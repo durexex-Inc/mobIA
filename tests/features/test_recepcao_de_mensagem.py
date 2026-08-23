@@ -298,6 +298,11 @@ async def test_falha_de_persistencia_nao_pode_responder_200(
     assert await session.scalar(select(func.count()).select_from(Message)) == 0
     assert await redis_pool.queued_jobs() == []
 
+    dados = evento_de_log(caplog, "webhook.persist_failed")
+    assert dados["reason"] == "OperationalError"
+    assert dados.get("payload_sha256"), "o hash do payload precisa estar no log da falha"
+    assert dados.get("remote_ip"), "remote_ip precisa estar no log da falha"
+
 
 async def test_falha_ao_virar_status_nao_pode_propagar(
     session, redis_pool, settings, caplog

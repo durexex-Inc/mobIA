@@ -100,8 +100,22 @@ async def ingest(
     # para o sweeper achar. Engolir isso num 200 faria a Meta marcar a entrega
     # como bem-sucedida e a mensagem sumiria para sempre. Deixar subir vira 500
     # e a Meta re-entrega; sem risco de duplicata, justamente porque nada foi
-    # escrito. Abaixo do `_persist` nao ha o que levantar: o `_try_enqueue` ja
-    # engole as proprias excecoes.
-    await service.ingest(parsed)
+    # escrito. Abaixo do `_persist` nada levanta: o `_try_enqueue` engole tanto a
+    # falha do enqueue quanto a da virada de status, porque de la em diante as
+    # linhas ja estao commitadas e um 500 provocaria a re-entrega de um payload
+    # ja gravado -- exatamente a duplicata que este desenho existe para evitar.
+    # O `except` abaixo so registra e re-levanta: nao muda o 500, so garante que
+    # a falha mais critica da rota nao saia apenas como traceback do uvicorn.
+    try:
+        await service.ingest(parsed)
+    except Exception as exc:
+        log.exception(
+            "webhook.persist_failed",
+            reason=type(exc).__name__,
+            detail=str(exc),
+            remote_ip=remote_ip,
+            payload_sha256=payload_sha256,
+        )
+        raise
 
     return Response(status_code=200)
