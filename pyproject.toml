@@ -47,3 +47,8 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# `Depends()` no default do parametro e o idioma do FastAPI, nao o bug de
+# default mutavel que a B008 existe para pegar.
+extend-immutable-calls = ["fastapi.Depends"]

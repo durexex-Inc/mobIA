@@ -18,9 +18,7 @@ router = APIRouter(tags=["whatsapp"])
 
 
 @router.get("/webhooks/whatsapp")
-async def verify(
-    request: Request, settings: Settings = Depends(get_settings)  # noqa: B008
-) -> Response:
+async def verify(request: Request, settings: Settings = Depends(get_settings)) -> Response:
     """Handshake de registro do webhook na Meta."""
     params = request.query_params
     if (
@@ -36,8 +34,8 @@ async def verify(
 @router.post("/webhooks/whatsapp")
 async def ingest(
     request: Request,
-    settings: Settings = Depends(get_settings),  # noqa: B008
-    service: IngestionService = Depends(get_ingestion_service),  # noqa: B008
+    settings: Settings = Depends(get_settings),
+    service: IngestionService = Depends(get_ingestion_service),
 ) -> Response:
     """Recebe, valida, persiste e enfileira.
 
