@@ -1,8 +1,8 @@
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 
 import structlog
+from arq.connections import ArqRedis
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -25,7 +25,7 @@ class IngestionService:
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
-        queue: Any | None,
+        queue: ArqRedis | None,
     ) -> None:
         self._session_factory = session_factory
         self._queue = queue
@@ -79,11 +79,22 @@ class IngestionService:
             )
             return
 
+        # O predicado de status importa: entre o enqueue voltar e este commit
+        # aterrissar, um worker pode ter reivindicado e concluido a mensagem.
+        # Sem ele, o webhook atropelaria PROCESSED de volta para QUEUED.
         async with self._session_factory() as session:
-            await session.execute(
+            resultado = await session.execute(
                 update(Message)
-                .where(Message.id == message_id)
+                .where(Message.id == message_id, Message.status == MessageStatus.RECEIVED)
                 .values(status=MessageStatus.QUEUED, queued_at=datetime.now(UTC))
             )
             await session.commit()
-        log.info("message.queued", message_id=str(message_id))
+
+        if resultado.rowcount == 1:
+            log.info("message.queued", message_id=str(message_id))
+        else:
+            log.info(
+                "message.queued_skipped",
+                message_id=str(message_id),
+                reason="status_ja_avancou",
+            )

@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.messages.models import Message
@@ -19,8 +19,23 @@ async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
 
     PROCESSING esta entre os estados reivindicaveis de proposito: e o estado que
     um worker morto no meio do job deixa para tras, e e o que permite a retomada.
-    Quem perde a corrida recebe rowcount 0 e sai como no-op.
+
+    A exclusao mutua e **parcial**. O `SELECT ... FOR UPDATE SKIP LOCKED` resolve
+    o caso simultaneo: quem chega com a linha travada sai limpo com False, em vez
+    de bloquear, reavaliar o predicado contra a nova versao da linha (onde
+    PROCESSING continua reivindicavel) e reivindicar tambem. O que ele nao cobre
+    e o worker que chega depois do commit do primeiro -- por construcao, ja que
+    e assim que a retomada funciona. Exclusao completa pede um lease com coluna
+    `claimed_at`, que fica para uma historia posterior.
     """
+    reservada = await session.execute(
+        select(Message.id)
+        .where(Message.id == message_id, Message.status.in_(CLAIMABLE_STATUSES))
+        .with_for_update(skip_locked=True)
+    )
+    if reservada.scalar_one_or_none() is None:
+        return False
+
     resultado = await session.execute(
         update(Message)
         .where(Message.id == message_id, Message.status.in_(CLAIMABLE_STATUSES))
@@ -43,10 +58,6 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> str:
 
     try:
         await outbound.send(identifier, ACK_KIND, {})
-
-        fault = ctx.get("fault")
-        if fault is not None:
-            raise fault
 
         async with session_factory() as session:
             await session.execute(

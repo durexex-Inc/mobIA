@@ -6,25 +6,28 @@ from mobia.app.config import get_settings
 from mobia.app.logging import configure_logging
 from mobia.domain.outbound.noop import NoopOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
-from mobia.infra.queue import create_redis_pool, redis_settings
+from mobia.infra.queue import redis_settings
 from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
 
 
 async def startup(ctx: dict[str, Any]) -> None:
+    """Monta o contexto compartilhado pelos jobs.
+
+    `ctx["redis"]` nao entra aqui: o proprio ARQ ja gravou `ctx['redis'] =
+    self.pool` imediatamente antes de chamar este hook, e sobrescrever so abriria
+    um segundo pool redundante.
+    """
     settings = get_settings()
     configure_logging(settings.log_level)
     session_factory = get_sessionmaker()
     ctx["settings"] = settings
     ctx["session_factory"] = session_factory
     ctx["outbound"] = NoopOutbound(session_factory)
-    ctx["redis"] = await create_redis_pool()
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
-    pool = ctx.get("redis")
-    if pool is not None:
-        await pool.aclose()
+    """O pool do Redis e do ARQ, que o fecha depois deste hook."""
     await dispose_engine()
 
 

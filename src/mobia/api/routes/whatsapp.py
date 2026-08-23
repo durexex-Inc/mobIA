@@ -70,10 +70,23 @@ async def ingest(
         )
         return Response(status_code=200)
 
-    parsed = parse_meta_envelope(payload)
-    if not parsed:
-        log.info("webhook.ignored", reason="no_inbound_messages")
-        return Response(status_code=200)
+    try:
+        parsed = parse_meta_envelope(payload)
+        if not parsed:
+            log.info("webhook.ignored", reason="no_inbound_messages")
+            return Response(status_code=200)
 
-    await service.ingest(parsed)
+        await service.ingest(parsed)
+    except Exception as exc:
+        # Um 500 aqui faria a Meta re-entregar o mesmo payload, e como
+        # provider_message_id so vira UNIQUE em TEC-125 isso nasce como uma
+        # segunda linha -- com message_id diferente, que a guarda de
+        # outbound_dispatches nao consegue casar.
+        log.exception(
+            "webhook.error",
+            reason=type(exc).__name__,
+            detail=str(exc),
+            payload_sha256=payload_sha256,
+        )
+
     return Response(status_code=200)

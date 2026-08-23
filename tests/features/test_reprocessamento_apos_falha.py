@@ -27,6 +27,18 @@ class QuedaDoWorker(RuntimeError):
     pass
 
 
+class OutboundQueCai(OutboundEspiao):
+    """Registra a entrega e so entao levanta.
+
+    Reproduz a janela que o cenario 3 precisa exercitar: o efeito externo ja
+    saiu, mas a linha ainda nao chegou a PROCESSED.
+    """
+
+    async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> None:
+        await super()._deliver(message_id, kind, payload)
+        raise QuedaDoWorker("worker morto no meio do processamento")
+
+
 async def enfileirada(session, status: str = MessageStatus.QUEUED) -> uuid.UUID:
     message = Message(
         id=uuid.uuid4(),
@@ -89,11 +101,10 @@ async def test_nao_perder_mensagem_em_falha_do_worker(session) -> None:
     processada e nenhuma resposta duplicada e enviada ao lead.
     """
     message_id = await enfileirada(session)
-    outbound = OutboundEspiao(get_sessionmaker())
-    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
 
     # Worker interrompido logo depois da entrega, antes de marcar PROCESSED.
-    ctx["fault"] = QuedaDoWorker("worker morto no meio do processamento")
+    caido = OutboundQueCai(get_sessionmaker())
+    ctx = {"session_factory": get_sessionmaker(), "outbound": caido}
     with pytest.raises(QuedaDoWorker):
         await process_message(ctx, str(message_id))
 
@@ -101,15 +112,16 @@ async def test_nao_perder_mensagem_em_falha_do_worker(session) -> None:
     await session.refresh(linha)
     assert linha.status == MessageStatus.FAILED
     assert linha.attempts == 1
-    assert len(outbound.entregas) == 1
+    assert len(caido.entregas) == 1
 
-    # Worker reiniciado: a mensagem volta a ser processada.
-    ctx.pop("fault")
+    # Worker reiniciado: instancia nova, sem a falha.
+    reiniciado = OutboundEspiao(get_sessionmaker())
+    ctx["outbound"] = reiniciado
     assert await process_message(ctx, str(message_id)) == "processed"
 
     await session.refresh(linha)
     assert linha.status == MessageStatus.PROCESSED
-    assert len(outbound.entregas) == 1, "nenhuma resposta duplicada ao lead"
+    assert reiniciado.entregas == [], "a guarda suprime a reentrega"
     assert await session.scalar(select(func.count()).select_from(OutboundDispatch)) == 1
 
 
