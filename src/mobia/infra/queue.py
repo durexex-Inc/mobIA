@@ -23,6 +23,11 @@ async def enqueue_process_message(pool: ArqRedis, message_id: uuid.UUID) -> bool
     Usa `_job_id` derivado do message_id: o ARQ recusa o segundo enqueue enquanto
     o job estiver pendente, entao o sweeper nao multiplica trabalho. Devolve False
     quando o job ja estava na fila.
+
+    O ARQ tambem recusa o enqueue quando a chave de *resultado* do mesmo job id
+    existe. Por isso `process_message` e registrado com `keep_result=0` em
+    `workers/main.py`: sem isso, o resultado de um job que terminou bloquearia
+    todo re-enqueue do sweeper pela hora seguinte.
     """
     job = await pool.enqueue_job(
         PROCESS_MESSAGE_JOB, str(message_id), _job_id=f"msg:{message_id}"

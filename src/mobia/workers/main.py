@@ -1,6 +1,6 @@
 from typing import Any
 
-from arq import cron
+from arq import cron, func
 
 from mobia.app.config import get_settings
 from mobia.app.logging import configure_logging
@@ -29,10 +29,29 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 
 
 class WorkerSettings:
-    functions = [process_message, sweep_stalled]
+    """Configuracao do worker ARQ.
+
+    `keep_result = 0` nao e cosmetico. O `enqueue_job` do ARQ
+    (`arq/connections.py`) recusa o enqueue quando **a chave do job ou a chave
+    de resultado** existe: `if await pipe.exists(job_key, result_key_prefix +
+    job_id)`. Como `enqueue_process_message` fixa `_job_id = msg:<id>`, um job
+    que terminou deixaria `arq:result:msg:<id>` viva por 3600s (default) e todo
+    re-enqueue do sweeper naquela hora viraria no-op silencioso -- queimando as
+    cinco tentativas e abandonando a mensagem. A deduplicacao de job em voo, que
+    e o motivo de o `_job_id` existir, mora na chave do *job*, que o `finish_job`
+    apaga; essa continua valendo.
+
+    O ajuste esta nos dois niveis de proposito: o `func(..., keep_result=0)`
+    cobre o caminho normal do `run_job`, e o `keep_result` da classe cobre o
+    `finish_failed_job` (`arq/worker.py`), que ignora a configuracao por funcao
+    e usa so a do worker.
+    """
+
+    functions = [func(process_message, keep_result=0), sweep_stalled]
     cron_jobs = [cron(sweep_stalled, second={0, 30}, run_at_startup=False)]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = redis_settings()
     max_tries = 5
     job_timeout = 60
+    keep_result = 0
