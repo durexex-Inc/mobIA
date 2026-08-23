@@ -48,9 +48,12 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
     em ~2,5 min de outage todas as mensagens em voo passariam do teto e seriam
     abandonadas -- justamente a janela que o sweeper existe para cobrir.
 
-    A selecao, os enqueues e o incremento vivem na mesma transacao: os locks do
-    `FOR UPDATE SKIP LOCKED` sao o que impede duas instancias de varrerem a
-    mesma linha, e solta-los antes do incremento perderia essa exclusao.
+    Os locks da selecao sao soltos antes de qualquer I/O de rede: segurar lock de
+    linha no Postgres enquanto se fala com o Redis e ruim por si so, e aqui teria
+    um efeito concreto -- o `claim_message` do worker usa SKIP LOCKED, entao um
+    job que chegasse durante a janela sairia como no-op em vez de processar. A
+    exclusao entre sweepers concorrentes nao depende disso: quem perde a corrida
+    do enqueue recebe False do ARQ e nao incrementa nada.
     """
     session_factory = ctx["session_factory"]
     redis = ctx["redis"]
@@ -67,37 +70,37 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
             },
         )
         ids: list[uuid.UUID] = [linha[0] for linha in resultado.fetchall()]
+        await session.commit()
 
-        enfileiradas: list[uuid.UUID] = []
-        for message_id in ids:
-            try:
-                novo = await enqueue_process_message(redis, message_id)
-            except Exception as exc:
-                log.warning(
-                    "sweep.enqueue_failed",
-                    message_id=str(message_id),
-                    reason=type(exc).__name__,
-                    detail=str(exc),
-                )
-                continue
-            if not novo:
-                log.info(
-                    "sweep.enqueue_skipped",
-                    message_id=str(message_id),
-                    reason="job_ja_pendente",
-                )
-                continue
-            enfileiradas.append(message_id)
+    enfileiradas: list[uuid.UUID] = []
+    for message_id in ids:
+        try:
+            novo = await enqueue_process_message(redis, message_id)
+        except Exception as exc:
+            log.warning(
+                "sweep.enqueue_failed",
+                message_id=str(message_id),
+                reason=type(exc).__name__,
+                detail=str(exc),
+            )
+            continue
+        if not novo:
+            log.info(
+                "sweep.enqueue_skipped",
+                message_id=str(message_id),
+                reason="job_ja_pendente",
+            )
+            continue
+        enfileiradas.append(message_id)
 
-        if enfileiradas:
+    if enfileiradas:
+        async with session_factory() as session:
             await session.execute(
                 update(Message)
                 .where(Message.id.in_(enfileiradas))
                 .values(attempts=Message.attempts + 1)
             )
-        await session.commit()
-
-    if enfileiradas:
+            await session.commit()
         log.info(
             "sweep.requeued",
             count=len(enfileiradas),
