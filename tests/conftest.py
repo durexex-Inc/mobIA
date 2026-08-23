@@ -7,9 +7,22 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.app.config import get_settings
+from mobia.app.logging import configure_logging
 from mobia.infra.db import dispose_engine, get_sessionmaker
 
 TABELAS = ("outbound_dispatches", "messages")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def configurar_logging() -> None:
+    """Configura o structlog uma vez por sessao de teste.
+
+    structlog e estado global de processo e em producao so e configurado dentro
+    de `create_app()`. Sem esta fixture, um teste que nao sobe o app fica com o
+    logger nao-configurado e `caplog` nao enxerga evento nenhum -- a suite
+    passaria so por acidente de ordenacao entre arquivos.
+    """
+    configure_logging(get_settings().log_level)
 
 
 @pytest.fixture(scope="session", autouse=True)
