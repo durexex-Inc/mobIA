@@ -4,12 +4,19 @@ Funcionalidade: Recepcao de mensagem do WhatsApp
 """
 
 import json
+from contextlib import asynccontextmanager
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 
+from mobia.api.deps import get_ingestion_service
+from mobia.app.main import create_app
 from mobia.domain.messages.models import Message
+from mobia.domain.messages.service import IngestionService
 from mobia.domain.messages.status import MessageStatus
+from mobia.infra.db import get_sessionmaker
 from mobia.infra.signature import SIGNATURE_HEADER, compute_signature
 
 ENVELOPE = {
@@ -211,3 +218,60 @@ async def test_handshake_de_verificacao(
     assert response.status_code == esperado_status
     if esperado_corpo is not None:
         assert response.text == esperado_corpo
+
+
+class SessaoQueFalhaNoCommit:
+    """Sessao real cujo COMMIT levanta, como Postgres fora do ar faria.
+
+    Delega tudo o mais para a sessao verdadeira, entao o caminho exercitado e o
+    `_persist` de producao inteiro -- so a confirmacao da transacao quebra.
+    """
+
+    def __init__(self, sessao) -> None:
+        self._sessao = sessao
+
+    def __getattr__(self, nome: str):
+        return getattr(self._sessao, nome)
+
+    async def commit(self) -> None:
+        raise OperationalError("COMMIT", {}, Exception("pool esgotado"))
+
+
+def fabrica_com_commit_quebrado(fabrica):
+    @asynccontextmanager
+    async def _fabrica():
+        async with fabrica() as sessao:
+            yield SessaoQueFalhaNoCommit(sessao)
+
+    return _fabrica
+
+
+async def test_falha_de_persistencia_nao_pode_responder_200(
+    session, redis_pool, settings, caplog
+) -> None:
+    """Se a linha nao foi gravada, a Meta precisa re-entregar.
+
+    O 200 e correto quando nao ha o que perder (assinatura invalida, JSON
+    malformado, envelope estranho). Aqui ha: o payload era valido e o commit
+    caiu. Responder 200 faz a Meta marcar a entrega como bem-sucedida e nunca
+    re-enviar -- a mensagem some sem deixar linha, e o sweeper, unico caminho de
+    recuperacao do desenho, nao tem o que achar.
+
+    Re-entrega nao duplica: `_persist` commita o lote inteiro numa transacao so,
+    entao quando ele levanta nada foi escrito.
+    """
+    app = create_app()
+    app.state.redis_pool = redis_pool
+    app.dependency_overrides[get_ingestion_service] = lambda: IngestionService(
+        fabrica_com_commit_quebrado(get_sessionmaker()), redis_pool
+    )
+    body, headers = corpo_assinado(settings.whatsapp_app_secret)
+
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as cliente:
+        with caplog.at_level("ERROR"):
+            response = await cliente.post("/webhooks/whatsapp", content=body, headers=headers)
+
+    assert response.status_code == 500, "a Meta so re-entrega em nao-2xx"
+    assert await session.scalar(select(func.count()).select_from(Message)) == 0
+    assert await redis_pool.queued_jobs() == []
