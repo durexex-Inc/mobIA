@@ -94,7 +94,7 @@ async def ingest(
         log.info("webhook.ignored", reason="no_inbound_messages")
         return Response(status_code=200)
 
-    # `ingest` fica deliberadamente fora do try. Se o `_persist` levanta
+    # A falha do `ingest` sobe deliberadamente. Se o `_persist` levanta
     # (Postgres fora do ar, pool esgotado, statement timeout), nada foi gravado
     # -- ele commita o lote inteiro numa transacao so -- e portanto nao ha linha
     # para o sweeper achar. Engolir isso num 200 faria a Meta marcar a entrega
