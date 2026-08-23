@@ -81,3 +81,17 @@ async def redis_pool() -> AsyncIterator["ArqRedis"]:  # noqa: F821
     finally:
         await pool.flushdb()
         await pool.aclose()
+
+
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+
+from mobia.app.main import create_app  # noqa: E402
+
+
+@pytest.fixture
+async def client(banco_limpo: None, redis_pool) -> AsyncIterator[AsyncClient]:
+    app = create_app()
+    app.state.redis_pool = redis_pool
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as http_client:
+        yield http_client
