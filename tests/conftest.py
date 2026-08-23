@@ -1,14 +1,21 @@
 import subprocess
 import sys
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.app.config import get_settings
 from mobia.app.logging import configure_logging
+from mobia.app.main import create_app
 from mobia.infra.db import dispose_engine, get_sessionmaker
+from mobia.infra.queue import create_redis_pool
+
+if TYPE_CHECKING:
+    from arq.connections import ArqRedis
 
 TABELAS = ("outbound_dispatches", "messages")
 
@@ -69,11 +76,8 @@ def settings():
     return get_settings()
 
 
-from mobia.infra.queue import create_redis_pool  # noqa: E402
-
-
 @pytest.fixture
-async def redis_pool() -> AsyncIterator["ArqRedis"]:  # noqa: F821
+async def redis_pool() -> AsyncIterator["ArqRedis"]:
     pool = await create_redis_pool()
     await pool.flushdb()
     try:
@@ -81,11 +85,6 @@ async def redis_pool() -> AsyncIterator["ArqRedis"]:  # noqa: F821
     finally:
         await pool.flushdb()
         await pool.aclose()
-
-
-from httpx import ASGITransport, AsyncClient  # noqa: E402
-
-from mobia.app.main import create_app  # noqa: E402
 
 
 @pytest.fixture

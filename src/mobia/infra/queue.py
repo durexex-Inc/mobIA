@@ -6,7 +6,6 @@ from arq.connections import ArqRedis, RedisSettings
 from mobia.app.config import get_settings
 
 PROCESS_MESSAGE_JOB = "process_message"
-SWEEP_STALLED_JOB = "sweep_stalled"
 
 
 def redis_settings() -> RedisSettings:

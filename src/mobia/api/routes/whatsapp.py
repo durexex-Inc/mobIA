@@ -53,7 +53,7 @@ async def ingest(
     if not is_valid_signature(settings.whatsapp_app_secret, body, signature):
         log.warning(
             "webhook.rejected",
-            reason="invalid_signature" if signature else "missing_or_invalid_signature",
+            reason="invalid_signature" if signature else "missing_signature",
             remote_ip=remote_ip,
             payload_sha256=payload_sha256,
         )

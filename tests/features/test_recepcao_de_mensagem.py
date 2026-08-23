@@ -122,7 +122,8 @@ async def test_assinatura_ausente_tambem_e_descartada(client, session, caplog) -
 
     assert response.status_code == 200
     assert await session.scalar(select(func.count()).select_from(Message)) == 0
-    assert "missing_or_invalid_signature" in caplog.text or "invalid_signature" in caplog.text
+    dados = evento_de_log(caplog, "webhook.rejected")
+    assert dados["reason"] == "missing_signature", "ausente e invalida tem de se distinguir no log"
 
 
 async def test_json_malformado_nao_derruba_o_endpoint(client, session, settings, caplog) -> None:
@@ -170,14 +171,18 @@ async def test_notificacao_de_status_nao_vira_mensagem(client, session, settings
     [
         ("valido", "subscribe", 200, "42"),
         ("errado", "subscribe", 403, None),
+        ("ausente", "subscribe", 403, None),
         ("valido", "unsubscribe", 403, None),
     ],
 )
 async def test_handshake_de_verificacao(
     client, settings, token, modo, esperado_status, esperado_corpo
 ) -> None:
-    verify_token = settings.whatsapp_verify_token if token == "valido" else "token-errado"
-    params = {"hub.mode": modo, "hub.verify_token": verify_token, "hub.challenge": "42"}
+    params = {"hub.mode": modo, "hub.challenge": "42"}
+    if token == "valido":
+        params["hub.verify_token"] = settings.whatsapp_verify_token
+    elif token == "errado":
+        params["hub.verify_token"] = "token-errado"
 
     response = await client.get("/webhooks/whatsapp", params=params)
 

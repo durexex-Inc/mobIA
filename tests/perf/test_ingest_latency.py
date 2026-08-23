@@ -14,7 +14,6 @@ from mobia.infra.signature import SIGNATURE_HEADER, compute_signature
 
 REQUISICOES = 200
 P95_MAXIMO_MS = 300.0
-P99_MAXIMO_MS = 500.0
 
 
 def envelope(indice: int) -> dict:
@@ -61,5 +60,6 @@ async def test_p95_do_webhook_fica_abaixo_de_300ms(client, settings) -> None:
     p99 = quantis[98]
 
     print(f"\np50={statistics.median(latencias_ms):.1f}ms p95={p95:.1f}ms p99={p99:.1f}ms")
+    # So o p95 e criterio de aceite de TEC-122. O p99 fica no print como
+    # observacao, sem virar orcamento que a historia nunca definiu.
     assert p95 < P95_MAXIMO_MS, f"p95 de {p95:.1f}ms estourou o orcamento de {P95_MAXIMO_MS}ms"
-    assert p99 < P99_MAXIMO_MS, f"p99 de {p99:.1f}ms estourou o orcamento de {P99_MAXIMO_MS}ms"

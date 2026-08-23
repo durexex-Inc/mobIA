@@ -74,6 +74,7 @@ async def test_nao_toca_em_queued_recente(session, redis_pool, settings) -> None
     await mensagem(session, MessageStatus.QUEUED, idade_segundos=60)
 
     assert await sweep_stalled(contexto(redis_pool, settings)) == 0
+    assert await redis_pool.queued_jobs() == []
 
 
 async def test_ignora_processed(session, redis_pool, settings) -> None:
