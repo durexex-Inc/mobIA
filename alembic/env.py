@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from mobia.app.config import get_settings
 from mobia.domain.messages.models import Base
+from mobia.domain.outbound.models import OutboundDispatch  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
