@@ -2,10 +2,9 @@ import uuid
 from typing import Any
 
 import structlog
-from sqlalchemy import text, update
+from sqlalchemy import text
 
 from mobia.app.config import Settings, get_settings
-from mobia.domain.messages.models import Message
 from mobia.infra.queue import enqueue_process_message
 
 log = structlog.get_logger(__name__)
@@ -40,20 +39,34 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
     `arq/worker.py` so `Retry`, `RetryJob` e `CancelledError` reagendam; uma
     `Exception` qualquer marca `finish = True` e o `finish_job` apaga o job da
     fila. Sem o sweeper, uma falha transitoria perderia a mensagem para sempre.
-    O teto `attempts < sweep_max_attempts` e o que limita o loop.
+    O teto `attempts < sweep_max_attempts` e o que limita o loop: o re-sweep de
+    FAILED e ancorado em `COALESCE(queued_at, received_at)` -- hora de enfileirar,
+    nao de falhar -- entao uma mensagem que falha sempre volta a cada varredura,
+    sem backoff. Com `attempts` contando so falha real de processamento, o
+    orcamento sao 5 falhas de verdade e o laco fica limitado de forma sana.
+    Backoff proprio (coluna `failed_at`) e TEC-209.
 
-    `attempts` so e incrementado para os ids que de fato entraram na fila, e
-    cada enqueue e isolado num try/except. Contar tentativa sem ter enfileirado
-    torna uma queda do Redis fatal: a varredura roda a cada 30s, o teto e 5, e
-    em ~2,5 min de outage todas as mensagens em voo passariam do teto e seriam
-    abandonadas -- justamente a janela que o sweeper existe para cobrir.
+    O sweeper **nao** mexe em `attempts`. A coluna significa o que o nome diz --
+    tentativa de processamento -- e quem a incrementa e o worker, no `except` do
+    `process_message`, quando o processamento de fato falhou. Contar varredura
+    como tentativa custava duas coisas. Uma: o UPDATE em lote rodava depois de
+    os jobs ja estarem visiveis no Redis, travava as linhas em ordem de scan e
+    bloqueava na primeira que um worker ja segurava, segurando as demais; o
+    `claim_message`, que usa SKIP LOCKED, entao devolvia False para linhas
+    perfeitamente reivindicaveis e o job saia como no-op -- consumido e perdido,
+    e ja cobrado. Duas: com worker e sweeper contando, o orcamento anunciado de
+    `sweep_max_attempts` valia na pratica metade.
+
+    O que se perde e o sinal "o sweeper enfileirou algo que nunca chegou a um
+    worker" -- que era exatamente o caso que o bug criava. Se ele voltar a fazer
+    falta, o jeito honesto e uma coluna `sweep_enqueues` propria.
 
     Os locks da selecao sao soltos antes de qualquer I/O de rede: segurar lock de
     linha no Postgres enquanto se fala com o Redis e ruim por si so, e aqui teria
     um efeito concreto -- o `claim_message` do worker usa SKIP LOCKED, entao um
     job que chegasse durante a janela sairia como no-op em vez de processar. A
     exclusao entre sweepers concorrentes nao depende disso: quem perde a corrida
-    do enqueue recebe False do ARQ e nao incrementa nada.
+    do enqueue recebe False do ARQ e sai sem fazer nada.
     """
     session_factory = ctx["session_factory"]
     redis = ctx["redis"]
@@ -94,13 +107,6 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
         enfileiradas.append(message_id)
 
     if enfileiradas:
-        async with session_factory() as session:
-            await session.execute(
-                update(Message)
-                .where(Message.id.in_(enfileiradas))
-                .values(attempts=Message.attempts + 1)
-            )
-            await session.commit()
         log.info(
             "sweep.requeued",
             count=len(enfileiradas),

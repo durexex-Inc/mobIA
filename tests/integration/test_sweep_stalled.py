@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import func, select
 
 from mobia.domain.messages.models import Message
@@ -56,7 +57,7 @@ async def test_reenfileira_received_parado(session, redis_pool, settings) -> Non
 
     linha = await session.get(Message, message_id)
     await session.refresh(linha)
-    assert linha.attempts == 1
+    assert linha.attempts == 0, "varrer nao e tentar processar: o sweeper nao cobra attempts"
 
 
 async def test_nao_toca_em_received_recente(session, redis_pool, settings) -> None:
@@ -111,7 +112,7 @@ async def test_varre_varias_de_uma_vez(session, redis_pool, settings) -> None:
             select(Message).where(Message.status == MessageStatus.RECEIVED)
         )
     ).all()
-    assert all(linha.attempts == 1 for linha in paradas)
+    assert all(linha.attempts == 0 for linha in paradas)
 
 
 class OutboundEspiao(GuardedOutbound):
@@ -121,6 +122,13 @@ class OutboundEspiao(GuardedOutbound):
 
     async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict) -> None:
         self.entregas.append(message_id)
+
+
+class OutboundQueCai(OutboundEspiao):
+    """Falha na entrega, como uma falha real de processamento."""
+
+    async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict) -> None:
+        raise RuntimeError("falha de processamento")
 
 
 class FilaQuebrada:
@@ -144,7 +152,7 @@ async def test_failed_volta_a_ser_processada_pelo_sweeper(session, redis_pool, s
 
     linha = await session.get(Message, message_id)
     await session.refresh(linha)
-    assert linha.attempts == 2
+    assert linha.attempts == 1, "a falha anterior ja contou; a varredura nao conta de novo"
 
     outbound = OutboundEspiao(get_sessionmaker())
     ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
@@ -159,9 +167,11 @@ async def test_failed_volta_a_ser_processada_pelo_sweeper(session, redis_pool, s
 async def test_fila_quebrada_nao_queima_attempts(session, redis_pool, settings) -> None:
     """Uma queda do Redis nao pode consumir o teto de tentativas em vazio.
 
-    O sweeper roda a cada 30s e o teto e 5: incrementar `attempts` sem ter
-    conseguido enfileirar abandonaria tudo que esta em voo em ~2,5 min de
-    outage -- exatamente a janela que o sweeper existe para cobrir.
+    O sweeper roda a cada 30s e o teto e 5: cobrar tentativa sem ter conseguido
+    enfileirar abandonaria tudo que esta em voo em ~2,5 min de outage --
+    exatamente a janela que o sweeper existe para cobrir. Hoje a garantia e mais
+    forte que antes: o sweeper nao escreve `attempts` em caminho nenhum, nem no
+    de sucesso, entao nao ha como uma varredura queimar orcamento.
     """
     ids = [await mensagem(session, MessageStatus.RECEIVED, idade_segundos=120) for _ in range(2)]
 
@@ -176,4 +186,39 @@ async def test_fila_quebrada_nao_queima_attempts(session, redis_pool, settings) 
     assert {job.args[0] for job in await redis_pool.queued_jobs()} == {str(i) for i in ids}
     for linha in linhas:
         await session.refresh(linha)
-    assert [linha.attempts for linha in linhas] == [1, 1]
+    assert [linha.attempts for linha in linhas] == [0, 0]
+
+
+async def test_teto_e_consumido_por_falha_de_processamento_e_continua_limitando(
+    session, redis_pool, settings
+) -> None:
+    """Quem gasta o orcamento e a falha real; o teto continua limitando o re-sweep.
+
+    Com o incremento do sweeper removido, `attempts` volta a valer o que o nome
+    diz. O invariante que importa nao mudou: uma mensagem que falha sempre para
+    de ser reenfileirada -- so que agora depois de `sweep_max_attempts` falhas de
+    verdade, e nao de ~metade disso.
+    """
+    teto = settings.sweep_max_attempts
+    message_id = await mensagem(
+        session, MessageStatus.FAILED, idade_segundos=3600, attempts=teto - 1
+    )
+
+    assert await sweep_stalled(contexto(redis_pool, settings)) == 1
+    linha = await session.get(Message, message_id)
+    await session.refresh(linha)
+    assert linha.attempts == teto - 1, "a varredura nao pode consumir orcamento"
+
+    ctx = {"session_factory": get_sessionmaker(), "outbound": OutboundQueCai(get_sessionmaker())}
+    with pytest.raises(RuntimeError):
+        await process_message(ctx, str(message_id))
+
+    await session.refresh(linha)
+    assert linha.attempts == teto
+    assert linha.status == MessageStatus.FAILED
+
+    # Sem o flush, o 0 abaixo poderia vir do dedup do job ainda em voo
+    # (_job_id `msg:<id>`) em vez do teto -- e o teto e o que se quer provar.
+    await redis_pool.flushdb()
+    assert await sweep_stalled(contexto(redis_pool, settings)) == 0
+    assert await redis_pool.queued_jobs() == []
