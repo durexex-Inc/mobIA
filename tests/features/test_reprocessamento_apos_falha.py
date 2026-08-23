@@ -1,5 +1,6 @@
 """Cenario Gherkin de TEC-122: nao perder mensagem em falha do worker."""
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -91,6 +92,24 @@ async def test_claim_aceita_processing_para_permitir_retomada(session) -> None:
     async with get_sessionmaker()() as sessao:
         assert await claim_message(sessao, message_id) is True
         await sessao.commit()
+
+
+async def test_claim_simultaneo_faz_o_segundo_worker_perder_limpo(session) -> None:
+    """Dois workers na mesma mensagem ao mesmo tempo.
+
+    Sem o SELECT ... FOR UPDATE SKIP LOCKED o segundo bloqueava no lock do
+    primeiro, reavaliava o predicado contra a linha ja em PROCESSING -- que
+    continua reivindicavel -- e reivindicava tambem, dobrando o trabalho.
+    """
+    message_id = await enfileirada(session)
+    session_factory = get_sessionmaker()
+
+    async with session_factory() as primeiro, session_factory() as segundo:
+        # O primeiro nao commita: mantem o lock da linha, como um job em curso.
+        assert await claim_message(primeiro, message_id) is True
+        perdedor = await asyncio.wait_for(claim_message(segundo, message_id), timeout=5)
+        assert perdedor is False, "o segundo worker tem de sair como no-op"
+        await primeiro.commit()
 
 
 async def test_nao_perder_mensagem_em_falha_do_worker(session) -> None:

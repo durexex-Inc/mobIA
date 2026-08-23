@@ -141,6 +141,28 @@ async def test_json_malformado_nao_derruba_o_endpoint(client, session, settings,
     assert dados.get("remote_ip"), "remote_ip precisa estar no log de rejeicao"
 
 
+async def test_envelope_estruturalmente_invalido_nao_vira_500(
+    client, session, settings, caplog
+) -> None:
+    """A rota responde 200 em todo caminho, inclusive no erro inesperado.
+
+    Um 500 faria a Meta re-entregar o mesmo payload; como provider_message_id so
+    vira UNIQUE em TEC-125, a re-entrega nasce como uma segunda linha, com
+    message_id diferente -- que a guarda de outbound_dispatches nao casa.
+    """
+    body = json.dumps({"object": "whatsapp_business_account", "entry": ["nao e dict"]}).encode(
+        "utf-8"
+    )
+    headers = {SIGNATURE_HEADER: compute_signature(settings.whatsapp_app_secret, body)}
+
+    with caplog.at_level("ERROR"):
+        response = await client.post("/webhooks/whatsapp", content=body, headers=headers)
+
+    assert response.status_code == 200
+    assert await session.scalar(select(func.count()).select_from(Message)) == 0
+    assert evento_de_log(caplog, "webhook.error")["reason"] == "AttributeError"
+
+
 async def test_notificacao_de_status_nao_vira_mensagem(client, session, settings) -> None:
     payload = {
         "object": "whatsapp_business_account",

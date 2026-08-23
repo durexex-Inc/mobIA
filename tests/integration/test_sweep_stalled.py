@@ -1,11 +1,14 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
+from mobia.domain.outbound.models import OutboundDispatch
+from mobia.domain.outbound.port import GuardedOutbound
 from mobia.infra.db import get_sessionmaker
+from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
 
 
@@ -109,3 +112,68 @@ async def test_varre_varias_de_uma_vez(session, redis_pool, settings) -> None:
         )
     ).all()
     assert all(linha.attempts == 1 for linha in paradas)
+
+
+class OutboundEspiao(GuardedOutbound):
+    def __init__(self, session_factory) -> None:
+        super().__init__(session_factory)
+        self.entregas: list[uuid.UUID] = []
+
+    async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict) -> None:
+        self.entregas.append(message_id)
+
+
+class FilaQuebrada:
+    """Fila que levanta no enqueue, como o Redis fora do ar faria."""
+
+    async def enqueue_job(self, *args, **kwargs):
+        raise ConnectionError("redis fora do ar")
+
+
+async def test_failed_volta_a_ser_processada_pelo_sweeper(session, redis_pool, settings) -> None:
+    """Uma mensagem em FAILED nao pode ser um buraco negro.
+
+    O ARQ nao re-tenta excecao comum: o job some da fila. Se o sweeper tambem
+    pular FAILED, ninguem mais le a linha e a mensagem se perde. Round trip
+    completo: o sweeper reenfileira e o process_message seguinte conclui.
+    """
+    message_id = await mensagem(session, MessageStatus.FAILED, idade_segundos=3600, attempts=1)
+
+    assert await sweep_stalled(contexto(redis_pool, settings)) == 1
+    assert [job.args for job in await redis_pool.queued_jobs()] == [(str(message_id),)]
+
+    linha = await session.get(Message, message_id)
+    await session.refresh(linha)
+    assert linha.attempts == 2
+
+    outbound = OutboundEspiao(get_sessionmaker())
+    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
+    assert await process_message(ctx, str(message_id)) == "processed"
+
+    await session.refresh(linha)
+    assert linha.status == MessageStatus.PROCESSED
+    assert outbound.entregas == [message_id]
+    assert await session.scalar(select(func.count()).select_from(OutboundDispatch)) == 1
+
+
+async def test_fila_quebrada_nao_queima_attempts(session, redis_pool, settings) -> None:
+    """Uma queda do Redis nao pode consumir o teto de tentativas em vazio.
+
+    O sweeper roda a cada 30s e o teto e 5: incrementar `attempts` sem ter
+    conseguido enfileirar abandonaria tudo que esta em voo em ~2,5 min de
+    outage -- exatamente a janela que o sweeper existe para cobrir.
+    """
+    ids = [await mensagem(session, MessageStatus.RECEIVED, idade_segundos=120) for _ in range(2)]
+
+    assert await sweep_stalled(contexto(FilaQuebrada(), settings)) == 0
+
+    linhas = (await session.scalars(select(Message).order_by(Message.received_at))).all()
+    assert [linha.attempts for linha in linhas] == [0, 0]
+    assert await redis_pool.queued_jobs() == []
+
+    # Redis volta: a varredura seguinte enfileira as duas.
+    assert await sweep_stalled(contexto(redis_pool, settings)) == 2
+    assert {job.args[0] for job in await redis_pool.queued_jobs()} == {str(i) for i in ids}
+    for linha in linhas:
+        await session.refresh(linha)
+    assert [linha.attempts for linha in linhas] == [1, 1]
