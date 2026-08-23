@@ -54,3 +54,17 @@ async def session(banco_limpo: None) -> AsyncIterator[AsyncSession]:
 def settings():
     get_settings.cache_clear()
     return get_settings()
+
+
+from mobia.infra.queue import create_redis_pool  # noqa: E402
+
+
+@pytest.fixture
+async def redis_pool() -> AsyncIterator["ArqRedis"]:  # noqa: F821
+    pool = await create_redis_pool()
+    await pool.flushdb()
+    try:
+        yield pool
+    finally:
+        await pool.flushdb()
+        await pool.aclose()
