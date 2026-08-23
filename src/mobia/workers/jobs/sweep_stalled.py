@@ -20,7 +20,7 @@ _SELECIONAR_PARADAS = text(
            AND (
                 (status = 'RECEIVED'
                  AND received_at < now() - make_interval(secs => :received_after))
-             OR (status IN ('QUEUED', 'PROCESSING')
+             OR (status IN ('QUEUED', 'PROCESSING', 'FAILED')
                  AND COALESCE(queued_at, received_at)
                      < now() - make_interval(secs => :inflight_after))
            )
@@ -36,9 +36,17 @@ _SELECIONAR_PARADAS = text(
 async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
     """Reenfileira mensagens que ficaram para tras.
 
-    Duas janelas de perda: RECEIVED velho (o processo morreu entre o commit e o
-    enqueue) e QUEUED/PROCESSING velho (o worker morreu durante o job). O
-    SKIP LOCKED permite varias instancias varrendo em paralelo sem colidir.
+    Tres janelas de perda: RECEIVED velho (o processo morreu entre o commit e o
+    enqueue), QUEUED/PROCESSING velho (o worker morreu durante o job) e FAILED
+    velho.
+
+    FAILED entra na varredura porque o ARQ **nao** re-tenta excecao comum: em
+    `arq/worker.py` so `Retry`, `RetryJob` e `CancelledError` reagendam; uma
+    `Exception` qualquer marca `finish = True` e o `finish_job` apaga o job da
+    fila. Sem o sweeper, uma falha transitoria perderia a mensagem para sempre.
+    O teto `attempts < sweep_max_attempts` e o que limita o loop.
+
+    O SKIP LOCKED permite varias instancias varrendo em paralelo sem colidir.
     """
     session_factory = ctx["session_factory"]
     redis = ctx["redis"]

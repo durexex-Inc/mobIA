@@ -76,11 +76,16 @@ async def test_nao_toca_em_queued_recente(session, redis_pool, settings) -> None
     assert await sweep_stalled(contexto(redis_pool, settings)) == 0
 
 
-async def test_ignora_terminais(session, redis_pool, settings) -> None:
+async def test_ignora_processed(session, redis_pool, settings) -> None:
+    """PROCESSED e o unico estado realmente terminal.
+
+    FAILED nao e terminal: o ARQ nao re-tenta excecao comum, entao o sweeper e o
+    unico caminho de volta para uma mensagem que falhou.
+    """
     await mensagem(session, MessageStatus.PROCESSED, idade_segundos=3600)
-    await mensagem(session, MessageStatus.FAILED, idade_segundos=3600, attempts=1)
 
     assert await sweep_stalled(contexto(redis_pool, settings)) == 0
+    assert await redis_pool.queued_jobs() == []
 
 
 async def test_respeita_o_teto_de_tentativas(session, redis_pool, settings) -> None:
