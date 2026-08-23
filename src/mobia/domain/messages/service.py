@@ -18,8 +18,9 @@ class IngestionService:
     """Persiste a mensagem recebida e so entao a enfileira.
 
     A ordem importa: a linha commitada no Postgres e a garantia de nao-perda.
-    O enqueue e otimista e sua falha nao propaga -- a mensagem fica em RECEIVED
-    e o sweeper (workers/jobs/sweep_stalled.py) a recupera.
+    Depois do `_persist` nada propaga: tanto o enqueue quanto a virada de status
+    sao otimistas e engolem as proprias falhas -- a mensagem fica em RECEIVED e o
+    sweeper (workers/jobs/sweep_stalled.py) a recupera.
     """
 
     def __init__(
@@ -82,13 +83,31 @@ class IngestionService:
         # O predicado de status importa: entre o enqueue voltar e este commit
         # aterrissar, um worker pode ter reivindicado e concluido a mensagem.
         # Sem ele, o webhook atropelaria PROCESSED de volta para QUEUED.
-        async with self._session_factory() as session:
-            resultado = await session.execute(
-                update(Message)
-                .where(Message.id == message_id, Message.status == MessageStatus.RECEIVED)
-                .values(status=MessageStatus.QUEUED, queued_at=datetime.now(UTC))
+        #
+        # A falha aqui tambem e engolida, e por um motivo mais forte que a do
+        # enqueue: neste ponto o `_persist` ja commitou as linhas. Deixar subir
+        # viraria 500 na rota e a Meta re-entregaria um payload cujas linhas ja
+        # existem; como provider_message_id so vira UNIQUE em TEC-125, a
+        # re-entrega nasceria como segunda linha, com message_id diferente --
+        # que a guarda UNIQUE (message_id, kind) de outbound_dispatches nao casa,
+        # e o lead levaria duas respostas. A linha fica em RECEIVED e o sweeper
+        # a recupera sem precisar de nada da Meta.
+        try:
+            async with self._session_factory() as session:
+                resultado = await session.execute(
+                    update(Message)
+                    .where(Message.id == message_id, Message.status == MessageStatus.RECEIVED)
+                    .values(status=MessageStatus.QUEUED, queued_at=datetime.now(UTC))
+                )
+                await session.commit()
+        except Exception as exc:
+            log.warning(
+                "queued_flag.failed",
+                message_id=str(message_id),
+                reason=type(exc).__name__,
+                detail=str(exc),
             )
-            await session.commit()
+            return
 
         if resultado.rowcount == 1:
             log.info("message.queued", message_id=str(message_id))

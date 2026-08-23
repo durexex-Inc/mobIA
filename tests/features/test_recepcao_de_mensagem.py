@@ -246,6 +246,28 @@ def fabrica_com_commit_quebrado(fabrica):
     return _fabrica
 
 
+def fabrica_com_segundo_commit_quebrado(fabrica):
+    """Primeira sessao real; da segunda em diante o COMMIT levanta.
+
+    `_persist` e a virada de status pegam cada um a sua sessao da fabrica, nessa
+    ordem, entao contar as sessoes entregues separa exatamente os dois commits:
+    o do lote passa e as linhas ficam durable, o do `UPDATE ... SET status` cai.
+    E o unico jeito de reproduzir a janela que interessa -- ja existe linha
+    gravada e mesmo assim algo depois do `_persist` quebra.
+    """
+    entregues = 0
+
+    @asynccontextmanager
+    async def _fabrica():
+        nonlocal entregues
+        entregues += 1
+        quebrada = entregues > 1
+        async with fabrica() as sessao:
+            yield SessaoQueFalhaNoCommit(sessao) if quebrada else sessao
+
+    return _fabrica
+
+
 async def test_falha_de_persistencia_nao_pode_responder_200(
     session, redis_pool, settings, caplog
 ) -> None:
@@ -275,3 +297,48 @@ async def test_falha_de_persistencia_nao_pode_responder_200(
     assert response.status_code == 500, "a Meta so re-entrega em nao-2xx"
     assert await session.scalar(select(func.count()).select_from(Message)) == 0
     assert await redis_pool.queued_jobs() == []
+
+
+async def test_falha_ao_virar_status_nao_pode_propagar(
+    session, redis_pool, settings, caplog
+) -> None:
+    """Depois que o `_persist` commita, nenhuma falha pode virar 500.
+
+    Este e o espelho do cenario acima e a fronteira entre os dois e o commit do
+    lote. Antes dele nada foi escrito e o 500 e obrigatorio; depois dele as
+    linhas existem, e um 500 faz a Meta re-entregar um payload ja gravado. Como
+    provider_message_id so vira UNIQUE em TEC-125, a re-entrega nasce como
+    segunda linha, com message_id diferente -- e a guarda UNIQUE
+    (message_id, kind) de outbound_dispatches, que so casa por message_id, nao
+    tem como ver que e a mesma mensagem. O resultado seria duas respostas ao
+    lead assim que TEC-134 tornar o outbound real.
+
+    O 500 tambem nao compraria nada aqui: a linha ficou em RECEIVED e o sweeper
+    a recupera sem depender da Meta.
+    """
+    app = create_app()
+    app.state.redis_pool = redis_pool
+    app.dependency_overrides[get_ingestion_service] = lambda: IngestionService(
+        fabrica_com_segundo_commit_quebrado(get_sessionmaker()), redis_pool
+    )
+    body, headers = corpo_assinado(settings.whatsapp_app_secret)
+
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as cliente:
+        with caplog.at_level("WARNING"):
+            response = await cliente.post("/webhooks/whatsapp", content=body, headers=headers)
+
+    assert response.status_code == 200, "a linha ja esta gravada; re-entrega da Meta duplicaria"
+
+    linha = await session.scalar(
+        select(Message).where(Message.provider_message_id == "wamid.GHERKIN")
+    )
+    assert linha is not None, "o commit do lote passou, a linha tem de estar la"
+    assert linha.status == MessageStatus.RECEIVED, "a virada de status falhou; o sweeper recupera"
+    assert linha.queued_at is None
+
+    assert len(await redis_pool.queued_jobs()) == 1, "o enqueue passou, quem caiu foi o UPDATE"
+
+    dados = evento_de_log(caplog, "queued_flag.failed")
+    assert dados["reason"] == "OperationalError"
+    assert dados["message_id"] == str(linha.id)
