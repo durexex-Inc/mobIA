@@ -48,6 +48,24 @@ def corpo_assinado(secret: str) -> tuple[bytes, dict[str, str]]:
     }
 
 
+def evento_de_log(caplog, evento: str) -> dict:
+    """Decodifica o primeiro registro cujo `event` (JSONRenderer do structlog) bate.
+
+    O structlog e configurado com `JSONRenderer` como ultimo processor, entao
+    cada mensagem capturada pelo caplog e um JSON serializado, nao texto livre.
+    Buscar por campo em vez de substring prova a forma do log, nao so que uma
+    palavra apareceu em algum lugar do buffer.
+    """
+    for record in caplog.records:
+        try:
+            dados = json.loads(record.getMessage())
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if dados.get("event") == evento:
+            return dados
+    raise AssertionError(f"nenhum registro de log com event={evento!r} encontrado")
+
+
 async def test_confirmar_recebimento_antes_de_processar(
     client, session, redis_pool, settings
 ) -> None:
@@ -88,8 +106,10 @@ async def test_descartar_payload_com_assinatura_invalida(
     assert response.status_code == 200
     assert await session.scalar(select(func.count()).select_from(Message)) == 0
     assert await redis_pool.queued_jobs() == []
-    assert "webhook.rejected" in caplog.text
-    assert "invalid_signature" in caplog.text
+
+    dados = evento_de_log(caplog, "webhook.rejected")
+    assert dados["reason"] == "invalid_signature"
+    assert dados.get("remote_ip"), "remote_ip precisa estar no log de rejeicao"
 
 
 async def test_assinatura_ausente_tambem_e_descartada(client, session, caplog) -> None:
@@ -114,7 +134,10 @@ async def test_json_malformado_nao_derruba_o_endpoint(client, session, settings,
 
     assert response.status_code == 200
     assert await session.scalar(select(func.count()).select_from(Message)) == 0
-    assert "malformed_json" in caplog.text
+
+    dados = evento_de_log(caplog, "webhook.rejected")
+    assert dados["reason"] == "malformed_json"
+    assert dados.get("remote_ip"), "remote_ip precisa estar no log de rejeicao"
 
 
 async def test_notificacao_de_status_nao_vira_mensagem(client, session, settings) -> None:

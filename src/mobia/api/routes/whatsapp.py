@@ -47,13 +47,15 @@ async def ingest(
 
     body = await request.body()
     signature = request.headers.get(SIGNATURE_HEADER)
+    remote_ip = request.client.host if request.client else None
+    payload_sha256 = hashlib.sha256(body).hexdigest()
 
     if not is_valid_signature(settings.whatsapp_app_secret, body, signature):
         log.warning(
             "webhook.rejected",
             reason="invalid_signature" if signature else "missing_or_invalid_signature",
-            remote_ip=request.client.host if request.client else None,
-            payload_sha256=hashlib.sha256(body).hexdigest(),
+            remote_ip=remote_ip,
+            payload_sha256=payload_sha256,
         )
         return Response(status_code=200)
 
@@ -63,7 +65,8 @@ async def ingest(
         log.warning(
             "webhook.rejected",
             reason="malformed_json",
-            payload_sha256=hashlib.sha256(body).hexdigest(),
+            remote_ip=remote_ip,
+            payload_sha256=payload_sha256,
         )
         return Response(status_code=200)
 
