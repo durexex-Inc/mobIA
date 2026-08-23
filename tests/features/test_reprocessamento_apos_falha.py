@@ -1,0 +1,129 @@
+"""Cenario Gherkin de TEC-122: nao perder mensagem em falha do worker."""
+
+import uuid
+from typing import Any
+
+import pytest
+from sqlalchemy import func, select
+
+from mobia.domain.messages.models import Message
+from mobia.domain.messages.status import MessageStatus
+from mobia.domain.outbound.models import OutboundDispatch
+from mobia.domain.outbound.port import GuardedOutbound
+from mobia.infra.db import get_sessionmaker
+from mobia.workers.jobs.process_message import claim_message, process_message
+
+
+class OutboundEspiao(GuardedOutbound):
+    def __init__(self, session_factory) -> None:
+        super().__init__(session_factory)
+        self.entregas: list[uuid.UUID] = []
+
+    async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> None:
+        self.entregas.append(message_id)
+
+
+class QuedaDoWorker(RuntimeError):
+    pass
+
+
+async def enfileirada(session, status: str = MessageStatus.QUEUED) -> uuid.UUID:
+    message = Message(
+        id=uuid.uuid4(),
+        channel="whatsapp",
+        provider_message_id=f"wamid.{uuid.uuid4().hex[:8]}",
+        sender_external_id="5511911112222",
+        recipient_external_id="222222222",
+        content_type="text",
+        text_body="ainda tem o 2 quartos?",
+        raw_payload={},
+        status=status,
+    )
+    session.add(message)
+    await session.commit()
+    return message.id
+
+
+async def test_processa_mensagem_enfileirada(session) -> None:
+    message_id = await enfileirada(session)
+    outbound = OutboundEspiao(get_sessionmaker())
+    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
+
+    assert await process_message(ctx, str(message_id)) == "processed"
+
+    linha = await session.get(Message, message_id)
+    await session.refresh(linha)
+    assert linha.status == MessageStatus.PROCESSED
+    assert linha.processed_at is not None
+    assert outbound.entregas == [message_id]
+
+
+async def test_mensagem_ja_processada_e_ignorada(session) -> None:
+    message_id = await enfileirada(session, status=MessageStatus.PROCESSED)
+    outbound = OutboundEspiao(get_sessionmaker())
+    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
+
+    assert await process_message(ctx, str(message_id)) == "skipped"
+    assert outbound.entregas == []
+
+
+async def test_claim_recusa_status_terminal(session) -> None:
+    message_id = await enfileirada(session, status=MessageStatus.PROCESSED)
+    async with get_sessionmaker()() as sessao:
+        assert await claim_message(sessao, message_id) is False
+
+
+async def test_claim_aceita_processing_para_permitir_retomada(session) -> None:
+    """PROCESSING e o estado que um worker morto deixa; tem de ser reivindicavel."""
+    message_id = await enfileirada(session, status=MessageStatus.PROCESSING)
+    async with get_sessionmaker()() as sessao:
+        assert await claim_message(sessao, message_id) is True
+        await sessao.commit()
+
+
+async def test_nao_perder_mensagem_em_falha_do_worker(session) -> None:
+    """Cenario: Nao perder mensagem em falha do worker.
+
+    Dada uma mensagem ja enfileirada e um worker interrompido durante o
+    processamento, quando o worker e reiniciado, a mensagem volta a ser
+    processada e nenhuma resposta duplicada e enviada ao lead.
+    """
+    message_id = await enfileirada(session)
+    outbound = OutboundEspiao(get_sessionmaker())
+    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
+
+    # Worker interrompido logo depois da entrega, antes de marcar PROCESSED.
+    ctx["fault"] = QuedaDoWorker("worker morto no meio do processamento")
+    with pytest.raises(QuedaDoWorker):
+        await process_message(ctx, str(message_id))
+
+    linha = await session.get(Message, message_id)
+    await session.refresh(linha)
+    assert linha.status == MessageStatus.FAILED
+    assert linha.attempts == 1
+    assert len(outbound.entregas) == 1
+
+    # Worker reiniciado: a mensagem volta a ser processada.
+    ctx.pop("fault")
+    assert await process_message(ctx, str(message_id)) == "processed"
+
+    await session.refresh(linha)
+    assert linha.status == MessageStatus.PROCESSED
+    assert len(outbound.entregas) == 1, "nenhuma resposta duplicada ao lead"
+    assert await session.scalar(select(func.count()).select_from(OutboundDispatch)) == 1
+
+
+async def test_mensagem_em_received_tambem_e_processavel(session) -> None:
+    """Cobre a linha que o sweeper recupera: nunca chegou a ficar QUEUED."""
+    message_id = await enfileirada(session, status=MessageStatus.RECEIVED)
+    outbound = OutboundEspiao(get_sessionmaker())
+    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
+
+    assert await process_message(ctx, str(message_id)) == "processed"
+    assert outbound.entregas == [message_id]
+
+
+async def test_mensagem_inexistente_e_ignorada() -> None:
+    outbound = OutboundEspiao(get_sessionmaker())
+    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
+    assert await process_message(ctx, str(uuid.uuid4())) == "skipped"
