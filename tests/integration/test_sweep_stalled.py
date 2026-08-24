@@ -226,3 +226,32 @@ async def test_teto_e_consumido_por_falha_de_processamento_e_continua_limitando(
     await redis_pool.flushdb()
     assert await sweep_stalled(contexto(redis_pool, settings)) == 0
     assert await redis_pool.queued_jobs() == []
+
+
+async def test_sweeper_ignora_linha_de_saida(session, redis_pool, settings) -> None:
+    """A fala do agente nao e mensagem recebida e nao volta para a fila.
+
+    Sem o filtro, o sweeper do TEC-122 varreria a propria resposta do agente e
+    a mandaria para `process_message` -- um efeito externo a mais por resposta.
+    """
+    identificador = uuid.uuid4()
+    antigo = datetime.now(UTC) - timedelta(seconds=3600)
+    session.add(
+        Message(
+            id=identificador,
+            channel="whatsapp",
+            provider_message_id=None,
+            conversation_key="5511911112222",
+            role=MessageRole.AGENTE,
+            direction=MessageDirection.OUTBOUND,
+            content_type=MessageContentType.TEXTO,
+            text_body=None,
+            raw_payload=None,
+            status=MessageStatus.RECEIVED,
+            created_at=antigo,
+        )
+    )
+    await session.commit()
+
+    assert await sweep_stalled(contexto(redis_pool, settings)) == 0
+    assert await redis_pool.queued_jobs() == []

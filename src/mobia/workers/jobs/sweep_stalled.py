@@ -13,7 +13,8 @@ _SELECIONAR_PARADAS = text(
     """
     SELECT id
       FROM messages
-     WHERE attempts < :max_attempts
+     WHERE direction = 'INBOUND'
+       AND attempts < :max_attempts
        AND (
             (status = 'RECEIVED'
              AND created_at < now() - make_interval(secs => :received_after))
@@ -60,6 +61,13 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
     O que se perde e o sinal "o sweeper enfileirou algo que nunca chegou a um
     worker" -- que era exatamente o caso que o bug criava. Se ele voltar a fazer
     falta, o jeito honesto e uma coluna `sweep_enqueues` propria.
+
+    O filtro `direction = 'INBOUND'` existe porque desde o TEC-126 a tabela
+    guarda tambem a fala do agente. Varrer uma linha OUTBOUND a mandaria para
+    `process_message`, que emitiria um efeito externo por uma mensagem que
+    ninguem enviou. A linha de saida ja nasce com `status` NULL, o que sozinho
+    bastaria -- o filtro esta aqui para que a garantia nao dependa de quem
+    escreve lembrar disso.
 
     Os locks da selecao sao soltos antes de qualquer I/O de rede: segurar lock de
     linha no Postgres enquanto se fala com o Redis e ruim por si so, e aqui teria
