@@ -2,6 +2,7 @@ import logging
 import re
 import sys
 from contextvars import ContextVar
+from typing import Any
 
 import structlog
 from structlog.typing import EventDict, ProcessorReturnValue, WrappedLogger
@@ -32,14 +33,77 @@ _UUID = re.compile(
 # Conteudo de lead: nao ha versao segura de logar, entao some inteiro.
 _CHAVES_REDIGIDAS = frozenset({"text_body", "raw_payload", "envelope_context"})
 
+# Chaves estruturalmente livres de PII: digest, id de correlacao e id de
+# mensagem. Sem esta lista o mascaramento come um sha256 sempre que ele tem 10
+# ou mais digitos decimais seguidos -- cerca de um em cada cinco -- e
+# `payload_sha256` e a unica alca de correlacao que sobra num webhook rejeitado,
+# justamente o caso que alguem vai depurar depois. Mesma classe de falso
+# positivo que o `_UUID` acima ja tratava.
+_CHAVES_LIVRES = frozenset(
+    {
+        "payload_sha256",
+        "correlation_id",
+        "message_id",
+        "message_ids",
+        "provider_message_id",
+    }
+)
+
+# Identificador do interlocutor. Hoje e sempre telefone brasileiro e a corrida
+# de digitos pega por acidente; o widget web do TEC-124 vai trazer id de sessao
+# ou e-mail, que nao sao digitos. Mascarar pela chave torna a garantia
+# estrutural em vez de dependente do formato do canal.
+_CHAVES_MASCARADAS = frozenset({"sender_external_id", "recipient_external_id", "conversation_key"})
+
+_CAUDA_VISIVEL = 4
+
 
 def _mascarar_digitos(texto: str) -> str:
     if _UUID.match(texto):
         return texto
     return _CORRIDA_DE_DIGITOS.sub(
-        lambda achado: "*" * (len(achado.group()) - 4) + achado.group()[-4:],
+        lambda achado: (
+            "*" * (len(achado.group()) - _CAUDA_VISIVEL) + achado.group()[-_CAUDA_VISIVEL:]
+        ),
         texto,
     )
+
+
+def _mascarar_inteiro(texto: str) -> str:
+    """Mesma forma do mascaramento por digito: so a cauda sobrevive.
+
+    A cauda serve para o operador confirmar que dois eventos falam do mesmo
+    interlocutor sem que o log carregue o identificador.
+    """
+    if len(texto) <= _CAUDA_VISIVEL:
+        return "*" * len(texto)
+    return "*" * (len(texto) - _CAUDA_VISIVEL) + texto[-_CAUDA_VISIVEL:]
+
+
+def _mascarar_valor(chave: str | None, valor: Any) -> Any:
+    """Desce por dict, list e tuple.
+
+    Andar so no nivel de cima deixava PII escapar inteira um nivel abaixo de
+    qualquer chave nao redigida -- o valor aninhado nunca chegava a ser visto.
+    """
+    if chave in _CHAVES_REDIGIDAS:
+        return "<redigido>"
+    if chave in _CHAVES_LIVRES:
+        return valor
+    if isinstance(valor, str):
+        if chave in _CHAVES_MASCARADAS:
+            return _mascarar_inteiro(valor)
+        return _mascarar_digitos(valor)
+    if isinstance(valor, dict):
+        return {
+            sub: _mascarar_valor(sub if isinstance(sub, str) else chave, item)
+            for sub, item in valor.items()
+        }
+    if isinstance(valor, list):
+        return [_mascarar_valor(chave, item) for item in valor]
+    if isinstance(valor, tuple):
+        return tuple(_mascarar_valor(chave, item) for item in valor)
+    return valor
 
 
 def _mascarar_pii(_logger: WrappedLogger, _method_name: str, event_dict: EventDict) -> EventDict:
@@ -49,14 +113,7 @@ def _mascarar_pii(_logger: WrappedLogger, _method_name: str, event_dict: EventDi
     em que alguem esquecer: disciplina que depende de lembrar vaza uma hora.
     """
     for chave, valor in list(event_dict.items()):
-        if chave in _CHAVES_REDIGIDAS:
-            event_dict[chave] = "<redigido>"
-        elif isinstance(valor, str):
-            event_dict[chave] = _mascarar_digitos(valor)
-        elif isinstance(valor, list):
-            event_dict[chave] = [
-                _mascarar_digitos(item) if isinstance(item, str) else item for item in valor
-            ]
+        event_dict[chave] = _mascarar_valor(chave, valor)
     return event_dict
 
 

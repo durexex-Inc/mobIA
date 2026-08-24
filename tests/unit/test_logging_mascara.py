@@ -1,3 +1,4 @@
+import hashlib
 import logging
 
 import structlog
@@ -29,6 +30,57 @@ def test_identificador_externo_e_mascarado_pela_chave(caplog) -> None:
         log.info("evento.teste", sender_external_id="5511987654321")
 
     assert "5511987654321" not in caplog.text
+    assert "*********4321" in caplog.text
+
+
+def test_conversation_key_sem_digito_sai_mascarada(caplog) -> None:
+    """O widget web do TEC-124 traz id de sessao, nao telefone.
+
+    A corrida de digitos nao pega isso; so o mascaramento por chave pega. Sem
+    ele a garantia seria um acidente do formato de telefone brasileiro.
+    """
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.INFO):
+        log.info("evento.teste", conversation_key="marina.souza@exemplo.com.br")
+
+    assert "marina.souza" not in caplog.text
+    assert "@exemplo" not in caplog.text
+
+
+def test_pii_aninhada_nao_escapa(caplog) -> None:
+    """Andar so no nivel de cima deixava passar tudo um nivel abaixo."""
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.INFO):
+        log.info(
+            "evento.teste",
+            contexto={
+                "lead": {"telefone": "5511987654321"},
+                "text_body": "quero apto na zona sul",
+                "tentativas": ("5511987654321",),
+            },
+        )
+
+    assert "5511987654321" not in caplog.text
+    assert "zona sul" not in caplog.text
+    assert "<redigido>" in caplog.text
+
+
+def test_payload_sha256_sobrevive_verbatim(caplog) -> None:
+    """Um sha256 tem corrida longa de digitos decimais em ~19% dos casos.
+
+    `payload_sha256` e a unica alca de correlacao de um webhook rejeitado com a
+    Meta; mascarado, ele deixa de casar com o payload original justamente no
+    caso que alguem depura depois. Este digest -- sha256 de b"13" -- carrega
+    quinze digitos seguidos.
+    """
+    digest = "3fdba35f04dc8c462986c992bcf875546257113072a909c162f7e470e581e278"
+    assert hashlib.sha256(b"13").hexdigest() == digest
+
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.INFO):
+        log.info("evento.teste", payload_sha256=digest)
+
+    assert digest in caplog.text
 
 
 def test_uuid_nao_e_confundido_com_telefone(caplog) -> None:
