@@ -1,5 +1,6 @@
 from sqlalchemy import select
 
+from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.service import IngestionService
@@ -12,7 +13,7 @@ def parsed(provider_message_id: str = "wamid.SERVICO") -> ParsedMessage:
         provider_message_id=provider_message_id,
         sender_external_id="5511911112222",
         recipient_external_id="222222222",
-        content_type="text",
+        content_type=MessageContentType.TEXTO,
         text_body="quero agendar visita",
         raw_payload={"id": provider_message_id, "type": "text"},
     )
