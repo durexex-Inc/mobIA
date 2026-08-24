@@ -7,6 +7,7 @@ criterio de aceite tenha um endereco, nao para cobrir codigo novo.
 
 import logging
 
+import structlog
 from sqlalchemy import text as sql
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -84,7 +85,25 @@ async def test_registrar_resposta_do_agente_com_custo(session) -> None:
 
 
 async def test_conteudo_pessoal_nao_vaza_para_o_log(session, redis_pool, caplog) -> None:
-    """Cenario: Conteudo pessoal nao vaza para o log."""
+    """Cenario: Conteudo pessoal nao vaza para o log.
+
+    Duas linhas de defesa, testadas separadamente. A primeira e a real no
+    caminho de ingestao: `service.py` e `schemas.py` nunca colocam
+    `sender_external_id` ou `text_body` num event dict, entao os eventos
+    emitidos (`message.received`, `message.queued`) so carregam uuids e
+    canal -- o telefone e o texto simplesmente nao chegam ao logger. As
+    duas assercoes de ausencia abaixo comprovam isso, nao que algo tenha
+    sido mascarado; se provassem mascaramento seriam um passe vazio, o
+    modo de falha que o brief desta tarefa aponta.
+
+    A segunda linha de defesa e o processor `_mascarar_pii` de
+    `app/logging.py`, para o dia em que um log statement passar a carregar
+    o numero. Esse caminho so e exercitado de verdade emitindo um evento
+    que carrega o telefone por um logger configurado pelo `configure_logging`
+    real (fixture `configurar_logging`, autouse) -- nao chamando o processor
+    diretamente -- e verificando que o que chega ao caplog e a forma
+    mascarada, nunca o numero em claro.
+    """
     servico = IngestionService(get_sessionmaker(), redis_pool)
 
     with caplog.at_level(logging.INFO):
@@ -100,6 +119,14 @@ async def test_conteudo_pessoal_nao_vaza_para_o_log(session, redis_pool, caplog)
     )
     assert TELEFONE.encode() not in bytes(cru)
     assert decrypt(bytes(cru), aad_de(message_id, "text_body")) == f"me liga no {TELEFONE}"
+
+    caplog.clear()
+    log = structlog.get_logger("teste.criterio")
+    with caplog.at_level(logging.INFO):
+        log.info("evento.teste", sender_external_id=TELEFONE)
+
+    assert TELEFONE not in caplog.text
+    assert "*********4321" in caplog.text
 
 
 async def test_falha_de_telemetria_nao_derruba_o_atendimento(session, caplog) -> None:
