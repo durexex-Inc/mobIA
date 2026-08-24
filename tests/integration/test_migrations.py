@@ -17,7 +17,10 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from mobia.infra.crypto import aad_de, decrypt
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
+from mobia.domain.messages.models import Message
+from mobia.domain.messages.status import MessageStatus
+from mobia.infra.crypto import aad_de, decrypt, encrypt, encrypt_json
 from mobia.infra.db import dispose_engine, get_sessionmaker
 
 INSERIR_LINHA = text(
@@ -123,3 +126,99 @@ async def test_upgrade_sobre_banco_com_duplicatas(esquema_na_0002) -> None:
     assert [linha.channel for linha in canais] == ["web", "whatsapp"], (
         "id igual em canais diferentes e legitimo"
     )
+
+
+async def test_downgrade_decifra_text_body_e_raw_payload(session) -> None:
+    """A metade irreversivel da 0004 nao tinha cobertura com dado real nenhum.
+
+    `esquema_na_0002` baixa o esquema antes de qualquer INSERT -- prova so o
+    backfill do upgrade. Aqui o ciclo e o inverso: sobe para o head, grava pelo
+    ORM (cifrado de verdade), desce para a 0003 e confere o que o downgrade da
+    migration promete: `text_body` decifrado de volta para texto claro,
+    `raw_payload` decifrado de volta para jsonb consultavel com a estrutura
+    aninhada intacta (nao so nao-nulo), `raw_payload` NULL virando `'{}'` em vez
+    de violar o NOT NULL restaurado, e a linha OUTBOUND apagada (ver a
+    docstring do modulo da migration). Volta para o head no fim, como o
+    fixture `esquema_na_0002` ja faz.
+    """
+    com_payload, sem_payload, de_saida = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    payload = {"id": "wamid.NESTED", "envelope": {"tipo": "text"}}
+
+    session.add_all(
+        [
+            Message(
+                id=com_payload,
+                channel="whatsapp",
+                provider_message_id="wamid.DOWNGRADE_COM_PAYLOAD",
+                sender_external_id="5511911112222",
+                recipient_external_id="222222222",
+                conversation_key="5511911112222",
+                role=MessageRole.LEAD,
+                direction=MessageDirection.INBOUND,
+                content_type=MessageContentType.TEXTO,
+                text_body=encrypt("mensagem com payload", aad_de(com_payload, "text_body")),
+                raw_payload=encrypt_json(payload, aad_de(com_payload, "raw_payload")),
+                status=MessageStatus.RECEIVED,
+            ),
+            Message(
+                id=sem_payload,
+                channel="whatsapp",
+                provider_message_id="wamid.DOWNGRADE_SEM_PAYLOAD",
+                sender_external_id="5511911112222",
+                recipient_external_id="222222222",
+                conversation_key="5511911112222",
+                role=MessageRole.LEAD,
+                direction=MessageDirection.INBOUND,
+                content_type=MessageContentType.TEXTO,
+                text_body=encrypt("mensagem sem payload", aad_de(sem_payload, "text_body")),
+                raw_payload=None,
+                status=MessageStatus.RECEIVED,
+            ),
+            Message(
+                id=de_saida,
+                channel="whatsapp",
+                provider_message_id=None,
+                conversation_key="5511911112222",
+                role=MessageRole.AGENTE,
+                direction=MessageDirection.OUTBOUND,
+                content_type=MessageContentType.TEXTO,
+                text_body=encrypt("fala do agente", aad_de(de_saida, "text_body")),
+                raw_payload=None,
+                status=None,
+            ),
+        ]
+    )
+    await session.commit()
+
+    await dispose_engine()
+    alembic("downgrade", "0003")
+    try:
+        async with get_sessionmaker()() as sessao:
+            texto_com_payload = await sessao.scalar(
+                text("SELECT text_body FROM messages WHERE id = :id"), {"id": com_payload}
+            )
+            tipo_aninhado = await sessao.scalar(
+                text("SELECT raw_payload -> 'envelope' ->> 'tipo' FROM messages WHERE id = :id"),
+                {"id": com_payload},
+            )
+            raw_payload_vazio = await sessao.scalar(
+                text("SELECT raw_payload::text FROM messages WHERE id = :id"),
+                {"id": sem_payload},
+            )
+            restantes = (await sessao.execute(text("SELECT id FROM messages"))).scalars().all()
+    finally:
+        await dispose_engine()
+        alembic("upgrade", "head")
+        await dispose_engine()
+
+    assert texto_com_payload == "mensagem com payload", (
+        "o downgrade tem de decifrar text_body de volta para texto claro"
+    )
+    assert tipo_aninhado == "text", (
+        "raw_payload tem de voltar jsonb consultavel, com a estrutura interna intacta"
+    )
+    assert raw_payload_vazio == "{}", "raw_payload NULL tem de virar '{}' antes do NOT NULL"
+    assert com_payload in restantes and sem_payload in restantes, (
+        "as linhas INBOUND sobrevivem ao downgrade"
+    )
+    assert de_saida not in restantes, "a linha OUTBOUND nao cabe no esquema anterior e e apagada"

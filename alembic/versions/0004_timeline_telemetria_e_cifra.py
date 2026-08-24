@@ -28,6 +28,44 @@ down_revision = "0003"
 branch_labels = None
 depends_on = None
 
+# O ADD COLUMN anterior ja travou messages em ACCESS EXCLUSIVE, e essa trava so
+# solta no fim da transacao da migration inteira -- ela nao piora com o lote.
+# O que o lote evita e ler a tabela inteira de uma vez para dentro da memoria
+# do processo do alembic (nao do Postgres), que cresce sem limite com o numero
+# de linhas, e encurtar cada UPDATE individual para nao alongar por quanto
+# tempo mais nada consegue escrever em messages.
+_TAMANHO_DO_LOTE = 500
+
+
+def _em_lotes(conexao: sa.engine.Connection, tamanho: int):
+    """Pagina messages por id, em ordem, sem OFFSET.
+
+    Keyset (id > ultimo_id) em vez de OFFSET porque OFFSET teria de reler e
+    descartar as linhas dos lotes anteriores a cada volta -- O(n^2) numa
+    tabela grande. `id` ja e chave natural de ordenacao, unica e estavel
+    durante a migration (a tabela esta com ACCESS EXCLUSIVE, nada mais escreve).
+    """
+    ultimo_id = None
+    while True:
+        if ultimo_id is None:
+            consulta = sa.text(
+                "SELECT id, text_body, raw_payload FROM messages ORDER BY id LIMIT :tamanho"
+            )
+            parametros: dict[str, object] = {"tamanho": tamanho}
+        else:
+            consulta = sa.text(
+                "SELECT id, text_body, raw_payload FROM messages"
+                " WHERE id > :ultimo_id ORDER BY id LIMIT :tamanho"
+            )
+            parametros = {"ultimo_id": ultimo_id, "tamanho": tamanho}
+
+        linhas = conexao.execute(consulta, parametros).fetchall()
+        if not linhas:
+            return
+        yield linhas
+        ultimo_id = linhas[-1].id
+
+
 _PARA_O_DOMINIO = """
     UPDATE messages SET content_type = CASE content_type
         WHEN 'text' THEN 'TEXTO'
@@ -85,19 +123,21 @@ def upgrade() -> None:
     op.add_column("messages", sa.Column("raw_payload_cifrado", sa.LargeBinary(), nullable=True))
 
     conexao = op.get_bind()
-    linhas = conexao.execute(sa.text("SELECT id, text_body, raw_payload FROM messages")).fetchall()
-    for linha in linhas:
+    for linhas in _em_lotes(conexao, _TAMANHO_DO_LOTE):
         conexao.execute(
             sa.text(
                 "UPDATE messages"
                 "   SET text_body_cifrado = :texto, raw_payload_cifrado = :payload"
                 " WHERE id = :id"
             ),
-            {
-                "id": linha.id,
-                "texto": encrypt(linha.text_body, aad_de(linha.id, "text_body")),
-                "payload": encrypt_json(linha.raw_payload, aad_de(linha.id, "raw_payload")),
-            },
+            [
+                {
+                    "id": linha.id,
+                    "texto": encrypt(linha.text_body, aad_de(linha.id, "text_body")),
+                    "payload": encrypt_json(linha.raw_payload, aad_de(linha.id, "raw_payload")),
+                }
+                for linha in linhas
+            ],
         )
 
     op.drop_column("messages", "text_body")
@@ -147,8 +187,7 @@ def downgrade() -> None:
     op.add_column("messages", sa.Column("raw_payload_claro", postgresql.JSONB(), nullable=True))
 
     conexao = op.get_bind()
-    linhas = conexao.execute(sa.text("SELECT id, text_body, raw_payload FROM messages")).fetchall()
-    for linha in linhas:
+    for linhas in _em_lotes(conexao, _TAMANHO_DO_LOTE):
         conexao.execute(
             sa.text(
                 "UPDATE messages"
@@ -156,15 +195,20 @@ def downgrade() -> None:
                 "       raw_payload_claro = CAST(:payload AS jsonb)"
                 " WHERE id = :id"
             ),
-            {
-                "id": linha.id,
-                "texto": decrypt(linha.text_body, aad_de(linha.id, "text_body")),
-                # O CAST no SQL espera texto JSON ou NULL, entao o dict decifrado
-                # volta a ser string aqui.
-                "payload": None
-                if linha.raw_payload is None
-                else json.dumps(decrypt_json(linha.raw_payload, aad_de(linha.id, "raw_payload"))),
-            },
+            [
+                {
+                    "id": linha.id,
+                    "texto": decrypt(linha.text_body, aad_de(linha.id, "text_body")),
+                    # O CAST no SQL espera texto JSON ou NULL, entao o dict
+                    # decifrado volta a ser string aqui.
+                    "payload": None
+                    if linha.raw_payload is None
+                    else json.dumps(
+                        decrypt_json(linha.raw_payload, aad_de(linha.id, "raw_payload"))
+                    ),
+                }
+                for linha in linhas
+            ],
         )
 
     op.drop_column("messages", "text_body")

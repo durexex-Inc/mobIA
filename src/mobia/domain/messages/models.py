@@ -79,6 +79,11 @@ class Message(Base):
             "conversation_key",
             text("created_at DESC"),
         ),
+        # Composta com `channel` de proposito: o widget web (TEC-124) tem espaco
+        # de ids proprio e nao deve colidir com o wamid da Meta. O indice desta
+        # constraint atende buscas pelo par e por `channel` sozinho, mas nao por
+        # `provider_message_id` sozinho -- nenhuma consulta faz isso hoje, e quem
+        # precisar deve criar o indice junto com a consulta.
         UniqueConstraint(
             "channel",
             "provider_message_id",

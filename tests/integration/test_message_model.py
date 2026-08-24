@@ -1,5 +1,6 @@
 import uuid
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from sqlalchemy import select, text
@@ -8,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
-from mobia.infra.crypto import aad_de, decrypt, encrypt
+from mobia.infra.crypto import aad_de, decrypt, decrypt_json, encrypt, encrypt_json
 
 
 def test_statuses_reivindicaveis() -> None:
@@ -22,7 +23,11 @@ def test_statuses_reivindicaveis() -> None:
     assert MessageStatus.PROCESSED not in CLAIMABLE_STATUSES
 
 
-def nova_mensagem(provider_message_id: str, channel: str = "whatsapp") -> Message:
+def nova_mensagem(
+    provider_message_id: str,
+    channel: str = "whatsapp",
+    raw_payload: dict[str, Any] | None = None,
+) -> Message:
     identificador = uuid.uuid4()
     return Message(
         id=identificador,
@@ -35,7 +40,7 @@ def nova_mensagem(provider_message_id: str, channel: str = "whatsapp") -> Messag
         direction=MessageDirection.INBOUND,
         content_type=MessageContentType.TEXTO,
         text_body=encrypt("oi", aad_de(identificador, "text_body")),
-        raw_payload=None,
+        raw_payload=encrypt_json(raw_payload, aad_de(identificador, "raw_payload")),
         status=MessageStatus.RECEIVED,
     )
 
@@ -49,13 +54,54 @@ async def test_persiste_mensagem_com_defaults(session) -> None:
         select(Message).where(Message.provider_message_id == "wamid.PERSIST")
     )
     assert resultado is not None
+    assert isinstance(resultado.id, uuid.UUID)
     assert resultado.role == MessageRole.LEAD
     assert resultado.direction == MessageDirection.INBOUND
     assert resultado.conversation_key == "5511911112222"
     assert resultado.content_type == MessageContentType.TEXTO
     assert resultado.created_at is not None
     assert resultado.attempts == 0
+    assert resultado.queued_at is None
+    assert resultado.processed_at is None
+    assert resultado.last_error is None
     assert decrypt(resultado.text_body, aad_de(resultado.id, "text_body")) == "oi"
+
+
+async def test_id_sem_valor_explicito_usa_o_default_de_uuid4(session) -> None:
+    """Todo outro teste passa `id=` na hora de montar o AAD -- este cobre quem nao passa."""
+    message = Message(
+        channel="whatsapp",
+        provider_message_id="wamid.SEM_ID_EXPLICITO",
+        sender_external_id="5511911112222",
+        recipient_external_id="222222222",
+        conversation_key="5511911112222",
+        role=MessageRole.LEAD,
+        direction=MessageDirection.INBOUND,
+        content_type=MessageContentType.TEXTO,
+        text_body=None,
+        raw_payload=None,
+        status=MessageStatus.RECEIVED,
+    )
+    session.add(message)
+    await session.commit()
+
+    assert isinstance(message.id, uuid.UUID)
+    resultado = await session.get(Message, message.id)
+    assert resultado is not None
+
+
+async def test_raw_payload_persiste_cifrado_e_decifra_pelo_orm(session) -> None:
+    """Todo outro teste do arquivo grava `raw_payload=None` -- este cobre o caminho com dado."""
+    payload = {"id": "wamid.PAYLOAD", "envelope": {"tipo": "text"}}
+    message = nova_mensagem("wamid.RAW_PAYLOAD", raw_payload=payload)
+    session.add(message)
+    await session.commit()
+
+    resultado = await session.scalar(
+        select(Message).where(Message.provider_message_id == "wamid.RAW_PAYLOAD")
+    )
+    assert resultado is not None
+    assert decrypt_json(resultado.raw_payload, aad_de(resultado.id, "raw_payload")) == payload
 
 
 async def test_linha_de_saida_nasce_sem_status(session) -> None:

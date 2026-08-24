@@ -14,7 +14,15 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
-        _engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+        # hide_parameters: um DBAPIError incorpora os bind params na propria
+        # mensagem de erro, e essa mensagem acaba em log (webhook.persist_failed,
+        # webhook.error). Sem isso, text_body e raw_payload -- hoje ainda em
+        # texto claro, cifrados so a partir do escritor do TEC-126 -- vazariam
+        # pelo log de erro mesmo com a mascara de PII, que so olha para
+        # campos estruturados, nunca para dentro da string de excecao.
+        _engine = create_async_engine(
+            get_settings().database_url, pool_pre_ping=True, hide_parameters=True
+        )
     return _engine
 
 
