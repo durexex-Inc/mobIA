@@ -42,3 +42,26 @@ Os critérios de aceite da história vivem como testes executáveis:
   a reentrega vira no-op, então o reprocessamento nunca duplica resposta.
 - Assinatura inválida responde 200 e só gera log. Devolver erro faria a própria
   Meta re-tentar o payload de um forjador.
+
+## TEC-126 — Telemetria de mensagens
+
+| Cenário Gherkin | Teste |
+|---|---|
+| Registrar mensagem de entrada do lead | `tests/features/test_telemetria_de_mensagens.py::test_registrar_mensagem_de_entrada_do_lead` |
+| Registrar resposta do agente com custo | `tests/features/test_telemetria_de_mensagens.py::test_registrar_resposta_do_agente_com_custo` |
+| Conteúdo pessoal não vaza para o log | `tests/features/test_telemetria_de_mensagens.py::test_conteudo_pessoal_nao_vaza_para_o_log` |
+| Falha de telemetria não derruba o atendimento | `tests/features/test_telemetria_de_mensagens.py::test_falha_de_telemetria_nao_derruba_o_atendimento` |
+
+### Garantias
+
+- `messages` é a linha do tempo da conversa: entrada e saída, agrupadas por
+  `conversation_key` e ordenadas por `created_at`. `sender` e `recipient` se
+  invertem entre as direções; `conversation_key` não.
+- `text_body` e `raw_payload` são cifrados com AES-GCM antes do `INSERT`, com
+  AAD `{message_id}:{coluna}` — ciphertext movido para outra linha não decifra.
+  Em troca, `raw_payload` deixou de ser consultável por operador JSONB.
+- Telemetria é gravada num segundo passo: falha nela perde o custo, nunca o
+  registro da fala do agente.
+- Modelo sem preço cadastrado grava `cost_usd` NULL, não zero.
+- A chave de cifra vem de `CONTENT_ENCRYPTION_KEY` (32 bytes em base64). Rotação
+  de chave não está implementada.
