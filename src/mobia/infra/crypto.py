@@ -10,7 +10,20 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from mobia.app.config import get_settings
 
 NONCE_BYTES = 12
+TAG_BYTES = 16
 CHAVE_BYTES = 32
+
+# Byte de versao a frente do blob. Rotacao de chave continua fora de escopo,
+# mas o *formato* e a parte cara de mudar depois que existem linhas gravadas:
+# sem ele nao ha como ter duas chaves validas ao mesmo tempo, e rotacionar
+# viraria reescrita offline da tabela inteira com o servico parado. Tambem
+# libera trocar de algoritmo. Nada foi implantado ainda, entao o custo hoje e
+# um byte por linha.
+VERSAO_ATUAL = 1
+
+# version(1) || nonce(12) || ciphertext || tag(16). Um blob menor que isso nao
+# tem nem cabecalho e tag, quanto mais conteudo.
+_TAMANHO_MINIMO = 1 + NONCE_BYTES + TAG_BYTES
 
 
 class DecryptionError(Exception):
@@ -42,13 +55,23 @@ def encrypt(texto: str | None, aad: str) -> bytes | None:
     # Nonce novo a cada chamada: o mesmo texto cifra diferente toda vez, entao
     # busca por igualdade sobre conteudo deixa de existir. E intencional.
     nonce = os.urandom(NONCE_BYTES)
-    return nonce + _cifra().encrypt(nonce, texto.encode(), aad.encode())
+    return bytes([VERSAO_ATUAL]) + nonce + _cifra().encrypt(nonce, texto.encode(), aad.encode())
 
 
 def decrypt(blob: bytes | None, aad: str) -> str | None:
     if blob is None:
         return None
-    nonce, corpo = blob[:NONCE_BYTES], blob[NONCE_BYTES:]
+    # Sem esta guarda um blob curto sai como ValueError cru do `cryptography`
+    # ("Nonce must be between 8 and 128 bytes") e quem captura DecryptionError
+    # nao pega. A mensagem nunca carrega o blob.
+    if len(blob) < _TAMANHO_MINIMO:
+        raise DecryptionError(f"blob de {len(blob)} bytes, minimo {_TAMANHO_MINIMO}: {aad}")
+    versao = blob[0]
+    if versao != VERSAO_ATUAL:
+        # Versao desconhecida nao e tentada: parsear com o layout errado
+        # produziria InvalidTag e esconderia a causa real.
+        raise DecryptionError(f"versao de cifra desconhecida {versao}: {aad}")
+    nonce, corpo = blob[1 : 1 + NONCE_BYTES], blob[1 + NONCE_BYTES :]
     try:
         return _cifra().decrypt(nonce, corpo, aad.encode()).decode()
     except InvalidTag as exc:

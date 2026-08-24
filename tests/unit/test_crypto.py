@@ -1,6 +1,9 @@
 import pytest
 
 from mobia.infra.crypto import (
+    NONCE_BYTES,
+    TAG_BYTES,
+    VERSAO_ATUAL,
     DecryptionError,
     aad_de,
     decrypt,
@@ -62,3 +65,39 @@ def test_roundtrip_de_json() -> None:
     cifrado = encrypt_json(payload, AAD)
     assert cifrado is not None
     assert decrypt_json(cifrado, AAD) == payload
+
+
+def test_blob_carrega_o_byte_de_versao() -> None:
+    """O formato e version(1) || nonce(12) || ciphertext || tag(16).
+
+    O byte de versao nao serve a nada hoje -- rotacao de chave esta fora de
+    escopo. Ele existe porque o formato e a parte cara de mudar depois que ha
+    linhas gravadas, e ainda nao ha nenhuma.
+    """
+    cifrado = encrypt("oi", AAD)
+    assert cifrado is not None
+    assert cifrado[0] == VERSAO_ATUAL
+    assert len(cifrado) == 1 + NONCE_BYTES + len(b"oi") + TAG_BYTES
+    assert decrypt(cifrado, AAD) == "oi"
+
+
+def test_versao_desconhecida_e_rejeitada() -> None:
+    """Tentar parsear com o layout errado daria InvalidTag e esconderia a causa."""
+    cifrado = bytearray(encrypt("oi", AAD) or b"")
+    cifrado[0] = 0x02
+    with pytest.raises(DecryptionError):
+        decrypt(bytes(cifrado), AAD)
+
+
+@pytest.mark.parametrize("blob", [b"", b"12345", b"\x01" * 28])
+def test_blob_curto_levanta_o_erro_documentado(blob: bytes) -> None:
+    """Antes saia ValueError cru do `cryptography` e quem capturava
+    DecryptionError nao pegava."""
+    with pytest.raises(DecryptionError):
+        decrypt(blob, AAD)
+
+
+def test_erro_de_blob_curto_nao_carrega_o_conteudo() -> None:
+    with pytest.raises(DecryptionError) as erro:
+        decrypt(b"conteudo-secreto", AAD)
+    assert "conteudo-secreto" not in str(erro.value)
