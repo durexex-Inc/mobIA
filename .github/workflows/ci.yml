@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Um push novo na mesma ref cancela o build anterior: o resultado dele ja nao
+# interessa e o runner e compartilhado.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  qualidade:
+    name: Lint e tipos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar dependencias
+        run: pip install -e ".[dev]"
+
+      - name: ruff check
+        run: ruff check src tests
+
+      - name: ruff format
+        run: ruff format --check src tests
+
+      - name: mypy
+        run: mypy src
+
+  testes:
+    name: Testes
+    runs-on: ubuntu-latest
+
+    # Postgres em 5433 e Redis em 6380 de proposito: sao os mesmos valores do
+    # docker-compose.yml e dos defaults de Settings, entao CI e maquina local
+    # rodam a mesma configuracao e nao existe um terceiro conjunto de variaveis
+    # para manter em sincronia.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mobia
+          POSTGRES_PASSWORD: mobia
+          POSTGRES_DB: mobia
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U mobia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar dependencias
+        run: pip install -e ".[dev]"
+
+      - name: Aplicar migrations
+        run: python -m alembic upgrade head
+
+      - name: Rodar a suite
+        # O teste de latencia fica fora pelo `addopts = "-m 'not perf'"` do
+        # pyproject: medir p95 em runner compartilhado seria flake, nao sinal.
+        run: python -m pytest -v
