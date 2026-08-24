@@ -1,16 +1,16 @@
 import logging
 import sys
 from contextvars import ContextVar
-from typing import Any
 
 import structlog
+from structlog.typing import EventDict, WrappedLogger
 
 correlation_id: ContextVar[str] = ContextVar("correlation_id", default="")
 
 
 def _add_correlation_id(
-    _logger: Any, _method_name: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+    _logger: WrappedLogger, _method_name: str, event_dict: EventDict
+) -> EventDict:
     value = correlation_id.get()
     if value:
         event_dict["correlation_id"] = value

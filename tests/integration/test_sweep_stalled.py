@@ -108,9 +108,7 @@ async def test_varre_varias_de_uma_vez(session, redis_pool, settings) -> None:
     assert len(await redis_pool.queued_jobs()) == 3
 
     paradas = (
-        await session.scalars(
-            select(Message).where(Message.status == MessageStatus.RECEIVED)
-        )
+        await session.scalars(select(Message).where(Message.status == MessageStatus.RECEIVED))
     ).all()
     assert all(linha.attempts == 0 for linha in paradas)
 

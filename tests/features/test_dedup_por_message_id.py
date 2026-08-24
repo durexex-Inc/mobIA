@@ -85,9 +85,7 @@ async def test_mesma_mensagem_entregue_duas_vezes(client, session, redis_pool, s
     assert descartes[0]["channel"] == "whatsapp"
 
 
-async def test_reentrega_concorrente_em_replicas_diferentes(
-    client, session, redis_pool, settings
-):
+async def test_reentrega_concorrente_em_replicas_diferentes(client, session, redis_pool, settings):
     """Cenario: Reentrega concorrente em replicas diferentes.
 
     Duas requisicoes identicas em voo ao mesmo tempo contra o Postgres real. So
@@ -122,9 +120,7 @@ async def test_mensagens_distintas_do_mesmo_lead_nao_se_confundem(
     assert len(await redis_pool.queued_jobs()) == 2
 
 
-async def test_duplicata_dentro_do_mesmo_envelope(
-    client, session, redis_pool, settings, caplog
-):
+async def test_duplicata_dentro_do_mesmo_envelope(client, session, redis_pool, settings, caplog):
     """A Meta pode repetir o mesmo wamid dentro de um unico envelope.
 
     O descarte tem de ser contabilizado tambem aqui: contar por conjunto em vez
