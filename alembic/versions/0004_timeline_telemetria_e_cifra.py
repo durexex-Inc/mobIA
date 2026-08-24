@@ -18,9 +18,9 @@ Revises: 0003
 import json
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
 from mobia.infra.crypto import aad_de, decrypt, decrypt_json, encrypt, encrypt_json
 
 revision = "0004"
