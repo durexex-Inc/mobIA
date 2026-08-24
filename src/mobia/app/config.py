@@ -1,3 +1,4 @@
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -30,3 +31,19 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+# Preco em dolar por 1 milhao de tokens, (entrada, saida). O custo e calculado e
+# **materializado** no momento do registro: mudar um preco aqui amanha nao pode
+# reescrever o que ja foi gasto.
+#
+# claude-sonnet-5 esta com tarifa promocional de 2.00/10.00 ate 2026-08-31.
+# Fica a tarifa cheia de proposito: precificacao com vigencia por data exigiria
+# intervalos de data na tabela, que o spec rejeitou ao descartar a opcao de
+# calcular custo em query. Superestimar num painel de custo e mais seguro que
+# subestimar.
+PRECOS_POR_MODELO: dict[str, tuple[Decimal, Decimal]] = {
+    "claude-opus-5": (Decimal("5.00"), Decimal("25.00")),
+    "claude-sonnet-5": (Decimal("3.00"), Decimal("15.00")),
+    "claude-haiku-4-5": (Decimal("1.00"), Decimal("5.00")),
+}
