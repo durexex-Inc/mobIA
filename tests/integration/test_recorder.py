@@ -157,3 +157,38 @@ async def test_timeline_intercala_entrada_e_saida_da_mesma_conversa(session) -> 
         MessageDirection.OUTBOUND,
         MessageDirection.INBOUND,
     ]
+
+
+async def test_tokens_de_cache_sao_gravados_quando_informados(session) -> None:
+    """TEC-127 reenvia uma janela de 20 mensagens a cada turno -- e a carga
+    canonica de prompt caching. Capturar o numero desde a primeira linha e a
+    parte que nao da para recuperar depois."""
+    _, message_id = await gravar(cache_read_tokens=9000, cache_write_tokens=1200)
+
+    telemetria = await session.get(MessageTelemetry, message_id)
+    assert telemetria is not None
+    assert telemetria.cache_read_tokens == 9000
+    assert telemetria.cache_write_tokens == 1200
+
+
+async def test_tokens_de_cache_sao_opcionais(session) -> None:
+    """Sem agente ligado, quem chama ainda nao tem esses numeros."""
+    _, message_id = await gravar()
+
+    telemetria = await session.get(MessageTelemetry, message_id)
+    assert telemetria is not None
+    assert telemetria.cache_read_tokens is None
+    assert telemetria.cache_write_tokens is None
+
+
+async def test_custo_ignora_tokens_de_cache_por_ora(session) -> None:
+    """Precificacao ciente de cache fica para a historia que liga o agente.
+
+    Sem agente nao ha forma de uso real para tarifar, e inventar taxa agora
+    seria chute materializado no historico de custo.
+    """
+    _, com_cache = await gravar(cache_read_tokens=50_000, cache_write_tokens=50_000)
+
+    telemetria = await session.get(MessageTelemetry, com_cache)
+    assert telemetria is not None
+    assert telemetria.cost_usd == custo_em_dolar("claude-sonnet-5", 1200, 180)

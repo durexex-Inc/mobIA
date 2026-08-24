@@ -112,6 +112,16 @@ class MessageTelemetry(Base):
     tokens_in: Mapped[int] = mapped_column(Integer, nullable=False)
     tokens_out: Mapped[int] = mapped_column(Integer, nullable=False)
 
+    # Nullable porque o agente do TEC-134 ainda nao existe e nem todo turno usa
+    # cache. As colunas nascem agora para que o dado seja capturado desde a
+    # primeira linha: numero nao gravado nao se recupera depois, enquanto a
+    # aritmetica e mudanca de configuracao. `custo_em_dolar` continua somando so
+    # `tokens_in` e `tokens_out` de proposito -- precificacao ciente de cache
+    # fica para a historia que liga o agente, que e quando existe forma de uso
+    # real para tarifar em vez de chute.
+    cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # NULL = modelo sem preco cadastrado. Gravar 0.00 somaria silenciosamente no
     # painel e faria o custo parecer menor do que foi; NULL aparece como lacuna.
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)

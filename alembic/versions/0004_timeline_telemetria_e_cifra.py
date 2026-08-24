@@ -165,6 +165,12 @@ def upgrade() -> None:
         sa.Column("subagent", sa.String(32), nullable=False),
         sa.Column("tokens_in", sa.Integer(), nullable=False),
         sa.Column("tokens_out", sa.Integer(), nullable=False),
+        # Nullable: nem todo turno usa cache e o agente do TEC-134 ainda nao
+        # existe. Nascem aqui para capturar o dado desde a primeira linha --
+        # numero nao gravado nao se recupera. Precificacao ciente de cache fica
+        # para a historia que liga o agente.
+        sa.Column("cache_read_tokens", sa.Integer(), nullable=True),
+        sa.Column("cache_write_tokens", sa.Integer(), nullable=True),
         sa.Column("cost_usd", sa.Numeric(12, 6), nullable=True),
         sa.Column("latency_ms", sa.Integer(), nullable=False),
         sa.Column(

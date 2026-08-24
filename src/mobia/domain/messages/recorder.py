@@ -11,7 +11,7 @@ from mobia.infra.crypto import aad_de, encrypt
 
 log = structlog.get_logger(__name__)
 
-_CENTAVO_DE_MILIONESIMO = Decimal("0.000001")
+_MILIONESIMO_DE_DOLAR = Decimal("0.000001")
 
 
 def custo_em_dolar(model: str, tokens_in: int, tokens_out: int) -> Decimal | None:
@@ -27,7 +27,7 @@ def custo_em_dolar(model: str, tokens_in: int, tokens_out: int) -> Decimal | Non
     total = (Decimal(tokens_in) / Decimal(1_000_000)) * entrada + (
         Decimal(tokens_out) / Decimal(1_000_000)
     ) * saida
-    return total.quantize(_CENTAVO_DE_MILIONESIMO)
+    return total.quantize(_MILIONESIMO_DE_DOLAR)
 
 
 class MessageRecorder:
@@ -58,6 +58,8 @@ class MessageRecorder:
         tokens_in: int,
         tokens_out: int,
         latency_ms: int,
+        cache_read_tokens: int | None = None,
+        cache_write_tokens: int | None = None,
         sender_external_id: str | None = None,
         recipient_external_id: str | None = None,
     ) -> uuid.UUID | None:
@@ -93,7 +95,14 @@ class MessageRecorder:
             return None
 
         await self._registrar_telemetria(
-            identificador, model, subagent, tokens_in, tokens_out, latency_ms
+            identificador,
+            model,
+            subagent,
+            tokens_in,
+            tokens_out,
+            latency_ms,
+            cache_read_tokens,
+            cache_write_tokens,
         )
         return identificador
 
@@ -105,6 +114,8 @@ class MessageRecorder:
         tokens_in: int,
         tokens_out: int,
         latency_ms: int,
+        cache_read_tokens: int | None,
+        cache_write_tokens: int | None,
     ) -> None:
         custo = custo_em_dolar(model, tokens_in, tokens_out)
         if custo is None:
@@ -119,6 +130,8 @@ class MessageRecorder:
                         subagent=subagent,
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
+                        cache_read_tokens=cache_read_tokens,
+                        cache_write_tokens=cache_write_tokens,
                         cost_usd=custo,
                         latency_ms=latency_ms,
                     )
@@ -140,5 +153,7 @@ class MessageRecorder:
             subagent=subagent,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
             latency_ms=latency_ms,
         )

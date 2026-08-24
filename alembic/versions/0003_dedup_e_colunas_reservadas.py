@@ -62,17 +62,11 @@ def upgrade() -> None:
     )
 
     op.add_column("messages", sa.Column("envelope_context", postgresql.JSONB(), nullable=True))
-    op.add_column(
-        "messages", sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True)
-    )
+    op.add_column("messages", sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True))
 
 
 def downgrade() -> None:
     op.drop_column("messages", "claimed_at")
     op.drop_column("messages", "envelope_context")
-    op.drop_constraint(
-        "uq_messages_channel_provider_message_id", "messages", type_="unique"
-    )
-    op.create_index(
-        "ix_messages_provider_message_id", "messages", ["provider_message_id"]
-    )
+    op.drop_constraint("uq_messages_channel_provider_message_id", "messages", type_="unique")
+    op.create_index("ix_messages_provider_message_id", "messages", ["provider_message_id"])
