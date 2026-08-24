@@ -1,13 +1,15 @@
 from dataclasses import dataclass
 from typing import Any
 
+from mobia.domain.messages.enums import MessageContentType, content_type_da_meta
+
 
 @dataclass(frozen=True)
 class ParsedMessage:
     provider_message_id: str
     sender_external_id: str
     recipient_external_id: str
-    content_type: str
+    content_type: MessageContentType
     text_body: str | None
     raw_payload: dict[str, Any]
 
@@ -32,9 +34,9 @@ def parse_meta_envelope(payload: dict[str, Any]) -> list[ParsedMessage]:
                 if not provider_message_id or not sender:
                     continue
 
-                content_type = message.get("type") or "unknown"
+                content_type = content_type_da_meta(message.get("type"))
                 text_body = None
-                if content_type == "text":
+                if content_type is MessageContentType.TEXTO:
                     text_body = (message.get("text") or {}).get("body")
 
                 parsed.append(
@@ -42,7 +44,7 @@ def parse_meta_envelope(payload: dict[str, Any]) -> list[ParsedMessage]:
                         provider_message_id=str(provider_message_id),
                         sender_external_id=str(sender),
                         recipient_external_id=recipient,
-                        content_type=str(content_type),
+                        content_type=content_type,
                         text_body=text_body,
                         raw_payload=message,
                     )

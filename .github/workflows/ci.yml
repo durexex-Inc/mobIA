@@ -30,11 +30,15 @@ jobs:
       - name: Instalar dependencias
         run: pip install -e ".[dev]"
 
+      # `alembic` entra nos dois: as migrations importam codigo da aplicacao
+      # (a 0004 chama mobia.infra.crypto) e ficavam fora de todo gate estatico.
+      # O mypy segue so em `src` -- cobrir alembic exige antes um
+      # src/mobia/py.typed, que e outra mudanca.
       - name: ruff check
-        run: ruff check src tests
+        run: ruff check src tests alembic
 
       - name: ruff format
-        run: ruff format --check src tests
+        run: ruff format --check src tests alembic
 
       - name: mypy
         run: mypy src

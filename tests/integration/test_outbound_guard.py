@@ -3,11 +3,13 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.outbound.models import OutboundDispatch
 from mobia.domain.outbound.noop import NoopOutbound
 from mobia.domain.outbound.port import GuardedOutbound
+from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
 
 
@@ -21,15 +23,19 @@ class OutboundEspiao(GuardedOutbound):
 
 
 async def criar_mensagem(session) -> uuid.UUID:
+    identificador = uuid.uuid4()
     message = Message(
-        id=uuid.uuid4(),
+        id=identificador,
         channel="whatsapp",
         provider_message_id=f"wamid.{uuid.uuid4().hex[:8]}",
         sender_external_id="5511911112222",
         recipient_external_id="222222222",
-        content_type="text",
-        text_body="oi",
-        raw_payload={},
+        conversation_key="5511911112222",
+        role=MessageRole.LEAD,
+        direction=MessageDirection.INBOUND,
+        content_type=MessageContentType.TEXTO,
+        text_body=encrypt("oi", aad_de(identificador, "text_body")),
+        raw_payload=None,
         status=MessageStatus.RECEIVED,
     )
     session.add(message)

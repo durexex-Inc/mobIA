@@ -5,8 +5,9 @@ Revises:
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "0001"
 down_revision = None
@@ -37,12 +38,8 @@ def upgrade() -> None:
         sa.Column("processed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_error", sa.Text(), nullable=True),
     )
-    op.create_index(
-        "ix_messages_status_received_at", "messages", ["status", "received_at"]
-    )
-    op.create_index(
-        "ix_messages_provider_message_id", "messages", ["provider_message_id"]
-    )
+    op.create_index("ix_messages_status_received_at", "messages", ["status", "received_at"])
+    op.create_index("ix_messages_provider_message_id", "messages", ["provider_message_id"])
 
 
 def downgrade() -> None:

@@ -13,15 +13,16 @@ _SELECIONAR_PARADAS = text(
     """
     SELECT id
       FROM messages
-     WHERE attempts < :max_attempts
+     WHERE direction = 'INBOUND'
+       AND attempts < :max_attempts
        AND (
             (status = 'RECEIVED'
-             AND received_at < now() - make_interval(secs => :received_after))
+             AND created_at < now() - make_interval(secs => :received_after))
          OR (status IN ('QUEUED', 'PROCESSING', 'FAILED')
-             AND COALESCE(queued_at, received_at)
+             AND COALESCE(queued_at, created_at)
                  < now() - make_interval(secs => :inflight_after))
        )
-     ORDER BY received_at
+     ORDER BY created_at
      LIMIT :limite
        FOR UPDATE SKIP LOCKED
     """
@@ -40,7 +41,7 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
     `Exception` qualquer marca `finish = True` e o `finish_job` apaga o job da
     fila. Sem o sweeper, uma falha transitoria perderia a mensagem para sempre.
     O teto `attempts < sweep_max_attempts` e o que limita o loop: o re-sweep de
-    FAILED e ancorado em `COALESCE(queued_at, received_at)` -- hora de enfileirar,
+    FAILED e ancorado em `COALESCE(queued_at, created_at)` -- hora de enfileirar,
     nao de falhar -- entao uma mensagem que falha sempre volta a cada varredura,
     sem backoff. Com `attempts` contando so falha real de processamento, o
     orcamento sao 5 falhas de verdade e o laco fica limitado de forma sana.
@@ -60,6 +61,13 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
     O que se perde e o sinal "o sweeper enfileirou algo que nunca chegou a um
     worker" -- que era exatamente o caso que o bug criava. Se ele voltar a fazer
     falta, o jeito honesto e uma coluna `sweep_enqueues` propria.
+
+    O filtro `direction = 'INBOUND'` existe porque desde o TEC-126 a tabela
+    guarda tambem a fala do agente. Varrer uma linha OUTBOUND a mandaria para
+    `process_message`, que emitiria um efeito externo por uma mensagem que
+    ninguem enviou. A linha de saida ja nasce com `status` NULL, o que sozinho
+    bastaria -- o filtro esta aqui para que a garantia nao dependa de quem
+    escreve lembrar disso.
 
     Os locks da selecao sao soltos antes de qualquer I/O de rede: segurar lock de
     linha no Postgres enquanto se fala com o Redis e ruim por si so, e aqui teria
