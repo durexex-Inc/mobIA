@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import structlog
 from arq.connections import ArqRedis
 from sqlalchemy import update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.messages.models import Message
@@ -43,26 +44,56 @@ class IngestionService:
         return message_ids
 
     async def _persist(self, parsed: list[ParsedMessage], channel: str) -> list[uuid.UUID]:
+        """Grava as mensagens novas e descarta as que a Meta ja tinha entregue.
+
+        O descarte e resolvido pelo `ON CONFLICT` do proprio Postgres, nao por
+        uma checagem em memoria: duas replicas da API recebendo a mesma reentrega
+        ao mesmo tempo so podem ser separadas pela constraint (TEC-125). O
+        `DO NOTHING` tambem impede que uma duplicata no meio do lote derrube as
+        mensagens legitimas que vieram junto.
+        """
+        valores = [
+            {
+                "id": uuid.uuid4(),
+                "channel": channel,
+                "provider_message_id": item.provider_message_id,
+                "sender_external_id": item.sender_external_id,
+                "recipient_external_id": item.recipient_external_id,
+                "content_type": item.content_type,
+                "text_body": item.text_body,
+                "raw_payload": item.raw_payload,
+                "status": MessageStatus.RECEIVED,
+            }
+            for item in parsed
+        ]
+        statement = (
+            pg_insert(Message)
+            .values(valores)
+            .on_conflict_do_nothing(constraint="uq_messages_channel_provider_message_id")
+            .returning(Message.id, Message.provider_message_id)
+        )
+
         async with self._session_factory() as session:
-            messages = [
-                Message(
-                    id=uuid.uuid4(),
-                    channel=channel,
-                    provider_message_id=item.provider_message_id,
-                    sender_external_id=item.sender_external_id,
-                    recipient_external_id=item.recipient_external_id,
-                    content_type=item.content_type,
-                    text_body=item.text_body,
-                    raw_payload=item.raw_payload,
-                    status=MessageStatus.RECEIVED,
-                )
-                for item in parsed
-            ]
-            session.add_all(messages)
+            resultado = await session.execute(statement)
+            inseridas = resultado.all()
             await session.commit()
 
-        message_ids = [message.id for message in messages]
-        log.info("message.received", message_ids=[str(i) for i in message_ids], channel=channel)
+        gravados = {linha.provider_message_id for linha in inseridas}
+        for item in parsed:
+            if item.provider_message_id not in gravados:
+                log.info(
+                    "message.duplicate_discarded",
+                    provider_message_id=item.provider_message_id,
+                    channel=channel,
+                )
+
+        message_ids = [linha.id for linha in inseridas]
+        if message_ids:
+            log.info(
+                "message.received",
+                message_ids=[str(i) for i in message_ids],
+                channel=channel,
+            )
         return message_ids
 
     async def _try_enqueue(self, message_id: uuid.UUID) -> None:

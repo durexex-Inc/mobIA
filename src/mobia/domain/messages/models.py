@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, func
+from sqlalchemy import DateTime, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -41,7 +41,22 @@ class Message(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Contexto do envelope da Meta -- `change.value` sem o array `messages`.
+    # Coluna reservada pelo TEC-217; nada escreve nela ainda.
+    envelope_context: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    # Instante da reivindicacao, para o lease de exclusao mutua entre workers.
+    # Coluna reservada pelo TEC-218; nada escreve nela ainda.
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         Index("ix_messages_status_received_at", "status", "received_at"),
-        Index("ix_messages_provider_message_id", "provider_message_id"),
+        # Composta com `channel` de proposito: o widget web (TEC-124) tem espaco
+        # de ids proprio e nao deve colidir com o wamid da Meta. O indice desta
+        # constraint tambem serve as buscas que o indice simples servia.
+        UniqueConstraint(
+            "channel",
+            "provider_message_id",
+            name="uq_messages_channel_provider_message_id",
+        ),
     )
