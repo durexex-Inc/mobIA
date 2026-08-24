@@ -213,15 +213,27 @@ testes. A suíte não toca a rede.
 - `Settings.anthropic_api_key`, sem default utilizável — mesmo tratamento que a
   TEC-126 deu à chave de cifra, que recusa subir em produção com o valor de
   desenvolvimento.
-- `Settings.modelo_resumo`, default `claude-haiku-4-5`.
+- `Settings.modelo_resumo`, default `claude-opus-5`.
 
-**A escolha do modelo é deliberada e é um rebaixamento consciente.** O padrão do
-projeto é `claude-opus-5`. Resumir histórico é mecânico, e Haiku 4.5 custa cerca
-de um quinto ($1/$5 por 1M contra $5/$25) — aproximadamente US$ 0,011 por
-regeneração contra US$ 0,053. O risco aceito: um resumo ruim degrada
-silenciosamente todos os turnos seguintes, e a suíte de avaliação que pegaria
-isso só chega na TEC-210. O modelo fica em configuração justamente para poder
-subir sem migração se a avaliação mostrar que foi barato demais.
+**O resumo roda no modelo padrão do projeto, sem rebaixamento.** A tentação era
+usar Haiku 4.5: resumir histórico parece mecânico e custaria cerca de um quinto
+($1/$5 por 1M contra $5/$25, aproximadamente US$ 0,011 por regeneração contra
+US$ 0,053).
+
+A razão de não fazer isso é a posição do resumo na arquitetura. Ele não é uma
+saída que alguém lê e descarta — é **entrada de todo turno seguinte**, para
+sempre. Um resumo que perde o orçamento que a Marina mencionou não erra uma vez:
+erra em todas as respostas dali em diante, e erra de forma que ninguém percebe,
+porque o modelo seguinte responde com confiança sobre um contexto empobrecido.
+Economizar quatro centavos por vinte mensagens não paga esse risco.
+
+O julgamento também não tem como ser verificado hoje: a suíte de avaliação que
+mediria a qualidade do resumo só chega na TEC-210. Rebaixar antes de existir a
+régua é apostar sem placar.
+
+O modelo fica em configuração de qualquer forma — se a TEC-210 mostrar que Haiku
+sustenta a qualidade, a troca é uma variável de ambiente, não uma migração. A
+direção barata da decisão é a reversível.
 
 ## Lacuna registrada, não fechada
 
