@@ -52,3 +52,10 @@ select = ["E", "F", "I", "UP", "B"]
 # `Depends()` no default do parametro e o idioma do FastAPI, nao o bug de
 # default mutavel que a B008 existe para pegar.
 extend-immutable-calls = ["fastapi.Depends"]
+
+[tool.mypy]
+python_version = "3.13"
+files = ["src"]
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true

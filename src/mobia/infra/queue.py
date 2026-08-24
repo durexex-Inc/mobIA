@@ -28,7 +28,5 @@ async def enqueue_process_message(pool: ArqRedis, message_id: uuid.UUID) -> bool
     `workers/main.py`: sem isso, o resultado de um job que terminou bloquearia
     todo re-enqueue do sweeper pela hora seguinte.
     """
-    job = await pool.enqueue_job(
-        PROCESS_MESSAGE_JOB, str(message_id), _job_id=f"msg:{message_id}"
-    )
+    job = await pool.enqueue_job(PROCESS_MESSAGE_JOB, str(message_id), _job_id=f"msg:{message_id}")
     return job is not None

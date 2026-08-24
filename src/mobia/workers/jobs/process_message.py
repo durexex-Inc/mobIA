@@ -1,9 +1,9 @@
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.messages.models import Message
@@ -36,10 +36,15 @@ async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
     if reservada.scalar_one_or_none() is None:
         return False
 
-    resultado = await session.execute(
-        update(Message)
-        .where(Message.id == message_id, Message.status.in_(CLAIMABLE_STATUSES))
-        .values(status=MessageStatus.PROCESSING)
+    # O `execute` de um UPDATE devolve um CursorResult em runtime, mas a tipagem
+    # do SQLAlchemy declara o Result generico, que nao expoe `rowcount`.
+    resultado = cast(
+        CursorResult[Any],
+        await session.execute(
+            update(Message)
+            .where(Message.id == message_id, Message.status.in_(CLAIMABLE_STATUSES))
+            .values(status=MessageStatus.PROCESSING)
+        ),
     )
     return resultado.rowcount == 1
 

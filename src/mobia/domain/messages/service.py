@@ -1,10 +1,11 @@
 import uuid
 from collections import Counter
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import structlog
 from arq.connections import ArqRedis
-from sqlalchemy import update
+from sqlalchemy import CursorResult, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -130,10 +131,18 @@ class IngestionService:
         # precisar de nada da Meta. O 500 so custaria retentativa a toa.
         try:
             async with self._session_factory() as session:
-                resultado = await session.execute(
-                    update(Message)
-                    .where(Message.id == message_id, Message.status == MessageStatus.RECEIVED)
-                    .values(status=MessageStatus.QUEUED, queued_at=datetime.now(UTC))
+                # O `execute` de um UPDATE devolve um CursorResult em runtime, mas
+                # a tipagem do SQLAlchemy declara o Result generico, sem `rowcount`.
+                resultado = cast(
+                    CursorResult[Any],
+                    await session.execute(
+                        update(Message)
+                        .where(
+                            Message.id == message_id,
+                            Message.status == MessageStatus.RECEIVED,
+                        )
+                        .values(status=MessageStatus.QUEUED, queued_at=datetime.now(UTC))
+                    ),
                 )
                 await session.commit()
         except Exception as exc:
