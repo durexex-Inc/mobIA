@@ -17,7 +17,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, validates
 
 
 class Base(DeclarativeBase):
@@ -68,6 +68,24 @@ class Message(Base):
     # Instante da reivindicacao, para o lease de exclusao mutua entre workers.
     # Coluna reservada pelo TEC-218; nada escreve nela ainda.
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @validates("text_body", "raw_payload")
+    def _exigir_bytes(self, coluna: str, valor: object) -> object:
+        """Fecha por construcao o canal de vazamento pelo texto da excecao.
+
+        `hide_parameters=True` cala o eco de parametros da propria SQLAlchemy,
+        mas o asyncpg monta a mensagem de erro dele com o valor ofensivo dentro
+        antes de a SQLAlchemy ver qualquer coisa -- e esse texto chega ao log
+        via `detail=str(exc)`. Escrever `Message(text_body="oi")` e o engano
+        natural e e o que abre o canal. Aqui a falha vira erro de aplicacao com
+        mensagem que nos controlamos, e ela nunca cita o valor.
+        """
+        if valor is None or isinstance(valor, bytes | bytearray | memoryview):
+            return valor
+        raise TypeError(
+            f"{coluna} recebeu {type(valor).__name__}: a coluna e bytea e o conteudo "
+            "tem de vir cifrado por mobia.infra.crypto.encrypt"
+        )
 
     __table_args__ = (
         Index("ix_messages_status_created_at", "status", "created_at"),

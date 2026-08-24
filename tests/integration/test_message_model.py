@@ -245,3 +245,25 @@ async def test_colunas_reservadas_nascem_nulas(session) -> None:
     )
     assert linha.envelope_context is None
     assert linha.claimed_at is None
+
+
+@pytest.mark.parametrize("coluna", ["text_body", "raw_payload"])
+def test_texto_claro_nas_colunas_cifradas_e_recusado(coluna: str) -> None:
+    """Fecha por construcao o canal de vazamento pelo texto da excecao.
+
+    Sem a guarda, o asyncpg monta a mensagem de erro dele com o valor ofensivo
+    dentro antes de a SQLAlchemy ver qualquer coisa, e `hide_parameters=True`
+    nao alcanca isso. O texto chega ao log via `detail=str(exc)`, e frase livre
+    nao e pega pelo mascarador de digitos.
+    """
+    with pytest.raises(TypeError) as erro:
+        Message(**{coluna: "quero apto na zona sul, telefone 5511987654321"})
+
+    assert coluna in str(erro.value)
+    assert "zona sul" not in str(erro.value)
+    assert "5511987654321" not in str(erro.value)
+
+
+@pytest.mark.parametrize("valor", [None, b"\x01cifrado", bytearray(b"\x01cifrado")])
+def test_bytes_e_none_atravessam_a_guarda(valor: object) -> None:
+    assert Message(text_body=valor).text_body == valor
