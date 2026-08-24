@@ -53,3 +53,22 @@ def test_lista_de_identificadores_sobrevive(caplog) -> None:
         log.info("evento.teste", message_ids=identificadores)
 
     assert identificadores[0] in caplog.text
+
+
+def test_telefone_no_traceback_tambem_sai_mascarado(caplog) -> None:
+    """`log.exception` sem `format_exc_info` antes do mascarador vaza PII.
+
+    O traceback so entra no dict como chave `exception` gracas ao
+    `format_exc_info`; sem ele o texto da excecao nasce depois do
+    `JSONRenderer` e o mascarador nunca chega a ve-lo.
+    """
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.ERROR):
+        try:
+            raise ValueError("contato do lead: 5511987654321")
+        except ValueError:
+            log.exception("evento.erro")
+
+    assert "5511987654321" not in caplog.text
+    assert "*********4321" in caplog.text
+    assert "ValueError" in caplog.text

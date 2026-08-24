@@ -4,7 +4,7 @@ import sys
 from contextvars import ContextVar
 
 import structlog
-from structlog.typing import EventDict, WrappedLogger
+from structlog.typing import EventDict, ProcessorReturnValue, WrappedLogger
 
 correlation_id: ContextVar[str] = ContextVar("correlation_id", default="")
 
@@ -60,6 +60,23 @@ def _mascarar_pii(_logger: WrappedLogger, _method_name: str, event_dict: EventDi
     return event_dict
 
 
+_renderizar_json = structlog.processors.JSONRenderer()
+
+
+def _finalizar(
+    logger: WrappedLogger, method_name: str, event_dict: EventDict
+) -> ProcessorReturnValue:
+    """Serializa o evento e desarma o `exc_info` real do LogRecord.
+
+    `logging.Logger.exception` religa `exc_info=True` por conta propria mesmo
+    quando so passamos a linha ja pronta, entao sem isso o Formatter padrao
+    duplica o traceback original -- sem mascara -- depois do JSON que ja o
+    contem mascarado via `exception`.
+    """
+    linha = _renderizar_json(logger, method_name, event_dict)
+    return (linha,), {"exc_info": False}
+
+
 def configure_logging(level: str = "INFO") -> None:
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=level.upper())
     structlog.configure(
@@ -68,8 +85,11 @@ def configure_logging(level: str = "INFO") -> None:
             _add_correlation_id,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
+            # sem isso o traceback so nasce depois do JSONRenderer, fora do
+            # alcance do mascaramento: tem de virar chave do dict antes.
+            structlog.processors.format_exc_info,
             _mascarar_pii,
-            structlog.processors.JSONRenderer(),
+            _finalizar,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
