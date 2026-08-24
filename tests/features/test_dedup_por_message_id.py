@@ -122,14 +122,21 @@ async def test_mensagens_distintas_do_mesmo_lead_nao_se_confundem(
     assert len(await redis_pool.queued_jobs()) == 2
 
 
-async def test_duplicata_dentro_do_mesmo_envelope(client, session, redis_pool, settings):
-    """A Meta pode repetir o mesmo wamid dentro de um unico envelope."""
+async def test_duplicata_dentro_do_mesmo_envelope(
+    client, session, redis_pool, settings, caplog
+):
+    """A Meta pode repetir o mesmo wamid dentro de um unico envelope.
+
+    O descarte tem de ser contabilizado tambem aqui: contar por conjunto em vez
+    de por ocorrencia faria a segunda copia sumir sem log.
+    """
     body, headers = assinado(
         envelope("wamid.REPETIDA", "wamid.REPETIDA", "wamid.OUTRA"),
         settings.whatsapp_app_secret,
     )
 
-    resposta = await client.post("/webhooks/whatsapp", content=body, headers=headers)
+    with caplog.at_level("INFO"):
+        resposta = await client.post("/webhooks/whatsapp", content=body, headers=headers)
 
     assert resposta.status_code == 200
     linhas = (await session.scalars(select(Message))).all()
@@ -138,6 +145,9 @@ async def test_duplicata_dentro_do_mesmo_envelope(client, session, redis_pool, s
         "wamid.OUTRA",
     }
     assert len(await redis_pool.queued_jobs()) == 2
+
+    descartes = eventos_de_log(caplog, "message.duplicate_discarded")
+    assert [d["provider_message_id"] for d in descartes] == ["wamid.REPETIDA"]
 
 
 async def test_lote_com_duplicata_nao_derruba_as_mensagens_legitimas(

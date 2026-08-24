@@ -1,0 +1,118 @@
+"""A migration 0003 tem de sobreviver a um banco que ja carrega duplicatas.
+
+O esquema ate a 0002 permitia duas linhas com o mesmo `provider_message_id` de
+proposito -- a dedup era o TEC-125. Reentrega da Meta e exatamente o que produz
+essas linhas, entao qualquer banco com trafego real chega na 0003 violando a
+constraint que ela cria. O resto da suite nao pegaria isso: o conftest migra um
+banco recem-truncado, onde nunca ha o que colidir.
+"""
+
+import subprocess
+import sys
+import uuid
+
+import pytest
+from sqlalchemy import text
+
+from mobia.infra.db import dispose_engine, get_sessionmaker
+
+INSERIR_LINHA = text(
+    """
+    INSERT INTO messages (
+        id, channel, provider_message_id, sender_external_id,
+        recipient_external_id, content_type, text_body, raw_payload,
+        status, attempts, received_at
+    ) VALUES (
+        :id, :channel, :provider_message_id, '5511911112222',
+        '222222222', 'text', :text_body, '{}'::jsonb,
+        'RECEIVED', 0, now() - make_interval(secs => :idade)
+    )
+    """
+)
+
+
+def alembic(*args: str) -> None:
+    subprocess.run(
+        [sys.executable, "-m", "alembic", *args],
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture
+async def esquema_na_0002():
+    """Volta o esquema para antes da dedup e garante o retorno ao head."""
+    await dispose_engine()
+    alembic("downgrade", "0002")
+    try:
+        yield
+    finally:
+        await dispose_engine()
+        alembic("upgrade", "head")
+        await dispose_engine()
+
+
+async def test_upgrade_sobre_banco_com_duplicatas(esquema_na_0002) -> None:
+    """Um unico ciclo downgrade/upgrade cobrindo os tres casos que importam.
+
+    Cada chamada ao alembic e um processo Python novo e custa dezenas de
+    segundos aqui, entao os casos moram num teste so de proposito.
+    """
+    antiga, recente = uuid.uuid4(), uuid.uuid4()
+
+    linhas = [
+        # Duplicata real: a Meta reentregou o mesmo wamid.
+        (antiga, "whatsapp", "wamid.REENTREGUE", "primeira entrega", 600),
+        (recente, "whatsapp", "wamid.REENTREGUE", "reentrega da Meta", 60),
+        # Mensagem sem duplicata: nao pode ser tocada.
+        (uuid.uuid4(), "whatsapp", "wamid.INTOCADA", "mensagem distinta", 300),
+        # Mesmo id em canais diferentes: legitimo, a constraint e composta.
+        (uuid.uuid4(), "whatsapp", "id.COMPARTILHADO", "via whatsapp", 120),
+        (uuid.uuid4(), "web", "id.COMPARTILHADO", "via web", 120),
+    ]
+
+    async with get_sessionmaker()() as sessao:
+        for identificador, canal, provider_message_id, corpo, idade in linhas:
+            await sessao.execute(
+                INSERIR_LINHA,
+                {
+                    "id": identificador,
+                    "channel": canal,
+                    "provider_message_id": provider_message_id,
+                    "text_body": corpo,
+                    "idade": idade,
+                },
+            )
+        await sessao.commit()
+
+    await dispose_engine()
+    alembic("upgrade", "head")
+
+    async with get_sessionmaker()() as sessao:
+        sobreviventes = (
+            await sessao.execute(
+                text(
+                    "SELECT id, text_body FROM messages"
+                    " WHERE provider_message_id = 'wamid.REENTREGUE'"
+                )
+            )
+        ).all()
+        intocada = await sessao.scalar(
+            text("SELECT count(*) FROM messages WHERE provider_message_id = 'wamid.INTOCADA'")
+        )
+        canais = (
+            await sessao.execute(
+                text(
+                    "SELECT channel FROM messages"
+                    " WHERE provider_message_id = 'id.COMPARTILHADO' ORDER BY channel"
+                )
+            )
+        ).all()
+
+    assert len(sobreviventes) == 1, "a migration tem de resolver a duplicata, nao abortar"
+    assert sobreviventes[0].id == antiga, "sobrevive a primeira entrega, que foi a processada"
+    assert sobreviventes[0].text_body == "primeira entrega"
+    assert intocada == 1, "mensagem sem duplicata nao pode ser afetada"
+    assert [linha.channel for linha in canais] == ["web", "whatsapp"], (
+        "id igual em canais diferentes e legitimo"
+    )

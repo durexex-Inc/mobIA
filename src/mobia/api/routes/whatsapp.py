@@ -77,11 +77,9 @@ async def ingest(
         parsed = parse_meta_envelope(payload)
     except Exception as exc:
         # So a interpretacao do envelope fica sob a rede de seguranca. Um 500
-        # aqui faria a Meta re-entregar um payload que ninguem consegue ler, e
-        # como provider_message_id so vira UNIQUE em TEC-125 uma re-entrega que
-        # desse certo nasceria como segunda linha -- com message_id diferente,
-        # que a guarda de outbound_dispatches nao casa. Payload assinado mas
-        # malformado nao tem o que perder: 200 e o certo.
+        # aqui faria a Meta re-entregar um payload que ninguem consegue ler --
+        # puro ruido, porque a re-entrega falharia no mesmo ponto. Payload
+        # assinado mas malformado nao tem o que perder: 200 e o certo.
         log.exception(
             "webhook.error",
             reason=type(exc).__name__,

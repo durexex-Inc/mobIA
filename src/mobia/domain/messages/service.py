@@ -1,4 +1,5 @@
 import uuid
+from collections import Counter
 from datetime import UTC, datetime
 
 import structlog
@@ -78,12 +79,17 @@ class IngestionService:
             inseridas = resultado.all()
             await session.commit()
 
-        gravados = {linha.provider_message_id for linha in inseridas}
-        for item in parsed:
-            if item.provider_message_id not in gravados:
+        # Contagem, nao conjunto: o mesmo wamid pode vir repetido dentro de um
+        # unico envelope, e ai uma das ocorrencias e gravada e a outra descartada.
+        # Com um `set` a segunda sumiria sem log, e a regra do TEC-125 e que todo
+        # descarte seja contabilizado.
+        recebidos = Counter(item.provider_message_id for item in parsed)
+        gravados = Counter(linha.provider_message_id for linha in inseridas)
+        for provider_message_id, vezes in recebidos.items():
+            for _ in range(vezes - gravados[provider_message_id]):
                 log.info(
                     "message.duplicate_discarded",
-                    provider_message_id=item.provider_message_id,
+                    provider_message_id=provider_message_id,
                     channel=channel,
                 )
 
@@ -118,11 +124,10 @@ class IngestionService:
         # A falha aqui tambem e engolida, e por um motivo mais forte que a do
         # enqueue: neste ponto o `_persist` ja commitou as linhas. Deixar subir
         # viraria 500 na rota e a Meta re-entregaria um payload cujas linhas ja
-        # existem; como provider_message_id so vira UNIQUE em TEC-125, a
-        # re-entrega nasceria como segunda linha, com message_id diferente --
-        # que a guarda UNIQUE (message_id, kind) de outbound_dispatches nao casa,
-        # e o lead levaria duas respostas. A linha fica em RECEIVED e o sweeper
-        # a recupera sem precisar de nada da Meta.
+        # existem. Desde o TEC-125 a UNIQUE (channel, provider_message_id)
+        # descartaria essa re-entrega, entao ela nao duplica -- mas tambem nao
+        # resolve nada: a linha ja esta em RECEIVED e o sweeper a recupera sem
+        # precisar de nada da Meta. O 500 so custaria retentativa a toa.
         try:
             async with self._session_factory() as session:
                 resultado = await session.execute(

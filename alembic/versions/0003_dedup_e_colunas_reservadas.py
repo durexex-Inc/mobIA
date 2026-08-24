@@ -21,8 +21,39 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # A UNIQUE composta cria seu proprio indice, que cobre as buscas que o
-    # indice simples cobria -- manter os dois seria indice duplicado.
+    # O esquema anterior permitia duplicata de proposito, e reentrega da Meta e
+    # exatamente o que as produz -- entao um banco com trafego real pode ja ter
+    # linhas que violam a constraint que vem a seguir. Sem esta limpeza o
+    # `upgrade` aborta com "Key ... is duplicated"; os testes nao pegariam,
+    # porque migram um banco recem-truncado.
+    #
+    # Mantem a linha de `received_at` mais antigo por (channel,
+    # provider_message_id): a primeira entrega e a que foi processada. O
+    # `ondelete=CASCADE` de outbound_dispatches leva junto as reservas das
+    # linhas removidas, que e o comportamento certo -- elas nunca deveriam ter
+    # existido.
+    op.execute(
+        """
+        DELETE FROM messages
+         WHERE id IN (
+            SELECT id
+              FROM (
+                    SELECT id,
+                           row_number() OVER (
+                               PARTITION BY channel, provider_message_id
+                               ORDER BY received_at, id
+                           ) AS posicao
+                      FROM messages
+                   ) AS ranqueadas
+             WHERE posicao > 1
+         )
+        """
+    )
+
+    # O indice simples sai porque a constraint composta cobre o mesmo prefixo
+    # (`channel`) e a busca real e sempre pelo par. Uma consulta so por
+    # `provider_message_id` deixa de ter indice -- nenhuma existe hoje, e quem
+    # precisar de uma que crie o indice junto com ela.
     op.drop_index("ix_messages_provider_message_id", table_name="messages")
     op.create_unique_constraint(
         "uq_messages_channel_provider_message_id",

@@ -53,7 +53,9 @@ class Message(Base):
         Index("ix_messages_status_received_at", "status", "received_at"),
         # Composta com `channel` de proposito: o widget web (TEC-124) tem espaco
         # de ids proprio e nao deve colidir com o wamid da Meta. O indice desta
-        # constraint tambem serve as buscas que o indice simples servia.
+        # constraint atende buscas pelo par e por `channel` sozinho, mas nao por
+        # `provider_message_id` sozinho -- nenhuma consulta faz isso hoje, e quem
+        # precisar deve criar o indice junto com a consulta.
         UniqueConstraint(
             "channel",
             "provider_message_id",

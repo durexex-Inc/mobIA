@@ -153,9 +153,8 @@ async def test_envelope_estruturalmente_invalido_nao_vira_500(
 ) -> None:
     """A rota responde 200 em todo caminho, inclusive no erro inesperado.
 
-    Um 500 faria a Meta re-entregar o mesmo payload; como provider_message_id so
-    vira UNIQUE em TEC-125, a re-entrega nasce como uma segunda linha, com
-    message_id diferente -- que a guarda de outbound_dispatches nao casa.
+    Um 500 faria a Meta re-entregar um payload que ninguem consegue interpretar,
+    e a re-entrega falharia no mesmo ponto -- retentativa a toa.
     """
     body = json.dumps({"object": "whatsapp_business_account", "entry": ["nao e dict"]}).encode(
         "utf-8"
@@ -310,13 +309,10 @@ async def test_falha_ao_virar_status_nao_pode_propagar(
     """Depois que o `_persist` commita, nenhuma falha pode virar 500.
 
     Este e o espelho do cenario acima e a fronteira entre os dois e o commit do
-    lote. Antes dele nada foi escrito e o 500 e obrigatorio; depois dele as
-    linhas existem, e um 500 faz a Meta re-entregar um payload ja gravado. Como
-    provider_message_id so vira UNIQUE em TEC-125, a re-entrega nasce como
-    segunda linha, com message_id diferente -- e a guarda UNIQUE
-    (message_id, kind) de outbound_dispatches, que so casa por message_id, nao
-    tem como ver que e a mesma mensagem. O resultado seria duas respostas ao
-    lead assim que TEC-134 tornar o outbound real.
+    lote. Antes dele nada foi escrito e o 500 e obrigatorio, senao a mensagem
+    some sem deixar linha para o sweeper achar. Depois dele as linhas ja existem
+    e o 500 nao serve para nada: desde o TEC-125 a re-entrega seria descartada
+    pela UNIQUE, e a linha ja em RECEIVED e recuperada pelo sweeper sozinha.
 
     O 500 tambem nao compraria nada aqui: a linha ficou em RECEIVED e o sweeper
     a recupera sem depender da Meta.
