@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     whatsapp_app_secret: str = "dev-app-secret"
     whatsapp_verify_token: str = "dev-verify-token"
 
+    # 32 bytes em base64. O default so serve para desenvolvimento e teste --
+    # em producao vem do ambiente, como o whatsapp_app_secret.
+    content_encryption_key: str = "ZGV2LWtleS0zMi1ieXRlcy1mb3ItbW9iaWEtb2shISE="
+
     log_level: str = "INFO"
 
     sweep_received_after_seconds: int = 30
