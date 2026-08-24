@@ -9,9 +9,11 @@ from sqlalchemy import CursorResult, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.status import MessageStatus
+from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 from mobia.infra.queue import enqueue_process_message
 
 log = structlog.get_logger(__name__)
@@ -54,20 +56,29 @@ class IngestionService:
         `DO NOTHING` tambem impede que uma duplicata no meio do lote derrube as
         mensagens legitimas que vieram junto.
         """
-        valores = [
-            {
-                "id": uuid.uuid4(),
-                "channel": channel,
-                "provider_message_id": item.provider_message_id,
-                "sender_external_id": item.sender_external_id,
-                "recipient_external_id": item.recipient_external_id,
-                "content_type": item.content_type,
-                "text_body": item.text_body,
-                "raw_payload": item.raw_payload,
-                "status": MessageStatus.RECEIVED,
-            }
-            for item in parsed
-        ]
+        valores = []
+        for item in parsed:
+            identificador = uuid.uuid4()
+            valores.append(
+                {
+                    "id": identificador,
+                    "channel": channel,
+                    "provider_message_id": item.provider_message_id,
+                    "sender_external_id": item.sender_external_id,
+                    "recipient_external_id": item.recipient_external_id,
+                    # Quem fala e o lead, entao a conversa e a dele. Na saida
+                    # sender e recipient se invertem e esta coluna nao.
+                    "conversation_key": item.sender_external_id,
+                    "role": MessageRole.LEAD,
+                    "direction": MessageDirection.INBOUND,
+                    "content_type": item.content_type,
+                    "text_body": encrypt(item.text_body, aad_de(identificador, "text_body")),
+                    "raw_payload": encrypt_json(
+                        item.raw_payload, aad_de(identificador, "raw_payload")
+                    ),
+                    "status": MessageStatus.RECEIVED,
+                }
+            )
         statement = (
             pg_insert(Message)
             .values(valores)

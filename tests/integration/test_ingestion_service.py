@@ -1,10 +1,12 @@
 from sqlalchemy import select
+from sqlalchemy import text as sql
 
-from mobia.domain.messages.enums import MessageContentType
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.service import IngestionService
 from mobia.domain.messages.status import MessageStatus
+from mobia.infra.crypto import aad_de, decrypt, decrypt_json
 from mobia.infra.db import get_sessionmaker
 
 
@@ -75,3 +77,34 @@ async def test_lista_vazia_nao_faz_nada(redis_pool) -> None:
     service = IngestionService(get_sessionmaker(), redis_pool)
     assert await service.ingest([]) == []
     assert await redis_pool.queued_jobs() == []
+
+
+async def test_entrada_grava_papel_direcao_e_conversa(session, redis_pool) -> None:
+    service = IngestionService(get_sessionmaker(), redis_pool)
+
+    (message_id,) = await service.ingest([parsed("wamid.PAPEL")])
+
+    linha = await session.get(Message, message_id)
+    assert linha is not None
+    assert linha.role == MessageRole.LEAD
+    assert linha.direction == MessageDirection.INBOUND
+    assert linha.conversation_key == linha.sender_external_id
+
+
+async def test_conteudo_vai_cifrado_para_o_banco(session, redis_pool) -> None:
+    """Um SELECT cru nao pode devolver o que a Marina escreveu."""
+    service = IngestionService(get_sessionmaker(), redis_pool)
+
+    (message_id,) = await service.ingest([parsed("wamid.CIFRADO")])
+
+    cru = (
+        await session.execute(
+            sql("SELECT text_body, raw_payload FROM messages WHERE id = :id"),
+            {"id": message_id},
+        )
+    ).one()
+    assert isinstance(cru.text_body, bytes | memoryview)
+    assert b"quero agendar visita" not in bytes(cru.text_body)
+
+    assert decrypt(bytes(cru.text_body), aad_de(message_id, "text_body")) is not None
+    assert decrypt_json(bytes(cru.raw_payload), aad_de(message_id, "raw_payload")) is not None

@@ -16,6 +16,7 @@ from mobia.app.main import create_app
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.service import IngestionService
 from mobia.domain.messages.status import MessageStatus
+from mobia.infra.crypto import aad_de, decrypt
 from mobia.infra.db import get_sessionmaker
 from mobia.infra.signature import SIGNATURE_HEADER, compute_signature
 
@@ -88,7 +89,12 @@ async def test_confirmar_recebimento_antes_de_processar(
     )
     assert linha is not None
     assert linha.status == MessageStatus.QUEUED
-    assert linha.text_body == "Boa noite, ainda tem o 2 quartos?"
+    # text_body e bytea cifrado desde o TEC-126; a assercao decifra em vez de
+    # comparar direto com o texto em claro.
+    assert (
+        decrypt(linha.text_body, aad_de(linha.id, "text_body"))
+        == "Boa noite, ainda tem o 2 quartos?"
+    )
 
     jobs = await redis_pool.queued_jobs()
     assert len(jobs) == 1, "a mensagem tem de estar na fila de processamento"
