@@ -4,10 +4,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.outbound.models import OutboundDispatch
 from mobia.domain.outbound.port import GuardedOutbound
+from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
 from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
@@ -20,18 +22,22 @@ async def mensagem(
     attempts: int = 0,
 ) -> uuid.UUID:
     instante = datetime.now(UTC) - timedelta(seconds=idade_segundos)
+    identificador = uuid.uuid4()
     message = Message(
-        id=uuid.uuid4(),
+        id=identificador,
         channel="whatsapp",
         provider_message_id=f"wamid.{uuid.uuid4().hex[:8]}",
         sender_external_id="5511911112222",
         recipient_external_id="222222222",
-        content_type="text",
-        text_body="oi",
-        raw_payload={},
+        conversation_key="5511911112222",
+        role=MessageRole.LEAD,
+        direction=MessageDirection.INBOUND,
+        content_type=MessageContentType.TEXTO,
+        text_body=encrypt("oi", aad_de(identificador, "text_body")),
+        raw_payload=None,
         status=status,
         attempts=attempts,
-        received_at=instante,
+        created_at=instante,
         queued_at=instante if status != MessageStatus.RECEIVED else None,
     )
     session.add(message)
@@ -175,7 +181,7 @@ async def test_fila_quebrada_nao_queima_attempts(session, redis_pool, settings) 
 
     assert await sweep_stalled(contexto(FilaQuebrada(), settings)) == 0
 
-    linhas = (await session.scalars(select(Message).order_by(Message.received_at))).all()
+    linhas = (await session.scalars(select(Message).order_by(Message.created_at))).all()
     assert [linha.attempts for linha in linhas] == [0, 0]
     assert await redis_pool.queued_jobs() == []
 

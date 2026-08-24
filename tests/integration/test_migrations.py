@@ -5,6 +5,9 @@ proposito -- a dedup era o TEC-125. Reentrega da Meta e exatamente o que produz
 essas linhas, entao qualquer banco com trafego real chega na 0003 violando a
 constraint que ela cria. O resto da suite nao pegaria isso: o conftest migra um
 banco recem-truncado, onde nunca ha o que colidir.
+
+A partir da 0004 este teste tambem prova o backfill de cifra: as linhas sao
+inseridas em texto claro no esquema da 0002 e tem de voltar cifradas no head.
 """
 
 import subprocess
@@ -14,6 +17,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
+from mobia.infra.crypto import aad_de, decrypt
 from mobia.infra.db import dispose_engine, get_sessionmaker
 
 INSERIR_LINHA = text(
@@ -111,7 +115,10 @@ async def test_upgrade_sobre_banco_com_duplicatas(esquema_na_0002) -> None:
 
     assert len(sobreviventes) == 1, "a migration tem de resolver a duplicata, nao abortar"
     assert sobreviventes[0].id == antiga, "sobrevive a primeira entrega, que foi a processada"
-    assert sobreviventes[0].text_body == "primeira entrega"
+    assert (
+        decrypt(sobreviventes[0].text_body, aad_de(sobreviventes[0].id, "text_body"))
+        == "primeira entrega"
+    ), "a 0004 tem de cifrar as linhas que ja existiam, nao so as novas"
     assert intocada == 1, "mensagem sem duplicata nao pode ser afetada"
     assert [linha.channel for linha in canais] == ["web", "whatsapp"], (
         "id igual em canais diferentes e legitimo"

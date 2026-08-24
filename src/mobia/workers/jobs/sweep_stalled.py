@@ -16,12 +16,12 @@ _SELECIONAR_PARADAS = text(
      WHERE attempts < :max_attempts
        AND (
             (status = 'RECEIVED'
-             AND received_at < now() - make_interval(secs => :received_after))
+             AND created_at < now() - make_interval(secs => :received_after))
          OR (status IN ('QUEUED', 'PROCESSING', 'FAILED')
-             AND COALESCE(queued_at, received_at)
+             AND COALESCE(queued_at, created_at)
                  < now() - make_interval(secs => :inflight_after))
        )
-     ORDER BY received_at
+     ORDER BY created_at
      LIMIT :limite
        FOR UPDATE SKIP LOCKED
     """
@@ -40,7 +40,7 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
     `Exception` qualquer marca `finish = True` e o `finish_job` apaga o job da
     fila. Sem o sweeper, uma falha transitoria perderia a mensagem para sempre.
     O teto `attempts < sweep_max_attempts` e o que limita o loop: o re-sweep de
-    FAILED e ancorado em `COALESCE(queued_at, received_at)` -- hora de enfileirar,
+    FAILED e ancorado em `COALESCE(queued_at, created_at)` -- hora de enfileirar,
     nao de falhar -- entao uma mensagem que falha sempre volta a cada varredura,
     sem backoff. Com `attempts` contando so falha real de processamento, o
     orcamento sao 5 falhas de verdade e o laco fica limitado de forma sana.

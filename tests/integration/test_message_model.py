@@ -1,11 +1,14 @@
 import uuid
+from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
-from mobia.domain.messages.models import Message
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
+from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
+from mobia.infra.crypto import aad_de, decrypt, encrypt
 
 
 def test_statuses_reivindicaveis() -> None:
@@ -19,17 +22,26 @@ def test_statuses_reivindicaveis() -> None:
     assert MessageStatus.PROCESSED not in CLAIMABLE_STATUSES
 
 
-async def test_persiste_mensagem_com_defaults(session) -> None:
-    message = Message(
-        channel="whatsapp",
-        provider_message_id="wamid.PERSIST",
+def nova_mensagem(provider_message_id: str, channel: str = "whatsapp") -> Message:
+    identificador = uuid.uuid4()
+    return Message(
+        id=identificador,
+        channel=channel,
+        provider_message_id=provider_message_id,
         sender_external_id="5511911112222",
         recipient_external_id="222222222",
-        content_type="text",
-        text_body="oi",
-        raw_payload={"id": "wamid.PERSIST", "type": "text"},
+        conversation_key="5511911112222",
+        role=MessageRole.LEAD,
+        direction=MessageDirection.INBOUND,
+        content_type=MessageContentType.TEXTO,
+        text_body=encrypt("oi", aad_de(identificador, "text_body")),
+        raw_payload=None,
         status=MessageStatus.RECEIVED,
     )
+
+
+async def test_persiste_mensagem_com_defaults(session) -> None:
+    message = nova_mensagem("wamid.PERSIST")
     session.add(message)
     await session.commit()
 
@@ -37,27 +49,112 @@ async def test_persiste_mensagem_com_defaults(session) -> None:
         select(Message).where(Message.provider_message_id == "wamid.PERSIST")
     )
     assert resultado is not None
-    assert isinstance(resultado.id, uuid.UUID)
-    assert resultado.status == MessageStatus.RECEIVED
+    assert resultado.role == MessageRole.LEAD
+    assert resultado.direction == MessageDirection.INBOUND
+    assert resultado.conversation_key == "5511911112222"
+    assert resultado.content_type == MessageContentType.TEXTO
+    assert resultado.created_at is not None
     assert resultado.attempts == 0
-    assert resultado.received_at is not None
-    assert resultado.queued_at is None
-    assert resultado.processed_at is None
-    assert resultado.last_error is None
-    assert resultado.raw_payload["type"] == "text"
+    assert decrypt(resultado.text_body, aad_de(resultado.id, "text_body")) == "oi"
 
 
-def nova_mensagem(provider_message_id: str, channel: str = "whatsapp") -> Message:
-    return Message(
-        channel=channel,
-        provider_message_id=provider_message_id,
-        sender_external_id="5511911112222",
-        recipient_external_id="222222222",
-        content_type="text",
-        text_body="oi",
-        raw_payload={},
-        status=MessageStatus.RECEIVED,
+async def test_linha_de_saida_nasce_sem_status(session) -> None:
+    """A fala do agente nao participa do pipeline de ingestao.
+
+    Se ela nascesse com o default RECEIVED, o sweeper do TEC-122 varreria a
+    propria resposta do agente e a enfileiraria para processamento.
+    """
+    identificador = uuid.uuid4()
+    session.add(
+        Message(
+            id=identificador,
+            channel="whatsapp",
+            provider_message_id=None,
+            sender_external_id=None,
+            recipient_external_id=None,
+            conversation_key="5511911112222",
+            role=MessageRole.AGENTE,
+            direction=MessageDirection.OUTBOUND,
+            content_type=MessageContentType.TEXTO,
+            text_body=encrypt(
+                "Ola! Em qual regiao voce procura?", aad_de(identificador, "text_body")
+            ),
+            raw_payload=None,
+            status=None,
+        )
     )
+    await session.commit()
+
+    linha = await session.get(Message, identificador)
+    assert linha is not None
+    assert linha.status is None
+    assert linha.provider_message_id is None
+
+
+async def test_varias_linhas_de_saida_convivem(session) -> None:
+    """A UNIQUE (channel, provider_message_id) sobrevive ao nullable.
+
+    Postgres nao considera dois NULLs iguais, entao as linhas de saida nao
+    colidem entre si nem enfraquecem a dedup do TEC-125.
+    """
+    for _ in range(3):
+        identificador = uuid.uuid4()
+        session.add(
+            Message(
+                id=identificador,
+                channel="whatsapp",
+                provider_message_id=None,
+                conversation_key="5511911112222",
+                role=MessageRole.AGENTE,
+                direction=MessageDirection.OUTBOUND,
+                content_type=MessageContentType.TEXTO,
+                text_body=None,
+                raw_payload=None,
+                status=None,
+            )
+        )
+    await session.commit()
+
+    total = await session.scalar(text("SELECT count(*) FROM messages WHERE direction = 'OUTBOUND'"))
+    assert total == 3
+
+
+async def test_telemetria_e_um_para_um_com_a_mensagem(session) -> None:
+    message = nova_mensagem("wamid.TELEMETRIA")
+    session.add(message)
+    await session.commit()
+
+    session.add(
+        MessageTelemetry(
+            message_id=message.id,
+            model="claude-sonnet-5",
+            subagent="qualificador",
+            tokens_in=1200,
+            tokens_out=180,
+            cost_usd=Decimal("0.006300"),
+            latency_ms=1450,
+        )
+    )
+    await session.commit()
+
+    linha = await session.get(MessageTelemetry, message.id)
+    assert linha is not None
+    assert linha.cost_usd == Decimal("0.006300")
+
+    session.add(
+        MessageTelemetry(
+            message_id=message.id,
+            model="outro",
+            subagent="roteador",
+            tokens_in=1,
+            tokens_out=1,
+            cost_usd=None,
+            latency_ms=1,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await session.commit()
+    await session.rollback()
 
 
 async def test_provider_message_id_e_unico_por_canal(session) -> None:
