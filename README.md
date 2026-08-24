@@ -64,4 +64,14 @@ Os critérios de aceite da história vivem como testes executáveis:
   registro da fala do agente.
 - Modelo sem preço cadastrado grava `cost_usd` NULL, não zero.
 - A chave de cifra vem de `CONTENT_ENCRYPTION_KEY` (32 bytes em base64). Rotação
-  de chave não está implementada.
+  de chave não está implementada, mas o formato gravado carrega um byte de
+  versão (`version(1) || nonce(12) || ciphertext || tag(16)`) para que ela não
+  exija reescrever a tabela offline no dia em que for feita.
+- `ENVIRONMENT=production` com `CONTENT_ENCRYPTION_KEY` no default commitado
+  **impede a aplicação de subir**. Assinatura errada falha na primeira
+  requisição; chave de cifra errada não falha — grava tudo com uma chave
+  pública e ninguém percebe. A guarda vive no validator de `Settings`, então
+  vale também para o Alembic, que cifra a tabela no backfill da 0004.
+- `message_telemetry` tem `cache_read_tokens` e `cache_write_tokens` nullable.
+  Eles são gravados desde já para que o dado exista; o cálculo de custo ainda
+  ignora cache e fica com a história que liga o agente (TEC-134).
