@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     contexto_teto_de_tokens: int = 12000
     contexto_literais_minimas: int = 20
 
+    # Reserva subtraida do teto antes de qualquer comparacao -- ver
+    # `teto_de_tokens_efetivo`. Protege contra o que o contador nao ve.
+    contexto_headroom_de_tokens: int = 400
+
     # Dobrar `gatilho - minimas` mensagens deixa exatamente `minimas` literais.
     # Manter gatilho >= 2 * minimas e o que garante o piso depois da regeneracao.
     contexto_gatilho_de_regeneracao: int = 40
@@ -100,11 +104,38 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def teto_de_tokens_efetivo(self) -> int:
+        """O teto contra o qual a montagem (TEC-127) de fato compara.
+
+        A contagem mede um proxy menor do que vai ser enviado. `_contar_se_valer`
+        monta uma unica mensagem de usuario plana e `ContadorAnthropic.contar` a
+        manda como `messages=[{"role": "user", ...}]`, sem `system=`. A
+        requisicao real que a TEC-134 vai montar e um system prompt mais um array
+        multi-turno, e cada turno carrega overhead estrutural que o contador
+        nunca ve -- da ordem de 100-200 tokens numa janela de vinte a quarenta
+        mensagens. Some a isso que `_texto_do_estado` e explicitamente uma
+        representacao para medir, nao o renderizador que a TEC-134 vai usar.
+
+        A reserva existe porque contar a forma exata exigiria conhecer a forma
+        exata, e o consumidor que a define ainda nao existe: construir para um
+        palpite e pior que reservar margem. 400 cobre ~5 tokens por turno numa
+        janela de quarenta (200) com o dobro de folga para o system prompt e para
+        o renderizador do estado.
+
+        **A TEC-134 tem de re-verificar este numero contra a requisicao real**
+        assim que ela existir, medindo `count_tokens` sobre a chamada de verdade
+        contra o valor que este modulo reporta em `ContextoMontado.tokens`. Se a
+        diferenca couber com folga, este numero desce; se nao couber, ele sobe.
+        """
+        return self.contexto_teto_de_tokens - self.contexto_headroom_de_tokens
+
+    @property
     def limiar_de_contagem_efetivo(self) -> int:
         """Acima disto, `_contar_se_valer` (TEC-127) paga a contagem real;
         abaixo, confia na estimativa de `len/4`.
 
-        0.6 do teto por padrao, nao um numero redondo: um limiar T implica um
+        0.6 do teto efetivo por padrao (`teto_de_tokens_efetivo`, ja com a
+        reserva descontada), nao um numero redondo: um limiar T implica um
         texto de aproximadamente `4*T` caracteres (a estimativa e `len//4`).
         Para a estimativa enganar -- dizer "cabe" quando na verdade estoura --
         o texto precisaria rodar a menos de `4*T/teto` caracteres por token.
@@ -124,7 +155,7 @@ class Settings(BaseSettings):
         """
         if self.contexto_limiar_de_contagem is not None:
             return self.contexto_limiar_de_contagem
-        return round(self.contexto_teto_de_tokens * _FRACAO_SEGURA_DO_LIMIAR_DE_CONTAGEM)
+        return round(self.teto_de_tokens_efetivo * _FRACAO_SEGURA_DO_LIMIAR_DE_CONTAGEM)
 
 
 @lru_cache

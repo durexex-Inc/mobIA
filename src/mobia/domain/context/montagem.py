@@ -121,16 +121,30 @@ async def _contar_se_valer(
 ) -> int:
     """Estimativa barata decide se vale pagar o round trip da contagem real.
 
-    Turno normal nao paga nada; turno perto do limite paga um e acerta. A
-    estimativa nunca decide sozinha se cabe -- so decide se vale medir.
+    Turno normal nao paga nada; turno perto do limite paga um e acerta.
+
+    Abaixo do limiar a estimativa **e** a resposta: e ela que decide se cabe e
+    e ela que sai em `ContextoMontado.tokens`. Nao ha aqui uma segunda medida
+    conferindo o palpite -- o limiar existe para que o palpite so responda
+    onde errar nao muda a decisao, nao para tira-lo da decisao.
 
     `len/4` supoe 4 caracteres por token. Isso cobre o pior caso plausivel de
     portugues acentuado (3.2-3.7 chars/token) com folga -- ver a derivacao
     completa e os casos que este limiar **nao** cobre (emoji, base64/URL) em
     `Settings.limiar_de_contagem_efetivo`.
     """
+    settings = get_settings()
     estimativa = _estimar(resumo, literais, estado)
-    if estimativa < get_settings().limiar_de_contagem_efetivo:
+    # Backstop duro, independente do limiar: `estimativa >= teto` e o mesmo que
+    # `len(texto) >= 4 * teto`, ou seja, um texto que ja estoura o teto ate na
+    # hipotese mais generosa de 4 caracteres por token. Devolver a estimativa
+    # ai seria decidir "cabe" a partir do unico numero que diz o contrario. Uma
+    # comparacao, de graca no trafego normal. Com o limiar default (0.6 do
+    # teto) ela nunca e o gatilho -- so passa a valer se alguem subir
+    # CONTEXTO_LIMIAR_DE_CONTAGEM acima do teto.
+    if estimativa < settings.limiar_de_contagem_efetivo and estimativa < (
+        settings.teto_de_tokens_efetivo
+    ):
         return estimativa
     return await contador.contar(
         f"{SISTEMA}\n{resumo or ''}\n{_texto_das(literais)}\n{_texto_do_estado(estado)}"
@@ -248,7 +262,9 @@ async def montar_contexto(
 
     tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
 
-    teto = settings.contexto_teto_de_tokens
+    # Teto ja com a reserva descontada: o contador mede um proxy menor que a
+    # requisicao real da TEC-134 -- ver `Settings.teto_de_tokens_efetivo`.
+    teto = settings.teto_de_tokens_efetivo
     iteracao = 0
     ja_comprimiu = False
     while tokens > teto:

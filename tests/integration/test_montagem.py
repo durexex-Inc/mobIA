@@ -683,6 +683,66 @@ async def test_resumo_ilegivel_e_sobrescrito_pela_proxima_dobra(session) -> None
     assert gravado.texto == "resumo do que veio antes"
 
 
+async def test_teto_e_comparado_ja_com_a_reserva_descontada(session, sempre_contar) -> None:
+    """Uma contagem entre o teto efetivo e o nominal tem de acionar o laco.
+
+    11.800 esta abaixo dos 12.000 nominais e acima do teto efetivo. E
+    exatamente a faixa que a reserva existe para pegar: o contador mede uma
+    mensagem plana, e o overhead estrutural do array multi-turno que a TEC-134
+    vai montar cabe dentro dessa diferenca. Sem a reserva, este contexto seria
+    aceito aqui e recusado pelo provedor la.
+    """
+    await semear(session, 25)
+    resumidor = ResumidorFake()
+
+    contexto = await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=resumidor,
+        contador=ContadorFake(roteiro=[11800, 9000]),
+    )
+
+    assert resumidor.chamadas == [INSTRUCAO_DOBRAR], (
+        "11.800 cabe no teto nominal e nao no efetivo -- o laco tem de rodar"
+    )
+    assert contexto.tokens <= get_settings().teto_de_tokens_efetivo
+
+
+async def test_estimativa_acima_do_teto_paga_a_contagem_real(
+    session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Backstop duro: a estimativa nunca responde "cabe" ao passar do teto.
+
+    Com o limiar levantado para alem do teto -- o unico jeito de este caminho
+    ser o gatilho -- um texto grande o suficiente para a propria estimativa
+    passar do teto ainda tem de acionar a contagem real. Decidir que cabe a
+    partir do unico numero disponivel, que diz o contrario, seria devolver um
+    contexto acima do limite fisico da chamada com um palpite por tras.
+    """
+    monkeypatch.setenv("CONTEXTO_LIMIAR_DE_CONTAGEM", "999999")
+    get_settings.cache_clear()
+    try:
+        # 20 x 2.500 caracteres: `len//4` ja passa do teto efetivo sozinho.
+        await semear(session, 20, texto="a" * 2500)
+        contador = ContadorFake()
+
+        await montar_contexto(
+            get_sessionmaker(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumidor=ResumidorFake(),
+            contador=contador,
+        )
+
+        assert contador.chamadas >= 1, (
+            "estimativa acima do teto tem de ceder a vez para a contagem real, "
+            "mesmo com o limiar desligado"
+        )
+    finally:
+        get_settings.cache_clear()
+
+
 async def test_estado_de_qualificacao_entra_no_contexto(session) -> None:
     await semear(session, 3)
     session.add(
@@ -738,20 +798,22 @@ async def test_limiar_de_contagem_cede_a_vez_para_a_contagem_real(session) -> No
     )
 
 
-async def test_limiar_nao_protege_conteudo_denso_em_emoji(session) -> None:
-    """Documenta o risco aceito: `len/4` nao sabe que emoji custa mais token
-    por caractere.
+async def test_conteudo_curto_em_caracteres_nunca_aciona_a_contagem_real(session) -> None:
+    """O mecanismo, nao o emoji: a decisao de medir olha `len()` e mais nada.
 
-    Poucas mensagens cheias de emoji ficam curtas em CARACTERES -- a
-    estimativa so olha para `len()` -- entao a estimativa barata decide
-    sozinha que cabe e a contagem real nunca e chamada, mesmo que na API de
-    verdade esse texto custe bem mais tokens do que a estimativa supoe (a
-    conta completa esta em `Settings.limiar_de_contagem_efetivo`). Este teste
-    nao prova o numero real de tokens -- o dublê tambem mede por `len/4`, e
-    nenhum teste desta suite toca a rede -- mas prova o mecanismo: conteudo
-    curto em caracteres nunca aciona a contagem real, seja lá o que ele
-    contenha. E o gap que o comentario do limiar documenta, nao um bug
-    escondido.
+    Este teste nao mede tokens de verdade -- o duble tambem conta por `len/4`
+    e nenhum teste desta suite toca a rede. O que ele prende e o gatilho:
+    conteudo curto em CARACTERES nunca paga a contagem real, seja la o que ele
+    contenha. Emoji e so o exemplo mais afiado (cada um e 1 caractere Python e
+    2-4 tokens); base64 e URL sao a versao comum. A conta completa esta em
+    `Settings.limiar_de_contagem_efetivo`.
+
+    NOTA PARA QUEM VIER DEPOIS: este teste ficar vermelho e o desfecho
+    esperado, nao uma regressao. Ele descreve um risco aceito, nao uma
+    garantia do produto -- no dia em que existir um estimador que leve
+    densidade de caracteres nao-ASCII em conta (ticket proprio, fora do
+    TEC-127), este conteudo passara a acionar a contagem real e a assercao
+    abaixo tem de ser invertida junto com a mudanca, nao "consertada".
     """
     emoji_denso = "\U0001f3e0" * 200  # curto em len(), denso em tokens de verdade
     await semear(session, 3, texto=emoji_denso)
