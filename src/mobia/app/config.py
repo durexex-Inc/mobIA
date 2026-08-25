@@ -57,8 +57,14 @@ class Settings(BaseSettings):
     contexto_gatilho_de_regeneracao: int = 40
 
     # Acima desta estimativa barata (len/4) vale pagar a contagem real da API.
-    # Abaixo, o turno nao gasta round trip nenhum.
-    contexto_limiar_de_contagem: int = 10000
+    # Abaixo, o turno nao gasta round trip nenhum. Nao e um numero redondo: e
+    # 0.75 do teto. `len/4` supoe 4 caracteres por token, mas portugues
+    # acentuado e emoji (comuns no trafego do WhatsApp) rodam perto de 3.2 --
+    # ou seja, no pior caso a estimativa erra por um fator de ate 4/3.2 = 1.25.
+    # Um limiar acima de 0.8 do teto deixaria passar, sem medir de verdade,
+    # estimativas que na contagem real ja estourariam o teto; 0.75 fica abaixo
+    # dessa fronteira com folga.
+    contexto_limiar_de_contagem: int = 9000
 
     # Teto de iteracoes do laco do estouro. Um `while` aqui e um caminho para
     # gastar dinheiro em circulo com um resumo que nao encolhe.
