@@ -14,6 +14,13 @@ log = structlog.get_logger(__name__)
 # lead e a mensagem livre deixa de ser permitida.
 CODIGO_FORA_DA_JANELA = 131047
 
+# 408 e 429 sao 4xx na faixa numerica, mas nao sao erro do cliente: o servidor
+# esta pedindo para tentar de novo mais tarde, nao dizendo que o payload esta
+# errado. Tratar qualquer um dos dois como EnvioRecusado prende a reserva e
+# perde a resposta ao lead para sempre. Quem reintroduzir um `status >= 400`
+# generico aqui reintroduz esse bug -- por isso o carve-out fica explicito.
+CODIGOS_4XX_RETENTAVEIS = frozenset({408, 429})
+
 TIMEOUT_SEGUNDOS = 10.0
 
 
@@ -44,7 +51,9 @@ class WhatsAppOutbound(GuardedOutbound):
 
     async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> None:
         settings = get_settings()
-        cliente = self._cliente or httpx.AsyncClient(timeout=TIMEOUT_SEGUNDOS)
+        # Monta url/corpo antes de abrir o cliente: se o payload vier sem uma
+        # chave esperada, o KeyError estoura sem deixar um AsyncClient aberto
+        # para tras.
         url = f"{settings.whatsapp_api_base}/{payload['de']}/messages"
         corpo = {
             "messaging_product": "whatsapp",
@@ -52,6 +61,7 @@ class WhatsAppOutbound(GuardedOutbound):
             "type": "text",
             "text": {"body": payload["texto"]},
         }
+        cliente = self._cliente or httpx.AsyncClient(timeout=TIMEOUT_SEGUNDOS)
 
         try:
             resposta = await cliente.post(
@@ -69,6 +79,9 @@ class WhatsAppOutbound(GuardedOutbound):
                 await cliente.aclose()
 
         if resposta.status_code >= 500:
+            raise EnvioRetentavel(f"http {resposta.status_code}")
+
+        if resposta.status_code in CODIGOS_4XX_RETENTAVEIS:
             raise EnvioRetentavel(f"http {resposta.status_code}")
 
         if resposta.status_code >= 400:

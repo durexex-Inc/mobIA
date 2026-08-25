@@ -42,14 +42,38 @@ async def test_5xx_e_retentavel(session) -> None:
         await entregar(cliente_que_responde(httpx.Response(503, json={})))
 
 
+async def test_429_e_retentavel(session) -> None:
+    """429 e 4xx na faixa numerica, mas e o servidor pedindo para tentar depois.
+
+    Nao e o cliente que errou -- classificar como permanente perde a resposta
+    ao lead para sempre.
+    """
+    with pytest.raises(EnvioRetentavel):
+        await entregar(
+            cliente_que_responde(
+                httpx.Response(429, json={"error": {"code": 4, "message": "rate limit"}})
+            )
+        )
+
+
+async def test_408_e_retentavel(session) -> None:
+    """Mesmo raciocinio do 429: timeout do servidor nao e payload invalido."""
+    with pytest.raises(EnvioRetentavel):
+        await entregar(cliente_que_responde(httpx.Response(408, json={})))
+
+
 async def test_4xx_comum_e_recusa_permanente(session) -> None:
     """Payload invalido nao melhora com retentativa."""
-    with pytest.raises(EnvioRecusado):
+    with pytest.raises(EnvioRecusado) as exc_info:
         await entregar(
             cliente_que_responde(
                 httpx.Response(400, json={"error": {"code": 100, "message": "invalido"}})
             )
         )
+
+    # A classificacao de tres vias e o ponto central desta tarefa: um 4xx
+    # comum precisa cair no tipo base, nunca no subtipo de janela expirada.
+    assert type(exc_info.value) is EnvioRecusado
 
 
 async def test_fora_da_janela_de_24h_tem_excecao_propria(session) -> None:
