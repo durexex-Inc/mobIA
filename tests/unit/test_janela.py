@@ -44,3 +44,38 @@ def test_dividir_preserva_a_ordem_e_nao_perde_ninguem() -> None:
     a_dobrar, a_manter = dividir(todas, minimas=20)
 
     assert a_dobrar + a_manter == todas, "nenhuma mensagem some nem troca de lugar"
+
+
+def test_dividir_so_dobra_abaixo_do_piso_com_o_opt_in() -> None:
+    """O piso e default; ceder e escolha explicita de quem chama.
+
+    Sem a flag, vinte literais nao produzem nada a dobrar -- e o que fazia o
+    laco do estouro cair direto no descarte, jogando fora dezenove das vinte
+    mensagens do lead em vez de dobra-las.
+    """
+    a_dobrar, a_manter = dividir(mensagens(20), minimas=20)
+    assert a_dobrar == []
+    assert len(a_manter) == 20
+
+    a_dobrar, a_manter = dividir(mensagens(20), minimas=20, piso_pode_ceder=True)
+    assert len(a_dobrar) == 19
+    assert len(a_manter) == 1, "a mais recente fica: e a fala a que o modelo tem de responder"
+
+
+def test_dividir_com_o_opt_in_preserva_a_ordem_e_nao_perde_ninguem() -> None:
+    todas = mensagens(20)
+    a_dobrar, a_manter = dividir(todas, minimas=20, piso_pode_ceder=True)
+
+    assert a_dobrar + a_manter == todas, "ceder o piso nao pode perder mensagem"
+
+
+def test_dividir_com_o_opt_in_nao_dobra_a_ultima_mensagem() -> None:
+    """Uma literal sozinha nao tem o que dobrar nem com o piso cedendo.
+
+    E o que garante que o laco do estouro termina: o degrau de dobrar abaixo
+    do piso para de ter efeito e o proximo degrau assume.
+    """
+    a_dobrar, a_manter = dividir(mensagens(1), minimas=20, piso_pode_ceder=True)
+
+    assert a_dobrar == []
+    assert len(a_manter) == 1

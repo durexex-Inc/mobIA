@@ -89,14 +89,21 @@ Os critérios de aceite da história vivem como testes executáveis:
 
 - O contexto é `resumo + tudo o que veio depois da marca d'água, na íntegra` —
   não existe lacuna entre o que foi resumido e o que está literal.
-- **A marca nunca avança além de deixar vinte mensagens literais.** As vinte mais
-  recentes são um piso, não um teto: entre regenerações o prompt carrega de vinte
-  a quarenta na íntegra.
-- Estouro do teto de 12.000 tokens avança a marca primeiro e só re-resume o
-  resumo depois — dobrar mensagem é perda normal, re-resumir é perda em cascata.
-  O laço é limitado a três iterações.
+- **A marca nunca avança além de deixar vinte mensagens literais**, com a única
+  exceção do estouro do teto, abaixo. As vinte mais recentes são um piso, não um
+  teto: entre regenerações o prompt carrega de vinte a quarenta na íntegra.
+- Estouro do teto de 12.000 tokens desce a cascata sempre na mesma ordem, e o
+  laço é limitado a três iterações: (1) avança a marca dobrando as mensagens
+  mais antigas, com o piso de pé; (2) re-resume o próprio resumo, uma vez por
+  turno; (3) dobra **abaixo** do piso, deixando só a mensagem mais recente
+  literal; (4) só então descarta literais. Dobrar é perda normal, re-resumir é
+  perda em cascata, e descartar é perda total — por isso o descarte é o último.
 - Quando o piso e o teto se contradizem (vinte mensagens que somam mais de
-  12.000 tokens), o teto vence e `contexto.piso_violado` registra.
+  12.000 tokens), o teto vence: ele é o limite físico da chamada, o piso é
+  preferência de qualidade. O piso cede **dobrando**, não descartando — o
+  conteúdo vai para o resumo e a marca avança junto, então continua não
+  existindo lacuna. `contexto.piso_violado` registra nos dois lugares em que o
+  piso de fato cede: nessa dobra e no truncamento de emergência.
 - Falha do provedor não derruba o turno: usa o resumo antigo, corta literais até
   caber, e loga `contexto.degradado`.
 - O resumo é cifrado em repouso como o conteúdo das mensagens; o estado de

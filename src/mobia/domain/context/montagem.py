@@ -4,7 +4,13 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
-from mobia.domain.context.janela import Marca, dividir, literais_apos, marca_de
+from mobia.domain.context.janela import (
+    Marca,
+    deve_regenerar,
+    dividir,
+    literais_apos,
+    marca_de,
+)
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.repositorio import (
     ResumoDaConversa,
@@ -156,10 +162,19 @@ async def _truncar_ate_caber(
     contexto nenhum que caiba: a excecao tipada avisa em vez de devolver algo
     acima do teto.
     """
+    piso = get_settings().contexto_literais_minimas
+    avisou_do_piso = False
     while len(literais) > 1 and tokens > teto:
         corte = max(len(literais) // 2, 1)
         descartadas = len(literais) - corte
         literais = literais[-corte:]
+        if len(literais) < piso and not avisou_do_piso:
+            # O piso cedeu aqui tambem, e da pior forma: o corte nao dobra o
+            # conteudo em lugar nenhum, ele some. Mesmo evento da dobra abaixo
+            # do piso -- quem pagina em `contexto.piso_violado` tem de ver os
+            # dois casos, e este e o mais grave dos dois.
+            log.warning("contexto.piso_violado", channel=channel, literais=len(literais), piso=piso)
+            avisou_do_piso = True
         log.warning("contexto.truncado", channel=channel, descartadas=descartadas, tokens=tokens)
         tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
 
@@ -198,7 +213,7 @@ async def montar_contexto(
 
     # Gatilho por acumulo: quarenta literais dobram as vinte mais antigas e
     # deixam vinte. Por proximidade, a marca colaria no presente.
-    if len(literais) >= settings.contexto_gatilho_de_regeneracao:
+    if deve_regenerar(len(literais), settings.contexto_gatilho_de_regeneracao):
         texto_do_resumo, literais, cobertas, marca_atual, falhou = await _dobrar(
             session_factory,
             channel,
@@ -214,43 +229,55 @@ async def montar_contexto(
 
     tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
 
+    teto = settings.contexto_teto_de_tokens
     iteracao = 0
-    while tokens > settings.contexto_teto_de_tokens:
+    ja_comprimiu = False
+    while tokens > teto:
         if iteracao >= settings.contexto_max_iteracoes:
             degradado = True
             texto_do_resumo, literais, tokens = await _truncar_ate_caber(
-                contador,
-                channel,
-                texto_do_resumo,
-                literais,
-                estado,
-                tokens,
-                settings.contexto_teto_de_tokens,
+                contador, channel, texto_do_resumo, literais, estado, tokens, teto
             )
             break
 
+        piso_cede = False
         if len(literais) > settings.contexto_literais_minimas:
+            # Degrau 1: dobrar mensagem em resumo e perda normal, e o piso fica
+            # de pe. E a mesma operacao da regeneracao, disparada por token em
+            # vez de por contagem.
             instrucao = INSTRUCAO_DOBRAR
-        elif texto_do_resumo is not None:
-            # Nao ha mais mensagem a dobrar sem violar o piso; agora a cascata.
+        elif texto_do_resumo is not None and not ja_comprimiu:
+            # Degrau 2: re-resumir o resumo e perda em cascata, entao so
+            # acontece depois que o degrau 1 nao bastou. Uma vez por turno:
+            # comprimir de novo o que ja foi comprimido paga outra chamada de
+            # modelo para tirar cada vez menos e trava o degrau 3, que tira
+            # mais e preserva o conteudo em vez de descarta-lo.
             instrucao = INSTRUCAO_COMPRIMIR
-            log.warning("contexto.piso_violado", channel=channel, tokens=tokens)
+        elif len(literais) > 1:
+            # Degrau 3, o unico lugar onde o piso cede -- e o spec diz que
+            # cede-lo e permitido justamente aqui. Vinte mensagens que sozinhas
+            # passam do teto existem (vinte audios transcritos longos chegam
+            # la) e o teto, limite fisico da chamada, vence o piso, que e
+            # preferencia de qualidade.
+            #
+            # O que importa e *como* o piso cede: dobrando, nao descartando. A
+            # dobra manda o conteudo para o resumo e avanca a marca junto,
+            # entao continua nao existindo lacuna entre o que esta resumido e o
+            # que esta literal -- a propriedade que a marca d'agua inteira
+            # existe para comprar. Descartar (o degrau seguinte) poupa uma
+            # chamada de modelo e perde a fala do lead para sempre.
+            instrucao = INSTRUCAO_DOBRAR
+            piso_cede = True
         else:
-            # Sem resumo para comprimir e sem literal sobrando para dobrar:
-            # pedir ao provedor para comprimir uma string vazia nao produz um
-            # resumo, produz um resumo inventado -- a mesma classe de falha
-            # que a Task 4 evita ao recusar um resumo vazio/so-espaco. Vai
-            # direto para o corte de emergencia em vez de fabricar memoria.
+            # Uma unica literal e nada que dobrar. Pedir ao provedor para
+            # comprimir uma string vazia nao produz um resumo, produz um resumo
+            # inventado -- a mesma classe de falha que a Task 4 evita ao
+            # recusar um resumo vazio/so-espaco. Vai direto para o corte de
+            # emergencia em vez de fabricar memoria.
             degradado = True
-            log.warning("contexto.sem_resumo_para_comprimir", channel=channel, tokens=tokens)
+            log.warning("contexto.sem_reducao_possivel", channel=channel, tokens=tokens)
             texto_do_resumo, literais, tokens = await _truncar_ate_caber(
-                contador,
-                channel,
-                texto_do_resumo,
-                literais,
-                estado,
-                tokens,
-                settings.contexto_teto_de_tokens,
+                contador, channel, texto_do_resumo, literais, estado, tokens, teto
             )
             break
 
@@ -264,6 +291,7 @@ async def montar_contexto(
             cobertas,
             marca_atual,
             instrucao,
+            piso_pode_ceder=piso_cede,
         )
         degradado = degradado or falhou
         if falhou:
@@ -272,15 +300,24 @@ async def montar_contexto(
             # em cena agora -- nunca devolver contexto acima do teto so porque
             # o provedor caiu no meio do laco.
             texto_do_resumo, literais, tokens = await _truncar_ate_caber(
-                contador,
-                channel,
-                texto_do_resumo,
-                literais,
-                estado,
-                tokens,
-                settings.contexto_teto_de_tokens,
+                contador, channel, texto_do_resumo, literais, estado, tokens, teto
             )
             break
+        ja_comprimiu = ja_comprimiu or instrucao == INSTRUCAO_COMPRIMIR
+        if piso_cede:
+            # Aqui, e so aqui na dobra, o piso de fato cedeu -- o outro lugar e
+            # o truncamento, que avisa por conta propria. E sinal de que a
+            # conversa tem um formato que ninguem previu, e por isso vale
+            # paginar em cima dele: o alerta so acorda alguem quando o piso
+            # realmente quebrou.
+            degradado = True
+            log.warning(
+                "contexto.piso_violado",
+                channel=channel,
+                literais=len(literais),
+                piso=settings.contexto_literais_minimas,
+                tokens=tokens,
+            )
         tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
         iteracao += 1
 
@@ -304,6 +341,8 @@ async def _dobrar(
     cobertas: int,
     marca: Marca | None,
     instrucao: str,
+    *,
+    piso_pode_ceder: bool = False,
 ) -> tuple[str | None, list[Message], int, Marca | None, bool]:
     """Uma passada: gera o resumo novo, grava a marca e devolve o que sobrou.
 
@@ -319,7 +358,9 @@ async def _dobrar(
         a_manter = literais
         conteudo = texto_do_resumo or ""
     else:
-        a_dobrar, a_manter = dividir(literais, settings.contexto_literais_minimas)
+        a_dobrar, a_manter = dividir(
+            literais, settings.contexto_literais_minimas, piso_pode_ceder=piso_pode_ceder
+        )
         if not a_dobrar:
             return texto_do_resumo, literais, cobertas, marca, False
         conteudo = (

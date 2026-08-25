@@ -333,17 +333,17 @@ async def test_laco_termina_mesmo_com_resumidor_que_nao_encolhe(session, sempre_
 async def test_truncar_descarta_o_resumo_quando_uma_mensagem_nao_basta(
     session, sempre_contar
 ) -> None:
-    """Segundo degrau da cascata final, agora fim a fim via `montar_contexto`.
+    """Ultimo degrau da cascata, fim a fim via `montar_contexto`.
 
     As quatro primeiras contagens do roteiro cobrem a contagem inicial e as
-    tres passadas normais do laco (dobra, comprime, comprime) ate estourar o
-    teto de iteracoes com 20 literais. As quatro seguintes cobrem a reducao
-    progressiva da janela ate 1 literal (20 -> 10 -> 5 -> 2 -> 1), sempre
-    acima do teto. So a nona, apos descartar o resumo tambem, cabe.
+    tres passadas do laco: dobra (25 -> 20 literais), comprime o resumo, e
+    dobra abaixo do piso (20 -> 1). Nesse ponto o teto de iteracoes estoura com
+    uma unica literal -- nao ha janela para reduzir pela metade -- e so a
+    quinta contagem, apos descartar o resumo tambem, cabe.
     """
     await semear(session, 25)
     resumidor = ResumidorFake()
-    contador = ContadorFake(roteiro=[13500] * 8 + [9000])
+    contador = ContadorFake(roteiro=[13500] * 4 + [9000])
 
     contexto = await montar_contexto(
         get_sessionmaker(),
@@ -390,15 +390,19 @@ async def test_sem_resumo_previo_nunca_manda_comprimir_string_vazia(session, sem
     """Sem resumo ainda, o laco nao pode pedir para o provedor comprimir o nada.
 
     Cinco literais (abaixo do piso) sem nenhum resumo previo, com a contagem
-    estourando de cara: sem esta guarda, o laco chamaria
+    estourando de cara. Comprimir aqui seria chamar
     `resumidor.resumir(INSTRUCAO_COMPRIMIR, "")` -- e o texto que o provedor
     inventasse a partir do vazio viraria memoria da conversa sem nunca ter
     sido ganho, a mesma classe de falha que a Task 4 evita ao recusar um
-    resumo vazio. O caminho certo e ir direto para o corte de emergencia.
+    resumo vazio.
+
+    O caminho certo nao e o corte de emergencia: e dobrar abaixo do piso. As
+    quatro mensagens antigas viram resumo de verdade -- conteudo que existiu --
+    em vez de serem descartadas.
     """
     await semear(session, 5)
     resumidor = ResumidorFake()
-    contador = ContadorFake(roteiro=[13500, 9000])  # estoura, cabe apos reduzir a janela
+    contador = ContadorFake(roteiro=[13500, 9000])  # estoura, cabe apos dobrar abaixo do piso
 
     contexto = await montar_contexto(
         get_sessionmaker(),
@@ -408,10 +412,107 @@ async def test_sem_resumo_previo_nunca_manda_comprimir_string_vazia(session, sem
         contador=contador,
     )
 
-    assert resumidor.chamadas == [], "nunca deve pedir ao provedor para comprimir uma string vazia"
-    assert contexto.resumo is None
+    assert INSTRUCAO_COMPRIMIR not in resumidor.chamadas, (
+        "nunca deve pedir ao provedor para comprimir uma string vazia"
+    )
+    assert resumidor.chamadas == [INSTRUCAO_DOBRAR], "o piso cede dobrando, nao descartando"
+    assert contexto.resumo == "resumo do que veio antes"
+    assert len(contexto.literais) == 1
     assert contexto.tokens <= get_settings().contexto_teto_de_tokens
     assert contexto.degradado is True
+
+
+async def test_piso_cede_dobrando_e_nao_descartando(session, caplog, sempre_contar) -> None:
+    """O cenario que o spec permite violar o piso -- e o unico.
+
+    Vinte mensagens que sozinhas somam mais de 12.000 tokens (vinte audios
+    transcritos longos) sem nenhum resumo previo. O piso nao pode ser
+    respeitado e o teto nao negocia, entao o piso cede. A questao e *como*:
+
+    - dobrando, as dezenove mais antigas viram resumo, a marca avanca junto e
+      nao existe lacuna entre o resumido e o literal;
+    - descartando, elas somem, e o modelo recebe resumo de 1..N + literais
+      N+k..M com um buraco no meio -- exatamente o que a arquitetura da marca
+      d'agua existe para impedir.
+
+    O teste prende o primeiro comportamento: o resumidor foi chamado, a marca
+    esta gravada cobrindo as dezenove, e nenhum `contexto.truncado` aconteceu.
+    """
+    criadas = await semear(session, 20)
+    resumidor = ResumidorFake()
+    contador = ContadorFake(roteiro=[13500, 9000])
+
+    with caplog.at_level(logging.WARNING):
+        contexto = await montar_contexto(
+            get_sessionmaker(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumidor=resumidor,
+            contador=contador,
+        )
+
+    assert resumidor.chamadas == [INSTRUCAO_DOBRAR], (
+        "sem resumo previo nao ha o que comprimir; o degrau que sobra e dobrar abaixo do piso"
+    )
+    assert len(contexto.literais) == 1
+    assert contexto.resumo == "resumo do que veio antes"
+    assert contexto.tokens <= get_settings().contexto_teto_de_tokens
+    assert "contexto.truncado" not in caplog.text, "conteudo do lead nao pode ser descartado aqui"
+    assert "contexto.piso_violado" in caplog.text, "o piso cedeu; o evento tem de registrar"
+
+    async with get_sessionmaker()() as outra:
+        gravado = await ler_resumo(outra, CANAL, CONVERSA)
+    assert gravado is not None, "a marca tem de avancar junto -- e o que fecha a lacuna"
+    assert gravado.mensagens_cobertas == 19
+    assert gravado.watermark_message_id == criadas[18].id
+
+
+async def test_comprimir_nao_registra_piso_violado(session, caplog, sempre_contar) -> None:
+    """O evento so pode disparar quando o piso de fato cede.
+
+    Aqui o laco dobra (25 -> 20 literais) e comprime o resumo justamente para
+    *nao* encostar no piso -- as literais ficam intactas nas vinte. Um alerta
+    que dispara neste caminho manda o operador investigar um piso saudavel e,
+    pior, se acostuma a ser ignorado quando o piso quebrar de verdade.
+    """
+    await semear(session, 25)
+    resumidor = ResumidorFake()
+    contador = ContadorFake(roteiro=[13500, 13500, 9000])
+
+    with caplog.at_level(logging.WARNING):
+        contexto = await montar_contexto(
+            get_sessionmaker(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumidor=resumidor,
+            contador=contador,
+        )
+
+    assert resumidor.chamadas == [INSTRUCAO_DOBRAR, INSTRUCAO_COMPRIMIR]
+    assert len(contexto.literais) == get_settings().contexto_literais_minimas
+    assert "contexto.piso_violado" not in caplog.text
+
+
+async def test_truncar_registra_o_piso_violado_junto_com_o_descarte(sempre_contar, caplog) -> None:
+    """Descartar literais abaixo do piso e violacao de piso, e a mais grave.
+
+    Antes so `contexto.truncado` registrava aqui, com outro nome, enquanto
+    `contexto.piso_violado` disparava num caminho em que o piso estava
+    intacto. Quem pagina no evento do piso tem de ver este caso.
+    """
+    literais = [_mensagem_literal() for _ in range(40)]
+    contador = ContadorFake(roteiro=[13500, 9000])  # 40 -> 20 ainda estoura, 20 -> 10 cabe
+
+    with caplog.at_level(logging.WARNING):
+        _, restantes, _ = await _truncar_ate_caber(
+            contador, CANAL, "resumo qualquer", literais, None, 13500, 12000
+        )
+
+    assert len(restantes) == 10
+    assert "contexto.piso_violado" in caplog.text
+    assert caplog.text.count("contexto.piso_violado") == 1, (
+        "um aviso por corte encheria o log; o piso quebra uma vez so"
+    )
 
 
 async def test_comprimir_persiste_o_resultado(session, sempre_contar) -> None:
