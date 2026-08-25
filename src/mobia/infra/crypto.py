@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import os
 import uuid
@@ -39,6 +40,20 @@ def _cifra() -> AESGCM:
     return AESGCM(chave)
 
 
+def _marca_do_aad(aad: str) -> str:
+    """Identifica o AAD no erro sem carregar o AAD.
+
+    O texto da excecao vaza para o log via `str(exc)` de quem captura, e a
+    mascara de PII do projeto so caminha por campos estruturados -- nunca por
+    dentro de uma string de excecao. E a mesma razao do `hide_parameters=True`
+    em `db.py`. Desde o TEC-127 nem todo AAD e um UUID: `aad_do_resumo` monta a
+    identidade a partir de `(channel, conversation_key)`, e `conversation_key` e
+    o telefone do lead. O hash curto mantem o valor de diagnostico -- duas
+    falhas do mesmo AAD correlacionam -- sem carregar o identificador.
+    """
+    return hashlib.sha256(aad.encode()).hexdigest()[:12]
+
+
 def aad_de(message_id: uuid.UUID | str, coluna: str) -> str:
     """Amarra o ciphertext a sua propria linha e coluna.
 
@@ -65,17 +80,19 @@ def decrypt(blob: bytes | None, aad: str) -> str | None:
     # ("Nonce must be between 8 and 128 bytes") e quem captura DecryptionError
     # nao pega. A mensagem nunca carrega o blob.
     if len(blob) < _TAMANHO_MINIMO:
-        raise DecryptionError(f"blob de {len(blob)} bytes, minimo {_TAMANHO_MINIMO}: {aad}")
+        raise DecryptionError(
+            f"blob de {len(blob)} bytes, minimo {_TAMANHO_MINIMO}: aad={_marca_do_aad(aad)}"
+        )
     versao = blob[0]
     if versao != VERSAO_ATUAL:
         # Versao desconhecida nao e tentada: parsear com o layout errado
         # produziria InvalidTag e esconderia a causa real.
-        raise DecryptionError(f"versao de cifra desconhecida {versao}: {aad}")
+        raise DecryptionError(f"versao de cifra desconhecida {versao}: aad={_marca_do_aad(aad)}")
     nonce, corpo = blob[1 : 1 + NONCE_BYTES], blob[1 + NONCE_BYTES :]
     try:
         return _cifra().decrypt(nonce, corpo, aad.encode()).decode()
     except InvalidTag as exc:
-        raise DecryptionError(aad) from exc
+        raise DecryptionError(f"conteudo nao autentica: aad={_marca_do_aad(aad)}") from exc
 
 
 def encrypt_json(valor: dict[str, Any] | None, aad: str) -> bytes | None:
