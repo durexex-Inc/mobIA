@@ -14,9 +14,15 @@ def aad_do_resumo(channel: str, conversation_key: str) -> str:
     """Amarra o resumo a sua propria conversa.
 
     Nao ha `message_id` aqui -- o resumo cobre muitas mensagens -- entao a
-    identidade da linha e o par (channel, conversation_key).
+    identidade da linha e o par (channel, conversation_key). Prefixado por
+    tamanho porque `channel` e `String(32)` sem whitelist de caracteres: sem o
+    prefixo, `("a:b", "c")` e `("a", "b:c")` colapsariam no mesmo AAD e um
+    resumo poderia decifrar sob a chave de outra conversa. Com o tamanho na
+    frente de cada parte, o ponto onde ela termina deixa de depender do
+    conteudo, entao dois pares diferentes nunca produzem a mesma string.
     """
-    return aad_de(f"{channel}:{conversation_key}", "resumo")
+    identidade = f"{len(channel)}:{channel}:{len(conversation_key)}:{conversation_key}"
+    return aad_de(identidade, "resumo")
 
 
 class ConversationSummary(Base):
@@ -32,10 +38,10 @@ class ConversationSummary(Base):
     channel: Mapped[str] = mapped_column(String(32), primary_key=True)
     conversation_key: Mapped[str] = mapped_column(String(64), primary_key=True)
 
-    # Cifrado com AES-GCM, AAD `{channel}:{conversation_key}:resumo`. Um resumo
-    # destila as mesmas frases que `messages.text_body` guarda -- deixa-lo em
-    # claro ao lado de uma coluna cifrada seria manter a fechadura e tirar a
-    # porta.
+    # Cifrado com AES-GCM, AAD de `aad_do_resumo` (formato em detalhe la). Um
+    # resumo destila as mesmas frases que `messages.text_body` guarda --
+    # deixa-lo em claro ao lado de uma coluna cifrada seria manter a
+    # fechadura e tirar a porta.
     resumo: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
 
     watermark_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

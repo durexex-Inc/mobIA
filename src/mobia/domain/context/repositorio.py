@@ -49,7 +49,13 @@ async def gravar_resumo(
     mensagens_cobertas: int,
     modelo: str,
 ) -> None:
-    """Upsert: uma conversa tem um resumo, nao um historico deles."""
+    """Upsert: uma conversa tem um resumo, nao um historico deles.
+
+    Nao commita -- a sessao e emprestada, como em `ler_resumo` e `ler_estado`,
+    e quem chama e dono da fronteira da transacao. Isso importa a partir da
+    TEC-145: gravar o resumo junto com outro estado na mesma transacao exige
+    que nada aqui a feche antes da hora.
+    """
     cifrado = encrypt(texto, aad_do_resumo(channel, conversation_key))
     valores = {
         "channel": channel,
@@ -78,7 +84,6 @@ async def gravar_resumo(
             },
         )
     )
-    await session.commit()
 
 
 async def ler_estado(

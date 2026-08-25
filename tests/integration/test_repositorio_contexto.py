@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import text as sql
 
-from mobia.domain.context.models import LeadQualification, aad_do_resumo
+from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.domain.context.repositorio import gravar_resumo, ler_estado, ler_resumo
 from mobia.infra.crypto import DecryptionError, decrypt
 
@@ -25,6 +25,8 @@ async def gravar(session, texto: str = "lead procura apto de 2 quartos na zona s
         mensagens_cobertas=40,
         modelo="claude-opus-5",
     )
+    # gravar_resumo nao commita -- quem chama e dono da fronteira da transacao.
+    await session.commit()
     return marca
 
 
@@ -106,3 +108,27 @@ async def test_estado_de_qualificacao_e_lido_do_banco(session) -> None:
 
 async def test_estado_ausente_devolve_none(session) -> None:
     assert await ler_estado(session, CANAL, "nunca-falou") is None
+
+
+def test_aad_do_resumo_e_injetivo_sobre_channel_e_key() -> None:
+    """`channel` nao tem whitelist de caracteres -- sem prefixo de tamanho, dois pares
+    diferentes colapsariam no mesmo AAD e um resumo decifraria sob a chave de outra
+    conversa."""
+    assert aad_do_resumo("a:b", "c") != aad_do_resumo("a", "b:c")
+
+
+def test_texto_claro_no_resumo_e_recusado() -> None:
+    """Mesma guarda de `Message`: str aqui vira vazamento no texto do erro."""
+    with pytest.raises(TypeError) as erro:
+        ConversationSummary(
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumo="quero apto na zona sul",
+            watermark_created_at=datetime.now(UTC),
+            watermark_message_id=uuid.uuid4(),
+            mensagens_cobertas=1,
+            modelo="claude-opus-5",
+        )
+
+    assert "resumo" in str(erro.value)
+    assert "zona sul" not in str(erro.value)
