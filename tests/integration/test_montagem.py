@@ -2,8 +2,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from mobia.domain.context.janela import Marca, literais_apos
+from mobia.domain.context.resumo import ResumoGerado
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
+from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.domain.messages.status import MessageStatus
 from mobia.infra.crypto import aad_de, encrypt
 
@@ -98,3 +100,18 @@ async def test_conversa_de_outro_lead_nao_entra(session) -> None:
     literais = await literais_apos(session, CANAL, CONVERSA, None)
 
     assert len(literais) == 3
+
+
+def test_resumo_gerado_tem_custo_calculavel() -> None:
+    """O log de `resumo.gerado` carrega custo; o modelo padrao tem preco."""
+    gerado = ResumoGerado(
+        texto="lead procura apto na zona sul",
+        modelo="claude-opus-5",
+        tokens_in=8000,
+        tokens_out=500,
+        latency_ms=1200,
+    )
+    custo = custo_em_dolar(gerado.modelo, gerado.tokens_in, gerado.tokens_out)
+
+    assert custo is not None, "modelo padrao do projeto tem de estar na tabela de precos"
+    assert custo > 0
