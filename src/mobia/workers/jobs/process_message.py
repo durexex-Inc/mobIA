@@ -6,12 +6,11 @@ import structlog
 from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agente.turno import executar_turno
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
 
 log = structlog.get_logger(__name__)
-
-ACK_KIND = "ack"
 
 
 async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
@@ -62,7 +61,20 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> str:
         await session.commit()
 
     try:
-        await outbound.send(identifier, ACK_KIND, {})
+        async with session_factory() as session:
+            linha = await session.get(Message, identifier)
+        if linha is None:
+            log.warning("message.sumiu", message_id=message_id)
+            return "skipped"
+
+        resultado = await executar_turno(
+            session_factory,
+            message=linha,
+            classificador=ctx["classificador"],
+            resumidor=ctx["resumidor"],
+            contador=ctx["contador"],
+            outbound=outbound,
+        )
 
         async with session_factory() as session:
             await session.execute(
@@ -87,4 +99,4 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> str:
         raise
 
     log.info("message.processed", message_id=message_id)
-    return "processed"
+    return resultado

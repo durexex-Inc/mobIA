@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 import pytest
+from conftest import ClassificadorFake, ContadorFake, ResumidorFake
 from sqlalchemy import func, select
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -15,6 +16,23 @@ from mobia.domain.outbound.port import GuardedOutbound
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
 from mobia.workers.jobs.process_message import claim_message, process_message
+
+
+def _ctx(session_factory, outbound) -> dict[str, Any]:
+    """Monta o ctx completo que `process_message` agora exige.
+
+    Desde a TEC-134 `process_message` roda o turno inteiro, entao alem de
+    `session_factory`/`outbound` ele precisa das tres portas do agente -- este
+    modulo testa reprocessamento e reserva de outbound, nao classificacao, daí
+    os dubles fixos em vez das fixtures parametrizaveis de `test_turno.py`.
+    """
+    return {
+        "session_factory": session_factory,
+        "outbound": outbound,
+        "classificador": ClassificadorFake(),
+        "resumidor": ResumidorFake(),
+        "contador": ContadorFake(),
+    }
 
 
 class OutboundEspiao(GuardedOutbound):
@@ -66,9 +84,9 @@ async def enfileirada(session, status: str = MessageStatus.QUEUED) -> uuid.UUID:
 async def test_processa_mensagem_enfileirada(session) -> None:
     message_id = await enfileirada(session)
     outbound = OutboundEspiao(get_sessionmaker())
-    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
+    ctx = _ctx(get_sessionmaker(), outbound)
 
-    assert await process_message(ctx, str(message_id)) == "processed"
+    assert await process_message(ctx, str(message_id)) == "respondido"
 
     linha = await session.get(Message, message_id)
     await session.refresh(linha)
@@ -80,7 +98,7 @@ async def test_processa_mensagem_enfileirada(session) -> None:
 async def test_mensagem_ja_processada_e_ignorada(session) -> None:
     message_id = await enfileirada(session, status=MessageStatus.PROCESSED)
     outbound = OutboundEspiao(get_sessionmaker())
-    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
+    ctx = _ctx(get_sessionmaker(), outbound)
 
     assert await process_message(ctx, str(message_id)) == "skipped"
     assert outbound.entregas == []
@@ -129,7 +147,7 @@ async def test_nao_perder_mensagem_em_falha_do_worker(session) -> None:
 
     # Worker interrompido logo depois da entrega, antes de marcar PROCESSED.
     caido = OutboundQueCai(get_sessionmaker())
-    ctx = {"session_factory": get_sessionmaker(), "outbound": caido}
+    ctx = _ctx(get_sessionmaker(), caido)
     with pytest.raises(QuedaDoWorker):
         await process_message(ctx, str(message_id))
 
@@ -142,7 +160,7 @@ async def test_nao_perder_mensagem_em_falha_do_worker(session) -> None:
     # Worker reiniciado: instancia nova, sem a falha.
     reiniciado = OutboundEspiao(get_sessionmaker())
     ctx["outbound"] = reiniciado
-    assert await process_message(ctx, str(message_id)) == "processed"
+    assert await process_message(ctx, str(message_id)) == "respondido"
 
     await session.refresh(linha)
     assert linha.status == MessageStatus.PROCESSED
@@ -154,13 +172,13 @@ async def test_mensagem_em_received_tambem_e_processavel(session) -> None:
     """Cobre a linha que o sweeper recupera: nunca chegou a ficar QUEUED."""
     message_id = await enfileirada(session, status=MessageStatus.RECEIVED)
     outbound = OutboundEspiao(get_sessionmaker())
-    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
+    ctx = _ctx(get_sessionmaker(), outbound)
 
-    assert await process_message(ctx, str(message_id)) == "processed"
+    assert await process_message(ctx, str(message_id)) == "respondido"
     assert outbound.entregas == [message_id]
 
 
 async def test_mensagem_inexistente_e_ignorada() -> None:
     outbound = OutboundEspiao(get_sessionmaker())
-    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
+    ctx = _ctx(get_sessionmaker(), outbound)
     assert await process_message(ctx, str(uuid.uuid4())) == "skipped"

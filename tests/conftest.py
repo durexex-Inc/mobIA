@@ -3,6 +3,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
@@ -17,6 +18,7 @@ from mobia.domain.context.resumo import ResumoGerado
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
+from mobia.domain.outbound.port import GuardedOutbound
 from mobia.infra.anthropic import get_client
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import dispose_engine, get_sessionmaker
@@ -24,6 +26,8 @@ from mobia.infra.queue import create_redis_pool
 
 if TYPE_CHECKING:
     from arq.connections import ArqRedis
+
+    from mobia.domain.agente.schemas import Intencao
 
 TABELAS = (
     "conversation_intent",
@@ -77,6 +81,117 @@ async def semear(
     return criadas
 
 
+CANAL_AGENTE = "whatsapp"
+CONVERSA_AGENTE = "5511911112222"
+
+
+async def _entrada_do_lead(session: AsyncSession) -> Message:
+    """Semeia a mensagem INBOUND que dispara um turno, ja reivindicada.
+
+    `status=PROCESSING` porque e o estado que `process_message` deixa depois
+    do claim, antes de rodar o turno -- e o ponto de partida real de
+    `executar_turno`, nao um QUEUED que nunca existiria naquele momento.
+    """
+    identificador = uuid.uuid4()
+    linha = Message(
+        id=identificador,
+        channel=CANAL_AGENTE,
+        provider_message_id=f"wamid.{identificador.hex[:10]}",
+        sender_external_id=CONVERSA_AGENTE,
+        recipient_external_id="222222222",
+        conversation_key=CONVERSA_AGENTE,
+        role=MessageRole.LEAD,
+        direction=MessageDirection.INBOUND,
+        content_type=MessageContentType.TEXTO,
+        text_body=encrypt(
+            "quero saber mais sobre apartamentos", aad_de(identificador, "text_body")
+        ),
+        raw_payload=None,
+        status=MessageStatus.PROCESSING,
+    )
+    session.add(linha)
+    await session.commit()
+    return linha
+
+
+class ClassificadorFake:
+    """Duble do provedor. Nenhum teste desta suite toca a rede."""
+
+    def __init__(
+        self,
+        intencao: "Intencao" = None,  # type: ignore[assignment]
+        confianca: Decimal = Decimal("0.91"),
+        erro: Exception | None = None,
+    ) -> None:
+        from mobia.domain.agente.schemas import Intencao as _Intencao
+
+        self.intencao = intencao or _Intencao.COMPRA
+        self.confianca = confianca
+        self.erro = erro
+        self.chamadas = 0
+
+    async def classificar(self, contexto):
+        from mobia.domain.agente.schemas import RespostaDoAgente
+
+        self.chamadas += 1
+        if self.erro is not None:
+            raise self.erro
+        return RespostaDoAgente(
+            intencao=self.intencao,
+            confianca=self.confianca,
+            resposta="Ola! Em qual regiao voce procura?",
+            modelo="claude-opus-5",
+            tokens_in=1200,
+            tokens_out=180,
+            latency_ms=900,
+        )
+
+
+class OutboundFake(GuardedOutbound):
+    def __init__(self, session_factory, erro: Exception | None = None) -> None:
+        super().__init__(session_factory)
+        self.erro = erro
+        self.entregues: list[str] = []
+
+    async def _deliver(self, message_id, kind, payload) -> None:
+        if self.erro is not None:
+            raise self.erro
+        self.entregues.append(payload["texto"])
+
+
+@pytest.fixture
+def classificador_fake():
+    return ClassificadorFake
+
+
+@pytest.fixture
+def outbound_fake():
+    def _criar(erro: Exception | None = None) -> OutboundFake:
+        return OutboundFake(get_sessionmaker(), erro=erro)
+
+    return _criar
+
+
+@pytest.fixture
+def rodar_turno():
+    """Semeia uma entrada e roda o turno inteiro sobre ela."""
+
+    async def _rodar(session, classificador, outbound, resumidor, contador) -> str:
+        from mobia.domain.agente.turno import executar_turno
+
+        linha = await _entrada_do_lead(session)
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor,
+            contador=contador,
+            outbound=outbound,
+        )
+
+    return _rodar
+
+
 class ResumidorFake:
     """Duble do provedor. Nenhum teste desta suite toca a rede."""
 
@@ -117,6 +232,16 @@ class ContadorFake:
         if self.roteiro:
             return self.roteiro.pop(0)
         return len(texto) // 4
+
+
+@pytest.fixture
+def resumidor_fake():
+    return ResumidorFake
+
+
+@pytest.fixture
+def contador_fake():
+    return ContadorFake
 
 
 @pytest.fixture

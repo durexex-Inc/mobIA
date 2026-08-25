@@ -4,7 +4,9 @@ from arq import cron, func
 
 from mobia.app.config import get_settings
 from mobia.app.logging import configure_logging
-from mobia.domain.outbound.noop import NoopOutbound
+from mobia.domain.agente.classificador import ClassificadorAnthropic
+from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
+from mobia.domain.outbound.whatsapp import WhatsAppOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.queue import redis_settings
 from mobia.workers.jobs.process_message import process_message
@@ -23,7 +25,10 @@ async def startup(ctx: dict[str, Any]) -> None:
     session_factory = get_sessionmaker()
     ctx["settings"] = settings
     ctx["session_factory"] = session_factory
-    ctx["outbound"] = NoopOutbound(session_factory)
+    ctx["outbound"] = WhatsAppOutbound(session_factory)
+    ctx["classificador"] = ClassificadorAnthropic()
+    ctx["resumidor"] = ResumidorAnthropic()
+    ctx["contador"] = ContadorAnthropic()
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
