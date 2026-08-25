@@ -40,6 +40,30 @@ class Settings(BaseSettings):
     # chave publicamente conhecida e nada reclama. Dai a guarda abaixo.
     content_encryption_key: str = CHAVE_DE_DESENVOLVIMENTO
 
+    # Sem default utilizavel: chave ausente falha alto na construcao do cliente.
+    # Nao precisa da guarda de producao que a chave de cifra tem -- uma chave de
+    # API errada falha na primeira chamada, enquanto uma chave de cifra errada
+    # grava dado com valor publicamente conhecido e nao reclama.
+    anthropic_api_key: str = ""
+
+    modelo_resumo: str = "claude-opus-5"
+
+    # RN-02.5: teto por chamada. RN-02.2: piso de mensagens literais.
+    contexto_teto_de_tokens: int = 12000
+    contexto_literais_minimas: int = 20
+
+    # Dobrar `gatilho - minimas` mensagens deixa exatamente `minimas` literais.
+    # Manter gatilho >= 2 * minimas e o que garante o piso depois da regeneracao.
+    contexto_gatilho_de_regeneracao: int = 40
+
+    # Acima desta estimativa barata (len/4) vale pagar a contagem real da API.
+    # Abaixo, o turno nao gasta round trip nenhum.
+    contexto_limiar_de_contagem: int = 10000
+
+    # Teto de iteracoes do laco do estouro. Um `while` aqui e um caminho para
+    # gastar dinheiro em circulo com um resumo que nao encolhe.
+    contexto_max_iteracoes: int = 3
+
     log_level: str = "INFO"
 
     sweep_received_after_seconds: int = 30

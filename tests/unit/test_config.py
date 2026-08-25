@@ -8,6 +8,7 @@ from mobia.app.config import (
     Settings,
     get_settings,
 )
+from mobia.infra.anthropic import get_client
 
 
 def test_settings_le_do_ambiente(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,3 +62,34 @@ def test_desenvolvimento_segue_com_o_default(monkeypatch: pytest.MonkeyPatch) ->
     settings = Settings(_env_file=None)
     assert settings.environment == "development"
     assert settings.content_encryption_key == CHAVE_DE_DESENVOLVIMENTO
+
+
+def test_defaults_da_janela_de_contexto(settings) -> None:
+    """Os numeros da RN-02.2 e RN-02.5 vivem em configuracao, nao espalhados no codigo."""
+    assert settings.modelo_resumo == "claude-opus-5"
+    assert settings.contexto_teto_de_tokens == 12000
+    assert settings.contexto_literais_minimas == 20
+    assert settings.contexto_gatilho_de_regeneracao == 40
+
+
+def test_gatilho_deixa_o_piso_de_literais(settings) -> None:
+    """A invariante das vinte: dobrar `gatilho - minimas` sempre deixa `minimas`.
+
+    Se alguem mexer num dos dois numeros sem mexer no outro, a regeneracao passa
+    a colar a marca no presente e o piso quebra no turno seguinte a cada resumo.
+    """
+    assert settings.contexto_gatilho_de_regeneracao >= 2 * settings.contexto_literais_minimas
+
+
+def test_cliente_recusa_subir_sem_chave(monkeypatch, caches_de_cliente_limpos: None) -> None:
+    """Chave ausente falha aqui, com mensagem util, e nao no meio de um turno."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    with pytest.raises(ConfiguracaoInsegura, match="ANTHROPIC_API_KEY"):
+        get_client()
+
+
+def test_cliente_e_construido_uma_vez(monkeypatch, caches_de_cliente_limpos: None) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-teste")
+
+    assert get_client() is get_client()

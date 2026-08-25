@@ -24,6 +24,16 @@ def test_campos_de_conteudo_sao_redigidos_inteiros(caplog) -> None:
     assert "<redigido>" in caplog.text
 
 
+def test_resumo_e_redigido_inteiro(caplog) -> None:
+    """O resumo (TEC-127) destila as mesmas frases que `text_body` -- mesma protecao."""
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.INFO):
+        log.info("evento.teste", resumo="lead procura apto de 2 quartos na zona sul")
+
+    assert "zona sul" not in caplog.text
+    assert "<redigido>" in caplog.text
+
+
 def test_identificador_externo_e_mascarado_pela_chave(caplog) -> None:
     log = structlog.get_logger("teste")
     with caplog.at_level(logging.INFO):
