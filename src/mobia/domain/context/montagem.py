@@ -404,6 +404,21 @@ async def montar_contexto(
     )
 
 
+def montar_prompt(contexto: ContextoMontado) -> str:
+    """Renderiza as partes na ordem que determina o custo.
+
+    Publico de proposito: a TEC-134 precisa do texto, e a ordem e decisao deste
+    modulo, nao dela. Sistema e resumo primeiro porque mudam devagar e ficam
+    quentes no cache; estado por ultimo porque muda a cada extracao da TEC-145.
+    """
+    partes = [contexto.sistema]
+    if contexto.resumo is not None:
+        partes.append(f"Resumo da conversa ate aqui:\n{contexto.resumo}")
+    partes.append(f"Mensagens recentes:\n{_texto_das(contexto.literais)}")
+    partes.append(f"Estado de qualificacao:\n{_texto_do_estado(contexto.estado)}")
+    return "\n\n".join(partes)
+
+
 async def _dobrar(
     session_factory: async_sessionmaker[AsyncSession],
     channel: str,
