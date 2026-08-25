@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from mobia.app.config import get_settings
+from mobia.domain.agente.models import ConversationIntent  # noqa: F401
 from mobia.domain.context.models import ConversationSummary, LeadQualification  # noqa: F401
 from mobia.domain.messages.models import Base
 from mobia.domain.outbound.models import OutboundDispatch  # noqa: F401

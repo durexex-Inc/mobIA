@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from arq.connections import ArqRedis
 
 TABELAS = (
+    "conversation_intent",
     "conversation_summaries",
     "lead_qualification",
     "message_telemetry",
