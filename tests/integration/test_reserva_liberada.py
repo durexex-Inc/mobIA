@@ -48,10 +48,31 @@ async def uma_mensagem(session) -> uuid.UUID:
     return identificador
 
 
+class OutboundLiberacaoFalha(OutboundQueFalha):
+    """Simula o delete da liberacao explodindo -- deadlock, conexao caida etc."""
+
+    async def _liberar(self, message_id: uuid.UUID, kind: str) -> None:
+        raise RuntimeError("conexao caiu no meio do delete de liberacao")
+
+
+class OutboundQueEstoura(GuardedOutbound):
+    """Deixa escapar uma excecao crua, sem passar por EnvioRetentavel/EnvioRecusado."""
+
+    async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> None:
+        raise RuntimeError("provider explodiu sem dizer se vale retentar")
+
+
 async def reservas(session, message_id: uuid.UUID) -> int:
     return await session.scalar(
         sql("SELECT count(*) FROM outbound_dispatches WHERE message_id = :m"),
         {"m": message_id},
+    )
+
+
+async def reservas_por_kind(session, message_id: uuid.UUID, kind: str) -> int:
+    return await session.scalar(
+        sql("SELECT count(*) FROM outbound_dispatches WHERE message_id = :m AND kind = :k"),
+        {"m": message_id, "k": kind},
     )
 
 
@@ -117,4 +138,71 @@ async def test_entrega_bem_sucedida_mantem_a_reserva(session) -> None:
     outbound = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("nunca"), falhas=0)
 
     assert await outbound.send(message_id, KIND, {}) is True
+    assert await reservas(session, message_id) == 1
+
+
+async def test_falha_ao_liberar_nao_mascara_o_erro_original(session, caplog) -> None:
+    """Se o delete da liberacao falhar, quem chama send() ainda ve EnvioRetentavel.
+
+    Nao um erro de infra do release. Do contrario um retentavel vira
+    permanente por engano e a reserva fica presa do mesmo jeito que a
+    liberacao existe para evitar.
+    """
+    message_id = await uma_mensagem(session)
+    outbound = OutboundLiberacaoFalha(get_sessionmaker(), EnvioRetentavel("timeout"))
+
+    raised: Exception | None = None
+    with caplog.at_level("ERROR"):
+        try:
+            await outbound.send(message_id, KIND, {})
+        except Exception as exc:
+            raised = exc
+
+    assert isinstance(raised, EnvioRetentavel), f"esperava EnvioRetentavel, veio {raised!r}"
+    assert "outbound.liberacao_falhou" in caplog.text
+
+
+async def test_liberar_so_apaga_a_reserva_do_kind_que_falhou(session) -> None:
+    """AND kind = :k e o que impede um reply liberado de arrastar o ack junto."""
+    message_id = await uma_mensagem(session)
+    ack_outbound = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("nunca"), falhas=0)
+    assert await ack_outbound.send(message_id, "ack", {}) is True
+
+    reply_outbound = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("timeout"))
+    try:
+        await reply_outbound.send(message_id, KIND, {})
+    except EnvioRetentavel:
+        pass
+
+    assert await reservas_por_kind(session, message_id, "ack") == 1, "a reserva do ack sobrevive"
+    assert await reservas_por_kind(session, message_id, KIND) == 0
+
+
+async def test_falha_retentavel_loga_reserva_liberada(session, caplog) -> None:
+    message_id = await uma_mensagem(session)
+    outbound = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("timeout"))
+
+    with caplog.at_level("WARNING"):
+        try:
+            await outbound.send(message_id, KIND, {})
+        except EnvioRetentavel:
+            pass
+
+    assert "outbound.reserva_liberada" in caplog.text
+
+
+async def test_excecao_nao_mapeada_mantem_a_reserva(session) -> None:
+    """O release so age em EnvioRetentavel -- uma excecao crua e caminho permanente.
+
+    Isso deixa o contrato explicito: um adapter que nao embrulhar suas falhas
+    em EnvioRetentavel/EnvioRecusado reabre o silencio que esta task fecha.
+    """
+    message_id = await uma_mensagem(session)
+    outbound = OutboundQueEstoura(get_sessionmaker())
+
+    try:
+        await outbound.send(message_id, KIND, {})
+    except RuntimeError:
+        pass
+
     assert await reservas(session, message_id) == 1

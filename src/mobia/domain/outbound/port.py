@@ -60,7 +60,21 @@ class GuardedOutbound:
             # reivindicar e a guarda responder "ja entreguei isso" -- e o lead
             # nunca recebe nada sobre aquele turno. Liberar inverte a troca
             # para uma duplicata possivel, que e visivel e recuperavel.
-            await self._liberar(message_id, kind)
+            try:
+                await self._liberar(message_id, kind)
+            except Exception:
+                # Se o proprio delete da liberacao falhar (deadlock, conexao
+                # caida), quem chama send() ainda precisa ver EnvioRetentavel,
+                # nao um erro de infra do release -- senao um retentavel vira
+                # permanente por engano e a reserva fica presa do mesmo jeito
+                # que este bloco existe para evitar. O erro de liberacao vira
+                # seu proprio evento de log, porque e um problema operacional
+                # diferente de perder o envio.
+                log.error(
+                    "outbound.liberacao_falhou",
+                    message_id=str(message_id),
+                    kind=kind,
+                )
             raise
 
         log.info("outbound.delivered", message_id=str(message_id), kind=kind)
