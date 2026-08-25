@@ -404,14 +404,20 @@ async def montar_contexto(
     )
 
 
-def montar_prompt(contexto: ContextoMontado) -> str:
+def montar_prompt(contexto: ContextoMontado, *, omitir_sistema: bool = False) -> str:
     """Renderiza as partes na ordem que determina o custo.
 
     Publico de proposito: a TEC-134 precisa do texto, e a ordem e decisao deste
     modulo, nao dela. Sistema e resumo primeiro porque mudam devagar e ficam
     quentes no cache; estado por ultimo porque muda a cada extracao da TEC-145.
+
+    `omitir_sistema=True` e para quem ja manda a propria persona pelo campo
+    `system` dedicado da API (a TEC-134 manda `SISTEMA_DO_AGENTE`): reenviar
+    `contexto.sistema` aqui dentro do turno do usuario duplicaria a persona
+    com um texto mais fraco que o oficial. O default mantem o texto completo
+    para quem ainda nao tem um canal de sistema proprio.
     """
-    partes = [contexto.sistema]
+    partes = [] if omitir_sistema else [contexto.sistema]
     if contexto.resumo is not None:
         partes.append(f"Resumo da conversa ate aqui:\n{contexto.resumo}")
     partes.append(f"Mensagens recentes:\n{_texto_das(contexto.literais)}")

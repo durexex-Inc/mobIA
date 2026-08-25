@@ -16,6 +16,7 @@ from mobia.domain.context.montagem import (
     _texto_das,
     _truncar_ate_caber,
     montar_contexto,
+    montar_prompt,
 )
 from mobia.domain.context.repositorio import ler_resumo
 from mobia.domain.context.resumo import (  # noqa: F401  (documenta a fronteira)
@@ -178,6 +179,68 @@ def test_mensagem_sem_texto_entra_marcada_pelo_tipo() -> None:
     assert _texto_da(desconhecido) == "[LEAD] (mensagem sem texto)", (
         "tipo nao mapeado ainda tem de dizer que veio alguma coisa"
     )
+
+
+def test_montar_prompt_ordena_sistema_resumo_literais_e_estado() -> None:
+    """A ordem e a razao de `montar_prompt` existir: sistema e resumo primeiro
+    porque mudam devagar e ficam quentes no cache de prompt, estado por
+    ultimo porque muda a cada extracao da TEC-145. Nada testava isso antes.
+    """
+    contexto = ContextoMontado(
+        sistema="MARCA-SISTEMA",
+        resumo="MARCA-RESUMO",
+        literais=[_mensagem_literal(corpo="MARCA-LITERAL")],
+        estado=LeadQualification(channel=CANAL, conversation_key=CONVERSA, regiao="MARCA-ESTADO"),
+        tokens=10,
+        degradado=False,
+    )
+
+    prompt = montar_prompt(contexto)
+
+    assert (
+        prompt.index("MARCA-SISTEMA")
+        < prompt.index("MARCA-RESUMO")
+        < prompt.index("MARCA-LITERAL")
+        < prompt.index("MARCA-ESTADO")
+    )
+
+
+def test_montar_prompt_omite_resumo_ausente() -> None:
+    """Sem resumo (primeiro turno da conversa), a secao nao aparece vazia --
+    ela simplesmente nao existe.
+    """
+    contexto = ContextoMontado(
+        sistema="MARCA-SISTEMA",
+        resumo=None,
+        literais=[_mensagem_literal(corpo="MARCA-LITERAL")],
+        estado=None,
+        tokens=5,
+        degradado=False,
+    )
+
+    prompt = montar_prompt(contexto)
+
+    assert "Resumo da conversa" not in prompt
+
+
+def test_montar_prompt_omite_sistema_quando_o_chamador_ja_tem_um() -> None:
+    """`omitir_sistema=True` e o que a TEC-134 usa: ela ja manda a propria
+    persona pelo campo `system` dedicado da API, e reenviar `contexto.sistema`
+    aqui dentro do turno do usuario duplicaria a mesma instrucao, mais fraca.
+    """
+    contexto = ContextoMontado(
+        sistema="MARCA-SISTEMA",
+        resumo="MARCA-RESUMO",
+        literais=[_mensagem_literal(corpo="MARCA-LITERAL")],
+        estado=None,
+        tokens=5,
+        degradado=False,
+    )
+
+    prompt = montar_prompt(contexto, omitir_sistema=True)
+
+    assert "MARCA-SISTEMA" not in prompt
+    assert "MARCA-RESUMO" in prompt
 
 
 def test_audio_nao_se_confunde_com_mensagem_vazia() -> None:

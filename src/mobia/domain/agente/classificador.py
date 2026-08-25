@@ -1,9 +1,11 @@
 import json
+import math
 import time
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
 import structlog
+from anthropic import transform_schema
 
 from mobia.app.config import get_settings
 from mobia.domain.agente.schemas import Intencao, RespostaDoAgente
@@ -33,7 +35,9 @@ SISTEMA_DO_AGENTE = (
 
 # Derivado do enum de proposito: duas listas mantidas a mao divergem, e a
 # divergencia so aparece quando o modelo devolve um valor que o codigo nao
-# sabe converter.
+# sabe converter. `minimum`/`maximum` ficam aqui como parte do contrato do
+# modulo (testados abaixo) mesmo sabendo que o compilador de schema da API
+# nao os suporta -- ver `_SCHEMA_COMPILADO`.
 SCHEMA_DA_RESPOSTA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -44,6 +48,18 @@ SCHEMA_DA_RESPOSTA: dict[str, Any] = {
     "required": ["intencao", "confianca", "resposta"],
     "additionalProperties": False,
 }
+
+# `output_config.format` bruto (sem `output_format=` Pydantic) vai direto pro
+# corpo da requisicao sem passar pelo `transform_schema` do SDK -- essa
+# funcao so roda no caminho de `client.messages.parse()`. `minimum`/`maximum`
+# nao estao na lista de palavras-chave que o compilador de schema do servidor
+# aceita (ver a doc da skill claude-api, "JSON Schema Limitations"), entao
+# manda-los seria um 400 na primeira chamada real. `transform_schema` dobra
+# as duas chaves para dentro de `description` (o modelo ainda le o intervalo,
+# so que como texto) e nao muta `SCHEMA_DA_RESPOSTA` -- os testes de schema
+# continuam lendo o dict original. Compilado uma vez no import: e uma funcao
+# pura do dict acima, que nao muda em runtime.
+_SCHEMA_COMPILADO = transform_schema(SCHEMA_DA_RESPOSTA)
 
 
 class RespostaInvalida(RuntimeError):
@@ -62,8 +78,12 @@ class ClassificadorAnthropic:
             model=settings.modelo_agente,
             max_tokens=MAX_TOKENS_DA_RESPOSTA,
             system=SISTEMA_DO_AGENTE,
-            messages=[{"role": "user", "content": montar_prompt(contexto)}],
-            output_config={"format": {"type": "json_schema", "schema": SCHEMA_DA_RESPOSTA}},
+            # omitir_sistema=True: SISTEMA_DO_AGENTE ja cobre a persona pelo
+            # canal `system` dedicado. Reenviar `contexto.sistema` aqui
+            # duplicaria a mesma instrucao, mais fraca, dentro do turno do
+            # usuario.
+            messages=[{"role": "user", "content": montar_prompt(contexto, omitir_sistema=True)}],
+            output_config={"format": {"type": "json_schema", "schema": _SCHEMA_COMPILADO}},
         )
         latency_ms = int((time.monotonic() - comeco) * 1000)
 
@@ -80,17 +100,48 @@ class ClassificadorAnthropic:
 
         try:
             dados = json.loads(texto)
+            intencao = Intencao(dados["intencao"])
+
+            confianca_bruta = dados["confianca"]
+            # additionalProperties/enum/type sao os unicos campos que o
+            # compilador do servidor de fato impoe (ver _SCHEMA_COMPILADO
+            # acima) -- o intervalo [0, 1] de `confianca` nunca foi garantido
+            # la. `json.loads` tambem aceita os literais `NaN`/`Infinity` do
+            # JSON5, que passariam incolumes por um `Decimal(str(...))` sem
+            # nunca satisfazer nem `>= 0.8` nem `< 0.6` de quem consome depois.
+            if (
+                isinstance(confianca_bruta, bool)
+                or not isinstance(confianca_bruta, int | float)
+                or not math.isfinite(confianca_bruta)
+                or not (0 <= confianca_bruta <= 1)
+            ):
+                # RuntimeError nao esta no tuple do except abaixo -- propaga
+                # direto, sem virar `type(exc).__name__`. Mensagem fixa, sem
+                # o valor: e erro de contrato, nao motivo para expor o que
+                # veio.
+                raise RespostaInvalida("campo confianca fora do intervalo [0, 1]")
+
             resultado = RespostaDoAgente(
-                intencao=Intencao(dados["intencao"]),
-                confianca=Decimal(str(dados["confianca"])),
+                intencao=intencao,
+                confianca=Decimal(str(confianca_bruta)),
                 resposta=dados["resposta"].strip(),
                 modelo=settings.modelo_agente,
                 tokens_in=resposta.usage.input_tokens,
                 tokens_out=resposta.usage.output_tokens,
                 latency_ms=latency_ms,
             )
-        except (json.JSONDecodeError, KeyError, ValueError) as exc:
-            # Nunca interpola `texto`: ele carrega a resposta destinada ao lead.
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            ValueError,
+            TypeError,
+            AttributeError,
+            InvalidOperation,
+        ) as exc:
+            # Nunca interpola `texto` nem `dados`: carregam a resposta
+            # destinada ao lead. So o nome da classe, nunca `str(exc)` --
+            # `KeyError`/`TypeError` de um schema com formato inesperado
+            # podem ecoar o proprio valor recebido na mensagem da excecao.
             raise RespostaInvalida(type(exc).__name__) from exc
 
         if not resultado.resposta:
