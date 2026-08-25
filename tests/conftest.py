@@ -1,6 +1,8 @@
 import subprocess
 import sys
+import uuid
 from collections.abc import AsyncIterator, Iterator
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -11,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mobia.app.config import Settings, get_settings
 from mobia.app.logging import configure_logging
 from mobia.app.main import create_app
+from mobia.domain.context.resumo import ResumoGerado
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
+from mobia.domain.messages.models import Message
+from mobia.domain.messages.status import MessageStatus
 from mobia.infra.anthropic import get_client
+from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.queue import create_redis_pool
 
@@ -25,6 +32,105 @@ TABELAS = (
     "outbound_dispatches",
     "messages",
 )
+
+# Conversa de referencia usada pelos testes de montagem de contexto
+# (tests/integration/test_montagem.py e tests/features/test_janela_de_contexto.py).
+CANAL = "whatsapp"
+CONVERSA = "5511911112222"
+
+
+async def semear(
+    session: AsyncSession,
+    quantidade: int,
+    base: datetime | None = None,
+    texto: str | None = None,
+) -> list[Message]:
+    """Cria `quantidade` mensagens da mesma conversa, uma por segundo.
+
+    `texto`, quando informado, substitui o corpo padrao (`mensagem {i}`) em
+    todas as mensagens -- serve para simular conteudo maior ou com caracteres
+    diferentes sem duplicar este laco em cada teste que precisa disso.
+    """
+    inicio = base or datetime.now(UTC) - timedelta(hours=1)
+    criadas = []
+    for i in range(quantidade):
+        identificador = uuid.uuid4()
+        linha = Message(
+            id=identificador,
+            channel=CANAL,
+            provider_message_id=f"wamid.{identificador.hex[:10]}",
+            sender_external_id=CONVERSA,
+            recipient_external_id="222222222",
+            conversation_key=CONVERSA,
+            role=MessageRole.LEAD,
+            direction=MessageDirection.INBOUND,
+            content_type=MessageContentType.TEXTO,
+            text_body=encrypt(texto or f"mensagem {i}", aad_de(identificador, "text_body")),
+            raw_payload=None,
+            status=MessageStatus.PROCESSED,
+            created_at=inicio + timedelta(seconds=i),
+        )
+        session.add(linha)
+        criadas.append(linha)
+    await session.commit()
+    return criadas
+
+
+class ResumidorFake:
+    """Dublê do provedor. Nenhum teste desta suite toca a rede."""
+
+    def __init__(
+        self,
+        texto: str = "resumo do que veio antes",
+        falha: bool = False,
+        roteiro: list[str] | None = None,
+    ) -> None:
+        self.texto = texto
+        self.falha = falha
+        self.roteiro = roteiro or []
+        self.chamadas: list[str] = []
+
+    async def resumir(self, instrucao: str, conteudo: str) -> ResumoGerado:
+        self.chamadas.append(instrucao)
+        if self.falha:
+            raise RuntimeError("provedor fora do ar")
+        texto = self.roteiro.pop(0) if self.roteiro else self.texto
+        return ResumoGerado(
+            texto=texto,
+            modelo="claude-opus-5",
+            tokens_in=100,
+            tokens_out=50,
+            latency_ms=10,
+        )
+
+
+class ContadorFake:
+    """Conta por caractere/4, ou devolve valores roteirizados em sequencia."""
+
+    def __init__(self, roteiro: list[int] | None = None) -> None:
+        self.roteiro = roteiro or []
+        self.chamadas = 0
+
+    async def contar(self, texto: str) -> int:
+        self.chamadas += 1
+        if self.roteiro:
+            return self.roteiro.pop(0)
+        return len(texto) // 4
+
+
+@pytest.fixture
+def sempre_contar(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Forca a contagem real em todo turno.
+
+    Sem isso a estimativa barata (len/4) responde sozinha: mensagens curtas de
+    teste nunca passam do limiar efetivo (`Settings.limiar_de_contagem_efetivo`,
+    derivado do teto -- ver `config.py`), o ContadorFake nao e consultado e o
+    roteiro de estouro nunca acontece. O teste passaria sem exercitar o laco.
+    """
+    monkeypatch.setenv("CONTEXTO_LIMIAR_DE_CONTAGEM", "0")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture(scope="session", autouse=True)

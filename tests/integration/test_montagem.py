@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from conftest import CANAL, CONVERSA, ContadorFake, ResumidorFake, semear
 
 from mobia.app.config import get_settings
 from mobia.domain.context.janela import Marca, literais_apos
@@ -27,46 +28,6 @@ from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.domain.messages.status import MessageStatus
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
-
-CANAL = "whatsapp"
-CONVERSA = "5511911112222"
-
-
-async def semear(
-    session,
-    quantidade: int,
-    base: datetime | None = None,
-    texto: str | None = None,
-) -> list[Message]:
-    """Cria `quantidade` mensagens da mesma conversa, uma por segundo.
-
-    `texto`, quando informado, substitui o corpo padrao (`mensagem {i}`) em
-    todas as mensagens -- serve para simular conteudo maior ou com caracteres
-    diferentes sem duplicar este laco em cada teste que precisa disso.
-    """
-    inicio = base or datetime.now(UTC) - timedelta(hours=1)
-    criadas = []
-    for i in range(quantidade):
-        identificador = uuid.uuid4()
-        linha = Message(
-            id=identificador,
-            channel=CANAL,
-            provider_message_id=f"wamid.{identificador.hex[:10]}",
-            sender_external_id=CONVERSA,
-            recipient_external_id="222222222",
-            conversation_key=CONVERSA,
-            role=MessageRole.LEAD,
-            direction=MessageDirection.INBOUND,
-            content_type=MessageContentType.TEXTO,
-            text_body=encrypt(texto or f"mensagem {i}", aad_de(identificador, "text_body")),
-            raw_payload=None,
-            status=MessageStatus.PROCESSED,
-            created_at=inicio + timedelta(seconds=i),
-        )
-        session.add(linha)
-        criadas.append(linha)
-    await session.commit()
-    return criadas
 
 
 def _mensagem_literal(role: MessageRole = MessageRole.LEAD) -> Message:
@@ -189,63 +150,6 @@ def test_texto_da_renderiza_o_role_como_texto_nao_como_repr_do_enum() -> None:
     assert _texto_da(com_enum) == "[LEAD] x"
     assert _texto_da(com_string_pura) == "[LEAD] x"
     assert "MessageRole" not in _texto_da(com_enum)
-
-
-class ResumidorFake:
-    """Dublê do provedor. Nenhum teste desta suite toca a rede."""
-
-    def __init__(
-        self,
-        texto: str = "resumo do que veio antes",
-        falha: bool = False,
-        roteiro: list[str] | None = None,
-    ) -> None:
-        self.texto = texto
-        self.falha = falha
-        self.roteiro = roteiro or []
-        self.chamadas: list[str] = []
-
-    async def resumir(self, instrucao: str, conteudo: str) -> ResumoGerado:
-        self.chamadas.append(instrucao)
-        if self.falha:
-            raise RuntimeError("provedor fora do ar")
-        texto = self.roteiro.pop(0) if self.roteiro else self.texto
-        return ResumoGerado(
-            texto=texto,
-            modelo="claude-opus-5",
-            tokens_in=100,
-            tokens_out=50,
-            latency_ms=10,
-        )
-
-
-class ContadorFake:
-    """Conta por caractere/4, ou devolve valores roteirizados em sequencia."""
-
-    def __init__(self, roteiro: list[int] | None = None) -> None:
-        self.roteiro = roteiro or []
-        self.chamadas = 0
-
-    async def contar(self, texto: str) -> int:
-        self.chamadas += 1
-        if self.roteiro:
-            return self.roteiro.pop(0)
-        return len(texto) // 4
-
-
-@pytest.fixture
-def sempre_contar(monkeypatch):
-    """Forca a contagem real em todo turno.
-
-    Sem isso a estimativa barata (len/4) responde sozinha: mensagens curtas de
-    teste nunca passam do limiar efetivo (`Settings.limiar_de_contagem_efetivo`,
-    derivado do teto -- ver `config.py`), o ContadorFake nao e consultado e o
-    roteiro de estouro nunca acontece. O teste passaria sem exercitar o laco.
-    """
-    monkeypatch.setenv("CONTEXTO_LIMIAR_DE_CONTAGEM", "0")
-    get_settings.cache_clear()
-    yield
-    get_settings.cache_clear()
 
 
 async def test_regenera_ao_atingir_o_gatilho(session) -> None:
