@@ -53,6 +53,17 @@ class Settings(BaseSettings):
 
     modelo_resumo: str = "claude-opus-5"
 
+    # Separado do modelo_resumo de proposito: a acuracia de intencao e a
+    # qualidade do resumo sao metricas distintas e a TEC-210 vai afinar uma
+    # sem tocar na outra.
+    modelo_agente: str = "claude-opus-5"
+
+    # Sem default utilizavel: envio sem token falha alto na primeira chamada,
+    # que e o comportamento certo. Nao precisa da guarda de producao que a
+    # chave de cifra tem -- aquela falha em silencio, esta nao.
+    whatsapp_access_token: str = ""
+    whatsapp_api_base: str = "https://graph.facebook.com/v21.0"
+
     # RN-02.5: teto por chamada. RN-02.2: piso de mensagens literais.
     contexto_teto_de_tokens: int = 12000
     contexto_literais_minimas: int = 20

@@ -118,3 +118,18 @@ def test_cliente_e_construido_uma_vez(monkeypatch, caches_de_cliente_limpos: Non
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-teste")
 
     assert get_client() is get_client()
+
+
+def test_defaults_do_agente(settings) -> None:
+    """O modelo do agente e configuravel separado do modelo do resumo.
+
+    Sao trabalhos diferentes: a TEC-210 vai querer afinar a acuracia de
+    intencao sem mexer na qualidade do resumo, e vice-versa.
+    """
+    assert settings.modelo_agente == "claude-opus-5"
+    assert settings.whatsapp_api_base.startswith("https://")
+
+
+def test_token_da_meta_nao_tem_default_utilizavel(settings) -> None:
+    """Sem token nao se envia nada, e isso tem de falhar alto no envio."""
+    assert settings.whatsapp_access_token == ""
