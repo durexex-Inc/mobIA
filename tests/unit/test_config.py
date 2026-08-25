@@ -81,29 +81,15 @@ def test_gatilho_deixa_o_piso_de_literais(settings) -> None:
     assert settings.contexto_gatilho_de_regeneracao >= 2 * settings.contexto_literais_minimas
 
 
-def test_cliente_recusa_subir_sem_chave(monkeypatch) -> None:
+def test_cliente_recusa_subir_sem_chave(monkeypatch, caches_de_cliente_limpos: None) -> None:
     """Chave ausente falha aqui, com mensagem util, e nao no meio de um turno."""
-    from mobia.app.config import get_settings
-
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
-    get_settings.cache_clear()
-    get_client.cache_clear()
-    try:
-        with pytest.raises(ConfiguracaoInsegura, match="ANTHROPIC_API_KEY"):
-            get_client()
-    finally:
-        get_settings.cache_clear()
-        get_client.cache_clear()
+
+    with pytest.raises(ConfiguracaoInsegura, match="ANTHROPIC_API_KEY"):
+        get_client()
 
 
-def test_cliente_e_construido_uma_vez(monkeypatch) -> None:
-    from mobia.app.config import get_settings
-
+def test_cliente_e_construido_uma_vez(monkeypatch, caches_de_cliente_limpos: None) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-teste")
-    get_settings.cache_clear()
-    get_client.cache_clear()
-    try:
-        assert get_client() is get_client()
-    finally:
-        get_settings.cache_clear()
-        get_client.cache_clear()
+
+    assert get_client() is get_client()

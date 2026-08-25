@@ -36,6 +36,18 @@ class ResumoGerado:
     latency_ms: int
 
 
+class ResumoInvalido(RuntimeError):
+    """Resposta do modelo nao e um resumo utilizavel.
+
+    Cobre truncamento por `max_tokens` (a resposta e uma frase pela metade que
+    parece completa) e texto vazio (recusa, bloqueio de conteudo, resposta so
+    com tool_use). Levantar aqui, e nao devolver um `ResumoGerado` manco, e o
+    que da ao chamador (Task 5) a chance de degradar para o resumo anterior em
+    vez de gravar um resumo vazio ou truncado como se fosse bom e avancar a
+    marca por cima das mensagens que ele deveria ter absorvido.
+    """
+
+
 class ResumidorPort(Protocol):
     async def resumir(self, instrucao: str, conteudo: str) -> ResumoGerado: ...
 
@@ -63,7 +75,21 @@ class ResumidorAnthropic:
         )
         latency_ms = int((time.monotonic() - comeco) * 1000)
 
+        # end_turn e a unica parada normal. max_tokens corta a resposta no meio
+        # de uma frase e ela sai parecendo completa; tool_use/stop_sequence/
+        # pause_turn/refusal/model_context_window_exceeded nao sao resumo
+        # nenhum. Checar antes de olhar o texto, porque um max_tokens pode
+        # muito bem ter texto (truncado) e passaria incolume pela checagem
+        # de vazio logo abaixo.
+        if resposta.stop_reason != "end_turn":
+            raise ResumoInvalido(
+                f"resumo interrompido antes do fim: stop_reason={resposta.stop_reason!r}"
+            )
+
         texto = "".join(bloco.text for bloco in resposta.content if bloco.type == "text")
+        if not texto:
+            raise ResumoInvalido("resumo veio vazio: resposta sem bloco de texto")
+
         gerado = ResumoGerado(
             texto=texto,
             modelo=settings.modelo_resumo,
