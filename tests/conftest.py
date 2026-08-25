@@ -77,7 +77,7 @@ async def semear(
 
 
 class ResumidorFake:
-    """Dublê do provedor. Nenhum teste desta suite toca a rede."""
+    """Duble do provedor. Nenhum teste desta suite toca a rede."""
 
     def __init__(
         self,

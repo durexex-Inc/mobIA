@@ -12,6 +12,7 @@ from conftest import CANAL, CONVERSA, ContadorFake, ResumidorFake, semear
 from mobia.app.config import get_settings
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import montar_contexto
+from mobia.domain.context.resumo import INSTRUCAO_DOBRAR
 from mobia.infra.db import get_sessionmaker
 
 
@@ -60,18 +61,36 @@ async def test_estado_estruturado_nao_e_reconstruido_pelo_modelo(session) -> Non
 
 
 async def test_resumo_e_comprimido_ao_estourar_o_limite(session, sempre_contar) -> None:
-    """Cenario: Resumo e comprimido ao estourar o limite."""
+    """Cenario: Resumo e comprimido ao estourar o limite.
+
+    O teto sozinho nao prova compressao -- um roteiro de contagem pode fazer
+    `contexto.tokens` caber mesmo que nada tenha sido dobrado. As tres
+    asserts abaixo verificam o que o codigo de fato fez: que o resumidor foi
+    chamado para dobrar, que a janela literal encolheu ate o piso, e que o
+    resumo deixou de ser vazio -- as tres quebram sob um `_dobrar` neutralizado
+    que reporta sucesso sem dobrar nada.
+    """
     await semear(session, 25)
+    resumidor = ResumidorFake()
 
     contexto = await montar_contexto(
         get_sessionmaker(),
         channel=CANAL,
         conversation_key=CONVERSA,
-        resumidor=ResumidorFake(),
+        resumidor=resumidor,
         contador=ContadorFake(roteiro=[13500, 9000]),
     )
 
     assert contexto.tokens <= 12000
+    assert resumidor.chamadas == [INSTRUCAO_DOBRAR], (
+        "o estouro tem de acionar o resumidor para dobrar as mensagens antigas"
+    )
+    assert len(contexto.literais) == get_settings().contexto_literais_minimas, (
+        "dobrar reduz a janela literal ate o piso"
+    )
+    assert contexto.resumo == "resumo do que veio antes", (
+        "o resumo tem de vir do que o resumidor devolveu, nao ficar vazio"
+    )
 
 
 async def test_resumo_e_regerado_na_cadencia_definida(session) -> None:
