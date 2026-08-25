@@ -28,7 +28,11 @@ async def ler_resumo(
     if linha is None:
         return None
     texto = decrypt(bytes(linha.resumo), aad_do_resumo(channel, conversation_key))
-    assert texto is not None, "resumo e NOT NULL no esquema"
+    if texto is None:
+        # `assert` some sob `python -O` e o dataclass sairia com `texto=None`
+        # contra a propria anotacao, para o prompt e para a contagem. A coluna
+        # e NOT NULL, entao chegar aqui e garantia quebrada -- falhar alto.
+        raise ValueError("resumo decifrou como nulo, mas a coluna e NOT NULL")
     return ResumoDaConversa(
         texto=texto,
         watermark_created_at=linha.watermark_created_at,
@@ -82,6 +86,15 @@ async def gravar_resumo(
                     "updated_at",
                 )
             },
+            # Guarda de monotonia: a marca so anda para frente. Dois turnos
+            # concorrentes da mesma conversa leem o mesmo estado, dobram e
+            # gravam; sem esta condicao o mais lento sobrescreve o mais rapido,
+            # a marca recua e as mensagens entre as duas marcas sao dobradas
+            # duas vezes -- conteudo duplicado no resumo, para sempre. `<=` e
+            # nao `<` porque a compressao regrava a mesma marca de proposito:
+            # ela so encurta o texto, nao cobre mensagem nova.
+            where=ConversationSummary.watermark_created_at
+            <= statement.excluded.watermark_created_at,
         )
     )
 

@@ -40,11 +40,12 @@ class ResumoInvalido(RuntimeError):
     """Resposta do modelo nao e um resumo utilizavel.
 
     Cobre truncamento por `max_tokens` (a resposta e uma frase pela metade que
-    parece completa) e texto vazio (recusa, bloqueio de conteudo, resposta so
-    com tool_use). Levantar aqui, e nao devolver um `ResumoGerado` manco, e o
-    que da ao chamador (Task 5) a chance de degradar para o resumo anterior em
-    vez de gravar um resumo vazio ou truncado como se fosse bom e avancar a
-    marca por cima das mensagens que ele deveria ter absorvido.
+    parece completa) e texto vazio ou so espaco em branco (recusa, bloqueio de
+    conteudo, resposta so com tool_use). Levantar aqui, e nao devolver um
+    `ResumoGerado` manco, e o que da ao chamador (Task 5) a chance de degradar
+    para o resumo anterior em vez de gravar um resumo vazio ou truncado como se
+    fosse bom e avancar a marca por cima das mensagens que ele deveria ter
+    absorvido.
     """
 
 
@@ -86,9 +87,14 @@ class ResumidorAnthropic:
                 f"resumo interrompido antes do fim: stop_reason={resposta.stop_reason!r}"
             )
 
-        texto = "".join(bloco.text for bloco in resposta.content if bloco.type == "text")
+        # .strip() antes de testar e antes de guardar: "   \n  " nao e vazio
+        # para `not texto`, mas nao carrega fato nenhum sobre o lead. Sem o
+        # strip aqui, esse texto passaria a checagem, viraria ResumoGerado.texto
+        # e o espaco em branco de sobra seria concatenado no prompt do proximo
+        # turno para sempre.
+        texto = "".join(bloco.text for bloco in resposta.content if bloco.type == "text").strip()
         if not texto:
-            raise ResumoInvalido("resumo veio vazio: resposta sem bloco de texto")
+            raise ResumoInvalido("resumo veio vazio ou so com espaco em branco")
 
         gerado = ResumoGerado(
             texto=texto,

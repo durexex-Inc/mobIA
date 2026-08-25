@@ -5,6 +5,7 @@ from mobia.infra.crypto import (
     TAG_BYTES,
     VERSAO_ATUAL,
     DecryptionError,
+    _marca_do_aad,
     aad_de,
     decrypt,
     decrypt_json,
@@ -101,3 +102,48 @@ def test_erro_de_blob_curto_nao_carrega_o_conteudo() -> None:
     with pytest.raises(DecryptionError) as erro:
         decrypt(b"conteudo-secreto", AAD)
     assert "conteudo-secreto" not in str(erro.value)
+
+
+def test_erro_de_autenticacao_nao_carrega_o_aad() -> None:
+    """O AAD do resumo (TEC-127) carrega o telefone do lead; o erro nao pode.
+
+    `aad_do_resumo` monta a identidade a partir de `(channel,
+    conversation_key)` -- e `conversation_key` e o numero do lead. A mascara de
+    PII do log so caminha por campos estruturados, nunca por dentro do texto de
+    uma excecao, entao um `str(exc)` no consumidor colocaria o telefone no log.
+    """
+    cifrado = encrypt("oi", AAD)
+    assert cifrado is not None
+    aad_com_telefone = "4:whatsapp:13:5511911112222:resumo"
+
+    with pytest.raises(DecryptionError) as erro:
+        decrypt(cifrado, aad_com_telefone)
+
+    assert "5511911112222" not in str(erro.value)
+    assert aad_com_telefone not in str(erro.value)
+
+
+def test_marca_do_aad_e_estavel_e_distingue_aads() -> None:
+    """O diagnostico continua servindo: duas falhas do mesmo AAD correlacionam."""
+    assert _marca_do_aad("a:b") == _marca_do_aad("a:b")
+    assert _marca_do_aad("a:b") != _marca_do_aad("a:c")
+
+
+def test_erro_de_versao_desconhecida_nao_carrega_o_aad() -> None:
+    cifrado = bytearray(encrypt("oi", AAD) or b"")
+    cifrado[0] = 0x02
+    aad_com_telefone = "4:whatsapp:13:5511911112222:resumo"
+
+    with pytest.raises(DecryptionError) as erro:
+        decrypt(bytes(cifrado), aad_com_telefone)
+
+    assert "5511911112222" not in str(erro.value)
+
+
+def test_erro_de_blob_curto_nao_carrega_o_aad() -> None:
+    aad_com_telefone = "4:whatsapp:13:5511911112222:resumo"
+
+    with pytest.raises(DecryptionError) as erro:
+        decrypt(b"12345", aad_com_telefone)
+
+    assert "5511911112222" not in str(erro.value)

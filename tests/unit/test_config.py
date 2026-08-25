@@ -73,12 +73,37 @@ def test_defaults_da_janela_de_contexto(settings) -> None:
 
 
 def test_gatilho_deixa_o_piso_de_literais(settings) -> None:
-    """A invariante das vinte: dobrar `gatilho - minimas` sempre deixa `minimas`.
+    """Dobrar `gatilho - minimas` deixa exatamente `minimas` literais.
 
-    Se alguem mexer num dos dois numeros sem mexer no outro, a regeneracao passa
-    a colar a marca no presente e o piso quebra no turno seguinte a cada resumo.
+    Quem garante o piso e `dividir`, nao esta relacao: com `piso_pode_ceder`
+    desligado ela nunca dobra abaixo de `minimas`, seja qual for o gatilho. O
+    que esta relacao controla e a *frequencia* -- com um gatilho menor que
+    `2 * minimas` a dobra sobra pouco a dobrar e a conversa paga uma chamada de
+    modelo com muito mais frequencia, cada uma absorvendo pouquissima mensagem.
+    Com `gatilho >= 2 * minimas` cada regeneracao dobra pelo menos `minimas`
+    mensagens de uma vez, que e o custo por mensagem que o spec orcou.
     """
     assert settings.contexto_gatilho_de_regeneracao >= 2 * settings.contexto_literais_minimas
+
+
+def test_headroom_desconta_do_teto(settings) -> None:
+    """O teto comparado nao e o teto nominal.
+
+    A contagem mede um proxy menor do que a TEC-134 vai de fato enviar: uma
+    mensagem plana, sem system e sem o overhead estrutural de cada turno do
+    array. A reserva e o que impede o modulo aceitar um contexto que so estoura
+    na requisicao real.
+    """
+    assert settings.contexto_headroom_de_tokens > 0
+    assert settings.teto_de_tokens_efetivo == (
+        settings.contexto_teto_de_tokens - settings.contexto_headroom_de_tokens
+    )
+    assert settings.teto_de_tokens_efetivo < settings.contexto_teto_de_tokens
+
+
+def test_limiar_deriva_do_teto_efetivo(settings) -> None:
+    """Mexer no teto ou na reserva move o limiar junto, sem descasar em silencio."""
+    assert settings.limiar_de_contagem_efetivo < settings.teto_de_tokens_efetivo
 
 
 def test_cliente_recusa_subir_sem_chave(monkeypatch, caches_de_cliente_limpos: None) -> None:

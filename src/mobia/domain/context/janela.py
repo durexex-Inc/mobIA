@@ -62,14 +62,27 @@ def deve_regenerar(quantidade: int, gatilho: int) -> bool:
     return quantidade >= gatilho
 
 
-def dividir(literais: list[Message], minimas: int) -> tuple[list[Message], list[Message]]:
+def dividir(
+    literais: list[Message], minimas: int, *, piso_pode_ceder: bool = False
+) -> tuple[list[Message], list[Message]]:
     """Separa o que vira resumo do que fica literal.
 
     O piso manda: por mais que se acumule, `minimas` mensagens sempre ficam na
     integra. E o que faz "as 20 mais recentes na integra" valer no turno logo
     apos uma regeneracao, e nao so no turno que a disparou.
+
+    `piso_pode_ceder` e o unico jeito de dobrar abaixo do piso e existe para o
+    ultimo degrau do laco do estouro. Vinte mensagens que sozinhas somam mais
+    de 12.000 tokens existem -- vinte audios transcritos longos chegam la -- e
+    quando o piso e o teto se contradizem o teto vence: ele e o limite fisico
+    da chamada, o piso e preferencia de qualidade. Com a flag ligada o piso
+    efetivo passa a ser uma mensagem, a mais recente: e a fala a que o modelo
+    tem de responder, e sem ela nao ha turno. O opt-in e explicito porque
+    violar o piso e decisao de dominio, nao detalhe de implementacao -- quem
+    chama tem de dizer, na chamada, que aceita a violacao.
     """
-    if len(literais) <= minimas:
+    piso = 1 if piso_pode_ceder else minimas
+    if len(literais) <= piso:
         return [], literais
-    corte = len(literais) - minimas
+    corte = len(literais) - piso
     return literais[:corte], literais[corte:]
