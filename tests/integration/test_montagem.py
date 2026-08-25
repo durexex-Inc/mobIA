@@ -11,6 +11,7 @@ from mobia.domain.context.janela import Marca, literais_apos
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.domain.context.montagem import (
     ContextoIrreducivel,
+    ContextoMontado,
     _texto_da,
     _texto_das,
     _truncar_ate_caber,
@@ -221,6 +222,32 @@ async def test_audio_no_prompt_e_no_resumo_nao_vira_turno_em_branco(session) -> 
 
     assert len(contexto.literais) == 1
     assert _texto_das(contexto.literais) == "[LEAD] (audio, sem transcricao)"
+
+
+def test_repr_do_contexto_nao_carrega_conteudo_do_lead() -> None:
+    """O repr default de dataclass despejaria o resumo em claro num log.
+
+    A mascara de PII desce por dict, list e tuple, mas nao por dataclass -- um
+    `log.info("turno", contexto=contexto)` na TEC-134 renderizaria o resumo sob
+    uma chave que nao esta na lista de redigidas. O repr elide o conteudo e
+    mantem a forma, que e o que serve para depurar.
+    """
+    contexto = ContextoMontado(
+        sistema="sistema",
+        resumo="lead procura apto de 600 mil na zona sul",
+        literais=[_mensagem_literal(), _mensagem_literal()],
+        estado=None,
+        tokens=9000,
+        degradado=False,
+    )
+
+    texto = repr(contexto)
+
+    assert "zona sul" not in texto
+    assert "600 mil" not in texto
+    assert "literais=2" in texto, "a forma continua depuravel"
+    assert "tokens=9000" in texto
+    assert "degradado=False" in texto
 
 
 async def test_regenera_ao_atingir_o_gatilho(session) -> None:

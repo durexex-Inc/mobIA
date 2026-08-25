@@ -17,19 +17,33 @@ from mobia.infra.db import get_sessionmaker
 
 
 async def test_conversa_longa_cabe_no_limite_de_tokens(session) -> None:
-    """Cenario: Conversa longa cabe no limite de tokens."""
-    await semear(session, 60)
+    """Cenario: Conversa longa cabe no limite de tokens.
+
+    As sessenta mensagens sao grandes de proposito. Com o corpo curto de
+    `semear`, a estimativa barata resolve sozinha e o contador nunca e
+    consultado -- o `<= 12.000` passaria sem a dimensao de token do criterio
+    ter sido exercitada em lugar nenhum. Com ~1.800 caracteres por mensagem, as
+    vinte literais que sobram depois da dobra cruzam
+    `Settings.limiar_de_contagem_efetivo` e a contagem real entra no caminho.
+    """
+    texto_grande = "conversa sobre apartamento na zona sul, dois quartos, uma vaga. " * 29
+    await semear(session, 60, texto=texto_grande)
+    contador = ContadorFake()
 
     contexto = await montar_contexto(
         get_sessionmaker(),
         channel=CANAL,
         conversation_key=CONVERSA,
         resumidor=ResumidorFake(),
-        contador=ContadorFake(),
+        contador=contador,
     )
 
     assert len(contexto.literais) >= get_settings().contexto_literais_minimas
     assert contexto.resumo is not None, "as anteriores viraram resumo"
+    assert contador.chamadas >= 1, (
+        "sem cruzar o limiar, o criterio de token passaria pela estimativa e "
+        "a contagem real ficaria sem cobertura nenhuma"
+    )
     assert contexto.tokens <= 12000
 
 

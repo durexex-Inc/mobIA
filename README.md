@@ -106,6 +106,23 @@ Os critérios de aceite da história vivem como testes executáveis:
   piso de fato cede: nessa dobra e no truncamento de emergência.
 - Falha do provedor não derruba o turno: usa o resumo antigo, corta literais até
   caber, e loga `contexto.degradado`.
+- Resumo que não decifra (rotação de chave, escrita parcial, restore de um
+  ambiente com outra chave) vale como resumo inexistente: tudo volta literal,
+  `contexto.resumo_ilegivel` registra, e a próxima dobra sobrescreve a linha.
+  Uma linha corrompida não pode brickar a conversa para sempre.
+- Quando nem uma única mensagem sem resumo cabe no teto, `montar_contexto`
+  levanta `ContextoIrreducivel` em vez de devolver um contexto acima do limite.
+  É exceção visível ao chamador — a TEC-134 tem de tratá-la — e acontecer
+  significa que uma mensagem sozinha excede o limite físico da chamada, que o
+  provedor recusaria de qualquer jeito.
+- O teto comparado é o nominal **menos** `CONTEXTO_HEADROOM_DE_TOKENS`. A
+  contagem mede uma mensagem plana, sem `system` e sem o overhead estrutural de
+  cada turno do array multi-turno que a TEC-134 vai montar; a reserva cobre essa
+  diferença. **A TEC-134 tem de reverificar o número contra a requisição real.**
+- Mensagem sem texto (áudio, imagem, documento) entra marcada pelo tipo, nunca
+  como turno em branco — o modelo tem de poder distinguir "mandou um áudio que
+  ainda não transcrevemos" de "não disse nada", e é esse texto que a dobra
+  grava no resumo para sempre.
 - O resumo é cifrado em repouso como o conteúdo das mensagens; o estado de
   qualificação fica em claro de propósito, porque TEC-147, TEC-150 e TEC-158
   filtram por ele em SQL.

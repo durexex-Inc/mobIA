@@ -49,7 +49,7 @@ class ContextoIrreducivel(RuntimeError):
     """
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class ContextoMontado:
     """As partes em ordem, nao uma string pronta.
 
@@ -65,6 +65,23 @@ class ContextoMontado:
     estado: LeadQualification | None
     tokens: int
     degradado: bool
+
+    def __repr__(self) -> str:
+        """Elide o conteudo do lead -- `repr=False` no dataclass e de proposito.
+
+        A mascara de PII do log desce por dict, list e tuple, mas nao por
+        dataclass. Um `log.info("turno", contexto=contexto)` na TEC-134
+        renderizaria o resumo em claro sob a chave `contexto`, que nao esta na
+        lista de campos redigidos, e `literais` carrega as `Message` inteiras.
+        Aqui o repr nao carrega texto nenhum: so a forma do contexto, que e o
+        que serve para depurar.
+        """
+        return (
+            f"ContextoMontado(resumo={'<omitido>' if self.resumo is not None else None}, "
+            f"literais={len(self.literais)}, "
+            f"estado={'<presente>' if self.estado is not None else None}, "
+            f"tokens={self.tokens}, degradado={self.degradado})"
+        )
 
 
 # Marcador por tipo para a mensagem que chega sem texto. AUDIO, IMAGEM e
