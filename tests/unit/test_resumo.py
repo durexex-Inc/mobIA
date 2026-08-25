@@ -114,3 +114,36 @@ async def test_resumir_recusa_truncamento_por_max_tokens(
     assert texto_truncado not in str(erro.value)
     assert texto_truncado not in caplog.text
     assert "resumo.gerado" not in caplog.text
+
+
+async def test_resumir_recusa_texto_so_com_espaco_em_branco(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`not texto` nao pega isto: "   \\n  " e uma string no-vazia de verdade.
+
+    E exatamente o buraco que passava pelo guard anterior (`if not texto`) --
+    stop_reason normal, bloco de texto presente, mas sem fato nenhum sobre o
+    lead dentro dele.
+    """
+    resposta = _resposta_falsa(texto="   \n  \t  ", stop_reason="end_turn")
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    with caplog.at_level(logging.INFO), pytest.raises(ResumoInvalido) as erro:
+        await ResumidorAnthropic().resumir(INSTRUCAO_DO_PROMPT, CONTEUDO_DO_PROMPT)
+
+    assert "vazio" in str(erro.value)
+    assert "resumo.gerado" not in caplog.text
+
+
+async def test_resumir_remove_espaco_de_borda_do_resumo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Espaco de borda nao pode sobreviver: ele se acumula no prompt do proximo turno.
+
+    Decisao deliberada: `ResumoGerado.texto` guarda o texto apos `.strip()`,
+    nao o texto cru da API.
+    """
+    resposta = _resposta_falsa(texto=f"  \n{TEXTO_DO_RESUMO}\t  ", stop_reason="end_turn")
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    gerado = await ResumidorAnthropic().resumir(INSTRUCAO_DO_PROMPT, CONTEUDO_DO_PROMPT)
+
+    assert gerado.texto == TEXTO_DO_RESUMO
