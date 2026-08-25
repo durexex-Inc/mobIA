@@ -17,7 +17,13 @@ from mobia.infra.queue import create_redis_pool
 if TYPE_CHECKING:
     from arq.connections import ArqRedis
 
-TABELAS = ("message_telemetry", "outbound_dispatches", "messages")
+TABELAS = (
+    "conversation_summaries",
+    "lead_qualification",
+    "message_telemetry",
+    "outbound_dispatches",
+    "messages",
+)
 
 
 @pytest.fixture(scope="session", autouse=True)
