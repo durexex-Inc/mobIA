@@ -8,7 +8,7 @@ from conftest import CANAL, CONVERSA, ContadorFake, ResumidorFake, semear
 
 from mobia.app.config import get_settings
 from mobia.domain.context.janela import Marca, literais_apos
-from mobia.domain.context.models import LeadQualification
+from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.domain.context.montagem import (
     ContextoIrreducivel,
     _texto_da,
@@ -607,6 +607,80 @@ async def test_falha_do_provedor_degrada_sem_derrubar(session, caplog, sempre_co
     assert contexto.degradado is True
     assert contexto.tokens <= get_settings().contexto_teto_de_tokens
     assert "contexto.degradado" in caplog.text
+
+
+async def test_resumo_ilegivel_degrada_em_vez_de_travar_a_conversa(session, caplog) -> None:
+    """Uma linha de resumo que nao decifra nao pode brickar o lead para sempre.
+
+    Rotacao de chave, escrita parcial, restore de um ambiente com outra chave:
+    o resumo fica ilegivel e, sem guarda, todo turno seguinte deste lead
+    levanta `DecryptionError` -- para sempre, porque nada reescreve a linha se
+    ninguem consegue montar contexto. Era o unico modo de falha deste modulo
+    sem caminho degradado.
+
+    Degradar aqui e barato: sem marca, tudo volta literal (nada some) e a
+    proxima dobra sobrescreve a linha ilegivel.
+    """
+    criadas = await semear(session, 3)
+    session.add(
+        ConversationSummary(
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            # Cifrado sob o AAD de OUTRA conversa: e exatamente o que uma chave
+            # trocada ou um restore cruzado produzem do ponto de vista do
+            # `decrypt` -- bytes que nao autenticam.
+            resumo=encrypt("resumo de outra conversa", aad_do_resumo(CANAL, "5511999998888")),
+            watermark_created_at=criadas[0].created_at,
+            watermark_message_id=criadas[0].id,
+            mensagens_cobertas=1,
+            modelo="claude-opus-5",
+        )
+    )
+    await session.commit()
+
+    with caplog.at_level(logging.WARNING):
+        contexto = await montar_contexto(
+            get_sessionmaker(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumidor=ResumidorFake(),
+            contador=ContadorFake(),
+        )
+
+    assert contexto.resumo is None, "resumo ilegivel vale como resumo inexistente"
+    assert len(contexto.literais) == 3, "sem marca, tudo volta literal -- nada some"
+    assert contexto.degradado is True
+    assert "contexto.resumo_ilegivel" in caplog.text
+
+
+async def test_resumo_ilegivel_e_sobrescrito_pela_proxima_dobra(session) -> None:
+    """O degradado tem de se curar sozinho, senao a conversa fica degradada."""
+    criadas = await semear(session, 40)
+    session.add(
+        ConversationSummary(
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumo=encrypt("ilegivel", aad_do_resumo(CANAL, "5511999998888")),
+            watermark_created_at=criadas[0].created_at,
+            watermark_message_id=criadas[0].id,
+            mensagens_cobertas=1,
+            modelo="claude-opus-5",
+        )
+    )
+    await session.commit()
+
+    await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorFake(),
+        contador=ContadorFake(),
+    )
+
+    async with get_sessionmaker()() as outra:
+        gravado = await ler_resumo(outra, CANAL, CONVERSA)
+    assert gravado is not None, "a linha ilegivel tem de ter sido reescrita"
+    assert gravado.texto == "resumo do que veio antes"
 
 
 async def test_estado_de_qualificacao_entra_no_contexto(session) -> None:

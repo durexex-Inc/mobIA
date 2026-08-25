@@ -25,7 +25,7 @@ from mobia.domain.context.resumo import (
     ResumidorPort,
 )
 from mobia.domain.messages.models import Message
-from mobia.infra.crypto import aad_de, decrypt
+from mobia.infra.crypto import DecryptionError, aad_de, decrypt
 
 log = structlog.get_logger(__name__)
 
@@ -201,15 +201,34 @@ async def montar_contexto(
 ) -> ContextoMontado:
     settings = get_settings()
 
+    degradado = False
+
     async with session_factory() as session:
-        resumo_atual: ResumoDaConversa | None = await ler_resumo(session, channel, conversation_key)
+        resumo_atual: ResumoDaConversa | None = None
+        try:
+            resumo_atual = await ler_resumo(session, channel, conversation_key)
+        except DecryptionError:
+            # Resumo ilegivel -- rotacao de chave, escrita parcial, restore de
+            # um ambiente com outra chave -- nao pode travar a conversa. Sem
+            # esta guarda uma unica linha corrompida faz todo turno seguinte
+            # deste lead levantar, para sempre: e o unico modo de falha deste
+            # modulo que nao tinha caminho degradado, e nao e mais raro que a
+            # queda do provedor, que tem.
+            #
+            # Degradar e seguro: sem marca, tudo depois do inicio da conversa
+            # volta literal -- nada some, so cresce -- e a proxima dobra
+            # sobrescreve a linha ilegivel com um resumo novo. So o tipo do
+            # erro vai para o log: o texto dele nunca carrega conteudo do lead
+            # (ver `_marca_do_aad` em `infra/crypto.py`), mas registrar o
+            # minimo aqui e mais barato que confiar nisso a cada refactor.
+            degradado = True
+            log.warning("contexto.resumo_ilegivel", channel=channel)
         literais = await literais_apos(session, channel, conversation_key, marca_de(resumo_atual))
         estado = await ler_estado(session, channel, conversation_key)
 
     texto_do_resumo = resumo_atual.texto if resumo_atual else None
     cobertas = resumo_atual.mensagens_cobertas if resumo_atual else 0
     marca_atual = marca_de(resumo_atual)
-    degradado = False
 
     # Gatilho por acumulo: quarenta literais dobram as vinte mais antigas e
     # deixam vinte. Por proximidade, a marca colaria no presente.
