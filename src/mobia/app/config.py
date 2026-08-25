@@ -10,6 +10,11 @@ CHAVE_DE_DESENVOLVIMENTO = "ZGV2LWtleS0zMi1ieXRlcy1mb3ItbW9iaWEtb2shISE="
 
 _AMBIENTES_DE_PRODUCAO = frozenset({"production", "producao", "prod"})
 
+# Fracao do teto usada por `Settings.limiar_de_contagem_efetivo` quando
+# `contexto_limiar_de_contagem` nao e sobrescrito. Derivada, nao um numero
+# redondo -- ver o property para a conta e para o que ela nao cobre.
+_FRACAO_SEGURA_DO_LIMIAR_DE_CONTAGEM = 0.6
+
 
 class ConfiguracaoInsegura(RuntimeError):
     """Configuracao que rodaria, mas sem a protecao que devia ter."""
@@ -56,15 +61,11 @@ class Settings(BaseSettings):
     # Manter gatilho >= 2 * minimas e o que garante o piso depois da regeneracao.
     contexto_gatilho_de_regeneracao: int = 40
 
-    # Acima desta estimativa barata (len/4) vale pagar a contagem real da API.
-    # Abaixo, o turno nao gasta round trip nenhum. Nao e um numero redondo: e
-    # 0.75 do teto. `len/4` supoe 4 caracteres por token, mas portugues
-    # acentuado e emoji (comuns no trafego do WhatsApp) rodam perto de 3.2 --
-    # ou seja, no pior caso a estimativa erra por um fator de ate 4/3.2 = 1.25.
-    # Um limiar acima de 0.8 do teto deixaria passar, sem medir de verdade,
-    # estimativas que na contagem real ja estourariam o teto; 0.75 fica abaixo
-    # dessa fronteira com folga.
-    contexto_limiar_de_contagem: int = 9000
+    # None -> derivado do teto, ver `limiar_de_contagem_efetivo`. Um valor
+    # explicito aqui -- ou via env `CONTEXTO_LIMIAR_DE_CONTAGEM` -- sobrescreve
+    # a derivacao; e o que a fixture `sempre_contar` dos testes usa para forcar
+    # a contagem real em todo turno.
+    contexto_limiar_de_contagem: int | None = None
 
     # Teto de iteracoes do laco do estouro. Um `while` aqui e um caminho para
     # gastar dinheiro em circulo com um resumo que nao encolhe.
@@ -97,6 +98,33 @@ class Settings(BaseSettings):
                 'print(base64.b64encode(os.urandom(32)).decode())"'
             )
         return self
+
+    @property
+    def limiar_de_contagem_efetivo(self) -> int:
+        """Acima disto, `_contar_se_valer` (TEC-127) paga a contagem real;
+        abaixo, confia na estimativa de `len/4`.
+
+        0.6 do teto por padrao, nao um numero redondo: um limiar T implica um
+        texto de aproximadamente `4*T` caracteres (a estimativa e `len//4`).
+        Para a estimativa enganar -- dizer "cabe" quando na verdade estoura --
+        o texto precisaria rodar a menos de `4*T/teto` caracteres por token.
+        Com T = 0.6 * teto essa razao e 2.4, e portugues acentuado (~3.2-3.7
+        chars/token) fica coberto com folga.
+
+        O que este limiar **nao** cobre: emoji (~0.3-0.5 chars/token -- cada
+        emoji e 1 caractere Python e 2-4 tokens) e blobs base64/URL (~2). Um
+        turno dominado por qualquer um dos dois pode escapar da contagem real
+        e sair medido para menos tokens do que de fato tem. Nao existe fracao
+        razoavel do teto que cubra emoji sem eliminar o beneficio da
+        estimativa barata para o trafego normal -- cobrir 0.3 exigiria um
+        limiar por volta de 7.5% do teto, baixo demais para qualquer conversa
+        real ficar abaixo dele. Ate existir um estimador que leve densidade de
+        caracteres nao-ASCII em conta, isto e um risco aceito e documentado,
+        nao um bug escondido.
+        """
+        if self.contexto_limiar_de_contagem is not None:
+            return self.contexto_limiar_de_contagem
+        return round(self.contexto_teto_de_tokens * _FRACAO_SEGURA_DO_LIMIAR_DE_CONTAGEM)
 
 
 @lru_cache

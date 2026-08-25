@@ -118,15 +118,13 @@ async def _contar_se_valer(
     Turno normal nao paga nada; turno perto do limite paga um e acerta. A
     estimativa nunca decide sozinha se cabe -- so decide se vale medir.
 
-    `len/4` supoe 4 caracteres por token, mas portugues acentuado e emoji --
-    comuns no trafego do WhatsApp -- rodam perto de 3.2. No pior caso a
-    estimativa erra por um fator de ate 4/3.2 = 1.25, entao qualquer limiar
-    acima de 0.8 do teto deixaria passar, sem medir de verdade, estimativas
-    que na contagem real ja estourariam. `contexto_limiar_de_contagem` fica
-    abaixo dessa fronteira com folga (ver comentario no `Settings`).
+    `len/4` supoe 4 caracteres por token. Isso cobre o pior caso plausivel de
+    portugues acentuado (3.2-3.7 chars/token) com folga -- ver a derivacao
+    completa e os casos que este limiar **nao** cobre (emoji, base64/URL) em
+    `Settings.limiar_de_contagem_efetivo`.
     """
     estimativa = _estimar(resumo, literais, estado)
-    if estimativa < get_settings().contexto_limiar_de_contagem:
+    if estimativa < get_settings().limiar_de_contagem_efetivo:
         return estimativa
     return await contador.contar(
         f"{SISTEMA}\n{resumo or ''}\n{_texto_das(literais)}\n{_texto_do_estado(estado)}"
@@ -146,16 +144,24 @@ async def _truncar_ate_caber(
     de qualidade. Quando se contradizem, o teto vence -- ate o fim, nao so na
     primeira tentativa.
 
-    Primeiro corta para a mensagem literal mais recente. Se ainda estourar,
-    descarta o resumo tambem -- uma unica mensagem sem memoria nenhuma e pior
-    que uma unica mensagem com memoria, mas ainda e melhor que nada. Se nem
-    isso bastar, quem chama nao tem contexto nenhum que caiba: a excecao
-    tipada avisa em vez de devolver algo acima do teto.
+    Reduz a janela pela metade a cada passo, em vez de cortar direto para uma
+    unica literal: uma falha transitoria do provedor (ou um estouro de sobra)
+    nao pode custar toda a memoria da conversa quando a metade dela ja
+    resolveria. O numero de passos continua limitado -- cada volta corta pelo
+    menos a metade do que resta, entao chega a 1 em no maximo log2(N) voltas.
+
+    Se cortar tudo ainda nao bastar, descarta o resumo tambem -- uma unica
+    mensagem sem memoria nenhuma e pior que uma unica mensagem com memoria,
+    mas ainda e melhor que nada. Se nem isso bastar, quem chama nao tem
+    contexto nenhum que caiba: a excecao tipada avisa em vez de devolver algo
+    acima do teto.
     """
-    descartadas = max(len(literais) - 1, 0)
-    literais = literais[-1:] if literais else literais
-    log.warning("contexto.truncado", channel=channel, descartadas=descartadas, tokens=tokens)
-    tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
+    while len(literais) > 1 and tokens > teto:
+        corte = max(len(literais) // 2, 1)
+        descartadas = len(literais) - corte
+        literais = literais[-corte:]
+        log.warning("contexto.truncado", channel=channel, descartadas=descartadas, tokens=tokens)
+        tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
 
     if tokens > teto and texto_do_resumo is not None:
         texto_do_resumo = None
@@ -225,10 +231,28 @@ async def montar_contexto(
 
         if len(literais) > settings.contexto_literais_minimas:
             instrucao = INSTRUCAO_DOBRAR
-        else:
+        elif texto_do_resumo is not None:
             # Nao ha mais mensagem a dobrar sem violar o piso; agora a cascata.
             instrucao = INSTRUCAO_COMPRIMIR
             log.warning("contexto.piso_violado", channel=channel, tokens=tokens)
+        else:
+            # Sem resumo para comprimir e sem literal sobrando para dobrar:
+            # pedir ao provedor para comprimir uma string vazia nao produz um
+            # resumo, produz um resumo inventado -- a mesma classe de falha
+            # que a Task 4 evita ao recusar um resumo vazio/so-espaco. Vai
+            # direto para o corte de emergencia em vez de fabricar memoria.
+            degradado = True
+            log.warning("contexto.sem_resumo_para_comprimir", channel=channel, tokens=tokens)
+            texto_do_resumo, literais, tokens = await _truncar_ate_caber(
+                contador,
+                channel,
+                texto_do_resumo,
+                literais,
+                estado,
+                tokens,
+                settings.contexto_teto_de_tokens,
+            )
+            break
 
         texto_do_resumo, literais, cobertas, marca_atual, falhou = await _dobrar(
             session_factory,
@@ -323,28 +347,31 @@ async def _dobrar(
         nova_marca = Marca(created_at=ultima.created_at, message_id=ultima.id)
         cobertas += len(a_dobrar)
 
-    if nova_marca is not None:
-        async with session_factory() as session:
-            await gravar_resumo(
-                session,
-                channel=channel,
-                conversation_key=conversation_key,
-                texto=gerado.texto,
-                watermark_created_at=nova_marca.created_at,
-                watermark_message_id=nova_marca.message_id,
-                mensagens_cobertas=cobertas,
-                modelo=gerado.modelo,
-            )
-            # gravar_resumo empresta a sessao (Task 2): quem chama e dono da
-            # fronteira. Sem este commit a marca nunca sai da memoria e todo
-            # turno seguinte paga de novo o mesmo dobramento ou a mesma
-            # compressao.
-            await session.commit()
-    else:
-        # COMPRIMIR sem nenhuma marca previa (nunca houve uma dobra) nao tem
-        # watermark para amarrar a linha -- watermark_* e NOT NULL no esquema.
-        # Sem watermark nao ha upsert seguro; o texto comprimido so vive na
-        # memoria deste turno.
-        log.warning("contexto.compressao_sem_marca", channel=channel)
+    if nova_marca is None:
+        # `montar_contexto` so escolhe INSTRUCAO_COMPRIMIR quando ja existe um
+        # resumo (texto_do_resumo not None implica marca not None -- os dois
+        # sao atualizados juntos, so por uma dobra). DOBRAR sem `a_dobrar`
+        # (a unica outra forma de chegar aqui sem marca) ja retornou antes,
+        # la em cima. Chegar aqui e uma garantia quebrada, nao um caso valido
+        # a degradar em silencio -- falhar alto e melhor que voltar a perder
+        # uma compressao sem ninguem perceber.
+        raise AssertionError("_dobrar: chamado sem marca previa e sem nada para dobrar")
+
+    async with session_factory() as session:
+        await gravar_resumo(
+            session,
+            channel=channel,
+            conversation_key=conversation_key,
+            texto=gerado.texto,
+            watermark_created_at=nova_marca.created_at,
+            watermark_message_id=nova_marca.message_id,
+            mensagens_cobertas=cobertas,
+            modelo=gerado.modelo,
+        )
+        # gravar_resumo empresta a sessao (Task 2): quem chama e dono da
+        # fronteira. Sem este commit a marca nunca sai da memoria e todo
+        # turno seguinte paga de novo o mesmo dobramento ou a mesma
+        # compressao.
+        await session.commit()
 
     return gerado.texto, a_manter, cobertas, nova_marca, False

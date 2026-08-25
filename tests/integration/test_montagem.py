@@ -8,7 +8,12 @@ import pytest
 from mobia.app.config import get_settings
 from mobia.domain.context.janela import Marca, literais_apos
 from mobia.domain.context.models import LeadQualification
-from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
+from mobia.domain.context.montagem import (
+    ContextoIrreducivel,
+    _texto_da,
+    _truncar_ate_caber,
+    montar_contexto,
+)
 from mobia.domain.context.repositorio import ler_resumo
 from mobia.domain.context.resumo import (  # noqa: F401  (documenta a fronteira)
     INSTRUCAO_COMPRIMIR,
@@ -62,6 +67,29 @@ async def semear(
         criadas.append(linha)
     await session.commit()
     return criadas
+
+
+def _mensagem_literal(role: MessageRole = MessageRole.LEAD) -> Message:
+    """Uma `Message` minima, sem tocar o banco.
+
+    `_texto_da` e `_truncar_ate_caber` so olham para `id`, `role`, `text_body`
+    e (no caso de `_texto_da`, via `_texto_das`) `created_at` -- nao precisam
+    de uma linha persistida, so de um objeto com esses campos preenchidos.
+    """
+    identificador = uuid.uuid4()
+    return Message(
+        id=identificador,
+        channel=CANAL,
+        provider_message_id=f"wamid.{identificador.hex[:10]}",
+        conversation_key=CONVERSA,
+        role=role,
+        direction=MessageDirection.INBOUND,
+        content_type=MessageContentType.TEXTO,
+        text_body=encrypt("x", aad_de(identificador, "text_body")),
+        raw_payload=None,
+        status=MessageStatus.PROCESSED,
+        created_at=datetime.now(UTC),
+    )
 
 
 async def test_sem_marca_traz_a_conversa_inteira(session) -> None:
@@ -141,6 +169,28 @@ def test_resumo_gerado_tem_custo_calculavel() -> None:
     assert custo > 0
 
 
+def test_texto_da_renderiza_o_role_como_texto_nao_como_repr_do_enum() -> None:
+    """O role tem de aparecer igual no prompt e na contagem, nos dois caminhos
+    possiveis para o valor do campo.
+
+    `role` e `Mapped[str]`, mas `MessageRole` e um `StrEnum` -- uma `Message`
+    construida em memoria (como em `semear`, antes de qualquer commit) guarda
+    o membro do enum; uma linha lida de volta do banco guarda a string pura.
+    Se o f-string de `_texto_da` alguma vez passasse a formatar como
+    `repr()`/`__str__` de um Enum comum, o prompt levaria "MessageRole.LEAD"
+    em vez de "LEAD" -- o modelo leria nome de tipo Python, e a contagem de
+    tokens mediria esse lixo. `StrEnum.__format__` usa o valor (comportamento
+    de `str`), entao os dois caminhos tem de bater.
+    """
+    com_enum = _mensagem_literal(role=MessageRole.LEAD)
+    com_string_pura = _mensagem_literal(role=MessageRole.LEAD)
+    com_string_pura.role = "LEAD"  # simula a linha como ela volta do banco
+
+    assert _texto_da(com_enum) == "[LEAD] x"
+    assert _texto_da(com_string_pura) == "[LEAD] x"
+    assert "MessageRole" not in _texto_da(com_enum)
+
+
 class ResumidorFake:
     """Dublê do provedor. Nenhum teste desta suite toca a rede."""
 
@@ -188,7 +238,8 @@ def sempre_contar(monkeypatch):
     """Forca a contagem real em todo turno.
 
     Sem isso a estimativa barata (len/4) responde sozinha: mensagens curtas de
-    teste nunca passam do limiar de 10.000, o ContadorFake nao e consultado e o
+    teste nunca passam do limiar efetivo (`Settings.limiar_de_contagem_efetivo`,
+    derivado do teto -- ver `config.py`), o ContadorFake nao e consultado e o
     roteiro de estouro nunca acontece. O teste passaria sem exercitar o laco.
     """
     monkeypatch.setenv("CONTEXTO_LIMIAR_DE_CONTAGEM", "0")
@@ -296,18 +347,72 @@ async def test_estouro_avanca_a_marca_antes_de_comprimir(session, sempre_contar)
     assert resumidor.chamadas[0] == INSTRUCAO_DOBRAR, "primeiro dobra, so depois comprime"
 
 
+async def test_truncar_reduz_pela_metade_em_vez_de_pular_direto_para_uma(sempre_contar) -> None:
+    """Uma falha transitoria nao pode custar o resto da janela.
+
+    Cortar direto para 1 literal garante o teto, mas custa caro: o proximo
+    turno do lead carregaria uma unica mensagem de contexto quando a metade da
+    janela ja teria coubido. Reduzir pela metade a cada passo da a mesma
+    garantia jogando bem menos memoria fora -- aqui a primeira reducao (8
+    literais -> 4) ja resolve, e o teste prova que o corte para por ali, sem
+    continuar ate sobrar 1.
+
+    Chamada direta em `_truncar_ate_caber`, sem `montar_contexto` em volta:
+    o numero exato de literais que sobra depende so desta funcao, e testa-la
+    isolada evita que o teste fique refem de `gatilho`/`minimas`/`max_iteracoes`.
+    Precisa de `sempre_contar`: as literais aqui sao um unico caractere cada,
+    entao sem forcar a contagem real a estimativa barata resolveria sozinha e
+    o roteiro nunca seria consultado.
+    """
+    literais = [_mensagem_literal() for _ in range(8)]
+    contador = ContadorFake(roteiro=[9000])  # cabe assim que corta pela metade
+
+    resumo, restantes, tokens = await _truncar_ate_caber(
+        contador, CANAL, "resumo qualquer", literais, None, 13500, 12000
+    )
+
+    assert len(restantes) == 4, "tem de parar assim que caber pela metade, sem ir ate 1"
+    assert tokens == 9000
+    assert resumo == "resumo qualquer", (
+        "coube reduzindo os literais; nao precisou descartar o resumo"
+    )
+
+
+async def test_truncar_continua_reduzindo_ate_sobrar_uma_e_so_entao_descarta_o_resumo(
+    sempre_contar,
+) -> None:
+    """Se a metade nao bastar, corta de novo -- e so desiste do resumo por ultimo.
+
+    Cada passo do roteiro fica acima do teto ate a janela chegar a 1 literal
+    (8 -> 4 -> 2 -> 1); so a contagem seguinte, apos descartar o resumo,
+    cabe. Prova os dois degraus da cascata funcionando em sequencia, com
+    reducao progressiva no lugar do salto direto para 1. Precisa de
+    `sempre_contar` pelo mesmo motivo do teste anterior.
+    """
+    literais = [_mensagem_literal() for _ in range(8)]
+    contador = ContadorFake(roteiro=[13500, 13500, 13500, 9000])
+
+    resumo, restantes, tokens = await _truncar_ate_caber(
+        contador, CANAL, "resumo qualquer", literais, None, 13500, 12000
+    )
+
+    assert len(restantes) == 1
+    assert tokens == 9000
+    assert resumo is None, "reduzir ate 1 nao bastou; o resumo teve de cair tambem"
+
+
 async def test_laco_termina_mesmo_com_resumidor_que_nao_encolhe(session, sempre_contar) -> None:
     """Um `while` aqui gastaria dinheiro em circulo. O teto de iteracoes corta.
 
-    Neste roteiro a contagem nunca baixa do teto, nem depois de truncar para
-    uma unica literal, nem depois de descartar o resumo -- o pior caso
-    possivel. Nesse ponto uma mensagem sozinha, sem memoria nenhuma, ainda
-    excede o teto: nao ha contexto valido para mandar, entao o modulo levanta
-    em vez de devolver algo acima do limite fisico da chamada.
+    Neste roteiro a contagem nunca baixa do teto -- nem reduzindo a janela
+    progressivamente ate 1 literal, nem depois de descartar o resumo -- o
+    pior caso possivel. Nesse ponto uma mensagem sozinha, sem memoria
+    nenhuma, ainda excede o teto: nao ha contexto valido para mandar, entao o
+    modulo levanta em vez de devolver algo acima do limite fisico da chamada.
     """
     await semear(session, 25)
     resumidor = ResumidorFake()
-    contador = ContadorFake(roteiro=[13500] * 10)
+    contador = ContadorFake(roteiro=[13500] * 15)
 
     with pytest.raises(ContextoIrreducivel):
         await montar_contexto(
@@ -324,17 +429,17 @@ async def test_laco_termina_mesmo_com_resumidor_que_nao_encolhe(session, sempre_
 async def test_truncar_descarta_o_resumo_quando_uma_mensagem_nao_basta(
     session, sempre_contar
 ) -> None:
-    """Segundo degrau da cascata final: truncar para uma literal pode nao bastar.
+    """Segundo degrau da cascata final, agora fim a fim via `montar_contexto`.
 
     As quatro primeiras contagens do roteiro cobrem a contagem inicial e as
     tres passadas normais do laco (dobra, comprime, comprime) ate estourar o
-    teto de iteracoes. A quinta e a contagem logo apos truncar para uma unica
-    literal -- ainda acima do teto. So a sexta, apos descartar o resumo
-    tambem, cabe.
+    teto de iteracoes com 20 literais. As quatro seguintes cobrem a reducao
+    progressiva da janela ate 1 literal (20 -> 10 -> 5 -> 2 -> 1), sempre
+    acima do teto. So a nona, apos descartar o resumo tambem, cabe.
     """
     await semear(session, 25)
     resumidor = ResumidorFake()
-    contador = ContadorFake(roteiro=[13500, 13500, 13500, 13500, 13000, 9000])
+    contador = ContadorFake(roteiro=[13500] * 8 + [9000])
 
     contexto = await montar_contexto(
         get_sessionmaker(),
@@ -347,7 +452,7 @@ async def test_truncar_descarta_o_resumo_quando_uma_mensagem_nao_basta(
     assert contexto.tokens == 9000
     assert contexto.tokens <= get_settings().contexto_teto_de_tokens
     assert len(contexto.literais) == 1
-    assert contexto.resumo is None, "truncar sozinho nao bastou; o resumo teve de cair tambem"
+    assert contexto.resumo is None, "reduzir a janela nao bastou; o resumo teve de cair tambem"
     assert contexto.degradado is True
 
 
@@ -377,6 +482,34 @@ async def test_falha_no_meio_do_laco_ainda_trunca_ate_caber(session, sempre_cont
     assert contexto.degradado is True
 
 
+async def test_sem_resumo_previo_nunca_manda_comprimir_string_vazia(session, sempre_contar) -> None:
+    """Sem resumo ainda, o laco nao pode pedir para o provedor comprimir o nada.
+
+    Cinco literais (abaixo do piso) sem nenhum resumo previo, com a contagem
+    estourando de cara: sem esta guarda, o laco chamaria
+    `resumidor.resumir(INSTRUCAO_COMPRIMIR, "")` -- e o texto que o provedor
+    inventasse a partir do vazio viraria memoria da conversa sem nunca ter
+    sido ganho, a mesma classe de falha que a Task 4 evita ao recusar um
+    resumo vazio. O caminho certo e ir direto para o corte de emergencia.
+    """
+    await semear(session, 5)
+    resumidor = ResumidorFake()
+    contador = ContadorFake(roteiro=[13500, 9000])  # estoura, cabe apos reduzir a janela
+
+    contexto = await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=resumidor,
+        contador=contador,
+    )
+
+    assert resumidor.chamadas == [], "nunca deve pedir ao provedor para comprimir uma string vazia"
+    assert contexto.resumo is None
+    assert contexto.tokens <= get_settings().contexto_teto_de_tokens
+    assert contexto.degradado is True
+
+
 async def test_comprimir_persiste_o_resultado(session, sempre_contar) -> None:
     """Sem persistir, o texto comprimido morre com o request.
 
@@ -385,7 +518,7 @@ async def test_comprimir_persiste_o_resultado(session, sempre_contar) -> None:
     fora a cada vez. A marca (`gravar_resumo`) prova que o texto da segunda
     passada -- a compressao, nao a dobra -- e o que fica gravado.
     """
-    await semear(session, 25)
+    criadas = await semear(session, 25)
     resumidor = ResumidorFake(roteiro=["resumo dobrado", "resumo comprimido"])
     # 1a conta estoura (dobra), 2a ainda estoura (comprime), 3a cabe.
     contador = ContadorFake(roteiro=[13500, 13500, 9000])
@@ -407,6 +540,15 @@ async def test_comprimir_persiste_o_resultado(session, sempre_contar) -> None:
         "a passada de compressao tem de sobrescrever a de dobrar no banco"
     )
     assert gravado.mensagens_cobertas == 5, "comprimir so encurta o texto, nao cobre mensagem nova"
+    # A dobra (25 literais, piso 20) dobra as 5 mais antigas; a marca e a
+    # ultima delas -- a 5a mensagem semeada (indice 4). Comprimir nao pode
+    # mexer nisso: sem esta checagem, um refatorador que avancasse a marca
+    # durante a compressao "orfanaria" cobertura sem nunca ter dobrado nada,
+    # e o teste continuaria verde ao olhar so para o texto.
+    assert gravado.watermark_created_at == criadas[4].created_at, (
+        "comprimir so encurta o texto -- a marca so avanca numa dobra"
+    )
+    assert gravado.watermark_message_id == criadas[4].id
 
 
 async def test_segunda_chamada_nao_repete_a_compressao_ja_persistida(
@@ -487,17 +629,19 @@ async def test_estado_de_qualificacao_entra_no_contexto(session) -> None:
 
 
 async def test_limiar_de_contagem_cede_a_vez_para_a_contagem_real(session) -> None:
-    """0.75 do teto, nao 0.83: a margem antiga deixava passar sem medir.
+    """0.6 do teto, derivado -- nao um numero redondo fixo e desligado dele.
 
-    `len/4` supoe 4 caracteres por token; portugues acentuado e emoji do
-    WhatsApp rodam mais perto de 3.2. Vinte literais de ~2.000 caracteres cada
-    formam uma conversa exatamente do tipo que o limiar antigo (10.000, 0.83
-    do teto) deixava passar pela estimativa barata sem nunca pagar a contagem
-    real -- e so seria pega depois de o teto ja ter estourado de verdade.
-    Nao forca `sempre_contar`: o que este teste prova e que o limiar *default*
-    ja cede a vez sozinho para conteudo deste tamanho.
+    `len/4` supoe 4 caracteres por token; portugues acentuado roda mais perto
+    de 3.2-3.7. Vinte literais de ~1.900 caracteres cada formam uma conversa
+    grande o bastante para que a estimativa barata (por volta de 9.487) cruze
+    o limiar efetivo (0.6 * 12.000 = 7.200) e ceda a vez para a contagem real,
+    em vez de decidir sozinha que cabe. Nao forca `sempre_contar`: o que este
+    teste prova e que o limiar *default* ja cede a vez sozinho para conteudo
+    deste tamanho. (Este teste e sobre acentuacao, nao sobre emoji -- ver
+    `test_limiar_nao_protege_conteudo_denso_em_emoji` logo abaixo para o que
+    este limiar deliberadamente nao cobre.)
     """
-    texto_grande = "conteudo em portugues acentuado, com emoji \U0001f3e0\U0001f511, " * 40
+    texto_grande = "conteudo em portugues acentuado: nao, coracao, qualificacao, imovel. " * 27
     await semear(session, 20, texto=texto_grande)
     contador = ContadorFake()
 
@@ -512,4 +656,38 @@ async def test_limiar_de_contagem_cede_a_vez_para_a_contagem_real(session) -> No
     assert contador.chamadas >= 1, (
         "com mensagens deste tamanho a estimativa barata tem de ceder a vez "
         "para a contagem real, nao decidir sozinha que cabe"
+    )
+
+
+async def test_limiar_nao_protege_conteudo_denso_em_emoji(session) -> None:
+    """Documenta o risco aceito: `len/4` nao sabe que emoji custa mais token
+    por caractere.
+
+    Poucas mensagens cheias de emoji ficam curtas em CARACTERES -- a
+    estimativa so olha para `len()` -- entao a estimativa barata decide
+    sozinha que cabe e a contagem real nunca e chamada, mesmo que na API de
+    verdade esse texto custe bem mais tokens do que a estimativa supoe (a
+    conta completa esta em `Settings.limiar_de_contagem_efetivo`). Este teste
+    nao prova o numero real de tokens -- o dublê tambem mede por `len/4`, e
+    nenhum teste desta suite toca a rede -- mas prova o mecanismo: conteudo
+    curto em caracteres nunca aciona a contagem real, seja lá o que ele
+    contenha. E o gap que o comentario do limiar documenta, nao um bug
+    escondido.
+    """
+    emoji_denso = "\U0001f3e0" * 200  # curto em len(), denso em tokens de verdade
+    await semear(session, 3, texto=emoji_denso)
+    contador = ContadorFake()
+
+    await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorFake(),
+        contador=contador,
+    )
+
+    assert contador.chamadas == 0, (
+        "conteudo curto em caracteres nunca passa pela contagem real, mesmo "
+        "sendo emoji denso -- risco aceito e documentado, nao coberto por "
+        "este limiar"
     )
