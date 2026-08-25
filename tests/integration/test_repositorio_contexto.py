@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -79,6 +79,74 @@ async def test_gravar_duas_vezes_atualiza_em_vez_de_duplicar(session) -> None:
 
     total = await session.scalar(sql("SELECT count(*) FROM conversation_summaries"))
     assert total == 1
+
+
+async def test_marca_nunca_anda_para_tras(session) -> None:
+    """Dois turnos concorrentes nao podem recuar a marca.
+
+    Ambos leem o mesmo estado, dobram e gravam. Sem a guarda de monotonia o
+    mais lento sobrescreve o mais rapido, a marca recua e as mensagens entre
+    as duas marcas voltam a ser dobradas -- conteudo duplicado no resumo, para
+    sempre.
+    """
+    recente = datetime.now(UTC)
+    antiga = recente - timedelta(minutes=10)
+
+    await gravar_resumo(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        texto="resumo do turno rapido",
+        watermark_created_at=recente,
+        watermark_message_id=uuid.uuid4(),
+        mensagens_cobertas=40,
+        modelo="claude-opus-5",
+    )
+    await session.commit()
+
+    await gravar_resumo(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        texto="resumo do turno lento",
+        watermark_created_at=antiga,
+        watermark_message_id=uuid.uuid4(),
+        mensagens_cobertas=20,
+        modelo="claude-opus-5",
+    )
+    await session.commit()
+
+    lido = await ler_resumo(session, CANAL, CONVERSA)
+    assert lido is not None
+    assert lido.watermark_created_at == recente, "a marca so anda para frente"
+    assert lido.texto == "resumo do turno rapido"
+
+
+async def test_marca_igual_ainda_grava_a_compressao(session) -> None:
+    """`<=` e nao `<`: comprimir regrava a mesma marca de proposito.
+
+    A compressao so encurta o texto -- nao cobre mensagem nova, entao a marca
+    e identica. Com `<` estrito o texto comprimido seria descartado em
+    silencio e a conversa pagaria a mesma compressao todo turno.
+    """
+    marca = datetime.now(UTC)
+    identificador = uuid.uuid4()
+    for texto in ("resumo dobrado", "resumo comprimido"):
+        await gravar_resumo(
+            session,
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            texto=texto,
+            watermark_created_at=marca,
+            watermark_message_id=identificador,
+            mensagens_cobertas=40,
+            modelo="claude-opus-5",
+        )
+        await session.commit()
+
+    lido = await ler_resumo(session, CANAL, CONVERSA)
+    assert lido is not None
+    assert lido.texto == "resumo comprimido"
 
 
 async def test_conversa_sem_resumo_devolve_none(session) -> None:
