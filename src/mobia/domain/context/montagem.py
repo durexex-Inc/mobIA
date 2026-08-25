@@ -24,6 +24,7 @@ from mobia.domain.context.resumo import (
     ContadorPort,
     ResumidorPort,
 )
+from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.models import Message
 from mobia.infra.crypto import DecryptionError, aad_de, decrypt
 
@@ -66,6 +67,24 @@ class ContextoMontado:
     degradado: bool
 
 
+# Marcador por tipo para a mensagem que chega sem texto. AUDIO, IMAGEM e
+# DOCUMENTO gravam `text_body` NULL hoje -- transcricao e OCR sao historias
+# proprias -- e DESCONHECIDO e por definicao o que ninguem mapeou.
+#
+# Sem marcador, tres audios do lead entram no prompt como tres turnos vazios,
+# indistinguiveis de tres mensagens em branco. O estrago nao para no turno: e
+# esse mesmo texto que a dobra manda para o resumo, entao a memoria permanente
+# da conversa passa a registrar "o lead nao disse nada" onde o lead mandou tres
+# audios, e todo turno seguinte le isso. O marcador nao inventa conteudo: diz o
+# que de fato se sabe -- veio um audio, e ele ainda nao foi transcrito.
+_SEM_TEXTO: dict[str, str] = {
+    MessageContentType.AUDIO: "(audio, sem transcricao)",
+    MessageContentType.IMAGEM: "(imagem, sem descricao)",
+    MessageContentType.DOCUMENTO: "(documento, sem texto extraido)",
+}
+_SEM_TEXTO_PADRAO = "(mensagem sem texto)"
+
+
 def _texto_da(linha: Message) -> str:
     """Decifra o corpo para montar o prompt.
 
@@ -73,7 +92,9 @@ def _texto_da(linha: Message) -> str:
     resumir o que foi dito, e a contagem de tokens tem de medir o que vai de
     fato ser enviado. Este texto nunca entra num `log.*`.
     """
-    corpo = decrypt(linha.text_body, aad_de(linha.id, "text_body")) or ""
+    corpo = decrypt(linha.text_body, aad_de(linha.id, "text_body"))
+    if corpo is None:
+        corpo = _SEM_TEXTO.get(linha.content_type, _SEM_TEXTO_PADRAO)
     return f"[{linha.role}] {corpo}"
 
 

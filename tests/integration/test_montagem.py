@@ -12,6 +12,7 @@ from mobia.domain.context.models import ConversationSummary, LeadQualification, 
 from mobia.domain.context.montagem import (
     ContextoIrreducivel,
     _texto_da,
+    _texto_das,
     _truncar_ate_caber,
     montar_contexto,
 )
@@ -30,7 +31,11 @@ from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
 
 
-def _mensagem_literal(role: MessageRole = MessageRole.LEAD) -> Message:
+def _mensagem_literal(
+    role: MessageRole = MessageRole.LEAD,
+    content_type: MessageContentType = MessageContentType.TEXTO,
+    corpo: str | None = "x",
+) -> Message:
     """Uma `Message` minima, sem tocar o banco.
 
     `_texto_da` e `_truncar_ate_caber` so olham para `id`, `role`, `text_body`
@@ -45,8 +50,8 @@ def _mensagem_literal(role: MessageRole = MessageRole.LEAD) -> Message:
         conversation_key=CONVERSA,
         role=role,
         direction=MessageDirection.INBOUND,
-        content_type=MessageContentType.TEXTO,
-        text_body=encrypt("x", aad_de(identificador, "text_body")),
+        content_type=content_type,
+        text_body=encrypt(corpo, aad_de(identificador, "text_body")),
         raw_payload=None,
         status=MessageStatus.PROCESSED,
         created_at=datetime.now(UTC),
@@ -150,6 +155,72 @@ def test_texto_da_renderiza_o_role_como_texto_nao_como_repr_do_enum() -> None:
     assert _texto_da(com_enum) == "[LEAD] x"
     assert _texto_da(com_string_pura) == "[LEAD] x"
     assert "MessageRole" not in _texto_da(com_enum)
+
+
+def test_mensagem_sem_texto_entra_marcada_pelo_tipo() -> None:
+    """Audio, imagem e documento nao podem entrar como turno vazio.
+
+    Essas linhas gravam `text_body` NULL hoje -- transcricao e OCR sao
+    historias proprias. Rendendo string vazia, tres audios do lead viram tres
+    turnos em branco no prompt, indistinguiveis de tres mensagens vazias, e a
+    dobra manda esse nada para o resumo: a memoria permanente da conversa passa
+    a dizer que o lead nao falou nada onde ele mandou tres audios.
+    """
+    audio = _mensagem_literal(content_type=MessageContentType.AUDIO, corpo=None)
+    imagem = _mensagem_literal(content_type=MessageContentType.IMAGEM, corpo=None)
+    documento = _mensagem_literal(content_type=MessageContentType.DOCUMENTO, corpo=None)
+    desconhecido = _mensagem_literal(content_type=MessageContentType.DESCONHECIDO, corpo=None)
+
+    assert _texto_da(audio) == "[LEAD] (audio, sem transcricao)"
+    assert _texto_da(imagem) == "[LEAD] (imagem, sem descricao)"
+    assert _texto_da(documento) == "[LEAD] (documento, sem texto extraido)"
+    assert _texto_da(desconhecido) == "[LEAD] (mensagem sem texto)", (
+        "tipo nao mapeado ainda tem de dizer que veio alguma coisa"
+    )
+
+
+def test_audio_nao_se_confunde_com_mensagem_vazia() -> None:
+    """A distincao e o ponto: o modelo tem de poder diferenciar os dois casos."""
+    audio = _mensagem_literal(content_type=MessageContentType.AUDIO, corpo=None)
+    vazia = _mensagem_literal(content_type=MessageContentType.TEXTO, corpo="")
+
+    assert _texto_da(audio) != _texto_da(vazia)
+
+
+async def test_audio_no_prompt_e_no_resumo_nao_vira_turno_em_branco(session) -> None:
+    """Fim a fim: o marcador chega no que e medido e no que e dobrado.
+
+    A mesma funcao monta o texto do prompt, o texto que a contagem mede e o
+    conteudo que vai para o resumidor na dobra -- entao provar o marcador em
+    `_texto_das` prova os tres.
+    """
+    identificador = uuid.uuid4()
+    session.add(
+        Message(
+            id=identificador,
+            channel=CANAL,
+            provider_message_id=f"wamid.{identificador.hex[:10]}",
+            conversation_key=CONVERSA,
+            role=MessageRole.LEAD,
+            direction=MessageDirection.INBOUND,
+            content_type=MessageContentType.AUDIO,
+            text_body=None,
+            raw_payload=None,
+            status=MessageStatus.PROCESSED,
+        )
+    )
+    await session.commit()
+
+    contexto = await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorFake(),
+        contador=ContadorFake(),
+    )
+
+    assert len(contexto.literais) == 1
+    assert _texto_das(contexto.literais) == "[LEAD] (audio, sem transcricao)"
 
 
 async def test_regenera_ao_atingir_o_gatilho(session) -> None:
