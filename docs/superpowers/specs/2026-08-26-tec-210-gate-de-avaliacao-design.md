@@ -32,8 +32,8 @@ medir, e dois dos cinco itens não são avaliação.
 | Precisão de extração de campos (≥ 85%) | ✗ sem sujeito — TEC-145 não existe |
 | Taxa de alucinação (< 2%) | ✗ sem sujeito — bloqueada por TEC-161, como o próprio card declara |
 | Aderência ao tom | ✗ sem sujeito — TEC-140 não existe |
-| Moderação de entrada e saída em 100% dos turnos | ✗ é feature de produção, não avaliação |
-| Política de não-treinamento com o provedor | ✗ é tarefa contratual, ninguém programa |
+| Moderação de entrada e saída em 100% dos turnos | ✗ é feature de produção — desmembrada na [TEC-233](https://eduardodurieuxlopes.atlassian.net/browse/TEC-233) |
+| Política de não-treinamento com o provedor | ✗ é tarefa contratual — desmembrada na [TEC-234](https://eduardodurieuxlopes.atlassian.net/browse/TEC-234) |
 
 As três métricas sem sujeito **entram declaradas no relatório**, sempre em
 `SEM_MECANISMO`, nunca em verde. Ver a seção própria abaixo.
@@ -228,7 +228,10 @@ esses rodam na suíte normal, sem rede:
 - **O eval não cobre o turno inteiro.** Ele chama `classificar` direto; regressão
   que só apareça na integração com contexto real do banco não é pega aqui.
 - **Nada disto entrega moderação.** O primeiro turno que existe continua indo ao
-  ar sem moderação de entrada ou de saída — item 4 do card, que precisa de card
-  próprio por ser feature de produção.
-- **A política de não-treinamento continua não configurada.** Item 5 do card,
-  administrativo.
+  ar sem moderação de entrada ou de saída, e este gate não muda isso — ele mede
+  acurácia de intenção, não impropriedade de conteúdo. É a
+  [TEC-233](https://eduardodurieuxlopes.atlassian.net/browse/TEC-233), que não
+  depende deste card e pode andar em paralelo.
+- **A política de não-treinamento continua não configurada.** É a
+  [TEC-234](https://eduardodurieuxlopes.atlassian.net/browse/TEC-234), que fecha
+  por evidência arquivada e não por merge — nenhum código a satisfaz.
