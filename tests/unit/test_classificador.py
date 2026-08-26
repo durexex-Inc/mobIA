@@ -427,3 +427,24 @@ async def test_classificar_recusa_corpo_que_nao_e_objeto(monkeypatch: pytest.Mon
         await ClassificadorAnthropic().classificar(_contexto())
 
     assert str(erro.value) == "TypeError"
+
+
+async def test_classificar_recusa_confianca_inteira_gigante(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Um inteiro JSON de ~320 digitos nao pode escapar como OverflowError.
+
+    `json.loads` devolve um `int` de precisao arbitraria sem reclamar.
+    Converte-lo para float (era o que `math.isfinite` fazia, antes da faixa)
+    levanta OverflowError -- ArithmeticError, fora do `except` do boundary --
+    e a excecao escapava crua, quebrando o contrato de que RespostaInvalida e
+    o unico modo de falha deste modulo. A comparacao `0 <= x <= 1` trabalha em
+    precisao arbitraria e rejeita antes de qualquer conversao.
+    """
+    resposta = _resposta_json(confianca=10**320)
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    with pytest.raises(RespostaInvalida) as erro:
+        await ClassificadorAnthropic().classificar(_contexto())
+
+    assert "intervalo" in str(erro.value)

@@ -1,5 +1,4 @@
 import json
-import math
 import time
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
@@ -106,13 +105,26 @@ class ClassificadorAnthropic:
             # additionalProperties/enum/type sao os unicos campos que o
             # compilador do servidor de fato impoe (ver _SCHEMA_COMPILADO
             # acima) -- o intervalo [0, 1] de `confianca` nunca foi garantido
-            # la. `json.loads` tambem aceita os literais `NaN`/`Infinity` do
-            # JSON5, que passariam incolumes por um `Decimal(str(...))` sem
-            # nunca satisfazer nem `>= 0.8` nem `< 0.6` de quem consome depois.
+            # la.
+            #
+            # A comparacao de faixa e a **primeira** checagem depois do tipo, e
+            # a ordem importa. Um `math.isfinite` aqui na frente recebe o int
+            # arbitrario que `json.loads` aceita sem reclamar (um inteiro JSON
+            # de ~320 digitos) e levanta OverflowError ao converter para float
+            # -- ArithmeticError, fora do `except` abaixo, escapando cru e
+            # quebrando o contrato de que RespostaInvalida e o unico modo de
+            # falha deste modulo. `0 <= x <= 1` trabalha em precisao
+            # arbitraria e rejeita o valor sem converter nada.
+            #
+            # E ela sozinha ja cobre `NaN`/`Infinity`/`-Infinity`, os literais
+            # nao-padrao que `json.loads` aceita: toda comparacao com NaN e
+            # falsa e os infinitos caem fora da faixa. Nenhum deles chega ao
+            # `Decimal(str(...))` -- um NaN ali nunca satisfaria `>= 0.8` nem
+            # `< 0.6` de quem consome depois, e a ramificacao simplesmente nao
+            # aconteceria, em silencio.
             if (
                 isinstance(confianca_bruta, bool)
                 or not isinstance(confianca_bruta, int | float)
-                or not math.isfinite(confianca_bruta)
                 or not (0 <= confianca_bruta <= 1)
             ):
                 # RuntimeError nao esta no tuple do except abaixo -- propaga
