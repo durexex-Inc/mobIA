@@ -160,6 +160,9 @@ async def test_falha_ao_liberar_nao_mascara_o_erro_original(session, caplog) -> 
 
     assert isinstance(raised, EnvioRetentavel), f"esperava EnvioRetentavel, veio {raised!r}"
     assert "outbound.liberacao_falhou" in caplog.text
+    # Sem o tipo no evento, um TypeError daqui de dentro fica indistinguivel
+    # de um deadlock do banco -- nao ha nada de que depurar.
+    assert "RuntimeError" in caplog.text
 
 
 async def test_liberar_so_apaga_a_reserva_do_kind_que_falhou(session) -> None:

@@ -10,6 +10,31 @@ from mobia.domain.outbound.models import OutboundDispatch
 
 log = structlog.get_logger(__name__)
 
+# A UNIQUE (message_id, kind) de `outbound_dispatches` -- ver
+# `OutboundDispatch.__table_args__`. E a unica violacao de integridade que
+# significa "ja reservei este envio".
+UNIQUE_DA_RESERVA = "uq_outbound_message_kind"
+
+
+def _e_reserva_duplicada(exc: IntegrityError) -> bool:
+    """Distingue a colisao da reserva de qualquer outra falha de integridade.
+
+    Tratar todo IntegrityError como duplicata converte uma falha nao
+    relacionada (FK quebrada, NOT NULL, um constraint novo que alguem
+    adicionar amanha) no desfecho terminal do turno: `send()` devolve False, o
+    turno vira "reentrega_suprimida", a linha fecha em PROCESSED -- terminal --
+    e o lead nunca recebe nada, com uma linha de log que diz "duplicata
+    suprimida" e manda quem investiga para o lado errado.
+
+    `constraint_name` vem do asyncpg; a checagem no texto e o fallback para
+    qualquer outro driver, que ainda cita o nome do constraint na mensagem.
+    """
+    original = exc.orig
+    nome = getattr(original, "constraint_name", None)
+    if nome is not None:
+        return bool(nome == UNIQUE_DA_RESERVA)
+    return UNIQUE_DA_RESERVA in str(original)
+
 
 class OutboundPort(Protocol):
     async def send(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> bool: ...
@@ -42,8 +67,15 @@ class GuardedOutbound:
             session.add(OutboundDispatch(id=uuid.uuid4(), message_id=message_id, kind=kind))
             try:
                 await session.commit()
-            except IntegrityError:
+            except IntegrityError as exc:
                 await session.rollback()
+                if not _e_reserva_duplicada(exc):
+                    raise
+                # `info` de proposito, e nao `error` como o desfecho do turno:
+                # aqui a supressao ainda pode ser o caso benigno (um ACK
+                # reentregue). Quem sabe que o que se perdeu foi a resposta ao
+                # lead e `executar_turno`, e e la que o nivel sobe -- ver
+                # `turno.reentrega_suprimida`.
                 log.info(
                     "outbound.duplicate_suppressed",
                     message_id=str(message_id),
@@ -62,7 +94,7 @@ class GuardedOutbound:
             # para uma duplicata possivel, que e visivel e recuperavel.
             try:
                 await self._liberar(message_id, kind)
-            except Exception:
+            except Exception as exc:
                 # Se o proprio delete da liberacao falhar (deadlock, conexao
                 # caida), quem chama send() ainda precisa ver EnvioRetentavel,
                 # nao um erro de infra do release -- senao um retentavel vira
@@ -74,6 +106,11 @@ class GuardedOutbound:
                     "outbound.liberacao_falhou",
                     message_id=str(message_id),
                     kind=kind,
+                    # Sem o tipo, este evento nao tem nada de que se depurar --
+                    # um TypeError daqui de dentro fica indistinguivel de um
+                    # deadlock do banco. So o nome da classe, como no resto do
+                    # projeto: nao vaza conteudo.
+                    reason=type(exc).__name__,
                 )
             raise
 
