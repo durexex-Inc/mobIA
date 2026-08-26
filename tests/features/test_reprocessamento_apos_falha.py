@@ -207,3 +207,55 @@ async def test_mensagem_inexistente_e_ignorada() -> None:
     outbound = OutboundEspiao(get_sessionmaker())
     ctx = _ctx(get_sessionmaker(), outbound)
     assert await process_message(ctx, str(uuid.uuid4())) == "skipped"
+
+
+class ErroDeTerceiro(RuntimeError):
+    """Fica fora do pacote `mobia` de proposito -- e o ponto do teste.
+
+    Reproduz uma excecao de SDK: `contador.contar` e `messages.create` mandam
+    a conversa decifrada do lead no corpo da requisicao, e nada garante o que
+    a biblioteca decide colocar em `str(exc)`.
+    """
+
+
+SENTINELA = "SENTINELA lead mora na Rua das Palmeiras e quer 2 quartos"
+
+
+async def test_erro_de_terceiro_nao_leva_a_mensagem_para_last_error(session, caplog) -> None:
+    """`messages.last_error` e coluna durvel e nao passa pela mascara de PII.
+
+    Ate a TEC-134 so excecao da ingestao chegava ali. Agora duas chamadas a
+    terceiros ficam a montante, com a conversa do lead no corpo da requisicao.
+    So o nome da classe pode atravessar essa fronteira.
+    """
+    message_id = await enfileirada(session)
+    ctx = _ctx(get_sessionmaker(), OutboundEspiao(get_sessionmaker()))
+    ctx["classificador"] = ClassificadorFake(erro=ErroDeTerceiro(SENTINELA))
+
+    with caplog.at_level("INFO"), pytest.raises(ErroDeTerceiro):
+        await process_message(ctx, str(message_id))
+
+    linha = await session.get(Message, message_id)
+    await session.refresh(linha)
+    assert linha.status == MessageStatus.FAILED
+    assert linha.last_error == "ErroDeTerceiro"
+    assert SENTINELA not in (linha.last_error or "")
+    assert SENTINELA not in caplog.text
+
+
+async def test_erro_do_proprio_projeto_mantem_a_mensagem(session) -> None:
+    """Excecao de `mobia` teve a mensagem escrita aqui dentro -- sabe-se o que
+    ela carrega, e ela e o que torna `last_error` util para depurar.
+    """
+    from mobia.domain.agente.classificador import RespostaInvalida
+
+    message_id = await enfileirada(session)
+    ctx = _ctx(get_sessionmaker(), OutboundEspiao(get_sessionmaker()))
+    ctx["classificador"] = ClassificadorFake(erro=RespostaInvalida("JSONDecodeError"))
+
+    with pytest.raises(RespostaInvalida):
+        await process_message(ctx, str(message_id))
+
+    linha = await session.get(Message, message_id)
+    await session.refresh(linha)
+    assert linha.last_error == "RespostaInvalida: JSONDecodeError"
