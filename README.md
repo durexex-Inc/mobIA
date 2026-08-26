@@ -280,15 +280,15 @@ fechava em `PROCESSED` — terminal — com o lead sem ter recebido nada.
   novo. Foi a escolha consciente; o caso oposto era perder a resposta para
   sempre. A janela é o tempo do POST, limitado a 10s pelo timeout do cliente
   do WhatsApp.
-- **`message.cancelled` não distingue timeout de deploy.** O `handle_sig` do
-  arq cancela todo job em voo a cada SIGTERM, então um deploy emite uma rajada
-  do mesmo evento, com o mesmo `last_error`. Pior que o ruído no alerta: um
-  restart **consome uma das cinco tentativas**, e a docstring do
-  `sweep_stalled` diz que esse orçamento é de "5 falhas de verdade" — um
-  restart não é falha de processamento nenhuma. É a
-  [TEC-232](https://eduardodurieuxlopes.atlassian.net/browse/TEC-232), que
-  ataca pela raiz: `job_completion_wait` faz o arq esperar os jobs em voo em
-  vez de cancelá-los.
+- ~~**`message.cancelled` não distingue timeout de deploy.**~~ Fechada pela
+  TEC-232, abaixo. O `handle_sig` do arq cancelava todo job em voo a cada
+  SIGTERM: um deploy emitia uma rajada do mesmo evento, com o mesmo
+  `last_error`, e cada restart **consumia uma das cinco tentativas** — enquanto
+  a docstring do `sweep_stalled` diz que esse orçamento é de "5 falhas de
+  verdade", e um restart não é falha de processamento nenhuma. O
+  `job_completion_wait` drena os jobs em voo antes de cancelar. O evento
+  continua sendo um só, mas agora ele só dispara quando o turno de fato esgotou
+  o próprio orçamento.
 - **A janela do commit da reserva continua aberta.** A guarda cobre o
   `_deliver`, não o `commit()` que cria a reserva. Um cancelamento exatamente
   ali deixa indeterminado se a linha foi gravada, e se foi, ninguém a libera —
@@ -301,4 +301,77 @@ fechava em `PROCESSED` — terminal — com o lead sem ter recebido nada.
   `classificar` sozinhos já somam o pior caso do cliente. O cancelamento apenas
   deixou de ser invisível — ele continua custando a passada inteira do turno,
   com as chamadas pagas ao modelo. Reduzir a chance de ele acontecer é a
+  [TEC-228](https://eduardodurieuxlopes.atlassian.net/browse/TEC-228).
+
+
+## TEC-232 — Deploy não cancela mais turno em voo
+
+O `handle_sig` do arq cancela **todo** job em voo a cada SIGTERM. Desde a
+TEC-227 esse cancelamento deixou de ser invisível — vira `FAILED` com
+`attempts` incrementado — e aí o preço ficou explícito: cada restart queimava
+uma das cinco `sweep_max_attempts` de uma mensagem que não tinha falhado em
+nada. Cinco deploys num dia ruim, e o lead é abandonado por um orçamento que a
+docstring do `sweep_stalled` reserva para "5 falhas de verdade".
+
+`job_completion_wait = 250` troca o handler pelo
+`handle_sig_wait_for_completion`: o worker para de pegar job novo, espera os
+que estão em voo e **só então** cancela o que sobrou.
+
+### Garantias
+
+- `job_completion_wait` (250s) é **estritamente maior** que o `job_timeout`
+  (240s), e é dessa relação que sai a garantia inteira: a drenagem cabe o
+  orçamento completo do turno, então nenhum deploy cancela um job por conta
+  própria. Ou ele termina, ou estoura os 240s dele — que é falha de verdade e
+  conta certo. Um teste trava o par, porque subir o `job_timeout` sem subir a
+  drenagem é o jeito provável de isto quebrar em silêncio.
+- O turno drenado fecha normalmente: `PROCESSED`, sem gastar tentativa, sem
+  emitir `message.cancelled`.
+- A cláusula de `CancelledError` da TEC-227 continua sendo a rede embaixo. O
+  cancelamento pós-janela ainda acontece — e ali ele é legítimo, porque o turno
+  realmente esgotou o orçamento.
+- O teste que importa não verifica a constante: ele verifica **qual handler o
+  arq registra no SIGTERM**. O `get_kwargs` do arq filtra
+  `WorkerSettings.__dict__` pela assinatura do `Worker` e descarta em silêncio o
+  que não casa — renomear o atributo, ou torná-lo uma `property`, faria a
+  configuração virar no-op sem erro nenhum. Um teste na constante passaria
+  intacto nesse caso.
+
+### Pré-requisito de deploy
+
+**A carência SIGTERM→SIGKILL da plataforma tem de passar de ~265s.** Não é
+recomendação, e o número tem conta: 250s de drenagem, mais os 10s de
+`SEGUNDOS_PARA_REGISTRAR_CANCELAMENTO` que o job não-drenado usa para escrever
+seu `FAILED`, mais os hooks de shutdown (`dispose_engine` e o fechamento do
+pool do Redis). Se o SIGKILL chegar antes de tudo isso, o processo morre sem
+`CancelledError`: a cláusula de `process_message` não roda, nada escreve
+`FAILED`, e a linha fica em `PROCESSING` com `attempts` congelado. O sweeper
+ainda a recupera, mas sem contar a tentativa — o que é **pior** que cancelar na
+hora, que ao menos registrava. Todo default de plataforma fica muito abaixo
+disso: `docker stop` são 10s, `terminationGracePeriodSeconds` do Kubernetes são
+30s.
+
+Nenhum teste cobre esta exigência, e não é descuido: não existe configuração de
+deploy neste repositório para um teste ler. O `docker-compose.yml` sobe apenas
+Postgres e Redis para desenvolvimento local, e o worker roda por `python -m
+arq`. Quando o deploy existir, este é o número que tem de subir junto.
+
+### Lacunas conhecidas
+
+- **Deploy passa a demorar até 250s.** É o preço direto da troca: drenar é
+  esperar. Um turno lento no ar segura o desligamento até terminar.
+- **Ctrl+C duas vezes não acelera o desligamento.** O segundo sinal cria outra
+  espera em vez de cancelar na hora, e o worker continua saindo no prazo da
+  primeira janela. Atrito de desenvolvimento, não de produção.
+- **`message.cancelled` continua sendo um evento só.** A distinção
+  timeout-versus-deploy não foi resolvida, foi tornada quase irrelevante: com a
+  drenagem, o deploy praticamente não gera mais o evento. Praticamente — um
+  turno que atravesse a janela inteira ainda é cancelado, e nesse caso o evento
+  está certo.
+- **A drenagem não cobre o SIGKILL.** Ver o pré-requisito acima. É a única
+  forma de esta mudança piorar o estado anterior, e ela depende inteiramente de
+  configuração que não está aqui.
+- **Nada disto cria folga no `job_timeout`.** Segue em 240s, e `resumir` +
+  `classificar` sozinhos já somam o pior caso do cliente. Reduzir a chance de
+  estourar é a
   [TEC-228](https://eduardodurieuxlopes.atlassian.net/browse/TEC-228).
