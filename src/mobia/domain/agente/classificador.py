@@ -7,7 +7,7 @@ import structlog
 from anthropic import transform_schema
 
 from mobia.app.config import get_settings
-from mobia.domain.agente.schemas import Intencao, RespostaDoAgente
+from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.montagem import ContextoMontado, montar_prompt
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.infra.anthropic import get_client
@@ -30,6 +30,18 @@ SISTEMA_DO_AGENTE = (
     "estado de qualificacao como memoria: nao repergunte o que ja esta "
     "preenchido. Nao invente informacao sobre imoveis que nao esteja no "
     "contexto."
+)
+
+MAX_TOKENS_DA_PERGUNTA = 300
+
+SISTEMA_DA_DESAMBIGUACAO = (
+    "Voce e o assistente virtual de uma imobiliaria brasileira. A ultima "
+    "mensagem do lead nao deixou claro o que ele quer, e voce nao pode "
+    "adivinhar.\n\n"
+    "Escreva uma unica pergunta, aberta, em portugues do Brasil e em tom de "
+    "conversa, que ajude o lead a explicar o que procura. Nao ofereca menu de "
+    "opcoes numeradas. Nao assuma nenhuma intencao. Nao faca mais de uma "
+    "pergunta. Devolva apenas o texto da pergunta, sem aspas e sem comentario."
 )
 
 # Derivado do enum de proposito: duas listas mantidas a mao divergem, e a
@@ -67,6 +79,7 @@ class RespostaInvalida(RuntimeError):
 
 class ClassificadorPort(Protocol):
     async def classificar(self, contexto: ContextoMontado) -> RespostaDoAgente: ...
+    async def desambiguar(self, contexto: ContextoMontado) -> PerguntaDeDesambiguacao: ...
 
 
 class ClassificadorAnthropic:
@@ -173,3 +186,53 @@ class ClassificadorAnthropic:
             ),
         )
         return resultado
+
+    async def desambiguar(self, contexto: ContextoMontado) -> PerguntaDeDesambiguacao:
+        """A segunda chamada do turno ambiguo: uma pergunta, sem schema.
+
+        Recebe o mesmo contexto da primeira -- o prefixo esta quente no cache
+        -- e troca so o system prompt. Sem `output_config`: a saida e uma
+        frase, nao ha campo para validar, e o compilador de schema do servidor
+        e uma chance a mais de 400 num caminho que ja e o de excecao.
+        """
+        settings = get_settings()
+        comeco = time.monotonic()
+        resposta = await get_client().messages.create(
+            model=settings.modelo_agente,
+            max_tokens=MAX_TOKENS_DA_PERGUNTA,
+            system=SISTEMA_DA_DESAMBIGUACAO,
+            messages=[{"role": "user", "content": montar_prompt(contexto, omitir_sistema=True)}],
+        )
+        latency_ms = int((time.monotonic() - comeco) * 1000)
+
+        # Mesmo criterio do `classificar`, e aqui `max_tokens` e um risco real:
+        # o teto e curto de proposito, e meia pergunta e pior que nenhuma.
+        if resposta.stop_reason != "end_turn":
+            raise RespostaInvalida(f"stop_reason={resposta.stop_reason!r}")
+
+        texto = "".join(bloco.text for bloco in resposta.content if bloco.type == "text").strip()
+        if not texto:
+            raise RespostaInvalida("pergunta veio vazia")
+
+        # So numeros e id de modelo -- a pergunta vai para o lead, nao para o log.
+        log.info(
+            "agente.desambiguacao_gerada",
+            modelo=settings.modelo_agente,
+            tokens_in=resposta.usage.input_tokens,
+            tokens_out=resposta.usage.output_tokens,
+            latency_ms=latency_ms,
+            custo_usd=str(
+                custo_em_dolar(
+                    settings.modelo_agente,
+                    resposta.usage.input_tokens,
+                    resposta.usage.output_tokens,
+                )
+            ),
+        )
+        return PerguntaDeDesambiguacao(
+            texto=texto,
+            modelo=settings.modelo_agente,
+            tokens_in=resposta.usage.input_tokens,
+            tokens_out=resposta.usage.output_tokens,
+            latency_ms=latency_ms,
+        )

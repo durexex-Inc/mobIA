@@ -46,3 +46,22 @@ class RespostaDoAgente:
     tokens_in: int
     tokens_out: int
     latency_ms: int
+
+
+@dataclass(frozen=True)
+class PerguntaDeDesambiguacao:
+    """O que a segunda chamada devolve quando o lead foi vago demais.
+
+    Nao tem `intencao` nem `confianca` de proposito: esta chamada nao
+    classifica nada. Quem classificou foi a primeira, e o resultado dela ja
+    esta gravado quando esta acontece.
+
+    Os campos de telemetria repetem os de `RespostaDoAgente` porque o turno
+    trata os dois do mesmo jeito na hora de gravar a fala do agente.
+    """
+
+    texto: str
+    modelo: str
+    tokens_in: int
+    tokens_out: int
+    latency_ms: int
