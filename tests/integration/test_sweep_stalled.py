@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import ClassificadorFake, ContadorFake, ResumidorFake
 from sqlalchemy import func, select
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -13,6 +14,18 @@ from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
 from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
+
+
+def _ctx_do_turno(session_factory, outbound) -> dict:
+    """`process_message` roda o turno inteiro desde a TEC-134 -- ver o mesmo
+    helper em `tests/features/test_reprocessamento_apos_falha.py`."""
+    return {
+        "session_factory": session_factory,
+        "outbound": outbound,
+        "classificador": ClassificadorFake(),
+        "resumidor": ResumidorFake(),
+        "contador": ContadorFake(),
+    }
 
 
 async def mensagem(
@@ -159,8 +172,8 @@ async def test_failed_volta_a_ser_processada_pelo_sweeper(session, redis_pool, s
     assert linha.attempts == 1, "a falha anterior ja contou; a varredura nao conta de novo"
 
     outbound = OutboundEspiao(get_sessionmaker())
-    ctx = {"session_factory": get_sessionmaker(), "outbound": outbound}
-    assert await process_message(ctx, str(message_id)) == "processed"
+    ctx = _ctx_do_turno(get_sessionmaker(), outbound)
+    assert await process_message(ctx, str(message_id)) == "respondido"
 
     await session.refresh(linha)
     assert linha.status == MessageStatus.PROCESSED
@@ -213,7 +226,7 @@ async def test_teto_e_consumido_por_falha_de_processamento_e_continua_limitando(
     await session.refresh(linha)
     assert linha.attempts == teto - 1, "a varredura nao pode consumir orcamento"
 
-    ctx = {"session_factory": get_sessionmaker(), "outbound": OutboundQueCai(get_sessionmaker())}
+    ctx = _ctx_do_turno(get_sessionmaker(), OutboundQueCai(get_sessionmaker()))
     with pytest.raises(RuntimeError):
         await process_message(ctx, str(message_id))
 

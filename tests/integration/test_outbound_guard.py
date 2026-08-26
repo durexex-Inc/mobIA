@@ -1,7 +1,9 @@
 import uuid
 from typing import Any
 
+import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
@@ -86,3 +88,21 @@ async def test_noop_outbound_reserva_sem_efeito_externo(session) -> None:
 
     total = await session.scalar(select(func.count()).select_from(OutboundDispatch))
     assert total == 1
+
+
+async def test_integridade_que_nao_e_a_unique_da_reserva_propaga(session) -> None:
+    """Nem todo IntegrityError e duplicata.
+
+    Um `message_id` sem linha em `messages` viola a FK, nao a UNIQUE
+    (message_id, kind). Tratar os dois igual converteria uma falha nao
+    relacionada no desfecho terminal do turno: `send()` devolvendo False vira
+    "reentrega_suprimida", a mensagem fecha em PROCESSED -- terminal -- e o
+    lead nunca recebe nada, com um log dizendo "duplicata suprimida" que manda
+    quem investiga para o lado errado.
+    """
+    outbound = OutboundEspiao(get_sessionmaker())
+
+    with pytest.raises(IntegrityError):
+        await outbound.send(uuid.uuid4(), "reply", {})
+
+    assert outbound.entregas == [], "nao entrega o que nao conseguiu reservar"

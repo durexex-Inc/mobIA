@@ -2,9 +2,11 @@ from typing import Any
 
 from arq import cron, func
 
-from mobia.app.config import get_settings
+from mobia.app.config import ConfiguracaoInsegura, get_settings
 from mobia.app.logging import configure_logging
-from mobia.domain.outbound.noop import NoopOutbound
+from mobia.domain.agente.classificador import ClassificadorAnthropic
+from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
+from mobia.domain.outbound.whatsapp import WhatsAppOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.queue import redis_settings
 from mobia.workers.jobs.process_message import process_message
@@ -20,10 +22,31 @@ async def startup(ctx: dict[str, Any]) -> None:
     """
     settings = get_settings()
     configure_logging(settings.log_level)
+
+    # Sem token, `WhatsAppOutbound` funcionaria -- ate a primeira entrega, que
+    # a Meta recusa com 401. Isso vira `EnvioRecusado` (permanente), o turno
+    # devolve "sem_resposta" e a linha fecha em PROCESSED, que e terminal: o
+    # sweeper nunca reenfileira. Cada lead que escrever antes de alguem notar
+    # a configuracao faltando perde a resposta pra sempre, sem alarme alem de
+    # uma linha de log. Falhar aqui, antes de `ctx["outbound"]` existir e
+    # antes de qualquer job rodar, e o mesmo raciocinio de `get_client()` para
+    # ANTHROPIC_API_KEY -- so que ali a chamada falha sozinha; aqui, sem esta
+    # guarda, ela nao falhava, so descartava em silencio.
+    if not settings.whatsapp_access_token:
+        raise ConfiguracaoInsegura(
+            "WHATSAPP_ACCESS_TOKEN nao configurado. Sem ele toda entrega volta "
+            "401 da Meta -- falha permanente que fecha a mensagem sem "
+            "retentativa, em silencio. Defina no .env ou no ambiente antes de "
+            "subir o worker."
+        )
+
     session_factory = get_sessionmaker()
     ctx["settings"] = settings
     ctx["session_factory"] = session_factory
-    ctx["outbound"] = NoopOutbound(session_factory)
+    ctx["outbound"] = WhatsAppOutbound(session_factory)
+    ctx["classificador"] = ClassificadorAnthropic()
+    ctx["resumidor"] = ResumidorAnthropic()
+    ctx["contador"] = ContadorAnthropic()
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -56,5 +79,23 @@ class WorkerSettings:
     on_shutdown = shutdown
     redis_settings = redis_settings()
     max_tries = 5
-    job_timeout = 60
+
+    # 240s, e a relacao com `sweep_inflight_after_seconds = 300` e o que fixa
+    # este numero: tem de ser **estritamente menor** que a janela do sweeper,
+    # senao o sweeper reenfileira um turno que ainda esta em voo e a mesma
+    # conversa roda duas vezes em paralelo. Os 60s vieram da TEC-122, quando o
+    # job era claim + ACK. Hoje o turno faz count_tokens, as vezes `resumir`
+    # (a cada ~40 mensagens, max_tokens=2000), `classificar`
+    # (max_tokens=1500) e o POST para a Meta -- um turno com dobra passa de
+    # 60s sem nada estar errado.
+    #
+    # Estourar aqui nao e so custo: o ARQ cancela a corrotina, e
+    # `asyncio.CancelledError` e BaseException -- o `except Exception` de
+    # `process_message` nao pega. A linha nunca vira FAILED, `attempts` nao
+    # sobe, e se o cancelamento cair depois da reserva commitada o sweeper
+    # reenfileira, a guarda suprime a reentrega e a mensagem fecha em
+    # PROCESSED sem o lead ter recebido nada. Ver tambem o `timeout` explicito
+    # do cliente em `infra/anthropic.py`: ele existe para que uma chamada
+    # lenta vire erro tipado (recuperavel) antes de virar cancelamento.
+    job_timeout = 240
     keep_result = 0

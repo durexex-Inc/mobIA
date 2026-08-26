@@ -118,3 +118,92 @@ def test_cliente_e_construido_uma_vez(monkeypatch, caches_de_cliente_limpos: Non
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-teste")
 
     assert get_client() is get_client()
+
+
+def test_defaults_do_agente(settings) -> None:
+    """O modelo do agente e configuravel separado do modelo do resumo.
+
+    Sao trabalhos diferentes: a TEC-210 vai querer afinar a acuracia de
+    intencao sem mexer na qualidade do resumo, e vice-versa.
+    """
+    assert settings.modelo_agente == "claude-opus-5"
+    assert settings.whatsapp_api_base.startswith("https://")
+
+
+def test_token_da_meta_nao_tem_default_utilizavel(settings) -> None:
+    """Sem default utilizavel: quem sobe sem configurar tem de decidir.
+
+    Ao contrario da ANTHROPIC_API_KEY, a ausencia nao falha alto sozinha --
+    vira 401 da Meta, tratado como falha permanente. A guarda que impede isso
+    de chegar a producao fica em `mobia.workers.main.startup`, testada em
+    `tests/integration/test_worker_startup.py`.
+    """
+    assert settings.whatsapp_access_token == ""
+
+
+def test_cliente_falha_tipado_antes_de_o_arq_cancelar(
+    monkeypatch, caches_de_cliente_limpos: None
+) -> None:
+    """O teto por requisicao tem de caber no `job_timeout` do worker.
+
+    O default do SDK (10 min, com retentativa interna) e maior que o job
+    inteiro: uma chamada lenta nunca falharia, seria cancelada pelo ARQ. E
+    `CancelledError` e BaseException -- o `except Exception` de
+    `process_message` nao pega, a linha nao vira FAILED e a reserva de envio
+    fica presa. Erro tipado e recuperavel; cancelamento nao e.
+    """
+    from mobia.infra.anthropic import MAX_TENTATIVAS, TIMEOUT_SEGUNDOS
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-teste")
+    cliente = get_client()
+
+    assert cliente.timeout == TIMEOUT_SEGUNDOS
+    assert cliente.max_retries == MAX_TENTATIVAS
+    # O par (timeout, retentativas) contra o `job_timeout` do worker esta em
+    # `tests/integration/test_worker_startup.py`: importar `workers.main` aqui
+    # construiria `Settings` antes do monkeypatch da chave.
+
+
+def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
+    """Discharge da re-verificacao que a TEC-127 deixou marcada para a TEC-134.
+
+    A contagem de `montar_contexto` mede um proxy do que a requisicao do
+    classificador de fato manda. Este teste refaz a conta com o mesmo `len/4`
+    do modulo de montagem -- e nao com `count_tokens`, que custaria uma
+    chamada paga e rede, que a suite nao toca -- e trava o resultado contra a
+    reserva.
+
+    Fica como teste, e nao como numero num comentario, porque cada parcela
+    vive num modulo diferente: crescer `SISTEMA_DO_AGENTE` ou acrescentar um
+    campo ao schema muda a conta sem tocar em `config.py`, e sem isto ninguem
+    ficaria sabendo ate a primeira chamada estourar o limite de verdade.
+    """
+    import json
+
+    from mobia.domain.agente.classificador import _SCHEMA_COMPILADO, SISTEMA_DO_AGENTE
+    from mobia.domain.context.montagem import SISTEMA
+
+    def em_tokens(texto: str) -> float:
+        return len(texto) / 4
+
+    rotulos = (
+        "Resumo da conversa ate aqui:\nMensagens recentes:\nEstado de qualificacao:\n" + "\n\n" * 2
+    )
+    subcontagem = (
+        # Contado e nao enviado: o classificador usa omitir_sistema=True.
+        -em_tokens(SISTEMA)
+        # Enviados e nunca contados: campo `system=`, o schema de saida e os
+        # rotulos que `montar_prompt` intercala.
+        + em_tokens(SISTEMA_DO_AGENTE)
+        + em_tokens(json.dumps(_SCHEMA_COMPILADO))
+        + em_tokens(rotulos)
+    )
+
+    assert subcontagem > 0, "se virar negativo, a conta abaixo perdeu o sentido"
+    assert subcontagem < settings.contexto_headroom_de_tokens, (
+        "a reserva parou de cobrir o que a contagem nao ve -- suba "
+        "CONTEXTO_HEADROOM_DE_TOKENS ou encolha o que e enviado sem ser contado"
+    )
+    # Folga, nao empate: o overhead estrutural da requisicao (envelope do
+    # turno de usuario) tambem sai daqui, e ele nao esta na conta acima.
+    assert subcontagem < settings.contexto_headroom_de_tokens * 0.75

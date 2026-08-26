@@ -116,9 +116,14 @@ Os critérios de aceite da história vivem como testes executáveis:
   significa que uma mensagem sozinha excede o limite físico da chamada, que o
   provedor recusaria de qualquer jeito.
 - O teto comparado é o nominal **menos** `CONTEXTO_HEADROOM_DE_TOKENS`. A
-  contagem mede uma mensagem plana, sem `system` e sem o overhead estrutural de
-  cada turno do array multi-turno que a TEC-134 vai montar; a reserva cobre essa
-  diferença. **A TEC-134 tem de reverificar o número contra a requisição real.**
+  contagem mede uma mensagem plana, sem `system` e sem os rótulos e o schema que
+  a requisição real carrega; a reserva cobre essa diferença. A TEC-134 mediu:
+  a contagem fica ~263 tokens abaixo do que se envia (`SISTEMA` contado e não
+  enviado, `SISTEMA_DO_AGENTE`, o schema de saída e os rótulos enviados e não
+  contados), contra uma reserva de 400 — que por isso continua em 400. A conta
+  usa o mesmo proxy `len/4` do módulo, não uma chamada paga de `count_tokens`, e
+  vive em `test_diferenca_entre_o_contado_e_o_enviado`, que quebra se alguma das
+  parcelas crescer.
 - Mensagem sem texto (áudio, imagem, documento) entra marcada pelo tipo, nunca
   como turno em branco — o modelo tem de poder distinguir "mandou um áudio que
   ainda não transcrevemos" de "não disse nada", e é esse texto que a dobra
@@ -127,3 +132,56 @@ Os critérios de aceite da história vivem como testes executáveis:
   qualificação fica em claro de propósito, porque TEC-147, TEC-150 e TEC-158
   filtram por ele em SQL.
 - A chave `ANTHROPIC_API_KEY` é obrigatória a partir desta história.
+
+## TEC-134 — Classificação de intenção e o primeiro turno
+
+| Cenário Gherkin | Teste |
+|---|---|
+| Classificação de investimento persiste no turno | `tests/features/test_classificacao_de_intencao.py::test_intencao_de_investimento_persiste_no_turno` |
+| Classificação de aluguel persiste no turno | `tests/features/test_classificacao_de_intencao.py::test_intencao_de_aluguel_persiste_no_turno` |
+| Intenção e confiança ficam registradas | `tests/features/test_classificacao_de_intencao.py::test_intencao_e_confianca_ficam_registradas_na_conversa` |
+
+O quarto cenário do ticket — suíte de 50 conversas com 90% de acurácia no CI —
+é a TEC-210, palavra por palavra, e não está aqui.
+
+### Garantias
+
+- **Este é o primeiro turno que responde ao lead.** Até aqui o `_deliver` do
+  `GuardedOutbound` levantava `NotImplementedError` e o `NoopOutbound` só logava.
+- Uma única chamada devolve intenção, confiança e resposta por saída estruturada
+  com schema estrito derivado do enum `Intencao`.
+- **A reserva de envio é liberada em falha retentável.** A TEC-122 escolheu o
+  contrário quando o que se perdia era um ACK; agora o que se perde é a resposta
+  ao lead, e perdê-la em silêncio é pior que entregá-la duas vezes.
+- **A fala do agente é gravada depois da entrega.** Uma queda no meio deixa o
+  lead com a resposta e a linha do tempo sem ela — o agente pode se repetir. O
+  contrário deixaria fala fantasma no histórico, que o resumo da TEC-127 dobraria
+  permanentemente.
+- Fora da janela de 24h da Meta não é falha: o turno termina `PROCESSED` com
+  aviso, porque retentar nunca vai entregar.
+- 4xx da Meta também termina `PROCESSED`, com log em nível `error` — marcar
+  `FAILED` faria o sweeper pagar cinco chamadas ao modelo por um payload que
+  nunca será aceito.
+- `ANTHROPIC_API_KEY` e `WHATSAPP_ACCESS_TOKEN` são obrigatórias.
+
+### Lacunas conhecidas
+
+- **`ContextoIrreducivel` faz o lead ser ignorado em silêncio.** Uma mensagem
+  grande demais para o teto de tokens termina o turno sem resposta. Fica visível
+  no log; o dono natural é a TEC-135.
+- **Reentrega suprimida pode terminar o turno sem o lead receber nada.** Se uma
+  tentativa anterior commitou a reserva e morreu antes de gravar a fala, o
+  reprocessamento cai na guarda: `send()` devolve `False`, nada é gravado (o
+  texto desta chamada nova pode não ser o que saiu antes) e a mensagem fecha em
+  `PROCESSED`, que é terminal. Não dá para saber se o lead recebeu o texto da
+  primeira tentativa. `turno.reentrega_suprimida` loga em `error` — mesmo nível
+  do 4xx, e pelo mesmo motivo: é o nível que o alerta observa.
+- **Não há moderação de entrada nem de saída.** A TEC-210 exige em 100% dos
+  turnos. Este é o primeiro turno que existe, e ele vai ao ar sem nenhuma.
+- A confiança é autoavaliação do modelo, não probabilidade calibrada. Os limiares
+  de 0,8 e 0,6 são provisórios até a TEC-210 medi-los.
+- **O reconhecimento de intenção em si não é verificado.** Os testes de aceite
+  provam que a classificação atravessa um turno real e chega ao banco intacta —
+  não que o modelo classifica certo: o classificador é sempre um dublê, porque
+  nenhum teste desta suíte toca a rede, e a intenção entra por argumento. Medir
+  acurácia é a TEC-210, com as 50 conversas anotadas.
