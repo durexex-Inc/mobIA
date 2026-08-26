@@ -188,6 +188,7 @@ ela não falhou, ela expirou, e isso é diferente. Template é outra história.
 | Fora da janela de 24h | Mantém a reserva, `PROCESSED`, log de aviso | não |
 | Erro da API do modelo | Propaga → `FAILED`, sweeper retenta | eventualmente sim |
 | `ContextoIrreducivel` | Loga, `PROCESSED`, sem resposta | **não, e nada avisa** |
+| Reentrega suprimida pela guarda | Mantém a reserva, `PROCESSED`, log de erro | **talvez nunca** |
 
 **Por que 4xx vira `PROCESSED` e não `FAILED`.** A tentação é marcar como falha
 para que o erro fique visível. Mas `FAILED` é o que o sweeper procura: ele
@@ -199,6 +200,15 @@ exatamente onde já estava.
 A visibilidade vem do nível do log, não do estado da linha: 4xx loga em `error`
 com o código que a Meta devolveu, e é isso que o alerta observa. `PROCESSED` aqui
 significa "este turno acabou", não "deu tudo certo".
+
+**Reentrega suprimida é o mesmo desfecho, por outra porta.** Quando uma
+tentativa anterior já commitou a reserva e morreu antes de gravar a fala, o
+reprocessamento chega na guarda, `send()` devolve `False` sem levantar, e o
+turno termina sem gravar nada — não dá para saber se o lead recebeu o texto da
+primeira tentativa ou se ela também morreu antes do POST. Gravar seria fala
+fantasma; não gravar é o certo. Mas `PROCESSED` é terminal, e por isso
+`turno.reentrega_suprimida` loga em **`error`**, no mesmo nível do 4xx e pelo
+mesmo motivo: é o nível que o alerta observa.
 
 ## Lacunas registradas, não fechadas
 

@@ -11,8 +11,7 @@ from mobia.domain.agente.schemas import Intencao
 from mobia.domain.agente.turno import KIND_DA_RESPOSTA, executar_turno
 from mobia.domain.context.montagem import ContextoIrreducivel
 from mobia.domain.outbound.models import OutboundDispatch
-from mobia.domain.outbound.port import EnvioRetentavel
-from mobia.domain.outbound.whatsapp import EnvioForaDaJanela
+from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRetentavel
 from mobia.infra.db import get_sessionmaker
 
 CANAL = "whatsapp"
@@ -152,7 +151,7 @@ async def test_reentrega_suprimida_nao_grava_fala_fantasma(
 
     outbound = outbound_fake()
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         resultado = await executar_turno(
             get_sessionmaker(),
             message=linha,
@@ -167,4 +166,15 @@ async def test_reentrega_suprimida_nao_grava_fala_fantasma(
 
     total = await session.scalar(sql("SELECT count(*) FROM messages WHERE direction = 'OUTBOUND'"))
     assert total == 0, "sem confirmacao do que foi entregue, nao ha texto confiavel pra gravar"
-    assert "turno.reentrega_suprimida" in caplog.text
+
+    # Nivel `error`, nao `warning`: a linha fecha em PROCESSED -- terminal, o
+    # sweeper nunca reenfileira -- e o lead pode nao ter recebido nada em
+    # nenhuma tentativa. A visibilidade deste desfecho vem so do nivel do log,
+    # como no 4xx, e e `error` que o alerta observa.
+    eventos = [
+        registro
+        for registro in caplog.records
+        if "turno.reentrega_suprimida" in registro.getMessage()
+    ]
+    assert eventos, "o desfecho tem de aparecer no log"
+    assert all(registro.levelno == logging.ERROR for registro in eventos)

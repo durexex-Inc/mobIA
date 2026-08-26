@@ -164,6 +164,13 @@ O quarto cenário do ticket — suíte de 50 conversas com 90% de acurácia no C
 - **`ContextoIrreducivel` faz o lead ser ignorado em silêncio.** Uma mensagem
   grande demais para o teto de tokens termina o turno sem resposta. Fica visível
   no log; o dono natural é a TEC-135.
+- **Reentrega suprimida pode terminar o turno sem o lead receber nada.** Se uma
+  tentativa anterior commitou a reserva e morreu antes de gravar a fala, o
+  reprocessamento cai na guarda: `send()` devolve `False`, nada é gravado (o
+  texto desta chamada nova pode não ser o que saiu antes) e a mensagem fecha em
+  `PROCESSED`, que é terminal. Não dá para saber se o lead recebeu o texto da
+  primeira tentativa. `turno.reentrega_suprimida` loga em `error` — mesmo nível
+  do 4xx, e pelo mesmo motivo: é o nível que o alerta observa.
 - **Não há moderação de entrada nem de saída.** A TEC-210 exige em 100% dos
   turnos. Este é o primeiro turno que existe, e ele vai ao ar sem nenhuma.
 - A confiança é autoavaliação do modelo, não probabilidade calibrada. Os limiares

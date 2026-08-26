@@ -115,7 +115,13 @@ async def executar_turno(
         # a ordem grava-depois-de-entregar existe para evitar, so que entrando
         # por esta porta em vez de uma excecao: exatamente por isso a checagem
         # do retorno, e nao so do "nao levantou", decide se grava.
-        log.warning(
+        # `error`, pelo mesmo criterio do 4xx logo acima: a visibilidade vem
+        # do nivel do log, nao do estado da linha, e o estado aqui e PROCESSED
+        # -- terminal, o sweeper nunca reenfileira. Este desfecho e pelo menos
+        # tao ruim quanto um 4xx: o lead pode nao ter recebido nada em
+        # nenhuma das tentativas, e nao ha mais nenhuma. Se so o alerta de
+        # `error` acorda alguem, isto tem de estar nele.
+        log.error(
             "turno.reentrega_suprimida",
             channel=message.channel,
             message_id=str(message.id),
