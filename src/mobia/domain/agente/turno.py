@@ -142,13 +142,14 @@ async def executar_turno(
         # `send()` devolve False sem levantar quando a guarda (Task 3) suprime
         # uma reentrega: ja existe uma reserva em outbound_dispatches para este
         # (message_id, kind), de uma tentativa anterior. `_deliver` nunca foi
-        # chamado agora -- entao `gerada.resposta`, que veio de uma chamada
-        # nova ao classificador, pode nao ser o texto que o lead recebeu (ou
-        # nenhum texto pode ter saido ainda, se a tentativa anterior tambem
-        # foi suprimida). Gravar aqui seria o mesmo risco de fala fantasma que
-        # a ordem grava-depois-de-entregar existe para evitar, so que entrando
-        # por esta porta em vez de uma excecao: exatamente por isso a checagem
-        # do retorno, e nao so do "nao levantou", decide se grava.
+        # chamado agora -- entao `texto`, que veio de uma chamada nova ao
+        # classificador (a de classificar ou a de desambiguar), pode nao ser o
+        # texto que o lead recebeu (ou nenhum texto pode ter saido ainda, se a
+        # tentativa anterior tambem foi suprimida). Gravar aqui seria o mesmo
+        # risco de fala fantasma que a ordem grava-depois-de-entregar existe
+        # para evitar, so que entrando por esta porta em vez de uma excecao:
+        # exatamente por isso a checagem do retorno, e nao so do "nao
+        # levantou", decide se grava.
         # `error`, pelo mesmo criterio do 4xx logo acima: a visibilidade vem
         # do nivel do log, nao do estado da linha, e o estado aqui e PROCESSED
         # -- terminal, o sweeper nunca reenfileira. Este desfecho e pelo menos
