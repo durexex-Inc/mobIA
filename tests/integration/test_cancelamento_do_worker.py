@@ -106,6 +106,7 @@ async def test_cancelamento_registra_last_error_e_loga(session, caplog) -> None:
     await session.refresh(gravada)
     assert gravada.last_error == "CancelledError"
     assert "message.cancelled" in caplog.text
+    assert "message.failed" not in caplog.text, "os dois eventos tem de ser distinguiveis"
 
 
 class OutboundQueTrava(GuardedOutbound):
@@ -150,10 +151,14 @@ async def test_apos_o_cancelamento_a_retentativa_entrega(session) -> None:
     """O criterio de aceite do card, ponta a ponta.
 
     Cancelamento depois da reserva commitada nao pode deixar a mensagem
-    terminal sem resposta. Sao as duas metades trabalhando juntas: a reserva
-    liberada permite a entrega, e o FAILED permite o claim -- se qualquer uma
-    faltar, a retentativa vira `reentrega_suprimida` e fecha em PROCESSED com
-    o lead sem nada.
+    terminal sem resposta.
+
+    O que este teste sozinho pin e a **liberacao da reserva**: sem ela a
+    retentativa colide na guarda, vira `reentrega_suprimida` e fecha em
+    PROCESSED com o lead sem nada. Ele nao pin o FAILED -- PROCESSING tambem
+    esta em CLAIMABLE_STATUSES, entao a retentativa reivindicaria a linha do
+    mesmo jeito. Quem prova a outra metade sao os dois primeiros testes deste
+    arquivo.
     """
     linha = await _entrada_do_lead(session)
     travado = OutboundQueTrava(get_sessionmaker())
@@ -171,3 +176,51 @@ async def test_apos_o_cancelamento_a_retentativa_entrega(session) -> None:
     gravada = await session.get(Message, linha.id)
     await session.refresh(gravada)
     assert gravada.status == MessageStatus.PROCESSED
+
+
+class FabricaQueFalhaDepois:
+    """Delega para a fabrica real ate a n-esima chamada, e entao levanta.
+
+    Serve para colocar a falha exatamente na sessao que o handler de
+    cancelamento abre -- que e o momento em que o banco tem mais chance de
+    estar fora do ar, ja que um banco pendurado e uma das razoes de o turno
+    ter estourado o orcamento.
+    """
+
+    def __init__(self, falhar_na: int) -> None:
+        self._real = get_sessionmaker()
+        self._falhar_na = falhar_na
+        self.chamadas = 0
+
+    def __call__(self):
+        self.chamadas += 1
+        if self.chamadas == self._falhar_na:
+            raise OSError("conexao com o banco caiu")
+        return self._real()
+
+
+async def test_falha_ao_registrar_o_cancelamento_nao_engole_o_cancelamento(session, caplog) -> None:
+    """A garantia "continua propagando" nao pode depender de o banco responder.
+
+    Se a escrita do FAILED levantar, essa excecao **substitui** o
+    CancelledError: o worker deixa de ver o cancelamento, o desligamento limpo
+    quebra, e a linha fica em PROCESSING sem nada no log dizendo por que.
+    """
+    linha = await _entrada_do_lead(session)
+    travado = ClassificadorQueTrava()
+    # Nunca falhar de saida: a primeira sessao e a do claim, e derruba-la
+    # mataria a task antes de o classificador ser alcancado.
+    fabrica = FabricaQueFalhaDepois(falhar_na=0)
+
+    ctx = _ctx(OutboundEspiao(get_sessionmaker()), travado)
+    ctx["session_factory"] = fabrica
+
+    tarefa = asyncio.create_task(process_message(ctx, str(linha.id)))
+    await travado.entrou.wait()
+    fabrica._falhar_na = fabrica.chamadas + 1
+    tarefa.cancel()
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(asyncio.CancelledError):
+            await tarefa
+
+    assert "message.cancelled_nao_registrado" in caplog.text

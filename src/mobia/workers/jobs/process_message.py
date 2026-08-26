@@ -5,7 +5,7 @@ from typing import Any, Literal, cast
 
 import structlog
 from sqlalchemy import CursorResult, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.agente.turno import ResultadoDoTurno, executar_turno
 from mobia.domain.messages.models import Message
@@ -40,6 +40,36 @@ def _detalhe_do_erro(exc: BaseException) -> str:
     if modulo == "mobia" or modulo.startswith("mobia."):
         return f"{type(exc).__name__}: {exc}"
     return type(exc).__name__
+
+
+# Teto proprio para a escrita que registra um cancelamento. Quando ela roda,
+# todo prazo ja se foi: o `asyncio.timeout` do arq disparou uma vez e nao volta
+# a disparar, e o `wait_for` que o envolvia ja decorreu. Sem teto, um banco
+# pendurado -- que e justamente uma das razoes de o turno ter estourado o
+# orcamento -- prenderia o slot do worker para sempre e faria o `close()` do
+# arq, que espera as tasks de job antes de desligar, nunca retornar.
+SEGUNDOS_PARA_REGISTRAR_CANCELAMENTO = 10
+
+
+async def _marcar_falha(
+    session_factory: async_sessionmaker[AsyncSession], identifier: uuid.UUID, detalhe: str
+) -> None:
+    """Fecha a linha como FAILED e conta a tentativa.
+
+    Nao loga: os dois chamadores emitem eventos diferentes de proposito, e o
+    que eles compartilham e so a escrita.
+    """
+    async with session_factory() as session:
+        await session.execute(
+            update(Message)
+            .where(Message.id == identifier)
+            .values(
+                status=MessageStatus.FAILED,
+                attempts=Message.attempts + 1,
+                last_error=detalhe,
+            )
+        )
+        await session.commit()
 
 
 async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
@@ -114,39 +144,37 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
             await session.commit()
     except Exception as exc:
         detalhe = _detalhe_do_erro(exc)
-        async with session_factory() as session:
-            await session.execute(
-                update(Message)
-                .where(Message.id == identifier)
-                .values(
-                    status=MessageStatus.FAILED,
-                    attempts=Message.attempts + 1,
-                    last_error=detalhe,
-                )
-            )
-            await session.commit()
+        await _marcar_falha(session_factory, identifier, detalhe)
         # Mesmo valor da coluna, e pelo mesmo motivo: o log estruturado nao
         # mascara `error`, e a chave nao esta na lista de campos redigidos.
         log.warning("message.failed", message_id=message_id, error=detalhe)
         raise
     except asyncio.CancelledError as exc:
         # `CancelledError` e BaseException, nao Exception: o `except` acima nao
-        # a pega. Sem esta clausula a linha fica em PROCESSING para sempre.
+        # a pega. Sem esta clausula a linha fica em PROCESSING -- e como
+        # PROCESSING e reivindicavel e `attempts` nao subia, o sweeper
+        # reenfileirava para sempre, pagando o turno inteiro a cada volta.
         detalhe = _detalhe_do_erro(exc)
-        async with session_factory() as session:
-            await session.execute(
-                update(Message)
-                .where(Message.id == identifier)
-                .values(
-                    status=MessageStatus.FAILED,
-                    attempts=Message.attempts + 1,
-                    last_error=detalhe,
-                )
+        try:
+            async with asyncio.timeout(SEGUNDOS_PARA_REGISTRAR_CANCELAMENTO):
+                await _marcar_falha(session_factory, identifier, detalhe)
+        except Exception as falha:
+            # Esta excecao nao pode escapar: ela **substituiria** o
+            # CancelledError, o worker deixaria de ver o cancelamento e o
+            # desligamento limpo quebraria -- justamente a garantia que esta
+            # clausula existe para dar. Vira evento proprio e o cancelamento
+            # segue seu caminho. A linha fica em PROCESSING, que o sweeper
+            # ainda recupera, so que sem contar a tentativa.
+            log.error(
+                "message.cancelled_nao_registrado",
+                message_id=message_id,
+                reason=type(falha).__name__,
             )
-            await session.commit()
-        # Evento proprio, e nao `message.failed`: estourar o orcamento de tempo
-        # do worker e problema operacional diferente de o turno falhar, e quem
-        # alerta precisa poder distinguir os dois.
+        # Evento proprio, e nao `message.failed`: cancelamento e problema
+        # operacional diferente de o turno falhar. Ele tem duas origens que o
+        # log **nao** distingue -- o `job_timeout` estourando e o SIGTERM de um
+        # deploy, que cancela todo job em voo. Ver as lacunas conhecidas no
+        # README.
         log.warning("message.cancelled", message_id=message_id, error=detalhe)
         raise
 

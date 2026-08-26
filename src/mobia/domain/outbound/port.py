@@ -154,10 +154,14 @@ class GuardedOutbound:
                 await self._liberar(message_id, kind)
             except Exception as exc:
                 # Se o proprio delete da liberacao falhar (deadlock, conexao
-                # caida), quem chama send() ainda precisa ver EnvioRetentavel,
-                # nao um erro de infra do release -- senao um retentavel vira
-                # permanente por engano e a reserva fica presa do mesmo jeito
-                # que este bloco existe para evitar. O erro de liberacao vira
+                # caida), quem chama send() ainda precisa ver a excecao
+                # original -- o EnvioRetentavel ou o cancelamento -- e nao um
+                # erro de infra do release: senao um retentavel vira permanente
+                # por engano, ou o cancelamento some, e a reserva fica presa do
+                # mesmo jeito que este bloco existe para evitar. Um
+                # cancelamento *da propria liberacao* nao cai aqui, porque
+                # `CancelledError` nao e Exception -- ele propaga, que e o
+                # desfecho certo. O erro de liberacao vira
                 # seu proprio evento de log, porque e um problema operacional
                 # diferente de perder o envio.
                 log.error(
