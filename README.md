@@ -284,8 +284,11 @@ fechava em `PROCESSED` — terminal — com o lead sem ter recebido nada.
   arq cancela todo job em voo a cada SIGTERM, então um deploy emite uma rajada
   do mesmo evento, com o mesmo `last_error`. Pior que o ruído no alerta: um
   restart **consome uma das cinco tentativas**, e a docstring do
-  `sweep_stalled` diz que esse orçamento é de "5 falhas de verdade". Separar as
-  duas origens exige um sinal de desligamento que o arq não expõe em processo.
+  `sweep_stalled` diz que esse orçamento é de "5 falhas de verdade" — um
+  restart não é falha de processamento nenhuma. É a
+  [TEC-232](https://eduardodurieuxlopes.atlassian.net/browse/TEC-232), que
+  ataca pela raiz: `job_completion_wait` faz o arq esperar os jobs em voo em
+  vez de cancelá-los.
 - **A janela do commit da reserva continua aberta.** A guarda cobre o
   `_deliver`, não o `commit()` que cria a reserva. Um cancelamento exatamente
   ali deixa indeterminado se a linha foi gravada, e se foi, ninguém a libera —
