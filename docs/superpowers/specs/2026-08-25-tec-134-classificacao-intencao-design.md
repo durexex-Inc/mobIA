@@ -253,9 +253,21 @@ Nenhum toca a rede: dublê para o classificador e para o HTTP da Meta.
 
 | Cenário Gherkin utilizável | O que prova |
 |---|---|
-| Reconhecer intenção de investimento | "quero investir em imóveis para renda" → INVESTIMENTO, confiança ≥ 0,8 |
-| Reconhecer intenção de aluguel | "procuro apartamento para alugar na Trindade" → ALUGUEL, confiança ≥ 0,8 |
+| Classificação de investimento persiste no turno | INVESTIMENTO com confiança ≥ 0,8 chega a `conversation_intent` depois de um turno real |
+| Classificação de aluguel persiste no turno | ALUGUEL com confiança ≥ 0,8, idem |
 | Intenção e confiança ficam registradas | `conversation_intent` tem COMPRA e 0,91 depois do turno |
+
+**Correção, feita depois da review final da branch.** As duas primeiras linhas
+diziam `"quero investir em imóveis para renda" → INVESTIMENTO`, ou seja,
+prometiam verificar **reconhecimento**. Isso contradiz o próprio parágrafo
+acima da tabela: se nenhum teste toca a rede e o classificador é sempre um
+dublê, a intenção é argumento de construtor e a mensagem semeada não influencia
+nada. As duas regras não cabem juntas, e a que vale é a de não tocar a rede.
+
+O que estes testes de fato provam — persistência da classificação através de um
+turno real, sobre SQL de verdade — é útil e não é tautológico, mas não é
+reconhecimento. **Reconhecimento de intenção fica sem verificação até a
+TEC-210**, que tem as 50 conversas anotadas e a régua de acurácia.
 
 Os que provam as decisões desta história, e que os cenários sozinhos não pegariam:
 

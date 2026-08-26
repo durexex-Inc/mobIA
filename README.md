@@ -137,8 +137,8 @@ Os critérios de aceite da história vivem como testes executáveis:
 
 | Cenário Gherkin | Teste |
 |---|---|
-| Reconhecer intenção de investimento | `tests/features/test_classificacao_de_intencao.py::test_reconhecer_intencao_de_investimento` |
-| Reconhecer intenção de aluguel | `tests/features/test_classificacao_de_intencao.py::test_reconhecer_intencao_de_aluguel` |
+| Classificação de investimento persiste no turno | `tests/features/test_classificacao_de_intencao.py::test_intencao_de_investimento_persiste_no_turno` |
+| Classificação de aluguel persiste no turno | `tests/features/test_classificacao_de_intencao.py::test_intencao_de_aluguel_persiste_no_turno` |
 | Intenção e confiança ficam registradas | `tests/features/test_classificacao_de_intencao.py::test_intencao_e_confianca_ficam_registradas_na_conversa` |
 
 O quarto cenário do ticket — suíte de 50 conversas com 90% de acurácia no CI —
@@ -180,3 +180,8 @@ O quarto cenário do ticket — suíte de 50 conversas com 90% de acurácia no C
   turnos. Este é o primeiro turno que existe, e ele vai ao ar sem nenhuma.
 - A confiança é autoavaliação do modelo, não probabilidade calibrada. Os limiares
   de 0,8 e 0,6 são provisórios até a TEC-210 medi-los.
+- **O reconhecimento de intenção em si não é verificado.** Os testes de aceite
+  provam que a classificação atravessa um turno real e chega ao banco intacta —
+  não que o modelo classifica certo: o classificador é sempre um dublê, porque
+  nenhum teste desta suíte toca a rede, e a intenção entra por argumento. Medir
+  acurácia é a TEC-210, com as 50 conversas anotadas.
