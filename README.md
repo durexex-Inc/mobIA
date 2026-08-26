@@ -231,3 +231,44 @@ O quarto cenário do ticket — suíte de 50 conversas com 90% de acurácia no C
   modelo é a [TEC-128](https://eduardodurieuxlopes.atlassian.net/browse/TEC-128).
 - O limiar de 0,6 continua não calibrado. Ele saiu de um comentário e virou
   constante nomeada — que é o pré-requisito para a TEC-210 mexer nele.
+
+## TEC-227 — Cancelamento do worker não perde a mensagem
+
+`asyncio.CancelledError` é `BaseException`, não `Exception`. Quando o
+`job_timeout` do arq estoura — ou o worker desliga — nenhum `except Exception`
+pega o cancelamento, e até aqui isso significava perder a mensagem em silêncio:
+a linha ficava em `PROCESSING` para sempre, `attempts` não subia, e um
+cancelamento depois da reserva de envio commitada fazia o sweeper reenfileirar,
+a guarda suprimir a reentrega e a mensagem fechar em `PROCESSED` — terminal —
+com o lead sem ter recebido nada.
+
+### Garantias
+
+- Um turno cancelado deixa a mensagem em `FAILED`, com `attempts` incrementado
+  e `last_error` preenchido, nunca em `PROCESSING` silencioso. `FAILED` é
+  reivindicável, então o sweeper a recupera pelo caminho normal e o teto de
+  `sweep_max_attempts` limita o laço.
+- O `CancelledError` **continua propagando** depois do registro. Engoli-lo
+  quebraria o desligamento limpo do worker.
+- Cancelamento durante a entrega libera a reserva em `outbound_dispatches`,
+  como já acontecia com `EnvioRetentavel`. É a mesma troca que a TEC-134 fez, e
+  pelo mesmo motivo: entre o lead receber duas vezes e nunca receber, a
+  duplicata ganha — ela é visível e recuperável, o silêncio não.
+- Cancelamento tem evento próprio no log (`message.cancelled`), separado de
+  `message.failed`: estourar o orçamento de tempo do worker é problema
+  operacional diferente de o turno falhar.
+- Todos os testes forçam cancelamento **real** (`task.cancel()` numa task em
+  voo). A diferença entre `Exception` e `BaseException` é o defeito inteiro —
+  um teste com exceção comum passaria com o bug intacto.
+
+### Lacunas conhecidas
+
+- **A duplicata deixou de ser hipotética.** Se o cancelamento cair depois de o
+  POST ter chegado à Meta, liberar a reserva faz a retentativa entregar de
+  novo. Foi a escolha consciente; o caso oposto era perder a resposta para
+  sempre.
+- **Isto não cria folga no `job_timeout`.** Continua em 240s, e `resumir` +
+  `classificar` sozinhos já somam o pior caso do cliente. O cancelamento
+  apenas deixou de ser invisível — ele continua custando a passada inteira do
+  turno, com as chamadas pagas ao modelo. Reduzir a chance de ele acontecer é
+  a [TEC-228](https://eduardodurieuxlopes.atlassian.net/browse/TEC-228).

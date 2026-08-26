@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -127,6 +128,26 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # Mesmo valor da coluna, e pelo mesmo motivo: o log estruturado nao
         # mascara `error`, e a chave nao esta na lista de campos redigidos.
         log.warning("message.failed", message_id=message_id, error=detalhe)
+        raise
+    except asyncio.CancelledError as exc:
+        # `CancelledError` e BaseException, nao Exception: o `except` acima nao
+        # a pega. Sem esta clausula a linha fica em PROCESSING para sempre.
+        detalhe = _detalhe_do_erro(exc)
+        async with session_factory() as session:
+            await session.execute(
+                update(Message)
+                .where(Message.id == identifier)
+                .values(
+                    status=MessageStatus.FAILED,
+                    attempts=Message.attempts + 1,
+                    last_error=detalhe,
+                )
+            )
+            await session.commit()
+        # Evento proprio, e nao `message.failed`: estourar o orcamento de tempo
+        # do worker e problema operacional diferente de o turno falhar, e quem
+        # alerta precisa poder distinguir os dois.
+        log.warning("message.cancelled", message_id=message_id, error=detalhe)
         raise
 
     log.info("message.processed", message_id=message_id)
