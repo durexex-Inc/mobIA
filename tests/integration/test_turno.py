@@ -12,7 +12,7 @@ from mobia.domain.agente.schemas import Intencao
 from mobia.domain.agente.turno import KIND_DA_RESPOSTA, SUBAGENTE_DESAMBIGUADOR, executar_turno
 from mobia.domain.context.montagem import ContextoIrreducivel
 from mobia.domain.outbound.models import OutboundDispatch
-from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRetentavel
+from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, EnvioRetentavel
 from mobia.infra.db import get_sessionmaker
 
 CANAL = "whatsapp"
@@ -204,6 +204,11 @@ async def test_confianca_baixa_entrega_a_pergunta_no_lugar_da_resposta(
     assert outbound.entregues == [classificador.pergunta]
     assert "Em qual regiao" not in outbound.entregues[0], "a resposta que assumia COMPRA nao sai"
 
+    async with get_sessionmaker()() as outra:
+        gravada = await ler_intencao(outra, CANAL, CONVERSA)
+    assert gravada is not None
+    assert gravada.desambiguado_em is not None, "a entrega confirmou -- o marcador tem de existir"
+
 
 async def test_confianca_no_limiar_exato_responde_sem_perguntar(
     session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
@@ -276,6 +281,15 @@ async def test_classificacao_confiante_abre_um_episodio_novo(
 
     await rodar_turno(session, vago, outbound, resumidor_fake(), contador_fake())
     await rodar_turno(session, claro, outbound, resumidor_fake(), contador_fake())
+
+    # A classificacao confiante do turno 2 tem de ter limpado o marcador --
+    # provado pela coluna, nao so pela contagem de chamadas do dublê abaixo,
+    # que provaria o mesmo efeito por consequencia em vez de pela causa.
+    async with get_sessionmaker()() as outra:
+        entre_turnos = await ler_intencao(outra, CANAL, CONVERSA)
+    assert entre_turnos is not None
+    assert entre_turnos.desambiguado_em is None
+
     await rodar_turno(session, vago, outbound, resumidor_fake(), contador_fake())
 
     assert vago.desambiguacoes == 2
@@ -301,6 +315,35 @@ async def test_entrega_expirada_nao_queima_a_pergunta(
     )
 
     assert resultado == "expirado"
+
+    async with get_sessionmaker()() as outra:
+        gravada = await ler_intencao(outra, CANAL, CONVERSA)
+    assert gravada is not None
+    assert gravada.desambiguado_em is None
+
+
+async def test_entrega_recusada_nao_queima_a_pergunta(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """O terceiro desfecho sem entrega confirmada: 4xx permanente da Meta.
+
+    Mesmo raciocinio de `test_entrega_expirada_nao_queima_a_pergunta` -- o
+    marcador afirma "eu ja perguntei", e um `EnvioRecusado` significa que nada
+    chegou ao lead. O spec promete o marcador ausente nos tres desfechos sem
+    entrega confirmada (expirado, recusado, reentrega_suprimida); so os dois
+    primeiros tinham teste.
+    """
+    outbound = outbound_fake(EnvioRecusado("400"))
+
+    resultado = await rodar_turno(
+        session,
+        classificador_fake(Intencao.COMPRA, confianca=BAIXA),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+    )
+
+    assert resultado == "sem_resposta"
 
     async with get_sessionmaker()() as outra:
         gravada = await ler_intencao(outra, CANAL, CONVERSA)

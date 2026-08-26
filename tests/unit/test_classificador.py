@@ -518,7 +518,7 @@ async def test_desambiguar_devolve_a_pergunta_e_a_telemetria(
     assert pergunta.latency_ms >= 0
 
 
-async def test_desambiguar_nao_manda_schema_estrito(monkeypatch) -> None:
+async def test_desambiguar_nao_manda_schema_estrito(monkeypatch: pytest.MonkeyPatch) -> None:
     """A saida e uma frase. Nao ha campo para validar, entao nao ha schema.
 
     O schema do `classificar` existe porque intencao e confianca sao regra de
@@ -541,10 +541,10 @@ def test_desambiguar_pede_uma_pergunta_aberta() -> None:
     spec. Se esta instrucao sumir do system prompt, some a regra inteira.
     """
     assert "menu" in SISTEMA_DA_DESAMBIGUACAO.lower()
-    assert "uma" in SISTEMA_DA_DESAMBIGUACAO.lower()
+    assert "uma unica pergunta" in SISTEMA_DA_DESAMBIGUACAO.lower()
 
 
-async def test_desambiguar_recusa_parada_anormal(monkeypatch) -> None:
+async def test_desambiguar_recusa_parada_anormal(monkeypatch: pytest.MonkeyPatch) -> None:
     """`max_tokens` corta a pergunta no meio; meia pergunta nao vai ao lead."""
     _instalar_cliente_falso(monkeypatch, _resposta_falsa(texto=PERGUNTA, stop_reason="max_tokens"))
 
@@ -552,14 +552,16 @@ async def test_desambiguar_recusa_parada_anormal(monkeypatch) -> None:
         await ClassificadorAnthropic().desambiguar(_contexto())
 
 
-async def test_desambiguar_recusa_pergunta_vazia(monkeypatch) -> None:
+async def test_desambiguar_recusa_pergunta_vazia(monkeypatch: pytest.MonkeyPatch) -> None:
     _instalar_cliente_falso(monkeypatch, _resposta_falsa(texto="   "))
 
     with pytest.raises(RespostaInvalida):
         await ClassificadorAnthropic().desambiguar(_contexto())
 
 
-async def test_desambiguar_nao_loga_a_pergunta_nem_o_prompt(monkeypatch, caplog) -> None:
+async def test_desambiguar_nao_loga_a_pergunta_nem_o_prompt(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     """Mesma regra do `classificar`: so numeros e id de modelo."""
     _instalar_cliente_falso(
         monkeypatch, _resposta_falsa(texto=f"{TEXTO_DA_RESPOSTA} qual e a sua duvida?")
