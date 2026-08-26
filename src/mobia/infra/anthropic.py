@@ -10,8 +10,15 @@ from mobia.app.config import ConfiguracaoInsegura, get_settings
 # BaseException, que o `except Exception` de `process_message` nao pega (a
 # linha nunca vira FAILED e a reserva de envio fica presa). Falha tipada e
 # recuperavel; cancelamento nao e. 60s por tentativa, uma retentativa: no pior
-# caso 120s por chamada, entao mesmo o turno com dobra (resumir + classificar)
-# tem folga dentro dos 240s antes de o ARQ cancelar.
+# caso 120s por chamada.
+#
+# Isso nao sobra folga dentro dos 240s do `job_timeout`. O turno paga entre
+# uma e tres chamadas deste cliente em sequencia -- `resumir` (as vezes, a
+# cada ~40 mensagens), `classificar` (sempre) e, desde a TEC-135,
+# `desambiguar` (so no turno ambiguo, logo depois de `classificar`). Duas
+# delas ja fecham a conta em 240s (2 x 120s); com as tres, o pior caso soma
+# 360s -- acima do teto antes mesmo de contar `count_tokens` ou o POST para a
+# Meta. Ver o comentario de `job_timeout` em `workers/main.py`.
 TIMEOUT_SEGUNDOS = 60.0
 MAX_TENTATIVAS = 1
 
