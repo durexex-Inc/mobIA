@@ -1,10 +1,11 @@
 import json
 import time
 from decimal import Decimal, InvalidOperation
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import structlog
 from anthropic import transform_schema
+from anthropic.types import Message
 
 from mobia.app.config import get_settings
 from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
@@ -83,32 +84,69 @@ class ClassificadorPort(Protocol):
 
 
 class ClassificadorAnthropic:
-    async def classificar(self, contexto: ContextoMontado) -> RespostaDoAgente:
-        settings = get_settings()
+    async def _chamar(
+        self,
+        contexto: ContextoMontado,
+        *,
+        modelo: str,
+        max_tokens: int,
+        system: str,
+        mensagem_se_vazia: str,
+        output_config: dict[str, Any] | None = None,
+    ) -> tuple[str, Any, int]:
+        """Chama o modelo e recusa qualquer parada que nao valha a pena aproveitar.
+
+        Comum a `classificar` e `desambiguar`: as duas fazem uma chamada, medem
+        a latencia e tem o mesmo criterio do que e uma resposta utilizavel --
+        `end_turn` com texto nao vazio. O que muda entre elas fica nos
+        parametros (schema, teto de tokens, system prompt, mensagem de erro
+        para o caso vazio) e no que cada uma faz com o texto depois de
+        receber -- isso continua em cada metodo, nao aqui.
+        """
         comeco = time.monotonic()
-        resposta = await get_client().messages.create(
-            model=settings.modelo_agente,
-            max_tokens=MAX_TOKENS_DA_RESPOSTA,
-            system=SISTEMA_DO_AGENTE,
-            # omitir_sistema=True: SISTEMA_DO_AGENTE ja cobre a persona pelo
-            # canal `system` dedicado. Reenviar `contexto.sistema` aqui
-            # duplicaria a mesma instrucao, mais fraca, dentro do turno do
-            # usuario.
-            messages=[{"role": "user", "content": montar_prompt(contexto, omitir_sistema=True)}],
-            output_config={"format": {"type": "json_schema", "schema": _SCHEMA_COMPILADO}},
-        )
+        kwargs: dict[str, Any] = {
+            "model": modelo,
+            "max_tokens": max_tokens,
+            "system": system,
+            # omitir_sistema=True: o `system` dedicado acima ja cobre a
+            # persona. Reenviar `contexto.sistema` aqui duplicaria a mesma
+            # instrucao, mais fraca, dentro do turno do usuario.
+            "messages": [{"role": "user", "content": montar_prompt(contexto, omitir_sistema=True)}],
+        }
+        if output_config is not None:
+            kwargs["output_config"] = output_config
+        # cast: **kwargs apaga a sobrecarga que o SDK usa para distinguir
+        # `Message` de `AsyncStream` por `stream=`. Nenhuma chamada deste
+        # modulo pede streaming -- `stream` nunca entra em `kwargs` -- entao
+        # o retorno real e sempre `Message`.
+        resposta = cast(Message, await get_client().messages.create(**kwargs))
         latency_ms = int((time.monotonic() - comeco) * 1000)
 
-        # end_turn e a unica parada normal aqui: sem tools declaradas, sem
-        # stop_sequence configurada. refusal e max_tokens sao os dois outros
-        # jeitos documentados de sair de um json_schema estrito, e nenhum dos
-        # dois produz um JSON que valha a pena tentar decodificar.
+        # end_turn e a unica parada normal em qualquer chamada deste modulo:
+        # nenhuma declara tools, nenhuma configura stop_sequence.
         if resposta.stop_reason != "end_turn":
             raise RespostaInvalida(f"stop_reason={resposta.stop_reason!r}")
 
         texto = "".join(bloco.text for bloco in resposta.content if bloco.type == "text").strip()
         if not texto:
-            raise RespostaInvalida("resposta veio vazia")
+            raise RespostaInvalida(mensagem_se_vazia)
+
+        return texto, resposta, latency_ms
+
+    async def classificar(self, contexto: ContextoMontado) -> RespostaDoAgente:
+        settings = get_settings()
+        # refusal e max_tokens sao os dois outros jeitos documentados de sair
+        # de um json_schema estrito, alem de end_turn -- e nenhum dos dois
+        # produz um JSON que valha a pena tentar decodificar. A recusa de
+        # `_chamar` para qualquer stop_reason != end_turn cobre os dois.
+        texto, resposta, latency_ms = await self._chamar(
+            contexto,
+            modelo=settings.modelo_agente,
+            max_tokens=MAX_TOKENS_DA_RESPOSTA,
+            system=SISTEMA_DO_AGENTE,
+            mensagem_se_vazia="resposta veio vazia",
+            output_config={"format": {"type": "json_schema", "schema": _SCHEMA_COMPILADO}},
+        )
 
         try:
             dados = json.loads(texto)
@@ -196,23 +234,17 @@ class ClassificadorAnthropic:
         e uma chance a mais de 400 num caminho que ja e o de excecao.
         """
         settings = get_settings()
-        comeco = time.monotonic()
-        resposta = await get_client().messages.create(
-            model=settings.modelo_agente,
+        # `max_tokens` curto de proposito faz do truncamento um risco real
+        # aqui -- meia pergunta e pior que nenhuma. E a recusa de `_chamar`
+        # para qualquer stop_reason != end_turn que impede isso de chegar ao
+        # lead.
+        texto, resposta, latency_ms = await self._chamar(
+            contexto,
+            modelo=settings.modelo_agente,
             max_tokens=MAX_TOKENS_DA_PERGUNTA,
             system=SISTEMA_DA_DESAMBIGUACAO,
-            messages=[{"role": "user", "content": montar_prompt(contexto, omitir_sistema=True)}],
+            mensagem_se_vazia="pergunta veio vazia",
         )
-        latency_ms = int((time.monotonic() - comeco) * 1000)
-
-        # Mesmo criterio do `classificar`, e aqui `max_tokens` e um risco real:
-        # o teto e curto de proposito, e meia pergunta e pior que nenhuma.
-        if resposta.stop_reason != "end_turn":
-            raise RespostaInvalida(f"stop_reason={resposta.stop_reason!r}")
-
-        texto = "".join(bloco.text for bloco in resposta.content if bloco.type == "text").strip()
-        if not texto:
-            raise RespostaInvalida("pergunta veio vazia")
 
         # So numeros e id de modelo -- a pergunta vai para o lead, nao para o log.
         log.info(
