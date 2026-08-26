@@ -85,7 +85,13 @@ pergunta pressupondo dúvida mesmo quando ele tem certeza.
 
 A segunda chamada concentra o custo extra no turno raro e deixa o limiar no
 código, onde dá para testá-lo. O preço, dito com todas as letras: no turno
-ambíguo a resposta da chamada 1 é **descartada** e a latência dobra — e é
+ambíguo a resposta da chamada 1 é **descartada**, a chamada 2 monta e paga o
+**mesmo contexto de entrada inteiro de novo** — este projeto não declara
+nenhum `cache_control`, e mesmo que declarasse, `system` precede `messages`
+no corpo da requisição, então trocar o system prompt invalidaria qualquer
+prefixo que estivesse quente — e a latência dobra. Como entrada domina a
+contagem de tokens, o turno ambíguo não desperdiça só a saída da chamada 1:
+paga o contexto de entrada (até `contexto_teto_de_tokens`) duas vezes. E é
 exatamente o turno em que o lead já estava indeciso.
 
 ## Modelo de dados
@@ -234,10 +240,36 @@ no formato que o TEC-134 estabeleceu. Somados a:
 - **O limiar continua não calibrado.** 0,6 é o número do SRS, e a confiança é
   autoavaliação do modelo, não probabilidade calibrada. Este card só o tira de um
   comentário e o coloca num lugar onde a TEC-210 possa mexer.
-- **Um turno ambíguo custa duas chamadas ao modelo.** Se a taxa de ambiguidade em
-  produção for muito maior que a esperada, a abordagem do campo a mais no schema
-  volta à mesa.
+- **Um turno ambíguo custa duas chamadas ao modelo, cada uma pagando o contexto
+  de entrada inteiro.** Não há `cache_control` neste projeto para amortizar a
+  repetição. Se a taxa de ambiguidade em produção for muito maior que a
+  esperada, a abordagem do campo a mais no schema volta à mesa.
 - **Nada limita quantos episódios de ambiguidade uma conversa pode ter.** Uma
   conversa que oscila em torno do limiar pode desambiguar várias vezes ao longo de
   muitos turnos. O reset exige uma classificação confiante no meio, o que torna o
   caso improvável, mas ele não é impossível.
+- **O orçamento de tempo do worker não sobra folga para o turno ambíguo.** O
+  turno paga `resumir` (às vezes) + `classificar` (sempre) + `desambiguar` (só
+  no turno ambíguo) em sequência no mesmo cliente Anthropic, 120s de pior caso
+  cada (60s por tentativa, uma retentativa). `resumir` + `classificar` sozinhos
+  já somam os 240s de `job_timeout`; com `desambiguar` o pior caso soma 360s,
+  sem contar `count_tokens` nem o POST para a Meta. Não é uma correção que este
+  card decidiu fazer — mudar `job_timeout` ou `sweep_inflight_after_seconds`
+  exige medir a taxa real de retentativa em produção, não uma extrapolação de
+  pior caso. Ver os comentários em `infra/anthropic.py` e
+  `workers/main.py::WorkerSettings.job_timeout`.
+- **A garantia de "uma pergunta por episódio" vale por sequência de turnos, não
+  por conversa.** Não há serialização por conversa: `claim_message` tranca por
+  *mensagem*, o `FOR UPDATE SKIP LOCKED` do sweeper é por linha, não há lock
+  consultivo, e `WorkerSettings` não define `max_jobs` — o default do arq é 10.
+  Duas mensagens do mesmo lead chegando segundos uma da outra (rotina no
+  WhatsApp) podem rodar em paralelo: as duas leem `desambiguado_em IS NULL`,
+  as duas desambiguam, as duas entregam — o lead recebe duas perguntas. A
+  guarda de saída não ajuda porque as duas passagens carregam `message_id`
+  diferentes. O dano acontece na entrega, antes do marcador ser escrito, então
+  nem um `UPDATE ... WHERE desambiguado_em IS NULL` condicional evitaria isso —
+  a correção real precisa serializar por conversa *antes* da segunda chamada
+  ao modelo, o que é um card à parte. A
+  [TEC-128](https://eduardodurieuxlopes.atlassian.net/browse/TEC-128)
+  ("Agrupar rajada de mensagens com debounce de 6 segundos") é o card que
+  endereça isso.
