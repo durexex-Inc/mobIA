@@ -127,3 +127,44 @@ Os critérios de aceite da história vivem como testes executáveis:
   qualificação fica em claro de propósito, porque TEC-147, TEC-150 e TEC-158
   filtram por ele em SQL.
 - A chave `ANTHROPIC_API_KEY` é obrigatória a partir desta história.
+
+## TEC-134 — Classificação de intenção e o primeiro turno
+
+| Cenário Gherkin | Teste |
+|---|---|
+| Reconhecer intenção de investimento | `tests/features/test_classificacao_de_intencao.py::test_reconhecer_intencao_de_investimento` |
+| Reconhecer intenção de aluguel | `tests/features/test_classificacao_de_intencao.py::test_reconhecer_intencao_de_aluguel` |
+| Intenção e confiança ficam registradas | `tests/features/test_classificacao_de_intencao.py::test_intencao_e_confianca_ficam_registradas_na_conversa` |
+
+O quarto cenário do ticket — suíte de 50 conversas com 90% de acurácia no CI —
+é a TEC-210, palavra por palavra, e não está aqui.
+
+### Garantias
+
+- **Este é o primeiro turno que responde ao lead.** Até aqui o `_deliver` do
+  `GuardedOutbound` levantava `NotImplementedError` e o `NoopOutbound` só logava.
+- Uma única chamada devolve intenção, confiança e resposta por saída estruturada
+  com schema estrito derivado do enum `Intencao`.
+- **A reserva de envio é liberada em falha retentável.** A TEC-122 escolheu o
+  contrário quando o que se perdia era um ACK; agora o que se perde é a resposta
+  ao lead, e perdê-la em silêncio é pior que entregá-la duas vezes.
+- **A fala do agente é gravada depois da entrega.** Uma queda no meio deixa o
+  lead com a resposta e a linha do tempo sem ela — o agente pode se repetir. O
+  contrário deixaria fala fantasma no histórico, que o resumo da TEC-127 dobraria
+  permanentemente.
+- Fora da janela de 24h da Meta não é falha: o turno termina `PROCESSED` com
+  aviso, porque retentar nunca vai entregar.
+- 4xx da Meta também termina `PROCESSED`, com log em nível `error` — marcar
+  `FAILED` faria o sweeper pagar cinco chamadas ao modelo por um payload que
+  nunca será aceito.
+- `ANTHROPIC_API_KEY` e `WHATSAPP_ACCESS_TOKEN` são obrigatórias.
+
+### Lacunas conhecidas
+
+- **`ContextoIrreducivel` faz o lead ser ignorado em silêncio.** Uma mensagem
+  grande demais para o teto de tokens termina o turno sem resposta. Fica visível
+  no log; o dono natural é a TEC-135.
+- **Não há moderação de entrada nem de saída.** A TEC-210 exige em 100% dos
+  turnos. Este é o primeiro turno que existe, e ele vai ao ar sem nenhuma.
+- A confiança é autoavaliação do modelo, não probabilidade calibrada. Os limiares
+  de 0,8 e 0,6 são provisórios até a TEC-210 medi-los.
