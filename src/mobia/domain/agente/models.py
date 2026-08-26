@@ -21,6 +21,10 @@ class ConversationIntent(Base):
     channel: Mapped[str] = mapped_column(String(32), primary_key=True)
     conversation_key: Mapped[str] = mapped_column(String(64), primary_key=True)
 
+    # O palpite cru do classificador, mesmo quando a confianca nao o sustenta.
+    # **Nao roteie por esta coluna**: use `IntencaoDaConversa.efetiva`, que
+    # devolve INDEFINIDA abaixo do limiar. O valor cru fica aqui porque e dele
+    # que a TEC-210 precisa para calibrar o limiar.
     intencao: Mapped[str] = mapped_column(String(20), nullable=False)
 
     # Autoavaliacao do modelo, nao probabilidade calibrada. Ver o spec: os
@@ -29,6 +33,16 @@ class ConversationIntent(Base):
     confianca: Mapped[Decimal] = mapped_column(Numeric(3, 2), nullable=False)
 
     modelo: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # NULL = nenhum episodio de ambiguidade em aberto. Preenchido = a pergunta
+    # de desambiguacao ja foi feita e entregue neste episodio, e nao se
+    # pergunta de novo. Uma classificacao com confianca >=
+    # LIMIAR_DE_DESAMBIGUACAO limpa o marcador -- e a evidencia de que a
+    # ambiguidade anterior foi resolvida.
+    #
+    # Timestamp e nao booleano porque ocupa o mesmo espaco e responde "quando"
+    # numa investigacao, igual ao `updated_at` logo abaixo.
+    desambiguado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
