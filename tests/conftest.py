@@ -122,13 +122,18 @@ class ClassificadorFake:
         intencao: "Intencao" = None,  # type: ignore[assignment]
         confianca: Decimal = Decimal("0.91"),
         erro: Exception | None = None,
+        pergunta: str = "Me conta um pouco mais sobre o que voce procura?",
+        erro_da_desambiguacao: Exception | None = None,
     ) -> None:
         from mobia.domain.agente.schemas import Intencao as _Intencao
 
         self.intencao = intencao or _Intencao.COMPRA
         self.confianca = confianca
         self.erro = erro
+        self.pergunta = pergunta
+        self.erro_da_desambiguacao = erro_da_desambiguacao
         self.chamadas = 0
+        self.desambiguacoes = 0
 
     async def classificar(self, contexto):
         from mobia.domain.agente.schemas import RespostaDoAgente
@@ -144,6 +149,20 @@ class ClassificadorFake:
             tokens_in=1200,
             tokens_out=180,
             latency_ms=900,
+        )
+
+    async def desambiguar(self, contexto):
+        from mobia.domain.agente.schemas import PerguntaDeDesambiguacao
+
+        self.desambiguacoes += 1
+        if self.erro_da_desambiguacao is not None:
+            raise self.erro_da_desambiguacao
+        return PerguntaDeDesambiguacao(
+            texto=self.pergunta,
+            modelo="claude-opus-5",
+            tokens_in=1100,
+            tokens_out=40,
+            latency_ms=600,
         )
 
 

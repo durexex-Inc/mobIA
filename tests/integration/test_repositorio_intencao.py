@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from sqlalchemy import text as sql
 
-from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao
+from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import Intencao
 
 CANAL = "whatsapp"
@@ -67,3 +67,71 @@ async def test_regravar_a_mesma_intencao_move_o_updated_at(session) -> None:
 
 async def test_conversa_sem_intencao_devolve_none(session) -> None:
     assert await ler_intencao(session, CANAL, "nunca-falou") is None
+
+
+async def test_marcador_comeca_vazio(session) -> None:
+    """Primeira ambiguidade de uma conversa nova tem de poder perguntar."""
+    await gravar(session, Intencao.COMPRA, "0.45")
+
+    lida = await ler_intencao(session, CANAL, CONVERSA)
+    assert lida is not None
+    assert lida.desambiguado_em is None
+
+
+async def test_marcar_desambiguacao_persiste(session) -> None:
+    await gravar(session, Intencao.COMPRA, "0.45")
+
+    await marcar_desambiguacao(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+
+    lida = await ler_intencao(session, CANAL, CONVERSA)
+    assert lida is not None
+    assert lida.desambiguado_em is not None
+
+
+async def test_confianca_baixa_preserva_o_marcador(session) -> None:
+    """O episodio de ambiguidade continua aberto -- a pergunta ja foi gasta."""
+    await gravar(session, Intencao.COMPRA, "0.45")
+    await marcar_desambiguacao(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+
+    await gravar(session, Intencao.ALUGUEL, "0.50")
+
+    lida = await ler_intencao(session, CANAL, CONVERSA)
+    assert lida is not None
+    assert lida.desambiguado_em is not None, "ambiguidade que persiste nao devolve a pergunta"
+
+
+async def test_confianca_no_limiar_limpa_o_marcador(session) -> None:
+    """Uma classificacao confiante encerra o episodio e abre outro.
+
+    E o limiar exato que faz isso, nao um valor folgado: a mesma borda dos dois
+    lados da regra.
+    """
+    await gravar(session, Intencao.COMPRA, "0.45")
+    await marcar_desambiguacao(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+
+    await gravar(session, Intencao.COMPRA, "0.60")
+
+    lida = await ler_intencao(session, CANAL, CONVERSA)
+    assert lida is not None
+    assert lida.desambiguado_em is None
+
+
+async def test_efetiva_esconde_o_palpite_de_baixa_confianca(session) -> None:
+    """A coluna guarda COMPRA; quem roteia enxerga INDEFINIDA."""
+    await gravar(session, Intencao.COMPRA, "0.45")
+
+    lida = await ler_intencao(session, CANAL, CONVERSA)
+    assert lida is not None
+    assert lida.intencao is Intencao.COMPRA, "a tabela registra o classificador sem edicao"
+    assert lida.efetiva is Intencao.INDEFINIDA
+
+
+async def test_efetiva_devolve_a_intencao_quando_ha_confianca(session) -> None:
+    await gravar(session, Intencao.ALUGUEL, "0.91")
+
+    lida = await ler_intencao(session, CANAL, CONVERSA)
+    assert lida is not None
+    assert lida.efetiva is Intencao.ALUGUEL

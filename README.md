@@ -185,3 +185,49 @@ O quarto cenário do ticket — suíte de 50 conversas com 90% de acurácia no C
   não que o modelo classifica certo: o classificador é sempre um dublê, porque
   nenhum teste desta suíte toca a rede, e a intenção entra por argumento. Medir
   acurácia é a TEC-210, com as 50 conversas anotadas.
+
+## TEC-135 — Desambiguação abaixo de 0,6
+
+| Cenário Gherkin | Teste |
+|---|---|
+| Mensagem vaga gera pergunta aberta | `tests/features/test_desambiguacao_de_intencao.py::test_mensagem_vaga_gera_pergunta_aberta` |
+| Confiança exatamente no limite não desambigua | `tests/features/test_desambiguacao_de_intencao.py::test_confianca_exatamente_no_limite_nao_desambigua` |
+| Resposta à desambiguação reclassifica a intenção | `tests/features/test_desambiguacao_de_intencao.py::test_resposta_a_desambiguacao_reclassifica_a_intencao` |
+| Ambiguidade persistente não vira insistência | `tests/features/test_desambiguacao_de_intencao.py::test_ambiguidade_persistente_nao_vira_insistencia` |
+
+### Garantias
+
+- Abaixo de `LIMIAR_DE_DESAMBIGUACAO` (0,6) o lead recebe uma pergunta do desambiguador
+  em vez de uma resposta que assume a intenção. O limiar é fechado por cima:
+  exatamente 0,6 segue sem perguntar.
+- Uma pergunta por **episódio** de ambiguidade, não por conversa, para uma
+  sequência de turnos processada em série. Uma classificação com confiança no
+  limiar ou acima limpa o marcador e abre um episódio novo. Ver a lacuna sobre
+  concorrência abaixo — a garantia não vale entre turnos que rodam em paralelo.
+- `desambiguado_em` só é gravado depois de a entrega ser confirmada. Falha de
+  entrega — expirada, recusada ou reentrega suprimida — não queima a pergunta.
+- `conversation_intent.intencao` continua guardando o palpite cru do
+  classificador. **Não roteie por essa coluna**: `IntencaoDaConversa.efetiva`
+  devolve `INDEFINIDA` abaixo do limiar, e é por ela que TEC-136 e TEC-137 leem.
+- O turno ambíguo custa **duas** chamadas ao modelo, cada uma pagando o
+  contexto de entrada inteiro (não há `cache_control` neste projeto): a
+  resposta da primeira é descartada, mas o desperdício não é só ela — entrada
+  domina a contagem de tokens, e a segunda chamada paga o mesmo contexto de
+  novo. A fala gravada leva a telemetria da segunda; o custo da primeira fica
+  só no log `agente.turno_gerado`.
+
+### Lacunas conhecidas
+
+- Nada no código garante que a segunda chamada devolva uma pergunta aberta em vez
+  de um menu numerado. A regra vive inteira no `SISTEMA_DA_DESAMBIGUACAO`, e
+  medir a saída é a TEC-210.
+- **A garantia de uma pergunta por episódio não vale sob concorrência.** Não há
+  serialização por conversa (`claim_message` tranca por mensagem, o sweeper
+  usa `FOR UPDATE SKIP LOCKED` por linha, não há lock consultivo, e o arq roda
+  até 10 jobs em paralelo por padrão). Duas mensagens do mesmo lead chegando
+  segundos uma da outra podem desambiguar em paralelo e o lead recebe duas
+  perguntas — a guarda de saída não pega isso porque as duas passagens têm
+  `message_id` diferentes. Serializar por conversa antes da segunda chamada ao
+  modelo é a [TEC-128](https://eduardodurieuxlopes.atlassian.net/browse/TEC-128).
+- O limiar de 0,6 continua não calibrado. Ele saiu de um comentário e virou
+  constante nomeada — que é o pré-requisito para a TEC-210 mexer nele.

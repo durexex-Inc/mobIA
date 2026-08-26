@@ -1,5 +1,6 @@
 import json
 import logging
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,7 +11,9 @@ from anthropic import transform_schema
 
 from mobia.domain.agente import classificador as classificador_mod
 from mobia.domain.agente.classificador import (
+    MAX_TOKENS_DA_PERGUNTA,
     SCHEMA_DA_RESPOSTA,
+    SISTEMA_DA_DESAMBIGUACAO,
     ClassificadorAnthropic,
     RespostaInvalida,
 )
@@ -88,6 +91,20 @@ def _instalar_cliente_falso(monkeypatch: pytest.MonkeyPatch, resposta: SimpleNam
     `mobia.infra.anthropic.get_client` e da `ANTHROPIC_API_KEY`.
     """
     monkeypatch.setattr(classificador_mod, "get_client", lambda: _ClienteFalso(resposta))
+
+
+def _instalar_e_capturar(
+    monkeypatch: pytest.MonkeyPatch, resposta: SimpleNamespace
+) -> _ClienteFalso:
+    """Como `_instalar_cliente_falso`, mas devolve o dublê.
+
+    Os testes da desambiguacao asseguram o **formato da requisicao** (sem
+    schema estrito, com teto de tokens curto), entao precisam do `AsyncMock`
+    para ler `call_args`.
+    """
+    cliente = _ClienteFalso(resposta)
+    monkeypatch.setattr(classificador_mod, "get_client", lambda: cliente)
+    return cliente
 
 
 async def test_classificar_devolve_intencao_confianca_e_resposta(
@@ -448,3 +465,112 @@ async def test_classificar_recusa_confianca_inteira_gigante(
         await ClassificadorAnthropic().classificar(_contexto())
 
     assert "intervalo" in str(erro.value)
+
+
+async def test_classificar_arredonda_confianca_como_o_numeric_3_2_do_banco(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`conversation_intent.confianca` e `numeric(3,2)`: o Postgres arredonda
+    ao gravar. Um `Decimal` sem arredondar aqui seria dois valores para o
+    mesmo limiar -- 0.599 desambigua em memoria, mas a linha gravada guardaria
+    0.60, que `efetiva` leria como confiante. Pino no resultado, nao no valor
+    bruto: 0.599 quantizado para escala 0.01 vira 0.60.
+    """
+    resposta = _resposta_json(confianca=0.599)
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resultado.confianca == Decimal("0.60")
+
+
+async def test_classificar_arredonda_para_cima_na_borda_como_o_postgres(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ROUND_HALF_UP`, nao o `ROUND_HALF_EVEN` default do `Decimal`.
+
+    Os dois modos so divergem exatamente na borda de 0,005: o Postgres
+    arredonda `numeric` para longe do zero e devolve 0.59; o bankers' rounding
+    do Python devolveria 0.58. O valor gravado tem de bater com o que o banco
+    faria, nao com o default da linguagem.
+    """
+    resposta = _resposta_json(confianca=0.585)
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resultado.confianca == Decimal("0.59")
+
+
+PERGUNTA = "O que voce esta buscando agora nesse momento?"
+
+
+async def test_desambiguar_devolve_a_pergunta_e_a_telemetria(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _instalar_cliente_falso(monkeypatch, _resposta_falsa(texto=f"  {PERGUNTA}  "))
+
+    pergunta = await ClassificadorAnthropic().desambiguar(_contexto())
+
+    assert pergunta.texto == PERGUNTA, "espacos das pontas nao vao para o lead"
+    assert pergunta.tokens_in == 4000
+    assert pergunta.tokens_out == 200
+    assert pergunta.latency_ms >= 0
+
+
+async def test_desambiguar_nao_manda_schema_estrito(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A saida e uma frase. Nao ha campo para validar, entao nao ha schema.
+
+    O schema do `classificar` existe porque intencao e confianca sao regra de
+    negocio; aqui ele so custaria tokens e uma chance a mais de 400.
+    """
+    cliente = _instalar_e_capturar(monkeypatch, _resposta_falsa(texto=PERGUNTA))
+
+    await ClassificadorAnthropic().desambiguar(_contexto())
+
+    kwargs = cliente.messages.create.call_args.kwargs
+    assert "output_config" not in kwargs
+    assert kwargs["max_tokens"] == MAX_TOKENS_DA_PERGUNTA
+    assert kwargs["system"] is SISTEMA_DA_DESAMBIGUACAO
+
+
+def test_desambiguar_pede_uma_pergunta_aberta() -> None:
+    """O prompt e a unica coisa que segura a regra "sem menu numerado".
+
+    Nada no codigo verifica o texto devolvido -- ver a secao de lacunas do
+    spec. Se esta instrucao sumir do system prompt, some a regra inteira.
+    """
+    assert "menu" in SISTEMA_DA_DESAMBIGUACAO.lower()
+    assert "uma unica pergunta" in SISTEMA_DA_DESAMBIGUACAO.lower()
+
+
+async def test_desambiguar_recusa_parada_anormal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`max_tokens` corta a pergunta no meio; meia pergunta nao vai ao lead."""
+    _instalar_cliente_falso(monkeypatch, _resposta_falsa(texto=PERGUNTA, stop_reason="max_tokens"))
+
+    with pytest.raises(RespostaInvalida):
+        await ClassificadorAnthropic().desambiguar(_contexto())
+
+
+async def test_desambiguar_recusa_pergunta_vazia(monkeypatch: pytest.MonkeyPatch) -> None:
+    _instalar_cliente_falso(monkeypatch, _resposta_falsa(texto="   "))
+
+    with pytest.raises(RespostaInvalida):
+        await ClassificadorAnthropic().desambiguar(_contexto())
+
+
+async def test_desambiguar_nao_loga_a_pergunta_nem_o_prompt(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Mesma regra do `classificar`: so numeros e id de modelo."""
+    _instalar_cliente_falso(
+        monkeypatch, _resposta_falsa(texto=f"{TEXTO_DA_RESPOSTA} qual e a sua duvida?")
+    )
+
+    with caplog.at_level(logging.INFO):
+        await ClassificadorAnthropic().desambiguar(_contexto())
+
+    assert "SENTINELA-RESPOSTA" not in caplog.text
+    assert "SENTINELA-SISTEMA" not in caplog.text
+    assert "SENTINELA-RESUMO" not in caplog.text
+    assert "agente.desambiguacao_gerada" in caplog.text
