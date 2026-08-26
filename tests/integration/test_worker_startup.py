@@ -31,3 +31,20 @@ async def test_startup_sobe_com_token_configurado(
     assert "classificador" in ctx
     assert "resumidor" in ctx
     assert "contador" in ctx
+
+
+def test_job_timeout_cabe_dentro_da_janela_do_sweeper() -> None:
+    """Os dois numeros sao acoplados e moram em arquivos diferentes.
+
+    `job_timeout` >= `sweep_inflight_after_seconds` faria o sweeper
+    reenfileirar um turno ainda em voo: a mesma conversa rodaria duas vezes em
+    paralelo, pagando duas classificacoes. E o timeout tem de ser maior que o
+    turno real (count_tokens + resumir + classificar + POST na Meta), senao o
+    ARQ cancela e `CancelledError` escapa do `except Exception` de
+    `process_message`.
+    """
+    from mobia.app.config import get_settings
+    from mobia.workers.main import WorkerSettings
+
+    assert WorkerSettings.job_timeout < get_settings().sweep_inflight_after_seconds
+    assert WorkerSettings.job_timeout >= 180

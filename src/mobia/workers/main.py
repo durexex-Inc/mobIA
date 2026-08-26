@@ -79,5 +79,23 @@ class WorkerSettings:
     on_shutdown = shutdown
     redis_settings = redis_settings()
     max_tries = 5
-    job_timeout = 60
+
+    # 240s, e a relacao com `sweep_inflight_after_seconds = 300` e o que fixa
+    # este numero: tem de ser **estritamente menor** que a janela do sweeper,
+    # senao o sweeper reenfileira um turno que ainda esta em voo e a mesma
+    # conversa roda duas vezes em paralelo. Os 60s vieram da TEC-122, quando o
+    # job era claim + ACK. Hoje o turno faz count_tokens, as vezes `resumir`
+    # (a cada ~40 mensagens, max_tokens=2000), `classificar`
+    # (max_tokens=1500) e o POST para a Meta -- um turno com dobra passa de
+    # 60s sem nada estar errado.
+    #
+    # Estourar aqui nao e so custo: o ARQ cancela a corrotina, e
+    # `asyncio.CancelledError` e BaseException -- o `except Exception` de
+    # `process_message` nao pega. A linha nunca vira FAILED, `attempts` nao
+    # sobe, e se o cancelamento cair depois da reserva commitada o sweeper
+    # reenfileira, a guarda suprime a reentrega e a mensagem fecha em
+    # PROCESSED sem o lead ter recebido nada. Ver tambem o `timeout` explicito
+    # do cliente em `infra/anthropic.py`: ele existe para que uma chamada
+    # lenta vire erro tipado (recuperavel) antes de virar cancelamento.
+    job_timeout = 240
     keep_result = 0

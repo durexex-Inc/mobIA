@@ -139,3 +139,27 @@ def test_token_da_meta_nao_tem_default_utilizavel(settings) -> None:
     `tests/integration/test_worker_startup.py`.
     """
     assert settings.whatsapp_access_token == ""
+
+
+def test_cliente_falha_tipado_antes_de_o_arq_cancelar(
+    monkeypatch, caches_de_cliente_limpos: None
+) -> None:
+    """O teto por requisicao tem de caber no `job_timeout` do worker.
+
+    O default do SDK (10 min, com retentativa interna) e maior que o job
+    inteiro: uma chamada lenta nunca falharia, seria cancelada pelo ARQ. E
+    `CancelledError` e BaseException -- o `except Exception` de
+    `process_message` nao pega, a linha nao vira FAILED e a reserva de envio
+    fica presa. Erro tipado e recuperavel; cancelamento nao e.
+    """
+    from mobia.infra.anthropic import MAX_TENTATIVAS, TIMEOUT_SEGUNDOS
+    from mobia.workers.main import WorkerSettings
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-teste")
+    cliente = get_client()
+
+    assert cliente.timeout == TIMEOUT_SEGUNDOS
+    assert cliente.max_retries == MAX_TENTATIVAS
+    pior_caso_por_chamada = TIMEOUT_SEGUNDOS * (1 + MAX_TENTATIVAS)
+    # Duas chamadas pesadas (resumir + classificar) no turno com dobra.
+    assert pior_caso_por_chamada * 2 <= WorkerSettings.job_timeout
