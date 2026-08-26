@@ -116,9 +116,14 @@ Os critérios de aceite da história vivem como testes executáveis:
   significa que uma mensagem sozinha excede o limite físico da chamada, que o
   provedor recusaria de qualquer jeito.
 - O teto comparado é o nominal **menos** `CONTEXTO_HEADROOM_DE_TOKENS`. A
-  contagem mede uma mensagem plana, sem `system` e sem o overhead estrutural de
-  cada turno do array multi-turno que a TEC-134 vai montar; a reserva cobre essa
-  diferença. **A TEC-134 tem de reverificar o número contra a requisição real.**
+  contagem mede uma mensagem plana, sem `system` e sem os rótulos e o schema que
+  a requisição real carrega; a reserva cobre essa diferença. A TEC-134 mediu:
+  a contagem fica ~263 tokens abaixo do que se envia (`SISTEMA` contado e não
+  enviado, `SISTEMA_DO_AGENTE`, o schema de saída e os rótulos enviados e não
+  contados), contra uma reserva de 400 — que por isso continua em 400. A conta
+  usa o mesmo proxy `len/4` do módulo, não uma chamada paga de `count_tokens`, e
+  vive em `test_diferenca_entre_o_contado_e_o_enviado`, que quebra se alguma das
+  parcelas crescer.
 - Mensagem sem texto (áudio, imagem, documento) entra marcada pelo tipo, nunca
   como turno em branco — o modelo tem de poder distinguir "mandou um áudio que
   ainda não transcrevemos" de "não disse nada", e é esse texto que a dobra

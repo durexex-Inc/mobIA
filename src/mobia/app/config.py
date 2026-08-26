@@ -139,10 +139,31 @@ class Settings(BaseSettings):
         janela de quarenta (200) com o dobro de folga para o system prompt e para
         o renderizador do estado.
 
-        **A TEC-134 tem de re-verificar este numero contra a requisicao real**
-        assim que ela existir, medindo `count_tokens` sobre a chamada de verdade
-        contra o valor que este modulo reporta em `ContextoMontado.tokens`. Se a
-        diferenca couber com folga, este numero desce; se nao couber, ele sobe.
+        **Medido na TEC-134, com a requisicao real ja montada.** A conta usa o
+        mesmo proxy `len/4` do modulo de montagem, e nao uma chamada de
+        `count_tokens` -- medir contra a API de verdade custaria uma chamada
+        paga por execucao e nao pode entrar na suite, que nao toca a rede. E
+        estimativa honesta, nao medida exata, e e por isso que o resultado
+        vira um teste (`test_diferenca_entre_o_contado_e_o_enviado`) em vez de
+        um numero solto num comentario.
+
+        O que a contagem ve a mais e a menos, em tokens de proxy:
+
+        - `-42`  `montagem.SISTEMA` entra na contagem mas **nao** e enviado --
+          o classificador chama `montar_prompt(omitir_sistema=True)`.
+        - `+193` `classificador.SISTEMA_DO_AGENTE` vai no campo `system=` e
+          nunca passa pelo contador.
+        - `+93`  o schema compilado em `output_config.format`, idem.
+        - `+19`  os rotulos de secao que `montar_prompt` intercala.
+
+        Liquido: **~263 tokens contados a menos do que se envia**, contra uma
+        reserva de 400. Sobram ~137 para o overhead estrutural da requisicao,
+        que hoje e um unico turno de usuario -- ordem de dezenas de tokens, nao
+        centenas, porque a TEC-134 nao montou o array multi-turno que este
+        texto previa. Por isso a reserva **fica em 400**: cobre o medido com
+        folga de mais de 50%, e derruba-la para perto de 263 trocaria uma
+        margem barata (2,2% do teto) por risco de estourar o limite real da
+        chamada.
         """
         return self.contexto_teto_de_tokens - self.contexto_headroom_de_tokens
 

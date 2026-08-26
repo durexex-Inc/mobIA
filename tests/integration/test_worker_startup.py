@@ -44,7 +44,13 @@ def test_job_timeout_cabe_dentro_da_janela_do_sweeper() -> None:
     `process_message`.
     """
     from mobia.app.config import get_settings
+    from mobia.infra.anthropic import MAX_TENTATIVAS, TIMEOUT_SEGUNDOS
     from mobia.workers.main import WorkerSettings
 
     assert WorkerSettings.job_timeout < get_settings().sweep_inflight_after_seconds
     assert WorkerSettings.job_timeout >= 180
+    # As duas chamadas pesadas do turno com dobra (resumir + classificar) tem
+    # de caber no pior caso do cliente, senao a falha tipada nunca acontece --
+    # o ARQ cancela antes, e cancelamento nao e recuperavel.
+    pior_caso_por_chamada = TIMEOUT_SEGUNDOS * (1 + MAX_TENTATIVAS)
+    assert pior_caso_por_chamada * 2 <= WorkerSettings.job_timeout

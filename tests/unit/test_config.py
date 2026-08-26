@@ -153,13 +153,57 @@ def test_cliente_falha_tipado_antes_de_o_arq_cancelar(
     fica presa. Erro tipado e recuperavel; cancelamento nao e.
     """
     from mobia.infra.anthropic import MAX_TENTATIVAS, TIMEOUT_SEGUNDOS
-    from mobia.workers.main import WorkerSettings
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-teste")
     cliente = get_client()
 
     assert cliente.timeout == TIMEOUT_SEGUNDOS
     assert cliente.max_retries == MAX_TENTATIVAS
-    pior_caso_por_chamada = TIMEOUT_SEGUNDOS * (1 + MAX_TENTATIVAS)
-    # Duas chamadas pesadas (resumir + classificar) no turno com dobra.
-    assert pior_caso_por_chamada * 2 <= WorkerSettings.job_timeout
+    # O par (timeout, retentativas) contra o `job_timeout` do worker esta em
+    # `tests/integration/test_worker_startup.py`: importar `workers.main` aqui
+    # construiria `Settings` antes do monkeypatch da chave.
+
+
+def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
+    """Discharge da re-verificacao que a TEC-127 deixou marcada para a TEC-134.
+
+    A contagem de `montar_contexto` mede um proxy do que a requisicao do
+    classificador de fato manda. Este teste refaz a conta com o mesmo `len/4`
+    do modulo de montagem -- e nao com `count_tokens`, que custaria uma
+    chamada paga e rede, que a suite nao toca -- e trava o resultado contra a
+    reserva.
+
+    Fica como teste, e nao como numero num comentario, porque cada parcela
+    vive num modulo diferente: crescer `SISTEMA_DO_AGENTE` ou acrescentar um
+    campo ao schema muda a conta sem tocar em `config.py`, e sem isto ninguem
+    ficaria sabendo ate a primeira chamada estourar o limite de verdade.
+    """
+    import json
+
+    from mobia.domain.agente.classificador import _SCHEMA_COMPILADO, SISTEMA_DO_AGENTE
+    from mobia.domain.context.montagem import SISTEMA
+
+    def em_tokens(texto: str) -> float:
+        return len(texto) / 4
+
+    rotulos = (
+        "Resumo da conversa ate aqui:\nMensagens recentes:\nEstado de qualificacao:\n" + "\n\n" * 2
+    )
+    subcontagem = (
+        # Contado e nao enviado: o classificador usa omitir_sistema=True.
+        -em_tokens(SISTEMA)
+        # Enviados e nunca contados: campo `system=`, o schema de saida e os
+        # rotulos que `montar_prompt` intercala.
+        + em_tokens(SISTEMA_DO_AGENTE)
+        + em_tokens(json.dumps(_SCHEMA_COMPILADO))
+        + em_tokens(rotulos)
+    )
+
+    assert subcontagem > 0, "se virar negativo, a conta abaixo perdeu o sentido"
+    assert subcontagem < settings.contexto_headroom_de_tokens, (
+        "a reserva parou de cobrir o que a contagem nao ve -- suba "
+        "CONTEXTO_HEADROOM_DE_TOKENS ou encolha o que e enviado sem ser contado"
+    )
+    # Folga, nao empate: o overhead estrutural da requisicao (envelope do
+    # turno de usuario) tambem sai daqui, e ele nao esta na conta acima.
+    assert subcontagem < settings.contexto_headroom_de_tokens * 0.75
