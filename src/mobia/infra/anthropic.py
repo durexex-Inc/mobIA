@@ -6,11 +6,12 @@ from mobia.app.config import ConfiguracaoInsegura, get_settings
 
 # O default do SDK e 10 minutos por requisicao, com retentativa interna --
 # muito acima do `job_timeout` do worker (240s). Sem um teto proprio, uma
-# chamada lenta nao falha: ela e cancelada pelo ARQ, e `CancelledError` e
-# BaseException, que o `except Exception` de `process_message` nao pega (a
-# linha nunca vira FAILED e a reserva de envio fica presa). Falha tipada e
-# recuperavel; cancelamento nao e. 60s por tentativa, uma retentativa: no pior
-# caso 120s por chamada.
+# chamada lenta nao falha: ela e cancelada pelo ARQ. Desde a TEC-227 o
+# cancelamento deixa de ser invisivel -- `process_message` marca FAILED e o
+# `GuardedOutbound` libera a reserva -- mas continua sendo o desfecho pior:
+# custa a passada inteira do turno, com as chamadas pagas ao modelo, e pode
+# duplicar a entrega. Falha tipada e recuperavel de graca; cancelamento nao.
+# 60s por tentativa, uma retentativa: no pior caso 120s por chamada.
 #
 # Isso nao sobra folga dentro dos 240s do `job_timeout`. O turno paga entre
 # uma e tres chamadas deste cliente em sequencia -- `resumir` (as vezes, a

@@ -102,12 +102,22 @@ class WorkerSettings:
     # antes, nao e uma correcao que este comentario decide sozinho.
     #
     # Estourar aqui nao e so custo: o ARQ cancela a corrotina, e
-    # `asyncio.CancelledError` e BaseException -- o `except Exception` de
-    # `process_message` nao pega. A linha nunca vira FAILED, `attempts` nao
-    # sobe, e se o cancelamento cair depois da reserva commitada o sweeper
-    # reenfileira, a guarda suprime a reentrega e a mensagem fecha em
-    # PROCESSED sem o lead ter recebido nada. Ver tambem o `timeout` explicito
-    # do cliente em `infra/anthropic.py`: ele existe para que uma chamada
-    # lenta vire erro tipado (recuperavel) antes de virar cancelamento.
+    # `asyncio.CancelledError` e BaseException -- nenhum `except Exception` a
+    # pega. Ate a TEC-227 isso significava perder a mensagem em silencio: a
+    # linha nunca virava FAILED, `attempts` nao subia, e um cancelamento
+    # depois da reserva commitada fazia o sweeper reenfileirar, a guarda
+    # suprimir a reentrega e a mensagem fechar em PROCESSED sem o lead ter
+    # recebido nada.
+    #
+    # Agora `process_message` tem uma clausula propria para `CancelledError`
+    # (marca FAILED, incrementa `attempts`, loga `message.cancelled` e
+    # repropaga) e o `GuardedOutbound` libera a reserva. **Estourar continua
+    # sendo ruim** -- custa uma passada inteira do turno, chamadas pagas ao
+    # modelo inclusas, e pode duplicar a entrega se o cancelamento cair depois
+    # de o POST ter chegado a Meta. So deixou de ser invisivel.
+    #
+    # Ver tambem o `timeout` explicito do cliente em `infra/anthropic.py`: ele
+    # existe para que uma chamada lenta vire erro tipado (recuperavel) antes
+    # de virar cancelamento.
     job_timeout = 240
     keep_result = 0

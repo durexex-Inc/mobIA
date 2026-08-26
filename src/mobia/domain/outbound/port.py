@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from typing import Any, Protocol
 
@@ -58,6 +59,11 @@ class OutboundPort(Protocol):
       FAILED e a retentativa cai na supressao de reentrega. Levantar algo fora
       destes tres tipos e escolher esse desfecho sem querer.
 
+    `asyncio.CancelledError` nao esta nessa lista porque nao e escolha de
+    adaptador nenhum: e o `job_timeout` do worker ou o shutdown chegando de
+    fora. A guarda a trata como retentavel (libera a reserva e propaga) --
+    ver TEC-227.
+
     E `send` devolve `False`, sem levantar, quando a guarda suprime uma
     reentrega -- ver `GuardedOutbound.send` e `turno.reentrega_suprimida`.
     """
@@ -97,9 +103,10 @@ class GuardedOutbound:
     A linha em outbound_dispatches e commitada antes do efeito externo. Queda
     entre a reserva e a entrega so perde aquele envio quando a falha e
     permanente (EnvioRecusado); queda depois nunca duplica. Falha retentavel
-    (EnvioRetentavel) libera a reserva para a proxima tentativa poder entregar.
-    O criterio de aceite exige "nenhuma resposta duplicada" -- a troca e essa,
-    e continua valendo no caminho de sucesso e na falha permanente.
+    (EnvioRetentavel) e cancelamento (`asyncio.CancelledError`, TEC-227)
+    liberam a reserva para a proxima tentativa poder entregar. O criterio de
+    aceite exige "nenhuma resposta duplicada" -- a troca e essa, e continua
+    valendo no caminho de sucesso e na falha permanente.
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -128,21 +135,33 @@ class GuardedOutbound:
 
         try:
             await self._deliver(message_id, kind, payload)
-        except EnvioRetentavel:
+        except (EnvioRetentavel, asyncio.CancelledError):
             # A reserva foi desenhada na TEC-122 para um ACK, e ali perder o
             # envio nao custava nada. Agora o que se perde e a resposta ao
             # lead: a reserva commitada faz o sweeper reenfileirar, o worker
             # reivindicar e a guarda responder "ja entreguei isso" -- e o lead
             # nunca recebe nada sobre aquele turno. Liberar inverte a troca
             # para uma duplicata possivel, que e visivel e recuperavel.
+            #
+            # `CancelledError` entra na mesma clausula, e nao numa propria, de
+            # proposito: o que fazer e identico, e duas copias do bloco
+            # divergiriam. O gatilho e que e diferente -- ele nao e excecao
+            # tipada nossa, e sim o `job_timeout` do worker ou o shutdown, e
+            # cai em qualquer ponto do `_deliver`, inclusive depois de o POST
+            # ter chegado a Meta. Nesse caso a duplicata acontece de verdade;
+            # a TEC-227 escolheu esse lado pelo mesmo criterio da TEC-134.
             try:
                 await self._liberar(message_id, kind)
             except Exception as exc:
                 # Se o proprio delete da liberacao falhar (deadlock, conexao
-                # caida), quem chama send() ainda precisa ver EnvioRetentavel,
-                # nao um erro de infra do release -- senao um retentavel vira
-                # permanente por engano e a reserva fica presa do mesmo jeito
-                # que este bloco existe para evitar. O erro de liberacao vira
+                # caida), quem chama send() ainda precisa ver a excecao
+                # original -- o EnvioRetentavel ou o cancelamento -- e nao um
+                # erro de infra do release: senao um retentavel vira permanente
+                # por engano, ou o cancelamento some, e a reserva fica presa do
+                # mesmo jeito que este bloco existe para evitar. Um
+                # cancelamento *da propria liberacao* nao cai aqui, porque
+                # `CancelledError` nao e Exception -- ele propaga, que e o
+                # desfecho certo. O erro de liberacao vira
                 # seu proprio evento de log, porque e um problema operacional
                 # diferente de perder o envio.
                 log.error(
