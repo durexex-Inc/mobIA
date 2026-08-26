@@ -171,10 +171,12 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 reason=type(falha).__name__,
             )
         # Evento proprio, e nao `message.failed`: cancelamento e problema
-        # operacional diferente de o turno falhar. Ele tem duas origens que o
-        # log **nao** distingue -- o `job_timeout` estourando e o SIGTERM de um
-        # deploy, que cancela todo job em voo. Ver as lacunas conhecidas no
-        # README.
+        # operacional diferente de o turno falhar. Desde a TEC-232 o SIGTERM de
+        # um deploy drena os jobs em voo antes de cancelar
+        # (`job_completion_wait` em `workers/main.py`), entao o que chega aqui e
+        # quase sempre o `job_timeout` estourando. O deploy so alcanca este
+        # ponto se o turno atravessar a janela inteira de drenagem -- e ai o
+        # orcamento dele realmente acabou. Ver a secao TEC-232 do README.
         log.warning("message.cancelled", message_id=message_id, error=detalhe)
         raise
 

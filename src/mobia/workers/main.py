@@ -120,4 +120,32 @@ class WorkerSettings:
     # existe para que uma chamada lenta vire erro tipado (recuperavel) antes
     # de virar cancelamento.
     job_timeout = 240
+
+    # SIGTERM: espera os jobs em voo terminarem em vez de cancela-los na hora.
+    # Com valor nao-zero o arq troca `handle_sig` por
+    # `handle_sig_wait_for_completion` (`arq/worker.py`), que para de pegar job
+    # novo (`allow_pick_jobs = False`), espera ate este prazo e **so entao**
+    # cancela o que sobrou. E carencia, nao garantia.
+    #
+    # 250 > `job_timeout` nao e folga arbitraria: e a invariante inteira. Sendo
+    # maior, a drenagem cabe o orcamento completo do turno, e nenhum deploy
+    # cancela um job por conta propria -- ele termina, ou estoura os 240s dele,
+    # que e falha de verdade e conta certo em `attempts`. Antes disto todo
+    # SIGTERM cancelava todo job em voo, e cada restart queimava uma das cinco
+    # `sweep_max_attempts` sem ter havido falha de processamento nenhuma.
+    #
+    # **Exige do deploy uma carencia SIGTERM->SIGKILL acima de ~265s**: os 250
+    # da drenagem, mais os 10 de `SEGUNDOS_PARA_REGISTRAR_CANCELAMENTO` para o
+    # job que a janela nao salvou escrever seu FAILED, mais os hooks de
+    # shutdown (`dispose_engine` e o pool do Redis). Se o SIGKILL chegar antes
+    # de tudo isso, o processo morre sem
+    # `CancelledError`: a clausula de `process_message` nao roda, nada escreve
+    # FAILED, e a linha fica em PROCESSING com `attempts` congelado -- pior que
+    # cancelar na hora, que ao menos registra. Nenhum teste cobre isso; a
+    # config de deploy nao mora neste repo. Ver a secao TEC-232 do README.
+    #
+    # A clausula de `CancelledError` da TEC-227 continua sendo a rede embaixo:
+    # o cancelamento pos-janela ainda acontece, e ai ele e legitimo.
+    job_completion_wait = 250
+
     keep_result = 0

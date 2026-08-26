@@ -1,3 +1,5 @@
+import signal
+
 import pytest
 
 from mobia.app.config import ConfiguracaoInsegura
@@ -54,3 +56,52 @@ def test_job_timeout_cabe_dentro_da_janela_do_sweeper() -> None:
     # o ARQ cancela antes, e cancelamento nao e recuperavel.
     pior_caso_por_chamada = TIMEOUT_SEGUNDOS * (1 + MAX_TENTATIVAS)
     assert pior_caso_por_chamada * 2 <= WorkerSettings.job_timeout
+
+
+def test_job_completion_wait_passa_do_job_timeout() -> None:
+    """A invariante que faz o deploy nunca cancelar um job por conta propria.
+
+    `job_completion_wait` maior que `job_timeout` significa que a drenagem
+    sempre cabe o orcamento inteiro do turno: no SIGTERM o job termina, ou
+    estoura o proprio `job_timeout`, que e falha de verdade e conta certo em
+    `attempts`. Inverter a relacao -- subir o `job_timeout` sem subir a
+    drenagem, o jeito provavel de isto quebrar -- traz de volta o deploy que
+    cancela turno em voo e queima uma das cinco tentativas por restart.
+    """
+    from mobia.workers.main import WorkerSettings
+
+    assert WorkerSettings.job_completion_wait > WorkerSettings.job_timeout
+
+
+async def test_arq_instala_o_handler_que_drena_no_sigterm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O `job_completion_wait` chegar ao `Worker` nao e obvio nem barulhento.
+
+    O arq monta o worker com `get_kwargs`, que filtra
+    `WorkerSettings.__dict__` pela assinatura do `Worker` e **descarta em
+    silencio** o que nao casa. Renomear o atributo, ou transforma-lo em
+    property, faz a configuracao virar no-op sem erro nenhum -- e o deploy
+    volta a cancelar job em voo. Por isso o teste olha o handler que o arq de
+    fato registra no SIGTERM, e nao o valor da constante, que passaria intacto
+    nesse caso.
+
+    O espiao tambem e o que torna o teste portavel: no Windows o
+    `loop.add_signal_handler` levanta `NotImplementedError` e o arq engole,
+    entao inspecionar o loop de verdade so valeria no Linux do CI.
+    """
+    from arq.worker import Worker, create_worker
+
+    from mobia.workers.main import WorkerSettings
+
+    registrados: dict[signal.Signals, str] = {}
+    monkeypatch.setattr(
+        Worker,
+        "_add_signal_handler",
+        lambda self, signum, handler: registrados.__setitem__(signum, handler.__name__),
+    )
+
+    create_worker(WorkerSettings)
+
+    assert registrados[signal.SIGTERM] == "handle_sig_wait_for_completion"
+    assert registrados[signal.SIGINT] == "handle_sig_wait_for_completion"
