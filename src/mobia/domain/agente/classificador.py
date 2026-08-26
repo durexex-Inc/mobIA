@@ -1,6 +1,6 @@
 import json
 import time
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Protocol, cast
 
 import structlog
@@ -186,7 +186,26 @@ class ClassificadorAnthropic:
 
             resultado = RespostaDoAgente(
                 intencao=intencao,
-                confianca=Decimal(str(confianca_bruta)),
+                # `conversation_intent.confianca` e `numeric(3,2)`: o Postgres
+                # arredonda ao gravar, e um `Decimal` sem arredondar aqui vira
+                # dois valores para o mesmo limiar -- o em-memoria (usado por
+                # `deve_desambiguar` neste turno) e o gravado (usado por
+                # `efetiva` em todo turno seguinte) podem discordar sobre o
+                # mesmo par (intencao, confianca) quando o valor bruto cai
+                # perto da borda (ex.: 0.599 nao desambigua se arredondar para
+                # 0.60, mas o turno ja decidiu desambiguar com o valor cru).
+                # Quantizar aqui, com a mesma escala da coluna, elimina essa
+                # divergencia: o que este turno decide e exatamente o que fica
+                # gravado.
+                #
+                # `ROUND_HALF_UP`, nao o `ROUND_HALF_EVEN` default do
+                # `Decimal` -- e o modo que o Postgres usa para `numeric`
+                # (round half away from zero). Os dois so divergem exatamente
+                # na borda de 0,005: 0.585 vira 0.59 no Postgres e 0.58 no
+                # bankers' rounding do Python.
+                confianca=Decimal(str(confianca_bruta)).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                ),
                 resposta=dados["resposta"].strip(),
                 modelo=settings.modelo_agente,
                 tokens_in=resposta.usage.input_tokens,

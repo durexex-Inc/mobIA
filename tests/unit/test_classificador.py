@@ -1,5 +1,6 @@
 import json
 import logging
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -466,10 +467,47 @@ async def test_classificar_recusa_confianca_inteira_gigante(
     assert "intervalo" in str(erro.value)
 
 
+async def test_classificar_arredonda_confianca_como_o_numeric_3_2_do_banco(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`conversation_intent.confianca` e `numeric(3,2)`: o Postgres arredonda
+    ao gravar. Um `Decimal` sem arredondar aqui seria dois valores para o
+    mesmo limiar -- 0.599 desambigua em memoria, mas a linha gravada guardaria
+    0.60, que `efetiva` leria como confiante. Pino no resultado, nao no valor
+    bruto: 0.599 quantizado para escala 0.01 vira 0.60.
+    """
+    resposta = _resposta_json(confianca=0.599)
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resultado.confianca == Decimal("0.60")
+
+
+async def test_classificar_arredonda_para_cima_na_borda_como_o_postgres(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ROUND_HALF_UP`, nao o `ROUND_HALF_EVEN` default do `Decimal`.
+
+    Os dois modos so divergem exatamente na borda de 0,005: o Postgres
+    arredonda `numeric` para longe do zero e devolve 0.59; o bankers' rounding
+    do Python devolveria 0.58. O valor gravado tem de bater com o que o banco
+    faria, nao com o default da linguagem.
+    """
+    resposta = _resposta_json(confianca=0.585)
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resultado.confianca == Decimal("0.59")
+
+
 PERGUNTA = "O que voce esta buscando agora nesse momento?"
 
 
-async def test_desambiguar_devolve_a_pergunta_e_a_telemetria(monkeypatch) -> None:
+async def test_desambiguar_devolve_a_pergunta_e_a_telemetria(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _instalar_cliente_falso(monkeypatch, _resposta_falsa(texto=f"  {PERGUNTA}  "))
 
     pergunta = await ClassificadorAnthropic().desambiguar(_contexto())
