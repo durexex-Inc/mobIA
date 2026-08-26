@@ -9,8 +9,7 @@ from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
-from mobia.domain.outbound.port import EnvioRecusado, OutboundPort
-from mobia.domain.outbound.whatsapp import EnvioForaDaJanela
+from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, OutboundPort
 
 log = structlog.get_logger(__name__)
 

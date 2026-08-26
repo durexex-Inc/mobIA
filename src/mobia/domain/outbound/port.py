@@ -37,6 +37,31 @@ def _e_reserva_duplicada(exc: IntegrityError) -> bool:
 
 
 class OutboundPort(Protocol):
+    """A porta de saida do turno -- e o contrato de excecoes que vem junto.
+
+    A assinatura declara so `send`, mas a correcao de `executar_turno` depende
+    inteiramente de **qual** excecao a implementacao levanta. Sem isto escrito,
+    um adaptador novo (a TEC-124 traz o canal web) escolhe o tipo errado e
+    muda o desfecho do turno sem tocar em nenhuma linha do dominio:
+
+    - `EnvioRetentavel` -- rede, 5xx, 408, 429. A guarda libera a reserva e
+      propaga: a mensagem vira FAILED e o sweeper retenta. O lead recebe
+      eventualmente.
+    - `EnvioForaDaJanela` -- o canal nao aceita mais mensagem livre nesta
+      conversa. Turno `expirado`, PROCESSED, aviso no log. Expirar nao e
+      falhar, e retentar nunca entregaria.
+    - `EnvioRecusado` -- 4xx permanente. Turno `sem_resposta`, PROCESSED, log
+      em `error` (e o alerta que observa isso). FAILED aqui faria o sweeper
+      rodar o turno inteiro de novo, chamada paga ao modelo inclusa, por um
+      payload que nunca sera aceito.
+    - Qualquer outra excecao propaga crua: a reserva **fica**, a mensagem vira
+      FAILED e a retentativa cai na supressao de reentrega. Levantar algo fora
+      destes tres tipos e escolher esse desfecho sem querer.
+
+    E `send` devolve `False`, sem levantar, quando a guarda suprime uma
+    reentrega -- ver `GuardedOutbound.send` e `turno.reentrega_suprimida`.
+    """
+
     async def send(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> bool: ...
 
 
@@ -46,6 +71,24 @@ class EnvioRetentavel(Exception):
 
 class EnvioRecusado(Exception):
     """Falha de envio permanente -- 4xx. Retentar nao muda nada."""
+
+
+class EnvioForaDaJanela(EnvioRecusado):
+    """O canal nao aceita mais mensagem livre nesta conversa.
+
+    Herda de EnvioRecusado porque retentar nao ajuda. Mas e distinguivel de um
+    4xx comum porque nao e erro nosso: o turno termina PROCESSED com aviso,
+    nao com erro de payload.
+
+    Mora aqui, e nao no adaptador do WhatsApp que a levanta hoje, porque
+    `executar_turno` a captura e o turno e agnostico de canal em todo o resto
+    -- ele recebe um `OutboundPort`. O nome ficou como estava, sem um
+    "EnvioExpirado" neutro com subclasse do WhatsApp por cima: a janela de 24h
+    da Meta e a unica encarnacao existente do conceito, e uma hierarquia de
+    dois niveis com um so habitante seria estrutura para um caso hipotetico.
+    O canal web da TEC-124 nao tem janela nenhuma -- ele simplesmente nunca
+    levanta esta excecao.
+    """
 
 
 class GuardedOutbound:

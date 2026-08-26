@@ -3,8 +3,8 @@ import uuid
 import httpx
 import pytest
 
-from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
-from mobia.domain.outbound.whatsapp import EnvioForaDaJanela, WhatsAppOutbound
+from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, EnvioRetentavel
+from mobia.domain.outbound.whatsapp import WhatsAppOutbound
 from mobia.infra.db import get_sessionmaker
 
 PAYLOAD = {"para": "5511911112222", "de": "222222222", "texto": "Ola! Em qual regiao voce procura?"}

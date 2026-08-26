@@ -6,7 +6,12 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
-from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel, GuardedOutbound
+from mobia.domain.outbound.port import (
+    EnvioForaDaJanela,
+    EnvioRecusado,
+    EnvioRetentavel,
+    GuardedOutbound,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -22,16 +27,6 @@ CODIGO_FORA_DA_JANELA = 131047
 CODIGOS_4XX_RETENTAVEIS = frozenset({408, 429})
 
 TIMEOUT_SEGUNDOS = 10.0
-
-
-class EnvioForaDaJanela(EnvioRecusado):
-    """Passaram mais de 24h desde a ultima fala do lead.
-
-    Herda de EnvioRecusado porque retentar nao ajuda -- so template aprovado
-    entrega fora da janela, e template e outra historia. Mas e distinguivel de
-    um 4xx comum porque nao e erro nosso: o turno termina PROCESSED com aviso,
-    nao com erro de payload.
-    """
 
 
 class WhatsAppOutbound(GuardedOutbound):
