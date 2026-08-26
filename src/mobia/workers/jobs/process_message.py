@@ -1,16 +1,21 @@
 import uuid
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import structlog
 from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.domain.agente.turno import executar_turno
+from mobia.domain.agente.turno import ResultadoDoTurno, executar_turno
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
 
 log = structlog.get_logger(__name__)
+
+# "skipped" e deste modulo -- claim recusado ou a mensagem sumiu entre o claim
+# e a busca -- os outros quatro vem do turno (Task 6, Literal de proposito: ver
+# `ResultadoDoTurno`).
+ResultadoDoProcessamento = Literal["skipped"] | ResultadoDoTurno
 
 
 async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
@@ -48,7 +53,7 @@ async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
     return resultado.rowcount == 1
 
 
-async def process_message(ctx: dict[str, Any], message_id: str) -> str:
+async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoProcessamento:
     session_factory = ctx["session_factory"]
     outbound = ctx["outbound"]
     identifier = uuid.UUID(message_id)

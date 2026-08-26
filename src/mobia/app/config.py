@@ -58,9 +58,15 @@ class Settings(BaseSettings):
     # sem tocar na outra.
     modelo_agente: str = "claude-opus-5"
 
-    # Sem default utilizavel: envio sem token falha alto na primeira chamada,
-    # que e o comportamento certo. Nao precisa da guarda de producao que a
-    # chave de cifra tem -- aquela falha em silencio, esta nao.
+    # Sem default utilizavel de proposito. Mas ao contrario da
+    # ANTHROPIC_API_KEY, esta ausencia **nao** falha alto na primeira chamada:
+    # a Meta devolve 401, o outbound (Task 4) classifica como EnvioRecusado
+    # (permanente), o turno devolve "sem_resposta" e a linha vira PROCESSED --
+    # terminal, o sweeper nunca reenfileira. Cada lead que escrever durante a
+    # janela de misconfiguracao perde a resposta pra sempre, sem alarme alem
+    # de uma linha `outbound.recusado_permanente` no log. Por isso a guarda
+    # mora em `mobia.workers.main.startup` (Task 6): falha antes de a primeira
+    # mensagem ser consumida, em vez de deixar o 401 acontecer em producao.
     whatsapp_access_token: str = ""
     whatsapp_api_base: str = "https://graph.facebook.com/v21.0"
 

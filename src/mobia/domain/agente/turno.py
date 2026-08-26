@@ -1,3 +1,5 @@
+from typing import Literal
+
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -14,6 +16,12 @@ log = structlog.get_logger(__name__)
 
 KIND_DA_RESPOSTA = "reply"
 
+# Conjunto fechado de proposito (Literal, nao str): um typo num dos dois
+# lugares que compara contra esta string (process_message, os testes) vira
+# erro de tipo no mypy em vez de um `if resultado == "processed"` que nunca
+# bate e falha em silencio.
+ResultadoDoTurno = Literal["respondido", "sem_resposta", "expirado", "reentrega_suprimida"]
+
 
 async def executar_turno(
     session_factory: async_sessionmaker[AsyncSession],
@@ -23,7 +31,7 @@ async def executar_turno(
     resumidor: ResumidorPort,
     contador: ContadorPort,
     outbound: OutboundPort,
-) -> str:
+) -> ResultadoDoTurno:
     """Um turno inteiro: contexto, classificacao, entrega, registro.
 
     A ordem no fim nao e arbitraria. Gravar a fala **depois** da entrega
@@ -67,7 +75,7 @@ async def executar_turno(
         await session.commit()
 
     try:
-        await outbound.send(
+        entregue = await outbound.send(
             message.id,
             KIND_DA_RESPOSTA,
             {
@@ -96,6 +104,24 @@ async def executar_turno(
             reason=str(exc),
         )
         return "sem_resposta"
+
+    if not entregue:
+        # `send()` devolve False sem levantar quando a guarda (Task 3) suprime
+        # uma reentrega: ja existe uma reserva em outbound_dispatches para este
+        # (message_id, kind), de uma tentativa anterior. `_deliver` nunca foi
+        # chamado agora -- entao `gerada.resposta`, que veio de uma chamada
+        # nova ao classificador, pode nao ser o texto que o lead recebeu (ou
+        # nenhum texto pode ter saido ainda, se a tentativa anterior tambem
+        # foi suprimida). Gravar aqui seria o mesmo risco de fala fantasma que
+        # a ordem grava-depois-de-entregar existe para evitar, so que entrando
+        # por esta porta em vez de uma excecao: exatamente por isso a checagem
+        # do retorno, e nao so do "nao levantou", decide se grava.
+        log.warning(
+            "turno.reentrega_suprimida",
+            channel=message.channel,
+            message_id=str(message.id),
+        )
+        return "reentrega_suprimida"
 
     recorder = MessageRecorder(session_factory)
     await recorder.record_agent_message(

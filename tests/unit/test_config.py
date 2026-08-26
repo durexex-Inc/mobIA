@@ -131,5 +131,11 @@ def test_defaults_do_agente(settings) -> None:
 
 
 def test_token_da_meta_nao_tem_default_utilizavel(settings) -> None:
-    """Sem token nao se envia nada, e isso tem de falhar alto no envio."""
+    """Sem default utilizavel: quem sobe sem configurar tem de decidir.
+
+    Ao contrario da ANTHROPIC_API_KEY, a ausencia nao falha alto sozinha --
+    vira 401 da Meta, tratado como falha permanente. A guarda que impede isso
+    de chegar a producao fica em `mobia.workers.main.startup`, testada em
+    `tests/integration/test_worker_startup.py`.
+    """
     assert settings.whatsapp_access_token == ""

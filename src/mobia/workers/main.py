@@ -2,7 +2,7 @@ from typing import Any
 
 from arq import cron, func
 
-from mobia.app.config import get_settings
+from mobia.app.config import ConfiguracaoInsegura, get_settings
 from mobia.app.logging import configure_logging
 from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
@@ -22,6 +22,24 @@ async def startup(ctx: dict[str, Any]) -> None:
     """
     settings = get_settings()
     configure_logging(settings.log_level)
+
+    # Sem token, `WhatsAppOutbound` funcionaria -- ate a primeira entrega, que
+    # a Meta recusa com 401. Isso vira `EnvioRecusado` (permanente), o turno
+    # devolve "sem_resposta" e a linha fecha em PROCESSED, que e terminal: o
+    # sweeper nunca reenfileira. Cada lead que escrever antes de alguem notar
+    # a configuracao faltando perde a resposta pra sempre, sem alarme alem de
+    # uma linha de log. Falhar aqui, antes de `ctx["outbound"]` existir e
+    # antes de qualquer job rodar, e o mesmo raciocinio de `get_client()` para
+    # ANTHROPIC_API_KEY -- so que ali a chamada falha sozinha; aqui, sem esta
+    # guarda, ela nao falhava, so descartava em silencio.
+    if not settings.whatsapp_access_token:
+        raise ConfiguracaoInsegura(
+            "WHATSAPP_ACCESS_TOKEN nao configurado. Sem ele toda entrega volta "
+            "401 da Meta -- falha permanente que fecha a mensagem sem "
+            "retentativa, em silencio. Defina no .env ou no ambiente antes de "
+            "subir o worker."
+        )
+
     session_factory = get_sessionmaker()
     ctx["settings"] = settings
     ctx["session_factory"] = session_factory

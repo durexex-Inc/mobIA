@@ -142,6 +142,16 @@ async def test_nao_perder_mensagem_em_falha_do_worker(session) -> None:
     Dada uma mensagem ja enfileirada e um worker interrompido durante o
     processamento, quando o worker e reiniciado, a mensagem volta a ser
     processada e nenhuma resposta duplicada e enviada ao lead.
+
+    A janela que `OutboundQueCai` reproduz -- entrega externa ja feita,
+    reserva ja commitada, processo morto antes de gravar a fala -- e a mesma
+    que TEC-134 fechou depois de um round de review: sem checar o retorno de
+    `send()`, o reprocessamento caia na guarda de reentrega (Task 3), que
+    devolve False sem levantar, e gravava a fala da *segunda* chamada ao
+    classificador como se fosse o que o lead recebeu na primeira -- fala
+    fantasma pela porta que a ordem grava-depois-de-entregar nao cobre. Este
+    teste e o motivo pelo qual esse bug so foi pego numa review: ele so
+    checava nivel de dispatch, nunca a contagem de linhas OUTBOUND.
     """
     message_id = await enfileirada(session)
 
@@ -157,15 +167,30 @@ async def test_nao_perder_mensagem_em_falha_do_worker(session) -> None:
     assert linha.attempts == 1
     assert len(caido.entregas) == 1
 
-    # Worker reiniciado: instancia nova, sem a falha.
+    # Worker reiniciado: instancia nova, sem a falha. A reserva da primeira
+    # tentativa persiste (so EnvioRetentavel libera, e QuedaDoWorker nao e
+    # isso), entao esta chamada colide na guarda e nunca chega a `_deliver`.
     reiniciado = OutboundEspiao(get_sessionmaker())
     ctx["outbound"] = reiniciado
-    assert await process_message(ctx, str(message_id)) == "respondido"
+    assert await process_message(ctx, str(message_id)) == "reentrega_suprimida"
 
     await session.refresh(linha)
     assert linha.status == MessageStatus.PROCESSED
     assert reiniciado.entregas == [], "a guarda suprime a reentrega"
     assert await session.scalar(select(func.count()).select_from(OutboundDispatch)) == 1
+
+    # O texto que de fato saiu na primeira tentativa (`caido.entregas`) nunca
+    # chega a existir como linha em `messages` -- o processo morreu antes de
+    # gravar. A segunda tentativa nao pode inventar essa linha com o texto de
+    # uma chamada nova ao classificador: 0, nao 1, e a contagem correta aqui.
+    # Ver `test_reentrega_suprimida_nao_grava_fala_fantasma` em
+    # `test_turno.py` para o caso isolado, sem a camada de reprocessamento.
+    total_outbound = await session.scalar(
+        select(func.count())
+        .select_from(Message)
+        .where(Message.direction == MessageDirection.OUTBOUND)
+    )
+    assert total_outbound == 0, "nenhuma fala fantasma -- a de verdade se perdeu no crash"
 
 
 async def test_mensagem_em_received_tambem_e_processavel(session) -> None:

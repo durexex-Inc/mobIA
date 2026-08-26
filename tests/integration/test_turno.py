@@ -1,4 +1,5 @@
 import logging
+import uuid
 from decimal import Decimal
 from typing import Any
 
@@ -7,7 +8,9 @@ from sqlalchemy import text as sql
 
 from mobia.domain.agente.repositorio import ler_intencao
 from mobia.domain.agente.schemas import Intencao
+from mobia.domain.agente.turno import KIND_DA_RESPOSTA, executar_turno
 from mobia.domain.context.montagem import ContextoIrreducivel
+from mobia.domain.outbound.models import OutboundDispatch
 from mobia.domain.outbound.port import EnvioRetentavel
 from mobia.domain.outbound.whatsapp import EnvioForaDaJanela
 from mobia.infra.db import get_sessionmaker
@@ -126,3 +129,42 @@ async def test_a_intencao_e_gravada_mesmo_se_a_entrega_falhar(
         gravada = await ler_intencao(outra, CANAL, CONVERSA)
     assert gravada is not None
     assert gravada.intencao is Intencao.ALUGUEL
+
+
+async def test_reentrega_suprimida_nao_grava_fala_fantasma(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, caplog
+) -> None:
+    """`send()` devolve False, sem levantar, quando a guarda (Task 3) suprime
+    uma reentrega -- ja existe reserva em outbound_dispatches para este
+    (message_id, kind) de uma tentativa anterior. O texto desta chamada nova
+    ao classificador pode nao ser o que o lead recebeu (ou nada pode ter saido
+    ainda). Gravar aqui e a mesma fala fantasma que a ordem grava-depois-de-
+    entregar existe para evitar, so que entrando pela porta do retorno em vez
+    de uma excecao.
+    """
+    from conftest import _entrada_do_lead
+
+    linha = await _entrada_do_lead(session)
+    # Simula a reserva que uma tentativa anterior ja commitou: a UNIQUE
+    # (message_id, kind) faz a proxima reserva colidir sem tocar em `_deliver`.
+    session.add(OutboundDispatch(id=uuid.uuid4(), message_id=linha.id, kind=KIND_DA_RESPOSTA))
+    await session.commit()
+
+    outbound = outbound_fake()
+
+    with caplog.at_level(logging.WARNING):
+        resultado = await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+        )
+
+    assert resultado == "reentrega_suprimida"
+    assert outbound.entregues == [], "a guarda nunca chega a chamar _deliver"
+
+    total = await session.scalar(sql("SELECT count(*) FROM messages WHERE direction = 'OUTBOUND'"))
+    assert total == 0, "sem confirmacao do que foi entregue, nao ha texto confiavel pra gravar"
+    assert "turno.reentrega_suprimida" in caplog.text
