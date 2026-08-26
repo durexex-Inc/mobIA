@@ -93,7 +93,7 @@ class ClassificadorAnthropic:
         system: str,
         mensagem_se_vazia: str,
         output_config: dict[str, Any] | None = None,
-    ) -> tuple[str, Any, int]:
+    ) -> tuple[str, Message, int]:
         """Chama o modelo e recusa qualquer parada que nao valha a pena aproveitar.
 
         Comum a `classificar` e `desambiguar`: as duas fazem uma chamada, medem
@@ -247,10 +247,17 @@ class ClassificadorAnthropic:
     async def desambiguar(self, contexto: ContextoMontado) -> PerguntaDeDesambiguacao:
         """A segunda chamada do turno ambiguo: uma pergunta, sem schema.
 
-        Recebe o mesmo contexto da primeira -- o prefixo esta quente no cache
-        -- e troca so o system prompt. Sem `output_config`: a saida e uma
-        frase, nao ha campo para validar, e o compilador de schema do servidor
-        e uma chance a mais de 400 num caminho que ja e o de excecao.
+        Recebe o mesmo contexto da primeira, montado de novo do zero -- este
+        projeto nao declara nenhum `cache_control` (ver `grep -rn
+        "cache_control" src/ tests/`), entao nao ha prefixo quente para
+        aproveitar, e mesmo que houvesse, `system` precede `messages` no
+        corpo da requisicao: trocar o system prompt invalidaria qualquer
+        cache do que vem depois dele. O turno ambiguo paga o contexto de
+        entrada inteiro (ate `contexto_teto_de_tokens`) **duas vezes**, uma
+        por chamada -- e input domina a contagem de tokens. Sem
+        `output_config`: a saida e uma frase, nao ha campo para validar, e o
+        compilador de schema do servidor e uma chance a mais de 400 num
+        caminho que ja e o de excecao.
         """
         settings = get_settings()
         # `max_tokens` curto de proposito faz do truncamento um risco real

@@ -47,10 +47,13 @@ async def executar_turno(
     depois e ninguem percebe.
 
     Abaixo de `LIMIAR_DE_DESAMBIGUACAO` e com o episodio ainda limpo, a
-    resposta da chamada 1 e descartada e uma segunda chamada produz uma
-    pergunta aberta. O marcador que impede a repeticao so e gravado depois da
-    entrega confirmada -- marca-lo antes queimaria a unica chance de perguntar
-    num 5xx da Meta.
+    resposta da chamada 1 e descartada e o texto da segunda chamada
+    (`classificador.desambiguar`) e entregue no lugar dela. O que o codigo
+    garante e so esse desvio -- nada aqui garante que o texto devolvido seja
+    uma pergunta aberta em vez de um menu numerado; a regra vive inteira no
+    system prompt de `desambiguar` (ver a secao de lacunas do spec). O
+    marcador que impede a repeticao so e gravado depois da entrega confirmada
+    -- marca-lo antes queimaria a unica chance de perguntar num 5xx da Meta.
     """
     try:
         contexto = await montar_contexto(
