@@ -197,7 +197,7 @@ O quarto cenário do ticket — suíte de 50 conversas com 90% de acurácia no C
 
 ### Garantias
 
-- Abaixo de `LIMIAR_DE_DESAMBIGUACAO` (0,6) o lead recebe **uma** pergunta aberta
+- Abaixo de `LIMIAR_DE_DESAMBIGUACAO` (0,6) o lead recebe uma pergunta do desambiguador
   em vez de uma resposta que assume a intenção. O limiar é fechado por cima:
   exatamente 0,6 segue sem perguntar.
 - Uma pergunta por **episódio** de ambiguidade, não por conversa. Uma
