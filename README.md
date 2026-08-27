@@ -375,3 +375,118 @@ arq`. Quando o deploy existir, este é o número que tem de subir junto.
   `classificar` sozinhos já somam o pior caso do cliente. Reduzir a chance de
   estourar é a
   [TEC-228](https://eduardodurieuxlopes.atlassian.net/browse/TEC-228).
+
+## TEC-210 — Gate de avaliação da classificação de intenção
+
+Até aqui a qualidade do agente era impressão subjetiva. A TEC-134 já dizia:
+o classificador é sempre um dublê nos testes, porque nenhum teste da suíte
+normal toca a rede — a intenção entra por argumento, e os limiares de 0,8 e
+0,6 da TEC-135 são autoavaliação do modelo, sem régua nenhuma para medi-los.
+Um ajuste de prompt que piora a classificação passava por toda a suíte sem
+barrar nada.
+
+O gate mora fora de `tests/` — em `evals/`, com conftest próprio — porque as
+fixtures `autouse` do conftest raiz exigem Postgres, e um marker `eval` não
+escaparia disso. `testpaths = ["tests"]` no `pyproject.toml` já garante que
+`pytest` sozinho nunca coleta o eval; rodá-lo é `pytest evals`, à parte.
+
+**A chamada ao modelo é real, nunca gravada.** Rodar contra resposta em cache
+seria determinístico e barato, e mediria nada: o que o gate existe para pegar
+é uma mudança de prompt alterando o que o modelo devolve, e um replay
+passaria verde com o prompt destruído. Pela mesma razão o eval não fixa
+`temperature=0` — o código não passa `temperature` para a API, então produção
+roda no default dela, e medir com `temperature=0` daria um número estável
+sobre uma configuração que a produção não usa.
+
+O corpus é `evals/corpus/*.yaml`, um arquivo por categoria (`compra`,
+`aluguel`, `investimento`, `follow_up`, `borda`), 50 conversas e **135
+turnos** anotados à mão — o texto é escrito primeiro, o rótulo depois, e por
+um humano, não pelo modelo medido: gerar o corpus com o mesmo modelo que ele
+avalia embutiria as pistas que aquele modelo lê bem e infla a acurácia por
+construção. A distribuição por intenção sai desigual porque a conversa real é
+desigual: COMPRA 46, ALUGUEL 32, INVESTIMENTO 26, FORA_DE_ESCOPO 9, INDEFINIDA
+9, SUPORTE_CONTRATO 7, VENDER_IMOVEL 6. Dez conversas mudam de intenção no
+meio, e duas são tentativa de injeção.
+
+A medida é **por turno, não por conversa** — é o que "acurácia de intenção"
+significa, e uma conversa que muda de intenção no meio só faz sentido medida
+assim. Cada turno vê o histórico dos turnos anteriores já montado, como em
+produção, via `mobia.evals.contexto`: `Message` transientes, cifradas com o
+mesmo `encrypt`/AAD do banco real mas nunca inseridas, então o job de CI não
+sobe Postgres nem Redis — só Python e a chave da API.
+
+### Garantias
+
+- **Verde em 90%, amarelo até 84%, vermelho abaixo.** Os 84% não são um
+  número escolhido para este README: é o exemplo de regressão que o próprio
+  Gherkin do card usa para dizer "isto tem de barrar o merge".
+- **A comparação é aritmética inteira, nunca float.** `126/150` é exatamente
+  84%, mas o literal `0.84` não é esse mesmo número em binário — em float a
+  borda do piso cai para o lado errado. `faixa_de` em
+  `src/mobia/evals/metricas.py` compara `acertos * 100` contra `total * ALVO_PCT`,
+  nunca uma razão decimal.
+- **`SEM_MECANISMO` nunca é verde, e nunca bloqueia.** As três métricas que o
+  card pede e não têm sujeito — precisão de extração (TEC-145), taxa de
+  alucinação (TEC-161) e aderência ao tom (TEC-140) — aparecem declaradas em
+  todo relatório nesse estado. Nunca verde, porque um slot que reporta verde
+  sem medir nada some do radar e finge cobertura que não existe. Nunca
+  bloqueia, porque um estado sem mecanismo que barrasse merge deixaria o gate
+  permanentemente vermelho — e um gate sempre vermelho é desligado em uma
+  semana.
+- O gate compara **percentual**, não contagem absoluta — o corpus real fecha
+  em algum número próximo de 150, e cravar contagem faria o limiar mudar de
+  significado a cada conversa acrescentada. O piso de 120 turnos
+  (`PISO_DE_TURNOS`) é o que garante que um único turno não valha mais de
+  0,8% e a faixa amarela continue absorvendo o ruído entre execuções — os 135
+  turnos reais folgam esse piso em 15.
+- `evals.yml` roda o gate com `paths` filtrando em `src/mobia/domain/agente/**`,
+  `src/mobia/evals/**` e `evals/**` — a maioria dos PRs não paga nada.
+  `evals-skip.yml` é o par dele: um check obrigatório com filtro de `paths`
+  nunca roda em PR que não toca aqueles caminhos, e a proteção de branch fica
+  esperando para sempre, travando o merge. O `paths-ignore` de um é o
+  complemento exato dos `paths` do outro, e os dois jobs têm o mesmo nome
+  (`Avaliacoes de IA`) para aparecerem como o mesmo check perante a proteção
+  de branch. **Se um arquivo mudar de caminho, o outro tem de mudar junto** —
+  divergência entre os dois cria PR onde nenhum dos dois roda, e o merge
+  trava sem explicação nenhuma.
+- **Pré-requisito:** o segredo `ANTHROPIC_API_KEY` não existe neste
+  repositório. Sem ele o job falha no primeiro turno.
+
+### Lacunas conhecidas
+
+- **O gate nunca foi executado de verdade.** Só a coleta do corpus foi
+  verificada nesta tarefa — carregar os 50 arquivos, contar os 135 turnos,
+  conferir a distribuição por intenção. A execução real custa 135 chamadas
+  pagas à API, e ficou como decisão do dono do repositório. **O número de
+  acurácia é desconhecido.**
+- **O path filter tem um buraco.** Uma mudança em `montagem.py` altera o que
+  o modelo vê sem tocar em nenhum prompt de agente, e passa livre pelo
+  filtro de `paths`. Cobrir isso exigiria rodar o gate em todo PR, com o
+  custo e o flake que a decisão do limiar amarelo rejeitou.
+- **Corpus sintético não é tráfego real.** Cento e trinta e cinco turnos
+  escritos por quem conhece o sistema carregam o viés de quem os escreveu, e
+  nenhuma anotação cuidadosa remove isso. O número que sair daqui é um piso
+  de confiança, não uma medida de campo.
+- **As 10 conversas de `investimento.yaml` abrem todas com pista lexical
+  explícita** — "airbnb", "revender", "renda" — então o lado INVESTIMENTO do
+  par difícil (compra sem finalidade declarada é COMPRA; INVESTIMENTO exige
+  evidência positiva de renda ou revenda) é detecção de palavra-chave, não
+  desambiguação de verdade. As 2 conversas de injeção são hijack frontal
+  ("ignore as instruções anteriores…", "esquece que você é da imobiliária…");
+  falta a injeção embutida dentro de um pedido legítimo, que é a que quebra
+  prompt na prática.
+- **COMPRA é 34% dos turnos** (46 de 135): um classificador que responda
+  sempre COMPRA já tira 34% de acurácia de graça. Isso não invalida o alvo —
+  90% continua exigindo acerto real nas outras classes —, mas a matriz de
+  confusão vai ser dominada por COMPRA e ALUGUEL, e VENDER_IMOVEL (6 turnos)
+  e SUPORTE_CONTRATO (7) têm massa tão pequena que um único erro move a
+  classe inteira em 14–17 pontos percentuais.
+- **O eval mede `classificar` isolado**, não o turno inteiro com worker e
+  banco — a integração já tem cobertura própria na suíte normal, mas uma
+  regressão que só apareça ali não é pega aqui.
+- **Este card não recalibra os limiares de 0,8 e 0,6.** Ele cria a régua;
+  medir e mexer nos números é trabalho seguinte.
+- **Moderação (TEC-233) e política de não-treinamento com o provedor
+  (TEC-234) continuam abertas.** Foram desmembradas da TEC-210 porque uma é
+  feature de produção e a outra é tarefa contratual — nenhuma das duas é
+  avaliação, e este gate não entrega nenhuma das duas.
