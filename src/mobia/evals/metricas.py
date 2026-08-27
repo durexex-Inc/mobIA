@@ -45,8 +45,11 @@ class ResultadoDaMetrica:
 def faixa_de(acertos: int, total: int) -> Faixa:
     """Compara em aritmetica inteira, nunca em float.
 
-    126/150 e exatamente 84%, mas o literal `0.84` nao e esse mesmo numero em
-    binario -- em float a borda do piso cai para o lado errado.
+    `acertos * 100 >= total * ALVO_PCT` e exato por construcao: os dois lados
+    sao inteiros e nenhuma divisao acontece. Nao e que float erraria a borda
+    -- `126/150 >= 0.84` e `135/150 >= 0.9` dao True, os dois. E que com
+    inteiros ninguem precisa verificar isso: nao ha representacao decimal no
+    caminho sobre a qual raciocinar, entao a borda nao e um caso a analisar.
     """
     if total <= 0:
         raise ValueError("nada medido nao e sucesso: total de turnos e zero")

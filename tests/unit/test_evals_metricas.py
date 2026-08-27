@@ -26,9 +26,13 @@ from mobia.evals.metricas import (
 def test_bordas_exatas_da_faixa(acertos: int, total: int, esperada: Faixa) -> None:
     """As bordas sao o unico lugar onde a faixa pode estar errada.
 
-    126/150 e exatamente 84%, e o literal float 0.84 nao e o mesmo numero em
-    binario -- uma comparacao em float classificaria este caso como VERMELHO.
-    A aritmetica e inteira por causa deste teste.
+    126/150 e exatamente 84%, o piso, e 135/150 exatamente 90%, o alvo. Os
+    dois casos passam em float tambem (`126/150 >= 0.84` e True) -- a
+    aritmetica inteira nao esta aqui para consertar uma borda que float
+    erraria, e sim para que a corretude na borda seja obvia por construcao em
+    vez de depender de conferir a representacao binaria de cada literal.
+    O que este teste guarda e o sentido de cada comparacao: `>=` no alvo e no
+    piso, e nao `>`.
     """
     assert faixa_de(acertos, total) is esperada
 
