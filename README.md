@@ -602,6 +602,17 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   ele recebe — sem tocar em nenhum prompt de agente, e passa livre sem rodar
   o eval. Cobrir isso exigiria rodar o gate em todo PR, com o custo e o
   flake que a decisão do limiar amarelo rejeitou.
+- **`src/mobia/app/config.py` também está fora do filtro, e esse buraco é
+  maior.** É lá que mora `modelo_agente` (`"claude-opus-5"`), e trocar o modelo
+  muda mais do que um ajuste de prompt muda: um PR de uma linha pode substituir
+  o modelo medido e ser mergeado sem o gate rodar uma vez. **Não** foi incluído
+  no filtro de propósito, e o motivo está comentado no próprio `evals.yml`:
+  `config.py` é o arquivo de configuração inteiro e muda por muitos motivos
+  alheios ao agente, então incluí-lo faria o gate pago rodar à toa em PRs que
+  não têm nada a ver com o modelo. A cobertura de verdade seria mover
+  `modelo_agente` para um arquivo que só o agente use — não existe ainda. Se um
+  dia o gate não rodar quando deveria, este e o `montagem.py` são os dois
+  lugares a olhar primeiro.
 - **Corpus sintético não é tráfego real.** Cento e trinta e seis turnos
   escritos por quem conhece o sistema carregam o viés de quem os escreveu, e
   nenhuma anotação cuidadosa remove isso. O número que sair daqui é um piso
@@ -612,13 +623,24 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   evidência positiva de renda ou revenda) é majoritariamente detecção de
   palavra-chave, não desambiguação de verdade. A exceção é `investimento-04`:
   o primeiro turno abre neutro ("quero comprar um apartamento de 2 quartos na
-  zona oeste", rotulado COMPRA) e só o segundo revela a finalidade
-  ("na real, é pra alugar depois no airbnb, não pra morar"), o único caso no
-  corpus em que a pista chega depois da abertura. As 2 conversas de injeção
-  são hijack frontal
-  ("ignore as instruções anteriores…", "esquece que você é da imobiliária…");
-  falta a injeção embutida dentro de um pedido legítimo, que é a que quebra
-  prompt na prática.
+  zona oeste", rotulado COMPRA) e só o segundo revela a finalidade, o único
+  caso no corpus em que a pista chega depois da abertura.
+  **Mas essa exceção salva menos do que parece**, e as duas coisas são
+  verdade ao mesmo tempo: o segundo turno dela recita a definição do próprio
+  system prompt quase palavra por palavra — o corpus diz `"nao pra morar"`
+  contra o `"nao para morar"` de `SISTEMA_DO_AGENTE` em
+  `src/mobia/domain/agente/classificador.py`. Acertar esse turno é, no limite,
+  casar com o texto do prompt, não desambiguar finalidade. Ou seja: o único
+  caso em que a pista chega depois da abertura é também o caso em que a pista
+  está mais fácil, e a cobertura real desse lado do par difícil segue sem
+  exemplo forte.
+- **Das 3 tentativas de injeção, 2 são hijack frontal** — as mais fáceis de
+  recusar ("ignore as instruções anteriores…", "esquece que você é da
+  imobiliária…"). A terceira, o segundo turno de `borda-injecao-01`, é a
+  injeção embutida num pedido legítimo, rotulada COMPRA porque é isso que o
+  lead quer; ela mede a metade legítima do turno, e ignorar a instrução colada
+  é trabalho do system prompt, que este gate não mede. Um exemplo só é pouco
+  para essa forma, que é a que quebra prompt na prática.
 - **COMPRA é 35% dos turnos** (47 de 136): um classificador que responda
   sempre COMPRA já tira 35% de acurácia de graça. Isso não invalida o alvo —
   90% continua exigindo acerto real nas outras classes —, mas a matriz de
@@ -628,6 +650,31 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
 - **O eval mede `classificar` isolado**, não o turno inteiro com worker e
   banco — a integração já tem cobertura própria na suíte normal, mas uma
   regressão que só apareça ali não é pega aqui.
+- **O histórico realimentado diverge de produção depois de um turno
+  ambíguo.** O runner alimenta o turno seguinte com a resposta da chamada de
+  `classificar`. Produção, no turno ambíguo com o episódio ainda limpo, faz
+  outra coisa: `executar_turno` (`src/mobia/domain/agente/turno.py`)
+  **descarta** essa resposta, paga uma segunda chamada a
+  `classificador.desambiguar` e é a pergunta de desambiguação — não esta
+  resposta — que entra no histórico e é gravada. O contexto medido a partir do
+  turno seguinte, portanto, não é o que produção teria. Isso não afeta a
+  classificação de cada turno, que é sempre a da primeira chamada, a mesma que
+  produção grava em `conversation_intent`; afeta o contexto dos turnos que vêm
+  **depois** de uma abertura provavelmente ambígua — `borda-evasivo-01`,
+  `borda-evasivo-02`, `borda-mista-01`, `borda-longa-01` e `follow-up-07` —,
+  que são justamente os turnos mais difíceis do corpus. Replicar o desvio
+  dobraria as chamadas pagas nesses turnos, e é decisão de escopo, fora da
+  TEC-210.
+- **Zero acentos nos dados do corpus.** Não há **um único** caractere
+  acentuado nos 136 turnos:
+  `LC_ALL=C grep -n '[^ -~\t]' evals/corpus/*.yaml` não casa nada. Isso é
+  vazamento da convenção de código (comentários e docstrings em ASCII puro)
+  para dentro dos dados, onde ela não vale: `carregar` em
+  `src/mobia/evals/corpus.py` lê o YAML com `encoding="utf-8"` e acento é
+  seguro em todo o caminho. Lead real digita "não", "orçamento", "três", e o
+  corpus não exercita nenhum. As próximas adições de turno **podem** usar
+  acentuação normal — só os comentários de cabeçalho dos `.yaml` seguem a regra
+  de código, porque ali ela é a convenção do repositório.
 - **Este card não recalibra os limiares de 0,8 e 0,6.** Ele cria a régua;
   medir e mexer nos números é trabalho seguinte.
 - **Moderação (TEC-233) e política de não-treinamento com o provedor
