@@ -634,9 +634,9 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   caso em que a pista chega depois da abertura é também o caso em que a pista
   está mais fácil, e a cobertura real desse lado do par difícil segue sem
   exemplo forte.
-- **Das 3 tentativas de injeção, 2 são hijack frontal** — as mais fáceis de
-  recusar ("ignore as instruções anteriores…", "esquece que você é da
-  imobiliária…"). A terceira, o segundo turno de `borda-injecao-01`, é a
+- **Das 3 falas de injeção do corpus — em 2 conversas —, 2 são hijack
+  frontal** e são as mais fáceis de recusar ("ignore as instruções
+  anteriores…", "esquece que você é da imobiliária…"). A terceira, o segundo turno de `borda-injecao-01`, é a
   injeção embutida num pedido legítimo, rotulada COMPRA porque é isso que o
   lead quer; ela mede a metade legítima do turno, e ignorar a instrução colada
   é trabalho do system prompt, que este gate não mede. Um exemplo só é pouco
