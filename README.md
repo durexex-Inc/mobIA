@@ -420,11 +420,18 @@ sobe Postgres nem Redis — só Python e a chave da API.
 - **Verde em 90%, amarelo até 84%, vermelho abaixo.** Os 84% não são um
   número escolhido para este README: é o exemplo de regressão que o próprio
   Gherkin do card usa para dizer "isto tem de barrar o merge".
-- **A comparação é aritmética inteira, nunca float.** `126/150` é exatamente
-  84%, mas o literal `0.84` não é esse mesmo número em binário — em float a
-  borda do piso cai para o lado errado. `faixa_de` em
-  `src/mobia/evals/metricas.py` compara `acertos * 100` contra `total * ALVO_PCT`,
-  nunca uma razão decimal.
+- **A comparação é aritmética inteira, nunca float.** `faixa_de` em
+  `src/mobia/evals/metricas.py` compara `acertos * 100` contra
+  `total * ALVO_PCT`: dois lados inteiros, nenhuma divisão no caminho, exato por
+  construção. O motivo **não** é que float erraria a borda — não erraria.
+  `126/150` e o literal `0.84` são o mesmo `double`, e
+  `print(126/150 >= 0.84, 126/150 == 0.84, 135/150 >= 0.9)` imprime
+  `True True True`. O motivo é que, com inteiros, ninguém precisa verificar
+  isso: não existe representação decimal no caminho sobre a qual raciocinar,
+  então a borda exata deixa de ser um caso a analisar a cada mexida em limiar
+  ou em tamanho de corpus. Uma versão anterior desta seção afirmava que a borda
+  caía para o lado errado em float; era falso, e a escolha continua certa por
+  outro motivo.
 - **`SEM_MECANISMO` nunca é verde, e nunca bloqueia.** As três métricas que o
   card pede e não têm sujeito — precisão de extração (TEC-145), taxa de
   alucinação (TEC-161) e aderência ao tom (TEC-140) — aparecem declaradas em
