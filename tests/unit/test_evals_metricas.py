@@ -278,21 +278,21 @@ def test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos() -> None:
     [
         (70, 140, Faixa.AMARELO),  # exatamente 50%, o piso -- ainda passa
         (69, 140, Faixa.VERMELHO),  # um abaixo do piso
-        (68, 135, Faixa.AMARELO),  # 50,4% no tamanho do corpus
-        (67, 135, Faixa.VERMELHO),  # 49,6% no tamanho do corpus
-        (9, 135, Faixa.VERMELHO),  # a catastrofe: sobram so os rotulos INDEFINIDA
-        (135, 135, Faixa.AMARELO),  # nunca VERDE, nem com tudo certo
+        (68, 136, Faixa.AMARELO),  # 50% exato no tamanho do corpus
+        (67, 136, Faixa.VERMELHO),  # 49,3% no tamanho do corpus
+        (9, 136, Faixa.VERMELHO),  # a catastrofe: sobram so os rotulos INDEFINIDA
+        (136, 136, Faixa.AMARELO),  # nunca VERDE, nem com tudo certo
     ],
 )
 def test_bordas_do_piso_de_catastrofe(acertos: int, total: int, esperada: Faixa) -> None:
     """As bordas do unico numero que esta metrica pode defender hoje.
 
-    O caso 135/135 nao e redundante: fixa que a faixa nunca sobe para VERDE.
+    O caso 136/136 nao e redundante: fixa que a faixa nunca sobe para VERDE.
     VERDE afirmaria "bateu o alvo", e alvo calibrado e exatamente o que nao
     existe -- reportar VERDE convidaria a leitura de que a acuracia efetiva
     esta boa, que e o que esta metrica existe para nao deixar acontecer.
 
-    O caso 9/135 e o corpus de hoje sob catastrofe total de calibragem: se
+    O caso 9/136 e o corpus de hoje sob catastrofe total de calibragem: se
     todo turno cair abaixo do limiar, sobram como acerto so os 9 turnos cujo
     rotulo ja era INDEFINIDA. E o cenario de onde o piso de 50% saiu.
     """
