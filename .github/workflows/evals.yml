@@ -86,7 +86,14 @@ jobs:
           #     arquivo inteiro no filtro faria o gate pago rodar por motivos
           #     que nao tem nada a ver com o prompt ou o modelo.
           # Se um dia o gate nao rodar quando deveria, olhar aqui primeiro.
-          if printf '%s\n' "$alterados" | grep -qE '^(src/mobia/domain/agente/|src/mobia/evals/|evals/)'; then
+          # `.github/workflows/evals.yml` entra na lista porque mudar o gate e
+          # motivo para re-medir: o filtro, o piso, o timeout e o que conta
+          # como falha vivem neste arquivo. Ele nao casava com nenhum dos
+          # outros padroes -- `evals/` exige que o caminho *comece* com
+          # `evals/`, e este comeca com `.github/` --, e por isso um PR que
+          # mexesse so no gate passava verde sem nunca exercitar o gate.
+          if printf '%s\n' "$alterados" \
+             | grep -qE '^(\.github/workflows/evals\.yml$|src/mobia/domain/agente/|src/mobia/evals/|evals/)'; then
             echo "mexeu=true" >> "$GITHUB_OUTPUT"
           else
             echo "mexeu=false" >> "$GITHUB_OUTPUT"
