@@ -180,11 +180,16 @@ async def test_acuracia_de_intencao_no_corpus(
         f"{TETO_DE_CONVERSAS_ABANDONADAS}. Execucao invalida, nao regressao de "
         f"prompt: re-rode.\n{relatorio}"
     )
-    # Agora esta asercao pode falhar de verdade. Antes nada era descartado, o
-    # total era sempre o do corpus, e ela nunca dizia nada -- o piso do corpus
-    # em si sai de graca em `tests/unit/test_evals_corpus_real.py` e no pre-voo
-    # da fixture `conversas`. O que ela guarda aqui e o que **sobrou** da
-    # execucao: e este piso que da sentido a folga de 15 turnos sobre 120.
+    # O piso deixou de ser estruturalmente vazio: antes nada era descartado, o
+    # total era sempre o do corpus, e a lista nunca encolhia. Agora ela
+    # encolhe de verdade com o abandono -- mas com o corpus de hoje esta
+    # asercao nao e a que dispara primeiro: o teto acima estoura antes dela,
+    # porque 5 x 3 = 15 turnos perdidos no pior caso cabem dentro da folga de
+    # 16 turnos sobre o piso de 120 (a conta esta travada por teste em
+    # `metricas.py`). Ela so fica alcancavel se essa folga diminuir. O piso do
+    # corpus em si sai de graca em `tests/unit/test_evals_corpus_real.py` e no
+    # pre-voo da fixture `conversas`. O que ela guarda aqui e o que **sobrou**
+    # da execucao.
     assert len(resultados) >= PISO_DE_TURNOS, (
         f"{len(resultados)} turnos medidos, piso {PISO_DE_TURNOS}. Amostra "
         f"insuficiente depois do abandono: a faixa amarela nao absorve o ruido "
