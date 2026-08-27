@@ -1,13 +1,20 @@
 name: Avaliacoes de IA
 
-# Roda so quando o prompt ou o proprio eval mudam -- e o que o criterio de
-# aceite do card pede. A maioria dos PRs nao paga nada.
+# **NÃO há `paths` nem `paths-ignore` aqui.** Isto é deliberado.
+#
+# A semântica do GitHub Actions é assimétrica: `paths` roda se algum arquivo
+# casa, mas `paths-ignore` roda se *qualquer* arquivo *não* casa. Num PR que
+# mude `src/mobia/domain/agente/classificador.py` (casa) E `README.md` (não
+# casa), os dois workflows disparam no mesmo commit com o mesmo nome de job.
+# O check trivial passa primeiro e pode mascarar a falha real, liberando
+# regressão de prompt — exatamente o que este gate existe para impedir.
+#
+# Solução: um workflow só, que sempre roda (exatamente um check run, nome
+# estável) mas decide no passo se o eval é necessário. Um job que passa sem
+# fazer nada é silencioso demais para investigação, então ele registra qual
+# caminho tomou.
 on:
   pull_request:
-    paths:
-      - 'src/mobia/domain/agente/**'
-      - 'src/mobia/evals/**'
-      - 'evals/**'
 
 concurrency:
   group: evals-${{ github.ref }}
@@ -21,21 +28,42 @@ jobs:
     name: Avaliacoes de IA
     runs-on: ubuntu-latest
 
-    # Sem `services:`. O eval monta o contexto direto e nao toca Postgres nem
-    # Redis -- ver `evals/conftest.py`.
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decidir se o prompt mudou
+        id: filtro
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
+             | grep -qE '^(src/mobia/domain/agente/|src/mobia/evals/|evals/)'; then
+            echo "mexeu=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mexeu=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-python@v5
+        if: steps.filtro.outputs.mexeu == 'true'
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: pyproject.toml
 
       - name: Instalar dependencias
+        if: steps.filtro.outputs.mexeu == 'true'
         run: pip install -e ".[dev]"
 
       - name: Rodar as avaliacoes
+        if: steps.filtro.outputs.mexeu == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python -m pytest evals -v
+
+      - name: Log do resultado
+        run: |
+          if [ "${{ steps.filtro.outputs.mexeu }}" = "true" ]; then
+            echo "✓ Prompt ou eval mudou: avaliacoes foram executadas"
+          else
+            echo "✓ Nenhum prompt ou eval mudou neste PR: avaliacao foi pulada"
+          fi
