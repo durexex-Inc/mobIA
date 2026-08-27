@@ -35,6 +35,12 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+# mobia.evals so serve ao corpus/runner de evals (evals/) e a suite de dev;
+# nada em producao importa esse pacote (conferido via grep). pyyaml, usado
+# por mobia/evals/corpus.py, so esta no extra "dev" -- sem essa exclusao, um
+# wheel instalado sem o extra dev empacota mobia.evals mas nao a dependencia
+# que ele precisa, e "import mobia.evals.corpus" levanta ImportError.
+exclude = ["mobia.evals", "mobia.evals.*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
