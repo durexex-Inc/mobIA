@@ -13,8 +13,14 @@ name: Avaliacoes de IA
 # estavel) mas decide no passo se o eval e necessario. Um job que passa sem
 # fazer nada e silencioso demais para investigacao, entao ele registra qual
 # caminho tomou.
+#
+# `workflow_dispatch` existe para medir sob demanda, e nao e conveniencia. Sem
+# ele o gate so roda em PR que toque os caminhos filtrados, e por isso nao ha
+# como medir a baseline depois que a mudanca esta na main, nem re-medir depois
+# de trocar `modelo_agente`, nem investigar uma suspeita sem inventar um PR.
 on:
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: evals-${{ github.ref }}
@@ -55,6 +61,13 @@ jobs:
         id: filtro
         run: |
           set -euo pipefail
+          # Dispatch manual nao tem PR, e portanto nao tem `base_ref`: o diff
+          # receberia `origin/...HEAD` e o passo falharia. Quem dispara na mao
+          # esta pedindo a medicao, entao nao ha o que filtrar.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mexeu=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Capturar git diff explicitamente e checar status antes de decidir.
           # Se o diff falhar (ref nao resolvida, ou outro erro), o passo falha
           # com mensagem clara, nao silencioso em mexeu=false que liberaria merge.
@@ -118,7 +131,9 @@ jobs:
 
       - name: Log do resultado
         run: |
-          if [ "${{ steps.filtro.outputs.mexeu }}" = "true" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "[OK] Disparo manual: avaliacoes foram executadas sem filtro"
+          elif [ "${{ steps.filtro.outputs.mexeu }}" = "true" ]; then
             echo "[OK] Prompt ou eval mudou: avaliacoes foram executadas"
           else
             echo "[OK] Nenhum prompt ou eval mudou neste PR: avaliacao foi pulada"
