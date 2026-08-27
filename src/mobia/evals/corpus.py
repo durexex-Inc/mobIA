@@ -26,6 +26,10 @@ class ConversaAnotada:
 
 
 def _turno_de(bruto: Any, conversa_id: str, arquivo: str) -> TurnoAnotado:
+    if not isinstance(bruto, dict):
+        raise CorpusInvalido(
+            f"{arquivo}: conversa {conversa_id!r} tem turno que nao e um mapeamento"
+        )
     try:
         intencao = Intencao(bruto["intencao"])
     except (KeyError, ValueError, TypeError) as exc:

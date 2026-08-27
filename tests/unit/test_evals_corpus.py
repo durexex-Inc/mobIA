@@ -81,3 +81,18 @@ def test_carrega_conversas_tipadas_e_soma_os_turnos(tmp_path: Path) -> None:
         Intencao.ALUGUEL,
     ]
     assert total_de_turnos(conversas) == 2
+
+
+def test_turno_nao_mapeamento_e_recusado_nomeando_conversa(tmp_path: Path) -> None:
+    """Turno que nao e um mapeamento (string, numero, etc) nao pode ser
+    indexado e vira AttributeError cru se nao validado. Mensagem deve nomear
+    arquivo e conversa como as demais recusas.
+    """
+    _escrever(
+        tmp_path,
+        "compra.yaml",
+        "- id: compra-01\n  descricao: teste\n  turnos:\n    - turno_invalido_como_string\n",
+    )
+
+    with pytest.raises(CorpusInvalido, match="compra-01"):
+        carregar(tmp_path)
