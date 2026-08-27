@@ -1,8 +1,11 @@
 # evals/corpus/compra.yaml
+# Convencao de anotacao: quando a transacao esta explicita (o lead diz "comprar")
+# mas a finalidade (morar vs investir) nao e dita, o rotulo e COMPRA -- e o caso
+# nao-marcado; INVESTIMENTO exige evidencia positiva de renda ou revenda.
 - id: compra-01
   descricao: lead abre por preco e vira aluguel quando ve o valor
   turnos:
-    - lead: "oi, vi o anuncio do apto na vila mariana, ainda ta disponivel?"
+    - lead: "oi, vi o anuncio do apto na vila mariana, ainda ta a venda?"
       intencao: COMPRA
     - lead: "nossa, 850 mil ta bem acima do que eu consigo. voces tem pra alugar na regiao?"
       intencao: ALUGUEL

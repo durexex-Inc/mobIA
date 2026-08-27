@@ -36,7 +36,7 @@
 - id: borda-fora-01
   descricao: pedido de indicacao de servico que nao e imobiliario
   turnos:
-    - lead: "vcs sabem me indicar um bom encanador? meu cano estourou aqui"
+    - lead: "sei que nao e com vcs, mas sabem me indicar um encanador?"
       intencao: FORA_DE_ESCOPO
     - lead: "e uma pizzaria boa aqui perto tambem, se souber kkk"
       intencao: FORA_DE_ESCOPO
@@ -70,11 +70,11 @@
       intencao: ALUGUEL
 
 - id: borda-longa-01
-  descricao: conversa mais longa, mas sem ambiguidade de intencao
+  descricao: anuncio generico no instagram, so vira compra quando o lead pergunta se e venda
   turnos:
     - lead: "vi um anuncio de vcs no instagram, sobre um apartamento na aclimacao"
-      intencao: COMPRA
-    - lead: "quantos metros quadrados tem e quantas vagas de garagem?"
+      intencao: INDEFINIDA
+    - lead: "quantos metros quadrados tem e quantas vagas? e o valor do anuncio e o de venda mesmo?"
       intencao: COMPRA
     - lead: "da pra ver ainda essa semana?"
       intencao: COMPRA

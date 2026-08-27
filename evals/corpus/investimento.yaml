@@ -1,4 +1,7 @@
 # evals/corpus/investimento.yaml
+# Convencao de anotacao: quando a transacao esta explicita (o lead diz "comprar")
+# mas a finalidade (morar vs investir) nao e dita, o rotulo e COMPRA -- e o caso
+# nao-marcado; INVESTIMENTO exige evidencia positiva de renda ou revenda.
 - id: investimento-01
   descricao: o par dificil -- comprar para render, nao para morar
   turnos:
