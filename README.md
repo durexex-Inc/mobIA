@@ -520,9 +520,9 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   é registrada em `FalhaDeInfraestrutura` e a próxima começa. O relatório sai
   sempre — inclusive numa execução que perdeu tudo —, porque ele é o único
   artefato que sobra de dinheiro já gasto, e ele mostra as falhas de rede em
-  seção própria, antes das métricas, dizendo explicitamente que nenhum turno
-  delas entrou em métrica nenhuma. Vermelho por 429 pede re-rodar; vermelho por
-  regressão pede investigar.
+  seção própria, logo depois das métricas, dizendo explicitamente que nenhum
+  turno delas entrou em métrica nenhuma. Vermelho por 429 pede re-rodar;
+  vermelho por regressão pede investigar.
 - **A conversa vale inteira ou não vale.** Uma conversa interrompida no meio é
   descartada por completo, sem aproveitar os turnos que já tinham dado certo:
   o histórico é sequencial, então o que sobra é sempre o prefixo dela — e o
