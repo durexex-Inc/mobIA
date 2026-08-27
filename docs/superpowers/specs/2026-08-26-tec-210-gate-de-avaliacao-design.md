@@ -4,6 +4,52 @@
 - **Jira:** [TEC-210](https://eduardodurieuxlopes.atlassian.net/browse/TEC-210) · Épico [TEC-208](https://eduardodurieuxlopes.atlassian.net/browse/TEC-208)
 - **Origem:** RNF-25, RNF-26, RNF-28 (SRS v1.0); seção 4.4, RT-01
 - **Status:** aprovado, aguardando plano de implementação
+- **Descrição viva:** a seção **TEC-210** do `README.md`. Este spec está
+  congelado no que foi aprovado e **não** é reescrito; onde ele e o código
+  discordarem, o código ganha. A implementação divergiu nos pontos abaixo, e
+  quem for ler o corpo do spec precisa deles antes:
+  - **O corpus tem cinco arquivos, não quatro.** Falta `aluguel.yaml` na lista
+    da seção "O corpus" — as conversas de aluguel existem, e são dez.
+  - **São 136 turnos, não "cerca de 150".** Os absolutos entre parênteses na
+    tabela de faixas (`135/150`, `126-134`) supõem 150 e servem só de leitura,
+    como o próprio spec diz ao insistir que o gate compara percentual; o ruído
+    estimado de "±2 turnos, ou 1,3% em 150" é 1,5% em 136. As conversas ficaram
+    entre 2 e 3 turnos, não "aproximadamente três".
+  - **O CI não tem path filter.** O desenho desta seção (`on: pull_request:
+    paths:` mais o job companheiro do pré-requisito 2) foi implementado e depois
+    substituído: dois workflows homônimos, um com `paths` e outro com
+    `paths-ignore`, disparam **juntos** num PR que mexa em caminho casado e em
+    caminho não casado, e o check trivial podia terminar primeiro e mascarar a
+    falha real. O que existe é um workflow único sem filtro de gatilho, que
+    sempre roda e decide num passo interno (`git diff --name-only` contra
+    `^(src/mobia/domain/agente/|src/mobia/evals/|evals/)`) se paga o modelo.
+    Não existe `evals-skip.yml`. O real também tem `timeout-minutes: 90`,
+    `concurrency` e `fetch-depth: 0`, nada disso previsto aqui.
+  - **Falha de infraestrutura não aborta mais a execução.** O spec diz que o job
+    "termina em erro com a causa" e que "a execução não produz número". Hoje a
+    conversa que falha é abandonada e registrada (`FalhaDeInfraestrutura`), a
+    próxima começa, e o relatório sai sempre — inclusive numa execução que
+    perdeu tudo, porque ele é o único artefato de dinheiro já gasto. Quem
+    reprova a execução inválida é `TETO_DE_CONVERSAS_ABANDONADAS` (5), verificado
+    antes do piso de 120 turnos medidos e antes da métrica.
+  - **Há duas acurácias, e este spec só prevê uma.** `Classificacao` carrega
+    `confianca`, e `acuracia_efetiva` mede o que produção roteia
+    (`intencao_efetiva`, que rebaixa para `INDEFINIDA` abaixo de 0,6). Ela
+    bloqueia pelo piso próprio `PISO_DE_CATASTROFE_EFETIVA_PCT = 50`, com faixa
+    de duas saídas (`faixa_de_catastrofe`) que nunca chega a VERDE. Sem isso o
+    gate era cego para um prompt que preservasse a acurácia crua e destruísse a
+    calibração da confiança — foi o achado Critical da revisão final.
+  - **O relatório cresceu.** Além da matriz de confusão: seção de falhas de
+    infraestrutura, seção de confiança e uma linha por turno errado, com marca
+    para o palpite certo que a confiança rebaixou. `render` recebe cinco
+    argumentos, não dois.
+  - **O exemplo de YAML aqui tem acentos; o corpus real não tem nenhum.** Não há
+    um único caractere acentuado nos 136 turnos. É lacuna declarada no README —
+    vazamento da regra ASCII-em-código para dentro dos dados —, não decisão de
+    design deste spec.
+  - **A lacuna do path filter continua valendo, com outro nome e um buraco a
+    mais.** É o filtro interno do workflow, e além de `montagem.py` ele deixa
+    passar `src/mobia/app/config.py`, onde mora `modelo_agente`.
 
 ## Problema
 

@@ -10,6 +10,56 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-26-tec-210-gate-de-avaliacao-design.md`
 
+**Status:** executado nesta branch e congelado como escrito — os checkboxes não
+foram atualizados durante a execução, e o corpo deste plano **não** é
+reescrito. A descrição viva do que existe é a seção **TEC-210** do `README.md`;
+onde o plano e o código discordarem, o código ganha. A implementação divergiu
+nos pontos abaixo:
+
+- **Global Constraints erra o motivo da aritmética inteira.** A linha diz que
+  "`126/150` e o literal `0.84` não são o mesmo número em binário, e a faixa
+  mudaria na borda exata". É falso:
+  `print(126/150 >= 0.84, 126/150 == 0.84, 135/150 >= 0.9)` imprime
+  `True True True`. A aritmética inteira continua sendo a escolha certa, por
+  outro motivo — é exata por construção e dispensa raciocinar sobre
+  representação decimal. O comentário de `faixa_de` e o README já dizem isso.
+- **Task 7 Step 2 cria `.github/workflows/evals-skip.yml`.** Esse arquivo não
+  existe. O par `paths`/`paths-ignore` com o mesmo nome de job tinha uma corrida
+  real: num PR que mexa em caminho casado **e** em caminho não casado, os dois
+  disparam, e o check trivial podia terminar primeiro e mascarar a falha real.
+  Foi colapsado em um workflow único, sem filtro de gatilho, que decide num
+  passo interno se paga o modelo — e ganhou `timeout-minutes: 90`,
+  `concurrency` e `fetch-depth: 0`, nenhum previsto aqui.
+- **Task 2 não prevê metade das métricas.** Faltam `confianca` em
+  `Classificacao`, `acuracia_efetiva`, `PISO_DE_CATASTROFE_EFETIVA_PCT`,
+  `faixa_de_catastrofe`, `ResumoDeConfianca`, `resumo_de_confianca`, `erros`,
+  `FalhaDeInfraestrutura` e `TETO_DE_CONVERSAS_ABANDONADAS`. A acurácia efetiva
+  é o que fecha a cegueira do gate para regressão de calibração da confiança, e
+  foi o achado Critical da revisão final.
+- **Task 4 desenha um `render` de dois argumentos.** O real recebe cinco:
+  métricas, matriz, e mais `confianca`, `erradas` e `infraestrutura` por
+  palavra-chave — as três seções que o relatório passou a ter.
+- **Task 6 aborta a execução na primeira falha de rede.** `InfraestruturaFalhou`
+  carrega hoje uma `FalhaDeInfraestrutura` estruturada em vez de uma string, e
+  cada conversa virou um envelope: a que falha é abandonada e registrada, a
+  próxima começa, e o relatório sai sempre. O runner também assere o teto de
+  conversas abandonadas antes do piso de turnos, e o piso passou a poder falhar
+  de verdade.
+- **Task 8 pede documentar no README o par `evals.yml`/`evals-skip.yml`.** O
+  README documenta o oposto — o workflow único e a corrida que matou o par —,
+  além do que o plano não previa: as duas acurácias e o que o relatório mostra.
+- **Os exemplos de YAML da Task 5 estão todos sem acento, e o corpus saiu
+  assim.** É a origem do vazamento da regra ASCII-em-código para dentro dos
+  dados: nenhum dos 136 turnos tem um caractere acentuado, embora `carregar` leia
+  o YAML como UTF-8. Está declarado como lacuna no README, e as próximas adições
+  podem usar acentuação.
+- **O corpus fechou em 136 turnos** (o plano não crava número; o spec cravava
+  "cerca de 150").
+
+Este plano não tinha campo `Status` — nenhum plano deste repositório tem. A
+linha existe porque a convenção de congelar o documento vale para os dois
+artefatos, e o próximo leitor precisa da divergência antes do corpo.
+
 ## Global Constraints
 
 - Python `>=3.13`. Ruff com `line-length = 100` e `select = ["E", "F", "I", "UP", "B"]`.
