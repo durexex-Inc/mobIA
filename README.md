@@ -433,12 +433,12 @@ sobe Postgres nem Redis — só Python e a chave da API.
   bloqueia, porque um estado sem mecanismo que barrasse merge deixaria o gate
   permanentemente vermelho — e um gate sempre vermelho é desligado em uma
   semana.
-- O gate compara **percentual**, não contagem absoluta — o corpus real fecha
-  em algum número próximo de 150, e cravar contagem faria o limiar mudar de
-  significado a cada conversa acrescentada. O piso de 120 turnos
-  (`PISO_DE_TURNOS`) é o que garante que um único turno não valha mais de
-  0,8% e a faixa amarela continue absorvendo o ruído entre execuções — os 135
-  turnos reais folgam esse piso em 15.
+- O gate compara **percentual**, não contagem absoluta — o corpus tem hoje
+  135 turnos, e uma conversa a mais ou a menos muda esse total, então cravar
+  contagem faria o limiar mudar de significado a cada conversa acrescentada.
+  O piso de 120 turnos (`PISO_DE_TURNOS`) é o que garante que um único turno
+  não valha mais de 0,8% e a faixa amarela continue absorvendo o ruído entre
+  execuções — os 135 turnos reais folgam esse piso em 15.
 - `evals.yml` roda o gate com `paths` filtrando em `src/mobia/domain/agente/**`,
   `src/mobia/evals/**` e `evals/**` — a maioria dos PRs não paga nada.
   `evals-skip.yml` é o par dele: um check obrigatório com filtro de `paths`
@@ -455,10 +455,10 @@ sobe Postgres nem Redis — só Python e a chave da API.
 ### Lacunas conhecidas
 
 - **O gate nunca foi executado de verdade.** Só a coleta do corpus foi
-  verificada nesta tarefa — carregar os 50 arquivos, contar os 135 turnos,
-  conferir a distribuição por intenção. A execução real custa 135 chamadas
-  pagas à API, e ficou como decisão do dono do repositório. **O número de
-  acurácia é desconhecido.**
+  verificada nesta tarefa — carregar os 5 arquivos, contar as 50 conversas e
+  os 135 turnos, conferir a distribuição por intenção. A execução real custa
+  135 chamadas pagas à API, e ficou como decisão do dono do repositório.
+  **O número de acurácia é desconhecido.**
 - **O path filter tem um buraco.** Uma mudança em `montagem.py` altera o que
   o modelo vê sem tocar em nenhum prompt de agente, e passa livre pelo
   filtro de `paths`. Cobrir isso exigiria rodar o gate em todo PR, com o
@@ -467,11 +467,16 @@ sobe Postgres nem Redis — só Python e a chave da API.
   escritos por quem conhece o sistema carregam o viés de quem os escreveu, e
   nenhuma anotação cuidadosa remove isso. O número que sair daqui é um piso
   de confiança, não uma medida de campo.
-- **As 10 conversas de `investimento.yaml` abrem todas com pista lexical
+- **9 das 10 conversas de `investimento.yaml` abrem com pista lexical
   explícita** — "airbnb", "revender", "renda" — então o lado INVESTIMENTO do
   par difícil (compra sem finalidade declarada é COMPRA; INVESTIMENTO exige
-  evidência positiva de renda ou revenda) é detecção de palavra-chave, não
-  desambiguação de verdade. As 2 conversas de injeção são hijack frontal
+  evidência positiva de renda ou revenda) é majoritariamente detecção de
+  palavra-chave, não desambiguação de verdade. A exceção é `investimento-04`:
+  o primeiro turno abre neutro ("quero comprar um apartamento de 2 quartos na
+  zona oeste", rotulado COMPRA) e só o segundo revela a finalidade
+  ("na real, é pra alugar depois no airbnb, não pra morar"), o único caso no
+  corpus em que a pista chega depois da abertura. As 2 conversas de injeção
+  são hijack frontal
   ("ignore as instruções anteriores…", "esquece que você é da imobiliária…");
   falta a injeção embutida dentro de um pedido legítimo, que é a que quebra
   prompt na prática.
