@@ -511,7 +511,8 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   resolve. Entram na lista também os turnos cujo palpite estava **certo** e foi
   rebaixado pela confiança — eles não aparecem na acurácia crua nem na matriz,
   e são os únicos que só a calibração explica, então cada linha vem marcada com
-  qual dos três casos é.
+  qual dos quatro casos é — exceto o errado e confiante, o único que não leva
+  marca, porque é o caso simples e não precisa de explicação extra.
 - **Falha de infraestrutura abandona a conversa e a execução segue.** Um 429,
   um timeout ou um `RespostaInvalida` não são o modelo errando a intenção:
   contá-los como turno errado faria rede instável ler como regressão de prompt.
