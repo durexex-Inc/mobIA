@@ -1,0 +1,114 @@
+# evals/corpus/compra.yaml
+- id: compra-01
+  descricao: lead abre por preco e vira aluguel quando ve o valor
+  turnos:
+    - lead: "oi, vi o anuncio do apto na vila mariana, ainda ta disponivel?"
+      intencao: COMPRA
+    - lead: "nossa, 850 mil ta bem acima do que eu consigo. voces tem pra alugar na regiao?"
+      intencao: ALUGUEL
+
+- id: compra-02
+  descricao: lead direto, dois quartos, financiamento
+  turnos:
+    - lead: "to procurando um dois quartos pra comprar ate 500 mil"
+      intencao: COMPRA
+    - lead: "voces trabalham com financiamento pela caixa?"
+      intencao: COMPRA
+    - lead: "e tem alguma coisa perto de metro nessa faixa?"
+      intencao: COMPRA
+
+- id: compra-03
+  descricao: lead quer usar fgts na entrada
+  turnos:
+    - lead: "bom dia! sera que da pra usar o fgts pra dar de entrada num apartamento?"
+      intencao: COMPRA
+    - lead: "e qual documentacao voces pedem pra dar entrada no processo?"
+      intencao: COMPRA
+    - lead: "faz quanto tempo em media do inicio ate a chave na mao?"
+      intencao: COMPRA
+
+- id: compra-04
+  descricao: casa acima do orcamento, lead migra pra aluguel na mesma regiao
+  turnos:
+    - lead: "vi que tem uma casa de 3 quartos no jardim das flores, quanto ta pedindo?"
+      intencao: COMPRA
+    - lead: "poxa, e mais que o dobro do que eu tinha em mente. tem algo pra alugar por la mesmo, mais em conta?"
+      intencao: ALUGUEL
+    - lead: "pode ser so 2 quartos tambem, contanto que tenha quintal"
+      intencao: ALUGUEL
+
+- id: compra-05
+  descricao: familia com crianca pequena quer casa terrea
+  turnos:
+    - lead: "procuro uma casa terrea, com quintal, pra comprar. tem crianca pequena em casa"
+      intencao: COMPRA
+    - lead: "precisa ser financiada, nao tenho o valor todo agora"
+      intencao: COMPRA
+    - lead: "voces atendem em cotia tambem?"
+      intencao: COMPRA
+
+- id: compra-06
+  descricao: cobertura duplex, perguntas sobre lazer e condominio
+  turnos:
+    - lead: "vi uma cobertura duplex la no anuncio, ainda esta disponivel pra venda?"
+      intencao: COMPRA
+    - lead: "tem churrasqueira na cobertura ou so na area comum do predio?"
+      intencao: COMPRA
+    - lead: "qual o valor do condominio dessa cobertura?"
+      intencao: COMPRA
+
+- id: compra-07
+  descricao: lead retomando conversa, ja com financiamento aprovado
+  turnos:
+    - lead: "oi bom dia, sou eu de novo. fechei financiamento e quero agendar visita no apartamento que conversamos semana passada"
+      intencao: COMPRA
+    - lead: "pode ser sabado de manha?"
+      intencao: COMPRA
+
+- id: compra-08
+  descricao: solteiro procurando apto pequeno perto do trabalho
+  turnos:
+    - lead: "queria comprar um apto pequeno, uns 40 metros, pra eu morar sozinho"
+      intencao: COMPRA
+    - lead: "tem que ser proximo do trabalho, na regiao da paulista"
+      intencao: COMPRA
+    - lead: "aceita entrada menor com parcelamento direto com o proprietario?"
+      intencao: COMPRA
+
+- id: compra-09
+  descricao: lead pergunta preco a vista, sem financiamento
+  turnos:
+    - lead: "quanto fica um imovel de 2 dormitorios no tatuape pra comprar a vista?"
+      intencao: COMPRA
+    - lead: "tem desconto pagando a vista mesmo, sem financiamento?"
+      intencao: COMPRA
+
+- id: compra-10
+  descricao: casal no primeiro imovel, duvidas de processo
+  turnos:
+    - lead: "minha esposa e eu queremos comprar nosso primeiro imovel, pode me ajudar a entender o processo?"
+      intencao: COMPRA
+    - lead: "quanto tempo demora entre a proposta e a escritura normalmente?"
+      intencao: COMPRA
+    - lead: "e precisa de advogado por nossa conta ou voces ja indicam um?"
+      intencao: COMPRA
+
+- id: compra-11
+  descricao: sobrado na zona sul, negociacao e permuta
+  turnos:
+    - lead: "vi o anuncio do sobrado na zona sul, da pra negociar o valor?"
+      intencao: COMPRA
+    - lead: "e aceita permuta com meu carro na entrada?"
+      intencao: COMPRA
+    - lead: "o sobrado tem escritura ja regularizada?"
+      intencao: COMPRA
+
+- id: compra-12
+  descricao: mudanca pra sp, quer imovel pronto pra morar
+  turnos:
+    - lead: "estou de mudanca pra sp e quero comprar um apartamento mobiliado pra ja morar"
+      intencao: COMPRA
+    - lead: "tem alguma coisa pronta pra morar, sem reforma?"
+      intencao: COMPRA
+    - lead: "consigo fechar tudo a distancia, sem vir pessoalmente antes?"
+      intencao: COMPRA
