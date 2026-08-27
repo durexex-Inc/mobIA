@@ -1,7 +1,36 @@
 from collections.abc import Sequence
 
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
-from mobia.evals.metricas import Classificacao, ResultadoDaMetrica, ResumoDeConfianca
+from mobia.evals.metricas import (
+    TETO_DE_CONVERSAS_ABANDONADAS,
+    Classificacao,
+    FalhaDeInfraestrutura,
+    ResultadoDaMetrica,
+    ResumoDeConfianca,
+)
+
+
+def _secao_de_infraestrutura(falhas: Sequence[FalhaDeInfraestrutura]) -> list[str]:
+    """As conversas que a rede levou, separadas dos erros de classificacao.
+
+    Vem logo depois das metricas e antes de tudo o mais porque muda como se le
+    o resto: vermelho por 429 pede re-rodar, vermelho por regressao pede
+    investigar, e o relatorio tem de dizer qual dos dois e antes de mostrar os
+    numeros que o leitor vai interpretar. Diz explicitamente que estes turnos
+    nao entraram em metrica nenhuma -- e a frase que impede rede instavel de
+    ser lida como prompt pior.
+    """
+    linhas = [
+        "",
+        "## Falhas de infraestrutura",
+        "",
+        f"{len(falhas)} conversa(s) abandonada(s), teto {TETO_DE_CONVERSAS_ABANDONADAS}.",
+        "Nao sao erro de classificacao: nenhum turno destas conversas entrou nas metricas.",
+        "",
+    ]
+    for falha in falhas:
+        linhas.append(f"- {falha.conversa_id}[{falha.indice}]: {falha.erro}")
+    return linhas
 
 
 def _marca_de(errada: Classificacao) -> str:
@@ -73,11 +102,15 @@ def render(
     *,
     confianca: ResumoDeConfianca | None = None,
     erradas: Sequence[Classificacao] = (),
+    infraestrutura: Sequence[FalhaDeInfraestrutura] = (),
 ) -> str:
     linhas = ["# Avaliacao da classificacao de intencao", ""]
 
     for metrica in metricas:
         linhas.append(f"- **{metrica.nome}**: {metrica.faixa.value} -- {metrica.detalhe}")
+
+    if infraestrutura:
+        linhas += _secao_de_infraestrutura(infraestrutura)
 
     if confianca is not None:
         linhas += _secao_de_confianca(confianca)

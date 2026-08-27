@@ -2,7 +2,9 @@ from decimal import Decimal
 
 from mobia.domain.agente.schemas import Intencao
 from mobia.evals.metricas import (
+    TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
+    FalhaDeInfraestrutura,
     ResumoDeConfianca,
     acuracia_de_intencao,
     sem_mecanismo,
@@ -165,3 +167,58 @@ def test_relatorio_sem_resumo_de_confianca_omite_a_secao() -> None:
     texto = render([], {})
 
     assert "## Confianca" not in texto
+
+
+def test_relatorio_separa_falha_de_infraestrutura_de_erro_de_classificacao() -> None:
+    """Vermelho por 429 e vermelho por regressao pedem acoes opostas -- re-rodar
+    contra investigar. A conversa que a rede levou tem de aparecer nomeada, e
+    fora da lista de classificacoes erradas: nenhum turno dela foi medido."""
+    falhas = [FalhaDeInfraestrutura(conversa_id="compra-12", indice=1, erro="APIStatusError")]
+    erradas = [classificacao(Intencao.ALUGUEL, Intencao.COMPRA, conversa_id="aluguel-02")]
+
+    texto = render([], {}, erradas=erradas, infraestrutura=falhas)
+
+    assert "## Falhas de infraestrutura" in texto
+    assert "- compra-12[1]: APIStatusError" in texto
+    assert "Nao sao erro de classificacao" in texto
+    depois_das_erradas = texto.split("## Classificacoes erradas")[1]
+    assert "compra-12" not in depois_das_erradas
+
+
+def test_relatorio_anuncia_o_teto_junto_da_contagem_de_abandono() -> None:
+    """Sem o teto ao lado, "3 conversas abandonadas" nao diz se a execucao
+    ainda vale -- e essa e a unica pergunta que o leitor tem ali."""
+    falhas = [
+        FalhaDeInfraestrutura(conversa_id=f"compra-{i}", indice=0, erro="APITimeoutError")
+        for i in range(3)
+    ]
+
+    texto = render([], {}, infraestrutura=falhas)
+
+    assert f"3 conversa(s) abandonada(s), teto {TETO_DE_CONVERSAS_ABANDONADAS}." in texto
+
+
+def test_a_secao_de_infraestrutura_vem_antes_das_que_dependem_das_metricas() -> None:
+    """Ela muda como se le o resto do relatorio, entao precede o resto. Quem
+    abre o log de CI tem de saber que a execucao perdeu conversas antes de
+    interpretar os numeros que vem depois."""
+    texto = render(
+        [],
+        {Intencao.COMPRA: {Intencao.ALUGUEL: 1}},
+        confianca=ResumoDeConfianca(
+            turnos=1, abaixo_do_limiar=0, acertos_rebaixados=0, acertos_recuperados=0
+        ),
+        erradas=[classificacao(Intencao.ALUGUEL, Intencao.COMPRA)],
+        infraestrutura=[FalhaDeInfraestrutura("compra-12", 1, "APIStatusError")],
+    )
+
+    assert texto.index("## Falhas de infraestrutura") < texto.index("## Confianca")
+    assert texto.index("## Confianca") < texto.index("## Classificacoes erradas")
+    assert texto.index("## Classificacoes erradas") < texto.index("## Matriz de confusao")
+
+
+def test_relatorio_sem_falha_de_infraestrutura_omite_a_secao() -> None:
+    """Execucao limpa nao ganha um cabecalho que sugere que algo caiu."""
+    texto = render([], {})
+
+    assert "## Falhas de infraestrutura" not in texto

@@ -13,7 +13,10 @@ from mobia.evals.contexto import contexto_do_historico
 from mobia.evals.corpus import ConversaAnotada
 from mobia.evals.metricas import (
     PISO_DE_TURNOS,
+    TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
+    FalhaDeInfraestrutura,
+    ResultadoDaMetrica,
     acuracia_de_intencao,
     acuracia_efetiva,
     bloqueia,
@@ -30,7 +33,15 @@ class InfraestruturaFalhou(RuntimeError):
 
     Nao e o modelo errando a intencao. Contar como turno errado faria rede
     instavel ler como regressao de prompt e barrar um merge inocente.
+
+    Carrega a `FalhaDeInfraestrutura` em vez de so a mensagem: quem captura
+    precisa dela estruturada para o relatorio, e reconstruir de `str(exc)` no
+    outro lado seria parsear a propria mensagem de erro.
     """
+
+    def __init__(self, falha: FalhaDeInfraestrutura) -> None:
+        super().__init__(f"{falha.conversa_id} turno {falha.indice}: {falha.erro}")
+        self.falha = falha
 
 
 async def _rodar_conversa(
@@ -51,6 +62,14 @@ async def _rodar_conversa(
     limitado ao contexto dos turnos que vem depois de um turno ambiguo -- a
     classificacao medida em cada turno e sempre a da primeira chamada, que e
     a mesma que producao grava em `conversation_intent`.
+
+    Levanta na primeira falha de infraestrutura e nao devolve os turnos que
+    ja tinham dado certo nesta conversa. E de proposito: o historico e
+    sequencial, entao o que sobra de uma conversa interrompida e sempre o
+    prefixo dela -- e os turnos faceis moram no prefixo. O corpus poe a
+    mudanca de intencao no meio ou no fim justamente porque e o turno
+    dificil, e aproveitar prefixos enviesaria a acuracia para cima em toda
+    execucao com rede instavel. Uma conversa vale inteira ou nao vale.
     """
     historico: list[tuple[MessageRole, str]] = []
     resultados: list[Classificacao] = []
@@ -65,7 +84,9 @@ async def _rodar_conversa(
             # httpx sobem como outra coisa e tem o mesmo significado aqui:
             # nao foi o modelo errando a intencao.
             raise InfraestruturaFalhou(
-                f"{conversa.id} turno {indice}: {type(exc).__name__}"
+                FalhaDeInfraestrutura(
+                    conversa_id=conversa.id, indice=indice, erro=type(exc).__name__
+                )
             ) from exc
 
         resultados.append(
@@ -86,36 +107,87 @@ async def _rodar_conversa(
     return resultados
 
 
-async def test_acuracia_de_intencao_no_corpus(
-    conversas: list[ConversaAnotada], capsys: pytest.CaptureFixture[str]
-) -> None:
-    classificador = ClassificadorAnthropic()
+def _metricas_de(resultados: list[Classificacao]) -> list[ResultadoDaMetrica]:
+    """As tres declaradas sem mecanismo saem sempre; as duas medidas, so com amostra.
 
-    resultados: list[Classificacao] = []
-    for conversa in conversas:
-        resultados.extend(await _rodar_conversa(classificador, conversa))
-
-    assert len(resultados) >= PISO_DE_TURNOS
-
-    metricas = [
-        acuracia_de_intencao(resultados),
-        # Bloqueia junto com a crua. E a que corresponde ao comportamento
-        # observavel: `executar_turno` roteia pela intencao efetiva, entao um
-        # prompt com acuracia crua intacta e confianca destruida reprova aqui
-        # e so aqui.
-        acuracia_efetiva(resultados),
+    `acuracia_de_intencao([])` levanta de proposito -- `faixa_de` recusa total
+    zero para que um corpus que falhou ao carregar nao abra o gate com 0/0. Mas
+    levantar **aqui** apagaria o relatorio, que e o unico artefato de uma
+    execucao paga que morreu na rede. Com zero turnos nenhuma metrica e medida,
+    ninguem fica verde, e quem reprova a execucao e o teto de conversas
+    abandonadas.
+    """
+    medidas = (
+        [
+            acuracia_de_intencao(resultados),
+            # Bloqueia junto com a crua. E a que corresponde ao comportamento
+            # observavel: `executar_turno` roteia pela intencao efetiva, entao
+            # um prompt com acuracia crua intacta e confianca destruida reprova
+            # aqui e so aqui.
+            acuracia_efetiva(resultados),
+        ]
+        if resultados
+        else []
+    )
+    return [
+        *medidas,
         sem_mecanismo("precisao de extracao", "sem mecanismo: TEC-145 nao existe"),
         sem_mecanismo("taxa de alucinacao", "sem mecanismo: bloqueada pela TEC-161"),
         sem_mecanismo("aderencia ao tom", "sem mecanismo: TEC-140 nao existe"),
     ]
 
+
+async def test_acuracia_de_intencao_no_corpus(
+    conversas: list[ConversaAnotada], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Uma falha de rede nao pode custar a execucao paga inteira.
+
+    Sao ~135 chamadas sequenciais com `MAX_TENTATIVAS = 1`. Antes, um 429 no
+    turno 90 subia pelo `for` e levava o dinheiro e os 89 resultados sem
+    imprimir nada. Agora cada conversa e um envelope: a que falha e abandonada,
+    registrada, e a proxima comeca. O relatorio sai sempre -- inclusive numa
+    execucao que perdeu tudo --, porque ele e o unico artefato que sobra de
+    dinheiro ja gasto.
+
+    As tres asercoes estao nesta ordem porque a primeira que estourar e a
+    mensagem que o CI mostra, e elas nao dizem a mesma coisa: teto e "a rede
+    caiu, re-rode", piso e "sobrou amostra de menos", `bloqueia` e "o prompt
+    regrediu". Vermelho por rede vem antes de vermelho por regressao.
+    """
+    classificador = ClassificadorAnthropic()
+
+    resultados: list[Classificacao] = []
+    abandonadas: list[FalhaDeInfraestrutura] = []
+    for conversa in conversas:
+        try:
+            resultados.extend(await _rodar_conversa(classificador, conversa))
+        except InfraestruturaFalhou as exc:
+            abandonadas.append(exc.falha)
+
+    metricas = _metricas_de(resultados)
     relatorio = render(
         metricas,
         matriz_de_confusao(resultados),
-        confianca=resumo_de_confianca(resultados),
+        confianca=resumo_de_confianca(resultados) if resultados else None,
         erradas=erros(resultados),
+        infraestrutura=abandonadas,
     )
     with capsys.disabled():
         print("\n" + relatorio)
 
+    assert len(abandonadas) <= TETO_DE_CONVERSAS_ABANDONADAS, (
+        f"{len(abandonadas)} conversas perdidas para infraestrutura, teto "
+        f"{TETO_DE_CONVERSAS_ABANDONADAS}. Execucao invalida, nao regressao de "
+        f"prompt: re-rode.\n{relatorio}"
+    )
+    # Agora esta asercao pode falhar de verdade. Antes nada era descartado, o
+    # total era sempre o do corpus, e ela nunca dizia nada -- o piso do corpus
+    # em si sai de graca em `tests/unit/test_evals_corpus_real.py`. O que ela
+    # guarda aqui e o que **sobrou** da execucao: e este piso que da sentido a
+    # folga de 15 turnos sobre 120.
+    assert len(resultados) >= PISO_DE_TURNOS, (
+        f"{len(resultados)} turnos medidos, piso {PISO_DE_TURNOS}. Amostra "
+        f"insuficiente depois do abandono: a faixa amarela nao absorve o ruido "
+        f"neste tamanho.\n{relatorio}"
+    )
     assert not bloqueia(metricas), relatorio

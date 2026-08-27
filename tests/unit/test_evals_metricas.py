@@ -1,9 +1,13 @@
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
+from mobia.evals.corpus import carregar, total_de_turnos
 from mobia.evals.metricas import (
+    PISO_DE_TURNOS,
+    TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
     Faixa,
     acuracia_de_intencao,
@@ -15,6 +19,8 @@ from mobia.evals.metricas import (
     resumo_de_confianca,
     sem_mecanismo,
 )
+
+CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
 
 # Acima do limiar: a intencao efetiva e o proprio palpite, entao a confianca
 # sai do caminho e o teste mede so o que quer medir.
@@ -214,3 +220,27 @@ def test_erros_incluem_o_acerto_rebaixado_e_excluem_o_acerto_confiante() -> None
     errado = classificacao(Intencao.ALUGUEL, Intencao.COMPRA, indice=2)
 
     assert erros([confiante_certo, rebaixado, errado]) == [rebaixado, errado]
+
+
+def test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos() -> None:
+    """O teto de conversas abandonadas nao e um numero de gosto: e a folga do
+    piso dividida pela conversa mais longa do corpus.
+
+    Enquanto essa conta fechar, os dois limites medem coisas diferentes sem se
+    atropelar -- o teto reprova "a rede caiu", o piso reprova "sobrou amostra
+    de menos", e nunca os dois pela mesma causa. Se o corpus mudar de forma
+    (conversas mais longas, ou menos folga sobre o piso), o abandono passa a
+    poder furar o piso tambem, e a mensagem que o CI mostra vira a de quem for
+    verificado primeiro em vez da causa real. Este teste falha exatamente ai,
+    e de graca -- sem chamada paga.
+    """
+    conversas = carregar(CORPUS)
+    mais_longa = max(len(conversa.turnos) for conversa in conversas)
+
+    pior_perda = TETO_DE_CONVERSAS_ABANDONADAS * mais_longa
+
+    assert total_de_turnos(conversas) - pior_perda >= PISO_DE_TURNOS, (
+        f"teto {TETO_DE_CONVERSAS_ABANDONADAS} x conversa mais longa "
+        f"{mais_longa} = {pior_perda} turnos, e o corpus tem "
+        f"{total_de_turnos(conversas)} sobre um piso de {PISO_DE_TURNOS}"
+    )
