@@ -34,6 +34,36 @@ PISO_DE_TURNOS = 120
 # ai nem os turnos que passaram merecem ser lidos como medida do prompt.
 TETO_DE_CONVERSAS_ABANDONADAS = 5
 
+# Piso proprio da `acuracia_efetiva`, deliberadamente **nao**
+# `PISO_DE_BLOQUEIO_PCT`. Os dois numeros nao respondem a mesma pergunta, e
+# confundi-los foi a primeira tentativa desta metrica.
+#
+# 50 nao e barra de qualidade: e detector de catastrofe. Ninguem sabe qual e a
+# acuracia efetiva saudavel deste agente, porque medi-la exige a execucao paga
+# que ainda nao rodou. Cravar 90/84 aqui seria repetir o erro que o proprio
+# `LIMIAR_DE_DESAMBIGUACAO` documenta -- numero do SRS, nao calibrado -- e
+# poderia abrir VERMELHO na primeira execucao sem regressao nenhuma.
+#
+# O que da para afirmar sem medir e o piso da catastrofe. Se um ajuste de
+# prompt destruir a calibragem e jogar a confianca de **todo** turno abaixo do
+# limiar, todo turno vira INDEFINIDA em producao, e sobram como acerto so os
+# turnos cujo rotulo ja era INDEFINIDA: hoje 9 de 135, ou 6,7%. Um piso de 50%
+# pega isso com margem enorme. E nenhum estado saudavel plausivel fica abaixo
+# de 50%, porque isso exigiria mais da metade dos turnos com confianca abaixo
+# de 0,6 -- que ja e achado que merece barrar por si.
+#
+# Provisorio. Quando a primeira execucao paga der a baseline real, esta
+# constante vira um par alvo/piso como o da acuracia crua, apertado em torno
+# do que se mediu, e a metrica passa a poder ficar VERDE.
+#
+# Limitacao declarada, e ela e o preco desta escolha: degradacao **parcial** de
+# calibragem nao bloqueia. Meio corpus rebaixado ainda da 50% e passa. Isso
+# aparece so no relatorio -- na secao "Confianca" e nas linhas marcadas
+# `certa, rebaixada para INDEFINIDA` --, e nao no vermelho do gate. Foi
+# aceito de proposito: barrar com piso inventado custa mais do que deixar
+# passar o que o relatorio mostra.
+PISO_DE_CATASTROFE_EFETIVA_PCT = 50
+
 
 class Faixa(StrEnum):
     VERDE = "VERDE"
@@ -150,16 +180,27 @@ def faixa_de(acertos: int, total: int) -> Faixa:
     return Faixa.VERMELHO
 
 
-def _acuracia(nome: str, acertos: int, total: int) -> ResultadoDaMetrica:
-    faixa = faixa_de(acertos, total)
+def faixa_de_catastrofe(acertos: int, total: int) -> Faixa:
+    """A faixa da acuracia efetiva: so distingue catastrofe de nao-catastrofe.
+
+    Duas saidas, e nao tres, porque so ha um numero defensavel. AMARELO e o
+    melhor que esta metrica pode reportar hoje: VERDE afirmaria "bateu o alvo",
+    e alvo calibrado e exatamente o que nao existe ainda -- ver
+    `PISO_DE_CATASTROFE_EFETIVA_PCT`. Reportar VERDE convidaria a leitura que
+    esta metrica existe para impedir, a de que a acuracia efetiva esta boa.
+
+    Aritmetica inteira pelo mesmo motivo de `faixa_de`: exata por construcao.
+    """
+    if total <= 0:
+        raise ValueError("nada medido nao e sucesso: total de turnos e zero")
+    if acertos * 100 >= total * PISO_DE_CATASTROFE_EFETIVA_PCT:
+        return Faixa.AMARELO
+    return Faixa.VERMELHO
+
+
+def _detalhe(acertos: int, total: int, referencia: str) -> str:
     pct = acertos * 100 / total
-    return ResultadoDaMetrica(
-        nome=nome,
-        faixa=faixa,
-        acertos=acertos,
-        total=total,
-        detalhe=f"{acertos}/{total} ({pct:.1f}%), alvo {ALVO_PCT}%, piso {PISO_DE_BLOQUEIO_PCT}%",
-    )
+    return f"{acertos}/{total} ({pct:.1f}%), {referencia}"
 
 
 def acuracia_de_intencao(classificacoes: Sequence[Classificacao]) -> ResultadoDaMetrica:
@@ -168,31 +209,52 @@ def acuracia_de_intencao(classificacoes: Sequence[Classificacao]) -> ResultadoDa
     Mede o classificador: quanto ele acerta quando se ignora o quanto ele diz
     estar seguro. Sozinha, e cega para calibragem -- ver `acuracia_efetiva`.
     """
-    return _acuracia(
-        "acuracia de intencao",
-        sum(1 for c in classificacoes if c.certa),
-        len(classificacoes),
+    total = len(classificacoes)
+    acertos = sum(1 for c in classificacoes if c.certa)
+    # Antes de `_detalhe`, que divide: e `faixa_de` que recusa total zero.
+    faixa = faixa_de(acertos, total)
+    return ResultadoDaMetrica(
+        nome="acuracia de intencao",
+        faixa=faixa,
+        acertos=acertos,
+        total=total,
+        detalhe=_detalhe(acertos, total, f"alvo {ALVO_PCT}%, piso {PISO_DE_BLOQUEIO_PCT}%"),
     )
 
 
 def acuracia_efetiva(classificacoes: Sequence[Classificacao]) -> ResultadoDaMetrica:
     """Acuracia do que producao roteia, e nao do que o modelo palpitou.
 
-    Metrica propria, e bloqueia igual a crua, pelas mesmas faixas. Nao e
-    detalhe da outra: uma linha informativa dentro de `acuracia de intencao`
-    nunca ficaria VERMELHA, e e justamente a regressao invisivel na acuracia
-    crua que o gate precisa barrar. Separadas, as duas ainda diferenciam o
-    diagnostico -- as duas vermelhas e o classificador degradando; a crua
-    verde e esta vermelha e a confianca desabando com o palpite intacto.
+    Metrica propria, e bloqueia -- mas pelo seu proprio piso, o de catastrofe,
+    e nao pelas faixas da crua. Ela nao pode ser detalhe da outra: uma linha
+    informativa dentro de `acuracia de intencao` nunca ficaria VERMELHA, e e
+    justamente a regressao invisivel na acuracia crua que o gate precisa
+    barrar. E nao pode herdar 90/84, que seria piso nao medido. As duas coisas
+    se resolvem separando o que a metrica **protege** do que ela **mede**: ver
+    `PISO_DE_CATASTROFE_EFETIVA_PCT`.
+
+    Separadas, as duas ainda diferenciam o diagnostico -- as duas vermelhas e
+    o classificador degradando; a crua verde e esta vermelha e a calibragem da
+    confianca desabando com o palpite intacto.
 
     Ela pode ficar acima da crua, e nao e bug: num turno cujo rotulo e
     INDEFINIDA, rebaixar um palpite mal-confiante acerta o rotulo. Ver
     `ResumoDeConfianca.acertos_recuperados`.
     """
-    return _acuracia(
-        "acuracia efetiva (o que producao roteia)",
-        sum(1 for c in classificacoes if c.certa_na_efetiva),
-        len(classificacoes),
+    total = len(classificacoes)
+    acertos = sum(1 for c in classificacoes if c.certa_na_efetiva)
+    # Antes de `_detalhe`, que divide: e a faixa que recusa total zero.
+    faixa = faixa_de_catastrofe(acertos, total)
+    return ResultadoDaMetrica(
+        nome="acuracia efetiva (o que producao roteia)",
+        faixa=faixa,
+        acertos=acertos,
+        total=total,
+        detalhe=_detalhe(
+            acertos,
+            total,
+            f"sem alvo calibrado; piso de catastrofe {PISO_DE_CATASTROFE_EFETIVA_PCT}%",
+        ),
     )
 
 
