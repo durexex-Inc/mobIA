@@ -399,14 +399,15 @@ roda no default dela, e medir com `temperature=0` daria um número estável
 sobre uma configuração que a produção não usa.
 
 O corpus é `evals/corpus/*.yaml`, um arquivo por categoria (`compra`,
-`aluguel`, `investimento`, `follow_up`, `borda`), 50 conversas e **135
+`aluguel`, `investimento`, `follow_up`, `borda`), 50 conversas e **136
 turnos** anotados à mão — o texto é escrito primeiro, o rótulo depois, e por
 um humano, não pelo modelo medido: gerar o corpus com o mesmo modelo que ele
 avalia embutiria as pistas que aquele modelo lê bem e infla a acurácia por
 construção. A distribuição por intenção sai desigual porque a conversa real é
-desigual: COMPRA 46, ALUGUEL 32, INVESTIMENTO 26, FORA_DE_ESCOPO 9, INDEFINIDA
-9, SUPORTE_CONTRATO 7, VENDER_IMOVEL 6. Dez conversas mudam de intenção no
-meio, e duas são tentativa de injeção.
+desigual: COMPRA 47, ALUGUEL 32, INVESTIMENTO 26, FORA_DE_ESCOPO 9, INDEFINIDA
+9, SUPORTE_CONTRATO 7, VENDER_IMOVEL 6. Onze conversas mudam de intenção no
+meio, e duas são tentativa de injeção — uma delas com dois turnos, o hijack
+frontal e, depois dele, a injeção embutida num pedido real de compra.
 
 A medida é **por turno, não por conversa** — é o que "acurácia de intenção"
 significa, e uma conversa que muda de intenção no meio só faz sentido medida
@@ -414,6 +415,59 @@ assim. Cada turno vê o histórico dos turnos anteriores já montado, como em
 produção, via `mobia.evals.contexto`: `Message` transientes, cifradas com o
 mesmo `encrypt`/AAD do banco real mas nunca inseridas, então o job de CI não
 sobe Postgres nem Redis — só Python e a chave da API.
+
+### Duas acurácias, e por que a crua não bastava
+
+O gate mede **duas** acurácias sobre a mesma execução, e a segunda foi a
+correção mais importante desta rodada.
+
+A crua compara o palpite do classificador (`obtida`) com o rótulo do corpus.
+Ela mede o classificador, e é cega para uma coisa: **produção não roteia pelo
+palpite cru.** `conversation_intent.intencao` guarda o palpite sem edição, mas
+quem consome lê `IntencaoDaConversa.efetiva`, que delega a `intencao_efetiva`
+em `src/mobia/domain/agente/desambiguacao.py` e rebaixa para `INDEFINIDA`
+qualquer classificação com confiança abaixo de `LIMIAR_DE_DESAMBIGUACAO`
+(0,6). No turno ambíguo `executar_turno` vai além: descarta a resposta escrita
+sobre o palpite e entrega a pergunta do desambiguador. Um ajuste de prompt que
+preservasse a acurácia crua e destruísse a calibração da confiança deixaria o
+gate verde enquanto produção desambigua em todo turno — pagando duas chamadas
+por turno e não respondendo nada. O gate era cego exatamente para isso, porque
+`Classificacao` não carregava `confianca`.
+
+A **acurácia efetiva** fecha esse buraco: é a mesma comparação, feita sobre
+`Classificacao.efetiva` — o que produção rotearia. Ela **bloqueia**, mas pelo
+seu próprio piso, `PISO_DE_CATASTROFE_EFETIVA_PCT = 50`, e não pelas faixas de
+90/84 da crua.
+
+**Cinquenta por cento é detector de catástrofe, não barra de qualidade.**
+Ninguém sabe qual é a acurácia efetiva saudável deste agente — medi-la exige a
+execução paga que ainda não rodou —, e herdar 90/84 aqui seria repetir o erro
+que o próprio `LIMIAR_DE_DESAMBIGUACAO` documenta: número do SRS, não
+calibrado. O que dá para afirmar sem medir é o piso da catástrofe, e ele é
+derivável: se a calibração morrer e a confiança de **todo** turno cair abaixo
+do limiar, todo turno vira `INDEFINIDA`, e sobram como acerto só os turnos cujo
+rótulo já era `INDEFINIDA` — hoje 9 de 136, ou 6,6%. Um piso de 50% pega isso
+com margem enorme, e nenhum estado saudável plausível fica abaixo dele: para
+isso, mais da metade dos turnos precisaria vir com confiança abaixo de 0,6, o
+que já é achado que merece barrar por si.
+
+**A faixa que passa é AMARELO, nunca VERDE**, e isso é de propósito:
+`faixa_de_catastrofe` tem duas saídas em vez de três. VERDE afirmaria "bateu o
+alvo", e alvo calibrado é exatamente o que não existe até a primeira execução
+paga; reportar VERDE convidaria à leitura que a métrica existe para impedir, a
+de que a acurácia efetiva está boa.
+
+**O piso de 50% é provisório.** Quando a primeira execução paga der a baseline
+real, `PISO_DE_CATASTROFE_EFETIVA_PCT` em `src/mobia/evals/metricas.py` vira um
+par alvo/piso como o 90/84 da crua, apertado em torno do que se mediu — e só
+então `faixa_de_catastrofe` ganha um VERDE para reportar.
+
+Separadas, as duas também diferenciam o diagnóstico: as duas vermelhas é o
+classificador degradando; a crua verde e a efetiva vermelha é a calibração da
+confiança desabando com o palpite intacto. E a efetiva pode ficar **acima** da
+crua sem que seja bug — num turno cujo rótulo é `INDEFINIDA`, rebaixar um
+palpite mal-confiante acerta o rótulo. A seção "Confiança" do relatório conta
+esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
 
 ### Garantias
 
@@ -432,6 +486,15 @@ sobe Postgres nem Redis — só Python e a chave da API.
   ou em tamanho de corpus. Uma versão anterior desta seção afirmava que a borda
   caía para o lado errado em float; era falso, e a escolha continua certa por
   outro motivo.
+- **A acurácia efetiva bloqueia, e é a única que pega regressão de
+  calibração.** Ela mede `Classificacao.efetiva` — o que produção rotearia —
+  contra o rótulo, com piso próprio de 50% e faixa que nunca sobe a VERDE. Ver
+  "Duas acurácias" acima: um prompt com palpite intacto e confiança destruída
+  reprova aqui, e só aqui.
+- **`Classificacao` carrega `confianca`, e o campo não é opcional.** Sem ele
+  não existe a tripla (esperada, obtida, confiança) que recalibrar
+  `LIMIAR_DE_DESAMBIGUACAO` exige, e nenhuma outra execução do sistema produz
+  essas triplas — o gate seria a única chance de coletá-las e a jogaria fora.
 - **`SEM_MECANISMO` nunca é verde, e nunca bloqueia.** As três métricas que o
   card pede e não têm sujeito — precisão de extração (TEC-145), taxa de
   alucinação (TEC-161) e aderência ao tom (TEC-140) — aparecem declaradas em
@@ -440,12 +503,47 @@ sobe Postgres nem Redis — só Python e a chave da API.
   bloqueia, porque um estado sem mecanismo que barrasse merge deixaria o gate
   permanentemente vermelho — e um gate sempre vermelho é desligado em uma
   semana.
+- **O relatório nomeia os turnos errados, um por linha**, com
+  `conversa_id[índice]: esperada -> obtida (confiança)`. A matriz de confusão
+  diz que `INVESTIMENTO` virou `COMPRA` sete vezes; ela não diz quais sete, e
+  descobrir isso pela matriz custaria outra execução paga. Sem teto de linhas
+  de propósito: uma lista truncada devolve o leitor ao problema que ela
+  resolve. Entram na lista também os turnos cujo palpite estava **certo** e foi
+  rebaixado pela confiança — eles não aparecem na acurácia crua nem na matriz,
+  e são os únicos que só a calibração explica, então cada linha vem marcada com
+  qual dos três casos é.
+- **Falha de infraestrutura abandona a conversa e a execução segue.** Um 429,
+  um timeout ou um `RespostaInvalida` não são o modelo errando a intenção:
+  contá-los como turno errado faria rede instável ler como regressão de prompt.
+  Antes, uma falha no turno 90 subia e levava o dinheiro já gasto e os 89
+  resultados sem imprimir nada; agora cada conversa é um envelope, a que falha
+  é registrada em `FalhaDeInfraestrutura` e a próxima começa. O relatório sai
+  sempre — inclusive numa execução que perdeu tudo —, porque ele é o único
+  artefato que sobra de dinheiro já gasto, e ele mostra as falhas de rede em
+  seção própria, antes das métricas, dizendo explicitamente que nenhum turno
+  delas entrou em métrica nenhuma. Vermelho por 429 pede re-rodar; vermelho por
+  regressão pede investigar.
+- **A conversa vale inteira ou não vale.** Uma conversa interrompida no meio é
+  descartada por completo, sem aproveitar os turnos que já tinham dado certo:
+  o histórico é sequencial, então o que sobra é sempre o prefixo dela — e o
+  corpus põe a mudança de intenção no meio ou no fim justamente porque é ali
+  que mora o turno difícil. Aproveitar prefixos enviesaria a acurácia para
+  cima em toda execução com rede instável.
+- **Duas asserções guardam a validade da execução, antes da que julga o
+  prompt**, e nessa ordem porque a primeira que estourar é a mensagem que o CI
+  mostra: `TETO_DE_CONVERSAS_ABANDONADAS` (5) diz "a rede caiu, re-rode",
+  `PISO_DE_TURNOS` (120) diz "sobrou amostra de menos", e só então `bloqueia`
+  diz "o prompt regrediu". O teto de 5 não é gosto: é a folga do piso dividida
+  pela conversa mais longa do corpus (5 × 3 = 15 turnos, contra 16 de folga),
+  e `tests/unit/test_evals_metricas.py::test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos`
+  falha de graça se o corpus mudar de forma e as duas asserções passarem a
+  poder reprovar a mesma execução por motivos diferentes.
 - O gate compara **percentual**, não contagem absoluta — o corpus tem hoje
-  135 turnos, e uma conversa a mais ou a menos muda esse total, então cravar
+  136 turnos, e uma conversa a mais ou a menos muda esse total, então cravar
   contagem faria o limiar mudar de significado a cada conversa acrescentada.
   O piso de 120 turnos (`PISO_DE_TURNOS`) é o que garante que um único turno
   não valha mais de 0,8% e a faixa amarela continue absorvendo o ruído entre
-  execuções — os 135 turnos reais folgam esse piso em 15.
+  execuções — os 136 turnos reais folgam esse piso em 16.
 - **`evals.yml` é um workflow só, sem `paths` nem `paths-ignore`, e roda em
   todo `pull_request`** — sempre exatamente um check run, com nome estável
   (`Avaliacoes de IA`). Um passo inicial decide sozinho se o PR mexeu em
@@ -480,9 +578,23 @@ sobe Postgres nem Redis — só Python e a chave da API.
 
 - **O gate nunca foi executado de verdade.** Só a coleta do corpus foi
   verificada nesta tarefa — carregar os 5 arquivos, contar as 50 conversas e
-  os 135 turnos, conferir a distribuição por intenção. A execução real custa
-  135 chamadas pagas à API, e ficou como decisão do dono do repositório.
+  os 136 turnos, conferir a distribuição por intenção. A execução real custa
+  136 chamadas pagas à API, e ficou como decisão do dono do repositório.
   **O número de acurácia é desconhecido.**
+- **Degradação parcial de calibração não barra.** O piso de 50% da acurácia
+  efetiva pega a catástrofe e só ela: meio corpus rebaixado para `INDEFINIDA`
+  ainda dá 50% e passa. Isso aparece só no relatório — na seção "Confiança" e
+  nas linhas marcadas `certa, rebaixada para INDEFINIDA` —, nunca no vermelho
+  do gate. Foi aceito de propósito, porque a alternativa era barrar com um piso
+  inventado; encolhe quando a baseline medida substituir os 50%.
+- **A contagem de "turnos abaixo do limiar" do relatório não é a contagem de
+  perguntas que produção faria.** Ela vem de `deve_desambiguar(confianca,
+  None)` — marcador vazio, porque o eval não tem banco nem episódio em aberto —
+  e responde "a confiança sozinha bastaria para perguntar?". Produção tem a
+  segunda condição, uma pergunta por episódio, então numa conversa com
+  ambiguidade persistente ela pergunta menos vezes que essa contagem sugere. O
+  rebaixamento em si não depende do marcador, então a acurácia efetiva
+  continua sendo exatamente o que produção rotearia.
 - **O filtro interno de `evals.yml` tem um buraco.** `montagem.py` mora em
   `src/mobia/domain/context/`, que não casa com o regex
   `^(src/mobia/domain/agente/|src/mobia/evals/|evals/)` do passo "Decidir se
@@ -490,7 +602,7 @@ sobe Postgres nem Redis — só Python e a chave da API.
   ele recebe — sem tocar em nenhum prompt de agente, e passa livre sem rodar
   o eval. Cobrir isso exigiria rodar o gate em todo PR, com o custo e o
   flake que a decisão do limiar amarelo rejeitou.
-- **Corpus sintético não é tráfego real.** Cento e trinta e cinco turnos
+- **Corpus sintético não é tráfego real.** Cento e trinta e seis turnos
   escritos por quem conhece o sistema carregam o viés de quem os escreveu, e
   nenhuma anotação cuidadosa remove isso. O número que sair daqui é um piso
   de confiança, não uma medida de campo.
@@ -507,8 +619,8 @@ sobe Postgres nem Redis — só Python e a chave da API.
   ("ignore as instruções anteriores…", "esquece que você é da imobiliária…");
   falta a injeção embutida dentro de um pedido legítimo, que é a que quebra
   prompt na prática.
-- **COMPRA é 34% dos turnos** (46 de 135): um classificador que responda
-  sempre COMPRA já tira 34% de acurácia de graça. Isso não invalida o alvo —
+- **COMPRA é 35% dos turnos** (47 de 136): um classificador que responda
+  sempre COMPRA já tira 35% de acurácia de graça. Isso não invalida o alvo —
   90% continua exigindo acerto real nas outras classes —, mas a matriz de
   confusão vai ser dominada por COMPRA e ALUGUEL, e VENDER_IMOVEL (6 turnos)
   e SUPORTE_CONTRATO (7) têm massa tão pequena que um único erro move a
