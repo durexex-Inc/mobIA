@@ -35,8 +35,19 @@ async def _rodar_conversa(
 ) -> list[Classificacao]:
     """Os turnos sao sequenciais, e a resposta real do agente volta ao historico.
 
-    E o que producao faz. Mostrar so as falas do lead mediria um contexto que
-    nunca existe.
+    Mostrar so as falas do lead mediria um contexto que nunca existe: o
+    classificador ve a conversa inteira, com as duas partes.
+
+    Nao e identico a producao no turno ambiguo. Com confianca abaixo de
+    `LIMIAR_DE_DESAMBIGUACAO` e o episodio ainda limpo, `executar_turno`
+    descarta a resposta desta chamada e entrega o texto de
+    `classificador.desambiguar` -- e essa pergunta, nao esta resposta, que
+    entra no historico do turno seguinte. Replicar isso aqui dobraria as
+    chamadas pagas nos turnos afetados; e decisao de escopo, nao detalhe de
+    implementacao, e esta fora da TEC-210. O efeito da divergencia esta
+    limitado ao contexto dos turnos que vem depois de um turno ambiguo -- a
+    classificacao medida em cada turno e sempre a da primeira chamada, que e
+    a mesma que producao grava em `conversation_intent`.
     """
     historico: list[tuple[MessageRole, str]] = []
     resultados: list[Classificacao] = []
