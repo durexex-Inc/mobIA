@@ -18,11 +18,11 @@ PISO_DE_TURNOS = 120
 # Quantas conversas a execucao pode perder para falha de infraestrutura antes
 # de deixar de valer como medida.
 #
-# O numero vem do corpus e do piso, nao do gosto. Hoje sao 50 conversas e 135
-# turnos, e a conversa mais longa tem 3 turnos; a folga do piso e 135 - 120 =
-# 15 turnos. Cinco conversas abandonadas custam no pior caso 5 x 3 = 15
-# turnos: exatamente a folga. Cinco e portanto o maior teto sob o qual
-# abandono nenhum consegue furar o piso -- com seis, o pior caso ja e 117
+# O numero vem do corpus e do piso, nao do gosto. Hoje sao 50 conversas e 136
+# turnos, e a conversa mais longa tem 3 turnos; a folga do piso e 136 - 120 =
+# 16 turnos. Cinco conversas abandonadas custam no pior caso 5 x 3 = 15
+# turnos: uma folga de um turno sobra. O teto de 5 continua valido -- abandono
+# nenhum consegue furar o piso -- porque com seis, o pior caso ja seria 117
 # turnos, e os dois limites passariam a reprovar a mesma execucao por motivos
 # diferentes, com a mensagem decidida por quem for verificado primeiro.
 #
@@ -47,7 +47,7 @@ TETO_DE_CONVERSAS_ABANDONADAS = 5
 # O que da para afirmar sem medir e o piso da catastrofe. Se um ajuste de
 # prompt destruir a calibragem e jogar a confianca de **todo** turno abaixo do
 # limiar, todo turno vira INDEFINIDA em producao, e sobram como acerto so os
-# turnos cujo rotulo ja era INDEFINIDA: hoje 9 de 135, ou 6,7%. Um piso de 50%
+# turnos cujo rotulo ja era INDEFINIDA: hoje 9 de 136, ou 6,6%. Um piso de 50%
 # pega isso com margem enorme. E nenhum estado saudavel plausivel fica abaixo
 # de 50%, porque isso exigiria mais da metade dos turnos com confianca abaixo
 # de 0,6 -- que ja e achado que merece barrar por si.

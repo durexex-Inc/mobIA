@@ -25,7 +25,7 @@ def conversas() -> list[ConversaAnotada]:
 
     O pre-voo e o unico momento em que essa conta sai de graca. Depois dele
     toda descoberta custa dinheiro: um corpus curto medido do jeito antigo
-    gastava as ~135 chamadas inteiras para so entao reprovar no piso.
+    gastava as ~136 chamadas inteiras para so entao reprovar no piso.
 
     Nao e o mesmo check de `tests/unit/test_evals_corpus_real.py`, que guarda o
     corpus **commitado** no CI, nem o do fim do runner, que guarda o que

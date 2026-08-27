@@ -142,7 +142,7 @@ async def test_acuracia_de_intencao_no_corpus(
 ) -> None:
     """Uma falha de rede nao pode custar a execucao paga inteira.
 
-    Sao ~135 chamadas sequenciais com `MAX_TENTATIVAS = 1`. Antes, um 429 no
+    Sao ~136 chamadas sequenciais com `MAX_TENTATIVAS = 1`. Antes, um 429 no
     turno 90 subia pelo `for` e levava o dinheiro e os 89 resultados sem
     imprimir nada. Agora cada conversa e um envelope: a que falha e abandonada,
     registrada, e a proxima comeca. O relatorio sai sempre -- inclusive numa
