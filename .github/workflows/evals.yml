@@ -1,17 +1,17 @@
 name: Avaliacoes de IA
 
-# **NÃO há `paths` nem `paths-ignore` aqui.** Isto é deliberado.
+# **NAO ha `paths` nem `paths-ignore` aqui.** Isto e deliberado.
 #
-# A semântica do GitHub Actions é assimétrica: `paths` roda se algum arquivo
-# casa, mas `paths-ignore` roda se *qualquer* arquivo *não* casa. Num PR que
-# mude `src/mobia/domain/agente/classificador.py` (casa) E `README.md` (não
+# A semantica do GitHub Actions e assimetrica: `paths` roda se algum arquivo
+# casa, mas `paths-ignore` roda se *qualquer* arquivo *nao* casa. Num PR que
+# mude `src/mobia/domain/agente/classificador.py` (casa) E `README.md` (nao
 # casa), os dois workflows disparam no mesmo commit com o mesmo nome de job.
 # O check trivial passa primeiro e pode mascarar a falha real, liberando
-# regressão de prompt — exatamente o que este gate existe para impedir.
+# regressao de prompt — exatamente o que este gate existe para impedir.
 #
-# Solução: um workflow só, que sempre roda (exatamente um check run, nome
-# estável) mas decide no passo se o eval é necessário. Um job que passa sem
-# fazer nada é silencioso demais para investigação, então ele registra qual
+# Solucao: um workflow so, que sempre roda (exatamente um check run, nome
+# estavel) mas decide no passo se o eval e necessario. Um job que passa sem
+# fazer nada e silencioso demais para investigacao, entao ele registra qual
 # caminho tomou.
 on:
   pull_request:
@@ -63,7 +63,7 @@ jobs:
       - name: Log do resultado
         run: |
           if [ "${{ steps.filtro.outputs.mexeu }}" = "true" ]; then
-            echo "✓ Prompt ou eval mudou: avaliacoes foram executadas"
+            echo "[OK] Prompt ou eval mudou: avaliacoes foram executadas"
           else
-            echo "✓ Nenhum prompt ou eval mudou neste PR: avaliacao foi pulada"
+            echo "[OK] Nenhum prompt ou eval mudou neste PR: avaliacao foi pulada"
           fi
