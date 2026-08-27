@@ -567,21 +567,36 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   workflow único sempre rodar: um check obrigatório com filtro de `paths`
   nunca roda em PR que não toca aqueles caminhos, e a proteção de branch fica
   esperando para sempre, travando o merge — só que agora a resposta é um
-  único workflow sem filtro de gatilho, não dois workflows espelhados.
+  único workflow sem filtro de gatilho, não dois workflows espelhados. Este
+  raciocínio é hipotético hoje, porque o repositório não pode ter check
+  obrigatório (ver lacunas), mas é o que impede alguém de "otimizar" o gatilho
+  de volta para um filtro de `paths` e criar o problema no dia em que puder.
 - **`fetch-depth: 0` no checkout não é detalhe.** Sem histórico completo,
   `origin/${{ github.base_ref }}` não existe no clone raso e o `git diff` do
   passo de decisão falha — um erro que só apareceria no primeiro PR real, não
   em desenvolvimento local.
-- **Pré-requisito:** o segredo `ANTHROPIC_API_KEY` não existe neste
-  repositório. Sem ele o job falha no primeiro turno.
+- **Pré-requisito:** o segredo `ANTHROPIC_API_KEY` no repositório. Foi criado em
+  27/08/2026; sem ele o job não falha no primeiro turno — ele abandona cada
+  conversa com `ConfiguracaoInsegura`, sem gastar chamada nenhuma, e reprova
+  pelo teto de conversas abandonadas. O relatório sai dizendo o que houve.
 
 ### Lacunas conhecidas
 
-- **O gate nunca foi executado de verdade.** Só a coleta do corpus foi
-  verificada nesta tarefa — carregar os 5 arquivos, contar as 50 conversas e
-  os 136 turnos, conferir a distribuição por intenção. A execução real custa
-  136 chamadas pagas à API, e ficou como decisão do dono do repositório.
-  **O número de acurácia é desconhecido.**
+- **Não há como tornar `Avaliacoes de IA` um check obrigatório.** Proteção de
+  branch e rulesets exigem GitHub Team em organização, ou repositório público, e
+  o `durexex-Inc` está em plano gratuito com repositório privado: os endpoints
+  respondem `403 — Upgrade to GitHub Pro or make this repository public`. O gate
+  roda em todo PR que toque os caminhos, e o vermelho aparece na lista de
+  checks — mas **nada impede o merge por cima dele**. Hoje o que separa uma
+  regressão de prompt da `main` é disciplina de quem mergeia, não trava. Se o
+  time crescer, ou o merge passar a ser feito por quem não acompanhou o PR, a
+  trava deixa de ser opcional.
+- **Uma medição, não uma distribuição.** A baseline de 27/08/2026 é uma amostra
+  única: 95,6% na crua, 92,6% na efetiva. Os pisos foram escolhidos em torno
+  dela, e o ruído real entre execuções é estimado (±1,5%), não medido. Um gate
+  relativo a histórico — bloquear por queda maior que a dispersão observada —
+  exigiria guardar as execuções, e o relatório hoje vive só no log efêmero do
+  CI. Enquanto isso, um vermelho perto da borda pode ser variância.
 - ~~**Degradação parcial de calibração não barra.**~~ Fechada quando a baseline
   medida substituiu o piso de 50% pelas faixas de 90/84. Meio corpus rebaixado
   dava exatamente 50% e passava; hoje é vermelho.
