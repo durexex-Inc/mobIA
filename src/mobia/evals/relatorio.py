@@ -16,7 +16,9 @@ def render(
     if confusao:
         linhas += ["", "## Matriz de confusao", "", "esperada -> obtida (contagem)", ""]
         for esperada in sorted(confusao, key=lambda i: i.value):
-            for obtida, quantas in sorted(confusao[esperada].items(), key=lambda par: -par[1]):
+            for obtida, quantas in sorted(
+                confusao[esperada].items(), key=lambda par: (-par[1], par[0].value)
+            ):
                 marca = "" if esperada is obtida else "  <-- erro"
                 linhas.append(f"- {esperada.value} -> {obtida.value}: {quantas}{marca}")
 

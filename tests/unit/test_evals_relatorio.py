@@ -37,3 +37,23 @@ def test_matriz_mostra_para_onde_a_intencao_escorreu() -> None:
     assert "INVESTIMENTO" in texto
     assert "COMPRA" in texto
     assert "7" in texto
+
+
+def test_matriz_ordena_erros_por_valor_quando_empata_em_contagem() -> None:
+    """Quando duas obtida tem a mesma contagem, deve ordenar deterministica
+    por .value do enum, nao pela ordem de insercao do dict. Testa com insercao
+    invertida (COMPRA antes de ALUGUEL) para pegar o sort sem desempate."""
+    confusao = {
+        Intencao.INVESTIMENTO: {
+            Intencao.COMPRA: 3,
+            Intencao.ALUGUEL: 3,
+        }
+    }
+
+    texto = render([], confusao)
+
+    linhas = texto.split("\n")
+    idx_aluguel = next(i for i, linha in enumerate(linhas) if "ALUGUEL" in linha)
+    idx_compra = next(i for i, linha in enumerate(linhas) if "COMPRA" in linha)
+
+    assert idx_aluguel < idx_compra, "ALUGUEL deve aparecer antes de COMPRA (ordem alfabetica)"
