@@ -49,8 +49,10 @@ def contexto_do_historico(
     (TEC-145) nao existe, entao nao ha o que preencher.
     """
     literais = [mensagem_transiente(texto, papel=papel) for papel, texto in historico]
-    # Estimativa de tokens: len(sistema) + soma dos textos divido por 4.
-    # Mesmo calculo que em montagem._estimar, adaptado para o caso sem resumo/estado.
+    # Estimativa de tokens: len(sistema) + soma dos textos brutos divido por 4.
+    # Diverge de montagem._estimar: nao inclui prefixo "[ROLE] " nem separadores.
+    # tokens nao alimenta decisao nenhuma no eval -- so preenche campo obrigatorio do
+    # dataclass. O valor e lido apenas por __repr__, nunca por logica de negocio.
     estimativa = len(sistema) + sum(len(texto) for _, texto in historico)
     tokens = estimativa // 4
     return ContextoMontado(

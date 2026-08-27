@@ -15,9 +15,11 @@ def test_mensagem_transiente_nao_precisa_de_sessao() -> None:
 
 
 def test_o_texto_original_chega_ao_prompt() -> None:
-    """Cifrar com o AAD errado nao levanta erro: `decrypt` devolve None e a
-    montagem troca por '(mensagem sem texto)'. O lead sumiria do prompt em
-    silencio e a acuracia despencaria sem causa visivel.
+    """O id gerado antes da cifra deve coincidir com o id da linha.
+
+    Se cifrado com AAD errado, decrypt levanta DecryptionError e aborta a
+    montagem do prompt. O teste garante que o id passado para encrypt eh o
+    mesmo que sera usado em decrypt durante montar_prompt.
     """
     contexto = contexto_do_historico(
         [
