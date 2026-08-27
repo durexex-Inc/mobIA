@@ -7,7 +7,7 @@ name: Avaliacoes de IA
 # mude `src/mobia/domain/agente/classificador.py` (casa) E `README.md` (nao
 # casa), os dois workflows disparam no mesmo commit com o mesmo nome de job.
 # O check trivial passa primeiro e pode mascarar a falha real, liberando
-# regressao de prompt — exatamente o que este gate existe para impedir.
+# regressao de prompt -- exatamente o que este gate existe para impedir.
 #
 # Solucao: um workflow so, que sempre roda (exatamente um check run, nome
 # estavel) mas decide no passo se o eval e necessario. Um job que passa sem
@@ -36,8 +36,15 @@ jobs:
       - name: Decidir se o prompt mudou
         id: filtro
         run: |
-          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
-             | grep -qE '^(src/mobia/domain/agente/|src/mobia/evals/|evals/)'; then
+          set -euo pipefail
+          # Capturar git diff explicitamente e checar status antes de decidir.
+          # Se o diff falhar (ref nao resolvida, ou outro erro), o passo falha
+          # com mensagem clara, nao silencioso em mexeu=false que liberaria merge.
+          if ! alterados="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"; then
+            echo "git diff falhou: nao da para saber se o prompt mudou" >&2
+            exit 1
+          fi
+          if printf '%s\n' "$alterados" | grep -qE '^(src/mobia/domain/agente/|src/mobia/evals/|evals/)'; then
             echo "mexeu=true" >> "$GITHUB_OUTPUT"
           else
             echo "mexeu=false" >> "$GITHUB_OUTPUT"

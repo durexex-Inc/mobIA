@@ -439,16 +439,33 @@ sobe Postgres nem Redis — só Python e a chave da API.
   O piso de 120 turnos (`PISO_DE_TURNOS`) é o que garante que um único turno
   não valha mais de 0,8% e a faixa amarela continue absorvendo o ruído entre
   execuções — os 135 turnos reais folgam esse piso em 15.
-- `evals.yml` roda o gate com `paths` filtrando em `src/mobia/domain/agente/**`,
-  `src/mobia/evals/**` e `evals/**` — a maioria dos PRs não paga nada.
-  `evals-skip.yml` é o par dele: um check obrigatório com filtro de `paths`
+- **`evals.yml` é um workflow só, sem `paths` nem `paths-ignore`, e roda em
+  todo `pull_request`** — sempre exatamente um check run, com nome estável
+  (`Avaliacoes de IA`). Um passo inicial decide sozinho se o PR mexeu em
+  prompt de agente, comparando `git diff --name-only
+  "origin/${{ github.base_ref }}...HEAD"` contra o regex
+  `^(src/mobia/domain/agente/|src/mobia/evals/|evals/)`; só quando bate é que
+  os passos caros (instalar dependências, chamar o modelo) rodam — a maioria
+  dos PRs não paga nada, mas o check aparece do mesmo jeito, com um log
+  dizendo qual caminho foi tomado, para não virar um "passou sem fazer nada"
+  silencioso demais para investigar.
+- **Esse desenho de workflow único substitui um par que existiu antes**
+  (`evals.yml` com `paths` de inclusão, `evals-skip.yml` com o
+  `paths-ignore` complementar) e que tinha uma corrida real. A semântica do
+  GitHub Actions é assimétrica: `paths` roda se *algum* arquivo casa,
+  `paths-ignore` roda se *qualquer* arquivo *não* casa. Um PR que mudasse
+  `classificador.py` (casa) e também `README.md` (não casa) disparava os
+  **dois** workflows no mesmo commit, com o mesmo nome de check — e o check
+  trivial (`evals-skip.yml`) podia terminar primeiro e mascarar a falha real
+  do outro. O motivo de existir um par continua válido e é o motivo de o
+  workflow único sempre rodar: um check obrigatório com filtro de `paths`
   nunca roda em PR que não toca aqueles caminhos, e a proteção de branch fica
-  esperando para sempre, travando o merge. O `paths-ignore` de um é o
-  complemento exato dos `paths` do outro, e os dois jobs têm o mesmo nome
-  (`Avaliacoes de IA`) para aparecerem como o mesmo check perante a proteção
-  de branch. **Se um arquivo mudar de caminho, o outro tem de mudar junto** —
-  divergência entre os dois cria PR onde nenhum dos dois roda, e o merge
-  trava sem explicação nenhuma.
+  esperando para sempre, travando o merge — só que agora a resposta é um
+  único workflow sem filtro de gatilho, não dois workflows espelhados.
+- **`fetch-depth: 0` no checkout não é detalhe.** Sem histórico completo,
+  `origin/${{ github.base_ref }}` não existe no clone raso e o `git diff` do
+  passo de decisão falha — um erro que só apareceria no primeiro PR real, não
+  em desenvolvimento local.
 - **Pré-requisito:** o segredo `ANTHROPIC_API_KEY` não existe neste
   repositório. Sem ele o job falha no primeiro turno.
 
@@ -459,10 +476,13 @@ sobe Postgres nem Redis — só Python e a chave da API.
   os 135 turnos, conferir a distribuição por intenção. A execução real custa
   135 chamadas pagas à API, e ficou como decisão do dono do repositório.
   **O número de acurácia é desconhecido.**
-- **O path filter tem um buraco.** Uma mudança em `montagem.py` altera o que
-  o modelo vê sem tocar em nenhum prompt de agente, e passa livre pelo
-  filtro de `paths`. Cobrir isso exigiria rodar o gate em todo PR, com o
-  custo e o flake que a decisão do limiar amarelo rejeitou.
+- **O filtro interno de `evals.yml` tem um buraco.** `montagem.py` mora em
+  `src/mobia/domain/context/`, que não casa com o regex
+  `^(src/mobia/domain/agente/|src/mobia/evals/|evals/)` do passo "Decidir se
+  o prompt mudou". Uma mudança ali altera o que o modelo vê — o contexto que
+  ele recebe — sem tocar em nenhum prompt de agente, e passa livre sem rodar
+  o eval. Cobrir isso exigiria rodar o gate em todo PR, com o custo e o
+  flake que a decisão do limiar amarelo rejeitou.
 - **Corpus sintético não é tráfego real.** Cento e trinta e cinco turnos
   escritos por quem conhece o sistema carregam o viés de quem os escreveu, e
   nenhuma anotação cuidadosa remove isso. O número que sair daqui é um piso
