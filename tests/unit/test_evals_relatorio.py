@@ -1,12 +1,39 @@
+from decimal import Decimal
+
 from mobia.domain.agente.schemas import Intencao
-from mobia.evals.metricas import Classificacao, acuracia_de_intencao, sem_mecanismo
+from mobia.evals.metricas import (
+    Classificacao,
+    ResumoDeConfianca,
+    acuracia_de_intencao,
+    sem_mecanismo,
+)
 from mobia.evals.relatorio import render
+
+CONFIANTE = Decimal("0.90")
+INSEGURA = Decimal("0.50")
+
+
+def classificacao(
+    esperada: Intencao,
+    obtida: Intencao,
+    *,
+    confianca: Decimal = CONFIANTE,
+    conversa_id: str = "c-01",
+    indice: int = 0,
+) -> Classificacao:
+    return Classificacao(
+        conversa_id=conversa_id,
+        indice=indice,
+        esperada=esperada,
+        obtida=obtida,
+        confianca=confianca,
+    )
 
 
 def test_relatorio_aponta_qual_metrica_regrediu() -> None:
     """O criterio de aceite do card exige que o relatorio diga qual metrica
     caiu, nao apenas que algo caiu."""
-    metricas = [acuracia_de_intencao([Classificacao("c", 0, Intencao.COMPRA, Intencao.ALUGUEL)])]
+    metricas = [acuracia_de_intencao([classificacao(Intencao.COMPRA, Intencao.ALUGUEL)])]
 
     texto = render(metricas, {})
 
@@ -57,3 +84,26 @@ def test_matriz_ordena_erros_por_valor_quando_empata_em_contagem() -> None:
     idx_compra = next(i for i, linha in enumerate(linhas) if "COMPRA" in linha)
 
     assert idx_aluguel < idx_compra, "ALUGUEL deve aparecer antes de COMPRA (ordem alfabetica)"
+
+
+def test_relatorio_traz_a_contagem_de_turnos_abaixo_do_limiar() -> None:
+    """Sem esta secao, recalibrar o limiar exigiria outra execucao paga: e o
+    unico lugar onde as contagens de confianca saem da execucao."""
+    resumo = ResumoDeConfianca(
+        turnos=100, abaixo_do_limiar=21, acertos_rebaixados=18, acertos_recuperados=3
+    )
+
+    texto = render([], {}, confianca=resumo)
+
+    assert "## Confianca" in texto
+    assert "21/100" in texto
+    assert "acertos rebaixados para INDEFINIDA: 18" in texto
+    assert "erros que o rebaixamento acertou: 3" in texto
+
+
+def test_relatorio_sem_resumo_de_confianca_omite_a_secao() -> None:
+    """Uma secao de confianca com zeros mentiria: zero turnos abaixo do
+    limiar e um resultado, "nao foi medido" e outro."""
+    texto = render([], {})
+
+    assert "## Confianca" not in texto
