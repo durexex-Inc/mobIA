@@ -90,9 +90,25 @@ jobs:
         if: steps.filtro.outputs.mexeu == 'true'
         run: pip install -e ".[dev]"
 
-      - name: Validar o corpus (gratis, antes de gastar com o modelo)
-        if: steps.filtro.outputs.mexeu == 'true'
-        run: python -m pytest tests/unit/test_evals_corpus_real.py -q
+      # Nao ha passo de "validar o corpus" aqui. Ja existe validacao gratis
+      # em dois lugares, e nenhum dos dois pode ou precisa rodar neste job:
+      #   - evals/conftest.py, fixture `conversas`: carrega o corpus e confere
+      #     o piso de turnos no setup, antes da primeira chamada paga do
+      #     passo abaixo. Isto ja cobre "nao pagar por um corpus quebrado".
+      #   - tests/unit/test_evals_corpus_real.py: guarda os invariantes
+      #     completos do corpus (50 conversas, 7 intencoes, injecoes,
+      #     prefixos). Ele roda no job "Testes" de ci.yml, que declara
+      #     `services: postgres` e `redis` e executa em todo PR.
+      # Qualquer arquivo sob `tests/` herda as fixtures `autouse` de
+      # tests/conftest.py (`migrar_banco` roda `alembic upgrade head` com
+      # `check=True`, `banco_limpo` faz TRUNCATE) e por isso exige Postgres.
+      # Este job nao declara `services:` de proposito -- roda so Python e a
+      # chave da API -- entao nenhum teste de `tests/` pode entrar aqui.
+      # Ja aconteceu de alguem reintroduzir um passo assim achando que
+      # evitava gasto com corpus quebrado: os 8 testes davam ERROR de
+      # CalledProcessError do alembic, o passo falhava, e o check
+      # obrigatorio "Avaliacoes de IA" ficava vermelho em todo PR sem nunca
+      # medir nada.
 
       - name: Rodar as avaliacoes
         if: steps.filtro.outputs.mexeu == 'true'
