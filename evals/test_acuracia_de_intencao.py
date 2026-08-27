@@ -17,6 +17,7 @@ from mobia.evals.metricas import (
     acuracia_de_intencao,
     acuracia_efetiva,
     bloqueia,
+    erros,
     matriz_de_confusao,
     resumo_de_confianca,
     sem_mecanismo,
@@ -112,6 +113,7 @@ async def test_acuracia_de_intencao_no_corpus(
         metricas,
         matriz_de_confusao(resultados),
         confianca=resumo_de_confianca(resultados),
+        erradas=erros(resultados),
     )
     with capsys.disabled():
         print("\n" + relatorio)

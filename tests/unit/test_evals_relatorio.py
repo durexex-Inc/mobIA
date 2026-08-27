@@ -101,6 +101,64 @@ def test_relatorio_traz_a_contagem_de_turnos_abaixo_do_limiar() -> None:
     assert "erros que o rebaixamento acertou: 3" in texto
 
 
+def test_relatorio_nomeia_cada_turno_errado() -> None:
+    """O agregado nao da para investigar. A matriz diz que INVESTIMENTO virou
+    COMPRA sete vezes e nao diz quais sete; descobrir isso sem estas linhas
+    custa outra execucao paga, porque o relatorio vive em log efemero de CI.
+    """
+    erradas = [
+        classificacao(
+            Intencao.INVESTIMENTO,
+            Intencao.COMPRA,
+            conversa_id="investimento-04",
+            indice=2,
+            confianca=Decimal("0.91"),
+        ),
+    ]
+
+    texto = render([], {}, erradas=erradas)
+
+    assert "## Classificacoes erradas" in texto
+    assert "- investimento-04[2]: INVESTIMENTO -> COMPRA (0.91)" in texto
+
+
+def test_relatorio_distingue_o_acerto_rebaixado_do_erro_de_classificacao() -> None:
+    """As duas linhas pedem acoes diferentes: uma e calibragem da confianca,
+    a outra e o classificador errando. E sem a marca a primeira pareceria bug
+    do relatorio, porque mostra `esperada -> obtida` iguais."""
+    rebaixada = classificacao(
+        Intencao.COMPRA, Intencao.COMPRA, conversa_id="compra-07", indice=1, confianca=INSEGURA
+    )
+    errada = classificacao(
+        Intencao.ALUGUEL, Intencao.COMPRA, conversa_id="aluguel-02", indice=0, confianca=CONFIANTE
+    )
+
+    texto = render([], {}, erradas=[rebaixada, errada])
+
+    assert "- compra-07[1]: COMPRA -> COMPRA (0.50)  <-- certa, rebaixada para INDEFINIDA" in texto
+    assert "- aluguel-02[0]: ALUGUEL -> COMPRA (0.90)" in texto
+    assert "aluguel-02[0]: ALUGUEL -> COMPRA (0.90)  <--" not in texto
+
+
+def test_relatorio_marca_o_erro_que_o_rebaixamento_acerta() -> None:
+    """Explica a acuracia efetiva ficar acima da crua. Sem a marca, esta
+    linha na lista de erradas contradiz a metrica logo acima dela."""
+    recuperada = classificacao(
+        Intencao.INDEFINIDA, Intencao.COMPRA, conversa_id="borda-evasivo-01", confianca=INSEGURA
+    )
+
+    texto = render([], {}, erradas=[recuperada])
+
+    assert "<-- errada, mas o rebaixamento acerta o rotulo" in texto
+
+
+def test_relatorio_sem_erradas_omite_a_secao() -> None:
+    """Execucao sem erro nenhum nao ganha um cabecalho vazio."""
+    texto = render([], {})
+
+    assert "## Classificacoes erradas" not in texto
+
+
 def test_relatorio_sem_resumo_de_confianca_omite_a_secao() -> None:
     """Uma secao de confianca com zeros mentiria: zero turnos abaixo do
     limiar e um resultado, "nao foi medido" e outro."""

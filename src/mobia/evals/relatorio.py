@@ -1,7 +1,50 @@
 from collections.abc import Sequence
 
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
-from mobia.evals.metricas import ResultadoDaMetrica, ResumoDeConfianca
+from mobia.evals.metricas import Classificacao, ResultadoDaMetrica, ResumoDeConfianca
+
+
+def _marca_de(errada: Classificacao) -> str:
+    """Por que este turno entrou na lista, quando a linha nao deixa obvio.
+
+    Os tres casos nao pedem a mesma acao. Palpite certo e rebaixado e
+    calibragem; palpite errado que o rebaixamento salva explica a acuracia
+    efetiva estar acima da crua; palpite errado e rebaixado erra duas vezes.
+    Sem a marca, a primeira linha ainda pareceria um bug do relatorio -- ela
+    mostra `esperada -> obtida` iguais.
+    """
+    if errada.certa:
+        return "  <-- certa, rebaixada para INDEFINIDA"
+    if errada.certa_na_efetiva:
+        return "  <-- errada, mas o rebaixamento acerta o rotulo"
+    if errada.desambiguaria:
+        return "  <-- errada, e rebaixada para INDEFINIDA"
+    return ""
+
+
+def _secao_de_erradas(erradas: Sequence[Classificacao]) -> list[str]:
+    """Nomeia turno por turno, porque agregado nao da para investigar.
+
+    A matriz diz que INVESTIMENTO virou COMPRA sete vezes; ela nao diz quais
+    sete. Sem estas linhas, descobrir isso custa outra execucao paga -- e o
+    relatorio vive em log efemero de CI, entao ou esta aqui ou nao existe.
+    Sem teto de linhas de proposito: no pior caso e um turno por linha, e uma
+    lista truncada devolve o leitor exatamente ao problema que ela resolve.
+    """
+    linhas = [
+        "",
+        "## Classificacoes erradas",
+        "",
+        "conversa_id[indice]: esperada -> obtida (confianca)",
+        "",
+    ]
+    for errada in erradas:
+        linhas.append(
+            f"- {errada.conversa_id}[{errada.indice}]: "
+            f"{errada.esperada.value} -> {errada.obtida.value} "
+            f"({errada.confianca}){_marca_de(errada)}"
+        )
+    return linhas
 
 
 def _secao_de_confianca(resumo: ResumoDeConfianca) -> list[str]:
@@ -29,6 +72,7 @@ def render(
     confusao: dict[Intencao, dict[Intencao, int]],
     *,
     confianca: ResumoDeConfianca | None = None,
+    erradas: Sequence[Classificacao] = (),
 ) -> str:
     linhas = ["# Avaliacao da classificacao de intencao", ""]
 
@@ -37,6 +81,9 @@ def render(
 
     if confianca is not None:
         linhas += _secao_de_confianca(confianca)
+
+    if erradas:
+        linhas += _secao_de_erradas(erradas)
 
     if confusao:
         linhas += ["", "## Matriz de confusao", "", "esperada -> obtida (contagem)", ""]
