@@ -6,8 +6,6 @@ import pytest
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
 from mobia.evals.corpus import carregar, total_de_turnos
 from mobia.evals.metricas import (
-    PISO_DE_BLOQUEIO_PCT,
-    PISO_DE_CATASTROFE_EFETIVA_PCT,
     PISO_DE_TURNOS,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
@@ -17,7 +15,6 @@ from mobia.evals.metricas import (
     bloqueia,
     erros,
     faixa_de,
-    faixa_de_catastrofe,
     matriz_de_confusao,
     resumo_de_confianca,
     sem_mecanismo,
@@ -184,14 +181,16 @@ def test_a_catastrofe_de_calibragem_bloqueia_com_a_crua_verde() -> None:
     assert bloqueia([crua, efetiva])
 
 
-def test_degradacao_parcial_de_calibragem_nao_bloqueia() -> None:
-    """A limitacao declarada do piso de catastrofe, fixada por teste para que
-    ninguem a descubra por acidente achando que e bug.
+def test_degradacao_parcial_de_calibragem_bloqueia() -> None:
+    """Este teste era o inverso, e a inversao e o ganho da baseline.
 
-    Metade dos turnos rebaixados da exatamente 50%, e 50% passa. O piso pega
-    catastrofe, nao degradacao parcial; a degradacao parcial aparece na secao
-    "Confianca" do relatorio e nas linhas marcadas como rebaixadas. Quando a
-    primeira execucao paga der a baseline, este piso aperta e este teste muda.
+    Com o piso proprio de 50%, metade do corpus rebaixado dava exatamente 50%
+    e passava: a degradacao parcial aparecia so no relatorio, e isso estava
+    declarado como limitacao. Desde que a efetiva herdou `PISO_DE_BLOQUEIO_PCT`
+    ela bloqueia -- metade rebaixada da 50%, muito abaixo de 84%.
+
+    Meia calibragem perdida e metade dos leads recebendo pergunta em vez de
+    atendimento. Nao deveria caber num gate verde, e nao cabe mais.
     """
     confiantes = [
         classificacao(Intencao.COMPRA, Intencao.COMPRA, indice=i, confianca=CONFIANTE)
@@ -206,8 +205,8 @@ def test_degradacao_parcial_de_calibragem_nao_bloqueia() -> None:
     efetiva = acuracia_efetiva(classificacoes)
 
     assert efetiva.acertos == 5
-    assert efetiva.faixa is Faixa.AMARELO
-    assert not bloqueia([efetiva])
+    assert efetiva.faixa is Faixa.VERMELHO
+    assert bloqueia([efetiva])
 
 
 def test_acuracia_efetiva_pode_passar_da_crua_em_turno_indefinido() -> None:
@@ -273,41 +272,32 @@ def test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("acertos", "total", "esperada"),
-    [
-        (70, 140, Faixa.AMARELO),  # exatamente 50%, o piso -- ainda passa
-        (69, 140, Faixa.VERMELHO),  # um abaixo do piso
-        (68, 136, Faixa.AMARELO),  # 50% exato no tamanho do corpus
-        (67, 136, Faixa.VERMELHO),  # 49,3% no tamanho do corpus
-        (9, 136, Faixa.VERMELHO),  # a catastrofe: sobram so os rotulos INDEFINIDA
-        (136, 136, Faixa.AMARELO),  # nunca VERDE, nem com tudo certo
-    ],
-)
-def test_bordas_do_piso_de_catastrofe(acertos: int, total: int, esperada: Faixa) -> None:
-    """As bordas do unico numero que esta metrica pode defender hoje.
+def test_a_efetiva_usa_as_mesmas_faixas_da_crua() -> None:
+    """O que a baseline mudou, fixado por teste.
 
-    O caso 136/136 nao e redundante: fixa que a faixa nunca sobe para VERDE.
-    VERDE afirmaria "bateu o alvo", e alvo calibrado e exatamente o que nao
-    existe -- reportar VERDE convidaria a leitura de que a acuracia efetiva
-    esta boa, que e o que esta metrica existe para nao deixar acontecer.
+    Antes a efetiva tinha faixa propria de duas saidas e nunca chegava a VERDE,
+    porque nao havia alvo calibrado. A execucao de 2026-08-27 mediu 92,6%, e o
+    alvo de 90% do criterio de aceite pertence a esta metrica ao menos tanto
+    quanto a crua: e a intencao efetiva que o lead experimenta.
 
-    O caso 9/136 e o corpus de hoje sob catastrofe total de calibragem: se
-    todo turno cair abaixo do limiar, sobram como acerto so os 9 turnos cujo
-    rotulo ja era INDEFINIDA. E o cenario de onde o piso de 50% saiu.
+    Os tres casos abaixo sao as mesmas bordas de `faixa_de`, verificadas pela
+    metrica de ponta a ponta -- se alguem devolver um piso proprio, algum
+    deles falha.
     """
-    assert faixa_de_catastrofe(acertos, total) is esperada
 
+    def efetiva_com(acertos: int, total: int) -> Faixa:
+        certas = [
+            classificacao(Intencao.COMPRA, Intencao.COMPRA, indice=i, confianca=CONFIANTE)
+            for i in range(acertos)
+        ]
+        erradas = [
+            classificacao(
+                Intencao.COMPRA, Intencao.ALUGUEL, indice=acertos + i, confianca=CONFIANTE
+            )
+            for i in range(total - acertos)
+        ]
+        return acuracia_efetiva(certas + erradas).faixa
 
-def test_o_piso_de_catastrofe_nao_e_o_piso_de_bloqueio() -> None:
-    """Os dois numeros respondem perguntas diferentes, e trocar um pelo outro
-    foi o erro que esta separacao conserta. Se alguem alinhar os dois, ou este
-    teste falha, ou a metrica voltou a ter piso nao medido."""
-    assert PISO_DE_CATASTROFE_EFETIVA_PCT == 50
-    assert PISO_DE_CATASTROFE_EFETIVA_PCT < PISO_DE_BLOQUEIO_PCT
-
-
-def test_faixa_de_catastrofe_recusa_total_zero() -> None:
-    """Mesma guarda de `faixa_de`: nada medido nao e sucesso."""
-    with pytest.raises(ValueError):
-        faixa_de_catastrofe(0, 0)
+    assert efetiva_com(90, 100) is Faixa.VERDE
+    assert efetiva_com(84, 100) is Faixa.AMARELO
+    assert efetiva_com(83, 100) is Faixa.VERMELHO

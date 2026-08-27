@@ -34,35 +34,31 @@ PISO_DE_TURNOS = 120
 # ai nem os turnos que passaram merecem ser lidos como medida do prompt.
 TETO_DE_CONVERSAS_ABANDONADAS = 5
 
-# Piso proprio da `acuracia_efetiva`, deliberadamente **nao**
-# `PISO_DE_BLOQUEIO_PCT`. Os dois numeros nao respondem a mesma pergunta, e
-# confundi-los foi a primeira tentativa desta metrica.
+# A `acuracia_efetiva` usa as MESMAS faixas da crua -- `ALVO_PCT` e
+# `PISO_DE_BLOQUEIO_PCT` -- e nao um piso proprio.
 #
-# 50 nao e barra de qualidade: e detector de catastrofe. Ninguem sabe qual e a
-# acuracia efetiva saudavel deste agente, porque medi-la exige a execucao paga
-# que ainda nao rodou. Cravar 90/84 aqui seria repetir o erro que o proprio
-# `LIMIAR_DE_DESAMBIGUACAO` documenta -- numero do SRS, nao calibrado -- e
-# poderia abrir VERMELHO na primeira execucao sem regressao nenhuma.
+# Ela teve um piso proprio de 50% enquanto a baseline nao existia. Aquilo era
+# andaime: ninguem sabia qual acuracia efetiva era saudavel, cravar 90/84 seria
+# piso nao medido, e um piso nao medido podia abrir VERMELHO na primeira
+# execucao sem regressao nenhuma. O piso de 50% respondia so "a calibragem
+# desabou por completo?", porque com todo turno rebaixado sobram como acerto
+# apenas os rotulos que ja eram INDEFINIDA -- 9 de 136, ou 6,6%.
 #
-# O que da para afirmar sem medir e o piso da catastrofe. Se um ajuste de
-# prompt destruir a calibragem e jogar a confianca de **todo** turno abaixo do
-# limiar, todo turno vira INDEFINIDA em producao, e sobram como acerto so os
-# turnos cujo rotulo ja era INDEFINIDA: hoje 9 de 136, ou 6,6%. Um piso de 50%
-# pega isso com margem enorme. E nenhum estado saudavel plausivel fica abaixo
-# de 50%, porque isso exigiria mais da metade dos turnos com confianca abaixo
-# de 0,6 -- que ja e achado que merece barrar por si.
+# A primeira execucao paga rodou em 2026-08-27 e mediu 126/136, ou 92,6%. Com
+# isso o andaime sai, por um motivo que a medicao tornou obvio: os 90% do
+# criterio de aceite sao sobre o que o lead experimenta, e o lead experimenta a
+# intencao **efetiva**, nao o palpite cru. O alvo pertence a esta metrica ao
+# menos tanto quanto a outra.
 #
-# Provisorio. Quando a primeira execucao paga der a baseline real, esta
-# constante vira um par alvo/piso como o da acuracia crua, apertado em torno
-# do que se mediu, e a metrica passa a poder ficar VERDE.
+# Consequencia boa: degradacao **parcial** de calibragem passa a bloquear. Com
+# o piso de 50% ela nao bloqueava -- metade do corpus rebaixado ainda dava 50%
+# e passava --, e essa limitacao estava declarada. Deixou de existir.
 #
-# Limitacao declarada, e ela e o preco desta escolha: degradacao **parcial** de
-# calibragem nao bloqueia. Meio corpus rebaixado ainda da 50% e passa. Isso
-# aparece so no relatorio -- na secao "Confianca" e nas linhas marcadas
-# `certa, rebaixada para INDEFINIDA` --, e nao no vermelho do gate. Foi
-# aceito de proposito: barrar com piso inventado custa mais do que deixar
-# passar o que o relatorio mostra.
-PISO_DE_CATASTROFE_EFETIVA_PCT = 50
+# Consequencia a aceitar: 92,6% deixa 2,6 pontos entre a medida e o alvo, e o
+# ruido esperado entre execucoes e da ordem de +/-1,5%. A efetiva vai oscilar
+# entre VERDE e AMARELO perto da borda. AMARELO nao bloqueia; sao 8,6 pontos
+# ate o piso de 84%. E a TEC-235 deve subir a efetiva, nao baixa-la: a medicao
+# mostrou que o rebaixamento perdeu 4 acertos e recuperou zero.
 
 
 class Faixa(StrEnum):
@@ -180,24 +176,6 @@ def faixa_de(acertos: int, total: int) -> Faixa:
     return Faixa.VERMELHO
 
 
-def faixa_de_catastrofe(acertos: int, total: int) -> Faixa:
-    """A faixa da acuracia efetiva: so distingue catastrofe de nao-catastrofe.
-
-    Duas saidas, e nao tres, porque so ha um numero defensavel. AMARELO e o
-    melhor que esta metrica pode reportar hoje: VERDE afirmaria "bateu o alvo",
-    e alvo calibrado e exatamente o que nao existe ainda -- ver
-    `PISO_DE_CATASTROFE_EFETIVA_PCT`. Reportar VERDE convidaria a leitura que
-    esta metrica existe para impedir, a de que a acuracia efetiva esta boa.
-
-    Aritmetica inteira pelo mesmo motivo de `faixa_de`: exata por construcao.
-    """
-    if total <= 0:
-        raise ValueError("nada medido nao e sucesso: total de turnos e zero")
-    if acertos * 100 >= total * PISO_DE_CATASTROFE_EFETIVA_PCT:
-        return Faixa.AMARELO
-    return Faixa.VERMELHO
-
-
 def _detalhe(acertos: int, total: int, referencia: str) -> str:
     pct = acertos * 100 / total
     return f"{acertos}/{total} ({pct:.1f}%), {referencia}"
@@ -225,13 +203,14 @@ def acuracia_de_intencao(classificacoes: Sequence[Classificacao]) -> ResultadoDa
 def acuracia_efetiva(classificacoes: Sequence[Classificacao]) -> ResultadoDaMetrica:
     """Acuracia do que producao roteia, e nao do que o modelo palpitou.
 
-    Metrica propria, e bloqueia -- mas pelo seu proprio piso, o de catastrofe,
-    e nao pelas faixas da crua. Ela nao pode ser detalhe da outra: uma linha
-    informativa dentro de `acuracia de intencao` nunca ficaria VERMELHA, e e
-    justamente a regressao invisivel na acuracia crua que o gate precisa
-    barrar. E nao pode herdar 90/84, que seria piso nao medido. As duas coisas
-    se resolvem separando o que a metrica **protege** do que ela **mede**: ver
-    `PISO_DE_CATASTROFE_EFETIVA_PCT`.
+    Metrica propria, e bloqueia pelas mesmas faixas da crua. Ela nao pode ser
+    detalhe da outra: uma linha informativa dentro de `acuracia de intencao`
+    nunca ficaria VERMELHA, e e justamente a regressao invisivel na acuracia
+    crua que o gate precisa barrar.
+
+    Herdar 90/84 seria piso nao medido enquanto a baseline nao existia -- por
+    isso ela nasceu com piso proprio. A baseline existe desde 2026-08-27
+    (92,6%), e o andaime saiu: ver o comentario de `ALVO_PCT`.
 
     Separadas, as duas ainda diferenciam o diagnostico -- as duas vermelhas e
     o classificador degradando; a crua verde e esta vermelha e a calibragem da
@@ -244,7 +223,7 @@ def acuracia_efetiva(classificacoes: Sequence[Classificacao]) -> ResultadoDaMetr
     total = len(classificacoes)
     acertos = sum(1 for c in classificacoes if c.certa_na_efetiva)
     # Antes de `_detalhe`, que divide: e a faixa que recusa total zero.
-    faixa = faixa_de_catastrofe(acertos, total)
+    faixa = faixa_de(acertos, total)
     return ResultadoDaMetrica(
         nome="acuracia efetiva (o que producao roteia)",
         faixa=faixa,
@@ -253,7 +232,7 @@ def acuracia_efetiva(classificacoes: Sequence[Classificacao]) -> ResultadoDaMetr
         detalhe=_detalhe(
             acertos,
             total,
-            f"sem alvo calibrado; piso de catastrofe {PISO_DE_CATASTROFE_EFETIVA_PCT}%",
+            f"alvo {ALVO_PCT}%, piso {PISO_DE_BLOQUEIO_PCT}%",
         ),
     )
 
