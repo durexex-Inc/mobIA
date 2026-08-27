@@ -22,7 +22,7 @@ PISO_DE_TURNOS = 120
 # turnos, e a conversa mais longa tem 3 turnos; a folga do piso e 136 - 120 =
 # 16 turnos. Cinco conversas abandonadas custam no pior caso 5 x 3 = 15
 # turnos: uma folga de um turno sobra. O teto de 5 continua valido -- abandono
-# nenhum consegue furar o piso -- porque com seis, o pior caso ja seria 117
+# nenhum consegue furar o piso -- porque com seis, o pior caso ja seria 118
 # turnos, e os dois limites passariam a reprovar a mesma execucao por motivos
 # diferentes, com a mensagem decidida por quem for verificado primeiro.
 #
