@@ -27,16 +27,24 @@ jobs:
   avaliacoes:
     name: Avaliacoes de IA
     runs-on: ubuntu-latest
-    # 135 chamadas sequenciais ao classificador (uma por turno anotado em
-    # evals/corpus/*.yaml). Em src/mobia/infra/anthropic.py, TIMEOUT_SEGUNDOS
-    # = 60 e MAX_TENTATIVAS = 1 (uma retentativa), e o proprio comentario la
-    # ja fecha a conta em 120s de pior caso por chamada (60s x 2 tentativas).
-    # 135 x 120s = 16200s = 270min. Arredondado para cima para dar folga ao
-    # checkout, setup-python e "pip install -e .[dev]" antes do loop de
-    # chamadas. Sem este teto o default do GitHub e 6h (360min): um job preso
-    # (rede degradada, todas as 135 chamadas no pior caso) so cairia la, muito
-    # depois de qualquer investigacao humana ter comecado.
-    timeout-minutes: 280
+    # Este timeout e um circuit breaker, nao cobertura de pior caso teorico.
+    # Tres numeros:
+    #   - Estimativa realista: 135 chamadas sequenciais ao classificador (uma
+    #     por turno em evals/corpus/*.yaml), poucos segundos cada, mais
+    #     checkout/install -- na casa de 20min.
+    #   - Pior caso teorico: em src/mobia/infra/anthropic.py,
+    #     TIMEOUT_SEGUNDOS=60 e MAX_TENTATIVAS=1 fecham 120s por chamada se
+    #     ela estourar o timeout do cliente e a retentativa tambem. 135 x
+    #     120s = 16200s = 270min -- so acontece com o provedor inteiro fora
+    #     do ar, cenario em que matar o job e a resposta certa, nao esperar.
+    #   - 90min: >4x de folga sobre o realista, tolera lentidao substancial,
+    #     e mata bem antes do default do GitHub (6h/360min), que deixaria um
+    #     check obrigatorio pendurado bloqueando merge de todo mundo por
+    #     quase um turno inteiro de trabalho.
+    # Risco aceito: uma execucao legitimamente lenta (nao travada, so lenta)
+    # pode ser morta aos 90min, perdendo as chamadas ja pagas ate ali. E o
+    # preco de nao deixar o job pendurado por horas.
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
