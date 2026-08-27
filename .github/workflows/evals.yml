@@ -1,0 +1,125 @@
+name: Avaliacoes de IA
+
+# **NAO ha `paths` nem `paths-ignore` aqui.** Isto e deliberado.
+#
+# A semantica do GitHub Actions e assimetrica: `paths` roda se algum arquivo
+# casa, mas `paths-ignore` roda se *qualquer* arquivo *nao* casa. Num PR que
+# mude `src/mobia/domain/agente/classificador.py` (casa) E `README.md` (nao
+# casa), os dois workflows disparam no mesmo commit com o mesmo nome de job.
+# O check trivial passa primeiro e pode mascarar a falha real, liberando
+# regressao de prompt -- exatamente o que este gate existe para impedir.
+#
+# Solucao: um workflow so, que sempre roda (exatamente um check run, nome
+# estavel) mas decide no passo se o eval e necessario. Um job que passa sem
+# fazer nada e silencioso demais para investigacao, entao ele registra qual
+# caminho tomou.
+on:
+  pull_request:
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  avaliacoes:
+    name: Avaliacoes de IA
+    runs-on: ubuntu-latest
+    # Este timeout e um circuit breaker, nao cobertura de pior caso teorico.
+    # Tres numeros:
+    #   - Estimativa realista: 136 chamadas sequenciais ao classificador (uma
+    #     por turno em evals/corpus/*.yaml), poucos segundos cada, mais
+    #     checkout/install -- na casa de 20min.
+    #   - Pior caso teorico: em src/mobia/infra/anthropic.py,
+    #     TIMEOUT_SEGUNDOS=60 e MAX_TENTATIVAS=1 fecham 120s por chamada se
+    #     ela estourar o timeout do cliente e a retentativa tambem. 136 x
+    #     120s = 16320s = 272min -- so acontece com o provedor inteiro fora
+    #     do ar, cenario em que matar o job e a resposta certa, nao esperar.
+    #   - 90min: >4x de folga sobre o realista, tolera lentidao substancial,
+    #     e mata bem antes do default do GitHub (6h/360min), que deixaria um
+    #     check obrigatorio pendurado bloqueando merge de todo mundo por
+    #     quase um turno inteiro de trabalho.
+    # Risco aceito: uma execucao legitimamente lenta (nao travada, so lenta)
+    # pode ser morta aos 90min, perdendo as chamadas ja pagas ate ali. E o
+    # preco de nao deixar o job pendurado por horas.
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decidir se o prompt mudou
+        id: filtro
+        run: |
+          set -euo pipefail
+          # Capturar git diff explicitamente e checar status antes de decidir.
+          # Se o diff falhar (ref nao resolvida, ou outro erro), o passo falha
+          # com mensagem clara, nao silencioso em mexeu=false que liberaria merge.
+          if ! alterados="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"; then
+            echo "git diff falhou: nao da para saber se o prompt mudou" >&2
+            exit 1
+          fi
+          # Este filtro nao cobre tudo que muda o que o modelo ve ou qual
+          # modelo roda. Dois exemplos conhecidos, deixados de fora de
+          # proposito:
+          #   - src/mobia/domain/context/montagem.py: monta o contexto que o
+          #     agente recebe; uma mudanca ali pode alterar a classificacao
+          #     sem tocar em src/mobia/domain/agente/.
+          #   - src/mobia/app/config.py: contem modelo_agente (qual modelo e
+          #     chamado), mas tambem toda config alheia ao agente. Incluir o
+          #     arquivo inteiro no filtro faria o gate pago rodar por motivos
+          #     que nao tem nada a ver com o prompt ou o modelo.
+          # Se um dia o gate nao rodar quando deveria, olhar aqui primeiro.
+          if printf '%s\n' "$alterados" | grep -qE '^(src/mobia/domain/agente/|src/mobia/evals/|evals/)'; then
+            echo "mexeu=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mexeu=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.filtro.outputs.mexeu == 'true'
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar dependencias
+        if: steps.filtro.outputs.mexeu == 'true'
+        run: pip install -e ".[dev]"
+
+      # Nao ha passo de "validar o corpus" aqui. Ja existe validacao gratis
+      # em dois lugares, e nenhum dos dois pode ou precisa rodar neste job:
+      #   - evals/conftest.py, fixture `conversas`: carrega o corpus e confere
+      #     o piso de turnos no setup, antes da primeira chamada paga do
+      #     passo abaixo. Isto ja cobre "nao pagar por um corpus quebrado".
+      #   - tests/unit/test_evals_corpus_real.py: guarda os invariantes
+      #     completos do corpus (50 conversas, 7 intencoes, injecoes,
+      #     prefixos). Ele roda no job "Testes" de ci.yml, que declara
+      #     `services: postgres` e `redis` e executa em todo PR.
+      # Qualquer arquivo sob `tests/` herda as fixtures `autouse` de
+      # tests/conftest.py (`migrar_banco` roda `alembic upgrade head` com
+      # `check=True`, `banco_limpo` faz TRUNCATE) e por isso exige Postgres.
+      # Este job nao declara `services:` de proposito -- roda so Python e a
+      # chave da API -- entao nenhum teste de `tests/` pode entrar aqui.
+      # Ja aconteceu de alguem reintroduzir um passo assim achando que
+      # evitava gasto com corpus quebrado: os 8 testes davam ERROR de
+      # CalledProcessError do alembic, o passo falhava, e o check
+      # obrigatorio "Avaliacoes de IA" ficava vermelho em todo PR sem nunca
+      # medir nada.
+
+      - name: Rodar as avaliacoes
+        if: steps.filtro.outputs.mexeu == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python -m pytest evals -v
+
+      - name: Log do resultado
+        run: |
+          if [ "${{ steps.filtro.outputs.mexeu }}" = "true" ]; then
+            echo "[OK] Prompt ou eval mudou: avaliacoes foram executadas"
+          else
+            echo "[OK] Nenhum prompt ou eval mudou neste PR: avaliacao foi pulada"
+          fi

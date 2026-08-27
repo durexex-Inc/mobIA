@@ -1,0 +1,123 @@
+# evals/corpus/investimento.yaml
+# Convencao de anotacao, em duas partes -- transacao e finalidade.
+#
+# 1. TRANSACAO: compra ou aluguel. Ela nao precisa estar dita com a palavra
+#    "comprar". Pergunta de preco ou de negociacao sobre imovel anunciado, sem
+#    nenhuma mencao a aluguel, conta como transacao implicita de compra: e o
+#    caso de `compra-04` t1 ("quanto ta pedindo?") e de `compra-11` t1 ("da pra
+#    negociar o valor?"), os dois rotulados COMPRA. Quem pergunta o preco de um
+#    imovel a venda esta na conversa de compra, tenha ou nao dito o verbo.
+#
+#    O que derruba o rotulo para INDEFINIDA e a ausencia *total* de pista de
+#    transacao, e nao a falta do verbo: `borda-longa-01` t1 ("vi um anuncio de
+#    vcs no instagram, sobre um apartamento na aclimacao") nao pergunta preco,
+#    nao fala de negociacao e nao diz se o anuncio era de venda ou de locacao
+#    -- ali nao ha o que inferir, e foi por isso que o turno foi corrigido para
+#    INDEFINIDA.
+#
+# 2. FINALIDADE: morar ou render. Com a transacao de compra estabelecida (por
+#    qualquer das duas vias acima) e a finalidade nao dita, o rotulo e COMPRA --
+#    e o caso nao-marcado; INVESTIMENTO exige evidencia positiva de renda ou
+#    revenda.
+#
+# A parte 1 esta escrita porque a primeira versao desta convencao falava so de
+# transacao "explicita" e portanto contradizia os rotulos destes proprios
+# arquivos. Os rotulos e que estao certos: sairam de dois anotadores
+# independentes, e a convencao e que estava estreita.
+- id: investimento-01
+  descricao: o par dificil -- comprar para render, nao para morar
+  turnos:
+    - lead: "queria comprar um studio pra por no airbnb, qual bairro rende mais?"
+      intencao: INVESTIMENTO
+    - lead: "qual o retorno medio que voces veem por ali?"
+      intencao: INVESTIMENTO
+    - lead: "e o condominio costuma proibir aluguel por temporada, ou ja vem liberado?"
+      intencao: INVESTIMENTO
+
+- id: investimento-02
+  descricao: lead nao diz que e investidor; a pista e "revender"
+  turnos:
+    - lead: "tem alguma coisa na planta que valorize bem pra revender depois?"
+      intencao: INVESTIMENTO
+    - lead: "qual a previsao de entrega desse lancamento?"
+      intencao: INVESTIMENTO
+
+- id: investimento-03
+  descricao: lead comeca pensando em renda e muda de ideia pra morar
+  turnos:
+    - lead: "to pensando em comprar um imovel pra alugar depois, algo que de bom retorno"
+      intencao: INVESTIMENTO
+    - lead: "pensando bem, acho que vou ficar com ele mesmo pra morar, minha familia ta crescendo"
+      intencao: COMPRA
+    - lead: "nesse caso, quais bairros voces recomendam pra crianca pequena?"
+      intencao: COMPRA
+
+- id: investimento-04
+  descricao: pedido comeca neutro e so na sequencia revela que e pra alugar
+  turnos:
+    - lead: "quero comprar um apartamento de 2 quartos na zona oeste"
+      intencao: COMPRA
+    - lead: "na real, e pra alugar depois no airbnb, nao pra morar. faz diferenca no financiamento?"
+      intencao: INVESTIMENTO
+    - lead: "voces tem algum parceiro que administra a locacao por temporada?"
+      intencao: INVESTIMENTO
+
+- id: investimento-05
+  descricao: diversificacao de patrimonio com imovel ja alugado
+  turnos:
+    - lead: "tenho uma grana parada e queria diversificar comprando imovel pra renda"
+      intencao: INVESTIMENTO
+    - lead: "voces tem algo com contrato de locacao ja em vigor, pronto pra receber aluguel?"
+      intencao: INVESTIMENTO
+    - lead: "qual o yield medio desse tipo de imovel ja alugado?"
+      intencao: INVESTIMENTO
+
+- id: investimento-06
+  descricao: renda extra explicitada logo no primeiro turno
+  turnos:
+    - lead: "quero comprar um apartamento pequeno num bairro que ta crescendo, pra fazer uma renda extra com aluguel depois"
+      intencao: INVESTIMENTO
+    - lead: "voces indicam alguma regiao com valorizacao maior nos ultimos anos?"
+      intencao: INVESTIMENTO
+    - lead: "e tem imoveis assim ja com inquilino, ou eu que vou atras depois?"
+      intencao: INVESTIMENTO
+
+- id: investimento-07
+  descricao: investidor de fora da cidade buscando reserva de valor
+  turnos:
+    - lead: "sou de fora, mas queria comprar aqui em sp so pra ter uma reserva que renda mais que poupanca"
+      intencao: INVESTIMENTO
+    - lead: "esse tipo de imovel da pra alugar por temporada tambem?"
+      intencao: INVESTIMENTO
+    - lead: "precisa vir pessoalmente pra assinar ou consigo por procuracao?"
+      intencao: INVESTIMENTO
+
+- id: investimento-08
+  descricao: lead quer montar carteira de varias unidades pequenas
+  turnos:
+    - lead: "queria montar uma carteira de imoveis pra alugar, uns 3 ou 4 unidades pequenas"
+      intencao: INVESTIMENTO
+    - lead: "voces administram a locacao tambem ou so a venda?"
+      intencao: INVESTIMENTO
+    - lead: "comprando mais de uma unidade de uma vez, tem desconto no valor?"
+      intencao: INVESTIMENTO
+
+- id: investimento-09
+  descricao: comprar barato, reformar e vender rapido
+  turnos:
+    - lead: "vi que tem um apartamento antigo baratinho pra vender, da pra reformar e vender rapido?"
+      intencao: INVESTIMENTO
+    - lead: "quanto tempo leva pra sair uma venda assim depois da reforma?"
+      intencao: INVESTIMENTO
+    - lead: "voces tem equipe de reforma parceira ou eu contrato por fora?"
+      intencao: INVESTIMENTO
+
+- id: investimento-10
+  descricao: comprar terreno para pequeno empreendimento e revender
+  turnos:
+    - lead: "to querendo comprar um terreno pra construir e vender depois, tipo um pequeno empreendimento"
+      intencao: INVESTIMENTO
+    - lead: "voces tem contato de construtora parceira pra esse tipo de projeto?"
+      intencao: INVESTIMENTO
+    - lead: "e a prefeitura demora muito pra aprovar esse tipo de obra por ali?"
+      intencao: INVESTIMENTO

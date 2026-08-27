@@ -1,0 +1,94 @@
+# evals/corpus/aluguel.yaml
+- id: aluguel-01
+  descricao: kitnet perto da usp, lead depois cogita comprar o predio
+  turnos:
+    - lead: "oi, queria alugar um kitnet perto da usp, pra mim e minha colega de quarto"
+      intencao: ALUGUEL
+    - lead: "vcs tb tem opcao de comprar aquele mesmo predio? seria bom parar de pagar aluguel"
+      intencao: COMPRA
+    - lead: "tem alguma unidade a venda ali mesmo ou so pra locacao?"
+      intencao: COMPRA
+
+- id: aluguel-02
+  descricao: dois quartos no brooklin, custos e pet
+  turnos:
+    - lead: "boa tarde, procuro um 2 quartos pra alugar na regiao do brooklin"
+      intencao: ALUGUEL
+    - lead: "qual o valor do condominio mais o iptu junto?"
+      intencao: ALUGUEL
+    - lead: "e o predio aceita pet de porte medio?"
+      intencao: ALUGUEL
+
+- id: aluguel-03
+  descricao: casa com quintal pra cachorro idoso
+  turnos:
+    - lead: "tem casa pra alugar com quintal pra cachorro na zona leste?"
+      intencao: ALUGUEL
+    - lead: "precisa ser terrea, meu cachorro e idoso e nao sobe escada"
+      intencao: ALUGUEL
+
+- id: aluguel-04
+  descricao: duvidas sobre fiador e custos de entrada
+  turnos:
+    - lead: "voces pedem fiador ou aceita seguro fianca?"
+      intencao: ALUGUEL
+    - lead: "e o valor do primeiro mes, e so o aluguel ou tem taxa de admin junto?"
+      intencao: ALUGUEL
+    - lead: "quanto tempo leva pra aprovar o cadastro?"
+      intencao: ALUGUEL
+
+- id: aluguel-05
+  descricao: aluguel temporario a trabalho, mobiliado
+  turnos:
+    - lead: "preciso de um apto mobiliado pra alugar por 6 meses, vim a trabalho"
+      intencao: ALUGUEL
+    - lead: "pode ser flat tambem, contanto que tenha internet incluida"
+      intencao: ALUGUEL
+    - lead: "tem faxina inclusa ou eu que providencio?"
+      intencao: ALUGUEL
+
+- id: aluguel-06
+  descricao: contrato atual vencendo, procura studio na mesma regiao
+  turnos:
+    - lead: "meu contrato de aluguel atual vence mes que vem, voces tem studio disponivel pra essa data?"
+      intencao: ALUGUEL
+    - lead: "precisa ser na mesma regiao, perto da estacao vila madalena"
+      intencao: ALUGUEL
+
+- id: aluguel-07
+  descricao: estudante dividindo republica
+  turnos:
+    - lead: "sou estudante, procuro republica ou kitnet pra alugar perto da unicamp"
+      intencao: ALUGUEL
+    - lead: "da pra dividir com mais um amigo no contrato?"
+      intencao: ALUGUEL
+    - lead: "e precisa comprovar renda dos dois ou so de um?"
+      intencao: ALUGUEL
+
+- id: aluguel-08
+  descricao: sala comercial pra consultorio
+  turnos:
+    - lead: "quero alugar uma sala comercial pequena, pra abrir um consultorio"
+      intencao: ALUGUEL
+    - lead: "tem alguma na regiao dos jardins?"
+      intencao: ALUGUEL
+    - lead: "o predio ja tem alvara pra uso comercial de saude?"
+      intencao: ALUGUEL
+
+- id: aluguel-09
+  descricao: casal recem-casado procurando primeiro aluguel
+  turnos:
+    - lead: "vou casar mes que vem e a gente ta procurando um apartamento pra alugar, 1 quarto ta bom"
+      intencao: ALUGUEL
+    - lead: "voces exigem quantos meses de deposito caucao?"
+      intencao: ALUGUEL
+    - lead: "e pode ter animal de estimacao no predio?"
+      intencao: ALUGUEL
+
+- id: aluguel-10
+  descricao: duvida simples sobre valor de anuncio
+  turnos:
+    - lead: "oi, o anuncio do apartamento na saude, o valor la e so de aluguel ou ja inclui condominio?"
+      intencao: ALUGUEL
+    - lead: "e mobiliado ou vazio?"
+      intencao: ALUGUEL
