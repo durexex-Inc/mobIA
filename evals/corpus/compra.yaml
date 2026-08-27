@@ -1,7 +1,29 @@
 # evals/corpus/compra.yaml
-# Convencao de anotacao: quando a transacao esta explicita (o lead diz "comprar")
-# mas a finalidade (morar vs investir) nao e dita, o rotulo e COMPRA -- e o caso
-# nao-marcado; INVESTIMENTO exige evidencia positiva de renda ou revenda.
+# Convencao de anotacao, em duas partes -- transacao e finalidade.
+#
+# 1. TRANSACAO: compra ou aluguel. Ela nao precisa estar dita com a palavra
+#    "comprar". Pergunta de preco ou de negociacao sobre imovel anunciado, sem
+#    nenhuma mencao a aluguel, conta como transacao implicita de compra: e o
+#    caso de `compra-04` t1 ("quanto ta pedindo?") e de `compra-11` t1 ("da pra
+#    negociar o valor?"), os dois rotulados COMPRA. Quem pergunta o preco de um
+#    imovel a venda esta na conversa de compra, tenha ou nao dito o verbo.
+#
+#    O que derruba o rotulo para INDEFINIDA e a ausencia *total* de pista de
+#    transacao, e nao a falta do verbo: `borda-longa-01` t1 ("vi um anuncio de
+#    vcs no instagram, sobre um apartamento na aclimacao") nao pergunta preco,
+#    nao fala de negociacao e nao diz se o anuncio era de venda ou de locacao
+#    -- ali nao ha o que inferir, e foi por isso que o turno foi corrigido para
+#    INDEFINIDA.
+#
+# 2. FINALIDADE: morar ou render. Com a transacao de compra estabelecida (por
+#    qualquer das duas vias acima) e a finalidade nao dita, o rotulo e COMPRA --
+#    e o caso nao-marcado; INVESTIMENTO exige evidencia positiva de renda ou
+#    revenda.
+#
+# A parte 1 esta escrita porque a primeira versao desta convencao falava so de
+# transacao "explicita" e portanto contradizia os rotulos destes proprios
+# arquivos. Os rotulos e que estao certos: sairam de dois anotadores
+# independentes, e a convencao e que estava estreita.
 - id: compra-01
   descricao: lead abre por preco e vira aluguel quando ve o valor
   turnos:
