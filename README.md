@@ -435,32 +435,32 @@ por turno e não respondendo nada. O gate era cego exatamente para isso, porque
 `Classificacao` não carregava `confianca`.
 
 A **acurácia efetiva** fecha esse buraco: é a mesma comparação, feita sobre
-`Classificacao.efetiva` — o que produção rotearia. Ela **bloqueia**, mas pelo
-seu próprio piso, `PISO_DE_CATASTROFE_EFETIVA_PCT = 50`, e não pelas faixas de
-90/84 da crua.
+`Classificacao.efetiva` — o que produção rotearia. Ela **bloqueia**, pelas
+mesmas faixas de 90/84 da crua.
 
-**Cinquenta por cento é detector de catástrofe, não barra de qualidade.**
-Ninguém sabe qual é a acurácia efetiva saudável deste agente — medi-la exige a
-execução paga que ainda não rodou —, e herdar 90/84 aqui seria repetir o erro
-que o próprio `LIMIAR_DE_DESAMBIGUACAO` documenta: número do SRS, não
-calibrado. O que dá para afirmar sem medir é o piso da catástrofe, e ele é
-derivável: se a calibração morrer e a confiança de **todo** turno cair abaixo
-do limiar, todo turno vira `INDEFINIDA`, e sobram como acerto só os turnos cujo
-rótulo já era `INDEFINIDA` — hoje 9 de 136, ou 6,6%. Um piso de 50% pega isso
-com margem enorme, e nenhum estado saudável plausível fica abaixo dele: para
-isso, mais da metade dos turnos precisaria vir com confiança abaixo de 0,6, o
-que já é achado que merece barrar por si.
+**Ela nasceu com piso próprio de 50%, e ele era andaime.** Enquanto a baseline
+não existia, ninguém sabia qual acurácia efetiva era saudável, e herdar 90/84
+seria repetir o erro que o próprio `LIMIAR_DE_DESAMBIGUACAO` documenta: número
+do SRS, não calibrado. Um piso não medido pode abrir vermelho na primeira
+execução sem regressão nenhuma. O que dava para afirmar sem medir era só a
+catástrofe: se a calibração morre e a confiança de **todo** turno cai abaixo do
+limiar, tudo vira `INDEFINIDA` e sobram como acerto apenas os turnos cujo
+rótulo já era `INDEFINIDA` — 9 de 136, ou 6,6%. Os 50% pegavam isso, e nada
+mais fino que isso.
 
-**A faixa que passa é AMARELO, nunca VERDE**, e isso é de propósito:
-`faixa_de_catastrofe` tem duas saídas em vez de três. VERDE afirmaria "bateu o
-alvo", e alvo calibrado é exatamente o que não existe até a primeira execução
-paga; reportar VERDE convidaria à leitura que a métrica existe para impedir, a
-de que a acurácia efetiva está boa.
+**A primeira execução paga rodou em 27/08/2026 e mediu 126/136, ou 92,6%.** O
+andaime saiu, por um motivo que a medição tornou óbvio: os 90% do critério de
+aceite são sobre o que o lead experimenta, e o lead experimenta a intenção
+**efetiva**, não o palpite cru. O alvo pertence a esta métrica ao menos tanto
+quanto à outra.
 
-**O piso de 50% é provisório.** Quando a primeira execução paga der a baseline
-real, `PISO_DE_CATASTROFE_EFETIVA_PCT` em `src/mobia/evals/metricas.py` vira um
-par alvo/piso como o 90/84 da crua, apertado em torno do que se mediu — e só
-então `faixa_de_catastrofe` ganha um VERDE para reportar.
+Isso trouxe um ganho e um custo. O ganho: **degradação parcial de calibração
+passou a barrar.** Com o piso de 50%, meio corpus rebaixado dava exatamente 50%
+e passava, e essa limitação estava declarada aqui; agora meia calibração
+perdida é vermelho, porque é metade dos leads recebendo pergunta em vez de
+atendimento. O custo: 92,6% deixa 2,6 pontos até o alvo, e o ruído entre
+execuções é da ordem de ±1,5% — a efetiva vai oscilar entre VERDE e AMARELO
+perto da borda. AMARELO não bloqueia, e são 8,6 pontos até o piso de 84%.
 
 Separadas, as duas também diferenciam o diagnóstico: as duas vermelhas é o
 classificador degradando; a crua verde e a efetiva vermelha é a calibração da
@@ -488,9 +488,9 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   outro motivo.
 - **A acurácia efetiva bloqueia, e é a única que pega regressão de
   calibração.** Ela mede `Classificacao.efetiva` — o que produção rotearia —
-  contra o rótulo, com piso próprio de 50% e faixa que nunca sobe a VERDE. Ver
-  "Duas acurácias" acima: um prompt com palpite intacto e confiança destruída
-  reprova aqui, e só aqui.
+  contra o rótulo, pelas mesmas faixas de 90/84 da crua. Ver "Duas acurácias"
+  acima: um prompt com palpite intacto e confiança destruída reprova aqui, e só
+  aqui.
 - **`Classificacao` carrega `confianca`, e o campo não é opcional.** Sem ele
   não existe a tripla (esperada, obtida, confiança) que recalibrar
   `LIMIAR_DE_DESAMBIGUACAO` exige, e nenhuma outra execução do sistema produz
@@ -567,27 +567,39 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   workflow único sempre rodar: um check obrigatório com filtro de `paths`
   nunca roda em PR que não toca aqueles caminhos, e a proteção de branch fica
   esperando para sempre, travando o merge — só que agora a resposta é um
-  único workflow sem filtro de gatilho, não dois workflows espelhados.
+  único workflow sem filtro de gatilho, não dois workflows espelhados. Este
+  raciocínio é hipotético hoje, porque o repositório não pode ter check
+  obrigatório (ver lacunas), mas é o que impede alguém de "otimizar" o gatilho
+  de volta para um filtro de `paths` e criar o problema no dia em que puder.
 - **`fetch-depth: 0` no checkout não é detalhe.** Sem histórico completo,
   `origin/${{ github.base_ref }}` não existe no clone raso e o `git diff` do
   passo de decisão falha — um erro que só apareceria no primeiro PR real, não
   em desenvolvimento local.
-- **Pré-requisito:** o segredo `ANTHROPIC_API_KEY` não existe neste
-  repositório. Sem ele o job falha no primeiro turno.
+- **Pré-requisito:** o segredo `ANTHROPIC_API_KEY` no repositório. Foi criado em
+  27/08/2026; sem ele o job não falha no primeiro turno — ele abandona cada
+  conversa com `ConfiguracaoInsegura`, sem gastar chamada nenhuma, e reprova
+  pelo teto de conversas abandonadas. O relatório sai dizendo o que houve.
 
 ### Lacunas conhecidas
 
-- **O gate nunca foi executado de verdade.** Só a coleta do corpus foi
-  verificada nesta tarefa — carregar os 5 arquivos, contar as 50 conversas e
-  os 136 turnos, conferir a distribuição por intenção. A execução real custa
-  136 chamadas pagas à API, e ficou como decisão do dono do repositório.
-  **O número de acurácia é desconhecido.**
-- **Degradação parcial de calibração não barra.** O piso de 50% da acurácia
-  efetiva pega a catástrofe e só ela: meio corpus rebaixado para `INDEFINIDA`
-  ainda dá 50% e passa. Isso aparece só no relatório — na seção "Confiança" e
-  nas linhas marcadas `certa, rebaixada para INDEFINIDA` —, nunca no vermelho
-  do gate. Foi aceito de propósito, porque a alternativa era barrar com um piso
-  inventado; encolhe quando a baseline medida substituir os 50%.
+- **Não há como tornar `Avaliacoes de IA` um check obrigatório.** Proteção de
+  branch e rulesets exigem GitHub Team em organização, ou repositório público, e
+  o `durexex-Inc` está em plano gratuito com repositório privado: os endpoints
+  respondem `403 — Upgrade to GitHub Pro or make this repository public`. O gate
+  roda em todo PR que toque os caminhos, e o vermelho aparece na lista de
+  checks — mas **nada impede o merge por cima dele**. Hoje o que separa uma
+  regressão de prompt da `main` é disciplina de quem mergeia, não trava. Se o
+  time crescer, ou o merge passar a ser feito por quem não acompanhou o PR, a
+  trava deixa de ser opcional.
+- **Uma medição, não uma distribuição.** A baseline de 27/08/2026 é uma amostra
+  única: 95,6% na crua, 92,6% na efetiva. Os pisos foram escolhidos em torno
+  dela, e o ruído real entre execuções é estimado (±1,5%), não medido. Um gate
+  relativo a histórico — bloquear por queda maior que a dispersão observada —
+  exigiria guardar as execuções, e o relatório hoje vive só no log efêmero do
+  CI. Enquanto isso, um vermelho perto da borda pode ser variância.
+- ~~**Degradação parcial de calibração não barra.**~~ Fechada quando a baseline
+  medida substituiu o piso de 50% pelas faixas de 90/84. Meio corpus rebaixado
+  dava exatamente 50% e passava; hoje é vermelho.
 - **A contagem de "turnos abaixo do limiar" do relatório não é a contagem de
   perguntas que produção faria.** Ela vem de `deve_desambiguar(confianca,
   None)` — marcador vazio, porque o eval não tem banco nem episódio em aberto —
