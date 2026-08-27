@@ -27,6 +27,16 @@ jobs:
   avaliacoes:
     name: Avaliacoes de IA
     runs-on: ubuntu-latest
+    # 135 chamadas sequenciais ao classificador (uma por turno anotado em
+    # evals/corpus/*.yaml). Em src/mobia/infra/anthropic.py, TIMEOUT_SEGUNDOS
+    # = 60 e MAX_TENTATIVAS = 1 (uma retentativa), e o proprio comentario la
+    # ja fecha a conta em 120s de pior caso por chamada (60s x 2 tentativas).
+    # 135 x 120s = 16200s = 270min. Arredondado para cima para dar folga ao
+    # checkout, setup-python e "pip install -e .[dev]" antes do loop de
+    # chamadas. Sem este teto o default do GitHub e 6h (360min): um job preso
+    # (rede degradada, todas as 135 chamadas no pior caso) so cairia la, muito
+    # depois de qualquer investigacao humana ter comecado.
+    timeout-minutes: 280
 
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +54,17 @@ jobs:
             echo "git diff falhou: nao da para saber se o prompt mudou" >&2
             exit 1
           fi
+          # Este filtro nao cobre tudo que muda o que o modelo ve ou qual
+          # modelo roda. Dois exemplos conhecidos, deixados de fora de
+          # proposito:
+          #   - src/mobia/domain/context/montagem.py: monta o contexto que o
+          #     agente recebe; uma mudanca ali pode alterar a classificacao
+          #     sem tocar em src/mobia/domain/agente/.
+          #   - src/mobia/app/config.py: contem modelo_agente (qual modelo e
+          #     chamado), mas tambem toda config alheia ao agente. Incluir o
+          #     arquivo inteiro no filtro faria o gate pago rodar por motivos
+          #     que nao tem nada a ver com o prompt ou o modelo.
+          # Se um dia o gate nao rodar quando deveria, olhar aqui primeiro.
           if printf '%s\n' "$alterados" | grep -qE '^(src/mobia/domain/agente/|src/mobia/evals/|evals/)'; then
             echo "mexeu=true" >> "$GITHUB_OUTPUT"
           else
@@ -60,6 +81,10 @@ jobs:
       - name: Instalar dependencias
         if: steps.filtro.outputs.mexeu == 'true'
         run: pip install -e ".[dev]"
+
+      - name: Validar o corpus (gratis, antes de gastar com o modelo)
+        if: steps.filtro.outputs.mexeu == 'true'
+        run: python -m pytest tests/unit/test_evals_corpus_real.py -q
 
       - name: Rodar as avaliacoes
         if: steps.filtro.outputs.mexeu == 'true'
