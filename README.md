@@ -694,3 +694,172 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   (TEC-234) continuam abertas.** Foram desmembradas da TEC-210 porque uma é
   feature de produção e a outra é tarefa contratual — nenhuma das duas é
   avaliação, e este gate não entrega nenhuma das duas.
+
+## TEC-233 — Moderação de entrada e saída
+
+A TEC-210 registrou a lacuna nestes termos: "não há moderação de entrada nem
+de saída", enquanto o critério de aceite do produto exige as duas em 100% dos
+turnos. Esta card fecha a lacuna — só ela, não a medição: as taxas continuam
+desconhecidas, ver "Lacunas conhecidas" abaixo.
+
+`ModeradorPort` (`src/mobia/domain/moderacao/port.py`) é um protocolo de um
+método, `moderar(texto, *, direcao: Direcao) -> Veredito`. `Direcao` tem dois
+valores, `ENTRADA` e `SAIDA`, porque o critério não é o mesmo dos dois lados:
+na entrada julga-se a fala de um estranho; na saída, o que a imobiliária diz
+em nome próprio, com critério mais estrito — o mesmo texto pode ser tolerável
+vindo do lead e inaceitável vindo da empresa. `Veredito` é `frozen`: atravessa
+o turno sem ser reescrito no caminho. `ModeracaoIndisponivel` é a exceção de
+"não deu para moderar", que **não** é o mesmo que "moderou e liberou" — quem
+trata essa exceção decide de forma assimétrica entre as duas pontas (ver
+Garantias). O port também define os dois textos fixos que substituem a fala
+do modelo quando ela é barrada: `TEXTO_DA_RECUSA_DE_ENTRADA` e
+`TEXTO_NEUTRO_DE_SAIDA` — nenhum dos dois explica o critério (explicar ensina
+a contornar) nem acusa o lead (falso positivo é comum, e quem caiu nele não é
+infrator).
+
+`ModeradorAnthropic` (`src/mobia/infra/moderacao.py`) é o único adaptador. Ele
+manda uma mensagem para o modelo com um dos dois system prompts fixos
+(`SISTEMA_DA_ENTRADA`, `SISTEMA_DA_SAIDA`) e exige de volta exatamente uma
+palavra — `BLOQUEAR` ou `LIBERAR` — sem pontuação nem explicação, com
+`MAX_TOKENS_DO_VEREDITO = 8`: curto o bastante para que um truncamento vire
+um erro tipado em vez de um veredito pela metade — "BLOQ" não é resposta.
+Qualquer coisa fora do protocolo (resposta truncada, palavra diferente,
+exceção do SDK, `stop_reason` que não é `end_turn`) vira
+`ModeracaoIndisponivel`; o adaptador nunca interpreta o desconhecido como
+liberado, porque isso transformaria um moderador confuso em um moderador
+desligado, e desligado em silêncio.
+
+`executar_turno` (`src/mobia/domain/agente/turno.py`) chama esse protocolo
+duas vezes: uma vez para a fala do lead, antes de montar o contexto; uma vez
+para o texto que o agente está prestes a entregar, depois de decidido qual
+texto é esse.
+
+### Garantias
+
+- **A moderação vive no turno, não num decorador do outbound, e há um teste
+  que fixa exatamente esse motivo.**
+  `tests/integration/test_moderacao_de_saida.py::test_o_recorder_grava_o_texto_entregue_e_nao_o_barrado`
+  existe porque `record_agent_message` grava o texto **entregue**. Um
+  decorador que interceptasse e substituísse a saída por dentro faria o
+  recorder gravar o texto **barrado**: o histórico do lead passaria a conter
+  uma fala que ele nunca viu, que entra no contexto do turno seguinte e é
+  dobrada permanentemente no resumo da TEC-127. Morar no turno é o que
+  garante que o recorder só veja o texto que de fato saiu.
+- **Cliente próprio, com teto de 5s e `modelo_moderacao`, e não o cliente do
+  turno.** `get_moderation_client()` usa
+  `TIMEOUT_DA_MODERACAO_SEGUNDOS = 5.0` e `MAX_TENTATIVAS_DA_MODERACAO = 0`
+  (`src/mobia/infra/moderacao.py`). O cliente do turno
+  (`infra/anthropic.py`) tem 60s por tentativa com uma retentativa — 120s de
+  pior caso por chamada — contra um `job_timeout` de 240s que o turno **já**
+  estoura sozinho: `resumir` + `classificar` + `desambiguar` somam 360s no
+  pior caso (comentário de `job_timeout` em `workers/main.py`, e a seção
+  TEC-135 acima). Moderar as duas pontas com aquele cliente somaria mais 240s
+  a um orçamento já estourado; com o teto de 5s e sem retentativa, as duas
+  chamadas de moderação somam 10s — ruído contra uma folga que já não existe,
+  não um agravante novo. `modelo_moderacao` (`claude-haiku-4-5-20251001` em
+  `app/config.py`) é uma configuração própria, independente de
+  `modelo_agente`, porque classificar uma palavra e escrever uma resposta não
+  precisam do mesmo modelo.
+- **A falha é assimétrica, e as duas metades importam.** Na entrada ela falha
+  **aberta**:
+  `tests/integration/test_moderacao_de_entrada.py::test_moderador_indisponivel_na_entrada_deixa_o_turno_seguir`
+  prova que o turno segue quando o moderador não responde, porque a fala do
+  lead já está cifrada no banco — a ingestão gravou antes de o worker
+  existir — e negar atendimento a um lead legítimo por um serviço fora do ar
+  pune o inocente. Na saída ela falha **fechada**:
+  `tests/integration/test_moderacao_de_saida.py::test_moderador_indisponivel_na_saida_nao_entrega`
+  prova que a exceção propaga e nada é entregue, porque entregar texto não
+  moderado é exatamente o risco que este subsistema existe para fechar, e o
+  custo de errar aqui é público — a reputação da imobiliária, não só o
+  atendimento de um lead.
+- **Bloqueio nunca produz silêncio**, nas duas pontas — o mesmo critério que
+  a TEC-134 e a TEC-227 já tinham escolhido ao preferir a duplicata visível à
+  perda silenciosa. Entrada bloqueada entrega `TEXTO_DA_RECUSA_DE_ENTRADA`;
+  saída bloqueada entrega `TEXTO_NEUTRO_DE_SAIDA` no lugar do texto barrado.
+  As duas passam por `record_agent_message`, então o histórico registra o
+  que o lead efetivamente recebeu.
+- **A moderação de entrada roda antes de `montar_contexto`, e isso economiza
+  o turno inteiro quando ela bloqueia** — inclusive as chamadas pagas que a
+  montagem pode disparar (`resumidor`, a cada ~40 mensagens; `contador`,
+  perto do teto de tokens).
+  `tests/integration/test_moderacao_de_entrada.py::test_entrada_bloqueada_entrega_recusa_e_nao_chama_o_modelo`
+  usa um espião sobre `montar_contexto` para provar que ele **não** é
+  chamado no caminho bloqueado — sem o espião, uma mensagem semeada não
+  torna `montar_contexto` observável, e o teste passaria com o bloco movido
+  para depois dele. O contraponto,
+  `test_entrada_liberada_segue_o_turno`, usa o mesmo espião para garantir que
+  o caminho liberado continua montando contexto de verdade.
+- **A saída é moderada uma vez por turno, porque só um texto sai.**
+  `tests/integration/test_moderacao_de_saida.py::test_a_saida_e_moderada_uma_vez_por_turno`
+  conta exatamente uma chamada com `Direcao.SAIDA`. No caminho ambíguo a
+  resposta da primeira chamada ao classificador já é descartada antes de
+  chegar à moderação — só a pergunta do desambiguador é julgada.
+- **O texto julgado nunca entra em log, nas duas direções.** Os eventos
+  `moderacao.entrada_bloqueada` e `moderacao.saida_bloqueada`
+  (`domain/agente/turno.py`) logam `message_id` e `motivo` (a palavra
+  `ENTRADA:BLOQUEAR` ou `SAIDA:BLOQUEAR`), nunca o texto. O adaptador segue a
+  mesma regra do lado do erro: a exceção carrega `type(exc).__name__`, nunca
+  `str(exc)` nem o texto enviado, porque a mensagem de erro do SDK pode
+  ecoar o corpo da requisição.
+- **O corpus tem os dois lados, e os de controle valem mais que os
+  positivos.** São 40 casos, 10 por arquivo em 4 arquivos
+  (`evals/moderacao/entrada_bloqueia.yaml`, `entrada_libera.yaml`,
+  `saida_bloqueia.yaml`, `saida_libera.yaml`) — um moderador que bloqueia
+  tudo passa de cara no corpus só-positivo e parece seguro; só o corpus de
+  controle (`*_libera`, o que **não** deveria bloquear) separa moderação de
+  censura.
+  `tests/unit/test_corpus_de_moderacao.py::test_o_controle_de_entrada_cobre_o_falso_positivo_caro`
+  exige que o corpus de controle contenha, nomeadamente, lead irritado e
+  palavrão usado como ênfase — o falso positivo mais caro deste sistema,
+  porque bloquear reclamação legítima perde o cliente que estava
+  reclamando. Esse arquivo de teste tem 11 testes ao todo (dois
+  parametrizados sobre os 4 arquivos do corpus, mais três testes únicos:
+  os dois lados existem nas duas direções, o controle de entrada cobre o
+  falso positivo caro, e os ids são únicos entre todos os arquivos).
+- **Nenhum piso foi cravado** para as taxas de acerto do moderador.
+  `evals/test_moderacao.py` mede e imprime as quatro taxas por categoria mas
+  faz uma única asserção — que o moderador respondeu em todos os casos
+  (`indisponiveis == 0`) — de propósito: a TEC-210 já provou que um piso
+  cravado sem medição prévia abre vermelho na primeira execução sem
+  regressão nenhuma. O piso entra depois, com o número na mão.
+
+### Lacunas conhecidas
+
+- **A moderação de entrada não impede que a fala exista.** Ela roda no
+  worker, depois de a ingestão já ter gravado a mensagem cifrada no banco.
+  Apagar o que entrou é a TEC-234 e a política de retenção, não esta card.
+- **Falha aberta na entrada é buraco declarado, não fechado.** Enquanto o
+  moderador estiver fora do ar, falas impróprias entram no contexto do
+  agente sem barreira nenhuma. O evento `moderacao.indisponivel` dá
+  visibilidade a isso, e visibilidade não é barreira.
+- **O turno passa a ter até cinco chamadas ao modelo, contra um
+  `job_timeout` que três delas já estouravam sozinhas.** `resumir` +
+  `classificar` + `desambiguar` já somavam 360s de pior caso antes desta
+  card (TEC-135, cliente de 120s por chamada). A moderação soma até mais
+  duas — entrada e saída, uma vez cada por turno — mas num cliente com teto
+  de 5s cada, 10s no total: marginal contra um orçamento que já estava
+  estourado, não a causa dele. Reduzir a chance de o turno estourar o
+  `job_timeout` é a TEC-228, não esta card.
+- **Falso positivo custa atendimento, e nada no código limita a taxa.** O
+  corpus de controle (`*_libera`) mede quantas vezes o moderador bloqueia o
+  que deveria liberar; medir não é impedir, e não há piso nem teto de código
+  agindo sobre esse número.
+- **Não há revisão humana de bloqueios.** Um lead barrado pela moderação de
+  entrada, ou uma resposta barrada na saída, não chega a nenhum humano para
+  reavaliação. Handoff é a TEC-174.
+- **A moderação julga texto isolado, não a conversa.** Cada chamada recebe
+  só o texto do turno atual, sem o histórico. Falas individualmente
+  inofensivas podem compor assédio ao longo de vários turnos sem que nada
+  aqui veja isso.
+- **O eval de moderação nunca foi executado.** `evals/test_moderacao.py`
+  existe e mede quatro taxas reais contra o corpus de 40 casos, mas até este
+  README ser escrito ninguém rodou `pytest evals` com ele — as duas taxas
+  (falso positivo e falso negativo, nas duas direções) são desconhecidas.
+- **Nenhum teste cobre "no caminho ambíguo, só a pergunta é moderada".** Os
+  quatro testes de `tests/integration/test_moderacao_de_saida.py` usam
+  `classificador_fake()` com a confiança padrão de 0,91 — acima do limiar de
+  0,6 — então todos exercitam o caminho não-ambíguo. A garantia "uma vez por
+  turno" é afirmada no comentário de `executar_turno` e testada apenas onde
+  ela não pode falhar: nenhum teste força o caminho ambíguo para confirmar
+  que a resposta descartada da primeira chamada ao classificador nunca chega
+  a ser julgada.
