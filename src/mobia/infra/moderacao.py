@@ -1,14 +1,11 @@
 from functools import lru_cache
 from typing import Any, cast
 
-import structlog
 from anthropic import AsyncAnthropic
 from anthropic.types import Message
 
 from mobia.app.config import ConfiguracaoInsegura, get_settings
 from mobia.domain.moderacao.port import Direcao, ModeracaoIndisponivel, Veredito
-
-log = structlog.get_logger(__name__)
 
 # Teto proprio, e nao o do cliente do turno. Aquele tem 60s com uma
 # retentativa, ou 120s de pior caso por chamada, contra um `job_timeout` de
@@ -54,7 +51,7 @@ SISTEMA_DA_SAIDA = (
     "Voce e um filtro de conteudo de uma imobiliaria brasileira. Recebe um "
     "texto que o atendente virtual da empresa esta a ponto de enviar a um lead "
     "e decide se a empresa pode dizer isso.\n\n"
-    "O critterio e mais estrito que para a fala do lead, porque aqui e a "
+    "O criterio e mais estrito que para a fala do lead, porque aqui e a "
     "empresa falando em nome proprio. BLOQUEAR conteudo discriminatorio, "
     "ofensa ao lead, ameaca, insinuacao sexual, conselho juridico ou "
     "financeiro apresentado como certeza, e qualquer criterio de atendimento "

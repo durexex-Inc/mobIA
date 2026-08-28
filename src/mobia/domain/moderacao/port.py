@@ -39,7 +39,7 @@ class ModeradorPort(Protocol):
     async def moderar(self, texto: str, *, direcao: Direcao) -> Veredito: ...
 
 
-# Curto, neutro, e nao explica o critterio -- explicar ensina a contornar. Nao
+# Curto, neutro, e nao explica o criterio -- explicar ensina a contornar. Nao
 # acusa o lead: falso positivo em moderacao e comum, e o legitimo que caiu nele
 # nao pode ser tratado como infrator.
 TEXTO_DA_RECUSA_DE_ENTRADA = (
