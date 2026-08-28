@@ -8,6 +8,7 @@ from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
 from mobia.domain.outbound.whatsapp import WhatsAppOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
+from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
 from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
@@ -47,6 +48,7 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["classificador"] = ClassificadorAnthropic()
     ctx["resumidor"] = ResumidorAnthropic()
     ctx["contador"] = ContadorAnthropic()
+    ctx["moderador"] = ModeradorAnthropic()
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:

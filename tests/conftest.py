@@ -191,11 +191,52 @@ def outbound_fake():
     return _criar
 
 
+class ModeradorFake:
+    """Duble do moderador. Nenhum teste desta suite toca a rede."""
+
+    def __init__(
+        self,
+        bloqueia_entrada: bool = False,
+        bloqueia_saida: bool = False,
+        erro_na_entrada: Exception | None = None,
+        erro_na_saida: Exception | None = None,
+    ) -> None:
+        self.bloqueia_entrada = bloqueia_entrada
+        self.bloqueia_saida = bloqueia_saida
+        self.erro_na_entrada = erro_na_entrada
+        self.erro_na_saida = erro_na_saida
+        self.entradas = 0
+        self.saidas = 0
+        self.direcoes: list = []
+
+    async def moderar(self, texto, *, direcao):
+        from mobia.domain.moderacao.port import Direcao, Veredito
+
+        self.direcoes.append(direcao)
+        if direcao is Direcao.ENTRADA:
+            self.entradas += 1
+            if self.erro_na_entrada is not None:
+                raise self.erro_na_entrada
+            return Veredito(bloqueado=self.bloqueia_entrada, motivo="fake")
+        self.saidas += 1
+        if self.erro_na_saida is not None:
+            raise self.erro_na_saida
+        return Veredito(bloqueado=self.bloqueia_saida, motivo="fake")
+
+
+@pytest.fixture
+def moderador_fake():
+    def _criar(**kwargs) -> ModeradorFake:
+        return ModeradorFake(**kwargs)
+
+    return _criar
+
+
 @pytest.fixture
 def rodar_turno():
     """Semeia uma entrada e roda o turno inteiro sobre ela."""
 
-    async def _rodar(session, classificador, outbound, resumidor, contador) -> str:
+    async def _rodar(session, classificador, outbound, resumidor, contador, moderador=None) -> str:
         from mobia.domain.agente.turno import executar_turno
 
         linha = await _entrada_do_lead(session)
@@ -206,6 +247,7 @@ def rodar_turno():
             resumidor=resumidor,
             contador=contador,
             outbound=outbound,
+            moderador=moderador if moderador is not None else ModeradorFake(),
         )
 
     return _rodar

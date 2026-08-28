@@ -5,7 +5,7 @@ import uuid
 from typing import Any
 
 import pytest
-from conftest import ClassificadorFake, ContadorFake, ResumidorFake
+from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFake
 from sqlalchemy import func, select
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -32,6 +32,7 @@ def _ctx(session_factory, outbound) -> dict[str, Any]:
         "classificador": ClassificadorFake(),
         "resumidor": ResumidorFake(),
         "contador": ContadorFake(),
+        "moderador": ModeradorFake(),
     }
 
 

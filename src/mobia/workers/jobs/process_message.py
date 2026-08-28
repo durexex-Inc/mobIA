@@ -133,6 +133,7 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
             resumidor=ctx["resumidor"],
             contador=ctx["contador"],
             outbound=outbound,
+            moderador=ctx["moderador"],
         )
 
         async with session_factory() as session:

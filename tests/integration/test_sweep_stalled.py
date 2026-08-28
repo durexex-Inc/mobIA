@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import ClassificadorFake, ContadorFake, ResumidorFake
+from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFake
 from sqlalchemy import func, select
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -25,6 +25,7 @@ def _ctx_do_turno(session_factory, outbound) -> dict:
         "classificador": ClassificadorFake(),
         "resumidor": ResumidorFake(),
         "contador": ContadorFake(),
+        "moderador": ModeradorFake(),
     }
 
 

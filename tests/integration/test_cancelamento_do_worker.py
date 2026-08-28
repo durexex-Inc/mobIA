@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 import pytest
-from conftest import ClassificadorFake, ContadorFake, ResumidorFake, _entrada_do_lead
+from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFake, _entrada_do_lead
 from sqlalchemy import func, select
 
 from mobia.domain.messages.models import Message
@@ -55,6 +55,7 @@ def _ctx(outbound, classificador=None) -> dict[str, Any]:
         "classificador": classificador or ClassificadorFake(),
         "resumidor": ResumidorFake(),
         "contador": ContadorFake(),
+        "moderador": ModeradorFake(),
     }
 
 

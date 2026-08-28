@@ -11,7 +11,14 @@ from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
+from mobia.domain.moderacao.port import (
+    TEXTO_DA_RECUSA_DE_ENTRADA,
+    Direcao,
+    ModeracaoIndisponivel,
+    ModeradorPort,
+)
 from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, OutboundPort
+from mobia.infra.crypto import aad_de, decrypt
 
 log = structlog.get_logger(__name__)
 
@@ -19,6 +26,7 @@ KIND_DA_RESPOSTA = "reply"
 
 SUBAGENTE_CLASSIFICADOR = "classificador"
 SUBAGENTE_DESAMBIGUADOR = "desambiguador"
+SUBAGENTE_MODERACAO = "moderacao"
 
 # Conjunto fechado de proposito (Literal, nao str): um typo num dos dois
 # lugares que compara contra esta string (process_message, os testes) vira
@@ -35,6 +43,7 @@ async def executar_turno(
     resumidor: ResumidorPort,
     contador: ContadorPort,
     outbound: OutboundPort,
+    moderador: ModeradorPort,
 ) -> ResultadoDoTurno:
     """Um turno inteiro: contexto, classificacao, entrega, registro.
 
@@ -55,6 +64,41 @@ async def executar_turno(
     marcador que impede a repeticao so e gravado depois da entrega confirmada
     -- marca-lo antes queimaria a unica chance de perguntar num 5xx da Meta.
     """
+    # Antes de montar contexto de proposito: bloquear aqui economiza o turno
+    # inteiro, inclusive as chamadas pagas ao modelo. E o texto do lead ainda
+    # nao passou por lugar nenhum.
+    corpo = decrypt(message.text_body, aad_de(message.id, "text_body"))
+    if corpo:
+        try:
+            veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
+        except ModeracaoIndisponivel as exc:
+            # Falha aberta, e assimetrica de proposito: a fala do lead ja esta
+            # cifrada no banco (a ingestao a gravou antes de o worker existir),
+            # e negar atendimento a lead legitimo porque um servico caiu pune o
+            # inocente. Na saida a escolha e a oposta -- ver o bloco de saida.
+            log.error(
+                "moderacao.indisponivel",
+                direcao=Direcao.ENTRADA.value,
+                message_id=str(message.id),
+                reason=str(exc),
+            )
+        else:
+            if veredito.bloqueado:
+                # `error` e nao `warning`: e o nivel que o alerta observa, pelo
+                # mesmo criterio de `outbound.recusado`. O texto julgado **nao**
+                # entra no log -- e fala do lead, coberta pela regra de PII.
+                log.error(
+                    "moderacao.entrada_bloqueada",
+                    message_id=str(message.id),
+                    motivo=veredito.motivo,
+                )
+                return await _entregar_texto_fixo(
+                    session_factory,
+                    message=message,
+                    outbound=outbound,
+                    recorder_texto=TEXTO_DA_RECUSA_DE_ENTRADA,
+                )
+
     try:
         contexto = await montar_contexto(
             session_factory,
@@ -194,6 +238,66 @@ async def executar_turno(
         tokens_in=telemetria.tokens_in,
         tokens_out=telemetria.tokens_out,
         latency_ms=telemetria.latency_ms,
+        sender_external_id=message.recipient_external_id,
+        recipient_external_id=message.conversation_key,
+    )
+    return "respondido"
+
+
+async def _entregar_texto_fixo(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    message: Message,
+    outbound: OutboundPort,
+    recorder_texto: str,
+) -> ResultadoDoTurno:
+    """Entrega um texto que nao veio do modelo, e grava o que entregou.
+
+    Bloqueio nunca produz silencio: e a mesma escolha que a TEC-134 e a
+    TEC-227 fizeram ao preferir a duplicata a perda, porque a duplicata e
+    visivel e recuperavel e o silencio nao.
+    """
+    try:
+        entregue = await outbound.send(
+            message.id,
+            KIND_DA_RESPOSTA,
+            {
+                "para": message.conversation_key,
+                "de": message.recipient_external_id,
+                "texto": recorder_texto,
+            },
+        )
+    except (EnvioForaDaJanela, EnvioRecusado) as exc:
+        log.error(
+            "moderacao.texto_fixo_nao_entregue",
+            message_id=str(message.id),
+            reason=type(exc).__name__,
+        )
+        return "sem_resposta"
+
+    if not entregue:
+        # Mesmo raciocinio do bloco principal (ver `turno.reentrega_suprimida`
+        # la embaixo): `send()` devolve False sem levantar quando a guarda ja
+        # tem uma reserva para este (message_id, kind) de uma tentativa
+        # anterior. Gravar aqui seria a mesma fala fantasma que aquele bloco
+        # existe para evitar -- so que para o texto fixo do bloqueio.
+        log.error(
+            "turno.reentrega_suprimida",
+            channel=message.channel,
+            message_id=str(message.id),
+        )
+        return "reentrega_suprimida"
+
+    recorder = MessageRecorder(session_factory)
+    await recorder.record_agent_message(
+        conversation_key=message.conversation_key,
+        channel=message.channel,
+        text=recorder_texto,
+        model="",
+        subagent=SUBAGENTE_MODERACAO,
+        tokens_in=0,
+        tokens_out=0,
+        latency_ms=0,
         sender_external_id=message.recipient_external_id,
         recipient_external_id=message.conversation_key,
     )

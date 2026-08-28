@@ -142,7 +142,7 @@ async def test_reentrega_suprimida_nao_grava_fala_fantasma(
     entregar existe para evitar, so que entrando pela porta do retorno em vez
     de uma excecao.
     """
-    from conftest import _entrada_do_lead
+    from conftest import ModeradorFake, _entrada_do_lead
 
     linha = await _entrada_do_lead(session)
     # Simula a reserva que uma tentativa anterior ja commitou: a UNIQUE
@@ -160,6 +160,7 @@ async def test_reentrega_suprimida_nao_grava_fala_fantasma(
             resumidor=resumidor_fake(),
             contador=contador_fake(),
             outbound=outbound,
+            moderador=ModeradorFake(),
         )
 
     assert resultado == "reentrega_suprimida"
@@ -359,7 +360,7 @@ async def test_reentrega_suprimida_nao_marca_o_episodio(
     Mesmo criterio da fala fantasma -- sem confirmacao de entrega, nada que
     afirme "ja perguntei" pode ser gravado.
     """
-    from conftest import _entrada_do_lead
+    from conftest import ModeradorFake, _entrada_do_lead
 
     linha = await _entrada_do_lead(session)
     session.add(OutboundDispatch(id=uuid.uuid4(), message_id=linha.id, kind=KIND_DA_RESPOSTA))
@@ -372,6 +373,7 @@ async def test_reentrega_suprimida_nao_marca_o_episodio(
         resumidor=resumidor_fake(),
         contador=contador_fake(),
         outbound=outbound_fake(),
+        moderador=ModeradorFake(),
     )
 
     assert resultado == "reentrega_suprimida"
