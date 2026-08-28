@@ -63,7 +63,10 @@ async def executar_turno(
     uma pergunta aberta em vez de um menu numerado; a regra vive inteira no
     system prompt de `desambiguar` (ver a secao de lacunas do spec). O
     marcador que impede a repeticao so e gravado depois da entrega confirmada
-    -- marca-lo antes queimaria a unica chance de perguntar num 5xx da Meta.
+    **e** so quando a pergunta foi de fato a coisa entregue -- marca-lo antes
+    queimaria a unica chance de perguntar num 5xx da Meta, e marca-lo com a
+    saida bloqueada queimaria a mesma chance por um texto neutro que nao
+    pergunta nada.
     """
     # Antes de montar contexto de proposito: bloquear aqui economiza o turno
     # inteiro, inclusive as chamadas pagas ao modelo. E o texto do lead ainda
@@ -177,7 +180,8 @@ async def executar_turno(
             reason=str(exc),
         )
         raise
-    if veredito_da_saida.bloqueado:
+    saida_bloqueada = veredito_da_saida.bloqueado
+    if saida_bloqueada:
         # O texto barrado **nao** entra no log: registra-lo criaria, no log,
         # exatamente aquilo que a moderacao impediu de sair.
         log.error(
@@ -244,11 +248,20 @@ async def executar_turno(
         )
         return "reentrega_suprimida"
 
-    if desambiguando:
+    if desambiguando and not saida_bloqueada:
         # Depois da entrega confirmada, nunca antes: ver `marcar_desambiguacao`.
         # A ordem entre esta gravacao e a da fala do agente nao e carregada --
         # as duas sao pos-entrega, e a guarda do outbound suprime qualquer
         # reentrega se o turno cair entre elas.
+        #
+        # `not saida_bloqueada` pelo mesmo motivo que o marcador espera a
+        # entrega: um bloqueio de saida e indistinguivel de um 5xx da Meta no
+        # unico aspecto que o marcador afirma -- a pergunta nao chegou. O que
+        # chegou foi `TEXTO_NEUTRO_DE_SAIDA`, que nao pergunta nada. Marcar
+        # aqui gastaria a unica pergunta do episodio numa entrega que nunca a
+        # fez, e o lead ficaria em INDEFINIDA sem ter sido perguntado. O
+        # `log.info` vai junto pela mesma razao: fora daqui ele afirmaria um
+        # "desambiguou" que nao aconteceu.
         async with session_factory() as session:
             await marcar_desambiguacao(
                 session,
