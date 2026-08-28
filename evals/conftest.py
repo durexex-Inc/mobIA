@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from mobia.evals.corpus import ConversaAnotada, carregar, total_de_turnos
-from mobia.evals.metricas import PISO_DE_TURNOS
+from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS
 
 CORPUS = Path(__file__).resolve().parent / "corpus"
 
@@ -32,6 +32,13 @@ def conversas() -> list[ConversaAnotada]:
     **sobrou** depois do abandono por infraestrutura. Este guarda o corpus como
     esta no disco agora, na maquina que vai pagar -- o caso que o unit test nao
     ve e que o `pytest evals` local com corpus meio editado produz.
+
+    Confere os dois pisos, nao so `PISO_DE_TURNOS`: `PISO_DE_TURNOS_ANOTADOS`
+    e irmao dele e tinha ficado sem guarda aqui e no fim do runner, so no
+    unit test do corpus commitado. Um corpus editado a mao no disco podia ter
+    120+ turnos e poucos deles anotados -- passava este pre-voo e so
+    `precisao_da_extracao` sofreria, silenciosamente, com uma amostra de
+    campo pequena de mais para o piso de 85% significar algo.
     """
     carregadas = carregar(CORPUS)
     turnos = total_de_turnos(carregadas)
@@ -39,5 +46,12 @@ def conversas() -> list[ConversaAnotada]:
         pytest.fail(
             f"corpus com {turnos} turnos, piso {PISO_DE_TURNOS}: abortado antes "
             f"da primeira chamada paga, porque a execucao nao teria amostra."
+        )
+    anotados = sum(1 for conversa in carregadas for turno in conversa.turnos if turno.campos)
+    if anotados < PISO_DE_TURNOS_ANOTADOS:
+        pytest.fail(
+            f"corpus com {anotados} turnos anotados, piso {PISO_DE_TURNOS_ANOTADOS}: "
+            f"abortado antes da primeira chamada paga, porque a precisao da extracao "
+            f"nao teria amostra."
         )
     return carregadas

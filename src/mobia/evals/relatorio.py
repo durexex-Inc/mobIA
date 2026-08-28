@@ -102,9 +102,12 @@ def _secao_de_reperguntas(reperguntas: Sequence[tuple[str, int, str]]) -> list[s
 
     Mesmo motivo de `_secao_de_confianca`: nenhum numero aqui tem faixa.
     `MARCADORES_DE_REPERGUNTA` (`evals/test_acuracia_de_intencao.py`) e lista de
-    palavra-chave e tem falso negativo por construcao -- uma repergunta com
-    outras palavras escapa. O total e uma cota inferior de reperguntas, nunca
-    garantia de que nao houve.
+    palavra-chave, e o total nao e cota inferior nem superior de reperguntas
+    -- e um indicador aproximado, com erro nas duas direcoes. Falso negativo
+    por construcao: uma repergunta com outras palavras escapa. Falso
+    positivo tambem: o agente pode citar "apartamento" ou "vaga" ao descrever
+    um imovel numa frase que, por outro motivo, termina com "?". Ver os
+    testes de `_reperguntou` em `tests/unit/test_evals_reperguntas.py`.
     """
     por_campo: dict[str, int] = defaultdict(int)
     for _, _, campo in reperguntas:

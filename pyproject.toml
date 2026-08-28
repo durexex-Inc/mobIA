@@ -46,6 +46,14 @@ exclude = ["mobia.evals", "mobia.evals.*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+# Sem isto, `import evals...` dentro de um teste sob `tests/` so funciona por
+# acidente de invocacao: `python -m pytest` poe o cwd em sys.path[0] porque
+# `-m` faz isso, nao porque o pytest faz -- um `pytest` puro, ou qualquer
+# wrapper que troque o cwd do processo antes de invocar, quebra o import sem
+# aviso. `tests/unit/test_evals_reperguntas.py` e o primeiro teste sob
+# `tests/` a importar de `evals/` (o runner pago, fora de `src/`), entao esta
+# linha e a diferenca entre "roda aqui e falha em CI" e "roda igual nos dois".
+pythonpath = ["."]
 addopts = "-m 'not perf'"
 markers = [
     "perf: teste de latencia, roda so sob demanda com -m perf",

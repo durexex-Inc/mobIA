@@ -113,6 +113,41 @@ async def ler_estado(
     return resultado.scalar_one_or_none()
 
 
+def campos_a_gravar(intencao: Intencao, extracao: Extracao) -> dict[str, Any]:
+    """A regra unica de acumulacao do estado de qualificacao.
+
+    Compartilhada entre `gravar_estado` (producao) e o runner do eval
+    (`_rodar_conversa` em `evals/test_acuracia_de_intencao.py`), porque o
+    corpus anotado da TEC-145 media a extracao com uma copia divergente desta
+    regra: nao honrava a guarda de `FORA_DE_ESCOPO` e nunca acumulava
+    `intencao`, entao o `LeadQualification` sintetico do eval nunca carregava
+    a linha `intencao: X` que o prompt de producao carrega a partir do
+    segundo turno (`montagem._texto_do_estado`). Extrair a regra para uma
+    funcao so fecha as duas frentes de uma vez: nao ha como o eval divergir de
+    novo sem que os dois lados divirjam da mesma chamada.
+
+    Devolve os campos **deste turno**, prontos para entrar num
+    `dict.update` (runner) ou num `ON CONFLICT DO UPDATE` (aqui) por cima do
+    estado anterior -- "mais novo vence" e responsabilidade de quem chama, nao
+    desta funcao.
+
+    - `FORA_DE_ESCOPO` nao grava nada: dict vazio. A guarda vive aqui, no
+      unico lugar que os dois chamadores passam, para que nao haja como
+      esquece-la num terceiro caminho futuro. Repare que ela tambem nao
+      **apaga**: um dict vazio nao entra no `update`/`SET`, entao o lead que
+      qualificou e depois mandou uma piada continua com o que disse.
+    - `None` no campo nao apaga: so os campos que `Extracao.preenchidos()`
+      devolveu (os que o lead de fato informou neste turno) entram.
+    - `intencao` sempre entra quando ha gravacao. Ela vem de fora, do
+      classificador, e nunca da extracao -- a tabela `conversation_intent` e
+      esta coluna guardam o mesmo fato, e duas fontes para ele divergiriam, o
+      que apareceria como bug de score na TEC-150.
+    """
+    if intencao is Intencao.FORA_DE_ESCOPO:
+        return {}
+    return {"intencao": intencao.value, **extracao.preenchidos()}
+
+
 async def gravar_estado(
     session: AsyncSession,
     *,
@@ -128,36 +163,25 @@ async def gravar_estado(
     quem chama e `executar_turno`, que grava intencao e estado no **mesmo**
     commit: os dois fatos vem da mesma chamada ao modelo.
 
-    `FORA_DE_ESCOPO` nao grava nada, e a guarda vive aqui e nao em quem chama
-    para que nao haja como esquece-la. Repare que ela tambem nao **apaga**: o
-    lead que qualificou e depois mandou uma piada continua com o que disse.
-
-    `intencao` vem de fora, do classificador, e nunca da extracao: a tabela
-    `conversation_intent` e esta coluna guardam o mesmo fato, e duas fontes
-    para ele divergiriam -- a divergencia apareceria como bug de score na
-    TEC-150.
+    A regra em si -- guarda de `FORA_DE_ESCOPO`, "mais novo vence", `None` nao
+    apaga, `intencao` sempre presente -- mora em `campos_a_gravar`, e nao
+    aqui, porque o runner do eval precisa da mesma regra para acumular o
+    estado sintetico entre turnos. Ver o docstring de la.
     """
-    if intencao is Intencao.FORA_DE_ESCOPO:
+    campos = campos_a_gravar(intencao, extracao)
+    if not campos:
         return
 
-    # A regra de "null nao apaga" mora aqui: so os campos informados entram no
-    # INSERT e no SET. Um dicionario completo com `None` nos campos calados
-    # sobrescreveria com NULL a cada turno, e o estado nunca acumularia nada.
-    preenchidos = extracao.preenchidos()
     valores: dict[str, Any] = {
         "channel": channel,
         "conversation_key": conversation_key,
-        "intencao": intencao.value,
         "updated_at": datetime.now(UTC),
-        **preenchidos,
+        **campos,
     }
     statement = pg_insert(LeadQualification).values(valores)
     await session.execute(
         statement.on_conflict_do_update(
             index_elements=["channel", "conversation_key"],
-            set_={
-                chave: statement.excluded[chave]
-                for chave in (*preenchidos, "intencao", "updated_at")
-            },
+            set_={chave: statement.excluded[chave] for chave in (*campos, "updated_at")},
         )
     )

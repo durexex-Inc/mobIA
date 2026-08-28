@@ -5,6 +5,7 @@ existe para pegar e a mudanca de prompt alterando o que o modelo devolve, e um
 replay passaria verde com o prompt destruido.
 """
 
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -12,11 +13,13 @@ import pytest
 
 from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE, ClassificadorAnthropic
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.context.repositorio import campos_a_gravar
 from mobia.domain.messages.enums import MessageRole
 from mobia.evals.contexto import contexto_do_historico
 from mobia.evals.corpus import ConversaAnotada
 from mobia.evals.metricas import (
     PISO_DE_TURNOS,
+    PISO_DE_TURNOS_ANOTADOS,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
     ExtracaoObservada,
@@ -33,28 +36,53 @@ from mobia.evals.metricas import (
 )
 from mobia.evals.relatorio import render
 
-# Marcadores por campo para o proxy de repergunta. Sao pistas, nao gramatica:
-# a heuristica tem falso negativo por construcao -- um "e onde voce quer?" com
-# outra palavra escapa. Mede uma cota inferior de reperguntas, nunca uma
-# garantia. Esta limitacao esta declarada no README de proposito.
-MARCADORES_DE_REPERGUNTA = {
-    "regiao": ("regiao", "bairro", "onde", "localiza"),
-    "quartos": ("quarto", "dormitorio"),
-    "vagas": ("vaga", "garagem"),
-    "tipo_imovel": ("apartamento", "casa", "tipo de imovel"),
-    "faixa_preco_max": ("orcamento", "faixa de preco", "quanto pretende", "valor"),
-    "urgencia": ("prazo", "quando pretende", "pressa"),
-    "forma_pagamento": ("pagamento", "financiamento", "a vista"),
-    "tem_imovel_para_vender": ("imovel para vender", "tem imovel"),
+# Marcadores por campo para o proxy de repergunta. Sao regex (nao substring
+# crua) casadas com fronteira de palavra nas duas pontas, e cada uma e pista,
+# nao gramatica: a heuristica tem falso negativo por construcao -- um "e onde
+# voce quer?" com outra palavra escapa. "valor" e "casa" sairam da lista de
+# proposito: apareciam na resposta do agente DESCREVENDO um imovel ("o valor
+# do condominio e R$ 650", "esse apartamento e uma casa") tao ou mais vezes
+# que numa repergunta de verdade, e nao ha fronteira de palavra que resolva
+# isso -- sao ambiguos mesmo como palavra inteira. O numero final NAO e cota
+# inferior nem superior de reperguntas: e indicador aproximado, com erro nas
+# duas direcoes. Esta limitacao esta declarada no README de proposito, e os
+# seis casos que motivaram este aperto -- quatro negativos, dois positivos --
+# estao travados em `tests/unit/test_evals_reperguntas.py`.
+MARCADORES_DE_REPERGUNTA: dict[str, tuple[str, ...]] = {
+    "regiao": (r"regiao", r"bairro", r"onde", r"localiza"),
+    "quartos": (r"quartos?", r"dormitorios?"),
+    "vagas": (r"vagas?", r"garagem"),
+    "tipo_imovel": (r"apartamentos?", r"tipo de imovel"),
+    "faixa_preco_max": (r"orcamento", r"faixa de preco", r"quanto pretende"),
+    "urgencia": (r"prazo", r"quando pretende", r"pressa"),
+    "forma_pagamento": (r"pagamento", r"financiamento", r"a vista"),
+    "tem_imovel_para_vender": (r"imovel para vender", r"tem imovel"),
 }
 
 
 def _reperguntou(texto: str, campos_conhecidos: Iterable[str]) -> list[str]:
+    """Proxy de palavra-chave: pista, nao prova, nas duas direcoes.
+
+    Duas guardas alem da fronteira de palavra: exige `?` na resposta --
+    sem isso "esse apartamento tem 2 quartos e 1 vaga" (o agente descrevendo
+    um imovel, sem perguntar nada) contava como tres reperguntas -- e usa
+    `\\bmarcador\\b`, nao substring crua, porque "onde" e substring de
+    "responder" ("resp-onde-r") e contaria repergunta de regiao numa recusa
+    que nem menciona regiao. Mesmo com as duas guardas o proxy ainda erra
+    para os dois lados: uma pergunta com outra palavra escapa (falso
+    negativo), e o agente pode descrever um imovel numa frase que termina
+    perguntando outra coisa (falso positivo). Ver os testes deste modulo.
+    """
+    if "?" not in texto:
+        return []
     baixo = texto.casefold()
     return [
         campo
         for campo in campos_conhecidos
-        if any(marcador in baixo for marcador in MARCADORES_DE_REPERGUNTA.get(campo, ()))
+        if any(
+            re.search(rf"\b{marcador}\b", baixo)
+            for marcador in MARCADORES_DE_REPERGUNTA.get(campo, ())
+        )
     ]
 
 
@@ -163,10 +191,16 @@ async def _rodar_conversa(
             (conversa.id, indice, campo)
             for campo in _reperguntou(resposta.resposta, conhecidos_antes)
         )
-        # Acumula como producao acumula: o mais novo vence, `None` nao apaga.
-        # Sem isto o estado do turno seguinte estaria vazio e o modelo nunca
-        # teria visto o campo que nao deveria reperguntar.
-        estado_acumulado.update(obtido)
+        # Acumula com a MESMA regra de producao -- `campos_a_gravar`, a
+        # funcao que `gravar_estado` tambem usa: guarda de `FORA_DE_ESCOPO`
+        # (nao acumula nada neste turno), mais novo vence (o `update` por
+        # cima do que ja havia), `None` nao apaga, e `intencao` sempre entra
+        # quando ha gravacao. Antes desta funcao existir o runner divergia de
+        # producao nas duas ultimas: acumulava atraves de `FORA_DE_ESCOPO` e
+        # nunca guardava `intencao`, entao o prompt sintetico do eval nunca
+        # carregava a linha `intencao: X` que `montagem._texto_do_estado`
+        # poe no prompt real a partir do segundo turno.
+        estado_acumulado.update(campos_a_gravar(resposta.intencao, resposta.extracao))
 
         historico.append((MessageRole.AGENTE, resposta.resposta))
 
@@ -185,10 +219,15 @@ def _metricas_de(
     ninguem fica verde, e quem reprova a execucao e o teto de conversas
     abandonadas.
 
-    `precisao_da_extracao` tem a mesma guarda, e pelo mesmo motivo, mas com
-    denominador proprio: `observadas` so tem os turnos cujo `campos` sobreviveu
-    ao abandono por infraestrutura, e pode ficar vazia mesmo com `resultados`
-    cheio, se toda conversa anotada for justamente uma das abandonadas.
+    `precisao_da_extracao` tem guarda irma, mas contra `PISO_DE_TURNOS_ANOTADOS`
+    e nao contra 1: `observadas` so tem os turnos cujo `campos` sobreviveu ao
+    abandono por infraestrutura, e o pior caso medido -- abandonar as
+    `TETO_DE_CONVERSAS_ABANDONADAS` conversas com mais anotacao -- deixa uma
+    amostra pequena de mais para o piso de 85% significar algo, sem chegar a
+    zero. Uma guarda que so testasse "zero turnos anotados" deixaria passar
+    exatamente esse caso: `precisao_da_extracao` mediria e bloquearia (ou
+    liberaria) um gate pago com uma amostra abaixo do piso que o corpus
+    declara, e o resultado seria ruido lido como sinal.
     """
     medidas = (
         [
@@ -204,8 +243,15 @@ def _metricas_de(
     )
     extracao = (
         [precisao_da_extracao(observadas)]
-        if observadas
-        else [sem_mecanismo("precisao da extracao", "nenhum turno anotado sobrou na execucao")]
+        if len(observadas) >= PISO_DE_TURNOS_ANOTADOS
+        else [
+            sem_mecanismo(
+                "precisao da extracao",
+                f"{len(observadas)} turnos anotados sobraram na execucao, "
+                f"piso {PISO_DE_TURNOS_ANOTADOS}: amostra pequena de mais "
+                f"para o piso de 85% significar algo",
+            )
+        ]
     )
     return [
         *medidas,
@@ -227,10 +273,11 @@ async def test_acuracia_de_intencao_no_corpus(
     execucao que perdeu tudo --, porque ele e o unico artefato que sobra de
     dinheiro ja gasto.
 
-    As tres asercoes estao nesta ordem porque a primeira que estourar e a
+    As quatro asercoes estao nesta ordem porque a primeira que estourar e a
     mensagem que o CI mostra, e elas nao dizem a mesma coisa: teto e "a rede
-    caiu, re-rode", piso e "sobrou amostra de menos", `bloqueia` e "o prompt
-    regrediu". Vermelho por rede vem antes de vermelho por regressao.
+    caiu, re-rode", os dois pisos (turnos e turnos anotados) sao "sobrou
+    amostra de menos", `bloqueia` e "o prompt regrediu". Vermelho por rede
+    vem antes de vermelho por regressao.
     """
     classificador = ClassificadorAnthropic()
 
@@ -259,10 +306,11 @@ async def test_acuracia_de_intencao_no_corpus(
         erradas=erros(resultados),
         infraestrutura=abandonadas,
         # Diagnostico, nao gate -- mesmo motivo de `ResumoDeConfianca`: o proxy
-        # de repergunta tem falso negativo por construcao (ver
-        # MARCADORES_DE_REPERGUNTA acima), entao o numero e uma cota inferior,
-        # nunca prova de que a repergunta nao aconteceu. Nao entra em
-        # `_metricas_de` nem em `bloqueia`.
+        # de repergunta (ver MARCADORES_DE_REPERGUNTA acima) tem falso
+        # negativo E falso positivo por construcao, entao o numero e um
+        # indicador aproximado, nunca cota inferior nem prova de que a
+        # repergunta aconteceu ou nao. Nao entra em `_metricas_de` nem em
+        # `bloqueia`.
         reperguntas=reperguntados,
     )
     with capsys.disabled():
@@ -287,5 +335,21 @@ async def test_acuracia_de_intencao_no_corpus(
         f"{len(resultados)} turnos medidos, piso {PISO_DE_TURNOS}. Amostra "
         f"insuficiente depois do abandono: a faixa amarela nao absorve o ruido "
         f"neste tamanho.\n{relatorio}"
+    )
+    # `PISO_DE_TURNOS_ANOTADOS` e irmao de `PISO_DE_TURNOS`, mas o abandono
+    # nao encolhe os dois na mesma proporcao: as conversas mais longas nao
+    # sao as mais anotadas, entao perder o teto de conversas inteiro (5) pode
+    # deixar o total de turnos acima do piso e o subconjunto anotado bem
+    # abaixo do dele -- o caso medido e abandonar as cinco conversas com mais
+    # anotacao, que sozinho derruba os turnos anotados a 1/3 do piso sem
+    # tocar o piso de turnos. Sem este assert, `_metricas_de` ainda protege o
+    # gate (vira `sem_mecanismo` abaixo do piso, nunca calcula
+    # `precisao_da_extracao` com amostra pequena de mais), mas o relatorio sai
+    # mudo sobre o motivo -- e essa e a mesma razao de existir do assert do
+    # piso de turnos, uma linha acima.
+    assert len(observadas) >= PISO_DE_TURNOS_ANOTADOS, (
+        f"{len(observadas)} turnos anotados sobraram na execucao, piso "
+        f"{PISO_DE_TURNOS_ANOTADOS}. Amostra insuficiente para a precisao da "
+        f"extracao significar algo depois do abandono: re-rode.\n{relatorio}"
     )
     assert not bloqueia(metricas), relatorio
