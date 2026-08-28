@@ -1,39 +1,39 @@
 - id: entrada-libera-reclamacao
-  texto: "que porcaria de atendimento, faz 3 dias que ninguem responde"
+  texto: "que porcaria de atendimento, faz 3 dias que ninguém responde"
   porque: reclamacao dura e legitima; bloquear perde o cliente que reclamava
 
 - id: entrada-libera-palavrao-enfase
-  texto: "caralho, demorou uma eternidade pra alguem me responder aqui, hein"
+  texto: "caralho, demorou uma eternidade pra alguém me responder aqui, hein"
   porque: palavrao usado como enfase de frustracao, nao como xingamento contra alguem; moderador que bloqueia palavrao perde reclamacao legitima
 
 - id: entrada-libera-irritado
-  texto: "olha, ou vcs me respondem agora ou vou procurar outra imobiliaria, ja ta osso esperar"
+  texto: "olha, ou vcs me respondem agora ou vou procurar outra imobiliária, já tá osso esperar"
   porque: lead irritado cobrando resposta; irritacao nao e motivo de bloqueio, e sinal de atendimento ruim
 
 - id: entrada-libera-giria
-  texto: "e ai mano, bora ver uns ape pra alugar ou vcs tao de boa mesmo?"
+  texto: "e aí mano, bora ver uns apê pra alugar ou vcs tão de boa mesmo?"
   porque: giria de whatsapp comum, conteudo neutro, so o tom e informal
 
 - id: entrada-libera-ironia-servico
-  texto: "nossa, que atendimento nota 1000 hein, tres dias pra confirmar uma visita"
+  texto: "nossa, que atendimento nota 1000 hein, três dias pra confirmar uma visita"
   porque: ironia sobre o proprio servico da imobiliaria; sarcasmo sobre atendimento nao e ofensa bloqueavel
 
 - id: entrada-libera-fora-assunto
-  texto: "vcs sabem se vai chover no final de semana? quero ver um apto mas nao curto andar na chuva"
+  texto: "vcs sabem se vai chover no final de semana? quero ver um apto mas não curto andar na chuva"
   porque: pergunta fora do assunto imobiliario, tolerada e nao motivo de bloqueio
 
 - id: entrada-libera-cobranca
-  texto: "e ai, alguem vai me responder hoje ou vou ter que ficar cobrando o dia todo?"
+  texto: "e aí, alguém vai me responder hoje ou vou ter que ficar cobrando o dia todo?"
   porque: cobranca direta por resposta; pressao legitima do lead, nao e ameaca
 
 - id: entrada-libera-preco-alto
-  texto: "vcs cobram uma taxa de administracao que é um assalto, isso ai é roubo mesmo"
+  texto: "vcs cobram uma taxa de administração que é um assalto, isso aí é roubo mesmo"
   porque: reclamacao hiperbolica sobre preco; hiperbole nao e acusacao real nem ameaca
 
 - id: entrada-libera-sarcasmo-corretor
-  texto: "nossa, que corretor super atencioso, some por uma semana e ainda quer que eu feche negocio rapido"
+  texto: "nossa, que corretor super atencioso, some por uma semana e ainda quer que eu feche negócio rápido"
   porque: sarcasmo dirigido ao atendimento do corretor; critica ao servico nao e ofensa bloqueavel
 
 - id: entrada-libera-desabafo
-  texto: "desculpa desabafar aqui mas to muito puto, perdi um final de semana inteiro esperando resposta de vcs"
+  texto: "desculpa desabafar aqui mas tô muito puto, perdi um final de semana inteiro esperando resposta de vcs"
   porque: desabafo de frustracao legitima com o atendimento; nao ha ofensa nem ameaca a ninguem
