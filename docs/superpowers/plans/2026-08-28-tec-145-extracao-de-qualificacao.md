@@ -40,7 +40,7 @@
 | `tests/integration/test_extracao_no_turno.py` | Criar: os cenários Gherkin e a saída bloqueada | 3 |
 | `src/mobia/evals/corpus.py` | Modificar: `TurnoAnotado.campos` e validação | 4 |
 | `src/mobia/evals/metricas.py` | Modificar: `faixa_de` parametrizada, `ExtracaoObservada`, `precisao_da_extracao` | 4 |
-| `tests/unit/test_metricas.py` | Modificar: a métrica nova pelos dois lados | 4 |
+| `tests/unit/test_evals_metricas.py` | Modificar: a métrica nova pelos dois lados | 4 |
 | `tests/unit/test_evals_corpus_real.py` | Modificar: piso de turnos anotados | 5 |
 | `src/mobia/evals/contexto.py` | Modificar: `contexto_do_historico` aceita `estado` | 5 |
 | `evals/corpus/*.yaml` | Modificar: anotar `campos` nos turnos | 5 |
@@ -53,6 +53,7 @@
 
 **Files:**
 - Modify: `src/mobia/domain/agente/schemas.py`
+- Modify: `src/mobia/domain/agente/classificador.py:187` (stub, substituido na Tarefa 2)
 - Modify: `tests/conftest.py:121-157` (`ClassificadorFake`)
 - Test: `tests/unit/test_extracao.py` (criar)
 
@@ -60,7 +61,7 @@
 - Consumes: nada de tarefas anteriores.
 - Produces: `TipoImovel`, `Urgencia`, `FormaPagamento` (`StrEnum`); `Extracao` (frozen dataclass, nove campos anuláveis com default `None`, métodos `vazia() -> bool` e `preenchidos() -> dict[str, object]`); `RespostaDoAgente.extracao: Extracao` (campo obrigatório, último da dataclass). `ClassificadorFake(extracao=...)` aceita uma `Extracao`.
 
-**Contexto que o brief não sabe:** `RespostaDoAgente` é construída em exatamente **dois** lugares no repositório — `src/mobia/domain/agente/classificador.py:187` e `tests/conftest.py:148`. O segundo é atualizado nesta tarefa; o primeiro, na Tarefa 2. Entre as duas tarefas a suíte fica vermelha em `test_classificador.py`, e isso é esperado: a Tarefa 2 fecha.
+**Contexto que o brief não sabe:** `RespostaDoAgente` é construída em exatamente **dois** lugares no repositório — `src/mobia/domain/agente/classificador.py:187` e `tests/conftest.py:148`. Esta tarefa atualiza **os dois**: o campo é obrigatório e sem default, então deixar o primeiro de fora faria o `mypy src` do Step 5 desta própria tarefa falhar. No de produção entra um stub `extracao=Extracao()`, que a Tarefa 2 substitui por `extrair(dados.get("extracao"))` — e é o teste de integração dela que prova a substituição, porque nenhum teste desta tarefa pega um stub esquecido.
 
 - [ ] **Step 1: Escrever os testes que falham**
 
@@ -246,6 +247,18 @@ E no docstring da classe, acrescente o parágrafo:
     isso ele nao repergunta o que acabou de ouvir.
 ```
 
+Em `src/mobia/domain/agente/classificador.py`, no `RespostaDoAgente(...)` da linha ~187, acrescente:
+
+```python
+                # Stub: a Tarefa 2 troca por `extrair(dados.get("extracao"))`.
+                # O campo e obrigatorio, entao sem esta linha o modulo nao
+                # tipa -- e sem o `extrair` da Tarefa 2 a extracao fica sempre
+                # vazia em producao, o que nenhum teste desta tarefa pega.
+                extracao=Extracao(),
+```
+
+e acrescente `Extracao` ao import de `mobia.domain.agente.schemas` que o arquivo já faz.
+
 Em `tests/conftest.py`, no `ClassificadorFake.__init__`, acrescente o parâmetro depois de `confianca`:
 
 ```python
@@ -281,7 +294,7 @@ Expected: sem erro. Se `mypy` reclamar de `Extracao` em `tests/conftest.py`, use
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/mobia/domain/agente/schemas.py tests/conftest.py tests/unit/test_extracao.py
+git add src/mobia/domain/agente/schemas.py src/mobia/domain/agente/classificador.py tests/conftest.py tests/unit/test_extracao.py
 git commit -m "feat(TEC-145): vocabulario fechado e contrato da extracao"
 ```
 
@@ -1005,8 +1018,8 @@ git commit -m "feat(TEC-145): gravar o estado no commit da intencao, sem apagar 
 **Files:**
 - Modify: `src/mobia/evals/corpus.py`
 - Modify: `src/mobia/evals/metricas.py`
-- Modify: `tests/unit/test_metricas.py`
-- Modify: `tests/unit/test_corpus.py` (se existir; senão acrescente ao arquivo de teste do corpus que existir sob `tests/unit/`)
+- Modify: `tests/unit/test_evals_metricas.py`
+- Modify: `tests/unit/test_evals_corpus.py`
 
 **Interfaces:**
 - Consumes: `Extracao.preenchidos()`.
@@ -1016,7 +1029,7 @@ git commit -m "feat(TEC-145): gravar o estado no commit da intencao, sem apagar 
 
 - [ ] **Step 1: Escrever os testes que falham**
 
-Acrescente em `tests/unit/test_metricas.py`:
+Acrescente em `tests/unit/test_evals_metricas.py`:
 
 ```python
 def _observada(esperado, obtido, *, indice=0):
@@ -1103,7 +1116,7 @@ def test_faixa_de_continua_com_os_defaults_de_antes():
     assert faixa_de(83, 100) is Faixa.VERMELHO
 ```
 
-E, para o corpus, no arquivo de teste unitário do corpus:
+E em `tests/unit/test_evals_corpus.py`:
 
 ```python
 def test_turno_sem_campos_tem_campos_none():
@@ -1134,7 +1147,7 @@ Adapte os nomes de fixture/constante aos que o arquivo já usa.
 
 - [ ] **Step 2: Rodar e confirmar que falha**
 
-Run: `python -m pytest tests/unit/test_metricas.py -v > /tmp/t4.txt 2>&1; echo "EXIT=$?"; tail -30 /tmp/t4.txt`
+Run: `python -m pytest tests/unit/test_evals_metricas.py -v > /tmp/t4.txt 2>&1; echo "EXIT=$?"; tail -30 /tmp/t4.txt`
 
 Expected: FAIL — `ImportError: cannot import name 'precisao_da_extracao'`.
 
