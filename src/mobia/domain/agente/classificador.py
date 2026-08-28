@@ -8,7 +8,12 @@ from anthropic import transform_schema
 from anthropic.types import Message
 
 from mobia.app.config import get_settings
-from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
+from mobia.domain.agente.schemas import (
+    Extracao,
+    Intencao,
+    PerguntaDeDesambiguacao,
+    RespostaDoAgente,
+)
 from mobia.domain.context.montagem import ContextoMontado, montar_prompt
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.infra.anthropic import get_client
@@ -211,6 +216,11 @@ class ClassificadorAnthropic:
                 tokens_in=resposta.usage.input_tokens,
                 tokens_out=resposta.usage.output_tokens,
                 latency_ms=latency_ms,
+                # Stub: a Tarefa 2 troca por `extrair(dados.get("extracao"))`.
+                # O campo e obrigatorio, entao sem esta linha o modulo nao
+                # tipa -- e sem o `extrair` da Tarefa 2 a extracao fica sempre
+                # vazia em producao, o que nenhum teste desta tarefa pega.
+                extracao=Extracao(),
             )
         except (
             json.JSONDecodeError,

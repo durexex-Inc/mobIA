@@ -28,7 +28,7 @@ from mobia.infra.queue import create_redis_pool
 if TYPE_CHECKING:
     from arq.connections import ArqRedis
 
-    from mobia.domain.agente.schemas import Intencao
+    from mobia.domain.agente.schemas import Extracao, Intencao
 
 TABELAS = (
     "conversation_intent",
@@ -125,14 +125,17 @@ class ClassificadorFake:
         self,
         intencao: "Intencao" = None,  # type: ignore[assignment]
         confianca: Decimal = Decimal("0.91"),
+        extracao: "Extracao | None" = None,
         erro: Exception | None = None,
         pergunta: str = "Me conta um pouco mais sobre o que voce procura?",
         erro_da_desambiguacao: Exception | None = None,
     ) -> None:
+        from mobia.domain.agente.schemas import Extracao as _Extracao
         from mobia.domain.agente.schemas import Intencao as _Intencao
 
         self.intencao = intencao or _Intencao.COMPRA
         self.confianca = confianca
+        self.extracao = extracao if extracao is not None else _Extracao()
         self.erro = erro
         self.pergunta = pergunta
         self.erro_da_desambiguacao = erro_da_desambiguacao
@@ -153,6 +156,7 @@ class ClassificadorFake:
             tokens_in=1200,
             tokens_out=180,
             latency_ms=900,
+            extracao=self.extracao,
         )
 
     async def desambiguar(self, contexto):
