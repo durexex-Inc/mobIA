@@ -794,6 +794,40 @@ texto é esse.
   conta exatamente uma chamada com `Direcao.SAIDA`. No caminho ambíguo a
   resposta da primeira chamada ao classificador já é descartada antes de
   chegar à moderação — só a pergunta do desambiguador é julgada.
+- **Saída bloqueada não gasta a pergunta de desambiguação.**
+  `marcar_desambiguacao` afirma "eu já perguntei", e é por isso que a
+  gravação espera a entrega confirmada: escrita antes, um 5xx da Meta
+  queimaria a única chance do episódio e o lead ficaria em `INDEFINIDA` sem
+  ninguém ter perguntado nada. Um bloqueio de saída é indistinguível de um
+  5xx no único aspecto que o marcador afirma — a pergunta não chegou; o que
+  chegou foi `TEXTO_NEUTRO_DE_SAIDA`, que não pergunta nada. A condição em
+  `executar_turno` exige as duas coisas, e o `turno.desambiguou` vai junto,
+  porque fora dela ele afirmava algo que não aconteceu.
+  `tests/integration/test_moderacao_de_saida.py::test_saida_bloqueada_no_caminho_ambiguo_nao_marca_a_desambiguacao`
+  é também o único teste que exercita moderação no caminho ambíguo — todos os
+  outros usam a confiança padrão do dublê (0,91), e era esse ponto cego que
+  mantinha o defeito vivo por seis revisões.
+- **O veredito é lido tolerante na forma e rígido no conteúdo.** O protocolo
+  pede uma palavra sem pontuação, mas `BLOQUEAR.` ou `**LIBERAR**` não podem
+  custar um turno: comparados por igualdade eles virariam
+  `ModeracaoIndisponivel`, e na saída isso propaga até a linha ficar em
+  `FAILED` para sempre, sem o lead receber nada. `_UMA_PALAVRA`
+  (`infra/moderacao.py`) exige que a resposta inteira seja **uma** corrida de
+  letras cercada só de não-letras; ela não procura a palavra dentro de uma
+  frase, então `BLOQUEAR LIBERAR`, `não vou BLOQUEAR` e `talvez` continuam
+  sendo indisponibilidade. A garantia que sustenta o subsistema — o
+  desconhecido nunca vira liberado — fica intacta, e há teste para cada
+  metade.
+- **A entrega de texto fixo não mente na telemetria nem no desfecho.**
+  `_entregar_texto_fixo` não chama modelo nenhum, e grava
+  `MODELO_SEM_CHAMADA` (`app/config.py`, custo zero na tabela de preços) em
+  vez de `model=""` — que caía fora da tabela, fazia `custo_em_dolar`
+  devolver `None` e emitia `telemetry.unknown_model` a cada entrada
+  bloqueada, abrindo chamado para uma lacuna que não existe. E
+  `EnvioForaDaJanela` ali é `warning` e `"expirado"`, como no caminho
+  principal, e não `error` e `"sem_resposta"`: janela de 24h fechada não é
+  recusa permanente, e o `Literal` de `ResultadoDoTurno` existe para essa
+  distinção não se perder.
 - **O texto julgado nunca entra em log, nas duas direções.** Os eventos
   `moderacao.entrada_bloqueada` e `moderacao.saida_bloqueada`
   (`domain/agente/turno.py`) logam `message_id` e `motivo` (a palavra
@@ -802,7 +836,8 @@ texto é esse.
   `str(exc)` nem o texto enviado, porque a mensagem de erro do SDK pode
   ecoar o corpo da requisição.
 - **O corpus tem os dois lados, e os de controle valem mais que os
-  positivos.** São 40 casos, 10 por arquivo em 4 arquivos
+  positivos.** São 41 casos em 4 arquivos — 11 em `entrada_libera.yaml`, 10
+  em cada um dos outros três
   (`evals/moderacao/entrada_bloqueia.yaml`, `entrada_libera.yaml`,
   `saida_bloqueia.yaml`, `saida_libera.yaml`) — um moderador que bloqueia
   tudo passa de cara no corpus só-positivo e parece seguro; só o corpus de
@@ -832,14 +867,19 @@ texto é esse.
   moderador estiver fora do ar, falas impróprias entram no contexto do
   agente sem barreira nenhuma. O evento `moderacao.indisponivel` dá
   visibilidade a isso, e visibilidade não é barreira.
-- **O turno passa a ter até cinco chamadas ao modelo, contra um
-  `job_timeout` que três delas já estouravam sozinhas.** `resumir` +
-  `classificar` + `desambiguar` já somavam 360s de pior caso antes desta
-  card (TEC-135, cliente de 120s por chamada). A moderação soma até mais
-  duas — entrada e saída, uma vez cada por turno — mas num cliente com teto
-  de 5s cada, 10s no total: marginal contra um orçamento que já estava
-  estourado, não a causa dele. Reduzir a chance de o turno estourar o
-  `job_timeout` é a TEC-228, não esta card.
+- **O turno passa a ter até cinco chamadas que geram texto, contra um
+  `job_timeout` que três delas já estouravam sozinhas.** As cinco são
+  `resumir`, `classificar`, `desambiguar` e as duas moderações — entrada e
+  saída, uma vez cada por turno. O número **exclui** `count_tokens`
+  (`contador.contar`), de propósito: ela é um round trip a mais que não gera
+  token nenhum, e pode acontecer mais de uma vez no mesmo turno — o laço de
+  truncamento de `montar_contexto` reconta a cada corte, então não há um
+  "número de chamadas" fechado que a inclua. `resumir` + `classificar` +
+  `desambiguar` já somavam 360s de pior caso antes desta card (TEC-135,
+  cliente de 120s por chamada); a moderação soma 10s, num cliente com teto de
+  5s por chamada: marginal contra um orçamento que já estava estourado, não a
+  causa dele. Reduzir a chance de o turno estourar o `job_timeout` é a
+  TEC-228, não esta card.
 - **Falso positivo custa atendimento, e nada no código limita a taxa.** O
   corpus de controle (`*_libera`) mede quantas vezes o moderador bloqueia o
   que deveria liberar; medir não é impedir, e não há piso nem teto de código
@@ -852,14 +892,42 @@ texto é esse.
   inofensivas podem compor assédio ao longo de vários turnos sem que nada
   aqui veja isso.
 - **O eval de moderação nunca foi executado.** `evals/test_moderacao.py`
-  existe e mede quatro taxas reais contra o corpus de 40 casos, mas até este
+  existe e mede quatro taxas reais contra o corpus de 41 casos, mas até este
   README ser escrito ninguém rodou `pytest evals` com ele — as duas taxas
   (falso positivo e falso negativo, nas duas direções) são desconhecidas.
-- **Nenhum teste cobre "no caminho ambíguo, só a pergunta é moderada".** Os
-  quatro testes de `tests/integration/test_moderacao_de_saida.py` usam
-  `classificador_fake()` com a confiança padrão de 0,91 — acima do limiar de
-  0,6 — então todos exercitam o caminho não-ambíguo. A garantia "uma vez por
-  turno" é afirmada no comentário de `executar_turno` e testada apenas onde
-  ela não pode falhar: nenhum teste força o caminho ambíguo para confirmar
-  que a resposta descartada da primeira chamada ao classificador nunca chega
-  a ser julgada.
+- **A fala bloqueada na entrada volta ao contexto no turno seguinte.** É a
+  lacuna mais séria desta card, e o spec afirma o contrário — *"o que ela
+  impede é que a fala vire contexto, resposta e resumo"*. Isso vale para o
+  turno em que a fala chega, e só para ele. O bloqueio retorna cedo e
+  economiza aquele turno, mas a linha da mensagem continua em `messages`,
+  vira `PROCESSED` como qualquer outra (`workers/jobs/process_message.py`
+  grava o status pelo desfecho, e o bloqueio devolve `"respondido"`) e **não
+  recebe marca nenhuma de bloqueio**. `literais_apos`
+  (`src/mobia/domain/context/janela.py`) seleciona por conversa e marca-d'água
+  do resumo; não filtra moderação. Então o lead manda M1 (bloqueada), recebe
+  a recusa, manda M2 — e o turno de M2 monta contexto decifrando M1 inteira
+  para dentro do prompt. Na dobra dos ~40, M1 entra no resumo e fica lá
+  permanentemente. O que resolveria é uma marca de bloqueio na própria linha
+  da mensagem mais um filtro por ela na janela; é card próprio, e não está
+  feito. Até lá, o que a moderação de entrada impede é que a fala vire
+  **resposta naquele turno** — não que ela vire contexto ou resumo depois.
+- **A indisponibilidade prolongada do moderador custa cinco turnos pagos por
+  mensagem e termina em silêncio.** Com o provedor fora do ar nas duas
+  pontas, a entrada falha aberta (o turno segue e paga `classificar`, e a
+  montagem pode pagar `resumir`) e a saída falha fechada (a exceção propaga,
+  nada é entregue). A linha vira `FAILED`, o sweeper reenfileira, e cada
+  tentativa paga tudo de novo até `sweep_max_attempts` (5); depois disso ela
+  fica em `FAILED` para sempre e o lead não recebe nada. É consequência
+  defensável de "a saída fecha" — entregar texto não moderado é o risco que
+  esta card existe para fechar —, mas o preço é este, e não estava escrito em
+  lugar nenhum.
+  `tests/integration/test_moderacao_de_saida.py::test_moderador_fora_do_ar_nas_duas_pontas_paga_o_turno_e_nao_entrega`
+  fixa o comportamento composto.
+- **Mensagem sem texto não passa pela moderação de entrada.** O `if corpo:`
+  de `executar_turno` pula o bloco inteiro quando `text_body` é nulo — áudio,
+  imagem, documento, e o tipo desconhecido. Hoje é inofensivo, porque não há
+  texto a julgar: `montagem.py` põe um marcador (`(audio, sem transcricao)`)
+  no lugar. Mas "moderação em 100% dos turnos" não é literalmente verdade, e
+  deixa de ser inofensivo no dia em que a transcrição existir — o texto
+  transcrito chegaria ao contexto sem ter passado por lugar nenhum. Quem
+  implementar transcrição tem de mover a moderação para depois dela.

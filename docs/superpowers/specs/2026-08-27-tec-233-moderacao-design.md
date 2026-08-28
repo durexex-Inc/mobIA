@@ -4,6 +4,42 @@
 - **Jira:** [TEC-233](https://eduardodurieuxlopes.atlassian.net/browse/TEC-233) · Épico [TEC-200](https://eduardodurieuxlopes.atlassian.net/browse/TEC-200)
 - **Origem:** desmembrada da [TEC-210](https://eduardodurieuxlopes.atlassian.net/browse/TEC-210); RNF-26 (SRS v1.0), seção 4.4, RT-01
 - **Status:** aprovado, aguardando plano de implementação
+- **Descrição viva:** a seção **TEC-233** do `README.md`. Este spec está
+  congelado no que foi aprovado e **não** é reescrito; onde ele e o código
+  discordarem, o código ganha. A implementação divergiu nos pontos abaixo, e
+  quem for ler o corpo do spec precisa deles antes:
+  - **A moderação de entrada não impede que a fala vire contexto e resumo —
+    só que ela vire resposta naquele turno.** A lacuna abaixo diz o contrário,
+    literalmente: *"o que ela impede é que a fala vire contexto, resposta e
+    resumo"*. É falso para todo turno posterior. O bloqueio retorna cedo, mas
+    a linha da mensagem fica em `messages` com `status=PROCESSED` e **sem
+    nenhuma marca de bloqueio**, e `literais_apos`
+    (`src/mobia/domain/context/janela.py`) seleciona por conversa e
+    marca-d'água do resumo, sem filtrar moderação. O turno seguinte decifra a
+    fala bloqueada inteira para dentro do prompt, e na dobra dos ~40 ela entra
+    no resumo permanentemente. Fechar isso exige marca na linha da mensagem
+    mais filtro na janela; é card próprio, e o README declara a lacuna.
+  - **São até cinco chamadas que geram texto, não quatro.** `resumir` +
+    `classificar` + `desambiguar` + moderação de entrada + moderação de saída.
+    O número exclui `count_tokens` (`contador.contar`), que é round trip sem
+    geração e pode acontecer mais de uma vez no mesmo turno — o laço de
+    truncamento de `montar_contexto` reconta a cada corte.
+  - **`_entregar_texto_fixo` não garante "PROCESSED com algo entregue".** O
+    spec afirma que os dois casos de bloqueio fecham o turno em `PROCESSED`
+    porque algo foi entregue. Dois ramos contradizem isso: `EnvioForaDaJanela`
+    devolve `"expirado"` e `reentrega_suprimida` devolve
+    `"reentrega_suprimida"`, e em nenhum dos dois há garantia de que o lead
+    recebeu alguma coisa. A linha fica em `PROCESSED` nos dois — o desfecho é
+    terminal —, mas "PROCESSED" aqui significa "não vale retentar", não
+    "entregue".
+  - **O texto fixo de recusa não passa pela moderação de saída.** A garantia
+    "nenhum texto é entregue ao lead sem ter passado por moderação de saída"
+    tem essa exceção: `_entregar_texto_fixo` vai direto ao `outbound.send`.
+    É deliberado — o texto é constante, escrito à mão neste repositório, e
+    moderá-lo pagaria uma chamada para julgar algo que não veio do modelo —,
+    mas a garantia, como escrita, é mais ampla que o código.
+  - **O corpus tem 41 casos, não um múltiplo redondo.** `entrada_libera.yaml`
+    tem 11; os outros três têm 10 cada.
 
 ## Problema
 
