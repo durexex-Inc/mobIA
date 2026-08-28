@@ -2,9 +2,15 @@ from pathlib import Path
 
 import pytest
 
-from mobia.domain.agente.schemas import Intencao
+from mobia.domain.agente.schemas import FormaPagamento, Intencao, TipoImovel, Urgencia
 from mobia.evals.corpus import ConversaAnotada, carregar, total_de_turnos
-from mobia.evals.metricas import PISO_DE_TURNOS
+from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS
+
+_VOCABULARIO = {
+    "tipo_imovel": TipoImovel,
+    "urgencia": Urgencia,
+    "forma_pagamento": FormaPagamento,
+}
 
 CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
 
@@ -71,3 +77,32 @@ def test_todo_id_e_prefixado_pela_categoria(conversas: list[ConversaAnotada]) ->
 
     for conversa in conversas:
         assert conversa.id.startswith(prefixos), conversa.id
+
+
+def test_corpus_tem_turnos_anotados_suficientes(conversas: list[ConversaAnotada]) -> None:
+    """Piso proprio: sem ele, anotar tres turnos faceis daria 100% de precisao
+    num corpus que nao mede nada."""
+    anotados = sum(1 for c in conversas for t in c.turnos if t.campos is not None)
+    assert anotados >= PISO_DE_TURNOS_ANOTADOS
+
+
+def test_anotacao_nunca_usa_valor_fora_do_vocabulario(conversas: list[ConversaAnotada]) -> None:
+    """`carregar` ja levanta nesse caso; este teste guarda o corpus commitado."""
+    for conversa in conversas:
+        for turno in conversa.turnos:
+            for nome, enum in _VOCABULARIO.items():
+                if turno.campos and nome in turno.campos:
+                    assert turno.campos[nome] in [membro.value for membro in enum]
+
+
+def test_ha_turno_de_correcao_anotado(conversas: list[ConversaAnotada]) -> None:
+    """A sobrescrita pelo mais novo (D4 do spec) precisa de caso no corpus."""
+    for conversa in conversas:
+        regioes = [
+            turno.campos["regiao"]
+            for turno in conversa.turnos
+            if turno.campos and "regiao" in turno.campos
+        ]
+        if len(regioes) >= 2 and len(set(regioes)) >= 2:
+            return
+    pytest.fail("nenhuma conversa anotada troca de regiao: a sobrescrita nao e medida")

@@ -20,6 +20,11 @@ PISO_DE_PRECISAO_DA_EXTRACAO_PCT = 85
 # amarela deixa de absorver o ruido entre execucoes.
 PISO_DE_TURNOS = 120
 
+# Piso de anotacao, irmao do PISO_DE_TURNOS. Sem ele, anotar tres turnos
+# faceis daria precisao alta num corpus que nao mede nada -- o mesmo furo do
+# corpus so-positivo, na outra direcao.
+PISO_DE_TURNOS_ANOTADOS = 30
+
 # Quantas conversas a execucao pode perder para falha de infraestrutura antes
 # de deixar de valer como medida.
 #

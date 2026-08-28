@@ -29,6 +29,9 @@
   turnos:
     - lead: "oi, vi o anuncio do apto na vila mariana, ainda ta a venda?"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
+        regiao: vila mariana
     - lead: "nossa, 850 mil ta bem acima do que eu consigo. voces tem pra alugar na regiao?"
       intencao: ALUGUEL
 
@@ -37,6 +40,9 @@
   turnos:
     - lead: "to procurando um dois quartos pra comprar ate 500 mil"
       intencao: COMPRA
+      campos:
+        quartos: 2
+        faixa_preco_max: 500000
     - lead: "voces trabalham com financiamento pela caixa?"
       intencao: COMPRA
     - lead: "e tem alguma coisa perto de metro nessa faixa?"
@@ -47,6 +53,9 @@
   turnos:
     - lead: "bom dia! sera que da pra usar o fgts pra dar de entrada num apartamento?"
       intencao: COMPRA
+      campos:
+        forma_pagamento: FGTS
+        tipo_imovel: APARTAMENTO
     - lead: "e qual documentacao voces pedem pra dar entrada no processo?"
       intencao: COMPRA
     - lead: "faz quanto tempo em media do inicio ate a chave na mao?"
@@ -57,20 +66,32 @@
   turnos:
     - lead: "vi que tem uma casa de 3 quartos no jardim das flores, quanto ta pedindo?"
       intencao: COMPRA
+      campos:
+        tipo_imovel: CASA
+        quartos: 3
+        regiao: jardim das flores
     - lead: "poxa, e mais que o dobro do que eu tinha em mente. tem algo pra alugar por la mesmo, mais em conta?"
       intencao: ALUGUEL
     - lead: "pode ser so 2 quartos tambem, contanto que tenha quintal"
       intencao: ALUGUEL
+      campos:
+        quartos: 2
 
 - id: compra-05
   descricao: familia com crianca pequena quer casa terrea
   turnos:
     - lead: "procuro uma casa terrea, com quintal, pra comprar. tem crianca pequena em casa"
       intencao: COMPRA
+      campos:
+        tipo_imovel: CASA
     - lead: "precisa ser financiada, nao tenho o valor todo agora"
       intencao: COMPRA
+      campos:
+        forma_pagamento: FINANCIAMENTO
     - lead: "voces atendem em cotia tambem?"
       intencao: COMPRA
+      campos:
+        regiao: cotia
 
 - id: compra-06
   descricao: cobertura duplex, perguntas sobre lazer e condominio
@@ -87,6 +108,9 @@
   turnos:
     - lead: "oi bom dia, sou eu de novo. fechei financiamento e quero agendar visita no apartamento que conversamos semana passada"
       intencao: COMPRA
+      campos:
+        forma_pagamento: FINANCIAMENTO
+        tipo_imovel: APARTAMENTO
     - lead: "pode ser sabado de manha?"
       intencao: COMPRA
 
@@ -95,8 +119,12 @@
   turnos:
     - lead: "queria comprar um apto pequeno, uns 40 metros, pra eu morar sozinho"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
     - lead: "tem que ser proximo do trabalho, na regiao da paulista"
       intencao: COMPRA
+      campos:
+        regiao: paulista
     - lead: "aceita entrada menor com parcelamento direto com o proprietario?"
       intencao: COMPRA
 
@@ -105,8 +133,14 @@
   turnos:
     - lead: "quanto fica um imovel de 2 dormitorios no tatuape pra comprar a vista?"
       intencao: COMPRA
+      campos:
+        quartos: 2
+        regiao: tatuape
+        forma_pagamento: A_VISTA
     - lead: "tem desconto pagando a vista mesmo, sem financiamento?"
       intencao: COMPRA
+      campos:
+        forma_pagamento: A_VISTA
 
 - id: compra-10
   descricao: casal no primeiro imovel, duvidas de processo
@@ -123,6 +157,8 @@
   turnos:
     - lead: "vi o anuncio do sobrado na zona sul, da pra negociar o valor?"
       intencao: COMPRA
+      campos:
+        regiao: zona sul
     - lead: "e aceita permuta com meu carro na entrada?"
       intencao: COMPRA
     - lead: "o sobrado tem escritura ja regularizada?"
@@ -133,6 +169,8 @@
   turnos:
     - lead: "estou de mudanca pra sp e quero comprar um apartamento mobiliado pra ja morar"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
     - lead: "tem alguma coisa pronta pra morar, sem reforma?"
       intencao: COMPRA
     - lead: "consigo fechar tudo a distancia, sem vir pessoalmente antes?"

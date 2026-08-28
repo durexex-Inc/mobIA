@@ -4,6 +4,8 @@
   turnos:
     - lead: "oi, queria alugar um kitnet perto da usp, pra mim e minha colega de quarto"
       intencao: ALUGUEL
+      campos:
+        regiao: perto da usp
     - lead: "vcs tb tem opcao de comprar aquele mesmo predio? seria bom parar de pagar aluguel"
       intencao: COMPRA
     - lead: "tem alguma unidade a venda ali mesmo ou so pra locacao?"
@@ -14,16 +16,28 @@
   turnos:
     - lead: "boa tarde, procuro um 2 quartos pra alugar na regiao do brooklin"
       intencao: ALUGUEL
+      campos:
+        quartos: 2
+        regiao: brooklin
     - lead: "qual o valor do condominio mais o iptu junto?"
       intencao: ALUGUEL
-    - lead: "e o predio aceita pet de porte medio?"
+    # Turno de correcao: o lead troca a regiao que ja tinha dado (brooklin -> itaim
+    # bibi). E o caso de sobrescrita que a D4 do spec aceitou com risco declarado --
+    # o mais novo vence e nao ha historico. Sem este caso a sobrescrita nao teria
+    # cobertura no corpus.
+    - lead: "pensando melhor, prefiro pesquisar no itaim bibi em vez do brooklin. e o predio aceita pet de porte medio?"
       intencao: ALUGUEL
+      campos:
+        regiao: itaim bibi
 
 - id: aluguel-03
   descricao: casa com quintal pra cachorro idoso
   turnos:
     - lead: "tem casa pra alugar com quintal pra cachorro na zona leste?"
       intencao: ALUGUEL
+      campos:
+        tipo_imovel: CASA
+        regiao: zona leste
     - lead: "precisa ser terrea, meu cachorro e idoso e nao sobe escada"
       intencao: ALUGUEL
 
@@ -42,6 +56,8 @@
   turnos:
     - lead: "preciso de um apto mobiliado pra alugar por 6 meses, vim a trabalho"
       intencao: ALUGUEL
+      campos:
+        tipo_imovel: APARTAMENTO
     - lead: "pode ser flat tambem, contanto que tenha internet incluida"
       intencao: ALUGUEL
     - lead: "tem faxina inclusa ou eu que providencio?"
@@ -54,12 +70,16 @@
       intencao: ALUGUEL
     - lead: "precisa ser na mesma regiao, perto da estacao vila madalena"
       intencao: ALUGUEL
+      campos:
+        regiao: vila madalena
 
 - id: aluguel-07
   descricao: estudante dividindo republica
   turnos:
     - lead: "sou estudante, procuro republica ou kitnet pra alugar perto da unicamp"
       intencao: ALUGUEL
+      campos:
+        regiao: perto da unicamp
     - lead: "da pra dividir com mais um amigo no contrato?"
       intencao: ALUGUEL
     - lead: "e precisa comprovar renda dos dois ou so de um?"
@@ -70,16 +90,25 @@
   turnos:
     - lead: "quero alugar uma sala comercial pequena, pra abrir um consultorio"
       intencao: ALUGUEL
+      campos:
+        tipo_imovel: COMERCIAL
     - lead: "tem alguma na regiao dos jardins?"
       intencao: ALUGUEL
+      campos:
+        regiao: jardins
     - lead: "o predio ja tem alvara pra uso comercial de saude?"
       intencao: ALUGUEL
+      campos:
+        tipo_imovel: COMERCIAL
 
 - id: aluguel-09
   descricao: casal recem-casado procurando primeiro aluguel
   turnos:
     - lead: "vou casar mes que vem e a gente ta procurando um apartamento pra alugar, 1 quarto ta bom"
       intencao: ALUGUEL
+      campos:
+        tipo_imovel: APARTAMENTO
+        quartos: 1
     - lead: "voces exigem quantos meses de deposito caucao?"
       intencao: ALUGUEL
     - lead: "e pode ter animal de estimacao no predio?"
@@ -90,5 +119,8 @@
   turnos:
     - lead: "oi, o anuncio do apartamento na saude, o valor la e so de aluguel ou ja inclui condominio?"
       intencao: ALUGUEL
+      campos:
+        tipo_imovel: APARTAMENTO
+        regiao: saude
     - lead: "e mobiliado ou vazio?"
       intencao: ALUGUEL

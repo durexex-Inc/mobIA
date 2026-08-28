@@ -2,6 +2,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
+from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import ContextoMontado
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
@@ -40,26 +41,33 @@ def mensagem_transiente(texto: str, *, papel: MessageRole) -> Message:
 
 
 def contexto_do_historico(
-    historico: Sequence[tuple[MessageRole, str]], *, sistema: str
+    historico: Sequence[tuple[MessageRole, str]],
+    *,
+    sistema: str,
+    estado: LeadQualification | None = None,
 ) -> ContextoMontado:
-    """Monta o contexto direto, sem resumo e sem estado de qualificacao.
+    """Monta o contexto direto, sem resumo.
 
     Sem resumo porque as conversas do corpus sao curtas -- a regeneracao so
-    dispara a cada ~40 mensagens. Sem estado porque a extracao de campos
-    (TEC-145) nao existe, entao nao ha o que preencher.
+    dispara a cada ~40 mensagens.
+
+    `estado` existe a partir da TEC-145: o runner acumula a extracao dos turnos
+    anteriores e passa aqui, porque medir "nao repergunta campo preenchido" com
+    estado sempre vazio nao mediria nada -- o modelo nunca teria visto o campo.
     """
     literais = [mensagem_transiente(texto, papel=papel) for papel, texto in historico]
     # Estimativa de tokens: len(sistema) + soma dos textos brutos divido por 4.
-    # Diverge de montagem._estimar: nao inclui prefixo "[ROLE] " nem separadores.
-    # tokens nao alimenta decisao nenhuma no eval -- so preenche campo obrigatorio do
-    # dataclass. O valor e lido apenas por __repr__, nunca por logica de negocio.
+    # Diverge de montagem._estimar: nao inclui prefixo "[ROLE] " nem separadores,
+    # e nao inclui o texto do estado. tokens nao alimenta decisao nenhuma no eval
+    # -- so preenche campo obrigatorio do dataclass. O valor e lido apenas por
+    # __repr__, nunca por logica de negocio.
     estimativa = len(sistema) + sum(len(texto) for _, texto in historico)
     tokens = estimativa // 4
     return ContextoMontado(
         sistema=sistema,
         resumo=None,
         literais=literais,
-        estado=None,
+        estado=estado,
         tokens=tokens,
         degradado=False,
     )

@@ -57,6 +57,10 @@
   turnos:
     - lead: "quero comprar um apartamento de 2 quartos na zona oeste"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
+        quartos: 2
+        regiao: zona oeste
     - lead: "na real, e pra alugar depois no airbnb, nao pra morar. faz diferenca no financiamento?"
       intencao: INVESTIMENTO
     - lead: "voces tem algum parceiro que administra a locacao por temporada?"
@@ -77,6 +81,8 @@
   turnos:
     - lead: "quero comprar um apartamento pequeno num bairro que ta crescendo, pra fazer uma renda extra com aluguel depois"
       intencao: INVESTIMENTO
+      campos:
+        tipo_imovel: APARTAMENTO
     - lead: "voces indicam alguma regiao com valorizacao maior nos ultimos anos?"
       intencao: INVESTIMENTO
     - lead: "e tem imoveis assim ja com inquilino, ou eu que vou atras depois?"
@@ -87,6 +93,8 @@
   turnos:
     - lead: "sou de fora, mas queria comprar aqui em sp so pra ter uma reserva que renda mais que poupanca"
       intencao: INVESTIMENTO
+      campos:
+        regiao: sp
     - lead: "esse tipo de imovel da pra alugar por temporada tambem?"
       intencao: INVESTIMENTO
     - lead: "precisa vir pessoalmente pra assinar ou consigo por procuracao?"
@@ -107,6 +115,8 @@
   turnos:
     - lead: "vi que tem um apartamento antigo baratinho pra vender, da pra reformar e vender rapido?"
       intencao: INVESTIMENTO
+      campos:
+        tipo_imovel: APARTAMENTO
     - lead: "quanto tempo leva pra sair uma venda assim depois da reforma?"
       intencao: INVESTIMENTO
     - lead: "voces tem equipe de reforma parceira ou eu contrato por fora?"
@@ -117,6 +127,8 @@
   turnos:
     - lead: "to querendo comprar um terreno pra construir e vender depois, tipo um pequeno empreendimento"
       intencao: INVESTIMENTO
+      campos:
+        tipo_imovel: TERRENO
     - lead: "voces tem contato de construtora parceira pra esse tipo de projeto?"
       intencao: INVESTIMENTO
     - lead: "e a prefeitura demora muito pra aprovar esse tipo de obra por ali?"
