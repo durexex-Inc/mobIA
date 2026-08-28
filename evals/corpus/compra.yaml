@@ -171,6 +171,7 @@
       intencao: COMPRA
       campos:
         tipo_imovel: APARTAMENTO
+        regiao: sp
     - lead: "tem alguma coisa pronta pra morar, sem reforma?"
       intencao: COMPRA
     - lead: "consigo fechar tudo a distancia, sem vir pessoalmente antes?"

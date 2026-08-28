@@ -454,6 +454,17 @@ aceite são sobre o que o lead experimenta, e o lead experimenta a intenção
 **efetiva**, não o palpite cru. O alvo pertence a esta métrica ao menos tanto
 quanto à outra.
 
+> **Nota da TEC-145 (28/08/2026):** o corpus mudou depois desta medição, e o
+> "50 conversas / 136 turnos" abaixo continua batendo, o que esconde a
+> mudança em vez de denunciá-la. O terceiro turno de `aluguel-02` foi
+> **reescrito** nesta card para conter uma correção de região (ver seção
+> TEC-145), então a fala enviada ao modelo hoje não é mais a mesma que gerou
+> os 126/136 acima — o rótulo (`ALUGUEL`) não mudou, mas o texto exato, sim.
+> Os outros 31 turnos que ganharam a chave `campos` não alteram texto
+> nenhum, só acrescentam anotação que o classificador nunca lê. Uma reexecução
+> paga contra o corpus atual pode divergir desse número por este motivo, além
+> do ruído normal entre execuções (±1,5%, citado abaixo).
+
 Isso trouxe um ganho e um custo. O ganho: **degradação parcial de calibração
 passou a barrar.** Com o piso de 50%, meio corpus rebaixado dava exatamente 50%
 e passava, e essa limitação estava declarada aqui; agora meia calibração
