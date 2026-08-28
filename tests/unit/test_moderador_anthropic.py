@@ -70,8 +70,15 @@ async def test_resposta_fora_do_protocolo_e_indisponibilidade(
 
 
 async def test_parada_anormal_e_indisponibilidade(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`max_tokens` truncando o veredito nao e veredito."""
-    cliente = ClienteFalso(RespostaFalsa("BLOQ", stop_reason="max_tokens"))
+    """Veredito com parada anormal nao e veredito, mesmo que a palavra sirva.
+
+    O texto aqui e `BLOQUEAR` inteiro, e nao truncado, de proposito: com uma
+    palavra invalida o `else` final do parser reprovaria sozinho, e o teste
+    passaria mesmo sem a checagem de `stop_reason` -- nao guardaria nada. Com a
+    palavra valida, so a checagem de parada pode reprovar, e removê-la faz este
+    teste falhar.
+    """
+    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR", stop_reason="max_tokens"))
 
     with pytest.raises(ModeracaoIndisponivel):
         await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.SAIDA)
