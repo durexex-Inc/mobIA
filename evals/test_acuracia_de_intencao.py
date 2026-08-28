@@ -28,6 +28,7 @@ from mobia.evals.metricas import (
     acuracia_de_intencao,
     acuracia_efetiva,
     bloqueia,
+    discrepancias_da_extracao,
     erros,
     matriz_de_confusao,
     precisao_da_extracao,
@@ -312,6 +313,12 @@ async def test_acuracia_de_intencao_no_corpus(
         # repergunta aconteceu ou nao. Nao entra em `_metricas_de` nem em
         # `bloqueia`.
         reperguntas=reperguntados,
+        # Releitura das mesmas `observadas`, sem nenhuma chamada nova ao
+        # modelo: o numero da precisao nao diz se o corpus mede errado ou se
+        # o modelo extrai mal, e essa distincao decide entre TEC-239
+        # (anotar) e TEC-240 (prompt). Diagnostico -- nao entra em
+        # `_metricas_de` nem em `bloqueia`.
+        discrepancias=discrepancias_da_extracao(observadas),
     )
     with capsys.disabled():
         print("\n" + relatorio)

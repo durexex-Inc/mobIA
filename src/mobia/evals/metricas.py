@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from mobia.domain.agente.desambiguacao import deve_desambiguar, intencao_efetiva
 from mobia.domain.agente.schemas import Intencao
@@ -325,6 +325,31 @@ class ExtracaoObservada:
     obtido: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class Discrepancia:
+    """Um campo que nao casou, com o endereco de onde arrumar.
+
+    `tipo` diz de quem e o problema, e essa distincao e a razao de existir
+    desta funcao:
+
+    - `extra`  -- o modelo extraiu, o corpus nao anotou. Acusa a **medicao**:
+                  pode ser invencao, mas tambem pode ser extracao correta de
+                  campo que ninguem anotou, e no denominador de uniao as duas
+                  descontam igual.
+    - `faltou` -- o corpus anotou, o modelo nao devolveu. Acusa o **modelo** ou
+                  o prompt.
+    - `divergiu` -- veio nos dois, com valores diferentes.
+
+    `conversa_id` e `indice` existem para quem for anotar nao precisar de outra
+    execucao paga so para descobrir *onde* faltava anotacao.
+    """
+
+    conversa_id: str
+    indice: int
+    campo: str
+    tipo: Literal["extra", "faltou", "divergiu"]
+
+
 def _comparavel(valor: Any) -> Any:
     """Normaliza para comparar anotacao de YAML com valor vindo do parse.
 
@@ -379,3 +404,46 @@ def precisao_da_extracao(observadas: Sequence[ExtracaoObservada]) -> ResultadoDa
             acertos, total, f"alvo {ALVO_PCT}%, piso {PISO_DE_PRECISAO_DA_EXTRACAO_PCT}%"
         ),
     )
+
+
+def discrepancias_da_extracao(
+    observadas: Sequence[ExtracaoObservada],
+) -> list[Discrepancia]:
+    """Decompoe o que `precisao_da_extracao` conta como erro, campo a campo.
+
+    Diagnostico, nunca gate: nao devolve faixa e nao entra em `bloqueia`. O
+    numero da metrica sozinho nao diz se o corpus mede errado ou se o modelo
+    extrai mal, e essas duas causas pedem cards diferentes.
+
+    Vale a invariante `acertos + len(discrepancias) == total` contra a mesma
+    sequencia de observadas -- ha teste guardando isso. Ela existe porque as
+    duas funcoes derivam do mesmo conjunto (a uniao de esperado com obtido), e
+    se alguem mudar a formula de uma sem mudar a outra o relatorio passa a
+    mentir em silencio em vez de quebrar.
+
+    A ordem acompanha os turnos observados, e dentro do turno e alfabetica por
+    campo: quem le a lista le de cima para baixo, seguindo a conversa, e a
+    ordem nao pode depender da iteracao de um `set`.
+    """
+    achadas: list[Discrepancia] = []
+    for observada in observadas:
+        for campo in sorted(set(observada.esperado) | set(observada.obtido)):
+            no_esperado = campo in observada.esperado
+            no_obtido = campo in observada.obtido
+            if no_esperado and no_obtido:
+                if _comparavel(observada.esperado[campo]) == _comparavel(observada.obtido[campo]):
+                    continue
+                tipo: Literal["extra", "faltou", "divergiu"] = "divergiu"
+            elif no_obtido:
+                tipo = "extra"
+            else:
+                tipo = "faltou"
+            achadas.append(
+                Discrepancia(
+                    conversa_id=observada.conversa_id,
+                    indice=observada.indice,
+                    campo=campo,
+                    tipo=tipo,
+                )
+            )
+    return achadas

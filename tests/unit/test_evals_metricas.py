@@ -10,11 +10,13 @@ from mobia.evals.metricas import (
     PISO_DE_TURNOS,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
+    Discrepancia,
     ExtracaoObservada,
     Faixa,
     acuracia_de_intencao,
     acuracia_efetiva,
     bloqueia,
+    discrepancias_da_extracao,
     erros,
     faixa_de,
     matriz_de_confusao,
@@ -388,3 +390,74 @@ def test_faixa_de_continua_com_os_defaults_de_antes():
     assert faixa_de(90, 100) is Faixa.VERDE
     assert faixa_de(84, 100) is Faixa.AMARELO
     assert faixa_de(83, 100) is Faixa.VERMELHO
+
+
+# --- TEC-239: discrepancias por campo, para saber o que anotar --------------
+
+
+def test_campo_obtido_sem_anotacao_e_extra():
+    """O lado que acusa corpus: o modelo extraiu, ninguem anotou."""
+    obtidas = discrepancias_da_extracao([_observada({"quartos": 2}, {"quartos": 2, "vagas": 1})])
+    assert obtidas == [Discrepancia(conversa_id="compra-01", indice=0, campo="vagas", tipo="extra")]
+
+
+def test_campo_anotado_que_nao_veio_e_faltou():
+    """O lado que acusa modelo ou prompt."""
+    obtidas = discrepancias_da_extracao(
+        [_observada({"quartos": 2, "regiao": "sp"}, {"quartos": 2})]
+    )
+    assert obtidas == [
+        Discrepancia(conversa_id="compra-01", indice=0, campo="regiao", tipo="faltou")
+    ]
+
+
+def test_campo_nos_dois_com_valor_diferente_divergiu():
+    obtidas = discrepancias_da_extracao([_observada({"quartos": 2}, {"quartos": 3})])
+    assert obtidas == [
+        Discrepancia(conversa_id="compra-01", indice=0, campo="quartos", tipo="divergiu")
+    ]
+
+
+def test_acerto_nao_gera_discrepancia():
+    assert discrepancias_da_extracao([_observada({"quartos": 2}, {"quartos": 2})]) == []
+
+
+def test_normalizacao_de_comparavel_vale_aqui_tambem():
+    """Se `_comparavel` nao fosse usado, isto viraria uma divergencia falsa e
+    mandaria alguem "corrigir" uma anotacao que esta certa."""
+    assert (
+        discrepancias_da_extracao([_observada({"regiao": "Zona Sul"}, {"regiao": " zona sul "})])
+        == []
+    )
+    assert (
+        discrepancias_da_extracao(
+            [_observada({"faixa_preco_max": 600000}, {"faixa_preco_max": Decimal("600000.00")})]
+        )
+        == []
+    )
+
+
+def test_acertos_mais_discrepancias_fecham_o_total_da_metrica():
+    """A invariante que amarra as duas funcoes.
+
+    Sem ela, alguem muda a formula de `precisao_da_extracao` e o relatorio passa
+    a mentir em silencio, em vez de o teste quebrar.
+    """
+    observadas = [
+        _observada({"quartos": 2, "regiao": "sp"}, {"quartos": 2, "vagas": 1}, indice=0),
+        _observada({"urgencia": "IMEDIATA"}, {"urgencia": "SEM_PRESSA"}, indice=1),
+        _observada({"tipo_imovel": "CASA"}, {"tipo_imovel": "CASA"}, indice=2),
+    ]
+    metrica = precisao_da_extracao(observadas)
+    assert metrica.total is not None and metrica.acertos is not None
+    assert metrica.acertos + len(discrepancias_da_extracao(observadas)) == metrica.total
+
+
+def test_a_ordem_segue_a_dos_turnos_observados():
+    """Quem for anotar le a lista de cima para baixo; ela tem de acompanhar a
+    conversa, nao a ordem arbitraria de um `set`."""
+    observadas = [
+        _observada({}, {"vagas": 1}, indice=5),
+        _observada({}, {"urgencia": "IMEDIATA"}, indice=2),
+    ]
+    assert [d.indice for d in discrepancias_da_extracao(observadas)] == [5, 2]

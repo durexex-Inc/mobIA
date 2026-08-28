@@ -5,6 +5,7 @@ from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
 from mobia.evals.metricas import (
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
+    Discrepancia,
     FalhaDeInfraestrutura,
     ResultadoDaMetrica,
     ResumoDeConfianca,
@@ -123,6 +124,43 @@ def _secao_de_reperguntas(reperguntas: Sequence[tuple[str, int, str]]) -> list[s
     return linhas
 
 
+def _secao_de_extracao(discrepancias: Sequence[Discrepancia]) -> list[str]:
+    """Onde a extracao nao casou, agregado e por turno. So diagnostico.
+
+    Nenhum numero aqui tem faixa, pelo mesmo motivo de `_secao_de_confianca` e
+    `_secao_de_reperguntas`. Quem bloqueia e `precisao_da_extracao`; esta secao
+    existe para dizer **o que fazer** com aquele numero.
+
+    A leitura importa: `extra` acusa a medicao antes de acusar o modelo. Com o
+    denominador de uniao, um campo que o modelo extraiu certo e que ninguem
+    anotou desconta exatamente como uma invencao. Campo com muitos `extra` e
+    nenhuma anotacao no corpus e forte candidato a lacuna de anotacao, nao a
+    defeito do modelo.
+
+    A lista por turno vem depois do agregado de proposito: o agregado diz onde
+    esta o problema, e o endereco (conversa e turno) e o que evita gastar outra
+    execucao paga so para achar onde anotar.
+    """
+    por_campo: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for d in discrepancias:
+        por_campo[d.campo][d.tipo] += 1
+
+    linhas = [
+        "",
+        "## Extracao: campos que nao casaram (diagnostico)",
+        "",
+        f"- total de discrepancias: {len(discrepancias)}",
+    ]
+    for campo, tipos in sorted(por_campo.items(), key=lambda par: (-sum(par[1].values()), par[0])):
+        detalhe = ", ".join(f"{tipo}: {quantos}" for tipo, quantos in sorted(tipos.items()))
+        linhas.append(f"  - {campo} -- {detalhe}")
+
+    linhas += ["", "Onde, para quem for anotar:", ""]
+    for d in discrepancias:
+        linhas.append(f"  - {d.conversa_id} turno {d.indice}: {d.campo} ({d.tipo})")
+    return linhas
+
+
 def render(
     metricas: Sequence[ResultadoDaMetrica],
     confusao: dict[Intencao, dict[Intencao, int]],
@@ -131,6 +169,7 @@ def render(
     erradas: Sequence[Classificacao] = (),
     infraestrutura: Sequence[FalhaDeInfraestrutura] = (),
     reperguntas: Sequence[tuple[str, int, str]] = (),
+    discrepancias: Sequence[Discrepancia] = (),
 ) -> str:
     linhas = ["# Avaliacao da classificacao de intencao", ""]
 
@@ -145,6 +184,9 @@ def render(
 
     if reperguntas:
         linhas += _secao_de_reperguntas(reperguntas)
+
+    if discrepancias:
+        linhas += _secao_de_extracao(discrepancias)
 
     if erradas:
         linhas += _secao_de_erradas(erradas)
