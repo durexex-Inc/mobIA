@@ -79,7 +79,7 @@ async def test_entrada_liberada_segue_o_turno(
     Sem ele, um mutante que parasse de montar contexto sempre (nao so no
     caminho bloqueado) so seria pego indiretamente -- via NameError em
     `contexto` na chamada ao classificador, que e um acidente de escopo, nao
-    uma asserção sobre a regra. Este teste torna "o caminho liberado monta
+    uma assercao sobre a regra. Este teste torna "o caminho liberado monta
     contexto de verdade" uma garantia explicita.
     """
     chamadas_de_montagem = _espionar_montagem(monkeypatch)
