@@ -4,6 +4,7 @@ from mobia.domain.agente.schemas import Intencao
 from mobia.evals.metricas import (
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
+    Discrepancia,
     FalhaDeInfraestrutura,
     ResumoDeConfianca,
     acuracia_de_intencao,
@@ -222,3 +223,46 @@ def test_relatorio_sem_falha_de_infraestrutura_omite_a_secao() -> None:
     texto = render([], {})
 
     assert "## Falhas de infraestrutura" not in texto
+
+
+# --- TEC-239: a secao de discrepancias da extracao --------------------------
+
+
+def _d(campo, tipo, *, conversa="compra-01", indice=0):
+    return Discrepancia(conversa_id=conversa, indice=indice, campo=campo, tipo=tipo)
+
+
+def test_sem_discrepancias_a_secao_nao_aparece():
+    texto = render([], {})
+    assert "extracao" not in texto.lower()
+
+
+def test_secao_traz_agregado_por_campo_e_tipo():
+    texto = render(
+        [],
+        {},
+        discrepancias=[
+            _d("vagas", "extra"),
+            _d("vagas", "extra", indice=1),
+            _d("regiao", "faltou", indice=2),
+        ],
+    )
+    assert "vagas" in texto and "regiao" in texto
+    assert "extra: 2" in texto
+    assert "faltou: 1" in texto
+
+
+def test_secao_traz_o_endereco_de_cada_discrepancia():
+    """Sem conversa e turno, quem for anotar sabe que falta `urgencia` mas nao
+    onde -- e descobrir isso custa outra execucao paga."""
+    texto = render([], {}, discrepancias=[_d("urgencia", "extra", conversa="aluguel-09", indice=3)])
+    assert "aluguel-09" in texto
+    assert "3" in texto
+    assert "urgencia" in texto
+
+
+def test_a_secao_nao_e_gate():
+    """Diagnostico, como reperguntas e confianca: nenhuma faixa, nenhum bloqueio."""
+    texto = render([], {}, discrepancias=[_d("vagas", "extra")])
+    for faixa in ("VERDE", "AMARELO", "VERMELHO"):
+        assert faixa not in texto
