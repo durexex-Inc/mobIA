@@ -2,7 +2,9 @@ from dataclasses import FrozenInstanceError
 from decimal import Decimal
 
 import pytest
+from anthropic import transform_schema
 
+from mobia.domain.agente.classificador import SCHEMA_DA_EXTRACAO, extrair
 from mobia.domain.agente.schemas import (
     Extracao,
     FormaPagamento,
@@ -71,3 +73,125 @@ def test_extracao_e_imutavel():
 def test_preco_guarda_precisao_de_decimal():
     extracao = Extracao(faixa_preco_max=Decimal("600000.00"))
     assert extracao.preenchidos() == {"faixa_preco_max": Decimal("600000.00")}
+
+
+def test_schema_da_extracao_sobrevive_ao_compilador_do_sdk():
+    """`transform_schema` encerra em `assert_never` para tipo desconhecido.
+
+    `{"type": ["string", "null"]}` nao casa com nenhum ramo do dispatch e
+    estoura aqui. `anyOf` e tratado por recursao. Este teste e a guarda contra
+    alguem "simplificar" a anulabilidade de volta para lista.
+    """
+    compilado = transform_schema(SCHEMA_DA_EXTRACAO)
+    assert compilado["type"] == "object"
+    assert compilado["additionalProperties"] is False
+
+
+def test_todos_os_nove_campos_sao_obrigatorios_e_anulaveis():
+    propriedades = SCHEMA_DA_EXTRACAO["properties"]
+    assert set(SCHEMA_DA_EXTRACAO["required"]) == set(propriedades)
+    assert len(propriedades) == 9
+    for nome, forma in propriedades.items():
+        variantes = [variante.get("type") for variante in forma["anyOf"]]
+        assert "null" in variantes, nome
+
+
+def test_enums_do_schema_saem_dos_stre_enums():
+    propriedades = SCHEMA_DA_EXTRACAO["properties"]
+    for nome, enum in (
+        ("tipo_imovel", TipoImovel),
+        ("urgencia", Urgencia),
+        ("forma_pagamento", FormaPagamento),
+    ):
+        nao_nulo = next(v for v in propriedades[nome]["anyOf"] if v.get("type") == "string")
+        assert nao_nulo["enum"] == [membro.value for membro in enum]
+
+
+def test_extrair_de_dicionario_completo():
+    obtido = extrair(
+        {
+            "faixa_preco_min": None,
+            "faixa_preco_max": 600000,
+            "regiao": "zona sul",
+            "tipo_imovel": "APARTAMENTO",
+            "quartos": 2,
+            "vagas": None,
+            "urgencia": "ATE_3_MESES",
+            "forma_pagamento": None,
+            "tem_imovel_para_vender": False,
+        }
+    )
+    assert obtido == Extracao(
+        faixa_preco_max=Decimal("600000"),
+        regiao="zona sul",
+        tipo_imovel=TipoImovel.APARTAMENTO,
+        quartos=2,
+        urgencia=Urgencia.ATE_3_MESES,
+        tem_imovel_para_vender=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "bruto",
+    [None, "texto", 42, [], {"quartos": {"aninhado": 1}}],
+)
+def test_extrair_nunca_levanta(bruto):
+    """Extracao e enriquecimento; a resposta ao lead vem da mesma chamada."""
+    assert isinstance(extrair(bruto), Extracao)
+
+
+def test_chave_ausente_nao_e_erro():
+    assert extrair({"quartos": 2}) == Extracao(quartos=2)
+
+
+@pytest.mark.parametrize(
+    "valor",
+    [-1, 0, 10**9 + 1, "seiscentos mil", float("nan"), float("inf"), True],
+)
+def test_preco_fora_da_faixa_e_descartado(valor):
+    assert extrair({"faixa_preco_max": valor, "quartos": 2}) == Extracao(quartos=2)
+
+
+def test_faixa_invertida_descarta_os_dois_precos():
+    obtido = extrair({"faixa_preco_min": 900000, "faixa_preco_max": 600000, "quartos": 2})
+    assert obtido == Extracao(quartos=2)
+
+
+def test_faixa_igual_nos_dois_lados_e_valida():
+    """ "exatamente 600 mil" nao e faixa invertida."""
+    obtido = extrair({"faixa_preco_min": 600000, "faixa_preco_max": 600000})
+    assert obtido.faixa_preco_min == Decimal("600000")
+    assert obtido.faixa_preco_max == Decimal("600000")
+
+
+@pytest.mark.parametrize("campo", ["quartos", "vagas"])
+@pytest.mark.parametrize("valor", [-1, 21, 2.5, "dois", True])
+def test_inteiro_fora_da_faixa_e_descartado(campo, valor):
+    assert extrair({campo: valor, "regiao": "centro"}) == Extracao(regiao="centro")
+
+
+@pytest.mark.parametrize("campo", ["quartos", "vagas"])
+def test_zero_e_valido(campo):
+    """Kitnet tem 0 quarto e imovel sem garagem tem 0 vaga."""
+    assert extrair({campo: 0}).preenchidos() == {campo: 0}
+
+
+def test_valor_de_enum_desconhecido_e_descartado():
+    obtido = extrair({"tipo_imovel": "IATE", "quartos": 2})
+    assert obtido == Extracao(quartos=2)
+
+
+def test_regiao_vazia_ou_so_espaco_e_descartada():
+    assert extrair({"regiao": "   "}) == Extracao()
+
+
+def test_regiao_e_truncada_no_limite_da_coluna():
+    """`lead_qualification.regiao` e `String(120)`: 121 caracteres seria
+    DataError no commit, derrubando o turno inteiro por um campo opcional."""
+    obtido = extrair({"regiao": "a" * 200})
+    assert obtido.regiao is not None
+    assert len(obtido.regiao) == 120
+
+
+def test_booleano_so_aceita_booleano():
+    assert extrair({"tem_imovel_para_vender": "sim"}) == Extracao()

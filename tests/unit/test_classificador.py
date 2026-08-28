@@ -574,3 +574,51 @@ async def test_desambiguar_nao_loga_a_pergunta_nem_o_prompt(
     assert "SENTINELA-SISTEMA" not in caplog.text
     assert "SENTINELA-RESUMO" not in caplog.text
     assert "agente.desambiguacao_gerada" in caplog.text
+
+
+async def test_extracao_entra_na_resposta_do_agente(monkeypatch: pytest.MonkeyPatch) -> None:
+    dados = dict(_DADOS_VALIDOS, extracao={"quartos": 3, "regiao": "moema"})
+    resposta = _resposta_falsa(texto=json.dumps(dados))
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resultado.extracao.quartos == 3
+    assert resultado.extracao.regiao == "moema"
+
+
+async def test_extracao_malformada_nao_derruba_o_turno(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O contrato central desta card: a resposta ao lead sobrevive."""
+    dados = dict(_DADOS_VALIDOS, extracao="isto nao e um objeto")
+    resposta = _resposta_falsa(texto=json.dumps(dados))
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resultado.resposta == TEXTO_DA_RESPOSTA
+    assert resultado.extracao.vazia() is True
+
+
+async def test_resposta_sem_extracao_continua_valida(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_DADOS_VALIDOS` nao tem `extracao`. Se isto falhar, o parse ficou
+    rigido onde deveria ser tolerante."""
+    resposta = _resposta_falsa(texto=json.dumps(_DADOS_VALIDOS))
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resultado.extracao.vazia() is True
+
+
+async def test_extracao_nao_vaza_no_log(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`regiao` e fala do lead. O log deste modulo carrega so numeros e modelo."""
+    dados = dict(_DADOS_VALIDOS, extracao={"regiao": "SENTINELA-REGIAO Rua das Palmeiras"})
+    resposta = _resposta_falsa(texto=json.dumps(dados))
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    with caplog.at_level(logging.INFO):
+        await ClassificadorAnthropic().classificar(_contexto())
+
+    assert "SENTINELA-REGIAO" not in caplog.text

@@ -1,6 +1,7 @@
 import json
 import time
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from enum import StrEnum
 from typing import Any, Protocol, cast
 
 import structlog
@@ -10,9 +11,12 @@ from anthropic.types import Message
 from mobia.app.config import get_settings
 from mobia.domain.agente.schemas import (
     Extracao,
+    FormaPagamento,
     Intencao,
     PerguntaDeDesambiguacao,
     RespostaDoAgente,
+    TipoImovel,
+    Urgencia,
 )
 from mobia.domain.context.montagem import ContextoMontado, montar_prompt
 from mobia.domain.messages.recorder import custo_em_dolar
@@ -65,6 +69,157 @@ SCHEMA_DA_RESPOSTA: dict[str, Any] = {
     "required": ["intencao", "confianca", "resposta"],
     "additionalProperties": False,
 }
+
+# Limites das guardas. Nao vao para o schema: `minimum`/`maximum` nao estao na
+# lista que o compilador do servidor aceita (mesma razao documentada em
+# `_SCHEMA_COMPILADO`), entao a faixa e checada aqui, em codigo.
+PRECO_MINIMO = Decimal("1")
+# `lead_qualification.faixa_preco_*` e `numeric(12,2)`: dez digitos antes da
+# virgula. 10^9 cabe com folga; um valor maior seria DataError no commit e
+# derrubaria o turno inteiro por causa de um campo opcional.
+PRECO_MAXIMO = Decimal("1000000000")
+MAX_AMBIENTES = 20
+# `lead_qualification.regiao` e `String(120)`.
+MAX_CARACTERES_DA_REGIAO = 120
+
+
+def _anulavel(tipo: dict[str, Any]) -> dict[str, Any]:
+    """Anulabilidade em `anyOf`, nunca em `type` como lista.
+
+    `transform_schema` (anthropic/lib/_parse/_transform.py) declara
+    `SupportedTypes` como `Literal` de tipos **unicos** e encerra o dispatch em
+    `assert_never(type_)`. Um `{"type": ["string", "null"]}` nao casa com ramo
+    nenhum e estoura ali -- e como `_SCHEMA_COMPILADO` e calculado no import
+    deste modulo, a falha seria na carga, nao numa chamada. `anyOf` e tratado
+    por recursao, e `"null"` esta entre os tipos suportados.
+    """
+    return {"anyOf": [tipo, {"type": "null"}]}
+
+
+def _enum_anulavel(enum: type[StrEnum]) -> dict[str, Any]:
+    return _anulavel({"type": "string", "enum": [membro.value for membro in enum]})
+
+
+SCHEMA_DA_EXTRACAO: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "faixa_preco_min": _anulavel({"type": "number"}),
+        "faixa_preco_max": _anulavel({"type": "number"}),
+        "regiao": _anulavel({"type": "string"}),
+        "tipo_imovel": _enum_anulavel(TipoImovel),
+        "quartos": _anulavel({"type": "integer"}),
+        "vagas": _anulavel({"type": "integer"}),
+        "urgencia": _enum_anulavel(Urgencia),
+        "forma_pagamento": _enum_anulavel(FormaPagamento),
+        "tem_imovel_para_vender": _anulavel({"type": "boolean"}),
+    },
+    # Todos obrigatorios, todos anulaveis: forcar o modelo a dizer `null`
+    # explicitamente e mais confiavel que aceitar chave ausente. O parse
+    # tolera a ausencia de todo modo -- ver `extrair`.
+    "required": [
+        "faixa_preco_min",
+        "faixa_preco_max",
+        "regiao",
+        "tipo_imovel",
+        "quartos",
+        "vagas",
+        "urgencia",
+        "forma_pagamento",
+        "tem_imovel_para_vender",
+    ],
+    "additionalProperties": False,
+}
+
+SCHEMA_DA_RESPOSTA["properties"]["extracao"] = SCHEMA_DA_EXTRACAO
+SCHEMA_DA_RESPOSTA["required"].append("extracao")
+
+
+def _numero(bruto: Any) -> Decimal | None:
+    """Converte sem nunca levantar, e recusa bool antes de tudo.
+
+    `isinstance(True, int)` e verdadeiro em Python: sem a recusa explicita,
+    `"quartos": true` viraria 1 quarto silenciosamente.
+    """
+    if isinstance(bruto, bool) or not isinstance(bruto, int | float | str):
+        return None
+    try:
+        valor = Decimal(str(bruto))
+    except InvalidOperation:
+        return None
+    # NaN e infinito passam pelo Decimal. `is_finite` os pega antes de qualquer
+    # comparacao -- toda comparacao com NaN e falsa, e um NaN que escapasse
+    # seria gravado no banco como campo valido.
+    return valor if valor.is_finite() else None
+
+
+def _preco(bruto: Any) -> Decimal | None:
+    valor = _numero(bruto)
+    if valor is None or not (PRECO_MINIMO <= valor <= PRECO_MAXIMO):
+        return None
+    return valor
+
+
+def _ambientes(bruto: Any) -> int | None:
+    if isinstance(bruto, bool) or not isinstance(bruto, int):
+        return None
+    return bruto if 0 <= bruto <= MAX_AMBIENTES else None
+
+
+def _membro(enum: type[StrEnum], bruto: Any) -> Any:
+    if not isinstance(bruto, str):
+        return None
+    try:
+        return enum(bruto)
+    except ValueError:
+        return None
+
+
+def _regiao(bruto: Any) -> str | None:
+    if not isinstance(bruto, str):
+        return None
+    limpa = bruto.strip()
+    return limpa[:MAX_CARACTERES_DA_REGIAO] if limpa else None
+
+
+def extrair(bruto: Any) -> Extracao:
+    """Converte o objeto `extracao` do modelo, descartando o que nao serve.
+
+    **Nunca levanta.** A extracao viaja na mesma chamada que a resposta ao
+    lead, e um numero malformado nao pode matar uma resposta entregavel:
+    extracao e enriquecimento, a resposta e o produto. Campo que falha na
+    guarda e descartado; os outros campos do mesmo turno seguem.
+
+    Nenhuma guarda e cosmetica -- cada uma existe porque o valor recusado
+    seria `DataError` no commit (`regiao` acima de 120 caracteres, preco acima
+    de `numeric(12,2)`) ou dado errado gravado em silencio (`true` virando 1
+    quarto, NaN virando preco).
+    """
+    if not isinstance(bruto, dict):
+        return Extracao()
+
+    minimo = _preco(bruto.get("faixa_preco_min"))
+    maximo = _preco(bruto.get("faixa_preco_max"))
+    # Faixa invertida descarta os dois lados: nao ha como saber qual dos dois o
+    # modelo errou, e gravar um deles produziria um filtro pior que nenhum.
+    # `>` e nao `>=`: "exatamente 600 mil" e faixa valida com os dois iguais.
+    if minimo is not None and maximo is not None and minimo > maximo:
+        log.info("extracao.faixa_invertida_descartada")
+        minimo = maximo = None
+
+    return Extracao(
+        faixa_preco_min=minimo,
+        faixa_preco_max=maximo,
+        regiao=_regiao(bruto.get("regiao")),
+        tipo_imovel=_membro(TipoImovel, bruto.get("tipo_imovel")),
+        quartos=_ambientes(bruto.get("quartos")),
+        vagas=_ambientes(bruto.get("vagas")),
+        urgencia=_membro(Urgencia, bruto.get("urgencia")),
+        forma_pagamento=_membro(FormaPagamento, bruto.get("forma_pagamento")),
+        tem_imovel_para_vender=(
+            valor if isinstance(valor := bruto.get("tem_imovel_para_vender"), bool) else None
+        ),
+    )
+
 
 # `output_config.format` bruto (sem `output_format=` Pydantic) vai direto pro
 # corpo da requisicao sem passar pelo `transform_schema` do SDK -- essa
@@ -216,11 +371,7 @@ class ClassificadorAnthropic:
                 tokens_in=resposta.usage.input_tokens,
                 tokens_out=resposta.usage.output_tokens,
                 latency_ms=latency_ms,
-                # Stub: a Tarefa 2 troca por `extrair(dados.get("extracao"))`.
-                # O campo e obrigatorio, entao sem esta linha o modulo nao
-                # tipa -- e sem o `extrair` da Tarefa 2 a extracao fica sempre
-                # vazia em producao, o que nenhum teste desta tarefa pega.
-                extracao=Extracao(),
+                extracao=extrair(dados.get("extracao")),
             )
         except (
             json.JSONDecodeError,
