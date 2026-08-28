@@ -3,6 +3,7 @@ from typing import Literal
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.app.config import MODELO_SEM_CHAMADA
 from mobia.domain.agente.classificador import ClassificadorPort
 from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
@@ -314,7 +315,22 @@ async def _entregar_texto_fixo(
                 "texto": recorder_texto,
             },
         )
-    except (EnvioForaDaJanela, EnvioRecusado) as exc:
+    except EnvioForaDaJanela as exc:
+        # Separada de `EnvioRecusado`, e com o mesmo nivel e o mesmo desfecho
+        # que o caminho principal ja dava a ela: janela de 24h fechada nao e
+        # recusa permanente, e o `Literal` de `ResultadoDoTurno` existe para
+        # essa distincao nao se perder. Classificar a mesma excecao de dois
+        # jeitos conforme o ramo do codigo faria o alerta de `error` acordar
+        # alguem por uma janela que so fechou, e faria "expirado" sumir das
+        # contagens exatamente nas mensagens bloqueadas.
+        log.warning(
+            "outbound.fora_da_janela",
+            channel=message.channel,
+            message_id=str(message.id),
+            reason=str(exc),
+        )
+        return "expirado"
+    except EnvioRecusado as exc:
         log.error(
             "moderacao.texto_fixo_nao_entregue",
             message_id=str(message.id),
@@ -340,7 +356,10 @@ async def _entregar_texto_fixo(
         conversation_key=message.conversation_key,
         channel=message.channel,
         text=recorder_texto,
-        model="",
+        # Nao houve chamada ao modelo neste caminho: o texto e constante. Ver
+        # `MODELO_SEM_CHAMADA` em `app/config.py` -- com "" a telemetria
+        # abriria um `telemetry.unknown_model` por entrada bloqueada.
+        model=MODELO_SEM_CHAMADA,
         subagent=SUBAGENTE_MODERACAO,
         tokens_in=0,
         tokens_out=0,

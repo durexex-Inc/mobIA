@@ -219,8 +219,22 @@ def get_settings() -> Settings:
 # intervalos de data na tabela, que o spec rejeitou ao descartar a opcao de
 # calcular custo em query. Superestimar num painel de custo e mais seguro que
 # subestimar.
+#
+# `MODELO_SEM_CHAMADA` nao e modelo: e a ausencia de chamada, com nome. Um
+# turno pode entregar texto constante sem falar com provedor nenhum -- e o que
+# `_entregar_texto_fixo` faz quando a moderacao de entrada bloqueia --, e a
+# telemetria dessa entrega precisa de algum valor em `model`. Com "" (ou
+# qualquer string fora desta tabela) `custo_em_dolar` devolve None e o recorder
+# emite `telemetry.unknown_model`, cujo proposito declarado e "None aparece
+# como lacuna e alguem conserta": toda entrada bloqueada abriria um chamado
+# para uma lacuna que nao existe. Zero aqui tambem nao e a mentira que aquele
+# docstring teme -- ele fala de chamada real com preco desconhecido somando
+# como zero; aqui nao houve chamada, e zero e o custo exato.
+MODELO_SEM_CHAMADA = "sem-chamada"
+
 PRECOS_POR_MODELO: dict[str, tuple[Decimal, Decimal]] = {
     "claude-opus-5": (Decimal("5.00"), Decimal("25.00")),
     "claude-sonnet-5": (Decimal("3.00"), Decimal("15.00")),
     "claude-haiku-4-5": (Decimal("1.00"), Decimal("5.00")),
+    MODELO_SEM_CHAMADA: (Decimal("0"), Decimal("0")),
 }
