@@ -173,3 +173,48 @@ async def test_a_tolerancia_de_forma_nao_afrouxa_o_conteudo(
 
     with pytest.raises(ModeracaoIndisponivel):
         await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.SAIDA)
+
+
+def test_o_cliente_da_moderacao_e_construido_com_o_teto_curto(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """O teste acima relaciona constantes; este prova que elas chegam ao cliente.
+
+    Sem ele, apagar `timeout=` e `max_retries=` de `get_moderation_client()`
+    passa na suite inteira: as constantes continuam la, a relacao entre elas
+    continua valendo, e o cliente volta ao default do SDK -- 10 min com
+    retentativa interna, ou seja o pior caso que o argumento de custo deste
+    card existe para evitar, com o card inteiro parecendo intacto. E o mesmo
+    padrao de `test_cliente_falha_tipado_antes_de_o_arq_cancelar`, em
+    `tests/unit/test_config.py`, para o cliente do turno.
+    """
+    from mobia.infra.moderacao import (
+        MAX_TENTATIVAS_DA_MODERACAO,
+        TIMEOUT_DA_MODERACAO_SEGUNDOS,
+        get_moderation_client,
+    )
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-teste")
+    cliente = get_moderation_client()
+
+    assert cliente.timeout == TIMEOUT_DA_MODERACAO_SEGUNDOS
+    assert cliente.max_retries == MAX_TENTATIVAS_DA_MODERACAO
+
+
+def test_o_cliente_da_moderacao_recusa_subir_sem_chave(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """Chave ausente falha aqui, com mensagem util, e nao no meio de um turno.
+
+    Mesma guarda que `get_client()` tem desde a TEC-127, e pelo mesmo motivo --
+    so que este cliente e chamado na primeira linha do turno, onde a falha nao
+    tipada seria confundida com "o moderador caiu" e trataria configuracao
+    ausente como indisponibilidade passageira.
+    """
+    from mobia.app.config import ConfiguracaoInsegura
+    from mobia.infra.moderacao import get_moderation_client
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+
+    with pytest.raises(ConfiguracaoInsegura, match="ANTHROPIC_API_KEY"):
+        get_moderation_client()

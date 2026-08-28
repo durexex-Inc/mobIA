@@ -185,3 +185,52 @@ async def test_saida_bloqueada_no_caminho_ambiguo_nao_marca_a_desambiguacao(
     assert gravada.desambiguado_em is None, (
         "a pergunta nao chegou ao lead -- o episodio ainda tem direito a ela"
     )
+
+
+async def test_moderador_fora_do_ar_nas_duas_pontas_paga_o_turno_e_nao_entrega(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """O cenario operacional real: o provedor cai, e cai para as duas pontas.
+
+    Ha teste de erro so na entrada e teste de erro so na saida; nenhum roda os
+    dois, que e a unica forma como a indisponibilidade de fato acontece. O
+    comportamento composto e a soma das duas escolhas assimetricas, e o custo
+    dele precisa estar escrito em algum lugar:
+
+    a entrada falha **aberta**, entao o turno segue -- monta contexto (que
+    pode disparar `resumidor` e `contador`) e paga `classificar`; a saida falha
+    **fechada**, entao a excecao propaga e nada e entregue. O turno paga a
+    conta inteira e o lead nao recebe nada. Pior: a linha vira FAILED, o
+    sweeper reenfileira, e cada retentativa paga tudo de novo ate
+    `sweep_max_attempts` -- cinco turnos pagos por mensagem, terminando em
+    silencio se o moderador nao voltar. E consequencia defensavel de "a saida
+    fecha", nao acidente, mas e o preco da indisponibilidade prolongada e esta
+    declarado como lacuna no README.
+    """
+    classificador = classificador_fake()
+    outbound = outbound_fake()
+    moderador = moderador_fake(
+        erro_na_entrada=ModeracaoIndisponivel("TimeoutError"),
+        erro_na_saida=ModeracaoIndisponivel("TimeoutError"),
+    )
+
+    with pytest.raises(ModeracaoIndisponivel):
+        await rodar_turno(
+            session,
+            classificador,
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+            moderador,
+        )
+
+    assert moderador.entradas == 1, "a entrada foi tentada, e a falha dela nao parou o turno"
+    assert classificador.chamadas == 1, "falha aberta na entrada custa a chamada paga"
+    assert moderador.saidas == 1
+    assert outbound.entregues == [], "falha fechada na saida: nada sai sem ter sido moderado"

@@ -22,6 +22,7 @@ from mobia.domain.outbound.port import GuardedOutbound
 from mobia.infra.anthropic import get_client
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import dispose_engine, get_sessionmaker
+from mobia.infra.moderacao import get_moderation_client
 from mobia.infra.queue import create_redis_pool
 
 if TYPE_CHECKING:
@@ -375,9 +376,10 @@ async def session(banco_limpo: None) -> AsyncIterator[AsyncSession]:
 
 @pytest.fixture
 def caches_de_cliente_limpos() -> Iterator[None]:
-    """Zera `get_settings` e `get_client` juntos, na entrada e na saida.
+    """Zera `get_settings` e os dois clientes juntos, na entrada e na saida.
 
-    As duas funcoes tem `@lru_cache` independente (Task 1 do TEC-127) e nada
+    As tres funcoes tem `@lru_cache` independente (Task 1 do TEC-127,
+    `get_moderation_client` na TEC-233) e nada
     estrutural forca quem limpa uma a limpar a outra. Um teste que so chama
     `get_settings.cache_clear()` -- por exemplo depois de mudar
     `ANTHROPIC_API_KEY` via monkeypatch -- deixa `get_client()` cacheado com um
@@ -389,12 +391,19 @@ def caches_de_cliente_limpos() -> Iterator[None]:
     vizinho pode herdar cache de quem rodou antes. Qualquer teste que mexa em
     `Settings`/`ANTHROPIC_API_KEY` deve depender desta fixture (diretamente ou
     via `settings`, abaixo) em vez de chamar `cache_clear()` na mao.
+
+    `get_moderation_client` entra pelo mesmo motivo, e nao porque hoje quebre
+    sem ele: todo teste de moderacao usa duble. Todo construtor novo com
+    `@lru_cache` sobre `get_settings()` reabre este buraco, e a lista aqui e o
+    unico lugar que o fecha.
     """
     get_settings.cache_clear()
     get_client.cache_clear()
+    get_moderation_client.cache_clear()
     yield
     get_settings.cache_clear()
     get_client.cache_clear()
+    get_moderation_client.cache_clear()
 
 
 @pytest.fixture
