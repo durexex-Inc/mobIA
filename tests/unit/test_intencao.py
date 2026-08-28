@@ -37,7 +37,7 @@ def test_schema_deriva_do_enum() -> None:
 def test_schema_e_estrito() -> None:
     """Sem additionalProperties: false o modelo pode inventar campo."""
     assert SCHEMA_DA_RESPOSTA["additionalProperties"] is False
-    assert set(SCHEMA_DA_RESPOSTA["required"]) == {"intencao", "confianca", "resposta"}
+    assert set(SCHEMA_DA_RESPOSTA["required"]) == {"intencao", "confianca", "resposta", "extracao"}
 
 
 def test_confianca_e_limitada_no_schema() -> None:

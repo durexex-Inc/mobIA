@@ -9,6 +9,7 @@ from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
+from mobia.domain.context.repositorio import gravar_estado
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
@@ -129,6 +130,11 @@ async def executar_turno(
     # A leitura vem **antes** da gravacao no mesmo bloco: `gravar_intencao`
     # limpa o marcador quando a confianca sustenta a classificacao, entao
     # depois dela nao da mais para saber se este episodio ja tinha perguntado.
+    #
+    # O estado de qualificacao entra no mesmo commit pela mesma razao, e ela
+    # vale mais forte aqui: o que o lead disse que procura e fato sobre a fala
+    # dele, nao sobre a nossa resposta. Saida bloqueada e envio fora da janela
+    # nao descartam a extracao.
     async with session_factory() as session:
         anterior = await ler_intencao(session, message.channel, message.conversation_key)
         await gravar_intencao(
@@ -138,6 +144,13 @@ async def executar_turno(
             intencao=gerada.intencao,
             confianca=gerada.confianca,
             modelo=gerada.modelo,
+        )
+        await gravar_estado(
+            session,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+            intencao=gerada.intencao,
+            extracao=gerada.extracao,
         )
         await session.commit()
 

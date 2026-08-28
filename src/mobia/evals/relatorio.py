@@ -1,3 +1,4 @@
+from collections import defaultdict
 from collections.abc import Sequence
 
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
@@ -96,6 +97,32 @@ def _secao_de_confianca(resumo: ResumoDeConfianca) -> list[str]:
     ]
 
 
+def _secao_de_reperguntas(reperguntas: Sequence[tuple[str, int, str]]) -> list[str]:
+    """Contagem do proxy de repergunta, so diagnostico -- nunca bloqueia.
+
+    Mesmo motivo de `_secao_de_confianca`: nenhum numero aqui tem faixa.
+    `MARCADORES_DE_REPERGUNTA` (`evals/test_acuracia_de_intencao.py`) e lista de
+    palavra-chave, e o total nao e cota inferior nem superior de reperguntas
+    -- e um indicador aproximado, com erro nas duas direcoes. Falso negativo
+    por construcao: uma repergunta com outras palavras escapa. Falso
+    positivo tambem: o agente pode citar "apartamento" ou "vaga" ao descrever
+    um imovel numa frase que, por outro motivo, termina com "?". Ver os
+    testes de `_reperguntou` em `tests/unit/test_evals_reperguntas.py`.
+    """
+    por_campo: dict[str, int] = defaultdict(int)
+    for _, _, campo in reperguntas:
+        por_campo[campo] += 1
+    linhas = [
+        "",
+        "## Reperguntas (proxy de palavra-chave, diagnostico)",
+        "",
+        f"- total detectado: {len(reperguntas)}",
+    ]
+    for campo, quantos in sorted(por_campo.items(), key=lambda par: (-par[1], par[0])):
+        linhas.append(f"  - {campo}: {quantos}")
+    return linhas
+
+
 def render(
     metricas: Sequence[ResultadoDaMetrica],
     confusao: dict[Intencao, dict[Intencao, int]],
@@ -103,6 +130,7 @@ def render(
     confianca: ResumoDeConfianca | None = None,
     erradas: Sequence[Classificacao] = (),
     infraestrutura: Sequence[FalhaDeInfraestrutura] = (),
+    reperguntas: Sequence[tuple[str, int, str]] = (),
 ) -> str:
     linhas = ["# Avaliacao da classificacao de intencao", ""]
 
@@ -114,6 +142,9 @@ def render(
 
     if confianca is not None:
         linhas += _secao_de_confianca(confianca)
+
+    if reperguntas:
+        linhas += _secao_de_reperguntas(reperguntas)
 
     if erradas:
         linhas += _secao_de_erradas(erradas)

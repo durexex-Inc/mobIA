@@ -120,10 +120,19 @@ Os critérios de aceite da história vivem como testes executáveis:
   a requisição real carrega; a reserva cobre essa diferença. A TEC-134 mediu:
   a contagem fica ~263 tokens abaixo do que se envia (`SISTEMA` contado e não
   enviado, `SISTEMA_DO_AGENTE`, o schema de saída e os rótulos enviados e não
-  contados), contra uma reserva de 400 — que por isso continua em 400. A conta
-  usa o mesmo proxy `len/4` do módulo, não uma chamada paga de `count_tokens`, e
-  vive em `test_diferenca_entre_o_contado_e_o_enviado`, que quebra se alguma das
-  parcelas crescer.
+  contados), contra uma reserva que era 400 na época. **A partir da TEC-145 a
+  reserva é 800, não 400**: o objeto `extracao` que a TEC-145 acrescentou ao
+  schema de saída (`SCHEMA_DA_RESPOSTA`) soma um segundo ~263 à subcontagem,
+  que sobe para **526**. Com a reserva ainda em 400 essa subcontagem já
+  excederia a própria reserva; com 800 ela cabe com **74 tokens** de folga
+  antes de a segunda asserção de `test_diferenca_entre_o_contado_e_o_enviado`
+  (headroom × 0,75, ou seja 600) voltar a disparar — não os ~137 que a
+  reserva de 400 deixava contra os ~263 de antes da TEC-145. A conta usa o
+  mesmo proxy `len/4` do módulo, não uma chamada paga de `count_tokens`, e
+  vive em `test_diferenca_entre_o_contado_e_o_enviado`, que quebra se alguma
+  das parcelas crescer. Ver a seção TEC-145 abaixo e o comentário de
+  `contexto_headroom_de_tokens` em `src/mobia/app/config.py`, que já tinha a
+  conta certa.
 - Mensagem sem texto (áudio, imagem, documento) entra marcada pelo tipo, nunca
   como turno em branco — o modelo tem de poder distinguir "mandou um áudio que
   ainda não transcrevemos" de "não disse nada", e é esse texto que a dobra
@@ -453,6 +462,17 @@ andaime saiu, por um motivo que a medição tornou óbvio: os 90% do critério d
 aceite são sobre o que o lead experimenta, e o lead experimenta a intenção
 **efetiva**, não o palpite cru. O alvo pertence a esta métrica ao menos tanto
 quanto à outra.
+
+> **Nota da TEC-145 (28/08/2026):** o corpus mudou depois desta medição, e o
+> "50 conversas / 136 turnos" abaixo continua batendo, o que esconde a
+> mudança em vez de denunciá-la. O terceiro turno de `aluguel-02` foi
+> **reescrito** nesta card para conter uma correção de região (ver seção
+> TEC-145), então a fala enviada ao modelo hoje não é mais a mesma que gerou
+> os 126/136 acima — o rótulo (`ALUGUEL`) não mudou, mas o texto exato, sim.
+> Os outros 31 turnos que ganharam a chave `campos` não alteram texto
+> nenhum, só acrescentam anotação que o classificador nunca lê. Uma reexecução
+> paga contra o corpus atual pode divergir desse número por este motivo, além
+> do ruído normal entre execuções (±1,5%, citado abaixo).
 
 Isso trouxe um ganho e um custo. O ganho: **degradação parcial de calibração
 passou a barrar.** Com o piso de 50%, meio corpus rebaixado dava exatamente 50%
@@ -931,3 +951,252 @@ texto é esse.
   deixa de ser inofensivo no dia em que a transcrição existir — o texto
   transcrito chegaria ao contexto sem ter passado por lugar nenhum. Quem
   implementar transcrição tem de mover a moderação para depois dela.
+
+## TEC-145 — Extração de qualificação do lead
+
+Até aqui o agente classificava intenção e respondia, e parava aí: o que o
+lead dizia sobre o que procura — região, orçamento, quartos, forma de
+pagamento — se perdia depois do turno, e cada pergunta seguinte partia do
+zero. Esta card faz essa fala virar estado estruturado, persistido, e
+consultável por SQL — pré-requisito declarado da TEC-147, TEC-150 e TEC-158.
+
+`Extracao` (`src/mobia/domain/agente/schemas.py`) é o contrato: nove campos,
+todos anuláveis, sem `intencao` — quem classifica intenção é o classificador,
+e duas fontes para o mesmo fato divergiriam (a divergência apareceria como bug
+de score na TEC-150). Todo campo anulável tem um significado exato: `None` é
+"o lead não falou disso **neste turno**", nunca "esqueça o que sabia" — quem
+apaga com esse sentido é `preenchidos()`, que descarta só os `None` e
+preserva `False` (`tem_imovel_para_vender`) e `0` (`vagas`) como informação
+válida.
+
+A extração viaja **na mesma chamada** que já classifica e responde — sem
+`tool` separada, sem chamada extra. `SCHEMA_DA_EXTRACAO`
+(`classificador.py`) entra como mais uma propriedade de
+`SCHEMA_DA_RESPOSTA`, e a nulidade de cada campo é `anyOf: [tipo, null]`, não
+`type: [tipo, "null"]` — `transform_schema` do SDK despacha por um `Literal`
+de tipos únicos e estoura em `assert_never` no segundo formato, e a falha
+seria no import do módulo, não numa chamada. `extrair()` **nunca levanta**:
+preço fora de `numeric(12,2)`, `quartos`/`vagas` fora de 0–20, `regiao` acima
+de 120 caracteres ou um booleano lido como `1 quarto` (`isinstance(True,
+int)` é verdadeiro em Python) são descartados campo a campo — um valor
+malformado não pode derrubar a resposta entregável, porque a extração é
+enriquecimento e a resposta é o produto.
+
+`gravar_estado` (`src/mobia/domain/context/repositorio.py`) grava só o que
+veio: o `UPSERT` monta `SET` a partir de `extracao.preenchidos()`, então um
+campo que o lead não mencionou neste turno nunca aparece no `SET` e não pode
+sobrescrever com `NULL` o que já estava lá. `FORA_DE_ESCOPO` não grava nada —
+a guarda mora aqui, não em quem chama, para que não haja como esquecê-la — e
+"não grava" também não é "apaga": o lead que qualificou e depois mandou uma
+piada continua com o que disse. A função não commita; `executar_turno` grava
+intenção e estado no mesmo commit, porque os dois fatos vêm da mesma chamada.
+
+### A medição: corpus anotado, estado acumulado no runner, precisão no gate
+
+O eval da TEC-210 media só intenção; esta card estende o mesmo corpus e o
+mesmo runner para medir extração, sem pagar chamada nova.
+
+`TurnoAnotado.campos` (`src/mobia/evals/corpus.py`) é a chave nova do YAML:
+um dicionário de campo para valor, presente só quando a fala daquele turno
+afirma alguma coisa. `campos` ausente tira o turno da medição de extração de
+propósito — omitir é o jeito de dizer "esta fala não afirma nada extraível".
+`campos` presente é contrato de anotação **completa**: `precisao_da_extracao`
+conta campo extraído que não está na anotação como erro, então uma anotação
+parcial não vira nota mais baixa do modelo — vira medição errada. `carregar`
+valida cada valor contra o vocabulário fechado (`TipoImovel`, `Urgencia`,
+`FormaPagamento`) e recusa campo desconhecido ou fora do vocabulário no
+carregamento, antes de qualquer chamada paga.
+
+`_rodar_conversa` (`evals/test_acuracia_de_intencao.py`) acumula um
+`estado_acumulado: dict[str, Any]` turno a turno e passa
+`contexto_do_historico(..., estado=LeadQualification(**estado_acumulado))`
+a cada chamada — `LeadQualification` aqui é o mesmo padrão transiente que
+`mensagem_transiente` já usa, nunca vai a sessão nenhuma. Sem isso a medição
+de "não repergunta campo preenchido" mediria estado sempre vazio: o modelo
+nunca teria visto o campo. A acumulação chama `campos_a_gravar(intencao,
+extracao)` (`src/mobia/domain/context/repositorio.py`) e faz
+`estado_acumulado.update(...)` com o retorno — a mesma função que
+`gravar_estado` usa em produção, extraída nesta onda porque o runner tinha
+uma cópia da regra que divergia dela em duas frentes: acumulava por cima da
+guarda de `FORA_DE_ESCOPO` (produção não grava nada nesse turno; o runner
+acumulava o que o modelo extraiu de qualquer forma) e nunca guardava
+`intencao` (produção sempre grava; o `LeadQualification` sintético do eval
+nunca carregava a linha `intencao: X` que `montagem._texto_do_estado` põe no
+prompt real a partir do segundo turno — diferença de prompt em praticamente
+todo turno de uma conversa com troca de intenção, que é exatamente o que o
+corpus de borda existe para exercitar). Com a função compartilhada as duas
+pontas não podem mais divergir sem que o teste da outra ponta quebre junto.
+
+`precisao_da_extracao` (`src/mobia/evals/metricas.py`) compara pelo
+denominador da **união** entre esperado e obtido, por turno: só o esperado no
+denominador daria 100% a um modelo que acerta o anotado e inventa mais
+quatro campos; só o obtido daria 100% a um modelo que nunca extrai nada — o
+mesmo furo que a TEC-233 fechou no corpus de moderação, na direção oposta.
+Ela **entra em `_metricas_de` e em `bloqueia`**: ao contrário das três
+métricas `SEM_MECANISMO` que a TEC-210 deixou declaradas, a extração agora
+tem sujeito, e uma precisão abaixo do piso de 85% (`PISO_DE_PRECISAO_DA_EXTRACAO_PCT`)
+reprova a execução — a mesma faixa vermelha/amarela/verde de `faixa_de`, com
+piso próprio em vez de herdar 90/84 da intenção.
+
+`PISO_DE_TURNOS_ANOTADOS = 30` (`src/mobia/evals/metricas.py`) é o piso
+irmão de `PISO_DE_TURNOS`, na outra direção: sem ele, anotar três turnos
+fáceis daria 100% de precisão num corpus que não mede nada. Hoje **32 turnos
+estão anotados**, distribuídos em `evals/corpus/compra.yaml` (15),
+`evals/corpus/aluguel.yaml` (12) e `evals/corpus/investimento.yaml` (5) — os
+três arquivos, e só eles, ganharam a chave `campos` nesta card.
+`aluguel-02` carrega o caso de correção que a D4 do spec pediu com risco
+declarado: o lead troca de região no meio da conversa (`brooklin` →
+`itaim bibi`), e é o turno que prova que a sobrescrita pelo mais novo tem
+cobertura de medição.
+
+O proxy de repergunta (`MARCADORES_DE_REPERGUNTA`,
+`evals/test_acuracia_de_intencao.py`) conta, por palavra-chave, quantas
+vezes a resposta do agente parece reperguntar um campo que o estado
+**já tinha** antes daquele turno (`conhecidos_antes`, capturado antes da
+chamada). Ele é **diagnóstico, nunca gate**, pelo mesmo motivo que
+`ResumoDeConfianca` já é diagnóstico no relatório da TEC-210: aparece numa
+seção própria do relatório (`render(..., reperguntas=...)`,
+`src/mobia/evals/relatorio.py`), mas não entra em `_metricas_de` nem em
+`bloqueia`.
+
+### Garantias
+
+- **A extração não paga chamada extra.** Ela viaja no mesmo schema
+  estruturado que já classifica intenção e escreve a resposta — o eval não
+  precisou de nenhuma chamada nova para medi-la, só estender o corpus e o
+  runner que a TEC-210 já pagava.
+- **`CONTEXTO_HEADROOM_DE_TOKENS` subiu de 400 para 800 nesta card**
+  (`src/mobia/app/config.py`, commit `68eddb6`). O schema de saída ganhou o
+  objeto `extracao`, e ele sozinho custa ~263 tokens enviados em toda chamada
+  e nunca contados por `montar_contexto` — a mesma ordem de grandeza do
+  déficit que a TEC-134 já tinha medido para o resto da requisição. A
+  subcontagem total sobe para 526; com a reserva em 400 ela nem passaria mais
+  na primeira asserção de `test_diferenca_entre_o_contado_e_o_enviado`
+  (`subcontagem < headroom`, e 526 não é menor que 400). Com a reserva em 800
+  ela passa nas duas, com 74 tokens de folga antes da segunda (headroom ×
+  0,75 = 600) voltar a disparar. Preço: 400 tokens a
+  menos de literais e resumo por turno, de um teto de 12000 — 3,3% do
+  contexto, em troca de extração estruturada. Ver o item "O teto comparado é
+  o nominal menos `CONTEXTO_HEADROOM_DE_TOKENS`" na seção TEC-127 acima, que
+  tinha ficado com os números de antes desta mudança.
+- **`intencao` está fora de `Extracao` de propósito**, e fica assim mesmo
+  tendo aparecido nos dois lugares onde seria conveniente incluí-la — o
+  schema da chamada e `campos` do corpus. Duas fontes de intenção divergiriam
+  em silêncio; só o classificador decide.
+- **Nenhuma guarda de `extrair()` derruba o turno.** Preço, quartos/vagas,
+  região e o booleano de "tem imóvel para vender" são validados um a um, e um
+  campo malformado é descartado sozinho — os outros campos e a resposta ao
+  lead seguem intactos.
+- **`None` nunca apaga, `FORA_DE_ESCOPO` não grava nada, e `intencao` sempre
+  entra quando há gravação — em produção e na medição, pela mesma função.**
+  `campos_a_gravar(intencao, extracao)` (`src/mobia/domain/context/repositorio.py`)
+  é a regra única: `gravar_estado` usa o retorno para montar o `SET` do
+  upsert, e o runner do eval usa o mesmo retorno para o `estado_acumulado.update(...)`
+  turno a turno. Antes desta onda cada lado tinha sua própria cópia da regra,
+  e divergiam em duas frentes — ver "A medição" acima.
+- **`FORA_DE_ESCOPO` não grava nada, e a guarda mora em `campos_a_gravar`**, o
+  único lugar que os dois chamadores passam — não há como esquecê-la em um
+  novo caminho de chamada futuro.
+- **O corpus valida o vocabulário no carregamento, antes de qualquer chamada
+  paga.** `carregar` recusa campo desconhecido ou valor fora de `TipoImovel`,
+  `Urgencia` ou `FormaPagamento` com o arquivo e a conversa no erro — o mesmo
+  padrão de validação adiantada que o piso de turnos da TEC-210 já usava.
+- **A precisão de extração pune os dois lados da conta nos 32 turnos
+  anotados** — pela união entre campos esperados e obtidos, nem um modelo que
+  inventa campos, nem um que nunca extrai nada, tira 100% de graça **nesse
+  subconjunto**. Nos outros 104 turnos do corpus, `campos` ausente tira o
+  turno da medição de extração por completo (é o único jeito de anotar "esta
+  fala não afirma nada extraível" — `carregar` recusa `campos: {}` com
+  `CorpusInvalido` e manda omitir a chave em vez de deixá-la vazia), então uma
+  invenção nesses 104 turnos não é medida por ninguém. Ver "Lacunas
+  conhecidas".
+- **Há teste de correção de região no corpus**
+  (`tests/unit/test_evals_corpus_real.py::test_ha_turno_de_correcao_anotado`),
+  porque a sobrescrita "mais novo vence, sem histórico" é a decisão do spec
+  com risco mais declarado (D4), e sem um caso anotado ela não tinha cobertura
+  de medição nenhuma.
+- **O proxy de repergunta nunca bloqueia**, e há comentário no próprio
+  `MARCADORES_DE_REPERGUNTA` dizendo por quê: é heurística de palavra-chave,
+  com erro nas duas direções. Ver "Lacunas conhecidas".
+
+### Lacunas conhecidas
+
+- **A medição de "não repergunta" é um proxy ininterpretável como cota — nem
+  piso, nem teto —, só indicador aproximado.** Detectar em texto livre que o
+  agente perguntou a região exigiria um juiz-modelo pago.
+  `MARCADORES_DE_REPERGUNTA` em `evals/test_acuracia_de_intencao.py` é lista de
+  palavra-chave casada com fronteira de palavra, e só conta se a resposta tiver
+  `?`. Isso elimina os falsos positivos mais óbvios (`"onde"` dentro de
+  "responder", "casa" dentro de "casamento", o agente descrevendo um imóvel
+  sem perguntar nada), mas não os dois tipos de erro: falso negativo por
+  construção (uma repergunta com outras palavras não é contada) e falso
+  positivo residual (o agente pode citar "apartamento" ou "vaga" ao descrever
+  um imóvel numa frase que, por outro motivo, termina com `?`). Os seis casos
+  que motivaram o aperto — quatro negativos, dois positivos — estão travados em
+  `tests/unit/test_evals_reperguntas.py`.
+- **Nada impede o agente de reperguntar.** A escolha da próxima pergunta é do
+  modelo, guiada pelo prompt; não há seletor em código. O spec (D5) explica por
+  quê — TEC-148 e TEC-149 mexem no mesmo seletor e o reescreveriam.
+- **Uma extração ruim apaga dado bom em definitivo.** A sobrescrita é pelo mais
+  novo e a tabela guarda só o valor atual, sem histórico: não há como saber que
+  houve troca nem voltar atrás. Aceito conscientemente no spec (D4); a
+  alternativa sobrepunha desenho com a TEC-152.
+- **O corpus anota um subconjunto dos turnos.** A precisão de extração é medida
+  sobre os turnos com `campos` anotado, não sobre os 136. `PISO_DE_TURNOS_ANOTADOS`
+  guarda o tamanho mínimo desse subconjunto, e é vigiado nos três pontos em
+  que `PISO_DE_TURNOS` já era: pré-voo (`evals/conftest.py`), corpus commitado
+  no CI (`tests/unit/test_evals_corpus_real.py`) e amostra sobrevivente depois
+  do abandono (`evals/test_acuracia_de_intencao.py`, `assert` ao lado do de
+  `PISO_DE_TURNOS`, e `_metricas_de` cai em `sem_mecanismo` abaixo do piso, não
+  só abaixo de zero). Antes desta onda ele só era vigiado no segundo ponto: o
+  pior caso medido — abandonar as `TETO_DE_CONVERSAS_ABANDONADAS` conversas com
+  mais anotação — deixava os dois asserts de `PISO_DE_TURNOS` passarem (121
+  turnos) com só 20 turnos anotados / 32 anotações de campo sobrevivendo, 33%
+  abaixo do piso declarado, e `precisao_da_extracao` bloqueava ou liberava um
+  gate pago com essa amostra.
+- **A precisão de extração pune os dois lados só nos 32 turnos anotados; nos
+  outros 104, invenção não é medida por ninguém.** `campos: {}` levanta
+  `CorpusInvalido` e a mensagem manda omitir a chave para tirar o turno da
+  medição — não há como anotar "o lead não afirmou nada aqui", e esse é o
+  único formato de turno em que invenção poderia ser pega sem exigir
+  julgamento humano por turno. Consequência: um modelo que extrai
+  perfeitamente nos 32 turnos anotados e emite `regiao`/`tipo_imovel` em
+  todos os outros 104 tira 100%, VERDE — e essas invenções são gravadas em
+  `lead_qualification` para toda intenção menos `FORA_DE_ESCOPO`, e "`None`
+  não apaga" (ver "Garantias") as torna permanentes e sem rastro. É o mesmo
+  furo do corpus só-positivo que a TEC-233 fechou no corpus de moderação, na
+  mesma forma — só que aqui continua aberto, e nenhuma anotação nem mudança
+  de validação foi feita nesta onda para fechá-lo: o conserto é anotar os 104
+  turnos (ou parte deles) com `campos: {}` tratado como "nada esperado, tudo
+  obtido é erro", o que muda o contrato de `carregar` e é card, não
+  correção de documentação.
+- **Quatro dos nove campos de `Extracao` têm zero anotação no corpus, e o
+  denominador de união faz isso baixar a nota de quem os extrai certo.**
+  Contagem nos 32 turnos anotados, 47 anotações de campo:
+
+  | campo | anotações |
+  |---|---|
+  | `regiao` | 17 |
+  | `tipo_imovel` | 17 |
+  | `quartos` | 7 |
+  | `forma_pagamento` | 5 |
+  | `faixa_preco_max` | 1 |
+  | `faixa_preco_min` | 0 |
+  | `vagas` | 0 |
+  | `urgencia` | 0 |
+  | `tem_imovel_para_vender` | 0 |
+
+  Como `precisao_da_extracao` soma pela união entre esperado e obtido por
+  turno, um campo sem nenhuma anotação só pode entrar no denominador pelo
+  lado obtido — extraí-lo corretamente nunca soma um acerto (não há anotação
+  contra a qual bater), mas sempre soma ao total. Um modelo perfeito que
+  também extrai corretamente `N` campos deste tipo tira `47/(47+N)`: `N=8` dá
+  85,5% (AMARELO), `N=10` dá 82,5% (VERMELHO). O piso de 85% premia um modelo
+  que se recusa a extrair `urgencia`, `vagas`, `faixa_preco_min` e
+  `tem_imovel_para_vender` — quatro dos nove campos que esta card existe para
+  entregar — e o Gherkin 3 do spec ("uma só" → `vagas = 1`) não tem cobertura
+  nenhuma no corpus. O número medido de `precisao_da_extracao` é, por isso,
+  um **piso pessimista** para esses quatro campos: não anotar corpus nem
+  mudar a validação foi decisão desta onda — o conserto é anotação, e é card.
+- **A precisão de extração nunca foi executada.** O eval é pago e roda sob demanda
+  ou em PR que toque `src/mobia/domain/agente/`.

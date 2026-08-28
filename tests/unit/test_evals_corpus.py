@@ -3,7 +3,10 @@ from pathlib import Path
 import pytest
 
 from mobia.domain.agente.schemas import Intencao
-from mobia.evals.corpus import CorpusInvalido, carregar, total_de_turnos
+from mobia.evals.corpus import CorpusInvalido, _turno_de, carregar, total_de_turnos
+
+# O corpus real, ainda sem anotacao de `campos` -- essa vem da TEC-145 T5.
+CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
 
 
 def _escrever(diretorio: Path, nome: str, conteudo: str) -> None:
@@ -96,3 +99,27 @@ def test_turno_nao_mapeamento_e_recusado_nomeando_conversa(tmp_path: Path) -> No
 
     with pytest.raises(CorpusInvalido, match="compra-01"):
         carregar(tmp_path)
+
+
+def test_turno_sem_campos_tem_campos_none() -> None:
+    """Turno nao anotado nao entra na medicao de extracao."""
+    conversas = carregar(CORPUS)
+    assert any(turno.campos is None for conversa in conversas for turno in conversa.turnos)
+
+
+def test_campo_desconhecido_no_corpus_e_erro() -> None:
+    with pytest.raises(CorpusInvalido):
+        _turno_de(
+            {"lead": "oi", "intencao": "COMPRA", "campos": {"piscina": True}},
+            "compra-99",
+            "compra.yaml",
+        )
+
+
+def test_valor_fora_do_vocabulario_e_erro() -> None:
+    with pytest.raises(CorpusInvalido):
+        _turno_de(
+            {"lead": "oi", "intencao": "COMPRA", "campos": {"tipo_imovel": "IATE"}},
+            "compra-99",
+            "compra.yaml",
+        )

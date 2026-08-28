@@ -6,9 +6,11 @@ import pytest
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
 from mobia.evals.corpus import carregar, total_de_turnos
 from mobia.evals.metricas import (
+    PISO_DE_PRECISAO_DA_EXTRACAO_PCT,
     PISO_DE_TURNOS,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
+    ExtracaoObservada,
     Faixa,
     acuracia_de_intencao,
     acuracia_efetiva,
@@ -16,6 +18,7 @@ from mobia.evals.metricas import (
     erros,
     faixa_de,
     matriz_de_confusao,
+    precisao_da_extracao,
     resumo_de_confianca,
     sem_mecanismo,
 )
@@ -301,3 +304,87 @@ def test_a_efetiva_usa_as_mesmas_faixas_da_crua() -> None:
     assert efetiva_com(90, 100) is Faixa.VERDE
     assert efetiva_com(84, 100) is Faixa.AMARELO
     assert efetiva_com(83, 100) is Faixa.VERMELHO
+
+
+def _observada(esperado, obtido, *, indice=0):
+    return ExtracaoObservada(
+        conversa_id="compra-01", indice=indice, esperado=esperado, obtido=obtido
+    )
+
+
+def test_extracao_perfeita_e_cem_por_cento():
+    resultado = precisao_da_extracao(
+        [_observada({"quartos": 2, "regiao": "zona sul"}, {"quartos": 2, "regiao": "zona sul"})]
+    )
+    assert (resultado.acertos, resultado.total) == (2, 2)
+    assert resultado.faixa is Faixa.VERDE
+
+
+def test_campo_esperado_que_nao_veio_conta_erro():
+    resultado = precisao_da_extracao([_observada({"quartos": 2, "vagas": 1}, {"quartos": 2})])
+    assert (resultado.acertos, resultado.total) == (1, 2)
+
+
+def test_campo_inventado_conta_erro():
+    """Sem isto, extrair o certo mais quatro campos inventados daria 100%."""
+    resultado = precisao_da_extracao(
+        [_observada({"quartos": 2}, {"quartos": 2, "vagas": 3, "regiao": "moema"})]
+    )
+    assert (resultado.acertos, resultado.total) == (1, 3)
+
+
+def test_nao_extrair_nada_nao_da_cem_por_cento():
+    """Sem isto, um modelo que nunca extrai passaria no piso."""
+    resultado = precisao_da_extracao([_observada({"quartos": 2, "regiao": "zona sul"}, {})])
+    assert (resultado.acertos, resultado.total) == (0, 2)
+    assert resultado.faixa is Faixa.VERMELHO
+
+
+def test_valor_errado_no_campo_certo_conta_erro():
+    resultado = precisao_da_extracao([_observada({"quartos": 2}, {"quartos": 3})])
+    assert (resultado.acertos, resultado.total) == (0, 1)
+
+
+def test_regiao_compara_sem_ligar_para_caixa_nem_espaco():
+    resultado = precisao_da_extracao([_observada({"regiao": "Zona Sul"}, {"regiao": " zona sul "})])
+    assert (resultado.acertos, resultado.total) == (1, 1)
+
+
+def test_preco_compara_por_valor_e_nao_por_texto():
+    """600000 e Decimal("600000.00") sao o mesmo preco."""
+    resultado = precisao_da_extracao(
+        [_observada({"faixa_preco_max": 600000}, {"faixa_preco_max": Decimal("600000.00")})]
+    )
+    assert (resultado.acertos, resultado.total) == (1, 1)
+
+
+def test_piso_da_extracao_e_oitenta_e_cinco():
+    assert PISO_DE_PRECISAO_DA_EXTRACAO_PCT == 85
+
+
+def test_faixa_da_extracao_usa_o_piso_proprio():
+    """84 de 100 e o unico ponto que discrimina os dois pisos.
+
+    Com o piso geral (84) seria AMARELO; com o piso da extracao (85) e
+    VERMELHO. Testar 85/100 nao provaria nada: 85 passa nos dois pisos, e o
+    teste continuaria verde se alguem esquecesse de passar `piso=`.
+    """
+    observadas = [_observada({"quartos": 2}, {"quartos": 2}, indice=i) for i in range(84)]
+    observadas += [_observada({"quartos": 2}, {"quartos": 3}, indice=84 + i) for i in range(16)]
+    resultado = precisao_da_extracao(observadas)
+    assert (resultado.acertos, resultado.total) == (84, 100)
+    assert resultado.faixa is Faixa.VERMELHO
+    # A prova de que o piso e a unica diferenca: o mesmo par no piso geral sobe.
+    assert faixa_de(84, 100) is Faixa.AMARELO
+
+
+def test_nada_medido_nao_e_sucesso():
+    with pytest.raises(ValueError):
+        precisao_da_extracao([])
+
+
+def test_faixa_de_continua_com_os_defaults_de_antes():
+    """A parametrizacao nao pode mudar nenhuma chamada existente."""
+    assert faixa_de(90, 100) is Faixa.VERDE
+    assert faixa_de(84, 100) is Faixa.AMARELO
+    assert faixa_de(83, 100) is Faixa.VERMELHO

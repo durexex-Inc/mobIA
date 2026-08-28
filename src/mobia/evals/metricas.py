@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
+from typing import Any
 
 from mobia.domain.agente.desambiguacao import deve_desambiguar, intencao_efetiva
 from mobia.domain.agente.schemas import Intencao
@@ -11,9 +12,18 @@ from mobia.domain.agente.schemas import Intencao
 ALVO_PCT = 90
 PISO_DE_BLOQUEIO_PCT = 84
 
+# O piso da extracao vem do card (RF-05, secao 4.4 do SRS): 85%. Diferente do
+# `PISO_DE_BLOQUEIO_PCT` de intencao, que e 84.
+PISO_DE_PRECISAO_DA_EXTRACAO_PCT = 85
+
 # Abaixo deste numero de turnos um unico turno vale mais de 0,8% e a faixa
 # amarela deixa de absorver o ruido entre execucoes.
 PISO_DE_TURNOS = 120
+
+# Piso de anotacao, irmao do PISO_DE_TURNOS. Sem ele, anotar tres turnos
+# faceis daria precisao alta num corpus que nao mede nada -- o mesmo furo do
+# corpus so-positivo, na outra direcao.
+PISO_DE_TURNOS_ANOTADOS = 30
 
 # Quantas conversas a execucao pode perder para falha de infraestrutura antes
 # de deixar de valer como medida.
@@ -158,7 +168,13 @@ class ResultadoDaMetrica:
     detalhe: str
 
 
-def faixa_de(acertos: int, total: int) -> Faixa:
+def faixa_de(
+    acertos: int,
+    total: int,
+    *,
+    alvo: int = ALVO_PCT,
+    piso: int = PISO_DE_BLOQUEIO_PCT,
+) -> Faixa:
     """Compara em aritmetica inteira, nunca em float.
 
     `acertos * 100 >= total * ALVO_PCT` e exato por construcao: os dois lados
@@ -166,12 +182,17 @@ def faixa_de(acertos: int, total: int) -> Faixa:
     -- `126/150 >= 0.84` e `135/150 >= 0.9` dao True, os dois. E que com
     inteiros ninguem precisa verificar isso: nao ha representacao decimal no
     caminho sobre a qual raciocinar, entao a borda nao e um caso a analisar.
+
+    `alvo` e `piso` sao parametros com default porque a extracao (TEC-145) tem
+    piso proprio de 85. Uma segunda funcao de faixa foi tentada na TEC-210
+    (`faixa_de_catastrofe`) e deletada no PR #10: duas funcoes de faixa
+    divergem, e a divergencia so aparece na borda.
     """
     if total <= 0:
         raise ValueError("nada medido nao e sucesso: total de turnos e zero")
-    if acertos * 100 >= total * ALVO_PCT:
+    if acertos * 100 >= total * alvo:
         return Faixa.VERDE
-    if acertos * 100 >= total * PISO_DE_BLOQUEIO_PCT:
+    if acertos * 100 >= total * piso:
         return Faixa.AMARELO
     return Faixa.VERMELHO
 
@@ -287,3 +308,74 @@ def sem_mecanismo(nome: str, motivo: str) -> ResultadoDaMetrica:
 
 def bloqueia(metricas: Sequence[ResultadoDaMetrica]) -> bool:
     return any(metrica.faixa is Faixa.VERMELHO for metrica in metricas)
+
+
+@dataclass(frozen=True)
+class ExtracaoObservada:
+    """Um turno anotado, com o que se esperava e o que veio.
+
+    `esperado` sao os campos que o corpus anotou para este turno; `obtido` e o
+    `Extracao.preenchidos()` do que o modelo devolveu. Os dois sao dicionarios
+    de nome de campo para valor.
+    """
+
+    conversa_id: str
+    indice: int
+    esperado: dict[str, Any]
+    obtido: dict[str, Any]
+
+
+def _comparavel(valor: Any) -> Any:
+    """Normaliza para comparar anotacao de YAML com valor vindo do parse.
+
+    `regiao` e texto livre escrito a mao no corpus: caixa e espaco nao sao erro
+    do modelo. Preco vem do YAML como `int` e do parse como `Decimal`, e
+    600000 e Decimal("600000.00") sao o mesmo preco.
+    """
+    if isinstance(valor, bool):
+        return valor
+    if isinstance(valor, str):
+        return valor.strip().casefold()
+    if isinstance(valor, int | float | Decimal):
+        return Decimal(str(valor))
+    return valor
+
+
+def precisao_da_extracao(observadas: Sequence[ExtracaoObservada]) -> ResultadoDaMetrica:
+    """Precisao de campo, punindo os dois lados da conta.
+
+    O denominador e a **uniao** dos campos esperados com os obtidos, por turno.
+    Isso e o que torna a metrica honesta nas duas direcoes:
+
+    - So o esperado no denominador daria 100% a um modelo que acerta os campos
+      anotados e inventa outros quatro.
+    - So o obtido daria 100% a um modelo que nunca extrai nada -- o mesmo furo
+      que a TEC-233 encontrou em corpus so-positivo, onde um moderador que
+      bloqueia tudo passa.
+
+    Turno sem anotacao (`campos` ausente no corpus) nao chega aqui: quem filtra
+    e o runner, porque um turno nao anotado nao tem verdade contra a qual
+    comparar.
+    """
+    acertos = 0
+    total = 0
+    for observada in observadas:
+        nomes = set(observada.esperado) | set(observada.obtido)
+        total += len(nomes)
+        acertos += sum(
+            1
+            for nome in nomes
+            if nome in observada.esperado
+            and nome in observada.obtido
+            and _comparavel(observada.esperado[nome]) == _comparavel(observada.obtido[nome])
+        )
+    faixa = faixa_de(acertos, total, piso=PISO_DE_PRECISAO_DA_EXTRACAO_PCT)
+    return ResultadoDaMetrica(
+        nome="precisao da extracao",
+        faixa=faixa,
+        acertos=acertos,
+        total=total,
+        detalhe=_detalhe(
+            acertos, total, f"alvo {ALVO_PCT}%, piso {PISO_DE_PRECISAO_DA_EXTRACAO_PCT}%"
+        ),
+    )

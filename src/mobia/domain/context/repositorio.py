@@ -1,11 +1,13 @@
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.infra.crypto import decrypt, encrypt
 
@@ -109,3 +111,77 @@ async def ler_estado(
         )
     )
     return resultado.scalar_one_or_none()
+
+
+def campos_a_gravar(intencao: Intencao, extracao: Extracao) -> dict[str, Any]:
+    """A regra unica de acumulacao do estado de qualificacao.
+
+    Compartilhada entre `gravar_estado` (producao) e o runner do eval
+    (`_rodar_conversa` em `evals/test_acuracia_de_intencao.py`), porque o
+    corpus anotado da TEC-145 media a extracao com uma copia divergente desta
+    regra: nao honrava a guarda de `FORA_DE_ESCOPO` e nunca acumulava
+    `intencao`, entao o `LeadQualification` sintetico do eval nunca carregava
+    a linha `intencao: X` que o prompt de producao carrega a partir do
+    segundo turno (`montagem._texto_do_estado`). Extrair a regra para uma
+    funcao so fecha as duas frentes de uma vez: nao ha como o eval divergir de
+    novo sem que os dois lados divirjam da mesma chamada.
+
+    Devolve os campos **deste turno**, prontos para entrar num
+    `dict.update` (runner) ou num `ON CONFLICT DO UPDATE` (aqui) por cima do
+    estado anterior -- "mais novo vence" e responsabilidade de quem chama, nao
+    desta funcao.
+
+    - `FORA_DE_ESCOPO` nao grava nada: dict vazio. A guarda vive aqui, no
+      unico lugar que os dois chamadores passam, para que nao haja como
+      esquece-la num terceiro caminho futuro. Repare que ela tambem nao
+      **apaga**: um dict vazio nao entra no `update`/`SET`, entao o lead que
+      qualificou e depois mandou uma piada continua com o que disse.
+    - `None` no campo nao apaga: so os campos que `Extracao.preenchidos()`
+      devolveu (os que o lead de fato informou neste turno) entram.
+    - `intencao` sempre entra quando ha gravacao. Ela vem de fora, do
+      classificador, e nunca da extracao -- a tabela `conversation_intent` e
+      esta coluna guardam o mesmo fato, e duas fontes para ele divergiriam, o
+      que apareceria como bug de score na TEC-150.
+    """
+    if intencao is Intencao.FORA_DE_ESCOPO:
+        return {}
+    return {"intencao": intencao.value, **extracao.preenchidos()}
+
+
+async def gravar_estado(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    intencao: Intencao,
+    extracao: Extracao,
+) -> None:
+    """Upsert do estado de qualificacao. `None` no campo nao apaga o que havia.
+
+    Nao commita -- a sessao e emprestada, como em `ler_resumo`, `ler_estado` e
+    `gravar_resumo`, e quem chama e dono da fronteira da transacao. Nesta card
+    quem chama e `executar_turno`, que grava intencao e estado no **mesmo**
+    commit: os dois fatos vem da mesma chamada ao modelo.
+
+    A regra em si -- guarda de `FORA_DE_ESCOPO`, "mais novo vence", `None` nao
+    apaga, `intencao` sempre presente -- mora em `campos_a_gravar`, e nao
+    aqui, porque o runner do eval precisa da mesma regra para acumular o
+    estado sintetico entre turnos. Ver o docstring de la.
+    """
+    campos = campos_a_gravar(intencao, extracao)
+    if not campos:
+        return
+
+    valores: dict[str, Any] = {
+        "channel": channel,
+        "conversation_key": conversation_key,
+        "updated_at": datetime.now(UTC),
+        **campos,
+    }
+    statement = pg_insert(LeadQualification).values(valores)
+    await session.execute(
+        statement.on_conflict_do_update(
+            index_elements=["channel", "conversation_key"],
+            set_={chave: statement.excluded[chave] for chave in (*campos, "updated_at")},
+        )
+    )
