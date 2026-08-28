@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     # sem tocar na outra.
     modelo_agente: str = "claude-opus-5"
 
+    # Separado do `modelo_agente` de proposito, e por dois motivos. Moderar e
+    # classificacao binaria sobre texto curto: nao precisa do modelo que
+    # escreve a resposta, e o teto de 5s do cliente da moderacao (ver
+    # `infra/moderacao.py`) so fecha com modelo rapido. E amarrar os dois faria
+    # uma troca de `modelo_agente` mudar em silencio o custo e a latencia da
+    # moderacao de **todo** turno -- num arquivo que o filtro do gate da
+    # TEC-210 nao cobre, entao a troca passaria sem re-medir.
+    modelo_moderacao: str = "claude-haiku-4-5-20251001"
+
     # Sem default utilizavel de proposito. Mas ao contrario da
     # ANTHROPIC_API_KEY, esta ausencia **nao** falha alto na primeira chamada:
     # a Meta devolve 401, o outbound (Task 4) classifica como EnvioRecusado
