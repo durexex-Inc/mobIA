@@ -85,15 +85,19 @@ class Settings(BaseSettings):
 
     # Reserva subtraida do teto antes de qualquer comparacao -- ver
     # `teto_de_tokens_efetivo`. Protege contra o que o contador nao ve.
-    # 702 e nao 400 desde a TEC-145: o objeto `extracao` do
+    # 800 e nao 400 desde a TEC-145: o objeto `extracao` do
     # `SCHEMA_DA_RESPOSTA` custa 263 tokens que sao enviados em toda chamada e
     # nunca entram na contagem de `montar_contexto`. Com 400 a conta de
     # `test_diferenca_entre_o_contado_e_o_enviado` chegava a 526 e a reserva
-    # deixava de cobrir o que a contagem nao ve. 702 deixa 176 de folga sobre
-    # os 526 de hoje, entao o prompt ainda pode crescer um pouco sem tropecar
-    # de novo. O preco: 300 tokens menos de literais e resumo por turno, de um
-    # teto de 12000 -- 2,5% do contexto, em troca de extracao estruturada.
-    contexto_headroom_de_tokens: int = 702
+    # deixava de cobrir o que a contagem nao ve. 800 deixa a subcontagem em 526
+    # contra os 600 que a segunda assercao de test_config.py exige (headroom *
+    # 0,75), ou seja 74 tokens de crescimento de prompt antes de o guarda voltar
+    # a disparar. O valor minimo que passa e 702, e foi o primeiro escolhido --
+    # mas 702 satisfaz a assercao por 0,5 token e derrota o proposito do fator
+    # 0,75, que e existir folga. O preco: 400 tokens menos de literais e resumo
+    # por turno, de um teto de 12000 -- 3,3% do contexto, em troca de extracao
+    # estruturada.
+    contexto_headroom_de_tokens: int = 800
 
     # Dobrar `gatilho - minimas` mensagens deixa exatamente `minimas` literais.
     # Manter gatilho >= 2 * minimas e o que garante o piso depois da regeneracao.
