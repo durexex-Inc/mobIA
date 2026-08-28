@@ -13,6 +13,7 @@ from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
 from mobia.domain.moderacao.port import (
     TEXTO_DA_RECUSA_DE_ENTRADA,
+    TEXTO_NEUTRO_DE_SAIDA,
     Direcao,
     ModeracaoIndisponivel,
     ModeradorPort,
@@ -153,6 +154,39 @@ async def executar_turno(
         texto, telemetria, subagente = pergunta.texto, pergunta, SUBAGENTE_DESAMBIGUADOR
     else:
         texto, telemetria, subagente = gerada.resposta, gerada, SUBAGENTE_CLASSIFICADOR
+
+    # Uma vez por turno: so um texto sai. No caminho ambiguo a resposta da
+    # chamada 1 foi descartada e so a pergunta e entregue.
+    #
+    # Aqui **nao** ha falha aberta. Entregar texto nao moderado e o risco que
+    # este subsistema existe para fechar, e o custo recai sobre a reputacao da
+    # imobiliaria em publico -- diferente da entrada, onde o custo de falhar
+    # aberto recai sobre o contexto do agente. A excecao propaga: a linha vira
+    # FAILED com `attempts` e o sweeper retenta.
+    try:
+        veredito_da_saida = await moderador.moderar(texto, direcao=Direcao.SAIDA)
+    except ModeracaoIndisponivel as exc:
+        # Loga e **repropaga**. O log existe porque `process_message` vai
+        # registrar so `message.failed` -- sem esta linha, "o turno falhou" e
+        # "nao deu para moderar a saida" ficam indistinguiveis no log, e o
+        # segundo e o unico dos dois que aponta para o moderador.
+        log.error(
+            "moderacao.indisponivel",
+            direcao=Direcao.SAIDA.value,
+            message_id=str(message.id),
+            reason=str(exc),
+        )
+        raise
+    if veredito_da_saida.bloqueado:
+        # O texto barrado **nao** entra no log: registra-lo criaria, no log,
+        # exatamente aquilo que a moderacao impediu de sair.
+        log.error(
+            "moderacao.saida_bloqueada",
+            message_id=str(message.id),
+            motivo=veredito_da_saida.motivo,
+            subagente=subagente,
+        )
+        texto = TEXTO_NEUTRO_DE_SAIDA
 
     try:
         entregue = await outbound.send(

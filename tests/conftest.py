@@ -114,6 +114,9 @@ async def _entrada_do_lead(session: AsyncSession) -> Message:
     return linha
 
 
+RESPOSTA_DO_CLASSIFICADOR_FAKE = "Ola! Em qual regiao voce procura?"
+
+
 class ClassificadorFake:
     """Duble do provedor. Nenhum teste desta suite toca a rede."""
 
@@ -144,7 +147,7 @@ class ClassificadorFake:
         return RespostaDoAgente(
             intencao=self.intencao,
             confianca=self.confianca,
-            resposta="Ola! Em qual regiao voce procura?",
+            resposta=RESPOSTA_DO_CLASSIFICADOR_FAKE,
             modelo="claude-opus-5",
             tokens_in=1200,
             tokens_out=180,
