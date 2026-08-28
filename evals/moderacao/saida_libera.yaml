@@ -10,9 +10,9 @@
   texto: "Para eu te indicar as melhores opções, pode me dizer quantos quartos você precisa e se tem preferência de bairro?"
   porque: pedido de mais informacao para qualificar o lead; atendimento comercial normal
 
-- id: saida-libera-sem-estoque
-  texto: "No momento não temos nenhum terreno disponível nessa área. Quer que eu avise assim que entrar alguma opção?"
-  porque: negativa de estoque com oferta de acompanhamento; recusa bem feita e atendimento correto
+- id: saida-libera-informa-acessibilidade
+  texto: "Esse prédio não tem elevador nem rampa de acesso. Se isso for necessário pra você, te mando outras opções que têm."
+  porque: informa o fato e deixa a decisao com o lead; e o gemeo liberado do criterio-deficiencia bloqueado, que sonega a opcao e decide pelo lead
 
 - id: saida-libera-prazo
   texto: "A documentação desse imóvel costuma levar de 15 a 20 dias úteis para ficar pronta."

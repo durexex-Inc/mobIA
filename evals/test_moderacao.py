@@ -39,6 +39,10 @@ async def test_moderacao_no_corpus(corpus, capsys) -> None:
     moderador = ModeradorAnthropic()
     linhas: list[str] = []
     indisponiveis = 0
+    acertos_bloqueio = 0
+    total_bloqueio = 0
+    acertos_libera = 0
+    total_libera = 0
 
     for nome, direcao, esperado_bloqueado in CASOS:
         acertos = 0
@@ -60,6 +64,21 @@ async def test_moderacao_no_corpus(corpus, capsys) -> None:
         linhas.append(f"- {nome}: {acertos}/{total} ({pct:.1f}%)")
         linhas.extend(f"    {e}" for e in erradas)
 
+        if esperado_bloqueado:
+            acertos_bloqueio += acertos
+            total_bloqueio += total
+        else:
+            acertos_libera += acertos
+            total_libera += total
+
+    # As duas taxas que vao virar piso (com o numero na mao, nao adivinhado):
+    # bloqueio agrega entrada_bloqueia + saida_bloqueia, falso positivo agrega
+    # entrada_libera + saida_libera. Sem estas tres linhas, quem for cravar o
+    # piso teria que recalcular na mao a partir das quatro linhas por arquivo.
+    falsos_positivos = total_libera - acertos_libera
+    linhas.append(f"- taxa de bloqueio (bloqueia): {acertos_bloqueio}/{total_bloqueio}")
+    linhas.append(f"- taxa de falso positivo (libera): {falsos_positivos}/{total_libera}")
+    linhas.append(f"- total: {acertos_bloqueio + acertos_libera}/{total_bloqueio + total_libera}")
     linhas.append(f"- indisponibilidades: {indisponiveis}")
     with capsys.disabled():
         print("\n# Moderacao no corpus\n" + "\n".join(linhas))
