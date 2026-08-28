@@ -125,3 +125,51 @@ def test_o_cliente_da_moderacao_tem_teto_proprio_e_nao_retenta() -> None:
     assert MAX_TENTATIVAS_DA_MODERACAO < MAX_TENTATIVAS
     pior_caso = TIMEOUT_DA_MODERACAO_SEGUNDOS * (1 + MAX_TENTATIVAS_DA_MODERACAO)
     assert pior_caso * 2 <= 15
+
+
+@pytest.mark.parametrize(
+    ("bruto", "esperado"),
+    [
+        ("BLOQUEAR.", True),
+        ("LIBERAR\n.", False),
+        ("**LIBERAR**", False),
+        ("  bloquear  ", True),
+    ],
+)
+async def test_pontuacao_em_volta_do_veredito_nao_perde_o_turno(
+    monkeypatch: pytest.MonkeyPatch, bruto: str, esperado: bool
+) -> None:
+    """Tolerante na forma, rigido no conteudo.
+
+    O protocolo pede uma palavra sem pontuacao, e o modelo quase sempre
+    obedece -- mas "quase" nao serve aqui. Um ponto final que escapa vira
+    `ModeracaoIndisponivel`, e na saida a indisponibilidade nao e inofensiva:
+    propaga, a linha vira FAILED, o sweeper roda o turno inteiro de novo
+    pagando `classificar` outra vez ate `sweep_max_attempts`, e depois disso a
+    linha fica em FAILED para sempre. O lead nao recebe nada -- silencio, o
+    desfecho que este repositorio trata como o pior de todos. Trocar um turno
+    por um ponto final e o negocio errado.
+    """
+    cliente = ClienteFalso(RespostaFalsa(bruto))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is esperado
+
+
+@pytest.mark.parametrize("bruto", ["BLOQUEAR LIBERAR", "talvez", "LIBERAR se quiser", ""])
+async def test_a_tolerancia_de_forma_nao_afrouxa_o_conteudo(
+    monkeypatch: pytest.MonkeyPatch, bruto: str
+) -> None:
+    """Limpar as pontas nao pode virar "achar a palavra em qualquer lugar".
+
+    A garantia que nao pode ceder e a de que o desconhecido nunca vira
+    liberado. Duas palavras nao sao um veredito -- nao da para saber qual
+    delas o modelo quis --, e uma resposta que explica em vez de decidir
+    tambem nao e. Se a normalizacao passasse a procurar a palavra dentro de
+    uma frase, "nao vou BLOQUEAR" e "BLOQUEAR LIBERAR" viravam veredito, e o
+    moderador confuso viraria moderador desligado.
+    """
+    cliente = ClienteFalso(RespostaFalsa(bruto))
+
+    with pytest.raises(ModeracaoIndisponivel):
+        await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.SAIDA)

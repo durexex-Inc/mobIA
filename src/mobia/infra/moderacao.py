@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from typing import Any, cast
 
@@ -26,6 +27,21 @@ MAX_TOKENS_DO_VEREDITO = 8
 
 _BLOQUEAR = "BLOQUEAR"
 _LIBERAR = "LIBERAR"
+
+# Tolerante na forma, rigido no conteudo. O protocolo pede uma palavra sem
+# pontuacao e o modelo quase sempre obedece, mas "quase" e caro: `BLOQUEAR.`
+# comparado por igualdade vira `ModeracaoIndisponivel`, e na saida a
+# indisponibilidade propaga -- a linha vira FAILED, o sweeper roda o turno
+# inteiro de novo pagando `classificar` outra vez ate `sweep_max_attempts`, e
+# depois disso fica em FAILED para sempre, sem o lead receber nada. Trocar um
+# turno por um ponto final e o negocio errado.
+#
+# O que a expressao **nao** faz e procurar a palavra dentro de uma frase: ela
+# exige que a resposta inteira seja uma unica corrida de letras, cercada so de
+# nao-letras. `BLOQUEAR LIBERAR` e `nao vou BLOQUEAR` continuam fora do
+# protocolo, e a garantia que sustenta o subsistema -- o desconhecido nunca
+# vira liberado -- fica intacta.
+_UMA_PALAVRA = re.compile(r"[^A-Z]*([A-Z]+)[^A-Z]*")
 
 _PROTOCOLO = (
     f"Responda com exatamente uma palavra, sem pontuacao e sem explicacao: "
@@ -115,9 +131,11 @@ class ModeradorAnthropic:
             raise ModeracaoIndisponivel(f"stop_reason={resposta.stop_reason!r}")
 
         bruto = "".join(b.text for b in resposta.content if b.type == "text").strip().upper()
-        if bruto == _BLOQUEAR:
+        achado = _UMA_PALAVRA.fullmatch(bruto)
+        palavra = achado.group(1) if achado else ""
+        if palavra == _BLOQUEAR:
             return Veredito(bloqueado=True, motivo=f"{direcao.value}:{_BLOQUEAR}")
-        if bruto == _LIBERAR:
+        if palavra == _LIBERAR:
             return Veredito(bloqueado=False, motivo=f"{direcao.value}:{_LIBERAR}")
         # Sem o valor recebido na mensagem: ele pode carregar o texto julgado.
         raise ModeracaoIndisponivel("veredito fora do protocolo")
