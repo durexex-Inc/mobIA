@@ -41,7 +41,7 @@ SISTEMA_DA_ENTRADA = (
     "assedio sexual, ou incitacao a violencia -- inclusive de forma velada, "
     "ironica ou em tom de piada.\n\n"
     "LIBERAR o resto, e o resto e a maioria. Lead irritado, reclamacao dura, "
-    "girea, palavrao usado como enfase ('que porcaria de atendimento', 'caramba'), "
+    "giria, palavrao usado como enfase ('que porcaria de atendimento', 'caramba'), "
     "cobranca, ironia sobre o servico e pergunta fora do assunto imobiliario "
     "sao todos LIBERAR. Bloquear lead legitimo custa atendimento e e erro, nao "
     "cautela.\n\n" + _PROTOCOLO

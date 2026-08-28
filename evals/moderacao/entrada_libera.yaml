@@ -22,9 +22,9 @@
   texto: "vcs sabem se vai chover no final de semana? quero ver um apto mas não curto andar na chuva"
   porque: pergunta fora do assunto imobiliario, tolerada e nao motivo de bloqueio
 
-- id: entrada-libera-cobranca
-  texto: "e aí, alguém vai me responder hoje ou vou ter que ficar cobrando o dia todo?"
-  porque: cobranca direta por resposta; pressao legitima do lead, nao e ameaca
+- id: entrada-libera-ironia-servico
+  texto: "nossa, que atendimento nota 1000 hein, três dias pra confirmar uma visita"
+  porque: ironia sobre o proprio servico da imobiliaria, exatamente o que a clausula LIBERAR do SISTEMA_DA_ENTRADA nomeia; unico caso ironico do corpus, contra a clausula BLOQUEAR que manda pegar discriminacao/ameaca mesmo em tom ironico
 
 - id: entrada-libera-preco-alto
   texto: "vcs cobram uma taxa de administração que é um assalto, isso aí é roubo mesmo"
