@@ -5,8 +5,9 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import text as sql
 
+from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
-from mobia.domain.context.repositorio import gravar_resumo, ler_estado, ler_resumo
+from mobia.domain.context.repositorio import gravar_estado, gravar_resumo, ler_estado, ler_resumo
 from mobia.infra.crypto import DecryptionError, decrypt
 
 CANAL = "whatsapp"
@@ -200,3 +201,119 @@ def test_texto_claro_no_resumo_e_recusado() -> None:
 
     assert "resumo" in str(erro.value)
     assert "zona sul" not in str(erro.value)
+
+
+async def test_gravar_estado_insere_e_depois_atualiza(session) -> None:
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(regiao="zona sul", quartos=2),
+    )
+    await session.commit()
+
+    estado = await ler_estado(session, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.regiao == "zona sul"
+    assert estado.quartos == 2
+    assert estado.intencao == "COMPRA"
+
+
+async def test_o_mais_novo_vence(session) -> None:
+    for regiao in ("zona sul", "zona norte"):
+        await gravar_estado(
+            session,
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            intencao=Intencao.COMPRA,
+            extracao=Extracao(regiao=regiao),
+        )
+        await session.commit()
+
+    estado = await ler_estado(session, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.regiao == "zona norte"
+
+
+async def test_null_nao_apaga(session) -> None:
+    """A regra que faz "o mais novo vence" funcionar em vez de destruir tudo."""
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(regiao="zona sul", quartos=2),
+    )
+    await session.commit()
+
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(vagas=1),
+    )
+    await session.commit()
+
+    estado = await ler_estado(session, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.regiao == "zona sul"
+    assert estado.quartos == 2
+    assert estado.vagas == 1
+
+
+async def test_extracao_vazia_ainda_grava_a_intencao(session) -> None:
+    """Turno em que o lead nao informou criterio nenhum. A intencao vale."""
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.ALUGUEL,
+        extracao=Extracao(),
+    )
+    await session.commit()
+
+    estado = await ler_estado(session, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.intencao == "ALUGUEL"
+    assert estado.regiao is None
+
+
+async def test_fora_de_escopo_nao_grava_nada(session) -> None:
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.FORA_DE_ESCOPO,
+        extracao=Extracao(regiao="zona sul"),
+    )
+    await session.commit()
+
+    assert await ler_estado(session, CANAL, CONVERSA) is None
+
+
+async def test_fora_de_escopo_nao_apaga_estado_que_ja_existia(session) -> None:
+    """O lead qualifica, depois manda uma piada. O que ele disse continua."""
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(regiao="zona sul"),
+    )
+    await session.commit()
+
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.FORA_DE_ESCOPO,
+        extracao=Extracao(),
+    )
+    await session.commit()
+
+    estado = await ler_estado(session, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.regiao == "zona sul"
+    assert estado.intencao == "COMPRA"

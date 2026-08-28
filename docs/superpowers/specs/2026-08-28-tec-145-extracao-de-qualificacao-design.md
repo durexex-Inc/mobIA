@@ -51,7 +51,7 @@ de forma.
 **Correcao medida (2026-08-28):** "custo marginal quase zero" era otimista. O
 objeto `extracao` acrescenta **263 tokens ao schema**, enviados em toda chamada
 e nunca contados pela montagem de contexto — o que obrigou a subir
-`CONTEXTO_HEADROOM_DE_TOKENS` de 400 para 700, custando 300 tokens de literais
+`CONTEXTO_HEADROOM_DE_TOKENS` de 400 para 800, custando 400 tokens de literais
 e resumo por turno, de um teto de 12000. O argumento da decisao continua
 valido: uma chamada separada pagaria o contexto de entrada **inteiro** de novo,
 o que e ordens de grandeza pior que 263 tokens de schema. Mas o custo nao e

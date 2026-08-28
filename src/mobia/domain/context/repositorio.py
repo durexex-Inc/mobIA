@@ -1,11 +1,13 @@
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.infra.crypto import decrypt, encrypt
 
@@ -109,3 +111,53 @@ async def ler_estado(
         )
     )
     return resultado.scalar_one_or_none()
+
+
+async def gravar_estado(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    intencao: Intencao,
+    extracao: Extracao,
+) -> None:
+    """Upsert do estado de qualificacao. `None` no campo nao apaga o que havia.
+
+    Nao commita -- a sessao e emprestada, como em `ler_resumo`, `ler_estado` e
+    `gravar_resumo`, e quem chama e dono da fronteira da transacao. Nesta card
+    quem chama e `executar_turno`, que grava intencao e estado no **mesmo**
+    commit: os dois fatos vem da mesma chamada ao modelo.
+
+    `FORA_DE_ESCOPO` nao grava nada, e a guarda vive aqui e nao em quem chama
+    para que nao haja como esquece-la. Repare que ela tambem nao **apaga**: o
+    lead que qualificou e depois mandou uma piada continua com o que disse.
+
+    `intencao` vem de fora, do classificador, e nunca da extracao: a tabela
+    `conversation_intent` e esta coluna guardam o mesmo fato, e duas fontes
+    para ele divergiriam -- a divergencia apareceria como bug de score na
+    TEC-150.
+    """
+    if intencao is Intencao.FORA_DE_ESCOPO:
+        return
+
+    # A regra de "null nao apaga" mora aqui: so os campos informados entram no
+    # INSERT e no SET. Um dicionario completo com `None` nos campos calados
+    # sobrescreveria com NULL a cada turno, e o estado nunca acumularia nada.
+    preenchidos = extracao.preenchidos()
+    valores: dict[str, Any] = {
+        "channel": channel,
+        "conversation_key": conversation_key,
+        "intencao": intencao.value,
+        "updated_at": datetime.now(UTC),
+        **preenchidos,
+    }
+    statement = pg_insert(LeadQualification).values(valores)
+    await session.execute(
+        statement.on_conflict_do_update(
+            index_elements=["channel", "conversation_key"],
+            set_={
+                chave: statement.excluded[chave]
+                for chave in (*preenchidos, "intencao", "updated_at")
+            },
+        )
+    )
