@@ -1,8 +1,15 @@
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
 
-from mobia.domain.agente.schemas import FormaPagamento, Intencao, TipoImovel, Urgencia
+from mobia.domain.agente.schemas import (
+    Extracao,
+    FormaPagamento,
+    Intencao,
+    TipoImovel,
+    Urgencia,
+)
 from mobia.evals.corpus import ConversaAnotada, carregar, total_de_turnos
 from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS
 
@@ -84,6 +91,31 @@ def test_corpus_tem_turnos_anotados_suficientes(conversas: list[ConversaAnotada]
     num corpus que nao mede nada."""
     anotados = sum(1 for c in conversas for t in c.turnos if t.campos is not None)
     assert anotados >= PISO_DE_TURNOS_ANOTADOS
+
+
+def test_todo_campo_de_extracao_tem_anotacao(conversas: list[ConversaAnotada]) -> None:
+    """Campo sem anotacao nenhuma so pode subtrair da precisao da extracao.
+
+    O denominador de `precisao_da_extracao` e a uniao do esperado com o obtido
+    por turno. Um campo que o corpus nunca anota nao tem como somar acerto --
+    nao ha anotacao contra a qual bater -- mas entra no total toda vez que o
+    modelo o extrai. O gate passa a premiar quem se recusa a extrair aquele
+    campo, que e o oposto do que a TEC-145 existe para medir.
+
+    A lista sai de `fields(Extracao)` e nao de um literal: a proxima card que
+    acrescentar campo quebra este teste, em vez de reabrir o buraco em
+    silencio.
+    """
+    anotados = {
+        nome
+        for conversa in conversas
+        for turno in conversa.turnos
+        if turno.campos
+        for nome in turno.campos
+    }
+    todos = {campo.name for campo in fields(Extracao)}
+
+    assert todos - anotados == set()
 
 
 def test_anotacao_nunca_usa_valor_fora_do_vocabulario(conversas: list[ConversaAnotada]) -> None:

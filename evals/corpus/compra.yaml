@@ -36,7 +36,7 @@
       intencao: ALUGUEL
 
 - id: compra-02
-  descricao: lead direto, dois quartos, financiamento
+  descricao: lead direto, dois quartos, financiamento, fecha com uma vaga so
   turnos:
     - lead: "to procurando um dois quartos pra comprar ate 500 mil"
       intencao: COMPRA
@@ -47,6 +47,15 @@
       intencao: COMPRA
     - lead: "e tem alguma coisa perto de metro nessa faixa?"
       intencao: COMPRA
+    # Gherkin 3 do spec da TEC-145 -- "uma so" -> `vagas = 1`. A elipse esta
+    # ancorada na propria fala do lead e nao na resposta do agente: o runner
+    # devolve a resposta REAL ao historico, entao um "uma so" sozinho so
+    # significaria vaga se o agente por acaso tivesse perguntado sobre vaga, e
+    # o corpus estaria medindo sorte.
+    - lead: "e quantas vagas de garagem costuma ter? pra mim uma so ja ta bom"
+      intencao: COMPRA
+      campos:
+        vagas: 1
 
 - id: compra-03
   descricao: lead quer usar fgts na entrada
@@ -115,7 +124,7 @@
       intencao: COMPRA
 
 - id: compra-08
-  descricao: solteiro procurando apto pequeno perto do trabalho
+  descricao: solteiro procurando apto pequeno perto do trabalho, com faixa de preco fechada
   turnos:
     - lead: "queria comprar um apto pequeno, uns 40 metros, pra eu morar sozinho"
       intencao: COMPRA
@@ -127,6 +136,15 @@
         regiao: paulista
     - lead: "aceita entrada menor com parcelamento direto com o proprietario?"
       intencao: COMPRA
+    # Unico turno do corpus que afirma piso de preco. Sem "por la" no fim de
+    # proposito: a anafora convidaria o modelo a repetir `regiao: paulista` do
+    # turno anterior, e isso contaria `extra` -- o turno mede faixa, nao
+    # memoria.
+    - lead: "minha faixa e de 300 a 450 mil, abaixo disso nao acho nada decente"
+      intencao: COMPRA
+      campos:
+        faixa_preco_min: 300000
+        faixa_preco_max: 450000
 
 - id: compra-09
   descricao: lead pergunta preco a vista, sem financiamento

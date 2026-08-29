@@ -21,6 +21,28 @@ class CorpusInvalido(RuntimeError):
 
 @dataclass(frozen=True)
 class TurnoAnotado:
+    """Um turno do corpus, com o rotulo de intencao e a anotacao de extracao.
+
+    `campos` ausente tira o turno da medicao de extracao de proposito -- e o
+    jeito de dizer "esta fala nao afirma nada extraivel", ou "nao sei enumerar
+    com confianca tudo o que ela afirma". `campos` presente e contrato de
+    anotacao **completa**: ver o comentario em `_turno_de`.
+
+    Duas regras de anotacao que a TEC-239 teve de decidir, porque o corpus as
+    aplicava de dois jeitos:
+
+    - **O imovel que o lead TEM nao e o que ele procura.** `Extracao` e sobre a
+      busca, entao "comprei um apartamento com voces e agora preciso vender"
+      afirma `tem_imovel_para_vender`, e nao `tipo_imovel: APARTAMENTO`.
+    - **Pergunta sobre forma de pagamento conta como afirmacao.** "sera que da
+      pra usar o fgts?" (`compra-03` t1) e "aceita financiamento?"
+      (`borda-injecao-01` t2) anotam `forma_pagamento`: quem pergunta se pode
+      usar um meio esta dizendo que pretende usa-lo. A regra esta escrita
+      porque so o primeiro estava anotado, e duas leituras opostas da mesma
+      forma de fala no mesmo corpus nao viram nota mais baixa do modelo --
+      viram medicao errada.
+    """
+
     lead: str
     intencao: Intencao
     campos: dict[str, Any] | None = None

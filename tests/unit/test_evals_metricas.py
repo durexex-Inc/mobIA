@@ -255,7 +255,7 @@ def test_erros_incluem_o_acerto_rebaixado_e_excluem_o_acerto_confiante() -> None
 
 def test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos() -> None:
     """O teto de conversas abandonadas nao e um numero de gosto: e a folga do
-    piso dividida pela conversa mais longa do corpus.
+    piso contra as conversas mais longas do corpus.
 
     Enquanto essa conta fechar, os dois limites medem coisas diferentes sem se
     atropelar -- o teto reprova "a rede caiu", o piso reprova "sobrou amostra
@@ -264,16 +264,26 @@ def test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos() -> None:
     poder furar o piso tambem, e a mensagem que o CI mostra vira a de quem for
     verificado primeiro em vez da causa real. Este teste falha exatamente ai,
     e de graca -- sem chamada paga.
+
+    A perda maxima e a **soma das `TETO` conversas mais longas**, e nao
+    `TETO x a mais longa`. As duas contas davam o mesmo numero enquanto havia
+    cinco ou mais conversas no comprimento maximo; a TEC-239 deu um quarto
+    turno a duas conversas e so a duas, e ai `5 x 4 = 20` passou a inventar
+    tres turnos de perda que abandono nenhum consegue causar. A soma dos cinco
+    maiores e o pior caso exato -- abandonar cinco conversas custa no maximo
+    as cinco mais longas --, entao a troca deixa o teste mais preciso, nao
+    mais frouxo: ele continua reprovando qualquer corpus em que o abandono de
+    fato alcance o piso.
     """
     conversas = carregar(CORPUS)
-    mais_longa = max(len(conversa.turnos) for conversa in conversas)
+    mais_longas = sorted((len(conversa.turnos) for conversa in conversas), reverse=True)
 
-    pior_perda = TETO_DE_CONVERSAS_ABANDONADAS * mais_longa
+    pior_perda = sum(mais_longas[:TETO_DE_CONVERSAS_ABANDONADAS])
 
     assert total_de_turnos(conversas) - pior_perda >= PISO_DE_TURNOS, (
-        f"teto {TETO_DE_CONVERSAS_ABANDONADAS} x conversa mais longa "
-        f"{mais_longa} = {pior_perda} turnos, e o corpus tem "
-        f"{total_de_turnos(conversas)} sobre um piso de {PISO_DE_TURNOS}"
+        f"as {TETO_DE_CONVERSAS_ABANDONADAS} conversas mais longas somam "
+        f"{pior_perda} turnos, e o corpus tem {total_de_turnos(conversas)} "
+        f"sobre um piso de {PISO_DE_TURNOS}"
     )
 
 

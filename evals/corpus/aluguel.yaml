@@ -109,6 +109,7 @@
       campos:
         tipo_imovel: APARTAMENTO
         quartos: 1
+        urgencia: ATE_3_MESES
     - lead: "voces exigem quantos meses de deposito caucao?"
       intencao: ALUGUEL
     - lead: "e pode ter animal de estimacao no predio?"

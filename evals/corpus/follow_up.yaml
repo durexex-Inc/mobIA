@@ -24,8 +24,12 @@
 - id: follow-up-03
   descricao: comprador antigo agora quer vender o mesmo imovel
   turnos:
+    # O apartamento aqui e o que o lead TEM, nao o que ele procura, entao
+    # `tipo_imovel` nao esta afirmado -- ver o docstring de `TurnoAnotado.campos`.
     - lead: "boa tarde, comprei um apartamento com voces faz 3 anos e agora preciso vender, vcs fazem essa parte tambem?"
       intencao: VENDER_IMOVEL
+      campos:
+        tem_imovel_para_vender: true
     - lead: "quanto tempo leva pra avaliar o imovel?"
       intencao: VENDER_IMOVEL
     - lead: "e voces cuidam da parte de documentacao pra baixa do financiamento tambem?"
@@ -54,6 +58,8 @@
   turnos:
     - lead: "quero colocar meu apartamento a venda, voces cuidam de fotografia e anuncio tambem?"
       intencao: VENDER_IMOVEL
+      campos:
+        tem_imovel_para_vender: true
     - lead: "e a comissao de voces e quanto por cento?"
       intencao: VENDER_IMOVEL
     - lead: "da pra deixar o preco em aberto pra negociar com quem se interessar?"
