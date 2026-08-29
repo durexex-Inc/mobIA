@@ -210,6 +210,30 @@ card fecha o exploit, não o buraco inteiro.
 > formaliza. Este parágrafo original não foi reescrito: a decisão estava certa quando
 > foi tomada, e a emenda é para que a história continue legível.
 
+> **Emenda (TEC-243, 2026-08-29):** as duas exclusões que sobraram aqui depois
+> da emenda acima — `follow-up-03` t2 e `borda-evasivo-02` t1/t2, três turnos —
+> **continuam valendo**. A TEC-243 as confirmou em vez de substituí-las: ela
+> passou as 56 falas que ainda estavam fora da medição pelo critério que essas
+> próprias exclusões já traziam implícito — o que exclui não é ser pergunta, é
+> a fala **pressupor** um campo sem afirmá-lo, ou sugerir um valor sem
+> nomeá-lo —, e as três chegaram do outro lado intactas. O que mudou é o
+> entorno delas. Este parágrafo dizia que sobravam 61 turnos fora da medição e
+> que isso ficaria declarado no README em vez de escondido; ficou, mas o README
+> ia além e chamava os turnos sem exclusão escrita de *"trabalho de anotação
+> que ainda não foi feito, não decisão tomada"*. Ler as 51 falas sem exclusão
+> uma a uma derrubou essa frase: a maioria era pergunta de processo dirigida ao
+> corretor, a mesma forma que o corpus já anotava `campos: {}` em turnos irmãos
+> das mesmas conversas. Faltava o critério escrito, e não o trabalho. Depois da
+> triagem são **17 turnos fora da medição** — as três exclusões acima, mais
+> `aluguel-09` t2 e `follow-up-03` t1 de uma revisão posterior a esta card, mais
+> as doze da TEC-243 —, cada um com o motivo em uma linha, e o conjunto deixou
+> de ser aberto: `_FORA_DA_MEDICAO` (`tests/unit/test_evals_corpus_real.py`) o
+> declara por inteiro, e turno novo sem `campos` quebra o CI até alguém decidir.
+> A conta do "Contrato depois da card" logo abaixo — 38 positivos, 39
+> negativos, 61 fora — não foi reescrita: é o registro do que **esta** card
+> entregou. O corpus de hoje está em 55 positivos, 66 negativos e 17 fora, e
+> quem quiser o número atual lê o README, não este spec.
+
 ## Contrato depois da card
 
 - 138 turnos: **38 positivos + 39 negativos = 77 medidos**, 61 fora.
