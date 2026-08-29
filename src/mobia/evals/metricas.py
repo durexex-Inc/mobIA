@@ -23,7 +23,12 @@ PISO_DE_TURNOS = 120
 # Piso de anotacao, irmao do PISO_DE_TURNOS. Sem ele, anotar tres turnos
 # faceis daria precisao alta num corpus que nao mede nada -- o mesmo furo do
 # corpus so-positivo, na outra direcao.
-PISO_DE_TURNOS_ANOTADOS = 30
+#
+# Medido em 2026-08-29 (TEC-243): sao 55 positivos, e o pior caso de abandono
+# de `TETO_DE_CONVERSAS_ABANDONADAS` conversas tira 15, entao a execucao mais
+# azarada ainda entrega 40. O piso fica em 38, com folga de dois -- a mesma
+# margem que o piso tinha antes desta card (31 contra 30).
+PISO_DE_TURNOS_ANOTADOS = 38
 
 # Piso dos turnos anotados como "o lead nao afirmou nada" (`campos: {}`).
 # Irmao de `PISO_DE_TURNOS_ANOTADOS` na terceira direcao: aquele responde
@@ -42,7 +47,12 @@ PISO_DE_TURNOS_ANOTADOS = 30
 # processo que pressupoe campo, e nao ausencia de afirmacao. As cinco
 # conversas com mais negativos somam 12, entao a execucao mais azarada ainda
 # entrega 37 - 12 = 25. O piso fica em 23, com folga de dois.
-PISO_DE_TURNOS_NEGATIVOS = 23
+#
+# Medido em 2026-08-29 (TEC-243): a TEC-242 e a triagem desta card levaram o
+# corpus a 66 negativos, e o pior caso de abandono passou a 51. O piso sobe
+# para 49, com a mesma folga de dois que tinha antes desta card (25 contra
+# 23).
+PISO_DE_TURNOS_NEGATIVOS = 49
 
 # Quantas conversas a execucao pode perder para falha de infraestrutura antes
 # de deixar de valer como medida.

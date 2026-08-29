@@ -79,6 +79,22 @@ class TurnoAnotado:
       apartamento. O unico turno que a usa (`aluguel-07`, primeiro turno) diz
       "republica ou kitnet" -- o lead oferece duas e nao escolhe --, entao ele
       fica sem `tipo_imovel`, de proposito.
+    - **O que decide entre negativo e fora da medicao (TEC-243).** Pergunta de
+      processo NAO e motivo de exclusao por si so: o corpus anota `{}` em
+      dezenas delas. O que exclui e a fala **pressupor um campo sem afirma-lo**
+      ("pode ter animal no predio?" pressupoe o predio) ou **sugerir um valor
+      sem nomea-lo** ("precisa ser terrea" sugere CASA; "850 mil ta acima do
+      que consigo" sugere um teto). Nos dois casos um negativo puniria o
+      modelo por ler a fala com razao, e um positivo inventaria anotacao --
+      por isso o turno sai da medicao, com o motivo escrito.
+
+      Anafora pura ("aquele mesmo predio", "ali mesmo", "nessa faixa") e
+      negativo, e nao exclusao: a fala nao nomeia nada, e repetir o campo do
+      turno anterior e `extra` de proposito.
+
+      Turno fora da medicao tem entrada em `_FORA_DA_MEDICAO`
+      (`tests/unit/test_evals_corpus_real.py`), com o motivo em uma linha. Nao
+      ha mais turno sem `campos` por acidente.
     """
 
     lead: str
