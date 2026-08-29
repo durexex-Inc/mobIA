@@ -996,16 +996,41 @@ intenção e estado no mesmo commit, porque os dois fatos vêm da mesma chamada.
 O eval da TEC-210 media só intenção; esta card estende o mesmo corpus e o
 mesmo runner para medir extração, sem pagar chamada nova.
 
-`TurnoAnotado.campos` (`src/mobia/evals/corpus.py`) é a chave nova do YAML:
-um dicionário de campo para valor, presente só quando a fala daquele turno
-afirma alguma coisa. `campos` ausente tira o turno da medição de extração de
-propósito — omitir é o jeito de dizer "esta fala não afirma nada extraível".
-`campos` presente é contrato de anotação **completa**: `precisao_da_extracao`
-conta campo extraído que não está na anotação como erro, então uma anotação
-parcial não vira nota mais baixa do modelo — vira medição errada. `carregar`
-valida cada valor contra o vocabulário fechado (`TipoImovel`, `Urgencia`,
-`FormaPagamento`) e recusa campo desconhecido ou fora do vocabulário no
-carregamento, antes de qualquer chamada paga.
+`TurnoAnotado.campos` (`src/mobia/evals/corpus.py`) é a chave nova do YAML,
+com três estados que significam três coisas diferentes:
+
+| estado | valor no YAML | significado |
+|---|---|---|
+| ausente | chave não escrita | o turno fica fora da medição de extração — "não sei enumerar com confiança tudo o que esta fala afirma" |
+| vazio | `campos: {}` | o turno está anotado por completo, e o completo é nada — "o lead não afirmou nada neste turno", tudo que o modelo devolver aqui é invenção |
+| preenchido | `campos: {...}` | o turno afirma alguma coisa, e a anotação diz exatamente o quê |
+
+`campos:` **sem valor** — o typo de escrever a chave e esquecer o `{}`, que o
+YAML lê como `None` — é **recusado** com `CorpusInvalido` em vez de cair num
+dos dois estados acima: são dois significados opostos ("fora da medição" e
+"nada foi afirmado, tudo é invenção") a dois caracteres de distância, e
+herdar um deles por acidente de digitação seria pior que estourar. A
+mensagem manda escolher — omitir a chave, ou escrever `campos: {}`.
+`campos` presente (vazio ou preenchido) é contrato de anotação **completa**:
+`precisao_da_extracao` conta campo extraído que não está na anotação como
+erro, então uma anotação parcial não vira nota mais baixa do modelo — vira
+medição errada. `carregar` valida cada valor contra o vocabulário fechado
+(`TipoImovel`, `Urgencia`, `FormaPagamento`) e recusa campo desconhecido ou
+fora do vocabulário no carregamento, antes de qualquer chamada paga.
+
+`TurnoAnotado` ganhou três propriedades para ler esses estados —
+`anotado` (`campos is not None`), `positivo` (`campos is not None and
+campos != {}`) e `negativo` (`campos == {}`). Elas existem porque, antes
+desta onda, quatro lugares testavam `campos` por veracidade (`if
+turno.campos`) e um por `is not None`, e as duas formas coincidiam
+perfeitamente enquanto `{}` era impossível de anotar — um dicionário vazio e
+`None` são igualmente falsy, então `if turno.campos` não distinguia "fora da
+medição" de "anotado como vazio": leria um turno negativo como se não
+estivesse anotado. Os três pontos que vigiam o piso de anotação — o pré-voo
+(`evals/conftest.py`), o corpus commitado no CI
+(`tests/unit/test_evals_corpus_real.py`) e a amostra sobrevivente depois do
+abandono (`evals/test_acuracia_de_intencao.py`) — passaram a usar as
+propriedades novas em vez da veracidade do campo.
 
 `_rodar_conversa` (`evals/test_acuracia_de_intencao.py`) acumula um
 `estado_acumulado: dict[str, Any]` turno a turno e passa
@@ -1040,8 +1065,9 @@ piso próprio em vez de herdar 90/84 da intenção.
 
 `PISO_DE_TURNOS_ANOTADOS = 30` (`src/mobia/evals/metricas.py`) é o piso
 irmão de `PISO_DE_TURNOS`, na outra direção: sem ele, anotar três turnos
-fáceis daria 100% de precisão num corpus que não mede nada. Hoje **38 turnos
-estão anotados**, distribuídos em `evals/corpus/compra.yaml` (17),
+fáceis daria 100% de precisão num corpus que não mede nada — o nome é
+histórico, e o piso confere `turno.positivo`. Hoje **38 turnos estão
+anotados como positivos**, distribuídos em `evals/corpus/compra.yaml` (17),
 `evals/corpus/aluguel.yaml` (12), `evals/corpus/investimento.yaml` (5),
 `evals/corpus/borda.yaml` (2) e `evals/corpus/follow_up.yaml` (2). Os três
 primeiros ganharam a chave `campos` na TEC-145; os dois últimos, na TEC-239,
@@ -1051,6 +1077,24 @@ zero.
 declarado: o lead troca de região no meio da conversa (`brooklin` →
 `itaim bibi`), e é o turno que prova que a sobrescrita pelo mais novo tem
 cobertura de medição.
+
+`PISO_DE_TURNOS_NEGATIVOS = 25` (`src/mobia/evals/metricas.py`) é o piso
+irmão de `PISO_DE_TURNOS_ANOTADOS` numa terceira direção: aquele responde
+"sobrou amostra para medir acerto?"; este responde "sobrou amostra para
+pegar invenção?" — e os dois são separados de propósito, porque um piso
+único sobre "todo turno anotado" se auto-satisfaria (30 turnos negativos sem
+invenção nenhuma dariam denominador zero, e `faixa_de` levantaria
+`ValueError` em vez de reportar — o mesmo furo entrando por outra porta). A
+TEC-238 anotou **39 turnos negativos**, distribuídos em
+`evals/corpus/borda.yaml` (14), `evals/corpus/aluguel.yaml` (7),
+`evals/corpus/follow_up.yaml` (7), `evals/corpus/investimento.yaml` (6) e
+`evals/corpus/compra.yaml` (5) — concentrados em `borda` e `follow_up`
+porque são os arquivos com mais turno de saudação, despedida e assunto fora
+de escopo, onde "o lead não afirmou nada" é a leitura mais direta. O piso
+vem do pior caso de abandono, no mesmo molde de
+`TETO_DE_CONVERSAS_ABANDONADAS`: as cinco conversas com mais negativos somam
+12, então a execução mais azarada ainda deixa 39 − 12 = 27 negativos de pé, e
+o piso fica em 25, com folga de dois.
 
 `discrepancias_da_extracao` (`src/mobia/evals/metricas.py`) decompõe, campo a
 campo, o que `precisao_da_extracao` conta como erro. É **diagnóstico, nunca
@@ -1194,21 +1238,40 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   turnos) com só 20 turnos anotados / 32 anotações de campo sobrevivendo, 33%
   abaixo do piso declarado, e `precisao_da_extracao` bloqueava ou liberava um
   gate pago com essa amostra.
-- **A precisão de extração pune os dois lados só nos 38 turnos anotados; nos
-  outros 100, invenção não é medida por ninguém.** `campos: {}` levanta
-  `CorpusInvalido` e a mensagem manda omitir a chave para tirar o turno da
-  medição — não há como anotar "o lead não afirmou nada aqui", e esse é o
-  único formato de turno em que invenção poderia ser pega sem exigir
-  julgamento humano por turno. Consequência: um modelo que extrai
-  perfeitamente nos 38 turnos anotados e emite `regiao`/`tipo_imovel` em
-  todos os outros 100 tira 100%, VERDE — e essas invenções são gravadas em
-  `lead_qualification` para toda intenção menos `FORA_DE_ESCOPO`, e "`None`
-  não apaga" (ver "Garantias") as torna permanentes e sem rastro. É o mesmo
-  furo do corpus só-positivo que a TEC-233 fechou no corpus de moderação, na
-  mesma forma — só que aqui continua aberto, e nenhuma anotação nem mudança
-  de validação foi feita para fechá-lo: o conserto é anotar os 100
-  turnos (ou parte deles) com `campos: {}` tratado como "nada esperado, tudo
-  obtido é erro", o que muda o contrato de `carregar`. É a
+- **A precisão de extração agora mede 77 dos 138 turnos — 38 positivos e 39
+  negativos —, e o exploit descrito antes não funciona mais.** `campos: {}`
+  é o estado novo do contrato: "o lead não afirmou nada neste turno, tudo
+  que vier é invenção". Chave ausente continua significando exatamente o
+  que significava antes — "fora da medição" —; a diferença é que agora
+  existe um jeito de anotar o oposto sem ambiguidade. Um modelo que
+  extraísse perfeitamente nos turnos positivos e inventasse
+  `regiao`/`tipo_imovel` à vontade nos 39 negativos não tira mais 100% de
+  graça: cada invenção entra no denominador de união contra um `esperado`
+  vazio, e há teste travando esse comportamento pelo nome
+  (`test_modelo_que_inventa_em_turno_negativo_nao_tira_cem_por_cento`,
+  `tests/unit/test_evals_metricas.py`). Mas **61 turnos continuam fora da
+  medição**, e é esse o buraco que sobra desta card, não o que ela fecha.
+  Três exclusões entre esses 61 foram deliberadas, e cada uma é uma
+  armadilha real que valeu a pena nomear em vez de anotar errado só para
+  fechar o número: `compra-11` t2 ("o sobrado tem escritura já
+  regularizada?") fica de fora porque `sobrado` não está no vocabulário de
+  `TipoImovel`, e um modelo que devolve `CASA` está lendo a fala com razão —
+  marcar como negativo puniria o acerto com força de gate; `follow-up-03` t2
+  ("documentação pra baixa do financiamento") fica de fora porque o
+  financiamento ali é o que o lead **já tem**, não a forma de pagamento que
+  pretende usar, e a distinção é fina de mais para virar gate; e
+  `borda-evasivo-02` t1/t2 ("depois eu vejo com calma") fica de fora porque
+  a TEC-239 já decidiu que essa fala não afirma `SEM_PRESSA` — anotá-la como
+  negativo afirmaria o contrário, com a mesma força de gate que a omissão
+  existe para evitar. As três exclusões cobrem quatro turnos (o par
+  `borda-evasivo-02` conta dois); os outros 57 turnos fora da medição não têm
+  exclusão documentada: são trabalho de anotação que ainda não foi feito, não
+  decisão tomada, e continuam sem cobertura de invenção nenhuma. Um ponto para não
+  ler o número errado quando ele aparecer: invenção nos 9 turnos negativos
+  de intenção `FORA_DE_ESCOPO` é medida, mas nunca chega a
+  `lead_qualification`, porque `campos_a_gravar` devolve dict vazio para
+  essa intenção (ver "Garantias") — esse número é sinal de quão disposto o
+  modelo está a inventar, não risco de dado permanente gravado. É a
   [TEC-238](https://eduardodurieuxlopes.atlassian.net/browse/TEC-238).
 - **Nenhum dos nove campos fica com zero anotação, e o teste guarda isso.**
   Contagem nos 38 turnos anotados, 59 anotações de campo:
