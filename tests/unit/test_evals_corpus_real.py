@@ -9,6 +9,7 @@ from mobia.domain.agente.schemas import (
     Intencao,
     TipoImovel,
     Urgencia,
+    normalizar_regiao,
 )
 from mobia.evals.corpus import ConversaAnotada, carregar, total_de_turnos
 from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS
@@ -138,3 +139,25 @@ def test_ha_turno_de_correcao_anotado(conversas: list[ConversaAnotada]) -> None:
         if len(regioes) >= 2 and len(set(regioes)) >= 2:
             return
     pytest.fail("nenhuma conversa anotada troca de regiao: a sobrescrita nao e medida")
+
+
+def test_anotacoes_de_regiao_nao_colidem_depois_de_normalizadas(
+    conversas: list[ConversaAnotada],
+) -> None:
+    """Normalizar nao pode fundir duas regioes distintas numa so.
+
+    Se `perto da usp` e `usp` fossem duas anotacoes com sentidos diferentes,
+    a normalizacao passaria a medir uma coisa por outra. Hoje nao ha colisao
+    assim, e este teste guarda que continue nao havendo quando alguem
+    acrescentar anotacao.
+    """
+    por_forma: dict[str, set[str]] = {}
+    for conversa in conversas:
+        for turno in conversa.turnos:
+            if turno.campos and "regiao" in turno.campos:
+                bruta = turno.campos["regiao"]
+                por_forma.setdefault(normalizar_regiao(bruta), set()).add(bruta)
+
+    colisoes = {forma: brutas for forma, brutas in por_forma.items() if len(brutas) > 1}
+
+    assert colisoes == {}, f"formas distintas normalizam para a mesma: {colisoes}"

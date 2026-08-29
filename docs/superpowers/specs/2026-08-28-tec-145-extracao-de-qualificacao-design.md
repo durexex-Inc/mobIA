@@ -148,6 +148,28 @@ taxonomia aqui seria decisão de produto que este desenho não tem. As colunas d
 três enums são `String(32)`; texto livre nelas envenenaria os filtros SQL da
 TEC-158, e é por isso que só `regiao` escapa.
 
+> **Emenda (TEC-241, 2026-08-29):** a decisão acima continua de pé — `regiao`
+> segue conjunto aberto, sem taxonomia. A TEC-241 dá **forma**, não
+> vocabulário: nenhum bairro ou cidade novo passou a ser recusado, e nenhuma
+> lista fechada foi criada. O que faltou neste desenho foi analisar a
+> consequência da forma livre para a **medição**, não só para o SQL. O
+> parágrafo acima examinou o risco de "texto livre envenena o filtro" — o
+> risco da TEC-158 — e parou aí; não examinou que texto livre sem contrato de
+> comparação também não é **mensurável**: duas formas do mesmo lugar
+> (`"perto da usp"` e `"usp"`) contam como discrepância na precisão de
+> extração mesmo quando o modelo acertou o lugar, porque `_comparavel` fazia
+> só `strip().casefold()`. A execução paga de 28/08 tornou isso visível — 10
+> das 29 discrepâncias eram só forma, todas em `regiao` — e a TEC-241 fechou
+> essa lacuna com `normalizar_regiao`, uma função aplicada dos dois lados
+> (gravação e comparação), documentada em
+> `docs/superpowers/specs/2026-08-29-tec-241-contrato-de-forma-da-regiao-design.md`.
+> O custo dessa escolha — perda de informação de proximidade, mudança de
+> comportamento de produção sem migração retroativa, número de divergências
+> ainda não medido — está declarado naquele spec e no README, seção
+> TEC-145, "Garantias". Este parágrafo original não foi reescrito: a emenda
+> é para que a história de por que `regiao` é texto livre, e do que essa
+> escolha ainda não tinha coberto, continue legível.
+
 ### Forma no JSON Schema
 
 Todos os campos internos são **obrigatórios e aceitam `null`**. Forçar o modelo a

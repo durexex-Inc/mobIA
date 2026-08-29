@@ -1155,6 +1155,45 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   porque a sobrescrita "mais novo vence, sem histórico" é a decisão do spec
   com risco mais declarado (D4), e sem um caso anotado ela não tinha cobertura
   de medição nenhuma.
+- **TEC-241 dá forma canônica a `regiao`, e é decisão registrada, não só
+  código** (`docs/superpowers/specs/2026-08-29-tec-241-contrato-de-forma-da-regiao-design.md`,
+  emenda ao spec desta card). `normalizar_regiao`
+  (`src/mobia/domain/agente/schemas.py`) é a única regra de forma, com dois
+  consumidores: `extrair` grava canônico em `lead_qualification.regiao`, e
+  `_comparavel` (`src/mobia/evals/metricas.py`) compara canônico contra
+  canônico na medição. Uma função só, e não duas — o mesmo motivo que já
+  matou `faixa_de_catastrofe` duplicada e levou `campos_a_gravar` a ser
+  compartilhada entre produção e eval (ver acima): duas cópias da mesma regra
+  divergem, mais cedo ou mais tarde. Ela colapsa espaço, aplica `casefold` e
+  tira prefixos de referência (`perto da`, `perto de`, `regiao do`,
+  `estacao`, …) do início da string, **repetidamente** até não sobrar
+  nenhum — mas **nunca tira `zona`**: `zona leste`, `zona sul` e `zona oeste`
+  são o nome da região, não ruído de referência.
+- **Normalizar perde informação, e a perda é aceita por escrito.** `"perto da
+  usp"` e `"usp"` viram a mesma string depois de normalizadas; o lead que
+  disse a primeira queria proximidade, não necessariamente o campus, e essa
+  distinção some do valor gravado. A troca é a favor do filtro SQL por
+  igualdade que a TEC-158 precisa — o texto original da fala continua
+  intacto no histórico de mensagens, cifrado, que é onde ele sempre esteve.
+- **É mudança de comportamento de produção, sem migração retroativa.** Os
+  registros já gravados em `lead_qualification.regiao` ficam na forma velha;
+  não há migração dos dados existentes, e por um tempo a coluna terá as duas
+  formas — velha e canônica — convivendo. A próxima fala do lead sobre a
+  mesma região sobrescreve pelo mais novo (D4 acima), então o convívio se
+  resolve sozinho por reincidência, não por migração.
+- **O número não foi medido, e não há baseline comparável para medi-lo
+  depois.** O critério de aceite da TEC-241 — "as divergências de `regiao`
+  caem para perto de zero numa execução do gate" — exige execução paga, que
+  esta card não fez. Os 29 de discrepâncias de 28/08 (10 delas de `regiao`)
+  não servem de baseline: o corpus mudou duas vezes desde então (a TEC-239
+  levou as anotações de campo de 47 para 59; a TEC-238 acrescentou 37 turnos
+  negativos).
+- **Os sinônimos de `tipo_imovel` (kitnet, república, sobrado, …) seguem sem
+  dono.** Eram 8 das 29 discrepâncias na mesma execução de 28/08. A TEC-241
+  manda esse problema para a TEC-239, mas a TEC-239 é sobre cobertura de
+  campo sem anotação (ver "Lacunas conhecidas" acima), não sobre sinônimo de
+  vocabulário — a referência está errada, e a dívida segue sem card que a
+  reivindique.
 - **O proxy de repergunta nunca bloqueia**, e há comentário no próprio
   `MARCADORES_DE_REPERGUNTA` dizendo por quê: é heurística de palavra-chave,
   com erro nas duas direções. Ver "Lacunas conhecidas".
