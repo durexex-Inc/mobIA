@@ -215,6 +215,28 @@ _SINONIMOS_DE_TIPO_IMOVEL = re.compile(r"\b(kitnet|studio|flat|cobertura|sobrado
 _SEM_TIPO_APESAR_DO_SINONIMO = {("aluguel-07", 0)}
 
 
+def _turnos_sem_tipo_imovel(
+    conversas: list[ConversaAnotada],
+    padrao: re.Pattern[str],
+    excecoes: set[tuple[str, int]],
+) -> list[tuple[str, int, str]]:
+    """Turnos cuja fala casa `padrao` e que nao anotam `tipo_imovel`.
+
+    Os dois guardas de tipologia diferem so no vocabulario que varrem e nas
+    excecoes que aceitam; o laco e o mesmo, e duas copias dele divergiriam.
+    """
+    faltando = []
+    for conversa in conversas:
+        for indice, turno in enumerate(conversa.turnos):
+            if (conversa.id, indice) in excecoes:
+                continue
+            if not padrao.search(turno.lead.casefold()):
+                continue
+            if not (turno.campos and "tipo_imovel" in turno.campos):
+                faltando.append((conversa.id, indice, turno.lead[:50]))
+    return faltando
+
+
 def test_todo_turno_com_sinonimo_tem_tipo_imovel_anotado(
     conversas: list[ConversaAnotada],
 ) -> None:
@@ -228,15 +250,44 @@ def test_todo_turno_com_sinonimo_tem_tipo_imovel_anotado(
     Sem este teste, o proximo turno com "kitnet" entra sem tipo e a punicao
     volta em silencio.
     """
-    faltando = []
-    for conversa in conversas:
-        for indice, turno in enumerate(conversa.turnos):
-            if (conversa.id, indice) in _SEM_TIPO_APESAR_DO_SINONIMO:
-                continue
-            fala = turno.lead.casefold()
-            if not _SINONIMOS_DE_TIPO_IMOVEL.search(fala):
-                continue
-            if not (turno.campos and "tipo_imovel" in turno.campos):
-                faltando.append((conversa.id, indice, turno.lead[:50]))
-
+    faltando = _turnos_sem_tipo_imovel(
+        conversas, _SINONIMOS_DE_TIPO_IMOVEL, _SEM_TIPO_APESAR_DO_SINONIMO
+    )
     assert faltando == [], f"turnos com sinonimo e sem `tipo_imovel`: {faltando}"
+
+
+# As palavras do proprio vocabulario, e nao os sinonimos da TEC-242. O guarda
+# dela varre "kitnet" e "sobrado"; um turno que diz "apartamento" com todas as
+# letras passava batido, e dois turnos POSITIVOS -- anotacao declarada
+# completa -- estavam nesse estado.
+#
+# `apto` entra porque o corpus ja o usa (`aluguel-05` i0, `borda-injecao-01`
+# i1). `sala comercial` entra como locucao, e nao `comercial` sozinho, que
+# aparece em "uso comercial de saude" descrevendo alvara e nao tipologia.
+_LITERAIS_DE_TIPO_IMOVEL = re.compile(r"\b(apartamento|apto|casa|terreno|sala comercial)\b")
+
+# O imovel que o lead TEM nao e o que ele procura -- a regra da TEC-239, que
+# ja esta no docstring de `TurnoAnotado` e ate agora nao tinha teste. Estes
+# dois turnos sao o caso literal dela: os dois anotam
+# `tem_imovel_para_vender: true` e nenhum anota `tipo_imovel`, e os dois estao
+# certos.
+_TIPO_E_DO_IMOVEL_QUE_O_LEAD_TEM = {("follow-up-03", 0), ("follow-up-06", 0)}
+
+
+def test_todo_turno_com_palavra_do_vocabulario_tem_tipo_imovel_anotado(
+    conversas: list[ConversaAnotada],
+) -> None:
+    """A regra do imovel que o lead TEM ganha guarda.
+
+    A TEC-242 fechou isto para sinonimos e deixou aberto para as palavras
+    literais: um turno novo que diga "apartamento" e nao anote `tipo_imovel`
+    entrava sem tipo em silencio, e a extracao certa contava `extra`.
+
+    As excecoes nao sao valvula de escape: cada uma e um turno em que a
+    tipologia descreve o imovel que o lead ja possui. Turno novo tem de
+    escolher entre anotar o tipo ou entrar aqui com motivo escrito.
+    """
+    faltando = _turnos_sem_tipo_imovel(
+        conversas, _LITERAIS_DE_TIPO_IMOVEL, _TIPO_E_DO_IMOVEL_QUE_O_LEAD_TEM
+    )
+    assert faltando == [], f"turnos com palavra do vocabulario e sem `tipo_imovel`: {faltando}"

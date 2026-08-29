@@ -6,6 +6,8 @@
   turnos:
     - lead: "oi, sou eu de novo, faz um tempo que nao falamos. ainda ta de pe aquele apartamento que vc me mostrou?"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
     - lead: "consegui juntar mais um pouco de entrada nesse meio tempo"
       intencao: COMPRA
     - lead: "da pra remarcar uma visita pra essa semana?"
@@ -50,6 +52,8 @@
   turnos:
     - lead: "e ai, lembra de mim? tava vendo aquela casa pra comprar mes passado"
       intencao: COMPRA
+      campos:
+        tipo_imovel: CASA
     - lead: "resolvi nao comprar agora, o banco negou o financiamento. tem opcao de alugar ela por enquanto?"
       intencao: ALUGUEL
     - lead: "se eu alugar agora, depois consigo ter prioridade pra comprar quando resolver o credito?"
@@ -86,8 +90,16 @@
     - lead: "desculpa o sumico, correria aqui"
       intencao: INDEFINIDA
       campos: {}
+    # `quero fechar logo` NAO anota `urgencia`: a barra da TEC-239 e marco
+    # temporal explicito, e entusiasmo nao e marco. O turno entra na medicao
+    # pelos campos que ele nomeia -- tipologia e quartos --, e a anotacao
+    # completa e essa. Ficar fora da medicao inteiro por causa de um campo que
+    # a fala nao afirma era exclusao larga de mais.
     - lead: "e entao, aquele apartamento de 3 quartos que a gente via, ainda ta disponivel? quero fechar logo"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
+        quartos: 3
 
 - id: follow-up-08
   descricao: lead retoma so pra agendar a assinatura, financiamento ja aprovado

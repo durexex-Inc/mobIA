@@ -99,6 +99,9 @@
       campos: {}
     - lead: "vim pelo anuncio do face, quero saber mais sobre aquele terreno em cotia pra comprar"
       intencao: COMPRA
+      campos:
+        tipo_imovel: TERRENO
+        regiao: cotia
     - lead: "tem escritura definitiva ou ainda ta em inventario?"
       intencao: COMPRA
 
@@ -110,6 +113,9 @@
       campos: {}
     - lead: "mas aproveitando, voces tem apartamento pra alugar na regiao do ipiranga?"
       intencao: ALUGUEL
+      campos:
+        tipo_imovel: APARTAMENTO
+        regiao: ipiranga
     - lead: "precisa ser perto do metro, eu nao dirijo"
       intencao: ALUGUEL
 
@@ -118,6 +124,9 @@
   turnos:
     - lead: "vi um anuncio de vcs no instagram, sobre um apartamento na aclimacao"
       intencao: INDEFINIDA
+      campos:
+        tipo_imovel: APARTAMENTO
+        regiao: aclimacao
     - lead: "quantos metros quadrados tem e quantas vagas? e o valor do anuncio e o de venda mesmo?"
       intencao: COMPRA
     # So `urgencia`: a fala nao repete tipo nem regiao, e `Extracao` e sobre o
