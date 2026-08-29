@@ -1254,7 +1254,8 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   mais anotação — deixava os dois asserts de `PISO_DE_TURNOS` passarem (121
   turnos) com só 20 turnos anotados / 32 anotações de campo sobrevivendo, 33%
   abaixo do piso declarado, e `precisao_da_extracao` bloqueava ou liberava um
-  gate pago com essa amostra.
+  gate pago com essa amostra — números de antes da TEC-239 acrescentar dois
+  turnos ao corpus (136, não os 138 de hoje), não do corpus atual.
 - **A precisão de extração agora mede 77 dos 138 turnos — 38 positivos e 39
   negativos —, e o exploit descrito antes não funciona mais.** `campos: {}`
   é o estado novo do contrato: "o lead não afirmou nada neste turno, tudo
