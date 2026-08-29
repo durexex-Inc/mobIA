@@ -388,8 +388,8 @@ async def test_acuracia_de_intencao_no_corpus(
     # positivos ou negativos -- bem abaixo do dele.
     #
     # `len(observadas) >= PISO_DE_TURNOS_ANOTADOS` sozinho se auto-satisfaz
-    # desde que `observadas` passou a incluir os dois: perder os 45 positivos
-    # inteiros ainda deixa 37 negativos, 82 >= 30, e o assert nunca dispara --
+    # desde que `observadas` passou a incluir os dois: perder os 55 positivos
+    # inteiros ainda deixa 66 negativos, 121 >= 38, e o assert nunca dispara --
     # exatamente o furo que a guarda de `_metricas_de` fecha contando os dois
     # em separado. Este assert usa a mesma conta de `_positivas_e_negativas`
     # para nao reabrir o furo aqui, no ponto irmao.

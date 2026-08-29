@@ -158,7 +158,7 @@ Três desses merecem justificativa, porque contrariam o que o README diz hoje:
   usá-lo"*. É a mesma forma de fala de `borda-injecao-01` i1 (*"aceita
   financiamento?"*), que já está anotada assim.
 
-### Balde C — as dezesseis exclusões
+### Balde C — as dezessete exclusões
 
 Cinco já têm comentário e ficam como estão: `follow-up-03` i1 e i2,
 `borda-evasivo-02` i1 e i2, `aluguel-09` i2.
@@ -193,7 +193,7 @@ processo sem pressuposição de campo, e três subgrupos merecem nota:
   `borda-generica-01` i0): a regra da TEC-239 diz que não é o que ele procura,
   então a anotação completa da busca é "nada".
 - **`follow-up-04` i1** (*"o banco negou o financiamento"*): negativo de
-  propósito, e o mais valioso dos trinta. A palavra "financiamento" está na
+  propósito, e o mais valioso dos vinte e nove. A palavra "financiamento" está na
   fala, mas o financiamento foi **negado** — não é a forma de pagamento
   pretendida. Um modelo que extrair `FINANCIAMENTO` aqui está inventando, e
   agora isso conta.

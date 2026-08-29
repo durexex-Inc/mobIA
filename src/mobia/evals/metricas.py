@@ -71,7 +71,8 @@ PISO_DE_TURNOS_NEGATIVOS = 49
 # amostra abaixo de `PISO_DE_TURNOS_ANOTADOS` -- valia em 57aee2d (38 - 13 =
 # 25, abaixo do piso de 30), mas a TEC-242 deu tres anotacoes a `compra-06` e
 # a colocou entre as cinco conversas com mais anotacao. Hoje a mesma conta da
-# 45 - 14 = 31, ACIMA do piso: a propriedade deixou de valer.
+# 55 - 15 = 40, ACIMA do piso -- que esta card subiu para 38, e nao os 30 da
+# linha acima: a propriedade deixou de valer.
 #
 # Isso nao muda a escolha de contar conversas **longas** neste teto, que
 # continua de pe pelo outro motivo ja escrito abaixo -- o teto mede

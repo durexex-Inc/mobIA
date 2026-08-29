@@ -264,7 +264,21 @@ def test_todo_turno_com_sinonimo_tem_tipo_imovel_anotado(
 # `apto` entra porque o corpus ja o usa (`aluguel-05` i0, `borda-injecao-01`
 # i1). `sala comercial` entra como locucao, e nao `comercial` sozinho, que
 # aparece em "uso comercial de saude" descrevendo alvara e nao tipologia.
-_LITERAIS_DE_TIPO_IMOVEL = re.compile(r"\b(apartamento|apto|casa|terreno|sala comercial)\b")
+#
+# O plural entra em todas elas: "apartamentos", "casas", "terrenos", "salas
+# comerciais". Nenhum turno do corpus pluraliza hoje, entao a forma larga nao
+# muda contagem nenhuma agora -- ela existe pra que a promessa do guarda
+# ("turno novo tem de anotar o tipo ou entrar na lista de excecao") valha
+# tambem pra fala que cita mais de um imovel.
+#
+# `sala comercial` e `salas comerciais` vao escritas por extenso, e nao como
+# `salas? comerciais?`: esse sufixo opcional casa "salas comerciais", mas NAO
+# o singular "sala comercial" -- que e a forma que o corpus usa (`aluguel-08`
+# i0) --, porque o plural de "comercial" e "comerciais" e nao "comercials".
+# Locucao com duas palavras flexionadas nao pluraliza com um `?` em cada.
+_LITERAIS_DE_TIPO_IMOVEL = re.compile(
+    r"\b(apartamentos?|aptos?|casas?|terrenos?|sala comercial|salas comerciais)\b"
+)
 
 # O imovel que o lead TEM nao e o que ele procura -- a regra da TEC-239, que
 # ja esta no docstring de `TurnoAnotado` e ate agora nao tinha teste. Estes
@@ -328,7 +342,7 @@ def test_todo_turno_fora_da_medicao_tem_motivo_escrito(
 
     Turno sem `campos` nao tem cobertura de invencao nenhuma: nao ha
     `esperado` contra o qual comparar, entao o turno sai da conta inteiro. Que
-    isso seja verdade para 16 turnos e escolha; que fosse verdade para 56 sem
+    isso seja verdade para 17 turnos e escolha; que fosse verdade para 56 sem
     ninguem ter olhado era acidente.
 
     Comentario de YAML nao sobrevive ao `yaml.safe_load`, entao o conjunto
