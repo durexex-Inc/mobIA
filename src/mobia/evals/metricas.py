@@ -349,6 +349,21 @@ class ExtracaoObservada:
     obtido: dict[str, Any]
 
 
+def eh_negativo(observada: ExtracaoObservada) -> bool:
+    """O criterio de "turno negativo", extraido para nao divergir em silencio.
+
+    `resumo_de_negativos` (aqui) e `_positivas_e_negativas`
+    (`evals/test_acuracia_de_intencao.py`) precisam do mesmo criterio: um e o
+    gate que decide se sobrou amostra para medir, o outro e o diagnostico que
+    conta invencao. Cada um com sua propria expressao (`== {}` num lado,
+    `!= {}` no outro) e o mesmo furo que motivou extrair `campos_a_gravar` para
+    o eval nao divergir de producao, e que matou `faixa_de_catastrofe` no PR
+    #10: duas formulas do mesmo criterio divergem, e a divergencia so aparece
+    na borda, sem teste para acusar.
+    """
+    return observada.esperado == {}
+
+
 @dataclass(frozen=True)
 class ResumoDeNegativos:
     """Quantos turnos negativos entraram na medicao, e quanto se inventou neles.
@@ -370,7 +385,7 @@ class ResumoDeNegativos:
 def resumo_de_negativos(observadas: Sequence[ExtracaoObservada]) -> ResumoDeNegativos:
     """Turno negativo e o que tem `esperado` vazio -- anotado por completo, e o
     completo e nada."""
-    negativas = [observada for observada in observadas if observada.esperado == {}]
+    negativas = [observada for observada in observadas if eh_negativo(observada)]
     return ResumoDeNegativos(
         turnos=len(negativas),
         com_invencao=sum(1 for observada in negativas if observada.obtido),

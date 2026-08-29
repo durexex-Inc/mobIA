@@ -291,3 +291,35 @@ def test_a_secao_de_extracao_nomeia_os_turnos_negativos() -> None:
 
     assert "39 turnos negativos" in saida
     assert "1 com invencao" in saida
+
+
+def test_um_campo_inventado_sai_no_singular() -> None:
+    """ "1 campos" e erro de portugues que o revisor apontou -- com um so campo
+    inventado, a linha tem de ler "1 campo"."""
+    saida = render(
+        [], {}, negativos=ResumoDeNegativos(turnos=5, com_invencao=1, campos_inventados=1)
+    )
+    assert "1 campo)" in saida
+    assert "1 campos)" not in saida
+
+
+def test_dois_campos_inventados_seguem_no_plural() -> None:
+    saida = render(
+        [], {}, negativos=ResumoDeNegativos(turnos=5, com_invencao=1, campos_inventados=2)
+    )
+    assert "2 campos)" in saida
+
+
+def test_ha_linha_em_branco_antes_da_lista_por_campo() -> None:
+    """Sem a linha em branco, o aviso de ambiguidade do turno negativo emenda
+    direto na lista por campo e aperta a leitura."""
+    saida = render(
+        [],
+        {},
+        discrepancias=[_d("regiao", "extra")],
+        negativos=ResumoDeNegativos(turnos=5, com_invencao=0, campos_inventados=0),
+    )
+    aviso = "esta anotado por completo, e o completo e vazio."
+    posicao = saida.index(aviso) + len(aviso)
+    resto = saida[posicao:]
+    assert resto.startswith("\n\n")

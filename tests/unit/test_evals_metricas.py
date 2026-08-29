@@ -19,6 +19,7 @@ from mobia.evals.metricas import (
     acuracia_efetiva,
     bloqueia,
     discrepancias_da_extracao,
+    eh_negativo,
     erros,
     faixa_de,
     matriz_de_confusao,
@@ -566,3 +567,13 @@ def test_resumo_de_negativos_conta_turnos_e_invencoes() -> None:
     resumo = resumo_de_negativos(observadas)
 
     assert resumo == ResumoDeNegativos(turnos=2, com_invencao=1, campos_inventados=2)
+
+
+def test_eh_negativo_e_o_criterio_unico_de_turno_negativo() -> None:
+    """`eh_negativo` e o que `resumo_de_negativos` e `_positivas_e_negativas`
+    (`evals/test_acuracia_de_intencao.py`) tem de compartilhar -- duas formulas
+    do mesmo criterio divergem sem teste para acusar, o mesmo furo que matou
+    `faixa_de_catastrofe` no PR #10."""
+    assert eh_negativo(_observada({}, {}, indice=0)) is True
+    assert eh_negativo(_observada({}, {"regiao": "sp"}, indice=0)) is True
+    assert eh_negativo(_observada({"quartos": 2}, {"quartos": 2}, indice=0)) is False

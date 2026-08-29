@@ -159,13 +159,15 @@ def _secao_de_extracao(
         f"- total de discrepancias: {len(discrepancias)}",
     ]
     if negativos is not None:
+        unidade_campo = "campo" if negativos.campos_inventados == 1 else "campos"
         linhas += [
             f"- {negativos.turnos} turnos negativos medidos, "
             f"{negativos.com_invencao} com invencao "
-            f"({negativos.campos_inventados} campos)",
+            f"({negativos.campos_inventados} {unidade_campo})",
             "",
             "  Num turno negativo, `extra` e invencao sem ambiguidade: o turno",
             "  esta anotado por completo, e o completo e vazio.",
+            "",
         ]
     for campo, tipos in sorted(por_campo.items(), key=lambda par: (-sum(par[1].values()), par[0])):
         detalhe = ", ".join(f"{tipo}: {quantos}" for tipo, quantos in sorted(tipos.items()))

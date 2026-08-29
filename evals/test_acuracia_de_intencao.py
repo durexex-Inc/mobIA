@@ -30,6 +30,7 @@ from mobia.evals.metricas import (
     acuracia_efetiva,
     bloqueia,
     discrepancias_da_extracao,
+    eh_negativo,
     erros,
     matriz_de_confusao,
     precisao_da_extracao,
@@ -211,7 +212,11 @@ async def _rodar_conversa(
 
 
 def _positivas_e_negativas(observadas: list[ExtracaoObservada]) -> tuple[int, int]:
-    """Quantas `observadas` afirmam algo, e quantas sao negativas (`esperado == {}`).
+    """Quantas `observadas` afirmam algo, e quantas sao negativas.
+
+    "Negativa" e `eh_negativo` (`mobia.evals.metricas`), o mesmo criterio que
+    `resumo_de_negativos` usa: as duas contagens tem de vir da mesma formula
+    para nao divergir em silencio.
 
     Extraida porque a mesma conta guarda dois pontos: a guarda de
     `precisao_da_extracao` dentro de `_metricas_de`, e o assert irmao em
@@ -220,8 +225,8 @@ def _positivas_e_negativas(observadas: list[ExtracaoObservada]) -> tuple[int, in
     Duplicar a formula nos dois lugares e o jeito de um deles ficar
     desalinhado do outro sem nenhum teste acusar.
     """
-    positivas = sum(1 for o in observadas if o.esperado != {})
-    return positivas, len(observadas) - positivas
+    negativas = sum(1 for o in observadas if eh_negativo(o))
+    return len(observadas) - negativas, negativas
 
 
 def _metricas_de(
