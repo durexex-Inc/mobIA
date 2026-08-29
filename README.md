@@ -1159,6 +1159,41 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   `MARCADORES_DE_REPERGUNTA` dizendo por quê: é heurística de palavra-chave,
   com erro nas duas direções. Ver "Lacunas conhecidas".
 
+> **Nota da TEC-240 (29/08/2026):** até aqui o prompt classificava intenção e
+> extraía campos, mas nunca nomeava a extração como tarefa nem explicava o
+> que `null` significa — a semântica em que o desenho inteiro se apoia
+> (`None` nunca apaga, "não falou disso neste turno" e não "esqueça o que
+> sabia"; ver "Garantias" acima) chegava ao modelo só como nomes de campo
+> crus, sem contrato nenhum em texto. Esta card faz `SISTEMA_DO_AGENTE`
+> nomear a terceira tarefa e dizer explicitamente que `null` é "não falou
+> disso agora" — nunca "não sei" — e que inferir o não-dito conta erro igual
+> a não extrair o dito. Três coisas que o escopo original também pedia **não**
+> foram feitas, e ficam registradas em vez de escondidas:
+>
+> - **A reserva não subiu.** `CONTEXTO_HEADROOM_DE_TOKENS` continua em 800.
+>   Entre a subcontagem de 526 que a TEC-145 deixou e o teto de 600 da segunda
+>   asserção de `test_diferenca_entre_o_contado_e_o_enviado` havia 296
+>   caracteres de folga (74 tokens de proxy); o texto novo do prompt coube
+>   nela, deixando a subcontagem em 587 — 13 tokens de margem, travados por
+>   `test_a_margem_do_orcamento_do_prompt_e_deliberada` para a próxima card não
+>   gastá-los sem saber. Subir a reserva era saída permitida pelo card e foi
+>   recusada de propósito: cada 100 tokens de reserva são 100 tokens a menos
+>   de literais e resumo por turno.
+> - **Nenhum campo do schema ganhou `description`, e o item 3 do escopo do
+>   card não foi entregue.** Descrever só os três enums de vocabulário
+>   arbitrário (`TipoImovel`, `Urgencia`, `FormaPagamento`) custa da ordem de
+>   300 caracteres — estoura sozinho os 296 de folga, antes de qualquer outro
+>   campo do schema ou qualquer palavra a mais no prompt.
+> - **O efeito não foi medido, e o critério 4 do card não se sustenta como
+>   escrito.** A única execução paga de extração é a de 28/08 (seção acima),
+>   contra um corpus que mudou duas vezes desde então: a TEC-239 levou as
+>   anotações de 47 para 59, e a TEC-238 acrescentou 37 turnos negativos. Um
+>   "depois" medido hoje contra aquele "antes" divergiria por mudança de
+>   prompt **e** de régua ao mesmo tempo, e a diferença não seria atribuível a
+>   uma causa só. Medir efeito de prompt exigiria uma execução paga nova
+>   **antes** desta card entrar — duas execuções pagas, não uma —, e essa
+>   execução não rodou.
+
 ### Lacunas conhecidas
 
 - **A medição de "não repergunta" é um proxy ininterpretável como cota — nem
@@ -1265,3 +1300,10 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   ganha nem perde ponto.
 - **A precisão de extração nunca foi executada.** O eval é pago e roda sob demanda
   ou em PR que toque `src/mobia/domain/agente/`.
+- **A TEC-240 mudou o prompt e não mediu o efeito, nem tinha como.** A única
+  execução paga contra este corpus continua sendo a de 28/08 (ver a nota
+  acima), e o corpus mudou duas vezes desde então. Comparar aquele número com
+  uma execução de hoje misturaria mudança de prompt com mudança de régua de
+  medição — o critério de aceite do card, "medir a precisão depois e comparar
+  com antes", exigia uma execução paga **antes** de a mudança de prompt
+  entrar, e essa execução não existe.

@@ -156,9 +156,10 @@ class Settings(BaseSettings):
 
         A reserva existe porque contar a forma exata exigiria conhecer a forma
         exata, e o consumidor que a define ainda nao existe: construir para um
-        palpite e pior que reservar margem. 400 cobre ~5 tokens por turno numa
-        janela de quarenta (200) com o dobro de folga para o system prompt e para
-        o renderizador do estado.
+        palpite e pior que reservar margem. O valor atual e `contexto_headroom_de_tokens`
+        (800, nao os 400 originais -- ver o comentario da propria constante e o
+        "por que" no fim desta docstring); a decomposicao abaixo e o que
+        justifica esse numero, medido, em vez de um segundo palpite escrito aqui.
 
         **Medido na TEC-134, com a requisicao real ja montada.** A conta usa o
         mesmo proxy `len/4` do modulo de montagem, e nao uma chamada de
@@ -170,21 +171,28 @@ class Settings(BaseSettings):
 
         O que a contagem ve a mais e a menos, em tokens de proxy:
 
-        - `-42`  `montagem.SISTEMA` entra na contagem mas **nao** e enviado --
+        - `-42`   `montagem.SISTEMA` entra na contagem mas **nao** e enviado --
           o classificador chama `montar_prompt(omitir_sistema=True)`.
-        - `+193` `classificador.SISTEMA_DO_AGENTE` vai no campo `system=` e
+        - `+254`  `classificador.SISTEMA_DO_AGENTE` vai no campo `system=` e
           nunca passa pelo contador.
-        - `+93`  o schema compilado em `output_config.format`, idem.
-        - `+19`  os rotulos de secao que `montar_prompt` intercala.
+        - `+356`  o schema compilado em `output_config.format`, idem.
+        - `+19`   os rotulos de secao que `montar_prompt` intercala.
 
-        Liquido: **~263 tokens contados a menos do que se envia**, contra uma
-        reserva de 400. Sobram ~137 para o overhead estrutural da requisicao,
-        que hoje e um unico turno de usuario -- ordem de dezenas de tokens, nao
-        centenas, porque a TEC-134 nao montou o array multi-turno que este
-        texto previa. Por isso a reserva **fica em 400**: cobre o medido com
-        folga de mais de 50%, e derruba-la para perto de 263 trocaria uma
-        margem barata (2,2% do teto) por risco de estourar o limite real da
-        chamada.
+        Liquido: **~587 tokens contados a menos do que se envia**, contra uma
+        reserva de 800. A reserva **fica em 800**: o fator 0,75 sobre o
+        headroom existe para haver folga -- 702 seria o minimo que ainda passa
+        a segunda assercao de `test_diferenca_entre_o_contado_e_o_enviado`,
+        mas por meio token, o que derrotaria o proposito de ter folga.
+
+        **Por que este texto ficou desatualizado antes de ser corrigido
+        agora:** a TEC-145 acrescentou o objeto `extracao` ao
+        `SCHEMA_DA_RESPOSTA` (de onde vem o `+356` acima, que era `+93`) e
+        subiu a reserva de 400 para 800 -- mas so atualizou o comentario da
+        propria constante `contexto_headroom_de_tokens` logo acima, nao esta
+        docstring, que ficou com os numeros de antes por uma card inteira. A
+        mesma conta vive em dois lugares neste arquivo; quando ela muda, os
+        dois precisam mudar juntos, ou um dos dois envelhece em silencio ate
+        a proxima pessoa confiar nele.
         """
         return self.contexto_teto_de_tokens - self.contexto_headroom_de_tokens
 
