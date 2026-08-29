@@ -49,8 +49,8 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # "melhora-la" sem olhar a conta, e descobre o estouro no CI.
 #
 # A ordem enunciada na abertura (classifica, extrai, responde) NAO e a ordem
-# dos campos em SCHEMA_DA_RESPOSTA -- "extracao" e anexada duas linhas
-# abaixo, depois de "resposta" (ver D3 do spec da TEC-240). Mover "extracao"
+# dos campos em SCHEMA_DA_RESPOSTA -- "extracao" e anexada mais abaixo,
+# nas duas linhas logo depois da definicao do schema SCHEMA_DA_EXTRACAO. Mover "extracao"
 # para antes de "resposta" teria custo zero de orcamento, mas mudaria a
 # ordem de geracao do modelo num caminho pago, para todo turno de producao;
 # decisao recusada por falta de instrumento para medir o efeito. Quem for

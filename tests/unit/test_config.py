@@ -17,7 +17,7 @@ from mobia.infra.anthropic import get_client
 # estado -- hardcoded aqui, acoplado a `montagem.py`, porque copiar o texto
 # exato e mais barato que importar o modulo so para reconstrui-lo. O
 # acoplamento e pre-existente (nao nasceu deste helper); o helper so o
-# concentra num unico ponto em vez de deixá-lo duplicado entre os dois testes
+# concentra num unico ponto em vez de deixa-lo duplicado entre os dois testes
 # que o usavam.
 _ROTULOS_DE_MONTAR_PROMPT = (
     "Resumo da conversa ate aqui:\nMensagens recentes:\nEstado de qualificacao:\n" + "\n\n" * 2
