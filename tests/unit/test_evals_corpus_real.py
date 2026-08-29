@@ -308,6 +308,7 @@ _FORA_DA_MEDICAO = {
     ("borda-mista-01", 2): "escritura: pressupoe o terreno do turno anterior",
     ("borda-mista-02", 2): "perto do metro: proximidade sem toponimo",
     ("compra-01", 1): "850 mil acima do que consigo: teto sugerido, nao afirmado",
+    ("compra-02", 2): "perto de metro: proximidade sem toponimo",
     ("compra-04", 1): "mais que o dobro do que eu tinha em mente: teto sugerido",
     ("compra-07", 1): "sabado de manha: sem ancora de semana",
     ("compra-08", 2): "parcelamento direto nao e valor de FormaPagamento",

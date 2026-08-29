@@ -121,6 +121,7 @@
         regiao: ipiranga
     # Fora da medicao: "perto do metro" e proximidade sem toponimo, e nao ha
     # forma canonica de regiao para anotar -- balde C do spec da TEC-243.
+    # Mesma decisao que `compra-02` indice 2.
     - lead: "precisa ser perto do metro, eu nao dirijo"
       intencao: ALUGUEL
 

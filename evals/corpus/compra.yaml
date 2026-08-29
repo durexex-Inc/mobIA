@@ -49,9 +49,14 @@
       intencao: COMPRA
       campos:
         forma_pagamento: FINANCIAMENTO
+    # Fora da medicao: "perto de metro" e proximidade sem toponimo. A forma
+    # canonica reduz a frase a "metro", que nao e nome de lugar e nao filtra
+    # nada -- mas tambem nao e ruido que a normalizacao descarte. Anotar `{}`
+    # aqui contaria invencao contra um modelo que so repetiu o que o lead
+    # disse. Mesma decisao que `borda-mista-02` indice 2, que diz a mesma
+    # coisa com outras palavras.
     - lead: "e tem alguma coisa perto de metro nessa faixa?"
       intencao: COMPRA
-      campos: {}
     # Gherkin 3 do spec da TEC-145 -- "uma so" -> `vagas = 1`. A elipse esta
     # ancorada na propria fala do lead e nao na resposta do agente: o runner
     # devolve a resposta REAL ao historico, entao um "uma so" sozinho so
