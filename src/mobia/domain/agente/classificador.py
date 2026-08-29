@@ -17,6 +17,7 @@ from mobia.domain.agente.schemas import (
     RespostaDoAgente,
     TipoImovel,
     Urgencia,
+    normalizar_regiao,
 )
 from mobia.domain.context.montagem import ContextoMontado, montar_prompt
 from mobia.domain.messages.recorder import custo_em_dolar
@@ -175,9 +176,15 @@ def _membro(enum: type[StrEnum], bruto: Any) -> Any:
 
 
 def _regiao(bruto: Any) -> str | None:
+    """Normaliza antes de truncar, e descarta o que sobra vazio.
+
+    `normalizar_regiao` ja faz o colapso de espaco e o `casefold`, entao o
+    `strip` de antes ficou dentro dela. O truncamento continua por ultimo:
+    `lead_qualification.regiao` e `String(120)`, e normalizar so encurta.
+    """
     if not isinstance(bruto, str):
         return None
-    limpa = bruto.strip()
+    limpa = normalizar_regiao(bruto)
     return limpa[:MAX_CARACTERES_DA_REGIAO] if limpa else None
 
 

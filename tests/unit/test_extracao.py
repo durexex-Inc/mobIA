@@ -253,3 +253,23 @@ def test_normalizar_regiao_e_idempotente() -> None:
     for bruto in ("perto da estacao vila madalena", "regiao do brooklin", "zona sul"):
         uma = normalizar_regiao(bruto)
         assert normalizar_regiao(uma) == uma
+
+
+def test_extrair_grava_regiao_na_forma_canonica() -> None:
+    """O banco passa a guardar o que a TEC-158 consegue filtrar. Sem isto, a
+    normalizacao existiria so para a medicao e o filtro SQL continuaria
+    comparando formas que o modelo escolheu."""
+    extracao = extrair({"regiao": "perto da estacao Vila Madalena"})
+
+    assert extracao.regiao == "vila madalena"
+
+
+def test_extrair_descarta_regiao_que_e_so_ruido() -> None:
+    """Vazio nao pode ser gravado: a TEC-158 filtraria por string vazia. Segue
+    a mesma regra das outras guardas de `extrair` -- campo malformado e
+    descartado um a um, sem derrubar a resposta."""
+    assert extrair({"regiao": "perto da"}).regiao is None
+
+
+def test_extrair_preserva_toponimo_limpo() -> None:
+    assert extrair({"regiao": "Itaim Bibi"}).regiao == "itaim bibi"
