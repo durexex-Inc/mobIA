@@ -1040,14 +1040,54 @@ piso próprio em vez de herdar 90/84 da intenção.
 
 `PISO_DE_TURNOS_ANOTADOS = 30` (`src/mobia/evals/metricas.py`) é o piso
 irmão de `PISO_DE_TURNOS`, na outra direção: sem ele, anotar três turnos
-fáceis daria 100% de precisão num corpus que não mede nada. Hoje **32 turnos
-estão anotados**, distribuídos em `evals/corpus/compra.yaml` (15),
-`evals/corpus/aluguel.yaml` (12) e `evals/corpus/investimento.yaml` (5) — os
-três arquivos, e só eles, ganharam a chave `campos` nesta card.
+fáceis daria 100% de precisão num corpus que não mede nada. Hoje **38 turnos
+estão anotados**, distribuídos em `evals/corpus/compra.yaml` (17),
+`evals/corpus/aluguel.yaml` (12), `evals/corpus/investimento.yaml` (5),
+`evals/corpus/borda.yaml` (2) e `evals/corpus/follow_up.yaml` (2). Os três
+primeiros ganharam a chave `campos` na TEC-145; os dois últimos, na TEC-239,
+que precisou dos turnos de injeção e de venda para tirar quatro campos do
+zero.
 `aluguel-02` carrega o caso de correção que a D4 do spec pediu com risco
 declarado: o lead troca de região no meio da conversa (`brooklin` →
 `itaim bibi`), e é o turno que prova que a sobrescrita pelo mais novo tem
 cobertura de medição.
+
+`discrepancias_da_extracao` (`src/mobia/evals/metricas.py`) decompõe, campo a
+campo, o que `precisao_da_extracao` conta como erro. É **diagnóstico, nunca
+gate**: não devolve faixa e não entra em `bloqueia`. Existe porque o número da
+métrica sozinho não diz se o corpus mede errado ou se o modelo extrai mal, e
+essas duas causas pedem cards diferentes. Cada `Discrepancia` carrega
+`conversa_id` e `indice` justamente para que quem for anotar não precise de
+outra execução paga só para descobrir **onde** faltava anotação.
+
+Os três tipos não são simétricos, e ler isso errado custa a card errada:
+
+| tipo | o que aconteceu | de quem é o problema |
+|---|---|---|
+| `extra` | o modelo extraiu, o corpus não anotou | acusa a **medição** antes do modelo |
+| `faltou` | o corpus anotou, o modelo não devolveu | acusa o **modelo** ou o prompt |
+| `divergiu` | veio nos dois, com valores diferentes | acusa o modelo, ou a anotação |
+
+`extra` é o que mais engana. Com o denominador de união, um campo que o modelo
+extraiu **certo** e que ninguém anotou desconta exatamente como uma invenção —
+campo com muitos `extra` e pouca anotação no corpus é candidato a lacuna de
+anotação, não a defeito do modelo. É a leitura que a TEC-238 vai precisar para
+separar invenção de anotação faltante nos 100 turnos sem `campos` — e a que,
+até a primeira execução paga acontecer, ninguém ainda exerceu contra dados
+reais.
+
+Uma invariante amarra as duas funções contra a mesma sequência de observadas:
+`acertos + len(discrepancias) == total`. Há teste guardando
+(`test_acertos_mais_discrepancias_fecham_o_total_da_metrica`), porque as duas
+derivam do mesmo conjunto — a união do esperado com o obtido — e mudar a fórmula
+de uma sem mudar a outra faria o relatório mentir em silêncio em vez de quebrar.
+A ordem da lista acompanha os turnos observados, e dentro do turno é alfabética
+por campo: quem lê, lê de cima para baixo seguindo a conversa, e a ordem não pode
+depender da iteração de um `set`.
+
+No relatório, `_secao_de_extracao` (`src/mobia/evals/relatorio.py`) imprime o
+agregado por campo antes da lista por turno — o agregado diz onde está o
+problema, e o endereço é o que evita pagar outra execução para achar onde anotar.
 
 O proxy de repergunta (`MARCADORES_DE_REPERGUNTA`,
 `evals/test_acuracia_de_intencao.py`) conta, por palavra-chave, quantas
