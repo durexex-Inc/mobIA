@@ -53,6 +53,13 @@ class TurnoAnotado:
       porque so o primeiro estava anotado, e duas leituras opostas da mesma
       forma de fala no mesmo corpus nao viram nota mais baixa do modelo --
       viram medicao errada.
+    - **`regiao` se anota como toponimo, sem preposicao.** "usp", nao "perto da
+      usp"; "vila madalena", nao "estacao vila madalena". Desde a TEC-241 a
+      medicao normaliza os dois lados, entao anotacao suja ainda casa -- mas
+      escrever ja canonico e o que faz o YAML dizer a mesma coisa que o banco
+      guarda. As duas anotacoes antigas com preposicao (`aluguel-01`,
+      `aluguel-07`) ficaram como estavam de proposito: reanota-las seria mexer
+      na regua sem necessidade.
     """
 
     lead: str

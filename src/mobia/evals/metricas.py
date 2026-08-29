@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any, Literal
 
 from mobia.domain.agente.desambiguacao import deve_desambiguar, intencao_efetiva
-from mobia.domain.agente.schemas import Intencao
+from mobia.domain.agente.schemas import Intencao, normalizar_regiao
 
 # Alvo do card. Abaixo do piso o merge e barrado; entre os dois, avisa.
 ALVO_PCT = 90
@@ -421,17 +421,26 @@ class Discrepancia:
     tipo: Literal["extra", "faltou", "divergiu"]
 
 
-def _comparavel(valor: Any) -> Any:
+def _comparavel(campo: str, valor: Any) -> Any:
     """Normaliza para comparar anotacao de YAML com valor vindo do parse.
 
-    `regiao` e texto livre escrito a mao no corpus: caixa e espaco nao sao erro
-    do modelo. Preco vem do YAML como `int` e do parse como `Decimal`, e
-    600000 e Decimal("600000.00") sao o mesmo preco.
+    Recebe o nome do campo porque `regiao` tem contrato de forma proprio
+    (TEC-241) e os outros textos nao: caixa e espaco nunca foram erro do
+    modelo, mas preposicao e ruido de referencia so sao ruido em toponimo.
+    Aplicar `normalizar_regiao` a todo texto faria um campo futuro herdar uma
+    regra pensada para outra coisa.
+
+    A regra de forma e importada de `schemas.py`, e nao reescrita aqui: e a
+    MESMA que `extrair` aplica antes de gravar, e duas copias divergiriam sem
+    nenhum teste acusar.
+
+    Preco vem do YAML como `int` e do parse como `Decimal`, e 600000 e
+    Decimal("600000.00") sao o mesmo preco.
     """
     if isinstance(valor, bool):
         return valor
     if isinstance(valor, str):
-        return valor.strip().casefold()
+        return normalizar_regiao(valor) if campo == "regiao" else valor.strip().casefold()
     if isinstance(valor, int | float | Decimal):
         return Decimal(str(valor))
     return valor
@@ -463,7 +472,8 @@ def precisao_da_extracao(observadas: Sequence[ExtracaoObservada]) -> ResultadoDa
             for nome in nomes
             if nome in observada.esperado
             and nome in observada.obtido
-            and _comparavel(observada.esperado[nome]) == _comparavel(observada.obtido[nome])
+            and _comparavel(nome, observada.esperado[nome])
+            == _comparavel(nome, observada.obtido[nome])
         )
     faixa = faixa_de(acertos, total, piso=PISO_DE_PRECISAO_DA_EXTRACAO_PCT)
     return ResultadoDaMetrica(
@@ -502,7 +512,9 @@ def discrepancias_da_extracao(
             no_esperado = campo in observada.esperado
             no_obtido = campo in observada.obtido
             if no_esperado and no_obtido:
-                if _comparavel(observada.esperado[campo]) == _comparavel(observada.obtido[campo]):
+                if _comparavel(campo, observada.esperado[campo]) == _comparavel(
+                    campo, observada.obtido[campo]
+                ):
                     continue
                 tipo: Literal["extra", "faltou", "divergiu"] = "divergiu"
             elif no_obtido:

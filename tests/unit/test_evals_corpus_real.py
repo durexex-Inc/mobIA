@@ -9,6 +9,7 @@ from mobia.domain.agente.schemas import (
     Intencao,
     TipoImovel,
     Urgencia,
+    normalizar_regiao,
 )
 from mobia.evals.corpus import ConversaAnotada, carregar, total_de_turnos
 from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS, PISO_DE_TURNOS_NEGATIVOS
@@ -146,3 +147,39 @@ def test_ha_turno_de_correcao_anotado(conversas: list[ConversaAnotada]) -> None:
         if len(regioes) >= 2 and len(set(regioes)) >= 2:
             return
     pytest.fail("nenhuma conversa anotada troca de regiao: a sobrescrita nao e medida")
+
+
+# As duas unicas anotacoes com preposicao do corpus (D5 do spec): ficam como
+# estao, de proposito, e a normalizacao existe para fundi-las com o toponimo
+# limpo que uma anotacao nova, seguindo a regra do cabecalho do YAML, vai
+# escrever. Uma anotacao nova de `usp` colide com `perto da usp` por
+# construcao -- e esse merge e o motivo da TEC-241 existir, nao uma regressao.
+_ANOTACOES_COM_PREPOSICAO_GRANDFATHERED = {"perto da usp", "perto da unicamp"}
+
+
+def test_anotacoes_de_regiao_nao_colidem_depois_de_normalizadas(
+    conversas: list[ConversaAnotada],
+) -> None:
+    """Fora das duas excecoes grandfathered, normalizar nao pode fundir duas
+    anotacoes de regiao distintas numa so.
+
+    `perto da usp` e `perto da unicamp` colidem de proposito com `usp` e
+    `unicamp` -- essas duas ja sao excluidas do agrupamento, porque colidir e
+    exatamente o que a TEC-241 existe para produzir (ver D5 do spec): elas
+    ficam com preposicao, grandfathered, enquanto uma anotacao nova do mesmo
+    lugar ja nasce como toponimo limpo. Fora dessas duas, uma colisao seria
+    sinal real de que a normalizacao esta fundindo regioes que nao deveriam
+    virar a mesma string, e e isso que este teste continua guardando.
+    """
+    por_forma: dict[str, set[str]] = {}
+    for conversa in conversas:
+        for turno in conversa.turnos:
+            if turno.campos and "regiao" in turno.campos:
+                bruta = turno.campos["regiao"]
+                if bruta in _ANOTACOES_COM_PREPOSICAO_GRANDFATHERED:
+                    continue
+                por_forma.setdefault(normalizar_regiao(bruta), set()).add(bruta)
+
+    colisoes = {forma: brutas for forma, brutas in por_forma.items() if len(brutas) > 1}
+
+    assert colisoes == {}, f"formas distintas normalizam para a mesma: {colisoes}"

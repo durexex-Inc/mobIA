@@ -6,10 +6,12 @@ from anthropic import transform_schema
 
 from mobia.domain.agente.classificador import SCHEMA_DA_EXTRACAO, extrair
 from mobia.domain.agente.schemas import (
+    _PREFIXOS_DE_REFERENCIA,
     Extracao,
     FormaPagamento,
     TipoImovel,
     Urgencia,
+    normalizar_regiao,
 )
 
 
@@ -193,5 +195,115 @@ def test_regiao_e_truncada_no_limite_da_coluna():
     assert len(obtido.regiao) == 120
 
 
+def test_regiao_com_prefixo_e_truncada_depois_de_normalizar():
+    """Prefixo e truncamento juntos, sem teste ate agora: `_regiao` normaliza
+    antes de truncar (ver docstring), entao o prefixo tem de sair antes da
+    contagem dos 120 caracteres, nao depois."""
+    obtido = extrair({"regiao": "perto da " + "a" * 200})
+    assert obtido.regiao is not None
+    assert len(obtido.regiao) == 120
+    assert obtido.regiao == "a" * 120
+
+
 def test_booleano_so_aceita_booleano():
     assert extrair({"tem_imovel_para_vender": "sim"}) == Extracao()
+
+
+@pytest.mark.parametrize(
+    ("bruto", "esperado"),
+    [
+        # O lado ANOTADO sujo: as duas unicas anotacoes do corpus com preposicao.
+        ("perto da usp", "usp"),
+        ("perto da unicamp", "unicamp"),
+        # O lado OBTIDO sujo, que e o caso maioritario: o modelo devolve a
+        # forma da fala, e 16 das 18 anotacoes ja sao toponimo limpo.
+        ("regiao do brooklin", "brooklin"),
+        ("regiao dos jardins", "jardins"),
+        ("regiao da paulista", "paulista"),
+        ("na regiao da paulista", "paulista"),
+        ("estacao vila madalena", "vila madalena"),
+        # Prefixos encadeados caem no mesmo passe.
+        ("perto da estacao vila madalena", "vila madalena"),
+        # Caixa e espaco sobrando.
+        ("  Vila   Mariana  ", "vila mariana"),
+    ],
+)
+def test_normalizar_regiao_tira_o_ruido_de_referencia(bruto: str, esperado: str) -> None:
+    assert normalizar_regiao(bruto) == esperado
+
+
+@pytest.mark.parametrize("nome", ["zona leste", "zona sul", "zona oeste"])
+def test_normalizar_regiao_nao_come_zona(nome: str) -> None:
+    """`zona` e o nome, nao ruido. Tres anotacoes do corpus dependem disto, e
+    perde-las transformaria a normalizacao no defeito que ela vem consertar."""
+    assert normalizar_regiao(nome) == nome
+
+
+@pytest.mark.parametrize(
+    "nome", ["brooklin", "itaim bibi", "jardim das flores", "tatuape", "sp", "cotia"]
+)
+def test_normalizar_regiao_nao_mexe_em_toponimo_limpo(nome: str) -> None:
+    assert normalizar_regiao(nome) == nome
+
+
+def test_normalizar_regiao_so_tira_prefixo_e_nao_subcadeia() -> None:
+    """ "estacao" no meio de um nome sobrevive. So some quando abre a string."""
+    assert normalizar_regiao("bairro estacao velha") == "bairro estacao velha"
+    # Perda conhecida e aceita, nao bug: quando "estacao" abre a string, o
+    # prefixo casa mesmo em toponimo real, e o primeiro token some junto.
+    # "Estacao Velha" e bairro de Campina Grande; "regiao dos lagos" e nome
+    # proprio no RJ (ver D2 do spec). O corpus desta card e SP-only, entao
+    # nenhum dos dois aparece nele -- mas o prefixo nao sabe disso, e por isso
+    # o risco fica medido aqui em vez de so declarado em prosa.
+    assert normalizar_regiao("estacao velha") == "velha"
+
+
+def test_regiao_que_e_so_ruido_vira_vazio() -> None:
+    """Quem decide o que fazer com o vazio e o chamador: `extrair` descarta o
+    campo. Devolver o original aqui gravaria ruido no banco."""
+    assert normalizar_regiao("perto da") == ""
+    assert normalizar_regiao("   ") == ""
+
+
+def test_normalizar_regiao_e_idempotente() -> None:
+    """Vale por construcao, porque a remocao repete ate nao casar -- este teste
+    e o que garante que continue valendo se alguem trocar o laco por um passe."""
+    for bruto in ("perto da estacao vila madalena", "regiao do brooklin", "zona sul"):
+        uma = normalizar_regiao(bruto)
+        assert normalizar_regiao(uma) == uma
+
+
+def test_extrair_grava_regiao_na_forma_canonica() -> None:
+    """O banco passa a guardar o que a TEC-158 consegue filtrar. Sem isto, a
+    normalizacao existiria so para a medicao e o filtro SQL continuaria
+    comparando formas que o modelo escolheu."""
+    extracao = extrair({"regiao": "perto da estacao Vila Madalena"})
+
+    assert extracao.regiao == "vila madalena"
+
+
+def test_extrair_descarta_regiao_que_e_so_ruido() -> None:
+    """Vazio nao pode ser gravado: a TEC-158 filtraria por string vazia. Segue
+    a mesma regra das outras guardas de `extrair` -- campo malformado e
+    descartado um a um, sem derrubar a resposta."""
+    assert extrair({"regiao": "perto da"}).regiao is None
+
+
+def test_extrair_preserva_toponimo_limpo() -> None:
+    assert extrair({"regiao": "Itaim Bibi"}).regiao == "itaim bibi"
+
+
+def test_nenhum_prefixo_de_referencia_e_prefixo_de_outro() -> None:
+    """Guarda estrutural: sem ela, acrescentar por exemplo "regiao " solto a
+    lista faria o resultado de `normalizar_regiao` passar a depender da ordem
+    de iteracao de `_PREFIXOS_DE_REFERENCIA` -- o laco para no primeiro que
+    casar, entao dois prefixos em relacao de prefixo-de-prefixo dariam
+    resultados diferentes conforme qual deles o `for` visita primeiro, em
+    silencio, sem nenhum teste acusando."""
+    colisoes = [
+        (a, b)
+        for a in _PREFIXOS_DE_REFERENCIA
+        for b in _PREFIXOS_DE_REFERENCIA
+        if a != b and b.startswith(a)
+    ]
+    assert colisoes == []
