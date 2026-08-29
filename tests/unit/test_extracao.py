@@ -10,6 +10,7 @@ from mobia.domain.agente.schemas import (
     FormaPagamento,
     TipoImovel,
     Urgencia,
+    normalizar_regiao,
 )
 
 
@@ -195,3 +196,60 @@ def test_regiao_e_truncada_no_limite_da_coluna():
 
 def test_booleano_so_aceita_booleano():
     assert extrair({"tem_imovel_para_vender": "sim"}) == Extracao()
+
+
+@pytest.mark.parametrize(
+    ("bruto", "esperado"),
+    [
+        # O lado ANOTADO sujo: as duas unicas anotacoes do corpus com preposicao.
+        ("perto da usp", "usp"),
+        ("perto da unicamp", "unicamp"),
+        # O lado OBTIDO sujo, que e o caso maioritario: o modelo devolve a
+        # forma da fala, e 16 das 18 anotacoes ja sao toponimo limpo.
+        ("regiao do brooklin", "brooklin"),
+        ("regiao dos jardins", "jardins"),
+        ("regiao da paulista", "paulista"),
+        ("na regiao da paulista", "paulista"),
+        ("estacao vila madalena", "vila madalena"),
+        # Prefixos encadeados caem no mesmo passe.
+        ("perto da estacao vila madalena", "vila madalena"),
+        # Caixa e espaco sobrando.
+        ("  Vila   Mariana  ", "vila mariana"),
+    ],
+)
+def test_normalizar_regiao_tira_o_ruido_de_referencia(bruto: str, esperado: str) -> None:
+    assert normalizar_regiao(bruto) == esperado
+
+
+@pytest.mark.parametrize("nome", ["zona leste", "zona sul", "zona oeste"])
+def test_normalizar_regiao_nao_come_zona(nome: str) -> None:
+    """`zona` e o nome, nao ruido. Tres anotacoes do corpus dependem disto, e
+    perde-las transformaria a normalizacao no defeito que ela vem consertar."""
+    assert normalizar_regiao(nome) == nome
+
+
+@pytest.mark.parametrize(
+    "nome", ["brooklin", "itaim bibi", "jardim das flores", "tatuape", "sp", "cotia"]
+)
+def test_normalizar_regiao_nao_mexe_em_toponimo_limpo(nome: str) -> None:
+    assert normalizar_regiao(nome) == nome
+
+
+def test_normalizar_regiao_so_tira_prefixo_e_nao_subcadeia() -> None:
+    """ "estacao" no meio de um nome sobrevive. So some quando abre a string."""
+    assert normalizar_regiao("bairro estacao velha") == "bairro estacao velha"
+
+
+def test_regiao_que_e_so_ruido_vira_vazio() -> None:
+    """Quem decide o que fazer com o vazio e o chamador: `extrair` descarta o
+    campo. Devolver o original aqui gravaria ruido no banco."""
+    assert normalizar_regiao("perto da") == ""
+    assert normalizar_regiao("   ") == ""
+
+
+def test_normalizar_regiao_e_idempotente() -> None:
+    """Vale por construcao, porque a remocao repete ate nao casar -- este teste
+    e o que garante que continue valendo se alguem trocar o laco por um passe."""
+    for bruto in ("perto da estacao vila madalena", "regiao do brooklin", "zona sul"):
+        uma = normalizar_regiao(bruto)
+        assert normalizar_regiao(uma) == uma
