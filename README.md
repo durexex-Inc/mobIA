@@ -661,7 +661,7 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   `modelo_agente` para um arquivo que só o agente use — não existe ainda. Se um
   dia o gate não rodar quando deveria, este e o `montagem.py` são os dois
   lugares a olhar primeiro.
-- **Corpus sintético não é tráfego real.** Cento e trinta e seis turnos
+- **Corpus sintético não é tráfego real.** Cento e trinta e oito turnos
   escritos por quem conhece o sistema carregam o viés de quem os escreveu, e
   nenhuma anotação cuidadosa remove isso. O número que sair daqui é um piso
   de confiança, não uma medida de campo.
