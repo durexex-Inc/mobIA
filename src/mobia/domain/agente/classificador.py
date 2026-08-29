@@ -179,8 +179,13 @@ def _regiao(bruto: Any) -> str | None:
     """Normaliza antes de truncar, e descarta o que sobra vazio.
 
     `normalizar_regiao` ja faz o colapso de espaco e o `casefold`, entao o
-    `strip` de antes ficou dentro dela. O truncamento continua por ultimo:
-    `lead_qualification.regiao` e `String(120)`, e normalizar so encurta.
+    `strip` de antes ficou dentro dela. O truncamento continua por ultimo, e a
+    ordem importa: normalizar pode ALONGAR (`casefold` de `ß` vira `ss`, e de
+    `ﬃ` vira `ffi`), por isso o truncamento vem depois, nunca antes. Truncar
+    primeiro normalizaria o resultado ja cortado em 120 e poderia devolver
+    mais que 120 caracteres depois do `casefold` -- acima de
+    `lead_qualification.regiao` (`String(120)`) e `DataError` no commit,
+    exatamente a falha que esta guarda existe para evitar.
     """
     if not isinstance(bruto, str):
         return None

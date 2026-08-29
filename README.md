@@ -1175,6 +1175,16 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   distinção some do valor gravado. A troca é a favor do filtro SQL por
   igualdade que a TEC-158 precisa — o texto original da fala continua
   intacto no histórico de mensagens, cifrado, que é onde ele sempre esteve.
+- **Esse consolo tem prazo de validade.** `_texto_do_estado`
+  (`src/mobia/domain/context/montagem.py`) entra no prompt de verdade que o
+  modelo lê a cada turno, não só na estimativa de tokens — então a partir
+  desta card a memória que o modelo enxerga passa a mostrar `regiao: vila
+  madalena` em vez da fala original do lead. Enquanto as mensagens literais
+  que carregam "perto da" ainda estiverem na janela de contexto, a intenção
+  de proximidade continua visível ao modelo por elas; quando saem da janela
+  (dobradas em resumo, ou truncadas), essa intenção some da visão do modelo
+  também, não só do banco — o histórico cifrado continua existindo, mas deixa
+  de ser lido a cada turno.
 - **É mudança de comportamento de produção, sem migração retroativa.** Os
   registros já gravados em `lead_qualification.regiao` ficam na forma velha;
   não há migração dos dados existentes, e por um tempo a coluna terá as duas

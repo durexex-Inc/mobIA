@@ -6,6 +6,7 @@ from anthropic import transform_schema
 
 from mobia.domain.agente.classificador import SCHEMA_DA_EXTRACAO, extrair
 from mobia.domain.agente.schemas import (
+    _PREFIXOS_DE_REFERENCIA,
     Extracao,
     FormaPagamento,
     TipoImovel,
@@ -194,6 +195,16 @@ def test_regiao_e_truncada_no_limite_da_coluna():
     assert len(obtido.regiao) == 120
 
 
+def test_regiao_com_prefixo_e_truncada_depois_de_normalizar():
+    """Prefixo e truncamento juntos, sem teste ate agora: `_regiao` normaliza
+    antes de truncar (ver docstring), entao o prefixo tem de sair antes da
+    contagem dos 120 caracteres, nao depois."""
+    obtido = extrair({"regiao": "perto da " + "a" * 200})
+    assert obtido.regiao is not None
+    assert len(obtido.regiao) == 120
+    assert obtido.regiao == "a" * 120
+
+
 def test_booleano_so_aceita_booleano():
     assert extrair({"tem_imovel_para_vender": "sim"}) == Extracao()
 
@@ -238,6 +249,13 @@ def test_normalizar_regiao_nao_mexe_em_toponimo_limpo(nome: str) -> None:
 def test_normalizar_regiao_so_tira_prefixo_e_nao_subcadeia() -> None:
     """ "estacao" no meio de um nome sobrevive. So some quando abre a string."""
     assert normalizar_regiao("bairro estacao velha") == "bairro estacao velha"
+    # Perda conhecida e aceita, nao bug: quando "estacao" abre a string, o
+    # prefixo casa mesmo em toponimo real, e o primeiro token some junto.
+    # "Estacao Velha" e bairro de Campina Grande; "regiao dos lagos" e nome
+    # proprio no RJ (ver D2 do spec). O corpus desta card e SP-only, entao
+    # nenhum dos dois aparece nele -- mas o prefixo nao sabe disso, e por isso
+    # o risco fica medido aqui em vez de so declarado em prosa.
+    assert normalizar_regiao("estacao velha") == "velha"
 
 
 def test_regiao_que_e_so_ruido_vira_vazio() -> None:
@@ -273,3 +291,19 @@ def test_extrair_descarta_regiao_que_e_so_ruido() -> None:
 
 def test_extrair_preserva_toponimo_limpo() -> None:
     assert extrair({"regiao": "Itaim Bibi"}).regiao == "itaim bibi"
+
+
+def test_nenhum_prefixo_de_referencia_e_prefixo_de_outro() -> None:
+    """Guarda estrutural: sem ela, acrescentar por exemplo "regiao " solto a
+    lista faria o resultado de `normalizar_regiao` passar a depender da ordem
+    de iteracao de `_PREFIXOS_DE_REFERENCIA` -- o laco para no primeiro que
+    casar, entao dois prefixos em relacao de prefixo-de-prefixo dariam
+    resultados diferentes conforme qual deles o `for` visita primeiro, em
+    silencio, sem nenhum teste acusando."""
+    colisoes = [
+        (a, b)
+        for a in _PREFIXOS_DE_REFERENCIA
+        for b in _PREFIXOS_DE_REFERENCIA
+        if a != b and b.startswith(a)
+    ]
+    assert colisoes == []

@@ -33,7 +33,7 @@ Consequência de desenho: o ruído aparece nos **dois** lados, e maioritariament
 
 **`extrair`** (`src/mobia/domain/agente/classificador.py`) valida `regiao` só por comprimento (≤ 120 caracteres) e devolve o texto como veio.
 
-**`lead_qualification.regiao`** é `String(32)`, filtrada por igualdade em SQL pela TEC-158.
+**`lead_qualification.regiao`** é `String(120)`, filtrada por igualdade em SQL pela TEC-158.
 
 ## Decisões
 
@@ -52,11 +52,15 @@ Dois consumidores:
 
 ### D2 — O que a normalização tira
 
-Prefixos de referência, no início da string, depois de `casefold` e colapso de espaço:
+Prefixos de referência, no início da string, depois de `casefold` e colapso de espaço. A lista implementada tem **15** entradas, não 13 — duas a mais do que este spec listava originalmente:
 
-`perto da` · `perto do` · `perto de` · `proximo a` · `proximo ao` · `proximo da` · `proximo do` · `regiao da` · `regiao do` · `regiao de` · `regiao das` · `regiao dos` · `estacao`
+`na regiao da` · `na regiao do` · `regiao das` · `regiao dos` · `regiao da` · `regiao do` · `regiao de` · `proximo da` · `proximo do` · `proximo ao` · `proximo a` · `perto da` · `perto do` · `perto de` · `estacao`
 
-E nada mais. Em particular **`zona` não é tirada**: `zona leste`, `zona sul` e `zona oeste` são o nome, não ruído — três das 18 anotações dependem disso.
+`na regiao da ` e `na regiao do ` foram acrescentados na implementação porque `"na regiao da paulista"` é a fala literal de `compra.yaml` (linha 133) — sem eles, um modelo que ecoa essa fala verbatim no campo extraído não normalizaria para `"paulista"`. Não são redundantes com `regiao da`/`regiao do`: a string começa com `na `, então o prefixo mais curto não casa na posição 0.
+
+**A extensão é assimétrica, e isso não foi decidido por escrito — só implementado.** O mesmo corpus tem `"na regiao dos jardins"` (`aluguel.yaml`, linha 95), `"na zona sul"` (`compra.yaml`, linha 176), `"na zona oeste"` (`investimento.yaml`, linha 58) e `"na zona leste"` (`aluguel.yaml`, linha 36) nas falas — nenhuma delas ganhou prefixo correspondente (`na regiao dos `, ou qualquer coisa para `na zona `). `zona` continua fora da lista de propósito (ver abaixo), então `na zona sul` não normalizaria de qualquer forma sem antes decidir se `na ` também deveria cair ali. Mas `na regiao dos ` é o mesmo caso que motivou `na regiao da`/`na regiao do`, só que não coberto — isto tem a forma de um esquecimento, não de uma decisão, e fica registrado aqui sem resolução: alguém com contexto do card precisa decidir se completa a simetria (`na regiao dos `, `na regiao das `) ou se declara por escrito por que parar em `da`/`do`.
+
+E nada mais além dos 15 acima. Em particular **`zona` não é tirada**: `zona leste`, `zona sul` e `zona oeste` são o nome, não ruído — três das 18 anotações dependem disso.
 
 A remoção é de **prefixo**, não de subcadeia. `"estacao"` no meio de um nome sobrevive; só some quando abre a string.
 
@@ -73,6 +77,8 @@ E **repete enquanto casar**: `"perto da estacao vila madalena"` perde `perto da`
 `"perto da usp"` e `"usp"` passam a ser a mesma coisa. Mas um lead que disse "perto da usp" quer **proximidade**, não o campus — e essa distinção some do banco.
 
 Para o filtro estruturado da TEC-158 isso é ganho: `"usp"` é filtrável, `"perto da usp"` não. Para um corretor lendo o registro do lead, é perda. A decisão é a favor do filtro, porque `lead_qualification` existe para ser consultada em SQL — o texto original da fala continua no histórico de mensagens, cifrado, que é onde ele pertence.
+
+O prefixo `estacao ` tem a mesma perda, e é mais grave porque não depende de preposição: quando abre a string, o prefixo casa mesmo em topônimo real, e o primeiro token some junto. `"estacao velha"` → `"velha"` (Estação Velha é bairro de Campina Grande); `"regiao dos lagos"` → `"lagos"` (nome próprio no RJ). O comportamento não muda — `estacao vila madalena` é caso real do corpus e precisa do prefixo —, mas a perda é conhecida e aceita, e o corpus desta card é SP-only: nenhum dos dois exemplos acima aparece nele.
 
 ### D4 — É mudança de comportamento de produção, sem migração retroativa
 

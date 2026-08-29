@@ -471,11 +471,30 @@ def test_regiao_com_estacao_casa_com_o_bairro():
 def test_regioes_realmente_diferentes_continuam_divergindo():
     """A normalizacao nao pode fazer tudo casar com tudo -- ai ela deixaria de
     medir. `aluguel-02` troca de regiao no meio da conversa, e esse caso e o
-    que prova que a sobrescrita e medida."""
+    que prova que a sobrescrita e medida.
+
+    `brooklin` x `itaim bibi` nao compartilha prefixo nenhum, entao so
+    reprovaria sob um normalizador degenerado -- ele nao exercita o mecanismo
+    de verdade, so confere que dois toponimos sem nada em comum continuam
+    diferentes. `zona sul` x `zona leste` compartilham a palavra "zona", que e
+    exatamente o tipo de prefixo que este modulo remove de outras referencias
+    (`regiao `, `estacao `, …) e que `_PREFIXOS_DE_REFERENCIA` recusa de
+    proposito remover aqui (ver comentario em `schemas.py`). Este par mede a
+    metrica de ponta a ponta sobre um caso de forma real, no lugar de um par
+    arbitrario -- a guarda contra "zona" virar prefixo removido continua
+    sendo `test_normalizar_regiao_nao_come_zona`, no nivel da funcao; este
+    teste garante que, enquanto essa guarda vale, a metrica tambem reflete a
+    divergencia real entre duas zonas distintas.
+    """
     observadas = [_observada({"regiao": "brooklin"}, {"regiao": "itaim bibi"})]
 
     assert precisao_da_extracao(observadas).acertos == 0
     assert [d.tipo for d in discrepancias_da_extracao(observadas)] == ["divergiu"]
+
+    observadas_zona = [_observada({"regiao": "zona sul"}, {"regiao": "zona leste"})]
+
+    assert precisao_da_extracao(observadas_zona).acertos == 0
+    assert [d.tipo for d in discrepancias_da_extracao(observadas_zona)] == ["divergiu"]
 
 
 def test_normalizacao_de_regiao_nao_vaza_para_outros_campos_de_texto():
