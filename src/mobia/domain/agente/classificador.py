@@ -26,10 +26,26 @@ log = structlog.get_logger(__name__)
 
 MAX_TOKENS_DA_RESPOSTA = 1500
 
+# Orcamento: SISTEMA_DO_AGENTE cabe em 587 caracteres/tokens-equivalentes de
+# um teto de 600 (ver test_diferenca_entre_o_contado_e_o_enviado, em
+# test_config.py). A margem de 13 e deliberada, nao descuido: guardada por
+# test_a_margem_do_orcamento_do_prompt_e_deliberada, para a proxima card nao
+# gastar sem saber que estava gastando a reserva.
+#
+# Nenhum campo de SCHEMA_DA_EXTRACAO ganhou "description": descrever so os
+# tres enums (tipo_imovel, urgencia, forma_pagamento) custaria da ordem de
+# 300 caracteres, e a folga inteira e de 296 -- estouraria sozinho.
+#
+# A abertura diz "extrai o que ele procura", nao "extrai o que ele disse
+# sobre o que procura". A forma longa e mais precisa e custa 18 caracteres a
+# mais (127 contra 109) -- cortada pelo orcamento. A precisao perdida volta
+# na regra de "null" logo abaixo, que diz explicitamente "so o que a fala
+# DESTE turno afirma". Sem este registro, quem achar a abertura imprecisa vai
+# "melhora-la" sem olhar a conta, e descobre o estouro no CI.
 SISTEMA_DO_AGENTE = (
     "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
-    "por mensagem. A cada turno voce faz duas coisas: classifica a intencao do "
-    "lead e responde a ele.\n\n"
+    "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
+    "lead, extrai o que ele procura, e responde a ele.\n\n"
     "Intencoes possiveis: COMPRA (quer comprar para morar), ALUGUEL (quer alugar), "
     "INVESTIMENTO (compra para renda ou revenda, nao para morar), VENDER_IMOVEL "
     "(quer vender o que tem), SUPORTE_CONTRATO (duvida sobre contrato vigente), "
@@ -40,6 +56,10 @@ SISTEMA_DO_AGENTE = (
     "estado de qualificacao como memoria: nao repergunte o que ja esta "
     "preenchido. Nao invente informacao sobre imoveis que nao esteja no "
     "contexto."
+    "\n\nNa extracao, preencha so o que a fala DESTE turno afirma; o resto e "
+    'null. null e "nao falou disso agora", nunca "nao sei". Nao infira: '
+    "extrair o que a fala nao afirma conta erro igual a nao extrair o que ela "
+    "afirma."
 )
 
 MAX_TOKENS_DA_PERGUNTA = 300

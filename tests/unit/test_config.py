@@ -207,3 +207,37 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
     # Folga, nao empate: o overhead estrutural da requisicao (envelope do
     # turno de usuario) tambem sai daqui, e ele nao esta na conta acima.
     assert subcontagem < settings.contexto_headroom_de_tokens * 0.75
+
+
+def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
+    """A TEC-240 gastou 61 dos 74 tokens de folga e deixou 13 de proposito.
+
+    Sem este teste, a proxima card gasta os 13 sem saber que eram a margem, e
+    a card seguinte descobre o estouro -- que e o que aconteceu com a reserva
+    antes da TEC-145. O teto de 590 e mais apertado que o de 600 usado pelo
+    teste irmao justamente para tornar a margem visivel: se voce esta lendo
+    isto porque ele reprovou, a pergunta e "o que sai do prompt para o novo
+    texto entrar?", nao "quanto subo o numero?".
+    """
+    import json
+
+    from mobia.domain.agente.classificador import _SCHEMA_COMPILADO, SISTEMA_DO_AGENTE
+    from mobia.domain.context.montagem import SISTEMA
+
+    def em_tokens(texto: str) -> float:
+        return len(texto) / 4
+
+    rotulos = (
+        "Resumo da conversa ate aqui:\nMensagens recentes:\nEstado de qualificacao:\n" + "\n\n" * 2
+    )
+    subcontagem = (
+        -em_tokens(SISTEMA)
+        + em_tokens(SISTEMA_DO_AGENTE)
+        + em_tokens(json.dumps(_SCHEMA_COMPILADO))
+        + em_tokens(rotulos)
+    )
+
+    assert subcontagem < 590, (
+        f"subcontagem {subcontagem}: a margem de 13 tokens sobre o teto de 600 "
+        f"foi consumida. Encolha o texto enviado, nao suba a reserva."
+    )
