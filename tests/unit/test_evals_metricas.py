@@ -447,6 +447,46 @@ def test_normalizacao_de_comparavel_vale_aqui_tambem():
     )
 
 
+# --- TEC-241: a medicao compara regiao na forma canonica --------------------
+
+
+def test_regiao_com_preposicao_casa_com_o_toponimo():
+    """O par que originou esta card: 10 das 29 discrepancias da execucao de
+    28/08 eram `regiao`, todas `divergiu`, e nenhuma era erro do modelo."""
+    observadas = [_observada({"regiao": "perto da usp"}, {"regiao": "usp"})]
+
+    metrica = precisao_da_extracao(observadas)
+
+    assert (metrica.acertos, metrica.total) == (1, 1)
+    assert discrepancias_da_extracao(observadas) == []
+
+
+def test_regiao_com_estacao_casa_com_o_bairro():
+    observadas = [_observada({"regiao": "vila madalena"}, {"regiao": "estacao vila madalena"})]
+
+    assert precisao_da_extracao(observadas).acertos == 1
+    assert discrepancias_da_extracao(observadas) == []
+
+
+def test_regioes_realmente_diferentes_continuam_divergindo():
+    """A normalizacao nao pode fazer tudo casar com tudo -- ai ela deixaria de
+    medir. `aluguel-02` troca de regiao no meio da conversa, e esse caso e o
+    que prova que a sobrescrita e medida."""
+    observadas = [_observada({"regiao": "brooklin"}, {"regiao": "itaim bibi"})]
+
+    assert precisao_da_extracao(observadas).acertos == 0
+    assert [d.tipo for d in discrepancias_da_extracao(observadas)] == ["divergiu"]
+
+
+def test_normalizacao_de_regiao_nao_vaza_para_outros_campos_de_texto():
+    """So `regiao` e normalizada. Se `_comparavel` aplicasse a regra a todo
+    texto, um campo futuro herdaria uma normalizacao pensada para toponimo."""
+    from mobia.evals.metricas import _comparavel
+
+    assert _comparavel("regiao", "perto da usp") == "usp"
+    assert _comparavel("tipo_imovel", "perto da usp") == "perto da usp"
+
+
 def test_acertos_mais_discrepancias_fecham_o_total_da_metrica():
     """A invariante que amarra as duas funcoes.
 
