@@ -1134,9 +1134,10 @@ Os três tipos não são simétricos, e ler isso errado custa a card errada:
 extraiu **certo** e que ninguém anotou desconta exatamente como uma invenção —
 campo com muitos `extra` e pouca anotação no corpus é candidato a lacuna de
 anotação, não a defeito do modelo. É a leitura que a TEC-238 vai precisar para
-separar invenção de anotação faltante nos 63 turnos sem `campos` — e a que,
-até a primeira execução paga acontecer, ninguém ainda exerceu contra dados
-reais.
+separar invenção de anotação faltante nos 63 turnos sem `campos`. A execução
+de 28/08 já exerceu essa leitura contra dados reais uma vez, e foi assim que
+`regiao` apareceu como o maior balde de discrepâncias — mas contra o corpus
+de antes da TEC-239 e da TEC-238, e sem turno negativo nenhum.
 
 Uma invariante amarra as duas funções contra a mesma sequência de observadas:
 `acertos + len(discrepancias) == total`. Há teste guardando
@@ -1357,15 +1358,30 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   independentes. Consequência aceita: `follow-up-07` índice 2 e `follow-up-08`
   índice 0 ficam fora da medição de extração, e um modelo que lê `IMEDIATA`
   ali não ganha nem perde ponto.
-- **A precisão de extração nunca foi executada.** O eval é pago e roda sob demanda
-  ou em PR que toque `src/mobia/domain/agente/`.
+- **A precisão de extração rodou uma vez, em 28/08/2026, e o número se perdeu.**
+  A execução foi feita com a instrumentação de `discrepancias_da_extracao`,
+  contra o corpus de então — 32 turnos anotados, 47 anotações, `regiao` com 17
+  —, e produziu **29 discrepâncias**, das quais 10 em `regiao` (todas
+  `divergiu`, por desacordo de forma) e 8 em sinônimos de `tipo_imovel`. Foi
+  ela que originou a [TEC-241](https://eduardodurieuxlopes.atlassian.net/browse/TEC-241).
+  **O percentual de precisão e a faixa não foram registrados, e o relatório
+  não foi preservado** — uma execução paga cujo resultado se perde é dinheiro
+  gasto duas vezes, e isso é lacuna de processo, não de código. O que sobrou
+  está na descrição da TEC-241, e é só a decomposição por campo.
+- **Não há baseline comparável para a extração.** Os 29 acima são de um corpus
+  que mudou duas vezes desde então: a TEC-239 levou as anotações de 47 para 59,
+  e a TEC-238 acrescentou 37 turnos negativos. Qualquer execução daqui para a
+  frente difere daquela por mudança de prompt **e** de régua ao mesmo tempo, e
+  a diferença entre as duas não é atribuível a uma causa só. Quem for medir
+  efeito de prompt precisa de uma execução nova como "antes".
 - **`SISTEMA_DO_AGENTE` não diz em lugar nenhum que a extração é por turno.**
   (`src/mobia/domain/agente/classificador.py`) manda usar o resumo e o estado
   de qualificação acumulado "como memória", e não menciona que cada turno
   deve extrair só o que aquele turno afirma — quem diz isso é o docstring de
   `Extracao`, que o modelo não lê. A convenção por-turno é pressuposta pelas
   anotações positivas desde a TEC-145 e nunca foi medida contra o prompt
-  real. Se a primeira execução paga desta card vier vermelha por invenção
-  nos turnos negativos, a primeira hipótese a checar é essa — o modelo
+  real — a execução de 28/08 é anterior aos turnos negativos e não podia
+  medir isso. Se a próxima execução paga vier vermelha por invenção nos
+  turnos negativos, a primeira hipótese a checar é essa — o modelo
   reemitindo estado acumulado num turno que não afirmou nada de novo —, não
   regressão de prompt.
