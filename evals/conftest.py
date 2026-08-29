@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from mobia.evals.corpus import ConversaAnotada, carregar, total_de_turnos
-from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS
+from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS, PISO_DE_TURNOS_NEGATIVOS
 
 CORPUS = Path(__file__).resolve().parent / "corpus"
 
@@ -33,12 +33,17 @@ def conversas() -> list[ConversaAnotada]:
     esta no disco agora, na maquina que vai pagar -- o caso que o unit test nao
     ve e que o `pytest evals` local com corpus meio editado produz.
 
-    Confere os dois pisos, nao so `PISO_DE_TURNOS`: `PISO_DE_TURNOS_ANOTADOS`
-    e irmao dele e tinha ficado sem guarda aqui e no fim do runner, so no
-    unit test do corpus commitado. Um corpus editado a mao no disco podia ter
-    120+ turnos e poucos deles anotados -- passava este pre-voo e so
-    `precisao_da_extracao` sofreria, silenciosamente, com uma amostra de
-    campo pequena de mais para o piso de 85% significar algo.
+    Confere os tres pisos, nao so `PISO_DE_TURNOS`: `PISO_DE_TURNOS_ANOTADOS` e
+    `PISO_DE_TURNOS_NEGATIVOS` sao irmaos dele e tinham ficado sem guarda aqui
+    e no fim do runner, so no unit test do corpus commitado. Um corpus editado
+    a mao no disco podia ter 120+ turnos e poucos deles anotados -- passava
+    este pre-voo e so `precisao_da_extracao` sofreria, silenciosamente, com uma
+    amostra de campo pequena de mais para o piso de 85% significar algo.
+
+    As duas guardas de anotacao usam `turno.positivo` e `turno.negativo`, e
+    nao a veracidade de `turno.campos`: desde a TEC-238 `campos: {}` e um
+    estado anotado (o lead nao afirmou nada), nao a ausencia de anotacao, e
+    `if turno.campos` leria esse turno negativo como turno fora da medicao.
     """
     carregadas = carregar(CORPUS)
     turnos = total_de_turnos(carregadas)
@@ -47,11 +52,18 @@ def conversas() -> list[ConversaAnotada]:
             f"corpus com {turnos} turnos, piso {PISO_DE_TURNOS}: abortado antes "
             f"da primeira chamada paga, porque a execucao nao teria amostra."
         )
-    anotados = sum(1 for conversa in carregadas for turno in conversa.turnos if turno.campos)
+    anotados = sum(1 for conversa in carregadas for turno in conversa.turnos if turno.positivo)
     if anotados < PISO_DE_TURNOS_ANOTADOS:
         pytest.fail(
             f"corpus com {anotados} turnos anotados, piso {PISO_DE_TURNOS_ANOTADOS}: "
             f"abortado antes da primeira chamada paga, porque a precisao da extracao "
             f"nao teria amostra."
+        )
+    negativos = sum(1 for conversa in carregadas for turno in conversa.turnos if turno.negativo)
+    if negativos < PISO_DE_TURNOS_NEGATIVOS:
+        pytest.fail(
+            f"corpus com {negativos} turnos negativos, piso {PISO_DE_TURNOS_NEGATIVOS}: "
+            f"abortado antes da primeira chamada paga, porque invencao nao teria "
+            f"amostra e a metrica voltaria a medir so um dos dois lados."
         )
     return carregadas

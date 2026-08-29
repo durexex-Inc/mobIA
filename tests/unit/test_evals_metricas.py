@@ -8,6 +8,7 @@ from mobia.evals.corpus import carregar, total_de_turnos
 from mobia.evals.metricas import (
     PISO_DE_PRECISAO_DA_EXTRACAO_PCT,
     PISO_DE_TURNOS,
+    PISO_DE_TURNOS_NEGATIVOS,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
     Discrepancia,
@@ -284,6 +285,25 @@ def test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos() -> None:
         f"as {TETO_DE_CONVERSAS_ABANDONADAS} conversas mais longas somam "
         f"{pior_perda} turnos, e o corpus tem {total_de_turnos(conversas)} "
         f"sobre um piso de {PISO_DE_TURNOS}"
+    )
+
+
+def test_o_piso_de_negativos_sobrevive_ao_teto_de_abandono() -> None:
+    """O piso nao e numero de gosto: e o que sobra depois do pior abandono.
+
+    Mesma conta de `test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos`,
+    na dimensao dos negativos. Se o corpus mudar de forma, este teste falha
+    de graca, antes de qualquer chamada paga.
+    """
+    conversas = carregar(CORPUS)
+    por_conversa = sorted((sum(1 for t in c.turnos if t.negativo) for c in conversas), reverse=True)
+    negativos = sum(por_conversa)
+    pior_perda = sum(por_conversa[:TETO_DE_CONVERSAS_ABANDONADAS])
+
+    assert negativos - pior_perda >= PISO_DE_TURNOS_NEGATIVOS, (
+        f"as {TETO_DE_CONVERSAS_ABANDONADAS} conversas com mais negativos somam "
+        f"{pior_perda}, e o corpus tem {negativos} sobre um piso de "
+        f"{PISO_DE_TURNOS_NEGATIVOS}"
     )
 
 

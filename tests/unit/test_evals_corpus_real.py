@@ -11,7 +11,7 @@ from mobia.domain.agente.schemas import (
     Urgencia,
 )
 from mobia.evals.corpus import ConversaAnotada, carregar, total_de_turnos
-from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS
+from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS, PISO_DE_TURNOS_NEGATIVOS
 
 _VOCABULARIO = {
     "tipo_imovel": TipoImovel,
@@ -89,7 +89,7 @@ def test_todo_id_e_prefixado_pela_categoria(conversas: list[ConversaAnotada]) ->
 def test_corpus_tem_turnos_anotados_suficientes(conversas: list[ConversaAnotada]) -> None:
     """Piso proprio: sem ele, anotar tres turnos faceis daria 100% de precisao
     num corpus que nao mede nada."""
-    anotados = sum(1 for c in conversas for t in c.turnos if t.campos is not None)
+    anotados = sum(1 for c in conversas for t in c.turnos if t.positivo)
     assert anotados >= PISO_DE_TURNOS_ANOTADOS
 
 
@@ -110,7 +110,7 @@ def test_todo_campo_de_extracao_tem_anotacao(conversas: list[ConversaAnotada]) -
         nome
         for conversa in conversas
         for turno in conversa.turnos
-        if turno.campos
+        if turno.positivo
         for nome in turno.campos
     }
     todos = {campo.name for campo in fields(Extracao)}
@@ -132,7 +132,7 @@ def test_o_corpus_tem_turnos_negativos_anotados(conversas: list[ConversaAnotada]
     coisa -- e um modelo que inventa em todo turno nao anotado tira 100%."""
     negativos = sum(1 for c in conversas for t in c.turnos if t.negativo)
 
-    assert negativos >= 25  # PISO_DE_TURNOS_NEGATIVOS, nomeado na Task 3
+    assert negativos >= PISO_DE_TURNOS_NEGATIVOS
 
 
 def test_ha_turno_de_correcao_anotado(conversas: list[ConversaAnotada]) -> None:

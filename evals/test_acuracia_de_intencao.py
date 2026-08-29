@@ -20,6 +20,7 @@ from mobia.evals.corpus import ConversaAnotada
 from mobia.evals.metricas import (
     PISO_DE_TURNOS,
     PISO_DE_TURNOS_ANOTADOS,
+    PISO_DE_TURNOS_NEGATIVOS,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
     ExtracaoObservada,
@@ -229,6 +230,14 @@ def _metricas_de(
     exatamente esse caso: `precisao_da_extracao` mediria e bloquearia (ou
     liberaria) um gate pago com uma amostra abaixo do piso que o corpus
     declara, e o resultado seria ruido lido como sinal.
+
+    A guarda conta positivos e negativos em separado, e nao `len(observadas)`
+    direto: `observadas` inclui os dois desde a TEC-238, e um total unico se
+    auto-satisfaria com 30 negativos e nenhum positivo (ou o inverso) -- o
+    mesmo furo que o piso de negativos existe para fechar, entrando por outra
+    porta. `precisao_da_extracao(observadas)` continua recebendo **todas** as
+    observadas, positivas e negativas: e so a guarda que precisa saber a
+    composicao, porque um dos dois grupos sozinho nao sustenta o piso de 85%.
     """
     medidas = (
         [
@@ -242,15 +251,18 @@ def _metricas_de(
         if resultados
         else []
     )
+    positivas = sum(1 for o in observadas if o.esperado != {})
+    negativas = len(observadas) - positivas
     extracao = (
         [precisao_da_extracao(observadas)]
-        if len(observadas) >= PISO_DE_TURNOS_ANOTADOS
+        if positivas >= PISO_DE_TURNOS_ANOTADOS and negativas >= PISO_DE_TURNOS_NEGATIVOS
         else [
             sem_mecanismo(
                 "precisao da extracao",
-                f"{len(observadas)} turnos anotados sobraram na execucao, "
-                f"piso {PISO_DE_TURNOS_ANOTADOS}: amostra pequena de mais "
-                f"para o piso de 85% significar algo",
+                f"{positivas} turnos anotados (piso {PISO_DE_TURNOS_ANOTADOS}) e "
+                f"{negativas} negativos (piso {PISO_DE_TURNOS_NEGATIVOS}) sobraram "
+                f"na execucao: amostra pequena de mais para o piso de 85% "
+                f"significar algo",
             )
         ]
     )

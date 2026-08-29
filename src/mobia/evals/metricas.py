@@ -25,6 +25,22 @@ PISO_DE_TURNOS = 120
 # corpus so-positivo, na outra direcao.
 PISO_DE_TURNOS_ANOTADOS = 30
 
+# Piso dos turnos anotados como "o lead nao afirmou nada" (`campos: {}`).
+# Irmao de `PISO_DE_TURNOS_ANOTADOS` na terceira direcao: aquele responde
+# "sobrou amostra para medir acerto?", este responde "sobrou amostra para
+# pegar invencao?".
+#
+# Os dois sao separados de proposito. Um piso unico sobre "todo turno
+# anotado" se auto-satisfaria: 30 turnos negativos sem invencao nenhuma
+# dariam denominador zero, e `faixa_de` levanta `ValueError` em vez de
+# reportar -- o mesmo furo que o piso existe para fechar, entrando por outra
+# porta.
+#
+# O numero vem do pior caso de abandono, como o de `TETO_DE_CONVERSAS_ABANDONADAS`:
+# sao 39 negativos, e as cinco conversas com mais negativos somam 12, entao a
+# execucao mais azarada ainda entrega 27. O piso fica em 25, com folga de dois.
+PISO_DE_TURNOS_NEGATIVOS = 25
+
 # Quantas conversas a execucao pode perder para falha de infraestrutura antes
 # de deixar de valer como medida.
 #
