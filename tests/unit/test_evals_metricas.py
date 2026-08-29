@@ -471,3 +471,61 @@ def test_a_ordem_segue_a_dos_turnos_observados():
         _observada({}, {"urgencia": "IMEDIATA"}, indice=2),
     ]
     assert [d.indice for d in discrepancias_da_extracao(observadas)] == [5, 2]
+
+
+# --- TEC-238: invencao em turno negativo -----------------------------------
+
+
+def test_modelo_que_inventa_em_turno_negativo_nao_tira_cem_por_cento() -> None:
+    """O exploit que a card existe para fechar.
+
+    Um modelo que acerta os turnos anotados e inventa `regiao`/`tipo_imovel`
+    em todo turno nao anotado tirava 100%, VERDE. Com turnos negativos no
+    corpus, a mesma invencao entra no denominador pelo lado obtido e nao tem
+    como somar acerto.
+    """
+    observadas = [
+        _observada({"quartos": 2}, {"quartos": 2}, indice=0),
+        _observada({}, {"regiao": "sp", "tipo_imovel": "CASA"}, indice=1),
+    ]
+
+    metrica = precisao_da_extracao(observadas)
+
+    assert (metrica.acertos, metrica.total) == (1, 3)
+    assert metrica.faixa is Faixa.VERMELHO
+
+
+def test_turno_negativo_sem_invencao_nao_altera_a_nota() -> None:
+    """Nao inventar nao pode custar nem render ponto: o turno negativo limpo
+    contribui zero para os dois lados da fracao. Sem isso, anotar mais
+    negativos diluiria a nota de um modelo que se comporta."""
+    so_positivo = [_observada({"quartos": 2}, {"quartos": 2}, indice=0)]
+    com_negativo = [*so_positivo, _observada({}, {}, indice=1)]
+
+    assert precisao_da_extracao(com_negativo).acertos == precisao_da_extracao(so_positivo).acertos
+    assert precisao_da_extracao(com_negativo).total == precisao_da_extracao(so_positivo).total
+
+
+def test_invencao_em_turno_negativo_e_extra_sem_ambiguidade() -> None:
+    """O que torna o diagnostico suficiente sem uma metrica separada.
+
+    Em turno positivo, `extra` pode ser invencao ou lacuna de anotacao. Em
+    turno negativo nao pode ser lacuna: o turno esta anotado por completo.
+    """
+    achadas = discrepancias_da_extracao([_observada({}, {"regiao": "sp"}, indice=0)])
+
+    assert [(d.campo, d.tipo) for d in achadas] == [("regiao", "extra")]
+
+
+def test_corpus_so_negativo_e_limpo_levanta_em_vez_de_reportar() -> None:
+    """A borda que o piso de negativos NAO protege.
+
+    Turno negativo limpo contribui zero para os dois lados, entao um conjunto
+    so de negativos sem invencao nenhuma tem total zero, e `faixa_de` recusa
+    total zero para que um corpus que falhou ao carregar nao abra o gate com
+    0/0. Quem impede esse conjunto de chegar aqui e `PISO_DE_TURNOS_ANOTADOS`,
+    contado sobre positivos -- este teste fixa que a protecao mora la, e nao
+    numa tolerancia escondida aqui dentro.
+    """
+    with pytest.raises(ValueError, match="nada medido"):
+        precisao_da_extracao([_observada({}, {}, indice=0)])

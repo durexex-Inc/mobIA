@@ -23,10 +23,16 @@ class CorpusInvalido(RuntimeError):
 class TurnoAnotado:
     """Um turno do corpus, com o rotulo de intencao e a anotacao de extracao.
 
-    `campos` ausente tira o turno da medicao de extracao de proposito -- e o
-    jeito de dizer "esta fala nao afirma nada extraivel", ou "nao sei enumerar
-    com confianca tudo o que ela afirma". `campos` presente e contrato de
-    anotacao **completa**: ver o comentario em `_turno_de`.
+    `campos` tem tres estados, e cada um significa uma coisa diferente:
+
+    - ausente (`None`): o turno fica fora da medicao de extracao de proposito
+      -- "nao sei enumerar com confianca tudo o que esta fala afirma".
+    - `{}`: o turno esta anotado por completo, e a anotacao e "nada foi
+      afirmado". Qualquer campo que o modelo devolver aqui e invencao.
+    - dict nao vazio: o turno afirma alguma coisa, e a anotacao diz o que.
+
+    `campos` presente (os dois ultimos casos) e contrato de anotacao
+    **completa**: ver o comentario em `_turno_de`.
 
     Duas regras de anotacao que a TEC-239 teve de decidir, porque o corpus as
     aplicava de dois jeitos:
@@ -46,6 +52,26 @@ class TurnoAnotado:
     lead: str
     intencao: Intencao
     campos: dict[str, Any] | None = None
+
+    @property
+    def anotado(self) -> bool:
+        """O turno entra na medicao de extracao."""
+        return self.campos is not None
+
+    @property
+    def positivo(self) -> bool:
+        """O turno afirma alguma coisa, e a anotacao diz o que."""
+        return self.campos is not None and self.campos != {}
+
+    @property
+    def negativo(self) -> bool:
+        """O turno esta anotado como "o lead nao afirmou nada".
+
+        Tudo que o modelo devolver aqui e invencao, sem ambiguidade: o turno
+        esta anotado por completo, e o completo e vazio. E o unico formato em
+        que `extra` acusa o modelo em vez de acusar a medicao.
+        """
+        return self.campos == {}
 
 
 @dataclass(frozen=True)
@@ -70,19 +96,28 @@ def _turno_de(bruto: Any, conversa_id: str, arquivo: str) -> TurnoAnotado:
     if not texto:
         raise CorpusInvalido(f"{arquivo}: conversa {conversa_id!r} tem turno sem texto")
 
-    campos_brutos = bruto.get("campos")
-    if campos_brutos is None:
+    # Distingue por PRESENCA da chave, e nunca por veracidade do valor:
+    # `bruto.get("campos")` devolve None tanto para chave ausente quanto para
+    # `campos:` sem valor, e desde a TEC-238 esses dois significam coisas
+    # opostas.
+    if "campos" not in bruto:
         campos = None
-    elif not isinstance(campos_brutos, dict) or not campos_brutos:
-        raise CorpusInvalido(
-            f"{arquivo}: {conversa_id} tem `campos` que nao e objeto ou esta vazio. "
-            f"Omita a chave para deixar o turno fora da medicao de extracao."
-        )
     else:
+        campos_brutos = bruto["campos"]
+        if campos_brutos is None:
+            raise CorpusInvalido(
+                f"{arquivo}: {conversa_id} tem `campos` sem valor, que nao diz nada. "
+                f"Omita a chave para deixar o turno fora da medicao de extracao, "
+                f"ou escreva `campos: {{}}` para dizer que o lead nao afirmou "
+                f"nada neste turno."
+            )
+        if not isinstance(campos_brutos, dict):
+            raise CorpusInvalido(f"{arquivo}: {conversa_id} tem `campos` que nao e um objeto.")
         # Anotacao e contrato: `campos` presente significa "este turno esta
         # anotado por completo". A metrica conta campo extraido que nao esta
         # aqui como erro, entao uma anotacao parcial nao vira nota mais baixa
-        # do modelo -- vira medicao errada.
+        # do modelo -- vira medicao errada. `{}` e o caso limite disso: nada
+        # esperado, tudo obtido e erro.
         for nome, valor in campos_brutos.items():
             if nome not in _CAMPOS_ANOTAVEIS:
                 raise CorpusInvalido(
