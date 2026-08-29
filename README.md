@@ -1519,6 +1519,31 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   sinal de quão disposto o modelo está a inventar, não risco de dado
   permanente gravado. É a
   [TEC-238](https://eduardodurieuxlopes.atlassian.net/browse/TEC-238).
+- **O critério de exclusão e o de anáfora colidem numa classe de turnos, e a
+  colisão está aberta por decisão, não por descuido.** A regra da TEC-242
+  mantém *"e pode ter animal de estimação no prédio?"* (`aluguel-09` índice 2)
+  **fora da medição**, porque `prédio` é contêiner genérico e um modelo que lê
+  tipologia dali está lendo a fala com razão. A regra que a TEC-243 escreveu
+  torna *"aquele mesmo prédio"* (`aluguel-01` índice 1) **negativo**, porque
+  anáfora pura não nomeia nada e repetir o campo do turno anterior é `extra` de
+  propósito. As duas falas são pergunta de processo com `prédio` apontando para
+  o imóvel que o turno 0 já estabeleceu, e mesmo assim um modelo que devolver
+  `tipo_imovel` leva invenção numa e nada na outra. É classe, e não turno: sete
+  turnos do corpus têm dica de tipologia na fala (`prédio`, `condomínio`,
+  `unidade`) — `aluguel-01` índices 1 e 2, `aluguel-02` índice 1,
+  `investimento-01` índice 2, `investimento-08` índices 0 e 2, mais
+  `aluguel-09` índice 2, o excluído. **Seis dos sete são negativos que esta
+  card criou**: antes da TEC-243 nenhum turno negativo do corpus tinha dica de
+  tipologia, e a colisão não existia na prática. Ela não foi resolvida porque
+  os dois jeitos custam mais do que ela: medir `aluguel-09` índice 2 derruba
+  uma decisão da TEC-238 que a TEC-242 reafirmou e que o spec desta card diz
+  confirmar — isso é card própria —, e excluir `aluguel-01` índice 1
+  contradiria o comentário de `borda-longa-01` índice 2, que registra que
+  repetir os campos do turno anterior conta `extra` de propósito, e cascataria
+  pelos outros cinco. O que custa deixar assim está medido: a régua cobra
+  invenção num turno e perdoa a uma conversa de distância, dentro desta classe
+  e só dela. Está escrita no docstring de `TurnoAnotado`
+  (`src/mobia/evals/corpus.py`), onde o próximo anotador a lê antes de anotar.
 - **Nenhum dos nove campos fica com zero anotação, e o teste guarda isso.**
   Contagem nos 55 turnos anotados como positivos, 83 anotações de campo:
 
