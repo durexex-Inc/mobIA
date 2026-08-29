@@ -4,12 +4,12 @@
 # 1. TRANSACAO: compra ou aluguel. Ela nao precisa estar dita com a palavra
 #    "comprar". Pergunta de preco ou de negociacao sobre imovel anunciado, sem
 #    nenhuma mencao a aluguel, conta como transacao implicita de compra: e o
-#    caso de `compra-04` t1 ("quanto ta pedindo?") e de `compra-11` t1 ("da pra
-#    negociar o valor?"), os dois rotulados COMPRA. Quem pergunta o preco de um
+#    caso de `compra-04` indice 0 ("quanto ta pedindo?") e de `compra-11`
+#    indice 0 ("da pra negociar o valor?"), os dois rotulados COMPRA. Quem pergunta o preco de um
 #    imovel a venda esta na conversa de compra, tenha ou nao dito o verbo.
 #
 #    O que derruba o rotulo para INDEFINIDA e a ausencia *total* de pista de
-#    transacao, e nao a falta do verbo: `borda-longa-01` t1 ("vi um anuncio de
+#    transacao, e nao a falta do verbo: `borda-longa-01` indice 0 ("vi um anuncio de
 #    vcs no instagram, sobre um apartamento na aclimacao") nao pergunta preco,
 #    nao fala de negociacao e nao diz se o anuncio era de venda ou de locacao
 #    -- ali nao ha o que inferir, e foi por isso que o turno foi corrigido para
@@ -75,6 +75,7 @@
       intencao: INVESTIMENTO
     - lead: "qual o yield medio desse tipo de imovel ja alugado?"
       intencao: INVESTIMENTO
+      campos: {}
 
 - id: investimento-06
   descricao: renda extra explicitada logo no primeiro turno
@@ -107,6 +108,7 @@
       intencao: INVESTIMENTO
     - lead: "voces administram a locacao tambem ou so a venda?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "comprando mais de uma unidade de uma vez, tem desconto no valor?"
       intencao: INVESTIMENTO
 
@@ -119,8 +121,10 @@
         tipo_imovel: APARTAMENTO
     - lead: "quanto tempo leva pra sair uma venda assim depois da reforma?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "voces tem equipe de reforma parceira ou eu contrato por fora?"
       intencao: INVESTIMENTO
+      campos: {}
 
 - id: investimento-10
   descricao: comprar terreno para pequeno empreendimento e revender
@@ -131,5 +135,7 @@
         tipo_imovel: TERRENO
     - lead: "voces tem contato de construtora parceira pra esse tipo de projeto?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "e a prefeitura demora muito pra aprovar esse tipo de obra por ali?"
       intencao: INVESTIMENTO
+      campos: {}

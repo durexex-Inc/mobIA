@@ -62,6 +62,66 @@ class FormaPagamento(StrEnum):
 LIMIAR_DE_DESAMBIGUACAO = Decimal("0.6")
 
 
+# Prefixos de referencia: o jeito de o lead localizar sem nomear. "perto da
+# usp" nao e uma regiao, e uma frase com preposicao, e `_comparavel` faz so
+# `strip` e `casefold` -- qualquer diferenca de forma contava erro cheio.
+#
+# `zona` NAO esta aqui, de proposito: `zona leste`, `zona sul` e `zona oeste`
+# sao o nome, nao ruido, e tres anotacoes do corpus dependem disso.
+_PREFIXOS_DE_REFERENCIA = (
+    "na regiao da ",
+    "na regiao do ",
+    "regiao das ",
+    "regiao dos ",
+    "regiao da ",
+    "regiao do ",
+    "regiao de ",
+    "proximo da ",
+    "proximo do ",
+    "proximo ao ",
+    "proximo a ",
+    "perto da ",
+    "perto do ",
+    "perto de ",
+    "estacao ",
+)
+
+
+def normalizar_regiao(texto: str) -> str:
+    """A forma canonica de `regiao`, na gravacao e na medicao.
+
+    Existe uma so, com dois consumidores -- `extrair` e o `_comparavel` do eval
+    --, porque duas regras de forma divergem e a divergencia so aparece na
+    borda. Mesmo motivo de `faixa_de_catastrofe` ter sido deletada e de
+    `campos_a_gravar` ter sido extraida.
+
+    Normalizar perde informacao de proposito: "perto da usp" e "usp" viram a
+    mesma coisa, e o lead que disse "perto da usp" queria proximidade, nao o
+    campus. A troca e a favor do filtro estruturado da TEC-158, que compara
+    `regiao` por igualdade em SQL -- "usp" e filtravel, "perto da usp" nao. O
+    texto original da fala continua no historico de mensagens, cifrado, que e
+    onde ele pertence.
+    """
+    limpo = " ".join(texto.split()).casefold()
+    # Repete enquanto casar: "perto da estacao vila madalena" perde `perto da`
+    # e so entao `estacao`. Um passe so deixaria metade do ruido -- a fala de
+    # `aluguel-06` e exatamente esse caso --, e repetir e o que torna a funcao
+    # idempotente por construcao em vez de por sorte.
+    mudou = True
+    while mudou:
+        mudou = False
+        for prefixo in _PREFIXOS_DE_REFERENCIA:
+            if limpo == prefixo.strip():
+                limpo = ""
+                mudou = True
+                break
+            if limpo.startswith(prefixo):
+                limpo = limpo[len(prefixo) :]
+                mudou = True
+                break
+    return limpo
+
+
 @dataclass(frozen=True)
 class Extracao:
     """O que o lead disse sobre o que procura, neste turno.

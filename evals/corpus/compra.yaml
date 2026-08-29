@@ -4,12 +4,12 @@
 # 1. TRANSACAO: compra ou aluguel. Ela nao precisa estar dita com a palavra
 #    "comprar". Pergunta de preco ou de negociacao sobre imovel anunciado, sem
 #    nenhuma mencao a aluguel, conta como transacao implicita de compra: e o
-#    caso de `compra-04` t1 ("quanto ta pedindo?") e de `compra-11` t1 ("da pra
-#    negociar o valor?"), os dois rotulados COMPRA. Quem pergunta o preco de um
+#    caso de `compra-04` indice 0 ("quanto ta pedindo?") e de `compra-11`
+#    indice 0 ("da pra negociar o valor?"), os dois rotulados COMPRA. Quem pergunta o preco de um
 #    imovel a venda esta na conversa de compra, tenha ou nao dito o verbo.
 #
 #    O que derruba o rotulo para INDEFINIDA e a ausencia *total* de pista de
-#    transacao, e nao a falta do verbo: `borda-longa-01` t1 ("vi um anuncio de
+#    transacao, e nao a falta do verbo: `borda-longa-01` indice 0 ("vi um anuncio de
 #    vcs no instagram, sobre um apartamento na aclimacao") nao pergunta preco,
 #    nao fala de negociacao e nao diz se o anuncio era de venda ou de locacao
 #    -- ali nao ha o que inferir, e foi por isso que o turno foi corrigido para
@@ -67,8 +67,10 @@
         tipo_imovel: APARTAMENTO
     - lead: "e qual documentacao voces pedem pra dar entrada no processo?"
       intencao: COMPRA
+      campos: {}
     - lead: "faz quanto tempo em media do inicio ate a chave na mao?"
       intencao: COMPRA
+      campos: {}
 
 - id: compra-04
   descricao: casa acima do orcamento, lead migra pra aluguel na mesma regiao
@@ -167,8 +169,10 @@
       intencao: COMPRA
     - lead: "quanto tempo demora entre a proposta e a escritura normalmente?"
       intencao: COMPRA
+      campos: {}
     - lead: "e precisa de advogado por nossa conta ou voces ja indicam um?"
       intencao: COMPRA
+      campos: {}
 
 - id: compra-11
   descricao: sobrado na zona sul, negociacao e permuta
@@ -179,6 +183,9 @@
         regiao: zona sul
     - lead: "e aceita permuta com meu carro na entrada?"
       intencao: COMPRA
+    # Nao anotado como negativo: "sobrado" nao esta em `TipoImovel`, e um
+    # modelo que devolve `CASA` esta lendo a fala com razao. Marcar este turno
+    # como negativo puniria o acerto com forca de gate.
     - lead: "o sobrado tem escritura ja regularizada?"
       intencao: COMPRA
 
@@ -194,3 +201,4 @@
       intencao: COMPRA
     - lead: "consigo fechar tudo a distancia, sem vir pessoalmente antes?"
       intencao: COMPRA
+      campos: {}

@@ -8,20 +8,24 @@ from mobia.evals.corpus import carregar, total_de_turnos
 from mobia.evals.metricas import (
     PISO_DE_PRECISAO_DA_EXTRACAO_PCT,
     PISO_DE_TURNOS,
+    PISO_DE_TURNOS_NEGATIVOS,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
     Discrepancia,
     ExtracaoObservada,
     Faixa,
+    ResumoDeNegativos,
     acuracia_de_intencao,
     acuracia_efetiva,
     bloqueia,
     discrepancias_da_extracao,
+    eh_negativo,
     erros,
     faixa_de,
     matriz_de_confusao,
     precisao_da_extracao,
     resumo_de_confianca,
+    resumo_de_negativos,
     sem_mecanismo,
 )
 
@@ -287,6 +291,25 @@ def test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos() -> None:
     )
 
 
+def test_o_piso_de_negativos_sobrevive_ao_teto_de_abandono() -> None:
+    """O piso nao e numero de gosto: e o que sobra depois do pior abandono.
+
+    Mesma conta de `test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos`,
+    na dimensao dos negativos. Se o corpus mudar de forma, este teste falha
+    de graca, antes de qualquer chamada paga.
+    """
+    conversas = carregar(CORPUS)
+    por_conversa = sorted((sum(1 for t in c.turnos if t.negativo) for c in conversas), reverse=True)
+    negativos = sum(por_conversa)
+    pior_perda = sum(por_conversa[:TETO_DE_CONVERSAS_ABANDONADAS])
+
+    assert negativos - pior_perda >= PISO_DE_TURNOS_NEGATIVOS, (
+        f"as {TETO_DE_CONVERSAS_ABANDONADAS} conversas com mais negativos somam "
+        f"{pior_perda}, e o corpus tem {negativos} sobre um piso de "
+        f"{PISO_DE_TURNOS_NEGATIVOS}"
+    )
+
+
 def test_a_efetiva_usa_as_mesmas_faixas_da_crua() -> None:
     """O que a baseline mudou, fixado por teste.
 
@@ -447,16 +470,83 @@ def test_normalizacao_de_comparavel_vale_aqui_tambem():
     )
 
 
+# --- TEC-241: a medicao compara regiao na forma canonica --------------------
+
+
+def test_regiao_com_preposicao_casa_com_o_toponimo():
+    """O par que originou esta card: 10 das 29 discrepancias da execucao de
+    28/08 eram `regiao`, todas `divergiu`, e nenhuma era erro do modelo."""
+    observadas = [_observada({"regiao": "perto da usp"}, {"regiao": "usp"})]
+
+    metrica = precisao_da_extracao(observadas)
+
+    assert (metrica.acertos, metrica.total) == (1, 1)
+    assert discrepancias_da_extracao(observadas) == []
+
+
+def test_regiao_com_estacao_casa_com_o_bairro():
+    observadas = [_observada({"regiao": "vila madalena"}, {"regiao": "estacao vila madalena"})]
+
+    assert precisao_da_extracao(observadas).acertos == 1
+    assert discrepancias_da_extracao(observadas) == []
+
+
+def test_regioes_realmente_diferentes_continuam_divergindo():
+    """A normalizacao nao pode fazer tudo casar com tudo -- ai ela deixaria de
+    medir. `aluguel-02` troca de regiao no meio da conversa, e esse caso e o
+    que prova que a sobrescrita e medida.
+
+    `brooklin` x `itaim bibi` nao compartilha prefixo nenhum, entao so
+    reprovaria sob um normalizador degenerado -- ele nao exercita o mecanismo
+    de verdade, so confere que dois toponimos sem nada em comum continuam
+    diferentes. `zona sul` x `zona leste` compartilham a palavra "zona", que e
+    exatamente o tipo de prefixo que este modulo remove de outras referencias
+    (`regiao `, `estacao `, …) e que `_PREFIXOS_DE_REFERENCIA` recusa de
+    proposito remover aqui (ver comentario em `schemas.py`). Este par mede a
+    metrica de ponta a ponta sobre um caso de forma real, no lugar de um par
+    arbitrario -- a guarda contra "zona" virar prefixo removido continua
+    sendo `test_normalizar_regiao_nao_come_zona`, no nivel da funcao; este
+    teste garante que, enquanto essa guarda vale, a metrica tambem reflete a
+    divergencia real entre duas zonas distintas.
+    """
+    observadas = [_observada({"regiao": "brooklin"}, {"regiao": "itaim bibi"})]
+
+    assert precisao_da_extracao(observadas).acertos == 0
+    assert [d.tipo for d in discrepancias_da_extracao(observadas)] == ["divergiu"]
+
+    observadas_zona = [_observada({"regiao": "zona sul"}, {"regiao": "zona leste"})]
+
+    assert precisao_da_extracao(observadas_zona).acertos == 0
+    assert [d.tipo for d in discrepancias_da_extracao(observadas_zona)] == ["divergiu"]
+
+
+def test_normalizacao_de_regiao_nao_vaza_para_outros_campos_de_texto():
+    """So `regiao` e normalizada. Se `_comparavel` aplicasse a regra a todo
+    texto, um campo futuro herdaria uma normalizacao pensada para toponimo."""
+    from mobia.evals.metricas import _comparavel
+
+    assert _comparavel("regiao", "perto da usp") == "usp"
+    assert _comparavel("tipo_imovel", "perto da usp") == "perto da usp"
+
+
 def test_acertos_mais_discrepancias_fecham_o_total_da_metrica():
-    """A invariante que amarra as duas funcoes.
+    """A invariante que amarra as duas funcoes, com negativos na mistura.
 
     Sem ela, alguem muda a formula de `precisao_da_extracao` e o relatorio passa
-    a mentir em silencio, em vez de o teste quebrar.
+    a mentir em silencio, em vez de o teste quebrar. O README aponta este teste
+    pelo nome como a guarda da invariante "continua valendo com negativos" --
+    as tres `observadas` originais eram todas positivas, e um negativo com
+    invencao (`esperado={}`, `obtido` nao vazio) exercita exatamente o lado da
+    uniao que so aparece desde a TEC-238: o campo entra no total pelo lado
+    obtido e vira `extra`, nunca `acerto`. O negativo limpo prova a outra
+    metade -- contribui zero para os dois lados e nao quebra a soma.
     """
     observadas = [
         _observada({"quartos": 2, "regiao": "sp"}, {"quartos": 2, "vagas": 1}, indice=0),
         _observada({"urgencia": "IMEDIATA"}, {"urgencia": "SEM_PRESSA"}, indice=1),
         _observada({"tipo_imovel": "CASA"}, {"tipo_imovel": "CASA"}, indice=2),
+        _observada({}, {"regiao": "sp"}, indice=3),
+        _observada({}, {}, indice=4),
     ]
     metrica = precisao_da_extracao(observadas)
     assert metrica.total is not None and metrica.acertos is not None
@@ -471,3 +561,86 @@ def test_a_ordem_segue_a_dos_turnos_observados():
         _observada({}, {"urgencia": "IMEDIATA"}, indice=2),
     ]
     assert [d.indice for d in discrepancias_da_extracao(observadas)] == [5, 2]
+
+
+# --- TEC-238: invencao em turno negativo -----------------------------------
+
+
+def test_modelo_que_inventa_em_turno_negativo_nao_tira_cem_por_cento() -> None:
+    """O exploit que a card existe para fechar.
+
+    Um modelo que acerta os turnos anotados e inventa `regiao`/`tipo_imovel`
+    em todo turno nao anotado tirava 100%, VERDE. Com turnos negativos no
+    corpus, a mesma invencao entra no denominador pelo lado obtido e nao tem
+    como somar acerto.
+    """
+    observadas = [
+        _observada({"quartos": 2}, {"quartos": 2}, indice=0),
+        _observada({}, {"regiao": "sp", "tipo_imovel": "CASA"}, indice=1),
+    ]
+
+    metrica = precisao_da_extracao(observadas)
+
+    assert (metrica.acertos, metrica.total) == (1, 3)
+    assert metrica.faixa is Faixa.VERMELHO
+
+
+def test_turno_negativo_sem_invencao_nao_altera_a_nota() -> None:
+    """Nao inventar nao pode custar nem render ponto: o turno negativo limpo
+    contribui zero para os dois lados da fracao. Sem isso, anotar mais
+    negativos diluiria a nota de um modelo que se comporta."""
+    so_positivo = [_observada({"quartos": 2}, {"quartos": 2}, indice=0)]
+    com_negativo = [*so_positivo, _observada({}, {}, indice=1)]
+
+    assert precisao_da_extracao(com_negativo).acertos == precisao_da_extracao(so_positivo).acertos
+    assert precisao_da_extracao(com_negativo).total == precisao_da_extracao(so_positivo).total
+
+
+def test_invencao_em_turno_negativo_e_extra_sem_ambiguidade() -> None:
+    """O que torna o diagnostico suficiente sem uma metrica separada.
+
+    Em turno positivo, `extra` pode ser invencao ou lacuna de anotacao. Em
+    turno negativo nao pode ser lacuna: o turno esta anotado por completo.
+    """
+    achadas = discrepancias_da_extracao([_observada({}, {"regiao": "sp"}, indice=0)])
+
+    assert [(d.campo, d.tipo) for d in achadas] == [("regiao", "extra")]
+
+
+def test_corpus_so_negativo_e_limpo_levanta_em_vez_de_reportar() -> None:
+    """A borda que o piso de negativos NAO protege.
+
+    Turno negativo limpo contribui zero para os dois lados, entao um conjunto
+    so de negativos sem invencao nenhuma tem total zero, e `faixa_de` recusa
+    total zero para que um corpus que falhou ao carregar nao abra o gate com
+    0/0. Quem impede esse conjunto de chegar aqui e `PISO_DE_TURNOS_ANOTADOS`,
+    contado sobre positivos -- este teste fixa que a protecao mora la, e nao
+    numa tolerancia escondida aqui dentro.
+    """
+    with pytest.raises(ValueError, match="nada medido"):
+        precisao_da_extracao([_observada({}, {}, indice=0)])
+
+
+def test_resumo_de_negativos_conta_turnos_e_invencoes() -> None:
+    """Turno negativo sem invencao nao aparece em `discrepancias_da_extracao`,
+    entao o relatorio nao teria como dizer quantos foram medidos. Sem esse
+    numero, "3 invencoes" nao se distingue de "3 invencoes em 3 turnos"."""
+    observadas = [
+        _observada({"quartos": 2}, {"quartos": 2}, indice=0),
+        _observada({}, {}, indice=1),
+        _observada({}, {"regiao": "sp", "tipo_imovel": "CASA"}, indice=2),
+    ]
+
+    resumo = resumo_de_negativos(observadas)
+
+    assert resumo == ResumoDeNegativos(turnos=2, com_invencao=1, campos_inventados=2)
+
+
+def test_eh_negativo_e_o_criterio_unico_de_turno_negativo() -> None:
+    """`eh_negativo` e o que `resumo_de_negativos` e `_positivas_e_negativas`
+    (`evals/test_acuracia_de_intencao.py`) tem de compartilhar -- duas formulas
+    do mesmo criterio divergem sem teste para acusar, o mesmo furo que matou
+    `faixa_de_catastrofe` no PR #10."""
+    assert eh_negativo(_observada({}, {}, indice=0)) is True
+    assert eh_negativo(_observada({}, {"regiao": "sp"}, indice=0)) is True
+    assert eh_negativo(_observada({"quartos": 2}, {"quartos": 2}, indice=0)) is False

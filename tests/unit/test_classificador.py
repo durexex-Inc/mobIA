@@ -653,4 +653,7 @@ async def test_extracao_nao_vaza_no_log(
     with caplog.at_level(logging.INFO):
         await ClassificadorAnthropic().classificar(_contexto())
 
-    assert "SENTINELA-REGIAO" not in caplog.text
+    # `extrair` agora grava `regiao` em `casefold` (TEC-241): se vazasse,
+    # apareceria como "sentinela-regiao", nao mais na caixa injetada acima.
+    # Comparar em caixa original deixaria este teste verde sem testar nada.
+    assert "sentinela-regiao" not in caplog.text.casefold()

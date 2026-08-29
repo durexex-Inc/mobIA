@@ -17,6 +17,7 @@ from mobia.domain.agente.schemas import (
     RespostaDoAgente,
     TipoImovel,
     Urgencia,
+    normalizar_regiao,
 )
 from mobia.domain.context.montagem import ContextoMontado, montar_prompt
 from mobia.domain.messages.recorder import custo_em_dolar
@@ -208,9 +209,20 @@ def _membro(enum: type[StrEnum], bruto: Any) -> Any:
 
 
 def _regiao(bruto: Any) -> str | None:
+    """Normaliza antes de truncar, e descarta o que sobra vazio.
+
+    `normalizar_regiao` ja faz o colapso de espaco e o `casefold`, entao o
+    `strip` de antes ficou dentro dela. O truncamento continua por ultimo, e a
+    ordem importa: normalizar pode ALONGAR (`casefold` de `ß` vira `ss`, e de
+    `ﬃ` vira `ffi`), por isso o truncamento vem depois, nunca antes. Truncar
+    primeiro normalizaria o resultado ja cortado em 120 e poderia devolver
+    mais que 120 caracteres depois do `casefold` -- acima de
+    `lead_qualification.regiao` (`String(120)`) e `DataError` no commit,
+    exatamente a falha que esta guarda existe para evitar.
+    """
     if not isinstance(bruto, str):
         return None
-    limpa = bruto.strip()
+    limpa = normalizar_regiao(bruto)
     return limpa[:MAX_CARACTERES_DA_REGIAO] if limpa else None
 
 
