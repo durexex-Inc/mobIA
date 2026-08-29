@@ -122,7 +122,7 @@ por:
     "lead, extrai o que ele procura, e responde a ele.\n\n"
 ```
 
-A ordem `classifica, extrai, responde` espelha a ordem dos campos em `SCHEMA_DA_RESPOSTA`. Não é enfeite: o modelo preenche o objeto na ordem declarada, e enunciar a tarefa fora de ordem convida a incoerência entre o que ele diz que fez e o que preencheu.
+A ordem `classifica, extrai, responde` **não** é a ordem dos campos em `SCHEMA_DA_RESPOSTA` (essa é `intencao, confianca, resposta, extracao` — `extracao` é anexada depois de `resposta`). Ver D3 do spec: mover `extracao` para antes de `resposta` teria custo zero de orçamento, mas foi recusado por mudar a ordem de geração do modelo num caminho pago sem instrumento para medir o efeito. O schema não muda nesta card.
 
 **A regra nova**, acrescentada ao **fim** da string, depois de `"...Nao invente informacao sobre imoveis que nao esteja no contexto."`:
 
@@ -221,7 +221,7 @@ Na seção da TEC-145, onde a preparação de contexto e a reserva já são disc
 - **o prompt passa a nomear a terceira tarefa e a explicar `null`** — até aqui a semântica em que todo o desenho se apoia chegava ao modelo como nomes de campo crus;
 - **a reserva não subiu.** Ficou em 800, e o texto coube nos 296 caracteres de folga com 13 tokens de margem, travada por teste próprio. Subir a reserva era saída permitida pelo card e foi recusada: cada 100 tokens de reserva são 100 tokens a menos de literais e resumo por turno;
 - **nenhum campo do schema ganhou `description`, e o item 3 do escopo do card não foi entregue** — com a aritmética ao lado: descrever só os três enums de vocabulário arbitrário custa da ordem de 300 caracteres e estoura os 296 sozinho;
-- **o efeito não foi medido, e o critério 4 do card não se sustenta como escrito.** A única execução paga de extração é a de 28/08, contra um corpus que mudou **duas vezes** desde então (TEC-239 levou as anotações de 47 para 59; TEC-238 acrescentou 37 turnos negativos). Um "depois" medido hoje difere daquele por mudança de prompt **e** de régua ao mesmo tempo, e a diferença não é atribuível a uma causa só. Medir efeito de prompt exigiria uma execução nova **antes** desta card entrar — duas execuções pagas, não uma.
+- **o efeito não foi medido, e o critério 4 do card não se sustenta como escrito.** A única execução paga de extração é a de 28/08, contra um corpus que já mudou **uma vez** nesta árvore desde então (TEC-239 levou as anotações de 47 para 59) e vai mudar de novo quando a TEC-238 entrar (37 turnos negativos, ainda só no PR #14, não nesta branch). Um "depois" medido hoje já difere daquele por mudança de prompt **e** de régua ao mesmo tempo, e a diferença não é atribuível a uma causa só. Medir efeito de prompt exigiria uma execução nova **antes** desta card entrar — duas execuções pagas, não uma.
 
 - [ ] **Step 3: Rode e commite**
 

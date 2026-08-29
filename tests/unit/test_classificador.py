@@ -560,9 +560,20 @@ def test_o_prompt_do_agente_nomeia_as_tres_tarefas() -> None:
 def test_o_prompt_do_agente_explica_a_semantica_de_null() -> None:
     """`null` significa "o lead nao falou disso NESTE turno", e a metrica pune
     inferencia tanto quanto omissao. As duas coisas chegavam ao modelo como
-    nomes de campo crus."""
+    nomes de campo crus.
+
+    Os dois primeiros asserts (ja existentes) so travam substrings soltas --
+    nao a frase que a card existe para escrever. Sem o terceiro assert, uma
+    edicao futura podia cortar exatamente a definicao explicita de `null` (a
+    unica que o modelo recebe) mantendo "DESTE turno" e "Nao infira" em outro
+    lugar do texto, e este teste continuaria verde.
+    """
     assert "DESTE turno" in SISTEMA_DO_AGENTE
     assert "Nao infira" in SISTEMA_DO_AGENTE
+    assert 'null e "nao falou disso agora"' in SISTEMA_DO_AGENTE
+    # Unico ponto onde o prompt usa o nome do campo do schema -- nada mais
+    # trava isso.
+    assert "Na extracao" in SISTEMA_DO_AGENTE
 
 
 async def test_desambiguar_recusa_parada_anormal(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -53,9 +53,13 @@ Custo medido: **+244 caracteres**, subcontagem 526 → **587**, contra o teto de
 
 A margem é parte da decisão, não sobra acidental. Uma versão mais explicativa desse mesmo texto foi medida em +317 caracteres e **estourava** o teto em 5 tokens; uma intermediária pousava em 599,8 contra 600, que é pior que estourar — passa hoje e quebra na próxima palavra que alguém acrescentar em qualquer um dos quatro termos da conta.
 
-### D3 — A ordem das três coisas espelha a ordem do schema
+### D3 — A ordem das três coisas no prompt não é a ordem do schema, e isso fica declarado
 
-`classifica, extrai, responde` é a ordem em que os campos aparecem em `SCHEMA_DA_RESPOSTA`. Não é enfeite: o modelo preenche o objeto na ordem declarada, e enunciar a tarefa fora de ordem convida a incoerência entre o que ele diz que fez e o que ele preencheu.
+`classifica, extrai, responde` é a ordem enunciada na abertura de `SISTEMA_DO_AGENTE`. Não é a ordem real de `SCHEMA_DA_RESPOSTA`: essa é `intencao, confianca, resposta, extracao` — `extracao` é anexada **depois** de `resposta` (as duas linhas `SCHEMA_DA_RESPOSTA["properties"]["extracao"] = ...` e o `.append` correspondente, em `classificador.py`), não antes dela. Confirmado por execução; uma versão anterior deste documento afirmava que as duas ordens coincidiam, o que era falso.
+
+**Alternativa considerada e recusada: mover `extracao` para antes de `resposta` no dict do schema.** Teria custo zero de orçamento — o dict não muda de tamanho — e tornaria a frase da abertura literalmente verdadeira. Foi recusada porque mudaria a **ordem de geração** do modelo (ele preenche o objeto JSON na ordem declarada no schema) num caminho **pago**, para todo turno de produção, numa card que por desenho não roda o eval e não tem como medir se essa mudança ajuda, atrapalha ou é neutra. É a mesma disciplina que levou a recusar subir a reserva (ver "O orçamento é o desenho" acima): não gastar num caminho pago sem instrumento para ler o resultado.
+
+A frase na abertura fica como está — enuncia a ordem em que o modelo é instruído a agir no turno (classificar, depois extrair, depois responder), não uma afirmação sobre a ordem de campos do schema. O schema não muda nesta card.
 
 ### D4 — "extrai o que ele procura", e não "o que ele disse sobre o que procura"
 
@@ -78,7 +82,7 @@ A forma longa é mais precisa e custa 18 caracteres a mais (127 contra 109). Foi
 
 **O critério 4 do card — "rodar o gate antes e depois, e registrar as duas precisões" — não é entregue, e não é só por causa do custo.**
 
-Ele não se sustenta como está escrito. A execução de 28/08 é o único "antes" que existe, e ela rodou contra um corpus que mudou **duas vezes** desde então: a TEC-239 levou as anotações de 47 para 59, e a TEC-238 acrescentou 37 turnos negativos. Um "depois" medido hoje difere daquele por mudança de prompt **e** de régua ao mesmo tempo, e a diferença não é atribuível a uma causa só.
+Ele não se sustenta como está escrito. A execução de 28/08 é o único "antes" que existe, e ela rodou contra um corpus que já mudou **uma vez** nesta árvore desde então: a TEC-239 levou as anotações de 47 para 59. Vai mudar de novo quando a TEC-238 entrar — 37 turnos negativos, ainda só no PR #14, não nesta branch. Um "depois" medido hoje já divergiria daquele por mudança de prompt **e** de régua ao mesmo tempo, e a diferença não é atribuível a uma causa só; o PR #14 só vai aumentar essa distância quando entrar.
 
 Medir efeito de prompt exige uma execução nova como linha de base, **antes** desta card entrar — duas execuções pagas, não uma. Isso fica registrado no README como o que é: a alavanca foi puxada sem instrumento para ler o resultado.
 

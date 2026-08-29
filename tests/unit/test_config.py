@@ -1,4 +1,5 @@
 import base64
+import json
 
 import pytest
 
@@ -8,7 +9,43 @@ from mobia.app.config import (
     Settings,
     get_settings,
 )
+from mobia.domain.agente.classificador import _SCHEMA_COMPILADO, SISTEMA_DO_AGENTE
+from mobia.domain.context.montagem import SISTEMA
 from mobia.infra.anthropic import get_client
+
+# Rotulos que `montar_prompt` intercala entre resumo, mensagens recentes e
+# estado -- hardcoded aqui, acoplado a `montagem.py`, porque copiar o texto
+# exato e mais barato que importar o modulo so para reconstrui-lo. O
+# acoplamento e pre-existente (nao nasceu deste helper); o helper so o
+# concentra num unico ponto em vez de deixá-lo duplicado entre os dois testes
+# que o usavam.
+_ROTULOS_DE_MONTAR_PROMPT = (
+    "Resumo da conversa ate aqui:\nMensagens recentes:\nEstado de qualificacao:\n" + "\n\n" * 2
+)
+
+
+def _subcontagem() -> float:
+    """A mesma conta que `test_diferenca_entre_o_contado_e_o_enviado` e
+    `test_a_margem_do_orcamento_do_prompt_e_deliberada` travam contra tetos
+    diferentes (600 e 590). Extraida para um so lugar porque as duas copias
+    verbatim divergirem em silencio era exatamente o risco que a duplicacao
+    corria: se `montar_prompt` ganhar um quarto rotulo, so um dos dois
+    testes seria atualizado, e os dois continuariam verdes medindo coisas
+    diferentes.
+    """
+
+    def em_tokens(texto: str) -> float:
+        return len(texto) / 4
+
+    return (
+        # Contado e nao enviado: o classificador usa omitir_sistema=True.
+        -em_tokens(SISTEMA)
+        # Enviados e nunca contados: campo `system=`, o schema de saida e os
+        # rotulos que `montar_prompt` intercala.
+        + em_tokens(SISTEMA_DO_AGENTE)
+        + em_tokens(json.dumps(_SCHEMA_COMPILADO))
+        + em_tokens(_ROTULOS_DE_MONTAR_PROMPT)
+    )
 
 
 def test_settings_le_do_ambiente(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,26 +215,7 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
     campo ao schema muda a conta sem tocar em `config.py`, e sem isto ninguem
     ficaria sabendo ate a primeira chamada estourar o limite de verdade.
     """
-    import json
-
-    from mobia.domain.agente.classificador import _SCHEMA_COMPILADO, SISTEMA_DO_AGENTE
-    from mobia.domain.context.montagem import SISTEMA
-
-    def em_tokens(texto: str) -> float:
-        return len(texto) / 4
-
-    rotulos = (
-        "Resumo da conversa ate aqui:\nMensagens recentes:\nEstado de qualificacao:\n" + "\n\n" * 2
-    )
-    subcontagem = (
-        # Contado e nao enviado: o classificador usa omitir_sistema=True.
-        -em_tokens(SISTEMA)
-        # Enviados e nunca contados: campo `system=`, o schema de saida e os
-        # rotulos que `montar_prompt` intercala.
-        + em_tokens(SISTEMA_DO_AGENTE)
-        + em_tokens(json.dumps(_SCHEMA_COMPILADO))
-        + em_tokens(rotulos)
-    )
+    subcontagem = _subcontagem()
 
     assert subcontagem > 0, "se virar negativo, a conta abaixo perdeu o sentido"
     assert subcontagem < settings.contexto_headroom_de_tokens, (
@@ -219,23 +237,7 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     isto porque ele reprovou, a pergunta e "o que sai do prompt para o novo
     texto entrar?", nao "quanto subo o numero?".
     """
-    import json
-
-    from mobia.domain.agente.classificador import _SCHEMA_COMPILADO, SISTEMA_DO_AGENTE
-    from mobia.domain.context.montagem import SISTEMA
-
-    def em_tokens(texto: str) -> float:
-        return len(texto) / 4
-
-    rotulos = (
-        "Resumo da conversa ate aqui:\nMensagens recentes:\nEstado de qualificacao:\n" + "\n\n" * 2
-    )
-    subcontagem = (
-        -em_tokens(SISTEMA)
-        + em_tokens(SISTEMA_DO_AGENTE)
-        + em_tokens(json.dumps(_SCHEMA_COMPILADO))
-        + em_tokens(rotulos)
-    )
+    subcontagem = _subcontagem()
 
     assert subcontagem < 590, (
         f"subcontagem {subcontagem}: a margem de 13 tokens sobre o teto de 600 "

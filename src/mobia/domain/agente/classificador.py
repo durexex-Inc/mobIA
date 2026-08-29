@@ -26,15 +26,20 @@ log = structlog.get_logger(__name__)
 
 MAX_TOKENS_DA_RESPOSTA = 1500
 
-# Orcamento: SISTEMA_DO_AGENTE cabe em 587 caracteres/tokens-equivalentes de
-# um teto de 600 (ver test_diferenca_entre_o_contado_e_o_enviado, em
-# test_config.py). A margem de 13 e deliberada, nao descuido: guardada por
+# Orcamento: SISTEMA_DO_AGENTE tem 1015 caracteres (254 tokens no proxy
+# len/4 deste modulo). Ele e uma das quatro parcelas da subcontagem que
+# test_diferenca_entre_o_contado_e_o_enviado mede, em test_config.py (as
+# outras tres: -SISTEMA de montagem.py, +schema compilado, +rotulos de
+# montar_prompt) -- hoje ela da 587, contra um teto de 600. A margem de 13
+# tokens (52 caracteres) e deliberada, nao descuido: guardada por
 # test_a_margem_do_orcamento_do_prompt_e_deliberada, para a proxima card nao
 # gastar sem saber que estava gastando a reserva.
 #
 # Nenhum campo de SCHEMA_DA_EXTRACAO ganhou "description": descrever so os
 # tres enums (tipo_imovel, urgencia, forma_pagamento) custaria da ordem de
-# 300 caracteres, e a folga inteira e de 296 -- estouraria sozinho.
+# 300 caracteres, e a folga de hoje e so 52 caracteres -- estouraria
+# sozinho. (Na card anterior, quando a folga era 296, ja estourava sozinho
+# tambem -- descrever os tres enums nunca coube num orcamento so de prosa.)
 #
 # A abertura diz "extrai o que ele procura", nao "extrai o que ele disse
 # sobre o que procura". A forma longa e mais precisa e custa 18 caracteres a
@@ -42,6 +47,14 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # na regra de "null" logo abaixo, que diz explicitamente "so o que a fala
 # DESTE turno afirma". Sem este registro, quem achar a abertura imprecisa vai
 # "melhora-la" sem olhar a conta, e descobre o estouro no CI.
+#
+# A ordem enunciada na abertura (classifica, extrai, responde) NAO e a ordem
+# dos campos em SCHEMA_DA_RESPOSTA -- "extracao" e anexada duas linhas
+# abaixo, depois de "resposta" (ver D3 do spec da TEC-240). Mover "extracao"
+# para antes de "resposta" teria custo zero de orcamento, mas mudaria a
+# ordem de geracao do modelo num caminho pago, para todo turno de producao;
+# decisao recusada por falta de instrumento para medir o efeito. Quem for
+# editar o prompt: isto nao e inconsistencia para "consertar".
 SISTEMA_DO_AGENTE = (
     "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
     "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "

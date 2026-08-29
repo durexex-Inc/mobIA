@@ -1308,8 +1308,10 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   ou em PR que toque `src/mobia/domain/agente/`.
 - **A TEC-240 mudou o prompt e não mediu o efeito, nem tinha como.** A única
   execução paga contra este corpus continua sendo a de 28/08 (ver a nota
-  acima), e o corpus mudou duas vezes desde então. Comparar aquele número com
-  uma execução de hoje misturaria mudança de prompt com mudança de régua de
-  medição — o critério de aceite do card, "medir a precisão depois e comparar
-  com antes", exigia uma execução paga **antes** de a mudança de prompt
-  entrar, e essa execução não existe.
+  acima), e o corpus já mudou uma vez nesta árvore desde então — a TEC-239
+  levou as anotações de 47 para 59 — e vai mudar de novo quando a TEC-238
+  entrar (37 turnos negativos, ainda só no PR #14, não nesta branch).
+  Comparar aquele número com uma execução de hoje misturaria mudança de
+  prompt com mudança de régua de medição — o critério de aceite do card,
+  "medir a precisão depois e comparar com antes", exigia uma execução paga
+  **antes** de a mudança de prompt entrar, e essa execução não existe.
