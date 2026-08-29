@@ -10,10 +10,15 @@
       campos:
         regiao: perto da usp
         tipo_imovel: APARTAMENTO
+    # Negativo por anafora: "aquele mesmo predio" nao nomeia tipologia nem
+    # regiao, e repetir os campos do turno 0 aqui conta `extra` -- mesma
+    # decisao que os comentarios de `borda-longa-01` i2 e `compra-08` i3.
     - lead: "vcs tb tem opcao de comprar aquele mesmo predio? seria bom parar de pagar aluguel"
       intencao: COMPRA
+      campos: {}
     - lead: "tem alguma unidade a venda ali mesmo ou so pra locacao?"
       intencao: COMPRA
+      campos: {}
 
 - id: aluguel-02
   descricao: dois quartos no brooklin, custos e pet
@@ -25,6 +30,7 @@
         regiao: brooklin
     - lead: "qual o valor do condominio mais o iptu junto?"
       intencao: ALUGUEL
+      campos: {}
     # Turno de correcao: o lead troca a regiao que ja tinha dado (brooklin -> itaim
     # bibi). E o caso de sobrescrita que a D4 do spec aceitou com risco declarado --
     # o mais novo vence e nao ha historico. Sem este caso a sobrescrita nao teria
@@ -42,6 +48,9 @@
       campos:
         tipo_imovel: CASA
         regiao: zona leste
+    # Fora da medicao: "precisa ser terrea" e atributo que sugere CASA sem
+    # nomear a tipologia. Um modelo que responde CASA aqui esta lendo com
+    # razao, e negativo puniria esse acerto -- balde C do spec da TEC-243.
     - lead: "precisa ser terrea, meu cachorro e idoso e nao sobe escada"
       intencao: ALUGUEL
 
@@ -71,6 +80,7 @@
         tipo_imovel: APARTAMENTO
     - lead: "tem faxina inclusa ou eu que providencio?"
       intencao: ALUGUEL
+      campos: {}
 
 - id: aluguel-06
   descricao: contrato atual vencendo, procura studio na mesma regiao
@@ -145,3 +155,4 @@
         regiao: saude
     - lead: "e mobiliado ou vazio?"
       intencao: ALUGUEL
+      campos: {}

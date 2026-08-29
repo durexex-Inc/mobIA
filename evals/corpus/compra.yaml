@@ -32,6 +32,8 @@
       campos:
         tipo_imovel: APARTAMENTO
         regiao: vila mariana
+    # Fora da medicao: "850 mil ta bem acima do que eu consigo" sugere um
+    # teto de preco que a fala nao afirma -- balde C do spec da TEC-243.
     - lead: "nossa, 850 mil ta bem acima do que eu consigo. voces tem pra alugar na regiao?"
       intencao: ALUGUEL
 
@@ -45,6 +47,14 @@
         faixa_preco_max: 500000
     - lead: "voces trabalham com financiamento pela caixa?"
       intencao: COMPRA
+      campos:
+        forma_pagamento: FINANCIAMENTO
+    # Fora da medicao: "perto de metro" e proximidade sem toponimo. A forma
+    # canonica reduz a frase a "metro", que nao e nome de lugar e nao filtra
+    # nada -- mas tambem nao e ruido que a normalizacao descarte. Anotar `{}`
+    # aqui contaria invencao contra um modelo que so repetiu o que o lead
+    # disse. Mesma decisao que `borda-mista-02` indice 2, que diz a mesma
+    # coisa com outras palavras.
     - lead: "e tem alguma coisa perto de metro nessa faixa?"
       intencao: COMPRA
     # Gherkin 3 do spec da TEC-145 -- "uma so" -> `vagas = 1`. A elipse esta
@@ -81,6 +91,9 @@
         tipo_imovel: CASA
         quartos: 3
         regiao: jardim das flores
+    # Fora da medicao: "mais que o dobro do que eu tinha em mente" e a mesma
+    # forma de `compra-01` i1 -- teto sugerido, nao afirmado. Balde C do spec
+    # da TEC-243.
     - lead: "poxa, e mais que o dobro do que eu tinha em mente. tem algo pra alugar por la mesmo, mais em conta?"
       intencao: ALUGUEL
     - lead: "pode ser so 2 quartos tambem, contanto que tenha quintal"
@@ -128,6 +141,9 @@
       campos:
         forma_pagamento: FINANCIAMENTO
         tipo_imovel: APARTAMENTO
+    # Fora da medicao: "pode ser sabado de manha?" nao tem ancora de semana
+    # explicita, ao contrario de "essa sexta" (`follow-up-08` i1) -- balde C
+    # do spec da TEC-243.
     - lead: "pode ser sabado de manha?"
       intencao: COMPRA
 
@@ -142,6 +158,8 @@
       intencao: COMPRA
       campos:
         regiao: paulista
+    # Fora da medicao: "parcelamento direto com o proprietario" nao e valor
+    # de FormaPagamento -- balde C do spec da TEC-243.
     - lead: "aceita entrada menor com parcelamento direto com o proprietario?"
       intencao: COMPRA
     # Unico turno do corpus que afirma piso de preco. Sem "por la" no fim de
@@ -173,6 +191,7 @@
   turnos:
     - lead: "minha esposa e eu queremos comprar nosso primeiro imovel, pode me ajudar a entender o processo?"
       intencao: COMPRA
+      campos: {}
     - lead: "quanto tempo demora entre a proposta e a escritura normalmente?"
       intencao: COMPRA
       campos: {}
@@ -188,6 +207,8 @@
       campos:
         regiao: zona sul
         tipo_imovel: CASA
+    # Fora da medicao: permuta com carro nao e valor de FormaPagamento --
+    # balde C do spec da TEC-243.
     - lead: "e aceita permuta com meu carro na entrada?"
       intencao: COMPRA
     - lead: "o sobrado tem escritura ja regularizada?"
@@ -205,6 +226,7 @@
         regiao: sp
     - lead: "tem alguma coisa pronta pra morar, sem reforma?"
       intencao: COMPRA
+      campos: {}
     - lead: "consigo fechar tudo a distancia, sem vir pessoalmente antes?"
       intencao: COMPRA
       campos: {}

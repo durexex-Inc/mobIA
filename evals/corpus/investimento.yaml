@@ -33,26 +33,33 @@
         tipo_imovel: APARTAMENTO
     - lead: "qual o retorno medio que voces veem por ali?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "e o condominio costuma proibir aluguel por temporada, ou ja vem liberado?"
       intencao: INVESTIMENTO
+      campos: {}
 
 - id: investimento-02
   descricao: lead nao diz que e investidor; a pista e "revender"
   turnos:
     - lead: "tem alguma coisa na planta que valorize bem pra revender depois?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "qual a previsao de entrega desse lancamento?"
       intencao: INVESTIMENTO
+      campos: {}
 
 - id: investimento-03
   descricao: lead comeca pensando em renda e muda de ideia pra morar
   turnos:
     - lead: "to pensando em comprar um imovel pra alugar depois, algo que de bom retorno"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "pensando bem, acho que vou ficar com ele mesmo pra morar, minha familia ta crescendo"
       intencao: COMPRA
+      campos: {}
     - lead: "nesse caso, quais bairros voces recomendam pra crianca pequena?"
       intencao: COMPRA
+      campos: {}
 
 - id: investimento-04
   descricao: pedido comeca neutro e so na sequencia revela que e pra alugar
@@ -63,18 +70,25 @@
         tipo_imovel: APARTAMENTO
         quartos: 2
         regiao: zona oeste
+    # Fora da medicao: "faz diferenca no financiamento?" pressupoe o meio em
+    # vez de perguntar se pode usa-lo -- fora da forma de fala que a TEC-239
+    # nomeou. Balde C do spec da TEC-243.
     - lead: "na real, e pra alugar depois no airbnb, nao pra morar. faz diferenca no financiamento?"
       intencao: INVESTIMENTO
     - lead: "voces tem algum parceiro que administra a locacao por temporada?"
       intencao: INVESTIMENTO
+      campos: {}
 
 - id: investimento-05
   descricao: diversificacao de patrimonio com imovel ja alugado
   turnos:
+    # Fora da medicao: "tenho uma grana parada" sugere A_VISTA sem afirmar --
+    # balde C do spec da TEC-243.
     - lead: "tenho uma grana parada e queria diversificar comprando imovel pra renda"
       intencao: INVESTIMENTO
     - lead: "voces tem algo com contrato de locacao ja em vigor, pronto pra receber aluguel?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "qual o yield medio desse tipo de imovel ja alugado?"
       intencao: INVESTIMENTO
       campos: {}
@@ -88,8 +102,10 @@
         tipo_imovel: APARTAMENTO
     - lead: "voces indicam alguma regiao com valorizacao maior nos ultimos anos?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "e tem imoveis assim ja com inquilino, ou eu que vou atras depois?"
       intencao: INVESTIMENTO
+      campos: {}
 
 - id: investimento-07
   descricao: investidor de fora da cidade buscando reserva de valor
@@ -100,19 +116,23 @@
         regiao: sp
     - lead: "esse tipo de imovel da pra alugar por temporada tambem?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "precisa vir pessoalmente pra assinar ou consigo por procuracao?"
       intencao: INVESTIMENTO
+      campos: {}
 
 - id: investimento-08
   descricao: lead quer montar carteira de varias unidades pequenas
   turnos:
     - lead: "queria montar uma carteira de imoveis pra alugar, uns 3 ou 4 unidades pequenas"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "voces administram a locacao tambem ou so a venda?"
       intencao: INVESTIMENTO
       campos: {}
     - lead: "comprando mais de uma unidade de uma vez, tem desconto no valor?"
       intencao: INVESTIMENTO
+      campos: {}
 
 - id: investimento-09
   descricao: comprar barato, reformar e vender rapido

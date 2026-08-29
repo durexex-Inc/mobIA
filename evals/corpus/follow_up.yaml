@@ -6,16 +6,29 @@
   turnos:
     - lead: "oi, sou eu de novo, faz um tempo que nao falamos. ainda ta de pe aquele apartamento que vc me mostrou?"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
+    # Fora da medicao: "juntar mais um pouco de entrada" sugere financiamento
+    # sem nomea-lo -- balde C do spec da TEC-243.
     - lead: "consegui juntar mais um pouco de entrada nesse meio tempo"
       intencao: COMPRA
+    # Precedente de `borda-longa-01` i2, ja no corpus: marcar visita com
+    # marco temporal explicito conta `urgencia: IMEDIATA`. "essa semana" e
+    # marco explicito.
     - lead: "da pra remarcar uma visita pra essa semana?"
       intencao: COMPRA
+      campos:
+        urgencia: IMEDIATA
 
 - id: follow-up-02
   descricao: inquilino antigo com duvida de renovacao de contrato
   turnos:
+    # Negativo pela regra do imovel que o lead TEM (TEC-239): ele e inquilino
+    # de um imovel que ja alugou, e `Extracao` e sobre a busca. A anotacao
+    # completa da busca, aqui, e "nada".
     - lead: "oi, sou inquilino de um imovel que alugamos com voces ano passado, o contrato venceu e ninguem me avisou o que fazer"
       intencao: SUPORTE_CONTRATO
+      campos: {}
     - lead: "tem multa se eu quiser renovar por menos tempo?"
       intencao: SUPORTE_CONTRATO
       campos: {}
@@ -50,16 +63,25 @@
   turnos:
     - lead: "e ai, lembra de mim? tava vendo aquela casa pra comprar mes passado"
       intencao: COMPRA
+      campos:
+        tipo_imovel: CASA
+    # Negativo, e a palavra "financiamento" na fala e justamente o motivo: o
+    # banco NEGOU. Nao e a forma de pagamento pretendida, e um modelo que
+    # extrair FINANCIAMENTO aqui esta inventando. E o negativo mais caro do
+    # corpus, porque a isca esta escrita na propria fala.
     - lead: "resolvi nao comprar agora, o banco negou o financiamento. tem opcao de alugar ela por enquanto?"
       intencao: ALUGUEL
+      campos: {}
     - lead: "se eu alugar agora, depois consigo ter prioridade pra comprar quando resolver o credito?"
       intencao: ALUGUEL
+      campos: {}
 
 - id: follow-up-05
   descricao: locatario questionando reajuste do contrato vigente
   turnos:
     - lead: "sou locatario ha 2 anos, o contrato ta reajustando pelo igpm e ficou um absurdo, da pra revisar?"
       intencao: SUPORTE_CONTRATO
+      campos: {}
     - lead: "existe algum indice alternativo que voces aceitam usar?"
       intencao: SUPORTE_CONTRATO
       campos: {}
@@ -76,6 +98,7 @@
       campos: {}
     - lead: "da pra deixar o preco em aberto pra negociar com quem se interessar?"
       intencao: VENDER_IMOVEL
+      campos: {}
 
 - id: follow-up-07
   descricao: lead some por meses, retoma sem contexto e so depois fica claro o motivo
@@ -86,13 +109,28 @@
     - lead: "desculpa o sumico, correria aqui"
       intencao: INDEFINIDA
       campos: {}
+    # `quero fechar logo` NAO anota `urgencia`: a barra da TEC-239 e marco
+    # temporal explicito, e entusiasmo nao e marco. O turno entra na medicao
+    # pelos campos que ele nomeia -- tipologia e quartos --, e a anotacao
+    # completa e essa. Ficar fora da medicao inteiro por causa de um campo que
+    # a fala nao afirma era exclusao larga de mais.
     - lead: "e entao, aquele apartamento de 3 quartos que a gente via, ainda ta disponivel? quero fechar logo"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
+        quartos: 3
 
 - id: follow-up-08
   descricao: lead retoma so pra agendar a assinatura, financiamento ja aprovado
   turnos:
+    # Sem `urgencia`: "bora marcar a assinatura" e entusiasmo, e a barra da
+    # TEC-239 e marco temporal explicito. O turno seguinte ("essa sexta a
+    # tarde") tem o marco, e e la que `urgencia` entra.
     - lead: "consegui aprovar o financiamento! bora marcar a assinatura do contrato"
       intencao: COMPRA
+      campos:
+        forma_pagamento: FINANCIAMENTO
     - lead: "pode ser essa sexta a tarde?"
       intencao: COMPRA
+      campos:
+        urgencia: IMEDIATA

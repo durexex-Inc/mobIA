@@ -79,6 +79,44 @@ class TurnoAnotado:
       apartamento. O unico turno que a usa (`aluguel-07`, primeiro turno) diz
       "republica ou kitnet" -- o lead oferece duas e nao escolhe --, entao ele
       fica sem `tipo_imovel`, de proposito.
+    - **O que decide entre negativo e fora da medicao (TEC-243).** Pergunta de
+      processo NAO e motivo de exclusao por si so: o corpus anota `{}` em
+      dezenas delas. O que exclui e a fala **pressupor um campo sem afirma-lo**
+      ("pode ter animal no predio?" pressupoe o predio) ou **sugerir um valor
+      sem nomea-lo** ("precisa ser terrea" sugere CASA; "850 mil ta acima do
+      que consigo" sugere um teto). Nos dois casos um negativo puniria o
+      modelo por ler a fala com razao, e um positivo inventaria anotacao --
+      por isso o turno sai da medicao, com o motivo escrito.
+
+      Anafora pura ("aquele mesmo predio", "ali mesmo", "nessa faixa") e
+      negativo, e nao exclusao: a fala nao nomeia nada, e repetir o campo do
+      turno anterior e `extra` de proposito.
+
+      **Esta regra colide com a da TEC-242, e a colisao esta em aberto por
+      decisao.** "aquele mesmo predio" (`aluguel-01` indice 1) e negativo aqui,
+      enquanto "pode ter animal de estimacao no predio?" (`aluguel-09` indice
+      2) fica fora da medicao pela regra acima. As duas sao pergunta de
+      processo com `predio` apontando pro imovel que o turno 0 ja estabeleceu,
+      e mesmo assim um modelo que devolve `tipo_imovel` leva invencao numa e
+      nada na outra. E classe, e nao turno: sete turnos do corpus tem dica de
+      tipologia na fala (`predio`, `condominio`, `unidade`) -- `aluguel-01`
+      indices 1 e 2, `aluguel-02` indice 1, `investimento-01` indice 2,
+      `investimento-08` indices 0 e 2, todos negativos e todos anotados pela
+      TEC-243, mais `aluguel-09` indice 2, o excluido.
+
+      Nao esta resolvida porque os dois jeitos de resolver custam mais do que
+      ela. Medir `aluguel-09` indice 2 derruba uma decisao da TEC-238 que a
+      TEC-242 reafirmou e que o spec desta card diz confirmar -- isso e card
+      propria, e nao nota de rodape. Excluir `aluguel-01` indice 1 contradiz o
+      comentario de `borda-longa-01` indice 2, que diz que repetir os campos do
+      turno anterior conta `extra` DE PROPOSITO, e cascatearia pelos outros
+      cinco. O que custa deixar assim esta medido: a regua cobra invencao num
+      turno e perdoa a uma conversa de distancia, dentro desta classe e so
+      dela. E reversivel, e agora esta escrito onde o proximo anotador le.
+
+      Turno fora da medicao tem entrada em `_FORA_DA_MEDICAO`
+      (`tests/unit/test_evals_corpus_real.py`), com o motivo em uma linha. Nao
+      ha mais turno sem `campos` por acidente.
     """
 
     lead: str
