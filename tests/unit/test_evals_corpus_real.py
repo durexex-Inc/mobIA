@@ -291,3 +291,56 @@ def test_todo_turno_com_palavra_do_vocabulario_tem_tipo_imovel_anotado(
         conversas, _LITERAIS_DE_TIPO_IMOVEL, _TIPO_E_DO_IMOVEL_QUE_O_LEAD_TEM
     )
     assert faltando == [], f"turnos com palavra do vocabulario e sem `tipo_imovel`: {faltando}"
+
+
+# Os turnos que ficam FORA da medicao de extracao, e o motivo de cada um em
+# uma linha. A lista e exaustiva de proposito: turno novo sem `campos` quebra
+# este teste, e quem o acrescentar tem de decidir -- anotar ou entrar aqui.
+#
+# Antes desta card havia 56 turnos fora da medicao e cinco motivos escritos.
+# Os outros 51 nao eram decisao tomada, eram silencio, e silencio numa regua
+# le como "nao ha o que medir aqui" quando na verdade era "ninguem olhou".
+_FORA_DA_MEDICAO = {
+    ("aluguel-03", 1): "atributo (terrea) sugere CASA sem nomear a tipologia",
+    ("aluguel-09", 2): "pergunta de processo que pressupoe o predio (TEC-238)",
+    ("borda-evasivo-02", 1): "omissao nao e asercao de completude (TEC-238)",
+    ("borda-evasivo-02", 2): "omissao nao e asercao de completude (TEC-238)",
+    ("borda-mista-01", 2): "escritura: pressupoe o terreno do turno anterior",
+    ("borda-mista-02", 2): "perto do metro: proximidade sem toponimo",
+    ("compra-01", 1): "850 mil acima do que consigo: teto sugerido, nao afirmado",
+    ("compra-04", 1): "mais que o dobro do que eu tinha em mente: teto sugerido",
+    ("compra-07", 1): "sabado de manha: sem ancora de semana",
+    ("compra-08", 2): "parcelamento direto nao e valor de FormaPagamento",
+    ("compra-11", 1): "permuta com carro nao e valor de FormaPagamento",
+    ("follow-up-01", 1): "juntar entrada sugere financiamento sem nomear",
+    ("follow-up-03", 1): "pergunta de processo que pressupoe o imovel (TEC-238)",
+    ("follow-up-03", 2): "financiamento que o lead ja tem, nao o pretendido (TEC-238)",
+    ("investimento-04", 1): "pressupoe o financiamento, nao pergunta se pode usar",
+    ("investimento-05", 0): "grana parada sugere A_VISTA sem afirmar",
+}
+
+
+def test_todo_turno_fora_da_medicao_tem_motivo_escrito(
+    conversas: list[ConversaAnotada],
+) -> None:
+    """Fora da medicao passa a ser decisao, e nao esquecimento.
+
+    Turno sem `campos` nao tem cobertura de invencao nenhuma: nao ha
+    `esperado` contra o qual comparar, entao o turno sai da conta inteiro. Que
+    isso seja verdade para 16 turnos e escolha; que fosse verdade para 56 sem
+    ninguem ter olhado era acidente.
+
+    Comentario de YAML nao sobrevive ao `yaml.safe_load`, entao o conjunto
+    declarado aqui e o que guarda -- o comentario no arquivo e para quem le o
+    corpus.
+    """
+    fora = {
+        (conversa.id, indice)
+        for conversa in conversas
+        for indice, turno in enumerate(conversa.turnos)
+        if turno.campos is None
+    }
+    assert fora == set(_FORA_DA_MEDICAO), (
+        f"sem motivo escrito: {sorted(fora - set(_FORA_DA_MEDICAO))}; "
+        f"declarados e ja anotados: {sorted(set(_FORA_DA_MEDICAO) - fora)}"
+    )

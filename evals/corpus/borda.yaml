@@ -102,6 +102,9 @@
       campos:
         tipo_imovel: TERRENO
         regiao: cotia
+    # Fora da medicao: pergunta de escritura que pressupoe o terreno do turno
+    # anterior, sem nomear nada de novo neste turno -- balde C do spec da
+    # TEC-243.
     - lead: "tem escritura definitiva ou ainda ta em inventario?"
       intencao: COMPRA
 
@@ -116,6 +119,8 @@
       campos:
         tipo_imovel: APARTAMENTO
         regiao: ipiranga
+    # Fora da medicao: "perto do metro" e proximidade sem toponimo, e nao ha
+    # forma canonica de regiao para anotar -- balde C do spec da TEC-243.
     - lead: "precisa ser perto do metro, eu nao dirijo"
       intencao: ALUGUEL
 
@@ -129,6 +134,7 @@
         regiao: aclimacao
     - lead: "quantos metros quadrados tem e quantas vagas? e o valor do anuncio e o de venda mesmo?"
       intencao: COMPRA
+      campos: {}
     # So `urgencia`: a fala nao repete tipo nem regiao, e `Extracao` e sobre o
     # que o lead disse NESTE turno. Repetir o apartamento da aclimacao aqui e
     # `extra`, e e de proposito que isso conte como erro.
@@ -142,6 +148,7 @@
   turnos:
     - lead: "sou cliente antigo, tenho uma duvida sobre a taxa de administracao que ta cobrando no meu boleto de aluguel"
       intencao: SUPORTE_CONTRATO
+      campos: {}
     - lead: "essa taxa pode ser retirada se eu pedir?"
       intencao: SUPORTE_CONTRATO
       campos: {}
