@@ -129,7 +129,7 @@ Não há função nova para testar. O guarda certo é sobre o **corpus commitado
    A lista de **detecção** do teste tem seis palavras, e não as cinco do mapa: `kitnet`, `studio`, `flat`, `cobertura`, `sobrado` e **`republica`**. Duas precisões que importam:
 
    - a palavra é `cobertura`, não `cobertura duplex` — `compra-06` i1 e i2 dizem só *"na cobertura"* e *"dessa cobertura"*;
-   - `republica` entra na detecção **apesar de não estar no mapa**. É justamente o que força `aluguel-07` i0 a aparecer na lista de exceções com o motivo escrito, em vez de sumir por não ser detectado.
+   - `republica` entra na detecção **apesar de não estar no mapa**, por motivo prospectivo: hoje ela não muda nada — o único turno que a usa, `aluguel-07` i0, já contém "kitnet" e seria detectado sem ela —, mas um turno futuro que diga só *"procuro uma república perto da PUC"*, sem outro sinônimo junto, precisa ser detectado e forçado a uma decisão explícita em vez de entrar sem tipo em silêncio.
 
 2. A lista de exceções é uma constante nomeada no arquivo de teste, com o motivo em comentário — o mesmo padrão que a TEC-241 usou para as anotações grandfathered de `regiao`.
 3. As contagens do README batem com o corpus, verificadas por execução.

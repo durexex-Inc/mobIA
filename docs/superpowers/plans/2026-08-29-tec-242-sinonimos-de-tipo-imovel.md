@@ -38,9 +38,12 @@ Em `tests/unit/test_evals_corpus_real.py`:
 
 ```python
 # Palavras que o lead usa e que NAO estao em `TipoImovel`. Seis, e nao as
-# cinco do mapa da TEC-242: `republica` entra aqui de proposito, apesar de
-# nao ter traducao, para forcar o turno que a usa a aparecer na lista de
-# excecoes com o motivo escrito em vez de sumir por nao ser detectado.
+# cinco do mapa da TEC-242: `republica` entra aqui de proposito, apesar de nao
+# ter traducao, por motivo prospectivo -- hoje ela nao muda nada (o unico
+# turno que a usa, `aluguel-07` i0, ja contem "kitnet" e seria detectado sem
+# ela), mas um turno futuro que diga so "procuro uma republica perto da puc",
+# sem outro sinonimo junto, precisa ser detectado e forcado a uma decisao
+# explicita em vez de entrar sem tipo em silencio.
 _SINONIMOS_DE_TIPO_IMOVEL = ("kitnet", "studio", "flat", "cobertura", "sobrado", "republica")
 
 # `aluguel-07` i0 diz "procuro republica ou kitnet": o lead oferece duas

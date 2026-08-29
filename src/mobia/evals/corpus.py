@@ -40,32 +40,40 @@ class TurnoAnotado:
     notacao le como 1-based pra quem nao conhece esta convencao, e ja apontou
     pro turno errado mais de uma vez neste README.
 
-    Duas regras de anotacao que a TEC-239 teve de decidir, porque o corpus as
-    aplicava de dois jeitos:
+    Regras de anotacao que o corpus aplica, e a card que decidiu cada uma:
 
-    - **O imovel que o lead TEM nao e o que ele procura.** `Extracao` e sobre a
-      busca, entao "comprei um apartamento com voces e agora preciso vender"
-      afirma `tem_imovel_para_vender`, e nao `tipo_imovel: APARTAMENTO`.
-    - **Pergunta sobre forma de pagamento conta como afirmacao.** "sera que da
-      pra usar o fgts?" (`compra-03` indice 0) e "aceita financiamento?"
-      (`borda-injecao-01` indice 1) anotam `forma_pagamento`: quem pergunta se
-      pode usar um meio esta dizendo que pretende usa-lo. A regra esta escrita
-      porque so o primeiro estava anotado, e duas leituras opostas da mesma
-      forma de fala no mesmo corpus nao viram nota mais baixa do modelo --
-      viram medicao errada.
-    - **`regiao` se anota como toponimo, sem preposicao.** "usp", nao "perto da
-      usp"; "vila madalena", nao "estacao vila madalena". Desde a TEC-241 a
-      medicao normaliza os dois lados, entao anotacao suja ainda casa -- mas
-      escrever ja canonico e o que faz o YAML dizer a mesma coisa que o banco
-      guarda. As duas anotacoes antigas com preposicao (`aluguel-01`,
-      `aluguel-07`) ficaram como estavam de proposito: reanota-las seria mexer
-      na regua sem necessidade.
-    - **Sinonimo de tipologia se anota pelo valor do vocabulario.** `kitnet`,
-      `studio`, `flat` e `cobertura` sao `APARTAMENTO`; `sobrado` e `CASA`.
-      Nao ha traducao em codigo, e nao pode haver: o schema da chamada e
-      estrito, entao o modelo ja devolve o valor do enum -- ele traduz
+    - **O imovel que o lead TEM nao e o que ele procura (TEC-239).** `Extracao`
+      e sobre a busca, entao "comprei um apartamento com voces e agora preciso
+      vender" afirma `tem_imovel_para_vender`, e nao `tipo_imovel: APARTAMENTO`.
+    - **Pergunta sobre forma de pagamento conta como afirmacao (TEC-239).**
+      "sera que da pra usar o fgts?" (`compra-03` indice 0) e "aceita
+      financiamento?" (`borda-injecao-01` indice 1) anotam `forma_pagamento`:
+      quem pergunta se pode usar um meio esta dizendo que pretende usa-lo. A
+      regra esta escrita porque so o primeiro estava anotado, e duas leituras
+      opostas da mesma forma de fala no mesmo corpus nao viram nota mais baixa
+      do modelo -- viram medicao errada.
+    - **`regiao` se anota como toponimo, sem preposicao (TEC-241).** "usp", nao
+      "perto da usp"; "vila madalena", nao "estacao vila madalena". Desde a
+      TEC-241 a medicao normaliza os dois lados, entao anotacao suja ainda
+      casa -- mas escrever ja canonico e o que faz o YAML dizer a mesma coisa
+      que o banco guarda. As duas anotacoes antigas com preposicao
+      (`aluguel-01`, `aluguel-07`) ficaram como estavam de proposito:
+      reanota-las seria mexer na regua sem necessidade.
+    - **Sinonimo de tipologia se anota pelo valor do vocabulario (TEC-242).**
+      `kitnet`, `studio`, `flat` e `cobertura` sao `APARTAMENTO`; `sobrado` e
+      `CASA`. Nao ha traducao em codigo, e nao pode haver: o schema da chamada
+      e estrito, entao o modelo ja devolve o valor do enum -- ele traduz
       sozinho. O que faltava era o corpus decidir a mesma traducao, e sem essa
       decisao a traducao certa contava `extra`.
+
+      O criterio que separa um sinonimo de um conteiner generico: a fala tem
+      de **nomear a tipologia**, e nao so citar um substantivo que pode ser
+      residencial ou comercial. `compra-06` indice 1 ("tem churrasqueira na
+      **cobertura**...") e indice 2 ("o valor do condominio dessa
+      **cobertura**") anotam `tipo_imovel`, porque `cobertura` nomeia; ja
+      `aluguel-09` indice 2 ("pode ter animal de estimacao no **predio**?")
+      fica de fora, porque `predio` e conteiner generico -- a mesma forma de
+      fala, com um substantivo que nao decide tipologia nenhuma.
 
       `republica` NAO tem traducao: e uso, nao tipologia, e pode ser casa ou
       apartamento. O unico turno que a usa (`aluguel-07`, primeiro turno) diz

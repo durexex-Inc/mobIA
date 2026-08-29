@@ -1267,9 +1267,9 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   depois.** O critério de aceite da TEC-241 — "as divergências de `regiao`
   caem para perto de zero numa execução do gate" — exige execução paga, que
   esta card não fez. Os 29 de discrepâncias de 28/08 (10 delas de `regiao`)
-  não servem de baseline: o corpus mudou duas vezes desde então (a TEC-239
-  levou as anotações de campo de 47 para 59; a TEC-238 acrescentou 37 turnos
-  negativos).
+  não servem de baseline: o corpus mudou desde então em quatro cards, não
+  duas — TEC-238, TEC-239, TEC-241 e TEC-242 —, e as anotações de campo foram
+  de 47 para 69, não para 59.
 - **Os sinônimos de `tipo_imovel` têm dono: a TEC-242.** Eram 8 das 29
   discrepâncias na execução de 28/08 — a TEC-241 tinha mandado esse problema
   para a TEC-239, mas a TEC-239 é sobre cobertura de campo sem anotação, não
@@ -1314,7 +1314,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   mudanças de corpus e de prompt depois, um "antes" daquele tamanho não
   serve de baseline: uma execução paga nova mediria o efeito desta regra
   **e** o de outras quatro cards ao mesmo tempo, sem jeito de separar as
-  causas — a mesma ressalva que o bullet de `regiao`, duas posições acima,
+  causas — a mesma ressalva que o bullet de `regiao`, logo acima,
   já faz para a própria lacuna.
 - **O proxy de repergunta nunca bloqueia**, e há comentário no próprio
   `MARCADORES_DE_REPERGUNTA` dizendo por quê: é heurística de palavra-chave,
@@ -1506,9 +1506,10 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   gasto duas vezes, e isso é lacuna de processo, não de código. O que sobrou
   está na descrição da TEC-241, e é só a decomposição por campo.
 - **Não há baseline comparável para a extração.** Os 29 acima são de um corpus
-  que mudou duas vezes desde então: a TEC-239 levou as anotações de 47 para 59,
-  e a TEC-238 acrescentou 37 turnos negativos. Qualquer execução daqui para a
-  frente difere daquela por mudança de prompt **e** de régua ao mesmo tempo, e
+  que mudou desde então em quatro cards, não duas — TEC-238, TEC-239, TEC-241
+  e TEC-242 —, e as anotações de campo foram de 47 para 69, não para 59.
+  Qualquer execução daqui para a frente difere daquela por mudança de prompt
+  **e** de régua ao mesmo tempo, e
   a diferença entre as duas não é atribuível a uma causa só. Quem for medir
   efeito de prompt precisa de uma execução nova como "antes".
 - **`SISTEMA_DO_AGENTE` não diz em lugar nenhum que a extração é por turno.**

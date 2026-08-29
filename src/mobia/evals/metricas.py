@@ -56,12 +56,17 @@ PISO_DE_TURNOS_NEGATIVOS = 23
 # 20 = 118 turnos, e os dois limites passariam a reprovar a mesma execucao por
 # motivos diferentes, com a mensagem decidida por quem for verificado primeiro.
 #
-# A conta e sobre as conversas mais **longas**, e nao sobre as mais anotadas:
-# abandonar as cinco com mais anotacao deixa 25 turnos anotados, abaixo de
-# `PISO_DE_TURNOS_ANOTADOS`. Isso e o piso de anotacao fazendo o que existe
-# para fazer -- `precisao_da_extracao` cai em `sem_mecanismo` em vez de
-# bloquear um merge com amostra pequena de mais --, e nao uma folga que este
-# teto devesse cobrir.
+# A conta e sobre as conversas mais **longas**, e nao sobre as mais anotadas.
+# Essa propriedade -- abandonar as cinco com mais anotacao ainda deixava a
+# amostra abaixo de `PISO_DE_TURNOS_ANOTADOS` -- valia em 57aee2d (38 - 13 =
+# 25, abaixo do piso de 30), mas a TEC-242 deu tres anotacoes a `compra-06` e
+# a colocou entre as cinco conversas com mais anotacao. Hoje a mesma conta da
+# 45 - 14 = 31, ACIMA do piso: a propriedade deixou de valer.
+#
+# Isso nao muda a escolha de contar conversas **longas** neste teto, que
+# continua de pe pelo outro motivo ja escrito abaixo -- o teto mede
+# confiabilidade de rede, o piso mede amostra --, so tira o apoio extra que
+# esta linha dava a ela.
 #
 # Com os dois assim, cada um mede uma coisa. O piso conta turnos e responde
 # "sobrou amostra suficiente?". Este teto conta conversas e responde "a rede
