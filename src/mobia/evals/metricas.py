@@ -28,13 +28,21 @@ PISO_DE_TURNOS_ANOTADOS = 30
 # Quantas conversas a execucao pode perder para falha de infraestrutura antes
 # de deixar de valer como medida.
 #
-# O numero vem do corpus e do piso, nao do gosto. Hoje sao 50 conversas e 136
-# turnos, e a conversa mais longa tem 3 turnos; a folga do piso e 136 - 120 =
-# 16 turnos. Cinco conversas abandonadas custam no pior caso 5 x 3 = 15
-# turnos: uma folga de um turno sobra. O teto de 5 continua valido -- abandono
-# nenhum consegue furar o piso -- porque com seis, o pior caso ja seria 118
-# turnos, e os dois limites passariam a reprovar a mesma execucao por motivos
-# diferentes, com a mensagem decidida por quem for verificado primeiro.
+# O numero vem do corpus e do piso, nao do gosto. Hoje sao 50 conversas e 138
+# turnos, e a folga do piso e 138 - 120 = 18 turnos. O pior caso de cinco
+# abandonos nao e 5 x 3: a TEC-239 deu um quarto turno a `compra-02` e a
+# `compra-08`, entao as cinco conversas mais longas somam 4 + 4 + 3 + 3 + 3 =
+# 17 turnos, e sobra folga de um. O teto de 5 continua valido -- abandono
+# nenhum consegue furar o piso -- porque com seis o pior caso ja seria 138 -
+# 20 = 118 turnos, e os dois limites passariam a reprovar a mesma execucao por
+# motivos diferentes, com a mensagem decidida por quem for verificado primeiro.
+#
+# A conta e sobre as conversas mais **longas**, e nao sobre as mais anotadas:
+# abandonar as cinco com mais anotacao deixa 25 turnos anotados, abaixo de
+# `PISO_DE_TURNOS_ANOTADOS`. Isso e o piso de anotacao fazendo o que existe
+# para fazer -- `precisao_da_extracao` cai em `sem_mecanismo` em vez de
+# bloquear um merge com amostra pequena de mais --, e nao uma folga que este
+# teto devesse cobrir.
 #
 # Com os dois assim, cada um mede uma coisa. O piso conta turnos e responde
 # "sobrou amostra suficiente?". Este teto conta conversas e responde "a rede

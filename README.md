@@ -1040,14 +1040,54 @@ piso próprio em vez de herdar 90/84 da intenção.
 
 `PISO_DE_TURNOS_ANOTADOS = 30` (`src/mobia/evals/metricas.py`) é o piso
 irmão de `PISO_DE_TURNOS`, na outra direção: sem ele, anotar três turnos
-fáceis daria 100% de precisão num corpus que não mede nada. Hoje **32 turnos
-estão anotados**, distribuídos em `evals/corpus/compra.yaml` (15),
-`evals/corpus/aluguel.yaml` (12) e `evals/corpus/investimento.yaml` (5) — os
-três arquivos, e só eles, ganharam a chave `campos` nesta card.
+fáceis daria 100% de precisão num corpus que não mede nada. Hoje **38 turnos
+estão anotados**, distribuídos em `evals/corpus/compra.yaml` (17),
+`evals/corpus/aluguel.yaml` (12), `evals/corpus/investimento.yaml` (5),
+`evals/corpus/borda.yaml` (2) e `evals/corpus/follow_up.yaml` (2). Os três
+primeiros ganharam a chave `campos` na TEC-145; os dois últimos, na TEC-239,
+que precisou dos turnos de injeção e de venda para tirar quatro campos do
+zero.
 `aluguel-02` carrega o caso de correção que a D4 do spec pediu com risco
 declarado: o lead troca de região no meio da conversa (`brooklin` →
 `itaim bibi`), e é o turno que prova que a sobrescrita pelo mais novo tem
 cobertura de medição.
+
+`discrepancias_da_extracao` (`src/mobia/evals/metricas.py`) decompõe, campo a
+campo, o que `precisao_da_extracao` conta como erro. É **diagnóstico, nunca
+gate**: não devolve faixa e não entra em `bloqueia`. Existe porque o número da
+métrica sozinho não diz se o corpus mede errado ou se o modelo extrai mal, e
+essas duas causas pedem cards diferentes. Cada `Discrepancia` carrega
+`conversa_id` e `indice` justamente para que quem for anotar não precise de
+outra execução paga só para descobrir **onde** faltava anotação.
+
+Os três tipos não são simétricos, e ler isso errado custa a card errada:
+
+| tipo | o que aconteceu | de quem é o problema |
+|---|---|---|
+| `extra` | o modelo extraiu, o corpus não anotou | acusa a **medição** antes do modelo |
+| `faltou` | o corpus anotou, o modelo não devolveu | acusa o **modelo** ou o prompt |
+| `divergiu` | veio nos dois, com valores diferentes | acusa o modelo, ou a anotação |
+
+`extra` é o que mais engana. Com o denominador de união, um campo que o modelo
+extraiu **certo** e que ninguém anotou desconta exatamente como uma invenção —
+campo com muitos `extra` e pouca anotação no corpus é candidato a lacuna de
+anotação, não a defeito do modelo. É a leitura que a TEC-238 vai precisar para
+separar invenção de anotação faltante nos 100 turnos sem `campos` — e a que,
+até a primeira execução paga acontecer, ninguém ainda exerceu contra dados
+reais.
+
+Uma invariante amarra as duas funções contra a mesma sequência de observadas:
+`acertos + len(discrepancias) == total`. Há teste guardando
+(`test_acertos_mais_discrepancias_fecham_o_total_da_metrica`), porque as duas
+derivam do mesmo conjunto — a união do esperado com o obtido — e mudar a fórmula
+de uma sem mudar a outra faria o relatório mentir em silêncio em vez de quebrar.
+A ordem da lista acompanha os turnos observados, e dentro do turno é alfabética
+por campo: quem lê, lê de cima para baixo seguindo a conversa, e a ordem não pode
+depender da iteração de um `set`.
+
+No relatório, `_secao_de_extracao` (`src/mobia/evals/relatorio.py`) imprime o
+agregado por campo antes da lista por turno — o agregado diz onde está o
+problema, e o endereço é o que evita pagar outra execução para achar onde anotar.
 
 O proxy de repergunta (`MARCADORES_DE_REPERGUNTA`,
 `evals/test_acuracia_de_intencao.py`) conta, por palavra-chave, quantas
@@ -1142,7 +1182,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   houve troca nem voltar atrás. Aceito conscientemente no spec (D4); a
   alternativa sobrepunha desenho com a TEC-152.
 - **O corpus anota um subconjunto dos turnos.** A precisão de extração é medida
-  sobre os turnos com `campos` anotado, não sobre os 136. `PISO_DE_TURNOS_ANOTADOS`
+  sobre os turnos com `campos` anotado, não sobre os 138. `PISO_DE_TURNOS_ANOTADOS`
   guarda o tamanho mínimo desse subconjunto, e é vigiado nos três pontos em
   que `PISO_DE_TURNOS` já era: pré-voo (`evals/conftest.py`), corpus commitado
   no CI (`tests/unit/test_evals_corpus_real.py`) e amostra sobrevivente depois
@@ -1154,49 +1194,74 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   turnos) com só 20 turnos anotados / 32 anotações de campo sobrevivendo, 33%
   abaixo do piso declarado, e `precisao_da_extracao` bloqueava ou liberava um
   gate pago com essa amostra.
-- **A precisão de extração pune os dois lados só nos 32 turnos anotados; nos
-  outros 104, invenção não é medida por ninguém.** `campos: {}` levanta
+- **A precisão de extração pune os dois lados só nos 38 turnos anotados; nos
+  outros 100, invenção não é medida por ninguém.** `campos: {}` levanta
   `CorpusInvalido` e a mensagem manda omitir a chave para tirar o turno da
   medição — não há como anotar "o lead não afirmou nada aqui", e esse é o
   único formato de turno em que invenção poderia ser pega sem exigir
   julgamento humano por turno. Consequência: um modelo que extrai
-  perfeitamente nos 32 turnos anotados e emite `regiao`/`tipo_imovel` em
-  todos os outros 104 tira 100%, VERDE — e essas invenções são gravadas em
+  perfeitamente nos 38 turnos anotados e emite `regiao`/`tipo_imovel` em
+  todos os outros 100 tira 100%, VERDE — e essas invenções são gravadas em
   `lead_qualification` para toda intenção menos `FORA_DE_ESCOPO`, e "`None`
   não apaga" (ver "Garantias") as torna permanentes e sem rastro. É o mesmo
   furo do corpus só-positivo que a TEC-233 fechou no corpus de moderação, na
   mesma forma — só que aqui continua aberto, e nenhuma anotação nem mudança
-  de validação foi feita nesta onda para fechá-lo: o conserto é anotar os 104
+  de validação foi feita para fechá-lo: o conserto é anotar os 100
   turnos (ou parte deles) com `campos: {}` tratado como "nada esperado, tudo
-  obtido é erro", o que muda o contrato de `carregar` e é card, não
-  correção de documentação.
-- **Quatro dos nove campos de `Extracao` têm zero anotação no corpus, e o
-  denominador de união faz isso baixar a nota de quem os extrai certo.**
-  Contagem nos 32 turnos anotados, 47 anotações de campo:
+  obtido é erro", o que muda o contrato de `carregar`. É a
+  [TEC-238](https://eduardodurieuxlopes.atlassian.net/browse/TEC-238).
+- **Nenhum dos nove campos fica com zero anotação, e o teste guarda isso.**
+  Contagem nos 38 turnos anotados, 59 anotações de campo:
 
   | campo | anotações |
   |---|---|
-  | `regiao` | 17 |
-  | `tipo_imovel` | 17 |
-  | `quartos` | 7 |
-  | `forma_pagamento` | 5 |
-  | `faixa_preco_max` | 1 |
-  | `faixa_preco_min` | 0 |
-  | `vagas` | 0 |
-  | `urgencia` | 0 |
-  | `tem_imovel_para_vender` | 0 |
+  | `regiao` | 18 |
+  | `tipo_imovel` | 18 |
+  | `quartos` | 8 |
+  | `forma_pagamento` | 6 |
+  | `faixa_preco_max` | 3 |
+  | `tem_imovel_para_vender` | 2 |
+  | `urgencia` | 2 |
+  | `faixa_preco_min` | 1 |
+  | `vagas` | 1 |
 
-  Como `precisao_da_extracao` soma pela união entre esperado e obtido por
-  turno, um campo sem nenhuma anotação só pode entrar no denominador pelo
-  lado obtido — extraí-lo corretamente nunca soma um acerto (não há anotação
-  contra a qual bater), mas sempre soma ao total. Um modelo perfeito que
-  também extrai corretamente `N` campos deste tipo tira `47/(47+N)`: `N=8` dá
-  85,5% (AMARELO), `N=10` dá 82,5% (VERMELHO). O piso de 85% premia um modelo
-  que se recusa a extrair `urgencia`, `vagas`, `faixa_preco_min` e
-  `tem_imovel_para_vender` — quatro dos nove campos que esta card existe para
-  entregar — e o Gherkin 3 do spec ("uma só" → `vagas = 1`) não tem cobertura
-  nenhuma no corpus. O número medido de `precisao_da_extracao` é, por isso,
-  um **piso pessimista** para esses quatro campos: não anotar corpus nem
-  mudar a validação foi decisão desta onda — o conserto é anotação, e é card.
+  A TEC-239 fechou uma inversão de incentivo, e não só um número baixo.
+  `precisao_da_extracao` soma pela união entre esperado e obtido por turno,
+  então um campo que o corpus **nunca** anota só entra no denominador pelo
+  lado obtido: extraí-lo corretamente jamais somava um acerto — não havia
+  anotação contra a qual bater — mas sempre somava ao total. Com
+  `urgencia`, `vagas`, `faixa_preco_min` e `tem_imovel_para_vender` em zero,
+  o piso de 85% **premiava um modelo que se recusasse a extrair quatro dos
+  nove campos que a TEC-145 existe para entregar**. Hoje não há campo nessa
+  situação, e `test_todo_campo_de_extracao_tem_anotacao` deriva a lista de
+  `fields(Extracao)` — a próxima card que acrescentar campo quebra o teste em
+  vez de reabrir o buraco em silêncio.
+
+  O que **não** mudou é a aritmética da união, que ainda desconta extração
+  correta em turno onde aquele campo não foi anotado: um modelo perfeito com
+  `N` extrações desse tipo tira `59/(59+N)` — `N=6` ainda é VERDE, `N=10` dá
+  85,5% (AMARELO) e `N=11` dá 84,3% (VERMELHO). A diferença é que agora isso
+  é ruído de anotação faltante, distribuído, e não um piso estrutural em
+  quatro campos específicos. Quem for investigar um número baixo lê
+  `discrepancias_da_extracao`, que separa `extra` (acusa a medição) de
+  `faltou` e `divergiu` (acusam o modelo).
+- **A cobertura é por campo, não por valor de vocabulário.** O teste exige uma
+  anotação por campo; ele não exige que todo membro de `TipoImovel`,
+  `Urgencia` e `FormaPagamento` apareça, e vários não aparecem — `RURAL`,
+  `CONSORCIO`, `FormaPagamento.INDEFINIDA`, `SEM_PRESSA` e `ATE_6_MESES` não
+  têm nenhuma anotação, nem `tem_imovel_para_vender: false`, que é o caso que
+  `preenchidos()` existe para preservar. É a mesma classe de furo que
+  `test_toda_intencao_do_enum_aparece` fecha para `Intencao`, e aqui está
+  aberta: uma regressão restrita a um desses valores passa o gate. Fechá-la
+  exige fala nova para cada valor, algumas bem artificiais, e ficou fora do
+  escopo da TEC-239 de propósito.
+- **A barra de anotação de `urgencia` é marco temporal explícito.** "mes que
+  vem" e "essa semana" contam; "quero fechar logo" e "bora marcar a
+  assinatura" não. A barra é estreita porque a métrica pune os dois lados:
+  anotar o que a fala não afirma penaliza o modelo por não inventar, e a
+  fronteira entre pressa e entusiasmo não sobrevive a dois anotadores
+  independentes. Consequência aceita: `follow-up-07` t3 e `follow-up-08` t1
+  ficam fora da medição de extração, e um modelo que lê `IMEDIATA` ali não
+  ganha nem perde ponto.
 - **A precisão de extração nunca foi executada.** O eval é pago e roda sob demanda
   ou em PR que toque `src/mobia/domain/agente/`.
