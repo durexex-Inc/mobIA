@@ -1,4 +1,7 @@
 # evals/corpus/aluguel.yaml
+# `campos: {}` significa "o lead nao afirmou nada extraivel neste turno", e
+# tudo que o modelo devolver ali conta como invencao. Chave ausente e outra
+# coisa: tira o turno da medicao. Ver o docstring de `TurnoAnotado`.
 - id: aluguel-01
   descricao: kitnet perto da usp, lead depois cogita comprar o predio
   turnos:
@@ -46,10 +49,13 @@
   turnos:
     - lead: "voces pedem fiador ou aceita seguro fianca?"
       intencao: ALUGUEL
+      campos: {}
     - lead: "e o valor do primeiro mes, e so o aluguel ou tem taxa de admin junto?"
       intencao: ALUGUEL
+      campos: {}
     - lead: "quanto tempo leva pra aprovar o cadastro?"
       intencao: ALUGUEL
+      campos: {}
 
 - id: aluguel-05
   descricao: aluguel temporario a trabalho, mobiliado
@@ -82,8 +88,10 @@
         regiao: perto da unicamp
     - lead: "da pra dividir com mais um amigo no contrato?"
       intencao: ALUGUEL
+      campos: {}
     - lead: "e precisa comprovar renda dos dois ou so de um?"
       intencao: ALUGUEL
+      campos: {}
 
 - id: aluguel-08
   descricao: sala comercial pra consultorio
@@ -112,8 +120,10 @@
         urgencia: ATE_3_MESES
     - lead: "voces exigem quantos meses de deposito caucao?"
       intencao: ALUGUEL
+      campos: {}
     - lead: "e pode ter animal de estimacao no predio?"
       intencao: ALUGUEL
+      campos: {}
 
 - id: aluguel-10
   descricao: duvida simples sobre valor de anuncio

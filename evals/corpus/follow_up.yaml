@@ -18,8 +18,10 @@
       intencao: SUPORTE_CONTRATO
     - lead: "tem multa se eu quiser renovar por menos tempo?"
       intencao: SUPORTE_CONTRATO
+      campos: {}
     - lead: "e o reajuste desse novo periodo e pelo mesmo indice de antes?"
       intencao: SUPORTE_CONTRATO
+      campos: {}
 
 - id: follow-up-03
   descricao: comprador antigo agora quer vender o mesmo imovel
@@ -32,6 +34,10 @@
         tem_imovel_para_vender: true
     - lead: "quanto tempo leva pra avaliar o imovel?"
       intencao: VENDER_IMOVEL
+      campos: {}
+    # Nao anotado como negativo: o financiamento aqui e o que o lead ja tem,
+    # nao a forma de pagamento que pretende usar. A distincao e fina de mais
+    # para virar gate.
     - lead: "e voces cuidam da parte de documentacao pra baixa do financiamento tambem?"
       intencao: VENDER_IMOVEL
 
@@ -52,6 +58,7 @@
       intencao: SUPORTE_CONTRATO
     - lead: "existe algum indice alternativo que voces aceitam usar?"
       intencao: SUPORTE_CONTRATO
+      campos: {}
 
 - id: follow-up-06
   descricao: proprietario quer colocar imovel a venda
@@ -62,6 +69,7 @@
         tem_imovel_para_vender: true
     - lead: "e a comissao de voces e quanto por cento?"
       intencao: VENDER_IMOVEL
+      campos: {}
     - lead: "da pra deixar o preco em aberto pra negociar com quem se interessar?"
       intencao: VENDER_IMOVEL
 
@@ -70,8 +78,10 @@
   turnos:
     - lead: "oi tudo bem? faz tempo que nao dou noticia, ainda ta ai?"
       intencao: INDEFINIDA
+      campos: {}
     - lead: "desculpa o sumico, correria aqui"
       intencao: INDEFINIDA
+      campos: {}
     - lead: "e entao, aquele apartamento de 3 quartos que a gente via, ainda ta disponivel? quero fechar logo"
       intencao: COMPRA
 

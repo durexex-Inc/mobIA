@@ -67,8 +67,10 @@
         tipo_imovel: APARTAMENTO
     - lead: "e qual documentacao voces pedem pra dar entrada no processo?"
       intencao: COMPRA
+      campos: {}
     - lead: "faz quanto tempo em media do inicio ate a chave na mao?"
       intencao: COMPRA
+      campos: {}
 
 - id: compra-04
   descricao: casa acima do orcamento, lead migra pra aluguel na mesma regiao
@@ -167,8 +169,10 @@
       intencao: COMPRA
     - lead: "quanto tempo demora entre a proposta e a escritura normalmente?"
       intencao: COMPRA
+      campos: {}
     - lead: "e precisa de advogado por nossa conta ou voces ja indicam um?"
       intencao: COMPRA
+      campos: {}
 
 - id: compra-11
   descricao: sobrado na zona sul, negociacao e permuta
@@ -179,6 +183,9 @@
         regiao: zona sul
     - lead: "e aceita permuta com meu carro na entrada?"
       intencao: COMPRA
+    # Nao anotado como negativo: "sobrado" nao esta em `TipoImovel`, e um
+    # modelo que devolve `CASA` esta lendo a fala com razao. Marcar este turno
+    # como negativo puniria o acerto com forca de gate.
     - lead: "o sobrado tem escritura ja regularizada?"
       intencao: COMPRA
 
@@ -194,3 +201,4 @@
       intencao: COMPRA
     - lead: "consigo fechar tudo a distancia, sem vir pessoalmente antes?"
       intencao: COMPRA
+      campos: {}

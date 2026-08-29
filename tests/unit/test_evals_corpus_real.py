@@ -127,6 +127,14 @@ def test_anotacao_nunca_usa_valor_fora_do_vocabulario(conversas: list[ConversaAn
                     assert turno.campos[nome] in [membro.value for membro in enum]
 
 
+def test_o_corpus_tem_turnos_negativos_anotados(conversas: list[ConversaAnotada]) -> None:
+    """Sem turno negativo, invencao so e medida onde o lead afirmou alguma
+    coisa -- e um modelo que inventa em todo turno nao anotado tira 100%."""
+    negativos = sum(1 for c in conversas for t in c.turnos if t.negativo)
+
+    assert negativos >= 25  # PISO_DE_TURNOS_NEGATIVOS, nomeado na Task 3
+
+
 def test_ha_turno_de_correcao_anotado(conversas: list[ConversaAnotada]) -> None:
     """A sobrescrita pelo mais novo (D4 do spec) precisa de caso no corpus."""
     for conversa in conversas:

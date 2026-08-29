@@ -75,6 +75,7 @@
       intencao: INVESTIMENTO
     - lead: "qual o yield medio desse tipo de imovel ja alugado?"
       intencao: INVESTIMENTO
+      campos: {}
 
 - id: investimento-06
   descricao: renda extra explicitada logo no primeiro turno
@@ -107,6 +108,7 @@
       intencao: INVESTIMENTO
     - lead: "voces administram a locacao tambem ou so a venda?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "comprando mais de uma unidade de uma vez, tem desconto no valor?"
       intencao: INVESTIMENTO
 
@@ -119,8 +121,10 @@
         tipo_imovel: APARTAMENTO
     - lead: "quanto tempo leva pra sair uma venda assim depois da reforma?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "voces tem equipe de reforma parceira ou eu contrato por fora?"
       intencao: INVESTIMENTO
+      campos: {}
 
 - id: investimento-10
   descricao: comprar terreno para pequeno empreendimento e revender
@@ -131,5 +135,7 @@
         tipo_imovel: TERRENO
     - lead: "voces tem contato de construtora parceira pra esse tipo de projeto?"
       intencao: INVESTIMENTO
+      campos: {}
     - lead: "e a prefeitura demora muito pra aprovar esse tipo de obra por ali?"
       intencao: INVESTIMENTO
+      campos: {}
