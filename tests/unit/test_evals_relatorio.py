@@ -7,6 +7,7 @@ from mobia.evals.metricas import (
     Discrepancia,
     FalhaDeInfraestrutura,
     ResumoDeConfianca,
+    ResumoDeNegativos,
     acuracia_de_intencao,
     sem_mecanismo,
 )
@@ -266,3 +267,68 @@ def test_a_secao_nao_e_gate():
     texto = render([], {}, discrepancias=[_d("vagas", "extra")])
     for faixa in ("VERDE", "AMARELO", "VERMELHO"):
         assert faixa not in texto
+
+
+def test_negativos_sem_discrepancia_ainda_mostra_a_secao() -> None:
+    """ "39 turnos negativos, zero invencoes" e o resultado mais valioso de
+    imprimir, e ele produz zero discrepancias -- a secao nao pode depender
+    so delas para aparecer."""
+    texto = render(
+        [], {}, negativos=ResumoDeNegativos(turnos=39, com_invencao=0, campos_inventados=0)
+    )
+    assert "39 turnos negativos" in texto
+
+
+def test_cabecalho_por_turno_nao_aparece_sem_discrepancias() -> None:
+    """Caso ideal: negativos medidos, zero invencao. Sem esta guarda o
+    relatorio imprimia "Onde, para quem for anotar:" seguido de nada."""
+    texto = render(
+        [], {}, negativos=ResumoDeNegativos(turnos=5, com_invencao=0, campos_inventados=0)
+    )
+    assert "Onde, para quem for anotar" not in texto
+
+
+def test_a_secao_de_extracao_nomeia_os_turnos_negativos() -> None:
+    """Sem isto, um `extra` no relatorio nao diz se foi invencao ou lacuna de
+    anotacao -- e a distincao e o motivo de a TEC-238 existir."""
+    saida = render(
+        [],
+        {},
+        discrepancias=[_d("regiao", "extra", conversa="borda-fora-01")],
+        negativos=ResumoDeNegativos(turnos=39, com_invencao=1, campos_inventados=1),
+    )
+
+    assert "39 turnos negativos" in saida
+    assert "1 com invencao" in saida
+
+
+def test_um_campo_inventado_sai_no_singular() -> None:
+    """ "1 campos" e erro de portugues que o revisor apontou -- com um so campo
+    inventado, a linha tem de ler "1 campo"."""
+    saida = render(
+        [], {}, negativos=ResumoDeNegativos(turnos=5, com_invencao=1, campos_inventados=1)
+    )
+    assert "1 campo)" in saida
+    assert "1 campos)" not in saida
+
+
+def test_dois_campos_inventados_seguem_no_plural() -> None:
+    saida = render(
+        [], {}, negativos=ResumoDeNegativos(turnos=5, com_invencao=1, campos_inventados=2)
+    )
+    assert "2 campos)" in saida
+
+
+def test_ha_linha_em_branco_antes_da_lista_por_campo() -> None:
+    """Sem a linha em branco, o aviso de ambiguidade do turno negativo emenda
+    direto na lista por campo e aperta a leitura."""
+    saida = render(
+        [],
+        {},
+        discrepancias=[_d("regiao", "extra")],
+        negativos=ResumoDeNegativos(turnos=5, com_invencao=0, campos_inventados=0),
+    )
+    aviso = "esta anotado por completo, e o completo e vazio."
+    posicao = saida.index(aviso) + len(aviso)
+    resto = saida[posicao:]
+    assert resto.startswith("\n\n")

@@ -25,6 +25,25 @@ PISO_DE_TURNOS = 120
 # corpus so-positivo, na outra direcao.
 PISO_DE_TURNOS_ANOTADOS = 30
 
+# Piso dos turnos anotados como "o lead nao afirmou nada" (`campos: {}`).
+# Irmao de `PISO_DE_TURNOS_ANOTADOS` na terceira direcao: aquele responde
+# "sobrou amostra para medir acerto?", este responde "sobrou amostra para
+# pegar invencao?".
+#
+# Os dois sao separados de proposito. Um piso unico sobre "todo turno
+# anotado" se auto-satisfaria: 30 turnos negativos sem invencao nenhuma
+# dariam denominador zero, e `faixa_de` levanta `ValueError` em vez de
+# reportar -- o mesmo furo que o piso existe para fechar, entrando por outra
+# porta.
+#
+# O numero vem do pior caso de abandono, como o de `TETO_DE_CONVERSAS_ABANDONADAS`:
+# sao 37 negativos -- a TEC-238 anotou 39, e esta revisao tirou dois
+# (`follow-up-03` indice 1 e `aluguel-09` indice 2) por serem pergunta de
+# processo que pressupoe campo, e nao ausencia de afirmacao. As cinco
+# conversas com mais negativos somam 12, entao a execucao mais azarada ainda
+# entrega 37 - 12 = 25. O piso fica em 23, com folga de dois.
+PISO_DE_TURNOS_NEGATIVOS = 23
+
 # Quantas conversas a execucao pode perder para falha de infraestrutura antes
 # de deixar de valer como medida.
 #
@@ -331,6 +350,50 @@ class ExtracaoObservada:
     indice: int
     esperado: dict[str, Any]
     obtido: dict[str, Any]
+
+
+def eh_negativo(observada: ExtracaoObservada) -> bool:
+    """O criterio de "turno negativo", extraido para nao divergir em silencio.
+
+    `resumo_de_negativos` (aqui) e `_positivas_e_negativas`
+    (`evals/test_acuracia_de_intencao.py`) precisam do mesmo criterio: um e o
+    gate que decide se sobrou amostra para medir, o outro e o diagnostico que
+    conta invencao. Cada um com sua propria expressao (`== {}` num lado,
+    `!= {}` no outro) e o mesmo furo que motivou extrair `campos_a_gravar` para
+    o eval nao divergir de producao, e que matou `faixa_de_catastrofe` no PR
+    #10: duas formulas do mesmo criterio divergem, e a divergencia so aparece
+    na borda, sem teste para acusar.
+    """
+    return observada.esperado == {}
+
+
+@dataclass(frozen=True)
+class ResumoDeNegativos:
+    """Quantos turnos negativos entraram na medicao, e quanto se inventou neles.
+
+    Nao carrega faixa: e diagnostico, como `ResumoDeConfianca`. Quem bloqueia
+    e `precisao_da_extracao`, que ja conta a invencao no denominador.
+
+    `turnos` precisa existir separado de `com_invencao` porque turno negativo
+    limpo nao gera discrepancia nenhuma: sem este numero, o relatorio nao teria
+    como dizer se "uma invencao" saiu de dois turnos medidos ou de trinta e
+    nove.
+    """
+
+    turnos: int
+    com_invencao: int
+    campos_inventados: int
+
+
+def resumo_de_negativos(observadas: Sequence[ExtracaoObservada]) -> ResumoDeNegativos:
+    """Turno negativo e o que tem `esperado` vazio -- anotado por completo, e o
+    completo e nada."""
+    negativas = [observada for observada in observadas if eh_negativo(observada)]
+    return ResumoDeNegativos(
+        turnos=len(negativas),
+        com_invencao=sum(1 for observada in negativas if observada.obtido),
+        campos_inventados=sum(len(observada.obtido) for observada in negativas),
+    )
 
 
 @dataclass(frozen=True)

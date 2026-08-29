@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 
 from mobia.domain.agente.schemas import Intencao
-from mobia.evals.corpus import CorpusInvalido, _turno_de, carregar, total_de_turnos
+from mobia.evals.corpus import CorpusInvalido, TurnoAnotado, _turno_de, carregar, total_de_turnos
 
-# O corpus real, ainda sem anotacao de `campos` -- essa vem da TEC-145 T5.
+# O corpus real, ja com anotacao de `campos` desde a TEC-145 T5.
 CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
 
 
@@ -123,3 +123,87 @@ def test_valor_fora_do_vocabulario_e_erro() -> None:
             "compra-99",
             "compra.yaml",
         )
+
+
+def test_campos_vazio_e_aceito_como_turno_negativo(tmp_path: Path) -> None:
+    """`{}` e o unico jeito de dizer "o lead nao afirmou nada aqui".
+
+    Sem ele, invencao so pode ser medida nos turnos que afirmam alguma coisa,
+    e um modelo que inventa em todo turno nao anotado tira 100%.
+    """
+    (tmp_path / "c.yaml").write_text(
+        "- id: compra-01\n"
+        "  descricao: teste\n"
+        "  turnos:\n"
+        '    - lead: "quanto tempo leva pra aprovar o cadastro?"\n'
+        "      intencao: COMPRA\n"
+        "      campos: {}\n",
+        encoding="utf-8",
+    )
+
+    turno = carregar(tmp_path)[0].turnos[0]
+
+    assert turno.campos == {}
+    assert turno.negativo
+
+
+def test_campos_sem_valor_e_recusado_por_ser_ambiguo(tmp_path: Path) -> None:
+    """`campos:` nulo e `campos: {}` sao dois caracteres de diferenca e
+    significados opostos -- "fora da medicao" contra "tudo que vier e erro".
+    A mensagem tem de dizer as duas saidas, senao quem errar o typo nao sabe
+    qual das duas queria."""
+    (tmp_path / "c.yaml").write_text(
+        "- id: compra-01\n"
+        "  descricao: teste\n"
+        "  turnos:\n"
+        '    - lead: "oi"\n'
+        "      intencao: COMPRA\n"
+        "      campos:\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusInvalido) as erro:
+        carregar(tmp_path)
+
+    assert "compra-01" in str(erro.value)
+    assert "campos: {}" in str(erro.value)
+
+
+def test_campo_com_valor_nulo_dentro_de_campos_e_recusado(tmp_path: Path) -> None:
+    """`campos: {quartos: }` carrega do YAML como `{"quartos": None}` e e o
+    mesmo typo de `campos:` nulo, um nivel abaixo.
+
+    Para `tipo_imovel`/`urgencia`/`forma_pagamento` o check de vocabulario ja
+    pegava esse `None` sem querer (`None not in vocabulario`); para `regiao`,
+    `quartos`, `vagas` e os dois precos nao havia checagem nenhuma, e o valor
+    passava e virava um `faltou` que o modelo nunca conseguia satisfazer,
+    porque `preenchidos()` jamais devolve `None`.
+    """
+    (tmp_path / "c.yaml").write_text(
+        "- id: compra-01\n"
+        "  descricao: teste\n"
+        "  turnos:\n"
+        '    - lead: "quero um apartamento"\n'
+        "      intencao: COMPRA\n"
+        "      campos:\n"
+        "        quartos:\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusInvalido) as erro:
+        carregar(tmp_path)
+
+    assert "compra-01" in str(erro.value)
+    assert "quartos" in str(erro.value)
+
+
+def test_os_tres_estados_de_anotacao_tem_propriedade_propria() -> None:
+    """Quatro lugares do codigo testavam `campos` por veracidade e um por
+    `is not None`. Isso era inocuo so enquanto `{}` era impossivel."""
+    fora = TurnoAnotado(lead="oi", intencao=Intencao.COMPRA, campos=None)
+    negativo = TurnoAnotado(lead="oi", intencao=Intencao.COMPRA, campos={})
+    positivo = TurnoAnotado(lead="oi", intencao=Intencao.COMPRA, campos={"quartos": 2})
+
+    assert (fora.anotado, fora.positivo, fora.negativo) == (False, False, False)
+    assert (negativo.anotado, negativo.positivo, negativo.negativo) == (True, False, True)
+    assert (positivo.anotado, positivo.positivo, positivo.negativo) == (True, True, False)

@@ -20,6 +20,7 @@ from mobia.evals.corpus import ConversaAnotada
 from mobia.evals.metricas import (
     PISO_DE_TURNOS,
     PISO_DE_TURNOS_ANOTADOS,
+    PISO_DE_TURNOS_NEGATIVOS,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
     ExtracaoObservada,
@@ -29,10 +30,12 @@ from mobia.evals.metricas import (
     acuracia_efetiva,
     bloqueia,
     discrepancias_da_extracao,
+    eh_negativo,
     erros,
     matriz_de_confusao,
     precisao_da_extracao,
     resumo_de_confianca,
+    resumo_de_negativos,
     sem_mecanismo,
 )
 from mobia.evals.relatorio import render
@@ -179,7 +182,7 @@ async def _rodar_conversa(
         )
 
         obtido = resposta.extracao.preenchidos()
-        if turno.campos is not None:
+        if turno.anotado:
             observadas.append(
                 ExtracaoObservada(
                     conversa_id=conversa.id,
@@ -208,6 +211,24 @@ async def _rodar_conversa(
     return resultados, observadas, reperguntados
 
 
+def _positivas_e_negativas(observadas: list[ExtracaoObservada]) -> tuple[int, int]:
+    """Quantas `observadas` afirmam algo, e quantas sao negativas.
+
+    "Negativa" e `eh_negativo` (`mobia.evals.metricas`), o mesmo criterio que
+    `resumo_de_negativos` usa: as duas contagens tem de vir da mesma formula
+    para nao divergir em silencio.
+
+    Extraida porque a mesma conta guarda dois pontos: a guarda de
+    `precisao_da_extracao` dentro de `_metricas_de`, e o assert irmao em
+    `test_acuracia_de_intencao_no_corpus` que existe para reprovar com
+    mensagem clara em vez de deixar a metrica cair muda em `sem_mecanismo`.
+    Duplicar a formula nos dois lugares e o jeito de um deles ficar
+    desalinhado do outro sem nenhum teste acusar.
+    """
+    negativas = sum(1 for o in observadas if eh_negativo(o))
+    return len(observadas) - negativas, negativas
+
+
 def _metricas_de(
     resultados: list[Classificacao], observadas: list[ExtracaoObservada]
 ) -> list[ResultadoDaMetrica]:
@@ -229,6 +250,14 @@ def _metricas_de(
     exatamente esse caso: `precisao_da_extracao` mediria e bloquearia (ou
     liberaria) um gate pago com uma amostra abaixo do piso que o corpus
     declara, e o resultado seria ruido lido como sinal.
+
+    A guarda conta positivos e negativos em separado, e nao `len(observadas)`
+    direto: `observadas` inclui os dois desde a TEC-238, e um total unico se
+    auto-satisfaria com 30 negativos e nenhum positivo (ou o inverso) -- o
+    mesmo furo que o piso de negativos existe para fechar, entrando por outra
+    porta. `precisao_da_extracao(observadas)` continua recebendo **todas** as
+    observadas, positivas e negativas: e so a guarda que precisa saber a
+    composicao, porque um dos dois grupos sozinho nao sustenta o piso de 85%.
     """
     medidas = (
         [
@@ -242,15 +271,17 @@ def _metricas_de(
         if resultados
         else []
     )
+    positivas, negativas = _positivas_e_negativas(observadas)
     extracao = (
         [precisao_da_extracao(observadas)]
-        if len(observadas) >= PISO_DE_TURNOS_ANOTADOS
+        if positivas >= PISO_DE_TURNOS_ANOTADOS and negativas >= PISO_DE_TURNOS_NEGATIVOS
         else [
             sem_mecanismo(
                 "precisao da extracao",
-                f"{len(observadas)} turnos anotados sobraram na execucao, "
-                f"piso {PISO_DE_TURNOS_ANOTADOS}: amostra pequena de mais "
-                f"para o piso de 85% significar algo",
+                f"{positivas} turnos anotados (piso {PISO_DE_TURNOS_ANOTADOS}) e "
+                f"{negativas} negativos (piso {PISO_DE_TURNOS_NEGATIVOS}) sobraram "
+                f"na execucao: amostra pequena de mais para o piso de 85% "
+                f"significar algo",
             )
         ]
     )
@@ -276,9 +307,9 @@ async def test_acuracia_de_intencao_no_corpus(
 
     As quatro asercoes estao nesta ordem porque a primeira que estourar e a
     mensagem que o CI mostra, e elas nao dizem a mesma coisa: teto e "a rede
-    caiu, re-rode", os dois pisos (turnos e turnos anotados) sao "sobrou
-    amostra de menos", `bloqueia` e "o prompt regrediu". Vermelho por rede
-    vem antes de vermelho por regressao.
+    caiu, re-rode", os pisos (turnos, e turnos anotados separados em positivos
+    e negativos) sao "sobrou amostra de menos", `bloqueia` e "o prompt
+    regrediu". Vermelho por rede vem antes de vermelho por regressao.
     """
     classificador = ClassificadorAnthropic()
 
@@ -319,6 +350,11 @@ async def test_acuracia_de_intencao_no_corpus(
         # (anotar) e TEC-240 (prompt). Diagnostico -- nao entra em
         # `_metricas_de` nem em `bloqueia`.
         discrepancias=discrepancias_da_extracao(observadas),
+        # Turno negativo e o unico lugar onde `extra` deixa de ser ambiguo: o
+        # turno esta anotado por completo, e o completo e vazio. Sem esta
+        # contagem, o relatorio nao diria se a invencao veio de dois turnos
+        # medidos ou de todos os negativos do corpus.
+        negativos=resumo_de_negativos(observadas),
     )
     with capsys.disabled():
         print("\n" + relatorio)
@@ -332,31 +368,42 @@ async def test_acuracia_de_intencao_no_corpus(
     # total era sempre o do corpus, e a lista nunca encolhia. Agora ela
     # encolhe de verdade com o abandono -- mas com o corpus de hoje esta
     # asercao nao e a que dispara primeiro: o teto acima estoura antes dela,
-    # porque 5 x 3 = 15 turnos perdidos no pior caso cabem dentro da folga de
-    # 16 turnos sobre o piso de 120 (a conta esta travada por teste em
-    # `metricas.py`). Ela so fica alcancavel se essa folga diminuir. O piso do
-    # corpus em si sai de graca em `tests/unit/test_evals_corpus_real.py` e no
-    # pre-voo da fixture `conversas`. O que ela guarda aqui e o que **sobrou**
-    # da execucao.
+    # porque o pior caso (a soma das cinco conversas mais longas, hoje
+    # 4+4+3+3+3 = 17 turnos perdidos) cabe dentro da folga de 138 - 120 = 18
+    # turnos sobre o piso de 120 (a conta esta travada por teste em
+    # `metricas.py`, `TETO_DE_CONVERSAS_ABANDONADAS`). Ela so fica alcancavel
+    # se essa folga diminuir. O piso do corpus em si sai de graca em
+    # `tests/unit/test_evals_corpus_real.py` e no pre-voo da fixture
+    # `conversas`. O que ela guarda aqui e o que **sobrou** da execucao.
     assert len(resultados) >= PISO_DE_TURNOS, (
         f"{len(resultados)} turnos medidos, piso {PISO_DE_TURNOS}. Amostra "
         f"insuficiente depois do abandono: a faixa amarela nao absorve o ruido "
         f"neste tamanho.\n{relatorio}"
     )
-    # `PISO_DE_TURNOS_ANOTADOS` e irmao de `PISO_DE_TURNOS`, mas o abandono
-    # nao encolhe os dois na mesma proporcao: as conversas mais longas nao
-    # sao as mais anotadas, entao perder o teto de conversas inteiro (5) pode
-    # deixar o total de turnos acima do piso e o subconjunto anotado bem
-    # abaixo do dele -- o caso medido e abandonar as cinco conversas com mais
-    # anotacao, que sozinho derruba os turnos anotados a 1/3 do piso sem
-    # tocar o piso de turnos. Sem este assert, `_metricas_de` ainda protege o
-    # gate (vira `sem_mecanismo` abaixo do piso, nunca calcula
+    # `PISO_DE_TURNOS_ANOTADOS` e `PISO_DE_TURNOS_NEGATIVOS` sao irmaos de
+    # `PISO_DE_TURNOS`, mas o abandono nao encolhe os tres na mesma proporcao:
+    # as conversas mais longas nao sao as mais anotadas, nem as mais anotadas
+    # sao as mais negativas, entao perder o teto de conversas inteiro (5) pode
+    # deixar o total de turnos acima do piso e um dos dois subconjuntos --
+    # positivos ou negativos -- bem abaixo do dele.
+    #
+    # `len(observadas) >= PISO_DE_TURNOS_ANOTADOS` sozinho se auto-satisfaz
+    # desde que `observadas` passou a incluir os dois: perder os 38 positivos
+    # inteiros ainda deixa 37 negativos, 75 >= 30, e o assert nunca dispara --
+    # exatamente o furo que a guarda de `_metricas_de` fecha contando os dois
+    # em separado. Este assert usa a mesma conta de `_positivas_e_negativas`
+    # para nao reabrir o furo aqui, no ponto irmao.
+    #
+    # Sem este assert, `_metricas_de` ainda protege o gate (vira
+    # `sem_mecanismo` abaixo de qualquer um dos dois pisos, nunca calcula
     # `precisao_da_extracao` com amostra pequena de mais), mas o relatorio sai
-    # mudo sobre o motivo -- e essa e a mesma razao de existir do assert do
-    # piso de turnos, uma linha acima.
-    assert len(observadas) >= PISO_DE_TURNOS_ANOTADOS, (
-        f"{len(observadas)} turnos anotados sobraram na execucao, piso "
-        f"{PISO_DE_TURNOS_ANOTADOS}. Amostra insuficiente para a precisao da "
-        f"extracao significar algo depois do abandono: re-rode.\n{relatorio}"
+    # mudo sobre qual dos dois faltou -- e essa e a mesma razao de existir do
+    # assert do piso de turnos, duas linhas acima.
+    positivas, negativas = _positivas_e_negativas(observadas)
+    assert positivas >= PISO_DE_TURNOS_ANOTADOS and negativas >= PISO_DE_TURNOS_NEGATIVOS, (
+        f"{positivas} turnos anotados (piso {PISO_DE_TURNOS_ANOTADOS}) e {negativas} "
+        f"negativos (piso {PISO_DE_TURNOS_NEGATIVOS}) sobraram na execucao. Amostra "
+        f"insuficiente para a precisao da extracao significar algo depois do "
+        f"abandono: re-rode.\n{relatorio}"
     )
     assert not bloqueia(metricas), relatorio
