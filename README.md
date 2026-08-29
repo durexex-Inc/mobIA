@@ -122,17 +122,21 @@ Os critérios de aceite da história vivem como testes executáveis:
   enviado, `SISTEMA_DO_AGENTE`, o schema de saída e os rótulos enviados e não
   contados), contra uma reserva que era 400 na época. **A partir da TEC-145 a
   reserva é 800, não 400**: o objeto `extracao` que a TEC-145 acrescentou ao
-  schema de saída (`SCHEMA_DA_RESPOSTA`) soma um segundo ~263 à subcontagem,
-  que sobe para **526**. Com a reserva ainda em 400 essa subcontagem já
-  excederia a própria reserva; com 800 ela cabe com **74 tokens** de folga
+  schema de saída (`SCHEMA_DA_RESPOSTA`) soma um segundo ~263 à subcontagem.
+  Na TEC-145 isso a levava a **526**; com a reserva ainda em 400 ela já
+  excederia a própria reserva, e com 800 ela cabia com **74 tokens** de folga
   antes de a segunda asserção de `test_diferenca_entre_o_contado_e_o_enviado`
   (headroom × 0,75, ou seja 600) voltar a disparar — não os ~137 que a
-  reserva de 400 deixava contra os ~263 de antes da TEC-145. A conta usa o
-  mesmo proxy `len/4` do módulo, não uma chamada paga de `count_tokens`, e
-  vive em `test_diferenca_entre_o_contado_e_o_enviado`, que quebra se alguma
-  das parcelas crescer. Ver a seção TEC-145 abaixo e o comentário de
-  `contexto_headroom_de_tokens` em `src/mobia/app/config.py`, que já tinha a
-  conta certa.
+  reserva de 400 deixava contra os ~263 de antes da TEC-145. **A TEC-240
+  alongou `SISTEMA_DO_AGENTE` e a subcontagem subiu para 587**, com 13
+  tokens de folga (ver a nota da TEC-240 na seção TEC-145 abaixo e
+  `test_a_margem_do_orcamento_do_prompt_e_deliberada`); 526/74 ficam como o
+  número da época, não o de hoje. A conta usa o mesmo proxy `len/4` do
+  módulo, não uma chamada paga de `count_tokens`, e vive em
+  `test_diferenca_entre_o_contado_e_o_enviado`, que quebra se alguma das
+  parcelas crescer — o único dos lugares onde ela está escrita que não pode
+  mentir, porque roda. Ver a seção TEC-145 abaixo e o comentário de
+  `contexto_headroom_de_tokens` em `src/mobia/app/config.py`.
 - Mensagem sem texto (áudio, imagem, documento) entra marcada pelo tipo, nunca
   como turno em branco — o modelo tem de poder distinguir "mandou um áudio que
   ainda não transcrevemos" de "não disse nada", e é esse texto que a dobra
@@ -1141,14 +1145,14 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   paga.** `carregar` recusa campo desconhecido ou valor fora de `TipoImovel`,
   `Urgencia` ou `FormaPagamento` com o arquivo e a conversa no erro — o mesmo
   padrão de validação adiantada que o piso de turnos da TEC-210 já usava.
-- **A precisão de extração pune os dois lados da conta nos 32 turnos
+- **A precisão de extração pune os dois lados da conta nos 38 turnos
   anotados** — pela união entre campos esperados e obtidos, nem um modelo que
   inventa campos, nem um que nunca extrai nada, tira 100% de graça **nesse
-  subconjunto**. Nos outros 104 turnos do corpus, `campos` ausente tira o
+  subconjunto**. Nos outros 100 turnos do corpus, `campos` ausente tira o
   turno da medição de extração por completo (é o único jeito de anotar "esta
   fala não afirma nada extraível" — `carregar` recusa `campos: {}` com
   `CorpusInvalido` e manda omitir a chave em vez de deixá-la vazia), então uma
-  invenção nesses 104 turnos não é medida por ninguém. Ver "Lacunas
+  invenção nesses 100 turnos não é medida por ninguém. Ver "Lacunas
   conhecidas".
 - **Há teste de correção de região no corpus**
   (`tests/unit/test_evals_corpus_real.py::test_ha_turno_de_correcao_anotado`),
@@ -1186,13 +1190,15 @@ seção própria do relatório (`render(..., reperguntas=...)`,
 >   campo do schema ou qualquer palavra a mais no prompt.
 > - **O efeito não foi medido, e o critério 4 do card não se sustenta como
 >   escrito.** A única execução paga de extração é a de 28/08 (seção acima),
->   contra um corpus que mudou duas vezes desde então: a TEC-239 levou as
->   anotações de 47 para 59, e a TEC-238 acrescentou 37 turnos negativos. Um
->   "depois" medido hoje contra aquele "antes" divergiria por mudança de
->   prompt **e** de régua ao mesmo tempo, e a diferença não seria atribuível a
->   uma causa só. Medir efeito de prompt exigiria uma execução paga nova
->   **antes** desta card entrar — duas execuções pagas, não uma —, e essa
->   execução não rodou.
+>   contra um corpus que já mudou uma vez nesta árvore desde então — a
+>   TEC-239 levou as anotações de 47 para 59 — e vai mudar de novo quando a
+>   TEC-238 entrar (37 turnos negativos, ainda só no PR #14, não nesta
+>   branch). Um "depois" medido hoje contra aquele "antes" já divergiria por
+>   mudança de prompt **e** de régua ao mesmo tempo, e a diferença não seria
+>   atribuível a uma causa só — e a TEC-238 só vai aumentar essa distância.
+>   Medir efeito de prompt exigiria uma execução paga nova **antes** desta
+>   card entrar — duas execuções pagas, não uma —, e essa execução não
+>   rodou.
 
 ### Lacunas conhecidas
 
