@@ -1307,6 +1307,15 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   continua visível por ela; quando sai da janela (dobrada em resumo, ou
   truncada), a palavra do lead some da visão do modelo também, não só do
   estado gravado.
+
+  **O efeito não foi medido, e não há baseline comparável para medi-lo
+  depois.** As 8 discrepâncias de sinônimo são da execução de 28/08 —
+  anterior à TEC-238, à TEC-239, à TEC-240, à TEC-241 e a esta card. Cinco
+  mudanças de corpus e de prompt depois, um "antes" daquele tamanho não
+  serve de baseline: uma execução paga nova mediria o efeito desta regra
+  **e** o de outras quatro cards ao mesmo tempo, sem jeito de separar as
+  causas — a mesma ressalva que o bullet de `regiao`, duas posições acima,
+  já faz para a própria lacuna.
 - **O proxy de repergunta nunca bloqueia**, e há comentário no próprio
   `MARCADORES_DE_REPERGUNTA` dizendo por quê: é heurística de palavra-chave,
   com erro nas duas direções. Ver "Lacunas conhecidas".
