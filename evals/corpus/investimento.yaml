@@ -29,6 +29,8 @@
   turnos:
     - lead: "queria comprar um studio pra por no airbnb, qual bairro rende mais?"
       intencao: INVESTIMENTO
+      campos:
+        tipo_imovel: APARTAMENTO
     - lead: "qual o retorno medio que voces veem por ali?"
       intencao: INVESTIMENTO
     - lead: "e o condominio costuma proibir aluguel por temporada, ou ja vem liberado?"

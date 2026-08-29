@@ -183,3 +183,42 @@ def test_anotacoes_de_regiao_nao_colidem_depois_de_normalizadas(
     colisoes = {forma: brutas for forma, brutas in por_forma.items() if len(brutas) > 1}
 
     assert colisoes == {}, f"formas distintas normalizam para a mesma: {colisoes}"
+
+
+# Palavras que o lead usa e que NAO estao em `TipoImovel`. Seis, e nao as
+# cinco do mapa da TEC-242: `republica` entra aqui de proposito, apesar de
+# nao ter traducao, para forcar o turno que a usa a aparecer na lista de
+# excecoes com o motivo escrito em vez de sumir por nao ser detectado.
+_SINONIMOS_DE_TIPO_IMOVEL = ("kitnet", "studio", "flat", "cobertura", "sobrado", "republica")
+
+# `aluguel-07` i0 diz "procuro republica ou kitnet": o lead oferece duas
+# tipologias e nao escolhe nenhuma. Anotar uma delas puniria o modelo por
+# escolher a outra, que e o erro simetrico que a regua ja pune.
+_SEM_TIPO_APESAR_DO_SINONIMO = {("aluguel-07", 0)}
+
+
+def test_todo_turno_com_sinonimo_tem_tipo_imovel_anotado(
+    conversas: list[ConversaAnotada],
+) -> None:
+    """A traducao que o modelo faz certo nao pode contar erro.
+
+    O schema da chamada e estrito: o modelo nunca devolve "kitnet", ele
+    devolve `APARTAMENTO`. Se o corpus nao anota nada nesse turno, a uniao
+    conta o campo como `extra` -- erro cheio, por acertar. Foi assim que
+    `tipo_imovel` virou 8 das 29 discrepancias da execucao de 28/08.
+
+    Sem este teste, o proximo turno com "kitnet" entra sem tipo e a punicao
+    volta em silencio.
+    """
+    faltando = []
+    for conversa in conversas:
+        for indice, turno in enumerate(conversa.turnos):
+            if (conversa.id, indice) in _SEM_TIPO_APESAR_DO_SINONIMO:
+                continue
+            fala = turno.lead.casefold()
+            if not any(s in fala for s in _SINONIMOS_DE_TIPO_IMOVEL):
+                continue
+            if not (turno.campos and "tipo_imovel" in turno.campos):
+                faltando.append((conversa.id, indice, turno.lead[:50]))
+
+    assert faltando == [], f"turnos com sinonimo e sem `tipo_imovel`: {faltando}"

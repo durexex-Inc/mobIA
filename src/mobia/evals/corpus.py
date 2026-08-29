@@ -60,6 +60,17 @@ class TurnoAnotado:
       guarda. As duas anotacoes antigas com preposicao (`aluguel-01`,
       `aluguel-07`) ficaram como estavam de proposito: reanota-las seria mexer
       na regua sem necessidade.
+    - **Sinonimo de tipologia se anota pelo valor do vocabulario.** `kitnet`,
+      `studio`, `flat` e `cobertura` sao `APARTAMENTO`; `sobrado` e `CASA`.
+      Nao ha traducao em codigo, e nao pode haver: o schema da chamada e
+      estrito, entao o modelo ja devolve o valor do enum -- ele traduz
+      sozinho. O que faltava era o corpus decidir a mesma traducao, e sem essa
+      decisao a traducao certa contava `extra`.
+
+      `republica` NAO tem traducao: e uso, nao tipologia, e pode ser casa ou
+      apartamento. O unico turno que a usa (`aluguel-07`, primeiro turno) diz
+      "republica ou kitnet" -- o lead oferece duas e nao escolhe --, entao ele
+      fica sem `tipo_imovel`, de proposito.
     """
 
     lead: str

@@ -9,6 +9,7 @@
       intencao: ALUGUEL
       campos:
         regiao: perto da usp
+        tipo_imovel: APARTAMENTO
     - lead: "vcs tb tem opcao de comprar aquele mesmo predio? seria bom parar de pagar aluguel"
       intencao: COMPRA
     - lead: "tem alguma unidade a venda ali mesmo ou so pra locacao?"
@@ -66,6 +67,8 @@
         tipo_imovel: APARTAMENTO
     - lead: "pode ser flat tambem, contanto que tenha internet incluida"
       intencao: ALUGUEL
+      campos:
+        tipo_imovel: APARTAMENTO
     - lead: "tem faxina inclusa ou eu que providencio?"
       intencao: ALUGUEL
 
@@ -74,6 +77,9 @@
   turnos:
     - lead: "meu contrato de aluguel atual vence mes que vem, voces tem studio disponivel pra essa data?"
       intencao: ALUGUEL
+      campos:
+        tipo_imovel: APARTAMENTO
+        urgencia: ATE_3_MESES
     - lead: "precisa ser na mesma regiao, perto da estacao vila madalena"
       intencao: ALUGUEL
       campos:
