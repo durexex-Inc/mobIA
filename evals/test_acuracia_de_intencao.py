@@ -209,6 +209,20 @@ async def _rodar_conversa(
     return resultados, observadas, reperguntados
 
 
+def _positivas_e_negativas(observadas: list[ExtracaoObservada]) -> tuple[int, int]:
+    """Quantas `observadas` afirmam algo, e quantas sao negativas (`esperado == {}`).
+
+    Extraida porque a mesma conta guarda dois pontos: a guarda de
+    `precisao_da_extracao` dentro de `_metricas_de`, e o assert irmao em
+    `test_acuracia_de_intencao_no_corpus` que existe para reprovar com
+    mensagem clara em vez de deixar a metrica cair muda em `sem_mecanismo`.
+    Duplicar a formula nos dois lugares e o jeito de um deles ficar
+    desalinhado do outro sem nenhum teste acusar.
+    """
+    positivas = sum(1 for o in observadas if o.esperado != {})
+    return positivas, len(observadas) - positivas
+
+
 def _metricas_de(
     resultados: list[Classificacao], observadas: list[ExtracaoObservada]
 ) -> list[ResultadoDaMetrica]:
@@ -251,8 +265,7 @@ def _metricas_de(
         if resultados
         else []
     )
-    positivas = sum(1 for o in observadas if o.esperado != {})
-    negativas = len(observadas) - positivas
+    positivas, negativas = _positivas_e_negativas(observadas)
     extracao = (
         [precisao_da_extracao(observadas)]
         if positivas >= PISO_DE_TURNOS_ANOTADOS and negativas >= PISO_DE_TURNOS_NEGATIVOS
@@ -288,9 +301,9 @@ async def test_acuracia_de_intencao_no_corpus(
 
     As quatro asercoes estao nesta ordem porque a primeira que estourar e a
     mensagem que o CI mostra, e elas nao dizem a mesma coisa: teto e "a rede
-    caiu, re-rode", os dois pisos (turnos e turnos anotados) sao "sobrou
-    amostra de menos", `bloqueia` e "o prompt regrediu". Vermelho por rede
-    vem antes de vermelho por regressao.
+    caiu, re-rode", os pisos (turnos, e turnos anotados separados em positivos
+    e negativos) sao "sobrou amostra de menos", `bloqueia` e "o prompt
+    regrediu". Vermelho por rede vem antes de vermelho por regressao.
     """
     classificador = ClassificadorAnthropic()
 
@@ -355,20 +368,30 @@ async def test_acuracia_de_intencao_no_corpus(
         f"insuficiente depois do abandono: a faixa amarela nao absorve o ruido "
         f"neste tamanho.\n{relatorio}"
     )
-    # `PISO_DE_TURNOS_ANOTADOS` e irmao de `PISO_DE_TURNOS`, mas o abandono
-    # nao encolhe os dois na mesma proporcao: as conversas mais longas nao
-    # sao as mais anotadas, entao perder o teto de conversas inteiro (5) pode
-    # deixar o total de turnos acima do piso e o subconjunto anotado bem
-    # abaixo do dele -- o caso medido e abandonar as cinco conversas com mais
-    # anotacao, que sozinho derruba os turnos anotados a 1/3 do piso sem
-    # tocar o piso de turnos. Sem este assert, `_metricas_de` ainda protege o
-    # gate (vira `sem_mecanismo` abaixo do piso, nunca calcula
+    # `PISO_DE_TURNOS_ANOTADOS` e `PISO_DE_TURNOS_NEGATIVOS` sao irmaos de
+    # `PISO_DE_TURNOS`, mas o abandono nao encolhe os tres na mesma proporcao:
+    # as conversas mais longas nao sao as mais anotadas, nem as mais anotadas
+    # sao as mais negativas, entao perder o teto de conversas inteiro (5) pode
+    # deixar o total de turnos acima do piso e um dos dois subconjuntos --
+    # positivos ou negativos -- bem abaixo do dele.
+    #
+    # `len(observadas) >= PISO_DE_TURNOS_ANOTADOS` sozinho se auto-satisfaz
+    # desde que `observadas` passou a incluir os dois: perder os 38 positivos
+    # inteiros ainda deixa 39 negativos, 77 >= 30, e o assert nunca dispara --
+    # exatamente o furo que a guarda de `_metricas_de` fecha contando os dois
+    # em separado. Este assert usa a mesma conta de `_positivas_e_negativas`
+    # para nao reabrir o furo aqui, no ponto irmao.
+    #
+    # Sem este assert, `_metricas_de` ainda protege o gate (vira
+    # `sem_mecanismo` abaixo de qualquer um dos dois pisos, nunca calcula
     # `precisao_da_extracao` com amostra pequena de mais), mas o relatorio sai
-    # mudo sobre o motivo -- e essa e a mesma razao de existir do assert do
-    # piso de turnos, uma linha acima.
-    assert len(observadas) >= PISO_DE_TURNOS_ANOTADOS, (
-        f"{len(observadas)} turnos anotados sobraram na execucao, piso "
-        f"{PISO_DE_TURNOS_ANOTADOS}. Amostra insuficiente para a precisao da "
-        f"extracao significar algo depois do abandono: re-rode.\n{relatorio}"
+    # mudo sobre qual dos dois faltou -- e essa e a mesma razao de existir do
+    # assert do piso de turnos, duas linhas acima.
+    positivas, negativas = _positivas_e_negativas(observadas)
+    assert positivas >= PISO_DE_TURNOS_ANOTADOS and negativas >= PISO_DE_TURNOS_NEGATIVOS, (
+        f"{positivas} turnos anotados (piso {PISO_DE_TURNOS_ANOTADOS}) e {negativas} "
+        f"negativos (piso {PISO_DE_TURNOS_NEGATIVOS}) sobraram na execucao. Amostra "
+        f"insuficiente para a precisao da extracao significar algo depois do "
+        f"abandono: re-rode.\n{relatorio}"
     )
     assert not bloqueia(metricas), relatorio

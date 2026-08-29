@@ -123,7 +123,7 @@ def test_anotacao_nunca_usa_valor_fora_do_vocabulario(conversas: list[ConversaAn
     for conversa in conversas:
         for turno in conversa.turnos:
             for nome, enum in _VOCABULARIO.items():
-                if turno.campos and nome in turno.campos:
+                if turno.positivo and nome in turno.campos:
                     assert turno.campos[nome] in [membro.value for membro in enum]
 
 
@@ -141,7 +141,7 @@ def test_ha_turno_de_correcao_anotado(conversas: list[ConversaAnotada]) -> None:
         regioes = [
             turno.campos["regiao"]
             for turno in conversa.turnos
-            if turno.campos and "regiao" in turno.campos
+            if turno.positivo and "regiao" in turno.campos
         ]
         if len(regioes) >= 2 and len(set(regioes)) >= 2:
             return
