@@ -122,17 +122,21 @@ Os critérios de aceite da história vivem como testes executáveis:
   enviado, `SISTEMA_DO_AGENTE`, o schema de saída e os rótulos enviados e não
   contados), contra uma reserva que era 400 na época. **A partir da TEC-145 a
   reserva é 800, não 400**: o objeto `extracao` que a TEC-145 acrescentou ao
-  schema de saída (`SCHEMA_DA_RESPOSTA`) soma um segundo ~263 à subcontagem,
-  que sobe para **526**. Com a reserva ainda em 400 essa subcontagem já
-  excederia a própria reserva; com 800 ela cabe com **74 tokens** de folga
+  schema de saída (`SCHEMA_DA_RESPOSTA`) soma um segundo ~263 à subcontagem.
+  Na TEC-145 isso a levava a **526**; com a reserva ainda em 400 ela já
+  excederia a própria reserva, e com 800 ela cabia com **74 tokens** de folga
   antes de a segunda asserção de `test_diferenca_entre_o_contado_e_o_enviado`
   (headroom × 0,75, ou seja 600) voltar a disparar — não os ~137 que a
-  reserva de 400 deixava contra os ~263 de antes da TEC-145. A conta usa o
-  mesmo proxy `len/4` do módulo, não uma chamada paga de `count_tokens`, e
-  vive em `test_diferenca_entre_o_contado_e_o_enviado`, que quebra se alguma
-  das parcelas crescer. Ver a seção TEC-145 abaixo e o comentário de
-  `contexto_headroom_de_tokens` em `src/mobia/app/config.py`, que já tinha a
-  conta certa.
+  reserva de 400 deixava contra os ~263 de antes da TEC-145. **A TEC-240
+  alongou `SISTEMA_DO_AGENTE` e a subcontagem subiu para 587**, com 13
+  tokens de folga (ver a nota da TEC-240 na seção TEC-145 abaixo e
+  `test_a_margem_do_orcamento_do_prompt_e_deliberada`); 526/74 ficam como o
+  número da época, não o de hoje. A conta usa o mesmo proxy `len/4` do
+  módulo, não uma chamada paga de `count_tokens`, e vive em
+  `test_diferenca_entre_o_contado_e_o_enviado`, que quebra se alguma das
+  parcelas crescer — o único dos lugares onde ela está escrita que não pode
+  mentir, porque roda. Ver a seção TEC-145 abaixo e o comentário de
+  `contexto_headroom_de_tokens` em `src/mobia/app/config.py`.
 - Mensagem sem texto (áudio, imagem, documento) entra marcada pelo tipo, nunca
   como turno em branco — o modelo tem de poder distinguir "mandou um áudio que
   ainda não transcrevemos" de "não disse nada", e é esse texto que a dobra
@@ -1272,6 +1276,43 @@ seção própria do relatório (`render(..., reperguntas=...)`,
 - **O proxy de repergunta nunca bloqueia**, e há comentário no próprio
   `MARCADORES_DE_REPERGUNTA` dizendo por quê: é heurística de palavra-chave,
   com erro nas duas direções. Ver "Lacunas conhecidas".
+
+> **Nota da TEC-240 (29/08/2026):** até aqui o prompt classificava intenção e
+> extraía campos, mas nunca nomeava a extração como tarefa nem explicava o
+> que `null` significa — a semântica em que o desenho inteiro se apoia
+> (`None` nunca apaga, "não falou disso neste turno" e não "esqueça o que
+> sabia"; ver "Garantias" acima) chegava ao modelo só como nomes de campo
+> crus, sem contrato nenhum em texto. Esta card faz `SISTEMA_DO_AGENTE`
+> nomear a terceira tarefa e dizer explicitamente que `null` é "não falou
+> disso agora" — nunca "não sei" — e que inferir o não-dito conta erro igual
+> a não extrair o dito. Três coisas que o escopo original também pedia **não**
+> foram feitas, e ficam registradas em vez de escondidas:
+>
+> - **A reserva não subiu.** `CONTEXTO_HEADROOM_DE_TOKENS` continua em 800.
+>   Entre a subcontagem de 526 que a TEC-145 deixou e o teto de 600 da segunda
+>   asserção de `test_diferenca_entre_o_contado_e_o_enviado` havia 296
+>   caracteres de folga (74 tokens de proxy); o texto novo do prompt coube
+>   nela, deixando a subcontagem em 587 — 13 tokens de margem, travados por
+>   `test_a_margem_do_orcamento_do_prompt_e_deliberada` para a próxima card não
+>   gastá-los sem saber. Subir a reserva era saída permitida pelo card e foi
+>   recusada de propósito: cada 100 tokens de reserva são 100 tokens a menos
+>   de literais e resumo por turno.
+> - **Nenhum campo do schema ganhou `description`, e o item 3 do escopo do
+>   card não foi entregue.** Descrever só os três enums de vocabulário
+>   arbitrário (`TipoImovel`, `Urgencia`, `FormaPagamento`) custa da ordem de
+>   300 caracteres — estoura sozinho os 296 de folga, antes de qualquer outro
+>   campo do schema ou qualquer palavra a mais no prompt.
+> - **O efeito não foi medido, e o critério 4 do card não se sustenta como
+>   escrito.** A única execução paga de extração é a de 28/08 (seção acima),
+>   contra um corpus que já mudou uma vez nesta árvore desde então — a
+>   TEC-239 levou as anotações de 47 para 59 — e vai mudar de novo quando a
+>   TEC-238 entrar (37 turnos negativos, ainda só no PR #14, não nesta
+>   branch). Um "depois" medido hoje contra aquele "antes" já divergiria por
+>   mudança de prompt **e** de régua ao mesmo tempo, e a diferença não seria
+>   atribuível a uma causa só — e a TEC-238 só vai aumentar essa distância.
+>   Medir efeito de prompt exigiria uma execução paga nova **antes** desta
+>   card entrar — duas execuções pagas, não uma —, e essa execução não
+>   rodou.
 
 ### Lacunas conhecidas
 

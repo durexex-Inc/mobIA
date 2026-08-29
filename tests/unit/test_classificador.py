@@ -14,6 +14,7 @@ from mobia.domain.agente.classificador import (
     MAX_TOKENS_DA_PERGUNTA,
     SCHEMA_DA_RESPOSTA,
     SISTEMA_DA_DESAMBIGUACAO,
+    SISTEMA_DO_AGENTE,
     ClassificadorAnthropic,
     RespostaInvalida,
 )
@@ -542,6 +543,37 @@ def test_desambiguar_pede_uma_pergunta_aberta() -> None:
     """
     assert "menu" in SISTEMA_DA_DESAMBIGUACAO.lower()
     assert "uma unica pergunta" in SISTEMA_DA_DESAMBIGUACAO.lower()
+
+
+def test_o_prompt_do_agente_nomeia_as_tres_tarefas() -> None:
+    """Ate a TEC-240 o prompt dizia "duas coisas" -- a TEC-145 pos um objeto
+    `extracao` de nove campos no schema e nao contou ao modelo.
+
+    Guarda contra alguem reverter a abertura ao editar o prompt por outro
+    motivo: o schema continuaria pedindo extracao, e o modelo voltaria a nao
+    saber que ela existe.
+    """
+    assert "tres coisas" in SISTEMA_DO_AGENTE
+    assert "extrai o que ele procura" in SISTEMA_DO_AGENTE
+
+
+def test_o_prompt_do_agente_explica_a_semantica_de_null() -> None:
+    """`null` significa "o lead nao falou disso NESTE turno", e a metrica pune
+    inferencia tanto quanto omissao. As duas coisas chegavam ao modelo como
+    nomes de campo crus.
+
+    Os dois primeiros asserts (ja existentes) so travam substrings soltas --
+    nao a frase que a card existe para escrever. Sem o terceiro assert, uma
+    edicao futura podia cortar exatamente a definicao explicita de `null` (a
+    unica que o modelo recebe) mantendo "DESTE turno" e "Nao infira" em outro
+    lugar do texto, e este teste continuaria verde.
+    """
+    assert "DESTE turno" in SISTEMA_DO_AGENTE
+    assert "Nao infira" in SISTEMA_DO_AGENTE
+    assert 'null e "nao falou disso agora"' in SISTEMA_DO_AGENTE
+    # Unico ponto onde o prompt usa o nome do campo do schema -- nada mais
+    # trava isso.
+    assert "Na extracao" in SISTEMA_DO_AGENTE
 
 
 async def test_desambiguar_recusa_parada_anormal(monkeypatch: pytest.MonkeyPatch) -> None:
