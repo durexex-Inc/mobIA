@@ -92,7 +92,7 @@ nomeá-la (*"precisa ser terrea"* — um modelo que responde `CASA` está lendo 
 razão, e um negativo ali o puniria); e valor sugerido sem ser dito (*"850 mil
 ta bem acima do que eu consigo"* sugere um teto que a fala não afirma).
 
-**D3 — Não existe mais turno fora da medição sem motivo escrito.** As 16
+**D3 — Não existe mais turno fora da medição sem motivo escrito.** As 17
 exclusões finais ganham comentário no YAML, e um teste trava o conjunto: a
 lista de turnos fora da medição passa a ser declarada no teste, e qualquer
 turno novo sem `campos` quebra o CI até alguém decidir. Comentário de YAML não
@@ -120,10 +120,10 @@ Contagens conferidas por execução sobre o corpus em `7a30831`:
 | balde | turnos | efeito |
 |---|---|---|
 | A — positivo | 10 | positivos 45 → **55**; anotações de campo 69 → **83** |
-| B — negativo `{}` | 30 | negativos 37 → **67** |
-| C — exclusão documentada | 16 (5 já escritas, 11 novas) | fora da medição 56 → **16** |
+| B — negativo `{}` | 29 | negativos 37 → **66** |
+| C — exclusão documentada | 17 (5 já escritas, 12 novas) | fora da medição 56 → **17** |
 
-Turnos na medição: 82 → **122** de 138. Cobertura de invenção: 37 → 67 turnos.
+Turnos na medição: 82 → **121** de 138. Cobertura de invenção: 37 → 66 turnos.
 
 ### Balde A — os dez positivos
 
@@ -163,7 +163,7 @@ Três desses merecem justificativa, porque contrariam o que o README diz hoje:
 Cinco já têm comentário e ficam como estão: `follow-up-03` i1 e i2,
 `borda-evasivo-02` i1 e i2, `aluguel-09` i2.
 
-As onze novas, com o motivo que vai para o YAML:
+As doze novas, com o motivo que vai para o YAML:
 
 | turno | motivo |
 |---|---|
@@ -173,18 +173,19 @@ As onze novas, com o motivo que vai para o YAML:
 | `compra-01` i1 | *"850 mil ta acima do que eu consigo"* sugere teto que a fala não afirma |
 | `compra-04` i1 | *"mais que o dobro do que eu tinha em mente"* — mesma forma, teto sugerido |
 | `compra-07` i1 | *"pode ser sabado de manha?"* — sem âncora de semana, ao contrário de *"essa sexta"* |
+| `compra-02` i2 | *"perto de metro"* — proximidade sem topônimo, igual a `borda-mista-02` i2 (ver emenda) |
 | `compra-08` i2 | *"parcelamento direto com o proprietario"* não é valor de `FormaPagamento` |
 | `compra-11` i1 | permuta com carro não é valor de `FormaPagamento` |
 | `follow-up-01` i1 | *"juntar mais um pouco de entrada"* sugere financiamento sem nomeá-lo |
 | `investimento-04` i1 | *"faz diferenca no financiamento?"* pressupõe o meio em vez de perguntar se pode usá-lo — fora da forma de fala que a TEC-239 nomeou |
 | `investimento-05` i0 | *"tenho uma grana parada"* sugere `A_VISTA` sem afirmar |
 
-### Balde B — os trinta negativos
+### Balde B — os vinte e nove negativos
 
 Estão listados por completo na Task 3 do plano. A forma dominante é pergunta de
 processo sem pressuposição de campo, e três subgrupos merecem nota:
 
-- **Anáfora pura** (`aluguel-01` i1 e i2, `compra-02` i2): a fala se refere ao
+- **Anáfora pura** (`aluguel-01` i1 e i2): a fala se refere ao
   imóvel do turno anterior sem nomear nada. Repetir os campos ali é `extra` de
   propósito — é a mesma decisão que os comentários de `borda-longa-01` i2 e de
   `compra-08` i3 já registram.
@@ -196,6 +197,29 @@ processo sem pressuposição de campo, e três subgrupos merecem nota:
   fala, mas o financiamento foi **negado** — não é a forma de pagamento
   pretendida. Um modelo que extrair `FINANCIAMENTO` aqui está inventando, e
   agora isso conta.
+
+## Emenda de 29/08/2026 — `compra-02` i2 muda de balde
+
+A revisão da Task 2 achou que este spec tratava a mesma fala de duas maneiras.
+`borda-mista-02` i2 (*"precisa ser perto do metro, eu nao dirijo"*) estava no
+balde C com o motivo "proximidade sem topônimo", e `compra-02` i2 (*"e tem
+alguma coisa perto de metro nessa faixa?"*) estava no balde B como negativo,
+filiado a "anáfora pura". As duas dizem a mesma coisa, e a justificativa de
+anáfora era falsa: *"nessa faixa"* é anáfora, *"perto de metro"* é constraint
+nova.
+
+O que decidiu foi um fato do código, e não simetria: `normalizar_regiao("perto
+do metro")` devolve `"metro"` — a normalização **não** descarta a frase como
+ruído. Um modelo que emite `regiao: perto de metro` produz valor comparável, e
+contra `campos: {}` isso conta invenção. Punir o modelo por repetir o que o
+lead disse é o que o critério 3 do D2 existe para evitar. `metro` não é
+topônimo; `usp` e `vila madalena` são, e é por isso que aquelas anotam `regiao`.
+
+`compra-02` i2 passa a ser exclusão documentada. As tabelas acima já refletem a
+mudança: balde B vai de 30 para 29, balde C de 16 para 17, negativos de 67 para
+66, fora da medição de 16 para 17. O pior caso dos pisos cai de 52 para 51
+negativos, e `PISO_DE_TURNOS_NEGATIVOS` fica em 49 em vez de 50, mantendo a
+mesma margem de 2.
 
 ## Fora de escopo
 
@@ -212,8 +236,8 @@ processo sem pressuposição de campo, e três subgrupos merecem nota:
 
 | critério | como se verifica |
 |---|---|
-| Nenhum turno fora da medição sem motivo escrito | conjunto declarado no teste, 16 turnos, comentário no YAML para cada um |
+| Nenhum turno fora da medição sem motivo escrito | conjunto declarado no teste, 17 turnos, comentário no YAML para cada um |
 | A regra "o imóvel que o lead TEM" ganha guarda | teste dos literais do vocabulário, com as duas exceções nomeadas |
-| Cobertura de invenção sobe de 37 para 67 turnos | contagem por execução |
+| Cobertura de invenção sobe de 37 para 66 turnos | contagem por execução |
 | O critério de triagem fica onde um anotador o lê | docstring de `TurnoAnotado` |
 | O efeito na precisão de extração | **não entregue** — exige execução paga (D5) |

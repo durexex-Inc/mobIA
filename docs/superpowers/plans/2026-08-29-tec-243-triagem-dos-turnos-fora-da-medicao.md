@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Levar a cobertura de invenção de 37 para 67 turnos, e fazer com que nenhum turno fique fora da medição sem motivo escrito e vigiado.
+**Goal:** Levar a cobertura de invenção de 37 para 66 turnos, e fazer com que nenhum turno fique fora da medição sem motivo escrito e vigiado.
 
-**Architecture:** Só anotação, comentário e teste. Nada em `src/mobia/domain/`. As 56 falas fora da medição são triadas em três baldes — 10 positivos, 30 negativos `{}`, 16 exclusões — e dois guardas novos impedem que a decisão se perca: um varre as palavras literais do vocabulário, outro trava o conjunto exato dos turnos fora da medição.
+**Architecture:** Só anotação, comentário e teste. Nada em `src/mobia/domain/`. As 56 falas fora da medição são triadas em três baldes — 10 positivos, 29 negativos `{}`, 17 exclusões — e dois guardas novos impedem que a decisão se perca: um varre as palavras literais do vocabulário, outro trava o conjunto exato dos turnos fora da medição.
 
 **Tech Stack:** Python 3.12+, pytest, YAML. Nenhuma dependência nova.
 
@@ -20,7 +20,26 @@
 - **`campos` presente é contrato de anotação completa.** Ao anotar um turno, enumere tudo o que a fala afirma — e só o que ela afirma.
 - **Convenção de índice de turno: 0-based.** "primeiro turno" é índice 0. Não use "t1"/"t2".
 - **Contagens conferidas por execução, não por leitura.**
-- A branch já carrega uma correção do README não commitada (o bullet da convenção por-turno, `README.md:1515-1534`). Ela entra na Task 5, não antes.
+- A branch já carrega uma correção do README não commitada (o bullet da convenção por-turno, `README.md:1515-1534`). Ela entra na Task 4, não antes.
+
+
+## Emenda de 29/08/2026 — durante a execução, depois da Task 2
+
+A revisão da Task 2 achou que o spec tratava a mesma fala de duas maneiras:
+`borda-mista-02` i2 e `compra-02` i2 dizem ambas "perto do metro", e uma estava
+excluída enquanto a outra virou negativo. **Ruling: `compra-02` i2 vira exclusão
+documentada**, porque `normalizar_regiao("perto do metro")` devolve `"metro"` em
+vez de descartar — então o negativo contaria invenção contra um modelo que só
+repetiu a fala. O spec tem a emenda completa.
+
+Efeito, já refletido nas Tasks 3 e 4 abaixo: negativos **66** (não 67), fora da
+medição **17** (não 16), `PISO_DE_TURNOS_NEGATIVOS` **49** (não 50). Positivos
+(55) e anotações de campo (83) não mudam.
+
+**As Tasks 1 e 2 abaixo estão como foram executadas** — os números dentro delas
+(30 negativos, 16 exclusões, 34 turnos no RED) descrevem o que aconteceu na
+hora, e o commit de correção veio depois. Não os reescreva: a história de
+execução é o que torna o plano auditável.
 
 ---
 
@@ -481,13 +500,13 @@ print(f'positivos {tp}, pior caso {pior_p} | negativos {tn}, pior caso {pior_n}'
 "
 ```
 
-Expected: `positivos 55, pior caso 40 | negativos 67, pior caso 52`.
+Expected: `positivos 55, pior caso 40 | negativos 66, pior caso 51`.
 
 - [ ] **Step 3: Suba os dois pisos**
 
-Em `src/mobia/evals/metricas.py`: `PISO_DE_TURNOS_ANOTADOS` de `30` para `38`, e `PISO_DE_TURNOS_NEGATIVOS` de `23` para `50`.
+Em `src/mobia/evals/metricas.py`: `PISO_DE_TURNOS_ANOTADOS` de `30` para `38`, e `PISO_DE_TURNOS_NEGATIVOS` de `23` para `49`.
 
-A margem de 2 sobre o pior caso é a mesma que os pisos tinham antes desta card — 31 contra 30 e 25 contra 23 —, e não é folga generosa de propósito: o piso existe para pegar erosão da amostra, e um piso muito abaixo do pior caso real não pega nada. Acrescente ao comentário de cada constante a data e o pior caso medido, no formato que os comentários vizinhos já usam.
+A margem de 2 sobre o pior caso (40 e 51) é a mesma que os pisos tinham antes desta card — 31 contra 30 e 25 contra 23 —, e não é folga generosa de propósito: o piso existe para pegar erosão da amostra, e um piso muito abaixo do pior caso real não pega nada. Acrescente ao comentário de cada constante a data e o pior caso medido, no formato que os comentários vizinhos já usam.
 
 - [ ] **Step 4: Rode, lint, tipos e commit**
 
@@ -522,7 +541,7 @@ Ela pertence aqui porque a convenção por-turno é a régua desta triagem: meta
 
 O bullet longo de "Lacunas conhecidas" que hoje diz *"56 turnos continuam fora da medição"* e enumera as quatro exclusões deliberadas. Ele muda em três pontos:
 
-- **56 vira 16**, e a cobertura de invenção vai de 37 para **67 turnos**;
+- **56 vira 17**, e a cobertura de invenção vai de 37 para **66 turnos**;
 - a frase *"os outros 51 turnos fora da medição não têm exclusão documentada: são trabalho de anotação que ainda não foi feito, não decisão tomada"* **deixa de ser verdade** e sai;
 - entra o que a triagem descobriu: a maioria daqueles 51 não era anotação atrasada, era pergunta de processo que o corpus já sabia anotar `{}` — e o que faltava era o critério escrito, não o trabalho.
 
@@ -550,7 +569,7 @@ Ele afirma que *"`follow-up-07` índice 2 e `follow-up-08` índice 0 ficam fora 
 
 - [ ] **Step 5: Atualize os pisos citados no README**
 
-Grepe por `PISO_DE_TURNOS_ANOTADOS` e `PISO_DE_TURNOS_NEGATIVOS` e por `30`/`23` no contexto deles. O bullet longo sobre o pior caso depois do abandono cita números da TEC-239 (20 turnos anotados, 32 anotações) que continuam sendo história correta — **não os reescreva**, mas acrescente o pior caso de hoje (40 positivos, 52 negativos).
+Grepe por `PISO_DE_TURNOS_ANOTADOS` e `PISO_DE_TURNOS_NEGATIVOS` e por `30`/`23` no contexto deles. O bullet longo sobre o pior caso depois do abandono cita números da TEC-239 (20 turnos anotados, 32 anotações) que continuam sendo história correta — **não os reescreva**, mas acrescente o pior caso de hoje (40 positivos, 51 negativos).
 
 - [ ] **Step 6: Emende o spec da TEC-238**
 
@@ -579,9 +598,9 @@ git commit -m "docs(TEC-243): a triagem escrita, e a emenda ao spec da TEC-238"
 
 | critério | estado esperado ao fim |
 |---|---|
-| Nenhum turno fora da medição sem motivo escrito | ✅ 16 turnos, cada um com entrada em `_FORA_DA_MEDICAO` e comentário no YAML |
+| Nenhum turno fora da medição sem motivo escrito | ✅ 17 turnos, cada um com entrada em `_FORA_DA_MEDICAO` e comentário no YAML |
 | A regra do imóvel que o lead TEM ganha guarda | ✅ `test_todo_turno_com_palavra_do_vocabulario_tem_tipo_imovel_anotado` |
-| Cobertura de invenção sobe de 37 para 67 turnos | ✅ conferido por execução |
+| Cobertura de invenção sobe de 37 para 66 turnos | ✅ conferido por execução |
 | O critério de triagem fica onde um anotador o lê | ✅ docstring de `TurnoAnotado` |
 | O efeito na precisão de extração | ❌ **não entregue** — exige execução paga (D5) |
 
