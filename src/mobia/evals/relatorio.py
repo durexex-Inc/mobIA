@@ -173,9 +173,10 @@ def _secao_de_extracao(
         detalhe = ", ".join(f"{tipo}: {quantos}" for tipo, quantos in sorted(tipos.items()))
         linhas.append(f"  - {campo} -- {detalhe}")
 
-    linhas += ["", "Onde, para quem for anotar:", ""]
-    for d in discrepancias:
-        linhas.append(f"  - {d.conversa_id} turno {d.indice}: {d.campo} ({d.tipo})")
+    if discrepancias:
+        linhas += ["", "Onde, para quem for anotar:", ""]
+        for d in discrepancias:
+            linhas.append(f"  - {d.conversa_id} turno {d.indice}: {d.campo} ({d.tipo})")
     return linhas
 
 

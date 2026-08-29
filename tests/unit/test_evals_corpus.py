@@ -169,6 +169,34 @@ def test_campos_sem_valor_e_recusado_por_ser_ambiguo(tmp_path: Path) -> None:
     assert "campos: {}" in str(erro.value)
 
 
+def test_campo_com_valor_nulo_dentro_de_campos_e_recusado(tmp_path: Path) -> None:
+    """`campos: {quartos: }` carrega do YAML como `{"quartos": None}` e e o
+    mesmo typo de `campos:` nulo, um nivel abaixo.
+
+    Para `tipo_imovel`/`urgencia`/`forma_pagamento` o check de vocabulario ja
+    pegava esse `None` sem querer (`None not in vocabulario`); para `regiao`,
+    `quartos`, `vagas` e os dois precos nao havia checagem nenhuma, e o valor
+    passava e virava um `faltou` que o modelo nunca conseguia satisfazer,
+    porque `preenchidos()` jamais devolve `None`.
+    """
+    (tmp_path / "c.yaml").write_text(
+        "- id: compra-01\n"
+        "  descricao: teste\n"
+        "  turnos:\n"
+        '    - lead: "quero um apartamento"\n'
+        "      intencao: COMPRA\n"
+        "      campos:\n"
+        "        quartos:\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusInvalido) as erro:
+        carregar(tmp_path)
+
+    assert "compra-01" in str(erro.value)
+    assert "quartos" in str(erro.value)
+
+
 def test_os_tres_estados_de_anotacao_tem_propriedade_propria() -> None:
     """Quatro lugares do codigo testavam `campos` por veracidade e um por
     `is not None`. Isso era inocuo so enquanto `{}` era impossivel."""

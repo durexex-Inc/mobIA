@@ -34,6 +34,12 @@ class TurnoAnotado:
     `campos` presente (os dois ultimos casos) e contrato de anotacao
     **completa**: ver o comentario em `_turno_de`.
 
+    Convencao de indice de turno: **0-based**, igual ao `enumerate` que produz
+    `Discrepancia.indice` no relatorio. "primeiro turno" e indice 0, "segundo
+    turno" e indice 1. Nao use "t1"/"t2" pra descrever turno deste corpus: essa
+    notacao le como 1-based pra quem nao conhece esta convencao, e ja apontou
+    pro turno errado mais de uma vez neste README.
+
     Duas regras de anotacao que a TEC-239 teve de decidir, porque o corpus as
     aplicava de dois jeitos:
 
@@ -41,9 +47,9 @@ class TurnoAnotado:
       busca, entao "comprei um apartamento com voces e agora preciso vender"
       afirma `tem_imovel_para_vender`, e nao `tipo_imovel: APARTAMENTO`.
     - **Pergunta sobre forma de pagamento conta como afirmacao.** "sera que da
-      pra usar o fgts?" (`compra-03` t1) e "aceita financiamento?"
-      (`borda-injecao-01` t2) anotam `forma_pagamento`: quem pergunta se pode
-      usar um meio esta dizendo que pretende usa-lo. A regra esta escrita
+      pra usar o fgts?" (`compra-03` indice 0) e "aceita financiamento?"
+      (`borda-injecao-01` indice 1) anotam `forma_pagamento`: quem pergunta se
+      pode usar um meio esta dizendo que pretende usa-lo. A regra esta escrita
       porque so o primeiro estava anotado, e duas leituras opostas da mesma
       forma de fala no mesmo corpus nao viram nota mais baixa do modelo --
       viram medicao errada.
@@ -123,6 +129,16 @@ def _turno_de(bruto: Any, conversa_id: str, arquivo: str) -> TurnoAnotado:
                 raise CorpusInvalido(
                     f"{arquivo}: {conversa_id} anota campo desconhecido {nome!r}. "
                     f"Conhecidos: {sorted(_CAMPOS_ANOTAVEIS)}."
+                )
+            # Mesmo typo de `campos:` nulo, um nivel abaixo: `{nome}:` sem
+            # valor carrega como `{nome!r}: None` e nao diz nada. Sem esta
+            # recusa o valor passava para regiao/quartos/vagas/os dois
+            # precos e virava um `faltou` que o modelo nunca tem como
+            # satisfazer, porque `preenchidos()` jamais devolve `None`.
+            if valor is None:
+                raise CorpusInvalido(
+                    f"{arquivo}: {conversa_id} anota {nome!r} sem valor, que nao diz "
+                    f"nada. Omita o campo se o lead nao afirmou isso, ou de um valor."
                 )
             enum = _VOCABULARIO.get(nome)
             if enum is not None and valor not in [membro.value for membro in enum]:

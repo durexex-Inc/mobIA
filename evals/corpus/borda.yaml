@@ -60,10 +60,12 @@
     - lead: "boa noite"
       intencao: INDEFINIDA
       campos: {}
-    # Nao anotados como negativos: a TEC-239 decidiu que "depois eu vejo com
-    # calma" e "ainda to decidindo o que quero" nao afirmam `SEM_PRESSA`.
-    # Anota-los como negativos afirmaria o contrario, e com forca de gate em
-    # vez de omissao.
+    # Nao anotados como negativos: a TEC-239 omitiu `SEM_PRESSA` aqui por
+    # incerteza sobre o que "depois eu vejo com calma" e "ainda to decidindo
+    # o que quero" afirmam. Omissao nao e o mesmo que asercao de completude
+    # -- anotar negativo e uma afirmacao forte de que a fala nao afirma nada,
+    # e a mesma incerteza que justificou a omissao tambem impede essa
+    # afirmacao forte.
     - lead: "depois eu vejo com calma, valeu"
       intencao: INDEFINIDA
     - lead: "ainda to decidindo o que quero"

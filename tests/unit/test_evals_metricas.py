@@ -471,15 +471,23 @@ def test_normalizacao_de_comparavel_vale_aqui_tambem():
 
 
 def test_acertos_mais_discrepancias_fecham_o_total_da_metrica():
-    """A invariante que amarra as duas funcoes.
+    """A invariante que amarra as duas funcoes, com negativos na mistura.
 
     Sem ela, alguem muda a formula de `precisao_da_extracao` e o relatorio passa
-    a mentir em silencio, em vez de o teste quebrar.
+    a mentir em silencio, em vez de o teste quebrar. O README aponta este teste
+    pelo nome como a guarda da invariante "continua valendo com negativos" --
+    as tres `observadas` originais eram todas positivas, e um negativo com
+    invencao (`esperado={}`, `obtido` nao vazio) exercita exatamente o lado da
+    uniao que so aparece desde a TEC-238: o campo entra no total pelo lado
+    obtido e vira `extra`, nunca `acerto`. O negativo limpo prova a outra
+    metade -- contribui zero para os dois lados e nao quebra a soma.
     """
     observadas = [
         _observada({"quartos": 2, "regiao": "sp"}, {"quartos": 2, "vagas": 1}, indice=0),
         _observada({"urgencia": "IMEDIATA"}, {"urgencia": "SEM_PRESSA"}, indice=1),
         _observada({"tipo_imovel": "CASA"}, {"tipo_imovel": "CASA"}, indice=2),
+        _observada({}, {"regiao": "sp"}, indice=3),
+        _observada({}, {}, indice=4),
     ]
     metrica = precisao_da_extracao(observadas)
     assert metrica.total is not None and metrica.acertos is not None

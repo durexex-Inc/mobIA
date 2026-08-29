@@ -182,7 +182,7 @@ async def _rodar_conversa(
         )
 
         obtido = resposta.extracao.preenchidos()
-        if turno.campos is not None:
+        if turno.anotado:
             observadas.append(
                 ExtracaoObservada(
                     conversa_id=conversa.id,
@@ -368,12 +368,13 @@ async def test_acuracia_de_intencao_no_corpus(
     # total era sempre o do corpus, e a lista nunca encolhia. Agora ela
     # encolhe de verdade com o abandono -- mas com o corpus de hoje esta
     # asercao nao e a que dispara primeiro: o teto acima estoura antes dela,
-    # porque 5 x 3 = 15 turnos perdidos no pior caso cabem dentro da folga de
-    # 16 turnos sobre o piso de 120 (a conta esta travada por teste em
-    # `metricas.py`). Ela so fica alcancavel se essa folga diminuir. O piso do
-    # corpus em si sai de graca em `tests/unit/test_evals_corpus_real.py` e no
-    # pre-voo da fixture `conversas`. O que ela guarda aqui e o que **sobrou**
-    # da execucao.
+    # porque o pior caso (a soma das cinco conversas mais longas, hoje
+    # 4+4+3+3+3 = 17 turnos perdidos) cabe dentro da folga de 138 - 120 = 18
+    # turnos sobre o piso de 120 (a conta esta travada por teste em
+    # `metricas.py`, `TETO_DE_CONVERSAS_ABANDONADAS`). Ela so fica alcancavel
+    # se essa folga diminuir. O piso do corpus em si sai de graca em
+    # `tests/unit/test_evals_corpus_real.py` e no pre-voo da fixture
+    # `conversas`. O que ela guarda aqui e o que **sobrou** da execucao.
     assert len(resultados) >= PISO_DE_TURNOS, (
         f"{len(resultados)} turnos medidos, piso {PISO_DE_TURNOS}. Amostra "
         f"insuficiente depois do abandono: a faixa amarela nao absorve o ruido "
@@ -388,7 +389,7 @@ async def test_acuracia_de_intencao_no_corpus(
     #
     # `len(observadas) >= PISO_DE_TURNOS_ANOTADOS` sozinho se auto-satisfaz
     # desde que `observadas` passou a incluir os dois: perder os 38 positivos
-    # inteiros ainda deixa 39 negativos, 77 >= 30, e o assert nunca dispara --
+    # inteiros ainda deixa 37 negativos, 75 >= 30, e o assert nunca dispara --
     # exatamente o furo que a guarda de `_metricas_de` fecha contando os dois
     # em separado. Este assert usa a mesma conta de `_positivas_e_negativas`
     # para nao reabrir o furo aqui, no ponto irmao.

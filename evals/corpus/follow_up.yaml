@@ -32,9 +32,13 @@
       intencao: VENDER_IMOVEL
       campos:
         tem_imovel_para_vender: true
+    # Fora da medicao: pergunta de processo que pressupoe um campo (que o
+    # lead continua com o imovel que quer vender) sem dar pra enumerar com
+    # confianca tudo o que a fala afirma -- mesma forma de fala que
+    # `aluguel-08` indice 2 usa pra reafirmar `tipo_imovel`. Negativo aqui
+    # puniria o modelo por ler a fala com razao.
     - lead: "quanto tempo leva pra avaliar o imovel?"
       intencao: VENDER_IMOVEL
-      campos: {}
     # Nao anotado como negativo: o financiamento aqui e o que o lead ja tem,
     # nao a forma de pagamento que pretende usar. A distincao e fina de mais
     # para virar gate.

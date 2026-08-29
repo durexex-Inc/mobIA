@@ -121,9 +121,13 @@
     - lead: "voces exigem quantos meses de deposito caucao?"
       intencao: ALUGUEL
       campos: {}
+    # Fora da medicao: pergunta de processo que pressupoe um campo (o predio
+    # em que o lead pretende alugar) sem dar pra enumerar com confianca tudo
+    # o que a fala afirma -- mesma forma de fala que `aluguel-08` indice 2
+    # usa pra reafirmar `tipo_imovel`. Negativo aqui puniria o modelo por ler
+    # a fala com razao.
     - lead: "e pode ter animal de estimacao no predio?"
       intencao: ALUGUEL
-      campos: {}
 
 - id: aluguel-10
   descricao: duvida simples sobre valor de anuncio

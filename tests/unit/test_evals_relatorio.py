@@ -279,6 +279,15 @@ def test_negativos_sem_discrepancia_ainda_mostra_a_secao() -> None:
     assert "39 turnos negativos" in texto
 
 
+def test_cabecalho_por_turno_nao_aparece_sem_discrepancias() -> None:
+    """Caso ideal: negativos medidos, zero invencao. Sem esta guarda o
+    relatorio imprimia "Onde, para quem for anotar:" seguido de nada."""
+    texto = render(
+        [], {}, negativos=ResumoDeNegativos(turnos=5, com_invencao=0, campos_inventados=0)
+    )
+    assert "Onde, para quem for anotar" not in texto
+
+
 def test_a_secao_de_extracao_nomeia_os_turnos_negativos() -> None:
     """Sem isto, um `extra` no relatorio nao diz se foi invencao ou lacuna de
     anotacao -- e a distincao e o motivo de a TEC-238 existir."""

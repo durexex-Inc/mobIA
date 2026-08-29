@@ -37,9 +37,12 @@ PISO_DE_TURNOS_ANOTADOS = 30
 # porta.
 #
 # O numero vem do pior caso de abandono, como o de `TETO_DE_CONVERSAS_ABANDONADAS`:
-# sao 39 negativos, e as cinco conversas com mais negativos somam 12, entao a
-# execucao mais azarada ainda entrega 27. O piso fica em 25, com folga de dois.
-PISO_DE_TURNOS_NEGATIVOS = 25
+# sao 37 negativos -- a TEC-238 anotou 39, e esta revisao tirou dois
+# (`follow-up-03` indice 1 e `aluguel-09` indice 2) por serem pergunta de
+# processo que pressupoe campo, e nao ausencia de afirmacao. As cinco
+# conversas com mais negativos somam 12, entao a execucao mais azarada ainda
+# entrega 37 - 12 = 25. O piso fica em 23, com folga de dois.
+PISO_DE_TURNOS_NEGATIVOS = 23
 
 # Quantas conversas a execucao pode perder para falha de infraestrutura antes
 # de deixar de valer como medida.
