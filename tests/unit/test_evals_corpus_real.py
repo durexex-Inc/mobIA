@@ -1,3 +1,4 @@
+import re
 from dataclasses import fields
 from pathlib import Path
 
@@ -183,3 +184,59 @@ def test_anotacoes_de_regiao_nao_colidem_depois_de_normalizadas(
     colisoes = {forma: brutas for forma, brutas in por_forma.items() if len(brutas) > 1}
 
     assert colisoes == {}, f"formas distintas normalizam para a mesma: {colisoes}"
+
+
+# Palavras que o lead usa e que NAO estao em `TipoImovel`. Seis, e nao as
+# cinco do mapa da TEC-242: `republica` entra aqui de proposito, apesar de nao
+# ter traducao, por motivo prospectivo -- hoje ela nao muda nada (o unico
+# turno que a usa, `aluguel-07` i0, ja contem "kitnet" e seria detectado sem
+# ela), mas um turno futuro que diga so "procuro uma republica perto da puc",
+# sem outro sinonimo junto, precisa ser detectado e forcado a uma decisao
+# explicita -- entrar na lista de excecoes ou ganhar `tipo_imovel` -- em vez
+# de entrar sem tipo em silencio.
+#
+# Fronteira de palavra, e nao substring crua: `studio` e substring de
+# "estudio", e `cobertura` e polissemica em portugues ("o seguro tem
+# cobertura pra danos?"). A polissemia de `cobertura` e inerente a lingua, e a
+# lista de excecoes abaixo e a valvula para ela -- nao ha regex que a
+# elimine.
+_SINONIMOS_DE_TIPO_IMOVEL = re.compile(r"\b(kitnet|studio|flat|cobertura|sobrado|republica)\b")
+
+# `aluguel-07` i0 diz "procuro republica ou kitnet": o lead oferece duas
+# tipologias e nao escolhe nenhuma. Anotar uma delas puniria o modelo por
+# escolher a outra, que e o erro simetrico que a regua ja pune.
+#
+# A lista acolhe mais de um caso: tambem cabe aqui o turno em que o sinonimo
+# descreve o imovel que o lead **tem**, e nao o que procura -- pela mesma
+# regra que exclui `tem_imovel_para_vender` de `tipo_imovel` (ver docstring
+# de `TurnoAnotado`). "comprei um sobrado com voces e agora preciso vender"
+# anota `{tem_imovel_para_vender: true}`, sem `tipo_imovel`, e o guarda exige
+# tipo ou excecao -- e essa e a excecao.
+_SEM_TIPO_APESAR_DO_SINONIMO = {("aluguel-07", 0)}
+
+
+def test_todo_turno_com_sinonimo_tem_tipo_imovel_anotado(
+    conversas: list[ConversaAnotada],
+) -> None:
+    """A traducao que o modelo faz certo nao pode contar erro.
+
+    O schema da chamada e estrito: o modelo nunca devolve "kitnet", ele
+    devolve `APARTAMENTO`. Se o corpus nao anota nada nesse turno, a uniao
+    conta o campo como `extra` -- erro cheio, por acertar. Foi assim que
+    `tipo_imovel` virou 8 das 29 discrepancias da execucao de 28/08.
+
+    Sem este teste, o proximo turno com "kitnet" entra sem tipo e a punicao
+    volta em silencio.
+    """
+    faltando = []
+    for conversa in conversas:
+        for indice, turno in enumerate(conversa.turnos):
+            if (conversa.id, indice) in _SEM_TIPO_APESAR_DO_SINONIMO:
+                continue
+            fala = turno.lead.casefold()
+            if not _SINONIMOS_DE_TIPO_IMOVEL.search(fala):
+                continue
+            if not (turno.campos and "tipo_imovel" in turno.campos):
+                faltando.append((conversa.id, indice, turno.lead[:50]))
+
+    assert faltando == [], f"turnos com sinonimo e sem `tipo_imovel`: {faltando}"

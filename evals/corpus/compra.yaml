@@ -109,10 +109,16 @@
   turnos:
     - lead: "vi uma cobertura duplex la no anuncio, ainda esta disponivel pra venda?"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
     - lead: "tem churrasqueira na cobertura ou so na area comum do predio?"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
     - lead: "qual o valor do condominio dessa cobertura?"
       intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
 
 - id: compra-07
   descricao: lead retomando conversa, ja com financiamento aprovado
@@ -181,13 +187,13 @@
       intencao: COMPRA
       campos:
         regiao: zona sul
+        tipo_imovel: CASA
     - lead: "e aceita permuta com meu carro na entrada?"
       intencao: COMPRA
-    # Nao anotado como negativo: "sobrado" nao esta em `TipoImovel`, e um
-    # modelo que devolve `CASA` esta lendo a fala com razao. Marcar este turno
-    # como negativo puniria o acerto com forca de gate.
     - lead: "o sobrado tem escritura ja regularizada?"
       intencao: COMPRA
+      campos:
+        tipo_imovel: CASA
 
 - id: compra-12
   descricao: mudanca pra sp, quer imovel pronto pra morar
