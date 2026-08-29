@@ -350,6 +350,35 @@ class ExtracaoObservada:
 
 
 @dataclass(frozen=True)
+class ResumoDeNegativos:
+    """Quantos turnos negativos entraram na medicao, e quanto se inventou neles.
+
+    Nao carrega faixa: e diagnostico, como `ResumoDeConfianca`. Quem bloqueia
+    e `precisao_da_extracao`, que ja conta a invencao no denominador.
+
+    `turnos` precisa existir separado de `com_invencao` porque turno negativo
+    limpo nao gera discrepancia nenhuma: sem este numero, o relatorio nao teria
+    como dizer se "uma invencao" saiu de dois turnos medidos ou de trinta e
+    nove.
+    """
+
+    turnos: int
+    com_invencao: int
+    campos_inventados: int
+
+
+def resumo_de_negativos(observadas: Sequence[ExtracaoObservada]) -> ResumoDeNegativos:
+    """Turno negativo e o que tem `esperado` vazio -- anotado por completo, e o
+    completo e nada."""
+    negativas = [observada for observada in observadas if observada.esperado == {}]
+    return ResumoDeNegativos(
+        turnos=len(negativas),
+        com_invencao=sum(1 for observada in negativas if observada.obtido),
+        campos_inventados=sum(len(observada.obtido) for observada in negativas),
+    )
+
+
+@dataclass(frozen=True)
 class Discrepancia:
     """Um campo que nao casou, com o endereco de onde arrumar.
 

@@ -7,6 +7,7 @@ from mobia.evals.metricas import (
     Discrepancia,
     FalhaDeInfraestrutura,
     ResumoDeConfianca,
+    ResumoDeNegativos,
     acuracia_de_intencao,
     sem_mecanismo,
 )
@@ -266,3 +267,27 @@ def test_a_secao_nao_e_gate():
     texto = render([], {}, discrepancias=[_d("vagas", "extra")])
     for faixa in ("VERDE", "AMARELO", "VERMELHO"):
         assert faixa not in texto
+
+
+def test_negativos_sem_discrepancia_ainda_mostra_a_secao() -> None:
+    """ "39 turnos negativos, zero invencoes" e o resultado mais valioso de
+    imprimir, e ele produz zero discrepancias -- a secao nao pode depender
+    so delas para aparecer."""
+    texto = render(
+        [], {}, negativos=ResumoDeNegativos(turnos=39, com_invencao=0, campos_inventados=0)
+    )
+    assert "39 turnos negativos" in texto
+
+
+def test_a_secao_de_extracao_nomeia_os_turnos_negativos() -> None:
+    """Sem isto, um `extra` no relatorio nao diz se foi invencao ou lacuna de
+    anotacao -- e a distincao e o motivo de a TEC-238 existir."""
+    saida = render(
+        [],
+        {},
+        discrepancias=[_d("regiao", "extra", conversa="borda-fora-01")],
+        negativos=ResumoDeNegativos(turnos=39, com_invencao=1, campos_inventados=1),
+    )
+
+    assert "39 turnos negativos" in saida
+    assert "1 com invencao" in saida

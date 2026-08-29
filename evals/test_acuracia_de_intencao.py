@@ -34,6 +34,7 @@ from mobia.evals.metricas import (
     matriz_de_confusao,
     precisao_da_extracao,
     resumo_de_confianca,
+    resumo_de_negativos,
     sem_mecanismo,
 )
 from mobia.evals.relatorio import render
@@ -344,6 +345,11 @@ async def test_acuracia_de_intencao_no_corpus(
         # (anotar) e TEC-240 (prompt). Diagnostico -- nao entra em
         # `_metricas_de` nem em `bloqueia`.
         discrepancias=discrepancias_da_extracao(observadas),
+        # Turno negativo e o unico lugar onde `extra` deixa de ser ambiguo: o
+        # turno esta anotado por completo, e o completo e vazio. Sem esta
+        # contagem, o relatorio nao diria se a invencao veio de dois turnos
+        # medidos ou de todos os negativos do corpus.
+        negativos=resumo_de_negativos(observadas),
     )
     with capsys.disabled():
         print("\n" + relatorio)

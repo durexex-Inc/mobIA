@@ -9,6 +9,7 @@ from mobia.evals.metricas import (
     FalhaDeInfraestrutura,
     ResultadoDaMetrica,
     ResumoDeConfianca,
+    ResumoDeNegativos,
 )
 
 
@@ -124,7 +125,9 @@ def _secao_de_reperguntas(reperguntas: Sequence[tuple[str, int, str]]) -> list[s
     return linhas
 
 
-def _secao_de_extracao(discrepancias: Sequence[Discrepancia]) -> list[str]:
+def _secao_de_extracao(
+    discrepancias: Sequence[Discrepancia], negativos: ResumoDeNegativos | None
+) -> list[str]:
     """Onde a extracao nao casou, agregado e por turno. So diagnostico.
 
     Nenhum numero aqui tem faixa, pelo mesmo motivo de `_secao_de_confianca` e
@@ -140,6 +143,10 @@ def _secao_de_extracao(discrepancias: Sequence[Discrepancia]) -> list[str]:
     A lista por turno vem depois do agregado de proposito: o agregado diz onde
     esta o problema, e o endereco (conversa e turno) e o que evita gastar outra
     execucao paga so para achar onde anotar.
+
+    `negativos` muda essa leitura quando existe: num turno negativo o corpus
+    esta anotado por completo, e o completo e vazio, entao `extra` ali deixa
+    de ser ambiguo e vira invencao sem discussao possivel.
     """
     por_campo: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for d in discrepancias:
@@ -151,6 +158,15 @@ def _secao_de_extracao(discrepancias: Sequence[Discrepancia]) -> list[str]:
         "",
         f"- total de discrepancias: {len(discrepancias)}",
     ]
+    if negativos is not None:
+        linhas += [
+            f"- {negativos.turnos} turnos negativos medidos, "
+            f"{negativos.com_invencao} com invencao "
+            f"({negativos.campos_inventados} campos)",
+            "",
+            "  Num turno negativo, `extra` e invencao sem ambiguidade: o turno",
+            "  esta anotado por completo, e o completo e vazio.",
+        ]
     for campo, tipos in sorted(por_campo.items(), key=lambda par: (-sum(par[1].values()), par[0])):
         detalhe = ", ".join(f"{tipo}: {quantos}" for tipo, quantos in sorted(tipos.items()))
         linhas.append(f"  - {campo} -- {detalhe}")
@@ -170,6 +186,7 @@ def render(
     infraestrutura: Sequence[FalhaDeInfraestrutura] = (),
     reperguntas: Sequence[tuple[str, int, str]] = (),
     discrepancias: Sequence[Discrepancia] = (),
+    negativos: ResumoDeNegativos | None = None,
 ) -> str:
     linhas = ["# Avaliacao da classificacao de intencao", ""]
 
@@ -185,8 +202,8 @@ def render(
     if reperguntas:
         linhas += _secao_de_reperguntas(reperguntas)
 
-    if discrepancias:
-        linhas += _secao_de_extracao(discrepancias)
+    if discrepancias or negativos is not None:
+        linhas += _secao_de_extracao(discrepancias, negativos)
 
     if erradas:
         linhas += _secao_de_erradas(erradas)

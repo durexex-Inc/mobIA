@@ -14,6 +14,7 @@ from mobia.evals.metricas import (
     Discrepancia,
     ExtracaoObservada,
     Faixa,
+    ResumoDeNegativos,
     acuracia_de_intencao,
     acuracia_efetiva,
     bloqueia,
@@ -23,6 +24,7 @@ from mobia.evals.metricas import (
     matriz_de_confusao,
     precisao_da_extracao,
     resumo_de_confianca,
+    resumo_de_negativos,
     sem_mecanismo,
 )
 
@@ -549,3 +551,18 @@ def test_corpus_so_negativo_e_limpo_levanta_em_vez_de_reportar() -> None:
     """
     with pytest.raises(ValueError, match="nada medido"):
         precisao_da_extracao([_observada({}, {}, indice=0)])
+
+
+def test_resumo_de_negativos_conta_turnos_e_invencoes() -> None:
+    """Turno negativo sem invencao nao aparece em `discrepancias_da_extracao`,
+    entao o relatorio nao teria como dizer quantos foram medidos. Sem esse
+    numero, "3 invencoes" nao se distingue de "3 invencoes em 3 turnos"."""
+    observadas = [
+        _observada({"quartos": 2}, {"quartos": 2}, indice=0),
+        _observada({}, {}, indice=1),
+        _observada({}, {"regiao": "sp", "tipo_imovel": "CASA"}, indice=2),
+    ]
+
+    resumo = resumo_de_negativos(observadas)
+
+    assert resumo == ResumoDeNegativos(turnos=2, com_invencao=1, campos_inventados=2)
