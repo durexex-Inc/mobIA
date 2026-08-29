@@ -408,12 +408,12 @@ roda no default dela, e medir com `temperature=0` daria um número estável
 sobre uma configuração que a produção não usa.
 
 O corpus é `evals/corpus/*.yaml`, um arquivo por categoria (`compra`,
-`aluguel`, `investimento`, `follow_up`, `borda`), 50 conversas e **136
+`aluguel`, `investimento`, `follow_up`, `borda`), 50 conversas e **138
 turnos** anotados à mão — o texto é escrito primeiro, o rótulo depois, e por
 um humano, não pelo modelo medido: gerar o corpus com o mesmo modelo que ele
 avalia embutiria as pistas que aquele modelo lê bem e infla a acurácia por
 construção. A distribuição por intenção sai desigual porque a conversa real é
-desigual: COMPRA 47, ALUGUEL 32, INVESTIMENTO 26, FORA_DE_ESCOPO 9, INDEFINIDA
+desigual: COMPRA 49, ALUGUEL 32, INVESTIMENTO 26, FORA_DE_ESCOPO 9, INDEFINIDA
 9, SUPORTE_CONTRATO 7, VENDER_IMOVEL 6. Onze conversas mudam de intenção no
 meio, e duas são tentativa de injeção — uma delas com dois turnos, o hijack
 frontal e, depois dele, a injeção embutida num pedido real de compra.
@@ -473,6 +473,15 @@ quanto à outra.
 > nenhum, só acrescentam anotação que o classificador nunca lê. Uma reexecução
 > paga contra o corpus atual pode divergir desse número por este motivo, além
 > do ruído normal entre execuções (±1,5%, citado abaixo).
+>
+> **Atualização (29/08/2026):** esta nota ficou desatualizada, e é exatamente
+> o risco que ela existe para avisar — o corpus mudou de novo por baixo dela
+> sem que ninguém voltasse para corrigi-la. A TEC-239 deu um quarto turno a
+> `compra-02` e a `compra-08`; o corpus tem hoje **138 turnos**, não 136, e o
+> texto logo abaixo já reflete o número atual. A comparação com os 126/136
+> acima segue valendo pelo motivo original — o turno de `aluguel-02` mudou de
+> texto —, mas agora soma-se um segundo motivo, maior, para uma reexecução
+> divergir: dois turnos inteiros que não existiam quando esta medição rodou.
 
 Isso trouxe um ganho e um custo. O ganho: **degradação parcial de calibração
 passou a barrar.** Com o piso de 50%, meio corpus rebaixado dava exatamente 50%
@@ -554,17 +563,23 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   prompt**, e nessa ordem porque a primeira que estourar é a mensagem que o CI
   mostra: `TETO_DE_CONVERSAS_ABANDONADAS` (5) diz "a rede caiu, re-rode",
   `PISO_DE_TURNOS` (120) diz "sobrou amostra de menos", e só então `bloqueia`
-  diz "o prompt regrediu". O teto de 5 não é gosto: é a folga do piso dividida
-  pela conversa mais longa do corpus (5 × 3 = 15 turnos, contra 16 de folga),
-  e `tests/unit/test_evals_metricas.py::test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos`
+  diz "o prompt regrediu". O teto de 5 não é gosto: é a folga do piso —
+  138 − 120 = 18 turnos — dividida pelo pior caso de abandono. Essa conta não
+  é mais 5 × 3: a TEC-239 deu um quarto turno a `compra-02` e a `compra-08`,
+  então as cinco conversas mais longas do corpus hoje somam 4 + 4 + 3 + 3 + 3
+  = 17 turnos, contra 18 de folga — o teto de 5 continua de pé, com a mesma
+  margem de 1 que já tinha quando a conta era 5 × 3 = 15 contra 16 de folga.
+  Com seis abandonos o pior caso já seria 138 − 20 = 118 turnos, furando o
+  piso — e é exatamente essa fronteira que
+  `tests/unit/test_evals_metricas.py::test_o_teto_de_abandono_nunca_consegue_furar_o_piso_de_turnos`
   falha de graça se o corpus mudar de forma e as duas asserções passarem a
   poder reprovar a mesma execução por motivos diferentes.
 - O gate compara **percentual**, não contagem absoluta — o corpus tem hoje
-  136 turnos, e uma conversa a mais ou a menos muda esse total, então cravar
+  138 turnos, e uma conversa a mais ou a menos muda esse total, então cravar
   contagem faria o limiar mudar de significado a cada conversa acrescentada.
   O piso de 120 turnos (`PISO_DE_TURNOS`) é o que garante que um único turno
   não valha mais de 0,8% e a faixa amarela continue absorvendo o ruído entre
-  execuções — os 136 turnos reais folgam esse piso em 16.
+  execuções — os 138 turnos reais folgam esse piso em 18.
 - **`evals.yml` é um workflow só, sem `paths` nem `paths-ignore`, e roda em
   todo `pull_request`** — sempre exatamente um check run, com nome estável
   (`Avaliacoes de IA`). Um passo inicial decide sozinho se o PR mexeu em
@@ -674,7 +689,7 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   lead quer; ela mede a metade legítima do turno, e ignorar a instrução colada
   é trabalho do system prompt, que este gate não mede. Um exemplo só é pouco
   para essa forma, que é a que quebra prompt na prática.
-- **COMPRA é 35% dos turnos** (47 de 136): um classificador que responda
+- **COMPRA é 35% dos turnos** (49 de 138): um classificador que responda
   sempre COMPRA já tira 35% de acurácia de graça. Isso não invalida o alvo —
   90% continua exigindo acerto real nas outras classes —, mas a matriz de
   confusão vai ser dominada por COMPRA e ALUGUEL, e VENDER_IMOVEL (6 turnos)
@@ -699,7 +714,7 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   dobraria as chamadas pagas nesses turnos, e é decisão de escopo, fora da
   TEC-210.
 - **Zero acentos nos dados do corpus.** Não há **um único** caractere
-  acentuado nos 136 turnos:
+  acentuado nos 138 turnos:
   `LC_ALL=C grep -n '[^ -~\t]' evals/corpus/*.yaml` não casa nada. Isso é
   vazamento da convenção de código (comentários e docstrings em ASCII puro)
   para dentro dos dados, onde ela não vale: `carregar` em
@@ -1116,7 +1131,7 @@ Os três tipos não são simétricos, e ler isso errado custa a card errada:
 extraiu **certo** e que ninguém anotou desconta exatamente como uma invenção —
 campo com muitos `extra` e pouca anotação no corpus é candidato a lacuna de
 anotação, não a defeito do modelo. É a leitura que a TEC-238 vai precisar para
-separar invenção de anotação faltante nos 100 turnos sem `campos` — e a que,
+separar invenção de anotação faltante nos 61 turnos sem `campos` — e a que,
 até a primeira execução paga acontecer, ninguém ainda exerceu contra dados
 reais.
 
@@ -1185,14 +1200,16 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   paga.** `carregar` recusa campo desconhecido ou valor fora de `TipoImovel`,
   `Urgencia` ou `FormaPagamento` com o arquivo e a conversa no erro — o mesmo
   padrão de validação adiantada que o piso de turnos da TEC-210 já usava.
-- **A precisão de extração pune os dois lados da conta nos 32 turnos
-  anotados** — pela união entre campos esperados e obtidos, nem um modelo que
-  inventa campos, nem um que nunca extrai nada, tira 100% de graça **nesse
-  subconjunto**. Nos outros 104 turnos do corpus, `campos` ausente tira o
-  turno da medição de extração por completo (é o único jeito de anotar "esta
-  fala não afirma nada extraível" — `carregar` recusa `campos: {}` com
-  `CorpusInvalido` e manda omitir a chave em vez de deixá-la vazia), então uma
-  invenção nesses 104 turnos não é medida por ninguém. Ver "Lacunas
+- **A precisão de extração pune os dois lados da conta nos 77 turnos
+  medidos — 38 positivos e 39 negativos.** Pela união entre campos esperados
+  e obtidos, nem um modelo que inventa campos, nem um que nunca extrai nada,
+  tira 100% de graça **nesse subconjunto**, e desde a TEC-238 os negativos
+  (`campos: {}`, "o lead não afirmou nada neste turno") fecham a metade que
+  faltava: sem eles um modelo podia inventar à vontade em todo turno sem
+  anotação positiva e não pagar por isso em lugar nenhum. Os outros 61 turnos
+  do corpus continuam fora da medição — chave `campos` ausente é o único
+  jeito de anotar "não sei enumerar com confiança tudo o que esta fala
+  afirma" —, e invenção neles não é medida por ninguém. Ver "Lacunas
   conhecidas".
 - **Há teste de correção de região no corpus**
   (`tests/unit/test_evals_corpus_real.py::test_ha_turno_de_correcao_anotado`),
@@ -1274,7 +1291,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   modelo está a inventar, não risco de dado permanente gravado. É a
   [TEC-238](https://eduardodurieuxlopes.atlassian.net/browse/TEC-238).
 - **Nenhum dos nove campos fica com zero anotação, e o teste guarda isso.**
-  Contagem nos 38 turnos anotados, 59 anotações de campo:
+  Contagem nos 38 turnos anotados como positivos, 59 anotações de campo:
 
   | campo | anotações |
   |---|---|
