@@ -1085,13 +1085,16 @@ piso próprio em vez de herdar 90/84 da intenção.
 `PISO_DE_TURNOS_ANOTADOS = 30` (`src/mobia/evals/metricas.py`) é o piso
 irmão de `PISO_DE_TURNOS`, na outra direção: sem ele, anotar três turnos
 fáceis daria 100% de precisão num corpus que não mede nada — o nome é
-histórico, e o piso confere `turno.positivo`. Hoje **38 turnos estão
-anotados como positivos**, distribuídos em `evals/corpus/compra.yaml` (17),
-`evals/corpus/aluguel.yaml` (12), `evals/corpus/investimento.yaml` (5),
+histórico, e o piso confere `turno.positivo`. Hoje **45 turnos estão
+anotados como positivos**, distribuídos em `evals/corpus/compra.yaml` (21),
+`evals/corpus/aluguel.yaml` (14), `evals/corpus/investimento.yaml` (6),
 `evals/corpus/borda.yaml` (2) e `evals/corpus/follow_up.yaml` (2). Os três
 primeiros ganharam a chave `campos` na TEC-145; os dois últimos, na TEC-239,
 que precisou dos turnos de injeção e de venda para tirar quatro campos do
-zero.
+zero. A TEC-242 acrescentou sete a esse total: turnos que citavam sinônimo
+de tipologia (*kitnet*, *studio*, *flat*, *cobertura*, *sobrado*) e ficavam
+fora da medição só por não haver regra que traduzisse a palavra do lead
+para o vocabulário de `TipoImovel`.
 `aluguel-02` carrega o caso de correção que a D4 do spec pediu com risco
 declarado: o lead troca de região no meio da conversa (`brooklin` →
 `itaim bibi`), e é o turno que prova que a sobrescrita pelo mais novo tem
@@ -1138,7 +1141,7 @@ Os três tipos não são simétricos, e ler isso errado custa a card errada:
 extraiu **certo** e que ninguém anotou desconta exatamente como uma invenção —
 campo com muitos `extra` e pouca anotação no corpus é candidato a lacuna de
 anotação, não a defeito do modelo. É a leitura que a TEC-238 vai precisar para
-separar invenção de anotação faltante nos 63 turnos sem `campos`. A execução
+separar invenção de anotação faltante nos 56 turnos sem `campos`. A execução
 de 28/08 já exerceu essa leitura contra dados reais uma vez, e foi assim que
 `regiao` apareceu como o maior balde de discrepâncias — mas contra o corpus
 de antes da TEC-239 e da TEC-238, e sem turno negativo nenhum.
@@ -1208,13 +1211,13 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   paga.** `carregar` recusa campo desconhecido ou valor fora de `TipoImovel`,
   `Urgencia` ou `FormaPagamento` com o arquivo e a conversa no erro — o mesmo
   padrão de validação adiantada que o piso de turnos da TEC-210 já usava.
-- **A precisão de extração pune os dois lados da conta nos 75 turnos
-  medidos — 38 positivos e 37 negativos.** Pela união entre campos esperados
+- **A precisão de extração pune os dois lados da conta nos 82 turnos
+  medidos — 45 positivos e 37 negativos.** Pela união entre campos esperados
   e obtidos, nem um modelo que inventa campos, nem um que nunca extrai nada,
   tira 100% de graça **nesse subconjunto**, e desde a TEC-238 os negativos
   (`campos: {}`, "o lead não afirmou nada neste turno") fecham a metade que
   faltava: sem eles um modelo podia inventar à vontade em todo turno sem
-  anotação positiva e não pagar por isso em lugar nenhum. Os outros 63 turnos
+  anotação positiva e não pagar por isso em lugar nenhum. Os outros 56 turnos
   do corpus continuam fora da medição — chave `campos` ausente é o único
   jeito de anotar "não sei enumerar com confiança tudo o que esta fala
   afirma" —, e invenção neles não é medida por ninguém. Ver "Lacunas
@@ -1267,12 +1270,43 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   não servem de baseline: o corpus mudou duas vezes desde então (a TEC-239
   levou as anotações de campo de 47 para 59; a TEC-238 acrescentou 37 turnos
   negativos).
-- **Os sinônimos de `tipo_imovel` (kitnet, república, sobrado, …) seguem sem
-  dono.** Eram 8 das 29 discrepâncias na mesma execução de 28/08. A TEC-241
-  manda esse problema para a TEC-239, mas a TEC-239 é sobre cobertura de
-  campo sem anotação (ver "Lacunas conhecidas" acima), não sobre sinônimo de
-  vocabulário — a referência está errada, e a dívida segue sem card que a
-  reivindique.
+- **Os sinônimos de `tipo_imovel` têm dono: a TEC-242.** Eram 8 das 29
+  discrepâncias na execução de 28/08 — a TEC-241 tinha mandado esse problema
+  para a TEC-239, mas a TEC-239 é sobre cobertura de campo sem anotação, não
+  sobre sinônimo de vocabulário, e a referência estava errada. A regra que
+  faltava é um mapa de cinco entradas, registrado como regra de **anotação**
+  no docstring de `TurnoAnotado` (`src/mobia/evals/corpus.py`), não em
+  código de produção: `kitnet`, `studio`, `flat` e `cobertura` se anotam
+  `APARTAMENTO`; `sobrado` se anota `CASA`. **Não é código de propósito:** o
+  schema da chamada ao modelo é estrito — `tipo_imovel` só aceita valor de
+  `TipoImovel` —, então o modelo nunca devolve "kitnet"; ele já traduz
+  sozinho e devolve `APARTAMENTO`. Um mapa de tradução em código de produção
+  nunca teria entrada para percorrer — seria código morto. O que faltava era
+  o corpus decidir a mesma tradução: sem ela, o modelo acertando a tradução
+  contava como `extra` — erro cheio, por acertar. A quinta entrada é a
+  exceção: `república` fica **fora** do mapa porque é uso, não tipologia —
+  pode ser casa ou apartamento —, e o único turno que a usa (`aluguel-07`
+  índice 0, "república ou kitnet") oferece duas tipologias sem escolher
+  nenhuma, então fica sem `tipo_imovel`, de propósito.
+
+  **O que fica perdido:** *kitnet*, *studio*, *flat* e *cobertura* deixam de
+  se distinguir de *apartamento* no estado de qualificação, e isso muda
+  faixa de preço e metragem esperadas para o lead — um kitnet e uma
+  cobertura duplex não pedem o mesmo orçamento, e o estado agora lê os dois
+  como o mesmo valor. Preservar a distinção exigiria alargar `TipoImovel`, o
+  que mexe na coluna `lead_qualification.tipo_imovel`, no filtro SQL que a
+  TEC-158 faz sobre ela e no orçamento de contexto do prompt — hoje em 587
+  de um teto de 600 (ver nota da TEC-240 acima). **É escolha, registrada
+  aqui, não esquecimento.**
+
+  E o agravante que a TEC-240 registrou vale igual aqui: `_texto_do_estado`
+  entra no prompt de verdade que o modelo lê a cada turno, não só na
+  estimativa de tokens — então a memória que o próprio modelo enxerga também
+  passa a mostrar `APARTAMENTO` em vez de "kitnet". Enquanto a mensagem
+  literal do lead ainda estiver na janela de contexto, a palavra original
+  continua visível por ela; quando sai da janela (dobrada em resumo, ou
+  truncada), a palavra do lead some da visão do modelo também, não só do
+  estado gravado.
 - **O proxy de repergunta nunca bloqueia**, e há comentário no próprio
   `MARCADORES_DE_REPERGUNTA` dizendo por quê: é heurística de palavra-chave,
   com erro nas duas direções. Ver "Lacunas conhecidas".
@@ -1350,7 +1384,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   abaixo do piso declarado, e `precisao_da_extracao` bloqueava ou liberava um
   gate pago com essa amostra — números de antes da TEC-239 acrescentar dois
   turnos ao corpus (136, não os 138 de hoje), não do corpus atual.
-- **A precisão de extração agora mede 75 dos 138 turnos — 38 positivos e 37
+- **A precisão de extração agora mede 82 dos 138 turnos — 45 positivos e 37
   negativos —, e o exploit descrito antes não funciona mais.** `campos: {}`
   é o estado novo do contrato: "o lead não afirmou nada neste turno, tudo
   que vier é invenção". Chave ausente continua significando exatamente o
@@ -1361,52 +1395,56 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   graça: cada invenção entra no denominador de união contra um `esperado`
   vazio, e há teste travando esse comportamento pelo nome
   (`test_modelo_que_inventa_em_turno_negativo_nao_tira_cem_por_cento`,
-  `tests/unit/test_evals_metricas.py`). Mas **63 turnos continuam fora da
+  `tests/unit/test_evals_metricas.py`). Mas **56 turnos continuam fora da
   medição**, e é esse o buraco que sobra desta card, não o que ela fecha.
-  Cinco exclusões entre esses 63 foram deliberadas, e cada uma é uma
+  Quatro exclusões entre esses 56 foram deliberadas, e cada uma é uma
   armadilha real que valeu a pena nomear em vez de anotar errado só para
   fechar o número (convenção de índice de turno, 0-based, declarada em
-  `TurnoAnotado`, `src/mobia/evals/corpus.py`): `compra-11` índice 2 ("o
-  sobrado tem escritura já regularizada?") fica de fora porque `sobrado` não
-  está no vocabulário de `TipoImovel`, e um modelo que devolve `CASA` está
-  lendo a fala com razão — marcar como negativo puniria o acerto com força
-  de gate; `follow-up-03` índice 2 ("documentação pra baixa do
-  financiamento") fica de fora porque o financiamento ali é o que o lead
-  **já tem**, não a forma de pagamento que pretende usar, e a distinção é
-  fina de mais para virar gate; `borda-evasivo-02` índices 1 e 2 ("depois eu
-  vejo com calma", "ainda to decidindo o que quero") ficam de fora porque
-  **omissão não é o mesmo que asserção de completude**: a TEC-239 omitiu
-  `SEM_PRESSA` aqui por incerteza sobre o que essas falas afirmam, e um
-  negativo é uma afirmação forte de que a fala não afirma nada — a mesma
-  incerteza que justificou a omissão também impede essa afirmação forte; e
-  `follow-up-03` índice 1 ("quanto tempo leva pra avaliar o imóvel?") e
-  `aluguel-09` índice 2 ("e pode ter animal de estimação no prédio?") ficam
-  de fora por serem pergunta de processo que pressupõe um campo sem dar pra
-  enumerar com confiança tudo o que a fala afirma — a mesma forma de fala
-  que `aluguel-08` índice 2 usa para reafirmar `tipo_imovel`, e negativo
-  aqui puniria o modelo por ler a fala com razão. As cinco exclusões cobrem
-  seis turnos (o par `borda-evasivo-02` conta dois); os outros 57 turnos
-  fora da medição não têm exclusão documentada: são trabalho de anotação que
-  ainda não foi feito, não decisão tomada, e continuam sem cobertura de
-  invenção nenhuma. Um ponto para não ler o número errado quando ele
-  aparecer: invenção nos 9 turnos negativos de intenção `FORA_DE_ESCOPO` é
+  `TurnoAnotado`, `src/mobia/evals/corpus.py`): `follow-up-03` índice 2
+  ("documentação pra baixa do financiamento") fica de fora porque o
+  financiamento ali é o que o lead **já tem**, não a forma de pagamento que
+  pretende usar, e a distinção é fina de mais para virar gate;
+  `borda-evasivo-02` índices 1 e 2 ("depois eu vejo com calma", "ainda to
+  decidindo o que quero") ficam de fora porque **omissão não é o mesmo que
+  asserção de completude**: a TEC-239 omitiu `SEM_PRESSA` aqui por incerteza
+  sobre o que essas falas afirmam, e um negativo é uma afirmação forte de
+  que a fala não afirma nada — a mesma incerteza que justificou a omissão
+  também impede essa afirmação forte; e `follow-up-03` índice 1 ("quanto
+  tempo leva pra avaliar o imóvel?") e `aluguel-09` índice 2 ("e pode ter
+  animal de estimação no prédio?") ficam de fora por serem pergunta de
+  processo que pressupõe um campo sem dar pra enumerar com confiança tudo o
+  que a fala afirma — a mesma forma de fala que `aluguel-08` índice 2 usa
+  para reafirmar `tipo_imovel`, e negativo aqui puniria o modelo por ler a
+  fala com razão. As quatro exclusões cobrem cinco turnos (o par
+  `borda-evasivo-02` conta dois); os outros 51 turnos fora da medição não
+  têm exclusão documentada: são trabalho de anotação que ainda não foi
+  feito, não decisão tomada, e continuam sem cobertura de invenção nenhuma.
+  `compra-11` índice 2 ("o sobrado tem escritura já regularizada?") estava
+  nesta lista desde que a TEC-238 a escreveu — `sobrado` não estava no
+  vocabulário de `TipoImovel`, e marcá-lo como negativo puniria com força de
+  gate um modelo que devolvesse `CASA` com razão. A TEC-242 criou a tradução que
+  faltava (ver "Garantias" acima), e o turno saiu desta lista: hoje é
+  anotado `campos: {tipo_imovel: CASA}` e conta como acerto, não mais como
+  exclusão. Ver a emenda correspondente no spec da TEC-238. Um ponto para
+  não ler o número errado quando ele aparecer: invenção nos 9 turnos
+  negativos de intenção `FORA_DE_ESCOPO` é
   medida, mas nunca chega a `lead_qualification`, porque `campos_a_gravar`
   devolve dict vazio para essa intenção (ver "Garantias") — esse número é
   sinal de quão disposto o modelo está a inventar, não risco de dado
   permanente gravado. É a
   [TEC-238](https://eduardodurieuxlopes.atlassian.net/browse/TEC-238).
 - **Nenhum dos nove campos fica com zero anotação, e o teste guarda isso.**
-  Contagem nos 38 turnos anotados como positivos, 59 anotações de campo:
+  Contagem nos 45 turnos anotados como positivos, 69 anotações de campo:
 
   | campo | anotações |
   |---|---|
+  | `tipo_imovel` | 27 |
   | `regiao` | 18 |
-  | `tipo_imovel` | 18 |
   | `quartos` | 8 |
   | `forma_pagamento` | 6 |
   | `faixa_preco_max` | 3 |
+  | `urgencia` | 3 |
   | `tem_imovel_para_vender` | 2 |
-  | `urgencia` | 2 |
   | `faixa_preco_min` | 1 |
   | `vagas` | 1 |
 
@@ -1424,8 +1462,8 @@ seção própria do relatório (`render(..., reperguntas=...)`,
 
   O que **não** mudou é a aritmética da união, que ainda desconta extração
   correta em turno onde aquele campo não foi anotado: um modelo perfeito com
-  `N` extrações desse tipo tira `59/(59+N)` — `N=6` ainda é VERDE, `N=10` dá
-  85,5% (AMARELO) e `N=11` dá 84,3% (VERMELHO). A diferença é que agora isso
+  `N` extrações desse tipo tira `69/(69+N)` — `N=7` ainda é VERDE, `N=12` dá
+  85,2% (AMARELO) e `N=13` dá 84,1% (VERMELHO). A diferença é que agora isso
   é ruído de anotação faltante, distribuído, e não um piso estrutural em
   quatro campos específicos. Quem for investigar um número baixo lê
   `discrepancias_da_extracao`, que separa `extra` (acusa a medição) de

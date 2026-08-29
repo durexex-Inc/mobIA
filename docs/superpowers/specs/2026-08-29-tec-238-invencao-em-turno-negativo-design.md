@@ -195,6 +195,21 @@ Três turnos ficam de fora **de propósito**, e cada exclusão é uma armadilha 
 Sobram **61 turnos** fora da medição. Isso fica declarado no README, não escondido: a
 card fecha o exploit, não o buraco inteiro.
 
+> **Emenda (TEC-242, 2026-08-29):** a exclusão de `compra-11` t2 acima estava certa
+> quando foi tomada — não havia regra que traduzisse `sobrado` para o vocabulário de
+> `TipoImovel`, e marcar o turno como negativo teria punido com força de gate um
+> modelo que estava lendo a fala com razão. A TEC-242 criou essa regra: `sobrado` se
+> anota `CASA` (junto de `kitnet`, `studio`, `flat` e `cobertura`, que se anotam
+> `APARTAMENTO`), registrada como regra de anotação no docstring de `TurnoAnotado`
+> (`src/mobia/evals/corpus.py`), não em código de tradução — o schema da chamada ao
+> modelo é estrito e o modelo já devolve o valor do enum sozinho. Com a regra em
+> vigor, `compra-11` t2 saiu da lista de exclusões acima: hoje é anotado
+> `campos: {tipo_imovel: CASA}` e conta como acerto, não mais como turno fora da
+> medição. O argumento original — *"um modelo que devolve `CASA` para 'sobrado' está
+> lendo a fala com razão"* — não foi derrubado; é exatamente o que a nova regra
+> formaliza. Este parágrafo original não foi reescrito: a decisão estava certa quando
+> foi tomada, e a emenda é para que a história continue legível.
+
 ## Contrato depois da card
 
 - 138 turnos: **38 positivos + 39 negativos = 77 medidos**, 61 fora.
