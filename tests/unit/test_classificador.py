@@ -554,7 +554,7 @@ def test_o_prompt_do_agente_nomeia_as_tres_tarefas() -> None:
     saber que ela existe.
     """
     assert "tres coisas" in SISTEMA_DO_AGENTE
-    assert "extrai" in SISTEMA_DO_AGENTE
+    assert "extrai o que ele procura" in SISTEMA_DO_AGENTE
 
 
 def test_o_prompt_do_agente_explica_a_semantica_de_null() -> None:
