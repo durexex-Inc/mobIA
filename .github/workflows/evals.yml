@@ -201,6 +201,13 @@ jobs:
           # chamada falhar com modelo invalido. So vira `MODELO_AGENTE` quando
           # tem conteudo.
           MODELO_ESCOLHIDO: ${{ inputs.modelo }}
+          # Fora da arvore de proposito. O default do runner e
+          # `evals/relatorios/<data>.md`, e apontar para la faria o
+          # `upload-artifact` abaixo ter de distinguir o relatorio desta
+          # execucao dos que estao COMMITADOS no mesmo diretorio -- um glob
+          # subiria os quatro historicos junto. Em `runner.temp` so existe o
+          # desta execucao.
+          RELATORIO_DE_EVAL: ${{ runner.temp }}/relatorio-da-execucao.md
         run: |
           set -euo pipefail
           if [ -n "${MODELO_ESCOLHIDO}" ]; then
@@ -211,8 +218,42 @@ jobs:
           fi
           python -m pytest evals -v
 
+      # `always()` e o ponto inteiro deste passo, nao um detalhe de robustez.
+      #
+      # Uma execucao VERMELHA e a que mais precisa ser lida turno a turno, e e
+      # exatamente a que o passo anterior faz falhar. Sem `always()` o artefato
+      # so existiria nas execucoes que passaram -- ou seja, so quando ninguem
+      # precisa dele.
+      #
+      # Isto ja aconteceu: a execucao de CI que abriu VERMELHO em 30/08 perdeu
+      # o relatorio, e o diagnostico saiu do log por sorte de ele ter cabido
+      # ali. O runner grava o artefato ANTES das asercoes (ver `preservar` em
+      # `src/mobia/evals/relatorio.py`) justamente para que exista nesse caso;
+      # faltava o CI subi-lo.
+      #
+      # A condicao repete `mexeu` porque `always()` sozinho roda ate quando o
+      # eval foi pulado, e ai nao ha arquivo nenhum para subir.
+      - name: Preservar o relatorio da execucao
+        if: always() && steps.filtro.outputs.mexeu == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-da-execucao-${{ github.run_number }}
+          path: ${{ runner.temp }}/relatorio-da-execucao.md
+          # Sem isto, uma execucao que morreu antes de gravar sobe um aviso
+          # amarelo e segue. O aviso e o sinal certo: nao ter relatorio e
+          # anormal, mas nao e motivo para reprovar um job que ja falhou por
+          # outro motivo -- ou que passou.
+          if-no-files-found: warn
+          retention-days: 90
+
       - name: Log do resultado
+        if: always()
         run: |
+          if [ "${{ steps.filtro.outputs.mexeu }}" = "true" ]; then
+            echo "[i] Relatorio desta execucao: artefato "
+            echo "    relatorio-da-execucao-${{ github.run_number }}, na aba"
+            echo "    Summary deste run. Ele sai mesmo quando o gate reprova."
+          fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "[OK] Disparo manual: avaliacoes foram executadas sem filtro"
           elif [ "${{ steps.filtro.outputs.mexeu }}" = "true" ]; then

@@ -2531,3 +2531,39 @@ casos:
   não cacheia e não dá erro; a execução fica mais cara, mas continua válida, e
   reprovar por isso seria confundir custo com medição. Com `claude-haiku-4-5`
   (mínimo 4.096 contra prefixo de 1.716) é exatamente esse o caso.
+
+### O relatório de uma execução em CI deixou de ser efêmero
+
+A lacuna que o próprio README registrava — *"o relatório de uma execução em CI
+continua efêmero: não há `upload-artifact` em `evals.yml`"* — mordeu em 30/08.
+A execução que abriu **VERMELHO** no CI perdeu o relatório, e o diagnóstico só
+saiu porque o log tinha cabido ali. Foi sorte, não desenho.
+
+O `evals.yml` passou a subir o relatório como artefato de workflow, e duas
+decisões carregam o peso disso:
+
+**`always()` é o ponto inteiro do passo, não robustez de rotina.** A execução
+vermelha é a que mais precisa ser lida turno a turno, e é exatamente a que faz
+o passo anterior falhar. Sem `always()`, o artefato só existiria nas execuções
+que passaram — ou seja, só quando ninguém precisa dele. O runner já gravava
+antes das asserções (`preservar`) justamente por isso; faltava o CI subir.
+
+**`RELATORIO_DE_EVAL` aponta para fora da árvore.** O default é
+`evals/relatorios/<data>.md`, e ali moram os relatórios **commitados** — um
+glob subiria os quatro históricos junto com o novo. Em `runner.temp` só existe
+o desta execução.
+
+A condição repete `mexeu` porque `always()` sozinho roda até quando o eval foi
+pulado, e aí não há arquivo nenhum. `if-no-files-found: warn` fecha o resto:
+não ter relatório é anormal e merece aviso, mas não é motivo para reprovar um
+job que já falhou por outro motivo — ou que passou.
+
+`Log do resultado` também ganhou `always()`: sem isso ele era pulado justamente
+nas execuções que falharam, e é ele que aponta onde o artefato está.
+
+#### O que isto não resolve
+
+O artefato vive **90 dias** e some. Ele serve para investigar uma execução
+recente, não como série histórica — para isso continua valendo o relatório
+commitado, que é o que a TEC-247 estabeleceu e o que sustenta a comparação
+entre execuções neste README.
