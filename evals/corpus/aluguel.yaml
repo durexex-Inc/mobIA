@@ -137,13 +137,14 @@
     - lead: "voces exigem quantos meses de deposito caucao?"
       intencao: ALUGUEL
       campos: {}
-    # Fora da medicao: pergunta de processo que pressupoe um campo (o predio
-    # em que o lead pretende alugar) sem dar pra enumerar com confianca tudo
-    # o que a fala afirma -- mesma forma de fala que `aluguel-08` indice 2
-    # usa pra reafirmar `tipo_imovel`. Negativo aqui puniria o modelo por ler
-    # a fala com razao.
+    # Negativo, e nao exclusao: a fala nao nomeia campo nenhum. `predio` e
+    # conteiner generico, e repetir o tipo do turno 0 aqui conta `extra` de
+    # proposito -- mesma decisao que `borda-longa-01` indice 2 e `aluguel-01`
+    # indice 1. A TEC-238 excluiu este turno antes de existir a regra de
+    # anafora; a TEC-246 deu eixo unico ao criterio e a exclusao cedeu.
     - lead: "e pode ter animal de estimacao no predio?"
       intencao: ALUGUEL
+      campos: {}
 
 - id: aluguel-10
   descricao: duvida simples sobre valor de anuncio

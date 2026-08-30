@@ -189,9 +189,15 @@
 - id: compra-10
   descricao: casal no primeiro imovel, duvidas de processo
   turnos:
+    # "primeiro imovel" afirma que nao ha imovel para vender. Como negativo
+    # -- que foi como a TEC-245 o deixou -- a regua cobrava invencao de um
+    # modelo que lesse a fala com razao. E o unico turno do corpus que anota
+    # `tem_imovel_para_vender: false`, o caso que `preenchidos()` existe para
+    # preservar.
     - lead: "minha esposa e eu queremos comprar nosso primeiro imovel, pode me ajudar a entender o processo?"
       intencao: COMPRA
-      campos: {}
+      campos:
+        tem_imovel_para_vender: false
     - lead: "quanto tempo demora entre a proposta e a escritura normalmente?"
       intencao: COMPRA
       campos: {}

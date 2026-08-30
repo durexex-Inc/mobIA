@@ -316,7 +316,6 @@ def test_todo_turno_com_palavra_do_vocabulario_tem_tipo_imovel_anotado(
 # le como "nao ha o que medir aqui" quando na verdade era "ninguem olhou".
 _FORA_DA_MEDICAO = {
     ("aluguel-03", 1): "atributo (terrea) sugere CASA sem nomear a tipologia",
-    ("aluguel-09", 2): "pergunta de processo que pressupoe o predio (TEC-238)",
     ("borda-evasivo-02", 1): "omissao nao e asercao de completude (TEC-238)",
     ("borda-evasivo-02", 2): "omissao nao e asercao de completude (TEC-238)",
     ("borda-mista-01", 2): "escritura: pressupoe o terreno do turno anterior",
@@ -342,7 +341,7 @@ def test_todo_turno_fora_da_medicao_tem_motivo_escrito(
 
     Turno sem `campos` nao tem cobertura de invencao nenhuma: nao ha
     `esperado` contra o qual comparar, entao o turno sai da conta inteiro. Que
-    isso seja verdade para 17 turnos e escolha; que fosse verdade para 56 sem
+    isso seja verdade para 16 turnos e escolha; que fosse verdade para 56 sem
     ninguem ter olhado era acidente.
 
     Comentario de YAML nao sobrevive ao `yaml.safe_load`, entao o conjunto
