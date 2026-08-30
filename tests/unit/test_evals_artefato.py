@@ -138,3 +138,31 @@ def test_folga_negativa_aparece_com_sinal() -> None:
     assert f"turnos medidos: {PISO_DE_TURNOS - 4}/{PISO_DE_TURNOS}, folga de -4" in "\n".join(
         linhas
     )
+
+
+def test_destino_aceita_caminho_absoluto_fora_da_arvore(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """O CI grava fora do repositorio, e o upload depende disso.
+
+    `evals/relatorios/` tem relatorios COMMITADOS, e apontar o CI para la
+    faria o `upload-artifact` ter de distinguir o desta execucao dos
+    historicos -- um glob subiria os quatro junto. Por isso o workflow aponta
+    `RELATORIO_DE_EVAL` para `runner.temp`, que e absoluto e so tem o desta
+    execucao.
+    """
+    destino = tmp_path / "sub" / "relatorio-da-execucao.md"
+    monkeypatch.setenv("RELATORIO_DE_EVAL", str(destino))
+    assert _destino_do_relatorio() == destino
+    assert _destino_do_relatorio().is_absolute()
+
+
+def test_preservar_cria_a_arvore_de_um_caminho_absoluto(tmp_path: Path) -> None:
+    """`runner.temp` existe, mas subdiretorio nenhum dentro dele existe.
+
+    Se `preservar` nao criasse o caminho, o artefato do CI sairia vazio
+    exatamente na execucao vermelha -- que e a que ele existe para salvar.
+    """
+    destino = tmp_path / "a" / "b" / "relatorio.md"
+    preservar("# medicao\n", destino)
+    assert destino.read_text(encoding="utf-8") == "# medicao\n"
