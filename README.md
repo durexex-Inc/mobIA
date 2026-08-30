@@ -2571,7 +2571,19 @@ entre execuções neste README.
 ### O resumo também trocou para sonnet-5, e essa troca não foi medida
 
 `modelo_resumo` passou de `claude-opus-5` para `claude-sonnet-5` junto com o
-agente. **A diferença entre as duas trocas é o instrumento, e ela importa.**
+agente.
+
+**Foi mudança manual, feita direto na `main`, sem card e sem PR** — commit
+`3a711a5`, cuja mensagem diz `readME.md` mas cujo diff é só `config.py`. Fica
+registrado aqui porque o histórico do git não conta essa história: quem
+procurar depois por que o resumo trocou de modelo não acha nada no `git log`,
+e esta é justamente a troca de modelo que **não tem gate** para explicá-la
+retroativamente.
+
+A mudança em si é decisão legítima de quem toca o projeto. O que não sobrevive
+sozinho é o *registro* dela.
+
+**A diferença entre as duas trocas é o instrumento, e ela importa.**
 
 | | `modelo_agente` | `modelo_resumo` |
 | --- | --- | --- |
