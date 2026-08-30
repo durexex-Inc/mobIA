@@ -2,15 +2,24 @@
 
 [TEC-246](https://eduardodurieuxlopes.atlassian.net/browse/TEC-246)
 
-## Por que as duas lacunas numa card só
+## Por que tudo isto numa card só
 
-Cada uma delas **muda a régua**, e cada mudança de régua invalida um baseline.
-A execução paga que mede a precisão de extração é a próxima card da fila, e a
-TEC-245 já registrou que não há "antes" comparável — a de 28/08 é anterior a
-cinco cards.
+Três mudanças de régua, e **cada uma invalida um baseline**. A execução paga
+que mede a precisão de extração é a próxima card da fila, e a TEC-245 já
+registrou que não há "antes" comparável — a de 28/08 é anterior a cinco cards.
 
-Fazer as duas separadas custa duas mudanças de régua antes da execução. Juntas,
-custa uma. É esse o argumento, e é o único: elas não têm parentesco temático.
+Fazer as três separadas custa três mudanças de régua antes da execução.
+Juntas, custa uma. É esse o argumento, e é o único: elas não têm parentesco
+temático.
+
+| | o que é | onde vive |
+|---|---|---|
+| Lacuna 1 | cobertura por valor de vocabulário: seis valores em zero | corpus |
+| Lacuna 2 | a colisão do `prédio`, que a TEC-245 documentou sem resolver | critério de anotação |
+| Lacuna 3 | `normalizar_regiao` trata `na regiao da/do` e ignora `de/das/dos` | `src/mobia/domain/` |
+
+A terceira apareceu **escrevendo este spec** — a primeira versão de uma das
+falas novas caía justamente nela. Ver D9.
 
 ## Lacuna 1 — a cobertura é por campo, não por valor
 
@@ -113,16 +122,49 @@ fecha os seis e nada impede o sétimo.
 linha. Esta card **não** roda `pytest evals`. Ela é a última mudança de régua
 antes do baseline pago, e é por isso que existe agora.
 
+**D9 — A lista de prefixos de `regiao` fica simétrica.** Ao escrever a fala de
+`compra-13` i0 descobriu-se que `normalizar_regiao("na regiao de sao roque")`
+devolve a frase **inteira**: a lista tem `na regiao da ` e `na regiao do `, mas
+não `na regiao de `. Investigando, não é um furo — é assimetria em três
+famílias:
+
+| família | tem | falta |
+|---|---|---|
+| `na regiao …` | `da`, `do` | **`de`, `das`, `dos`** |
+| `proximo …` | `da`, `do`, `ao`, `a` | **`das`, `dos`** |
+| `perto …` | `da`, `do`, `de` | **`das`, `dos`** |
+
+O corpus só exercita `na regiao da/do`, então o furo é latente — mas *"na
+região de"* é português corrente, e forma não-canônica de `regiao` respondeu
+por **10 das 29 discrepâncias** de 28/08. Foi o que originou a TEC-241.
+
+As sete entradas entram de uma vez. Conferido por execução: o invariante de
+`test_nenhum_prefixo_de_referencia_e_prefixo_de_outro` continua valendo — o
+espaço final é o que faz `na regiao da ` e `na regiao das ` não colidirem —, e
+a anotação existente `jardim das flores` fica **intacta**, porque `das` só é
+retirado depois de `regiao`, `proximo` ou `perto`.
+
+Corrigir só `na regiao de ` e deixar as outras quatro reproduziria exatamente
+a assimetria que esta decisão existe para fechar.
+
 ## A exceção que precisa ser declarada
 
 A TEC-241, a TEC-242 e a TEC-245 trataram **"nenhuma mudança em
-`src/mobia/domain/`"** como restrição global. Esta card **escreve no docstring
-de `Extracao`** (`src/mobia/domain/agente/schemas.py`) para cumprir a D4.
+`src/mobia/domain/`"** como restrição global. Esta card a quebra em dois
+lugares, e o precedente foi aceito explicitamente:
 
-Nenhum comportamento, nenhum campo de schema, nenhuma linha de prompt, nenhum
-token a mais na chamada paga. É docstring. Mas a restrição existia para impedir
-que uma card de corpus mexesse no domínio por conveniência, e a forma de
-respeitá-la é declarar a exceção — não redefini-la em silêncio.
+1. **Docstring de `Extracao`** (D4) — define o significado de
+   `FormaPagamento.INDEFINIDA`. Nenhum comportamento.
+2. **`_PREFIXOS_DE_REFERENCIA`** (D9) — muda o **comportamento** de
+   `normalizar_regiao`, que `extrair` usa para gravar no banco.
+
+A segunda é a séria, e a justificativa não é conveniência: `normalizar_regiao`
+roda nos **dois lados** da comparação da medição, então um furo nela é furo de
+régua. Consertá-lo depois do baseline pago significaria medir com a régua
+torta e comparar contra ela. Se pertence a alguma fila, é a desta card.
+
+O que **não** muda: nenhum campo de schema, nenhuma linha de prompt, nenhum
+token a mais na chamada paga, nenhum limite.
 
 ## O que muda, concretamente
 
@@ -209,6 +251,7 @@ de ser lacuna.
   filtro da TEC-158, e é card própria.
 - **`borda-evasivo-02` i1.** Ver D3.
 - **Transformar a regra de sinônimos em dado.** Ver abaixo.
+- **Qualquer outra mudança de comportamento em `src/mobia/domain/`** além da D9.
 
 ## Dívida observada, não paga aqui
 
@@ -218,33 +261,6 @@ guarda, TEC-246 acrescenta duas). Prosa que cresce a cada card é prosa que uma
 hora diverge do teste que a implementa. Um mapa em dado, derivado por ambos os
 guardas, resolveria — mas isso é refatoração de teste, não escopo desta card, e
 fazê-la aqui misturaria duas mudanças de régua com uma de estrutura.
-
-## Um furo achado ao escrever este spec, e deixado fora de propósito
-
-A primeira versão da fala de `compra-13` i0 dizia *"na regiao de sao roque"*.
-Conferido por execução, `normalizar_regiao("na regiao de sao roque")` devolve a
-frase **inteira**: a lista `_PREFIXOS_DE_REFERENCIA` tem `na regiao da `,
-`na regiao do ` e `regiao de `, mas **não** `na regiao de `.
-
-O corpus só exercita `na regiao da/do`, então nenhuma anotação existente esbarra
-nisso — o furo é latente. Mas *"na região de"* é português corrente, e um modelo
-que o devolva produz forma não-canônica: exatamente a falha que a TEC-241 existe
-para fechar, e que respondia por 10 das 29 discrepâncias de 28/08.
-
-A fala foi trocada para *"perto de sao roque"*, que normaliza. **O furo fica
-para card própria**, por dois motivos:
-
-1. Acrescentar o prefixo muda o **comportamento** de `normalizar_regiao`, que
-   `extrair` usa para gravar no banco. A exceção que esta card declara para
-   `src/mobia/domain/` é de **docstring**; usá-la para passar uma mudança de
-   comportamento seria justamente a conveniência que a restrição existe para
-   impedir.
-2. Ela também é mudança de régua — o normalizador roda nos dois lados da
-   comparação —, então pertence à fila **antes** da execução paga, junto com
-   esta card, e não depois.
-
-Recomendação: card pequena, uma linha de código e um teste, rodando antes do
-baseline.
 
 ## Risco conhecido
 
@@ -268,5 +284,6 @@ merge. Se as três falas não soarem como lead, o resto da card não salva.
 | Valor novo no vocabulário nasce quebrando o teste | o teste deriva dos enums, não de lista à mão |
 | A mesma forma de fala não recebe dois tratamentos | `aluguel-09` i2 e `aluguel-01` i1 no mesmo balde; eixo único escrito no docstring |
 | `FormaPagamento.INDEFINIDA` tem significado escrito e distinto de `None` | docstring de `Extracao` |
+| `normalizar_regiao` trata as três famílias de prefixo simetricamente | teste por família, e o invariante de prefixo-de-prefixo segue verde |
 | Contagens e pisos conferidos por execução | script de contagem no plano |
 | O efeito na precisão de extração | **não entregue** — exige execução paga (D8) |
