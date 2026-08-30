@@ -69,6 +69,14 @@ A regra vai no **docstring de `TurnoAnotado`** (`src/mobia/evals/corpus.py`), ju
 
 **Nenhuma mudança em `src/mobia/domain/`.** Nada em `extrair`, nada no schema, nada no prompt.
 
+> **Emenda (TEC-246, 2026-08-29):** duas coisas mudaram, e o texto acima não foi reescrito.
+>
+> **1. A tabela ganhou duas entradas.** `chacara` e `sitio` se anotam `RURAL`, pelo raciocínio idêntico ao das cinco originais: ninguém diz *"quero comprar um rural"*, o schema da chamada é estrito e o modelo já devolve `RURAL` sozinho, então sem a tradução no corpus a extração **certa** contaria `extra`. `compra-13` é a conversa que as exercita. O guarda de detecção da regra — `_SINONIMOS_DE_TIPO_IMOVEL` em `tests/unit/test_evals_corpus_real.py` — passou a varrer `chacara`, `chacaras`, `sitio` e `sitios`. `_LITERAIS_DE_TIPO_IMOVEL`, o guarda irmão, **não** mudou: ele varre as palavras do próprio vocabulário, e `rural` não aparece em fala nenhuma do corpus.
+>
+> **2. O critério que separa sinônimo de contêiner genérico continua valendo; o balde do exemplo canônico não.** Este spec deixou o critério — *a fala tem de **nomear** a tipologia, e não só citar um substantivo que pode ser residencial ou comercial* — escrito no docstring de `TurnoAnotado` (`src/mobia/evals/corpus.py`), não aqui, e usou `aluguel-09` índice 2 (*"pode ter animal de estimacao no predio?"*) como o caso canônico do lado errado da linha, contra os três de `compra-06` que dizem *"cobertura"*. **O critério não se move:** `predio` continua sem nomear tipologia nenhuma, e `aluguel-09` índice 2 continua **sem** `tipo_imovel` anotado. O que muda é para onde vai o turno que falha no critério. Ele ficava **fora da medição**; a TEC-246 deu eixo único ao critério de exclusão e ele passou a **negativo `{}`** — a fala não nomeia campo nenhum, e essa é exatamente a anotação de "nada foi afirmado". Não nomear a tipologia deixou de ser motivo para sair da medição e virou motivo para não anotar o campo, que são coisas diferentes. Ver as emendas nos specs da TEC-238 e da TEC-245.
+>
+> As contagens de D3 e do "Contrato depois da card" abaixo — 45 positivos, 37 negativos, `tipo_imovel` com 27 anotações — não foram reescritas: são o registro do que **esta** card entregou. O corpus de hoje está em 62 positivos, 70 negativos, 96 anotações de campo e `tipo_imovel` com 36, medidos em 29/08. Quem quiser o número atual lê o README.
+
 ### D2 — `república` fica fora, e o motivo é a fala, não a política
 
 `república` não é tipologia — é **uso**, e pode ser casa ou apartamento. A única ocorrência no corpus torna isso explícito: `aluguel-07` i0 diz *"procuro **republica ou kitnet** pra alugar perto da unicamp"* — o lead oferece **duas** opções e não escolhe.

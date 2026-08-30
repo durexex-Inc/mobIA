@@ -232,6 +232,45 @@ def test_normalizar_regiao_tira_o_ruido_de_referencia(bruto: str, esperado: str)
     assert normalizar_regiao(bruto) == esperado
 
 
+@pytest.mark.parametrize(
+    ("fala", "esperado"),
+    [
+        # A familia `na regiao` tinha `da` e `do` e faltavam tres.
+        ("na regiao de sao roque", "sao roque"),
+        ("na regiao das flores", "flores"),
+        ("na regiao dos lagos", "lagos"),
+        # `proximo` e `perto` tinham o singular e faltava o plural.
+        ("proximo das clinicas", "clinicas"),
+        ("proximo dos jardins", "jardins"),
+        ("perto das lojas", "lojas"),
+        ("perto dos jardins", "jardins"),
+        # `perto` tinha `de` e `proximo` nao. Terceira assimetria da
+        # familia, fechada na revisao final da TEC-246.
+        ("proximo de sao roque", "sao roque"),
+    ],
+)
+def test_normalizar_regiao_trata_as_familias_de_prefixo_simetricamente(
+    fala: str, esperado: str
+) -> None:
+    """A lista tinha `na regiao da/do` e ignorava `de/das/dos`.
+
+    O corpus so exercitava `da` e `do`, entao o furo era latente -- mas "na
+    regiao de" e portugues corrente, e forma nao-canonica de `regiao` respondeu
+    por 10 das 29 discrepancias de 28/08. Foi o que originou a TEC-241.
+    """
+    assert normalizar_regiao(fala) == esperado
+
+
+def test_normalizar_regiao_nao_come_o_de_de_um_toponimo() -> None:
+    """`das` so sai depois de `regiao`, `proximo` ou `perto`.
+
+    `compra-04` anota `regiao: jardim das flores`. Se a lista ganhasse `das `
+    solto, o toponimo viraria "flores" e a anotacao existente passaria a nao
+    casar consigo mesma.
+    """
+    assert normalizar_regiao("jardim das flores") == "jardim das flores"
+
+
 @pytest.mark.parametrize("nome", ["zona leste", "zona sul", "zona oeste"])
 def test_normalizar_regiao_nao_come_zona(nome: str) -> None:
     """`zona` e o nome, nao ruido. Tres anotacoes do corpus dependem disto, e

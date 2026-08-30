@@ -66,53 +66,48 @@ class TurnoAnotado:
       sozinho. O que faltava era o corpus decidir a mesma traducao, e sem essa
       decisao a traducao certa contava `extra`.
 
+      `chacara` e `sitio` sao `RURAL` (TEC-246). Entram pelo mesmo motivo dos
+      outros: ninguem diz "quero comprar um rural", entao sem a traducao no
+      corpus a extracao certa contaria `extra`.
+
       O criterio que separa um sinonimo de um conteiner generico: a fala tem
       de **nomear a tipologia**, e nao so citar um substantivo que pode ser
       residencial ou comercial. `compra-06` indice 1 ("tem churrasqueira na
       **cobertura**...") e indice 2 ("o valor do condominio dessa
       **cobertura**") anotam `tipo_imovel`, porque `cobertura` nomeia; ja
       `aluguel-09` indice 2 ("pode ter animal de estimacao no **predio**?")
-      fica de fora, porque `predio` e conteiner generico -- a mesma forma de
-      fala, com um substantivo que nao decide tipologia nenhuma.
+      NAO anota `tipo_imovel`, porque `predio` e conteiner generico -- a
+      mesma forma de fala, com um substantivo que nao decide tipologia
+      nenhuma. Nao anotar `tipo_imovel` nao e ficar fora da medicao: esse
+      turno e **negativo**, e o marcador seguinte ("o que decide entre
+      negativo e fora da medicao") diz por que.
 
       `republica` NAO tem traducao: e uso, nao tipologia, e pode ser casa ou
       apartamento. O unico turno que a usa (`aluguel-07`, primeiro turno) diz
       "republica ou kitnet" -- o lead oferece duas e nao escolhe --, entao ele
       fica sem `tipo_imovel`, de proposito.
-    - **O que decide entre negativo e fora da medicao (TEC-245).** Pergunta de
-      processo NAO e motivo de exclusao por si so: o corpus anota `{}` em
-      dezenas delas. O que exclui e a fala **pressupor um campo sem afirma-lo**
-      ("pode ter animal no predio?" pressupoe o predio) ou **sugerir um valor
-      sem nomea-lo** ("precisa ser terrea" sugere CASA; "850 mil ta acima do
-      que consigo" sugere um teto). Nos dois casos um negativo puniria o
-      modelo por ler a fala com razao, e um positivo inventaria anotacao --
-      por isso o turno sai da medicao, com o motivo escrito.
+    - **O que decide entre negativo e fora da medicao (TEC-245, TEC-246).**
+      Pergunta de processo NAO exclui por si so: o corpus anota `{}` em dezenas
+      delas, e desde a TEC-246 **pressupor um campo tambem nao exclui** --
+      "pode ter animal no predio?" (`aluguel-09` indice 2) e "quanto tempo leva
+      pra avaliar o imovel?" (`follow-up-03` indice 1) sao negativos, pela
+      mesma razao que `aluguel-01` indice 1: a fala nao nomeia nada, e repetir
+      o campo do turno anterior conta `extra` de proposito.
 
-      Anafora pura ("aquele mesmo predio", "ali mesmo", "nessa faixa") e
-      negativo, e nao exclusao: a fala nao nomeia nada, e repetir o campo do
-      turno anterior e `extra` de proposito.
+      Sai da medicao o turno que cai numa destas tres, e so nelas:
 
-      **Esta regra colide com a da TEC-242, e a colisao esta em aberto por
-      decisao.** "aquele mesmo predio" (`aluguel-01` indice 1) e negativo aqui,
-      enquanto "pode ter animal de estimacao no predio?" (`aluguel-09` indice
-      2) fica fora da medicao pela regra acima. As duas sao pergunta de
-      processo com `predio` apontando pro imovel que o turno 0 ja estabeleceu,
-      e mesmo assim um modelo que devolve `tipo_imovel` leva invencao numa e
-      nada na outra. E classe, e nao turno: sete turnos do corpus tem dica de
-      tipologia na fala (`predio`, `condominio`, `unidade`) -- `aluguel-01`
-      indices 1 e 2, `aluguel-02` indice 1, `investimento-01` indice 2,
-      `investimento-08` indices 0 e 2, todos negativos e todos anotados pela
-      TEC-245, mais `aluguel-09` indice 2, o excluido.
-
-      Nao esta resolvida porque os dois jeitos de resolver custam mais do que
-      ela. Medir `aluguel-09` indice 2 derruba uma decisao da TEC-238 que a
-      TEC-242 reafirmou e que o spec desta card diz confirmar -- isso e card
-      propria, e nao nota de rodape. Excluir `aluguel-01` indice 1 contradiz o
-      comentario de `borda-longa-01` indice 2, que diz que repetir os campos do
-      turno anterior conta `extra` DE PROPOSITO, e cascatearia pelos outros
-      cinco. O que custa deixar assim esta medido: a regua cobra invencao num
-      turno e perdoa a uma conversa de distancia, dentro desta classe e so
-      dela. E reversivel, e agora esta escrito onde o proximo anotador le.
+      1. **Sugere um valor sem nomea-lo.** "precisa ser terrea" sugere CASA;
+         "850 mil ta acima do que consigo" sugere um teto; "perto do metro" e
+         proximidade sem toponimo. Um negativo puniria o modelo por ler a fala
+         com razao.
+      2. **Nomeia algo que o vocabulario nao expressa.** "parcelamento direto
+         com o proprietario" e "permuta com meu carro na entrada" nao sao
+         valores de `FormaPagamento`.
+      3. **Incerteza declarada sobre o que a fala afirma.** "depois eu vejo com
+         calma" pode ou nao ser `SEM_PRESSA`; "faz diferenca no financiamento?"
+         pressupoe o meio, e se pressupor equivale a pretender e questao que a
+         regra da TEC-239 nao decide. Omissao nao e asercao de completude, e um
+         negativo e afirmacao forte.
 
       Turno fora da medicao tem entrada em `_FORA_DA_MEDICAO`
       (`tests/unit/test_evals_corpus_real.py`), com o motivo em uma linha. Nao

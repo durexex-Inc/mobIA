@@ -4,22 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from mobia.domain.agente.schemas import (
-    Extracao,
-    FormaPagamento,
-    Intencao,
-    TipoImovel,
-    Urgencia,
-    normalizar_regiao,
-)
-from mobia.evals.corpus import ConversaAnotada, carregar, total_de_turnos
-from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS, PISO_DE_TURNOS_NEGATIVOS
+from mobia.domain.agente.schemas import Extracao, Intencao, normalizar_regiao
 
-_VOCABULARIO = {
-    "tipo_imovel": TipoImovel,
-    "urgencia": Urgencia,
-    "forma_pagamento": FormaPagamento,
-}
+# `_VOCABULARIO` vem de `mobia.evals.corpus` e nao de uma copia daqui: e o
+# mesmo mapa que `carregar` usa para recusar valor fora do vocabulario, e duas
+# copias dele divergiriam no dia em que um campo novo entrar num dos lados so.
+from mobia.evals.corpus import _VOCABULARIO, ConversaAnotada, carregar, total_de_turnos
+from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS, PISO_DE_TURNOS_NEGATIVOS
 
 CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
 
@@ -29,10 +20,18 @@ def conversas() -> list[ConversaAnotada]:
     return carregar(CORPUS)
 
 
-def test_o_corpus_tem_as_cinquenta_conversas_do_card(
+def test_o_corpus_tem_todas_as_conversas_declaradas(
     conversas: list[ConversaAnotada],
 ) -> None:
-    assert len(conversas) == 50
+    """Cinquenta vieram do card da TEC-134; a TEC-246 acrescentou tres
+    arquetipos que o vocabulario exigia e o corpus nao tinha -- chacara,
+    consorcio e pagamento indefinido.
+
+    O nome nao diz mais o numero de proposito: `cinquenta` no identificador
+    envelheceu junto com o valor, e este repo ja perdeu tempo com numero
+    embutido em prosa.
+    """
+    assert len(conversas) == 53
 
 
 def test_o_corpus_passa_do_piso_de_turnos(conversas: list[ConversaAnotada]) -> None:
@@ -120,6 +119,35 @@ def test_todo_campo_de_extracao_tem_anotacao(conversas: list[ConversaAnotada]) -
     assert todos - anotados == set()
 
 
+def test_todo_valor_do_vocabulario_tem_anotacao(
+    conversas: list[ConversaAnotada],
+) -> None:
+    """A cobertura era por campo; passa a ser por valor.
+
+    `test_todo_campo_de_extracao_tem_anotacao` garante que nenhum dos nove
+    campos fica em zero, e nao diz nada sobre os valores dentro deles. Uma
+    regressao restrita a `RURAL` ou a `CONSORCIO` passava o gate sem que
+    nenhum teste piscasse -- mesmo furo que
+    `test_toda_intencao_do_enum_aparece` fecha para `Intencao`.
+
+    A lista sai dos enums e do proprio tipo, e nao de uma lista a mao: valor
+    novo no vocabulario quebra este teste em vez de nascer descoberto.
+    """
+    anotados = {
+        f"{campo}={valor}"
+        for conversa in conversas
+        for turno in conversa.turnos
+        if turno.campos
+        for campo, valor in turno.campos.items()
+        if campo in ("tipo_imovel", "urgencia", "forma_pagamento", "tem_imovel_para_vender")
+    }
+    esperados = {
+        f"{campo}={membro.value}" for campo, enum in _VOCABULARIO.items() for membro in enum
+    } | {"tem_imovel_para_vender=True", "tem_imovel_para_vender=False"}
+
+    assert esperados - anotados == set(), f"valores sem anotacao: {sorted(esperados - anotados)}"
+
+
 def test_anotacao_nunca_usa_valor_fora_do_vocabulario(conversas: list[ConversaAnotada]) -> None:
     """`carregar` ja levanta nesse caso; este teste guarda o corpus commitado."""
     for conversa in conversas:
@@ -186,9 +214,10 @@ def test_anotacoes_de_regiao_nao_colidem_depois_de_normalizadas(
     assert colisoes == {}, f"formas distintas normalizam para a mesma: {colisoes}"
 
 
-# Palavras que o lead usa e que NAO estao em `TipoImovel`. Seis, e nao as
-# cinco do mapa da TEC-242: `republica` entra aqui de proposito, apesar de nao
-# ter traducao, por motivo prospectivo -- hoje ela nao muda nada (o unico
+# Palavras que o lead usa e que NAO estao em `TipoImovel`. Oito lemas, e nao
+# os sete do mapa de sinonimos (cinco da TEC-242, dois da TEC-246):
+# `republica` entra aqui de proposito, apesar de nao ter traducao, por motivo
+# prospectivo -- hoje ela nao muda nada (o unico
 # turno que a usa, `aluguel-07` i0, ja contem "kitnet" e seria detectado sem
 # ela), mas um turno futuro que diga so "procuro uma republica perto da puc",
 # sem outro sinonimo junto, precisa ser detectado e forcado a uma decisao
@@ -200,7 +229,9 @@ def test_anotacoes_de_regiao_nao_colidem_depois_de_normalizadas(
 # cobertura pra danos?"). A polissemia de `cobertura` e inerente a lingua, e a
 # lista de excecoes abaixo e a valvula para ela -- nao ha regex que a
 # elimine.
-_SINONIMOS_DE_TIPO_IMOVEL = re.compile(r"\b(kitnet|studio|flat|cobertura|sobrado|republica)\b")
+_SINONIMOS_DE_TIPO_IMOVEL = re.compile(
+    r"\b(kitnet|studio|flat|cobertura|sobrado|republica|chacara|chacaras|sitio|sitios)\b"
+)
 
 # `aluguel-07` i0 diz "procuro republica ou kitnet": o lead oferece duas
 # tipologias e nao escolhe nenhuma. Anotar uma delas puniria o modelo por
@@ -311,15 +342,13 @@ def test_todo_turno_com_palavra_do_vocabulario_tem_tipo_imovel_anotado(
 # uma linha. A lista e exaustiva de proposito: turno novo sem `campos` quebra
 # este teste, e quem o acrescentar tem de decidir -- anotar ou entrar aqui.
 #
-# Antes desta card havia 56 turnos fora da medicao e cinco motivos escritos.
+# Antes da TEC-245 havia 56 turnos fora da medicao e cinco motivos escritos.
 # Os outros 51 nao eram decisao tomada, eram silencio, e silencio numa regua
 # le como "nao ha o que medir aqui" quando na verdade era "ninguem olhou".
 _FORA_DA_MEDICAO = {
     ("aluguel-03", 1): "atributo (terrea) sugere CASA sem nomear a tipologia",
-    ("aluguel-09", 2): "pergunta de processo que pressupoe o predio (TEC-238)",
     ("borda-evasivo-02", 1): "omissao nao e asercao de completude (TEC-238)",
     ("borda-evasivo-02", 2): "omissao nao e asercao de completude (TEC-238)",
-    ("borda-mista-01", 2): "escritura: pressupoe o terreno do turno anterior",
     ("borda-mista-02", 2): "perto do metro: proximidade sem toponimo",
     ("compra-01", 1): "850 mil acima do que consigo: teto sugerido, nao afirmado",
     ("compra-02", 2): "perto de metro: proximidade sem toponimo",
@@ -328,9 +357,8 @@ _FORA_DA_MEDICAO = {
     ("compra-08", 2): "parcelamento direto nao e valor de FormaPagamento",
     ("compra-11", 1): "permuta com carro nao e valor de FormaPagamento",
     ("follow-up-01", 1): "juntar entrada sugere financiamento sem nomear",
-    ("follow-up-03", 1): "pergunta de processo que pressupoe o imovel (TEC-238)",
-    ("follow-up-03", 2): "financiamento que o lead ja tem, nao o pretendido (TEC-238)",
-    ("investimento-04", 1): "pressupoe o financiamento, nao pergunta se pode usar",
+    ("follow-up-03", 2): "financiamento que o lead ja tem: incerteza declarada (TEC-238)",
+    ("investimento-04", 1): "pressupor um meio equivale a pretende-lo? nao decidido",
     ("investimento-05", 0): "grana parada sugere A_VISTA sem afirmar",
 }
 
@@ -342,7 +370,7 @@ def test_todo_turno_fora_da_medicao_tem_motivo_escrito(
 
     Turno sem `campos` nao tem cobertura de invencao nenhuma: nao ha
     `esperado` contra o qual comparar, entao o turno sai da conta inteiro. Que
-    isso seja verdade para 17 turnos e escolha; que fosse verdade para 56 sem
+    isso seja verdade para 14 turnos e escolha; que fosse verdade para 56 sem
     ninguem ter olhado era acidente.
 
     Comentario de YAML nao sobrevive ao `yaml.safe_load`, entao o conjunto

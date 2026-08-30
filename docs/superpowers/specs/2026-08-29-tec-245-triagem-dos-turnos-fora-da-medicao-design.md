@@ -230,6 +230,68 @@ mudança: balde B vai de 30 para 29, balde C de 16 para 17, negativos de 67 para
 negativos, e `PISO_DE_TURNOS_NEGATIVOS` fica em 49 em vez de 50, mantendo a
 mesma margem de 2.
 
+## Emenda de 29/08/2026 (TEC-246) — a colisão que este spec deixou aberta foi fechada
+
+Este spec criou uma colisão e a declarou em vez de escondê-la, e é essa
+honestidade que a torna corrigível agora. Nada do texto acima foi reescrito.
+
+**O que colidia.** O balde C do D2 exclui a fala que *pressupõe* um campo sem
+afirmá-lo, e o exemplo canônico do critério é `aluguel-09` i2 (*"e pode ter
+animal de estimacao no predio?"*). O balde B, na mesma triagem, tornou
+`aluguel-01` i1 e i2 negativos por **anáfora pura** — a fala se refere ao imóvel
+do turno anterior sem nomear nada, e repetir os campos ali é `extra` de
+propósito. As duas leituras são a mesma forma de fala com o mesmo `predio`
+apontando para o imóvel que o turno 0 estabeleceu, e mesmo assim um modelo que
+devolvesse `tipo_imovel` levava invenção numa e nada na outra. Era classe, e não
+turno: sete turnos do corpus têm dica de tipologia na fala (`prédio`,
+`condomínio`, `unidade`) — `aluguel-01` i1 e i2, `aluguel-02` i1,
+`investimento-01` i2, `investimento-08` i0 e i2, mais `aluguel-09` i2, o
+excluído. **Seis dos sete são negativos que esta card criou:** antes dela nenhum
+turno negativo do corpus tinha dica de tipologia, e a colisão não existia na
+prática.
+
+**Qual leitura venceu: a anáfora.** A TEC-246 deu **eixo único** ao critério —
+pergunta de processo que não nomeia campo é negativo, **pressuponha ela o imóvel
+do turno anterior ou não**. O que decidiu foi o propósito do negativo: ele existe
+para pegar o modelo reemitindo estado acumulado, que é a primeira hipótese que o
+README manda checar se a próxima execução paga vier vermelha, e o corpus já tinha
+decidido isso no comentário de `borda-longa-01` i2. A exclusão de `aluguel-09` i2
+é anterior à regra de anáfora — a TEC-238 a escreveu quando essa regra não
+existia —, e é ela que cede.
+
+**O que mudou de balde.** Três turnos saíram do balde C para o B: `aluguel-09`
+i2, `follow-up-03` i1 (pressupõe o imóvel que o lead quer vender) e
+`borda-mista-01` i2 (*"tem escritura definitiva ou ainda ta em inventario?"*,
+que pressupõe o terreno do turno anterior). O balde C cai de **17 para 14**.
+Dois dos que ficaram foram **reclassificados sem mudar de balde**: `follow-up-03`
+i2 e `investimento-04` i1 saíam por "pressupõe um campo", motivo que deixou de
+existir, e permanecem fora por **incerteza declarada** sobre o que a fala afirma.
+
+**O balde C tem hoje três formas, e não as três que o D2 lista.** A enumeração
+do D2 — pergunta de processo que pressupõe campo; atributo que sugere tipologia
+sem nomeá-la; valor sugerido sem ser dito — perdeu a primeira e ganhou duas. As
+três de hoje, escritas no docstring de `TurnoAnotado`: **(1)** sugere um valor
+sem nomeá-lo (as duas últimas do D2, fundidas); **(2)** nomeia algo que o
+vocabulário não expressa (*"permuta com meu carro na entrada"* não é valor de
+`FormaPagamento`); **(3)** incerteza declarada sobre o que a fala afirma.
+
+**Contagens.** O critério de aceitação *"cobertura de invenção sobe de 37 para 66
+turnos"* continua sendo o registro do que **esta** card entregou. Depois da
+TEC-246 são **70 negativos, 62 positivos e 14 fora da medição**, em 53 conversas
+e 146 turnos, conferidos por execução em 29/08 — três negativos vêm desta emenda,
+dois das conversas novas da TEC-246, e um turno (`compra-10` i0) saiu dos
+negativos por virar positivo. `PISO_DE_TURNOS_NEGATIVOS` subiu de 49 para 53. Ver
+também as emendas nos specs da TEC-238 e da TEC-242.
+
+**E o "Fora de escopo" logo abaixo fechou.** Os seis valores de vocabulário que
+este spec conferiu por execução estarem em zero — e cuja frase *"nenhuma das 56
+falas afirma qualquer um dos seis"* estava certa — têm anotação hoje. A card
+própria que ele previa foi a TEC-246: cinco deles ganharam fala nova, em três
+conversas escritas para o vocabulário, e `tem_imovel_para_vender: false` foi
+fechado sem fala nova, em `compra-10` i0, que este spec tinha deixado como
+negativo. A cobertura passou a ser verificada por valor, derivada dos enums, em
+`test_todo_valor_do_vocabulario_tem_anotacao`.
+
 ## Fora de escopo
 
 - **Cobertura por valor de vocabulário.** `RURAL`, `CONSORCIO`,

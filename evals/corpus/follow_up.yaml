@@ -45,16 +45,15 @@
       intencao: VENDER_IMOVEL
       campos:
         tem_imovel_para_vender: true
-    # Fora da medicao: pergunta de processo que pressupoe um campo (que o
-    # lead continua com o imovel que quer vender) sem dar pra enumerar com
-    # confianca tudo o que a fala afirma -- mesma forma de fala que
-    # `aluguel-08` indice 2 usa pra reafirmar `tipo_imovel`. Negativo aqui
-    # puniria o modelo por ler a fala com razao.
+    # Negativo: pergunta de processo que nao nomeia campo nenhum. Pressupoe o
+    # imovel que o lead quer vender, e pressuposicao deixou de excluir
+    # (TEC-246). O `tem_imovel_para_vender` do turno 0 nao se repete aqui.
     - lead: "quanto tempo leva pra avaliar o imovel?"
       intencao: VENDER_IMOVEL
-    # Nao anotado como negativo: o financiamento aqui e o que o lead ja tem,
-    # nao a forma de pagamento que pretende usar. A distincao e fina de mais
-    # para virar gate.
+      campos: {}
+    # Fora da medicao: o financiamento aqui e o que o lead ja tem, nao a forma
+    # de pagamento que pretende usar -- incerteza declarada sobre o que a
+    # fala afirma, e a distincao e fina de mais para virar gate (TEC-238).
     - lead: "e voces cuidam da parte de documentacao pra baixa do financiamento tambem?"
       intencao: VENDER_IMOVEL
 

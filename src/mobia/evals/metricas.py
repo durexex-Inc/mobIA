@@ -18,6 +18,11 @@ PISO_DE_PRECISAO_DA_EXTRACAO_PCT = 85
 
 # Abaixo deste numero de turnos um unico turno vale mais de 0,8% e a faixa
 # amarela deixa de absorver o ruido entre execucoes.
+#
+# Medido em 2026-08-29 (TEC-246): o corpus tem 146 turnos e o pior caso de
+# abandono de `TETO_DE_CONVERSAS_ABANDONADAS` conversas entrega 129. O piso
+# continua em 120 de proposito -- ele e estatistico, e nao de erosao de
+# amostra, entao a conta do pior caso nao o governa.
 PISO_DE_TURNOS = 120
 
 # Piso de anotacao, irmao do PISO_DE_TURNOS. Sem ele, anotar tres turnos
@@ -26,9 +31,18 @@ PISO_DE_TURNOS = 120
 #
 # Medido em 2026-08-29 (TEC-245): sao 55 positivos, e o pior caso de abandono
 # de `TETO_DE_CONVERSAS_ABANDONADAS` conversas tira 15, entao a execucao mais
-# azarada ainda entrega 40. O piso fica em 38, com folga de dois -- a mesma
-# margem que o piso tinha antes desta card (31 contra 30).
-PISO_DE_TURNOS_ANOTADOS = 38
+# azarada ainda entrega 40. O piso fica em 38, com folga de dois. A folga
+# anterior era de UM, e nao de dois (31 contra 30): a margem mudou de
+# tamanho aqui.
+#
+# Medido em 2026-08-29 (TEC-246): o corpus cresceu para 62 positivos, e o
+# pior caso de abandono passou a 47. O piso sobe para 45, folga de dois (47
+# contra 45) -- do mesmo tamanho da medicao anterior, mas por medicao e nao
+# por convencao: esta constante nasceu na TEC-145 com folga de um e nao
+# carrega margem fixa nenhuma. Quem tem folga de dois desde a origem e a
+# irma `PISO_DE_TURNOS_NEGATIVOS`, criada pela TEC-238 -- que nunca mexeu
+# nesta aqui.
+PISO_DE_TURNOS_ANOTADOS = 45
 
 # Piso dos turnos anotados como "o lead nao afirmou nada" (`campos: {}`).
 # Irmao de `PISO_DE_TURNOS_ANOTADOS` na terceira direcao: aquele responde
@@ -52,27 +66,42 @@ PISO_DE_TURNOS_ANOTADOS = 38
 # corpus a 66 negativos, e o pior caso de abandono passou a 51. O piso sobe
 # para 49, com a mesma folga de dois que tinha antes desta card (25 contra
 # 23).
-PISO_DE_TURNOS_NEGATIVOS = 49
+#
+# Medido em 2026-08-29 (TEC-246): o corpus cresceu para 70 negativos, e o
+# pior caso de abandono passou a 55. O piso sobe para 53, com a mesma folga
+# de dois que carrega desde a TEC-238 (55 contra 53).
+PISO_DE_TURNOS_NEGATIVOS = 53
 
 # Quantas conversas a execucao pode perder para falha de infraestrutura antes
 # de deixar de valer como medida.
 #
-# O numero vem do corpus e do piso, nao do gosto. Hoje sao 50 conversas e 138
-# turnos, e a folga do piso e 138 - 120 = 18 turnos. O pior caso de cinco
-# abandonos nao e 5 x 3: a TEC-239 deu um quarto turno a `compra-02` e a
-# `compra-08`, entao as cinco conversas mais longas somam 4 + 4 + 3 + 3 + 3 =
-# 17 turnos, e sobra folga de um. O teto de 5 continua valido -- abandono
-# nenhum consegue furar o piso -- porque com seis o pior caso ja seria 138 -
-# 20 = 118 turnos, e os dois limites passariam a reprovar a mesma execucao por
-# motivos diferentes, com a mensagem decidida por quem for verificado primeiro.
+# O numero vem do corpus e do piso, nao do gosto. Medido em 2026-08-29
+# (TEC-246): hoje sao 53 conversas e 146 turnos (eram 50 e 138 antes desta
+# card), e a folga do piso e 146 - 120 = 26 turnos, contra 138 - 120 = 18
+# antes desta card. O pior caso de cinco abandonos nao e 5 x 3: a TEC-239 deu
+# um quarto turno a `compra-02` e a `compra-08`, entao as cinco conversas
+# mais longas somam 4 + 4 + 3 + 3 + 3 = 17 turnos (o mesmo pior caso de
+# sempre -- o corpus cresceu em conversas menores), e sobra folga de nove
+# (129 - 120), contra a folga de um que a conta tinha antes desta card (121 -
+# 120 com os 138 turnos de entao). O teto de 5 continua valido -- abandono
+# nenhum consegue furar o piso --, e a folga so cresceu com o corpus: com
+# seis o pior caso passa a 146 - 20 = 126 turnos, ainda acima do piso; e so a
+# partir de nove abandonos o pior caso cai a 146 - 29 = 117, abaixo de 120,
+# ponto em que os dois limites passariam a reprovar a mesma execucao por
+# motivos diferentes, com a mensagem decidida por quem for verificado
+# primeiro. Antes desta card, esse ponto de virada era em seis (138 - 20 =
+# 118): o corpus cresceu mais rapido no total de turnos do que nas cinco
+# conversas mais longas, e a margem entre o teto de 5 e a reprovacao dupla
+# alargou de um abandono extra para quatro.
 #
 # A conta e sobre as conversas mais **longas**, e nao sobre as mais anotadas.
 # Essa propriedade -- abandonar as cinco com mais anotacao ainda deixava a
 # amostra abaixo de `PISO_DE_TURNOS_ANOTADOS` -- valia em 57aee2d (38 - 13 =
 # 25, abaixo do piso de 30), mas a TEC-242 deu tres anotacoes a `compra-06` e
-# a colocou entre as cinco conversas com mais anotacao. Hoje a mesma conta da
-# 55 - 15 = 40, ACIMA do piso -- que esta card subiu para 38, e nao os 30 da
-# linha acima: a propriedade deixou de valer.
+# a colocou entre as cinco conversas com mais anotacao. Medido em 2026-08-29
+# (TEC-246), a mesma conta da 62 - 15 = 47, ACIMA do piso -- que hoje e 45,
+# e nao os 38 da TEC-245 nem os 30 da linha acima: a propriedade deixou de
+# valer.
 #
 # Isso nao muda a escolha de contar conversas **longas** neste teto, que
 # continua de pe pelo outro motivo ja escrito abaixo -- o teto mede
