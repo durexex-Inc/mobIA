@@ -51,8 +51,7 @@ class Settings(BaseSettings):
     # grava dado com valor publicamente conhecido e nao reclama.
     anthropic_api_key: str = ""
 
-    modelo_resumo: str = "claude-opus-5"
-
+    modelo_resumo: str = "claude-sonnet-5"
     # Separado do modelo_resumo de proposito: a acuracia de intencao e a
     # qualidade do resumo sao metricas distintas e a TEC-210 vai afinar uma
     # sem tocar na outra.
