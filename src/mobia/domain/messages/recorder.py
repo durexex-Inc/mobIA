@@ -29,19 +29,47 @@ _MILIONESIMO_DE_DOLAR = Decimal("0.000001")
 _SEM_SNAPSHOT = re.compile(r"-\d{8}$")
 
 
-def custo_em_dolar(model: str, tokens_in: int, tokens_out: int) -> Decimal | None:
+# Multiplicadores do preco de ENTRADA para os dois lados do cache. Escrever
+# custa agio, ler custa quase nada -- e a diferenca entre os dois e a razao de
+# o cache valer a pena so quando o prefixo e reusado.
+_AGIO_DE_ESCRITA_NO_CACHE = Decimal("1.25")
+_DESCONTO_DE_LEITURA_NO_CACHE = Decimal("0.1")
+
+
+def custo_em_dolar(
+    model: str,
+    tokens_in: int,
+    tokens_out: int,
+    cache_write: int = 0,
+    cache_read: int = 0,
+) -> Decimal | None:
     """Devolve None para modelo sem preco cadastrado, nunca zero.
 
     Zero somaria silenciosamente no painel de custo e faria o gasto parecer
     menor do que foi. None aparece como lacuna e alguem conserta.
+
+    `cache_write` e `cache_read` existem desde a TEC-251, e sem eles esta
+    funcao passou a MENTIR PARA BAIXO no dia em que o cache entrou: os tokens
+    cacheados saem de `input_tokens` e vao para contadores proprios, entao um
+    turno que antes reportava ~1.700 de entrada passou a reportar 54 -- e o
+    custo caiu junto, sem que o gasto tivesse caido tanto.
+
+    E o mesmo defeito que a TEC-249 consertou, entrando pela outra porta:
+    subestimar em silencio e exatamente o que o paragrafo acima promete nao
+    fazer. Os dois default zero mantem toda chamada antiga correta -- sem
+    cache, nao ha o que somar.
     """
     preco = PRECOS_POR_MODELO.get(model) or PRECOS_POR_MODELO.get(_SEM_SNAPSHOT.sub("", model))
     if preco is None:
         return None
     entrada, saida = preco
-    total = (Decimal(tokens_in) / Decimal(1_000_000)) * entrada + (
-        Decimal(tokens_out) / Decimal(1_000_000)
-    ) * saida
+    por_milhao = Decimal(1_000_000)
+    total = (
+        (Decimal(tokens_in) / por_milhao) * entrada
+        + (Decimal(tokens_out) / por_milhao) * saida
+        + (Decimal(cache_write) / por_milhao) * entrada * _AGIO_DE_ESCRITA_NO_CACHE
+        + (Decimal(cache_read) / por_milhao) * entrada * _DESCONTO_DE_LEITURA_NO_CACHE
+    )
     return total.quantize(_MILIONESIMO_DE_DOLAR)
 
 
