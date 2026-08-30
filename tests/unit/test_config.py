@@ -25,28 +25,73 @@ _ROTULOS_DE_MONTAR_PROMPT = (
 )
 
 
-def _subcontagem() -> float:
-    """A mesma conta que `test_diferenca_entre_o_contado_e_o_enviado` e
-    `test_a_margem_do_orcamento_do_prompt_e_deliberada` travam contra tetos
-    diferentes (600 e 590). Extraida para um so lugar porque as duas copias
-    verbatim divergirem em silencio era exatamente o risco que a duplicacao
-    corria: se `montar_prompt` ganhar um quarto rotulo, so um dos dois
-    testes seria atualizado, e os dois continuariam verdes medindo coisas
-    diferentes.
+def _linha(rotulo: str, valor: float) -> None:
+    """Uma linha do relatorio de `_subcontagem`, alinhada pelo rotulo mais
+    longo das parcelas para que os testes possam acrescentar teto e folga
+    embaixo da tabela sem desalinha-la.
+
+    A largura e derivada dos proprios nomes, e nao um numero escrito aqui:
+    seria estranho a card que tira valores derivados da prosa deixar um para
+    tras no proprio relatorio que ela criou.
+    """
+    largura = max(len(nome) for nome in _decomposicao())
+    print(f"  {rotulo:<{largura}}  {valor:>8.1f}")
+
+
+def _decomposicao() -> dict[str, float]:
+    """As quatro parcelas da subcontagem, em tokens do proxy `len/4`.
+
+    Sao quatro porque quatro coisas diferem entre o que `montar_contexto`
+    conta e o que a requisicao do classificador de fato manda. Os *nomes* das
+    parcelas nao envelhecem -- os *valores* envelhecem a cada mudanca de
+    prompt ou de schema, e e por isso que eles vivem aqui, calculados, e nao
+    transcritos em prosa (TEC-243).
     """
 
     def em_tokens(texto: str) -> float:
         return len(texto) / 4
 
-    return (
+    return {
         # Contado e nao enviado: o classificador usa omitir_sistema=True.
-        -em_tokens(SISTEMA)
+        "-montagem.SISTEMA (contado, nao enviado)": -em_tokens(SISTEMA),
         # Enviados e nunca contados: campo `system=`, o schema de saida e os
         # rotulos que `montar_prompt` intercala.
-        + em_tokens(SISTEMA_DO_AGENTE)
-        + em_tokens(json.dumps(_SCHEMA_COMPILADO))
-        + em_tokens(_ROTULOS_DE_MONTAR_PROMPT)
-    )
+        "+classificador.SISTEMA_DO_AGENTE (campo system=)": em_tokens(SISTEMA_DO_AGENTE),
+        "+schema compilado (output_config.format)": em_tokens(json.dumps(_SCHEMA_COMPILADO)),
+        "+rotulos de montar_prompt": em_tokens(_ROTULOS_DE_MONTAR_PROMPT),
+    }
+
+
+def _subcontagem() -> float:
+    """A mesma conta que `test_diferenca_entre_o_contado_e_o_enviado` e
+    `test_a_margem_do_orcamento_do_prompt_e_deliberada` travam contra tetos
+    diferentes. Extraida para um so lugar porque as duas copias verbatim
+    divergirem em silencio era exatamente o risco que a duplicacao corria: se
+    `montar_prompt` ganhar um quarto rotulo, so um dos dois testes seria
+    atualizado, e os dois continuariam verdes medindo coisas diferentes.
+
+    Imprime a decomposicao. O `print` nao e depuracao esquecida: e o entregavel
+    da TEC-243. Os valores derivados -- subcontagem, folga, margem -- estavam
+    transcritos a mao em quatro textos de prosa e envelheceram quatro vezes em
+    dois dias, sempre do mesmo jeito: alguem mexe numa parcela e o valor
+    derivado fica velho em tres lugares de uma vez. Agora a prosa explica o
+    mecanismo e manda rodar isto:
+
+        python -m pytest -q -k margem_do_orcamento -s
+
+    Sem `-s` o pytest engole a saida quando o teste passa -- e a mostra quando
+    ele falha, que e justamente quando alguem precisa dela.
+    """
+    parcelas = _decomposicao()
+    liquido = sum(parcelas.values())
+
+    largura = max(len(nome) for nome in parcelas)
+    print("\nSubcontagem do orcamento de contexto (tokens do proxy len/4):")
+    for nome, valor in parcelas.items():
+        print(f"  {nome:<{largura}}  {valor:>8.1f}")
+    print(f"  {'= liquido':<{largura}}  {liquido:>8.1f}")
+
+    return liquido
 
 
 def test_settings_le_do_ambiente(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -233,6 +278,9 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
     ficaria sabendo ate a primeira chamada estourar o limite de verdade.
     """
     subcontagem = _subcontagem()
+    teto = settings.contexto_headroom_de_tokens * 0.75
+    _linha("teto desta assercao (headroom * 0,75)", teto)
+    _linha("folga", teto - subcontagem)
 
     assert subcontagem > 0, "se virar negativo, a conta abaixo perdeu o sentido"
     assert subcontagem < settings.contexto_headroom_de_tokens, (
@@ -241,35 +289,40 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
     )
     # Folga, nao empate: o overhead estrutural da requisicao (envelope do
     # turno de usuario) tambem sai daqui, e ele nao esta na conta acima.
-    assert subcontagem < settings.contexto_headroom_de_tokens * 0.75
+    assert subcontagem < teto
 
 
 def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     """A margem existe para ser vista antes de ser gasta, nao depois.
 
-    A TEC-240 gastou 61 dos 74 tokens de folga e deixou 13 de proposito. A
-    TEC-250 gastou esses 13 e mais: as tres regras novas custaram 35,8 tokens
-    e levaram a subcontagem de 587 para 622,8.
+    O teto de 627 e mais apertado que o `headroom * 0,75` usado pelo teste
+    irmao, e e o proposito deste teste: se voce esta lendo isto porque ele
+    reprovou, a pergunta e "o que sai do prompt para o novo texto entrar?",
+    nao "quanto subo o numero?". Subir e resposta legitima -- mas so depois da
+    primeira pergunta, e com o preco por turno escrito no comentario de
+    `contexto_headroom_de_tokens`.
 
-    **A reserva subiu, e a pergunta abaixo foi feita antes.** Procurou-se o
-    que cortar e nao havia corte de ~92 caracteres que nao tocasse algo
-    medido -- a enumeracao das tarefas (TEC-240), os parenteses que separam
-    COMPRA de INVESTIMENTO, a guarda de alucinacao, a definicao da confianca.
-    Ver o comentario de `contexto_headroom_de_tokens`, onde o preco de 50
-    tokens por turno esta registrado.
+    O 627 e o unico numero desta conta escrito a mao em qualquer lugar, e e
+    escrito aqui de proposito: um limite so trava se estiver fixo. Todo o
+    resto -- subcontagem, folga, margem -- e derivado e sai impresso por
+    `_subcontagem`, para ninguem precisar transcrever (TEC-243):
 
-    O teto de 627 continua mais apertado que o de 637,5 (0,75 * 850) usado
-    pelo teste irmao, pelo mesmo motivo de sempre: se voce esta lendo isto
-    porque ele reprovou, a pergunta e "o que sai do prompt para o novo texto
-    entrar?", nao "quanto subo o numero?". Subir e resposta legitima -- mas
-    so depois da primeira pergunta, e com o preco escrito.
+        python -m pytest -q -k margem_do_orcamento -s
+
+    Historico das duas vezes em que este numero se mexeu: a TEC-240 gastou 61
+    dos 74 tokens de folga que a TEC-145 tinha deixado e parou com 13 de
+    proposito; a TEC-250 gastou esses 13 e mais 35,8, e subiu a reserva de 800
+    para 850 depois de procurar o que cortar e nao achar. Sao numeros daquelas
+    cards, nao os de hoje -- os de hoje estao na saida acima.
     """
     subcontagem = _subcontagem()
+    _linha("teto desta assercao (fixo)", 627)
+    _linha("margem", 627 - subcontagem)
 
     assert subcontagem < 627, (
-        f"subcontagem {subcontagem}: a margem de ~14 tokens sobre o teto de "
-        f"637,5 foi consumida. Encolha o texto enviado, ou suba a reserva "
-        f"registrando o preco por turno."
+        f"subcontagem {subcontagem}: a margem sobre o teto de 627 foi "
+        f"consumida. Encolha o texto enviado, ou suba a reserva registrando "
+        f"o preco por turno."
     )
 
 

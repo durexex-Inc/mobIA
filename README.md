@@ -17,6 +17,7 @@ docker compose up -d
 |---|---|
 | Testes | `python -m pytest` |
 | Teste de latência | `python -m pytest -m perf` |
+| Orçamento de contexto do prompt | `python -m pytest -q -k margem_do_orcamento -s` |
 | Lint | `python -m ruff check src tests alembic` |
 | Formatação | `python -m ruff format src tests alembic` |
 | Migrations | `python -m alembic upgrade head` |
@@ -117,26 +118,29 @@ Os critérios de aceite da história vivem como testes executáveis:
   provedor recusaria de qualquer jeito.
 - O teto comparado é o nominal **menos** `CONTEXTO_HEADROOM_DE_TOKENS`. A
   contagem mede uma mensagem plana, sem `system` e sem os rótulos e o schema que
-  a requisição real carrega; a reserva cobre essa diferença. A TEC-134 mediu:
-  a contagem fica ~263 tokens abaixo do que se envia (`SISTEMA` contado e não
-  enviado, `SISTEMA_DO_AGENTE`, o schema de saída e os rótulos enviados e não
-  contados), contra uma reserva que era 400 na época. **A partir da TEC-145 a
-  reserva é 800, não 400**: o objeto `extracao` que a TEC-145 acrescentou ao
-  schema de saída (`SCHEMA_DA_RESPOSTA`) soma um segundo ~263 à subcontagem.
-  Na TEC-145 isso a levava a **526**; com a reserva ainda em 400 ela já
-  excederia a própria reserva, e com 800 ela cabia com **74 tokens** de folga
-  antes de a segunda asserção de `test_diferenca_entre_o_contado_e_o_enviado`
-  (headroom × 0,75, ou seja 600) voltar a disparar — não os ~137 que a
-  reserva de 400 deixava contra os ~263 de antes da TEC-145. **A TEC-240
-  alongou `SISTEMA_DO_AGENTE` e a subcontagem subiu para 587**, com 13
-  tokens de folga (ver a nota da TEC-240 na seção TEC-145 abaixo e
-  `test_a_margem_do_orcamento_do_prompt_e_deliberada`); 526/74 ficam como o
-  número da época, não o de hoje. A conta usa o mesmo proxy `len/4` do
-  módulo, não uma chamada paga de `count_tokens`, e vive em
+  a requisição real carrega; a reserva cobre essa diferença. São quatro as
+  parcelas em que a contagem difere do que se envia: `SISTEMA` de `montagem.py`
+  é contado e **não** enviado (o classificador chama
+  `montar_prompt(omitir_sistema=True)`); `SISTEMA_DO_AGENTE`, o schema de saída
+  compilado e os rótulos de seção que `montar_prompt` intercala são enviados e
+  **nunca** contados.
+
+  **Quanto isso dá hoje não está escrito aqui, de propósito** (TEC-243). É
+  valor derivado — muda a cada mudança de prompt, de campo do schema ou de
+  rótulo — e transcrito à mão ele envelheceu quatro vezes em dois dias, sempre
+  pego tarde e por revisão humana. Ele vive em
   `test_diferenca_entre_o_contado_e_o_enviado`, que quebra se alguma das
-  parcelas crescer — o único dos lugares onde ela está escrita que não pode
-  mentir, porque roda. Ver a seção TEC-145 abaixo e o comentário de
-  `contexto_headroom_de_tokens` em `src/mobia/app/config.py`.
+  parcelas crescer, e sai impresso por:
+
+  ```
+  python -m pytest -q -k margem_do_orcamento -s
+  ```
+
+  A conta usa o mesmo proxy `len/4` do módulo, não uma chamada paga de
+  `count_tokens`. A reserva já subiu duas vezes — 400 → 800 na TEC-145,
+  800 → 850 na TEC-250 —, e o porquê de cada subida e o preço por turno estão
+  no comentário de `contexto_headroom_de_tokens` em `src/mobia/app/config.py`,
+  que é o registro dessa decisão. Ver também a seção TEC-145 abaixo.
 - Mensagem sem texto (áudio, imagem, documento) entra marcada pelo tipo, nunca
   como turno em branco — o modelo tem de poder distinguir "mandou um áudio que
   ainda não transcrevemos" de "não disse nada", e é esse texto que a dobra
@@ -1245,16 +1249,18 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   (`src/mobia/app/config.py`, commit `68eddb6`). O schema de saída ganhou o
   objeto `extracao`, e ele sozinho custa ~263 tokens enviados em toda chamada
   e nunca contados por `montar_contexto` — a mesma ordem de grandeza do
-  déficit que a TEC-134 já tinha medido para o resto da requisição. A
-  subcontagem total sobe para 526; com a reserva em 400 ela nem passaria mais
-  na primeira asserção de `test_diferenca_entre_o_contado_e_o_enviado`
-  (`subcontagem < headroom`, e 526 não é menor que 400). Com a reserva em 800
-  ela passa nas duas, com 74 tokens de folga antes da segunda (headroom ×
-  0,75 = 600) voltar a disparar. Preço: 400 tokens a
-  menos de literais e resumo por turno, de um teto de 12000 — 3,3% do
-  contexto, em troca de extração estruturada. Ver o item "O teto comparado é
-  o nominal menos `CONTEXTO_HEADROOM_DE_TOKENS`" na seção TEC-127 acima, que
-  tinha ficado com os números de antes desta mudança.
+  déficit que a TEC-134 já tinha medido para o resto da requisição. **Os
+  números a seguir são os medidos nesta card e não valem hoje** (a reserva
+  subiu de novo na TEC-250, e o prompt cresceu duas vezes; os de hoje saem de
+  `python -m pytest -q -k margem_do_orcamento -s`): a subcontagem subiu para
+  526; com a reserva em 400 ela nem passava mais na primeira asserção de
+  `test_diferenca_entre_o_contado_e_o_enviado` (`subcontagem < headroom`, e
+  526 não é menor que 400). Com a reserva em 800 ela passava nas duas, com 74
+  tokens de folga antes da segunda (headroom × 0,75 = 600) voltar a disparar.
+  Preço: 400 tokens a menos de literais e resumo por turno, de um teto de
+  12000 — 3,3% do contexto, em troca de extração estruturada. Ver o item "O
+  teto comparado é o nominal menos `CONTEXTO_HEADROOM_DE_TOKENS`" na seção
+  TEC-127 acima.
 - **`intencao` está fora de `Extracao` de propósito**, e fica assim mesmo
   tendo aparecido nos dois lugares onde seria conveniente incluí-la — o
   schema da chamada e `campos` do corpus. Duas fontes de intenção divergiriam
@@ -1448,8 +1454,9 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   cobertura duplex não pedem o mesmo orçamento, e o estado agora lê os dois
   como o mesmo valor. Preservar a distinção exigiria alargar `TipoImovel`, o
   que mexe na coluna `lead_qualification.tipo_imovel`, no filtro SQL que a
-  TEC-158 faz sobre ela e no orçamento de contexto do prompt — hoje em 587
-  de um teto de 600 (ver nota da TEC-240 acima). **É escolha, registrada
+  TEC-158 faz sobre ela e no orçamento de contexto do prompt, cuja folga
+  sempre coube em dezenas de caracteres, nunca em centenas — `python -m pytest
+  -q -k margem_do_orcamento -s` diz quantos são hoje. **É escolha, registrada
   aqui, não esquecimento.**
 
   E o agravante que a TEC-240 registrou vale igual aqui: `_texto_do_estado`
@@ -1476,7 +1483,10 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   `MARCADORES_DE_REPERGUNTA` dizendo por quê: é heurística de palavra-chave,
   com erro nas duas direções. Ver "Lacunas conhecidas".
 
-> **Nota da TEC-240 (29/08/2026):** até aqui o prompt classificava intenção e
+> **Nota da TEC-240 (29/08/2026).** Os números de orçamento deste bloco são
+> os medidos naquela data e **não valem hoje** — a TEC-250 gastou a margem
+> descrita abaixo e subiu a reserva. Os de hoje saem de `python -m pytest -q
+> -k margem_do_orcamento -s`. Até aqui o prompt classificava intenção e
 > extraía campos, mas nunca nomeava a extração como tarefa nem explicava o
 > que `null` significa — a semântica em que o desenho inteiro se apoia
 > (`None` nunca apaga, "não falou disso neste turno" e não "esqueça o que
@@ -1487,7 +1497,8 @@ seção própria do relatório (`render(..., reperguntas=...)`,
 > a não extrair o dito. Três coisas que o escopo original também pedia **não**
 > foram feitas, e ficam registradas em vez de escondidas:
 >
-> - **A reserva não subiu.** `CONTEXTO_HEADROOM_DE_TOKENS` continua em 800.
+> - **A reserva não subiu nesta card.** `CONTEXTO_HEADROOM_DE_TOKENS` ficou
+>   em 800 (a TEC-250 depois o levou a 850).
 >   Entre a subcontagem de 526 que a TEC-145 deixou e o teto de 600 da segunda
 >   asserção de `test_diferenca_entre_o_contado_e_o_enviado` havia 296
 >   caracteres de folga (74 tokens de proxy); o texto novo do prompt coube
@@ -2437,9 +2448,11 @@ alucinação, a definição da confiança. Preço registrado: **50 tokens a meno
 literais por turno, 0,4% do contexto** — contra os 400 tokens (3,3%) que a
 subida anterior custou.
 
-830 não serviu, e o meio token importou: 830 × 0,75 = 622,5 contra subcontagem
-de 622,8. Empatar com o teto derrotaria o fator 0,75, que existe para haver
-folga.
+830 não serviu, e o meio token importou: **na medição desta card**, 830 × 0,75
+= 622,5 contra uma subcontagem de 622,8. Empatar com o teto derrotaria o fator
+0,75, que existe para haver folga. (Esses são os números de 30/08/2026; a
+TEC-243 tirou os valores derivados da prosa, e os de hoje saem de `python -m
+pytest -q -k margem_do_orcamento -s`.)
 
 ### O resultado
 

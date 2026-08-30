@@ -27,20 +27,29 @@ log = structlog.get_logger(__name__)
 
 MAX_TOKENS_DA_RESPOSTA = 1500
 
-# Orcamento: SISTEMA_DO_AGENTE tem 1015 caracteres (254 tokens no proxy
-# len/4 deste modulo). Ele e uma das quatro parcelas da subcontagem que
+# Orcamento: SISTEMA_DO_AGENTE e uma das quatro parcelas da subcontagem que
 # test_diferenca_entre_o_contado_e_o_enviado mede, em test_config.py (as
 # outras tres: -SISTEMA de montagem.py, +schema compilado, +rotulos de
-# montar_prompt) -- hoje ela da 587, contra um teto de 600. A margem de 13
-# tokens (52 caracteres) e deliberada, nao descuido: guardada por
+# montar_prompt). Alongar este texto gasta reserva de contexto: cada caractere
+# aqui e enviado em toda chamada e nunca contado por montar_contexto.
+#
+# **Quanto ainda cabe nao esta escrito neste comentario, de proposito**
+# (TEC-243): e valor derivado, muda a cada mudanca de prompt ou de schema, e
+# transcrito a mao envelhecia sem ninguem notar. Antes de acrescentar texto
+# aqui, rode:
+#
+#     python -m pytest -q -k margem_do_orcamento -s
+#
+# A margem que sobrar e deliberada, nao descuido -- guardada por
 # test_a_margem_do_orcamento_do_prompt_e_deliberada, para a proxima card nao
-# gastar sem saber que estava gastando a reserva.
+# gastar sem saber que estava gastando a reserva. Ela sempre coube em dezenas
+# de caracteres, nunca em centenas.
 #
 # Nenhum campo de SCHEMA_DA_EXTRACAO ganhou "description": descrever so os
 # tres enums (tipo_imovel, urgencia, forma_pagamento) custaria da ordem de
-# 300 caracteres, e a folga de hoje e so 52 caracteres -- estouraria
-# sozinho. (Na card anterior, quando a folga era 296, ja estourava sozinho
-# tambem -- descrever os tres enums nunca coube num orcamento so de prosa.)
+# 300 caracteres -- estoura sozinho a folga, e estourava tambem na card
+# anterior, quando ela era a maior que ja foi. Descrever os tres enums nunca
+# coube num orcamento so de prosa.
 #
 # A abertura diz "extrai o que ele procura", nao "extrai o que ele disse
 # sobre o que procura". A forma longa e mais precisa e custa 18 caracteres a
