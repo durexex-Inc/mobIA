@@ -210,9 +210,9 @@ card fecha o exploit, não o buraco inteiro.
 > formaliza. Este parágrafo original não foi reescrito: a decisão estava certa quando
 > foi tomada, e a emenda é para que a história continue legível.
 
-> **Emenda (TEC-243, 2026-08-29):** as duas exclusões que sobraram aqui depois
+> **Emenda (TEC-245, 2026-08-29):** as duas exclusões que sobraram aqui depois
 > da emenda acima — `follow-up-03` índice 2 e `borda-evasivo-02` índices 1 e 2,
-> três turnos — **continuam valendo**. A TEC-243 as confirmou em vez de
+> três turnos — **continuam valendo**. A TEC-245 as confirmou em vez de
 > substituí-las: ela passou as 56 falas que ainda estavam fora da medição pelo
 > critério que essas próprias exclusões já traziam implícito — o que exclui não
 > é ser pergunta, é a fala **pressupor** um campo sem afirmá-lo, ou sugerir um
@@ -226,7 +226,7 @@ card fecha o exploit, não o buraco inteiro.
 > {}` em turnos irmãos das mesmas conversas. Faltava o critério escrito, e não
 > o trabalho. Depois da triagem são **17 turnos fora da medição** — as três
 > exclusões acima, mais `aluguel-09` índice 2 e `follow-up-03` índice 1 de uma
-> revisão posterior a esta card, mais as doze da TEC-243 —, cada um com o
+> revisão posterior a esta card, mais as doze da TEC-245 —, cada um com o
 > motivo em uma linha, e o conjunto deixou de ser aberto: `_FORA_DA_MEDICAO`
 > (`tests/unit/test_evals_corpus_real.py`) o declara por inteiro, e turno novo
 > sem `campos` quebra o CI até alguém decidir. A conta do "Contrato depois da

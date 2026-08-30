@@ -1,4 +1,4 @@
-# TEC-243 — Triagem dos turnos fora da medição: plano de implementação
+# TEC-245 — Triagem dos turnos fora da medição: plano de implementação
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,11 +8,11 @@
 
 **Tech Stack:** Python 3.12+, pytest, YAML. Nenhuma dependência nova.
 
-**Spec:** [docs/superpowers/specs/2026-08-29-tec-243-triagem-dos-turnos-fora-da-medicao-design.md](../specs/2026-08-29-tec-243-triagem-dos-turnos-fora-da-medicao-design.md)
+**Spec:** [docs/superpowers/specs/2026-08-29-tec-245-triagem-dos-turnos-fora-da-medicao-design.md](../specs/2026-08-29-tec-245-triagem-dos-turnos-fora-da-medicao-design.md)
 
 ## Global Constraints
 
-- **Número do card é provisório.** `TEC-243` é o próximo da sequência, não um número confirmado no Jira. Se o real for outro, `sed` nos dois documentos e `git mv` nos nomes antes do commit final.
+- **Este plano foi executado sob o número errado (`TEC-243`), corrigido depois do merge.** Ver a nota no topo do spec. Os passos abaixo citam `TEC-245` porque as referências foram corrigidas; as mensagens de commit no histórico ainda dizem `TEC-243`, de propósito.
 - **Comandos:** `.venv/Scripts/python.exe -m pytest tests/unit -q` (leva ~4-8 min nesta máquina — **rode em primeiro plano e aguarde**; se o harness mover para segundo plano, **leia o arquivo de saída até o fim**, a notificação não chega); `... -m ruff check src tests alembic evals`; `... -m ruff format src tests alembic`; `... -m mypy src`.
 - **NUNCA rode `pytest evals`.** É pago — uma chamada a uma API de LLM por turno do corpus. Nada aqui precisa dele, e o efeito desta card **não será medido** (D5 do spec).
 - **Nenhuma mudança em `src/mobia/domain/`.** Prompt e schema não entram. Se você se pegar editando `classificador.py` ou `schemas.py`, pare.
@@ -243,7 +243,7 @@ Se algum número divergir, **pare e reporte** — não ajuste o plano ao corpus.
 .venv/Scripts/python.exe -m ruff check src tests alembic evals
 .venv/Scripts/python.exe -m mypy src
 git add tests/unit/test_evals_corpus_real.py evals/corpus
-git commit -m "feat(TEC-243): o guarda cobre as palavras literais do vocabulario"
+git commit -m "feat(TEC-245): o guarda cobre as palavras literais do vocabulario"
 ```
 
 ---
@@ -444,7 +444,7 @@ Se algum número divergir, **pare e reporte**.
 .venv/Scripts/python.exe -m ruff check src tests alembic evals
 .venv/Scripts/python.exe -m mypy src
 git add tests/unit/test_evals_corpus_real.py evals/corpus
-git commit -m "feat(TEC-243): trinta negativos, quatro positivos e dezesseis exclusoes com motivo"
+git commit -m "feat(TEC-245): trinta negativos, quatro positivos e dezesseis exclusoes com motivo"
 ```
 
 **Testes vizinhos podem reprovar, e não é regressão.** Qualquer teste que conte turnos fora da medição verá 16 em vez de 56, e qualquer um que conte negativos verá 67 em vez de 37. Se algum reprovar, atualize a expectativa e **diga no relatório qual e por quê**.
@@ -466,7 +466,7 @@ git commit -m "feat(TEC-243): trinta negativos, quatro positivos e dezesseis exc
 Em `src/mobia/evals/corpus.py`, acrescente às regras que já estão lá:
 
 ```
-    - **O que decide entre negativo e fora da medicao (TEC-243).** Pergunta de
+    - **O que decide entre negativo e fora da medicao (TEC-245).** Pergunta de
       processo NAO e motivo de exclusao por si so: o corpus anota `{}` em
       dezenas delas. O que exclui e a fala **pressupor um campo sem afirma-lo**
       ("pode ter animal no predio?" pressupoe o predio) ou **sugerir um valor
@@ -516,7 +516,7 @@ A margem de 2 sobre o pior caso (40 e 51) é a mesma que os pisos tinham antes d
 .venv/Scripts/python.exe -m ruff check src tests alembic evals
 .venv/Scripts/python.exe -m mypy src
 git add src/mobia/evals/
-git commit -m "docs(TEC-243): o criterio de triagem, e os pisos que a amostra nova permite"
+git commit -m "docs(TEC-245): o criterio de triagem, e os pisos que a amostra nova permite"
 ```
 
 ---
@@ -575,7 +575,7 @@ Grepe por `PISO_DE_TURNOS_ANOTADOS` e `PISO_DE_TURNOS_NEGATIVOS` e por `30`/`23`
 
 Ele registra as exclusões de `follow-up-03` i1 e i2 e de `borda-evasivo-02` i1 e i2 como decisões deliberadas. As quatro **continuam valendo** — este card não as desfaz, ele as acompanha com onze irmãs e um guarda.
 
-**Não reescreva o texto original.** Acrescente um bloco de emenda datado dizendo que a TEC-243 triou as 51 restantes, que o conjunto de exclusões passou a ser exaustivo e vigiado por `_FORA_DA_MEDICAO`, e que as quatro exclusões originais foram confirmadas pela triagem, não substituídas. É o mesmo tratamento que a TEC-241 deu ao spec da TEC-145 e a TEC-242 ao da TEC-238.
+**Não reescreva o texto original.** Acrescente um bloco de emenda datado dizendo que a TEC-245 triou as 51 restantes, que o conjunto de exclusões passou a ser exaustivo e vigiado por `_FORA_DA_MEDICAO`, e que as quatro exclusões originais foram confirmadas pela triagem, não substituídas. É o mesmo tratamento que a TEC-241 deu ao spec da TEC-145 e a TEC-242 ao da TEC-238.
 
 - [ ] **Step 7: Rode e commite**
 
@@ -583,7 +583,7 @@ Ele registra as exclusões de `follow-up-03` i1 e i2 e de `borda-evasivo-02` i1 
 .venv/Scripts/python.exe -m pytest tests/unit -q
 .venv/Scripts/python.exe -m ruff check src tests alembic evals
 git add README.md docs/superpowers/
-git commit -m "docs(TEC-243): a triagem escrita, e a emenda ao spec da TEC-238"
+git commit -m "docs(TEC-245): a triagem escrita, e a emenda ao spec da TEC-238"
 ```
 
 ---
@@ -592,7 +592,7 @@ git commit -m "docs(TEC-243): a triagem escrita, e a emenda ao spec da TEC-238"
 
 - [ ] **Suíte inteira, lint, tipos** uma última vez.
 
-- [ ] **Se o número do card no Jira não for 243**, `sed -i 's/TEC-243/TEC-XXX/g'` no spec, no plano, no README e nas mensagens de commit que ainda não subiram, mais `git mv` dos dois arquivos de `docs/superpowers/`.
+- [x] **O número do card estava errado, e foi corrigido depois do merge.** O plano rodou inteiro como `TEC-243`; a card real é a [TEC-245](https://eduardodurieuxlopes.atlassian.net/browse/TEC-245). Spec, plano, README, corpus e os dois comentários em `src/mobia/evals/` foram corrigidos num commit próprio; as mensagens de commit ficaram como estão.
 
 - [ ] **Critérios de aceitação do card:**
 

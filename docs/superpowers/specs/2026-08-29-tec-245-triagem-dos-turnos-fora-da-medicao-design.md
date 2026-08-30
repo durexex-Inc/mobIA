@@ -1,9 +1,18 @@
-# TEC-243 — Triagem dos turnos fora da medição: design
+# TEC-245 — Triagem dos turnos fora da medição: design
 
-> **Número provisório.** O card ainda não existe no Jira — `TEC-243` é o
-> próximo da sequência, não um número confirmado. Se o número real for outro,
-> `sed -i 's/TEC-243/TEC-XXX/g'` nestes dois arquivos e um `git mv` dos nomes
-> resolvem.
+> **Este documento nasceu com o número errado, e o registro fica.** Ele foi
+> escrito, implementado e mergeado (PR #18) como `TEC-243`, número inferido da
+> sequência do `git log` porque o conector do Jira não estava autorizado na
+> sessão. `TEC-243` é outra tarefa — *"Tirar os números do orçamento de
+> contexto da prosa"* — e continua pendente. O trabalho ganhou a
+> [TEC-245](https://eduardodurieuxlopes.atlassian.net/browse/TEC-245) depois do
+> merge, e este commit corrige as referências. As mensagens dos nove commits
+> originais **não** foram reescritas: são história, e reescrever `main` por
+> causa de rótulo é pior que o rótulo.
+>
+> A lição, para quem for escrever a próxima: as chaves do projeto TEC não são
+> contíguas, e a faixa alta já está ocupada por cards escritas e não
+> implementadas. Número de card se lê no Jira ou se pergunta — não se infere.
 
 ## O problema
 

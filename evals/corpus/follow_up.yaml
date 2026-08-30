@@ -9,7 +9,7 @@
       campos:
         tipo_imovel: APARTAMENTO
     # Fora da medicao: "juntar mais um pouco de entrada" sugere financiamento
-    # sem nomea-lo -- balde C do spec da TEC-243.
+    # sem nomea-lo -- balde C do spec da TEC-245.
     - lead: "consegui juntar mais um pouco de entrada nesse meio tempo"
       intencao: COMPRA
     # Precedente de `borda-longa-01` i2, ja no corpus: marcar visita com

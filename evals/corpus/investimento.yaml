@@ -72,7 +72,7 @@
         regiao: zona oeste
     # Fora da medicao: "faz diferenca no financiamento?" pressupoe o meio em
     # vez de perguntar se pode usa-lo -- fora da forma de fala que a TEC-239
-    # nomeou. Balde C do spec da TEC-243.
+    # nomeou. Balde C do spec da TEC-245.
     - lead: "na real, e pra alugar depois no airbnb, nao pra morar. faz diferenca no financiamento?"
       intencao: INVESTIMENTO
     - lead: "voces tem algum parceiro que administra a locacao por temporada?"
@@ -83,7 +83,7 @@
   descricao: diversificacao de patrimonio com imovel ja alugado
   turnos:
     # Fora da medicao: "tenho uma grana parada" sugere A_VISTA sem afirmar --
-    # balde C do spec da TEC-243.
+    # balde C do spec da TEC-245.
     - lead: "tenho uma grana parada e queria diversificar comprando imovel pra renda"
       intencao: INVESTIMENTO
     - lead: "voces tem algo com contrato de locacao ja em vigor, pronto pra receber aluguel?"
