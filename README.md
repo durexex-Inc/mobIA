@@ -1346,26 +1346,25 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   `estacao`, …) do início da string, **repetidamente** até não sobrar
   nenhum — mas **nunca tira `zona`**: `zona leste`, `zona sul` e `zona oeste`
   são o nome da região, não ruído de referência.
-- **A TEC-246 emparelhou duas assimetrias da lista de prefixos, e a terceira
-  fica registrada em aberto.** A lista tratava as famílias de forma desigual
-  sem que nada explicasse por quê. **O que fechou:** `na regiao` tinha `da` e
-  `do` e ignorava `de`, `das` e `dos`; `proximo` e `perto` tinham o singular e
-  não o plural. Entraram sete prefixos — a lista vai de 15 para 22 —, e
+- **A TEC-246 emparelhou as três assimetrias da lista de prefixos.** A lista
+  tratava as famílias de forma desigual sem que nada explicasse por quê: `na
+  regiao` tinha `da` e `do` e ignorava `de`, `das` e `dos`; `proximo` e `perto`
+  tinham o singular e não o plural; e `perto` tinha `de` e `proximo` não.
+  Entraram oito prefixos — a lista vai de 15 para 23 —, e
   `test_normalizar_regiao_trata_as_familias_de_prefixo_simetricamente`
-  (`tests/unit/test_extracao.py`) trava as sete formas novas. **O que não
-  fechou, e é falsificável em uma chamada:** `perto` tem `de` e `proximo` não.
-  `normalizar_regiao("perto de metro")` devolve `"metro"`;
-  `normalizar_regiao("proximo de metro")` devolve a string inteira. E **não
-  foi decisão escrita:** a tabela da D9 do spec desta card lista `proximo …`
-  como tendo `da`, `do`, `ao`, `a` e faltando só `das`/`dos` — `de` não
-  aparece na coluna do que falta, então nunca entrou em escopo para ser
-  recusado. A própria decisão que existe para fechar assimetria reproduziu uma,
-  o que é a evidência mais forte que este bullet tem a favor da sua própria
-  tese. Fica anotado aqui, sem conserto, porque furo que ninguém escreveu é
-  furo que ninguém procura. O furo
+  (`tests/unit/test_extracao.py`) trava as oito formas novas. A terceira
+  fechou só na revisão final da card, e vale registrar por quê: ela era
+  falsificável em uma chamada — `normalizar_regiao("perto de metro")` devolvia
+  `"metro"` e `normalizar_regiao("proximo de metro")` devolvia a string
+  inteira — e mesmo assim **não foi decisão escrita nenhuma:** a tabela da D9
+  do spec desta card lista `proximo …` como tendo `da`, `do`, `ao`, `a` e
+  faltando só `das`/`dos` — `de` não aparece na coluna do que falta, então
+  nunca entrou em escopo para ser recusado, foi esquecido. A própria decisão
+  que existe para fechar assimetria reproduziu uma, o que é a evidência mais
+  forte que este bullet tem a favor da sua própria tese. O furo
   era **latente**, e é por isso que ele merece registro em vez de passar como
   conserto de rotina: o corpus só exercitava `na regiao da/do`, então a régua
-  nunca tocaria nas sete formas novas, e nada quebraria até um lead real
+  nunca tocaria nas oito formas novas, e nada quebraria até um lead real
   escrever uma delas — *"na regiao de"* é português corrente. O que dá peso à
   hipótese é a única execução paga que este projeto tem: forma não-canônica de
   `regiao` respondeu por **10 das 29 discrepâncias** de 28/08, o maior balde
@@ -1612,7 +1611,8 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   (`tests/unit/test_evals_corpus_real.py`) declara os 14 com o motivo de cada
   um, e um turno novo sem `campos` quebra o CI até alguém decidir para onde
   ele vai — "fora da medição" deixou de ser um estado em que um turno cai por
-  omissão. Ver as emendas correspondentes nos specs da TEC-238 e da TEC-246.
+  omissão. Ver as emendas correspondentes nos specs da TEC-238, da TEC-245 e
+  da TEC-246.
   Os 14 continuam sem
   cobertura de invenção nenhuma, e isso é o preço aceito: forçar anotação
   neles seria inventar anotação, que é o erro que a régua pune nos dois

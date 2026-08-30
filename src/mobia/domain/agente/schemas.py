@@ -89,6 +89,7 @@ _PREFIXOS_DE_REFERENCIA = (
     "regiao de ",
     "proximo da ",
     "proximo do ",
+    "proximo de ",
     "proximo das ",
     "proximo dos ",
     "proximo ao ",

@@ -358,6 +358,12 @@ mudar `_PREFIXOS_DE_REFERENCIA` de novo é mudança de comportamento em
 `src/mobia/domain/`, fora do escopo desta documentação; fica registrado no
 README, no mesmo bullet, e roteado para a próxima onda de correção.
 
+**Fechado na onda de correção final da card.** `"proximo de "` entrou em
+`_PREFIXOS_DE_REFERENCIA` — a lista vai de 15 para **23** —, com caso novo em
+`test_normalizar_regiao_trata_as_familias_de_prefixo_simetricamente` e o
+invariante `test_nenhum_prefixo_de_referencia_e_prefixo_de_outro` verde. O
+bullet do README passou a descrever as **três** assimetrias como fechadas.
+
 **6. Foram quatro specs emendados, e não três.** A seção "Documentação" acima
 nomeia TEC-238, TEC-242 e TEC-245. O quarto é este, pelos cinco pontos
 anteriores. A

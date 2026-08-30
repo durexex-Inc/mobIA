@@ -244,6 +244,9 @@ def test_normalizar_regiao_tira_o_ruido_de_referencia(bruto: str, esperado: str)
         ("proximo dos jardins", "jardins"),
         ("perto das lojas", "lojas"),
         ("perto dos jardins", "jardins"),
+        # `perto` tinha `de` e `proximo` nao. Terceira assimetria da
+        # familia, fechada na revisao final da TEC-246.
+        ("proximo de sao roque", "sao roque"),
     ],
 )
 def test_normalizar_regiao_trata_as_familias_de_prefixo_simetricamente(
