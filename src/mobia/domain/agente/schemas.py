@@ -68,9 +68,20 @@ LIMIAR_DE_DESAMBIGUACAO = Decimal("0.6")
 #
 # `zona` NAO esta aqui, de proposito: `zona leste`, `zona sul` e `zona oeste`
 # sao o nome, nao ruido, e tres anotacoes do corpus dependem disso.
+#
+# A TEC-246 fechou a assimetria: `na regiao` tinha `da`/`do` e ignorava
+# `de`/`das`/`dos`, e `proximo`/`perto` tinham o singular e nao o plural. O
+# corpus so exercitava `na regiao da/do`, entao o furo era latente -- e
+# latente e o pior estado, porque a fala do lead nao pede licenca. O espaco
+# final de cada entrada e o que mantem
+# `test_nenhum_prefixo_de_referencia_e_prefixo_de_outro` verde: sem ele,
+# `na regiao da ` seria prefixo de `na regiao das `.
 _PREFIXOS_DE_REFERENCIA = (
     "na regiao da ",
     "na regiao do ",
+    "na regiao de ",
+    "na regiao das ",
+    "na regiao dos ",
     "regiao das ",
     "regiao dos ",
     "regiao da ",
@@ -78,11 +89,15 @@ _PREFIXOS_DE_REFERENCIA = (
     "regiao de ",
     "proximo da ",
     "proximo do ",
+    "proximo das ",
+    "proximo dos ",
     "proximo ao ",
     "proximo a ",
     "perto da ",
     "perto do ",
     "perto de ",
+    "perto das ",
+    "perto dos ",
     "estacao ",
 )
 
