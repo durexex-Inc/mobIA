@@ -722,8 +722,8 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   vocabulário da **extração**. As três conversas novas cabiam em qualquer
   categoria; foram para `compra.yaml` porque o arquétipo do lead que procura
   chácara, usa consórcio ou ainda não decidiu a forma de pagamento é o de
-  quem compra. O piso de graça de um classificador degenerado subiu 4 pontos
-  por isso, e a próxima card que acrescentar conversa deve olhar esta linha
+  quem compra. O piso de graça de um classificador degenerado subiu 3,5 pontos
+  por isso (35,5% para 39,0%), e a próxima card que acrescentar conversa deve olhar esta linha
   antes de escolher o arquivo.
 - **O eval mede `classificar` isolado**, não o turno inteiro com worker e
   banco — a integração já tem cobertura própria na suíte normal, mas uma
@@ -1016,8 +1016,9 @@ válida. `FormaPagamento.INDEFINIDA` **não** é sinônimo de `None`, e a TEC-24
 escreveu a diferença no docstring de `Extracao` antes de escrever fala que a
 usasse: `None` é "o lead não falou de pagamento neste turno", `INDEFINIDA` é
 "o lead afirmou que ainda não decidiu". O valor existia no enum sem
-significado escrito em lugar nenhum — nenhuma ocorrência de `INDEFINIDA` em
-`src/` era deste enum —, e anotar uma fala para ele antes disso seria
+significado escrito em lugar nenhum — fora a própria linha que o declara em
+`FormaPagamento`, nenhum **uso** de `INDEFINIDA` em `src/` era deste enum;
+todos os outros são de `Intencao` —, e anotar uma fala para ele antes disso seria
 inventar o significado de passagem.
 
 A extração viaja **na mesma chamada** que já classifica e responde — sem
@@ -1345,16 +1346,26 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   `estacao`, …) do início da string, **repetidamente** até não sobrar
   nenhum — mas **nunca tira `zona`**: `zona leste`, `zona sul` e `zona oeste`
   são o nome da região, não ruído de referência.
-- **A TEC-246 fechou a assimetria das três famílias de prefixo.** A lista
-  tratava as famílias de forma desigual sem que nada explicasse por quê: `na
-  regiao` tinha `da` e `do` e ignorava `de`, `das` e `dos`; `proximo` e
-  `perto` tinham o singular e não o plural. Entraram sete prefixos — a lista
-  vai de 15 para 22 —, e
+- **A TEC-246 emparelhou duas assimetrias da lista de prefixos, e a terceira
+  fica registrada em aberto.** A lista tratava as famílias de forma desigual
+  sem que nada explicasse por quê. **O que fechou:** `na regiao` tinha `da` e
+  `do` e ignorava `de`, `das` e `dos`; `proximo` e `perto` tinham o singular e
+  não o plural. Entraram sete prefixos — a lista vai de 15 para 22 —, e
   `test_normalizar_regiao_trata_as_familias_de_prefixo_simetricamente`
-  (`tests/unit/test_extracao.py`) trava as sete formas que faltavam. O furo
+  (`tests/unit/test_extracao.py`) trava as sete formas novas. **O que não
+  fechou, e é falsificável em uma chamada:** `perto` tem `de` e `proximo` não.
+  `normalizar_regiao("perto de metro")` devolve `"metro"`;
+  `normalizar_regiao("proximo de metro")` devolve a string inteira. E **não
+  foi decisão escrita:** a tabela da D9 do spec desta card lista `proximo …`
+  como tendo `da`, `do`, `ao`, `a` e faltando só `das`/`dos` — `de` não
+  aparece na coluna do que falta, então nunca entrou em escopo para ser
+  recusado. A própria decisão que existe para fechar assimetria reproduziu uma,
+  o que é a evidência mais forte que este bullet tem a favor da sua própria
+  tese. Fica anotado aqui, sem conserto, porque furo que ninguém escreveu é
+  furo que ninguém procura. O furo
   era **latente**, e é por isso que ele merece registro em vez de passar como
   conserto de rotina: o corpus só exercitava `na regiao da/do`, então a régua
-  nunca tocaria nas outras cinco formas, e nada quebraria até um lead real
+  nunca tocaria nas sete formas novas, e nada quebraria até um lead real
   escrever uma delas — *"na regiao de"* é português corrente. O que dá peso à
   hipótese é a única execução paga que este projeto tem: forma não-canônica de
   `regiao` respondeu por **10 das 29 discrepâncias** de 28/08, o maior balde
@@ -1397,20 +1408,21 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   discrepâncias na execução de 28/08 — a TEC-241 tinha mandado esse problema
   para a TEC-239, mas a TEC-239 é sobre cobertura de campo sem anotação, não
   sobre sinônimo de vocabulário, e a referência estava errada. A regra que
-  faltava é um mapa de cinco entradas, registrado como regra de **anotação**
+  faltava é um mapa de sete entradas — cinco escritas pela TEC-242, duas
+  acrescentadas pela TEC-246 —, registrado como regra de **anotação**
   no docstring de `TurnoAnotado` (`src/mobia/evals/corpus.py`), não em
   código de produção: `kitnet`, `studio`, `flat` e `cobertura` se anotam
-  `APARTAMENTO`; `sobrado` se anota `CASA`. A TEC-246 acrescentou duas
-  entradas pelo mesmo raciocínio — `chacara` e `sitio` se anotam `RURAL`,
-  porque ninguém diz "quero comprar um rural" e sem a tradução no corpus a
+  `APARTAMENTO`; `sobrado` se anota `CASA`; e `chacara` e `sitio` se anotam
+  `RURAL`, pelo mesmo raciocínio das cinco primeiras —
+  ninguém diz "quero comprar um rural", e sem a tradução no corpus a
   extração certa contaria `extra`. **Não é código de propósito:** o
   schema da chamada ao modelo é estrito — `tipo_imovel` só aceita valor de
   `TipoImovel` —, então o modelo nunca devolve "kitnet"; ele já traduz
   sozinho e devolve `APARTAMENTO`. Um mapa de tradução em código de produção
   nunca teria entrada para percorrer — seria código morto. O que faltava era
   o corpus decidir a mesma tradução: sem ela, o modelo acertando a tradução
-  contava como `extra` — erro cheio, por acertar. A quinta entrada é a
-  exceção: `república` fica **fora** do mapa porque é uso, não tipologia —
+  contava como `extra` — erro cheio, por acertar. A exceção:
+  `república` fica **fora** do mapa porque é uso, não tipologia —
   pode ser casa ou apartamento —, e o único turno que a usa (`aluguel-07`
   índice 0, "república ou kitnet") oferece duas tipologias sem escolher
   nenhuma, então fica sem `tipo_imovel`, de propósito.
@@ -1558,8 +1570,16 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   ("quanto tempo leva pra avaliar o imóvel?") e `aluguel-09` índice 2 ("e pode
   ter animal de estimação no prédio?") ficavam de fora por serem pergunta de
   processo que **pressupõe** um campo sem dar pra enumerar com confiança tudo
-  o que a fala afirma. A TEC-246 tirou a pressuposição do critério — ver o
-  bullet do `prédio` abaixo —, e os dois são negativos hoje.
+  o que a fala afirma. **O argumento que as sustentava, preservado porque era
+  verdadeiro quando foi escrito:** é a mesma forma de fala que `aluguel-08`
+  índice 2 (*"o predio ja tem alvara pra uso comercial de saude?"*) usa para
+  **reafirmar** `tipo_imovel`, e um negativo aqui puniria o modelo por ler a
+  fala com razão. O que a TEC-246 opôs a ele não foi um contra-exemplo, e sim
+  o propósito do negativo: `aluguel-08` índice 2 é positivo porque *"uso
+  comercial de saude"* **nomeia** a tipologia, e `prédio` sozinho não nomeia
+  nada — as duas falas só são "a mesma forma" na superfície. A TEC-246 tirou a
+  pressuposição do critério — ver o bullet do `prédio` abaixo —, e os dois são
+  negativos hoje.
 
   Dos outros 51 turnos fora da medição este bullet dizia, até a TEC-245, que
   eram *"trabalho de anotação que ainda não foi feito, não decisão tomada"*.
@@ -1677,13 +1697,19 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   O que **não** mudou é a aritmética da união, que ainda desconta extração
   correta em turno onde aquele campo não foi anotado: um modelo perfeito com
   `N` extrações desse tipo tira `96/(96+N)` — `N=10` ainda é VERDE, `N=11` é
-  o primeiro AMARELO e `N=17` o primeiro VERMELHO. As bordas subiram de 9/10/15
-  porque o denominador cresceu de 83 para 96, e **não** porque o furo fechou:
+  o primeiro AMARELO e `N=17` o primeiro VERMELHO. As bordas subiram duas
+  vezes, e a cadeia inteira importa porque é ela que mostra que a tolerância
+  acompanha o denominador e nada mais: **7/12/13** com 69 anotações,
+  **9/10/15** com 83, **10/11/17** com 96. O denominador foi de 69 para 83 na
+  TEC-245 e de 83 para 96 na TEC-246, e **não** foi o furo que fechou:
   a tolerância a anotação faltante é proporcional ao tamanho da amostra
-  anotada, e é só isso que a TEC-245 comprou aqui, e a TEC-246 depois dela.
+  anotada, e é só isso que as duas cards compraram aqui.
   As três bordas são conferidas por execução contra `faixa_de`, em aritmética
   inteira, e não por regra de três — o arredondamento não põe a borda onde a
-  intuição decimal a colocaria. A diferença é que agora
+  intuição decimal a colocaria, e o caso que prova isso é a própria borda
+  vermelha: `N=17` dá `96/113`, que **exibe** 85,0% e mesmo assim reprova,
+  porque `96 × 100 = 9600` é menor que `113 × 85 = 9605`. Uma leitura decimal
+  do relatório poria essa execução exatamente no piso. A diferença é que agora
   isso é ruído de anotação faltante, distribuído, e não um piso estrutural em
   quatro campos específicos. Quem for investigar um número baixo lê
   `discrepancias_da_extracao`, que separa `extra` (acusa a medição) de

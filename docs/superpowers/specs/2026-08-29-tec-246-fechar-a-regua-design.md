@@ -293,7 +293,7 @@ merge. Se as três falas não soarem como lead, o resto da card não salva.
 Este spec fixou a regra que se aplica a si mesmo: *"todas as contagens deste spec
 são derivadas das falas acima e conferidas na implementação por execução. Se o
 plano medir diferente, é o spec que está errado."* A implementação mediu
-diferente em cinco pontos. Nada do texto acima foi reescrito — a emenda existe
+diferente em seis pontos. Nada do texto acima foi reescrito — a emenda existe
 para que o que foi previsto e o que foi entregue fiquem os dois legíveis.
 
 **1. A D1 descreveu uma família de exclusão, e o corpus tinha quatro.** A D1
@@ -343,8 +343,23 @@ cada direção (47 positivos e 55 negativos). `PISO_DE_TURNOS` fica em **120**: 
 é estatístico, e não de erosão de amostra, então a conta do pior caso não o
 governa.
 
-**5. Foram quatro specs emendados, e não três.** A seção "Documentação" acima
-nomeia TEC-238, TEC-242 e TEC-245. O quarto é este, pelos quatro pontos
+**5. A tabela da D9 reproduziu a assimetria que a D9 existe para fechar.** A
+D9 fecha dizendo que *"corrigir só `na regiao de ` e deixar as outras quatro
+reproduziria exatamente a assimetria que esta decisão existe para fechar"*. A
+tabela logo acima dela lista `proximo …` como tendo `da`, `do`, `ao`, `a` e
+faltando **`das`, `dos`** — e `perto …` como tendo `da`, `do`, **`de`** e
+faltando `das`, `dos`. `de` não aparece na coluna do que falta em `proximo`, e
+por isso não entrou nas sete entradas. Medido depois da implementação:
+`normalizar_regiao("perto de metro")` devolve `"metro"`, e
+`normalizar_regiao("proximo de metro")` devolve a string inteira. O
+comportamento é o que a D9 especificou, e o teste que ela pediu está verde — o
+que falhou foi o levantamento, não a execução. Não foi consertado aqui porque
+mudar `_PREFIXOS_DE_REFERENCIA` de novo é mudança de comportamento em
+`src/mobia/domain/`, fora do escopo desta documentação; fica registrado no
+README, no mesmo bullet, e roteado para a próxima onda de correção.
+
+**6. Foram quatro specs emendados, e não três.** A seção "Documentação" acima
+nomeia TEC-238, TEC-242 e TEC-245. O quarto é este, pelos cinco pontos
 anteriores. A
 emenda na TEC-242 também precisou ser mais precisa do que a previsão: o caso
 canônico de `aluguel-09` i2 que a "regra da TEC-242" cita não mora no spec dela,
