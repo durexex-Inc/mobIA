@@ -71,8 +71,9 @@ PISO_DE_TURNOS_NEGATIVOS = 53
 # de deixar de valer como medida.
 #
 # O numero vem do corpus e do piso, nao do gosto. Medido em 2026-08-29
-# (TEC-246): hoje sao 53 conversas e 146 turnos, e a folga do piso e 146 -
-# 120 = 26 turnos. O pior caso de cinco abandonos nao e 5 x 3: a TEC-239 deu
+# (TEC-246): hoje sao 53 conversas e 146 turnos (eram 50 e 138 antes desta
+# card), e a folga do piso e 146 - 120 = 26 turnos, contra 138 - 120 = 18
+# antes desta card. O pior caso de cinco abandonos nao e 5 x 3: a TEC-239 deu
 # um quarto turno a `compra-02` e a `compra-08`, entao as cinco conversas
 # mais longas somam 4 + 4 + 3 + 3 + 3 = 17 turnos (o mesmo pior caso de
 # sempre -- o corpus cresceu em conversas menores), e sobra folga de nove
