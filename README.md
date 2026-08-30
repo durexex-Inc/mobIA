@@ -1699,16 +1699,24 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   `N` extrações desse tipo tira `96/(96+N)` — `N=10` ainda é VERDE, `N=11` é
   o primeiro AMARELO e `N=17` o primeiro VERMELHO. As bordas subiram duas
   vezes, e a cadeia inteira importa porque é ela que mostra que a tolerância
-  acompanha o denominador e nada mais: **7/12/13** com 69 anotações,
+  acompanha o denominador e nada mais. Cada tripla é
+  **(último VERDE / primeiro AMARELO / primeiro VERMELHO)**, a mesma
+  convenção da frase acima e em todas as três: **7/8/13** com 69 anotações,
   **9/10/15** com 83, **10/11/17** com 96. O denominador foi de 69 para 83 na
   TEC-245 e de 83 para 96 na TEC-246, e **não** foi o furo que fechou:
   a tolerância a anotação faltante é proporcional ao tamanho da amostra
-  anotada, e é só isso que as duas cards compraram aqui.
-  As três bordas são conferidas por execução contra `faixa_de`, em aritmética
+  anotada, e é só isso que as duas cards compraram aqui. **A convenção precisa
+  ser dita porque este parágrafo já usou outra:** versões anteriores dele
+  escreviam a tripla de 69 como `7/12/13`, com o **último** AMARELO (12) no
+  meio em vez do primeiro (8). As duas descrevem a mesma faixa — AMARELO vai
+  de 8 a 12 com 69 anotações —, e misturar as duas numa mesma cadeia faz um
+  degrau parecer maior do que é.
+  As nove bordas são conferidas por execução contra `faixa_de`, em aritmética
   inteira, e não por regra de três — o arredondamento não põe a borda onde a
-  intuição decimal a colocaria, e o caso que prova isso é a própria borda
-  vermelha: `N=17` dá `96/113`, que **exibe** 85,0% e mesmo assim reprova,
-  porque `96 × 100 = 9600` é menor que `113 × 85 = 9605`. Uma leitura decimal
+  intuição decimal a colocaria. O caso que prova isso está no denominador de
+  hoje, e só nele: com 96 anotações, `N=17` dá `96/113`, que **exibe**
+  85,0% e mesmo assim reprova, porque `96 × 100 = 9600` é menor que
+  `113 × 85 = 9605`. Uma leitura decimal
   do relatório poria essa execução exatamente no piso. A diferença é que agora
   isso é ruído de anotação faltante, distribuído, e não um piso estrutural em
   quatro campos específicos. Quem for investigar um número baixo lê
