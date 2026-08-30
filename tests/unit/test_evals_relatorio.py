@@ -2,8 +2,10 @@ from decimal import Decimal
 
 from mobia.domain.agente.schemas import Intencao
 from mobia.evals.metricas import (
+    DISPERSAO_MEDIDA,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
+    DecomposicaoDaExtracao,
     Discrepancia,
     FalhaDeInfraestrutura,
     ResumoDeConfianca,
@@ -400,3 +402,45 @@ def test_discrepancia_sem_valores_nao_deixa_sobra_de_pontuacao() -> None:
     saida = render([], {}, discrepancias=[_d("regiao", "divergiu")])
     linha = next(x for x in saida.splitlines() if "turno" in x and "regiao" in x)
     assert linha.rstrip().endswith("(divergiu)")
+
+
+def test_relatorio_avisa_quanto_uma_execucao_resolve() -> None:
+    """O aviso tem de estar no artefato, nao so no README.
+
+    Quem compara duas execucoes abre o relatorio, nao a documentacao. A
+    TEC-250 atribuiu um ganho de 8,1 pontos como "cinco vezes maior que o
+    ruido" porque nada no artefato dizia quanto o instrumento resolve.
+    """
+    texto = render(
+        [],
+        {},
+        decomposicao=DecomposicaoDaExtracao(anotados=96, acertos=88, faltou=8, divergiu=0, extra=3),
+    )
+
+    assert "base fixa" in texto
+    assert "Poder de resolucao" in texto
+    assert f"{DISPERSAO_MEDIDA.uniao_pp:.1f}" in texto
+    assert f"{DISPERSAO_MEDIDA.base_fixa_pp:.1f}" in texto
+
+
+def test_a_conta_aberta_vem_antes_da_lista_de_discrepancias() -> None:
+    """Ordem deliberada: o poder de resolucao antes do detalhe.
+
+    Quem abre o relatorio para comparar com a execucao anterior precisa
+    esbarrar no aviso antes de formar opiniao sobre os numeros, nao depois de
+    ja ter lido a lista inteira.
+    """
+    texto = render(
+        [],
+        {},
+        discrepancias=[
+            Discrepancia(conversa_id="c-01", indice=0, campo="quartos", tipo="faltou", esperado=2)
+        ],
+        decomposicao=DecomposicaoDaExtracao(anotados=96, acertos=88, faltou=8, divergiu=0, extra=3),
+    )
+
+    assert texto.index("Poder de resolucao") < texto.index("campos que nao casaram")
+
+
+def test_relatorio_sem_decomposicao_omite_a_secao() -> None:
+    assert "Poder de resolucao" not in render([], {})

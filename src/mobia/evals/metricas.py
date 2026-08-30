@@ -554,6 +554,100 @@ def precisao_da_extracao(observadas: Sequence[ExtracaoObservada]) -> ResultadoDa
     )
 
 
+@dataclass(frozen=True)
+class DispersaoEntreExecucoes:
+    """Quanto duas execucoes do MESMO codigo ja diferiram, medido.
+
+    Nao e derivado de nada que roda: e resultado de experimento, e so muda
+    quando alguem medir de novo. Mora aqui, num lugar so, para nao ser
+    transcrito a mao na prosa de tres arquivos -- a licao da TEC-243.
+    """
+
+    data: str
+    uniao_pp: float
+    base_fixa_pp: float
+
+
+# Medida pela TEC-253 sobre as execucoes de 30/08/2026 das 17:08 e 19:51 UTC:
+# prompt, schema, corpus, regua e modelo identicos, e mesmo assim a metrica de
+# uniao deu 91,8% e 86,1%. Sobre a base fixa as mesmas duas execucoes deram
+# 92,7% e 90,6%.
+#
+# Duas execucoes nao sao distribuicao: isto e a maior diferenca observada, nao
+# a dispersao real, e o limite superior continua desconhecido. Use como piso do
+# que o gate NAO distingue, nunca como intervalo de confianca.
+DISPERSAO_MEDIDA = DispersaoEntreExecucoes(data="30/08/2026", uniao_pp=5.7, base_fixa_pp=2.1)
+
+
+@dataclass(frozen=True)
+class DecomposicaoDaExtracao:
+    """A conta de `precisao_da_extracao` aberta em parcelas que se movem
+    diferente.
+
+    A metrica que trava usa denominador de **uniao** (`esperado | obtido`), e
+    isso e certo: sem contar o inventado, um modelo que acerta o anotado e
+    inventa mais quatro campos tiraria 100%. O preco e que ela soma numa razao
+    so duas coisas de natureza oposta:
+
+    - `faltou` e `divergiu` medem o **defeito**, e sao estaveis entre
+      execucoes -- nas quatro execucoes de sonnet-5 de 30/08/2026, `faltou`
+      deu 8, 8, 8 e 7.
+    - `extra` e a parte que **oscila** (1, 3, 5 e 7 nas mesmas quatro), e cada
+      campo inventado desconta duas vezes: deixa de ser acerto **e** infla o
+      denominador.
+
+    Por isso a mesma arvore pode sair VERDE ou AMARELO dependendo da hora, e
+    por isso esta decomposicao existe: `anotados` e constante por construcao
+    (e o corpus), entao `acertos/anotados` isola o defeito do ruido.
+
+    Isto e diagnostico, como `ResumoDeNegativos` e `ResumoDeConfianca`. Quem
+    bloqueia continua sendo `precisao_da_extracao`, com o mesmo piso: a TEC-253
+    mediu o instrumento, nao mudou o que ele cobra.
+    """
+
+    anotados: int
+    acertos: int
+    faltou: int
+    divergiu: int
+    extra: int
+
+    @property
+    def taxa_sobre_base_fixa(self) -> float | None:
+        """`None` quando nao ha campo anotado -- a razao nao existiria."""
+        return self.acertos / self.anotados if self.anotados else None
+
+
+def decomposicao_da_extracao(
+    observadas: Sequence[ExtracaoObservada],
+) -> DecomposicaoDaExtracao:
+    """Mesma varredura de `precisao_da_extracao`, aberta por tipo.
+
+    Refaz o laco em vez de somar `discrepancias_da_extracao`, e isso e
+    deliberado: `acertos` aqui tem de ser **o mesmo** numero que a metrica que
+    trava publica, e a unica forma de garantir isso e aplicar `_comparavel` do
+    mesmo jeito. Um teste amarra as duas contas (`anotados` = acertos + faltou
+    + divergiu, e uniao = anotados + extra), para a divergencia aparecer na
+    suite e nao numa execucao paga.
+    """
+    anotados = acertos = faltou = divergiu = extra = 0
+    for observada in observadas:
+        anotados += len(observada.esperado)
+        for nome in set(observada.esperado) | set(observada.obtido):
+            if nome not in observada.esperado:
+                extra += 1
+            elif nome not in observada.obtido:
+                faltou += 1
+            elif _comparavel(nome, observada.esperado[nome]) == _comparavel(
+                nome, observada.obtido[nome]
+            ):
+                acertos += 1
+            else:
+                divergiu += 1
+    return DecomposicaoDaExtracao(
+        anotados=anotados, acertos=acertos, faltou=faltou, divergiu=divergiu, extra=extra
+    )
+
+
 def discrepancias_da_extracao(
     observadas: Sequence[ExtracaoObservada],
 ) -> list[Discrepancia]:

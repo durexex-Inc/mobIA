@@ -2478,6 +2478,18 @@ por sorte.
 > de uma vez e meia**. E os 91,8% desta execução são o topo de uma faixa, não
 > um patamar: uma execução do código idêntico, duas horas depois, deu 86,1% —
 > abaixo do alvo. Ver a seção TEC-244.
+>
+> **Emenda da TEC-253.** Duas correções à emenda acima. Primeira: 1,7 e 5,7
+> são duas observações da mesma grandeza, não uma estimativa errada e uma
+> certa — e o par que deu 1,7 **não pode ser reexaminado**, porque a execução
+> de 83,7% não teve artefato preservado. Segunda, e é a que importa:
+> decompondo a métrica, **o efeito de 8,1 pontos era quase todo redução de
+> invenção**. Sobre a base fixa — acertos nos 96 campos anotados, que é
+> constante — o antes deu 91,7% e as três execuções seguintes deram 92,7%,
+> 90,6% e 91,7%. O `faltou` ficou em **8 antes e 8 depois**: a regra de
+> re-afirmação, creditada acima com "Causa A: 3 de 7", não moveu o agregado.
+> O efeito existe e é sobre inventar menos — que é a parcela volátil. Ver a
+> seção TEC-253.
 
 As discrepâncias caíram de 17 para **8**, e `urgencia` foi a **zero**.
 
@@ -2631,6 +2643,115 @@ Isso tem consequência para tudo que este gate mede:
   é a **TEC-253**, e a TEC-252 depende dela para ser medida sem repetir o
   erro de atribuição da TEC-250.
 
+## TEC-253 — O que o gate resolve, e duas atribuições que não sobrevivem
+
+A precisão da extração é a métrica que este projeto mais usou para decidir, e
+até aqui ninguém sabia quanto dela é sinal. Duas execuções do **mesmo código**
+— prompt, schema, corpus, régua e modelo idênticos — deram **91,8% (VERDE)** e
+**86,1% (AMARELO)**. A mesma árvore atravessa o alvo dependendo da hora.
+
+### A causa: a métrica soma duas coisas que se movem diferente
+
+`precisao_da_extracao` usa denominador de **união** (`esperado | obtido`), e
+isso está certo: sem contar o inventado, um modelo que acerta o anotado e
+inventa mais quatro tiraria 100%. O preço é que ela junta numa razão só o
+defeito e o ruído.
+
+Os campos **anotados** são 96 em toda execução — é o corpus, constante por
+construção. Decompondo as cinco execuções preservadas de 30/08/2026:
+
+| execução | modelo | união (trava) | base fixa (`acertos/96`) | `faltou` | `divergiu` | `extra` |
+| --- | --- | --- | --- | --- | --- | --- |
+| 12:02 | opus-5 | 79,2% VERMELHO | 83,3% | 8 | 8 | 5 |
+| 14:44 | sonnet-5 | 85,4% AMARELO | 91,7% | 8 | 0 | 7 |
+| 17:08 | sonnet-5 | **91,8% VERDE** | 92,7% | 7 | 0 | 1 |
+| 19:51 | sonnet-5 | **86,1% AMARELO** | 90,6% | 8 | 1 | 5 |
+| 22:20 | sonnet-5 | 88,9% AMARELO | 91,7% | 8 | 0 | 3 |
+
+As duas linhas em negrito são o **mesmo código**. Leia as colunas:
+
+- **`faltou` é praticamente constante** — 8, 8, 7, 8, 8 — em cinco execuções,
+  dois modelos e três versões de prompt. É o defeito, e ele é determinístico.
+- **`extra` é que oscila** — 1 a 7 —, e cada campo inventado desconta **duas
+  vezes**: deixa de ser acerto e infla o denominador.
+- **A base fixa dispersa menos que a união**: 2,1 pontos contra 5,7 no par do
+  mesmo código.
+
+### O poder de resolução
+
+**Uma execução não sustenta atribuir um efeito de menos de ~6 pontos na
+métrica de união, nem de ~2 pontos na base fixa.** Esses são os maiores
+desvios observados entre execuções do mesmo código, não a dispersão real —
+duas execuções não são distribuição, e o limite superior continua desconhecido.
+
+O número mora em `DISPERSAO_MEDIDA` (`src/mobia/evals/metricas.py`), datado, e
+**o relatório de toda execução agora o imprime**, numa seção que vem antes da
+lista de discrepâncias. Quem abre o artefato para comparar com a execução
+anterior esbarra no aviso antes de formar opinião — que é exatamente o que não
+aconteceu nas duas atribuições abaixo.
+
+### O protocolo, e ele é mais barato do que parecia
+
+A saída óbvia era rodar N execuções por braço e multiplicar a conta por N. A
+decomposição dá uma mais barata, porque as parcelas não precisam do mesmo
+tratamento:
+
+- **Para efeito sobre o defeito** (`faltou`, `divergiu`): compare as contagens
+  diretamente. São estáveis o bastante para uma execução por braço dizer
+  alguma coisa — 8, 8, 7, 8, 8 é um sinal limpo.
+- **Para efeito sobre invenção** (`extra`): precisa de várias execuções por
+  braço. É a parcela volátil, e nenhuma execução isolada decide.
+- **Nunca compare o percentual de união entre execuções** para atribuir causa.
+  Ele é a métrica certa para *travar* — pune os dois lados — e a errada para
+  *comparar*.
+
+### Duas atribuições que não sobrevivem
+
+**A TEC-250 não melhorou a extração do que estava anotado.** Ela reivindicou
+8,1 pontos (85,4% → 91,8%). Na base fixa: 91,7% → 92,7%, e as três execuções
+pós-TEC-250 dão 92,7%, 90,6% e 91,7% — média igual à de antes. O `faltou`
+ficou em 8 antes e 8 depois. **O que a TEC-250 mexeu foi a invenção**, de 7
+para 1/5/3 campos — efeito real, e as regras dela eram mesmo em parte sobre
+isso, mas é outro efeito, e é o volátil. A regra de re-afirmação, que ela
+creditou com "Causa A: 3 de 7", não moveu o `faltou` agregado.
+
+**A troca de `modelo_agente` para sonnet-5 não tem medição de extração que a
+sustente.** A comparação opus-5 (12:02) contra sonnet-5 (14:44) atravessa a
+TEC-248, que mudou a régua: `normalizar_regiao` entrou em `schemas.py` e
+`metricas.py` mudou 83 linhas entre os dois commits. E os números batem exato
+com essa explicação — os 8 `divergiu` do opus eram **7 de `regiao`** e um de
+`urgencia`, e viraram acerto; `acertos` foi de 80 para 88, `faltou` ficou em 8
+nos dois lados. **O ganho inteiro é da régua, não do modelo.** A troca pode ter
+sido boa; a extração não a mediu.
+
+A acurácia de intenção não sofre disso — 142, 143, 143, 143, 142 nas cinco
+execuções — e é a única das duas em que "sonnet-5 aguentou" se sustenta.
+
+### O que mudou no código
+
+`decomposicao_da_extracao` refaz a mesma varredura de `precisao_da_extracao`,
+aberta por tipo, e o relatório ganhou a seção. **Nada do que trava mudou**: a
+métrica de união e o piso de 85% continuam idênticos — esta card mediu o
+instrumento, não mexeu no que ele cobra. Um teste amarra as duas contas
+(`anotados + extra == total` da métrica de união), para as fórmulas não
+divergirem em silêncio.
+
+### Lacunas conhecidas
+
+- **Dois pares não são distribuição.** 5,7 e 2,1 são os maiores desvios
+  observados. Caracterizar a dispersão de verdade custaria execuções pagas que
+  esta card não gastou.
+- **O par que sustentava os "1,7 pontos" não pode ser reexaminado.** A
+  execução de 83,7% que a TEC-250 citou não teve o artefato preservado — é
+  anterior ao commit que fez o relatório de CI parar de ser efêmero —, então a
+  decomposição dela não existe e não dá para saber se aqueles 1,7 eram do
+  mesmo código.
+- **A variância não foi reduzida, só isolada.** Atacar a cauda de invenção é
+  mudança de comportamento, e é a TEC-252.
+- **A base fixa não é métrica de gate, e não virou uma.** Ela ignora invenção
+  de propósito; usá-la para travar reabriria o furo que o denominador de união
+  fecha.
+
 ## Escolher o modelo no disparo manual do gate
 
 `workflow_dispatch` passou a aceitar um input `modelo`. Vazio — que é o caso de
@@ -2728,16 +2849,23 @@ sozinho é o *registro* dela.
 | | `modelo_agente` | `modelo_resumo` |
 | --- | --- | --- |
 | tem gate | sim | **não** |
-| medido depois da troca | 91,8% VERDE, contra 85,4% antes | **não é mensurável hoje** |
+| medido depois da troca | ver a ressalva abaixo | **não é mensurável hoje** |
 
 Nada em `evals/` toca `modelo_resumo`. A única guarda que ele tem é
 `test_todo_modelo_configurado_tem_preco_cadastrado`, que confere **preço**, não
 qualidade — foi ela que a TEC-249 criou, e ela pega custo nulo, não regressão.
 
-O argumento *"sonnet-5 aguentou"* vale para a acurácia de intenção e para a
-precisão da extração, porque as duas foram medidas antes e depois. **Ele não
-transfere para a qualidade do resumo.** Se ela regrediu, nada neste projeto
-acusaria.
+O argumento *"sonnet-5 aguentou"* vale para a **acurácia de intenção**, medida
+antes e depois. **Ele não transfere para a qualidade do resumo** — se ela
+regrediu, nada neste projeto acusaria.
+
+> **Ressalva da TEC-253.** Ele também **não se sustenta para a extração**, e a
+> linha da tabela acima foi esvaziada por isso. A comparação opus-5 (12:02)
+> contra sonnet-5 (14:44) atravessa a TEC-248, que mudou a régua: os 8
+> `divergiu` do opus eram 7 de `regiao` e um de `urgencia`, e viraram acerto
+> quando `normalizar_regiao` entrou. `acertos` foi de 80 para 88 e `faltou`
+> ficou em 8 nos dois lados — **o ganho inteiro é da régua, não do modelo**. A
+> troca pode ter sido boa; a extração não a mediu. Ver a seção TEC-253.
 
 Medir exigiria corpus e critério próprios, que não existem — e a TEC-140, que
 seria o lugar disso, também não. É a mesma lacuna que `aderencia ao tom` já

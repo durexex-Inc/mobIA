@@ -4,8 +4,10 @@ from pathlib import Path
 
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
 from mobia.evals.metricas import (
+    DISPERSAO_MEDIDA,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
+    DecomposicaoDaExtracao,
     Discrepancia,
     FalhaDeInfraestrutura,
     ResultadoDaMetrica,
@@ -148,6 +150,50 @@ def _valores_de(discrepancia: Discrepancia) -> str:
     return f" -- {', '.join(partes)}" if partes else ""
 
 
+def _secao_da_conta_da_extracao(decomposicao: DecomposicaoDaExtracao) -> list[str]:
+    """A conta da metrica que trava, aberta -- e o aviso de quanto ela resolve.
+
+    Existe porque o numero de manchete e o pior lugar para comparar duas
+    execucoes, e ate a TEC-253 nada dizia isso a quem lia o relatorio. A
+    TEC-250 atribuiu um ganho de 8,1 pontos chamando-o de "cinco vezes maior
+    que o ruido" contra uma dispersao de 1,7 medida num par de execucoes; um
+    segundo par deu 5,7, e a frase caiu.
+
+    Esta secao vem **antes** da lista de discrepancias de proposito: quem abre
+    o relatorio para comparar com a execucao anterior precisa esbarrar no poder
+    de resolucao antes de formar opiniao, nao depois.
+    """
+    taxa = decomposicao.taxa_sobre_base_fixa
+    sobre_base = "sem campo anotado" if taxa is None else f"{taxa:.1%} da base fixa"
+    return [
+        "",
+        "## Extracao: a conta aberta, e quanto ela resolve (diagnostico)",
+        "",
+        f"- campos anotados no corpus (base fixa): {decomposicao.anotados}",
+        f"- acertos: {decomposicao.acertos} -- {sobre_base}",
+        f"- faltou: {decomposicao.faltou} | divergiu: {decomposicao.divergiu} "
+        f"| inventados (extra): {decomposicao.extra}",
+        "",
+        "  A metrica que trava usa denominador de uniao (esperado | obtido), e",
+        "  e assim de proposito: sem contar o inventado, um modelo que acerta o",
+        "  anotado e inventa mais quatro tiraria 100%. O preco e que ela soma",
+        "  numa razao so duas coisas que se movem diferente -- `faltou` e",
+        "  `divergiu` medem o defeito e sao estaveis; `extra` oscila, e cada",
+        "  campo inventado desconta duas vezes, deixando de ser acerto e",
+        "  inflando o denominador.",
+        "",
+        f"  **Poder de resolucao (medido em {DISPERSAO_MEDIDA.data}, TEC-253):** duas",
+        f"  execucoes do MESMO codigo ja diferiram {DISPERSAO_MEDIDA.uniao_pp:.1f} pontos na",
+        f"  metrica de uniao e {DISPERSAO_MEDIDA.base_fixa_pp:.1f} na base fixa. Nao atribua a",
+        "  uma mudanca um efeito dessa ordem a partir de uma execucao so --",
+        "  compare `faltou` e `divergiu`, que sao a parte estavel, e trate",
+        "  `extra` como quantidade que precisa de varias execucoes.",
+        "",
+        "  Duas execucoes nao sao distribuicao: e a maior diferenca observada,",
+        "  nao a dispersao real.",
+    ]
+
+
 def _secao_de_extracao(
     discrepancias: Sequence[Discrepancia], negativos: ResumoDeNegativos | None
 ) -> list[str]:
@@ -215,6 +261,7 @@ def render(
     reperguntas: Sequence[tuple[str, int, str]] = (),
     discrepancias: Sequence[Discrepancia] = (),
     negativos: ResumoDeNegativos | None = None,
+    decomposicao: DecomposicaoDaExtracao | None = None,
 ) -> str:
     linhas = ["# Avaliacao da classificacao de intencao", ""]
 
@@ -229,6 +276,9 @@ def render(
 
     if reperguntas:
         linhas += _secao_de_reperguntas(reperguntas)
+
+    if decomposicao is not None:
+        linhas += _secao_da_conta_da_extracao(decomposicao)
 
     if discrepancias or negativos is not None:
         linhas += _secao_de_extracao(discrepancias, negativos)
