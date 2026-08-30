@@ -2572,9 +2572,14 @@ A_VISTA` — é a mesma que a seção TEC-250 registrou como *"discrepância nov
 não diagnosticada"*: ela apareceu numa execução, sumiu na outra, e o diagnóstico
 correto era ruído.
 
-O núcleo que sobrevive é quase todo `tipo_imovel` de repetição do mesmo termo —
-o padrão que a TEC-250 já tinha isolado e que a **TEC-242** tem por dono. A
-ordem do schema não toca nele.
+O núcleo que sobrevive é quase todo de repetição do mesmo termo — o padrão que
+a TEC-250 já tinha isolado como hipótese. A ordem do schema não toca nele.
+
+**Isso virou a TEC-252**, e não é da TEC-242: aquela decidiu o vocabulário
+fechado (o que `kitnet`, `sobrado` e `studio` viram) e está Feita. Falhar em
+reemitir um termo que o lead repete é outro defeito, e dois dos seis casos nem
+são `tipo_imovel` — são `forma_pagamento` e `tem_imovel_para_vender`. Se a
+hipótese estiver certa, o defeito é da regra de `null`, não da tipologia.
 
 A hipótese do card era que extrair antes de responder reduziria campo
 inventado. Os campos `extra` foram 1, 5 e 3: a ordem nova ficou no meio. **A
@@ -2620,7 +2625,11 @@ Isso tem consequência para tudo que este gate mede:
 - **A hipótese do card não foi respondida, só arquivada.** Responder se a
   ordem reduz invenção exigiria várias execuções por braço — dinheiro que a
   pergunta, medida esta, não justifica.
-- **O núcleo estável de sete discrepâncias continua**, e é da TEC-242.
+- **O núcleo estável de sete discrepâncias continua**, e é a **TEC-252**.
+- **O ruído medido aqui não foi tratado, só registrado.** Decidir o protocolo
+  de medição — quantas execuções por braço, ou atacar a variância na fonte —
+  é a **TEC-253**, e a TEC-252 depende dela para ser medida sem repetir o
+  erro de atribuição da TEC-250.
 
 ## Escolher o modelo no disparo manual do gate
 
