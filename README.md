@@ -2470,6 +2470,15 @@ passou de 0,4 para **6,8 pontos**.
 mesmo sistema. Efeito cinco vezes maior que a dispersão medida não se explica
 por sorte.
 
+> **Emenda da TEC-244 (30/08/2026, 22:20 UTC).** O parágrafo acima ficou de pé
+> sobre uma estimativa de ruído que a TEC-244 depois mediu de novo e achou
+> **três vezes maior: 5,7 pontos**, entre duas execuções deste mesmo código.
+> Com essa dispersão, o efeito de 8,1 pontos continua provavelmente real — é
+> maior que ela —, mas **"cinco vezes maior que o ruído" está errado: é menos
+> de uma vez e meia**. E os 91,8% desta execução são o topo de uma faixa, não
+> um patamar: uma execução do código idêntico, duas horas depois, deu 86,1% —
+> abaixo do alvo. Ver a seção TEC-244.
+
 As discrepâncias caíram de 17 para **8**, e `urgencia` foi a **zero**.
 
 ### O que se resolveu, e o que não
@@ -2499,10 +2508,119 @@ não experimento.
   lead oferece duas tipologias; o modelo escolhe uma. Qual dos dois está certo
   é questão de régua, não de prompt.
 - **`compra-09[1]` (`forma_pagamento: A_VISTA`) é discrepância nova**, que não
-  aparecia nas execuções anteriores. Não foi diagnosticada.
+  aparecia nas execuções anteriores. Não foi diagnosticada aqui; **a TEC-244
+  diagnosticou depois: era ruído** — o turno sumiu da lista numa das três
+  execuções seguintes.
 - **Duas execuções não são distribuição.** O ruído de 1,7 ponto vem de dois
-  pontos sobre o mesmo sistema, e é a única dispersão medida que este projeto
-  tem.
+  pontos sobre o mesmo sistema, e era a única dispersão medida que este projeto
+  tinha. **A TEC-244 mediu um terceiro par e achou 5,7 pontos** — ver a seção
+  dela, e a emenda acima.
+
+## TEC-244 — A ordem do schema não era onde o problema estava
+
+`SISTEMA_DO_AGENTE` sempre anunciou *"a cada turno você faz três coisas:
+classifica a intenção do lead, **extrai o que ele procura**, e responde a
+ele"*. O schema entregava `intencao → confianca → resposta → extracao`:
+`extracao` era anexada depois da definição de `SCHEMA_DA_RESPOSTA`, porque
+`SCHEMA_DA_EXTRACAO` só existe mais adiante no módulo, e a ordem saiu como
+efeito colateral disso.
+
+O modelo preenche o objeto na ordem declarada, então ele formulava a resposta
+ao lead **antes** de ter isolado o que a fala afirma. A TEC-240 usou exatamente
+esse argumento para escolher a ordem da frase — escolheu certo e descreveu o
+schema errado, e a incoerência continuou entregue a cada turno de produção.
+
+### A mudança, e o custo zero verificado
+
+`extracao` passou para antes de `resposta` em `properties` e em `required`, via
+`_ORDEM_DOS_CAMPOS` com guarda de import — `RuntimeError` e não `assert`,
+porque `python -O` removeria o assert e a reordenação descartaria em silêncio
+um campo novo.
+
+`json.dumps(_SCHEMA_COMPILADO)` continua com **1424 caracteres, 356,0 tokens**
+no proxy: mesmas chaves, mesmo conteúdo, só a ordem muda. O orçamento de
+contexto não se mexe, e isso foi medido, não herdado da alegação da TEC-240.
+
+### Três execuções, e o que elas dizem
+
+O PR da TEC-243 disparou o gate pago sem que ninguém pedisse — o filtro de
+`evals.yml` é por caminho e não distingue mudança de comentário. Isso saiu
+caro e saiu **útil**: virou uma segunda medição da ordem antiga, com prompt e
+schemas byte-a-byte idênticos aos da execução da TEC-250, corpus e régua
+intocados e o mesmo `claude-sonnet-5`.
+
+| execução | ordem | extração | discrep. | campos `extra` | intenção |
+| --- | --- | --- | --- | --- | --- |
+| 30/08 17:08 | antiga | 89/97 — **91,8%** VERDE | 8 | 1 | 143/146 |
+| 30/08 19:51 | antiga | 87/101 — **86,1%** AMARELO | 14 | 5 | 143/146 |
+| 30/08 22:20 | **nova** | 88/99 — **88,9%** AMARELO | 11 | 3 | 142/146 |
+
+**Toda métrica da ordem nova cai entre as duas execuções da ordem antiga.**
+Extração, contagem de discrepâncias, campos inventados: nenhuma delas sai da
+faixa que o mesmo código produziu sozinho. A intenção ficou um turno abaixo,
+que é menos que a variação de tudo o mais.
+
+**O efeito da reordenação é indistinguível de ruído**, e isso é o resultado —
+não um resultado que faltou.
+
+### O que a comparação turno a turno mostra
+
+As oito discrepâncias da primeira execução reaparecem **todas** na segunda: há
+um núcleo determinístico de erro e uma cauda espúria que varia. Na ordem nova,
+**sete das oito sobrevivem**. A que sumiu — `compra-09[1]`, `forma_pagamento:
+A_VISTA` — é a mesma que a seção TEC-250 registrou como *"discrepância nova,
+não diagnosticada"*: ela apareceu numa execução, sumiu na outra, e o diagnóstico
+correto era ruído.
+
+O núcleo que sobrevive é quase todo `tipo_imovel` de repetição do mesmo termo —
+o padrão que a TEC-250 já tinha isolado e que a **TEC-242** tem por dono. A
+ordem do schema não toca nele.
+
+A hipótese do card era que extrair antes de responder reduziria campo
+inventado. Os campos `extra` foram 1, 5 e 3: a ordem nova ficou no meio. **A
+hipótese não se sustenta nem se refuta com esta amostra.**
+
+### A decisão: a ordem nova fica
+
+Fica, e não por ter ganhado a medição — ela empatou. Fica por três razões que
+não dependem do número:
+
+1. **Custa zero.** Nenhum token, nenhuma latência, nenhuma chamada a mais.
+2. **Resolve a contradição** entre o que o prompt anuncia e o que o schema
+   pede, que era o critério 2 do card. A alternativa seria editar o texto do
+   prompt para anunciar `classifica, responde, extrai` — mais invasivo, e
+   contra o argumento que a própria TEC-240 considerou correto.
+3. **A medição não mostrou dano.** "Sem efeito detectável" é razão para manter
+   a versão coerente, não para preferir a incoerente.
+
+### O achado que vale mais que o card
+
+**O ruído entre execuções da precisão de extração é de 5,7 pontos.** A seção
+TEC-250 registra, como lacuna, que *"o ruído de 1,7 ponto vem de dois pontos
+sobre o mesmo sistema, e é a única dispersão medida que este projeto tem"*.
+Agora há um terceiro par, e a dispersão é **três vezes maior** do que aquela
+estimativa.
+
+Isso tem consequência para tudo que este gate mede:
+
+- **Uma execução não distingue efeitos menores que ~6 pontos de extração.**
+  Qualquer card que atribuir a uma mudança um ganho dessa ordem está lendo
+  ruído, a menos que rode várias vezes por braço.
+- **A acurácia de intenção não tem esse problema**: 143, 143, 142 em três
+  execuções. O ruído é específico da extração, e a mecânica é visível — o
+  núcleo de erro é estável e a cauda de campo inventado é que oscila. O
+  denominador oscila junto, porque campo `extra` entra na conta.
+- **A conclusão da TEC-250 fica enfraquecida**, e está anotada lá.
+
+### Lacunas conhecidas
+
+- **Três execuções ainda não são distribuição.** 5,7 pontos é a maior
+  dispersão observada, não a dispersão real. O limite superior continua
+  desconhecido.
+- **A hipótese do card não foi respondida, só arquivada.** Responder se a
+  ordem reduz invenção exigiria várias execuções por braço — dinheiro que a
+  pergunta, medida esta, não justifica.
+- **O núcleo estável de sete discrepâncias continua**, e é da TEC-242.
 
 ## Escolher o modelo no disparo manual do gate
 
