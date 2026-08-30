@@ -236,3 +236,61 @@
     - lead: "consigo fechar tudo a distancia, sem vir pessoalmente antes?"
       intencao: COMPRA
       campos: {}
+
+- id: compra-13
+  descricao: chacara de fim de semana, sem pressa nenhuma
+  turnos:
+    - lead: "queria comprar uma chacara pra passar os fins de semana com a familia, perto de sao roque"
+      intencao: COMPRA
+      campos:
+        tipo_imovel: RURAL
+        regiao: sao roque
+    # Unico turno do corpus que afirma SEM_PRESSA. A barra da TEC-239 e marco
+    # temporal explicito para `urgencia`, e "nao tenho pressa nenhuma" e
+    # afirmacao direta de horizonte, nao entusiasmo -- o oposto simetrico de
+    # "quero fechar logo", que nao anota.
+    - lead: "nao tenho pressa nenhuma, quero achar o lugar certo mesmo que demore"
+      intencao: COMPRA
+      campos:
+        urgencia: SEM_PRESSA
+    - lead: "o acesso costuma ser por estrada de terra por ali?"
+      intencao: COMPRA
+      campos: {}
+
+- id: compra-14
+  descricao: contemplado no consorcio, carta vencendo em seis meses
+  turnos:
+    - lead: "fui contemplado no consorcio e quero usar a carta num apartamento de 2 quartos ate 400 mil"
+      intencao: COMPRA
+      campos:
+        forma_pagamento: CONSORCIO
+        tipo_imovel: APARTAMENTO
+        quartos: 2
+        faixa_preco_max: 400000
+    - lead: "a carta vence em seis meses, entao preciso fechar ate la"
+      intencao: COMPRA
+      campos:
+        urgencia: ATE_6_MESES
+    # Anota pela regra da TEC-239: quem pergunta se pode usar um meio esta
+    # dizendo que pretende usa-lo. Mesma forma de fala de `borda-injecao-01`
+    # indice 1 e `compra-02` indice 1.
+    - lead: "voces aceitam carta de consorcio de qualquer administradora?"
+      intencao: COMPRA
+      campos:
+        forma_pagamento: CONSORCIO
+
+- id: compra-15
+  descricao: comprador que ainda nao decidiu como paga
+  turnos:
+    # Unico turno que afirma FormaPagamento.INDEFINIDA. Ele falou de
+    # pagamento -- por isso nao e `None` -- e o que disse foi que nao
+    # escolheu. Ver o docstring de `Extracao`.
+    - lead: "quero comprar um apartamento na zona norte, mas ainda nao decidi se vou financiar ou pagar a vista"
+      intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
+        regiao: zona norte
+        forma_pagamento: INDEFINIDA
+    - lead: "voces tem plantao de visita no fim de semana?"
+      intencao: COMPRA
+      campos: {}

@@ -4,22 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from mobia.domain.agente.schemas import (
-    Extracao,
-    FormaPagamento,
-    Intencao,
-    TipoImovel,
-    Urgencia,
-    normalizar_regiao,
-)
-from mobia.evals.corpus import ConversaAnotada, carregar, total_de_turnos
-from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS, PISO_DE_TURNOS_NEGATIVOS
+from mobia.domain.agente.schemas import Extracao, Intencao, normalizar_regiao
 
-_VOCABULARIO = {
-    "tipo_imovel": TipoImovel,
-    "urgencia": Urgencia,
-    "forma_pagamento": FormaPagamento,
-}
+# `_VOCABULARIO` vem de `mobia.evals.corpus` e nao de uma copia daqui: e o
+# mesmo mapa que `carregar` usa para recusar valor fora do vocabulario, e duas
+# copias dele divergiriam no dia em que um campo novo entrar num dos lados so.
+from mobia.evals.corpus import _VOCABULARIO, ConversaAnotada, carregar, total_de_turnos
+from mobia.evals.metricas import PISO_DE_TURNOS, PISO_DE_TURNOS_ANOTADOS, PISO_DE_TURNOS_NEGATIVOS
 
 CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
 
@@ -29,10 +20,18 @@ def conversas() -> list[ConversaAnotada]:
     return carregar(CORPUS)
 
 
-def test_o_corpus_tem_as_cinquenta_conversas_do_card(
+def test_o_corpus_tem_todas_as_conversas_declaradas(
     conversas: list[ConversaAnotada],
 ) -> None:
-    assert len(conversas) == 50
+    """Cinquenta vieram do card da TEC-134; a TEC-246 acrescentou tres
+    arquetipos que o vocabulario exigia e o corpus nao tinha -- chacara,
+    consorcio e pagamento indefinido.
+
+    O nome nao diz mais o numero de proposito: `cinquenta` no identificador
+    envelheceu junto com o valor, e este repo ja perdeu tempo com numero
+    embutido em prosa.
+    """
+    assert len(conversas) == 53
 
 
 def test_o_corpus_passa_do_piso_de_turnos(conversas: list[ConversaAnotada]) -> None:
@@ -120,6 +119,35 @@ def test_todo_campo_de_extracao_tem_anotacao(conversas: list[ConversaAnotada]) -
     assert todos - anotados == set()
 
 
+def test_todo_valor_do_vocabulario_tem_anotacao(
+    conversas: list[ConversaAnotada],
+) -> None:
+    """A cobertura era por campo; passa a ser por valor.
+
+    `test_todo_campo_de_extracao_tem_anotacao` garante que nenhum dos nove
+    campos fica em zero, e nao diz nada sobre os valores dentro deles. Uma
+    regressao restrita a `RURAL` ou a `CONSORCIO` passava o gate sem que
+    nenhum teste piscasse -- mesmo furo que
+    `test_toda_intencao_do_enum_aparece` fecha para `Intencao`.
+
+    A lista sai dos enums e do proprio tipo, e nao de uma lista a mao: valor
+    novo no vocabulario quebra este teste em vez de nascer descoberto.
+    """
+    anotados = {
+        f"{campo}={valor}"
+        for conversa in conversas
+        for turno in conversa.turnos
+        if turno.campos
+        for campo, valor in turno.campos.items()
+        if campo in ("tipo_imovel", "urgencia", "forma_pagamento", "tem_imovel_para_vender")
+    }
+    esperados = {
+        f"{campo}={membro.value}" for campo, enum in _VOCABULARIO.items() for membro in enum
+    } | {"tem_imovel_para_vender=True", "tem_imovel_para_vender=False"}
+
+    assert esperados - anotados == set(), f"valores sem anotacao: {sorted(esperados - anotados)}"
+
+
 def test_anotacao_nunca_usa_valor_fora_do_vocabulario(conversas: list[ConversaAnotada]) -> None:
     """`carregar` ja levanta nesse caso; este teste guarda o corpus commitado."""
     for conversa in conversas:
@@ -200,7 +228,9 @@ def test_anotacoes_de_regiao_nao_colidem_depois_de_normalizadas(
 # cobertura pra danos?"). A polissemia de `cobertura` e inerente a lingua, e a
 # lista de excecoes abaixo e a valvula para ela -- nao ha regex que a
 # elimine.
-_SINONIMOS_DE_TIPO_IMOVEL = re.compile(r"\b(kitnet|studio|flat|cobertura|sobrado|republica)\b")
+_SINONIMOS_DE_TIPO_IMOVEL = re.compile(
+    r"\b(kitnet|studio|flat|cobertura|sobrado|republica|chacara|chacaras|sitio|sitios)\b"
+)
 
 # `aluguel-07` i0 diz "procuro republica ou kitnet": o lead oferece duas
 # tipologias e nao escolhe nenhuma. Anotar uma delas puniria o modelo por

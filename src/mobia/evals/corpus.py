@@ -66,6 +66,10 @@ class TurnoAnotado:
       sozinho. O que faltava era o corpus decidir a mesma traducao, e sem essa
       decisao a traducao certa contava `extra`.
 
+      `chacara` e `sitio` sao `RURAL` (TEC-246). Entram pelo mesmo motivo dos
+      outros: ninguem diz "quero comprar um rural", entao sem a traducao no
+      corpus a extracao certa contaria `extra`.
+
       O criterio que separa um sinonimo de um conteiner generico: a fala tem
       de **nomear a tipologia**, e nao so citar um substantivo que pode ser
       residencial ou comercial. `compra-06` indice 1 ("tem churrasqueira na

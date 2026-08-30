@@ -145,6 +145,13 @@ class Extracao:
     nao falou disso neste turno**. Nunca "esqueca o que sabia". `gravar_estado`
     depende dessa leitura -- ver `preenchidos`.
 
+    `FormaPagamento.INDEFINIDA` nao e sinonimo de `None`, e a diferenca e o
+    que a medicao cobra: `None` e "o lead nao falou de pagamento neste turno",
+    `INDEFINIDA` e "o lead afirmou que ainda nao decidiu". A fala de
+    `compra-15` indice 0 -- "ainda nao decidi se vou financiar ou pagar a
+    vista" -- e o caso: ele falou de pagamento, e o que disse foi que nao
+    escolheu.
+
     Nao tem `intencao` de proposito: quem classifica intencao e o
     classificador, e duas fontes para o mesmo fato divergiriam. Nao tem
     telemetria porque a extracao viaja na chamada de `RespostaDoAgente`, que ja
