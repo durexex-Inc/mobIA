@@ -59,6 +59,18 @@ class TurnoAnotado:
       que o banco guarda. As duas anotacoes antigas com preposicao
       (`aluguel-01`, `aluguel-07`) ficaram como estavam de proposito:
       reanota-las seria mexer na regua sem necessidade.
+    - **`regiao` se anota pelo LUGAR, e nao pela string do lead (TEC-248).**
+      "estou de mudanca pra sp" anota `sao paulo`, e nao `sp`. A sonda dos
+      sete `divergiu` mediu o modelo devolvendo o lugar em todos eles --
+      "sao paulo" para "sp", "avenida paulista" para "paulista", com acento
+      e com a cidade anexada -- e em nenhum ele errou a regiao. Anotar a
+      abreviacao do lead punia o modelo por acertar, e era a anotacao que
+      estava errada, nao ele.
+
+      A regra e irma da de cima: aquela tira a preposicao, esta tira a
+      abreviacao. As duas dizem a mesma coisa -- o campo guarda o toponimo
+      que o filtro SQL da TEC-158 compara, e nao a forma como o lead o
+      escreveu.
     - **Sinonimo de tipologia se anota pelo valor do vocabulario (TEC-242).**
       `kitnet`, `studio`, `flat` e `cobertura` sao `APARTAMENTO`; `sobrado` e
       `CASA`. Nao ha traducao em codigo, e nao pode haver: o schema da chamada

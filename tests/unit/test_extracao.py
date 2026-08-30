@@ -346,3 +346,76 @@ def test_nenhum_prefixo_de_referencia_e_prefixo_de_outro() -> None:
         if a != b and b.startswith(a)
     ]
     assert colisoes == []
+
+
+# --- TEC-248: os quatro mecanismos que a sonda dos sete mediu ---------------
+#
+# Cada par abaixo e um valor REAL devolvido pelo modelo em
+# `evals/relatorios/2026-08-30-sonda-regiao.md`, e nao um par inventado. Foi
+# essa a diferenca que fez a TEC-248 custar nove chamadas em vez de outra
+# execucao de 146: sem os valores nao havia como saber o que consertar.
+
+
+@pytest.mark.parametrize(
+    ("obtido", "esperado"),
+    [
+        # Acento puro. `saude` e `aclimacao`, os dois turnos em que o unico
+        # desacordo era o diacritico.
+        ("saude", "saude"),
+        ("aclimacao", "aclimacao"),
+        # Cedilha decompoe junto com o til: um caractere, dois diacriticos.
+        ("assuncao", "assuncao"),
+    ],
+)
+def test_normalizar_regiao_dobra_acento(obtido: str, esperado: str) -> None:
+    """O modelo nao e consistente com acento, e a regua nao pode depender disso.
+
+    A mesma execucao devolveu `saude` e `aclimacao` COM acento e `butanta` e
+    `tatuape` SEM -- e as duas ultimas casaram justamente por isso. Adivinhar
+    qual das duas formas vem e depender de sorte.
+    """
+    assert normalizar_regiao(obtido) == esperado
+
+
+def test_normalizar_regiao_derruba_qualificador_entre_parenteses() -> None:
+    """`compra-13[0]`: o modelo devolveu "sao roque (sp)" para um corpus que
+    anota "sao roque". Parentese e ruido de referencia como os prefixos, so
+    que no fim em vez de no comeco."""
+    assert normalizar_regiao("sao roque (sp)") == "sao roque"
+
+
+def test_normalizar_regiao_fica_com_o_pedaco_antes_da_virgula() -> None:
+    """`aluguel-06[1]`: o modelo devolveu "vila madalena (perto da estacao),
+    sao paulo". Ele responde o LUGAR, e anexa o contexto mais largo depois da
+    virgula -- o que o filtro SQL compara e o primeiro pedaco.
+
+    Exercita os tres passes de uma vez, e a ordem entre eles: o acento tem de
+    cair antes dos prefixos, senao `estacao` com acento nunca casaria com o
+    prefixo `estacao ` que e escrito sem.
+    """
+    assert normalizar_regiao("vila madalena (perto da estacao), sao paulo") == "vila madalena"
+
+
+@pytest.mark.parametrize("fala", ["avenida paulista", "av. paulista", "av paulista"])
+def test_normalizar_regiao_derruba_logradouro(fala: str) -> None:
+    """`compra-08[1]`: "avenida paulista" contra "paulista" anotado.
+
+    So `avenida ` foi observada. `av. ` e `av ` entram por simetria -- a
+    licao que a TEC-246 tirou do proprio caro e que lista de prefixo
+    assimetrica e bug latente, que so aparece quando alguem escreve a forma
+    que faltava.
+    """
+    assert normalizar_regiao(fala) == "paulista"
+
+
+def test_normalizar_regiao_nao_inventa_expansao_de_abreviacao() -> None:
+    """ "sp" e "sao paulo" continuam DIFERENTES, e isso e de proposito.
+
+    Os dois turnos com `sp` nao eram defeito de regua: o modelo devolveu o
+    lugar ("sao paulo") e o corpus anotava a abreviacao do lead. Quem estava
+    errado era a anotacao, e ela foi corrigida -- ver a regra em
+    `TurnoAnotado`. Resolver isso na normalizacao exigiria uma tabela de
+    apelidos, que e onde a funcao deixaria de normalizar forma e passaria a
+    decidir semantica.
+    """
+    assert normalizar_regiao("sp") != normalizar_regiao("sao paulo")

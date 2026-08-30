@@ -2083,6 +2083,133 @@ daqui, e ela existe porque os endereços foram registrados.
   registrados, não desfazem essa ambiguidade — ela é da anotação, não da
   comparação —, mas dizem **o que** o modelo extraiu, que é o suficiente para
   quem for decidir se aquilo merecia anotação.
-- **Os valores dos `divergiu` de 30/08 não existem, e não vão existir.** A
-  instrumentação que os registraria entrou depois da execução. A causa dos sete
-  `divergiu` de `regiao` só se confirma na próxima execução paga.
+- ~~**Os valores dos `divergiu` de 30/08 não existem, e não vão existir.**~~
+  Verdade sobre *aquela* execução, e contornada pela TEC-248: sondar os sete
+  turnos custou 9 chamadas em vez de 146, e respondeu a pergunta sem esperar
+  a próxima execução paga. Ver a seção TEC-248.
+
+## TEC-248 — Por que `regiao` divergia, medido com nove chamadas
+
+A baseline da TEC-247 deu VERMELHO com **7 `divergiu` em `regiao`**, o maior
+balde da execução, e ninguém sabia a causa: `Discrepancia` registrava o
+endereço e não os valores, e a instrumentação que os registraria entrou
+*depois* da execução.
+
+Esta card sondou os sete. **Nove chamadas — não 146, e nem os sete da
+estimativa**: `aluguel-06` e `compra-08` são índice 1, e o turno 0 deles tem de
+rodar antes para montar o histórico e o estado acumulado. Custo medido:
+**US$ 0,18**. O artefato está em `evals/relatorios/2026-08-30-sonda-regiao.md`,
+commitado antes de qualquer análise.
+
+### O que o modelo devolveu, e o que cada um era
+
+| turno | anotado | obtido | mecanismo | de quem era |
+| --- | --- | --- | --- | --- |
+| `aluguel-06[1]` | `vila madalena` | `vila madalena (perto da estação), são paulo` | parentético + cidade anexada | régua |
+| `aluguel-10[0]` | `saude` | `saúde` | acento | régua |
+| `borda-longa-01[0]` | `aclimacao` | `aclimação` | acento | régua |
+| `compra-08[1]` | `paulista` | `avenida paulista` | logradouro | régua |
+| `compra-12[0]` | `sp` | `são paulo` | expansão de abreviação | **anotação** |
+| `compra-13[0]` | `sao roque` | `são roque (sp)` | acento + UF parentética | régua |
+| `investimento-07[0]` | `sp` | `são paulo (sp)` | expansão + acento + UF | **anotação** |
+
+**Em nenhum dos sete o modelo errou a região.** Seis eram defeito de régua e
+um era anotação errada — e "erro do modelo", que era a leitura registrada pela
+TEC-247 para os `faltou` e `divergiu`, não vale para nenhum destes sete.
+
+### O mecanismo dominante não era acento
+
+A hipótese que a TEC-247 deixou escrita era acento, e ela estava **parcialmente
+certa e mal fundamentada**. Acento aparece em quatro dos sete valores devolvidos
+(`saúde`, `aclimação`, `são roque`, `são paulo`), mas dobrar acento sozinho
+resolveria só **dois** deles.
+
+O que a sonda mostrou é maior que acento: **o modelo devolve o LUGAR, e não a
+string do lead.** Ele expande `sp` para `são paulo`, promove `paulista` a
+`avenida paulista`, anexa a cidade depois de vírgula e acrescenta a UF entre
+parênteses. É comportamento coerente e, do ponto de vista do produto, *melhor*
+que a anotação — só não era o que a régua comparava.
+
+E a inconsistência que a TEC-247 tinha observado continua verdadeira, agora com
+explicação: a mesma execução devolveu `saúde` e `aclimação` **com** acento e
+`butanta` e `tatuape` **sem** — e essas duas casaram justamente por isso. O
+modelo não é consistente com diacrítico, então a régua não pode depender de
+adivinhar qual das duas formas vem.
+
+### O que mudou na régua
+
+`normalizar_regiao` ganhou três passes, nesta ordem, antes da remoção de
+prefixo que já existia:
+
+1. **Dobra acento** (NFD + descarte de combinantes; pega cedilha junto).
+2. **Derruba qualificador entre parênteses** — `sao roque (sp)` é `sao roque`.
+   Parêntese é ruído de referência como os prefixos, só que no fim.
+3. **Fica com o pedaço antes da primeira vírgula** — o contexto mais largo que
+   o modelo anexa não é o que o filtro compara.
+
+**A ordem não é detalhe.** O acento tem de cair **antes** dos prefixos: o
+modelo devolveu `(perto da estação)` com acento, e `estacao ` na lista é
+escrito sem — dobrar depois deixaria o prefixo dentro do valor.
+`test_normalizar_regiao_fica_com_o_pedaco_antes_da_virgula` exercita os três
+passes e a ordem entre eles de uma vez.
+
+`_PREFIXOS_DE_REFERENCIA` ganhou `avenida `, e mais `av. ` e `av ` por
+simetria — só `avenida ` foi observada, mas a lição que a TEC-246 tirou do
+próprio caro é que lista de prefixo assimétrica é bug latente, que só aparece
+quando alguém escreve a forma que faltava.
+
+Isto é mudança na função que **produção também usa** ao gravar, e não só na
+medição. A perda de informação vai na mesma direção que o README já aceita por
+escrito para `perto da usp` → `usp`: a troca é a favor do filtro SQL da
+TEC-158, que compara `regiao` por igualdade.
+
+### A decisão de anotação, que não era de régua
+
+Os dois `sp` **não** eram defeito de normalização. O modelo devolveu o lugar
+(`são paulo`) e o corpus anotava a abreviação do lead (`sp`). Quem estava
+errado era a anotação: ela punia o modelo por acertar.
+
+`compra-12[0]` e `investimento-07[0]` passaram a anotar `sao paulo`, e a regra
+está escrita no docstring de `TurnoAnotado` — **`regiao` se anota pelo lugar,
+não pela string do lead**, irmã da regra da TEC-241 que tirou a preposição. As
+duas dizem a mesma coisa: o campo guarda o topônimo que o filtro compara, não a
+forma como o lead o escreveu.
+
+Resolver isso na normalização exigiria uma tabela de apelidos, e é ali que a
+função deixaria de normalizar **forma** e passaria a decidir **semântica**.
+`test_normalizar_regiao_nao_inventa_expansao_de_abreviacao` trava essa fronteira:
+`sp` e `sao paulo` continuam diferentes de propósito.
+
+### O que isso deve fazer com o número, e por que não é medição
+
+Com os sete resolvidos, a precisão da extração iria de 80/101 (79,2%,
+VERMELHO) para **87/101 (86,1%), AMARELO** — acima do piso de 85%, e o gate
+deixaria de bloquear.
+
+**Isso é aritmética, não medição.** É o que os mesmos valores dariam se
+recontados com a régua nova, e não uma execução nova. Uma execução paga contra
+esta régua pode divergir: a normalização mudou para todos os 23 turnos com
+`regiao`, não só para os sete, e o ruído normal entre execuções continua na
+casa de ±1,5%. **Esta card não mede o próprio efeito** — medir é a próxima
+execução paga, e é card própria pelo mesmo motivo que a TEC-247 foi.
+
+E a baseline de 30/08 deixa de servir como "antes" comparável a partir daqui:
+ela mediu a régua de `6d74cff`, e esta card mexeu na régua. O número dela
+continua válido como o que foi medido; o que expira é a comparabilidade.
+
+### Lacunas conhecidas
+
+- **Os outros 14 de discrepância continuam sem diagnóstico.** `urgencia` (6,
+  espalhado nos três tipos), `tipo_imovel` (6, metade `faltou` e metade
+  `extra`), `forma_pagamento` (1) e `tem_imovel_para_vender` (1). A sonda desta
+  card cobriu `regiao` e nada mais, e não há razão para supor que a causa seja a
+  mesma — `regiao` era o único campo com contrato de forma próprio.
+- **A sonda não é reprodutível a partir do repositório.** O script viveu fora
+  da árvore e o que ficou foi o resultado. Repetir o método para `urgencia` ou
+  `tipo_imovel` custa reescrevê-lo.
+- **Nenhum dos sete foi re-medido depois do conserto.** Os testes travam os
+  pares reais que a sonda colheu, o que garante que a régua nova reconcilia
+  *aqueles* valores — não que o modelo devolva os mesmos valores na próxima
+  execução.
+- **`av. ` e `av ` nunca foram observados.** Entraram por simetria, e a única
+  forma medida é `avenida `.

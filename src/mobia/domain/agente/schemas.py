@@ -1,3 +1,5 @@
+import re
+import unicodedata
 from dataclasses import dataclass, fields
 from decimal import Decimal
 from enum import StrEnum
@@ -100,7 +102,38 @@ _PREFIXOS_DE_REFERENCIA = (
     "perto das ",
     "perto dos ",
     "estacao ",
+    # Logradouro, mesma classe de conteiner que `estacao`: a TEC-248 mediu o
+    # modelo devolvendo "avenida paulista" onde o corpus anota "paulista".
+    # So `avenida ` foi observada; `av. ` e `av ` entram por simetria, que e a
+    # licao que a TEC-246 tirou do proprio caro: lista de prefixo assimetrica e
+    # bug latente que so aparece quando um lead escreve a forma que faltava.
+    "avenida ",
+    "av. ",
+    "av ",
 )
+
+
+_PARENTESES = re.compile(r"\([^)]*\)")
+
+
+def _sem_acento(texto: str) -> str:
+    """Dobra acento, porque o modelo nao e consistente com ele.
+
+    A TEC-248 mediu os dois comportamentos no mesmo corpus e na mesma
+    execucao: o modelo devolveu `saude` como "saude" com acento e
+    `aclimacao` como "aclimacao" com acento, mas devolveu `butanta` e
+    `tatuape` **sem** acento -- e essas duas casaram justamente por isso.
+    Uma regua que dependa de adivinhar qual dos dois vem depende de sorte.
+
+    NFD separa o diacritico do caractere base e `combining` identifica o que
+    sobra para descartar. Pega cedilha junto: "aclimacao" com til e cedilha
+    decompoe nos dois, e os dois somem.
+    """
+    return "".join(
+        caractere
+        for caractere in unicodedata.normalize("NFD", texto)
+        if not unicodedata.combining(caractere)
+    )
 
 
 def normalizar_regiao(texto: str) -> str:
@@ -119,6 +152,19 @@ def normalizar_regiao(texto: str) -> str:
     onde ele pertence.
     """
     limpo = " ".join(texto.split()).casefold()
+    # Acento sai ANTES dos prefixos, e a ordem nao e detalhe: o modelo devolveu
+    # "vila madalena (perto da estacao)" com acento em `estacao`, e um prefixo
+    # escrito sem acento nunca casaria com ele. Dobrar depois deixaria o
+    # prefixo dentro do valor.
+    limpo = _sem_acento(limpo)
+    # Qualificador entre parenteses e ruido de referencia como os prefixos, so
+    # que no fim em vez de no comeco: "sao roque (sp)" e "sao roque".
+    limpo = _PARENTESES.sub(" ", limpo)
+    # O modelo devolve o lugar, nao a string do lead, e anexa o contexto mais
+    # largo depois de virgula: "vila madalena, sao paulo". O que filtra e o
+    # primeiro pedaco.
+    limpo = limpo.split(",")[0]
+    limpo = " ".join(limpo.split())
     # Repete enquanto casar: "perto da estacao vila madalena" perde `perto da`
     # e so entao `estacao`. Um passe so deixaria metade do ruido -- a fala de
     # `aluguel-06` e exatamente esse caso --, e repetir e o que torna a funcao
