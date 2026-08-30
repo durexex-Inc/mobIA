@@ -337,7 +337,17 @@ async def test_classificar_nao_duplica_a_persona_no_turno_do_usuario(
     await ClassificadorAnthropic().classificar(_contexto())
 
     _, kwargs = cliente.messages.create.call_args
-    assert kwargs["system"] == classificador_mod.SISTEMA_DO_AGENTE
+    # Bloco com `cache_control`, e nao string crua, desde a TEC-251: o prefixo
+    # e identico em toda chamada e sem o marcador e pago inteiro toda vez. O
+    # que este teste guarda continua sendo o MESMO -- que a persona vai no
+    # campo dedicado --, so que na forma que o cache exige.
+    assert kwargs["system"] == [
+        {
+            "type": "text",
+            "text": classificador_mod.SISTEMA_DO_AGENTE,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
     conteudo_do_turno = kwargs["messages"][0]["content"]
     assert SISTEMA_DO_PROMPT not in conteudo_do_turno
 
@@ -532,7 +542,13 @@ async def test_desambiguar_nao_manda_schema_estrito(monkeypatch: pytest.MonkeyPa
     kwargs = cliente.messages.create.call_args.kwargs
     assert "output_config" not in kwargs
     assert kwargs["max_tokens"] == MAX_TOKENS_DA_PERGUNTA
-    assert kwargs["system"] is SISTEMA_DA_DESAMBIGUACAO
+    assert kwargs["system"] == [
+        {
+            "type": "text",
+            "text": SISTEMA_DA_DESAMBIGUACAO,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
 
 def test_desambiguar_pede_uma_pergunta_aberta() -> None:

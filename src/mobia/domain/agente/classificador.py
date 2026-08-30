@@ -312,7 +312,20 @@ class ClassificadorAnthropic:
         kwargs: dict[str, Any] = {
             "model": modelo,
             "max_tokens": max_tokens,
-            "system": system,
+            # `system` vai como bloco com `cache_control` em vez de string
+            # crua: o prefixo -- este texto mais o schema de `output_config` --
+            # e identico em toda chamada, e sem isto ele e pago inteiro toda
+            # vez. Medido em 30/08/2026: 1.652 tokens, 88% da entrada de uma
+            # execucao do gate.
+            #
+            # O minimo cacheavel e POR MODELO e nao e monotonico entre
+            # geracoes -- 512 no opus-5, 1.024 no sonnet-5, 4.096 no
+            # haiku-4-5 --, e prefixo curto de mais nao cacheia E NAO DA ERRO:
+            # sai `cache_creation_input_tokens: 0` e ninguem percebe. Por isso
+            # `test_o_prefixo_cacheavel_passa_o_minimo_do_modelo` amarra o
+            # tamanho ao modelo configurado, e por isso o log abaixo carrega
+            # os dois contadores.
+            "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             # omitir_sistema=True: o `system` dedicado acima ja cobre a
             # persona. Reenviar `contexto.sistema` aqui duplicaria a mesma
             # instrucao, mais fraca, dentro do turno do usuario.
@@ -435,6 +448,8 @@ class ClassificadorAnthropic:
         if not resultado.resposta:
             raise RespostaInvalida("campo resposta veio vazio")
 
+        escrito_no_cache = getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0
+        lido_do_cache = getattr(resposta.usage, "cache_read_input_tokens", 0) or 0
         # So numeros e id de modelo. Nem a resposta, nem o prompt, nem a
         # intencao classificada -- essa ultima nao e conteudo do lead, mas
         # tambem nao ajuda em log e mantem a regra simples.
@@ -443,9 +458,24 @@ class ClassificadorAnthropic:
             modelo=resultado.modelo,
             tokens_in=resultado.tokens_in,
             tokens_out=resultado.tokens_out,
+            # A unica guarda contra o cache falhar em silencio. Se um
+            # invalidador entrar no prefixo, `cache_read` cai a zero e nada
+            # mais avisa -- a chamada continua correta, so mais cara.
+            cache_write=escrito_no_cache,
+            cache_read=lido_do_cache,
             latency_ms=resultado.latency_ms,
+            # Os dois contadores entram na conta: sem eles o custo cairia
+            # junto com `tokens_in` sem o gasto ter caido tanto, e o painel
+            # passaria a subestimar -- ver TEC-251 no docstring de
+            # `custo_em_dolar`.
             custo_usd=str(
-                custo_em_dolar(resultado.modelo, resultado.tokens_in, resultado.tokens_out)
+                custo_em_dolar(
+                    resultado.modelo,
+                    resultado.tokens_in,
+                    resultado.tokens_out,
+                    cache_write=escrito_no_cache,
+                    cache_read=lido_do_cache,
+                )
             ),
         )
         return resultado
@@ -484,12 +514,20 @@ class ClassificadorAnthropic:
             modelo=settings.modelo_agente,
             tokens_in=resposta.usage.input_tokens,
             tokens_out=resposta.usage.output_tokens,
+            # Este caminho nao manda schema, entao o prefixo dele e so o
+            # system prompt da desambiguacao -- provavelmente abaixo do minimo
+            # do modelo, e portanto sem cache. Registrar mesmo assim: e o que
+            # transforma "nao cacheia" de suposicao em dado.
+            cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
             latency_ms=latency_ms,
             custo_usd=str(
                 custo_em_dolar(
                     settings.modelo_agente,
                     resposta.usage.input_tokens,
                     resposta.usage.output_tokens,
+                    cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
+                    cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
                 )
             ),
         )

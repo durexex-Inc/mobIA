@@ -2309,3 +2309,88 @@ desconhecido e permanece desconhecido.** A série começa aqui.
   `-YYYYMMDD` no fim é sempre um snapshot do modelo à esquerda. É verdade para
   a convenção de nomes de hoje; um ID futuro que termine em oito dígitos por
   outro motivo passaria a ser reduzido por engano.
+
+## TEC-251 — Prompt caching: 88% da entrada era o mesmo texto, pago toda vez
+
+Toda chamada ao agente manda o mesmo prefixo — `SISTEMA_DO_AGENTE` mais o
+schema de `output_config`. **Medido em 30/08/2026: 1.652 tokens**, idênticos
+nas 146 chamadas de uma execução e em todo turno de produção. Na execução do
+sonnet-5 isso foi **241.192 dos 273.401 tokens de entrada.**
+
+### Que funciona está verificado, e a dedução dizia o contrário
+
+O mínimo cacheável é **por modelo**, e prefixo curto demais **não cacheia e não
+dá erro** — sai `cache_creation_input_tokens: 0` e ninguém percebe.
+
+`SISTEMA_DO_AGENTE` sozinho tem **457 tokens**, abaixo dos 1.024 que o
+`claude-sonnet-5` exige. A documentação descreve o prefixo como
+`tools` → `system` → `messages` e não cita `output_config`, então pela leitura
+dela o schema ficaria de fora e o cache seria inútil aqui.
+
+Duas chamadas (US$ 0,01) resolveram:
+
+```
+chamada 1: input=21  cache_creation=1652  cache_read=0
+chamada 2: input=21  cache_creation=0     cache_read=1652
+```
+
+**O schema entra.** Medir custou menos que continuar deduzindo.
+
+### O ganho, e onde ele não vale
+
+Na execução do gate: **US$ 1,15 → US$ 0,72, 37% a menos**, com a saída
+intacta.
+
+**Em produção o ganho não foi medido, e pode ser negativo.** O TTL padrão é de
+5 minutos. No eval as chamadas saem a 6,1s uma da outra e o prefixo fica quente
+do começo ao fim; em produção os turnos são esparsos, e um turno frio paga o
+prefixo **mais** o ágio de 1,25% da escrita. Por turno, medido:
+
+| turno | custo |
+| --- | --- |
+| sem cache | US$ 0,006992 |
+| quente (leitura) | **US$ 0,004018** |
+| frio (escrita) | **US$ 0,007818** |
+
+Um turno frio custa **12% a mais** que não ter cache. Com tráfego baixo o saldo
+pode virar. `test_turno_frio_custa_mais_que_turno_sem_cache` trava esse fato
+para ele não virar surpresa.
+
+### O custo passou a mentir para baixo, e foi consertado junto
+
+Os tokens cacheados **saem de `input_tokens`** e vão para contadores próprios:
+um turno que reportava ~1.700 de entrada passou a reportar **54**. Como
+`custo_em_dolar` só olhava `tokens_in`, o custo caiu junto — sem o gasto ter
+caído tanto.
+
+É o defeito da TEC-249 entrando pela outra porta, e contra o que o próprio
+docstring da função promete: *"Zero somaria silenciosamente no painel de custo
+e faria o gasto parecer menor do que foi."* `custo_em_dolar` ganhou
+`cache_write` e `cache_read`, com o ágio de 1,25× e o desconto de 0,1× sobre o
+preço de entrada. Os dois com default zero, então moderação e resumo — que não
+usam cache — não veem número nenhum mudar.
+
+### O acoplamento que ninguém veria
+
+O mínimo cacheável **não é monotônico entre gerações**: 512 no `claude-opus-5`,
+**1.024** no `claude-sonnet-5`, **4.096** no `claude-haiku-4-5`. O prefixo de
+1.652 passa nos dois primeiros e **falharia no terceiro, em silêncio**.
+
+Trocar `modelo_agente` pode desligar o cache sem nada acusar — e `config.py`
+está fora do filtro de `evals.yml`, então nem o gate pago dispararia. É a mesma
+classe de armadilha da tabela de preços da TEC-249: configuração que muda
+comportamento sem sinal. `test_o_prefixo_cacheavel_passa_o_minimo_do_modelo`
+amarra o tamanho do prefixo ao modelo configurado, e é o sinal que faltava.
+
+### Lacunas conhecidas
+
+- **O ganho em produção não foi medido.** Depende da densidade de turnos, e não
+  há dado de tráfego. O TTL de 1h existe e custa mais na escrita — decisão para
+  quando houver dado.
+- **`PREFIXO_CACHEAVEL_EM_TOKENS` é um número copiado, não calculado.** Ele foi
+  medido com `count_tokens` e travado à mão; mudar o prompt ou o schema o
+  invalida, e nada recalcula sozinho. O teste guarda o limiar, não a medição.
+- **A desambiguação provavelmente não cacheia.** Ela não manda schema, então o
+  prefixo dela é só o system prompt próprio — abaixo do mínimo. Os contadores
+  são registrados no log dela de propósito: é o que transforma "não cacheia" de
+  suposição em dado.

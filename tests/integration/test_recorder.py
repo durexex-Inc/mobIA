@@ -239,3 +239,41 @@ def test_a_reducao_de_snapshot_nao_inventa_preco_para_modelo_desconhecido() -> N
     """
     assert custo_em_dolar("modelo-que-nao-existe-20260101", 10, 10) is None
     assert custo_em_dolar("claude-haiku-4-5-2025", 10, 10) is None
+
+
+def test_custo_soma_os_dois_lados_do_cache() -> None:
+    """Escrita cobra agio de 1,25x e leitura cobra 0,1x, sobre o preco de entrada.
+
+    Sem isto a funcao passou a MENTIR PARA BAIXO no dia em que o cache entrou:
+    os tokens cacheados saem de `input_tokens` e vao para contadores proprios,
+    entao um turno que reportava ~1.700 de entrada passou a reportar 54 -- e o
+    custo caiu junto, sem que o gasto tivesse caido tanto.
+    """
+    entrada, _ = PRECOS_POR_MODELO["claude-sonnet-5"]
+    so_escrita = custo_em_dolar("claude-sonnet-5", 0, 0, cache_write=1_000_000)
+    so_leitura = custo_em_dolar("claude-sonnet-5", 0, 0, cache_read=1_000_000)
+    assert so_escrita == (entrada * Decimal("1.25")).quantize(Decimal("0.000001"))
+    assert so_leitura == (entrada * Decimal("0.1")).quantize(Decimal("0.000001"))
+
+
+def test_turno_frio_custa_mais_que_turno_sem_cache() -> None:
+    """O agio da escrita e real, e e o que torna o ganho em producao incerto.
+
+    No eval as chamadas saem a ~6s uma da outra e o prefixo fica quente as 146
+    inteiras. Em producao os turnos sao esparsos, e um turno frio paga o
+    prefixo MAIS o agio -- com trafego baixo o cache pode custar mais do que
+    economiza. Este teste trava esse fato para ele nao virar surpresa.
+    """
+    sem_cache = custo_em_dolar("claude-sonnet-5", 1706, 358)
+    frio = custo_em_dolar("claude-sonnet-5", 54, 358, cache_write=1652)
+    quente = custo_em_dolar("claude-sonnet-5", 54, 358, cache_read=1652)
+    assert frio > sem_cache
+    assert quente < sem_cache
+
+
+def test_sem_cache_o_custo_nao_muda() -> None:
+    """Os dois defaults zero mantem toda chamada antiga correta: a moderacao e
+    o resumo nao usam cache, e nao podem ver o numero deles mudar."""
+    assert custo_em_dolar("claude-sonnet-5", 1200, 180) == custo_em_dolar(
+        "claude-sonnet-5", 1200, 180, cache_write=0, cache_read=0
+    )
