@@ -51,10 +51,28 @@ class Settings(BaseSettings):
     # grava dado com valor publicamente conhecido e nao reclama.
     anthropic_api_key: str = ""
 
+    # Trocado de `claude-opus-5` para `claude-sonnet-5` por custo, junto com o
+    # `modelo_agente`. **A troca do resumo nao foi medida, e hoje nao ha como
+    # medir**: nada em `evals/` toca `modelo_resumo`, e a unica guarda que ele
+    # tem e `test_todo_modelo_configurado_tem_preco_cadastrado`, que confere
+    # preco e nao qualidade.
+    #
+    # A diferenca com o agente e essa, e importa: o agente trocou com gate --
+    # 91,8% VERDE medido depois, contra 85,4% antes --, e o resumo trocou sem
+    # instrumento. O argumento "sonnet-5 aguentou" vale para a acuracia de
+    # intencao e para a precisao da extracao, que foram medidas, e NAO
+    # transfere para a qualidade do resumo, que nao foi.
+    #
+    # Fica registrado em vez de escondido: se a qualidade do resumo regrediu,
+    # nada neste projeto acusaria. Medir exigiria corpus e criterio proprios,
+    # que nao existem -- e a TEC-140, que seria o lugar disso, tambem nao.
     modelo_resumo: str = "claude-sonnet-5"
+
     # Separado do modelo_resumo de proposito: a acuracia de intencao e a
     # qualidade do resumo sao metricas distintas e a TEC-210 vai afinar uma
-    # sem tocar na outra.
+    # sem tocar na outra. Os dois rodam em sonnet-5 hoje, e continuam campos
+    # separados: e a possibilidade de divergir que a separacao guarda, nao o
+    # fato de divergirem agora.
     # Trocado de `claude-opus-5` para `claude-sonnet-5` por custo: $2/$10 por
     # MTok contra $5/$25, ou ~60% mais barato dos dois lados. Uma execucao do
     # gate custava US$ 3,05 medidos (146 chamadas, 282k tokens de entrada e

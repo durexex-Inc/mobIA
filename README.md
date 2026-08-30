@@ -2567,3 +2567,30 @@ O artefato vive **90 dias** e some. Ele serve para investigar uma execução
 recente, não como série histórica — para isso continua valendo o relatório
 commitado, que é o que a TEC-247 estabeleceu e o que sustenta a comparação
 entre execuções neste README.
+
+### O resumo também trocou para sonnet-5, e essa troca não foi medida
+
+`modelo_resumo` passou de `claude-opus-5` para `claude-sonnet-5` junto com o
+agente. **A diferença entre as duas trocas é o instrumento, e ela importa.**
+
+| | `modelo_agente` | `modelo_resumo` |
+| --- | --- | --- |
+| tem gate | sim | **não** |
+| medido depois da troca | 91,8% VERDE, contra 85,4% antes | **não é mensurável hoje** |
+
+Nada em `evals/` toca `modelo_resumo`. A única guarda que ele tem é
+`test_todo_modelo_configurado_tem_preco_cadastrado`, que confere **preço**, não
+qualidade — foi ela que a TEC-249 criou, e ela pega custo nulo, não regressão.
+
+O argumento *"sonnet-5 aguentou"* vale para a acurácia de intenção e para a
+precisão da extração, porque as duas foram medidas antes e depois. **Ele não
+transfere para a qualidade do resumo.** Se ela regrediu, nada neste projeto
+acusaria.
+
+Medir exigiria corpus e critério próprios, que não existem — e a TEC-140, que
+seria o lugar disso, também não. É a mesma lacuna que `aderencia ao tom` já
+declara como `SEM_MECANISMO` no relatório do gate, agora com um segundo dono.
+
+Os dois campos continuam separados de propósito, e rodarem no mesmo modelo hoje
+não muda isso: **é a possibilidade de divergir que a separação guarda, não o
+fato de divergirem agora.**
