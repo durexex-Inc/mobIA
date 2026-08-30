@@ -6,6 +6,7 @@ import pytest
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
 from mobia.evals.corpus import carregar, total_de_turnos
 from mobia.evals.metricas import (
+    DISPERSAO_MEDIDA,
     PISO_DE_PRECISAO_DA_EXTRACAO_PCT,
     PISO_DE_TURNOS,
     PISO_DE_TURNOS_NEGATIVOS,
@@ -18,6 +19,7 @@ from mobia.evals.metricas import (
     acuracia_de_intencao,
     acuracia_efetiva,
     bloqueia,
+    decomposicao_da_extracao,
     discrepancias_da_extracao,
     eh_negativo,
     erros,
@@ -391,6 +393,72 @@ def test_preco_compara_por_valor_e_nao_por_texto():
         [_observada({"faixa_preco_max": 600000}, {"faixa_preco_max": Decimal("600000.00")})]
     )
     assert (resultado.acertos, resultado.total) == (1, 1)
+
+
+def test_a_decomposicao_fecha_com_a_metrica_que_trava():
+    """O invariante que impede as duas contas de divergirem em silencio.
+
+    `decomposicao_da_extracao` refaz a varredura de `precisao_da_extracao` em
+    vez de reaproveita-la, para aplicar `_comparavel` do mesmo jeito. Duas
+    formulas do mesmo criterio divergem, e a divergencia so aparece na borda:
+    este teste e o que faz ela aparecer aqui em vez de numa execucao paga.
+    """
+    observadas = [
+        _observada({"quartos": 2, "vagas": 1}, {"quartos": 2, "regiao": "moema"}),
+        _observada({"regiao": "Zona Sul"}, {"regiao": " zona sul "}, indice=1),
+        _observada({"quartos": 2}, {"quartos": 3}, indice=2),
+        _observada({}, {"urgencia": "IMEDIATA"}, indice=3),
+    ]
+    metrica = precisao_da_extracao(observadas)
+    decomposicao = decomposicao_da_extracao(observadas)
+
+    assert decomposicao.acertos == metrica.acertos
+    # O denominador de uniao e a base fixa mais o que o modelo inventou.
+    assert decomposicao.anotados + decomposicao.extra == metrica.total
+    # E a base fixa se fecha nas tres formas de um campo anotado terminar.
+    assert (
+        decomposicao.acertos + decomposicao.faltou + decomposicao.divergiu == decomposicao.anotados
+    )
+
+
+def test_a_base_fixa_nao_se_move_quando_o_modelo_inventa():
+    """A razao de existir da decomposicao, num caso minimo.
+
+    Inventar um campo derruba a metrica de uniao (de 1/1 para 1/2) e nao toca
+    na base fixa. E isso, multiplicado por alguns campos, que faz a mesma
+    arvore sair VERDE numa execucao e AMARELO na seguinte -- ver TEC-253.
+    """
+    sem_invencao = [_observada({"quartos": 2}, {"quartos": 2})]
+    com_invencao = [_observada({"quartos": 2}, {"quartos": 2, "vagas": 3})]
+
+    assert precisao_da_extracao(sem_invencao).total == 1
+    assert precisao_da_extracao(com_invencao).total == 2
+
+    assert decomposicao_da_extracao(sem_invencao).taxa_sobre_base_fixa == 1.0
+    assert decomposicao_da_extracao(com_invencao).taxa_sobre_base_fixa == 1.0
+    assert decomposicao_da_extracao(com_invencao).extra == 1
+
+
+def test_taxa_sobre_base_fixa_e_none_sem_campo_anotado():
+    """Turno negativo puro: a razao nao existe, e inventar zero nao e 100%."""
+    decomposicao = decomposicao_da_extracao([_observada({}, {"vagas": 3})])
+    assert decomposicao.anotados == 0
+    assert decomposicao.taxa_sobre_base_fixa is None
+    assert decomposicao.extra == 1
+
+
+def test_a_dispersao_medida_e_do_par_de_execucoes_e_nao_um_palpite():
+    """`DISPERSAO_MEDIDA` e resultado de experimento, nao constante de codigo.
+
+    O teste existe para que mexer no numero exija encarar que ele veio de uma
+    medicao datada: se alguem o alterar sem medir de novo, isto reprova e
+    pergunta de onde veio o valor novo.
+    """
+    assert DISPERSAO_MEDIDA.data == "30/08/2026"
+    assert DISPERSAO_MEDIDA.uniao_pp == pytest.approx(91.8 - 86.1, abs=0.05)
+    assert DISPERSAO_MEDIDA.base_fixa_pp == pytest.approx(92.7 - 90.6, abs=0.05)
+    # A uniao dispersa mais que a base fixa: e o achado inteiro da TEC-253.
+    assert DISPERSAO_MEDIDA.uniao_pp > DISPERSAO_MEDIDA.base_fixa_pp
 
 
 def test_piso_da_extracao_e_oitenta_e_cinco():

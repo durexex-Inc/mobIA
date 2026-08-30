@@ -33,6 +33,7 @@ from mobia.evals.metricas import (
     acuracia_de_intencao,
     acuracia_efetiva,
     bloqueia,
+    decomposicao_da_extracao,
     discrepancias_da_extracao,
     eh_negativo,
     erros,
@@ -425,6 +426,12 @@ async def test_acuracia_de_intencao_no_corpus(
         # contagem, o relatorio nao diria se a invencao veio de dois turnos
         # medidos ou de todos os negativos do corpus.
         negativos=resumo_de_negativos(observadas),
+        # A mesma conta da metrica que trava, aberta em parcelas que se movem
+        # diferente -- e o aviso de quanto uma execucao resolve. A TEC-253
+        # mediu 5,7 pontos de diferenca entre duas execucoes do mesmo codigo,
+        # e sem este bloco quem compara com a execucao anterior nao tem como
+        # saber que o numero de manchete nao suporta a comparacao.
+        decomposicao=decomposicao_da_extracao(observadas),
     )
     condicoes = "\n".join(_condicoes_da_execucao(conversas, resultados, observadas, abandonadas))
     artefato = condicoes + "\n" + relatorio
