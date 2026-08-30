@@ -2213,3 +2213,85 @@ continua válido como o que foi medido; o que expira é a comparabilidade.
   execução.
 - **`av. ` e `av ` nunca foram observados.** Entraram por simetria, e a única
   forma medida é `avenida `.
+
+## Troca do `modelo_agente` para `claude-sonnet-5`, medida
+
+`modelo_agente` passou de `claude-opus-5` para `claude-sonnet-5` por custo:
+$2/$10 por MTok contra $5/$25. A troca foi **medida**, e a medição está em
+`evals/relatorios/2026-08-30-sonnet-5-corpus-8ae54e9.md`.
+
+**Execução em 30/08/2026, 14:44 UTC**, contra a régua de `8ae54e9` (a da
+TEC-248), 146 chamadas, 14min53s, **zero conversa abandonada**. As três folgas
+de piso são as mesmas da baseline: 146/120, 62/45, 70/53.
+
+| métrica | opus-5, régua `6d74cff` | sonnet-5, régua `8ae54e9` | faixa |
+| --- | --- | --- | --- |
+| acurácia crua | 142/146, 97,3% | **143/146, 97,9%** | VERDE |
+| acurácia efetiva | 141/146, 96,6% | **143/146, 97,9%** | VERDE |
+| precisão da extração | 80/101, **79,2%** | **88/103, 85,4%** | AMARELO |
+| custo da execução | US$ 3,05 | **US$ 1,15** | −62% |
+
+**O gate passa.** Nenhuma métrica em VERMELHO, e `pytest evals` sai verde pela
+primeira vez desde que a extração passou a ser medida.
+
+### O que este número NÃO diz
+
+**A execução moveu duas coisas de uma vez** — o modelo e a régua da TEC-248 —,
+então a melhora **não é atribuível ao sonnet-5**. Separar exigiria uma execução
+de opus-5 contra a régua nova, que custaria US$ 3,05 para responder uma
+pergunta que não muda decisão nenhuma.
+
+O que dá para afirmar é mais fraco e mais útil: a aritmética da TEC-248 previa
+**86,1%** para a régua nova, e o medido foi **85,4%**. A diferença cabe no
+ruído esperado entre execuções (±1,5%). Então **a régua fez o trabalho, e o
+sonnet-5 aguentou** — e não "o sonnet-5 melhorou a extração".
+
+**A margem é fina: 0,4 ponto acima do piso de 85.** Uma execução azarada pode
+cair para VERMELHO sem regressão nenhuma. Quem mexer em prompt ou corpus daqui
+para a frente tem de contar com isso.
+
+### O que a execução confirmou da TEC-248
+
+- **`regiao` sumiu da lista de discrepâncias.** Eram 7 `divergiu`, o maior
+  balde da baseline; são **zero**. A normalização nova reconcilia os sete.
+- **Invenção nos turnos negativos: 0 de 70**, contra 1 na baseline.
+- **Nenhum `divergiu` sobrou em campo nenhum.** As 15 discrepâncias restantes
+  são 7 `extra` e 8 `faltou`.
+
+### O que sobrou, e mudou de dono
+
+As discrepâncias caíram de 21 para 15, mas a composição mudou:
+
+| campo | baseline (opus-5) | agora (sonnet-5) |
+| --- | --- | --- |
+| `regiao` | 7 | **0** |
+| `tipo_imovel` | 6 | **10** (5 `extra`, 5 `faltou`) |
+| `urgencia` | 6 | **3** |
+| `forma_pagamento` | 1 | 1 |
+| `tem_imovel_para_vender` | 1 | 1 |
+
+**`tipo_imovel` é hoje o maior balde, e piorou** — de 6 para 10. Se isso é o
+sonnet-5 extraindo tipologia pior que o opus-5, ou efeito da régua, ou ruído,
+**esta execução não separa.** É o candidato natural para a próxima sondagem
+barata, pelo método da TEC-248: os endereços estão no relatório, e os valores
+crus agora também.
+
+### Calibragem da confiança
+
+4 turnos de 146 (2,7%) abaixo do limiar, **0 acertos rebaixados** e 0
+recuperados — por isso a acurácia efetiva é **idêntica** à crua pela primeira
+vez. Nas duas execuções de opus-5 o rebaixamento custava acertos e não
+recuperava nenhum (4 e 1, contra zero); com sonnet-5 ele não custa nada.
+
+Isso é dado novo para a TEC-235, e não conclusão: uma execução não é
+distribuição, e o limiar continua sem ter sido calibrado contra medição.
+
+### A troca não dispara o gate sozinha
+
+`src/mobia/app/config.py` **não** entra no filtro de `.github/workflows/evals.yml`
+— está escrito lá, de propósito, porque o arquivo carrega config alheia ao
+agente. Então trocar `modelo_agente` **não roda o gate pago**: a re-medição é
+manual, e foi feita à mão nesta card.
+
+`test_defaults_do_agente` trava `claude-sonnet-5` justamente por isso: sem o
+assert, a próxima troca passaria sem nada acusar — nem teste, nem CI.
