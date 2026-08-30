@@ -215,3 +215,27 @@ async def test_custo_ignora_tokens_de_cache_por_ora(session) -> None:
     telemetria = await session.get(MessageTelemetry, com_cache)
     assert telemetria is not None
     assert telemetria.cost_usd == custo_em_dolar("claude-sonnet-5", 1200, 180)
+
+
+def test_snapshot_datado_custa_o_mesmo_que_o_modelo_base() -> None:
+    """`claude-haiku-4-5-20251001` e o mesmo modelo que `claude-haiku-4-5`.
+
+    Sem a reducao do sufixo, `modelo_moderacao` -- que e um ID datado -- nunca
+    achava preco, e a moderacao ficaria com custo nulo no dia em que ganhasse
+    telemetria. Uma linha por data na tabela seria a alternativa, e a primeira
+    que faltasse reabriria o buraco.
+    """
+    assert custo_em_dolar("claude-haiku-4-5-20251001", 1000, 100) == custo_em_dolar(
+        "claude-haiku-4-5", 1000, 100
+    )
+
+
+def test_a_reducao_de_snapshot_nao_inventa_preco_para_modelo_desconhecido() -> None:
+    """A reducao e estreita de proposito: ela resolve a data, nao o modelo.
+
+    Um modelo que nao esta na tabela continua devolvendo None mesmo com
+    sufixo de data -- a lacuna continua aparecendo, que e o que o docstring de
+    `custo_em_dolar` promete.
+    """
+    assert custo_em_dolar("modelo-que-nao-existe-20260101", 10, 10) is None
+    assert custo_em_dolar("claude-haiku-4-5-2025", 10, 10) is None

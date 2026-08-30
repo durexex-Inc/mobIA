@@ -1,3 +1,4 @@
+import re
 import uuid
 from decimal import Decimal
 
@@ -14,13 +15,27 @@ log = structlog.get_logger(__name__)
 _MILIONESIMO_DE_DOLAR = Decimal("0.000001")
 
 
+# Um snapshot datado e o MESMO modelo pelo MESMO preco:
+# `claude-haiku-4-5-20251001` custa o que `claude-haiku-4-5` custa. Sem esta
+# reducao a tabela precisaria de uma linha por data, e a primeira que faltasse
+# viraria custo nulo -- foi exatamente o que aconteceu com `modelo_moderacao`,
+# que e um ID datado e nunca teve entrada.
+#
+# So um sufixo de OITO digitos sai, e so no fim. Isso e estreito de proposito:
+# nao e normalizacao generosa, e a unica reducao que a tabela de precos
+# garante ser verdadeira. `claude-opus-9-20260101` continua devolvendo None,
+# porque `claude-opus-9` tambem nao esta na tabela -- a lacuna continua
+# aparecendo, que e o que o docstring abaixo promete.
+_SEM_SNAPSHOT = re.compile(r"-\d{8}$")
+
+
 def custo_em_dolar(model: str, tokens_in: int, tokens_out: int) -> Decimal | None:
     """Devolve None para modelo sem preco cadastrado, nunca zero.
 
     Zero somaria silenciosamente no painel de custo e faria o gasto parecer
     menor do que foi. None aparece como lacuna e alguem conserta.
     """
-    preco = PRECOS_POR_MODELO.get(model)
+    preco = PRECOS_POR_MODELO.get(model) or PRECOS_POR_MODELO.get(_SEM_SNAPSHOT.sub("", model))
     if preco is None:
         return None
     entrada, saida = preco

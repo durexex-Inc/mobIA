@@ -2214,84 +2214,98 @@ continua válido como o que foi medido; o que expira é a comparabilidade.
 - **`av. ` e `av ` nunca foram observados.** Entraram por simetria, e a única
   forma medida é `avenida `.
 
-## Troca do `modelo_agente` para `claude-sonnet-5`, medida
+## TEC-249 — O custo da moderação nunca foi registrado
 
-`modelo_agente` passou de `claude-opus-5` para `claude-sonnet-5` por custo:
-$2/$10 por MTok contra $5/$25. A troca foi **medida**, e a medição está em
-`evals/relatorios/2026-08-30-sonnet-5-corpus-8ae54e9.md`.
+A moderação roda em **todo turno, nas duas pontas**. É o caminho mais quente do
+produto, e o gasto dele nunca apareceu em lugar nenhum.
 
-**Execução em 30/08/2026, 14:44 UTC**, contra a régua de `8ae54e9` (a da
-TEC-248), 146 chamadas, 14min53s, **zero conversa abandonada**. As três folgas
-de piso são as mesmas da baseline: 146/120, 62/45, 70/53.
+### A causa não era a que a card descrevia
 
-| métrica | opus-5, régua `6d74cff` | sonnet-5, régua `8ae54e9` | faixa |
-| --- | --- | --- | --- |
-| acurácia crua | 142/146, 97,3% | **143/146, 97,9%** | VERDE |
-| acurácia efetiva | 141/146, 96,6% | **143/146, 97,9%** | VERDE |
-| precisão da extração | 80/101, **79,2%** | **88/103, 85,4%** | AMARELO |
-| custo da execução | US$ 3,05 | **US$ 1,15** | −62% |
+A card foi escrita supondo que `custo_em_dolar` devolvia `None` para a
+moderação e que `telemetry.unknown_model` vinha sendo emitido a cada chamada,
+sem ninguém ler. **Estava errado, e a leitura do código desmentiu.**
 
-**O gate passa.** Nenhuma métrica em VERMELHO, e `pytest evals` sai verde pela
-primeira vez desde que a extração passou a ser medida.
+`ModeradorAnthropic.moderar` (`src/mobia/infra/moderacao.py`) **nunca chamou
+`custo_em_dolar`.** Ela tinha a resposta inteira em mãos — com `model` e
+`usage` — e descartava as duas, devolvendo só o `Veredito(bloqueado, motivo)`.
+Não havia log, não havia contagem de tokens, não havia custo. Não era uma
+consulta que falhava: era instrumentação que não existia.
 
-### O que este número NÃO diz
+O buraco na tabela de preços é real, mas era **latente**: ninguém consultava o
+preço da moderação, então nada acusava. Ele viraria custo nulo em produção no
+instante em que alguém instrumentasse — que é o que esta card fez.
 
-**A execução moveu duas coisas de uma vez** — o modelo e a régua da TEC-248 —,
-então a melhora **não é atribuível ao sonnet-5**. Separar exigiria uma execução
-de opus-5 contra a régua nova, que custaria US$ 3,05 para responder uma
-pergunta que não muda decisão nenhuma.
+### Os dois defeitos, e por que são irmãos
 
-O que dá para afirmar é mais fraco e mais útil: a aritmética da TEC-248 previa
-**86,1%** para a régua nova, e o medido foi **85,4%**. A diferença cabe no
-ruído esperado entre execuções (±1,5%). Então **a régua fez o trabalho, e o
-sonnet-5 aguentou** — e não "o sonnet-5 melhorou a extração".
+**1. O ID datado não achava preço.** `custo_em_dolar` fazia busca por chave
+exata:
 
-**A margem é fina: 0,4 ponto acima do piso de 85.** Uma execução azarada pode
-cair para VERMELHO sem regressão nenhuma. Quem mexer em prompt ou corpus daqui
-para a frente tem de contar com isso.
+| | valor |
+| --- | --- |
+| `settings.modelo_moderacao` | `claude-haiku-4-5-20251001` |
+| chave em `PRECOS_POR_MODELO` | `claude-haiku-4-5` |
 
-### O que a execução confirmou da TEC-248
+Um snapshot datado é o **mesmo modelo pelo mesmo preço**, então a busca passou
+a reduzir um sufixo de data antes de desistir. A redução é estreita de
+propósito: sai só `-` seguido de **oito dígitos**, e só no fim.
+`claude-opus-9-20260101` continua devolvendo `None`, porque `claude-opus-9`
+também não está na tabela — a lacuna continua aparecendo, que é o que o
+docstring de `custo_em_dolar` promete. Uma linha por data seria a alternativa,
+e a primeira que faltasse reabriria o buraco.
 
-- **`regiao` sumiu da lista de discrepâncias.** Eram 7 `divergiu`, o maior
-  balde da baseline; são **zero**. A normalização nova reconcilia os sete.
-- **Invenção nos turnos negativos: 0 de 70**, contra 1 na baseline.
-- **Nenhum `divergiu` sobrou em campo nenhum.** As 15 discrepâncias restantes
-  são 7 `extra` e 8 `faltou`.
+**2. A moderação não media nada.** `moderar` passou a registrar
+`moderacao.avaliada` com modelo, direção, tokens, latência e custo — **antes**
+de qualquer recusa, porque a chamada já foi paga e um veredito fora do
+protocolo custa igual a um veredito bom. Registrar só no caminho feliz
+esconderia justamente o gasto que não produziu nada.
 
-### O que sobrou, e mudou de dono
+O log usa `resposta.model`, e não `settings.modelo_moderacao`: o que interessa
+é o modelo que **serviu** a requisição, que pode diferir do que foi pedido.
 
-As discrepâncias caíram de 21 para 15, mas a composição mudou:
+A regra do log do classificador — só números e id de modelo — aperta aqui, e
+está travada por teste: o que a moderação vê é conteúdo do lead ou da empresa,
+e a resposta carrega o veredito sobre ele. Nem o texto julgado, nem o veredito.
 
-| campo | baseline (opus-5) | agora (sonnet-5) |
-| --- | --- | --- |
-| `regiao` | 7 | **0** |
-| `tipo_imovel` | 6 | **10** (5 `extra`, 5 `faltou`) |
-| `urgencia` | 6 | **3** |
-| `forma_pagamento` | 1 | 1 |
-| `tem_imovel_para_vender` | 1 | 1 |
+### A causa de fundo, que era comum aos dois
 
-**`tipo_imovel` é hoje o maior balde, e piorou** — de 6 para 10. Se isso é o
-sonnet-5 extraindo tipologia pior que o opus-5, ou efeito da régua, ou ruído,
-**esta execução não separa.** É o candidato natural para a próxima sondagem
-barata, pelo método da TEC-248: os endereços estão no relatório, e os valores
-crus agora também.
+**A tabela de preços não tinha nada que a amarrasse à realidade.** Dois defeitos
+distintos saíram dela em dois dias:
 
-### Calibragem da confiança
+- `claude-sonnet-5` estava com `$3/$15`, que são os preços do
+  `claude-sonnet-4-6` — corrigido na troca do `modelo_agente`.
+- `modelo_moderacao` não tinha entrada nenhuma — esta card.
 
-4 turnos de 146 (2,7%) abaixo do limiar, **0 acertos rebaixados** e 0
-recuperados — por isso a acurácia efetiva é **idêntica** à crua pela primeira
-vez. Nas duas execuções de opus-5 o rebaixamento custava acertos e não
-recuperava nenhum (4 e 1, contra zero); com sonnet-5 ele não custa nada.
+O teste que deveria ter pego o primeiro repetia `3.00`/`15.00` escritos à mão,
+duplicando a constante: pegava erro de fórmula e nunca erro de preço. Agora há
+duas guardas que fecham a classe inteira:
 
-Isso é dado novo para a TEC-235, e não conclusão: uma execução não é
-distribuição, e o limiar continua sem ter sido calibrado contra medição.
+- `test_precos_batem_com_a_tabela_publicada` trava os preços contra a tabela
+  publicada.
+- `test_todo_modelo_configurado_tem_preco_cadastrado` varre toda `modelo_*` de
+  `Settings` e exige preço para cada uma. **É o teste que teria pego este bug
+  no dia em que ele entrou**, e é o que pega o próximo modelo configurado sem
+  entrada.
 
-### A troca não dispara o gate sozinha
+### O histórico não é recuperável
 
-`src/mobia/app/config.py` **não** entra no filtro de `.github/workflows/evals.yml`
-— está escrito lá, de propósito, porque o arquivo carrega config alheia ao
-agente. Então trocar `modelo_agente` **não roda o gate pago**: a re-medição é
-manual, e foi feita à mão nesta card.
+O custo da moderação nunca foi gravado, e **os tokens também não** — `moderar`
+descartava `usage` inteiro, então não há de onde recalcular. Não existe registro
+em `message_telemetry` para as chamadas de moderação: elas nunca passaram pelo
+`MessageRecorder`.
 
-`test_defaults_do_agente` trava `claude-sonnet-5` justamente por isso: sem o
-assert, a próxima troca passaria sem nada acusar — nem teste, nem CI.
+Fica como está, por escrito: **o gasto de moderação anterior a esta card é
+desconhecido e permanece desconhecido.** A série começa aqui.
+
+### Lacunas conhecidas
+
+- **O custo da moderação vai para log, não para `message_telemetry`.** O
+  classificador e o resumo fazem o mesmo, então isto é consistente — mas
+  significa que o gasto de moderação não entra em nenhuma consulta SQL, só em
+  agregação de log. Somar custo por conversa continua não sendo possível para
+  esta ponta.
+- **Quanto a moderação custou até aqui continua desconhecido**, e não há como
+  recuperar.
+- **A redução de snapshot é sintática, não semântica.** Ela assume que
+  `-YYYYMMDD` no fim é sempre um snapshot do modelo à esquerda. É verdade para
+  a convenção de nomes de hoje; um ID futuro que termine em oito dígitos por
+  outro motivo passaria a ser reduzido por engano.
