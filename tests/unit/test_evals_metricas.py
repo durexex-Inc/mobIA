@@ -431,7 +431,9 @@ def test_faixa_de_continua_com_os_defaults_de_antes():
 def test_campo_obtido_sem_anotacao_e_extra():
     """O lado que acusa corpus: o modelo extraiu, ninguem anotou."""
     obtidas = discrepancias_da_extracao([_observada({"quartos": 2}, {"quartos": 2, "vagas": 1})])
-    assert obtidas == [Discrepancia(conversa_id="compra-01", indice=0, campo="vagas", tipo="extra")]
+    assert obtidas == [
+        Discrepancia(conversa_id="compra-01", indice=0, campo="vagas", tipo="extra", obtido=1)
+    ]
 
 
 def test_campo_anotado_que_nao_veio_e_faltou():
@@ -440,15 +442,54 @@ def test_campo_anotado_que_nao_veio_e_faltou():
         [_observada({"quartos": 2, "regiao": "sp"}, {"quartos": 2})]
     )
     assert obtidas == [
-        Discrepancia(conversa_id="compra-01", indice=0, campo="regiao", tipo="faltou")
+        Discrepancia(
+            conversa_id="compra-01", indice=0, campo="regiao", tipo="faltou", esperado="sp"
+        )
     ]
 
 
 def test_campo_nos_dois_com_valor_diferente_divergiu():
     obtidas = discrepancias_da_extracao([_observada({"quartos": 2}, {"quartos": 3})])
     assert obtidas == [
-        Discrepancia(conversa_id="compra-01", indice=0, campo="quartos", tipo="divergiu")
+        Discrepancia(
+            conversa_id="compra-01",
+            indice=0,
+            campo="quartos",
+            tipo="divergiu",
+            esperado=2,
+            obtido=3,
+        )
     ]
+
+
+def test_o_lado_ausente_de_uma_discrepancia_fica_none():
+    """`None` e "este lado nao tinha valor", e nunca um valor real: o corpus
+    recusa anotacao nula e `preenchidos()` nunca devolve `None`. Sem essa
+    garantia o relatorio teria de distinguir ausencia de nulo, e nao tem
+    como."""
+    (extra,) = discrepancias_da_extracao([_observada({}, {"vagas": 1})])
+    assert extra.esperado is None and extra.obtido == 1
+    (faltou,) = discrepancias_da_extracao([_observada({"vagas": 1}, {})])
+    assert faltou.esperado == 1 and faltou.obtido is None
+
+
+def test_divergiu_guarda_os_dois_valores_crus():
+    """Crus, e nao normalizados -- e este e o caso exato que motivou guarda-los.
+
+    `normalizar_regiao` dobra caixa e espaco, mas **nao dobra acento**, e o
+    corpus e escrito sem acento enquanto o modelo responde em portugues. A
+    baseline de 30/08/2026 (TEC-247) teve sete `divergiu` em `regiao` e
+    nenhum valor guardado, entao esta hipotese ficou sem como ser confirmada
+    sem pagar a execucao de novo. Com os valores crus a linha do relatorio
+    mostra o acento e a pergunta se responde de graca.
+
+    Guardar a forma comparada em vez da crua nao serviria: quem le a lista ja
+    sabe que `_comparavel` rodou e nao reconciliou os dois -- e o que estar
+    nesta lista significa.
+    """
+    (d,) = discrepancias_da_extracao([_observada({"regiao": "sao roque"}, {"regiao": "São Roque"})])
+    assert d.esperado == "sao roque"
+    assert d.obtido == "São Roque"
 
 
 def test_acerto_nao_gera_discrepancia():

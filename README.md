@@ -1956,6 +1956,86 @@ que a card do conserto entre. O vermelho é verdadeiro — a precisão da extra�
 está abaixo do piso que o SRS declara — e escondê-lo mexendo no piso seria
 trocar o instrumento pelo número que se queria dele.
 
+### O relatório dizia onde, e não o quê — e para `divergiu` isso não basta
+
+A execução de 30/08 expôs um buraco na própria instrumentação que ela usou.
+`Discrepancia` carregava `conversa_id`, `indice`, `campo` e `tipo`, e o
+docstring explicava por quê: para quem for anotar não precisar de outra
+execução paga só para descobrir **onde** faltava anotação.
+
+Isso resolve `faltou` e `extra`, que são perguntas de anotação — o endereço
+manda a pessoa no YAML certo e ela vê o resto. **Não resolve `divergiu`**, que
+é uma pergunta de comparação: os dois lados existem, e sem os valores não há
+como saber se o modelo errou o campo ou se as duas formas apenas não casaram.
+São causas opostas, e pedem cards opostos.
+
+Foi exatamente onde a baseline parou. Sete `divergiu` em `regiao`, os sete
+endereços registrados, e **nenhum dos catorze valores**. A hipótese mais forte
+ficou sem como ser confirmada sem pagar as 146 chamadas de novo — numa card
+que existe para que resultado pago não se perca.
+
+`Discrepancia` agora carrega `esperado` e `obtido`, e `_secao_de_extracao` os
+imprime na linha do turno:
+
+```
+  - compra-13 turno 0: regiao (divergiu) -- anotado 'sao roque', obtido 'São Roque'
+  - compra-02 turno 1: forma_pagamento (faltou) -- anotado 'FGTS'
+  - follow-up-03 turno 0: tipo_imovel (extra) -- obtido 'APARTAMENTO'
+```
+
+Três decisões, com o motivo de cada uma:
+
+- **Os valores são crus, não normalizados.** Quem lê a lista já sabe que
+  `_comparavel` rodou e **não** reconciliou os dois — é o que estar nesta lista
+  significa —, então a forma comparada não acrescentaria nada. A crua
+  acrescenta: é nela que o acento, o espaço sobrando e `600000` contra
+  `Decimal('600000.00')` ficam visíveis.
+- **`repr`, e não `str`.** Este texto é lido por quem está caçando defeito de
+  comparação, e `repr` mostra justamente o que `str` esconde.
+- **`None` é "este lado não tinha valor", sem ambiguidade.** O corpus recusa
+  anotação com valor nulo (`_turno_de`, `corpus.py`) e `preenchidos()` nunca
+  devolve `None`, então o lado ausente nunca colide com um valor real. `faltou`
+  imprime só o anotado, `extra` só o obtido.
+
+**Isso não é mudança de régua, e o número não se mexeu.**
+`precisao_da_extracao` não foi tocada: ela conta a união de esperado com obtido
+exatamente como contava, e os **79,2% (80/101) da baseline continuam valendo**
+como medidos. O que ganhou campos foi a decomposição de diagnóstico, que nunca
+entrou em `_metricas_de` nem em `bloqueia`.
+
+**E não diagnostica a execução de 30/08 retroativamente.** Aqueles valores
+nunca foram capturados, e não existem em lugar nenhum. O que esta mudança faz é
+garantir que a próxima execução paga não termine na mesma parede.
+
+#### A hipótese que a instrumentação vai testar
+
+`normalizar_regiao` (`src/mobia/domain/agente/schemas.py`) dobra caixa e espaço
+e remove prefixo de referência. **Não dobra acento.** Todo prefixo de
+`_PREFIXOS_DE_REFERENCIA` é escrito sem acento — `regiao`, `proximo`,
+`estacao` — e o corpus inteiro também: `saude`, `aclimacao`, `sao roque`. O
+modelo responde em português, e escreve `Saúde`, `Aclimação`, `São Roque`.
+
+`casefold()` não resolve isso: `casefold("São Roque")` é `"são roque"`, que não
+é `"sao roque"`. `test_divergiu_guarda_os_dois_valores_crus`
+(`tests/unit/test_evals_metricas.py`) trava o mecanismo — o par
+`sao roque` / `São Roque` **produz** um `divergiu`.
+
+Isso torna a hipótese mecanicamente real, e **não** a confirma: nada aqui prova
+que o modelo devolveu acento nos sete turnos de 30/08, porque os valores
+daquela execução não foram guardados. Confirmar exige a próxima execução, que
+agora vai registrar os valores.
+
+Se ela confirmar, os sete `divergiu` de `regiao` são **defeito de régua e não
+do modelo** — e a leitura registrada acima, de que os 16 `faltou`+`divergiu`
+acusam o modelo, vale para os `faltou` e fica em aberto para os `divergiu`. A
+conta de faixa não muda de dono: com os sete resolvidos a precisão vai a 87/101
+(86,1%), AMARELO, e o gate deixa de bloquear.
+
+Corrigir a normalização é **card própria**, pelo mesmo motivo que consertar o
+número era: é mudança de régua, invalida qualquer baseline anterior a ela, e
+tem de entrar antes da próxima execução paga — a mesma disciplina que a
+TEC-246 impôs à TEC-247.
+
 ### Lacunas conhecidas
 
 - **O relatório de uma execução em CI continua efêmero.** O runner grava em
@@ -1976,4 +2056,10 @@ trocar o instrumento pelo número que se queria dele.
   coisa nenhuma.
 - **`extra` em turno positivo continua ambíguo.** Os 4 fora dos negativos podem
   ser invenção ou anotação faltante, e a execução não distingue. Só o turno
-  negativo dá `extra` sem ambiguidade, e lá houve 1.
+  negativo dá `extra` sem ambiguidade, e lá houve 1. Os valores crus, agora
+  registrados, não desfazem essa ambiguidade — ela é da anotação, não da
+  comparação —, mas dizem **o que** o modelo extraiu, que é o suficiente para
+  quem for decidir se aquilo merecia anotação.
+- **Os valores dos `divergiu` de 30/08 não existem, e não vão existir.** A
+  instrumentação que os registraria entrou depois da execução. A causa dos sete
+  `divergiu` de `regiao` só se confirma na próxima execução paga.

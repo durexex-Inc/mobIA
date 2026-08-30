@@ -332,3 +332,71 @@ def test_ha_linha_em_branco_antes_da_lista_por_campo() -> None:
     posicao = saida.index(aviso) + len(aviso)
     resto = saida[posicao:]
     assert resto.startswith("\n\n")
+
+
+def test_divergiu_mostra_os_dois_valores_na_linha_do_turno() -> None:
+    """Endereco sozinho nao diagnostica `divergiu`. Foi por faltar esta linha
+    que os sete `divergiu` de `regiao` da baseline de 30/08/2026 (TEC-247)
+    ficaram sem causa, com a execucao paga ja gasta."""
+    saida = render(
+        [],
+        {},
+        discrepancias=[
+            Discrepancia(
+                conversa_id="compra-13",
+                indice=0,
+                campo="regiao",
+                tipo="divergiu",
+                esperado="sao roque",
+                obtido="Sao Roque",
+            )
+        ],
+    )
+    assert "compra-13 turno 0: regiao (divergiu)" in saida
+    assert "anotado 'sao roque', obtido 'Sao Roque'" in saida
+
+
+def test_faltou_mostra_so_o_lado_anotado() -> None:
+    """`obtido` e None num `faltou`, e imprimir "obtido None" faria parecer que
+    o modelo devolveu um nulo -- coisa que `preenchidos()` nunca faz."""
+    saida = render(
+        [],
+        {},
+        discrepancias=[
+            Discrepancia(
+                conversa_id="compra-02",
+                indice=1,
+                campo="forma_pagamento",
+                tipo="faltou",
+                esperado="FGTS",
+            )
+        ],
+    )
+    assert "anotado 'FGTS'" in saida
+    assert "obtido" not in saida.split("faltou)")[1]
+
+
+def test_extra_mostra_so_o_lado_obtido() -> None:
+    saida = render(
+        [],
+        {},
+        discrepancias=[
+            Discrepancia(
+                conversa_id="follow-up-03",
+                indice=0,
+                campo="tipo_imovel",
+                tipo="extra",
+                obtido="APARTAMENTO",
+            )
+        ],
+    )
+    assert "obtido 'APARTAMENTO'" in saida
+    assert "anotado" not in saida.split("extra)")[1]
+
+
+def test_discrepancia_sem_valores_nao_deixa_sobra_de_pontuacao() -> None:
+    """Os valores tem default `None`, entao uma `Discrepancia` construida sem
+    eles ainda tem de render uma linha limpa -- sem um " -- " orfao no fim."""
+    saida = render([], {}, discrepancias=[_d("regiao", "divergiu")])
+    linha = next(x for x in saida.splitlines() if "turno" in x and "regiao" in x)
+    assert linha.rstrip().endswith("(divergiu)")
