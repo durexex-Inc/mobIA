@@ -175,8 +175,36 @@ SCHEMA_DA_EXTRACAO: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+# `extracao` e anexada aqui, e nao na definicao de SCHEMA_DA_RESPOSTA la em
+# cima, porque SCHEMA_DA_EXTRACAO so existe a esta altura do modulo.
+#
+# **A ordem e deliberada, e e o assunto da TEC-244.** O modelo preenche o
+# objeto na ordem declarada: com `extracao` depois de `resposta`, ele formulava
+# o que dizer ao lead antes de ter isolado o que a fala afirma. A abertura de
+# SISTEMA_DO_AGENTE sempre anunciou "classifica, extrai, responde"; o schema
+# entregava intencao, confianca, resposta, extracao. O prompt e o schema se
+# contradiziam, e a TEC-240 escolheu a frase certa pelo argumento certo e
+# descreveu o schema errado.
+#
+# Custo de orcamento: zero. Mesmas chaves, mesmo conteudo -- so a ordem muda,
+# e `test_diferenca_entre_o_contado_e_o_enviado` continua medindo o mesmo
+# `json.dumps`. Foi por isso que a TEC-240 identificou a saida e a recusou:
+# de graca em tokens, mas muda a ordem de geracao num caminho pago, para todo
+# turno de producao, numa card que nao podia medir nada.
+_ORDEM_DOS_CAMPOS = ("intencao", "confianca", "extracao", "resposta")
+
 SCHEMA_DA_RESPOSTA["properties"]["extracao"] = SCHEMA_DA_EXTRACAO
-SCHEMA_DA_RESPOSTA["required"].append("extracao")
+if set(SCHEMA_DA_RESPOSTA["properties"]) != set(_ORDEM_DOS_CAMPOS):
+    # Guarda de import, nao assert: `python -O` removeria o assert e a
+    # reordenacao abaixo descartaria em silencio o campo novo.
+    raise RuntimeError(
+        "SCHEMA_DA_RESPOSTA mudou de campos e _ORDEM_DOS_CAMPOS nao acompanhou: "
+        f"{sorted(SCHEMA_DA_RESPOSTA['properties'])} != {sorted(_ORDEM_DOS_CAMPOS)}"
+    )
+SCHEMA_DA_RESPOSTA["properties"] = {
+    campo: SCHEMA_DA_RESPOSTA["properties"][campo] for campo in _ORDEM_DOS_CAMPOS
+}
+SCHEMA_DA_RESPOSTA["required"] = list(_ORDEM_DOS_CAMPOS)
 
 
 def _numero(bruto: Any) -> Decimal | None:
