@@ -5,12 +5,16 @@ existe para pegar e a mudanca de prompt alterando o que o modelo devolve, e um
 replay passaria verde com o prompt destruido.
 """
 
+import os
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from mobia.app.config import get_settings
 from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE, ClassificadorAnthropic
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.repositorio import campos_a_gravar
@@ -38,7 +42,7 @@ from mobia.evals.metricas import (
     resumo_de_negativos,
     sem_mecanismo,
 )
-from mobia.evals.relatorio import render
+from mobia.evals.relatorio import DIRETORIO_DE_RELATORIOS, preservar, render
 
 # Marcadores por campo para o proxy de repergunta. Sao regex (nao substring
 # crua) casadas com fronteira de palavra nas duas pontas, e cada uma e pista,
@@ -293,6 +297,72 @@ def _metricas_de(
     ]
 
 
+def _condicoes_da_execucao(
+    conversas: Sequence[ConversaAnotada],
+    resultados: Sequence[Classificacao],
+    observadas: Sequence[ExtracaoObservada],
+    abandonadas: Sequence[FalhaDeInfraestrutura],
+) -> list[str]:
+    """O que faz esta execucao valer como medida, ao lado do numero que ela mede.
+
+    Existe porque uma execucao que rocou um piso vale menos que uma folgada, e
+    o relatorio sozinho nao diz qual das duas foi: `_secao_de_infraestrutura`
+    so aparece quando houve falha -- zero abandono nao imprime nada --, e os
+    tres pisos nao aparecem em lugar nenhum quando a execucao passa por eles.
+    Sem estas linhas, um baseline lido daqui a tres cards nao teria como saber
+    se a amostra que o produziu era confortavel ou estava na borda.
+
+    Fica no runner, e nao em `render`: sao condicoes da **execucao** (que
+    modelo, que dia, quanto sobrou depois do abandono), e nao do conteudo
+    medido. `render` e puro e nao sabe nenhuma delas.
+
+    A data e UTC e explicita no texto. Baseline sem data e baseline sem prazo
+    de validade, e foi assim que o numero de 28/08/2026 se perdeu.
+    """
+    positivas, negativas = _positivas_e_negativas(observadas)
+
+    def folga(medido: int, piso: int) -> str:
+        return f"{medido}/{piso}, folga de {medido - piso}"
+
+    return [
+        "# Condicoes de validade da execucao",
+        "",
+        f"- data: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"- modelo: {get_settings().modelo_agente}",
+        f"- corpus no disco: {len(conversas)} conversas, "
+        f"{sum(len(conversa.turnos) for conversa in conversas)} turnos",
+        f"- conversas abandonadas por infraestrutura: {len(abandonadas)}, "
+        f"teto {TETO_DE_CONVERSAS_ABANDONADAS}",
+        f"- turnos medidos: {folga(len(resultados), PISO_DE_TURNOS)}",
+        f"- turnos anotados positivos: {folga(positivas, PISO_DE_TURNOS_ANOTADOS)}",
+        f"- turnos anotados negativos: {folga(negativas, PISO_DE_TURNOS_NEGATIVOS)}",
+        "",
+        "Folga negativa em qualquer linha acima invalida a execucao: o numero",
+        "medido nao tem amostra que o sustente, e re-rodar e mais barato que",
+        "acreditar nele.",
+        "",
+    ]
+
+
+def _destino_do_relatorio() -> Path:
+    """Onde o artefato desta execucao e gravado.
+
+    `RELATORIO_DE_EVAL` existe para o disparo manual poder nomear o arquivo
+    (o commit do corpus nao cabe numa data), e o default dateado existe para
+    que esquecer de definir a variavel nao volte a produzir uma execucao paga
+    sem artefato -- que e exatamente o que a TEC-247 esta consertando.
+    """
+    escolhido = os.environ.get("RELATORIO_DE_EVAL")
+    if escolhido:
+        return Path(escolhido)
+    # Ancorado no arquivo, e nao no cwd: `DIRETORIO_DE_RELATORIOS` e relativo
+    # ao repositorio, e um `pytest evals` disparado de outro diretorio
+    # gravaria o artefato de uma execucao paga fora da arvore -- onde ninguem
+    # o commitaria. Mesmo motivo do `Path(__file__)` em `evals/conftest.py`.
+    raiz = Path(__file__).resolve().parent.parent
+    return raiz / DIRETORIO_DE_RELATORIOS / f"{datetime.now(UTC).strftime('%Y-%m-%d')}.md"
+
+
 async def test_acuracia_de_intencao_no_corpus(
     conversas: list[ConversaAnotada], capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -356,8 +426,27 @@ async def test_acuracia_de_intencao_no_corpus(
         # medidos ou de todos os negativos do corpus.
         negativos=resumo_de_negativos(observadas),
     )
+    condicoes = "\n".join(_condicoes_da_execucao(conversas, resultados, observadas, abandonadas))
+    artefato = condicoes + "\n" + relatorio
+
+    # Grava ANTES das asercoes, e nao depois: o `assert` que reprova a
+    # execucao aborta o teste, e um artefato escrito depois dele nao
+    # existiria justamente na execucao vermelha -- a que mais precisa ser
+    # lida turno a turno. Pelo mesmo motivo o disco nao pode derrubar a
+    # medicao: se a gravacao falhar, o relatorio ainda sai no terminal e a
+    # execucao segue reprovando (ou passando) pelo que mediu, com o motivo
+    # da falha impresso ao lado.
+    destino = _destino_do_relatorio()
+    try:
+        preservar(artefato, destino)
+    except OSError as exc:
+        aviso = f"[!] o relatorio NAO foi gravado em {destino}: {type(exc).__name__}: {exc}"
+    else:
+        aviso = f"[OK] relatorio preservado em {destino}"
+
     with capsys.disabled():
-        print("\n" + relatorio)
+        print("\n" + artefato)
+        print(aviso)
 
     assert len(abandonadas) <= TETO_DE_CONVERSAS_ABANDONADAS, (
         f"{len(abandonadas)} conversas perdidas para infraestrutura, teto "
