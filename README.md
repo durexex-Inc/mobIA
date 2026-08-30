@@ -2012,29 +2012,52 @@ garantir que a próxima execução paga não termine na mesma parede.
 `normalizar_regiao` (`src/mobia/domain/agente/schemas.py`) dobra caixa e espaço
 e remove prefixo de referência. **Não dobra acento.** Todo prefixo de
 `_PREFIXOS_DE_REFERENCIA` é escrito sem acento — `regiao`, `proximo`,
-`estacao` — e o corpus inteiro também: `saude`, `aclimacao`, `sao roque`. O
-modelo responde em português, e escreve `Saúde`, `Aclimação`, `São Roque`.
-
-`casefold()` não resolve isso: `casefold("São Roque")` é `"são roque"`, que não
-é `"sao roque"`. `test_divergiu_guarda_os_dois_valores_crus`
+`estacao` — e as **23 anotações de `regiao` do corpus também**: nenhuma tem
+acento, num domínio paulistano onde `Saúde`, `Aclimação`, `Tatuapé` e `Butantã`
+levam. `casefold()` não reconcilia isso: `casefold("São Roque")` é
+`"são roque"`, que não é `"sao roque"`.
+`test_divergiu_guarda_os_dois_valores_crus`
 (`tests/unit/test_evals_metricas.py`) trava o mecanismo — o par
 `sao roque` / `São Roque` **produz** um `divergiu`.
 
-Isso torna a hipótese mecanicamente real, e **não** a confirma: nada aqui prova
-que o modelo devolveu acento nos sete turnos de 30/08, porque os valores
-daquela execução não foram guardados. Confirmar exige a próxima execução, que
-agora vai registrar os valores.
+**Mas o próprio corpus tem a evidência contrária, e ela é forte.** Das 23
+anotações, 16 casaram e 7 divergiram, sem nenhum `faltou` nem `extra` — o
+modelo devolveu `regiao` nos 23 turnos. Entre as que **casaram** estão
+`butanta` (`borda-injecao-01[1]`) e `tatuape` (`compra-09[0]`), e as duas
+levam acento em português corrente. Se o modelo restaurasse acento de forma
+uniforme, essas duas teriam divergido também. Não divergiram. **Acento sozinho
+não explica os sete.**
 
-Se ela confirmar, os sete `divergiu` de `regiao` são **defeito de régua e não
-do modelo** — e a leitura registrada acima, de que os 16 `faltou`+`divergiu`
-acusam o modelo, vale para os `faltou` e fica em aberto para os `divergiu`. A
-conta de faixa não muda de dono: com os sete resolvidos a precisão vai a 87/101
-(86,1%), AMARELO, e o gate deixa de bloquear.
+E dois dos sete não são acento de jeito nenhum: `sp` (`compra-12[0]` e
+`investimento-07[0]`) contra qualquer expansão que o modelo tenha devolvido é
+abreviação, não grafia — e `"sao paulo"` continua diferente de `"sp"` depois de
+qualquer dobra de acento. Esses dois são pergunta de **anotação**, não de
+normalização: se o modelo devolveu "São Paulo" para *"estou de mudança pra
+sp"*, quem está errado é a anotação, não ele.
 
-Corrigir a normalização é **card própria**, pelo mesmo motivo que consertar o
-número era: é mudança de régua, invalida qualquer baseline anterior a ela, e
-tem de entrar antes da próxima execução paga — a mesma disciplina que a
-TEC-246 impôs à TEC-247.
+**Conclusão honesta: a causa dos sete é desconhecida.** O que está descartado é
+"acento explica tudo"; o que sobra são pelo menos três mecanismos distintos
+(grafia, prefixo não coberto, abreviação) e nenhum medido. Os valores daquela
+execução não foram guardados, então isto não se resolve relendo nada — se
+resolve chamando o modelo naqueles turnos e olhando o que ele devolve.
+
+A conta de faixa não depende da causa: com os sete resolvidos, seja lá como, a
+precisão vai a 87/101 (86,1%), AMARELO, e o gate deixa de bloquear. Se forem
+defeito de régua, a leitura registrada acima — de que os 16 `faltou`+`divergiu`
+acusam o modelo — vale para os `faltou` e fica em aberto para os `divergiu`.
+
+Descobrir a causa e corrigir é **card própria**, pelo mesmo motivo que
+consertar o número era: mexer em `normalizar_regiao` ou nas anotações é
+mudança de régua, invalida qualquer baseline anterior a ela, e tem de entrar
+antes da próxima execução paga — a mesma disciplina que a TEC-246 impôs à
+TEC-247.
+
+O diagnóstico, porém, **não** custa uma execução paga inteira. São 7 turnos
+nomeados: `aluguel-06[1]`, `aluguel-10[0]`, `borda-longa-01[0]`,
+`compra-08[1]`, `compra-12[0]`, `compra-13[0]`, `investimento-07[0]`. Chamar o
+modelo só neles são **7 chamadas, 5% de uma execução**, e respondem
+definitivamente o que 146 chamadas responderiam. É a forma barata de sair
+daqui, e ela existe porque os endereços foram registrados.
 
 ### Lacunas conhecidas
 
