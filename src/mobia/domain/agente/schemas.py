@@ -256,6 +256,14 @@ class RespostaDoAgente:
     latency_ms: int
     extracao: Extracao
 
+    # Zero, e nao `None`, porque "nao cacheou" e uma quantidade e nao uma
+    # ausencia: o modelo respondeu, o prefixo foi enviado, e o que o cache
+    # poupou foi nada. `None` em `message_telemetry` significa outra coisa --
+    # "esta linha e anterior a TEC-231 e ninguem media" --, e as duas leituras
+    # nao podem colidir na mesma coluna.
+    cache_write: int = 0
+    cache_read: int = 0
+
 
 @dataclass(frozen=True)
 class PerguntaDeDesambiguacao:
@@ -274,3 +282,11 @@ class PerguntaDeDesambiguacao:
     tokens_in: int
     tokens_out: int
     latency_ms: int
+
+    # Zero, e nao `None`, porque "nao cacheou" e uma quantidade e nao uma
+    # ausencia: o modelo respondeu, o prefixo foi enviado, e o que o cache
+    # poupou foi nada. `None` em `message_telemetry` significa outra coisa --
+    # "esta linha e anterior a TEC-231 e ninguem media" --, e as duas leituras
+    # nao podem colidir na mesma coluna.
+    cache_write: int = 0
+    cache_read: int = 0

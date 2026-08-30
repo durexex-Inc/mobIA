@@ -298,6 +298,14 @@ async def executar_turno(
         subagent=subagente,
         tokens_in=telemetria.tokens_in,
         tokens_out=telemetria.tokens_out,
+        # As duas colunas existem em `message_telemetry` desde a TEC-126 e
+        # ficaram SEMPRE NULL: `record_agent_message` as aceitava como
+        # parametro e nenhum chamador passava valor. A TEC-251 ligou o cache e
+        # pos os contadores no LOG, o que nao alcanca consulta nenhuma -- o
+        # painel de custo da TEC-191 continuaria sem custo de cache. Este e o
+        # criterio da TEC-231 que faltava.
+        cache_write_tokens=telemetria.cache_write,
+        cache_read_tokens=telemetria.cache_read,
         latency_ms=telemetria.latency_ms,
         sender_external_id=message.recipient_external_id,
         recipient_external_id=message.conversation_key,

@@ -204,15 +204,39 @@ async def test_tokens_de_cache_sao_opcionais(session) -> None:
     assert telemetria.cache_write_tokens is None
 
 
-async def test_custo_ignora_tokens_de_cache_por_ora(session) -> None:
-    """Precificacao ciente de cache fica para a historia que liga o agente.
+async def test_custo_gravado_conta_os_tokens_de_cache(session) -> None:
+    """A promessa da TEC-220, aberta desde a TEC-126, agora cobrada.
 
-    Sem agente nao ha forma de uso real para tarifar, e inventar taxa agora
-    seria chute materializado no historico de custo.
+    Este teste travava o oposto -- `test_custo_ignora_tokens_de_cache_por_ora`
+    -- e a justificativa era honesta enquanto valeu: *"sem agente nao ha forma
+    de uso real para tarifar, e inventar taxa agora seria chute materializado
+    no historico de custo"*. O agente existe, o cache esta ligado desde a
+    TEC-251, e a taxa deixou de ser chute: escrita a 1,25x e leitura a 0,1x
+    sobre o preco de entrada.
+
+    Ignorar os dois agora nao seria mais prudencia, seria erro: os tokens
+    cacheados SAEM de `input_tokens`, entao o custo cairia sem o gasto ter
+    caido -- e `cost_usd` e o que o painel da TEC-191 vai somar.
     """
     _, com_cache = await gravar(cache_read_tokens=50_000, cache_write_tokens=50_000)
 
     telemetria = await session.get(MessageTelemetry, com_cache)
+    assert telemetria is not None
+    assert telemetria.cost_usd == custo_em_dolar(
+        "claude-sonnet-5", 1200, 180, cache_write=50_000, cache_read=50_000
+    )
+    assert telemetria.cost_usd > custo_em_dolar("claude-sonnet-5", 1200, 180)
+
+
+async def test_cache_nulo_grava_o_mesmo_custo_de_antes(session) -> None:
+    """`None` nas duas colunas e "esta chamada nao mediu cache".
+
+    E o caso de toda gravacao anterior a TEC-231, e tambem o da moderacao e do
+    resumo, que nao usam cache. Nenhuma delas pode ver o custo mudar.
+    """
+    _, sem_cache = await gravar()
+
+    telemetria = await session.get(MessageTelemetry, sem_cache)
     assert telemetria is not None
     assert telemetria.cost_usd == custo_em_dolar("claude-sonnet-5", 1200, 180)
 
@@ -277,3 +301,21 @@ def test_sem_cache_o_custo_nao_muda() -> None:
     assert custo_em_dolar("claude-sonnet-5", 1200, 180) == custo_em_dolar(
         "claude-sonnet-5", 1200, 180, cache_write=0, cache_read=0
     )
+
+
+async def test_as_colunas_de_cache_chegam_ao_banco(session) -> None:
+    """As duas colunas existem desde a TEC-126 e ficaram SEMPRE NULL.
+
+    `record_agent_message` as aceitava como parametro e nenhum chamador
+    passava valor -- era criterio de aceite da TEC-231 e ficou de fora quando
+    a TEC-251 ligou o cache. Aquela card pos os contadores no LOG, o que nao
+    alcanca consulta nenhuma: o painel de custo da TEC-191 continuaria sem
+    custo de cache, que e o mesmo padrao da TEC-249 (gasto que existe e nao
+    chega a lugar consultavel).
+    """
+    _, message_id = await gravar(cache_read_tokens=1716, cache_write_tokens=0)
+
+    telemetria = await session.get(MessageTelemetry, message_id)
+    assert telemetria is not None
+    assert telemetria.cache_read_tokens == 1716
+    assert telemetria.cache_write_tokens == 0
