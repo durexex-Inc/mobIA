@@ -56,7 +56,27 @@ class Settings(BaseSettings):
     # Separado do modelo_resumo de proposito: a acuracia de intencao e a
     # qualidade do resumo sao metricas distintas e a TEC-210 vai afinar uma
     # sem tocar na outra.
-    modelo_agente: str = "claude-opus-5"
+    # Trocado de `claude-opus-5` para `claude-sonnet-5` por custo: $2/$10 por
+    # MTok contra $5/$25, ou ~60% mais barato dos dois lados. Uma execucao do
+    # gate custava US$ 3,05 medidos (146 chamadas, 282k tokens de entrada e
+    # 66k de saida), e passa a custar da ordem de US$ 1,20.
+    #
+    # **A troca nao foi medida quando entrou, e o risco esta assimetrico entre
+    # as duas metricas do gate.** A baseline de 30/08/2026 (TEC-247, medida em
+    # opus-5) tinha acuracia de intencao com folga larga -- 97,3% crua e 96,6%
+    # efetiva, contra alvo 90 e piso 84 --, mas `precisao_da_extracao` em
+    # 79,2%, ja **abaixo** do piso de 85. Nao ha margem daquele lado para
+    # gastar com modelo mais barato, e as duas metricas saem da MESMA chamada:
+    # nao da para tierizar uma sem a outra sem dobrar o custo por turno.
+    #
+    # Quem re-medir tem de olhar `precisao_da_extracao` primeiro, e nao a
+    # acuracia: e ela que decide se esta troca se paga ou se custa o gate.
+    #
+    # Este arquivo NAO entra no filtro de `.github/workflows/evals.yml` (esta
+    # escrito la, e de proposito -- ele carrega config alheia ao agente).
+    # Entao trocar esta linha **nao dispara o gate pago**: a re-medicao e
+    # manual, por `workflow_dispatch` ou `pytest evals`.
+    modelo_agente: str = "claude-sonnet-5"
 
     # Separado do `modelo_agente` de proposito, e por dois motivos. Moderar e
     # classificacao binaria sobre texto curto: nao precisa do modelo que
@@ -270,7 +290,12 @@ MODELO_SEM_CHAMADA = "sem-chamada"
 
 PRECOS_POR_MODELO: dict[str, tuple[Decimal, Decimal]] = {
     "claude-opus-5": (Decimal("5.00"), Decimal("25.00")),
-    "claude-sonnet-5": (Decimal("3.00"), Decimal("15.00")),
+    # $2/$10, e nao $3/$15 -- aqueles sao os precos do `claude-sonnet-4-6`, e
+    # estavam nesta linha sob o nome do sonnet-5. Corrigido quando o
+    # `modelo_agente` passou a ser sonnet-5: com a tabela errada, a telemetria
+    # de custo de TODO turno sairia 50% acima do real, e o painel que deveria
+    # confirmar a economia da troca e justamente o que estaria mentindo.
+    "claude-sonnet-5": (Decimal("2.00"), Decimal("10.00")),
     "claude-haiku-4-5": (Decimal("1.00"), Decimal("5.00")),
     MODELO_SEM_CHAMADA: (Decimal("0"), Decimal("0")),
 }
