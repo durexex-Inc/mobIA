@@ -15,15 +15,21 @@ import pytest
 
 from mobia.app.config import get_settings
 
-# Medido com `messages.count_tokens` em 30/08/2026 (TEC-251): 457 do
-# `SISTEMA_DO_AGENTE` mais ~1.195 do schema de `output_config`. Confirmado
-# contra a API, que devolveu `cache_creation_input_tokens=1652` na primeira
-# chamada e `cache_read_input_tokens=1652` na segunda.
+# Medido com `messages.count_tokens`. Nao e estimativa por `len(texto)//4`:
+# essa conta erra o suficiente para cruzar um limiar de 1.024 sem avisar, que
+# e exatamente o erro que este modulo existe para impedir.
 #
-# Nao e estimativa por `len(texto)//4`: essa conta erra o suficiente para
-# cruzar um limiar de 1.024 sem avisar, que e exatamente o erro que este
-# modulo existe para impedir.
-PREFIXO_CACHEAVEL_EM_TOKENS = 1652
+# 30/08/2026 (TEC-251): 1.652 -- 457 do `SISTEMA_DO_AGENTE` mais ~1.195 do
+# schema. Confirmado contra a API, que devolveu `cache_creation=1652` na
+# primeira chamada e `cache_read=1652` na segunda.
+#
+# 30/08/2026 (TEC-250): **1.716**. As tres regras novas do prompt somaram 64
+# tokens. A TEC-251 registrou como lacuna conhecida que este numero e copiado
+# e nao calculado -- que mudar o prompt o invalida e nada recalcula sozinho --
+# e a card seguinte ja o invalidou. Ele continua copiado de proposito: o
+# alternativo e uma chamada paga a `count_tokens` dentro da suite, que nao
+# toca a rede. Quem mexer no prompt ou no schema re-mede e atualiza aqui.
+PREFIXO_CACHEAVEL_EM_TOKENS = 1716
 
 # Minimos publicados por modelo. NAO sao monotonicos entre geracoes -- o
 # sonnet-5 exige o dobro do opus-5, e o haiku-4-5 exige oito vezes.

@@ -2394,3 +2394,99 @@ amarra o tamanho do prefixo ao modelo configurado, e é o sinal que faltava.
   prefixo dela é só o system prompt próprio — abaixo do mínimo. Os contadores
   são registrados no log dela de propósito: é o que transforma "não cacheia" de
   suposição em dado.
+
+## TEC-250 — O prompt passou a dizer o que a régua sempre cobrou
+
+A execução de 30/08 deixou 15 discrepâncias de extração, e 13 delas eram
+`tipo_imovel` e `urgencia`. **O diagnóstico custou zero**: a instrumentação da
+TEC-248 põe os valores crus na linha do relatório, e com eles mais as falas do
+corpus as 13 se explicaram sem uma única chamada paga.
+
+Nenhuma era o modelo errando.
+
+### Causa A — a convenção por-turno era ambígua sobre RE-AFIRMAÇÃO
+
+O prompt dizia *"preencha so o que a fala DESTE turno afirma"* e, no mesmo
+texto, oferecia o estado acumulado como memória. Quando um turno posterior
+**re-afirma** algo que já está no estado, as duas instruções apontavam para
+lados opostos — e o modelo resolvia isso de forma inconsistente: 6 vezes não
+reemitia onde o corpus esperava que sim, 1 vez reemitia onde esperava que não.
+
+`follow-up-08` tinha os dois defeitos na mesma conversa: `urgencia` disparava
+um turno cedo (*"bora marcar"*, sem marco temporal) e faltava no turno que tem
+o marco (*"essa sexta a tarde"*).
+
+### Causa B — regras de anotação que viviam só no corpus
+
+O docstring de `TurnoAnotado` carrega as regras que a régua aplica, e **o
+modelo nunca as via**. Ele era cobrado por um contrato que não recebeu:
+
+- o imóvel que o lead **tem** não é o que ele procura (TEC-239);
+- `urgencia` exige **marco temporal explícito**; entusiasmo não é marco.
+
+### O que entrou, e o que custou
+
+Três frases em `SISTEMA_DO_AGENTE`, cada uma travada por teste — `mesmo que ja
+esteja no estado`, `O imovel que o lead ja tem nao e o que ele procura`,
+`Urgencia so com marco temporal explicito`.
+
+**A reserva subiu de 800 para 850**, e a alternativa foi procurada primeiro. Não
+havia corte de ~92 caracteres que não tocasse algo medido: a enumeração das
+tarefas (TEC-240), os parênteses que separam COMPRA de INVESTIMENTO, a guarda de
+alucinação, a definição da confiança. Preço registrado: **50 tokens a menos de
+literais por turno, 0,4% do contexto** — contra os 400 tokens (3,3%) que a
+subida anterior custou.
+
+830 não serviu, e o meio token importou: 830 × 0,75 = 622,5 contra subcontagem
+de 622,8. Empatar com o teto derrotaria o fator 0,75, que existe para haver
+folga.
+
+### O resultado
+
+| execução | precisão da extração | faixa |
+| --- | --- | --- |
+| 30/08, sonnet-5 | 88/103, 85,4% | AMARELO |
+| 30/08, mesma régua (CI) | 87/104, 83,7% | **VERMELHO** |
+| 30/08, com a TEC-250 | **89/97, 91,8%** | **VERDE** |
+
+**Acima do alvo de 90%, não só do piso.** Primeira vez. A folga sobre o piso
+passou de 0,4 para **6,8 pontos**.
+
+**Desta vez a atribuição é segura**, e das anteriores não era: o efeito é de
+**8,1 pontos** contra um ruído observado de **1,7** entre duas execuções do
+mesmo sistema. Efeito cinco vezes maior que a dispersão medida não se explica
+por sorte.
+
+As discrepâncias caíram de 17 para **8**, e `urgencia` foi a **zero**.
+
+### O que se resolveu, e o que não
+
+**Causa B: 5 de 6.** As regras que faltavam no prompt funcionaram quase por
+completo. Sobrou `aluguel-07[0]` — *"procuro republica ou kitnet"* —, onde o
+corpus omite de propósito porque o lead oferece duas opções e não escolhe, e o
+modelo continua escolhendo `APARTAMENTO` a partir de `kitnet`.
+
+**Causa A: 3 de 7.** A regra de re-afirmação funcionou **parcialmente**, e o
+padrão do que sobrou é nítido: os quatro casos restantes são todos de lead
+**repetindo o MESMO termo** — `cobertura` duas vezes em `compra-06`, `sobrado`
+de novo em `compra-11`, `comercial` de novo em `aluguel-08`. O caso que se
+resolveu (`aluguel-05[1]`, *"pode ser flat tambem"*) é o único em que o lead
+introduz um **sinônimo novo**.
+
+A hipótese para a próxima card: o modelo trata repetir a mesma palavra como
+"já disse isso" e trata um sinônimo novo como afirmação nova. A regra escrita
+não distingue os dois casos. **Não está medido** — é leitura de quatro turnos,
+não experimento.
+
+### Lacunas conhecidas
+
+- **Quatro discrepâncias de `tipo_imovel` continuam**, todas de repetição do
+  mesmo termo. A hipótese acima não foi testada.
+- **`aluguel-07[0]` é decisão de anotação em aberto.** O corpus omite porque o
+  lead oferece duas tipologias; o modelo escolhe uma. Qual dos dois está certo
+  é questão de régua, não de prompt.
+- **`compra-09[1]` (`forma_pagamento: A_VISTA`) é discrepância nova**, que não
+  aparecia nas execuções anteriores. Não foi diagnosticada.
+- **Duas execuções não são distribuição.** O ruído de 1,7 ponto vem de dois
+  pontos sobre o mesmo sistema, e é a única dispersão medida que este projeto
+  tem.

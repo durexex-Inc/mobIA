@@ -673,3 +673,62 @@ async def test_extracao_nao_vaza_no_log(
     # apareceria como "sentinela-regiao", nao mais na caixa injetada acima.
     # Comparar em caixa original deixaria este teste verde sem testar nada.
     assert "sentinela-regiao" not in caplog.text.casefold()
+
+
+# --- TEC-250: as tres regras que o corpus aplicava e o prompt nao dizia ----
+
+
+def test_o_prompt_manda_extrair_mesmo_o_que_ja_esta_no_estado() -> None:
+    """A ambiguidade que produziu 7 das 15 discrepancias de 30/08.
+
+    O prompt oferecia o estado acumulado como memoria e proibia reemiti-lo na
+    extracao. Quando um turno posterior RE-AFIRMA algo que ja esta no estado
+    -- "pode ser flat tambem", "o sobrado tem escritura" --, as duas
+    instrucoes apontam para lados opostos, e o modelo resolvia isso de forma
+    inconsistente: 6 vezes nao reemitiu onde o corpus esperava que sim, 1 vez
+    reemitiu onde esperava que nao.
+
+    O corpus sempre foi inequivoco -- anota o que ESTE turno afirma, esteja no
+    estado ou nao. Faltava o prompt dizer o mesmo.
+    """
+    assert "mesmo que ja esteja no estado" in SISTEMA_DO_AGENTE
+
+
+def test_o_prompt_diz_que_o_imovel_que_o_lead_TEM_nao_e_o_que_procura() -> None:
+    """Regra da TEC-239 que vivia so no docstring de `TurnoAnotado`.
+
+    `follow-up-03[0]` e `follow-up-06[0]` -- "comprei um apartamento com voces
+    e agora preciso vender" -- extraiam `tipo_imovel: APARTAMENTO`, e o corpus
+    anota so `tem_imovel_para_vender`. O modelo nao tinha como acertar: era
+    medido contra uma regra que nunca recebeu.
+    """
+    assert "O imovel que o lead ja tem nao e o que ele procura" in SISTEMA_DO_AGENTE
+
+
+def test_o_prompt_exige_marco_temporal_para_urgencia() -> None:
+    """A outra regra da TEC-239 que so o corpus conhecia.
+
+    `follow-up-07[2]` ("quero fechar logo") e `follow-up-08[0]` ("bora marcar")
+    extraiam `urgencia: IMEDIATA`; a barra do corpus e marco temporal
+    explicito, e entusiasmo nao e marco. Em `follow-up-08` isso produzia um
+    off-by-one visivel: `urgencia` disparava no turno 0, sem marco, e faltava
+    no turno 1, que tem "essa sexta a tarde".
+    """
+    assert "Urgencia so com marco temporal explicito" in SISTEMA_DO_AGENTE
+
+
+def test_as_regras_de_anotacao_do_corpus_estao_no_prompt() -> None:
+    """A invariante que as tres acima instanciam.
+
+    O docstring de `TurnoAnotado` (`mobia.evals.corpus`) e a regua; o prompt e
+    o que o modelo le. Toda regra que a regua aplica e o prompt nao diz e uma
+    discrepancia garantida -- o modelo e cobrado por um contrato que nao
+    recebeu, e nenhuma execucao paga consegue distinguir isso de erro do
+    modelo.
+    """
+    for regra in (
+        "mesmo que ja esteja no estado",
+        "O imovel que o lead ja tem",
+        "marco temporal explicito",
+    ):
+        assert regra in SISTEMA_DO_AGENTE, f"regra ausente do prompt: {regra!r}"
