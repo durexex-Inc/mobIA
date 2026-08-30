@@ -102,11 +102,13 @@
       campos:
         tipo_imovel: TERRENO
         regiao: cotia
-    # Fora da medicao: pergunta de escritura que pressupoe o terreno do turno
-    # anterior, sem nomear nada de novo neste turno -- balde C do spec da
-    # TEC-245.
+    # Negativo: pergunta de processo que nao nomeia campo nenhum. Ela
+    # pressupoe o terreno do turno 1, e pressuposicao deixou de ser motivo de
+    # exclusao (TEC-246) -- repetir `tipo_imovel` do turno anterior aqui conta
+    # `extra` de proposito.
     - lead: "tem escritura definitiva ou ainda ta em inventario?"
       intencao: COMPRA
+      campos: {}
 
 - id: borda-mista-02
   descricao: mensagem fora de escopo seguida de pedido real de aluguel

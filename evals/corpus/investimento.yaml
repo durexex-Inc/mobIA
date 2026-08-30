@@ -70,9 +70,10 @@
         tipo_imovel: APARTAMENTO
         quartos: 2
         regiao: zona oeste
-    # Fora da medicao: "faz diferenca no financiamento?" pressupoe o meio em
-    # vez de perguntar se pode usa-lo -- fora da forma de fala que a TEC-239
-    # nomeou. Balde C do spec da TEC-245.
+    # Fora da medicao: "faz diferenca no financiamento?" pressupoe o meio, e
+    # se pressupor um meio equivale a pretende-lo e questao que a regra da
+    # TEC-239 nao decide -- incerteza declarada, e nao presuncao de campo
+    # (TEC-246).
     - lead: "na real, e pra alugar depois no airbnb, nao pra morar. faz diferenca no financiamento?"
       intencao: INVESTIMENTO
     - lead: "voces tem algum parceiro que administra a locacao por temporada?"

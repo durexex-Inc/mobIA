@@ -79,33 +79,28 @@ class TurnoAnotado:
       apartamento. O unico turno que a usa (`aluguel-07`, primeiro turno) diz
       "republica ou kitnet" -- o lead oferece duas e nao escolhe --, entao ele
       fica sem `tipo_imovel`, de proposito.
-    - **O que decide entre negativo e fora da medicao (TEC-245).** Pergunta de
-      processo NAO e motivo de exclusao por si so: o corpus anota `{}` em
-      dezenas delas. O que exclui e a fala **pressupor um campo sem afirma-lo**
-      ("pode ter animal no predio?" pressupoe o predio) ou **sugerir um valor
-      sem nomea-lo** ("precisa ser terrea" sugere CASA; "850 mil ta acima do
-      que consigo" sugere um teto). Nos dois casos um negativo puniria o
-      modelo por ler a fala com razao, e um positivo inventaria anotacao --
-      por isso o turno sai da medicao, com o motivo escrito.
+    - **O que decide entre negativo e fora da medicao (TEC-245, TEC-246).**
+      Pergunta de processo NAO exclui por si so: o corpus anota `{}` em dezenas
+      delas, e desde a TEC-246 **pressupor um campo tambem nao exclui** --
+      "pode ter animal no predio?" (`aluguel-09` indice 2) e "quanto tempo leva
+      pra avaliar o imovel?" (`follow-up-03` indice 1) sao negativos, pela
+      mesma razao que `aluguel-01` indice 1: a fala nao nomeia nada, e repetir
+      o campo do turno anterior conta `extra` de proposito.
 
-      Anafora pura ("aquele mesmo predio", "ali mesmo", "nessa faixa") e
-      negativo, e nao exclusao: a fala nao nomeia nada, e repetir o campo do
-      turno anterior e `extra` de proposito.
+      Sai da medicao o turno que cai numa destas tres, e so nelas:
 
-      **Quando as duas leituras cabem, anafora vence (TEC-246).** "pode ter
-      animal de estimacao no predio?" (`aluguel-09` indice 2) pressupoe o
-      predio E nao nomeia campo nenhum. Ate a TEC-245 isso o tirava da
-      medicao; hoje ele e negativo, igual a `aluguel-01` indice 1, que diz
-      "aquele mesmo predio". As duas sao a mesma forma de fala e agora tem o
-      mesmo balde.
-
-      O criterio de exclusao ficou mais estreito de proposito: exclui-se por
-      **sugerir um valor sem nomea-lo**, e nao por pressupor. O que decidiu
-      foi o proposito do negativo -- pegar o modelo reemitindo estado
-      acumulado --, que e a primeira hipotese a checar se a execucao paga vier
-      vermelha. `borda-longa-01` indice 2 ja dizia que repetir campo do turno
-      anterior conta `extra` DE PROPOSITO; a exclusao da TEC-238 e anterior a
-      essa regra, e foi ela que cedeu.
+      1. **Sugere um valor sem nomea-lo.** "precisa ser terrea" sugere CASA;
+         "850 mil ta acima do que consigo" sugere um teto; "perto do metro" e
+         proximidade sem toponimo. Um negativo puniria o modelo por ler a fala
+         com razao.
+      2. **Nomeia algo que o vocabulario nao expressa.** "parcelamento direto
+         com o proprietario" e "permuta com meu carro na entrada" nao sao
+         valores de `FormaPagamento`.
+      3. **Incerteza declarada sobre o que a fala afirma.** "depois eu vejo com
+         calma" pode ou nao ser `SEM_PRESSA`; "faz diferenca no financiamento?"
+         pressupoe o meio, e se pressupor equivale a pretender e questao que a
+         regra da TEC-239 nao decide. Omissao nao e asercao de completude, e um
+         negativo e afirmacao forte.
 
       Turno fora da medicao tem entrada em `_FORA_DA_MEDICAO`
       (`tests/unit/test_evals_corpus_real.py`), com o motivo em uma linha. Nao

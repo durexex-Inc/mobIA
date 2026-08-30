@@ -318,7 +318,6 @@ _FORA_DA_MEDICAO = {
     ("aluguel-03", 1): "atributo (terrea) sugere CASA sem nomear a tipologia",
     ("borda-evasivo-02", 1): "omissao nao e asercao de completude (TEC-238)",
     ("borda-evasivo-02", 2): "omissao nao e asercao de completude (TEC-238)",
-    ("borda-mista-01", 2): "escritura: pressupoe o terreno do turno anterior",
     ("borda-mista-02", 2): "perto do metro: proximidade sem toponimo",
     ("compra-01", 1): "850 mil acima do que consigo: teto sugerido, nao afirmado",
     ("compra-02", 2): "perto de metro: proximidade sem toponimo",
@@ -327,9 +326,8 @@ _FORA_DA_MEDICAO = {
     ("compra-08", 2): "parcelamento direto nao e valor de FormaPagamento",
     ("compra-11", 1): "permuta com carro nao e valor de FormaPagamento",
     ("follow-up-01", 1): "juntar entrada sugere financiamento sem nomear",
-    ("follow-up-03", 1): "pergunta de processo que pressupoe o imovel (TEC-238)",
-    ("follow-up-03", 2): "financiamento que o lead ja tem, nao o pretendido (TEC-238)",
-    ("investimento-04", 1): "pressupoe o financiamento, nao pergunta se pode usar",
+    ("follow-up-03", 2): "financiamento que o lead ja tem: incerteza declarada (TEC-238)",
+    ("investimento-04", 1): "pressupor um meio equivale a pretende-lo? nao decidido",
     ("investimento-05", 0): "grana parada sugere A_VISTA sem afirmar",
 }
 
@@ -341,7 +339,7 @@ def test_todo_turno_fora_da_medicao_tem_motivo_escrito(
 
     Turno sem `campos` nao tem cobertura de invencao nenhuma: nao ha
     `esperado` contra o qual comparar, entao o turno sai da conta inteiro. Que
-    isso seja verdade para 16 turnos e escolha; que fosse verdade para 56 sem
+    isso seja verdade para 14 turnos e escolha; que fosse verdade para 56 sem
     ninguem ter olhado era acidente.
 
     Comentario de YAML nao sobrevive ao `yaml.safe_load`, entao o conjunto
