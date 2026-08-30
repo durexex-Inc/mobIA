@@ -214,9 +214,10 @@ def test_anotacoes_de_regiao_nao_colidem_depois_de_normalizadas(
     assert colisoes == {}, f"formas distintas normalizam para a mesma: {colisoes}"
 
 
-# Palavras que o lead usa e que NAO estao em `TipoImovel`. Seis, e nao as
-# cinco do mapa da TEC-242: `republica` entra aqui de proposito, apesar de nao
-# ter traducao, por motivo prospectivo -- hoje ela nao muda nada (o unico
+# Palavras que o lead usa e que NAO estao em `TipoImovel`. Oito lemas, e nao
+# os sete do mapa de sinonimos (cinco da TEC-242, dois da TEC-246):
+# `republica` entra aqui de proposito, apesar de nao ter traducao, por motivo
+# prospectivo -- hoje ela nao muda nada (o unico
 # turno que a usa, `aluguel-07` i0, ja contem "kitnet" e seria detectado sem
 # ela), mas um turno futuro que diga so "procuro uma republica perto da puc",
 # sem outro sinonimo junto, precisa ser detectado e forcado a uma decisao
@@ -341,7 +342,7 @@ def test_todo_turno_com_palavra_do_vocabulario_tem_tipo_imovel_anotado(
 # uma linha. A lista e exaustiva de proposito: turno novo sem `campos` quebra
 # este teste, e quem o acrescentar tem de decidir -- anotar ou entrar aqui.
 #
-# Antes desta card havia 56 turnos fora da medicao e cinco motivos escritos.
+# Antes da TEC-245 havia 56 turnos fora da medicao e cinco motivos escritos.
 # Os outros 51 nao eram decisao tomada, eram silencio, e silencio numa regua
 # le como "nao ha o que medir aqui" quando na verdade era "ninguem olhou".
 _FORA_DA_MEDICAO = {

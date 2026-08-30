@@ -31,12 +31,17 @@ PISO_DE_TURNOS = 120
 #
 # Medido em 2026-08-29 (TEC-245): sao 55 positivos, e o pior caso de abandono
 # de `TETO_DE_CONVERSAS_ABANDONADAS` conversas tira 15, entao a execucao mais
-# azarada ainda entrega 40. O piso fica em 38, com folga de dois -- a mesma
-# margem que o piso tinha antes desta card (31 contra 30).
+# azarada ainda entrega 40. O piso fica em 38, com folga de dois. A folga
+# anterior era de UM, e nao de dois (31 contra 30): a margem mudou de
+# tamanho aqui.
 #
 # Medido em 2026-08-29 (TEC-246): o corpus cresceu para 62 positivos, e o
-# pior caso de abandono passou a 47. O piso sobe para 45, com a mesma folga
-# de dois que carrega desde a TEC-238 (47 contra 45).
+# pior caso de abandono passou a 47. O piso sobe para 45, folga de dois (47
+# contra 45) -- do mesmo tamanho da medicao anterior, mas por medicao e nao
+# por convencao: esta constante nasceu na TEC-145 com folga de um e nao
+# carrega margem fixa nenhuma. Quem tem folga de dois desde a origem e a
+# irma `PISO_DE_TURNOS_NEGATIVOS`, criada pela TEC-238 -- que nunca mexeu
+# nesta aqui.
 PISO_DE_TURNOS_ANOTADOS = 45
 
 # Piso dos turnos anotados como "o lead nao afirmou nada" (`campos: {}`).
@@ -93,9 +98,10 @@ PISO_DE_TURNOS_NEGATIVOS = 53
 # Essa propriedade -- abandonar as cinco com mais anotacao ainda deixava a
 # amostra abaixo de `PISO_DE_TURNOS_ANOTADOS` -- valia em 57aee2d (38 - 13 =
 # 25, abaixo do piso de 30), mas a TEC-242 deu tres anotacoes a `compra-06` e
-# a colocou entre as cinco conversas com mais anotacao. Hoje a mesma conta da
-# 55 - 15 = 40, ACIMA do piso -- que esta card subiu para 38, e nao os 30 da
-# linha acima: a propriedade deixou de valer.
+# a colocou entre as cinco conversas com mais anotacao. Medido em 2026-08-29
+# (TEC-246), a mesma conta da 62 - 15 = 47, ACIMA do piso -- que hoje e 45,
+# e nao os 38 da TEC-245 nem os 30 da linha acima: a propriedade deixou de
+# valer.
 #
 # Isso nao muda a escolha de contar conversas **longas** neste teto, que
 # continua de pe pelo outro motivo ja escrito abaixo -- o teto mede

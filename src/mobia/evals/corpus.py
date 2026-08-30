@@ -76,8 +76,11 @@ class TurnoAnotado:
       **cobertura**...") e indice 2 ("o valor do condominio dessa
       **cobertura**") anotam `tipo_imovel`, porque `cobertura` nomeia; ja
       `aluguel-09` indice 2 ("pode ter animal de estimacao no **predio**?")
-      fica de fora, porque `predio` e conteiner generico -- a mesma forma de
-      fala, com um substantivo que nao decide tipologia nenhuma.
+      NAO anota `tipo_imovel`, porque `predio` e conteiner generico -- a
+      mesma forma de fala, com um substantivo que nao decide tipologia
+      nenhuma. Nao anotar `tipo_imovel` nao e ficar fora da medicao: esse
+      turno e **negativo**, e o marcador seguinte ("o que decide entre
+      negativo e fora da medicao") diz por que.
 
       `republica` NAO tem traducao: e uso, nao tipologia, e pode ser casa ou
       apartamento. O unico turno que a usa (`aluguel-07`, primeiro turno) diz
