@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
+from mobia.app.config import PRECOS_POR_MODELO
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.messages.recorder import MessageRecorder, custo_em_dolar
@@ -100,10 +101,32 @@ async def test_nunca_propaga_excecao(session) -> None:
 
 
 def test_custo_e_calculado_por_milhao_de_tokens() -> None:
-    esperado = (Decimal(1200) / Decimal(1_000_000)) * Decimal("3.00") + (
+    """Testa a ARITMETICA, lendo o preco da tabela em vez de repeti-lo.
+
+    Antes esta funcao trazia `3.00`/`15.00` escritos a mao. Isso duplicava a
+    constante, entao ela so pegava erro de formula -- nunca erro de preco --,
+    e passou verde durante todo o tempo em que a tabela dizia que o sonnet-5
+    custava o preco do sonnet-4-6. Quem guarda o preco e o teste abaixo.
+    """
+    entrada, saida = PRECOS_POR_MODELO["claude-sonnet-5"]
+    esperado = (Decimal(1200) / Decimal(1_000_000)) * entrada + (
         Decimal(180) / Decimal(1_000_000)
-    ) * Decimal("15.00")
+    ) * saida
     assert custo_em_dolar("claude-sonnet-5", 1200, 180) == esperado.quantize(Decimal("0.000001"))
+
+
+def test_precos_batem_com_a_tabela_publicada() -> None:
+    """O preco em si, que o teste de aritmetica acima nao pode guardar.
+
+    Existe porque a tabela ja esteve errada: `claude-sonnet-5` estava com
+    $3/$15, que sao os precos do `claude-sonnet-4-6`. Enquanto o agente rodava
+    em opus-5 isso era so um numero errado num dicionario; no dia em que
+    `modelo_agente` virou sonnet-5, virou 50% de erro na telemetria de custo
+    de todo turno de producao.
+    """
+    assert PRECOS_POR_MODELO["claude-opus-5"] == (Decimal("5.00"), Decimal("25.00"))
+    assert PRECOS_POR_MODELO["claude-sonnet-5"] == (Decimal("2.00"), Decimal("10.00"))
+    assert PRECOS_POR_MODELO["claude-haiku-4-5"] == (Decimal("1.00"), Decimal("5.00"))
 
 
 def test_modelo_desconhecido_nao_tem_custo() -> None:

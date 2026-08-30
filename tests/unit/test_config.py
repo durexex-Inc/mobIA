@@ -162,8 +162,13 @@ def test_defaults_do_agente(settings) -> None:
 
     Sao trabalhos diferentes: a TEC-210 vai querer afinar a acuracia de
     intencao sem mexer na qualidade do resumo, e vice-versa.
+
+    O default e `claude-sonnet-5` desde a troca por custo. Esta asercao existe
+    para a troca ser deliberada: mudar o modelo do agente muda o sistema que o
+    gate mede, e `config.py` nao esta no filtro de `evals.yml` -- entao sem
+    este assert a troca passaria sem nada acusar, nem teste nem CI.
     """
-    assert settings.modelo_agente == "claude-opus-5"
+    assert settings.modelo_agente == "claude-sonnet-5"
     assert settings.whatsapp_api_base.startswith("https://")
 
 
