@@ -235,6 +235,39 @@ card fecha o exploit, não o buraco inteiro.
 > positivos, 66 negativos e 17 fora, e quem quiser o número atual lê o README,
 > não este spec.
 
+> **Emenda (TEC-246, 2026-08-29):** a exclusão de `aluguel-09` índice 2 — *"e
+> pode ter animal de estimacao no predio?"* — **foi derrubada**. Ela não está
+> na lista de três acima: entrou numa revisão posterior a esta card, junto com
+> `follow-up-03` índice 1, e a emenda da TEC-245 a registra. As duas saíam pelo
+> mesmo motivo: pergunta de processo que **pressupõe** um campo sem dar para
+> enumerar com confiança tudo o que a fala afirma.
+>
+> **A decisão estava certa quando foi tomada, e o que mudou não foi o
+> raciocínio.** Quando esta card excluiu esses turnos, a regra de anáfora **não
+> existia**. Ela só nasceu na TEC-245, que criou os primeiros turnos negativos
+> com dica de tipologia na fala — antes disso o corpus não tinha nenhum, e não
+> havia colisão a resolver. Num corpus sem o outro lado da comparação, excluir
+> era a leitura conservadora correta.
+>
+> A TEC-246 substituiu a exclusão por **eixo único**: pergunta de processo que
+> não nomeia campo é negativo, pressuponha ela o imóvel do turno anterior ou
+> não. O que decidiu foi o propósito do negativo — ele existe para pegar o
+> modelo reemitindo estado acumulado, e o corpus já tinha decidido isso no
+> comentário de `borda-longa-01` índice 2, que registra que repetir os campos do
+> turno anterior conta `extra` de propósito. `aluguel-09` índice 2,
+> `follow-up-03` índice 1 e `borda-mista-01` índice 2 são negativos `{}` hoje.
+>
+> **Das três exclusões originais desta card, duas sobreviveram** —
+> `follow-up-03` índice 2 e `borda-evasivo-02` índices 1 e 2 (três turnos) —, e
+> a terceira, `compra-11` índice 2, já tinha caído na TEC-242, pela emenda duas
+> acima. As duas que ficaram não caem na regra de anáfora: uma é incerteza
+> declarada sobre o que a fala afirma, a outra é omissão que não vira asserção
+> de completude. A frase final da emenda da TEC-245 — *"o corpus de hoje está em
+> 55 positivos, 66 negativos e 17 fora"* — envelheceu junto: são **62 positivos,
+> 70 negativos e 14 fora da medição**, em 53 conversas e 146 turnos, conferidos
+> por execução em 29/08. A instrução dela continua valendo, e é a única parte que
+> não envelhece: quem quiser o número atual lê o README, não este spec.
+
 ## Contrato depois da card
 
 - 138 turnos: **38 positivos + 39 negativos = 77 medidos**, 61 fora.

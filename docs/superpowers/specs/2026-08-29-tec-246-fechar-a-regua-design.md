@@ -287,3 +287,67 @@ merge. Se as três falas não soarem como lead, o resto da card não salva.
 | `normalizar_regiao` trata as três famílias de prefixo simetricamente | teste por família, e o invariante de prefixo-de-prefixo segue verde |
 | Contagens e pisos conferidos por execução | script de contagem no plano |
 | O efeito na precisão de extração | **não entregue** — exige execução paga (D8) |
+
+## Emenda de 29/08/2026 — o que a execução mediu diferente do que este spec previu
+
+Este spec fixou a regra que se aplica a si mesmo: *"todas as contagens deste spec
+são derivadas das falas acima e conferidas na implementação por execução. Se o
+plano medir diferente, é o spec que está errado."* A implementação mediu
+diferente em cinco pontos. Nada do texto acima foi reescrito — a emenda existe
+para que o que foi previsto e o que foi entregue fiquem os dois legíveis.
+
+**1. A D1 descreveu uma família de exclusão, e o corpus tinha quatro.** A D1
+escreveu que a exclusão *"fica reservada a sugerir um valor sem nomeá-lo"*. A
+revisão da execução mostrou que os turnos fora da medição saíam por quatro
+motivos distintos, e não por um, e que o eixo único da D1 só resolvia o primeiro
+deles. O ruling que fechou isso: **a pressuposição para de excluir** — três
+turnos viram negativo, e não um só. `aluguel-09` i2 (o que a D1 nomeia),
+`borda-mista-01` i2 e `follow-up-03` i1 são negativos `{}`. Dois outros —
+`follow-up-03` i2 e `investimento-04` i1 — **continuam fora**, mas
+reclassificados: o motivo deles deixou de ser "pressupõe um campo" e passou a ser
+**incerteza declarada** sobre o que a fala afirma. As famílias que sobrevivem são
+**três**, e estão enumeradas no docstring de `TurnoAnotado`: sugere um valor sem
+nomeá-lo; nomeia algo que o vocabulário não expressa; incerteza declarada.
+
+**2. `_FORA_DA_MEDICAO` foi para 14, não 16.** O item 2 de "Testes que mudam"
+previa 17 → 16, com `aluguel-09` i2 saindo sozinho. Saíram três, pelo ruling
+acima.
+
+**3. `_LITERAIS_DE_TIPO_IMOVEL` não ganhou `chacara`/`sitio`.** O item 3 nomeia
+os dois guardas; só `_SINONIMOS_DE_TIPO_IMOVEL` mudou. `_LITERAIS_...` varre as
+palavras **do próprio enum** — `apartamento`, `apto`, `casa`, `terreno`, `sala
+comercial` — e não os sinônimos; `chacara` e `sitio` não são palavras do
+vocabulário, e `rural`, que é, não aparece em fala nenhuma do corpus. Pô-las lá
+seria duplicar o guarda de sinônimos dentro do guarda de literais.
+
+**4. A tabela de contagens errou dois números.** `negativos` e `fora da medição`
+eram projeções feitas com uma exclusão caindo, e caíram três. Medido por
+execução em 29/08, com a mesma coluna "antes":
+
+| | antes | previsto | **medido** |
+|---|---|---|---|
+| conversas | 50 | 53 | **53** |
+| turnos | 138 | 146 | **146** |
+| positivos | 55 | 62 | **62** |
+| negativos | 66 | 68 | **70** |
+| fora da medição | 17 | 16 | **14** |
+| anotações de campo | 83 | 96 | **96** |
+
+A tabela por campo do spec bateu inteira: `tipo_imovel` 36, `regiao` 23,
+`forma_pagamento` 11, `quartos` 10, `urgencia` 7, `faixa_preco_max` 4,
+`tem_imovel_para_vender` 3, `faixa_preco_min` 1, `vagas` 1.
+
+Os pisos que saíram daí: `PISO_DE_TURNOS_ANOTADOS` 38 → **45** e
+`PISO_DE_TURNOS_NEGATIVOS` 49 → **53**, dois abaixo do pior caso de abandono em
+cada direção (47 positivos e 55 negativos). `PISO_DE_TURNOS` fica em **120**: ele
+é estatístico, e não de erosão de amostra, então a conta do pior caso não o
+governa.
+
+**5. Foram quatro specs emendados, e não três.** A seção "Documentação" acima
+nomeia TEC-238, TEC-242 e TEC-245. O quarto é este, pelos quatro pontos
+anteriores. A
+emenda na TEC-242 também precisou ser mais precisa do que a previsão: o caso
+canônico de `aluguel-09` i2 que a "regra da TEC-242" cita não mora no spec dela,
+e sim no docstring de `TurnoAnotado`, que ela escreveu — e o que muda ali não é o
+critério de *nomear a tipologia*, que continua de pé, mas o balde para onde vai o
+turno que falha nele.
