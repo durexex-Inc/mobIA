@@ -474,22 +474,23 @@ def test_o_lado_ausente_de_uma_discrepancia_fica_none():
 
 
 def test_divergiu_guarda_os_dois_valores_crus():
-    """Crus, e nao normalizados -- e este e o caso exato que motivou guarda-los.
+    """Crus, e nao normalizados -- e a TEC-248 mostrou por que isso importa.
 
-    `normalizar_regiao` dobra caixa e espaco, mas **nao dobra acento**, e o
-    corpus e escrito sem acento enquanto o modelo responde em portugues. A
-    baseline de 30/08/2026 (TEC-247) teve sete `divergiu` em `regiao` e
-    nenhum valor guardado, entao esta hipotese ficou sem como ser confirmada
-    sem pagar a execucao de novo. Com os valores crus a linha do relatorio
-    mostra o acento e a pergunta se responde de graca.
+    A baseline de 30/08/2026 teve sete `divergiu` em `regiao` e nenhum valor
+    guardado, entao ninguem sabia se o modelo errava a regiao ou se as duas
+    formas so nao casavam. A sonda de nove chamadas respondeu: o modelo
+    acertou o lugar nos sete, e devolvia "sao paulo" com acento onde o corpus
+    anotava "sp", ou "avenida paulista" onde ele anotava "paulista". Eram
+    seis defeitos de regua e uma anotacao errada -- zero erro do modelo.
 
-    Guardar a forma comparada em vez da crua nao serviria: quem le a lista ja
-    sabe que `_comparavel` rodou e nao reconciliou os dois -- e o que estar
-    nesta lista significa.
+    Nada disso teria sido legivel numa lista que so dissesse "regiao
+    (divergiu)". Guardar a forma comparada tambem nao serviria: quem le a
+    lista ja sabe que `_comparavel` rodou e nao reconciliou os dois -- e o
+    que estar nesta lista significa.
     """
-    (d,) = discrepancias_da_extracao([_observada({"regiao": "sao roque"}, {"regiao": "São Roque"})])
-    assert d.esperado == "sao roque"
-    assert d.obtido == "São Roque"
+    (d,) = discrepancias_da_extracao([_observada({"regiao": "jardins"}, {"regiao": "moema"})])
+    assert d.esperado == "jardins"
+    assert d.obtido == "moema"
 
 
 def test_acerto_nao_gera_discrepancia():

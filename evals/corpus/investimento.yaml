@@ -114,7 +114,7 @@
     - lead: "sou de fora, mas queria comprar aqui em sp so pra ter uma reserva que renda mais que poupanca"
       intencao: INVESTIMENTO
       campos:
-        regiao: sp
+        regiao: sao paulo
     - lead: "esse tipo de imovel da pra alugar por temporada tambem?"
       intencao: INVESTIMENTO
       campos: {}
