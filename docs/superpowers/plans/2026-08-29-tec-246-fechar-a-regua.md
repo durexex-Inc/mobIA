@@ -21,6 +21,28 @@
 - **As falas novas imitam o corpus:** minúsculas, sem acentos, informais ("pra", "voces", "to"). Um turno que soe como texto de spec destoa e vira ruído na régua.
 - **Contagens conferidas por execução, não por leitura.**
 
+
+## Emenda de 29/08/2026 — durante a execução, depois da Task 2
+
+A revisão da Task 2 achou que a D1 estava sub-especificada: ela declarava um
+eixo único mas o plano só mandava mover **um** turno, e o corpus ficava com
+outros da mesma forma em balde diferente — além de um parágrafo do docstring
+contradizendo o novo, com o mesmo exemplo.
+
+**Ruling:** os 16 motivos de exclusão formam quatro famílias, e a D1 abole a de
+*pressuposição*. `borda-mista-01` i2 e `follow-up-03` i1 viraram negativos;
+`follow-up-03` i2 e `investimento-04` i1 ficaram fora, reclassificados para
+*incerteza declarada*. O docstring passa a enumerar as três famílias que
+sobrevivem.
+
+Efeito, já refletido nas Tasks 3, 4 e 5 abaixo: negativos **70** ao fim (não
+68), fora da medição **14** (não 16), `PISO_DE_TURNOS_NEGATIVOS` **53** (não
+51). Positivos (62) e anotações (96) não mudam, e as faixas da união seguem
+VERDE ≤10 / AMARELO 11–16 / VERMELHO ≥17.
+
+**A Task 2 abaixo está como foi executada** — seus números (66 negativos, 16
+fora) descrevem o estado antes do commit de correção. Não os reescreva.
+
 ---
 
 ### Task 1: A simetria dos prefixos de `regiao`
@@ -288,8 +310,8 @@ git commit -m "feat(TEC-246): anafora vence a pressuposicao, e primeiro imovel v
 - Modify: `tests/unit/test_evals_corpus_real.py`
 
 **Interfaces:**
-- Consumes: corpus da Task 2 (56 positivos, 84 anotações).
-- Produces: 53 conversas, 146 turnos, 62 positivos, 68 negativos, 16 fora, 96 anotações. Todo valor do vocabulário com pelo menos uma anotação.
+- Consumes: corpus da Task 2 (56 positivos, 68 negativos, 14 fora, 84 anotações).
+- Produces: 53 conversas, 146 turnos, 62 positivos, 70 negativos, 14 fora, 96 anotações. Todo valor do vocabulário com pelo menos uma anotação.
 
 - [ ] **Step 1: Escreva o guarda por valor, que falha**
 
@@ -479,7 +501,7 @@ for k, v in sorted(campos.items(), key=lambda kv: -kv[1]): print(f'  {v:3d} {k}'
 Expected, exatamente:
 
 ```
-conversas 53 | turnos 146 | positivos 62 | negativos 68 | fora 16 | anotacoes 96
+conversas 53 | turnos 146 | positivos 62 | negativos 70 | fora 14 | anotacoes 96
    36 tipo_imovel
    23 regiao
    11 forma_pagamento
@@ -535,15 +557,15 @@ for i, rotulo in ((0, 'positivos'), (1, 'negativos'), (2, 'turnos')):
 "
 ```
 
-Expected: `positivos: 62, pior caso 47 | negativos: 68, pior caso 53 | turnos: 146, pior caso 129`.
+Expected: `positivos: 62, pior caso 47 | negativos: 70, pior caso 55 | turnos: 146, pior caso 129`.
 
 Se divergir, **pare e reporte** — os pisos abaixo saem desses números e não do plano.
 
 - [ ] **Step 2: Suba os dois pisos de amostra**
 
-Em `src/mobia/evals/metricas.py`: `PISO_DE_TURNOS_ANOTADOS` de `38` para `45`, e `PISO_DE_TURNOS_NEGATIVOS` de `49` para `51`.
+Em `src/mobia/evals/metricas.py`: `PISO_DE_TURNOS_ANOTADOS` de `38` para `45`, e `PISO_DE_TURNOS_NEGATIVOS` de `49` para `53`.
 
-A margem de 2 sobre o pior caso (47 e 53) é a mesma que os pisos carregam desde a TEC-238. Acrescente ao comentário de cada constante a data e o pior caso medido, no formato que os comentários vizinhos já usam, **sem apagar a derivação anterior** — a história de como um piso foi calibrado é o que explica o número.
+A margem de 2 sobre o pior caso (47 e 55) é a mesma que os pisos carregam desde a TEC-238. Acrescente ao comentário de cada constante a data e o pior caso medido, no formato que os comentários vizinhos já usam, **sem apagar a derivação anterior** — a história de como um piso foi calibrado é o que explica o número.
 
 - [ ] **Step 3: `PISO_DE_TURNOS` fica em 120, e diga por quê**
 
@@ -580,7 +602,7 @@ git commit -m "docs(TEC-246): os pisos que a amostra de 53 conversas permite"
 
 - [ ] **Step 1: As contagens do README**
 
-Toda contagem que mudou: **53 conversas** (era 50), **146 turnos** (era 138), **62 positivos** (era 55), **68 negativos** (era 66), **16 fora** (era 17), **96 anotações** (era 83). A tabela de nove linhas passa a ser a da Task 3, Step 7.
+Toda contagem que mudou: **53 conversas** (era 50), **146 turnos** (era 138), **62 positivos** (era 55), **70 negativos** (era 66), **14 fora** (era 17), **96 anotações** (era 83). A tabela de nove linhas passa a ser a da Task 3, Step 7.
 
 Recalcule a aritmética da união. Hoje o README diz `83/(83+N)`; passa a `96/(96+N)`, e as faixas ficam:
 
