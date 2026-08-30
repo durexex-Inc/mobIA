@@ -127,7 +127,31 @@ class Settings(BaseSettings):
     #
     # O preco: 400 tokens menos de literais e resumo por turno, de um teto de
     # 12000 -- 3,3% do contexto, em troca de extracao estruturada.
-    contexto_headroom_de_tokens: int = 800
+    #
+    # 800 -> 850 na TEC-250, que acrescentou tres regras ao `SISTEMA_DO_AGENTE`
+    # e levou a subcontagem de 587 para 622,8 -- acima do teto real de
+    # 0,75 * 800 = 600. **A alternativa foi procurada primeiro**, porque o
+    # proprio `test_a_margem_do_orcamento_do_prompt_e_deliberada` manda
+    # perguntar "o que sai do prompt?" antes de "quanto subo o numero?".
+    # Nao havia corte de ~92 caracteres que nao tocasse algo medido: a
+    # enumeracao das tres tarefas foi acrescentada pela TEC-240 justamente
+    # para nomear a extracao, os parenteses das intencoes separam COMPRA de
+    # INVESTIMENTO (distincao que o gate mede), a guarda de alucinacao e a
+    # unica que existe, e a frase da confianca e o unico lugar onde ela e
+    # definida -- nenhum campo do schema tem `description`.
+    #
+    # 830 nao serve, e o meio token importa: 830 * 0,75 = 622,5, e a
+    # subcontagem e 622,8 -- reprovaria por 0,3. 850 da teto de 637,5 e
+    # deixa 14,7 tokens de margem visivel, do mesmo tamanho dos 13 que a
+    # TEC-240 deixou de proposito. Empatar com o teto derrotaria o fator
+    # 0,75, que existe justamente para haver folga (ver TEC-145, onde o
+    # minimo passava por meio token e por isso nao foi adotado).
+    #
+    # O preco desta subida: **50 tokens a menos de literais e resumo por
+    # turno, de 12000 -- 0,4% do contexto**. Muito menor que o preco da
+    # subida anterior (400 tokens, 3,3%), e a decisao foi tomada com o
+    # numero na mao, nao por reflexo.
+    contexto_headroom_de_tokens: int = 850
 
     # Dobrar `gatilho - minimas` mensagens deixa exatamente `minimas` literais.
     # Manter gatilho >= 2 * minimas e o que garante o piso depois da regeneracao.

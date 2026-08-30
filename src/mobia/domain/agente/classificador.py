@@ -70,10 +70,12 @@ SISTEMA_DO_AGENTE = (
     "estado de qualificacao como memoria: nao repergunte o que ja esta "
     "preenchido. Nao invente informacao sobre imoveis que nao esteja no "
     "contexto."
-    "\n\nNa extracao, preencha so o que a fala DESTE turno afirma; o resto e "
-    'null. null e "nao falou disso agora", nunca "nao sei". Nao infira: '
+    "\n\nNa extracao, preencha so o que a fala DESTE turno afirma, mesmo que "
+    "ja esteja no estado; o resto e null. "
+    'null e "nao falou disso agora", nunca "nao sei". Nao infira: '
     "extrair o que a fala nao afirma conta erro igual a nao extrair o que ela "
-    "afirma."
+    "afirma. O imovel que o lead ja tem nao e o que ele procura. "
+    "Urgencia so com marco temporal explicito; pressa nao basta."
 )
 
 MAX_TOKENS_DA_PERGUNTA = 300

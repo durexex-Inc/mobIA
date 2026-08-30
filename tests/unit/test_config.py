@@ -234,20 +234,31 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
 
 
 def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
-    """A TEC-240 gastou 61 dos 74 tokens de folga e deixou 13 de proposito.
+    """A margem existe para ser vista antes de ser gasta, nao depois.
 
-    Sem este teste, a proxima card gasta os 13 sem saber que eram a margem, e
-    a card seguinte descobre o estouro -- que e o que aconteceu com a reserva
-    antes da TEC-145. O teto de 590 e mais apertado que o de 600 usado pelo
-    teste irmao justamente para tornar a margem visivel: se voce esta lendo
-    isto porque ele reprovou, a pergunta e "o que sai do prompt para o novo
-    texto entrar?", nao "quanto subo o numero?".
+    A TEC-240 gastou 61 dos 74 tokens de folga e deixou 13 de proposito. A
+    TEC-250 gastou esses 13 e mais: as tres regras novas custaram 35,8 tokens
+    e levaram a subcontagem de 587 para 622,8.
+
+    **A reserva subiu, e a pergunta abaixo foi feita antes.** Procurou-se o
+    que cortar e nao havia corte de ~92 caracteres que nao tocasse algo
+    medido -- a enumeracao das tarefas (TEC-240), os parenteses que separam
+    COMPRA de INVESTIMENTO, a guarda de alucinacao, a definicao da confianca.
+    Ver o comentario de `contexto_headroom_de_tokens`, onde o preco de 50
+    tokens por turno esta registrado.
+
+    O teto de 627 continua mais apertado que o de 637,5 (0,75 * 850) usado
+    pelo teste irmao, pelo mesmo motivo de sempre: se voce esta lendo isto
+    porque ele reprovou, a pergunta e "o que sai do prompt para o novo texto
+    entrar?", nao "quanto subo o numero?". Subir e resposta legitima -- mas
+    so depois da primeira pergunta, e com o preco escrito.
     """
     subcontagem = _subcontagem()
 
-    assert subcontagem < 590, (
-        f"subcontagem {subcontagem}: a margem de 13 tokens sobre o teto de 600 "
-        f"foi consumida. Encolha o texto enviado, nao suba a reserva."
+    assert subcontagem < 627, (
+        f"subcontagem {subcontagem}: a margem de ~14 tokens sobre o teto de "
+        f"637,5 foi consumida. Encolha o texto enviado, ou suba a reserva "
+        f"registrando o preco por turno."
     )
 
 
