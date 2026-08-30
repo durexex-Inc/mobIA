@@ -1,5 +1,6 @@
 from collections import defaultdict
 from collections.abc import Sequence
+from pathlib import Path
 
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
 from mobia.evals.metricas import (
@@ -125,6 +126,28 @@ def _secao_de_reperguntas(reperguntas: Sequence[tuple[str, int, str]]) -> list[s
     return linhas
 
 
+def _valores_de(discrepancia: Discrepancia) -> str:
+    """O que cada lado tinha, para `divergiu` nao precisar de outra execucao paga.
+
+    Endereco sozinho basta para `faltou` e `extra` -- quem for anotar abre o
+    YAML e ve. Nao basta para `divergiu`: os dois lados existem, e sem os
+    valores nao da para saber se o modelo errou o campo ou se as duas formas so
+    nao casaram. A baseline de 30/08/2026 (TEC-247) morreu nessa distincao,
+    com sete `divergiu` em `regiao` e nenhum valor guardado.
+
+    Usa `!r` de proposito. Este texto e lido por quem esta cacando defeito de
+    comparacao, e `repr` e o que torna visiveis exatamente as diferencas que
+    `str` esconde: acento, espaco sobrando, `600000` contra
+    `Decimal('600000.00')`, `"2"` contra `2`.
+    """
+    partes = []
+    if discrepancia.esperado is not None:
+        partes.append(f"anotado {discrepancia.esperado!r}")
+    if discrepancia.obtido is not None:
+        partes.append(f"obtido {discrepancia.obtido!r}")
+    return f" -- {', '.join(partes)}" if partes else ""
+
+
 def _secao_de_extracao(
     discrepancias: Sequence[Discrepancia], negativos: ResumoDeNegativos | None
 ) -> list[str]:
@@ -176,7 +199,9 @@ def _secao_de_extracao(
     if discrepancias:
         linhas += ["", "Onde, para quem for anotar:", ""]
         for d in discrepancias:
-            linhas.append(f"  - {d.conversa_id} turno {d.indice}: {d.campo} ({d.tipo})")
+            linhas.append(
+                f"  - {d.conversa_id} turno {d.indice}: {d.campo} ({d.tipo}){_valores_de(d)}"
+            )
     return linhas
 
 
@@ -221,3 +246,30 @@ def render(
                 linhas.append(f"- {esperada.value} -> {obtida.value}: {quantas}{marca}")
 
     return "\n".join(linhas) + "\n"
+
+
+# Onde o relatorio de uma execucao paga fica quando ninguem escolhe o caminho.
+# Relativo ao repositorio, e commitado: e a diferenca entre "a medicao existe"
+# e "alguem viu a medicao passar num terminal". A execucao de 28/08/2026
+# aconteceu, custou dinheiro, e o percentual e a faixa dela nao existem em
+# lugar nenhum -- so a decomposicao por campo, porque alguem a copiou para a
+# descricao da TEC-241 antes do terminal fechar.
+DIRETORIO_DE_RELATORIOS = Path("evals/relatorios")
+
+
+def preservar(texto: str, destino: Path) -> Path:
+    """Grava o relatorio em disco, criando o diretorio se preciso.
+
+    Existe separada de `render` porque as duas falham de jeitos diferentes e
+    so uma delas pode derrubar a execucao. `render` e pura e roda sempre;
+    esta toca o sistema de arquivos, e quem a chama tem de poder decidir o que
+    fazer quando o disco recusa -- num runner pago, a resposta certa e
+    imprimir o relatorio e seguir, nunca perder a medicao junto com o arquivo.
+
+    Nao dateia nem versiona o nome: quem chama escolhe o caminho, porque o
+    nome carrega a data e o commit do corpus, e essas duas coisas o modulo de
+    render nao tem como saber.
+    """
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text(texto, encoding="utf-8")
+    return destino

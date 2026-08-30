@@ -458,12 +458,34 @@ class Discrepancia:
 
     `conversa_id` e `indice` existem para quem for anotar nao precisar de outra
     execucao paga so para descobrir *onde* faltava anotacao.
+
+    `esperado` e `obtido` sao os valores **crus** -- como o corpus anotou e
+    como o modelo devolveu --, antes de `_comparavel`. Eles existem porque
+    endereco sozinho nao diagnostica `divergiu`: saber que `regiao` divergiu em
+    `compra-13[0]` nao diz se o modelo errou a regiao ou se as duas formas so
+    nao casaram, e essas duas causas pedem cards opostos. A baseline de
+    30/08/2026 (TEC-247) parou exatamente ai -- sete `divergiu` em `regiao`,
+    nenhum valor registrado, e a hipotese mais forte (acento) sem como ser
+    confirmada sem pagar a execucao de novo.
+
+    Crus de proposito, e nao normalizados: quem le a lista ja sabe que
+    `_comparavel` rodou e **nao** reconciliou os dois -- e o que significa
+    estar nesta lista --, entao a forma comparada nao acrescenta nada. A crua
+    acrescenta: e nela que "saude" contra "Saude" com acento, ou um espaco
+    sobrando, ficam visiveis.
+
+    `None` nos dois campos e "este lado nao tinha valor", sem ambiguidade: o
+    corpus recusa anotacao com valor nulo (`_turno_de`, `corpus.py`) e
+    `preenchidos()` nunca devolve `None`. Entao `faltou` tem `obtido=None`,
+    `extra` tem `esperado=None`, e `divergiu` tem os dois preenchidos.
     """
 
     conversa_id: str
     indice: int
     campo: str
     tipo: Literal["extra", "faltou", "divergiu"]
+    esperado: Any = None
+    obtido: Any = None
 
 
 def _comparavel(campo: str, valor: Any) -> Any:
@@ -572,6 +594,8 @@ def discrepancias_da_extracao(
                     indice=observada.indice,
                     campo=campo,
                     tipo=tipo,
+                    esperado=observada.esperado.get(campo),
+                    obtido=observada.obtido.get(campo),
                 )
             )
     return achadas

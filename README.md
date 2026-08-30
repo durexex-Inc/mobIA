@@ -644,12 +644,17 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   regressão de prompt da `main` é disciplina de quem mergeia, não trava. Se o
   time crescer, ou o merge passar a ser feito por quem não acompanhou o PR, a
   trava deixa de ser opcional.
-- **Uma medição, não uma distribuição.** A baseline de 27/08/2026 é uma amostra
-  única: 95,6% na crua, 92,6% na efetiva. Os pisos foram escolhidos em torno
-  dela, e o ruído real entre execuções é estimado (±1,5%), não medido. Um gate
-  relativo a histórico — bloquear por queda maior que a dispersão observada —
-  exigiria guardar as execuções, e o relatório hoje vive só no log efêmero do
-  CI. Enquanto isso, um vermelho perto da borda pode ser variância.
+- **Duas medições, ainda não uma distribuição.** A baseline de 27/08/2026
+  (95,6% na crua, 92,6% na efetiva) ganhou uma segunda em 30/08/2026 pela
+  TEC-247 (97,3% e 96,6%), contra um corpus diferente. Os pisos foram
+  escolhidos em torno da primeira, e o ruído real entre execuções continua
+  estimado (±1,5%), não medido: dois pontos contra corpus distintos não são
+  dispersão. Um gate relativo a histórico — bloquear por queda maior que a
+  dispersão observada — já tem **onde** guardar as execuções desde a TEC-247
+  (`evals/relatorios/`, commitado), mas ainda não tem execuções suficientes
+  para calcular a dispersão, e o relatório de uma execução **em CI** continua
+  efêmero: não há `upload-artifact` em `evals.yml`. Enquanto isso, um vermelho
+  perto da borda pode ser variância.
 - ~~**Degradação parcial de calibração não barra.**~~ Fechada quando a baseline
   medida substituiu o piso de 50% pelas faixas de 90/84. Meio corpus rebaixado
   dava exatamente 50% e passava; hoje é vermelho.
@@ -1200,7 +1205,12 @@ TEC-245 fez essa separação por leitura das falas, sem execução paga, e sobra
 critério, e são hoje **14** — todos com motivo escrito. A execução
 de 28/08 já exerceu essa leitura contra dados reais uma vez, e foi assim que
 `regiao` apareceu como o maior balde de discrepâncias — mas contra o corpus
-de antes da TEC-239 e da TEC-238, e sem turno negativo nenhum.
+de antes da TEC-239 e da TEC-238, e sem turno negativo nenhum. A execução de
+30/08 (TEC-247) a exerceu com 70 turnos negativos, e a leitura se pagou: dos 5
+`extra` da execução, **1 caiu em turno negativo** — invenção sem discussão
+possível — e os outros 4 em turnos positivos, onde continuam ambíguos entre
+invenção e anotação faltante. Sem a separação, os cinco pareceriam a mesma
+coisa.
 
 Uma invariante amarra as duas funções contra a mesma sequência de observadas:
 `acertos + len(discrepancias) == total`. Há teste guardando
@@ -1396,13 +1406,19 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   formas — velha e canônica — convivendo. A próxima fala do lead sobre a
   mesma região sobrescreve pelo mais novo (D4 acima), então o convívio se
   resolve sozinho por reincidência, não por migração.
-- **O número não foi medido, e não há baseline comparável para medi-lo
-  depois.** O critério de aceite da TEC-241 — "as divergências de `regiao`
-  caem para perto de zero numa execução do gate" — exige execução paga, que
-  esta card não fez. Os 29 de discrepâncias de 28/08 (10 delas de `regiao`)
-  não servem de baseline: o corpus mudou desde então em seis cards, não
-  duas — TEC-238, TEC-239, TEC-241, TEC-242, TEC-245 e TEC-246 —, e as
-  anotações de campo foram de 47 para 96, não para 59.
+- **O número foi medido pela TEC-247, e o critério de aceite não se
+  sustentou.** O critério da TEC-241 — "as divergências de `regiao` caem para
+  perto de zero numa execução do gate" — exigia execução paga, que esta card
+  não fez; ela rodou em 30/08/2026 e **`regiao` continua sendo o maior balde
+  de discrepâncias: 7 `divergiu`**, todas de forma, sem nenhum `extra` nem
+  `faltou`. Sete não é perto de zero. Os endereços estão em
+  `evals/relatorios/2026-08-30-corpus-6d74cff.md`. **Isso não é uma medida de
+  efeito da normalização:** os 29 de 28/08 (10 deles de `regiao`) não servem
+  de "antes" — o corpus mudou desde então em seis cards, não duas — TEC-238,
+  TEC-239, TEC-241, TEC-242, TEC-245 e TEC-246 —, e as anotações de campo foram
+  de 47 para 96, não para 59. "10 caiu para 7" não quer dizer nada. O que a
+  execução afirma é só o estado de hoje: normalizado dos dois lados, `regiao`
+  ainda diverge mais que qualquer outro campo.
 - **Os sinônimos de `tipo_imovel` têm dono: a TEC-242.** Eram 8 das 29
   discrepâncias na execução de 28/08 — a TEC-241 tinha mandado esse problema
   para a TEC-239, mas a TEC-239 é sobre cobertura de campo sem anotação, não
@@ -1445,14 +1461,17 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   truncada), a palavra do lead some da visão do modelo também, não só do
   estado gravado.
 
-  **O efeito não foi medido, e não há baseline comparável para medi-lo
-  depois.** As 8 discrepâncias de sinônimo são da execução de 28/08 —
+  **O efeito desta card continua sem baseline comparável, e sempre vai
+  continuar.** As 8 discrepâncias de sinônimo são da execução de 28/08 —
   anterior à TEC-238, à TEC-239, à TEC-240, à TEC-241, a esta card, à
   TEC-245 e à TEC-246. Sete mudanças de corpus e de prompt depois, um "antes"
-  daquele tamanho não serve de baseline: uma execução paga nova mediria o
-  efeito desta regra **e** o de outras seis cards ao mesmo tempo, sem jeito de separar as
-  causas — a mesma ressalva que o bullet de `regiao`, logo acima,
-  já faz para a própria lacuna.
+  daquele tamanho não serve de baseline, e a execução da TEC-247 (30/08/2026)
+  não conserta isso retroativamente: ela mede o efeito desta regra **e** o de
+  outras seis cards ao mesmo tempo, sem jeito de separar as causas — a mesma
+  ressalva que o bullet de `regiao`, logo acima, já faz para a própria lacuna.
+  O que ela dá é o **estado de hoje**, e só ele: `tipo_imovel` respondeu por 6
+  das 21 discrepâncias, metade `faltou` e metade `extra` — empatado com
+  `urgencia` e atrás de `regiao`.
 - **O proxy de repergunta nunca bloqueia**, e há comentário no próprio
   `MARCADORES_DE_REPERGUNTA` dizendo por quê: é heurística de palavra-chave,
   com erro nas duas direções. Ver "Lacunas conhecidas".
@@ -1493,6 +1512,13 @@ seção própria do relatório (`render(..., reperguntas=...)`,
 >   Medir efeito de prompt exigiria uma execução paga nova **antes** desta
 >   card entrar — duas execuções pagas, não uma —, e essa execução não
 >   rodou.
+>
+>   *Posterior (TEC-247, 30/08/2026):* a segunda execução paga rodou, e a frase
+>   acima continua de pé — ela mede esta card junto com outras seis, e o efeito
+>   **isolado** da TEC-240 segue sem baseline e sempre vai seguir. O que deixou
+>   de ser desconhecido é o estado absoluto do que esta card queria: 70 turnos
+>   negativos, 1 com invenção. A instrução por-turno bastou. Ver a seção
+>   TEC-247.
 
 ### Lacunas conhecidas
 
@@ -1739,24 +1765,26 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   medição, anotados pelos campos que nomeiam. A barra tira um **campo** da
   anotação, e não o turno da medição: a distinção parece pequena, e confundi-la
   manteve dois turnos fora da medição desde a TEC-239.
-- **A precisão de extração rodou uma vez, em 28/08/2026, e o número se perdeu.**
-  A execução foi feita com a instrumentação de `discrepancias_da_extracao`,
-  contra o corpus de então — 32 turnos anotados, 47 anotações, `regiao` com 17
-  —, e produziu **29 discrepâncias**, das quais 10 em `regiao` (todas
-  `divergiu`, por desacordo de forma) e 8 em sinônimos de `tipo_imovel`. Foi
-  ela que originou a [TEC-241](https://eduardodurieuxlopes.atlassian.net/browse/TEC-241).
-  **O percentual de precisão e a faixa não foram registrados, e o relatório
-  não foi preservado** — uma execução paga cujo resultado se perde é dinheiro
-  gasto duas vezes, e isso é lacuna de processo, não de código. O que sobrou
-  está na descrição da TEC-241, e é só a decomposição por campo.
-- **Não há baseline comparável para a extração.** Os 29 acima são de um corpus
-  que mudou desde então em seis cards, não duas — TEC-238, TEC-239, TEC-241,
-  TEC-242, TEC-245 e TEC-246 —, e as anotações de campo foram de 47 para 96,
-  não para 59.
-  Qualquer execução daqui para a frente difere daquela por mudança de prompt
-  **e** de régua ao mesmo tempo, e
-  a diferença entre as duas não é atribuível a uma causa só. Quem for medir
-  efeito de prompt precisa de uma execução nova como "antes".
+- ~~**A precisão de extração rodou uma vez, em 28/08/2026, e o número se
+  perdeu.**~~ Fechada pela [TEC-247](https://eduardodurieuxlopes.atlassian.net/browse/TEC-247)
+  em 30/08/2026: **79,2% (80/101), VERMELHO**, com o relatório commitado em
+  `evals/relatorios/2026-08-30-corpus-6d74cff.md`. Ver a seção TEC-247.
+  O que se perdeu da execução de 28/08 continua perdido, e fica registrado
+  porque explica de onde vieram a TEC-241 e a TEC-242: ela rodou com a
+  instrumentação de `discrepancias_da_extracao`, contra o corpus de então — 32
+  turnos anotados, 47 anotações, `regiao` com 17 —, e produziu **29
+  discrepâncias**, das quais 10 em `regiao` (todas `divergiu`, por desacordo de
+  forma) e 8 em sinônimos de `tipo_imovel`. **O percentual e a faixa daquela
+  execução nunca foram registrados** — o que sobrou está na descrição da
+  TEC-241, e é só a decomposição por campo.
+- ~~**Não há baseline comparável para a extração.**~~ Fechada pela TEC-247: a
+  execução de 30/08/2026 é o "antes" real, medido contra o corpus fechado pela
+  TEC-246 (`6d74cff`) e com data, commit e condições de validade registrados ao
+  lado do número. Os 29 de 28/08 continuam sem servir de comparação, pelo
+  motivo original: são de um corpus que mudou desde então em seis cards —
+  TEC-238, TEC-239, TEC-241, TEC-242, TEC-245 e TEC-246 —, e as anotações de
+  campo foram de 47 para 96. A diferença entre aquela execução e esta não é
+  atribuível a uma causa só, e **não deve ser lida como efeito de nada**.
 - **A convenção por-turno já está no prompt, e continua sem medição contra
   ele.** Até a TEC-240, `SISTEMA_DO_AGENTE`
   (`src/mobia/domain/agente/classificador.py`) só mandava usar o resumo e o
@@ -1769,11 +1797,292 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   e as duas instruções convivem no mesmo texto puxando para lados opostos: o
   estado acumulado é oferecido como memória a usar, e a extração é proibida de
   reemiti-lo. Nada garante que o modelo resolva essa tensão do jeito que a
-  régua espera, e a convenção **nunca foi medida contra o prompt real**: a
-  execução de 28/08 é anterior tanto aos turnos negativos da TEC-238 quanto ao
-  texto que a TEC-240 acrescentou, e não podia medir nenhum dos dois. Se a
-  próxima execução paga vier vermelha por invenção nos turnos negativos, a
-  primeira hipótese a checar continua sendo essa — o modelo reemitindo estado
-  acumulado num turno que não afirmou nada de novo —, não regressão de prompt.
-  O que mudou é a leitura do resultado: a hipótese agora é "a instrução não
-  bastou", e não "não havia instrução".
+  régua espera. A execução de 28/08 não podia responder isso — é anterior tanto
+  aos turnos negativos da TEC-238 quanto ao texto que a TEC-240 acrescentou.
+  **A TEC-247 mediu, em 30/08/2026, e a tensão se resolve do lado certo:** 70
+  turnos negativos, **1 com invenção**, 1 campo. A hipótese que estava escrita
+  aqui — o modelo reemitindo estado acumulado num turno que não afirmou nada de
+  novo — era a primeira a checar se o vermelho viesse por invenção nos
+  negativos, e **não é o que aconteceu**: a execução veio vermelha na precisão
+  da extração (79,2%) por `faltou` e `divergiu` em turnos positivos, com os
+  negativos praticamente limpos. A instrução da TEC-240 bastou; o que não
+  bastou está em outro lugar. Ver a seção TEC-247.
+
+## TEC-247 — A baseline paga da extração, e o relatório que sobrou dela
+
+**A execução rodou em 30/08/2026, 12:02 UTC**, contra o corpus fechado pela
+TEC-246 — commit `6d74cff`, a última mudança de régua —, com a árvore em
+`b607fce` e `modelo_agente = claude-opus-5`. Foram 146 chamadas sequenciais,
+uma por turno, em 19min53s.
+
+**A precisão da extração deu VERMELHO: 80/101, ou 79,2%** — abaixo do piso de
+85% e do alvo de 90%. É o número que este projeto não tinha, e ele é ruim.
+
+As outras duas métricas passaram, e melhoraram sobre a baseline de 27/08/2026:
+
+| métrica | 27/08/2026 | 30/08/2026 | faixa |
+| --- | --- | --- | --- |
+| acurácia de intenção (crua) | 130/136, 95,6% | 142/146, **97,3%** | VERDE |
+| acurácia efetiva (o que produção roteia) | 126/136, 92,6% | 141/146, **96,6%** | VERDE |
+| precisão da extração | não registrada | 80/101, **79,2%** | **VERMELHO** |
+
+### O relatório está commitado, e essa é a metade do card que não era sobre o número
+
+`evals/relatorios/2026-08-30-corpus-6d74cff.md`. O nome carrega a data e o
+commit do corpus de propósito: baseline sem as duas não tem prazo de validade,
+e foi exatamente assim que o resultado de 28/08/2026 se perdeu — a execução
+aconteceu, custou dinheiro, e o que sobrou dela foi a decomposição por campo
+que alguém copiou para a descrição da TEC-241 antes do terminal fechar.
+
+O runner grava o artefato **antes** das asserções (`preservar`,
+`src/mobia/evals/relatorio.py`), e não depois. A ordem importa e esta execução
+provou por quê: ela foi vermelha, o `assert not bloqueia(metricas)` abortou o
+teste, e um artefato escrito depois dele não existiria justamente na execução
+que mais precisa ser lida turno a turno. Se a gravação falhar, o relatório
+ainda sai no terminal e a execução segue reprovando pelo que mediu — o disco
+não pode derrubar a medida.
+
+### Condições de validade, ao lado do número
+
+Uma execução que roçou um piso vale menos que uma folgada, e o relatório
+sozinho não dizia qual das duas foi: `_secao_de_infraestrutura` só imprime
+quando **houve** falha, então zero abandono não imprimia nada, e os três pisos
+não apareciam em lugar nenhum quando a execução passava por eles. Agora
+aparecem, em `_condicoes_da_execucao` (`evals/test_acuracia_de_intencao.py`),
+no topo do próprio artefato:
+
+- **conversas abandonadas: 0**, teto 5. Nenhuma perda de rede — a execução
+  atravessou inteira, e nenhum número aqui está contaminado por 429.
+- **turnos medidos: 146/120**, folga de 26.
+- **turnos anotados positivos: 62/45**, folga de 17.
+- **turnos anotados negativos: 70/53**, folga de 17.
+
+Nenhum piso foi roçado. **Este resultado não tem desculpa de amostra**: as três
+folgas são as maiores que este corpus já teve, e o vermelho não é ruído de
+denominador pequeno.
+
+### A decomposição, e como não ler ela errado
+
+São **21 discrepâncias** em 101 campos no denominador de união. A separação que
+importa é entre o que acusa a **medição** e o que acusa o **modelo**:
+
+| tipo | quantas | acusa |
+| --- | --- | --- |
+| `extra` (modelo extraiu, corpus não anotou) | 5 | a medição, ou invenção |
+| `faltou` (corpus anotou, modelo não devolveu) | 8 | o modelo |
+| `divergiu` (veio nos dois, valores diferentes) | 8 | o modelo |
+
+Por campo:
+
+- **`regiao` — 7 `divergiu`**, o maior balde da execução, e nenhum `extra` nem
+  `faltou`.
+- **`urgencia` — 6** (3 `faltou`, 2 `extra`, 1 `divergiu`), o campo com o
+  espalhamento mais largo entre os três tipos.
+- **`tipo_imovel` — 6** (3 `faltou`, 3 `extra`).
+- **`forma_pagamento` — 1 `faltou`**; **`tem_imovel_para_vender` — 1 `faltou`**.
+
+**O vermelho não é lacuna de anotação, e a conta do card fecha isso sem
+ambiguidade.** A leitura registrada em TEC-247 diz que, com 96 anotações, um
+modelo perfeito com `N` extrações corretas em campo não anotado ainda tira
+VERDE até `N=10`, AMARELO de 11 a 16, e VERMELHO a partir de 17. **Esta
+execução teve `N=5`** — dentro da faixa verde, com folga de cinco. O
+denominador confirma: 96 anotações + 5 `extra` = os 101 campos medidos. Se o
+corpus estivesse perfeito e o modelo errasse só os 5 `extra`, seriam 96/101 =
+95%, VERDE. **Os 16 `faltou` + `divergiu` são o vermelho inteiro**, e eles
+acusam o modelo ou o prompt, não a régua.
+
+### Invenção nos turnos negativos: a hipótese do card não se confirmou
+
+Este é o número que a execução vê pela primeira vez com cobertura real — **70
+turnos negativos, contra 37 na última vez que alguém olhou** — e ele veio
+limpo: **1 turno com invenção, 1 campo**. Um em setenta.
+
+A TEC-247 mandava, se o vermelho viesse por invenção nos negativos, checar
+primeiro o modelo reemitindo estado acumulado num turno que não afirmou nada
+de novo — as duas instruções de `SISTEMA_DO_AGENTE` que convivem no mesmo texto
+puxando para lados opostos (o estado é oferecido como memória, e a extração é
+proibida de reemiti-lo). **Não foi isso.** O modelo resolve essa tensão do jeito
+que a régua espera em 69 dos 70 turnos negativos, e a convenção por-turno da
+TEC-240 passa a ter medição contra o prompt real — ela funciona.
+
+Os outros 4 `extra` estão em turnos **positivos**, onde o corpus anotou alguns
+campos e não aquele. Ali `extra` continua ambíguo por construção: pode ser
+invenção, pode ser extração correta de campo que ninguém anotou, e no
+denominador de união as duas descontam igual.
+
+Os **9 turnos `FORA_DE_ESCOPO`** foram classificados certo, todos os nove, e
+nada deles chega a `lead_qualification` de qualquer jeito — `campos_a_gravar`
+devolve dict vazio para essa intenção. É disciplina do modelo, não risco de
+dado gravado.
+
+### `regiao` continua sendo o maior balde, depois da TEC-241
+
+Sete `divergiu`, e nenhum `extra` nem `faltou`: o modelo acha a região sempre,
+e discorda da forma em sete turnos. Em 28/08 eram **10 das 29** discrepâncias,
+todas `divergiu` por desacordo de forma, e foi isso que originou a TEC-241 —
+que normalizou os dois lados da comparação com `normalizar_regiao` justamente
+para essas sumirem.
+
+As duas execuções não são comparáveis (corpus diferente, seis cards no meio),
+então "10 caiu para 7" não é uma medida de efeito e não deve ser lida como
+uma. O que se pode afirmar é mais simples e mais desconfortável: **depois da
+normalização, `regiao` ainda é o campo que mais diverge**, e o critério de
+aceite da TEC-241 — "as divergências de `regiao` caem para perto de zero numa
+execução do gate" — **não foi atingido**. Sete não é perto de zero. Os
+endereços estão no relatório: `aluguel-06[1]`, `aluguel-10[0]`,
+`borda-longa-01[0]`, `compra-08[1]`, `compra-12[0]`, `compra-13[0]`,
+`investimento-07[0]`.
+
+### Confiança: o limiar continua custando mais do que devolve
+
+5 turnos de 146 (3,4%) abaixo de `LIMIAR_DE_DESAMBIGUACAO`, **1 acerto
+rebaixado** para INDEFINIDA (`compra-04[0]`, confiança 0,55) e **0 erros que o
+rebaixamento acertou**. Em 27/08 a conta era 4 perdidos e zero recuperados; o
+sinal é o mesmo, mais fraco, e na mesma direção: o rebaixamento não recuperou
+um único acerto em nenhuma das duas execuções pagas que este projeto tem.
+
+Os outros 4 turnos abaixo do limiar já vinham com `obtida = INDEFINIDA` —
+eram erro cru, e a confiança baixa neles é coerente. A diferença entre 97,3% e
+96,6% é esse único acerto rebaixado, e mais nada.
+
+### O que esta card não fez, de propósito
+
+**Não agiu sobre o resultado.** O número veio ruim, e consertar é card própria:
+esta entrega a medição, não o conserto. Mexer em corpus, prompt, schema ou
+qualquer piso durante esta card invalidaria a própria execução que ela pagou.
+
+Consequência a aceitar por escrito: **a `main` fica com o gate vermelho** até
+que a card do conserto entre. O vermelho é verdadeiro — a precisão da extração
+está abaixo do piso que o SRS declara — e escondê-lo mexendo no piso seria
+trocar o instrumento pelo número que se queria dele.
+
+### O relatório dizia onde, e não o quê — e para `divergiu` isso não basta
+
+A execução de 30/08 expôs um buraco na própria instrumentação que ela usou.
+`Discrepancia` carregava `conversa_id`, `indice`, `campo` e `tipo`, e o
+docstring explicava por quê: para quem for anotar não precisar de outra
+execução paga só para descobrir **onde** faltava anotação.
+
+Isso resolve `faltou` e `extra`, que são perguntas de anotação — o endereço
+manda a pessoa no YAML certo e ela vê o resto. **Não resolve `divergiu`**, que
+é uma pergunta de comparação: os dois lados existem, e sem os valores não há
+como saber se o modelo errou o campo ou se as duas formas apenas não casaram.
+São causas opostas, e pedem cards opostos.
+
+Foi exatamente onde a baseline parou. Sete `divergiu` em `regiao`, os sete
+endereços registrados, e **nenhum dos catorze valores**. A hipótese mais forte
+ficou sem como ser confirmada sem pagar as 146 chamadas de novo — numa card
+que existe para que resultado pago não se perca.
+
+`Discrepancia` agora carrega `esperado` e `obtido`, e `_secao_de_extracao` os
+imprime na linha do turno:
+
+```
+  - compra-13 turno 0: regiao (divergiu) -- anotado 'sao roque', obtido 'São Roque'
+  - compra-02 turno 1: forma_pagamento (faltou) -- anotado 'FGTS'
+  - follow-up-03 turno 0: tipo_imovel (extra) -- obtido 'APARTAMENTO'
+```
+
+Três decisões, com o motivo de cada uma:
+
+- **Os valores são crus, não normalizados.** Quem lê a lista já sabe que
+  `_comparavel` rodou e **não** reconciliou os dois — é o que estar nesta lista
+  significa —, então a forma comparada não acrescentaria nada. A crua
+  acrescenta: é nela que o acento, o espaço sobrando e `600000` contra
+  `Decimal('600000.00')` ficam visíveis.
+- **`repr`, e não `str`.** Este texto é lido por quem está caçando defeito de
+  comparação, e `repr` mostra justamente o que `str` esconde.
+- **`None` é "este lado não tinha valor", sem ambiguidade.** O corpus recusa
+  anotação com valor nulo (`_turno_de`, `corpus.py`) e `preenchidos()` nunca
+  devolve `None`, então o lado ausente nunca colide com um valor real. `faltou`
+  imprime só o anotado, `extra` só o obtido.
+
+**Isso não é mudança de régua, e o número não se mexeu.**
+`precisao_da_extracao` não foi tocada: ela conta a união de esperado com obtido
+exatamente como contava, e os **79,2% (80/101) da baseline continuam valendo**
+como medidos. O que ganhou campos foi a decomposição de diagnóstico, que nunca
+entrou em `_metricas_de` nem em `bloqueia`.
+
+**E não diagnostica a execução de 30/08 retroativamente.** Aqueles valores
+nunca foram capturados, e não existem em lugar nenhum. O que esta mudança faz é
+garantir que a próxima execução paga não termine na mesma parede.
+
+#### A hipótese que a instrumentação vai testar
+
+`normalizar_regiao` (`src/mobia/domain/agente/schemas.py`) dobra caixa e espaço
+e remove prefixo de referência. **Não dobra acento.** Todo prefixo de
+`_PREFIXOS_DE_REFERENCIA` é escrito sem acento — `regiao`, `proximo`,
+`estacao` — e as **23 anotações de `regiao` do corpus também**: nenhuma tem
+acento, num domínio paulistano onde `Saúde`, `Aclimação`, `Tatuapé` e `Butantã`
+levam. `casefold()` não reconcilia isso: `casefold("São Roque")` é
+`"são roque"`, que não é `"sao roque"`.
+`test_divergiu_guarda_os_dois_valores_crus`
+(`tests/unit/test_evals_metricas.py`) trava o mecanismo — o par
+`sao roque` / `São Roque` **produz** um `divergiu`.
+
+**Mas o próprio corpus tem a evidência contrária, e ela é forte.** Das 23
+anotações, 16 casaram e 7 divergiram, sem nenhum `faltou` nem `extra` — o
+modelo devolveu `regiao` nos 23 turnos. Entre as que **casaram** estão
+`butanta` (`borda-injecao-01[1]`) e `tatuape` (`compra-09[0]`), e as duas
+levam acento em português corrente. Se o modelo restaurasse acento de forma
+uniforme, essas duas teriam divergido também. Não divergiram. **Acento sozinho
+não explica os sete.**
+
+E dois dos sete não são acento de jeito nenhum: `sp` (`compra-12[0]` e
+`investimento-07[0]`) contra qualquer expansão que o modelo tenha devolvido é
+abreviação, não grafia — e `"sao paulo"` continua diferente de `"sp"` depois de
+qualquer dobra de acento. Esses dois são pergunta de **anotação**, não de
+normalização: se o modelo devolveu "São Paulo" para *"estou de mudança pra
+sp"*, quem está errado é a anotação, não ele.
+
+**Conclusão honesta: a causa dos sete é desconhecida.** O que está descartado é
+"acento explica tudo"; o que sobra são pelo menos três mecanismos distintos
+(grafia, prefixo não coberto, abreviação) e nenhum medido. Os valores daquela
+execução não foram guardados, então isto não se resolve relendo nada — se
+resolve chamando o modelo naqueles turnos e olhando o que ele devolve.
+
+A conta de faixa não depende da causa: com os sete resolvidos, seja lá como, a
+precisão vai a 87/101 (86,1%), AMARELO, e o gate deixa de bloquear. Se forem
+defeito de régua, a leitura registrada acima — de que os 16 `faltou`+`divergiu`
+acusam o modelo — vale para os `faltou` e fica em aberto para os `divergiu`.
+
+Descobrir a causa e corrigir é **card própria**, pelo mesmo motivo que
+consertar o número era: mexer em `normalizar_regiao` ou nas anotações é
+mudança de régua, invalida qualquer baseline anterior a ela, e tem de entrar
+antes da próxima execução paga — a mesma disciplina que a TEC-246 impôs à
+TEC-247.
+
+O diagnóstico, porém, **não** custa uma execução paga inteira. São 7 turnos
+nomeados: `aluguel-06[1]`, `aluguel-10[0]`, `borda-longa-01[0]`,
+`compra-08[1]`, `compra-12[0]`, `compra-13[0]`, `investimento-07[0]`. Chamar o
+modelo só neles são **7 chamadas, 5% de uma execução**, e respondem
+definitivamente o que 146 chamadas responderiam. É a forma barata de sair
+daqui, e ela existe porque os endereços foram registrados.
+
+### Lacunas conhecidas
+
+- **O relatório de uma execução em CI continua efêmero.** O runner grava em
+  disco sempre, mas em CI esse arquivo morre com o runner: não há
+  `upload-artifact` em `.github/workflows/evals.yml`, e nada commita de volta.
+  A lacuna que a TEC-247 fechou é a da execução **local**, que é a que produziu
+  esta baseline. Uma execução disparada por `workflow_dispatch` ainda deixa só
+  log.
+- **Duas medições de intenção, ainda não uma distribuição.** 95,6%/92,6% em
+  27/08 e 97,3%/96,6% em 30/08, contra corpus diferentes. Dois pontos não são
+  dispersão, e o ruído entre execuções continua estimado (±1,5%), não medido.
+  Um gate relativo a histórico — bloquear por queda maior que a dispersão
+  observada — agora tem onde guardar as execuções (`evals/relatorios/`), mas
+  ainda não tem execuções suficientes para calcular a dispersão.
+- **A precisão da extração tem exatamente um ponto.** Não há com o que comparar
+  os 79,2%: a execução de 28/08 não registrou percentual nenhum. Este número é
+  o "antes" que a TEC-235 e a TEC-244 não tinham; ele não é um "depois" de
+  coisa nenhuma.
+- **`extra` em turno positivo continua ambíguo.** Os 4 fora dos negativos podem
+  ser invenção ou anotação faltante, e a execução não distingue. Só o turno
+  negativo dá `extra` sem ambiguidade, e lá houve 1. Os valores crus, agora
+  registrados, não desfazem essa ambiguidade — ela é da anotação, não da
+  comparação —, mas dizem **o que** o modelo extraiu, que é o suficiente para
+  quem for decidir se aquilo merecia anotação.
+- **Os valores dos `divergiu` de 30/08 não existem, e não vão existir.** A
+  instrumentação que os registraria entrou depois da execução. A causa dos sete
+  `divergiu` de `regiao` só se confirma na próxima execução paga.
