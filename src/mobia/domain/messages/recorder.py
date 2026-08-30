@@ -160,7 +160,22 @@ class MessageRecorder:
         cache_read_tokens: int | None,
         cache_write_tokens: int | None,
     ) -> None:
-        custo = custo_em_dolar(model, tokens_in, tokens_out)
+        # Os tokens de cache entram na conta aqui pelo mesmo motivo que entram
+        # no log do classificador: eles SAEM de `input_tokens` e vao para
+        # contadores proprios, entao ignora-los faz `cost_usd` cair sem o
+        # gasto ter caido. Subestimar em silencio e exatamente o que o
+        # docstring de `custo_em_dolar` promete nao fazer.
+        #
+        # `or 0` porque os dois parametros sao `int | None`: `None` e "esta
+        # chamada nao mediu cache" -- o caso das gravacoes anteriores a
+        # TEC-231 --, e para a conta isso vale zero.
+        custo = custo_em_dolar(
+            model,
+            tokens_in,
+            tokens_out,
+            cache_write=cache_write_tokens or 0,
+            cache_read=cache_read_tokens or 0,
+        )
         if custo is None:
             log.warning("telemetry.unknown_model", model=model, message_id=str(message_id))
 

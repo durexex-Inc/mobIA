@@ -2606,3 +2606,48 @@ declara como `SEM_MECANISMO` no relatório do gate, agora com um segundo dono.
 Os dois campos continuam separados de propósito, e rodarem no mesmo modelo hoje
 não muda isso: **é a possibilidade de divergir que a separação guarda, não o
 fato de divergirem agora.**
+
+### As colunas de cache do banco, que ficaram NULL desde a TEC-126
+
+A TEC-251 ligou o prompt caching e pôs os contadores no **log**. Isso não
+alcança consulta nenhuma: `message_telemetry.cache_read_tokens` e
+`cache_write_tokens` existem desde a TEC-126, `record_agent_message` sempre as
+aceitou como parâmetro, e **nenhum chamador passava valor**. Continuavam
+sempre `NULL`.
+
+Era critério de aceite da [TEC-231](https://eduardodurieuxlopes.atlassian.net/browse/TEC-231),
+que já existia aberta quando a TEC-251 foi escrita — e a TEC-251 é, em boa
+parte, duplicata dela e da
+[TEC-220](https://eduardodurieuxlopes.atlassian.net/browse/TEC-220). O backlog
+não foi consultado antes de criar a card nova; fica registrado porque o erro é
+de processo e se repete sozinho.
+
+**A consequência era concreta:** o painel de custo da TEC-191 somaria custo sem
+a parte de cache — o mesmo padrão da TEC-249, gasto que existe e não chega a
+lugar consultável.
+
+`RespostaDoAgente` e `PerguntaDeDesambiguacao` passaram a carregar
+`cache_write`/`cache_read`, o turno os repassa, e o recorder os grava.
+
+#### O custo gravado também subestimava
+
+`record_agent_message` calculava `cost_usd` com `tokens_in` e `tokens_out` só.
+Como os tokens cacheados **saem** de `input_tokens`, o custo no banco cairia
+sem o gasto ter caído — o mesmo defeito que a TEC-251 consertou no log,
+sobrevivendo no caminho que o painel de fato lê.
+
+Havia um teste travando exatamente esse comportamento,
+`test_custo_ignora_tokens_de_cache_por_ora`, com justificativa honesta enquanto
+valeu: *"sem agente não há forma de uso real para tarifar, e inventar taxa
+agora seria chute materializado no histórico de custo"*. O agente existe, o
+cache está ligado, e a taxa deixou de ser chute — 1,25× na escrita e 0,1× na
+leitura. O teste foi substituído por dois: um que cobra a conta com cache, e um
+que garante que `None` nas colunas continua gravando o custo de antes.
+
+#### Zero e `None` significam coisas diferentes nessas colunas
+
+`cache_write=0` é *"o modelo respondeu, o prefixo foi enviado, e o cache poupou
+nada"* — uma quantidade. `NULL` é *"esta linha é anterior à TEC-231 e ninguém
+media"* — uma ausência. As duas leituras não podem colidir na mesma coluna, e
+por isso os campos de telemetria usam `0` e as colunas continuam aceitando
+`None` para o histórico.

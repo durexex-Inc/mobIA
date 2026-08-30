@@ -432,6 +432,8 @@ class ClassificadorAnthropic:
                 tokens_out=resposta.usage.output_tokens,
                 latency_ms=latency_ms,
                 extracao=extrair(dados.get("extracao")),
+                cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
+                cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
             )
         except (
             json.JSONDecodeError,
@@ -450,8 +452,8 @@ class ClassificadorAnthropic:
         if not resultado.resposta:
             raise RespostaInvalida("campo resposta veio vazio")
 
-        escrito_no_cache = getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0
-        lido_do_cache = getattr(resposta.usage, "cache_read_input_tokens", 0) or 0
+        escrito_no_cache = resultado.cache_write
+        lido_do_cache = resultado.cache_read
         # So numeros e id de modelo. Nem a resposta, nem o prompt, nem a
         # intencao classificada -- essa ultima nao e conteudo do lead, mas
         # tambem nao ajuda em log e mantem a regra simples.
@@ -536,6 +538,8 @@ class ClassificadorAnthropic:
         return PerguntaDeDesambiguacao(
             texto=texto,
             modelo=settings.modelo_agente,
+            cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
             tokens_in=resposta.usage.input_tokens,
             tokens_out=resposta.usage.output_tokens,
             latency_ms=latency_ms,
