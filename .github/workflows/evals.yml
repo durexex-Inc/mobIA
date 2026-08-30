@@ -18,9 +18,26 @@ name: Avaliacoes de IA
 # ele o gate so roda em PR que toque os caminhos filtrados, e por isso nao ha
 # como medir a baseline depois que a mudanca esta na main, nem re-medir depois
 # de trocar `modelo_agente`, nem investigar uma suspeita sem inventar um PR.
+#
+# O input `modelo` fecha metade da lacuna que o README registra: trocar
+# `modelo_agente` NAO dispara este gate, porque `src/mobia/app/config.py` esta
+# fora do filtro abaixo de proposito (o arquivo carrega config alheia ao
+# agente). Com o input da para comparar modelos pela UI do Actions, sem commit
+# e sem tocar em `config.py` -- e `_condicoes_da_execucao` ja grava o modelo no
+# topo do artefato, entao cada execucao fica auto-identificada.
+#
+# A outra metade da lacuna continua aberta: um PR que troque o DEFAULT em
+# `config.py` passa sem medir. So o filtro resolveria isso, e incluir o arquivo
+# inteiro faria o gate pago rodar por motivos alheios ao agente.
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      modelo:
+        description: "Modelo do agente. Vazio = o default de config.py."
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: evals-${{ github.ref }}
@@ -130,11 +147,69 @@ jobs:
       # obrigatorio "Avaliacoes de IA" ficava vermelho em todo PR sem nunca
       # medir nada.
 
+      # Guarda de graca antes das 146 chamadas pagas. Um modelo com typo
+      # falharia sozinho na primeira chamada, e isso seria barato -- mas um
+      # modelo VALIDO e sem preco cadastrado roda a execucao inteira e produz
+      # um relatorio com `custo_usd=None`, que e exatamente o buraco que a
+      # TEC-249 fechou na moderacao. Aqui ele entraria de novo pela porta do
+      # disparo manual.
+      #
+      # Reusa as duas tabelas que ja existem em vez de repetir os valores:
+      # `PRECOS_POR_MODELO` e `MINIMO_CACHEAVEL_POR_MODELO`. O minimo de cache
+      # nao reprova -- prefixo curto de mais nao cacheia e nao da erro, entao
+      # a execucao continua valida, so mais cara --, mas avisa.
+      - name: Conferir o modelo escolhido
+        if: steps.filtro.outputs.mexeu == 'true' && inputs.modelo != ''
+        env:
+          MODELO_ESCOLHIDO: ${{ inputs.modelo }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, sys
+          from mobia.app.config import PRECOS_POR_MODELO
+          from mobia.domain.messages.recorder import custo_em_dolar
+          sys.path.insert(0, "tests/unit")
+          from test_prompt_caching import PREFIXO_CACHEAVEL_EM_TOKENS, _minimo_de
+
+          modelo = os.environ["MODELO_ESCOLHIDO"]
+          if custo_em_dolar(modelo, 1000, 100) is None:
+              raise SystemExit(
+                  f"modelo {modelo!r} nao tem preco em PRECOS_POR_MODELO: a "
+                  f"execucao rodaria inteira e o relatorio sairia com custo "
+                  f"nulo. Cadastre o preco antes de medir. "
+                  f"Conhecidos: {sorted(PRECOS_POR_MODELO)}"
+              )
+          minimo = _minimo_de(modelo)
+          if minimo is None:
+              print(f"[!] minimo cacheavel de {modelo!r} desconhecido")
+          elif PREFIXO_CACHEAVEL_EM_TOKENS < minimo:
+              print(
+                  f"[!] prefixo de {PREFIXO_CACHEAVEL_EM_TOKENS} tokens contra "
+                  f"minimo de {minimo} do {modelo}: SEM CACHE nesta execucao, "
+                  f"e ela vai custar mais. Nao invalida a medicao."
+              )
+          print(f"[OK] {modelo}: preco cadastrado, minimo de cache {minimo}")
+          PY
+
       - name: Rodar as avaliacoes
         if: steps.filtro.outputs.mexeu == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python -m pytest evals -v
+          # Nome intermediario de proposito: `inputs.modelo` e string vazia
+          # tanto no `pull_request` quanto no dispatch sem escolha, e exportar
+          # `MODELO_AGENTE=""` faria o pydantic aceitar vazio e a primeira
+          # chamada falhar com modelo invalido. So vira `MODELO_AGENTE` quando
+          # tem conteudo.
+          MODELO_ESCOLHIDO: ${{ inputs.modelo }}
+        run: |
+          set -euo pipefail
+          if [ -n "${MODELO_ESCOLHIDO}" ]; then
+            export MODELO_AGENTE="${MODELO_ESCOLHIDO}"
+            echo "modelo forcado pelo disparo manual: ${MODELO_AGENTE}"
+          else
+            echo "modelo: o default de config.py"
+          fi
+          python -m pytest evals -v
 
       - name: Log do resultado
         run: |

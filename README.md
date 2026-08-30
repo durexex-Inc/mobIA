@@ -2490,3 +2490,44 @@ não experimento.
 - **Duas execuções não são distribuição.** O ruído de 1,7 ponto vem de dois
   pontos sobre o mesmo sistema, e é a única dispersão medida que este projeto
   tem.
+
+## Escolher o modelo no disparo manual do gate
+
+`workflow_dispatch` passou a aceitar um input `modelo`. Vazio — que é o caso de
+todo `pull_request` — usa o default de `config.py`; preenchido, exporta
+`MODELO_AGENTE` só para aquela execução.
+
+Isso fecha **metade** da lacuna registrada acima: dá para comparar modelos pela
+UI do Actions, sem commit e sem tocar em `config.py`, e o
+`_condicoes_da_execucao` já grava o modelo no topo do artefato — cada execução
+fica auto-identificada.
+
+**A outra metade continua aberta.** Um PR que troque o *default* em
+`config.py` continua passando sem medir, porque o arquivo está fora do filtro
+de propósito: ele carrega config alheia ao agente, e incluí-lo faria o gate
+pago rodar por motivos que não têm nada a ver com o prompt. Hoje o que segura
+essa ponta é `test_defaults_do_agente`.
+
+### O nome intermediário não é estilo
+
+`inputs.modelo` é string vazia tanto no `pull_request` quanto no dispatch sem
+escolha. Exportar `MODELO_AGENTE=""` faria o pydantic aceitar vazio e a
+primeira chamada falhar com modelo inválido — o passo lê `MODELO_ESCOLHIDO` e
+só promove a `MODELO_AGENTE` quando tem conteúdo.
+
+### A guarda que roda antes de gastar
+
+Um modelo com typo falharia sozinho na primeira chamada, e isso seria barato.
+**O caso caro é o modelo válido sem preço cadastrado**: ele roda as 146
+chamadas e produz um relatório com `custo_usd=None` — exatamente o buraco que
+a TEC-249 fechou na moderação, entrando de novo pela porta do disparo manual.
+
+O passo `Conferir o modelo escolhido` reusa `PRECOS_POR_MODELO` e
+`MINIMO_CACHEAVEL_POR_MODELO` em vez de repetir valores, e distingue os dois
+casos:
+
+- **sem preço → falha**, antes de qualquer chamada paga;
+- **prefixo abaixo do mínimo de cache → avisa e segue.** Prefixo curto demais
+  não cacheia e não dá erro; a execução fica mais cara, mas continua válida, e
+  reprovar por isso seria confundir custo com medição. Com `claude-haiku-4-5`
+  (mínimo 4.096 contra prefixo de 1.716) é exatamente esse o caso.
