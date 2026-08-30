@@ -1,12 +1,17 @@
 import re
+import time
 from functools import lru_cache
 from typing import Any, cast
 
+import structlog
 from anthropic import AsyncAnthropic
 from anthropic.types import Message
 
 from mobia.app.config import ConfiguracaoInsegura, get_settings
+from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.domain.moderacao.port import Direcao, ModeracaoIndisponivel, Veredito
+
+log = structlog.get_logger(__name__)
 
 # Teto proprio, e nao o do cliente do turno. Aquele tem 60s com uma
 # retentativa, ou 120s de pior caso por chamada, contra um `job_timeout` de
@@ -120,12 +125,35 @@ class ModeradorAnthropic:
             "system": _SISTEMA_POR_DIRECAO[direcao],
             "messages": [{"role": "user", "content": texto}],
         }
+        comecou = time.perf_counter()
         try:
             resposta = cast(Message, await get_moderation_client().messages.create(**kwargs))
         except Exception as exc:
             # Nunca interpola `texto` nem `str(exc)`: o primeiro e conteudo do
             # lead ou da empresa, e o segundo pode ecoar o corpo enviado.
             raise ModeracaoIndisponivel(type(exc).__name__) from exc
+
+        # Antes de qualquer recusa abaixo: a chamada ja foi paga, e o veredito
+        # fora do protocolo custa igual ao veredito bom. Registrar so no
+        # caminho feliz esconderia justamente o gasto que nao produziu nada.
+        #
+        # So numeros, direcao e id de modelo -- a mesma regra do log do
+        # classificador, e aqui ela aperta: o que a moderacao ve e conteudo do
+        # lead ou da empresa, e `resposta` carrega o veredito sobre ele.
+        # Nunca o texto julgado, nunca a resposta.
+        log.info(
+            "moderacao.avaliada",
+            modelo=resposta.model,
+            direcao=direcao.value,
+            tokens_in=resposta.usage.input_tokens,
+            tokens_out=resposta.usage.output_tokens,
+            latency_ms=int((time.perf_counter() - comecou) * 1000),
+            custo_usd=str(
+                custo_em_dolar(
+                    resposta.model, resposta.usage.input_tokens, resposta.usage.output_tokens
+                )
+            ),
+        )
 
         if resposta.stop_reason != "end_turn":
             raise ModeracaoIndisponivel(f"stop_reason={resposta.stop_reason!r}")

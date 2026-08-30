@@ -11,6 +11,7 @@ from mobia.app.config import (
 )
 from mobia.domain.agente.classificador import _SCHEMA_COMPILADO, SISTEMA_DO_AGENTE
 from mobia.domain.context.montagem import SISTEMA
+from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.infra.anthropic import get_client
 
 # Rotulos que `montar_prompt` intercala entre resumo, mensagens recentes e
@@ -248,3 +249,30 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
         f"subcontagem {subcontagem}: a margem de 13 tokens sobre o teto de 600 "
         f"foi consumida. Encolha o texto enviado, nao suba a reserva."
     )
+
+
+def test_todo_modelo_configurado_tem_preco_cadastrado(settings) -> None:
+    """A guarda que teria pego o buraco da moderacao no dia em que ele entrou.
+
+    `modelo_moderacao` e um ID datado (`claude-haiku-4-5-20251001`) e a tabela
+    so tinha a chave sem data, entao `custo_em_dolar` devolvia None para ele.
+    Ficou latente porque a moderacao nao tinha telemetria nenhuma -- ninguem
+    consultava o preco --, e teria virado custo nulo em producao no dia em que
+    alguem instrumentasse. Foi o que a TEC-249 fez.
+
+    Este teste amarra as duas pontas: toda `modelo_*` de `Settings` tem de ter
+    preco, e o proximo modelo configurado sem entrada reprova aqui em vez de
+    somar zero num painel.
+    """
+    configurados = {
+        nome: getattr(settings, nome)
+        for nome in type(settings).model_fields
+        if nome.startswith("modelo_")
+    }
+    assert configurados, "nenhuma `modelo_*` encontrada: o teste perdeu o alvo"
+    sem_preco = {
+        nome: valor
+        for nome, valor in configurados.items()
+        if custo_em_dolar(valor, 1000, 100) is None
+    }
+    assert not sem_preco, f"modelos configurados sem preco em PRECOS_POR_MODELO: {sem_preco}"

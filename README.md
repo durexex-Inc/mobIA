@@ -2213,3 +2213,99 @@ continua válido como o que foi medido; o que expira é a comparabilidade.
   execução.
 - **`av. ` e `av ` nunca foram observados.** Entraram por simetria, e a única
   forma medida é `avenida `.
+
+## TEC-249 — O custo da moderação nunca foi registrado
+
+A moderação roda em **todo turno, nas duas pontas**. É o caminho mais quente do
+produto, e o gasto dele nunca apareceu em lugar nenhum.
+
+### A causa não era a que a card descrevia
+
+A card foi escrita supondo que `custo_em_dolar` devolvia `None` para a
+moderação e que `telemetry.unknown_model` vinha sendo emitido a cada chamada,
+sem ninguém ler. **Estava errado, e a leitura do código desmentiu.**
+
+`ModeradorAnthropic.moderar` (`src/mobia/infra/moderacao.py`) **nunca chamou
+`custo_em_dolar`.** Ela tinha a resposta inteira em mãos — com `model` e
+`usage` — e descartava as duas, devolvendo só o `Veredito(bloqueado, motivo)`.
+Não havia log, não havia contagem de tokens, não havia custo. Não era uma
+consulta que falhava: era instrumentação que não existia.
+
+O buraco na tabela de preços é real, mas era **latente**: ninguém consultava o
+preço da moderação, então nada acusava. Ele viraria custo nulo em produção no
+instante em que alguém instrumentasse — que é o que esta card fez.
+
+### Os dois defeitos, e por que são irmãos
+
+**1. O ID datado não achava preço.** `custo_em_dolar` fazia busca por chave
+exata:
+
+| | valor |
+| --- | --- |
+| `settings.modelo_moderacao` | `claude-haiku-4-5-20251001` |
+| chave em `PRECOS_POR_MODELO` | `claude-haiku-4-5` |
+
+Um snapshot datado é o **mesmo modelo pelo mesmo preço**, então a busca passou
+a reduzir um sufixo de data antes de desistir. A redução é estreita de
+propósito: sai só `-` seguido de **oito dígitos**, e só no fim.
+`claude-opus-9-20260101` continua devolvendo `None`, porque `claude-opus-9`
+também não está na tabela — a lacuna continua aparecendo, que é o que o
+docstring de `custo_em_dolar` promete. Uma linha por data seria a alternativa,
+e a primeira que faltasse reabriria o buraco.
+
+**2. A moderação não media nada.** `moderar` passou a registrar
+`moderacao.avaliada` com modelo, direção, tokens, latência e custo — **antes**
+de qualquer recusa, porque a chamada já foi paga e um veredito fora do
+protocolo custa igual a um veredito bom. Registrar só no caminho feliz
+esconderia justamente o gasto que não produziu nada.
+
+O log usa `resposta.model`, e não `settings.modelo_moderacao`: o que interessa
+é o modelo que **serviu** a requisição, que pode diferir do que foi pedido.
+
+A regra do log do classificador — só números e id de modelo — aperta aqui, e
+está travada por teste: o que a moderação vê é conteúdo do lead ou da empresa,
+e a resposta carrega o veredito sobre ele. Nem o texto julgado, nem o veredito.
+
+### A causa de fundo, que era comum aos dois
+
+**A tabela de preços não tinha nada que a amarrasse à realidade.** Dois defeitos
+distintos saíram dela em dois dias:
+
+- `claude-sonnet-5` estava com `$3/$15`, que são os preços do
+  `claude-sonnet-4-6` — corrigido na troca do `modelo_agente`.
+- `modelo_moderacao` não tinha entrada nenhuma — esta card.
+
+O teste que deveria ter pego o primeiro repetia `3.00`/`15.00` escritos à mão,
+duplicando a constante: pegava erro de fórmula e nunca erro de preço. Agora há
+duas guardas que fecham a classe inteira:
+
+- `test_precos_batem_com_a_tabela_publicada` trava os preços contra a tabela
+  publicada.
+- `test_todo_modelo_configurado_tem_preco_cadastrado` varre toda `modelo_*` de
+  `Settings` e exige preço para cada uma. **É o teste que teria pego este bug
+  no dia em que ele entrou**, e é o que pega o próximo modelo configurado sem
+  entrada.
+
+### O histórico não é recuperável
+
+O custo da moderação nunca foi gravado, e **os tokens também não** — `moderar`
+descartava `usage` inteiro, então não há de onde recalcular. Não existe registro
+em `message_telemetry` para as chamadas de moderação: elas nunca passaram pelo
+`MessageRecorder`.
+
+Fica como está, por escrito: **o gasto de moderação anterior a esta card é
+desconhecido e permanece desconhecido.** A série começa aqui.
+
+### Lacunas conhecidas
+
+- **O custo da moderação vai para log, não para `message_telemetry`.** O
+  classificador e o resumo fazem o mesmo, então isto é consistente — mas
+  significa que o gasto de moderação não entra em nenhuma consulta SQL, só em
+  agregação de log. Somar custo por conversa continua não sendo possível para
+  esta ponta.
+- **Quanto a moderação custou até aqui continua desconhecido**, e não há como
+  recuperar.
+- **A redução de snapshot é sintática, não semântica.** Ela assume que
+  `-YYYYMMDD` no fim é sempre um snapshot do modelo à esquerda. É verdade para
+  a convenção de nomes de hoje; um ID futuro que termine em oito dígitos por
+  outro motivo passaria a ser reduzido por engano.

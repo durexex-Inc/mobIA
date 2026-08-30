@@ -8,15 +8,33 @@ from mobia.domain.moderacao.port import Direcao, ModeracaoIndisponivel
 class RespostaFalsa:
     """Molda o que o SDK devolve, sem tocar a rede."""
 
-    def __init__(self, texto: str, stop_reason: str = "end_turn") -> None:
+    def __init__(
+        self,
+        texto: str,
+        stop_reason: str = "end_turn",
+        modelo: str = "claude-haiku-4-5-20251001",
+        tokens_in: int = 120,
+        tokens_out: int = 3,
+    ) -> None:
         class Bloco:
             type = "text"
 
             def __init__(self, t: str) -> None:
                 self.text = t
 
+        class Uso:
+            def __init__(self, entrada: int, saida: int) -> None:
+                self.input_tokens = entrada
+                self.output_tokens = saida
+
         self.content = [Bloco(texto)]
         self.stop_reason = stop_reason
+        # `model` e `usage` vem do SDK e a TEC-249 passou a le-los: sem eles
+        # aqui, o molde deixaria de moldar o que o codigo de fato consome.
+        # O default e um ID DATADO de proposito -- e o que `modelo_moderacao`
+        # configura, e foi o formato que nunca achava preco na tabela.
+        self.model = modelo
+        self.usage = Uso(tokens_in, tokens_out)
 
 
 class ClienteFalso:
@@ -218,3 +236,69 @@ def test_o_cliente_da_moderacao_recusa_subir_sem_chave(
 
     with pytest.raises(ConfiguracaoInsegura, match="ANTHROPIC_API_KEY"):
         get_moderation_client()
+
+
+async def test_moderacao_registra_custo_nao_nulo(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """O custo da moderacao nunca foi registrado, e este teste e a guarda.
+
+    `moderar` tinha a resposta inteira em maos -- com `model` e `usage` -- e
+    descartava as duas, devolvendo so o `Veredito`. A moderacao roda nas duas
+    pontas de todo turno, entao o caminho mais quente do produto era o unico
+    sem custo em lugar nenhum.
+
+    O assert e sobre `custo_usd` nao ser "None": e a forma exata que o buraco
+    da tabela de precos produzia, e a que voltaria se alguem trocasse
+    `modelo_moderacao` por um ID sem preco cadastrado.
+    """
+    import logging
+
+    cliente = ClienteFalso(RespostaFalsa("LIBERAR"))
+    with caplog.at_level(logging.INFO):
+        await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    linha = next(r for r in caplog.records if "moderacao.avaliada" in r.getMessage())
+    texto = linha.getMessage()
+    assert "custo_usd=None" not in texto
+    assert "custo_usd='None'" not in texto
+    assert "tokens_in" in texto and "tokens_out" in texto
+
+
+async def test_veredito_fora_do_protocolo_tambem_registra_custo(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A chamada ja foi paga antes de o veredito ser julgado invalido.
+
+    Registrar so no caminho feliz esconderia justamente o gasto que nao
+    produziu nada -- e um moderador devolvendo lixo gasta igual a um que
+    funciona.
+    """
+    import logging
+
+    cliente = ClienteFalso(RespostaFalsa("TALVEZ"))
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(ModeracaoIndisponivel):
+            await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.SAIDA)
+
+    assert any("moderacao.avaliada" in r.getMessage() for r in caplog.records)
+
+
+async def test_log_da_moderacao_nao_carrega_o_texto_julgado(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """O que a moderacao ve e conteudo do lead ou da empresa.
+
+    A regra do log do classificador -- so numeros e id de modelo -- aperta
+    aqui: nem o texto julgado, nem o veredito sobre ele.
+    """
+    import logging
+
+    segredo = "meu telefone e 11999998888"
+    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR"))
+    with caplog.at_level(logging.INFO):
+        await _moderador(monkeypatch, cliente).moderar(segredo, direcao=Direcao.ENTRADA)
+
+    for registro in caplog.records:
+        assert segredo not in registro.getMessage()
+        assert "BLOQUEAR" not in registro.getMessage()
