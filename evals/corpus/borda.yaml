@@ -104,7 +104,7 @@
         regiao: cotia
     # Fora da medicao: pergunta de escritura que pressupoe o terreno do turno
     # anterior, sem nomear nada de novo neste turno -- balde C do spec da
-    # TEC-243.
+    # TEC-245.
     - lead: "tem escritura definitiva ou ainda ta em inventario?"
       intencao: COMPRA
 
@@ -120,7 +120,7 @@
         tipo_imovel: APARTAMENTO
         regiao: ipiranga
     # Fora da medicao: "perto do metro" e proximidade sem toponimo, e nao ha
-    # forma canonica de regiao para anotar -- balde C do spec da TEC-243.
+    # forma canonica de regiao para anotar -- balde C do spec da TEC-245.
     # Mesma decisao que `compra-02` indice 2.
     - lead: "precisa ser perto do metro, eu nao dirijo"
       intencao: ALUGUEL

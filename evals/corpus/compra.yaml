@@ -33,7 +33,7 @@
         tipo_imovel: APARTAMENTO
         regiao: vila mariana
     # Fora da medicao: "850 mil ta bem acima do que eu consigo" sugere um
-    # teto de preco que a fala nao afirma -- balde C do spec da TEC-243.
+    # teto de preco que a fala nao afirma -- balde C do spec da TEC-245.
     - lead: "nossa, 850 mil ta bem acima do que eu consigo. voces tem pra alugar na regiao?"
       intencao: ALUGUEL
 
@@ -93,7 +93,7 @@
         regiao: jardim das flores
     # Fora da medicao: "mais que o dobro do que eu tinha em mente" e a mesma
     # forma de `compra-01` i1 -- teto sugerido, nao afirmado. Balde C do spec
-    # da TEC-243.
+    # da TEC-245.
     - lead: "poxa, e mais que o dobro do que eu tinha em mente. tem algo pra alugar por la mesmo, mais em conta?"
       intencao: ALUGUEL
     - lead: "pode ser so 2 quartos tambem, contanto que tenha quintal"
@@ -143,7 +143,7 @@
         tipo_imovel: APARTAMENTO
     # Fora da medicao: "pode ser sabado de manha?" nao tem ancora de semana
     # explicita, ao contrario de "essa sexta" (`follow-up-08` i1) -- balde C
-    # do spec da TEC-243.
+    # do spec da TEC-245.
     - lead: "pode ser sabado de manha?"
       intencao: COMPRA
 
@@ -159,7 +159,7 @@
       campos:
         regiao: paulista
     # Fora da medicao: "parcelamento direto com o proprietario" nao e valor
-    # de FormaPagamento -- balde C do spec da TEC-243.
+    # de FormaPagamento -- balde C do spec da TEC-245.
     - lead: "aceita entrada menor com parcelamento direto com o proprietario?"
       intencao: COMPRA
     # Unico turno do corpus que afirma piso de preco. Sem "por la" no fim de
@@ -208,7 +208,7 @@
         regiao: zona sul
         tipo_imovel: CASA
     # Fora da medicao: permuta com carro nao e valor de FormaPagamento --
-    # balde C do spec da TEC-243.
+    # balde C do spec da TEC-245.
     - lead: "e aceita permuta com meu carro na entrada?"
       intencao: COMPRA
     - lead: "o sobrado tem escritura ja regularizada?"

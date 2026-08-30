@@ -1095,7 +1095,7 @@ venda para tirar quatro campos do zero. A TEC-242 acrescentou sete a esse
 total: turnos que citavam sinônimo de tipologia (*kitnet*, *studio*,
 *flat*, *cobertura*, *sobrado*) e ficavam fora da medição só por não haver
 regra que traduzisse a palavra do lead para o vocabulário de `TipoImovel`.
-A TEC-243 acrescentou os dez últimos, ao ler uma por uma as falas que
+A TEC-245 acrescentou os dez últimos, ao ler uma por uma as falas que
 estavam fora da medição sem decisão escrita — a maioria em `follow_up` e
 `borda`, que são os arquivos onde o lead se refere a um imóvel já visto e a
 anotação exige decidir se a fala o **nomeia** ou só aponta para ele (ver
@@ -1115,14 +1115,14 @@ invenção nenhuma dariam denominador zero, e `faixa_de` levantaria
 TEC-238 anotou 39 turnos negativos, e esta revisão tirou dois que eram
 pergunta de processo pressupondo campo, não ausência de afirmação
 (`follow-up-03` índice 1 e `aluguel-09` índice 2 — ver "Lacunas
-conhecidas"), restando 37. A TEC-243 acrescentou 29 ao passar o corpus
+conhecidas"), restando 37. A TEC-245 acrescentou 29 ao passar o corpus
 inteiro sob o mesmo critério, e são hoje **66 turnos negativos**,
 distribuídos em `evals/corpus/investimento.yaml` (21),
 `evals/corpus/borda.yaml` (16), `evals/corpus/aluguel.yaml` (11),
 `evals/corpus/follow_up.yaml` (11) e `evals/corpus/compra.yaml` (7). A
 TEC-238 tinha concentrado os negativos em `borda` e `follow_up`, os
 arquivos com mais turno de saudação, despedida e assunto fora de escopo,
-onde "o lead não afirmou nada" é a leitura mais direta; a TEC-243 desfez
+onde "o lead não afirmou nada" é a leitura mais direta; a TEC-245 desfez
 essa concentração ao mostrar que o resto do corpus é dominado por outra
 forma de fala igualmente clara — pergunta de processo dirigida ao corretor.
 `investimento` passou de 6 para 21 negativos, quinze dos vinte e nove que a
@@ -1153,7 +1153,7 @@ extraiu **certo** e que ninguém anotou desconta exatamente como uma invenção 
 campo com muitos `extra` e pouca anotação no corpus é candidato a lacuna de
 anotação, não a defeito do modelo. Era a leitura que a TEC-238 precisaria para
 separar invenção de anotação faltante nos 56 turnos sem `campos` de então; a
-TEC-243 fez essa separação por leitura das falas, sem execução paga, e sobraram
+TEC-245 fez essa separação por leitura das falas, sem execução paga, e sobraram
 **17** turnos sem `campos` — todos com motivo escrito. A execução
 de 28/08 já exerceu essa leitura contra dados reais uma vez, e foi assim que
 `regiao` apareceu como o maior balde de discrepâncias — mas contra o corpus
@@ -1234,13 +1234,13 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   do corpus continuam fora da medição — chave `campos` ausente é o único
   jeito de anotar "não sei enumerar com confiança tudo o que esta fala
   afirma" —, e invenção neles não é medida por ninguém. A diferença desde a
-  TEC-243 é que esses 17 são **o conjunto inteiro dos que ficam de fora**, e
+  TEC-245 é que esses 17 são **o conjunto inteiro dos que ficam de fora**, e
   cada um é decisão com motivo escrito: `_FORA_DA_MEDICAO`
   (`tests/unit/test_evals_corpus_real.py`) declara os 17, e um turno novo sem
   `campos` quebra o CI até alguém decidir para onde ele vai. Ver "Lacunas
   conhecidas".
 - **A regra "o imóvel que o lead TEM não é o que ele procura" ganhou teste.**
-  Ela é da TEC-239, mora no docstring de `TurnoAnotado` e até a TEC-243 valia
+  Ela é da TEC-239, mora no docstring de `TurnoAnotado` e até a TEC-245 valia
   só por disciplina de quem anotava. O guarda de sinônimos da TEC-242 varre
   *kitnet*, *studio*, *flat*, *cobertura*, *sobrado* e *república*, e não as
   palavras **literais** do vocabulário: um turno que dissesse "apartamento"
@@ -1301,7 +1301,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   caem para perto de zero numa execução do gate" — exige execução paga, que
   esta card não fez. Os 29 de discrepâncias de 28/08 (10 delas de `regiao`)
   não servem de baseline: o corpus mudou desde então em cinco cards, não
-  duas — TEC-238, TEC-239, TEC-241, TEC-242 e TEC-243 —, e as anotações de
+  duas — TEC-238, TEC-239, TEC-241, TEC-242 e TEC-245 —, e as anotações de
   campo foram de 47 para 83, não para 59.
 - **Os sinônimos de `tipo_imovel` têm dono: a TEC-242.** Eram 8 das 29
   discrepâncias na execução de 28/08 — a TEC-241 tinha mandado esse problema
@@ -1344,7 +1344,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   **O efeito não foi medido, e não há baseline comparável para medi-lo
   depois.** As 8 discrepâncias de sinônimo são da execução de 28/08 —
   anterior à TEC-238, à TEC-239, à TEC-240, à TEC-241, a esta card e à
-  TEC-243. Seis mudanças de corpus e de prompt depois, um "antes" daquele
+  TEC-245. Seis mudanças de corpus e de prompt depois, um "antes" daquele
   tamanho não serve de baseline: uma execução paga nova mediria o efeito
   desta regra **e** o de outras cinco cards ao mesmo tempo, sem jeito de separar as
   causas — a mesma ressalva que o bullet de `regiao`, logo acima,
@@ -1426,7 +1426,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   abaixo do piso declarado, e `precisao_da_extracao` bloqueava ou liberava um
   gate pago com essa amostra — números de antes da TEC-239 acrescentar dois
   turnos ao corpus (136, não os 138 de hoje), não do corpus atual. O pior caso
-  de hoje, medido em 29/08 sobre o corpus depois da TEC-243, é **40 positivos e
+  de hoje, medido em 29/08 sobre o corpus depois da TEC-245, é **40 positivos e
   51 negativos** de pé — as cinco conversas com mais positivos somam 15, e as
   cinco com mais negativos somam outros 15 —, e é dele que saem os pisos
   atuais: `PISO_DE_TURNOS_ANOTADOS = 38` e
@@ -1448,7 +1448,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   `tests/unit/test_evals_metricas.py`). Mas **17 turnos continuam fora da
   medição**, e é esse o buraco que sobra — muito menor do que os 56 que a
   TEC-238 declarou aqui, e hoje de outra natureza. Quatro exclusões, cobrindo
-  cinco turnos, já eram deliberadas antes da TEC-243, e cada uma é
+  cinco turnos, já eram deliberadas antes da TEC-245, e cada uma é
   uma armadilha real que valeu a pena nomear em vez de anotar errado só para
   fechar o número (convenção de índice de turno, 0-based, declarada em
   `TurnoAnotado`, `src/mobia/evals/corpus.py`): `follow-up-03` índice 2
@@ -1469,7 +1469,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   fala com razão. As quatro exclusões cobrem cinco turnos (o par
   `borda-evasivo-02` conta dois).
 
-  Dos outros 51 turnos fora da medição este bullet dizia, até a TEC-243, que
+  Dos outros 51 turnos fora da medição este bullet dizia, até a TEC-245, que
   eram *"trabalho de anotação que ainda não foi feito, não decisão tomada"*.
   **Essa frase estava errada**, e o que a derrubou foi ler as 51 falas uma a
   uma: a maioria é pergunta de processo dirigida ao corretor — *"qual o valor
@@ -1479,7 +1479,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   conversas estavam anotados `campos: {}` havia duas cards. O que faltava não
   era o trabalho de anotação; era o **critério escrito** que dissesse quando
   uma pergunta é negativo e quando é exclusão. Ele existia implícito nas quatro
-  exclusões acima, e a TEC-243 o escreveu: o que exclui não é ser pergunta, é
+  exclusões acima, e a TEC-245 o escreveu: o que exclui não é ser pergunta, é
   a fala **pressupor** um campo sem afirmá-lo, ou sugerir um valor sem
   nomeá-lo. Passadas as 51 sob esse critério — que hoje mora no docstring de
   `TurnoAnotado`, onde o próximo anotador o lê antes de anotar —, 10 viraram
@@ -1523,7 +1523,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   colisão está aberta por decisão, não por descuido.** A regra da TEC-242
   mantém *"e pode ter animal de estimação no prédio?"* (`aluguel-09` índice 2)
   **fora da medição**, porque `prédio` é contêiner genérico e um modelo que lê
-  tipologia dali está lendo a fala com razão. A regra que a TEC-243 escreveu
+  tipologia dali está lendo a fala com razão. A regra que a TEC-245 escreveu
   torna *"aquele mesmo prédio"* (`aluguel-01` índice 1) **negativo**, porque
   anáfora pura não nomeia nada e repetir o campo do turno anterior é `extra` de
   propósito. As duas falas são pergunta de processo com `prédio` apontando para
@@ -1533,7 +1533,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   `unidade`) — `aluguel-01` índices 1 e 2, `aluguel-02` índice 1,
   `investimento-01` índice 2, `investimento-08` índices 0 e 2, mais
   `aluguel-09` índice 2, o excluído. **Seis dos sete são negativos que esta
-  card criou**: antes da TEC-243 nenhum turno negativo do corpus tinha dica de
+  card criou**: antes da TEC-245 nenhum turno negativo do corpus tinha dica de
   tipologia, e a colisão não existia na prática. Ela não foi resolvida porque
   os dois jeitos custam mais do que ela: medir `aluguel-09` índice 2 derruba
   uma decisão da TEC-238 que a TEC-242 reafirmou e que o spec desta card diz
@@ -1577,7 +1577,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   85,6% (AMARELO) e `N=15` dá 84,7% (VERMELHO). As bordas subiram de 7/12/13
   porque o denominador cresceu de 69 para 83, e **não** porque o furo fechou:
   a tolerância a anotação faltante é proporcional ao tamanho da amostra
-  anotada, e é só isso que a TEC-243 comprou aqui. A diferença é que agora
+  anotada, e é só isso que a TEC-245 comprou aqui. A diferença é que agora
   isso é ruído de anotação faltante, distribuído, e não um piso estrutural em
   quatro campos específicos. Quem for investigar um número baixo lê
   `discrepancias_da_extracao`, que separa `extra` (acusa a medição) de
@@ -1600,7 +1600,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   independentes. **A barra continua exatamente onde estava** — *"quero fechar
   logo"* (`follow-up-07` índice 2) e *"bora marcar a assinatura"*
   (`follow-up-08` índice 0) seguem sem marco temporal, e nenhum dos dois anota
-  `urgencia`. O que a TEC-243 corrigiu foi a consequência que se tirava daí:
+  `urgencia`. O que a TEC-245 corrigiu foi a consequência que se tirava daí:
   até ela, esses dois turnos ficavam **inteiros** fora da medição, como se não
   saber o valor de um campo impedisse enumerar os outros oito. Não impede —
   `follow-up-07` índice 2 afirma tipologia e quartos (*"aquele apartamento de
@@ -1621,7 +1621,7 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   está na descrição da TEC-241, e é só a decomposição por campo.
 - **Não há baseline comparável para a extração.** Os 29 acima são de um corpus
   que mudou desde então em cinco cards, não duas — TEC-238, TEC-239, TEC-241,
-  TEC-242 e TEC-243 —, e as anotações de campo foram de 47 para 83, não para
+  TEC-242 e TEC-245 —, e as anotações de campo foram de 47 para 83, não para
   59.
   Qualquer execução daqui para a frente difere daquela por mudança de prompt
   **e** de régua ao mesmo tempo, e

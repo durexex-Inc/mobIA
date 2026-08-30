@@ -79,7 +79,7 @@ class TurnoAnotado:
       apartamento. O unico turno que a usa (`aluguel-07`, primeiro turno) diz
       "republica ou kitnet" -- o lead oferece duas e nao escolhe --, entao ele
       fica sem `tipo_imovel`, de proposito.
-    - **O que decide entre negativo e fora da medicao (TEC-243).** Pergunta de
+    - **O que decide entre negativo e fora da medicao (TEC-245).** Pergunta de
       processo NAO e motivo de exclusao por si so: o corpus anota `{}` em
       dezenas delas. O que exclui e a fala **pressupor um campo sem afirma-lo**
       ("pode ter animal no predio?" pressupoe o predio) ou **sugerir um valor
@@ -102,7 +102,7 @@ class TurnoAnotado:
       tipologia na fala (`predio`, `condominio`, `unidade`) -- `aluguel-01`
       indices 1 e 2, `aluguel-02` indice 1, `investimento-01` indice 2,
       `investimento-08` indices 0 e 2, todos negativos e todos anotados pela
-      TEC-243, mais `aluguel-09` indice 2, o excluido.
+      TEC-245, mais `aluguel-09` indice 2, o excluido.
 
       Nao esta resolvida porque os dois jeitos de resolver custam mais do que
       ela. Medir `aluguel-09` indice 2 derruba uma decisao da TEC-238 que a

@@ -50,7 +50,7 @@
         regiao: zona leste
     # Fora da medicao: "precisa ser terrea" e atributo que sugere CASA sem
     # nomear a tipologia. Um modelo que responde CASA aqui esta lendo com
-    # razao, e negativo puniria esse acerto -- balde C do spec da TEC-243.
+    # razao, e negativo puniria esse acerto -- balde C do spec da TEC-245.
     - lead: "precisa ser terrea, meu cachorro e idoso e nao sobe escada"
       intencao: ALUGUEL
 
