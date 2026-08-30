@@ -103,8 +103,19 @@ def test_desenvolvimento_segue_com_o_default(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_defaults_da_janela_de_contexto(settings) -> None:
-    """Os numeros da RN-02.2 e RN-02.5 vivem em configuracao, nao espalhados no codigo."""
-    assert settings.modelo_resumo == "claude-opus-5"
+    """Os numeros da RN-02.2 e RN-02.5 vivem em configuracao, nao espalhados no codigo.
+
+    `modelo_resumo` esta aqui pelo mesmo motivo que `modelo_agente` esta em
+    `test_defaults_do_agente`: travar o default para a troca ser deliberada.
+    Ele fez o trabalho -- reprovou quando o resumo passou para `claude-sonnet-5`
+    sem esta linha ser atualizada.
+
+    A diferenca entre os dois e o que vem DEPOIS do assert. Trocar o agente tem
+    gate pago que mede a consequencia; trocar o resumo nao tem nada. Este
+    assert e a unica coisa que torna a troca do resumo visivel, e o que ele
+    garante e que ela foi escolhida -- nao que ela foi boa.
+    """
+    assert settings.modelo_resumo == "claude-sonnet-5"
     assert settings.contexto_teto_de_tokens == 12000
     assert settings.contexto_literais_minimas == 20
     assert settings.contexto_gatilho_de_regeneracao == 40
