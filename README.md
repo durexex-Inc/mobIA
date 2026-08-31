@@ -1719,6 +1719,14 @@ seção própria do relatório (`render(..., reperguntas=...)`,
   | `faixa_preco_min` | 1 |
   | `vagas` | 1 |
 
+  > **Emenda da TEC-254 (31/08/2026).** A tabela acima é de 29/08 e a régua
+  > mudou desde então. Hoje são **147 turnos, 62 positivos, 71 negativos e 97
+  > anotações**, com `tipo_imovel` em 37. Os totais coincidem por acaso: a
+  > TEC-254 tirou a anotação por pressuposição de `compra-10[0]`, acrescentou
+  > `tipo_imovel` a `aluguel-07[0]` e criou um turno em `compra-10` para
+  > devolver a cobertura de `tem_imovel_para_vender: false`, que o primeiro
+  > movimento tinha zerado. Ver a seção TEC-254.
+
   A TEC-239 fechou uma inversão de incentivo, e não só um número baixo.
   `precisao_da_extracao` soma pela união entre esperado e obtido por turno,
   então um campo que o corpus **nunca** anota só entra no denominador pelo
@@ -3099,6 +3107,93 @@ novo a moderação, que é barata perto de vazar a fala para dentro do prompt.
 - **Moderação com histórico da conversa** — falas individualmente inofensivas
   que compõem assédio ao longo de vários turnos — continua fora, é outra lacuna
   declarada e outra card.
+
+## TEC-254 — As duas disputas de régua, decididas em direções opostas
+
+A TEC-252 mediu a extração como produção a experimenta e sobraram três
+divergências em 146 turnos. Uma era falha do modelo; **as outras duas eram
+disputas de régua**, e nenhuma tinha dono. Esta card as decide — e cada uma
+caiu para um lado diferente.
+
+### `compra-10[0]` — o prompt vence a pressuposição
+
+> *"minha esposa e eu queremos comprar nosso primeiro imovel, pode me ajudar a
+> entender o processo?"* → o corpus anotava `tem_imovel_para_vender: false`.
+
+Ninguém disse isso; deduz-se de "primeiro imóvel". E `SISTEMA_DO_AGENTE` diz
+*"**Nao infira**: extrair o que a fala nao afirma conta erro igual a nao
+extrair o que ela afirma"*.
+
+**A colisão era deliberada dos dois lados, e ninguém tinha visto.** As duas
+regras são de 29/08/2026: o prompt às 11:20 (TEC-240), a anotação às 22:25
+(TEC-246, commit *"anafora vence a pressuposicao, e primeiro imovel volta pra
+medicao"*). A anotação veio **onze horas depois** da regra que ela contradiz.
+
+**Decisão: o corpus cede.** O prompt é o contrato a que o modelo responde;
+cobrar dele o oposto do que se pede é medir errado, não medir alto. E o corpus
+já era inconsistente consigo: dos três turnos que anotam esse campo, os outros
+dois — *"preciso vender"*, *"quero colocar meu apartamento a venda"* — são
+afirmação direta.
+
+Vira **negativo** e não exclusão, e isso não é escolha: pressuposição não está
+entre as três famílias que a exclusão reserva, e foi a própria TEC-246 que a
+tirou daquela lista.
+
+### `aluguel-07[0]` — o modelo vence a omissão
+
+> *"sou estudante, procuro republica ou kitnet pra alugar perto da unicamp"* →
+> o corpus omitia `tipo_imovel`; o modelo devolvia `APARTAMENTO` e levava
+> `extra` em toda execução.
+
+`kitnet` **está** no vocabulário, e a TEC-242 decidiu que ela vira
+`APARTAMENTO`. `república` não está, porque é uso e não tipologia. O lead
+nomeou uma coisa que a régua reconhece e uma que ela não reconhece.
+
+**Decisão: o modelo acertou.** Oferecer uma segunda opção não desfaz o que foi
+nomeado. O turno passa a anotar `tipo_imovel: APARTAMENTO`, e o falso positivo
+permanente da régua desaparece.
+
+**A linha entre as duas decisões é a mesma**, e agora está escrita no docstring
+de `TurnoAnotado`, onde o próximo anotador a lê antes de anotar: vale o que a
+fala **diz**, não o que ela deixa concluir.
+
+### O terceiro passo, que a card não previa
+
+Tirar a pressuposição de `compra-10[0]` deixou o corpus **sem nenhuma anotação
+de `tem_imovel_para_vender: false`** — era o único turno que a tinha, e
+`test_todo_valor_do_vocabulario_tem_anotacao` reprovou. Com razão: `False` é
+justamente o valor que `preenchidos()` existe para preservar (`is not None`, e
+não a veracidade do valor), e um corpus que nunca o mede não guarda esse
+contrato.
+
+Nenhuma fala do corpus afirmava isso explicitamente. **Foi preciso escrever
+uma** — *"a gente nao tem nenhum imovel pra vender, vai ser so a compra
+mesmo"* —, acrescentada a `compra-10`. Ela afirma do mesmo jeito que os outros
+dois turnos do campo, que era o que faltava.
+
+### A régua mudou, e a comparação fica cortada aqui
+
+O corpus foi de 146 para **147 turnos**, e três anotações se mexeram. **Execuções
+anteriores a 31/08/2026 não são comparáveis com as posteriores** na precisão de
+extração.
+
+Isto está escrito porque foi assim que a TEC-248 confundiu a leitura da troca de
+modelo — a régua mudou no meio e ninguém marcou o corte, e a TEC-253 gastou
+metade de uma varredura para descobrir. Os totais coincidirem (96 → 97
+anotações, 62 positivos nos dois) é coincidência dos três movimentos, não
+estabilidade.
+
+**Efeito esperado na próxima execução paga:** duas das três divergências da
+extração efetiva somem, e sobra `follow-up-01[0]` — a única falha limpa do
+modelo, que é da TEC-252.
+
+### Lacunas conhecidas
+
+- **O sinal de "primeira compra" continua sem ser capturado**, e agora por
+  decisão. Se ele tiver valor comercial, sai da extração e vira derivação em
+  outro lugar, fora do caminho pago — card própria, e não bloqueia nada hoje.
+- **O turno novo nunca foi medido.** Ele entra na próxima execução paga como
+  qualquer outro; se o modelo falhar nele, é falha de verdade e não artefato.
 
 ## Escolher o modelo no disparo manual do gate
 

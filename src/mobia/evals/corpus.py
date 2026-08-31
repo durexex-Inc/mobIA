@@ -52,6 +52,22 @@ class TurnoAnotado:
       regra esta escrita porque so o primeiro estava anotado, e duas leituras
       opostas da mesma forma de fala no mesmo corpus nao viram nota mais baixa
       do modelo -- viram medicao errada.
+    - **Pressuposicao nao e afirmacao (TEC-254).** "queremos comprar nosso
+      primeiro imovel" **nao** anota `tem_imovel_para_vender: false`, por mais
+      que a conclusao seja obvia para um humano. A regra sai do prompt, que e
+      o contrato a que o modelo responde: desde a TEC-240 ele diz *"Nao
+      infira: extrair o que a fala nao afirma conta erro igual a nao extrair o
+      que ela afirma"*. Anotar o pressuposto cobra do modelo o oposto do que
+      se pede a ele.
+
+      Um turno cujo unico conteudo extraivel e pressuposto e **negativo**, e
+      nao exclusao -- pressuposicao nao esta entre as tres familias que a
+      exclusao reserva, e foi a TEC-246 que a tirou daquela lista.
+
+      Nomear entre alternativas, porem, **e** afirmar: "procuro republica ou
+      kitnet" anota `tipo_imovel: APARTAMENTO`, porque `kitnet` esta no
+      vocabulario e oferecer uma segunda opcao nao desfaz o que foi nomeado.
+      A linha e entre o que a fala **diz** e o que ela deixa concluir.
     - **`regiao` se anota como toponimo, sem preposicao (TEC-241).** "usp", nao
       "perto da usp"; "vila madalena", nao "estacao vila madalena". Desde a
       TEC-241 a medicao normaliza os dois lados, entao anotacao suja ainda

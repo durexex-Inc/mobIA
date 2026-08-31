@@ -98,10 +98,19 @@
 - id: aluguel-07
   descricao: estudante dividindo republica
   turnos:
+    # `kitnet` esta no vocabulario e a TEC-242 decidiu que ela vira
+    # APARTAMENTO; `republica` nao esta, porque e uso e nao tipologia. O lead
+    # nomeou uma coisa que a regua reconhece e uma que ela nao reconhece, e o
+    # modelo extraiu a que ela reconhece -- a TEC-254 decidiu que ele acertou.
+    # Oferecer alternativas nao desfaz o que foi nomeado.
+    #
+    # Antes disto o turno cobrava `extra` em toda execucao, e era falso
+    # positivo permanente na regua.
     - lead: "sou estudante, procuro republica ou kitnet pra alugar perto da unicamp"
       intencao: ALUGUEL
       campos:
         regiao: perto da unicamp
+        tipo_imovel: APARTAMENTO
     - lead: "da pra dividir com mais um amigo no contrato?"
       intencao: ALUGUEL
       campos: {}
