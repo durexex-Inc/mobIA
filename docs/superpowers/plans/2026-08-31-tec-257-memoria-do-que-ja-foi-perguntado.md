@@ -184,9 +184,9 @@ E, no fim do bloco de comentário acima dela (depois do parágrafo da TEC-250):
     # Preco desta subida: **30 tokens a menos de literais e resumo por turno,
     # de 12000 -- 0,25% do contexto**. Menor que as duas anteriores (3,3% e
     # 0,4%).
+```
 
 **Escreva o comentário exatamente assim, no tempo verbal acima.** A versão anterior deste plano mandava afirmar, no passado, que a cláusula já tinha sido encurtada — o que é falso neste commit, porque quem encurta é a Task 5. Um comentário permanente com afirmação falsa, justamente no arquivo cuja razão de existir é não envelhecer, é a TEC-243 sendo violada em prosa em vez de em número. Isso foi pego pela revisão da Task 1 e corrigido aqui.
-```
 
 Em `tests/unit/test_config.py`, no `test_a_margem_do_orcamento_do_prompt_e_deliberada`, troque as **duas** ocorrências de `627` (a de `_linha` e a do `assert`) por `655`, e acrescente ao histórico do docstring:
 
@@ -823,7 +823,11 @@ Expected: PASS (5 testes)
 
 `perguntou` é fato sobre a **nossa resposta**, não sobre a fala do lead, e por isso segue a regra da outra marca desta função: `marcar_desambiguacao` só é gravado depois da entrega confirmada, porque *"marca-lo antes queimaria a unica chance de perguntar num 5xx da Meta"*. A marca da TEC-257 queima exatamente a mesma chance.
 
-Grave-a depois da entrega confirmada, e só quando o texto entregue foi de fato a resposta do `gerada` — entregue, **e** não `desambiguando`, **e** saída não bloqueada. Reuse `gravar_estado`, passando `intencao=gerada.intencao`, `extracao=gerada.extracao` e `perguntou=gerada.perguntou`: reescrever os mesmos valores é idempotente (mais novo vence, mesmos valores) e mantém a subtração correta.
+Grave-a depois da entrega confirmada, e só quando o texto entregue foi de fato a resposta do `gerada` — entregue, **e** não `desambiguando`, **e** saída não bloqueada.
+
+**Esta versão do plano mandava reusar `gravar_estado` inteiro, passando `intencao=gerada.intencao`, `extracao=gerada.extracao` e `perguntou=gerada.perguntou`, e chamava isso de idempotente. Estava errado, e o erro foi implementado e depois corrigido — este parágrafo fica como registro do que aconteceu, não como o que fazer.** "Idempotente" só é verdade contra si mesmo, num turno isolado. Contra a concorrência real entre dois turnos da mesma conversa — a razão pela qual a união da marca foi para o SQL em primeiro lugar — reescrever `intencao`/`extracao` neste ponto inverte "mais novo vence" em silêncio: turno A grava `extracao_A` em t1, turno B grava `extracao_B` em t2 > t1, e este commit pós-entrega de A aconteceria em t3 > t2 e sobrescreveria a extração mais nova de B com a mais velha de A — nas mesmas colunas de valor que a marca foi desenhada para não arriscar.
+
+O mecanismo certo, o que o código de fato faz, é uma função irmã: `marcar_perguntados(session, channel=..., conversation_key=..., intencao=gerada.intencao, extracao=gerada.extracao, perguntou=gerada.perguntou)`. Ela recalcula `campos_a_gravar` e `campos_a_marcar` só para chegar aos nomes a marcar, e executa um `UPDATE` que toca **apenas** `perguntados_sem_resposta` (mais `updated_at`) — o mesmo `coalesce(coluna, '{}') || excluded` que `gravar_estado` já usa, agora num `UPDATE` avulso em vez de dentro do `SET` de um `ON CONFLICT`. Sem coluna de valor no `SET`, não há nada para o commit pós-entrega inverter.
 
 Se o processo morrer entre a entrega e a marcação, a marca se perde e o agente pode reperguntar — que é marcar de **menos**, o erro seguro.
 

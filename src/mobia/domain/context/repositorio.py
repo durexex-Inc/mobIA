@@ -329,9 +329,15 @@ async def marcar_perguntados(
     `gravar_estado` vale: sem campos deste turno (inclui FORA_DE_ESCOPO), nao
     ha marca (D8 do spec) -- marcar de menos e o erro seguro.
 
-    Um `UPDATE` que nao casa nenhuma linha e um no-op correto, nao um erro: e
-    o que acontece quando a chamada pre-entrega nao criou linha nenhuma
-    (FORA_DE_ESCOPO) e nenhum turno anterior desta conversa criou uma antes.
+    A linha existe garantidamente sempre que ha algo a marcar: o guard acima
+    (`if not preenchidos: return`) so deixa passar quando `campos_a_gravar`
+    devolveu campos deste turno, e e exatamente esse retorno cedo -- nao este
+    `UPDATE` -- que cobre FORA_DE_ESCOPO. Quando ha campos deste turno, a
+    chamada pre-entrega de `gravar_estado` (o bloco de cima em `turno.py`) ja
+    commitou, numa transacao anterior e ja fechada, a linha que este UPDATE
+    vai encontrar. Um `UPDATE` que nao casasse nenhuma linha ficaria um no-op
+    inofensivo mesmo assim -- e uma propriedade defensiva desta funcao, nao um
+    caminho que se espera exercitar.
     """
     preenchidos = campos_a_gravar(intencao, extracao)
     if not preenchidos:

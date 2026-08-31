@@ -16,7 +16,7 @@ import logging
 from sqlalchemy.dialects import postgresql
 
 from mobia.domain.agente.schemas import Extracao, Intencao
-from mobia.domain.context.repositorio import campos_a_marcar, gravar_estado
+from mobia.domain.context.repositorio import campos_a_marcar, gravar_estado, marcar_perguntados
 
 
 def test_marca_o_que_foi_perguntado_e_nao_esta_preenchido():
@@ -137,3 +137,31 @@ async def test_a_uniao_e_sql_compilado_e_nao_leitura_previa() -> None:
 
     assert "coalesce(lead_qualification.perguntados_sem_resposta" in sql_gerado
     assert "|| excluded.perguntados_sem_resposta" in sql_gerado
+
+
+async def test_a_uniao_do_marcar_perguntados_e_sql_compilado_e_nao_leitura_previa() -> None:
+    """A mesma trava do teste acima, para o UPDATE que producao de fato roda.
+
+    Desde o commit que separou as duas fases, producao nao chama mais
+    `gravar_estado` com `perguntou` -- quem grava a marca, depois da entrega
+    confirmada, e `marcar_perguntados`, com um UPDATE avulso que o teste
+    acima nao exercita nem podia (ele trava o ON CONFLICT DO UPDATE de
+    `gravar_estado`, nao este). Sem este teste, a uniao deste UPDATE podia
+    virar um SELECT + update em Python e nenhum teste desta suite reprovaria.
+    """
+    sessao = _SessaoQueCapturaOStatement()
+
+    await marcar_perguntados(
+        sessao,
+        channel="wa",
+        conversation_key="k",
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+        perguntou=["regiao"],
+    )
+
+    assert sessao.statement is not None
+    sql_gerado = str(sessao.statement.compile(dialect=postgresql.dialect()))
+
+    assert "coalesce(lead_qualification.perguntados_sem_resposta" in sql_gerado
+    assert "|| %(coalesce_1)s" in sql_gerado
