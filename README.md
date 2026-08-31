@@ -2685,6 +2685,17 @@ As duas linhas em negrito são o **mesmo código**. Leia as colunas:
 - **A base fixa dispersa menos que a união**: 2,1 pontos contra 5,7 no par do
   mesmo código.
 
+> **Emenda da execução de 31/08.** A palavra **determinístico** acima é forte
+> demais, e a sexta execução mostrou por quê. O `faltou` manteve a contagem
+> (7) e **trocou de membros**: `aluguel-05` e `follow-up-01` saíram,
+> `compra-13[1]` e `follow-up-08[1]` entraram. Cinco dos oito permanecem.
+>
+> O que é estável é a **contagem**, não a lista de turnos. A distinção entre
+> núcleo e cauda continua valendo — `faltou` oscila muito menos que `extra` —,
+> mas ela é estatística, e tratá-la como um conjunto fixo de turnos foi ler
+> dois pontos como se fossem uma distribuição. É o erro que esta própria seção
+> documenta, cometido por ela. Ver a seção da execução de 31/08.
+
 ### O poder de resolução
 
 **Uma execução não sustenta atribuir um efeito de menos de ~6 pontos na
@@ -2872,10 +2883,17 @@ que o produto: **boa parte do que ela cobrava era reemissão, não extração.**
   peso maior a conversa longa, e o valor final é o que o handoff e o lead
   scoring vão ler.
 - **Os 96,6% são reconstrução**, não execução nova — derivados do relatório de
-  22:20 e do corpus. A próxima execução paga imprime o número medido.
-- **`compra-10` continua em aberto**, e é decisão de régua: ou o corpus para
-  de pedir a inferência, ou o prompt passa a permiti-la. As duas mexem em
-  coisas que esta card não podia mexer.
+  22:20 e do corpus. ~~A próxima execução paga imprime o número medido.~~
+  **Ela imprimiu 94,4%, e os dois não são comparáveis:** a TEC-254 mudou a
+  régua entre a reconstrução e a medição, então ela ficou sem conferência
+  possível. Ver a seção da execução de 31/08.
+- **`follow-up-01[0]` não era defeito estável.** A execução de 31/08 não o
+  encontrou — o modelo extraiu o campo. A conclusão de que ele era "a única
+  falha limpa do modelo" saiu de uma execução só, que é exatamente o que a
+  TEC-253 manda não fazer.
+- ~~**`compra-10` continua em aberto**, e é decisão de régua.~~ **Fechada
+  pela TEC-254, e o corpus cedeu:** a anotação por pressuposição saiu, o turno
+  virou negativo, e a execução de 31/08 confirmou que ele deixou de divergir.
 
 ## TEC-235 — O limiar fica em 0,6, e o custo que motivou a card desapareceu sozinho
 
@@ -3194,6 +3212,86 @@ modelo, que é da TEC-252.
   outro lugar, fora do caminho pago — card própria, e não bloqueia nada hoje.
 - **O turno novo nunca foi medido.** Ele entra na próxima execução paga como
   qualquer outro; se o modelo falhar nele, é falha de verdade e não artefato.
+
+## A execução de 31/08 — o que ela verificou, e a previsão minha que ela derrubou
+
+Primeira execução paga depois de sete cards, e a primeira com o corpus de 147
+turnos. Relatório em `evals/relatorios/2026-08-31-verificacao-das-decisoes.md`.
+
+| métrica | resultado |
+| --- | --- |
+| acurácia de intenção | 143/147 — **97,3% VERDE** (crua = efetiva) |
+| precisão da extração (união, é a que trava) | 89/98 — **90,8% VERDE** |
+| precisão da extração (base fixa) | 89/97 — 91,8% |
+| **extração efetiva** (estado final) | **85/90 — 94,4%** |
+| decomposição | `faltou` 7 · `divergiu` 1 · `extra` 1 |
+
+### O que ela verificou
+
+**As duas decisões de régua da TEC-254 funcionaram.** `compra-10` e
+`aluguel-07` sumiram das duas listas de divergência. São verificações
+**categóricas** — o turno aparece ou não —, então uma execução basta, ao
+contrário de qualquer leitura de percentual.
+
+**A extração efetiva saiu medida pela primeira vez**, e as seções que a TEC-252
+e a TEC-253 acrescentaram ao relatório foram impressas numa execução real. Até
+aqui existiam só em teste unitário.
+
+### A previsão que ela derrubou, e ela era minha
+
+A TEC-252 concluiu que `follow-up-01[0]` era **"a única falha limpa do
+modelo"** — o defeito de verdade, depois de descontar artefato de medição e
+disputa de régua.
+
+**Ele não aparece nesta execução.** O modelo extraiu o campo. Não era defeito
+estável: era cauda de ruído, e foi chamado de determinístico com base numa
+execução só.
+
+O `faltou` conta a mesma história de outro jeito. Ele manteve a **contagem**
+— 7, contra 8, 8, 7, 8, 8 nas cinco anteriores — e **trocou de membros**:
+`aluguel-05` e `follow-up-01` saíram; `compra-13[1]` e `follow-up-08[1]`
+entraram, os dois em `urgencia`. Cinco dos antigos permanecem.
+
+**A conclusão da TEC-253 precisa de emenda.** Ela afirmou que "as oito
+discrepâncias da primeira execução reaparecem todas na segunda" e concluiu que
+o núcleo era determinístico. Isso era verdade para o par que ela comparou. Com
+mais pontos, o que é estável é a **contagem**; a identidade dos turnos varia
+mais do que dois pontos deixavam ver. A distinção entre núcleo e cauda continua
+útil — `faltou` oscila muito menos que `extra` —, mas ela é estatística e não
+uma lista fixa de turnos.
+
+É o erro que a própria TEC-253 documentou, cometido por quem o documentou.
+
+### Uma validação que ficou impossível, e é erro de sequenciamento
+
+Os **96,6% (85/88)** que a seção TEC-252 registra são reconstrução, derivada do
+relatório de 30/08 22:20 e do corpus daquela data. A medição de hoje dá
+**94,4% (85/90)** — mesmo numerador, denominador diferente.
+
+**Os dois números não são comparáveis**, porque a TEC-254 mudou a régua entre
+um e outro. Rodar o gate **antes** da TEC-254 teria validado a reconstrução;
+rodar depois não valida nem refuta. A reconstrução cumpriu o papel dela, que
+era informar a decisão, mas ficou sem conferência — e isso foi escolha de ordem,
+não acaso.
+
+### O que apareceu de novo
+
+- **`compra-13[0]`: `regiao` divergiu** — anotado `sao roque`, obtido `sao
+  roque e arredores`. Mesma classe que a TEC-248 tratou: o modelo devolve o
+  lugar com uma qualificação a mais. Não tem card.
+- **`urgencia` voltou a falhar em dois turnos** (`compra-13[1]` SEM_PRESSA,
+  `follow-up-08[1]` IMEDIATA), depois de a TEC-250 tê-la levado a zero. Dentro
+  da faixa de ruído que a TEC-253 mediu, mas é o campo a observar na próxima.
+- **`extra` caiu para 1**, o menor desde 30/08 17:08.
+
+### O que continua sem resposta
+
+**Esta é uma execução.** Com 5,7 pontos de ruído medido na métrica de união,
+ela não distingue efeito de ruído — serve como baseline nova, que a mudança de
+régua tornou obrigatória, e como verificação das decisões categóricas.
+
+**A baseline válida para comparação passa a ser esta**, e não nenhuma das seis
+de 30/08.
 
 ## Escolher o modelo no disparo manual do gate
 
