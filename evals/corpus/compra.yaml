@@ -189,21 +189,45 @@
 - id: compra-10
   descricao: casal no primeiro imovel, duvidas de processo
   turnos:
-    # "primeiro imovel" afirma que nao ha imovel para vender. Como negativo
-    # -- que foi como a TEC-245 o deixou -- a regua cobrava invencao de um
-    # modelo que lesse a fala com razao. E o unico turno do corpus que anota
-    # `tem_imovel_para_vender: false`, o caso que `preenchidos()` existe para
-    # preservar.
+    # Negativo. A TEC-246 anotou aqui `tem_imovel_para_vender: false`, lendo
+    # "primeiro imovel" como afirmacao por pressuposicao -- e isso colidia com
+    # o prompt, que desde a TEC-240 diz "Nao infira: extrair o que a fala nao
+    # afirma conta erro igual a nao extrair o que ela afirma". As duas regras
+    # sao de 29/08/2026, o prompt as 11:20 e a anotacao as 22:25, e a colisao
+    # so ficou visivel quando a TEC-252 isolou este turno como uma das tres
+    # divergencias que sobravam na extracao efetiva.
+    #
+    # A TEC-254 resolveu pelo prompt: ele e o contrato a que o modelo responde,
+    # e um turno cujo unico conteudo extraivel e uma pressuposicao afirma
+    # **nada**. Nao vira exclusao porque pressuposicao nao esta entre as tres
+    # familias que a exclusao reserva (ver `TurnoAnotado`) -- a propria TEC-246
+    # a tirou daquela lista.
+    #
+    # Consequencia aceita: se um modelo futuro inferir aqui, leva `extra`. E o
+    # que se quer -- o prompt manda nao inferir.
     - lead: "minha esposa e eu queremos comprar nosso primeiro imovel, pode me ajudar a entender o processo?"
       intencao: COMPRA
-      campos:
-        tem_imovel_para_vender: false
+      campos: {}
     - lead: "quanto tempo demora entre a proposta e a escritura normalmente?"
       intencao: COMPRA
       campos: {}
     - lead: "e precisa de advogado por nossa conta ou voces ja indicam um?"
       intencao: COMPRA
       campos: {}
+    # Turno acrescentado pela TEC-254, e a razao e cobertura de vocabulario.
+    # Ao tirar a pressuposicao do turno 0, o corpus ficou **sem nenhuma**
+    # anotacao de `tem_imovel_para_vender: false` -- e `test_todo_valor_do_
+    # vocabulario_tem_anotacao` reprovou, com razao: `False` e justamente o
+    # valor que `preenchidos()` existe para preservar (`is not None`, e nao a
+    # veracidade), e um corpus que nunca o mede nao guarda esse contrato.
+    #
+    # A fala afirma, nao pressupoe: "nao temos nenhum imovel pra vender" e
+    # afirmacao direta, do jeito que os outros dois turnos do campo
+    # (`follow-up-03`, `follow-up-06`) tambem sao. Era isto que faltava.
+    - lead: "so pra confirmar: a gente nao tem nenhum imovel pra vender, vai ser so a compra mesmo"
+      intencao: COMPRA
+      campos:
+        tem_imovel_para_vender: false
 
 - id: compra-11
   descricao: sobrado na zona sul, negociacao e permuta
