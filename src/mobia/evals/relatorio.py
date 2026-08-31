@@ -11,6 +11,7 @@ from mobia.evals.metricas import (
     Discrepancia,
     FalhaDeInfraestrutura,
     ResultadoDaMetrica,
+    ResumoDaExtracaoEfetiva,
     ResumoDeConfianca,
     ResumoDeNegativos,
 )
@@ -150,6 +151,53 @@ def _valores_de(discrepancia: Discrepancia) -> str:
     return f" -- {', '.join(partes)}" if partes else ""
 
 
+def _secao_da_extracao_efetiva(resumo: ResumoDaExtracaoEfetiva) -> list[str]:
+    """A extracao medida como producao a experimenta -- estado final da
+    conversa, e nao turno a turno.
+
+    Espelha o que `acuracia_efetiva` faz para a intencao. `None` nao apaga
+    (ver `campos_a_gravar`), entao um campo que o modelo deixou de reemitir
+    num turno posterior continua gravado, e a metrica turno a turno conta um
+    erro que o lead nunca experimenta.
+
+    Diagnostico: nao entra em `bloqueia`. Promove-la a metrica que trava
+    pediria piso proprio e medido -- o de `precisao_da_extracao` foi calibrado
+    contra outra conta.
+    """
+    taxa = resumo.taxa
+    medida = (
+        "sem campo para comparar"
+        if taxa is None
+        else f"{resumo.acertos}/{resumo.total} ({taxa:.1%})"
+    )
+    linhas = [
+        "",
+        "## Extracao efetiva: o estado que a conversa deixou (diagnostico)",
+        "",
+        f"- {resumo.conversas} conversas, estado final contra anotacao acumulada",
+        f"- campos corretos no estado: {medida}",
+        "",
+        "  Compare com a precisao turno a turno acima. A diferenca entre as",
+        "  duas nao e erro de nenhuma: `None` nao apaga, entao um campo que o",
+        "  modelo deixou de reemitir num turno posterior continua gravado. A",
+        "  metrica turno a turno cobra a reemissao; o lead experimenta o",
+        "  estado. Onde as duas discordam, e a de cima que mede o modelo e",
+        "  esta que mede o produto.",
+    ]
+    if resumo.divergencias:
+        linhas += ["", "Campos errados no estado final:", ""]
+        for d in resumo.divergencias:
+            valores = ""
+            if d.tipo == "faltou":
+                valores = f" -- anotado {d.esperado!r}"
+            elif d.tipo == "extra":
+                valores = f" -- obtido {d.obtido!r}"
+            else:
+                valores = f" -- anotado {d.esperado!r}, obtido {d.obtido!r}"
+            linhas.append(f"  - {d.conversa_id}: {d.campo} ({d.tipo}){valores}")
+    return linhas
+
+
 def _secao_da_conta_da_extracao(decomposicao: DecomposicaoDaExtracao) -> list[str]:
     """A conta da metrica que trava, aberta -- e o aviso de quanto ela resolve.
 
@@ -262,6 +310,7 @@ def render(
     discrepancias: Sequence[Discrepancia] = (),
     negativos: ResumoDeNegativos | None = None,
     decomposicao: DecomposicaoDaExtracao | None = None,
+    efetiva: ResumoDaExtracaoEfetiva | None = None,
 ) -> str:
     linhas = ["# Avaliacao da classificacao de intencao", ""]
 
@@ -279,6 +328,9 @@ def render(
 
     if decomposicao is not None:
         linhas += _secao_da_conta_da_extracao(decomposicao)
+
+    if efetiva is not None:
+        linhas += _secao_da_extracao_efetiva(efetiva)
 
     if discrepancias or negativos is not None:
         linhas += _secao_de_extracao(discrepancias, negativos)

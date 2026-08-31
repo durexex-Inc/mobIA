@@ -1,11 +1,13 @@
+from dataclasses import fields
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
+from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Extracao, Intencao
 from mobia.evals.corpus import carregar, total_de_turnos
 from mobia.evals.metricas import (
+    CAMPOS_DA_EXTRACAO,
     DISPERSAO_MEDIDA,
     PISO_DE_PRECISAO_DA_EXTRACAO_PCT,
     PISO_DE_TURNOS,
@@ -13,6 +15,7 @@ from mobia.evals.metricas import (
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
     Discrepancia,
+    EstadoDaConversa,
     ExtracaoObservada,
     Faixa,
     ResumoDeNegativos,
@@ -26,6 +29,7 @@ from mobia.evals.metricas import (
     faixa_de,
     matriz_de_confusao,
     precisao_da_extracao,
+    precisao_efetiva_da_extracao,
     resumo_de_confianca,
     resumo_de_negativos,
     sem_mecanismo,
@@ -754,3 +758,100 @@ def test_eh_negativo_e_o_criterio_unico_de_turno_negativo() -> None:
     assert eh_negativo(_observada({}, {}, indice=0)) is True
     assert eh_negativo(_observada({}, {"regiao": "sp"}, indice=0)) is True
     assert eh_negativo(_observada({"quartos": 2}, {"quartos": 2}, indice=0)) is False
+
+
+def _estado(esperado, obtido, *, conversa_id="compra-06"):
+    return EstadoDaConversa(conversa_id=conversa_id, esperado=esperado, obtido=obtido)
+
+
+def test_reafirmacao_nao_reemitida_nao_e_erro_no_estado():
+    """O caso que motivou a metrica, e a metade "reafirmou de menos".
+
+    Em `compra-06` o lead diz "cobertura" nos tres turnos e o corpus anota
+    `tipo_imovel` nos tres. O modelo extrai no primeiro e devolve `null` nos
+    outros dois -- corretamente, porque "qual o valor do condominio dessa
+    cobertura?" pressupoe em vez de afirmar, e a regra do prompt manda extrair
+    so o que a fala afirma. `precisao_da_extracao` conta dois `faltou`;
+    `campos_a_gravar` nao apaga, entao o estado carrega APARTAMENTO desde o
+    primeiro turno e o lead nunca vive esses dois erros.
+    """
+    resumo = precisao_efetiva_da_extracao(
+        [_estado({"tipo_imovel": "APARTAMENTO"}, {"tipo_imovel": "APARTAMENTO"})]
+    )
+    assert (resumo.acertos, resumo.total) == (1, 1)
+    assert resumo.divergencias == []
+
+
+def test_campo_extraido_num_turno_sem_anotacao_nao_e_erro_no_estado():
+    """A outra metade: "reafirmou de mais", ou cedo demais.
+
+    Em `follow-up-08` o corpus anota `urgencia` no turno 1 e o modelo a extrai
+    no turno 0. Turno a turno isso e `extra` -- invencao --, e no estado final
+    e simplesmente o valor certo. A metrica por turno pune o modelo por
+    acertar cedo; esta nao.
+    """
+    resumo = precisao_efetiva_da_extracao(
+        [_estado({"urgencia": "IMEDIATA"}, {"urgencia": "IMEDIATA"}, conversa_id="follow-up-08")]
+    )
+    assert (resumo.acertos, resumo.total) == (1, 1)
+
+
+def test_campo_que_nunca_foi_extraido_continua_erro():
+    """A metrica efetiva nao e mais frouxa -- e mais especifica.
+
+    `compra-10` tem um turno so, e o modelo nao extraiu
+    `tem_imovel_para_vender`. Nao ha turno anterior que tenha gravado, entao o
+    estado final sai errado e o lead vive o erro. Este e dos que sobram.
+    """
+    resumo = precisao_efetiva_da_extracao(
+        [_estado({"tem_imovel_para_vender": False}, {}, conversa_id="compra-10")]
+    )
+    assert (resumo.acertos, resumo.total) == (0, 1)
+    assert [(d.campo, d.tipo) for d in resumo.divergencias] == [
+        ("tem_imovel_para_vender", "faltou")
+    ]
+
+
+def test_invencao_que_sobrevive_ate_o_fim_continua_erro():
+    """Denominador de uniao, pelo mesmo motivo de `precisao_da_extracao`.
+
+    Sem contar o inventado, um estado que acerta o anotado e carrega tres
+    campos que ninguem anotou pontuaria igual a um limpo -- e o lead veria
+    esses campos no estado de qualificacao.
+    """
+    resumo = precisao_efetiva_da_extracao([_estado({"quartos": 2}, {"quartos": 2, "vagas": 3})])
+    assert (resumo.acertos, resumo.total) == (1, 2)
+    assert [(d.campo, d.tipo) for d in resumo.divergencias] == [("vagas", "extra")]
+
+
+def test_valor_errado_no_estado_final_e_divergencia():
+    resumo = precisao_efetiva_da_extracao([_estado({"quartos": 2}, {"quartos": 3})])
+    assert (resumo.acertos, resumo.total) == (0, 1)
+    assert resumo.divergencias[0].tipo == "divergiu"
+    assert (resumo.divergencias[0].esperado, resumo.divergencias[0].obtido) == (2, 3)
+
+
+def test_estado_efetivo_usa_a_mesma_normalizacao_da_metrica_por_turno():
+    """`regiao` tem contrato de forma proprio (TEC-241), e as duas contas
+    precisam aplica-lo igual -- senao a efetiva acusaria divergencia onde a
+    por turno ja tinha reconciliado."""
+    resumo = precisao_efetiva_da_extracao(
+        [_estado({"regiao": "Zona Sul"}, {"regiao": " zona sul "})]
+    )
+    assert (resumo.acertos, resumo.total) == (1, 1)
+
+
+def test_taxa_e_none_sem_campo_nenhum():
+    resumo = precisao_efetiva_da_extracao([_estado({}, {})])
+    assert resumo.taxa is None
+
+
+def test_campos_da_extracao_sai_da_dataclass_e_nao_de_lista_escrita_a_mao():
+    """Um campo novo em `Extracao` tem de entrar aqui sozinho.
+
+    O filtro existe porque `estado_acumulado` carrega tambem `intencao`, que
+    `campos_a_gravar` poe e que nao e campo de extracao. Uma lista literal
+    envelheceria calada no dia em que alguem acrescentasse um campo.
+    """
+    assert CAMPOS_DA_EXTRACAO == {campo.name for campo in fields(Extracao)}
+    assert "intencao" not in CAMPOS_DA_EXTRACAO

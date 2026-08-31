@@ -7,7 +7,9 @@ from mobia.evals.metricas import (
     Classificacao,
     DecomposicaoDaExtracao,
     Discrepancia,
+    DivergenciaDeEstado,
     FalhaDeInfraestrutura,
+    ResumoDaExtracaoEfetiva,
     ResumoDeConfianca,
     ResumoDeNegativos,
     acuracia_de_intencao,
@@ -444,3 +446,36 @@ def test_a_conta_aberta_vem_antes_da_lista_de_discrepancias() -> None:
 
 def test_relatorio_sem_decomposicao_omite_a_secao() -> None:
     assert "Poder de resolucao" not in render([], {})
+
+
+def test_relatorio_traz_a_extracao_efetiva_com_o_endereco_da_divergencia() -> None:
+    """Endereco, e nao so contagem: quem for arrumar precisa saber onde.
+
+    Mesma razao de `Discrepancia` carregar `conversa_id` -- descobrir *onde*
+    nao pode custar outra execucao paga.
+    """
+    texto = render(
+        [],
+        {},
+        efetiva=ResumoDaExtracaoEfetiva(
+            conversas=40,
+            acertos=85,
+            total=88,
+            divergencias=[
+                DivergenciaDeEstado(
+                    conversa_id="compra-10",
+                    campo="tem_imovel_para_vender",
+                    tipo="faltou",
+                    esperado=False,
+                )
+            ],
+        ),
+    )
+
+    assert "Extracao efetiva" in texto
+    assert "85/88 (96.6%)" in texto
+    assert "compra-10: tem_imovel_para_vender (faltou)" in texto
+
+
+def test_relatorio_sem_extracao_efetiva_omite_a_secao() -> None:
+    assert "Extracao efetiva" not in render([], {})
