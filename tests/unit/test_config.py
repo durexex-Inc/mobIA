@@ -302,7 +302,7 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     primeira pergunta, e com o preco por turno escrito no comentario de
     `contexto_headroom_de_tokens`.
 
-    O 627 e o unico numero desta conta escrito a mao em qualquer lugar, e e
+    O 655 e o unico numero desta conta escrito a mao em qualquer lugar, e e
     escrito aqui de proposito: um limite so trava se estiver fixo. Todo o
     resto -- subcontagem, folga, margem -- e derivado e sai impresso por
     `_subcontagem`, para ninguem precisar transcrever (TEC-243):
@@ -314,13 +314,17 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     proposito; a TEC-250 gastou esses 13 e mais 35,8, e subiu a reserva de 800
     para 850 depois de procurar o que cortar e nao achar. Sao numeros daquelas
     cards, nao os de hoje -- os de hoje estao na saida acima.
+
+    A TEC-257 gastou os 4,2 que restavam e mais ~15, subindo o teto para 655
+    e a reserva para 880: o campo `perguntou` do schema custou ~18,5 e a
+    clausula reescrita do prompt 0,75.
     """
     subcontagem = _subcontagem()
-    _linha("teto desta assercao (fixo)", 627)
-    _linha("margem", 627 - subcontagem)
+    _linha("teto desta assercao (fixo)", 655)
+    _linha("margem", 655 - subcontagem)
 
-    assert subcontagem < 627, (
-        f"subcontagem {subcontagem}: a margem sobre o teto de 627 foi "
+    assert subcontagem < 655, (
+        f"subcontagem {subcontagem}: a margem sobre o teto de 655 foi "
         f"consumida. Encolha o texto enviado, ou suba a reserva registrando "
         f"o preco por turno."
     )

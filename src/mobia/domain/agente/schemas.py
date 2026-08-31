@@ -289,6 +289,14 @@ class RespostaDoAgente:
     latency_ms: int
     extracao: Extracao
 
+    # TEC-257. Os campos sobre os quais esta resposta pergunta, declarados
+    # pelo proprio modelo. Vem depois de `resposta` no schema porque relata o
+    # texto ja escrito -- ver `_ORDEM_DOS_CAMPOS`.
+    #
+    # Tupla e nao list: o dataclass e frozen, e uma list mutavel dentro dele
+    # seria congelamento de fachada.
+    perguntou: tuple[str, ...] = ()
+
     # Zero, e nao `None`, porque "nao cacheou" e uma quantidade e nao uma
     # ausencia: o modelo respondeu, o prefixo foi enviado, e o que o cache
     # poupou foi nada. `None` em `message_telemetry` significa outra coisa --
