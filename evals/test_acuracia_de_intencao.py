@@ -47,6 +47,7 @@ from mobia.evals.metricas import (
     sem_mecanismo,
 )
 from mobia.evals.relatorio import DIRETORIO_DE_RELATORIOS, preservar, render
+from mobia.infra.anthropic import motivo_do_provedor
 
 # Marcadores por campo para o proxy de repergunta. Sao regex (nao substring
 # crua) casadas com fronteira de palavra nas duas pontas, e cada uma e pista,
@@ -180,7 +181,13 @@ async def _rodar_conversa(
             # nao foi o modelo errando a intencao.
             raise InfraestruturaFalhou(
                 FalhaDeInfraestrutura(
-                    conversa_id=conversa.id, indice=indice, erro=type(exc).__name__
+                    conversa_id=conversa.id,
+                    indice=indice,
+                    erro=type(exc).__name__,
+                    # Sem isto, 91 linhas de `BadRequestError` e nenhuma pista:
+                    # foi o que custou um dia de diagnostico em 28/08, quando a
+                    # causa era saldo esgotado e vinha escrita no corpo do 400.
+                    motivo=motivo_do_provedor(exc),
                 )
             ) from exc
 

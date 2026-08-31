@@ -215,6 +215,12 @@ class FalhaDeInfraestrutura:
     conversa_id: str
     indice: int
     erro: str
+    # O porque, quando o provedor o manda (TEC-237). `erro` continua sendo so o
+    # nome da classe; `motivo` carrega status, tipo e mensagem do corpo de erro
+    # da API -- que e gerado pelo servidor, ao contrario de `str(exc)`. `None`
+    # para tudo que nao for erro de protocolo do provedor, que e a garantia:
+    # ver `motivo_do_provedor` em `mobia.infra.anthropic`.
+    motivo: str | None = None
 
 
 @dataclass(frozen=True)

@@ -26,6 +26,7 @@ from mobia.domain.context.resumo import (
 )
 from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.models import Message
+from mobia.infra.anthropic import motivo_do_provedor
 from mobia.infra.crypto import DecryptionError, aad_de, decrypt
 
 log = structlog.get_logger(__name__)
@@ -469,10 +470,17 @@ async def _dobrar(
         # texto decifrado do lead -- um `str(exc)` de um SDK que ecoa o corpo
         # da requisicao (ou de um resumidor que interpola a propria entrada no
         # erro) vazaria esse texto para o log estruturado.
+        #
+        # `motivo` e a excecao estreita que a TEC-237 abriu: so corpo de erro
+        # de protocolo do provedor, gerado pelo servidor, e `None` para todo o
+        # resto -- inclusive para um resumidor que interpole a propria entrada.
+        # A regra acima continua valendo; o que mudou e que "a conta acabou"
+        # deixou de ser indistinguivel de "o schema quebrou".
         log.warning(
             "contexto.degradado",
             channel=channel,
             reason=type(exc).__name__,
+            motivo=motivo_do_provedor(exc),
         )
         return texto_do_resumo, literais, cobertas, marca, True
 

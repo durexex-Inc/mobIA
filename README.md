@@ -2948,6 +2948,80 @@ e foram três cards até ele virar medição.
 - **Nenhuma execução paga foi gasta nesta card.** Os sete pontos saíram dos
   relatórios preservados e da própria descrição da card.
 
+## TEC-237 — O porquê do erro do provedor, sem afrouxar a regra que o escondia
+
+Em 28/08/2026 o gate pago falhou em **100% das chamadas** — 50 de 50 conversas
+de intenção e 41 de 41 casos de moderação — com `BadRequestError`, em 13
+segundos. Nenhuma linha do caminho de chamada tinha mudado. **O diagnóstico
+levou um dia e passou por três hipóteses erradas.**
+
+A causa estava na primeira linha do corpo de erro:
+
+```
+400 invalid_request_error
+"Your credit balance is too low to access the Anthropic API."
+```
+
+Saldo esgotado volta como **400**, o mesmo código de um erro de contrato entre
+cliente e servidor. Por isso pareceu problema de schema ou de versão de SDK.
+
+### A regra que escondeu a resposta estava certa
+
+O código nunca interpola `str(exc)`, e não por descuido: `KeyError` e
+`TypeError` de um schema inesperado **ecoam o valor recebido** na mensagem da
+exceção, e esse valor pode ser a fala do lead. A garantia é da TEC-134 e está
+escrita em cada um dos pontos que a aplicam.
+
+Aplicada sem exceção, ela apagou a única informação que resolvia o caso.
+
+### A distinção que abre a exceção
+
+**Corpo de erro de `APIStatusError` é gerado pelo servidor**; mensagem de
+exceção arbitrária é montada pelo Python interpolando o que estourou. São
+coisas diferentes, e só a primeira passa.
+
+`motivo_do_provedor` (`src/mobia/infra/anthropic.py`) devolve `None` para
+qualquer exceção que não seja `APIStatusError` — **não há ramo de melhor
+esforço**, que seria exatamente o buraco que a função existe para não abrir.
+Um `APIConnectionError` também não passa: é do SDK, mas não houve resposta
+HTTP, então não há corpo do servidor para citar.
+
+Para os que passam, sai status, tipo, mensagem e `request_id` — este último não
+estava no escopo da card e entra porque é handle de correlação com o suporte do
+provedor, sem conteúdo nenhum.
+
+### Onde aparece
+
+- **Relatório do eval**: `FalhaDeInfraestrutura` ganhou `motivo`, indentado sob
+  a falha. As 91 linhas cegas de 28/08 diriam que foi crédito.
+- **`montagem.py`**: o log de `contexto.degradado` ganhou `motivo`.
+- **`moderacao.py`**: `ModeracaoIndisponivel` passa a carregar o motivo quando
+  ele existe, e o nome da classe quando não. Foi este caminho que somou 41 das
+  91 falhas.
+
+### O risco que sobra, e ele não é zero
+
+A garantia depende de o provedor não ecoar o payload no corpo de erro. Isso
+vale para erros de conta, permissão e limite — os que motivaram a card —, mas
+um erro de validação de schema poderia, em tese, citar o valor recusado.
+
+Três coisas limitam o estrago: o teto de 300 caracteres, o mascaramento de
+corrida de dígitos que `app/logging.py` aplica a todo valor logado, e o fato de
+a fala do lead ir em `messages`, que a API valida por forma e não por conteúdo.
+
+**Não é prova.** É o balanço entre um dia de diagnóstico e um risco estreito,
+tomado com os olhos abertos e escrito aqui para quem vier depois poder
+discordar.
+
+### Lacunas conhecidas
+
+- **O teto de versão do SDK continua sem existir.** A primeira versão da card
+  culpava a atualização de `anthropic` 1.1.0 → 1.2.0; a comparação arquivo a
+  arquivo mostrou que os quatro do caminho de chamada são idênticos. É boa
+  prática e pede card própria — não sob a justificativa deste incidente.
+- **Não há alerta de saldo.** Esta card faz o diagnóstico custar cinco minutos
+  em vez de um dia; não impede a próxima parada.
+
 ## Escolher o modelo no disparo manual do gate
 
 `workflow_dispatch` passou a aceitar um input `modelo`. Vazio — que é o caso de

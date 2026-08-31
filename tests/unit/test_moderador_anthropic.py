@@ -302,3 +302,55 @@ async def test_log_da_moderacao_nao_carrega_o_texto_julgado(
     for registro in caplog.records:
         assert segredo not in registro.getMessage()
         assert "BLOQUEAR" not in registro.getMessage()
+
+
+async def test_o_porque_do_erro_do_provedor_chega_a_indisponibilidade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Metade do incidente de 28/08 foi aqui: 41 de 41 casos, todos cegos.
+
+    `ModeracaoIndisponivel` carregava so o nome da classe, entao saldo esgotado
+    e schema quebrado ficavam identicos no log (TEC-237).
+    """
+    import httpx
+    from anthropic import BadRequestError
+
+    requisicao = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    resposta = httpx.Response(400, request=requisicao)
+    cliente = ClienteFalso(
+        erro=BadRequestError(
+            "erro",
+            response=resposta,
+            body={
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "Your credit balance is too low to access the Anthropic API.",
+                },
+            },
+        )
+    )
+
+    with pytest.raises(ModeracaoIndisponivel) as capturado:
+        await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert "credit balance is too low" in str(capturado.value)
+
+
+async def test_excecao_sem_corpo_do_provedor_continua_so_com_o_nome_da_classe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A garantia que a TEC-237 nao podia afrouxar.
+
+    O texto de uma excecao qualquer pode ser o proprio conteudo moderado -- a
+    fala do lead ou a resposta da empresa. Sem corpo de erro do servidor, so o
+    nome da classe sai daqui.
+    """
+    segredo = "quero um apartamento de 3 quartos na zona sul"
+    cliente = ClienteFalso(erro=TimeoutError(segredo))
+
+    with pytest.raises(ModeracaoIndisponivel) as capturado:
+        await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert str(capturado.value) == "TimeoutError"
+    assert segredo not in str(capturado.value)
