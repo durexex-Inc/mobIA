@@ -24,6 +24,20 @@ _CAMPOS_DA_EXTRACAO = frozenset(campo.name for campo in fields(Extracao))
 # Um nome de campo e minusculas e underscore. O que nao casa nao vai para o
 # log: o modelo pode devolver o texto da pergunta em vez do nome, e texto de
 # pergunta carrega o que o lead disse.
+#
+# Risco residual, aceito e nao eliminado: o regex barra frase -- tem espaco,
+# maiuscula, acento, pontuacao -- mas nao barra um token isolado, minusculo,
+# sem acento e sem digito. Um valor do lead nessa forma ("pinheiros", "sim")
+# passa no fullmatch e vai literal para `nomes=[...]` do log.warning abaixo.
+# Nao existe filtro estrutural que separe esse token de um nome de campo
+# legitimo que o modelo inventou (ex.: "bairro") -- os dois sao a mesma forma
+# sintatica, e distinguir os dois e exatamente o que este log existe para
+# mostrar. Trocar o nome por so uma contagem fecharia esse buraco, mas
+# destruiria o diagnostico que fez `perguntou` ser lista de string em vez de
+# enum: pagaria o preco da forma cara sem comprar o beneficio dela. E a
+# exposicao so acontece quando o modelo poe um valor onde deveria por um nome
+# de campo -- caso em que queremos ver, porque significa que a declaracao do
+# modelo quebrou.
 _NOME_PLAUSIVEL = re.compile(r"[a-z_]{1,32}")
 
 
