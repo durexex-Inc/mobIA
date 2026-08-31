@@ -414,9 +414,16 @@ Crie `tests/unit/test_estado_marcado.py`:
 
 Puro de proposito: e a mesma funcao que producao e o runner do eval chamam,
 e o que ela decide nao depende de sessao nenhuma.
+
+`caplog.at_level` e as assercoes por chave (`'"descartados"'`, e nao
+`descartados=1`) sao obrigatorias: `configure_logging` usa
+`structlog.stdlib.LoggerFactory` com JSONRenderer, entao o que chega em
+`caplog.text` e JSON. Assercao sobre o formato do valor quebra a cada mudanca
+de renderer -- e a forma que `test_classificar_loga_metricas_sem_conteudo` ja
+usa.
 """
 
-import pytest
+import logging
 
 from mobia.domain.context.repositorio import campos_a_marcar
 
@@ -448,7 +455,9 @@ def test_logga_o_nome_descartado_para_a_deriva_ser_vista(caplog):
 
     E o buraco que a card acusa na opcao do proxy -- "o erro fica invisivel".
     """
-    campos_a_marcar(["bairro"], set())
+    with caplog.at_level(logging.WARNING):
+        campos_a_marcar(["bairro"], set())
+
     assert "estado.campo_perguntado_desconhecido" in caplog.text
     assert "bairro" in caplog.text
 
@@ -459,13 +468,18 @@ def test_o_log_nao_carrega_o_que_nao_parece_nome_de_campo(caplog):
     Um nome que nao casa `[a-z_]{1,32}` e contado, nunca escrito. A regra de
     PII vale para tudo o que vem de uma chamada ao modelo.
     """
-    campos_a_marcar(["Regiao: Vila Mariana, perto da USP"], set())
+    with caplog.at_level(logging.WARNING):
+        campos_a_marcar(["Regiao: Vila Mariana, perto da USP"], set())
+
     assert "Vila Mariana" not in caplog.text
-    assert "descartados=1" in caplog.text or "descartados': 1" in caplog.text
+    assert '"descartados"' in caplog.text
+    assert '"nomes": []' in caplog.text
 
 
 def test_vazio_nao_logga_nada(caplog):
-    assert campos_a_marcar([], {"regiao"}) == set()
+    with caplog.at_level(logging.WARNING):
+        assert campos_a_marcar([], {"regiao"}) == set()
+
     assert caplog.text == ""
 ```
 
