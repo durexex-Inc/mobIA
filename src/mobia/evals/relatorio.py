@@ -199,6 +199,12 @@ def _secao_de_formato(resumo: ResumoDoFormato) -> list[str]:
                 f"  - {violacao.conversa_id} turno {violacao.indice}: "
                 f"{violacao.regra} -- {violacao.medido}"
             )
+            # O texto inteiro, indentado sob o endereco. Sem ele nao da para
+            # separar duas perguntas de verdade de erro do proxy de `?`, e
+            # descobrir custaria outra execucao paga -- foi o que aconteceu com
+            # as 26 violacoes de 31/08. Corpus ficticio e fala do agente: nao
+            # ha dado de lead real aqui.
+            linhas.append(f"      {violacao.texto}")
     return linhas
 
 
