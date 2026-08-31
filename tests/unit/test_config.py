@@ -316,8 +316,9 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     cards, nao os de hoje -- os de hoje estao na saida acima.
 
     A TEC-257 gastou os 4,2 que restavam e mais ~15, subindo o teto para 655
-    e a reserva para 880: o campo `perguntou` do schema custou ~18,5 e a
-    clausula reescrita do prompt 0,75.
+    e a reserva para 880: o campo `perguntou` do schema custou ~18,5, ja
+    gastos aqui. Os 0,75 restantes ficam reservados para a clausula que uma
+    task posterior desta mesma card ainda vai aplicar ao prompt.
     """
     subcontagem = _subcontagem()
     _linha("teto desta assercao (fixo)", 655)

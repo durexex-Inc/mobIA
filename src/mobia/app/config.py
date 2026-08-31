@@ -175,15 +175,15 @@ class Settings(BaseSettings):
     # o numero na mao, nao por reflexo.
     #
     # **850 -> 880 na TEC-257**, que acrescentou o campo `perguntou` ao
-    # `SCHEMA_DA_RESPOSTA` -- lista de strings, ~18,5 tokens medidos naquela
-    # card, mais 0,75 da clausula reescrita do prompt. A alternativa foi
-    # procurada primeiro, como o teste manda: a clausula do prompt de fato
-    # foi encurtada em vez de acrescentada ("nao repergunte o preenchido nem
-    # o ignorado" contra "...o que ja esta preenchido nem o que o lead
-    # ignorou", +0,75 contra +6,25), e isso pagou quase toda a parte de
-    # prosa. O campo do schema nao tinha corte equivalente: a forma barata
-    # ja foi a escolhida -- lista de strings livre em vez de enum dos nove
-    # campos, +18,5 contra +56,0.
+    # `SCHEMA_DA_RESPOSTA` -- lista de strings, ~18,5 tokens medidos nesta
+    # card, ja gastos aqui. Os 0,75 restantes da subida sao reserva: uma task
+    # posterior desta mesma card ainda vai reescrever uma clausula de
+    # `SISTEMA_DO_AGENTE` (classificador.py) para cobrir o que o lead ignorou,
+    # nao so o que ja esta preenchido -- o texto de hoje, intocado por esta
+    # card, continua "nao repergunte o que ja esta preenchido". O campo do
+    # schema nao tinha corte equivalente: a forma barata ja foi a escolhida --
+    # lista de strings livre em vez de enum dos nove campos, +18,5 contra
+    # +56,0.
     # Preco desta subida: **30 tokens a menos de literais e resumo por turno,
     # de 12000 -- 0,25% do contexto**. Menor que as duas anteriores (3,3% e
     # 0,4%).
