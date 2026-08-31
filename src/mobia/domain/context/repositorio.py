@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import func, literal_column, select
+from sqlalchemy import func, literal_column, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -288,5 +288,64 @@ async def gravar_estado(
                     literal_column("'{}'::varchar[]"),
                 ).op("||")(statement.excluded.perguntados_sem_resposta),
             },
+        )
+    )
+
+
+async def marcar_perguntados(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    intencao: Intencao,
+    extracao: Extracao,
+    perguntou: Iterable[str],
+) -> None:
+    """Grava so a marca de `perguntou`, num UPDATE que nao toca mais nada.
+
+    Existe para o commit pos-entrega de `turno.py` (a marca so pode ser
+    gravada depois da entrega confirmada -- ver o comentario la) nao reabrir
+    a corrida que a uniao em SQL de `gravar_estado` fechou para a marca, so
+    que agora do lado das colunas de valor.
+
+    Reusar `gravar_estado` inteiro nesse ponto -- regravando `intencao` e
+    `extracao` de novo, com os mesmos valores de `gerada` -- e idempotente so
+    contra si mesmo. Contra a concorrencia real entre dois turnos da mesma
+    conversa (a razao pela qual a uniao da marca foi para o SQL) ele inverte
+    "mais novo vence" em silencio: turno A grava extracao_A em t1, turno B
+    grava extracao_B em t2 > t1, e o commit pos-entrega de A -- se regravasse
+    extracao -- aconteceria em t3 > t2 e sobrescreveria extracao_B com
+    extracao_A, que e mais velha. Esta funcao evita o problema tocando so a
+    coluna da marca: nao ha coluna de valor no `SET` para inverter.
+
+    `preenchidos` vem de `campos_a_gravar`, calculada aqui so para a
+    subtracao de `campos_a_marcar` -- nada dela e gravado. A mesma guarda de
+    `gravar_estado` vale: sem campos deste turno (inclui FORA_DE_ESCOPO), nao
+    ha marca (D8 do spec) -- marcar de menos e o erro seguro.
+
+    Um `UPDATE` que nao casa nenhuma linha e um no-op correto, nao um erro: e
+    o que acontece quando a chamada pre-entrega nao criou linha nenhuma
+    (FORA_DE_ESCOPO) e nenhum turno anterior desta conversa criou uma antes.
+    """
+    preenchidos = campos_a_gravar(intencao, extracao)
+    if not preenchidos:
+        return
+
+    marcados = sorted(campos_a_marcar(perguntou, preenchidos))
+    if not marcados:
+        return
+
+    await session.execute(
+        update(LeadQualification)
+        .where(
+            LeadQualification.channel == channel,
+            LeadQualification.conversation_key == conversation_key,
+        )
+        .values(
+            perguntados_sem_resposta=func.coalesce(
+                LeadQualification.perguntados_sem_resposta,
+                literal_column("'{}'::varchar[]"),
+            ).op("||")(marcados),
+            updated_at=datetime.now(UTC),
         )
     )

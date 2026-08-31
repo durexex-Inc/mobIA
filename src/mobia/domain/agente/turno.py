@@ -9,7 +9,7 @@ from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
-from mobia.domain.context.repositorio import gravar_estado
+from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.messages.bloqueio import marcar_bloqueada
 from mobia.domain.messages.models import Message
@@ -332,13 +332,19 @@ async def executar_turno(
         # queimaria, para sempre e em silencio, a chance de perguntar aquele
         # campo de verdade -- a uniao no SQL nunca remove.
         #
-        # Reusa `gravar_estado` em vez de uma funcao nova: regravar os mesmos
-        # `intencao`/`extracao` de cima e idempotente (mais novo vence, mesmos
-        # valores) e mantem a subtracao contra `campos` correta -- esta
-        # segunda chamada so acrescenta `perguntou`, que so agora e seguro
-        # gravar.
+        # `marcar_perguntados`, e NAO `gravar_estado` de novo: regravar
+        # `intencao`/`extracao` aqui e idempotente so contra si mesmo. Contra
+        # a concorrencia real entre dois turnos da mesma conversa -- a razao
+        # pela qual a uniao da marca foi para o SQL -- reescrever as colunas
+        # de valor pos-entrega reabriria a corrida que a uniao fechou, so que
+        # do lado errado: turno A grava extracao_A em t1, turno B grava
+        # extracao_B em t2 > t1, e este commit pos-entrega de A aconteceria
+        # em t3 > t2 e sobrescreveria a extracao mais nova de B com a mais
+        # velha de A -- "mais novo vence" invertido, em silencio, para as
+        # mesmas colunas que a marca foi desenhada para nao arriscar.
+        # `marcar_perguntados` faz so o UPDATE da marca, ver o docstring la.
         async with session_factory() as session:
-            await gravar_estado(
+            await marcar_perguntados(
                 session,
                 channel=message.channel,
                 conversation_key=message.conversation_key,

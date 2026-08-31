@@ -530,3 +530,65 @@ async def test_marca_de_perguntou_nao_e_gravada_com_saida_bloqueada(
         estado = await ler_estado(outra, CANAL, CONVERSA)
     assert estado is not None
     assert estado.perguntados_sem_resposta == []
+
+
+async def test_marca_de_perguntou_pos_entrega_nao_reescreve_valor_concorrente(
+    session, classificador_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """A escrita pos-entrega toca so a marca -- nunca intencao/extracao.
+
+    Fix da revisao do fechamento da TEC-257: a versao anterior deste commit
+    reusava `gravar_estado` inteiro no ponto pos-entrega, regravando os
+    mesmos `intencao`/`extracao` de `gerada`. Isso e idempotente so contra si
+    mesmo -- contra um turno concorrente da MESMA conversa que grave um valor
+    mais novo PARA O MESMO CAMPO entre o commit pre-entrega e esta escrita,
+    aquele reuso sobrescreveria o valor mais novo com o mais velho,
+    invertendo "mais novo vence" em silencio. `marcar_perguntados` fecha isso
+    tocando so a coluna da marca -- nao ha coluna de valor no `SET` para
+    inverter.
+
+    O teste simula a corrida usando o unico ponto de sincronizacao real do
+    turno: o outbound. `_deliver` -- chamado depois do commit pre-entrega
+    (que grava `quartos=2`) e antes da marcacao pos-entrega -- grava
+    `quartos=5` como se fosse um turno concorrente mais novo da mesma
+    conversa. Com o bug, a marcacao pos-entrega regravaria `quartos=2` por
+    cima; com o fix, `quartos` fica intocado.
+    """
+    from conftest import OutboundFake
+
+    class OutboundQueEscreveNoMeio(OutboundFake):
+        async def _deliver(self, message_id, kind, payload) -> None:
+            async with get_sessionmaker()() as concorrente:
+                await concorrente.execute(
+                    sql(
+                        "UPDATE lead_qualification SET quartos = 5 "
+                        "WHERE channel = :canal AND conversation_key = :conversa"
+                    ),
+                    {"canal": CANAL, "conversa": CONVERSA},
+                )
+                await concorrente.commit()
+            await super()._deliver(message_id, kind, payload)
+
+    classificador = classificador_fake(
+        Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+        perguntou=("regiao",),
+    )
+    outbound = OutboundQueEscreveNoMeio(get_sessionmaker())
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+
+    async with get_sessionmaker()() as outra:
+        estado = await ler_estado(outra, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.quartos == 5, (
+        "o valor concorrente (mais novo) foi sobrescrito pela marcacao "
+        "pos-entrega -- ela regravou extracao=2, invertendo 'mais novo vence'"
+    )
+    assert estado.perguntados_sem_resposta == ["regiao"], (
+        "a marca ainda tem de ser gravada -- so os valores nao podem ser tocados"
+    )
