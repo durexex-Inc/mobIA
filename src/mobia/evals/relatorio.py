@@ -15,6 +15,7 @@ from mobia.evals.metricas import (
     ResultadoDaMetrica,
     ResumoDaExtracaoEfetiva,
     ResumoDeConfianca,
+    ResumoDeInsistencia,
     ResumoDeNegativos,
     ResumoDoFormato,
 )
@@ -156,6 +157,35 @@ def _valores_de(discrepancia: Discrepancia) -> str:
     if discrepancia.obtido is not None:
         partes.append(f"obtido {discrepancia.obtido!r}")
     return f" -- {', '.join(partes)}" if partes else ""
+
+
+def _secao_de_insistencia(resumo: ResumoDeInsistencia) -> list[str]:
+    """Campo perguntado em mais de um turno da mesma conversa, sem resposta.
+
+    Irma da secao de reperguntas, e a distincao entre as duas e o ponto:
+    aquela conta o agente perguntando o que o **estado ja sabe**; esta conta
+    ele reinsistindo no que o lead **nao respondeu**. A regra do prompt e o
+    proxy antigo cobrem so a primeira.
+
+    So diagnostico, e sem faixa: reinsistir nao e errado em si -- se o lead
+    ignorou, perguntar de novo e razoavel. O que a execucao de 31/08/2026
+    mostrou foi cadencia, nao a pergunta: `compra-14` pedindo regiao e vaga nos
+    turnos 0, 1 e 2 com a mesma formulacao. Medir primeiro (TEC-256).
+    """
+    linhas = [
+        "",
+        "## Insistencia: a mesma pergunta de novo, sem resposta (diagnostico)",
+        "",
+        f"- {resumo.conversas} conversas com pergunta a campo desconhecido",
+        f"- conversas em que algum campo foi perguntado mais de uma vez: "
+        f"{resumo.conversas_afetadas}",
+    ]
+    if resumo.insistencias:
+        linhas += ["", "Onde, do pior para o menos grave:", ""]
+        for insistencia in resumo.insistencias:
+            turnos = ", ".join(str(t) for t in insistencia.turnos)
+            linhas.append(f"  - {insistencia.conversa_id}: {insistencia.campo} -- turnos {turnos}")
+    return linhas
 
 
 def _secao_de_formato(resumo: ResumoDoFormato) -> list[str]:
@@ -369,6 +399,7 @@ def render(
     decomposicao: DecomposicaoDaExtracao | None = None,
     efetiva: ResumoDaExtracaoEfetiva | None = None,
     formato: ResumoDoFormato | None = None,
+    insistencia: ResumoDeInsistencia | None = None,
 ) -> str:
     linhas = ["# Avaliacao da classificacao de intencao", ""]
 
@@ -392,6 +423,9 @@ def render(
 
     if formato is not None:
         linhas += _secao_de_formato(formato)
+
+    if insistencia is not None:
+        linhas += _secao_de_insistencia(insistencia)
 
     if discrepancias or negativos is not None:
         linhas += _secao_de_extracao(discrepancias, negativos)

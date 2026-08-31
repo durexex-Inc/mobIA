@@ -9,8 +9,10 @@ from mobia.evals.metricas import (
     Discrepancia,
     DivergenciaDeEstado,
     FalhaDeInfraestrutura,
+    Insistencia,
     ResumoDaExtracaoEfetiva,
     ResumoDeConfianca,
+    ResumoDeInsistencia,
     ResumoDeNegativos,
     ResumoDoFormato,
     ViolacaoDeFormato,
@@ -607,3 +609,51 @@ def test_o_texto_da_violacao_viaja_junto_do_endereco() -> None:
 
     assert "investimento-03 turno 0: perguntas -- 2" in texto
     assert "voce ja investe em imoveis? qual valor pretende aplicar?" in texto
+
+
+def test_relatorio_ordena_a_insistencia_do_pior_para_o_menos_grave() -> None:
+    """Tres turnos seguidos e pior que dois, e a lista pode ficar longa.
+
+    Quem abre o relatorio tem de ver o caso grave antes de rolar -- mesma
+    razao pela qual a secao da conta aberta vem antes das discrepancias.
+    """
+    texto = render(
+        [],
+        {},
+        insistencia=ResumoDeInsistencia(
+            conversas=53,
+            insistencias=[
+                Insistencia(conversa_id="compra-14", campo="regiao", turnos=(0, 1, 2)),
+                Insistencia(conversa_id="compra-13", campo="quartos", turnos=(0, 1)),
+            ],
+        ),
+    )
+
+    assert "compra-14: regiao -- turnos 0, 1, 2" in texto
+    assert "compra-13: quartos -- turnos 0, 1" in texto
+    assert texto.index("compra-14") < texto.index("compra-13")
+
+
+def test_a_secao_de_insistencia_distingue_conversas_de_ocorrencias() -> None:
+    """Um lead incomodado em dois campos e UMA conversa, nao duas.
+
+    Sem a distincao, o numero da secao inflaria com campos e sugeriria mais
+    leads afetados do que existem.
+    """
+    texto = render(
+        [],
+        {},
+        insistencia=ResumoDeInsistencia(
+            conversas=53,
+            insistencias=[
+                Insistencia(conversa_id="compra-14", campo="regiao", turnos=(0, 1)),
+                Insistencia(conversa_id="compra-14", campo="vagas", turnos=(0, 1)),
+            ],
+        ),
+    )
+
+    assert "perguntado mais de uma vez: 1" in texto
+
+
+def test_relatorio_sem_insistencia_omite_a_secao() -> None:
+    assert "Insistencia" not in render([], {})

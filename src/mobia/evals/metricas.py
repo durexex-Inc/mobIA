@@ -546,6 +546,127 @@ def resumo_do_formato(respostas: Sequence[RespostaObservada]) -> ResumoDoFormato
     )
 
 
+# Marcadores de pergunta por campo. Moram aqui, e nao no runner do eval, porque
+# dois proxies dependem deles e uma segunda copia divergiria: `_reperguntou`
+# (perguntar o que o estado JA SABE) e `insistencias` (perguntar de novo o que
+# o lead NAO respondeu). Sao perguntas opostas sobre a mesma deteccao.
+#
+# A lista veio de `evals/test_acuracia_de_intencao.py` sem uma virgula de
+# mudanca, e os seis casos que a apertaram continuam travados em
+# `tests/unit/test_evals_reperguntas.py`.
+MARCADORES_DE_REPERGUNTA: dict[str, tuple[str, ...]] = {
+    "regiao": (r"regiao", r"bairro", r"onde", r"localiza"),
+    "quartos": (r"quartos?", r"dormitorios?"),
+    "vagas": (r"vagas?", r"garagem"),
+    "tipo_imovel": (r"apartamentos?", r"tipo de imovel"),
+    "faixa_preco_max": (r"orcamento", r"faixa de preco", r"quanto pretende"),
+    "urgencia": (r"prazo", r"quando pretende", r"pressa"),
+    "forma_pagamento": (r"pagamento", r"financiamento", r"a vista"),
+    "tem_imovel_para_vender": (r"imovel para vender", r"tem imovel"),
+}
+
+
+def campos_perguntados(texto: str) -> set[str]:
+    """Sobre quais campos esta resposta parece perguntar.
+
+    Proxy de palavra-chave, com as duas guardas que a TEC-210 apertou: exige
+    `?` no texto -- sem isso "esse apartamento tem 2 quartos e 1 vaga" (o
+    agente descrevendo um imovel) contaria tres perguntas -- e casa
+    `\bmarcador\b` e nao substring crua, porque "onde" e substring de
+    "responder".
+
+    Erra nas duas direcoes mesmo assim, e isso esta declarado: uma pergunta com
+    outra palavra escapa, e uma frase descritiva que termina perguntando outra
+    coisa entra. Pista, nao prova.
+    """
+    if "?" not in texto:
+        return set()
+    baixo = texto.casefold()
+    return {
+        campo
+        for campo, marcadores in MARCADORES_DE_REPERGUNTA.items()
+        if any(re.search(rf"\b{marcador}\b", baixo) for marcador in marcadores)
+    }
+
+
+@dataclass(frozen=True)
+class PerguntaObservada:
+    """Os campos ainda **desconhecidos** sobre os quais o agente perguntou num
+    turno.
+
+    "Desconhecidos" e o filtro que separa esta medicao do proxy irmao: campo
+    que ja esta no estado e reperguntado, e `_reperguntou` cuida disso. Aqui
+    interessa o que o lead nao respondeu -- e que o agente pode estar
+    reinsistindo.
+    """
+
+    conversa_id: str
+    indice: int
+    campos: frozenset[str]
+
+
+@dataclass(frozen=True)
+class Insistencia:
+    """Um campo perguntado em mais de um turno da mesma conversa, sem resposta.
+
+    `turnos` carrega todos os indices, e nao so a contagem: tres turnos
+    seguidos e um caso pior que dois turnos separados por dez, e o endereco e
+    o que permite ler as respostas sem pagar outra execucao.
+    """
+
+    conversa_id: str
+    campo: str
+    turnos: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class ResumoDeInsistencia:
+    """Diagnostico. Nao carrega faixa e nao entra em `bloqueia`.
+
+    Nao vira metrica porque ninguem decidiu ainda se reinsistir e defeito.
+    Reinsistir **nao e errado em si**: se o lead ignorou, perguntar de novo e
+    razoavel. O que a execucao de 31/08/2026 mostrou -- `compra-14` pedindo
+    "regiao? E vaga?" nos turnos 0, 1 e 2, com a mesma formulacao -- e
+    cadencia, nao a pergunta. Medir primeiro, decidir depois (TEC-256).
+    """
+
+    conversas: int
+    insistencias: list[Insistencia]
+
+    @property
+    def conversas_afetadas(self) -> int:
+        return len({i.conversa_id for i in self.insistencias})
+
+
+def insistencias(perguntas: Sequence[PerguntaObservada]) -> ResumoDeInsistencia:
+    """Campos perguntados em mais de um turno da mesma conversa.
+
+    O criterio e por **campo**, e nao por frase. Comparar o texto das perguntas
+    pegaria so repeticao literal, e a reformulacao passaria: em `compra-14` o
+    turno 1 pergunta "para eu montar boas opcoes [...] voce tem alguma regiao
+    ou bairro de preferencia?" e o turno 0 pergunta a mesma coisa sem o
+    prefixo. Sao a mesma pergunta com textos diferentes.
+
+    O preco desta escolha: dois campos distintos numa frase so contam como duas
+    perguntas, e uma reformulacao que troque a palavra-chave escapa. Herda os
+    erros de `campos_perguntados`, que sao os do proxy da TEC-210.
+    """
+    por_conversa: dict[tuple[str, str], list[int]] = defaultdict(list)
+    conversas: set[str] = set()
+    for pergunta in perguntas:
+        conversas.add(pergunta.conversa_id)
+        for campo in pergunta.campos:
+            por_conversa[(pergunta.conversa_id, campo)].append(pergunta.indice)
+
+    achadas = [
+        Insistencia(conversa_id=conversa, campo=campo, turnos=tuple(sorted(turnos)))
+        for (conversa, campo), turnos in por_conversa.items()
+        if len(turnos) > 1
+    ]
+    achadas.sort(key=lambda i: (-len(i.turnos), i.conversa_id, i.campo))
+    return ResumoDeInsistencia(conversas=len(conversas), insistencias=achadas)
+
+
 def sem_mecanismo(nome: str, motivo: str) -> ResultadoDaMetrica:
     """Metrica declarada que ainda nao tem o que medir.
 
