@@ -317,3 +317,40 @@ async def test_fora_de_escopo_nao_apaga_estado_que_ja_existia(session) -> None:
     assert estado is not None
     assert estado.regiao == "zona sul"
     assert estado.intencao == "COMPRA"
+
+
+async def test_marca_de_perguntado_aceita_nulo_e_vazio(session) -> None:
+    """`NULL` e `{}` sao fatos diferentes, e a coluna guarda os dois.
+
+    `NULL` e "linha anterior a TEC-257, ninguem marcava". `{}` e "marcava, e
+    nao havia nada a marcar". Colidir as duas leituras na mesma coluna e o
+    defeito que a TEC-231 consertou nas colunas de cache.
+    """
+    session.add(
+        LeadQualification(channel="wa", conversation_key="antiga", intencao="COMPRA")
+    )
+    session.add(
+        LeadQualification(
+            channel="wa",
+            conversation_key="nova",
+            intencao="COMPRA",
+            perguntados_sem_resposta=[],
+        )
+    )
+    session.add(
+        LeadQualification(
+            channel="wa",
+            conversation_key="marcada",
+            intencao="COMPRA",
+            perguntados_sem_resposta=["regiao", "vagas"],
+        )
+    )
+    await session.commit()
+
+    antiga = await session.get(LeadQualification, ("wa", "antiga"))
+    nova = await session.get(LeadQualification, ("wa", "nova"))
+    marcada = await session.get(LeadQualification, ("wa", "marcada"))
+
+    assert antiga.perguntados_sem_resposta is None
+    assert nova.perguntados_sem_resposta == []
+    assert marcada.perguntados_sem_resposta == ["regiao", "vagas"]

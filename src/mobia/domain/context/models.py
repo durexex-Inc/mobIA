@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, DateTime, Integer, LargeBinary, Numeric, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from mobia.domain.messages.models import Base
@@ -90,6 +90,19 @@ class LeadQualification(Base):
     urgencia: Mapped[str | None] = mapped_column(String(32), nullable=True)
     forma_pagamento: Mapped[str | None] = mapped_column(String(32), nullable=True)
     tem_imovel_para_vender: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # TEC-257. Os campos que o agente perguntou e o lead nao respondeu.
+    #
+    # `NULL` e `{}` nao sao sinonimos: `NULL` e "linha anterior a esta card,
+    # ninguem marcava", `{}` e "marcava, e nao havia nada". Quem le tem de
+    # tratar os dois iguais **na leitura** (`or ()`), e nunca gravar `NULL`
+    # querendo dizer vazio.
+    #
+    # Em claro, como o resto desta tabela: e o que o sistema concluiu, nao o
+    # que o lead escreveu.
+    perguntados_sem_resposta: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(32)), nullable=True
+    )
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
