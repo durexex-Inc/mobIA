@@ -9,6 +9,9 @@ from mobia.evals.corpus import carregar, total_de_turnos
 from mobia.evals.metricas import (
     CAMPOS_DA_EXTRACAO,
     DISPERSAO_MEDIDA,
+    MAX_CARACTERES_DA_RESPOSTA,
+    PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT,
+    PISO_DE_BLOQUEIO_PCT,
     PISO_DE_PRECISAO_DA_EXTRACAO_PCT,
     PISO_DE_TURNOS,
     PISO_DE_TURNOS_NEGATIVOS,
@@ -18,9 +21,11 @@ from mobia.evals.metricas import (
     EstadoDaConversa,
     ExtracaoObservada,
     Faixa,
+    RespostaObservada,
     ResumoDeNegativos,
     acuracia_de_intencao,
     acuracia_efetiva,
+    aderencia_ao_tom,
     bloqueia,
     decomposicao_da_extracao,
     discrepancias_da_extracao,
@@ -32,7 +37,9 @@ from mobia.evals.metricas import (
     precisao_efetiva_da_extracao,
     resumo_de_confianca,
     resumo_de_negativos,
+    resumo_do_formato,
     sem_mecanismo,
+    violacoes_de_formato,
 )
 
 CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
@@ -855,3 +862,91 @@ def test_campos_da_extracao_sai_da_dataclass_e_nao_de_lista_escrita_a_mao():
     """
     assert CAMPOS_DA_EXTRACAO == {campo.name for campo in fields(Extracao)}
     assert "intencao" not in CAMPOS_DA_EXTRACAO
+
+
+def _resposta(texto: str, *, indice: int = 0) -> RespostaObservada:
+    return RespostaObservada(conversa_id="compra-01", indice=indice, texto=texto)
+
+
+def test_seiscentos_caracteres_passa_e_seiscentos_e_um_viola():
+    """A borda do RN-04.2, nos dois lados. O teto e inclusivo."""
+    assert violacoes_de_formato([_resposta("x" * MAX_CARACTERES_DA_RESPOSTA)]) == []
+
+    violacoes = violacoes_de_formato([_resposta("x" * (MAX_CARACTERES_DA_RESPOSTA + 1))])
+    assert [(v.regra, v.medido) for v in violacoes] == [("comprimento", 601)]
+
+
+def test_uma_pergunta_passa_e_duas_violam():
+    """ "Nunca um bloco com cinco perguntas" -- o teto de uma e a leitura
+    literal, e uma resposta sem pergunta nenhuma tambem cumpre."""
+    assert violacoes_de_formato([_resposta("qual regiao voce prefere?")]) == []
+    assert violacoes_de_formato([_resposta("perfeito, vou procurar.")]) == []
+
+    violacoes = violacoes_de_formato([_resposta("qual regiao? e quantos quartos?")])
+    assert [(v.regra, v.medido) for v in violacoes] == [("perguntas", 2)]
+
+
+def test_turno_que_viola_as_duas_conta_como_um_turno_ruim():
+    """A metrica e por resposta, nao por violacao.
+
+    O lead vive o turno: um turno que estoura o tamanho **e** faz tres
+    perguntas e um turno ruim, nao dois. Contar violacoes derrubaria a taxa
+    abaixo do que o lead experimenta.
+    """
+    ruim = _resposta("x" * 700 + " a? b? c?")
+
+    assert len(violacoes_de_formato([ruim])) == 2
+    metrica = aderencia_ao_tom([ruim, _resposta("tudo certo.", indice=1)])
+    assert (metrica.acertos, metrica.total) == (1, 2)
+
+
+def test_a_metrica_e_a_lista_de_violacoes_nao_divergem():
+    """As duas contas saem da mesma funcao, e este teste trava isso.
+
+    `campos_a_gravar` e `_subcontagem` ja mostraram neste projeto o que
+    acontece com duas copias da mesma regra: elas divergem, e a divergencia so
+    aparece na borda.
+    """
+    respostas = [
+        _resposta("x" * 601, indice=0),
+        _resposta("a? b?", indice=1),
+        _resposta("ok", indice=2),
+        _resposta("x" * 800 + "?" * 3, indice=3),
+    ]
+
+    violadas = {(v.conversa_id, v.indice) for v in violacoes_de_formato(respostas)}
+    metrica = aderencia_ao_tom(respostas)
+
+    assert metrica.total - metrica.acertos == len(violadas)
+
+
+def test_emoji_e_contado_mas_nao_reprova():
+    """A regra de emoji do card **nao** e mecanizavel, e por isso nao entra na
+    metrica.
+
+    "A informacao essencial nunca depende de emoji" exige entender o que a
+    frase afirma. Contar figurinha nao responde isso -- e reportar um numero
+    que nao mede a regra seria pior que reportar nenhum, que e o raciocinio de
+    `sem_mecanismo`.
+    """
+    com_emoji = _resposta("achei tres opcoes otimas para voce 🏠✨")
+
+    assert violacoes_de_formato([com_emoji]) == []
+    assert aderencia_ao_tom([com_emoji]).acertos == 1
+
+    resumo = resumo_do_formato([com_emoji, _resposta("sem figurinha", indice=1)])
+    assert (resumo.com_emoji, resumo.emojis) == (1, 2)
+
+
+def test_o_piso_da_aderencia_e_andaime_declarado():
+    """Ninguem sabe ainda qual aderencia e saudavel: o texto do agente nunca
+    foi medido.
+
+    Cravar 84 aqui seria piso nao medido, e um piso nao medido abre VERMELHO
+    na primeira execucao sem regressao nenhuma. A `acuracia_efetiva` viveu
+    exatamente isso ate a TEC-210 medir. Trocar por piso real e trabalho da
+    proxima card, com o numero na mao -- e este teste existe para que a troca
+    seja deliberada.
+    """
+    assert PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT == 50
+    assert PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT < PISO_DE_BLOQUEIO_PCT

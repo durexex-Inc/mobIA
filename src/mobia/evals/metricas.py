@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, fields
@@ -369,6 +370,165 @@ def matriz_de_confusao(
     for c in classificacoes:
         matriz[c.esperada][c.obtida] += 1
     return {esperada: dict(obtidas) for esperada, obtidas in matriz.items()}
+
+
+# RN-04.2: teto de caracteres por mensagem do agente. Vem do SRS, e nao de
+# medicao -- e regra de produto sobre o que o lead recebe, nao um limite
+# tecnico.
+MAX_CARACTERES_DA_RESPOSTA = 600
+
+# RN-04.7: uma pergunta por turno. "Nunca um bloco com cinco perguntas" e o
+# que o card pede; o teto de 1 e a leitura literal disso.
+MAX_PERGUNTAS_POR_TURNO = 1
+
+# Piso-ANDAIME, e nao o piso de verdade. Ninguem sabe hoje qual aderencia e
+# saudavel: o texto que o modelo devolve nunca foi medido, so usado para o
+# proxy de reperguntas e jogado no historico. Cravar 90/84 aqui seria piso nao
+# medido, e um piso nao medido pode abrir VERMELHO na primeira execucao sem
+# regressao nenhuma -- e o que a docstring de `sem_mecanismo` avisa, e o que a
+# `acuracia_efetiva` viveu ate a TEC-210 medir (ela teve piso-andaime de 50%
+# pelo mesmo motivo, e o trocou pelo real com a baseline na mao).
+#
+# 50% responde uma pergunta so: "o modelo ignorou as duas regras por
+# completo?". Trocar por piso medido e trabalho da proxima card, com o numero
+# na mao.
+PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT = 50
+
+# Blocos Unicode de emoji, na pratica e nao na norma: pictogramas, emoticons,
+# transporte, simbolos diversos e dingbats, mais o seletor de variacao que faz
+# um caractere comum renderizar como emoji.
+#
+# **Deliberadamente aproximado.** Nao existe propriedade Unicode "e emoji" que
+# o `re` da stdlib exponha, e trazer dependencia para contar figurinha num
+# diagnostico seria caro demais. O que esta faixa erra: bandeiras compostas
+# contam como dois, e alguns simbolos matematicos antigos entram sem ser
+# emoji. Para o uso aqui -- dizer se a resposta tem figurinha e quantas --
+# isso basta, e a imprecisao esta escrita.
+_EMOJI = re.compile("[\U0001f000-\U0001faff\u2600-\u27bf\u2b00-\u2bff\ufe0f\u2190-\u21ff]")
+
+
+@dataclass(frozen=True)
+class RespostaObservada:
+    """O texto que o agente devolveu num turno, com o endereco.
+
+    Existe porque o texto era gerado em toda execucao paga e **descartado**:
+    `resposta.resposta` alimentava o proxy de reperguntas e o historico, e
+    mais nada. Medir o formato nao custa chamada nenhuma -- o texto ja esta
+    ali.
+    """
+
+    conversa_id: str
+    indice: int
+    texto: str
+
+
+@dataclass(frozen=True)
+class ViolacaoDeFormato:
+    """Uma regra de formato que a resposta de um turno nao cumpriu.
+
+    `medido` carrega o valor que estourou -- 812 caracteres, 3 perguntas --
+    porque saber que violou sem saber por quanto nao diz se e ajuste de prompt
+    ou desvio grosseiro.
+    """
+
+    conversa_id: str
+    indice: int
+    regra: Literal["comprimento", "perguntas"]
+    medido: int
+
+
+def violacoes_de_formato(respostas: Sequence[RespostaObservada]) -> list[ViolacaoDeFormato]:
+    """As duas regras do RF-04 que sao decidiveis sobre o texto.
+
+    **A terceira regra do card nao esta aqui, e nao por esquecimento.** "A
+    informacao essencial nunca depende de emoji" exige entender o que a frase
+    afirma -- se a figurinha substitui uma palavra ou so decora. Nenhuma
+    contagem responde isso, entao ela nao vira criterio: `resumo_do_formato`
+    reporta presenca e quantidade de emoji como diagnostico, e a parte de
+    "essencial" fica declarada como nao mecanizada. Reportar um numero que nao
+    mede a regra seria pior que reportar nenhum -- e o mesmo raciocinio de
+    `sem_mecanismo`.
+
+    Contar `?` e proxy, da mesma classe que `_reperguntou` no runner do eval, e
+    erra nas duas direcoes: "cabe em R$ 500?" conta pergunta que nao pergunta
+    nada ao lead, e "me diz qual regiao voce prefere" escapa por nao ter `?`.
+    Pista, nao prova.
+    """
+    violacoes: list[ViolacaoDeFormato] = []
+    for resposta in respostas:
+        caracteres = len(resposta.texto)
+        if caracteres > MAX_CARACTERES_DA_RESPOSTA:
+            violacoes.append(
+                ViolacaoDeFormato(
+                    conversa_id=resposta.conversa_id,
+                    indice=resposta.indice,
+                    regra="comprimento",
+                    medido=caracteres,
+                )
+            )
+        perguntas = resposta.texto.count("?")
+        if perguntas > MAX_PERGUNTAS_POR_TURNO:
+            violacoes.append(
+                ViolacaoDeFormato(
+                    conversa_id=resposta.conversa_id,
+                    indice=resposta.indice,
+                    regra="perguntas",
+                    medido=perguntas,
+                )
+            )
+    return violacoes
+
+
+def aderencia_ao_tom(respostas: Sequence[RespostaObservada]) -> ResultadoDaMetrica:
+    """Fracao das respostas que cumprem as duas regras decidiveis.
+
+    Por resposta e nao por violacao: o lead vive o turno, e um turno que
+    estoura o tamanho **e** faz tres perguntas e um turno ruim, nao dois.
+
+    Deriva de `violacoes_de_formato` em vez de refazer as comparacoes, para as
+    duas contas nao divergirem em silencio -- a licao que `campos_a_gravar` e
+    `_subcontagem` ja tinham deixado neste projeto.
+    """
+    violadas = {(v.conversa_id, v.indice) for v in violacoes_de_formato(respostas)}
+    total = len(respostas)
+    acertos = total - len(violadas)
+    return ResultadoDaMetrica(
+        nome="aderencia ao tom",
+        faixa=faixa_de(acertos, total, piso=PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT),
+        acertos=acertos,
+        total=total,
+        detalhe=_detalhe(
+            acertos,
+            total,
+            f"alvo {ALVO_PCT}%, piso-andaime {PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT}%",
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class ResumoDoFormato:
+    """Diagnostico do formato, aberto por regra. Nao carrega faixa.
+
+    Quem bloqueia e `aderencia_ao_tom`; esta secao existe para dizer **o que
+    fazer** com aquele numero -- se a violacao e de tamanho ou de perguntas
+    decide entre encurtar o texto e mudar a instrucao, e sao consertos
+    diferentes.
+    """
+
+    respostas: int
+    violacoes: list[ViolacaoDeFormato]
+    com_emoji: int
+    emojis: int
+
+
+def resumo_do_formato(respostas: Sequence[RespostaObservada]) -> ResumoDoFormato:
+    com_emoji = sum(1 for r in respostas if _EMOJI.search(r.texto))
+    return ResumoDoFormato(
+        respostas=len(respostas),
+        violacoes=violacoes_de_formato(respostas),
+        com_emoji=com_emoji,
+        emojis=sum(len(_EMOJI.findall(r.texto)) for r in respostas),
+    )
 
 
 def sem_mecanismo(nome: str, motivo: str) -> ResultadoDaMetrica:

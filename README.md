@@ -3293,6 +3293,85 @@ régua tornou obrigatória, e como verificação das decisões categóricas.
 **A baseline válida para comparação passa a ser esta**, e não nenhuma das seis
 de 30/08.
 
+## TEC-140 (parte 1) — A aderência ao tom deixou de ser um slot vazio
+
+O relatório do gate declarava, em toda execução paga:
+
+```
+- aderencia ao tom: SEM_MECANISMO -- sem mecanismo: TEC-140 nao existe
+```
+
+Agora ela mede. **Sem nenhuma chamada paga adicional**: o texto que o agente
+devolve já era gerado em toda execução e **descartado** — `resposta.resposta`
+alimentava o proxy de reperguntas e o histórico, e mais nada.
+
+### A card foi decomposta, e esta é a primeira parte
+
+A TEC-140 tem quatro peças em subsistemas diferentes:
+
+| peça | onde vive | estado |
+| --- | --- | --- |
+| formato do texto (600 caracteres, uma pergunta, emoji) | resposta do modelo | **esta parte** |
+| a métrica que o mede no gate | `metricas.py`, `relatorio.py` | **esta parte** |
+| teto de 2 mensagens consecutivas | estado de conversa + guarda do outbound | card própria |
+| indicador de digitação acima de 4s | `OutboundPort` + API da Meta | card própria |
+
+As duas últimas mudam comportamento de produção, e a do indicador muda a
+interface que três implementações de `OutboundPort` seguem.
+
+### Medir antes de aplicar, e a razão é a sessão inteira
+
+A card diz "**aplicar**" o formato. Esta parte **não aplica nada** — nem no
+prompt, nem em produção.
+
+O motivo: **não existia um único dado sobre conformidade**. Pode ser que o
+modelo já cumpra as três regras quase sempre, e aí "aplicar" é um problema
+muito menor do que a card supõe. As três formas de aplicar têm custos muito
+diferentes — regra no prompt não cabe (a margem é de 4,2 tokens), validação com
+regeneração custa uma chamada paga por violação em produção, e truncar corta
+frase no meio — e escolher entre elas sem número é o erro que a TEC-240 e a
+TEC-250 cometeram gastando orçamento de prompt.
+
+### Duas regras são decidíveis, a terceira não é
+
+- **600 caracteres** — `len(resposta) <= 600`. Exato, sem proxy.
+- **Uma pergunta por turno** — contagem de `?`. **É proxy**, da mesma classe
+  que `_reperguntou`: *"cabe em R$ 500?"* conta pergunta que não pergunta nada
+  ao lead, e *"me diz qual região você prefere"* escapa por não ter `?`.
+- **Emoji** — *"a informação essencial nunca depende de emoji"* exige entender
+  o que a frase afirma: se a figurinha substitui uma palavra ou só decora.
+  **Nenhuma contagem responde isso**, então ela não vira critério. O relatório
+  conta emoji como diagnóstico, com a limitação escrita ao lado do número.
+
+Reportar um número que não mede a regra seria pior que não reportar — é o
+mesmo raciocínio de `sem_mecanismo`.
+
+**A métrica é por resposta, não por violação.** O lead vive o turno: um turno
+que estoura o tamanho **e** faz três perguntas é um turno ruim, não dois.
+
+### O piso é andaime, e está declarado
+
+`PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT = 50`. Ninguém sabe qual aderência é
+saudável, porque o texto nunca foi medido. Cravar 84 seria piso não medido, e
+um piso não medido **abre VERMELHO na primeira execução sem regressão
+nenhuma** — o que a docstring de `sem_mecanismo` avisa, e o que a
+`acuracia_efetiva` viveu até a TEC-210 medir (ela teve andaime de 50% pelo
+mesmo motivo).
+
+50% responde uma pergunta só: *"o modelo ignorou as duas regras por completo?"*.
+Trocar pelo piso real é trabalho da próxima card, com o número na mão. Um teste
+trava o valor para que a troca seja deliberada.
+
+### Lacunas conhecidas
+
+- **Nada foi aplicado.** Se a medição mostrar violação sistemática, a forma de
+  corrigir ainda precisa ser escolhida — e as três opções têm custos muito
+  diferentes.
+- **A regra do emoji continua sem mecanismo**, e isso é limite do problema e
+  não da implementação.
+- **O piso é andaime.** Enquanto for, a métrica não bloqueia nada que não seja
+  colapso total.
+
 ## Escolher o modelo no disparo manual do gate
 
 `workflow_dispatch` passou a aceitar um input `modelo`. Vazio — que é o caso de

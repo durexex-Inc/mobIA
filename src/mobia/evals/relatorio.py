@@ -5,6 +5,8 @@ from pathlib import Path
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
 from mobia.evals.metricas import (
     DISPERSAO_MEDIDA,
+    MAX_CARACTERES_DA_RESPOSTA,
+    MAX_PERGUNTAS_POR_TURNO,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
     DecomposicaoDaExtracao,
@@ -14,6 +16,7 @@ from mobia.evals.metricas import (
     ResumoDaExtracaoEfetiva,
     ResumoDeConfianca,
     ResumoDeNegativos,
+    ResumoDoFormato,
 )
 
 
@@ -153,6 +156,50 @@ def _valores_de(discrepancia: Discrepancia) -> str:
     if discrepancia.obtido is not None:
         partes.append(f"obtido {discrepancia.obtido!r}")
     return f" -- {', '.join(partes)}" if partes else ""
+
+
+def _secao_de_formato(resumo: ResumoDoFormato) -> list[str]:
+    """O formato da resposta, aberto por regra. So diagnostico.
+
+    Quem bloqueia e `aderencia ao tom`; esta secao diz **o que fazer** com
+    aquele numero: violacao de tamanho e violacao de numero de perguntas pedem
+    consertos diferentes, e um total unico esconderia qual dos dois esta
+    acontecendo.
+
+    A contagem de emoji nao entra na metrica de proposito. A regra do card e
+    "a informacao essencial nunca depende de emoji", e isso exige entender o
+    que a frase afirma -- se a figurinha substitui uma palavra ou so decora.
+    Nenhuma contagem responde isso. O numero fica aqui como pista para quem
+    for ler as respostas, com a limitacao dita.
+    """
+    por_regra: dict[str, int] = defaultdict(int)
+    for violacao in resumo.violacoes:
+        por_regra[violacao.regra] += 1
+
+    linhas = [
+        "",
+        "## Formato da resposta (diagnostico)",
+        "",
+        f"- {resumo.respostas} respostas do agente medidas",
+        f"- acima de {MAX_CARACTERES_DA_RESPOSTA} caracteres: {por_regra['comprimento']}",
+        f"- com mais de {MAX_PERGUNTAS_POR_TURNO} pergunta: {por_regra['perguntas']}",
+        f"- com emoji: {resumo.com_emoji} ({resumo.emojis} no total)",
+        "",
+        '  A contagem de emoji **nao** entra na metrica. A regra e "a',
+        '  informacao essencial nunca depende de emoji", e decidir isso exige',
+        "  entender o que a frase afirma -- nenhuma contagem responde. O numero",
+        "  fica como pista para quem for ler as respostas.",
+        "",
+        "  Contar `?` e proxy, como o de reperguntas: erra nas duas direcoes.",
+    ]
+    if resumo.violacoes:
+        linhas += ["", "Onde:", ""]
+        for violacao in resumo.violacoes:
+            linhas.append(
+                f"  - {violacao.conversa_id} turno {violacao.indice}: "
+                f"{violacao.regra} -- {violacao.medido}"
+            )
+    return linhas
 
 
 def _secao_da_extracao_efetiva(resumo: ResumoDaExtracaoEfetiva) -> list[str]:
@@ -315,6 +362,7 @@ def render(
     negativos: ResumoDeNegativos | None = None,
     decomposicao: DecomposicaoDaExtracao | None = None,
     efetiva: ResumoDaExtracaoEfetiva | None = None,
+    formato: ResumoDoFormato | None = None,
 ) -> str:
     linhas = ["# Avaliacao da classificacao de intencao", ""]
 
@@ -335,6 +383,9 @@ def render(
 
     if efetiva is not None:
         linhas += _secao_da_extracao_efetiva(efetiva)
+
+    if formato is not None:
+        linhas += _secao_de_formato(formato)
 
     if discrepancias or negativos is not None:
         linhas += _secao_de_extracao(discrepancias, negativos)

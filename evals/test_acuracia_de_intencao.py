@@ -31,9 +31,11 @@ from mobia.evals.metricas import (
     EstadoDaConversa,
     ExtracaoObservada,
     FalhaDeInfraestrutura,
+    RespostaObservada,
     ResultadoDaMetrica,
     acuracia_de_intencao,
     acuracia_efetiva,
+    aderencia_ao_tom,
     bloqueia,
     decomposicao_da_extracao,
     discrepancias_da_extracao,
@@ -44,6 +46,7 @@ from mobia.evals.metricas import (
     precisao_efetiva_da_extracao,
     resumo_de_confianca,
     resumo_de_negativos,
+    resumo_do_formato,
     sem_mecanismo,
 )
 from mobia.evals.relatorio import DIRETORIO_DE_RELATORIOS, preservar, render
@@ -121,6 +124,7 @@ async def _rodar_conversa(
     list[Classificacao],
     list[ExtracaoObservada],
     list[tuple[str, int, str]],
+    list[RespostaObservada],
     EstadoDaConversa,
 ]:
     """Os turnos sao sequenciais, e a resposta real do agente volta ao historico.
@@ -159,6 +163,10 @@ async def _rodar_conversa(
     # A anotacao acumulada com a mesma regra do estado: "mais novo vence".
     # E o que o corpus diz que a conversa deveria ter deixado gravado.
     esperado_acumulado: dict[str, Any] = {}
+    # O texto que o agente devolveu, que ate a TEC-140 era usado so pelo proxy
+    # de reperguntas e pelo historico, e depois jogado fora. Medir o formato
+    # dele nao custa chamada nenhuma: ele ja foi gerado e pago.
+    respostas: list[RespostaObservada] = []
     observadas: list[ExtracaoObservada] = []
     reperguntados: list[tuple[str, int, str]] = []
 
@@ -231,6 +239,9 @@ async def _rodar_conversa(
         # poe no prompt real a partir do segundo turno.
         estado_acumulado.update(campos_a_gravar(resposta.intencao, resposta.extracao))
 
+        respostas.append(
+            RespostaObservada(conversa_id=conversa.id, indice=indice, texto=resposta.resposta)
+        )
         historico.append((MessageRole.AGENTE, resposta.resposta))
 
     # `estado_acumulado` carrega tambem `intencao`, que `campos_a_gravar` poe
@@ -240,6 +251,7 @@ async def _rodar_conversa(
         resultados,
         observadas,
         reperguntados,
+        respostas,
         EstadoDaConversa(
             conversa_id=conversa.id,
             esperado=esperado_acumulado,
@@ -271,7 +283,9 @@ def _positivas_e_negativas(observadas: list[ExtracaoObservada]) -> tuple[int, in
 
 
 def _metricas_de(
-    resultados: list[Classificacao], observadas: list[ExtracaoObservada]
+    resultados: list[Classificacao],
+    observadas: list[ExtracaoObservada],
+    respostas: list[RespostaObservada],
 ) -> list[ResultadoDaMetrica]:
     """As duas declaradas sem mecanismo saem sempre; as demais, so com amostra.
 
@@ -330,7 +344,13 @@ def _metricas_de(
         *medidas,
         *extracao,
         sem_mecanismo("taxa de alucinacao", "sem mecanismo: bloqueada pela TEC-161"),
-        sem_mecanismo("aderencia ao tom", "sem mecanismo: TEC-140 nao existe"),
+        # Deixou de ser slot vazio na TEC-140. Mede as duas regras do RF-04 que
+        # sao decidiveis sobre o texto -- tamanho e numero de perguntas -- com
+        # piso-ANDAIME, porque ninguem sabe ainda qual aderencia e saudavel.
+        # Sem amostra ela cai de volta no slot, como as outras.
+        aderencia_ao_tom(respostas)
+        if respostas
+        else sem_mecanismo("aderencia ao tom", "nenhuma resposta sobreviveu a execucao"),
     ]
 
 
@@ -425,22 +445,25 @@ async def test_acuracia_de_intencao_no_corpus(
     reperguntados: list[tuple[str, int, str]] = []
     abandonadas: list[FalhaDeInfraestrutura] = []
     estados: list[EstadoDaConversa] = []
+    respostas: list[RespostaObservada] = []
     for conversa in conversas:
         try:
             (
                 resultados_conversa,
                 observadas_conversa,
                 reperguntados_conversa,
+                respostas_conversa,
                 estado_da_conversa,
             ) = await _rodar_conversa(classificador, conversa)
             resultados.extend(resultados_conversa)
             observadas.extend(observadas_conversa)
             reperguntados.extend(reperguntados_conversa)
+            respostas.extend(respostas_conversa)
             estados.append(estado_da_conversa)
         except InfraestruturaFalhou as exc:
             abandonadas.append(exc.falha)
 
-    metricas = _metricas_de(resultados, observadas)
+    metricas = _metricas_de(resultados, observadas, respostas)
     relatorio = render(
         metricas,
         matriz_de_confusao(resultados),
@@ -476,6 +499,10 @@ async def test_acuracia_de_intencao_no_corpus(
         # deixou de reemitir num turno posterior continua gravado -- a TEC-252
         # mediu que seis das oito faltas turno a turno eram exatamente isso.
         efetiva=precisao_efetiva_da_extracao(estados) if estados else None,
+        # O formato aberto por regra: tamanho e perguntas decidem consertos
+        # diferentes, e a contagem de emoji e diagnostico puro -- a regra de
+        # "informacao essencial nao depende de emoji" nao e mecanizavel.
+        formato=resumo_do_formato(respostas) if respostas else None,
     )
     condicoes = "\n".join(_condicoes_da_execucao(conversas, resultados, observadas, abandonadas))
     artefato = condicoes + "\n" + relatorio

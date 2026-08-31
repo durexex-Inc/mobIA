@@ -22,6 +22,7 @@ from mobia.evals.metricas import (
     Classificacao,
     ExtracaoObservada,
     Faixa,
+    RespostaObservada,
 )
 
 
@@ -38,7 +39,12 @@ def _negativo(indice: int) -> ExtracaoObservada:
 def _faixa_da_extracao(
     resultados: list[Classificacao], observadas: list[ExtracaoObservada]
 ) -> Faixa:
-    metricas = _metricas_de(resultados, observadas)
+    # `respostas=[]` de proposito: este arquivo trava a guarda da extracao, e a
+    # aderencia ao tom (TEC-140) nao participa dela. Lista vazia e o caso real
+    # de uma execucao que morreu antes de gerar resposta -- ela cai em
+    # `sem_mecanismo`, que e o que `test_sem_resposta_a_aderencia_cai_em_sem_mecanismo`
+    # abaixo trava.
+    metricas = _metricas_de(resultados, observadas, [])
     extracao = next(m for m in metricas if m.nome == "precisao da extracao")
     return extracao.faixa
 
@@ -69,3 +75,29 @@ def test_os_dois_pisos_satisfeitos_mede_a_metrica() -> None:
     observadas += [_negativo(PISO_DE_TURNOS_ANOTADOS + i) for i in range(PISO_DE_TURNOS_NEGATIVOS)]
 
     assert _faixa_da_extracao([], observadas) is not Faixa.SEM_MECANISMO
+
+
+def test_sem_resposta_a_aderencia_cai_em_sem_mecanismo() -> None:
+    """A metrica nova tem a mesma guarda das outras, e pelo mesmo motivo.
+
+    `faixa_de` recusa total zero -- "nada medido nao e sucesso" --, entao
+    `aderencia_ao_tom([])` levantaria. Levantar **aqui** apagaria o relatorio,
+    que e o unico artefato de uma execucao paga que morreu na rede. O
+    raciocinio e o mesmo que ja protege a acuracia de intencao em
+    `_metricas_de`.
+    """
+    metricas = _metricas_de([], [], [])
+    tom = next(m for m in metricas if m.nome == "aderencia ao tom")
+
+    assert tom.faixa is Faixa.SEM_MECANISMO
+    assert "nenhuma resposta" in tom.detalhe
+
+
+def test_com_resposta_a_aderencia_e_medida() -> None:
+    """Com amostra ela sai do slot e vira numero -- nao fica presa em
+    `SEM_MECANISMO` para sempre, que era o estado ate a TEC-140."""
+    metricas = _metricas_de([], [], [RespostaObservada(conversa_id="c", indice=0, texto="ok")])
+    tom = next(m for m in metricas if m.nome == "aderencia ao tom")
+
+    assert tom.faixa is not Faixa.SEM_MECANISMO
+    assert (tom.acertos, tom.total) == (1, 1)
