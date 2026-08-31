@@ -22,11 +22,13 @@ from mobia.domain.messages.enums import MessageRole
 from mobia.evals.contexto import contexto_do_historico
 from mobia.evals.corpus import ConversaAnotada
 from mobia.evals.metricas import (
+    CAMPOS_DA_EXTRACAO,
     PISO_DE_TURNOS,
     PISO_DE_TURNOS_ANOTADOS,
     PISO_DE_TURNOS_NEGATIVOS,
     TETO_DE_CONVERSAS_ABANDONADAS,
     Classificacao,
+    EstadoDaConversa,
     ExtracaoObservada,
     FalhaDeInfraestrutura,
     ResultadoDaMetrica,
@@ -39,6 +41,7 @@ from mobia.evals.metricas import (
     erros,
     matriz_de_confusao,
     precisao_da_extracao,
+    precisao_efetiva_da_extracao,
     resumo_de_confianca,
     resumo_de_negativos,
     sem_mecanismo,
@@ -113,13 +116,19 @@ class InfraestruturaFalhou(RuntimeError):
 
 async def _rodar_conversa(
     classificador: ClassificadorAnthropic, conversa: ConversaAnotada
-) -> tuple[list[Classificacao], list[ExtracaoObservada], list[tuple[str, int, str]]]:
+) -> tuple[
+    list[Classificacao],
+    list[ExtracaoObservada],
+    list[tuple[str, int, str]],
+    EstadoDaConversa,
+]:
     """Os turnos sao sequenciais, e a resposta real do agente volta ao historico.
 
     Devolve tres listas -- classificacoes, observacoes de extracao e
     reperguntas detectadas pelo proxy -- porque a TEC-145 acrescentou duas
     medidas novas a mesma passada sequencial, e refazer o laco so pra separar
-    as tres pagaria a chamada de novo.
+    as tres pagaria a chamada de novo. A TEC-252 acrescentou a quarta, o
+    estado final da conversa, pela mesma razao.
 
     Mostrar so as falas do lead mediria um contexto que nunca existe: o
     classificador ve a conversa inteira, com as duas partes.
@@ -146,6 +155,9 @@ async def _rodar_conversa(
     historico: list[tuple[MessageRole, str]] = []
     resultados: list[Classificacao] = []
     estado_acumulado: dict[str, Any] = {}
+    # A anotacao acumulada com a mesma regra do estado: "mais novo vence".
+    # E o que o corpus diz que a conversa deveria ter deixado gravado.
+    esperado_acumulado: dict[str, Any] = {}
     observadas: list[ExtracaoObservada] = []
     reperguntados: list[tuple[str, int, str]] = []
 
@@ -188,6 +200,7 @@ async def _rodar_conversa(
 
         obtido = resposta.extracao.preenchidos()
         if turno.anotado:
+            esperado_acumulado.update(turno.campos)
             observadas.append(
                 ExtracaoObservada(
                     conversa_id=conversa.id,
@@ -213,7 +226,23 @@ async def _rodar_conversa(
 
         historico.append((MessageRole.AGENTE, resposta.resposta))
 
-    return resultados, observadas, reperguntados
+    # `estado_acumulado` carrega tambem `intencao`, que `campos_a_gravar` poe
+    # e que nao e campo de extracao -- nao ha anotacao contra a qual compara-la
+    # aqui. O filtro sai de `Extracao`, nao de uma lista escrita a mao.
+    return (
+        resultados,
+        observadas,
+        reperguntados,
+        EstadoDaConversa(
+            conversa_id=conversa.id,
+            esperado=esperado_acumulado,
+            obtido={
+                campo: valor
+                for campo, valor in estado_acumulado.items()
+                if campo in CAMPOS_DA_EXTRACAO
+            },
+        ),
+    )
 
 
 def _positivas_e_negativas(observadas: list[ExtracaoObservada]) -> tuple[int, int]:
@@ -388,16 +417,19 @@ async def test_acuracia_de_intencao_no_corpus(
     observadas: list[ExtracaoObservada] = []
     reperguntados: list[tuple[str, int, str]] = []
     abandonadas: list[FalhaDeInfraestrutura] = []
+    estados: list[EstadoDaConversa] = []
     for conversa in conversas:
         try:
             (
                 resultados_conversa,
                 observadas_conversa,
                 reperguntados_conversa,
+                estado_da_conversa,
             ) = await _rodar_conversa(classificador, conversa)
             resultados.extend(resultados_conversa)
             observadas.extend(observadas_conversa)
             reperguntados.extend(reperguntados_conversa)
+            estados.append(estado_da_conversa)
         except InfraestruturaFalhou as exc:
             abandonadas.append(exc.falha)
 
@@ -432,6 +464,11 @@ async def test_acuracia_de_intencao_no_corpus(
         # e sem este bloco quem compara com a execucao anterior nao tem como
         # saber que o numero de manchete nao suporta a comparacao.
         decomposicao=decomposicao_da_extracao(observadas),
+        # A extracao como producao a experimenta: estado final da conversa,
+        # nao turno a turno. `None` nao apaga, entao um campo que o modelo
+        # deixou de reemitir num turno posterior continua gravado -- a TEC-252
+        # mediu que seis das oito faltas turno a turno eram exatamente isso.
+        efetiva=precisao_efetiva_da_extracao(estados) if estados else None,
     )
     condicoes = "\n".join(_condicoes_da_execucao(conversas, resultados, observadas, abandonadas))
     artefato = condicoes + "\n" + relatorio

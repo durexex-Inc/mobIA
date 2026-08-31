@@ -2752,6 +2752,123 @@ divergirem em silêncio.
   de propósito; usá-la para travar reabriria o furo que o denominador de união
   fecha.
 
+## TEC-252 — A métrica de extração cobrava reemissão; produção nunca viu
+
+A hipótese da card era que o modelo deixa de reemitir um campo quando o lead
+repete o mesmo termo. **Ela se confirmou com nitidez rara** — e a conclusão que
+ela previa se inverteu.
+
+### A hipótese, medida no corpus
+
+O corpus tem exatamente **sete turnos de reafirmação**: mesmo campo, mesmo
+valor já anotado antes na conversa. O modelo falha em **seis deles**. O único
+que passou, `compra-09[1]`, é justamente o que apareceu e sumiu entre as
+execuções — ruído.
+
+Fora das reafirmações, sobram duas faltas. A concentração é quase perfeita.
+
+### Por que o modelo falha, e por que ele está certo
+
+As falas dizem tudo:
+
+> `compra-06[2]`: *"qual o valor do condominio **dessa cobertura**?"*
+> `compra-11[2]`: *"**o sobrado** tem escritura ja regularizada?"*
+> `aluguel-08[2]`: *"o predio ja tem alvara pra uso **comercial** de saude?"*
+
+Em todos, o termo aparece como **referência ao imóvel em discussão**, não como
+afirmação de um critério de busca. *"Qual o valor do condomínio dessa
+cobertura?"* pressupõe que é uma cobertura; não afirma. E a regra do prompt
+manda extrair *"só o que a fala DESTE turno afirma"*. **O modelo está
+obedecendo à regra.**
+
+### A consequência: seis dos oito erros não existem em produção
+
+`campos_a_gravar` — a função que `gravar_estado` e o runner do eval
+compartilham — documenta que **`None` no campo não apaga**. Nos seis casos, um
+turno anterior extraiu o valor certo, e o estado o carrega. O modelo devolver
+`null` depois não muda nada.
+
+Mas `precisao_da_extracao` compara **turno a turno**: `obtido` é o
+`preenchidos()` daquele turno. Ela conta seis erros que o lead nunca vive.
+
+E a punição é simétrica, o que fecha o diagnóstico:
+
+- **`follow-up-06`**: o corpus anota `tem_imovel_para_vender` no turno 0; o
+  modelo o reemitiu no turno 2, onde não há anotação. Turno a turno isso é
+  `extra` — invenção. Punido por reafirmar **demais**.
+- **`follow-up-08`**: o corpus anota `urgencia` no turno 1; o modelo a extraiu
+  no turno 0. Também `extra`. Punido por acertar **cedo**.
+
+**A métrica por turno é uma métrica de *timing* disfarçada de métrica de
+*conteúdo*.** Ela cobra que o modelo emita cada campo exatamente nos turnos em
+que o corpus o anotou — e produção só enxerga o estado acumulado.
+
+### A extração efetiva
+
+`precisao_efetiva_da_extracao` compara o **estado final de cada conversa**
+contra a anotação acumulada. É o espelho do que `acuracia_efetiva` já faz para
+a intenção: medir o que produção entrega, não o palpite cru.
+
+Reconstruindo a execução de 30/08 22:20 a partir do relatório preservado, sem
+execução nova:
+
+| | turno a turno | **efetiva** |
+| --- | --- | --- |
+| precisão | 88,9% | **96,6%** (85/88) |
+| divergências | 11 | **3** |
+
+E as três que sobram têm donos diferentes:
+
+- **`aluguel-07`, `tipo_imovel` (`extra`)** — o lead diz *"republica ou
+  kitnet"*, oferece duas tipologias e o corpus omite de propósito. É a disputa
+  de anotação já registrada na seção TEC-250. **Questão de régua.**
+- **`compra-10`, `tem_imovel_para_vender` (`faltou`)** — *"queremos comprar
+  nosso primeiro imovel"*. O corpus pede **inferir** `False` de "primeiro
+  imóvel"; a guarda de alucinação do prompt proíbe inferir o não-dito.
+  **Corpus e prompt se contradizem**, e não dá para atender aos dois.
+- **`follow-up-01`, `tipo_imovel` (`faltou`)** — *"ainda ta de pe aquele
+  apartamento que vc me mostrou?"*. **Esta é falha limpa do modelo**, e é a
+  única.
+
+**O defeito real de extração é um turno em 146.**
+
+### Por que a regra no prompt não foi escrita
+
+A card previa ajustar a regra de `null` para o modelo reafirmar pressuposição.
+Não foi feito, e a razão é dupla:
+
+1. **Não melhoraria o produto.** O estado já está certo nos seis casos. A
+   mudança melhoraria só o número.
+2. **Custaria orçamento que não existe.** A margem sobre o teto de 627 é de
+   **4,2 tokens** (`pytest -q -k margem_do_orcamento -s`). Gastar isso para
+   mover uma métrica que não mede o produto, num caminho pago e em todo turno
+   de produção, é o oposto do que a TEC-253 acabou de estabelecer.
+
+E há o risco de fazer mal: ensinar o modelo a reafirmar o pressuposto empurra
+na direção contrária à guarda de alucinação, que é a única que existe.
+
+### O que isso diz sobre as cards anteriores
+
+A TEC-240 e a TEC-250 gastaram orçamento de prompt para mover a precisão da
+extração. A TEC-253 já tinha mostrado que a TEC-250 não melhorou o que estava
+anotado — só reduziu invenção. Esta card mostra por que a régua parecia pior do
+que o produto: **boa parte do que ela cobrava era reemissão, não extração.**
+
+### Lacunas conhecidas
+
+- **A efetiva é diagnóstico, não trava.** Promovê-la exigiria piso próprio e
+  medido; o de `precisao_da_extracao` foi calibrado contra outra conta, e
+  mexer no que o gate cobra estava fora de escopo aqui e na TEC-253.
+- **Ela compara só o estado final.** Um campo gravado certo e depois
+  sobrescrito errado aparece pelo valor final. Comparar a cada turno daria
+  peso maior a conversa longa, e o valor final é o que o handoff e o lead
+  scoring vão ler.
+- **Os 96,6% são reconstrução**, não execução nova — derivados do relatório de
+  22:20 e do corpus. A próxima execução paga imprime o número medido.
+- **`compra-10` continua em aberto**, e é decisão de régua: ou o corpus para
+  de pedir a inferência, ou o prompt passa a permiti-la. As duas mexem em
+  coisas que esta card não podia mexer.
+
 ## Escolher o modelo no disparo manual do gate
 
 `workflow_dispatch` passou a aceitar um input `modelo`. Vazio — que é o caso de

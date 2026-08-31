@@ -1,12 +1,12 @@
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
 
 from mobia.domain.agente.desambiguacao import deve_desambiguar, intencao_efetiva
-from mobia.domain.agente.schemas import Intencao, normalizar_regiao
+from mobia.domain.agente.schemas import Extracao, Intencao, normalizar_regiao
 
 # Alvo do card. Abaixo do piso o merge e barrado; entre os dois, avisa.
 ALVO_PCT = 90
@@ -645,6 +645,140 @@ def decomposicao_da_extracao(
                 divergiu += 1
     return DecomposicaoDaExtracao(
         anotados=anotados, acertos=acertos, faltou=faltou, divergiu=divergiu, extra=extra
+    )
+
+
+# Os campos que o corpus pode anotar e que `Extracao` carrega. Derivado da
+# dataclass, e nao escrito a mao: um campo novo em `Extracao` entra aqui
+# sozinho, e a alternativa -- uma lista literal -- envelheceria calada no dia
+# em que alguem acrescentasse um campo (a licao da TEC-243, aplicada a codigo).
+CAMPOS_DA_EXTRACAO = frozenset(campo.name for campo in fields(Extracao))
+
+
+@dataclass(frozen=True)
+class EstadoDaConversa:
+    """O que a conversa deixou gravado, contra o que ela deveria ter deixado.
+
+    `obtido` e o `estado_acumulado` do runner **filtrado** aos campos de
+    extracao: ele vem de `campos_a_gravar`, a mesma funcao que `gravar_estado`
+    usa em producao, e carrega tambem `intencao`, que nao e campo de extracao e
+    nao tem anotacao contra a qual comparar.
+
+    `esperado` e a anotacao do corpus acumulada com a mesma regra de "mais novo
+    vence".
+    """
+
+    conversa_id: str
+    esperado: dict[str, Any]
+    obtido: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ResumoDaExtracaoEfetiva:
+    """A extracao medida como producao a experimenta, e por que ela difere.
+
+    `precisao_da_extracao` compara **turno a turno**: `obtido` e o
+    `preenchidos()` daquele turno. Producao nao funciona assim -- `None` nao
+    apaga (ver `campos_a_gravar`), entao o estado carrega o que turnos
+    anteriores gravaram. Quando o lead diz *"qual o valor do condominio dessa
+    cobertura?"*, o modelo devolve `null` para `tipo_imovel` -- corretamente,
+    porque a regra do prompt manda extrair so o que a fala **afirma**, e essa
+    pergunta pressupoe em vez de afirmar. A metrica turno a turno conta erro;
+    o estado ja tem `APARTAMENTO` do primeiro turno e nao muda.
+
+    Medido em 30/08/2026 (TEC-252): dos oito campos que a metrica turno a
+    turno deu como `faltou`, **seis eram reafirmacao de valor que o estado ja
+    tinha**. O corpus tem sete turnos de reafirmacao e o modelo "falha" em seis
+    deles, sem nenhuma consequencia para o lead.
+
+    Isto e diagnostico, e nao entra em `bloqueia`. Promove-lo a metrica que
+    trava e decisao separada: exigiria piso proprio e medido, e o piso de
+    `precisao_da_extracao` foi calibrado contra outra conta.
+
+    E o espelho do que `acuracia_efetiva` faz para a intencao -- medir o que
+    producao roteia, e nao o palpite cru.
+    """
+
+    conversas: int
+    acertos: int
+    total: int
+    divergencias: list["DivergenciaDeEstado"]
+
+    @property
+    def taxa(self) -> float | None:
+        return self.acertos / self.total if self.total else None
+
+
+@dataclass(frozen=True)
+class DivergenciaDeEstado:
+    """Um campo em que o estado final da conversa nao bateu com a anotacao.
+
+    `tipo` segue `Discrepancia`, e pelo mesmo motivo: `faltou` acusa o modelo,
+    `extra` acusa a medicao antes do modelo, `divergiu` sao os dois com valores
+    diferentes.
+    """
+
+    conversa_id: str
+    campo: str
+    tipo: Literal["extra", "faltou", "divergiu"]
+    esperado: Any = None
+    obtido: Any = None
+
+
+def precisao_efetiva_da_extracao(
+    estados: Sequence[EstadoDaConversa],
+) -> ResumoDaExtracaoEfetiva:
+    """Compara o estado final de cada conversa, nao cada turno.
+
+    Denominador de uniao, como em `precisao_da_extracao` e pelo mesmo motivo:
+    sem contar o inventado, um estado que acerta o anotado e carrega tres
+    campos que ninguem anotou pontuaria igual a um limpo.
+
+    Uma comparacao por conversa, e nao uma por turno: comparar o acumulado a
+    cada turno contaria o mesmo campo tantas vezes quantos turnos a conversa
+    tem, e daria peso maior a conversa longa. O preco e que um campo gravado
+    certo e depois sobrescrito errado aparece so pelo valor final -- que e,
+    de todo modo, o que o handoff e o lead scoring vao ler.
+    """
+    acertos = total = 0
+    divergencias: list[DivergenciaDeEstado] = []
+    for estado in estados:
+        for campo in sorted(set(estado.esperado) | set(estado.obtido)):
+            total += 1
+            if campo not in estado.esperado:
+                divergencias.append(
+                    DivergenciaDeEstado(
+                        conversa_id=estado.conversa_id,
+                        campo=campo,
+                        tipo="extra",
+                        obtido=estado.obtido[campo],
+                    )
+                )
+            elif campo not in estado.obtido:
+                divergencias.append(
+                    DivergenciaDeEstado(
+                        conversa_id=estado.conversa_id,
+                        campo=campo,
+                        tipo="faltou",
+                        esperado=estado.esperado[campo],
+                    )
+                )
+            elif _comparavel(campo, estado.esperado[campo]) == _comparavel(
+                campo, estado.obtido[campo]
+            ):
+                acertos += 1
+            else:
+                divergencias.append(
+                    DivergenciaDeEstado(
+                        conversa_id=estado.conversa_id,
+                        campo=campo,
+                        tipo="divergiu",
+                        esperado=estado.esperado[campo],
+                        obtido=estado.obtido[campo],
+                    )
+                )
+    return ResumoDaExtracaoEfetiva(
+        conversas=len(estados), acertos=acertos, total=total, divergencias=divergencias
     )
 
 
