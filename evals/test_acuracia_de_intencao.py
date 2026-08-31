@@ -6,7 +6,6 @@ replay passaria verde com o prompt destruido.
 """
 
 import os
-import re
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,16 +30,19 @@ from mobia.evals.metricas import (
     EstadoDaConversa,
     ExtracaoObservada,
     FalhaDeInfraestrutura,
+    PerguntaObservada,
     RespostaObservada,
     ResultadoDaMetrica,
     acuracia_de_intencao,
     acuracia_efetiva,
     aderencia_ao_tom,
     bloqueia,
+    campos_perguntados,
     decomposicao_da_extracao,
     discrepancias_da_extracao,
     eh_negativo,
     erros,
+    insistencias,
     matriz_de_confusao,
     precisao_da_extracao,
     precisao_efetiva_da_extracao,
@@ -51,6 +53,7 @@ from mobia.evals.metricas import (
 )
 from mobia.evals.relatorio import DIRETORIO_DE_RELATORIOS, preservar, render
 from mobia.infra.anthropic import motivo_do_provedor
+
 
 # Marcadores por campo para o proxy de repergunta. Sao regex (nao substring
 # crua) casadas com fronteira de palavra nas duas pontas, e cada uma e pista,
@@ -64,42 +67,20 @@ from mobia.infra.anthropic import motivo_do_provedor
 # duas direcoes. Esta limitacao esta declarada no README de proposito, e os
 # seis casos que motivaram este aperto -- quatro negativos, dois positivos --
 # estao travados em `tests/unit/test_evals_reperguntas.py`.
-MARCADORES_DE_REPERGUNTA: dict[str, tuple[str, ...]] = {
-    "regiao": (r"regiao", r"bairro", r"onde", r"localiza"),
-    "quartos": (r"quartos?", r"dormitorios?"),
-    "vagas": (r"vagas?", r"garagem"),
-    "tipo_imovel": (r"apartamentos?", r"tipo de imovel"),
-    "faixa_preco_max": (r"orcamento", r"faixa de preco", r"quanto pretende"),
-    "urgencia": (r"prazo", r"quando pretende", r"pressa"),
-    "forma_pagamento": (r"pagamento", r"financiamento", r"a vista"),
-    "tem_imovel_para_vender": (r"imovel para vender", r"tem imovel"),
-}
-
-
 def _reperguntou(texto: str, campos_conhecidos: Iterable[str]) -> list[str]:
-    """Proxy de palavra-chave: pista, nao prova, nas duas direcoes.
+    """Os campos que o estado JA SABE e sobre os quais a resposta pergunta.
 
-    Duas guardas alem da fronteira de palavra: exige `?` na resposta --
-    sem isso "esse apartamento tem 2 quartos e 1 vaga" (o agente descrevendo
-    um imovel, sem perguntar nada) contava como tres reperguntas -- e usa
-    `\\bmarcador\\b`, nao substring crua, porque "onde" e substring de
-    "responder" ("resp-onde-r") e contaria repergunta de regiao numa recusa
-    que nem menciona regiao. Mesmo com as duas guardas o proxy ainda erra
-    para os dois lados: uma pergunta com outra palavra escapa (falso
-    negativo), e o agente pode descrever um imovel numa frase que termina
-    perguntando outra coisa (falso positivo). Ver os testes deste modulo.
+    A deteccao mora em `campos_perguntados` (`mobia.evals.metricas`) desde a
+    TEC-256, junto da tabela de marcadores: dois proxies dependem dela -- este
+    e `insistencias`, que pergunta o oposto (campo NAO sabido, perguntado de
+    novo) -- e duas copias divergiriam, que e o defeito que `campos_a_gravar` e
+    `_subcontagem` ja custaram a este projeto. Os erros do proxy sao os de la e
+    continuam declarados: pista, nao prova, nas duas direcoes.
+
+    Ordena para o relatorio nao mudar de ordem entre execucoes por causa da
+    iteracao de um `set`.
     """
-    if "?" not in texto:
-        return []
-    baixo = texto.casefold()
-    return [
-        campo
-        for campo in campos_conhecidos
-        if any(
-            re.search(rf"\b{marcador}\b", baixo)
-            for marcador in MARCADORES_DE_REPERGUNTA.get(campo, ())
-        )
-    ]
+    return sorted(campos_perguntados(texto) & set(campos_conhecidos))
 
 
 class InfraestruturaFalhou(RuntimeError):
@@ -125,6 +106,7 @@ async def _rodar_conversa(
     list[ExtracaoObservada],
     list[tuple[str, int, str]],
     list[RespostaObservada],
+    list[PerguntaObservada],
     EstadoDaConversa,
 ]:
     """Os turnos sao sequenciais, e a resposta real do agente volta ao historico.
@@ -167,6 +149,10 @@ async def _rodar_conversa(
     # de reperguntas e pelo historico, e depois jogado fora. Medir o formato
     # dele nao custa chamada nenhuma: ele ja foi gerado e pago.
     respostas: list[RespostaObservada] = []
+    # Os campos ainda desconhecidos sobre os quais o agente perguntou, por
+    # turno. E a materia-prima de `insistencias` (TEC-256): o proxy irmao mede
+    # o que o estado ja sabe, este o que o lead nao respondeu.
+    perguntas: list[PerguntaObservada] = []
     observadas: list[ExtracaoObservada] = []
     reperguntados: list[tuple[str, int, str]] = []
 
@@ -228,6 +214,17 @@ async def _rodar_conversa(
             (conversa.id, indice, campo)
             for campo in _reperguntou(resposta.resposta, conhecidos_antes)
         )
+        # `- conhecidos_antes`: o que ja estava no estado e repergunta, e cai
+        # na lista acima. Aqui so entra o que o lead ainda nao respondeu.
+        ainda_sem_resposta = campos_perguntados(resposta.resposta) - conhecidos_antes
+        if ainda_sem_resposta:
+            perguntas.append(
+                PerguntaObservada(
+                    conversa_id=conversa.id,
+                    indice=indice,
+                    campos=frozenset(ainda_sem_resposta),
+                )
+            )
         # Acumula com a MESMA regra de producao -- `campos_a_gravar`, a
         # funcao que `gravar_estado` tambem usa: guarda de `FORA_DE_ESCOPO`
         # (nao acumula nada neste turno), mais novo vence (o `update` por
@@ -252,6 +249,7 @@ async def _rodar_conversa(
         observadas,
         reperguntados,
         respostas,
+        perguntas,
         EstadoDaConversa(
             conversa_id=conversa.id,
             esperado=esperado_acumulado,
@@ -446,6 +444,7 @@ async def test_acuracia_de_intencao_no_corpus(
     abandonadas: list[FalhaDeInfraestrutura] = []
     estados: list[EstadoDaConversa] = []
     respostas: list[RespostaObservada] = []
+    perguntas: list[PerguntaObservada] = []
     for conversa in conversas:
         try:
             (
@@ -453,12 +452,14 @@ async def test_acuracia_de_intencao_no_corpus(
                 observadas_conversa,
                 reperguntados_conversa,
                 respostas_conversa,
+                perguntas_conversa,
                 estado_da_conversa,
             ) = await _rodar_conversa(classificador, conversa)
             resultados.extend(resultados_conversa)
             observadas.extend(observadas_conversa)
             reperguntados.extend(reperguntados_conversa)
             respostas.extend(respostas_conversa)
+            perguntas.extend(perguntas_conversa)
             estados.append(estado_da_conversa)
         except InfraestruturaFalhou as exc:
             abandonadas.append(exc.falha)
@@ -471,7 +472,7 @@ async def test_acuracia_de_intencao_no_corpus(
         erradas=erros(resultados),
         infraestrutura=abandonadas,
         # Diagnostico, nao gate -- mesmo motivo de `ResumoDeConfianca`: o proxy
-        # de repergunta (ver MARCADORES_DE_REPERGUNTA acima) tem falso
+        # de repergunta (ver `campos_perguntados`, em metricas.py) tem falso
         # negativo E falso positivo por construcao, entao o numero e um
         # indicador aproximado, nunca cota inferior nem prova de que a
         # repergunta aconteceu ou nao. Nao entra em `_metricas_de` nem em
@@ -503,6 +504,10 @@ async def test_acuracia_de_intencao_no_corpus(
         # diferentes, e a contagem de emoji e diagnostico puro -- a regra de
         # "informacao essencial nao depende de emoji" nao e mecanizavel.
         formato=resumo_do_formato(respostas) if respostas else None,
+        # Campo perguntado em mais de um turno da mesma conversa, sem o lead
+        # ter respondido. Diagnostico -- ninguem decidiu ainda se reinsistir e
+        # defeito, e reinsistir nao e errado em si (TEC-256).
+        insistencia=insistencias(perguntas) if perguntas else None,
     )
     condicoes = "\n".join(_condicoes_da_execucao(conversas, resultados, observadas, abandonadas))
     artefato = condicoes + "\n" + relatorio

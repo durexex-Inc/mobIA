@@ -21,17 +21,20 @@ from mobia.evals.metricas import (
     EstadoDaConversa,
     ExtracaoObservada,
     Faixa,
+    PerguntaObservada,
     RespostaObservada,
     ResumoDeNegativos,
     acuracia_de_intencao,
     acuracia_efetiva,
     aderencia_ao_tom,
     bloqueia,
+    campos_perguntados,
     decomposicao_da_extracao,
     discrepancias_da_extracao,
     eh_negativo,
     erros,
     faixa_de,
+    insistencias,
     matriz_de_confusao,
     precisao_da_extracao,
     precisao_efetiva_da_extracao,
@@ -950,3 +953,79 @@ def test_o_piso_da_aderencia_e_andaime_declarado():
     """
     assert PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT == 50
     assert PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT < PISO_DE_BLOQUEIO_PCT
+
+
+def _perguntou(indice: int, *campos: str, conversa: str = "compra-14") -> PerguntaObservada:
+    return PerguntaObservada(conversa_id=conversa, indice=indice, campos=frozenset(campos))
+
+
+def test_campo_perguntado_em_dois_turnos_e_insistencia():
+    """O caso que a execucao de 31/08 mostrou, no menor tamanho possivel."""
+    resumo = insistencias([_perguntou(0, "regiao"), _perguntou(1, "regiao")])
+
+    assert [(i.campo, i.turnos) for i in resumo.insistencias] == [("regiao", (0, 1))]
+
+
+def test_campo_perguntado_uma_vez_so_nao_e_insistencia():
+    """Perguntar uma vez e o trabalho do agente, nao defeito."""
+    assert insistencias([_perguntou(0, "regiao"), _perguntou(1, "quartos")]).insistencias == []
+
+
+def test_conversas_diferentes_nao_se_somam():
+    """A insistencia e dentro da conversa. Dois leads perguntados sobre regiao
+    uma vez cada nao viram um lead perguntado duas."""
+    resumo = insistencias([_perguntou(0, "regiao"), _perguntou(0, "regiao", conversa="aluguel-01")])
+
+    assert resumo.insistencias == []
+    assert resumo.conversas == 2
+
+
+def test_o_pior_caso_vem_primeiro():
+    """Tres turnos seguidos e pior que dois, e quem le o relatorio precisa ver
+    isso antes -- a lista pode ficar longa."""
+    resumo = insistencias(
+        [
+            _perguntou(0, "vagas"),
+            _perguntou(1, "vagas"),
+            _perguntou(0, "regiao"),
+            _perguntou(1, "regiao"),
+            _perguntou(2, "regiao"),
+        ]
+    )
+
+    assert [i.campo for i in resumo.insistencias] == ["regiao", "vagas"]
+    assert resumo.insistencias[0].turnos == (0, 1, 2)
+
+
+def test_conversas_afetadas_conta_conversa_e_nao_campo():
+    """`compra-14` insistiu em dois campos e e UMA conversa incomodada."""
+    resumo = insistencias([_perguntou(0, "regiao", "vagas"), _perguntou(1, "regiao", "vagas")])
+
+    assert len(resumo.insistencias) == 2
+    assert resumo.conversas_afetadas == 1
+
+
+def test_campos_perguntados_exige_interrogacao():
+    """A guarda que a TEC-210 apertou, e que esta funcao herdou inteira.
+
+    Sem ela, o agente descrevendo um imovel contaria como tres perguntas.
+    """
+    assert campos_perguntados("Esse apartamento tem 2 quartos e 1 vaga de garagem") == set()
+    assert campos_perguntados("Quantos quartos voce precisa?") == {"quartos"}
+
+
+def test_campos_perguntados_e_a_fonte_unica_dos_dois_proxies():
+    """`_reperguntou` delega para ca desde a TEC-256.
+
+    Duas copias da tabela de marcadores divergiriam, e a divergencia so
+    apareceria na borda -- o defeito que `campos_a_gravar` e `_subcontagem` ja
+    custaram a este projeto.
+    """
+    from evals.test_acuracia_de_intencao import _reperguntou
+
+    texto = "Em qual bairro voce esta procurando? E quantos quartos?"
+
+    assert campos_perguntados(texto) == {"regiao", "quartos"}
+    # O proxy irmao e a intersecao com o que o estado ja sabe.
+    assert _reperguntou(texto, ["regiao"]) == ["regiao"]
+    assert _reperguntou(texto, ["vagas"]) == []

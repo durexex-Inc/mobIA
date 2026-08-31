@@ -3436,6 +3436,63 @@ mesmo motivo de antes: ele diz o que o gate não resolve no pior caso observado.
   outra coisa.
 - **Três pontos ainda não são distribuição**, mesmo os três concordando.
 
+## TEC-256 — Reinsistir na pergunta que o lead ignorou
+
+A execução de 31/08 que trouxe o texto das respostas mostrou um padrão que
+ninguém tinha visto: `compra-14` pergunta *"região ou bairro? E vaga de
+garagem?"* nos turnos **0, 1 e 2**, com a mesma formulação. O lead responde
+outra coisa a cada turno e recebe a mesma pergunta três vezes.
+
+### A lacuna era precisa
+
+`SISTEMA_DO_AGENTE` já diz *"não repergunte o que já está preenchido"*, e o
+relatório já tinha um proxy que mede isso. **Os dois cobrem "não pergunte o que
+você já sabe".** Nenhum cobria *"não repita o que o lead ignorou"* — e é aí que
+`compra-14` cai: `regiao` e `vagas` **não** estão no estado, porque o lead nunca
+respondeu. Pela regra anterior o agente estava correto.
+
+### O critério é por campo, e os dados escolheram
+
+Comparar o texto das perguntas pegaria só repetição literal. Em `compra-14` o
+turno 0 pergunta *"Você tem alguma região ou bairro de preferência?"* e o turno
+1 pergunta *"para eu montar boas opções [...] você tem alguma região ou bairro
+de preferência?"*: **mesma pergunta, textos diferentes**.
+
+Por isso a detecção é por marcador de campo, reusando a tabela do proxy antigo.
+O preço está escrito: dois campos numa frase contam como duas perguntas, e uma
+reformulação que troque a palavra-chave escapa.
+
+### Uma tabela, dois proxies opostos
+
+`MARCADORES_DE_REPERGUNTA` saiu do runner e foi para `metricas.py`, com
+`campos_perguntados` como detecção única. `_reperguntou` passou a delegar.
+
+Os dois agora fazem **perguntas opostas sobre a mesma detecção**: um mede
+perguntar o que o estado **já sabe**, o outro perguntar de novo o que o lead
+**não respondeu**. Duas cópias da tabela divergiriam, e a divergência só
+apareceria na borda — o defeito que `campos_a_gravar` e `_subcontagem` já
+custaram a este projeto. Um teste amarra os dois.
+
+### Entra como diagnóstico, sem faixa
+
+**Reinsistir não é errado em si.** Se o lead ignorou, perguntar de novo é
+razoável. O que incomoda é a cadência e a formulação idêntica — e ninguém
+decidiu ainda se isso é defeito. Medir primeiro, como na TEC-140 (parte 1) e
+pelo mesmo motivo.
+
+### Lacunas conhecidas
+
+- **Nada foi medido ainda em execução real.** Os cinco casos conhecidos vêm de
+  contar sobre os 28 turnos que violaram formato, que são os únicos cujo texto
+  o relatório carregava. O número sobre os 147 sai na próxima execução paga.
+- **A decisão de tratar ou conviver depende desse número**, e as saídas
+  conhecidas são regra no prompt (não cabe) ou marcar no estado o que já foi
+  perguntado sem resposta, que é mudança de produção.
+- **Testes puros pagam banco.** Os dez testes acrescentados aqui não precisam
+  de Postgres e mesmo assim herdam as fixtures autouse de `tests/conftest.py`.
+  É desenho pré-existente e declarado, mas cada teste puro novo o torna um
+  pouco mais caro.
+
 ## TEC-140 (parte 1) — A aderência ao tom deixou de ser um slot vazio
 
 O relatório do gate declarava, em toda execução paga:
