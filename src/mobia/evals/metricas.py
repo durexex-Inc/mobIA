@@ -429,12 +429,25 @@ class ViolacaoDeFormato:
     `medido` carrega o valor que estourou -- 812 caracteres, 3 perguntas --
     porque saber que violou sem saber por quanto nao diz se e ajuste de prompt
     ou desvio grosseiro.
+
+    `texto` carrega a resposta inteira, e a primeira execucao provou por que.
+    Em 31/08 sairam 26 violacoes de "uma pergunta", 24 delas com exatamente
+    duas -- e **nao havia como saber** se eram duas perguntas de verdade ou
+    erro do proxy de `?`, porque so o endereco e a contagem viajavam. Descobrir
+    exigiria outra execucao paga. E a mesma licao que `Discrepancia` ja
+    encodava ao carregar `esperado` e `obtido` crus: endereco sozinho nao
+    diagnostica.
+
+    Nao ha dado de lead real aqui. O corpus e ficticio e o texto e a resposta
+    do **agente** a ele -- por isso pode ir para um relatorio commitado, ao
+    contrario de tudo que a regra de PII cobre em producao.
     """
 
     conversa_id: str
     indice: int
     regra: Literal["comprimento", "perguntas"]
     medido: int
+    texto: str
 
 
 def violacoes_de_formato(respostas: Sequence[RespostaObservada]) -> list[ViolacaoDeFormato]:
@@ -464,6 +477,7 @@ def violacoes_de_formato(respostas: Sequence[RespostaObservada]) -> list[Violaca
                     indice=resposta.indice,
                     regra="comprimento",
                     medido=caracteres,
+                    texto=resposta.texto,
                 )
             )
         perguntas = resposta.texto.count("?")
@@ -474,6 +488,7 @@ def violacoes_de_formato(respostas: Sequence[RespostaObservada]) -> list[Violaca
                     indice=resposta.indice,
                     regra="perguntas",
                     medido=perguntas,
+                    texto=resposta.texto,
                 )
             )
     return violacoes
@@ -742,6 +757,20 @@ class DispersaoEntreExecucoes:
 # Duas execucoes nao sao distribuicao: isto e a maior diferenca observada, nao
 # a dispersao real, e o limite superior continua desconhecido. Use como piso do
 # que o gate NAO distingue, nunca como intervalo de confianca.
+#
+# **O par de 31/08/2026 deu 0,0, e o numero NAO baixou.** As execucoes das
+# 11:46 e 13:19 -- mesmo codigo, mesma regua de 147 turnos -- deram 89/98 as
+# duas, identicas. Baixar para 0,0 diria que o gate resolve efeitos
+# arbitrariamente pequenos, e isso e falso: duas execucoes concordarem uma vez
+# nao e ausencia de dispersao.
+#
+# A leitura que os tres pares sustentam: a dispersao **nao e propriedade fixa
+# da metrica**, e sim funcao de quanto o modelo inventa naquela execucao. O par
+# que deu 5,7 teve `extra` indo de 1 para 5; o que deu 0,0 teve `extra` em 1
+# nas duas. Quando a invencao e baixa e estavel, as execucoes concordam; quando
+# ela oscila, a metrica oscila junto -- e o denominador de uniao amplifica.
+# Por isso o numero conservador fica: ele diz o que o gate nao distingue no
+# pior caso observado, que e o unico caso em que a pergunta importa.
 DISPERSAO_MEDIDA = DispersaoEntreExecucoes(data="30/08/2026", uniao_pp=5.7, base_fixa_pp=2.1)
 
 

@@ -3293,6 +3293,80 @@ régua tornou obrigatória, e como verificação das decisões categóricas.
 **A baseline válida para comparação passa a ser esta**, e não nenhuma das seis
 de 30/08.
 
+### A segunda execução de 31/08 — o primeiro número de tom, e o primeiro par válido
+
+Disparada às 13:19 UTC, **mesmo código e mesma régua** da de 11:46: os dois PRs
+entre elas foram documentação e medição, nada que o modelo veja. Relatório em
+`evals/relatorios/2026-08-31-aderencia-ao-tom-medida.md`.
+
+| | 11:46 | 13:19 |
+| --- | --- | --- |
+| acurácia de intenção | 143/147 | 144/147 |
+| acurácia efetiva | 143/147 | 143/147 |
+| **extração (união)** | **89/98 — 90,8%** | **89/98 — 90,8%** |
+| base fixa | 89/97 — 91,8% | 89/97 — 91,8% |
+| `faltou` / `divergiu` / `extra` | 7 / 1 / 1 | 8 / 0 / 1 |
+| extração efetiva | 85/90 — 94,4% | 86/92 — 93,5% |
+| **aderência ao tom** | — | **121/147 — 82,3% AMARELO** |
+
+#### A dispersão deu 0,0, e o número conservador não baixou
+
+As duas execuções deram **exatamente** 89/98. A composição mudou — um
+`divergiu` virou `faltou` — mas o total não.
+
+`DISPERSAO_MEDIDA` **continua em 5,7**. Baixar para 0,0 diria que o gate
+resolve efeitos arbitrariamente pequenos, e isso é falso: duas execuções
+concordarem uma vez não é ausência de dispersão.
+
+**A leitura que os três pares agora sustentam:** a dispersão não é propriedade
+fixa da métrica, é função de **quanto o modelo inventa naquela execução**. O
+par que deu 5,7 teve `extra` indo de 1 para 5; o que deu 0,0 teve `extra` em 1
+nas duas. Quando a invenção é baixa e estável as execuções concordam; quando
+ela oscila, a métrica oscila junto, e o denominador de união amplifica.
+
+Isso refina o modelo da TEC-253 sem contradizê-lo: `extra` continua sendo a
+parcela volátil, e agora sabemos que ela é a **causa** da dispersão, não só um
+sintoma correlacionado.
+
+#### As duas observações sem dono eram ruído
+
+`compra-13[0]` (`sao roque` × `sao roque e arredores`) não voltou. `urgencia`
+não aparece em discrepância nenhuma desta execução. Era exatamente para isso
+que o segundo ponto servia, e nenhuma das duas vira card.
+
+#### Uma ressalva à TEC-254 que só o segundo ponto revelou
+
+`aluguel-07: tipo_imovel (faltou)` aparece no estado final desta execução. É o
+turno que a TEC-254 anotou como `APARTAMENTO` decidindo que "o modelo acertou"
+— e **desta vez ele não extraiu**.
+
+A decisão continua defensável: a régua diz o que é **correto**, não o que o
+modelo faz de forma confiável, e "kitnet está no vocabulário" não deixa de ser
+verdade porque o modelo às vezes não o usa. Mas a frase *"o modelo acertou"*
+descrevia execuções em que ele acertou, e ele o faz de forma variável. Fica
+registrado.
+
+#### O primeiro número de aderência ao tom, e o que ele ainda não diz
+
+**121/147 — 82,3%**, AMARELO contra o piso-andaime de 50%. Decomposto:
+
+- **2 violações de comprimento** — 602 e 625 caracteres. Estouram por pouco.
+- **26 violações de "uma pergunta"** — e **24 delas com exatamente duas**.
+
+**Não dá para interpretar os 26 ainda**, e a culpa é do que a TEC-140 entregou:
+`ViolacaoDeFormato` carregava o endereço e a contagem, e **não o texto**. Sem
+ele não se separa duas perguntas de verdade de erro do proxy de `?` — e
+descobrir exigiria outra execução paga.
+
+É a mesma lição que `Discrepancia` já encodava ao guardar `esperado` e `obtido`
+crus: *"endereço sozinho não diagnostica"*. O texto agora viaja junto, e a
+próxima execução responde sem custo novo. Não há dado de lead real nisso: o
+corpus é fictício e o texto é a fala do **agente**.
+
+**A decisão de como aplicar continua esperando**, e agora por um motivo mais
+específico: se os 26 forem majoritariamente proxy, a aderência real está perto
+de 98% e não há o que aplicar.
+
 ## TEC-140 (parte 1) — A aderência ao tom deixou de ser um slot vazio
 
 O relatório do gate declarava, em toda execução paga:

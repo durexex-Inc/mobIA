@@ -533,9 +533,19 @@ def test_relatorio_abre_o_formato_por_regra() -> None:
             respostas=147,
             violacoes=[
                 ViolacaoDeFormato(
-                    conversa_id="compra-01", indice=2, regra="comprimento", medido=812
+                    conversa_id="compra-01",
+                    indice=2,
+                    regra="comprimento",
+                    medido=812,
+                    texto="resposta longa demais",
                 ),
-                ViolacaoDeFormato(conversa_id="aluguel-03", indice=0, regra="perguntas", medido=3),
+                ViolacaoDeFormato(
+                    conversa_id="aluguel-03",
+                    indice=0,
+                    regra="perguntas",
+                    medido=3,
+                    texto="qual regiao? quantos quartos? e o prazo?",
+                ),
             ],
             com_emoji=9,
             emojis=14,
@@ -566,3 +576,34 @@ def test_o_relatorio_diz_que_a_contagem_de_emoji_nao_e_criterio() -> None:
 
 def test_relatorio_sem_formato_omite_a_secao() -> None:
     assert "Formato da resposta" not in render([], {})
+
+
+def test_o_texto_da_violacao_viaja_junto_do_endereco() -> None:
+    """Endereco sozinho nao diagnostica, e a primeira execucao provou.
+
+    Em 31/08 sairam 26 violacoes de "uma pergunta", 24 com exatamente duas --
+    e nao havia como saber se eram duas perguntas de verdade ou erro do proxy
+    de `?`. Descobrir exigiria outra execucao paga. Mesma licao que
+    `Discrepancia` ja carregava ao guardar `esperado` e `obtido` crus.
+    """
+    texto = render(
+        [],
+        {},
+        formato=ResumoDoFormato(
+            respostas=1,
+            violacoes=[
+                ViolacaoDeFormato(
+                    conversa_id="investimento-03",
+                    indice=0,
+                    regra="perguntas",
+                    medido=2,
+                    texto="voce ja investe em imoveis? qual valor pretende aplicar?",
+                )
+            ],
+            com_emoji=0,
+            emojis=0,
+        ),
+    )
+
+    assert "investimento-03 turno 0: perguntas -- 2" in texto
+    assert "voce ja investe em imoveis? qual valor pretende aplicar?" in texto
