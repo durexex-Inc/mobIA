@@ -27,9 +27,13 @@ class ConversationIntent(Base):
     # que a TEC-210 precisa para calibrar o limiar.
     intencao: Mapped[str] = mapped_column(String(20), nullable=False)
 
-    # Autoavaliacao do modelo, nao probabilidade calibrada. Ver o spec: os
-    # limiares de 0,8 e 0,6 sao provisorios ate a TEC-210 medir contra as 50
-    # conversas anotadas.
+    # Autoavaliacao do modelo, nao probabilidade calibrada -- isso continua
+    # verdade e nao muda. O que mudou: o limiar de 0,6 deixou de ser
+    # provisorio. A TEC-210 construiu a regua, a TEC-235 mediu o custo e o
+    # beneficio do rebaixamento em seis execucoes e a decisao de manter 0,6
+    # esta registrada no comentario de `LIMIAR_DE_DESAMBIGUACAO`
+    # (`schemas.py`), com os numeros. Nao existe um segundo limiar: o `0,8`
+    # que esta linha citava nunca governou decisao nenhuma.
     confianca: Mapped[Decimal] = mapped_column(Numeric(3, 2), nullable=False)
 
     modelo: Mapped[str] = mapped_column(String(64), nullable=False)

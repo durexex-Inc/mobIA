@@ -2869,6 +2869,85 @@ que o produto: **boa parte do que ela cobrava era reemissão, não extração.**
   de pedir a inferência, ou o prompt passa a permiti-la. As duas mexem em
   coisas que esta card não podia mexer.
 
+## TEC-235 — O limiar fica em 0,6, e o custo que motivou a card desapareceu sozinho
+
+A card foi escrita em 27/08/2026 com a primeira medição do gate, e o argumento
+dela era forte: o rebaixamento por confiança convertia **4 acertos em erros e
+corrigia zero**, e os 3 pontos entre a acurácia crua e a efetiva eram
+inteiramente acertos jogados fora. Uma segunda execução no mesmo dia confirmou:
+6 acertos rebaixados, zero erros recuperados.
+
+**Em 30/08 esse custo é zero, e ninguém tocou no limiar.**
+
+| data | modelo | turnos sub-limiar | acertos rebaixados (custo) | erros recuperados (benefício) | crua × efetiva |
+| --- | --- | --- | --- | --- | --- |
+| 27/08 | opus-5 | 13/136 | **4** | 0 | 95,6% × 92,6% |
+| 27/08 | opus-5 | 12/136 | **6** | 0 | 96,3% × 91,9% |
+| 30/08 12:02 | opus-5 | 5/146 | 1 | 0 | 97,3% × 96,6% |
+| 30/08 14:44 | sonnet-5 | 4/146 | **0** | 0 | 97,9% × **97,9%** |
+| 30/08 17:08 | sonnet-5 | 4/146 | **0** | 0 | 97,9% × **97,9%** |
+| 30/08 19:51 | sonnet-5 | 4/146 | **0** | 0 | 97,9% × **97,9%** |
+| 30/08 22:20 | sonnet-5 | 3/146 | **0** | 0 | 97,3% × **97,3%** |
+
+Nas quatro execuções com `sonnet-5`, **a acurácia efetiva é igual à crua**. Não
+há mais lacuna para fechar.
+
+### O que mudou, e o que não
+
+Entre as duas datas trocou o modelo (`opus-5` → `sonnet-5`) e o prompt cresceu
+duas vezes (TEC-240, TEC-250). A distribuição de confiança subiu junto: os
+turnos de compra com transação implícita — *"quanto ta pedindo?"*, *"da pra
+negociar o valor?"* — que voltavam entre 0,50 e 0,58 pararam de voltar.
+
+**O benefício nunca existiu.** `erros que o rebaixamento acertou` deu **zero em
+todas as sete execuções**, de duas datas, dois modelos e três versões de
+prompt. O limiar nunca salvou nada.
+
+Com custo zero e benefício zero, **o limiar está inerte** neste corpus.
+
+### A decisão: fica em 0,6
+
+Baixá-lo compraria um benefício medido de **zero** e assumiria risco não
+medido — que é o oposto do que a card pedia. Os critérios de aceite dela, em
+Gherkin, pedem que "a quantidade de acertos rebaixados diminua" e que "a
+acurácia efetiva suba": as duas já estão no melhor valor possível, e não há
+como satisfazê-los mexendo no número.
+
+O terceiro critério — *"quem consulta o porquê daquele valor encontra a medição
+que o sustenta, e não um palpite"* — **é o que esta card entrega**. O
+comentário de `LIMIAR_DE_DESAMBIGUACAO` deixou de dizer "provisório até a
+TEC-210 medir" e passou a carregar os números, e um teste trava o valor para
+que quem o baixar leia o porquê antes.
+
+### O que faria falta para calibrar de verdade
+
+O benefício ser zero é **fato sobre o corpus**, não licença para eliminar o
+limiar. O corpus não tem turnos de ambiguidade genuína — aqueles em que
+perguntar é a resposta certa —, então ele mede só um lado da conta. Quem quiser
+mexer no limiar precisa primeiro anotar turnos que exercitem o outro lado.
+
+A card já dizia isso nas regras de negócio. A medição confirmou.
+
+### O `0,8` não existia
+
+Dois comentários citavam "os limiares de 0,8 e 0,6" como se houvesse dois.
+**Não há.** A única comparação de confiança em `src/` é contra
+`LIMIAR_DE_DESAMBIGUACAO`; o `0,8` nunca governou decisão nenhuma. As menções
+saíram, e um teste varre `src/mobia/domain/agente/` para que um segundo limiar
+só entre nomeado — um número solto num `if` é exatamente como o `0,6` começou,
+e foram três cards até ele virar medição.
+
+### Lacunas conhecidas
+
+- **A calibragem continua impossível com este corpus**, e agora está escrito
+  por quê.
+- **O custo pode voltar.** Ele sumiu por efeito colateral de mudanças de
+  modelo e prompt, não por decisão. Se a distribuição de confiança descer de
+  novo, o custo volta — e o gate mostra, porque mede as duas colunas em toda
+  execução.
+- **Nenhuma execução paga foi gasta nesta card.** Os sete pontos saíram dos
+  relatórios preservados e da própria descrição da card.
+
 ## Escolher o modelo no disparo manual do gate
 
 `workflow_dispatch` passou a aceitar um input `modelo`. Vazio — que é o caso de

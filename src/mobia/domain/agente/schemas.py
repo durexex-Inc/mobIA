@@ -57,10 +57,43 @@ class FormaPagamento(StrEnum):
 # a comparacao e de igualdade na borda: `0.6` em binario nao e 0,6, e "confianca
 # exatamente 0,6 nao desambigua" e criterio de aceite.
 #
-# Fechado por cima: `< LIMIAR` desambigua, `>= LIMIAR` nao. O numero vem do SRS
-# e nao esta calibrado -- confianca e autoavaliacao do modelo, nao
-# probabilidade. Quem vai medi-lo contra as 50 conversas anotadas e a TEC-210, e
-# este e o unico lugar que ela precisa mexer.
+# Fechado por cima: `< LIMIAR` desambigua, `>= LIMIAR` nao.
+#
+# **O numero veio do SRS sem calibragem, e a TEC-235 o mediu. Ele fica em 0,6,
+# e agora por medicao e nao por omissao.** Confianca continua sendo
+# autoavaliacao do modelo, nao probabilidade calibrada -- o que mudou e que
+# existe evidencia sobre o efeito do corte.
+#
+# Duas coisas o gate mede a cada execucao: quantos acertos o rebaixamento
+# transforma em INDEFINIDA (o custo) e quantos erros ele transforma em acerto
+# (o beneficio).
+#
+#   27/08/2026, duas execucoes, opus-5, corpus de 136 turnos
+#     custo:     4 e 6 acertos rebaixados       beneficio: 0 e 0
+#     3 pontos separavam a acuracia crua da efetiva
+#
+#   30/08/2026, quatro execucoes, sonnet-5, corpus de 146 turnos
+#     custo:     0 em todas as quatro           beneficio: 0 em todas
+#     acuracia efetiva == acuracia crua, nas quatro
+#
+# O custo que motivou a TEC-235 **desapareceu sem que ninguem mexesse no
+# limiar**: entre as duas datas trocou o modelo (opus-5 -> sonnet-5) e o prompt
+# cresceu (TEC-240, TEC-250), e a distribuicao de confianca subiu junto. Os
+# turnos de compra com transacao implicita -- "quanto ta pedindo?", "da pra
+# negociar o valor?" -- que voltavam entre 0,50 e 0,58 pararam de voltar.
+#
+# Baixar o limiar hoje compraria um beneficio medido de **zero** e assumiria
+# risco nao medido, que e o oposto do que a card pedia.
+#
+# **O beneficio nunca foi medido, e isso e fato sobre o corpus.** Em seis
+# execucoes o rebaixamento nao salvou um unico erro -- mas o corpus tambem nao
+# tem turnos de ambiguidade genuina, daqueles em que perguntar e a resposta
+# certa. Isso e licenca para manter o limiar sem medo, e nao para elimina-lo:
+# quem quiser mexer nele precisa primeiro anotar turnos que exercitem o outro
+# lado da conta.
+#
+# Nao ha segundo limiar. O `0,8` que comentarios antigos citavam ao lado deste
+# nunca governou decisao nenhuma -- a TEC-235 varreu e tirou as mencoes.
 LIMIAR_DE_DESAMBIGUACAO = Decimal("0.6")
 
 
