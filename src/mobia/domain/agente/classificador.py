@@ -65,6 +65,15 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # ordem de geracao do modelo num caminho pago, para todo turno de producao;
 # decisao recusada por falta de instrumento para medir o efeito. Quem for
 # editar o prompt: isto nao e inconsistencia para "consertar".
+#
+# A clausula da memoria foi **reescrita** e nao acrescentada, na TEC-257.
+# "nao repergunte o que ja esta preenchido nem o que o lead ignorou" custava
+# +6,25 tokens sobre uma margem de 4,2; encurtar a clausula existente para
+# "nao repergunte o preenchido nem o ignorado" cobre os dois casos por +0,75.
+# "o ignorado" depende de o modelo ligar a palavra a linha
+# "(perguntado, sem resposta)" que `_texto_do_estado` poe no estado -- a forma
+# explicita existia e custava 3,25, recusada por nao deixar folga para
+# ninguem depois.
 SISTEMA_DO_AGENTE = (
     "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
     "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
@@ -76,8 +85,8 @@ SISTEMA_DO_AGENTE = (
     "imobiliario).\n\n"
     "A confianca e o quanto voce considera a classificacao segura, de 0 a 1.\n\n"
     "Responda em portugues do Brasil, em tom de conversa. Use o resumo e o "
-    "estado de qualificacao como memoria: nao repergunte o que ja esta "
-    "preenchido. Nao invente informacao sobre imoveis que nao esteja no "
+    "estado de qualificacao como memoria: nao repergunte o preenchido nem o "
+    "ignorado. Nao invente informacao sobre imoveis que nao esteja no "
     "contexto."
     "\n\nNa extracao, preencha so o que a fala DESTE turno afirma, mesmo que "
     "ja esteja no estado; o resto e null. "

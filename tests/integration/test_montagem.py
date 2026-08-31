@@ -7,6 +7,7 @@ import pytest
 from conftest import CANAL, CONVERSA, ContadorFake, ResumidorFake, semear
 
 from mobia.app.config import get_settings
+from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE
 from mobia.domain.context.janela import Marca, literais_apos
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.domain.context.montagem import (
@@ -14,6 +15,7 @@ from mobia.domain.context.montagem import (
     ContextoMontado,
     _texto_da,
     _texto_das,
+    _texto_do_estado,
     _truncar_ate_caber,
     montar_contexto,
     montar_prompt,
@@ -179,6 +181,102 @@ def test_mensagem_sem_texto_entra_marcada_pelo_tipo() -> None:
     assert _texto_da(desconhecido) == "[LEAD] (mensagem sem texto)", (
         "tipo nao mapeado ainda tem de dizer que veio alguma coisa"
     )
+
+
+def test_campo_marcado_aparece_no_estado() -> None:
+    estado = LeadQualification(
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao="COMPRA",
+        quartos=3,
+        perguntados_sem_resposta=["regiao"],
+    )
+    texto = _texto_do_estado(estado)
+
+    assert "quartos: 3" in texto
+    assert "regiao: (perguntado, sem resposta)" in texto
+
+
+def test_valor_vence_marca() -> None:
+    """A marca nunca aparece ao lado de um valor.
+
+    Marca sobre campo ja preenchido e possivel -- `campos_a_marcar` subtrai
+    os campos DESTE turno, nao o estado acumulado -- e e inerte por causa
+    desta regra.
+    """
+    estado = LeadQualification(
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao="COMPRA",
+        regiao="pinheiros",
+        perguntados_sem_resposta=["regiao"],
+    )
+    texto = _texto_do_estado(estado)
+
+    assert "regiao: pinheiros" in texto
+    assert "perguntado" not in texto
+
+
+def test_valor_falso_tambem_vence_marca() -> None:
+    """`0` e `False` sao informacao, e a marca nao pode engoli-los.
+
+    `Extracao.preenchidos` ja documenta isso: o lead que diz "nao tenho nada
+    pra vender" respondeu a pergunta, e quem precisa de zero vaga informou
+    zero. Um `if valor` em vez de `is not None` mostraria a marca por cima
+    dos dois -- o agente reperguntaria o que o lead ja respondeu, e a
+    seguranca que `campos_a_marcar` afirma (marca sobre campo preenchido e
+    inerte) seria falsa justamente nos dois casos que o projeto ja sabe que
+    enganam.
+    """
+    estado = LeadQualification(
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao="COMPRA",
+        vagas=0,
+        tem_imovel_para_vender=False,
+        perguntados_sem_resposta=["vagas", "tem_imovel_para_vender"],
+    )
+    texto = _texto_do_estado(estado)
+
+    assert "vagas: 0" in texto
+    assert "tem_imovel_para_vender: False" in texto
+    assert "perguntado" not in texto
+
+
+def test_a_ordem_dos_campos_nao_muda_por_causa_da_marca() -> None:
+    """A ordem e estavel: o campo marcado sai no lugar dele, nao no fim.
+
+    Ordem instavel no fim do prompt e mudanca de cache e de geracao a cada
+    turno, de graca.
+    """
+    estado = LeadQualification(
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao="COMPRA",
+        vagas=1,
+        perguntados_sem_resposta=["regiao"],
+    )
+    linhas = _texto_do_estado(estado).splitlines()
+
+    assert linhas == [
+        "intencao: COMPRA",
+        "regiao: (perguntado, sem resposta)",
+        "vagas: 1",
+    ]
+
+
+def test_marca_nula_e_marca_vazia_leem_igual() -> None:
+    """`NULL` e `{}` sao fatos diferentes no banco e a mesma coisa na leitura."""
+    nula = LeadQualification(channel=CANAL, conversation_key=CONVERSA, intencao="COMPRA")
+    vazia = LeadQualification(
+        channel=CANAL, conversation_key=CONVERSA, intencao="COMPRA", perguntados_sem_resposta=[]
+    )
+
+    assert _texto_do_estado(nula) == _texto_do_estado(vazia) == "intencao: COMPRA"
+
+
+def test_a_regra_do_prompt_cobre_o_ignorado() -> None:
+    assert "nao repergunte o preenchido nem o ignorado" in SISTEMA_DO_AGENTE
 
 
 def test_montar_prompt_ordena_sistema_resumo_literais_e_estado() -> None:

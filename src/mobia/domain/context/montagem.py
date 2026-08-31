@@ -120,16 +120,32 @@ def _texto_das(literais: list[Message]) -> str:
     return "\n".join(_texto_da(linha) for linha in literais)
 
 
+# TEC-257. Fica no bloco de estado que ja existe, e nao numa secao nova de
+# `montar_prompt`: um rotulo novo sairia da subcontagem fixa do orcamento, que
+# tinha 4,2 tokens de margem. Reusar o rotulo custa zero ali -- o texto por
+# turno cresce, e esse `montar_contexto` conta, que e o correto porque ele e
+# de fato enviado.
+_MARCA_SEM_RESPOSTA = "(perguntado, sem resposta)"
+
+
 def _texto_do_estado(estado: LeadQualification | None) -> str:
     """Representa o estado de qualificacao para fins de medicao.
 
     Nao e o renderizador do prompt -- isso e da TEC-134 -- mas a contagem tem
     de medir algo perto do que sera de fato enviado. Ignorar o estado aqui
-    faria a medida ficar sistematicamente menor que a real, e o campo so
-    cresce a partir da TEC-145.
+    faria a medida ficar sistematicamente menor que a real.
+
+    A partir da TEC-257 carrega tambem os campos perguntados sem resposta.
+    **Valor vence marca**, e a ordem dos campos nao muda: o campo marcado sai
+    no lugar dele, nao no fim. Ordem instavel no fim do prompt seria mudanca
+    de cache e de geracao a cada turno, de graca.
+
+    `NULL` e `{}` na coluna significam coisas diferentes (ver o modelo) e a
+    **leitura** trata os dois igual: `or ()`.
     """
     if estado is None:
         return ""
+    marcados = set(estado.perguntados_sem_resposta or ())
     campos = {
         "intencao": estado.intencao,
         "faixa_preco_min": estado.faixa_preco_min,
@@ -142,7 +158,13 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
         "forma_pagamento": estado.forma_pagamento,
         "tem_imovel_para_vender": estado.tem_imovel_para_vender,
     }
-    return "\n".join(f"{chave}: {valor}" for chave, valor in campos.items() if valor is not None)
+    linhas = []
+    for chave, valor in campos.items():
+        if valor is not None:
+            linhas.append(f"{chave}: {valor}")
+        elif chave in marcados:
+            linhas.append(f"{chave}: {_MARCA_SEM_RESPOSTA}")
+    return "\n".join(linhas)
 
 
 def _estimar(resumo: str | None, literais: list[Message], estado: LeadQualification | None) -> int:
