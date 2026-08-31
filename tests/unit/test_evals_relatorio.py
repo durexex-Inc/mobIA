@@ -12,6 +12,8 @@ from mobia.evals.metricas import (
     ResumoDaExtracaoEfetiva,
     ResumoDeConfianca,
     ResumoDeNegativos,
+    ResumoDoFormato,
+    ViolacaoDeFormato,
     acuracia_de_intencao,
     sem_mecanismo,
 )
@@ -515,3 +517,52 @@ def test_falha_sem_motivo_nao_ganha_linha_vazia() -> None:
 
     assert "c-01[0]: TimeoutError" in texto
     assert "\n    \n" not in texto
+
+
+def test_relatorio_abre_o_formato_por_regra() -> None:
+    """Tamanho e numero de perguntas pedem consertos diferentes.
+
+    Um total unico esconderia qual dos dois esta acontecendo -- encurtar o
+    texto e mudar a instrucao de perguntas sao mudancas diferentes, e a
+    segunda custa orcamento de prompt que hoje nao existe.
+    """
+    texto = render(
+        [],
+        {},
+        formato=ResumoDoFormato(
+            respostas=147,
+            violacoes=[
+                ViolacaoDeFormato(
+                    conversa_id="compra-01", indice=2, regra="comprimento", medido=812
+                ),
+                ViolacaoDeFormato(conversa_id="aluguel-03", indice=0, regra="perguntas", medido=3),
+            ],
+            com_emoji=9,
+            emojis=14,
+        ),
+    )
+
+    assert "147 respostas do agente medidas" in texto
+    assert "compra-01 turno 2: comprimento -- 812" in texto
+    assert "aluguel-03 turno 0: perguntas -- 3" in texto
+    assert "com emoji: 9 (14 no total)" in texto
+
+
+def test_o_relatorio_diz_que_a_contagem_de_emoji_nao_e_criterio() -> None:
+    """A ressalva tem de viajar junto do numero.
+
+    Sem ela, `com emoji: 9` numa lista de metricas le como se 9 fosse erro --
+    e a regra do card ("a informacao essencial nunca depende de emoji") nao e
+    o que essa contagem mede.
+    """
+    texto = render(
+        [],
+        {},
+        formato=ResumoDoFormato(respostas=10, violacoes=[], com_emoji=3, emojis=5),
+    )
+
+    assert "nao** entra na metrica" in texto
+
+
+def test_relatorio_sem_formato_omite_a_secao() -> None:
+    assert "Formato da resposta" not in render([], {})
