@@ -3436,6 +3436,68 @@ mesmo motivo de antes: ele diz o que o gate não resolve no pior caso observado.
   outra coisa.
 - **Três pontos ainda não são distribuição**, mesmo os três concordando.
 
+### A quarta execução de 31/08 — a insistência é sistemática, e a amostra menor enganava
+
+Primeira medição de insistência sobre os 147 turnos. Preservada em
+`evals/relatorios/2026-08-31-insistencia-medida.md`.
+
+**18 conversas de 42 — 43% — têm ao menos um campo perguntado mais de uma vez
+sem o lead ter respondido.** Em **14 delas** o campo foi perguntado em **três
+turnos**.
+
+A contagem manual sobre a execução anterior tinha achado **cinco**. A diferença
+não é ruído: aquela contagem só via os 28 turnos que violaram formato, porque
+eram os únicos cujo texto o relatório carregava. Um turno com **uma** pergunta
+só não viola formato, e repete igual. **A amostra disponível subestimava o
+fenômeno em 3,6 vezes** — e isso é um aviso sobre medir pelo que está à mão.
+
+#### O pior caso é um vendedor
+
+`follow-up-06` é `VENDER_IMOVEL` nos três turnos: o lead quer anunciar o
+apartamento dele e pergunta sobre comissão e preço. O agente pergunta
+**quartos, região, tipo de imóvel e vagas — três vezes cada**.
+
+Isso não é insistência, é o roteiro de qualificação de comprador rodando em
+quem quer vender — território da TEC-137, que encaminha venda direto ao
+handoff. **É um caso só entre os 16**, então não é padrão; é o pior exemplo, e
+aponta para outro problema.
+
+Os outros quinze são compradores, locatários e investidores legítimos sendo
+perguntados de novo.
+
+#### O instrumento, conferido contra a contagem manual
+
+Três das cinco conversas contadas à mão aparecem: `compra-14`, `compra-02` e
+`compra-13`. **`investimento-01` e `investimento-03` não aparecem**, e há duas
+explicações possíveis que os artefatos não separam: o filtro `- conhecidos_antes`
+pode estar corretamente jogando aqueles casos para o proxy de reperguntas (campo
+que o lead **já** respondeu), ou o modelo simplesmente não repetiu a pergunta
+nesta execução. Fica registrado sem escolher.
+
+#### A quarta medição de extração, e a hipótese continua de pé
+
+| | 11:46 | 13:19 | 15:0x | 16:xx |
+| --- | --- | --- | --- | --- |
+| extração (união) | 90,8% | 90,8% | 90,9% | **91,8%** |
+| `extra` | 1 | 1 | 2 | 1 |
+| `faltou` | 7 | 8 | 7 | 7 |
+| aderência ao tom | — | 82,3% | 80,3% | **83,7%** |
+
+Quatro execuções na mesma régua dispersam **1,0 ponto** na união, com a invenção
+entre 1 e 2. `DISPERSAO_MEDIDA` continua em 5,7 pelo mesmo motivo: ele diz o que
+o gate não resolve no **pior** caso observado, e o par que o produziu teve
+invenção indo de 1 a 5.
+
+#### O que isso decide
+
+A TEC-256 dizia: *"se for raro, é registro e não conserto; se for sistemático,
+as saídas são regra no prompt (não cabe) ou marcar no estado o que já foi
+perguntado e não respondido"*.
+
+**43% é sistemático.** A decisão de tratar deixou de depender de medição e passa
+a depender de escolha — e a única saída que cabe no orçamento é a segunda, que é
+mudança de produção.
+
 ## TEC-256 — Reinsistir na pergunta que o lead ignorou
 
 A execução de 31/08 que trouxe o texto das respostas mostrou um padrão que
