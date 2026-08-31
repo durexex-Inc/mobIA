@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, literal_column, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -228,33 +228,65 @@ async def gravar_estado(
     conversation_key: str,
     intencao: Intencao,
     extracao: Extracao,
+    perguntou: Iterable[str] = (),
 ) -> None:
     """Upsert do estado de qualificacao. `None` no campo nao apaga o que havia.
 
     Nao commita -- a sessao e emprestada, como em `ler_resumo`, `ler_estado` e
-    `gravar_resumo`, e quem chama e dono da fronteira da transacao. Nesta card
-    quem chama e `executar_turno`, que grava intencao e estado no **mesmo**
-    commit: os dois fatos vem da mesma chamada ao modelo.
+    `gravar_resumo`, e quem chama e dono da fronteira da transacao.
 
-    A regra em si -- guarda de `FORA_DE_ESCOPO`, "mais novo vence", `None` nao
-    apaga, `intencao` sempre presente -- mora em `campos_a_gravar`, e nao
-    aqui, porque o runner do eval precisa da mesma regra para acumular o
-    estado sintetico entre turnos. Ver o docstring de la.
+    A regra dos campos mora em `campos_a_gravar` e a da marca em
+    `campos_a_marcar`, e nao aqui, porque o runner do eval precisa das duas
+    para acumular o estado sintetico entre turnos. Ver os docstrings de la.
+
+    `perguntou` tem default de proposito: nenhum chamador antigo precisa saber
+    da TEC-257 para continuar funcionando, e nao marcar e o comportamento
+    seguro.
     """
     campos = campos_a_gravar(intencao, extracao)
     if not campos:
+        # A guarda de FORA_DE_ESCOPO vale para a marca tambem, e o buraco esta
+        # declarado no spec: um agente que pergunte num turno fora de escopo
+        # nao marca e pode perguntar de novo. Com a marca permanente, marcar
+        # de menos e o erro mais seguro dos dois.
         return
+
+    marcados = sorted(campos_a_marcar(perguntou, campos))
 
     valores: dict[str, Any] = {
         "channel": channel,
         "conversation_key": conversation_key,
         "updated_at": datetime.now(UTC),
+        # Sempre presente, mesmo vazio: `NULL` esta reservado para "linha
+        # anterior a TEC-257, ninguem marcava", e um insert que omitisse a
+        # coluna criaria uma linha nova com a semantica de linha antiga.
+        "perguntados_sem_resposta": marcados,
         **campos,
     }
     statement = pg_insert(LeadQualification).values(valores)
     await session.execute(
         statement.on_conflict_do_update(
             index_elements=["channel", "conversation_key"],
-            set_={chave: statement.excluded[chave] for chave in (*campos, "updated_at")},
+            set_={
+                **{chave: statement.excluded[chave] for chave in (*campos, "updated_at")},
+                # A uniao mora no SQL, e nao numa leitura previa em Python.
+                #
+                # Ler o array antigo, unir em memoria e gravar abriria a
+                # janela que a guarda de monotonia de `gravar_resumo` ja
+                # fechou para o resumo: dois turnos concorrentes da mesma
+                # conversa leem o mesmo valor, cada um une o seu, e o mais
+                # lento sobrescreve a marca do mais rapido -- perda
+                # silenciosa, e a marca e o que impede reperguntar.
+                #
+                # `coalesce` porque `NULL || {'regiao'}` e NULL em Postgres, e
+                # toda linha anterior a esta card tem NULL aqui.
+                #
+                # Duplicata e possivel por este caminho e nao incomoda: quem
+                # le testa pertinencia, nao conta.
+                "perguntados_sem_resposta": func.coalesce(
+                    LeadQualification.perguntados_sem_resposta,
+                    literal_column("'{}'::varchar[]"),
+                ).op("||")(statement.excluded.perguntados_sem_resposta),
+            },
         )
     )

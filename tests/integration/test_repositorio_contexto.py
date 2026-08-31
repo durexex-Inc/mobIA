@@ -360,3 +360,107 @@ async def test_marca_de_perguntado_aceita_nulo_e_vazio(session) -> None:
     assert antiga.perguntados_sem_resposta is None
     assert nova.perguntados_sem_resposta == []
     assert marcada.perguntados_sem_resposta == ["regiao", "vagas"]
+
+
+async def test_grava_a_marca_do_que_foi_perguntado(session) -> None:
+    await gravar_estado(
+        session,
+        channel="wa",
+        conversation_key="k1",
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+        perguntou=["regiao", "vagas"],
+    )
+    await session.commit()
+
+    linha = await session.get(LeadQualification, ("wa", "k1"))
+    assert sorted(linha.perguntados_sem_resposta) == ["regiao", "vagas"]
+
+
+async def test_gravacao_sem_nada_a_marcar_deixa_vazio_e_nao_nulo(session) -> None:
+    """`NULL` esta reservado para linha anterior a esta card."""
+    await gravar_estado(
+        session,
+        channel="wa",
+        conversation_key="k2",
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+    )
+    await session.commit()
+
+    linha = await session.get(LeadQualification, ("wa", "k2"))
+    assert linha.perguntados_sem_resposta == []
+
+
+async def test_a_marca_e_uniao_e_nao_substituicao(session) -> None:
+    """Dois turnos, duas marcas, e as duas sobrevivem."""
+    await gravar_estado(
+        session,
+        channel="wa",
+        conversation_key="k3",
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+        perguntou=["regiao"],
+    )
+    await session.commit()
+    await gravar_estado(
+        session,
+        channel="wa",
+        conversation_key="k3",
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(vagas=1),
+        perguntou=["urgencia"],
+    )
+    await session.commit()
+
+    linha = await session.get(LeadQualification, ("wa", "k3"))
+    assert set(linha.perguntados_sem_resposta) == {"regiao", "urgencia"}
+
+
+async def test_a_uniao_sobrevive_a_linha_antiga_com_nulo(session) -> None:
+    """`coalesce` no SQL: `NULL || {'regiao'}` seria NULL sem ele."""
+    session.add(
+        LeadQualification(channel="wa", conversation_key="k4", intencao="COMPRA")
+    )
+    await session.commit()
+
+    await gravar_estado(
+        session,
+        channel="wa",
+        conversation_key="k4",
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+        perguntou=["regiao"],
+    )
+    await session.commit()
+
+    # O session.add() acima ja colocou a linha no identity map com
+    # perguntados_sem_resposta=None. expire_on_commit=False (ver o teste
+    # anterior) significa que session.get() devolveria esse mesmo objeto
+    # sem reconsultar o banco, e o teste passaria mesmo se o UPDATE nunca
+    # tivesse acontecido -- estaria testando memoria, nao o coalesce/uniao
+    # no SQL que e o assunto deste teste.
+    session.expire_all()
+
+    linha = await session.get(LeadQualification, ("wa", "k4"))
+    assert linha.perguntados_sem_resposta == ["regiao"]
+
+
+async def test_fora_de_escopo_nao_marca(session) -> None:
+    """A guarda de `campos_a_gravar` vale para a marca tambem.
+
+    O buraco e declarado no spec (D8): um agente que pergunte num turno
+    FORA_DE_ESCOPO nao marca. Fica assim porque marcar de menos e o erro
+    seguro.
+    """
+    await gravar_estado(
+        session,
+        channel="wa",
+        conversation_key="k5",
+        intencao=Intencao.FORA_DE_ESCOPO,
+        extracao=Extracao(),
+        perguntou=["regiao"],
+    )
+    await session.commit()
+
+    assert await session.get(LeadQualification, ("wa", "k5")) is None

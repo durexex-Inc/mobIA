@@ -164,6 +164,7 @@ async def executar_turno(
             conversation_key=message.conversation_key,
             intencao=gerada.intencao,
             extracao=gerada.extracao,
+            perguntou=gerada.perguntou,
         )
         await session.commit()
 
