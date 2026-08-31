@@ -347,6 +347,12 @@ async def test_marca_de_perguntado_aceita_nulo_e_vazio(session) -> None:
     )
     await session.commit()
 
+    # A sessao usa expire_on_commit=False (mobia.infra.db.get_sessionmaker):
+    # sem isto, session.get() devolve o objeto que ja esta no identity map,
+    # sem reler a coluna. expire_all() e sincrono na AsyncSession -- forca a
+    # proxima leitura de atributo a emitir SELECT de verdade.
+    session.expire_all()
+
     antiga = await session.get(LeadQualification, ("wa", "antiga"))
     nova = await session.get(LeadQualification, ("wa", "nova"))
     marcada = await session.get(LeadQualification, ("wa", "marcada"))
