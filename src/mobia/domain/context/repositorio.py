@@ -1,8 +1,11 @@
+import re
 import uuid
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +13,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.infra.crypto import decrypt, encrypt
+
+log = structlog.get_logger(__name__)
+
+# Sai de `Extracao` e nao de uma lista escrita a mao: e a mesma fonte de onde
+# `SCHEMA_DA_EXTRACAO` deriva, entao a proxima card que acrescentar campo nao
+# precisa lembrar deste lugar.
+_CAMPOS_DA_EXTRACAO = frozenset(campo.name for campo in fields(Extracao))
+
+# Um nome de campo e minusculas e underscore. O que nao casa nao vai para o
+# log: o modelo pode devolver o texto da pergunta em vez do nome, e texto de
+# pergunta carrega o que o lead disse.
+_NOME_PLAUSIVEL = re.compile(r"[a-z_]{1,32}")
 
 
 @dataclass(frozen=True)
@@ -146,6 +161,50 @@ def campos_a_gravar(intencao: Intencao, extracao: Extracao) -> dict[str, Any]:
     if intencao is Intencao.FORA_DE_ESCOPO:
         return {}
     return {"intencao": intencao.value, **extracao.preenchidos()}
+
+
+def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set[str]:
+    """Os campos que o agente perguntou neste turno e o lead nao respondeu.
+
+    A regra unica de marcacao da TEC-257, compartilhada entre `gravar_estado`
+    (producao) e o runner do eval, pela mesma razao que `campos_a_gravar`:
+    duas copias divergiriam, e a divergencia so apareceria na borda.
+
+    `perguntou` vem do modelo, que declara sobre o que perguntou. **Nome que
+    nao e campo de extracao e descartado**, nao corrigido nem adivinhado: com
+    a marca permanente, marcar de mais mata o campo pela vida da conversa e
+    sem rastro, enquanto marcar de menos custa uma pergunta a mais. O
+    descarte e logado para a deriva de vocabulario do modelo ser visivel --
+    era a critica que a card fazia ao proxy de palavra-chave.
+
+    `preenchidos` sao os campos que este turno gravou. A subtracao e o que
+    separa esta marca do proxy irmao: campo que o estado JA SABE e
+    reperguntado e assunto de `_reperguntou`, nao daqui.
+
+    A subtracao usa os campos **deste** turno, e nao o estado acumulado, para
+    nao pagar uma consulta a mais. Uma marca sobre campo que ja estava
+    preenchido de um turno anterior e possivel por esse caminho, e e inerte:
+    `_texto_do_estado` mostra o valor quando ele existe, e a marca so aparece
+    onde nao ha valor. Valor vence marca -- e um valor, uma vez gravado,
+    nunca e apagado (`None` nao apaga).
+    """
+    conhecidos: set[str] = set()
+    ignorados: list[str] = []
+    for nome in perguntou:
+        if nome in _CAMPOS_DA_EXTRACAO:
+            conhecidos.add(nome)
+        else:
+            ignorados.append(nome)
+
+    if ignorados:
+        plausiveis = sorted({n for n in ignorados if _NOME_PLAUSIVEL.fullmatch(n)})
+        log.warning(
+            "estado.campo_perguntado_desconhecido",
+            nomes=plausiveis,
+            descartados=len(ignorados) - len(plausiveis),
+        )
+
+    return conhecidos - set(preenchidos)
 
 
 async def gravar_estado(
