@@ -427,9 +427,9 @@ class ClassificadorAnthropic:
             # E ela sozinha ja cobre `NaN`/`Infinity`/`-Infinity`, os literais
             # nao-padrao que `json.loads` aceita: toda comparacao com NaN e
             # falsa e os infinitos caem fora da faixa. Nenhum deles chega ao
-            # `Decimal(str(...))` -- um NaN ali nunca satisfaria `>= 0.8` nem
-            # `< 0.6` de quem consome depois, e a ramificacao simplesmente nao
-            # aconteceria, em silencio.
+            # `Decimal(str(...))` -- um NaN ali nunca satisfaria o
+            # `< LIMIAR_DE_DESAMBIGUACAO` de quem consome depois, e a
+            # ramificacao simplesmente nao aconteceria, em silencio.
             if (
                 isinstance(confianca_bruta, bool)
                 or not isinstance(confianca_bruta, int | float)

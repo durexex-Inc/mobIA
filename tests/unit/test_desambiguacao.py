@@ -7,6 +7,7 @@ acrescenta nada a prova.
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 from mobia.domain.agente.desambiguacao import deve_desambiguar, intencao_efetiva
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
@@ -44,3 +45,39 @@ def test_intencao_no_limiar_exato_e_preservada() -> None:
 
 def test_intencao_confiante_passa_intacta() -> None:
     assert intencao_efetiva(Intencao.ALUGUEL, Decimal("0.91")) is Intencao.ALUGUEL
+
+
+def test_o_limiar_continua_em_0_6_por_medicao() -> None:
+    """O numero saiu do SRS sem calibragem, e a TEC-235 o mediu.
+
+    Fica como teste, e nao so como comentario, porque mexer neste valor e
+    mudanca de comportamento de producao em todo turno: quem baixar o limiar
+    reprova aqui e vai ler o porque antes de seguir.
+
+    O que a medicao diz, em seis execucoes: o rebaixamento **nunca** salvou um
+    erro. E o custo dele -- acerto virando INDEFINIDA -- era de 4 a 6 turnos
+    em 27/08/2026 e caiu a **zero** nas quatro execucoes de 30/08, sem que
+    ninguem tocasse no limiar; trocou o modelo e cresceu o prompt. Baixa-lo
+    hoje compra beneficio medido de zero.
+
+    Ver o comentario de `LIMIAR_DE_DESAMBIGUACAO`, que carrega os numeros.
+    """
+    assert LIMIAR_DE_DESAMBIGUACAO == Decimal("0.6")
+
+
+def test_nao_ha_um_segundo_limiar_de_confianca() -> None:
+    """O `0,8` que dois comentarios citavam nunca governou nada.
+
+    A TEC-235 varreu: a unica comparacao de confianca em `src/` e contra
+    `LIMIAR_DE_DESAMBIGUACAO`. O teste existe para que um segundo limiar so
+    entre nomeado -- um numero solto num `if` e exatamente como o `0,6`
+    comecou, e foram tres cards ate ele virar medicao.
+    """
+    agente = Path(__file__).resolve().parents[2] / "src" / "mobia" / "domain" / "agente"
+    for arquivo in agente.glob("*.py"):
+        codigo = "\n".join(
+            linha
+            for linha in arquivo.read_text(encoding="utf-8").splitlines()
+            if not linha.lstrip().startswith("#")
+        )
+        assert "0.8" not in codigo, f"{arquivo.name}: limiar solto de 0.8 fora de comentario"
