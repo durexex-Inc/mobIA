@@ -295,7 +295,7 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
 def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     """A margem existe para ser vista antes de ser gasta, nao depois.
 
-    O teto de 627 e mais apertado que o `headroom * 0,75` usado pelo teste
+    O teto de 655 e mais apertado que o `headroom * 0,75` usado pelo teste
     irmao, e e o proposito deste teste: se voce esta lendo isto porque ele
     reprovou, a pergunta e "o que sai do prompt para o novo texto entrar?",
     nao "quanto subo o numero?". Subir e resposta legitima -- mas so depois da
@@ -316,9 +316,12 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     cards, nao os de hoje -- os de hoje estao na saida acima.
 
     A TEC-257 gastou os 4,2 que restavam e mais ~15, subindo o teto para 655
-    e a reserva para 880: o campo `perguntou` do schema custou ~18,5, ja
-    gastos aqui. Os 0,75 restantes ficam reservados para a clausula que uma
-    task posterior desta mesma card ainda vai aplicar ao prompt.
+    e a reserva para 880: o campo `perguntou` do schema custou ~18,5 e a
+    clausula da memoria em `SISTEMA_DO_AGENTE` custou ~0,75, ~19,25 no total.
+    A clausula foi encurtada, nao acrescentada -- "nao repergunte o que ja
+    esta preenchido" virou "nao repergunte o preenchido nem o ignorado" -- e
+    foi o corte na forma existente que pagou quase toda a clausula nova,
+    +0,75 em vez dos +6,25 que so acrescentar teria custado.
     """
     subcontagem = _subcontagem()
     _linha("teto desta assercao (fixo)", 655)

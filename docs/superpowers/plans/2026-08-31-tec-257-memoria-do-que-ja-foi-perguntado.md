@@ -173,26 +173,28 @@ E, no fim do bloco de comentário acima dela (depois do parágrafo da TEC-250):
 
 ```python
     # **850 -> 880 na TEC-257**, que acrescentou o campo `perguntou` ao
-    # `SCHEMA_DA_RESPOSTA` -- lista de strings, ~18,5 tokens medidos naquela
-    # card, mais 0,75 da clausula reescrita do prompt. A alternativa foi
-    # procurada primeiro, como o teste manda: a clausula do prompt de fato
-    # foi encurtada em vez de acrescentada ("nao repergunte o preenchido nem
-    # o ignorado" contra "...o que ja esta preenchido nem o que o lead
-    # ignorou", +0,75 contra +6,25), e isso pagou quase toda a parte de
-    # prosa. O campo do schema nao tinha corte equivalente: a forma barata
-    # ja foi a escolhida -- lista de strings livre em vez de enum dos nove
-    # campos, +18,5 contra +56,0.
+    # `SCHEMA_DA_RESPOSTA` -- lista de strings livre, ~18,5 tokens gastos
+    # neste commit. A alternativa mais cara foi recusada com o numero na mao:
+    # enum dos nove campos custava ~56,0.
+    #
+    # Os ~0,75 restantes da subida sao **reserva**, e ainda nao foram gastos:
+    # a clausula da memoria do `SISTEMA_DO_AGENTE` sera encurtada mais
+    # adiante nesta mesma card, e o encurtamento e o que paga a clausula
+    # nova. Enquanto isso a clausula segue como esta.
     # Preco desta subida: **30 tokens a menos de literais e resumo por turno,
     # de 12000 -- 0,25% do contexto**. Menor que as duas anteriores (3,3% e
     # 0,4%).
+
+**Escreva o comentário exatamente assim, no tempo verbal acima.** A versão anterior deste plano mandava afirmar, no passado, que a cláusula já tinha sido encurtada — o que é falso neste commit, porque quem encurta é a Task 5. Um comentário permanente com afirmação falsa, justamente no arquivo cuja razão de existir é não envelhecer, é a TEC-243 sendo violada em prosa em vez de em número. Isso foi pego pela revisão da Task 1 e corrigido aqui.
 ```
 
 Em `tests/unit/test_config.py`, no `test_a_margem_do_orcamento_do_prompt_e_deliberada`, troque as **duas** ocorrências de `627` (a de `_linha` e a do `assert`) por `655`, e acrescente ao histórico do docstring:
 
 ```
     A TEC-257 gastou os 4,2 que restavam e mais ~15, subindo o teto para 655
-    e a reserva para 880: o campo `perguntou` do schema custou ~18,5 e a
-    clausula reescrita do prompt 0,75.
+    e a reserva para 880. O campo `perguntou` do schema custou ~18,5; os
+    ~0,75 restantes sao reserva da clausula do prompt que a mesma card
+    encurta mais adiante, e ainda nao foram gastos.
 ```
 
 - [ ] **Step 9: Confirmar que a conta fecha**
@@ -240,6 +242,8 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 A fixture `session` vem de `tests/conftest.py` (linha 376) e é a que os testes vizinhos de `test_repositorio_contexto.py` já usam — não crie outra.
 
+**Um teste de persistência nesta sessão precisa expirar antes de ler.** `expire_on_commit=False` faz `session.get()` devolver o objeto do identity map sem recarregar os atributos já populados — sem `expire_all()`, as asserções checam o construtor em memória e um erro de encode/decode da coluna passa batido. Confirme se `expire_all()` na `AsyncSession` deste projeto é síncrono; o precedente alternativo do arquivo é o SELECT cru de `test_resumo_vai_cifrado_para_o_banco`. E antes de fechar a task, **veja o teste falhar de propósito** — um teste de persistência que ninguém viu vermelho não provou nada.
+
 - [ ] **Step 1: Escrever o teste que falha**
 
 Em `tests/integration/test_repositorio_contexto.py`, no fim do arquivo:
@@ -273,6 +277,13 @@ async def test_marca_de_perguntado_aceita_nulo_e_vazio(session) -> None:
     )
     await session.commit()
 
+    # Sem expirar, o teste nao testa nada: a sessao usa
+    # `expire_on_commit=False`, entao `session.get` devolve o objeto que ja
+    # esta no identity map e NAO sobrescreve os atributos ja populados com o
+    # que voltou do banco. As assercoes leriam o construtor em memoria, e um
+    # erro de encode/decode da coluna passaria batido.
+    session.expire_all()
+
     antiga = await session.get(LeadQualification, ("wa", "antiga"))
     nova = await session.get(LeadQualification, ("wa", "nova"))
     marcada = await session.get(LeadQualification, ("wa", "marcada"))
@@ -286,7 +297,7 @@ Use a fixture de sessão que os testes vizinhos daquele arquivo já usam, e impo
 
 - [ ] **Step 2: Rodar e confirmar que falha**
 
-Run: `docker-compose up -d && python -m pytest tests/integration/test_migrations.py -q -k perguntado`
+Run: `docker-compose up -d && python -m pytest tests/integration/test_repositorio_contexto.py -q -k perguntado`
 Expected: FAIL — `TypeError: 'perguntados_sem_resposta' is an invalid keyword argument`
 
 - [ ] **Step 3: Escrever a migração**
@@ -804,20 +815,19 @@ Expected: PASS (5 testes)
 
 **O que estes testes não provam, e fica declarado:** a união é testada em turnos **sequenciais**, não concorrentes. A segurança sob concorrência vem de a união acontecer dentro do `UPDATE` — não há leitura para ficar velha —, e não de um teste. Testar duas transações concorrentes de verdade exigiria duas sessões e controle de ordem de commit, e o que isso mediria seria o Postgres, não este código.
 
-- [ ] **Step 5: Ligar o turno**
+- [ ] **Step 5: Ligar o turno — e a marca vem DEPOIS da entrega**
 
-Em `turno.py`, na chamada de `gravar_estado` (linha ~161):
+**A primeira chamada de `gravar_estado` (linha ~161) não muda.** Intenção e extração continuam sendo commitadas antes da entrega, e a justificativa escrita em `turno.py:147-150` continua valendo para elas: são *"fato sobre a fala dele, nao sobre a nossa resposta"*.
 
-```python
-        await gravar_estado(
-            session,
-            channel=message.channel,
-            conversation_key=message.conversation_key,
-            intencao=gerada.intencao,
-            extracao=gerada.extracao,
-            perguntou=gerada.perguntou,
-        )
-```
+**`perguntou` não pode viajar nesse commit**, e essa é a correção mais importante deste plano. Três caminhos depois dele descartam a resposta do `gerada`: `desambiguando` (a resposta da chamada 1 é descartada — *"paga e nao entregue"*, diz o comentário do arquivo — e o lead recebe outra pergunta), saída bloqueada pela moderação, e envio fora da janela. Como a união nunca remove, marcar antes deixaria o campo marcado como já perguntado **sem nunca ter sido perguntado, para sempre e em silêncio** — marcar de mais, a direção que o desenho chama de insegura.
+
+`perguntou` é fato sobre a **nossa resposta**, não sobre a fala do lead, e por isso segue a regra da outra marca desta função: `marcar_desambiguacao` só é gravado depois da entrega confirmada, porque *"marca-lo antes queimaria a unica chance de perguntar num 5xx da Meta"*. A marca da TEC-257 queima exatamente a mesma chance.
+
+Grave-a depois da entrega confirmada, e só quando o texto entregue foi de fato a resposta do `gerada` — entregue, **e** não `desambiguando`, **e** saída não bloqueada. Reuse `gravar_estado`, passando `intencao=gerada.intencao`, `extracao=gerada.extracao` e `perguntou=gerada.perguntou`: reescrever os mesmos valores é idempotente (mais novo vence, mesmos valores) e mantém a subtração correta.
+
+Se o processo morrer entre a entrega e a marcação, a marca se perde e o agente pode reperguntar — que é marcar de **menos**, o erro seguro.
+
+**Testes obrigatórios deste step:** um provando que a marca **não** é gravada quando `desambiguando` é verdadeiro (o caminho de rotina, não de erro), e um provando que **é** gravada no caminho normal. Cada um tem de falhar contra a implementação que marca antes da entrega — se passar nas duas, não está testando isto.
 
 - [ ] **Step 6: Rodar os testes do turno**
 
@@ -896,6 +906,32 @@ def test_valor_vence_marca():
     texto = _texto_do_estado(estado)
 
     assert "regiao: pinheiros" in texto
+    assert "perguntado" not in texto
+
+
+def test_valor_falso_tambem_vence_marca():
+    """`0` e `False` sao informacao, e a marca nao pode engoli-los.
+
+    `Extracao.preenchidos` ja documenta isso: o lead que diz "nao tenho nada
+    pra vender" respondeu a pergunta, e quem precisa de zero vaga informou
+    zero. Um `if valor` em vez de `is not None` mostraria a marca por cima
+    dos dois -- o agente reperguntaria o que o lead ja respondeu, e a
+    seguranca que `campos_a_marcar` afirma (marca sobre campo preenchido e
+    inerte) seria falsa justamente nos dois casos que o projeto ja sabe que
+    enganam.
+    """
+    estado = LeadQualification(
+        channel="wa",
+        conversation_key="k",
+        intencao="COMPRA",
+        vagas=0,
+        tem_imovel_para_vender=False,
+        perguntados_sem_resposta=["vagas", "tem_imovel_para_vender"],
+    )
+    texto = _texto_do_estado(estado)
+
+    assert "vagas: 0" in texto
+    assert "tem_imovel_para_vender: False" in texto
     assert "perguntado" not in texto
 
 

@@ -174,16 +174,14 @@ class Settings(BaseSettings):
     # que o da subida anterior (400 tokens, 3,3%), e a decisao foi tomada com
     # o numero na mao, nao por reflexo.
     #
-    # **850 -> 880 na TEC-257**, que acrescentou o campo `perguntou` ao
-    # `SCHEMA_DA_RESPOSTA` -- lista de strings, ~18,5 tokens medidos nesta
-    # card, ja gastos aqui. Os 0,75 restantes da subida sao reserva: uma task
-    # posterior desta mesma card ainda vai reescrever uma clausula de
-    # `SISTEMA_DO_AGENTE` (classificador.py) para cobrir o que o lead ignorou,
-    # nao so o que ja esta preenchido -- o texto de hoje, intocado por esta
-    # card, continua "nao repergunte o que ja esta preenchido". O campo do
-    # schema nao tinha corte equivalente: a forma barata ja foi a escolhida --
-    # lista de strings livre em vez de enum dos nove campos, +18,5 contra
-    # +56,0.
+    # **850 -> 880 na TEC-257**, que gastou ~18,5 tokens no campo `perguntou`
+    # do `SCHEMA_DA_RESPOSTA` -- lista de strings livre em vez de enum dos
+    # nove campos, que custaria +56,0 -- e ~0,75 na clausula da memoria de
+    # `SISTEMA_DO_AGENTE` (classificador.py), ~19,25 no total. A clausula foi
+    # **encurtada, e nao acrescentada**: "nao repergunte o que ja esta
+    # preenchido" virou "nao repergunte o preenchido nem o ignorado", e foi o
+    # corte na forma existente que pagou quase toda a clausula nova -- +0,75
+    # em vez dos +6,25 que so acrescentar teria custado.
     # Preco desta subida: **30 tokens a menos de literais e resumo por turno,
     # de 12000 -- 0,25% do contexto**. Menor que as duas anteriores (3,3% e
     # 0,4%).
