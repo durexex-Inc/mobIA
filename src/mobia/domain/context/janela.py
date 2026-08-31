@@ -45,6 +45,15 @@ async def literais_apos(
     condicoes = [
         Message.channel == channel,
         Message.conversation_key == conversation_key,
+        # A fala que a moderacao de entrada bloqueou nao entra no contexto
+        # (TEC-236). Filtrar **aqui** e nao no chamador e o que faz o resumo
+        # herdar a correcao de graca: `dividir` recebe o que esta funcao
+        # devolve, entao o que nao sai daqui nunca chega a dobra.
+        #
+        # A TEC-233 impedia so que a fala virasse resposta *naquele turno*. O
+        # turno seguinte montava contexto decifrando-a inteira, e na dobra dos
+        # ~40 turnos ela entrava no resumo permanente.
+        Message.bloqueada_em.is_(None),
     ]
     if marca is not None:
         condicoes.append(

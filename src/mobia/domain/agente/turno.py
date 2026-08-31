@@ -11,6 +11,7 @@ from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgent
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
 from mobia.domain.context.repositorio import gravar_estado
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
+from mobia.domain.messages.bloqueio import marcar_bloqueada
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
 from mobia.domain.moderacao.port import (
@@ -98,6 +99,18 @@ async def executar_turno(
                     message_id=str(message.id),
                     motivo=veredito.motivo,
                 )
+                # A marca vem ANTES da entrega, e a ordem e o ponto (TEC-236).
+                # `_entregar_texto_fixo` tem tres saidas que nao entregam nada
+                # -- janela fechada, recusa permanente da Meta, reentrega
+                # suprimida --, e duas delas fecham a linha em PROCESSED, que e
+                # terminal. Marcar depois deixaria a fala bloqueada sem marca
+                # exatamente nos casos em que ninguem mais volta nesta linha, e
+                # ela entraria no contexto do proximo turno.
+                #
+                # Se a marca falhar, a excecao sobe: a linha vira FAILED e o
+                # sweeper retenta. Custa uma moderacao paga a mais e nao vaza a
+                # fala -- ver `messages/bloqueio.py`.
+                await marcar_bloqueada(session_factory, message.id)
                 return await _entregar_texto_fixo(
                     session_factory,
                     message=message,

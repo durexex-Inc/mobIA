@@ -52,6 +52,34 @@ class Message(Base):
     # NULL significa "nao participa do pipeline de ingestao" -- e o que a linha
     # de saida grava. Ver a docstring do sweeper.
     status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    # NULL = a moderacao de entrada nao bloqueou esta fala. Preenchido = ela
+    # bloqueou, e a linha nao pode entrar em contexto nem em resumo (TEC-236).
+    #
+    # **Marca em paralelo ao `status`, e nao um `MessageStatus` novo** -- a
+    # card deixou a escolha ao implementador e esta e a decisao, registrada
+    # aqui. Tres razoes:
+    #
+    #   - `status` responde "o pipeline de ingestao terminou com esta linha?".
+    #     Um turno bloqueado **entregou** a recusa ao lead: ele terminou, e
+    #     PROCESSED e a resposta certa. Um BLOCKED terminal contaria a mesma
+    #     historia com outra palavra e faria "respondemos?" virar duas
+    #     perguntas.
+    #   - `CLAIMABLE_STATUSES` governa o que o sweeper reivindica. Um valor
+    #     novo no enum obriga a revisar essa tupla e todo `status ==` do
+    #     projeto para uma pergunta que nao e sobre retentativa.
+    #   - As duas coisas podem coexistir e vao querer coexistir: uma fala
+    #     bloqueada cuja recusa nao foi entregue e FAILED **e** bloqueada.
+    #     Um campo so nao representa isso.
+    #
+    # Timestamp e nao booleano pelo mesmo motivo de `desambiguado_em`
+    # (`agente/models.py`): ocupa o mesmo espaco e responde "quando" numa
+    # investigacao.
+    #
+    # So a entrada escreve aqui. Bloqueio de saida nao grava linha nenhuma --
+    # `_entregar_texto_fixo` registra o texto neutro que foi entregue, e nao a
+    # fala recusada do modelo, que nunca existiu como linha.
+    bloqueada_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     created_at: Mapped[datetime] = mapped_column(

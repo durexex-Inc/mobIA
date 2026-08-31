@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mobia.app.config import MODELO_SEM_CHAMADA
 from mobia.domain.agente.turno import SUBAGENTE_MODERACAO
 from mobia.domain.messages.models import MessageTelemetry
+from mobia.domain.messages.status import MessageStatus
 from mobia.domain.moderacao.port import TEXTO_DA_RECUSA_DE_ENTRADA, Direcao, ModeracaoIndisponivel
 from mobia.domain.outbound.port import EnvioForaDaJanela
 
@@ -231,3 +232,90 @@ async def test_a_entrega_da_recusa_nao_finge_lacuna_de_preco(
     ).scalar_one()
     assert linha.model == MODELO_SEM_CHAMADA
     assert linha.cost_usd == Decimal("0")
+
+
+async def test_a_fala_bloqueada_recebe_marca_na_linha(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """Criterio de aceite da TEC-236: distinguivel sem reinterpretar texto.
+
+    Antes desta card o bloqueio nao deixava rastro nenhum na linha -- ela
+    fechava em PROCESSED como qualquer outra, e nada em `messages` dizia que a
+    moderacao a tinha recusado.
+    """
+    from mobia.domain.messages.models import Message
+
+    moderador = moderador_fake(bloqueia_entrada=True)
+
+    resultado = await rodar_turno(
+        session,
+        classificador_fake(),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        moderador,
+    )
+
+    assert resultado == "respondido"
+    linha = (
+        await session.scalars(
+            select(Message).where(Message.direction == "INBOUND").order_by(Message.created_at)
+        )
+    ).all()[-1]
+    await session.refresh(linha)
+    assert linha.bloqueada_em is not None
+    # E o `status` nao se mexeu. Quem o escreve e `process_message`, pelo
+    # desfecho do turno -- `executar_turno` nunca toca nele. As duas colunas
+    # respondem perguntas diferentes e sao escritas por camadas diferentes, que
+    # e exatamente o argumento para a marca ser paralela e nao um
+    # `MessageStatus` novo (ver o comentario de `bloqueada_em` em
+    # `messages/models.py`).
+    assert linha.status == MessageStatus.PROCESSING
+
+
+async def test_a_marca_e_gravada_mesmo_quando_a_recusa_nao_e_entregue(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+    caplog,
+) -> None:
+    """A ordem entre marcar e entregar, provada pelo caso que a expoe.
+
+    `_entregar_texto_fixo` tem tres saidas que nao entregam nada, e duas delas
+    fecham a linha em PROCESSED -- terminal, ninguem volta nela. Marcar depois
+    da entrega deixaria a fala bloqueada sem marca exatamente nesses casos, e
+    ela entraria no contexto do turno seguinte.
+    """
+    from mobia.domain.messages.models import Message
+
+    outbound = outbound_fake(EnvioForaDaJanela("131047"))
+    moderador = moderador_fake(bloqueia_entrada=True)
+
+    with caplog.at_level(logging.WARNING):
+        resultado = await rodar_turno(
+            session,
+            classificador_fake(),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+            moderador,
+        )
+
+    assert resultado == "expirado"
+    linha = (
+        await session.scalars(
+            select(Message).where(Message.direction == "INBOUND").order_by(Message.created_at)
+        )
+    ).all()[-1]
+    await session.refresh(linha)
+    assert linha.bloqueada_em is not None, "a recusa nao saiu, mas a fala foi bloqueada do mesmo"
