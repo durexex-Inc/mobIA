@@ -8,9 +8,10 @@ from sqlalchemy import text as sql
 
 from mobia.domain.agente.classificador import RespostaInvalida
 from mobia.domain.agente.repositorio import ler_intencao
-from mobia.domain.agente.schemas import Intencao
+from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.agente.turno import KIND_DA_RESPOSTA, SUBAGENTE_DESAMBIGUADOR, executar_turno
 from mobia.domain.context.montagem import ContextoIrreducivel
+from mobia.domain.context.repositorio import ler_estado
 from mobia.domain.outbound.models import OutboundDispatch
 from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, EnvioRetentavel
 from mobia.infra.db import get_sessionmaker
@@ -436,3 +437,96 @@ async def test_falha_da_segunda_chamada_derruba_o_turno(
     assert gravada is not None
     assert gravada.intencao is Intencao.COMPRA, "a classificacao aconteceu e fica registrada"
     assert gravada.desambiguado_em is None, "a proxima passada ainda pode perguntar"
+
+
+async def test_marca_de_perguntou_nao_e_gravada_quando_desambigua(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """A resposta da chamada 1 e descartada -- paga e nao entregue (TEC-236).
+
+    O que ela declarou ter "perguntado" nunca chegou ao lead: quem chega e a
+    pergunta do desambiguador. Fix round 1 da Task 4 (TEC-257): a versao
+    anterior gravava `perguntou` no mesmo commit da intencao/extracao, antes de
+    saber se a resposta ia ser entregue -- e como a uniao no SQL nunca remove,
+    isso marcava o campo como ja perguntado para sempre, sem nunca ter sido.
+    """
+    classificador = classificador_fake(
+        Intencao.COMPRA,
+        confianca=BAIXA,
+        extracao=Extracao(quartos=2),
+        perguntou=("regiao",),
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert classificador.desambiguacoes == 1, "o turno de fato desambiguou"
+
+    async with get_sessionmaker()() as outra:
+        estado = await ler_estado(outra, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.perguntados_sem_resposta == [], (
+        "vazio, nao nulo (Task 4 sempre escreve a coluna) e sem 'regiao': "
+        "a chamada que perguntou isso foi descartada"
+    )
+
+
+async def test_marca_de_perguntou_e_gravada_no_caminho_normal(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """Sem desambiguacao e sem bloqueio, `gerada` e de fato o texto entregue."""
+    classificador = classificador_fake(
+        Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+        perguntou=("regiao",),
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert classificador.desambiguacoes == 0
+
+    async with get_sessionmaker()() as outra:
+        estado = await ler_estado(outra, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.perguntados_sem_resposta == ["regiao"]
+
+
+async def test_marca_de_perguntou_nao_e_gravada_com_saida_bloqueada(
+    session,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """O lead recebeu `TEXTO_NEUTRO_DE_SAIDA`, que nao pergunta nada."""
+    classificador = classificador_fake(
+        Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+        perguntou=("regiao",),
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session,
+        classificador,
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador=moderador_fake(bloqueia_saida=True),
+    )
+
+    assert resultado == "respondido"
+
+    async with get_sessionmaker()() as outra:
+        estado = await ler_estado(outra, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.perguntados_sem_resposta == []

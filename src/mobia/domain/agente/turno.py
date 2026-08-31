@@ -70,6 +70,15 @@ async def executar_turno(
     queimaria a unica chance de perguntar num 5xx da Meta, e marca-lo com a
     saida bloqueada queimaria a mesma chance por um texto neutro que nao
     pergunta nada.
+
+    A marca de `perguntou` da TEC-257 segue a mesma regra, pelo mesmo motivo:
+    e um fato sobre a nossa resposta, nao sobre a fala do lead, entao so entra
+    depois da entrega confirmada e so quando `gerada` foi de fato o texto
+    entregue -- nunca no caminho de desambiguacao (a chamada 1 foi descartada)
+    nem com a saida bloqueada (o texto neutro nao pergunta nada). Diferente do
+    marcador de desambiguacao, esta marca e permanente e a uniao no SQL nunca
+    remove: marcar de mais aqui perde a chance de perguntar aquele campo para
+    sempre e em silencio, nao so ate o proximo episodio.
     """
     # Antes de montar contexto de proposito: bloquear aqui economiza o turno
     # inteiro, inclusive as chamadas pagas ao modelo. E o texto do lead ainda
@@ -148,6 +157,13 @@ async def executar_turno(
     # vale mais forte aqui: o que o lead disse que procura e fato sobre a fala
     # dele, nao sobre a nossa resposta. Saida bloqueada e envio fora da janela
     # nao descartam a extracao.
+    #
+    # `perguntou` fica de fora deste `gravar_estado`, de proposito: ao
+    # contrario da intencao e da extracao, ele e um fato sobre a NOSSA
+    # resposta, nao sobre a fala do lead -- e a resposta pode nao ser a coisa
+    # entregue (desambiguacao descarta a chamada 1; moderacao troca o texto
+    # pelo neutro). A marca dele so e gravada mais abaixo, depois da entrega
+    # confirmada -- ver o comentario la.
     async with session_factory() as session:
         anterior = await ler_intencao(session, message.channel, message.conversation_key)
         await gravar_intencao(
@@ -164,7 +180,6 @@ async def executar_turno(
             conversation_key=message.conversation_key,
             intencao=gerada.intencao,
             extracao=gerada.extracao,
-            perguntou=gerada.perguntou,
         )
         await session.commit()
 
@@ -302,6 +317,36 @@ async def executar_turno(
             channel=message.channel,
             message_id=str(message.id),
         )
+
+    if not desambiguando and not saida_bloqueada:
+        # A marca de `perguntou` (TEC-257) e, ao contrario da intencao e da
+        # extracao gravadas la em cima, um fato sobre a NOSSA resposta -- e
+        # por isso nao pode entrar naquele commit pre-entrega. Ela so pode ser
+        # gravada depois da entrega confirmada, e so quando o texto de
+        # `gerada` foi de fato o que saiu, pela mesma razao que
+        # `marcar_desambiguacao` espera a entrega (ver o bloco acima): no
+        # caminho de desambiguacao a resposta da chamada 1 foi descartada --
+        # paga e nao entregue -- e o lead recebeu a pergunta do desambiguador,
+        # nao a de `gerada`; com a saida bloqueada o lead recebeu
+        # `TEXTO_NEUTRO_DE_SAIDA`, que tambem nao pergunta nada. Marcar aqui
+        # queimaria, para sempre e em silencio, a chance de perguntar aquele
+        # campo de verdade -- a uniao no SQL nunca remove.
+        #
+        # Reusa `gravar_estado` em vez de uma funcao nova: regravar os mesmos
+        # `intencao`/`extracao` de cima e idempotente (mais novo vence, mesmos
+        # valores) e mantem a subtracao contra `campos` correta -- esta
+        # segunda chamada so acrescenta `perguntou`, que so agora e seguro
+        # gravar.
+        async with session_factory() as session:
+            await gravar_estado(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                intencao=gerada.intencao,
+                extracao=gerada.extracao,
+                perguntou=gerada.perguntou,
+            )
+            await session.commit()
 
     recorder = MessageRecorder(session_factory)
     await recorder.record_agent_message(
