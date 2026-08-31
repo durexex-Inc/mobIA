@@ -204,7 +204,13 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
     """
     conhecidos: set[str] = set()
     ignorados: list[str] = []
-    for nome in perguntou:
+    # dict.fromkeys em vez de iterar `perguntou` direto: sem dedupe, um nome
+    # repetido (["bairro", "bairro"]) entraria duas vezes em `ignorados`, e o
+    # `len(ignorados) - len(plausiveis)` abaixo contaria a segunda ocorrencia
+    # como se o filtro de PII tivesse suprimido alguem -- um `descartados=1`
+    # mentindo sobre uma supressao que nunca aconteceu, no unico instrumento
+    # que esta card tem para essa deriva.
+    for nome in dict.fromkeys(perguntou):
         if nome in _CAMPOS_DA_EXTRACAO:
             conhecidos.add(nome)
         else:
