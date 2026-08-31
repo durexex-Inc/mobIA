@@ -3367,6 +3367,75 @@ corpus é fictício e o texto é a fala do **agente**.
 específico: se os 26 forem majoritariamente proxy, a aderência real está perto
 de 98% e não há o que aplicar.
 
+### A terceira execução de 31/08 — o texto responde, e a resposta não era a esperada
+
+Primeira execução com o texto da resposta no relatório. Preservada em
+`evals/relatorios/2026-08-31-tom-com-o-texto.md`.
+
+| | 11:46 | 13:19 | 15:0x |
+| --- | --- | --- | --- |
+| acurácia de intenção | 143/147 | 144/147 | 145/147 |
+| **extração (união)** | 89/98 — 90,8% | 89/98 — 90,8% | 90/99 — **90,9%** |
+| `extra` | 1 | 1 | 2 |
+| **aderência ao tom** | — | 121/147 — 82,3% | 118/147 — **80,3%** |
+| violações de comprimento | — | 2 | 1 |
+| violações de perguntas | — | 26 | **28** |
+
+#### A hipótese estava errada, e o texto provou
+
+A suposição era que boa parte das violações de "uma pergunta" fosse erro do
+proxy de `?`. **Não é.** Lendo os textos, a maioria é de duas perguntas de
+qualificação genuínas, quase sempre no mesmo formato:
+
+> `compra-14[0]`: *"Você tem alguma região ou bairro de preferência? **E**
+> precisa de vaga de garagem?"*
+>
+> `aluguel-08[0]`: *"em qual região ou bairro você gostaria de alugar? **E**
+> você tem uma ideia de faixa de valor de aluguel...?"*
+
+Umas três são artefato — abertura fática (*"Como posso te ajudar hoje?"*) ou
+uma pergunta só partida em duas frases — mas não explicam as 28.
+
+#### O achado real: o bloco de perguntas não existe
+
+**Todas as 28 violações são exatamente 2 perguntas. Zero turnos com 3 ou
+mais**, em 147 turnos.
+
+A regra vem de RN-04.7 e a justificativa escrita na card é *"nunca um bloco com
+cinco perguntas"* e *"não responder a um questionário"*. **O cenário que a
+regra teme não está acontecendo.** O que acontece é um padrão estável de duas
+perguntas em ~19% dos turnos.
+
+Isto tem a mesma forma das disputas da TEC-254: a régua literal sinaliza um
+comportamento que o propósito dela talvez não condene. **A decisão é de
+produto** — subir o limiar para 2 contraria RN-04.7 como escrito, e mantê-lo em
+1 exige atacar um comportamento que pode ser aceitável. Fica registrado com o
+dado, sem mexer no limiar.
+
+#### Um achado lateral que é dano mais claro
+
+**O agente repete as mesmas duas perguntas em turnos consecutivos.**
+`compra-14` pergunta *"região? E vaga?"* nos turnos 0, 1 **e** 2 — o lead não
+respondeu e o agente reinsiste, com a mesma formulação.
+
+Isso é pior que perguntar duas de uma vez, e é outro problema. O relatório já
+tem um proxy de reperguntas para o caso vizinho (perguntar o que o estado já
+sabe); este é perguntar de novo o que ainda não foi respondido.
+
+#### A hipótese da dispersão se sustenta no terceiro ponto
+
+Extração deu **90,8 / 90,8 / 90,9** nas três execuções, com `extra` em
+**1 / 1 / 2**. Invenção baixa e estável, métrica parada — como a leitura de que
+a dispersão segue a invenção previa. `DISPERSAO_MEDIDA` continua em 5,7 pelo
+mesmo motivo de antes: ele diz o que o gate não resolve no pior caso observado.
+
+#### Lacunas conhecidas
+
+- **A decisão do limiar de perguntas está aberta**, e é de produto.
+- **A repetição de perguntas não tem card nem medição.** O proxy atual mede
+  outra coisa.
+- **Três pontos ainda não são distribuição**, mesmo os três concordando.
+
 ## TEC-140 (parte 1) — A aderência ao tom deixou de ser um slot vazio
 
 O relatório do gate declarava, em toda execução paga:
