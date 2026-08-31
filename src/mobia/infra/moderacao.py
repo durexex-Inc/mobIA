@@ -10,6 +10,7 @@ from anthropic.types import Message
 from mobia.app.config import ConfiguracaoInsegura, get_settings
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.domain.moderacao.port import Direcao, ModeracaoIndisponivel, Veredito
+from mobia.infra.anthropic import motivo_do_provedor
 
 log = structlog.get_logger(__name__)
 
@@ -131,7 +132,12 @@ class ModeradorAnthropic:
         except Exception as exc:
             # Nunca interpola `texto` nem `str(exc)`: o primeiro e conteudo do
             # lead ou da empresa, e o segundo pode ecoar o corpo enviado.
-            raise ModeracaoIndisponivel(type(exc).__name__) from exc
+            #
+            # `motivo_do_provedor` nao afrouxa isso (TEC-237): ele devolve
+            # `None` para qualquer excecao que nao seja `APIStatusError`, e
+            # para essas devolve o corpo de erro que o servidor escreveu. Foi
+            # este caminho que somou 41 das 91 falhas cegas de 28/08.
+            raise ModeracaoIndisponivel(motivo_do_provedor(exc) or type(exc).__name__) from exc
 
         # Antes de qualquer recusa abaixo: a chamada ja foi paga, e o veredito
         # fora do protocolo custa igual ao veredito bom. Registrar so no

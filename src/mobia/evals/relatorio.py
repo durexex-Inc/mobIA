@@ -37,6 +37,10 @@ def _secao_de_infraestrutura(falhas: Sequence[FalhaDeInfraestrutura]) -> list[st
     ]
     for falha in falhas:
         linhas.append(f"- {falha.conversa_id}[{falha.indice}]: {falha.erro}")
+        # Indentado sob a falha, e nao concatenado nela: a mensagem do provedor
+        # pode ter 300 caracteres, e a lista continua legivel de relance.
+        if falha.motivo:
+            linhas.append(f"    {falha.motivo}")
     return linhas
 
 

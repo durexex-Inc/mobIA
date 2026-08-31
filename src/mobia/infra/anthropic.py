@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from anthropic import AsyncAnthropic
+from anthropic import APIStatusError, AsyncAnthropic
 
 from mobia.app.config import ConfiguracaoInsegura, get_settings
 
@@ -39,3 +39,74 @@ def get_client() -> AsyncAnthropic:
             "defina no .env ou no ambiente antes de subir a API ou o worker."
         )
     return AsyncAnthropic(api_key=chave, timeout=TIMEOUT_SEGUNDOS, max_retries=MAX_TENTATIVAS)
+
+
+# Teto do texto que vem do provedor. A mensagem que resolveu o incidente de
+# 28/08 cabe em ~120 caracteres; o teto existe para o dia em que ela nao
+# couber, porque log estruturado nao e lugar de despejo.
+MAX_CARACTERES_DO_MOTIVO = 300
+
+
+def motivo_do_provedor(exc: BaseException) -> str | None:
+    """O porque de um erro de protocolo do provedor, sem conteudo do lead.
+
+    **Isto e uma excecao deliberada a regra de nunca logar `str(exc)`**, e a
+    regra continua valendo em todo o resto. A distincao que a justifica: o
+    corpo de erro de um `APIStatusError` e **gerado pelo servidor** em resposta
+    a requisicao, e nao o texto que uma excecao qualquer do Python monta
+    interpolando o valor que a fez estourar. Um `KeyError` de um schema
+    inesperado ecoa o valor recebido; um 400 da API devolve prosa que o
+    servidor escreveu.
+
+    Por isso o `isinstance` e a guarda inteira: qualquer excecao que nao seja
+    `APIStatusError` devolve `None`, e nenhum texto dela chega a lugar nenhum.
+    Nao ha ramo "melhor esforco" -- ele seria exatamente o buraco que esta
+    funcao existe para nao abrir.
+
+    **Por que a card existe (TEC-237).** Em 28/08/2026 o gate pago falhou em
+    100% das chamadas com `BadRequestError`, e o diagnostico levou um dia por
+    tres hipoteses erradas. A causa estava na primeira linha do corpo de erro,
+    que ninguem via porque so o nome da classe era registrado:
+
+        400 invalid_request_error: Your credit balance is too low to access
+        the Anthropic API.
+
+    Saldo esgotado volta como **400**, o mesmo codigo de um erro de contrato.
+    Sem a mensagem nao ha como separar "a conta acabou" de "o schema quebrou".
+
+    **O risco que sobra, e ele nao e zero.** A garantia depende de o provedor
+    nao ecoar o payload no corpo de erro. Isso vale para os erros de conta,
+    permissao e limite -- os que motivaram esta funcao --, mas um erro de
+    validacao de schema poderia, em tese, citar o valor recusado. Tres coisas
+    limitam o estrago: o teto de caracteres, o mascaramento de corrida de
+    digitos que `app/logging.py` aplica a todo valor logado, e o fato de a
+    chamada do classificador mandar a fala do lead em `messages`, que a API
+    valida por forma e nao por conteudo. Nao e prova; e o balanco entre um dia
+    de diagnostico e um risco estreito, tomado com os olhos abertos.
+    """
+    if not isinstance(exc, APIStatusError):
+        return None
+
+    corpo = exc.body if isinstance(exc.body, dict) else {}
+    erro = corpo.get("error")
+    erro = erro if isinstance(erro, dict) else {}
+
+    tipo = erro.get("type")
+    mensagem = erro.get("message")
+
+    partes = [str(exc.status_code)]
+    if isinstance(tipo, str) and tipo:
+        partes.append(tipo)
+    resumo = " ".join(partes)
+    if isinstance(mensagem, str) and mensagem:
+        cortada = mensagem[:MAX_CARACTERES_DO_MOTIVO]
+        sufixo = "..." if len(mensagem) > MAX_CARACTERES_DO_MOTIVO else ""
+        resumo = f"{resumo}: {cortada}{sufixo}"
+
+    # `request_id` e o handle de correlacao com o suporte do provedor, e nao
+    # tem conteudo nenhum. Ele nao estava no escopo da card e entra porque a
+    # proxima investigacao vai querer citar um numero para quem atende.
+    request_id = getattr(exc, "request_id", None)
+    if isinstance(request_id, str) and request_id:
+        resumo = f"{resumo} (request_id={request_id})"
+    return resumo

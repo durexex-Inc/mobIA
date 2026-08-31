@@ -479,3 +479,39 @@ def test_relatorio_traz_a_extracao_efetiva_com_o_endereco_da_divergencia() -> No
 
 def test_relatorio_sem_extracao_efetiva_omite_a_secao() -> None:
     assert "Extracao efetiva" not in render([], {})
+
+
+def test_relatorio_mostra_o_porque_da_falha_de_infraestrutura() -> None:
+    """91 linhas de `BadRequestError` e nenhuma pista custaram um dia (TEC-237).
+
+    O motivo vem indentado sob a falha, e nao concatenado nela: a mensagem do
+    provedor pode ter 300 caracteres, e a lista continua legivel de relance.
+    """
+    texto = render(
+        [],
+        {},
+        infraestrutura=[
+            FalhaDeInfraestrutura(
+                conversa_id="compra-01",
+                indice=0,
+                erro="BadRequestError",
+                motivo="400 invalid_request_error: Your credit balance is too low.",
+            )
+        ],
+    )
+
+    assert "compra-01[0]: BadRequestError" in texto
+    assert "    400 invalid_request_error: Your credit balance is too low." in texto
+
+
+def test_falha_sem_motivo_nao_ganha_linha_vazia() -> None:
+    """Timeout e 429 nao tem corpo de erro do servidor, e a maioria das falhas
+    de infraestrutura e disso."""
+    texto = render(
+        [],
+        {},
+        infraestrutura=[FalhaDeInfraestrutura(conversa_id="c-01", indice=0, erro="TimeoutError")],
+    )
+
+    assert "c-01[0]: TimeoutError" in texto
+    assert "\n    \n" not in texto
