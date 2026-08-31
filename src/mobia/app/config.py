@@ -173,7 +173,19 @@ class Settings(BaseSettings):
     # literais e resumo por turno, de 12000 -- 0,4% do contexto**. Muito menor
     # que o da subida anterior (400 tokens, 3,3%), e a decisao foi tomada com
     # o numero na mao, nao por reflexo.
-    contexto_headroom_de_tokens: int = 850
+    #
+    # **850 -> 880 na TEC-257**, que gastou ~18,5 tokens no campo `perguntou`
+    # do `SCHEMA_DA_RESPOSTA` -- lista de strings livre em vez de enum dos
+    # nove campos, que custaria +56,0 -- e ~0,75 na clausula da memoria de
+    # `SISTEMA_DO_AGENTE` (classificador.py), ~19,25 no total. A clausula foi
+    # **encurtada, e nao acrescentada**: "nao repergunte o que ja esta
+    # preenchido" virou "nao repergunte o preenchido nem o ignorado", e foi o
+    # corte na forma existente que pagou quase toda a clausula nova -- +0,75
+    # em vez dos +6,25 que so acrescentar teria custado.
+    # Preco desta subida: **30 tokens a menos de literais e resumo por turno,
+    # de 12000 -- 0,25% do contexto**. Menor que as duas anteriores (3,3% e
+    # 0,4%).
+    contexto_headroom_de_tokens: int = 880
 
     # Dobrar `gatilho - minimas` mensagens deixa exatamente `minimas` literais.
     # Manter gatilho >= 2 * minimas e o que garante o piso depois da regeneracao.

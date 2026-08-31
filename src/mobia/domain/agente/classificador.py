@@ -65,6 +65,15 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # ordem de geracao do modelo num caminho pago, para todo turno de producao;
 # decisao recusada por falta de instrumento para medir o efeito. Quem for
 # editar o prompt: isto nao e inconsistencia para "consertar".
+#
+# A clausula da memoria foi **reescrita** e nao acrescentada, na TEC-257.
+# "nao repergunte o que ja esta preenchido nem o que o lead ignorou" custava
+# +6,25 tokens sobre uma margem de 4,2; encurtar a clausula existente para
+# "nao repergunte o preenchido nem o ignorado" cobre os dois casos por +0,75.
+# "o ignorado" depende de o modelo ligar a palavra a linha
+# "(perguntado, sem resposta)" que `_texto_do_estado` poe no estado -- a forma
+# explicita existia e custava 3,25, recusada por nao deixar folga para
+# ninguem depois.
 SISTEMA_DO_AGENTE = (
     "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
     "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
@@ -76,8 +85,8 @@ SISTEMA_DO_AGENTE = (
     "imobiliario).\n\n"
     "A confianca e o quanto voce considera a classificacao segura, de 0 a 1.\n\n"
     "Responda em portugues do Brasil, em tom de conversa. Use o resumo e o "
-    "estado de qualificacao como memoria: nao repergunte o que ja esta "
-    "preenchido. Nao invente informacao sobre imoveis que nao esteja no "
+    "estado de qualificacao como memoria: nao repergunte o preenchido nem o "
+    "ignorado. Nao invente informacao sobre imoveis que nao esteja no "
     "contexto."
     "\n\nNa extracao, preencha so o que a fala DESTE turno afirma, mesmo que "
     "ja esteja no estado; o resto e null. "
@@ -110,6 +119,16 @@ SCHEMA_DA_RESPOSTA: dict[str, Any] = {
         "intencao": {"type": "string", "enum": [membro.value for membro in Intencao]},
         "confianca": {"type": "number", "minimum": 0, "maximum": 1},
         "resposta": {"type": "string"},
+        # TEC-257. Lista de strings livre, e nao enum dos nove campos: o
+        # enum impede o modelo inventar nome, e custaria +56,0 tokens contra
+        # +18,5 desta forma. Nome inventado nao casa em `campos_a_marcar`, e
+        # e descartado -- marca de MENOS, que e o erro seguro quando a marca
+        # e permanente. Marcar de mais mataria o campo em silencio.
+        #
+        # Sem `description`: nenhum campo deste schema tem, e uma aqui
+        # custaria mais que o campo inteiro. O modelo infere o vocabulario de
+        # `extracao`, no mesmo objeto, que carrega exatamente os nove nomes.
+        "perguntou": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["intencao", "confianca", "resposta"],
     "additionalProperties": False,
@@ -191,7 +210,7 @@ SCHEMA_DA_EXTRACAO: dict[str, Any] = {
 # `json.dumps`. Foi por isso que a TEC-240 identificou a saida e a recusou:
 # de graca em tokens, mas muda a ordem de geracao num caminho pago, para todo
 # turno de producao, numa card que nao podia medir nada.
-_ORDEM_DOS_CAMPOS = ("intencao", "confianca", "extracao", "resposta")
+_ORDEM_DOS_CAMPOS = ("intencao", "confianca", "extracao", "resposta", "perguntou")
 
 SCHEMA_DA_RESPOSTA["properties"]["extracao"] = SCHEMA_DA_EXTRACAO
 if set(SCHEMA_DA_RESPOSTA["properties"]) != set(_ORDEM_DOS_CAMPOS):
@@ -223,6 +242,22 @@ def _numero(bruto: Any) -> Decimal | None:
     # comparacao -- toda comparacao com NaN e falsa, e um NaN que escapasse
     # seria gravado no banco como campo valido.
     return valor if valor.is_finite() else None
+
+
+def _perguntou(bruto: Any) -> tuple[str, ...]:
+    """Os nomes de campo que o modelo diz ter perguntado neste turno.
+
+    Nao valida os nomes de proposito: quem filtra contra `fields(Extracao)` e
+    `campos_a_marcar`, que tambem loga o que descartou. Duas filtragens
+    divergiriam, e a divergencia so apareceria na borda.
+
+    Nao levanta nunca. Este campo e o modelo relatando o que ele mesmo fez --
+    uma forma errada aqui nao pode custar o turno inteiro, que ja foi pago e
+    ja tem resposta valida para o lead.
+    """
+    if not isinstance(bruto, list):
+        return ()
+    return tuple(item for item in bruto if isinstance(item, str))
 
 
 def _preco(bruto: Any) -> Decimal | None:
@@ -469,6 +504,7 @@ class ClassificadorAnthropic:
                 tokens_out=resposta.usage.output_tokens,
                 latency_ms=latency_ms,
                 extracao=extrair(dados.get("extracao")),
+                perguntou=_perguntou(dados.get("perguntou")),
                 cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
                 cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
             )

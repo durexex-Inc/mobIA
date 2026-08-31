@@ -8,9 +8,10 @@ from sqlalchemy import text as sql
 
 from mobia.domain.agente.classificador import RespostaInvalida
 from mobia.domain.agente.repositorio import ler_intencao
-from mobia.domain.agente.schemas import Intencao
+from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.agente.turno import KIND_DA_RESPOSTA, SUBAGENTE_DESAMBIGUADOR, executar_turno
 from mobia.domain.context.montagem import ContextoIrreducivel
+from mobia.domain.context.repositorio import ler_estado
 from mobia.domain.outbound.models import OutboundDispatch
 from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, EnvioRetentavel
 from mobia.infra.db import get_sessionmaker
@@ -436,3 +437,158 @@ async def test_falha_da_segunda_chamada_derruba_o_turno(
     assert gravada is not None
     assert gravada.intencao is Intencao.COMPRA, "a classificacao aconteceu e fica registrada"
     assert gravada.desambiguado_em is None, "a proxima passada ainda pode perguntar"
+
+
+async def test_marca_de_perguntou_nao_e_gravada_quando_desambigua(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """A resposta da chamada 1 e descartada -- paga e nao entregue (TEC-236).
+
+    O que ela declarou ter "perguntado" nunca chegou ao lead: quem chega e a
+    pergunta do desambiguador. Fix round 1 da Task 4 (TEC-257): a versao
+    anterior gravava `perguntou` no mesmo commit da intencao/extracao, antes de
+    saber se a resposta ia ser entregue -- e como a uniao no SQL nunca remove,
+    isso marcava o campo como ja perguntado para sempre, sem nunca ter sido.
+    """
+    classificador = classificador_fake(
+        Intencao.COMPRA,
+        confianca=BAIXA,
+        extracao=Extracao(quartos=2),
+        perguntou=("regiao",),
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert classificador.desambiguacoes == 1, "o turno de fato desambiguou"
+
+    async with get_sessionmaker()() as outra:
+        estado = await ler_estado(outra, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.perguntados_sem_resposta == [], (
+        "vazio, nao nulo (Task 4 sempre escreve a coluna) e sem 'regiao': "
+        "a chamada que perguntou isso foi descartada"
+    )
+
+
+async def test_marca_de_perguntou_e_gravada_no_caminho_normal(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """Sem desambiguacao e sem bloqueio, `gerada` e de fato o texto entregue."""
+    classificador = classificador_fake(
+        Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+        perguntou=("regiao",),
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert classificador.desambiguacoes == 0
+
+    async with get_sessionmaker()() as outra:
+        estado = await ler_estado(outra, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.perguntados_sem_resposta == ["regiao"]
+
+
+async def test_marca_de_perguntou_nao_e_gravada_com_saida_bloqueada(
+    session,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """O lead recebeu `TEXTO_NEUTRO_DE_SAIDA`, que nao pergunta nada."""
+    classificador = classificador_fake(
+        Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+        perguntou=("regiao",),
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session,
+        classificador,
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador=moderador_fake(bloqueia_saida=True),
+    )
+
+    assert resultado == "respondido"
+
+    async with get_sessionmaker()() as outra:
+        estado = await ler_estado(outra, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.perguntados_sem_resposta == []
+
+
+async def test_marca_de_perguntou_pos_entrega_nao_reescreve_valor_concorrente(
+    session, classificador_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """A escrita pos-entrega toca so a marca -- nunca intencao/extracao.
+
+    Fix da revisao do fechamento da TEC-257: a versao anterior deste commit
+    reusava `gravar_estado` inteiro no ponto pos-entrega, regravando os
+    mesmos `intencao`/`extracao` de `gerada`. Isso e idempotente so contra si
+    mesmo -- contra um turno concorrente da MESMA conversa que grave um valor
+    mais novo PARA O MESMO CAMPO entre o commit pre-entrega e esta escrita,
+    aquele reuso sobrescreveria o valor mais novo com o mais velho,
+    invertendo "mais novo vence" em silencio. `marcar_perguntados` fecha isso
+    tocando so a coluna da marca -- nao ha coluna de valor no `SET` para
+    inverter.
+
+    O teste simula a corrida usando o unico ponto de sincronizacao real do
+    turno: o outbound. `_deliver` -- chamado depois do commit pre-entrega
+    (que grava `quartos=2`) e antes da marcacao pos-entrega -- grava
+    `quartos=5` como se fosse um turno concorrente mais novo da mesma
+    conversa. Com o bug, a marcacao pos-entrega regravaria `quartos=2` por
+    cima; com o fix, `quartos` fica intocado.
+    """
+    from conftest import OutboundFake
+
+    class OutboundQueEscreveNoMeio(OutboundFake):
+        async def _deliver(self, message_id, kind, payload) -> None:
+            async with get_sessionmaker()() as concorrente:
+                await concorrente.execute(
+                    sql(
+                        "UPDATE lead_qualification SET quartos = 5 "
+                        "WHERE channel = :canal AND conversation_key = :conversa"
+                    ),
+                    {"canal": CANAL, "conversa": CONVERSA},
+                )
+                await concorrente.commit()
+            await super()._deliver(message_id, kind, payload)
+
+    classificador = classificador_fake(
+        Intencao.COMPRA,
+        extracao=Extracao(quartos=2),
+        perguntou=("regiao",),
+    )
+    outbound = OutboundQueEscreveNoMeio(get_sessionmaker())
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+
+    async with get_sessionmaker()() as outra:
+        estado = await ler_estado(outra, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.quartos == 5, (
+        "o valor concorrente (mais novo) foi sobrescrito pela marcacao "
+        "pos-entrega -- ela regravou extracao=2, invertendo 'mais novo vence'"
+    )
+    assert estado.perguntados_sem_resposta == ["regiao"], (
+        "a marca ainda tem de ser gravada -- so os valores nao podem ser tocados"
+    )

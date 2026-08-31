@@ -16,7 +16,7 @@ import pytest
 from mobia.app.config import get_settings
 from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE, ClassificadorAnthropic
 from mobia.domain.context.models import LeadQualification
-from mobia.domain.context.repositorio import campos_a_gravar
+from mobia.domain.context.repositorio import campos_a_gravar, campos_a_marcar
 from mobia.domain.messages.enums import MessageRole
 from mobia.evals.contexto import contexto_do_historico
 from mobia.evals.corpus import ConversaAnotada
@@ -81,6 +81,23 @@ def _reperguntou(texto: str, campos_conhecidos: Iterable[str]) -> list[str]:
     iteracao de um `set`.
     """
     return sorted(campos_perguntados(texto) & set(campos_conhecidos))
+
+
+# A chave que `campos_a_marcar` acumula no estado sintetico. Nao e campo de
+# extracao, e por isso nao pode entrar em `conhecidos_antes`.
+CHAVE_DA_MARCA = "perguntados_sem_resposta"
+
+
+def _campos_conhecidos(estado: dict[str, Any]) -> set[str]:
+    """Os campos que o estado sintetico ja sabe, sem a chave da marca.
+
+    A armadilha que isto fecha: `set(estado_acumulado)` cru poria a string
+    "perguntados_sem_resposta" na lista de campos conhecidos, e os dois
+    proxies passariam a tratar a marca como um campo que o lead respondeu.
+    `intencao` fica -- ela sempre esteve aqui, vem de `campos_a_gravar`, e
+    nenhum marcador de repergunta casa com ela.
+    """
+    return set(estado) - {CHAVE_DA_MARCA}
 
 
 class InfraestruturaFalhou(RuntimeError):
@@ -161,7 +178,7 @@ async def _rodar_conversa(
         # Capturado antes da chamada: a pergunta do proxy e sobre o que ja era
         # conhecido *antes* deste turno, nao sobre o que este turno acabou de
         # extrair.
-        conhecidos_antes = set(estado_acumulado)
+        conhecidos_antes = _campos_conhecidos(estado_acumulado)
         contexto = contexto_do_historico(
             historico,
             sistema=SISTEMA_DO_AGENTE,
@@ -229,12 +246,19 @@ async def _rodar_conversa(
         # funcao que `gravar_estado` tambem usa: guarda de `FORA_DE_ESCOPO`
         # (nao acumula nada neste turno), mais novo vence (o `update` por
         # cima do que ja havia), `None` nao apaga, e `intencao` sempre entra
-        # quando ha gravacao. Antes desta funcao existir o runner divergia de
-        # producao nas duas ultimas: acumulava atraves de `FORA_DE_ESCOPO` e
-        # nunca guardava `intencao`, entao o prompt sintetico do eval nunca
-        # carregava a linha `intencao: X` que `montagem._texto_do_estado`
-        # poe no prompt real a partir do segundo turno.
-        estado_acumulado.update(campos_a_gravar(resposta.intencao, resposta.extracao))
+        # quando ha gravacao.
+        #
+        # A marca da TEC-257 segue o mesmo caminho e a mesma guarda, por
+        # `campos_a_marcar`: sem isto o prompt sintetico do eval nao carrega
+        # a linha "(perguntado, sem resposta)" que producao carrega, e o eval
+        # nao consegue medir o conserto. E o mesmo defeito que fez
+        # `campos_a_gravar` existir, um andar acima.
+        campos_do_turno = campos_a_gravar(resposta.intencao, resposta.extracao)
+        if campos_do_turno:
+            marcados = set(estado_acumulado.get(CHAVE_DA_MARCA) or ())
+            marcados |= campos_a_marcar(resposta.perguntou, set(campos_do_turno))
+            estado_acumulado.update(campos_do_turno)
+            estado_acumulado[CHAVE_DA_MARCA] = sorted(marcados)
 
         respostas.append(
             RespostaObservada(conversa_id=conversa.id, indice=indice, texto=resposta.resposta)

@@ -9,7 +9,7 @@ Antes deste arquivo, `_reperguntou` nao tinha teste nenhum -- foi por isso que
 o substring cru sem fronteira de palavra e sem exigir `?` passou despercebido.
 """
 
-from evals.test_acuracia_de_intencao import _reperguntou
+from evals.test_acuracia_de_intencao import _campos_conhecidos, _reperguntou
 
 CAMPOS = ("regiao", "quartos", "vagas", "tipo_imovel", "faixa_preco_max")
 
@@ -43,3 +43,19 @@ def test_reperguntou_conta_pergunta_real_de_regiao() -> None:
 
 def test_reperguntou_conta_pergunta_real_de_quartos() -> None:
     assert _reperguntou("Quantos quartos voce precisa?", CAMPOS) == ["quartos"]
+
+
+def test_conhecidos_antes_nao_conta_a_chave_da_marca() -> None:
+    """A armadilha nomeada no spec (D10).
+
+    `conhecidos_antes` e `set(estado_acumulado)`. Com a marca virando mais
+    uma chave do dict, a string "perguntados_sem_resposta" entraria como se
+    fosse um campo conhecido e contaminaria os dois proxies -- `_reperguntou`
+    e o `- conhecidos_antes` de `campos_perguntados`.
+    """
+    estado = {
+        "intencao": "COMPRA",
+        "quartos": 2,
+        "perguntados_sem_resposta": ["regiao"],
+    }
+    assert _campos_conhecidos(estado) == {"intencao", "quartos"}

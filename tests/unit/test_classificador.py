@@ -17,6 +17,7 @@ from mobia.domain.agente.classificador import (
     SISTEMA_DO_AGENTE,
     ClassificadorAnthropic,
     RespostaInvalida,
+    _perguntou,
 )
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.montagem import ContextoMontado
@@ -274,6 +275,39 @@ async def test_classificar_envia_schema_compilado_no_output_config(
     # tests/unit/test_intencao.py leem esse dict diretamente.
     assert SCHEMA_DA_RESPOSTA["properties"]["confianca"]["minimum"] == 0
     assert SCHEMA_DA_RESPOSTA["properties"]["confianca"]["maximum"] == 1
+
+
+def test_perguntou_chega_como_tupla_de_nomes():
+    """O campo novo da TEC-257: o modelo diz sobre o que perguntou.
+
+    Nao filtra nada aqui -- filtrar e a regra de `campos_a_marcar`, que
+    precisa logar o que descartou. Aqui so a forma.
+    """
+    assert _perguntou(["regiao", "vagas"]) == ("regiao", "vagas")
+
+
+def test_perguntou_tolera_forma_errada_sem_levantar():
+    """Nome inventado nao e recusado aqui, e nao-string e descartado.
+
+    Recusar a resposta inteira por causa deste campo trocaria um turno
+    respondido por um turno perdido -- o campo e diagnostico do proprio
+    modelo, nao dado do lead.
+    """
+    assert _perguntou(None) == ()
+    assert _perguntou("regiao") == ()
+    assert _perguntou(["regiao", 7, None, "bairro"]) == ("regiao", "bairro")
+
+
+def test_a_ordem_dos_campos_poe_perguntou_depois_de_resposta():
+    """TEC-244: a ordem do schema e a ordem de geracao, e ela e deliberada.
+
+    `perguntou` relata o que a resposta ja escrita pergunta. Antes de
+    `resposta`, seria um compromisso a honrar -- pedido diferente, nunca
+    medido.
+    """
+    ordem = list(SCHEMA_DA_RESPOSTA["properties"])
+    assert ordem.index("perguntou") > ordem.index("resposta")
+    assert SCHEMA_DA_RESPOSTA["required"] == ordem
 
 
 async def test_classificar_envia_payload_real_sem_minimum_maximum_via_sdk(
