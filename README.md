@@ -3022,6 +3022,84 @@ discordar.
 - **Não há alerta de saldo.** Esta card faz o diagnóstico custar cinco minutos
   em vez de um dia; não impede a próxima parada.
 
+## TEC-236 — A fala bloqueada saía do turno, mas continuava entrando no contexto
+
+A moderação de entrada da TEC-233 impede que a fala bloqueada vire **resposta
+naquele turno** — não que ela vire contexto ou resumo depois. O spec daquela
+card afirmava o contrário, e a divergência já estava registrada.
+
+O caminho que expunha o defeito: o lead manda M1 (bloqueada), recebe a recusa,
+manda M2 — e o turno de M2 monta contexto **decifrando M1 inteira** para dentro
+do prompt. Na dobra dos ~40 turnos, M1 entra no resumo permanente e fica lá.
+
+### Marca em paralelo ao `status`, e não um `MessageStatus` novo
+
+A card deixou a escolha ao implementador e pediu que ficasse registrada. É esta,
+e as três razões:
+
+- **`status` responde outra pergunta.** Ele diz se o pipeline de ingestão
+  terminou com a linha. Um turno bloqueado **entregou** a recusa ao lead: ele
+  terminou, e `PROCESSED` é a resposta certa. Um `BLOCKED` terminal contaria a
+  mesma história com outra palavra.
+- **`CLAIMABLE_STATUSES` governa o que o sweeper reivindica.** Um valor novo no
+  enum obriga a revisar essa tupla e todo `status ==` do projeto por uma
+  pergunta que não é sobre retentativa.
+- **As duas coisas coexistem.** Uma fala bloqueada cuja recusa não foi entregue
+  é `FAILED` **e** bloqueada. Um campo só não representa isso.
+
+E há a prova estrutural: `status` é escrito por `process_message`, pelo desfecho
+do turno; `executar_turno` nunca toca nele. As duas colunas são escritas por
+camadas diferentes. Um teste afirma exatamente isso.
+
+`bloqueada_em` é timestamp e não booleano pelo mesmo motivo de
+`desambiguado_em`: ocupa o mesmo espaço e responde "quando" numa investigação.
+
+### O filtro mora na janela, e o resumo herda de graça
+
+`literais_apos` ganhou `Message.bloqueada_em.is_(None)`. É o ponto por onde tudo
+que monta contexto ou resumo passa, então o que não sai dali não chega a lugar
+nenhum — `dividir` recebe o que `literais_apos` devolve, e a dobra nunca vê a
+fala bloqueada.
+
+**Consequência aceita:** a mensagem bloqueada deixa de contar para o gatilho de
+regeneração. É correto — o gatilho conta o que vai virar prompt —, e está
+anotado no teste que precisou semear 41 em vez de 40 por causa disso.
+
+### Marcar vem antes de entregar, e a ordem é o ponto
+
+`_entregar_texto_fixo` tem três saídas que não entregam nada: janela de 24h
+fechada, recusa permanente da Meta, reentrega suprimida. **Duas delas fecham a
+linha em `PROCESSED`, que é terminal** — ninguém volta nela.
+
+Marcar depois da entrega deixaria a fala bloqueada sem marca exatamente nos
+casos em que ninguém mais passa por ali, e ela entraria no contexto do turno
+seguinte. Um teste cobre isso com a janela fechada.
+
+### A marca propaga a falha, ao contrário da telemetria
+
+`marcar_bloqueada` mora fora de `MessageRecorder` de propósito. O contrato
+daquele é explícito — *"nenhum método propaga exceção"* — e está certo para
+telemetria: perder uma linha de custo não pode derrubar a resposta.
+
+Aqui a escolha é a oposta. Se a marca falhar em silêncio, a fala bloqueada
+continua elegível para o contexto e para o resumo permanente. O desfecho seguro
+é falhar o turno, deixar a linha em `FAILED` e o sweeper retentar — pagando de
+novo a moderação, que é barata perto de vazar a fala para dentro do prompt.
+
+### Lacunas conhecidas
+
+- **As falas bloqueadas antes desta migration não têm marca**, e não há como
+  distingui-las: o bloqueio não deixava rastro na linha, e esse era o defeito.
+  Elas continuam elegíveis para contexto e resumo. Backfill exigiria re-moderar
+  histórico (pago) ou cruzar com o log de `moderacao.entrada_bloqueada`, que
+  retém por tempo limitado. Está escrito na própria migration.
+- **Bloqueio de saída não grava marca**, e não precisa: `_entregar_texto_fixo`
+  registra o texto neutro entregue, e a fala recusada do modelo nunca existiu
+  como linha.
+- **Moderação com histórico da conversa** — falas individualmente inofensivas
+  que compõem assédio ao longo de vários turnos — continua fora, é outra lacuna
+  declarada e outra card.
+
 ## Escolher o modelo no disparo manual do gate
 
 `workflow_dispatch` passou a aceitar um input `modelo`. Vazio — que é o caso de

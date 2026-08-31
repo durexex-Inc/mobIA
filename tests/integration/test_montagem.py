@@ -993,3 +993,99 @@ async def test_conteudo_curto_em_caracteres_nunca_aciona_a_contagem_real(session
         "sendo emoji denso -- risco aceito e documentado, nao coberto por "
         "este limiar"
     )
+
+
+class _ResumidorEspiao(ResumidorFake):
+    """Registra o `conteudo` que recebeu, e nao so a instrucao.
+
+    `ResumidorFake` guarda `chamadas` com a instrucao; para a TEC-236 o que
+    importa e o outro argumento -- e nele que as falas literais viajam para
+    dentro do resumo permanente.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.conteudos: list[str] = []
+
+    async def resumir(self, instrucao: str, conteudo: str):
+        self.conteudos.append(conteudo)
+        return await super().resumir(instrucao, conteudo)
+
+
+async def _bloquear(session, mensagem: Message) -> None:
+    from mobia.domain.messages.bloqueio import marcar_bloqueada
+
+    await marcar_bloqueada(get_sessionmaker(), mensagem.id)
+    await session.refresh(mensagem)
+
+
+async def test_fala_bloqueada_nao_entra_na_janela(session) -> None:
+    """O filtro na origem, no menor nivel possivel.
+
+    `literais_apos` e onde a correcao mora, e nao no chamador: tudo o que monta
+    contexto ou resumo passa por aqui, entao o que nao sai daqui nao chega a
+    lugar nenhum.
+    """
+    criadas = await semear(session, 5)
+    await _bloquear(session, criadas[2])
+
+    janela = await literais_apos(session, CANAL, CONVERSA, None)
+
+    assert len(janela) == 4
+    assert criadas[2].id not in {m.id for m in janela}
+
+
+async def test_fala_bloqueada_nao_entra_no_contexto_do_turno_seguinte(session) -> None:
+    """O defeito que a TEC-236 conserta, no caminho que o expunha.
+
+    A TEC-233 impedia que a fala bloqueada virasse **resposta naquele turno**.
+    O turno seguinte montava contexto decifrando-a inteira para dentro do
+    prompt -- e era exatamente esse turno que ninguem testava.
+    """
+    criadas = await semear(session, 3, texto=None)
+    bloqueada = criadas[1]
+    await _bloquear(session, bloqueada)
+
+    contexto = await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorFake(),
+        contador=ContadorFake(),
+    )
+
+    literais = {m.id for m in contexto.literais}
+    assert len(contexto.literais) == 2
+    assert bloqueada.id not in literais, "a fala bloqueada foi montada no contexto"
+    assert {criadas[0].id, criadas[2].id} == literais, "as outras continuam"
+
+
+async def test_fala_bloqueada_nao_entra_no_resumo_na_dobra(session) -> None:
+    """A metade permanente do defeito, e a que nao tem volta.
+
+    Contexto e efemero: a fala sai da janela quando a conversa anda. O resumo
+    nao -- o que entra na dobra fica gravado e viaja em todo turno seguinte,
+    para sempre. Se a fala bloqueada atravessa aqui, ela sobrevive a propria
+    janela.
+    """
+    # 41 e nao 40: a mensagem bloqueada sai da janela, entao ela deixa de
+    # contar para o gatilho. E consequencia correta -- o gatilho conta o que
+    # vai virar prompt --, mas o teste tem de semear uma a mais para a dobra
+    # ainda acontecer.
+    criadas = await semear(session, 41)
+    # Uma das mais antigas: sao essas que a dobra consome.
+    bloqueada = criadas[3]
+    await _bloquear(session, bloqueada)
+    resumidor = _ResumidorEspiao()
+
+    await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=resumidor,
+        contador=ContadorFake(),
+    )
+
+    assert len(resumidor.conteudos) == 1, "40 literais nao bloqueados disparam a dobra"
+    assert "mensagem 3" not in resumidor.conteudos[0]
+    assert "mensagem 2" in resumidor.conteudos[0], "as outras foram dobradas normalmente"
