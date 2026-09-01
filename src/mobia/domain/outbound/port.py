@@ -7,6 +7,8 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
+from mobia.domain.optout.repositorio import esta_em_optout_por_mensagem
 from mobia.domain.outbound.models import OutboundDispatch
 
 log = structlog.get_logger(__name__)
@@ -64,8 +66,28 @@ class OutboundPort(Protocol):
     fora. A guarda a trata como retentavel (libera a reserva e propaga) --
     ver TEC-227.
 
-    E `send` devolve `False`, sem levantar, quando a guarda suprime uma
-    reentrega -- ver `GuardedOutbound.send` e `turno.reentrega_suprimida`.
+    `send` devolve `False`, sem levantar, em duas situacoes distintas, e
+    quem le o retorno nao consegue distinguir uma da outra so pelo booleano:
+
+    - Reentrega suprimida: a reserva em `outbound_dispatches` ja existia
+      para este `(message_id, kind)` -- ver `GuardedOutbound.send` e
+      `turno.reentrega_suprimida`.
+    - Envio barrado pela guarda de opt-out: o lead deste `message_id` pediu
+      para parar de receber mensagem, e `kind` nao e
+      `KIND_DA_CONFIRMACAO_DE_OPTOUT` -- ver `GuardedOutbound.send` e
+      `esta_em_optout_por_mensagem`.
+
+    `OutboundPort` e um Protocol estrutural: qualquer classe com um metodo
+    `send` de assinatura compativel satisfaz o tipo, herdando de
+    `GuardedOutbound` ou nao. A guarda de opt-out, porem, so existe dentro do
+    corpo de `GuardedOutbound.send` -- nao ha nada no `Protocol` em si, nem
+    no `mypy`, que a force. Um adaptador novo escrito direto contra este
+    Protocol, sem herdar de `GuardedOutbound`, tipa igual e passa em
+    qualquer checagem estatica, mas nao tem a guarda: ele manda mensagem
+    para quem pediu para parar. Isso nao e um bug de performance ou um
+    turno errado -- e uma violacao de LGPD. Quem for por esse caminho
+    precisa reimplementar a checagem de opt-out por conta propria; a rota
+    segura e herdar de `GuardedOutbound`.
     """
 
     async def send(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> bool: ...
@@ -98,7 +120,13 @@ class EnvioForaDaJanela(EnvioRecusado):
 
 
 class GuardedOutbound:
-    """Reserva antes de entregar.
+    """Barra quem pediu opt-out, reserva, e so entao entrega.
+
+    A guarda de opt-out (TEC-182) roda antes da reserva, e e a razao de o
+    docstring de `OutboundPort` apontar esta classe como a rota segura: herdar
+    daqui e o que garante que um caminho de envio novo nao fale com quem pediu
+    silencio. O unico kind que a atravessa e
+    `KIND_DA_CONFIRMACAO_DE_OPTOUT` -- ver `send`.
 
     A linha em outbound_dispatches e commitada antes do efeito externo. Queda
     entre a reserva e a entrega so perde aquele envio quando a falha e
@@ -113,6 +141,31 @@ class GuardedOutbound:
         self._session_factory = session_factory
 
     async def send(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> bool:
+        # A guarda de opt-out mora AQUI, e nao em `executar_turno`, de
+        # proposito. No turno ela protegeria o caminho de hoje e nada mais, e a
+        # TEC-183 vai criar um segundo caminho de envio. Quem HERDA desta
+        # classe ganha a guarda de graca, sem precisar lembrar dela -- e e por
+        # isso que ela mora aqui. Mas herdar e o mecanismo, nao uma garantia
+        # da linguagem: quem implementar `OutboundPort` direto, sem herdar,
+        # nao tem a guarda -- ver o aviso no docstring do Protocol acima.
+        #
+        # Antes da reserva: barrar depois deixaria linha orfa em
+        # `outbound_dispatches`, e o sweeper leria isso como tentativa feita.
+        if kind != KIND_DA_CONFIRMACAO_DE_OPTOUT:
+            async with self._session_factory() as session:
+                if await esta_em_optout_por_mensagem(session, message_id):
+                    # `warning` e nao `info`: um envio barrado aqui significa
+                    # que algum caminho tentou falar com quem pediu silencio.
+                    # Nao e erro nosso -- a guarda funcionou --, mas e o
+                    # sintoma que denuncia um caminho sem a checagem barata do
+                    # turno.
+                    log.warning(
+                        "outbound.optout_bloqueou",
+                        message_id=str(message_id),
+                        kind=kind,
+                    )
+                    return False
+
         async with self._session_factory() as session:
             session.add(OutboundDispatch(id=uuid.uuid4(), message_id=message_id, kind=kind))
             try:

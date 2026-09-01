@@ -3853,3 +3853,167 @@ nada"* — uma quantidade. `NULL` é *"esta linha é anterior à TEC-231 e ningu
 media"* — uma ausência. As duas leituras não podem colidir na mesma coluna, e
 por isso os campos de telemetria usam `0` e as colunas continuam aceitando
 `None` para o histórico.
+## TEC-182 — Opt-out: o lead pede para sair, e o silêncio é imediato
+
+Antes desta card, procurar por `opt.out` ou `descadastr` no código inteiro
+devolvia zero. Um lead que escrevia *"não quero mais receber mensagens"*
+recebia uma resposta de qualificação. Era evidência de LGPD inexistente
+(RNF-19), era a defesa contra denúncia na Meta que o Anexo B do SRS manda nunca
+cortar, e bloqueava a
+[TEC-183](https://eduardodurieuxlopes.atlassian.net/browse/TEC-183) — ligar
+cadência automática sem chave de desligamento é o caminho mais curto para o
+bloqueio do número.
+
+O desenho inteiro está em
+`docs/superpowers/specs/2026-09-01-tec-182-opt-out-design.md`, com as decisões
+e os erros que a revisão da branch encontrou marcados no próprio documento.
+
+### Duas faixas de detecção, e o que fecha a colisão
+
+A detecção é determinística e sem chamada paga: uma decisão de LGPD não pode
+depender de um provedor estar de pé. São duas faixas em
+`src/mobia/domain/optout/deteccao.py`.
+
+**Termos inequívocos** casam em qualquer posição da mensagem, e o que os torna
+seguros **não** é a raridade da frase — é o **objeto de mensageria** que cada
+um carrega. `pare de me mandar mensagens` não colide com *"pare de mandar
+apartamento sem vaga"*; `nao quero mais receber mensagens` não colide com *"nao
+quero mais receber apartamento sem vaga"*. A primeira versão da lista tinha os
+termos **truncados** (`pare de mandar`, `nao quero mais receber`) e silenciava
+lead comprador para sempre, em silêncio, com o lead vendo só a ausência de
+resposta.
+
+**Termos ambíguos** (`sair`, `parar`, `stop`, `cancelar`, `me tire da lista`,
+`nao quero mais`) só disparam quando são a **mensagem inteira** normalizada —
+minúsculas, sem acento, sem pontuação, espaços colapsados. É o padrão real de
+quem quer sair, e a estreiteza é o que protege *"podemos parar por aqui hoje?"*
+e *"quero sair do aluguel e comprar"*.
+
+A assimetria é o **inverso** da TEC-257: lá marcar de mais era o erro
+perigoso; aqui deixar de detectar é violação de LGPD e detectar demais é
+prejuízo comercial. Por isso a faixa inequívoca é generosa e só a ambígua é
+estrita.
+
+### A guarda mora na porta de saída, e a checagem do turno é só economia
+
+A checagem de opt-out roda em `GuardedOutbound.send`, **antes** da reserva em
+`outbound_dispatches` — barrar depois deixaria linha órfã e o sweeper leria
+isso como tentativa feita. É lá, e não em `executar_turno`, porque o turno
+protege o caminho de hoje e nada mais.
+
+A checagem no topo do turno continua existindo, e é **economia**, não correção:
+sem ela, um lead silenciado pagaria a classificação inteira para o envio ser
+barrado no fim. A duplicação é deliberada e assimétrica — esquecer a do turno
+custa dinheiro, esquecer a da porta manda mensagem para quem pediu para parar.
+
+O único envio que atravessa a guarda é a confirmação do próprio pedido, por um
+`kind` dedicado (`optout_confirmacao`). A exceção é nomeada, não um furo.
+
+### Registro append-only, porque reativação não apaga evidência
+
+`optout_events` tem uma linha por evento, e o estado atual de um lead é o
+**último** evento por `(channel, conversation_key)`. Com coluna booleana, a
+reativação **apagaria** a prova do opt-out — exatamente o que a RN-14.2 exige
+que não aconteça.
+
+`created_at` é carimbado pelo Postgres (`server_default=func.now()`), como nas
+demais tabelas do repositório que já usam o mesmo padrão. Aqui isso pesa mais do que nelas: a
+consulta de estado é `ORDER BY created_at DESC LIMIT 1` **sem desempate**, então
+a ordem *é* o estado — com o relógio do cliente escrevendo a coluna, um skew
+entre o worker que grava o opt-out e a máquina que roda o script de reativação
+inverteria os dois eventos e devolveria "não está em opt-out" para quem pediu
+para sair.
+
+O evento referencia `message_id` e **não copia** o texto: o corpo já está
+cifrado em `messages`, e copiá-lo criaria uma segunda cópia em claro da fala do
+lead.
+
+### Reativação por script, com autor e motivo obrigatórios
+
+```
+python -m mobia.admin.reativar --channel wa --key <conversation_key> \
+    --autor "Paulo M." --motivo "lead pediu por telefone"
+```
+
+Script e não endpoint: o projeto não tem camada de autenticação (JWT, OIDC e
+papéis são a TEC-201, com zero linhas), e um endpoint sem autenticação que
+reverte proteção de LGPD é pior que não ter reativação nenhuma. Quem consegue
+rodar isto já tem acesso ao servidor e ao banco, e isso **é** a autenticação.
+Quando o dashboard existir (TEC-189), ele chama a mesma função de domínio.
+
+### Garantias
+
+- Opt-out detectado é gravado **antes** de a confirmação sair. Se a entrega
+  falhar de forma terminal, o lead fica em silêncio sem confirmação — ruim e
+  conforme. Na ordem inversa teríamos opt-out não registrado e continuaríamos
+  mandando mensagem, que é a violação.
+- O registro acontece **antes** da moderação de entrada. Uma mensagem que é ao
+  mesmo tempo pedido de opt-out e algo que a moderação reprova ainda é
+  registrada — senão a recusa de entrada seria mandada para quem pediu para
+  sair.
+- Falha **retentável** na confirmação (5xx da Meta) não perde a confirmação: o
+  short-circuit de silêncio no topo do turno não dispara quando a mensagem em
+  mãos é ela própria um pedido de opt-out, então a retentativa reentrega. A
+  idempotência vem da reserva em `outbound_dispatches`.
+- O silêncio é sobre o **lead**, não sobre a mensagem ter texto: imagem e áudio
+  de quem pediu opt-out também não recebem resposta.
+- Um `kind` que ninguém previu (`follow_up`, o da TEC-183) é barrado por
+  default. A guarda é lista negra de um `kind` só, não lista branca.
+
+### Lacunas conhecidas
+
+- **Um lead que já optou e digita "parar" de novo recebe a confirmação de
+  novo.** É o resíduo aceito do conserto da falha retentável: o short-circuit
+  de silêncio não pode barrar um pedido de opt-out em mãos, e distinguir
+  "retentativa da mesma mensagem" de "mensagem nova" no topo do turno exigiria
+  estado que não existe. É defensável porque a confirmação do próprio pedido já
+  é a exceção nomeada, e porque o gatilho é sempre uma fala do lead pedindo
+  exatamente isso. O segundo turno também grava um segundo evento `OPT_OUT` —
+  inofensivo, porque a tabela é append-only e o estado é o último evento.
+- **O mesmo conserto troca um `silenciado`/`info` por um `reentrega_suprimida`/
+  `error` num caminho benigno.** Se o worker morrer depois de a confirmação
+  ter sido entregue com sucesso e antes de marcar a linha como processada, o
+  turno seguinte agora encontra a reserva viva em `outbound_dispatches` e
+  devolve `reentrega_suprimida`, com log em nível `error` — antes deste
+  conserto, o mesmo cenário devolvia `silenciado`, em `info`. É alarme falso,
+  recém-alcançável por causa desta correção: vale a linha para quem for
+  investigar o alerta não procurar defeito onde não há.
+- **A guarda é fail-open para `message_id` inexistente.** Sem linha em
+  `messages` atrás do id, não há `(channel, conversation_key)` a consultar, e
+  recusar o envio esconderia o defeito real, que é o chamador. A consequência
+  é direta: **um envio disparado com uuid sintético passa sem checagem
+  nenhuma**.
+- **Nada amarra `payload["para"]` ao `conversation_key` da mensagem.** A guarda
+  decide pelo lead do `message_id`; o adaptador do WhatsApp entrega para
+  `payload["para"]`. Um chamador que misture os dois é aprovado pela guarda e
+  entrega ao endereço errado.
+- **O que a TEC-183 precisa respeitar**, e nada disso é garantido pelo
+  compilador: herdar `GuardedOutbound` e **nunca** implementar `OutboundPort`
+  direto (é `Protocol` estrutural — uma classe com `async def send` tipa igual
+  e não tem guarda); passar um `message_id` que exista em `messages` e
+  pertença ao lead alvo; nunca reusar `optout_confirmacao`, que é bypass
+  incondicional; manter `payload["para"]` coerente com o `conversation_key` da
+  mensagem.
+- **A moldura de cortesia não é detectada.** *"por favor pare"* e *"obrigado,
+  pode parar"* não disparam nada: a faixa estrita compara a mensagem inteira.
+  Relaxá-la é redesenho da regra e reabre o falso positivo que ela fecha.
+- **`nao quero mais receber nada` deixou de disparar.** O termo estava na faixa
+  inequívoca e silenciava *"nao quero mais receber nada sem vaga"*, *"...nada
+  acima de 500 mil"* e *"...nada nessa regiao"* — `nada` é quantificador
+  universal e aceita complemento partitivo, então não é objeto de mensageria.
+  Saiu da lista; as três frases viraram teste negativo permanente.
+- **A detecção é lista fixa e vai errar por falta.** *"chega"*, *"me deixa em
+  paz"* não são detectados. A lista não é estendida por antecipação: cada termo
+  novo é risco de falso positivo, e não há conversa real deste produto para
+  dizer quais faltam.
+- **A evidência se autodestrói no relógio de retenção de `messages`.** O evento
+  referencia `message_id`, e a D4 do desenho afirma que *"a referência **é** o
+  conteúdo original"*. Quando a RNF-22 (retenção de 12 meses de `messages`)
+  existir, esse id vira ponteiro solto e a afirmação deixa de valer. A migração
+  `0010` já não tem FK para `messages` para a limpeza não apagar evidência por
+  cascata — mas não ter FK preserva a **linha**, não o **conteúdo**.
+- **Não há métrica de opt-out.** Quantos acontecem, e se algum foi falso
+  positivo, ninguém sabe. Cabe no epic de observabilidade.
+- **O cenário de opt-out durante rajada é vacuamente verdadeiro.** A RN-01.6
+  (debounce) não existe. Quem a implementar tem que furar a janela para o
+  opt-out, e o teste nasce com ela.

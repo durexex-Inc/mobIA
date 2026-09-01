@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import Settings, get_settings
 from mobia.app.logging import configure_logging
@@ -36,6 +36,7 @@ TABELAS = (
     "lead_qualification",
     "message_telemetry",
     "outbound_dispatches",
+    "optout_events",
     "messages",
 )
 
@@ -379,6 +380,11 @@ async def banco_limpo(migrar_banco: None) -> AsyncIterator[None]:
 async def session(banco_limpo: None) -> AsyncIterator[AsyncSession]:
     async with get_sessionmaker()() as sessao:
         yield sessao
+
+
+@pytest.fixture
+def session_factory(banco_limpo: None) -> async_sessionmaker[AsyncSession]:
+    return get_sessionmaker()
 
 
 @pytest.fixture
