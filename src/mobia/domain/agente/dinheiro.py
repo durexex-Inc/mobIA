@@ -12,8 +12,10 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 # Ruido que nao carrega valor. Sai antes de qualquer parsing para que
 # "uns 500 mil" e "500 mil" sigam o mesmo caminho.
+# Nota: r$ precisa de trato diferente das palavras; sem \b consegue pegar
+# "r$ " ou "r$", enquanto palavras inteiras ganham \b em torno.
 _RUIDO = re.compile(
-    r"\b(r\$|reais?|uns?|umas?|cerca de|por volta de|mais ou menos|em torno de)\b"
+    r"r\$\s*|\b(?:reais?|uns?|umas?|cerca de|por volta de|mais ou menos|em torno de)\b"
 )
 
 # `\b` separa "mil" de "milhao": sem ele o primeiro padrao comeria o prefixo do
