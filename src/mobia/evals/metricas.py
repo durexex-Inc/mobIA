@@ -377,10 +377,16 @@ def matriz_de_confusao(
 # tecnico.
 MAX_CARACTERES_DA_RESPOSTA = 600
 
-# RN-04.7 diz uma pergunta por turno, e o teto de 1 era a leitura literal
-# disso. A TEC-255 subiu para 2, contra a letra da RN-04.7 e a favor do que ela
-# protege: "nunca um bloco com cinco perguntas" e "nao responder a um
-# questionario".
+# RN-04.2 diz "uma pergunta por vez", e o teto de 1 era a leitura literal disso.
+# A TEC-255 subiu para 2, contra a letra da regra e a favor do que ela protege:
+# "nunca um questionario de cinco itens".
+#
+# A regra e a MESMA sentenca do teto de 600 caracteres acima -- RN-04.2 carrega
+# tres clausulas: 600 caracteres, no maximo 2 mensagens consecutivas, e uma
+# pergunta por vez. "Uma pergunta por turno" reaparece em RN-05.4. Ate 01/09/2026
+# este comentario citava RN-04.7, que e outra regra (indicador de digitacao
+# acima de 4s) e nao tem relacao com perguntas; a emenda E-01 do SRS versionado
+# em `docs/srs/` corrige RN-04.2 e RN-05.4, e nao RN-04.7.
 #
 # O que as duas execucoes de 31/08 mostraram, sobre 294 turnos medidos: as
 # violacoes sao quase todas de exatamente duas perguntas de qualificacao
