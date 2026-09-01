@@ -368,7 +368,8 @@ def _metricas_de(
         sem_mecanismo("taxa de alucinacao", "sem mecanismo: bloqueada pela TEC-161"),
         # Deixou de ser slot vazio na TEC-140. Mede as duas regras do RF-04 que
         # sao decidiveis sobre o texto -- tamanho e numero de perguntas -- com
-        # piso-ANDAIME, porque ninguem sabe ainda qual aderencia e saudavel.
+        # piso medido pela TEC-255 (90) e alvo proprio (98), que substituiram
+        # o piso-andaime de 50 quando a aderencia foi medida.
         # Sem amostra ela cai de volta no slot, como as outras.
         aderencia_ao_tom(respostas)
         if respostas

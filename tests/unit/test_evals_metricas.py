@@ -7,10 +7,11 @@ import pytest
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Extracao, Intencao
 from mobia.evals.corpus import carregar, total_de_turnos
 from mobia.evals.metricas import (
+    ALVO_DE_ADERENCIA_AO_TOM_PCT,
     CAMPOS_DA_EXTRACAO,
     DISPERSAO_MEDIDA,
     MAX_CARACTERES_DA_RESPOSTA,
-    PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT,
+    PISO_DE_ADERENCIA_AO_TOM_PCT,
     PISO_DE_BLOQUEIO_PCT,
     PISO_DE_PRECISAO_DA_EXTRACAO_PCT,
     PISO_DE_TURNOS,
@@ -879,14 +880,21 @@ def test_seiscentos_caracteres_passa_e_seiscentos_e_um_viola():
     assert [(v.regra, v.medido) for v in violacoes] == [("comprimento", 601)]
 
 
-def test_uma_pergunta_passa_e_duas_violam():
-    """ "Nunca um bloco com cinco perguntas" -- o teto de uma e a leitura
-    literal, e uma resposta sem pergunta nenhuma tambem cumpre."""
+def test_duas_perguntas_passam_e_tres_violam():
+    """A regua cobra o proposito da RN-04.7, e nao a leitura literal dela.
+
+    O que a regra protege e "nunca um bloco com cinco perguntas" e "nao
+    responder a um questionario". O teto de 1 marcava como violacao um padrao
+    estavel de duas perguntas de qualificacao genuinas -- 28 turnos em 147 na
+    execucao de 31/08 -- enquanto o bloco que ela teme nao aparecia. A TEC-255
+    subiu o teto para 2, entao a borda que importa passa a ser a terceira.
+    """
     assert violacoes_de_formato([_resposta("qual regiao voce prefere?")]) == []
     assert violacoes_de_formato([_resposta("perfeito, vou procurar.")]) == []
+    assert violacoes_de_formato([_resposta("qual regiao? e quantos quartos?")]) == []
 
-    violacoes = violacoes_de_formato([_resposta("qual regiao? e quantos quartos?")])
-    assert [(v.regra, v.medido) for v in violacoes] == [("perguntas", 2)]
+    violacoes = violacoes_de_formato([_resposta("qual regiao? quartos? vaga?")])
+    assert [(v.regra, v.medido) for v in violacoes] == [("perguntas", 3)]
 
 
 def test_turno_que_viola_as_duas_conta_como_um_turno_ruim():
@@ -941,18 +949,53 @@ def test_emoji_e_contado_mas_nao_reprova():
     assert (resumo.com_emoji, resumo.emojis) == (1, 2)
 
 
-def test_o_piso_da_aderencia_e_andaime_declarado():
-    """Ninguem sabe ainda qual aderencia e saudavel: o texto do agente nunca
-    foi medido.
+def test_o_piso_da_aderencia_deixou_de_ser_andaime():
+    """A troca que o andaime pedia, feita com o numero na mao.
 
-    Cravar 84 aqui seria piso nao medido, e um piso nao medido abre VERMELHO
-    na primeira execucao sem regressao nenhuma. A `acuracia_efetiva` viveu
-    exatamente isso ate a TEC-210 medir. Trocar por piso real e trabalho da
-    proxima card, com o numero na mao -- e este teste existe para que a troca
-    seja deliberada.
+    O piso de 50 existia porque o texto do agente nunca tinha sido medido. A
+    TEC-255 mediu, recalculando os dois relatorios de 31/08 sob o teto novo de
+    perguntas: 144/147 (98,0%) e 146/147 (99,3%). O piso de 90 fica oito
+    pontos abaixo do pior ponto observado -- a escolha conservadora, porque
+    dois pontos de medicao sao pouco para um piso apertado, e um piso que abre
+    VERMELHO sem regressao real e o erro que o andaime avisava.
+
+    Este piso fica ACIMA de `PISO_DE_BLOQUEIO_PCT`, ao contrario do andaime, e
+    isso e deliberado: 84 e o piso da acuracia de intencao, medido sobre outra
+    coisa, e nao um teto para os pisos das metricas irmas.
     """
-    assert PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT == 50
-    assert PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT < PISO_DE_BLOQUEIO_PCT
+    assert PISO_DE_ADERENCIA_AO_TOM_PCT == 90
+    assert PISO_DE_ADERENCIA_AO_TOM_PCT > PISO_DE_BLOQUEIO_PCT
+
+
+def test_o_alvo_da_aderencia_e_proprio_e_nao_o_global():
+    """Com alvo igual ao piso a faixa AMARELA desapareceria.
+
+    `faixa_de` devolve VERDE em `>= alvo` e AMARELO em `>= piso`. Se esta
+    metrica usasse o `ALVO_PCT` global de 90 junto do piso novo de 90, o
+    segundo teste nunca seria alcancado: a metrica viraria binaria e passaria
+    a bloquear o gate abaixo de 90 -- mais duro que o andaime que ela
+    substitui, e o oposto de escolher o piso conservador.
+    """
+    assert ALVO_DE_ADERENCIA_AO_TOM_PCT == 98
+    assert ALVO_DE_ADERENCIA_AO_TOM_PCT > PISO_DE_ADERENCIA_AO_TOM_PCT
+
+
+def test_as_faixas_da_aderencia_saem_do_piso_e_do_alvo_proprios():
+    """A faixa e comportamento, e nao so o valor de duas constantes.
+
+    Sob o `ALVO_PCT` global de 90 e o andaime de 50, uma execucao de 95%
+    sairia VERDE e uma de 89% sairia AMARELO. Com o alvo de 98 e o piso de 90
+    as duas descem uma faixa, e e essa descida que a TEC-255 comprou.
+    """
+
+    def _faixa(acertos: int, total: int) -> Faixa:
+        respostas = [_resposta("ok" if i < acertos else "a? b? c?", indice=i) for i in range(total)]
+        return aderencia_ao_tom(respostas).faixa
+
+    assert _faixa(98, 100) is Faixa.VERDE
+    assert _faixa(95, 100) is Faixa.AMARELO
+    assert _faixa(90, 100) is Faixa.AMARELO
+    assert _faixa(89, 100) is Faixa.VERMELHO
 
 
 def _perguntou(indice: int, *campos: str, conversa: str = "compra-14") -> PerguntaObservada:
