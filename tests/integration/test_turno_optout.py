@@ -12,6 +12,7 @@ import logging
 import uuid
 from typing import Any
 
+import pytest
 from conftest import ModeradorFake, OutboundFake
 from sqlalchemy import func, select
 
@@ -21,8 +22,8 @@ from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.optout.deteccao import TEXTO_DA_CONFIRMACAO_DE_OPTOUT
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
-from mobia.domain.outbound.port import EnvioRecusado
-from mobia.infra.crypto import aad_de, encrypt
+from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
+from mobia.infra.crypto import aad_de, decrypt, encrypt
 from mobia.infra.db import get_sessionmaker
 
 CANAL = "whatsapp"
@@ -117,6 +118,19 @@ async def test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo(
     assert await esta_em_optout(
         session, channel=mensagem.channel, conversation_key=mensagem.conversation_key
     )
+
+    # RN-14.4, e a unica asserta que prova a evidencia: a confirmacao entregue
+    # tem de virar linha de AGENTE em `messages`, como qualquer outra fala
+    # nossa. Sem isto, o historico do lead fecha com o pedido dele e nada
+    # depois -- e quem auditar o registro de conformidade nao acha o texto que
+    # foi de fato entregue, so o evento em `optout_events`.
+    faladas = (
+        (await session.execute(select(Message).where(Message.role == MessageRole.AGENTE)))
+        .scalars()
+        .all()
+    )
+    textos = [decrypt(linha.text_body, aad_de(linha.id, "text_body")) for linha in faladas]
+    assert textos == [TEXTO_DA_CONFIRMACAO_DE_OPTOUT]
 
 
 async def test_pedido_de_optout_e_registrado_mesmo_com_entrada_bloqueada_pela_moderacao(
@@ -257,6 +271,61 @@ async def test_optout_gravado_mesmo_quando_a_confirmacao_nao_sai(
     assert await esta_em_optout(
         session, channel=mensagem.channel, conversation_key=mensagem.conversation_key
     )
+
+
+async def test_confirmacao_e_reentregue_depois_de_uma_falha_retentavel(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """IMPORTANT da revisao final: a confirmacao NAO pode se perder para
+    sempre num 5xx da Meta.
+
+    Turno 1 grava o OPT_OUT e `_deliver` levanta `EnvioRetentavel`. A guarda
+    libera a reserva (para a proxima tentativa poder entregar) e propaga: a
+    linha vira FAILED e o sweeper reenfileira a MESMA mensagem. Antes do fix, o
+    turno 2 batia no `esta_em_optout` incondicional do topo de
+    `executar_turno`, devolvia "silenciado" e fechava em PROCESSED -- terminal
+    -- e o lead nunca recebia a confirmacao de que o pedido dele foi atendido.
+
+    A D5 aceitou "sem confirmacao" para as saidas TERMINAIS de
+    `_entregar_texto_fixo`; falha retentavel nao e nenhuma delas. O fix e o
+    `not pedido_de_optout` no short-circuit do topo: com o pedido em maos, o
+    turno segue e reentrega.
+
+    O segundo turno grava um segundo evento OPT_OUT, e isso e de proposito:
+    a tabela e append-only e o estado e o ULTIMO evento, entao um OPT_OUT
+    repetido nao muda estado nenhum -- e mentir sobre o historico (nao
+    registrar a segunda passagem) seria pior que a linha a mais.
+    """
+    mensagem = await _mensagem_gravada(session, texto="parar")
+
+    with pytest.raises(EnvioRetentavel):
+        await executar_turno(
+            get_sessionmaker(),
+            message=mensagem,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound_fake(EnvioRetentavel("http 503")),
+            moderador=ModeradorFake(),
+        )
+
+    assert await esta_em_optout(
+        session, channel=mensagem.channel, conversation_key=mensagem.conversation_key
+    ), "o opt-out fica gravado mesmo com a confirmacao falhando"
+
+    outbound = outbound_fake()
+    resultado = await executar_turno(
+        get_sessionmaker(),
+        message=mensagem,
+        classificador=classificador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=outbound,
+        moderador=ModeradorFake(),
+    )
+
+    assert resultado == "opt_out", "a retentativa nao pode virar 'silenciado'"
+    assert outbound.entregues == [TEXTO_DA_CONFIRMACAO_DE_OPTOUT]
 
 
 class _OutboundQueOptaNoMeio(OutboundFake):

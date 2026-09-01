@@ -35,7 +35,12 @@ def upgrade() -> None:
         sa.Column("message_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("autor", sa.String(120), nullable=True),
         sa.Column("motivo", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
     )
     op.create_index(
         "ix_optout_events_lead",

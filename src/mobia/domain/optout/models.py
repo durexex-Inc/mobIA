@@ -14,7 +14,7 @@ do lead. A RN-14.2 pede "o conteudo original que o disparou", e a referencia
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, String, Text, text
+from sqlalchemy import DateTime, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,7 +43,18 @@ class OptoutEvent(Base):
     autor: Mapped[str | None] = mapped_column(String(120), nullable=True)
     motivo: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # `server_default` e nao um valor vindo do cliente, e aqui isso pesa mais
+    # do que nas outras cinco tabelas que ja fazem o mesmo: nesta a ORDEM dos
+    # `created_at` **e** o estado. `esta_em_optout` le
+    # `ORDER BY created_at DESC LIMIT 1` sem desempate, entao com o relogio de
+    # cada maquina escrevendo a coluna, um skew entre o worker que grava o
+    # opt-out e a maquina que roda `mobia.admin.reativar` inverte a ordem dos
+    # dois eventos e devolve "nao esta em opt-out" para quem pediu para sair.
+    # Com o default do servidor, os dois eventos sao carimbados pelo mesmo
+    # relogio -- o do Postgres.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
     __table_args__ = (
         # A consulta quente e "qual o ultimo evento deste lead?", uma vez por

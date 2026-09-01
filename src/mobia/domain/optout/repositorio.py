@@ -1,5 +1,11 @@
 """Grava, reverte e consulta o estado de opt-out de um lead.
 
+Nenhuma das duas escritas passa `created_at`: a coluna tem
+`server_default=func.now()` e quem carimba e o Postgres. Ver a nota em
+`OptoutEvent.created_at` -- com o relogio do cliente, skew entre a maquina que
+grava o opt-out e a que roda a reativacao inverte a ordem dos eventos, e a
+ordem **e** o estado nesta tabela.
+
 As duas escritas recebem `session_factory` e commitam sozinhas, como
 `marcar_bloqueada`: sao atos completos em si, e quem chama nao tem transacao
 para compartilhar. As duas leituras recebem `session` porque rodam dentro da
@@ -7,7 +13,6 @@ sessao de quem pergunta -- a guarda na porta de saida ja tem uma aberta.
 """
 
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -32,7 +37,6 @@ async def registrar_optout(
                 conversation_key=conversation_key,
                 evento=EVENTO_OPT_OUT,
                 message_id=message_id,
-                created_at=datetime.now(UTC),
             )
         )
         await session.commit()
@@ -60,7 +64,6 @@ async def reativar(
                 evento=EVENTO_REATIVACAO,
                 autor=autor,
                 motivo=motivo,
-                created_at=datetime.now(UTC),
             )
         )
         await session.commit()

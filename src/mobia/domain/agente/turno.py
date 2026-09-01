@@ -116,6 +116,10 @@ async def executar_turno(
     # nao passou por lugar nenhum.
     corpo = decrypt(message.text_body, aad_de(message.id, "text_body"))
 
+    # `bool(...)` por fora, e nao `bool(corpo) and ...`: so a forma curta-
+    # circuitada estreita `corpo` de `str | None` para `str` dentro da chamada.
+    pedido_de_optout = bool(corpo and pediu_optout(corpo))
+
     # Antes de tudo, inclusive da moderacao: quem ja pediu silencio nao paga
     # moderacao nem recebe resposta. Fica FORA do `if corpo:` de proposito: o
     # silencio e sobre o LEAD (o par channel/conversation_key), nao sobre a
@@ -124,18 +128,40 @@ async def executar_turno(
     # mensagem sem texto escaparia do silencio. A guarda da porta de saida
     # (Task 4) ja impediria o envio de qualquer jeito; esta checagem existe
     # so para nao pagar o turno inteiro ate la.
-    async with session_factory() as sessao:
-        if await esta_em_optout(
-            sessao, channel=message.channel, conversation_key=message.conversation_key
-        ):
-            log.info(
-                "turno.silenciado_por_optout",
-                channel=message.channel,
-                message_id=str(message.id),
-            )
-            return "silenciado"
+    #
+    # `not pedido_de_optout` e o fix de revisao (Important). Sem ele a
+    # confirmacao se perdia PARA SEMPRE numa falha retentavel: turno 1 grava o
+    # OPT_OUT, `_deliver` levanta `EnvioRetentavel` (5xx da Meta), a guarda
+    # libera a reserva, a linha vira FAILED e o sweeper reenfileira -- e o
+    # turno 2, sobre a MESMA mensagem, batia aqui, devolvia "silenciado" e
+    # fechava em PROCESSED sem nunca reentregar. A D5 aceitou o lead ficar sem
+    # confirmacao nas saidas TERMINAIS de `_entregar_texto_fixo` (janela
+    # fechada, recusa permanente, reentrega suprimida); falha retentavel nao e
+    # nenhuma delas, e o custo caiu entre duas tasks sem ninguem escolher.
+    #
+    # A idempotencia de quem JA recebeu a confirmacao continua vindo da
+    # reserva em `outbound_dispatches`: se a confirmacao de fato saiu, a
+    # reserva ainda existe, `send` devolve False e o desfecho e
+    # `reentrega_suprimida`, com o alarme certo.
+    #
+    # O custo aceito: um lead que ja optou e digita "parar" de novo recebe a
+    # confirmacao de novo -- mensagem nova para quem pediu silencio. E
+    # defensavel porque e a excecao que a D1 ja nomeia (a confirmacao do
+    # proprio pedido e o unico envio permitido depois do registro), e o
+    # gatilho e sempre uma fala do lead pedindo exatamente isso.
+    if not pedido_de_optout:
+        async with session_factory() as sessao:
+            if await esta_em_optout(
+                sessao, channel=message.channel, conversation_key=message.conversation_key
+            ):
+                log.info(
+                    "turno.silenciado_por_optout",
+                    channel=message.channel,
+                    message_id=str(message.id),
+                )
+                return "silenciado"
 
-    if corpo and pediu_optout(corpo):
+    if pedido_de_optout:
         # ANTES da moderacao de entrada, de proposito -- fix de revisao
         # (Critical): o bloco de moderacao logo abaixo tem `return` proprio.
         # Se este bloco rodasse depois dele, uma mensagem que e AO MESMO
