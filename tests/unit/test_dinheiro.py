@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from mobia.domain.agente.dinheiro import _Valor, _valor_de
+from mobia.domain.agente.dinheiro import _RUIDO, _Valor, _valor_de
 
 
 @pytest.mark.parametrize(
@@ -34,17 +34,27 @@ def test_ponto_e_milhar_virgula_e_decimal():
     assert _valor_de("1,5").centavos == 150
 
 
-def test_ruido_r_dollar_com_sem_espaco():
-    """Verifica que a limpeza de R$ funciona com e sem espaco apos o simbolo."""
-    # "R$ " com espaco entre simbolo e numero
-    com_espaco = _valor_de("R$ 500.000")
-    assert com_espaco is not None
-    assert com_espaco.centavos == 50_000_000
+def test_ruido_stripping_direto():
+    """Testa remocao de ruido diretamente no regex, nao em valor final.
 
-    # "R$" sem espaco
-    sem_espaco = _valor_de("R$500.000")
-    assert sem_espaco is not None
-    assert sem_espaco.centavos == 50_000_000
+    _RUIDO e privado, mas testar a remocao direto e necessario porque o caminho
+    publico (_valor_de) e insensivel ao ruido quando o numero esta presente:
+    _NUMERO.search encontra a faixa de digitos independente de lixo na frente.
+    Isto era o problema original: "R$ 500.000" nao limpava o "R$ " e o teste
+    passava mesmo assim porque _NUMERO achava "500.000". O teste aqui valida
+    o regex diretamente, forçando a falha se a limpeza regredir.
+    """
+    # Forma com espaco (era quebrada, precisava da fix r\$\s*)
+    resultado_com_espaco = _RUIDO.sub(" ", "r$ 500.000".casefold())
+    assert "r$" not in resultado_com_espaco
+
+    # Forma sem espaco (ja funcionava, precisa nao regredir)
+    resultado_sem_espaco = _RUIDO.sub(" ", "r$500".casefold())
+    assert "r$" not in resultado_sem_espaco
+
+    # Guarda: palavras inteiras com \b nao sao comidas (reaisimo, algumas, etc)
+    assert _RUIDO.sub(" ", "reaisimo") == "reaisimo"
+    assert _RUIDO.sub(" ", "algumas") == "algumas"
 
 
 @pytest.mark.parametrize(
