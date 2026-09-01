@@ -377,22 +377,46 @@ def matriz_de_confusao(
 # tecnico.
 MAX_CARACTERES_DA_RESPOSTA = 600
 
-# RN-04.7: uma pergunta por turno. "Nunca um bloco com cinco perguntas" e o
-# que o card pede; o teto de 1 e a leitura literal disso.
-MAX_PERGUNTAS_POR_TURNO = 1
-
-# Piso-ANDAIME, e nao o piso de verdade. Ninguem sabe hoje qual aderencia e
-# saudavel: o texto que o modelo devolve nunca foi medido, so usado para o
-# proxy de reperguntas e jogado no historico. Cravar 90/84 aqui seria piso nao
-# medido, e um piso nao medido pode abrir VERMELHO na primeira execucao sem
-# regressao nenhuma -- e o que a docstring de `sem_mecanismo` avisa, e o que a
-# `acuracia_efetiva` viveu ate a TEC-210 medir (ela teve piso-andaime de 50%
-# pelo mesmo motivo, e o trocou pelo real com a baseline na mao).
+# RN-04.7 diz uma pergunta por turno, e o teto de 1 era a leitura literal
+# disso. A TEC-255 subiu para 2, contra a letra da RN-04.7 e a favor do que ela
+# protege: "nunca um bloco com cinco perguntas" e "nao responder a um
+# questionario".
 #
-# 50% responde uma pergunta so: "o modelo ignorou as duas regras por
-# completo?". Trocar por piso medido e trabalho da proxima card, com o numero
-# na mao.
-PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT = 50
+# O que as duas execucoes de 31/08 mostraram, sobre 294 turnos medidos: as
+# violacoes sao quase todas de exatamente duas perguntas de qualificacao
+# genuinas ("qual regiao? E precisa de vaga?"), e o bloco que a regra teme nao
+# aparece -- o maior turno observado tem TRES perguntas, uma vez
+# (`follow-up-07[0]`, execucao das 13:19). O teto de 1 marcava 19% dos turnos
+# como violacao de um comportamento que ninguem pretendia consertar, e regua
+# que ninguem pretende obedecer vira regua ignorada.
+#
+# A regua NAO fica cega ao subir: recalculadas sob o teto de 2, as duas
+# execucoes dao 144/147 e 146/147, e o que sobra violando e justamente o turno
+# de tres perguntas e as violacoes de comprimento.
+MAX_PERGUNTAS_POR_TURNO = 2
+
+# Piso medido, e nao mais o andaime de 50% que viveu aqui ate a TEC-255. O
+# andaime existia porque o texto que o modelo devolve nunca tinha sido medido;
+# a TEC-255 mediu, recalculando os dois relatorios de 31/08 sob o teto novo:
+# 98,0% e 99,3%.
+#
+# 90 fica oito pontos abaixo do pior ponto observado. E a escolha conservadora
+# entre as que estavam na mesa (a outra era 95): dois pontos de medicao sao
+# pouco para um piso apertado, e um piso que abre VERMELHO sem regressao real e
+# exatamente o erro que o andaime avisava -- o que a `acuracia_efetiva` viveu
+# ate a TEC-210 medir.
+#
+# Este piso fica ACIMA de `PISO_DE_BLOQUEIO_PCT`, ao contrario do andaime, e e
+# deliberado: 84 e o piso da acuracia de intencao, medido sobre outra coisa, e
+# nao um teto para os pisos das metricas irmas.
+PISO_DE_ADERENCIA_AO_TOM_PCT = 90
+
+# Alvo proprio, e nao o `ALVO_PCT` global de 90. `faixa_de` devolve VERDE em
+# `>= alvo` e AMARELO em `>= piso`: com os dois em 90 o segundo teste nunca
+# seria alcancado, a metrica viraria binaria e passaria a bloquear o gate
+# abaixo de 90 -- mais duro que o andaime que ela substitui, e o oposto de ter
+# escolhido o piso conservador.
+ALVO_DE_ADERENCIA_AO_TOM_PCT = 98
 
 # Blocos Unicode de emoji, na pratica e nao na norma: pictogramas, emoticons,
 # transporte, simbolos diversos e dingbats, mais o seletor de variacao que faz
@@ -509,13 +533,18 @@ def aderencia_ao_tom(respostas: Sequence[RespostaObservada]) -> ResultadoDaMetri
     acertos = total - len(violadas)
     return ResultadoDaMetrica(
         nome="aderencia ao tom",
-        faixa=faixa_de(acertos, total, piso=PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT),
+        faixa=faixa_de(
+            acertos,
+            total,
+            alvo=ALVO_DE_ADERENCIA_AO_TOM_PCT,
+            piso=PISO_DE_ADERENCIA_AO_TOM_PCT,
+        ),
         acertos=acertos,
         total=total,
         detalhe=_detalhe(
             acertos,
             total,
-            f"alvo {ALVO_PCT}%, piso-andaime {PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT}%",
+            f"alvo {ALVO_DE_ADERENCIA_AO_TOM_PCT}%, piso {PISO_DE_ADERENCIA_AO_TOM_PCT}%",
         ),
     )
 

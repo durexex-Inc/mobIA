@@ -3401,6 +3401,11 @@ uma pergunta só partida em duas frases — mas não explicam as 28.
 **Todas as 28 violações são exatamente 2 perguntas. Zero turnos com 3 ou
 mais**, em 147 turnos.
 
+Isso vale para esta execução, e **não** para as duas. A das 13:19 tem um turno
+com três perguntas — `follow-up-07[0]`. Um em 294 turnos medidos, o que
+continua muito longe do bloco de cinco, mas a diferença importa: a régua não
+fica cega ao subir o limiar, porque esse turno segue sendo pego.
+
 A regra vem de RN-04.7 e a justificativa escrita na card é *"nunca um bloco com
 cinco perguntas"* e *"não responder a um questionário"*. **O cenário que a
 regra teme não está acontecendo.** O que acontece é um padrão estável de duas
@@ -3409,8 +3414,46 @@ perguntas em ~19% dos turnos.
 Isto tem a mesma forma das disputas da TEC-254: a régua literal sinaliza um
 comportamento que o propósito dela talvez não condene. **A decisão é de
 produto** — subir o limiar para 2 contraria RN-04.7 como escrito, e mantê-lo em
-1 exige atacar um comportamento que pode ser aceitável. Fica registrado com o
-dado, sem mexer no limiar.
+1 exige atacar um comportamento que pode ser aceitável.
+
+#### A decisão (TEC-255): o limiar sobe para 2
+
+O motivo, e ele não é "o agente está passando na prova": uma régua que marca
+19% dos turnos como violação de um comportamento que ninguém pretende
+consertar vira régua ignorada, e régua ignorada é pior que régua nenhuma. As
+outras duas saídas foram recusadas com o custo na mão — corrigir o agente por
+prompt não cabe (a margem sobre o teto é de 13,0 tokens depois da TEC-257), por
+regeneração custa chamada paga por violação em produção, e por truncagem corta
+frase no meio; conviver deixaria a métrica reportando ~80% para sempre sem
+ninguém saber se é bom.
+
+**Isto contraria RN-04.7 como está escrito, e a emenda ao SRS fica pendente.**
+RN-04.7 não vive neste repositório — é só citada aqui e em `metricas.py`.
+
+Recalculadas sob o limiar 2, as duas execuções de 31/08 dão:
+
+|  | 13:19 | 15:0x |
+| --- | --- | --- |
+| sob MAX=1 (como reportado) | 121/147 — 82,3% | 118/147 — 80,3% |
+| sob MAX=2 (recalculado) | **144/147 — 98,0%** | **146/147 — 99,3%** |
+| quem continua violando | `compra-10[1]`, `compra-10[2]`, `follow-up-07[0]` | `aluguel-07[2]` |
+
+Não é estimativa: o limiar só muda a classificação, os textos são os mesmos, e
+os relatórios trazem cada violação com o valor medido.
+
+**O piso deixa de ser andaime.** O andaime de 50% existia porque o texto do
+agente nunca tinha sido medido, e o próprio comentário dizia que trocá-lo era
+trabalho da próxima card, com o número na mão. O piso passa a ser **90%**, oito
+pontos abaixo do pior ponto observado — a escolha conservadora, porque dois
+pontos de medição são pouco para um piso apertado. Como `aderencia_ao_tom`
+usava o `ALVO_PCT` global de 90, alvo e piso ficariam iguais e a faixa AMARELA
+sumiria: a métrica ganha **alvo próprio de 98%**. VERDE ≥98, AMARELO 90–98 (não
+bloqueia), VERMELHO <90.
+
+**O corte de comparação.** Execuções anteriores a esta card reportam sob MAX=1
+e não são comparáveis linha a linha com as posteriores. Qualquer execução
+antiga cujo relatório liste as violações com o valor medido pode ser convertida
+por recálculo, como as duas acima.
 
 #### Um achado lateral que é dano mais claro
 
@@ -3611,28 +3654,29 @@ mesmo raciocínio de `sem_mecanismo`.
 **A métrica é por resposta, não por violação.** O lead vive o turno: um turno
 que estoura o tamanho **e** faz três perguntas é um turno ruim, não dois.
 
-### O piso é andaime, e está declarado
+### O piso nasceu andaime, e a TEC-255 o trocou pelo medido
 
-`PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT = 50`. Ninguém sabe qual aderência é
-saudável, porque o texto nunca foi medido. Cravar 84 seria piso não medido, e
-um piso não medido **abre VERMELHO na primeira execução sem regressão
-nenhuma** — o que a docstring de `sem_mecanismo` avisa, e o que a
-`acuracia_efetiva` viveu até a TEC-210 medir (ela teve andaime de 50% pelo
-mesmo motivo).
+Ele nasceu como `PISO_ANDAIME_DE_ADERENCIA_AO_TOM_PCT = 50`, porque ninguém
+sabia qual aderência era saudável: o texto nunca tinha sido medido. Cravar 84
+ali seria piso não medido, e um piso não medido **abre VERMELHO na primeira
+execução sem regressão nenhuma** — o que a docstring de `sem_mecanismo` avisa, e
+o que a `acuracia_efetiva` viveu até a TEC-210 medir (ela teve andaime de 50%
+pelo mesmo motivo). Um teste travava o valor para que a troca fosse deliberada.
 
-50% responde uma pergunta só: *"o modelo ignorou as duas regras por completo?"*.
-Trocar pelo piso real é trabalho da próxima card, com o número na mão. Um teste
-trava o valor para que a troca seja deliberada.
+A troca aconteceu na TEC-255, com o número na mão: `PISO_DE_ADERENCIA_AO_TOM_PCT
+= 90` e `ALVO_DE_ADERENCIA_AO_TOM_PCT = 98`. O raciocínio e os números estão na
+decisão do limiar, acima. O teste que travava o andaime continua existindo, e
+agora trava o piso medido e o alvo próprio.
 
 ### Lacunas conhecidas
 
-- **Nada foi aplicado.** Se a medição mostrar violação sistemática, a forma de
-  corrigir ainda precisa ser escolhida — e as três opções têm custos muito
-  diferentes.
 - **A regra do emoji continua sem mecanismo**, e isso é limite do problema e
   não da implementação.
-- **O piso é andaime.** Enquanto for, a métrica não bloqueia nada que não seja
-  colapso total.
+- **A emenda ao SRS está pendente.** O limiar de 2 contraria RN-04.7 como
+  escrito, e RN-04.7 não vive neste repositório.
+- **O piso de 90% se apoia em dois pontos de medição**, os dois recalculados
+  sobre execuções feitas sob o limiar antigo. A primeira execução paga sob o
+  limiar novo é que confirma a faixa.
 
 ## Escolher o modelo no disparo manual do gate
 

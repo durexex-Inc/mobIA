@@ -326,9 +326,7 @@ async def test_marca_de_perguntado_aceita_nulo_e_vazio(session) -> None:
     nao havia nada a marcar". Colidir as duas leituras na mesma coluna e o
     defeito que a TEC-231 consertou nas colunas de cache.
     """
-    session.add(
-        LeadQualification(channel="wa", conversation_key="antiga", intencao="COMPRA")
-    )
+    session.add(LeadQualification(channel="wa", conversation_key="antiga", intencao="COMPRA"))
     session.add(
         LeadQualification(
             channel="wa",
@@ -419,9 +417,7 @@ async def test_a_marca_e_uniao_e_nao_substituicao(session) -> None:
 
 async def test_a_uniao_sobrevive_a_linha_antiga_com_nulo(session) -> None:
     """`coalesce` no SQL: `NULL || {'regiao'}` seria NULL sem ele."""
-    session.add(
-        LeadQualification(channel="wa", conversation_key="k4", intencao="COMPRA")
-    )
+    session.add(LeadQualification(channel="wa", conversation_key="k4", intencao="COMPRA"))
     await session.commit()
 
     await gravar_estado(
