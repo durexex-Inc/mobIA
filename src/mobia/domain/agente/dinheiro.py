@@ -147,6 +147,20 @@ _BANDAS = {
 # Uniao das duas: na duvida, aceita. Fechar a banda para o lead ainda nao
 # classificado custaria valores de aluguel legitimos, que sao a maioria dos
 # valores baixos. Lacuna declarada no desenho.
+#
+# `_BANDAS.get` cai aqui para TODA intencao que nao esta na tabela acima, e
+# isso inclui as duas nao-monetarias: SUPORTE_CONTRATO e FORA_DE_ESCOPO, nao
+# so INDEFINIDA. Nao e acidente do `.get`: um numero solto numa conversa de
+# suporte ao contrato nao e orcamento de compra nem de aluguel, mas recusar
+# de cara e decisao de escopo que pertence a outra card -- a banda frouxa pelo
+# menos barra um valor absurdo (ex.: "500 milhoes" numa duvida de contrato)
+# sem o modulo precisar saber julgar a intencao. Rio abaixo os dois membros
+# divergem: `campos_a_gravar` (repositorio.py) descarta tudo para
+# FORA_DE_ESCOPO, entao um preco parseado ali nunca chega ao banco; para
+# SUPORTE_CONTRATO nao ha essa guarda, e o preco e gravado como qualquer
+# outro. Se isso for um problema, o conserto e no filtro de gravacao, nao
+# aqui: este modulo so decide se o numero e plausivel, nao se a intencao
+# devia gravar preco.
 _BANDA_FROUXA = (
     min(_BANDA_DE_COMPRA[0], _BANDA_DE_ALUGUEL[0]),
     max(_BANDA_DE_COMPRA[1], _BANDA_DE_ALUGUEL[1]),

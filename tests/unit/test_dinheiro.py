@@ -180,3 +180,16 @@ def test_teto_da_banda_e_inclusive():
     assert parsear("1000000000", Intencao.COMPRA) == FaixaDePreco(
         max_centavos=100_000_000_000
     )
+
+
+@pytest.mark.parametrize("intencao", [Intencao.SUPORTE_CONTRATO, Intencao.FORA_DE_ESCOPO])
+def test_intencao_nao_monetaria_cai_na_banda_frouxa(intencao):
+    """`_BANDAS.get` sem entrada para estes dois cai na uniao das bandas, e
+    isso e decisao, nao acidente do `.get`. O valor abaixo prova que a
+    escolha muda o resultado: 1500 reais fica abaixo do piso de COMPRA
+    (ambiguo la), mas dentro da banda frouxa (aceito aqui).
+
+    `parsear` nao sabe que `campos_a_gravar` descarta FORA_DE_ESCOPO e grava
+    SUPORTE_CONTRATO normalmente -- essa e uma decisao do filtro de
+    gravacao, nao deste modulo. Ver comentario de `_BANDA_FROUXA`."""
+    assert parsear("1500", intencao) == FaixaDePreco(max_centavos=150_000)
