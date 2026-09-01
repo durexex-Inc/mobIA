@@ -143,8 +143,11 @@ class GuardedOutbound:
     async def send(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> bool:
         # A guarda de opt-out mora AQUI, e nao em `executar_turno`, de
         # proposito. No turno ela protegeria o caminho de hoje e nada mais, e a
-        # TEC-183 vai criar um segundo caminho de envio. Na porta, todo envio
-        # presente e futuro a herda e esquece-la deixa de ser possivel.
+        # TEC-183 vai criar um segundo caminho de envio. Quem HERDA desta
+        # classe ganha a guarda de graca, sem precisar lembrar dela -- e e por
+        # isso que ela mora aqui. Mas herdar e o mecanismo, nao uma garantia
+        # da linguagem: quem implementar `OutboundPort` direto, sem herdar,
+        # nao tem a guarda -- ver o aviso no docstring do Protocol acima.
         #
         # Antes da reserva: barrar depois deixaria linha orfa em
         # `outbound_dispatches`, e o sweeper leria isso como tentativa feita.

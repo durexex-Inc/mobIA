@@ -3917,7 +3917,7 @@ reativação **apagaria** a prova do opt-out — exatamente o que a RN-14.2 exig
 que não aconteça.
 
 `created_at` é carimbado pelo Postgres (`server_default=func.now()`), como nas
-outras cinco tabelas do repositório. Aqui isso pesa mais do que nelas: a
+demais tabelas do repositório que já usam o mesmo padrão. Aqui isso pesa mais do que nelas: a
 consulta de estado é `ORDER BY created_at DESC LIMIT 1` **sem desempate**, então
 a ordem *é* o estado — com o relógio do cliente escrevendo a coluna, um skew
 entre o worker que grava o opt-out e a máquina que roda o script de reativação
@@ -3970,6 +3970,14 @@ Quando o dashboard existir (TEC-189), ele chama a mesma função de domínio.
   é a exceção nomeada, e porque o gatilho é sempre uma fala do lead pedindo
   exatamente isso. O segundo turno também grava um segundo evento `OPT_OUT` —
   inofensivo, porque a tabela é append-only e o estado é o último evento.
+- **O mesmo conserto troca um `silenciado`/`info` por um `reentrega_suprimida`/
+  `error` num caminho benigno.** Se o worker morrer depois de a confirmação
+  ter sido entregue com sucesso e antes de marcar a linha como processada, o
+  turno seguinte agora encontra a reserva viva em `outbound_dispatches` e
+  devolve `reentrega_suprimida`, com log em nível `error` — antes deste
+  conserto, o mesmo cenário devolvia `silenciado`, em `info`. É alarme falso,
+  recém-alcançável por causa desta correção: vale a linha para quem for
+  investigar o alerta não procurar defeito onde não há.
 - **A guarda é fail-open para `message_id` inexistente.** Sem linha em
   `messages` atrás do id, não há `(channel, conversation_key)` a consultar, e
   recusar o envio esconderia o defeito real, que é o chamador. A consequência

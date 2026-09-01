@@ -43,9 +43,10 @@ class OptoutEvent(Base):
     autor: Mapped[str | None] = mapped_column(String(120), nullable=True)
     motivo: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # `server_default` e nao um valor vindo do cliente, e aqui isso pesa mais
-    # do que nas outras cinco tabelas que ja fazem o mesmo: nesta a ORDEM dos
-    # `created_at` **e** o estado. `esta_em_optout` le
+    # `server_default` e nao um valor vindo do cliente, como nas demais
+    # tabelas do repositorio que ja usam `server_default=func.now()`. Aqui
+    # isso pesa mais do que nelas: nesta a ORDEM dos `created_at` **e** o
+    # estado. `esta_em_optout` le
     # `ORDER BY created_at DESC LIMIT 1` sem desempate, entao com o relogio de
     # cada maquina escrevendo a coluna, um skew entre o worker que grava o
     # opt-out e a maquina que roda `mobia.admin.reativar` inverte a ordem dos

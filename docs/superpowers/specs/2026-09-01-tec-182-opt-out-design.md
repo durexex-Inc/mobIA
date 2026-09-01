@@ -84,7 +84,7 @@ Com booleano, a reativação **apaga** a evidência do opt-out — exatamente o 
 | `message_id` | uuid, nulo | a mensagem que disparou o opt-out; nulo na reativação |
 | `autor` | varchar(120), nulo | quem reativou; nulo no opt-out, que é ato do lead |
 | `motivo` | text, nulo | justificativa da reativação; nulo no opt-out |
-| `created_at` | timestamptz | `server_default=func.now()`, como nas outras cinco tabelas do repositório. **Corrigido depois da entrega:** era escrito pelo cliente, e nesta tabela a ordem **é** o estado — skew de relógio entre o worker que grava o opt-out e a máquina que roda a reativação inverteria os dois eventos. |
+| `created_at` | timestamptz | `server_default=func.now()`, como nas demais tabelas do repositório que já usam o mesmo padrão. **Corrigido depois da entrega:** era escrito pelo cliente, e nesta tabela a ordem **é** o estado — skew de relógio entre o worker que grava o opt-out e a máquina que roda a reativação inverteria os dois eventos. |
 
 Índice `(channel, conversation_key, created_at DESC)` — a consulta quente é `ORDER BY created_at DESC LIMIT 1`.
 
@@ -100,7 +100,7 @@ O opt-out é persistido **antes** de a mensagem de confirmação sair.
 
 `_entregar_texto_fixo` tem **quatro** saídas que não entregam nada — janela fechada (`expirado`), recusa permanente da Meta (`sem_resposta`), reentrega suprimida (`reentrega_suprimida`) e bloqueio pela própria guarda de opt-out (`bloqueado_por_optout`) —, e todas fecham a linha em estado terminal. Gravar depois deixaria o opt-out perdido exatamente nos casos em que ninguém volta àquela linha. (A versão original deste documento dizia “três”; o comentário em `turno.py` já dizia quatro.)
 
-**Corrigido depois da entrega — a falha retentável não é nenhuma das quatro.** O que a decisão acima aceita é o lead ficar sem confirmação nas saídas **terminais**. Um `EnvioRetentavel` (5xx da Meta) não é terminal: a guarda libera a reserva, a exceção sobe, a linha vira FAILED e o sweeper reenfileira a mesma mensagem. Como entregue, o segundo turno batia no short-circuit incondicional de `esta_em_optout` no topo de `executar_turno`, devolvia `silenciado` e fechava em PROCESSED — e **a confirmação se perdia para sempre**, num custo que ninguém escolheu: ele caiu entre duas tasks. O conserto: o short-circuit não dispara quando a mensagem em mãos é ela própria um pedido de opt-out, e aí o turno segue e reentrega. A idempotência de quem já recebeu continua vindo da reserva em `outbound_dispatches` — se a confirmação saiu, a reserva ainda existe, `send` devolve `False` e o desfecho é `reentrega_suprimida`, com o alarme certo. O custo aceito, e declarado: um lead que já optou e digita “parar” de novo recebe confirmação de novo. É a exceção que a D1 já nomeia.
+**Corrigido depois da entrega — a falha retentável não é nenhuma das quatro.** O que a decisão acima aceita é o lead ficar sem confirmação nas saídas **terminais**. Um `EnvioRetentavel` (5xx da Meta) não é terminal: a guarda libera a reserva, a exceção sobe, a linha vira FAILED e o sweeper reenfileira a mesma mensagem. Como entregue, o segundo turno batia no short-circuit incondicional de `esta_em_optout` no topo de `executar_turno`, devolvia `silenciado` e fechava em PROCESSED — e **a confirmação se perdia para sempre**, num custo que ninguém escolheu: ele caiu entre duas tasks. O conserto: o short-circuit não dispara quando a mensagem em mãos é ela própria um pedido de opt-out, e aí o turno segue e reentrega. A idempotência de quem já recebeu continua vindo da reserva em `outbound_dispatches` — se a confirmação saiu, a reserva ainda existe, `send` devolve `False` e o desfecho é `reentrega_suprimida`, com o alarme certo. O custo aceito, e declarado: um lead que já optou e digita “parar” de novo recebe confirmação de novo. É a exceção que a D1 já nomeia. **Um segundo resíduo do mesmo conserto:** se o worker morrer *depois* de a confirmação ter sido entregue com sucesso e *antes* de marcar a linha como processada, o turno seguinte agora encontra a reserva viva em `outbound_dispatches` e devolve `reentrega_suprimida`, com log em nível **`error`** — antes deste conserto, esse mesmo cenário devolvia `silenciado`, em `info`. É alarme falso num caminho benigno, recém-alcançável por causa desta correção; vale a linha para quem for investigar o alerta não procurar defeito onde não há.
 
 ### D6 — Reativação por script administrativo
 
@@ -117,9 +117,16 @@ A lógica mora numa função de domínio (`reativar`), e o script é só o ponto
 ```
 mensagem do lead chega
   |
-  +-- ja ha opt-out ativo?  --sim-->  nao responde nada.
-  |                                    a mensagem fica gravada.
-  |                                    (a guarda de D3 barra na porta)
+  +-- ja ha opt-out ativo?  --sim-->  a propria mensagem e um pedido de
+  |                                    opt-out? (D5, falha retentavel)
+  |                                      |
+  |                                     sim --> segue o fluxo abaixo e
+  |                                              reentrega a confirmacao
+  |                                      |
+  |                                     nao --> nao responde nada.
+  |                                              a mensagem fica gravada.
+  |                                              (a guarda de D3 barra na
+  |                                              porta)
   nao
   |
   +-- o texto dispara opt-out? (D2)
