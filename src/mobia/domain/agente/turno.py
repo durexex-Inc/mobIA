@@ -21,6 +21,14 @@ from mobia.domain.moderacao.port import (
     ModeracaoIndisponivel,
     ModeradorPort,
 )
+
+# Reexportado (import ... as ...) de proposito: o nome vive em
+# `optout.deteccao` -- ver o comentario la sobre o circular que colocar aqui
+# causaria -- mas quem consome a porta de saida importa deste modulo, e a
+# Task 5 e os testes de integracao dependem deste caminho continuar valendo.
+from mobia.domain.optout.deteccao import (
+    KIND_DA_CONFIRMACAO_DE_OPTOUT as KIND_DA_CONFIRMACAO_DE_OPTOUT,
+)
 from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, OutboundPort
 from mobia.infra.crypto import aad_de, decrypt
 

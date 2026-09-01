@@ -7,6 +7,8 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
+from mobia.domain.optout.repositorio import esta_em_optout_por_mensagem
 from mobia.domain.outbound.models import OutboundDispatch
 
 log = structlog.get_logger(__name__)
@@ -113,6 +115,28 @@ class GuardedOutbound:
         self._session_factory = session_factory
 
     async def send(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> bool:
+        # A guarda de opt-out mora AQUI, e nao em `executar_turno`, de
+        # proposito. No turno ela protegeria o caminho de hoje e nada mais, e a
+        # TEC-183 vai criar um segundo caminho de envio. Na porta, todo envio
+        # presente e futuro a herda e esquece-la deixa de ser possivel.
+        #
+        # Antes da reserva: barrar depois deixaria linha orfa em
+        # `outbound_dispatches`, e o sweeper leria isso como tentativa feita.
+        if kind != KIND_DA_CONFIRMACAO_DE_OPTOUT:
+            async with self._session_factory() as session:
+                if await esta_em_optout_por_mensagem(session, message_id):
+                    # `warning` e nao `info`: um envio barrado aqui significa
+                    # que algum caminho tentou falar com quem pediu silencio.
+                    # Nao e erro nosso -- a guarda funcionou --, mas e o
+                    # sintoma que denuncia um caminho sem a checagem barata do
+                    # turno.
+                    log.warning(
+                        "outbound.optout_bloqueou",
+                        message_id=str(message_id),
+                        kind=kind,
+                    )
+                    return False
+
         async with self._session_factory() as session:
             session.add(OutboundDispatch(id=uuid.uuid4(), message_id=message_id, kind=kind))
             try:

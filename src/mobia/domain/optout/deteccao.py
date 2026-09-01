@@ -88,3 +88,15 @@ TEXTO_DA_CONFIRMACAO_DE_OPTOUT = (
     "Pronto, não vou mais te enviar mensagens. Se mudar de ideia, é só falar "
     "com a nossa equipe. Obrigado pelo contato!"
 )
+
+# Kind proprio, e nao `reply`, porque a guarda de opt-out em
+# `GuardedOutbound.send` precisa distinguir o unico envio permitido depois do
+# registro. Kind separado tambem da reserva propria em `outbound_dispatches`:
+# a confirmacao nao colide com a resposta que o mesmo turno nao vai mandar.
+#
+# Mora aqui, e nao em `turno.py`, porque `turno.py` importa de
+# `outbound.port` e `outbound.port` precisa desta constante: colocar a
+# constante em `turno.py` faria `port.py` importar `turno.py`, que ja importa
+# `port.py`, e estourar import circular. O kind pertence ao assunto opt-out de
+# qualquer forma -- a posicao em `turno.py` seria so conveniencia.
+KIND_DA_CONFIRMACAO_DE_OPTOUT = "optout_confirmacao"
