@@ -9,6 +9,9 @@ de quem passa por aqui.
 import re
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from enum import StrEnum
+
+from mobia.domain.agente.schemas import Intencao
 
 # Ruido que nao carrega valor. Sai antes de qualquer parsing para que
 # "uns 500 mil" e "500 mil" sigam o mesmo caminho.
@@ -126,3 +129,89 @@ def _faixa_de(expressao: str) -> FaixaDePreco | None:
 
     valor = _valor_de(limpo)
     return None if valor is None else FaixaDePreco(max_centavos=valor.centavos)
+
+
+# Bandas em centavos. Constantes de modulo, nao configuracao: a card pede
+# configurabilidade para os PESOS DO SCORE (TEC-150), e nao diz nada sobre
+# bandas de preco. Configuracao que ninguem pediu e superficie a mais.
+_BANDA_DE_COMPRA = (3_000_000, 100_000_000_000)  # R$ 30 mil a R$ 1 bilhao
+_BANDA_DE_ALUGUEL = (30_000, 20_000_000)  # R$ 300 a R$ 200 mil
+
+_BANDAS = {
+    Intencao.COMPRA: _BANDA_DE_COMPRA,
+    Intencao.INVESTIMENTO: _BANDA_DE_COMPRA,
+    Intencao.VENDER_IMOVEL: _BANDA_DE_COMPRA,
+    Intencao.ALUGUEL: _BANDA_DE_ALUGUEL,
+}
+
+# Uniao das duas: na duvida, aceita. Fechar a banda para o lead ainda nao
+# classificado custaria valores de aluguel legitimos, que sao a maioria dos
+# valores baixos. Lacuna declarada no desenho.
+_BANDA_FROUXA = (
+    min(_BANDA_DE_COMPRA[0], _BANDA_DE_ALUGUEL[0]),
+    max(_BANDA_DE_COMPRA[1], _BANDA_DE_ALUGUEL[1]),
+)
+
+
+class MotivoDaRecusa(StrEnum):
+    """Tres motivos que mandam quem investiga para lados diferentes.
+
+    AMBIGUA e IMPLAUSIVEL dizem que o LEAD foi impreciso; ILEGIVEL diz que o
+    PARSER nao deu conta. Um pico de ILEGIVEL e trabalho para a proxima card
+    da gramatica; um pico de AMBIGUA e sinal sobre como os leads deste
+    produto falam de dinheiro.
+    """
+
+    AMBIGUA = "AMBIGUA"
+    IMPLAUSIVEL = "IMPLAUSIVEL"
+    ILEGIVEL = "ILEGIVEL"
+
+
+@dataclass(frozen=True)
+class Recusa:
+    """Recusa com motivo -- nunca excecao. Ver `parsear`."""
+
+    motivo: MotivoDaRecusa
+
+
+def _tinha_marcador(expressao: str) -> bool:
+    limpo = expressao.casefold()
+    return any(padrao.search(limpo) for padrao, _ in _MULTIPLICADORES)
+
+
+def parsear(expressao: str, intencao: Intencao) -> FaixaDePreco | Recusa:
+    """Resolve a expressao, ou recusa com motivo. Nunca levanta.
+
+    Chamador com `expressao` nula nao chega aqui: nao ha o que parsear, nada e
+    gravado e nada e logado. E o turno comum, que nao fala de orcamento.
+    """
+    faixa = _faixa_de(expressao)
+    if faixa is None:
+        return Recusa(MotivoDaRecusa.ILEGIVEL)
+
+    # Invertida antes da banda: os dois extremos podem estar dentro dela e
+    # ainda assim a faixa nao fazer sentido.
+    if (
+        faixa.min_centavos is not None
+        and faixa.max_centavos is not None
+        and faixa.min_centavos > faixa.max_centavos
+    ):
+        return Recusa(MotivoDaRecusa.IMPLAUSIVEL)
+
+    piso, teto = _BANDAS.get(intencao, _BANDA_FROUXA)
+    extremos = [v for v in (faixa.min_centavos, faixa.max_centavos) if v is not None]
+
+    for valor in extremos:
+        if valor > teto:
+            return Recusa(MotivoDaRecusa.IMPLAUSIVEL)
+        if valor < piso:
+            # Numero nu abaixo do piso e ambiguo, nao implausivel: o lead
+            # quase certamente disse outra coisa. Com marcador explicito, ele
+            # disse algo que nao fecha com a intencao.
+            return Recusa(
+                MotivoDaRecusa.AMBIGUA
+                if not _tinha_marcador(expressao)
+                else MotivoDaRecusa.IMPLAUSIVEL
+            )
+
+    return faixa

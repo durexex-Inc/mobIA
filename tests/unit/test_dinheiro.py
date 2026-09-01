@@ -2,7 +2,17 @@ from decimal import Decimal
 
 import pytest
 
-from mobia.domain.agente.dinheiro import _RUIDO, FaixaDePreco, _faixa_de, _Valor, _valor_de
+from mobia.domain.agente.dinheiro import (
+    _RUIDO,
+    FaixaDePreco,
+    MotivoDaRecusa,
+    Recusa,
+    _faixa_de,
+    _Valor,
+    _valor_de,
+    parsear,
+)
+from mobia.domain.agente.schemas import Intencao
 
 
 @pytest.mark.parametrize(
@@ -113,3 +123,60 @@ def test_cada_lado_com_seu_proprio_marcador():
 
 def test_faixa_sem_numero_nenhum_devolve_none():
     assert _faixa_de("o que der") is None
+
+
+def test_expressao_clara_de_compra_e_aceita():
+    assert parsear("uns 500 mil", Intencao.COMPRA) == FaixaDePreco(max_centavos=50_000_000)
+
+
+def test_numero_nu_abaixo_do_piso_e_ambiguo():
+    """O caso da card: "uns 500" para compra nao e R$ 500, e o sistema nao
+    deve adivinhar qual e."""
+    assert parsear("uns 500", Intencao.COMPRA) == Recusa(MotivoDaRecusa.AMBIGUA)
+
+
+def test_magnitude_explicita_fora_da_banda_e_implausivel():
+    assert parsear("2,5 milhoes", Intencao.ALUGUEL) == Recusa(MotivoDaRecusa.IMPLAUSIVEL)
+
+
+def test_sem_numero_e_ilegivel():
+    """ILEGIVEL mede o buraco da gramatica; os outros dois medem o lead."""
+    assert parsear("quinhentos mil", Intencao.COMPRA) == Recusa(MotivoDaRecusa.ILEGIVEL)
+
+
+def test_aluguel_aceita_valor_que_compra_recusaria():
+    assert parsear("1500", Intencao.ALUGUEL) == FaixaDePreco(max_centavos=150_000)
+    assert parsear("1500", Intencao.COMPRA) == Recusa(MotivoDaRecusa.AMBIGUA)
+
+
+def test_indefinida_usa_a_uniao_das_bandas():
+    assert parsear("1500", Intencao.INDEFINIDA) == FaixaDePreco(max_centavos=150_000)
+
+
+def test_faixa_invertida_e_recusada():
+    """D6 do desenho: faixa invertida e canario de bug do parser -- o caso
+    mais provavel e o marcador ter se ligado ao lado errado. Reordenar em
+    silencio calaria o sinal."""
+    assert parsear("entre 500 e 400 mil", Intencao.COMPRA) == Recusa(
+        MotivoDaRecusa.IMPLAUSIVEL
+    )
+
+
+def test_faixa_igual_nos_dois_lados_e_valida():
+    obtido = parsear("exatamente 600 mil", Intencao.COMPRA)
+    assert obtido == FaixaDePreco(max_centavos=60_000_000)
+
+
+def test_piso_da_banda_e_inclusive():
+    """O piso e o menor valor ACEITO, nao o maior valor recusado: exatamente
+    em cima da fronteira tem que passar. Sem este teste, trocar `<` por `<=`
+    no piso nao quebra nada -- foi visto passar os 40 testes sem pegar."""
+    assert parsear("30000", Intencao.COMPRA) == FaixaDePreco(max_centavos=3_000_000)
+
+
+def test_teto_da_banda_e_inclusive():
+    """Espelho do teste do piso, do lado de cima: exatamente no teto tem que
+    passar, nao ser tratado como acima dele."""
+    assert parsear("1000000000", Intencao.COMPRA) == FaixaDePreco(
+        max_centavos=100_000_000_000
+    )
