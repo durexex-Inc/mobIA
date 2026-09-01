@@ -43,6 +43,7 @@ KIND_DA_RESPOSTA = "reply"
 SUBAGENTE_CLASSIFICADOR = "classificador"
 SUBAGENTE_DESAMBIGUADOR = "desambiguador"
 SUBAGENTE_MODERACAO = "moderacao"
+SUBAGENTE_OPTOUT = "optout"
 
 # Conjunto fechado de proposito (Literal, nao str): um typo num dos dois
 # lugares que compara contra esta string (process_message, os testes) vira
@@ -134,6 +135,49 @@ async def executar_turno(
             )
             return "silenciado"
 
+    if corpo and pediu_optout(corpo):
+        # ANTES da moderacao de entrada, de proposito -- fix de revisao
+        # (Critical): o bloco de moderacao logo abaixo tem `return` proprio.
+        # Se este bloco rodasse depois dele, uma mensagem que e AO MESMO
+        # TEMPO um pedido de opt-out e algo que a moderacao reprova (ex.:
+        # "pare de mandar mensagem" seguido de um xingamento) nunca chegaria
+        # aqui: a moderacao bloquearia e devolveria antes, o opt-out nunca
+        # seria registrado, e continuariamos mandando mensagem (a recusa de
+        # entrada) para quem pediu para sair -- a violacao que a D5 existe
+        # para evitar, entrando por outra porta. Checar opt-out primeiro
+        # tambem poupa a chamada paga de moderacao no caminho de opt-out, que
+        # e o que o docstring de
+        # `test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo` promete.
+        #
+        # Gravado ANTES da entrega, pelo precedente de `marcar_bloqueada`. Se
+        # a entrega falhar depois, o lead fica em silencio sem confirmacao --
+        # ruim e conforme. Na ordem inversa, um opt-out nao registrado nos
+        # deixaria mandando mensagem, que e a violacao.
+        await registrar_optout(
+            session_factory,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+            message_id=message.id,
+        )
+        # Nome distinto de `entregue` (o bool que `outbound.send` devolve mais
+        # abaixo, no caminho principal): mypy infere um tipo unico por nome de
+        # variavel na funcao inteira, e este aqui e o `ResultadoDoTurno` que
+        # `_entregar_texto_fixo` devolve, nao o booleano cru.
+        desfecho_da_confirmacao = await _entregar_texto_fixo(
+            session_factory,
+            message=message,
+            outbound=outbound,
+            recorder_texto=TEXTO_DA_CONFIRMACAO_DE_OPTOUT,
+            kind=KIND_DA_CONFIRMACAO_DE_OPTOUT,
+            subagent=SUBAGENTE_OPTOUT,
+        )
+        # `_entregar_texto_fixo` devolve "expirado", "sem_resposta",
+        # "reentrega_suprimida" ou "bloqueado_por_optout" quando nao entrega.
+        # Esses desfechos sao sobre o ENVIO da confirmacao, e o opt-out ja
+        # esta gravado -- entao eles passam adiante como estao, e so o
+        # caminho de sucesso vira "opt_out".
+        return "opt_out" if desfecho_da_confirmacao == "respondido" else desfecho_da_confirmacao
+
     if corpo:
         try:
             veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
@@ -177,35 +221,6 @@ async def executar_turno(
                     outbound=outbound,
                     recorder_texto=TEXTO_DA_RECUSA_DE_ENTRADA,
                 )
-
-    if corpo and pediu_optout(corpo):
-        # Gravado ANTES da entrega, pelo precedente de `marcar_bloqueada`. Se a
-        # entrega falhar depois, o lead fica em silencio sem confirmacao --
-        # ruim e conforme. Na ordem inversa, um opt-out nao registrado nos
-        # deixaria mandando mensagem, que e a violacao.
-        await registrar_optout(
-            session_factory,
-            channel=message.channel,
-            conversation_key=message.conversation_key,
-            message_id=message.id,
-        )
-        # Nome distinto de `entregue` (o bool que `outbound.send` devolve mais
-        # abaixo, no caminho principal): mypy infere um tipo unico por nome de
-        # variavel na funcao inteira, e este aqui e o `ResultadoDoTurno` que
-        # `_entregar_texto_fixo` devolve, nao o booleano cru.
-        desfecho_da_confirmacao = await _entregar_texto_fixo(
-            session_factory,
-            message=message,
-            outbound=outbound,
-            recorder_texto=TEXTO_DA_CONFIRMACAO_DE_OPTOUT,
-            kind=KIND_DA_CONFIRMACAO_DE_OPTOUT,
-        )
-        # `_entregar_texto_fixo` devolve "expirado", "sem_resposta",
-        # "reentrega_suprimida" ou "bloqueado_por_optout" quando nao entrega.
-        # Esses desfechos sao sobre o ENVIO da confirmacao, e o opt-out ja
-        # esta gravado -- entao eles passam adiante como estao, e so o
-        # caminho de sucesso vira "opt_out".
-        return "opt_out" if desfecho_da_confirmacao == "respondido" else desfecho_da_confirmacao
 
     try:
         contexto = await montar_contexto(
@@ -510,6 +525,7 @@ async def _entregar_texto_fixo(
     outbound: OutboundPort,
     recorder_texto: str,
     kind: str = KIND_DA_RESPOSTA,
+    subagent: str = SUBAGENTE_MODERACAO,
 ) -> ResultadoDoTurno:
     """Entrega um texto que nao veio do modelo, e grava o que entregou.
 
@@ -519,7 +535,11 @@ async def _entregar_texto_fixo(
     os chamadores existentes -- o texto de recusa de entrada usa o kind da
     resposta normal. A confirmacao de opt-out (TEC-182) passa o kind proprio,
     que e o unico que atravessa a guarda de opt-out da porta de saida depois
-    do registro -- ver `GuardedOutbound.send`.
+    do registro -- ver `GuardedOutbound.send`. `subagent` anda junto de
+    `kind` pelo mesmo motivo: sem o parametro, toda entrega deste caminho --
+    inclusive a confirmacao de opt-out, que nao e moderacao nenhuma -- gravava
+    `message_telemetry.subagent = "moderacao"`, rotulando errado quem olhar a
+    telemetria depois.
     """
     try:
         entregue = await outbound.send(
@@ -555,7 +575,22 @@ async def _entregar_texto_fixo(
         return "sem_resposta"
 
     if not entregue:
-        if await _bloqueado_por_optout_concorrente(session_factory, message):
+        # `kind != KIND_DA_CONFIRMACAO_DE_OPTOUT` guarda a chamada seguinte,
+        # de proposito -- fix de revisao (Important). Quando ESTE chamador e
+        # a propria confirmacao de opt-out, o turno acabou de rodar
+        # `registrar_optout` antes de chegar aqui: `esta_em_optout` so pode
+        # devolver True, sempre, por construcao -- nao porque a guarda barrou
+        # por opt-out desta vez, mas porque o opt-out que o PROPRIO turno
+        # gravou ainda esta la. E a guarda pula a checagem de opt-out para
+        # este kind especifico (ver `GuardedOutbound.send`), entao um `False`
+        # aqui so pode vir de reserva duplicada de verdade. Chamar o helper
+        # mesmo assim relataria "bloqueado_por_optout" em `info` e engoliria
+        # o "reentrega_suprimida" em `error` -- o alarme de dado sumido que
+        # importa exatamente aqui, na confirmacao que apaga o unico rastro
+        # visivel do pedido do lead se ela nao chegar.
+        if kind != KIND_DA_CONFIRMACAO_DE_OPTOUT and await _bloqueado_por_optout_concorrente(
+            session_factory, message
+        ):
             # Mesmo raciocinio do bloco principal (ver
             # `turno.bloqueado_por_optout_concorrente` la em cima): a guarda
             # barrou este envio porque outro turno da mesma conversa
@@ -589,7 +624,7 @@ async def _entregar_texto_fixo(
         # `MODELO_SEM_CHAMADA` em `app/config.py` -- com "" a telemetria
         # abriria um `telemetry.unknown_model` por entrada bloqueada.
         model=MODELO_SEM_CHAMADA,
-        subagent=SUBAGENTE_MODERACAO,
+        subagent=subagent,
         tokens_in=0,
         tokens_out=0,
         latency_ms=0,

@@ -14,7 +14,7 @@ from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
 log = structlog.get_logger(__name__)
 
 # "skipped" e deste modulo -- claim recusado ou a mensagem sumiu entre o claim
-# e a busca -- os outros quatro vem do turno (Task 6, Literal de proposito: ver
+# e a busca -- os outros sete vem do turno (Task 6, Literal de proposito: ver
 # `ResultadoDoTurno`).
 ResultadoDoProcessamento = Literal["skipped"] | ResultadoDoTurno
 

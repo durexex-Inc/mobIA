@@ -56,10 +56,39 @@ async def _mensagem_gravada(session, *, texto: str) -> Message:
     return linha
 
 
+async def _mensagem_sem_texto_gravada(session, *, content_type: MessageContentType) -> Message:
+    """Uma mensagem INBOUND sem corpo (imagem ou audio), `text_body=None`.
+
+    Existe so para provar que o silencio de quem ja pediu opt-out nao depende
+    da mensagem ter texto -- ver a checagem `esta_em_optout` fora do
+    `if corpo:` em `executar_turno`.
+    """
+    identificador = uuid.uuid4()
+    linha = Message(
+        id=identificador,
+        channel=CANAL,
+        provider_message_id=f"wamid.{identificador.hex[:10]}",
+        sender_external_id=CONVERSA,
+        recipient_external_id="222222222",
+        conversation_key=CONVERSA,
+        role=MessageRole.LEAD,
+        direction=MessageDirection.INBOUND,
+        content_type=content_type,
+        text_body=None,
+        raw_payload=None,
+        status=MessageStatus.PROCESSING,
+    )
+    session.add(linha)
+    await session.commit()
+    return linha
+
+
 async def test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo(
-    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
 ) -> None:
-    """O turno inteiro e economizado: nenhuma chamada ao classificador.
+    """O turno inteiro e economizado: nenhuma chamada ao classificador, e
+    tambem nenhuma chamada de moderacao (fix da revisao -- a checagem de
+    opt-out roda ANTES do bloco de moderacao de entrada, nao depois).
 
     E o mesmo motivo que poe a moderacao de entrada antes de montar contexto --
     bloquear cedo economiza o turno pago inteiro.
@@ -67,6 +96,7 @@ async def test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo(
     mensagem = await _mensagem_gravada(session, texto="parar")
     classificador = classificador_fake()
     outbound = outbound_fake()
+    moderador = moderador_fake()
 
     resultado = await executar_turno(
         get_sessionmaker(),
@@ -75,13 +105,53 @@ async def test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo(
         resumidor=resumidor_fake(),
         contador=contador_fake(),
         outbound=outbound,
-        moderador=ModeradorFake(),
+        moderador=moderador,
     )
 
     assert resultado == "opt_out"
     assert classificador.chamadas == 0
+    assert moderador.entradas == 0, "opt-out e checado antes da moderacao -- ela nem roda"
     # `OutboundFake._deliver` grava o texto entregue (payload["texto"]), nao o
     # kind -- e o texto que confirma o registro ao lead.
+    assert outbound.entregues == [TEXTO_DA_CONFIRMACAO_DE_OPTOUT]
+    assert await esta_em_optout(
+        session, channel=mensagem.channel, conversation_key=mensagem.conversation_key
+    )
+
+
+async def test_pedido_de_optout_e_registrado_mesmo_com_entrada_bloqueada_pela_moderacao(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """CRITICAL da revisao: o registro de opt-out nao pode depender da
+    moderacao aprovar a mensagem que o carrega.
+
+    O bloco de moderacao de entrada tem `return` proprio. Se o bloco de
+    opt-out rodasse depois dele (como estava antes deste fix), uma mensagem
+    que e AO MESMO TEMPO um pedido de opt-out e algo que a moderacao reprova
+    -- por exemplo "pare de mandar mensagem" com um xingamento junto -- nunca
+    chegaria ao registro: a moderacao bloquearia e devolveria a recusa de
+    entrada primeiro, e continuariamos mandando mensagem (a propria recusa)
+    para quem pediu para sair. E a violacao que a D5 existe para evitar,
+    entrando por outra porta. Este teste usa `bloqueia_entrada=True` para
+    forcar exatamente esse cenario e provar que o opt-out ainda e registrado.
+    """
+    mensagem = await _mensagem_gravada(session, texto="pare de mandar mensagem, seu golpista")
+    classificador = classificador_fake()
+    outbound = outbound_fake()
+    moderador = moderador_fake(bloqueia_entrada=True)
+
+    resultado = await executar_turno(
+        get_sessionmaker(),
+        message=mensagem,
+        classificador=classificador,
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=outbound,
+        moderador=moderador,
+    )
+
+    assert resultado == "opt_out"
+    assert moderador.entradas == 0, "o opt-out e checado antes -- a moderacao nunca roda"
     assert outbound.entregues == [TEXTO_DA_CONFIRMACAO_DE_OPTOUT]
     assert await esta_em_optout(
         session, channel=mensagem.channel, conversation_key=mensagem.conversation_key
@@ -94,6 +164,12 @@ async def test_lead_ja_silenciado_nao_recebe_nada_e_nao_paga(
     """A segunda mensagem de quem ja pediu para sair.
 
     D1: silencio total. Ele nao recebe resposta nem quando escreve primeiro.
+    RN-14.4 (fix de revisao -- Important 3, movido para ca do teste que
+    afirmava isso sem verificar): opt-out nao apaga historico nem para a
+    ingestao -- a fala do lead ja silenciado continua gravada. `total == 1`
+    prova que a linha, ja commitada antes do turno rodar (como a ingestao
+    real faz), sobrevive ao turno que devolve "silenciado" -- nenhuma
+    reescrita, nenhum apagamento.
     """
     await registrar_optout(
         get_sessionmaker(), channel=CANAL, conversation_key=CONVERSA, message_id=uuid.uuid4()
@@ -116,32 +192,44 @@ async def test_lead_ja_silenciado_nao_recebe_nada_e_nao_paga(
     assert classificador.chamadas == 0
     assert outbound.entregues == []
 
+    total = (await session.execute(select(func.count()).select_from(Message))).scalar_one()
+    assert total == 1, "a fala do lead ja silenciado continua gravada -- nada some"
+    ainda_la = await session.get(Message, mensagem.id)
+    assert ainda_la is not None
 
-async def test_a_mensagem_do_lead_silenciado_continua_gravada(
+
+async def test_mensagem_sem_texto_de_lead_silenciado_tambem_fica_em_silencio(
     session, classificador_fake, outbound_fake, resumidor_fake, contador_fake
 ) -> None:
-    """RN-14.4: opt-out nao apaga historico, e nao para a ingestao.
+    """IMPORTANT da revisao: a checagem de silencio fica FORA do `if corpo:`
+    de proposito, e nenhum dos outros testes deste arquivo prova isso -- todos
+    semeiam mensagem com corpo de texto, entao mover a checagem para DENTRO do
+    `if corpo:` nao quebraria nenhum deles.
 
-    A fala do lead que disparou o opt-out ja estava gravada antes do turno
-    rodar (a ingestao grava antes do worker existir, como em todo turno) -- e
-    continua la depois. A confirmacao que o turno entrega tambem vira linha.
-    Duas mensagens no total: nenhuma sumiu.
+    O silencio e sobre o LEAD (o par channel/conversation_key), nao sobre a
+    mensagem ter texto: uma imagem ou audio de quem ja pediu opt-out tambem
+    nao pode receber resposta. `text_body=None` aqui simula exatamente isso.
     """
-    mensagem = await _mensagem_gravada(session, texto="parar")
+    await registrar_optout(
+        get_sessionmaker(), channel=CANAL, conversation_key=CONVERSA, message_id=uuid.uuid4()
+    )
+    mensagem = await _mensagem_sem_texto_gravada(session, content_type=MessageContentType.AUDIO)
+    classificador = classificador_fake()
+    outbound = outbound_fake()
 
     resultado = await executar_turno(
         get_sessionmaker(),
         message=mensagem,
-        classificador=classificador_fake(),
+        classificador=classificador,
         resumidor=resumidor_fake(),
         contador=contador_fake(),
-        outbound=outbound_fake(),
+        outbound=outbound,
         moderador=ModeradorFake(),
     )
 
-    assert resultado == "opt_out"
-    total = (await session.execute(select(func.count()).select_from(Message))).scalar_one()
-    assert total == 2, "a fala do lead e a confirmacao ficam gravadas, nenhuma some"
+    assert resultado == "silenciado"
+    assert classificador.chamadas == 0
+    assert outbound.entregues == []
 
 
 async def test_optout_gravado_mesmo_quando_a_confirmacao_nao_sai(
@@ -274,6 +362,65 @@ async def test_bloqueio_da_guarda_na_entrada_bloqueada_tambem_nao_vira_reentrega
     eventos_de_erro = [registro for registro in caplog.records if registro.levelno == logging.ERROR]
     assert not any(
         "turno.reentrega_suprimida" in registro.getMessage() for registro in eventos_de_erro
+    )
+
+
+async def test_confirmacao_de_optout_que_nao_entrega_nunca_vira_bloqueado_por_optout(
+    session, classificador_fake, resumidor_fake, contador_fake, caplog
+) -> None:
+    """IMPORTANT da revisao: no chamador da CONFIRMACAO de opt-out, um `False`
+    de `outbound.send` so pode vir de reserva duplicada de verdade -- nunca da
+    guarda de opt-out.
+
+    Este turno acabou de rodar `registrar_optout` antes de chegar em
+    `_entregar_texto_fixo`, entao `esta_em_optout` devolveria True por
+    construcao se fosse consultada aqui -- nao porque a guarda bloqueou desta
+    vez, mas porque o proprio opt-out que ESTE turno gravou ainda esta la. E a
+    guarda pula a checagem de opt-out para `KIND_DA_CONFIRMACAO_DE_OPTOUT`.
+    Simula a reserva duplicada real (Task 3): outra tentativa anterior ja
+    reservou o mesmo `(message_id, kind)` em `outbound_dispatches` antes deste
+    turno rodar -- o cenario que `test_reentrega_suprimida_nao_grava_fala_fantasma`
+    (test_turno.py) usa para o caminho principal, replicado aqui para o
+    caminho de opt-out.
+    """
+    from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
+    from mobia.domain.outbound.models import OutboundDispatch
+
+    mensagem = await _mensagem_gravada(session, texto="parar")
+    session.add(
+        OutboundDispatch(
+            id=uuid.uuid4(), message_id=mensagem.id, kind=KIND_DA_CONFIRMACAO_DE_OPTOUT
+        )
+    )
+    await session.commit()
+    outbound = OutboundFake(get_sessionmaker())
+
+    with caplog.at_level(logging.INFO):
+        resultado = await executar_turno(
+            get_sessionmaker(),
+            message=mensagem,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=ModeradorFake(),
+        )
+
+    assert resultado == "reentrega_suprimida", (
+        "reserva duplicada de verdade -- nao pode se disfarcar de bloqueado_por_optout"
+    )
+    eventos_de_erro = [
+        registro
+        for registro in caplog.records
+        if "turno.reentrega_suprimida" in registro.getMessage()
+    ]
+    assert eventos_de_erro and all(r.levelno == logging.ERROR for r in eventos_de_erro), (
+        "o alarme de dado sumido nao pode ser engolido pela checagem de opt-out"
+    )
+    # O opt-out em si foi registrado (aconteceu antes da tentativa de envio):
+    # so a confirmacao nao saiu.
+    assert await esta_em_optout(
+        session, channel=mensagem.channel, conversation_key=mensagem.conversation_key
     )
 
 
