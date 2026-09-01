@@ -11,7 +11,7 @@ o substring cru sem fronteira de palavra e sem exigir `?` passou despercebido.
 
 from evals.test_acuracia_de_intencao import _campos_conhecidos, _reperguntou
 
-CAMPOS = ("regiao", "quartos", "vagas", "tipo_imovel", "faixa_preco_max")
+CAMPOS = ("regiao", "quartos", "vagas", "tipo_imovel", "faixa_preco_max_centavos")
 
 
 def test_reperguntou_nao_conta_recusa_com_onde_embutido() -> None:

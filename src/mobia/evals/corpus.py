@@ -14,6 +14,14 @@ _VOCABULARIO = {
     "forma_pagamento": FormaPagamento,
 }
 
+# TEC-146. A anotacao fica em reais porque e artefato humano; o banco guarda
+# centavos. A conversao mora aqui, no unico ponto em que o corpus vira dado,
+# para nao haver duas unidades circulando no runner.
+_EM_REAIS = {
+    "faixa_preco_min": "faixa_preco_min_centavos",
+    "faixa_preco_max": "faixa_preco_max_centavos",
+}
+
 
 class CorpusInvalido(RuntimeError):
     """O corpus nao pode ser usado como regua deste jeito."""
@@ -211,8 +219,14 @@ def _turno_de(bruto: Any, conversa_id: str, arquivo: str) -> TurnoAnotado:
         # aqui como erro, entao uma anotacao parcial nao vira nota mais baixa
         # do modelo -- vira medicao errada. `{}` e o caso limite disso: nada
         # esperado, tudo obtido e erro.
+        campos = {}
         for nome, valor in campos_brutos.items():
-            if nome not in _CAMPOS_ANOTAVEIS:
+            # `_EM_REAIS` traduz o nome de anotacao (reais) para o nome de
+            # gravacao (centavos) antes de qualquer checagem, para que o nome
+            # que o autor do YAML escreve seja o validado contra o vocabulario
+            # e o nome que sai daqui seja o que `Extracao`/o banco esperam.
+            nome_final = _EM_REAIS.get(nome, nome)
+            if nome_final not in _CAMPOS_ANOTAVEIS:
                 raise CorpusInvalido(
                     f"{arquivo}: {conversa_id} anota campo desconhecido {nome!r}. "
                     f"Conhecidos: {sorted(_CAMPOS_ANOTAVEIS)}."
@@ -227,13 +241,13 @@ def _turno_de(bruto: Any, conversa_id: str, arquivo: str) -> TurnoAnotado:
                     f"{arquivo}: {conversa_id} anota {nome!r} sem valor, que nao diz "
                     f"nada. Omita o campo se o lead nao afirmou isso, ou de um valor."
                 )
-            enum = _VOCABULARIO.get(nome)
+            enum = _VOCABULARIO.get(nome_final)
             if enum is not None and valor not in [membro.value for membro in enum]:
                 raise CorpusInvalido(
                     f"{arquivo}: {conversa_id} anota {nome}={valor!r}, fora do "
                     f"vocabulario {[membro.value for membro in enum]}."
                 )
-        campos = campos_brutos
+            campos[nome_final] = int(valor) * 100 if nome in _EM_REAIS else valor
     return TurnoAnotado(lead=texto, intencao=intencao, campos=campos)
 
 

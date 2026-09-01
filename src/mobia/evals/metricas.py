@@ -594,7 +594,7 @@ MARCADORES_DE_REPERGUNTA: dict[str, tuple[str, ...]] = {
     "quartos": (r"quartos?", r"dormitorios?"),
     "vagas": (r"vagas?", r"garagem"),
     "tipo_imovel": (r"apartamentos?", r"tipo de imovel"),
-    "faixa_preco_max": (r"orcamento", r"faixa de preco", r"quanto pretende"),
+    "faixa_preco_max_centavos": (r"orcamento", r"faixa de preco", r"quanto pretende"),
     "urgencia": (r"prazo", r"quando pretende", r"pressa"),
     "forma_pagamento": (r"pagamento", r"financiamento", r"a vista"),
     "tem_imovel_para_vender": (r"imovel para vender", r"tem imovel"),

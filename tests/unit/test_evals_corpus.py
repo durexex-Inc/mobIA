@@ -207,3 +207,16 @@ def test_os_tres_estados_de_anotacao_tem_propriedade_propria() -> None:
     assert (fora.anotado, fora.positivo, fora.negativo) == (False, False, False)
     assert (negativo.anotado, negativo.positivo, negativo.negativo) == (True, False, True)
     assert (positivo.anotado, positivo.positivo, positivo.negativo) == (True, True, False)
+
+
+def test_corpus_anota_reais_e_carrega_centavos(tmp_path: Path) -> None:
+    """D7: a anotacao continua legivel para humanos. 50000000 no YAML convida
+    ao zero a mais de quem adicionar caso novo, e um erro desses num corpus
+    que e o baseline medido da TEC-145 aparece como regressao de acuracia que
+    ninguem atribui a esta migracao."""
+    turno = _turno_de(
+        {"lead": "ate 500 mil", "intencao": "COMPRA", "campos": {"faixa_preco_max": 500000}},
+        "compra-01",
+        "compra.yaml",
+    )
+    assert turno.campos == {"faixa_preco_max_centavos": 50_000_000}
