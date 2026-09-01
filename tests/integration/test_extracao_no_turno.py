@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 from conftest import CANAL_AGENTE, CONVERSA_AGENTE
 
 from mobia.domain.agente.schemas import Extracao, Intencao, TipoImovel, Urgencia
@@ -16,7 +14,7 @@ async def test_quatro_campos_de_uma_frase_so(
             tipo_imovel=TipoImovel.APARTAMENTO,
             quartos=2,
             regiao="zona sul",
-            faixa_preco_max=Decimal("600000"),
+            faixa_preco_max_centavos=60_000_000,
             urgencia=Urgencia.ATE_3_MESES,
         ),
     )
@@ -34,7 +32,7 @@ async def test_quatro_campos_de_uma_frase_so(
         2,
         "zona sul",
     )
-    assert estado.faixa_preco_max == Decimal("600000.00")
+    assert estado.faixa_preco_max_centavos == 60_000_000
     assert estado.urgencia == "ATE_3_MESES"
 
 

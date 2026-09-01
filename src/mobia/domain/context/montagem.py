@@ -148,8 +148,8 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
     marcados = set(estado.perguntados_sem_resposta or ())
     campos = {
         "intencao": estado.intencao,
-        "faixa_preco_min": estado.faixa_preco_min,
-        "faixa_preco_max": estado.faixa_preco_max,
+        "faixa_preco_min_centavos": estado.faixa_preco_min_centavos,
+        "faixa_preco_max_centavos": estado.faixa_preco_max_centavos,
         "regiao": estado.regiao,
         "tipo_imovel": estado.tipo_imovel,
         "quartos": estado.quartos,

@@ -1,7 +1,6 @@
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 import pytest
 from conftest import CANAL, CONVERSA, ContadorFake, ResumidorFake, semear
@@ -1008,7 +1007,7 @@ async def test_estado_de_qualificacao_entra_no_contexto(session) -> None:
         LeadQualification(
             channel=CANAL,
             conversation_key=CONVERSA,
-            faixa_preco_max=Decimal("600000.00"),
+            faixa_preco_max_centavos=60_000_000,
             regiao="zona sul",
         )
     )
@@ -1023,7 +1022,7 @@ async def test_estado_de_qualificacao_entra_no_contexto(session) -> None:
     )
 
     assert contexto.estado is not None
-    assert contexto.estado.faixa_preco_max == Decimal("600000.00")
+    assert contexto.estado.faixa_preco_max_centavos == 60_000_000
 
 
 async def test_limiar_de_contagem_cede_a_vez_para_a_contagem_real(session) -> None:

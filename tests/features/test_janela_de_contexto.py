@@ -5,8 +5,6 @@ deliberada com os testes de integracao: estes existem para que o criterio tenha
 um endereco, nao para cobrir codigo novo.
 """
 
-from decimal import Decimal
-
 from conftest import CANAL, CONVERSA, ContadorFake, ResumidorFake, semear
 
 from mobia.app.config import get_settings
@@ -54,7 +52,7 @@ async def test_estado_estruturado_nao_e_reconstruido_pelo_modelo(session) -> Non
         LeadQualification(
             channel=CANAL,
             conversation_key=CONVERSA,
-            faixa_preco_max=Decimal("600000.00"),
+            faixa_preco_max_centavos=60_000_000,
             regiao="zona sul",
         )
     )
@@ -70,7 +68,7 @@ async def test_estado_estruturado_nao_e_reconstruido_pelo_modelo(session) -> Non
     )
 
     assert contexto.estado is not None
-    assert contexto.estado.faixa_preco_max == Decimal("600000.00")
+    assert contexto.estado.faixa_preco_max_centavos == 60_000_000
     assert resumidor.chamadas == [], "o estado vem do banco; nenhuma chamada ao modelo o reconstroi"
 
 
