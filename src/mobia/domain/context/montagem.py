@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from decimal import Decimal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -128,12 +129,35 @@ def _texto_das(literais: list[Message]) -> str:
 _MARCA_SEM_RESPOSTA = "(perguntado, sem resposta)"
 
 
-def _texto_do_estado(estado: LeadQualification | None) -> str:
-    """Representa o estado de qualificacao para fins de medicao.
+def _em_reais(centavos: int | None) -> Decimal | None:
+    """Converte centavos (armazenamento exato) para reais (leitura humana e do modelo).
 
-    Nao e o renderizador do prompt -- isso e da TEC-134 -- mas a contagem tem
-    de medir algo perto do que sera de fato enviado. Ignorar o estado aqui
-    faria a medida ficar sistematicamente menor que a real.
+    TEC-146: o banco guarda centavos porque inteiro nao tem erro de
+    arredondamento; quem le -- humano ou modelo -- le reais, pela mesma razao
+    que a D7 da spec manda o corpus de eval ficar anotado em reais: um inteiro
+    grande demais (60000000) convida a um zero a mais ou a menos, e aqui o
+    erro chegaria ao lead como preco errado numa mensagem real.
+
+    `scaleb(-2)` desloca o ponto decimal sem dividir -- reproduz o mesmo texto
+    que a coluna `numeric(12,2)` produzia antes desta migracao (com os zeros a
+    direita, ex.: 60000000 -> "600000.00"), byte a byte. Uma divisao por 100
+    normalizaria a casa decimal e perderia esse zero a direita.
+    """
+    if centavos is None:
+        return None
+    return Decimal(centavos).scaleb(-2)
+
+
+def _texto_do_estado(estado: LeadQualification | None) -> str:
+    """Representa o estado de qualificacao -- e para a medicao de tokens, e
+    para o prompt de verdade.
+
+    Serve os dois: a estimativa de `_estimar`/`_contar_se_valer` (que precisa
+    medir perto do que sera de fato enviado, sob pena de subcontar) e a linha
+    "Estado de qualificacao" que `montar_prompt` manda para o modelo. Por
+    servir o prompt real, o texto que esta funcao produz **nao e livre para
+    mudar**: uma mudanca de unidade ou de nome de campo aqui e uma mudanca no
+    que o lead pode ouvir de volta, nao um detalhe de implementacao.
 
     A partir da TEC-257 carrega tambem os campos perguntados sem resposta.
     **Valor vence marca**, e a ordem dos campos nao muda: o campo marcado sai
@@ -142,14 +166,19 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
 
     `NULL` e `{}` na coluna significam coisas diferentes (ver o modelo) e a
     **leitura** trata os dois igual: `or ()`.
+
+    TEC-146: o preco fica em centavos no banco (`_em_reais` explica o porque),
+    mas aqui vira reais de volta e sai sob as chaves antigas
+    `faixa_preco_min`/`faixa_preco_max` -- nem a unidade nem o nome que o
+    modelo le podem mudar so porque o armazenamento mudou.
     """
     if estado is None:
         return ""
     marcados = set(estado.perguntados_sem_resposta or ())
     campos = {
         "intencao": estado.intencao,
-        "faixa_preco_min_centavos": estado.faixa_preco_min_centavos,
-        "faixa_preco_max_centavos": estado.faixa_preco_max_centavos,
+        "faixa_preco_min": _em_reais(estado.faixa_preco_min_centavos),
+        "faixa_preco_max": _em_reais(estado.faixa_preco_max_centavos),
         "regiao": estado.regiao,
         "tipo_imovel": estado.tipo_imovel,
         "quartos": estado.quartos,

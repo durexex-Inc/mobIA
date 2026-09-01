@@ -196,6 +196,33 @@ def test_campo_marcado_aparece_no_estado() -> None:
     assert "regiao: (perguntado, sem resposta)" in texto
 
 
+def test_preco_aparece_em_reais_sob_a_chave_antiga() -> None:
+    """TEC-146: o banco guarda centavos, mas o texto que o modelo le nao muda.
+
+    `_texto_do_estado` alimenta o prompt de verdade (`montar_prompt`), entao a
+    unidade e o nome da chave sao contrato com o modelo, nao detalhe de
+    armazenamento -- ver o docstring de `_em_reais`. `faixa_preco_min_centavos`
+    aqui e proposital: 123456 nao e multiplo de 100 (o parser aceita "R$
+    1.234,56"), entao "1234.56" prova que a conversao divide por 100 de
+    verdade, e nao so troca o nome da chave.
+    """
+    estado = LeadQualification(
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao="COMPRA",
+        faixa_preco_min_centavos=123456,
+        faixa_preco_max_centavos=60_000_000,
+    )
+    linhas = _texto_do_estado(estado).splitlines()
+
+    assert "faixa_preco_min: 1234.56" in linhas
+    assert "faixa_preco_max: 600000.00" in linhas
+    assert not any("centavos" in linha for linha in linhas), (
+        "a chave que o modelo le e a antiga, sem sufixo -- o armazenamento mudou, "
+        "o contrato com o modelo nao"
+    )
+
+
 def test_valor_vence_marca() -> None:
     """A marca nunca aparece ao lado de um valor.
 
