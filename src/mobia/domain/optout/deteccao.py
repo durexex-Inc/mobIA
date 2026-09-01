@@ -14,25 +14,42 @@ so a ambigua e estrita.
 import re
 import unicodedata
 
-# Casam em qualquer posicao da mensagem. Nenhum destes aparece em fala de quem
-# procura imovel, entao a posicao nao importa e o recall vale mais.
+# Casam em qualquer posicao da mensagem. Cada termo carrega o objeto de
+# mensageria, e e o objeto que fecha a colisao. "pare de me mandar mensagens"
+# nao casa com "pare de mandar apartamento sem vaga". "nao quero mais receber
+# mensagens" nao casa com "nao quero mais receber apartamento sem vaga". Por
+# isso a posicao nao importa e o recall vale mais.
 _TERMOS_INEQUIVOCOS: tuple[str, ...] = (
     "descadastrar",
     "descadastre",
-    "nao quero mais receber",
-    "pare de me mandar",
-    "pare de mandar",
-    "me tira da lista",
-    "me tire da lista",
     "remover meu contato",
-    "nao me mande mais",
+    "nao quero mais receber mensagens",
+    "nao quero mais receber mensagem",
+    "nao quero mais receber nada",
+    "pare de me mandar mensagens",
+    "pare de me mandar mensagem",
+    "pare de mandar mensagens",
+    "pare de mandar mensagem",
+    "nao me mande mais mensagens",
+    "nao me mande mais mensagem",
+    "nao me envie mais mensagens",
 )
 
 # Casam SO quando sao a mensagem inteira normalizada. Todos aparecem em fala
 # normal de quem procura imovel, e a mensagem de uma palavra so e o padrao real
 # de quem quer sair.
 _TERMOS_AMBIGUOS: frozenset[str] = frozenset(
-    {"sair", "parar", "pare", "stop", "cancelar", "cancela"}
+    {
+        "sair",
+        "parar",
+        "pare",
+        "stop",
+        "cancelar",
+        "cancela",
+        "me tira da lista",
+        "me tire da lista",
+        "nao quero mais",
+    }
 )
 
 _SO_LETRAS_E_ESPACO = re.compile(r"[^a-z ]+")
@@ -53,7 +70,7 @@ def _normalizar(texto: str) -> str:
 def pediu_optout(texto: str) -> bool:
     """O lead pediu para parar de receber mensagens.
 
-    Determinstico e sem chamada paga: uma decisao de LGPD nao pode depender de
+    Deterministico e sem chamada paga: uma decisao de LGPD nao pode depender de
     um provedor estar de pe.
     """
     normalizado = _normalizar(texto)
@@ -68,6 +85,6 @@ def pediu_optout(texto: str) -> bool:
 # `TEXTO_DA_RECUSA_DE_ENTRADA` mora no modulo de moderacao: o texto pertence ao
 # assunto, nao ao orquestrador que o entrega.
 TEXTO_DA_CONFIRMACAO_DE_OPTOUT = (
-    "Pronto, nao vou mais te enviar mensagens. Se mudar de ideia, e so falar "
+    "Pronto, não vou mais te enviar mensagens. Se mudar de ideia, é só falar "
     "com a nossa equipe. Obrigado pelo contato!"
 )

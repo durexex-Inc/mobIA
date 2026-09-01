@@ -9,7 +9,6 @@ from mobia.domain.optout.deteccao import pediu_optout
         "descadastrar",
         "quero descadastrar meu numero por favor",
         "pare de me mandar mensagem",
-        "por gentileza, me tira da lista",
         "nao quero mais receber nada de voces",
         "nao me mande mais mensagens",
     ],
@@ -23,7 +22,9 @@ def test_termo_inequivoco_dispara_em_qualquer_posicao(texto: str) -> None:
     assert pediu_optout(texto) is True
 
 
-@pytest.mark.parametrize("texto", ["parar", "PARAR", "Parar!", "  sair  ", "stop", "cancelar"])
+@pytest.mark.parametrize(
+    "texto", ["parar", "PARAR", "Parar!", "  sair  ", "stop", "cancelar", "me tira da lista"]
+)
 def test_termo_ambiguo_dispara_quando_e_a_mensagem_inteira(texto: str) -> None:
     """A mensagem de uma palavra so e o padrao real de quem quer sair.
 
@@ -48,6 +49,23 @@ def test_termo_ambiguo_dentro_de_frase_nao_dispara(texto: str) -> None:
     invisivel: ele so ve o silencio.
     """
     assert pediu_optout(texto) is False
+
+
+def test_refinamento_de_busca_nao_e_optout() -> None:
+    """Casos que uma revisao achou silenciando lead legitimo com a lista antiga.
+
+    A lista tinha "pare de mandar" e "nao quero mais receber" truncados.
+    Estes vieram de review e nao devem disparar com a lista consertada, que
+    exige o objeto de mensageria completo.
+    """
+    casos = [
+        "pare de mandar apartamento sem vaga, so quero com vaga",
+        "nao me mande mais casa, so apartamento",
+        "nao quero mais receber apartamento sem vaga",
+        "por favor, me tire da lista de interessados desse imovel",
+    ]
+    for texto in casos:
+        assert pediu_optout(texto) is False
 
 
 def test_texto_vazio_nao_dispara() -> None:
