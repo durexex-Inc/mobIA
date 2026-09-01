@@ -66,8 +66,28 @@ class OutboundPort(Protocol):
     fora. A guarda a trata como retentavel (libera a reserva e propaga) --
     ver TEC-227.
 
-    E `send` devolve `False`, sem levantar, quando a guarda suprime uma
-    reentrega -- ver `GuardedOutbound.send` e `turno.reentrega_suprimida`.
+    `send` devolve `False`, sem levantar, em duas situacoes distintas, e
+    quem le o retorno nao consegue distinguir uma da outra so pelo booleano:
+
+    - Reentrega suprimida: a reserva em `outbound_dispatches` ja existia
+      para este `(message_id, kind)` -- ver `GuardedOutbound.send` e
+      `turno.reentrega_suprimida`.
+    - Envio barrado pela guarda de opt-out: o lead deste `message_id` pediu
+      para parar de receber mensagem, e `kind` nao e
+      `KIND_DA_CONFIRMACAO_DE_OPTOUT` -- ver `GuardedOutbound.send` e
+      `esta_em_optout_por_mensagem`.
+
+    `OutboundPort` e um Protocol estrutural: qualquer classe com um metodo
+    `send` de assinatura compativel satisfaz o tipo, herdando de
+    `GuardedOutbound` ou nao. A guarda de opt-out, porem, so existe dentro do
+    corpo de `GuardedOutbound.send` -- nao ha nada no `Protocol` em si, nem
+    no `mypy`, que a force. Um adaptador novo escrito direto contra este
+    Protocol, sem herdar de `GuardedOutbound`, tipa igual e passa em
+    qualquer checagem estatica, mas nao tem a guarda: ele manda mensagem
+    para quem pediu para parar. Isso nao e um bug de performance ou um
+    turno errado -- e uma violacao de LGPD. Quem for por esse caminho
+    precisa reimplementar a checagem de opt-out por conta propria; a rota
+    segura e herdar de `GuardedOutbound`.
     """
 
     async def send(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> bool: ...
