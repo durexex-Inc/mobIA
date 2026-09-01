@@ -1,5 +1,4 @@
 from dataclasses import FrozenInstanceError
-from decimal import Decimal
 
 import pytest
 from anthropic import transform_schema
@@ -9,6 +8,7 @@ from mobia.domain.agente.schemas import (
     _PREFIXOS_DE_REFERENCIA,
     Extracao,
     FormaPagamento,
+    Intencao,
     TipoImovel,
     Urgencia,
     normalizar_regiao,
@@ -72,11 +72,6 @@ def test_extracao_e_imutavel():
         extracao.quartos = 3  # type: ignore[misc]
 
 
-def test_preco_guarda_precisao_de_decimal():
-    extracao = Extracao(faixa_preco_max=Decimal("600000.00"))
-    assert extracao.preenchidos() == {"faixa_preco_max": Decimal("600000.00")}
-
-
 def test_schema_da_extracao_sobrevive_ao_compilador_do_sdk():
     """`transform_schema` encerra em `assert_never` para tipo desconhecido.
 
@@ -89,10 +84,12 @@ def test_schema_da_extracao_sobrevive_ao_compilador_do_sdk():
     assert compilado["additionalProperties"] is False
 
 
-def test_todos_os_nove_campos_sao_obrigatorios_e_anulaveis():
+def test_todos_os_oito_campos_sao_obrigatorios_e_anulaveis():
+    """Oito, nao nove: a TEC-146 trocou os dois campos numericos de preco por
+    um unico `faixa_preco_expressao` de string."""
     propriedades = SCHEMA_DA_EXTRACAO["properties"]
     assert set(SCHEMA_DA_EXTRACAO["required"]) == set(propriedades)
-    assert len(propriedades) == 9
+    assert len(propriedades) == 8
     for nome, forma in propriedades.items():
         variantes = [variante.get("type") for variante in forma["anyOf"]]
         assert "null" in variantes, nome
@@ -112,8 +109,7 @@ def test_enums_do_schema_saem_dos_stre_enums():
 def test_extrair_de_dicionario_completo():
     obtido = extrair(
         {
-            "faixa_preco_min": None,
-            "faixa_preco_max": 600000,
+            "faixa_preco_expressao": "600 mil",
             "regiao": "zona sul",
             "tipo_imovel": "APARTAMENTO",
             "quartos": 2,
@@ -121,10 +117,11 @@ def test_extrair_de_dicionario_completo():
             "urgencia": "ATE_3_MESES",
             "forma_pagamento": None,
             "tem_imovel_para_vender": False,
-        }
+        },
+        Intencao.COMPRA,
     )
     assert obtido == Extracao(
-        faixa_preco_max=Decimal("600000"),
+        faixa_preco_max_centavos=60_000_000,
         regiao="zona sul",
         tipo_imovel=TipoImovel.APARTAMENTO,
         quartos=2,
@@ -139,58 +136,87 @@ def test_extrair_de_dicionario_completo():
 )
 def test_extrair_nunca_levanta(bruto):
     """Extracao e enriquecimento; a resposta ao lead vem da mesma chamada."""
-    assert isinstance(extrair(bruto), Extracao)
+    assert isinstance(extrair(bruto, Intencao.COMPRA), Extracao)
 
 
 def test_chave_ausente_nao_e_erro():
-    assert extrair({"quartos": 2}) == Extracao(quartos=2)
+    assert extrair({"quartos": 2}, Intencao.COMPRA) == Extracao(quartos=2)
 
 
-@pytest.mark.parametrize(
-    "valor",
-    [-1, 0, 10**9 + 1, "seiscentos mil", float("nan"), float("inf"), True],
-)
-def test_preco_fora_da_faixa_e_descartado(valor):
-    assert extrair({"faixa_preco_max": valor, "quartos": 2}) == Extracao(quartos=2)
+def test_expressao_de_preco_vira_centavos():
+    obtido = extrair({"faixa_preco_expressao": "uns 600 mil"}, Intencao.COMPRA)
+    assert obtido.faixa_preco_max_centavos == 60_000_000
+    assert obtido.faixa_preco_min_centavos is None
 
 
-def test_faixa_invertida_descarta_os_dois_precos():
-    obtido = extrair({"faixa_preco_min": 900000, "faixa_preco_max": 600000, "quartos": 2})
+def test_expressao_ambigua_nao_grava_nada_e_nao_mata_os_outros_campos():
+    """O defeito que esta card conserta: antes, "uns 500" virava R$ 500 em
+    silencio e ia para o filtro de busca."""
+    obtido = extrair({"faixa_preco_expressao": "uns 500", "quartos": 2}, Intencao.COMPRA)
     assert obtido == Extracao(quartos=2)
 
 
-def test_faixa_igual_nos_dois_lados_e_valida():
-    """ "exatamente 600 mil" nao e faixa invertida."""
-    obtido = extrair({"faixa_preco_min": 600000, "faixa_preco_max": 600000})
-    assert obtido.faixa_preco_min == Decimal("600000")
-    assert obtido.faixa_preco_max == Decimal("600000")
+def test_faixa_invertida_continua_descartada():
+    """D6: canario de bug do parser. Reordenar em silencio calaria o sinal."""
+    obtido = extrair(
+        {"faixa_preco_expressao": "entre 500 e 400 mil", "quartos": 2}, Intencao.COMPRA
+    )
+    assert obtido == Extracao(quartos=2)
+
+
+def test_expressao_nula_nao_e_recusa():
+    assert extrair({"faixa_preco_expressao": None, "quartos": 2}, Intencao.COMPRA) == Extracao(
+        quartos=2
+    )
+
+
+def test_extrair_loga_o_motivo_da_recusa(caplog):
+    """A recusa carrega motivo -- e o que separa `AMBIGUA` (o lead foi
+    impreciso) de `ILEGIVEL` (o parser nao deu conta) no log, e a diferenca
+    e o que manda quem investiga para lados diferentes."""
+    import logging
+
+    with caplog.at_level(logging.INFO):
+        extrair({"faixa_preco_expressao": "uns 500"}, Intencao.COMPRA)
+    assert any("extracao.preco_recusado" in registro.message for registro in caplog.records)
+
+
+def test_extrair_nao_loga_quando_nao_ha_expressao(caplog):
+    """Turno sem menção a dinheiro não é recusa: nada para logar."""
+    import logging
+
+    with caplog.at_level(logging.INFO):
+        extrair({"quartos": 2}, Intencao.COMPRA)
+    assert not any("extracao.preco_recusado" in registro.message for registro in caplog.records)
 
 
 @pytest.mark.parametrize("campo", ["quartos", "vagas"])
 @pytest.mark.parametrize("valor", [-1, 21, 2.5, "dois", True])
 def test_inteiro_fora_da_faixa_e_descartado(campo, valor):
-    assert extrair({campo: valor, "regiao": "centro"}) == Extracao(regiao="centro")
+    assert extrair({campo: valor, "regiao": "centro"}, Intencao.COMPRA) == Extracao(
+        regiao="centro"
+    )
 
 
 @pytest.mark.parametrize("campo", ["quartos", "vagas"])
 def test_zero_e_valido(campo):
     """Kitnet tem 0 quarto e imovel sem garagem tem 0 vaga."""
-    assert extrair({campo: 0}).preenchidos() == {campo: 0}
+    assert extrair({campo: 0}, Intencao.COMPRA).preenchidos() == {campo: 0}
 
 
 def test_valor_de_enum_desconhecido_e_descartado():
-    obtido = extrair({"tipo_imovel": "IATE", "quartos": 2})
+    obtido = extrair({"tipo_imovel": "IATE", "quartos": 2}, Intencao.COMPRA)
     assert obtido == Extracao(quartos=2)
 
 
 def test_regiao_vazia_ou_so_espaco_e_descartada():
-    assert extrair({"regiao": "   "}) == Extracao()
+    assert extrair({"regiao": "   "}, Intencao.COMPRA) == Extracao()
 
 
 def test_regiao_e_truncada_no_limite_da_coluna():
     """`lead_qualification.regiao` e `String(120)`: 121 caracteres seria
     DataError no commit, derrubando o turno inteiro por um campo opcional."""
-    obtido = extrair({"regiao": "a" * 200})
+    obtido = extrair({"regiao": "a" * 200}, Intencao.COMPRA)
     assert obtido.regiao is not None
     assert len(obtido.regiao) == 120
 
@@ -199,14 +225,14 @@ def test_regiao_com_prefixo_e_truncada_depois_de_normalizar():
     """Prefixo e truncamento juntos, sem teste ate agora: `_regiao` normaliza
     antes de truncar (ver docstring), entao o prefixo tem de sair antes da
     contagem dos 120 caracteres, nao depois."""
-    obtido = extrair({"regiao": "perto da " + "a" * 200})
+    obtido = extrair({"regiao": "perto da " + "a" * 200}, Intencao.COMPRA)
     assert obtido.regiao is not None
     assert len(obtido.regiao) == 120
     assert obtido.regiao == "a" * 120
 
 
 def test_booleano_so_aceita_booleano():
-    assert extrair({"tem_imovel_para_vender": "sim"}) == Extracao()
+    assert extrair({"tem_imovel_para_vender": "sim"}, Intencao.COMPRA) == Extracao()
 
 
 @pytest.mark.parametrize(
@@ -316,7 +342,7 @@ def test_extrair_grava_regiao_na_forma_canonica() -> None:
     """O banco passa a guardar o que a TEC-158 consegue filtrar. Sem isto, a
     normalizacao existiria so para a medicao e o filtro SQL continuaria
     comparando formas que o modelo escolheu."""
-    extracao = extrair({"regiao": "perto da estacao Vila Madalena"})
+    extracao = extrair({"regiao": "perto da estacao Vila Madalena"}, Intencao.COMPRA)
 
     assert extracao.regiao == "vila madalena"
 
@@ -325,11 +351,11 @@ def test_extrair_descarta_regiao_que_e_so_ruido() -> None:
     """Vazio nao pode ser gravado: a TEC-158 filtraria por string vazia. Segue
     a mesma regra das outras guardas de `extrair` -- campo malformado e
     descartado um a um, sem derrubar a resposta."""
-    assert extrair({"regiao": "perto da"}).regiao is None
+    assert extrair({"regiao": "perto da"}, Intencao.COMPRA).regiao is None
 
 
 def test_extrair_preserva_toponimo_limpo() -> None:
-    assert extrair({"regiao": "Itaim Bibi"}).regiao == "itaim bibi"
+    assert extrair({"regiao": "Itaim Bibi"}, Intencao.COMPRA).regiao == "itaim bibi"
 
 
 def test_nenhum_prefixo_de_referencia_e_prefixo_de_outro() -> None:
