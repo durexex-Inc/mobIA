@@ -22,13 +22,17 @@ from mobia.domain.moderacao.port import (
     ModeradorPort,
 )
 
-# Reexportado (import ... as ...) de proposito: o nome vive em
-# `optout.deteccao` -- ver o comentario la sobre o circular que colocar aqui
-# causaria -- mas quem consome a porta de saida importa deste modulo, e a
-# Task 5 e os testes de integracao dependem deste caminho continuar valendo.
+# Consumida no corpo deste modulo (a checagem de opt-out e a entrega da
+# confirmacao), entao o import normal ja basta -- sem o "as X" que so existia
+# para calar o ruff quando o nome era so reexportado, nunca usado aqui. Quem
+# importava `from mobia.domain.agente.turno import KIND_DA_CONFIRMACAO_DE_OPTOUT`
+# continua funcionando: o nome fica no namespace do modulo do mesmo jeito.
 from mobia.domain.optout.deteccao import (
-    KIND_DA_CONFIRMACAO_DE_OPTOUT as KIND_DA_CONFIRMACAO_DE_OPTOUT,
+    KIND_DA_CONFIRMACAO_DE_OPTOUT,
+    TEXTO_DA_CONFIRMACAO_DE_OPTOUT,
+    pediu_optout,
 )
+from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
 from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, OutboundPort
 from mobia.infra.crypto import aad_de, decrypt
 
@@ -44,7 +48,25 @@ SUBAGENTE_MODERACAO = "moderacao"
 # lugares que compara contra esta string (process_message, os testes) vira
 # erro de tipo no mypy em vez de um `if resultado == "processed"` que nunca
 # bate e falha em silencio.
-ResultadoDoTurno = Literal["respondido", "sem_resposta", "expirado", "reentrega_suprimida"]
+ResultadoDoTurno = Literal[
+    "respondido",
+    "sem_resposta",
+    "expirado",
+    "reentrega_suprimida",
+    # A TEC-182 acrescentou os tres abaixo. Separados de proposito:
+    # "opt_out" e o turno que ATENDEU o pedido (gravou e confirmou);
+    # "silenciado" e o turno que nao fez nada porque o pedido ja valia;
+    # "bloqueado_por_optout" e o turno que tentou responder normalmente e a
+    # guarda da porta de saida (Task 4) barrou o envio porque outro turno da
+    # MESMA conversa registrou o opt-out entre a checagem do topo deste turno
+    # e este envio -- ver `_bloqueado_por_optout_concorrente`. Somar os tres
+    # num valor so esconderia quantos opt-outs de fato acontecem, e faria o
+    # terceiro caso soar como perda de dado quando a guarda so fez o trabalho
+    # dela.
+    "opt_out",
+    "silenciado",
+    "bloqueado_por_optout",
+]
 
 
 async def executar_turno(
@@ -92,6 +114,26 @@ async def executar_turno(
     # inteiro, inclusive as chamadas pagas ao modelo. E o texto do lead ainda
     # nao passou por lugar nenhum.
     corpo = decrypt(message.text_body, aad_de(message.id, "text_body"))
+
+    # Antes de tudo, inclusive da moderacao: quem ja pediu silencio nao paga
+    # moderacao nem recebe resposta. Fica FORA do `if corpo:` de proposito: o
+    # silencio e sobre o LEAD (o par channel/conversation_key), nao sobre a
+    # mensagem ter texto. Uma imagem ou audio de quem ja pediu opt-out
+    # tambem nao pode receber resposta, e dentro do `if corpo:` essa
+    # mensagem sem texto escaparia do silencio. A guarda da porta de saida
+    # (Task 4) ja impediria o envio de qualquer jeito; esta checagem existe
+    # so para nao pagar o turno inteiro ate la.
+    async with session_factory() as sessao:
+        if await esta_em_optout(
+            sessao, channel=message.channel, conversation_key=message.conversation_key
+        ):
+            log.info(
+                "turno.silenciado_por_optout",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
+            return "silenciado"
+
     if corpo:
         try:
             veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
@@ -117,12 +159,13 @@ async def executar_turno(
                     motivo=veredito.motivo,
                 )
                 # A marca vem ANTES da entrega, e a ordem e o ponto (TEC-236).
-                # `_entregar_texto_fixo` tem tres saidas que nao entregam nada
-                # -- janela fechada, recusa permanente da Meta, reentrega
-                # suprimida --, e duas delas fecham a linha em PROCESSED, que e
-                # terminal. Marcar depois deixaria a fala bloqueada sem marca
-                # exatamente nos casos em que ninguem mais volta nesta linha, e
-                # ela entraria no contexto do proximo turno.
+                # `_entregar_texto_fixo` tem quatro saidas que nao entregam
+                # nada -- janela fechada, recusa permanente da Meta, reentrega
+                # suprimida, bloqueio por opt-out concorrente (TEC-182) --, e
+                # a maioria delas fecha a linha em PROCESSED, que e terminal.
+                # Marcar depois deixaria a fala bloqueada sem marca exatamente
+                # nos casos em que ninguem mais volta nesta linha, e ela
+                # entraria no contexto do proximo turno.
                 #
                 # Se a marca falhar, a excecao sobe: a linha vira FAILED e o
                 # sweeper retenta. Custa uma moderacao paga a mais e nao vaza a
@@ -134,6 +177,35 @@ async def executar_turno(
                     outbound=outbound,
                     recorder_texto=TEXTO_DA_RECUSA_DE_ENTRADA,
                 )
+
+    if corpo and pediu_optout(corpo):
+        # Gravado ANTES da entrega, pelo precedente de `marcar_bloqueada`. Se a
+        # entrega falhar depois, o lead fica em silencio sem confirmacao --
+        # ruim e conforme. Na ordem inversa, um opt-out nao registrado nos
+        # deixaria mandando mensagem, que e a violacao.
+        await registrar_optout(
+            session_factory,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+            message_id=message.id,
+        )
+        # Nome distinto de `entregue` (o bool que `outbound.send` devolve mais
+        # abaixo, no caminho principal): mypy infere um tipo unico por nome de
+        # variavel na funcao inteira, e este aqui e o `ResultadoDoTurno` que
+        # `_entregar_texto_fixo` devolve, nao o booleano cru.
+        desfecho_da_confirmacao = await _entregar_texto_fixo(
+            session_factory,
+            message=message,
+            outbound=outbound,
+            recorder_texto=TEXTO_DA_CONFIRMACAO_DE_OPTOUT,
+            kind=KIND_DA_CONFIRMACAO_DE_OPTOUT,
+        )
+        # `_entregar_texto_fixo` devolve "expirado", "sem_resposta",
+        # "reentrega_suprimida" ou "bloqueado_por_optout" quando nao entrega.
+        # Esses desfechos sao sobre o ENVIO da confirmacao, e o opt-out ja
+        # esta gravado -- entao eles passam adiante como estao, e so o
+        # caminho de sucesso vira "opt_out".
+        return "opt_out" if desfecho_da_confirmacao == "respondido" else desfecho_da_confirmacao
 
     try:
         contexto = await montar_contexto(
@@ -275,6 +347,24 @@ async def executar_turno(
         return "sem_resposta"
 
     if not entregue:
+        if await _bloqueado_por_optout_concorrente(session_factory, message):
+            # A guarda de `GuardedOutbound.send` (Task 4) barrou ESTE envio
+            # porque outro turno da MESMA conversa registrou o opt-out entre
+            # a checagem do topo deste turno (`esta_em_optout`, la em cima) e
+            # este envio -- os dois turnos correram em paralelo sobre a mesma
+            # conversa. A guarda funcionou exatamente como desenhada: nada
+            # foi perdido, o lead so nao recebe porque pediu para nao
+            # receber. Por isso este desfecho NAO pode se disfarcar de
+            # "reentrega_suprimida" -- aquele nome e `error` porque e alarme
+            # de DADO SUMIDO (ver o comentario logo abaixo), e aqui nao sumiu
+            # nada. `info`, no nivel de uma checagem que funcionou como devia.
+            log.info(
+                "turno.bloqueado_por_optout_concorrente",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
+            return "bloqueado_por_optout"
+
         # `send()` devolve False sem levantar quando a guarda (Task 3) suprime
         # uma reentrega: ja existe uma reserva em outbound_dispatches para este
         # (message_id, kind), de uma tentativa anterior. `_deliver` nunca foi
@@ -386,23 +476,55 @@ async def executar_turno(
     return "respondido"
 
 
+async def _bloqueado_por_optout_concorrente(
+    session_factory: async_sessionmaker[AsyncSession], message: Message
+) -> bool:
+    """Distingue as duas causas de `outbound.send` devolver False sem levantar.
+
+    `OutboundPort.send` documenta que quem le so o retorno NAO consegue
+    separar uma reentrega genuinamente suprimida (reserva duplicada em
+    `outbound_dispatches`) de um envio que a guarda de opt-out barrou -- ver
+    o docstring de `OutboundPort` e `GuardedOutbound.send`. Reconsultar
+    `esta_em_optout` aqui, depois do `send()`, e o unico jeito de escolher a
+    historia certa para o log: se o lead esta em opt-out agora, a guarda e a
+    explicacao mais provavel para o False, e as duas causas nao podem levar
+    o mesmo nivel de log nem o mesmo `ResultadoDoTurno` -- uma e alarme de
+    dado sumido, a outra e a guarda funcionando como desenhada.
+
+    Best-effort de proposito: entre o `send()` e esta consulta o estado ainda
+    pode mudar (uma reativacao, por exemplo). Isso so muda qual historia o
+    log conta -- em nenhum dos dois casos ha texto reenviado ou dado perdido,
+    entao um veredito ocasionalmente desatualizado aqui nao cria um risco
+    novo de LGPD nem de duplicata.
+    """
+    async with session_factory() as sessao:
+        return await esta_em_optout(
+            sessao, channel=message.channel, conversation_key=message.conversation_key
+        )
+
+
 async def _entregar_texto_fixo(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     message: Message,
     outbound: OutboundPort,
     recorder_texto: str,
+    kind: str = KIND_DA_RESPOSTA,
 ) -> ResultadoDoTurno:
     """Entrega um texto que nao veio do modelo, e grava o que entregou.
 
     Bloqueio nunca produz silencio: e a mesma escolha que a TEC-134 e a
     TEC-227 fizeram ao preferir a duplicata a perda, porque a duplicata e
-    visivel e recuperavel e o silencio nao.
+    visivel e recuperavel e o silencio nao. `kind` tem default para preservar
+    os chamadores existentes -- o texto de recusa de entrada usa o kind da
+    resposta normal. A confirmacao de opt-out (TEC-182) passa o kind proprio,
+    que e o unico que atravessa a guarda de opt-out da porta de saida depois
+    do registro -- ver `GuardedOutbound.send`.
     """
     try:
         entregue = await outbound.send(
             message.id,
-            KIND_DA_RESPOSTA,
+            kind,
             {
                 "para": message.conversation_key,
                 "de": message.recipient_external_id,
@@ -433,6 +555,19 @@ async def _entregar_texto_fixo(
         return "sem_resposta"
 
     if not entregue:
+        if await _bloqueado_por_optout_concorrente(session_factory, message):
+            # Mesmo raciocinio do bloco principal (ver
+            # `turno.bloqueado_por_optout_concorrente` la em cima): a guarda
+            # barrou este envio porque outro turno da mesma conversa
+            # registrou o opt-out entre a checagem do topo e este envio. Nao
+            # e "reentrega_suprimida" -- nada foi perdido.
+            log.info(
+                "turno.bloqueado_por_optout_concorrente",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
+            return "bloqueado_por_optout"
+
         # Mesmo raciocinio do bloco principal (ver `turno.reentrega_suprimida`
         # la embaixo): `send()` devolve False sem levantar quando a guarda ja
         # tem uma reserva para este (message_id, kind) de uma tentativa
