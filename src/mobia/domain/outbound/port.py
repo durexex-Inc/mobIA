@@ -120,7 +120,13 @@ class EnvioForaDaJanela(EnvioRecusado):
 
 
 class GuardedOutbound:
-    """Reserva antes de entregar.
+    """Barra quem pediu opt-out, reserva, e so entao entrega.
+
+    A guarda de opt-out (TEC-182) roda antes da reserva, e e a razao de o
+    docstring de `OutboundPort` apontar esta classe como a rota segura: herdar
+    daqui e o que garante que um caminho de envio novo nao fale com quem pediu
+    silencio. O unico kind que a atravessa e
+    `KIND_DA_CONFIRMACAO_DE_OPTOUT` -- ver `send`.
 
     A linha em outbound_dispatches e commitada antes do efeito externo. Queda
     entre a reserva e a entrega so perde aquele envio quando a falha e

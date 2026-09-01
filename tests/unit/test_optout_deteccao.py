@@ -9,15 +9,22 @@ from mobia.domain.optout.deteccao import pediu_optout
         "descadastrar",
         "quero descadastrar meu numero por favor",
         "pare de me mandar mensagem",
-        "nao quero mais receber nada de voces",
+        "nao quero mais receber mensagens de voces",
         "nao me mande mais mensagens",
     ],
 )
 def test_termo_inequivoco_dispara_em_qualquer_posicao(texto: str) -> None:
-    """Nenhum destes aparece em fala de quem procura imovel.
+    """Cada termo carrega o OBJETO DE MENSAGERIA, e e o objeto que fecha a colisao.
 
-    Por isso a faixa inequivoca casa em qualquer posicao: o risco de falso
-    positivo e desprezivel e deixar de detectar e violacao de LGPD.
+    A versao original deste docstring dizia "nenhum destes aparece em fala de
+    quem procura imovel", e isso era falso: "pare de mandar" e "nao quero mais
+    receber" aparecem, e aparecem muito -- e o lead refinando a busca. O que
+    torna a faixa segura em qualquer posicao nao e a raridade da frase, e sim
+    o complemento: "mensagens", "mensagem", "meu contato". "pare de me mandar
+    mensagens" nao casa com "pare de mandar apartamento sem vaga".
+
+    Por isso a posicao nao importa nesta faixa: com o objeto exigido, o risco
+    de falso positivo e desprezivel e deixar de detectar e violacao de LGPD.
     """
     assert pediu_optout(texto) is True
 
@@ -63,6 +70,14 @@ def test_refinamento_de_busca_nao_e_optout() -> None:
         "nao me mande mais casa, so apartamento",
         "nao quero mais receber apartamento sem vaga",
         "por favor, me tire da lista de interessados desse imovel",
+        # Segunda leva, de uma revisao posterior: "nao quero mais receber
+        # nada" ainda estava na faixa inequivoca e silenciava os tres. "nada"
+        # e quantificador universal e aceita complemento partitivo -- nao e
+        # objeto de mensageria, e por isso escapou do conserto anterior, que
+        # so exigiu o objeto nos termos que ja o tinham.
+        "nao quero mais receber nada sem vaga",
+        "nao quero mais receber nada acima de 500 mil",
+        "nao quero mais receber nada nessa regiao",
     ]
     for texto in casos:
         assert pediu_optout(texto) is False

@@ -83,6 +83,38 @@ async def test_lead_em_optout_nao_recebe_e_nao_reserva(
     assert reservas == 0
 
 
+async def test_kind_arbitrario_tambem_e_barrado(
+    session: AsyncSession, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """A guarda barra por LISTA NEGRA de um kind so, nao por lista branca.
+
+    Os outros testes so exercitam `reply` e a confirmacao, e uma inversao da
+    condicao em `GuardedOutbound.send` (`kind == KIND_DA_CONFIRMACAO_DE_OPTOUT`
+    virando `kind in {...}` com um kind novo dentro, ou a checagem virando
+    especifica de `reply`) passaria em todos eles. `follow_up` e literalmente
+    o kind que a TEC-183 (cadencia de follow-up) vai introduzir: um envio que
+    nao existe hoje, que ninguem lembrou de listar, e que precisa ser barrado
+    por default.
+    """
+    mensagem = await _mensagem_gravada(session, channel="wa", conversation_key="5548999998888")
+    await registrar_optout(
+        session_factory,
+        channel="wa",
+        conversation_key="5548999998888",
+        message_id=mensagem.id,
+    )
+    outbound = _OutboundQueEntrega(session_factory)
+
+    entregue = await outbound.send(mensagem.id, "follow_up", {"texto": "ainda procurando?"})
+
+    assert entregue is False
+    assert outbound.entregues == []
+    reservas = (
+        await session.execute(select(func.count()).select_from(OutboundDispatch))
+    ).scalar_one()
+    assert reservas == 0
+
+
 async def test_a_confirmacao_do_proprio_optout_atravessa(
     session: AsyncSession, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:

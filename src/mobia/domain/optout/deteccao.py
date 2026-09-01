@@ -25,7 +25,18 @@ _TERMOS_INEQUIVOCOS: tuple[str, ...] = (
     "remover meu contato",
     "nao quero mais receber mensagens",
     "nao quero mais receber mensagem",
-    "nao quero mais receber nada",
+    # "nao quero mais receber nada" saiu daqui numa revisao posterior, e a
+    # razao e a mesma que mantem os outros: "nada" NAO e objeto de mensageria.
+    # E quantificador universal, e aceita complemento partitivo -- "nao quero
+    # mais receber nada sem vaga", "nao quero mais receber nada acima de 500
+    # mil", "nao quero mais receber nada nessa regiao" sao refinamento de
+    # busca, e cada um deles silenciava um lead comprador para sempre. Ver
+    # `test_refinamento_de_busca_nao_e_optout`. O custo aceito e de recall:
+    # quem escrever exatamente "nao quero mais receber nada" e parar por ai
+    # nao dispara mais. Exigir fim de mensagem so para este termo mascara o
+    # problema (o complemento vem depois, entao a exigencia funcionaria) mas
+    # abre o outro lado -- "nao quero mais receber nada, obrigado" volta a
+    # escapar. Fora, e declarado como lacuna, e melhor que dentro e mentindo.
     "pare de me mandar mensagens",
     "pare de me mandar mensagem",
     "pare de mandar mensagens",
