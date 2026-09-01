@@ -36,6 +36,7 @@ TABELAS = (
     "lead_qualification",
     "message_telemetry",
     "outbound_dispatches",
+    "optout_events",
     "messages",
 )
 
