@@ -3406,14 +3406,14 @@ com três perguntas — `follow-up-07[0]`. Um em 294 turnos medidos, o que
 continua muito longe do bloco de cinco, mas a diferença importa: a régua não
 fica cega ao subir o limiar, porque esse turno segue sendo pego.
 
-A regra vem de RN-04.7 e a justificativa escrita na card é *"nunca um bloco com
+A regra vem de RN-04.2 e a justificativa escrita na card é *"nunca um bloco com
 cinco perguntas"* e *"não responder a um questionário"*. **O cenário que a
 regra teme não está acontecendo.** O que acontece é um padrão estável de duas
 perguntas em ~19% dos turnos.
 
 Isto tem a mesma forma das disputas da TEC-254: a régua literal sinaliza um
 comportamento que o propósito dela talvez não condene. **A decisão é de
-produto** — subir o limiar para 2 contraria RN-04.7 como escrito, e mantê-lo em
+produto** — subir o limiar para 2 contraria RN-04.2 como escrito, e mantê-lo em
 1 exige atacar um comportamento que pode ser aceitável.
 
 #### A decisão (TEC-255): o limiar sobe para 2
@@ -3427,8 +3427,15 @@ regeneração custa chamada paga por violação em produção, e por truncagem c
 frase no meio; conviver deixaria a métrica reportando ~80% para sempre sem
 ninguém saber se é bom.
 
-**Isto contraria RN-04.7 como está escrito, e a emenda ao SRS fica pendente.**
-RN-04.7 não vive neste repositório — é só citada aqui e em `metricas.py`.
+**Isto contraria RN-04.2 como está escrito.** A emenda foi feita: o SRS v1.0
+está versionado em [`docs/srs/`](docs/srs/srs-agente-sdr-imobiliario-v1.0.md) e a
+emenda E-01 altera RN-04.2 e RN-05.4.
+
+Até 01/09/2026 este documento e o `metricas.py` citavam **RN-04.7** para a regra
+de uma pergunta por turno. Estava errado, e o erro só apareceu quando o SRS
+entrou no repositório: RN-04.7 é o indicador de digitação acima de 4 s. A regra
+das perguntas é a RN-04.2 — a mesma sentença do teto de 600 caracteres, que o
+código já citava certo — e reaparece em RN-05.4.
 
 Recalculadas sob o limiar 2, as duas execuções de 31/08 dão:
 
@@ -3672,8 +3679,9 @@ agora trava o piso medido e o alvo próprio.
 
 - **A regra do emoji continua sem mecanismo**, e isso é limite do problema e
   não da implementação.
-- **A emenda ao SRS está pendente.** O limiar de 2 contraria RN-04.7 como
-  escrito, e RN-04.7 não vive neste repositório.
+- ~~A emenda ao SRS está pendente.~~ Feita na emenda E-01 de
+  [`docs/srs/`](docs/srs/srs-agente-sdr-imobiliario-v1.0.md), sobre RN-04.2 e
+  RN-05.4.
 - **O piso de 90% se apoia em dois pontos de medição**, os dois recalculados
   sobre execuções feitas sob o limiar antigo. A primeira execução paga sob o
   limiar novo é que confirma a faixa.

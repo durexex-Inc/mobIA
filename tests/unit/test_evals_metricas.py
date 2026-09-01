@@ -881,7 +881,7 @@ def test_seiscentos_caracteres_passa_e_seiscentos_e_um_viola():
 
 
 def test_duas_perguntas_passam_e_tres_violam():
-    """A regua cobra o proposito da RN-04.7, e nao a leitura literal dela.
+    """A regua cobra o proposito da RN-04.2, e nao a leitura literal dela.
 
     O que a regra protege e "nunca um bloco com cinco perguntas" e "nao
     responder a um questionario". O teto de 1 marcava como violacao um padrao
