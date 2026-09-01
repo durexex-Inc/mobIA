@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from mobia.domain.agente.dinheiro import _RUIDO, _Valor, _valor_de
+from mobia.domain.agente.dinheiro import _RUIDO, FaixaDePreco, _faixa_de, _Valor, _valor_de
 
 
 @pytest.mark.parametrize(
@@ -76,3 +76,40 @@ def test_fator_rastreia_multiplicador(texto, fator_esperado):
     resultado = _valor_de(texto)
     assert resultado is not None
     assert resultado.fator == fator_esperado
+
+
+@pytest.mark.parametrize(
+    ("expressao", "minimo", "maximo"),
+    [
+        ("uns 500 mil", None, 50_000_000),
+        ("ate 500 mil", None, 50_000_000),
+        ("no maximo 500 mil", None, 50_000_000),
+        ("a partir de 300 mil", 30_000_000, None),
+        ("no minimo 300 mil", 30_000_000, None),
+        ("acima de 300 mil", 30_000_000, None),
+        ("entre 400 e 500 mil", 40_000_000, 50_000_000),
+        ("de 300 a 450 mil", 30_000_000, 45_000_000),
+        ("300 a 450 mil", 30_000_000, 45_000_000),
+    ],
+)
+def test_direcao_e_faixa(expressao, minimo, maximo):
+    assert _faixa_de(expressao) == FaixaDePreco(min_centavos=minimo, max_centavos=maximo)
+
+
+def test_marcador_final_distribui_para_os_dois_lados():
+    """A regra que a D2 do desenho protege: em "entre 400 e 500 mil" o `mil`
+    vale para os dois. E o motivo de o modelo devolver a faixa inteira em vez
+    de partir os limites -- partir e decisao de normalizacao."""
+    assert _faixa_de("entre 400 e 500 mil") == FaixaDePreco(
+        min_centavos=40_000_000, max_centavos=50_000_000
+    )
+
+
+def test_cada_lado_com_seu_proprio_marcador():
+    assert _faixa_de("de 800 mil a 1,2 milhao") == FaixaDePreco(
+        min_centavos=80_000_000, max_centavos=120_000_000
+    )
+
+
+def test_faixa_sem_numero_nenhum_devolve_none():
+    assert _faixa_de("o que der") is None

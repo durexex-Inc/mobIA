@@ -79,3 +79,50 @@ def _valor_de(texto: str) -> _Valor | None:
     centavos = (valor * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     return _Valor(centavos=int(centavos), tinha_marcador=tinha_marcador,
                   fator=fator_aplicado)
+
+
+# Preposicoes que abrem faixa. "de X a Y" e "entre X e Y" sao as duas formas
+# que o corpus da TEC-145 traz; "X a Y" e a mesma coisa sem a abertura.
+_FAIXA = re.compile(r"(?:entre\s+)?(.+?)\s+(?:a|e|ate)\s+(.+)", re.DOTALL)
+
+_SO_MAXIMO = re.compile(r"\b(ate|no maximo|maximo|abaixo de|menos de)\b")
+_SO_MINIMO = re.compile(r"\b(a partir de|no minimo|minimo|acima de|mais de)\b")
+
+
+@dataclass(frozen=True)
+class FaixaDePreco:
+    """Faixa resolvida. Extremo nulo e faixa aberta daquele lado."""
+
+    min_centavos: int | None = None
+    max_centavos: int | None = None
+
+
+def _faixa_de(expressao: str) -> FaixaDePreco | None:
+    limpo = expressao.casefold()
+
+    # Direcao antes de faixa: "ate 500 mil" casaria em `_FAIXA` pelo "ate",
+    # com o lado esquerdo vazio. Testar a direcao primeiro evita o falso par.
+    if _SO_MINIMO.search(limpo):
+        valor = _valor_de(limpo)
+        return None if valor is None else FaixaDePreco(min_centavos=valor.centavos)
+    if _SO_MAXIMO.search(limpo):
+        valor = _valor_de(limpo)
+        return None if valor is None else FaixaDePreco(max_centavos=valor.centavos)
+
+    par = _FAIXA.match(limpo)
+    if par is not None:
+        esquerda, direita = _valor_de(par.group(1)), _valor_de(par.group(2))
+        if esquerda is not None and direita is not None:
+            # O marcador do lado direito distribui para a esquerda quando o
+            # esquerdo nao tem o seu: "entre 400 e 500 mil" sao 400 MIL e 500
+            # mil, nao 400 reais e 500 mil. Quando a esquerda ja tem marcador
+            # proprio ("800 mil a 1,2 milhao"), ela fica como esta -- usar o
+            # fator ja aplicado por _valor_de evita reconstruir string para
+            # descobrir o multiplicador de novo.
+            minimo = esquerda.centavos
+            if not esquerda.tinha_marcador and direita.tinha_marcador:
+                minimo = int(esquerda.centavos * direita.fator)
+            return FaixaDePreco(min_centavos=minimo, max_centavos=direita.centavos)
+
+    valor = _valor_de(limpo)
+    return None if valor is None else FaixaDePreco(max_centavos=valor.centavos)
