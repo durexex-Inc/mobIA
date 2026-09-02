@@ -286,8 +286,18 @@ async def gravar_estado(
     intencao: Intencao,
     extracao: Extracao,
     perguntou: Iterable[str] = (),
-) -> None:
+) -> LeadQualification | None:
     """Upsert do estado de qualificacao. `None` no campo nao apaga o que havia.
+
+    Devolve a linha que o `RETURNING` trouxe -- o que o banco de fato gravou,
+    ja acumulado com o que a linha tinha antes deste turno, e nao so os
+    campos que este turno passou. A alternativa seria recompor a acumulacao
+    em Python (estado anterior + `campos_a_gravar`), o que criaria uma
+    terceira copia da regra: `campos_a_gravar` existe precisamente para que
+    producao e o runner do eval nao divirjam cada um com a sua copia, e uma
+    copia a mais so para uma linha de log repetiria o mesmo erro. `RETURNING`
+    devolve o valor sem consulta extra e sem essa copia -- a TEC-147 usa isso
+    para o turno comparar o estado antes e depois da escrita.
 
     Nao commita -- a sessao e emprestada, como em `ler_resumo`, `ler_estado` e
     `gravar_resumo`, e quem chama e dono da fronteira da transacao.
@@ -305,8 +315,9 @@ async def gravar_estado(
         # A guarda de FORA_DE_ESCOPO vale para a marca tambem, e o buraco esta
         # declarado no spec: um agente que pergunte num turno fora de escopo
         # nao marca e pode perguntar de novo. Com a marca permanente, marcar
-        # de menos e o erro mais seguro dos dois.
-        return
+        # de menos e o erro mais seguro dos dois. Nao ha linha gravada, entao
+        # nao ha linha a devolver.
+        return None
 
     marcados = sorted(campos_a_marcar(perguntou, campos))
 
@@ -321,7 +332,7 @@ async def gravar_estado(
         **campos,
     }
     statement = pg_insert(LeadQualification).values(valores)
-    await session.execute(
+    resultado = await session.execute(
         statement.on_conflict_do_update(
             index_elements=["channel", "conversation_key"],
             set_={
@@ -345,8 +356,9 @@ async def gravar_estado(
                     literal_column("'{}'::varchar[]"),
                 ).op("||")(statement.excluded.perguntados_sem_resposta),
             },
-        )
+        ).returning(LeadQualification)
     )
+    return resultado.scalar_one()
 
 
 async def marcar_perguntados(
