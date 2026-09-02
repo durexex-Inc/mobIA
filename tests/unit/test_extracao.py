@@ -251,9 +251,7 @@ def test_extrair_nao_loga_quando_nao_ha_expressao(caplog):
 @pytest.mark.parametrize("campo", ["quartos", "vagas"])
 @pytest.mark.parametrize("valor", [-1, 21, 2.5, "dois", True])
 def test_inteiro_fora_da_faixa_e_descartado(campo, valor):
-    assert extrair({campo: valor, "regiao": "centro"}, Intencao.COMPRA) == Extracao(
-        regiao="centro"
-    )
+    assert extrair({campo: valor, "regiao": "centro"}, Intencao.COMPRA) == Extracao(regiao="centro")
 
 
 @pytest.mark.parametrize("campo", ["quartos", "vagas"])
