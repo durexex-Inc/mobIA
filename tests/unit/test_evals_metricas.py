@@ -404,12 +404,19 @@ def test_regiao_compara_sem_ligar_para_caixa_nem_espaco():
 
 
 def test_preco_compara_por_valor_e_nao_por_texto():
-    """600000 e Decimal("600000.00") sao o mesmo preco."""
+    """60000000 e Decimal("60000000.00") sao o mesmo numero de CENTAVOS.
+
+    A chave e `_centavos` desde a TEC-146, entao os dois lados aqui sao
+    R$ 600.000 -- o docstring anterior ainda dizia "600000 e o mesmo preco",
+    que sob esta chave seria R$ 6.000. O que o teste guarda nao mudou: a
+    comparacao e por valor numerico, e nao por texto, porque nem toda camada
+    entrega o mesmo tipo Python para a mesma quantidade.
+    """
     resultado = precisao_da_extracao(
         [
             _observada(
-                {"faixa_preco_max_centavos": 600000},
-                {"faixa_preco_max_centavos": Decimal("600000.00")},
+                {"faixa_preco_max_centavos": 60_000_000},
+                {"faixa_preco_max_centavos": Decimal("60000000.00")},
             )
         ]
     )

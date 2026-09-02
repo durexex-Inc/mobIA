@@ -220,3 +220,59 @@ def test_corpus_anota_reais_e_carrega_centavos(tmp_path: Path) -> None:
         "compra.yaml",
     )
     assert turno.campos == {"faixa_preco_max_centavos": 50_000_000}
+
+
+@pytest.mark.parametrize(
+    "valor",
+    [
+        # `int(valor)` levantava `ValueError` cru aqui -- sem arquivo, sem
+        # conversa, quebrando o contrato deste modulo de que toda recusa
+        # enderece o problema num corpus de centenas de turnos.
+        "seiscentos mil",
+        # String nao e aceita nem quando parece numero: "600.000" e seiscentos
+        # mil em pt-BR e seiscentos em en-US, e `Decimal` le a segunda. Um erro
+        # de 1000x no baseline medido da TEC-145, sem desempate possivel.
+        "600.000",
+        "600000.75",
+        "600000",
+        "",
+        # `bool` e subclasse de `int`: `int(True) * 100` dava 100 centavos, e
+        # um `true` digitado onde ia um numero passava a medir o modelo contra
+        # R$ 1,00 em silencio.
+        True,
+        False,
+        [600000],
+        {"reais": 600000},
+        "nan",
+        "inf",
+        # Fracao de centavo nao existe, e o `int()` de antes a truncava sem
+        # dizer nada.
+        600000.751,
+    ],
+)
+def test_anotacao_de_preco_que_nao_e_reais_e_recusada_com_endereco(valor) -> None:
+    with pytest.raises(CorpusInvalido, match="compra.yaml: compra-01"):
+        _turno_de(
+            {"lead": "ate 500 mil", "intencao": "COMPRA", "campos": {"faixa_preco_max": valor}},
+            "compra-01",
+            "compra.yaml",
+        )
+
+
+@pytest.mark.parametrize(
+    ("anotado", "centavos"),
+    [
+        (600000, 60_000_000),
+        # Centavos anotados chegam inteiros em vez de truncados: `int(600000.75)`
+        # comia os 75 antes da multiplicacao.
+        (600000.75, 60_000_075),
+        (0, 0),
+    ],
+)
+def test_anotacao_de_preco_preserva_os_centavos(anotado, centavos) -> None:
+    turno = _turno_de(
+        {"lead": "ate 500 mil", "intencao": "COMPRA", "campos": {"faixa_preco_max": anotado}},
+        "compra-01",
+        "compra.yaml",
+    )
+    assert turno.campos == {"faixa_preco_max_centavos": centavos}
