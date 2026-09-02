@@ -1,6 +1,8 @@
 # TEC-146 — Normalizar valores monetários informados em linguagem natural
 
-**Status:** desenhado em 2026-09-01. Não implementado.
+**Status:** implementado de 2026-09-01 a 2026-09-02, na branch `feat/tec-146-normalizar-valores-monetarios`.
+
+Commits, em ordem: `cbcff97` (este desenho), `49ac47d` (o plano em sete tasks), `d81cb27`, `c14f1e9` e `6987fa6` (núcleo do parser), `5de031b` e `216940a` (direção, faixa e banda), `bec1db1` (fallback da banda frouxa), `67af04f` (modelo devolve expressão), `48ec3a6` (migração `0011`), `782dec6`, `2983081` e `fb71701` (prompt e consumidores), `3e0f78f`, `2499217` e `792438f` (onda de correção final).
 
 **Card:** [TEC-146](https://eduardodurieuxlopes.atlassian.net/browse/TEC-146) — Must (MoSCoW). Origem: RF-05, RN-05.6 (SRS v1.0, em `docs/srs/`). Épico [TEC-144](https://eduardodurieuxlopes.atlassian.net/browse/TEC-144).
 
