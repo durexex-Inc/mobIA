@@ -137,17 +137,18 @@ async def test_a_contagem_de_um_lead_sem_mensagem_e_zero(session) -> None:
     assert await contar_mensagens_do_lead(session, channel=CANAL, conversation_key="ninguem") == 0
 
 
-async def _qualificacao(session, **ajustes: object) -> None:
-    """Os quatro obrigatorios preenchidos, menos o que o teste mudar."""
-    base: dict[str, object] = {
-        "channel": CANAL,
-        "conversation_key": CONVERSA,
-        "intencao": Intencao.COMPRA.value,
-        "faixa_preco_max_centavos": 50_000_000,
-        "regiao": "vila mariana",
-        "urgencia": Urgencia.ATE_3_MESES.value,
-    }
-    session.add(LeadQualification(**{**base, **ajustes}))
+async def _qualificacao(session) -> None:
+    """Os quatro obrigatorios preenchidos."""
+    session.add(
+        LeadQualification(
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            intencao=Intencao.COMPRA.value,
+            faixa_preco_max_centavos=50_000_000,
+            regiao="vila mariana",
+            urgencia=Urgencia.ATE_3_MESES.value,
+        )
+    )
     await session.commit()
 
 
@@ -207,9 +208,60 @@ async def test_informar_a_vista_grava_o_delta_da_capacidade(session) -> None:
 
 
 async def test_sem_linha_de_qualificacao_nao_ha_o_que_auditar(session) -> None:
-    """`calcular_score(None)` devolve zerado, e o `score.py` distingue a
-    ausencia de sujeito de uma nota igual a zero."""
+    """Sem linha em `LeadQualification`, `registrar_recalculo` devolve `None`
+    antes mesmo de calcular -- o `SELECT ... FOR UPDATE` nao acha a linha, e o
+    `if estado is None: return None` sai dali. Nao ha score zerado para
+    auditar: a ausencia de sujeito nao e uma nota igual a zero."""
     await _mensagem(session)
 
     assert await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA) is None
     assert (await session.scalars(select(LeadScoreAudit))).all() == []
+
+
+async def test_populate_existing_rele_o_estado_por_baixo_da_instancia_em_maos(session) -> None:
+    """Reproduz o perigo que `.execution_options(populate_existing=True)`
+    existe para evitar, e nao so o afirma.
+
+    `infra/db.py` monta a sessionmaker com `expire_on_commit=False`, entao
+    nada expira esta linha por conta propria: uma vez carregada, a sessao
+    devolve a MESMA instancia Python de novo para qualquer leitura futura na
+    mesma sessao, com os atributos que ela tinha quando foi carregada -- a
+    menos que algo peca explicitamente para os atualizar. E isso que
+    `populate_existing` pede.
+
+    O UPDATE abaixo passa por `text()`, por baixo do ORM de proposito: e o
+    unico jeito de o banco mudar sem que o objeto Python que o identity map
+    guarda mude junto -- exatamente a divergencia entre "o que a sessao acha
+    que a linha diz" e "o que a linha diz" que a releitura de
+    `registrar_recalculo` existe para fechar.
+    """
+    await _qualificacao(session)
+    await _mensagem(session)
+
+    # Carrega a linha no identity map desta sessao. E esta copia que ficaria
+    # obsoleta sem `populate_existing`.
+    carregada = await session.get(LeadQualification, (CANAL, CONVERSA))
+    assert carregada is not None
+    assert carregada.forma_pagamento is None
+
+    # Muda o banco por baixo da instancia carregada, sem passar pelo ORM.
+    await session.execute(
+        text(
+            "UPDATE lead_qualification SET forma_pagamento = 'A_VISTA' "
+            "WHERE channel = :channel AND conversation_key = :conversa"
+        ),
+        {"channel": CANAL, "conversa": CONVERSA},
+    )
+    # A instancia em maos continua mentindo -- e o estado que a releitura tem
+    # de corrigir.
+    assert carregada.forma_pagamento is None
+
+    gravada = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+
+    assert gravada is not None
+    # 60 e capacidade 15 (a vista), e nao 51 e capacidade 6 (sem forma de
+    # pagamento): sem `populate_existing`, `registrar_recalculo` calcularia
+    # sobre a instancia velha do identity map, e este teste ficaria vermelho.
+    assert gravada.total_novo == 60
+    assert gravada.capacidade == 15

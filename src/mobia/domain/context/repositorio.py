@@ -611,8 +611,20 @@ async def registrar_recalculo(
         causas=list(causas),
     )
     session.add(linha)
-    # Flush e nao commit: a linha precisa existir no banco para o proximo
-    # `registrar_recalculo` da mesma transacao a enxergar como "ultimo", e o
-    # commit e de quem chamou.
+    # Flush e nao commit: a linha precisa existir no banco antes do fim da
+    # transacao, e o commit e de quem chamou. O flush compra VISIBILIDADE
+    # dentro da transacao, e nao ORDEM entre linhas dela: `created_at` usa
+    # `server_default=func.now()`, e dentro de uma unica transacao Postgres o
+    # `now()` e o mesmo timestamp de inicio da transacao para toda linha
+    # escrita nela, e `ix_lead_score_audit_lead` nao tem desempate (`id` e
+    # uuid4 aleatorio). Uma segunda chamada de `registrar_recalculo` na MESMA
+    # transacao ve esta linha como "ultimo" sem ambiguidade -- so ha uma para
+    # competir. Uma terceira chamada, na mesma transacao, encontraria duas
+    # linhas empatadas em `created_at` e o `ORDER BY ... LIMIT 1` escolheria
+    # entre elas por acaso, podendo encadear `total_anterior` a partir da
+    # linha errada. Hoje isto e inalcancavel -- `registrar_recalculo` roda uma
+    # vez por turno --, e permanece assim ate uma card futura decidir chama-lo
+    # duas vezes na mesma transacao; essa card precisa de uma coluna de
+    # desempate, o que esta funcao nao adiciona por conta propria.
     await session.flush()
     return linha
