@@ -171,6 +171,13 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
     mas aqui vira reais de volta e sai sob as chaves antigas
     `faixa_preco_min`/`faixa_preco_max` -- nem a unidade nem o nome que o
     modelo le podem mudar so porque o armazenamento mudou.
+
+    Consequencia disso para a marca da TEC-257: `perguntados_sem_resposta`
+    guarda a marca de orcamento sob `faixa_preco_max`, e nao sob nenhum dos
+    nomes de coluna, porque e a chave renderizada aqui que o `elif` abaixo
+    compara. Quem grava a marca ja traduz (`_NOME_DA_MARCA`, em
+    `repositorio.py`), e `test_toda_chave_do_estado_tem_marca_alcancavel`
+    pina os dois lados contra este dicionario.
     """
     if estado is None:
         return ""

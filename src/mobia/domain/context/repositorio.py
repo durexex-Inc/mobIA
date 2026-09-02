@@ -21,6 +21,45 @@ log = structlog.get_logger(__name__)
 # precisa lembrar deste lugar.
 _CAMPOS_DA_EXTRACAO = frozenset(campo.name for campo in fields(Extracao))
 
+# O orcamento e o unico campo cujo nome NAO e o mesmo nos tres lugares, e a
+# TEC-146 criou essa divergencia sem querer:
+#
+#   o modelo diz     `faixa_preco_expressao`  (unica chave de preco do
+#                                              SCHEMA_DA_EXTRACAO)
+#   o banco guarda   `faixa_preco_min_centavos` / `faixa_preco_max_centavos`
+#   o prompt exibe   `faixa_preco_min` / `faixa_preco_max`  (ruling R6:
+#                                              reais, sob as chaves antigas)
+#
+# A marca de "(perguntado, sem resposta)" viaja da primeira coluna para a
+# terceira, e depois do rename ela nao chegava em ponto nenhum: o nome que o
+# modelo pode dizer nao e campo de `Extracao` (era descartado como vocabulario
+# desconhecido, com `estado.campo_perguntado_desconhecido` no log), e mesmo
+# escrito na forma do banco nunca casaria a chave que `_texto_do_estado`
+# renderiza. Resultado: o agente podia reperguntar o orcamento a cada turno,
+# para sempre, sem nenhum teste ficando vermelho -- o mesmo modo de falha
+# silencioso que a TEC-257 documentou ao criar esta maquinaria.
+#
+# A traducao mora aqui porque aqui e onde os tres vocabularios se encontram.
+# O alvo e `faixa_preco_max`, que e o nome que a marca tinha antes desta
+# branch, quando os tres coincidiam -- entao o texto do prompt volta a ser
+# byte-identico ao de antes tambem neste caminho. `faixa_preco_min` de
+# proposito nao recebe marca: orcamento e UM assunto, e duas linhas de marca
+# para uma pergunta so gastariam prompt dizendo a mesma coisa.
+_MARCA_DO_ORCAMENTO = "faixa_preco_max"
+_NOME_DA_MARCA = {
+    "faixa_preco_expressao": _MARCA_DO_ORCAMENTO,
+    "faixa_preco_min_centavos": _MARCA_DO_ORCAMENTO,
+    "faixa_preco_max_centavos": _MARCA_DO_ORCAMENTO,
+}
+
+
+def _marca_de(nome: str) -> str | None:
+    """O nome sob o qual a marca deste campo e gravada, ou `None` se o nome
+    nao pertence a vocabulario nenhum que este modulo conheca."""
+    if nome in _NOME_DA_MARCA:
+        return _NOME_DA_MARCA[nome]
+    return nome if nome in _CAMPOS_DA_EXTRACAO else None
+
 # Um nome de campo e minusculas e underscore. O que nao casa nao vai para o
 # log: o modelo pode devolver o texto da pergunta em vez do nome, e texto de
 # pergunta carrega o que o lead disse.
@@ -184,11 +223,16 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
     (producao) e o runner do eval, pela mesma razao que `campos_a_gravar`:
     duas copias divergiriam, e a divergencia so apareceria na borda.
 
-    `perguntou` vem do modelo, que declara sobre o que perguntou. **Nome que
-    nao e campo de extracao e descartado**, nao corrigido nem adivinhado: com
-    a marca permanente, marcar de mais mata o campo pela vida da conversa e
-    sem rastro, enquanto marcar de menos custa uma pergunta a mais. O
-    descarte e logado para a deriva de vocabulario do modelo ser visivel --
+    `perguntou` vem do modelo, que declara sobre o que perguntou. Os nomes
+    passam por `_NOME_DA_MARCA` antes de qualquer coisa -- o orcamento tem tres
+    nomes desde a TEC-146, e o unico que o modelo pode dizer nao e campo de
+    `Extracao`. Ver o comentario daquela tabela.
+
+    **Nome que nao pertence a vocabulario nenhum e descartado**, nao corrigido
+    nem adivinhado: com a marca permanente, marcar de mais mata o campo pela
+    vida da conversa e sem rastro, enquanto marcar de menos custa uma pergunta
+    a mais. O descarte e logado para a deriva de vocabulario do modelo ser
+    visivel --
     era a critica que a card fazia ao proxy de palavra-chave.
 
     `preenchidos` sao os campos que este turno gravou. A subtracao e o que
@@ -211,10 +255,11 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
     # mentindo sobre uma supressao que nunca aconteceu, no unico instrumento
     # que esta card tem para essa deriva.
     for nome in dict.fromkeys(perguntou):
-        if nome in _CAMPOS_DA_EXTRACAO:
-            conhecidos.add(nome)
-        else:
+        marca = _marca_de(nome)
+        if marca is None:
             ignorados.append(nome)
+        else:
+            conhecidos.add(marca)
 
     if ignorados:
         plausiveis = sorted({n for n in ignorados if _NOME_PLAUSIVEL.fullmatch(n)})
@@ -224,7 +269,12 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
             descartados=len(ignorados) - len(plausiveis),
         )
 
-    return conhecidos - set(preenchidos)
+    # `preenchidos` passa pela mesma traducao: um turno que gravou QUALQUER
+    # extremo do orcamento respondeu a pergunta sobre orcamento. Sem isto,
+    # "a partir de 300 mil" (que so preenche o minimo) deixaria a marca de
+    # `faixa_preco_max` de pe sobre um campo que o lead acabou de responder --
+    # marcar de MAIS, que e o erro caro, porque a marca e permanente.
+    return conhecidos - {_marca_de(nome) or nome for nome in preenchidos}
 
 
 async def gravar_estado(
