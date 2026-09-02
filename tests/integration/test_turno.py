@@ -8,7 +8,7 @@ from sqlalchemy import text as sql
 
 from mobia.domain.agente.classificador import RespostaInvalida
 from mobia.domain.agente.repositorio import ler_intencao
-from mobia.domain.agente.schemas import Extracao, Intencao
+from mobia.domain.agente.schemas import Extracao, Intencao, Urgencia
 from mobia.domain.agente.turno import KIND_DA_RESPOSTA, SUBAGENTE_DESAMBIGUADOR, executar_turno
 from mobia.domain.context.montagem import ContextoIrreducivel
 from mobia.domain.context.repositorio import ler_estado
@@ -592,3 +592,78 @@ async def test_marca_de_perguntou_pos_entrega_nao_reescreve_valor_concorrente(
     assert estado.perguntados_sem_resposta == ["regiao"], (
         "a marca ainda tem de ser gravada -- so os valores nao podem ser tocados"
     )
+
+
+# Extracao com os tres campos que faltam para completar a RN-05.3, dado que a
+# intencao qualificavel vem por fora, do classificador -- ver CAMPOS_OBRIGATORIOS.
+_EXTRACAO_QUE_QUALIFICA = Extracao(
+    faixa_preco_max_centavos=50_000_000,
+    regiao="pinheiros",
+    urgencia=Urgencia.ATE_3_MESES,
+)
+
+
+async def test_a_travessia_para_qualificado_e_registrada(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno, caplog
+) -> None:
+    """O evento que a RN-17.1 (taxa de qualificacao) vai precisar contar. Sem
+    ele esta card entrega uma funcao que ninguem chama."""
+    # Turno que completa o quarto campo obrigatorio.
+    classificador = classificador_fake(Intencao.COMPRA, extracao=_EXTRACAO_QUE_QUALIFICA)
+    outbound = outbound_fake()
+
+    with caplog.at_level(logging.INFO):
+        resultado = await rodar_turno(
+            session, classificador, outbound, resumidor_fake(), contador_fake()
+        )
+
+    assert resultado == "respondido"
+    registros = caplog.records
+    assert any("lead.qualificado" in registro.getMessage() for registro in registros)
+
+
+async def test_a_travessia_nao_se_repete_nos_turnos_seguintes(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno, caplog
+) -> None:
+    """Dispara na borda, nao no estado. Um lead ja qualificado que continua
+    conversando nao gera o evento de novo -- senao a taxa de qualificacao
+    contaria conversas, nao leads."""
+    outbound = outbound_fake()
+
+    # Primeiro turno completa a qualificacao.
+    with caplog.at_level(logging.INFO):
+        await rodar_turno(
+            session,
+            classificador_fake(Intencao.COMPRA, extracao=_EXTRACAO_QUE_QUALIFICA),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+        )
+
+    caplog.clear()
+
+    # Segundo turno acrescenta `vagas` -- ja qualificado, so segue conversando.
+    with caplog.at_level(logging.INFO):
+        await rodar_turno(
+            session,
+            classificador_fake(Intencao.COMPRA, extracao=Extracao(vagas=2)),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+        )
+
+    registros_do_segundo_turno = caplog.records
+    assert sum(1 for r in registros_do_segundo_turno if "lead.qualificado" in r.getMessage()) == 0
+
+
+async def test_turno_que_nao_grava_estado_nao_avalia_transicao(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno, caplog
+) -> None:
+    """FORA_DE_ESCOPO: `gravar_estado` devolve None, e nao ha depois."""
+    classificador = classificador_fake(Intencao.FORA_DE_ESCOPO, extracao=_EXTRACAO_QUE_QUALIFICA)
+    outbound = outbound_fake()
+
+    with caplog.at_level(logging.INFO):
+        await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
+
+    assert not any("lead.qualificado" in registro.getMessage() for registro in caplog.records)
