@@ -191,6 +191,17 @@ def test_vazio_nao_logga_nada(caplog):
     assert caplog.text == ""
 
 
+class _ResultadoComScalarOne:
+    """Duble do `CursorResult`: TEC-147 fez `gravar_estado` chamar
+    `.scalar_one()` no retorno de `execute` (o `RETURNING` do upsert). Sem
+    banco de verdade aqui, o valor em si nao importa -- os dois testes
+    abaixo verificam o SQL compilado, nao a linha devolvida.
+    """
+
+    def scalar_one(self) -> object:
+        return object()
+
+
 class _SessaoQueCapturaOStatement:
     """Duble minimo: guarda o statement que `gravar_estado` mandaria executar.
 
@@ -201,8 +212,9 @@ class _SessaoQueCapturaOStatement:
     def __init__(self) -> None:
         self.statement: object = None
 
-    async def execute(self, statement: object) -> None:
+    async def execute(self, statement: object) -> _ResultadoComScalarOne:
         self.statement = statement
+        return _ResultadoComScalarOne()
 
 
 async def test_a_uniao_e_sql_compilado_e_nao_leitura_previa() -> None:

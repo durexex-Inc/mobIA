@@ -9,6 +9,7 @@ from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
+from mobia.domain.context.qualificacao import esta_qualificado
 from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.messages.bloqueio import marcar_bloqueada
@@ -285,6 +286,7 @@ async def executar_turno(
     # entregue (desambiguacao descarta a chamada 1; moderacao troca o texto
     # pelo neutro). A marca dele so e gravada mais abaixo, depois da entrega
     # confirmada -- ver o comentario la.
+    antes = esta_qualificado(contexto.estado)
     async with session_factory() as session:
         anterior = await ler_intencao(session, message.channel, message.conversation_key)
         await gravar_intencao(
@@ -295,7 +297,7 @@ async def executar_turno(
             confianca=gerada.confianca,
             modelo=gerada.modelo,
         )
-        await gravar_estado(
+        depois_do_estado = await gravar_estado(
             session,
             channel=message.channel,
             conversation_key=message.conversation_key,
@@ -303,6 +305,19 @@ async def executar_turno(
             extracao=gerada.extracao,
         )
         await session.commit()
+
+    # A borda, nao o estado: um lead ja qualificado que segue conversando nao
+    # gera o evento de novo, senao a taxa de qualificacao da RN-17.1 contaria
+    # conversas em vez de leads. `antes` sai de `contexto.estado`, que
+    # `montar_contexto` ja leu para montar o prompt -- nenhuma consulta extra.
+    # `esta_qualificado(None)` devolve False, entao o caso FORA_DE_ESCOPO (onde
+    # `gravar_estado` devolve None) nao dispara nada.
+    if not antes and esta_qualificado(depois_do_estado):
+        log.info(
+            "lead.qualificado",
+            channel=message.channel,
+            message_id=str(message.id),
+        )
 
     desambiguando = deve_desambiguar(
         gerada.confianca, anterior.desambiguado_em if anterior else None

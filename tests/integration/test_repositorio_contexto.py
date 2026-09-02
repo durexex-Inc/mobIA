@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import text as sql
 
-from mobia.domain.agente.schemas import Extracao, Intencao
+from mobia.domain.agente.schemas import Extracao, Intencao, Urgencia
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.domain.context.repositorio import gravar_estado, gravar_resumo, ler_estado, ler_resumo
 from mobia.infra.crypto import DecryptionError, decrypt
@@ -474,3 +474,100 @@ async def test_preco_em_centavos_sobrevive_ao_round_trip(session) -> None:
     estado = await ler_estado(session, channel="whatsapp", conversation_key="5511999999999")
     assert estado is not None
     assert estado.faixa_preco_max_centavos == 100_000_000_000
+
+
+async def test_gravar_estado_devolve_a_linha_gravada(session):
+    """O valor vem do RETURNING, entao e o que o banco gravou -- nao o que o
+    Python achou que ia gravar. E o que permite ao turno comparar antes e
+    depois sem uma consulta a mais e sem recompor a regra de acumulacao."""
+    devolvido = await gravar_estado(
+        session,
+        channel="whatsapp",
+        conversation_key="5511988887777",
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(regiao="zona sul", faixa_preco_max_centavos=60_000_000),
+    )
+    assert devolvido is not None
+    assert devolvido.regiao == "zona sul"
+    assert devolvido.faixa_preco_max_centavos == 60_000_000
+    assert devolvido.intencao == Intencao.COMPRA.value
+
+
+async def test_gravar_estado_devolve_none_quando_nao_grava(session):
+    """FORA_DE_ESCOPO nao grava nada -- `campos_a_gravar` devolve dict vazio e
+    a funcao retorna antes de qualquer execute. Nao havendo linha gravada, nao
+    ha linha a devolver, e o turno nao tem transicao a avaliar."""
+    devolvido = await gravar_estado(
+        session,
+        channel="whatsapp",
+        conversation_key="5511977776666",
+        intencao=Intencao.FORA_DE_ESCOPO,
+        extracao=Extracao(regiao="zona sul"),
+    )
+    assert devolvido is None
+
+
+async def test_o_devolvido_traz_a_acumulacao_e_nao_so_o_turno(session):
+    """Dois turnos: o segundo devolve o estado ACUMULADO, com o campo do
+    primeiro ainda la. Se devolvesse so os campos deste turno, o turno leria
+    "regiao ausente" e a transicao dispararia na hora errada."""
+    chave = "5511966665555"
+    await gravar_estado(
+        session,
+        channel="whatsapp",
+        conversation_key=chave,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(regiao="zona sul"),
+    )
+    devolvido = await gravar_estado(
+        session,
+        channel="whatsapp",
+        conversation_key=chave,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(urgencia=Urgencia.ATE_3_MESES),
+    )
+    assert devolvido is not None
+    assert devolvido.regiao == "zona sul"
+    assert devolvido.urgencia == Urgencia.ATE_3_MESES.value
+
+
+async def test_o_devolvido_vale_mesmo_quando_a_sessao_ja_leu_a_linha(session):
+    """A sessao le com `ler_estado` e grava logo depois, sem commit no meio.
+
+    Sem `populate_existing`, o identity map do SQLAlchemy devolve aqui a
+    instancia que a sessao ja tinha carregado e NAO a atualiza com o que o
+    `RETURNING` trouxe: o chamador receberia o estado ANTERIOR a sua propria
+    gravacao, e a docstring de `gravar_estado` -- "o que o banco de fato
+    gravou" -- estaria mentindo.
+
+    `turno.py` hoje escapa por acidente, porque le numa sessao e grava
+    noutra, e por isso os tres testes irmaos acima nao alcancam este caminho.
+    A TEC-150 quer ler e gravar na mesma sessao para recalcular o score, e
+    ali `lead.qualificado` pararia de disparar em silencio.
+    """
+    chave = "5511955554444"
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=chave,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(regiao="zona sul", faixa_preco_max_centavos=60_000_000),
+    )
+    await session.commit()
+
+    lido = await ler_estado(session, CANAL, chave)
+    assert lido is not None
+    assert lido.urgencia is None
+
+    devolvido = await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=chave,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(urgencia=Urgencia.ATE_3_MESES),
+    )
+    assert devolvido is not None
+    assert devolvido.urgencia == Urgencia.ATE_3_MESES.value, (
+        "o RETURNING devolveu a instancia velha do identity map, nao a linha gravada"
+    )
+    assert devolvido.regiao == "zona sul"
