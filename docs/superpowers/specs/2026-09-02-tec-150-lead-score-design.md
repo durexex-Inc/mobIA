@@ -171,7 +171,7 @@ Dizer que *"a faixa útil encolhe"* é inadequado: descreve um efeito de tamanho
 | **72** | quatro obrigatórios · `urgencia = IMEDIATA` · `FINANCIAMENTO`/`CONSORCIO`/`FGTS` · ≥6 mensagens |
 | **70** | quatro obrigatórios · `IMEDIATA` · `A_VISTA` · 1–5 mensagens — **ou** três dos quatro · `IMEDIATA` · `A_VISTA` · ≥6 mensagens |
 
-Ou seja: até a TEC-158, `QUENTE` **não é uma faixa numérica** — é o predicado *"urgência imediata **e** forma de pagamento declarada **e** pelo menos três obrigatórios **e** o lead falou"*. Em particular:
+Ou seja: até a TEC-158, `QUENTE` é alcançado apenas pelas configurações enumeradas acima. Em particular:
 
 - **Nenhum lead que não seja `IMEDIATA` alcança `QUENTE`.** O máximo para qualquer outra urgência é **65**.
 - **Nenhum lead sem forma de pagamento declarada alcança `QUENTE`.** O máximo com coluna nula ou `INDEFINIDA` é **66**.
