@@ -52,7 +52,7 @@ def test_ruido_stripping_direto():
     _NUMERO.search encontra a faixa de digitos independente de lixo na frente.
     Isto era o problema original: "R$ 500.000" nao limpava o "R$ " e o teste
     passava mesmo assim porque _NUMERO achava "500.000". O teste aqui valida
-    o regex diretamente, forçando a falha se a limpeza regredir.
+    o regex diretamente, forcando a falha se a limpeza regredir.
     """
     # Forma com espaco (era quebrada, precisava da fix r\$\s*)
     resultado_com_espaco = _RUIDO.sub(" ", "r$ 500.000".casefold())
@@ -150,7 +150,11 @@ def test_aluguel_aceita_valor_que_compra_recusaria():
 
 
 def test_indefinida_usa_a_uniao_das_bandas():
-    assert parsear("1500", Intencao.INDEFINIDA) == FaixaDePreco(max_centavos=150_000)
+    """Com marcador de grandeza, a banda frouxa e mesmo a uniao das duas:
+    R$ 1.500 esta fora da banda de compra e dentro da de aluguel, e sob
+    INDEFINIDA ele passa. O caso NU e outro -- ver o teste seguinte."""
+    assert parsear("1,5 mil", Intencao.INDEFINIDA) == FaixaDePreco(max_centavos=150_000)
+    assert parsear("1,5 mil", Intencao.COMPRA) == Recusa(MotivoDaRecusa.IMPLAUSIVEL)
 
 
 def test_faixa_invertida_e_recusada():
@@ -186,10 +190,183 @@ def test_teto_da_banda_e_inclusive():
 def test_intencao_nao_monetaria_cai_na_banda_frouxa(intencao):
     """`_BANDAS.get` sem entrada para estes dois cai na uniao das bandas, e
     isso e decisao, nao acidente do `.get`. O valor abaixo prova que a
-    escolha muda o resultado: 1500 reais fica abaixo do piso de COMPRA
-    (ambiguo la), mas dentro da banda frouxa (aceito aqui).
+    escolha muda o resultado: R$ 1.500 fica abaixo do piso de COMPRA
+    (implausivel la, porque tem marcador), mas dentro da banda frouxa
+    (aceito aqui).
+
+    Com marcador de proposito: o numero NU responde ao piso de COMPRA em toda
+    intencao sem banda propria -- ver
+    `test_numero_nu_sob_a_banda_frouxa_responde_ao_piso_de_compra`.
 
     `parsear` nao sabe que `campos_a_gravar` descarta FORA_DE_ESCOPO e grava
     SUPORTE_CONTRATO normalmente -- essa e uma decisao do filtro de
     gravacao, nao deste modulo. Ver comentario de `_BANDA_FROUXA`."""
-    assert parsear("1500", intencao) == FaixaDePreco(max_centavos=150_000)
+    assert parsear("1,5 mil", intencao) == FaixaDePreco(max_centavos=150_000)
+
+
+# --- Revisao final da branch: os defeitos que a suite anterior nao pegava ---
+
+
+@pytest.mark.parametrize(
+    "expressao",
+    [
+        # Linha digitavel de boleto: 47 digitos. O lead cola isto quando a
+        # conversa chega em pagamento, e `_NUMERO` era `\d[\d.]*`, sem teto.
+        "3419179001010435100479102015000889105000001500",
+        "1" * 100,
+        "9" * 29,  # o primeiro comprimento que estourava a precisao de 28
+    ],
+)
+def test_numero_absurdamente_longo_e_recusado_sem_levantar(expressao):
+    """O contrato mais duro deste modulo, e o que ele custava quando furava.
+
+    `(valor * 100).quantize(...)` levanta `InvalidOperation` quando o
+    resultado passa dos 28 digitos do contexto decimal. `InvalidOperation`
+    esta na tupla de `except` do classificador, entao virava
+    `RespostaInvalida`: mensagem em FAILED, `attempts` incrementado, worker
+    repetindo a chamada paga e batendo no mesmo parse deterministico. **O
+    lead nao recebia resposta nenhuma**, por causa de um campo opcional de
+    enriquecimento.
+    """
+    assert parsear(expressao, Intencao.COMPRA) == Recusa(MotivoDaRecusa.ILEGIVEL)
+
+
+@pytest.mark.parametrize(
+    ("expressao", "minimo", "maximo"),
+    [
+        # A familia `de X ate Y`: portugues corrente, e cada uma destas
+        # devolvia um MAXIMO de R$ 300.000 -- 40% abaixo do que o lead disse,
+        # dentro da banda, gravado sem log. A direcao (`ate`) era testada
+        # antes da faixa e engolia a expressao inteira.
+        ("de 300 mil ate 500 mil", 30_000_000, 50_000_000),
+        ("entre 300 mil ate 500 mil", 30_000_000, 50_000_000),
+        ("300 mil ate 500 mil", 30_000_000, 50_000_000),
+        # Esta perdia o maximo em vez do minimo, pelo mesmo mecanismo.
+        ("a partir de 300 mil a 500 mil", 30_000_000, 50_000_000),
+    ],
+)
+def test_faixa_vence_direcao(expressao, minimo, maximo):
+    """Dois numeros ligados por conector enunciam os dois extremos, e uma
+    palavra de direcao no meio nao apaga um deles."""
+    assert _faixa_de(expressao) == FaixaDePreco(min_centavos=minimo, max_centavos=maximo)
+
+
+@pytest.mark.parametrize(
+    ("fala", "minimo", "maximo"),
+    [
+        # `evals/corpus/compra.yaml`, verbatim: o unico turno do corpus que
+        # afirma piso, anotado min 300000 / max 450000. Devolvia max
+        # R$ 300.000 e perdia o minimo -- o regex de faixa partia no "e" de
+        # "minha faixa e de", o lado esquerdo ficava sem numero, e o ramo de
+        # faixa era abandonado inteiro.
+        (
+            "minha faixa e de 300 a 450 mil, abaixo disso nao acho nada decente",
+            30_000_000,
+            45_000_000,
+        ),
+        ("meu orcamento e de 300 a 450 mil", 30_000_000, 45_000_000),
+    ],
+)
+def test_faixa_sobrevive_a_prosa_em_volta(fala, minimo, maximo):
+    assert _faixa_de(fala) == FaixaDePreco(min_centavos=minimo, max_centavos=maximo)
+
+
+@pytest.mark.parametrize(
+    "expressao",
+    [
+        # I1: numero nao-monetario colado a um marcador de outra clausula.
+        # Devolvia R$ 120.000 (o lead disse 600 mil), dentro da banda.
+        "apartamento de 120m2 ate 600 mil",
+        "2 quartos ate 600 mil",
+        # `evals/corpus/borda.yaml`, a fala inteira. Se o modelo recortar de
+        # mais, o parser tem de dizer que nao deu conta em vez de casar o
+        # primeiro numero que achar com o marcador do ultimo.
+        (
+            "quero comprar um apto de 2 quartos no butanta ate 600 mil, "
+            "aceita financiamento? pode me mandar as opcoes?"
+        ),
+    ],
+)
+def test_numero_de_outra_clausula_nao_vira_orcamento(expressao):
+    """Recusar custa uma repergunta; casar o numero errado custa um filtro de
+    busca errado que ninguem atribui ao parser. Mesma assimetria da D6."""
+    assert parsear(expressao, Intencao.COMPRA) == Recusa(MotivoDaRecusa.ILEGIVEL)
+
+
+def test_o_recorte_certo_da_mesma_fala_de_borda_e_lido():
+    """O par do teste acima: quando o modelo recorta a expressao de orcamento
+    -- que e o que a D1 lhe pede --, ela e lida sem drama."""
+    assert parsear("ate 600 mil", Intencao.COMPRA) == FaixaDePreco(max_centavos=60_000_000)
+
+
+@pytest.mark.parametrize(
+    ("com_acento", "sem_acento"),
+    [
+        ("no mínimo 300 mil", "no minimo 300 mil"),
+        ("mínimo 300 mil", "minimo 300 mil"),
+        ("até 500 mil", "ate 500 mil"),
+        ("no máximo 500 mil", "no maximo 500 mil"),
+    ],
+)
+def test_acento_na_palavra_de_direcao_nao_muda_o_lado(com_acento, sem_acento):
+    """Quem digita e o lead, e `_MULTIPLICADORES` ja assumia isso.
+
+    "no mínimo 300 mil" devolvia um MAXIMO de R$ 300.000 -- filtro invertido,
+    valor dentro da banda, nada logado. As formas de maximo escapavam do
+    sintoma so porque o fallback ja e maximo, o que torna o defeito ainda
+    mais facil de nao ver.
+    """
+    assert _faixa_de(com_acento) == _faixa_de(sem_acento)
+    assert _faixa_de(com_acento) is not None
+
+
+def test_numero_nu_sob_a_banda_frouxa_responde_ao_piso_de_compra():
+    """A lacuna que a spec declarava e que esta revisao fechou.
+
+    "uns 500" e o caso que abre o desenho desta card, e a INDEFINIDA e o
+    momento comum da PRIMEIRA mencao de orcamento. Aceitar ali nao se corrige
+    depois: `campos_a_gravar` nunca apaga e turno nenhum revalida, entao o
+    valor sobrevive para dentro de uma conversa depois classificada COMPRA e
+    vira o filtro da busca la.
+    """
+    assert parsear("uns 500", Intencao.INDEFINIDA) == Recusa(MotivoDaRecusa.AMBIGUA)
+    assert parsear("1500", Intencao.INDEFINIDA) == Recusa(MotivoDaRecusa.AMBIGUA)
+    # A regra e da banda frouxa, e nao de INDEFINIDA: os outros dois membros
+    # respondem igual.
+    assert parsear("1500", Intencao.SUPORTE_CONTRATO) == Recusa(MotivoDaRecusa.AMBIGUA)
+    # E nao vaza para quem tem banda propria: aluguel continua aceitando o
+    # numero nu, que e o motivo de a banda ser por intencao.
+    assert parsear("1500", Intencao.ALUGUEL) == FaixaDePreco(max_centavos=150_000)
+
+
+def test_cifrao_e_marcador_de_grandeza_para_a_regra_de_ambiguidade():
+    """D3 lista `R$` entre os marcadores, e `_tinha_marcador` so olhava os
+    multiplicadores. Os dois motivos apontam para lados opostos: "uns 500" e
+    o lead impreciso; "R$ 500" e o lead dizendo a moeda de proposito e
+    afirmando um valor que nao fecha com a intencao."""
+    assert parsear("R$ 500", Intencao.COMPRA) == Recusa(MotivoDaRecusa.IMPLAUSIVEL)
+    assert parsear("uns 500", Intencao.COMPRA) == Recusa(MotivoDaRecusa.AMBIGUA)
+
+
+def test_ponto_fora_da_forma_de_milhar_e_recusado():
+    """"1.5 milhao" devolvia R$ 15.000.000 -- o ponto lido como milhar, 10x o
+    que o lead disse, dentro da banda. Nao ha leitura pt-BR de "1.5", entao a
+    saida e recusar, nao adivinhar entre 1 milhao e 1,5 milhao."""
+    assert parsear("1.5 milhao", Intencao.COMPRA) == Recusa(MotivoDaRecusa.ILEGIVEL)
+    # A forma legitima do lado de la continua lida.
+    assert parsear("1,5 milhao", Intencao.COMPRA) == FaixaDePreco(max_centavos=150_000_000)
+    assert parsear("R$ 1.234.567,89", Intencao.COMPRA) == FaixaDePreco(max_centavos=123_456_789)
+
+
+def test_sinal_negativo_nao_e_descartado():
+    """"-500 mil" virava R$ 500.000, dentro da banda, gravado em silencio."""
+    assert parsear("-500 mil", Intencao.COMPRA) == Recusa(MotivoDaRecusa.ILEGIVEL)
+
+
+def test_bilhao_e_lido_em_vez_de_virar_dois_reais():
+    """Sem `bilhao` na gramatica, "2 bilhoes" resolvia para R$ 2,00 e era
+    logado como AMBIGUA -- culpa do lead, por um buraco do parser. O teto da
+    banda e R$ 1 bilhao, entao a gramatica precisa saber dizer o proprio
+    limite dela."""
+    assert parsear("1 bilhao", Intencao.COMPRA) == FaixaDePreco(max_centavos=100_000_000_000)
+    assert parsear("2 bilhoes", Intencao.COMPRA) == Recusa(MotivoDaRecusa.IMPLAUSIVEL)

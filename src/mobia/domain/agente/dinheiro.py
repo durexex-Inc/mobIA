@@ -4,11 +4,20 @@ TEC-146. Puro de proposito: sem I/O, sem banco, sem chamada ao modelo. Quem
 decide a ordem de grandeza e este modulo, e nao o modelo -- ver D1 do desenho.
 A gramatica e lista fixa e erra por falta; estende-la e decisao de card, nao
 de quem passa por aqui.
+
+**Nem `parsear` nem `_faixa_de` levantam.** A expressao chega de uma chamada ao
+modelo, que por sua vez repete a fala do lead: qualquer sequencia de caracteres
+e entrada valida deste modulo, inclusive uma linha digitavel de boleto colada
+no meio da conversa. Uma excecao aqui vira `RespostaInvalida` no classificador,
+o turno inteiro vai a `FAILED` e **o lead nao recebe resposta nenhuma** por
+causa de um campo de enriquecimento. Toda aritmetica deste arquivo esta sob
+guarda por causa disso, e `_BEM_FORMADO` limita o tamanho do numero antes de a
+aritmetica comecar.
 """
 
 import re
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, DecimalException
 from enum import StrEnum
 
 from mobia.domain.agente.schemas import Intencao
@@ -21,14 +30,48 @@ _RUIDO = re.compile(
     r"r\$\s*|\b(?:reais?|uns?|umas?|cerca de|por volta de|mais ou menos|em torno de)\b"
 )
 
+# `r$` sobrevive so aqui: `_RUIDO` o apaga antes do parsing (ele nao muda o
+# numero), mas a D3 do desenho conta o cifrao entre os marcadores que separam
+# `AMBIGUA` de `IMPLAUSIVEL` -- quem escreve "R$ 500" nao esqueceu a ordem de
+# grandeza, disse um valor que nao fecha. Ver `_tinha_marcador`.
+_MARCADOR_DE_MOEDA = re.compile(r"r\$")
+
 # `\b` separa "mil" de "milhao": sem ele o primeiro padrao comeria o prefixo do
 # segundo e "1 milhao" viraria mil.
+#
+# `bilhao` entrou na revisao final por um motivo estrutural, e nao por
+# antecipacao: o TETO da banda da D3 e R$ 1 bilhao, entao sem esta linha a
+# gramatica nao conseguia dizer o proprio limite superior dela -- "2 bilhoes"
+# resolvia para R$ 2,00, um erro de 10^9 que so nao era gravado porque dois
+# reais tambem caem fora da banda, e que era logado como `AMBIGUA` (culpa do
+# lead) em vez de `IMPLAUSIVEL`. A abreviacao "bi" NAO entra: "mi" ja existia e
+# tem uso corrente numa fala de imovel, "bi" nao, e cada alternativa a mais e
+# superficie de falso positivo.
 _MULTIPLICADORES: tuple[tuple[re.Pattern[str], Decimal], ...] = (
+    (re.compile(r"\b(bilhao|bilhoes|bilhões|bilhão)\b"), Decimal(1_000_000_000)),
     (re.compile(r"\b(milhao|milhoes|milhões|milhão|mi)\b"), Decimal(1_000_000)),
     (re.compile(r"\b(mil|k)\b"), Decimal(1_000)),
 )
 
-_NUMERO = re.compile(r"\d[\d.]*(?:,\d+)?")
+# Casa o token numerico INTEIRO -- digitos com pontos e virgulas dentro -- e
+# nao so o prefixo bem formado dele. A diferenca decide dois casos:
+#
+#   "1.5 milhao"  o token e "1.5", que nao e forma pt-BR nenhuma. Um padrao que
+#                 casasse so o prefixo leria "1" e devolveria R$ 1 milhao em
+#                 silencio; casando o token todo, `_BEM_FORMADO` reprova e a
+#                 expressao vira ILEGIVEL.
+#   boleto        47 digitos casam num token so, `_BEM_FORMADO` reprova, e a
+#                 aritmetica nunca roda. Sem o limite, `quantize` estourava a
+#                 precisao de 28 digitos do contexto decimal e levantava
+#                 `InvalidOperation` -- ver o docstring do modulo.
+_NUMERO = re.compile(r"\d[\d.,]*")
+
+# A forma que o parser aceita: milhar em grupos de tres separados por ponto, ou
+# inteiro corrido de ate 12 digitos, com no maximo duas casas decimais depois
+# da virgula. Doze digitos sao R$ 999 bilhoes -- tres ordens de grandeza acima
+# do teto da banda, entao nada gravavel e recusado aqui, e a aritmetica fica
+# duas dezenas de digitos abaixo do limite do contexto decimal.
+_BEM_FORMADO = re.compile(r"\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d{1,12}(?:,\d{1,2})?")
 
 
 @dataclass(frozen=True)
@@ -50,46 +93,85 @@ class _Valor:
 
 
 def _decimal_de(bruto: str) -> Decimal | None:
-    """Ponto e separador de milhar; virgula e decimal. Convencao pt-BR."""
+    """Ponto e separador de milhar; virgula e decimal. Convencao pt-BR.
+
+    So aceita o que `_BEM_FORMADO` aprova. A checagem fica aqui, e nao so no
+    chamador, porque e ela que garante que a aritmetica de `_resolver` nunca
+    receba um numero grande o bastante para estourar o contexto decimal.
+    """
+    if not _BEM_FORMADO.fullmatch(bruto):
+        return None
     try:
         return Decimal(bruto.replace(".", "").replace(",", "."))
-    except InvalidOperation:
+    except DecimalException:
         return None
 
 
-def _valor_de(texto: str) -> _Valor | None:
-    limpo = _RUIDO.sub(" ", texto.casefold())
-    achado = _NUMERO.search(limpo)
-    if achado is None:
-        return None
+def _negativo(texto: str, inicio: int) -> bool:
+    """O sinal fica fora de `_NUMERO`, e "-500 mil" nao e orcamento.
 
-    valor = _decimal_de(achado.group())
+    Sem esta checagem o sinal era simplesmente descartado e a expressao virava
+    R$ 500.000 -- valor dentro da banda, gravado em silencio. O hifen tambem
+    NAO abre faixa ("300-450 mil"): a gramatica da D3 lista `entre X e Y`,
+    `de X a Y` e `X a Y`, e nada mais. As duas leituras do hifen chegam ao
+    mesmo lugar (recusa), e a recusa e logada como ILEGIVEL, que e a metrica
+    do buraco da gramatica.
+    """
+    return texto[:inicio].rstrip().endswith("-")
+
+
+def _resolver(bruto: str, sufixo: str) -> _Valor | None:
+    """Um numero, e o trecho sobre o qual o marcador dele manda.
+
+    `sufixo` e o escopo do marcador de grandeza, e quem o delimita e o
+    chamador -- e essa delimitacao que impede o "mil" de um lado da faixa
+    multiplicar o numero do outro lado.
+    """
+    valor = _decimal_de(bruto)
     if valor is None:
         return None
 
     # O marcador vale se aparecer DEPOIS do numero: "500 mil" multiplica,
     # "mil e quinhentos reais de condominio, imovel de 500" nao.
-    resto = limpo[achado.end() :]
     tinha_marcador = False
     fator_aplicado = Decimal(1)
     for padrao, fator in _MULTIPLICADORES:
-        if padrao.search(resto):
+        if padrao.search(sufixo):
             valor *= fator
             tinha_marcador = True
             fator_aplicado = fator
             break
 
-    centavos = (valor * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    return _Valor(centavos=int(centavos), tinha_marcador=tinha_marcador,
-                  fator=fator_aplicado)
+    try:
+        centavos = (valor * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    except DecimalException:
+        # Inalcancavel com `_BEM_FORMADO` na frente. Fica porque o contrato
+        # "nunca levanta" nao pode depender de um regex noutra funcao.
+        return None
+    return _Valor(centavos=int(centavos), tinha_marcador=tinha_marcador, fator=fator_aplicado)
 
 
-# Preposicoes que abrem faixa. "de X a Y" e "entre X e Y" sao as duas formas
-# que o corpus da TEC-145 traz; "X a Y" e a mesma coisa sem a abertura.
-_FAIXA = re.compile(r"(?:entre\s+)?(.+?)\s+(?:a|e|ate)\s+(.+)", re.DOTALL)
+def _valor_de(texto: str) -> _Valor | None:
+    """O PRIMEIRO numero do texto, com todo o resto como escopo do marcador."""
+    limpo = _RUIDO.sub(" ", texto.casefold())
+    achado = _NUMERO.search(limpo)
+    if achado is None or _negativo(limpo, achado.start()):
+        return None
+    return _resolver(achado.group().rstrip(".,"), limpo[achado.end() :])
 
-_SO_MAXIMO = re.compile(r"\b(ate|no maximo|maximo|abaixo de|menos de)\b")
-_SO_MINIMO = re.compile(r"\b(a partir de|no minimo|minimo|acima de|mais de)\b")
+
+# Conectores de faixa: as tres formas da D3 (`entre X e Y`, `de X a Y`,
+# `X a Y`) reduzem-se todas a "a", "e" ou "ate" ENTRE os dois numeros. Virgula
+# e espaco em volta sao ruido de escrita.
+_CONECTOR_DE_FAIXA = re.compile(r"[\s,]*(?:ate|até|a|e)[\s,]*")
+
+# Acentuados junto com a forma sem acento, pela mesma razao que
+# `_MULTIPLICADORES`: quem digita e o lead, e "no minimo"/"no mínimo" sao a
+# mesma frase. Sem os acentos, "no mínimo 300 mil" nao casava aqui e caia no
+# fallback -- que e MAXIMO -- invertendo o filtro de busca em silencio. As
+# formas de maximo escapavam do sintoma so porque o fallback ja e maximo.
+_SO_MAXIMO = re.compile(r"\b(at[eé]|no m[aá]ximo|m[aá]ximo|abaixo de|menos de)\b")
+_SO_MINIMO = re.compile(r"\b(a partir de|no m[ií]nimo|m[ií]nimo|acima de|mais de)\b")
 
 
 @dataclass(frozen=True)
@@ -100,35 +182,93 @@ class FaixaDePreco:
     max_centavos: int | None = None
 
 
+def _sem_marcador(trecho: str) -> str:
+    """Tira os marcadores de grandeza do trecho.
+
+    Usada so no separador de faixa: o "mil" de "de 300 mil ate 500 mil"
+    pertence ao numero da ESQUERDA, e nao ao conector. Sem esta limpeza o
+    separador " mil ate " nao pareceria conector, a faixa seria recusada, e
+    "de X ate Y" -- portugues corrente -- nao teria como ser lido.
+    """
+    for padrao, _ in _MULTIPLICADORES:
+        trecho = padrao.sub(" ", trecho)
+    return trecho
+
+
 def _faixa_de(expressao: str) -> FaixaDePreco | None:
-    limpo = expressao.casefold()
+    """Resolve direcao e faixa amarrando cada numero a clausula dele.
 
-    # Direcao antes de faixa: "ate 500 mil" casaria em `_FAIXA` pelo "ate",
-    # com o lado esquerdo vazio. Testar a direcao primeiro evita o falso par.
-    if _SO_MINIMO.search(limpo):
+    A decisao estrutural, e a que fechou tres defeitos de uma vez na revisao
+    final: **quem decide a forma e a quantidade de numeros**, e nao uma
+    sequencia de regexes sobre a string inteira.
+
+    A versao anterior testava direcao sobre a expressao toda ANTES de testar
+    faixa, e resolvia o valor sobre a expressao toda depois. Isso fazia
+    "de 300 mil ate 500 mil" virar um maximo de R$ 300.000 -- o `ate` casava a
+    direcao, e o primeiro numero da string respondia por ela. Quarenta por
+    cento abaixo do que o lead disse, dentro da banda, gravado sem log. Pelo
+    mesmo caminho "apartamento de 120m2 ate 600 mil" virava R$ 120.000, e a
+    unica linha do corpus que afirma piso ("minha faixa e de 300 a 450 mil,
+    abaixo disso nao acho nada decente") perdia o minimo, porque o regex de
+    faixa partia no primeiro "e" da frase e desistia.
+
+    Agora:
+
+    - **Um numero** -- a direcao vale, procurada na expressao inteira: nao ha
+      clausula concorrente, e "500 mil no maximo" e tao corrente quanto
+      "no maximo 500 mil". Sem direcao, valor nu e maximo (D3).
+    - **Dois numeros separados apenas por conector** -- e faixa, e a faixa
+      vence a direcao: quem diz "a partir de 300 mil a 500 mil" enunciou os
+      dois extremos, e ficar so com o piso perde metade do que foi dito. Cada
+      lado resolve o marcador dentro do proprio escopo.
+    - **Qualquer outra coisa** -- recusa (ILEGIVEL). Dois numeros que nao sao
+      faixa ("2 quartos ate 600 mil") ou tres numeros nao dizem ao parser qual
+      deles e dinheiro, e chutar custa um filtro de busca errado que ninguem
+      atribui ao parser. E a mesma assimetria da D6: recusar custa uma
+      repergunta.
+    """
+    limpo = _RUIDO.sub(" ", expressao.casefold())
+    achados = list(_NUMERO.finditer(limpo))
+
+    if len(achados) == 1:
+        # `_valor_de` de novo sobre o texto ja limpo: com um numero so ele
+        # acha o mesmo e o escopo do marcador e todo o resto, que e
+        # exatamente a regra deste ramo. `_RUIDO.sub` sobre texto ja limpo e
+        # no-op, entao repetir a limpeza nao muda nada.
         valor = _valor_de(limpo)
-        return None if valor is None else FaixaDePreco(min_centavos=valor.centavos)
-    if _SO_MAXIMO.search(limpo):
-        valor = _valor_de(limpo)
-        return None if valor is None else FaixaDePreco(max_centavos=valor.centavos)
+        if valor is None:
+            return None
+        if _SO_MINIMO.search(limpo):
+            return FaixaDePreco(min_centavos=valor.centavos)
+        return FaixaDePreco(max_centavos=valor.centavos)
 
-    par = _FAIXA.match(limpo)
-    if par is not None:
-        esquerda, direita = _valor_de(par.group(1)), _valor_de(par.group(2))
-        if esquerda is not None and direita is not None:
-            # O marcador do lado direito distribui para a esquerda quando o
-            # esquerdo nao tem o seu: "entre 400 e 500 mil" sao 400 MIL e 500
-            # mil, nao 400 reais e 500 mil. Quando a esquerda ja tem marcador
-            # proprio ("800 mil a 1,2 milhao"), ela fica como esta -- usar o
-            # fator ja aplicado por _valor_de evita reconstruir string para
-            # descobrir o multiplicador de novo.
-            minimo = esquerda.centavos
-            if not esquerda.tinha_marcador and direita.tinha_marcador:
-                minimo = int(esquerda.centavos * direita.fator)
-            return FaixaDePreco(min_centavos=minimo, max_centavos=direita.centavos)
+    if len(achados) != 2:
+        return None
 
-    valor = _valor_de(limpo)
-    return None if valor is None else FaixaDePreco(max_centavos=valor.centavos)
+    primeiro, segundo = achados
+    if _negativo(limpo, primeiro.start()) or _negativo(limpo, segundo.start()):
+        return None
+
+    separador = limpo[primeiro.end() : segundo.start()]
+    if not _CONECTOR_DE_FAIXA.fullmatch(_sem_marcador(separador)):
+        return None
+
+    # O escopo do marcador da esquerda e o separador, e nao o resto da string:
+    # e o que amarra o "mil" de "de 300 mil ate 500 mil" ao 300.
+    esquerda = _resolver(primeiro.group().rstrip(".,"), separador)
+    direita = _resolver(segundo.group().rstrip(".,"), limpo[segundo.end() :])
+    if esquerda is None or direita is None:
+        return None
+
+    # O marcador do lado direito distribui para a esquerda quando o esquerdo
+    # nao tem o seu: "entre 400 e 500 mil" sao 400 MIL e 500 mil, nao 400
+    # reais e 500 mil. Quando a esquerda ja tem marcador proprio ("800 mil a
+    # 1,2 milhao"), ela fica como esta -- usar o fator ja aplicado por
+    # `_resolver` evita reconstruir string para descobrir o multiplicador.
+    minimo = esquerda.centavos
+    if not esquerda.tinha_marcador and direita.tinha_marcador:
+        minimo = int(esquerda.centavos * direita.fator)
+    return FaixaDePreco(min_centavos=minimo, max_centavos=direita.centavos)
 
 
 # Bandas em centavos. Constantes de modulo, nao configuracao: a card pede
@@ -146,7 +286,8 @@ _BANDAS = {
 
 # Uniao das duas: na duvida, aceita. Fechar a banda para o lead ainda nao
 # classificado custaria valores de aluguel legitimos, que sao a maioria dos
-# valores baixos. Lacuna declarada no desenho.
+# valores baixos. Lacuna declarada no desenho -- e estreitada, para o numero
+# NU, pelo `piso_do_numero_nu` de `parsear`.
 #
 # `_BANDAS.get` cai aqui para TODA intencao que nao esta na tabela acima, e
 # isso inclui as duas nao-monetarias: SUPORTE_CONTRATO e FORA_DE_ESCOPO, nao
@@ -189,8 +330,20 @@ class Recusa:
 
 
 def _tinha_marcador(expressao: str) -> bool:
+    """Se a fala trouxe ordem de grandeza explicita -- cifrao incluido.
+
+    A D3 lista `mil`, `k`, `milhao` **e `R$`** como os marcadores que separam
+    `AMBIGUA` de `IMPLAUSIVEL`, e o cifrao estava faltando aqui. Nao e detalhe
+    de log: as duas recusas apontam para lados opostos. Quem escreve "uns 500"
+    para uma compra provavelmente quis dizer outro numero (AMBIGUA); quem
+    escreve "R$ 500" pos a moeda de proposito e disse um valor que nao fecha
+    com a intencao (IMPLAUSIVEL). Recebe a expressao CRUA, antes de `_RUIDO`
+    apagar o cifrao.
+    """
     limpo = expressao.casefold()
-    return any(padrao.search(limpo) for padrao, _ in _MULTIPLICADORES)
+    return bool(_MARCADOR_DE_MOEDA.search(limpo)) or any(
+        padrao.search(limpo) for padrao, _ in _MULTIPLICADORES
+    )
 
 
 def parsear(expressao: str, intencao: Intencao) -> FaixaDePreco | Recusa:
@@ -213,6 +366,30 @@ def parsear(expressao: str, intencao: Intencao) -> FaixaDePreco | Recusa:
         return Recusa(MotivoDaRecusa.IMPLAUSIVEL)
 
     piso, teto = _BANDAS.get(intencao, _BANDA_FROUXA)
+    tinha_marcador = _tinha_marcador(expressao)
+
+    # O numero NU responde ao piso de COMPRA quando a banda e a frouxa, e este
+    # e o unico ponto em que a banda frouxa deixa de ser a uniao pura.
+    #
+    # O motivo e que a banda frouxa nao e uma banda de verdade: e a ausencia de
+    # uma. Sem esta linha, "uns 500" com intencao INDEFINIDA -- o momento comum
+    # da PRIMEIRA mencao de orcamento -- era aceito como R$ 500, que e
+    # exatamente o defeito que abre o desenho desta card. E ele nao se corrige
+    # sozinho depois: `campos_a_gravar` nunca APAGA e turno nenhum revalida o
+    # que ja esta gravado, entao o valor admitido enquanto a intencao era
+    # INDEFINIDA sobrevive para dentro de uma conversa depois classificada
+    # COMPRA e vira o filtro da busca la.
+    #
+    # Vale para as tres intencoes sem banda propria, e nao so para INDEFINIDA:
+    # a regra e da banda frouxa, e o modulo nao tem por que saber qual dos
+    # membros dela esta em jogo -- e a mesma razao pela qual `_BANDAS` e
+    # tabela parcial com fallback em vez de mapa total do enum.
+    #
+    # Custa uma repergunta ao lead de aluguel que escreve "1500" nu antes de a
+    # intencao estar decidida; com marcador ("1,5 mil", "R$ 1.500") ele passa
+    # na hora. E o mesmo balanco da D6: recusar custa uma pergunta, aceitar
+    # errado custa um filtro de busca que ninguem atribui ao parser.
+    piso_do_numero_nu = piso if intencao in _BANDAS else _BANDA_DE_COMPRA[0]
     extremos = [v for v in (faixa.min_centavos, faixa.max_centavos) if v is not None]
 
     for valor in extremos:
@@ -223,9 +400,9 @@ def parsear(expressao: str, intencao: Intencao) -> FaixaDePreco | Recusa:
             # quase certamente disse outra coisa. Com marcador explicito, ele
             # disse algo que nao fecha com a intencao.
             return Recusa(
-                MotivoDaRecusa.AMBIGUA
-                if not _tinha_marcador(expressao)
-                else MotivoDaRecusa.IMPLAUSIVEL
+                MotivoDaRecusa.AMBIGUA if not tinha_marcador else MotivoDaRecusa.IMPLAUSIVEL
             )
+        if not tinha_marcador and valor < piso_do_numero_nu:
+            return Recusa(MotivoDaRecusa.AMBIGUA)
 
     return faixa

@@ -132,7 +132,33 @@ def test_extrair_de_dicionario_completo():
 
 @pytest.mark.parametrize(
     "bruto",
-    [None, "texto", 42, [], {"quartos": {"aninhado": 1}}],
+    [
+        None,
+        "texto",
+        42,
+        [],
+        {"quartos": {"aninhado": 1}},
+        # As cinco entradas acima nunca chegavam a `faixa_preco_expressao`,
+        # entao o campo mais novo -- e o unico com uma gramatica inteira
+        # atras dele -- ficava fora do contrato que este teste existe para
+        # guardar. As de baixo entram nele.
+        #
+        # Linha digitavel de boleto: 47 digitos, exatamente o que um lead cola
+        # quando a conversa chega em pagamento. `(valor * 100).quantize(...)`
+        # levantava `InvalidOperation`, que esta na tupla de `except` de
+        # `classificar`: a mensagem ia a FAILED, `attempts` incrementava, e o
+        # worker repetia a chamada paga para bater no mesmo parse
+        # deterministico. **O lead nao recebia resposta nenhuma**, por causa de
+        # um campo opcional de enriquecimento.
+        {"faixa_preco_expressao": "3419179001010435100479102015000889105000001500"},
+        {"faixa_preco_expressao": "1" * 200},
+        {"faixa_preco_expressao": ""},
+        {"faixa_preco_expressao": "   "},
+        {"faixa_preco_expressao": 42},
+        {"faixa_preco_expressao": ["500 mil"]},
+        {"faixa_preco_expressao": "-,.,.-"},
+        {"faixa_preco_expressao": "1.5 milhao"},
+    ],
 )
 def test_extrair_nunca_levanta(bruto):
     """Extracao e enriquecimento; a resposta ao lead vem da mesma chamada."""
@@ -170,19 +196,51 @@ def test_expressao_nula_nao_e_recusa():
     )
 
 
-def test_extrair_loga_o_motivo_da_recusa(caplog):
-    """A recusa carrega motivo -- e o que separa `AMBIGUA` (o lead foi
-    impreciso) de `ILEGIVEL` (o parser nao deu conta) no log, e a diferenca
-    e o que manda quem investiga para lados diferentes."""
+@pytest.mark.parametrize(
+    ("expressao", "motivo"),
+    [
+        # Numero nu abaixo do piso: o LEAD foi impreciso.
+        ("uns 500", "AMBIGUA"),
+        # Magnitude explicita acima do teto: o LEAD disse algo que nao fecha.
+        ("2 bilhoes", "IMPLAUSIVEL"),
+        # Numero nenhum resolvido: o PARSER nao deu conta.
+        ("quinhentos mil", "ILEGIVEL"),
+    ],
+)
+def test_extrair_loga_o_motivo_da_recusa(caplog, expressao, motivo):
+    """A recusa carrega motivo, e o log tem de carregar QUAL.
+
+    E o que separa `AMBIGUA` e `IMPLAUSIVEL` (o lead foi impreciso) de
+    `ILEGIVEL` (o parser nao deu conta), e a diferenca manda quem investiga
+    para lados opostos: um pico de ILEGIVEL e trabalho para a proxima card da
+    gramatica, um pico de AMBIGUA e sinal sobre como os leads deste produto
+    falam de dinheiro. Sao os tres unicos instrumentos de observabilidade
+    desta card.
+
+    A versao anterior deste teste afirmava so o nome do evento: apagar
+    `motivo=` da chamada de log deixava a suite inteira verde.
+
+    `json.loads` sobre `registro.message` e a forma que a suite ja usa
+    (`test_estado_marcado`): `configure_logging` poe um `JSONRenderer`, entao
+    o que chega no caplog e JSON, e assertar sobre a CHAVE sobrevive a uma
+    troca de renderer melhor que assertar sobre o texto formatado.
+    """
+    import json
     import logging
 
     with caplog.at_level(logging.INFO):
-        extrair({"faixa_preco_expressao": "uns 500"}, Intencao.COMPRA)
-    assert any("extracao.preco_recusado" in registro.message for registro in caplog.records)
+        extrair({"faixa_preco_expressao": expressao}, Intencao.COMPRA)
+
+    recusas = [
+        json.loads(registro.message)
+        for registro in caplog.records
+        if "extracao.preco_recusado" in registro.message
+    ]
+    assert [registro["motivo"] for registro in recusas] == [motivo]
 
 
 def test_extrair_nao_loga_quando_nao_ha_expressao(caplog):
-    """Turno sem menção a dinheiro não é recusa: nada para logar."""
+    """Turno sem mencao a dinheiro nao e recusa: nada para logar."""
     import logging
 
     with caplog.at_level(logging.INFO):
