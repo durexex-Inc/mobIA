@@ -11,7 +11,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agente.schemas import Extracao, Intencao
-from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
+from mobia.domain.context.auditoria import causas_do_recalculo
+from mobia.domain.context.models import (
+    ConversationSummary,
+    LeadQualification,
+    LeadScoreAudit,
+    aad_do_resumo,
+)
+from mobia.domain.context.score import Score, calcular_score
 from mobia.domain.messages.enums import MessageDirection
 from mobia.domain.messages.models import Message
 from mobia.infra.crypto import decrypt, encrypt
@@ -490,3 +497,122 @@ async def contar_mensagens_do_lead(
         )
     )
     return total or 0
+
+
+def _score_do_registro(registro: LeadScoreAudit | None) -> Score | None:
+    """Reconstroi o `Score` de um registro da trilha.
+
+    Existe porque a comparacao da RN-06.4 emendada e sobre os cinco fatores, e
+    nao sobre o total: um registro guarda os cinco em colunas, e compara-los
+    exige remonta-los no tipo que `causas_do_recalculo` recebe.
+    """
+    if registro is None:
+        return None
+    return Score(
+        completude=registro.completude,
+        urgencia=registro.urgencia,
+        catalogo=registro.catalogo,
+        engajamento=registro.engajamento,
+        capacidade=registro.capacidade,
+    )
+
+
+async def registrar_recalculo(
+    session: AsyncSession, *, channel: str, conversation_key: str
+) -> LeadScoreAudit | None:
+    """Recalcula o score do lead e grava a trilha se ele mudou.
+
+    Devolve a linha gravada, ou `None` quando nao havia estado a pontuar ou
+    quando o resultado foi identico ao ultimo registrado.
+
+    Nao commita -- a sessao e emprestada, como em `gravar_estado`, e quem chama
+    e dono da fronteira da transacao. A trilha tem de entrar no MESMO commit
+    que o estado: uma trilha que registrasse um score calculado sobre um estado
+    que o rollback desfez seria pior que trilha nenhuma, porque e lida
+    justamente por quem ja desconfia do numero.
+
+    **O estado vem do `SELECT ... FOR UPDATE` daqui, e nao de fora.** Reusar o
+    retorno de `gravar_estado` ou o `contexto.estado` do turno pareceria mais
+    barato -- os dois ja estao em maos -- e seria errado no caminho sem campos:
+    `contexto.estado` foi lido por `montar_contexto` numa OUTRA sessao, antes
+    deste bloco, e um turno concorrente da mesma conversa pode ter commitado
+    uma alteracao no intervalo. Como o lock precisa do statement de qualquer
+    jeito, deixa-lo devolver a linha custa zero e apaga a questao.
+
+    **O lock nao e decorativo: turnos da mesma conversa NAO sao
+    serializados.** A deduplicacao do ARQ e por mensagem (`_job_id =
+    msg:<id>`), nao por conversa, e a protecao contra paralelismo e uma
+    invariante de tempo (`job_timeout` < `sweep_inflight_after_seconds`), nao
+    um lock. Sem ele, dois recalculos concorrentes leem o mesmo ultimo
+    registro, ambos veem mudanca e ambos gravam -- dois registros com o mesmo
+    `total_anterior`, e a cadeia deixa de reconstruir a evolucao. No turno COM
+    campos o lock ja foi tomado pelo `ON CONFLICT DO UPDATE` de
+    `gravar_estado` e este e redundante; no turno SEM campos nao ha upsert, e e
+    exatamente o caminho em que a unica mudanca vem da contagem de mensagens.
+    """
+    estado = (
+        await session.execute(
+            select(LeadQualification)
+            .where(
+                LeadQualification.channel == channel,
+                LeadQualification.conversation_key == conversation_key,
+            )
+            .with_for_update()
+            # Mesma razao do `populate_existing` de `gravar_estado`: no turno
+            # com campos a sessao ACABOU de carregar esta linha pelo RETURNING
+            # do upsert, e sem a opcao o identity map devolve a instancia que a
+            # sessao ja tem em vez da linha que o banco mandou. A releitura que
+            # existe justamente para nao usar estado velho devolveria estado
+            # velho, com o lock tomado e tudo parecendo certo.
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if estado is None:
+        return None
+
+    novo = calcular_score(
+        estado,
+        mensagens_do_lead=await contar_mensagens_do_lead(
+            session, channel=channel, conversation_key=conversation_key
+        ),
+        # Explicito, e nao pelo default: a busca de imoveis (TEC-158) nao
+        # existe, e a TEC-150 prescreve que ate la o fator contribua zero.
+        # Quando ela existir, este e o unico ponto que muda.
+        imoveis_compativeis=0,
+    )
+
+    ultimo = (
+        await session.scalars(
+            select(LeadScoreAudit)
+            .where(
+                LeadScoreAudit.channel == channel,
+                LeadScoreAudit.conversation_key == conversation_key,
+            )
+            .order_by(LeadScoreAudit.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+
+    causas = causas_do_recalculo(_score_do_registro(ultimo), novo)
+    if not causas:
+        return None
+
+    linha = LeadScoreAudit(
+        id=uuid.uuid4(),
+        channel=channel,
+        conversation_key=conversation_key,
+        total_anterior=ultimo.total_novo if ultimo is not None else None,
+        total_novo=novo.total,
+        completude=novo.completude,
+        urgencia=novo.urgencia,
+        catalogo=novo.catalogo,
+        engajamento=novo.engajamento,
+        capacidade=novo.capacidade,
+        causas=list(causas),
+    )
+    session.add(linha)
+    # Flush e nao commit: a linha precisa existir no banco para o proximo
+    # `registrar_recalculo` da mesma transacao a enxergar como "ultimo", e o
+    # commit e de quem chamou.
+    await session.flush()
+    return linha

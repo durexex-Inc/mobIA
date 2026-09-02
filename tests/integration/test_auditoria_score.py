@@ -10,8 +10,9 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from mobia.domain.context.models import LeadScoreAudit
-from mobia.domain.context.repositorio import contar_mensagens_do_lead
+from mobia.domain.agente.schemas import FormaPagamento, Intencao, Urgencia
+from mobia.domain.context.models import LeadQualification, LeadScoreAudit
+from mobia.domain.context.repositorio import contar_mensagens_do_lead, registrar_recalculo
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -134,3 +135,81 @@ async def test_a_contagem_ignora_a_fala_bloqueada(session) -> None:
 
 async def test_a_contagem_de_um_lead_sem_mensagem_e_zero(session) -> None:
     assert await contar_mensagens_do_lead(session, channel=CANAL, conversation_key="ninguem") == 0
+
+
+async def _qualificacao(session, **ajustes: object) -> None:
+    """Os quatro obrigatorios preenchidos, menos o que o teste mudar."""
+    base: dict[str, object] = {
+        "channel": CANAL,
+        "conversation_key": CONVERSA,
+        "intencao": Intencao.COMPRA.value,
+        "faixa_preco_max_centavos": 50_000_000,
+        "regiao": "vila mariana",
+        "urgencia": Urgencia.ATE_3_MESES.value,
+    }
+    session.add(LeadQualification(**{**base, **ajustes}))
+    await session.commit()
+
+
+async def test_o_primeiro_recalculo_grava_com_anterior_nulo(session) -> None:
+    """Quatro obrigatorios (20), ATE_3_MESES (15), uma mensagem (10), sem forma
+    de pagamento (6) = 51."""
+    await _qualificacao(session)
+    await _mensagem(session)
+
+    gravada = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+
+    assert gravada is not None
+    assert gravada.total_anterior is None
+    assert gravada.total_novo == 51
+    assert (gravada.completude, gravada.urgencia, gravada.catalogo) == (20, 15, 0)
+    assert (gravada.engajamento, gravada.capacidade) == (10, 6)
+    assert gravada.causas == ["PRIMEIRO_CALCULO"]
+
+
+async def test_o_recalculo_que_nao_move_nada_nao_grava(session) -> None:
+    await _qualificacao(session)
+    await _mensagem(session)
+    await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+
+    assert await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA) is None
+    await session.commit()
+
+    assert len((await session.scalars(select(LeadScoreAudit))).all()) == 1
+
+
+async def test_informar_a_vista_grava_o_delta_da_capacidade(session) -> None:
+    """O cenario 1 da card, no equivalente alcancavel: 51 -> 60.
+
+    A card diz 48 -> 63, um delta de 15. A vista move `capacidade` de 6 para
+    15 -- delta de 9 --, e na escala da TEC-150 nenhum dos dois numeros e
+    alcancavel hoje: 63 nao existe com `imoveis_compativeis=0`, e 48 so existe
+    para quem JA paga a vista. Ver a secao correspondente do desenho.
+    """
+    await _qualificacao(session)
+    await _mensagem(session)
+    await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+
+    estado = await session.get(LeadQualification, (CANAL, CONVERSA))
+    assert estado is not None
+    estado.forma_pagamento = FormaPagamento.A_VISTA.value
+    await session.commit()
+
+    gravada = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+
+    assert gravada is not None
+    assert (gravada.total_anterior, gravada.total_novo) == (51, 60)
+    assert gravada.causas == ["FORMA_DE_PAGAMENTO"]
+
+
+async def test_sem_linha_de_qualificacao_nao_ha_o_que_auditar(session) -> None:
+    """`calcular_score(None)` devolve zerado, e o `score.py` distingue a
+    ausencia de sujeito de uma nota igual a zero."""
+    await _mensagem(session)
+
+    assert await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA) is None
+    assert (await session.scalars(select(LeadScoreAudit))).all() == []
