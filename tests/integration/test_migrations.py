@@ -222,3 +222,34 @@ async def test_downgrade_decifra_text_body_e_raw_payload(session) -> None:
         "as linhas INBOUND sobrevivem ao downgrade"
     )
     assert de_saida not in restantes, "a linha OUTBOUND nao cabe no esquema anterior e e apagada"
+
+
+async def test_a_0012_desce_e_sobe_de_novo() -> None:
+    """A trilha some no downgrade e a trigger volta no upgrade.
+
+    A trigger e a funcao sao criadas com `op.execute` e nao pelo autogenerate,
+    entao nada garante que o downgrade as derrube -- uma funcao orfa faria o
+    upgrade seguinte reprovar com "function already exists".
+    """
+    await dispose_engine()
+    alembic("downgrade", "0011")
+    try:
+        async with get_sessionmaker()() as sessao:
+            assert (
+                await sessao.scalar(text("SELECT to_regclass('public.lead_score_audit')")) is None
+            )
+    finally:
+        await dispose_engine()
+        alembic("upgrade", "head")
+        await dispose_engine()
+
+    async with get_sessionmaker()() as sessao:
+        assert (
+            await sessao.scalar(text("SELECT to_regclass('public.lead_score_audit')")) is not None
+        )
+        assert (
+            await sessao.scalar(
+                text("SELECT count(*) FROM pg_trigger WHERE tgname = 'lead_score_audit_imutavel'")
+            )
+            == 1
+        )

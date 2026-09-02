@@ -34,6 +34,9 @@ TABELAS = (
     "conversation_intent",
     "conversation_summaries",
     "lead_qualification",
+    # A trilha e append-only e nada a apaga em producao: sem o truncate, os
+    # registros de um teste viram o "ultimo recalculo" do proximo.
+    "lead_score_audit",
     "message_telemetry",
     "outbound_dispatches",
     "optout_events",

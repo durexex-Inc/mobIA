@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, LargeBinary, String, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
@@ -109,4 +119,69 @@ class LeadQualification(Base):
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class LeadScoreAudit(Base):
+    """Um registro por recalculo que mudou o score. Append-only e imutavel.
+
+    TEC-152, RN-06.4. Mesmo molde de `optout_events`: uma linha por evento,
+    `server_default` no carimbo porque a ORDEM e o que torna a trilha legivel,
+    e sem FK para `messages` nem para `lead_qualification` -- a retencao da
+    trilha (12 meses, RNF-18) nao pode ser encurtada por cascata da limpeza de
+    outra tabela.
+
+    **So os fatores do score NOVO sao gravados.** Como o registro so entra
+    quando o resultado muda, o registro anterior da mesma conversa **e** o
+    score anterior; guardar os dois criaria duas fontes para o mesmo fato, que
+    e o defeito que a TEC-146 gastou uma card inteira consertando.
+    `total_anterior` fica mesmo assim porque e o que a card nomeia e poupa a
+    segunda leitura de quem so quer o delta.
+    """
+
+    __tablename__ = "lead_score_audit"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+
+    # O par que identifica o lead, o mesmo de `lead_qualification`.
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Nulo no primeiro registro do lead, e nao zero. O `score.py` ja faz essa
+    # distincao: "o zero e a ausencia de sujeito, nao uma nota sobre ele". Um
+    # lead cujo primeiro calculo deu 51 nunca teve score 0, e dizer que teve
+    # inventaria uma subida de 51 pontos que nao aconteceu.
+    total_anterior: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_novo: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    completude: Mapped[int] = mapped_column(Integer, nullable=False)
+    urgencia: Mapped[int] = mapped_column(Integer, nullable=False)
+    catalogo: Mapped[int] = mapped_column(Integer, nullable=False)
+    engajamento: Mapped[int] = mapped_column(Integer, nullable=False)
+    capacidade: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Nunca NULL e nunca vazio: tupla vazia e o sinal de nao gravar, entao uma
+    # linha sem causa nao deveria ter chegado ao INSERT. O vocabulario mora em
+    # `context/auditoria.py`.
+    causas: Mapped[list[str]] = mapped_column(ARRAY(String(32)), nullable=False)
+
+    # So na edicao manual pelo dashboard (TEC-192), que ainda nao existe --
+    # hoje e sempre nulo. Mesma forma de `optout_events.autor`, nulo no
+    # opt-out pela mesma razao: o ato e do lead, nao de um humano nosso.
+    autor: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # A consulta quente e "qual o ultimo registro deste lead?", uma vez por
+        # turno. DESC no indice para o LIMIT 1 nao ordenar em memoria. Mesmo
+        # formato do `ix_optout_events_lead` e do `ix_messages_timeline`.
+        Index(
+            "ix_lead_score_audit_lead",
+            "channel",
+            "conversation_key",
+            text("created_at DESC"),
+        ),
     )
