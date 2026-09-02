@@ -47,7 +47,13 @@ A RN-05.3 diz apenas *"intenção + faixa de preço (ou ticket) + região + urg�
 
 As duas regras convivem se a RN-05.3 for lida como *"o mínimo para um lead qualificável"*, não como *"o suficiente para qualquer lead"*. É a leitura adotada, e está declarada aqui porque a card não a contém.
 
-**`INDEFINIDA` e `FORA_DE_ESCOPO` também ficam fora, e a razão é outra.** Depois do primeiro turno `intencao` nunca é nula — o classificador sempre devolve um dos sete valores. Então *"intenção preenchida"* não pode significar *"não é nulo"*, ou a coluna estaria sempre preenchida. `INDEFINIDA` significa, no comentário do próprio enum, *"ainda não dá para saber"*; é ausência de intenção utilizável, não intenção.
+**`INDEFINIDA` e `FORA_DE_ESCOPO` também ficam fora, e a razão é outra.** Depois do primeiro turno `intencao` raramente é nula — o classificador sempre devolve um dos sete valores. Então *"intenção preenchida"* não pode significar *"não é nulo"*, ou a coluna estaria sempre preenchida. `INDEFINIDA` significa, no comentário do próprio enum, *"ainda não dá para saber"*; é ausência de intenção utilizável, não intenção.
+
+**Consequência que o desenho original não tirou, e que a revisão final cobrou:** se `INDEFINIDA` não é intenção utilizável para *ler*, ela também não pode ser intenção utilizável para *escrever*. `campos_a_gravar` gravava `intencao` incondicionalmente em todo turno que não fosse `FORA_DE_ESCOPO`, e `intencao` era a única coluna de `lead_qualification` que não honrava o *"None não apaga"* que todas as outras honram. O efeito: um lead com os quatro campos completos que mandasse um "obrigado" — turno que o classificador rotula `INDEFINIDA` com extração vazia — deixava de estar qualificado, e voltava a estar quando retomasse o assunto, emitindo `lead.qualificado` uma segunda vez. A taxa de qualificação da RN-17.1 contaria travessias, e um lead tagarela produz várias.
+
+`campos_a_gravar` passou a omitir a chave `intencao` quando a intenção do turno é `INDEFINIDA`. Os campos de extração do mesmo turno continuam gravando normalmente: *"zona sul, até 600 mil"* dito sem deixar claro se é compra ou aluguel é fato sobre a fala do lead, e não depende de sabermos a intenção. A alternativa — deixar `esta_qualificado` tolerante à regressão — foi recusada: a função pura só vê a linha atual e não tem como saber que houve intenção melhor antes.
+
+**O preço, aceito:** um turno `INDEFINIDA` *sem extração nenhuma* passa a devolver dict vazio, e portanto não grava linha e não grava a marca de "perguntado, sem resposta" da TEC-257. Um primeiro turno que só diz "oi" deixa de criar uma linha com `intencao: INDEFINIDA` — linha que não afirmava nada e que o prompt renderizava assim mesmo. É "marcar de menos", que a própria `campos_a_marcar` declara como o erro seguro dos dois: custa uma pergunta a mais, e não mata um campo para o resto da conversa.
 
 ### D3 — O que conta como preenchido, campo a campo
 
@@ -77,6 +83,8 @@ Quem grava recusa é a [TEC-148](https://eduardodurieuxlopes.atlassian.net/brows
 Com o conjunto entrando por parâmetro, a regra fica completa e testável hoje, e a assinatura documenta a dependência em vez de escondê-la. A TEC-148 cria a coluna e passa o valor real; nenhuma linha desta card precisa mudar para isso acontecer.
 
 O default vazio é deliberado: até a TEC-148, todo chamador de produção passa o conjunto vazio, e o comportamento é o da regra sem recusas.
+
+**Os nomes que entram em `recusados` são canonicalizados**, e isso não é defensividade decorativa. `CAMPOS_OBRIGATORIOS` chama o orçamento de `faixa_preco`, que não é nome de coluna (`faixa_preco_min_centavos`/`faixa_preco_max_centavos`), nem campo de `Extracao` (`faixa_preco_expressao`), nem chave que o prompt renderiza (`faixa_preco_min`/`faixa_preco_max`) — e é sob a última que a marca da TEC-257 é gravada, via `_MARCA_DO_ORCAMENTO`. A TEC-148, ao reusar o vocabulário da marca (a escolha óbvia, e a única que ele oferece), passaria `recusados={"faixa_preco_max"}`: string que não está em `CAMPOS_OBRIGATORIOS`, laço que nunca a vê, e um lead que se recusou a falar de orçamento qualificando assim mesmo sobre um preço velho — com teste verde nas duas cards. É a mesma classe de divergência em que a TEC-146 queimou uma card inteira. A tradução é por prefixo (`faixa_preco`), e não por tabela, porque tabela precisa ser lembrada e prefixo não.
 
 ### D6 — A transição é o que esta card entrega de observável
 
@@ -117,6 +125,9 @@ Turno que não grava estado — `FORA_DE_ESCOPO`, em que `campos_a_gravar` devol
 - **`recusados`:** cada um dos quatro campos recusado isoladamente, e o caso da D4 (coluna preenchida e campo recusado ao mesmo tempo).
 - **`estado is None`** — lead sem nenhuma linha ainda. Não qualificado, sem levantar.
 - **Integração:** a transição da D6 dispara uma vez e só uma, no turno que completa o quarto campo, e não volta a disparar nos turnos seguintes.
+- **Integração, o caso com a forma da produção:** o lead entrega os campos aos poucos — três obrigatórios no turno 1, o quarto no turno 2 — e o evento sai no turno 2 e só nele. Um lead que qualifica do estado vazio num turno só nunca exercita o `antes`: nele `antes` é sempre `esta_qualificado(None)`, e trocar a regra inteira por `estado is not None` deixa o teste verde. Foi o que a revisão final demonstrou por mutação.
+- **Integração, a sequência de três turnos da D2:** qualifica, manda um "obrigado" (`INDEFINIDA`), volta ao assunto. A intenção sobrevive na coluna, e o evento não sai uma segunda vez.
+- **Integração, o `RETURNING` sob identity map:** a mesma sessão lê com `ler_estado` e grava logo depois; o objeto devolvido reflete a gravação. Sem `populate_existing`, ele reflete a leitura.
 - TDD, e cada teste verificado por mutação — reverter a regra que ele cobre tem de deixá-lo vermelho. Na TEC-146, todas as rodadas de revisão perdidas foram testes que passavam com o código certo ou errado.
 
 ## Lacunas declaradas
@@ -127,9 +138,21 @@ Turno que não grava estado — `FORA_DE_ESCOPO`, em que `campos_a_gravar` devol
 
 **O ticket de investidor não existe.** A RN-05.3 diz *"faixa de preço (ou ticket)"*, e a RN-05.2 lista campos próprios de `INVESTIMENTO` — ticket disponível, horizonte, tolerância a reforma — que são a [TEC-153](https://eduardodurieuxlopes.atlassian.net/browse/TEC-153). Até lá, um investidor qualifica pela faixa de preço, como comprador. É a única leitura possível com os campos que existem.
 
-**A transição da D6 depende do estado anterior estar em memória.** Se um caminho futuro gravar estado sem ter lido o anterior, o log não dispara e ninguém percebe. Não há guarda contra isso — a marca de "já qualificado" não existe em lugar nenhum, justamente por causa da D1.
+**A transição da D6 depende do estado anterior estar em memória, e o caminho perigoso é o que *lê*.** Não há guarda contra nada disso — a marca de "já qualificado" não existe em lugar nenhum, justamente por causa da D1.
+
+O risco óbvio é um caminho futuro que grave estado sem ter lido o anterior: `antes` seria `esta_qualificado(None)`, e o evento dispararia para um lead que já estava qualificado há turnos. O mais provável, porém, é o inverso, e ele custou um achado na revisão final: um caminho que **lê e grava na mesma sessão**. O `RETURNING` da D6 devolve uma instância ORM, e o *identity map* do SQLAlchemy entrega a instância que a sessão já carregou em vez de atualizá-la com a linha do banco — o `depois` viria idêntico ao `antes`, e o evento simplesmente não sairia. `turno.py` escapa por acidente, porque lê em `montar_contexto` (uma sessão) e grava em outra; a TEC-150 vai querer as duas na mesma sessão para recalcular o score. `gravar_estado` passa `populate_existing=True` no statement por causa disso, e um teste de integração fixa o cenário — mas é uma opção de execução que alguém pode remover sem entender, não uma garantia estrutural.
 
 **Recusa não é detectada por nada.** A D5 deixa a regra pronta e o parâmetro vazio. Até a TEC-148, o cenário de aceite do campo recusado fecha apenas no teste unitário; em produção nenhum campo é recusado porque nada marca recusa.
+
+**A regra qualifica sobre o palpite bruto do classificador, e não sobre a intenção efetiva.** Este repo tem uma resposta canônica para "em qual intenção posso rotear": `IntencaoDaConversa.efetiva` (`src/mobia/domain/agente/repositorio.py`), cuja docstring diz *"Leia por aqui"* e que rebaixa para `INDEFINIDA` qualquer classificação abaixo do limiar de 0,6 — *"'COMPRA com 0,45' é operacionalmente INDEFINIDA"*. A coluna `lead_qualification.intencao` guarda o palpite bruto, sem a confiança ao lado.
+
+O cenário concreto, num turno só: o classificador devolve `COMPRA` com confiança 0,45 e uma extração confiante (faixa de preço, região e urgência). `esta_qualificado` vê `intencao = "COMPRA"`, declara o lead qualificado e o turno emite `lead.qualificado`. Quatro linhas depois, no mesmo turno, `deve_desambiguar` olha a mesma confiança de 0,45, decide que ela não sustenta o palpite, descarta a resposta gerada e pergunta ao lead *"você quer comprar ou alugar?"*. O evento afirma que sabemos o que ele quer no exato turno em que perguntamos o que ele quer.
+
+Não foi consertado aqui porque a coluna não guarda confiança: uma função pura sobre a linha não tem como aplicar o limiar, e mudar o que a coluna guarda é escopo de outra card. A TEC-150, que já vai mexer no que a linha carrega para calcular score, é o lugar natural.
+
+**Dois turnos concorrentes da mesma conversa emitem o evento os dois.** O `antes` é fotografado antes da chamada ao modelo, então a janela entre a foto e a gravação é uma ida e volta inteira ao LLM — centenas de milissegundos. Concorrência na mesma conversa não é hipótese neste repo: a união da marca de `perguntados_sem_resposta` foi para dentro do SQL exatamente por causa dela, e a guarda de monotonia de `gravar_resumo` também.
+
+Consertar de verdade exige uma marca durável de "já qualificado" — isto é, a coluna que a D1 recusa, e recusá-la é o centro do desenho. O requisito de teste declarado acima (*"a transição dispara uma vez e só uma"*) vale para turnos sequenciais, e **não** vale sob concorrência: dois turnos simultâneos produzem dois `lead.qualificado` para o mesmo lead. O efeito é imprecisão de métrica na taxa da RN-17.1, e não erro no que chega ao corretor — nada roteia por este log. Se a RN-17.1 vier a precisar de contagem exata, ela paga a coluna.
 
 ## Fora de escopo
 
