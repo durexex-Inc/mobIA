@@ -161,9 +161,7 @@ def test_faixa_invertida_e_recusada():
     """D6 do desenho: faixa invertida e canario de bug do parser -- o caso
     mais provavel e o marcador ter se ligado ao lado errado. Reordenar em
     silencio calaria o sinal."""
-    assert parsear("entre 500 e 400 mil", Intencao.COMPRA) == Recusa(
-        MotivoDaRecusa.IMPLAUSIVEL
-    )
+    assert parsear("entre 500 e 400 mil", Intencao.COMPRA) == Recusa(MotivoDaRecusa.IMPLAUSIVEL)
 
 
 def test_faixa_igual_nos_dois_lados_e_valida():
@@ -181,9 +179,7 @@ def test_piso_da_banda_e_inclusive():
 def test_teto_da_banda_e_inclusive():
     """Espelho do teste do piso, do lado de cima: exatamente no teto tem que
     passar, nao ser tratado como acima dele."""
-    assert parsear("1000000000", Intencao.COMPRA) == FaixaDePreco(
-        max_centavos=100_000_000_000
-    )
+    assert parsear("1000000000", Intencao.COMPRA) == FaixaDePreco(max_centavos=100_000_000_000)
 
 
 @pytest.mark.parametrize("intencao", [Intencao.SUPORTE_CONTRATO, Intencao.FORA_DE_ESCOPO])
@@ -349,7 +345,7 @@ def test_cifrao_e_marcador_de_grandeza_para_a_regra_de_ambiguidade():
 
 
 def test_ponto_fora_da_forma_de_milhar_e_recusado():
-    """"1.5 milhao" devolvia R$ 15.000.000 -- o ponto lido como milhar, 10x o
+    """ "1.5 milhao" devolvia R$ 15.000.000 -- o ponto lido como milhar, 10x o
     que o lead disse, dentro da banda. Nao ha leitura pt-BR de "1.5", entao a
     saida e recusar, nao adivinhar entre 1 milhao e 1,5 milhao."""
     assert parsear("1.5 milhao", Intencao.COMPRA) == Recusa(MotivoDaRecusa.ILEGIVEL)
@@ -359,7 +355,7 @@ def test_ponto_fora_da_forma_de_milhar_e_recusado():
 
 
 def test_sinal_negativo_nao_e_descartado():
-    """"-500 mil" virava R$ 500.000, dentro da banda, gravado em silencio."""
+    """ "-500 mil" virava R$ 500.000, dentro da banda, gravado em silencio."""
     assert parsear("-500 mil", Intencao.COMPRA) == Recusa(MotivoDaRecusa.ILEGIVEL)
 
 

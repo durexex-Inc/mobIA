@@ -220,16 +220,14 @@ def _centavos_da_anotacao(valor: Any, *, arquivo: str, conversa_id: str, nome: s
         centavos = Decimal(str(valor)).scaleb(2)
     except DecimalException as exc:
         raise CorpusInvalido(
-            f"{arquivo}: {conversa_id} anota {nome}={valor!r}, que nao e um numero "
-            f"de reais."
+            f"{arquivo}: {conversa_id} anota {nome}={valor!r}, que nao e um numero de reais."
         ) from exc
     # `float("nan")` e `float("inf")` sao `float` validos e chegam ate aqui:
     # `scaleb` nao levanta para nenhum dos dois, e `int(Infinity)` levantaria
     # `OverflowError` cru la embaixo.
     if not centavos.is_finite():
         raise CorpusInvalido(
-            f"{arquivo}: {conversa_id} anota {nome}={valor!r}, que nao e um numero "
-            f"de reais."
+            f"{arquivo}: {conversa_id} anota {nome}={valor!r}, que nao e um numero de reais."
         )
     if centavos != centavos.to_integral_value():
         raise CorpusInvalido(

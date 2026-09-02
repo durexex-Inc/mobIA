@@ -60,6 +60,7 @@ def _marca_de(nome: str) -> str | None:
         return _NOME_DA_MARCA[nome]
     return nome if nome in _CAMPOS_DA_EXTRACAO else None
 
+
 # Um nome de campo e minusculas e underscore. O que nao casa nao vai para o
 # log: o modelo pode devolver o texto da pergunta em vez do nome, e texto de
 # pergunta carrega o que o lead disse.
