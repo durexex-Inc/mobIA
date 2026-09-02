@@ -18,7 +18,7 @@ CAMPOS_OBRIGATORIOS: tuple[str, ...] = ("intencao", CAMPO_DO_ORCAMENTO, "regiao"
 
 # RN-03.4: VENDER_IMOVEL e SUPORTE_CONTRATO vao direto para handoff, e o SDR
 # nao os qualifica. INDEFINIDA e FORA_DE_ESCOPO ficam de fora por outro
-# motivo: significam ausencia de intencao utilizavel, e a coluna nunca e nula
+# motivo: significam ausencia de intencao utilizavel, e a coluna raramente e nula
 # depois do primeiro turno, entao "preenchida" precisa desta lista para
 # significar alguma coisa.
 INTENCOES_QUALIFICAVEIS = frozenset(
