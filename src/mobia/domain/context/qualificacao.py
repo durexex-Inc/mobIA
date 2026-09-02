@@ -83,6 +83,21 @@ def _canonico(nome: str) -> str:
     return CAMPO_DO_ORCAMENTO if nome.startswith(CAMPO_DO_ORCAMENTO) else nome
 
 
+def campos_obrigatorios_preenchidos(estado: LeadQualification | None) -> int:
+    """Quantos dos obrigatorios da RN-05.3 este lead ja informou.
+
+    Existe para o score da TEC-150, que pontua completude a 5 pontos por
+    campo. Devolve a contagem, e nao expoe `_preenchido`: o score precisa da
+    resposta inteira, e publicar o passo a passo convidaria o proximo modulo
+    a iterar `CAMPOS_OBRIGATORIOS` por conta propria -- meio caminho para uma
+    segunda copia da lista, que e o defeito que a TEC-146 gastou uma card
+    inteira para consertar.
+    """
+    if estado is None:
+        return 0
+    return sum(1 for campo in CAMPOS_OBRIGATORIOS if _preenchido(estado, campo))
+
+
 def _preenchido(estado: LeadQualification, campo: str) -> bool:
     if campo == "intencao":
         return estado.intencao in INTENCOES_QUALIFICAVEIS

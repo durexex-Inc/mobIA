@@ -12,7 +12,11 @@ import pytest
 from mobia.domain.agente.schemas import Extracao, Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import _texto_do_estado
-from mobia.domain.context.qualificacao import CAMPOS_OBRIGATORIOS, esta_qualificado
+from mobia.domain.context.qualificacao import (
+    CAMPOS_OBRIGATORIOS,
+    campos_obrigatorios_preenchidos,
+    esta_qualificado,
+)
 from mobia.domain.context.repositorio import _MARCA_DO_ORCAMENTO, _NOME_DA_MARCA, campos_a_gravar
 
 
@@ -218,3 +222,41 @@ def test_intencao_boa_sobrevive_a_um_turno_indefinido():
     # nao ha travessia nova aqui.
     acumulado.update(campos_a_gravar(Intencao.COMPRA, Extracao(vagas=1)))
     assert esta_qualificado(LeadQualification(**acumulado)) is True
+
+
+def test_contagem_com_todos_preenchidos():
+    assert campos_obrigatorios_preenchidos(_estado()) == len(CAMPOS_OBRIGATORIOS)
+
+
+def test_contagem_de_estado_inexistente_e_zero():
+    assert campos_obrigatorios_preenchidos(None) == 0
+
+
+@pytest.mark.parametrize("faltando", ["intencao", "regiao", "urgencia"])
+def test_cada_campo_faltando_tira_um(faltando):
+    assert campos_obrigatorios_preenchidos(_estado(**{faltando: None})) == 3
+
+
+def test_faixa_aberta_ainda_conta_como_um_campo():
+    """A mesma regra do `esta_qualificado`: sao duas colunas, e qualquer
+    extremo basta. A contagem nao pode discordar da qualificacao sobre o que
+    e um campo preenchido -- e o motivo de esta funcao morar aqui e nao no
+    modulo de score."""
+    obtido = campos_obrigatorios_preenchidos(
+        _estado(faixa_preco_min_centavos=None, faixa_preco_max_centavos=50_000_000)
+    )
+    assert obtido == len(CAMPOS_OBRIGATORIOS)
+
+
+def test_sem_nenhum_extremo_de_preco_tira_um():
+    obtido = campos_obrigatorios_preenchidos(
+        _estado(faixa_preco_min_centavos=None, faixa_preco_max_centavos=None)
+    )
+    assert obtido == 3
+
+
+def test_intencao_nao_qualificavel_nao_conta():
+    """VENDER_IMOVEL preenche a coluna e nao conta como intencao (RN-03.4),
+    exatamente como em `esta_qualificado`."""
+    obtido = campos_obrigatorios_preenchidos(_estado(intencao=Intencao.VENDER_IMOVEL.value))
+    assert obtido == 3
