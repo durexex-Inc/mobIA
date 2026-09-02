@@ -1,7 +1,6 @@
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 import pytest
 from conftest import CANAL, CONVERSA, ContadorFake, ResumidorFake, semear
@@ -197,6 +196,33 @@ def test_campo_marcado_aparece_no_estado() -> None:
     assert "regiao: (perguntado, sem resposta)" in texto
 
 
+def test_preco_aparece_em_reais_sob_a_chave_antiga() -> None:
+    """TEC-146: o banco guarda centavos, mas o texto que o modelo le nao muda.
+
+    `_texto_do_estado` alimenta o prompt de verdade (`montar_prompt`), entao a
+    unidade e o nome da chave sao contrato com o modelo, nao detalhe de
+    armazenamento -- ver o docstring de `_em_reais`. `faixa_preco_min_centavos`
+    aqui e proposital: 123456 nao e multiplo de 100 (o parser aceita "R$
+    1.234,56"), entao "1234.56" prova que a conversao divide por 100 de
+    verdade, e nao so troca o nome da chave.
+    """
+    estado = LeadQualification(
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao="COMPRA",
+        faixa_preco_min_centavos=123456,
+        faixa_preco_max_centavos=60_000_000,
+    )
+    linhas = _texto_do_estado(estado).splitlines()
+
+    assert "faixa_preco_min: 1234.56" in linhas
+    assert "faixa_preco_max: 600000.00" in linhas
+    assert not any("centavos" in linha for linha in linhas), (
+        "a chave que o modelo le e a antiga, sem sufixo -- o armazenamento mudou, "
+        "o contrato com o modelo nao"
+    )
+
+
 def test_valor_vence_marca() -> None:
     """A marca nunca aparece ao lado de um valor.
 
@@ -277,6 +303,21 @@ def test_marca_nula_e_marca_vazia_leem_igual() -> None:
 
 def test_a_regra_do_prompt_cobre_o_ignorado() -> None:
     assert "nao repergunte o preenchido nem o ignorado" in SISTEMA_DO_AGENTE
+
+
+def test_o_prompt_manda_confirmar_orcamento_vago() -> None:
+    """D4: o codigo e a correcao (nao grava), o prompt e a economia (pergunta
+    no mesmo turno). A camada que garante nao pode depender da que lembra.
+
+    Assercao de posicao, nao so de substring: a frase precisa estar colada ao
+    fim do texto, precedida pelo ponto e espaco herdados da frase anterior.
+    Um erro de concatenacao comum e realista neste modulo -- string literal
+    adjacente sem separador, ou a frase esquecida dentro do comentario que
+    documenta o orcamento e nunca chegando a fazer parte do valor de
+    `SISTEMA_DO_AGENTE` -- passaria num `in` solto e falha aqui.
+    """
+    assert SISTEMA_DO_AGENTE.endswith(" Orcamento vago: peca confirmacao.")
+    assert "  " not in SISTEMA_DO_AGENTE
 
 
 def test_montar_prompt_ordena_sistema_resumo_literais_e_estado() -> None:
@@ -1008,7 +1049,7 @@ async def test_estado_de_qualificacao_entra_no_contexto(session) -> None:
         LeadQualification(
             channel=CANAL,
             conversation_key=CONVERSA,
-            faixa_preco_max=Decimal("600000.00"),
+            faixa_preco_max_centavos=60_000_000,
             regiao="zona sul",
         )
     )
@@ -1023,7 +1064,7 @@ async def test_estado_de_qualificacao_entra_no_contexto(session) -> None:
     )
 
     assert contexto.estado is not None
-    assert contexto.estado.faixa_preco_max == Decimal("600000.00")
+    assert contexto.estado.faixa_preco_max_centavos == 60_000_000
 
 
 async def test_limiar_de_contagem_cede_a_vez_para_a_contagem_real(session) -> None:

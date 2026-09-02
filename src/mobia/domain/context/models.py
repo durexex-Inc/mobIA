@@ -1,8 +1,7 @@
 import uuid
 from datetime import datetime
-from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Integer, LargeBinary, Numeric, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, LargeBinary, String, func
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
@@ -81,8 +80,8 @@ class LeadQualification(Base):
     conversation_key: Mapped[str] = mapped_column(String(64), primary_key=True)
 
     intencao: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    faixa_preco_min: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    faixa_preco_max: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    faixa_preco_min_centavos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    faixa_preco_max_centavos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     regiao: Mapped[str | None] = mapped_column(String(120), nullable=True)
     tipo_imovel: Mapped[str | None] = mapped_column(String(32), nullable=True)
     quartos: Mapped[int | None] = mapped_column(Integer, nullable=True)

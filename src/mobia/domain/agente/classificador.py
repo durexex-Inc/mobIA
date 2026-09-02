@@ -9,6 +9,7 @@ from anthropic import transform_schema
 from anthropic.types import Message
 
 from mobia.app.config import get_settings
+from mobia.domain.agente.dinheiro import Recusa, parsear
 from mobia.domain.agente.schemas import (
     Extracao,
     FormaPagamento,
@@ -74,6 +75,20 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # "(perguntado, sem resposta)" que `_texto_do_estado` poe no estado -- a forma
 # explicita existia e custava 3,25, recusada por nao deixar folga para
 # ninguem depois.
+#
+# A TEC-146 (Task 7) acrescentou " Orcamento vago: peca confirmacao." ao
+# final, depois das quatro tasks anteriores da mesma card terem trocado dois
+# campos numericos do schema por um campo de string na Task 4 -- essa troca
+# tinha liberado a margem de 32,2 que esta clausula gasta. Custou 8,4 (32,2
+# -> 23,8), perto dos ~8,5 estimados no proxy antes de escrever. Nao e
+# reescrita de clausula existente como a da TEC-257: esta e regra nova, sem
+# forma anterior para encolher. A forma longa e mais precisa -- "se o valor
+# de orcamento nao trouxer ordem de grandeza clara, peca confirmacao ao
+# lead" -- custaria ~21 e nao caberia nos 32,2 sem cortar outro texto; a
+# curta faz o mesmo servico porque o parser deterministico (`dinheiro.py`,
+# Tasks 1-3) e quem decide "vago", nao o modelo -- o prompt so precisa
+# lembrar o modelo de perguntar quando `extrair` (Task 4) ja recusou gravar.
+# Margem restante: 23,8.
 SISTEMA_DO_AGENTE = (
     "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
     "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
@@ -94,6 +109,7 @@ SISTEMA_DO_AGENTE = (
     "extrair o que a fala nao afirma conta erro igual a nao extrair o que ela "
     "afirma. O imovel que o lead ja tem nao e o que ele procura. "
     "Urgencia so com marco temporal explicito; pressa nao basta."
+    " Orcamento vago: peca confirmacao."
 )
 
 MAX_TOKENS_DA_PERGUNTA = 300
@@ -119,7 +135,7 @@ SCHEMA_DA_RESPOSTA: dict[str, Any] = {
         "intencao": {"type": "string", "enum": [membro.value for membro in Intencao]},
         "confianca": {"type": "number", "minimum": 0, "maximum": 1},
         "resposta": {"type": "string"},
-        # TEC-257. Lista de strings livre, e nao enum dos nove campos: o
+        # TEC-257. Lista de strings livre, e nao enum dos campos de extracao: o
         # enum impede o modelo inventar nome, e custaria +56,0 tokens contra
         # +18,5 desta forma. Nome inventado nao casa em `campos_a_marcar`, e
         # e descartado -- marca de MENOS, que e o erro seguro quando a marca
@@ -127,21 +143,16 @@ SCHEMA_DA_RESPOSTA: dict[str, Any] = {
         #
         # Sem `description`: nenhum campo deste schema tem, e uma aqui
         # custaria mais que o campo inteiro. O modelo infere o vocabulario de
-        # `extracao`, no mesmo objeto, que carrega exatamente os nove nomes.
+        # `extracao`, no mesmo objeto, que carrega os mesmos nomes (TEC-146
+        # trocou dois campos numericos por um de expressao, entao a contagem
+        # exata de campos de SCHEMA_DA_EXTRACAO nao e mais nove -- ver
+        # `test_todos_os_oito_campos_sao_obrigatorios_e_anulaveis`).
         "perguntou": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["intencao", "confianca", "resposta"],
     "additionalProperties": False,
 }
 
-# Limites das guardas. Nao vao para o schema: `minimum`/`maximum` nao estao na
-# lista que o compilador do servidor aceita (mesma razao documentada em
-# `_SCHEMA_COMPILADO`), entao a faixa e checada aqui, em codigo.
-PRECO_MINIMO = Decimal("1")
-# `lead_qualification.faixa_preco_*` e `numeric(12,2)`: dez digitos antes da
-# virgula. 10^9 cabe com folga; um valor maior seria DataError no commit e
-# derrubaria o turno inteiro por causa de um campo opcional.
-PRECO_MAXIMO = Decimal("1000000000")
 MAX_AMBIENTES = 20
 # `lead_qualification.regiao` e `String(120)`.
 MAX_CARACTERES_DA_REGIAO = 120
@@ -167,8 +178,7 @@ def _enum_anulavel(enum: type[StrEnum]) -> dict[str, Any]:
 SCHEMA_DA_EXTRACAO: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "faixa_preco_min": _anulavel({"type": "number"}),
-        "faixa_preco_max": _anulavel({"type": "number"}),
+        "faixa_preco_expressao": _anulavel({"type": "string"}),
         "regiao": _anulavel({"type": "string"}),
         "tipo_imovel": _enum_anulavel(TipoImovel),
         "quartos": _anulavel({"type": "integer"}),
@@ -181,8 +191,7 @@ SCHEMA_DA_EXTRACAO: dict[str, Any] = {
     # explicitamente e mais confiavel que aceitar chave ausente. O parse
     # tolera a ausencia de todo modo -- ver `extrair`.
     "required": [
-        "faixa_preco_min",
-        "faixa_preco_max",
+        "faixa_preco_expressao",
         "regiao",
         "tipo_imovel",
         "quartos",
@@ -226,24 +235,6 @@ SCHEMA_DA_RESPOSTA["properties"] = {
 SCHEMA_DA_RESPOSTA["required"] = list(_ORDEM_DOS_CAMPOS)
 
 
-def _numero(bruto: Any) -> Decimal | None:
-    """Converte sem nunca levantar, e recusa bool antes de tudo.
-
-    `isinstance(True, int)` e verdadeiro em Python: sem a recusa explicita,
-    `"quartos": true` viraria 1 quarto silenciosamente.
-    """
-    if isinstance(bruto, bool) or not isinstance(bruto, int | float | str):
-        return None
-    try:
-        valor = Decimal(str(bruto))
-    except InvalidOperation:
-        return None
-    # NaN e infinito passam pelo Decimal. `is_finite` os pega antes de qualquer
-    # comparacao -- toda comparacao com NaN e falsa, e um NaN que escapasse
-    # seria gravado no banco como campo valido.
-    return valor if valor.is_finite() else None
-
-
 def _perguntou(bruto: Any) -> tuple[str, ...]:
     """Os nomes de campo que o modelo diz ter perguntado neste turno.
 
@@ -258,13 +249,6 @@ def _perguntou(bruto: Any) -> tuple[str, ...]:
     if not isinstance(bruto, list):
         return ()
     return tuple(item for item in bruto if isinstance(item, str))
-
-
-def _preco(bruto: Any) -> Decimal | None:
-    valor = _numero(bruto)
-    if valor is None or not (PRECO_MINIMO <= valor <= PRECO_MAXIMO):
-        return None
-    return valor
 
 
 def _ambientes(bruto: Any) -> int | None:
@@ -300,7 +284,7 @@ def _regiao(bruto: Any) -> str | None:
     return limpa[:MAX_CARACTERES_DA_REGIAO] if limpa else None
 
 
-def extrair(bruto: Any) -> Extracao:
+def extrair(bruto: Any, intencao: Intencao) -> Extracao:
     """Converte o objeto `extracao` do modelo, descartando o que nao serve.
 
     **Nunca levanta.** A extracao viaja na mesma chamada que a resposta ao
@@ -309,25 +293,30 @@ def extrair(bruto: Any) -> Extracao:
     guarda e descartado; os outros campos do mesmo turno seguem.
 
     Nenhuma guarda e cosmetica -- cada uma existe porque o valor recusado
-    seria `DataError` no commit (`regiao` acima de 120 caracteres, preco acima
-    de `numeric(12,2)`) ou dado errado gravado em silencio (`true` virando 1
-    quarto, NaN virando preco).
+    seria `DataError` no commit (`regiao` acima de 120 caracteres) ou dado
+    errado gravado em silencio (`true` virando 1 quarto).
+
+    `intencao` entra desde a TEC-146: a banda de plausibilidade do preco,
+    calculada em `dinheiro.parsear`, depende dela -- R$ 1.500 e aluguel
+    corriqueiro e preco de compra absurdo.
     """
     if not isinstance(bruto, dict):
         return Extracao()
 
-    minimo = _preco(bruto.get("faixa_preco_min"))
-    maximo = _preco(bruto.get("faixa_preco_max"))
-    # Faixa invertida descarta os dois lados: nao ha como saber qual dos dois o
-    # modelo errou, e gravar um deles produziria um filtro pior que nenhum.
-    # `>` e nao `>=`: "exatamente 600 mil" e faixa valida com os dois iguais.
-    if minimo is not None and maximo is not None and minimo > maximo:
-        log.info("extracao.faixa_invertida_descartada")
-        minimo = maximo = None
+    minimo = maximo = None
+    expressao = bruto.get("faixa_preco_expressao")
+    # Nula ou vazia nao e recusa: e o turno comum, que nao falou de dinheiro.
+    # Logar aqui contaria erro para todo turno sem orcamento -- a maioria.
+    if isinstance(expressao, str) and expressao.strip():
+        resultado = parsear(expressao, intencao)
+        if isinstance(resultado, Recusa):
+            log.info("extracao.preco_recusado", motivo=resultado.motivo.value)
+        else:
+            minimo, maximo = resultado.min_centavos, resultado.max_centavos
 
     return Extracao(
-        faixa_preco_min=minimo,
-        faixa_preco_max=maximo,
+        faixa_preco_min_centavos=minimo,
+        faixa_preco_max_centavos=maximo,
         regiao=_regiao(bruto.get("regiao")),
         tipo_imovel=_membro(TipoImovel, bruto.get("tipo_imovel")),
         quartos=_ambientes(bruto.get("quartos")),
@@ -503,7 +492,7 @@ class ClassificadorAnthropic:
                 tokens_in=resposta.usage.input_tokens,
                 tokens_out=resposta.usage.output_tokens,
                 latency_ms=latency_ms,
-                extracao=extrair(dados.get("extracao")),
+                extracao=extrair(dados.get("extracao"), intencao),
                 perguntou=_perguntou(dados.get("perguntou")),
                 cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
                 cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,

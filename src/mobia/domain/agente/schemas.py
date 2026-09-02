@@ -238,8 +238,8 @@ class Extracao:
     carrega a dela.
     """
 
-    faixa_preco_min: Decimal | None = None
-    faixa_preco_max: Decimal | None = None
+    faixa_preco_min_centavos: int | None = None
+    faixa_preco_max_centavos: int | None = None
     regiao: str | None = None
     tipo_imovel: TipoImovel | None = None
     quartos: int | None = None

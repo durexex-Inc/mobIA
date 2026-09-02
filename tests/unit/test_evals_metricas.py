@@ -10,6 +10,7 @@ from mobia.evals.metricas import (
     ALVO_DE_ADERENCIA_AO_TOM_PCT,
     CAMPOS_DA_EXTRACAO,
     DISPERSAO_MEDIDA,
+    MARCADORES_DE_REPERGUNTA,
     MAX_CARACTERES_DA_RESPOSTA,
     PISO_DE_ADERENCIA_AO_TOM_PCT,
     PISO_DE_BLOQUEIO_PCT,
@@ -403,9 +404,21 @@ def test_regiao_compara_sem_ligar_para_caixa_nem_espaco():
 
 
 def test_preco_compara_por_valor_e_nao_por_texto():
-    """600000 e Decimal("600000.00") sao o mesmo preco."""
+    """60000000 e Decimal("60000000.00") sao o mesmo numero de CENTAVOS.
+
+    A chave e `_centavos` desde a TEC-146, entao os dois lados aqui sao
+    R$ 600.000 -- o docstring anterior ainda dizia "600000 e o mesmo preco",
+    que sob esta chave seria R$ 6.000. O que o teste guarda nao mudou: a
+    comparacao e por valor numerico, e nao por texto, porque nem toda camada
+    entrega o mesmo tipo Python para a mesma quantidade.
+    """
     resultado = precisao_da_extracao(
-        [_observada({"faixa_preco_max": 600000}, {"faixa_preco_max": Decimal("600000.00")})]
+        [
+            _observada(
+                {"faixa_preco_max_centavos": 60_000_000},
+                {"faixa_preco_max_centavos": Decimal("60000000.00")},
+            )
+        ]
     )
     assert (resultado.acertos, resultado.total) == (1, 1)
 
@@ -589,7 +602,12 @@ def test_normalizacao_de_comparavel_vale_aqui_tambem():
     )
     assert (
         discrepancias_da_extracao(
-            [_observada({"faixa_preco_max": 600000}, {"faixa_preco_max": Decimal("600000.00")})]
+            [
+                _observada(
+                    {"faixa_preco_max_centavos": 600000},
+                    {"faixa_preco_max_centavos": Decimal("600000.00")},
+                )
+            ]
         )
         == []
     )
@@ -1055,6 +1073,24 @@ def test_campos_perguntados_exige_interrogacao():
     """
     assert campos_perguntados("Esse apartamento tem 2 quartos e 1 vaga de garagem") == set()
     assert campos_perguntados("Quantos quartos voce precisa?") == {"quartos"}
+
+
+def test_marcadores_de_repergunta_usam_nomes_reais_da_extracao():
+    """Trava o acordo entre a tabela de deteccao e os nomes que `Extracao`
+    de fato tem -- os mesmos que `campos_a_gravar` (repositorio.py) grava e
+    que `campos_a_marcar` subtrai deles.
+
+    Sem este teste, um campo renomeado em `Extracao` (como
+    `faixa_preco_max` -> `faixa_preco_max_centavos` na TEC-146) deixa
+    `MARCADORES_DE_REPERGUNTA` com uma chave que nunca mais casa em
+    `campos_a_marcar`. A marca de "perguntou e nao respondeu" para aquele
+    campo fica impossivel, e nenhuma suite acusa: nada faz `assert False`,
+    so um efeito que deixa de acontecer. Foi exatamente o defeito que a
+    TEC-257 documentou ao extrair `campos_a_gravar`/`campos_a_marcar` para
+    fora de copias divergentes -- e a mesma classe de erro que passou batido
+    aqui, num lugar que aquela extracao nao cobria.
+    """
+    assert set(MARCADORES_DE_REPERGUNTA) <= CAMPOS_DA_EXTRACAO
 
 
 def test_campos_perguntados_e_a_fonte_unica_dos_dois_proxies():

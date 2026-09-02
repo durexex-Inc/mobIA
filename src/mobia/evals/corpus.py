@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, fields
+from decimal import Decimal, DecimalException
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,14 @@ _VOCABULARIO = {
     "tipo_imovel": TipoImovel,
     "urgencia": Urgencia,
     "forma_pagamento": FormaPagamento,
+}
+
+# TEC-146. A anotacao fica em reais porque e artefato humano; o banco guarda
+# centavos. A conversao mora aqui, no unico ponto em que o corpus vira dado,
+# para nao haver duas unidades circulando no runner.
+_EM_REAIS = {
+    "faixa_preco_min": "faixa_preco_min_centavos",
+    "faixa_preco_max": "faixa_preco_max_centavos",
 }
 
 
@@ -174,6 +183,62 @@ class ConversaAnotada:
     turnos: list[TurnoAnotado]
 
 
+def _centavos_da_anotacao(valor: Any, *, arquivo: str, conversa_id: str, nome: str) -> int:
+    """Converte a anotacao em reais para centavos, recusando o resto.
+
+    A forma anterior era `int(valor) * 100`, e ela furava o contrato deste
+    modulo em tres pontos de uma vez -- **toda** recusa daqui nomeia arquivo e
+    conversa, porque um corpus de centenas de turnos sem endereco nao e
+    corrigivel:
+
+    - `faixa_preco_max: seiscentos mil` levantava `ValueError` cru, sem dizer
+      onde. Agora e `CorpusInvalido` com o endereco, como as outras recusas.
+    - `600000.75` era truncado para R$ 600.000 em silencio -- o `int()` come a
+      fracao antes da multiplicacao. Agora os centavos entram, e so uma fracao
+      de centavo (que nao existe) e recusada.
+    - `faixa_preco_max: true` virava 100 centavos: `bool` e subclasse de `int`
+      em Python, entao `int(True)` e 1. Um `true` digitado onde ia um numero
+      passava a medir o modelo contra R$ 1,00.
+
+    **String nao e aceita, nem a que parece numero.** `"600.000"` e a forma
+    pt-BR de seiscentos mil e a forma en-US de seiscentos, e `Decimal` le a
+    segunda -- um erro de 1000x numa anotacao que e o baseline medido da
+    TEC-145, exatamente a classe de erro que a D7 evita mandando o corpus
+    ficar em reais. Nao ha desempate possivel aqui, entao a saida e mandar
+    quem anota escrever um numero YAML (`faixa_preco_max: 600000`) em vez de
+    adivinhar a convencao.
+
+    `Decimal(str(valor))` e nao `Decimal(valor)`: o YAML entrega `600000.5`
+    como float binario, e a conversao direta traria o lixo da base 2.
+    """
+    if isinstance(valor, bool) or not isinstance(valor, int | float):
+        raise CorpusInvalido(
+            f"{arquivo}: {conversa_id} anota {nome}={valor!r}, que nao e um numero "
+            f"de reais. Escreva um numero YAML, sem aspas."
+        )
+    try:
+        centavos = Decimal(str(valor)).scaleb(2)
+    except DecimalException as exc:
+        raise CorpusInvalido(
+            f"{arquivo}: {conversa_id} anota {nome}={valor!r}, que nao e um numero "
+            f"de reais."
+        ) from exc
+    # `float("nan")` e `float("inf")` sao `float` validos e chegam ate aqui:
+    # `scaleb` nao levanta para nenhum dos dois, e `int(Infinity)` levantaria
+    # `OverflowError` cru la embaixo.
+    if not centavos.is_finite():
+        raise CorpusInvalido(
+            f"{arquivo}: {conversa_id} anota {nome}={valor!r}, que nao e um numero "
+            f"de reais."
+        )
+    if centavos != centavos.to_integral_value():
+        raise CorpusInvalido(
+            f"{arquivo}: {conversa_id} anota {nome}={valor!r}, que tem fracao de "
+            f"centavo. Anote em reais com no maximo duas casas."
+        )
+    return int(centavos)
+
+
 def _turno_de(bruto: Any, conversa_id: str, arquivo: str) -> TurnoAnotado:
     if not isinstance(bruto, dict):
         raise CorpusInvalido(
@@ -211,8 +276,14 @@ def _turno_de(bruto: Any, conversa_id: str, arquivo: str) -> TurnoAnotado:
         # aqui como erro, entao uma anotacao parcial nao vira nota mais baixa
         # do modelo -- vira medicao errada. `{}` e o caso limite disso: nada
         # esperado, tudo obtido e erro.
+        campos = {}
         for nome, valor in campos_brutos.items():
-            if nome not in _CAMPOS_ANOTAVEIS:
+            # `_EM_REAIS` traduz o nome de anotacao (reais) para o nome de
+            # gravacao (centavos) antes de qualquer checagem, para que o nome
+            # que o autor do YAML escreve seja o validado contra o vocabulario
+            # e o nome que sai daqui seja o que `Extracao`/o banco esperam.
+            nome_final = _EM_REAIS.get(nome, nome)
+            if nome_final not in _CAMPOS_ANOTAVEIS:
                 raise CorpusInvalido(
                     f"{arquivo}: {conversa_id} anota campo desconhecido {nome!r}. "
                     f"Conhecidos: {sorted(_CAMPOS_ANOTAVEIS)}."
@@ -227,13 +298,17 @@ def _turno_de(bruto: Any, conversa_id: str, arquivo: str) -> TurnoAnotado:
                     f"{arquivo}: {conversa_id} anota {nome!r} sem valor, que nao diz "
                     f"nada. Omita o campo se o lead nao afirmou isso, ou de um valor."
                 )
-            enum = _VOCABULARIO.get(nome)
+            enum = _VOCABULARIO.get(nome_final)
             if enum is not None and valor not in [membro.value for membro in enum]:
                 raise CorpusInvalido(
                     f"{arquivo}: {conversa_id} anota {nome}={valor!r}, fora do "
                     f"vocabulario {[membro.value for membro in enum]}."
                 )
-        campos = campos_brutos
+            campos[nome_final] = (
+                _centavos_da_anotacao(valor, arquivo=arquivo, conversa_id=conversa_id, nome=nome)
+                if nome in _EM_REAIS
+                else valor
+            )
     return TurnoAnotado(lead=texto, intencao=intencao, campos=campos)
 
 

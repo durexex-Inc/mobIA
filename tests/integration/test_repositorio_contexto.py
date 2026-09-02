@@ -1,6 +1,5 @@
 import uuid
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 import pytest
 from sqlalchemy import text as sql
@@ -161,7 +160,7 @@ async def test_estado_de_qualificacao_e_lido_do_banco(session) -> None:
             channel=CANAL,
             conversation_key=CONVERSA,
             intencao="COMPRA",
-            faixa_preco_max=Decimal("600000.00"),
+            faixa_preco_max_centavos=60_000_000,
             regiao="zona sul",
             quartos=2,
         )
@@ -170,7 +169,7 @@ async def test_estado_de_qualificacao_e_lido_do_banco(session) -> None:
 
     estado = await ler_estado(session, CANAL, CONVERSA)
     assert estado is not None
-    assert estado.faixa_preco_max == Decimal("600000.00")
+    assert estado.faixa_preco_max_centavos == 60_000_000
     assert estado.regiao == "zona sul"
     assert estado.vagas is None, "campo nao informado fica nulo, nao zero"
 
@@ -460,3 +459,18 @@ async def test_fora_de_escopo_nao_marca(session) -> None:
     await session.commit()
 
     assert await session.get(LeadQualification, ("wa", "k5")) is None
+
+
+async def test_preco_em_centavos_sobrevive_ao_round_trip(session) -> None:
+    """BigInteger e nao Integer: 10^11 centavos (R$ 1 bilhao, o teto da banda)
+    estoura int32, que para em ~2,1x10^9 -- R$ 21 milhoes."""
+    await gravar_estado(
+        session,
+        channel="whatsapp",
+        conversation_key="5511999999999",
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(faixa_preco_max_centavos=100_000_000_000),
+    )
+    estado = await ler_estado(session, channel="whatsapp", conversation_key="5511999999999")
+    assert estado is not None
+    assert estado.faixa_preco_max_centavos == 100_000_000_000
