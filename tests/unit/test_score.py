@@ -2,7 +2,8 @@ import pytest
 
 from mobia.domain.agente.schemas import FormaPagamento, Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
-from mobia.domain.context.score import Score, calcular_score
+from mobia.domain.context.qualificacao import CAMPOS_OBRIGATORIOS
+from mobia.domain.context.score import PONTOS_POR_CAMPO_OBRIGATORIO, Score, calcular_score
 
 
 def _estado(**campos) -> LeadQualification:
@@ -91,3 +92,83 @@ def test_capacidade_ausente_vale_a_avaliar():
     """Coluna nula e INDEFINIDA significam a mesma coisa para este fator: o
     lead nao disse como pagaria, entao e "a avaliar"."""
     assert calcular_score(_estado(forma_pagamento=None)).capacidade == 6
+
+
+def test_o_cenario_de_aceite_da_card():
+    """Quatro obrigatorios, prazo de 20 dias, seis imoveis compativeis,
+    pagamento a vista -> pelo menos 70.
+
+    Com catalogo, como a card escreveu o cenario.
+    """
+    obtido = calcular_score(
+        _estado(urgencia=Urgencia.IMEDIATA.value, forma_pagamento=FormaPagamento.A_VISTA.value),
+        mensagens_do_lead=4,
+        imoveis_compativeis=6,
+    )
+    assert obtido.total >= 70
+
+
+def test_o_mesmo_cenario_sem_catalogo_ainda_fecha():
+    """A diferenca que a TEC-158 fara, pinada desde ja. Sem o catalogo o
+    mesmo lead perde 20 pontos e ainda precisa alcancar 70 -- e o que forcou
+    a calibragem das faixas de engajamento."""
+    obtido = calcular_score(
+        _estado(urgencia=Urgencia.IMEDIATA.value, forma_pagamento=FormaPagamento.A_VISTA.value),
+        mensagens_do_lead=4,
+    )
+    assert obtido.total >= 70
+
+
+def test_a_completude_maxima_acompanha_a_lista_de_obrigatorios():
+    """Impede a divergencia que a TEC-146 gastou uma card consertando: se
+    alguem acrescentar um quinto obrigatorio na RN-05.3, este teste quebra e
+    obriga a decidir o peso, em vez de o score simplesmente pontuar a menos
+    em silencio."""
+    maximo = calcular_score(_estado(), mensagens_do_lead=99, imoveis_compativeis=99).completude
+    assert maximo == len(CAMPOS_OBRIGATORIOS) * PONTOS_POR_CAMPO_OBRIGATORIO
+
+
+def test_o_total_e_a_soma_dos_cinco():
+    """Quebraria se um fator fosse esquecido na soma -- que e o defeito mais
+    facil de introduzir num dataclass que cresce."""
+    s = calcular_score(
+        _estado(forma_pagamento=FormaPagamento.A_VISTA.value),
+        mensagens_do_lead=6,
+        imoveis_compativeis=6,
+    )
+    assert s.total == s.completude + s.urgencia + s.catalogo + s.engajamento + s.capacidade
+
+
+def test_o_teto_com_catalogo_e_95():
+    """Nao 100. Ver D3: 5 pontos por campo com quatro obrigatorios da 20, e o
+    peso 25 da tabela da RN-06.1 nao fecha com a lista da RN-05.3."""
+    obtido = calcular_score(
+        _estado(urgencia=Urgencia.IMEDIATA.value, forma_pagamento=FormaPagamento.A_VISTA.value),
+        mensagens_do_lead=99,
+        imoveis_compativeis=99,
+    )
+    assert obtido.total == 95
+
+
+def test_o_teto_sem_catalogo_e_75():
+    obtido = calcular_score(
+        _estado(urgencia=Urgencia.IMEDIATA.value, forma_pagamento=FormaPagamento.A_VISTA.value),
+        mensagens_do_lead=99,
+    )
+    assert obtido.total == 75
+
+
+def test_o_calculo_e_deterministico():
+    """A igualdade do dataclass compara os cinco fatores, nao so o total --
+    entao dois calculos que somassem igual por caminhos diferentes seriam
+    pegos aqui."""
+    estado = _estado(forma_pagamento=FormaPagamento.FINANCIAMENTO.value)
+    assert calcular_score(estado, 4, 3) == calcular_score(estado, 4, 3)
+
+
+def test_nenhum_fator_e_negativo():
+    """Contagem negativa nao e alcancavel por chamador nenhum, mas um peso
+    trocado por engano poderia produzi-la, e um score negativo passaria
+    despercebido numa fila ordenada."""
+    s = calcular_score(_estado(), mensagens_do_lead=0, imoveis_compativeis=0)
+    assert min(s.completude, s.urgencia, s.catalogo, s.engajamento, s.capacidade) >= 0
