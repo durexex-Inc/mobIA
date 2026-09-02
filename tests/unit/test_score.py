@@ -3,7 +3,13 @@ import pytest
 from mobia.domain.agente.schemas import FormaPagamento, Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.qualificacao import CAMPOS_OBRIGATORIOS
-from mobia.domain.context.score import PONTOS_POR_CAMPO_OBRIGATORIO, Score, calcular_score
+from mobia.domain.context.score import (
+    _PONTOS_POR_CAPACIDADE,
+    _PONTOS_POR_URGENCIA,
+    PONTOS_POR_CAMPO_OBRIGATORIO,
+    Score,
+    calcular_score,
+)
 
 
 def _estado(**campos) -> LeadQualification:
@@ -68,9 +74,12 @@ def test_catalogo_e_zero_por_default():
 
 @pytest.mark.parametrize(
     ("mensagens", "pontos"),
-    [(10, 15), (6, 15), (5, 10), (3, 10), (2, 5), (1, 5), (0, 0)],
+    [(10, 15), (6, 15), (5, 10), (3, 10), (2, 10), (1, 10), (0, 0)],
 )
 def test_engajamento_por_faixa(mensagens, pontos):
+    """Tres faixas, e as duas bordas pinadas: 5/6 separa 10 de 15, e 0/1
+    separa nao falar de falar. Nao ha degrau em 3 -- ver a docstring de
+    `_pontos_do_engajamento`."""
     assert calcular_score(_estado(), mensagens_do_lead=mensagens).engajamento == pontos
 
 
@@ -95,10 +104,14 @@ def test_capacidade_ausente_vale_a_avaliar():
 
 
 def test_o_cenario_de_aceite_da_card():
-    """Quatro obrigatorios, prazo de 20 dias, seis imoveis compativeis,
-    pagamento a vista -> pelo menos 70.
+    """Documenta o cenario que a card escreveu, literal: quatro obrigatorios,
+    prazo de 20 dias, seis imoveis compativeis, pagamento a vista -> >=70.
 
-    Com catalogo, como a card escreveu o cenario.
+    O `>=70` sozinho e frouxo aqui: o cenario COM catalogo da 90, vinte
+    pontos de folga, e nenhuma mutacao de constante o derrubaria. O segundo
+    assert e o que faz este teste poder falhar; o primeiro e o criterio da
+    card, mantido porque e o que a card diz. Quem pina a diferenca que a
+    TEC-158 fara sao os dois testes de teto, e nao este.
     """
     obtido = calcular_score(
         _estado(urgencia=Urgencia.IMEDIATA.value, forma_pagamento=FormaPagamento.A_VISTA.value),
@@ -106,15 +119,25 @@ def test_o_cenario_de_aceite_da_card():
         imoveis_compativeis=6,
     )
     assert obtido.total >= 70
+    assert obtido.total == 90
 
 
-def test_o_mesmo_cenario_sem_catalogo_ainda_fecha():
-    """A diferenca que a TEC-158 fara, pinada desde ja. Sem o catalogo o
-    mesmo lead perde 20 pontos e ainda precisa alcancar 70 -- e o que forcou
-    a calibragem das faixas de engajamento."""
+@pytest.mark.parametrize("mensagens", [1, 2, 3, 5, 6, 99])
+def test_o_cenario_de_aceite_sem_catalogo_fecha_em_qualquer_contagem(mensagens):
+    """Sem catalogo o mesmo lead perde 20 pontos e ainda precisa alcancar 70,
+    e precisa alcancar **em qualquer contagem de mensagens >=1**.
+
+    A versao anterior deste teste fixava `mensagens_do_lead=4` e afirmava o
+    criterio de aceite sob exatamente a premissa usada para derivar as
+    faixas -- circular, e por isso nao pegou que o lead que diz tudo numa
+    unica mensagem somava 65 e reprovava o criterio da propria card. O caso
+    `mensagens=1` e o que estava vermelho antes da mudanca de faixas, e e o
+    que trava a calibragem agora: baixar a faixa de baixo para 5 deixa quatro
+    destes casos vermelhos.
+    """
     obtido = calcular_score(
         _estado(urgencia=Urgencia.IMEDIATA.value, forma_pagamento=FormaPagamento.A_VISTA.value),
-        mensagens_do_lead=4,
+        mensagens_do_lead=mensagens,
     )
     assert obtido.total >= 70
 
@@ -126,6 +149,26 @@ def test_a_completude_maxima_acompanha_a_lista_de_obrigatorios():
     em silencio."""
     maximo = calcular_score(_estado(), mensagens_do_lead=99, imoveis_compativeis=99).completude
     assert maximo == len(CAMPOS_OBRIGATORIOS) * PONTOS_POR_CAMPO_OBRIGATORIO
+
+
+def test_o_mapa_de_urgencia_cobre_o_enum():
+    """Um membro novo em `Urgencia` -- operacao que as docstrings de `Intencao`
+    e `TipoImovel` tratam como desenhada -- cairia no default do `.get` e
+    pontuaria 0, identico a `SEM_PRESSA`, colapsando em silencio um fator de
+    25 pontos com toda a suite verde.
+
+    E a mesma defesa que `test_a_completude_maxima_acompanha_a_lista_de_obrigatorios`
+    da a `CAMPOS_OBRIGATORIOS`, aplicada a segunda das tres acoplagens deste
+    modulo com um vocabulario que mora fora dele.
+    """
+    assert set(_PONTOS_POR_URGENCIA) == {membro.value for membro in Urgencia}
+
+
+def test_o_mapa_de_capacidade_cobre_o_enum():
+    """Um membro novo em `FormaPagamento` receberia em silencio os 6 de "a
+    avaliar", que e o default reservado a coluna nula -- e um caminho de
+    pagamento definido valeria menos que dizer "ainda nao decidi"."""
+    assert set(_PONTOS_POR_CAPACIDADE) == {membro.value for membro in FormaPagamento}
 
 
 def test_o_total_e_a_soma_dos_cinco():
@@ -159,16 +202,29 @@ def test_o_teto_sem_catalogo_e_75():
 
 
 def test_o_calculo_e_deterministico():
-    """A igualdade do dataclass compara os cinco fatores, nao so o total --
-    entao dois calculos que somassem igual por caminhos diferentes seriam
-    pegos aqui."""
+    """Duas chamadas com o mesmo estado dao o mesmo `Score`.
+
+    Vale dizer o que isto pega, que e estreito: mutacao de `estado` pela
+    propria funcao, e qualquer impureza introduzida depois -- relogio,
+    aleatorio, leitura de fora. Nao compara fatores contra total, porque uma
+    chamada comparada consigo mesma nao pode fazer isso; quem faz e
+    `test_o_total_e_a_soma_dos_cinco`. Nenhuma mutacao de constante derruba
+    este teste: e guarda prospectiva, declarada como tal.
+    """
     estado = _estado(forma_pagamento=FormaPagamento.FINANCIAMENTO.value)
-    assert calcular_score(estado, 4, 3) == calcular_score(estado, 4, 3)
+    antes = calcular_score(estado, mensagens_do_lead=4, imoveis_compativeis=3)
+    assert antes == calcular_score(estado, mensagens_do_lead=4, imoveis_compativeis=3)
 
 
 def test_nenhum_fator_e_negativo():
-    """Contagem negativa nao e alcancavel por chamador nenhum, mas um peso
-    trocado por engano poderia produzi-la, e um score negativo passaria
-    despercebido numa fila ordenada."""
+    """Um peso digitado com o sinal trocado deixa este teste vermelho: mutar
+    `_PONTOS_SEM_FORMA_DE_PAGAMENTO` para -6 basta. Contagem negativa em si
+    nao e alcancavel por chamador nenhum, porque as faixas usam `>=`.
+
+    O que ele NAO faz e falhar sozinho: toda mutacao que o mata mata tambem
+    um teste de faixa, que aponta direto para a constante errada. Ele nao
+    acrescenta poder de deteccao sobre a suite -- documenta a propriedade
+    "nenhum fator e negativo" no unico lugar onde ela e verificavel.
+    """
     s = calcular_score(_estado(), mensagens_do_lead=0, imoveis_compativeis=0)
     assert min(s.completude, s.urgencia, s.catalogo, s.engajamento, s.capacidade) >= 0
