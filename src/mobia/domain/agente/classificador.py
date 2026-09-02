@@ -75,6 +75,20 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # "(perguntado, sem resposta)" que `_texto_do_estado` poe no estado -- a forma
 # explicita existia e custava 3,25, recusada por nao deixar folga para
 # ninguem depois.
+#
+# A TEC-146 (Task 7) acrescentou " Orcamento vago: peca confirmacao." ao
+# final, depois das quatro tasks anteriores da mesma card terem trocado dois
+# campos numericos do schema por um campo de string na Task 4 -- essa troca
+# tinha liberado a margem de 32,2 que esta clausula gasta. Custou 8,4 (32,2
+# -> 23,8), perto dos ~8,5 estimados no proxy antes de escrever. Nao e
+# reescrita de clausula existente como a da TEC-257: esta e regra nova, sem
+# forma anterior para encolher. A forma longa e mais precisa -- "se o valor
+# de orcamento nao trouxer ordem de grandeza clara, peca confirmacao ao
+# lead" -- custaria ~21 e nao caberia nos 32,2 sem cortar outro texto; a
+# curta faz o mesmo servico porque o parser deterministico (`dinheiro.py`,
+# Tasks 1-3) e quem decide "vago", nao o modelo -- o prompt so precisa
+# lembrar o modelo de perguntar quando `extrair` (Task 4) ja recusou gravar.
+# Margem restante: 23,8.
 SISTEMA_DO_AGENTE = (
     "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
     "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
@@ -95,6 +109,7 @@ SISTEMA_DO_AGENTE = (
     "extrair o que a fala nao afirma conta erro igual a nao extrair o que ela "
     "afirma. O imovel que o lead ja tem nao e o que ele procura. "
     "Urgencia so com marco temporal explicito; pressa nao basta."
+    " Orcamento vago: peca confirmacao."
 )
 
 MAX_TOKENS_DA_PERGUNTA = 300

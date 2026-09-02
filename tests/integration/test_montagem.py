@@ -305,6 +305,21 @@ def test_a_regra_do_prompt_cobre_o_ignorado() -> None:
     assert "nao repergunte o preenchido nem o ignorado" in SISTEMA_DO_AGENTE
 
 
+def test_o_prompt_manda_confirmar_orcamento_vago() -> None:
+    """D4: o codigo e a correcao (nao grava), o prompt e a economia (pergunta
+    no mesmo turno). A camada que garante nao pode depender da que lembra.
+
+    Assercao de posicao, nao so de substring: a frase precisa estar colada ao
+    fim do texto, precedida pelo ponto e espaco herdados da frase anterior.
+    Um erro de concatenacao comum e realista neste modulo -- string literal
+    adjacente sem separador, ou a frase esquecida dentro do comentario que
+    documenta o orcamento e nunca chegando a fazer parte do valor de
+    `SISTEMA_DO_AGENTE` -- passaria num `in` solto e falha aqui.
+    """
+    assert SISTEMA_DO_AGENTE.endswith(" Orcamento vago: peca confirmacao.")
+    assert "  " not in SISTEMA_DO_AGENTE
+
+
 def test_montar_prompt_ordena_sistema_resumo_literais_e_estado() -> None:
     """A ordem e a razao de `montar_prompt` existir: sistema e resumo primeiro
     porque mudam devagar e ficam quentes no cache de prompt, estado por
