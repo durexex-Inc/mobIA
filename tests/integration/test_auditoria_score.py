@@ -4,12 +4,18 @@ TEC-152.
 """
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from mobia.domain.context.models import LeadScoreAudit
+from mobia.domain.context.repositorio import contar_mensagens_do_lead
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
+from mobia.domain.messages.models import Message
+from mobia.domain.messages.status import MessageStatus
+from mobia.infra.crypto import aad_de, encrypt
 
 CANAL = "whatsapp"
 CONVERSA = "5511911112222"
@@ -79,3 +85,52 @@ async def test_delete_continua_livre(session) -> None:
     await session.commit()
 
     assert (await session.scalars(select(LeadScoreAudit))).all() == []
+
+
+async def _mensagem(
+    session,
+    *,
+    direction: MessageDirection = MessageDirection.INBOUND,
+    bloqueada: bool = False,
+) -> None:
+    identificador = uuid.uuid4()
+    session.add(
+        Message(
+            id=identificador,
+            channel=CANAL,
+            provider_message_id=f"wamid.{identificador.hex[:10]}",
+            sender_external_id=CONVERSA,
+            recipient_external_id="222222222",
+            conversation_key=CONVERSA,
+            role=MessageRole.LEAD if direction is MessageDirection.INBOUND else MessageRole.AGENTE,
+            direction=direction,
+            content_type=MessageContentType.TEXTO,
+            text_body=encrypt("oi", aad_de(identificador, "text_body")),
+            raw_payload=None,
+            status=MessageStatus.PROCESSED,
+            bloqueada_em=datetime.now(UTC) if bloqueada else None,
+        )
+    )
+    await session.commit()
+
+
+async def test_a_contagem_ignora_a_fala_do_agente(session) -> None:
+    """Fala do agente nao e engajamento do lead, e contar as duas direcoes
+    quase dobra o numero e empurra MORNO para QUENTE de graca."""
+    await _mensagem(session)
+    await _mensagem(session, direction=MessageDirection.OUTBOUND)
+
+    assert await contar_mensagens_do_lead(session, channel=CANAL, conversation_key=CONVERSA) == 1
+
+
+async def test_a_contagem_ignora_a_fala_bloqueada(session) -> None:
+    """Um turno que o resto do produto trata como nao-dito nao pode virar ponto
+    aqui: `literais_apos` ja filtra `bloqueada_em IS NULL` desde a TEC-236."""
+    await _mensagem(session)
+    await _mensagem(session, bloqueada=True)
+
+    assert await contar_mensagens_do_lead(session, channel=CANAL, conversation_key=CONVERSA) == 1
+
+
+async def test_a_contagem_de_um_lead_sem_mensagem_e_zero(session) -> None:
+    assert await contar_mensagens_do_lead(session, channel=CANAL, conversation_key="ninguem") == 0

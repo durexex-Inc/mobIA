@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
+from mobia.domain.messages.enums import MessageDirection
+from mobia.domain.messages.models import Message
 from mobia.infra.crypto import decrypt, encrypt
 
 log = structlog.get_logger(__name__)
@@ -456,3 +458,35 @@ async def marcar_perguntados(
             updated_at=datetime.now(UTC),
         )
     )
+
+
+async def contar_mensagens_do_lead(
+    session: AsyncSession, *, channel: str, conversation_key: str
+) -> int:
+    """As falas de ENTRADA do lead que a moderacao nao bloqueou.
+
+    **Esta e a unica implementacao do contrato, e existe para que a TEC-151
+    nao escreva a segunda.** A docstring de `calcular_score` fixa a definicao
+    palavra por palavra e nomeia o risco: tres leituras eram defensaveis, e
+    duas fontes para o mesmo fato divergiriam em silencio -- que e o defeito
+    que a TEC-146 gastou uma card inteira consertando. Quem precisar da
+    contagem chama daqui.
+
+    `status` nao entra: RECEIVED, QUEUED e PROCESSED descrevem o pipeline de
+    ingestao, nao se o lead falou, e filtrar por eles faria a contagem oscilar
+    com retentativa.
+
+    Inclui a mensagem do turno corrente -- a ingestao a persiste antes de o job
+    rodar.
+    """
+    total = await session.scalar(
+        select(func.count())
+        .select_from(Message)
+        .where(
+            Message.channel == channel,
+            Message.conversation_key == conversation_key,
+            Message.direction == MessageDirection.INBOUND,
+            Message.bloqueada_em.is_(None),
+        )
+    )
+    return total or 0
