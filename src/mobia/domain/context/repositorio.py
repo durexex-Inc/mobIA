@@ -207,13 +207,33 @@ def campos_a_gravar(intencao: Intencao, extracao: Extracao) -> dict[str, Any]:
       qualificou e depois mandou uma piada continua com o que disse.
     - `None` no campo nao apaga: so os campos que `Extracao.preenchidos()`
       devolveu (os que o lead de fato informou neste turno) entram.
-    - `intencao` sempre entra quando ha gravacao. Ela vem de fora, do
-      classificador, e nunca da extracao -- a tabela `conversation_intent` e
-      esta coluna guardam o mesmo fato, e duas fontes para ele divergiriam, o
-      que apareceria como bug de score na TEC-150.
+    - `intencao` entra quando ha gravacao e quando ela diz alguma coisa. Ela
+      vem de fora, do classificador, e nunca da extracao -- a tabela
+      `conversation_intent` e esta coluna guardam o mesmo fato, e duas fontes
+      para ele divergiriam, o que apareceria como bug de score na TEC-150.
+    - **`INDEFINIDA` nao sobrescreve `intencao`** (TEC-147). Era a unica
+      coluna desta tabela que violava o "None nao apaga" logo acima:
+      `INDEFINIDA` e, no comentario do proprio enum, "ainda nao da para
+      saber", e o classificador pode devolve-la em qualquer turno -- um
+      "obrigado" no meio da conversa basta. Deixando-a sobrescrever, um lead
+      que ja tinha dito COMPRA deixava de ser qualificado (`esta_qualificado`
+      so ve a linha atual e nao tem como saber que houve intencao melhor
+      antes) e disparava `lead.qualificado` DE NOVO ao voltar ao assunto --
+      a taxa da RN-17.1 contando travessias em vez de leads. Os campos de
+      extracao do turno continuam gravando normalmente: o lead que diz
+      "zona sul" sem deixar claro se compra ou aluga informou a regiao.
+
+      Consequencia aceita, e ela e o "marcar de menos" que `campos_a_marcar`
+      ja declara como o erro seguro: um turno `INDEFINIDA` sem extracao
+      nenhuma agora devolve dict vazio, entao nao grava linha e nao grava
+      marca de "perguntado, sem resposta". O primeiro turno de uma conversa
+      que so diz "oi" deixa de criar linha com `intencao: INDEFINIDA` --
+      linha que nao dizia nada e que o prompt renderizava assim mesmo.
     """
     if intencao is Intencao.FORA_DE_ESCOPO:
         return {}
+    if intencao is Intencao.INDEFINIDA:
+        return extracao.preenchidos()
     return {"intencao": intencao.value, **extracao.preenchidos()}
 
 
@@ -356,7 +376,19 @@ async def gravar_estado(
                     literal_column("'{}'::varchar[]"),
                 ).op("||")(statement.excluded.perguntados_sem_resposta),
             },
-        ).returning(LeadQualification)
+        )
+        .returning(LeadQualification)
+        # Sem isto o `RETURNING` mente quando a sessao ja carregou esta linha:
+        # o identity map do SQLAlchemy devolve a instancia que a sessao ja tem
+        # e NAO a atualiza com a linha que o banco acabou de devolver. Uma
+        # sessao que le com `ler_estado` e grava logo depois receberia aqui o
+        # estado ANTERIOR a gravacao -- e a docstring acima estaria mentindo.
+        #
+        # `turno.py` hoje escapa por acidente (le numa sessao, grava noutra),
+        # e por isso nenhum teste pegava. A TEC-150 quer ler e gravar na mesma
+        # sessao para recalcular o score, e ali `lead.qualificado` pararia de
+        # disparar em silencio.
+        .execution_options(populate_existing=True)
     )
     return resultado.scalar_one()
 

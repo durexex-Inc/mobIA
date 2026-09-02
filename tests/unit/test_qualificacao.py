@@ -1,8 +1,19 @@
+"""A regra da RN-05.3, e a regra de acumulacao que a alimenta.
+
+As duas moram no mesmo arquivo porque o defeito que a revisao final achou nao
+estava em nenhuma das duas isoladamente: `esta_qualificado` so ve a linha
+atual, e o que decide o que a linha carrega e `campos_a_gravar`. Testar as
+duas separadas foi exatamente o que deixou passar `INDEFINIDA` apagando uma
+intencao boa.
+"""
+
 import pytest
 
-from mobia.domain.agente.schemas import Intencao
+from mobia.domain.agente.schemas import Extracao, Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
-from mobia.domain.context.qualificacao import esta_qualificado
+from mobia.domain.context.montagem import _texto_do_estado
+from mobia.domain.context.qualificacao import CAMPOS_OBRIGATORIOS, esta_qualificado
+from mobia.domain.context.repositorio import _MARCA_DO_ORCAMENTO, _NOME_DA_MARCA, campos_a_gravar
 
 
 def _estado(**campos) -> LeadQualification:
@@ -17,7 +28,7 @@ def _estado(**campos) -> LeadQualification:
         "intencao": Intencao.COMPRA.value,
         "faixa_preco_max_centavos": 60_000_000,
         "regiao": "zona sul",
-        "urgencia": "ATE_3_MESES",
+        "urgencia": Urgencia.ATE_3_MESES.value,
     }
     return LeadQualification(**{**base, **campos})
 
@@ -113,3 +124,97 @@ def test_recusado_vence_o_valor_gravado():
 def test_recusa_de_campo_desejavel_nao_atrapalha():
     """Recusar `vagas` nao e recusar obrigatorio nenhum."""
     assert esta_qualificado(_estado(), recusados=frozenset({"vagas"})) is True
+
+
+def test_recusa_do_orcamento_vale_sob_qualquer_nome_que_o_repo_use():
+    """Pina o MECANISMO, e nao a instancia: os nomes saem das fontes de
+    verdade, nao de uma lista escrita a mao aqui.
+
+    `CAMPOS_OBRIGATORIOS` chama o orcamento de `faixa_preco`, que nao e nome
+    de coluna, nem de campo de `Extracao`, nem a chave que o prompt
+    renderiza, nem a marca que `campos_a_marcar` grava. A TEC-148, que e quem
+    vai preencher `recusados`, so tem o vocabulario da marca a mao -- e
+    `faixa_preco_max` nao esta em `CAMPOS_OBRIGATORIOS`. Sem a traducao, o
+    laco nunca ve a recusa, e um lead que se recusou a falar de orcamento
+    qualifica assim mesmo sobre um preco velho, com teste verde nas duas
+    cards. Foi assim que a TEC-146 queimou uma card inteira.
+    """
+    colunas = set(LeadQualification.__table__.columns.keys())
+    # As chaves que so existem no prompt sao exatamente `faixa_preco_min` e
+    # `faixa_preco_max`: todas as outras linhas de `_texto_do_estado` saem de
+    # uma coluna com o mesmo nome. Derivar por subtracao e o que impede este
+    # teste de virar uma copia da lista que ele deveria estar conferindo.
+    so_do_prompt = {
+        linha.split(":", 1)[0] for linha in _texto_do_estado(_estado()).splitlines()
+    } - colunas
+    assert so_do_prompt, "nenhuma chave so-do-prompt: a derivacao deixou de valer"
+
+    nomes = {_MARCA_DO_ORCAMENTO, *_NOME_DA_MARCA, *_NOME_DA_MARCA.values(), *so_do_prompt}
+    assert "faixa_preco_max" in nomes, "o vocabulario da marca sumiu da derivacao"
+
+    for nome in nomes:
+        assert esta_qualificado(_estado(), recusados=frozenset({nome})) is False, (
+            f"recusa de orcamento sob o nome {nome!r} foi ignorada em silencio"
+        )
+
+
+def test_o_nome_logico_do_orcamento_nao_e_coluna_nem_campo_de_extracao():
+    """A razao de `_canonico` existir, travada: os dois vocabularios de fato
+    divergem, entao a traducao nao e defensiva decorativa."""
+    colunas = set(LeadQualification.__table__.columns.keys())
+    assert "faixa_preco" in CAMPOS_OBRIGATORIOS
+    assert "faixa_preco" not in colunas
+    assert "faixa_preco" != _MARCA_DO_ORCAMENTO
+
+
+def test_indefinida_nao_sobrescreve_a_intencao_gravada():
+    """C1, na funcao. `INDEFINIDA` e "ainda nao da para saber", e o
+    classificador pode devolve-la em qualquer turno -- um "obrigado" basta.
+    Deixando-a entrar no dict, ela apaga o COMPRA que ja estava na coluna, e
+    todo o resto desta tabela honra "None nao apaga"."""
+    assert "intencao" not in campos_a_gravar(Intencao.INDEFINIDA, Extracao())
+    assert campos_a_gravar(Intencao.INDEFINIDA, Extracao()) == {}
+
+
+def test_indefinida_ainda_grava_os_campos_de_extracao():
+    """So a chave `intencao` sai. O lead que diz "zona sul, ate 600 mil" sem
+    deixar claro se compra ou aluga informou regiao e preco, e isso e fato
+    sobre a fala dele -- nao depende de sabermos a intencao."""
+    campos = campos_a_gravar(
+        Intencao.INDEFINIDA, Extracao(regiao="zona sul", faixa_preco_max_centavos=60_000_000)
+    )
+    assert campos == {"regiao": "zona sul", "faixa_preco_max_centavos": 60_000_000}
+
+
+def test_intencao_boa_sobrevive_a_um_turno_indefinido():
+    """A sequencia inteira da C1, sem banco: o `dict.update` e a mesma
+    acumulacao que o `ON CONFLICT DO UPDATE` faz, e que o runner do eval faz.
+
+    Antes da correcao, o turno 2 zerava a qualificacao e o turno 3 disparava
+    `lead.qualificado` de novo -- a taxa da RN-17.1 contando travessias em vez
+    de leads.
+    """
+    acumulado: dict[str, object] = {"channel": "whatsapp", "conversation_key": "5511999999999"}
+
+    acumulado.update(
+        campos_a_gravar(
+            Intencao.COMPRA,
+            Extracao(
+                faixa_preco_max_centavos=60_000_000,
+                regiao="zona sul",
+                urgencia=Urgencia.ATE_3_MESES,
+            ),
+        )
+    )
+    assert esta_qualificado(LeadQualification(**acumulado)) is True
+
+    # "obrigado" -- o classificador nao consegue dizer nada sobre esta fala.
+    acumulado.update(campos_a_gravar(Intencao.INDEFINIDA, Extracao()))
+    assert esta_qualificado(LeadQualification(**acumulado)) is True, (
+        "um turno ambiguo desqualificou um lead que ja estava qualificado"
+    )
+
+    # O lead volta ao assunto. Ele nunca deixou de estar qualificado, entao
+    # nao ha travessia nova aqui.
+    acumulado.update(campos_a_gravar(Intencao.COMPRA, Extracao(vagas=1)))
+    assert esta_qualificado(LeadQualification(**acumulado)) is True

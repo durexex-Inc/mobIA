@@ -245,8 +245,13 @@ async def _rodar_conversa(
         # Acumula com a MESMA regra de producao -- `campos_a_gravar`, a
         # funcao que `gravar_estado` tambem usa: guarda de `FORA_DE_ESCOPO`
         # (nao acumula nada neste turno), mais novo vence (o `update` por
-        # cima do que ja havia), `None` nao apaga, e `intencao` sempre entra
-        # quando ha gravacao.
+        # cima do que ja havia), `None` nao apaga, e `intencao` entra quando
+        # ha gravacao e quando ela diz alguma coisa -- `INDEFINIDA` nao
+        # sobrescreve a intencao acumulada (TEC-147). Consequencia aqui: um
+        # turno `INDEFINIDA` sem extracao nenhuma nao acumula nada, entao uma
+        # conversa que comeca assim monta o prompt do turno seguinte com
+        # `estado=None` em vez de uma linha com `intencao: INDEFINIDA`. E a
+        # mesma coisa que producao faz, que e o unico requisito deste ponto.
         #
         # A marca da TEC-257 segue o mesmo caminho e a mesma guarda, por
         # `campos_a_marcar`: sem isto o prompt sintetico do eval nao carrega

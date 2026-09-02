@@ -69,9 +69,13 @@ class LeadQualification(Base):
     """Estado estruturado de qualificacao. Esta historia le; TEC-145 escreve.
 
     Fica **em claro**, ao contrario do resumo, e a assimetria e deliberada:
-    TEC-147, TEC-150 e TEC-158 consultam faixa de preco e regiao em SQL, e
-    cifrar forcaria carregar a tabela inteira para filtrar em memoria. A cifra
-    da TEC-126 protege o que o lead escreveu; isto e o que o sistema concluiu.
+    TEC-150 e TEC-158 consultam faixa de preco e regiao em SQL, e cifrar
+    forcaria carregar a tabela inteira para filtrar em memoria. A cifra da
+    TEC-126 protege o que o lead escreveu; isto e o que o sistema concluiu.
+
+    A TEC-147 **nao** consulta: `esta_qualificado` e funcao pura sobre a linha
+    ja carregada, e nao ha consulta que filtre por qualificado (e uma lacuna
+    declarada no desenho dela). Ela estava nesta lista por engano.
     """
 
     __tablename__ = "lead_qualification"

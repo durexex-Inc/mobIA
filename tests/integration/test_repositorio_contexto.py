@@ -529,3 +529,45 @@ async def test_o_devolvido_traz_a_acumulacao_e_nao_so_o_turno(session):
     assert devolvido is not None
     assert devolvido.regiao == "zona sul"
     assert devolvido.urgencia == Urgencia.ATE_3_MESES.value
+
+
+async def test_o_devolvido_vale_mesmo_quando_a_sessao_ja_leu_a_linha(session):
+    """A sessao le com `ler_estado` e grava logo depois, sem commit no meio.
+
+    Sem `populate_existing`, o identity map do SQLAlchemy devolve aqui a
+    instancia que a sessao ja tinha carregado e NAO a atualiza com o que o
+    `RETURNING` trouxe: o chamador receberia o estado ANTERIOR a sua propria
+    gravacao, e a docstring de `gravar_estado` -- "o que o banco de fato
+    gravou" -- estaria mentindo.
+
+    `turno.py` hoje escapa por acidente, porque le numa sessao e grava
+    noutra, e por isso os tres testes irmaos acima nao alcancam este caminho.
+    A TEC-150 quer ler e gravar na mesma sessao para recalcular o score, e
+    ali `lead.qualificado` pararia de disparar em silencio.
+    """
+    chave = "5511955554444"
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=chave,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(regiao="zona sul", faixa_preco_max_centavos=60_000_000),
+    )
+    await session.commit()
+
+    lido = await ler_estado(session, CANAL, chave)
+    assert lido is not None
+    assert lido.urgencia is None
+
+    devolvido = await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=chave,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(urgencia=Urgencia.ATE_3_MESES),
+    )
+    assert devolvido is not None
+    assert devolvido.urgencia == Urgencia.ATE_3_MESES.value, (
+        "o RETURNING devolveu a instancia velha do identity map, nao a linha gravada"
+    )
+    assert devolvido.regiao == "zona sul"

@@ -656,10 +656,20 @@ async def test_a_travessia_nao_se_repete_nos_turnos_seguintes(
     assert sum(1 for r in registros_do_segundo_turno if "lead.qualificado" in r.getMessage()) == 0
 
 
-async def test_turno_que_nao_grava_estado_nao_avalia_transicao(
+async def test_turno_fora_de_escopo_nao_emite_o_evento(
     session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno, caplog
 ) -> None:
-    """FORA_DE_ESCOPO: `gravar_estado` devolve None, e nao ha depois."""
+    """FORA_DE_ESCOPO com extracao que qualificaria: nada e gravado, e nada e
+    logado.
+
+    O que este teste NAO prova, e o nome antigo prometia: qual das guardas
+    segurou. Sao duas, independentes, e as duas valem neste caminho --
+    `gravar_estado` devolve `None` porque `campos_a_gravar` devolveu dict
+    vazio, e `esta_qualificado(None)` devolve `False` de qualquer forma.
+    Derrubar uma delas sozinha deixa este teste verde. E ele continua valendo
+    a pena: o cenario e o do lead que manda uma piada carregada de criterio, e
+    o que ele fixa e que a piada nao vira lead qualificado.
+    """
     classificador = classificador_fake(Intencao.FORA_DE_ESCOPO, extracao=_EXTRACAO_QUE_QUALIFICA)
     outbound = outbound_fake()
 
@@ -667,3 +677,128 @@ async def test_turno_que_nao_grava_estado_nao_avalia_transicao(
         await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
 
     assert not any("lead.qualificado" in registro.getMessage() for registro in caplog.records)
+
+
+async def test_a_travessia_dispara_no_turno_que_completa_o_quarto_campo(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno, caplog
+) -> None:
+    """O caso com a forma da producao: o lead entrega os campos aos poucos.
+
+    Os dois testes acima qualificam um lead a partir do estado VAZIO, num
+    turno so, entao `antes` neles e sempre `esta_qualificado(None)` -- e
+    trocar a regra inteira por `estado is not None` os deixa verdes. Aqui o
+    turno 2 encontra uma linha que JA EXISTE e que ainda nao qualifica, que e
+    a unica forma de exercitar a regra da RN-05.3 no `antes`.
+    """
+    outbound = outbound_fake()
+
+    # Turno 1: intencao + regiao + urgencia. Falta o orcamento.
+    with caplog.at_level(logging.INFO):
+        await rodar_turno(
+            session,
+            classificador_fake(
+                Intencao.COMPRA,
+                extracao=Extracao(regiao="pinheiros", urgencia=Urgencia.ATE_3_MESES),
+            ),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+        )
+
+    assert not any("lead.qualificado" in r.getMessage() for r in caplog.records), (
+        "tres dos quatro campos nao qualificam"
+    )
+    caplog.clear()
+
+    # Turno 2: so o quarto campo. E aqui que a travessia acontece.
+    with caplog.at_level(logging.INFO):
+        await rodar_turno(
+            session,
+            classificador_fake(
+                Intencao.COMPRA, extracao=Extracao(faixa_preco_max_centavos=50_000_000)
+            ),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+        )
+
+    assert sum(1 for r in caplog.records if "lead.qualificado" in r.getMessage()) == 1
+
+
+async def test_um_turno_ambiguo_nao_desqualifica_nem_reemite_o_evento(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno, caplog
+) -> None:
+    """C1: `INDEFINIDA` no meio da conversa nao apaga a intencao gravada.
+
+    O classificador pode devolver `INDEFINIDA` em qualquer turno -- um
+    "obrigado" basta. Se ela sobrescrevesse `intencao`, o lead qualificado do
+    turno 1 deixaria de ser qualificado no turno 2 e o evento dispararia DE
+    NOVO no turno 3, quando ele voltasse ao assunto. A taxa da RN-17.1
+    contaria travessias, e um lead tagarela produz varias.
+    """
+    outbound = outbound_fake()
+
+    with caplog.at_level(logging.INFO):
+        await rodar_turno(
+            session,
+            classificador_fake(Intencao.COMPRA, extracao=_EXTRACAO_QUE_QUALIFICA),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+        )
+    assert sum(1 for r in caplog.records if "lead.qualificado" in r.getMessage()) == 1
+    caplog.clear()
+
+    # Turno 2: "obrigado" -- o classificador nao consegue dizer nada.
+    with caplog.at_level(logging.INFO):
+        await rodar_turno(
+            session,
+            classificador_fake(Intencao.INDEFINIDA, extracao=Extracao()),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+        )
+    assert not any("lead.qualificado" in r.getMessage() for r in caplog.records)
+
+    estado = await ler_estado(session, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.intencao == Intencao.COMPRA.value, (
+        "um turno ambiguo apagou a intencao que o lead ja tinha declarado"
+    )
+    caplog.clear()
+
+    # Turno 3: o lead volta ao assunto. Ele nunca deixou de estar qualificado.
+    with caplog.at_level(logging.INFO):
+        await rodar_turno(
+            session,
+            classificador_fake(Intencao.COMPRA, extracao=Extracao(vagas=2)),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+        )
+    assert not any("lead.qualificado" in r.getMessage() for r in caplog.records), (
+        "o evento disparou uma segunda vez para o mesmo lead"
+    )
+
+
+async def test_turno_ambiguo_ainda_grava_o_que_o_lead_informou(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """So a chave `intencao` sai do dict. O que o lead disse que procura e
+    fato sobre a fala dele, e nao depende de sabermos se ele compra ou aluga."""
+    await rodar_turno(
+        session,
+        classificador_fake(
+            Intencao.INDEFINIDA,
+            extracao=Extracao(regiao="pinheiros", urgencia=Urgencia.ATE_3_MESES),
+        ),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+    )
+
+    estado = await ler_estado(session, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.regiao == "pinheiros"
+    assert estado.urgencia == Urgencia.ATE_3_MESES.value
+    assert estado.intencao is None, "INDEFINIDA nao e intencao, e nao vai para a coluna"
