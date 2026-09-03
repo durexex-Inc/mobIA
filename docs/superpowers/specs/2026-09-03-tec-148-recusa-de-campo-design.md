@@ -1,6 +1,6 @@
 # TEC-148 — Respeitar recusa de campo sem reperguntar
 
-**Status:** desenhado em 2026-09-03. Não implementado.
+**Status:** desenhado em 2026-09-03; implementado em 2026-09-03, na branch `feat/tec-148-recusa-de-campo`.
 
 **Card:** [TEC-148](https://eduardodurieuxlopes.atlassian.net/browse/TEC-148) — Should (MoSCoW). Origem: RF-05, RN-05.7 (SRS v1.0, em `docs/srs/`). Épico [TEC-144](https://eduardodurieuxlopes.atlassian.net/browse/TEC-144).
 
@@ -75,6 +75,8 @@ A cláusula *"nao repergunte o preenchido nem o ignorado"* já cobre recusa, por
 
 Então `_texto_do_estado` não muda e o custo em tokens é zero além dos 17,6 da D3.
 
+**Correção na revisão final (03/09/2026): `_texto_do_estado` mudou.** A premissa acima — "o campo recusado já vem marcado por outro caminho" — é verdadeira só quando a marca da TEC-257 chegou a ser gravada, e ela **não** é gravada quando o turno da pergunta não tinha nada a gravar (`marcar_perguntados` retorna cedo), quando o turno seguiu o caminho da desambiguação, ou quando a saída foi bloqueada. A própria história da Marina passa por aí: "oi" → `INDEFINIDA`, confiança baixa, desambiguação, nenhuma marca; no turno seguinte ela recusa o orçamento e o agente perguntaria de novo. `_texto_do_estado` passou a renderizar a **união** de `perguntados_sem_resposta` e `campos_recusados`, sob o mesmo marcador. As duas colunas guardam o orçamento sob o mesmo nome canônico (`faixa_preco_max`), então a união não precisa de tradução. **O custo em tokens continua zero:** `_texto_do_estado` não é uma das quatro parcelas que o teto de 655 mede, e o líquido segue em 648,8 com margem de 6,2.
+
 **Consequência declarada: "valor vence marca" continua valendo.** Um campo recusado que tenha valor de um turno anterior renderiza o valor, e o modelo pode usá-lo na conversa. A consequência de qualificação é resolvida em código (D5), não no prompt. Isso é aceito: o lead recusou *dizer* o valor agora, e usar um que ele já disse antes não é pressioná-lo.
 
 ### D5 — O score fecha a divergência que a TEC-150 declarou
@@ -141,6 +143,8 @@ A **RN-05.7** diz, literalmente, que o campo recusado *"não é reperguntado na 
 **A TEC-149 mexe no mesmo território.** Não há seletor de próxima pergunta em código — a escolha é do modelo, guiada pelo prompt, e o desenho da TEC-145 registra que TEC-148 e TEC-149 reescreveriam o mesmo seletor. Esta card não cria seletor; ela subtrai do que o modelo pode perguntar.
 
 **Recusa não é opt-out.** Recusar um campo não silencia o contato, e a card diz isso explicitamente. As duas maquinarias não se falam.
+
+**O caminho de UPDATE-only passa `()` a `campos_a_recusar`, e não `campos`.** É deliberado, e não descuido de simetria com o outro ponto de chamada: aquele ramo só é alcançado quando `campos_a_gravar` devolveu vazio, então no caso `INDEFINIDA` não há campo preenchido neste turno a subtrair, e no caso `FORA_DE_ESCOPO` o valor extraído é descartado de propósito pela guarda da própria `campos_a_gravar` — subtrair por ele apagaria uma recusa usando um valor que ninguém gravou.
 
 ## Fora de escopo
 
