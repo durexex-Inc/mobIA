@@ -674,6 +674,9 @@ async def registrar_recalculo(
         # existe, e a TEC-150 prescreve que ate la o fator contribua zero.
         # Quando ela existir, este e o unico ponto que muda.
         imoveis_compativeis=0,
+        # TEC-148: a recusa sai da mesma linha que o lock acabou de reler,
+        # entao nao ha consulta extra e nao ha risco de ler estado velho.
+        recusados=frozenset(estado.campos_recusados or ()),
     )
 
     ultimo = (
