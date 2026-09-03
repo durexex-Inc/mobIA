@@ -3,6 +3,7 @@
 TEC-152.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -507,3 +508,46 @@ async def test_a_ordem_da_trilha_segue_a_escrita_e_nao_o_inicio_da_transacao(
     # e daria `total_anterior=60` com causas URGENCIA e ENGAJAMENTO.
     assert terceira.total_anterior == 45
     assert terceira.causas == ["ENGAJAMENTO"]
+
+
+async def test_sem_o_for_update_dois_turnos_da_mesma_conversa_nao_se_serializam(
+    session, session_factory
+) -> None:
+    """D7: o `SELECT ... FOR UPDATE` e o unico ponto que serializa dois turnos
+    concorrentes da mesma conversa, e sem teste ele pode sumir em silencio.
+
+    A deduplicacao do ARQ e por mensagem, nao por conversa: duas falas do
+    mesmo lead chegando juntas produzem dois jobs em paralelo. Sem o lock, os
+    dois leem o mesmo "ultimo registro", ambos veem mudanca e ambos gravam --
+    dois registros com o mesmo `total_anterior`.
+
+    Aqui `segurando` faz o papel do turno que ja esta dentro da secao critica.
+    Com o lock, `registrar_recalculo` bloqueia no primeiro statement e o
+    `wait_for` estoura; sem ele, a chamada atravessa na hora e nao ha
+    `TimeoutError`.
+    """
+    await _qualificacao(session)
+    await _mensagem(session)
+
+    async with session_factory() as segurando, session_factory() as bloqueada:
+        await segurando.execute(
+            select(LeadQualification)
+            .where(
+                LeadQualification.channel == CANAL,
+                LeadQualification.conversation_key == CONVERSA,
+            )
+            .with_for_update()
+        )
+        try:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(
+                    registrar_recalculo(bloqueada, channel=CANAL, conversation_key=CONVERSA),
+                    timeout=1,
+                )
+        finally:
+            # Solta o lock antes de qualquer outra coisa: sem isto o proximo
+            # teste do arquivo esperaria por ele ate o timeout do pytest.
+            await segurando.rollback()
+            await bloqueada.rollback()
+
+    assert (await session.scalars(select(LeadScoreAudit))).all() == []
