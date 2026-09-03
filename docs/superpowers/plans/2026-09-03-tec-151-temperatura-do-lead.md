@@ -244,7 +244,7 @@ def temperatura_de(score: Score, *, qualificado: bool, forcada: bool) -> Tempera
 - [ ] **Step 4: Rode o teste para confirmar que passa**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/unit/test_temperatura.py -v`
-Expected: PASS, 12 testes (5 da parametrização da faixa + 3 do teto + 4 avulsos).
+Expected: PASS, 13 testes (5 da parametrização da faixa + 1 do teto `MORNO` + 3 do teto que só morde + 4 avulsos).
 
 - [ ] **Step 5: Rode os três gates**
 
@@ -606,7 +606,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from mobia.domain.agente.schemas import FormaPagamento, Intencao, Urgencia
+from mobia.domain.agente.schemas import Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
 
 # Os mesmos valores que `CANAL_AGENTE`/`CONVERSA_AGENTE` em `tests/conftest.py`,
@@ -1005,6 +1005,8 @@ git commit -m "refactor(TEC-151): o recalculo passa a distinguir sem sujeito de 
 
 Acrescente a `tests/integration/test_temperatura_no_turno.py`:
 
+Acrescente `FormaPagamento` ao import de `mobia.domain.agente.schemas` no topo do arquivo — a Task 3 não o importou porque nenhum teste dela o usava, e um import não usado reprova o `ruff check`.
+
 ```python
 import uuid
 
@@ -1017,18 +1019,31 @@ from mobia.domain.messages.status import MessageStatus
 from mobia.infra.crypto import aad_de, encrypt
 
 
-async def _mensagem(session, *, texto: str = "oi") -> None:
-    """Uma fala de ENTRADA nao bloqueada, que e o que o engajamento conta."""
+async def _mensagem(session) -> None:
+    """Uma fala de ENTRADA nao bloqueada, que e o que o engajamento conta.
+
+    Copia exata do helper de mesmo nome em `test_auditoria_score.py`, menos os
+    parametros que este arquivo nao usa. As quatro colunas de identificacao do
+    provedor (`provider_message_id`, `sender_external_id`,
+    `recipient_external_id`, `raw_payload`) nao sao decorativas -- a tabela as
+    exige, e omiti-las quebra o INSERT.
+
+    `MessageContentType.TEXTO`, com O: o enum e em portugues.
+    """
     identificador = uuid.uuid4()
     session.add(
         Message(
             id=identificador,
             channel=CANAL,
+            provider_message_id=f"wamid.{identificador.hex[:10]}",
+            sender_external_id=CONVERSA,
+            recipient_external_id="222222222",
             conversation_key=CONVERSA,
-            direction=MessageDirection.INBOUND,
             role=MessageRole.LEAD,
-            content_type=MessageContentType.TEXT,
-            text_body=encrypt(texto, aad_de(identificador, "text_body")),
+            direction=MessageDirection.INBOUND,
+            content_type=MessageContentType.TEXTO,
+            text_body=encrypt("oi", aad_de(identificador, "text_body")),
+            raw_payload=None,
             status=MessageStatus.PROCESSED,
         )
     )
