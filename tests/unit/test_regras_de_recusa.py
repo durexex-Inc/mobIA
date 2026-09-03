@@ -22,6 +22,23 @@ def test_o_nome_do_orcamento_e_traduzido_para_a_forma_canonica():
     assert campos_a_recusar(["faixa_preco_expressao"], []) == {"faixa_preco_max"}
 
 
+def test_a_recusa_do_orcamento_sobrevive_sob_o_nome_QUE_O_PROMPT_RENDERIZA():
+    """O cenario titular da card, e o unico vocabulario que o modelo VE.
+
+    Nada no prompt diz qual vocabulario `recusou` aceita. O que o modelo le a
+    cada turno, em `_texto_do_estado`, e `faixa_preco_min`/`faixa_preco_max`
+    -- entao e por esses nomes que ele tende a relatar. Antes desta linha em
+    `_NOME_DA_MARCA` os dois eram descartados como vocabulario desconhecido,
+    e a Marina que dissesse "prefiro nao falar de dinheiro" continuava sendo
+    perguntada sobre dinheiro.
+
+    Os dois extremos colapsam num nome so, como as outras tres formas:
+    orcamento e UM assunto.
+    """
+    assert campos_a_recusar(["faixa_preco_max"], []) == {"faixa_preco_max"}
+    assert campos_a_recusar(["faixa_preco_min"], []) == {"faixa_preco_max"}
+
+
 def test_nome_fora_do_vocabulario_e_descartado_e_nao_adivinhado():
     """Recusa inventada faz o agente parar de perguntar um obrigatorio e
     `esta_qualificado` devolver False para sempre, em silencio. Descartar e o

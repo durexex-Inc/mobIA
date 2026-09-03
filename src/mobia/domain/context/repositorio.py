@@ -51,14 +51,26 @@ _CAMPOS_DA_EXTRACAO = frozenset(campo.name for campo in fields(Extracao))
 # A traducao mora aqui porque aqui e onde os tres vocabularios se encontram.
 # O alvo e `faixa_preco_max`, que e o nome que a marca tinha antes desta
 # branch, quando os tres coincidiam -- entao o texto do prompt volta a ser
-# byte-identico ao de antes tambem neste caminho. `faixa_preco_min` de
-# proposito nao recebe marca: orcamento e UM assunto, e duas linhas de marca
-# para uma pergunta so gastariam prompt dizendo a mesma coisa.
+# byte-identico ao de antes tambem neste caminho. Nenhum nome sai como
+# `faixa_preco_min`: orcamento e UM assunto, e duas linhas de marca para uma
+# pergunta so gastariam prompt dizendo a mesma coisa.
+#
+# TEC-148: as duas chaves do PROMPT entram tambem. Nada diz ao modelo qual
+# dos vocabularios `perguntou`/`recusou` aceitam, e o que ele le a cada turno
+# e `faixa_preco_min`/`faixa_preco_max` -- entao e por esses nomes que ele
+# tende a relatar. Sem as duas linhas abaixo, uma recusa do orcamento (o
+# cenario titular da card) era descartada como vocabulario desconhecido.
+# `faixa_preco_max` mapeia para si mesmo. A linha parece redundante e nao e:
+# sem ela o nome cai no `in _CAMPOS_DA_EXTRACAO` de `_marca_de`, e nem
+# `faixa_preco_max` nem `faixa_preco_min` sao campos de `Extracao` -- os dois
+# voltariam a ser descartados. Nao apague.
 _MARCA_DO_ORCAMENTO = "faixa_preco_max"
 _NOME_DA_MARCA = {
     "faixa_preco_expressao": _MARCA_DO_ORCAMENTO,
     "faixa_preco_min_centavos": _MARCA_DO_ORCAMENTO,
     "faixa_preco_max_centavos": _MARCA_DO_ORCAMENTO,
+    "faixa_preco_min": _MARCA_DO_ORCAMENTO,
+    "faixa_preco_max": _MARCA_DO_ORCAMENTO,
 }
 
 
