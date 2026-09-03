@@ -117,6 +117,26 @@ class LeadQualification(Base):
         ARRAY(String(32)), nullable=True
     )
 
+    # TEC-148, RN-05.7. Os campos que o lead se negou a informar.
+    #
+    # O nome vem do modelo de dados do SRS (`campos_recusados text[]`), e nao
+    # de `recusados`, que e o nome do PARAMETRO que `esta_qualificado` expoe
+    # desde a TEC-147. Coluna e parametro nao precisam coincidir.
+    #
+    # Coluna propria e nao reuso de `perguntados_sem_resposta`: silencio e
+    # recusa sao fatos diferentes. Silencio e "pode ser que ele responda
+    # depois"; recusa e "ele disse que nao". Colapsa-los tornaria
+    # inqualificavel para sempre todo lead que apenas ainda nao respondeu.
+    #
+    # `NULL` e `{}` nao sao sinonimos, como na coluna vizinha: `NULL` e
+    # "linha anterior a esta card, ninguem registrava", `{}` e "registrava, e
+    # nao havia recusa". Quem le trata os dois iguais (`or ()`), e nunca grava
+    # `NULL` querendo dizer vazio.
+    #
+    # Em claro, como o resto desta tabela: e o que o sistema concluiu, nao o
+    # que o lead escreveu.
+    campos_recusados: Mapped[list[str] | None] = mapped_column(ARRAY(String(32)), nullable=True)
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
