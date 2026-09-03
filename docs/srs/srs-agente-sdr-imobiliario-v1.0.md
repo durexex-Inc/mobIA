@@ -196,6 +196,7 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 - RN-06.2: Temperatura derivada do score: `QUENTE` ≥ 70, `MORNO` 40–69, `FRIO` < 40.
 - RN-06.3: Gatilhos que forçam `QUENTE` independentemente do score: pedido explícito de visita, pedido de falar com corretor, menção a proposta ou contrato.
 - RN-06.4: Todo recálculo grava um registro de auditoria com score anterior, novo, fatores e timestamp.
+  - **Emenda E-01 (TEC-152, 02/09/2026):** o registro é gravado quando o resultado do recálculo **difere do último registrado**, e não a cada recálculo. A comparação é sobre os cinco fatores, não sobre o total — completude +15 com urgência −15 deixa o total igual e é justamente o caso que a trilha existe para explicar. O gancho roda a cada turno com estado, e a maioria dos recálculos não move nada: uma linha por mensagem de entrada enterraria as transições no meio das duplicatas. A consequência declarada é que a trilha não prova que um recálculo *aconteceu*, só que o resultado *mudou*.
 - RN-06.5: Lead `QUENTE` dispara notificação ao corretor em até 60 segundos (RF-16), mesmo sem agendamento.
 
 **Critérios de aceite:**
