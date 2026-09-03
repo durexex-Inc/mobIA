@@ -132,12 +132,16 @@ def calcular_score(
     recalculo vive e decisao da TEC-151/TEC-152, mas a forma do fator e
     decidida aqui, e por isso a lacuna e desta card.
 
-    **O total, porem, nao e monotono, e deixou de ser nesta funcao a partir
-    da TEC-148.** Ate ela, nenhum fator podia cair e o score de um lead era
-    nao-decrescente ao longo da vida da conversa. Uma recusa agora tira 5
-    pontos da completude (ver `recusados` abaixo), e a queda e deliberada --
-    a trilha da TEC-152 a registra com causa `CAMPOS_OBRIGATORIOS`. Quem
-    ordenar a fila nao pode supor que o numero de ontem e um piso.
+    **O total nunca foi monotono, e a TEC-148 abriu mais uma forma de ele
+    cair.** `urgencia` e `capacidade` ja caiam antes desta branch, porque
+    `campos_a_gravar` e "mais novo vence" -- a docstring dela diz isso --, e
+    o lead que informa IMEDIATA e depois SEM_PRESSA perde os 25 pontos de
+    urgencia; a docstring de `causas_do_recalculo` usa uma queda de urgencia
+    como exemplo. O que so subia era a **completude**, porque valor gravado
+    nunca e apagado -- e e ela que a recusa agora derruba em 5 pontos (ver
+    `recusados` abaixo), com a trilha da TEC-152 registrando a queda sob
+    `CAUSA_CAMPOS_OBRIGATORIOS`. Quem ordenar a fila nao pode supor que o
+    numero de ontem e um piso.
 
     `imoveis_compativeis` tem default zero porque a busca de imoveis
     (TEC-158) nao existe, e a card prescreve que ate la o fator contribua
