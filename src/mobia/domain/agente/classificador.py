@@ -153,7 +153,7 @@ SCHEMA_DA_RESPOSTA: dict[str, Any] = {
         # TEC-240 recusou reordenar campos do schema porque muda a ordem de
         # geracao num caminho pago em todo turno de producao.
         #
-        # Custou 14,75 tokens do orcamento, e o teto de 655 nao se mexeu --
+        # Custou 17,6 tokens do orcamento, e o teto de 655 nao se mexeu --
         # ver a docstring de `test_a_margem_do_orcamento_do_prompt_e_deliberada`.
         "recusou": {"type": "array", "items": {"type": "string"}},
     },
