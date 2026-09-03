@@ -43,6 +43,7 @@ def test_schema_e_estrito() -> None:
         "resposta",
         "extracao",
         "perguntou",
+        "recusou",
     }
 
 
