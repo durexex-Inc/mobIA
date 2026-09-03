@@ -31,8 +31,10 @@ A história é da Marina, que não quer falar de dinheiro logo na primeira conve
 Migration `0013`, em `lead_qualification`:
 
 ```python
-recusados: Mapped[list[str] | None] = mapped_column(ARRAY(String(32)), nullable=True)
+campos_recusados: Mapped[list[str] | None] = mapped_column(ARRAY(String(32)), nullable=True)
 ```
+
+**O nome vem do SRS**, que já o fixou no modelo de dados: `campos_recusados | text[] | Não | RN-05.7`. O repo divergiu daquela tabela em vários pontos — `regiao` é `String(120)` e não `regioes text[]`, a urgência é faixa e não `urgencia_dias`, e `completude_pct` nunca existiu porque a TEC-147 decidiu derivar em vez de gravar —, mas cada uma dessas divergências foi decisão desenhada. Aqui não há razão para divergir, e o nome do SRS é mais descritivo que um `recusados` pelado. **O parâmetro que `esta_qualificado` já expõe continua sendo `recusados`**, que a TEC-147 escolheu; coluna e parâmetro não precisam ter o mesmo nome, e renomear a assinatura dela seria mexer em card entregue.
 
 **`NULL` e `{}` não são sinônimos**, pela razão que a TEC-257 documentou para a coluna vizinha: `NULL` é *"linha anterior a esta card, ninguém registrava"* e `{}` é *"registrava, e não havia recusa"*. Quem lê trata os dois igual (`or ()`); quem grava nunca escreve `NULL` querendo dizer vazio. Sem essa distinção, uma linha antiga e uma linha nova sem recusa ficariam indistinguíveis, e a próxima card que precisar saber "este lead já foi avaliado para recusa?" não teria como.
 
@@ -89,9 +91,9 @@ Sem isso, `esta_qualificado` e o score contariam histórias contrárias sobre o 
 2. `_recusou` normaliza a forma sem levantar e sem validar nomes.
 3. `campos_a_recusar(recusou, preenchidos)` decide o que acrescentar: os nomes canônicos que o modelo relatou, **menos** os que este turno preencheu. É a regra do cenário 2 da card, e mora ao lado de `campos_a_gravar` e `campos_a_marcar` porque o runner do eval precisa das três.
 4. `gravar_estado` acrescenta por **união em SQL** e remove o que chegou com valor. A união mora no SQL pela mesma razão que a de `perguntados_sem_resposta`: dois turnos concorrentes da mesma conversa leriam o mesmo array, cada um uniria o seu, e o mais lento sobrescreveria em silêncio — perda que não aparece em teste nenhum.
-5. `esta_qualificado(estado, frozenset(estado.recusados or ()))` e `calcular_score(..., recusados=frozenset(...))` leem a coluna. **`frozenset` e não `set`:** a assinatura que a TEC-147 escreveu é `recusados: frozenset[str] = frozenset()`, e passar `set` reprova no mypy.
+5. `esta_qualificado(estado, frozenset(estado.campos_recusados or ()))` e `calcular_score(..., recusados=frozenset(estado.campos_recusados or ()))` leem a coluna. **`frozenset` e não `set`:** a assinatura que a TEC-147 escreveu é `recusados: frozenset[str] = frozenset()`, e passar `set` reprova no mypy. E `or ()` porque `NULL` e `{}` são lidos igual (D1).
 
-**Sobre os dois nomes.** `recusou` é o campo do schema — o modelo relatando o que fez neste turno — e `recusados` é a coluna, que acumula. O par espelha `perguntou` / `perguntados_sem_resposta`, que já existe pelas mesmas razões, e não é inconsistência para "consertar": um é evento, o outro é estado.
+**Sobre os três nomes, que não são inconsistência para "consertar".** `recusou` é o campo do schema — o modelo relatando o que fez neste turno. `campos_recusados` é a coluna, que acumula, e o nome vem do SRS. `recusados` é o parâmetro que `esta_qualificado` já expõe desde a TEC-147. O par evento/estado espelha `perguntou` / `perguntados_sem_resposta`, que já existe pelas mesmas razões.
 
 **Os nomes passam por `_canonico` antes de qualquer comparação**, e é a parte que já custou uma card a este projeto. O orçamento tem seis nomes; a coluna grava sob o mesmo que `CAMPOS_OBRIGATORIOS` usa, e um teste pina os dois lados.
 
@@ -116,9 +118,15 @@ Sem isso, `esta_qualificado` e o score contariam histórias contrárias sobre o 
 
 TDD, e cada teste verificado por mutação: trocar a subtração por união em `campos_a_recusar` tem de deixar vermelho exatamente o teste do cenário 2. Nas cards anteriores, toda rodada de revisão perdida foi teste que passava com o código certo ou errado.
 
+## Emenda ao SRS
+
+A **RN-05.7** diz, literalmente, que o campo recusado *"não é reperguntado na mesma conversa"*. A D2 entrega recusa com escopo de lead, então isto é desvio da regra e não interpretação dela. Entra em `docs/srs/srs-agente-sdr-imobiliario-v1.0.md` como item aninhado sob a RN-05.7, sem tocar o texto de 22/08. A regra não tem emenda hoje, logo é `E-01`:
+
+> **Emenda E-01 (TEC-148, 03/09/2026)** — a recusa vale para o **lead**, e não para a conversa. Não há fronteira de conversa no sistema: `conversation_key` é o id externo do lead, e `messages`, `lead_qualification`, `conversation_summaries` e `optout_events` todos o usam com esse sentido. Introduzir a entidade de conversa é maior que esta card, e fica deferido. A consequência é que o campo recusado não é reperguntado **nunca**, e não só na conversa corrente — erro na direção de não incomodar o lead.
+
 ## Lacunas declaradas
 
-**O cenário 4 fica para depois.** Ver D2. Recusa vale para o lead, não para a conversa, porque não há conversa no schema. Deferido pelo usuário, não recusado.
+**O cenário 4 fica para depois.** Ver D2 e a emenda acima. Recusa vale para o lead, não para a conversa, porque não há conversa no schema. Deferido pelo usuário, não recusado.
 
 **Quem decide recusa é o modelo, e não há guarda em código contra recusa inventada.** É o erro caro desta card: um falso positivo faz o agente parar de perguntar um obrigatório e `esta_qualificado` devolver False para sempre, sem log de alarme e sem o lead perceber. Ao contrário do opt-out, cuja detecção é determinística e testável sem modelo, aqui a única defesa é a medição de acurácia dos evals — e nenhum turno do corpus anota recusa hoje.
 
