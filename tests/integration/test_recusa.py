@@ -248,6 +248,71 @@ async def test_a_recusa_reabre_a_borda_de_qualificacao_e_reemite_o_evento(
     assert sum("lead.qualificado" in r.getMessage() for r in caplog.records) == 1
 
 
+async def test_o_ultimo_obrigatorio_chegando_junto_de_uma_recusa_nao_emite(
+    session,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    caplog,
+) -> None:
+    """Mata a mutacao do SEGUNDO ponto de chamada de `_recusados_de`.
+
+    `test_a_recusa_reabre_a_borda...` cobre o primeiro (o de `antes`), mas
+    nao o de `depois_do_estado`: naquele roteiro, todo turno em que `antes` e
+    False tem o estado seguinte de fato qualificado, entao trocar
+    `_recusados_de(depois_do_estado)` por `frozenset()` nao muda nada e a
+    suite fica verde com a feature meio morta.
+
+    Este e o caso que separa os dois: o turno preenche o ultimo obrigatorio
+    que faltava E recusa um que ja estava preenchido, no mesmo turno. Antes
+    dele o lead nao estava qualificado (faltava o orcamento) e depois dele
+    continua nao estando (a regiao esta recusada), mesmo com as quatro
+    colunas cheias. Com a mutacao, `esta_qualificado` ignora a recusa, ve
+    quatro campos preenchidos e emite `lead.qualificado` para um lead que
+    nao esta qualificado -- a metrica RN-17.1 contando quem nunca cruzou a
+    borda.
+    """
+    outbound = outbound_fake()
+
+    def turno(extracao, recusou=()):
+        return rodar_turno(
+            session,
+            classificador_fake(
+                intencao=Intencao.COMPRA,
+                confianca=Decimal("0.95"),
+                extracao=extracao,
+                recusou=recusou,
+            ),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+        )
+
+    # Turno A: tudo menos o orcamento. Nao qualifica, nao emite.
+    with caplog.at_level(logging.INFO):
+        await turno(Extracao(regiao="vila mariana", urgencia=Urgencia.ATE_3_MESES))
+    assert sum("lead.qualificado" in r.getMessage() for r in caplog.records) == 0
+    caplog.clear()
+
+    # Turno B: o orcamento chega e a regiao e recusada na mesma fala. O
+    # `array_remove` so tira do array o que ESTE turno respondeu (o
+    # orcamento), entao a recusa da regiao fica de pe.
+    with caplog.at_level(logging.INFO):
+        await turno(Extracao(faixa_preco_max_centavos=50_000_000), recusou=("regiao",))
+
+    linha = (await session.scalars(select(LeadQualification))).one()
+    assert linha.campos_recusados == ["regiao"]
+    assert linha.regiao == "vila mariana", (
+        "a recusa nao apaga o valor -- e por isso que so `esta_qualificado` "
+        "sabe que o lead nao esta qualificado"
+    )
+    assert sum("lead.qualificado" in r.getMessage() for r in caplog.records) == 0, (
+        "quatro colunas cheias com uma recusa sobre uma delas nao e lead qualificado"
+    )
+
+
 async def test_o_turno_grava_a_recusa_que_o_modelo_relatou(
     session,
     rodar_turno,
@@ -263,6 +328,39 @@ async def test_o_turno_grava_a_recusa_que_o_modelo_relatou(
             confianca=Decimal("0.95"),
             extracao=Extracao(regiao="vila mariana"),
             recusou=("faixa_preco_expressao",),
+        ),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+    )
+
+    linha = (await session.scalars(select(LeadQualification))).one()
+    assert linha.campos_recusados == ["faixa_preco_max"]
+
+
+async def test_a_recusa_relatada_sob_o_nome_do_prompt_chega_na_coluna(
+    session,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """Fim a fim para o vocabulario que o modelo de fato ve.
+
+    `test_o_turno_grava_a_recusa_que_o_modelo_relatou` usa
+    `faixa_preco_expressao`, o nome do SCHEMA_DA_EXTRACAO -- mas o modelo nao
+    le esse nome no estado, le `faixa_preco_max`, que e o que
+    `_texto_do_estado` renderiza a cada turno. Nada no prompt diz qual dos
+    dois `recusou` aceita. Este teste percorre o caminho pelo nome provavel.
+    """
+    await rodar_turno(
+        session,
+        classificador_fake(
+            intencao=Intencao.COMPRA,
+            confianca=Decimal("0.95"),
+            extracao=Extracao(regiao="vila mariana"),
+            recusou=("faixa_preco_max",),
         ),
         outbound_fake(),
         resumidor_fake(),
