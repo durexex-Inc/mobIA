@@ -6,9 +6,12 @@ Sem FK para `messages` nem para `lead_qualification`, pela razao da 0010: a
 retencao da trilha (12 meses, RNF-18) nao pode ser encurtada por cascata da
 limpeza de outra tabela.
 
-O CHECK existe porque `total_novo` e denormalizado de proposito -- e por ele
-que se ordena e se filtra --, e sem a restricao um fator esquecido na soma
-produz uma trilha que parece consistente e nao e.
+O CHECK do total existe porque `total_novo` e denormalizado de proposito -- e
+por ele que se ordena e se filtra --, e sem a restricao um fator esquecido na
+soma produz uma trilha que parece consistente e nao e. O CHECK de `causas`
+fecha a outra metade da mesma invariante: tupla vazia e o sinal de NAO gravar,
+entao uma linha que afirma mudanca sem nomear causa e a mesma forma de mentira
+que o CHECK do total impede.
 
 **`clock_timestamp()` e nao `now()`.** `now()` e `transaction_timestamp()`,
 congelado no primeiro statement da transacao; o INSERT desta tabela acontece no
@@ -79,6 +82,7 @@ def upgrade() -> None:
             "total_novo = completude + urgencia + catalogo + engajamento + capacidade",
             name="ck_lead_score_audit_total",
         ),
+        sa.CheckConstraint("cardinality(causas) > 0", name="ck_lead_score_audit_causas"),
     )
     op.create_index(
         "ix_lead_score_audit_lead",

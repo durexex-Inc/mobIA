@@ -65,6 +65,22 @@ async def test_o_check_recusa_um_total_que_nao_soma(session) -> None:
     await session.rollback()
 
 
+async def test_o_check_recusa_causas_vazias(session) -> None:
+    """Tupla vazia e o sinal de NAO gravar, entao uma linha sem causa nunca
+    deveria ter chegado ao INSERT.
+
+    `nullable=False` so cobre metade do que o modelo afirma ("nunca NULL e
+    nunca vazio"). Uma linha que diz que o score mudou sem nomear o que se
+    moveu e a mesma forma de mentira que o CHECK do total impede.
+    """
+    session.add(linha(causas=[]))
+
+    with pytest.raises(IntegrityError):
+        await session.commit()
+
+    await session.rollback()
+
+
 async def test_update_e_recusado_pela_trigger(session) -> None:
     """Cenario 3 da card: "quando se tenta altera-lo, a operacao e recusada"."""
     session.add(linha())

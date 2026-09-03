@@ -50,6 +50,8 @@ Migration `0012`.
 
 **Só os fatores do score novo são gravados, não os do anterior.** Com "grava só quando muda" (D3), o registro anterior da mesma conversa *é* o score anterior — guardar os dois criaria duas fontes para o mesmo fato, que é o defeito que a TEC-146 gastou uma card inteira consertando. `total_anterior` fica mesmo assim: é o que a card nomeia, e poupa a segunda leitura no caso comum de só se querer o delta.
 
+**`CHECK (cardinality(causas) > 0)`.** A tabela diz que `causas` nunca é vazio, e `NOT NULL` só cobre metade disso. Uma linha que afirma que o score mudou sem nomear o que se moveu é a mesma forma de mentira que o `CHECK` do total impede — e, pela D4, uma tupla vazia é o sinal de *não gravar*, então essa linha nunca deveria ter chegado ao `INSERT`.
+
 **`CHECK (total_novo = completude + urgencia + catalogo + engajamento + capacidade)`.** O total é denormalizado de propósito — é por ele que se ordena e se filtra —, e a restrição é o que impede a denormalização de mentir. Sem ela, um fator esquecido na soma produz uma trilha que parece consistente e não é.
 
 **O teto de 95 não vira `CHECK`.** Ele se move quando a TEC-158 acender o catálogo e quando os pesos virarem configuração (RF-19), e engessá-lo no banco custaria uma migration para mudar uma constante de módulo. A D3 da TEC-150 já declarou que a escala não chega a 100; o banco não precisa ter opinião sobre isso.
