@@ -307,6 +307,61 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
     return conhecidos - {_marca_de(nome) or nome for nome in preenchidos}
 
 
+def campos_a_recusar(recusou: Iterable[str], preenchidos: Iterable[str]) -> set[str]:
+    """Os campos que o lead se negou a informar neste turno.
+
+    Mesma forma de `campos_a_marcar` e pelos mesmos motivos: e regra unica,
+    compartilhada entre producao e o runner do eval, e os nomes passam por
+    `_marca_de` antes de qualquer coisa porque o orcamento tem varios nomes
+    neste repo e o unico que o modelo pode dizer nao e coluna.
+
+    **Nome fora do vocabulario e descartado, nao adivinhado.** Aqui isso pesa
+    mais que na marca: recusa inventada faz o agente parar de perguntar um
+    campo obrigatorio e `esta_qualificado` devolver False para sempre, sem
+    alarme e sem o lead perceber. Descartar custa uma pergunta a mais.
+
+    **`preenchidos` subtrai, e e o cenario 2 da card:** se o lead informou o
+    campo neste turno, ele nao esta recusando o campo. Vale para os dois
+    extremos do orcamento -- "a partir de 300 mil" preenche so o minimo e
+    responde a pergunta sobre orcamento.
+
+    A subtracao aqui cobre o turno corrente. Desfazer uma recusa ANTERIOR
+    quando o valor chega e feito no SQL de `gravar_estado`, que e o unico
+    lugar que ve o array acumulado.
+    """
+    conhecidos: set[str] = set()
+    ignorados: list[str] = []
+    for nome in dict.fromkeys(recusou):
+        marca = _marca_de(nome)
+        if marca is None:
+            ignorados.append(nome)
+        else:
+            conhecidos.add(marca)
+
+    if ignorados:
+        plausiveis = sorted({n for n in ignorados if _NOME_PLAUSIVEL.fullmatch(n)})
+        log.warning(
+            "estado.campo_recusado_desconhecido",
+            nomes=plausiveis,
+            descartados=len(ignorados) - len(plausiveis),
+        )
+
+    return conhecidos - {_marca_de(nome) or nome for nome in preenchidos}
+
+
+def _sem_os_respondidos(expressao: Any, respondidos: list[str]) -> Any:
+    """Encadeia `array_remove` para tirar do array cada campo respondido.
+
+    Existe como funcao para o laco nao poluir o dicionario do `set_`, que ja
+    e o trecho mais denso de `gravar_estado`. Postgres nao tem operador de
+    subtracao de array; `array_remove` e o built-in, e remove todas as
+    ocorrencias do elemento.
+    """
+    for nome in respondidos:
+        expressao = func.array_remove(expressao, nome)
+    return expressao
+
+
 async def gravar_estado(
     session: AsyncSession,
     *,
@@ -315,6 +370,7 @@ async def gravar_estado(
     intencao: Intencao,
     extracao: Extracao,
     perguntou: Iterable[str] = (),
+    recusou: Iterable[str] = (),
 ) -> LeadQualification | None:
     """Upsert do estado de qualificacao. `None` no campo nao apaga o que havia.
 
@@ -338,6 +394,10 @@ async def gravar_estado(
     `perguntou` tem default de proposito: nenhum chamador antigo precisa saber
     da TEC-257 para continuar funcionando, e nao marcar e o comportamento
     seguro.
+
+    `recusou` tem default de proposito, como `perguntou`: nenhum chamador
+    antigo precisa saber da TEC-148 para continuar funcionando, e nao
+    registrar recusa e o comportamento seguro.
     """
     campos = campos_a_gravar(intencao, extracao)
     if not campos:
@@ -349,6 +409,10 @@ async def gravar_estado(
         return None
 
     marcados = sorted(campos_a_marcar(perguntou, campos))
+    recusados = sorted(campos_a_recusar(recusou, campos))
+    # Os nomes que este turno preencheu, na forma canonica da marca -- e o que
+    # sai do array acumulado no SQL abaixo.
+    respondidos = sorted({_marca_de(nome) or nome for nome in campos})
 
     valores: dict[str, Any] = {
         "channel": channel,
@@ -358,6 +422,9 @@ async def gravar_estado(
         # anterior a TEC-257, ninguem marcava", e um insert que omitisse a
         # coluna criaria uma linha nova com a semantica de linha antiga.
         "perguntados_sem_resposta": marcados,
+        # Sempre presente, mesmo vazio, pela mesma razao da coluna vizinha:
+        # `NULL` esta reservado para "linha anterior a esta card".
+        "campos_recusados": recusados,
         **campos,
     }
     statement = pg_insert(LeadQualification).values(valores)
@@ -384,6 +451,22 @@ async def gravar_estado(
                     LeadQualification.perguntados_sem_resposta,
                     literal_column("'{}'::varchar[]"),
                 ).op("||")(statement.excluded.perguntados_sem_resposta),
+                # Uniao em SQL pela razao da coluna vizinha: dois turnos
+                # concorrentes da mesma conversa leriam o mesmo array, cada um
+                # uniria o seu, e o mais lento sobrescreveria em silencio.
+                #
+                # `array_remove` encadeado tira o que este turno respondeu --
+                # o cenario 2 da card, atravessando turnos. Ele remove TODAS
+                # as ocorrencias, entao duplicata no array nao sobrevive; e
+                # sao no maximo os campos de `Extracao`, entao a cadeia e
+                # curta e conhecida.
+                "campos_recusados": _sem_os_respondidos(
+                    func.coalesce(
+                        LeadQualification.campos_recusados,
+                        literal_column("'{}'::varchar[]"),
+                    ).op("||")(statement.excluded.campos_recusados),
+                    respondidos,
+                ),
             },
         )
         .returning(LeadQualification)

@@ -5,8 +5,9 @@ TEC-148.
 
 from sqlalchemy import select
 
-from mobia.domain.agente.schemas import Intencao, Urgencia
+from mobia.domain.agente.schemas import Extracao, Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.context.repositorio import gravar_estado
 
 CANAL = "whatsapp"
 CONVERSA = "5511911112222"
@@ -47,3 +48,87 @@ async def test_null_e_vazio_sao_estados_diferentes_na_coluna(session) -> None:
     await session.commit()
     vazia = (await session.scalars(select(LeadQualification))).one()
     assert vazia.campos_recusados == []
+
+
+async def test_gravar_estado_acumula_a_recusa(session) -> None:
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(regiao="vila mariana"),
+        recusou=["faixa_preco_expressao"],
+    )
+    await session.commit()
+
+    linha = (await session.scalars(select(LeadQualification))).one()
+    assert linha.campos_recusados == ["faixa_preco_max"]
+
+
+async def test_o_valor_posterior_desfaz_a_recusa(session) -> None:
+    """Cenario 2 da card, atravessando turnos: a recusa de um turno anterior
+    sai quando o valor chega, e isso e feito no SQL porque so ele ve o array
+    acumulado."""
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(regiao="vila mariana"),
+        recusou=["faixa_preco_expressao"],
+    )
+    await session.commit()
+
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(faixa_preco_max_centavos=60_000_000),
+    )
+    await session.commit()
+
+    linha = (await session.scalars(select(LeadQualification))).one()
+    assert linha.campos_recusados == []
+    assert linha.faixa_preco_max_centavos == 60_000_000
+
+
+async def test_recusas_de_turnos_diferentes_se_acumulam(session_factory) -> None:
+    """Uniao e `array_remove` compoem entre turnos, em sessoes diferentes.
+
+    **O que este teste NAO prova:** que a uniao precisa morar no SQL. As
+    operacoes abaixo sao sequenciais, e sob READ COMMITTED a segunda leitura
+    ja ve o commit da primeira -- uma uniao feita em Python passaria
+    identicamente. A perda concorrente (duas sessoes que leem o mesmo array
+    antes de qualquer uma gravar) nao tem teste direto aqui: forcar o
+    interleaving exigiria `asyncio.gather` sem garantia de ordem, e teste
+    flaky e pior que teste ausente.
+
+    A uniao em SQL segue justificada pela mesma razao que a da coluna irma
+    `perguntados_sem_resposta` (TEC-257), cuja corrida tambem nunca foi
+    testada. Lacuna declarada no desenho.
+    """
+    async with session_factory() as a, session_factory() as b:
+        await gravar_estado(
+            a,
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            intencao=Intencao.COMPRA,
+            extracao=Extracao(regiao="vila mariana"),
+            recusou=["faixa_preco_expressao"],
+        )
+        await a.commit()
+
+        await gravar_estado(
+            b,
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            intencao=Intencao.COMPRA,
+            extracao=Extracao(quartos=2),
+            recusou=["urgencia"],
+        )
+        await b.commit()
+
+    async with session_factory() as c:
+        linha = (await c.scalars(select(LeadQualification))).one()
+        assert sorted(linha.campos_recusados or []) == ["faixa_preco_max", "urgencia"]
