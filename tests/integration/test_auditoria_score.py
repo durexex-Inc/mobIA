@@ -270,7 +270,6 @@ async def test_populate_existing_rele_o_estado_por_baixo_da_instancia_em_maos(se
 
 async def test_o_turno_grava_a_trilha(
     session,
-    session_factory,
     rodar_turno,
     classificador_fake,
     outbound_fake,
@@ -308,9 +307,10 @@ async def test_o_turno_que_nao_move_o_score_nao_grava_de_novo(
     resumidor_fake,
     contador_fake,
 ) -> None:
-    """A partir da segunda mensagem o engajamento ja esta em 10 e nao sobe de
-    novo antes da sexta, entao um turno que repete a mesma extracao nao move
-    fator nenhum."""
+    """O engajamento fica em 10 da primeira mensagem ate a quinta -- a faixa
+    de baixo comeca em UMA mensagem, nao na segunda -- e so sobe na sexta,
+    entao um segundo turno que repete a mesma extracao nao move fator
+    nenhum."""
 
     def turno():
         return rodar_turno(
@@ -371,3 +371,68 @@ async def test_a_trilha_reconstroi_a_evolucao_em_ordem(
     # seguinte.
     for anterior, seguinte in zip(registros, registros[1:], strict=False):
         assert seguinte.total_anterior == anterior.total_novo
+
+
+async def test_um_turno_sem_campo_nenhum_ainda_grava_a_travessia_de_engajamento(
+    session,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """D2 do desenho: o gancho roda em todo turno com estado, e nao so quando
+    `gravar_estado` devolveu linha.
+
+    O engajamento depende da contagem de mensagens, que sobe em todo turno --
+    inclusive um em que o lead nao informou nada de novo e o classificador nao
+    da nenhuma intencao aproveitavel. `campos_a_gravar` devolve dict vazio (e
+    `gravar_estado` devolve `None`) quando a intencao e INDEFINIDA e a
+    extracao nao trouxe nenhum campo -- e esse e o turno 6 abaixo. Se o gancho
+    so disparasse quando ha campo gravado, a travessia de 5 para 6 mensagens
+    (10 -> 15 pontos, `_pontos_do_engajamento`) ficaria fora da trilha.
+    """
+
+    async def turno_com_campo():
+        await rodar_turno(
+            session,
+            classificador_fake(
+                intencao=Intencao.COMPRA,
+                confianca=Decimal("0.95"),
+                extracao=Extracao(regiao="vila mariana", urgencia=Urgencia.ATE_3_MESES),
+            ),
+            outbound_fake(),
+            resumidor_fake(),
+            contador_fake(),
+        )
+
+    # Turnos 1 a 5: o primeiro cria a linha de qualificacao e o primeiro
+    # registro da trilha; os quatro seguintes repetem a mesma extracao --
+    # nada novo para gravar, e o engajamento segue em 10 (faixa de 1 a 5
+    # mensagens) -- entao nenhum deles acrescenta registro.
+    for _ in range(5):
+        await turno_com_campo()
+
+    antes = (await session.scalars(select(LeadScoreAudit))).all()
+    assert len(antes) == 1
+
+    # Turno 6: INDEFINIDA e extracao vazia -- `campos_a_gravar` devolve {},
+    # `gravar_estado` devolve `None`, nenhum campo e escrito. A sexta mensagem
+    # do lead e a unica coisa que muda: o engajamento cruza de 10 para 15.
+    await rodar_turno(
+        session,
+        classificador_fake(
+            intencao=Intencao.INDEFINIDA, confianca=Decimal("0.95"), extracao=Extracao()
+        ),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+    )
+
+    depois = (
+        await session.scalars(select(LeadScoreAudit).order_by(LeadScoreAudit.created_at))
+    ).all()
+    assert len(depois) == 2
+    assert depois[-1].causas == ["ENGAJAMENTO"]
+    assert depois[-1].total_anterior == depois[0].total_novo
+    assert depois[-1].total_novo - depois[-1].total_anterior == 5
