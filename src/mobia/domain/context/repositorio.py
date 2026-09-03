@@ -796,6 +796,14 @@ async def registrar_recalculo(
     if estado is None:
         return None
 
+    # `or ()` porque `NULL` (linha anterior a TEC-148) e `{}` (registrou, sem
+    # recusa) sao estados diferentes na coluna, e esta leitura trata os dois
+    # iguais -- mesmo raciocinio de `_recusados_de` em turno.py. Calculada uma
+    # vez e passada para `calcular_score` e `esta_qualificado` abaixo: as duas
+    # chamadas precisam do mesmo fato sobre a mesma linha, e duas copias do
+    # `frozenset(...)` seriam duas copias deste comentario para manter certas.
+    recusados = frozenset(estado.campos_recusados or ())
+
     novo = calcular_score(
         estado,
         mensagens_do_lead=await contar_mensagens_do_lead(
@@ -807,10 +815,7 @@ async def registrar_recalculo(
         imoveis_compativeis=0,
         # TEC-148: a recusa sai da mesma linha que o lock acabou de reler,
         # entao nao ha consulta extra e nao ha risco de ler estado velho.
-        # `or ()` porque `NULL` (linha anterior a TEC-148) e `{}` (registrou,
-        # sem recusa) sao estados diferentes na coluna, e esta leitura trata
-        # os dois iguais -- mesmo raciocinio de `_recusados_de` em turno.py.
-        recusados=frozenset(estado.campos_recusados or ()),
+        recusados=recusados,
     )
 
     # A temperatura sai da MESMA linha travada que o score, e o `qualificado`
@@ -819,11 +824,7 @@ async def registrar_recalculo(
     # turno concorrente da mesma conversa pode ter commitado no intervalo --
     # o teto seria aplicado sobre qualificacao velha. Mesma razao pela qual o
     # estado vem do `FOR UPDATE` daqui, e nao de `depois_do_estado`.
-    #
-    # `recusados` da mesma linha, `or ()` pela razao de sempre: NULL (linha
-    # anterior a TEC-148) e {} (registrou, sem recusa) sao estados diferentes
-    # na coluna, e esta leitura trata os dois iguais.
-    qualificado = esta_qualificado(estado, frozenset(estado.campos_recusados or ()))
+    qualificado = esta_qualificado(estado, recusados)
 
     # As duas metades do forcamento, e a persistida e a que o cenario 3 da
     # card exige. O segundo termo forca AGORA (o pedido de visita chegando
@@ -844,15 +845,19 @@ async def registrar_recalculo(
     # pertinencia, nao conta -- mesma aceitacao das duas colunas de array
     # vizinhas.
     if temperatura is not anterior or gatilhos:
-        valores: dict[str, Any] = {"temperatura": temperatura.value}
+        valores: dict[str, Any] = {
+            "temperatura": temperatura.value,
+            "updated_at": datetime.now(UTC),
+        }
         if gatilhos:
             valores["temperatura_forcada_em"] = func.coalesce(
                 LeadQualification.temperatura_forcada_em, func.clock_timestamp()
             )
-            # A uniao mora no SQL e nao numa leitura previa em Python, pela
-            # razao que `gravar_estado` ja documentou para `campos_recusados`:
-            # dois turnos concorrentes leriam o mesmo array, cada um uniria o
-            # seu, e o mais lento sobrescreveria em silencio.
+            # A uniao mora no SQL, no molde da coluna irma `campos_recusados`
+            # em `gravar_estado` -- mesma forma, por consistencia, e nao pela
+            # mesma razao: aquele UPDATE nao tem lock, e este roda sob o `FOR
+            # UPDATE` que `estado` ja tomou, entao a corrida entre dois
+            # turnos que aquele comentario descreve nao existe aqui.
             #
             # `coalesce` porque `NULL || {'VISITA'}` e NULL em Postgres, e
             # toda linha anterior a esta card tem NULL aqui.
@@ -868,6 +873,19 @@ async def registrar_recalculo(
             )
             .values(**valores)
         )
+        # Sem `populate_existing`, e nao por descuido: este e um Core
+        # `update()` contra uma entidade ORM, executado por `Session.execute`
+        # com `synchronize_session="auto"` (o default). Todo valor acima e
+        # expressao SQL (`func.coalesce`, `.op("||")`), nunca um literal
+        # Python -- e para expressao SQL o `synchronize_session` nao sabe
+        # calcular o novo valor em Python, entao ele EXPIRA os atributos
+        # correspondentes na instancia que a sessao ja tem (`estado`, que e a
+        # mesma linha, pelo identity map) em vez de tentar sincroniza-los. A
+        # proxima leitura desses atributos -- inclusive um `session.get`
+        # depois do commit, como os testes fazem -- dispara SELECT e volta
+        # com o valor gravado. Mesma familia de comportamento implicito que o
+        # comentario de `populate_existing` em `gravar_estado` documenta, so
+        # que aqui e a ausencia da opcao que e o ponto.
 
     ultimo = (
         await session.scalars(
