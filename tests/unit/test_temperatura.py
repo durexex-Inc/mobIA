@@ -40,7 +40,7 @@ def test_a_faixa_da_rn_06_2(total: int, esperada: Temperatura) -> None:
 
 
 def test_o_lead_nao_qualificado_topa_em_morno() -> None:
-    """A emenda E-01 a RN-06.2, e a diverencia que a TEC-150 declarou.
+    """A emenda E-01 a RN-06.2, e a divergencia que a TEC-150 declarou.
 
     Um lead com `intencao = None`, resto completo, IMEDIATA, forma de
     pagamento declarada e engajamento soma 70 com `esta_qualificado` False.
