@@ -148,6 +148,14 @@ SCHEMA_DA_RESPOSTA: dict[str, Any] = {
         # exata de campos de SCHEMA_DA_EXTRACAO nao e mais nove -- ver
         # `test_todos_os_oito_campos_sao_obrigatorios_e_anulaveis`).
         "perguntou": {"type": "array", "items": {"type": "string"}},
+        # TEC-148. Os campos que o lead se negou a informar, declarados pelo
+        # modelo. Mesma forma de `perguntou`, e no fim pela mesma razao: a
+        # TEC-240 recusou reordenar campos do schema porque muda a ordem de
+        # geracao num caminho pago em todo turno de producao.
+        #
+        # Custou 14,75 tokens do orcamento, e o teto de 655 nao se mexeu --
+        # ver a docstring de `test_a_margem_do_orcamento_do_prompt_e_deliberada`.
+        "recusou": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["intencao", "confianca", "resposta"],
     "additionalProperties": False,
@@ -219,7 +227,7 @@ SCHEMA_DA_EXTRACAO: dict[str, Any] = {
 # `json.dumps`. Foi por isso que a TEC-240 identificou a saida e a recusou:
 # de graca em tokens, mas muda a ordem de geracao num caminho pago, para todo
 # turno de producao, numa card que nao podia medir nada.
-_ORDEM_DOS_CAMPOS = ("intencao", "confianca", "extracao", "resposta", "perguntou")
+_ORDEM_DOS_CAMPOS = ("intencao", "confianca", "extracao", "resposta", "perguntou", "recusou")
 
 SCHEMA_DA_RESPOSTA["properties"]["extracao"] = SCHEMA_DA_EXTRACAO
 if set(SCHEMA_DA_RESPOSTA["properties"]) != set(_ORDEM_DOS_CAMPOS):
@@ -235,16 +243,21 @@ SCHEMA_DA_RESPOSTA["properties"] = {
 SCHEMA_DA_RESPOSTA["required"] = list(_ORDEM_DOS_CAMPOS)
 
 
-def _perguntou(bruto: Any) -> tuple[str, ...]:
-    """Os nomes de campo que o modelo diz ter perguntado neste turno.
+def _lista_de_nomes(bruto: Any) -> tuple[str, ...]:
+    """Nomes de campo que o modelo declara sobre o proprio turno.
 
-    Nao valida os nomes de proposito: quem filtra contra `fields(Extracao)` e
-    `campos_a_marcar`, que tambem loga o que descartou. Duas filtragens
-    divergiriam, e a divergencia so apareceria na borda.
+    Serve `perguntou` (o que ele perguntou) e `recusou` (o que o lead se
+    negou a informar). Uma funcao para os dois porque a normalizacao e
+    identica, e duas copias divergiriam -- a divergencia so apareceria na
+    borda, que e onde este tipo de campo erra.
 
-    Nao levanta nunca. Este campo e o modelo relatando o que ele mesmo fez --
-    uma forma errada aqui nao pode custar o turno inteiro, que ja foi pago e
-    ja tem resposta valida para o lead.
+    Nao valida os nomes de proposito: quem filtra contra `fields(Extracao)`
+    sao `campos_a_marcar` e `campos_a_recusar`, que tambem logam o que
+    descartaram. Duas filtragens divergiriam.
+
+    Nao levanta nunca. Estes campos sao o modelo relatando o que ele mesmo
+    fez -- uma forma errada aqui nao pode custar o turno inteiro, que ja foi
+    pago e ja tem resposta valida para o lead.
     """
     if not isinstance(bruto, list):
         return ()
@@ -493,7 +506,8 @@ class ClassificadorAnthropic:
                 tokens_out=resposta.usage.output_tokens,
                 latency_ms=latency_ms,
                 extracao=extrair(dados.get("extracao"), intencao),
-                perguntou=_perguntou(dados.get("perguntou")),
+                perguntou=_lista_de_nomes(dados.get("perguntou")),
+                recusou=_lista_de_nomes(dados.get("recusou")),
                 cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
                 cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
             )

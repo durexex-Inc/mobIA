@@ -17,7 +17,7 @@ from mobia.domain.agente.classificador import (
     SISTEMA_DO_AGENTE,
     ClassificadorAnthropic,
     RespostaInvalida,
-    _perguntou,
+    _lista_de_nomes,
 )
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.montagem import ContextoMontado
@@ -277,25 +277,18 @@ async def test_classificar_envia_schema_compilado_no_output_config(
     assert SCHEMA_DA_RESPOSTA["properties"]["confianca"]["maximum"] == 1
 
 
-def test_perguntou_chega_como_tupla_de_nomes():
-    """O campo novo da TEC-257: o modelo diz sobre o que perguntou.
-
-    Nao filtra nada aqui -- filtrar e a regra de `campos_a_marcar`, que
-    precisa logar o que descartou. Aqui so a forma.
-    """
-    assert _perguntou(["regiao", "vagas"]) == ("regiao", "vagas")
+def test_lista_de_nomes_chega_como_tupla():
+    """Serve `perguntou` e `recusou`: os dois sao o modelo relatando nomes de
+    campo sobre o proprio turno, e a normalizacao e a mesma."""
+    assert _lista_de_nomes(["regiao", "vagas"]) == ("regiao", "vagas")
 
 
-def test_perguntou_tolera_forma_errada_sem_levantar():
-    """Nome inventado nao e recusado aqui, e nao-string e descartado.
-
-    Recusar a resposta inteira por causa deste campo trocaria um turno
-    respondido por um turno perdido -- o campo e diagnostico do proprio
-    modelo, nao dado do lead.
-    """
-    assert _perguntou(None) == ()
-    assert _perguntou("regiao") == ()
-    assert _perguntou(["regiao", 7, None, "bairro"]) == ("regiao", "bairro")
+def test_lista_de_nomes_tolera_forma_errada_sem_levantar():
+    """O turno ja foi pago e ja tem resposta valida para o lead: forma errada
+    num campo de relato nao pode custa-lo."""
+    assert _lista_de_nomes(None) == ()
+    assert _lista_de_nomes("regiao") == ()
+    assert _lista_de_nomes(["regiao", 7, None, "bairro"]) == ("regiao", "bairro")
 
 
 def test_a_ordem_dos_campos_poe_perguntou_depois_de_resposta():
@@ -308,6 +301,37 @@ def test_a_ordem_dos_campos_poe_perguntou_depois_de_resposta():
     ordem = list(SCHEMA_DA_RESPOSTA["properties"])
     assert ordem.index("perguntou") > ordem.index("resposta")
     assert SCHEMA_DA_RESPOSTA["required"] == ordem
+
+
+def test_recusou_esta_no_schema_como_array_de_string():
+    from mobia.domain.agente.classificador import SCHEMA_DA_RESPOSTA
+
+    assert SCHEMA_DA_RESPOSTA["properties"]["recusou"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+
+
+def test_recusou_vem_depois_de_perguntou_na_ordem_dos_campos():
+    """A TEC-240 recusou reordenar campos do schema mesmo a custo zero de
+    tokens: muda a ordem de geracao do modelo num caminho pago, em todo turno
+    de producao. Acrescentar no fim e a unica posicao que nao mexe no que ja
+    existe.
+    """
+    from mobia.domain.agente.classificador import _ORDEM_DOS_CAMPOS
+
+    assert _ORDEM_DOS_CAMPOS[-2:] == ("perguntou", "recusou")
+
+
+def test_recusou_default_e_tupla_vazia_no_dataclass():
+    """Turno que nao relata recusa nao e turno com recusa vazia por acidente:
+    o default explicito e o que faz o chamador antigo continuar valendo."""
+    from dataclasses import fields
+
+    from mobia.domain.agente.schemas import RespostaDoAgente
+
+    campo = next(f for f in fields(RespostaDoAgente) if f.name == "recusou")
+    assert campo.default == ()
 
 
 async def test_classificar_envia_payload_real_sem_minimum_maximum_via_sdk(
