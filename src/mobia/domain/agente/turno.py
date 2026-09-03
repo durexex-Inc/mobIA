@@ -346,18 +346,26 @@ async def executar_turno(
     # gera o evento de novo, senao a taxa de qualificacao da RN-17.1 contaria
     # conversas em vez de leads. `antes` sai de `contexto.estado`, que
     # `montar_contexto` ja leu para montar o prompt -- nenhuma consulta extra.
-    # `esta_qualificado(None)` devolve False, entao o caso FORA_DE_ESCOPO (onde
-    # `gravar_estado` devolve None) nao dispara nada.
+    # Um turno FORA_DE_ESCOPO que so grava recusa (o caminho do Achado 1 em
+    # `gravar_estado`) pode devolver a linha em vez de `None` -- mas isso
+    # nunca dispara o evento: aquele caminho so acrescenta nomes a
+    # `campos_recusados` (uniao, sem `array_remove`, porque nao ha campo
+    # respondido neste turno) e nunca toca as colunas de valor, entao a
+    # qualificacao de `depois_do_estado` so pode piorar ou empatar com a de
+    # `contexto.estado` -- nunca melhorar. Como o evento exige `not antes and
+    # esta_qualificado(depois...)`, ele so dispararia se `depois` fosse MAIS
+    # qualificado que `antes`, o que este caminho nunca produz.
     #
     # TEC-148 quebrou a premissa que sustentava "uma vez qualificado, sempre
-    # qualificado" por tras do paragrafo acima: antes desta card nenhum valor
-    # gravado era apagado, entao a borda so era cruzada uma vez por lead, para
-    # sempre. Agora uma recusa pode derrubar `esta_qualificado` (o campo
-    # deixa de contar enquanto recusado) e uma resposta seguinte pode
+    # qualificado" por tras do primeiro paragrafo acima: antes desta card
+    # nenhum valor gravado era apagado, entao a borda so era cruzada uma vez
+    # por lead, para sempre. Agora uma recusa pode derrubar `esta_qualificado`
+    # (o campo deixa de contar enquanto recusado) e uma resposta seguinte pode
     # devolve-lo (o `array_remove` de `gravar_estado` tira a recusa quando o
-    # valor chega) -- turno A completa os quatro obrigatorios e emite; turno
-    # B recusa um deles e `antes` volta a False; turno C o lead responde e a
-    # borda e cruzada de novo, para o MESMO lead. O evento reemite. Isto NAO
+    # valor chega) -- turno A completa os quatro obrigatorios e emite; turno B
+    # recusa um deles; turno C comeca com `antes` False (o estado que
+    # `contexto.estado` leu ja carrega a recusa do turno B), o lead responde e
+    # a borda e cruzada de novo, para o MESMO lead. O evento reemite. Isto NAO
     # esta corrigido aqui: tornar a emissao idempotente por lead exige estado
     # persistido de "ja emiti uma vez", que e decisao de quem e dono da
     # metrica RN-17.1, nao desta card -- so fica declarado, para quem ler essa
