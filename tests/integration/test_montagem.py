@@ -291,6 +291,67 @@ def test_a_ordem_dos_campos_nao_muda_por_causa_da_marca() -> None:
     ]
 
 
+def test_campo_recusado_aparece_marcado_mesmo_sem_a_marca_irma() -> None:
+    """TEC-148: e a uniao das duas colunas que sustenta a promessa da card.
+
+    A marca da TEC-257 NAO e garantida no turno que pergunta --
+    `marcar_perguntados` nao roda quando o turno nao tem nada a gravar, o
+    caminho de desambiguacao nunca chega la, e saida bloqueada tambem nao. A
+    sequencia da propria historia da card passa por ai: o lead diz "oi"
+    (INDEFINIDA, confianca baixa, desambiguacao, nenhuma marca), depois diz
+    "prefiro nao falar de dinheiro". Sem a uniao, `perguntados_sem_resposta`
+    esta vazio e o orcamento sai do prompt sem marca nenhuma -- o agente
+    repergunta exatamente o que o lead acabou de recusar.
+
+    `perguntados_sem_resposta=[]` de proposito: e o estado que prova a
+    uniao. Com a lista irma preenchida, o teste passaria com ou sem ela.
+    """
+    estado = LeadQualification(
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao="COMPRA",
+        perguntados_sem_resposta=[],
+        campos_recusados=["faixa_preco_max"],
+    )
+    linhas = _texto_do_estado(estado).splitlines()
+
+    assert linhas == [
+        "intencao: COMPRA",
+        "faixa_preco_max: (perguntado, sem resposta)",
+    ]
+
+
+def test_valor_vence_a_marca_da_recusa_tambem() -> None:
+    """D4 do desenho, declarada: um campo recusado que tenha valor de um turno
+    anterior renderiza o valor, e o modelo pode usa-lo na conversa. O lead
+    recusou DIZER o valor agora; usar o que ele ja disse antes nao e
+    pressiona-lo. A consequencia de qualificacao mora em `esta_qualificado` e
+    em `calcular_score`, nunca aqui.
+    """
+    estado = LeadQualification(
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao="COMPRA",
+        regiao="pinheiros",
+        campos_recusados=["regiao"],
+    )
+    texto = _texto_do_estado(estado)
+
+    assert "regiao: pinheiros" in texto
+    assert "perguntado" not in texto
+
+
+def test_recusa_nula_e_recusa_vazia_leem_igual() -> None:
+    """`NULL` e `{}` sao fatos diferentes no banco e a mesma coisa na leitura,
+    na coluna da recusa como na irma."""
+    nula = LeadQualification(channel=CANAL, conversation_key=CONVERSA, intencao="COMPRA")
+    vazia = LeadQualification(
+        channel=CANAL, conversation_key=CONVERSA, intencao="COMPRA", campos_recusados=[]
+    )
+
+    assert _texto_do_estado(nula) == _texto_do_estado(vazia) == "intencao: COMPRA"
+
+
 def test_marca_nula_e_marca_vazia_leem_igual() -> None:
     """`NULL` e `{}` sao fatos diferentes no banco e a mesma coisa na leitura."""
     nula = LeadQualification(channel=CANAL, conversation_key=CONVERSA, intencao="COMPRA")

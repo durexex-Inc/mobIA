@@ -159,12 +159,31 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
     mudar**: uma mudanca de unidade ou de nome de campo aqui e uma mudanca no
     que o lead pode ouvir de volta, nao um detalhe de implementacao.
 
-    A partir da TEC-257 carrega tambem os campos perguntados sem resposta.
+    A partir da TEC-257 carrega tambem os campos perguntados sem resposta, e
+    a partir da TEC-148 os campos recusados junto -- **as duas colunas
+    marcam com o mesmo texto**. Do ponto de vista do prompt as duas dizem a
+    mesma coisa ("nao ha valor, e ja se pediu"), e a clausula
+    "nao repergunte o preenchido nem o ignorado" cobre as duas. Distinguir
+    "sem resposta" de "recusado" aqui custaria um segundo marcador em texto
+    que sai em todo turno, e a margem do orcamento do prompt e de 6,2 tokens.
+
+    A uniao existe porque a marca da TEC-257 **nao** e garantida no turno
+    que pergunta: `marcar_perguntados` nao roda quando nao ha nada a gravar,
+    o caminho de desambiguacao nao chega la, e saida bloqueada tambem nao.
+    Sem a uniao, a promessa central da TEC-148 -- nao reperguntar o que o
+    lead recusou -- valeria so quando a marca irma tivesse sido gravada por
+    acaso. As duas colunas guardam o orcamento sob o mesmo nome canonico
+    (`faixa_preco_max`, via `_NOME_DA_MARCA` em `repositorio.py`), entao unir
+    os dois conjuntos nao precisa de traducao nenhuma.
+
     **Valor vence marca**, e a ordem dos campos nao muda: o campo marcado sai
     no lugar dele, nao no fim. Ordem instavel no fim do prompt seria mudanca
-    de cache e de geracao a cada turno, de graca.
+    de cache e de geracao a cada turno, de graca. Vale igual para a recusa:
+    um campo recusado com valor de um turno anterior renderiza o valor, e a
+    consequencia de qualificacao dele e resolvida em codigo
+    (`esta_qualificado`, `calcular_score`), nunca aqui -- e a D4 do desenho.
 
-    `NULL` e `{}` na coluna significam coisas diferentes (ver o modelo) e a
+    `NULL` e `{}` nas colunas significam coisas diferentes (ver o modelo) e a
     **leitura** trata os dois igual: `or ()`.
 
     TEC-146: o preco fica em centavos no banco (`_em_reais` explica o porque),
@@ -181,7 +200,7 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
     """
     if estado is None:
         return ""
-    marcados = set(estado.perguntados_sem_resposta or ())
+    marcados = set(estado.perguntados_sem_resposta or ()) | set(estado.campos_recusados or ())
     campos = {
         "intencao": estado.intencao,
         "faixa_preco_min": _em_reais(estado.faixa_preco_min_centavos),
