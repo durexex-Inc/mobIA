@@ -392,15 +392,30 @@ async def executar_turno(
         )
 
     # A borda, e nao o estado: um lead que continua QUENTE nao reemite, senao
-    # a RN-06.5 viraria um ping por mensagem. `anterior` sai da coluna
-    # `temperatura`, e nao da trilha de auditoria -- a trilha grava so quando
-    # o score muda e tem retencao de 12 meses (RNF-18), entao um lead cujo
-    # ultimo registro fosse expurgado voltaria a parecer nunca-calculado e
-    # reemitiria como se tivesse acabado de esquentar.
+    # a RN-06.5 viraria um ping por mensagem. `recalculo.anterior` sai da
+    # coluna `temperatura`, e nao da trilha de auditoria -- a trilha grava so
+    # quando o score muda e tem retencao de 12 meses (RNF-18), entao um lead
+    # cujo ultimo registro fosse expurgado voltaria a parecer nunca-calculado
+    # e reemitiria como se tivesse acabado de esquentar. (`anterior`, sem
+    # prefixo, e OUTRA variavel nesta funcao -- a linha de intencao que
+    # `ler_intencao` devolveu, la em cima; nao confundir as duas.)
     #
-    # `anterior is None` (coluna nula) com QUENTE emite: um lead cujo primeiro
-    # recalculo ja cai em QUENTE de fato esquentou, e tratar NULL como "ja era
-    # quente" perderia a unica travessia que ele tem.
+    # `recalculo.anterior is None` (coluna nula) com QUENTE emite: um lead
+    # cujo primeiro recalculo ja cai em QUENTE de fato esquentou, e tratar
+    # NULL como "ja era quente" perderia a unica travessia que ele tem.
+    #
+    # `recalculo is not None` nao e so defensivo: e "nao havia
+    # `lead_qualification` para pontuar" (ver a docstring de
+    # `registrar_recalculo`). Uma linha so nasce quando `campos_a_gravar`
+    # devolve algo -- `gravar_estado` documenta o caminho "Deliberadamente NAO
+    # cria linha" --, entao um lead que AINDA NAO TEM linha (primeiro turno, ou
+    # so turnos FORA_DE_ESCOPO/INDEFINIDA sem extracao ate agora) e que peca
+    # visita justo num turno assim continua sem linha: `registrar_recalculo`
+    # nao acha o que pontuar, devolve `None`, e o pedido se perde em silencio,
+    # sem forcar e sem emitir. Um lead que JA TEM linha (de um turno COMPRA
+    # anterior, por exemplo) nao sofre disto -- `registrar_recalculo` acha a
+    # linha existente e aplica o gatilho normalmente, mesmo num turno
+    # FORA_DE_ESCOPO. Nao corrigido aqui -- lacuna declarada no desenho.
     #
     # Depois do commit, como `lead.qualificado`: logar uma transicao que o
     # rollback desfez e mentir para quem le o log.

@@ -324,6 +324,14 @@ async def test_a_borda_nao_reemite_no_turno_seguinte(
             texto="quero agendar visita de novo",
         )
 
+    # Ancora o proprio precondicionamento: sem isto, um forcamento
+    # inteiramente quebrado (turno 1 deixa a linha em FRIO) tambem passaria
+    # aqui -- zero emissoes nos dois turnos, e o teste ficaria verde
+    # dependendo do vizinho para pegar a regressao, nao de si mesmo.
+    session.expire_all()
+    carregada = await session.get(LeadQualification, (CANAL, CONVERSA))
+    assert carregada is not None
+    assert carregada.temperatura == "QUENTE"
     assert sum(1 for r in caplog.records if "lead.esquentou" in r.getMessage()) == 0
 
 
