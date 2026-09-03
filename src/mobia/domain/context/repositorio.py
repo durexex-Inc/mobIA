@@ -333,8 +333,13 @@ def campos_a_recusar(recusou: Iterable[str], preenchidos: Iterable[str]) -> set[
 
     **Nome fora do vocabulario e descartado, nao adivinhado.** Aqui isso pesa
     mais que na marca: recusa inventada faz o agente parar de perguntar um
-    campo obrigatorio e `esta_qualificado` devolver False para sempre, sem
-    alarme e sem o lead perceber. Descartar custa uma pergunta a mais.
+    campo obrigatorio e `esta_qualificado` devolver False para sempre, sem o
+    lead perceber. Descartar custa uma pergunta a mais.
+
+    **A recusa aceita tambem e logada**, e nao so a descartada. Uma recusa
+    sobre campo que ainda nao tinha valor nao move o score nem gera linha na
+    trilha da TEC-152 -- sem esta linha de log ela nao existiria em lugar
+    nenhum alem da coluna. Ver o comentario no corpo.
 
     **`preenchidos` subtrai, e e o cenario 2 da card:** se o lead informou o
     campo neste turno, ele nao esta recusando o campo. Vale para os dois
@@ -368,7 +373,24 @@ def campos_a_recusar(recusou: Iterable[str], preenchidos: Iterable[str]) -> set[
             descartados=len(ignorados) - len(plausiveis),
         )
 
-    return conhecidos - {_marca_de(nome) or nome for nome in preenchidos}
+    aceitos = conhecidos - {_marca_de(nome) or nome for nome in preenchidos}
+    if aceitos:
+        # O unico instrumento do erro CARO desta card. Recusa de falso
+        # positivo e silenciosa por construcao: quando o campo nao tinha
+        # valor, o score nao muda (a completude ja nao o contava), a trilha
+        # da TEC-152 nao ganha linha, e o lead vira permanentemente
+        # inqualificavel sem rastro em lugar nenhum alem da coluna. Uma linha
+        # de log e a coisa barata que torna isso audivel enquanto o corpus de
+        # eval nao anota recusa (lacuna declarada no desenho).
+        #
+        # Os nomes saem INTEIROS, sem passar por `_NOME_PLAUSIVEL`. Nao e
+        # esquecimento: aqui eles ja passaram por `_marca_de`, entao sao
+        # vocabulario fixo -- chave de `_NOME_DA_MARCA` ou campo de
+        # `Extracao` --, e nao ha caminho por onde texto do lead chegue.
+        # Filtrar seria custo sem risco a comprar. Os DESCARTADOS acima sao
+        # o caso oposto, e por isso so eles precisam do filtro.
+        log.info("estado.campo_recusado", nomes=sorted(aceitos))
+    return aceitos
 
 
 def _sem_os_respondidos(expressao: Any, respondidos: list[str]) -> Any:

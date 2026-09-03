@@ -102,6 +102,37 @@ def test_o_log_nao_carrega_o_que_nao_parece_nome_de_campo(caplog):
     assert '"nomes": []' in caplog.text
 
 
+def test_a_recusa_aceita_e_logada_para_o_falso_positivo_ter_instrumento(caplog):
+    """O erro caro desta card e silencioso por construcao.
+
+    Uma recusa sobre campo que ainda nao tinha valor nao muda o score (a
+    completude ja nao o contava), nao gera linha na trilha da TEC-152 e nao
+    e vista pelo lead -- o lead so fica permanentemente inqualificavel. Sem
+    esta linha de log, o unico rastro seria a coluna. O corpus de eval nao
+    anota recusa (lacuna declarada), entao este e o unico instrumento que
+    existe hoje.
+
+    O nome sai INTEIRO e em `info`, nao em `warning`: recusa aceita e o
+    caminho normal da card, nao anomalia.
+    """
+    with caplog.at_level(logging.INFO):
+        assert campos_a_recusar(["faixa_preco_expressao"], []) == {"faixa_preco_max"}
+
+    assert "estado.campo_recusado" in caplog.text
+    assert '"nomes": ["faixa_preco_max"]' in caplog.text
+
+
+def test_a_recusa_cancelada_pelo_valor_deste_turno_nao_e_logada_como_aceita(caplog):
+    """O log conta o que de fato entrou na coluna, e nao o que o modelo
+    relatou. Logar antes da subtracao do cenario 2 faria o instrumento do
+    falso positivo acusar recusas que nunca foram gravadas -- ruido no unico
+    lugar que existe para ser lido."""
+    with caplog.at_level(logging.INFO):
+        assert campos_a_recusar(["regiao"], ["regiao"]) == set()
+
+    assert "estado.campo_recusado" not in caplog.text
+
+
 def test_sem_recusa_devolve_vazio():
     assert campos_a_recusar([], ["regiao"]) == set()
 
