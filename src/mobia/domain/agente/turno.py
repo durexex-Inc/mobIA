@@ -10,7 +10,7 @@ from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marca
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
 from mobia.domain.context.qualificacao import esta_qualificado
-from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados
+from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados, registrar_recalculo
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.messages.bloqueio import marcar_bloqueada
 from mobia.domain.messages.models import Message
@@ -303,6 +303,24 @@ async def executar_turno(
             conversation_key=message.conversation_key,
             intencao=gerada.intencao,
             extracao=gerada.extracao,
+        )
+        # A trilha entra no mesmo commit que o estado, pela mesma razao que a
+        # intencao e a extracao entram: ou os dois fatos existem, ou nenhum.
+        #
+        # Chamada em cada turno com estado, e nao so quando `gravar_estado`
+        # devolveu linha: o engajamento depende da contagem de mensagens, que
+        # sobe em todo turno, e as travessias de faixa dele podem cair num
+        # turno sem campo nenhum. Amarrar o recalculo a escrita de campo
+        # deixaria essas subidas fora da trilha.
+        #
+        # Nao recebe `depois_do_estado`: `registrar_recalculo` rele a linha sob
+        # lock, e o motivo esta na docstring dele. `depois_do_estado` continua
+        # valendo abaixo -- a releitura acontece na mesma sessao e na mesma
+        # transacao, entao as duas referencias apontam para a mesma linha.
+        await registrar_recalculo(
+            session,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
         )
         await session.commit()
 

@@ -5,12 +5,13 @@ TEC-152.
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from mobia.domain.agente.schemas import FormaPagamento, Intencao, Urgencia
+from mobia.domain.agente.schemas import Extracao, FormaPagamento, Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.context.repositorio import contar_mensagens_do_lead, registrar_recalculo
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -265,3 +266,108 @@ async def test_populate_existing_rele_o_estado_por_baixo_da_instancia_em_maos(se
     # sobre a instancia velha do identity map, e este teste ficaria vermelho.
     assert gravada.total_novo == 60
     assert gravada.capacidade == 15
+
+
+async def test_o_turno_grava_a_trilha(
+    session,
+    session_factory,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """O turno passa a recalcular, e o primeiro registro do lead aparece."""
+    await rodar_turno(
+        session,
+        classificador_fake(
+            intencao=Intencao.COMPRA,
+            confianca=Decimal("0.95"),
+            extracao=Extracao(regiao="vila mariana", urgencia=Urgencia.ATE_3_MESES),
+        ),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+    )
+
+    registros = (await session.scalars(select(LeadScoreAudit))).all()
+    assert len(registros) == 1
+    assert registros[0].total_anterior is None
+    assert registros[0].causas == ["PRIMEIRO_CALCULO"]
+    # Tres dos quatro obrigatorios -- intencao, regiao, urgencia; falta
+    # `faixa_preco` -- sao 15 de completude, mais urgencia ATE_3_MESES (15),
+    # uma mensagem (10) e nenhuma forma de pagamento (6).
+    assert registros[0].total_novo == 46
+
+
+async def test_o_turno_que_nao_move_o_score_nao_grava_de_novo(
+    session,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """A partir da segunda mensagem o engajamento ja esta em 10 e nao sobe de
+    novo antes da sexta, entao um turno que repete a mesma extracao nao move
+    fator nenhum."""
+
+    def turno():
+        return rodar_turno(
+            session,
+            classificador_fake(
+                intencao=Intencao.COMPRA,
+                confianca=Decimal("0.95"),
+                extracao=Extracao(regiao="vila mariana", urgencia=Urgencia.ATE_3_MESES),
+            ),
+            outbound_fake(),
+            resumidor_fake(),
+            contador_fake(),
+        )
+
+    await turno()
+    antes = len((await session.scalars(select(LeadScoreAudit))).all())
+    await turno()
+    depois = len((await session.scalars(select(LeadScoreAudit))).all())
+
+    assert antes == 1
+    assert depois == 1
+
+
+async def test_a_trilha_reconstroi_a_evolucao_em_ordem(
+    session,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """Cenario 4 da card: os registros aparecem em ordem cronologica com os
+    respectivos motivos."""
+    extracoes = [
+        Extracao(regiao="vila mariana"),
+        Extracao(urgencia=Urgencia.ATE_3_MESES),
+        Extracao(forma_pagamento=FormaPagamento.A_VISTA),
+    ]
+    for extracao in extracoes:
+        await rodar_turno(
+            session,
+            classificador_fake(
+                intencao=Intencao.COMPRA, confianca=Decimal("0.95"), extracao=extracao
+            ),
+            outbound_fake(),
+            resumidor_fake(),
+            contador_fake(),
+        )
+
+    registros = (
+        await session.scalars(select(LeadScoreAudit).order_by(LeadScoreAudit.created_at))
+    ).all()
+
+    assert [r.causas for r in registros][0] == ["PRIMEIRO_CALCULO"]
+    assert [r.total_novo for r in registros] == sorted(r.total_novo for r in registros)
+    assert registros[-1].causas == ["FORMA_DE_PAGAMENTO"]
+    # A cadeia fecha: o `total_novo` de cada registro e o `total_anterior` do
+    # seguinte.
+    for anterior, seguinte in zip(registros, registros[1:], strict=False):
+        assert seguinte.total_anterior == anterior.total_novo
