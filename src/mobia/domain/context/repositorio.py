@@ -691,13 +691,34 @@ def _score_do_registro(registro: LeadScoreAudit | None) -> Score | None:
     )
 
 
+@dataclass(frozen=True)
+class Recalculo:
+    """O que o passo de recalculo do turno produziu.
+
+    Existe porque o turno precisa de mais de uma resposta do mesmo passo, e
+    todas saem da mesma linha travada. Devolver so a trilha obrigaria uma
+    segunda leitura -- e nao confiar em leitura de fora e exatamente o motivo
+    pelo qual esta funcao rele sob lock.
+
+    `trilha is None` significa "o resultado nao mudou, e nada foi gravado".
+    **Nao confunda com o `None` que a funcao devolve**, que significa "nao
+    havia sujeito": sem linha de qualificacao nao ha lead a pontuar, e
+    `score.py` ja distingue a ausencia de sujeito de uma nota igual a zero.
+    """
+
+    trilha: LeadScoreAudit | None
+
+
 async def registrar_recalculo(
     session: AsyncSession, *, channel: str, conversation_key: str
-) -> LeadScoreAudit | None:
+) -> Recalculo | None:
     """Recalcula o score do lead e grava a trilha se ele mudou.
 
-    Devolve a linha gravada, ou `None` quando nao havia estado a pontuar ou
-    quando o resultado foi identico ao ultimo registrado.
+    Devolve `None` quando **nao havia estado a pontuar**, e um `Recalculo`
+    com `trilha is None` quando havia estado e o resultado foi identico ao
+    ultimo registrado. Os dois casos eram o mesmo `None` ate a TEC-151, e ela
+    os separou porque a temperatura pode mudar num turno em que nenhum dos
+    cinco fatores se move -- um gatilho da RN-06.3 e exatamente isso.
 
     Nao commita -- a sessao e emprestada, como em `gravar_estado`, e quem chama
     e dono da fronteira da transacao. A trilha tem de entrar no MESMO commit
@@ -775,7 +796,7 @@ async def registrar_recalculo(
 
     causas = causas_do_recalculo(_score_do_registro(ultimo), novo)
     if not causas:
-        return None
+        return Recalculo(trilha=None)
 
     linha = LeadScoreAudit(
         id=uuid.uuid4(),
@@ -796,4 +817,4 @@ async def registrar_recalculo(
     # transacao -- inclusive a que a proxima chamada faz para achar o "ultimo
     # registro".
     await session.flush()
-    return linha
+    return Recalculo(trilha=linha)

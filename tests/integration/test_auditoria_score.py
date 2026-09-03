@@ -14,7 +14,11 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from mobia.domain.agente.schemas import Extracao, FormaPagamento, Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
-from mobia.domain.context.repositorio import contar_mensagens_do_lead, registrar_recalculo
+from mobia.domain.context.repositorio import (
+    Recalculo,
+    contar_mensagens_do_lead,
+    registrar_recalculo,
+)
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -176,9 +180,13 @@ async def test_o_primeiro_recalculo_grava_com_anterior_nulo(session) -> None:
     await _qualificacao(session)
     await _mensagem(session)
 
-    gravada = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    recalculo: Recalculo | None = await registrar_recalculo(
+        session, channel=CANAL, conversation_key=CONVERSA
+    )
     await session.commit()
 
+    assert recalculo is not None
+    gravada = recalculo.trilha
     assert gravada is not None
     assert gravada.total_anterior is None
     assert gravada.total_novo == 51
@@ -193,7 +201,8 @@ async def test_o_recalculo_que_nao_move_nada_nao_grava(session) -> None:
     await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
     await session.commit()
 
-    assert await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA) is None
+    segundo = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    assert segundo is not None and segundo.trilha is None
     await session.commit()
 
     assert len((await session.scalars(select(LeadScoreAudit))).all()) == 1
@@ -217,9 +226,11 @@ async def test_informar_a_vista_grava_o_delta_da_capacidade(session) -> None:
     estado.forma_pagamento = FormaPagamento.A_VISTA.value
     await session.commit()
 
-    gravada = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    recalculo = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
     await session.commit()
 
+    assert recalculo is not None
+    gravada = recalculo.trilha
     assert gravada is not None
     assert (gravada.total_anterior, gravada.total_novo) == (51, 60)
     assert gravada.causas == ["FORMA_DE_PAGAMENTO"]
@@ -274,9 +285,11 @@ async def test_populate_existing_rele_o_estado_por_baixo_da_instancia_em_maos(se
     # de corrigir.
     assert carregada.forma_pagamento is None
 
-    gravada = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    recalculo = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
     await session.commit()
 
+    assert recalculo is not None
+    gravada = recalculo.trilha
     assert gravada is not None
     # 60 e capacidade 15 (a vista), e nao 51 e capacidade 6 (sem forma de
     # pagamento): sem `populate_existing`, `registrar_recalculo` calcularia
@@ -487,7 +500,9 @@ async def test_a_ordem_da_trilha_segue_a_escrita_e_nao_o_inicio_da_transacao(
             ),
             {"channel": CANAL, "conversa": CONVERSA},
         )
-        escrita_antes = await registrar_recalculo(recente, channel=CANAL, conversation_key=CONVERSA)
+        escrita_antes = (
+            await registrar_recalculo(recente, channel=CANAL, conversation_key=CONVERSA)
+        ).trilha
         await recente.commit()
 
         await antiga.execute(
@@ -497,7 +512,9 @@ async def test_a_ordem_da_trilha_segue_a_escrita_e_nao_o_inicio_da_transacao(
             ),
             {"channel": CANAL, "conversa": CONVERSA},
         )
-        escrita_depois = await registrar_recalculo(antiga, channel=CANAL, conversation_key=CONVERSA)
+        escrita_depois = (
+            await registrar_recalculo(antiga, channel=CANAL, conversation_key=CONVERSA)
+        ).trilha
         await antiga.commit()
 
     assert escrita_antes is not None and escrita_depois is not None
@@ -516,7 +533,9 @@ async def test_a_ordem_da_trilha_segue_a_escrita_e_nao_o_inicio_da_transacao(
         await _mensagem(session)
 
     async with session_factory() as seguinte:
-        terceira = await registrar_recalculo(seguinte, channel=CANAL, conversation_key=CONVERSA)
+        terceira = (
+            await registrar_recalculo(seguinte, channel=CANAL, conversation_key=CONVERSA)
+        ).trilha
         await seguinte.commit()
 
     assert terceira is not None
@@ -567,3 +586,28 @@ async def test_sem_o_for_update_dois_turnos_da_mesma_conversa_nao_se_serializam(
             await bloqueada.rollback()
 
     assert (await session.scalars(select(LeadScoreAudit))).all() == []
+
+
+async def test_o_none_significa_ausencia_de_sujeito_e_nunca_ausencia_de_mudanca(
+    session,
+) -> None:
+    """As duas respostas negativas de `registrar_recalculo` deixam de ser a
+    mesma coisa, e a distincao e a que `score.py` ja faz entre ausencia de
+    sujeito e nota igual a zero.
+
+    Sem linha de qualificacao: `None`, e nao ha temperatura a resolver.
+    Com linha e sem mudanca: um `Recalculo` cujo `trilha` e `None` -- porque
+    a temperatura pode ter se movido num turno em que nenhum fator se moveu.
+    """
+    await _mensagem(session)
+    assert await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA) is None
+
+    await _qualificacao(session)
+    primeiro = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+    assert primeiro is not None and primeiro.trilha is not None
+
+    segundo = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+    assert segundo is not None
+    assert segundo.trilha is None
