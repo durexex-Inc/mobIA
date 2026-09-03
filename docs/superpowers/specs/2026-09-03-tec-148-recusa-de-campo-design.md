@@ -114,7 +114,7 @@ Sem isso, `esta_qualificado` e o score contariam histórias contrárias sobre o 
 
 - O turno grava a recusa relatada pelo modelo.
 - Valor posterior desfaz a recusa e o campo volta a contar (cenário 2).
-- Dois turnos concorrentes da mesma conversa não perdem recusa — a união em SQL.
+- União e `array_remove` compõem entre turnos, em sessões diferentes. **Não** é teste da corrida — ver as lacunas.
 - `NULL` e `{}` lidos igual.
 - `upgrade` e `downgrade` da `0013`.
 
@@ -133,6 +133,8 @@ A **RN-05.7** diz, literalmente, que o campo recusado *"não é reperguntado na 
 **Quem decide recusa é o modelo, e não há guarda em código contra recusa inventada.** É o erro caro desta card: um falso positivo faz o agente parar de perguntar um obrigatório e `esta_qualificado` devolver False para sempre, sem log de alarme e sem o lead perceber. Ao contrário do opt-out, cuja detecção é determinística e testável sem modelo, aqui a única defesa é a medição de acurácia dos evals — e nenhum turno do corpus anota recusa hoje.
 
 **O corpus não tem caso de recusa.** A medição de extração dos evals não cobre este campo, então a acurácia do `recusou` não é medida por nada. Anotar recusa no corpus é trabalho de outra card, e sem isso o falso positivo acima não tem instrumento.
+
+**A perda concorrente de recusa não tem teste direto.** A união mora no SQL para que dois turnos concorrentes da mesma conversa não sobrescrevam a recusa um do outro, mas exercitar essa corrida exigiria forçar interleaving sem garantia de ordem, e teste flaky é pior que teste ausente. O que os testes cobrem é que união e `array_remove` compõem entre turnos. A coluna irmã `perguntados_sem_resposta` (TEC-257) tem exatamente a mesma propriedade não testada, pela mesma razão.
 
 **A margem do prompt cai para 9,05 tokens.** Quem for alongar o prompt ou mexer no schema depois desta card herda isso, e a pergunta continua sendo *"o que sai para o novo texto entrar?"*.
 

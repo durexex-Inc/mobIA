@@ -619,18 +619,20 @@ async def test_o_valor_posterior_desfaz_a_recusa(session) -> None:
     assert linha.faixa_preco_max_centavos == 60_000_000
 
 
-async def test_duas_recusas_concorrentes_nao_se_perdem(session_factory) -> None:
-    """A uniao TEM de morar no SQL, e este e o unico teste que prova isso.
+async def test_recusas_de_turnos_diferentes_se_acumulam(session_factory) -> None:
+    """Uniao e `array_remove` compoem entre turnos, em sessoes diferentes.
 
-    Um teste sequencial nao provaria: uma uniao feita em Python -- ler o
-    array, unir em memoria, gravar -- passaria igual, porque entre os dois
-    `gravar_estado` a leitura do segundo ja veria o resultado do primeiro. O
-    que quebra a versao em Python e a concorrencia: duas sessoes que leem o
-    mesmo array antes de qualquer uma gravar, e a mais lenta sobrescreve a
-    recusa da mais rapida.
+    **O que este teste NAO prova:** que a uniao precisa morar no SQL. As
+    operacoes abaixo sao sequenciais, e sob READ COMMITTED a segunda leitura
+    ja ve o commit da primeira -- uma uniao feita em Python passaria
+    identicamente. A perda concorrente (duas sessoes que leem o mesmo array
+    antes de qualquer uma gravar) nao tem teste direto aqui: forcar o
+    interleaving exigiria `asyncio.gather` sem garantia de ordem, e teste
+    flaky e pior que teste ausente.
 
-    As duas sessoes abrem antes de qualquer gravacao, e e por isso que a
-    ordem das chamadas abaixo importa.
+    A uniao em SQL segue justificada pela mesma razao que a da coluna irma
+    `perguntados_sem_resposta` (TEC-257), cuja corrida tambem nunca foi
+    testada. Lacuna declarada no desenho.
     """
     async with session_factory() as a, session_factory() as b:
         await gravar_estado(
