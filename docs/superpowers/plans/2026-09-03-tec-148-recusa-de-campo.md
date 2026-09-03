@@ -20,7 +20,7 @@
   ./.venv/Scripts/python.exe -m mypy
   ```
 - **O escopo é `src tests alembic evals`, não `src tests`.** Ruff `line-length = 100`, `select = ["E","F","I","UP","B"]`, target py313.
-- **O orçamento do prompt é apertado e tem ritual.** Teto **fixo de 655**, e esta card gasta **14,75** dos 23,8 de margem: o líquido vai de 631,2 a 645,95 e a margem fica em **9,05**. O teto **não se move**. Confira sempre com `./.venv/Scripts/python.exe -m pytest -q -k margem_do_orcamento -s`, e **não** meça com `json.dumps(separators=(",", ":"))` — o teste serializa com os separadores padrão, e a forma compacta subestima em 1,5 token.
+- **O orçamento do prompt é apertado e tem ritual.** Teto **fixo de 655**, e esta card gasta **17,6** dos 23,8 de margem: o líquido vai de 631,2 a 648,8 e a margem fica em **6,2**. O teto **não se move**. Confira sempre com `./.venv/Scripts/python.exe -m pytest -q -k margem_do_orcamento -s`, e **não** meça com `json.dumps(separators=(",", ":"))` — o teste serializa com os separadores padrão, e a forma compacta subestima em 1,5 token.
 - **Comentário explica o porquê, não o quê, e comentário desatualizado é defeito.** Se você mudar código que um comentário descreve, o comentário muda junto ou some.
 - **TDD, e cada teste verificado por mutação.** Depois de verde, quebre de propósito a linha que o teste cobre e confirme que ele fica vermelho — e vermelho *naquele* teste.
 - **A suíte é lenta:** `tests/unit` ~7 min, inteira ~7,5 min, e imprime só no fim. Rode o arquivo ou o teste durante o ciclo; a suíte inteira só na última task.
@@ -158,7 +158,7 @@ No mesmo arquivo, na definição de `SCHEMA_DA_RESPOSTA["properties"]`, **logo d
         # TEC-240 recusou reordenar campos do schema porque muda a ordem de
         # geracao num caminho pago em todo turno.
         #
-        # Custou 14,75 tokens do orcamento, e o teto de 655 nao se mexeu --
+        # Custou 17,6 tokens do orcamento, e o teto de 655 nao se mexeu --
         # ver a docstring de `test_a_margem_do_orcamento_do_prompt_e_deliberada`.
         "recusou": {"type": "array", "items": {"type": "string"}},
 ```
@@ -206,21 +206,25 @@ Esperado: todos passam. Se algum outro teste do arquivo usava `_perguntou`, ele 
 ./.venv/Scripts/python.exe -m pytest -q -k margem_do_orcamento -s
 ```
 
-Esperado: passa, com `liquido 645.9` e `margem 9.1` na tabela impressa. **Se o número não for esse, pare e reporte** — não ajuste o teto.
+Esperado: passa, com `liquido 648.8` e `margem 6.2` na tabela impressa. **Se o número não for esse, pare e reporte** — não ajuste o teto.
 
 Depois acrescente ao **fim** da docstring de `test_a_margem_do_orcamento_do_prompt_e_deliberada` em `tests/unit/test_config.py`:
 
 ```
-    A TEC-148 gastou 14,75 dos 23,8 que a TEC-257 havia deixado, e o teto
-    NAO se mexeu: o liquido foi de 631,2 para 645,95 e a margem ficou em
-    9,05. Todo o custo foi o campo `recusou` no schema -- o prompt nao ganhou
+    A TEC-148 gastou 17,6 dos 23,8 que a TEC-257 havia deixado, e o teto
+    NAO se mexeu: o liquido foi de 631,2 para 648,8 e a margem ficou em
+    6,2. Todo o custo foi o campo `recusou` no schema -- o prompt nao ganhou
     texto, porque a clausula "nao repergunte o preenchido nem o ignorado" da
     TEC-257 ja cobre recusa, e o campo recusado ja vem marcado
     "(perguntado, sem resposta)" do turno em que foi perguntado.
 
-    Cuidado ao remedir: a conta acima serializa o schema com `json.dumps`
-    sem `separators`, entao cada `,` e `:` carrega um espaco. Medir com
-    `separators=(",", ":")` subestima -- neste campo, 13,25 em vez de 14,75.
+    Nao meca por fora: rode este teste. O desenho da TEC-148 errou duas
+    vezes tentando simular a conta -- primeiro com
+    `json.dumps(separators=(",", ":"))`, que subestima em 1,5 porque aqui a
+    serializacao usa os separadores padrao; depois precificando so a entrada
+    em `properties` e esquecendo que `_ORDEM_DOS_CAMPOS` alimenta tambem
+    `SCHEMA_DA_RESPOSTA["required"]`, entao um campo novo cresce as DUAS
+    listas e custa 2,85 a mais do que a conta ingenua diz.
 ```
 
 - [ ] **Step 9: Verificar por mutação**
@@ -1188,7 +1192,7 @@ git commit -m "docs(TEC-148): a RN-05.7 passa a valer para o lead, e nao para a 
 
 - [ ] Os três gates passam com o escopo `src tests alembic evals`.
 - [ ] A suíte inteira passa.
-- [ ] `pytest -q -k margem_do_orcamento -s` imprime margem 9,1 e o teto continua 655.
+- [ ] `pytest -q -k margem_do_orcamento -s` imprime margem 6,2 e o teto continua 655.
 - [ ] `alembic downgrade 0012 && alembic upgrade head` funciona duas vezes seguidas. **Nunca desça abaixo de 0012.**
 - [ ] Nenhum comentário descreve código que mudou.
 - [ ] A emenda no SRS só acrescentou linhas.

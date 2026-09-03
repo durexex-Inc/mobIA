@@ -58,9 +58,9 @@ A card diz *"conversa nova do mesmo lead pode perguntar de novo — a recusa val
 
 **E a direção do erro caro é o inverso do opt-out.** A docstring de `optout/deteccao.py` explica que lá deixar de detectar é violação de LGPD e detectar demais é prejuízo comercial, e por isso a faixa inequívoca é generosa. Aqui: detectar recusa que não houve faz o agente parar de perguntar um campo obrigatório, `esta_qualificado` devolve False para sempre e o lead nunca chega ao corretor — **em silêncio**. Deixar de detectar apenas repergunta. Uma lista de palavra-chave erra exatamente no lado caro, e o repo já tem o registro de um proxy lexical mal-comportado: `MARCADORES_DE_REPERGUNTA`, nos evals, é documentado como *"proxy ininterpretável"* com falso positivo e falso negativo por construção.
 
-**Custa 14,75 tokens, e o teto de 655 não se move.** O líquido medido em 03/09 é 631,2; com o campo novo vai a 645,95, e `test_a_margem_do_orcamento_do_prompt_e_deliberada` continua com o mesmo teto. **A margem cai de 23,8 para 9,05**, e é isso que a próxima card que tocar o prompt herda.
+**Custa 17,6 tokens, e o teto de 655 não se move.** O líquido medido em 03/09 é 631,2; com o campo novo vai a 648,8, e `test_a_margem_do_orcamento_do_prompt_e_deliberada` continua com o mesmo teto. **A margem cai de 23,8 para 6,2**, e é isso que a próxima card que tocar o prompt herda.
 
-**Cuidado ao remedir:** o teste serializa com `json.dumps` sem `separators`, então cada `,` e `:` do schema carrega um espaço. Medir com `separators=(",", ":")` subestima — neste campo, 13,25 em vez de 14,75, e foi o erro que este desenho cometeu na primeira passagem. O número que vale é o que sai de `pytest -q -k margem_do_orcamento -s`.
+**Não meça por fora: rode o teste.** Este desenho errou duas vezes tentando simular a conta. Primeiro com `json.dumps(separators=(",", ":"))`, que subestima em 1,5 porque o teste usa os separadores padrão e cada `,` e `:` carrega um espaço. Depois precificando só a entrada em `properties` e esquecendo que `_ORDEM_DOS_CAMPOS` alimenta também `SCHEMA_DA_RESPOSTA["required"]` — a guarda de import exige que as duas listas casem, então o campo cresce as duas e custa 2,85 a mais. O único número que vale é o de `pytest -q -k margem_do_orcamento -s`.
 
 Dois detalhes que os comentários do classificador tornam obrigatórios:
 
@@ -73,7 +73,7 @@ Dois detalhes que os comentários do classificador tornam obrigatórios:
 
 A cláusula *"nao repergunte o preenchido nem o ignorado"* já cobre recusa, porque **o campo recusado já vem marcado por outro caminho.** A sequência é: no turno N o agente pergunta o orçamento e `perguntou` marca `faixa_preco_max`; no turno N+1 o lead recusa. Quando a recusa é relatada, `(perguntado, sem resposta)` já está no estado desde o turno anterior.
 
-Então `_texto_do_estado` não muda e o custo em tokens é zero além dos 14,75 da D3.
+Então `_texto_do_estado` não muda e o custo em tokens é zero além dos 17,6 da D3.
 
 **Consequência declarada: "valor vence marca" continua valendo.** Um campo recusado que tenha valor de um turno anterior renderiza o valor, e o modelo pode usá-lo na conversa. A consequência de qualificação é resolvida em código (D5), não no prompt. Isso é aceito: o lead recusou *dizer* o valor agora, e usar um que ele já disse antes não é pressioná-lo.
 
@@ -107,7 +107,7 @@ Sem isso, `esta_qualificado` e o score contariam histórias contrárias sobre o 
 - `_recusou` com forma inválida — string em vez de lista, número, `None` — não levanta e devolve tupla vazia.
 - `esta_qualificado` com campo recusado que **tem** valor na coluna devolve False. É o caso que distingue esta card do marcador da TEC-257.
 - `calcular_score` com campo recusado não pontua a completude dele, e o total cai exatamente 5.
-- **O orçamento do prompt:** `test_a_margem_do_orcamento_do_prompt_e_deliberada` continua com teto 655, e a docstring dele registra a passagem de 631,2 para 645,95 e a margem de 9,05 — o ritual do repo é que a docstring guarde o histórico de cada vez que o número se mexeu, mesmo quando o teto não muda.
+- **O orçamento do prompt:** `test_a_margem_do_orcamento_do_prompt_e_deliberada` continua com teto 655, e a docstring dele registra a passagem de 631,2 para 648,8 e a margem de 6,2 — o ritual do repo é que a docstring guarde o histórico de cada vez que o número se mexeu, mesmo quando o teto não muda.
 - `_ORDEM_DOS_CAMPOS` cobre exatamente as chaves de `SCHEMA_DA_RESPOSTA`, que a guarda de import já verifica — o teste garante que a guarda é alcançada.
 
 **Integração:**
@@ -136,7 +136,7 @@ A **RN-05.7** diz, literalmente, que o campo recusado *"não é reperguntado na 
 
 **A perda concorrente de recusa não tem teste direto.** A união mora no SQL para que dois turnos concorrentes da mesma conversa não sobrescrevam a recusa um do outro, mas exercitar essa corrida exigiria forçar interleaving sem garantia de ordem, e teste flaky é pior que teste ausente. O que os testes cobrem é que união e `array_remove` compõem entre turnos. A coluna irmã `perguntados_sem_resposta` (TEC-257) tem exatamente a mesma propriedade não testada, pela mesma razão.
 
-**A margem do prompt cai para 9,05 tokens.** Quem for alongar o prompt ou mexer no schema depois desta card herda isso, e a pergunta continua sendo *"o que sai para o novo texto entrar?"*.
+**A margem do prompt cai para 6,2 tokens.** Quem for alongar o prompt ou mexer no schema depois desta card herda isso, e a pergunta continua sendo *"o que sai para o novo texto entrar?"*.
 
 **A TEC-149 mexe no mesmo território.** Não há seletor de próxima pergunta em código — a escolha é do modelo, guiada pelo prompt, e o desenho da TEC-145 registra que TEC-148 e TEC-149 reescreveriam o mesmo seletor. Esta card não cria seletor; ela subtrai do que o modelo pode perguntar.
 
