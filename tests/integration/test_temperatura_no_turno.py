@@ -4,6 +4,7 @@ TEC-151. Integracao: os CHECK vivem no banco, e o forcamento so significa
 algo se sobreviver a uma transacao.
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -259,3 +260,111 @@ async def test_o_turno_sem_mudanca_de_score_ainda_resolve_a_temperatura(session)
     carregada = await session.get(LeadQualification, (CANAL, CONVERSA))
     assert carregada is not None
     assert carregada.temperatura == "QUENTE"
+
+
+async def test_o_pedido_de_visita_no_turno_forca_quente_e_emite(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno, caplog
+) -> None:
+    """A card ponta a ponta: o lead pede visita, a temperatura vira QUENTE
+    apesar do score baixo, e o evento da RN-06.5 sai uma vez."""
+    session.add(_linha(urgencia=None, faixa_preco_max_centavos=None))
+    await session.commit()
+
+    with caplog.at_level(logging.INFO):
+        resultado = await rodar_turno(
+            session,
+            classificador_fake(Intencao.COMPRA),
+            outbound_fake(),
+            resumidor_fake(),
+            contador_fake(),
+            texto="quero agendar visita",
+        )
+
+    assert resultado == "respondido"
+
+    # `expire_all` porque o turno gravou por OUTRA sessao (`get_sessionmaker()`
+    # dentro de `executar_turno`), e o identity map desta ainda tem a instancia
+    # que este teste adicionou -- sem isto, `get` devolve o objeto velho e o
+    # teste passa ou falha por acidente.
+    session.expire_all()
+    carregada = await session.get(LeadQualification, (CANAL, CONVERSA))
+    assert carregada is not None
+    assert carregada.temperatura == "QUENTE"
+    assert carregada.temperatura_forcada_motivos == [MOTIVO_VISITA]
+    assert carregada.temperatura_forcada_em is not None
+    assert sum(1 for r in caplog.records if "lead.esquentou" in r.getMessage()) == 1
+
+
+async def test_a_borda_nao_reemite_no_turno_seguinte(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno, caplog
+) -> None:
+    """O evento e da travessia, nao do estado: um lead que continua QUENTE nao
+    reemite. E a razao pela qual `Recalculo.anterior` existe -- sem ele a
+    RN-06.5 viraria um ping por mensagem."""
+    session.add(_linha(urgencia=None, faixa_preco_max_centavos=None))
+    await session.commit()
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.COMPRA),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="quero agendar visita",
+    )
+    caplog.clear()
+
+    with caplog.at_level(logging.INFO):
+        await rodar_turno(
+            session,
+            classificador_fake(Intencao.COMPRA),
+            outbound_fake(),
+            resumidor_fake(),
+            contador_fake(),
+            texto="quero agendar visita de novo",
+        )
+
+    assert sum(1 for r in caplog.records if "lead.esquentou" in r.getMessage()) == 0
+
+
+async def test_a_fala_bloqueada_pela_moderacao_nao_forca_quente(
+    session,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+    caplog,
+) -> None:
+    """Nao ha guarda para isto no codigo, e o teste existe justamente por isso.
+
+    `executar_turno` retorna por `_entregar_texto_fixo` quando a moderacao
+    bloqueia a entrada, antes do bloco transacional -- entao a fala bloqueada
+    nunca chega ao gancho, e a propriedade sai de graca. O teste a fixa para
+    que uma reordenacao futura nao a perca em silencio.
+
+    E coerente com o contrato de `mensagens_do_lead`, que exclui
+    `bloqueada_em IS NOT NULL` da contagem de engajamento pela mesma razao: um
+    turno que o resto do produto trata como nao-dito nao pode virar sinal aqui.
+    """
+    session.add(_linha(urgencia=None, faixa_preco_max_centavos=None))
+    await session.commit()
+
+    with caplog.at_level(logging.INFO):
+        await rodar_turno(
+            session,
+            classificador_fake(Intencao.COMPRA),
+            outbound_fake(),
+            resumidor_fake(),
+            contador_fake(),
+            moderador_fake(bloqueia_entrada=True),
+            texto="quero agendar visita",
+        )
+
+    session.expire_all()
+    carregada = await session.get(LeadQualification, (CANAL, CONVERSA))
+    assert carregada is not None
+    assert carregada.temperatura is None, "a fala bloqueada nao chega ao gancho"
+    assert carregada.temperatura_forcada_em is None
+    assert sum(1 for r in caplog.records if "lead.esquentou" in r.getMessage()) == 0

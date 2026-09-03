@@ -90,12 +90,19 @@ CANAL_AGENTE = "whatsapp"
 CONVERSA_AGENTE = "5511911112222"
 
 
-async def _entrada_do_lead(session: AsyncSession) -> Message:
+async def _entrada_do_lead(
+    session: AsyncSession, *, texto: str = "quero saber mais sobre apartamentos"
+) -> Message:
     """Semeia a mensagem INBOUND que dispara um turno, ja reivindicada.
 
     `status=PROCESSING` porque e o estado que `process_message` deixa depois
     do claim, antes de rodar o turno -- e o ponto de partida real de
     `executar_turno`, nao um QUEUED que nunca existiria naquele momento.
+
+    O `texto` e parametro desde a TEC-151, cujos gatilhos da RN-06.3 sao
+    detectados na fala do lead -- um turno que precisa que o lead peca visita
+    nao tem outro jeito de dizer isso. O default e o texto de sempre, entao
+    nenhum teste anterior muda.
     """
     identificador = uuid.uuid4()
     linha = Message(
@@ -108,9 +115,7 @@ async def _entrada_do_lead(session: AsyncSession) -> Message:
         role=MessageRole.LEAD,
         direction=MessageDirection.INBOUND,
         content_type=MessageContentType.TEXTO,
-        text_body=encrypt(
-            "quero saber mais sobre apartamentos", aad_de(identificador, "text_body")
-        ),
+        text_body=encrypt(texto, aad_de(identificador, "text_body")),
         raw_payload=None,
         status=MessageStatus.PROCESSING,
     )
@@ -254,10 +259,19 @@ def moderador_fake():
 def rodar_turno():
     """Semeia uma entrada e roda o turno inteiro sobre ela."""
 
-    async def _rodar(session, classificador, outbound, resumidor, contador, moderador=None) -> str:
+    async def _rodar(
+        session,
+        classificador,
+        outbound,
+        resumidor,
+        contador,
+        moderador=None,
+        *,
+        texto: str = "quero saber mais sobre apartamentos",
+    ) -> str:
         from mobia.domain.agente.turno import executar_turno
 
-        linha = await _entrada_do_lead(session)
+        linha = await _entrada_do_lead(session, texto=texto)
         return await executar_turno(
             get_sessionmaker(),
             message=linha,

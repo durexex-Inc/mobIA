@@ -8,11 +8,13 @@ from mobia.domain.agente.classificador import ClassificadorPort
 from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
+from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
 from mobia.domain.context.qualificacao import esta_qualificado
 from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados, registrar_recalculo
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
+from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.messages.bloqueio import marcar_bloqueada
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
@@ -133,6 +135,17 @@ async def executar_turno(
     # `bool(...)` por fora, e nao `bool(corpo) and ...`: so a forma curta-
     # circuitada estreita `corpo` de `str | None` para `str` dentro da chamada.
     pedido_de_optout = bool(corpo and pediu_optout(corpo))
+
+    # Ao lado do opt-out de proposito: mesmo insumo (o texto decifrado), mesmo
+    # ponto do fluxo, e nenhuma consulta. A fala bloqueada pela moderacao nunca
+    # chega ao gancho -- `executar_turno` retorna por `_entregar_texto_fixo`
+    # antes do bloco transacional --, entao um turno que o resto do produto
+    # trata como nao-dito nao forca QUENTE, e isso sai de graca.
+    #
+    # `if corpo else ()` e nao `bool(corpo) and ...` porque a saida e uma
+    # tupla, nao um bool: so a forma condicional estreita `corpo` de
+    # `str | None` para `str` E preserva o tipo de retorno.
+    gatilhos = gatilhos_de(corpo) if corpo else ()
 
     # Antes de tudo, inclusive da moderacao: quem ja pediu silencio nao paga
     # moderacao nem recebe resposta. Fica FORA do `if corpo:` de proposito: o
@@ -335,10 +348,11 @@ async def executar_turno(
         # lock, e o motivo esta na docstring dele. `depois_do_estado` continua
         # valendo abaixo -- a releitura acontece na mesma sessao e na mesma
         # transacao, entao as duas referencias apontam para a mesma linha.
-        await registrar_recalculo(
+        recalculo = await registrar_recalculo(
             session,
             channel=message.channel,
             conversation_key=message.conversation_key,
+            gatilhos=gatilhos,
         )
         await session.commit()
 
@@ -375,6 +389,47 @@ async def executar_turno(
             "lead.qualificado",
             channel=message.channel,
             message_id=str(message.id),
+        )
+
+    # A borda, e nao o estado: um lead que continua QUENTE nao reemite, senao
+    # a RN-06.5 viraria um ping por mensagem. `anterior` sai da coluna
+    # `temperatura`, e nao da trilha de auditoria -- a trilha grava so quando
+    # o score muda e tem retencao de 12 meses (RNF-18), entao um lead cujo
+    # ultimo registro fosse expurgado voltaria a parecer nunca-calculado e
+    # reemitiria como se tivesse acabado de esquentar.
+    #
+    # `anterior is None` (coluna nula) com QUENTE emite: um lead cujo primeiro
+    # recalculo ja cai em QUENTE de fato esquentou, e tratar NULL como "ja era
+    # quente" perderia a unica travessia que ele tem.
+    #
+    # Depois do commit, como `lead.qualificado`: logar uma transicao que o
+    # rollback desfez e mentir para quem le o log.
+    #
+    # **Isto NAO e a notificacao da RN-06.5, e a lacuna esta declarada no
+    # desenho.** A entrega depende do handoff (E7), que nao existe -- nao ha
+    # epico, nao ha consumidor, e o conteudo da mensagem esta fora do escopo
+    # da card. Os 60 segundos da regra sao triviais porque o evento e sincrono
+    # no turno; o que nao existe e alguem do outro lado.
+    #
+    # O texto do lead nao entra: `motivos` e vocabulario nosso, nao fala dele.
+    # Mesma regra de PII que `moderacao.entrada_bloqueada` respeita.
+    #
+    # Este evento herda o defeito de reemissao de `lead.qualificado`, pela
+    # mesma causa: o total nao e monotono desde a TEC-148, entao a borda por
+    # faixa e atravessavel nos dois sentidos para o MESMO lead. O forcado nao
+    # volta; o derivado volta. Declarado, nao corrigido -- corrigir exige
+    # estado persistido de "ja emiti uma vez".
+    if (
+        recalculo is not None
+        and recalculo.anterior is not Temperatura.QUENTE
+        and recalculo.temperatura is Temperatura.QUENTE
+    ):
+        log.info(
+            "lead.esquentou",
+            channel=message.channel,
+            message_id=str(message.id),
+            motivos=list(recalculo.gatilhos),
+            total=recalculo.total,
         )
 
     desambiguando = deve_desambiguar(
