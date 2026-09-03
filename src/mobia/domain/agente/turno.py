@@ -348,6 +348,20 @@ async def executar_turno(
     # `montar_contexto` ja leu para montar o prompt -- nenhuma consulta extra.
     # `esta_qualificado(None)` devolve False, entao o caso FORA_DE_ESCOPO (onde
     # `gravar_estado` devolve None) nao dispara nada.
+    #
+    # TEC-148 quebrou a premissa que sustentava "uma vez qualificado, sempre
+    # qualificado" por tras do paragrafo acima: antes desta card nenhum valor
+    # gravado era apagado, entao a borda so era cruzada uma vez por lead, para
+    # sempre. Agora uma recusa pode derrubar `esta_qualificado` (o campo
+    # deixa de contar enquanto recusado) e uma resposta seguinte pode
+    # devolve-lo (o `array_remove` de `gravar_estado` tira a recusa quando o
+    # valor chega) -- turno A completa os quatro obrigatorios e emite; turno
+    # B recusa um deles e `antes` volta a False; turno C o lead responde e a
+    # borda e cruzada de novo, para o MESMO lead. O evento reemite. Isto NAO
+    # esta corrigido aqui: tornar a emissao idempotente por lead exige estado
+    # persistido de "ja emiti uma vez", que e decisao de quem e dono da
+    # metrica RN-17.1, nao desta card -- so fica declarado, para quem ler essa
+    # metrica saber que uma travessia de ida-e-volta agora conta duas vezes.
     if not antes and esta_qualificado(depois_do_estado, _recusados_de(depois_do_estado)):
         log.info(
             "lead.qualificado",

@@ -3,6 +3,7 @@
 TEC-148.
 """
 
+import logging
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -134,6 +135,117 @@ async def test_recusas_de_turnos_diferentes_se_acumulam(session_factory) -> None
     async with session_factory() as c:
         linha = (await c.scalars(select(LeadQualification))).one()
         assert sorted(linha.campos_recusados or []) == ["faixa_preco_max", "urgencia"]
+
+
+async def test_recusa_sobrevive_quando_o_turno_nao_grava_campo_nenhum(session) -> None:
+    """Cenario central da card: um lead que so diz "prefiro nao falar disso"
+    classifica INDEFINIDA e nao extrai nada. `campos_a_gravar` devolve {} e o
+    upsert normal nao gravaria linha nenhuma -- mas a linha ja existe, e a
+    recusa nao pode se perder so porque o turno nao trouxe nenhum outro
+    campo. Fix round 1 (achado Important/code): antes desta correcao a
+    recusa caia no chao junto com a guarda de FORA_DE_ESCOPO."""
+    await _linha(session, campos_recusados=[])
+
+    linha = await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.INDEFINIDA,
+        extracao=Extracao(),
+        recusou=["faixa_preco_expressao"],
+    )
+    await session.commit()
+
+    assert linha is not None
+    assert linha.campos_recusados == ["faixa_preco_max"]
+
+
+async def test_recusa_sem_linha_existente_nao_cria_linha(session) -> None:
+    """Reverso do teste acima: sem linha nenhuma, a recusa continua se
+    perdendo -- de proposito, e nao por descuido. Criar uma linha so por uma
+    recusa isolada moveria o score desse lead de 0 para o piso documentado de
+    6 pontos e geraria registro na trilha da TEC-152, uma consequencia que
+    esta card nunca decidiu."""
+    linha = await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        intencao=Intencao.INDEFINIDA,
+        extracao=Extracao(),
+        recusou=["faixa_preco_expressao"],
+    )
+    await session.commit()
+
+    assert linha is None
+    nenhuma = (await session.scalars(select(LeadQualification))).all()
+    assert nenhuma == []
+
+
+async def test_a_recusa_reabre_a_borda_de_qualificacao_e_reemite_o_evento(
+    session,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    caplog,
+) -> None:
+    """TEC-148 quebrou a monotonia por tras de "uma vez qualificado, sempre
+    qualificado": antes desta card nenhum valor gravado era apagado, entao a
+    borda de `esta_qualificado` so era cruzada uma vez por lead. Uma recusa
+    agora pode derrubar o resultado, e uma resposta seguinte pode devolve-lo
+    -- e o evento `lead.qualificado` reemite nesse ciclo de ida e volta, para
+    o MESMO lead. Fix round 1 (achado Important/test): sem este teste, os
+    dois pontos de chamada de `_recusados_de` em turno.py podiam virar
+    `frozenset()` fixo sem nenhum teste da suite acusar.
+    """
+    outbound = outbound_fake()
+
+    def turno(extracao, recusou=()):
+        return rodar_turno(
+            session,
+            classificador_fake(
+                intencao=Intencao.COMPRA,
+                confianca=Decimal("0.95"),
+                extracao=extracao,
+                recusou=recusou,
+            ),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+        )
+
+    # Turno A: os quatro obrigatorios de uma vez. Cruza a borda, emite.
+    with caplog.at_level(logging.INFO):
+        await turno(
+            Extracao(
+                regiao="vila mariana",
+                urgencia=Urgencia.ATE_3_MESES,
+                faixa_preco_max_centavos=50_000_000,
+            )
+        )
+    assert sum("lead.qualificado" in r.getMessage() for r in caplog.records) == 1
+    caplog.clear()
+
+    # Turno B: recusa o orcamento, sem extrair nada de novo. `antes` ainda e
+    # True (o estado anterior a este turno segue qualificado), entao nao ha
+    # emissao aqui -- so a recusa sendo gravada, para o turno C usar.
+    with caplog.at_level(logging.INFO):
+        await turno(Extracao(), recusou=("faixa_preco_expressao",))
+    assert sum("lead.qualificado" in r.getMessage() for r in caplog.records) == 0
+    caplog.clear()
+
+    linha = (await session.scalars(select(LeadQualification))).one()
+    assert linha.campos_recusados == ["faixa_preco_max"], (
+        "a recusa tem de sobreviver ao turno para o proximo turno derrubar a qualificacao"
+    )
+
+    # Turno C: o lead responde. `array_remove` tira a recusa, a borda e
+    # cruzada de novo e o evento reemite -- a consequencia que o achado
+    # Important/comment desta rodada declara, nao corrige.
+    with caplog.at_level(logging.INFO):
+        await turno(Extracao(faixa_preco_max_centavos=50_000_000))
+    assert sum("lead.qualificado" in r.getMessage() for r in caplog.records) == 1
 
 
 async def test_o_turno_grava_a_recusa_que_o_modelo_relatou(

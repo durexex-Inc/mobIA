@@ -408,15 +408,60 @@ async def gravar_estado(
     `recusou` tem default de proposito, como `perguntou`: nenhum chamador
     antigo precisa saber da TEC-148 para continuar funcionando, e nao
     registrar recusa e o comportamento seguro.
+
+    Quando o turno nao tem campo nenhum a gravar (`campos_a_gravar` devolveu
+    {}), esta funcao ainda pode gravar -- so a recusa, so por UPDATE, e so
+    numa linha que ja existe. Ver o comentario dentro do `if not campos:`
+    abaixo para o motivo de isso nao seguir a mesma guarda de `perguntou`.
     """
     campos = campos_a_gravar(intencao, extracao)
     if not campos:
-        # A guarda de FORA_DE_ESCOPO vale para a marca tambem, e o buraco esta
-        # declarado no spec: um agente que pergunte num turno fora de escopo
-        # nao marca e pode perguntar de novo. Com a marca permanente, marcar
-        # de menos e o erro mais seguro dos dois. Nao ha linha gravada, entao
-        # nao ha linha a devolver.
-        return None
+        # A guarda de FORA_DE_ESCOPO vale para a marca de `perguntou` tambem,
+        # e o buraco esta declarado no spec: um agente que pergunte num turno
+        # fora de escopo nao marca e pode perguntar de novo. Com a marca
+        # permanente, marcar de menos e o erro mais seguro dos dois -- por
+        # isso `perguntou` simplesmente cai no chao aqui, sem UPDATE nenhum.
+        #
+        # `recusou` NAO pode cair no mesmo chao. Um turno sem campo nenhum e
+        # exatamente a forma provavel do cenario central desta card: um lead
+        # que so diz "prefiro nao falar disso" classifica INDEFINIDA ou
+        # FORA_DE_ESCOPO e nao extrai nada, `campos_a_gravar` devolve {} e
+        # cairia aqui -- e para a recusa marcar de menos e o erro CARO, nao o
+        # seguro: o agente continua perguntando o campo que o lead ja disse
+        # que nao quer informar, o que e o proprio motivo da card existir.
+        #
+        # A saida e um UPDATE que toca so `campos_recusados`, no molde de
+        # `marcar_perguntados` (mesmo arquivo): nao reabre o upsert de
+        # `intencao`/`extracao`, e devolve a linha atualizada em vez de nada.
+        #
+        # Deliberadamente NAO cria linha. Um lead sem `lead_qualification`
+        # nenhuma que so recusa continua sem linha -- criar moveria o score
+        # dele de 0 para o piso documentado de 6 pontos e geraria registro na
+        # trilha da TEC-152 so por uma recusa isolada, uma consequencia que
+        # esta card nunca decidiu. A recusa sobrevive para quem ja tem
+        # estado; de quem nao tem nenhum, ela continua se perdendo, do mesmo
+        # jeito que antes desta correcao.
+        recusados_isolados = sorted(campos_a_recusar(recusou, ()))
+        if not recusados_isolados:
+            return None
+
+        resultado_da_recusa = await session.execute(
+            update(LeadQualification)
+            .where(
+                LeadQualification.channel == channel,
+                LeadQualification.conversation_key == conversation_key,
+            )
+            .values(
+                campos_recusados=func.coalesce(
+                    LeadQualification.campos_recusados,
+                    literal_column("'{}'::varchar[]"),
+                ).op("||")(recusados_isolados),
+                updated_at=datetime.now(UTC),
+            )
+            .returning(LeadQualification)
+            .execution_options(populate_existing=True)
+        )
+        return resultado_da_recusa.scalar_one_or_none()
 
     marcados = sorted(campos_a_marcar(perguntou, campos))
     recusados = sorted(campos_a_recusar(recusou, campos))
@@ -676,6 +721,9 @@ async def registrar_recalculo(
         imoveis_compativeis=0,
         # TEC-148: a recusa sai da mesma linha que o lock acabou de reler,
         # entao nao ha consulta extra e nao ha risco de ler estado velho.
+        # `or ()` porque `NULL` (linha anterior a TEC-148) e `{}` (registrou,
+        # sem recusa) sao estados diferentes na coluna, e esta leitura trata
+        # os dois iguais -- mesmo raciocinio de `_recusados_de` em turno.py.
         recusados=frozenset(estado.campos_recusados or ()),
     )
 
