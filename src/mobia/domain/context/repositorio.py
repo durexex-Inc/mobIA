@@ -875,17 +875,24 @@ async def registrar_recalculo(
         )
         # Sem `populate_existing`, e nao por descuido: este e um Core
         # `update()` contra uma entidade ORM, executado por `Session.execute`
-        # com `synchronize_session="auto"` (o default). Todo valor acima e
-        # expressao SQL (`func.coalesce`, `.op("||")`), nunca um literal
-        # Python -- e para expressao SQL o `synchronize_session` nao sabe
-        # calcular o novo valor em Python, entao ele EXPIRA os atributos
-        # correspondentes na instancia que a sessao ja tem (`estado`, que e a
-        # mesma linha, pelo identity map) em vez de tentar sincroniza-los. A
-        # proxima leitura desses atributos -- inclusive um `session.get`
-        # depois do commit, como os testes fazem -- dispara SELECT e volta
-        # com o valor gravado. Mesma familia de comportamento implicito que o
-        # comentario de `populate_existing` em `gravar_estado` documenta, so
-        # que aqui e a ausencia da opcao que e o ponto.
+        # com `synchronize_session="auto"` (o default), que sincroniza cada
+        # coluna do `SET` de um jeito diferente conforme o valor.
+        #
+        # `temperatura` e `updated_at` sao literais Python (`str`, `datetime`)
+        # -- o avaliador consegue calcula-los e os atribui direto na
+        # instancia que a sessao ja tem (`estado`, mesma linha, pelo identity
+        # map), sem expirar nada.
+        #
+        # `temperatura_forcada_em` e `temperatura_forcada_motivos` -- gravadas
+        # so quando `gatilhos` nao e vazio -- sao expressao SQL
+        # (`func.coalesce`, `.op("||")`), que o avaliador nao sabe calcular em
+        # Python. Para essas duas, e so essas duas, ele EXPIRA os atributos
+        # correspondentes em vez de sincroniza-los; a proxima leitura --
+        # inclusive um `session.get` depois do commit, como os testes fazem --
+        # dispara SELECT e volta com o valor gravado. Mesma familia de
+        # comportamento implicito que o comentario de `populate_existing` em
+        # `gravar_estado` documenta, so que aqui e a ausencia da opcao que e o
+        # ponto.
 
     ultimo = (
         await session.scalars(
