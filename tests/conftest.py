@@ -134,6 +134,7 @@ class ClassificadorFake:
         pergunta: str = "Me conta um pouco mais sobre o que voce procura?",
         erro_da_desambiguacao: Exception | None = None,
         perguntou: tuple[str, ...] = (),
+        recusou: tuple[str, ...] = (),
     ) -> None:
         from mobia.domain.agente.schemas import Extracao as _Extracao
         from mobia.domain.agente.schemas import Intencao as _Intencao
@@ -145,6 +146,7 @@ class ClassificadorFake:
         self.pergunta = pergunta
         self.erro_da_desambiguacao = erro_da_desambiguacao
         self.perguntou = perguntou
+        self.recusou = recusou
         self.chamadas = 0
         self.desambiguacoes = 0
 
@@ -164,6 +166,7 @@ class ClassificadorFake:
             latency_ms=900,
             extracao=self.extracao,
             perguntou=self.perguntou,
+            recusou=self.recusou,
         )
 
     async def desambiguar(self, contexto):

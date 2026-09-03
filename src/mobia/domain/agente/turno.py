@@ -8,6 +8,7 @@ from mobia.domain.agente.classificador import ClassificadorPort
 from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
+from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
 from mobia.domain.context.qualificacao import esta_qualificado
 from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados, registrar_recalculo
@@ -69,6 +70,18 @@ ResultadoDoTurno = Literal[
     "silenciado",
     "bloqueado_por_optout",
 ]
+
+
+def _recusados_de(estado: LeadQualification | None) -> frozenset[str]:
+    """A recusa da linha, na forma que `esta_qualificado` recebe.
+
+    `or ()` porque `NULL` e `{}` na coluna significam coisas diferentes e a
+    leitura trata as duas iguais -- ver o comentario da coluna. `frozenset` e
+    nao `set` porque e o que a assinatura da TEC-147 pede.
+    """
+    if estado is None:
+        return frozenset()
+    return frozenset(estado.campos_recusados or ())
 
 
 async def executar_turno(
@@ -286,7 +299,11 @@ async def executar_turno(
     # entregue (desambiguacao descarta a chamada 1; moderacao troca o texto
     # pelo neutro). A marca dele so e gravada mais abaixo, depois da entrega
     # confirmada -- ver o comentario la.
-    antes = esta_qualificado(contexto.estado)
+    #
+    # `recusou` entra AQUI, ao contrario de `perguntou`: e fato sobre a fala
+    # do lead, nao sobre a nossa resposta. Saida bloqueada e envio fora da
+    # janela nao descartam uma recusa que o lead de fato disse.
+    antes = esta_qualificado(contexto.estado, _recusados_de(contexto.estado))
     async with session_factory() as session:
         anterior = await ler_intencao(session, message.channel, message.conversation_key)
         await gravar_intencao(
@@ -303,6 +320,7 @@ async def executar_turno(
             conversation_key=message.conversation_key,
             intencao=gerada.intencao,
             extracao=gerada.extracao,
+            recusou=gerada.recusou,
         )
         # A trilha entra no mesmo commit que o estado, pela mesma razao que a
         # intencao e a extracao entram: ou os dois fatos existem, ou nenhum.
@@ -328,9 +346,31 @@ async def executar_turno(
     # gera o evento de novo, senao a taxa de qualificacao da RN-17.1 contaria
     # conversas em vez de leads. `antes` sai de `contexto.estado`, que
     # `montar_contexto` ja leu para montar o prompt -- nenhuma consulta extra.
-    # `esta_qualificado(None)` devolve False, entao o caso FORA_DE_ESCOPO (onde
-    # `gravar_estado` devolve None) nao dispara nada.
-    if not antes and esta_qualificado(depois_do_estado):
+    # Um turno FORA_DE_ESCOPO que so grava recusa (o caminho do Achado 1 em
+    # `gravar_estado`) pode devolver a linha em vez de `None` -- mas isso
+    # nunca dispara o evento: aquele caminho so acrescenta nomes a
+    # `campos_recusados` (uniao, sem `array_remove`, porque nao ha campo
+    # respondido neste turno) e nunca toca as colunas de valor, entao a
+    # qualificacao de `depois_do_estado` so pode piorar ou empatar com a de
+    # `contexto.estado` -- nunca melhorar. Como o evento exige `not antes and
+    # esta_qualificado(depois...)`, ele so dispararia se `depois` fosse MAIS
+    # qualificado que `antes`, o que este caminho nunca produz.
+    #
+    # TEC-148 quebrou a premissa que sustentava "uma vez qualificado, sempre
+    # qualificado" por tras do primeiro paragrafo acima: antes desta card
+    # nenhum valor gravado era apagado, entao a borda so era cruzada uma vez
+    # por lead, para sempre. Agora uma recusa pode derrubar `esta_qualificado`
+    # (o campo deixa de contar enquanto recusado) e uma resposta seguinte pode
+    # devolve-lo (o `array_remove` de `gravar_estado` tira a recusa quando o
+    # valor chega) -- turno A completa os quatro obrigatorios e emite; turno B
+    # recusa um deles; turno C comeca com `antes` False (o estado que
+    # `contexto.estado` leu ja carrega a recusa do turno B), o lead responde e
+    # a borda e cruzada de novo, para o MESMO lead. O evento reemite. Isto NAO
+    # esta corrigido aqui: tornar a emissao idempotente por lead exige estado
+    # persistido de "ja emiti uma vez", que e decisao de quem e dono da
+    # metrica RN-17.1, nao desta card -- so fica declarado, para quem ler essa
+    # metrica saber que uma travessia de ida-e-volta agora conta duas vezes.
+    if not antes and esta_qualificado(depois_do_estado, _recusados_de(depois_do_estado)):
         log.info(
             "lead.qualificado",
             channel=message.channel,

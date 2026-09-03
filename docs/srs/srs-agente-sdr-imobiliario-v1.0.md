@@ -12,6 +12,8 @@
 > | Emenda | Regras | Card | Data |
 > | --- | --- | --- | --- |
 > | E-01 | RN-04.2, RN-05.4 | [TEC-255](https://eduardodurieuxlopes.atlassian.net/browse/TEC-255) | 01/09/2026 |
+> | E-01 | RN-06.4 | [TEC-152](https://eduardodurieuxlopes.atlassian.net/browse/TEC-152) | 02/09/2026 |
+> | E-01 | RN-05.7 | [TEC-148](https://eduardodurieuxlopes.atlassian.net/browse/TEC-148) | 03/09/2026 |
 
 ---
 
@@ -173,6 +175,7 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 - RN-05.5: O agente não faz mais de 8 perguntas de qualificação em uma conversa. Atingido o limite sem os obrigatórios, ele oferece a conversa com o corretor mesmo assim.
 - RN-05.6: Valores monetários são normalizados: "uns 500 mil", "500k" e "R$ 500.000" viram `50000000` (centavos, inteiro). Faixa aberta ("até 500 mil") vira `max=50000000, min=null`.
 - RN-05.7: Recusa em responder um campo é registrada como `recusado` e o campo não é reperguntado na mesma conversa.
+  - **Emenda E-01 (TEC-148, 03/09/2026):** a recusa vale para o **lead**, e não para a conversa. Não há fronteira de conversa no sistema: `conversation_key` é o id externo do lead, e `messages`, `lead_qualification`, `conversation_summaries` e `optout_events` todos o usam com esse sentido; introduzir a entidade de conversa é maior que esta card e fica deferido. A consequência é que o campo recusado não é reperguntado **nunca**, e não só na conversa corrente — erro na direção de não incomodar o lead. A recusa também deixa de contar na qualificação (RN-05.3) e na completude do score (RN-06.1), fechando a divergência que a TEC-150 declarou.
 
 **Critérios de aceite:**
 - CA-05.1: Dada a frase "procuro apto de 2 quartos na zona sul até 600 mil pra mudar em janeiro", quando processada, então 4 campos são preenchidos em uma única passagem e o próximo turno não repergunta nenhum deles.

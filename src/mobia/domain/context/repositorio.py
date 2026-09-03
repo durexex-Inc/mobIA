@@ -51,14 +51,26 @@ _CAMPOS_DA_EXTRACAO = frozenset(campo.name for campo in fields(Extracao))
 # A traducao mora aqui porque aqui e onde os tres vocabularios se encontram.
 # O alvo e `faixa_preco_max`, que e o nome que a marca tinha antes desta
 # branch, quando os tres coincidiam -- entao o texto do prompt volta a ser
-# byte-identico ao de antes tambem neste caminho. `faixa_preco_min` de
-# proposito nao recebe marca: orcamento e UM assunto, e duas linhas de marca
-# para uma pergunta so gastariam prompt dizendo a mesma coisa.
+# byte-identico ao de antes tambem neste caminho. Nenhum nome sai como
+# `faixa_preco_min`: orcamento e UM assunto, e duas linhas de marca para uma
+# pergunta so gastariam prompt dizendo a mesma coisa.
+#
+# TEC-148: as duas chaves do PROMPT entram tambem. Nada diz ao modelo qual
+# dos vocabularios `perguntou`/`recusou` aceitam, e o que ele le a cada turno
+# e `faixa_preco_min`/`faixa_preco_max` -- entao e por esses nomes que ele
+# tende a relatar. Sem as duas linhas abaixo, uma recusa do orcamento (o
+# cenario titular da card) era descartada como vocabulario desconhecido.
+# `faixa_preco_max` mapeia para si mesmo. A linha parece redundante e nao e:
+# sem ela o nome cai no `in _CAMPOS_DA_EXTRACAO` de `_marca_de`, e nem
+# `faixa_preco_max` nem `faixa_preco_min` sao campos de `Extracao` -- os dois
+# voltariam a ser descartados. Nao apague.
 _MARCA_DO_ORCAMENTO = "faixa_preco_max"
 _NOME_DA_MARCA = {
     "faixa_preco_expressao": _MARCA_DO_ORCAMENTO,
     "faixa_preco_min_centavos": _MARCA_DO_ORCAMENTO,
     "faixa_preco_max_centavos": _MARCA_DO_ORCAMENTO,
+    "faixa_preco_min": _MARCA_DO_ORCAMENTO,
+    "faixa_preco_max": _MARCA_DO_ORCAMENTO,
 }
 
 
@@ -307,6 +319,93 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
     return conhecidos - {_marca_de(nome) or nome for nome in preenchidos}
 
 
+def campos_a_recusar(recusou: Iterable[str], preenchidos: Iterable[str]) -> set[str]:
+    """Os campos que o lead se negou a informar neste turno.
+
+    Mesma forma de `campos_a_marcar` e pelos mesmos motivos: e regra unica
+    para producao, e os nomes passam por `_marca_de` antes de qualquer coisa
+    porque o orcamento tem varios nomes neste repo e o unico que o modelo
+    pode dizer nao e coluna. O runner do eval NAO chama esta funcao -- o
+    corpus anotado da TEC-145 nao marca recusa em turno nenhum (lacuna
+    declarada no desenho), entao nao ha o que a regra faria ali. Uma card
+    futura que anote recusa no corpus tem de ligar o runner nesta funcao, e
+    nao escrever uma segunda copia dela.
+
+    **Nome fora do vocabulario e descartado, nao adivinhado.** Aqui isso pesa
+    mais que na marca: recusa inventada faz o agente parar de perguntar um
+    campo obrigatorio e `esta_qualificado` devolver False para sempre, sem o
+    lead perceber. Descartar custa uma pergunta a mais.
+
+    **A recusa aceita tambem e logada**, e nao so a descartada. Uma recusa
+    sobre campo que ainda nao tinha valor nao move o score nem gera linha na
+    trilha da TEC-152 -- sem esta linha de log ela nao existiria em lugar
+    nenhum alem da coluna. Ver o comentario no corpo.
+
+    **`preenchidos` subtrai, e e o cenario 2 da card:** se o lead informou o
+    campo neste turno, ele nao esta recusando o campo. Vale para os dois
+    extremos do orcamento -- "a partir de 300 mil" preenche so o minimo e
+    responde a pergunta sobre orcamento.
+
+    A subtracao aqui cobre o turno corrente. Desfazer uma recusa ANTERIOR
+    quando o valor chega e feito no SQL de `gravar_estado`, que e o unico
+    lugar que ve o array acumulado.
+    """
+    conhecidos: set[str] = set()
+    ignorados: list[str] = []
+    # dict.fromkeys em vez de iterar `recusou` direto: sem dedupe, um nome
+    # repetido (["bairro", "bairro"]) entraria duas vezes em `ignorados`, e o
+    # `len(ignorados) - len(plausiveis)` abaixo contaria a segunda ocorrencia
+    # como se o filtro de PII tivesse suprimido alguem -- um `descartados=1`
+    # mentindo sobre uma supressao que nunca aconteceu. Mesmo raciocinio de
+    # `campos_a_marcar`, ver o comentario la.
+    for nome in dict.fromkeys(recusou):
+        marca = _marca_de(nome)
+        if marca is None:
+            ignorados.append(nome)
+        else:
+            conhecidos.add(marca)
+
+    if ignorados:
+        plausiveis = sorted({n for n in ignorados if _NOME_PLAUSIVEL.fullmatch(n)})
+        log.warning(
+            "estado.campo_recusado_desconhecido",
+            nomes=plausiveis,
+            descartados=len(ignorados) - len(plausiveis),
+        )
+
+    aceitos = conhecidos - {_marca_de(nome) or nome for nome in preenchidos}
+    if aceitos:
+        # O unico instrumento do erro CARO desta card. Recusa de falso
+        # positivo e silenciosa por construcao: quando o campo nao tinha
+        # valor, o score nao muda (a completude ja nao o contava), a trilha
+        # da TEC-152 nao ganha linha, e o lead vira permanentemente
+        # inqualificavel sem rastro em lugar nenhum alem da coluna. Uma linha
+        # de log e a coisa barata que torna isso audivel enquanto o corpus de
+        # eval nao anota recusa (lacuna declarada no desenho).
+        #
+        # Os nomes saem INTEIROS, sem passar por `_NOME_PLAUSIVEL`. Nao e
+        # esquecimento: aqui eles ja passaram por `_marca_de`, entao sao
+        # vocabulario fixo -- chave de `_NOME_DA_MARCA` ou campo de
+        # `Extracao` --, e nao ha caminho por onde texto do lead chegue.
+        # Filtrar seria custo sem risco a comprar. Os DESCARTADOS acima sao
+        # o caso oposto, e por isso so eles precisam do filtro.
+        log.info("estado.campo_recusado", nomes=sorted(aceitos))
+    return aceitos
+
+
+def _sem_os_respondidos(expressao: Any, respondidos: list[str]) -> Any:
+    """Encadeia `array_remove` para tirar do array cada campo respondido.
+
+    Existe como funcao para o laco nao poluir o dicionario do `set_`, que ja
+    e o trecho mais denso de `gravar_estado`. Postgres nao tem operador de
+    subtracao de array; `array_remove` e o built-in, e remove todas as
+    ocorrencias do elemento.
+    """
+    for nome in respondidos:
+        expressao = func.array_remove(expressao, nome)
+    return expressao
+
+
 async def gravar_estado(
     session: AsyncSession,
     *,
@@ -315,6 +414,7 @@ async def gravar_estado(
     intencao: Intencao,
     extracao: Extracao,
     perguntou: Iterable[str] = (),
+    recusou: Iterable[str] = (),
 ) -> LeadQualification | None:
     """Upsert do estado de qualificacao. `None` no campo nao apaga o que havia.
 
@@ -338,17 +438,70 @@ async def gravar_estado(
     `perguntou` tem default de proposito: nenhum chamador antigo precisa saber
     da TEC-257 para continuar funcionando, e nao marcar e o comportamento
     seguro.
+
+    `recusou` tem default de proposito, como `perguntou`: nenhum chamador
+    antigo precisa saber da TEC-148 para continuar funcionando, e nao
+    registrar recusa e o comportamento seguro.
+
+    Quando o turno nao tem campo nenhum a gravar (`campos_a_gravar` devolveu
+    {}), esta funcao ainda pode gravar -- so a recusa, so por UPDATE, e so
+    numa linha que ja existe. Ver o comentario dentro do `if not campos:`
+    abaixo para o motivo de isso nao seguir a mesma guarda de `perguntou`.
     """
     campos = campos_a_gravar(intencao, extracao)
     if not campos:
-        # A guarda de FORA_DE_ESCOPO vale para a marca tambem, e o buraco esta
-        # declarado no spec: um agente que pergunte num turno fora de escopo
-        # nao marca e pode perguntar de novo. Com a marca permanente, marcar
-        # de menos e o erro mais seguro dos dois. Nao ha linha gravada, entao
-        # nao ha linha a devolver.
-        return None
+        # A guarda de FORA_DE_ESCOPO vale para a marca de `perguntou` tambem,
+        # e o buraco esta declarado no spec: um agente que pergunte num turno
+        # fora de escopo nao marca e pode perguntar de novo. Com a marca
+        # permanente, marcar de menos e o erro mais seguro dos dois -- por
+        # isso `perguntou` simplesmente cai no chao aqui, sem UPDATE nenhum.
+        #
+        # `recusou` NAO pode cair no mesmo chao. Um turno sem campo nenhum e
+        # exatamente a forma provavel do cenario central desta card: um lead
+        # que so diz "prefiro nao falar disso" classifica INDEFINIDA ou
+        # FORA_DE_ESCOPO e nao extrai nada, `campos_a_gravar` devolve {} e
+        # cairia aqui -- e para a recusa marcar de menos e o erro CARO, nao o
+        # seguro: o agente continua perguntando o campo que o lead ja disse
+        # que nao quer informar, o que e o proprio motivo da card existir.
+        #
+        # A saida e um UPDATE que toca so `campos_recusados`, no molde de
+        # `marcar_perguntados` (mesmo arquivo): nao reabre o upsert de
+        # `intencao`/`extracao`, e devolve a linha atualizada em vez de nada.
+        #
+        # Deliberadamente NAO cria linha. Um lead sem `lead_qualification`
+        # nenhuma que so recusa continua sem linha -- criar moveria o score
+        # dele de 0 para o piso documentado de 6 pontos e geraria registro na
+        # trilha da TEC-152 so por uma recusa isolada, uma consequencia que
+        # esta card nunca decidiu. A recusa sobrevive para quem ja tem
+        # estado; de quem nao tem nenhum, ela continua se perdendo, do mesmo
+        # jeito que antes desta correcao.
+        recusados_isolados = sorted(campos_a_recusar(recusou, ()))
+        if not recusados_isolados:
+            return None
+
+        resultado_da_recusa = await session.execute(
+            update(LeadQualification)
+            .where(
+                LeadQualification.channel == channel,
+                LeadQualification.conversation_key == conversation_key,
+            )
+            .values(
+                campos_recusados=func.coalesce(
+                    LeadQualification.campos_recusados,
+                    literal_column("'{}'::varchar[]"),
+                ).op("||")(recusados_isolados),
+                updated_at=datetime.now(UTC),
+            )
+            .returning(LeadQualification)
+            .execution_options(populate_existing=True)
+        )
+        return resultado_da_recusa.scalar_one_or_none()
 
     marcados = sorted(campos_a_marcar(perguntou, campos))
+    recusados = sorted(campos_a_recusar(recusou, campos))
+    # Os nomes que este turno preencheu, na forma canonica da marca -- e o que
+    # sai do array acumulado no SQL abaixo.
+    respondidos = sorted({_marca_de(nome) or nome for nome in campos})
 
     valores: dict[str, Any] = {
         "channel": channel,
@@ -358,6 +511,9 @@ async def gravar_estado(
         # anterior a TEC-257, ninguem marcava", e um insert que omitisse a
         # coluna criaria uma linha nova com a semantica de linha antiga.
         "perguntados_sem_resposta": marcados,
+        # Sempre presente, mesmo vazio, pela mesma razao da coluna vizinha:
+        # `NULL` esta reservado para "linha anterior a esta card".
+        "campos_recusados": recusados,
         **campos,
     }
     statement = pg_insert(LeadQualification).values(valores)
@@ -384,6 +540,24 @@ async def gravar_estado(
                     LeadQualification.perguntados_sem_resposta,
                     literal_column("'{}'::varchar[]"),
                 ).op("||")(statement.excluded.perguntados_sem_resposta),
+                # Uniao em SQL pela razao da coluna vizinha: dois turnos
+                # concorrentes da mesma conversa leriam o mesmo array, cada um
+                # uniria o seu, e o mais lento sobrescreveria em silencio.
+                #
+                # `array_remove` encadeado tira o que este turno respondeu --
+                # o cenario 2 da card, atravessando turnos. Ele remove TODAS
+                # as ocorrencias do nome respondido; um nome recusado em DOIS
+                # turnos diferentes sem nunca ser respondido acumula
+                # ['regiao', 'regiao'] e fica assim -- duplicata e possivel
+                # por este caminho, mesma razao da coluna irma logo acima:
+                # quem le testa pertinencia, nao conta.
+                "campos_recusados": _sem_os_respondidos(
+                    func.coalesce(
+                        LeadQualification.campos_recusados,
+                        literal_column("'{}'::varchar[]"),
+                    ).op("||")(statement.excluded.campos_recusados),
+                    respondidos,
+                ),
             },
         )
         .returning(LeadQualification)
@@ -579,6 +753,12 @@ async def registrar_recalculo(
         # existe, e a TEC-150 prescreve que ate la o fator contribua zero.
         # Quando ela existir, este e o unico ponto que muda.
         imoveis_compativeis=0,
+        # TEC-148: a recusa sai da mesma linha que o lock acabou de reler,
+        # entao nao ha consulta extra e nao ha risco de ler estado velho.
+        # `or ()` porque `NULL` (linha anterior a TEC-148) e `{}` (registrou,
+        # sem recusa) sao estados diferentes na coluna, e esta leitura trata
+        # os dois iguais -- mesmo raciocinio de `_recusados_de` em turno.py.
+        recusados=frozenset(estado.campos_recusados or ()),
     )
 
     ultimo = (

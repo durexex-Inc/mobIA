@@ -86,6 +86,7 @@ def calcular_score(
     *,
     mensagens_do_lead: int = 0,
     imoveis_compativeis: int = 0,
+    recusados: frozenset[str] = frozenset(),
 ) -> Score:
     """O score da RN-06.1. Nunca levanta.
 
@@ -126,21 +127,45 @@ def calcular_score(
     Lacuna declarada no desenho.
 
     **O engajamento nao decai.** Nao ha janela de recencia: oito mensagens de
-    quatro meses atras valem 15 para sempre, duas de hoje valem 10, e o score
-    de um lead e monotono nao-decrescente ao longo da vida da conversa. Onde
-    o recalculo vive e decisao da TEC-151/TEC-152, mas a forma do fator e
+    quatro meses atras valem 15 para sempre, e duas de hoje valem 10 -- a
+    contribuicao DESTE fator so sobe ao longo da vida da conversa. Onde o
+    recalculo vive e decisao da TEC-151/TEC-152, mas a forma do fator e
     decidida aqui, e por isso a lacuna e desta card.
+
+    **O total nunca foi monotono, e a TEC-148 abriu mais uma forma de ele
+    cair.** `urgencia` e `capacidade` ja caiam antes desta branch, porque
+    `campos_a_gravar` e "mais novo vence" -- a docstring dela diz isso --, e
+    o lead que informa IMEDIATA e depois SEM_PRESSA perde os 25 pontos de
+    urgencia; a docstring de `causas_do_recalculo` usa uma queda de urgencia
+    como exemplo. O que so subia era a **completude**, porque valor gravado
+    nunca e apagado -- e e ela que a recusa agora derruba em 5 pontos (ver
+    `recusados` abaixo), com a trilha da TEC-152 registrando a queda sob
+    `CAUSA_CAMPOS_OBRIGATORIOS`. Quem ordenar a fila nao pode supor que o
+    numero de ontem e um piso.
 
     `imoveis_compativeis` tem default zero porque a busca de imoveis
     (TEC-158) nao existe, e a card prescreve que ate la o fator contribua
     zero. Quando ela existir, o chamador passa o numero real e nenhuma linha
     daqui muda.
+
+    **`recusados` fecha a divergencia que esta card declarou.** Ate a
+    TEC-148, campo recusado ainda pontuava a completude sobre um valor de um
+    turno anterior, porque `calcular_score` nao recebia o conjunto. Recebe
+    agora, e a regra e a mesma de `esta_qualificado`: recusado nao conta,
+    mesmo com valor na coluna.
+
+    **Apenas a completude consulta a recusa.** Nenhum outro dos cinco fatores
+    o faz -- em particular, recusar `forma_pagamento` nao mexe na capacidade,
+    que continua pontuando "a avaliar" pela coluna. Fica declarado.
+
+    Keyword-only como os dois vizinhos, por consistencia da assinatura.
     """
     if estado is None:
         return Score(completude=0, urgencia=0, catalogo=0, engajamento=0, capacidade=0)
 
     return Score(
-        completude=campos_obrigatorios_preenchidos(estado) * PONTOS_POR_CAMPO_OBRIGATORIO,
+        completude=campos_obrigatorios_preenchidos(estado, recusados)
+        * PONTOS_POR_CAMPO_OBRIGATORIO,
         urgencia=_PONTOS_POR_URGENCIA.get(estado.urgencia or "", 0),
         catalogo=_pontos_do_catalogo(imoveis_compativeis),
         engajamento=_pontos_do_engajamento(mensagens_do_lead),

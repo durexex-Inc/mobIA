@@ -83,7 +83,9 @@ def _canonico(nome: str) -> str:
     return CAMPO_DO_ORCAMENTO if nome.startswith(CAMPO_DO_ORCAMENTO) else nome
 
 
-def campos_obrigatorios_preenchidos(estado: LeadQualification | None) -> int:
+def campos_obrigatorios_preenchidos(
+    estado: LeadQualification | None, recusados: frozenset[str] = frozenset()
+) -> int:
     """Quantos dos obrigatorios da RN-05.3 este lead ja informou.
 
     Existe para o score da TEC-150, que pontua completude a 5 pontos por
@@ -92,10 +94,20 @@ def campos_obrigatorios_preenchidos(estado: LeadQualification | None) -> int:
     a iterar `CAMPOS_OBRIGATORIOS` por conta propria -- meio caminho para uma
     segunda copia da lista, que e o defeito que a TEC-146 gastou uma card
     inteira para consertar.
+
+    `recusados` entra na TEC-148 e usa a mesma regra de `esta_qualificado`:
+    campo recusado nao conta, mesmo com valor na coluna. Sem isto, o score e
+    a qualificacao contariam historias contrarias sobre o mesmo lead.
+
+    O default vazio e o comportamento anterior a TEC-148, e mantem valendo o
+    chamador que nao passa nada.
     """
     if estado is None:
         return 0
-    return sum(1 for campo in CAMPOS_OBRIGATORIOS if _preenchido(estado, campo))
+    negados = {_canonico(nome) for nome in recusados}
+    return sum(
+        1 for campo in CAMPOS_OBRIGATORIOS if campo not in negados and _preenchido(estado, campo)
+    )
 
 
 def _preenchido(estado: LeadQualification, campo: str) -> bool:

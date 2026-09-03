@@ -322,6 +322,32 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     esta preenchido" virou "nao repergunte o preenchido nem o ignorado" -- e
     foi o corte na forma existente que pagou quase toda a clausula nova,
     +0,75 em vez dos +6,25 que so acrescentar teria custado.
+
+    A TEC-148 gastou 17,6 dos 23,8 que a TEC-257 havia deixado, e o teto NAO
+    se mexeu: o liquido foi de 631,2 para 648,8 e a margem ficou em 6,2.
+    Todo o custo foi o campo `recusou` no schema -- o prompt nao ganhou
+    texto, porque a clausula "nao repergunte o preenchido nem o ignorado" da
+    TEC-257 ja cobre recusa, e o campo recusado ja vem marcado
+    "(perguntado, sem resposta)" do turno em que foi perguntado.
+
+    O calculo de custo desta card errou duas vezes antes de bater com o
+    numero real, e as duas ficam registradas para ninguem repetir a conta
+    por fora do teste. A entrada nova em `properties`
+    (`{"recusou": {"type": "array", "items": {"type": "string"}}}`) sozinha
+    e 14,75 tokens -- mas `_ORDEM_DOS_CAMPOS` tambem alimenta
+    `SCHEMA_DA_RESPOSTA["required"]` (a guarda de import em
+    `classificador.py` exige que as duas listas tenham as mesmas chaves), e
+    `required` cresceu junto com `properties`. Simular so a entrada de
+    `properties` e esquecer que `required` cresce e o primeiro erro. Medir
+    essa simulacao com `json.dumps(separators=(",", ":"))`, e nao com os
+    separadores default que o teste usa, e o segundo -- subestima de novo,
+    13,25 em vez de 14,75 so na entrada de `properties`. Os dois juntos
+    ficam 4,35 tokens abaixo do real. Por isso o numero que conta e sempre
+    o impresso por
+
+        python -m pytest -q -k margem_do_orcamento -s
+
+    nunca uma simulacao do schema por fora dele.
     """
     subcontagem = _subcontagem()
     _linha("teto desta assercao (fixo)", 655)

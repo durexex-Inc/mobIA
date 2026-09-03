@@ -35,6 +35,24 @@ def test_nao_marca_o_que_ja_esta_preenchido():
     assert campos_a_marcar(["regiao", "vagas"], {"regiao"}) == {"vagas"}
 
 
+def test_o_nome_do_orcamento_QUE_O_PROMPT_RENDERIZA_tambem_marca():
+    """Efeito colateral da TEC-148 sobre a marca da TEC-257, na direcao segura.
+
+    `_NOME_DA_MARCA` ganhou as duas chaves do prompt para que a RECUSA do
+    orcamento parasse de ser descartada; a marca compartilha a mesma tabela e
+    herda o ganho. Antes disso, um `perguntou: ["faixa_preco_max"]` -- o nome
+    que o modelo le no estado a cada turno -- caia como vocabulario
+    desconhecido e o agente podia reperguntar o orcamento para sempre.
+
+    A direcao e segura: passa a marcar o nome que o modelo de fato usa, e o
+    resultado colapsa no mesmo `faixa_preco_max` das outras tres formas -- o
+    prompt nao ganha linha nova nem nome novo.
+    """
+    assert campos_a_marcar(["faixa_preco_max"], set()) == {"faixa_preco_max"}
+    assert campos_a_marcar(["faixa_preco_min"], set()) == {"faixa_preco_max"}
+    assert campos_a_marcar(["faixa_preco_max"], {"faixa_preco_min_centavos"}) == set()
+
+
 def test_descarta_nome_que_nao_e_campo_de_extracao():
     """Nome inventado marca de MENOS, e esse e o erro seguro.
 

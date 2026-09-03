@@ -253,3 +253,37 @@ async def test_a_0012_desce_e_sobe_de_novo() -> None:
             )
             == 1
         )
+
+
+async def test_a_0013_desce_e_sobe_de_novo() -> None:
+    """A coluna some no downgrade e volta no upgrade, sem backfill."""
+    await dispose_engine()
+    alembic("downgrade", "0012")
+    try:
+        async with get_sessionmaker()() as sessao:
+            assert (
+                await sessao.scalar(
+                    text(
+                        "SELECT count(*) FROM information_schema.columns "
+                        "WHERE table_name = 'lead_qualification' "
+                        "AND column_name = 'campos_recusados'"
+                    )
+                )
+                == 0
+            )
+    finally:
+        await dispose_engine()
+        alembic("upgrade", "head")
+        await dispose_engine()
+
+    async with get_sessionmaker()() as sessao:
+        assert (
+            await sessao.scalar(
+                text(
+                    "SELECT count(*) FROM information_schema.columns "
+                    "WHERE table_name = 'lead_qualification' "
+                    "AND column_name = 'campos_recusados'"
+                )
+            )
+            == 1
+        )

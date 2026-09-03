@@ -297,6 +297,14 @@ class RespostaDoAgente:
     # seria congelamento de fachada.
     perguntou: tuple[str, ...] = ()
 
+    # TEC-148. Os campos que o lead se negou a informar neste turno,
+    # declarados pelo proprio modelo. Vem depois de `perguntou` no schema --
+    # ver `_ORDEM_DOS_CAMPOS`.
+    #
+    # Tupla e nao list, como `perguntou`: o dataclass e frozen, e uma list
+    # mutavel dentro dele seria congelamento de fachada.
+    recusou: tuple[str, ...] = ()
+
     # Zero, e nao `None`, porque "nao cacheou" e uma quantidade e nao uma
     # ausencia: o modelo respondeu, o prefixo foi enviado, e o que o cache
     # poupou foi nada. `None` em `message_telemetry` significa outra coisa --
