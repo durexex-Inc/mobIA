@@ -5,7 +5,14 @@ TEC-148.
 
 import logging
 
+from mobia.domain.agente.schemas import FormaPagamento, Intencao, Urgencia
+from mobia.domain.context.models import LeadQualification
+from mobia.domain.context.qualificacao import (
+    campos_obrigatorios_preenchidos,
+    esta_qualificado,
+)
 from mobia.domain.context.repositorio import campos_a_recusar
+from mobia.domain.context.score import calcular_score
 
 
 def test_o_nome_do_orcamento_e_traduzido_para_a_forma_canonica():
@@ -80,3 +87,58 @@ def test_o_log_nao_carrega_o_que_nao_parece_nome_de_campo(caplog):
 
 def test_sem_recusa_devolve_vazio():
     assert campos_a_recusar([], ["regiao"]) == set()
+
+
+def _estado(**ajustes: object) -> LeadQualification:
+    base: dict[str, object] = {
+        "channel": "whatsapp",
+        "conversation_key": "5511911112222",
+        "intencao": Intencao.COMPRA.value,
+        "faixa_preco_max_centavos": 50_000_000,
+        "regiao": "vila mariana",
+        "urgencia": Urgencia.ATE_3_MESES.value,
+    }
+    return LeadQualification(**{**base, **ajustes})
+
+
+def test_campo_recusado_com_valor_na_coluna_nao_conta_como_preenchido():
+    """E o caso que distingue esta card do marcador da TEC-257: la
+    "valor vence marca", entao um campo com valor antigo renderiza o valor e a
+    marca fica invisivel. Aqui a recusa tem de vencer o valor."""
+    estado = _estado()
+    assert campos_obrigatorios_preenchidos(estado) == 4
+    assert campos_obrigatorios_preenchidos(estado, frozenset({"faixa_preco_max"})) == 3
+
+
+def test_lead_com_obrigatorio_recusado_nao_esta_qualificado():
+    estado = _estado()
+    assert esta_qualificado(estado) is True
+    assert esta_qualificado(estado, frozenset({"faixa_preco_max"})) is False
+
+
+def test_o_score_para_de_pontuar_a_completude_do_campo_recusado():
+    """A divergencia que a TEC-150 declarou e esta card fecha: sem isto,
+    `esta_qualificado` e o score contam historias contrarias sobre o mesmo
+    lead, e a TEC-151 ordena a fila por um numero que a qualificacao
+    contradiz."""
+    estado = _estado()
+    cheio = calcular_score(estado, mensagens_do_lead=1)
+    recusado = calcular_score(estado, mensagens_do_lead=1, recusados=frozenset({"faixa_preco_max"}))
+
+    assert cheio.completude - recusado.completude == 5
+    assert cheio.total - recusado.total == 5
+
+
+def test_recusar_campo_que_nao_e_obrigatorio_nao_muda_score_nem_qualificacao():
+    """`forma_pagamento` nao esta na RN-05.3, e a completude conta so os
+    quatro obrigatorios. Recusa-la nao mexe na completude -- e o fator de
+    capacidade nao consulta recusa, o que fica declarado no desenho."""
+    estado = _estado(forma_pagamento=FormaPagamento.A_VISTA.value)
+    recusados = frozenset({"forma_pagamento"})
+
+    assert campos_obrigatorios_preenchidos(estado, recusados) == 4
+    assert esta_qualificado(estado, recusados) is True
+    assert (
+        calcular_score(estado, mensagens_do_lead=1, recusados=recusados).completude
+        == calcular_score(estado, mensagens_do_lead=1).completude
+    )

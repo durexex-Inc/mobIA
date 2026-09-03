@@ -86,6 +86,7 @@ def calcular_score(
     *,
     mensagens_do_lead: int = 0,
     imoveis_compativeis: int = 0,
+    recusados: frozenset[str] = frozenset(),
 ) -> Score:
     """O score da RN-06.1. Nunca levanta.
 
@@ -135,12 +136,25 @@ def calcular_score(
     (TEC-158) nao existe, e a card prescreve que ate la o fator contribua
     zero. Quando ela existir, o chamador passa o numero real e nenhuma linha
     daqui muda.
+
+    **`recusados` fecha a divergencia que esta card declarou.** Ate a
+    TEC-148, campo recusado ainda pontuava a completude sobre um valor de um
+    turno anterior, porque `calcular_score` nao recebia o conjunto. Recebe
+    agora, e a regra e a mesma de `esta_qualificado`: recusado nao conta,
+    mesmo com valor na coluna.
+
+    **Apenas a completude consulta a recusa.** Nenhum outro dos cinco fatores
+    o faz -- em particular, recusar `forma_pagamento` nao mexe na capacidade,
+    que continua pontuando "a avaliar" pela coluna. Fica declarado.
+
+    Keyword-only como os dois vizinhos, por consistencia da assinatura.
     """
     if estado is None:
         return Score(completude=0, urgencia=0, catalogo=0, engajamento=0, capacidade=0)
 
     return Score(
-        completude=campos_obrigatorios_preenchidos(estado) * PONTOS_POR_CAMPO_OBRIGATORIO,
+        completude=campos_obrigatorios_preenchidos(estado, recusados)
+        * PONTOS_POR_CAMPO_OBRIGATORIO,
         urgencia=_PONTOS_POR_URGENCIA.get(estado.urgencia or "", 0),
         catalogo=_pontos_do_catalogo(imoveis_compativeis),
         engajamento=_pontos_do_engajamento(mensagens_do_lead),
