@@ -310,10 +310,14 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
 def campos_a_recusar(recusou: Iterable[str], preenchidos: Iterable[str]) -> set[str]:
     """Os campos que o lead se negou a informar neste turno.
 
-    Mesma forma de `campos_a_marcar` e pelos mesmos motivos: e regra unica,
-    compartilhada entre producao e o runner do eval, e os nomes passam por
-    `_marca_de` antes de qualquer coisa porque o orcamento tem varios nomes
-    neste repo e o unico que o modelo pode dizer nao e coluna.
+    Mesma forma de `campos_a_marcar` e pelos mesmos motivos: e regra unica
+    para producao, e os nomes passam por `_marca_de` antes de qualquer coisa
+    porque o orcamento tem varios nomes neste repo e o unico que o modelo
+    pode dizer nao e coluna. O runner do eval NAO chama esta funcao -- o
+    corpus anotado da TEC-145 nao marca recusa em turno nenhum (lacuna
+    declarada no desenho), entao nao ha o que a regra faria ali. Uma card
+    futura que anote recusa no corpus tem de ligar o runner nesta funcao, e
+    nao escrever uma segunda copia dela.
 
     **Nome fora do vocabulario e descartado, nao adivinhado.** Aqui isso pesa
     mais que na marca: recusa inventada faz o agente parar de perguntar um
@@ -331,6 +335,12 @@ def campos_a_recusar(recusou: Iterable[str], preenchidos: Iterable[str]) -> set[
     """
     conhecidos: set[str] = set()
     ignorados: list[str] = []
+    # dict.fromkeys em vez de iterar `recusou` direto: sem dedupe, um nome
+    # repetido (["bairro", "bairro"]) entraria duas vezes em `ignorados`, e o
+    # `len(ignorados) - len(plausiveis)` abaixo contaria a segunda ocorrencia
+    # como se o filtro de PII tivesse suprimido alguem -- um `descartados=1`
+    # mentindo sobre uma supressao que nunca aconteceu. Mesmo raciocinio de
+    # `campos_a_marcar`, ver o comentario la.
     for nome in dict.fromkeys(recusou):
         marca = _marca_de(nome)
         if marca is None:
@@ -457,9 +467,11 @@ async def gravar_estado(
                 #
                 # `array_remove` encadeado tira o que este turno respondeu --
                 # o cenario 2 da card, atravessando turnos. Ele remove TODAS
-                # as ocorrencias, entao duplicata no array nao sobrevive; e
-                # sao no maximo os campos de `Extracao`, entao a cadeia e
-                # curta e conhecida.
+                # as ocorrencias do nome respondido; um nome recusado em DOIS
+                # turnos diferentes sem nunca ser respondido acumula
+                # ['regiao', 'regiao'] e fica assim -- duplicata e possivel
+                # por este caminho, mesma razao da coluna irma logo acima:
+                # quem le testa pertinencia, nao conta.
                 "campos_recusados": _sem_os_respondidos(
                     func.coalesce(
                         LeadQualification.campos_recusados,
