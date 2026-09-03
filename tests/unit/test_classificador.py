@@ -716,6 +716,38 @@ async def test_resposta_sem_extracao_continua_valida(monkeypatch: pytest.MonkeyP
     assert resultado.extracao.vazia() is True
 
 
+async def test_recusou_do_modelo_chega_no_resultado_pelo_parse_real(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEC-148: o unico teste que morre se a leitura de `recusou` sumir.
+
+    Toda a integracao passa por `ClassificadorFake`, que constroi
+    `RespostaDoAgente` direto -- e o campo tem default `()`. Apagar a linha
+    `recusou=_lista_de_nomes(dados.get("recusou"))` daqui deixaria a feature
+    morta em producao com a suite inteira verde: nenhum teste que nao passe
+    pelo parse de verdade consegue ver a diferenca.
+    """
+    dados = dict(_DADOS_VALIDOS, recusou=["regiao"])
+    resposta = _resposta_falsa(texto=json.dumps(dados))
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resultado.recusou == ("regiao",)
+
+
+async def test_resposta_sem_recusou_continua_valida(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_DADOS_VALIDOS` nao tem `recusou`. O campo e relato do modelo sobre o
+    proprio turno: ausencia dele nao pode custar um turno ja pago que ja tem
+    resposta valida para o lead."""
+    resposta = _resposta_falsa(texto=json.dumps(_DADOS_VALIDOS))
+    _instalar_cliente_falso(monkeypatch, resposta)
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resultado.recusou == ()
+
+
 async def test_extracao_nao_vaza_no_log(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
