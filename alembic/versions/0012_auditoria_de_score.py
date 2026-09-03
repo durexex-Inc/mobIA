@@ -10,6 +10,15 @@ O CHECK existe porque `total_novo` e denormalizado de proposito -- e por ele
 que se ordena e se filtra --, e sem a restricao um fator esquecido na soma
 produz uma trilha que parece consistente e nao e.
 
+**`clock_timestamp()` e nao `now()`.** `now()` e `transaction_timestamp()`,
+congelado no primeiro statement da transacao; o INSERT desta tabela acontece no
+fim de um turno longo, varios statements depois desse primeiro. Dois turnos
+concorrentes da mesma conversa seriam entao carimbados pela ordem em que
+COMECARAM, e nao pela ordem em que gravaram -- o que a linha de `FOR UPDATE`
+serializa --, e a trilha sairia ao contrario. Como o INSERT ocorre com o lock
+de `lead_qualification` na mao, `clock_timestamp()` da uma ordem total igual a
+ordem do lock.
+
 **A trigger recusa UPDATE e nao DELETE.** Imutavel significa "nao se altera o
 que foi registrado"; expurgo por politica de retencao e ato deliberado, nao
 alteracao -- e a RNF-18, que pede 12 meses, pede que apagar seja possivel.
@@ -64,7 +73,7 @@ def upgrade() -> None:
             "created_at",
             sa.DateTime(timezone=True),
             nullable=False,
-            server_default=sa.func.now(),
+            server_default=sa.text("clock_timestamp()"),
         ),
         sa.CheckConstraint(
             "total_novo = completude + urgencia + catalogo + engajamento + capacidade",

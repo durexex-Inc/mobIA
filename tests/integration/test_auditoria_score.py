@@ -436,3 +436,74 @@ async def test_um_turno_sem_campo_nenhum_ainda_grava_a_travessia_de_engajamento(
     assert depois[-1].causas == ["ENGAJAMENTO"]
     assert depois[-1].total_anterior == depois[0].total_novo
     assert depois[-1].total_novo - depois[-1].total_anterior == 5
+
+
+async def test_a_ordem_da_trilha_segue_a_escrita_e_nao_o_inicio_da_transacao(
+    session, session_factory
+) -> None:
+    """`created_at` e `clock_timestamp()`, e a diferenca para `now()` e visivel.
+
+    `now()` e `transaction_timestamp()`: congelado no PRIMEIRO statement da
+    transacao, que num turno e o `ler_intencao` -- varios statements antes de
+    `registrar_recalculo` tomar o lock. Um turno que COMECA antes pode gravar
+    DEPOIS, e com `now()` sairia carimbado como o mais antigo dos dois: a
+    trilha ficaria na ordem inversa da ordem em que o lock foi concedido, e o
+    turno seguinte leria como "ultimo registro" uma linha que nao e a atual,
+    encadeando `total_anterior` a partir dela.
+
+    Aqui `antiga` abre a transacao primeiro e grava por ultimo.
+    """
+    await _qualificacao(session)
+    await _mensagem(session)
+    await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+
+    async with session_factory() as antiga, session_factory() as recente:
+        # Abre a transacao de `antiga` -- e este o instante que `now()`
+        # congelaria para tudo que ela escrever depois.
+        comeco_da_antiga = await antiga.scalar(text("SELECT transaction_timestamp()"))
+
+        await recente.execute(
+            text(
+                "UPDATE lead_qualification SET forma_pagamento = 'A_VISTA' "
+                "WHERE channel = :channel AND conversation_key = :conversa"
+            ),
+            {"channel": CANAL, "conversa": CONVERSA},
+        )
+        escrita_antes = await registrar_recalculo(recente, channel=CANAL, conversation_key=CONVERSA)
+        await recente.commit()
+
+        await antiga.execute(
+            text(
+                "UPDATE lead_qualification SET urgencia = 'SEM_PRESSA' "
+                "WHERE channel = :channel AND conversation_key = :conversa"
+            ),
+            {"channel": CANAL, "conversa": CONVERSA},
+        )
+        escrita_depois = await registrar_recalculo(antiga, channel=CANAL, conversation_key=CONVERSA)
+        await antiga.commit()
+
+    assert escrita_antes is not None and escrita_depois is not None
+    # A montagem e mesmo a que o teste diz que e: a transacao que gravou por
+    # ultimo comecou antes de a outra ter gravado.
+    assert comeco_da_antiga < escrita_antes.created_at
+    # 60 (a vista) e depois 45 (sem pressa): a ordem de escrita.
+    assert (escrita_antes.total_novo, escrita_depois.total_novo) == (60, 45)
+    # O carimbo segue a escrita. Com `now()` esta comparacao se inverte.
+    assert escrita_depois.created_at > escrita_antes.created_at
+
+    # E a consequencia que importa: o proximo recalculo encadeia a partir da
+    # linha realmente atual. Cinco mensagens a mais cruzam a sexta e movem so
+    # o engajamento (10 -> 15).
+    for _ in range(5):
+        await _mensagem(session)
+
+    async with session_factory() as seguinte:
+        terceira = await registrar_recalculo(seguinte, channel=CANAL, conversation_key=CONVERSA)
+        await seguinte.commit()
+
+    assert terceira is not None
+    # Com `now()`, o "ultimo registro" seria o de 60 -- que tem urgencia 15 --
+    # e daria `total_anterior=60` com causas URGENCIA e ENGAJAMENTO.
+    assert terceira.total_anterior == 45
+    assert terceira.causas == ["ENGAJAMENTO"]

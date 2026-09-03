@@ -126,10 +126,9 @@ class LeadScoreAudit(Base):
     """Um registro por recalculo que mudou o score. Append-only e imutavel.
 
     TEC-152, RN-06.4. Mesmo molde de `optout_events`: uma linha por evento,
-    `server_default` no carimbo porque a ORDEM e o que torna a trilha legivel,
-    e sem FK para `messages` nem para `lead_qualification` -- a retencao da
-    trilha (12 meses, RNF-18) nao pode ser encurtada por cascata da limpeza de
-    outra tabela.
+    carimbo pelo relogio do servidor, e sem FK para `messages` nem para
+    `lead_qualification` -- a retencao da trilha (12 meses, RNF-18) nao pode
+    ser encurtada por cascata da limpeza de outra tabela.
 
     **So os fatores do score NOVO sao gravados.** Como o registro so entra
     quando o resultado muda, o registro anterior da mesma conversa **e** o
@@ -170,8 +169,21 @@ class LeadScoreAudit(Base):
     # opt-out pela mesma razao: o ato e do lead, nao de um humano nosso.
     autor: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
+    # `server_default` e nao valor vindo do cliente, pela razao do
+    # `optout_events`: `registrar_recalculo` le `ORDER BY created_at DESC LIMIT
+    # 1` sem desempate, e com o relogio de cada worker escrevendo a coluna um
+    # skew entre duas maquinas inverteria dois registros do mesmo lead.
+    #
+    # E `clock_timestamp()` e nao `now()`: `now()` e
+    # `transaction_timestamp()`, congelado no PRIMEIRO statement da transacao,
+    # e este INSERT acontece no fim de um turno longo -- varios statements
+    # depois dele. Dois turnos concorrentes da mesma conversa seriam entao
+    # ordenados por quando COMECARAM, e nao por quando gravaram, invertendo a
+    # trilha em relacao a ordem que o `SELECT ... FOR UPDATE` de
+    # `registrar_recalculo` serializa. Como o INSERT ocorre com aquele lock na
+    # mao, `clock_timestamp()` produz uma ordem total igual a ordem do lock.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
     )
 
     __table_args__ = (

@@ -40,11 +40,13 @@ Migration `0012`.
 | `completude`, `urgencia`, `catalogo`, `engajamento`, `capacidade` | `Integer` | os cinco fatores do score **novo** |
 | `causas` | `ARRAY(String(32))` | nunca `NULL`, nunca vazio. Ver D4 |
 | `autor` | `String(120)` nulável | só na edição manual (TEC-192); hoje sempre nulo |
-| `created_at` | `timestamptz` | `server_default=func.now()` |
+| `created_at` | `timestamptz` | `server_default=clock_timestamp()`. Ver abaixo |
 
 Índice `ix_lead_score_audit_lead (channel, conversation_key, created_at DESC)`, mesmo formato do `ix_optout_events_lead` e do `ix_messages_timeline`: a consulta quente é *"qual o último registro deste lead?"*, uma vez por turno, e o `DESC` no índice evita ordenar em memória para um `LIMIT 1`.
 
 `server_default` e não valor vindo do cliente, pela razão que a `0010` já documentou e que vale igual aqui: a **ordem** dos `created_at` é o que torna a trilha legível, e com o relógio de cada máquina escrevendo a coluna um skew inverteria dois registros do mesmo lead.
+
+**E `clock_timestamp()` e não `now()`.** `now()` é `transaction_timestamp()`, congelado no *primeiro* statement da transação — num turno, o `ler_intencao`, vários statements antes de o passo de auditoria tomar o lock. Dois turnos concorrentes da mesma conversa sairiam então carimbados pela ordem em que **começaram**, e não pela ordem em que gravaram; o turno que começa antes e ganha o lock depois grava por último com o carimbo mais antigo, e a trilha fica na ordem inversa da ordem de escrita. A consequência não é cosmética: o turno seguinte lê como "último registro" uma linha que não é a atual e encadeia `total_anterior` a partir dela. Como o `INSERT` acontece com o lock de `lead_qualification` na mão (D7), `clock_timestamp()` produz uma ordem total igual à ordem do lock.
 
 **Só os fatores do score novo são gravados, não os do anterior.** Com "grava só quando muda" (D3), o registro anterior da mesma conversa *é* o score anterior — guardar os dois criaria duas fontes para o mesmo fato, que é o defeito que a TEC-146 gastou uma card inteira consertando. `total_anterior` fica mesmo assim: é o que a card nomeia, e poupa a segunda leitura no caso comum de só se querer o delta.
 
