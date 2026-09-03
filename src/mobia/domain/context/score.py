@@ -127,10 +127,17 @@ def calcular_score(
     Lacuna declarada no desenho.
 
     **O engajamento nao decai.** Nao ha janela de recencia: oito mensagens de
-    quatro meses atras valem 15 para sempre, duas de hoje valem 10, e o score
-    de um lead e monotono nao-decrescente ao longo da vida da conversa. Onde
-    o recalculo vive e decisao da TEC-151/TEC-152, mas a forma do fator e
+    quatro meses atras valem 15 para sempre, e duas de hoje valem 10 -- a
+    contribuicao DESTE fator so sobe ao longo da vida da conversa. Onde o
+    recalculo vive e decisao da TEC-151/TEC-152, mas a forma do fator e
     decidida aqui, e por isso a lacuna e desta card.
+
+    **O total, porem, nao e monotono, e deixou de ser nesta funcao a partir
+    da TEC-148.** Ate ela, nenhum fator podia cair e o score de um lead era
+    nao-decrescente ao longo da vida da conversa. Uma recusa agora tira 5
+    pontos da completude (ver `recusados` abaixo), e a queda e deliberada --
+    a trilha da TEC-152 a registra com causa `CAMPOS_OBRIGATORIOS`. Quem
+    ordenar a fila nao pode supor que o numero de ontem e um piso.
 
     `imoveis_compativeis` tem default zero porque a busca de imoveis
     (TEC-158) nao existe, e a card prescreve que ate la o fator contribua
