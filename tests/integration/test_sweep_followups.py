@@ -30,7 +30,11 @@ from mobia.workers.jobs.sweep_followups import sweep_followups
 CANAL = "whatsapp"
 CONVERSA = "5511944443333"
 
-FUSO = ZoneInfo("America/Sao_Paulo")
+# Nome do fuso, e nao so o ZoneInfo: `_ctx()` passa este MESMO nome para
+# `Settings`, para o fuso do relogio dos testes e o fuso da varredura nao
+# poderem divergir.
+NOME_DO_FUSO = "America/Sao_Paulo"
+FUSO = ZoneInfo(NOME_DO_FUSO)
 
 # Todo teste deste arquivo fixa `agora`. Com a guarda de horario da TEC-185 a
 # varredura depende da hora do dia, e sem fixar o momento a suite inteira desta
@@ -86,14 +90,27 @@ async def _lead(
 
 
 def _ctx() -> dict:
-    """A janela default da card (9h-20h) explicita, e nao herdada do ambiente.
+    """A janela default da card (9h-20h, fuso `NOME_DO_FUSO`) explicita, e nao
+    herdada do ambiente -- as TRES pontas, nao so duas.
 
-    Sem o `Settings` aqui, o job cairia em `get_settings()`, que le o `.env` da
-    maquina -- e um `.env` com a janela mexida faria a suite mentir.
+    `_env_file=None` desliga o `.env`, mas nao a variavel de ambiente do
+    PROCESSO -- e kwarg de construtor vence env var, entao `inicio` e `fim`
+    ja ficavam pinados so com eles no `Settings(...)`. O `followup_fuso` NAO
+    ficava: sem o kwarg abaixo ele vinha direto do ambiente, e o horario e
+    metade fuso -- um `FOLLOWUP_FUSO` exportado na maquina de quem roda o
+    teste bastaria para reintroduzir a mesma nao-determinismo de relogio de
+    parede que a D10 existe para eliminar. Passar `NOME_DO_FUSO` aqui, o
+    mesmo nome que constroi o `FUSO` do modulo, fecha o buraco e impede as
+    duas pontas de divergirem entre si.
     """
     return {
         "session_factory": get_sessionmaker(),
-        "settings": Settings(_env_file=None, followup_horario_inicio=9, followup_horario_fim=20),
+        "settings": Settings(
+            _env_file=None,
+            followup_horario_inicio=9,
+            followup_horario_fim=20,
+            followup_fuso=NOME_DO_FUSO,
+        ),
     }
 
 

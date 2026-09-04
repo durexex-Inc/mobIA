@@ -29,8 +29,8 @@ async def sweep_followups(
 ) -> int:
     """Registra as tentativas de follow-up que venceram. Devolve quantas.
 
-    **A ordem das duas guardas e proposital: `tentativa_devida` primeiro,
-    `esta_em_optout` so para quem passou.** A primeira e funcao pura, sem
+    **A ordem das duas guardas POR CANDIDATO e proposital: `tentativa_devida`
+    primeiro, `esta_em_optout` so para quem passou.** A primeira e funcao pura, sem
     I/O; a segunda e uma ida ao banco. Checar o opt-out antes pagaria essa
     consulta para todo candidato, inclusive os que nem estao devidos -- e a
     premissa que justifica consultar por candidato em vez de juntar na query
@@ -75,7 +75,12 @@ async def sweep_followups(
     **Quando o fuso virar por lead, esta chamada desce para dentro do laco**,
     ao lado de `esta_em_optout`, e a funcao pura nao muda: ela ja recebe o
     fuso por parametro. Nao reescreva o predicado achando que ele e global por
-    natureza.
+    natureza. O que muda tambem: a candidatura de um lead nao depende mais so
+    de estar devido, mas de estar devido E dentro do PROPRIO horario -- e quem
+    esta fora do proprio horario nao sai da consulta, so nao dispara. Esses
+    leads ficam no topo do `ORDER BY ancora_em` e consomem vagas de `limite`
+    sem produzir `followup.devido`, a mesma forma de esfomeamento que o corte
+    de esgotamento e a lacuna 6 do desenho da TEC-183 ja registram.
 
     **Nao ha codigo de adiamento, e nao falta nenhum.** A card pede que o
     disparo fora da janela seja "adiado para a proxima abertura, nao
@@ -103,6 +108,21 @@ async def sweep_followups(
         fim=settings.followup_horario_fim,
         fuso=settings.fuso_de_envio,
     ):
+        # debug, e nao info: a cadencia de 5 minutos faz isto disparar por
+        # treze das vinte e quatro horas, cerca de 156 vezes ao dia. Sem esta
+        # linha, uma janela VALIDA mas ERRADA (FOLLOWUP_HORARIO_FIM=10 por
+        # typo, ou FOLLOWUP_FUSO=UTC deslocando a janela em tres horas) produz
+        # o mesmo sintoma que o validator de Settings existe para evitar --
+        # ausencia de `followup.devido` indistinguivel de "nenhum lead devido"
+        # -- e so o validator nao alcanca essa classe de erro, porque a janela
+        # continua sendo POSSIVEL.
+        log.debug(
+            "sweep.fora_do_horario",
+            agora=agora.isoformat(),
+            inicio=settings.followup_horario_inicio,
+            fim=settings.followup_horario_fim,
+            fuso=settings.followup_fuso,
+        )
         return 0
 
     async with session_factory() as session:
