@@ -10,7 +10,18 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from mobia.domain.agente.schemas import Intencao, Urgencia
+from mobia.domain.context.models import LeadQualification
+from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.models import FollowUp
+from mobia.domain.followup.repositorio import (
+    candidatos_a_followup,
+    registrar_followup,
+)
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
+from mobia.domain.messages.models import Message
+from mobia.domain.messages.status import MessageStatus
+from mobia.infra.crypto import aad_de, encrypt
 
 CANAL = "whatsapp"
 CONVERSA = "5511955554444"
@@ -78,3 +89,150 @@ async def test_o_check_recusa_tentativa_zero(session) -> None:
     session.add(_linha(tentativa_numero=0))
     with pytest.raises(IntegrityError):
         await session.commit()
+
+
+AGORA = ANCORA + timedelta(days=30)
+
+
+async def _qualificacao(session, *, temperatura: str | None = "QUENTE") -> None:
+    session.add(
+        LeadQualification(
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            intencao=Intencao.COMPRA.value,
+            faixa_preco_max_centavos=50_000_000,
+            regiao="vila mariana",
+            urgencia=Urgencia.IMEDIATA.value,
+            temperatura=temperatura,
+        )
+    )
+    await session.commit()
+
+
+async def _fala_do_lead(session, *, quando, bloqueada: bool = False) -> None:
+    """Uma fala de ENTRADA. `bloqueada` marca o que a moderacao recusou.
+
+    Copia do helper de `test_auditoria_score.py`, com `created_at` explicito
+    porque a ancora deste desenho e exatamente esse valor. As quatro colunas de
+    identificacao do provedor nao sao decorativas: a tabela as exige.
+    """
+    identificador = uuid.uuid4()
+    session.add(
+        Message(
+            id=identificador,
+            channel=CANAL,
+            provider_message_id=f"wamid.{identificador.hex[:10]}",
+            sender_external_id=CONVERSA,
+            recipient_external_id="222222222",
+            conversation_key=CONVERSA,
+            role=MessageRole.LEAD,
+            direction=MessageDirection.INBOUND,
+            content_type=MessageContentType.TEXTO,
+            text_body=encrypt("oi", aad_de(identificador, "text_body")),
+            raw_payload=None,
+            status=MessageStatus.PROCESSED,
+            created_at=quando,
+            bloqueada_em=quando if bloqueada else None,
+        )
+    )
+    await session.commit()
+
+
+async def test_o_candidato_traz_a_ancora_e_zero_disparos(session) -> None:
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=ANCORA)
+
+    candidatos = await candidatos_a_followup(session, agora=AGORA)
+
+    assert len(candidatos) == 1
+    assert candidatos[0].conversation_key == CONVERSA
+    assert candidatos[0].temperatura is Temperatura.QUENTE
+    assert candidatos[0].ancora_em == ANCORA
+    assert candidatos[0].ja_disparada == 0
+
+
+async def test_lead_sem_temperatura_nao_e_candidato(session) -> None:
+    """A D3: `NULL` e "linha anterior a TEC-151" ou "lead que nunca disse nada
+    qualificavel". A RN-13.1 so prescreve cadencia para as tres temperaturas."""
+    await _qualificacao(session, temperatura=None)
+    await _fala_do_lead(session, quando=ANCORA)
+
+    assert await candidatos_a_followup(session, agora=AGORA) == []
+
+
+async def test_lead_que_falou_ha_pouco_nao_e_candidato(session) -> None:
+    """O corte por `INTERVALO_MINIMO`: nada abaixo de 2h pode estar devido em
+    temperatura nenhuma."""
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=AGORA - timedelta(hours=1))
+
+    assert await candidatos_a_followup(session, agora=AGORA) == []
+
+
+async def test_lead_sem_linha_de_qualificacao_nao_e_candidato(session) -> None:
+    """Sem linha nao ha temperatura, e sem temperatura nao ha regua."""
+    await _fala_do_lead(session, quando=ANCORA)
+
+    assert await candidatos_a_followup(session, agora=AGORA) == []
+
+
+async def test_a_ancora_ignora_a_fala_bloqueada_pela_moderacao(session) -> None:
+    """Mesma definicao de fala do lead que `contar_mensagens_do_lead` fixou:
+    `direction = INBOUND` e `bloqueada_em IS NULL`. Um turno que o resto do
+    produto trata como nao-dito nao pode adiar o follow-up."""
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=ANCORA)
+    await _fala_do_lead(session, quando=ANCORA + timedelta(days=1), bloqueada=True)
+
+    candidatos = await candidatos_a_followup(session, agora=AGORA)
+
+    assert candidatos[0].ancora_em == ANCORA
+
+
+async def test_ja_disparada_e_o_maximo_sob_a_ancora(session) -> None:
+    """MAX e nao COUNT -- ver a docstring de `tentativa_devida`."""
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=ANCORA)
+    session.add(_linha(tentativa_numero=3))
+    await session.commit()
+
+    candidatos = await candidatos_a_followup(session, agora=AGORA)
+
+    assert candidatos[0].ja_disparada == 3
+
+
+async def test_a_resposta_do_lead_zera_a_regua(session) -> None:
+    """O reinicio da RN-13.4, e o teste que morre se `ja_disparada` olhar a
+    vida inteira em vez de por ancora."""
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=ANCORA)
+    session.add(_linha(tentativa_numero=4))
+    await session.commit()
+
+    nova_ancora = ANCORA + timedelta(days=5)
+    await _fala_do_lead(session, quando=nova_ancora)
+
+    candidatos = await candidatos_a_followup(session, agora=AGORA)
+
+    assert candidatos[0].ancora_em == nova_ancora
+    assert candidatos[0].ja_disparada == 0
+
+
+async def test_registrar_devolve_none_na_corrida(session) -> None:
+    """A segunda varredura nao levanta: o `ON CONFLICT DO NOTHING` absorve, e o
+    `None` diz ao chamador que outra passagem chegou primeiro."""
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=ANCORA)
+    candidato = (await candidatos_a_followup(session, agora=AGORA))[0]
+
+    primeira = await registrar_followup(
+        session, candidato=candidato, tentativa=1, devido_em=ANCORA + timedelta(hours=2)
+    )
+    await session.commit()
+    segunda = await registrar_followup(
+        session, candidato=candidato, tentativa=1, devido_em=ANCORA + timedelta(hours=2)
+    )
+    await session.commit()
+
+    assert primeira is not None
+    assert segunda is None
