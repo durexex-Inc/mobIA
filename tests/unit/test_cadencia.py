@@ -48,6 +48,17 @@ def test_os_intervalos_sao_os_do_srs() -> None:
     assert CADENCIA[Temperatura.FRIO] == (timedelta(days=3), timedelta(days=14))
 
 
+def test_os_intervalos_sao_estritamente_crescentes() -> None:
+    """A descida na regua so e correta se os deslocamentos ascendem. Sem isso,
+    um lead muito atrasado poderia receber o numero da tentativa errado em
+    silencio. Se alguem reordena ou digita a tabela errado, este teste pega."""
+    for temperatura, intervalos in CADENCIA.items():
+        for i in range(len(intervalos) - 1):
+            assert intervalos[i] < intervalos[i + 1], (
+                f"{temperatura}: intervalo {i} nao e menor que {i + 1}"
+            )
+
+
 def test_a_primeira_tentativa_do_quente_vence_em_duas_horas() -> None:
     """A CA-13.1: parou as 18h, follow-up as 20h."""
     assert devida(Temperatura.QUENTE, timedelta(hours=2)) == 1
@@ -108,6 +119,14 @@ def test_esquentar_alonga_a_cadencia_restante() -> None:
     """O outro lado da mesma regra: MORNO esgotado que esquenta ganha a quarta
     do QUENTE."""
     assert devida(Temperatura.QUENTE, timedelta(days=30), ja_disparada=3) == 4
+
+
+def test_ja_disparada_maior_que_a_tabela_nao_causa_erro() -> None:
+    """Quem recebeu tres tentativas como QUENTE e esfriou para FRIO pode chegar
+    com ja_disparada=3 contra uma tabela de 2 -- e a regua nao deve levantar
+    nem devolver nada fora de range. A recalibrizacao de temperatura acontece
+    em producao."""
+    assert devida(Temperatura.FRIO, timedelta(days=30), ja_disparada=3) is None
 
 
 def test_o_intervalo_minimo_e_derivado_e_nao_escrito_a_mao() -> None:

@@ -87,6 +87,11 @@ def tentativa_devida(
     e trocar a ordem nao levanta, nao e erro de tipo, nao e visivel ao mypy, e
     devolve a tentativa errada em silencio. Mesma razao das duas contagens de
     `calcular_score` e dos dois flags de `temperatura_de`.
+
+    **Invariante: os intervalos em cada tupla sao estritamente crescentes.**
+    A descida pela tabela so acha a tentativa MAIOR porque nenhuma tentativa
+    anterior e mais vencida. Se a ordem quebra, a funcao silenciosamente devolve
+    a errada.
     """
     decorrido = agora - ultima_fala
     for numero in range(len(CADENCIA[temperatura]), ja_disparada, -1):
