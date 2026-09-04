@@ -15,6 +15,7 @@
 > | E-01 | RN-06.4 | [TEC-152](https://eduardodurieuxlopes.atlassian.net/browse/TEC-152) | 02/09/2026 |
 > | E-01 | RN-05.7 | [TEC-148](https://eduardodurieuxlopes.atlassian.net/browse/TEC-148) | 03/09/2026 |
 > | E-01 | RN-06.2 | [TEC-151](https://eduardodurieuxlopes.atlassian.net/browse/TEC-151) | 03/09/2026 |
+> | E-01 | RN-13.4 | [TEC-183](https://eduardodurieuxlopes.atlassian.net/browse/TEC-183) | 03/09/2026 |
 
 ---
 
@@ -321,6 +322,7 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 - RN-13.2: Cada follow-up é gerado com o contexto da conversa e **traz informação nova** (novo imóvel compatível, mudança de preço, convite para agendar). Proibido "oi, tudo bem?" solto.
 - RN-13.3: Envio apenas entre 9h e 20h no fuso do lead. Disparo agendado fora da janela é adiado para a próxima abertura.
 - RN-13.4: Resposta do lead cancela a cadência pendente e reinicia o ciclo a partir do novo estado.
+  - **Emenda E-01 (TEC-183, 03/09/2026):** não há cadência pendente a cancelar, porque não há agendamento persistido. A cadência é derivada da **âncora** — a última fala não bloqueada do lead — a cada varredura, e a resposta do lead move essa âncora, o que faz a régua recomeçar por aritmética. O efeito observável da regra é idêntico ao descrito: as tentativas restantes não acontecem, e o ciclo recomeça a partir do novo estado. O motivo da mudança de forma são as outras duas regras da mesma card, que um horário gravado no banco tornaria mentirosas: *"mudança de temperatura recalcula a cadência restante"* e *"os intervalos vêm de configuração e podem ser ajustados sem deploy"* — um `agendado_para` persistido congela o intervalo no instante do agendamento e fica imune às duas. **Consequência declarada:** a entidade `FollowUp` da seção 5 perde `PENDENTE` e `CANCELADO` do enum de status, e `agendado_para` passa a ser `devido_em`, calculado no momento do disparo e **não** ajustado à janela da RN-13.3 (isso é a TEC-185).
 - RN-13.5: Esgotadas as tentativas sem resposta, o lead vira `DORMENTE` e sai da cadência automática, permanecendo elegível a campanha manual pelo dashboard.
 - RN-13.6: Fora da janela de 24 horas do WhatsApp, o envio só pode usar **template aprovado** pela Meta. O sistema mantém no mínimo 3 templates aprovados e escolhe conforme o contexto; sem template aplicável, o follow-up é convertido em tarefa para o corretor.
 - RN-13.7: Máximo absoluto de 4 mensagens não respondidas consecutivas por lead. Atingido, nenhuma automação envia mais nada — proteção anti-spam e contra bloqueio do número.

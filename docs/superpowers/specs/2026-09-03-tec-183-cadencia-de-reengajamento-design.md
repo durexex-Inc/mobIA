@@ -1,6 +1,6 @@
 # TEC-183 — Agendar a cadência de reengajamento por temperatura
 
-**Status:** desenhado em 2026-09-03. Não implementado.
+**Status:** desenhado em 2026-09-03, implementado em 2026-09-03 na branch `feat/tec-183-cadencia-de-reengajamento`.
 
 **Card:** [TEC-183](https://eduardodurieuxlopes.atlassian.net/browse/TEC-183) — Must (MoSCoW). Origem: RF-13, RN-13.1, RN-13.4 (SRS v1.0, em `docs/srs/`). Épico de follow-up e opt-out.
 
