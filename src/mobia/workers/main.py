@@ -11,6 +11,7 @@ from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
 from mobia.workers.jobs.process_message import process_message
+from mobia.workers.jobs.sweep_followups import sweep_followups
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
 
 
@@ -75,8 +76,20 @@ class WorkerSettings:
     e usa so a do worker.
     """
 
-    functions = [func(process_message, keep_result=0), sweep_stalled]
-    cron_jobs = [cron(sweep_stalled, second={0, 30}, run_at_startup=False)]
+    functions = [func(process_message, keep_result=0), sweep_stalled, sweep_followups]
+    cron_jobs = [
+        cron(sweep_stalled, second={0, 30}, run_at_startup=False),
+        # De 5 em 5 minutos, e nao de 30 em 30 segundos como o irmao: o menor
+        # intervalo da RN-13.1 e de DUAS HORAS, entao precisao de segundos nao
+        # compra nada e custa uma varredura que agrega `messages` a cada
+        # passagem. O erro maximo de disparo fica em cinco minutos sobre uma
+        # janela de duas horas.
+        cron(
+            sweep_followups,
+            minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
+            run_at_startup=False,
+        ),
+    ]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = redis_settings()
