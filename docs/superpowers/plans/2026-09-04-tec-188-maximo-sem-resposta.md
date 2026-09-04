@@ -70,13 +70,15 @@ def test_acima_do_maximo_continua_nao_podendo() -> None:
     assert antispam_permite_envio(ja_enviadas=MAXIMO_SEM_RESPOSTA + 1) is False
 
 
-def test_o_maximo_e_o_numero_da_regra_e_nao_o_da_cadencia() -> None:
-    """RN-13.7: "maximo absoluto de 4 mensagens nao respondidas consecutivas".
+def test_o_maximo_e_o_numero_da_regra() -> None:
+    """RN-13.7 fixa o numero em 4 mensagens sem resposta consecutivas.
 
-    O numero e escrito a mao e NAO derivado de `CADENCIA`. Este teste e o que
-    denuncia se alguem o derivar: derivado, ele passaria a acompanhar a tabela
-    de intervalos em vez de prevalecer sobre ela, e a regra "mesmo que alguem
-    configure 6 tentativas, o envio para na quarta" viraria tautologia.
+    Este teste fixa o numero na base de codigo de modo que uma mudanca nele
+    seja deliberada e visivel. Mas NAO detecta se o numero foi derivado de
+    `CADENCIA` -- hoje `len(CADENCIA[Temperatura.QUENTE])` tambem e 4, entao
+    nenhuma asserctacao sobre valor consegue discernir um 4 escrito a mao de um
+    derivado. O que protege contra derivacao e o comentario no `MAXIMO_SEM_RESPOSTA`
+    e a revisao, nao este teste.
     """
     assert MAXIMO_SEM_RESPOSTA == 4
 ```
@@ -711,7 +713,7 @@ EOF
 | D1 — `COUNT`, não `MAX` | Task 2 (Steps 1, 4 e 5) |
 | D2 — resposta zera sem código | Task 2, `test_a_resposta_do_lead_zera_o_contador`; Task 4, a emenda |
 | D3 — "ciclos somam" é o mesmo `COUNT` | Task 4, a emenda (não precisa de código, que é o ponto) |
-| D4 — constante de módulo | Task 1, Step 3, e `test_o_maximo_e_o_numero_da_regra_e_nao_o_da_cadencia` |
+| D4 — constante de módulo | Task 1, Step 3, e `test_o_maximo_e_o_numero_da_regra` |
 | D5 — a guarda não dispara hoje | Task 3 (comentário e `test_a_guarda_do_maximo_barra_o_candidato`); Task 4 (emenda e lacuna 4) |
 | D6 — evento uma vez | Task 3, os dois testes do evento |
 | D7 — nome `antispam` | Global Constraints; Tasks 1 e 3 |
