@@ -1,5 +1,6 @@
 from decimal import Decimal
 from functools import lru_cache
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -207,6 +208,22 @@ class Settings(BaseSettings):
     sweep_inflight_after_seconds: int = 300
     sweep_max_attempts: int = 5
 
+    # RN-13.3 (TEC-185): a janela de envio automatico, em horas locais do
+    # `followup_fuso`. `fim` nomeia o ultimo MINUTO em que um envio pode
+    # comecar -- `fim=20` autoriza 20:00 e recusa 20:01 --, e nao a ultima hora
+    # inteira. A borda inclusiva nao e escolha estetica: os dois primeiros
+    # criterios de aceite da card caem exatamente em 20:00, porque um lead que
+    # parou de falar as 18h vence a primeira tentativa do QUENTE (+2h) as 20h
+    # em ponto.
+    followup_horario_inicio: int = 9
+    followup_horario_fim: int = 20
+
+    # Fuso UNICO da POC (PR-04), e nao o fuso do lead: a deteccao pelo numero
+    # esta declarada fora do escopo da TEC-185. Nome e nao offset de proposito
+    # -- o Brasil aboliu o horario de verao em 2019, e gravar `-3` faria a
+    # volta dele virar um erro silencioso de uma hora em todo disparo.
+    followup_fuso: str = "America/Sao_Paulo"
+
     @model_validator(mode="after")
     def _recusar_chave_de_desenvolvimento_em_producao(self) -> "Settings":
         """Fica no validator, e nao no `create_app`, para valer em todo processo.
@@ -228,6 +245,49 @@ class Settings(BaseSettings):
                 'print(base64.b64encode(os.urandom(32)).decode())"'
             )
         return self
+
+    @model_validator(mode="after")
+    def _recusar_janela_de_envio_impossivel(self) -> "Settings":
+        """Janela invertida ou vazia desligaria a cadencia em silencio.
+
+        A varredura devolveria 0 para sempre, e o unico sintoma seria a
+        ausencia de `followup.devido` -- indistinguivel de "nenhum lead
+        devido". Um `followup_fuso` invalido, sem esta guarda, explodiria
+        dentro da varredura a cada 5 minutos em vez de aqui.
+
+        `ValueError` e nao `ConfiguracaoInsegura`: o docstring daquela excecao
+        fala de configuracao que roda "sem a protecao que devia ter", e o caso
+        dela e a chave de cifra de desenvolvimento em producao. Uma janela
+        invertida nao perde protecao -- ela deixa de operar. O pydantic
+        embrulha este ValueError em ValidationError, que falha igualmente alto
+        e em todo processo.
+        """
+        if not 0 <= self.followup_horario_inicio < self.followup_horario_fim <= 23:
+            raise ValueError(
+                "followup_horario_inicio e followup_horario_fim precisam satisfazer "
+                f"0 <= inicio < fim <= 23; recebi inicio={self.followup_horario_inicio} "
+                f"e fim={self.followup_horario_fim}. Janela invertida ou vazia desliga "
+                "a cadencia de follow-up sem nenhum sintoma."
+            )
+        try:
+            ZoneInfo(self.followup_fuso)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(
+                f"followup_fuso={self.followup_fuso!r} nao e um fuso conhecido. "
+                "Se o nome estiver certo, confira a dependencia `tzdata` no "
+                "pyproject.toml -- o Windows nao tem base de fusos do sistema."
+            ) from exc
+        return self
+
+    @property
+    def fuso_de_envio(self) -> ZoneInfo:
+        """O fuso da janela da RN-13.3, ja validado na construcao.
+
+        Construido a cada acesso em vez de guardado: o `ZoneInfo` e cacheado
+        pelo proprio modulo `zoneinfo`, e um atributo aqui teria de ser
+        excluido do modelo do pydantic.
+        """
+        return ZoneInfo(self.followup_fuso)
 
     @property
     def teto_de_tokens_efetivo(self) -> int:

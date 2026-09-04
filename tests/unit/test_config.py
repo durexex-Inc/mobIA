@@ -2,6 +2,7 @@ import base64
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from mobia.app.config import (
     CHAVE_DE_DESENVOLVIMENTO,
@@ -385,3 +386,50 @@ def test_todo_modelo_configurado_tem_preco_cadastrado(settings) -> None:
         if custo_em_dolar(valor, 1000, 100) is None
     }
     assert not sem_preco, f"modelos configurados sem preco em PRECOS_POR_MODELO: {sem_preco}"
+
+
+def test_a_janela_de_envio_invertida_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Janela invertida desligaria a cadencia sem nenhum sintoma.
+
+    A varredura devolveria 0 para sempre, e a ausencia de `followup.devido` e
+    indistinguivel de "nenhum lead devido" -- exatamente a falha silenciosa que
+    este repo trata como pior que a alta.
+    """
+    monkeypatch.setenv("FOLLOWUP_HORARIO_INICIO", "20")
+    monkeypatch.setenv("FOLLOWUP_HORARIO_FIM", "9")
+
+    with pytest.raises(ValidationError, match="followup_horario"):
+        Settings(_env_file=None)
+
+
+def test_a_janela_de_envio_vazia_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """9-9 nao e uma janela de um instante: e a cadencia desligada."""
+    monkeypatch.setenv("FOLLOWUP_HORARIO_INICIO", "9")
+    monkeypatch.setenv("FOLLOWUP_HORARIO_FIM", "9")
+
+    with pytest.raises(ValidationError, match="followup_horario"):
+        Settings(_env_file=None)
+
+
+def test_o_fuso_de_envio_invalido_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem esta guarda, o typo explodiria dentro da varredura a cada 5 minutos
+    em vez de na subida do worker."""
+    monkeypatch.setenv("FOLLOWUP_FUSO", "America/Sao_Paolo")
+
+    with pytest.raises(ValidationError, match="followup_fuso"):
+        Settings(_env_file=None)
+
+
+def test_o_fuso_de_envio_default_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A guarda do tzdata: sem a dependencia isto levanta no Windows, onde o
+    `zoneinfo` nao tem base de fusos do sistema. Passaria no Linux do CI e
+    falharia na maquina de quem desenvolve."""
+    monkeypatch.delenv("FOLLOWUP_HORARIO_INICIO", raising=False)
+    monkeypatch.delenv("FOLLOWUP_HORARIO_FIM", raising=False)
+    monkeypatch.delenv("FOLLOWUP_FUSO", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.fuso_de_envio.key == "America/Sao_Paulo"
+    assert settings.followup_horario_inicio == 9
+    assert settings.followup_horario_fim == 20
