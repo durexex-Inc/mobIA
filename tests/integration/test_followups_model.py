@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from mobia.domain.agente.schemas import Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
+from mobia.domain.followup.cadencia import MAX_TENTATIVAS
 from mobia.domain.followup.models import FollowUp
 from mobia.domain.followup.repositorio import (
     candidatos_a_followup,
@@ -109,8 +110,18 @@ async def _qualificacao(session, *, temperatura: str | None = "QUENTE") -> None:
     await session.commit()
 
 
-async def _fala_do_lead(session, *, quando, bloqueada: bool = False) -> None:
-    """Uma fala de ENTRADA. `bloqueada` marca o que a moderacao recusou.
+async def _fala_do_lead(
+    session,
+    *,
+    quando,
+    bloqueada: bool = False,
+    direcao: MessageDirection = MessageDirection.INBOUND,
+) -> None:
+    """Uma fala. Por padrao de ENTRADA; `direcao` permite gravar a resposta do
+    agente para os testes que provam que ela nao move a ancora.
+
+    `bloqueada` marca o que a moderacao recusou, e so faz sentido com a
+    entrada -- nenhum teste passa as duas.
 
     Copia do helper de `test_auditoria_score.py`, com `created_at` explicito
     porque a ancora deste desenho e exatamente esse valor. As quatro colunas de
@@ -125,8 +136,8 @@ async def _fala_do_lead(session, *, quando, bloqueada: bool = False) -> None:
             sender_external_id=CONVERSA,
             recipient_external_id="222222222",
             conversation_key=CONVERSA,
-            role=MessageRole.LEAD,
-            direction=MessageDirection.INBOUND,
+            role=MessageRole.LEAD if direcao is MessageDirection.INBOUND else MessageRole.AGENTE,
+            direction=direcao,
             content_type=MessageContentType.TEXTO,
             text_body=encrypt("oi", aad_de(identificador, "text_body")),
             raw_payload=None,
@@ -189,6 +200,23 @@ async def test_a_ancora_ignora_a_fala_bloqueada_pela_moderacao(session) -> None:
     assert candidatos[0].ancora_em == ANCORA
 
 
+async def test_a_resposta_do_agente_nao_move_a_ancora(session) -> None:
+    """A outra metade da definicao de `contar_mensagens_do_lead`:
+    `direction = 'INBOUND'`. A ancora e a ULTIMA FALA DO LEAD, e nao a ultima
+    mensagem da conversa -- uma resposta do agente e quase sempre mais recente
+    que a fala do lead que a gerou, e se ela movesse a ancora a cadencia
+    nunca fecharia num lead que so o agente atendeu."""
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=ANCORA)
+    await _fala_do_lead(
+        session, quando=ANCORA + timedelta(hours=1), direcao=MessageDirection.OUTBOUND
+    )
+
+    candidatos = await candidatos_a_followup(session, agora=AGORA)
+
+    assert candidatos[0].ancora_em == ANCORA
+
+
 async def test_ja_disparada_e_o_maximo_sob_a_ancora(session) -> None:
     """MAX e nao COUNT -- ver a docstring de `tentativa_devida`."""
     await _qualificacao(session)
@@ -210,6 +238,29 @@ async def test_a_resposta_do_lead_zera_a_regua(session) -> None:
     await session.commit()
 
     nova_ancora = ANCORA + timedelta(days=5)
+    await _fala_do_lead(session, quando=nova_ancora)
+
+    candidatos = await candidatos_a_followup(session, agora=AGORA)
+
+    assert candidatos[0].ancora_em == nova_ancora
+    assert candidatos[0].ja_disparada == 0
+
+
+async def test_lead_exaurido_nao_e_candidato_ate_falar_de_novo(session) -> None:
+    """`MAX_TENTATIVAS` e o teto de QUALQUER temperatura: um lead com esse
+    numero de tentativas sob a ancora atual nao pode mais estar devido, esfrie
+    ou esquente. Sem o excluir da consulta, ele travaria no topo da fila para
+    sempre -- candidatura nao olha quantos disparos ja houve, so a idade da
+    ancora, e a dele e a mais antiga do lote. So uma fala nova (ancora nova)
+    o traz de volta."""
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=ANCORA)
+    session.add(_linha(tentativa_numero=MAX_TENTATIVAS))
+    await session.commit()
+
+    assert await candidatos_a_followup(session, agora=AGORA) == []
+
+    nova_ancora = ANCORA + timedelta(days=1)
     await _fala_do_lead(session, quando=nova_ancora)
 
     candidatos = await candidatos_a_followup(session, agora=AGORA)

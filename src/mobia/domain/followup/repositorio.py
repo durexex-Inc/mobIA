@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.context.temperatura import Temperatura
-from mobia.domain.followup.cadencia import INTERVALO_MINIMO
+from mobia.domain.followup.cadencia import INTERVALO_MINIMO, MAX_TENTATIVAS
 from mobia.domain.followup.models import FollowUp
 
 
@@ -46,6 +46,27 @@ class Candidato:
 # O subselect de `ja_disparada` roda por linha ja filtrada, e o indice
 # `ix_followups_lead` o atende.
 #
+# **`candidatos` e uma CTE, e nao um SELECT unico, porque o filtro de
+# `ja_disparada` precisa do valor JA calculado.** Postgres nao deixa referenciar
+# um alias da propria lista de SELECT no WHERE do mesmo nivel; promover o
+# calculo a uma CTE e a forma mais legivel de filtrar por ele depois, sem
+# repetir o subselect correlacionado numa segunda copia.
+#
+# **O filtro por `ja_disparada < :max_tentativas` e o que evita a fome.** Um
+# lead exaurido em QUALQUER temperatura tem a ancora mais antiga do lote --
+# `ORDER BY ancora` o poe na frente -- e, sem este corte, ele nunca sai do topo
+# da fila: candidatura so depende de `temperatura IS NOT NULL` e da idade da
+# ancora, e nenhuma das duas muda so porque um disparo aconteceu. Quando o
+# numero de leads assim excede `limite`, nenhum lead recem-devido seria mais
+# alcancado -- silenciosamente. `MAX_TENTATIVAS` e o teto de QUALQUER
+# temperatura (ver o comentario em `cadencia.py`): um lead com esse numero de
+# tentativas sob a ancora atual nao pode mais estar devido, esfrie ou esquente.
+# Note que isto NAO filtra por esgotamento "na temperatura atual" -- um FRIO
+# com 2 disparos segue candidato, porque se esquentar deve as tentativas 3 e 4
+# do QUENTE -- e por isso o corte usa o teto global, e nunca a tabela
+# `CADENCIA` reescrita em SQL (seria a segunda fonte que este repo ja gastou
+# cards inteiras evitando).
+#
 # **Esta consulta agrega `messages` a cada passagem.** E varredura, e o
 # `ix_messages_timeline` serve "a ultima mensagem de UMA conversa", nao "todas
 # as conversas cuja ultima fala e antiga". Aceitavel a cada 5 minutos no volume
@@ -60,25 +81,30 @@ _SELECIONAR_CANDIDATOS = text(
            AND bloqueada_em IS NULL
          GROUP BY channel, conversation_key
         HAVING MAX(created_at) <= :corte
+    ),
+    candidatos AS (
+        SELECT lq.channel,
+               lq.conversation_key,
+               lq.temperatura,
+               u.ancora,
+               COALESCE(
+                   (SELECT MAX(f.tentativa_numero)
+                      FROM followups f
+                     WHERE f.channel = lq.channel
+                       AND f.conversation_key = lq.conversation_key
+                       AND f.ancora_em = u.ancora),
+                   0
+               ) AS ja_disparada
+          FROM lead_qualification lq
+          JOIN ultima_fala u
+            ON u.channel = lq.channel
+           AND u.conversation_key = lq.conversation_key
+         WHERE lq.temperatura IS NOT NULL
     )
-    SELECT lq.channel,
-           lq.conversation_key,
-           lq.temperatura,
-           u.ancora,
-           COALESCE(
-               (SELECT MAX(f.tentativa_numero)
-                  FROM followups f
-                 WHERE f.channel = lq.channel
-                   AND f.conversation_key = lq.conversation_key
-                   AND f.ancora_em = u.ancora),
-               0
-           ) AS ja_disparada
-      FROM lead_qualification lq
-      JOIN ultima_fala u
-        ON u.channel = lq.channel
-       AND u.conversation_key = lq.conversation_key
-     WHERE lq.temperatura IS NOT NULL
-     ORDER BY u.ancora
+    SELECT channel, conversation_key, temperatura, ancora, ja_disparada
+      FROM candidatos
+     WHERE ja_disparada < :max_tentativas
+     ORDER BY ancora, channel, conversation_key
      LIMIT :limite
     """
 )
@@ -98,13 +124,21 @@ async def candidatos_a_followup(
     isso nenhum teste consegue posicionar o relogio, e a cadencia inteira e
     sobre tempo.
 
-    `ORDER BY u.ancora` faz o `LIMIT` cortar os mais recentes quando ha mais
-    candidatos que o teto -- ou seja, quem esta esperando ha mais tempo passa
-    primeiro. A proxima varredura pega o resto cinco minutos depois.
+    `ORDER BY ancora, channel, conversation_key` faz o `LIMIT` cortar os mais
+    recentes quando ha mais candidatos que o teto -- quem esta esperando ha
+    mais tempo passa primeiro, e o desempate por identidade evita que dois
+    leads com a mesma ancora troquem de lugar entre varreduras. **A cabeca da
+    fila e estavel entre passagens**: um lead que ja disparou continua
+    candidato (nada na candidatura muda so por causa de um disparo), entao sem
+    o corte de `ja_disparada < MAX_TENTATIVAS` os leads exauridos, por terem as
+    ancoras mais antigas, ocupariam o topo para sempre e um lote grande o
+    bastante deles faria a varredura nunca mais alcancar quem esta realmente
+    devido. O corte de exaustao e o que evita essa fome; ver o comentario da
+    query.
     """
     resultado = await session.execute(
         _SELECIONAR_CANDIDATOS,
-        {"corte": agora - INTERVALO_MINIMO, "limite": limite},
+        {"corte": agora - INTERVALO_MINIMO, "max_tentativas": MAX_TENTATIVAS, "limite": limite},
     )
     return [
         Candidato(

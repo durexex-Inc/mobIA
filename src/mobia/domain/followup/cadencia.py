@@ -51,6 +51,19 @@ CADENCIA: dict[Temperatura, tuple[timedelta, ...]] = {
 # devidos mais cedo.
 INTERVALO_MINIMO: timedelta = min(intervalos[0] for intervalos in CADENCIA.values())
 
+# O outro corte barato da varredura, e o que evita a fome: um lead com este
+# numero de tentativas gravadas sob a ancora corrente ja esgotou a cadencia em
+# QUALQUER temperatura -- nao ha tabela, hoje ou apos recalibrar, com mais
+# tentativas que a mais longa. Esse lead nunca mais fica devido sob a mesma
+# ancora, e so uma fala nova (nova ancora) o traz de volta; sem exclui-lo, ele
+# fica parado no topo da fila (a ancora mais antiga ordena primeiro) e, quando
+# o numero de leads assim ultrapassa o `limite` da varredura, nenhum lead
+# recem-devido e alcancado outra vez.
+#
+# Derivado e nao escrito a mao pela mesma razao de `INTERVALO_MINIMO`: um
+# numero fixo divergiria em silencio se alguem alongasse `CADENCIA`.
+MAX_TENTATIVAS: int = max(len(intervalos) for intervalos in CADENCIA.values())
+
 
 def tentativa_devida(
     *,
