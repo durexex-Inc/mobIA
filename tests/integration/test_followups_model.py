@@ -392,3 +392,61 @@ async def test_registrar_devolve_none_na_corrida(session) -> None:
 
     assert primeira is not None
     assert segunda is None
+
+
+async def test_o_contador_conta_linhas_e_nao_a_maior_tentativa(session) -> None:
+    """A inversao da D1, que e o centro desta card.
+
+    Um lead cuja UNICA linha sob a ancora e a tentativa 3 -- o caso do lead
+    atrasado, que recebeu so a maior tentativa vencida -- tem `ja_disparada=3`
+    e `ja_enviadas=1`. Os dois agregados saem da mesma consulta, sobre as
+    mesmas linhas, com respostas diferentes e ambas corretas.
+
+    E o teste que morre se alguem escrever o contador como MAX.
+
+    **O numero 3 e escolhido, e 4 nao serviria:** com `tentativa_numero=4` o
+    lead teria `ja_disparada=4`, o corte de esgotamento do QUENTE o excluiria
+    da candidatura, e a consulta nao devolveria linha nenhuma para comparar --
+    o teste ficaria vazio sem parecer vazio.
+    """
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=ANCORA)
+    session.add(_linha(tentativa_numero=3, devido_em=ANCORA + timedelta(days=3)))
+    await session.commit()
+
+    candidatos = await candidatos_a_followup(session, agora=AGORA)
+
+    assert len(candidatos) == 1
+    assert candidatos[0].ja_disparada == 3
+    assert candidatos[0].ja_enviadas == 1
+
+
+async def test_a_resposta_do_lead_zera_o_contador(session) -> None:
+    """A RN-13.7 pede que "qualquer resposta do lead zere o contador", e no
+    modelo derivado isso nao tem codigo: a resposta move a ancora, e a
+    contagem sob a ancora nova comeca em zero.
+
+    A ultima assertiva existe porque apagar as linhas antigas TAMBEM zeraria o
+    contador, e seria errado -- a trilha e append-only, e as duas series ficam
+    lado a lado sob ancoras diferentes.
+
+    Tres linhas e nao quatro: com quatro, `ja_disparada` chegaria a 4 e o corte
+    de esgotamento excluiria o lead da candidatura ja na primeira consulta.
+    """
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=ANCORA)
+    for numero in (1, 2, 3):
+        session.add(_linha(tentativa_numero=numero, devido_em=ANCORA + timedelta(days=numero)))
+    await session.commit()
+
+    antes = await candidatos_a_followup(session, agora=AGORA)
+    assert antes[0].ja_enviadas == 3
+
+    nova_fala = ANCORA + timedelta(days=1)
+    await _fala_do_lead(session, quando=nova_fala)
+
+    depois = await candidatos_a_followup(session, agora=AGORA)
+    assert depois[0].ancora_em == nova_fala
+    assert depois[0].ja_enviadas == 0
+    assert depois[0].ja_disparada == 0
+    assert len((await session.scalars(select(FollowUp))).all()) == 3

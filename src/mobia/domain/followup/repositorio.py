@@ -28,6 +28,12 @@ class Candidato:
     zero quando nao ha nenhuma -- e nao uma contagem. A razao esta na docstring
     de `tentativa_devida`, e o resumo e que um lead muito atrasado recebe uma
     tentativa so, a ultima, e com contagem a regua refaria as anteriores.
+
+    `ja_enviadas` e a CONTAGEM de linhas sob a mesma ancora, e nao o maximo --
+    a inversa exata do campo acima, sobre exatamente as mesmas linhas. A regua
+    pula tentativas intermediarias, entao um lead com uma unica linha de
+    `tentativa_numero=3` tem `ja_disparada=3` e `ja_enviadas=1`. O maximo
+    anti-spam da RN-13.7 conta mensagens que sairam, nao posicoes na regua.
     """
 
     channel: str
@@ -35,6 +41,7 @@ class Candidato:
     temperatura: Temperatura
     ancora_em: datetime
     ja_disparada: int
+    ja_enviadas: int
 
 
 # A ancora usa a MESMA definicao de fala do lead que `contar_mensagens_do_lead`
@@ -67,6 +74,20 @@ class Candidato:
 # D3 sem precisar de um `IS NOT NULL` em separado. O vocabulario vem de
 # `CADENCIA.keys()` -- nunca escrito a mao.
 #
+# **Os dois subselects sao a MESMA leitura com agregados opostos, e isso e
+# proposital.** `ja_disparada` e o MAX porque a regua precisa saber ate onde a
+# cadencia foi; `ja_enviadas` e o COUNT porque o maximo da RN-13.7 conta
+# mensagens que sairam. A regua pula tentativas intermediarias, entao os dois
+# divergem sempre que houve salto -- uma unica linha de `tentativa_numero=3`
+# da MAX=3 e COUNT=1.
+#
+# O COUNT nao leva COALESCE e o MAX leva: `COUNT` de zero linhas e 0, enquanto
+# `MAX` de zero linhas e NULL. Nao "corrija" a assimetria.
+#
+# Os dois rodam por linha ja filtrada e sao servidos pelo mesmo
+# `ix_followups_lead`. O alias `f` se repete porque os escopos sao
+# independentes.
+
 # **O corte por esgotamento e o que evita a fome, e tem de ser POR
 # TEMPERATURA.** Um lead exaurido tem a ancora mais antiga do lote -- `ORDER BY
 # ancora` o poe na frente -- e, sem corte nenhum, ele nunca sai do topo da
@@ -137,14 +158,19 @@ _SELECIONAR_CANDIDATOS = text(
                        AND f.conversation_key = lq.conversation_key
                        AND f.ancora_em = u.ancora),
                    0
-               ) AS ja_disparada
+               ) AS ja_disparada,
+               (SELECT COUNT(*)
+                  FROM followups f
+                 WHERE f.channel = lq.channel
+                   AND f.conversation_key = lq.conversation_key
+                   AND f.ancora_em = u.ancora) AS ja_enviadas
           FROM lead_qualification lq
           JOIN ultima_fala u
             ON u.channel = lq.channel
            AND u.conversation_key = lq.conversation_key
          WHERE lq.temperatura IN :temperaturas_validas
     )
-    SELECT channel, conversation_key, temperatura, ancora, ja_disparada
+    SELECT channel, conversation_key, temperatura, ancora, ja_disparada, ja_enviadas
       FROM candidatos
      WHERE ja_disparada < CASE temperatura {_CASE_TETO_POR_TEMPERATURA} END
      ORDER BY ancora, channel, conversation_key
@@ -209,6 +235,7 @@ async def candidatos_a_followup(
             temperatura=Temperatura(linha.temperatura),
             ancora_em=linha.ancora,
             ja_disparada=linha.ja_disparada,
+            ja_enviadas=linha.ja_enviadas,
         )
         for linha in resultado
     ]
