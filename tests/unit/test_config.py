@@ -411,6 +411,35 @@ def test_o_horario_de_envio_vazio_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> N
         Settings(_env_file=None)
 
 
+def test_o_horario_de_envio_alem_das_23_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ceiling `fim <= 23`: 24 pareceria "meia-noite" para quem le o
+    validator de fora, mas a comparacao interna e contra `fim * 60` em
+    minuto do dia, e 24 estouraria o dia sem recusar nada dentro dele."""
+    monkeypatch.setenv("FOLLOWUP_HORARIO_FIM", "24")
+
+    with pytest.raises(ValidationError, match="followup_horario"):
+        Settings(_env_file=None)
+
+
+def test_o_horario_de_envio_com_inicio_negativo_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FOLLOWUP_HORARIO_INICIO", "-1")
+
+    with pytest.raises(ValidationError, match="followup_horario"):
+        Settings(_env_file=None)
+
+
+def test_o_horario_de_envio_no_limite_das_bordas_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`inicio=0, fim=23` e o extremo permitido dos dois lados ao mesmo
+    tempo, e o validator tem de aceitar em vez de recusar por engano."""
+    monkeypatch.setenv("FOLLOWUP_HORARIO_INICIO", "0")
+    monkeypatch.setenv("FOLLOWUP_HORARIO_FIM", "23")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.followup_horario_inicio == 0
+    assert settings.followup_horario_fim == 23
+
+
 def test_o_fuso_de_envio_invalido_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sem esta guarda, o typo explodiria dentro da varredura a cada 5 minutos
     em vez de na subida do worker."""

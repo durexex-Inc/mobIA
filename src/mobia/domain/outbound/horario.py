@@ -17,6 +17,16 @@ lead -- `executar_turno` envia por ali --, e um lead que escreve as 3h da
 manha tem de ser respondido as 3h da manha. A card fala de envio AUTOMATICO,
 nao de todo envio; a janela na porta compartilhada silenciaria o produto
 treze horas por dia. A guarda pertence aos sitios que ORIGINAM automacao.
+
+**`sweep_followups` (TEC-183) e o unico sitio de automacao que aplica esta
+guarda hoje -- e NAO `sweep_stalled`, que tambem e um cron capaz de causar
+envio.** A exclusao e deliberada: `sweep_stalled` so reenfileira
+`process_message` para uma mensagem INBOUND que o lead ja esta esperando
+resposta, nunca origina um contato novo. Gate-lo atrasaria a resposta a um
+lead que escreveu as 3h ate as 9h -- exatamente a propriedade que esta card
+protege ao NAO tocar `GuardedOutbound.send`. Se um dia `sweep_stalled` passar
+a originar envio (e nao so retomar um turno pendente), a guarda entra la
+tambem.
 """
 
 from datetime import datetime

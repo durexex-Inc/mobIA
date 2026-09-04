@@ -215,6 +215,13 @@ class Settings(BaseSettings):
     # criterios de aceite da card caem exatamente em 20:00, porque um lead que
     # parou de falar as 18h vence a primeira tentativa do QUENTE (+2h) as 20h
     # em ponto.
+    #
+    # O validator abaixo exige `fim <= 23`, e a comparacao e contra
+    # `fim * 60`: entao os minutos 23:01-23:59 NUNCA podem ser autorizados,
+    # em nenhuma configuracao, e uma janela de 24 horas e inexpressivel --
+    # nao existe `fim` que signifique "meia-noite". A D10 do desenho depende
+    # deste fato: uma janela "sempre aberta" nao existe, so uma que recusa
+    # 59 minutos por dia.
     followup_horario_inicio: int = 9
     followup_horario_fim: int = 20
 

@@ -86,6 +86,8 @@ Seria a escolha tentadora: é lá que a guarda de opt-out mora, e o comentário 
 
 A guarda pertence aos sítios que **originam** automação. Hoje há um; a TEC-171 e a TEC-172 trarão os outros.
 
+**`sweep_stalled` também é um cron capaz de causar envio, e fica de fora pela mesma razão que `GuardedOutbound.send` fica.** Ele não origina automação: só reenfileira `process_message` para uma mensagem INBOUND que o lead já está esperando resposta. Gatear esse sítio atrasaria até as 9h a resposta a um lead que escreveu às 3h — quebrando exatamente a propriedade que esta seção protege.
+
 ### D5 — A borda das 20h só passa se os segundos morrerem
 
 A janela é inclusiva nas duas pontas, **na granularidade do minuto**:

@@ -113,7 +113,7 @@ def test_o_fuso_de_envio_default_resolve(monkeypatch: pytest.MonkeyPatch) -> Non
 - [ ] **Step 3: Rodar e ver falhar**
 
 ```bash
-./.venv/Scripts/python.exe -m pytest tests/unit/test_config.py -k "janela_de_envio or fuso_de_envio" -v
+./.venv/Scripts/python.exe -m pytest tests/unit/test_config.py -k "horario_de_envio or fuso_de_envio" -v
 ```
 
 Esperado: os quatro FALHAM. Os três primeiros porque `Settings` aceita qualquer valor (nenhum `ValidationError` é levantado), o quarto com `AttributeError: 'Settings' object has no attribute 'fuso_de_envio'`.

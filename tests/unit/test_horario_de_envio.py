@@ -68,6 +68,14 @@ def test_as_vinte_e_cinco_recusa() -> None:
     assert _permite(_local(20, 5)) is False
 
 
+def test_as_vinte_e_um_minuto_recusa() -> None:
+    """A borda que o campo `followup_horario_fim` promete por escrito:
+    `fim=20` autoriza 20:00 e recusa 20:01. O teste de 20:05 acima mata a
+    comparacao de hora inteira; este e o minuto exato que o comentario do
+    campo e o docstring da funcao afirmam, e nenhum teste ainda prendia."""
+    assert _permite(_local(20, 1)) is False
+
+
 def test_o_momento_ingenuo_levanta() -> None:
     """Um naive faz `astimezone` assumir o fuso do SISTEMA -- UTC-3 nesta
     maquina, UTC no runner do CI --, e o erro seria invisivel em um dos dois."""
