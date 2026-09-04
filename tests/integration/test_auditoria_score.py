@@ -500,9 +500,11 @@ async def test_a_ordem_da_trilha_segue_a_escrita_e_nao_o_inicio_da_transacao(
             ),
             {"channel": CANAL, "conversa": CONVERSA},
         )
-        escrita_antes = (
-            await registrar_recalculo(recente, channel=CANAL, conversation_key=CONVERSA)
-        ).trilha
+        recalculo_antes = await registrar_recalculo(
+            recente, channel=CANAL, conversation_key=CONVERSA
+        )
+        assert recalculo_antes is not None
+        escrita_antes = recalculo_antes.trilha
         await recente.commit()
 
         await antiga.execute(
@@ -512,9 +514,11 @@ async def test_a_ordem_da_trilha_segue_a_escrita_e_nao_o_inicio_da_transacao(
             ),
             {"channel": CANAL, "conversa": CONVERSA},
         )
-        escrita_depois = (
-            await registrar_recalculo(antiga, channel=CANAL, conversation_key=CONVERSA)
-        ).trilha
+        recalculo_depois = await registrar_recalculo(
+            antiga, channel=CANAL, conversation_key=CONVERSA
+        )
+        assert recalculo_depois is not None
+        escrita_depois = recalculo_depois.trilha
         await antiga.commit()
 
     assert escrita_antes is not None and escrita_depois is not None
@@ -533,9 +537,11 @@ async def test_a_ordem_da_trilha_segue_a_escrita_e_nao_o_inicio_da_transacao(
         await _mensagem(session)
 
     async with session_factory() as seguinte:
-        terceira = (
-            await registrar_recalculo(seguinte, channel=CANAL, conversation_key=CONVERSA)
-        ).trilha
+        recalculo_terceiro = await registrar_recalculo(
+            seguinte, channel=CANAL, conversation_key=CONVERSA
+        )
+        assert recalculo_terceiro is not None
+        terceira = recalculo_terceiro.trilha
         await seguinte.commit()
 
     assert terceira is not None

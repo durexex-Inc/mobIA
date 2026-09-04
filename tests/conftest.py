@@ -89,10 +89,14 @@ async def semear(
 CANAL_AGENTE = "whatsapp"
 CONVERSA_AGENTE = "5511911112222"
 
+# Default de `_entrada_do_lead` e de `rodar_turno`, e uma constante so: as
+# duas funcoes tem de concordar sobre o texto do turno "sem nada de especial"
+# quando quem chama nao passa `texto`, e uma copia divergente do literal em
+# cada uma so seria descoberta quando uma mudasse e a outra nao.
+TEXTO_PADRAO_DO_LEAD = "quero saber mais sobre apartamentos"
 
-async def _entrada_do_lead(
-    session: AsyncSession, *, texto: str = "quero saber mais sobre apartamentos"
-) -> Message:
+
+async def _entrada_do_lead(session: AsyncSession, *, texto: str = TEXTO_PADRAO_DO_LEAD) -> Message:
     """Semeia a mensagem INBOUND que dispara um turno, ja reivindicada.
 
     `status=PROCESSING` porque e o estado que `process_message` deixa depois
@@ -267,7 +271,7 @@ def rodar_turno():
         contador,
         moderador=None,
         *,
-        texto: str = "quero saber mais sobre apartamentos",
+        texto: str = TEXTO_PADRAO_DO_LEAD,
     ) -> str:
         from mobia.domain.agente.turno import executar_turno
 

@@ -45,13 +45,24 @@ MOTIVO_PROPOSTA = "PROPOSTA"
 # E o que faz "quero agendar visita" casar e "voces tem plantao de visita no
 # fim de semana?" nao -- o segundo e fala real do corpus
 # (`evals/corpus/compra.yaml:318`), e pergunta sobre horario de funcionamento.
-# Mesma forma que fecha a colisao no opt-out, onde e o objeto de mensageria
-# que faz "pare de me mandar mensagens" nao casar com "pare de mandar
-# apartamento sem vaga".
 #
-# Casam em qualquer posicao da mensagem: com o verbo exigido, a posicao nao
-# acrescenta risco, e exigir inicio de frase perderia "bom dia, queria
-# agendar visita".
+# **O limite de palavra (`\b` em `_PADRAO_POR_MOTIVO`, abaixo) e o que faz o
+# verbo valer so quando COMECA ali, e nao quando e o RABO de um verbo maior.**
+# Sem ele, substring simples casava "marcar visita" dentro de "desmarcar
+# visita" -- um lead CANCELANDO uma visita virava forcamento permanente para
+# QUENTE, o oposto do que a fala dizia. Com o limite, "desmarcar visita" nao
+# casa termo nenhum. O mesmo limite tambem cortaria "remarcar visita" e
+# "reagendar visita" do verbo mais curto (`marcar`/`agendar`) que teriam
+# casado por acidente -- por isso os dois estao escritos por extenso na
+# tabela, e nao so os verbos base. Mesma ideia do opt-out
+# (`optout/deteccao.py`), onde e o objeto de mensageria que faz "pare de me
+# mandar mensagens" nao casar com "pare de mandar apartamento sem vaga" --
+# mas aqui a colisao era outra: nao o objeto sozinho, e sim um verbo mais
+# curto escondido dentro de um verbo maior.
+#
+# Casam em qualquer posicao da mensagem: com o limite de palavra no INICIO do
+# verbo, a posicao dentro da frase nao acrescenta risco, e exigir inicio de
+# frase perderia "bom dia, queria agendar visita".
 #
 # A ordem desta tupla e a ordem da saida de `gatilhos_de`: duas execucoes com
 # o mesmo texto devolvem a mesma tupla, e o teste pode comparar por igualdade
@@ -70,6 +81,12 @@ _TERMOS_POR_MOTIVO: tuple[tuple[str, tuple[str, ...]], ...] = (
             "remarcar visita",
             "remarcar uma visita",
             "remarcar a visita",
+            # "reagendar" tem "agendar" como RABO -- sem estes tres, o limite
+            # de palavra que impede "desmarcar visita" tambem impediria
+            # "reagendar visita" em silencio. Mesmo motivo de `remarcar` acima.
+            "reagendar visita",
+            "reagendar uma visita",
+            "reagendar a visita",
         ),
     ),
     (
@@ -89,14 +106,41 @@ _TERMOS_POR_MOTIVO: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "fazer proposta",
             "fazer uma proposta",
+            # "refazer" tem "fazer" como RABO, mesmo caso de "reagendar" acima.
+            "refazer proposta",
+            "refazer uma proposta",
             "enviar proposta",
             "enviar uma proposta",
+            # "reenviar" tem "enviar" como RABO, mesmo caso.
+            "reenviar proposta",
+            "reenviar uma proposta",
             "assinar contrato",
             "assinar o contrato",
+            # "reassinar" tem "assinar" como RABO, mesmo caso.
+            "reassinar contrato",
+            "reassinar o contrato",
             "fechar negocio",
             "fechar o negocio",
         ),
     ),
+)
+
+# Um padrao compilado por motivo, e nao um teste de substring por termo: o
+# `\b` no inicio de cada alternativa e o que impede um verbo mais curto de
+# casar escondido dentro de um verbo maior (ver o comentario acima da
+# tabela). `re.escape` porque os termos sao literais, nunca regex.
+#
+# So no INICIO: nao ha `\b` fechando cada alternativa, porque o objeto
+# (`visita`, `proposta`, ...) sendo prefixo de uma palavra maior
+# ("visitante") nao e o problema que esta correcao resolve, e ja era assim
+# antes -- estender o limite ao fim mudaria comportamento que nenhum teste
+# pede.
+#
+# Construido na ordem de `_TERMOS_POR_MOTIVO` para que `gatilhos_de` continue
+# devolvendo a mesma ordem de sempre.
+_PADRAO_POR_MOTIVO: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (motivo, re.compile(r"\b(?:" + "|".join(re.escape(termo) for termo in termos) + r")"))
+    for motivo, termos in _TERMOS_POR_MOTIVO
 )
 
 _SO_LETRAS_E_ESPACO = re.compile(r"[^a-z ]+")
@@ -134,7 +178,5 @@ def gatilhos_de(texto: str) -> tuple[str, ...]:
     if not normalizado:
         return ()
     return tuple(
-        motivo
-        for motivo, termos in _TERMOS_POR_MOTIVO
-        if any(termo in normalizado for termo in termos)
+        motivo for motivo, padrao in _PADRAO_POR_MOTIVO if padrao.search(normalizado) is not None
     )

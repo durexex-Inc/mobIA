@@ -166,6 +166,19 @@ class LeadQualification(Base):
     # O carimbo e o do PRIMEIRO forcamento, nao do ultimo: quem grava usa
     # `COALESCE`. E o que "permanece ate intervencao humana" torna
     # interessante -- quando esquentou, e ha quanto tempo ninguem interveio.
+    #
+    # **A intervencao humana (TEC-192) nao existe hoje, e nada nesta base
+    # limpa esta coluna.** Quando ela for construida, limpar SO este carimbo
+    # nao basta e passa despercebido pelos dois CHECK: `NULL` aqui com
+    # `temperatura_forcada_motivos` ainda preenchido e `temperatura` ainda
+    # "QUENTE" satisfaz os dois (nenhum dos dois olha para a coluna vizinha
+    # sem o carimbo tambem ser NULL) e deixa a linha MENTINDO -- forcada por
+    # motivos que a coluna de carimbo diz que nao existem mais, e a
+    # temperatura travada em QUENTE sem nenhum dos tres campos concordando
+    # entre si. A intervencao tem de limpar as TRES colunas juntas
+    # (`temperatura_forcada_em`, `temperatura_forcada_motivos` e recalcular
+    # `temperatura` a partir do score puro, via `temperatura_de` com
+    # `forcada=False`) na mesma transacao, nunca so esta.
     temperatura_forcada_em: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

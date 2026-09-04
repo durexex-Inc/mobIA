@@ -61,6 +61,49 @@ def test_mencao_a_proposta_ou_contrato_dispara(texto: str) -> None:
     assert gatilhos_de(texto) == (MOTIVO_PROPOSTA,)
 
 
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "quero desmarcar visita",
+        "preciso desmarcar a visita de amanha",
+        "vou ter que desmarcar uma visita",
+    ],
+)
+def test_desmarcar_visita_nunca_dispara(texto: str) -> None:
+    """Cancelar e o oposto de pedir, e o forcamento e permanente e sem
+    desfazer -- a mesma razao pela qual a faixa inteira e estrita
+    (docstring do modulo). "desmarcar" tem "marcar" como rabo; sem o limite
+    de palavra em `_PADRAO_POR_MOTIVO`, um lead CANCELANDO uma visita virava
+    QUENTE para sempre e tocava o telefone do corretor por engano."""
+    assert gatilhos_de(texto) == ()
+
+
+@pytest.mark.parametrize(
+    "texto",
+    ["quero reagendar visita", "posso reagendar a visita?", "preciso reagendar uma visita"],
+)
+def test_reagendar_visita_dispara(texto: str) -> None:
+    """ "reagendar" tambem tem "agendar" como rabo, mas ao contrario de
+    "desmarcar" o pedido continua sendo de visita -- por isso os tres termos
+    estao escritos por extenso na tabela, no molde de `remarcar`."""
+    assert gatilhos_de(texto) == (MOTIVO_VISITA,)
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "quero refazer uma proposta",
+        "posso reenviar proposta hoje?",
+        "preciso reassinar o contrato",
+    ],
+)
+def test_o_reprefixo_dispara_igual_ao_verbo_base(texto: str) -> None:
+    """`fazer`, `enviar` e `assinar` tem os mesmos rabos que `agendar`/`marcar`
+    -- `refazer`, `reenviar` e `reassinar` -- e pela mesma razao de
+    `reagendar` os tres estao escritos por extenso na tabela."""
+    assert gatilhos_de(texto) == (MOTIVO_PROPOSTA,)
+
+
 def test_plantao_de_visita_nao_dispara() -> None:
     """O caso real do corpus que a estritez existe para proteger.
 

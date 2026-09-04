@@ -838,18 +838,30 @@ async def registrar_recalculo(
     anterior = Temperatura(estado.temperatura) if estado.temperatura else None
     temperatura = temperatura_de(novo, qualificado=qualificado, forcada=forcada)
 
-    # `or gatilhos` no teste, e nao so a mudanca de temperatura: um lead que
-    # JA era QUENTE forcado e menciona proposta nao muda de temperatura, mas o
-    # motivo novo tem de entrar na coluna. Duplicata e possivel por este
-    # caminho (o lead pede visita duas vezes) e nao incomoda: quem le testa
-    # pertinencia, nao conta -- mesma aceitacao das duas colunas de array
-    # vizinhas.
-    if temperatura is not anterior or gatilhos:
+    # So os motivos que a coluna AINDA nao tem -- e nao `gatilhos` bruto --
+    # decidem se ha algo NOVO a escrever. Um lead ja forcado que repete a
+    # mesma fala ("quero agendar visita" de novo) devolve `gatilhos` nao
+    # vazio todo turno, mas nao ha motivo novo nenhum: usar `gatilhos` ali
+    # fazia o UPDATE disparar a cada turno e a coluna crescer
+    # (['VISITA', 'VISITA', ...]) para sempre, o que nem a duplicata
+    # tolerada das colunas irmas justifica -- aquelas duplicam quando o LEAD
+    # diz duas coisas diferentes que colidem no mesmo nome, esta duplicava
+    # quando ele repetia a MESMA fala.
+    novos = tuple(g for g in gatilhos if g not in (estado.temperatura_forcada_motivos or ()))
+
+    # `or novos` no teste, e nao so a mudanca de temperatura: um lead que JA
+    # era QUENTE forcado e menciona proposta pela primeira vez nao muda de
+    # temperatura, mas o motivo novo tem de entrar na coluna. Duplicata
+    # continua possivel dentro de UM turno so (`gatilhos_de` pode repetir a
+    # tupla se o texto casar o mesmo motivo duas vezes) e nao incomoda, mesma
+    # aceitacao das duas colunas de array vizinhas -- o que este calculo
+    # fecha e so a duplicata ENTRE turnos.
+    if temperatura is not anterior or novos:
         valores: dict[str, Any] = {
             "temperatura": temperatura.value,
             "updated_at": datetime.now(UTC),
         }
-        if gatilhos:
+        if novos:
             valores["temperatura_forcada_em"] = func.coalesce(
                 LeadQualification.temperatura_forcada_em, func.clock_timestamp()
             )
@@ -860,11 +872,14 @@ async def registrar_recalculo(
             # turnos que aquele comentario descreve nao existe aqui.
             #
             # `coalesce` porque `NULL || {'VISITA'}` e NULL em Postgres, e
-            # toda linha anterior a esta card tem NULL aqui.
+            # toda linha anterior a esta card tem NULL aqui. `novos` e nao
+            # `gatilhos` no `cast`: e o mesmo calculo que decidiu entrar
+            # neste `if`, e gravar `gatilhos` aqui reabriria o crescimento
+            # sem fim que `novos` existe para fechar.
             valores["temperatura_forcada_motivos"] = func.coalesce(
                 LeadQualification.temperatura_forcada_motivos,
                 literal_column("'{}'::varchar[]"),
-            ).op("||")(cast(list(gatilhos), ARRAY(String(16))))
+            ).op("||")(cast(list(novos), ARRAY(String(16))))
         await session.execute(
             update(LeadQualification)
             .where(
@@ -884,7 +899,7 @@ async def registrar_recalculo(
         # map), sem expirar nada.
         #
         # `temperatura_forcada_em` e `temperatura_forcada_motivos` -- gravadas
-        # so quando `gatilhos` nao e vazio -- sao expressao SQL
+        # so quando `novos` nao e vazio -- sao expressao SQL
         # (`func.coalesce`, `.op("||")`), que o avaliador nao sabe calcular em
         # Python. Para essas duas, e so essas duas, ele EXPIRA os atributos
         # correspondentes em vez de sincroniza-los; a proxima leitura --

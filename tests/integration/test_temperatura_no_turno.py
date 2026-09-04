@@ -191,6 +191,51 @@ async def test_o_forcamento_sobrevive_a_um_recalculo_sem_gatilho(session) -> Non
     assert obtido.anterior is Temperatura.QUENTE
 
 
+async def test_o_gatilho_repetido_nao_duplica_o_motivo_nem_a_coluna(session) -> None:
+    """Issue da revisao de branch inteira: `or gatilhos` na condicao do UPDATE
+    nao testava novidade, so presenca -- um lead ja forcado que repete a
+    MESMA fala ("quero agendar visita" de novo) reenviava `gatilhos=(VISITA,)`
+    todo turno, e a coluna crescia sem fim (['VISITA', 'VISITA', ...]).
+
+    `novos` (o calculo que corrige isto) tem de ser vazio quando o motivo
+    repetido ja esta na coluna, entao nem o UPDATE dispara nem o array cresce.
+    """
+    session.add(_linha(urgencia=None, faixa_preco_max_centavos=None))
+    await session.commit()
+    await _mensagem(session)
+    primeiro = await registrar_recalculo(
+        session, channel=CANAL, conversation_key=CONVERSA, gatilhos=(MOTIVO_VISITA,)
+    )
+    await session.commit()
+    assert primeiro is not None
+
+    session.expire_all()
+    carregada_apos_primeiro = await session.get(LeadQualification, (CANAL, CONVERSA))
+    assert carregada_apos_primeiro is not None
+    carimbo = carregada_apos_primeiro.temperatura_forcada_em
+    atualizado_em = carregada_apos_primeiro.updated_at
+
+    segundo = await registrar_recalculo(
+        session, channel=CANAL, conversation_key=CONVERSA, gatilhos=(MOTIVO_VISITA,)
+    )
+    await session.commit()
+    assert segundo is not None
+    # `gatilhos` no `Recalculo` continua reportando o que ESTA fala disparou,
+    # e nao o que e novo -- e o que o evento de log precisa (docstring de
+    # `Recalculo`).
+    assert segundo.gatilhos == (MOTIVO_VISITA,)
+
+    session.expire_all()
+    carregada = await session.get(LeadQualification, (CANAL, CONVERSA))
+    assert carregada is not None
+    assert carregada.temperatura == "QUENTE"
+    assert carregada.temperatura_forcada_motivos == [MOTIVO_VISITA]
+    assert carregada.temperatura_forcada_em == carimbo
+    # Nao houve UPDATE nenhum no segundo recalculo: nem o carimbo nem
+    # `updated_at` se moveram.
+    assert carregada.updated_at == atualizado_em
+
+
 async def test_o_carimbo_e_o_do_primeiro_forcamento(session) -> None:
     """`COALESCE` e nao sobrescrita: "permanece ate intervencao humana" torna
     interessante QUANDO esquentou, e ha quanto tempo ninguem interveio."""
@@ -333,6 +378,11 @@ async def test_a_borda_nao_reemite_no_turno_seguinte(
     assert carregada is not None
     assert carregada.temperatura == "QUENTE"
     assert sum(1 for r in caplog.records if "lead.esquentou" in r.getMessage()) == 0
+    # O segundo turno repete o MESMO motivo (VISITA): sem newness-check no
+    # `if` que decide gravar, a coluna cresceria para ['VISITA', 'VISITA']
+    # a cada turno em que o lead so repete o pedido. So o motivo genuinamente
+    # novo entra na uniao.
+    assert carregada.temperatura_forcada_motivos == [MOTIVO_VISITA]
 
 
 async def test_a_fala_bloqueada_pela_moderacao_nao_forca_quente(
