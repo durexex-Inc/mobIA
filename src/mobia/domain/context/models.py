@@ -171,8 +171,8 @@ class LeadQualification(Base):
     # limpa esta coluna.** Quando ela for construida, limpar SO este carimbo
     # nao basta e passa despercebido pelos dois CHECK: `NULL` aqui com
     # `temperatura_forcada_motivos` ainda preenchido e `temperatura` ainda
-    # "QUENTE" satisfaz os dois (nenhum dos dois olha para a coluna vizinha
-    # sem o carimbo tambem ser NULL) e deixa a linha MENTINDO -- forcada por
+    # "QUENTE" satisfaz os dois (com o carimbo NULL, nenhum dos dois chega a
+    # olhar para a coluna vizinha) e deixa a linha MENTINDO -- forcada por
     # motivos que a coluna de carimbo diz que nao existem mais, e a
     # temperatura travada em QUENTE sem nenhum dos tres campos concordando
     # entre si. A intervencao tem de limpar as TRES colunas juntas
@@ -191,9 +191,11 @@ class LeadQualification(Base):
     # e possivel (o lead pede visita duas vezes) e nao incomoda, mesma razao
     # das duas colunas de array acima: quem le testa pertinencia, nao conta.
     #
-    # `NULL` = nao forcada, e e o unico estado que o CHECK admite junto de
-    # carimbo nulo. Array vazio com carimbo nao nulo e inalcancavel pelos
-    # dois CHECK juntos. Quem le trata NULL e vazio iguais (`or ()`).
+    # `NULL` = nao forcada, mas nao e o unico estado que o CHECK admite
+    # junto de carimbo nulo: com o carimbo NULL, o CHECK nem chega a olhar
+    # para esta coluna, entao qualquer valor passaria aqui. Array vazio com
+    # carimbo nao nulo e que fica inalcancavel, proibido pelo mesmo CHECK.
+    # Quem le trata NULL e vazio iguais (`or ()`).
     temperatura_forcada_motivos: Mapped[list[str] | None] = mapped_column(
         ARRAY(String(16)), nullable=True
     )
