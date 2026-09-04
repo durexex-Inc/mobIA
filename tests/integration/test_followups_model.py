@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from mobia.domain.agente.schemas import Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
-from mobia.domain.followup.cadencia import MAX_TENTATIVAS
+from mobia.domain.followup.cadencia import CADENCIA
 from mobia.domain.followup.models import FollowUp
 from mobia.domain.followup.repositorio import (
     candidatos_a_followup,
@@ -247,15 +247,14 @@ async def test_a_resposta_do_lead_zera_a_regua(session) -> None:
 
 
 async def test_lead_exaurido_nao_e_candidato_ate_falar_de_novo(session) -> None:
-    """`MAX_TENTATIVAS` e o teto de QUALQUER temperatura: um lead com esse
-    numero de tentativas sob a ancora atual nao pode mais estar devido, esfrie
-    ou esquente. Sem o excluir da consulta, ele travaria no topo da fila para
-    sempre -- candidatura nao olha quantos disparos ja houve, so a idade da
-    ancora, e a dele e a mais antiga do lote. So uma fala nova (ancora nova)
-    o traz de volta."""
+    """Um lead com o teto de tentativas da PROPRIA temperatura sob a ancora
+    atual nao pode mais estar devido naquela temperatura. Sem o excluir da
+    consulta, ele travaria no topo da fila para sempre -- candidatura nao olha
+    quantos disparos ja houve, so a idade da ancora, e a dele e a mais antiga
+    do lote. So uma fala nova (ancora nova) o traz de volta."""
     await _qualificacao(session)
     await _fala_do_lead(session, quando=ANCORA)
-    session.add(_linha(tentativa_numero=MAX_TENTATIVAS))
+    session.add(_linha(tentativa_numero=len(CADENCIA[Temperatura.QUENTE])))
     await session.commit()
 
     assert await candidatos_a_followup(session, agora=AGORA) == []
@@ -267,6 +266,76 @@ async def test_lead_exaurido_nao_e_candidato_ate_falar_de_novo(session) -> None:
 
     assert candidatos[0].ancora_em == nova_ancora
     assert candidatos[0].ja_disparada == 0
+
+
+async def test_lead_esgotado_no_morno_nao_bloqueia_a_fila_para_quem_esta_devido(session) -> None:
+    """A regressao do bug critico: o corte de esgotamento tinha de ser POR
+    TEMPERATURA, nao um teto global.
+
+    Um MORNO com as 3 tentativas da propria tabela ja disparadas nunca mais
+    fica devido -- nada mais muda a candidatura dele, e a ancora dele so fica
+    mais velha. Ordenado por `ancora ASC`, ele ocupa o topo da fila para
+    sempre. Com um teto GLOBAL (o antigo `MAX_TENTATIVAS`, o maior das tres
+    tabelas -- 4, do QUENTE), esse lead com 3 disparos seguia candidato e
+    continuava no topo; um lote de leads assim maior que `limite` fazia a
+    varredura nunca mais alcancar quem estava genuinamente devido. Usando um
+    `limite` de 2, dois MORNO esgotados bastam para saturar a pagina -- e o
+    lead QUENTE, devido de verdade e com a ancora mais recente, tem de
+    aparecer mesmo assim."""
+    for numero in range(2):
+        canal_exaurido = f"exaurido-{numero}"
+        session.add(
+            LeadQualification(
+                channel=canal_exaurido,
+                conversation_key=canal_exaurido,
+                intencao=Intencao.COMPRA.value,
+                faixa_preco_max_centavos=50_000_000,
+                regiao="vila mariana",
+                urgencia=Urgencia.IMEDIATA.value,
+                temperatura=Temperatura.MORNO.value,
+            )
+        )
+        await session.commit()
+        identificador = uuid.uuid4()
+        session.add(
+            Message(
+                id=identificador,
+                channel=canal_exaurido,
+                provider_message_id=f"wamid.{identificador.hex[:10]}",
+                sender_external_id=canal_exaurido,
+                recipient_external_id="222222222",
+                conversation_key=canal_exaurido,
+                role=MessageRole.LEAD,
+                direction=MessageDirection.INBOUND,
+                content_type=MessageContentType.TEXTO,
+                text_body=encrypt("oi", aad_de(identificador, "text_body")),
+                raw_payload=None,
+                status=MessageStatus.PROCESSED,
+                created_at=ANCORA,
+            )
+        )
+        session.add(
+            FollowUp(
+                id=uuid.uuid4(),
+                channel=canal_exaurido,
+                conversation_key=canal_exaurido,
+                tentativa_numero=len(CADENCIA[Temperatura.MORNO]),
+                temperatura=Temperatura.MORNO.value,
+                ancora_em=ANCORA,
+                devido_em=ANCORA + timedelta(days=1),
+            )
+        )
+        await session.commit()
+
+    # O devido de verdade: QUENTE, sem disparo, ancora mais recente que os
+    # dois exauridos -- entao, sem o corte por temperatura, ele fica atras
+    # deles na fila e um `limite` de 2 nunca o alcanca.
+    await _qualificacao(session)
+    await _fala_do_lead(session, quando=ANCORA + timedelta(hours=1))
+
+    candidatos = await candidatos_a_followup(session, agora=AGORA, limite=2)
+
+    assert [c.conversation_key for c in candidatos] == [CONVERSA]
 
 
 async def test_registrar_devolve_none_na_corrida(session) -> None:

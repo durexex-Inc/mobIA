@@ -35,6 +35,25 @@ async def test_startup_sobe_com_token_configurado(
     assert "contador" in ctx
 
 
+def test_sweep_followups_esta_registrado_no_cron_de_doze_minutos() -> None:
+    """O entregavel inteiro da TEC-183 e "roda sozinho a cada 5 minutos" --
+    sem este teste, apagar a entrada `cron(...)` nao quebra nada na suite, e a
+    cadencia para de disparar em producao sem que nenhum teste perceba.
+
+    `functions` e o que o worker aceita executar (via enqueue OU cron);
+    `cron_jobs` e o agendamento. As duas listas tem de conter a funcao para
+    ela rodar sozinha, e o segundo conjunto de minutos e o de cinco em cinco
+    que o comentario do registro em `workers/main.py` justifica."""
+    from mobia.workers.jobs.sweep_followups import sweep_followups
+    from mobia.workers.main import WorkerSettings
+
+    assert sweep_followups in WorkerSettings.functions
+
+    candidatos = [job for job in WorkerSettings.cron_jobs if job.coroutine is sweep_followups]
+    assert len(candidatos) == 1
+    assert candidatos[0].minute == {0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}
+
+
 def test_job_timeout_cabe_dentro_da_janela_do_sweeper() -> None:
     """Os dois numeros sao acoplados e moram em arquivos diferentes.
 

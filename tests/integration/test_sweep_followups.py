@@ -114,13 +114,56 @@ async def test_o_lead_muito_atrasado_recebe_uma_tentativa_so(session) -> None:
     assert [linha.tentativa_numero for linha in linhas] == [4]
 
 
-async def test_a_varredura_e_idempotente_na_mesma_passagem(session) -> None:
-    """Duas varreduras concorrentes veriam o mesmo candidato. O UNIQUE absorve,
-    e o job nao levanta -- devolve zero na segunda."""
+async def test_a_segunda_passagem_nao_repete_a_tentativa_ja_servida(session) -> None:
+    """Um lead ja atendido nao recebe nada novo enquanto nada mais vence.
+
+    A primeira varredura grava a tentativa 1 (QUENTE, +2h). Na segunda, com
+    `ja_disparada=1` e so 3h decorridas, `tentativa_devida` nao acha nenhuma
+    tentativa vencida (a proxima, +24h, ainda nao chegou) e o loop pula antes
+    de tocar `registrar_followup` -- o zero vem de "nada esta devido", nao do
+    `UNIQUE` absorvendo um conflito. Esse caso e coberto a parte, no nivel do
+    job, por `test_a_varredura_absorve_a_corrida_entre_duas_passagens`
+    abaixo."""
     await _lead(session, calado_ha=timedelta(hours=3))
 
     assert await sweep_followups(_ctx()) == 1
     assert await sweep_followups(_ctx()) == 0
+
+
+async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(session) -> None:
+    """A defesa de verdade contra duas varreduras concorrentes, testada no
+    nivel do job e nao so no repositorio.
+
+    Pre-inserir a MESMA linha que a varredura esta prestes a gravar simula o
+    que uma segunda passagem concorrente veria: o candidato ja tem a tentativa
+    1 registrada sob esta ancora, mas o job ainda nao sabe disso porque
+    `candidatos_a_followup` olha `ja_disparada` no INSTANTE da consulta. Sem
+    o `ON CONFLICT DO NOTHING` (ou com o nome errado de constraint), o
+    `INSERT` levantaria `IntegrityError` e a varredura quebraria no meio do
+    lote. Isto pegaria um refactor que trocasse a estrategia de conflito ou
+    errasse o nome da constraint, que a suite ate aqui deixava passar --
+    nenhum teste de job insercia a linha por fora antes de rodar."""
+    calado_ha = timedelta(hours=2, minutes=5)
+    await _lead(session, calado_ha=calado_ha)
+
+    ancora = (await session.scalars(select(Message))).one().created_at
+    session.add(
+        FollowUp(
+            id=uuid.uuid4(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            tentativa_numero=1,
+            temperatura="QUENTE",
+            ancora_em=ancora,
+            devido_em=ancora + timedelta(hours=2),
+        )
+    )
+    await session.commit()
+
+    assert await sweep_followups(_ctx()) == 0
+
+    linhas = (await session.scalars(select(FollowUp))).all()
+    assert len(linhas) == 1
 
 
 async def test_o_lead_que_falou_ha_pouco_nao_entra(session) -> None:

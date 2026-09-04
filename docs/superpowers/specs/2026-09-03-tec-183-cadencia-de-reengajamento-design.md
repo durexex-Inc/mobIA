@@ -130,30 +130,35 @@ Isso resolve a pegadinha do modelo derivado: se `ja_disparada` olhasse a vida in
 
 **E não de 30 em 30 segundos como o irmão.** O menor intervalo de qualquer temperatura na RN-13.1 é **2 horas**; precisão de segundos não compra nada e custa uma varredura que agrega `messages`. Cinco minutos deixa o erro máximo de disparo em cinco minutos sobre uma janela de duas horas.
 
-Os candidatos saem de um `GROUP BY` sobre `messages` juntado com `lead_qualification`, com dois cortes baratos aplicados antes de qualquer trabalho:
+Os candidatos saem de um `GROUP BY` sobre `messages` juntado com `lead_qualification`, com três cortes baratos aplicados antes de qualquer trabalho:
 
-- `temperatura IS NOT NULL` — a D3.
+- `temperatura IN (vocabulário de CADENCIA)` — a D3 (o `NULL` nunca casa um `IN`) e, ao mesmo tempo, a defesa contra um valor de `temperatura` fora do enum: sem este filtro esse valor derrubaria a varredura inteira ao tentar virar `Temperatura` em Python, e com ele vira só um lead ignorado.
 - `MAX(created_at) < now() - 2h` — o menor intervalo que existe em qualquer temperatura, então nada abaixo disso pode estar devido.
+- `ja_disparada < teto da PRÓPRIA temperatura` (4 para `QUENTE`, 3 para `MORNO`, 2 para `FRIO`, todos derivados de `CADENCIA`) — sem este corte, um lead que esgotou a cadência da própria temperatura tem a âncora mais antiga do lote e nunca sai do topo da fila ordenada por `ancora ASC`; um lote desses maior que o `limite` da página faz a varredura nunca mais alcançar quem está genuinamente devido. O corte é por temperatura, e não um teto global, precisamente para não quebrar essa garantia: ele é reavaliado contra a `temperatura` viva a cada passagem, então um lead que esquenta depois de esgotar volta a ser candidato no instante em que a coluna muda — o mesmo efeito que um teto global perseguia, sem o custo de nunca excluir quem esgotou `MORNO` ou `FRIO`.
 
 A âncora usa a mesma definição de fala do lead que `contar_mensagens_do_lead` fixou: `direction = INBOUND` e `bloqueada_em IS NULL`. **Não é uma segunda leitura desse fato**, é a mesma regra — e a docstring daquela função existe precisamente para que a próxima card não escreva uma terceira.
 
 Para cada candidato, em Python:
 
-1. `esta_em_optout(...)` → pula.
-2. `tentativa_devida(...)` devolve `None` → pula.
-3. Senão: `INSERT` na `followups` e `log.info("followup.devido", ...)`.
+1. `tentativa_devida(...)` devolve `None` → pula.
+2. Senão: `esta_em_optout(...)` → pula.
+3. Senão: `INSERT` na `followups`.
+4. O evento `log.info("followup.devido", ...)` só sai depois do `commit()` do lote inteiro — nunca dentro do loop.
 
-**O opt-out é consultado por candidato, e não juntado na consulta.** `esta_em_optout` é a única implementação daquele fato, e escrevê-lo uma segunda vez em SQL criaria duas fontes que divergem em silêncio — o defeito que a TEC-146 gastou uma card inteira consertando. O preço é uma consulta por candidato, e os candidatos são poucos por construção: só quem tem temperatura, calou há mais de duas horas e ainda não esgotou.
+**A ordem das duas guardas é proposital: `tentativa_devida` primeiro, `esta_em_optout` só para quem passou.** A primeira é pura, sem I/O; a segunda é uma ida ao banco. Checar o opt-out antes pagaria essa consulta para todo candidato, inclusive os que nem estão devidos — e a premissa que justifica consultar por candidato em vez de juntar na query (próximo parágrafo) é que o conjunto que sobra depois do primeiro corte é pequeno. Invertida, essa premissa deixa de valer.
 
-**O evento no log é o entregável observável desta card**, no molde de `lead.qualificado` e `lead.esquentou`: `followup.devido` com canal, tentativa, temperatura e a âncora. Sem texto do lead — a regra de PII que `moderacao.entrada_bloqueada` respeita vale igual aqui.
+**O opt-out é consultado por candidato, e não juntado na consulta.** `esta_em_optout` é a única implementação daquele fato, e escrevê-lo uma segunda vez em SQL criaria duas fontes que divergem em silêncio — o defeito que a TEC-146 gastou uma card inteira consertando. O preço é uma consulta por candidato, e os candidatos são poucos por construção: só quem tem temperatura, calou há mais de duas horas e ainda não esgotou a própria temperatura.
+
+**O evento no log é o entregável observável desta card**, no molde de `lead.qualificado` e `lead.esquentou`: `followup.devido` com canal, tentativa, temperatura e a âncora. Sem texto do lead — a regra de PII que `moderacao.entrada_bloqueada` respeita vale igual aqui. Por ser o efeito observável — e o único desta card, já que nada é enviado —, ele só sai depois que a transação inteira confirma: logar antes do `commit` deixaria um evento órfão se o lote falhasse depois, sem linha nenhuma no banco para uma varredura futura reconhecer e não repetir.
 
 ## Fluxo
 
 1. O cron dispara `sweep_followups` a cada 5 minutos.
-2. Uma consulta devolve os candidatos: leads com `temperatura` não nula cuja última fala não bloqueada tem mais de 2 horas, com a âncora e a maior tentativa já disparada sob aquela âncora.
-3. Para cada um, na ordem: opt-out barra; `tentativa_devida` decide; o `INSERT` registra.
+2. Uma consulta devolve os candidatos: leads com `temperatura` no vocabulário de `CADENCIA`, cuja última fala não bloqueada tem mais de 2 horas, que ainda não esgotaram o teto de tentativas da própria temperatura, com a âncora e a maior tentativa já disparada sob aquela âncora.
+3. Para cada um, na ordem: `tentativa_devida` decide; opt-out barra quem sobrou; o `INSERT` registra.
 4. A restrição `UNIQUE` absorve a corrida entre duas varreduras — a segunda falha o `INSERT` daquela linha e segue.
-5. Nada é entregue ao lead. A TEC-184 plugará a geração e o envio sobre esta trilha.
+5. Os eventos `followup.devido` do lote inteiro só saem depois do `commit`.
+6. Nada é entregue ao lead. A TEC-184 plugará a geração e o envio sobre esta trilha.
 
 ## Testes
 
@@ -171,11 +176,13 @@ Para cada candidato, em Python:
 - **A restrição `UNIQUE` recusa a segunda inserção** da mesma tentativa sob a mesma âncora.
 - **Lead com `temperatura` nula não aparece entre os candidatos**, nem com dois meses de silêncio.
 
+**Um quinto, adicionado depois de um bug crítico na revisão da branch inteira.** A primeira versão do corte de esgotamento usava um teto global (o maior das três tabelas), e um `FRIO` ou `MORNO` esgotado — a maioria do tráfego real, ver a lacuna 7 — permanecia candidato para sempre, empacado no topo da fila ordenada por âncora. O teste cria mais leads exauridos do que o `limite` da página, mais um lead genuinamente devido, e verifica que o devido é servido mesmo assim — a regressão que teria pego o bug antes do merge. Fica em `tests/integration/test_followups_model.py`, ao lado dos outros testes da consulta de candidatos.
+
 ## Emendas ao SRS
 
 **RN-13.4** ganha `Emenda E-01` como item aninhado, sem tocar no texto de 22/08, mais uma linha na tabela do topo. A numeração é **por regra** — há várias `E-01` no documento, cada uma de uma regra diferente.
 
-O teor: não há cadência pendente a cancelar, porque não há agendamento persistido. A resposta do lead move a âncora e a cadência recomeça por aritmética; o efeito observável da regra é idêntico. A consequência declarada é que a entidade `FollowUp` da seção 5 perde `PENDENTE` e `CANCELADO` do enum de status, e que `agendado_para` vira `devido_em` — calculado, não agendado.
+O teor: não há cadência pendente a cancelar, porque não há agendamento persistido. A resposta do lead move a âncora e a cadência recomeça por aritmética; o efeito observável da regra é idêntico. A consequência declarada — corrigida no próprio SRS, e repetida aqui pela mesma razão — é que a entidade `FollowUp` da seção 5 perde a coluna `status` inteira (não só os valores `PENDENTE` e `CANCELADO` do enum), e que `agendado_para` vira `devido_em` — calculado, não agendado.
 
 ## Lacunas declaradas
 

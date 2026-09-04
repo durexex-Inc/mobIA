@@ -50,12 +50,20 @@ async def sweep_followups(ctx: dict[str, Any], limite: int = 500) -> int:
     chegou primeiro (o `ON CONFLICT DO NOTHING` absorveu). Nao e erro e nao
     entra na contagem.
 
-    Tudo numa transacao so: a varredura nao tem efeito externo, entao nao ha o
-    risco que faz o `sweep_stalled` soltar os locks antes do I/O de rede.
+    **O `followup.devido` so e emitido depois do `commit`, nunca dentro do
+    loop.** O evento e o efeito observavel desta card (o desenho e explicito
+    sobre isso), entao logar antes de confirmar mente em duas direcoes se algo
+    falhar depois -- um `ConnectionResetError` no meio do lote (rotineiro
+    neste repo), um erro de statement, ou o `job_timeout` do ARQ cancelando a
+    meio caminho: o rollback desfaz a linha, mas o log ja saiu, e a proxima
+    varredura reemite o mesmo evento para a mesma tentativa porque o UNIQUE
+    nao tem o que absorver -- nunca houve linha para conflitar. Os eventos
+    ficam numa lista dentro do loop e so saem depois que `session.commit()`
+    retorna, com o lote inteiro ja confirmado.
     """
     session_factory = ctx["session_factory"]
     agora = datetime.now(UTC)
-    gravadas = 0
+    eventos: list[dict[str, Any]] = []
 
     async with session_factory() as session:
         candidatos = await candidatos_a_followup(session, agora=agora, limite=limite)
@@ -84,18 +92,21 @@ async def sweep_followups(ctx: dict[str, Any], limite: int = 500) -> int:
             if linha is None:
                 continue
 
-            gravadas += 1
             # O texto do lead nao entra: a regra de PII que
             # `moderacao.entrada_bloqueada` respeita vale igual aqui.
-            log.info(
-                "followup.devido",
-                channel=candidato.channel,
-                tentativa=tentativa,
-                temperatura=candidato.temperatura.value,
-                ancora_em=candidato.ancora_em.isoformat(),
-                devido_em=devido_em.isoformat(),
+            eventos.append(
+                {
+                    "channel": candidato.channel,
+                    "tentativa": tentativa,
+                    "temperatura": candidato.temperatura.value,
+                    "ancora_em": candidato.ancora_em.isoformat(),
+                    "devido_em": devido_em.isoformat(),
+                }
             )
 
         await session.commit()
 
-    return gravadas
+    for evento in eventos:
+        log.info("followup.devido", **evento)
+
+    return len(eventos)

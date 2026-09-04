@@ -8,13 +8,16 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import text
+import structlog
+from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.context.temperatura import Temperatura
-from mobia.domain.followup.cadencia import INTERVALO_MINIMO, MAX_TENTATIVAS
+from mobia.domain.followup.cadencia import CADENCIA, INTERVALO_MINIMO
 from mobia.domain.followup.models import FollowUp
+
+log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -41,7 +44,7 @@ class Candidato:
 #
 # O `HAVING` e o corte barato: nada abaixo de `INTERVALO_MINIMO` pode estar
 # devido em temperatura nenhuma, entao o lead sai antes de qualquer outro
-# trabalho. `temperatura IS NOT NULL` e o outro corte (D3).
+# trabalho.
 #
 # O subselect de `ja_disparada` roda por linha ja filtrada, e o indice
 # `ix_followups_lead` o atende.
@@ -52,28 +55,68 @@ class Candidato:
 # calculo a uma CTE e a forma mais legivel de filtrar por ele depois, sem
 # repetir o subselect correlacionado numa segunda copia.
 #
-# **O filtro por `ja_disparada < :max_tentativas` e o que evita a fome.** Um
-# lead exaurido em QUALQUER temperatura tem a ancora mais antiga do lote --
-# `ORDER BY ancora` o poe na frente -- e, sem este corte, ele nunca sai do topo
-# da fila: candidatura so depende de `temperatura IS NOT NULL` e da idade da
-# ancora, e nenhuma das duas muda so porque um disparo aconteceu. Quando o
-# numero de leads assim excede `limite`, nenhum lead recem-devido seria mais
-# alcancado -- silenciosamente. `MAX_TENTATIVAS` e o teto de QUALQUER
-# temperatura (ver o comentario em `cadencia.py`): um lead com esse numero de
-# tentativas sob a ancora atual nao pode mais estar devido, esfrie ou esquente.
-# Note que isto NAO filtra por esgotamento "na temperatura atual" -- um FRIO
-# com 2 disparos segue candidato, porque se esquentar deve as tentativas 3 e 4
-# do QUENTE -- e por isso o corte usa o teto global, e nunca a tabela
-# `CADENCIA` reescrita em SQL (seria a segunda fonte que este repo ja gastou
-# cards inteiras evitando).
+# **`lq.temperatura IN :temperaturas_validas` e a D3 E a defesa contra lixo.**
+# `lead_qualification.temperatura` e uma `String(8)` sem CHECK de vocabulario:
+# um `UPDATE` manual em producao e o bastante para gravar um valor fora do
+# enum, e sem este filtro essa linha chegaria ao Python, onde
+# `Temperatura(linha.temperatura)` levanta `ValueError` DENTRO da list
+# comprehension -- antes de qualquer tratamento por lead, derrubando a
+# varredura inteira e permanentemente (a linha continua la na proxima
+# passagem). Com o filtro, um valor desconhecido vira um lead ignorado, nao uma
+# parada de producao. `NULL` nunca casa um `IN`, entao o filtro tambem cobre a
+# D3 sem precisar de um `IS NOT NULL` em separado. O vocabulario vem de
+# `CADENCIA.keys()` -- nunca escrito a mao.
+#
+# **O corte por esgotamento e o que evita a fome, e tem de ser POR
+# TEMPERATURA.** Um lead exaurido tem a ancora mais antiga do lote -- `ORDER BY
+# ancora` o poe na frente -- e, sem corte nenhum, ele nunca sai do topo da
+# fila: candidatura nao muda so porque um disparo aconteceu. A versao anterior
+# desta consulta usava um teto GLOBAL (`MAX_TENTATIVAS`, o maior entre as tres
+# temperaturas) sob o argumento de que um FRIO com 2 disparos segue candidato
+# porque, se esquentar, deve as tentativas 3 e 4 do QUENTE. O argumento sobre o
+# aquecimento estava certo; a conclusao, nao -- um corte por temperatura
+# reage ao aquecimento igual, porque e reavaliado contra `lq.temperatura` a
+# cada passagem: o lead reaparece no instante em que a coluna muda. O teto
+# global so tinha o efeito de nunca excluir ninguem que esgotou MORNO (3) ou
+# FRIO (2) sem esquentar -- a maioria do trafego real (ver a lacuna 7 do
+# desenho) -- e esses leads exauridos, por ficarem para sempre no topo da fila
+# ordenada por ancora, bloqueavam QUALQUER lead novo assim que o numero deles
+# excedesse `limite`. O `CASE` abaixo e gerado a partir de `CADENCIA`, e nunca
+# reescrito com os tetos como literais em SQL -- seria a segunda fonte que este
+# repo ja gastou cards inteiras evitando.
 #
 # **Esta consulta agrega `messages` a cada passagem.** E varredura, e o
 # `ix_messages_timeline` serve "a ultima mensagem de UMA conversa", nao "todas
 # as conversas cuja ultima fala e antiga". Aceitavel a cada 5 minutos no volume
 # de MVP; a saida, quando doer, e uma coluna de ancora denormalizada em
 # `lead_qualification` -- que o turno ja tem sob lock. Lacuna declarada.
+
+# Os dois blocos abaixo sao a unica fonte dos tetos e do vocabulario de
+# temperatura que a consulta usa -- derivados de `CADENCIA` (e, por
+# transitividade, de `Temperatura`) em vez de escritos a mao, pela mesma razao
+# de `INTERVALO_MINIMO` em `cadencia.py`: um numero ou um valor fixo aqui
+# divergiria em silencio se alguem alongasse `CADENCIA` ou o enum.
+_TETOS_POR_TEMPERATURA: dict[str, int] = {
+    f"max_{temperatura.value.lower()}": len(intervalos)
+    for temperatura, intervalos in CADENCIA.items()
+}
+_VALORES_TEMPERATURA_VALIDOS: tuple[str, ...] = tuple(temperatura.value for temperatura in CADENCIA)
+#
+# O `CAST(... AS smallint)` em cada ramo NAO e decoracao: sem um tipo
+# explicito, o Postgres nao consegue inferir o tipo do `CASE` inteiro quando
+# todo ramo e um parametro sem tipo -- ele cai no default do padrao SQL,
+# `text`, e `ja_disparada < CASE ... END` vira "operator does not exist:
+# integer < text". `tentativa_numero` e `smallint`, e e o que `ja_disparada`
+# acumula via `MAX`. E `CAST(x AS tipo)`, e nao `x::tipo`: o `text()` do
+# SQLAlchemy usa `::` como escape de um `:` literal para bind params por
+# nome, entao `::smallint` colado a `:max_quente` nunca chega ao Postgres.
+_CASE_TETO_POR_TEMPERATURA = " ".join(
+    f"WHEN '{temperatura.value}' THEN CAST(:max_{temperatura.value.lower()} AS smallint)"
+    for temperatura in CADENCIA
+)
+
 _SELECIONAR_CANDIDATOS = text(
-    """
+    f"""
     WITH ultima_fala AS (
         SELECT channel, conversation_key, MAX(created_at) AS ancora
           FROM messages
@@ -99,15 +142,15 @@ _SELECIONAR_CANDIDATOS = text(
           JOIN ultima_fala u
             ON u.channel = lq.channel
            AND u.conversation_key = lq.conversation_key
-         WHERE lq.temperatura IS NOT NULL
+         WHERE lq.temperatura IN :temperaturas_validas
     )
     SELECT channel, conversation_key, temperatura, ancora, ja_disparada
       FROM candidatos
-     WHERE ja_disparada < :max_tentativas
+     WHERE ja_disparada < CASE temperatura {_CASE_TETO_POR_TEMPERATURA} END
      ORDER BY ancora, channel, conversation_key
      LIMIT :limite
     """
-)
+).bindparams(bindparam("temperaturas_validas", expanding=True))
 
 
 async def candidatos_a_followup(
@@ -130,16 +173,35 @@ async def candidatos_a_followup(
     leads com a mesma ancora troquem de lugar entre varreduras. **A cabeca da
     fila e estavel entre passagens**: um lead que ja disparou continua
     candidato (nada na candidatura muda so por causa de um disparo), entao sem
-    o corte de `ja_disparada < MAX_TENTATIVAS` os leads exauridos, por terem as
-    ancoras mais antigas, ocupariam o topo para sempre e um lote grande o
-    bastante deles faria a varredura nunca mais alcancar quem esta realmente
-    devido. O corte de exaustao e o que evita essa fome; ver o comentario da
-    query.
+    corte de esgotamento os leads exauridos, por terem as ancoras mais antigas,
+    ocupariam o topo para sempre e um lote grande o bastante deles faria a
+    varredura nunca mais alcancar quem esta realmente devido.
+
+    **O corte de esgotamento e POR TEMPERATURA, e reavaliado a cada
+    passagem contra a `temperatura` viva de `lead_qualification`.** Um lead
+    exaure a propria temperatura (MORNO em 3, FRIO em 2, QUENTE em 4) e some
+    da candidatura; se esquentar depois, a proxima varredura o ve com a nova
+    temperatura e o teto certo, porque o corte nunca olha um valor congelado.
+    Ver o comentario da query para o porque de um teto GLOBAL nao bastar.
+
+    **Um resultado do tamanho de `limite` significa que leads podem ter
+    ficado de fora desta passagem.** Fica um aviso no log -- silencioso, isso
+    e exatamente a fome que o corte de esgotamento existe para evitar, e sem
+    o aviso ninguem percebe ate reparar que follow-ups pararam de sair.
     """
-    resultado = await session.execute(
-        _SELECIONAR_CANDIDATOS,
-        {"corte": agora - INTERVALO_MINIMO, "max_tentativas": MAX_TENTATIVAS, "limite": limite},
+    resultado = list(
+        await session.execute(
+            _SELECIONAR_CANDIDATOS,
+            {
+                "corte": agora - INTERVALO_MINIMO,
+                "limite": limite,
+                "temperaturas_validas": _VALORES_TEMPERATURA_VALIDOS,
+                **_TETOS_POR_TEMPERATURA,
+            },
+        )
     )
+    if len(resultado) == limite:
+        log.warning("followup.candidatos_saturados", limite=limite)
     return [
         Candidato(
             channel=linha.channel,
