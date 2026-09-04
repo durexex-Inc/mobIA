@@ -19,6 +19,7 @@ from mobia.app.config import Settings, get_settings
 from mobia.domain.followup.cadencia import CADENCIA, tentativa_devida
 from mobia.domain.followup.repositorio import candidatos_a_followup, registrar_followup
 from mobia.domain.optout.repositorio import esta_em_optout
+from mobia.domain.outbound.antispam import MAXIMO_SEM_RESPOSTA, antispam_permite_envio
 from mobia.domain.outbound.horario import horario_permite_envio
 
 log = structlog.get_logger(__name__)
@@ -95,12 +96,25 @@ async def sweep_followups(
     relogio. Com a guarda de horario isso deixou de ser conveniencia -- sem o
     parametro, a suite inteira desta varredura passaria ou reprovaria conforme
     a hora do dia em que o CI rodasse. Producao nao passa o argumento.
+
+    **A guarda do maximo (TEC-188, RN-13.7) e a terceira, e entra antes do
+    opt-out por ser pura.** Ela conta mensagens que sairam -- `ja_enviadas`, o
+    COUNT sob a ancora --, e nao a posicao da regua. Hoje ela nao pode
+    disparar pela consulta real: o UNIQUE limita a quatro linhas por ancora e
+    o QUENTE para em quatro, entao o maximo coincide com o esgotamento. Ela
+    existe para ser herdada pela TEC-184 e pela TEC-171.
+
+    O retorno continua sendo o numero de linhas GRAVADAS. O evento de maximo
+    sai numa lista propria e nao entra nessa contagem: gravar e atingir o
+    maximo sao fatos diferentes, e somar os dois faria o retorno mentir para
+    quem mede a varredura.
     """
     session_factory = ctx["session_factory"]
     settings: Settings = ctx.get("settings") or get_settings()
     if agora is None:
         agora = datetime.now(UTC)
     eventos: list[dict[str, Any]] = []
+    eventos_de_maximo: list[dict[str, Any]] = []
 
     if not horario_permite_envio(
         momento=agora,
@@ -138,6 +152,21 @@ async def sweep_followups(
             if tentativa is None:
                 continue
 
+            # A terceira guarda, e ela entra ANTES do opt-out porque e pura: a
+            # premissa que justifica consultar o opt-out por candidato e que o
+            # conjunto que sobra depois dos cortes baratos e pequeno.
+            #
+            # **Esta guarda nao pode disparar pela consulta real hoje**, e isso
+            # e declarado, nao esquecido: o UNIQUE limita a quatro linhas por
+            # ancora e a cadencia do QUENTE para em quatro, entao
+            # `ja_enviadas=4` implica `ja_disparada=4`, que o corte de
+            # esgotamento ja excluiu. Ela existe para a TEC-184 (envio de
+            # verdade) e a TEC-171 (lembretes) herdarem em vez de precisarem
+            # lembrar -- o mesmo motivo pelo qual a guarda de opt-out foi
+            # escrita em `GuardedOutbound` antes de existir consumidor.
+            if not antispam_permite_envio(ja_enviadas=candidato.ja_enviadas):
+                continue
+
             if await esta_em_optout(
                 session,
                 channel=candidato.channel,
@@ -164,9 +193,34 @@ async def sweep_followups(
                 }
             )
 
+            # `==` e nao `>=` porque a guarda acima ja garante
+            # `ja_enviadas < MAXIMO_SEM_RESPOSTA`, entao a soma nunca passa do
+            # maximo -- e o evento e sobre o INSTANTE em que a contagem fecha.
+            #
+            # Emitir a cada supressao, em vez de uma vez aqui, repetiria a
+            # mesma linha a cada cinco minutos para sempre, porque um lead que
+            # nunca responde nunca sai do estado. "Atingir o teto" e um
+            # instante; o estado e derivavel da tabela a qualquer momento.
+            if candidato.ja_enviadas + 1 == MAXIMO_SEM_RESPOSTA:
+                eventos_de_maximo.append(
+                    {
+                        "channel": candidato.channel,
+                        "conversation_key": candidato.conversation_key,
+                        "ancora_em": candidato.ancora_em.isoformat(),
+                        "ja_enviadas": MAXIMO_SEM_RESPOSTA,
+                    }
+                )
+
         await session.commit()
 
     for evento in eventos:
         log.info("followup.devido", **evento)
+
+    for evento in eventos_de_maximo:
+        # `warning` e nao `info`: nao e erro, mas e um lead saindo do alcance
+        # da automacao, que a RN-13.7 quer visivel para a gerente. Mesmo nivel
+        # de `followup.candidatos_saturados` e `outbound.optout_bloqueou`, que
+        # tambem sao "funcionou como desenhado, e alguem precisa saber".
+        log.warning("followup.antispam_atingido", **evento)
 
     return len(eventos)
