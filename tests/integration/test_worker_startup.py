@@ -35,15 +35,20 @@ async def test_startup_sobe_com_token_configurado(
     assert "contador" in ctx
 
 
-def test_sweep_followups_esta_registrado_no_cron_de_doze_minutos() -> None:
+def test_sweep_followups_esta_registrado_no_cron_de_cinco_em_cinco_minutos() -> None:
     """O entregavel inteiro da TEC-183 e "roda sozinho a cada 5 minutos" --
     sem este teste, apagar a entrada `cron(...)` nao quebra nada na suite, e a
     cadencia para de disparar em producao sem que nenhum teste perceba.
 
-    `functions` e o que o worker aceita executar (via enqueue OU cron);
-    `cron_jobs` e o agendamento. As duas listas tem de conter a funcao para
-    ela rodar sozinha, e o segundo conjunto de minutos e o de cinco em cinco
-    que o comentario do registro em `workers/main.py` justifica."""
+    `functions` e o que o worker aceita executar por enqueue explicito, pelo
+    nome -- pinar essa lista aqui nao e sobre o cron rodar ou nao, e sobre a
+    funcao continuar disponivel para quem quiser a enfileirar a mao. Quem de
+    fato agenda a execucao periodica e `cron_jobs`: `Worker.__init__`
+    (`arq/worker.py`) faz `self.functions.update({cj.name: cj for cj in
+    self.cron_jobs})`, entao um cron job se auto-registra sob `cron:<nome>` --
+    apagar a entrada de `functions` NAO pararia a cadencia de disparar, so
+    tiraria o enqueue manual. O conjunto de minutos e o de cinco em cinco que
+    o comentario do registro em `workers/main.py` justifica."""
     from mobia.workers.jobs.sweep_followups import sweep_followups
     from mobia.workers.main import WorkerSettings
 

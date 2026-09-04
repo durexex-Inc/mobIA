@@ -85,7 +85,7 @@ A função é então: o maior `N` tal que `agora >= ultima_fala + CADENCIA[tempe
 
 ### D3 — Lead sem temperatura não entra na cadência
 
-A varredura exige `temperatura IS NOT NULL`.
+A varredura exige que `temperatura` esteja no vocabulário de `CADENCIA`. Não há um `IS NOT NULL` em separado — o filtro `IN` da D5 já cobre o nulo de graça, porque `NULL` nunca casa um `IN`.
 
 Depois da TEC-151, `NULL` significa uma de duas coisas, e nenhuma pede insistência: linha anterior àquela card, ou **lead que nunca disse nada qualificável** — o turno classificado `FORA_DE_ESCOPO`/`INDEFINIDA` sem campo extraído, que pelo caminho *"Deliberadamente NAO cria linha"* de `gravar_estado` nem chega a ter linha em `lead_qualification`.
 
@@ -176,7 +176,7 @@ Para cada candidato, em Python:
 - **A restrição `UNIQUE` recusa a segunda inserção** da mesma tentativa sob a mesma âncora.
 - **Lead com `temperatura` nula não aparece entre os candidatos**, nem com dois meses de silêncio.
 
-**Um quinto, adicionado depois de um bug crítico na revisão da branch inteira.** A primeira versão do corte de esgotamento usava um teto global (o maior das três tabelas), e um `FRIO` ou `MORNO` esgotado — a maioria do tráfego real, ver a lacuna 7 — permanecia candidato para sempre, empacado no topo da fila ordenada por âncora. O teste cria mais leads exauridos do que o `limite` da página, mais um lead genuinamente devido, e verifica que o devido é servido mesmo assim — a regressão que teria pego o bug antes do merge. Fica em `tests/integration/test_followups_model.py`, ao lado dos outros testes da consulta de candidatos.
+**Um quinto, adicionado depois de um bug crítico na revisão da branch inteira.** A primeira versão do corte de esgotamento usava um teto global (o maior das três tabelas), e um `FRIO` ou `MORNO` esgotado — a maioria do tráfego real, ver a lacuna 7 — permanecia candidato para sempre, empacado no topo da fila ordenada por âncora. O teste cria leads exauridos até saturar o `limite` da página (dois, com `limite=2`), mais um lead genuinamente devido, e verifica que o devido é servido mesmo assim — a regressão que teria pego o bug antes do merge. Fica em `tests/integration/test_followups_model.py`, ao lado dos outros testes da consulta de candidatos.
 
 ## Emendas ao SRS
 

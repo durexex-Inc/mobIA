@@ -338,6 +338,42 @@ async def test_lead_esgotado_no_morno_nao_bloqueia_a_fila_para_quem_esta_devido(
     assert [c.conversation_key for c in candidatos] == [CONVERSA]
 
 
+async def test_o_corte_de_esgotamento_le_a_temperatura_viva_nao_a_congelada(session) -> None:
+    """A propriedade exata em que a correcao do bug critico se apoia: o
+    `CASE` do teto por temperatura tem de ler `lead_qualification.temperatura`
+    -- a coluna VIVA -- e nao `followups.temperatura`, a congelada no
+    instante de cada disparo.
+
+    Um FRIO com as 2 tentativas do proprio teto ja gravadas nao e candidato.
+    Ele esquenta para QUENTE (teto 4) sem nunca mais falar -- a ancora nao
+    muda --, e volta a ser candidato, devendo as tentativas 3 e 4 que so o
+    QUENTE tem. Um refactor que trocasse o operando do `CASE` pela coluna
+    congelada quebraria isto em silencio: as duas linhas gravadas sempre
+    diriam FRIO, o teto aplicado seria sempre 2, e o lead aquecido ficaria
+    soterrado no topo da fila para sempre -- o mesmo bug que este desenho ja
+    corrigiu uma vez, so que por outra porta."""
+    await _qualificacao(session, temperatura=Temperatura.FRIO.value)
+    await _fala_do_lead(session, quando=ANCORA)
+    session.add(_linha(tentativa_numero=1, temperatura=Temperatura.FRIO.value))
+    session.add(
+        _linha(tentativa_numero=len(CADENCIA[Temperatura.FRIO]), temperatura=Temperatura.FRIO.value)
+    )
+    await session.commit()
+
+    assert await candidatos_a_followup(session, agora=AGORA) == []
+
+    qualificacao = await session.get(LeadQualification, (CANAL, CONVERSA))
+    assert qualificacao is not None
+    qualificacao.temperatura = Temperatura.QUENTE.value
+    await session.commit()
+
+    candidatos = await candidatos_a_followup(session, agora=AGORA)
+
+    assert len(candidatos) == 1
+    assert candidatos[0].temperatura is Temperatura.QUENTE
+    assert candidatos[0].ja_disparada == 2
+
+
 async def test_registrar_devolve_none_na_corrida(session) -> None:
     """A segunda varredura nao levanta: o `ON CONFLICT DO NOTHING` absorve, e o
     `None` diz ao chamador que outra passagem chegou primeiro."""

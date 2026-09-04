@@ -8,11 +8,15 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import select
 
+import mobia.workers.jobs.sweep_followups as sweep_followups_module
 from mobia.domain.agente.schemas import Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.models import FollowUp
+from mobia.domain.followup.repositorio import Candidato
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -130,23 +134,53 @@ async def test_a_segunda_passagem_nao_repete_a_tentativa_ja_servida(session) -> 
     assert await sweep_followups(_ctx()) == 0
 
 
-async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(session) -> None:
+async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(
+    session, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A defesa de verdade contra duas varreduras concorrentes, testada no
     nivel do job e nao so no repositorio.
 
-    Pre-inserir a MESMA linha que a varredura esta prestes a gravar simula o
-    que uma segunda passagem concorrente veria: o candidato ja tem a tentativa
-    1 registrada sob esta ancora, mas o job ainda nao sabe disso porque
-    `candidatos_a_followup` olha `ja_disparada` no INSTANTE da consulta. Sem
-    o `ON CONFLICT DO NOTHING` (ou com o nome errado de constraint), o
-    `INSERT` levantaria `IntegrityError` e a varredura quebraria no meio do
-    lote. Isto pegaria um refactor que trocasse a estrategia de conflito ou
-    errasse o nome da constraint, que a suite ate aqui deixava passar --
-    nenhum teste de job insercia a linha por fora antes de rodar."""
-    calado_ha = timedelta(hours=2, minutes=5)
-    await _lead(session, calado_ha=calado_ha)
+    Nenhuma escolha de numeros faz o teste anterior (que so pre-inseria uma
+    linha e deixava `candidatos_a_followup` rodar de verdade) funcionar:
+    `ja_disparada` e `MAX(tentativa_numero)` sob a ancora, entao qualquer
+    linha pre-inserida que colidisse com o que a varredura fosse gravar ja
+    teria subido `ja_disparada` o bastante para `tentativa_devida` escolher
+    uma tentativa MAIOR -- nunca a que colidiria. O zero saia sempre de "nada
+    esta devido", nunca do `ON CONFLICT DO NOTHING` absorvendo alguma coisa --
+    um espiao em `registrar_followup` no teste antigo media ZERO chamadas.
 
-    ancora = (await session.scalars(select(Message))).one().created_at
+    A saida e mockar a fronteira da consulta: `candidatos_a_followup` e
+    substituida por um coroutine que devolve um `Candidato` construido a mao,
+    com `ja_disparada=0`, enquanto a linha para a tentativa 1 sob a MESMA
+    `ancora_em` ja existe na tabela. Mockar aqui e legitimo -- a consulta e a
+    fronteira, e o que este teste cobre e o tratamento de conflito do job, nao
+    a consulta em si (que tem os proprios testes em
+    `test_followups_model.py`). `ancora_em` tem de ser EXATAMENTE igual entre
+    o candidato mockado e a linha pre-inserida, senao o `UNIQUE` nao bate e o
+    teste volta a ser vacuo.
+
+    Sem o `ON CONFLICT DO NOTHING` (ou com o nome errado de constraint), o
+    `INSERT` levantaria `IntegrityError` e a varredura quebraria no meio do
+    lote. Provado nao-vacuo: com `constraint="uq_followups_tentativa_por_ancora_typo"`
+    em `registrar_followup`, este teste falha com
+    `sqlalchemy.exc.ProgrammingError` (constraint inexistente), como
+    documentado no relatorio desta rodada."""
+    ancora = datetime.now(UTC) - timedelta(hours=2, minutes=5)
+    candidato = Candidato(
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        temperatura=Temperatura.QUENTE,
+        ancora_em=ancora,
+        ja_disparada=0,
+    )
+
+    async def _candidatos_a_followup_stub(session, *, agora, limite=500):
+        return [candidato]
+
+    monkeypatch.setattr(
+        sweep_followups_module, "candidatos_a_followup", _candidatos_a_followup_stub
+    )
+
     session.add(
         FollowUp(
             id=uuid.uuid4(),
