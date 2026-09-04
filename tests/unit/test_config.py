@@ -2,6 +2,7 @@ import base64
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from mobia.app.config import (
     CHAVE_DE_DESENVOLVIMENTO,
@@ -385,3 +386,79 @@ def test_todo_modelo_configurado_tem_preco_cadastrado(settings) -> None:
         if custo_em_dolar(valor, 1000, 100) is None
     }
     assert not sem_preco, f"modelos configurados sem preco em PRECOS_POR_MODELO: {sem_preco}"
+
+
+def test_o_horario_de_envio_invertido_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Horario invertido desligaria a cadencia sem nenhum sintoma.
+
+    A varredura devolveria 0 para sempre, e a ausencia de `followup.devido` e
+    indistinguivel de "nenhum lead devido" -- exatamente a falha silenciosa que
+    este repo trata como pior que a alta.
+    """
+    monkeypatch.setenv("FOLLOWUP_HORARIO_INICIO", "20")
+    monkeypatch.setenv("FOLLOWUP_HORARIO_FIM", "9")
+
+    with pytest.raises(ValidationError, match="followup_horario"):
+        Settings(_env_file=None)
+
+
+def test_o_horario_de_envio_vazio_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """9-9 nao e um horario de um instante: e a cadencia desligada."""
+    monkeypatch.setenv("FOLLOWUP_HORARIO_INICIO", "9")
+    monkeypatch.setenv("FOLLOWUP_HORARIO_FIM", "9")
+
+    with pytest.raises(ValidationError, match="followup_horario"):
+        Settings(_env_file=None)
+
+
+def test_o_horario_de_envio_alem_das_23_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ceiling `fim <= 23`: 24 pareceria "meia-noite" para quem le o
+    validator de fora, mas a comparacao interna e contra `fim * 60` em
+    minuto do dia, e 24 estouraria o dia sem recusar nada dentro dele."""
+    monkeypatch.setenv("FOLLOWUP_HORARIO_FIM", "24")
+
+    with pytest.raises(ValidationError, match="followup_horario"):
+        Settings(_env_file=None)
+
+
+def test_o_horario_de_envio_com_inicio_negativo_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FOLLOWUP_HORARIO_INICIO", "-1")
+
+    with pytest.raises(ValidationError, match="followup_horario"):
+        Settings(_env_file=None)
+
+
+def test_o_horario_de_envio_no_limite_das_bordas_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`inicio=0, fim=23` e o extremo permitido dos dois lados ao mesmo
+    tempo, e o validator tem de aceitar em vez de recusar por engano."""
+    monkeypatch.setenv("FOLLOWUP_HORARIO_INICIO", "0")
+    monkeypatch.setenv("FOLLOWUP_HORARIO_FIM", "23")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.followup_horario_inicio == 0
+    assert settings.followup_horario_fim == 23
+
+
+def test_o_fuso_de_envio_invalido_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem esta guarda, o typo explodiria dentro da varredura a cada 5 minutos
+    em vez de na subida do worker."""
+    monkeypatch.setenv("FOLLOWUP_FUSO", "America/Sao_Paolo")
+
+    with pytest.raises(ValidationError, match="followup_fuso"):
+        Settings(_env_file=None)
+
+
+def test_o_fuso_de_envio_default_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A guarda do tzdata: sem a dependencia isto levanta no Windows, onde o
+    `zoneinfo` nao tem base de fusos do sistema. Passaria no Linux do CI e
+    falharia na maquina de quem desenvolve."""
+    monkeypatch.delenv("FOLLOWUP_HORARIO_INICIO", raising=False)
+    monkeypatch.delenv("FOLLOWUP_HORARIO_FIM", raising=False)
+    monkeypatch.delenv("FOLLOWUP_FUSO", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.fuso_de_envio.key == "America/Sao_Paulo"
+    assert settings.followup_horario_inicio == 9
+    assert settings.followup_horario_fim == 20

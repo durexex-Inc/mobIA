@@ -6,3 +6,14 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 *.egg-info/
+
+# Scratch do fluxo de execucao por subagente (ledger, briefs, pacotes de
+# revisao). E rastro de processo, nao artefato do projeto -- o registro que
+# fica e o historico do git.
+#
+# A ferramenta ja cria um `.superpowers/sdd/.gitignore` com `*`, entao o que
+# ela escreve la dentro ja estaria ignorado sem esta linha. O que esta linha
+# acrescenta e a cobertura de `.superpowers/` INTEIRO: qualquer coisa que a
+# ferramenta venha a escrever fora de `sdd/` nao depende de ela ter lembrado
+# de plantar outro arquivo.
+.superpowers/

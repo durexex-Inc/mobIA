@@ -7,11 +7,13 @@ varredura e o que ela grava so da para verificar contra o banco.
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
 
 import mobia.workers.jobs.sweep_followups as sweep_followups_module
+from mobia.app.config import Settings
 from mobia.domain.agente.schemas import Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
@@ -28,9 +30,33 @@ from mobia.workers.jobs.sweep_followups import sweep_followups
 CANAL = "whatsapp"
 CONVERSA = "5511944443333"
 
+# Nome do fuso, e nao so o ZoneInfo: `_ctx()` passa este MESMO nome para
+# `Settings`, para o fuso do relogio dos testes e o fuso da varredura nao
+# poderem divergir.
+NOME_DO_FUSO = "America/Sao_Paulo"
+FUSO = ZoneInfo(NOME_DO_FUSO)
 
-async def _lead(session, *, temperatura: str | None = "QUENTE", calado_ha: timedelta) -> None:
-    """Um lead com temperatura e uma fala de entrada com a idade pedida."""
+# Todo teste deste arquivo fixa `agora`. Com a guarda de horario da TEC-185 a
+# varredura depende da hora do dia, e sem fixar o momento a suite inteira desta
+# card passaria ou reprovaria conforme a hora em que o CI rodasse. Nao da para
+# resolver com uma janela "sempre aberta": a borda e inclusiva no minuto, entao
+# `inicio=0, fim=23` recusa 23:01-23:59.
+DENTRO_DA_JANELA = datetime(2026, 9, 4, 14, 0, tzinfo=FUSO).astimezone(UTC)
+FORA_DA_JANELA = datetime(2026, 9, 4, 3, 0, tzinfo=FUSO).astimezone(UTC)
+
+
+async def _lead(
+    session,
+    *,
+    temperatura: str | None = "QUENTE",
+    calado_ha: timedelta,
+    agora: datetime = DENTRO_DA_JANELA,
+) -> None:
+    """Um lead com temperatura e uma fala de entrada com a idade pedida.
+
+    `agora` e a referencia da idade, e nao `datetime.now()`: a varredura
+    tambem recebe um momento fixo, e os dois tem de concordar.
+    """
     session.add(
         LeadQualification(
             channel=CANAL,
@@ -57,14 +83,35 @@ async def _lead(session, *, temperatura: str | None = "QUENTE", calado_ha: timed
             text_body=encrypt("oi", aad_de(identificador, "text_body")),
             raw_payload=None,
             status=MessageStatus.PROCESSED,
-            created_at=datetime.now(UTC) - calado_ha,
+            created_at=agora - calado_ha,
         )
     )
     await session.commit()
 
 
 def _ctx() -> dict:
-    return {"session_factory": get_sessionmaker()}
+    """A janela default da card (9h-20h, fuso `NOME_DO_FUSO`) explicita, e nao
+    herdada do ambiente -- as TRES pontas, nao so duas.
+
+    `_env_file=None` desliga o `.env`, mas nao a variavel de ambiente do
+    PROCESSO -- e kwarg de construtor vence env var, entao `inicio` e `fim`
+    ja ficavam pinados so com eles no `Settings(...)`. O `followup_fuso` NAO
+    ficava: sem o kwarg abaixo ele vinha direto do ambiente, e o horario e
+    metade fuso -- um `FOLLOWUP_FUSO` exportado na maquina de quem roda o
+    teste bastaria para reintroduzir a mesma nao-determinismo de relogio de
+    parede que a D10 existe para eliminar. Passar `NOME_DO_FUSO` aqui, o
+    mesmo nome que constroi o `FUSO` do modulo, fecha o buraco e impede as
+    duas pontas de divergirem entre si.
+    """
+    return {
+        "session_factory": get_sessionmaker(),
+        "settings": Settings(
+            _env_file=None,
+            followup_horario_inicio=9,
+            followup_horario_fim=20,
+            followup_fuso=NOME_DO_FUSO,
+        ),
+    }
 
 
 async def test_o_quente_calado_ha_duas_horas_recebe_a_primeira(session, caplog) -> None:
@@ -72,7 +119,7 @@ async def test_o_quente_calado_ha_duas_horas_recebe_a_primeira(session, caplog) 
     await _lead(session, calado_ha=timedelta(hours=2, minutes=5))
 
     with caplog.at_level(logging.INFO):
-        gravadas = await sweep_followups(_ctx())
+        gravadas = await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA)
 
     assert gravadas == 1
     linhas = (await session.scalars(select(FollowUp))).all()
@@ -98,7 +145,7 @@ async def test_o_lead_com_optout_nao_recebe_nada(session, caplog) -> None:
     await session.commit()
 
     with caplog.at_level(logging.INFO):
-        gravadas = await sweep_followups(_ctx())
+        gravadas = await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA)
 
     assert gravadas == 0
     assert (await session.scalars(select(FollowUp))).all() == []
@@ -111,8 +158,8 @@ async def test_o_lead_muito_atrasado_recebe_uma_tentativa_so(session) -> None:
     nada."""
     await _lead(session, calado_ha=timedelta(days=10))
 
-    assert await sweep_followups(_ctx()) == 1
-    assert await sweep_followups(_ctx()) == 0
+    assert await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA) == 1
+    assert await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA) == 0
 
     linhas = (await session.scalars(select(FollowUp))).all()
     assert [linha.tentativa_numero for linha in linhas] == [4]
@@ -130,8 +177,8 @@ async def test_a_segunda_passagem_nao_repete_a_tentativa_ja_servida(session) -> 
     abaixo."""
     await _lead(session, calado_ha=timedelta(hours=3))
 
-    assert await sweep_followups(_ctx()) == 1
-    assert await sweep_followups(_ctx()) == 0
+    assert await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA) == 1
+    assert await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA) == 0
 
 
 async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(
@@ -169,7 +216,7 @@ async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(
     genuino. Que o `INSERT` chega ao banco foi verificado alterando-se a
     constraint para `uq_followups_tentativa_por_ancora_typo` em `registrar_followup`:
     o teste falha com `sqlalchemy.exc.ProgrammingError` (constraint inexistente)."""
-    ancora = datetime.now(UTC) - timedelta(hours=2, minutes=5)
+    ancora = DENTRO_DA_JANELA - timedelta(hours=2, minutes=5)
     candidato = Candidato(
         channel=CANAL,
         conversation_key=CONVERSA,
@@ -198,7 +245,7 @@ async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(
     )
     await session.commit()
 
-    assert await sweep_followups(_ctx()) == 0
+    assert await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA) == 0
 
     linhas = (await session.scalars(select(FollowUp))).all()
     assert len(linhas) == 1
@@ -207,11 +254,69 @@ async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(
 async def test_o_lead_que_falou_ha_pouco_nao_entra(session) -> None:
     await _lead(session, calado_ha=timedelta(minutes=30))
 
-    assert await sweep_followups(_ctx()) == 0
+    assert await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA) == 0
 
 
 async def test_o_lead_sem_temperatura_nao_entra(session) -> None:
     """A D3, ponta a ponta."""
     await _lead(session, temperatura=None, calado_ha=timedelta(days=30))
 
-    assert await sweep_followups(_ctx()) == 0
+    assert await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA) == 0
+
+
+async def test_a_madrugada_nao_dispara_nada(session, caplog) -> None:
+    """A guarda da TEC-185, ponta a ponta: mesmo lead, mesma divida, outra hora.
+
+    As duas assertivas existem porque devolver 0 sem gravar e gravar sem contar
+    sao falhas diferentes, e um `return 0` no lugar errado passaria com uma so.
+    """
+    await _lead(session, calado_ha=timedelta(hours=2, minutes=5), agora=FORA_DA_JANELA)
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(), agora=FORA_DA_JANELA)
+
+    assert gravadas == 0
+    assert (await session.scalars(select(FollowUp))).all() == []
+    assert sum(1 for r in caplog.records if "followup.devido" in r.getMessage()) == 0
+
+
+async def test_o_adiamento_nao_consome_a_tentativa(session) -> None:
+    """O criterio de aceite inteiro do adiamento, em tres momentos.
+
+    "Parou de responder as 19h30 ... nada e enviado as 21h30 ... o follow-up e
+    enviado as 9h do dia seguinte ... ele conta como a primeira tentativa."
+
+    Nao existe codigo de adiamento: fora da janela nada e gravado,
+    `ja_disparada` continua zero, e a varredura das 9h reencontra a MESMA
+    tentativa 1 pela aritmetica. E o teste que morre se alguem tentar
+    implementar o adiamento com estado -- uma linha PENDENTE, uma coluna
+    `adiado_para` -- em vez de deixar a ancora responder.
+    """
+    parou = datetime(2026, 9, 4, 19, 30, tzinfo=FUSO)
+    await _lead(session, calado_ha=timedelta(0), agora=parou.astimezone(UTC))
+
+    tarde_da_noite = (parou + timedelta(hours=2)).astimezone(UTC)
+    assert await sweep_followups(_ctx(), agora=tarde_da_noite) == 0
+    assert (await session.scalars(select(FollowUp))).all() == []
+
+    manha_seguinte = datetime(2026, 9, 5, 9, 0, tzinfo=FUSO).astimezone(UTC)
+    assert await sweep_followups(_ctx(), agora=manha_seguinte) == 1
+
+    linhas = (await session.scalars(select(FollowUp))).all()
+    assert [linha.tentativa_numero for linha in linhas] == [1]
+
+
+async def test_as_vinte_em_ponto_ainda_disparam(session) -> None:
+    """A CA-13.1 e a borda das 20h no mesmo teste: um lead QUENTE que parou de
+    falar as 18h vence a primeira tentativa (+2h) exatamente as 20h.
+
+    A borda sobrevive nas duas pontas do caminho, e as duas sao inclusivas de
+    proposito: o corte da consulta e `HAVING MAX(created_at) <= :corte` e a
+    regua compara com `>=`. Trocar qualquer uma por estrita faz este teste
+    reprovar por um instante.
+    """
+    parou = datetime(2026, 9, 4, 18, 0, tzinfo=FUSO)
+    await _lead(session, calado_ha=timedelta(0), agora=parou.astimezone(UTC))
+
+    vinte_em_ponto = (parou + timedelta(hours=2)).astimezone(UTC)
+    assert await sweep_followups(_ctx(), agora=vinte_em_ponto) == 1

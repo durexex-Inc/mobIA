@@ -15,18 +15,22 @@ from typing import Any
 
 import structlog
 
+from mobia.app.config import Settings, get_settings
 from mobia.domain.followup.cadencia import CADENCIA, tentativa_devida
 from mobia.domain.followup.repositorio import candidatos_a_followup, registrar_followup
 from mobia.domain.optout.repositorio import esta_em_optout
+from mobia.domain.outbound.horario import horario_permite_envio
 
 log = structlog.get_logger(__name__)
 
 
-async def sweep_followups(ctx: dict[str, Any], limite: int = 500) -> int:
+async def sweep_followups(
+    ctx: dict[str, Any], limite: int = 500, *, agora: datetime | None = None
+) -> int:
     """Registra as tentativas de follow-up que venceram. Devolve quantas.
 
-    **A ordem das duas guardas e proposital: `tentativa_devida` primeiro,
-    `esta_em_optout` so para quem passou.** A primeira e funcao pura, sem
+    **A ordem das duas guardas POR CANDIDATO e proposital: `tentativa_devida`
+    primeiro, `esta_em_optout` so para quem passou.** A primeira e funcao pura, sem
     I/O; a segunda e uma ida ao banco. Checar o opt-out antes pagaria essa
     consulta para todo candidato, inclusive os que nem estao devidos -- e a
     premissa que justifica consultar por candidato em vez de juntar na query
@@ -60,10 +64,66 @@ async def sweep_followups(ctx: dict[str, Any], limite: int = 500) -> int:
     nao tem o que absorver -- nunca houve linha para conflitar. Os eventos
     ficam numa lista dentro do loop e so saem depois que `session.commit()`
     retorna, com o lote inteiro ja confirmado.
+
+    **A guarda de horario (TEC-185, RN-13.3) roda antes da consulta, e e a
+    unica das tres que roda antes.** Sob fuso unico (PR-04) a janela e
+    propriedade de `agora` e nao do candidato, entao nada do que a consulta
+    trouxesse mudaria a resposta -- e o `GROUP BY` sobre `messages` e a parte
+    cara desta varredura. Por treze das vinte e quatro horas o job nao toca o
+    banco.
+
+    **Quando o fuso virar por lead, esta chamada desce para dentro do laco**,
+    ao lado de `esta_em_optout`, e a funcao pura nao muda: ela ja recebe o
+    fuso por parametro. Nao reescreva o predicado achando que ele e global por
+    natureza. O que muda tambem: a candidatura de um lead nao depende mais so
+    de estar devido, mas de estar devido E dentro do PROPRIO horario -- e quem
+    esta fora do proprio horario nao sai da consulta, so nao dispara. Esses
+    leads ficam no topo do `ORDER BY ancora_em` e consomem vagas de `limite`
+    sem produzir `followup.devido`, a mesma forma de esfomeamento que o corte
+    de esgotamento e a lacuna 6 do desenho da TEC-183 ja registram.
+
+    **Nao ha codigo de adiamento, e nao falta nenhum.** A card pede que o
+    disparo fora da janela seja "adiado para a proxima abertura, nao
+    descartado" e que "o adiamento nao consuma a tentativa". Como nada e
+    gravado quando a janela recusa, `ja_disparada` -- que e o MAX sob a ancora
+    -- nao se move, e a proxima varredura dentro da janela reencontra a mesma
+    tentativa devida. As duas regras sao consequencia da cadencia derivada, e
+    nao implementacao.
+
+    **`agora` entra por parametro pela razao que `candidatos_a_followup` ja
+    escreveu para a consulta**: sem isso nenhum teste consegue posicionar o
+    relogio. Com a guarda de horario isso deixou de ser conveniencia -- sem o
+    parametro, a suite inteira desta varredura passaria ou reprovaria conforme
+    a hora do dia em que o CI rodasse. Producao nao passa o argumento.
     """
     session_factory = ctx["session_factory"]
-    agora = datetime.now(UTC)
+    settings: Settings = ctx.get("settings") or get_settings()
+    if agora is None:
+        agora = datetime.now(UTC)
     eventos: list[dict[str, Any]] = []
+
+    if not horario_permite_envio(
+        momento=agora,
+        inicio=settings.followup_horario_inicio,
+        fim=settings.followup_horario_fim,
+        fuso=settings.fuso_de_envio,
+    ):
+        # debug, e nao info: a cadencia de 5 minutos faz isto disparar por
+        # treze das vinte e quatro horas, cerca de 156 vezes ao dia. Sem esta
+        # linha, uma janela VALIDA mas ERRADA (FOLLOWUP_HORARIO_FIM=10 por
+        # typo, ou FOLLOWUP_FUSO=UTC deslocando a janela em tres horas) produz
+        # o mesmo sintoma que o validator de Settings existe para evitar --
+        # ausencia de `followup.devido` indistinguivel de "nenhum lead devido"
+        # -- e so o validator nao alcanca essa classe de erro, porque a janela
+        # continua sendo POSSIVEL.
+        log.debug(
+            "sweep.fora_do_horario",
+            agora=agora.isoformat(),
+            inicio=settings.followup_horario_inicio,
+            fim=settings.followup_horario_fim,
+            fuso=settings.followup_fuso,
+        )
+        return 0
 
     async with session_factory() as session:
         candidatos = await candidatos_a_followup(session, agora=agora, limite=limite)
