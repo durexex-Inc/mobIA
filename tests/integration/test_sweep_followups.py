@@ -161,10 +161,14 @@ async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(
 
     Sem o `ON CONFLICT DO NOTHING` (ou com o nome errado de constraint), o
     `INSERT` levantaria `IntegrityError` e a varredura quebraria no meio do
-    lote. Provado nao-vacuo: com `constraint="uq_followups_tentativa_por_ancora_typo"`
-    em `registrar_followup`, este teste falha com
-    `sqlalchemy.exc.ProgrammingError` (constraint inexistente), como
-    documentado no relatorio desta rodada."""
+    lote. A nao-vacuidade repousa no calculo: o `Candidato` mockado e a linha
+    pre-inserida compartilham os quatro campos do `UNIQUE` (`channel`,
+    `conversation_key`, `ancora_em`, `tentativa_numero`), e `tentativa_devida`
+    com `ja_disparada=0` e cerca de duas horas e cinco minutos decorridos retorna
+    tentativa 1, exatamente a que a linha pre-inserida ocupa. Esse e o conflito
+    genuino. Que o `INSERT` chega ao banco foi verificado alterando-se a
+    constraint para `uq_followups_tentativa_por_ancora_typo` em `registrar_followup`:
+    o teste falha com `sqlalchemy.exc.ProgrammingError` (constraint inexistente)."""
     ancora = datetime.now(UTC) - timedelta(hours=2, minutes=5)
     candidato = Candidato(
         channel=CANAL,
