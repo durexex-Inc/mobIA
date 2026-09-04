@@ -174,6 +174,20 @@ antes de `candidatos_a_followup`.
 
 **O que muda quando o fuso virar por lead:** o sítio da chamada desce para dentro do laço, e a função pura não muda — ela já recebe o fuso por parâmetro. Fica escrito no comentário do porteiro, para que a próxima card não reescreva o predicado achando que ele é global por natureza.
 
+### D10 — `sweep_followups` passa a receber `agora`
+
+`async def sweep_followups(ctx, limite=500, *, agora: datetime | None = None) -> int`, com `None` significando `datetime.now(UTC)`.
+
+**Sem isto, a suíte da TEC-183 passaria a depender da hora do dia em que o CI roda.** Os sete testes de `tests/integration/test_sweep_followups.py` chamam `sweep_followups(_ctx())` e assumem que a varredura roda; com o porteiro da D9, um CI que rodasse às 23h de São Paulo reprovaria os sete. Isso não é um teste frágil que dá para tolerar — é a suíte inteira de uma card mergeada virando função do relógio de parede.
+
+**Configurar a janela nos testes não resolve, e a aritmética diz por que.** A tentação é o `_ctx()` injetar uma janela "sempre aberta", mas ela não existe: com a borda da D5, `inicio=0, fim=23` autoriza 00:00 até 23:00 e **recusa 23:01–23:59**. Uma suíte que reprova cinquenta e nove minutos por dia é pior que uma que reprova sempre, porque parece flake.
+
+**O precedente está escrito no repo.** A docstring de `candidatos_a_followup` já argumenta exatamente isto para a consulta: *"`agora` entra por parâmetro e não sai de `datetime.now()` aqui dentro: sem isso nenhum teste consegue posicionar o relógio, e a cadência inteira é sobre tempo."* A D10 estende o mesmo argumento uma camada acima — o job também é sobre tempo, e agora tem duas perguntas de tempo em vez de uma.
+
+**O que isso permite, além de não quebrar nada:** o cenário-título da card fica testável ponta a ponta. "Parou às 19h30, nada às 21h30, follow-up às 9h do dia seguinte, contando como a primeira tentativa" vira três chamadas com três momentos, contra o mesmo banco.
+
+Produção não passa o parâmetro — o cron chama `sweep_followups(ctx)`, e `limite` já é um parâmetro que só os testes variam.
+
 ## Fluxo
 
 1. O cron dispara `sweep_followups` a cada 5 minutos.
@@ -194,10 +208,12 @@ antes de `candidatos_a_followup`.
 - `momento` naive levanta `ValueError` (D6).
 - Janela configurada diferente do default, provando que os parâmetros são lidos e não ignorados.
 
-**Integração**, injetando `Settings` em `ctx` com uma janela que inclui ou exclui o momento corrente:
+**Integração**, com o momento fixado pelo parâmetro da D10 e a janela default (9h–20h) injetada em `ctx`:
 
 - Fora da janela, `sweep_followups` devolve 0 **e não grava linha** — as duas assertivas, porque devolver 0 sem gravar e gravar sem contar são falhas diferentes.
-- Dentro da janela, o comportamento da TEC-183 permanece intacto (a suíte existente daquela card é a regressão).
+- **O adiamento ponta a ponta:** parou às 19h30, a varredura das 21h30 devolve 0 e não grava, e a das 9h do dia seguinte grava a tentativa **1**. É o teste que morre se alguém tentar implementar o adiamento com estado.
+- **As 20h em ponto ainda disparam:** um lead `QUENTE` que parou às 18h vence a primeira tentativa exatamente às 20h. A borda sobrevive nas duas pontas do caminho, e isso foi verificado no código da TEC-183: o corte da consulta é `HAVING MAX(created_at) <= :corte` (inclusivo) e a régua compara com `>=`.
+- Os sete testes existentes daquela card ganham `agora` explícito e passam a ser determinísticos (D10). O comportamento verificado por eles não muda.
 
 **Configuração:** o `model_validator` recusa janela invertida, janela vazia e fuso inválido. Três testes em `tests/unit/test_config.py`, que já é o lugar das guardas de `Settings`.
 
