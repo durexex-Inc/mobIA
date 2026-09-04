@@ -41,6 +41,10 @@ TABELAS = (
     "outbound_dispatches",
     "optout_events",
     "messages",
+    # Mesmo raciocinio da lead_score_audit: followups tambem e append-only, e
+    # o UNIQUE por (channel, conversation_key, ancora_em, tentativa_numero) faz
+    # o registro de um teste colidir com o do proximo sem o truncate.
+    "followups",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
