@@ -63,8 +63,8 @@ Esperado: imprime `ZoneInfo(key='America/Sao_Paulo')`. Antes desta instalação 
 Em `tests/unit/test_config.py`, acrescente `from pydantic import ValidationError` aos imports e estes quatro testes ao fim do arquivo:
 
 ```python
-def test_a_janela_de_envio_invertida_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Janela invertida desligaria a cadencia sem nenhum sintoma.
+def test_o_horario_de_envio_invertido_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Horario invertido desligaria a cadencia sem nenhum sintoma.
 
     A varredura devolveria 0 para sempre, e a ausencia de `followup.devido` e
     indistinguivel de "nenhum lead devido" -- exatamente a falha silenciosa que
@@ -77,8 +77,8 @@ def test_a_janela_de_envio_invertida_nao_sobe(monkeypatch: pytest.MonkeyPatch) -
         Settings(_env_file=None)
 
 
-def test_a_janela_de_envio_vazia_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """9-9 nao e uma janela de um instante: e a cadencia desligada."""
+def test_o_horario_de_envio_vazio_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """9-9 nao e um horario de um instante: e a cadencia desligada."""
     monkeypatch.setenv("FOLLOWUP_HORARIO_INICIO", "9")
     monkeypatch.setenv("FOLLOWUP_HORARIO_FIM", "9")
 
@@ -129,7 +129,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 Acrescente os campos logo depois de `sweep_max_attempts: int = 5`:
 
 ```python
-    # RN-13.3 (TEC-185): a janela de envio automatico, em horas locais do
+    # RN-13.3 (TEC-185): o horario de envio automatico, em horas locais do
     # `followup_fuso`. `fim` nomeia o ultimo MINUTO em que um envio pode
     # comecar -- `fim=20` autoriza 20:00 e recusa 20:01 --, e nao a ultima hora
     # inteira. A borda inclusiva nao e escolha estetica: os dois primeiros
@@ -150,8 +150,8 @@ Acrescente o validator logo depois de `_recusar_chave_de_desenvolvimento_em_prod
 
 ```python
     @model_validator(mode="after")
-    def _recusar_janela_de_envio_impossivel(self) -> "Settings":
-        """Janela invertida ou vazia desligaria a cadencia em silencio.
+    def _recusar_horario_de_envio_impossivel(self) -> "Settings":
+        """Horario invertido ou vazio desligaria a cadencia em silencio.
 
         A varredura devolveria 0 para sempre, e o unico sintoma seria a
         ausencia de `followup.devido` -- indistinguivel de "nenhum lead
@@ -160,8 +160,8 @@ Acrescente o validator logo depois de `_recusar_chave_de_desenvolvimento_em_prod
 
         `ValueError` e nao `ConfiguracaoInsegura`: o docstring daquela excecao
         fala de configuracao que roda "sem a protecao que devia ter", e o caso
-        dela e a chave de cifra de desenvolvimento em producao. Uma janela
-        invertida nao perde protecao -- ela deixa de operar. O pydantic
+        dela e a chave de cifra de desenvolvimento em producao. Um horario
+        invertido nao perde protecao -- ele deixa de operar. O pydantic
         embrulha este ValueError em ValidationError, que falha igualmente alto
         e em todo processo.
         """
@@ -169,7 +169,7 @@ Acrescente o validator logo depois de `_recusar_chave_de_desenvolvimento_em_prod
             raise ValueError(
                 "followup_horario_inicio e followup_horario_fim precisam satisfazer "
                 f"0 <= inicio < fim <= 23; recebi inicio={self.followup_horario_inicio} "
-                f"e fim={self.followup_horario_fim}. Janela invertida ou vazia desliga "
+                f"e fim={self.followup_horario_fim}. Horario invertido ou vazio desliga "
                 "a cadencia de follow-up sem nenhum sintoma."
             )
         try:
@@ -188,7 +188,7 @@ Acrescente a property logo antes de `teto_de_tokens_efetivo`:
 ```python
     @property
     def fuso_de_envio(self) -> ZoneInfo:
-        """O fuso da janela da RN-13.3, ja validado na construcao.
+        """O fuso do horario da RN-13.3, ja validado na construcao.
 
         Construido a cada acesso em vez de guardado: o `ZoneInfo` e cacheado
         pelo proprio modulo `zoneinfo`, e um atributo aqui teria de ser

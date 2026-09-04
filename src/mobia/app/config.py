@@ -208,7 +208,7 @@ class Settings(BaseSettings):
     sweep_inflight_after_seconds: int = 300
     sweep_max_attempts: int = 5
 
-    # RN-13.3 (TEC-185): a janela de envio automatico, em horas locais do
+    # RN-13.3 (TEC-185): o horario de envio automatico, em horas locais do
     # `followup_fuso`. `fim` nomeia o ultimo MINUTO em que um envio pode
     # comecar -- `fim=20` autoriza 20:00 e recusa 20:01 --, e nao a ultima hora
     # inteira. A borda inclusiva nao e escolha estetica: os dois primeiros
@@ -247,8 +247,8 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _recusar_janela_de_envio_impossivel(self) -> "Settings":
-        """Janela invertida ou vazia desligaria a cadencia em silencio.
+    def _recusar_horario_de_envio_impossivel(self) -> "Settings":
+        """Horario invertido ou vazio desligaria a cadencia em silencio.
 
         A varredura devolveria 0 para sempre, e o unico sintoma seria a
         ausencia de `followup.devido` -- indistinguivel de "nenhum lead
@@ -257,8 +257,8 @@ class Settings(BaseSettings):
 
         `ValueError` e nao `ConfiguracaoInsegura`: o docstring daquela excecao
         fala de configuracao que roda "sem a protecao que devia ter", e o caso
-        dela e a chave de cifra de desenvolvimento em producao. Uma janela
-        invertida nao perde protecao -- ela deixa de operar. O pydantic
+        dela e a chave de cifra de desenvolvimento em producao. Um horario
+        invertido nao perde protecao -- ele deixa de operar. O pydantic
         embrulha este ValueError em ValidationError, que falha igualmente alto
         e em todo processo.
         """
@@ -266,7 +266,7 @@ class Settings(BaseSettings):
             raise ValueError(
                 "followup_horario_inicio e followup_horario_fim precisam satisfazer "
                 f"0 <= inicio < fim <= 23; recebi inicio={self.followup_horario_inicio} "
-                f"e fim={self.followup_horario_fim}. Janela invertida ou vazia desliga "
+                f"e fim={self.followup_horario_fim}. Horario invertido ou vazio desliga "
                 "a cadencia de follow-up sem nenhum sintoma."
             )
         try:
@@ -281,7 +281,7 @@ class Settings(BaseSettings):
 
     @property
     def fuso_de_envio(self) -> ZoneInfo:
-        """O fuso da janela da RN-13.3, ja validado na construcao.
+        """O fuso do horario da RN-13.3, ja validado na construcao.
 
         Construido a cada acesso em vez de guardado: o `ZoneInfo` e cacheado
         pelo proprio modulo `zoneinfo`, e um atributo aqui teria de ser

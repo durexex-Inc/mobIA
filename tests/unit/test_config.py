@@ -388,8 +388,8 @@ def test_todo_modelo_configurado_tem_preco_cadastrado(settings) -> None:
     assert not sem_preco, f"modelos configurados sem preco em PRECOS_POR_MODELO: {sem_preco}"
 
 
-def test_a_janela_de_envio_invertida_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Janela invertida desligaria a cadencia sem nenhum sintoma.
+def test_o_horario_de_envio_invertido_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Horario invertido desligaria a cadencia sem nenhum sintoma.
 
     A varredura devolveria 0 para sempre, e a ausencia de `followup.devido` e
     indistinguivel de "nenhum lead devido" -- exatamente a falha silenciosa que
@@ -402,8 +402,8 @@ def test_a_janela_de_envio_invertida_nao_sobe(monkeypatch: pytest.MonkeyPatch) -
         Settings(_env_file=None)
 
 
-def test_a_janela_de_envio_vazia_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """9-9 nao e uma janela de um instante: e a cadencia desligada."""
+def test_o_horario_de_envio_vazio_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """9-9 nao e um horario de um instante: e a cadencia desligada."""
     monkeypatch.setenv("FOLLOWUP_HORARIO_INICIO", "9")
     monkeypatch.setenv("FOLLOWUP_HORARIO_FIM", "9")
 
