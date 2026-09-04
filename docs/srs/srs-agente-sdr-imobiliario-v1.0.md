@@ -14,6 +14,7 @@
 > | E-01 | RN-04.2, RN-05.4 | [TEC-255](https://eduardodurieuxlopes.atlassian.net/browse/TEC-255) | 01/09/2026 |
 > | E-01 | RN-06.4 | [TEC-152](https://eduardodurieuxlopes.atlassian.net/browse/TEC-152) | 02/09/2026 |
 > | E-01 | RN-05.7 | [TEC-148](https://eduardodurieuxlopes.atlassian.net/browse/TEC-148) | 03/09/2026 |
+> | E-01 | RN-06.2 | [TEC-151](https://eduardodurieuxlopes.atlassian.net/browse/TEC-151) | 03/09/2026 |
 
 ---
 
@@ -197,6 +198,7 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 | Capacidade financeira | 15 | Pagamento à vista = 15; financiamento pré-aprovado = 12; a avaliar = 6 |
 
 - RN-06.2: Temperatura derivada do score: `QUENTE` ≥ 70, `MORNO` 40–69, `FRIO` < 40.
+  - **Emenda E-01 (TEC-151, 03/09/2026):** `QUENTE` por faixa passa a exigir também `esta_qualificado` (RN-05.3); um lead não-qualificado com score ≥ 70 fica em `MORNO`. Os gatilhos da RN-06.3 ignoram o teto — quem pede visita está pronto para agir mesmo sem os quatro campos obrigatórios. O motivo é a RN-06.5: a TEC-150 declarou dois estados alcançáveis que somam 70 com `esta_qualificado` False — um deles com `intencao = None`, cuja intenção o sistema nunca determinou —, e enquanto nada consumia o número declarar bastava. Com a notificação ao corretor, o número passou a fazer um telefone tocar. Os cortes de 70 e 40 **não** se mexeram: perguntou-se em 02/09/2026 se deveriam recalibrar para o teto real do score (75 sem catálogo) e a decisão foi aceitar a consequência — só três totais alcançam 70 hoje, `{70, 72, 75}`, então `QUENTE` por faixa é uma conjunção de quase-máximos e não uma faixa.
 - RN-06.3: Gatilhos que forçam `QUENTE` independentemente do score: pedido explícito de visita, pedido de falar com corretor, menção a proposta ou contrato.
 - RN-06.4: Todo recálculo grava um registro de auditoria com score anterior, novo, fatores e timestamp.
   - **Emenda E-01 (TEC-152, 02/09/2026):** o registro é gravado quando o resultado do recálculo **difere do último registrado**, e não a cada recálculo. A comparação é sobre os cinco fatores, não sobre o total — completude +15 com urgência −15 deixa o total igual e é justamente o caso que a trilha existe para explicar. O gancho roda a cada turno com estado, e a maioria dos recálculos não move nada: uma linha por mensagem de entrada enterraria as transições no meio das duplicatas. A consequência declarada é que a trilha não prova que um recálculo *aconteceu*, só que o resultado *mudou*.

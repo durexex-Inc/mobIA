@@ -167,8 +167,9 @@ def test_lead_com_obrigatorio_recusado_nao_esta_qualificado():
 def test_o_score_para_de_pontuar_a_completude_do_campo_recusado():
     """A divergencia que a TEC-150 declarou e esta card fecha: sem isto,
     `esta_qualificado` e o score contam historias contrarias sobre o mesmo
-    lead, e a TEC-151 ordena a fila por um numero que a qualificacao
-    contradiz."""
+    lead. A TEC-151 fechou a outra metade -- `temperatura_de` aplica teto
+    MORNO a lead nao-qualificado --, mas o total cru continua nao sabendo da
+    qualificacao, e e por isso que este teste segue valendo."""
     estado = _estado()
     cheio = calcular_score(estado, mensagens_do_lead=1)
     recusado = calcular_score(estado, mensagens_do_lead=1, recusados=frozenset({"faixa_preco_max"}))

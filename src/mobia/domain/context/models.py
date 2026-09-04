@@ -137,6 +137,69 @@ class LeadQualification(Base):
     # que o lead escreveu.
     campos_recusados: Mapped[list[str] | None] = mapped_column(ARRAY(String(32)), nullable=True)
 
+    # TEC-151, RN-06.2. A temperatura corrente do lead.
+    #
+    # Materializada, e nao derivada na leitura: e contra ela que a borda da
+    # RN-06.5 compara para saber se o lead ACABOU de esquentar. Derivar na
+    # leitura daria a temperatura de agora e nao a de antes, e a notificacao
+    # dispararia em todo turno quente em vez de na travessia.
+    #
+    # `NULL` significa "linha anterior a esta card, nunca recalculada", e nao
+    # "FRIO": um lead cuja primeira travessia cai em QUENTE tem de emitir, e
+    # com NULL colapsado em FRIO ele emitiria igual -- mas um lead que JA era
+    # quente antes desta card reemitiria, e a distincao existe para isso.
+    #
+    # Denormalizacao declarada: ao contrario do `total_novo` da 0012, que a
+    # soma dos cinco fatores prende num CHECK, esta coluna guarda uma
+    # conclusao que ninguem pode reconferir contra o banco. Se os pesos
+    # virarem configuracao (RF-19), ela passa a guardar uma conclusao
+    # calculada com os pesos de ontem.
+    temperatura: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+    # TEC-151, RN-06.3. Quando o lead foi forcado a QUENTE por gatilho.
+    #
+    # `NULL` = nao forcada. Nao nulo = QUENTE ate intervencao humana, e
+    # nenhum recalculo de score rebaixa -- e a leitura desta coluna que
+    # alimenta o `forcada` de `temperatura_de`, entao a regra de "nao
+    # rebaixa" mora no mesmo lugar que a regra de "qual e a temperatura".
+    #
+    # O carimbo e o do PRIMEIRO forcamento, nao do ultimo: quem grava usa
+    # `COALESCE`. E o que "permanece ate intervencao humana" torna
+    # interessante -- quando esquentou, e ha quanto tempo ninguem interveio.
+    #
+    # **A intervencao humana (TEC-192) nao existe hoje, e nada nesta base
+    # limpa esta coluna.** Quando ela for construida, limpar SO este carimbo
+    # nao basta e passa despercebido pelos dois CHECK: `NULL` aqui com
+    # `temperatura_forcada_motivos` ainda preenchido e `temperatura` ainda
+    # "QUENTE" satisfaz os dois (com o carimbo NULL, nenhum dos dois chega a
+    # olhar para a coluna vizinha) e deixa a linha MENTINDO -- forcada por
+    # motivos que a coluna de carimbo diz que nao existem mais, e a
+    # temperatura travada em QUENTE sem nenhum dos tres campos concordando
+    # entre si. A intervencao tem de limpar as TRES colunas juntas
+    # (`temperatura_forcada_em`, `temperatura_forcada_motivos` e recalcular
+    # `temperatura` a partir do score puro, via `temperatura_de` com
+    # `forcada=False`) na mesma transacao, nunca so esta.
+    temperatura_forcada_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # TEC-151, RN-06.3. Quais gatilhos forcaram, acumulados.
+    #
+    # Uniao entre turnos e nao sobrescrita, no molde de `campos_recusados`:
+    # "primeiro vence" esconde o que veio depois, "ultimo vence" perde
+    # justamente o motivo que forcou, e a uniao nao tem esse lado. Duplicata
+    # e possivel (o lead pede visita duas vezes) e nao incomoda, mesma razao
+    # das duas colunas de array acima: quem le testa pertinencia, nao conta.
+    #
+    # `NULL` = nao forcada, mas nao e o unico estado que o CHECK admite
+    # junto de carimbo nulo: com o carimbo NULL, o CHECK nem chega a olhar
+    # para esta coluna, entao qualquer valor passaria aqui. Array vazio com
+    # carimbo nao nulo e que fica inalcancavel, proibido pelo mesmo CHECK.
+    # Quem le trata NULL e vazio iguais (`or ()`).
+    temperatura_forcada_motivos: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(16)), nullable=True
+    )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -6,7 +6,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import func, literal_column, select, update
+from sqlalchemy import String, cast, func, literal_column, select, update
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +19,9 @@ from mobia.domain.context.models import (
     LeadScoreAudit,
     aad_do_resumo,
 )
+from mobia.domain.context.qualificacao import esta_qualificado
 from mobia.domain.context.score import Score, calcular_score
+from mobia.domain.context.temperatura import Temperatura, temperatura_de
 from mobia.domain.messages.enums import MessageDirection
 from mobia.domain.messages.models import Message
 from mobia.infra.crypto import decrypt, encrypt
@@ -691,13 +694,55 @@ def _score_do_registro(registro: LeadScoreAudit | None) -> Score | None:
     )
 
 
+@dataclass(frozen=True)
+class Recalculo:
+    """O que o passo de recalculo do turno produziu.
+
+    Existe porque o turno precisa de mais de uma resposta do mesmo passo, e
+    todas saem da mesma linha travada. Devolver so a trilha obrigaria uma
+    segunda leitura -- e nao confiar em leitura de fora e exatamente o motivo
+    pelo qual esta funcao rele sob lock.
+
+    `trilha is None` significa "o resultado nao mudou, e nada foi gravado".
+    **Nao confunda com o `None` que a funcao devolve**, que significa "nao
+    havia sujeito": sem linha de qualificacao nao ha lead a pontuar, e
+    `score.py` ja distingue a ausencia de sujeito de uma nota igual a zero.
+
+    `anterior is None` e a coluna `temperatura` nula -- lead nunca
+    recalculado, ou linha anterior a TEC-151. **Nao e sinonimo de FRIO**: a
+    borda da RN-06.5 dispara quando `anterior` nao era QUENTE e agora e, e um
+    lead cujo primeiro recalculo cai em QUENTE de fato esquentou.
+
+    `gatilhos` sao os desta fala, e nao os acumulados na coluna: e o que o
+    evento do log precisa dizer sobre POR QUE esquentou agora. Vazio quando a
+    temperatura veio da faixa.
+
+    `total` acompanha para o log poder distinguir um QUENTE de faixa (70+) de
+    um QUENTE forcado sobre score baixo, que sao fatos operacionais bem
+    diferentes para quem le.
+    """
+
+    trilha: LeadScoreAudit | None
+    temperatura: Temperatura
+    anterior: Temperatura | None
+    gatilhos: tuple[str, ...]
+    total: int
+
+
 async def registrar_recalculo(
-    session: AsyncSession, *, channel: str, conversation_key: str
-) -> LeadScoreAudit | None:
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    gatilhos: tuple[str, ...] = (),
+) -> Recalculo | None:
     """Recalcula o score do lead e grava a trilha se ele mudou.
 
-    Devolve a linha gravada, ou `None` quando nao havia estado a pontuar ou
-    quando o resultado foi identico ao ultimo registrado.
+    Devolve `None` quando **nao havia estado a pontuar**, e um `Recalculo`
+    com `trilha is None` quando havia estado e o resultado foi identico ao
+    ultimo registrado. Os dois casos eram o mesmo `None` ate a TEC-151, e ela
+    os separou porque a temperatura pode mudar num turno em que nenhum dos
+    cinco fatores se move -- um gatilho da RN-06.3 e exatamente isso.
 
     Nao commita -- a sessao e emprestada, como em `gravar_estado`, e quem chama
     e dono da fronteira da transacao. A trilha tem de entrar no MESMO commit
@@ -723,6 +768,13 @@ async def registrar_recalculo(
     campos o lock ja foi tomado pelo `ON CONFLICT DO UPDATE` de
     `gravar_estado` e este e redundante; no turno SEM campos nao ha upsert, e e
     exatamente o caminho em que a unica mudanca vem da contagem de mensagens.
+
+    **A temperatura e resolvida ANTES da trilha, e a ordem e o ponto
+    (TEC-151).** Ate esta card a funcao retornava cedo quando `causas` estava
+    vazio; nao pode mais, porque um gatilho da RN-06.3 dispara em turno em que
+    nenhum dos cinco fatores se move -- o lead pede visita, e o `return None`
+    antecipado engoliria o forcamento. Ha teste de guarda para isso:
+    `test_o_turno_sem_mudanca_de_score_ainda_resolve_a_temperatura`.
     """
     estado = (
         await session.execute(
@@ -744,6 +796,14 @@ async def registrar_recalculo(
     if estado is None:
         return None
 
+    # `or ()` porque `NULL` (linha anterior a TEC-148) e `{}` (registrou, sem
+    # recusa) sao estados diferentes na coluna, e esta leitura trata os dois
+    # iguais -- mesmo raciocinio de `_recusados_de` em turno.py. Calculada uma
+    # vez e passada para `calcular_score` e `esta_qualificado` abaixo: as duas
+    # chamadas precisam do mesmo fato sobre a mesma linha, e duas copias do
+    # `frozenset(...)` seriam duas copias deste comentario para manter certas.
+    recusados = frozenset(estado.campos_recusados or ())
+
     novo = calcular_score(
         estado,
         mensagens_do_lead=await contar_mensagens_do_lead(
@@ -755,11 +815,99 @@ async def registrar_recalculo(
         imoveis_compativeis=0,
         # TEC-148: a recusa sai da mesma linha que o lock acabou de reler,
         # entao nao ha consulta extra e nao ha risco de ler estado velho.
-        # `or ()` porque `NULL` (linha anterior a TEC-148) e `{}` (registrou,
-        # sem recusa) sao estados diferentes na coluna, e esta leitura trata
-        # os dois iguais -- mesmo raciocinio de `_recusados_de` em turno.py.
-        recusados=frozenset(estado.campos_recusados or ()),
+        recusados=recusados,
     )
+
+    # A temperatura sai da MESMA linha travada que o score, e o `qualificado`
+    # tambem. Nao vem do `antes` de `turno.py`: aquele foi lido por
+    # `montar_contexto` numa OUTRA sessao, antes do bloco transacional, e um
+    # turno concorrente da mesma conversa pode ter commitado no intervalo --
+    # o teto seria aplicado sobre qualificacao velha. Mesma razao pela qual o
+    # estado vem do `FOR UPDATE` daqui, e nao de `depois_do_estado`.
+    qualificado = esta_qualificado(estado, recusados)
+
+    # As duas metades do forcamento, e a persistida e a que o cenario 3 da
+    # card exige. O segundo termo forca AGORA (o pedido de visita chegando
+    # neste turno); o primeiro MANTEM forcado depois -- e e o unico que
+    # responde ao cenario 3, porque o turno que rebaixaria e justamente um
+    # turno SEM gatilho: o lead pediu visita ha tres turnos, agora so
+    # respondeu "ok", e `gatilhos` esta vazio. Sem o termo persistido,
+    # `temperatura_de` voltaria a olhar o score e devolveria FRIO.
+    forcada = estado.temperatura_forcada_em is not None or bool(gatilhos)
+
+    anterior = Temperatura(estado.temperatura) if estado.temperatura else None
+    temperatura = temperatura_de(novo, qualificado=qualificado, forcada=forcada)
+
+    # So os motivos que a coluna AINDA nao tem -- e nao `gatilhos` bruto --
+    # decidem se ha algo NOVO a escrever. Um lead ja forcado que repete a
+    # mesma fala ("quero agendar visita" de novo) devolve `gatilhos` nao
+    # vazio todo turno, mas nao ha motivo novo nenhum: usar `gatilhos` ali
+    # fazia o UPDATE disparar a cada turno e a coluna crescer
+    # (['VISITA', 'VISITA', ...]) para sempre, o que nem a duplicata
+    # tolerada das colunas irmas justifica -- aquelas duplicam quando o LEAD
+    # diz duas coisas diferentes que colidem no mesmo nome, esta duplicava
+    # quando ele repetia a MESMA fala.
+    novos = tuple(g for g in gatilhos if g not in (estado.temperatura_forcada_motivos or ()))
+
+    # `or novos` no teste, e nao so a mudanca de temperatura: um lead que JA
+    # era QUENTE forcado e menciona proposta pela primeira vez nao muda de
+    # temperatura, mas o motivo novo tem de entrar na coluna. Duplicata
+    # continua possivel dentro de UM turno so (`gatilhos_de` pode repetir a
+    # tupla se o texto casar o mesmo motivo duas vezes) e nao incomoda, mesma
+    # aceitacao das duas colunas de array vizinhas -- o que este calculo
+    # fecha e so a duplicata ENTRE turnos.
+    if temperatura is not anterior or novos:
+        valores: dict[str, Any] = {
+            "temperatura": temperatura.value,
+            "updated_at": datetime.now(UTC),
+        }
+        if novos:
+            valores["temperatura_forcada_em"] = func.coalesce(
+                LeadQualification.temperatura_forcada_em, func.clock_timestamp()
+            )
+            # A uniao mora no SQL, no molde da coluna irma `campos_recusados`
+            # em `gravar_estado` -- mesma forma, por consistencia, e nao pela
+            # mesma razao: aquele UPDATE nao tem lock, e este roda sob o `FOR
+            # UPDATE` que `estado` ja tomou, entao a corrida entre dois
+            # turnos que aquele comentario descreve nao existe aqui.
+            #
+            # `coalesce` porque `NULL || {'VISITA'}` e NULL em Postgres, e
+            # toda linha anterior a esta card tem NULL aqui. `novos` e nao
+            # `gatilhos` no `cast`: e o mesmo calculo que decidiu entrar
+            # neste `if`, e gravar `gatilhos` aqui reabriria o crescimento
+            # sem fim que `novos` existe para fechar.
+            valores["temperatura_forcada_motivos"] = func.coalesce(
+                LeadQualification.temperatura_forcada_motivos,
+                literal_column("'{}'::varchar[]"),
+            ).op("||")(cast(list(novos), ARRAY(String(16))))
+        await session.execute(
+            update(LeadQualification)
+            .where(
+                LeadQualification.channel == channel,
+                LeadQualification.conversation_key == conversation_key,
+            )
+            .values(**valores)
+        )
+        # Sem `populate_existing`, e nao por descuido: este e um Core
+        # `update()` contra uma entidade ORM, executado por `Session.execute`
+        # com `synchronize_session="auto"` (o default), que sincroniza cada
+        # coluna do `SET` de um jeito diferente conforme o valor.
+        #
+        # `temperatura` e `updated_at` sao literais Python (`str`, `datetime`)
+        # -- o avaliador consegue calcula-los e os atribui direto na
+        # instancia que a sessao ja tem (`estado`, mesma linha, pelo identity
+        # map), sem expirar nada.
+        #
+        # `temperatura_forcada_em` e `temperatura_forcada_motivos` -- gravadas
+        # so quando `novos` nao e vazio -- sao expressao SQL
+        # (`func.coalesce`, `.op("||")`), que o avaliador nao sabe calcular em
+        # Python. Para essas duas, e so essas duas, ele EXPIRA os atributos
+        # correspondentes em vez de sincroniza-los; a proxima leitura --
+        # inclusive um `session.get` depois do commit, como os testes fazem --
+        # dispara SELECT e volta com o valor gravado. Mesma familia de
+        # comportamento implicito que o comentario de `populate_existing` em
+        # `gravar_estado` documenta, so que aqui e a ausencia da opcao que e o
+        # ponto.
 
     ultimo = (
         await session.scalars(
@@ -775,7 +923,13 @@ async def registrar_recalculo(
 
     causas = causas_do_recalculo(_score_do_registro(ultimo), novo)
     if not causas:
-        return None
+        return Recalculo(
+            trilha=None,
+            temperatura=temperatura,
+            anterior=anterior,
+            gatilhos=gatilhos,
+            total=novo.total,
+        )
 
     linha = LeadScoreAudit(
         id=uuid.uuid4(),
@@ -796,4 +950,10 @@ async def registrar_recalculo(
     # transacao -- inclusive a que a proxima chamada faz para achar o "ultimo
     # registro".
     await session.flush()
-    return linha
+    return Recalculo(
+        trilha=linha,
+        temperatura=temperatura,
+        anterior=anterior,
+        gatilhos=gatilhos,
+        total=novo.total,
+    )

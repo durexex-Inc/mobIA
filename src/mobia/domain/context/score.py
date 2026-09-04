@@ -120,11 +120,19 @@ def calcular_score(
     fatores consulta `esta_qualificado`, e completude conta campos, nao a
     decisao. Um lead com `intencao=VENDER_IMOVEL` -- que a RN-03.4 manda
     direto para handoff e o SDR nao qualifica --, resto preenchido, urgencia
-    `IMEDIATA`, pagamento a vista e seis mensagens soma **70**, faixa QUENTE,
-    com `esta_qualificado` False; um lead qualificado que so nao disse como
-    pagaria soma **66**, faixa MORNO. **Quem ordenar a fila (TEC-151) tem de
-    combinar o total com `esta_qualificado`, e nunca usar o total sozinho.**
-    Lacuna declarada no desenho.
+    `IMEDIATA`, pagamento a vista e seis mensagens soma **70**, com
+    `esta_qualificado` False; um lead qualificado que so nao disse como
+    pagaria soma **66**.
+
+    **A TEC-151 fechou a consequencia disso, e nao aqui.** Este score continua
+    sem saber da qualificacao -- e deliberado, e nada nesta funcao mudou --,
+    mas quem deriva a temperatura combina os dois: `temperatura_de`
+    (`context/temperatura.py`) recebe `qualificado` e aplica teto `MORNO`, de
+    forma que o primeiro exemplo acima NAO chega a QUENTE. E emenda E-01 a
+    RN-06.2, e o motivo foi a RN-06.5: QUENTE faz o telefone do corretor
+    tocar. **Quem for ordenar a fila continua tendo de combinar o total com
+    `esta_qualificado`, e nunca usar o total sozinho** -- a temperatura ja o
+    faz, o total cru nao.
 
     **O engajamento nao decai.** Nao ha janela de recencia: oito mensagens de
     quatro meses atras valem 15 para sempre, e duas de hoje valem 10 -- a
