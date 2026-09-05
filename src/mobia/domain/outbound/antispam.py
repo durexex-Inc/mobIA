@@ -5,10 +5,11 @@ I/O, sem banco, sem chamada ao modelo. Quem conta e o repositorio; aqui so se
 compara.
 
 **Mora em `outbound/` e nao em `followup/`**, ao lado de `horario.py` e pela
-mesma razao: a RN-13.7 diz que, atingido o maximo, "nenhuma automacao envia
-mais nada a esse lead -- nem follow-up, nem lembrete, nem reengajamento". Sob
-`followup/` a TEC-171 nao acharia esta funcao e escreveria a segunda, que e a
-forma do defeito que a TEC-146 gastou uma card inteira consertando.
+mesma razao: a RN-13.7 diz que, atingido o maximo, nenhuma automacao envia
+mais nada a esse lead, e a card enumera -- nem follow-up, nem lembrete, nem
+reengajamento. Sob `followup/` a TEC-171 nao acharia esta funcao e escreveria
+a segunda, que e a forma do defeito que a TEC-146 gastou uma card inteira
+consertando.
 
 **E NAO mora em `GuardedOutbound.send`**, pela mesma razao que a janela da
 TEC-185 nao mora: aquele caminho carrega a resposta ao lead, e o maximo e

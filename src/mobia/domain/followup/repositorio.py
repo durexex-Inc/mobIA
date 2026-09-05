@@ -53,9 +53,6 @@ class Candidato:
 # devido em temperatura nenhuma, entao o lead sai antes de qualquer outro
 # trabalho.
 #
-# O subselect de `ja_disparada` roda por linha ja filtrada, e o indice
-# `ix_followups_lead` o atende.
-#
 # **`candidatos` e uma CTE, e nao um SELECT unico, porque o filtro de
 # `ja_disparada` precisa do valor JA calculado.** Postgres nao deixa referenciar
 # um alias da propria lista de SELECT no WHERE do mesmo nivel; promover o

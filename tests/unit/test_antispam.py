@@ -32,7 +32,7 @@ def test_o_maximo_e_o_numero_da_regra() -> None:
     Este teste fixa o numero na base de codigo de modo que uma mudanca nele
     seja deliberada e visivel. Mas NAO detecta se o numero foi derivado de
     `CADENCIA` -- hoje `len(CADENCIA[Temperatura.QUENTE])` tambem e 4, entao
-    nenhuma asserctacao sobre valor consegue discernir um 4 escrito a mao de um
+    nenhuma assercao sobre valor consegue discernir um 4 escrito a mao de um
     derivado. O que protege contra derivacao e o comentario no `MAXIMO_SEM_RESPOSTA`
     e a revisao, nao este teste.
     """

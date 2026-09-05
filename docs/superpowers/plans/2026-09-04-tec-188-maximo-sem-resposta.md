@@ -76,7 +76,7 @@ def test_o_maximo_e_o_numero_da_regra() -> None:
     Este teste fixa o numero na base de codigo de modo que uma mudanca nele
     seja deliberada e visivel. Mas NAO detecta se o numero foi derivado de
     `CADENCIA` -- hoje `len(CADENCIA[Temperatura.QUENTE])` tambem e 4, entao
-    nenhuma asserctacao sobre valor consegue discernir um 4 escrito a mao de um
+    nenhuma assercao sobre valor consegue discernir um 4 escrito a mao de um
     derivado. O que protege contra derivacao e o comentario no `MAXIMO_SEM_RESPOSTA`
     e a revisao, nao este teste.
     """
@@ -726,7 +726,7 @@ EOF
 | Quarta mensagem encerra a automação, com evento | Task 3, `test_o_evento_de_maximo_sai_quando_a_quarta_e_gravada` (o evento) e `test_a_guarda_do_maximo_barra_o_candidato` (o barramento) |
 | Resposta zera o contador | Task 2, `test_a_resposta_do_lead_zera_o_contador` |
 | Soma tentativas de ciclos diferentes | Coberto pela forma: a mudança de temperatura não move a âncora, então o `COUNT` já soma. Registrado na emenda |
-| O teto prevalece sobre a configuração | Task 1, `test_o_maximo_e_o_numero_da_regra_e_nao_o_da_cadencia` — é o que impede o número de virar derivado |
+| O teto prevalece sobre a configuração | Task 1, `test_o_maximo_e_o_numero_da_regra` — fixa o número para que mudá-lo seja deliberado e visível; **não** detecta se o número foi derivado de `CADENCIA`, o que fica a cargo do comentário na constante e da revisão, não do teste |
 | Lembrete de visita respeita o teto | **Não coberto, e declarado**: TEC-171 não existe, nem o lembrete nem a tarefa para o corretor |
 
 **Consistência de nomes e tipos:** `antispam_permite_envio(*, ja_enviadas: int) -> bool` e `MAXIMO_SEM_RESPOSTA` são idênticos entre a Task 1 (definição) e a Task 3 (uso). `Candidato.ja_enviadas: int` é idêntico entre a Task 2 (definição), a Task 3 (uso no laço e no teste que constrói o `Candidato` à mão) e o SQL (`AS ja_enviadas` → `linha.ja_enviadas`). O evento `followup.antispam_atingido` tem o mesmo nome no código da Task 3, nos dois testes e na emenda da Task 4.

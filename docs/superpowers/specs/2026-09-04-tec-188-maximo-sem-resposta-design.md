@@ -80,11 +80,11 @@ Verificado contra os caminhos que poderiam furar isso, e nenhum fura: um lead `F
 **Então esta card não muda o comportamento de envio de nada, hoje.** Ela entrega:
 
 - **O evento**, que é a única mudança observável agora — ver a D6.
-- **A guarda e o predicado**, que a TEC-184 (envio de verdade) e a TEC-171 (lembretes) herdam em vez de precisarem lembrar.
+- **A guarda e o predicado.** A analogia com `GuardedOutbound` só vale pela metade: aquela guarda é herdada por **mecanismo de linguagem** — uma subclasse não consegue esquecê-la. A TEC-184 herda esta guarda de fato, porque vai editar este mesmo laço e manter a chamada, mas não por mecanismo — só por tocar o mesmo código. A TEC-171 não herda nada: será outro job sobre outra tabela, e terá de lembrar de chamar o predicado; o que ela ganha é a facilidade de achá-lo em `outbound/` em vez de `followup/`, que é o argumento real da D8.
 
 A alternativa era entregar só o evento e deixar a guarda para a card que a tornasse alcançável. Rejeitada pelo precedente do próprio repo: a guarda de opt-out foi escrita em `GuardedOutbound` antes de existir consumidor, e o comentário dela explica que o motivo é justamente não depender de alguém lembrar. Uma regra Must de segurança que espera para ser escrita é uma regra que a próxima card esquece.
 
-**O que faz a guarda passar a valer:** um segundo produtor de mensagem automática. Enquanto `followups` for a única fonte, o máximo é redundante com o corte de esgotamento.
+**O que faz a guarda passar a valer:** um segundo produtor de mensagem automática — mas nem a TEC-184 nem a TEC-171 são isso por si sós. A TEC-184 grava nas mesmas linhas de `followups`, com a mesma aritmética da D1; a lacuna 4 diz que o contador cobre só `followups` e que compor uma segunda fonte em `ja_enviadas` não existe hoje. A TEC-171 nem passa por este laço. A guarda só passa a valer quando alguém fechar aquela lacuna.
 
 ### D6 — O evento sai uma vez, no instante em que a contagem fecha
 
@@ -138,7 +138,7 @@ Puro, keyword-only, em `domain/outbound/`, ao lado de `horario.py`, e pela mesma
 
 **O número 3 é escolhido, e 4 não serviria.** Com `tentativa_numero = 4` o lead teria `ja_disparada = 4`, o corte de esgotamento do `QUENTE` o excluiria da candidatura, e a consulta não devolveria linha nenhuma para comparar — o teste ficaria vazio sem parecer vazio. Com 3 ele continua candidato (`3 < 4`) e os dois agregados ficam observáveis lado a lado.
 
-**A divergência entre `COUNT` e `MAX` não é observável na guarda, só no contador**, e isso é consequência da D5: para o máximo barrar seria preciso `COUNT >= 4`, o que implica `MAX = 4`, o que já exclui o lead da candidatura. Por isso a inversão é testada no valor que a consulta devolve, e a guarda é testada à parte, pela fronteira.
+**A divergência entre `COUNT` e `MAX` não é observável na guarda, mas é observável no evento.** Na guarda, é consequência da D5: para o máximo barrar seria preciso `COUNT >= 4`, o que implica `MAX = 4`, o que já exclui o lead da candidatura — por isso a inversão é testada no valor que a consulta devolve, e a guarda é testada à parte, pela fronteira. No evento a divergência **é** observável: um lead cuja única linha pré-existente sob a âncora é `tentativa_numero = 3` tem `ja_disparada = 3` (continua candidato, `3 < 4`) e `ja_enviadas = 1`; a varredura grava a tentativa 4, mas só duas mensagens saíram no total, então o evento não pode sair. Uma implementação que disparasse por posição (`tentativa == MAXIMO_SEM_RESPOSTA`) em vez de por contagem (`ja_enviadas + 1 == MAXIMO_SEM_RESPOSTA`) dispararia aqui, cedo demais — e é exatamente o caso que os dois testes acima não cobrem, porque neles a contagem de linhas e a posição da régua coincidem. `test_o_evento_de_maximo_nao_confunde_contagem_com_posicao_da_regua`, em `tests/integration/test_sweep_followups.py`, é onde essa distinção fica pinada.
 
 **Integração, o evento:** sai exatamente uma vez quando a quarta linha é gravada, e **não** sai quando a terceira é. Duas assertivas, porque emitir cedo e emitir sempre são defeitos diferentes.
 
