@@ -98,9 +98,9 @@ async def sweep_followups(
     parametro, a suite inteira desta varredura passaria ou reprovaria conforme
     a hora do dia em que o CI rodasse. Producao nao passa o argumento.
 
-    **A guarda do maximo (TEC-188, RN-13.7) e a terceira, e entra antes do
-    opt-out por ser pura.** Ela conta mensagens que sairam -- `ja_enviadas`, o
-    COUNT sob a ancora --, e nao a posicao da regua. Hoje ela nao pode
+    **A guarda do maximo (TEC-188, RN-13.7) entra antes do opt-out por ser
+    pura.** Ela conta mensagens que sairam -- `ja_enviadas`, o COUNT sob a
+    ancora --, e nao a posicao da regua. Hoje ela nao pode
     disparar pela consulta real: o UNIQUE limita a quatro linhas por ancora e
     o QUENTE para em quatro, entao o maximo coincide com o esgotamento. A
     TEC-184 herda esta guarda de fato -- vai editar este mesmo laco e manter a
@@ -159,7 +159,7 @@ async def sweep_followups(
             if tentativa is None:
                 continue
 
-            # A terceira guarda, e ela entra ANTES do opt-out porque e pura: a
+            # A guarda do maximo entra ANTES do opt-out porque e pura: a
             # premissa que justifica consultar o opt-out por candidato e que o
             # conjunto que sobra depois dos cortes baratos e pequeno.
             #
