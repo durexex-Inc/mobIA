@@ -19,6 +19,7 @@ from mobia.app.config import Settings, get_settings
 from mobia.domain.followup.cadencia import CADENCIA, tentativa_devida
 from mobia.domain.followup.repositorio import candidatos_a_followup, registrar_followup
 from mobia.domain.optout.repositorio import esta_em_optout
+from mobia.domain.outbound.antispam import MAXIMO_SEM_RESPOSTA, antispam_permite_envio
 from mobia.domain.outbound.horario import horario_permite_envio
 
 log = structlog.get_logger(__name__)
@@ -29,13 +30,14 @@ async def sweep_followups(
 ) -> int:
     """Registra as tentativas de follow-up que venceram. Devolve quantas.
 
-    **A ordem das duas guardas POR CANDIDATO e proposital: `tentativa_devida`
-    primeiro, `esta_em_optout` so para quem passou.** A primeira e funcao pura, sem
-    I/O; a segunda e uma ida ao banco. Checar o opt-out antes pagaria essa
-    consulta para todo candidato, inclusive os que nem estao devidos -- e a
-    premissa que justifica consultar por candidato em vez de juntar na query
-    (comentario abaixo) e que o conjunto que sobra depois do primeiro corte e
-    pequeno. Invertida, essa premissa deixa de valer.
+    **A ordem das tres guardas POR CANDIDATO e proposital: `tentativa_devida`,
+    depois `antispam_permite_envio`, e `esta_em_optout` so para quem passou as
+    duas primeiras.** As duas primeiras sao funcao pura, sem I/O; a terceira e
+    uma ida ao banco. Checar o opt-out antes pagaria essa consulta para todo
+    candidato, inclusive os que nem estao devidos ou ja esgotaram o maximo --
+    e a premissa que justifica consultar por candidato em vez de juntar na
+    query (comentario abaixo) e que o conjunto que sobra depois dos cortes
+    puros e pequeno. Invertida, essa premissa deixa de valer.
 
     O opt-out e consultado por candidato, e nao juntado na consulta:
     `esta_em_optout` e a unica implementacao daquele fato, e escreve-lo uma
@@ -66,7 +68,7 @@ async def sweep_followups(
     retorna, com o lote inteiro ja confirmado.
 
     **A guarda de horario (TEC-185, RN-13.3) roda antes da consulta, e e a
-    unica das tres que roda antes.** Sob fuso unico (PR-04) a janela e
+    unica das quatro que roda antes.** Sob fuso unico (PR-04) a janela e
     propriedade de `agora` e nao do candidato, entao nada do que a consulta
     trouxesse mudaria a resposta -- e o `GROUP BY` sobre `messages` e a parte
     cara desta varredura. Por treze das vinte e quatro horas o job nao toca o
@@ -95,12 +97,31 @@ async def sweep_followups(
     relogio. Com a guarda de horario isso deixou de ser conveniencia -- sem o
     parametro, a suite inteira desta varredura passaria ou reprovaria conforme
     a hora do dia em que o CI rodasse. Producao nao passa o argumento.
+
+    **A guarda do maximo (TEC-188, RN-13.7) entra antes do opt-out por ser
+    pura.** Ela conta mensagens que sairam -- `ja_enviadas`, o COUNT sob a
+    ancora --, e nao a posicao da regua. Hoje ela nao pode
+    disparar pela consulta real: o UNIQUE limita a quatro linhas por ancora e
+    o QUENTE para em quatro, entao o maximo coincide com o esgotamento. A
+    TEC-184 herda esta guarda de fato -- vai editar este mesmo laco e manter a
+    chamada --, mas nao por um mecanismo de linguagem como o de
+    `GuardedOutbound`, so por tocar o mesmo codigo. A TEC-171 nao herda nada:
+    sera outro job sobre outra tabela e tera de lembrar de chamar o predicado;
+    o que ganha e so a facilidade de acha-lo em `outbound/` (D8). Nenhuma das
+    duas torna a guarda alcancavel -- isso exige um segundo produtor que
+    componha a propria contagem em `ja_enviadas` (lacuna 4 do desenho).
+
+    O retorno continua sendo o numero de linhas GRAVADAS. O evento de maximo
+    sai numa lista propria e nao entra nessa contagem: gravar e atingir o
+    maximo sao fatos diferentes, e somar os dois faria o retorno mentir para
+    quem mede a varredura.
     """
     session_factory = ctx["session_factory"]
     settings: Settings = ctx.get("settings") or get_settings()
     if agora is None:
         agora = datetime.now(UTC)
     eventos: list[dict[str, Any]] = []
+    eventos_de_maximo: list[dict[str, Any]] = []
 
     if not horario_permite_envio(
         momento=agora,
@@ -138,6 +159,26 @@ async def sweep_followups(
             if tentativa is None:
                 continue
 
+            # A guarda do maximo entra ANTES do opt-out porque e pura: a
+            # premissa que justifica consultar o opt-out por candidato e que o
+            # conjunto que sobra depois dos cortes baratos e pequeno.
+            #
+            # **Esta guarda nao pode disparar pela consulta real hoje**, e isso
+            # e declarado, nao esquecido: o UNIQUE limita a quatro linhas por
+            # ancora e a cadencia do QUENTE para em quatro, entao
+            # `ja_enviadas=4` implica `ja_disparada=4`, que o corte de
+            # esgotamento ja excluiu. A TEC-184 herda esta guarda de fato --
+            # vai editar este mesmo laco e manter a chamada --, mas nao por um
+            # mecanismo de linguagem como o de `GuardedOutbound`, so por tocar
+            # o mesmo codigo. A TEC-171 nao herda nada: sera outro job sobre
+            # outra tabela e tera de lembrar de chamar o predicado; o que
+            # ganha e so a facilidade de acha-lo em `outbound/`. Nenhuma das
+            # duas torna a guarda alcancavel -- isso exige um segundo produtor
+            # que componha a propria contagem em `ja_enviadas` (lacuna 4 do
+            # desenho).
+            if not antispam_permite_envio(ja_enviadas=candidato.ja_enviadas):
+                continue
+
             if await esta_em_optout(
                 session,
                 channel=candidato.channel,
@@ -164,9 +205,41 @@ async def sweep_followups(
                 }
             )
 
+            # `==` e nao `>=` porque a guarda acima ja garante
+            # `ja_enviadas < MAXIMO_SEM_RESPOSTA`, entao a soma nunca passa do
+            # maximo -- e o evento e sobre o INSTANTE em que a contagem fecha.
+            #
+            # Emitir a cada supressao, em vez de uma vez aqui, repetiria a
+            # mesma linha a cada cinco minutos para sempre, porque um lead que
+            # nunca responde nunca sai do estado. "Atingir o teto" e um
+            # instante; o estado e derivavel da tabela a qualquer momento.
+            if candidato.ja_enviadas + 1 == MAXIMO_SEM_RESPOSTA:
+                eventos_de_maximo.append(
+                    {
+                        "channel": candidato.channel,
+                        "conversation_key": candidato.conversation_key,
+                        "ancora_em": candidato.ancora_em.isoformat(),
+                        "ja_enviadas": MAXIMO_SEM_RESPOSTA,
+                    }
+                )
+
         await session.commit()
 
     for evento in eventos:
         log.info("followup.devido", **evento)
+
+    for evento in eventos_de_maximo:
+        # `warning` e nao `info`: nao e erro, mas e um lead saindo do alcance
+        # da automacao, que a RN-13.7 quer visivel para a gerente. Mesmo nivel
+        # de `followup.candidatos_saturados` e `outbound.optout_bloqueou`, que
+        # tambem sao "funcionou como desenhado, e alguem precisa saber".
+        #
+        # `conversation_key` viaja aqui e nao em `followup.devido`: o proposito
+        # da propria regra e que alguem consiga agir sobre O LEAD especifico
+        # que saiu do alcance da automacao, e um evento sem identificador nao
+        # da para isso. `structlog` mascara o campo (`_CHAVES_MASCARADAS` em
+        # `app/logging.py`) para os quatro ultimos digitos antes de qualquer
+        # coisa chegar ao log de verdade.
+        log.warning("followup.antispam_atingido", **evento)
 
     return len(eventos)

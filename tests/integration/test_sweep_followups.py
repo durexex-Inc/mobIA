@@ -223,6 +223,10 @@ async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(
         temperatura=Temperatura.QUENTE,
         ancora_em=ancora,
         ja_disparada=0,
+        # ja_enviadas virou campo obrigatorio com a TEC-188. Este teste e da
+        # TEC-183 e nao exercita o antispam -- so precisa de um valor que nao
+        # acione a guarda, e 0 e o mais neutro.
+        ja_enviadas=0,
     )
 
     async def _candidatos_a_followup_stub(session, *, agora, limite=500):
@@ -320,3 +324,153 @@ async def test_as_vinte_em_ponto_ainda_disparam(session) -> None:
 
     vinte_em_ponto = (parou + timedelta(hours=2)).astimezone(UTC)
     assert await sweep_followups(_ctx(), agora=vinte_em_ponto) == 1
+
+
+async def test_o_evento_de_maximo_sai_quando_a_quarta_e_gravada(session, caplog) -> None:
+    """O criterio de aceite: "um evento registra que o teto foi atingido".
+
+    Lead QUENTE calado ha mais de sete dias, com as tentativas 1, 2 e 3 ja
+    gravadas sob a ancora. A quarta vence, e gravar ela fecha o maximo.
+    """
+    parou_ha = timedelta(days=8)
+    await _lead(session, calado_ha=parou_ha, agora=DENTRO_DA_JANELA)
+    ancora = DENTRO_DA_JANELA - parou_ha
+    for numero in (1, 2, 3):
+        session.add(
+            FollowUp(
+                id=uuid.uuid4(),
+                channel=CANAL,
+                conversation_key=CONVERSA,
+                tentativa_numero=numero,
+                temperatura="QUENTE",
+                ancora_em=ancora,
+                devido_em=ancora + timedelta(days=numero),
+            )
+        )
+    await session.commit()
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA)
+
+    assert gravadas == 1
+    assert sum(1 for r in caplog.records if "followup.antispam_atingido" in r.getMessage()) == 1
+
+
+async def test_o_evento_de_maximo_nao_sai_na_terceira(session, caplog) -> None:
+    """A outra metade da mesma assertiva: emitir cedo e emitir sempre sao
+    defeitos diferentes, e um teste so nao separa os dois.
+
+    Mesmo lead, duas tentativas gravadas em vez de tres, e silencio de quatro
+    dias -- bastante para a tentativa 3 (+3d) e nao para a 4 (+7d).
+    """
+    parou_ha = timedelta(days=4)
+    await _lead(session, calado_ha=parou_ha, agora=DENTRO_DA_JANELA)
+    ancora = DENTRO_DA_JANELA - parou_ha
+    for numero in (1, 2):
+        session.add(
+            FollowUp(
+                id=uuid.uuid4(),
+                channel=CANAL,
+                conversation_key=CONVERSA,
+                tentativa_numero=numero,
+                temperatura="QUENTE",
+                ancora_em=ancora,
+                devido_em=ancora + timedelta(days=numero),
+            )
+        )
+    await session.commit()
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA)
+
+    assert gravadas == 1
+    assert sum(1 for r in caplog.records if "followup.antispam_atingido" in r.getMessage()) == 0
+
+
+async def test_o_evento_de_maximo_nao_confunde_contagem_com_posicao_da_regua(
+    session, caplog
+) -> None:
+    """A distincao central da card, pinada onde os dois testes acima nao a
+    alcancam: neles a contagem de linhas e a posicao da regua coincidem
+    (tres linhas -> ja_enviadas=3, ou duas linhas -> ja_enviadas=2), entao um
+    `if tentativa == MAXIMO_SEM_RESPOSTA` no lugar de
+    `if ja_enviadas + 1 == MAXIMO_SEM_RESPOSTA` passaria nos dois sem se
+    denunciar.
+
+    Aqui a UNICA linha pre-existente sob a ancora e a tentativa 3 -- o caso do
+    lead atrasado, que a regua ja pula direto para a maior tentativa vencida.
+    `ja_disparada=3` (MAX) mantem o lead candidato (3 < 4), e `ja_enviadas=1`
+    (COUNT). A varredura grava a tentativa 4, mas so DUAS mensagens sairam no
+    total (a antiga mais esta) -- o evento NAO pode sair. Uma implementacao
+    por posicao dispara aqui, cedo demais; a implementacao por contagem nao.
+    """
+    parou_ha = timedelta(days=8)
+    await _lead(session, calado_ha=parou_ha, agora=DENTRO_DA_JANELA)
+    ancora = DENTRO_DA_JANELA - parou_ha
+    session.add(
+        FollowUp(
+            id=uuid.uuid4(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            tentativa_numero=3,
+            temperatura="QUENTE",
+            ancora_em=ancora,
+            devido_em=ancora + timedelta(days=3),
+        )
+    )
+    await session.commit()
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA)
+
+    assert gravadas == 1
+    linhas = (await session.scalars(select(FollowUp))).all()
+    assert [linha.tentativa_numero for linha in linhas] == [3, 4]
+    assert sum(1 for r in caplog.records if "followup.antispam_atingido" in r.getMessage()) == 0
+
+
+async def test_a_guarda_do_maximo_barra_o_candidato(
+    session, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """A guarda da D5, testada pela fronteira porque a consulta real nao a
+    alcanca.
+
+    O `UNIQUE` limita a quatro linhas por ancora e a cadencia do QUENTE para em
+    quatro, entao `ja_enviadas=4` implica `ja_disparada=4`, que o corte de
+    esgotamento ja exclui da candidatura. O ramo da guarda so tem cobertura se
+    o `Candidato` vier construido a mao -- e mockar `candidatos_a_followup` e
+    legitimo pelo mesmo motivo que no teste da corrida: a consulta e a
+    fronteira, e o que se testa aqui e o tratamento do job.
+
+    `ja_disparada=0` de proposito: sem isso `tentativa_devida` devolveria None e
+    o teste passaria pela guarda errada, verde e vazio.
+
+    A assertiva de `followup.antispam_atingido` nao e cosmetica: a D6 do
+    desenho considerou e rejeitou emitir o evento a cada supressao, e essa
+    alternativa rejeitada emitiria exatamente neste cenario -- com a suite
+    inteira ainda verde, porque nenhum outro teste barra por esta guarda.
+    """
+    ancora = DENTRO_DA_JANELA - timedelta(hours=2, minutes=5)
+    candidato = Candidato(
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        temperatura=Temperatura.QUENTE,
+        ancora_em=ancora,
+        ja_disparada=0,
+        ja_enviadas=4,
+    )
+
+    async def _candidatos_a_followup_stub(session, *, agora, limite=500):
+        return [candidato]
+
+    monkeypatch.setattr(
+        sweep_followups_module, "candidatos_a_followup", _candidatos_a_followup_stub
+    )
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA)
+
+    assert gravadas == 0
+    assert (await session.scalars(select(FollowUp))).all() == []
+    assert sum(1 for r in caplog.records if "followup.devido" in r.getMessage()) == 0
+    assert sum(1 for r in caplog.records if "followup.antispam_atingido" in r.getMessage()) == 0
