@@ -404,7 +404,7 @@ def test_os_seis_campos_que_entram_estao_no_documento() -> None:
     assert "APARTAMENTO" in documento
     assert "Vila Mariana" in documento
     assert "Sao Paulo" in documento
-    assert "portaria 24h" in documento
+    assert "portaria full time" in documento
 
 
 def test_o_hash_nao_muda_quando_so_o_preco_muda() -> None:
