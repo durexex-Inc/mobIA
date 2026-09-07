@@ -10,6 +10,7 @@ Task 5). Os testes daqui embaixo cobrem so os tres primeiros, direto contra
 gravado na tabela `importacoes`, vem depois, contra `registrar`/`executar`.
 """
 
+import asyncio
 import uuid
 from dataclasses import replace
 from decimal import Decimal
@@ -328,3 +329,47 @@ async def test_reimportacao_grava_atualizados_e_inalterados_na_linha(session, se
     assert (gravada.inseridos, gravada.atualizados, gravada.inalterados) == (0, 3, 7)
     assert gravada.processados == 10
     assert gravada.rejeitados == 0
+
+
+async def test_corrida_de_lotes_nao_deixa_updated_at_para_tras(session_factory):
+    """A linha perdedora da corrida ganha conteudo E carimbo novos.
+
+    Reproduz a corrida que a docstring de `repositorio` descreve: dois lotes
+    com o mesmo codigo, o segundo fazendo seu SELECT antes de o primeiro
+    comitar. O INSERT do segundo cai no ON CONFLICT DO UPDATE.
+
+    Sem `updated_at` no SET, a linha ficava com o conteudo do segundo lote e o
+    carimbo do primeiro -- dados que mudaram e um `updated_at` jurando que
+    nao. A rotulagem imprecisa (contada como inserida) e custo aceito de D4;
+    o carimbo mentindo para menos nao era.
+    """
+    primeira = session_factory()
+    segunda = session_factory()
+    try:
+        await sincronizar(primeira, [_registro("AP-1")])
+        # Sem commit de proposito: e esta janela, em que a linha existe no
+        # indice mas nao para quem le, que abre a corrida.
+
+        async def segundo_lote() -> None:
+            await sincronizar(segunda, [_registro("AP-1", preco=59_000_000)])
+            await segunda.commit()
+
+        tarefa = asyncio.create_task(segundo_lote())
+        # O INSERT do segundo lote trava no UNIQUE ate o commit do primeiro. A
+        # espera garante os dois lados da corrida e, junto, uma distancia
+        # mensuravel entre os dois carimbos.
+        await asyncio.sleep(0.3)
+        await primeira.commit()
+        await tarefa
+    finally:
+        await primeira.close()
+        await segunda.close()
+
+    async with session_factory() as leitura:
+        imovel = (await leitura.scalars(select(Imovel))).one()
+        assert imovel.preco_venda == 59_000_000
+        # Diferenca > 0.1s, e nao `!=`: os dois server_default sao
+        # clock_timestamp() e nascem microssegundos separados no mesmo INSERT.
+        # Os 0.3s de espera acima so aparecem aqui se o SET do conflito tiver
+        # mexido no carimbo.
+        assert (imovel.updated_at - imovel.created_at).total_seconds() > 0.1

@@ -88,7 +88,13 @@ A RN-08.3 diz que *"alteração apenas de preço ou status não regera embedding
 
 **O inalterado não recebe escrita nenhuma**, nem um toque em `updated_at`. Bumpar o carimbo numa linha que não mudou faria a coluna mentir sobre quando o imóvel mudou pela última vez — e `updated_at` é justamente o que um humano consulta para responder "quando isso mexeu?".
 
-**A corrida, dita em voz alta.** Entre o `SELECT` e o `INSERT`, outro lote pode inserir o mesmo código. O `INSERT` leva `ON CONFLICT (codigo) DO UPDATE` para não levantar, e a linha acaba contada como `inserido` quando de fato foi `atualizado`. Fica assim de propósito: a alternativa seria `SELECT ... FOR UPDATE` sobre códigos que ainda não existem, que não tranca nada. Duas importações simultâneas do mesmo catálogo são operação anômala; a integridade continua garantida pelo `UNIQUE (codigo)` e só a rotulagem de uma linha rara sai imprecisa. Vai como comentário no código, não como nota de rodapé aqui.
+**A corrida, dita em voz alta.** Entre o `SELECT` e o `INSERT`, outro lote pode inserir o mesmo código. O `INSERT` leva `ON CONFLICT (codigo) DO UPDATE` para não levantar, e o que sai torto é duas coisas, não uma: a linha é contada como `inserido` quando de fato foi `atualizado`, **e** o `DO UPDATE` dispara sem consultar o diff — esse caminho não passa por `_mudou`, então um lote concorrente com conteúdo idêntico ainda escreve e ainda move `updated_at`, o oposto do que a regra do inalterado promete no caminho normal.
+
+Fica assim de propósito: a alternativa seria `SELECT ... FOR UPDATE` sobre códigos que ainda não existem, que não tranca nada. Duas importações simultâneas do mesmo catálogo são operação anômala e a integridade continua garantida pelo `UNIQUE (codigo)`. Vai como comentário no código, não como nota de rodapé aqui.
+
+**Emenda da revisão final:** o `SET` do `ON CONFLICT` é montado a partir de `CAMPOS_COMPARADOS`, que exclui `updated_at` de propósito (o diff não pode olhar para ele, senão toda linha pareceria alterada) — e o `SET` herdava essa exclusão. Resultado: a linha perdedora da corrida tinha o conteúdo sobrescrito e o carimbo mantido, uma linha cujos dados mudaram e cujo `updated_at` jura que não. Nesta coluna, mentir para menos é pior que bumpar a mais, então `updated_at` entra no `SET` explicitamente. O texto anterior desta decisão dizia que a corrida custava "só a rotulagem de uma linha rara" — descrevia um perigo menor que o do código, que é a forma de comentário que esta base trata como defeito.
+
+Na mesma emenda, o caminho ORM do atualizado passa a usar `clock_timestamp()` do servidor em vez de `datetime.now(UTC)`: todo outro carimbo deste schema nasce do relógio do banco, e misturar dois relógios na mesma coluna faria a ordem entre duas linhas depender de qual caminho gravou cada uma.
 
 ### D5 — O parser é puro e estrito; a tolerância é só de codificação e delimitador
 
@@ -317,7 +323,7 @@ Três, todas aninhadas sob a regra que alteram, sem tocar no texto de 22/08/2026
 ## Lacunas declaradas
 
 1. **O endpoint fica com autenticação mais fraca que a especificada** até a TEC-201. Um segredo compartilhado não tem expiração, rotação nem papel — quem o tem pode reimportar o catálogo inteiro. Aceito porque a alternativa (não entregar o endpoint) descumpre uma regra Must, e porque o objeto não é dado pessoal.
-2. **A rotulagem inserido/atualizado sai imprecisa sob importação concorrente** (D4). A integridade não sai; só a contagem.
+2. **A rotulagem inserido/atualizado sai imprecisa sob importação concorrente** (D4), e o `DO UPDATE` daquele caminho escreve mesmo quando o conteúdo é idêntico — então uma linha pode ter `updated_at` movido sem ter mudado. A integridade não sai; sai a contagem e, nessa linha rara, a precisão do carimbo.
 3. **A guarda de plausibilidade de preço não é completa.** Um erro de unidade que caia dentro da faixa passa. Ela reduz a classe do bug, não a elimina.
 4. **A distribuição da base simulada é fixa no arquivo.** A TEC-159, se precisar de volume maior para medir o SLA, gera o próprio arquivo no formato que esta card publica.
 5. **Sem `GET /api/v1/imoveis`**, então conferir o resultado de uma importação exige o relatório ou o banco. A listagem é a TEC-197.

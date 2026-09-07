@@ -18,18 +18,31 @@ abordagens sao instantaneas; a diferenca esta em qual deixa o gancho. Ver D4.
 
 **A corrida, dita em voz alta.** Entre o SELECT e o INSERT, outro lote pode
 inserir o mesmo codigo. O INSERT leva ON CONFLICT DO UPDATE para nao levantar,
-e a linha acaba contada como inserida quando de fato foi atualizada. Fica
-assim de proposito: a alternativa seria SELECT ... FOR UPDATE sobre codigos
-que ainda nao existem, que nao tranca nada. Duas importacoes simultaneas do
-mesmo catalogo sao operacao anomala, a integridade continua garantida pelo
-UNIQUE, e so a rotulagem de uma linha rara sai imprecisa.
+e o que sai torto e isto, com todas as letras:
+
+- a linha e **contada como inserida quando de fato foi atualizada**. Erro de
+  rotulagem no relatorio, e nada alem disso;
+- o `DO UPDATE` dispara **sem consultar o diff** -- este caminho nao passa por
+  `_mudou`. Se o conteudo do lote concorrente for identico ao deste, a linha
+  leva um UPDATE e um `updated_at` novo mesmo sem ter mudado, o que e o
+  oposto do que a regra do inalterado promete no caminho normal.
+
+Fica assim de proposito: a alternativa seria SELECT ... FOR UPDATE sobre
+codigos que ainda nao existem, que nao tranca nada. Duas importacoes
+simultaneas do mesmo catalogo sao operacao anomala e a integridade continua
+garantida pelo UNIQUE -- mas o custo NAO e so "a rotulagem de uma linha rara",
+e dizer isso aqui era descrever um perigo menor que o do codigo.
+
+**`updated_at` entra no SET do ON CONFLICT.** Sem ele o conteudo da linha
+perdedora era sobrescrito e o carimbo ficava com o valor antigo: uma linha
+cujos dados mudaram e cujo `updated_at` jura que nao. Nesta coluna, mentir
+para menos e pior que bumpar a mais.
 """
 
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -124,7 +137,13 @@ async def sincronizar(
 
             for campo, valor in valores.items():
                 setattr(existente, campo, valor)
-            existente.updated_at = datetime.now(UTC)
+            # Relogio do servidor, e nao `datetime.now(UTC)`: todo carimbo
+            # deste schema nasce de `clock_timestamp()` (os server_default de
+            # `created_at`/`updated_at`), e o caminho do ON CONFLICT abaixo usa
+            # o mesmo. Misturar o relogio do processo com o do banco na MESMA
+            # coluna faria a ordem entre duas linhas depender de qual caminho
+            # gravou cada uma.
+            existente.updated_at = func.clock_timestamp()
             atualizados += 1
 
         if novos:
@@ -135,7 +154,15 @@ async def sincronizar(
             await session.execute(
                 comando.on_conflict_do_update(
                     index_elements=["codigo"],
-                    set_={campo: comando.excluded[campo] for campo in CAMPOS_COMPARADOS},
+                    set_={
+                        **{campo: comando.excluded[campo] for campo in CAMPOS_COMPARADOS},
+                        # `updated_at` NAO esta em CAMPOS_COMPARADOS (o diff
+                        # nao pode olhar para ele, senao toda linha pareceria
+                        # alterada), mas tem de estar aqui: sem isso a linha
+                        # perdedora da corrida tinha o conteudo sobrescrito e o
+                        # carimbo mantido, e passava a jurar que nao mudou.
+                        "updated_at": func.clock_timestamp(),
+                    },
                 )
             )
 
