@@ -11,6 +11,7 @@ from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
 from mobia.workers.jobs.importar_catalogo import importar_catalogo
+from mobia.workers.jobs.indexar_catalogo import indexar_catalogo
 from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_followups import sweep_followups
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
@@ -41,6 +42,26 @@ async def startup(ctx: dict[str, Any]) -> None:
             "401 da Meta -- falha permanente que fecha a mensagem sem "
             "retentativa, em silencio. Defina no .env ou no ambiente antes de "
             "subir o worker."
+        )
+
+    # TEC-157, D10. Mesma forma da guarda acima, e o mesmo motivo de ela
+    # existir aqui e nao so no `get_client()`: sem chave, o
+    # `ConfiguracaoInsegura` que ele levanta cairia DENTRO do `except
+    # Exception` do laco de lotes da varredura, que loga e segue. Nenhuma
+    # linha seria indexada nunca, o retorno da passagem ociosa jamais
+    # dispararia, e sobraria um aviso por lote a cada 30 segundos, para
+    # sempre -- ruido que some no log em vez de parar o deploy.
+    #
+    # A varredura tem hoje um retorno antecipado que avisa UMA vez, mas ele e
+    # a metade de desenvolvimento da D10: o catalogo simplesmente fica sem
+    # vetor e a busca devolve vazio. Em producao a resposta certa e nao subir.
+    if settings.em_producao and not settings.openai_api_key:
+        raise ConfiguracaoInsegura(
+            "OPENAI_API_KEY nao configurada e ENVIRONMENT="
+            f"{settings.environment}. Sem ela nenhum imovel e indexado e a "
+            "busca semantica devolve vazio, com um aviso por lote a cada 30 "
+            "segundos como unico sintoma. Defina no .env ou no ambiente antes "
+            "de subir o worker."
         )
 
     session_factory = get_sessionmaker()
@@ -86,9 +107,16 @@ class WorkerSettings:
         sweep_stalled,
         sweep_followups,
         importar_catalogo,
+        indexar_catalogo,
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
+        # De 30 em 30 segundos, como a `sweep_stalled` e nao como a
+        # `sweep_followups`: o pre-filtro nao devolve nada quando nao ha
+        # pendencia, entao a passagem ociosa e barata -- e a janela entre
+        # importar e poder buscar e exatamente o que a indexacao eventual
+        # custou. Encurta-la e o uso mais obvio de um cron barato.
+        cron(indexar_catalogo, second={0, 30}, run_at_startup=False),
         # De 5 em 5 minutos, e nao de 30 em 30 segundos como o irmao: o menor
         # intervalo da RN-13.1 e de DUAS HORAS, entao precisao de segundos nao
         # compra nada e custa uma varredura que agrega `messages` a cada

@@ -11,6 +11,19 @@ cp .env.example .env
 docker compose up -d
 ```
 
+**Se você já tinha o volume do Postgres de antes da TEC-157, recrie-o.** A
+imagem passou de `postgres:16-alpine` para `pgvector/pgvector:pg16`, e não
+existe imagem pgvector oficial em Alpine — a troca muda a base de musl para
+glibc. Reaproveitar o data dir arrisca ordenação incorreta de índice de texto,
+porque o collation difere entre as duas. A base local é reproduzível, então o
+custo é baixo e a alternativa é um risco silencioso:
+
+```bash
+docker compose down -v
+docker compose up -d
+python -m alembic upgrade head
+```
+
 ## Comandos
 
 | O quê | Comando |

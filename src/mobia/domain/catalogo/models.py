@@ -9,6 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
@@ -90,6 +91,34 @@ class Imovel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
     )
+
+    # TEC-157. As tres juntas respondem "este vetor ainda vale?" sem que
+    # nenhum caminho de escrita precise avisar que o texto mudou.
+    #
+    # `documento_hash` e o portao preciso: sha256 do documento que gerou o
+    # vetor, com o modelo e a dimensao do provedor dentro do material
+    # hasheado. Se ele difere do hash de hoje, o vetor esta velho -- e trocar
+    # o modelo mantendo a dimensao conta como velho, senao o catalogo
+    # guardaria vetores de dois espacos incompativeis sem sintoma nenhum.
+    # `embedding_atualizado_em` e o pre-filtro barato para mudanca de TEXTO --
+    # comparado contra `updated_at`, evita recalcular hash de linha que
+    # ninguem tocou. `embedding_modelo` e o pre-filtro barato para mudanca de
+    # CONFIGURACAO, e as duas coisas sao necessarias porque uma troca de
+    # modelo no `Settings` nao toca linha nenhuma: sem esta coluna a linha ja
+    # indexada nunca viraria candidata, o hash nunca seria recalculado, e o
+    # catalogo guardaria vetores de dois espacos incompativeis sem sintoma.
+    # O hash segue sendo o portao PRECISO das duas -- cobrir o modelo nos dois
+    # lugares nao e redundancia a simplificar: sao os dois estagios do mesmo
+    # desenho, barato em SQL e exato em Python.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    embedding_atualizado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    documento_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Nulavel pelo mesmo motivo das outras tres (`0018`): linha indexada antes
+    # da coluna existir entra como candidata, o hash bate, e a varredura so
+    # carimba -- conciliacao sem backfill.
+    embedding_modelo: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         CheckConstraint(

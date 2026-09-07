@@ -54,7 +54,7 @@ jobs:
     # para manter em sincronia.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: mobia
           POSTGRES_PASSWORD: mobia
