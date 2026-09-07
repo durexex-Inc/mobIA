@@ -30,7 +30,13 @@ Local, com a venv do projeto:
 ./.venv/Scripts/python.exe -m pytest          # suíte inteira
 ```
 
-**A suíte é lenta, e lentidão aqui parece travamento.** Números medidos em 02/09/2026: `tests/unit` sozinho leva ~7 minutos; a suíte completa, ~7,5 minutos e 857 testes. Com `-q` o pytest só imprime no fim, então um arquivo de saída vazio depois de dez minutos é normal, não deadlock. Para ver progresso, use `python -u -m pytest -v`.
+**A suíte é lenta, e lentidão aqui parece travamento.** Números medidos em 07/09/2026 (TEC-156): a suíte completa leva **~22 minutos e 1236 testes** em máquina ociosa. Com `-q` o pytest só imprime no fim, então um arquivo de saída vazio depois de dez minutos é normal, não deadlock. Para ver progresso, use `python -u -m pytest -v`.
+
+**A suíte cresce rápido — confira a data antes de confiar no número.** Em 02/09/2026 eram 857 testes em ~7,5 minutos; em 04/09, 1140 em ~22 minutos. Quem lê um número velho como se fosse o de hoje mata execuções boas achando que travaram.
+
+**Carga muda a duração em ordem de grandeza, não em percentual.** A mesma árvore que roda em 22 minutos levou **1h12** numa sessão em que onze subagentes já haviam rodado. Não compare durações entre execuções sem saber o que mais estava na máquina.
+
+**Use `-q` só quando não for precisar do diagnóstico.** `-q` imprime apenas o `short test summary info` — o nome do teste que falhou, sem uma linha de traceback. Numa suíte de vinte minutos, descobrir a causa exige rodar tudo de novo. Se você vai ter de diagnosticar o resultado, peça `--tb=short` desde o início.
 
 `addopts = "-m 'not perf'"` no `pyproject.toml` já exclui os testes de latência — medir p95 em runner compartilhado seria flake, não sinal.
 
@@ -40,7 +46,11 @@ Depois de `docker compose restart`, o `alembic upgrade head` reprova por vários
 
 Não é. O socket cru já responde `N` ao SSLRequest e o `psql` interno funciona. Espere e retente antes de diagnosticar qualquer coisa.
 
-**Testes de integração flakeiam sob carga, não isolados.** `test_montagem.py`, `test_sweep_stalled.py` e `test_dedup_por_message_id.py` falham com `ConnectionResetError` ou erro de Redis quando a suíte inteira roda junta, e passam 100% em isolamento. Antes de atribuir uma falha dessas a uma mudança sua, rode o arquivo sozinho.
+**Testes de integração flakeiam sob carga, não isolados.** `test_montagem.py`, `test_sweep_stalled.py`, `test_dedup_por_message_id.py` e `test_optout_repositorio.py` falham com `ConnectionResetError` ou erro de Redis quando a suíte inteira roda junta, e passam 100% em isolamento. Antes de atribuir uma falha dessas a uma mudança sua, rode o arquivo sozinho.
+
+**A evidência que fecha o argumento é a mesma árvore duas vezes.** Rodar isolado ajuda, mas não prova: um teste pode passar sozinho e falhar junto por um defeito real de isolamento. O que descarta regressão é o mesmo commit dando dois resultados — na TEC-156, `b35069d` passou 1236/1236 e, na execução seguinte sobre árvore idêntica e limpa, falhou 1. Guarde o hash junto com o resultado de cada execução.
+
+**Cada tabela nova em `TABELAS` (`tests/conftest.py`) custa um `TRUNCATE ... CASCADE` por teste.** A fixture `banco_limpo` é autouse, então acrescentar duas tabelas numa suíte de 1200 testes são ~2.400 TRUNCATEs a mais. Não introduz incorreção, mas aumenta a contenção de lock que produz os flakes acima.
 
 ## Acentos: onde sim, onde não
 
