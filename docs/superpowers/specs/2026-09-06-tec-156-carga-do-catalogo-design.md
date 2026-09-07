@@ -278,6 +278,10 @@ grava `importacoes(origem='CLI', status='PROCESSANDO')` → `importacao.executar
 
 Sai com `0` mesmo havendo rejeições — o primeiro cenário Gherkin exige que 3 linhas ruins terminem com *"sucesso"*. `--falhar-se-rejeitar` inverte isso, para quem quiser o seed dentro de um pipeline que deva parar.
 
+**Emenda da revisão final — `FALHOU` sai com `1`, com ou sem a flag.** O desfecho da importação vivia só na linha `importacoes`: `Relatorio` não tinha campo de status e a entrada de falha era montada numa lista local de `_concluir`, então o objeto que `executar` devolvia num `FALHOU` era zero em tudo com `erros` vazia — indistinguível de uma importação limpa sobre arquivo vazio. Um `seed --arquivo base.csv --falhar-se-rejeitar` sobre um CSV sem a coluna `codigo` imprimia cinco zeros, nenhum texto de erro, e **saía com `0`**: o pipeline seguia com o catálogo vazio, exatamente o oposto do que a flag promete. E como o `GET` lê a linha durável, era divergência entre as duas entradas de algo que a D2 chama de "o ponto único que as duas chamam".
+
+`Relatorio` passa a ter `status`, e `registrar_falha` marca `FALHOU` e põe o motivo na frente de `erros` — no objeto devolvido e na linha gravada, que agora saem da mesma fonte. Rejeição e falha continuam sendo coisas diferentes: a primeira entregou o resto do catálogo e a flag existe para quem quer parar nela; a segunda não entregou nada. Códigos de saída: `0` sucesso, `1` `FALHOU` ou rejeição com a flag, `2` arquivo inexistente.
+
 **HTTP:**
 
 ```
@@ -306,12 +310,12 @@ Cuidado específico deste repositório: **basename de teste que colida entre `te
 
 | arquivo | cobre |
 |---|---|
-| `tests/unit/test_catalogo_parser.py` | BOM, delimitador `;`, preço decimal, guarda de plausibilidade, enum minúsculo, arrays por `\|`, motivos acumulados numa linha, numeração CSV vs JSON, código repetido no arquivo, JSON malformado |
+| `tests/unit/test_catalogo_parser.py` | BOM, delimitador `;`, preço decimal, guarda de plausibilidade, enum minúsculo, arrays por `\|`, motivos acumulados numa linha, numeração CSV vs JSON, código repetido no arquivo, JSON malformado; limites de coluna (texto longo, `SmallInteger`, `Integer`, `BIGINT`, faixa de coordenada), `NaN`/`Infinity`, numeração com quebra de linha em campo entre aspas, e a ausência deliberada de guarda de faixa em `condominio`/`iptu_mensal` |
 | `tests/unit/test_catalogo_relatorio.py` | os cinco totais fecham; classificação inserido / atualizado / inalterado |
-| `tests/unit/test_seed_catalogo_cli.py` | argparse, exit 0 com rejeições, `--falhar-se-rejeitar`, argumento obrigatório ausente |
+| `tests/unit/test_seed_catalogo_cli.py` | argparse, exit 0 com rejeições, `--falhar-se-rejeitar`, argumento obrigatório ausente, exit 1 em `FALHOU` com e sem a flag, e o motivo da falha impresso |
 | `tests/unit/test_base_simulada.py` | **cenário 4**: o CSV versionado tem ≥500 linhas e atravessa o parser sem uma rejeição sequer — puro, sem banco |
-| `tests/integration/test_catalogo_upsert.py` | **cenário 1** (497 gravados, 3 rejeições com linha e motivo, processo termina com sucesso); **cenário 3** (0 novos, 10 atualizados, 490 inalterados); `UNIQUE` sob reimportação; `updated_at` intocado no inalterado |
-| `tests/integration/test_importacao_http.py` | `202` + id, `GET` do relatório, `403` sem token, `404` em id inexistente, rota ausente quando o token não está configurado |
+| `tests/integration/test_catalogo_upsert.py` | **cenário 1** (497 gravados, 3 rejeições com linha e motivo, processo termina com sucesso); **cenário 3** (0 novos, 10 atualizados, 490 inalterados) e o mesmo cenário pela superfície do produto, com os dois contadores lidos da linha `importacoes` gravada; `UNIQUE` sob reimportação; `updated_at` intocado no inalterado; célula longa rejeitando a linha e não o lote; a corrida de dois lotes deixando conteúdo **e** carimbo novos |
+| `tests/integration/test_importacao_http.py` | `202` + id, `GET` do relatório, `403` sem token, `404` em id inexistente, rota ausente quando o token não está configurado, `503` com a linha em `FALHOU` quando o enqueue não acontece (sem pool e com `enqueue_job` levantando) |
 
 Os quatro cenários Gherkin da card estão cobertos: 1 e 3 em `test_catalogo_upsert.py`, 2 em `test_catalogo_relatorio.py`, 4 em `test_base_simulada.py`.
 
