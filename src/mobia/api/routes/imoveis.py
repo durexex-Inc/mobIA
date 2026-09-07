@@ -35,6 +35,9 @@ async def importar(
 ) -> dict[str, str]:
     conteudo = await arquivo.read()
     if len(conteudo) > TETO_DE_UPLOAD_EM_BYTES:
+        # HTTP_413_CONTENT_TOO_LARGE, nao HTTP_413_REQUEST_ENTITY_TOO_LARGE: e
+        # o mesmo codigo 413, mas o segundo nome esta deprecated nesta versao
+        # do Starlette e emite warning a cada chamada.
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=f"arquivo acima de {TETO_DE_UPLOAD_EM_BYTES} bytes; use a CLI de seed",

@@ -30,6 +30,11 @@ def exigir_admin(x_admin_token: Annotated[str, Header()] = "") -> None:
     em vez de um `if` dentro da rota.
     """
     esperado = get_settings().catalogo_admin_token
+    # `not esperado` curto-circuita antes do compare_digest quando o token nao
+    # esta configurado. Em producao isso nunca dispara sozinho -- main.py so
+    # registra este router quando `catalogo_admin_token` e verdadeiro --, mas
+    # a funcao roda isolada em teste, e sem esta clausula um token vazio
+    # comparado contra um vazio recusado passaria como "correto".
     if not esperado or not secrets.compare_digest(
         x_admin_token.encode("utf-8"), esperado.encode("utf-8")
     ):
