@@ -22,7 +22,6 @@ nenhum reclamasse.
 """
 
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -43,9 +42,18 @@ log = structlog.get_logger(__name__)
 # definicao do documento mora em `documento.py` e a comparacao exata e feita
 # em Python. Um `md5` de colunas concatenadas nesta consulta duplicaria a
 # lista de campos, e a divergencia se manifestaria como vetor velho e mudo.
+#
+# `clock_timestamp()` vai no SELECT, nao e lido do relogio da aplicacao: o
+# carimbo gravado em `embedding_atualizado_em` precisa estar no MESMO relogio
+# que `updated_at` (gravado em `repositorio.py` via `func.clock_timestamp()`),
+# senao a comparacao `updated_at > embedding_atualizado_em` compara relogios
+# diferentes e deixa de ser invariante. Lido na mesma instrucao que seleciona
+# e trava as linhas, o valor nunca pode ser mais tarde que o instante em que
+# o documento foi lido -- nem mesmo se um importador bloqueado no FOR UPDATE
+# gravar `updated_at` no instante em que o rollback abaixo solta o lock.
 _SELECIONAR_PENDENTES = text(
     """
-    SELECT id
+    SELECT id, clock_timestamp() AS lido_em
       FROM imoveis
      WHERE embedding IS NULL
         OR documento_hash IS NULL
@@ -74,13 +82,18 @@ async def indexar_catalogo(ctx: dict[str, Any], limite: int | None = None) -> in
 
     async with session_factory() as session:
         resultado = await session.execute(_SELECIONAR_PENDENTES, {"limite": teto})
-        identificadores = [linha.id for linha in resultado]
+        linhas = list(resultado)
+        identificadores = [linha.id for linha in linhas]
 
         if not identificadores:
             # A passagem ociosa e barata de proposito: nesta cadencia, a
             # consulta que nao devolve nada e o caso comum.
             await session.rollback()
             return 0
+
+        # Um unico valor para toda a passagem -- ver o comentario acima da
+        # consulta sobre por que vem do relogio do banco.
+        lido_em = linhas[0].lido_em
 
         # Carregados pelo ORM, e nao por `SELECT *` cru: `embedding` e uma
         # coluna `Vector`, e reconstruir `Imovel(**linha)` de um mapping
@@ -114,11 +127,10 @@ async def indexar_catalogo(ctx: dict[str, Any], limite: int | None = None) -> in
         # mesmo motivo que a `sweep_stalled` documenta: segurar lock de linha
         # no Postgres enquanto se fala com um provedor externo e ruim por si
         # so. A exclusao entre varreduras concorrentes nao depende de manter
-        # o lock -- ver o `SKIP LOCKED` acima e o teste de concorrencia.
+        # o lock -- ver o `SKIP LOCKED` acima.
         await session.rollback()
 
     embeddados = 0
-    agora = datetime.now(UTC)
 
     for inicio in range(0, len(pendentes), lote_maximo):
         lote = pendentes[inicio : inicio + lote_maximo]
@@ -126,20 +138,34 @@ async def indexar_catalogo(ctx: dict[str, Any], limite: int | None = None) -> in
         try:
             vetores = await embedar([texto for _, texto, _ in lote])
         except Exception as erro:
-            # Loga o porque e RELEVANTA. Nao engolir e deliberado: a linha
-            # continua pendente e a proxima passagem a pega, entao a falha
-            # nao precisa de tratamento -- precisa de registro. O motivo vem
-            # de `motivo_do_provedor`, que so devolve texto para erro de
-            # protocolo do provedor; para qualquer outra excecao devolve None,
-            # porque `str(exc)` arbitrario pode carregar o que nao deve ir
-            # para log.
+            # Loga e CONTINUA para o proximo lote -- nao propaga. A consulta
+            # ordena por `updated_at`, entao um documento com problema nao
+            # retentavel (texto grande demais, conteudo recusado --
+            # MAX_TENTATIVAS = 1 dispensa retry do proprio provedor) tende a
+            # cair sempre no primeiro lote de cada passagem; um `raise` aqui
+            # abortaria a passagem inteira e junto todo lote seguinte,
+            # inclusive imoveis alterados mais recentemente que ordenam
+            # depois -- o catalogo pararia de indexar por inteiro por causa
+            # de uma linha, com um unico warning por cron como sintoma. O
+            # molde da `sweep_stalled` faz o mesmo: loga e segue. A linha
+            # deste lote continua pendente e a proxima passagem a pega -- e
+            # essa retomada entre passagens, nao um retry dentro desta, e o
+            # "a reindexacao fica pendente e e retomada" da card. Um contador
+            # de falhas por linha (no molde de `sweep_max_attempts`) e
+            # follow-up, nao esta card. O motivo vem de `motivo_do_provedor`,
+            # que so devolve texto para erro de protocolo do provedor; para
+            # qualquer outra excecao devolve None, porque `str(exc)`
+            # arbitrario pode carregar o que nao deve ir para log -- por isso
+            # o tipo da excecao tambem vai pro log, para nao perder o sinal
+            # quando o motivo sai None.
             log.warning(
                 "indexacao_do_catalogo_falhou",
                 lote=len(lote),
                 embeddados_antes=embeddados,
                 motivo=motivo_do_provedor(erro),
+                tipo=type(erro).__name__,
             )
-            raise
+            continue
 
         async with session_factory() as escrita:
             for (identificador, _, digest), vetor in zip(lote, vetores, strict=True):
@@ -149,7 +175,7 @@ async def indexar_catalogo(ctx: dict[str, Any], limite: int | None = None) -> in
                     .values(
                         embedding=vetor,
                         documento_hash=digest,
-                        embedding_atualizado_em=agora,
+                        embedding_atualizado_em=lido_em,
                     )
                 )
             # Commit por lote: uma falha no lote seguinte preserva este.
@@ -161,7 +187,7 @@ async def indexar_catalogo(ctx: dict[str, Any], limite: int | None = None) -> in
             await escrita.execute(
                 update(Imovel)
                 .where(Imovel.id.in_(carimbar_apenas))
-                .values(embedding_atualizado_em=agora)
+                .values(embedding_atualizado_em=lido_em)
             )
             await escrita.commit()
 
