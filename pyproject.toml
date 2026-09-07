@@ -5,6 +5,10 @@ description = "Agente de IA para qualificacao de leads imobiliarios"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
+    # Exigido pelo FastAPI para decodificar multipart/form-data -- o upload de
+    # arquivo do endpoint de importacao (TEC-156) so funciona com isto
+    # instalado; sem ele a rota levanta RuntimeError na primeira requisicao.
+    "python-multipart>=0.0.12",
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",

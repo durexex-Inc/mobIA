@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from mobia.app.config import (
     CHAVE_DE_DESENVOLVIMENTO,
+    TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO,
     ConfiguracaoInsegura,
     Settings,
     get_settings,
@@ -146,6 +147,48 @@ def test_desenvolvimento_segue_com_o_default(monkeypatch: pytest.MonkeyPatch) ->
     settings = Settings(_env_file=None)
     assert settings.environment == "development"
     assert settings.content_encryption_key == CHAVE_DE_DESENVOLVIMENTO
+
+
+def test_producao_com_o_token_de_catalogo_de_desenvolvimento_nao_sobe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Token de catalogo de dev em producao deixa o catalogo gravavel por quem o leu.
+
+    Mesmo molde da guarda da chave de cifra: o valor de desenvolvimento esta
+    no `.env.example`, versionado, e por isso conhecido de qualquer um que
+    clonou o repo.
+    """
+    # CONTENT_ENCRYPTION_KEY precisa de um valor proprio aqui -- sem isso a
+    # guarda da chave de cifra (que roda antes desta) dispara primeiro, e o
+    # teste acabaria verificando a mensagem errada.
+    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO)
+    with pytest.raises(ConfiguracaoInsegura) as erro:
+        Settings(_env_file=None)
+
+    assert "CATALOGO_ADMIN_TOKEN" in str(erro.value)
+    assert TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO not in str(erro.value)
+
+
+def test_producao_com_token_de_catalogo_proprio_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    token = "token-de-producao-gerado-com-secrets"
+    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", token)
+    settings = Settings(_env_file=None)
+    assert settings.catalogo_admin_token == token
+
+
+def test_desenvolvimento_segue_com_o_token_de_catalogo_de_desenvolvimento(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guarda nao pode travar a maquina de ninguem nem o CI."""
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO)
+    settings = Settings(_env_file=None)
+    assert settings.environment == "development"
+    assert settings.catalogo_admin_token == TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO
 
 
 def test_defaults_da_janela_de_contexto(settings) -> None:

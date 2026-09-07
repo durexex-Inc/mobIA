@@ -10,6 +10,7 @@ from mobia.domain.outbound.whatsapp import WhatsAppOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
+from mobia.workers.jobs.importar_catalogo import importar_catalogo
 from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_followups import sweep_followups
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
@@ -76,7 +77,16 @@ class WorkerSettings:
     e usa so a do worker.
     """
 
-    functions = [func(process_message, keep_result=0), sweep_stalled, sweep_followups]
+    # `importar_catalogo` entra sem `func(..., keep_result=0)`: o resultado do
+    # job nao carrega nada -- o relatorio mora em `importacoes`, e e de la que
+    # o GET o le. Nao entra em `cron_jobs` tambem: importacao e disparada por
+    # quem envia o arquivo, nunca por relogio.
+    functions = [
+        func(process_message, keep_result=0),
+        sweep_stalled,
+        sweep_followups,
+        importar_catalogo,
+    ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
         # De 5 em 5 minutos, e nao de 30 em 30 segundos como o irmao: o menor

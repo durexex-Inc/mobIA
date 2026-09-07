@@ -18,6 +18,7 @@
 > | E-01 | RN-13.4 | [TEC-183](https://eduardodurieuxlopes.atlassian.net/browse/TEC-183) | 03/09/2026 |
 > | E-01 | RN-13.3 | [TEC-185](https://eduardodurieuxlopes.atlassian.net/browse/TEC-185) | 04/09/2026 |
 > | E-01 | RN-13.7 | [TEC-188](https://eduardodurieuxlopes.atlassian.net/browse/TEC-188) | 04/09/2026 |
+> | E-01 | RN-08.5, RN-08.1, Seção 6.3 (`POST /api/v1/imoveis/importar`) | [TEC-156](https://eduardodurieuxlopes.atlassian.net/browse/TEC-156) | 06/09/2026 |
 
 ---
 
@@ -235,10 +236,12 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 
 **Regras de negócio:**
 - RN-08.1: Carga por arquivo CSV/JSON via CLI de seed e por endpoint administrativo. A POC vem com base simulada de no mínimo 500 imóveis, gerada com distribuição realista de bairros, preços e tipologias.
+  - **Emenda E-01 (TEC-156, 06/09/2026):** o contrato do arquivo, que a regra chama apenas de "CSV/JSON", é: colunas nomeadas em `snake_case` com cabeçalho obrigatório e ordem livre; preços em **reais com decimais** (`580000.00`), convertidos a centavos na borda com `Decimal`; `|` como separador de `caracteristicas` e `fotos`; enums em maiúscula exata, sem normalização; leitura em `utf-8-sig`; delimitador `,` ou `;` detectado pelo cabeçalho. JSON é lista de objetos com as mesmas chaves, sem envelope. A guarda de plausibilidade de preço — recusa fora da faixa `[R$ 1.000, R$ 500.000.000]` — se aplica só a `preco_venda` e `preco_aluguel`: `condominio` e `iptu_mensal` são cobranças mensais, e um condomínio de R$ 850 ou um IPTU de R$ 320 são o comum, não a exceção — um piso de R$ 1.000 rejeitaria quase todo imóvel real nesses dois campos. Os dois são convertidos a centavos com o mesmo `Decimal`, mas sem guarda de faixa nenhuma. **Consequência declarada:** valor que não parseia vira rejeição visível, nunca campo vazio — o oposto do módulo de valores monetários da RN-05, que erra por falta porque a entrada dele é fala de lead. Mas um erro de unidade em `condominio` (alguém digitando centavos num campo de reais) passa em silêncio — é a mesma classe de erro que a guarda de `preco_venda`/`preco_aluguel` existe para pegar, só que num campo menos visível no relatório. As duas tolerâncias de leitura (BOM e delimitador) são sobre conseguir ler a célula, nunca sobre o que há dentro dela.
 - RN-08.2: Cada imóvel gera um documento textual normalizado (descrição + características + bairro + diferenciais) que é embeddado e armazenado com `pgvector`.
 - RN-08.3: Reindexação automática ao criar ou atualizar imóvel. Alteração apenas de preço ou status não regera embedding (economia de custo) — só campos textuais o fazem.
 - RN-08.4: Imóvel com status ≠ `DISPONIVEL` é excluído dos resultados de busca, mas mantido no banco para histórico.
 - RN-08.5: Ingestão registra falhas por linha sem abortar o lote; ao final devolve relatório com total processado, inserido, atualizado e rejeitado.
+  - **Emenda E-01 (TEC-156, 06/09/2026):** o relatório traz **cinco** totais, e não quatro: `processados`, `inseridos`, `atualizados`, `inalterados` e `rejeitados`, com `processados = inseridos + atualizados + inalterados + rejeitados`. O quinto existe porque o critério de aceite CA-08.1 da própria história fixa o significado de `atualizados`: reimportar 500 imóveis com 10 preços alterados deve reportar **10** atualizados, não 500. Isso obriga `atualizados` a contar linhas cujo conteúdo mudou de fato, e não linhas que casaram com um código já existente — e deixa as 490 restantes sem categoria nos quatro totais originais. **Consequência declarada:** um relatório de reimportação sem alterações mostra `processados` igual a `inalterados` e zeros no resto, o que antes era indistinguível de "nada foi processado". A detecção campo a campo que o quinto total exige é a mesma que a RN-08.3 usa para decidir se regera o embedding.
 
 **Critérios de aceite:**
 - CA-08.1: Dado um CSV com 500 imóveis e 3 linhas inválidas, quando importado, então 497 são indexados, o relatório aponta as 3 falhas com o motivo e o processo não aborta.
@@ -1033,6 +1036,7 @@ Entrada:
 #### POST /api/v1/imoveis/importar
 Autenticação: Bearer JWT | Papel: `ADMIN` | `multipart/form-data` com CSV ou JSON.
 `202 Accepted`: `{ "importacaoId": "uuid", "status": "PROCESSANDO" }`
+  - **Emenda E-01 (TEC-156, 06/09/2026):** enquanto a TEC-201 não existir, a autenticação deste endpoint é o header `X-Admin-Token`, comparado em tempo constante com `CATALOGO_ADMIN_TOKEN`; token ausente ou errado devolve `403`. **Com a variável vazia o router não é registrado**, e a rota devolve `404` — rota que não existe não pode ser exposta por engano de configuração, o que uma rota respondendo `401` não garante. `Bearer JWT | Papel: ADMIN` continua sendo o alvo: a TEC-201 troca o corpo da dependência `exigir_admin` e nenhum handler muda. **Consequência declarada:** um segredo compartilhado não tem expiração, rotação nem papel — quem o tem pode reimportar o catálogo inteiro. Aceito porque o objeto é o catálogo de imóveis e não dado pessoal, ao contrário da reativação de opt-out da TEC-182, que por isso ficou sem rota HTTP.
 #### GET /api/v1/imoveis/importacoes/{id} → `{ "status": "CONCLUIDO", "processados": 500, "inseridos": 497, "rejeitados": 3, "erros": [{ "linha": 12, "motivo": "preco_venda ausente" }] }` (RN-08.5)
 
 #### POST /api/v1/imoveis · PATCH /api/v1/imoveis/{id} · DELETE /api/v1/imoveis/{id}
