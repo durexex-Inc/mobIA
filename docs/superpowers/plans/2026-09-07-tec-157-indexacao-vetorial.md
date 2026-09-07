@@ -1223,17 +1223,13 @@ git commit -m "test(TEC-157): mudanca de preco nao gera chamada, e o teste separ
 
 - [ ] **Step 1: Escrever os três testes**
 
-Primeiro acrescente ao topo do arquivo os dois imports que esta task passa a usar:
+Primeiro acrescente ao topo do arquivo o import que esta task passa a usar:
 
 ```python
 import asyncio
 ```
 
-e, no grupo de terceiros:
-
-```python
-import pytest
-```
+`import pytest` **não** entra: depois da correção da Task 4 o job não relevanta mais, então não há `pytest.raises` aqui, e import sem uso é `F401`.
 
 Então os testes:
 
@@ -1256,8 +1252,12 @@ async def test_imovel_vendido_tambem_e_indexado(session: Any) -> None:
 async def test_falha_do_provedor_deixa_a_linha_pendente(session: Any) -> None:
     identificador = await _imovel(session)
 
-    with pytest.raises(RuntimeError):
-        await indexar_catalogo(_ctx(EmbedadorFake(falhar=True)))
+    # NAO levanta, e isso e deliberado. Relevantar faria um documento que o
+    # provedor rejeita de forma permanente abortar a passagem inteira -- e com
+    # `ORDER BY updated_at` ele cai no lote 1 de TODA passagem, entao nada mais
+    # no catalogo seria indexado nunca, com um warning por tick como unico
+    # sintoma. O job loga e segue, no molde do `sweep_stalled`.
+    assert await indexar_catalogo(_ctx(EmbedadorFake(falhar=True))) == 0
 
     async with get_sessionmaker()() as leitura:
         imovel = await leitura.scalar(select(Imovel).where(Imovel.id == identificador))
