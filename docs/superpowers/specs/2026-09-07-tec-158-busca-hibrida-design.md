@@ -32,9 +32,11 @@ A história é da Marina: *"como quem disse até quanto posso pagar, quero ver s
 
 ## Decisões
 
-### D1 — Uma consulta, com a fase estruturada em CTE e o score no `ORDER BY`
+### D1 — Uma consulta, com o filtro no `WHERE` e o score no `ORDER BY`
 
-As duas fases da RN-09.1 são **uma instrução**: uma CTE com o filtro estruturado, e a similaridade calculada sobre ela. "Antes" na regra é ordem de avaliação, não número de viagens ao banco.
+As duas fases da RN-09.1 são **uma instrução**: o filtro estruturado no `WHERE`, e a similaridade calculada sobre o que sobreviveu a ele. "Antes" na regra é ordem de avaliação, não número de viagens ao banco — e o Postgres avalia `WHERE` antes de qualquer expressão de `ORDER BY`, então a garantia da regra é a semântica do SQL e não uma construção que a imite.
+
+**E não é preciso CTE para isso.** A primeira versão desta decisão aninhava o filtro numa CTE para que a aderência pudesse referenciar um alias de preço. Não precisa: a aderência referencia a **coluna** de preço diretamente (`preco_venda` ou `preco_aluguel`, escolhida pela D2), e um `SELECT` plano com as duas expressões no `ORDER BY` tem exatamente a mesma semântica com um nível menos de aninhamento. Fica registrado porque um desenho que descreve uma CTE que o código não tem é a mesma classe de defeito que um comentário desatualizado.
 
 Duas alternativas recusadas:
 
@@ -43,37 +45,31 @@ Duas alternativas recusadas:
 
 **A consulta é montada com o Core do SQLAlchemy, e não com `text()` cru** — e aqui o desenho **diverge do molde das varreduras** (`sweep_stalled`, `indexar_catalogo`), que usam SQL cru. O motivo é que aquelas têm **uma** forma fixa e esta tem seis filtros independentemente opcionais. Escrever isso em `text()` obriga a `(:preco_max IS NULL OR preco_venda <= :preco_max)` em cada cláusula, e esse predicado entrega ao planejador uma condição que ele **não pode podar** — o plano genérico passa a considerar a coluna filtrada mesmo quando o parâmetro é nulo. Isso é ruim justamente na card seguinte, que mede p95. Com o Core, só as condições presentes entram no `WHERE`, e `Imovel.embedding.cosine_distance(...)` do `pgvector.sqlalchemy` dá o operador tipado sem `bindparam` escrito à mão para vetor e para array.
 
-Forma da consulta, em SQL equivalente:
+Forma da consulta, em SQL equivalente (`{coluna_preco}` é `preco_venda` ou `preco_aluguel`, e as quatro cláusulas marcadas só entram quando o chamador informou o valor):
 
 ```sql
-WITH filtrado AS (
-  SELECT id, codigo, titulo, bairro, quartos, vagas, area_util_m2,
-         {coluna_preco} AS preco, embedding
-    FROM imoveis
-   WHERE status = 'DISPONIVEL'                       -- RN-08.4, e nao e parametro (D3)
-     AND operacao = ANY(:operacoes)                  -- [:operacao, 'AMBOS'] (D2)
-     AND {coluna_preco} IS NOT NULL
-     -- e so as condicoes que o chamador informou:
-     AND {coluna_preco} <= :preco_max
-     AND {coluna_preco} >= :preco_min
-     AND tipo = :tipo
-     AND quartos >= :quartos
-     AND vagas >= :vagas
-     AND (bairro_busca = ANY(:regioes) OR zona = ANY(:zonas))   -- D4
-), pontuado AS (
-  SELECT *,
-         COALESCE(GREATEST(0, 1 - (embedding <=> :vetor)), 0) AS similaridade,
-         CASE WHEN :preco_max IS NULL THEN 1
-              ELSE GREATEST(0, 1 - abs(preco - :preco_max)::float8 / :preco_max)
-         END AS aderencia
-    FROM filtrado
-)
-SELECT *, round((0.6 * similaridade + 0.4 * aderencia)::numeric, 3) AS score,
-          count(*) OVER () AS total_candidatos
-  FROM pontuado
+SELECT id, codigo, titulo, bairro, quartos, vagas, area_util_m2,
+       {coluna_preco} AS preco,
+       embedding IS NOT NULL AS tem_vetor,
+       round((0.6 * COALESCE(GREATEST(0, 1 - (embedding <=> :vetor)), 0)
+            + 0.4 * GREATEST(0, 1 - abs({coluna_preco} - :teto)::float8 / :teto)
+             )::numeric, 3) AS score,
+       count(*) OVER () AS total_candidatos
+  FROM imoveis
+ WHERE status = 'DISPONIVEL'                        -- RN-08.4, e nao e parametro (D3)
+   AND operacao = ANY(:operacoes)                   -- [:operacao, 'AMBOS'] (D2)
+   AND {coluna_preco} IS NOT NULL
+   AND {coluna_preco} <= :teto                      -- so se informado
+   AND {coluna_preco} >= :piso                      -- so se informado
+   AND tipo = :tipo                                 -- so se informado
+   AND quartos >= :quartos                          -- so se informado
+   AND vagas >= :vagas                              -- so se informado
+   AND (bairro_busca = ANY(:regioes) OR zona = ANY(:zonas))   -- so se informado, D4
  ORDER BY score DESC, id
  LIMIT :limite
 ```
+
+Sem teto informado, o termo da aderência é a constante `1` (D7).
 
 **`count(*) OVER ()` e não um `COUNT` separado.** O contrato da seção 6.3 devolve `totalCandidatos`, que é a contagem **antes** do teto de 10. A função de janela é avaliada antes do `LIMIT`, então o número sai na mesma passagem; uma segunda consulta pagaria o filtro duas vezes para devolver um inteiro.
 
@@ -290,11 +286,10 @@ Saída:
 
 TDD. Os nomes de arquivo são distintos entre `unit` e `integration` de propósito: basename repetido aborta a coleta da suíte inteira, não aparece em execução isolada, e já custou duas cards.
 
-**`tests/unit/test_busca_pontuacao.py`** — sobre as funções puras:
+**A aderência é testada sobre linhas reais, e não em unitário.** Ela existe **uma vez**, como expressão SQL montada em Python — porque o score tem de estar no `ORDER BY` para o `LIMIT` significar algo, então o cálculo mora no banco. Uma função Python gêmea que devolvesse o mesmo número seria uma segunda definição da mesma regra, exatamente o que a D3 da TEC-157 recusou — e o unitário sobre ela testaria uma função que a consulta não usa. Os valores da D7 (1,0 no teto; 0,5 na metade; 0,9 a 10% acima) são afirmados no arquivo de integração, contra o que realmente roda.
 
-- aderência sem teto informado vale 1 para todos, e o score vira similaridade pura;
-- aderência no teto vale 1,0; na metade do orçamento, 0,5; a 10% acima do teto, 0,9 — este último é o que amarra a D7 ao relaxamento da TEC-160 antes de ele existir;
-- aderência é presa em 0 e nunca negativa;
+**`tests/unit/test_busca_pontuacao.py`** — sobre o que é de fato puro:
+
 - `dobrar` é idempotente, e dobra cedilha junto com acento;
 - `dobrar` **não** come prefixo de referência — `"estacao vila madalena"` sai inteira, ao contrário de `normalizar_regiao` (D6);
 - as zonas derivadas de `"zona sul"`, `"sul"`, `"centro"` e `"moema"` — a última não deriva nenhuma;
@@ -308,6 +303,8 @@ TDD. Os nomes de arquivo são distintos entre `unit` e `integration` de propósi
 - **cenário 4:** cada candidato traz `id` e preço lidos do banco;
 - imóvel `operacao = AMBOS` entra na busca de `VENDA`, e imóvel de `ALUGUEL` não;
 - busca de `ALUGUEL` compara `preco_aluguel` — o imóvel de R$ 580.000 de venda e R$ 3.000 de aluguel entra numa faixa de "até R$ 4.000" e não numa de "até R$ 600.000" de aluguel;
+- **os três valores da aderência**, medidos no `score` que a consulta devolve: imóvel no teto, na metade do orçamento, e 10% acima dele (este só alcançável quando a TEC-160 relaxar, e afirmado agora para que a D7 já esteja amarrada);
+- aderência presa em 0 e nunca negativa, e busca sem teto informado ordenando por similaridade pura;
 - imóvel com `embedding NULL` **entra**, e ordena atrás de um vetorizado com similaridade positiva (D8);
 - **embedador que levanta devolve candidatos filtrados, não erro** — a asserção que a D9 tornou necessária ao trocar topologia por decisão;
 - busca sem `consulta_texto` não chama o embedador nenhuma vez, e ordena por aderência;
