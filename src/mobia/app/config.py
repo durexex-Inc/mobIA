@@ -221,6 +221,11 @@ class Settings(BaseSettings):
     # TEC-157. A chave do provedor de embedding, que NAO e a da Anthropic: a
     # API da Anthropic nao tem endpoint de embeddings, entao a indexacao usa
     # um segundo provedor e o agente segue no `infra/anthropic.py`.
+    #
+    # Sem valor, o `startup` do worker RECUSA subir em producao (D10) e a
+    # varredura avisa uma unica vez em desenvolvimento. Nao ha default: uma
+    # chave falsa faria o provedor recusar a cada lote, que e o mesmo estrago
+    # com sintoma pior.
     openai_api_key: str | None = None
 
     # 1536 nao e ajustavel a gosto: e a dimensao da coluna `vector(1536)` da
@@ -259,6 +264,18 @@ class Settings(BaseSettings):
     # volta dele virar um erro silencioso de uma hora em todo disparo.
     followup_fuso: str = "America/Sao_Paulo"
 
+    @property
+    def em_producao(self) -> bool:
+        """O unico lugar que decide o que "producao" quer dizer.
+
+        Os dois validators abaixo e a guarda de `OPENAI_API_KEY` no
+        `workers/main.py` (TEC-157) fazem a mesma pergunta. Tres copias de
+        `environment.strip().lower() in _AMBIENTES_DE_PRODUCAO` divergiriam no
+        dia em que alguem aceitasse mais um nome de ambiente em uma delas so --
+        e a divergencia apareceria como guarda que nao guarda.
+        """
+        return self.environment.strip().lower() in _AMBIENTES_DE_PRODUCAO
+
     @model_validator(mode="after")
     def _recusar_chave_de_desenvolvimento_em_producao(self) -> "Settings":
         """Fica no validator, e nao no `create_app`, para valer em todo processo.
@@ -269,10 +286,7 @@ class Settings(BaseSettings):
         passa pelo `create_app`. Aqui a guarda pega API, worker, alembic e
         qualquer script que construa `Settings`.
         """
-        if (
-            self.environment.strip().lower() in _AMBIENTES_DE_PRODUCAO
-            and self.content_encryption_key == CHAVE_DE_DESENVOLVIMENTO
-        ):
+        if self.em_producao and self.content_encryption_key == CHAVE_DE_DESENVOLVIMENTO:
             raise ConfiguracaoInsegura(
                 "CONTENT_ENCRYPTION_KEY esta com o default de desenvolvimento e "
                 f"ENVIRONMENT={self.environment}. Gere uma chave de 32 bytes: "
@@ -290,10 +304,7 @@ class Settings(BaseSettings):
         -- e por isso a guarda nao precisa existir para o token VAZIO, que
         apenas desliga a rota.
         """
-        if (
-            self.environment.strip().lower() in _AMBIENTES_DE_PRODUCAO
-            and self.catalogo_admin_token == TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO
-        ):
+        if self.em_producao and self.catalogo_admin_token == TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO:
             raise ConfiguracaoInsegura(
                 "CATALOGO_ADMIN_TOKEN esta com o default de desenvolvimento e "
                 f"ENVIRONMENT={self.environment}. Gere um token: "

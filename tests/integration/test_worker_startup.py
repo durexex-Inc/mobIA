@@ -1,3 +1,4 @@
+import base64
 import signal
 
 import pytest
@@ -33,6 +34,53 @@ async def test_startup_sobe_com_token_configurado(
     assert "classificador" in ctx
     assert "resumidor" in ctx
     assert "contador" in ctx
+
+
+def _producao(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Producao COM os outros segredos proprios.
+
+    Sem isto os validators de `Settings` recusariam antes, pela chave de cifra
+    e pelo token de catalogo de desenvolvimento, e o teste passaria pelo
+    motivo errado.
+    """
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+
+
+async def test_startup_recusa_subir_em_producao_sem_a_chave_de_embedding(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """D10, a metade "recusa em producao".
+
+    Sem a chave o `get_client()` so levantaria dentro do `except Exception` do
+    laco de lotes da varredura, que loga e segue: nenhum imovel seria indexado
+    nunca, a busca semantica devolveria vazio e o unico sintoma seria um aviso
+    por lote a cada 30 segundos. A guarda barra antes de qualquer job rodar.
+    """
+    _producao(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+    with pytest.raises(ConfiguracaoInsegura, match="OPENAI_API_KEY"):
+        await startup({})
+
+
+async def test_startup_sobe_em_desenvolvimento_sem_a_chave_de_embedding(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """A outra metade da D10: fora de producao a ausencia nao trava ninguem.
+
+    "Falhar alto" e "nao poluir o log a cada 30 segundos" nao cabem juntos num
+    cron -- em desenvolvimento quem avisa e a varredura, uma unica vez.
+    """
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+    ctx: dict = {}
+    await startup(ctx)
+
+    assert ctx["settings"].openai_api_key in (None, "")
 
 
 def test_sweep_followups_esta_registrado_no_cron_de_cinco_em_cinco_minutos() -> None:

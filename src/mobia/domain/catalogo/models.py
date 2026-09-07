@@ -96,7 +96,10 @@ class Imovel(Base):
     # nenhum caminho de escrita precise avisar que o texto mudou.
     #
     # `documento_hash` e o portao preciso: sha256 do documento que gerou o
-    # vetor. Se ele difere do hash do documento de hoje, o vetor esta velho.
+    # vetor, com o modelo e a dimensao do provedor dentro do material
+    # hasheado. Se ele difere do hash de hoje, o vetor esta velho -- e trocar
+    # o modelo mantendo a dimensao conta como velho, senao o catalogo
+    # guardaria vetores de dois espacos incompativeis sem sintoma nenhum.
     # `embedding_atualizado_em` e o pre-filtro barato -- comparado contra
     # `updated_at`, evita recalcular hash de linha que ninguem tocou.
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)

@@ -44,6 +44,26 @@ async def startup(ctx: dict[str, Any]) -> None:
             "subir o worker."
         )
 
+    # TEC-157, D10. Mesma forma da guarda acima, e o mesmo motivo de ela
+    # existir aqui e nao so no `get_client()`: sem chave, o
+    # `ConfiguracaoInsegura` que ele levanta cairia DENTRO do `except
+    # Exception` do laco de lotes da varredura, que loga e segue. Nenhuma
+    # linha seria indexada nunca, o retorno da passagem ociosa jamais
+    # dispararia, e sobraria um aviso por lote a cada 30 segundos, para
+    # sempre -- ruido que some no log em vez de parar o deploy.
+    #
+    # A varredura tem hoje um retorno antecipado que avisa UMA vez, mas ele e
+    # a metade de desenvolvimento da D10: o catalogo simplesmente fica sem
+    # vetor e a busca devolve vazio. Em producao a resposta certa e nao subir.
+    if settings.em_producao and not settings.openai_api_key:
+        raise ConfiguracaoInsegura(
+            "OPENAI_API_KEY nao configurada e ENVIRONMENT="
+            f"{settings.environment}. Sem ela nenhum imovel e indexado e a "
+            "busca semantica devolve vazio, com um aviso por lote a cada 30 "
+            "segundos como unico sintoma. Defina no .env ou no ambiente antes "
+            "de subir o worker."
+        )
+
     session_factory = get_sessionmaker()
     ctx["settings"] = settings
     ctx["session_factory"] = session_factory

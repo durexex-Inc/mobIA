@@ -29,7 +29,14 @@ dependencies = [
     # O tipo `Vector` do SQLAlchemy. Sem ele a coluna `embedding` teria de
     # ficar fora do ORM e ser escrita por SQL cru, e a TEC-158 precisaria
     # dela mapeada para a busca.
-    "pgvector>=0.3.6",
+    #
+    # O piso e 0.4 e nao 0.3.6: em 0.3.x a coluna `Vector` desserializa para
+    # `numpy.ndarray`, e nao para lista. O anotado em `models.py`
+    # (`Mapped[list[float] | None]`) passaria a mentir, e pior -- toda
+    # checagem de verdade ou igualdade sobre o vetor lido (`if imovel.embedding`,
+    # `== outro`) levanta ou devolve array em vez de bool, que e o caminho que
+    # a busca da TEC-158 vai percorrer.
+    "pgvector>=0.4",
 ]
 
 [project.optional-dependencies]

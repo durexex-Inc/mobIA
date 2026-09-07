@@ -9,6 +9,12 @@ import uuid
 from mobia.domain.catalogo.documento import documento_de, hash_do_documento
 from mobia.domain.catalogo.models import Imovel
 
+# Os defaults de `Settings`. Ficam aqui como literais, e nao importados de
+# `Settings`, porque o teste do modelo abaixo precisa de DOIS valores e
+# porque um teste de funcao pura nao deve depender do ambiente de quem roda.
+MODELO = "text-embedding-3-small"
+DIMENSOES = 1536
+
 
 def _imovel(**sobrescritas: object) -> Imovel:
     campos: dict[str, object] = {
@@ -95,21 +101,46 @@ def test_os_seis_campos_que_entram_estao_no_documento() -> None:
 
 
 def test_o_hash_nao_muda_quando_so_o_preco_muda() -> None:
-    antes = hash_do_documento(documento_de(_imovel(preco_venda=74900000)))
-    depois = hash_do_documento(documento_de(_imovel(preco_venda=69900000)))
+    antes = hash_do_documento(documento_de(_imovel(preco_venda=74900000)), MODELO, DIMENSOES)
+    depois = hash_do_documento(documento_de(_imovel(preco_venda=69900000)), MODELO, DIMENSOES)
 
     assert antes == depois
 
 
 def test_o_hash_muda_quando_a_descricao_muda() -> None:
-    antes = hash_do_documento(documento_de(_imovel()))
-    depois = hash_do_documento(documento_de(_imovel(descricao="Reformado em 2026.")))
+    antes = hash_do_documento(documento_de(_imovel()), MODELO, DIMENSOES)
+    depois = hash_do_documento(
+        documento_de(_imovel(descricao="Reformado em 2026.")), MODELO, DIMENSOES
+    )
 
     assert antes != depois
 
 
+def test_o_hash_muda_quando_o_modelo_muda_na_mesma_dimensao() -> None:
+    # O caso silencioso: `text-embedding-3-large` aceita `dimensions=1536`,
+    # entao a coluna `vector(1536)` nao recusa nada e a troca de modelo nao
+    # produziria erro nenhum. Se o hash nao mudasse, nenhuma linha viraria
+    # candidata e o catalogo guardaria vetores de dois espacos incompativeis
+    # -- cosseno entre eles e ruido, sem sintoma e sem reindexacao.
+    documento = documento_de(_imovel())
+
+    pequeno = hash_do_documento(documento, "text-embedding-3-small", 1536)
+    grande = hash_do_documento(documento, "text-embedding-3-large", 1536)
+
+    assert pequeno != grande
+
+
+def test_o_hash_muda_quando_a_dimensao_muda() -> None:
+    # Este ja falharia alto (a coluna recusa o vetor), mas deixar a dimensao
+    # fora do hash faria o material hasheado descrever pela metade o que
+    # produziu o vetor.
+    documento = documento_de(_imovel())
+
+    assert hash_do_documento(documento, MODELO, 1536) != hash_do_documento(documento, MODELO, 1024)
+
+
 def test_o_hash_e_sha256_em_hexadecimal() -> None:
-    valor = hash_do_documento("qualquer texto")
+    valor = hash_do_documento("qualquer texto", MODELO, DIMENSOES)
 
     assert len(valor) == 64
     assert set(valor) <= set("0123456789abcdef")

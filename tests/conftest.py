@@ -211,16 +211,31 @@ class EmbedadorFake:
     uma implementacao por posicao o vetor tambem sairia igual.
     """
 
-    def __init__(self, dimensoes: int = 1536, falhar: bool = False) -> None:
+    def __init__(
+        self,
+        dimensoes: int = 1536,
+        falhar: bool = False,
+        falhar_a_partir_da_chamada: int | None = None,
+    ) -> None:
         self.dimensoes = dimensoes
         self.falhar = falhar
+        # 1-indexado, e "a partir de" em vez de "exatamente nesta": o laco de
+        # lotes da varredura loga e SEGUE, entao um falso que so falhasse na
+        # segunda de tres chamadas gravaria a terceira -- e a assercao "o
+        # primeiro lote sobreviveu e os outros continuam pendentes" deixaria
+        # de ser expressavel. Aditivo: `falhar=True` continua significando
+        # "falha em toda chamada".
+        self.falhar_a_partir_da_chamada = falhar_a_partir_da_chamada
         self.chamadas: list[list[str]] = []
 
     async def __call__(self, textos: list[str]) -> list[list[float]]:
         if not textos:
             return []
         self.chamadas.append(list(textos))
-        if self.falhar:
+        if self.falhar or (
+            self.falhar_a_partir_da_chamada is not None
+            and len(self.chamadas) >= self.falhar_a_partir_da_chamada
+        ):
             raise RuntimeError("provedor de embedding indisponivel")
         # Vetor deterministico e distinto por texto: o teste precisa
         # distinguir "reindexou" de "manteve o vetor antigo".

@@ -14,6 +14,14 @@ RNF-03. **O indice esta aqui por conformidade com o SRS, nao porque a busca
 dependa dele hoje.** Quem revisita `lists`, cobra o SLA ou migra para HNSW e
 a TEC-159.
 
+**Esta frase vence por volta de 10.000 imoveis, e o numero esta escrito aqui
+para que ninguem a leia como atemporal.** A orientacao do proprio pgvector e
+`lists ~= linhas / 1000`: em 10.000 linhas ela ja pede `lists = 10`, e a lista
+unica passa a significar varredura sequencial de 10.000 vetores a cada
+consulta. Quem ler isto com 40.000 imoveis no catalogo esta lendo um
+argumento que ja expirou -- `lists` precisa subir, e com `REINDEX`, porque
+IVFFlat treina na construcao do indice e nao na insercao.
+
 As tres colunas sao nulaveis porque hash nulo E a definicao de pendencia: e
 o que faz o catalogo ja importado entrar na fila sem caminho de backfill.
 

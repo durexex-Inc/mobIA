@@ -66,6 +66,10 @@ Então a definição mora em `domain/catalogo/documento.py`, em função pura, e
 
 **O hash é `sha256` em hexadecimal**, 64 caracteres em `text`. A escolha não é de segurança — é impressão digital para detectar mudança — e `sha256` custa o mesmo nesta escala e não deixa ninguém interpretar `md5` como decisão criptográfica que não é.
 
+**O hash cobre também a identidade do provedor** (revisão de branch, 07/09/2026). O `sha256` do texto sozinho não distingue vetor gerado por `text-embedding-3-small` de vetor gerado por `text-embedding-3-large`. Uma troca de **dimensão** falha alto — a coluna `vector(1536)` recusa o vetor —, mas uma troca de **modelo na mesma dimensão** (`dimensions=1536` é opção do provedor) não mudaria hash nenhum: nenhuma linha viraria candidata, e o catálogo passaria a guardar vetores de dois espaços incompatíveis. Cosseno entre eles é ruído, sem erro e sem caminho de reindexação — a mesma classe de falha que esta decisão recusou o hash em SQL para evitar, alcançada pela configuração do provedor em vez da lista de campos.
+
+Então `hash_do_documento(texto, modelo, dimensoes)` hasheia os três juntos. **O documento não muda:** o que vai para a API continua sendo `documento_de(imovel)` e nada mais — prefixar o nome do modelo no que se embeda mudaria o vetor de todo imóvel por um motivo que não é semântico. Quem ganha o prefixo é o material hasheado, porque ele responde outra pergunta: "o vetor guardado ainda vale?". Trocar o modelo faz todo hash diferir, e a varredura reindexa o catálogo sozinha, sem caminho de backfill — pelo mesmo mecanismo da D2.
+
 ### D4 — Quatro campos textuais ficam fora do documento, pelo mesmo princípio do preço
 
 Entram no documento: `titulo`, `descricao`, `tipo`, `bairro`, `cidade`, `caracteristicas`.
@@ -85,6 +89,10 @@ A importação grava os imóveis e fecha o relatório como hoje; a indexação c
 O alternativo — embedar dentro do job de importação — transformaria 500 imóveis em 500 chamadas externas dentro de um job com `job_timeout` de 240s, e faria a importação **falhar quando o provedor cair**, que é o oposto do que a regra da card pede.
 
 **E a regra "falha de embedding não bloqueia o atendimento" sai da topologia, não de um `try/except`.** A indexação é um cron separado; não existe caminho em que `process_message` chame o provedor de embedding. Isso é mais forte que capturar exceção — e é o que precisa estar escrito na docstring do job, porque um refactor futuro que chamasse o embedding de dentro do turno violaria a regra sem que teste nenhum reclamasse.
+
+**Mas o argumento da topologia cobre correção, não capacidade** (revisão de branch, 07/09/2026). Ele diz que `process_message` nunca chama o provedor; não diz que ele não disputa vaga com quem chama. Os dois jobs dividem o mesmo pool do worker ARQ, e o `cron(..., unique=True)` cunha um id de job por tick — cada tick de 30 segundos é um job **distinto**, e `WorkerSettings` não fixa `max_jobs` (o default do ARQ é 10). Passagens sobrepostas portanto são fenômeno de **um** worker, não de vários: com o pior caso de 200s desta card, quase sete ticks, até 8 das 10 vagas poderiam estar indexando exatamente quando o provedor está lento.
+
+Por isso a varredura se auto-exclui: `SELECT pg_try_advisory_lock(<chave>)` no início da passagem, e `return 0` imediato quando não é concedido. O lock é de **sessão** — precisa sobreviver ao rollback que solta os locks de linha e atravessar as sessões de escrita do laço de lotes — e é solto num `finally`, porque lock de sessão vazado dura o que durar a conexão, e a conexão volta para o pool. Um lock de transação (`pg_try_advisory_xact_lock`) exigiria manter transação aberta durante todo o I/O de rede, que é o que o rollback antes do laço existe para evitar. A chave é derivada do nome do job (`sha256` de `mobia.indexar_catalogo`, primeiros 8 bytes, big-endian com sinal) e a reprodução está escrita no módulo: o espaço de `pg_advisory_lock(bigint)` é global no banco, então número redondo escolhido a dedo é exatamente o que colide com o próximo job a fazer o mesmo. Sendo do banco e não do processo, a exclusão vale também entre workers.
 
 ### D6 — A imagem do Postgres troca nos dois lugares, e o volume local é recriado
 
@@ -120,6 +128,8 @@ Segue o `ConfiguracaoInsegura` do `infra/anthropic.py`: em produção, recusa. E
 
 **Consequência declarada:** em desenvolvimento sem chave, o catálogo fica sem vetor e a busca da TEC-158 devolve vazio. Quem cair nisso precisa achar a causa no primeiro aviso, porque não haverá um segundo.
 
+**Onde cada metade mora** (revisão de branch, 07/09/2026). A recusa está no `startup()` de `workers/main.py`, ao lado da guarda de `WHATSAPP_ACCESS_TOKEN` e decidindo produção pelo mesmo `Settings.em_producao` dos validators de `config.py`. O aviso único está no começo de `indexar_catalogo`, com flag de módulo, **antes** de qualquer consulta — sem ele o `ConfiguracaoInsegura` do `get_client()` cairia dentro do `except Exception` do laço de lotes, que loga e segue: nenhuma linha seria indexada nunca, o retorno da passagem ociosa jamais dispararia, e sobraria um aviso por lote a cada 30 segundos, para sempre. E `OPENAI_API_KEY` entra no `.env.example`, como toda credencial deste repo entrou na card que a introduziu.
+
 ## Modelo de dados (migration `0017`)
 
 `CREATE EXTENSION IF NOT EXISTS vector`, e três colunas em `imoveis`, todas nuláveis:
@@ -138,7 +148,7 @@ As três nuláveis é o que faz os 520 imóveis já importados entrarem como pen
 
 | Arquivo | Papel |
 |---|---|
-| `domain/catalogo/documento.py` | **Novo.** `documento_de(imovel) -> str` e `hash_do_documento(texto) -> str`. Puras, sem I/O |
+| `domain/catalogo/documento.py` | **Novo.** `documento_de(imovel) -> str` e `hash_do_documento(texto, modelo, dimensoes) -> str`. Puras, sem I/O |
 | `infra/embeddings.py` | **Novo.** Cliente do provedor no molde do `infra/anthropic.py` |
 | `workers/jobs/indexar_catalogo.py` | **Novo.** A varredura |
 | `workers/main.py` | Registra em `functions` e `cron_jobs` |
@@ -149,7 +159,7 @@ As três nuláveis é o que faz os 520 imóveis já importados entrarem como pen
 
 ## Fluxo
 
-Uma passagem da varredura:
+Uma passagem da varredura, precedida de `pg_try_advisory_lock` — não concedido significa que outra passagem está em curso, e a passagem devolve 0 sem tocar em `imoveis` (D5):
 
 1. **Pré-filtro em SQL**, com teto por passagem e `FOR UPDATE SKIP LOCKED`:
 
@@ -188,7 +198,8 @@ Unitários, sobre a função pura:
 
 - nenhum valor numérico do imóvel aparece no documento — afirmado buscando o preço e o número de quartos na string, que é o critério de aceite da card virado teste;
 - hash estável quando só o preço muda;
-- hash muda quando a descrição muda.
+- hash muda quando a descrição muda;
+- hash muda quando o **modelo** muda na mesma dimensão, e quando a dimensão muda (D3).
 
 Integração, sobre a varredura:
 
@@ -196,6 +207,7 @@ Integração, sobre a varredura:
 - **mudança de preço não faz chamada nenhuma** — asserção de zero chamadas no falso, e não "o vetor parece igual";
 - mudança de descrição gera vetor novo e hash novo;
 - falha do provedor deixa a linha pendente e a passagem seguinte a indexa;
+- **uma falha no segundo lote preserva o commit do primeiro** — três pendentes com `indexacao_tamanho_do_lote = 1` injetado por `ctx["settings"]`, falhando a partir da segunda chamada. É o único teste que percorre mais de uma iteração do laço de lotes, e é ele que sustenta a afirmação "comita por lote" que faz teto e lote serem dois números diferentes;
 - duas varreduras concorrentes não indexam a mesma linha duas vezes.
 
 **Basename sem colisão.** Basename de teste repetido entre `unit` e `integration` aborta a coleta da suíte inteira e não aparece em execução isolada — já custou duas cards. Vão como `test_documento_do_imovel.py` e `test_indexacao_do_catalogo.py`.
@@ -213,7 +225,7 @@ Nenhum teste de latência aqui: `addopts = "-m 'not perf'"` já exclui `perf`, e
 3. **O IVFFlat nasce sem treino real** (D7). Inofensivo nesta escala, e revisitá-lo é da TEC-159.
 4. **A reindexação por CRUD administrativo não tem teste** porque o CRUD não existe — a TEC-197 o traz. O desenho a cobre por construção (D2), mas cobertura por construção sem consumidor não é cobertura demonstrada.
 5. **O caminho de corrida do `ON CONFLICT` gasta um hash** por linha tocada sem mudança de conteúdo. Barato, e é o preço de fechar o buraco.
-6. **Duas varreduras simultâneas podem gastar uma chamada em duplicidade.** O `FOR UPDATE SKIP LOCKED` impede que selecionem a mesma linha no mesmo instante, mas o lock é solto antes do I/O de rede — deliberadamente, herdado da `sweep_stalled`, porque segurar lock de linha atravessando chamada a provedor externo é pior. Uma varredura que comece depois do rollback da outra vê a linha ainda sem vetor e a indexa também. É desperdício **idempotente**, não incorreção: o mesmo texto gera o mesmo vetor, e a última escrita tem o conteúdo da primeira. O teto por passagem limita o desperdício a 100 imóveis por janela de 30 segundos, e só numa operação com mais de um worker. Fechar isso exigiria uma coluna de claim, que é complexidade sem problema medido.
+6. ~~Duas varreduras simultâneas podem gastar uma chamada em duplicidade.~~ **Fechada na revisão de branch (07/09/2026).** O texto original dizia que a sobreposição só aconteceria "numa operação com mais de um worker", e isso era falso: o `cron(..., unique=True)` cunha um id de job por tick e o worker não fixa `max_jobs`, então **um** worker já roda passagens sobrepostas sempre que uma passagem passa dos 30 segundos — e o pior caso desta card são 200s. Dizia também que fechar isso exigiria uma coluna de claim; exigiu duas linhas de `pg_try_advisory_lock`. Ver a D5 para o mecanismo, e para por que o problema é de capacidade e não de correção.
 
 ## Fora de escopo
 

@@ -7,11 +7,14 @@ import asyncio
 import uuid
 from typing import Any
 
+import pytest
 from conftest import EmbedadorFake
 from sqlalchemy import select, text
 
+from mobia.app.config import Settings
 from mobia.domain.catalogo.models import Imovel
 from mobia.infra.db import get_sessionmaker
+from mobia.workers.jobs import indexar_catalogo as modulo
 from mobia.workers.jobs.indexar_catalogo import indexar_catalogo
 
 
@@ -179,6 +182,92 @@ async def test_falha_do_provedor_deixa_a_linha_pendente(session: Any) -> None:
     assert await indexar_catalogo(_ctx(embedador)) == 1
 
 
+async def test_a_falha_num_lote_preserva_o_commit_do_lote_anterior(session: Any) -> None:
+    identificadores = [await _imovel(session, codigo=f"AP-{numero:03d}") for numero in range(3)]
+    embedador = EmbedadorFake(falhar_a_partir_da_chamada=2)
+
+    ctx = _ctx(embedador)
+    # `indexacao_tamanho_do_lote = 1` e o que exercita a SEGUNDA iteracao do
+    # laco de lotes. Com o default de 50, tres pendentes cabem num lote so e o
+    # "comita por lote" nunca chega a ser exercido -- e ele e toda a
+    # justificativa de teto (100) e lote (50) serem dois numeros diferentes.
+    ctx["settings"] = Settings(indexacao_tamanho_do_lote=1)
+
+    indexados = await indexar_catalogo(ctx)
+
+    assert indexados == 1
+    # Tres tentativas, e nao duas: a passagem nao aborta no primeiro erro, ela
+    # loga e segue para o lote seguinte.
+    assert len(embedador.chamadas) == 3
+
+    async with get_sessionmaker()() as leitura:
+        por_id = {
+            imovel.id: imovel
+            for imovel in (
+                await leitura.scalars(select(Imovel).where(Imovel.id.in_(identificadores)))
+            ).all()
+        }
+
+    # O primeiro lote comitou e sobreviveu a falha dos seguintes.
+    primeiro = por_id[identificadores[0]]
+    assert primeiro.embedding is not None
+    assert primeiro.documento_hash is not None
+    assert primeiro.embedding_atualizado_em is not None
+
+    # E os outros dois continuam pendentes, sem nada parcial gravado.
+    for identificador in identificadores[1:]:
+        pendente = por_id[identificador]
+        assert pendente.embedding is None
+        assert pendente.documento_hash is None
+        assert pendente.embedding_atualizado_em is None
+
+
+class _LogEspiao:
+    def __init__(self) -> None:
+        self.avisos: list[str] = []
+
+    def warning(self, evento: str, **_: object) -> None:
+        self.avisos.append(evento)
+
+    def info(self, evento: str, **_: object) -> None:
+        pass
+
+
+async def test_sem_chave_a_varredura_avisa_uma_vez_e_nao_indexa(
+    session: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D10, a metade "aviso unico em desenvolvimento".
+
+    Sem esta guarda a chave ausente vira um warning por LOTE a cada passagem,
+    para sempre: nenhuma linha e indexada, entao o retorno da passagem ociosa
+    nunca dispara. Na cadencia de 30 segundos isso e ruido continuo no log --
+    e o segundo aviso ja e um a mais do que a D10 permite.
+    """
+    await _imovel(session)
+    espiao = _LogEspiao()
+    monkeypatch.setattr(modulo, "log", espiao)
+    monkeypatch.setattr(modulo, "_AVISOU_DA_CHAVE_AUSENTE", False)
+
+    # Sem `ctx["embedador"]`: a guarda pergunta ao embedador DE VERDADE, que e
+    # quem exige a chave. Nenhuma chamada de rede acontece -- o ponto do teste
+    # e que a passagem sai antes de qualquer coisa.
+    ctx: dict[str, Any] = {
+        "session_factory": get_sessionmaker(),
+        "settings": Settings(openai_api_key=None),
+    }
+
+    assert await indexar_catalogo(ctx) == 0
+    assert await indexar_catalogo(ctx) == 0
+    assert await indexar_catalogo(ctx) == 0
+
+    assert espiao.avisos == ["indexacao_do_catalogo_sem_chave"]
+
+    async with get_sessionmaker()() as leitura:
+        pendente = await leitura.scalar(select(Imovel))
+    assert pendente is not None
+    assert pendente.embedding is None
+
+
 async def test_varreduras_concorrentes_deixam_a_linha_indexada_uma_vez(
     session: Any,
 ) -> None:
@@ -191,18 +280,17 @@ async def test_varreduras_concorrentes_deixam_a_linha_indexada_uma_vez(
         indexar_catalogo(_ctx(segundo)),
     )
 
-    # A assercao e sobre o DESFECHO, e nao sobre o numero de chamadas.
+    # A assercao e sobre o DESFECHO, e nao sobre QUAL das duas indexou.
     #
-    # `FOR UPDATE SKIP LOCKED` impede duas varreduras de selecionar a mesma
-    # linha no mesmo instante, mas o lock e solto antes do I/O de rede -- de
-    # proposito, herdado da `sweep_stalled`: segurar lock de linha atravessando
-    # chamada a provedor externo e pior. Entao uma varredura que comece depois
-    # do rollback da outra pode gastar uma chamada em duplicidade. Isso e
-    # desperdicio idempotente, nao incorrecao: mesmo texto gera mesmo vetor, e
-    # a ultima escrita tem o mesmo conteudo da primeira.
+    # `pg_try_advisory_lock` faz a varredura excluir a si mesma: a segunda a
+    # chegar nao pega o lock e devolve 0 na hora, sem tocar o banco. Antes
+    # disso as duas podiam gastar uma chamada em duplicidade -- desperdicio
+    # idempotente, nao incorrecao, mas desperdicio pago justamente quando o
+    # provedor esta lento.
     #
-    # Afirmar `len(chamadas) == 1` aqui seria afirmar mais do que o desenho
-    # garante, e o teste flakearia sob carga por um motivo que nao e defeito.
+    # Nao se afirma AQUI qual das duas venceu, nem em qual `EmbedadorFake` a
+    # chamada caiu: isso depende de qual corrotina o laco de eventos despacha
+    # primeiro, e afirmar sobre ela seria flake sob carga.
     async with get_sessionmaker()() as leitura:
         imovel = await leitura.scalar(select(Imovel).where(Imovel.id == identificador))
     assert imovel is not None
