@@ -9,6 +9,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # valor existe para impedir que ele saia daqui.
 CHAVE_DE_DESENVOLVIMENTO = "ZGV2LWtleS0zMi1ieXRlcy1mb3ItbW9iaWEtb2shISE="
 
+# O default de desenvolvimento, recusado em producao pelo validator abaixo.
+# Mesmo molde da CHAVE_DE_DESENVOLVIMENTO.
+TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO = "dev-catalogo-token"
+
 _AMBIENTES_DE_PRODUCAO = frozenset({"production", "producao", "prod"})
 
 # Fracao do teto usada por `Settings.limiar_de_contagem_efetivo` quando
@@ -38,6 +42,12 @@ class Settings(BaseSettings):
 
     whatsapp_app_secret: str = "dev-app-secret"
     whatsapp_verify_token: str = "dev-verify-token"
+
+    # Vazio DESLIGA o endpoint de importacao: o router nem e registrado. Nao e
+    # 401 -- rota que nao existe nao pode ser exposta por engano de
+    # configuracao, e este projeto ainda nao tem camada de autenticacao (JWT,
+    # OIDC e papeis sao a TEC-201). Ver D1 do desenho da TEC-156.
+    catalogo_admin_token: str = ""
 
     # 32 bytes em base64. O default so serve para desenvolvimento e teste --
     # em producao vem do ambiente. A analogia com o whatsapp_app_secret que o
@@ -250,6 +260,26 @@ class Settings(BaseSettings):
                 f"ENVIRONMENT={self.environment}. Gere uma chave de 32 bytes: "
                 'python -c "import base64,os;'
                 'print(base64.b64encode(os.urandom(32)).decode())"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _recusar_token_de_catalogo_de_desenvolvimento_em_producao(self) -> "Settings":
+        """O token de dev em producao deixa o catalogo gravavel por quem o leu.
+
+        Ele esta no `.env.example`, versionado: qualquer um que clonou o repo o
+        conhece. Diferente da chave de cifra, aqui o estrago nao e silencioso
+        -- e por isso a guarda nao precisa existir para o token VAZIO, que
+        apenas desliga a rota.
+        """
+        if (
+            self.environment.strip().lower() in _AMBIENTES_DE_PRODUCAO
+            and self.catalogo_admin_token == TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO
+        ):
+            raise ConfiguracaoInsegura(
+                "CATALOGO_ADMIN_TOKEN esta com o default de desenvolvimento e "
+                f"ENVIRONMENT={self.environment}. Gere um token: "
+                'python -c "import secrets;print(secrets.token_urlsafe(32))"'
             )
         return self
 
