@@ -188,3 +188,160 @@ def test_json_malformado_derruba_o_arquivo():
 def test_extensao_desconhecida_derruba_o_arquivo():
     with pytest.raises(ArquivoInvalido, match="extensao"):
         list(parsear(b"qualquer coisa", nome_arquivo="base.xlsx"))
+
+
+def test_uf_mais_longa_que_a_coluna_e_rejeicao_de_linha():
+    """ "Sao Paulo" no lugar de "SP" nao pode derrubar o lote inteiro.
+
+    Sem esta checagem o registro atravessava o parser, entrava num INSERT de
+    500 linhas e o Postgres derrubava o lote com StringDataRightTruncation:
+    zero imoveis gravados, FALHOU sem numero de linha e sem nome de campo, por
+    um typo numa celula. O parser e a unica camada que sabe a linha.
+    """
+    linha = LINHA_BOA.replace(",SC,CENTRO,", ",Sao Paulo,CENTRO,")
+    r = _so(parsear(_csv(linha), nome_arquivo="base.csv"))
+    assert isinstance(r, Rejeicao)
+    assert "uf" in r.motivo
+    assert r.linha == 2
+
+
+def test_codigo_titulo_bairro_e_cidade_respeitam_o_tamanho_da_coluna():
+    casos = {
+        "codigo": ("AP-1042", "A" * 21),
+        "titulo": ("Apartamento com varanda", "T" * 161),
+        "bairro": ("Centro", "B" * 121),
+        "cidade": ("Florianopolis", "C" * 121),
+    }
+    for campo, (original, longo) in casos.items():
+        linha = LINHA_BOA.replace(original, longo)
+        r = _so(parsear(_csv(linha), nome_arquivo="base.csv"))
+        assert isinstance(r, Rejeicao), campo
+        assert campo in r.motivo, (campo, r.motivo)
+
+
+def test_o_limite_de_texto_vem_da_coluna_e_nao_de_constante_copiada():
+    # Guarda contra descolamento: se `titulo` virar String(200), um 160
+    # escrito no parser passaria a recusar linha boa sem nenhum gate acusar.
+    from mobia.domain.catalogo.models import Imovel
+    from mobia.domain.catalogo.parser import _limite_de_texto
+
+    for campo in ("codigo", "titulo", "bairro", "cidade", "uf"):
+        assert _limite_de_texto(campo) == Imovel.__table__.c[campo].type.length
+    # Text nao tem teto, e nao um teto grande: a checagem tem de sair de cena.
+    assert _limite_de_texto("descricao") is None
+
+
+def test_quartos_fora_do_smallint_e_rejeicao_de_linha():
+    # `99999` nao e "muito quarto": e overflow de SMALLINT, que derruba o
+    # INSERT do lote de 500 do mesmo jeito que o `uf` longo.
+    linha = LINHA_BOA.replace(",74,2,1,2,1,", ",74,99999,1,2,1,")
+    r = _so(parsear(_csv(linha), nome_arquivo="base.csv"))
+    assert isinstance(r, Rejeicao)
+    assert "quartos" in r.motivo
+
+
+def test_area_util_fora_do_integer_e_rejeicao_de_linha():
+    linha = LINHA_BOA.replace(",74,2,1,2,1,", ",99999999999,2,1,2,1,")
+    r = _so(parsear(_csv(linha), nome_arquivo="base.csv"))
+    assert isinstance(r, Rejeicao)
+    assert "area_util_m2" in r.motivo
+
+
+def test_latitude_fora_da_faixa_geografica_e_rejeicao_de_linha():
+    # Numeric(9, 6) aceita tres digitos inteiros; "1234.5" estoura a coluna.
+    linha = LINHA_BOA.replace("-27.595377", "1234.5")
+    r = _so(parsear(_csv(linha), nome_arquivo="base.csv"))
+    assert isinstance(r, Rejeicao)
+    assert "latitude" in r.motivo
+
+
+def test_longitude_fora_da_faixa_geografica_e_rejeicao_de_linha():
+    linha = LINHA_BOA.replace("-48.548050", "-200.0")
+    r = _so(parsear(_csv(linha), nome_arquivo="base.csv"))
+    assert isinstance(r, Rejeicao)
+    assert "longitude" in r.motivo
+
+
+def test_latitude_nan_e_rejeicao_e_nao_um_decimal_valido():
+    """`Decimal("NaN")` parseia, o `numeric` do Postgres o aceita, e envenena o diff.
+
+    Gravado, `NaN != NaN` faz o diff campo a campo de `_mudou` acusar a linha
+    como alterada em TODA reimportacao: um UPDATE inutil por importacao, e
+    `updated_at` bumpado numa linha que nao mudou -- exatamente o que o
+    comentario da coluna diz que nao pode acontecer.
+    """
+    for texto in ("NaN", "nan", "-NaN", "sNaN"):
+        linha = LINHA_BOA.replace("-27.595377", texto)
+        r = _so(parsear(_csv(linha), nome_arquivo="base.csv"))
+        assert isinstance(r, Rejeicao), texto
+        assert "latitude" in r.motivo
+
+
+def test_coordenada_infinita_e_rejeicao():
+    for texto in ("Infinity", "-Infinity"):
+        linha = LINHA_BOA.replace("-48.548050", texto)
+        r = _so(parsear(_csv(linha), nome_arquivo="base.csv"))
+        assert isinstance(r, Rejeicao), texto
+        assert "longitude" in r.motivo
+
+
+def test_preco_nao_finito_e_rejeicao():
+    for texto in ("NaN", "Infinity"):
+        linha = LINHA_BOA.replace("580000.00", texto)
+        r = _so(parsear(_csv(linha), nome_arquivo="base.csv"))
+        assert isinstance(r, Rejeicao), texto
+        assert "preco_venda" in r.motivo
+
+
+def test_condominio_que_nao_cabe_no_bigint_e_rejeicao_de_linha():
+    # O limite fisico da coluna vale mesmo sem guarda de plausibilidade: a
+    # ausencia de faixa em condominio (D6) nao e licenca para estourar BIGINT.
+    linha = LINHA_BOA.replace(",850.00,", ",1e30,")
+    r = _so(parsear(_csv(linha), nome_arquivo="base.csv"))
+    assert isinstance(r, Rejeicao)
+    assert "condominio" in r.motivo
+
+
+def test_condominio_e_iptu_nao_tem_guarda_de_faixa():
+    """R$ 850 de condominio e R$ 320 de IPTU passam, e isso e decisao D6.
+
+    A faixa [R$ 1.000, R$ 500.000.000] de `preco_venda`/`preco_aluguel` NAO se
+    aplica a esses dois campos: sao cobrancas mensais, tipicamente na casa das
+    centenas de reais, e o piso de R$ 1.000 rejeitaria a maioria dos imoveis
+    legitimos. Os dois valores deste teste ficam abaixo do piso de proposito.
+
+    Este teste existe porque a excecao inverte o que o plano original dizia e
+    hoje so esta protegida por acidente: uma limpeza de "consistencia" que
+    acrescentasse `checar_faixa=True` as quatro chamadas de `preco` produziria
+    uma falha sobre centavos, confusa o bastante para ser "corrigida" mexendo
+    na expectativa. A lacuna declarada 7 do desenho e a contrapartida aceita.
+    """
+    r = _so(parsear(_csv(LINHA_BOA), nome_arquivo="base.csv"))
+    assert isinstance(r, RegistroImovel)
+    assert r.condominio == 85_000
+    assert r.iptu_mensal == 32_000
+    # E o mesmo valor, no campo com guarda, seria recusado:
+    linha = LINHA_BOA.replace("580000.00", "850.00")
+    assert isinstance(_so(parsear(_csv(linha), nome_arquivo="base.csv")), Rejeicao)
+
+
+def test_descricao_com_quebra_de_linha_nao_desloca_a_numeracao():
+    """A numeracao conta linha fisica, e nao registro.
+
+    Uma `descricao` entre aspas com quebra de linha faz o primeiro registro
+    ocupar as linhas 2 e 3. Com `enumerate` sobre registros o registro
+    seguinte seria chamado de linha 3, e todo numero dali para frente
+    apontaria para a linha errada no editor de quem for corrigir.
+    """
+    com_quebra = LINHA_BOA.replace(
+        "Vista para o mar e varanda gourmet",
+        '"Vista para o mar\ne varanda gourmet"',
+    )
+    ruim = LINHA_BOA.replace("AP-1042", "AP-2").replace("APARTAMENTO", "apto")
+    itens = list(parsear(_csv(com_quebra, ruim), nome_arquivo="base.csv"))
+
+    assert isinstance(itens[0], RegistroImovel)
+    assert itens[0].descricao == "Vista para o mar\ne varanda gourmet"
+    assert itens[0].linha == 3  # o registro termina na linha 3
+    assert isinstance(itens[1], Rejeicao)
+    assert itens[1].linha == 4  # e nao 3, que e onde `enumerate` o poria

@@ -248,3 +248,83 @@ async def test_arquivo_sem_cabecalho_valido_e_falhou_e_nao_rejeicao(session, ses
     # A falha do arquivo inteiro vai para `erros` com linha 0: nao e "uma
     # linha", mas quem le o relatorio precisa do motivo em algum lugar.
     assert gravada.erros and gravada.erros[0]["linha"] == 0
+
+
+async def test_uf_longa_rejeita_a_linha_e_nao_derruba_o_lote(session, session_factory):
+    """Celula que a coluna nao aceita custa uma linha, nunca o arquivo.
+
+    Antes da checagem de tamanho no parser esta linha atravessava, o INSERT do
+    lote levantava StringDataRightTruncation, e o relatorio saia FALHOU com
+    zero gravados e um motivo sem linha e sem nome de campo -- as tres linhas
+    (ou as 520 de uma base real) perdidas por um typo numa celula. A RN-08.5
+    diz o oposto: linha ruim nunca leva a FALHOU.
+    """
+    linhas = [
+        _linha("AP-1"),
+        _linha("AP-2").replace(",SC,CENTRO,", ",Sao Paulo,CENTRO,"),
+        _linha("AP-3"),
+    ]
+    importacao_id = await registrar(
+        session,
+        origem=OrigemImportacao.CLI,
+        nome_arquivo="base.csv",
+        conteudo=_arquivo(linhas),
+    )
+    await session.commit()
+
+    relatorio = await executar(session_factory, importacao_id=importacao_id)
+
+    assert relatorio.status is StatusImportacao.CONCLUIDO
+    assert (relatorio.processados, relatorio.inseridos, relatorio.rejeitados) == (3, 2, 1)
+    assert relatorio.fecha()
+    assert [e.linha for e in relatorio.erros] == [3]
+    assert "uf" in relatorio.erros[0].motivo
+
+    session.expire_all()
+    gravada = await session.get(Importacao, importacao_id)
+    assert gravada is not None
+    assert gravada.status == StatusImportacao.CONCLUIDO
+    assert gravada.inseridos == 2
+    assert len((await session.scalars(select(Imovel))).all()) == 2
+
+
+async def test_reimportacao_grava_atualizados_e_inalterados_na_linha(session, session_factory):
+    """O cenario 3 pela superficie do produto, e nao contra `sincronizar`.
+
+    O outro teste do cenario 3 chama `sincronizar` direto e le a tupla de
+    retorno. Nada afirmava que `atualizados` e `inalterados` atravessam
+    `executar` e chegam a linha `importacoes` -- que e o que o GET do relatorio
+    devolve, e o unico lugar onde o admin le esses dois numeros. Se `executar`
+    parasse de acumular os dois, a suite inteira continuaria verde.
+    """
+    linhas = [_linha(f"AP-{i}") for i in range(10)]
+    primeira = await registrar(
+        session,
+        origem=OrigemImportacao.CLI,
+        nome_arquivo="base.csv",
+        conteudo=_arquivo(linhas),
+    )
+    await session.commit()
+    await executar(session_factory, importacao_id=primeira)
+
+    alteradas = [
+        _linha(f"AP-{i}", preco="590000.00") if i < 3 else _linha(f"AP-{i}") for i in range(10)
+    ]
+    segunda = await registrar(
+        session,
+        origem=OrigemImportacao.CLI,
+        nome_arquivo="base.csv",
+        conteudo=_arquivo(alteradas),
+    )
+    await session.commit()
+    relatorio = await executar(session_factory, importacao_id=segunda)
+
+    assert (relatorio.inseridos, relatorio.atualizados, relatorio.inalterados) == (0, 3, 7)
+
+    session.expire_all()
+    gravada = await session.get(Importacao, segunda)
+    assert gravada is not None
+    assert gravada.status == StatusImportacao.CONCLUIDO
+    assert (gravada.inseridos, gravada.atualizados, gravada.inalterados) == (0, 3, 7)
+    assert gravada.processados == 10
+    assert gravada.rejeitados == 0
