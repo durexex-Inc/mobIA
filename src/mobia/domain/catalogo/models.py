@@ -9,6 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
@@ -90,6 +91,19 @@ class Imovel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
     )
+
+    # TEC-157. As tres juntas respondem "este vetor ainda vale?" sem que
+    # nenhum caminho de escrita precise avisar que o texto mudou.
+    #
+    # `documento_hash` e o portao preciso: sha256 do documento que gerou o
+    # vetor. Se ele difere do hash do documento de hoje, o vetor esta velho.
+    # `embedding_atualizado_em` e o pre-filtro barato -- comparado contra
+    # `updated_at`, evita recalcular hash de linha que ninguem tocou.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    embedding_atualizado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    documento_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         CheckConstraint(

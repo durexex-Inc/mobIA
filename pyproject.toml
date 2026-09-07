@@ -22,6 +22,14 @@ dependencies = [
     "anthropic>=1.0",
     "httpx>=0.28",
     "tzdata>=2026.1",
+    # Embeddings do catalogo (TEC-157). A Anthropic nao tem endpoint de
+    # embeddings -- este e o segundo provedor do projeto, e serve so a
+    # indexacao; o agente continua no `infra/anthropic.py`.
+    "openai>=1.0",
+    # O tipo `Vector` do SQLAlchemy. Sem ele a coluna `embedding` teria de
+    # ficar fora do ORM e ser escrita por SQL cru, e a TEC-158 precisaria
+    # dela mapeada para a busca.
+    "pgvector>=0.3.6",
 ]
 
 [project.optional-dependencies]

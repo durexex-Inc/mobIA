@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector nao publica imagem Alpine. A troca muda a distro base de musl
+    # para glibc, e por isso o volume local e recriado e nao reaproveitado:
+    # collation de texto difere entre as duas bibliotecas.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: mobia
       POSTGRES_PASSWORD: mobia
