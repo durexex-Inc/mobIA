@@ -1,4 +1,4 @@
-"""A `0017` criou a extensao, as tres colunas e o indice.
+"""A `0017` criou a extensao, as colunas e o indice; a `0018`, o modelo.
 
 Basename distinto de qualquer arquivo em `tests/unit/`: basename repetido
 entre unit e integration aborta a coleta da suite inteira.
@@ -15,11 +15,16 @@ async def test_a_extensao_vector_existe() -> None:
     assert presente == 1
 
 
-async def test_as_tres_colunas_existem_e_sao_nulaveis() -> None:
+async def test_as_colunas_do_embedding_existem_e_sao_nulaveis() -> None:
     esperadas = {
         "embedding": "USER-DEFINED",
         "embedding_atualizado_em": "timestamp with time zone",
         "documento_hash": "text",
+        # A `0018`. Nulavel pelo mesmo motivo das tres da `0017`: a migration
+        # nao sabe qual modelo gerou os vetores que ja existem, e NULL e
+        # `IS DISTINCT FROM` de qualquer modelo -- a linha entra como
+        # candidata e a varredura concilia numa passagem, sem backfill.
+        "embedding_modelo": "text",
     }
     async with get_sessionmaker()() as session:
         resultado = await session.execute(

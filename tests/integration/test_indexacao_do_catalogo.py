@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 
 from mobia.app.config import Settings
 from mobia.domain.catalogo.models import Imovel
-from mobia.infra.db import get_sessionmaker
+from mobia.infra.db import engine_de, get_sessionmaker
 from mobia.workers.jobs import indexar_catalogo as modulo
 from mobia.workers.jobs.indexar_catalogo import indexar_catalogo
 
@@ -302,3 +302,195 @@ async def test_varreduras_concorrentes_deixam_a_linha_indexada_uma_vez(
     terceiro = EmbedadorFake()
     assert await indexar_catalogo(_ctx(terceiro)) == 0
     assert terceiro.chamadas == []
+
+
+class _EmbedadorEstacionado:
+    """Um embedador que PARA dentro de `__call__` ate ser liberado.
+
+    E o que reproduz a geometria real do tick de 30 segundos: enquanto uma
+    passagem espera o provedor, ela nao esta usando conexao nenhuma para
+    trabalhar -- a do laco de selecao ja foi devolvida ao pool. Um falso que
+    responde na hora nunca deixa duas passagens SOBREPOSTAS, e por isso nao
+    exercita o lock consultivo.
+    """
+
+    def __init__(self, dimensoes: int = 1536) -> None:
+        self.dimensoes = dimensoes
+        self.entrou = asyncio.Event()
+        self.liberar = asyncio.Event()
+        self.chamadas: list[list[str]] = []
+
+    async def __call__(self, textos: list[str]) -> list[list[float]]:
+        self.chamadas.append(list(textos))
+        self.entrou.set()
+        await self.liberar.wait()
+        return [[0.5] * self.dimensoes for _ in textos]
+
+
+async def test_a_passagem_sobreposta_nao_pega_o_lock(session: Any) -> None:
+    """A segunda passagem devolve 0 SEM chamar o provedor.
+
+    A assercao e sobre a CHAMADA, e nao sobre o desfecho da linha: um lock que
+    nao exclui nada tambem deixaria a linha indexada no fim, so que gastando
+    duas chamadas -- que e exatamente o desperdicio que a D5 fecha.
+    """
+    await _imovel(session)
+    estacionado = _EmbedadorEstacionado()
+
+    primeira = asyncio.create_task(indexar_catalogo(_ctx(estacionado)))  # type: ignore[arg-type]
+    await asyncio.wait_for(estacionado.entrou.wait(), timeout=30)
+
+    segundo = EmbedadorFake()
+    assert await indexar_catalogo(_ctx(segundo)) == 0
+    assert segundo.chamadas == []
+
+    estacionado.liberar.set()
+    assert await primeira == 1
+
+
+async def test_a_passagem_nao_deixa_lock_pendurado(session: Any) -> None:
+    """Depois da passagem, nenhum lock consultivo vivo no banco.
+
+    Lock de sessao vazado dura o que durar a CONEXAO, e a conexao volta para o
+    pool -- entao um unlock que nao encontra o lock nao e ruido de log: e a
+    varredura desligando a si mesma para sempre, com
+    `indexacao_do_catalogo_ja_em_curso` como unico sintoma ate o worker
+    reiniciar.
+    """
+    await _imovel(session)
+    fabrica = get_sessionmaker()
+
+    # Mais de uma conexao no pool ANTES da passagem, que e o estado normal de
+    # um worker onde `process_message` divide o mesmo pool. Com uma conexao so,
+    # o pool devolve sempre a mesma e um lock preso a ela seria solto por
+    # acidente -- o vazamento existiria e este teste nao o veria.
+    async with fabrica() as uma, fabrica() as outra:
+        await uma.execute(text("SELECT 1"))
+        await outra.execute(text("SELECT 1"))
+
+    embedador = EmbedadorFake()
+
+    assert await indexar_catalogo(_ctx(embedador)) == 1
+
+    async with fabrica() as leitura:
+        vivos = await leitura.scalar(
+            text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'")
+        )
+    assert vivos == 0
+
+
+async def test_a_troca_de_modelo_reindexa_a_linha_ja_indexada(session: Any) -> None:
+    """Mudar o modelo na configuracao nao toca linha nenhuma -- e mesmo assim
+    a linha ja indexada tem de ser reindexada.
+
+    Este e o buraco que o hash sozinho nao fecha: o pre-filtro em SQL nao
+    consulta hash (D3), entao uma linha com as tres colunas preenchidas e
+    `updated_at <= embedding_atualizado_em` nunca viraria candidata e o hash
+    novo nunca chegaria a ser comparado. Sem `embedding_modelo` no pre-filtro,
+    o catalogo ficaria com vetores de dois espacos incompativeis, e cosseno
+    entre eles e ruido -- sem erro e sem sintoma.
+    """
+    identificador = await _imovel(session)
+    embedador = EmbedadorFake()
+
+    assert await indexar_catalogo(_ctx(embedador)) == 1
+
+    async with get_sessionmaker()() as leitura:
+        antes = await leitura.scalar(select(Imovel).where(Imovel.id == identificador))
+    assert antes is not None
+    assert antes.embedding_modelo == Settings().embedding_modelo
+    hash_antigo = antes.documento_hash
+
+    ctx = _ctx(embedador)
+    ctx["settings"] = Settings(embedding_modelo="text-embedding-3-large")
+
+    assert await indexar_catalogo(ctx) == 1
+    assert len(embedador.chamadas) == 2
+
+    async with get_sessionmaker()() as leitura:
+        depois = await leitura.scalar(select(Imovel).where(Imovel.id == identificador))
+    assert depois is not None
+    assert depois.embedding_modelo == "text-embedding-3-large"
+    assert depois.documento_hash != hash_antigo
+
+
+async def test_a_linha_sem_modelo_gravado_concilia_em_uma_passagem(session: Any) -> None:
+    """A linha indexada antes de a `0018` existir nao fica candidata para sempre.
+
+    `embedding_modelo` NULL e `IS DISTINCT FROM` de qualquer modelo
+    configurado, entao ela vira candidata -- e o hash bate, porque o texto e o
+    modelo nao mudaram. A varredura nao chama a API, so carimba, e a passagem
+    SEGUINTE ja nao a encontra. Sem gravar a coluna no ramo do carimbo, esta
+    linha seria candidata em toda passagem, para sempre.
+    """
+    identificador = await _imovel(session)
+    embedador = EmbedadorFake()
+    assert await indexar_catalogo(_ctx(embedador)) == 1
+
+    async with get_sessionmaker()() as escrita:
+        await escrita.execute(
+            text("UPDATE imoveis SET embedding_modelo = NULL WHERE id = :id"),
+            {"id": identificador},
+        )
+        await escrita.commit()
+
+    assert await indexar_catalogo(_ctx(embedador)) == 0
+    # Nenhuma chamada nova: o hash bate, so o carimbo muda.
+    assert len(embedador.chamadas) == 1
+
+    async with get_sessionmaker()() as leitura:
+        depois = await leitura.scalar(select(Imovel).where(Imovel.id == identificador))
+    assert depois is not None
+    assert depois.embedding_modelo == Settings().embedding_modelo
+
+    assert await indexar_catalogo(_ctx(embedador)) == 0
+    assert len(embedador.chamadas) == 1
+
+
+class _ConexaoQueCancelaNoUnlock:
+    """Delega tudo a conexao de verdade, menos o `execute` do unlock.
+
+    So o que `_soltar_o_lock` toca. `CancelledError` porque e exatamente o que
+    o `job_timeout` de 240s do worker entrega, e o pior caso desenhado da
+    passagem e de 200s -- o cancelamento caindo no meio do unlock e
+    alcancavel, nao teorico.
+    """
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+
+    async def execute(self, *_a: Any, **_k: Any) -> Any:
+        raise asyncio.CancelledError()
+
+    async def rollback(self) -> None:
+        await self._real.rollback()
+
+    async def invalidate(self) -> None:
+        await self._real.invalidate()
+
+
+async def test_o_cancelamento_no_unlock_ainda_solta_o_lock() -> None:
+    """Cancelado no meio do unlock, o lock morre junto com a conexao.
+
+    Invalidar fecha a conexao FISICA em vez de devolve-la ao pool, e o lock e
+    da sessao do Postgres: encerrar a sessao o solta. Devolver a conexao ao
+    pool ainda segurando o lock desligaria a varredura para sempre.
+
+    E nada escapa do `finally`: uma excecao daqui substituiria a excecao da
+    passagem e esconderia o erro de verdade.
+    """
+    engine = engine_de(get_sessionmaker())
+
+    async with engine.connect() as conexao:
+        assert await conexao.scalar(
+            text("SELECT pg_try_advisory_lock(:chave)"), {"chave": modulo._CHAVE_DO_LOCK}
+        )
+        await conexao.rollback()
+
+        await modulo._soltar_o_lock(_ConexaoQueCancelaNoUnlock(conexao))  # type: ignore[arg-type]
+
+    async with engine.connect() as leitura:
+        vivos = await leitura.scalar(
+            text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'")
+        )
+    assert vivos == 0

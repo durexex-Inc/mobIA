@@ -62,7 +62,20 @@ def hash_do_documento(texto: str, modelo: str, dimensoes: int) -> str:
     ruido, sem erro e sem caminho de reindexacao -- a mesma classe de falha
     que a D3 recusou o hash em SQL para evitar, alcancada pela configuracao
     do provedor em vez da lista de campos. Com o prefixo, a troca faz todo
-    hash diferir e a varredura reindexa o catalogo sozinha.
+    hash diferir.
+
+    **O hash sozinho nao bastaria para a troca de modelo disparar
+    reindexacao, e vale dizer por que.** O pre-filtro em SQL da varredura nao
+    consulta hash (D3): ele seleciona por `embedding`/`documento_hash`/
+    `embedding_atualizado_em` nulos e por `updated_at >
+    embedding_atualizado_em`. Uma troca de modelo no `Settings` nao toca linha
+    nenhuma, entao a linha ja indexada nao satisfaria nenhuma dessas
+    condicoes: ela nunca viraria candidata e este hash nunca chegaria a ser
+    comparado. Por isso `imoveis` tem a coluna `embedding_modelo` (`0018`) e o
+    pre-filtro tem `OR embedding_modelo IS DISTINCT FROM :modelo` -- e a
+    varredura reindexa o catalogo sozinha, sem caminho de backfill. As duas
+    pecas sao os dois estagios do mesmo desenho: a coluna e o filtro barato em
+    SQL, este hash e o portao exato em Python.
 
     A dimensao entra junto por completude. Sozinha ela ja falha alto -- a
     coluna `vector(1536)` recusa vetor de outro tamanho --, mas deixa-la fora

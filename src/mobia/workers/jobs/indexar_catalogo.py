@@ -31,10 +31,12 @@ from typing import Any
 
 import structlog
 from sqlalchemy import select, text, update
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from mobia.app.config import Settings, get_settings
 from mobia.domain.catalogo.documento import documento_de, hash_do_documento
 from mobia.domain.catalogo.models import Imovel
+from mobia.infra.db import engine_de
 from mobia.infra.embeddings import embedar as embedar_de_verdade
 from mobia.infra.embeddings import motivo_do_provedor
 
@@ -55,8 +57,22 @@ _CHAVE_DO_LOCK = -6845322960407244279
 # sobreviver ao rollback que solta os locks de linha e atravessar as sessoes de
 # escrita do laco de lotes. Um lock de transacao aqui significaria manter uma
 # transacao aberta durante todo o I/O de rede, que e justamente o que o
-# rollback antes do laco existe para evitar. O preco de escolher o de sessao e
-# ter de solta-lo a mao -- por isso o `finally`.
+# rollback antes do laco existe para evitar.
+#
+# **"Sessao" aqui e a do Postgres, que e a CONEXAO -- nao a `Session` do
+# SQLAlchemy.** Tomar este lock numa `AsyncSession` e depois chamar
+# `rollback()` nela devolve a conexao ao pool uma instrucao depois de o lock
+# ter sido tomado, e o efeito foi medido: duas passagens seguidas recebem
+# `true` para a MESMA chave (locks consultivos sao reentrantes por conexao, e
+# o pool devolve a mesma conexao para a passagem seguinte), enquanto o unlock
+# do `finally` cai numa conexao qualquer e devolve `false` -- o lock fica
+# pendurado numa conexao do pool para sempre, `pool_recycle` e -1, e toda
+# passagem posterior sai com `indexacao_do_catalogo_ja_em_curso`. A varredura
+# se desligaria sozinha, que e pior que a sobreposicao que o lock veio fechar.
+#
+# Por isso a passagem inteira roda dentro de `engine.connect()`: uma
+# `AsyncConnection` sobrevive ao `rollback()` e so e devolvida ao pool no
+# `close()`, entao o lock tem casa fixa do inicio ao fim da passagem.
 _TOMAR_O_LOCK = text("SELECT pg_try_advisory_lock(:chave)")
 _SOLTAR_O_LOCK = text("SELECT pg_advisory_unlock(:chave)")
 
@@ -66,6 +82,27 @@ _AVISOU_DA_CHAVE_AUSENTE = False
 
 # O `embedding_atualizado_em IS NULL` esta explicito de proposito: sem ele,
 # `updated_at > NULL` da NULL e imovel recem-inserido nunca seria candidato.
+#
+# **`updated_at` e o pre-filtro de mudanca de TEXTO; `embedding_modelo` e o de
+# mudanca de CONFIGURACAO.** Sao dois porque respondem perguntas diferentes:
+# mudanca de texto bumpa `updated_at` na linha, mas trocar o modelo no
+# `Settings` nao toca linha nenhuma. Sem a clausula do modelo, uma linha ja
+# indexada tem as tres colunas preenchidas e `updated_at <=
+# embedding_atualizado_em`: nunca vira candidata, o hash nunca e recalculado,
+# a comparacao em Python nunca roda nela -- e o catalogo fica com metade dos
+# vetores em cada espaco depois de uma troca, sem erro e sem sintoma. O
+# alternativo honesto seria uma lacuna declarada mandando rodar
+# `UPDATE imoveis SET documento_hash = NULL` a mao, e "alguem precisa lembrar"
+# e justamente o modo de falha que a D2 existe para eliminar.
+#
+# A DIMENSAO nao entra aqui, e a assimetria e proposital: trocar a dimensao ja
+# falha alto -- a coluna `vector(1536)` recusa vetor de outro tamanho. O
+# pre-filtro so precisa cobrir o que falharia em SILENCIO.
+#
+# O hash continua cobrindo modelo e dimensao (`hash_do_documento`), e isso NAO
+# e redundancia a simplificar: sao os dois estagios do mesmo desenho -- o SQL
+# barato escolhe candidatos sem repetir nome de campo, o Python decide com
+# exatidao. Quem remover um dos dois quebra um dos estagios.
 #
 # Nenhum nome de campo do documento aparece aqui, e isso e o ponto da D3: a
 # definicao do documento mora em `documento.py` e a comparacao exata e feita
@@ -88,6 +125,7 @@ _SELECIONAR_PENDENTES = text(
         OR documento_hash IS NULL
         OR embedding_atualizado_em IS NULL
         OR updated_at > embedding_atualizado_em
+        OR embedding_modelo IS DISTINCT FROM :modelo
      ORDER BY updated_at
      LIMIT :limite
        FOR UPDATE SKIP LOCKED
@@ -145,11 +183,16 @@ async def indexar_catalogo(ctx: dict[str, Any], limite: int | None = None) -> in
             )
         return 0
 
-    async with session_factory() as guarda:
-        concedido = await guarda.scalar(_TOMAR_O_LOCK, {"chave": _CHAVE_DO_LOCK})
-        # Solta a transacao implicita e mantem o lock: ele e de sessao. Sem
-        # isto a conexao ficaria `idle in transaction` por toda a passagem.
-        await guarda.rollback()
+    # A conexao e segurada pela passagem inteira, e isso custa uma vaga do pool
+    # (`create_async_engine` sem `pool_size`: 5 permanentes, ate 10 de
+    # overflow). E uma so, porque so uma passagem por vez ganha o lock -- a que
+    # nao ganha devolve a conexao na instrucao seguinte.
+    async with engine_de(session_factory).connect() as conexao:
+        concedido = await conexao.scalar(_TOMAR_O_LOCK, {"chave": _CHAVE_DO_LOCK})
+        # Solta a transacao implicita e MANTEM o lock: ele e da conexao, e a
+        # conexao e desta passagem ate o `close()`. Sem isto ela ficaria `idle
+        # in transaction` por todo o I/O de rede.
+        await conexao.rollback()
 
         if not concedido:
             # Outra passagem ainda esta em curso. Sair agora e o ponto: a
@@ -161,11 +204,43 @@ async def indexar_catalogo(ctx: dict[str, Any], limite: int | None = None) -> in
         try:
             return await _uma_passagem(session_factory, settings, embedar, limite)
         finally:
-            # No `finally` porque um lock de sessao vazado dura o que durar a
-            # conexao -- e a conexao volta para o pool, entao a varredura
-            # ficaria travada para sempre em vez de ate o fim da passagem.
-            await guarda.execute(_SOLTAR_O_LOCK, {"chave": _CHAVE_DO_LOCK})
-            await guarda.rollback()
+            await _soltar_o_lock(conexao)
+
+
+async def _soltar_o_lock(conexao: AsyncConnection) -> None:
+    """Solta o lock, e nunca devolve a conexao ao pool ainda segurando-o.
+
+    Um lock de sessao vazado dura o que durar a conexao, e a conexao volta
+    para o pool: a varredura ficaria travada para sempre em vez de ate o fim
+    da passagem.
+
+    `BaseException`, e nao `Exception`: o `job_timeout` de 240s do worker
+    cancela a corrotina, `CancelledError` nao e `Exception`, e o pior caso
+    desenhado da passagem e de 200s -- o cancelamento caindo exatamente aqui e
+    alcancavel, nao teorico. Quando o unlock nao pode completar,
+    `invalidate()` fecha a conexao FISICA em vez de devolve-la ao pool: o lock
+    e da sessao do Postgres, entao encerrar a sessao o solta de qualquer jeito.
+
+    **Nao repropaga.** Este bloco roda num `finally`, e uma excecao daqui
+    SUBSTITUIRIA a excecao da passagem -- o erro de verdade sumiria atras de um
+    erro de limpeza. O log fica como sintoma.
+    """
+    try:
+        await conexao.execute(_SOLTAR_O_LOCK, {"chave": _CHAVE_DO_LOCK})
+        await conexao.rollback()
+    except BaseException as erro:
+        try:
+            await conexao.invalidate()
+        except BaseException:
+            # Ultimo recurso: nem invalidar deu. Nao ha o que fazer aqui alem
+            # de nao mascarar a excecao da passagem -- o warning abaixo e o
+            # unico sintoma, e ele nomeia a chave para quem for soltar a mao.
+            pass
+        log.warning(
+            "indexacao_do_catalogo_lock_nao_solto",
+            chave=_CHAVE_DO_LOCK,
+            tipo=type(erro).__name__,
+        )
 
 
 async def _uma_passagem(
@@ -179,7 +254,10 @@ async def _uma_passagem(
     lote_maximo = settings.indexacao_tamanho_do_lote
 
     async with session_factory() as session:
-        resultado = await session.execute(_SELECIONAR_PENDENTES, {"limite": teto})
+        resultado = await session.execute(
+            _SELECIONAR_PENDENTES,
+            {"limite": teto, "modelo": settings.embedding_modelo},
+        )
         linhas = list(resultado)
         identificadores = [linha.id for linha in linhas]
 
@@ -276,6 +354,7 @@ async def _uma_passagem(
                         embedding=vetor,
                         documento_hash=digest,
                         embedding_atualizado_em=lido_em,
+                        embedding_modelo=settings.embedding_modelo,
                     )
                 )
             # Commit por lote: uma falha no lote seguinte preserva este.
@@ -284,10 +363,23 @@ async def _uma_passagem(
 
     if carimbar_apenas:
         async with session_factory() as escrita:
+            # `embedding_modelo` vai junto com o carimbo, e nao so no ramo que
+            # embeda. Duas razoes, e a segunda e o que impede um laco: a
+            # primeira e que o hash bater JA prova que o modelo bate (o modelo
+            # esta dentro do material hasheado), entao escrever a coluna aqui
+            # e verdade e nao chute; a segunda e que sem isso a linha indexada
+            # antes de a coluna existir -- `embedding_modelo` NULL, hash certo
+            # -- seria `IS DISTINCT FROM` do modelo configurado em TODA
+            # passagem, para sempre, sem nunca chamar a API e sem nunca sair
+            # da lista de candidatos. Este e o caminho de conciliacao das
+            # linhas da `0018`, e ele fecha em uma passagem.
             await escrita.execute(
                 update(Imovel)
                 .where(Imovel.id.in_(carimbar_apenas))
-                .values(embedding_atualizado_em=lido_em)
+                .values(
+                    embedding_atualizado_em=lido_em,
+                    embedding_modelo=settings.embedding_modelo,
+                )
             )
             await escrita.commit()
 

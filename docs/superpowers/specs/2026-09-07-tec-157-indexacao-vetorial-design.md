@@ -68,7 +68,13 @@ Então a definição mora em `domain/catalogo/documento.py`, em função pura, e
 
 **O hash cobre também a identidade do provedor** (revisão de branch, 07/09/2026). O `sha256` do texto sozinho não distingue vetor gerado por `text-embedding-3-small` de vetor gerado por `text-embedding-3-large`. Uma troca de **dimensão** falha alto — a coluna `vector(1536)` recusa o vetor —, mas uma troca de **modelo na mesma dimensão** (`dimensions=1536` é opção do provedor) não mudaria hash nenhum: nenhuma linha viraria candidata, e o catálogo passaria a guardar vetores de dois espaços incompatíveis. Cosseno entre eles é ruído, sem erro e sem caminho de reindexação — a mesma classe de falha que esta decisão recusou o hash em SQL para evitar, alcançada pela configuração do provedor em vez da lista de campos.
 
-Então `hash_do_documento(texto, modelo, dimensoes)` hasheia os três juntos. **O documento não muda:** o que vai para a API continua sendo `documento_de(imovel)` e nada mais — prefixar o nome do modelo no que se embeda mudaria o vetor de todo imóvel por um motivo que não é semântico. Quem ganha o prefixo é o material hasheado, porque ele responde outra pergunta: "o vetor guardado ainda vale?". Trocar o modelo faz todo hash diferir, e a varredura reindexa o catálogo sozinha, sem caminho de backfill — pelo mesmo mecanismo da D2.
+Então `hash_do_documento(texto, modelo, dimensoes)` hasheia os três juntos. **O documento não muda:** o que vai para a API continua sendo `documento_de(imovel)` e nada mais — prefixar o nome do modelo no que se embeda mudaria o vetor de todo imóvel por um motivo que não é semântico. Quem ganha o prefixo é o material hasheado, porque ele responde outra pergunta: "o vetor guardado ainda vale?".
+
+**O hash sozinho não dispara a reindexação, e a segunda revisão de branch (07/09/2026) corrigiu esta frase.** A versão anterior dizia que "trocar o modelo faz todo hash diferir, e a varredura reindexa o catálogo sozinha" — e isso era falso pelo mesmo motivo que a D3 escolheu não consultar hash no SQL: o pré-filtro seleciona por coluna nula e por `updated_at > embedding_atualizado_em`, e **uma troca de modelo no `Settings` não toca linha nenhuma**. A linha já indexada tem as três colunas preenchidas e o carimbo mais novo que `updated_at`: ela nunca viraria candidata, o hash novo nunca chegaria a ser comparado, e o catálogo ficaria com metade dos vetores em cada espaço até que um importador tocasse cada linha. O apelo ao mecanismo da D2 não transferia: a D2 fala de mudança de texto, que bumpa `updated_at`; mudança de configuração não bumpa nada.
+
+A resposta foi tornar a frase verdadeira, e não retirá-la. `imoveis` ganha `embedding_modelo` (migration `0018`), escrita junto com o vetor, e o pré-filtro ganha `OR embedding_modelo IS DISTINCT FROM :modelo` com o modelo configurado ligado como parâmetro. Uma lacuna declarada dizendo "quem trocar o modelo roda `UPDATE imoveis SET documento_hash = NULL`" seria honesta, mas reintroduziria exatamente o "alguém precisa lembrar" que a D2 existe para eliminar.
+
+**As três peças são simétricas, e o código diz qual estágio cada uma serve:** `updated_at` é o pré-filtro barato em SQL para mudança de **texto**, `embedding_modelo` é o pré-filtro barato em SQL para mudança de **configuração**, e `documento_hash` continua sendo o portão preciso em Python para as duas. O hash seguir cobrindo o modelo não é redundância a remover: é o mesmo desenho de dois estágios que a card já usa, e um comentário em cada lugar diz isso para que ninguém "simplifique" um dos dois. A **dimensão** fica fora do pré-filtro de propósito: trocá-la já falha alto na coluna `vector(1536)`, e o pré-filtro só precisa cobrir o que falharia em silêncio.
 
 ### D4 — Quatro campos textuais ficam fora do documento, pelo mesmo princípio do preço
 
@@ -92,7 +98,13 @@ O alternativo — embedar dentro do job de importação — transformaria 500 im
 
 **Mas o argumento da topologia cobre correção, não capacidade** (revisão de branch, 07/09/2026). Ele diz que `process_message` nunca chama o provedor; não diz que ele não disputa vaga com quem chama. Os dois jobs dividem o mesmo pool do worker ARQ, e o `cron(..., unique=True)` cunha um id de job por tick — cada tick de 30 segundos é um job **distinto**, e `WorkerSettings` não fixa `max_jobs` (o default do ARQ é 10). Passagens sobrepostas portanto são fenômeno de **um** worker, não de vários: com o pior caso de 200s desta card, quase sete ticks, até 8 das 10 vagas poderiam estar indexando exatamente quando o provedor está lento.
 
-Por isso a varredura se auto-exclui: `SELECT pg_try_advisory_lock(<chave>)` no início da passagem, e `return 0` imediato quando não é concedido. O lock é de **sessão** — precisa sobreviver ao rollback que solta os locks de linha e atravessar as sessões de escrita do laço de lotes — e é solto num `finally`, porque lock de sessão vazado dura o que durar a conexão, e a conexão volta para o pool. Um lock de transação (`pg_try_advisory_xact_lock`) exigiria manter transação aberta durante todo o I/O de rede, que é o que o rollback antes do laço existe para evitar. A chave é derivada do nome do job (`sha256` de `mobia.indexar_catalogo`, primeiros 8 bytes, big-endian com sinal) e a reprodução está escrita no módulo: o espaço de `pg_advisory_lock(bigint)` é global no banco, então número redondo escolhido a dedo é exatamente o que colide com o próximo job a fazer o mesmo. Sendo do banco e não do processo, a exclusão vale também entre workers.
+Por isso a varredura se auto-exclui: `SELECT pg_try_advisory_lock(<chave>)` no início da passagem, e `return 0` imediato quando não é concedido. O lock é de **sessão** — precisa sobreviver ao rollback que solta os locks de linha e atravessar as sessões de escrita do laço de lotes — e é solto num `finally`, porque lock de sessão vazado dura o que durar a conexão, e a conexão volta para o pool.
+
+**"Sessão" ali é a do Postgres, que é a conexão — não a `Session` do SQLAlchemy** (segunda revisão de branch, 07/09/2026). A primeira implementação tomou o lock numa `AsyncSession` e chamou `rollback()` nela, e `Session.rollback()` devolve a conexão ao pool: o lock era solto uma instrução depois de ser tomado. Medido, as duas consequências apareceram juntas — duas passagens seguidas recebendo `true` para a mesma chave (locks consultivos são reentrantes por conexão, e o pool devolve a mesma conexão à passagem seguinte, que é justamente a geometria do tick de 30 segundos com uma passagem parada no provedor), e um `pg_advisory_unlock` caindo em conexão diferente, devolvendo `false` e deixando o lock pendurado numa conexão do pool. Com `pool_recycle = -1` isso é permanente: toda passagem posterior sairia com `indexacao_do_catalogo_ja_em_curso` até o worker reiniciar. A varredura se desligando sozinha é pior que a sobreposição que o lock veio fechar.
+
+A correção é dar ao lock uma casa fixa: a passagem inteira roda dentro de `engine.connect()`, e uma `AsyncConnection` sobrevive ao `rollback()` — só é devolvida ao pool no `close()`. **O custo, dito em voz alta: uma vaga do pool fica ocupada pela duração inteira da passagem.** O engine (`infra/db.py`) é criado sem `pool_size`, então são os defaults do SQLAlchemy — 5 conexões permanentes e até 10 de _overflow_. É **uma** vaga, não uma por tick: só uma passagem por vez ganha o lock, e a que não ganha devolve a conexão na instrução seguinte. Com o pior caso de 200s, isso é uma das 5 permanentes ocupada por boa parte do tempo, e `process_message` divide o mesmo pool — cabe, mas é uma conta que quem mexer em `max_jobs` ou no tamanho do pool precisa refazer.
+
+A soltura é escrita para dois casos ruins que a passagem alcança: uma exceção vinda dela, e o cancelamento do `job_timeout` de 240s caindo no meio do `unlock` (o pior caso desenhado é 200s, então o cancelamento ali é alcançável). Quando o `unlock` não completa, a conexão é **invalidada** em vez de devolvida ao pool — fechar a conexão física encerra a sessão do Postgres e solta o lock de qualquer jeito. E o bloco não repropaga: exceção vinda de um `finally` substituiria a exceção da passagem e esconderia o erro de verdade. Um lock de transação (`pg_try_advisory_xact_lock`) exigiria manter transação aberta durante todo o I/O de rede, que é o que o rollback antes do laço existe para evitar. A chave é derivada do nome do job (`sha256` de `mobia.indexar_catalogo`, primeiros 8 bytes, big-endian com sinal) e a reprodução está escrita no módulo: o espaço de `pg_advisory_lock(bigint)` é global no banco, então número redondo escolhido a dedo é exatamente o que colide com o próximo job a fazer o mesmo. Sendo do banco e não do processo, a exclusão vale também entre workers.
 
 ### D6 — A imagem do Postgres troca nos dois lugares, e o volume local é recriado
 
@@ -144,6 +156,14 @@ Segue o `ConfiguracaoInsegura` do `infra/anthropic.py`: em produção, recusa. E
 
 As três nuláveis é o que faz os 520 imóveis já importados entrarem como pendentes **sem backfill nenhum** — hash nulo é pendência por definição.
 
+### Migration `0018` — `embedding_modelo`
+
+| Coluna | Tipo | Papel |
+|---|---|---|
+| `embedding_modelo` | `text` | O modelo que gerou o vetor guardado. É o pré-filtro barato para mudança de **configuração**, como `embedding_atualizado_em` é o de mudança de texto |
+
+Nulável, e **sem backfill**: a migration não sabe qual modelo gerou os vetores que já existem. `NULL` é `IS DISTINCT FROM` de qualquer modelo configurado, então toda linha já indexada entra como candidata na passagem seguinte; lá o hash decide, e se o modelo não mudou nenhuma chamada é feita ao provedor — a varredura só carimba a coluna. É a mesma conciliação-sem-backfill das três nuláveis da `0017`, e é ela que impede a linha de ficar candidata para sempre. Sem índice: a coluna só aparece num `OR` de um pré-filtro que já varre `imoveis` inteira nesta escala.
+
 ## Estrutura
 
 | Arquivo | Papel |
@@ -154,6 +174,7 @@ As três nuláveis é o que faz os 520 imóveis já importados entrarem como pen
 | `workers/main.py` | Registra em `functions` e `cron_jobs` |
 | `app/config.py` | Chave, modelo, dimensão, teto por passagem |
 | `alembic/versions/0017_indexacao_vetorial.py` | **Novo.** Extensão, colunas, índice |
+| `alembic/versions/0018_modelo_do_embedding.py` | **Novo.** `embedding_modelo`, o pré-filtro de mudança de configuração |
 | `docker-compose.yml` | Imagem |
 | `.github/workflows/ci.yml` | Imagem |
 
@@ -168,19 +189,24 @@ Uma passagem da varredura, precedida de `pg_try_advisory_lock` — não concedid
       OR documento_hash IS NULL
       OR embedding_atualizado_em IS NULL
       OR updated_at > embedding_atualizado_em
+      OR embedding_modelo IS DISTINCT FROM :modelo
    ```
 
    O `embedding_atualizado_em IS NULL` está explícito de propósito: sem ele, `updated_at > NULL` dá `NULL` e imóvel recém-inserido nunca seria candidato.
 
+   A cláusula de `embedding_modelo` liga o modelo configurado como parâmetro e é o que faz uma troca de modelo virar reindexação sem que ninguém precise lembrar de nada (D3). Ela é a **outra metade** do `updated_at`: mudança de texto bumpa a linha, mudança de configuração não bumpa nada.
+
 2. **Para cada candidato**, monta o documento e calcula o hash em Python.
 
-3. **Hash diferente ou nulo** → embeda em lote, grava `embedding`, `documento_hash` e `embedding_atualizado_em = now()`.
+3. **Hash diferente ou nulo** → embeda em lote, grava `embedding`, `documento_hash`, `embedding_modelo` e `embedding_atualizado_em = now()`.
 
-4. **Hash igual** → **nenhuma chamada à API**; só carimba `embedding_atualizado_em = now()`.
+4. **Hash igual** → **nenhuma chamada à API**; só carimba `embedding_atualizado_em = now()` e `embedding_modelo`.
+
+   O `embedding_modelo` vai junto no passo 4, e não só no 3, por duas razões — e a segunda é o que impede um laço. A primeira: o hash bater já **prova** que o modelo bate, porque o modelo está dentro do material hasheado; escrever a coluna aqui é verdade, não chute. A segunda: sem isso, a linha indexada antes de a coluna existir (`embedding_modelo` nulo, hash certo) seria `IS DISTINCT FROM` do modelo configurado em toda passagem, para sempre — sem nunca chamar a API e sem nunca sair da lista de candidatos.
 
 O passo 4 é o que cumpre *"alteração de preço não regera embedding"*, e cumpre de forma demonstrável: a mudança de preço bumpa `updated_at`, a linha vira candidata, o hash bate, nada é chamado. O carimbo é o que impede a linha de ficar candidata para sempre.
 
-**Não há laço.** `updated_at` não tem `onupdate` — é escrito explicitamente pelo `repositorio.py`, e o comentário de `models.py` declara que linha inalterada não o bumpa. Carimbar `embedding_atualizado_em` não realimenta o pré-filtro.
+**Não há laço.** `updated_at` não tem `onupdate` — é escrito explicitamente pelo `repositorio.py`, e o comentário de `models.py` declara que linha inalterada não o bumpa. Carimbar `embedding_atualizado_em` não realimenta o pré-filtro, e gravar `embedding_modelo` no passo 4 é o que impede a cláusula nova de realimentá-lo.
 
 **Falha do provedor.** A linha só é gravada em caso de sucesso, então falha deixa o candidato como estava e a passagem seguinte o pega. A retomada não depende do retry do ARQ: o cron roda de novo em 30 segundos de qualquer modo. A "fila" da card é o estado derivado — e é por isso que não há enfileiramento que possa se perder.
 
@@ -208,7 +234,11 @@ Integração, sobre a varredura:
 - mudança de descrição gera vetor novo e hash novo;
 - falha do provedor deixa a linha pendente e a passagem seguinte a indexa;
 - **uma falha no segundo lote preserva o commit do primeiro** — três pendentes com `indexacao_tamanho_do_lote = 1` injetado por `ctx["settings"]`, falhando a partir da segunda chamada. É o único teste que percorre mais de uma iteração do laço de lotes, e é ele que sustenta a afirmação "comita por lote" que faz teto e lote serem dois números diferentes;
-- duas varreduras concorrentes não indexam a mesma linha duas vezes.
+- duas varreduras concorrentes não indexam a mesma linha duas vezes;
+- **a passagem sobreposta não pega o lock** — um embedador que estaciona num `asyncio.Event` dentro do `__call__` mantém a passagem A parada no provedor com as conexões de trabalho já devolvidas ao pool, que é a geometria real do tick de 30 segundos; a segunda passagem tem de devolver `0` **sem nenhuma chamada ao provedor**. É a asserção sobre a chamada, e não sobre o desfecho da linha: um lock que não exclui nada também deixaria a linha indexada no fim, gastando duas chamadas. Esta era a lacuna que deixou a primeira implementação passar — apagar o bloco do lock inteiro não deixava um teste vermelho;
+- **a passagem não deixa lock pendurado** — `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'` tem de ser `0` depois de uma passagem completa. Com mais de uma conexão no pool antes da passagem, que é o estado normal de um worker onde `process_message` divide o mesmo pool; com uma só, o pool devolve sempre a mesma conexão e o vazamento existiria sem o teste enxergá-lo;
+- **a troca de modelo reindexa a linha já indexada** — `Settings` injetado com outro `embedding_modelo`, sem tocar a linha, e a asserção é sobre a chamada nova e sobre as colunas gravadas;
+- **a linha sem modelo gravado concilia em uma passagem** — `embedding_modelo` nulo vira candidata, o hash bate, nenhuma chamada é feita, a coluna é carimbada, e a passagem seguinte não a encontra mais.
 
 **Basename sem colisão.** Basename de teste repetido entre `unit` e `integration` aborta a coleta da suíte inteira e não aparece em execução isolada — já custou duas cards. Vão como `test_documento_do_imovel.py` e `test_indexacao_do_catalogo.py`.
 
@@ -225,7 +255,8 @@ Nenhum teste de latência aqui: `addopts = "-m 'not perf'"` já exclui `perf`, e
 3. **O IVFFlat nasce sem treino real** (D7). Inofensivo nesta escala, e revisitá-lo é da TEC-159.
 4. **A reindexação por CRUD administrativo não tem teste** porque o CRUD não existe — a TEC-197 o traz. O desenho a cobre por construção (D2), mas cobertura por construção sem consumidor não é cobertura demonstrada.
 5. **O caminho de corrida do `ON CONFLICT` gasta um hash** por linha tocada sem mudança de conteúdo. Barato, e é o preço de fechar o buraco.
-6. ~~Duas varreduras simultâneas podem gastar uma chamada em duplicidade.~~ **Fechada na revisão de branch (07/09/2026).** O texto original dizia que a sobreposição só aconteceria "numa operação com mais de um worker", e isso era falso: o `cron(..., unique=True)` cunha um id de job por tick e o worker não fixa `max_jobs`, então **um** worker já roda passagens sobrepostas sempre que uma passagem passa dos 30 segundos — e o pior caso desta card são 200s. Dizia também que fechar isso exigiria uma coluna de claim; exigiu duas linhas de `pg_try_advisory_lock`. Ver a D5 para o mecanismo, e para por que o problema é de capacidade e não de correção.
+6. ~~Duas varreduras simultâneas podem gastar uma chamada em duplicidade.~~ **Fechada na revisão de branch (07/09/2026).** O texto original dizia que a sobreposição só aconteceria "numa operação com mais de um worker", e isso era falso: o `cron(..., unique=True)` cunha um id de job por tick e o worker não fixa `max_jobs`, então **um** worker já roda passagens sobrepostas sempre que uma passagem passa dos 30 segundos — e o pior caso desta card são 200s. Dizia também que fechar isso exigiria uma coluna de claim; exigiu duas linhas de `pg_try_advisory_lock` — **e uma conexão dedicada, que a primeira implementação não deu a ele** (segunda revisão de branch, 07/09/2026): tomado numa `AsyncSession` e seguido de `rollback()`, o lock voltava ao pool junto com a conexão e não excluía nada, além de ficar pendurado quando o `unlock` caía em outra conexão. O custo declarado da correção é **uma vaga do pool ocupada pela passagem inteira** (5 permanentes + 10 de _overflow_, defaults do `create_async_engine` em `infra/db.py`). Ver a D5 para o mecanismo, para o custo, e para por que o problema é de capacidade e não de correção.
+7. **A troca de modelo custa uma passagem de conciliação sobre o catálogo inteiro** (`embedding_modelo` nulo depois da `0018`, ou diferente depois de uma troca de verdade). Com teto de 100 por passagem e cadência de 30 segundos, 520 imóveis levam ~3 minutos — sem chamada ao provedor quando o modelo não mudou, porque o hash bate e a varredura só carimba.
 
 ## Fora de escopo
 
