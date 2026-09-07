@@ -76,10 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if not args.arquivo.is_file():
-        # as_posix() e nao str(): no Windows, str() imprimiria com barra
-        # invertida, e quem colou o caminho da linha de comando (com "/")
-        # nao reconheceria o proprio argumento na mensagem de erro.
-        print(f"arquivo nao encontrado: {args.arquivo.as_posix()}", file=sys.stderr)
+        print(f"arquivo nao encontrado: {args.arquivo}", file=sys.stderr)
         return 2
 
     relatorio = asyncio.run(_importar(arquivo=args.arquivo, origem=OrigemImportacao.CLI))

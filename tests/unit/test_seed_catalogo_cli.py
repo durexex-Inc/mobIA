@@ -4,6 +4,8 @@ TEC-156. Testa a casca, nao a importacao -- `_executar` e dublado. A logica de
 verdade tem cobertura de integracao em tests/integration/test_catalogo_upsert.py.
 """
 
+from pathlib import Path
+
 import pytest
 
 from mobia.admin import seed_catalogo
@@ -75,4 +77,6 @@ def test_falhar_se_rejeitar_sai_zero_quando_nao_ha_rejeicao(sem_banco):
 def test_arquivo_inexistente_sai_com_erro(sem_banco, capsys):
     sem_banco(Relatorio())
     assert seed_catalogo.main(["--arquivo", "nao/existe.csv"]) == 2
-    assert "nao/existe.csv" in capsys.readouterr().err
+    # str(Path(...)) e nao o literal "nao/existe.csv": no Windows a mensagem
+    # usa "\", que e a mesma convencao do --arquivo-padrao no --help.
+    assert str(Path("nao/existe.csv")) in capsys.readouterr().err
