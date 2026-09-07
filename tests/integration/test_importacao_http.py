@@ -169,3 +169,81 @@ async def test_o_job_conclui_a_importacao_enfileirada(app_com_token):
     assert corpo["processados"] == 1
     assert corpo["inseridos"] == 1
     assert corpo["rejeitados"] == 0
+
+
+@pytest.fixture
+async def app_sem_pool(monkeypatch, caches_de_cliente_limpos, banco_limpo):
+    """O mesmo app, mas com `redis_pool` em None -- o jeito mais direto de
+    fazer o enqueue nao acontecer sem derrubar o Redis do ambiente."""
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN)
+    get_settings.cache_clear()
+    app = create_app()
+    app.state.redis_pool = None
+    transporte = ASGITransport(app=app)
+    async with AsyncClient(transport=transporte, base_url="http://teste") as cliente:
+        yield cliente
+    get_settings.cache_clear()
+
+
+async def test_sem_enqueue_o_post_nao_finge_202(app_sem_pool):
+    """Sem pool, o POST devolvia 202 PROCESSANDO e logava "enfileirada".
+
+    Nada tinha sido enfileirado. A linha ficava em PROCESSANDO para sempre --
+    nao ha job para roda-la e nao ha sweep que varra importacao parada --,
+    guardando ate 10 MB e indistinguivel de "ainda trabalhando". E o log
+    afirmava um evento que nao aconteceu, que nesta base e o mesmo defeito de
+    um comentario que mente.
+    """
+    resposta = await app_sem_pool.post(
+        "/api/v1/imoveis/importar",
+        files={"arquivo": ("base.csv", ARQUIVO, "text/csv")},
+        headers={"X-Admin-Token": TOKEN},
+    )
+    assert resposta.status_code == 503
+    detalhe = resposta.json()["detail"]
+    # O id vai no corpo do erro: sem ele o cliente nao teria como consultar o
+    # motivo nem como saber que existe uma importacao registrada.
+    assert detalhe["status"] == "FALHOU"
+    uuid.UUID(detalhe["importacaoId"])
+
+
+async def test_sem_enqueue_a_linha_fica_em_falhou_com_motivo(app_sem_pool):
+    resposta = await app_sem_pool.post(
+        "/api/v1/imoveis/importar",
+        files={"arquivo": ("base.csv", ARQUIVO, "text/csv")},
+        headers={"X-Admin-Token": TOKEN},
+    )
+    importacao_id = resposta.json()["detail"]["importacaoId"]
+
+    consulta = await app_sem_pool.get(
+        f"/api/v1/imoveis/importacoes/{importacao_id}", headers={"X-Admin-Token": TOKEN}
+    )
+    assert consulta.status_code == 200
+    corpo = consulta.json()
+    assert corpo["status"] == "FALHOU"
+    assert corpo["erros"] and corpo["erros"][0]["linha"] == 0
+    assert "enfileirad" in corpo["erros"][0]["motivo"]
+
+
+async def test_enqueue_que_levanta_tambem_marca_falhou(app_com_token, monkeypatch, redis_pool):
+    """Redis no ar mas `enqueue_job` levantando: mesma consequencia, mesmo desfecho."""
+
+    async def explode(*args, **kwargs):
+        raise ConnectionError("redis fora do ar")
+
+    monkeypatch.setattr(type(redis_pool), "enqueue_job", explode)
+
+    resposta = await app_com_token.post(
+        "/api/v1/imoveis/importar",
+        files={"arquivo": ("base.csv", ARQUIVO, "text/csv")},
+        headers={"X-Admin-Token": TOKEN},
+    )
+    assert resposta.status_code == 503
+    importacao_id = resposta.json()["detail"]["importacaoId"]
+
+    consulta = await app_com_token.get(
+        f"/api/v1/imoveis/importacoes/{importacao_id}", headers={"X-Admin-Token": TOKEN}
+    )
+    corpo = consulta.json()
+    assert corpo["status"] == "FALHOU"
+    assert "redis fora do ar" in corpo["erros"][0]["motivo"]

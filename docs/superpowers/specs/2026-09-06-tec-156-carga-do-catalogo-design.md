@@ -285,6 +285,7 @@ POST /api/v1/imoveis/importar   multipart/form-data, teto 10 MB
   -> 202 {"importacaoId": ..., "status": "PROCESSANDO"}
   -> 403 sem X-Admin-Token valido
   -> 413 acima de 10 MB
+  -> 503 quando o job nao pode ser enfileirado (linha em FALHOU, id no corpo)
 GET /api/v1/imoveis/importacoes/{id}
   -> 200 relatorio  |  404
 ```
@@ -292,6 +293,10 @@ GET /api/v1/imoveis/importacoes/{id}
 Consultar antes de o job terminar devolve `200` com `status: "PROCESSANDO"` e os totais ainda em zero — não `202`, não `404`. A linha existe desde o `POST`; o que muda é o `status`, e é ele que quem consulta deve ler.
 
 O `POST` grava `importacoes(origem='HTTP')` com os bytes e enfileira `importar_catalogo(importacao_id)`. Erros seguem o formato único da seção 6 do SRS: `{"erro", "mensagem", "detalhes", "traceId"}`.
+
+**Emenda da revisão final — o enqueue que não acontece.** A linha é comitada *antes* do enqueue, e tem de ser: o job recebe só o `importacao_id` e lê os bytes da própria linha (D9). O código original ignorava a consequência disso — com `app.state.redis_pool` ausente ele devolvia `202 {"status": "PROCESSANDO"}` e ainda emitia `log.info("catalogo.importacao_enfileirada")`, uma linha de log afirmando um evento que não ocorreu; e quando `enqueue_job` levantava, o cliente recebia `500`, nunca ficava sabendo o id, e a linha ficava em `PROCESSANDO` para sempre segurando até 10 MB — indistinguível de "ainda trabalhando", sem job que a rode e sem sweep que a encontre.
+
+Passa a ser: a linha é fechada em `FALHOU` com motivo (`linha: 0`, como toda falha que não é de linha), o log de sucesso só sai quando o job foi de fato enfileirado, e a resposta é `503` **com o `importacaoId` no corpo** — sem o id o cliente não teria como ler o motivo pelo `GET` nem como saber que existe uma importação registrada.
 
 Acima de 10 MB (~40 mil imóveis) o caminho é a CLI. O parser itera linha a linha e o upsert vai em lotes de 500, então a memória não acompanha o tamanho do arquivo — o teto é sobre o upload, não sobre a capacidade.
 
