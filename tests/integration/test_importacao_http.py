@@ -147,3 +147,25 @@ async def test_arquivo_acima_do_teto_e_413(app_com_token):
         headers={"X-Admin-Token": TOKEN},
     )
     assert resposta.status_code == 413
+
+
+async def test_o_job_conclui_a_importacao_enfileirada(app_com_token):
+    from mobia.workers.jobs.importar_catalogo import importar_catalogo
+
+    criada = await app_com_token.post(
+        "/api/v1/imoveis/importar",
+        files={"arquivo": ("base.csv", ARQUIVO, "text/csv")},
+        headers={"X-Admin-Token": TOKEN},
+    )
+    importacao_id = criada.json()["importacaoId"]
+
+    await importar_catalogo({}, importacao_id)
+
+    resposta = await app_com_token.get(
+        f"/api/v1/imoveis/importacoes/{importacao_id}", headers={"X-Admin-Token": TOKEN}
+    )
+    corpo = resposta.json()
+    assert corpo["status"] == "CONCLUIDO"
+    assert corpo["processados"] == 1
+    assert corpo["inseridos"] == 1
+    assert corpo["rejeitados"] == 0
