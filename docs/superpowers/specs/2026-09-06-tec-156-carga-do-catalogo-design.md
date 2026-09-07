@@ -117,6 +117,8 @@ Centavos no arquivo seria mais direto no código e é o que o banco guarda. Mas 
 
 **A guarda de plausibilidade fecha o buraco simétrico.** Preço fora de `[R$ 1.000, R$ 500.000.000]` é rejeição com motivo explícito. É ela que pega quem digitou centavos achando que eram reais: `58000000` no formato reais vira R$ 58 milhões, sobrevive à faixa, e — este é o ponto — a faixa foi escolhida larga o bastante para não recusar imóvel legítimo e estreita o bastante para o erro de unidade cair fora dela na grande maioria dos casos. Não é uma guarda perfeita; é a diferença entre um erro que grita e um erro que não deixa rastro.
 
+**A guarda só se aplica a `preco_venda` e `preco_aluguel`.** `condominio` e `iptu_mensal` passam pelo mesmo parser `Decimal` e viram centavos do mesmo jeito, mas sem `checar_faixa`: um condomínio de R$ 850 ou um IPTU de R$ 320 são o comum, não a exceção, e um piso de R$ 1.000 rejeitaria quase todo imóvel real nesses dois campos. Preço de venda ou aluguel abaixo de R$ 1.000 é implausível; encargo mensal abaixo de R$ 1.000 é a norma. A mesma faixa não serve às duas naturezas de valor.
+
 **Não reusar `domain/agente/dinheiro.py`.** A tentação é óbvia: aquele módulo já parseia `R$ 580.000,00` e `580 mil`, com gramática testada. Mas a docstring dele diz que *"nem `parsear` nem `_faixa_de` levantam"* e que *"a gramática é lista fixa e erra por falta"* — desenhado assim porque a entrada é fala de lead vinda de uma chamada ao modelo, onde uma exceção derruba o turno e o lead fica sem resposta. Num arquivo o contrato é o inverso: valor que não parseia tem que virar rejeição visível, não `None` silencioso. Mesmo problema aparente, semânticas opostas.
 
 ### D7 — Uma rejeição por linha, com todos os motivos juntos
@@ -296,7 +298,7 @@ Os dois arquivos de integração vão flakear sob carga com `ConnectionResetErro
 Três, todas aninhadas sob a regra que alteram, sem tocar no texto de 22/08/2026.
 
 - **RN-08.5 → E-01 (TEC-156, 06/09/2026):** o relatório ganha um quinto total, `inalterados`. Motivo na D3.
-- **RN-08.1 → E-01 (TEC-156, 06/09/2026):** o contrato do arquivo, que a regra só chama de "CSV/JSON" — colunas nomeadas em `snake_case`, preço em reais decimais com guarda de plausibilidade, `|` como separador de array, enums em maiúscula exata, leitura em `utf-8-sig`, delimitador `,` ou `;` detectado no cabeçalho. Motivos nas D5 e D6.
+- **RN-08.1 → E-01 (TEC-156, 06/09/2026):** o contrato do arquivo, que a regra só chama de "CSV/JSON" — colunas nomeadas em `snake_case`, preço em reais decimais com guarda de plausibilidade em `preco_venda`/`preco_aluguel` apenas (`condominio` e `iptu_mensal` convertem sem guarda de faixa), `|` como separador de array, enums em maiúscula exata, leitura em `utf-8-sig`, delimitador `,` ou `;` detectado no cabeçalho. Motivos nas D5 e D6.
 - **Seção 6.3, `POST /api/v1/imoveis/importar` → E-01 (TEC-156, 06/09/2026):** até a TEC-201, a autenticação é `X-Admin-Token` comparado em tempo constante, e a rota não é registrada quando o token não está configurado. `Bearer JWT | Papel: ADMIN` continua sendo o alvo. Motivo na D1.
 
 ## Lacunas declaradas
@@ -307,6 +309,7 @@ Três, todas aninhadas sob a regra que alteram, sem tocar no texto de 22/08/2026
 4. **A distribuição da base simulada é fixa no arquivo.** A TEC-159, se precisar de volume maior para medir o SLA, gera o próprio arquivo no formato que esta card publica.
 5. **Sem `GET /api/v1/imoveis`**, então conferir o resultado de uma importação exige o relatório ou o banco. A listagem é a TEC-197.
 6. **A `importacoes` acumula os bytes dos arquivos importados** (D9). Irrelevante na POC, decisão de retenção fora desta card.
+7. **`condominio` e `iptu_mensal` não têm guarda de faixa nenhuma.** A faixa `[R$ 1.000, R$ 500.000.000]` de D6 não pode se aplicar aos dois: são cobranças mensais, tipicamente na casa das centenas de reais, e o piso de R$ 1.000 rejeitaria a maioria dos imóveis legítimos. Um erro de unidade nesses campos — por exemplo, digitar centavos num campo de reais — passa em silêncio, sem a rede que pega o mesmo erro em `preco_venda`/`preco_aluguel`.
 
 ## Fora de escopo
 
