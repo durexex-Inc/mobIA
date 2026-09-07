@@ -218,6 +218,24 @@ class Settings(BaseSettings):
     sweep_inflight_after_seconds: int = 300
     sweep_max_attempts: int = 5
 
+    # TEC-157. A chave do provedor de embedding, que NAO e a da Anthropic: a
+    # API da Anthropic nao tem endpoint de embeddings, entao a indexacao usa
+    # um segundo provedor e o agente segue no `infra/anthropic.py`.
+    openai_api_key: str | None = None
+
+    # 1536 nao e ajustavel a gosto: e a dimensao da coluna `vector(1536)` da
+    # `0017` e a do modelo escolhido. Mudar aqui sem migration deixa o
+    # provedor devolvendo vetor que a coluna recusa.
+    embedding_modelo: str = "text-embedding-3-small"
+    embedding_dimensoes: int = 1536
+
+    # Teto de candidatos por passagem e tamanho do lote por chamada. O lote e
+    # MENOR que o teto de proposito: com um lote so, "comita por lote" nao
+    # significaria nada -- uma falha desfaria a passagem inteira. Com dois,
+    # uma falha na segunda chamada preserva os 50 primeiros.
+    indexacao_limite_por_passagem: int = 100
+    indexacao_tamanho_do_lote: int = 50
+
     # RN-13.3 (TEC-185): o horario de envio automatico, em horas locais do
     # `followup_fuso`. `fim` nomeia o ultimo MINUTO em que um envio pode
     # comecar -- `fim=20` autoriza 20:00 e recusa 20:01 --, e nao a ultima hora
