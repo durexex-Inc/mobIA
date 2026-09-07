@@ -344,7 +344,10 @@ def _imovel(**sobrescritas: object) -> Imovel:
         "suites": 1,
         "banheiros": 2,
         "vagas": 2,
-        "caracteristicas": ["varanda gourmet", "portaria 24h"],
+        # Texto sem digito de proposito: o teste abaixo afirma a ausencia dos
+        # VALORES numericos, e digito solto dentro de texto livre legitimo
+        # tornaria a assercao insustentavel.
+        "caracteristicas": ["varanda gourmet", "portaria full time"],
         "fotos": [],
         "status": "DISPONIVEL",
     }
@@ -355,9 +358,30 @@ def _imovel(**sobrescritas: object) -> Imovel:
 def test_nenhum_valor_numerico_do_imovel_aparece_no_documento() -> None:
     documento = documento_de(_imovel())
 
-    # Os numeros como o banco os guarda, e como um humano os leria.
-    for proibido in ("74900000", "749000", "89000", "31000", "78", "3", "1", "2"):
+    # Os valores como o banco os guarda, e como um humano os leria.
+    for proibido in ("74900000", "749000", "89000", "890", "31000", "310"):
         assert proibido not in documento, f"{proibido!r} vazou para o documento"
+
+    # Nenhum algarismo, o que so vale porque o fixture usa texto sem digito:
+    # e a forma mais forte de afirmar que area, quartos, suites, banheiros e
+    # vagas nao entraram.
+    assert not any(caractere.isdigit() for caractere in documento)
+
+
+def test_o_documento_e_exatamente_os_seis_campos_nesta_ordem() -> None:
+    # Igualdade exata, e nao `in`: e o que pega um campo novo entrando no
+    # documento sem que ninguem decida que ele deve entrar.
+    assert documento_de(_imovel()) == "\n".join(
+        [
+            "Apartamento reformado na Vila Mariana",
+            "Sala ampla com varanda gourmet e sol da manha.",
+            "APARTAMENTO",
+            "Vila Mariana",
+            "Sao Paulo",
+            "varanda gourmet",
+            "portaria full time",
+        ]
+    )
 
 
 def test_os_quatro_textuais_de_filtro_ficam_fora() -> None:
@@ -476,9 +500,9 @@ def hash_do_documento(texto: str) -> str:
 ./.venv/Scripts/python.exe -m pytest tests/unit/test_documento_do_imovel.py -v --tb=short
 ```
 
-Esperado: as seis PASSAM.
+Esperado: as sete PASSAM.
 
-Se `test_nenhum_valor_numerico_do_imovel_aparece_no_documento` falhar em `"2"` ou `"3"`, é porque um dígito apareceu dentro de um texto legítimo (`"portaria 24h"` contém `2` e `4`). Ajuste o fixture `_imovel` para usar características sem dígitos — **não** afrouxe a asserção: ela é o critério de aceite da card.
+Se `test_o_documento_e_exatamente_os_seis_campos_nesta_ordem` falhar, compare o esperado com o obtido antes de mexer no teste: a igualdade exata existe para pegar campo entrando no documento sem decisão, e mudar o esperado sem decidir é justamente o que ela impede. **Não** afrouxe para `in`.
 
 - [ ] **Step 5: Escrever a emenda ao SRS**
 
@@ -567,7 +591,11 @@ from mobia.infra import embeddings
 
 
 def test_sem_chave_o_cliente_recusa(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # `setenv` com string vazia, e nao `delenv`: variavel de ambiente vence o
+    # `.env` no pydantic-settings, e string vazia e falsy. Com `delenv`, uma
+    # chave presente no `.env` de quem executa faria o teste falhar por
+    # ambiente.
+    monkeypatch.setenv("OPENAI_API_KEY", "")
     get_settings.cache_clear()
     embeddings.get_client.cache_clear()
 
@@ -580,7 +608,11 @@ def test_sem_chave_o_cliente_recusa(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_lote_vazio_nao_chama_o_provedor(monkeypatch: pytest.MonkeyPatch) -> None:
     # Se `embedar([])` chamasse o provedor, a guarda da chave levantaria --
     # entao passar sem chave configurada E a assercao.
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # `setenv` com string vazia, e nao `delenv`: variavel de ambiente vence o
+    # `.env` no pydantic-settings, e string vazia e falsy. Com `delenv`, uma
+    # chave presente no `.env` de quem executa faria o teste falhar por
+    # ambiente.
+    monkeypatch.setenv("OPENAI_API_KEY", "")
     get_settings.cache_clear()
     embeddings.get_client.cache_clear()
 
@@ -1239,21 +1271,41 @@ async def test_falha_do_provedor_deixa_a_linha_pendente(session: Any) -> None:
     assert await indexar_catalogo(_ctx(embedador)) == 1
 
 
-async def test_duas_varreduras_concorrentes_nao_indexam_a_mesma_linha_duas_vezes(
+async def test_varreduras_concorrentes_deixam_a_linha_indexada_uma_vez(
     session: Any,
 ) -> None:
-    await _imovel(session)
+    identificador = await _imovel(session)
     primeiro = EmbedadorFake()
     segundo = EmbedadorFake()
 
-    resultados = await asyncio.gather(
+    await asyncio.gather(
         indexar_catalogo(_ctx(primeiro)),
         indexar_catalogo(_ctx(segundo)),
     )
 
-    # Uma das duas pega a linha; a outra sai vazia pelo SKIP LOCKED.
-    assert sorted(resultados) == [0, 1]
-    assert len(primeiro.chamadas) + len(segundo.chamadas) == 1
+    # A assercao e sobre o DESFECHO, e nao sobre o numero de chamadas.
+    #
+    # `FOR UPDATE SKIP LOCKED` impede duas varreduras de selecionar a mesma
+    # linha no mesmo instante, mas o lock e solto antes do I/O de rede -- de
+    # proposito, herdado da `sweep_stalled`: segurar lock de linha atravessando
+    # chamada a provedor externo e pior. Entao uma varredura que comece depois
+    # do rollback da outra pode gastar uma chamada em duplicidade. Isso e
+    # desperdicio idempotente, nao incorrecao: mesmo texto gera mesmo vetor, e
+    # a ultima escrita tem o mesmo conteudo da primeira.
+    #
+    # Afirmar `len(chamadas) == 1` aqui seria afirmar mais do que o desenho
+    # garante, e o teste flakearia sob carga por um motivo que nao e defeito.
+    async with get_sessionmaker()() as leitura:
+        imovel = await leitura.scalar(select(Imovel).where(Imovel.id == identificador))
+    assert imovel is not None
+    assert imovel.embedding is not None
+    assert imovel.documento_hash is not None
+    assert imovel.embedding_atualizado_em is not None
+
+    # E a linha nao fica candidata depois: a proxima passagem nao chama nada.
+    terceiro = EmbedadorFake()
+    assert await indexar_catalogo(_ctx(terceiro)) == 0
+    assert terceiro.chamadas == []
 ```
 
 - [ ] **Step 2: Rodar todos os oito**
@@ -1264,7 +1316,7 @@ async def test_duas_varreduras_concorrentes_nao_indexam_a_mesma_linha_duas_vezes
 
 Esperado: os oito PASSAM — três da Task 4, dois da Task 5, três desta.
 
-Se o teste de concorrência der `[1, 1]`, é porque o `SKIP LOCKED` está sendo solto antes de a outra passagem chegar à seleção — este arquivo está entre os que flakeiam sob carga. **Rode o arquivo isolado antes de concluir que é defeito seu**, conforme o CLAUDE.md.
+Este arquivo é de integração e está na família que flakeia sob carga (`ConnectionResetError`, erro de Redis). **Rode o arquivo isolado antes de concluir que é defeito seu**, conforme o CLAUDE.md.
 
 - [ ] **Step 3: Os três gates e commit**
 

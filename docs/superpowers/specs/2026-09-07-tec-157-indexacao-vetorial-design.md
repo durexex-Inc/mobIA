@@ -213,6 +213,7 @@ Nenhum teste de latência aqui: `addopts = "-m 'not perf'"` já exclui `perf`, e
 3. **O IVFFlat nasce sem treino real** (D7). Inofensivo nesta escala, e revisitá-lo é da TEC-159.
 4. **A reindexação por CRUD administrativo não tem teste** porque o CRUD não existe — a TEC-197 o traz. O desenho a cobre por construção (D2), mas cobertura por construção sem consumidor não é cobertura demonstrada.
 5. **O caminho de corrida do `ON CONFLICT` gasta um hash** por linha tocada sem mudança de conteúdo. Barato, e é o preço de fechar o buraco.
+6. **Duas varreduras simultâneas podem gastar uma chamada em duplicidade.** O `FOR UPDATE SKIP LOCKED` impede que selecionem a mesma linha no mesmo instante, mas o lock é solto antes do I/O de rede — deliberadamente, herdado da `sweep_stalled`, porque segurar lock de linha atravessando chamada a provedor externo é pior. Uma varredura que comece depois do rollback da outra vê a linha ainda sem vetor e a indexa também. É desperdício **idempotente**, não incorreção: o mesmo texto gera o mesmo vetor, e a última escrita tem o conteúdo da primeira. O teto por passagem limita o desperdício a 100 imóveis por janela de 30 segundos, e só numa operação com mais de um worker. Fechar isso exigiria uma coluna de claim, que é complexidade sem problema medido.
 
 ## Fora de escopo
 
