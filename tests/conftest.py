@@ -40,6 +40,11 @@ TABELAS = (
     "message_telemetry",
     "outbound_dispatches",
     "optout_events",
+    # As duas do catalogo (TEC-156). `imoveis` precisa entrar porque o UNIQUE
+    # em `codigo` faz o imovel de um teste colidir com o do proximo; sem o
+    # truncate a falha aparece so a partir do segundo teste do arquivo.
+    "importacoes",
+    "imoveis",
     "messages",
     # Mesmo raciocinio da lead_score_audit: followups tambem e append-only, e
     # o UNIQUE por (channel, conversation_key, ancora_em, tentativa_numero) faz
