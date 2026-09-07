@@ -7,7 +7,13 @@ e o orquestrador acumula os dois num `Relatorio`.
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from mobia.domain.catalogo.enums import Operacao, StatusImovel, TipoImovel, Zona
+from mobia.domain.catalogo.enums import (
+    Operacao,
+    StatusImovel,
+    StatusImportacao,
+    TipoImovel,
+    Zona,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,14 +69,26 @@ class RegistroImovel:
 
 @dataclass
 class Relatorio:
-    """Os cinco totais e a lista de rejeicoes.
+    """Os cinco totais, o desfecho e a lista de rejeicoes.
 
     `inalterados` e a emenda E-01 da RN-08.5. Sem ele o cenario 3 do Gherkin
     devolve 500/0/10/0 e 490 linhas ficam sem categoria -- silencio sobre 98%
     do lote, num artefato cujo proposito e "saber exatamente o que falhou".
     Ver D3.
+
+    `status` e o mesmo campo que a linha `importacoes` guarda, e nao um
+    booleano proprio: quem chama `executar` recebe este objeto, quem consulta
+    o `GET` le a linha, e os dois precisam responder a mesma pergunta com a
+    mesma palavra. Sem ele o objeto devolvido num FALHOU era indistinguivel de
+    uma importacao limpa sobre arquivo vazio -- zero em tudo, `erros` vazia --
+    e a CLI saia com 0 sobre um catalogo que nao entrou.
+
+    Comeca em PROCESSANDO pelo mesmo motivo que a coluna: o desfecho e o que
+    `executar` decide no fim, e um default de CONCLUIDO faria um relatorio
+    abandonado no meio se declarar bem-sucedido.
     """
 
+    status: StatusImportacao = StatusImportacao.PROCESSANDO
     processados: int = 0
     inseridos: int = 0
     atualizados: int = 0
@@ -88,3 +106,16 @@ class Relatorio:
         self.rejeitados += 1
         self.processados += 1
         self.erros.append(rejeicao)
+
+    def registrar_falha(self, falha: Rejeicao) -> None:
+        """Marca a importacao inteira como FALHOU e poe o motivo na frente.
+
+        Na frente e nao no fim porque a falha do arquivo explica por que os
+        totais pararam onde pararam; lida depois de 300 rejeicoes de linha ela
+        chega tarde demais.
+
+        NAO incrementa `rejeitados` nem `processados`: um FALHOU nunca e "uma
+        linha" (D11), e conta-lo ali quebraria a identidade de `fecha()`.
+        """
+        self.status = StatusImportacao.FALHOU
+        self.erros.insert(0, falha)

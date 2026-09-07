@@ -6,6 +6,7 @@ nao 500. Isso obriga `atualizados` a significar "mudou de valor", e obriga um
 quinto total para as 490 que casaram e nao mudaram. Ver D3 do desenho.
 """
 
+from mobia.domain.catalogo.enums import StatusImportacao
 from mobia.domain.catalogo.schemas import Rejeicao, Relatorio
 
 
@@ -61,3 +62,29 @@ def test_registrar_rejeicao_incrementa_os_dois_contadores():
     assert r.rejeitados == 1
     assert r.processados == 1
     assert r.erros[0].linha == 7
+
+
+def test_relatorio_nasce_processando():
+    # E nao CONCLUIDO: o desfecho e o que `executar` decide no fim, e um
+    # default otimista faria um relatorio abandonado no meio se declarar
+    # bem-sucedido.
+    assert Relatorio().status is StatusImportacao.PROCESSANDO
+
+
+def test_registrar_falha_marca_o_desfecho_e_poe_o_motivo_na_frente():
+    r = Relatorio()
+    r.registrar_rejeicao(Rejeicao(linha=7, motivo="tipo invalido"))
+    r.registrar_falha(Rejeicao(linha=0, motivo="falha durante a gravacao: boom"))
+
+    assert r.status is StatusImportacao.FALHOU
+    assert r.erros[0].linha == 0
+    assert r.erros[1].linha == 7
+
+
+def test_registrar_falha_nao_conta_como_linha_processada():
+    # Um FALHOU nunca e "uma linha" (D11). Conta-lo em `rejeitados` quebraria
+    # a identidade que `fecha()` existe para verificar.
+    r = Relatorio(processados=3, inseridos=3)
+    r.registrar_falha(Rejeicao(linha=0, motivo="boom"))
+    assert (r.processados, r.rejeitados) == (3, 0)
+    assert r.fecha()

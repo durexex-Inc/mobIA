@@ -14,7 +14,6 @@ efeito colateral: atomicidade e sucesso parcial sao requisitos opostos.
 """
 
 import uuid
-from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import structlog
@@ -71,13 +70,8 @@ async def executar(
         # Nao e "uma linha": o arquivo inteiro nao pode ser processado. Linha 0
         # porque o relatorio precisa carregar o motivo em algum lugar, e
         # nenhuma linha real tem esse numero.
-        await _concluir(
-            sessionmaker,
-            importacao_id,
-            relatorio,
-            status=StatusImportacao.FALHOU,
-            falha=Rejeicao(linha=0, motivo=str(erro)),
-        )
+        relatorio.registrar_falha(Rejeicao(linha=0, motivo=str(erro)))
+        await _concluir(sessionmaker, importacao_id, relatorio)
         log.warning(
             "catalogo.importacao_falhou",
             importacao_id=str(importacao_id),
@@ -112,20 +106,16 @@ async def executar(
     except Exception as erro:  # excecao ampla e deliberada -- ver docstring do modulo
         # Os lotes ja comitados ficam. O relatorio guarda os totais parciais
         # reais, que e mais util que "nada aconteceu".
-        await _concluir(
-            sessionmaker,
-            importacao_id,
-            relatorio,
-            status=StatusImportacao.FALHOU,
-            falha=Rejeicao(linha=0, motivo=f"falha durante a gravacao: {erro}"),
-        )
+        relatorio.registrar_falha(Rejeicao(linha=0, motivo=f"falha durante a gravacao: {erro}"))
+        await _concluir(sessionmaker, importacao_id, relatorio)
         log.exception(
             "catalogo.importacao_interrompida",
             importacao_id=str(importacao_id),
         )
         return relatorio
 
-    await _concluir(sessionmaker, importacao_id, relatorio, status=StatusImportacao.CONCLUIDO)
+    relatorio.status = StatusImportacao.CONCLUIDO
+    await _concluir(sessionmaker, importacao_id, relatorio)
     log.info(
         "catalogo.importacao_concluida",
         importacao_id=str(importacao_id),
@@ -142,21 +132,32 @@ async def _concluir(
     sessionmaker: async_sessionmaker[AsyncSession],
     importacao_id: uuid.UUID,
     relatorio: Relatorio,
-    *,
-    status: StatusImportacao,
-    falha: Rejeicao | None = None,
 ) -> None:
-    erros: Sequence[Rejeicao] = relatorio.erros if falha is None else [falha, *relatorio.erros]
+    """Copia o relatorio inteiro -- desfecho incluido -- para a linha gravada.
+
+    Nao recebe `status` nem `falha` por parametro de proposito: quando o
+    desfecho vivia so aqui, o objeto que `executar` devolvia nao o carregava, e
+    a CLI (que le o objeto) e o `GET` (que le a linha) discordavam sobre a
+    mesma importacao. Agora ha uma fonte so, e este corpo apenas a persiste.
+    """
     async with sessionmaker() as session:
         importacao = await session.get(Importacao, importacao_id)
         if importacao is None:
+            # A linha sumiu entre `registrar` e o fim -- TRUNCATE de teste ou
+            # remocao manual. Nao ha o que gravar, mas sumir em silencio faria
+            # um relatorio perdido parecer um relatorio concluido.
+            log.error(
+                "catalogo.importacao_sumiu_antes_de_concluir",
+                importacao_id=str(importacao_id),
+                status=str(relatorio.status),
+            )
             return
-        importacao.status = str(status)
+        importacao.status = str(relatorio.status)
         importacao.processados = relatorio.processados
         importacao.inseridos = relatorio.inseridos
         importacao.atualizados = relatorio.atualizados
         importacao.inalterados = relatorio.inalterados
         importacao.rejeitados = relatorio.rejeitados
-        importacao.erros = [{"linha": e.linha, "motivo": e.motivo} for e in erros]
+        importacao.erros = [{"linha": e.linha, "motivo": e.motivo} for e in relatorio.erros]
         importacao.concluida_em = datetime.now(UTC)
         await session.commit()
