@@ -46,6 +46,10 @@ Depois de `docker compose restart`, o `alembic upgrade head` reprova por vários
 
 Não é. O socket cru já responde `N` ao SSLRequest e o `psql` interno funciona. Espere e retente antes de diagnosticar qualquer coisa.
 
+**E o `[WinError 64]` não é só do pós-restart.** Medido na TEC-263, com os containers de pé havia horas e a máquina ociosa: **5 falhas em ~100 iterações** do mesmo teste de integração — ~5% dos connects —, sempre na negociação SSL do `asyncpg` dentro da fixture, nunca numa asserção. Ele vem em rajada e depois desaparece: quatro de seis execuções falharam no começo da sessão e as 60 iterações seguintes passaram limpas. Uma suíte completa no mesmo dia deu 1313 passed e **1 `ERROR` de setup** com esse traceback, num arquivo unitário sem relação com a mudança, que passou 80/80 isolado.
+
+Duas consequências práticas. Uma falha isolada com esse traceback **não autoriza conclusão nenhuma** — nem a favor nem contra a sua mudança. E um critério de aceite do tipo "passa nas 20 seguidas" pode ser inalcançável nesta máquina sem que nada esteja errado com o código: antes de culpar o que você escreveu, rode a versão ANTIGA o mesmo número de vezes.
+
 **Testes de integração flakeiam sob carga, não isolados.** `test_montagem.py`, `test_sweep_stalled.py`, `test_dedup_por_message_id.py` e `test_optout_repositorio.py` falham com `ConnectionResetError` ou erro de Redis quando a suíte inteira roda junta, e passam 100% em isolamento. Antes de atribuir uma falha dessas a uma mudança sua, rode o arquivo sozinho.
 
 **A evidência que fecha o argumento é a mesma árvore duas vezes.** Rodar isolado ajuda, mas não prova: um teste pode passar sozinho e falhar junto por um defeito real de isolamento. O que descarta regressão é o mesmo commit dando dois resultados — na TEC-156, `b35069d` passou 1236/1236 e, na execução seguinte sobre árvore idêntica e limpa, falhou 1. Guarde o hash junto com o resultado de cada execução.
