@@ -14,6 +14,7 @@ import asyncio
 import uuid
 from dataclasses import replace
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from sqlalchemy import select, text
@@ -56,6 +57,9 @@ def _imovel(codigo: str) -> Imovel:
         operacao=Operacao.VENDA,
         preco_venda=58_000_000,
         bairro="Centro",
+        # Este helper constroi o ORM direto, sem passar por `sincronizar` --
+        # entao ninguem deriva a coluna para ele. NOT NULL desde a `0019`.
+        bairro_busca="centro",
         cidade="Florianopolis",
         uf="SC",
         area_util_m2=74,
@@ -373,3 +377,35 @@ async def test_corrida_de_lotes_nao_deixa_updated_at_para_tras(session_factory):
         # Os 0.3s de espera acima so aparecem aqui se o SET do conflito tiver
         # mexido no carimbo.
         assert (imovel.updated_at - imovel.created_at).total_seconds() > 0.1
+
+
+async def test_o_upsert_mantem_a_dobra_do_bairro(session: Any) -> None:
+    """A guarda escrita da D5: `bairro_busca` acompanha `bairro`, sempre.
+
+    Esta coluna e derivada e escrita a mao porque o Postgres nao permite
+    coluna gerada com `unaccent` (STABLE, nao IMMUTABLE). O preco disso e que
+    um escritor novo pode esquece-la; este teste e o que pega o esquecimento.
+
+    Duas metades, porque sao dois caminhos de escrita diferentes: o INSERT e o
+    UPDATE de linha existente.
+    """
+    # `_registro` (linha 72 deste arquivo) nao expoe `bairro` -- ele fixa
+    # "Centro". `replace` do dataclasses ja esta importado aqui, e sobrescreve
+    # sem mexer no helper que outros doze testes usam.
+    await sincronizar(session, [replace(_registro("AP-7001"), bairro="Aclimação")])
+    await session.commit()
+
+    imovel = await session.scalar(select(Imovel).where(Imovel.codigo == "AP-7001"))
+    assert imovel is not None
+    assert imovel.bairro == "Aclimação"
+    assert imovel.bairro_busca == "aclimacao"
+
+    # Segunda metade: a linha existe, e o bairro muda. Este e o caminho do
+    # `setattr`, e nao o do INSERT -- sao dois lugares diferentes no
+    # repositorio, e um pode ter a dobra sem o outro.
+    await sincronizar(session, [replace(_registro("AP-7001"), bairro="Vila Madalena")])
+    await session.commit()
+
+    await session.refresh(imovel)
+    assert imovel.bairro == "Vila Madalena"
+    assert imovel.bairro_busca == "vila madalena"

@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.catalogo.schemas import RegistroImovel
+from mobia.domain.texto import dobrar
 
 TAMANHO_DO_LOTE = 500
 
@@ -78,6 +79,20 @@ CAMPOS_COMPARADOS: tuple[str, ...] = (
     "fotos",
     "status",
 )
+
+
+# `bairro_busca` fica FORA de CAMPOS_COMPARADOS de proposito, e por dois
+# motivos: ela nao vem do arquivo (`RegistroImovel` nao tem o campo, e
+# `getattr` levantaria), e e derivada de `bairro`, que o diff ja compara --
+# incluir as duas nao detecta nada a mais.
+#
+# Mas ela TEM de ser gravada nos dois caminhos de escrita. Sem isso, a linha
+# vencedora da corrida documentada no header deste modulo fica com o
+# `bairro` de um lote e a dobra do outro: um imovel que a busca por bairro
+# nao encontra, sem erro nenhum e sem sintoma no relatorio.
+def _derivados(valores: dict[str, object]) -> dict[str, object]:
+    """Os campos que o banco guarda e o arquivo nao carrega. TEC-158, D5."""
+    return {"bairro_busca": dobrar(str(valores["bairro"]))}
 
 
 def _valores(registro: RegistroImovel) -> dict[str, object]:
@@ -125,7 +140,14 @@ async def sincronizar(
             existente = existentes.get(registro.codigo)
 
             if existente is None:
-                novos.append({"id": uuid.uuid4(), "codigo": registro.codigo, **valores})
+                novos.append(
+                    {
+                        "id": uuid.uuid4(),
+                        "codigo": registro.codigo,
+                        **valores,
+                        **_derivados(valores),
+                    }
+                )
                 inseridos += 1
                 continue
 
@@ -135,7 +157,7 @@ async def sincronizar(
                 inalterados += 1
                 continue
 
-            for campo, valor in valores.items():
+            for campo, valor in {**valores, **_derivados(valores)}.items():
                 setattr(existente, campo, valor)
             # Relogio do servidor, e nao `datetime.now(UTC)`: todo carimbo
             # deste schema nasce de `clock_timestamp()` (os server_default de
@@ -156,6 +178,10 @@ async def sincronizar(
                     index_elements=["codigo"],
                     set_={
                         **{campo: comando.excluded[campo] for campo in CAMPOS_COMPARADOS},
+                        # Derivada, entao nao esta em CAMPOS_COMPARADOS -- mas
+                        # sem ela a linha perdedora da corrida teria o bairro
+                        # sobrescrito e a dobra mantida.
+                        "bairro_busca": comando.excluded["bairro_busca"],
                         # `updated_at` NAO esta em CAMPOS_COMPARADOS (o diff
                         # nao pode olhar para ele, senao toda linha pareceria
                         # alterada), mas tem de estar aqui: sem isso a linha
