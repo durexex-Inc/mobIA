@@ -39,6 +39,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from mobia.domain.catalogo.enums import Operacao, StatusImovel, Zona
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.catalogo.schemas import (
+    COLUNA_DE_PRECO,
     Candidato,
     Embedador,
     FiltroDeBusca,
@@ -57,15 +58,6 @@ PESO_ADERENCIA = 0.4
 # RN-09.2. O teto do que volta ao agente; os 3 que chegam ao lead sao a
 # TEC-162.
 MAX_CANDIDATOS = 10
-
-# A coluna que a faixa do lead compara, escolhida pela operacao pedida.
-#
-# `Operacao.AMBOS` NAO e chave: e o que um imovel pode ser, nunca o que uma
-# busca pede -- uma busca de AMBOS nao tem coluna de preco para comparar.
-COLUNA_DE_PRECO = {
-    Operacao.VENDA: "preco_venda",
-    Operacao.ALUGUEL: "preco_aluguel",
-}
 
 # O vocabulario que faz "zona sul" virar `Zona.SUL`. Cada zona entra com o
 # nome nu e com o prefixo `zona `, porque o lead diz os dois -- e

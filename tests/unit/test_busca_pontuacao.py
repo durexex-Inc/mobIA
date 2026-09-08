@@ -11,8 +11,11 @@ tres valores da D7 sao afirmados em `tests/integration/test_busca_hibrida.py`,
 contra o que realmente roda.
 """
 
+import pytest
+
 from mobia.domain.catalogo.busca import MAX_CANDIDATOS, zonas_de
-from mobia.domain.catalogo.enums import Zona
+from mobia.domain.catalogo.enums import Operacao, Zona
+from mobia.domain.catalogo.schemas import FiltroDeBusca
 
 
 def test_zona_pelo_nome_nu_e_pelo_prefixo() -> None:
@@ -42,3 +45,20 @@ def test_varias_regioes_derivam_varias_zonas_sem_duplicar() -> None:
 def test_o_teto_de_candidatos_e_dez() -> None:
     """RN-09.2. Constante de modulo e nao `Settings` -- ver D11."""
     assert MAX_CANDIDATOS == 10
+
+
+def test_busca_de_ambos_e_recusada_na_construcao() -> None:
+    """`AMBOS` e o que um imovel pode ser, nunca o que uma busca pede.
+
+    A guarda mora na construcao do filtro e nao no uso: sem ela, o
+    `COLUNA_DE_PRECO[operacao]` levantava `KeyError` cru, e a borda HTTP da
+    TEC-158 aceita `AMBOS` como valor de enum -- ou seja, 500 com entrada
+    sintaticamente valida.
+    """
+    with pytest.raises(ValueError, match="nao e buscavel"):
+        FiltroDeBusca(operacao=Operacao.AMBOS)
+
+
+def test_as_duas_operacoes_buscaveis_constroem() -> None:
+    assert FiltroDeBusca(operacao=Operacao.VENDA).operacao is Operacao.VENDA
+    assert FiltroDeBusca(operacao=Operacao.ALUGUEL).operacao is Operacao.ALUGUEL

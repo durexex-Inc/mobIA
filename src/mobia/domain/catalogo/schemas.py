@@ -130,6 +130,21 @@ class Relatorio:
 # inteiro sem credencial e sem rede. Ver D9.
 Embedador = Callable[[list[str]], Awaitable[list[list[float]]]]
 
+# A coluna que a faixa do lead compara, escolhida pela operacao pedida.
+#
+# `Operacao.AMBOS` NAO e chave: e o que um imovel pode ser, nunca o que uma
+# busca pede -- uma busca de AMBOS nao tem coluna de preco para comparar.
+#
+# Mora aqui, e nao em `busca.py`, porque `FiltroDeBusca.__post_init__` deriva
+# a guarda de construcao deste mesmo mapa: a regra "AMBOS nao e buscavel" tem
+# de ter uma unica fonte, e checar `not in COLUNA_DE_PRECO` em vez de
+# `is Operacao.AMBOS` faz o proximo membro do enum que nao tiver coluna
+# cair na guarda de graca, sem precisar nomea-lo.
+COLUNA_DE_PRECO = {
+    Operacao.VENDA: "preco_venda",
+    Operacao.ALUGUEL: "preco_aluguel",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class FiltroDeBusca:
@@ -162,6 +177,17 @@ class FiltroDeBusca:
     quartos_min: int | None = None
     vagas_min: int | None = None
     regioes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # `not in COLUNA_DE_PRECO`, e nao `is Operacao.AMBOS`: uma guarda que
+        # nomeasse AMBOS seria uma segunda copia da regra, e o proximo membro
+        # do enum sem coluna passaria por ela e quebraria so no lookup,
+        # dentro da consulta. O mapa segue sendo a unica definicao.
+        if self.operacao not in COLUNA_DE_PRECO:
+            raise ValueError(
+                f"operacao {self.operacao} nao e buscavel: AMBOS e o que um imovel pode "
+                "ser, nunca o que uma busca pede -- nao ha coluna de preco a comparar"
+            )
 
 
 @dataclass(frozen=True, slots=True)
