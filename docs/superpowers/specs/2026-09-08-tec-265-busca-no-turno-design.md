@@ -66,7 +66,9 @@ Três variantes foram medidas em 2026-09-08, no mesmo proxy `len/4` que o teste 
 
 A coluna "líquido" é a subcontagem que o teste imprime; os números escritos à mão no código são os inteiros acima dela.
 
-**A V2 é a base, e a D11 acrescenta um `enum` a ela.** Com `operacao` como `enum` de dois valores e os nomes de campo finais (`preco_max_centavos`, não `preco_max`), a ferramenta custa **131,2**: líquido **780,0**, teto **780**, reserva **1005**, preço de **125,0 de 12000 — 1,04% do contexto** (ver D10 e D11). Os 7,5 tokens do `enum` compram o que a D11 explica.
+**A V2 é a base, e a D11 acrescenta um `enum` a ela.** Com `operacao` como `enum` de dois valores e os nomes de campo finais (`preco_max_centavos`, não `preco_max`), a ferramenta custa **131,2** e o líquido vai a **780,0** (ver D10 e D11). Os 7,5 tokens do `enum` compram o que a D11 explica.
+
+> **Correção de 2026-09-08, na execução.** Os números de teto e reserva que este desenho publicou primeiro — 780 e 1005 — **não funcionam**, e o erro era meu, de fórmula e não de medição. A asserção do teste é estrita (`subcontagem < teto`), então um teto de 780 contra líquido de 780,0 reprova. E eu derivei a reserva somando o delta do teto (880 + 125), quando a restrição real é o **teste irmão**: `test_diferenca_entre_o_contado_e_o_enviado` mede a mesma subcontagem contra `contexto_headroom_de_tokens * 0,75`, e 1005 × 0,75 = 753,75 cai abaixo do líquido. Os números corretos, medidos: teto **786** (margem 6,0, na mesma ordem das margens que as subidas anteriores deixaram) e reserva **1060** (`headroom * 0,75` = 795,0). O preço real é **1,5% do contexto por turno**, não 1,04%.
 
 **`preco_min_centavos` fica fora do schema**, embora `FiltroDeBusca` o aceite: o orçamento do lead entra na RN-09.6 como *teto* (a aderência é medida contra ele), e nenhuma regra da RF-09 pede piso. Lacuna declarada: "quero acima de 500 mil" não é expressável por esta ferramenta.
 
@@ -110,11 +112,11 @@ Exceção aqui mataria o turno inteiro por causa de uma busca, e a regra que o `
 
 ### D10 — O teto do orçamento sobe, com o preço escrito
 
-`test_a_margem_do_orcamento_do_prompt_e_deliberada` passa a ter uma quinta parcela em `_decomposicao` — a definição da ferramenta, que é enviada e nunca contada, como o schema de saída já é. O teto vai de 655 para **780** (líquido medido: 780,0) e `contexto_headroom_de_tokens` de 880 para **1005**. Os dois números só ficam finais depois da lacuna 1: se `strict` obrigar todas as propriedades a entrarem em `required`, o schema cresce e a medição refaz a conta.
+`test_a_margem_do_orcamento_do_prompt_e_deliberada` passa a ter uma quinta parcela em `_decomposicao` — a definição da ferramenta, que é enviada e nunca contada, como o schema de saída já é. O teto vai de 655 para **786** e `contexto_headroom_de_tokens` de 880 para **1060**, com líquido medido de 780,0 (ver a correção na D5: os primeiros números publicados aqui, 780 e 1005, reprovavam). Os dois só ficam finais depois da lacuna 1: se `strict` obrigar todas as propriedades a entrarem em `required`, o schema cresce e a medição refaz a conta.
 
 A pergunta que a docstring manda fazer foi feita antes: **o que sai do prompt para isso entrar?** A resposta honesta é que não há corte de ~115 tokens que não toque algo medido — o `SISTEMA_DO_AGENTE` são 298,8 tokens de cláusulas que o gate mede uma por uma, e o schema compilado são 372,8 de campos que a extração usa. O que **foi** cortado é dentro da própria ferramenta: a V2 em vez da V1 economizou ~40 tokens trocando enum por string livre, e é o mesmo movimento que a TEC-257 fez.
 
-Preço desta subida, no formato das três anteriores: **125 tokens a menos de literais e resumo por turno, de 12000 — 1,04% do contexto**. Fica entre a primeira (3,3%) e as duas últimas (0,4% e 0,25%), e é a segunda maior da história do projeto.
+Preço desta subida, no formato das três anteriores: **180 tokens a menos de literais e resumo por turno, de 12000 — 1,5% do contexto** (número corrigido na execução; ver a nota na D5). Fica entre a primeira (3,3%) e as duas últimas (0,4% e 0,25%), e é a segunda maior da história do projeto.
 
 ### D11 — `operacao` é `enum` no schema, porque os dois vocabulários discordam
 
