@@ -54,12 +54,15 @@ async def startup(ctx: dict[str, Any]) -> None:
     #
     # A varredura tem hoje um retorno antecipado que avisa UMA vez, mas ele e
     # a metade de desenvolvimento da D10: o catalogo simplesmente fica sem
-    # vetor e a busca devolve vazio. Em producao a resposta certa e nao subir.
+    # vetor e a busca perde o termo de similaridade, ordenando so por
+    # aderencia de preco (emenda E-02 a RN-08.2, TEC-158) -- nunca vazio nem
+    # erro. Em producao a resposta certa e nao subir.
     if settings.em_producao and not settings.openai_api_key:
         raise ConfiguracaoInsegura(
             "OPENAI_API_KEY nao configurada e ENVIRONMENT="
             f"{settings.environment}. Sem ela nenhum imovel e indexado e a "
-            "busca semantica devolve vazio, com um aviso por lote a cada 30 "
+            "busca semantica perde o termo de similaridade (60% do score) e "
+            "ordena so por aderencia de preco, com um aviso por lote a cada 30 "
             "segundos como unico sintoma. Defina no .env ou no ambiente antes "
             "de subir o worker."
         )

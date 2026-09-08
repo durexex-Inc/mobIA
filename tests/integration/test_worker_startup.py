@@ -56,8 +56,9 @@ async def test_startup_recusa_subir_em_producao_sem_a_chave_de_embedding(
 
     Sem a chave o `get_client()` so levantaria dentro do `except Exception` do
     laco de lotes da varredura, que loga e segue: nenhum imovel seria indexado
-    nunca, a busca semantica devolveria vazio e o unico sintoma seria um aviso
-    por lote a cada 30 segundos. A guarda barra antes de qualquer job rodar.
+    nunca, a busca semantica perderia o termo de similaridade e ordenaria so
+    por aderencia de preco, e o unico sintoma seria um aviso por lote a cada
+    30 segundos. A guarda barra antes de qualquer job rodar.
     """
     _producao(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "")

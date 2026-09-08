@@ -198,8 +198,10 @@ async def indexar_catalogo(ctx: dict[str, Any], limite: int | None = None) -> in
                 "indexacao_do_catalogo_sem_chave",
                 detalhe=(
                     "OPENAI_API_KEY nao configurada: o catalogo fica sem vetor e a "
-                    "busca semantica devolve vazio. Este aviso sai UMA vez por "
-                    "processo -- nao havera um segundo."
+                    "busca perde o termo de similaridade, ordenando so por "
+                    "aderencia de preco (emenda E-02 a RN-08.2) -- nunca vazio nem "
+                    "erro. Este aviso sai UMA vez por processo -- nao havera um "
+                    "segundo."
                 ),
             )
         return 0
