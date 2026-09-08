@@ -172,7 +172,10 @@ class FiltrosDaBusca(BaseModel):
     tipo: TipoImovel | None = None
     quartos_min: int | None = Field(default=None, alias="quartosMin")
     vagas_min: int | None = Field(default=None, alias="vagasMin")
-    regioes: list[str] = Field(default_factory=list)
+    # `max_length=20`: um lead nomeia um punhado de bairros ou zonas, nunca
+    # duas dezenas. O limite existe para a lista nao virar um IN gigante --
+    # honesto ou nao, ninguem digita mais que isso numa conversa.
+    regioes: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("operacao")
     @classmethod
@@ -200,7 +203,12 @@ class FiltrosDaBusca(BaseModel):
 class PedidoDeBusca(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    consulta_texto: str | None = Field(default=None, alias="consultaTexto")
+    # `max_length=500`: a frase de busca de um lead e uma sentenca, nao um
+    # texto colado. Hoje o campo e inerte (nenhum embedador injetado, ver a
+    # docstring de `busca` abaixo); o teto existe para o dia em que a
+    # TEC-161 ligar o embedador e cada caractere passar a custar uma chamada
+    # a um provedor pago.
+    consulta_texto: str | None = Field(default=None, alias="consultaTexto", max_length=500)
     filtros: FiltrosDaBusca
     # `le=MAX_CANDIDATOS` recusa com 422 em vez de devolver 10 calado: o
     # dominio faz o clamp de qualquer jeito (RN-09.2 e sobre o que a busca
@@ -223,6 +231,12 @@ async def busca(pedido: PedidoDeBusca, _: None = Depends(exigir_admin)) -> dict[
     quando a TEC-161 ligar a busca ao agente. Ate la `consultaVetorizada` sai
     `false` e a ordem e a aderencia de preco -- o que e a degradacao da D8
     funcionando, e nao um defeito. Trocar isto e uma linha.
+
+    **`consultaTexto` e aceito e INERTE ate a TEC-161 injetar o embedador.**
+    O campo entra no pedido e e repassado, mas sem embedador `_vetor_da_consulta`
+    devolve `None` sempre, entao ele nao muda um resultado sequer. Relevancia
+    ou latencia medidas atraves DESTE endpoint descrevem so o caminho
+    degradado -- a chamada de embedding, que e a parte cara, nunca acontece.
     """
     filtro = FiltroDeBusca(
         operacao=pedido.filtros.operacao,

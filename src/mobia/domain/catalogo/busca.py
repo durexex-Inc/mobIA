@@ -145,12 +145,14 @@ async def buscar(
 ) -> ResultadoDaBusca:
     """Os candidatos que atendem ao filtro, ordenados pela relevancia da RN-09.6.
 
-    `limite` e preso em `MAX_CANDIDATOS` mesmo quando o chamador pede mais: a
-    RN-09.2 e sobre o que a busca DEVOLVE, e nao sobre o que o endpoint
-    aceita. O endpoint recusa `limite > 10` com 422 para informar o cliente;
-    este clamp garante a regra para quem chama por dentro. Ver D10.
+    `limite` e preso entre 1 e `MAX_CANDIDATOS` mesmo quando o chamador pede
+    algo fora da faixa: a RN-09.2 e sobre o que a busca DEVOLVE, e nao sobre
+    o que o endpoint aceita. O endpoint recusa `limite > 10` com 422 e exige
+    `ge=1` para informar o cliente; este clamp garante a regra nos dois
+    sentidos para quem chama por dentro -- sem ele, `0` devolveria uma busca
+    vazia sem motivo e `-1` faria o `LIMIT` do Postgres levantar. Ver D10.
     """
-    teto_de_candidatos = min(limite, MAX_CANDIDATOS)
+    teto_de_candidatos = max(1, min(limite, MAX_CANDIDATOS))
 
     # Dobra o que recebeu: o chamador pode passar "Zona Sul" ou "zona sul" e o
     # resultado e o mesmo, porque `dobrar` e idempotente. O lead chega pela
@@ -187,9 +189,13 @@ async def buscar(
     if filtro.vagas_min is not None:
         condicoes.append(Imovel.vagas >= filtro.vagas_min)
     if regioes:
-        # O OR da D4. `zonas` vazia gera `zona IN ()`, que o Postgres avalia
-        # como falso mesmo para `zona` NULL -- imovel sem zona cadastrada so
-        # nao casa por esse lado, e nao envenena o OR.
+        # O OR da D4. `IN ()` e erro de sintaxe no Postgres -- o SQLAlchemy
+        # nunca o emite. Para `zonas` vazia, `in_([])` compila para
+        # `zona IN (NULL) AND (1 != 1)`: a estrategia de empty-IN do proprio
+        # SQLAlchemy. A clausula fica falsa porque `AND` tem precedencia sobre
+        # `OR`, entao o WHERE le como `bairro_busca IN (...) OR (zona IN
+        # (NULL) AND (1 != 1))` -- o lado da zona nunca contribui, mesmo para
+        # `zona` NULL, e nao envenena o OR.
         condicoes.append(
             or_(
                 Imovel.bairro_busca.in_(regioes),
@@ -209,7 +215,7 @@ async def buscar(
             Numeric,
         ),
         3,
-    )
+    ).label("score")
 
     consulta = (
         select(
@@ -222,7 +228,7 @@ async def buscar(
             Imovel.vagas,
             Imovel.area_util_m2,
             Imovel.embedding.is_not(None).label("tem_vetor"),
-            score.label("score"),
+            score,
             # A contagem ANTES do teto, na mesma passagem: funcao de janela e
             # avaliada depois do WHERE e antes do LIMIT. Um COUNT separado
             # pagaria o filtro duas vezes para devolver um inteiro.
@@ -233,6 +239,11 @@ async def buscar(
         # empatados e a que o executor entregar, e ela varia entre execucoes.
         # Numa suite cujos testes de integracao ja flakeiam sob carga, isso
         # seria flake plantado a mao.
+        #
+        # `score` aqui e o `Label` do SELECT, e nao a expressao crua: o
+        # SQLAlchemy referencia o alias (`ORDER BY score DESC`) em vez de
+        # recompilar o `round(CAST(... greatest ...))` inteiro uma segunda
+        # vez -- o Postgres computa o score uma vez por linha, nao duas.
         .order_by(score.desc(), Imovel.id)
         .limit(teto_de_candidatos)
     )
