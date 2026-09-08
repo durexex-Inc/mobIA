@@ -232,20 +232,31 @@ async def test_sem_teto_de_preco_a_aderencia_para_de_discriminar(session: Any) -
 
 
 async def test_a_ordem_entre_scores_empatados_e_estavel(session: Any) -> None:
-    """D1. Sem o desempate por `id` isto seria flake plantado a mao."""
-    for numero in range(5):
-        await _imovel(session, f"AP-09{numero}", preco_venda=50000000)
+    """D1. O desempate por `id` e OBRIGATORIO, e a assercao prova isso.
+
+    As cinco linhas tem o mesmo preco e nenhum teto, entao todas empatam em
+    0,400: sem `Imovel.id` no ORDER BY, duas chamadas ainda poderiam devolver
+    a mesma ordem fisica por coincidencia, e essa comparacao nao provaria
+    nada sobre a clausula. O que de fato depende do desempate e comparar
+    contra os ids ORDENADOS -- `uuid.UUID` ordena por bytes igual ao `uuid`
+    do Postgres, entao a comparacao e valida.
+    """
+    identificadores = [
+        await _imovel(session, f"AP-09{numero}", preco_venda=50000000) for numero in range(5)
+    ]
 
     primeira = await buscar(session, FiltroDeBusca(operacao=Operacao.VENDA))
     segunda = await buscar(session, FiltroDeBusca(operacao=Operacao.VENDA))
 
-    assert [candidato.imovel_id for candidato in primeira.candidatos] == [
-        candidato.imovel_id for candidato in segunda.candidatos
-    ]
+    assert [c.imovel_id for c in primeira.candidatos] == sorted(identificadores)
+    assert [c.imovel_id for c in primeira.candidatos] == [c.imovel_id for c in segunda.candidatos]
 
 
 async def test_o_filtro_de_tipo_e_o_de_vagas(session: Any) -> None:
-    """As duas dimensoes da RN-09.1 que os cenarios do Gherkin nao exercitam."""
+    """Duas das tres dimensoes da RN-09.1 que os cenarios do Gherkin nao
+    exercitam -- a terceira, o piso de preco, tem teste proprio abaixo
+    (`test_o_piso_de_preco_exclui_quem_fica_abaixo`).
+    """
     casa_com_duas = await _imovel(session, "CA-001", tipo=TipoImovel.CASA.value, vagas=2)
     await _imovel(session, "CA-002", tipo=TipoImovel.CASA.value, vagas=1)
     await _imovel(session, "AP-100", tipo=TipoImovel.APARTAMENTO.value, vagas=2)
@@ -256,6 +267,26 @@ async def test_o_filtro_de_tipo_e_o_de_vagas(session: Any) -> None:
     )
 
     assert [candidato.imovel_id for candidato in resultado.candidatos] == [casa_com_duas]
+
+
+async def test_o_piso_de_preco_exclui_quem_fica_abaixo(session: Any) -> None:
+    """`preco_min_centavos`, o unico predicado do WHERE sem teste ate aqui.
+
+    Duas linhas abaixo do piso, duas em cima dele -- a `>=` da RN-09.1 aceita
+    a igualdade, entao o imovel exatamente no piso tem de voltar.
+    """
+    piso = 40000000
+    abaixo = await _imovel(session, "AP-300", preco_venda=piso - 1)
+    await _imovel(session, "AP-301", preco_venda=piso - 100)
+    no_piso = await _imovel(session, "AP-302", preco_venda=piso)
+    acima = await _imovel(session, "AP-303", preco_venda=piso + 1000000)
+
+    resultado = await buscar(
+        session, FiltroDeBusca(operacao=Operacao.VENDA, preco_min_centavos=piso)
+    )
+
+    assert {candidato.imovel_id for candidato in resultado.candidatos} == {no_piso, acima}
+    assert abaixo not in {candidato.imovel_id for candidato in resultado.candidatos}
 
 
 async def test_limite_acima_do_teto_e_preso_em_dez(session: Any) -> None:
