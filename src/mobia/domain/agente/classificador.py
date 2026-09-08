@@ -371,7 +371,9 @@ class LacoDeBuscaExcedido(RuntimeError):
 
 
 class ClassificadorPort(Protocol):
-    async def classificar(self, contexto: ContextoMontado) -> RespostaDoAgente: ...
+    async def classificar(
+        self, contexto: ContextoMontado, *, porta: PortaDeBusca | None = None
+    ) -> RespostaDoAgente: ...
     async def desambiguar(self, contexto: ContextoMontado) -> PerguntaDeDesambiguacao: ...
 
 
@@ -464,12 +466,22 @@ class ClassificadorAnthropic:
             kwargs["tool_choice"] = {"type": "auto"}
 
         candidatos: list[dict[str, Any]] = []
+        # Somados ao longo do laco pelo mesmo motivo que a latencia sai dele:
+        # um turno com busca faz DUAS chamadas de verdade, cada uma cobrando
+        # tokens de verdade, e a RNF-06 (custo por conversa) so fecha conta
+        # se `tokens_in`/`tokens_out` cobrirem o turno inteiro. Reportar so a
+        # ultima chamada subestimaria o custo de todo turno que busca, do
+        # mesmo jeito que a latencia media so metade se ficasse dentro do laco.
+        tokens_in_do_turno = 0
+        tokens_out_do_turno = 0
         for tentativa in (1, 2):
             # cast: **kwargs apaga a sobrecarga que o SDK usa para distinguir
             # `Message` de `AsyncStream` por `stream=`. Nenhuma chamada deste
             # modulo pede streaming -- `stream` nunca entra em `kwargs` --
             # entao o retorno real e sempre `Message`.
             resposta = cast(Message, await get_client().messages.create(**kwargs))
+            tokens_in_do_turno += resposta.usage.input_tokens
+            tokens_out_do_turno += resposta.usage.output_tokens
 
             if resposta.stop_reason == "tool_use":
                 if porta is None or tentativa == 2:
@@ -494,6 +506,11 @@ class ClassificadorAnthropic:
             if not texto:
                 raise RespostaInvalida(mensagem_se_vazia)
             latency_ms = int((time.monotonic() - comeco) * 1000)
+            # `classificar`/`desambiguar` leem tokens de `resposta.usage`, nao
+            # de um item a mais na tupla -- sobrescrever aqui com o total do
+            # turno evita duplicar o dado em dois lugares que podiam divergir.
+            resposta.usage.input_tokens = tokens_in_do_turno
+            resposta.usage.output_tokens = tokens_out_do_turno
             return texto, resposta, latency_ms, candidatos
 
         raise LacoDeBuscaExcedido("laco de tool use nao convergiu")

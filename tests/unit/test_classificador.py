@@ -941,3 +941,56 @@ async def test_sem_porta_a_ferramenta_nao_e_declarada(
 
     assert "tools" not in cliente.messages.create.await_args.kwargs
     assert cliente.messages.create.await_count == 1
+
+
+async def test_turno_sem_ferramenta_tem_candidatos_vazio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O campo existe sempre, e vazio significa "nao houve busca".
+
+    None significaria a mesma coisa com um tipo a mais para a TEC-161 tratar.
+    Diferente de `test_erro_da_porta_vira_tool_result_com_is_error` (que
+    busca e da erro): aqui nao ha porta nenhuma, entao nem a ferramenta e
+    declarada -- e o caminho que a TEC-161 precisa distinguir do outro.
+    """
+    _instalar_sequencia(monkeypatch, [_resposta_json()])
+
+    resposta = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resposta.candidatos == []
+
+
+async def test_a_latencia_e_os_tokens_cobrem_as_duas_chamadas_do_laco(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RNF-02 (p95 <= 6 s) e RNF-06 (custo por conversa) medem o turno
+    inteiro, nao a ultima chamada.
+
+    `time.monotonic` e trocado por um relogio falso: `_chamar` so o chama
+    duas vezes (o `comeco`, antes do laco, e o calculo de `latency_ms`,
+    depois dele) nao importa quantas tentativas o laco de tool use fizer,
+    entao a diferenca entre as duas leituras falsas e exatamente o que
+    `latency_ms` vai reportar -- sem depender do relogio de verdade, que um
+    duble de cliente sem rede nao gasta.
+    """
+    primeira = _resposta_tool_use({"operacao": "VENDA"})
+    primeira.usage = SimpleNamespace(input_tokens=1000, output_tokens=50)
+    segunda = _resposta_json()
+    segunda.usage = SimpleNamespace(input_tokens=3000, output_tokens=150)
+    _instalar_sequencia(monkeypatch, [primeira, segunda])
+
+    # Troca o NOME `time` que `classificador.py` enxerga, nao o modulo `time`
+    # de verdade: `time` e um singleton global do interprete, e mutar
+    # `time.monotonic` in-place afetaria o event loop do asyncio (que tambem
+    # o usa) para o processo inteiro, nao so este teste.
+    relogio = iter([100.0, 106.5])
+    monkeypatch.setattr(classificador_mod, "time", SimpleNamespace(monotonic=lambda: next(relogio)))
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"candidatos": [], "total_candidatos": 0}
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert resultado.latency_ms == 6500
+    assert resultado.tokens_in == 4000
+    assert resultado.tokens_out == 200
