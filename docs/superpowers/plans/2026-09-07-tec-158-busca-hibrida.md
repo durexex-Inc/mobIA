@@ -1593,7 +1593,13 @@ async def test_a_busca_devolve_o_contrato_da_secao_6_3(
     # copia-lo ao pe da letra faria a busca de aluguel devolver o campo
     # errado. Ver o contrato do endpoint no desenho.
     assert item["preco"] == 58000000
-    assert item["scoreMatch"] == 0.4
+    # 0,387 e nao 0,4: sem vetor a similaridade vale 0, entao o score e
+    # `0,4 x aderencia`, e a aderencia de R$ 580.000 contra um teto de
+    # R$ 600.000 e `1 - 2/60 = 0,9667`. Conferido no Postgres:
+    # `round((0.4 * (1 - abs(58000000-60000000)::float8/60000000))::numeric, 3)`
+    # da 0.387. O imovel no teto exato e que daria 0,4 -- ver
+    # `test_a_aderencia_vale_um_no_teto_e_meio_na_metade`.
+    assert item["scoreMatch"] == 0.387
 
 
 async def test_regiao_em_caixa_alta_casa_igual(
