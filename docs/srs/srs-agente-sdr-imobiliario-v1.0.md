@@ -20,6 +20,8 @@
 > | E-01 | RN-13.7 | [TEC-188](https://eduardodurieuxlopes.atlassian.net/browse/TEC-188) | 04/09/2026 |
 > | E-01 | RN-08.5, RN-08.1, Seção 6.3 (`POST /api/v1/imoveis/importar`) | [TEC-156](https://eduardodurieuxlopes.atlassian.net/browse/TEC-156) | 06/09/2026 |
 > | E-01 | RN-08.2 | [TEC-157](https://eduardodurieuxlopes.atlassian.net/browse/TEC-157) | 07/09/2026 |
+> | E-01 | RN-09.1, RN-09.6 | [TEC-158](https://eduardodurieuxlopes.atlassian.net/browse/TEC-158) | 07/09/2026 |
+> | E-02 | RN-08.2 | [TEC-158](https://eduardodurieuxlopes.atlassian.net/browse/TEC-158) | 07/09/2026 |
 
 ---
 

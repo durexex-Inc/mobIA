@@ -34,9 +34,17 @@ seguiria violando a RN da card sem que teste nenhum reclamasse -- e e por
 isso que a frase fica escrita aqui.
 
 **Mas o argumento da topologia cobre CORRECAO, nao CAPACIDADE.** Os dois jobs
-dividem o mesmo pool do worker ARQ: `process_message` nao chama o provedor de
-embedding, e mesmo assim disputa vaga com quem chama. O lock consultivo
-abaixo e o que cobre a segunda metade.
+dividem o mesmo pool do worker ARQ: `process_message` nao chama o provedor
+para o embedding do CATALOGO, e mesmo assim disputa vaga com quem chama. O
+lock consultivo abaixo e o que cobre a segunda metade.
+
+A ressalva na frase acima importa desde a TEC-158, e vale ser exata: o
+`process_message` de hoje nao chama provedor de embedding nenhum -- a busca
+hibrida existe, mas ainda nao esta ligada ao turno, que e a TEC-161. No dia em
+que estiver, ele passa a DISPUTAR vaga e a CHAMAR o provedor dentro da mesma
+vaga. O argumento de capacidade fica mais forte, e nao mais fraco; o que deixou
+de valer e so a frase "nao chama o provedor", que era o que sustentava a
+assimetria entre os dois jobs.
 """
 
 import uuid
