@@ -1308,8 +1308,10 @@ async def test_imovel_sem_vetor_entra_e_ordena_atras(session: Any) -> None:
     """D8. Falta de vetor nunca exclui ninguem.
 
     A alternativa literal -- so imovel com vetor e candidato -- foi recusada
-    porque o proprio aviso da TEC-157 descreve o desfecho: "o catalogo fica
-    sem vetor e a busca semantica devolve vazio". Um ambiente sem chave
+    porque era o desfecho que o aviso da TEC-157 costumava descrever antes
+    desta card: catalogo sem vetor e busca semantica devolvendo vazio. E
+    exatamente esse desfecho que a emenda E-02 desta card reescreveu, e o
+    motivo de reescreve-lo continua sendo este teste. Um ambiente sem chave
     responderia "nao ha imoveis" para um catalogo de 500.
 
     Os dois imoveis tem o MESMO preco, entao a aderencia empata e a ordem sai
