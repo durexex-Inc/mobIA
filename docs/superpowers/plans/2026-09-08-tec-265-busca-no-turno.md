@@ -96,8 +96,6 @@ import json
 import uuid
 from typing import Any
 
-import pytest
-
 from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA, porta_de_busca
 from mobia.domain.catalogo.enums import Operacao, TipoImovel
 from mobia.domain.catalogo.schemas import Candidato, ResultadoDaBusca
@@ -270,7 +268,6 @@ motivo (D3 do desenho): `classificar` nao conhece `FiltroDeBusca` e
 ela tem nome nos testes.
 """
 
-import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
