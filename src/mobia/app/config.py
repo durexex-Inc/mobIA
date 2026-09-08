@@ -134,9 +134,10 @@ class Settings(BaseSettings):
     # Reserva subtraida do teto antes de qualquer comparacao -- ver
     # `teto_de_tokens_efetivo`. Protege contra o que o contador nao ve: a
     # contagem de `montar_contexto` mede uma mensagem plana, e a requisicao
-    # real difere dela em quatro parcelas (o `SISTEMA` de montagem.py, que e
-    # contado e nao enviado; e o `SISTEMA_DO_AGENTE`, o schema compilado e os
-    # rotulos de `montar_prompt`, enviados e nunca contados).
+    # real difere dela em cinco parcelas (o `SISTEMA` de montagem.py, que e
+    # contado e nao enviado; e o `SISTEMA_DO_AGENTE`, o schema compilado, os
+    # rotulos de `montar_prompt` e a definicao da ferramenta de busca em
+    # `tools=` (TEC-265), enviados e nunca contados).
     #
     # **O valor de hoje dessa diferenca nao esta escrito aqui, de proposito**
     # (TEC-243). Ele e derivado -- muda quando alguem mexe no prompt, num
@@ -146,7 +147,7 @@ class Settings(BaseSettings):
     #
     #     python -m pytest -q -k margem_do_orcamento -s
     #
-    # imprime as quatro parcelas, o liquido, o teto e a folga.
+    # imprime as cinco parcelas, o liquido, o teto e a folga.
     #
     # O que este comentario registra e o que **nao** envelhece: por que a
     # reserva existe, por que ela ja subiu duas vezes, e o que cada subida
@@ -196,7 +197,23 @@ class Settings(BaseSettings):
     # Preco desta subida: **30 tokens a menos de literais e resumo por turno,
     # de 12000 -- 0,25% do contexto**. Menor que as duas anteriores (3,3% e
     # 0,4%).
-    contexto_headroom_de_tokens: int = 880
+    #
+    # **880 -> 1060 na TEC-265**, que declarou a ferramenta de busca em
+    # `tools=` (131,2 tokens). A alternativa sem `enum` em `operacao` custava
+    # 123,8, e os 7,5 de diferenca compram o modelo traduzindo COMPRA -> VENDA
+    # sozinho: os dois vocabularios discordam e `Operacao("COMPRA")`
+    # levantaria em turno normal.
+    #
+    # 1005 (880 + 125, o aumento que so cobria o teto fixo) nao serviu: deixa
+    # `headroom * 0,75` -- o teto que `test_diferenca_entre_o_contado_e_o_enviado`
+    # usa -- em 753,75, abaixo do proprio liquido de 780,0. O fator 0,75
+    # exige mais reserva do que o teto fixo sozinho pede; 1060 deixa esse
+    # segundo teto em 795,0, com folga de 9,0 sobre o teto fixo de 786 (ver
+    # `test_a_margem_do_orcamento_do_prompt_e_deliberada`). Preco desta
+    # subida: **180 tokens a menos de literais e resumo por turno, de 12000
+    # -- 1,5% do contexto**. E a segunda maior da historia do projeto, atras
+    # dos 3,3% da primeira.
+    contexto_headroom_de_tokens: int = 1060
 
     # Dobrar `gatilho - minimas` mensagens deixa exatamente `minimas` literais.
     # Manter gatilho >= 2 * minimas e o que garante o piso depois da regeneracao.
@@ -382,7 +399,7 @@ class Settings(BaseSettings):
         vira um teste (`test_diferenca_entre_o_contado_e_o_enviado`) em vez de
         um numero solto num comentario.
 
-        Sao quatro as parcelas em que a contagem difere do que se envia:
+        Sao cinco as parcelas em que a contagem difere do que se envia:
 
         - `-` `montagem.SISTEMA` entra na contagem mas **nao** e enviado --
           o classificador chama `montar_prompt(omitir_sistema=True)`.
@@ -390,6 +407,7 @@ class Settings(BaseSettings):
           nunca passa pelo contador.
         - `+` o schema compilado em `output_config.format`, idem.
         - `+` os rotulos de secao que `montar_prompt` intercala.
+        - `+` a definicao da ferramenta de busca em `tools=` (TEC-265), idem.
 
         **Quanto cada uma pesa hoje nao esta escrito aqui** (TEC-243). Os
         nomes das parcelas nao envelhecem; os valores envelhecem a cada

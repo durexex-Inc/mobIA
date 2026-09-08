@@ -12,6 +12,7 @@ from mobia.app.config import (
     get_settings,
 )
 from mobia.domain.agente.classificador import _SCHEMA_COMPILADO, SISTEMA_DO_AGENTE
+from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA
 from mobia.domain.context.montagem import SISTEMA
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.infra.anthropic import get_client
@@ -41,10 +42,10 @@ def _linha(rotulo: str, valor: float) -> None:
 
 
 def _decomposicao() -> dict[str, float]:
-    """As quatro parcelas da subcontagem, em tokens do proxy `len/4`.
+    """As cinco parcelas da subcontagem, em tokens do proxy `len/4`.
 
-    Sao quatro porque quatro coisas diferem entre o que `montar_contexto`
-    conta e o que a requisicao do classificador de fato manda. Os *nomes* das
+    Sao cinco porque cinco coisas diferem entre o que `montar_contexto` conta
+    e o que a requisicao do classificador de fato manda. Os *nomes* das
     parcelas nao envelhecem -- os *valores* envelhecem a cada mudanca de
     prompt ou de schema, e e por isso que eles vivem aqui, calculados, e nao
     transcritos em prosa (TEC-243).
@@ -61,6 +62,9 @@ def _decomposicao() -> dict[str, float]:
         "+classificador.SISTEMA_DO_AGENTE (campo system=)": em_tokens(SISTEMA_DO_AGENTE),
         "+schema compilado (output_config.format)": em_tokens(json.dumps(_SCHEMA_COMPILADO)),
         "+rotulos de montar_prompt": em_tokens(_ROTULOS_DE_MONTAR_PROMPT),
+        # TEC-265: enviada em toda chamada do classificador e nunca contada por
+        # `montar_contexto`, exatamente como o schema de saida.
+        "+ferramenta de busca (tools=)": em_tokens(json.dumps(FERRAMENTA_DE_BUSCA)),
     }
 
 
@@ -339,14 +343,14 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
 def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     """A margem existe para ser vista antes de ser gasta, nao depois.
 
-    O teto de 655 e mais apertado que o `headroom * 0,75` usado pelo teste
+    O teto de 786 e mais apertado que o `headroom * 0,75` usado pelo teste
     irmao, e e o proposito deste teste: se voce esta lendo isto porque ele
     reprovou, a pergunta e "o que sai do prompt para o novo texto entrar?",
     nao "quanto subo o numero?". Subir e resposta legitima -- mas so depois da
     primeira pergunta, e com o preco por turno escrito no comentario de
     `contexto_headroom_de_tokens`.
 
-    O 655 e o unico numero desta conta escrito a mao em qualquer lugar, e e
+    O 786 e o unico numero desta conta escrito a mao em qualquer lugar, e e
     escrito aqui de proposito: um limite so trava se estiver fixo. Todo o
     resto -- subcontagem, folga, margem -- e derivado e sai impresso por
     `_subcontagem`, para ninguem precisar transcrever (TEC-243):
@@ -374,6 +378,27 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     TEC-257 ja cobre recusa, e o campo recusado ja vem marcado
     "(perguntado, sem resposta)" do turno em que foi perguntado.
 
+    A TEC-265 gastou os 6,2 que restavam: a definicao da ferramenta de busca
+    em `tools=` custou 131,2, levando o liquido a exatamente 780,0. A
+    alternativa mais barata foi recusada por defeito e nao por preco -- um
+    schema com so `consulta_texto` (73,8) buscaria com o estado do turno
+    anterior, porque a extracao do turno atual so volta no JSON final. Dentro
+    da propria ferramenta houve corte: `tipo` como string livre em vez de
+    `enum` economizou ~40, e `operacao` ficou `enum` (+7,5) porque e a unica
+    dimensao que nao pode ser descartada -- ver a D5 e a D11 do desenho.
+
+    O teto subiu para 786, nao para 780: com o liquido medido em exatamente
+    780,0, um teto igual a ele zerava a margem e reprovava esta assercao, que
+    e estrita (`<`, nao `<=`). 786 deixa 6,0 de margem, do mesmo tamanho da
+    que a TEC-148 tinha deixado. A reserva precisou subir mais do que o
+    aumento do teto: 1005 (780 + 125, o primeiro numero cogitado) faz
+    `headroom * 0,75` cair para 753,75, abaixo do proprio liquido de 780,0 --
+    o fator 0,75 do teste irmao exige folga adicional que o aumento do teto
+    sozinho nao cobre. 1060 deixa `headroom * 0,75` em 795,0, 9,0 acima do
+    teto fixo de 786. Preco: 180 tokens a menos de literais e resumo por
+    turno, de 12000 -- 1,5% do contexto, a segunda maior subida da historia
+    do projeto, atras dos 3,3% da primeira.
+
     O calculo de custo desta card errou duas vezes antes de bater com o
     numero real, e as duas ficam registradas para ninguem repetir a conta
     por fora do teste. A entrada nova em `properties`
@@ -394,11 +419,11 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     nunca uma simulacao do schema por fora dele.
     """
     subcontagem = _subcontagem()
-    _linha("teto desta assercao (fixo)", 655)
-    _linha("margem", 655 - subcontagem)
+    _linha("teto desta assercao (fixo)", 786)
+    _linha("margem", 786 - subcontagem)
 
-    assert subcontagem < 655, (
-        f"subcontagem {subcontagem}: a margem sobre o teto de 655 foi "
+    assert subcontagem < 786, (
+        f"subcontagem {subcontagem}: a margem sobre o teto de 786 foi "
         f"consumida. Encolha o texto enviado, ou suba a reserva registrando "
         f"o preco por turno."
     )
