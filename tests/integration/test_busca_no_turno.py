@@ -4,13 +4,16 @@ Basename distinto de tudo em `tests/unit/`.
 """
 
 import uuid
+from decimal import Decimal
 from typing import Any
 
 from conftest import EmbedadorFake
 from sqlalchemy import select
 
 from mobia.domain.agente.ferramenta_de_busca import porta_de_busca
+from mobia.domain.agente.schemas import Extracao, Intencao, RespostaDoAgente
 from mobia.domain.catalogo.models import Imovel
+from mobia.domain.context.montagem import ContextoMontado
 from mobia.domain.messages.enums import MessageRole
 from mobia.domain.messages.models import Message
 from mobia.infra.crypto import aad_de, decrypt
@@ -144,3 +147,81 @@ async def test_turno_que_nao_pede_imovel_nao_apresenta_imovel(
     async with get_sessionmaker()() as leitura:
         entregue = await _texto_entregue(leitura)
     assert "AP-001" not in entregue
+
+
+class _ClassificadorQuePedeAFerramenta:
+    """Duble PROPRIO, so para este teste -- e nao `ClassificadorFake`.
+
+    O spec promete, na secao Testes, "turno completo com candidatos chegando
+    a geracao": um turno em que a porta de busca de verdade roda contra o
+    catalogo de verdade e os resultados atravessam ate `RespostaDoAgente`.
+    `ClassificadorFake` (`tests/conftest.py`) nao serve para isso -- ele so
+    GUARDA a porta que recebe em `self.portas`, para a asserta da D3
+    (`test_o_turno_monta_a_porta_e_a_entrega_ao_classificador`), e nunca a
+    CHAMA. Contorce-lo para chamar a porta romperia o contrato que os outros
+    testes que o usam dependem (ele nunca busca sozinho). Este duble existe
+    so para simular o que o laco de tool use real faz dentro de
+    `ClassificadorAnthropic._chamar`: recebe a porta, chama com um filtro, e
+    devolve uma `RespostaDoAgente` com os candidatos que a porta trouxe.
+
+    Guarda a `RespostaDoAgente` construida em `self.resultado` porque
+    `executar_turno` nao devolve `RespostaDoAgente` para quem chama -- so o
+    `ResultadoDoTurno` (a string "respondido"/"expirado"/...). Sem isto o
+    teste nao teria como inspecionar o que `classificar` de fato devolveu.
+    """
+
+    def __init__(self, filtro: dict[str, object]) -> None:
+        self.filtro = filtro
+        self.resultado: RespostaDoAgente | None = None
+
+    async def classificar(self, contexto: ContextoMontado, *, porta=None) -> RespostaDoAgente:
+        assert porta is not None, "o turno tem de montar e passar a porta (D3)"
+        saida = await porta(self.filtro)
+        self.resultado = RespostaDoAgente(
+            intencao=Intencao.COMPRA,
+            confianca=Decimal("0.90"),
+            resposta="Encontrei uma opcao que pode te interessar.",
+            modelo="claude-opus-5",
+            tokens_in=500,
+            tokens_out=80,
+            latency_ms=50,
+            extracao=Extracao(),
+            candidatos=saida.get("candidatos", []),
+        )
+        return self.resultado
+
+    async def desambiguar(self, contexto: ContextoMontado):
+        raise AssertionError("confianca alta o bastante para nao desambiguar neste teste")
+
+
+async def test_turno_completo_com_candidatos_chegando_a_geracao(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """A promessa do spec (secao Testes) que faltava: "turno completo com
+    candidatos chegando a geracao".
+
+    Diferente de `test_a_porta_busca_no_catalogo_de_verdade` (que chama
+    `porta_de_busca` direto, sem passar por `executar_turno`) e de
+    `test_turno_que_nao_pede_imovel_nao_apresenta_imovel` (onde o duble
+    generico nunca busca), este teste roda o turno INTEIRO com um duble que
+    de fato pede a ferramenta -- a porta real executa contra o catalogo real
+    (com `EmbedadorFake`, sem rede), e o candidato semeado chega ate
+    `RespostaDoAgente.candidatos`, exatamente o que a D8 do desenho promete
+    para a TEC-161 validar depois.
+    """
+    identificador = await _imovel(session)
+    classificador = _ClassificadorQuePedeAFerramenta({"operacao": "VENDA"})
+
+    resultado = await rodar_turno(
+        session, classificador, outbound_fake(), resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert classificador.resultado is not None
+    (candidato,) = classificador.resultado.candidatos
+    assert candidato["imovel_id"] == str(identificador)
+    assert candidato["preco_centavos"] == 74900000
