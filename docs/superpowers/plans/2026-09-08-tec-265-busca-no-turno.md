@@ -412,10 +412,12 @@ def porta_de_busca(
     return porta
 ```
 
+> **Correção pós-execução (2026-09-08).** O snippet acima tem um defeito que a revisão pegou: `Operacao("AMBOS")` é membro válido do enum, então passa pelo `except ValueError` — e `FiltroDeBusca.__post_init__` levanta depois, fora dos dois `try`, violando a D9. A guarda tem de cobrir também a operação que existe no enum e não tem coluna de preço, reusando `COLUNA_DE_PRECO` como definição única. O código entregue (`973f9b1`) já faz isso, com o teste `test_operacao_ambos_e_erro_e_nao_levanta`.
+
 - [ ] **Step 5: Rodar e confirmar que passa**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/unit/test_ferramenta_de_busca.py --tb=short`
-Expected: PASS, 7 testes.
+Expected: PASS, 8 testes (7 do snippet mais o do `AMBOS`).
 
 - [ ] **Step 6: Gates e commit**
 
