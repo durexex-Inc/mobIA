@@ -423,3 +423,66 @@ async def test_sem_teto_a_ordem_e_a_similaridade_pura(session: Any) -> None:
     por_id = {candidato.imovel_id: candidato.score for candidato in resultado.candidatos}
     assert por_id[parecido] == 1.0
     assert por_id[diferente] == 0.4
+
+
+async def test_imovel_rural_e_encontrado(session: Any) -> None:
+    """TEC-262. O zero-resultado que a lacuna 2 da TEC-158 declarou.
+
+    O modelo devolve RURAL sozinho e o corpus anota `chacara`/`sitio` assim
+    desde a TEC-246, entao o caminho funcionava ate a ultima clausula: a busca
+    filtrava `tipo = 'RURAL'` contra uma coluna que nao podia conter o valor.
+    """
+    rural = await _imovel(session, "RU-001", tipo=TipoImovel.RURAL.value)
+    await _imovel(session, "CA-300", tipo=TipoImovel.CASA.value)
+
+    resultado = await buscar(session, FiltroDeBusca(operacao=Operacao.VENDA, tipo=TipoImovel.RURAL))
+
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [rural]
+
+
+async def test_pedido_de_apartamento_inclui_cobertura(session: Any) -> None:
+    """TEC-262, D2. Para a fala do lead, cobertura e uma especie de apartamento.
+
+    A D1 da TEC-242 ja decidiu isso ao anotar os tres turnos de `compra-06`
+    que dizem "cobertura" como APARTAMENTO. Deixar a cobertura fora do
+    resultado faria o filtro contradizer a anotacao do corpus -- e, na base
+    simulada, esconderia 8% do catalogo do pedido mais comum.
+    """
+    apartamento = await _imovel(session, "AP-400", tipo=TipoImovel.APARTAMENTO.value)
+    cobertura = await _imovel(session, "CO-400", tipo=TipoImovel.COBERTURA.value)
+    await _imovel(session, "CA-400", tipo=TipoImovel.CASA.value)
+
+    resultado = await buscar(
+        session, FiltroDeBusca(operacao=Operacao.VENDA, tipo=TipoImovel.APARTAMENTO)
+    )
+
+    assert {candidato.imovel_id for candidato in resultado.candidatos} == {
+        apartamento,
+        cobertura,
+    }
+
+
+async def test_a_inclusao_de_cobertura_aponta_num_sentido_so(session: Any) -> None:
+    """TEC-262, D2. As duas metades, porque a primeira sozinha nao basta.
+
+    Um mapa simetrico errado -- COBERTURA casando APARTAMENTO de volta, ou
+    CASA generalizando para residencial -- passaria no teste de cima e falharia
+    aqui. A assercao e sobre o que a inclusao NAO faz.
+    """
+    apartamento = await _imovel(session, "AP-500", tipo=TipoImovel.APARTAMENTO.value)
+    cobertura = await _imovel(session, "CO-500", tipo=TipoImovel.COBERTURA.value)
+    casa = await _imovel(session, "CA-500", tipo=TipoImovel.CASA.value)
+
+    so_cobertura = await buscar(
+        session, FiltroDeBusca(operacao=Operacao.VENDA, tipo=TipoImovel.COBERTURA)
+    )
+    assert [c.imovel_id for c in so_cobertura.candidatos] == [cobertura]
+
+    so_casa = await buscar(session, FiltroDeBusca(operacao=Operacao.VENDA, tipo=TipoImovel.CASA))
+    assert [c.imovel_id for c in so_casa.candidatos] == [casa]
+
+    # E o apartamento so aparece para quem pede apartamento.
+    so_apartamento = await buscar(
+        session, FiltroDeBusca(operacao=Operacao.VENDA, tipo=TipoImovel.APARTAMENTO)
+    )
+    assert apartamento in {c.imovel_id for c in so_apartamento.candidatos}

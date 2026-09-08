@@ -418,3 +418,18 @@ async def test_o_upsert_mantem_a_dobra_do_bairro(session: Any) -> None:
     await session.refresh(imovel)
     assert imovel.bairro == "Vila Madalena"
     assert imovel.bairro_busca == "vila madalena"
+
+
+async def test_linha_rural_e_aceita(session: Any) -> None:
+    """TEC-262, D1. O contrato do arquivo se corrige pelo enum, sem tocar o parser.
+
+    `parsear` faz `enumerado("tipo", TipoImovel)` sobre o enum do catalogo:
+    acrescentar o membro e o que faz uma linha RURAL deixar de ser rejeitada.
+    Antes desta card, um arquivo com chacara era recusado linha a linha.
+    """
+    await sincronizar(session, [replace(_registro("RU-9001"), tipo=TipoImovel.RURAL)])
+    await session.commit()
+
+    imovel = await session.scalar(select(Imovel).where(Imovel.codigo == "RU-9001"))
+    assert imovel is not None
+    assert imovel.tipo == "RURAL"

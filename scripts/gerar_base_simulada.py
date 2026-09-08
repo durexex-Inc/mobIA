@@ -26,11 +26,21 @@ BAIRROS = [
 ]
 
 TIPOS = [
-    ("APARTAMENTO", "AP", 0.55, (45, 180), (1, 4)),
+    ("APARTAMENTO", "AP", 0.50, (45, 180), (1, 4)),
     ("CASA", "CA", 0.25, (90, 320), (2, 5)),
     ("COBERTURA", "CO", 0.08, (120, 400), (2, 4)),
     ("TERRENO", "TE", 0.07, (200, 900), (0, 0)),
     ("COMERCIAL", "CM", 0.05, (30, 400), (0, 0)),
+    # TEC-262. O peso de APARTAMENTO caiu de 0,55 para 0,50 para a soma
+    # seguir em 1,00 -- `rng.choices` nao exige soma 1, mas a lista somava e
+    # manter isso deixa o peso legivel como percentual. 0,05 poe RURAL entre
+    # COMERCIAL e TERRENO, que e onde uma tipologia de nicho pertence.
+    #
+    # A faixa de area e a mais larga do arquivo, de proposito: chacara e
+    # sitio vao de terreno pequeno a propriedade grande, e a largura e o que
+    # mantem folgada a assercao de dispersao de preco do
+    # `test_distribuicao_e_realista` com um tipo a mais.
+    ("RURAL", "RU", 0.05, (400, 5000), (1, 4)),
 ]
 
 CARACTERISTICAS = [
