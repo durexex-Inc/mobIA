@@ -11,11 +11,35 @@ from enum import StrEnum
 
 
 class TipoImovel(StrEnum):
+    """O vocabulario de tipo do CATALOGO, que nao e o mesmo do agente.
+
+    `agente/schemas.py` tem o seu, e os dois nao se importam -- `catalogo` nao
+    importa `agente` (D2 da TEC-158), e a seta contraria seria igualmente
+    errada. Depois da TEC-262 eles tem os mesmos seis valores, mas seguem
+    sendo dois tipos Python distintos: quem liga a busca ao turno converte
+    por nome.
+
+    **`COBERTURA` existe aqui e NAO existe no do agente, de proposito.** A D1
+    da TEC-242 mapeia "cobertura" para `APARTAMENTO` nas regras de anotacao do
+    corpus, e deixou escrito que nada muda no schema da chamada nem no prompt:
+    o modelo devolve `APARTAMENTO` para quem diz cobertura, e os tres turnos
+    de `compra-06` estao anotados assim. Acrescentar o membro la faria as tres
+    anotacoes virarem discrepancia. Quem alcanca a cobertura e o filtro da
+    busca, pela `_INCLUSOES` em `busca.py`.
+    """
+
     APARTAMENTO = "APARTAMENTO"
     CASA = "CASA"
     COBERTURA = "COBERTURA"
     TERRENO = "TERRENO"
     COMERCIAL = "COMERCIAL"
+    # TEC-262. O agente ja devolvia RURAL e o catalogo nao tinha onde guardar:
+    # o lead dizia "chacara", gravava-se `tipo_imovel = RURAL`, e a busca
+    # filtrava contra uma coluna que nao podia conter o valor -- zero
+    # resultados, sem erro e sem log. O membro aqui e o que fecha isso, e
+    # tambem o que faz o parser aceitar a linha, porque ele valida por
+    # `enumerado("tipo", TipoImovel)`.
+    RURAL = "RURAL"
 
 
 class Operacao(StrEnum):

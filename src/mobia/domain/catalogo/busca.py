@@ -36,7 +36,7 @@ from sqlalchemy import Numeric, cast, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from mobia.domain.catalogo.enums import Operacao, StatusImovel, Zona
+from mobia.domain.catalogo.enums import Operacao, StatusImovel, TipoImovel, Zona
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.catalogo.schemas import (
     COLUNA_DE_PRECO,
@@ -68,6 +68,38 @@ _ZONA_POR_TEXTO: dict[str, Zona] = {
     **{dobrar(zona.value): zona for zona in Zona},
     **{f"zona {dobrar(zona.value)}": zona for zona in Zona},
 }
+
+
+# TEC-262, D2. Os tipos do catalogo que um pedido de tipo casa, alem dele
+# mesmo. UMA entrada, e um `.get` com default de identidade -- a forma e a
+# mensagem: existe uma regra assimetrica e todo o resto e ele mesmo.
+#
+# Um dicionario com as seis chaves preenchidas convidaria o proximo leitor a
+# completar a simetria (`CASA: (CASA,)`, `TERRENO: (TERRENO,)`) e, tendo
+# completado, a "consertar" a linha que nao e simetrica. A assimetria e o
+# ponto, e nao um esquecimento.
+#
+# **Por que a seta aponta num sentido so.** Nao existe pedido de `COBERTURA`
+# vindo do lead: o enum do agente nao tem o membro, e a D1 da TEC-242 garante
+# que nao tera. Um chamador HTTP pode pedir cobertura -- a secao 6.3 aceita o
+# enum do catalogo -- e ali a igualdade pura e a resposta certa: quem pede
+# cobertura explicitamente quer cobertura. E quem pede `CASA` nao deve ver
+# apartamento, que seria a generalizacao errada da mesma ideia.
+_INCLUSOES: dict[TipoImovel, tuple[TipoImovel, ...]] = {
+    TipoImovel.APARTAMENTO: (TipoImovel.APARTAMENTO, TipoImovel.COBERTURA),
+}
+
+
+def _inclusoes_de(tipo: TipoImovel) -> tuple[TipoImovel, ...]:
+    """Os tipos que este pedido casa. Identidade, menos onde a D2 diz o contrario.
+
+    Para a fala do lead, cobertura e uma especie de apartamento -- a D1 da
+    TEC-242 ja decidiu isso ao anotar os tres turnos de `compra-06` que dizem
+    "cobertura" como `APARTAMENTO`. Deixar a cobertura fora do resultado faria
+    o filtro contradizer a anotacao do corpus, e na base simulada esconderia
+    8% do catalogo do pedido mais comum.
+    """
+    return _INCLUSOES.get(tipo, (tipo,))
 
 
 def zonas_de(regioes: Sequence[str]) -> tuple[Zona, ...]:
@@ -181,7 +213,7 @@ async def buscar(
     if filtro.preco_min_centavos is not None:
         condicoes.append(preco >= filtro.preco_min_centavos)
     if filtro.tipo is not None:
-        condicoes.append(Imovel.tipo == filtro.tipo.value)
+        condicoes.append(Imovel.tipo.in_([tipo.value for tipo in _inclusoes_de(filtro.tipo)]))
     if filtro.quartos_min is not None:
         # `>=`, porque a card diz "nenhum resultado tem menos de 2 quartos" e
         # o contrato do SRS chama o campo de `quartosMin`.

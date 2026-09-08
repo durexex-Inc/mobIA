@@ -9,6 +9,7 @@ teste quebra antes de qualquer um notar em producao. Ver D8 do desenho.
 from collections import Counter
 from pathlib import Path
 
+from mobia.domain.catalogo.enums import TipoImovel
 from mobia.domain.catalogo.parser import parsear
 from mobia.domain.catalogo.schemas import RegistroImovel, Rejeicao
 
@@ -50,3 +51,16 @@ def test_distribuicao_e_realista():
     assert len({r.tipo for r in registros}) >= 4
     precos = [r.preco_venda for r in registros if r.preco_venda]
     assert max(precos) >= 3 * min(precos)
+
+
+def test_os_seis_tipos_aparecem_na_base():
+    """TEC-262, D4. A guarda que impede o zero de rural voltar em silencio.
+
+    `test_distribuicao_e_realista` afirma `>= 4` tipos distintos, e continuaria
+    verde com cinco -- exatamente o estado que esta card existe para sair. Um
+    peso zerado numa regeracao futura, ou uma edicao manual do CSV, precisa
+    virar teste vermelho e nao zero-resultado descoberto meses depois.
+    """
+    registros = [i for i in _itens() if isinstance(i, RegistroImovel)]
+    presentes = {r.tipo for r in registros}
+    assert presentes == set(TipoImovel), f"faltando: {set(TipoImovel) - presentes}"
