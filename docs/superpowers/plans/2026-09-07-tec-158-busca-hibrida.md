@@ -1776,15 +1776,11 @@ Esperado: PASS, os cinco.
 ./.venv/Scripts/python.exe -m mypy
 ```
 
-- [ ] **Step 6: Rode a suíte inteira, uma vez**
+- [ ] **Step 6: A suíte inteira roda depois, pelo controller**
 
-```bash
-./.venv/Scripts/python.exe -u -m pytest -v --tb=short
-```
+A suíte leva ~22 minutos, o Bash em primeiro plano tem teto de 10 minutos, e uma execução em segundo plano morre quando o turno deste subagente termina — nenhuma das três formas é executável por quem está rodando esta task. Não rode a suíte completa aqui: o **controller** roda `./.venv/Scripts/python.exe -u -m pytest -v --tb=short` depois que esta task fechar, fora do escopo de um subagente.
 
-Espere **~22 minutos em máquina ociosa** — e muito mais se houver outra coisa rodando. Saída vazia por dez minutos é normal, não deadlock.
-
-Se algum de `test_montagem.py`, `test_sweep_stalled.py`, `test_dedup_por_message_id.py` ou `test_optout_repositorio.py` falhar com `ConnectionResetError` ou erro de Redis, **rode o arquivo sozinho antes de atribuir a falha a esta branch** — os quatro flakeiam sob carga e passam isolados. Guarde o hash do commit junto com o resultado de cada execução.
+Se algum de `test_montagem.py`, `test_sweep_stalled.py`, `test_dedup_por_message_id.py` ou `test_optout_repositorio.py` falhar com `ConnectionResetError` ou erro de Redis nessa execução, **rode o arquivo sozinho antes de atribuir a falha a esta branch** — os quatro flakeiam sob carga e passam isolados. Guarde o hash do commit junto com o resultado de cada execução.
 
 - [ ] **Step 7: Commit**
 

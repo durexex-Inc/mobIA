@@ -40,7 +40,7 @@ As duas fases da RN-09.1 são **uma instrução**: o filtro estruturado no `WHER
 
 Duas alternativas recusadas:
 
-- **Duas viagens** (`SELECT` dos ids do filtro, depois `SELECT` ordenado por similaridade sobre esses ids). Dobra a latência para não ganhar nada: o Postgres já avalia a CTE antes de pontuar.
+- **Duas viagens** (`SELECT` dos ids do filtro, depois `SELECT` ordenado por similaridade sobre esses ids). Dobra a latência para não ganhar nada: o Postgres já avalia o `WHERE` antes de pontuar, numa instrução só.
 - **Cosseno em Python.** Trazer o subconjunto filtrado com os vetores para calcular distância na aplicação transfere 1536 floats por linha. Numa faixa larga de preço isso é o catálogo inteiro pela rede, por consulta.
 
 **A consulta é montada com o Core do SQLAlchemy, e não com `text()` cru** — e aqui o desenho **diverge do molde das varreduras** (`sweep_stalled`, `indexar_catalogo`), que usam SQL cru. O motivo é que aquelas têm **uma** forma fixa e esta tem seis filtros independentemente opcionais. Escrever isso em `text()` obriga a `(:preco_max IS NULL OR preco_venda <= :preco_max)` em cada cláusula, e esse predicado entrega ao planejador uma condição que ele **não pode podar** — o plano genérico passa a considerar a coluna filtrada mesmo quando o parâmetro é nulo. Isso é ruim justamente na card seguinte, que mede p95. Com o Core, só as condições presentes entram no `WHERE`, e `Imovel.embedding.cosine_distance(...)` do `pgvector.sqlalchemy` dá o operador tipado sem `bindparam` escrito à mão para vetor e para array.
@@ -253,7 +253,7 @@ Uma busca, de fora para dentro:
 1. **O chamador monta o filtro.** `operacao` é obrigatória (D2); faixa, tipo, quartos, vagas e regiões são opcionais. `consulta_texto` é opcional.
 2. **A busca dobra as regiões recebidas** e deriva as zonas que o vocabulário reconhece (D4).
 3. **O vetor da consulta**, quando há `consulta_texto`: chamada ao embedador injetado. Falha ou ausência de chave → `vetor = None`, e a busca **segue** (D8, D9).
-4. **Uma instrução no banco** (D1): filtro estruturado na CTE, similaridade e aderência sobre o subconjunto, score no `ORDER BY`, `LIMIT` no teto.
+4. **Uma instrução no banco** (D1): filtro estruturado no `WHERE` de um `SELECT` plano, similaridade e aderência calculadas no `ORDER BY`, `LIMIT` no teto.
 5. **O resultado** traz, por candidato, o `id` e o preço **lidos do banco** — que é a RN-09.4 e o quarto cenário do Gherkin — mais o score; e, no envelope, `total_candidatos`, `consulta_vetorizada` e quantos vieram sem vetor.
 
 **O que acontece com zero resultados:** devolve lista vazia com `total_candidatos = 0`. O relaxamento da RN-09.3 é da TEC-160, e esta card não o antecipa nem o impede — a assinatura do filtro é o que ela vai relaxar.
@@ -339,6 +339,7 @@ Nenhum teste de latência: `addopts = "-m 'not perf'"` já exclui `perf`, e o SL
 6. **Precisão da busca não é medida nesta card.** O SRS pede um conjunto de 30 consultas com gabarito e precisão@3 (mitigação do risco RT-06); os testes daqui provam que o filtro é respeitado e que a ordem é determinística, não que ela é boa. A D7 diz onde olhar primeiro quando alguém medir.
 7. **`ix_imoveis_status` fica redundante** para esta consulta, sendo prefixo do composto novo. Derrubá-lo exige medir o efeito nas outras consultas de `imoveis`.
 8. **Não há filtro de cidade, e o bairro homônimo atravessa cidades.** A RN-09.1 não lista cidade entre as dimensões estruturadas, então esta card não a filtra: `"centro"` casa o Centro de todas as cidades do catálogo. A Emenda E-01 da TEC-157 **previu exatamente isso** e pôs `cidade` no documento embeddado *"porque bairro homônimo em cidades diferentes colide e o filtro estruturado da RN-09.1 filtra por bairro"* — mas isso mitiga pela similaridade, que tem 60% do peso e vale zero quando não há vetor (D8). Enquanto o catálogo é de uma cidade só, é inócuo; num catálogo multicidade, o filtro precisa da dimensão, e ela vem com emenda à RN-09.1 e um parâmetro novo, não com ajuste de peso.
+9. **`consultaTexto` é aceito e inerte no endpoint desta card, até a TEC-161 injetar o embedador.** `POST /api/v1/imoveis/busca` não recebe embedador (D10), então `_vetor_da_consulta` devolve `None` sempre e o campo não muda um resultado sequer — `consultaVetorizada` sai `false` para todo pedido. Consequência declarada: relevância ou latência medidas **através deste endpoint** descrevem só o caminho degradado, porque a chamada de embedding — a parte cara — nunca acontece. Isso inclui o harness de precisão@3 da lacuna 6 e o trabalho de p95 da TEC-159, se algum dos dois usar este endpoint como superfície de medição em vez de chamar `buscar()` com um embedador de verdade.
 
 ## Fora de escopo
 
