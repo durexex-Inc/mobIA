@@ -133,6 +133,24 @@ async def test_operacao_que_o_dominio_nao_le_e_erro_e_nao_dimensao_derrubada() -
     assert busca.filtros == []
 
 
+async def test_operacao_ambos_e_erro_e_nao_levanta() -> None:
+    """D9 e D11: `AMBOS` e membro valido do enum, mas nao tem coluna de preco.
+
+    `Operacao("AMBOS")` passa incolume pelo `except ValueError` da porta --
+    quem barra `AMBOS` e o `FiltroDeBusca.__post_init__`, que levanta
+    `ValueError` por fora de qualquer `try` da porta se ninguem checar antes.
+    Excecao aqui violaria a D9 ("falha de busca devolve erro, nunca levanta")
+    e derrubaria o turno inteiro por uma operacao que o proprio catalogo diz
+    que "e o que um imovel pode ser, nunca o que uma busca pede".
+    """
+    busca = _BuscaEspia()
+
+    saida = await _porta(busca)({"operacao": "AMBOS"})
+
+    assert "erro" in saida
+    assert busca.filtros == []
+
+
 async def test_busca_que_levanta_vira_erro_e_nao_derruba_o_turno() -> None:
     async def explode(*_: object, **__: object) -> None:
         raise RuntimeError("banco fora")

@@ -18,7 +18,7 @@ import structlog
 
 from mobia.domain.catalogo.busca import buscar as buscar_de_verdade
 from mobia.domain.catalogo.enums import Operacao, TipoImovel
-from mobia.domain.catalogo.schemas import Candidato, FiltroDeBusca
+from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, Candidato, FiltroDeBusca
 
 log = structlog.get_logger(__name__)
 
@@ -109,12 +109,25 @@ def porta_de_busca(
     executar = buscar or buscar_de_verdade
 
     async def porta(entrada: dict[str, Any]) -> dict[str, Any]:
+        operacao_bruta = str(entrada.get("operacao"))
         try:
-            operacao = Operacao(str(entrada.get("operacao")))
+            operacao: Operacao | None = Operacao(operacao_bruta)
         except ValueError:
-            # D11: sem operacao legivel nao existe busca -- ela escolhe a
-            # coluna de preco. Erro, e nao dimensao derrubada.
-            log.warning("catalogo.tool_call_operacao_ilegivel", valor=str(entrada.get("operacao")))
+            operacao = None
+
+        # D11: sem operacao BUSCAVEL nao existe busca -- ela escolhe a coluna
+        # de preco. Dois valores chegam aqui sem coluna: um que o enum nem
+        # reconhece (`Operacao(...)` levanta acima, ex.: "COMPRA") e um que o
+        # enum reconhece mas `FiltroDeBusca` recusa (`AMBOS`, que e o que um
+        # imovel pode SER e nunca o que uma busca pede -- ver o comentario de
+        # `__post_init__` em catalogo/schemas.py). `COLUNA_DE_PRECO` e a unica
+        # definicao de "operacao buscavel"; checar contra ela em vez de
+        # nomear `AMBOS` aqui evita duplicar aquela regra numa segunda copia
+        # que poderia divergir dela. Sem esta checagem, `AMBOS` passava pelo
+        # `except` acima e so levantava dentro de `FiltroDeBusca`, fora dos
+        # dois `try` da porta -- exatamente o `raise` que a D9 proibe.
+        if operacao is None or operacao not in COLUNA_DE_PRECO:
+            log.warning("catalogo.tool_call_operacao_ilegivel", valor=operacao_bruta)
             return {"erro": "operacao invalida: use VENDA ou ALUGUEL"}
 
         regioes = tuple(str(regiao) for regiao in entrada.get("regioes") or ())
