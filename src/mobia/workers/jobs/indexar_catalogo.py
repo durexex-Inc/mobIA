@@ -301,6 +301,24 @@ async def _uma_passagem(
             (await session.scalars(select(Imovel).where(Imovel.id.in_(identificadores)))).all()
         )
 
+        # A ordem da selecao tem de chegar aos lotes, e o `select` acima nao a
+        # traz: ele nao tem `ORDER BY`, entao devolve as linhas na ordem que o
+        # plano escolher -- de heap, numa tabela pequena, o que acidentalmente
+        # coincide com a de insercao e por isso enganou a TEC-157. Sem esta
+        # ordenacao, em que lote cada candidato cai e sorteio, e o argumento
+        # contra o `raise` no `except` abaixo -- o documento problematico cai no
+        # lote 1 de toda passagem -- nao se sustentaria.
+        #
+        # Ordenar pela POSICAO em `identificadores`, e nao por `updated_at` de
+        # novo, e o que sobrevive a uma troca do criterio da selecao: o que se
+        # promete aqui e "a ordem e a que a selecao escolheu", qualquer que ela
+        # seja. Repetir o `ORDER BY` seria a mesma regra em dois lugares, com
+        # divergencia muda no dia em que um dos dois mudar.
+        posicao_na_selecao = {
+            identificador: indice for indice, identificador in enumerate(identificadores)
+        }
+        imoveis.sort(key=lambda imovel: posicao_na_selecao[imovel.id])
+
         pendentes: list[tuple[uuid.UUID, str, str]] = []
         carimbar_apenas: list[uuid.UUID] = []
 
@@ -342,19 +360,17 @@ async def _uma_passagem(
             # Loga e CONTINUA para o proximo lote -- nao propaga. Um documento
             # com problema nao retentavel (texto grande demais, conteudo
             # recusado -- MAX_TENTATIVAS = 1 dispensa retry do proprio
-            # provedor) volta a ser SELECIONADO em toda passagem: o `ORDER BY
-            # updated_at` com `LIMIT` pega os de carimbo mais antigo, e linha
-            # que nunca e gravada nunca sai dessa ponta. Em QUE lote da
-            # passagem ele cai e que nao se sabe -- a ordem da selecao nao
-            # sobrevive ao `select` do ORM logo acima, que nao tem `ORDER BY`
-            # (a TEC-263 saiu de um teste que acreditou que sobrevivia). Um
-            # `raise` aqui abortaria a passagem no lote dele e junto todo lote
-            # seguinte, entregando so o que por acaso veio antes: o catalogo
-            # indexaria por sorte de ordenacao, com um unico warning por cron
-            # como sintoma. O molde da `sweep_stalled` faz o mesmo: loga e
-            # segue. A linha deste lote continua pendente e a proxima passagem
-            # a pega -- e essa retomada entre passagens, nao um retry dentro
-            # desta, e o "a reindexacao fica pendente e e retomada" da card. Um
+            # provedor) tende a cair no PRIMEIRO lote de toda passagem: ele
+            # nunca e gravado, entao nunca sai da ponta antiga do `ORDER BY
+            # updated_at`, e desde a TEC-264 essa ordem chega aos lotes. Um
+            # `raise` aqui abortaria a passagem inteira e junto todo lote
+            # seguinte, inclusive imoveis alterados mais recentemente que
+            # ordenam depois -- o catalogo pararia de indexar por inteiro por
+            # causa de uma linha, com um unico warning por cron como sintoma. O
+            # molde da `sweep_stalled` faz o mesmo: loga e segue. A linha deste
+            # lote continua pendente e a proxima passagem a pega -- e essa
+            # retomada entre passagens, nao um retry dentro desta, e o "a
+            # reindexacao fica pendente e e retomada" da card. Um
             # contador de falhas por linha (no molde de `sweep_max_attempts`) e
             # follow-up, nao esta card. O motivo vem de `motivo_do_provedor`,
             # que so devolve texto para erro de protocolo do provedor; para

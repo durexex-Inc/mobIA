@@ -5,6 +5,7 @@ Basename distinto de tudo em `tests/unit/`.
 
 import asyncio
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -167,12 +168,12 @@ async def test_falha_do_provedor_deixa_a_linha_pendente(session: Any) -> None:
     identificador = await _imovel(session)
 
     # NAO levanta, e isso e deliberado. Relevantar faria um documento que o
-    # provedor rejeita de forma permanente abortar a passagem inteira -- e a
-    # selecao o pega de novo em TODA passagem, porque linha que nunca e
-    # gravada nunca sai da ponta mais antiga do `ORDER BY updated_at`. Toda
-    # passagem morreria no lote dele entregando so o que por acaso veio antes,
-    # com um warning por tick como unico sintoma. O job loga e segue, no molde
-    # do `sweep_stalled`.
+    # provedor rejeita de forma permanente abortar a passagem inteira -- e ele
+    # cai no lote 1 de TODA passagem, porque linha que nunca e gravada nunca sai
+    # da ponta antiga do `ORDER BY updated_at` e, desde a TEC-264, essa ordem
+    # chega aos lotes. Entao nada mais no catalogo seria indexado nunca, com um
+    # warning por tick como unico sintoma. O job loga e segue, no molde do
+    # `sweep_stalled`.
     assert await indexar_catalogo(_ctx(EmbedadorFake(falhar=True))) == 0
 
     async with get_sessionmaker()() as leitura:
@@ -212,18 +213,17 @@ async def test_a_falha_num_lote_preserva_o_commit_do_lote_anterior(session: Any)
     assert len(imoveis) == 3
 
     # A assercao nao nomeia QUAL linha foi embeddada, e nomear era o defeito da
-    # TEC-263. A regra diz que o primeiro lote comita e sobrevive a falha dos
-    # seguintes; ela nunca disse qual dos tres imoveis cai nesse lote, e a
-    # varredura tambem nao promete: o `ORDER BY updated_at` da selecao e
-    # descartado no `select(Imovel).where(id.in_(...))` de `_uma_passagem`, que
-    # nao ordena. Afirmar sobre `identificadores[0]` era portanto afirmar sobre
-    # a ordem fisica do heap -- que costuma bater com a de insercao para tres
-    # linhas novas, e trocava sob carga: 1 failed em 1307 na suite completa,
-    # 15/15 em isolamento.
+    # TEC-263: a regra deste teste e o commit por lote, e ela nunca falou sobre
+    # qual dos tres imoveis cai nesse lote. Afirmar sobre `identificadores[0]`
+    # era afirmar sobre a ordem fisica do heap, que trocava sob carga -- 1
+    # failed em 1307 na suite completa, 15/15 em isolamento.
     #
-    # Trocar a posicao por carimbos de `updated_at` fixos NAO resolveria, pelo
-    # mesmo motivo: o `select` sem `ORDER BY` fica no caminho de qualquer ordem
-    # que a selecao tenha escolhido.
+    # Desde a TEC-264 a ordem da selecao chega aos lotes, entao nomear a linha
+    # voltou a ser POSSIVEL -- e continua sendo o teste errado para isso. Ordem
+    # e o assunto de `test_o_primeiro_lote_leva_o_candidato_mais_antigo` e do
+    # seu par com os carimbos invertidos; este teste afirma que o lote 1 comita
+    # e sobrevive a falha dos seguintes, e nao e ele que deve reprovar se a
+    # ordem mudar.
     embeddados = [imovel for imovel in imoveis if imovel.embedding is not None]
     assert len(embeddados) == 1
 
@@ -239,6 +239,78 @@ async def test_a_falha_num_lote_preserva_o_commit_do_lote_anterior(session: Any)
         assert pendente.embedding is None
         assert pendente.documento_hash is None
         assert pendente.embedding_atualizado_em is None
+
+
+# TEC-264. Os dois testes abaixo afirmam sobre a ORDEM em que os candidatos
+# entram nos lotes, que e garantia diferente da do teste acima -- aquele afirma
+# que o lote 1 comita e sobrevive, e deliberadamente NAO nomeia a linha (a
+# TEC-263 nasceu de ele nomear).
+_ANCORA = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+
+
+async def _tres_com_updated_at(session: Any, minutos: list[int]) -> list[uuid.UUID]:
+    """Tres imoveis criados em sequencia, com `updated_at` fixado por `minutos`.
+
+    O carimbo e explicito porque o default da coluna vem de
+    `clock_timestamp()`: tres insercoes em sequencia rapida podem empatar, e um
+    teste sobre ordem nao pode depender da resolucao do relogio do servidor.
+    """
+    return [
+        await _imovel(
+            session,
+            codigo=f"AP-{indice:03d}",
+            updated_at=_ANCORA + timedelta(minutes=minuto),
+        )
+        for indice, minuto in enumerate(minutos)
+    ]
+
+
+async def _o_unico_embeddado(identificadores: list[uuid.UUID]) -> uuid.UUID:
+    """Roda uma passagem em que so o primeiro lote passa, e devolve quem passou.
+
+    `indexacao_tamanho_do_lote = 1` mais `falhar_a_partir_da_chamada=2` fazem do
+    lote 1 o unico a comitar -- entao "quem foi embeddado" e "quem caiu no lote
+    1" sao a mesma pergunta, e e assim que estes testes olham para a ordem sem
+    precisar espiar dentro do laco.
+    """
+    ctx = _ctx(EmbedadorFake(falhar_a_partir_da_chamada=2))
+    ctx["settings"] = Settings(indexacao_tamanho_do_lote=1)
+
+    assert await indexar_catalogo(ctx) == 1
+
+    async with get_sessionmaker()() as leitura:
+        imoveis = (
+            await leitura.scalars(select(Imovel).where(Imovel.id.in_(identificadores)))
+        ).all()
+
+    embeddados = [imovel.id for imovel in imoveis if imovel.embedding is not None]
+    assert len(embeddados) == 1
+    return embeddados[0]
+
+
+async def test_o_primeiro_lote_leva_o_candidato_mais_antigo(session: Any) -> None:
+    # `updated_at` na mesma ordem da criacao: o caso facil, e o que documenta a
+    # intencao. Ele passa mesmo sem a ordenacao em `_uma_passagem` -- quem
+    # reprova sem ela e o teste seguinte.
+    identificadores = await _tres_com_updated_at(session, [0, 1, 2])
+
+    assert await _o_unico_embeddado(identificadores) == identificadores[0]
+
+
+async def test_a_ordem_dos_lotes_nao_vem_da_ordem_fisica_das_linhas(session: Any) -> None:
+    """A garantia da TEC-264: a ordem da selecao chega aos lotes.
+
+    `updated_at` na ordem INVERSA da de criacao. Sem a ordenacao explicita, o
+    `select(Imovel).where(id.in_(...))` de `_uma_passagem` devolve as linhas na
+    ordem do heap -- que numa tabela recem-populada e a de insercao --, o lote 1
+    leva o imovel mais NOVO, e este teste reprova. Era essa coincidencia entre
+    heap e insercao que sustentava a assercao por posicao da TEC-157, e ela nao
+    e promessa de ninguem.
+    """
+    identificadores = await _tres_com_updated_at(session, [2, 1, 0])
+
+    # O ULTIMO criado e o de `updated_at` mais antigo, logo o candidato do lote 1.
+    assert await _o_unico_embeddado(identificadores) == identificadores[-1]
 
 
 class _LogEspiao:
