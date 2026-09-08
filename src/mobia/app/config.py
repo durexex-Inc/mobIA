@@ -134,10 +134,23 @@ class Settings(BaseSettings):
     # Reserva subtraida do teto antes de qualquer comparacao -- ver
     # `teto_de_tokens_efetivo`. Protege contra o que o contador nao ve: a
     # contagem de `montar_contexto` mede uma mensagem plana, e a requisicao
-    # real difere dela em cinco parcelas (o `SISTEMA` de montagem.py, que e
-    # contado e nao enviado; e o `SISTEMA_DO_AGENTE`, o schema compilado, os
-    # rotulos de `montar_prompt` e a definicao da ferramenta de busca em
-    # `tools=` (TEC-265), enviados e nunca contados).
+    # real difere dela em cinco parcelas MEDIDAS (o `SISTEMA` de
+    # montagem.py, que e contado e nao enviado; e o `SISTEMA_DO_AGENTE`, o
+    # schema compilado, os rotulos de `montar_prompt` e a definicao da
+    # ferramenta de busca em `tools=` (TEC-265), enviados e nunca contados).
+    #
+    # **Ha uma sexta parcela, e ela NAO entra em `_decomposicao`.** Quando o
+    # laco de tool use (TEC-265) da a segunda volta, a segunda chamada ao
+    # modelo tambem manda o eco do `tool_use` do assistente e o `tool_result`
+    # com ate 10 candidatos -- e nenhum dos dois e contado por
+    # `montar_contexto` nem pelas cinco parcelas acima. Ficou de fora de
+    # proposito (fix-wave da TEC-265): medir e travar um sexto numero e
+    # decisao de design, nao correcao deste comentario. O que importa aqui e
+    # que a reserva de baixo tem so ~280 tokens de folga sobre o teto fixo de
+    # `test_a_margem_do_orcamento_do_prompt_e_deliberada`, e um `tool_result`
+    # de 10 candidatos com titulo e bairro longos passa disso pelo mesmo
+    # proxy `len/4` -- o segundo round-trip de um turno com busca pode
+    # estourar a reserva sem que nenhum teste hoje reclame.
     #
     # **O valor de hoje dessa diferenca nao esta escrito aqui, de proposito**
     # (TEC-243). Ele e derivado -- muda quando alguem mexe no prompt, num
