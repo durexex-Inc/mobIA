@@ -64,7 +64,11 @@ Três variantes foram medidas em 2026-09-08, no mesmo proxy `len/4` que o teste 
 | **V2 — filtro completo, `tipo`/`operacao` como string** | **121,5** | **770,3** | **995,3** | **115,3 de 12000 (0,96%)** |
 | V3 — só `consulta_texto`, filtro vindo do estado | 73,8 | 722,5 | 947,5 | 67,5 de 12000 (0,56%) |
 
-A coluna "líquido" é a subcontagem que o teste imprime; os números escritos à mão no código são os inteiros acima dela — teto **771** e reserva **996** para a V2 (ver D10).
+A coluna "líquido" é a subcontagem que o teste imprime; os números escritos à mão no código são os inteiros acima dela.
+
+**A V2 é a base, e a D11 acrescenta um `enum` a ela.** Com `operacao` como `enum` de dois valores e os nomes de campo finais (`preco_max_centavos`, não `preco_max`), a ferramenta custa **131,2**: líquido **780,0**, teto **780**, reserva **1005**, preço de **125,0 de 12000 — 1,04% do contexto** (ver D10 e D11). Os 7,5 tokens do `enum` compram o que a D11 explica.
+
+**`preco_min_centavos` fica fora do schema**, embora `FiltroDeBusca` o aceite: o orçamento do lead entra na RN-09.6 como *teto* (a aderência é medida contra ele), e nenhuma regra da RF-09 pede piso. Lacuna declarada: "quero acima de 500 mil" não é expressável por esta ferramenta.
 
 A **V3 é a mais barata e tem defeito**: no instante do tool call, os critérios que o lead disse **neste turno** ainda não estão persistidos — a extração volta no mesmo JSON final da resposta. A V3 buscaria com o estado do turno anterior, e "quero três quartos" só valeria no turno seguinte.
 
@@ -106,11 +110,23 @@ Exceção aqui mataria o turno inteiro por causa de uma busca, e a regra que o `
 
 ### D10 — O teto do orçamento sobe, com o preço escrito
 
-`test_a_margem_do_orcamento_do_prompt_e_deliberada` passa a ter uma quinta parcela em `_decomposicao` — a definição da ferramenta, que é enviada e nunca contada, como o schema de saída já é. O teto vai de 655 para **771** (líquido medido: 770,3) e `contexto_headroom_de_tokens` de 880 para **996**. Os dois números só ficam finais depois da lacuna 1: se `strict` obrigar todas as propriedades a entrarem em `required`, o schema cresce e a medição refaz a conta.
+`test_a_margem_do_orcamento_do_prompt_e_deliberada` passa a ter uma quinta parcela em `_decomposicao` — a definição da ferramenta, que é enviada e nunca contada, como o schema de saída já é. O teto vai de 655 para **780** (líquido medido: 780,0) e `contexto_headroom_de_tokens` de 880 para **1005**. Os dois números só ficam finais depois da lacuna 1: se `strict` obrigar todas as propriedades a entrarem em `required`, o schema cresce e a medição refaz a conta.
 
 A pergunta que a docstring manda fazer foi feita antes: **o que sai do prompt para isso entrar?** A resposta honesta é que não há corte de ~115 tokens que não toque algo medido — o `SISTEMA_DO_AGENTE` são 298,8 tokens de cláusulas que o gate mede uma por uma, e o schema compilado são 372,8 de campos que a extração usa. O que **foi** cortado é dentro da própria ferramenta: a V2 em vez da V1 economizou ~40 tokens trocando enum por string livre, e é o mesmo movimento que a TEC-257 fez.
 
-Preço desta subida, no formato das três anteriores: **115 tokens a menos de literais e resumo por turno, de 12000 — 0,96% do contexto**. Fica entre a primeira (3,3%) e as duas últimas (0,4% e 0,25%).
+Preço desta subida, no formato das três anteriores: **125 tokens a menos de literais e resumo por turno, de 12000 — 1,04% do contexto**. Fica entre a primeira (3,3%) e as duas últimas (0,4% e 0,25%), e é a segunda maior da história do projeto.
+
+### D11 — `operacao` é `enum` no schema, porque os dois vocabulários discordam
+
+O agente fala `COMPRA` e o catálogo fala `VENDA`. `Intencao` (`domain/agente/schemas.py`) tem `COMPRA`, `ALUGUEL`, `INVESTIMENTO`, `VENDER_IMOVEL`; `Operacao` (`domain/catalogo/enums.py`) tem `VENDA`, `ALUGUEL`, `AMBOS`. O prompt inteiro do agente é escrito no primeiro vocabulário, então `operacao: "COMPRA"` no tool call não é hipótese: é o valor que o modelo tende a produzir, e `Operacao("COMPRA")` levanta `ValueError`.
+
+Duas saídas foram medidas. Tabela de alias na porta (`COMPRA` e `INVESTIMENTO` → `VENDA`) custa 0 token de prompt e é código que ninguém vê falhar quando o modelo inventa um quinto valor. `enum` de dois valores no schema custa **+7,5 tokens** e faz o próprio modelo traduzir, com `strict: true` garantindo o valor.
+
+O `enum` ganha, e é a escolha oposta à da D5 para `tipo` — deliberadamente. `tipo` é dimensão **descartável**: valor que o domínio não lê sai do filtro (D6) e a busca acontece. `operacao` não é: ela escolhe a coluna de preço, `FiltroDeBusca` recusa default para ela por decisão da TEC-158 (D2 daquele desenho), e sem ela não há busca nenhuma. Pagar 7,5 tokens para a única dimensão que não pode ser descartada nunca chegar errada é barato.
+
+**A porta ainda trata valor não reconhecido em `operacao` como `is_error: true`**, e isso não é redundância: a garantia do `enum` depende de `strict`, que a lacuna 1 ainda não verificou. Se `strict` sair, o `enum` vira sugestão e a porta é o que sobra.
+
+Este é o mesmo formato de problema que a TEC-262 resolveu para `tipo`, e a D1 dela recusou unir os enums. A D11 não os une: ela põe a tradução no lugar mais barato onde ela é verificável.
 
 **Nomes de evento** ficam para o plano, e seguem os prefixos que já existem no log estruturado (`catalogo.` para o que é do catálogo, `message.` para o que é do turno). O desenho fixa que existe evento nos três pontos — dimensão derrubada (D6), busca falhando (D9) e segundo `tool_use` recusado (D4) —, não como cada um se chama.
 
@@ -146,7 +162,8 @@ E o gate de orçamento é entrega, não efeito colateral: a quinta parcela entra
 1. **`strict: true` com `required` parcial não foi verificado contra a API.** A referência exige `additionalProperties: false` e `required`, e não diz se `strict` obriga todas as propriedades a entrarem em `required`. Se obrigar, o schema cresce ou `strict` sai — e a medição da D5 muda. O plano verifica antes de fixar o número.
 2. **A latência do turno com duas chamadas não foi medida.** A RNF-02 pede p95 ≤ 6 s ponta a ponta, o `job_timeout` do worker é 240 s, e o comentário do `workers/main.py` já registra que um turno com dobra "passava de". Não existe medição de latência de turno hoje — a instrumentação é a TEC-211.
 3. **O modelo pode não chamar a ferramenta.** Com `tool_choice: auto` (D4), um turno em que o lead pede imóvel e o modelo responde sem buscar é possível, e esta card não põe guarda contra isso. A TEC-161 **não** cobre a lacuna: ela valida imóvel citado fora da lista, não ausência de busca. Fica registrada como risco desta decisão.
-4. **O custo por conversa não foi recontado.** A RNF-06 dá US$ 0,12 por conversa qualificada. O prefixo cacheado cobre `tools` e `system` (a ordem de renderização é `tools` → `system` → `messages`, e o breakpoint já está no `system`), mas os candidatos entram em `messages` e não são cacheados. O delta não foi medido.
+4. **`preco_min_centavos` não é expressável pela ferramenta** (D5). O lead que diz "acima de 500 mil" não tem como estreitar por baixo; a RF-09 não pede piso, e `FiltroDeBusca` aceita um se algum dia pedirem.
+5. **O custo por conversa não foi recontado.** A RNF-06 dá US$ 0,12 por conversa qualificada. O prefixo cacheado cobre `tools` e `system` (a ordem de renderização é `tools` → `system` → `messages`, e o breakpoint já está no `system`), mas os candidatos entram em `messages` e não são cacheados. O delta não foi medido.
 
 ## Fora de escopo
 
