@@ -58,6 +58,18 @@ class Imovel(Base):
     iptu_mensal: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     bairro: Mapped[str] = mapped_column(String(120), nullable=False)
+    # TEC-158, D5. O `bairro` dobrado -- caixa e acento --, e e contra ela que
+    # a `regiao` do lead compara. DERIVADA de `bairro` e escrita a mao: quem
+    # gravar `bairro` tem de gravar esta na mesma instrucao.
+    #
+    # Nao e `GENERATED ALWAYS AS ... STORED`, e a recusa e do Postgres e nao do
+    # gosto: a expressao de coluna gerada tem de ser IMMUTABLE, e dobrar acento
+    # em SQL exige `unaccent()`, que e STABLE. O preco declarado dessa
+    # impossibilidade e que existe um caminho em que esta coluna fica velha --
+    # o escritor novo que esqueca. Hoje ha um escritor (`repositorio.py`); o
+    # CRUD da TEC-197 sera o segundo. A guarda e o
+    # `test_o_upsert_mantem_a_dobra_do_bairro`.
+    bairro_busca: Mapped[str] = mapped_column(Text, nullable=False)
     cidade: Mapped[str] = mapped_column(String(120), nullable=False)
     uf: Mapped[str] = mapped_column(String(2), nullable=False)
     zona: Mapped[str | None] = mapped_column(String(8), nullable=True)
@@ -129,6 +141,10 @@ class Imovel(Base):
         Index("ix_imoveis_bairro", "bairro"),
         Index("ix_imoveis_cidade", "cidade"),
         Index("ix_imoveis_status", "status"),
+        Index("ix_imoveis_bairro_busca", "bairro_busca"),
+        # O composto que a secao de indices criticos do SRS nomeia para a
+        # RN-09.1. Por conformidade, nao por medicao -- ver a `0019`.
+        Index("ix_imoveis_filtro", "status", "tipo", "preco_venda", "quartos"),
     )
 
 

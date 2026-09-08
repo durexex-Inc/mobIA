@@ -29,6 +29,9 @@ async def _imovel(session: Any, codigo: str = "AP-001", **sobrescritas: object) 
         "operacao": "VENDA",
         "preco_venda": 74900000,
         "bairro": "Vila Mariana",
+        # NOT NULL desde a TEC-158 (`0019`). Nenhum chamador sobrescreve
+        # `bairro` aqui, entao a dobra fixa acompanha o default acima.
+        "bairro_busca": "vila mariana",
         "cidade": "Sao Paulo",
         "uf": "SP",
         "area_util_m2": 78,

@@ -1,9 +1,13 @@
-"""As tres formas puras da importacao: o registro, a rejeicao e o relatorio.
+"""As formas puras de duas familias: a importacao e a busca hibrida.
 
-Sem I/O, sem banco, sem FastAPI. O parser produz `RegistroImovel | Rejeicao`
-e o orquestrador acumula os dois num `Relatorio`.
+Sem I/O, sem banco, sem FastAPI. Da importacao: o registro, a rejeicao e o
+relatorio -- o parser produz `RegistroImovel | Rejeicao` e o orquestrador
+acumula os dois num `Relatorio`. Da busca (TEC-158): o filtro que o lead
+pediu, o candidato que volta e o resultado que embrulha os dois.
 """
 
+import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -119,3 +123,113 @@ class Relatorio:
         """
         self.status = StatusImportacao.FALHOU
         self.erros.insert(0, falha)
+
+
+# `Embedador` e a porta, e nao o cliente: a busca recebe a funcao e nunca
+# importa `infra.embeddings`. E o que permite a suite exercitar o caminho
+# inteiro sem credencial e sem rede. Ver D9.
+Embedador = Callable[[list[str]], Awaitable[list[list[float]]]]
+
+# A coluna que a faixa do lead compara, escolhida pela operacao pedida.
+#
+# `Operacao.AMBOS` NAO e chave: e o que um imovel pode ser, nunca o que uma
+# busca pede -- uma busca de AMBOS nao tem coluna de preco para comparar.
+#
+# Mora aqui, e nao em `busca.py`, porque `FiltroDeBusca.__post_init__` deriva
+# a guarda de construcao deste mesmo mapa: a regra "AMBOS nao e buscavel" tem
+# de ter uma unica fonte, e checar `not in COLUNA_DE_PRECO` em vez de
+# `is Operacao.AMBOS` faz o proximo membro do enum que nao tiver coluna
+# cair na guarda de graca, sem precisar nomea-lo.
+COLUNA_DE_PRECO = {
+    Operacao.VENDA: "preco_venda",
+    Operacao.ALUGUEL: "preco_aluguel",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class FiltroDeBusca:
+    """O que o lead pediu, em dimensoes que o SQL resolve. TEC-158, RN-09.1.
+
+    `operacao` e OBRIGATORIA e nao tem default, e e ela que escolhe a coluna
+    de preco: o imovel tem `preco_venda` e `preco_aluguel`, o CHECK da tabela
+    so garante que um dos dois existe, e a faixa do lead e um par de centavos
+    que nao diz de qual universo e. Um default aqui faria "ate R$ 600.000"
+    casar todo aluguel do catalogo, e a Marina receberia apartamento de
+    R$ 3.500 por mes como se fosse a compra que ela pediu. Ver D2.
+
+    **`status` NAO esta aqui, de proposito.** A RN-08.4 exclui da busca o que
+    nao esta DISPONIVEL, e aceita-lo como filtro daria ao chamador um jeito de
+    pedir imovel vendido pela mesma porta que o agente usa. Ele e literal no
+    WHERE. Ver D3.
+
+    **Nao ha filtro de cidade**, e a RN-09.1 nao o lista: "centro" casa o
+    Centro de todas as cidades do catalogo. Enquanto o catalogo e de uma
+    cidade so, e inocuo -- ver a lacuna 8 do desenho.
+
+    `regioes` e tupla e nao list porque o dataclass e frozen. Vazia significa
+    "sem filtro de regiao", nunca "nenhuma regiao casa".
+    """
+
+    operacao: Operacao
+    preco_min_centavos: int | None = None
+    preco_max_centavos: int | None = None
+    tipo: TipoImovel | None = None
+    quartos_min: int | None = None
+    vagas_min: int | None = None
+    regioes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # `not in COLUNA_DE_PRECO`, e nao `is Operacao.AMBOS`: uma guarda que
+        # nomeasse AMBOS seria uma segunda copia da regra, e o proximo membro
+        # do enum sem coluna passaria por ela e quebraria so no lookup,
+        # dentro da consulta. O mapa segue sendo a unica definicao.
+        if self.operacao not in COLUNA_DE_PRECO:
+            raise ValueError(
+                f"operacao {self.operacao} nao e buscavel: AMBOS e o que um imovel pode "
+                "ser, nunca o que uma busca pede -- nao ha coluna de preco a comparar"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class Candidato:
+    """Um imovel devolvido ao agente, com o id e o preco vindos do banco.
+
+    RN-09.4, e o quarto cenario do Gherkin. O preco e o da OPERACAO buscada --
+    a mesma coluna que o filtro comparou --, e por isso o campo se chama
+    `preco_centavos` e nao `preco_venda`: numa busca de aluguel, devolver o
+    preco de venda seria devolver o campo errado. O exemplo da secao 6.3 do
+    SRS mostra `precoVenda` porque o exemplo dele e de venda.
+
+    `tem_vetor` existe para que a degradacao da D8 seja legivel: sem ele,
+    "a ordenacao esta estranha" e "o provedor esta fora" sao indistinguiveis
+    para quem investiga.
+    """
+
+    imovel_id: uuid.UUID
+    codigo: str
+    titulo: str
+    bairro: str
+    preco_centavos: int
+    quartos: int
+    vagas: int
+    area_util_m2: int
+    score: float
+    tem_vetor: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ResultadoDaBusca:
+    """Os candidatos e o que o chamador precisa saber sobre como eles sairam.
+
+    `total_candidatos` e a contagem ANTES do teto de 10 -- e o
+    `totalCandidatos` da secao 6.3, e e ele que diz ao agente que havia 40
+    opcoes e ele esta vendo 10.
+    """
+
+    candidatos: tuple[Candidato, ...]
+    total_candidatos: int
+    consulta_vetorizada: bool
+
+    @property
+    def candidatos_sem_vetor(self) -> int:
+        return sum(1 for candidato in self.candidatos if not candidato.tem_vetor)

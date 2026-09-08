@@ -1,8 +1,9 @@
 import re
-import unicodedata
 from dataclasses import dataclass, fields
 from decimal import Decimal
 from enum import StrEnum
+
+from mobia.domain.texto import dobrar
 
 
 class Intencao(StrEnum):
@@ -149,26 +150,6 @@ _PREFIXOS_DE_REFERENCIA = (
 _PARENTESES = re.compile(r"\([^)]*\)")
 
 
-def _sem_acento(texto: str) -> str:
-    """Dobra acento, porque o modelo nao e consistente com ele.
-
-    A TEC-248 mediu os dois comportamentos no mesmo corpus e na mesma
-    execucao: o modelo devolveu `saude` como "saude" com acento e
-    `aclimacao` como "aclimacao" com acento, mas devolveu `butanta` e
-    `tatuape` **sem** acento -- e essas duas casaram justamente por isso.
-    Uma regua que dependa de adivinhar qual dos dois vem depende de sorte.
-
-    NFD separa o diacritico do caractere base e `combining` identifica o que
-    sobra para descartar. Pega cedilha junto: "aclimacao" com til e cedilha
-    decompoe nos dois, e os dois somem.
-    """
-    return "".join(
-        caractere
-        for caractere in unicodedata.normalize("NFD", texto)
-        if not unicodedata.combining(caractere)
-    )
-
-
 def normalizar_regiao(texto: str) -> str:
     """A forma canonica de `regiao`, na gravacao e na medicao.
 
@@ -184,12 +165,17 @@ def normalizar_regiao(texto: str) -> str:
     texto original da fala continua no historico de mensagens, cifrado, que e
     onde ele pertence.
     """
-    limpo = " ".join(texto.split()).casefold()
     # Acento sai ANTES dos prefixos, e a ordem nao e detalhe: o modelo devolveu
     # "vila madalena (perto da estacao)" com acento em `estacao`, e um prefixo
     # escrito sem acento nunca casaria com ele. Dobrar depois deixaria o
     # prefixo dentro do valor.
-    limpo = _sem_acento(limpo)
+    #
+    # A dobra vem de `domain/texto.py` desde a TEC-158: a MESMA funcao grava
+    # `imoveis.bairro_busca` na importacao. Duas expressoes equivalentes em
+    # arquivos diferentes divergem no dia em que uma delas muda, e a
+    # divergencia aqui se manifestaria como bairro que o lead nomeia e a busca
+    # nao encontra -- sem erro nenhum.
+    limpo = dobrar(texto)
     # Qualificador entre parenteses e ruido de referencia como os prefixos, so
     # que no fim em vez de no comeco: "sao roque (sp)" e "sao roque".
     limpo = _PARENTESES.sub(" ", limpo)

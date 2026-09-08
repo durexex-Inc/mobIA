@@ -13,17 +13,38 @@ sintoma; os imoveis ja importados exigiriam backfill proprio; e
 enfileiramento que falha nao retoma -- o bug que a TEC-156 corrigiu no
 endpoint e a lacuna que a TEC-261 existe para fechar.
 
-**A regra "falha de embedding nao bloqueia o atendimento" sai da topologia,
-nao de um `try/except`.** Este job e um cron separado: nao existe caminho em
-que `process_message` chame o provedor de embedding. Isso e mais forte que
-capturar excecao -- e e por isso que esta escrito aqui. Um refactor futuro
-que chame o embedding de dentro do turno violaria a RN da card sem que teste
-nenhum reclamasse.
+**A regra "falha de embedding nao bloqueia o atendimento" tem duas metades, e
+a TEC-158 mudou uma delas.** Ate a TEC-157, a regra saia inteira da
+topologia: nao existia caminho em que `process_message` chamasse o provedor
+de embedding, e isso e mais forte que capturar excecao. A TEC-158 abriu o
+caminho -- a busca hibrida embeda a CONSULTA do lead dentro do turno -- e o
+que sobrevive e isto:
+
+- o embedding do CATALOGO continua nascendo so aqui. Este job e um cron
+  separado, e nenhum caminho de atendimento gera vetor de imovel;
+- o embedding da CONSULTA e gerado no turno, e falha dele nao bloqueia por
+  DECISAO e nao por topologia: `domain/catalogo/busca.py` degrada para o
+  filtro estruturado ordenado por aderencia de preco, e
+  `test_provedor_caido_devolve_candidatos_filtrados_e_nao_erro` e o que
+  impede um `raise` de voltar para la sem sintoma.
+
+A metade que este arquivo garante e a primeira, e ela continua valendo por
+construcao. Um refactor que chame o embedding de IMOVEL de dentro do turno
+seguiria violando a RN da card sem que teste nenhum reclamasse -- e e por
+isso que a frase fica escrita aqui.
 
 **Mas o argumento da topologia cobre CORRECAO, nao CAPACIDADE.** Os dois jobs
-dividem o mesmo pool do worker ARQ: `process_message` nao chama o provedor de
-embedding, e mesmo assim disputa vaga com quem chama. O lock consultivo
-abaixo e o que cobre a segunda metade.
+dividem o mesmo pool do worker ARQ: `process_message` nao chama o provedor
+para o embedding do CATALOGO, e mesmo assim disputa vaga com quem chama. O
+lock consultivo abaixo e o que cobre a segunda metade.
+
+A ressalva na frase acima importa desde a TEC-158, e vale ser exata: o
+`process_message` de hoje nao chama provedor de embedding nenhum -- a busca
+hibrida existe, mas ainda nao esta ligada ao turno, que e a TEC-161. No dia em
+que estiver, ele passa a DISPUTAR vaga e a CHAMAR o provedor dentro da mesma
+vaga. O argumento de capacidade fica mais forte, e nao mais fraco; o que deixou
+de valer e so a frase "nao chama o provedor", que era o que sustentava a
+assimetria entre os dois jobs.
 """
 
 import uuid
@@ -177,8 +198,10 @@ async def indexar_catalogo(ctx: dict[str, Any], limite: int | None = None) -> in
                 "indexacao_do_catalogo_sem_chave",
                 detalhe=(
                     "OPENAI_API_KEY nao configurada: o catalogo fica sem vetor e a "
-                    "busca semantica devolve vazio. Este aviso sai UMA vez por "
-                    "processo -- nao havera um segundo."
+                    "busca perde o termo de similaridade, ordenando so por "
+                    "aderencia de preco (emenda E-02 a RN-08.2) -- nunca vazio nem "
+                    "erro. Este aviso sai UMA vez por processo -- nao havera um "
+                    "segundo."
                 ),
             )
         return 0
