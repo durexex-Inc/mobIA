@@ -51,12 +51,28 @@ def upgrade() -> None:
     # vazio em vez de nao casar nada.
     op.add_column("imoveis", sa.Column("bairro_busca", sa.Text(), nullable=True))
 
+    # Um round trip para o SELECT e UM SO para o backfill inteiro, nao um por
+    # linha: a tabela fica com ACCESS EXCLUSIVE (do `add_column` acima) ate o
+    # fim desta transacao, e na escala que o teto de upload da importacao
+    # implica (~40 mil linhas) 40 mil idas e vindas sob esse lock seriam
+    # minutos em vez de milissegundos. `executemany` (a lista de dicts como
+    # segundo argumento de `execute`) manda o DBAPI executar o UPDATE uma vez
+    # por linha em lote, numa unica viagem de rede -- e o dobra continua
+    # sendo calculada em Python, por `dobrar()`, entao a regra de dobra
+    # continua com uma definicao so. A alternativa seria `UPDATE ... FROM
+    # (VALUES ...)` escrito a mao em SQL, que duplicaria a logica de
+    # `dobrar()` no banco -- exatamente o que a D5 do desenho recusou fazer
+    # com `unaccent()`.
     conexao = op.get_bind()
     linhas = conexao.execute(sa.text("SELECT id, bairro FROM imoveis")).fetchall()
-    for identificador, bairro in linhas:
+    parametros = [
+        {"dobrado": dobrar(bairro), "identificador": identificador}
+        for identificador, bairro in linhas
+    ]
+    if parametros:
         conexao.execute(
             sa.text("UPDATE imoveis SET bairro_busca = :dobrado WHERE id = :identificador"),
-            {"dobrado": dobrar(bairro), "identificador": identificador},
+            parametros,
         )
 
     op.alter_column("imoveis", "bairro_busca", nullable=False)
