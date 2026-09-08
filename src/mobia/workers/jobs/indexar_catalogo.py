@@ -339,26 +339,29 @@ async def _uma_passagem(
         try:
             vetores = await embedar([texto for _, texto, _ in lote])
         except Exception as erro:
-            # Loga e CONTINUA para o proximo lote -- nao propaga. A consulta
-            # ordena por `updated_at`, entao um documento com problema nao
-            # retentavel (texto grande demais, conteudo recusado --
-            # MAX_TENTATIVAS = 1 dispensa retry do proprio provedor) tende a
-            # cair sempre no primeiro lote de cada passagem; um `raise` aqui
-            # abortaria a passagem inteira e junto todo lote seguinte,
-            # inclusive imoveis alterados mais recentemente que ordenam
-            # depois -- o catalogo pararia de indexar por inteiro por causa
-            # de uma linha, com um unico warning por cron como sintoma. O
-            # molde da `sweep_stalled` faz o mesmo: loga e segue. A linha
-            # deste lote continua pendente e a proxima passagem a pega -- e
-            # essa retomada entre passagens, nao um retry dentro desta, e o
-            # "a reindexacao fica pendente e e retomada" da card. Um contador
-            # de falhas por linha (no molde de `sweep_max_attempts`) e
+            # Loga e CONTINUA para o proximo lote -- nao propaga. Um documento
+            # com problema nao retentavel (texto grande demais, conteudo
+            # recusado -- MAX_TENTATIVAS = 1 dispensa retry do proprio
+            # provedor) volta a ser SELECIONADO em toda passagem: o `ORDER BY
+            # updated_at` com `LIMIT` pega os de carimbo mais antigo, e linha
+            # que nunca e gravada nunca sai dessa ponta. Em QUE lote da
+            # passagem ele cai e que nao se sabe -- a ordem da selecao nao
+            # sobrevive ao `select` do ORM logo acima, que nao tem `ORDER BY`
+            # (a TEC-263 saiu de um teste que acreditou que sobrevivia). Um
+            # `raise` aqui abortaria a passagem no lote dele e junto todo lote
+            # seguinte, entregando so o que por acaso veio antes: o catalogo
+            # indexaria por sorte de ordenacao, com um unico warning por cron
+            # como sintoma. O molde da `sweep_stalled` faz o mesmo: loga e
+            # segue. A linha deste lote continua pendente e a proxima passagem
+            # a pega -- e essa retomada entre passagens, nao um retry dentro
+            # desta, e o "a reindexacao fica pendente e e retomada" da card. Um
+            # contador de falhas por linha (no molde de `sweep_max_attempts`) e
             # follow-up, nao esta card. O motivo vem de `motivo_do_provedor`,
             # que so devolve texto para erro de protocolo do provedor; para
-            # qualquer outra excecao devolve None, porque `str(exc)`
-            # arbitrario pode carregar o que nao deve ir para log -- por isso
-            # o tipo da excecao tambem vai pro log, para nao perder o sinal
-            # quando o motivo sai None.
+            # qualquer outra excecao devolve None, porque `str(exc)` arbitrario
+            # pode carregar o que nao deve ir para log -- por isso o tipo da
+            # excecao tambem vai pro log, para nao perder o sinal quando o
+            # motivo sai None.
             log.warning(
                 "indexacao_do_catalogo_falhou",
                 lote=len(lote),

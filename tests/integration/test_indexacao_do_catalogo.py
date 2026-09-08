@@ -167,10 +167,12 @@ async def test_falha_do_provedor_deixa_a_linha_pendente(session: Any) -> None:
     identificador = await _imovel(session)
 
     # NAO levanta, e isso e deliberado. Relevantar faria um documento que o
-    # provedor rejeita de forma permanente abortar a passagem inteira -- e com
-    # `ORDER BY updated_at` ele cai no lote 1 de TODA passagem, entao nada mais
-    # no catalogo seria indexado nunca, com um warning por tick como unico
-    # sintoma. O job loga e segue, no molde do `sweep_stalled`.
+    # provedor rejeita de forma permanente abortar a passagem inteira -- e a
+    # selecao o pega de novo em TODA passagem, porque linha que nunca e
+    # gravada nunca sai da ponta mais antiga do `ORDER BY updated_at`. Toda
+    # passagem morreria no lote dele entregando so o que por acaso veio antes,
+    # com um warning por tick como unico sintoma. O job loga e segue, no molde
+    # do `sweep_stalled`.
     assert await indexar_catalogo(_ctx(EmbedadorFake(falhar=True))) == 0
 
     async with get_sessionmaker()() as leitura:
@@ -204,22 +206,36 @@ async def test_a_falha_num_lote_preserva_o_commit_do_lote_anterior(session: Any)
     assert len(embedador.chamadas) == 3
 
     async with get_sessionmaker()() as leitura:
-        por_id = {
-            imovel.id: imovel
-            for imovel in (
-                await leitura.scalars(select(Imovel).where(Imovel.id.in_(identificadores)))
-            ).all()
-        }
+        imoveis = (
+            await leitura.scalars(select(Imovel).where(Imovel.id.in_(identificadores)))
+        ).all()
+    assert len(imoveis) == 3
 
-    # O primeiro lote comitou e sobreviveu a falha dos seguintes.
-    primeiro = por_id[identificadores[0]]
-    assert primeiro.embedding is not None
-    assert primeiro.documento_hash is not None
-    assert primeiro.embedding_atualizado_em is not None
+    # A assercao nao nomeia QUAL linha foi embeddada, e nomear era o defeito da
+    # TEC-263. A regra diz que o primeiro lote comita e sobrevive a falha dos
+    # seguintes; ela nunca disse qual dos tres imoveis cai nesse lote, e a
+    # varredura tambem nao promete: o `ORDER BY updated_at` da selecao e
+    # descartado no `select(Imovel).where(id.in_(...))` de `_uma_passagem`, que
+    # nao ordena. Afirmar sobre `identificadores[0]` era portanto afirmar sobre
+    # a ordem fisica do heap -- que costuma bater com a de insercao para tres
+    # linhas novas, e trocava sob carga: 1 failed em 1307 na suite completa,
+    # 15/15 em isolamento.
+    #
+    # Trocar a posicao por carimbos de `updated_at` fixos NAO resolveria, pelo
+    # mesmo motivo: o `select` sem `ORDER BY` fica no caminho de qualquer ordem
+    # que a selecao tenha escolhido.
+    embeddados = [imovel for imovel in imoveis if imovel.embedding is not None]
+    assert len(embeddados) == 1
+
+    # O lote que passou gravou as tres colunas de controle, e nao so o vetor.
+    unico = embeddados[0]
+    assert unico.documento_hash is not None
+    assert unico.embedding_atualizado_em is not None
 
     # E os outros dois continuam pendentes, sem nada parcial gravado.
-    for identificador in identificadores[1:]:
-        pendente = por_id[identificador]
+    for pendente in imoveis:
+        if pendente.id == unico.id:
+            continue
         assert pendente.embedding is None
         assert pendente.documento_hash is None
         assert pendente.embedding_atualizado_em is None
