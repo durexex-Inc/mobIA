@@ -19,6 +19,7 @@ from mobia.domain.agente.classificador import (
     RespostaInvalida,
     _lista_de_nomes,
 )
+from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.montagem import ContextoMontado
 
@@ -863,7 +864,11 @@ def _instalar_sequencia(
     """Um duble que devolve uma resposta por chamada, na ordem dada.
 
     O `_ClienteFalso` de hoje tem `return_value` e serviria para uma chamada
-    so; o laco de tool use faz duas.
+    so; o laco de tool use faz duas. `_ClienteFalso(respostas[0])` constroi
+    esse `AsyncMock` de uma chamada so e a linha seguinte o descarta de
+    proposito, trocando por um `side_effect` com a sequencia inteira --
+    reaproveitar `_ClienteFalso` (em vez de montar o `SimpleNamespace` aqui de
+    novo) e o que evita uma segunda copia da classe so para este helper.
     """
     cliente = _ClienteFalso(respostas[0])
     cliente.messages = SimpleNamespace(create=AsyncMock(side_effect=respostas))
@@ -927,6 +932,44 @@ async def test_erro_da_porta_vira_tool_result_com_is_error(
     assert resposta.candidatos == []
 
 
+async def test_erro_da_porta_seguido_de_novo_tool_use_vira_laco_excedido(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Achado 4 do fix-wave: o round-trip realista depois de um erro, nao o
+    conveniente.
+
+    `test_erro_da_porta_vira_tool_result_com_is_error` (acima) hardcoda a
+    SEGUNDA resposta como JSON valido -- ou seja, testa o modelo aceitando a
+    falha e respondendo. O caminho mais provavel e o oposto: o `tool_result`
+    da tentativa 1 chega com `is_error: true`, dizendo ao modelo que a busca
+    dele falhou, e a reacao mais comum a "sua ferramenta falhou" e tentar de
+    novo -- um segundo `tool_use`, nao uma resposta final.
+
+    Este teste documenta essa consequencia, sem alegar que ela e desejavel:
+    D4 nao atende o segundo `tool_use` (o teto e um round-trip por turno), e
+    o resultado e duas chamadas pagas ao modelo sem nenhuma resposta ao lead
+    -- o turno cai para o texto conservador (`turno.py`,
+    `TEXTO_DA_BUSCA_INCONCLUSIVA`) exatamente pela D9/D4, e a promessa de
+    D9 ("o modelo responde sem imovel e o turno nao cai") so vale quando o
+    modelo NAO insiste depois do erro.
+    """
+    cliente = _instalar_sequencia(
+        monkeypatch,
+        [
+            _resposta_tool_use({"operacao": "COMPRA"}),
+            _resposta_tool_use({"operacao": "VENDA"}),
+        ],
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"erro": "operacao invalida: use VENDA ou ALUGUEL"}
+
+    with pytest.raises(classificador_mod.LacoDeBuscaExcedido):
+        await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert cliente.messages.create.await_count == 2
+
+
 async def test_um_segundo_tool_use_nao_e_atendido(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -959,6 +1002,38 @@ async def test_sem_porta_a_ferramenta_nao_e_declarada(
 
     assert "tools" not in cliente.messages.create.await_args.kwargs
     assert cliente.messages.create.await_count == 1
+
+
+async def test_com_porta_a_ferramenta_e_declarada_com_tool_choice_sem_paralelo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Achados 2 e 3 do fix-wave: a unica cobertura de `tools` era negativa.
+
+    `test_sem_porta_a_ferramenta_nao_e_declarada` (acima) so afirma que
+    `tools` fica FORA da chamada sem porta -- apagar as duas linhas que
+    montam `tools`/`tool_choice` em `classificar` deixava a suite inteira
+    verde, porque o cliente falso devolve `tool_use` independente do que foi
+    enviado. Este teste fixa a forma exata da requisicao COM porta.
+
+    `disable_parallel_tool_use: True` entra porque o uso paralelo vem ligado
+    por padrao: uma unica resposta pode trazer varios blocos `tool_use`, e o
+    laco de `_chamar` executa todos eles (`for b in blocos`). Sem a chave, o
+    numero de buscas por round-trip fica a criterio do modelo, e a D4 --
+    "teto de um round-trip por turno" -- limitaria so quantas vezes o laco
+    chama o modelo, nao quantas buscas uma unica chamada dispara.
+    """
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_json()]
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"candidatos": [], "total_candidatos": 0}
+
+    await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    primeira = cliente.messages.create.await_args_list[0].kwargs
+    assert primeira["tools"] == [FERRAMENTA_DE_BUSCA]
+    assert primeira["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
 
 
 async def test_turno_sem_ferramenta_tem_candidatos_vazio(

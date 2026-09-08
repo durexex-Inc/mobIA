@@ -463,7 +463,17 @@ class ClassificadorAnthropic:
             # `auto`, e nao forcado: o `claude-sonnet-5` aceita `any`/`tool`,
             # mas forcar gastaria uma busca em TODO turno, inclusive nos que
             # nao pedem imovel.
-            kwargs["tool_choice"] = {"type": "auto"}
+            #
+            # `disable_parallel_tool_use: True` porque o uso paralelo vem
+            # LIGADO por padrao: uma unica mensagem do assistente pode trazer
+            # varios blocos `tool_use`, e o laco abaixo executa todos eles (ver
+            # o `for b in blocos` mais adiante). Sem esta chave, quantas
+            # buscas o turno faz por round-trip fica a criterio do modelo, e a
+            # D4 -- "teto de um round-trip por turno" -- so limitaria QUANTAS
+            # VEZES o laco chama o modelo, nao quantas buscas ele dispara
+            # numa unica chamada. E suportado com `auto` (a proibicao de
+            # `any`/`tool` e so dos modelos Fable 5.1/Mythos 5.1).
+            kwargs["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
 
         candidatos: list[dict[str, Any]] = []
         # Somados ao longo do laco pelo mesmo motivo que a latencia sai dele:
