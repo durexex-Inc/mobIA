@@ -10,6 +10,7 @@ from anthropic.types import Message
 
 from mobia.app.config import get_settings
 from mobia.domain.agente.dinheiro import Recusa, parsear
+from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA, PortaDeBusca
 from mobia.domain.agente.schemas import (
     Extracao,
     FormaPagamento,
@@ -359,9 +360,45 @@ class RespostaInvalida(RuntimeError):
     """O modelo nao devolveu algo utilizavel neste turno."""
 
 
+class LacoDeBuscaExcedido(RuntimeError):
+    """O modelo pediu a ferramenta duas vezes no mesmo turno.
+
+    D4 do desenho: o teto e um round-trip. Nao e falha do modelo nem do
+    provedor -- e o teto funcionando --, e por isso tem tipo proprio: o turno
+    a trata pelo texto fixo (`turno.py`), e nao pelo caminho de excecao que
+    marca a mensagem como FAILED e reenfileira.
+    """
+
+
 class ClassificadorPort(Protocol):
     async def classificar(self, contexto: ContextoMontado) -> RespostaDoAgente: ...
     async def desambiguar(self, contexto: ContextoMontado) -> PerguntaDeDesambiguacao: ...
+
+
+async def _tool_result(porta: PortaDeBusca, bloco: Any) -> dict[str, Any]:
+    """O bloco `tool_result` de um `tool_use`, com `is_error` quando a porta errou."""
+    saida = await porta(dict(bloco.input))
+    return {
+        "type": "tool_result",
+        "tool_use_id": bloco.id,
+        "content": json.dumps(saida, ensure_ascii=False),
+        **({"is_error": True} if "erro" in saida else {}),
+    }
+
+
+def _candidatos_de(blocos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Os candidatos que sairam dos `tool_result` deste turno.
+
+    D8: eles saem do laco junto com a resposta. Se morressem aqui, a TEC-161
+    teria de refazer a busca para validar -- e validar contra uma segunda busca
+    e validar contra outra coisa, nao contra o que o modelo viu.
+    """
+    encontrados: list[dict[str, Any]] = []
+    for bloco in blocos:
+        if bloco.get("is_error"):
+            continue
+        encontrados.extend(json.loads(bloco["content"]).get("candidatos", []))
+    return encontrados
 
 
 class ClassificadorAnthropic:
@@ -374,7 +411,9 @@ class ClassificadorAnthropic:
         system: str,
         mensagem_se_vazia: str,
         output_config: dict[str, Any] | None = None,
-    ) -> tuple[str, Message, int]:
+        tools: list[dict[str, Any]] | None = None,
+        porta: PortaDeBusca | None = None,
+    ) -> tuple[str, Message, int, list[dict[str, Any]]]:
         """Chama o modelo e recusa qualquer parada que nao valha a pena aproveitar.
 
         Comum a `classificar` e `desambiguar`: as duas fazem uma chamada, medem
@@ -383,6 +422,9 @@ class ClassificadorAnthropic:
         parametros (schema, teto de tokens, system prompt, mensagem de erro
         para o caso vazio) e no que cada uma faz com o texto depois de
         receber -- isso continua em cada metodo, nao aqui.
+
+        `tools`/`porta` so chegam de `classificar`: `desambiguar` nao declara
+        ferramenta, entao para ela o laco abaixo sempre sai na primeira volta.
         """
         comeco = time.monotonic()
         kwargs: dict[str, Any] = {
@@ -409,37 +451,73 @@ class ClassificadorAnthropic:
         }
         if output_config is not None:
             kwargs["output_config"] = output_config
-        # cast: **kwargs apaga a sobrecarga que o SDK usa para distinguir
-        # `Message` de `AsyncStream` por `stream=`. Nenhuma chamada deste
-        # modulo pede streaming -- `stream` nunca entra em `kwargs` -- entao
-        # o retorno real e sempre `Message`.
-        resposta = cast(Message, await get_client().messages.create(**kwargs))
-        latency_ms = int((time.monotonic() - comeco) * 1000)
+        if tools is not None:
+            # Ordem de renderizacao do cache e `tools` -> `system` ->
+            # `messages`: com o breakpoint no `system`, uma lista de
+            # ferramentas byte-estavel entra DENTRO do prefixo cacheado, e o
+            # `test_o_prefixo_cacheavel_passa_o_minimo_do_modelo` continua
+            # valendo porque o prefixo so cresce.
+            kwargs["tools"] = tools
+            # `auto`, e nao forcado: o `claude-sonnet-5` aceita `any`/`tool`,
+            # mas forcar gastaria uma busca em TODO turno, inclusive nos que
+            # nao pedem imovel.
+            kwargs["tool_choice"] = {"type": "auto"}
 
-        # end_turn e a unica parada normal em qualquer chamada deste modulo:
-        # nenhuma declara tools, nenhuma configura stop_sequence.
-        if resposta.stop_reason != "end_turn":
-            raise RespostaInvalida(f"stop_reason={resposta.stop_reason!r}")
+        candidatos: list[dict[str, Any]] = []
+        for tentativa in (1, 2):
+            # cast: **kwargs apaga a sobrecarga que o SDK usa para distinguir
+            # `Message` de `AsyncStream` por `stream=`. Nenhuma chamada deste
+            # modulo pede streaming -- `stream` nunca entra em `kwargs` --
+            # entao o retorno real e sempre `Message`.
+            resposta = cast(Message, await get_client().messages.create(**kwargs))
 
-        texto = "".join(bloco.text for bloco in resposta.content if bloco.type == "text").strip()
-        if not texto:
-            raise RespostaInvalida(mensagem_se_vazia)
+            if resposta.stop_reason == "tool_use":
+                if porta is None or tentativa == 2:
+                    # Segunda vez: o teto da D4. Primeira vez sem porta: o
+                    # modelo pediu ferramenta que nao declaramos.
+                    raise LacoDeBuscaExcedido(f"tool_use na tentativa {tentativa}")
+                blocos = [b for b in resposta.content if b.type == "tool_use"]
+                kwargs["messages"] = [
+                    *kwargs["messages"],
+                    {"role": "assistant", "content": resposta.content},
+                    {"role": "user", "content": [await _tool_result(porta, b) for b in blocos]},
+                ]
+                candidatos = _candidatos_de(kwargs["messages"][-1]["content"])
+                continue
 
-        return texto, resposta, latency_ms
+            # `end_turn` e a unica parada aproveitavel: `max_tokens` e
+            # `refusal` nao produzem JSON que valha decodificar.
+            if resposta.stop_reason != "end_turn":
+                raise RespostaInvalida(f"stop_reason={resposta.stop_reason!r}")
 
-    async def classificar(self, contexto: ContextoMontado) -> RespostaDoAgente:
+            texto = "".join(b.text for b in resposta.content if b.type == "text").strip()
+            if not texto:
+                raise RespostaInvalida(mensagem_se_vazia)
+            latency_ms = int((time.monotonic() - comeco) * 1000)
+            return texto, resposta, latency_ms, candidatos
+
+        raise LacoDeBuscaExcedido("laco de tool use nao convergiu")
+
+    async def classificar(
+        self, contexto: ContextoMontado, *, porta: PortaDeBusca | None = None
+    ) -> RespostaDoAgente:
         settings = get_settings()
         # refusal e max_tokens sao os dois outros jeitos documentados de sair
         # de um json_schema estrito, alem de end_turn -- e nenhum dos dois
         # produz um JSON que valha a pena tentar decodificar. A recusa de
         # `_chamar` para qualquer stop_reason != end_turn cobre os dois.
-        texto, resposta, latency_ms = await self._chamar(
+        texto, resposta, latency_ms, candidatos = await self._chamar(
             contexto,
             modelo=settings.modelo_agente,
             max_tokens=MAX_TOKENS_DA_RESPOSTA,
             system=SISTEMA_DO_AGENTE,
             mensagem_se_vazia="resposta veio vazia",
             output_config={"format": {"type": "json_schema", "schema": _SCHEMA_COMPILADO}},
+            # `tools` so entra quando ha porta injetada: sem ela, `_chamar` nao
+            # tem como executar o `tool_use` e o teto da D4 derrubaria o turno
+            # a toa (ver `test_sem_porta_a_ferramenta_nao_e_declarada`).
+            tools=[FERRAMENTA_DE_BUSCA] if porta is not None else None,
+            porta=porta,
         )
 
         try:
@@ -510,6 +588,7 @@ class ClassificadorAnthropic:
                 recusou=_lista_de_nomes(dados.get("recusou")),
                 cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
                 cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
+                candidatos=candidatos,
             )
         except (
             json.JSONDecodeError,
@@ -580,7 +659,10 @@ class ClassificadorAnthropic:
         # aqui -- meia pergunta e pior que nenhuma. E a recusa de `_chamar`
         # para qualquer stop_reason != end_turn que impede isso de chegar ao
         # lead.
-        texto, resposta, latency_ms = await self._chamar(
+        # Sem `tools`/`porta`: a desambiguacao nunca busca imovel, entao o
+        # quarto item (candidatos) sai sempre vazio e nao serve a esta
+        # chamada -- so `classificar` devolve algo la.
+        texto, resposta, latency_ms, _candidatos = await self._chamar(
             contexto,
             modelo=settings.modelo_agente,
             max_tokens=MAX_TOKENS_DA_PERGUNTA,

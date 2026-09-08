@@ -822,3 +822,122 @@ def test_as_regras_de_anotacao_do_corpus_estao_no_prompt() -> None:
         "marco temporal explicito",
     ):
         assert regra in SISTEMA_DO_AGENTE, f"regra ausente do prompt: {regra!r}"
+
+
+# --- TEC-265: o laco de tool use em _chamar --------------------------------
+
+
+def _bloco_tool_use(entrada: dict[str, object]) -> SimpleNamespace:
+    return SimpleNamespace(type="tool_use", id="toolu_01", name="buscar_imoveis", input=entrada)
+
+
+def _resposta_tool_use(entrada: dict[str, object]) -> SimpleNamespace:
+    return SimpleNamespace(
+        content=[_bloco_tool_use(entrada)],
+        usage=SimpleNamespace(input_tokens=4000, output_tokens=200),
+        stop_reason="tool_use",
+    )
+
+
+def _instalar_sequencia(
+    monkeypatch: pytest.MonkeyPatch, respostas: list[SimpleNamespace]
+) -> _ClienteFalso:
+    """Um duble que devolve uma resposta por chamada, na ordem dada.
+
+    O `_ClienteFalso` de hoje tem `return_value` e serviria para uma chamada
+    so; o laco de tool use faz duas.
+    """
+    cliente = _ClienteFalso(respostas[0])
+    cliente.messages = SimpleNamespace(create=AsyncMock(side_effect=respostas))
+    monkeypatch.setattr(classificador_mod, "get_client", lambda: cliente)
+    return cliente
+
+
+async def test_classificar_executa_a_ferramenta_e_chama_de_novo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_json()]
+    )
+    chamadas: list[dict[str, object]] = []
+
+    async def porta(entrada: dict[str, object]) -> dict[str, object]:
+        chamadas.append(entrada)
+        return {"candidatos": [{"imovel_id": "abc", "preco_centavos": 100}], "total_candidatos": 1}
+
+    resposta = await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert chamadas == [{"operacao": "VENDA"}]
+    assert cliente.messages.create.await_count == 2
+    assert resposta.candidatos == [{"imovel_id": "abc", "preco_centavos": 100}]
+
+
+async def test_a_segunda_chamada_leva_o_tool_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_json()]
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"candidatos": [], "total_candidatos": 0}
+
+    await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    segunda = cliente.messages.create.await_args_list[1].kwargs
+    blocos = segunda["messages"][-1]["content"]
+    assert blocos[0]["type"] == "tool_result"
+    assert blocos[0]["tool_use_id"] == "toolu_01"
+    assert blocos[0].get("is_error") is not True
+
+
+async def test_erro_da_porta_vira_tool_result_com_is_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D9: o turno nao cai por causa de uma busca."""
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "COMPRA"}), _resposta_json()]
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"erro": "operacao invalida: use VENDA ou ALUGUEL"}
+
+    resposta = await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    blocos = cliente.messages.create.await_args_list[1].kwargs["messages"][-1]["content"]
+    assert blocos[0]["is_error"] is True
+    assert resposta.candidatos == []
+
+
+async def test_um_segundo_tool_use_nao_e_atendido(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D4: o teto e um round-trip por turno.
+
+    Sem ele, quantas chamadas o turno faz e decisao do modelo -- e a RNF-02
+    (p95 <= 6 s) e a RNF-06 (US$ 0,12 por conversa) ficam a merce dela.
+    """
+    cliente = _instalar_sequencia(
+        monkeypatch,
+        [_resposta_tool_use({"operacao": "VENDA"}), _resposta_tool_use({"operacao": "VENDA"})],
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"candidatos": [], "total_candidatos": 0}
+
+    with pytest.raises(classificador_mod.LacoDeBuscaExcedido):
+        await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert cliente.messages.create.await_count == 2
+
+
+async def test_sem_porta_a_ferramenta_nao_e_declarada(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Turno sem porta injetada continua sendo uma chamada so, sem `tools`."""
+    cliente = _instalar_sequencia(monkeypatch, [_resposta_json()])
+
+    await ClassificadorAnthropic().classificar(_contexto())
+
+    assert "tools" not in cliente.messages.create.await_args.kwargs
+    assert cliente.messages.create.await_count == 1
