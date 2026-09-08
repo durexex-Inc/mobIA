@@ -6,10 +6,16 @@ from typing import Any
 import pytest
 from sqlalchemy import text as sql
 
-from mobia.domain.agente.classificador import RespostaInvalida
+from mobia.domain.agente.classificador import LacoDeBuscaExcedido, RespostaInvalida
 from mobia.domain.agente.repositorio import ler_intencao
 from mobia.domain.agente.schemas import Extracao, Intencao, Urgencia
-from mobia.domain.agente.turno import KIND_DA_RESPOSTA, SUBAGENTE_DESAMBIGUADOR, executar_turno
+from mobia.domain.agente.turno import (
+    KIND_DA_RESPOSTA,
+    SUBAGENTE_CLASSIFICADOR,
+    SUBAGENTE_DESAMBIGUADOR,
+    TEXTO_DA_BUSCA_INCONCLUSIVA,
+    executar_turno,
+)
 from mobia.domain.context.montagem import ContextoIrreducivel
 from mobia.domain.context.repositorio import ler_estado
 from mobia.domain.outbound.models import OutboundDispatch
@@ -76,6 +82,65 @@ async def test_fora_da_janela_termina_o_turno_sem_erro(
 
     assert resultado == "expirado"
     assert "outbound.fora_da_janela" in caplog.text
+
+
+async def test_o_turno_monta_a_porta_e_a_entrega_ao_classificador(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """D3: quem tem `session_factory` e o turno, e e ele que passa a porta pronta.
+
+    O classificador nao ganha `AsyncSession` -- se ganhasse, o dominio do agente
+    passaria a fazer I/O de banco e o teste unitario do laco de tool use
+    precisaria de container.
+    """
+    classificador = classificador_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound_fake(), resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert callable(classificador.portas[0])
+
+
+async def test_laco_de_busca_excedido_entrega_texto_conservador(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """D4 mais D9: o teto do laco nao pode virar silencio nem falha retentavel.
+
+    `LacoDeBuscaExcedido` tem tipo proprio justamente para NAO cair no caminho
+    de excecao do `process_message`: la a mensagem viraria FAILED e o sweeper
+    reenfileiraria o mesmo turno, que pediria a ferramenta duas vezes de novo
+    -- duas chamadas ao modelo por tentativa para chegar ao mesmo lugar.
+    """
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session,
+        classificador_fake(erro=LacoDeBuscaExcedido("tool_use na tentativa 2")),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+    )
+
+    assert resultado == "respondido"
+    # O texto conservador, nao silencio nem a resposta normal do fake -- ver
+    # `outbound.entregues` (ja existente, sem atributo novo no duble).
+    assert outbound.entregues == [TEXTO_DA_BUSCA_INCONCLUSIVA]
+
+    linha = (
+        await session.execute(
+            sql(
+                "SELECT t.subagent FROM messages m"
+                " JOIN message_telemetry t ON t.message_id = m.id"
+                " WHERE m.direction = 'OUTBOUND'"
+            )
+        )
+    ).one()
+    # E o classificador quem falhou, nao a moderacao -- rotular como
+    # SUBAGENTE_MODERACAO (o default) mentiria na telemetria, o defeito que a
+    # TEC-182 corrigiu ao acrescentar o parametro.
+    assert linha.subagent == SUBAGENTE_CLASSIFICADOR
 
 
 async def test_contexto_irreducivel_nao_derruba_o_worker(

@@ -4,8 +4,9 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import MODELO_SEM_CHAMADA
-from mobia.domain.agente.classificador import ClassificadorPort
+from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
 from mobia.domain.agente.desambiguacao import deve_desambiguar
+from mobia.domain.agente.ferramenta_de_busca import porta_de_busca
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.gatilhos import gatilhos_de
@@ -43,6 +44,12 @@ from mobia.infra.crypto import aad_de, decrypt
 log = structlog.get_logger(__name__)
 
 KIND_DA_RESPOSTA = "reply"
+
+# TEC-265, D4. O lead nunca fica em silencio porque o teto do laco funcionou.
+TEXTO_DA_BUSCA_INCONCLUSIVA = (
+    "Deixa eu confirmar algumas coisas com um corretor para nao te passar "
+    "informacao errada. Ja te retorno com as opcoes."
+)
 
 SUBAGENTE_CLASSIFICADOR = "classificador"
 SUBAGENTE_DESAMBIGUADOR = "desambiguador"
@@ -292,7 +299,27 @@ async def executar_turno(
         )
         return "sem_resposta"
 
-    gerada = await classificador.classificar(contexto)
+    try:
+        gerada = await classificador.classificar(
+            contexto,
+            # A porta e montada aqui porque e aqui que existe `session_factory`.
+            # O classificador recebe um callable pronto e nao sabe o que e uma
+            # sessao -- D3 do desenho.
+            porta=porta_de_busca(session_factory),
+        )
+    except LacoDeBuscaExcedido:
+        # Nao propaga: `process_message` marcaria FAILED e o sweeper
+        # reenfileiraria o mesmo turno, que pediria a ferramenta duas vezes de
+        # novo -- gastando duas chamadas ao modelo por tentativa para chegar
+        # ao mesmo lugar. O lead recebe texto conservador e o corretor entra.
+        log.warning("turno.laco_de_busca_excedido", channel=message.channel)
+        return await _entregar_texto_fixo(
+            session_factory,
+            message=message,
+            outbound=outbound,
+            recorder_texto=TEXTO_DA_BUSCA_INCONCLUSIVA,
+            subagent=SUBAGENTE_CLASSIFICADOR,
+        )
 
     # Gravada antes da entrega de proposito: a classificacao e sobre a mensagem
     # do lead, que existe, e nao sobre a resposta que pode nao sair.
