@@ -55,11 +55,22 @@ def _resposta_falsa(
     stop_reason: str = "end_turn",
     tokens_in: int = 4000,
     tokens_out: int = 200,
+    cache_write: int = 0,
+    cache_read: int = 0,
 ) -> SimpleNamespace:
+    # Os quatro campos de `usage`, nao so os dois de entrada/saida: `_chamar`
+    # le e sobrescreve os quatro em todo turno (TEC-265), e um duble que so
+    # tivesse dois quebraria com AttributeError na primeira chamada real de
+    # verdade que passasse por ele.
     blocos = [_bloco_texto(texto)] if texto else []
     return SimpleNamespace(
         content=blocos,
-        usage=SimpleNamespace(input_tokens=tokens_in, output_tokens=tokens_out),
+        usage=SimpleNamespace(
+            input_tokens=tokens_in,
+            output_tokens=tokens_out,
+            cache_creation_input_tokens=cache_write,
+            cache_read_input_tokens=cache_read,
+        ),
         stop_reason=stop_reason,
     )
 
@@ -832,9 +843,16 @@ def _bloco_tool_use(entrada: dict[str, object]) -> SimpleNamespace:
 
 
 def _resposta_tool_use(entrada: dict[str, object]) -> SimpleNamespace:
+    # Os quatro campos de `usage`, pelo mesmo motivo de `_resposta_falsa`:
+    # `_chamar` le os quatro em toda iteracao do laco, tool_use incluido.
     return SimpleNamespace(
         content=[_bloco_tool_use(entrada)],
-        usage=SimpleNamespace(input_tokens=4000, output_tokens=200),
+        usage=SimpleNamespace(
+            input_tokens=4000,
+            output_tokens=200,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        ),
         stop_reason="tool_use",
     )
 
@@ -960,11 +978,13 @@ async def test_turno_sem_ferramenta_tem_candidatos_vazio(
     assert resposta.candidatos == []
 
 
-async def test_a_latencia_e_os_tokens_cobrem_as_duas_chamadas_do_laco(
+async def test_a_latencia_e_os_contadores_cobrem_as_duas_chamadas_do_laco(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """RNF-02 (p95 <= 6 s) e RNF-06 (custo por conversa) medem o turno
-    inteiro, nao a ultima chamada.
+    """RNF-02 (p95 <= 6 s) mede o turno inteiro, e RNF-06 (custo por
+    conversa) cobra os quatro contadores de `usage` do turno inteiro --
+    `custo_em_dolar` usa os quatro na mesma formula, entao os quatro tem que
+    somar as duas chamadas juntas ou nenhum soma nada.
 
     `time.monotonic` e trocado por um relogio falso: `_chamar` so o chama
     duas vezes (o `comeco`, antes do laco, e o calculo de `latency_ms`,
@@ -974,9 +994,19 @@ async def test_a_latencia_e_os_tokens_cobrem_as_duas_chamadas_do_laco(
     duble de cliente sem rede nao gasta.
     """
     primeira = _resposta_tool_use({"operacao": "VENDA"})
-    primeira.usage = SimpleNamespace(input_tokens=1000, output_tokens=50)
+    primeira.usage = SimpleNamespace(
+        input_tokens=1000,
+        output_tokens=50,
+        cache_creation_input_tokens=10,
+        cache_read_input_tokens=5,
+    )
     segunda = _resposta_json()
-    segunda.usage = SimpleNamespace(input_tokens=3000, output_tokens=150)
+    segunda.usage = SimpleNamespace(
+        input_tokens=3000,
+        output_tokens=150,
+        cache_creation_input_tokens=20,
+        cache_read_input_tokens=15,
+    )
     _instalar_sequencia(monkeypatch, [primeira, segunda])
 
     # Troca o NOME `time` que `classificador.py` enxerga, nao o modulo `time`
@@ -994,3 +1024,5 @@ async def test_a_latencia_e_os_tokens_cobrem_as_duas_chamadas_do_laco(
     assert resultado.latency_ms == 6500
     assert resultado.tokens_in == 4000
     assert resultado.tokens_out == 200
+    assert resultado.cache_write == 30
+    assert resultado.cache_read == 20

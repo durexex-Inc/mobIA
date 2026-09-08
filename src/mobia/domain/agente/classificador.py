@@ -468,12 +468,18 @@ class ClassificadorAnthropic:
         candidatos: list[dict[str, Any]] = []
         # Somados ao longo do laco pelo mesmo motivo que a latencia sai dele:
         # um turno com busca faz DUAS chamadas de verdade, cada uma cobrando
-        # tokens de verdade, e a RNF-06 (custo por conversa) so fecha conta
-        # se `tokens_in`/`tokens_out` cobrirem o turno inteiro. Reportar so a
-        # ultima chamada subestimaria o custo de todo turno que busca, do
-        # mesmo jeito que a latencia media so metade se ficasse dentro do laco.
+        # tokens de verdade. Os quatro contadores, nao so entrada/saida --
+        # `custo_em_dolar` usa os quatro na MESMA formula (ver
+        # `mobia.domain.messages.recorder`), entao somar dois e deixar dois
+        # vindo so da ultima chamada produziria um custo errado de um jeito
+        # que ninguem consegue reconstruir depois. "Tokens do turno" vale
+        # para os quatro campos ou para nenhum. Reportar so a ultima chamada
+        # subestimaria o custo de todo turno que busca, do mesmo jeito que a
+        # latencia mediria so metade se ficasse dentro do laco.
         tokens_in_do_turno = 0
         tokens_out_do_turno = 0
+        cache_write_do_turno = 0
+        cache_read_do_turno = 0
         for tentativa in (1, 2):
             # cast: **kwargs apaga a sobrecarga que o SDK usa para distinguir
             # `Message` de `AsyncStream` por `stream=`. Nenhuma chamada deste
@@ -482,6 +488,12 @@ class ClassificadorAnthropic:
             resposta = cast(Message, await get_client().messages.create(**kwargs))
             tokens_in_do_turno += resposta.usage.input_tokens
             tokens_out_do_turno += resposta.usage.output_tokens
+            # `or 0` cobre o valor real de producao (None quando a chamada
+            # nao tocou cache), nao um duble incompleto -- o duble de teste
+            # sempre declara os dois campos (ver `_resposta_falsa` e
+            # `_resposta_tool_use`).
+            cache_write_do_turno += resposta.usage.cache_creation_input_tokens or 0
+            cache_read_do_turno += resposta.usage.cache_read_input_tokens or 0
 
             if resposta.stop_reason == "tool_use":
                 if porta is None or tentativa == 2:
@@ -506,11 +518,14 @@ class ClassificadorAnthropic:
             if not texto:
                 raise RespostaInvalida(mensagem_se_vazia)
             latency_ms = int((time.monotonic() - comeco) * 1000)
-            # `classificar`/`desambiguar` leem tokens de `resposta.usage`, nao
-            # de um item a mais na tupla -- sobrescrever aqui com o total do
-            # turno evita duplicar o dado em dois lugares que podiam divergir.
+            # `classificar`/`desambiguar` leem os quatro contadores de
+            # `resposta.usage`, nao de itens a mais na tupla -- sobrescrever
+            # aqui com o total do turno evita duplicar o dado em dois lugares
+            # que podiam divergir.
             resposta.usage.input_tokens = tokens_in_do_turno
             resposta.usage.output_tokens = tokens_out_do_turno
+            resposta.usage.cache_creation_input_tokens = cache_write_do_turno
+            resposta.usage.cache_read_input_tokens = cache_read_do_turno
             return texto, resposta, latency_ms, candidatos
 
         raise LacoDeBuscaExcedido("laco de tool use nao convergiu")
