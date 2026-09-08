@@ -11,6 +11,8 @@ numero que de fato ordena.
 import uuid
 from typing import Any
 
+from conftest import EmbedadorFake
+
 from mobia.domain.catalogo.busca import buscar
 from mobia.domain.catalogo.enums import Operacao, StatusImovel, TipoImovel
 from mobia.domain.catalogo.models import Imovel
@@ -276,3 +278,115 @@ async def test_zero_resultados_devolve_vazio_e_nao_levanta(session: Any) -> None
 
     assert resultado.candidatos == ()
     assert resultado.total_candidatos == 0
+
+
+async def test_imovel_sem_vetor_entra_e_ordena_atras(session: Any) -> None:
+    """D8. Falta de vetor nunca exclui ninguem.
+
+    A alternativa literal -- so imovel com vetor e candidato -- foi recusada
+    porque o proprio aviso da TEC-157 descreve o desfecho: "o catalogo fica
+    sem vetor e a busca semantica devolve vazio". Um ambiente sem chave
+    responderia "nao ha imoveis" para um catalogo de 500.
+
+    Os dois imoveis tem o MESMO preco, entao a aderencia empata e a ordem sai
+    inteira da similaridade.
+    """
+    com_vetor = await _imovel(session, "AP-200", embedding=[0.1] * 1536)
+    sem_vetor = await _imovel(session, "AP-201")
+
+    resultado = await buscar(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA),
+        consulta_texto="apartamento com varanda",
+        embedador=EmbedadorFake(),
+    )
+
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [
+        com_vetor,
+        sem_vetor,
+    ]
+    assert resultado.consulta_vetorizada is True
+    assert resultado.candidatos_sem_vetor == 1
+
+
+async def test_provedor_caido_devolve_candidatos_filtrados_e_nao_erro(session: Any) -> None:
+    """A assercao que a D9 tornou necessaria.
+
+    A TEC-157 derivava de TOPOLOGIA a regra "falha de embedding nao bloqueia
+    o atendimento" -- nao havia caminho em que o turno chamasse o provedor.
+    Esta card criou o caminho, entao a regra passou a precisar de teste. Sem
+    esta assercao, um `raise` no lugar do `except` de `_vetor_da_consulta`
+    deixaria a suite verde e o atendimento parado.
+    """
+    identificador = await _imovel(session, "AP-210")
+
+    resultado = await buscar(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA),
+        consulta_texto="apartamento com varanda",
+        embedador=EmbedadorFake(falhar=True),
+    )
+
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [identificador]
+    assert resultado.consulta_vetorizada is False
+
+
+async def test_busca_sem_texto_nao_chama_o_provedor(session: Any) -> None:
+    """D8. Criterio estruturado sozinho nao paga uma requisicao.
+
+    A assercao e sobre a CHAMADA e nao sobre o desfecho: um embedador chamado
+    e descartado devolveria os mesmos candidatos, gastando dinheiro e
+    latencia em todo turno.
+    """
+    await _imovel(session, "AP-220")
+    embedador = EmbedadorFake()
+
+    resultado = await buscar(session, FiltroDeBusca(operacao=Operacao.VENDA), embedador=embedador)
+
+    assert embedador.chamadas == []
+    assert resultado.consulta_vetorizada is False
+    assert len(resultado.candidatos) == 1
+
+
+async def test_sem_embedador_injetado_a_busca_segue(session: Any) -> None:
+    """O default do parametro nao pode ser um caminho que levanta."""
+    await _imovel(session, "AP-230")
+
+    resultado = await buscar(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA),
+        consulta_texto="apartamento com varanda",
+    )
+
+    assert len(resultado.candidatos) == 1
+    assert resultado.consulta_vetorizada is False
+
+
+async def test_sem_teto_a_ordem_e_a_similaridade_pura(session: Any) -> None:
+    """D7, a outra metade: sem teto o termo de aderencia empata em 1.
+
+    Os dois imoveis tem precos muito diferentes -- R$ 100 mil e R$ 900 mil --,
+    e a ordem NAO os segue: o barato vem primeiro porque o vetor dele casa a
+    consulta. E o que prova que 0,6 da ordenacao e da similaridade, e nao um
+    termo decorativo ao lado do preco.
+
+    O vetor de soma zero da similaridade exatamente 0 contra o vetor constante
+    do falso; o constante da exatamente 1. Ver a nota do Step 1.
+    """
+    parecido = await _imovel(session, "AP-240", preco_venda=10000000, embedding=[0.1] * 1536)
+    diferente = await _imovel(session, "AP-241", preco_venda=90000000, embedding=[0.1, -0.1] * 768)
+
+    resultado = await buscar(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA),
+        consulta_texto="apartamento com varanda",
+        embedador=EmbedadorFake(),
+    )
+
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [
+        parecido,
+        diferente,
+    ]
+    por_id = {candidato.imovel_id: candidato.score for candidato in resultado.candidatos}
+    assert por_id[parecido] == 1.0
+    assert por_id[diferente] == 0.4
