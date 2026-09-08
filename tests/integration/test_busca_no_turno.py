@@ -83,10 +83,17 @@ async def test_a_porta_busca_no_catalogo_de_verdade(session: Any) -> None:
 
 
 async def test_catalogo_sem_resultado_nao_vira_invencao(session: Any) -> None:
-    """Cenario 2 da card: nenhum candidato, e nada falha.
+    """Cenario 2 da card: o filtro exclui, e excluir nao e erro.
 
-    Zero resultado nao e erro -- relaxar o criterio e a TEC-160.
+    Semeia um imovel com `quartos=3` -- que satisfaz toda outra condicao
+    implicita do filtro -- e pede `quartos_min=9`. Sem essa linha, catalogo
+    vazio nao distingue "o filtro excluiu corretamente" de "nao havia nada" ou
+    de "um bug curto-circuitou a busca sem consultar nada"; com a linha, o
+    vazio prova que `WHERE Imovel.quartos >= filtro.quartos_min` fez o
+    trabalho dela. Relaxar o criterio e a TEC-160.
     """
+    await _imovel(session, quartos=3)
+
     saida = await porta_de_busca(get_sessionmaker(), embedador=EmbedadorFake())(
         {"operacao": "VENDA", "quartos_min": 9}
     )
@@ -111,6 +118,16 @@ async def test_turno_que_nao_pede_imovel_nao_apresenta_imovel(
     busca, e nao que o modelo se comporta. A outra metade -- o modelo deixando
     de buscar quando devia -- e a lacuna 3 do desenho, aceita como risco, e
     nenhum teste desta suite a cobre.
+
+    **A asserta de texto e uma tautologia declarada.** Com `ClassificadorFake`,
+    o texto entregue e sempre `RESPOSTA_DO_CLASSIFICADOR_FAKE`
+    (`tests/conftest.py`), uma constante desacoplada do catalogo -- entao
+    `"AP-001" not in entregue` NAO PODE falhar por mudanca nenhuma em
+    `porta_de_busca`, em `busca.py` ou no catalogo. So falharia se alguem
+    editasse a string do proprio duble. O que este teste de fato garante e que
+    o turno completa como `"respondido"` com a porta ligada; a asserta de
+    texto e guarda barata contra o dia em que o texto do duble passar a vir do
+    catalogo, nao evidencia de que a busca real fica fora da resposta hoje.
     """
     await _imovel(session)
     classificador = classificador_fake()
