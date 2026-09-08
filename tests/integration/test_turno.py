@@ -103,6 +103,44 @@ async def test_o_turno_monta_a_porta_e_a_entrega_ao_classificador(
     assert callable(classificador.portas[0])
 
 
+async def test_a_porta_do_turno_carrega_o_embedador_de_verdade(
+    session,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    rodar_turno,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Achado 1 do fix-wave: sem isto a busca do turno nao e hibrida.
+
+    `porta_de_busca(session_factory)` sem `embedador=` faz `_vetor_da_consulta`
+    (busca.py) devolver None sempre -- `consulta_texto` do tool call vira
+    campo inerte em producao, e a busca ordena so por aderencia de preco. O
+    turno tem de passar o mesmo `embedar` que `indexar_catalogo` usa para o
+    catalogo -- ver o comentario em `turno.py` no ponto que monta a porta.
+    """
+    from mobia.domain.agente import turno as turno_mod
+    from mobia.infra.embeddings import embedar
+
+    chamadas: list[dict[str, object]] = []
+    porta_de_busca_original = turno_mod.porta_de_busca
+
+    def _porta_de_busca_espia(session_factory, **kwargs: object):
+        chamadas.append(kwargs)
+        return porta_de_busca_original(session_factory, **kwargs)
+
+    monkeypatch.setattr(turno_mod, "porta_de_busca", _porta_de_busca_espia)
+
+    resultado = await rodar_turno(
+        session, classificador_fake(), outbound_fake(), resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert len(chamadas) == 1
+    assert chamadas[0].get("embedador") is embedar
+
+
 async def test_laco_de_busca_excedido_entrega_texto_conservador(
     session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
 ) -> None:

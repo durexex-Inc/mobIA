@@ -40,6 +40,7 @@ from mobia.domain.optout.deteccao import (
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
 from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, OutboundPort
 from mobia.infra.crypto import aad_de, decrypt
+from mobia.infra.embeddings import embedar
 
 log = structlog.get_logger(__name__)
 
@@ -305,7 +306,19 @@ async def executar_turno(
             # A porta e montada aqui porque e aqui que existe `session_factory`.
             # O classificador recebe um callable pronto e nao sabe o que e uma
             # sessao -- D3 do desenho.
-            porta=porta_de_busca(session_factory),
+            #
+            # `embedador=embedar` liga a busca do turno ao provedor de verdade
+            # -- o mesmo `embedar` que `indexar_catalogo` usa para o catalogo.
+            # Sem isto, `consulta_texto` do tool call seria aceito e nunca
+            # mudaria um resultado: `_vetor_da_consulta` (busca.py) devolve
+            # None sem embedador injetado, a similaridade fica 0 para todo
+            # candidato, e a busca hibrida da TEC-158 nunca aconteceria dentro
+            # de um turno -- so pela rota HTTP, que nao injeta embedador (ver
+            # `api/routes/imoveis.py`). A degradacao por falha continua
+            # coberta pelo mesmo `except Exception` de `_vetor_da_consulta`:
+            # o embedador real pode falhar, e a busca segue pelo filtro
+            # estruturado -- D9.
+            porta=porta_de_busca(session_factory, embedador=embedar),
         )
     except LacoDeBuscaExcedido:
         # Nao propaga: `process_message` marcaria FAILED e o sweeper
