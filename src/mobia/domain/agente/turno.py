@@ -1,12 +1,14 @@
-from typing import Literal
+import uuid
+from typing import Any, Literal
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import MODELO_SEM_CHAMADA
+from mobia.domain.agente.apresentacao import legenda_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
 from mobia.domain.agente.desambiguacao import deve_desambiguar
-from mobia.domain.agente.ferramenta_de_busca import porta_de_busca
+from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo, porta_de_busca
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.gatilhos import gatilhos_de
@@ -45,6 +47,16 @@ from mobia.infra.embeddings import embedar
 log = structlog.get_logger(__name__)
 
 KIND_DA_RESPOSTA = "reply"
+
+# TEC-162. Kinds fixos POR POSICAO, e nao derivados do id do imovel: o
+# UNIQUE (message_id, kind) de `outbound_dispatches` precisa de um valor que
+# a retentativa reproduza. Um kind com o id dentro deixaria de colidir assim
+# que a retentativa escolhesse outro imovel, e a idempotencia sumiria
+# justamente no caso em que ela importa -- ver a D9 e a L1 do desenho.
+KINDS_DAS_FICHAS = ("ficha_1", "ficha_2", "ficha_3")
+
+# RN-10.2: maximo de 3 por turno, mesmo quando a busca devolveu 10.
+MAX_IMOVEIS_POR_TURNO = len(KINDS_DAS_FICHAS)
 
 # TEC-265, D4. O lead nunca fica em silencio porque o teto do laco funcionou.
 TEXTO_DA_BUSCA_INCONCLUSIVA = (
@@ -505,8 +517,11 @@ async def executar_turno(
     else:
         texto, telemetria, subagente = gerada.resposta, gerada, SUBAGENTE_CLASSIFICADOR
 
-    # Uma vez por turno: so um texto sai. No caminho ambiguo a resposta da
-    # chamada 1 foi descartada e so a pergunta e entregue.
+    # Uma vez por turno: so um texto vem do modelo. No caminho ambiguo a
+    # resposta da chamada 1 foi descartada e so a pergunta e entregue. Na
+    # apresentacao da TEC-162 saem tres mensagens, mas o unico texto gerado
+    # continua sendo esta prosa -- a ficha e dado do banco montado por codigo,
+    # e moderar dado nosso seria gastar chamada sobre texto que nao inventamos.
     #
     # Aqui **nao** ha falha aberta. Entregar texto nao moderado e o risco que
     # este subsistema existe para fechar, e o custo recai sobre a reputacao da
@@ -539,16 +554,42 @@ async def executar_turno(
         )
         texto = TEXTO_NEUTRO_DE_SAIDA
 
+    # TEC-162, D4. Candidatos sem pergunta e turno de apresentacao. As tres
+    # condicoes sao a mesma regra: pergunta adia as fichas. `desambiguando`
+    # entra porque `gerada.perguntou` fala da chamada 1, que foi DESCARTADA
+    # nesse caminho -- o texto entregue e a pergunta do desambiguador.
+    apresentando = bool(gerada.candidatos) and not gerada.perguntou and not desambiguando
+
     try:
-        entregue = await outbound.send(
-            message.id,
-            KIND_DA_RESPOSTA,
-            {
-                "para": message.conversation_key,
-                "de": message.recipient_external_id,
-                "texto": texto,
-            },
-        )
+        if apresentando:
+            # `prosa=texto` le o valor ANTES da atribuicao: a chamada e
+            # avaliada primeiro, e o `texto` que sai sao as legendas
+            # concatenadas (D16).
+            texto, quantas, suprimidas = await _apresentar(
+                session_factory,
+                message=message,
+                outbound=outbound,
+                candidatos=gerada.candidatos,
+                prosa=texto,
+            )
+            entregue = quantas > 0
+            # Nenhuma ficha entrou e TODAS foram suprimidas pela reserva: e o
+            # mesmo caso do `not entregue` do caminho de texto -- reentrega de
+            # uma tentativa anterior --, e o desfecho tem de ser o mesmo.
+            if not entregue and suprimidas == 0:
+                # Todas foram recusadas permanentemente. Cada uma ja logou
+                # `error` em `_apresentar`.
+                return "sem_resposta"
+        else:
+            entregue = await outbound.send(
+                message.id,
+                KIND_DA_RESPOSTA,
+                {
+                    "para": message.conversation_key,
+                    "de": message.recipient_external_id,
+                    "texto": texto,
+                },
+            )
     except EnvioForaDaJanela as exc:
         log.warning(
             "outbound.fora_da_janela",
@@ -593,9 +634,12 @@ async def executar_turno(
         # uma reentrega: ja existe uma reserva em outbound_dispatches para este
         # (message_id, kind), de uma tentativa anterior. `_deliver` nunca foi
         # chamado agora -- entao `texto`, que veio de uma chamada nova ao
-        # classificador (a de classificar ou a de desambiguar), pode nao ser o
-        # texto que o lead recebeu (ou nenhum texto pode ter saido ainda, se a
-        # tentativa anterior tambem foi suprimida). Gravar aqui seria o mesmo
+        # classificador (a de classificar ou a de desambiguar) ou, no caminho
+        # de apresentacao da TEC-162, das legendas que ESTA tentativa montou,
+        # pode nao ser o texto que o lead recebeu (ou nenhum texto pode ter
+        # saido ainda, se a tentativa anterior tambem foi suprimida). Na
+        # apresentacao o `texto` chega aqui vazio, porque nenhuma ficha
+        # entrou. Gravar aqui seria o mesmo
         # risco de fala fantasma que a ordem grava-depois-de-entregar existe
         # para evitar, so que entrando por esta porta em vez de uma excecao:
         # exatamente por isso a checagem do retorno, e nao so do "nao
@@ -841,3 +885,79 @@ async def _entregar_texto_fixo(
         recipient_external_id=message.conversation_key,
     )
     return "respondido"
+
+
+async def _apresentar(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    message: Message,
+    outbound: OutboundPort,
+    candidatos: list[dict[str, Any]],
+    prosa: str,
+) -> tuple[str, int, int]:
+    """Entrega ate 3 fichas e devolve (texto para gravar, entregues, suprimidas).
+
+    O texto devolvido sao as legendas concatenadas -- o que o lead recebeu, e
+    nao a prosa sozinha. Gravar so a prosa faria o turno seguinte reapresentar
+    os mesmos imoveis por nao saber que ja os mostrou (D16).
+
+    **Recusa permanente numa ficha nao interrompe as outras**, e a divergencia
+    do caminho de texto unico e deliberada: a recusa provavel aqui e a Meta
+    rejeitando a URL da midia, e uma foto ruim nao pode apagar dois imoveis
+    bons (D10). `EnvioForaDaJanela` propaga, porque nesse caso a apresentacao
+    inteira e impossivel e o desfecho e o mesmo de hoje.
+    """
+    escolhidos = candidatos[:MAX_IMOVEIS_POR_TURNO]
+    ids = [uuid.UUID(c["imovel_id"]) for c in escolhidos]
+    precos = {uuid.UUID(c["imovel_id"]): int(c["preco_centavos"]) for c in escolhidos}
+    fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)
+
+    legendas: list[str] = []
+    entregues = suprimidas = 0
+    for posicao, ficha in enumerate(fichas):
+        # So a primeira leva a prosa (D5); as outras sao ficha pura.
+        legenda = legenda_de(ficha, prefixo=prosa if posicao == 0 else None)
+        payload: dict[str, Any] = {
+            "para": message.conversation_key,
+            "de": message.recipient_external_id,
+        }
+        if ficha.foto is None:
+            # D13: sem foto, cai no caminho de texto que ja existe em vez de
+            # ganhar um ramo proprio.
+            payload["texto"] = legenda
+        else:
+            payload["tipo"] = "imagem"
+            payload["link"] = ficha.foto
+            payload["legenda"] = legenda
+
+        try:
+            entrou = await outbound.send(message.id, KINDS_DAS_FICHAS[posicao], payload)
+        except EnvioForaDaJanela:
+            # Repropaga, e esta clausula tem de vir ANTES da de baixo:
+            # `EnvioForaDaJanela` HERDA de `EnvioRecusado` (port.py), entao um
+            # `except EnvioRecusado` sozinho engoliria a janela de 24h
+            # fechada. O turno devolveria "respondido" com zero entregas em
+            # vez de "expirado", e o alerta que observa janela fechada ficaria
+            # cego. Janela fechada torna a apresentacao inteira impossivel --
+            # nao e uma ficha ruim entre tres.
+            raise
+        except EnvioRecusado as exc:
+            # `error` pelo mesmo criterio do caminho de texto: o estado da
+            # linha sera terminal e a visibilidade vem do nivel do log.
+            log.error(
+                "apresentacao.ficha_recusada",
+                channel=message.channel,
+                message_id=str(message.id),
+                kind=KINDS_DAS_FICHAS[posicao],
+                reason=str(exc),
+            )
+            continue
+
+        if not entrou:
+            suprimidas += 1
+            continue
+
+        entregues += 1
+        legendas.append(legenda)
+
+    return "\n\n".join(legendas), entregues, suprimidas
