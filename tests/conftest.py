@@ -260,7 +260,10 @@ class OutboundFake(GuardedOutbound):
     async def _deliver(self, message_id, kind, payload) -> None:
         if self.erro is not None:
             raise self.erro
-        self.entregues.append(payload["texto"])
+        # TEC-162: payload de imagem guarda a LEGENDA. `entregues` continua
+        # `list[str]` para nao quebrar as assertas dos testes de antes desta
+        # card, que comparam contra o texto entregue.
+        self.entregues.append(payload.get("legenda") or payload["texto"])
 
 
 @pytest.fixture
