@@ -122,8 +122,9 @@ class Settings(BaseSettings):
     # terminal, o sweeper nunca reenfileira. Cada lead que escrever durante a
     # janela de misconfiguracao perde a resposta pra sempre, sem alarme alem
     # de uma linha `outbound.recusado_permanente` no log -- ou, se o turno for
-    # de apresentacao de fichas (TEC-162), de tres linhas
-    # `apresentacao.ficha_recusada` e nenhuma `outbound.recusado_permanente`,
+    # de apresentacao de fichas (TEC-162), de uma linha
+    # `apresentacao.ficha_recusada` por ficha recusada (uma, duas ou tres,
+    # conforme quantas o turno tinha) e nenhuma `outbound.recusado_permanente`,
     # porque aquele caminho loga por ficha e nao pelo turno. Por isso a guarda
     # mora em `mobia.workers.main.startup` (Task 6): falha antes de a primeira
     # mensagem ser consumida, em vez de deixar o 401 acontecer em producao.

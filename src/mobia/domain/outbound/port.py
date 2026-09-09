@@ -62,9 +62,13 @@ class OutboundPort(Protocol):
       recusa de UMA ficha nao interrompe as outras. Ela loga
       `apresentacao.ficha_recusada` em `error`, com o `kind` da posicao, e o
       turno segue -- devolvendo `respondido` se qualquer outra ficha entrou. O
-      `sem_resposta` so volta quando as tres foram recusadas. A divergencia e
-      deliberada: a recusa provavel ali e a Meta rejeitando a URL da foto, e
-      uma foto ruim nao pode apagar dois imoveis bons.
+      `sem_resposta` so volta quando TODAS as fichas do turno foram
+      recusadas -- que pode ser uma, duas ou tres. `MAX_IMOVEIS_POR_TURNO` e
+      um teto, nao um piso: um turno com menos de tres candidatos, ou um em
+      que `imoveis_por_ids` derrubou algum, tem menos de tres fichas para
+      recusar em primeiro lugar. A divergencia e deliberada: a recusa
+      provavel ali e a Meta rejeitando a URL da foto, e uma foto ruim nao
+      pode apagar os outros imoveis bons do mesmo turno.
       Os dois nomes de evento importam por igual para quem configura alerta:
       **nao existe regra de alerta neste repositorio** -- ela vive no
       monitoramento externo, que casa por nome --, e este bullet e o unico

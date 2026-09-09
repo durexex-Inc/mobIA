@@ -11,6 +11,7 @@ separador `-`. E a mesma disciplina de `TEXTO_DA_BUSCA_INCONCLUSIVA` em
 consertar a politica.
 """
 
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -29,14 +30,20 @@ _RETICENCIA = "..."
 
 @dataclass(frozen=True, slots=True)
 class Ficha:
-    """Os oito campos da RN-10.1, resolvidos e agnosticos de canal.
+    """Os oito campos da RN-10.1, resolvidos e agnosticos de canal -- mais o
+    `id` do imovel, que nao e um dos oito e nao aparece na legenda.
 
-    Tres campos sao opcionais porque o catalogo os tem vazios de verdade --
-    117 dos 520 imoveis do seed nao tem caracteristica nenhuma. Ausencia
-    omite a linha e nunca esconde o imovel, que e a regra da propria RN-10.2
-    sobre foto.
+    `id` existe para quem opera, nao para o lead: fix wave da TEC-162
+    (Minor). Sem ele, `turno.py` nao tinha como dizer QUAL imovel sumiu do
+    catalogo entre a busca e a apresentacao -- so quantos.
+
+    Tres dos oito campos sao opcionais porque o catalogo os tem vazios de
+    verdade -- 117 dos 520 imoveis do seed nao tem caracteristica nenhuma.
+    Ausencia omite a linha e nunca esconde o imovel, que e a regra da propria
+    RN-10.2 sobre foto.
     """
 
+    id: uuid.UUID
     titulo: str
     bairro: str
     preco_centavos: int
@@ -71,6 +78,17 @@ def diferencial_de(caracteristicas: Sequence[str]) -> str | None:
     return " e ".join(escolhidas)
 
 
+def _pluralizado(quantidade: int, singular: str, plural: str) -> str:
+    """`singular` quando `quantidade == 1`, `plural` em qualquer outro caso.
+
+    Zero fica com o plural de proposito ("0 quartos", "0 vagas") -- e a forma
+    que um TERRENO usa de verdade, e se aquela linha deveria sumir inteira
+    quando os dois campos sao zero e questao de produto que esta correcao nao
+    resolve. So o "1" tem forma propria em portugues.
+    """
+    return singular if quantidade == 1 else plural
+
+
 def legenda_de(ficha: Ficha, *, prefixo: str | None = None) -> str:
     """A legenda de uma ficha, com a prosa do modelo opcionalmente na frente.
 
@@ -78,10 +96,12 @@ def legenda_de(ficha: Ficha, *, prefixo: str | None = None) -> str:
     o conteudo que a RN-10.1 exige e a prosa e ornamento, e essa ordem de
     prioridade e a D14 do desenho.
     """
+    quartos = _pluralizado(ficha.quartos, "quarto", "quartos")
+    vagas = _pluralizado(ficha.vagas, "vaga", "vagas")
     linhas = [
         ficha.titulo,
         f"{ficha.bairro} - {reais_de(ficha.preco_centavos)}",
-        f"{ficha.quartos} quartos - {ficha.vagas} vagas - {ficha.area_util_m2} m2",
+        f"{ficha.quartos} {quartos} - {ficha.vagas} {vagas} - {ficha.area_util_m2} m2",
     ]
     if ficha.condominio_centavos is not None:
         linhas.append(f"Condominio {reais_de(ficha.condominio_centavos)}")

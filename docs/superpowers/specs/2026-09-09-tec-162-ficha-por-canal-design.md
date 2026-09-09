@@ -46,7 +46,7 @@ A alternativa era escrever também o renderizador de card web, função pura tes
 
 A RN-04.2 limita a **2 mensagens consecutivas**. A RN-10.2 pede **3 imóveis, uma imagem cada**. As duas regras do mesmo SRS se contradizem, e a CA-10.1 desempata: ela pressupõe três apresentados (*"Dados 3 imóveis apresentados, quando o lead responde 'gostei do segundo'"*), então baixar o teto de imóveis para 2 invalidaria um critério de aceite.
 
-A emenda vai na RN-04.2: o teto de 2 vale para mensagens de **texto**; a apresentação pode emitir até 3 de mídia por turno. O teto existe contra parede de texto, e três fichas com foto não são isso.
+A emenda vai na RN-04.2: o teto de 2 vale para mensagens de **texto**; a apresentação pode emitir até 3 mensagens de **apresentação** por turno — mídia, ou texto quando o imóvel não tem foto (D13). O teto existe contra parede de texto, e três fichas de apresentação — com ou sem foto — não são isso: cada uma carrega um imóvel diferente, e a D13 já garante que a ausência de foto nunca esconde o imóvel por trás de silêncio. Uma redação presa a "mídia" deixaria de fora justamente o turno que a Task 6 semeou (dois imóveis sem foto no seed) e cujas três legendas, todas em texto, ficariam sem teto declarado — a falha que este mesmo desenho existe para fechar.
 
 **Sem mensagem de abertura.** As três legendas se bastam, e uma quarta mensagem seria justamente a parede que a regra teme.
 
@@ -255,6 +255,8 @@ Integração:
 `EnvioRetentavel` propaga, a linha vira `FAILED` e o sweeper roda o turno **inteiro** de novo — nova chamada paga, nova busca. O classificador não fixa `temperature` ([`classificador.py:432-434`](../../../src/mobia/domain/agente/classificador.py#L432) monta `kwargs` sem ela, valendo o default da API), então o filtro da segunda vez pode diferir. A `ficha_1` já entregue colide na reserva e vira no-op; as outras duas podem vir de um top-3 diferente.
 
 **Nunca duplica, pode misturar.** A correção limpa é persistir o conjunto escolhido, que é a `Recomendacao` da RN-10.3 — a TEC-163. Fica declarada, não consertada.
+
+**Custo achado na execução, e não coberto pelo parágrafo acima: a entrega parcial some da linha do tempo.** Se a `ficha_1` já entregou e a `ficha_2` toma o mesmo `EnvioRetentavel`, a reserva da `ficha_2` é liberada e a linha vira `FAILED` antes de `_apresentar` devolver — o que significa que `record_agent_message` nunca roda para esta tentativa, e a legenda que o lead JÁ RECEBEU (a `ficha_1`) não fica gravada em lugar nenhum. O sweeper roda o turno de novo: a reserva da `ficha_1` sobrevive e a suprime (não duplica, ver acima), mas nada no histórico registra que ela foi mostrada — o turno seguinte pode reapresentar exatamente aquele imóvel, porque a única fonte que saberia disso é a linha do tempo, e ela ficou muda para essa tentativa. `EnvioForaDaJanela` depois de uma ficha ter entrado abre o mesmo buraco, pelo mesmo motivo. Fica só no docstring de `_apresentar` (`turno.py`) desde a implementação; entra aqui porque a TEC-163 será planejada a partir deste documento, e o custo que ela precisa fechar não pode existir só em comentário de código. A `Recomendacao` da RN-10.3 é a correção de verdade: persistir o conjunto escolhido ANTES da entrega tornaria a gravação da linha do tempo independente do sucesso do envio, e o buraco fecharia junto com o de cima.
 
 ### L2 — O card web fica sem renderizador
 

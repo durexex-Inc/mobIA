@@ -389,6 +389,9 @@ async def test_candidato_que_sumiu_do_catalogo_nao_vira_turno_mudo_sem_log(
     ((nivel, evento),) = _eventos_de_log(caplog, "apresentacao.fichas_sumiram_do_catalogo")
     assert nivel == "ERROR", "zero ficha e turno mudo para o lead: tem de acordar alguem"
     assert (evento["pedidas"], evento["encontradas"]) == (1, 0)
+    # Fix wave da TEC-162 (Minor): o id que sumiu tem de aparecer no proprio
+    # evento -- e o unico log da arvore que sabe qual imovel foi.
+    assert evento["imovel_ids_faltantes"] == [str(fantasma)]
 
 
 async def test_a_linha_do_tempo_grava_as_tres_legendas(
@@ -416,7 +419,15 @@ async def test_imovel_sem_foto_sai_como_texto(
     session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
 ) -> None:
     """D13, quarto cenario do Gherkin: a ausencia de imagem nao esconde o
-    imovel."""
+    imovel.
+
+    Fix wave da TEC-162 (Important): a asserta sobre `entregue` (a string
+    colapsada) passava mesmo se `_apresentar` mandasse
+    `{"tipo": "imagem", "link": None, "legenda": ...}` -- payload que o
+    adaptador de verdade repassaria para a Meta como `image.link: null` e
+    tomaria 400. Checar o `payload` cru pina a decisao real da D13: sem foto,
+    o payload nao tem `tipo` nenhum e cai no mesmo formato que o texto comum.
+    """
     identificador = await _imovel(session, "AP-001", 50000000, fotos=[])
     classificador = _ClassificadorComCandidatos([_candidato(identificador, 50000000)])
     outbound = outbound_fake()
@@ -428,3 +439,27 @@ async def test_imovel_sem_foto_sai_como_texto(
     assert resultado == "respondido"
     (entregue,) = outbound.entregues
     assert "Apartamento AP-001" in entregue
+    (payload,) = outbound.payloads
+    assert "tipo" not in payload
+    assert "texto" in payload
+
+
+async def test_imovel_com_foto_sai_como_imagem_com_link(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """Espelho do teste acima (fix wave da TEC-162, Important). Sem este
+    teste, `_apresentar` podia mandar `link: None` mesmo com foto cadastrada e
+    nenhuma asserta desta suite pegaria -- `outbound.entregues` so guarda a
+    legenda, nunca o link."""
+    identificador = await _imovel(session, "AP-001", 50000000)
+    classificador = _ClassificadorComCandidatos([_candidato(identificador, 50000000)])
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    (payload,) = outbound.payloads
+    assert payload["tipo"] == "imagem"
+    assert payload["link"] == "https://exemplo.com/AP-001.jpg"

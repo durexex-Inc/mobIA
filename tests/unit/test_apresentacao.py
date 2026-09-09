@@ -4,6 +4,7 @@ Basename distinto de tudo em `tests/integration/` -- colisao aborta a coleta
 da suite inteira e nao aparece em execucao isolada.
 """
 
+import uuid
 from dataclasses import replace
 
 from mobia.domain.agente.apresentacao import (
@@ -18,6 +19,7 @@ from mobia.domain.agente.apresentacao import (
 # `__dict__` -- a segunda forma levanta AttributeError.
 
 COMPLETA = Ficha(
+    id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
     titulo="Apartamento em Lagoa da Conceicao",
     bairro="Lagoa da Conceicao",
     preco_centavos=51646430,
@@ -40,6 +42,15 @@ def test_a_legenda_traz_os_oito_campos_da_rn_10_1() -> None:
         "Condominio R$ 550\n"
         "Destaque: churrasqueira e mobiliado"
     )
+
+
+def test_um_quarto_e_uma_vaga_nao_ficam_no_plural() -> None:
+    """Fix wave da TEC-162 (Important). 129 dos 520 imoveis do seed tem
+    vagas == 1 e 63 tem quartos == 1 -- "1 quartos - 1 vagas" saia errado no
+    texto mais visivel que o lead recebe. 0 continua no plural de proposito
+    (um TERRENO), e essa linha nao muda aqui."""
+    legenda = legenda_de(replace(COMPLETA, quartos=1, vagas=1))
+    assert "1 quarto - 1 vaga - 54 m2" in legenda
 
 
 def test_os_centavos_sao_truncados_para_baixo_e_nunca_arredondados() -> None:
@@ -99,6 +110,7 @@ def test_o_teto_de_600_corta_a_prosa_e_nunca_a_ficha() -> None:
 def test_prosa_que_nao_cabe_de_jeito_nenhum_sai_de_cena() -> None:
     """Se nem a reticencia couber, a prosa some inteira -- a ficha nao cede."""
     gigante = Ficha(
+        id=uuid.UUID("22222222-2222-2222-2222-222222222222"),
         titulo="T" * 300,
         bairro="B" * 200,
         preco_centavos=51646430,

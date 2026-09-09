@@ -193,6 +193,7 @@ async def fichas_do_catalogo(
 
     return tuple(
         Ficha(
+            id=imovel.id,
             titulo=imovel.titulo,
             bairro=imovel.bairro,
             preco_centavos=precos[imovel.id],

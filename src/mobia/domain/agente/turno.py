@@ -40,7 +40,12 @@ from mobia.domain.optout.deteccao import (
     pediu_optout,
 )
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
-from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, OutboundPort
+from mobia.domain.outbound.port import (
+    EnvioForaDaJanela,
+    EnvioRecusado,
+    EnvioRetentavel,
+    OutboundPort,
+)
 from mobia.infra.crypto import aad_de, decrypt
 from mobia.infra.embeddings import embedar
 
@@ -914,8 +919,9 @@ async def _apresentar(
     inteira e impossivel e o desfecho e o mesmo de hoje.
 
     **Custo conhecido, e nao acidente: entrega parcial seguida de falha
-    retentavel perde o registro do que ja saiu.** `EnvioRetentavel` nao e
-    capturado aqui nem la fora, entao ele passa por cima de
+    retentavel perde o registro do que ja saiu.** `EnvioRetentavel` e
+    capturado logo abaixo, mas so para logar `entregues` e repropagar sem
+    mudar nada -- o desfecho continua passando por cima de
     `record_agent_message`. Se a ficha 1 entregou e a 2 tomou um 5xx, a
     reserva da 2 e liberada, a linha vira FAILED, o sweeper roda o turno
     inteiro de novo, a posicao 1 e suprimida pela reserva que sobreviveu -- e
@@ -923,7 +929,9 @@ async def _apresentar(
     das duas tentativas. E exatamente o dano que a D16 existe para evitar,
     entrando pela porta da falha parcial; a consequencia pratica e o turno
     seguinte poder reapresentar aqueles imoveis. `EnvioForaDaJanela` depois de
-    uma ficha ter entrado abre o mesmo buraco.
+    uma ficha ter entrado abre o mesmo buraco. O log torna o caso visivel para
+    quem opera; nao torna o dado recuperavel -- a lacuna L1 do desenho registra
+    o custo por extenso, e a correcao de verdade e a mesma citada abaixo.
 
     Gravar as parciais antes de deixar a excecao sair mudaria o que um turno
     FAILED escreve na linha do tempo, no caminho de entrega que TODA conversa
@@ -948,6 +956,14 @@ async def _apresentar(
         # `error` quando sobrou ZERO, porque ai o lead nao recebe nada e nao ha
         # segunda tentativa; `warning` quando sobrou alguma, porque o lead
         # ainda recebe o que restou.
+        #
+        # `imovel_ids_faltantes` e fix de revisao (Minor): `pedidas` e
+        # `encontradas` sao contagem, e quem opera precisa saber QUAL imovel
+        # sumiu, nao so quantos. O id nao aparece em nenhuma outra linha deste
+        # arquivo -- sem isto ele e irrecuperavel. `Ficha.id` (fix wave, mesma
+        # entrega) e o que torna a diferenca calculavel aqui.
+        encontrados = {ficha.id for ficha in fichas}
+        faltantes = [i for i in ids if i not in encontrados]
         registrar = log.error if not fichas else log.warning
         registrar(
             "apresentacao.fichas_sumiram_do_catalogo",
@@ -955,6 +971,7 @@ async def _apresentar(
             message_id=str(message.id),
             pedidas=len(escolhidos),
             encontradas=len(fichas),
+            imovel_ids_faltantes=[str(i) for i in faltantes],
         )
 
     legendas: list[str] = []
@@ -988,6 +1005,26 @@ async def _apresentar(
             # a mentir sobre por que o lead nao recebeu. Janela fechada torna
             # a apresentacao inteira impossivel; nao e uma ficha ruim entre
             # tres.
+            raise
+        except EnvioRetentavel:
+            # Fix de revisao (aceito do revisor). `EnvioRetentavel` nao herda
+            # de `EnvioRecusado` nem de `EnvioForaDaJanela` (port.py) -- as
+            # tres sao ramos distintos, entao esta clausula nao disputa MRO
+            # com as duas de cima e a ordem entre elas nao muda qual excecao
+            # cada uma pega. Propaga sem alterar o desfecho -- FAILED e o
+            # sweeper reenfileira, exatamente como sem esta clausula --, e o
+            # unico acrescimo e este log: sem ele, uma entrega PARCIAL (uma ou
+            # duas fichas ja saidas quando o 5xx bateu nesta) fica invisivel
+            # para quem opera ate a proxima tentativa reaparecer no mesmo
+            # lugar. `entregues` conta so as que JA passaram por
+            # `entregues += 1` abaixo -- a que estourou agora nao entra.
+            log.error(
+                "apresentacao.entrega_parcial_antes_de_falha_retentavel",
+                channel=message.channel,
+                message_id=str(message.id),
+                kind=KINDS_DAS_FICHAS[posicao],
+                entregues=entregues,
+            )
             raise
         except EnvioRecusado as exc:
             # `error` pelo mesmo criterio do caminho de texto: o estado da
