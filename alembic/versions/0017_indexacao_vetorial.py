@@ -37,19 +37,20 @@ dois ja basta sozinho.
 Primeiro: o caminho rapido do IVFFlat so engata em
 `ORDER BY <coluna> <=> <constante> LIMIT n`. `buscar()` ordena por um score
 computado, `round(cast(0.6 * similaridade + 0.4 * aderencia, numeric), 3)`
-(`src/mobia/domain/catalogo/busca.py:243-259`) -- ja nao e a forma que o
-indice reconhece, sem precisar de plano nenhum para saber disso.
+(score definido em `src/mobia/domain/catalogo/busca.py:243-250`, e `ORDER BY`
+em linha 279) -- ja nao e a forma que o indice reconhece, sem precisar de
+plano nenhum para saber disso.
 
 Segundo, e independente do primeiro: a lista de colunas do SELECT carrega
-`func.count().over()` sem `PARTITION BY` (`busca.py:275`). Uma window
+`func.count().over()` sem `PARTITION BY` (`busca.py:267`). Uma window
 function sem particao forca o Postgres a materializar e agregar (`WindowAgg`)
 o conjunto inteiro que sobrevive ao WHERE, ANTES do `Sort` e do `Limit` --
 entao nao ha `LIMIT` nenhum para um scan ordenado por indice se aproveitar,
 mesmo se o `ORDER BY` acima fosse a distancia de cosseno pura.
 
-`grep -rn "cosine_distance\|<=>" src/` devolve exatamente um resultado: este
-mesmo score, dentro de `buscar()`. `ix_imoveis_embedding` nao tem outro
-consumidor no codigo.
+`grep -rn "cosine_distance\|<=>" src/` devolve uma mencao em comentario e
+uma chamada no codigo de `buscar()` -- um site de consumo para o indice.
+`ix_imoveis_embedding` nao tem outro consumidor no codigo.
 
 **A consequencia e direta: hoje este indice e custo de escrita sem retorno
 de leitura.** Toda insercao e atualizacao de `embedding` paga o custo de

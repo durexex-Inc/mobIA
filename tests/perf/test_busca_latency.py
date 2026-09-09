@@ -15,7 +15,7 @@ provedor.
 Gherkin, mas `regioes=()` -- "sem filtro de regiao" em `schemas.py` -- e
 formato legal e comum: e o lead que da faixa de preco mas nao bairro, e e
 exatamente quem paga o custo pleno de 10.000 vetores. Com bairro,
-`ix_imoveis_bairro_busca` reduz o candidato a uma fatia (75 a 500 linhas
+`ix_imoveis_bairro_busca` reduz o candidato a uma fatia (22 a 500 linhas
 dos 10.000); sem bairro, a consulta varre o catalogo inteiro. Sao caminhos
 de custo diferentes -- uma media dos dois esconderia qual dos dois estoura
 o orcamento.
