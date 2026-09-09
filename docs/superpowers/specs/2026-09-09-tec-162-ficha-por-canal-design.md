@@ -216,7 +216,7 @@ A redundância título/bairro é do título gerado do seed, não do formato, e n
 
 Entram como item aninhado abaixo da regra que alteram, sem reescrever o texto de 22/08/2026:
 
-- **RN-04.2 — Emenda E-02 (TEC-162, 09/09/2026):** o teto de 2 mensagens consecutivas vale para mensagens de texto. A apresentação de imóveis da RN-10.2 pode emitir até 3 mensagens de mídia por turno. Justificativa em D2. É **E-02** porque a RN-04.2 já tem a E-01 (TEC-255), e vale notar que aquela emenda declarou a cláusula das 2 mensagens *"inalterada"* — esta é a que a altera, oito dias depois.
+- **RN-04.2 — Emenda E-02 (TEC-162, 09/09/2026):** o teto de 2 mensagens consecutivas vale para mensagens de texto. A apresentação de imóveis da RN-10.2 pode emitir até 3 mensagens de **apresentação** por turno — mídia, ou texto quando o imóvel não tem foto. Justificativa em D2. É **E-02** porque a RN-04.2 já tem a E-01 (TEC-255), e vale notar que aquela emenda declarou a cláusula das 2 mensagens *"inalterada"* — esta é a que a altera, oito dias depois.
 - **RN-10.2 — Emenda E-01 (TEC-162, 09/09/2026):** o card clicável do widget web fica com a TEC-124. Justificativa em D1. É a primeira emenda desta regra.
 
 ## Testes
