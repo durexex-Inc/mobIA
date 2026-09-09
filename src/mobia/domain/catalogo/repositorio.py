@@ -195,3 +195,25 @@ async def sincronizar(
         await session.flush()
 
     return inseridos, atualizados, inalterados
+
+
+async def imoveis_por_ids(session: AsyncSession, ids: Sequence[uuid.UUID]) -> tuple[Imovel, ...]:
+    """Os imoveis pedidos, NA ORDEM PEDIDA. Nao comita.
+
+    A ordem e o contrato, e nao um detalhe: quem chama e a apresentacao da
+    TEC-162, e a ordem que ela pede e a de score da busca. Devolver na ordem
+    do banco faria a ficha_1 ser um candidato qualquer, e o lead leria a pior
+    opcao primeiro sem que nada falhasse.
+
+    Id sem linha sai da lista em vez de virar `None`: imovel inativado entre
+    a busca e a apresentacao e caminho normal (D6 do desenho), e um `None` no
+    meio da tupla obrigaria todo chamador a filtrar.
+    """
+    if not ids:
+        return ()
+
+    encontrados = {
+        imovel.id: imovel
+        for imovel in (await session.scalars(select(Imovel).where(Imovel.id.in_(ids)))).all()
+    }
+    return tuple(encontrados[chave] for chave in ids if chave in encontrados)
