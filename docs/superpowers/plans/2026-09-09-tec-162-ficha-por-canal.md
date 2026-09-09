@@ -1008,35 +1008,51 @@ async def test_pergunta_no_turno_adia_as_fichas(
     assert await _kinds_reservados() == ["reply"]
 
 
-async def test_ficha_ja_reservada_nao_reentrega_e_as_outras_entram(
-    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+async def test_a_retentativa_nao_reentrega_nenhuma_ficha(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any
 ) -> None:
     """D9. A idempotencia por posicao: a retentativa nao duplica a ficha_1.
 
-    Sem os kinds fixos por posicao, a segunda tentativa mandaria a primeira
-    imagem de novo -- e o criterio de aceite da TEC-134 proibe resposta
-    duplicada.
+    Sem os kinds fixos por posicao, a segunda tentativa mandaria as imagens
+    de novo -- e o criterio de aceite da TEC-134 proibe resposta duplicada.
+
+    **Nao usa `rodar_turno`**, e a razao e o proprio contrato dele: ele semeia
+    uma entrada NOVA a cada chamada, entao dois `rodar_turno` dariam
+    `message_id` diferentes e a reserva nunca colidiria -- o teste passaria
+    sem provar nada. A idempotencia e por (message_id, kind), entao a mesma
+    Message tem de rodar duas vezes.
     """
+    from conftest import ModeradorFake, _entrada_do_lead  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import executar_turno
+
     ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
     classificador = _ClassificadorComCandidatos(
         [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
     )
     outbound = outbound_fake()
+    linha = await _entrada_do_lead(session)
 
-    # Reserva a ficha_1 a mao, simulando a tentativa anterior que ja entregou.
-    linha = (
-        await session.execute(select(Message).where(Message.role == MessageRole.LEAD))
-    ).scalars().first()
-    if linha is None:
-        # `rodar_turno` semeia a entrada; aqui precisamos dela ANTES do turno,
-        # entao o teste roda o turno uma vez e inspeciona a segunda.
-        pass
+    async def _turno() -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=ModeradorFake(),
+        )
 
-    primeiro = await rodar_turno(
-        session, classificador, outbound, resumidor_fake(), contador_fake()
-    )
-    assert primeiro == "respondido"
+    assert await _turno() == "respondido"
     assert len(outbound.entregues) == 3
+
+    # Segunda passada sobre a MESMA Message: as tres reservas ja existem.
+    segundo = await _turno()
+
+    assert len(outbound.entregues) == 3, "reentregou ficha que ja tinha reserva"
+    assert segundo == "reentrega_suprimida"
+    assert await _kinds_reservados() == sorted(KINDS_DAS_FICHAS)
 
 
 async def test_recusa_permanente_numa_ficha_nao_cala_as_outras(
@@ -1111,7 +1127,7 @@ async def test_imovel_sem_foto_sai_como_texto(
     assert "Apartamento AP-001" in entregue
 ```
 
-O teste `test_ficha_ja_reservada_nao_reentrega_e_as_outras_entram` está escrito com um bloco morto de propósito: **descubra na Step 2 se `rodar_turno` deixa a linha do lead acessível antes do turno.** Se não deixar, reescreva o teste para rodar `executar_turno` duas vezes sobre a MESMA `Message` (chamando `executar_turno` direto em vez de `rodar_turno`, com a linha semeada por `_entrada_do_lead`) e afirmar que a segunda execução entrega zero e mantém os três kinds. Não deixe o bloco morto no commit.
+**Sobre `test_a_retentativa_nao_reentrega_nenhuma_ficha`:** ele não usa `rodar_turno` de propósito, e o motivo está no docstring do teste. Se a asserção `segundo == "reentrega_suprimida"` falhar, leia o valor real antes de mudar o teste — o desvio da Step 5 faz o caminho de reentrega suprimida servir os dois casos, e um valor diferente aqui é informação sobre o código, não ruído a silenciar.
 
 - [ ] **Step 2: Rode para ver falhar**
 
@@ -1119,7 +1135,7 @@ O teste `test_ficha_ja_reservada_nao_reentrega_e_as_outras_entram` está escrito
 ./.venv/Scripts/python.exe -m pytest tests/integration/test_apresentacao_no_turno.py -v --tb=short
 ```
 
-Esperado: `ImportError: cannot import name 'KINDS_DAS_FICHAS'`. Resolva o pendente do teste de reentrega antes de seguir.
+Esperado: `ImportError: cannot import name 'KINDS_DAS_FICHAS'`.
 
 - [ ] **Step 3: Acrescente as constantes no topo de `turno.py`**
 
@@ -1192,6 +1208,15 @@ async def _apresentar(
 
         try:
             entrou = await outbound.send(message.id, KINDS_DAS_FICHAS[posicao], payload)
+        except EnvioForaDaJanela:
+            # Repropaga, e esta clausula tem de vir ANTES da de baixo:
+            # `EnvioForaDaJanela` HERDA de `EnvioRecusado` (port.py), entao um
+            # `except EnvioRecusado` sozinho engoliria a janela de 24h
+            # fechada. O turno devolveria "respondido" com zero entregas em
+            # vez de "expirado", e o alerta que observa janela fechada ficaria
+            # cego. Janela fechada torna a apresentacao inteira impossivel --
+            # nao e uma ficha ruim entre tres.
+            raise
         except EnvioRecusado as exc:
             # `error` pelo mesmo criterio do caminho de texto: o estado da
             # linha sera terminal e a visibilidade vem do nivel do log.
@@ -1483,4 +1508,9 @@ gh pr create --base main --title "feat(TEC-162): ficha estruturada por canal" --
 
 **Lacunas do desenho, cobertas ou declaradas:** L1 (conjunto misturado) fica declarada no comentário de `KINDS_DAS_FICHAS`, sem código. L2, L3 e L4 não geram tarefa — são consequências aceitas. L5 gera o critério de aceite da Task 8 Step 3.
 
-**Uma pendência conhecida, deliberada:** o `test_ficha_ja_reservada_nao_reentrega_e_as_outras_entram` da Task 5 depende de o `rodar_turno` do conftest expor a linha do lead antes do turno, e o plano manda descobrir isso na Step 2 e reescrever o teste em vez de fingir que já sabe. É a única coisa no plano que o implementador tem de resolver lendo o código.
+**Dois defeitos meus, achados no scan de pré-execução e corrigidos aqui:**
+
+- `_apresentar` capturava `EnvioRecusado` sem capturar `EnvioForaDaJanela` antes — e a segunda **herda** da primeira (`port.py`). A janela de 24h fechada seria engolida como "uma ficha ruim", o turno devolveria `"respondido"` com zero entregas em vez de `"expirado"`, e o alerta de janela fechada ficaria cego.
+- O teste de idempotência usava `rodar_turno` duas vezes. Ele semeia uma entrada nova a cada chamada, então os dois turnos teriam `message_id` diferentes, a reserva nunca colidiria, e o teste passaria sem provar nada. Agora roda `executar_turno` duas vezes sobre a mesma `Message`.
+
+**O código da Task 2 foi executado antes de entrar aqui** — 8/8 testes passam e o módulo passa `ruff format --check` como está escrito. As outras tarefas não foram executadas; os defeitos acima são a evidência de que vale ler o plano com desconfiança.
