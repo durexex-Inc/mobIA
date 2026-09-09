@@ -93,7 +93,7 @@ A ficha precisa de condomínio, foto e características, e nenhum dos três cheg
 
 Alargar o `Candidato` e o SELECT da busca resolveria o acesso, mas exigiria decidir se os campos novos entram em `_candidato_serializavel` — e entrar custa orçamento de prompt por um dado que o modelo não usa.
 
-O turno pega os três primeiros `imovel_id` e chama `imoveis_por_ids(session, ids)`, novo em [`catalogo/repositorio.py`](../../../src/mobia/domain/catalogo/repositorio.py) — o arquivo hoje só tem `sincronizar`, e leitura por id não existe em lugar nenhum. A função devolve na ordem dos ids pedidos, que é a ordem de score.
+O turno pega os três primeiros `imovel_id` e pede as fichas a `ferramenta_de_busca.fichas_do_catalogo`, que chama `imoveis_por_ids(session, ids)`, novo em [`catalogo/repositorio.py`](../../../src/mobia/domain/catalogo/repositorio.py) — o arquivo hoje só tem `sincronizar`, e leitura por id não existe em lugar nenhum. A função devolve na ordem dos ids pedidos, que é a ordem de score. A camada intermediária existe pela invariante de import descrita em Fronteiras, não por gosto.
 
 O contrato de `porta_de_busca` fica intocado, e a busca e o `Candidato` não mudam.
 
@@ -159,9 +159,17 @@ Os 520 imóveis do seed têm foto, então o caminho de texto da D13 seria invis�
 
 `test_tem_pelo_menos_500_imoveis` usa `>= 500`, então acrescentar linhas é seguro, e `test_base_simulada.py` ganha a asserção de que existe pelo menos um imóvel sem foto — no molde de `test_os_seis_tipos_aparecem_na_base`, que a 262 escreveu.
 
+### D16 — A linha do tempo grava as três legendas concatenadas
+
+`executar_turno` termina em `recorder.record_agent_message(text=texto, ...)` ([`turno.py:688-708`](../../../src/mobia/domain/agente/turno.py#L688)), e esse texto volta no contexto do turno seguinte. Num turno de três fichas, o que se grava são **as três legendas concatenadas** — o que o lead de fato recebeu, sem formato inventado.
+
+Gravar só a prosa foi recusado: a linha do tempo omitiria o que o lead viu, e o turno seguinte poderia reapresentar os mesmos três imóveis por não saber que já os mostrou. O docstring de `executar_turno` é enfático sobre memória inventada contaminar tudo o que vem depois; memória que omite é o espelho disso. Gravar prosa mais uma linha compacta com os códigos (`"[apresentados: AP-1004, ...]"`) foi recusado por inventar um formato que entra no contexto como se o agente o tivesse dito ao lead.
+
+**Custo medido:** três legendas dão ~450 caracteres, ~112 tokens pela estimativa `len//4` de [`context/montagem.py:227`](../../../src/mobia/domain/context/montagem.py#L227), contra ~50 de um turno de texto. Não estoura nada — `contexto_teto_de_tokens` é 12000 com `contexto_headroom_de_tokens` de 1060, e `_truncar_ate_caber` derruba literais pela metade até caber, com piso de 20 (`contexto_literais_minimas`). O preço se paga em janela de memória mais curta, não em estouro.
+
 ## O fluxo do turno de apresentação
 
-1. `gerada.candidatos` não-vazio **e** `gerada.perguntou` vazio (D4).
+1. `gerada.candidatos` não-vazio **e** `gerada.perguntou` vazio **e** não estamos desambiguando (D4). A terceira condição é a mesma regra da segunda: no caminho de desambiguação o texto entregue é a pergunta do desambiguador, e D4 diz que pergunta adia as fichas. `gerada.perguntou` não a cobre porque fala da chamada 1, que foi descartada.
 2. Os três primeiros `imovel_id`, na ordem de score → `imoveis_por_ids` (D6).
 3. Menos de três voltarem: apresenta o que voltou.
 4. A moderação de saída roda sobre a prosa, e **só** sobre ela — a ficha é dado do banco montado por código, e não tem texto de modelo dentro.
@@ -176,13 +184,15 @@ Com `AP-1004` do seed (`preco_venda` 516464.30, condomínio 550, `churrasqueira|
 
 ```
 Apartamento em Lagoa da Conceicao
-Lagoa da Conceicao · R$ 516.464
-4 quartos · 2 vagas · 54 m2
+Lagoa da Conceicao - R$ 516.464
+4 quartos - 2 vagas - 54 m2
 Condominio R$ 550
 Destaque: churrasqueira e mobiliado
 ```
 
 Cerca de 140 caracteres, folga confortável dentro dos 600.
+
+**Separador ASCII, e `m2` e não `m²`, pelo mesmo motivo da D12.** A disciplina do repo na fala do agente é ASCII puro, e a `descricao` gerada do seed já escreve *"Terreno de 666 m2"*. Um `·` bonito no meio de uma ficha sem acento seria inconsistência escolhida.
 
 **Destaque são as duas primeiras características, na ordem do catálogo** — ordem armazenada e não ranking; quem quiser priorizar muda o CSV. Duas e não quatro porque cinco linhas já é o limite do que se lê numa legenda.
 
@@ -190,9 +200,13 @@ A redundância título/bairro é do título gerado do seed, não do formato, e n
 
 ## Fronteiras
 
-**`domain/agente/apresentacao.py`** (novo, puro, sem I/O): `Ficha` frozen, `fichas_de`, `legenda_de(ficha, prefixo=None)` e o formatador de reais (D11). Testável sem banco, sem chave e sem canal. Não vai para `turno.py`, que já tem 42,5K.
+**A invariante que decide o desenho dos módulos.** [`ferramenta_de_busca.py:3`](../../../src/mobia/domain/agente/ferramenta_de_busca.py#L3) declara: *"Este e o unico arquivo em que `domain/agente` toca `domain/catalogo`, e o acoplamento fica aqui de proposito: o agente consome o catalogo, o catalogo nao sabe que existe agente."* Um `apresentacao.py` que importasse `Imovel` a quebraria, e `turno.py` chamando `imoveis_por_ids` direto também. A rebusca da D6 fica, então, atrás do arquivo que já é a fronteira.
 
-**`domain/catalogo/repositorio.py`**: ganha `imoveis_por_ids` (D6).
+**`domain/agente/apresentacao.py`** (novo, puro, sem I/O e **sem nenhum import de `domain/catalogo`**): `Ficha` frozen, `legenda_de(ficha, prefixo=None)` e o formatador de reais (D11). Testável sem banco, sem chave e sem canal. Não vai para `turno.py`, que já tem 42,5K.
+
+**`domain/agente/ferramenta_de_busca.py`**: ganha `fichas_do_catalogo(session_factory, *, ids, precos)`, que chama o repositório e monta as `Ficha`. É a única peça que vê `Imovel` e `Ficha` ao mesmo tempo, e é o arquivo cujo docstring já assume esse papel.
+
+**`domain/catalogo/repositorio.py`**: ganha `imoveis_por_ids` (D6). O catálogo continua sem saber que existe agente.
 
 **`domain/outbound/whatsapp.py`**: ganha o ramo de `tipo` (D8).
 
@@ -225,6 +239,8 @@ Integração:
 - `ficha_1` já em `outbound_dispatches` vira no-op e as outras duas entram (D9);
 - `EnvioRecusado` na `ficha_2` não impede a `ficha_3` (D10);
 - imóvel inativado entre a busca e a rebusca apresenta 2 (D6).
+
+**`OutboundFake` em `tests/conftest.py` tem de aceitar payload de imagem.** Hoje `_deliver` faz `self.entregues.append(payload["texto"])` ([`conftest.py:260-263`](../../../tests/conftest.py#L260)), e o primeiro payload de imagem levanta `KeyError` — dentro do duble, num traceback que aponta para o conftest e não para a card. É a primeira coisa a consertar, antes de qualquer teste de integração da apresentação.
 
 **Nenhuma tabela nova**, então `TABELAS` em `tests/conftest.py` não cresce e não há `TRUNCATE ... CASCADE` adicional por teste.
 
