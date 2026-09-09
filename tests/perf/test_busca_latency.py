@@ -13,7 +13,9 @@ provedor.
 
 ## Evidencia medida
 
-(preencher na Task 3, com data e maquina)
+- 2026-09-09, maquina de desenvolvimento Windows rodando Postgres via docker
+  compose: p50=68.9ms p95=144.9ms p99=255.8ms com 10.000 imoveis e
+  `lists = 1`. Passa o teto de 400 ms, com cerca de 2.8x de margem.
 """
 
 import random
