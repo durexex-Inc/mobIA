@@ -68,9 +68,16 @@ async def test_imovel_sem_embedding_ainda_e_candidato(session: Any) -> None:
     """Imovel indexado e imovel nao indexado convivem no mesmo resultado.
 
     A degradacao da RNF-32 nao e so "a consulta sem vetor funciona" -- e
-    tambem "a linha sem vetor nao some da busca". Sem esta assercao, um
-    INNER JOIN acidental no futuro passaria despercebido: o outro teste
-    continuaria verde porque nenhum imovel dele tem embedding.
+    tambem "a linha sem vetor nao some da busca". A consulta de hoje e um
+    SELECT de tabela unica, sem join nenhum -- mas a `0017` ja nomeia o
+    mecanismo concreto que quebraria isto: uma consulta em dois estagios, que
+    pre-filtra por ANN antes de reordenar os sobreviventes pelo score
+    computado. Um pre-filtro ANN so acha linha que TEM `embedding` -- e
+    dropa toda linha com `embedding IS NULL`, exatamente o candidato que esta
+    assercao garante que nao suma. Sem esta assercao, o dia em que alguem
+    fizer essa migracao (ver a nota da `0017` sobre o indice ser custo de
+    escrita sem retorno de leitura hoje) passaria despercebido ate um imovel
+    sem embedding sumir da busca em producao.
     """
     sem_vetor = await _imovel(session, "AP-001")
     com_vetor = await _imovel(session, "AP-002", embedding=[0.1] * 1536)

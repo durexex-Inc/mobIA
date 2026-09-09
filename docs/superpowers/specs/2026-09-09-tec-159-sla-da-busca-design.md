@@ -38,6 +38,8 @@ Mudar o índice sem medir repetiria exatamente o erro que a `0017` teve o cuidad
 
 **É possível que o SLA já passe.** Varredura sequencial de 10.000 vetores de 1536 dimensões são ~15 milhões de operações de ponto flutuante por consulta, e pgvector pode muito bem resolver isso bem abaixo de 400 ms. Se passar, a entrega é a evidência mais a atualização da `0017` — o número medido no lugar da estimativa.
 
+**Emenda (revisão de fim de branch, 2026-09-09): a estimativa acima descrevia UMA forma de consulta, e o benchmark original só mediu a outra.** Toda consulta do benchmark filtrava por bairro, e `ix_imoveis_bairro_busca` reduz o candidato a uma fatia de 75 a 500 linhas — nunca os 10.000 vetores que este parágrafo estima. `regioes=()` (sem filtro de região) é forma legal e comum do filtro, e é ela que paga o custo pleno da varredura. O benchmark corrigido mede os dois: grupo "com bairro" (o formato do Gherkin, candidato limitado pelo índice de bairro) e grupo "sem bairro" (o candidato desta estimativa, os 10.000 vetores inteiros). Os dois números — e se cada um respeita o teto de 400 ms — estão no docstring de `tests/perf/test_busca_latency.py` e na nota correspondente da `0017`.
+
 Se reprovar, a mesma card sobe `lists` com `REINDEX`, e aí a troca recall-versus-latência passa a ter número dos dois lados.
 
 ### D2 — Vetores clusterizados sintéticos, não uniformes

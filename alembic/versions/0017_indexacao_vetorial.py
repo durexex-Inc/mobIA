@@ -28,28 +28,47 @@ p95 da busca ficou em 144.9 ms contra o teto de 400 ms da RNF-03 -- cerca de
 conservadora na direcao: a lista unica ainda resolve neste volume, e com
 folga, nao no limite.
 
-**Mas a revisao de codigo da mesma card achou algo que muda o que fazer a
-seguir, e que a frase acima nao previa.** O `ORDER BY` de `buscar()` ordena
-por um score computado, `0.6 * similaridade + 0.4 * aderencia`
-(`src/mobia/domain/catalogo/busca.py:243-250,279`), e nao pela distancia de
-cosseno pura. O caminho rapido do IVFFlat so engata em
-`ORDER BY <distancia> LIMIT n`; com o score computado no meio, o planner
-provavelmente calcula a distancia de cosseno para cada linha que sobrevive
-ao WHERE e so depois ordena. Isso nao invalida a medicao acima -- este
-paragrafo ja dizia que `lists = 1` degenera para varredura sequencial, entao
-o piso de custo e o mesmo com ou sem o indice, e o benchmark mede fielmente
-se esse caminho de custo pleno cabe no orcamento -- mas poe em duvida a
-prescricao do paragrafo anterior: se o caminho ANN nunca engata por causa do
-`ORDER BY` computado, subir `lists` sozinho pode nao ajudar em volume
-nenhum, e o remedio de verdade, quando o catalogo crescer, seria diferente
-em tipo -- por exemplo uma consulta em dois estagios, que usa o indice so
-para um pre-filtro ANN e reordena os sobreviventes pelo score computado.
+**Mas a revisao de codigo da mesma card fechou o que este paragrafo deixava
+em aberto -- e a resposta nao precisava de `EXPLAIN ANALYZE`, so de
+leitura.** Ha DOIS bloqueios estruturais independentes para o caminho ANN
+do IVFFlat na unica consulta que existe sobre `embedding`, e qualquer um dos
+dois ja basta sozinho.
 
-Isto fica registrado como pergunta aberta, nao como conclusao: o que
-resolveria e instrumentar o plano de execucao (`EXPLAIN ANALYZE`) da consulta
-de `buscar()` e ver se o indice aparece. `tests/perf/test_busca_latency.py` e
-o comando que responde a pergunta de orcamento de novo, no proximo volume que
-preocupar.
+Primeiro: o caminho rapido do IVFFlat so engata em
+`ORDER BY <coluna> <=> <constante> LIMIT n`. `buscar()` ordena por um score
+computado, `round(cast(0.6 * similaridade + 0.4 * aderencia, numeric), 3)`
+(`src/mobia/domain/catalogo/busca.py:243-259`) -- ja nao e a forma que o
+indice reconhece, sem precisar de plano nenhum para saber disso.
+
+Segundo, e independente do primeiro: a lista de colunas do SELECT carrega
+`func.count().over()` sem `PARTITION BY` (`busca.py:275`). Uma window
+function sem particao forca o Postgres a materializar e agregar (`WindowAgg`)
+o conjunto inteiro que sobrevive ao WHERE, ANTES do `Sort` e do `Limit` --
+entao nao ha `LIMIT` nenhum para um scan ordenado por indice se aproveitar,
+mesmo se o `ORDER BY` acima fosse a distancia de cosseno pura.
+
+`grep -rn "cosine_distance\|<=>" src/` devolve exatamente um resultado: este
+mesmo score, dentro de `buscar()`. `ix_imoveis_embedding` nao tem outro
+consumidor no codigo.
+
+**A consequencia e direta: hoje este indice e custo de escrita sem retorno
+de leitura.** Toda insercao e atualizacao de `embedding` paga o custo de
+manter o IVFFlat treinado, e a unica consulta que poderia usa-lo
+estruturalmente nao consegue, por dois motivos que nao dependem de volume.
+Isso nao e argumento contra o indice existir -- o paragrafo original desta
+migration ja o justifica por conformidade com o SRS, nunca por ganho de
+leitura -- mas e argumento contra ler o benchmark como validacao do indice:
+`tests/perf/test_busca_latency.py` mede o piso de custo de uma varredura
+sequencial, que e o que a consulta faz de qualquer jeito, com ou sem
+`ix_imoveis_embedding` -- e o grupo "sem bairro" daquele benchmark e quem
+mede esse piso sobre os 10.000 vetores inteiros; o grupo "com bairro" mede
+um caminho mais barato, filtrado por `ix_imoveis_bairro_busca` antes de
+chegar no vetor.
+
+Revisitar o indice e o formato da consulta JUNTOS -- por exemplo a consulta
+em dois estagios cogitada acima, que pre-filtra por ANN e reordena os
+sobreviventes pelo score computado -- e trabalho de card propria, nao algo
+que esta nota resolve.
 
 As tres colunas sao nulaveis porque hash nulo E a definicao de pendencia: e
 o que faz o catalogo ja importado entrar na fila sem caminho de backfill.
