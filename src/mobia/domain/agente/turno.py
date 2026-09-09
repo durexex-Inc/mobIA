@@ -577,8 +577,14 @@ async def executar_turno(
             # mesmo caso do `not entregue` do caminho de texto -- reentrega de
             # uma tentativa anterior --, e o desfecho tem de ser o mesmo.
             if not entregue and suprimidas == 0:
-                # Todas foram recusadas permanentemente. Cada uma ja logou
-                # `error` em `_apresentar`.
+                # Duas rotas chegam aqui, e as duas ja logaram em
+                # `_apresentar`: ou todas as fichas foram recusadas
+                # permanentemente (um `apresentacao.ficha_recusada` por
+                # ficha), ou nenhuma ficha existiu -- `imoveis_por_ids`
+                # derrubou todos os ids e o loop nunca rodou
+                # (`apresentacao.fichas_sumiram_do_catalogo`). A segunda e a
+                # que engana: sem aquele log ela seria um turno inteiramente
+                # mudo, sem uma linha para quem opera.
                 return "sem_resposta"
         else:
             entregue = await outbound.send(
@@ -906,11 +912,50 @@ async def _apresentar(
     rejeitando a URL da midia, e uma foto ruim nao pode apagar dois imoveis
     bons (D10). `EnvioForaDaJanela` propaga, porque nesse caso a apresentacao
     inteira e impossivel e o desfecho e o mesmo de hoje.
+
+    **Custo conhecido, e nao acidente: entrega parcial seguida de falha
+    retentavel perde o registro do que ja saiu.** `EnvioRetentavel` nao e
+    capturado aqui nem la fora, entao ele passa por cima de
+    `record_agent_message`. Se a ficha 1 entregou e a 2 tomou um 5xx, a
+    reserva da 2 e liberada, a linha vira FAILED, o sweeper roda o turno
+    inteiro de novo, a posicao 1 e suprimida pela reserva que sobreviveu -- e
+    a legenda que o lead viu nunca e gravada na linha do tempo, por nenhuma
+    das duas tentativas. E exatamente o dano que a D16 existe para evitar,
+    entrando pela porta da falha parcial; a consequencia pratica e o turno
+    seguinte poder reapresentar aqueles imoveis. `EnvioForaDaJanela` depois de
+    uma ficha ter entrado abre o mesmo buraco.
+
+    Gravar as parciais antes de deixar a excecao sair mudaria o que um turno
+    FAILED escreve na linha do tempo, no caminho de entrega que TODA conversa
+    usa, e nenhum teste deste repo consegue reproduzir um 5xx no meio da
+    apresentacao. A correcao de verdade e persistir o conjunto escolhido --
+    a `Recomendacao` da TEC-163. Ate la, isto e custo herdado e nao surpresa.
     """
     escolhidos = candidatos[:MAX_IMOVEIS_POR_TURNO]
     ids = [uuid.UUID(c["imovel_id"]) for c in escolhidos]
     precos = {uuid.UUID(c["imovel_id"]): int(c["preco_centavos"]) for c in escolhidos}
     fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)
+
+    if len(fichas) < len(escolhidos):
+        # `imoveis_por_ids` derruba id sem linha, e a D6 chama isso de caminho
+        # normal: o candidato veio do indice vetorial e o imovel pode ter saido
+        # do catalogo entre a busca e agora. O que NAO e normal e isso passar
+        # calado -- quando nenhuma ficha sobra, o loop abaixo nao roda, nenhum
+        # `ficha_recusada` sai, e o turno inteiro vira silencio com a prosa ja
+        # moderada jogada fora. Sem esta linha ninguem que opera consegue ver
+        # isso acontecer.
+        #
+        # `error` quando sobrou ZERO, porque ai o lead nao recebe nada e nao ha
+        # segunda tentativa; `warning` quando sobrou alguma, porque o lead
+        # ainda recebe o que restou.
+        registrar = log.error if not fichas else log.warning
+        registrar(
+            "apresentacao.fichas_sumiram_do_catalogo",
+            channel=message.channel,
+            message_id=str(message.id),
+            pedidas=len(escolhidos),
+            encontradas=len(fichas),
+        )
 
     legendas: list[str] = []
     entregues = suprimidas = 0
@@ -936,10 +981,13 @@ async def _apresentar(
             # Repropaga, e esta clausula tem de vir ANTES da de baixo:
             # `EnvioForaDaJanela` HERDA de `EnvioRecusado` (port.py), entao um
             # `except EnvioRecusado` sozinho engoliria a janela de 24h
-            # fechada. O turno devolveria "respondido" com zero entregas em
-            # vez de "expirado", e o alerta que observa janela fechada ficaria
-            # cego. Janela fechada torna a apresentacao inteira impossivel --
-            # nao e uma ficha ruim entre tres.
+            # fechada: o turno devolveria "sem_resposta" (se todas as tres
+            # batessem na janela) ou "respondido" com as fichas restantes (se
+            # a janela fechasse no meio) em vez de "expirado", e o alerta que
+            # observa janela fechada ficaria cego -- alem de o desfecho passar
+            # a mentir sobre por que o lead nao recebeu. Janela fechada torna
+            # a apresentacao inteira impossivel; nao e uma ficha ruim entre
+            # tres.
             raise
         except EnvioRecusado as exc:
             # `error` pelo mesmo criterio do caminho de texto: o estado da

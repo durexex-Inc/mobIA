@@ -4,24 +4,32 @@ Basename distinto de tudo em `tests/unit/`, e rima com
 `test_busca_no_turno.py`.
 """
 
+import json
 import uuid
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
 
-from mobia.domain.agente.schemas import Extracao, Intencao, RespostaDoAgente
+from mobia.domain.agente.schemas import (
+    LIMIAR_DE_DESAMBIGUACAO,
+    Extracao,
+    Intencao,
+    PerguntaDeDesambiguacao,
+    RespostaDoAgente,
+)
 from mobia.domain.agente.turno import KINDS_DAS_FICHAS
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.montagem import ContextoMontado
 from mobia.domain.messages.enums import MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.outbound.models import OutboundDispatch
-from mobia.domain.outbound.port import EnvioRecusado
+from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado
 from mobia.infra.crypto import aad_de, decrypt
 from mobia.infra.db import get_sessionmaker
 
 PROSA = "Achei tres opcoes que encaixam no que voce falou."
+PERGUNTA_DO_DESAMBIGUADOR = "Voce procura para morar ou para investir?"
 
 
 async def _imovel(session: Any, codigo: str, preco: int, **sobrescritas: object) -> uuid.UUID:
@@ -65,14 +73,20 @@ class _ClassificadorComCandidatos:
     sairam livre da ordenacao por score.
     """
 
-    def __init__(self, candidatos: list[dict[str, Any]], perguntou: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        candidatos: list[dict[str, Any]],
+        perguntou: tuple[str, ...] = (),
+        confianca: Decimal = Decimal("0.95"),
+    ) -> None:
         self.candidatos = candidatos
         self.perguntou = perguntou
+        self.confianca = confianca
 
     async def classificar(self, contexto: ContextoMontado, *, porta=None) -> RespostaDoAgente:
         return RespostaDoAgente(
             intencao=Intencao.COMPRA,
-            confianca=Decimal("0.95"),
+            confianca=self.confianca,
             resposta=PROSA,
             modelo="claude-opus-5",
             tokens_in=500,
@@ -83,8 +97,16 @@ class _ClassificadorComCandidatos:
             candidatos=self.candidatos,
         )
 
-    async def desambiguar(self, contexto: ContextoMontado):
-        raise AssertionError("confianca alta o bastante para nao desambiguar")
+    async def desambiguar(self, contexto: ContextoMontado) -> PerguntaDeDesambiguacao:
+        if self.confianca >= LIMIAR_DE_DESAMBIGUACAO:
+            raise AssertionError("confianca alta o bastante para nao desambiguar")
+        return PerguntaDeDesambiguacao(
+            texto=PERGUNTA_DO_DESAMBIGUADOR,
+            modelo="claude-opus-5",
+            tokens_in=200,
+            tokens_out=30,
+            latency_ms=40,
+        )
 
 
 def _candidato(identificador: uuid.UUID, preco: int) -> dict[str, Any]:
@@ -177,6 +199,33 @@ async def test_pergunta_no_turno_adia_as_fichas(
     assert await _kinds_reservados() == ["reply"]
 
 
+async def test_desambiguacao_com_candidatos_nao_manda_ficha(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """D4, o terceiro conjunto do gatilho -- o que nenhum outro teste cobre.
+
+    Aqui `gerada.perguntou` esta VAZIO e os candidatos existem, entao sem o
+    `not desambiguando` o turno apresentaria fichas. Mas o texto que sai e a
+    pergunta do desambiguador, e `gerada.perguntou` fala da chamada 1, que foi
+    descartada -- mandar tres fotos junto com "morar ou investir?" e a mesma
+    parede que a RN-04.2 fecha. Sem este teste, apagar `not desambiguando`
+    passa nos outros sete.
+    """
+    identificador = await _imovel(session, "AP-001", 50000000)
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(identificador, 50000000)], confianca=Decimal("0.4")
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [PERGUNTA_DO_DESAMBIGUADOR]
+    assert await _kinds_reservados() == ["reply"]
+
+
 async def test_a_retentativa_nao_reentrega_nenhuma_ficha(
     session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any
 ) -> None:
@@ -255,6 +304,91 @@ async def test_recusa_permanente_numa_ficha_nao_cala_as_outras(
 
     assert resultado == "respondido"
     assert len(outbound.entregues) == 2
+
+
+async def test_janela_fechada_na_primeira_ficha_expira_o_turno(
+    session: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """A ordem das duas clausulas `except` em `_apresentar` e carregada.
+
+    `EnvioForaDaJanela` HERDA de `EnvioRecusado`, entao inverter as clausulas
+    faria a janela de 24h fechada cair no ramo da D10: o turno seguiria e
+    devolveria "sem_resposta" -- ou "respondido" com as fichas restantes, se a
+    janela fechasse no meio -- em vez de "expirado", e o alerta que observa
+    janela fechada ficaria cego. Sem este teste a inversao passa em todos os
+    outros: nada mais aqui levanta `EnvioForaDaJanela`.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
+    )
+
+    class _JanelaFechada(OutboundFake):
+        async def _deliver(self, message_id, kind, payload) -> None:
+            if kind == KINDS_DAS_FICHAS[0]:
+                raise EnvioForaDaJanela("re-engagement window closed")
+            await super()._deliver(message_id, kind, payload)
+
+    outbound = _JanelaFechada(get_sessionmaker())
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "expirado"
+    assert outbound.entregues == [], "janela fechada interrompe a apresentacao inteira"
+
+
+def _eventos_de_log(caplog: Any, evento: str) -> list[tuple[str, dict[str, Any]]]:
+    """(nivel, corpo) de cada registro JSON do structlog que carrega `evento`.
+
+    Mesmo molde de `eventos_de_log` em `tests/features/test_dedup_por_message_id.py`,
+    com o nivel junto porque aqui a asserta e sobre ele.
+    """
+    encontrados = []
+    for registro in caplog.records:
+        try:
+            dados = json.loads(registro.getMessage())
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if dados.get("event") == evento:
+            encontrados.append((registro.levelname, dados))
+    return encontrados
+
+
+async def test_candidato_que_sumiu_do_catalogo_nao_vira_turno_mudo_sem_log(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+    caplog: Any,
+) -> None:
+    """D6: `imoveis_por_ids` derruba id sem linha, e isso e caminho normal.
+
+    Quando derruba TODOS, o laco de `_apresentar` nunca roda: zero entrega,
+    zero `ficha_recusada`, e a prosa ja moderada jogada fora. O turno e
+    silencio para o lead, e sem o log de `fichas_sumiram_do_catalogo` seria
+    silencio tambem para quem opera -- por isso a asserta e sobre o evento, e
+    nao so sobre o desfecho.
+    """
+    fantasma = uuid.uuid4()  # nenhuma linha em `imoveis` com este id
+    classificador = _ClassificadorComCandidatos([_candidato(fantasma, 50000000)])
+    outbound = outbound_fake()
+
+    with caplog.at_level("WARNING"):
+        resultado = await rodar_turno(
+            session, classificador, outbound, resumidor_fake(), contador_fake()
+        )
+
+    assert resultado == "sem_resposta"
+    assert outbound.entregues == []
+    assert await _kinds_reservados() == []
+    ((nivel, evento),) = _eventos_de_log(caplog, "apresentacao.fichas_sumiram_do_catalogo")
+    assert nivel == "ERROR", "zero ficha e turno mudo para o lead: tem de acordar alguem"
+    assert (evento["pedidas"], evento["encontradas"]) == (1, 0)
 
 
 async def test_a_linha_do_tempo_grava_as_tres_legendas(

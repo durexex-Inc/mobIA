@@ -53,10 +53,24 @@ class OutboundPort(Protocol):
     - `EnvioForaDaJanela` -- o canal nao aceita mais mensagem livre nesta
       conversa. Turno `expirado`, PROCESSED, aviso no log. Expirar nao e
       falhar, e retentar nunca entregaria.
-    - `EnvioRecusado` -- 4xx permanente. Turno `sem_resposta`, PROCESSED, log
-      em `error` (e o alerta que observa isso). FAILED aqui faria o sweeper
-      rodar o turno inteiro de novo, chamada paga ao modelo inclusa, por um
-      payload que nunca sera aceito.
+    - `EnvioRecusado` -- 4xx permanente. No caminho de texto unico: turno
+      `sem_resposta`, PROCESSED, log `outbound.recusado_permanente` em `error`
+      (e o alerta que observa isso). FAILED aqui faria o sweeper rodar o turno
+      inteiro de novo, chamada paga ao modelo inclusa, por um payload que
+      nunca sera aceito.
+      **Na apresentacao de fichas (TEC-162, D10) o desfecho e outro:** a
+      recusa de UMA ficha nao interrompe as outras. Ela loga
+      `apresentacao.ficha_recusada` em `error`, com o `kind` da posicao, e o
+      turno segue -- devolvendo `respondido` se qualquer outra ficha entrou. O
+      `sem_resposta` so volta quando as tres foram recusadas. A divergencia e
+      deliberada: a recusa provavel ali e a Meta rejeitando a URL da foto, e
+      uma foto ruim nao pode apagar dois imoveis bons.
+      Os dois nomes de evento importam por igual para quem configura alerta:
+      **nao existe regra de alerta neste repositorio** -- ela vive no
+      monitoramento externo, que casa por nome --, e este bullet e o unico
+      lugar da arvore que diz quais nomes observar. Alertar so em
+      `outbound.recusado_permanente` deixa uma apresentacao inteiramente
+      recusada passar em silencio.
     - Qualquer outra excecao propaga crua: a reserva **fica**, a mensagem vira
       FAILED e a retentativa cai na supressao de reentrega. Levantar algo fora
       destes tres tipos e escolher esse desfecho sem querer.
