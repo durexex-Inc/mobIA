@@ -38,13 +38,10 @@ dividem o mesmo pool do worker ARQ: `process_message` nao chama o provedor
 para o embedding do CATALOGO, e mesmo assim disputa vaga com quem chama. O
 lock consultivo abaixo e o que cobre a segunda metade.
 
-A ressalva na frase acima importa desde a TEC-158, e vale ser exata: o
-`process_message` de hoje nao chama provedor de embedding nenhum -- a busca
-hibrida existe, mas ainda nao esta ligada ao turno, que e a TEC-161. No dia em
-que estiver, ele passa a DISPUTAR vaga e a CHAMAR o provedor dentro da mesma
-vaga. O argumento de capacidade fica mais forte, e nao mais fraco; o que deixou
-de valer e so a frase "nao chama o provedor", que era o que sustentava a
-assimetria entre os dois jobs.
+Desde a TEC-265 o `process_message` CHAMA o provedor de embedding -- a busca
+hibrida embeda a consulta do lead dentro do turno, por tool call. O que o
+lock consultivo cobre fica mais forte, e nao mais fraco: os dois jobs
+dividem o pool do worker ARQ, e agora os dois falam com o provedor.
 """
 
 import uuid

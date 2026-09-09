@@ -19,6 +19,7 @@ from mobia.domain.agente.classificador import (
     RespostaInvalida,
     _lista_de_nomes,
 )
+from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.montagem import ContextoMontado
 
@@ -55,11 +56,22 @@ def _resposta_falsa(
     stop_reason: str = "end_turn",
     tokens_in: int = 4000,
     tokens_out: int = 200,
+    cache_write: int = 0,
+    cache_read: int = 0,
 ) -> SimpleNamespace:
+    # Os quatro campos de `usage`, nao so os dois de entrada/saida: `_chamar`
+    # le e sobrescreve os quatro em todo turno (TEC-265), e um duble que so
+    # tivesse dois quebraria com AttributeError na primeira chamada real de
+    # verdade que passasse por ele.
     blocos = [_bloco_texto(texto)] if texto else []
     return SimpleNamespace(
         content=blocos,
-        usage=SimpleNamespace(input_tokens=tokens_in, output_tokens=tokens_out),
+        usage=SimpleNamespace(
+            input_tokens=tokens_in,
+            output_tokens=tokens_out,
+            cache_creation_input_tokens=cache_write,
+            cache_read_input_tokens=cache_read,
+        ),
         stop_reason=stop_reason,
     )
 
@@ -822,3 +834,270 @@ def test_as_regras_de_anotacao_do_corpus_estao_no_prompt() -> None:
         "marco temporal explicito",
     ):
         assert regra in SISTEMA_DO_AGENTE, f"regra ausente do prompt: {regra!r}"
+
+
+# --- TEC-265: o laco de tool use em _chamar --------------------------------
+
+
+def _bloco_tool_use(entrada: dict[str, object]) -> SimpleNamespace:
+    return SimpleNamespace(type="tool_use", id="toolu_01", name="buscar_imoveis", input=entrada)
+
+
+def _resposta_tool_use(entrada: dict[str, object]) -> SimpleNamespace:
+    # Os quatro campos de `usage`, pelo mesmo motivo de `_resposta_falsa`:
+    # `_chamar` le os quatro em toda iteracao do laco, tool_use incluido.
+    return SimpleNamespace(
+        content=[_bloco_tool_use(entrada)],
+        usage=SimpleNamespace(
+            input_tokens=4000,
+            output_tokens=200,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        ),
+        stop_reason="tool_use",
+    )
+
+
+def _instalar_sequencia(
+    monkeypatch: pytest.MonkeyPatch, respostas: list[SimpleNamespace]
+) -> _ClienteFalso:
+    """Um duble que devolve uma resposta por chamada, na ordem dada.
+
+    O `_ClienteFalso` de hoje tem `return_value` e serviria para uma chamada
+    so; o laco de tool use faz duas. `_ClienteFalso(respostas[0])` constroi
+    esse `AsyncMock` de uma chamada so e a linha seguinte o descarta de
+    proposito, trocando por um `side_effect` com a sequencia inteira --
+    reaproveitar `_ClienteFalso` (em vez de montar o `SimpleNamespace` aqui de
+    novo) e o que evita uma segunda copia da classe so para este helper.
+    """
+    cliente = _ClienteFalso(respostas[0])
+    cliente.messages = SimpleNamespace(create=AsyncMock(side_effect=respostas))
+    monkeypatch.setattr(classificador_mod, "get_client", lambda: cliente)
+    return cliente
+
+
+async def test_classificar_executa_a_ferramenta_e_chama_de_novo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_json()]
+    )
+    chamadas: list[dict[str, object]] = []
+
+    async def porta(entrada: dict[str, object]) -> dict[str, object]:
+        chamadas.append(entrada)
+        return {"candidatos": [{"imovel_id": "abc", "preco_centavos": 100}], "total_candidatos": 1}
+
+    resposta = await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert chamadas == [{"operacao": "VENDA"}]
+    assert cliente.messages.create.await_count == 2
+    assert resposta.candidatos == [{"imovel_id": "abc", "preco_centavos": 100}]
+
+
+async def test_a_segunda_chamada_leva_o_tool_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_json()]
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"candidatos": [], "total_candidatos": 0}
+
+    await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    segunda = cliente.messages.create.await_args_list[1].kwargs
+    blocos = segunda["messages"][-1]["content"]
+    assert blocos[0]["type"] == "tool_result"
+    assert blocos[0]["tool_use_id"] == "toolu_01"
+    assert blocos[0].get("is_error") is not True
+
+
+async def test_erro_da_porta_vira_tool_result_com_is_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D9: o turno nao cai por causa de uma busca."""
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "COMPRA"}), _resposta_json()]
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"erro": "operacao invalida: use VENDA ou ALUGUEL"}
+
+    resposta = await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    blocos = cliente.messages.create.await_args_list[1].kwargs["messages"][-1]["content"]
+    assert blocos[0]["is_error"] is True
+    assert resposta.candidatos == []
+
+
+async def test_erro_da_porta_seguido_de_novo_tool_use_vira_laco_excedido(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Achado 4 do fix-wave: o round-trip realista depois de um erro, nao o
+    conveniente.
+
+    `test_erro_da_porta_vira_tool_result_com_is_error` (acima) hardcoda a
+    SEGUNDA resposta como JSON valido -- ou seja, testa o modelo aceitando a
+    falha e respondendo. O caminho mais provavel e o oposto: o `tool_result`
+    da tentativa 1 chega com `is_error: true`, dizendo ao modelo que a busca
+    dele falhou, e a reacao mais comum a "sua ferramenta falhou" e tentar de
+    novo -- um segundo `tool_use`, nao uma resposta final.
+
+    Este teste documenta essa consequencia, sem alegar que ela e desejavel:
+    D4 nao atende o segundo `tool_use` (o teto e um round-trip por turno), e
+    o resultado e duas chamadas pagas ao modelo sem nenhuma resposta ao lead
+    -- o turno cai para o texto conservador (`turno.py`,
+    `TEXTO_DA_BUSCA_INCONCLUSIVA`) exatamente pela D9/D4, e a promessa de
+    D9 ("o modelo responde sem imovel e o turno nao cai") so vale quando o
+    modelo NAO insiste depois do erro.
+    """
+    cliente = _instalar_sequencia(
+        monkeypatch,
+        [
+            _resposta_tool_use({"operacao": "COMPRA"}),
+            _resposta_tool_use({"operacao": "VENDA"}),
+        ],
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"erro": "operacao invalida: use VENDA ou ALUGUEL"}
+
+    with pytest.raises(classificador_mod.LacoDeBuscaExcedido):
+        await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert cliente.messages.create.await_count == 2
+
+
+async def test_um_segundo_tool_use_nao_e_atendido(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D4: o teto e um round-trip por turno.
+
+    Sem ele, quantas chamadas o turno faz e decisao do modelo -- e a RNF-02
+    (p95 <= 6 s) e a RNF-06 (US$ 0,12 por conversa) ficam a merce dela.
+    """
+    cliente = _instalar_sequencia(
+        monkeypatch,
+        [_resposta_tool_use({"operacao": "VENDA"}), _resposta_tool_use({"operacao": "VENDA"})],
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"candidatos": [], "total_candidatos": 0}
+
+    with pytest.raises(classificador_mod.LacoDeBuscaExcedido):
+        await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert cliente.messages.create.await_count == 2
+
+
+async def test_sem_porta_a_ferramenta_nao_e_declarada(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Turno sem porta injetada continua sendo uma chamada so, sem `tools`."""
+    cliente = _instalar_sequencia(monkeypatch, [_resposta_json()])
+
+    await ClassificadorAnthropic().classificar(_contexto())
+
+    assert "tools" not in cliente.messages.create.await_args.kwargs
+    assert cliente.messages.create.await_count == 1
+
+
+async def test_com_porta_a_ferramenta_e_declarada_com_tool_choice_sem_paralelo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Achados 2 e 3 do fix-wave: a unica cobertura de `tools` era negativa.
+
+    `test_sem_porta_a_ferramenta_nao_e_declarada` (acima) so afirma que
+    `tools` fica FORA da chamada sem porta -- apagar as duas linhas que
+    montam `tools`/`tool_choice` em `classificar` deixava a suite inteira
+    verde, porque o cliente falso devolve `tool_use` independente do que foi
+    enviado. Este teste fixa a forma exata da requisicao COM porta.
+
+    `disable_parallel_tool_use: True` entra porque o uso paralelo vem ligado
+    por padrao: uma unica resposta pode trazer varios blocos `tool_use`, e o
+    laco de `_chamar` executa todos eles (`for b in blocos`). Sem a chave, o
+    numero de buscas por round-trip fica a criterio do modelo, e a D4 --
+    "teto de um round-trip por turno" -- limitaria so quantas vezes o laco
+    chama o modelo, nao quantas buscas uma unica chamada dispara.
+    """
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_json()]
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"candidatos": [], "total_candidatos": 0}
+
+    await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    primeira = cliente.messages.create.await_args_list[0].kwargs
+    assert primeira["tools"] == [FERRAMENTA_DE_BUSCA]
+    assert primeira["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
+
+
+async def test_turno_sem_ferramenta_tem_candidatos_vazio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O campo existe sempre, e vazio significa "nao houve busca".
+
+    None significaria a mesma coisa com um tipo a mais para a TEC-161 tratar.
+    Diferente de `test_erro_da_porta_vira_tool_result_com_is_error` (que
+    busca e da erro): aqui nao ha porta nenhuma, entao nem a ferramenta e
+    declarada -- e o caminho que a TEC-161 precisa distinguir do outro.
+    """
+    _instalar_sequencia(monkeypatch, [_resposta_json()])
+
+    resposta = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resposta.candidatos == []
+
+
+async def test_a_latencia_e_os_contadores_cobrem_as_duas_chamadas_do_laco(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RNF-02 (p95 <= 6 s) mede o turno inteiro, e RNF-06 (custo por
+    conversa) cobra os quatro contadores de `usage` do turno inteiro --
+    `custo_em_dolar` usa os quatro na mesma formula, entao os quatro tem que
+    somar as duas chamadas juntas ou nenhum soma nada.
+
+    `time.monotonic` e trocado por um relogio falso: `_chamar` so o chama
+    duas vezes (o `comeco`, antes do laco, e o calculo de `latency_ms`,
+    depois dele) nao importa quantas tentativas o laco de tool use fizer,
+    entao a diferenca entre as duas leituras falsas e exatamente o que
+    `latency_ms` vai reportar -- sem depender do relogio de verdade, que um
+    duble de cliente sem rede nao gasta.
+    """
+    primeira = _resposta_tool_use({"operacao": "VENDA"})
+    primeira.usage = SimpleNamespace(
+        input_tokens=1000,
+        output_tokens=50,
+        cache_creation_input_tokens=10,
+        cache_read_input_tokens=5,
+    )
+    segunda = _resposta_json()
+    segunda.usage = SimpleNamespace(
+        input_tokens=3000,
+        output_tokens=150,
+        cache_creation_input_tokens=20,
+        cache_read_input_tokens=15,
+    )
+    _instalar_sequencia(monkeypatch, [primeira, segunda])
+
+    # Troca o NOME `time` que `classificador.py` enxerga, nao o modulo `time`
+    # de verdade: `time` e um singleton global do interprete, e mutar
+    # `time.monotonic` in-place afetaria o event loop do asyncio (que tambem
+    # o usa) para o processo inteiro, nao so este teste.
+    relogio = iter([100.0, 106.5])
+    monkeypatch.setattr(classificador_mod, "time", SimpleNamespace(monotonic=lambda: next(relogio)))
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"candidatos": [], "total_candidatos": 0}
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert resultado.latency_ms == 6500
+    assert resultado.tokens_in == 4000
+    assert resultado.tokens_out == 200
+    assert resultado.cache_write == 30
+    assert resultado.cache_read == 20

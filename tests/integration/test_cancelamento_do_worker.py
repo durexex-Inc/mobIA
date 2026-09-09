@@ -42,7 +42,10 @@ class ClassificadorQueTrava(ClassificadorFake):
         super().__init__()
         self.entrou = asyncio.Event()
 
-    async def classificar(self, contexto):
+    async def classificar(self, contexto, *, porta=None):
+        # TEC-265 adicionou porta= ao chamador. Uma override que nao o aceita
+        # levanta TypeError antes de entrou.set(), transformando cada teste
+        # neste arquivo numa travesia em vez de uma falha diagnosticavel.
         self.entrou.set()
         await asyncio.Event().wait()
         raise AssertionError("inalcancavel")

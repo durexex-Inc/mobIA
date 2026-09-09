@@ -167,11 +167,16 @@ class ClassificadorFake:
         self.recusou = recusou
         self.chamadas = 0
         self.desambiguacoes = 0
+        self.candidatos: list[dict[str, object]] = []
+        self.portas: list[object] = []
 
-    async def classificar(self, contexto):
+    async def classificar(self, contexto, *, porta=None):
         from mobia.domain.agente.schemas import RespostaDoAgente
 
         self.chamadas += 1
+        # Guardado, e nao ignorado: e o que o teste da TEC-265 afirma -- que o
+        # turno monta a porta e a entrega pronta ao classificador (D3).
+        self.portas.append(porta)
         if self.erro is not None:
             raise self.erro
         return RespostaDoAgente(
@@ -185,6 +190,7 @@ class ClassificadorFake:
             extracao=self.extracao,
             perguntou=self.perguntou,
             recusou=self.recusou,
+            candidatos=self.candidatos,
         )
 
     async def desambiguar(self, contexto):

@@ -204,10 +204,12 @@ class PedidoDeBusca(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     # `max_length=500`: a frase de busca de um lead e uma sentenca, nao um
-    # texto colado. Hoje o campo e inerte (nenhum embedador injetado, ver a
-    # docstring de `busca` abaixo); o teto existe para o dia em que a
-    # TEC-161 ligar o embedador e cada caractere passar a custar uma chamada
-    # a um provedor pago.
+    # texto colado. NESTE endpoint o campo continua inerte (nenhum embedador
+    # injetado, ver a docstring de `busca` abaixo) -- desde a TEC-265 e o
+    # turno quem injeta embedador nas buscas dele (`domain/agente/turno.py`),
+    # e este endpoint HTTP nao muda. O teto existe para o dia em que este
+    # endpoint tambem ligar o embedador, e cada caractere passar a custar uma
+    # chamada a um provedor pago.
     consulta_texto: str | None = Field(default=None, alias="consultaTexto", max_length=500)
     filtros: FiltrosDaBusca
     # `le=MAX_CANDIDATOS` recusa com 422 em vez de devolver 10 calado: o
@@ -226,17 +228,20 @@ async def busca(pedido: PedidoDeBusca, _: None = Depends(exigir_admin)) -> dict[
     quando o JWT chegar (TEC-201) ele precisa de papel proprio.
 
     **O embedador nao e injetado aqui, e a consequencia esta no corpo da
-    resposta.** Nenhum consumidor HTTP tem hoje um motivo para pagar a
-    latencia de embedar a consulta: quem vai passar o embedador e o turno,
-    quando a TEC-161 ligar a busca ao agente. Ate la `consultaVetorizada` sai
-    `false` e a ordem e a aderencia de preco -- o que e a degradacao da D8
-    funcionando, e nao um defeito. Trocar isto e uma linha.
+    resposta.** A TEC-265 ligou a busca ao agente, e quem passa o embedador de
+    verdade e o turno (`domain/agente/turno.py`), nao esta rota -- nenhum
+    consumidor HTTP tem hoje um motivo para pagar a latencia de embedar a
+    consulta. Aqui `consultaVetorizada` continua saindo `false` e a ordem e a
+    aderencia de preco -- o que e a degradacao da D8 funcionando, e nao um
+    defeito. Trocar isto e uma linha.
 
-    **`consultaTexto` e aceito e INERTE ate a TEC-161 injetar o embedador.**
-    O campo entra no pedido e e repassado, mas sem embedador `_vetor_da_consulta`
-    devolve `None` sempre, entao ele nao muda um resultado sequer. Relevancia
-    ou latencia medidas atraves DESTE endpoint descrevem so o caminho
-    degradado -- a chamada de embedding, que e a parte cara, nunca acontece.
+    **`consultaTexto` e aceito e INERTE NESTA ROTA.** O campo entra no
+    pedido e e repassado, mas sem embedador `_vetor_da_consulta` devolve
+    `None` sempre, entao ele nao muda um resultado sequer. Relevancia ou
+    latencia medidas atraves DESTE endpoint descrevem so o caminho degradado
+    -- a chamada de embedding, que e a parte cara, nunca acontece. No turno,
+    desde a TEC-265, o mesmo campo do tool call NAO e inerte: ver
+    `domain/agente/ferramenta_de_busca.py` e `domain/agente/turno.py`.
     """
     filtro = FiltroDeBusca(
         operacao=pedido.filtros.operacao,

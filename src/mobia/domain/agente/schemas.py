@@ -1,7 +1,8 @@
 import re
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from decimal import Decimal
 from enum import StrEnum
+from typing import Any
 
 from mobia.domain.texto import dobrar
 
@@ -298,6 +299,15 @@ class RespostaDoAgente:
     # nao podem colidir na mesma coluna.
     cache_write: int = 0
     cache_read: int = 0
+
+    # TEC-265. Os candidatos que a ferramenta de busca devolveu neste turno,
+    # ja no formato que o modelo viu -- e nao o `Candidato` do catalogo.
+    #
+    # Vazio significa "nao houve busca neste turno", e e por isso que o campo
+    # nao e `None`: a TEC-161 vai validar a resposta contra esta lista, e um
+    # tipo opcional a obrigaria a distinguir "nao buscou" de "buscou e nao
+    # achou" para tomar a MESMA decisao nos dois casos.
+    candidatos: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
