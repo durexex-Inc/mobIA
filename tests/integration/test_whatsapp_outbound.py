@@ -1,3 +1,4 @@
+import json
 import uuid
 
 import httpx
@@ -103,3 +104,50 @@ async def test_erro_da_meta_nao_carrega_o_texto_no_log(session, caplog) -> None:
             )
 
     assert "Em qual regiao" not in caplog.text
+
+
+PAYLOAD_DE_IMAGEM = {
+    "tipo": "imagem",
+    "para": "5511911112222",
+    "de": "222222222",
+    "link": "https://exemplo.com/ap-1004-1.jpg",
+    "legenda": "Apartamento em Lagoa da Conceicao\nLagoa da Conceicao - R$ 516.464",
+}
+
+
+def cliente_que_captura(capturado: dict[str, object]) -> httpx.AsyncClient:
+    """Guarda o corpo enviado para a asserta poder ler o que foi para a Meta."""
+
+    def _responde(requisicao: httpx.Request) -> httpx.Response:
+        capturado.update(json.loads(requisicao.content))
+        return httpx.Response(200, json={"messages": [{"id": "wamid.X"}]})
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(_responde))
+
+
+async def test_payload_sem_tipo_continua_saindo_como_texto(session) -> None:
+    """A retrocompatibilidade dos tres chamadores de hoje, afirmada.
+
+    `turno.py`, `_entregar_texto_fixo` e os caminhos de follow-up mandam
+    payload sem `tipo`. Se este teste falhar, a TEC-162 quebrou a resposta
+    normal do agente -- que e todo turno que nao apresenta imovel.
+    """
+    corpo: dict[str, object] = {}
+    outbound = WhatsAppOutbound(get_sessionmaker(), cliente=cliente_que_captura(corpo))
+    await outbound._deliver(uuid.uuid4(), "reply", PAYLOAD)
+
+    assert corpo["type"] == "text"
+    assert corpo["text"] == {"body": PAYLOAD["texto"]}
+
+
+async def test_payload_de_imagem_sai_como_image_com_link_e_caption(session) -> None:
+    """RN-10.2: uma imagem por imovel com legenda estruturada."""
+    corpo: dict[str, object] = {}
+    outbound = WhatsAppOutbound(get_sessionmaker(), cliente=cliente_que_captura(corpo))
+    await outbound._deliver(uuid.uuid4(), "ficha_1", PAYLOAD_DE_IMAGEM)
+
+    assert corpo["type"] == "image"
+    assert corpo["image"] == {
+        "link": PAYLOAD_DE_IMAGEM["link"],
+        "caption": PAYLOAD_DE_IMAGEM["legenda"],
+    }

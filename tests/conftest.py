@@ -256,11 +256,32 @@ class OutboundFake(GuardedOutbound):
         super().__init__(session_factory)
         self.erro = erro
         self.entregues: list[str] = []
+        # TEC-162, fix wave: payload cru, ao lado de `entregues`. Nenhuma
+        # asserta de outro arquivo olha para isto, entao acrescentar aqui nao
+        # move nada que ja passava -- e e o unico jeito de um teste distinguir
+        # `{"tipo": "imagem", "link": None, ...}` (que o adaptador de verdade
+        # rejeitaria) de um payload de texto que so PARECE igual depois de
+        # colapsado em string.
+        self.payloads: list[dict] = []
 
     async def _deliver(self, message_id, kind, payload) -> None:
         if self.erro is not None:
             raise self.erro
-        self.entregues.append(payload["texto"])
+        self.payloads.append(payload)
+        # TEC-162: payload de imagem guarda a LEGENDA. `entregues` continua
+        # `list[str]` para nao quebrar as assertas dos testes de antes desta
+        # card, que comparam contra o texto entregue.
+        #
+        # O discriminador e `payload.get("tipo") == "imagem"`, e nao o antigo
+        # `payload.get("legenda") or payload["texto"]` -- fix wave (Important).
+        # O `or` tinha dois problemas: uma legenda vazia caia para
+        # `payload["texto"]`, que payload de imagem nao tem, e levantava
+        # `KeyError` de dentro do duble em vez de testar o codigo da card; e
+        # nada aqui obrigava o payload de imagem a de fato ter `link`
+        # preenchido, entao `_apresentar` podia mandar `link: None` e o duble
+        # aceitava do mesmo jeito. Checar o `tipo` fecha os dois.
+        eh_imagem = payload.get("tipo") == "imagem"
+        self.entregues.append(payload["legenda"] if eh_imagem else payload["texto"])
 
 
 @pytest.fixture

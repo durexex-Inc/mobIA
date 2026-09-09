@@ -11,13 +11,16 @@ motivo (D3 do desenho): `classificar` nao conhece `FiltroDeBusca` e
 ela tem nome nos testes.
 """
 
-from collections.abc import Awaitable, Callable
+import uuid
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 import structlog
 
+from mobia.domain.agente.apresentacao import Ficha, diferencial_de
 from mobia.domain.catalogo.busca import buscar as buscar_de_verdade
 from mobia.domain.catalogo.enums import Operacao, TipoImovel
+from mobia.domain.catalogo.repositorio import imoveis_por_ids
 from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, Candidato, FiltroDeBusca
 
 log = structlog.get_logger(__name__)
@@ -164,3 +167,42 @@ def porta_de_busca(
         }
 
     return porta
+
+
+async def fichas_do_catalogo(
+    session_factory: Any,
+    *,
+    ids: Sequence[uuid.UUID],
+    precos: Mapping[uuid.UUID, int],
+) -> tuple[Ficha, ...]:
+    """As fichas dos imoveis pedidos, na ordem pedida. TEC-162.
+
+    Mora NESTE arquivo, e nao em `apresentacao.py`, pela invariante do
+    docstring do modulo: aqui e o unico lugar em que `domain/agente` importa
+    `domain/catalogo`. Esta funcao e a unica peca que precisa ver `Imovel` e
+    `Ficha` ao mesmo tempo, e `apresentacao.py` fica puro por causa dela.
+
+    `precos` vem do dict do candidato e NAO da linha rebuscada: a linha tem
+    `preco_venda` e `preco_aluguel` e nao diz qual usar, porque a operacao
+    buscada so existe dentro de `porta_de_busca`. Ler a coluna aqui faria
+    toda busca de aluguel mostrar preco de venda ao lead -- ver a D7 do
+    desenho.
+    """
+    async with session_factory() as session:
+        imoveis = await imoveis_por_ids(session, ids)
+
+    return tuple(
+        Ficha(
+            id=imovel.id,
+            titulo=imovel.titulo,
+            bairro=imovel.bairro,
+            preco_centavos=precos[imovel.id],
+            quartos=imovel.quartos,
+            vagas=imovel.vagas,
+            area_util_m2=imovel.area_util_m2,
+            condominio_centavos=imovel.condominio,
+            diferencial=diferencial_de(imovel.caracteristicas),
+            foto=imovel.fotos[0] if imovel.fotos else None,
+        )
+        for imovel in imoveis
+    )

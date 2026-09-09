@@ -50,12 +50,20 @@ class WhatsAppOutbound(GuardedOutbound):
         # chave esperada, o KeyError estoura sem deixar um AsyncClient aberto
         # para tras.
         url = f"{settings.whatsapp_api_base}/{payload['de']}/messages"
-        corpo = {
+        corpo: dict[str, Any] = {
             "messaging_product": "whatsapp",
             "to": payload["para"],
-            "type": "text",
-            "text": {"body": payload["texto"]},
         }
+        # TEC-162. `tipo` ausente e texto, e o default nao e comodidade: os
+        # chamadores de antes desta card (`turno.py`, `_entregar_texto_fixo`,
+        # os follow-ups) nao mandam a chave, e exigi-la deles quebraria toda
+        # resposta que nao apresenta imovel.
+        if payload.get("tipo") == "imagem":
+            corpo["type"] = "image"
+            corpo["image"] = {"link": payload["link"], "caption": payload["legenda"]}
+        else:
+            corpo["type"] = "text"
+            corpo["text"] = {"body": payload["texto"]}
         cliente = self._cliente or httpx.AsyncClient(timeout=TIMEOUT_SEGUNDOS)
 
         try:

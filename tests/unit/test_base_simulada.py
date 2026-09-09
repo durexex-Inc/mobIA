@@ -64,3 +64,13 @@ def test_os_seis_tipos_aparecem_na_base():
     registros = [i for i in _itens() if isinstance(i, RegistroImovel)]
     presentes = {r.tipo for r in registros}
     assert presentes == set(TipoImovel), f"faltando: {set(TipoImovel) - presentes}"
+
+
+def test_ha_imovel_sem_foto_na_base():
+    """TEC-162, D15. A RN-10.2 manda apresentar o imovel sem foto de todo
+    jeito, com os dados textuais -- e nas 520 linhas de antes desta card
+    TODAS tinham foto, entao esse caminho era invisivel fora do teste
+    unitario. Uma demonstracao manual nunca o exercitaria.
+    """
+    sem_foto = [r for r in _itens() if not r.fotos]
+    assert sem_foto, "nenhum imovel sem foto: o caminho de texto da RN-10.2 fica invisivel"
