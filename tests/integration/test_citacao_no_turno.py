@@ -5,6 +5,7 @@ Basename distinto de tudo em `tests/unit/`, e rima com
 arquivos de integracao deste repo sao autocontidos de proposito.
 """
 
+import json
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -118,6 +119,23 @@ async def _kinds_reservados() -> list[str]:
         return sorted((await leitura.scalars(select(OutboundDispatch.kind))).all())
 
 
+def _eventos_de_log(caplog: Any, evento: str) -> list[tuple[str, dict[str, Any]]]:
+    """(nivel, corpo) de cada registro JSON do structlog que carrega `evento`.
+
+    Mesmo molde de `_eventos_de_log` em `test_apresentacao_no_turno.py`, copiado
+    e nao importado -- os arquivos de integracao deste repo sao autocontidos.
+    """
+    encontrados = []
+    for registro in caplog.records:
+        try:
+            dados = json.loads(registro.getMessage())
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if dados.get("event") == evento:
+            encontrados.append((registro.levelname, dados))
+    return encontrados
+
+
 async def test_prosa_consistente_segue_como_prefixo(
     session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
 ) -> None:
@@ -138,13 +156,23 @@ async def test_prosa_consistente_segue_como_prefixo(
 
 
 async def test_prosa_inventada_vira_ficha_pura(
-    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+    caplog: Any,
 ) -> None:
     """D8: descarta a prosa, nao o turno.
 
     O lead recebe o imovel -- que veio do banco e esta certo -- sem a frase
     que inventou um preco. A ficha e o conteudo da RN-10.1; a prosa e
     ornamento, e e ela que cede sob pressao de confianca.
+
+    Tambem trava o D10 inteiro, hoje sem asserta nenhuma: o evento
+    `citacao.bloqueada` tem de sair com o valor que o modelo inventou, e a
+    prosa barrada nao pode aparecer no log -- a mesma regra que vale para a
+    moderacao de saida, aqui sobre o proprio evento que a guarda gera.
     """
     identificador = await _imovel(session, "AP-1004", PRECO)
     classificador = _ClassificadorComProsa(
@@ -152,9 +180,10 @@ async def test_prosa_inventada_vira_ficha_pura(
     )
     outbound = outbound_fake()
 
-    resultado = await rodar_turno(
-        session, classificador, outbound, resumidor_fake(), contador_fake()
-    )
+    with caplog.at_level("ERROR"):
+        resultado = await rodar_turno(
+            session, classificador, outbound, resumidor_fake(), contador_fake()
+        )
 
     assert resultado == "respondido"
     assert len(outbound.entregues) == 1
@@ -163,6 +192,14 @@ async def test_prosa_inventada_vira_ficha_pura(
     # A ficha continua inteira: bloquear a prosa nao pode calar o imovel.
     assert "Apartamento AP-1004" in outbound.entregues[0]
     assert await _kinds_reservados() == [KINDS_DAS_FICHAS[0]]
+
+    ((nivel, evento),) = _eventos_de_log(caplog, "citacao.bloqueada")
+    assert nivel == "ERROR"
+    assert "R$ 900.000" in evento["citados"]
+    assert PROSA_INVENTADA not in caplog.text, (
+        "a prosa barrada nao pode aparecer no log -- registra-la criaria ali "
+        "exatamente o que a guarda impediu de sair"
+    )
 
 
 async def test_prosa_inventada_sem_ficha_vira_verificacao_humana(

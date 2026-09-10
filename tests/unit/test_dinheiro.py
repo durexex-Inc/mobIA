@@ -379,6 +379,12 @@ def test_bilhao_e_lido_em_vez_de_virar_dois_reais():
         ("500 reais de condominio", (50_000,)),
         ("de 400 mil a 600 mil", (40_000_000, 60_000_000)),
         ("meio milhao nao entra, mas 1,2 milhao sim", (120_000_000,)),
+        # Assimetria entre as duas entradas da mesma gramatica: `_faixa_de`
+        # distribui o marcador final para os dois lados (D2 do desenho, ver
+        # `test_marcador_final_distribui_para_os_dois_lados`), mas
+        # `valores_em` nao participa dessa distribuicao e le so o numero que
+        # tem marcador colado -- o 400 sem "mil" ao lado fica de fora.
+        ("entre 400 e 500 mil", (50_000_000,)),
         # Sem marcador: nao contam. Esta metade e a que impede a guarda de
         # bloquear turno correto -- ver D2 do desenho.
         ("2 quartos e 1 vaga", ()),

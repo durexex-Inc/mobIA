@@ -63,7 +63,8 @@ class Divergencia:
 
 
 def _cabe_em_algum(citado: int, precos: Sequence[int]) -> bool:
-    """O valor esta a menos de 10% de algum candidato.
+    """O valor esta a no maximo 10% de algum candidato -- fronteira fechada
+    dos dois lados, ver `test_o_limite_da_tolerancia_e_fechado_dos_dois_lados`.
 
     "Algum" e nao "o certo": a prosa fala de um imovel entre ate dez, e nao ha
     como saber qual. Exigir o candidato correto pediria uma ligacao que a

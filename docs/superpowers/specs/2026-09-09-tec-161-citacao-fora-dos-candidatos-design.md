@@ -78,7 +78,7 @@ Um valor da prosa passa se, para **algum** candidato, `abs(citado - preco) / pre
 
 `depois_do_estado` (`LeadQualification`, gravado no mesmo turno) carrega `faixa_preco_min_centavos` e `faixa_preco_max_centavos` acumulados, e está em escopo no ponto de enxerto. Um valor da prosa dentro dessa faixa passa mesmo sem casar com candidato nenhum.
 
-Sem isso, *"entendi, até R$ 600 mil"* — o modelo ecoando o que o lead acabou de dizer — viraria bloqueio, e num turno de qualificação pura (sem busca, sem candidato) todo eco de orçamento bloquearia. `depois_do_estado` pode ser `None`; nesse caso não há válvula e todo valor tem de casar com candidato.
+Sem isso, *"entendi, até R$ 600 mil"* — o modelo ecoando o que o lead acabou de dizer — viraria bloqueio, e num turno de qualificação pura (sem busca, sem candidato) todo eco de orçamento bloquearia. `depois_do_estado` é `None` no turno mais comum de todos — aquele em que o lead não disse nada novo sobre orçamento e `gravar_estado` por isso não grava linha —, e é exatamente nesse turno que o eco acontece com mais frequência. Por isso o ponto de enxerto usa `depois_do_estado or contexto.estado`: quando o turno atual não gravou nada, cai no estado de antes dele, que já carrega a faixa de um turno anterior. A válvula só fica ausente quando não há nenhuma linha `lead_qualification` para o lead — nem a de antes, nem a de depois —, e só nesse caso todo valor tem de casar com candidato.
 
 ### D6 — Código pelo formato do catálogo
 
@@ -96,7 +96,7 @@ A validação roda **depois** da moderação de saída, sobre o texto que de fat
 
 ### D8 — Não regenera: descarta a prosa
 
-O enxerto fica em `executar_turno` entre o bloco da moderação de saída e o cálculo de `apresentando` — portanto **antes** de `_apresentar`, que é quem grava reserva em `outbound_dispatches` e entrega. Bloquear depois deixaria reserva gravada e mensagem entregue.
+O enxerto fica em `executar_turno` depois do bloco da moderação de saída **e** depois do cálculo de `apresentando` — a guarda usa esse valor para decidir o desfecho do bloqueio — mas **antes** de `_apresentar`, que é quem grava reserva em `outbound_dispatches` e entrega. Bloquear depois de `_apresentar` deixaria reserva gravada e mensagem entregue.
 
 - **Turno de apresentação:** a prosa vira `""` e `legenda_de` omite o prefixo. O lead recebe as fichas puras, montadas do banco. Nenhum conteúdo da RN-10.1 se perde — o docstring de `legenda_de` já diz que, sob pressão de espaço, *"o que se corta e o PREFIXO -- nunca a ficha. A ficha e o conteudo que a RN-10.1 exige e a prosa e ornamento"*. Esta card aplica a mesma ordem de prioridade sob pressão de confiança.
 - **Turno que não apresenta:** `texto = TEXTO_DA_BUSCA_INCONCLUSIVA`.
@@ -149,13 +149,13 @@ executar_turno
   ...
   moderacao de saida  ──bloqueou──> texto = TEXTO_NEUTRO_DE_SAIDA
   │
+  ├─ apresentando = bool(candidatos) and not perguntou and not desambiguando
+  │
   ├─ divergencias_de(texto, candidatos=gerada.candidatos, faixa=...)
   │     vazio ──────────> segue com a prosa do modelo
   │     nao vazio ──────> log.error("citacao.bloqueada")
   │                       apresentando?  sim → prosa = ""
   │                                      nao → texto = TEXTO_DA_BUSCA_INCONCLUSIVA
-  │
-  ├─ apresentando = bool(candidatos) and not perguntou and not desambiguando
   │
   └─ _apresentar(...) ──> outbound.send  (primeira reserva em outbound_dispatches)
 ```
@@ -220,6 +220,9 @@ Os cenários 2 (preço divergente bloqueia) e 3 (resposta consistente passa) seg
 3. **O formato de código é o do seed** (D6).
 4. **Bairro e título não são validados.** O modelo os ecoa legitimamente — o lead pediu Trindade, a prosa diz Trindade — e checá-los produziria bloqueio em turno correto. Consequência: *"tenho ótimas opções no Itaim"* sem candidato no Itaim passa, desde que sem cifra.
 5. **A ausência de busca continua sem guarda.** Esta card valida o que a prosa afirma; ela não obriga o modelo a chamar a ferramenta. É a mesma lacuna 3 da TEC-265, e o lugar de olhar continua sendo a taxa de `tool_use` por turno, que a TEC-211 vai instrumentar.
+6. **A guarda valida contra todos os candidatos, não só os entregues.** `gerada.candidatos` carrega até dez, por RN-09.2, e `_apresentar` só entrega os três primeiros. Prosa que cita o preço exato do candidato #7 passa a guarda — o valor é real, veio do banco — e o lead recebe as fichas 1 a 3, sem nenhuma delas para conferir o número. Estreitar a base da guarda para os três entregues é o remédio errado: trocaria um falso negativo com lastro no banco (o preço citado existe, só não foi mostrado) por falsos positivos sem lastro nenhum, bloqueando prosa correta toda vez que ela mencionar a #4 em diante.
+7. **Valores secundários não são preço de candidato.** Condomínio, IPTU, entrada e ITBI não entram em `_candidato_serializavel` — o modelo não vê `condominio` — e por isso só passam pela válvula da D5, se o valor citado couber na faixa que o lead já declarou. *"o condomínio fica em torno de R$ 500"* bloqueia para um lead que declarou "de 300 a 450 mil": nem candidato nem faixa sustentam os R$ 500. Frequência baixa, porque o modelo tem pouco motivo para se voluntariar a citar condomínio sem o dado à vista, mas é a classe de entrada mais provável de queimar um turno correto, já que o valor é verdadeiro e ainda assim bloqueia.
+8. **Um turno com duas buscas valida contra a última, não contra as duas.** `classificador.py:519` atribui `candidatos = _candidatos_de(...)` a cada chamada de ferramenta, sem acumular as anteriores — comportamento pré-existente da TEC-265, e consistente com o que `_apresentar` mostra, que também só conhece a busca final. Esta card é a primeira consumidora que transforma essa atribuição numa decisão de bloqueio: prosa que cita um candidato só visto na primeira busca do turno bloqueia, mesmo que o valor tenha vindo do banco.
 
 ## Fora de escopo
 

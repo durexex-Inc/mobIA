@@ -65,7 +65,7 @@ def test_preco_fora_da_tolerancia_bloqueia() -> None:
 
 
 def test_o_limite_da_tolerancia_e_fechado_dos_dois_lados() -> None:
-    """Exatamente 10% passa; um centavo alem nao.
+    """Exatamente 10% passa; um real alem nao.
 
     Sem este teste, trocar `<=` por `<` na comparacao passa nos outros.
     """
