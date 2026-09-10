@@ -1,11 +1,12 @@
 import re
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
 
+from mobia.domain.agente.citacao import Divergencia, divergencias_de
 from mobia.domain.agente.desambiguacao import deve_desambiguar, intencao_efetiva
 from mobia.domain.agente.schemas import Extracao, Intencao, normalizar_regiao
 
@@ -551,6 +552,135 @@ def aderencia_ao_tom(respostas: Sequence[RespostaObservada]) -> ResultadoDaMetri
             acertos,
             total,
             f"alvo {ALVO_DE_ADERENCIA_AO_TOM_PCT}%, piso {PISO_DE_ADERENCIA_AO_TOM_PCT}%",
+        ),
+    )
+
+
+# O nome carrega o escopo de proposito (D4 do desenho). A guarda da TEC-161
+# cobre cifra e codigo; NAO cobre parafrase -- "tenho um bem espacoso na
+# praia" sobre imovel inexistente passa, e a lacuna 1 daquela card declara
+# isso. Sem o parenteses, um VERDE nesta linha diria a quem audita o RT-01
+# que toda alucinacao esta coberta.
+#
+# `turnos sem invencao` foi recusado: colide com `com_invencao` neste mesmo
+# modulo, que conta campo de extracao inventado em turno negativo.
+NOME_DA_TAXA_DE_ALUCINACAO = "taxa de alucinacao (cifra e codigo)"
+
+# A RNF-26 pede taxa abaixo de 2%, logo 98% de turnos ancorados. A metrica
+# conta o complemento por dentro porque `faixa_de` e quanto-maior-melhor.
+ALVO_DE_ANCORAGEM_PCT = 98
+
+# ANDAIME, nao medida -- D6 do desenho. Substituir por piso medido quando
+# houver execucoes, que foi o que a TEC-255 fez com a aderencia ao tom
+# (trocou o andaime de 50 por 90 depois de medir). Gatear em 2% na primeira
+# execucao seria gatear em ruido: esta metrica tem denominador FIXO (todos os
+# turnos), entao o analogo honesto e `DISPERSAO_MEDIDA.base_fixa_pp`, e nao
+# `uniao_pp` -- duas execucoes do MESMO codigo ja diferiram 2,1 pontos por
+# essa conta (o `uniao_pp` de 5,7 e de uma metrica com denominador de uniao, e
+# nao se aplica aqui). 2,1 pontos ja bastam para proibir gatear em 2%.
+#
+# **Este numero e propriedade do par modelo-detector, nao do modelo** (D2).
+# Alargar a gramatica de `divergencias_de` faz a taxa subir sem o modelo ter
+# piorado. Quem alargar re-mede o piso na mesma card, e a pergunta e "subiu
+# porque o modelo piorou ou porque o detector melhorou?" antes de "quanto
+# subo o piso?".
+#
+# Primeira medicao paga (2026-09-10): CI run 34471488445, workflow_dispatch
+# no branch feat/tec-269-taxa-de-alucinacao, conclusao success, commit b059585.
+# Corpus: 53 conversas, 147 turnos; 0 abandonadas. Resultado: 1/147 turnos com
+# cifra sem base (0,7%), VERDE contra alvo <2%. Colaterais: intencao 98,0%
+# VERDE, efetiva 95,9% VERDE, extracao 91,9% VERDE, tom 98,0% AMARELO.
+#
+# O piso fica em 50 de proposito -- registrar a medida agora, atuar depois
+# quando houver historia.
+PISO_ANDAIME_DE_ANCORAGEM_PCT = 50
+
+
+@dataclass(frozen=True)
+class InvencaoObservada:
+    """Um turno cuja prosa citou cifra ou codigo sem base, com o endereco.
+
+    Carrega as divergencias e nao so a contagem para uma secao de
+    diagnostico FUTURA poder renderiza-las -- **essa secao nao existe
+    ainda**. Hoje `divergencias` so e lido por dois testes unitarios:
+    `taxa_de_alucinacao` conta so por `conversa_id`/`indice` e nunca passa
+    este campo para `render`. E diferente de `ViolacaoDeFormato`, que carrega
+    o mesmo tipo de detalhe e ELE chega ao relatorio -- aqui, descobrir qual
+    foi a divergencia de um turno especifico ainda exige outra execucao paga.
+    """
+
+    conversa_id: str
+    indice: int
+    divergencias: tuple[Divergencia, ...]
+
+
+def invencao_do_turno(
+    texto: str,
+    *,
+    conversa_id: str,
+    indice: int,
+    candidatos: Sequence[Mapping[str, Any]],
+    faixa: tuple[int | None, int | None],
+) -> InvencaoObservada | None:
+    """A invencao deste turno, ou `None` quando a prosa esta ancorada.
+
+    Chama `divergencias_de` -- a MESMA funcao que `executar_turno` roda em
+    producao -- e nao uma copia. Uma segunda definicao de "alucinacao" neste
+    repo seriam duas medindo coisas diferentes com o mesmo nome, e a TEC-161
+    recusou a gramatica gemea tres vezes dentro da propria branch.
+
+    `candidatos` chega vazio em todo turno do corpus, porque o eval nao passa
+    `porta` e portanto nao ha tool use (D1). Com lista vazia so a faixa que o
+    MODELO EXTRAIU absolve -- e nao a que o lead declarou: `faixa` chega aqui
+    a partir de `estado_acumulado`, que e alimentado por `campos_a_gravar`
+    sobre a extracao do modelo, nunca pela anotacao do corpus. As duas
+    coincidem quando a extracao acerta e divergem quando ela erra -- ver a
+    lacuna 5 do desenho.
+    """
+    divergencias = divergencias_de(texto, candidatos=candidatos, faixa=faixa)
+    if not divergencias:
+        return None
+    return InvencaoObservada(conversa_id=conversa_id, indice=indice, divergencias=divergencias)
+
+
+def taxa_de_alucinacao(
+    invencoes: Sequence[InvencaoObservada],
+    respostas: Sequence[RespostaObservada],
+) -> ResultadoDaMetrica:
+    """Fracao dos turnos cuja prosa nao inventou cifra nem codigo.
+
+    Por turno e nao por divergencia, pela mesma razao de `aderencia_ao_tom`:
+    o lead vive o turno, e um turno que inventa dois precos e um turno ruim,
+    nao dois.
+
+    `acertos` conta turnos LIMPOS porque `faixa_de` e quanto-maior-melhor; o
+    `detalhe` -- a unica coisa que o relatorio renderiza -- reporta a taxa na
+    direcao que a RNF-26 pede. A inversao e deliberada (D5).
+    """
+    total = len(respostas)
+    if total == 0:
+        return sem_mecanismo(
+            NOME_DA_TAXA_DE_ALUCINACAO,
+            "nenhuma resposta sobreviveu a execucao",
+        )
+    sujos = len({(i.conversa_id, i.indice) for i in invencoes})
+    acertos = total - sujos
+    pct = sujos * 100 / total
+    return ResultadoDaMetrica(
+        nome=NOME_DA_TAXA_DE_ALUCINACAO,
+        faixa=faixa_de(
+            acertos,
+            total,
+            alvo=ALVO_DE_ANCORAGEM_PCT,
+            piso=PISO_ANDAIME_DE_ANCORAGEM_PCT,
+        ),
+        acertos=acertos,
+        total=total,
+        detalhe=(
+            f"{sujos}/{total} turnos com cifra sem base ({pct:.1f}%), "
+            f"alvo <{100 - ALVO_DE_ANCORAGEM_PCT}%, "
+            f"piso <{100 - PISO_ANDAIME_DE_ANCORAGEM_PCT}% (andaime), "
+            f"sem busca no corpus"
         ),
     )
 

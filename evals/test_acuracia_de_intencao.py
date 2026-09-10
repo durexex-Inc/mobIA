@@ -30,6 +30,7 @@ from mobia.evals.metricas import (
     EstadoDaConversa,
     ExtracaoObservada,
     FalhaDeInfraestrutura,
+    InvencaoObservada,
     PerguntaObservada,
     RespostaObservada,
     ResultadoDaMetrica,
@@ -43,6 +44,7 @@ from mobia.evals.metricas import (
     eh_negativo,
     erros,
     insistencias,
+    invencao_do_turno,
     matriz_de_confusao,
     precisao_da_extracao,
     precisao_efetiva_da_extracao,
@@ -50,6 +52,7 @@ from mobia.evals.metricas import (
     resumo_de_negativos,
     resumo_do_formato,
     sem_mecanismo,
+    taxa_de_alucinacao,
 )
 from mobia.evals.relatorio import DIRETORIO_DE_RELATORIOS, preservar, render
 from mobia.infra.anthropic import motivo_do_provedor
@@ -124,6 +127,7 @@ async def _rodar_conversa(
     list[tuple[str, int, str]],
     list[RespostaObservada],
     list[PerguntaObservada],
+    list[InvencaoObservada],
     EstadoDaConversa,
 ]:
     """Os turnos sao sequenciais, e a resposta real do agente volta ao historico.
@@ -172,6 +176,8 @@ async def _rodar_conversa(
     perguntas: list[PerguntaObservada] = []
     observadas: list[ExtracaoObservada] = []
     reperguntados: list[tuple[str, int, str]] = []
+    # TEC-269. Os turnos em que a prosa citou cifra ou codigo sem base.
+    invencoes: list[InvencaoObservada] = []
 
     for indice, turno in enumerate(conversa.turnos):
         historico.append((MessageRole.LEAD, turno.lead))
@@ -265,6 +271,25 @@ async def _rodar_conversa(
             estado_acumulado.update(campos_do_turno)
             estado_acumulado[CHAVE_DA_MARCA] = sorted(marcados)
 
+        # TEC-269, D3. Depois de `estado_acumulado.update(...)` de proposito:
+        # em producao a guarda le a faixa DEPOIS de `gravar_estado`, entao ela
+        # inclui o que este turno acabou de extrair. Coletar antes contaria
+        # como invencao o modelo ecoando o orcamento que o lead deu neste
+        # mesmo turno -- o falso positivo que a D5 da TEC-161 existe para
+        # impedir.
+        invencao = invencao_do_turno(
+            resposta.resposta,
+            conversa_id=conversa.id,
+            indice=indice,
+            candidatos=resposta.candidatos,
+            faixa=(
+                estado_acumulado.get("faixa_preco_min_centavos"),
+                estado_acumulado.get("faixa_preco_max_centavos"),
+            ),
+        )
+        if invencao is not None:
+            invencoes.append(invencao)
+
         respostas.append(
             RespostaObservada(conversa_id=conversa.id, indice=indice, texto=resposta.resposta)
         )
@@ -279,6 +304,7 @@ async def _rodar_conversa(
         reperguntados,
         respostas,
         perguntas,
+        invencoes,
         EstadoDaConversa(
             conversa_id=conversa.id,
             esperado=esperado_acumulado,
@@ -313,8 +339,13 @@ def _metricas_de(
     resultados: list[Classificacao],
     observadas: list[ExtracaoObservada],
     respostas: list[RespostaObservada],
+    invencoes: list[InvencaoObservada],
 ) -> list[ResultadoDaMetrica]:
-    """As duas declaradas sem mecanismo saem sempre; as demais, so com amostra.
+    """Nao ha mais slot permanentemente sem mecanismo aqui. Toda metrica que pode
+    cair em `sem_mecanismo` -- extracao, taxa de alucinacao e aderencia ao tom
+    -- so cai por falta de amostra, nunca incondicionalmente. Ate a TEC-269 a
+    taxa de alucinacao era esse slot fixo; agora ela segue a mesma regra das
+    outras duas.
 
     `acuracia_de_intencao([])` levanta de proposito -- `faixa_de` recusa total
     zero para que um corpus que falhou ao carregar nao abra o gate com 0/0. Mas
@@ -370,7 +401,11 @@ def _metricas_de(
     return [
         *medidas,
         *extracao,
-        sem_mecanismo("taxa de alucinacao", "sem mecanismo: bloqueada pela TEC-161"),
+        # TEC-269. Deixou de ser slot vazio: a TEC-161 entregou o mecanismo e
+        # esta em `main`. Sem amostra ela cai de volta no slot sozinha, como
+        # as outras -- `taxa_de_alucinacao` devolve `sem_mecanismo` quando
+        # nenhuma resposta sobreviveu.
+        taxa_de_alucinacao(invencoes, respostas),
         # Deixou de ser slot vazio na TEC-140. Mede as duas regras do RF-04 que
         # sao decidiveis sobre o texto -- tamanho e numero de perguntas -- com
         # piso medido pela TEC-255 (90) e alvo proprio (98), que substituiram
@@ -475,6 +510,7 @@ async def test_acuracia_de_intencao_no_corpus(
     estados: list[EstadoDaConversa] = []
     respostas: list[RespostaObservada] = []
     perguntas: list[PerguntaObservada] = []
+    invencoes: list[InvencaoObservada] = []
     for conversa in conversas:
         try:
             (
@@ -483,6 +519,7 @@ async def test_acuracia_de_intencao_no_corpus(
                 reperguntados_conversa,
                 respostas_conversa,
                 perguntas_conversa,
+                invencoes_conversa,
                 estado_da_conversa,
             ) = await _rodar_conversa(classificador, conversa)
             resultados.extend(resultados_conversa)
@@ -490,11 +527,12 @@ async def test_acuracia_de_intencao_no_corpus(
             reperguntados.extend(reperguntados_conversa)
             respostas.extend(respostas_conversa)
             perguntas.extend(perguntas_conversa)
+            invencoes.extend(invencoes_conversa)
             estados.append(estado_da_conversa)
         except InfraestruturaFalhou as exc:
             abandonadas.append(exc.falha)
 
-    metricas = _metricas_de(resultados, observadas, respostas)
+    metricas = _metricas_de(resultados, observadas, respostas, invencoes)
     relatorio = render(
         metricas,
         matriz_de_confusao(resultados),
