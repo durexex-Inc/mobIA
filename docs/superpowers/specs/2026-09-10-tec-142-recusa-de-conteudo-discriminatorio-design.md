@@ -55,9 +55,12 @@ As duas listas são derivadas cláusula a cláusula do que cada prompt já manda
 | `BLOQUEAR <palavra do vocabulário>` | bloqueado, com a categoria |
 | `BLOQUEAR <palavra desconhecida>` | bloqueado, `categoria = OUTRO` |
 | `BLOQUEAR`, sozinho | bloqueado, `categoria = OUTRO` |
+| `BLOQUEAR BLOQUEAR`, `BLOQUEAR LIBERAR` | `ModeracaoIndisponivel` |
 | qualquer outra coisa | `ModeracaoIndisponivel` |
 
 Toda folga concedida cai do lado que bloqueia. `LIBERAR` **não** aceita segunda palavra, e a razão é concreta: com uma regra que só olhasse a primeira palavra, `LIBERAR NAO` viraria liberação. A invariante que sustenta o subsistema — *o desconhecido nunca vira liberado* — sai desta card mais forte do que entrou, não mais fraca.
+
+**A penúltima linha da tabela é uma concessão a um argumento que já estava escrito**, e não uma exceção decorativa. O docstring de `test_a_tolerancia_de_forma_nao_afrouxa_o_conteudo` diz que *"duas palavras não são um veredito — não dá para saber qual delas o modelo quis"*, e `BLOQUEAR LIBERAR` é um dos quatro casos que ele já parametriza. Esse argumento continua verdadeiro depois desta card: uma segunda palavra que é ela própria um veredito não é uma categoria mal escolhida, é um modelo em dúvida entre os dois desfechos — e resolver a dúvida dele para o lado do bloqueio recusaria lead legítimo, que é o falso positivo mais caro do sistema. A leniência de `OUTRO` cobre a segunda palavra **desconhecida**, que é o caso de "o modelo decidiu e errou o rótulo". Sem essa distinção, a card teria de reescrever aquele docstring para que ele parasse de dizer a verdade.
 
 Isso também **reduz** um risco que existe hoje. O comentário de `_UMA_PALAVRA` descreve o custo de um veredito fora do protocolo: na saída ele propaga, a linha vira `FAILED`, o sweeper repaga o turno inteiro até `sweep_max_attempts` e depois o lead nunca recebe nada. Hoje um `BLOQUEAR` que o modelo enfeitou cai nesse buraco; com `OUTRO`, ele vira um bloqueio auditado.
 
@@ -74,11 +77,13 @@ moderation_events
   conversation_key varchar(64)   not null
   direcao          varchar(8)    not null   -- ENTRADA | SAIDA
   categoria        varchar(32)   not null   -- DISCRIMINACAO | ... | OUTRO
-  message_id       uuid          not null   -- referência, nunca cópia
+  message_id       uuid          not null   -- referência, nunca cópia, SEM FK
   created_at       timestamptz   not null   server_default=func.now()
 
 Index ix_moderation_events_lead (channel, conversation_key, created_at DESC)
 ```
+
+**Sem FK para `messages`, pelo motivo escrito na migration 0010.** A retenção de mensagens é de 12 meses (RNF-22) e a do registro de conformidade não é; com FK, a limpeza de mensagens apagaria evidência de recusa por cascata, ou travaria por restrição. O `message_id` fica como referência solta, exatamente como em `optout_events` — e o risco declarado é o mesmo: um `message_id` órfão depois da limpeza, que é preferível a um registro de auditoria que some junto com a mensagem que o originou.
 
 **Nunca o texto.** O argumento de `optout_events` vale inteiro e aqui vale mais: o corpo já está cifrado em `messages`, e a RN-04.5 pede o registro do evento, não do conteúdo. Copiar o texto criaria em claro exatamente aquilo que o quarto critério de aceite da card manda não existir. Na saída, `message_id` aponta para a mensagem **de entrada** que originou o turno — é a âncora que existe; o texto barrado não é persistido em lugar nenhum, por construção.
 
