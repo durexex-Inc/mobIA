@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from mobia.domain.agente.citacao import Divergencia
 from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Extracao, Intencao
 from mobia.evals.corpus import carregar, total_de_turnos
 from mobia.evals.metricas import (
@@ -23,6 +24,7 @@ from mobia.evals.metricas import (
     EstadoDaConversa,
     ExtracaoObservada,
     Faixa,
+    InvencaoObservada,
     PerguntaObservada,
     RespostaObservada,
     ResumoDeNegativos,
@@ -37,6 +39,7 @@ from mobia.evals.metricas import (
     erros,
     faixa_de,
     insistencias,
+    invencao_do_turno,
     matriz_de_confusao,
     precisao_da_extracao,
     precisao_efetiva_da_extracao,
@@ -44,6 +47,7 @@ from mobia.evals.metricas import (
     resumo_de_negativos,
     resumo_do_formato,
     sem_mecanismo,
+    taxa_de_alucinacao,
     violacoes_de_formato,
 )
 
@@ -1108,3 +1112,120 @@ def test_campos_perguntados_e_a_fonte_unica_dos_dois_proxies():
     # O proxy irmao e a intersecao com o que o estado ja sabe.
     assert _reperguntou(texto, ["regiao"]) == ["regiao"]
     assert _reperguntou(texto, ["vagas"]) == []
+
+
+def _sem_faixa() -> tuple[int | None, int | None]:
+    return (None, None)
+
+
+def _invencao(indice: int, citado: str = "R$ 900.000") -> InvencaoObservada:
+    return InvencaoObservada(
+        conversa_id="c1",
+        indice=indice,
+        divergencias=(Divergencia(tipo="preco", citado=citado),),
+    )
+
+
+def test_prosa_ancorada_nao_vira_invencao() -> None:
+    """Sem cifra e sem codigo nao ha o que ancorar."""
+    assert (
+        invencao_do_turno(
+            "Achei tres opcoes que encaixam no que voce falou.",
+            conversa_id="c1",
+            indice=0,
+            candidatos=[],
+            faixa=_sem_faixa(),
+        )
+        is None
+    )
+
+
+def test_cifra_sem_base_vira_invencao() -> None:
+    """D1: sem busca no corpus, citar preco de imovel e invencao por construcao."""
+    observada = invencao_do_turno(
+        "Tenho um otimo por R$ 900 mil.",
+        conversa_id="c1",
+        indice=2,
+        candidatos=[],
+        faixa=_sem_faixa(),
+    )
+    assert observada is not None
+    assert observada.indice == 2
+    assert observada.divergencias == (Divergencia(tipo="preco", citado="R$ 900.000"),)
+
+
+def test_eco_do_orcamento_do_lead_nao_e_invencao() -> None:
+    """D3. Sem esta valvula a metrica contaria como alucinacao o modelo
+    repetindo o numero que o proprio lead deu -- e o prompt PEDE que ele
+    repita, porque `montar_contexto` poe a faixa no bloco de estado."""
+    assert (
+        invencao_do_turno(
+            "Entendi, vou procurar ate R$ 600 mil.",
+            conversa_id="c1",
+            indice=1,
+            candidatos=[],
+            faixa=(None, 60_000_000),
+        )
+        is None
+    )
+
+
+def test_taxa_conta_por_turno_e_nao_por_divergencia() -> None:
+    """Um turno que inventa dois precos e um turno ruim, nao dois.
+
+    Mesma regra de `aderencia_ao_tom`: o lead vive o turno.
+    """
+    duas_no_mesmo_turno = InvencaoObservada(
+        conversa_id="c1",
+        indice=0,
+        divergencias=(
+            Divergencia(tipo="preco", citado="R$ 900.000"),
+            Divergencia(tipo="codigo", citado="AP-9999"),
+        ),
+    )
+    respostas = [_resposta("qualquer coisa", indice=i) for i in range(4)]
+    metrica = taxa_de_alucinacao([duas_no_mesmo_turno], respostas)
+    assert metrica.acertos == 3
+    assert metrica.total == 4
+
+
+def test_o_detalhe_reporta_a_taxa_e_nao_o_complemento() -> None:
+    """D5. Por dentro conta turnos limpos, porque `faixa_de` e
+    quanto-maior-melhor. Por fora reporta a taxa, que e o que a RNF-26 pede.
+    Sem isto a linha exibiria "98,6%" ao lado da palavra "alucinacao".
+    """
+    respostas = [_resposta("qualquer coisa", indice=i) for i in range(4)]
+    metrica = taxa_de_alucinacao([_invencao(0)], respostas)
+    assert metrica.nome == "taxa de alucinacao (cifra e codigo)"
+    assert "1/4 turnos com cifra sem base" in metrica.detalhe
+    assert "25.0%" in metrica.detalhe
+
+
+def test_sem_amostra_volta_para_sem_mecanismo() -> None:
+    """D7. Nunca verde: slot que reporta verde sem medir finge cobertura."""
+    metrica = taxa_de_alucinacao([], [])
+    assert metrica.faixa is Faixa.SEM_MECANISMO
+    assert metrica.acertos is None
+
+
+def test_a_borda_do_alvo_e_exatamente_a_da_rnf_26() -> None:
+    """1 turno sujo em 50 sao 2% -- o alvo da RNF-26 -- e tem de sair VERDE.
+
+    `faixa_de` compara `acertos * 100 >= total * alvo` em inteiro: 49*100 e
+    50*98 dao 4900 dos dois lados. A borda e inclusiva, e este teste existe
+    para que trocar `>=` por `>` em `faixa_de` apareca aqui e nao numa
+    execucao paga.
+    """
+    respostas = [_resposta("qualquer coisa", indice=i) for i in range(50)]
+    assert taxa_de_alucinacao([_invencao(0)], respostas).faixa is Faixa.VERDE
+    assert taxa_de_alucinacao([_invencao(0), _invencao(1)], respostas).faixa is Faixa.AMARELO
+
+
+def test_o_andaime_nao_reprova_execucao_ruim() -> None:
+    """D6. O piso da primeira entrega e andaime, nao medida: gatear em 2% na
+    primeira execucao seria gatear em ruido. Este teste existe para alguem
+    que substituir o andaime por piso medido ver que o comportamento mudou.
+    """
+    respostas = [_resposta("qualquer coisa", indice=i) for i in range(10)]
+    tres_sujos = [_invencao(i) for i in range(3)]
+    assert taxa_de_alucinacao(tres_sujos, respostas).faixa is not Faixa.VERMELHO
