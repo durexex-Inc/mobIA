@@ -573,8 +573,11 @@ ALVO_DE_ANCORAGEM_PCT = 98
 # ANDAIME, nao medida -- D6 do desenho. Substituir por piso medido quando
 # houver execucoes, que foi o que a TEC-255 fez com a aderencia ao tom
 # (trocou o andaime de 50 por 90 depois de medir). Gatear em 2% na primeira
-# execucao seria gatear em ruido: duas execucoes do MESMO codigo ja diferiram
-# 5,7 pontos noutra metrica deste relatorio.
+# execucao seria gatear em ruido: esta metrica tem denominador FIXO (todos os
+# turnos), entao o analogo honesto e `DISPERSAO_MEDIDA.base_fixa_pp`, e nao
+# `uniao_pp` -- duas execucoes do MESMO codigo ja diferiram 2,1 pontos por
+# essa conta (o `uniao_pp` de 5,7 e de uma metrica com denominador de uniao, e
+# nao se aplica aqui). 2,1 pontos ja bastam para proibir gatear em 2%.
 #
 # **Este numero e propriedade do par modelo-detector, nao do modelo** (D2).
 # Alargar a gramatica de `divergencias_de` faz a taxa subir sem o modelo ter
@@ -586,11 +589,10 @@ ALVO_DE_ANCORAGEM_PCT = 98
 # no branch feat/tec-269-taxa-de-alucinacao, conclusao success, commit b059585.
 # Corpus: 53 conversas, 147 turnos; 0 abandonadas. Resultado: 1/147 turnos com
 # cifra sem base (0,7%), VERDE contra alvo <2%. Colaterais: intencao 98,0%
-# VERDE, extracao 91,9% VERDE, tom 98,0% AMARELO.
+# VERDE, efetiva 95,9% VERDE, extracao 91,9% VERDE, tom 98,0% AMARELO.
 #
-# Uma execucao nao e distribuicao: duas execucoes do MESMO codigo ja diferiram
-# 5,7 pontos noutra metrica. O piso fica em 50 de proposito -- registrar a
-# medida agora, atuar depois quando houver historia.
+# O piso fica em 50 de proposito -- registrar a medida agora, atuar depois
+# quando houver historia.
 PISO_ANDAIME_DE_ANCORAGEM_PCT = 50
 
 
@@ -598,9 +600,13 @@ PISO_ANDAIME_DE_ANCORAGEM_PCT = 50
 class InvencaoObservada:
     """Um turno cuja prosa citou cifra ou codigo sem base, com o endereco.
 
-    Carrega as divergencias e nao so a contagem, pela licao que
-    `ViolacaoDeFormato` ja registra neste arquivo: endereco sozinho nao
-    diagnostica, e descobrir o porque exigiria outra execucao paga.
+    Carrega as divergencias e nao so a contagem para uma secao de
+    diagnostico FUTURA poder renderiza-las -- **essa secao nao existe
+    ainda**. Hoje `divergencias` so e lido por dois testes unitarios:
+    `taxa_de_alucinacao` conta so por `conversa_id`/`indice` e nunca passa
+    este campo para `render`. E diferente de `ViolacaoDeFormato`, que carrega
+    o mesmo tipo de detalhe e ELE chega ao relatorio -- aqui, descobrir qual
+    foi a divergencia de um turno especifico ainda exige outra execucao paga.
     """
 
     conversa_id: str
@@ -624,9 +630,12 @@ def invencao_do_turno(
     recusou a gramatica gemea tres vezes dentro da propria branch.
 
     `candidatos` chega vazio em todo turno do corpus, porque o eval nao passa
-    `porta` e portanto nao ha tool use (D1). Com lista vazia so a faixa do
-    lead absolve, que e exatamente o caso RT-01 puro: o agente citou preco
-    sem ter buscado nada.
+    `porta` e portanto nao ha tool use (D1). Com lista vazia so a faixa que o
+    MODELO EXTRAIU absolve -- e nao a que o lead declarou: `faixa` chega aqui
+    a partir de `estado_acumulado`, que e alimentado por `campos_a_gravar`
+    sobre a extracao do modelo, nunca pela anotacao do corpus. As duas
+    coincidem quando a extracao acerta e divergem quando ela erra -- ver a
+    lacuna 5 do desenho.
     """
     divergencias = divergencias_de(texto, candidatos=candidatos, faixa=faixa)
     if not divergencias:
@@ -670,7 +679,8 @@ def taxa_de_alucinacao(
         detalhe=(
             f"{sujos}/{total} turnos com cifra sem base ({pct:.1f}%), "
             f"alvo <{100 - ALVO_DE_ANCORAGEM_PCT}%, "
-            f"piso <{100 - PISO_ANDAIME_DE_ANCORAGEM_PCT}% (andaime)"
+            f"piso <{100 - PISO_ANDAIME_DE_ANCORAGEM_PCT}% (andaime), "
+            f"sem busca no corpus"
         ),
     )
 

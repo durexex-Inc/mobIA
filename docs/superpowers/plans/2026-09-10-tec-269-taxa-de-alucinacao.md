@@ -36,6 +36,7 @@
 | `src/mobia/evals/metricas.py` | **Modificar.** Ganha `InvencaoObservada`, `invencao_do_turno` e `taxa_de_alucinacao`. É onde a lógica fica testável de graça. | 1 |
 | `tests/unit/test_evals_metricas.py` | **Modificar.** Os testes da métrica. Arquivo já existe; **não crie um novo** — basename repetido entre `tests/unit/` e `tests/integration/` aborta a coleta da suíte inteira e não aparece rodando o arquivo isolado. | 1 |
 | `evals/test_acuracia_de_intencao.py` | **Modificar.** Só fiação: coleta no laço, propaga na tupla, troca o `sem_mecanismo`. | 2 |
+| `tests/unit/test_evals_guarda_extracao.py` | **Modificar.** Importa `_metricas_de` de `evals/test_acuracia_de_intencao.py` (arquivo já existe desde a TEC-238/TEC-140) e trava a guarda de amostra da métrica nova, além — desde a revisão final — de dirigir `_rodar_conversa` com um classificador dublê para travar D3 sem gastar chamada paga. | 2 |
 
 ---
 
@@ -330,7 +331,7 @@ git commit -m "feat(TEC-269): a metrica de alucinacao existe e e testavel sem ga
 - Consumes: `InvencaoObservada`, `invencao_do_turno`, `taxa_de_alucinacao` (Task 1).
 - Produces: nenhum símbolo novo. O efeito observável é a linha do relatório deixar de dizer `SEM_MECANISMO`.
 
-**Aviso honesto sobre verificação:** este arquivo é o gate pago e **não tem cobertura unitária** — foi por isso que a lógica ficou toda na Task 1. A prova real da fiação é a Task 4. Aqui você verifica que importa, que o mypy e o ruff passam, e que a coleta funciona.
+**Aviso sobre verificação:** este arquivo é o gate pago, e a prova mais forte da fiação continua sendo a Task 4. Mas ele **tem**, sim, cobertura unitária indireta desde `4d5e671`: `tests/unit/test_evals_guarda_extracao.py` importa `_metricas_de` deste módulo, e `tests/unit/test_evals_metricas.py` importa `_reperguntou` (dentro de um teste). A revisão final da TEC-269 (fix wave) foi além disso e acrescentou testes que dirigem `_rodar_conversa` diretamente, com um classificador dublê — sem rede nem banco —, fechando a lacuna que a wiring do laço (D3, a posição da coleta em relação a `estado_acumulado.update`) não tinha nenhum teste cobrindo. Aqui você ainda verifica que importa, que o mypy e o ruff passam, e que a coleta funciona.
 
 - [ ] **Step 1: Acrescentar os imports**
 
