@@ -581,6 +581,16 @@ ALVO_DE_ANCORAGEM_PCT = 98
 # piorado. Quem alargar re-mede o piso na mesma card, e a pergunta e "subiu
 # porque o modelo piorou ou porque o detector melhorou?" antes de "quanto
 # subo o piso?".
+#
+# Primeira medicao paga (2026-09-10): CI run 34471488445, workflow_dispatch
+# no branch feat/tec-269-taxa-de-alucinacao, conclusao success, commit b059585.
+# Corpus: 53 conversas, 147 turnos; 0 abandonadas. Resultado: 1/147 turnos com
+# cifra sem base (0,7%), VERDE contra alvo <2%. Colaterais: intencao 98,0%
+# VERDE, extracao 91,9% VERDE, tom 98,0% AMARELO.
+#
+# Uma execucao nao e distribuicao: duas execucoes do MESMO codigo ja diferiram
+# 5,7 pontos noutra metrica. O piso fica em 50 de proposito -- registrar a
+# medida agora, atuar depois quando houver historia.
 PISO_ANDAIME_DE_ANCORAGEM_PCT = 50
 
 
