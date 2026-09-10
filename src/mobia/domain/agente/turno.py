@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import MODELO_SEM_CHAMADA
 from mobia.domain.agente.apresentacao import legenda_de
+from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
 from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo, porta_de_busca
@@ -109,6 +110,19 @@ def _recusados_de(estado: LeadQualification | None) -> frozenset[str]:
     if estado is None:
         return frozenset()
     return frozenset(estado.campos_recusados or ())
+
+
+def _faixa_declarada(estado: LeadQualification | None) -> tuple[int | None, int | None]:
+    """O orcamento que o lead ja declarou, na forma que `divergencias_de` recebe.
+
+    Existe para a guarda da TEC-161 nao bloquear o modelo ecoando o proprio
+    lead: "entendi, ate R$ 600 mil" nao e imovel inventado. Linha ausente vira
+    faixa vazia, que `_na_faixa` trata como ausencia de declaracao -- e nao
+    como faixa aberta.
+    """
+    if estado is None:
+        return (None, None)
+    return (estado.faixa_preco_min_centavos, estado.faixa_preco_max_centavos)
 
 
 async def executar_turno(
@@ -565,6 +579,59 @@ async def executar_turno(
     # nesse caminho -- o texto entregue e a pergunta do desambiguador.
     apresentando = bool(gerada.candidatos) and not gerada.perguntou and not desambiguando
 
+    # TEC-161. A ultima coisa que acontece antes de a entrega comecar, e a
+    # ordem e a invariante da card: `_apresentar` grava reserva em
+    # `outbound_dispatches`, e bloquear depois dela deixaria linha gravada e
+    # mensagem entregue.
+    #
+    # **Nao regenera**, contra a letra da RN-09.4 e com emenda no SRS. Tres
+    # razoes, na ordem de peso: a moderacao de saida logo acima ja barra sem
+    # regerar e duas politicas para o mesmo problema no mesmo turno seriam uma
+    # a mais; uma segunda chamada reexecuta o laco de tool use da TEC-265, ou
+    # seja uma busca nova, dentro de um `job_timeout` que o pior caso ja
+    # estoura; e depois da TEC-162 descartar a prosa ainda entrega ate tres
+    # fichas corretas, porque nenhum campo delas passou pelo modelo.
+    # `depois_do_estado or contexto.estado`: `gravar_estado` devolve `None` em
+    # todo turno que nao extraiu campo novo e nao registrou recusa (ver o
+    # "Deliberadamente NAO cria linha" no docstring dela), o que inclui o
+    # turno mais comum de todos -- o lead nao disse nada novo sobre orcamento,
+    # so continuou a conversa. Alimentar so `depois_do_estado` cegaria a
+    # excecao da faixa exatamente nesses turnos, mesmo com a linha
+    # `lead_qualification` ja existindo e ja carregando a faixa: o modelo
+    # ecoando "beleza, vou procurar ate 600 mil" -- que o D5 do desenho existe
+    # para permitir, e que `montar_contexto` ate instrui o modelo a fazer --
+    # seria bloqueado como se tivesse inventado o numero. `contexto.estado` e
+    # o mesmo valor que `antes`, la em cima, ja leu para a borda de
+    # qualificacao: a linha de antes do turno, que continua valendo quando
+    # este turno nao gravou nada novo.
+    divergencias = divergencias_de(
+        texto,
+        candidatos=gerada.candidatos,
+        faixa=_faixa_declarada(depois_do_estado or contexto.estado),
+    )
+    citacao_bloqueada = bool(divergencias)
+    if citacao_bloqueada:
+        # A prosa barrada **nao** entra no log, pela mesma razao que o texto
+        # barrado pela moderacao nao entra: registra-la criaria no log
+        # exatamente aquilo que a guarda impediu de sair. Os valores
+        # divergentes entram -- sao o que o modelo inventou, e sao o unico
+        # dado que torna a linha investigavel.
+        log.error(
+            "citacao.bloqueada",
+            channel=message.channel,
+            message_id=str(message.id),
+            tipos=[d.tipo for d in divergencias],
+            citados=[d.citado for d in divergencias],
+            candidatos=len(gerada.candidatos),
+            apresentando=apresentando,
+        )
+        # Apresentando, a prosa vira prefixo vazio e `legenda_de` a omite: o
+        # lead recebe a ficha do banco, que e o conteudo que a RN-10.1 exige.
+        # Sem ficha para entregar, a prosa era a mensagem inteira, e o
+        # substituto e o mesmo texto que o `LacoDeBuscaExcedido` ja usa --
+        # ele E a proposta de verificacao com o corretor que a card pede.
+        texto = "" if apresentando else TEXTO_DA_BUSCA_INCONCLUSIVA
+
     try:
         if apresentando:
             # `prosa=texto` le o valor ANTES da atribuicao: a chamada e
@@ -668,7 +735,7 @@ async def executar_turno(
         )
         return "reentrega_suprimida"
 
-    if desambiguando and not saida_bloqueada:
+    if desambiguando and not saida_bloqueada and not citacao_bloqueada:
         # Depois da entrega confirmada, nunca antes: ver `marcar_desambiguacao`.
         # A ordem entre esta gravacao e a da fala do agente nao e carregada --
         # as duas sao pos-entrega, e a guarda do outbound suprime qualquer
@@ -682,6 +749,13 @@ async def executar_turno(
         # fez, e o lead ficaria em INDEFINIDA sem ter sido perguntado. O
         # `log.info` vai junto pela mesma razao: fora daqui ele afirmaria um
         # "desambiguou" que nao aconteceu.
+        #
+        # `not citacao_bloqueada` (TEC-161) pela mesma razao, terceiro caso: a
+        # guarda de citacao substituiu o texto ANTES deste ponto, e no caminho
+        # de desambiguacao esse texto era a pergunta do desambiguador. O que
+        # chegou ao lead foi `TEXTO_DA_BUSCA_INCONCLUSIVA` (ou a ficha pura),
+        # nao a pergunta -- marcar aqui seria o mesmo dano que `saida_bloqueada`
+        # evita, so que pela guarda nova em vez da moderacao.
         async with session_factory() as session:
             await marcar_desambiguacao(
                 session,
@@ -695,7 +769,7 @@ async def executar_turno(
             message_id=str(message.id),
         )
 
-    if not desambiguando and not saida_bloqueada:
+    if not desambiguando and not saida_bloqueada and not citacao_bloqueada:
         # A marca de `perguntou` (TEC-257) e, ao contrario da intencao e da
         # extracao gravadas la em cima, um fato sobre a NOSSA resposta -- e
         # por isso nao pode entrar naquele commit pre-entrega. Ela so pode ser
@@ -705,7 +779,9 @@ async def executar_turno(
         # caminho de desambiguacao a resposta da chamada 1 foi descartada --
         # paga e nao entregue -- e o lead recebeu a pergunta do desambiguador,
         # nao a de `gerada`; com a saida bloqueada o lead recebeu
-        # `TEXTO_NEUTRO_DE_SAIDA`, que tambem nao pergunta nada. Marcar aqui
+        # `TEXTO_NEUTRO_DE_SAIDA`, que tambem nao pergunta nada; e com a
+        # citacao bloqueada (TEC-161) o lead recebeu `TEXTO_DA_BUSCA_INCONCLUSIVA`
+        # ou a ficha pura -- tambem nao a pergunta de `gerada`. Marcar aqui
         # queimaria, para sempre e em silencio, a chance de perguntar aquele
         # campo de verdade -- a uniao no SQL nunca remove.
         #
