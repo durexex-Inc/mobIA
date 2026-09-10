@@ -39,19 +39,32 @@ from mobia.app.config import get_settings
 # configurada (`Your credit balance is too low`); resolvida na TEC-141
 # abaixo.
 #
-# 10/09/2026 (TEC-141): **1.128**, medido com `claude-sonnet-5` (ja com saldo
-# na chave). Uma chamada a `messages.count_tokens` com
-# `tools=[FERRAMENTA_DE_BUSCA]` + `system=[{"type": "text", "text":
-# SISTEMA_DO_AGENTE}]` + `messages=[{"role": "user", "content": "x"}]`
-# devolveu `input_tokens=1135`; uma segunda chamada so com o mesmo
-# `messages` (sem `tools` nem `system`) devolveu 7. O prefixo cacheavel e
-# `tools` + `system`, e `messages` e overhead de fora dele -- por isso
-# 1135 - 7 = 1128 e o valor abaixo, e nao o numero cru da primeira chamada.
+# 10/09/2026 (TEC-141): **2.351**, medido com `claude-sonnet-5` (rota 1: a
+# API aceitou `output_config` em `messages.count_tokens`, sem precisar cair
+# para uma chamada real `messages.create`/TEC-251). A chamada mediu o
+# prefixo de producao INTEIRO, no mesmo formato que `_chamar`/`classificar`
+# mandam: `tools=[FERRAMENTA_DE_BUSCA]` + `system=[{"type": "text", "text":
+# SISTEMA_DO_AGENTE, "cache_control": {"type": "ephemeral"}}]` +
+# `output_config={"format": {"type": "json_schema", "schema":
+# _SCHEMA_COMPILADO}}` + `messages=[{"role": "user", "content": "x"}]` --
+# devolveu `input_tokens=2358`. Uma segunda chamada so com o mesmo
+# `messages` (sem tools/system/output_config) devolveu 7, e 2358 - 7 = 2351
+# e o valor abaixo.
+#
+# O prefixo cacheavel de producao e `tools` + `system` + o schema de
+# `output_config` -- os tres viajam sob o MESMO `cache_control` porque
+# `_chamar` so marca o bloco `system`, e tudo que a API renderiza antes
+# dele (`tools`, `output_config`) entra dentro do prefixo quente por
+# ordem de renderizacao, nao so `tools` + `system`. Uma primeira medicao
+# desta mesma card cobriu so `tools` + `system` e achou 1.128 -- um
+# subconjunto estrito do prefixo real (faltava o schema, ~1.195 tokens
+# pela TEC-251), nao uma medicao menor dele. Corrigido aqui antes do
+# commit final.
+#
 # Esta card tambem trocou uma frase do `SISTEMA_DO_AGENTE` (ganhou "Nao
 # negocie valor: e com o corretor.", perdeu ", de 0 a 1"), entao o numero
-# muda de novo por causa do prompt, nao so pela ordem de `tools`/`system`
-# que a TEC-265 tinha registrado.
-PREFIXO_CACHEAVEL_EM_TOKENS = 1128
+# muda de novo por causa do prompt, alem da correcao de escopo acima.
+PREFIXO_CACHEAVEL_EM_TOKENS = 2351
 
 # Minimos publicados por modelo. NAO sao monotonicos entre geracoes -- o
 # sonnet-5 exige o dobro do opus-5, e o haiku-4-5 exige oito vezes.
