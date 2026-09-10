@@ -655,11 +655,18 @@ def test_o_prompt_recusa_negociacao_e_diz_para_onde_vai() -> None:
 
 
 def test_a_faixa_da_confianca_nao_e_dita_duas_vezes() -> None:
-    """O schema compilado ja declara `minimum: 0, maximum: 1`.
+    """O schema compilado carrega a faixa dentro de `description`, nao em
+    `minimum`/`maximum` soltos.
 
-    Dizer a faixa tambem em prosa custa 2,5 tokens por chamada para repetir
-    o que a estrutura ja garante. O SIGNIFICADO da confianca continua no
-    prompt -- `minimum`/`maximum` nao dizem o que ela mede.
+    O compilador de schema do lado do servidor nao suporta essas duas
+    chaves para `number` -- `transform_schema` (biblioteca `anthropic`) as
+    dobra para dentro de `description`, e o campo compilado vira
+    `{"type": "number", "description": "{minimum: 0, maximum: 1}"}` (ver
+    `_SCHEMA_COMPILADO` em `classificador.py`). A faixa ainda chega ao
+    modelo, so que como texto -- dizer ela tambem em prosa custava 2,5
+    tokens por chamada para repetir o que a description ja carrega. O
+    SIGNIFICADO da confianca continua no prompt -- `minimum`/`maximum` nao
+    dizem o que ela mede.
     """
     assert "de 0 a 1" not in SISTEMA_DO_AGENTE
     assert "A confianca e o quanto voce considera a classificacao segura" in SISTEMA_DO_AGENTE

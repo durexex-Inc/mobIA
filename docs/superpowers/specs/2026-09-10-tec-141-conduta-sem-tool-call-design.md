@@ -41,7 +41,7 @@ A cláusula precisa recusar **e** encaminhar, e a margem é **6,0**. Nenhuma red
 
 O ritual do `CLAUDE.md` foi cumprido na ordem certa — a pergunta "o que sai para o novo texto entrar?" veio antes de "quanto subo o número?". A busca achou **um** corte legítimo:
 
-- **Sai `, de 0 a 1`** da frase da confiança (**-2,50**). O schema compilado já declara `"confianca": {"type": "number", "minimum": 0, "maximum": 1}`, então a faixa é dita duas vezes, uma delas em prosa paga. O que **não** sai é o resto da frase: `minimum`/`maximum` declaram a faixa, não o significado.
+- **Sai `, de 0 a 1`** da frase da confiança (**-2,50**). `SCHEMA_DA_RESPOSTA` declara `"confianca": {"type": "number", "minimum": 0, "maximum": 1}`, mas o compilador de schema do lado do servidor não aceita essas duas chaves para `number` — `transform_schema` (biblioteca `anthropic`) as dobra para dentro de `description`, e o campo compilado vira `{"type": "number", "description": "{minimum: 0, maximum: 1}"}`. A faixa chega ao modelo mesmo assim, só que como texto em `description`, então dizê-la também em prosa repete o que o schema compilado já carrega. O que **não** sai é o resto da frase: `minimum`/`maximum` declaram a faixa, não o significado.
 
 **Há dois tetos, e eles são acoplados.** O 786 não é o limite real: `test_diferenca_entre_o_contado_e_o_enviado` afirma `subcontagem < contexto_headroom_de_tokens * 0,75`, o que hoje dá **795,0** (1060 × 0,75). O 786 é o teto **deliberadamente mais apertado** dos dois, e a própria docstring diz isso. Passar o teto fixo de 795 o tornaria mais frouxo que o derivado, invertendo a relação — e o número que de fato prenderia seria 795, com margem de 1,75.
 
@@ -132,5 +132,5 @@ O teto do orçamento não é regra de SRS: vive no corpo de `test_a_margem_do_or
 ## O que esta card não faz
 
 - **O quarto critério de aceite, na íntegra.** Ele exige que a taxa de alucinação fique abaixo de 2% **e que regressão bloqueie o merge**. A TEC-269 entregou a medição (0,0–0,7% em duas execuções) e deliberadamente deixou o piso como andaime em 50%, porque uma execução não é distribuição. **O gate bloqueante é card própria**, quando houver histórico. Esta card não o fecha e não deve fingir que fecha.
-- **O caminho sem resultado no catálogo** (lacuna 4): pô-lo no prompt seria pagar por turno pelo que o código já garante nos outros dois caminhos.
+- **O caminho sem resultado no catálogo** (lacuna 4): os outros dois caminhos (laço excedido, citação bloqueada) já são resolvidos em código, a custo zero de prompt, por `TEXTO_DA_BUSCA_INCONCLUSIVA` (`turno.py`) — pôr o terceiro caminho no prompt pagaria por turno por algo que também dá para resolver em código, pelo mesmo mecanismo.
 - **Filtro de conteúdo discriminatório** — é a TEC-142, e a própria card já o declara fora de escopo.

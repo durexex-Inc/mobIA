@@ -47,9 +47,10 @@ from mobia.app.config import get_settings
 # SISTEMA_DO_AGENTE, "cache_control": {"type": "ephemeral"}}]` +
 # `output_config={"format": {"type": "json_schema", "schema":
 # _SCHEMA_COMPILADO}}` + `messages=[{"role": "user", "content": "x"}]` --
-# devolveu `input_tokens=2358`. Uma segunda chamada so com o mesmo
-# `messages` (sem tools/system/output_config) devolveu 7, e 2358 - 7 = 2351
-# e o valor abaixo.
+# devolveu `input_tokens=2358`. O baseline de `messages` sozinho (7) foi
+# reaproveitado da medicao anterior desta mesma card, e nao remedido agora
+# -- reuso valido porque e propriedade do turno de usuario de um
+# caractere, nao do prompt que mudou. 2358 - 7 = 2351 e o valor abaixo.
 #
 # O prefixo cacheavel de producao e `tools` + `system` + o schema de
 # `output_config` -- os tres viajam sob o MESMO `cache_control` porque
@@ -87,7 +88,7 @@ def _minimo_de(modelo: str) -> int | None:
 def test_o_prefixo_cacheavel_passa_o_minimo_do_modelo() -> None:
     """A guarda principal: o cache so existe se o prefixo passar o minimo.
 
-    Com `claude-sonnet-5` a folga e de 628 tokens (1.652 contra 1.024). Se
+    Com `claude-sonnet-5` a folga e de 1.327 tokens (2.351 contra 1.024). Se
     alguem trocar para um modelo de minimo maior -- `claude-haiku-4-5` exige
     4.096 --, o cache morre em silencio e a conta sobe sem nenhum sinal. Este
     assert e o sinal.

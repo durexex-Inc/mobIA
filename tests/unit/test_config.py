@@ -420,12 +420,26 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
 
     A TEC-141 gastou 9,25 e devolveu 2,50, subindo o teto para 793: a
     clausula `Nao negocie valor: e com o corretor.` custou 9,25, e saiu o
-    `, de 0 a 1` da confianca, que o schema compilado ja declara em
-    `minimum`/`maximum`. O teto NAO foi para 800 -- a redacao longa
-    (`nem prometa desconto`, +15,75) exigiria subir
-    `contexto_headroom_de_tokens`, cujo `* 0,75` e o OUTRO teto desta conta
-    (795,0 hoje). Um teto fixo acima do derivado seria decorativo, e subir a
-    reserva custa literais e resumo por turno. A palavra `desconto` ficou com
+    `, de 0 a 1` da confianca -- o schema compilado carrega essa faixa
+    dentro de `description`, nao em `minimum`/`maximum` soltos
+    (`transform_schema` dobra as duas chaves para la, porque o compilador
+    de schema do lado do servidor nao as suporta para `number`), entao
+    dizer a faixa tambem em prosa repetia o que a description ja carregava.
+
+    O teto fixo passou de 9,0 abaixo do teto derivado (795,0) para 2,0
+    abaixo dele: qualquer alta acima de +2 no fixo passa a exigir subir
+    `contexto_headroom_de_tokens` junto, o que custa historico de conversa
+    por turno -- essa e a margem apertada que a proxima card herda.
+
+    O teto fixo NAO foi para 800. As duas redacoes mais longas cabem, em
+    tokens brutos, no teto derivado de 795,0: `nem desconto` fica em 790,00
+    (5,0 de folga) e `nem prometa desconto` em 793,25 (1,75 de folga) --
+    nenhuma das duas fura o teto derivado por aritmetica. O que elas nao
+    deixam e a margem de ~6 tokens que esta card mantem por convencao (a
+    curta fica em 786,75 liquido contra 793, folga de 6,25). O argumento
+    real para a clausula curta e semantico, nao aritmetico: pedir desconto
+    ja e negociar valor (desenho, D2), entao a forma curta cobre o mesmo
+    cenario do Gherkin sem apertar a margem. A palavra `desconto` ficou com
     o moderador de saida, onde nao custa orcamento.
     """
     subcontagem = _subcontagem()

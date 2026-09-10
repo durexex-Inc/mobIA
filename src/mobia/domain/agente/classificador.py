@@ -89,7 +89,6 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # curta faz o mesmo servico porque o parser deterministico (`dinheiro.py`,
 # Tasks 1-3) e quem decide "vago", nao o modelo -- o prompt so precisa
 # lembrar o modelo de perguntar quando `extrair` (Task 4) ja recusou gravar.
-# Margem restante: 23,8.
 SISTEMA_DO_AGENTE = (
     "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
     "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
