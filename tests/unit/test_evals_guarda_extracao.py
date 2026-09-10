@@ -44,7 +44,7 @@ def _faixa_da_extracao(
     # de uma execucao que morreu antes de gerar resposta -- ela cai em
     # `sem_mecanismo`, que e o que `test_sem_resposta_a_aderencia_cai_em_sem_mecanismo`
     # abaixo trava.
-    metricas = _metricas_de(resultados, observadas, [])
+    metricas = _metricas_de(resultados, observadas, [], [])
     extracao = next(m for m in metricas if m.nome == "precisao da extracao")
     return extracao.faixa
 
@@ -86,7 +86,7 @@ def test_sem_resposta_a_aderencia_cai_em_sem_mecanismo() -> None:
     raciocinio e o mesmo que ja protege a acuracia de intencao em
     `_metricas_de`.
     """
-    metricas = _metricas_de([], [], [])
+    metricas = _metricas_de([], [], [], [])
     tom = next(m for m in metricas if m.nome == "aderencia ao tom")
 
     assert tom.faixa is Faixa.SEM_MECANISMO
@@ -96,8 +96,24 @@ def test_sem_resposta_a_aderencia_cai_em_sem_mecanismo() -> None:
 def test_com_resposta_a_aderencia_e_medida() -> None:
     """Com amostra ela sai do slot e vira numero -- nao fica presa em
     `SEM_MECANISMO` para sempre, que era o estado ate a TEC-140."""
-    metricas = _metricas_de([], [], [RespostaObservada(conversa_id="c", indice=0, texto="ok")])
+    metricas = _metricas_de([], [], [RespostaObservada(conversa_id="c", indice=0, texto="ok")], [])
     tom = next(m for m in metricas if m.nome == "aderencia ao tom")
 
     assert tom.faixa is not Faixa.SEM_MECANISMO
     assert (tom.acertos, tom.total) == (1, 1)
+
+
+def test_sem_resposta_a_taxa_de_alucinacao_cai_em_sem_mecanismo() -> None:
+    """TEC-269: a metrica nova tem a mesma guarda de amostra que a aderencia.
+
+    O comportamento da propria `taxa_de_alucinacao` ja esta travado em
+    `test_evals_metricas.py::test_sem_amostra_volta_para_sem_mecanismo`; este
+    teste trava so a fiacao -- que `_metricas_de` chama a funcao com
+    `invencoes` e `respostas` e devolve o resultado dela na lista, do mesmo
+    jeito que ja fazia para `aderencia_ao_tom`.
+    """
+    metricas = _metricas_de([], [], [], [])
+    taxa = next(m for m in metricas if m.nome == "taxa de alucinacao (cifra e codigo)")
+
+    assert taxa.faixa is Faixa.SEM_MECANISMO
+    assert "nenhuma resposta" in taxa.detalhe
