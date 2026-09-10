@@ -19,7 +19,7 @@ Nenhuma cifra e nenhum código de imóvel chegam ao lead sem corresponder ao que
 - **`RespostaDoAgente.candidatos`** existe desde a TEC-265, com o comentário que antecipa esta card: lista vazia significa "não houve busca neste turno", e o campo não é opcional exatamente para que "não buscou" e "buscou e não achou" levem à **mesma** decisão aqui.
 - **O modelo vê** `imovel_id`, `codigo`, `titulo`, `bairro`, `preco_centavos`, `quartos`, `vagas`, `area_util_m2` (`_candidato_serializavel`, `domain/agente/ferramenta_de_busca.py`). O preço vai como inteiro em centavos, e o comentário de lá diz que é assim porque é o que esta card vai comparar.
 - **A instrução já existe e não é guarda.** A `description` de `FERRAMENTA_DE_BUSCA` diz *"Busca no catalogo. Nunca cite imovel que nao veio dela."* — o que falta é a verificação, não o pedido.
-- **A moderação de saída não regenera.** Bloqueou, ela troca `texto` por `TEXTO_NEUTRO_DE_SAIDA` e o turno segue. É o precedente mais próximo desta card e está no mesmo arquivo, dez linhas acima do ponto de enxerto.
+- **A moderação de saída não regenera.** Bloqueou, ela troca `texto` por `TEXTO_NEUTRO_DE_SAIDA` e o turno segue. É o precedente mais próximo desta card e está no mesmo arquivo, antes do ponto de enxerto.
 - **A margem do orçamento do prompt é de 6,0 tokens** (líquido 780,0 contra teto fixo de 786), medida em 2026-09-09 por `pytest -k margem_do_orcamento -s`. Esta card não gasta nada dela.
 - **Códigos do catálogo** têm a forma `AP-1004`, `CA-1005`, `TE-1001` no seed (`data/seed/imoveis.csv`); a coluna é `String(20)` e não tem constraint de formato.
 
