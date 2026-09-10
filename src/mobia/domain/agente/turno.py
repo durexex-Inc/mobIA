@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import MODELO_SEM_CHAMADA
 from mobia.domain.agente.apresentacao import legenda_de
+from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
 from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo, porta_de_busca
@@ -109,6 +110,19 @@ def _recusados_de(estado: LeadQualification | None) -> frozenset[str]:
     if estado is None:
         return frozenset()
     return frozenset(estado.campos_recusados or ())
+
+
+def _faixa_declarada(estado: LeadQualification | None) -> tuple[int | None, int | None]:
+    """O orcamento que o lead ja declarou, na forma que `divergencias_de` recebe.
+
+    Existe para a guarda da TEC-161 nao bloquear o modelo ecoando o proprio
+    lead: "entendi, ate R$ 600 mil" nao e imovel inventado. Linha ausente vira
+    faixa vazia, que `_na_faixa` trata como ausencia de declaracao -- e nao
+    como faixa aberta.
+    """
+    if estado is None:
+        return (None, None)
+    return (estado.faixa_preco_min_centavos, estado.faixa_preco_max_centavos)
 
 
 async def executar_turno(
@@ -564,6 +578,45 @@ async def executar_turno(
     # entra porque `gerada.perguntou` fala da chamada 1, que foi DESCARTADA
     # nesse caminho -- o texto entregue e a pergunta do desambiguador.
     apresentando = bool(gerada.candidatos) and not gerada.perguntou and not desambiguando
+
+    # TEC-161. A ultima coisa que acontece antes de a entrega comecar, e a
+    # ordem e a invariante da card: `_apresentar` grava reserva em
+    # `outbound_dispatches`, e bloquear depois dela deixaria linha gravada e
+    # mensagem entregue.
+    #
+    # **Nao regenera**, contra a letra da RN-09.4 e com emenda no SRS. Tres
+    # razoes, na ordem de peso: a moderacao de saida logo acima ja barra sem
+    # regerar e duas politicas para o mesmo problema no mesmo turno seriam uma
+    # a mais; uma segunda chamada reexecuta o laco de tool use da TEC-265, ou
+    # seja uma busca nova, dentro de um `job_timeout` que o pior caso ja
+    # estoura; e depois da TEC-162 descartar a prosa ainda entrega ate tres
+    # fichas corretas, porque nenhum campo delas passou pelo modelo.
+    divergencias = divergencias_de(
+        texto,
+        candidatos=gerada.candidatos,
+        faixa=_faixa_declarada(depois_do_estado),
+    )
+    if divergencias:
+        # A prosa barrada **nao** entra no log, pela mesma razao que o texto
+        # barrado pela moderacao nao entra: registra-la criaria no log
+        # exatamente aquilo que a guarda impediu de sair. Os valores
+        # divergentes entram -- sao o que o modelo inventou, e sao o unico
+        # dado que torna a linha investigavel.
+        log.error(
+            "citacao.bloqueada",
+            channel=message.channel,
+            message_id=str(message.id),
+            tipos=[d.tipo for d in divergencias],
+            citados=[d.citado for d in divergencias],
+            candidatos=len(gerada.candidatos),
+            apresentando=apresentando,
+        )
+        # Apresentando, a prosa vira prefixo vazio e `legenda_de` a omite: o
+        # lead recebe a ficha do banco, que e o conteudo que a RN-10.1 exige.
+        # Sem ficha para entregar, a prosa era a mensagem inteira, e o
+        # substituto e o mesmo texto que o `LacoDeBuscaExcedido` ja usa --
+        # ele E a proposta de verificacao com o corretor que a card pede.
+        texto = "" if apresentando else TEXTO_DA_BUSCA_INCONCLUSIVA
 
     try:
         if apresentando:
