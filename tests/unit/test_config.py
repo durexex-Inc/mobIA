@@ -343,14 +343,14 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
 def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     """A margem existe para ser vista antes de ser gasta, nao depois.
 
-    O teto de 786 e mais apertado que o `headroom * 0,75` usado pelo teste
+    O teto de 793 e mais apertado que o `headroom * 0,75` usado pelo teste
     irmao, e e o proposito deste teste: se voce esta lendo isto porque ele
     reprovou, a pergunta e "o que sai do prompt para o novo texto entrar?",
     nao "quanto subo o numero?". Subir e resposta legitima -- mas so depois da
     primeira pergunta, e com o preco por turno escrito no comentario de
     `contexto_headroom_de_tokens`.
 
-    O 786 e o unico numero desta conta escrito a mao em qualquer lugar, e e
+    O 793 e o unico numero desta conta escrito a mao em qualquer lugar, e e
     escrito aqui de proposito: um limite so trava se estiver fixo. Todo o
     resto -- subcontagem, folga, margem -- e derivado e sai impresso por
     `_subcontagem`, para ninguem precisar transcrever (TEC-243):
@@ -417,13 +417,23 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
         python -m pytest -q -k margem_do_orcamento -s
 
     nunca uma simulacao do schema por fora dele.
+
+    A TEC-141 gastou 9,25 e devolveu 2,50, subindo o teto para 793: a
+    clausula `Nao negocie valor: e com o corretor.` custou 9,25, e saiu o
+    `, de 0 a 1` da confianca, que o schema compilado ja declara em
+    `minimum`/`maximum`. O teto NAO foi para 800 -- a redacao longa
+    (`nem prometa desconto`, +15,75) exigiria subir
+    `contexto_headroom_de_tokens`, cujo `* 0,75` e o OUTRO teto desta conta
+    (795,0 hoje). Um teto fixo acima do derivado seria decorativo, e subir a
+    reserva custa literais e resumo por turno. A palavra `desconto` ficou com
+    o moderador de saida, onde nao custa orcamento.
     """
     subcontagem = _subcontagem()
-    _linha("teto desta assercao (fixo)", 786)
-    _linha("margem", 786 - subcontagem)
+    _linha("teto desta assercao (fixo)", 793)
+    _linha("margem", 793 - subcontagem)
 
-    assert subcontagem < 786, (
-        f"subcontagem {subcontagem}: a margem sobre o teto de 786 foi "
+    assert subcontagem < 793, (
+        f"subcontagem {subcontagem}: a margem sobre o teto de 793 foi "
         f"consumida. Encolha o texto enviado, ou suba a reserva registrando "
         f"o preco por turno."
     )
