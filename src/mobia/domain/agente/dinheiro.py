@@ -160,6 +160,59 @@ def _valor_de(texto: str) -> _Valor | None:
     return _resolver(achado.group().rstrip(".,"), limpo[achado.end() :])
 
 
+# `reais` DEPOIS do numero e marcador de moeda tanto quanto `R$` antes dele.
+# Precisa de padrao proprio porque `_RUIDO` apaga a palavra antes de qualquer
+# parsing -- para `parsear` ela e ruido mesmo, mas para `valores_em` ela e
+# metade da evidencia de que aquele numero e dinheiro.
+_MARCADOR_DE_REAIS = re.compile(r"\A\s*reais?\b")
+
+# Quantos caracteres antes do numero ainda contam como lugar do `R$`. Tres
+# bastam para "r$ " e nao alcancam o numero anterior.
+_ALCANCE_DO_CIFRAO = 3
+
+
+def valores_em(texto: str) -> tuple[int, ...]:
+    """Todos os valores monetarios do texto, em centavos, na ordem.
+
+    Diferente de `parsear`, que resolve UMA expressao ja isolada pelo modelo,
+    este varre prosa livre. A diferenca de contrato que importa: aqui um
+    numero so conta se vier com marcador -- `R$` antes, `reais` depois, ou
+    sufixo de grandeza. Sem isso "2 quartos" e "80 m2" viram dinheiro, e a
+    guarda da TEC-161 passa a bloquear turno correto (D2 do desenho).
+
+    **Erra por falta, de proposito.** "esse ai sai por 750" nao e detectado.
+    E a mesma politica que o docstring deste modulo ja declara para a
+    gramatica inteira, e a alternativa -- aceitar numero nu -- troca um falso
+    negativo por uma enxurrada de falso positivo.
+
+    Nao levanta, pelo mesmo motivo que `parsear` nao levanta.
+    """
+    limpo = texto.casefold()
+    achados = list(_NUMERO.finditer(limpo))
+    valores: list[int] = []
+    for indice, achado in enumerate(achados):
+        if _negativo(limpo, achado.start()):
+            continue
+        # O escopo do marcador termina no proximo numero. E a mesma delimitacao
+        # que `_faixa_de` faz para impedir o "mil" de um lado da faixa de
+        # multiplicar o numero do outro lado -- ver o docstring de `_resolver`.
+        fim = achados[indice + 1].start() if indice + 1 < len(achados) else len(limpo)
+        sufixo = limpo[achado.end() : fim]
+        antes = limpo[max(0, achado.start() - _ALCANCE_DO_CIFRAO) : achado.start()]
+
+        valor = _resolver(achado.group().rstrip(".,"), sufixo)
+        if valor is None:
+            continue
+        tem_marcador = (
+            valor.tinha_marcador
+            or _MARCADOR_DE_MOEDA.search(antes) is not None
+            or _MARCADOR_DE_REAIS.match(sufixo) is not None
+        )
+        if tem_marcador:
+            valores.append(valor.centavos)
+    return tuple(valores)
+
+
 # Conectores de faixa: as tres formas da D3 (`entre X e Y`, `de X a Y`,
 # `X a Y`) reduzem-se todas a "a", "e" ou "ate" ENTRE os dois numeros. Virgula
 # e espaco em volta sao ruido de escrita.

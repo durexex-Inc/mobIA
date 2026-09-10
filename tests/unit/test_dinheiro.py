@@ -11,6 +11,7 @@ from mobia.domain.agente.dinheiro import (
     _Valor,
     _valor_de,
     parsear,
+    valores_em,
 )
 from mobia.domain.agente.schemas import Intencao
 
@@ -366,3 +367,41 @@ def test_bilhao_e_lido_em_vez_de_virar_dois_reais():
     limite dela."""
     assert parsear("1 bilhao", Intencao.COMPRA) == FaixaDePreco(max_centavos=100_000_000_000)
     assert parsear("2 bilhoes", Intencao.COMPRA) == Recusa(MotivoDaRecusa.IMPLAUSIVEL)
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        # Com marcador: contam.
+        ("custa R$ 500 mil", (50_000_000,)),
+        ("sai por 500 mil", (50_000_000,)),
+        ("R$ 516.464,30 fechado", (51_646_430,)),
+        ("500 reais de condominio", (50_000,)),
+        ("de 400 mil a 600 mil", (40_000_000, 60_000_000)),
+        ("meio milhao nao entra, mas 1,2 milhao sim", (120_000_000,)),
+        # Sem marcador: nao contam. Esta metade e a que impede a guarda de
+        # bloquear turno correto -- ver D2 do desenho.
+        ("2 quartos e 1 vaga", ()),
+        ("80 m2 no andar 12", ()),
+        ("achei 3 opcoes", ()),
+        ("esse ai sai por 750", ()),
+        # Malformado: erra por falta, nao inventa valor.
+        ("1.5 milhao", ()),
+        ("", ()),
+    ],
+)
+def test_valores_em_exige_marcador(texto: str, esperado: tuple[int, ...]) -> None:
+    """D2: numero nu nao e dinheiro.
+
+    Sem esta regra, "2 quartos" vira R$ 2,00 e a guarda da TEC-161 bloqueia
+    turno correto -- que e o unico jeito de uma guarda anti-alucinacao perder
+    a confianca de quem opera.
+    """
+    assert valores_em(texto) == esperado
+
+
+def test_valores_em_nunca_levanta() -> None:
+    """Mesmo contrato do resto do modulo: a entrada vem do modelo repetindo a
+    fala do lead, entao qualquer sequencia de caracteres e valida."""
+    for texto in ("34191790010104351004791020150008291070026000", "R$", "-500 mil", "mil"):
+        assert isinstance(valores_em(texto), tuple)
