@@ -35,19 +35,29 @@ O **prompt previne**: o modelo escreve a recusa certa e o lead recebe uma respos
 
 Nenhum dos dois sozinho serve. Só prompt não verifica nada — é exatamente a situação em que a TEC-161 encontrou o RT-01, com uma instrução na `description` da ferramenta e nada checando. Só moderador entrega ao lead o `TEXTO_NEUTRO_DE_SAIDA` (*"Tive um problema para montar a resposta agora"*) diante de *"consegue baixar para 550 mil?"*, que é uma pergunta legítima e comum.
 
-### D2 — O teto do orçamento sobe para 800, e o preço está escrito
+### D2 — O teto do orçamento sobe para 793, e são dois tetos, não um
 
-A cláusula mais curta que satisfaz o Gherkin custa **+15,75 tokens**. A margem é **6,0**. Não cabe, e nenhuma redação mais enxuta faz caber: mesmo `Nao negocie valor nem prometa desconto.` sem destino custa 10,00.
+A cláusula precisa recusar **e** encaminhar, e a margem é **6,0**. Nenhuma redação cabe nela: mesmo `Nao negocie valor nem prometa desconto.` sem destino custa 10,00.
 
 O ritual do `CLAUDE.md` foi cumprido na ordem certa — a pergunta "o que sai para o novo texto entrar?" veio antes de "quanto subo o número?". A busca achou **um** corte legítimo:
 
 - **Sai `, de 0 a 1`** da frase da confiança (**-2,50**). O schema compilado já declara `"confianca": {"type": "number", "minimum": 0, "maximum": 1}`, então a faixa é dita duas vezes, uma delas em prosa paga. O que **não** sai é o resto da frase: `minimum`/`maximum` declaram a faixa, não o significado.
 
-Líquido **+13,25**: 780,0 passa a **793,25**. Teto **786 → 800**, margem **6,75**.
+**Há dois tetos, e eles são acoplados.** O 786 não é o limite real: `test_diferenca_entre_o_contado_e_o_enviado` afirma `subcontagem < contexto_headroom_de_tokens * 0,75`, o que hoje dá **795,0** (1060 × 0,75). O 786 é o teto **deliberadamente mais apertado** dos dois, e a própria docstring diz isso. Passar o teto fixo de 795 o tornaria mais frouxo que o derivado, invertendo a relação — e o número que de fato prenderia seria 795, com margem de 1,75.
 
-O 800 não é arredondamento por gosto. Manter a margem exatamente em 6,0 — como a TEC-265 fez ao escolher 786 sobre um líquido de 780,0 — daria 799,25, e o teto é inteiro escrito à mão. 799 deixaria 5,75, menos folga do que a card anterior julgou o mínimo aceitável; 800 deixa 6,75 e é o primeiro inteiro que não aperta.
+Isso elimina a redação longa. Medindo as três candidatas contra os dois tetos:
 
-> **Correção registrada:** a primeira versão deste desenho dizia 796, número que eu levei à decisão de produto antes de conferir a conta. 796 sobre 793,25 são 2,75 de margem, não os ~6 prometidos. O erro foi de aritmética minha, não de escolha — a decisão (só a negociação entra no prompt) permanece; o teto que a implementa é outro.
+| Cláusula | Líquido | Teto fixo | Cabe? |
+|---|---|---|---|
+| `Nao negocie valor: e com o corretor.` | 786,75 | 793 | **sim** |
+| `Nao negocie valor nem desconto: e com o corretor.` | 790,00 | 797 | exige subir `headroom` |
+| `Nao negocie valor nem prometa desconto: isso e com o corretor.` | 793,25 | 800 | exige subir `headroom` |
+
+Subir `contexto_headroom_de_tokens` não é gratuito: o comentário dele em `config.py` registra que a última subida (880 → 1060, na TEC-265) custou **180 tokens a menos de literais e resumo por turno**. A reserva sai do mesmo contexto que guarda a conversa do lead.
+
+**Escolha: a primeira.** Teto **786 → 793**, líquido 786,75, margem **6,25**, `headroom` intocado, zero custo em histórico de conversa. `desconto` sai da prosa do prompt e fica com o moderador, onde não custa nada — e pedir desconto é negociar valor, então a cláusula curta cobre o cenário do Gherkin.
+
+> **Duas correções registradas.** A primeira versão deste desenho dizia teto 796; 796 sobre 793,25 são 2,75 de margem, não os ~6 prometidos — erro de aritmética que eu levei à decisão de produto antes de conferir. A segunda dizia 800, e estava errada por outro motivo: eu tratava o orçamento como um número quando são dois, e 800 é maior que o teto derivado de 795. A decisão de produto (só a negociação entra no prompt, com destino) sobreviveu às duas; o que mudou foi o preço, para menos.
 
 Não há corte maior disponível sem apagar regra que outra card pagou para pôr ali — a docstring de `test_a_margem_do_orcamento_do_prompt_e_deliberada` registra cada uma, e desfazer trabalho alheio para financiar o meu seria a leitura errada do ritual.
 
@@ -56,7 +66,7 @@ Não há corte maior disponível sem apagar regra que outra card pagou para pôr
 Entra, ao fim do parágrafo de resposta:
 
 ```
-Nao negocie valor nem prometa desconto: isso e com o corretor.
+Nao negocie valor: e com o corretor.
 ```
 
 **O destino não é ornamento.** O segundo cenário Gherkin da card exige `E encaminha a negociação ao corretor` — recusar sem encaminhar não passa no critério de aceite.
@@ -65,7 +75,7 @@ Nao negocie valor nem prometa desconto: isso e com o corretor.
 
 ### D4 — O moderador ganha a negociação, fora do teto
 
-`SISTEMA_DA_SAIDA` passa a barrar promessa de desconto e negociação de valor. O prompt do moderador tem orçamento próprio — o teto de 786 é do bloco `system` do agente — então esta metade é gratuita em contexto pago do turno.
+`SISTEMA_DA_SAIDA` passa a barrar promessa de desconto e negociação de valor. O prompt do moderador tem orçamento próprio: os dois tetos da D2 medem o bloco `system` do **agente**, e a moderação é outra chamada, com outro `system`. Esta metade é gratuita no contexto pago do turno.
 
 **O risco está no outro lado, e é o que a card pode quebrar.** O moderador hoje libera explicitamente *"dizer que nao ha imovel no perfil, que o valor esta fora da faixa, ou pedir mais informacao"*. Essa liberação tem de sobreviver: `"Esse está acima da sua faixa"` é atendimento correto, `"consigo baixar para 550"` é a violação, e a fronteira entre as duas é estreita. Um moderador que confunde as duas bloqueia conversa comercial normal — o erro que o próprio `SISTEMA_DA_ENTRADA` chama de *"erro, nao cautela"*.
 
@@ -98,7 +108,7 @@ bloqueou? -> texto = TEXTO_NEUTRO_DE_SAIDA (comportamento atual, nao muda)
 **Unitários** (`tests/unit/`, sem rede):
 
 - A cláusula está em `SISTEMA_DO_AGENTE` e o `, de 0 a 1` saiu.
-- `pytest -k margem_do_orcamento -s` passa com teto 800 e margem 6,75. O histórico do teto ganha a linha desta card, com o custo e o corte.
+- `pytest -k margem_do_orcamento -s` passa com teto 793 e margem 6,25. O histórico do teto ganha a linha desta card, com o custo e o corte.
 - O corpus de moderação continua satisfazendo os invariantes que `tests/unit/` já guarda (contagem por arquivo, ids únicos).
 
 **Eval de moderação** (`pytest evals` — pago, roda só quando autorizado):
