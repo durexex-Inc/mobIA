@@ -30,23 +30,28 @@ from mobia.app.config import get_settings
 # alternativo e uma chamada paga a `count_tokens` dentro da suite, que nao
 # toca a rede. Quem mexer no prompt ou no schema re-mede e atualiza aqui.
 #
-# **08/09/2026 (TEC-265): NAO re-medido, e o numero abaixo esta velho.** A
-# ordem de renderizacao do cache e `tools` -> `system` -> `messages`
-# (`classificador.py`, comentario de `_chamar`): a partir desta card
-# `tools=[FERRAMENTA_DE_BUSCA]` passou a entrar ANTES do `system` com
-# `cache_control`, ou seja, DENTRO do prefixo cacheado -- nao depois dele. A
-# ferramenta mede 131,2 tokens pelo proxy `len/4` (D5 do desenho da TEC-265),
-# entao o prefixo real cresceu por volta disso, e 1.716 e hoje um PISO, nao o
-# valor -- a assercao abaixo e `>=`, entao ela continua passando mesmo com o
-# numero desatualizado, exatamente o jeito de falhar em silencio que este
-# arquivo existe para fechar. A remedicao com `messages.count_tokens` (o
-# metodo que este arquivo documenta) foi tentada nesta correcao e nao
-# completou: a chave configurada no ambiente nao tinha saldo para a chamada
-# (`Your credit balance is too low`). Fica registrado aqui em vez de
-# escondido atras de um numero que parece atual: quem tiver saldo disponivel
-# roda a medicao e atualiza esta constante antes de confiar nela para orcamento
-# de custo.
-PREFIXO_CACHEAVEL_EM_TOKENS = 1716
+# 08/09/2026 (TEC-265): a ordem de renderizacao do cache e
+# `tools` -> `system` -> `messages` (`classificador.py`, comentario de
+# `_chamar`): a partir desta card `tools=[FERRAMENTA_DE_BUSCA]` passou a
+# entrar ANTES do `system` com `cache_control`, ou seja, DENTRO do prefixo
+# cacheado -- nao depois dele. A remedicao com `messages.count_tokens` foi
+# tentada nesta correcao e nao completou por falta de saldo na chave
+# configurada (`Your credit balance is too low`); resolvida na TEC-141
+# abaixo.
+#
+# 10/09/2026 (TEC-141): **1.128**, medido com `claude-sonnet-5` (ja com saldo
+# na chave). Uma chamada a `messages.count_tokens` com
+# `tools=[FERRAMENTA_DE_BUSCA]` + `system=[{"type": "text", "text":
+# SISTEMA_DO_AGENTE}]` + `messages=[{"role": "user", "content": "x"}]`
+# devolveu `input_tokens=1135`; uma segunda chamada so com o mesmo
+# `messages` (sem `tools` nem `system`) devolveu 7. O prefixo cacheavel e
+# `tools` + `system`, e `messages` e overhead de fora dele -- por isso
+# 1135 - 7 = 1128 e o valor abaixo, e nao o numero cru da primeira chamada.
+# Esta card tambem trocou uma frase do `SISTEMA_DO_AGENTE` (ganhou "Nao
+# negocie valor: e com o corretor.", perdeu ", de 0 a 1"), entao o numero
+# muda de novo por causa do prompt, nao so pela ordem de `tools`/`system`
+# que a TEC-265 tinha registrado.
+PREFIXO_CACHEAVEL_EM_TOKENS = 1128
 
 # Minimos publicados por modelo. NAO sao monotonicos entre geracoes -- o
 # sonnet-5 exige o dobro do opus-5, e o haiku-4-5 exige oito vezes.
