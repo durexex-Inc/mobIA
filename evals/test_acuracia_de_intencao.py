@@ -341,7 +341,11 @@ def _metricas_de(
     respostas: list[RespostaObservada],
     invencoes: list[InvencaoObservada],
 ) -> list[ResultadoDaMetrica]:
-    """A declarada sem mecanismo sai sempre; as demais, so com amostra.
+    """Nao ha mais slot permanentemente sem mecanismo aqui. Toda metrica que pode
+    cair em `sem_mecanismo` -- extracao, taxa de alucinacao e aderencia ao tom
+    -- so cai por falta de amostra, nunca incondicionalmente. Ate a TEC-269 a
+    taxa de alucinacao era esse slot fixo; agora ela segue a mesma regra das
+    outras duas.
 
     `acuracia_de_intencao([])` levanta de proposito -- `faixa_de` recusa total
     zero para que um corpus que falhou ao carregar nao abra o gate com 0/0. Mas
