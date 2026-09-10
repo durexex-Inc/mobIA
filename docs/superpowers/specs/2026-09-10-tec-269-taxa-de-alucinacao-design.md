@@ -93,7 +93,7 @@ Se não houver turnos medidos, a métrica cai em `sem_mecanismo` com o motivo es
 - A coleta no laço de `evals/test_acuracia_de_intencao.py`, ao lado de `respostas.append(...)`.
 - A troca do `sem_mecanismo("taxa de alucinacao", ...)` na montagem da lista de métricas.
 
-`InvencaoObservada` carrega as divergências e não só a contagem, pela lição que `ViolacaoDeFormato` já registra neste arquivo: endereço sozinho não diagnostica, e descobrir o porquê exigiria outra execução paga.
+`InvencaoObservada` carrega as divergências e não só a contagem, para que uma futura seção de diagnóstico do relatório possa renderizá-las — mas essa seção **não existe** nesta card. Hoje `divergencias` só é lido por dois testes unitários; `taxa_de_alucinacao()` conta por turno e nunca repassa o campo para `render`, então descobrir qual foi a divergência de um turno específico ainda exige outra execução paga. É diferente de `ViolacaoDeFormato`, que carrega o mesmo tipo de detalhe e ele chega ao relatório de verdade.
 
 ## Fluxo
 

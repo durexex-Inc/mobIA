@@ -207,9 +207,15 @@ async def test_eco_do_orcamento_extraido_no_mesmo_turno_nao_e_invencao() -> None
     `_rodar_conversa` -- a regressao contra D3 que a revisao final apontou.
     Verificado: mover o bloco (cortar e colar as linhas de
     `invencao_do_turno(...)` ate `invencoes.append(invencao)` para logo apos
-    `conhecidos_antes = _campos_conhecidos(estado_acumulado)`, antes do
-    `campos_do_turno = campos_a_gravar(...)`) faz este teste falhar com
-    `assert [InvencaoObservada(...)] == []`; revertido, ele volta a passar.
+    `conhecidos_antes = _campos_conhecidos(estado_acumulado)`, antes de
+    `contexto = contexto_do_historico(...)` -- ou seja, antes de `resposta =
+    await classificador.classificar(contexto)` sequer existir) nao faz este
+    teste falhar numa assercao: faz `_rodar_conversa` levantar
+    `UnboundLocalError: cannot access local variable 'resposta' where it is
+    not associated with a value`, porque o bloco movido le `resposta.resposta`
+    e `resposta.candidatos` antes de `resposta` ser atribuida. Revertido
+    (`git checkout -- evals/test_acuracia_de_intencao.py`), a suite deste
+    arquivo volta a passar (9 testes).
     """
     conversa = ConversaAnotada(
         id="c1",
