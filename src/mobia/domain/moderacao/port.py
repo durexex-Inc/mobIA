@@ -27,12 +27,38 @@ class ModeracaoIndisponivel(RuntimeError):
     """
 
 
+# O vocabulario e derivado clausula a clausula do que cada prompt de sistema ja
+# manda bloquear, e nao de uma taxonomia inventada aqui. Por isso as duas
+# listas diferem: `OFENSA` (ofensa ao lead) so a saida bloqueia -- o corpus
+# registra isso em `entrada-libera-ofensa-atendente` --, e `VIOLENCIA`
+# (incitacao) so a entrada nomeia.
+#
+# `NEGOCIACAO` e da TEC-141. Sem ela, o modelo ficaria sem palavra legal para
+# um bloqueio que aquela card acabou de instruir, e responderia fora do
+# protocolo exatamente no caso novo.
+CATEGORIAS_POR_DIRECAO: dict[Direcao, frozenset[str]] = {
+    Direcao.ENTRADA: frozenset({"DISCRIMINACAO", "AMEACA", "ASSEDIO", "VIOLENCIA"}),
+    Direcao.SAIDA: frozenset(
+        {"DISCRIMINACAO", "AMEACA", "ASSEDIO", "OFENSA", "ACONSELHAMENTO", "NEGOCIACAO"}
+    ),
+}
+
+# Fracasso do protocolo, nao categoria do dominio: o modelo bloqueou e o rotulo
+# nao foi reconhecido. Fica FORA de `CATEGORIAS_POR_DIRECAO` de proposito --
+# oferecer a palavra ao modelo seria oferecer a saida facil no lugar de decidir.
+CATEGORIA_OUTRO = "OUTRO"
+
+
 @dataclass(frozen=True)
 class Veredito:
     """Frozen: o veredito atravessa o turno e nao e reescrito no caminho."""
 
     bloqueado: bool
     motivo: str
+    # `None` **e** o veredito liberado: nao ha categoria de liberacao a
+    # inventar, e um valor sentinela como "NENHUMA" criaria uma categoria que
+    # nunca vai para a auditoria e que todo leitor teria que aprender a ignorar.
+    categoria: str | None = None
 
 
 class ModeradorPort(Protocol):
