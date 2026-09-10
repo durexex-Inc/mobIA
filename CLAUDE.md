@@ -64,7 +64,9 @@ Duas consequências práticas. Uma falha isolada com esse traceback **não autor
 
 ## O orçamento do prompt é apertado e tem ritual
 
-`SISTEMA_DO_AGENTE` (`domain/agente/classificador.py`) vai como bloco `system` com `cache_control` e é medido contra um teto **fixo** de 655 por `test_a_margem_do_orcamento_do_prompt_e_deliberada`. A margem se mede em unidades de token.
+`SISTEMA_DO_AGENTE` (`domain/agente/classificador.py`) vai como bloco `system` com `cache_control` e é medido contra um teto **fixo** por `test_a_margem_do_orcamento_do_prompt_e_deliberada`. A margem se mede em unidades de token.
+
+**O teto não está escrito aqui de propósito.** Ele vive uma única vez, no corpo daquele teste, e a docstring de lá afirma ser "o unico numero desta conta escrito a mao em qualquer lugar" — uma segunda cópia neste arquivo tornaria essa frase falsa e envelheceria sozinha. Foi o que aconteceu: este parágrafo dizia 655 desde a TEC-257 e continuou dizendo depois que a TEC-265 gastou os 6,2 de folga restantes com a definição da ferramenta de busca em `tools=` (131,2 tokens), levando o teto a 786. Quem lesse 655 e medisse 780 concluiria que alguém estourou o orçamento em 125 tokens e iria procurar um problema que não existe. **Rode o comando abaixo para saber o teto de hoje; não confie em número transcrito em prosa.**
 
 Antes de alongar o prompt ou mexer no schema compilado:
 
