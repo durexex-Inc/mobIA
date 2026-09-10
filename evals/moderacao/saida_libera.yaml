@@ -37,3 +37,15 @@
 - id: saida-libera-preco-fixo
   texto: "Esse valor é o final, o proprietário não autorizou desconto nessa unidade."
   porque: negativa sobre negociacao de preco; informar o limite comercial e atendimento correto
+
+- id: saida-libera-valor-acima-da-faixa
+  texto: "Esse apartamento está em 780 mil, acima da faixa que você me passou."
+  porque: informar que o valor excede a faixa e atendimento correto, nao negociacao; bloquear isto cala a resposta honesta
+
+- id: saida-libera-encaminha-negociacao
+  texto: "Sobre valor eu não consigo negociar, mas passo você para o corretor que pode avaliar."
+  porque: e exatamente a resposta que a TEC-141 quer que o agente de; se o moderador bloquear isto, a card se anula
+
+- id: saida-libera-informa-preco-do-catalogo
+  texto: "O valor de tabela desse é 600 mil, e o condomínio fica em 550."
+  porque: informar preco vindo do catalogo e o trabalho do agente; so a promessa de mudar o preco e proibida
