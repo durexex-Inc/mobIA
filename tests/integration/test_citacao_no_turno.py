@@ -9,12 +9,14 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
+from conftest import CANAL_AGENTE, CONVERSA_AGENTE
 from sqlalchemy import select
 
 from mobia.domain.agente.schemas import Extracao, Intencao, RespostaDoAgente
 from mobia.domain.agente.turno import KINDS_DAS_FICHAS, TEXTO_DA_BUSCA_INCONCLUSIVA
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.montagem import ContextoMontado
+from mobia.domain.context.repositorio import ler_estado
 from mobia.domain.outbound.models import OutboundDispatch
 from mobia.infra.db import get_sessionmaker
 
@@ -67,30 +69,42 @@ def _candidato(identificador: uuid.UUID, codigo: str, preco: int) -> dict[str, A
 
 
 class _ClassificadorComProsa:
-    """Prosa fixa e candidatos fixos: o assunto aqui e a guarda, nao a busca."""
+    """Prosa fixa e candidatos fixos: o assunto aqui e a guarda, nao a busca.
+
+    `intencao` e `extracao` tem default que preserva o comportamento original
+    (COMPRA, sem campo nenhum). O teste da faixa ja declarada precisa dos
+    dois: INDEFINIDA sem extracao e o unico jeito de `gravar_estado` devolver
+    `None` sem tambem gravar coisa nenhuma, e e exatamente o turno que expoe
+    o ramo nao-`None` de `_faixa_declarada`.
+    """
 
     def __init__(
         self,
         prosa: str,
         candidatos: list[dict[str, Any]],
         perguntou: tuple[str, ...] = (),
+        *,
+        intencao: Intencao = Intencao.COMPRA,
+        extracao: Extracao | None = None,
     ) -> None:
         self.prosa = prosa
         self.candidatos = candidatos
         self.perguntou = perguntou
+        self.intencao = intencao
+        self.extracao = extracao if extracao is not None else Extracao()
 
     async def classificar(
         self, contexto: ContextoMontado, *, porta: Any = None
     ) -> RespostaDoAgente:
         return RespostaDoAgente(
-            intencao=Intencao.COMPRA,
+            intencao=self.intencao,
             confianca=Decimal("0.95"),
             resposta=self.prosa,
             modelo="claude-opus-5",
             tokens_in=500,
             tokens_out=80,
             latency_ms=50,
-            extracao=Extracao(),
+            extracao=self.extracao,
             perguntou=self.perguntou,
             candidatos=self.candidatos,
         )
@@ -175,6 +189,15 @@ async def test_prosa_inventada_sem_ficha_vira_verificacao_humana(
     assert outbound.entregues == [TEXTO_DA_BUSCA_INCONCLUSIVA]
     assert await _kinds_reservados() == ["reply"]
 
+    async with get_sessionmaker()() as leitura:
+        estado = await ler_estado(leitura, CANAL_AGENTE, CONVERSA_AGENTE)
+    assert estado is not None
+    assert "regiao" not in (estado.perguntados_sem_resposta or []), (
+        "a guarda de citacao substituiu o texto pelo fallback -- o lead nunca "
+        "recebeu a pergunta sobre regiao, e marca-la queimaria a chance de "
+        "perguntar de verdade, para sempre e em silencio"
+    )
+
 
 async def test_sem_busca_a_cifra_inventada_bloqueia(
     session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
@@ -211,3 +234,52 @@ async def test_nenhuma_reserva_e_gravada_antes_da_validacao(
 
     assert await _kinds_reservados() == [KINDS_DAS_FICHAS[0]]
     assert all("900" not in entregue for entregue in outbound.entregues)
+
+
+async def test_faixa_ja_declarada_absorve_o_eco_do_orcamento(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """D5 do desenho: ecoar o orcamento que o lead ja deu nao e invencao.
+
+    `_faixa_declarada` so tinha cobertura do ramo `estado is None` -- os
+    outros quatro testes deste arquivo usam intencao COMPRA, que faz
+    `gravar_estado` sempre devolver linha (o dict de `campos_a_gravar` nunca
+    fica vazio so por causa de `extracao`, porque a propria intencao entra
+    nele). `gravar_estado` so devolve `None` para INDEFINIDA sem extracao (ou
+    FORA_DE_ESCOPO) -- exatamente o turno em que o modelo so comenta, sem
+    extrair nada novo, e e o turno em que o lead mais frequentemente ouve o
+    proprio orcamento de volta ("beleza, vou procurar ate X").
+
+    Sem o fallback para `contexto.estado`, este turno perderia a faixa que a
+    linha ja tinha (gravada num turno anterior) so porque este turno em
+    particular nao gravou nada, e a guarda bloquearia o eco como se fosse
+    numero inventado.
+    """
+    identificador = await _imovel(session, "AP-1004", PRECO)
+    # Turno 1: estabelece a faixa. Prosa limpa -- o que importa aqui e o
+    # `lead_qualification` que este turno grava, nao a entrega dele.
+    primeiro_turno = _ClassificadorComProsa(
+        PROSA_LIMPA,
+        [],
+        intencao=Intencao.COMPRA,
+        extracao=Extracao(faixa_preco_max_centavos=60_000_000),
+    )
+    await rodar_turno(session, primeiro_turno, outbound_fake(), resumidor_fake(), contador_fake())
+
+    # Turno 2: INDEFINIDA sem extracao -- `gravar_estado` devolve None. A
+    # cifra citada (R$ 300 mil) fica fora da tolerancia de 10% do candidato
+    # (R$ 516.464,30), entao so a faixa do turno 1 pode absolver a prosa.
+    eco_do_orcamento = "Beleza, vou procurar ate R$ 300 mil, entao."
+    segundo_turno = _ClassificadorComProsa(
+        eco_do_orcamento,
+        [_candidato(identificador, "AP-1004", PRECO)],
+        intencao=Intencao.INDEFINIDA,
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, segundo_turno, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues[0].startswith(f"{eco_do_orcamento}\n\n")

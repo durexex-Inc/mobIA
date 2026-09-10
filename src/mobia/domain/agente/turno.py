@@ -591,12 +591,26 @@ async def executar_turno(
     # seja uma busca nova, dentro de um `job_timeout` que o pior caso ja
     # estoura; e depois da TEC-162 descartar a prosa ainda entrega ate tres
     # fichas corretas, porque nenhum campo delas passou pelo modelo.
+    # `depois_do_estado or contexto.estado`: `gravar_estado` devolve `None` em
+    # todo turno que nao extraiu campo novo e nao registrou recusa (ver o
+    # "Deliberadamente NAO cria linha" no docstring dela), o que inclui o
+    # turno mais comum de todos -- o lead nao disse nada novo sobre orcamento,
+    # so continuou a conversa. Alimentar so `depois_do_estado` cegaria a
+    # excecao da faixa exatamente nesses turnos, mesmo com a linha
+    # `lead_qualification` ja existindo e ja carregando a faixa: o modelo
+    # ecoando "beleza, vou procurar ate 600 mil" -- que o D5 do desenho existe
+    # para permitir, e que `montar_contexto` ate instrui o modelo a fazer --
+    # seria bloqueado como se tivesse inventado o numero. `contexto.estado` e
+    # o mesmo valor que `antes`, la em cima, ja leu para a borda de
+    # qualificacao: a linha de antes do turno, que continua valendo quando
+    # este turno nao gravou nada novo.
     divergencias = divergencias_de(
         texto,
         candidatos=gerada.candidatos,
-        faixa=_faixa_declarada(depois_do_estado),
+        faixa=_faixa_declarada(depois_do_estado or contexto.estado),
     )
-    if divergencias:
+    citacao_bloqueada = bool(divergencias)
+    if citacao_bloqueada:
         # A prosa barrada **nao** entra no log, pela mesma razao que o texto
         # barrado pela moderacao nao entra: registra-la criaria no log
         # exatamente aquilo que a guarda impediu de sair. Os valores
@@ -721,7 +735,7 @@ async def executar_turno(
         )
         return "reentrega_suprimida"
 
-    if desambiguando and not saida_bloqueada:
+    if desambiguando and not saida_bloqueada and not citacao_bloqueada:
         # Depois da entrega confirmada, nunca antes: ver `marcar_desambiguacao`.
         # A ordem entre esta gravacao e a da fala do agente nao e carregada --
         # as duas sao pos-entrega, e a guarda do outbound suprime qualquer
@@ -735,6 +749,13 @@ async def executar_turno(
         # fez, e o lead ficaria em INDEFINIDA sem ter sido perguntado. O
         # `log.info` vai junto pela mesma razao: fora daqui ele afirmaria um
         # "desambiguou" que nao aconteceu.
+        #
+        # `not citacao_bloqueada` (TEC-161) pela mesma razao, terceiro caso: a
+        # guarda de citacao substituiu o texto ANTES deste ponto, e no caminho
+        # de desambiguacao esse texto era a pergunta do desambiguador. O que
+        # chegou ao lead foi `TEXTO_DA_BUSCA_INCONCLUSIVA` (ou a ficha pura),
+        # nao a pergunta -- marcar aqui seria o mesmo dano que `saida_bloqueada`
+        # evita, so que pela guarda nova em vez da moderacao.
         async with session_factory() as session:
             await marcar_desambiguacao(
                 session,
@@ -748,7 +769,7 @@ async def executar_turno(
             message_id=str(message.id),
         )
 
-    if not desambiguando and not saida_bloqueada:
+    if not desambiguando and not saida_bloqueada and not citacao_bloqueada:
         # A marca de `perguntou` (TEC-257) e, ao contrario da intencao e da
         # extracao gravadas la em cima, um fato sobre a NOSSA resposta -- e
         # por isso nao pode entrar naquele commit pre-entrega. Ela so pode ser
@@ -758,7 +779,9 @@ async def executar_turno(
         # caminho de desambiguacao a resposta da chamada 1 foi descartada --
         # paga e nao entregue -- e o lead recebeu a pergunta do desambiguador,
         # nao a de `gerada`; com a saida bloqueada o lead recebeu
-        # `TEXTO_NEUTRO_DE_SAIDA`, que tambem nao pergunta nada. Marcar aqui
+        # `TEXTO_NEUTRO_DE_SAIDA`, que tambem nao pergunta nada; e com a
+        # citacao bloqueada (TEC-161) o lead recebeu `TEXTO_DA_BUSCA_INCONCLUSIVA`
+        # ou a ficha pura -- tambem nao a pergunta de `gerada`. Marcar aqui
         # queimaria, para sempre e em silencio, a chance de perguntar aquele
         # campo de verdade -- a uniao no SQL nunca remove.
         #
