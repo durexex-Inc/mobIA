@@ -643,6 +643,35 @@ def test_o_prompt_do_agente_nomeia_as_tres_tarefas() -> None:
     assert "extrai o que ele procura" in SISTEMA_DO_AGENTE
 
 
+def test_o_prompt_recusa_negociacao_e_diz_para_onde_vai() -> None:
+    """RN-04.4, e o segundo cenario Gherkin da TEC-141.
+
+    Recusar sem encaminhar nao passa no criterio de aceite: ele exige
+    "E encaminha a negociacao ao corretor". Por isso a asserta e sobre a
+    frase inteira e nao so sobre "nao negocie" -- o destino e metade da
+    regra, e foi o que decidiu o tamanho da clausula contra o orcamento.
+    """
+    assert "Nao negocie valor: e com o corretor." in SISTEMA_DO_AGENTE
+
+
+def test_a_faixa_da_confianca_nao_e_dita_duas_vezes() -> None:
+    """O schema compilado carrega a faixa dentro de `description`, nao em
+    `minimum`/`maximum` soltos.
+
+    O compilador de schema do lado do servidor nao suporta essas duas
+    chaves para `number` -- `transform_schema` (biblioteca `anthropic`) as
+    dobra para dentro de `description`, e o campo compilado vira
+    `{"type": "number", "description": "{minimum: 0, maximum: 1}"}` (ver
+    `_SCHEMA_COMPILADO` em `classificador.py`). A faixa ainda chega ao
+    modelo, so que como texto -- dizer ela tambem em prosa custava 2,5
+    tokens por chamada para repetir o que a description ja carrega. O
+    SIGNIFICADO da confianca continua no prompt -- `minimum`/`maximum` nao
+    dizem o que ela mede.
+    """
+    assert "de 0 a 1" not in SISTEMA_DO_AGENTE
+    assert "A confianca e o quanto voce considera a classificacao segura" in SISTEMA_DO_AGENTE
+
+
 def test_o_prompt_do_agente_explica_a_semantica_de_null() -> None:
     """`null` significa "o lead nao falou disso NESTE turno", e a metrica pune
     inferencia tanto quanto omissao. As duas coisas chegavam ao modelo como

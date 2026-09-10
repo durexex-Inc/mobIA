@@ -76,12 +76,14 @@ SISTEMA_DA_SAIDA = (
     "O criterio e mais estrito que para a fala do lead, porque aqui e a "
     "empresa falando em nome proprio. BLOQUEAR conteudo discriminatorio, "
     "ofensa ao lead, ameaca, insinuacao sexual, conselho juridico ou "
-    "financeiro apresentado como certeza, e qualquer criterio de atendimento "
+    "financeiro apresentado como certeza, promessa de desconto ou negociacao "
+    "de valor em nome da imobiliaria, e qualquer criterio de atendimento "
     "baseado em caracteristica pessoal do lead (origem, religiao, familia, "
     "deficiencia).\n\n"
     "LIBERAR resposta comercial normal, inclusive negativa: dizer que nao ha "
     "imovel no perfil, que o valor esta fora da faixa, ou pedir mais "
-    "informacao, e atendimento correto.\n\n" + _PROTOCOLO
+    "informacao, e atendimento correto. Dizer que o valor esta fora da faixa "
+    "do lead nao e negociar: e informar.\n\n" + _PROTOCOLO
 )
 
 _SISTEMA_POR_DIRECAO = {

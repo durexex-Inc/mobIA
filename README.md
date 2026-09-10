@@ -3738,7 +3738,7 @@ casos:
 - **prefixo abaixo do mínimo de cache → avisa e segue.** Prefixo curto demais
   não cacheia e não dá erro; a execução fica mais cara, mas continua válida, e
   reprovar por isso seria confundir custo com medição. Com `claude-haiku-4-5`
-  (mínimo 4.096 contra prefixo de 1.716) é exatamente esse o caso.
+  (mínimo 4.096 contra prefixo de 2.351) é exatamente esse o caso.
 
 ### O relatório de uma execução em CI deixou de ser efêmero
 

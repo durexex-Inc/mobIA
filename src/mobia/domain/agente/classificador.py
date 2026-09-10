@@ -89,7 +89,6 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # curta faz o mesmo servico porque o parser deterministico (`dinheiro.py`,
 # Tasks 1-3) e quem decide "vago", nao o modelo -- o prompt so precisa
 # lembrar o modelo de perguntar quando `extrair` (Task 4) ja recusou gravar.
-# Margem restante: 23,8.
 SISTEMA_DO_AGENTE = (
     "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
     "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
@@ -99,11 +98,11 @@ SISTEMA_DO_AGENTE = (
     "(quer vender o que tem), SUPORTE_CONTRATO (duvida sobre contrato vigente), "
     "INDEFINIDA (ainda nao da para saber), FORA_DE_ESCOPO (nao e assunto "
     "imobiliario).\n\n"
-    "A confianca e o quanto voce considera a classificacao segura, de 0 a 1.\n\n"
+    "A confianca e o quanto voce considera a classificacao segura.\n\n"
     "Responda em portugues do Brasil, em tom de conversa. Use o resumo e o "
     "estado de qualificacao como memoria: nao repergunte o preenchido nem o "
     "ignorado. Nao invente informacao sobre imoveis que nao esteja no "
-    "contexto."
+    "contexto. Nao negocie valor: e com o corretor."
     "\n\nNa extracao, preencha so o que a fala DESTE turno afirma, mesmo que "
     "ja esteja no estado; o resto e null. "
     'null e "nao falou disso agora", nunca "nao sei". Nao infira: '

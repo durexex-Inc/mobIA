@@ -30,23 +30,42 @@ from mobia.app.config import get_settings
 # alternativo e uma chamada paga a `count_tokens` dentro da suite, que nao
 # toca a rede. Quem mexer no prompt ou no schema re-mede e atualiza aqui.
 #
-# **08/09/2026 (TEC-265): NAO re-medido, e o numero abaixo esta velho.** A
-# ordem de renderizacao do cache e `tools` -> `system` -> `messages`
-# (`classificador.py`, comentario de `_chamar`): a partir desta card
-# `tools=[FERRAMENTA_DE_BUSCA]` passou a entrar ANTES do `system` com
-# `cache_control`, ou seja, DENTRO do prefixo cacheado -- nao depois dele. A
-# ferramenta mede 131,2 tokens pelo proxy `len/4` (D5 do desenho da TEC-265),
-# entao o prefixo real cresceu por volta disso, e 1.716 e hoje um PISO, nao o
-# valor -- a assercao abaixo e `>=`, entao ela continua passando mesmo com o
-# numero desatualizado, exatamente o jeito de falhar em silencio que este
-# arquivo existe para fechar. A remedicao com `messages.count_tokens` (o
-# metodo que este arquivo documenta) foi tentada nesta correcao e nao
-# completou: a chave configurada no ambiente nao tinha saldo para a chamada
-# (`Your credit balance is too low`). Fica registrado aqui em vez de
-# escondido atras de um numero que parece atual: quem tiver saldo disponivel
-# roda a medicao e atualiza esta constante antes de confiar nela para orcamento
-# de custo.
-PREFIXO_CACHEAVEL_EM_TOKENS = 1716
+# 08/09/2026 (TEC-265): a ordem de renderizacao do cache e
+# `tools` -> `system` -> `messages` (`classificador.py`, comentario de
+# `_chamar`): a partir desta card `tools=[FERRAMENTA_DE_BUSCA]` passou a
+# entrar ANTES do `system` com `cache_control`, ou seja, DENTRO do prefixo
+# cacheado -- nao depois dele. A remedicao com `messages.count_tokens` foi
+# tentada nesta correcao e nao completou por falta de saldo na chave
+# configurada (`Your credit balance is too low`); resolvida na TEC-141
+# abaixo.
+#
+# 10/09/2026 (TEC-141): **2.351**, medido com `claude-sonnet-5` (rota 1: a
+# API aceitou `output_config` em `messages.count_tokens`, sem precisar cair
+# para uma chamada real `messages.create`/TEC-251). A chamada mediu o
+# prefixo de producao INTEIRO, no mesmo formato que `_chamar`/`classificar`
+# mandam: `tools=[FERRAMENTA_DE_BUSCA]` + `system=[{"type": "text", "text":
+# SISTEMA_DO_AGENTE, "cache_control": {"type": "ephemeral"}}]` +
+# `output_config={"format": {"type": "json_schema", "schema":
+# _SCHEMA_COMPILADO}}` + `messages=[{"role": "user", "content": "x"}]` --
+# devolveu `input_tokens=2358`. O baseline de `messages` sozinho (7) foi
+# reaproveitado da medicao anterior desta mesma card, e nao remedido agora
+# -- reuso valido porque e propriedade do turno de usuario de um
+# caractere, nao do prompt que mudou. 2358 - 7 = 2351 e o valor abaixo.
+#
+# O prefixo cacheavel de producao e `tools` + `system` + o schema de
+# `output_config` -- os tres viajam sob o MESMO `cache_control` porque
+# `_chamar` so marca o bloco `system`, e tudo que a API renderiza antes
+# dele (`tools`, `output_config`) entra dentro do prefixo quente por
+# ordem de renderizacao, nao so `tools` + `system`. Uma primeira medicao
+# desta mesma card cobriu so `tools` + `system` e achou 1.128 -- um
+# subconjunto estrito do prefixo real (faltava o schema, ~1.195 tokens
+# pela TEC-251), nao uma medicao menor dele. Corrigido aqui antes do
+# commit final.
+#
+# Esta card tambem trocou uma frase do `SISTEMA_DO_AGENTE` (ganhou "Nao
+# negocie valor: e com o corretor.", perdeu ", de 0 a 1"), entao o numero
+# muda de novo por causa do prompt, alem da correcao de escopo acima.
+PREFIXO_CACHEAVEL_EM_TOKENS = 2351
 
 # Minimos publicados por modelo. NAO sao monotonicos entre geracoes -- o
 # sonnet-5 exige o dobro do opus-5, e o haiku-4-5 exige oito vezes.
@@ -69,7 +88,7 @@ def _minimo_de(modelo: str) -> int | None:
 def test_o_prefixo_cacheavel_passa_o_minimo_do_modelo() -> None:
     """A guarda principal: o cache so existe se o prefixo passar o minimo.
 
-    Com `claude-sonnet-5` a folga e de 628 tokens (1.652 contra 1.024). Se
+    Com `claude-sonnet-5` a folga e de 1.327 tokens (2.351 contra 1.024). Se
     alguem trocar para um modelo de minimo maior -- `claude-haiku-4-5` exige
     4.096 --, o cache morre em silencio e a conta sobe sem nenhum sinal. Este
     assert e o sinal.

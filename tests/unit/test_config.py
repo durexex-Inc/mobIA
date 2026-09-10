@@ -343,14 +343,14 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
 def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     """A margem existe para ser vista antes de ser gasta, nao depois.
 
-    O teto de 786 e mais apertado que o `headroom * 0,75` usado pelo teste
+    O teto de 793 e mais apertado que o `headroom * 0,75` usado pelo teste
     irmao, e e o proposito deste teste: se voce esta lendo isto porque ele
     reprovou, a pergunta e "o que sai do prompt para o novo texto entrar?",
     nao "quanto subo o numero?". Subir e resposta legitima -- mas so depois da
     primeira pergunta, e com o preco por turno escrito no comentario de
     `contexto_headroom_de_tokens`.
 
-    O 786 e o unico numero desta conta escrito a mao em qualquer lugar, e e
+    O 793 e o unico numero desta conta escrito a mao em qualquer lugar, e e
     escrito aqui de proposito: um limite so trava se estiver fixo. Todo o
     resto -- subcontagem, folga, margem -- e derivado e sai impresso por
     `_subcontagem`, para ninguem precisar transcrever (TEC-243):
@@ -417,13 +417,37 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
         python -m pytest -q -k margem_do_orcamento -s
 
     nunca uma simulacao do schema por fora dele.
+
+    A TEC-141 gastou 9,25 e devolveu 2,50, subindo o teto para 793: a
+    clausula `Nao negocie valor: e com o corretor.` custou 9,25, e saiu o
+    `, de 0 a 1` da confianca -- o schema compilado carrega essa faixa
+    dentro de `description`, nao em `minimum`/`maximum` soltos
+    (`transform_schema` dobra as duas chaves para la, porque o compilador
+    de schema do lado do servidor nao as suporta para `number`), entao
+    dizer a faixa tambem em prosa repetia o que a description ja carregava.
+
+    O teto fixo passou de 9,0 abaixo do teto derivado (795,0) para 2,0
+    abaixo dele: qualquer alta acima de +2 no fixo passa a exigir subir
+    `contexto_headroom_de_tokens` junto, o que custa historico de conversa
+    por turno -- essa e a margem apertada que a proxima card herda.
+
+    O teto fixo NAO foi para 800. As duas redacoes mais longas cabem, em
+    tokens brutos, no teto derivado de 795,0: `nem desconto` fica em 790,00
+    (5,0 de folga) e `nem prometa desconto` em 793,25 (1,75 de folga) --
+    nenhuma das duas fura o teto derivado por aritmetica. O que elas nao
+    deixam e a margem de ~6 tokens que esta card mantem por convencao (a
+    curta fica em 786,75 liquido contra 793, folga de 6,25). O argumento
+    real para a clausula curta e semantico, nao aritmetico: pedir desconto
+    ja e negociar valor (desenho, D2), entao a forma curta cobre o mesmo
+    cenario do Gherkin sem apertar a margem. A palavra `desconto` ficou com
+    o moderador de saida, onde nao custa orcamento.
     """
     subcontagem = _subcontagem()
-    _linha("teto desta assercao (fixo)", 786)
-    _linha("margem", 786 - subcontagem)
+    _linha("teto desta assercao (fixo)", 793)
+    _linha("margem", 793 - subcontagem)
 
-    assert subcontagem < 786, (
-        f"subcontagem {subcontagem}: a margem sobre o teto de 786 foi "
+    assert subcontagem < 793, (
+        f"subcontagem {subcontagem}: a margem sobre o teto de 793 foi "
         f"consumida. Encolha o texto enviado, ou suba a reserva registrando "
         f"o preco por turno."
     )
