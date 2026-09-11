@@ -49,6 +49,14 @@ Texto fixo, montado por código, prefixado à primeira mensagem que enviamos num
 
 **O prefixo entra depois da moderação de saída**, pelo mesmo argumento que a TEC-162 já escreveu para as fichas de imóvel: *"moderar dado nosso seria gastar chamada sobre texto que nao inventamos"*. O texto é uma constante do repositório, não saída de modelo.
 
+**No turno de apresentação, a identificação é mensagem própria — não prefixo.** Este é o ponto que quase passou despercebido, e ele decide a correção do caminho mais comum. Na apresentação, a prosa do modelo não vira mensagem: ela entra como prefixo da legenda da primeira ficha (D16 da TEC-162). E `legenda_de` tem prioridade declarada na D14 daquela card — *"estourado o teto, o que se corta é o PREFIXO — nunca a ficha"* —, com `_prosa_que_cabe` devolvendo string vazia quando não sobra espaço nem para a reticência.
+
+Prefixar a identificação à prosa, então, a submeteria a esse corte. Numa conversa nova em que o lead já diz o que procura — *"quero apartamento de 2 quartos no centro até 500 mil"*, o turno mais comum que existe — o agente busca, apresenta três fichas, e **a identificação seria truncada ou descartada em silêncio**. Um critério de aceite Must falharia sem deixar rastro, e o teste óbvio ("a primeira resposta carrega a identificação") passaria verde, porque o caminho de resposta normal funciona.
+
+A ficha é o conteúdo que a RN-10.1 exige; a identificação é o que a RN-04.1 exige. Nenhuma das duas é ornamento da outra, então nenhuma pode despejar a outra: em turno de apresentação a identificação sai como **mensagem de texto própria, antes das fichas**.
+
+Isso **cabe na RN-04.2 sem emenda nova**. A emenda E-02 (TEC-162) separou os dois tetos — até 2 mensagens de **texto** e até 3 de **apresentação** por turno. Uma identificação (1 texto) mais três fichas (3 apresentação) respeita os dois.
+
 **O texto é genérico e não nomeia a imobiliária**, porque não existe nome configurável em `app/config.py`. A RN-04.1 também é genérica (*"assistente virtual da imobiliária"*), então o texto segue a regra em vez de inventar um campo de configuração que ninguém pediu. Introduzir esse campo é card própria.
 
 O texto também **oferece o corretor**, que é a regra 3 da card no caminho proativo.
@@ -76,10 +84,18 @@ executar_turno
               │
              sim
               │
-              └─> texto = IDENTIFICACAO + separador + texto
-                  e entrega
+              ├─ turno de APRESENTACAO ─> envia IDENTIFICACAO como mensagem
+              │                            de texto propria, ANTES das fichas
+              │                            (a prosa nao pode carrega-la: ela
+              │                             vira prefixo de legenda e o corte
+              │                             da D14/TEC-162 a descartaria)
+              │
+              └─ demais trilhas ────────> texto = IDENTIFICACAO + separador + texto
 
-Vale para: resposta normal · recusa da moderação · texto neutro · confirmação de opt-out
+Dois pontos de insercao no codigo:
+  1. `_entregar_texto_fixo`  -> cobre recusa da moderacao, texto neutro,
+                                confirmacao de opt-out e busca inconclusiva
+  2. antes do bloco de entrega -> cobre resposta normal e apresentacao
 ```
 
 ## Testes
@@ -88,7 +104,9 @@ Vale para: resposta normal · recusa da moderação · texto neutro · confirma�
 
 **Unitários, o texto** — identifica como assistente virtual, oferece corretor, e não excede o teto de tamanho de mensagem.
 
-**Integração, as quatro trilhas** — primeira resposta de conversa nova carrega a identificação; segunda resposta da mesma conversa **não** a repete; recusa da moderação em conversa nova carrega; confirmação de opt-out em conversa nova carrega.
+**Integração, as trilhas** — primeira resposta de conversa nova carrega a identificação; segunda resposta da mesma conversa **não** a repete; recusa da moderação em conversa nova carrega; confirmação de opt-out em conversa nova carrega; busca inconclusiva em conversa nova carrega.
+
+**Integração, o turno de apresentação — o teste que o defeito da D2 exige.** Conversa nova cujo primeiro turno apresenta imóveis: a identificação sai como mensagem de texto própria e **sobrevive inteira**, e as três fichas saem completas. O teste tem de ser construído com legenda perto do teto de 600 caracteres, porque é só no estouro que o corte da D14 apareceria — um teste com ficha curta passaria mesmo com a implementação errada, que é precisamente como este defeito quase entrou.
 
 **Integração, a regra 4** — dois turnos separados por mais de 30 dias no mesmo lead produzem **duas** identificações; separados por menos, uma só.
 
