@@ -119,6 +119,25 @@ async def _kinds_reservados() -> list[str]:
         return sorted((await leitura.scalars(select(OutboundDispatch.kind))).all())
 
 
+async def _conversa_ja_existe(session: Any) -> None:
+    """Semeia uma entrada anterior para que `e_conversa_nova` veja a
+    conversa como NAO nova (TEC-139).
+
+    Mesmo padrao de `_conversa_ja_existe` em `test_apresentacao_no_turno.py`,
+    copiado e nao importado -- os arquivos de integracao deste repo sao
+    autocontidos. Os testes deste arquivo provam a guarda de citacao
+    (RT-01), nao identificacao (que tem arquivo proprio,
+    `test_identificacao_no_turno.py`). Sem isto, `banco_limpo` (autouse)
+    deixa cada teste comecar em silencio total, `e_conversa_nova` devolveria
+    True e o prefixo de identificacao -- ou, no caminho de apresentacao, uma
+    mensagem "reply" extra antes das fichas -- contaminaria contagens e
+    posicoes que nao sao sobre ela.
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    await _entrada_do_lead(session, texto="ja tinha falado com o assistente antes")
+
+
 def _eventos_de_log(caplog: Any, evento: str) -> list[tuple[str, dict[str, Any]]]:
     """(nivel, corpo) de cada registro JSON do structlog que carrega `evento`.
 
@@ -141,6 +160,7 @@ async def test_prosa_consistente_segue_como_prefixo(
 ) -> None:
     """O caminho feliz nao muda. Sem este teste, uma guarda quebrada que
     bloqueia SEMPRE passaria nos outros dois."""
+    await _conversa_ja_existe(session)
     identificador = await _imovel(session, "AP-1004", PRECO)
     classificador = _ClassificadorComProsa(
         PROSA_LIMPA, [_candidato(identificador, "AP-1004", PRECO)]
@@ -174,6 +194,7 @@ async def test_prosa_inventada_vira_ficha_pura(
     prosa barrada nao pode aparecer no log -- a mesma regra que vale para a
     moderacao de saida, aqui sobre o proprio evento que a guarda gera.
     """
+    await _conversa_ja_existe(session)
     identificador = await _imovel(session, "AP-1004", PRECO)
     classificador = _ClassificadorComProsa(
         PROSA_INVENTADA, [_candidato(identificador, "AP-1004", PRECO)]
@@ -267,6 +288,7 @@ async def test_nenhuma_reserva_e_gravada_antes_da_validacao(
     e mensagem entregue -- o dano exato que esta card existe para impedir.
     Um unico kind reservado, e nenhum dele carrega a prosa inventada.
     """
+    await _conversa_ja_existe(session)
     identificador = await _imovel(session, "AP-1004", PRECO)
     classificador = _ClassificadorComProsa(
         PROSA_INVENTADA, [_candidato(identificador, "AP-1004", PRECO)]

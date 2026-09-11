@@ -13,6 +13,24 @@ from mobia.infra.crypto import aad_de, decrypt
 from mobia.infra.db import get_sessionmaker
 
 
+async def _conversa_ja_existe(session: AsyncSession) -> None:
+    """Semeia uma entrada anterior para que `e_conversa_nova` veja a
+    conversa como NAO nova (TEC-139).
+
+    Mesmo padrao de `_conversa_ja_existe` em `test_apresentacao_no_turno.py`,
+    copiado e nao importado -- os arquivos de integracao deste repo sao
+    autocontidos. Os testes que chamam isto provam a moderacao de saida, nao
+    identificacao (que tem arquivo proprio, `test_identificacao_no_turno.py`).
+    Sem isto, `banco_limpo` (autouse) deixa cada teste comecar em silencio
+    total, `e_conversa_nova` devolveria True e o prefixo de identificacao
+    quebraria a igualdade exata contra `TEXTO_NEUTRO_DE_SAIDA` que estes
+    testes provam.
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    await _entrada_do_lead(session, texto="ja tinha falado com o assistente antes")
+
+
 async def test_saida_bloqueada_entrega_o_texto_neutro(
     session: AsyncSession,
     classificador_fake,
@@ -22,6 +40,7 @@ async def test_saida_bloqueada_entrega_o_texto_neutro(
     moderador_fake,
     rodar_turno,
 ) -> None:
+    await _conversa_ja_existe(session)
     outbound = outbound_fake()
     moderador = moderador_fake(bloqueia_saida=True)
 
@@ -57,6 +76,7 @@ async def test_o_recorder_grava_o_texto_entregue_e_nao_o_barrado(
     Sem este teste, alguem move a moderacao para um wrapper e reintroduz a fala
     fantasma.
     """
+    await _conversa_ja_existe(session)
     moderador = moderador_fake(bloqueia_saida=True)
 
     await rodar_turno(
@@ -161,6 +181,7 @@ async def test_saida_bloqueada_no_caminho_ambiguo_nao_marca_a_desambiguacao(
     era esse ponto cego que mantinha o defeito vivo. Por isso a contagem de
     `saidas` tambem e afirmada -- so a pergunta e julgada, nao as duas.
     """
+    await _conversa_ja_existe(session)
     classificador = classificador_fake(confianca=Decimal("0.5"))
     outbound = outbound_fake()
     moderador = moderador_fake(bloqueia_saida=True)

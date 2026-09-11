@@ -36,7 +36,10 @@ async def test_mensagem_vaga_gera_pergunta_aberta(
 
     await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
 
-    assert outbound.entregues == [classificador.pergunta]
+    # `in` e nao `==` desde a TEC-139: em conversa nova a entrega carrega o
+    # prefixo de identificacao antes da pergunta.
+    assert len(outbound.entregues) == 1
+    assert classificador.pergunta in outbound.entregues[-1]
 
     async with get_sessionmaker()() as outra:
         gravada = await ler_intencao(outra, CANAL, CONVERSA)
@@ -54,7 +57,10 @@ async def test_confianca_exatamente_no_limite_nao_desambigua(
     await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
 
     assert classificador.desambiguacoes == 0
-    assert outbound.entregues == ["Ola! Em qual regiao voce procura?"]
+    # `in` e nao `==` desde a TEC-139: em conversa nova a entrega carrega o
+    # prefixo de identificacao antes da resposta normal.
+    assert len(outbound.entregues) == 1
+    assert "Ola! Em qual regiao voce procura?" in outbound.entregues[-1]
 
     async with get_sessionmaker()() as outra:
         gravada = await ler_intencao(outra, CANAL, CONVERSA)
