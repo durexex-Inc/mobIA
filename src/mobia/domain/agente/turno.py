@@ -756,12 +756,15 @@ async def executar_turno(
             # continuam vigiadas so pelo gate (`aderencia_ao_tom`, piso de 90%), e
             # o motivo e que fecha-las em runtime custaria mais do que resolvem:
             #
-            # - Perguntas: exigiria regenerar a resposta, que a TEC-161 ja recusou
-            #   com emenda no SRS -- a segunda chamada reexecuta o laco de tool use
-            #   dentro de um `job_timeout` que o pior caso ja estoura. Descartar
-            #   perguntas do texto muda o que o agente quis dizer, e a regra existe
-            #   contra questionario, nao contra a segunda pergunta (emenda E-01,
-            #   medida sobre 294 turnos).
+            # - Perguntas: exigiria regenerar a resposta. O argumento contra
+            #   isso e emprestado da TEC-161 -- que decidiu sobre a RN-09.4
+            #   (citacao de imovel divergente), nao sobre esta clausula --,
+            #   mas o motivo arquitetural vale igual aqui: a segunda chamada
+            #   reexecuta o laco de tool use dentro de um `job_timeout` que o
+            #   pior caso ja estoura. Descartar perguntas do texto muda o que
+            #   o agente quis dizer, e a regra existe contra questionario,
+            #   nao contra a segunda pergunta (emenda E-01, medida sobre 294
+            #   turnos).
             # - Emoji: a RNF-42 fala de COMPREENSAO ("a informacao essencial nunca
             #   depende de emoji"), e o comentario de `evals/metricas.py` registra
             #   que por isso a metrica reporta presenca e quantidade como
@@ -772,15 +775,40 @@ async def executar_turno(
             # exigir todas -- trataria "a segunda caiu na janela fechada" como
             # turno sem resposta, quando o lead ja recebeu a primeira.
             #
-            # Se a segunda falhar, a excecao sobe e o tratamento existente
-            # decide o desfecho. A retentativa do sweeper reentrega so ela: a
-            # primeira ja tem reserva por kind e e suprimida.
+            # A falha da PRIMEIRA parte segue o comportamento de sempre: nada
+            # foi capturado ainda, a excecao sobe crua para os `except` deste
+            # bloco la embaixo, e o turno termina em "expirado"/"sem_resposta"
+            # sem gravar nada -- igual a antes desta card, quando so existia
+            # uma mensagem.
+            #
+            # A falha de uma parte POSTERIOR -- com pelo menos uma ja
+            # entregue -- nao pode seguir o mesmo caminho: `EnvioForaDaJanela`
+            # e `EnvioRecusado` sao capturadas DENTRO de `executar_turno` (os
+            # `except` la embaixo) e viram "expirado"/"sem_resposta" ANTES do
+            # recorder gravar. Nao ha retentativa do sweeper para nenhuma das
+            # duas -- o estado da linha vira `PROCESSED`, que e terminal
+            # (`status.py`). Deixar a excecao subir depois que a parte 1 ja
+            # saiu apagaria o registro de conteudo real que o lead recebeu: o
+            # log ficaria identico ao de "nada saiu", e a transcricao nao
+            # teria nenhuma linha daquele turno para um lead que recebeu
+            # metade da resposta.
+            #
+            # Por isso essas duas excecoes sao capturadas AQUI DENTRO do laco
+            # quando `entregue` ja e True, logadas com um evento proprio que
+            # diz "parcial" -- distinto do de "nada saiu", para quem le o log
+            # conseguir separar os dois casos -- e o turno segue: `entregue`
+            # continua True e o fluxo cai no recorder normalmente.
+            # `entrega_parcial` reescreve `texto` para so as partes que de
+            # fato saíram: gravar o texto inteiro aqui trocaria a mentira
+            # "nada saiu" pela mentira "saiu tudo".
             entregue = False
+            partes_entregues: list[str] = []
+            entrega_parcial = False
             # strict=False e a garantia, nao um detalhe: o zip trunca pela
-            # menor sequencia de proposito (ver comentario acima).
+            # menor sequencia de proposito (ver comentario acima do bloco).
             for kind, parte in zip(KINDS_DA_RESPOSTA, quebrar_em_mensagens(texto), strict=False):
-                entregue = (
-                    await outbound.send(
+                try:
+                    entrou = await outbound.send(
                         message.id,
                         kind,
                         {
@@ -789,8 +817,25 @@ async def executar_turno(
                             "texto": parte,
                         },
                     )
-                    or entregue
-                )
+                except (EnvioForaDaJanela, EnvioRecusado) as exc:
+                    if not entregue:
+                        # Nada saiu ainda: mesmo desfecho de antes desta
+                        # card, a excecao sobe crua.
+                        raise
+                    entrega_parcial = True
+                    log.error(
+                        "turno.entrega_parcial_da_resposta",
+                        channel=message.channel,
+                        message_id=str(message.id),
+                        kind=kind,
+                        reason=str(exc),
+                    )
+                    break
+                if entrou:
+                    partes_entregues.append(parte)
+                entregue = entrou or entregue
+            if entrega_parcial:
+                texto = "\n\n".join(partes_entregues)
     except EnvioForaDaJanela as exc:
         log.warning(
             "outbound.fora_da_janela",

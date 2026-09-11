@@ -132,3 +132,80 @@ async def test_o_recorder_grava_o_texto_inteiro_numa_linha_so(
     assert len(faladas) == 1
     gravado = decrypt(faladas[0].text_body, aad_de(faladas[0].id, "text_body"))
     assert gravado == longa
+
+
+async def test_segunda_parte_recusada_nao_apaga_a_primeira_ja_entregue(
+    session: Any,
+    classificador_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """Fix round 1 (TEC-140). Antes deste teste, uma recusa permanente na
+    SEGUNDA parte fazia a excecao subir crua -- e como `EnvioRecusado` e
+    capturada DENTRO de `executar_turno`, o turno terminava em
+    "sem_resposta" ANTES do recorder gravar. O lead ja tinha recebido a
+    primeira parte de verdade, mas a transcricao ficava muda sobre aquele
+    turno inteiro, do mesmo jeito que ficaria se nada tivesse saido -- as
+    duas situacoes eram indistinguiveis para quem le o handoff.
+
+    Copia o padrao de `test_recusa_permanente_numa_ficha_nao_cala_as_outras`
+    em `test_apresentacao_no_turno.py`: subclasse de `OutboundFake` que
+    recusa so um `kind` especifico, porque o dublê compartilhado
+    (`outbound_fake`) so aceita um erro para TODAS as chamadas.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.formato import quebrar_em_mensagens
+    from mobia.domain.agente.turno import KINDS_DA_RESPOSTA
+    from mobia.domain.messages.enums import MessageRole
+    from mobia.domain.messages.models import Message
+    from mobia.domain.outbound.port import EnvioRecusado
+    from mobia.infra.crypto import aad_de, decrypt
+
+    await _conversa_ja_existe(session)
+    longa = "Encontrei uma opcao muito boa para voce no centro da cidade. " * 12
+    primeira_parte, _segunda_parte = quebrar_em_mensagens(longa)
+
+    class _RecusaASegundaMensagem(OutboundFake):
+        async def _deliver(self, message_id: Any, kind: Any, payload: Any) -> None:
+            if kind == KINDS_DA_RESPOSTA[1]:
+                raise EnvioRecusado("http 400 codigo 131053")
+            await super()._deliver(message_id, kind, payload)
+
+    outbound = _RecusaASegundaMensagem(get_sessionmaker())
+
+    resultado = await rodar_turno(
+        session,
+        classificador_fake(resposta=longa),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(),
+    )
+
+    # O turno segue "respondido": a primeira parte chegou, e nao ha por que
+    # tratar isto como turno mudo (a diferenca com "sem_resposta" e exatamente
+    # o que este teste existe para travar).
+    assert resultado == "respondido"
+    assert outbound.entregues == [primeira_parte]
+    # A reserva da segunda parte FICA -- `EnvioRecusado` nao libera (so
+    # `EnvioRetentavel`/cancelamento liberam, ver `GuardedOutbound.send`).
+    # Sem a reserva presa, o sweeper tentaria reentregar um payload que a
+    # Meta ja recusou de forma permanente.
+    assert await _kinds_reservados() == ["reply", "reply_2"]
+
+    faladas = (
+        await session.scalars(select(Message).where(Message.role == MessageRole.AGENTE))
+    ).all()
+    assert len(faladas) == 1
+    gravado = decrypt(faladas[0].text_body, aad_de(faladas[0].id, "text_body"))
+    # So a parte que de fato saiu -- gravar `longa` inteira aqui trocaria a
+    # mentira "nada saiu" pela mentira "saiu tudo", que e o proprio defeito
+    # que este fix corrige. `len(gravado) < len(longa)` prova que nao e o
+    # texto inteiro (um `in` contra `_segunda_parte` nao provaria nada: a
+    # frase se repete dentro de `longa`, entao ela aparece dentro da PRIMEIRA
+    # parte tambem).
+    assert gravado == primeira_parte
+    assert len(gravado) < len(longa)
