@@ -61,6 +61,20 @@ log = structlog.get_logger(__name__)
 
 KIND_DA_RESPOSTA = "reply"
 
+# Dois kinds e nao um repetido, pelo mesmo motivo de `KINDS_DAS_FICHAS`: a
+# `UNIQUE (message_id, kind)` de `outbound_dispatches` e o que torna o
+# reprocessamento seguro, e duas mensagens com o mesmo kind fariam a segunda
+# ser suprimida como reentrega -- o lead receberia metade da resposta em
+# silencio.
+#
+# O primeiro continua sendo `KIND_DA_RESPOSTA` e nao um nome novo: ha linhas
+# gravadas com "reply" e testes que afirmam `_kinds_reservados() == ["reply"]`.
+#
+# Efeito colateral util da reserva por kind: se a segunda mensagem falhar no
+# envio, a retentativa do sweeper reentrega SO ela -- a primeira ja tem reserva
+# e e suprimida.
+KINDS_DA_RESPOSTA = (KIND_DA_RESPOSTA, "reply_2")
+
 # TEC-162. Kinds fixos POR POSICAO, e nao derivados do id do imovel: o
 # UNIQUE (message_id, kind) de `outbound_dispatches` precisa de um valor que
 # a retentativa reproduza. Um kind com o id dentro deixaria de colidir assim

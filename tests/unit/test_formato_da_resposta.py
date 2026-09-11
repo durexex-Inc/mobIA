@@ -112,3 +112,52 @@ def test_quebra_de_paragrafo_e_fronteira_de_frase() -> None:
 
     sem_espaco_e_quebra = "".join(partes).replace(" ", "").replace("\n", "")
     assert sem_espaco_e_quebra == texto.replace(" ", "").replace("\n", "")
+
+
+def test_o_primeiro_kind_continua_sendo_reply() -> None:
+    """`outbound_dispatches` ja tem linhas gravadas com "reply", e varios
+    testes afirmam `_kinds_reservados() == ["reply"]`. Renomear o primeiro
+    kind invalidaria as duas coisas para ganhar nada.
+    """
+    from mobia.domain.agente.turno import KIND_DA_RESPOSTA, KINDS_DA_RESPOSTA
+
+    assert KINDS_DA_RESPOSTA[0] == KIND_DA_RESPOSTA == "reply"
+
+
+def test_os_dois_kinds_sao_distintos_e_nao_colidem_com_os_vizinhos() -> None:
+    """A UNIQUE (message_id, kind) e o que torna o reprocessamento seguro. Dois
+    kinds iguais no mesmo turno fariam a SEGUNDA mensagem ser suprimida como
+    reentrega -- o lead receberia metade da resposta, em silencio, e o log
+    diria que estava tudo certo.
+    """
+    from mobia.domain.agente.turno import KINDS_DA_RESPOSTA, KINDS_DAS_FICHAS
+    from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
+
+    assert len(set(KINDS_DA_RESPOSTA)) == len(KINDS_DA_RESPOSTA)
+    assert not set(KINDS_DA_RESPOSTA) & set(KINDS_DAS_FICHAS)
+    assert KIND_DA_CONFIRMACAO_DE_OPTOUT not in KINDS_DA_RESPOSTA
+
+
+def test_toda_constante_de_texto_fixo_cabe_numa_mensagem() -> None:
+    """As tres trilhas de `_entregar_texto_fixo` NAO passam pela quebra (D1):
+    aqueles textos sao constantes deste repositorio, escolhidas curtas de
+    proposito. Este teste existe para que uma constante longa escrita no futuro
+    reprove aqui, e nao chegue ao lead sem guarda nenhuma -- quem a escrevesse
+    nao teria motivo para saber que aquele caminho e desguarnecido.
+    """
+    from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO
+    from mobia.domain.agente.turno import TEXTO_DA_BUSCA_INCONCLUSIVA
+    from mobia.domain.moderacao.port import (
+        TEXTO_DA_RECUSA_DE_ENTRADA,
+        TEXTO_NEUTRO_DE_SAIDA,
+    )
+    from mobia.domain.optout.deteccao import TEXTO_DA_CONFIRMACAO_DE_OPTOUT
+
+    for constante in (
+        TEXTO_DA_IDENTIFICACAO,
+        TEXTO_DA_BUSCA_INCONCLUSIVA,
+        TEXTO_DA_RECUSA_DE_ENTRADA,
+        TEXTO_NEUTRO_DE_SAIDA,
+        TEXTO_DA_CONFIRMACAO_DE_OPTOUT,
+    ):
+        assert 0 < len(constante) <= MAX_CARACTERES_POR_MENSAGEM
