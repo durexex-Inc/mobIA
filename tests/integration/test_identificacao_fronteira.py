@@ -78,6 +78,36 @@ async def test_o_limite_exato_de_30_dias_tem_lado_definido(
     assert await e_conversa_nova(get_sessionmaker(), atual, agora=agora) is False
 
 
+async def test_rajada_a_primeira_e_nova_e_a_segunda_nao(
+    session: AsyncSession, semear_entrada
+) -> None:
+    """O caso que `Message.id != message.id` nao cobria.
+
+    `IngestionService._persist` (`messages/service.py`) grava a lista
+    inteira do payload de uma vez, e so depois enfileira uma a uma. Duas
+    mensagens no mesmo webhook -- ou dois webhooks em sequencia, que e como o
+    lead manda "oi" e depois "quero um apto de 2 quartos" -- deixam as duas
+    linhas commitadas antes de qualquer turno rodar. Excluir so a mensagem
+    corrente faz o turno de A achar B (que ja esta no timeline) e o turno de
+    B achar A: os dois veem "outra mensagem no lead" e nenhum se identifica.
+
+    Aqui as duas entradas sao semeadas com `created_at` proximos (a rajada),
+    e a prova e que a ANTERIOR no tempo e conversa nova e a POSTERIOR nao e
+    -- exatamente o que os testes anteriores deste arquivo nunca exercitam,
+    porque todos semeiam a anterior antes de checar a corrente, e a corrente
+    e sempre a mais nova.
+    """
+    agora = datetime.now(UTC)
+    primeira = await semear_entrada(session)
+    primeira.created_at = agora - timedelta(seconds=1)
+    segunda = await semear_entrada(session)
+    segunda.created_at = agora
+    await session.commit()
+
+    assert await e_conversa_nova(get_sessionmaker(), primeira, agora=agora) is True
+    assert await e_conversa_nova(get_sessionmaker(), segunda, agora=agora) is False
+
+
 async def test_mensagem_de_outro_lead_nao_conta(session: AsyncSession, semear_entrada) -> None:
     """O predicado e por lead, nao global. Sem o filtro de conversa, o primeiro
     lead do dia abriria conversa nova e nenhum outro abriria.
