@@ -2,9 +2,9 @@
 
 **Status:** desenhado em 2026-09-11.
 
-**Card:** [TEC-160](https://eduardodurieuxlopes.atlassian.net/browse/TEC-160). Origem: RF-09, RN-09.3 e CA-09.3 (SRS v1.0).
+**Card:** [TEC-160](https://eduardodurieuxlopes.atlassian.net/browse/TEC-160) — História, Should (MoSCoW), prioridade High. Origem: RF-09, RN-09.3 e CA-09.3 (SRS v1.0). Épico [TEC-155](https://eduardodurieuxlopes.atlassian.net/browse/TEC-155).
 
-> **O texto da card não foi lido.** Os conectores Atlassian não estavam autorizados na sessão em que este desenho foi escrito, e a sessão não era interativa. A fonte de requisitos aqui é o SRS — a RN-09.3, a CA-09.3 e a emenda E-01 da RN-09.6 — mais os bilhetes que três cards vizinhas deixaram por escrito para esta. **Antes do plano, confira este desenho contra o texto da card**: MoSCoW, prioridade e épico não estão registrados acima porque seriam chute, e o `CLAUDE.md` proíbe chutar. Ver a L6.
+**A história:** *"Como Marina, cujo critério não achou nada, quero receber opções próximas em vez de um 'não encontrei', para não sair da conversa de mãos vazias."* O contorno que a card registra, e que esta implementação substitui, é o agente admitir que não achou e encaminhar ao corretor — *"funciona, mas perde a conversa"*.
 
 **Desbloqueada pela [TEC-158](https://eduardodurieuxlopes.atlassian.net/browse/TEC-158)** (a busca híbrida, que é o passe que esta card aprende a repetir) **e pela [TEC-262](https://eduardodurieuxlopes.atlassian.net/browse/TEC-262)**, mergeada como `6c74206`. A segunda não é dependência de código: o desenho dela registra que *"a TEC-160 existe para relaxar zero-resultados e o relaxamento que a RN-09.3 descreve é de faixa de preço e bairros adjacentes. Um zero causado por tipo sem par no catálogo é invisível para ela: relaxaria preço e bairro de uma busca que nunca teve chance."* Com `RURAL` no catálogo, esse zero deixou de existir.
 
@@ -14,7 +14,7 @@
 
 Fazer valer a RN-09.3: busca sem resultado executa **um** relaxamento automático — faixa de preço em até 10% e bairros adjacentes — e o lead é avisado de que o critério foi ampliado.
 
-**O que a card entrega:** a política de relaxamento em módulo próprio, a tabela de adjacência com carga, o campo `relaxamentoAplicado` nos dois contratos de saída (o `tool_result` do agente e o `POST` da seção 6.3), o aviso ao lead como mensagem própria, e as duas emendas ao SRS que a regra exige para deixar de se contradizer.
+**O que a card entrega:** a política de relaxamento em módulo próprio, a tabela de adjacência com carga, o estado do relaxamento nos dois contratos de saída (o `tool_result` do agente e o `POST` da seção 6.3), o aviso ao lead como mensagem própria dizendo em que dimensão ampliou, o desfecho quando nem ampliando aparece algo, e as duas emendas ao SRS que a regra exige para deixar de se contradizer.
 
 **O que ela não entrega:** relaxamento de tipo, quartos ou vagas (a RN-09.3 não os menciona — ver a L3); adjacência de outras cidades (L1); e a medição do SLA do caminho relaxado, que é da TEC-159 (L4).
 
@@ -72,13 +72,22 @@ Sem teto **e** sem região, o zero veio de tipo, quartos ou vagas, e a RN-09.3 n
 
 É também a lacuna que o desenho da TEC-262 nomeou — *"relaxaria preço e bairro de uma busca que nunca teve chance"* — e que ele fechou para o caso do tipo. Para quartos e vagas ela continua aberta, e a L3 a registra.
 
-### D6 — `relaxamento_aplicado` significa "veio do passe relaxado", não "eu tentei"
+### D6 — O estado do relaxamento é tri-estado no domínio, e booleano só nas bordas
 
-Passe relaxado que também devolve zero reporta `False`, com lista vazia.
+```python
+class EstadoDoRelaxamento(StrEnum):
+    NAO_HOUVE = "NAO_HOUVE"        # achou no passe 1, ou nada era relaxavel
+    APLICADO = "APLICADO"          # relaxou e achou
+    SEM_RESULTADO = "SEM_RESULTADO"  # relaxou e continuou zero
+```
 
-Se o campo significasse "tentei", o aviso ao lead anunciaria "ampliei o critério" seguido de nada — e o campo diria ao agente que há alternativas ampliadas para apresentar quando não há nenhuma. Com este significado, o booleano e o aviso são o **mesmo fato**: o aviso sai se e somente se o campo é verdadeiro, e não existe estado em que um contradiga o outro.
+`ResultadoDaBusca.relaxamento` guarda o enum; `buscar()` devolve **sempre** `NAO_HOUVE`, porque ela é um passe e não sabe se é o primeiro ou o segundo. Quem afirma é `buscar_com_relaxamento`, por `dataclasses.replace`.
 
-`buscar()` devolve **sempre** `False` — ela é um passe e não sabe se é o primeiro ou o segundo. Quem afirma é `buscar_com_relaxamento`, por `dataclasses.replace`. Não há caminho em que o campo seja escrito em dois lugares.
+**Um booleano não serve, e a regra 4 da card é quem prova.** A card manda que, *"se mesmo com o relaxamento não houver resultado, o agente não tenta de novo: informa e oferece a lista de espera ou o corretor"*. O turno precisa então distinguir três situações, e `relaxamentoAplicado: false` colapsa duas delas: "não relaxei" e "relaxei e não achei" pedem mensagens diferentes ao lead — a primeira não menciona ampliação nenhuma, a segunda tem de dizer que nem ampliando apareceu algo. Com o enum, o estado impossível ("não tentei, mas apliquei") deixa de ser representável.
+
+**Nas bordas continua booleano, como os contratos escrevem.** `relaxamentoAplicado` do `POST` da seção 6.3 e `relaxamento_aplicado` do `tool_result` são `estado is APLICADO`, derivados num lugar só. O `tool_result` leva também `relaxamento_sem_resultado` — ele é consumido pelo **nosso** código no turno, não pelo modelo, e por isso não ganha frase no prompt (ver a D12): no caminho em que ele é verdadeiro a prosa do modelo é substituída de qualquer jeito (D14).
+
+Com isso o aviso e o campo continuam sendo o mesmo fato: o aviso da D10 sai se e somente se o estado é `APLICADO`, e não existe estado em que um contradiga o outro.
 
 ### D7 — A adjacência é tabela no banco, semeada pela própria migration
 
@@ -135,7 +144,7 @@ Não precisa de sentinela: "passei `None`" e "não passei" querem a mesma coisa 
 
 ### D10 — O aviso é mensagem própria com kind próprio, não prefixo de legenda
 
-`TEXTO_DO_CRITERIO_AMPLIADO` e `KIND_DO_CRITERIO_AMPLIADO = "criterio_ampliado"`, em `turno.py`, ao lado de `TEXTO_DA_BUSCA_INCONCLUSIVA`.
+As três variantes da D11 e `KIND_DO_CRITERIO_AMPLIADO = "criterio_ampliado"`, em `turno.py`, ao lado de `TEXTO_DA_BUSCA_INCONCLUSIVA`.
 
 **Prefixo não serve, e a TEC-139 já pagou para descobrir.** No caminho de apresentação a prosa vira prefixo da legenda da primeira ficha, e `legenda_de` corta o **prefixo** antes da ficha — `_prosa_que_cabe` devolve string vazia quando não sobra espaço. O comentário da TEC-139 diz por que a identificação saiu dali: *"ela sairia truncada ou não sairia nenhuma, em silêncio"*. Um aviso que some em silêncio quebra a CA-09.3 exatamente no turno em que ela existe para valer.
 
@@ -147,11 +156,21 @@ Não precisa de sentinela: "passei `None`" e "não passei" querem a mesma coisa 
 
 **A RN-04.2 fecha sem emenda, e fica empatada.** A E-02 da TEC-162 separou os tetos em até 2 mensagens de texto e até 3 de apresentação; conversa nova com relaxamento gasta os dois textos mais até 3 fichas. Ver a L5.
 
-### D11 — O aviso não cita valor nenhum
+### D11 — O aviso diz **em quê** ampliou, no nível da dimensão, e nunca em número
 
-O texto diz que a busca foi ampliada em valor e em bairros vizinhos, e não diz 10%, nem o teto ampliado, nem os nomes dos bairros.
+A card exige que *"o lead é sempre avisado, de forma explícita, de que o critério foi ampliado **e em quê**"*. São três variantes, e sai a que corresponde ao que de fato foi relaxado:
 
-O número ampliado é conta nossa, não fato do banco, e dizê-lo ao lead é afirmar precisão sobre política interna. É também o que mantém o aviso fora da discussão da TEC-161 — texto nosso não passa por `divergencias_de`, mas um texto nosso que cita valor convida o próximo leitor a achar que passa.
+| Relaxou | Texto |
+|---|---|
+| preço e bairro | `"...ampliei um pouco: valor um pouco acima e bairros vizinhos."` |
+| só preço | `"...ampliei um pouco o valor."` |
+| só bairro | `"...incluí bairros vizinhos."` |
+
+**Uma constante fixa que dissesse sempre as duas coisas seria o aviso mentindo.** O lead que não deu região nenhuma teve só o preço relaxado, e ouvir "incluí bairros vizinhos" é informação falsa sobre o que o sistema fez — num aviso cujo propósito inteiro é ser explícito. A variante é escolhida pelo que `alargar` mudou, e não por heurística no turno.
+
+**"Em quê" para aqui: dimensão, nunca valor.** O texto não diz 10%, nem o teto ampliado. O número ampliado é conta nossa, não fato do banco, e dizê-lo ao lead é afirmar precisão sobre política interna. É também o que mantém o aviso fora da discussão da TEC-161 — texto nosso não passa por `divergencias_de`, mas um texto nosso que cita valor convida o próximo leitor a achar que passa.
+
+Os nomes dos bairros também ficam de fora, e essa é a escolha mais discutível das três: nome de bairro é fato do catálogo e não reabriria o problema da TEC-161. Ficam fora porque a lista é variável — a Trindade do Gherkin amplia para três, o Itacorubi para quatro — e uma mensagem que cresce com o grau do nó é mensagem cujo pior caso ninguém mediu. O lead vê o bairro de cada imóvel na ficha, que é onde ele importa.
 
 ### D12 — O modelo sabe que relaxou, e isso custa uma frase do orçamento
 
@@ -167,16 +186,38 @@ O número ampliado é conta nossa, não fato do banco, e dizê-lo ao lead é afi
 
 Log e segue com a dimensão que sobrou, no molde de `_vetor_da_consulta` e da D6 da TEC-265: *"derrubar a dimensão e não a busca"*. Bairro sem linha na tabela não é erro — é lista vazia, e o passe relaxa só o preço.
 
+### D14 — Relaxou e continuou zero tem desfecho nosso, não prosa do modelo
+
+`TEXTO_SEM_RESULTADO_APOS_AMPLIAR`: informa que nem ampliando apareceu algo e oferece o corretor. Substitui `texto` no caminho de não-apresentação, exatamente como o caminho de citação bloqueada da TEC-161 já faz.
+
+É a regra 4 da card, e o segundo cenário do Gherkin a cobra: *"nenhuma segunda ampliação é tentada, e o lead recebe a oferta de lista de espera ou conversa com o corretor"*. **A lista de espera está fora de escopo** — a própria card a exclui, junto do handoff por indisponibilidade (E5 e E7) —, então o desfecho oferece o corretor, que é a metade que esta card pode entregar.
+
+**Constante nova, e não reúso de `TEXTO_DA_BUSCA_INCONCLUSIVA`.** Aquele texto promete *"já te retorno com as opções"*, e aqui não há opção nenhuma para retornar — seria o sistema prometendo o que sabe que não tem. O laço excedido e a citação bloqueada podem prometer porque nos dois casos os imóveis existem e o problema é nosso.
+
+**Só no zero pós-relaxamento**, que é o único que a card legisla. O zero de "nada relaxável" (D5) segue com a prosa do modelo: ali ele ainda pode fazer algo útil que nós não sabemos fazer — perguntar se o lead aceita dois quartos, por exemplo — e calá-lo custaria mais do que padroniza. É o `estado is SEM_RESULTADO` da D6 que separa os dois, e é por isso que o booleano não bastava.
+
+## Os quatro cenários do Gherkin
+
+| Cenário da card | Onde é verificado |
+|---|---|
+| 1 — Ampliar faixa e bairro quando não há resultado (3 quartos, R$ 400.000, Trindade → R$ 440.000 + adjacentes) | Integração, com os números da card |
+| 2 — Relaxamento acontece uma única vez, e o lead recebe a oferta do corretor | Integração (nenhuma terceira consulta) + turno (D14) |
+| 3 — Busca com resultado não é relaxada, e nenhum aviso é enviado | Integração + turno |
+| 4 — Bairros adjacentes vêm da tabela pré-carregada | Integração |
+
+**Uma ambiguidade do cenário 4, resolvida aqui.** Ele diz *"**apenas** bairros marcados como adjacentes à Trindade entram na busca"*. Ao pé da letra isso excluiria a própria Trindade — o que estaria errado: o passe 1 não achou nada na Trindade **sob o filtro original**, mas com o preço relaxado pode haver ali um imóvel a R$ 420.000, e descartá-lo seria devolver o vizinho e esconder o bairro que o lead pediu. A leitura que vale é *"a ampliação se limita à tabela; nenhum bairro não-marcado entra"*, e a busca é regiões ∪ adjacentes. O cenário 1 confirma essa leitura ao dizer "preço até R$ 440.000 **e** bairros adjacentes", e não "em vez de".
+
 ## O que a card entrega
 
 1. `domain/catalogo/relaxamento.py`: `buscar_com_relaxamento()`, `alargar()` e o lookup de adjacência.
-2. `FiltroDeBusca.relaxado` e `ResultadoDaBusca.relaxamento_aplicado`.
+2. `FiltroDeBusca.relaxado`, `EstadoDoRelaxamento` e `ResultadoDaBusca.relaxamento`.
 3. `buscar()` com o parâmetro `vetor` e a leitura de `relaxado` no `WHERE` de preço.
 4. Migration `0021_bairros_adjacentes.py`, com schema e os 30 pares.
-5. `relaxamento_aplicado` no `tool_result`; `relaxamentoAplicado` no `POST` da seção 6.3; os dois chamadores migrados para `buscar_com_relaxamento`.
+5. `relaxamento_aplicado` e `relaxamento_sem_resultado` no `tool_result`; `relaxamentoAplicado` no `POST` da seção 6.3; os dois chamadores migrados para `buscar_com_relaxamento`.
 6. A frase nova em `SISTEMA_DO_AGENTE`.
-7. `TEXTO_DO_CRITERIO_AMPLIADO`, `KIND_DO_CRITERIO_AMPLIADO` e o envio no caminho de apresentação.
-8. As duas emendas ao SRS, e as duas linhas no índice do topo.
+7. As três variantes do aviso, `KIND_DO_CRITERIO_AMPLIADO` e o envio no caminho de apresentação.
+8. `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` e a substituição no caminho de não-apresentação (D14).
+9. As duas emendas ao SRS, e as duas linhas no índice do topo.
 
 ## Testes
 
@@ -184,15 +225,20 @@ Log e segue com a dimensão que sobrou, no molde de `_vetor_da_consulta` e da D6
 |---|---|
 | Unit | `alargar`: regiões ∪ adjacentes, `relaxado=True`, teto original **preservado** |
 | Unit | "nada relaxável" não dispara segunda consulta |
-| Unit | `relaxamento_aplicado` no `tool_result`, com `buscar` injetado |
+| Unit | os dois booleanos derivados do `tool_result`, com `buscar` injetado |
 | Unit | o vetor é calculado uma vez e reusado pelos dois passes |
-| Integração | passe 1 com resultado não relaxa; zero relaxa e devolve |
+| Unit | a variante do aviso corresponde ao que foi relaxado — as três (D11) |
+| Integração | **cenário 1 da card**: 3 quartos, R$ 400.000, Trindade → R$ 440.000 e adjacentes |
+| Integração | **cenário 3 da card**: busca com resultado não relaxa e não avisa |
+| Integração | **cenário 4 da card**: só bairro marcado adjacente entra, e a Trindade continua dentro |
 | Integração | **10% acima do teto pontua 0,9** — a dívida que a TEC-158 deixou nomeada |
-| Integração | passe relaxado que também dá zero devolve `relaxamento_aplicado=False` |
+| Integração | **cenário 2 da card**: relaxou e continuou zero → `SEM_RESULTADO`, e nenhuma terceira consulta |
 | Integração | a tabela é simétrica, e todo nome dela existe no catálogo seed |
 | Integração | busca por zona relaxa preço e não amplia bairro |
 | Turno | o aviso sai como mensagem própria, com kind próprio, depois da identificação |
 | Turno | o aviso **não** sai quando o modelo perguntou |
+| Turno | `SEM_RESULTADO` substitui a prosa pelo desfecho com o corretor (D14) |
+| Turno | zero de "nada relaxável" **não** substitui a prosa do modelo |
 | Orçamento | `margem_do_orcamento` continua passando com a frase nova |
 
 **Basenames únicos entre `tests/unit/` e `tests/integration/`**: `test_relaxamento_alargar.py` e `test_relaxamento_busca.py`. Colisão de basename aborta a coleta da suíte inteira e não aparece em execução isolada — já custou duas cards neste repo.
@@ -203,7 +249,7 @@ Log e segue com a dimensão que sobrou, no molde de `_vetor_da_consulta` e da D6
 
 **`CA-09.1` — Emenda E-01 (TEC-160, 11/09/2026).** O critério diz *"nenhum resultado tem preço acima de R$ 600 mil"* e a RN-09.3 devolve até 10% acima: literalmente, relaxar viola a CA-09.1. A emenda declara que ela descreve o **passe de filtro duro** — que continua exato e é o único que roda quando há resultado — e que o passe relaxado é a exceção nomeada, visível ao lead pelo aviso e ao chamador por `relaxamentoAplicado`. **A metade dos quartos não se mexe**: a RN-09.3 relaxa preço e bairro, nunca quartos, tipo ou vagas.
 
-**`RN-09.3` — Emenda E-01 (TEC-160, 11/09/2026).** A regra deixa sete pontos em aberto que o código decidiria sozinho — o mesmo defeito que a E-01 da RN-09.6 corrigiu quando a regra dava o peso e nunca dizia o que se media. A emenda fixa: (1) *"um relaxamento"* é uma consulta a mais, com as duas dimensões juntas; (2) a faixa cede nas duas pontas, 10 pontos percentuais, em aritmética inteira sobre centavos; (3) a âncora da ordenação da RN-09.6 **não** se move com o `WHERE`; (4) `relaxamentoAplicado` significa "o que você está vendo veio do passe relaxado", e é `false` quando o passe relaxado também dá zero; (5) sem teto e sem região não há segunda consulta; (6) a tabela de adjacência é chaveada pelo bairro dobrado, guarda as duas direções e não tem FK, e a integridade é teste, não schema; (7) o aviso da CA-09.3 é mensagem determinística nossa, com kind próprio, e nunca prosa do modelo. Declara junto que **busca por zona relaxa preço e não amplia bairro**.
+**`RN-09.3` — Emenda E-01 (TEC-160, 11/09/2026).** A regra deixa oito pontos em aberto que o código decidiria sozinho — o mesmo defeito que a E-01 da RN-09.6 corrigiu quando a regra dava o peso e nunca dizia o que se media. A emenda fixa: (1) *"um relaxamento"* é uma consulta a mais, com as duas dimensões juntas; (2) a faixa cede nas duas pontas, 10 pontos percentuais, em aritmética inteira sobre centavos; (3) a âncora da ordenação da RN-09.6 **não** se move com o `WHERE`; (4) `relaxamentoAplicado` significa "o que você está vendo veio do passe relaxado", e é `false` quando o passe relaxado também dá zero — o domínio guarda os três estados e a borda deriva o booleano; (5) sem teto e sem região não há segunda consulta; (6) a tabela de adjacência é chaveada pelo bairro dobrado, guarda as duas direções e não tem FK, e a integridade é teste, não schema; (7) o aviso da CA-09.3 é mensagem determinística nossa, com kind próprio, nunca prosa do modelo, e **nomeia a dimensão que foi ampliada** — nunca o valor; (8) a ampliação de região é regiões ∪ adjacentes: o bairro pedido continua na busca, e "apenas adjacentes" limita de onde vêm os novos, não quem sai. Declara junto que **busca por zona relaxa preço e não amplia bairro**.
 
 **O que não se emenda.** A RN-04.2 continua valendo sem mudança (ver a D10 e a L5). A RN-09.6 não precisa de emenda nova: a E-01 dela já previu este caso — o que muda é que a previsão passa a ter teste.
 
@@ -229,12 +275,13 @@ O p95 ≤ 400 ms passa a cobrir, no caminho de zero resultado, duas consultas ma
 
 Depois desta card, conversa nova com relaxamento gasta as duas mensagens de texto que a E-02 da TEC-162 permite. **Não sobra folga.** A próxima trilha que quiser mensagem própria vai precisar de emenda à RN-04.2 — e não vai descobrir isso sozinha se ninguém registrar agora.
 
-### L6 — O texto da card não foi lido
+### L6 — O desfecho oferece o corretor, e não a lista de espera
 
-Ver o cabeçalho. Este desenho deriva da RN-09.3, da CA-09.3, da E-01 da RN-09.6 e dos bilhetes das TEC-158, TEC-262 e TEC-265. Se a card disser algo que o SRS não diz, este documento não sabe.
+A regra 4 da card diz *"informa e oferece a lista de espera **ou** o corretor"*, e a mesma card põe a lista de espera fora de escopo (E5). A D14 entrega a metade disponível. Quando o E5 existir, o texto de `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` é o lugar a revisitar — e esta lacuna é o bilhete para quem chegar lá.
 
 ## Fora de escopo
 
+- A lista de espera e o handoff por indisponibilidade — a própria card os exclui (E5 e E7). Ver a L6.
 - Relaxamento de tipo, quartos ou vagas (L3).
 - Adjacência multi-cidade e filtro de cidade (L1, e a lacuna 8 da TEC-158).
 - A medição do SLA no caminho relaxado (L4, TEC-159).
