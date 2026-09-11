@@ -19,7 +19,7 @@ o excedente, abrir uma terceira mensagem, ou deixar a segunda passar do teto:
 - Uma terceira mensagem cumpre o limite de 600 mas viola a OUTRA clausula da
   mesma RN-04.2 (o maximo de mensagens consecutivas) -- trocar uma violacao
   por outra da mesma regra nao e ganho nenhum.
-- Deixar a segunda parte estourar viola so a clausula de tamanho, mantém o
+- Deixar a segunda parte estourar viola so a clausula de tamanho, mantem o
   conteudo inteiro, e o gate de avaliacao (piso de 90%) continua contando o
   excedente -- entao a degradacao fica visivel em vez de escondida.
 
@@ -71,7 +71,16 @@ def quebrar_em_mensagens(texto: str) -> tuple[str, ...]:
 
     Cada parte devolvida vem sem espaco em branco nas pontas: mandar ao lead
     uma mensagem com espaco sobrando e desleixo, quebra tendo ou nao fronteira
-    de frase para se apoiar.
+    de frase para se apoiar. Quando a fronteira escolhida cai dentro de uma
+    sequencia de quebras de linha (quebra de paragrafo dupla), o strip() come
+    todas elas, nao so a que decidiu o corte -- sem perda de conteudo, porque
+    linha em branco nao e conteudo.
+
+    Se depois de limpar as pontas a segunda parte ficar vazia -- artefato
+    comum de saida de LLM e um `\\n` final sozinho depois do ponto --, o texto
+    cabia numa mensagem so e a funcao devolve uma 1-tupla. Sem este colapso, a
+    Task 3 pareia as duas partes com um `kind` cada e despacharia a segunda,
+    vazia, como mensagem real ao lead.
 
     Nunca devolve mais que `MAX_MENSAGENS_DE_TEXTO` partes. Acima de
     ~1.200 caracteres a segunda parte pode passar de
@@ -96,4 +105,11 @@ def quebrar_em_mensagens(texto: str) -> tuple[str, ...]:
             primeira = texto[:MAX_CARACTERES_POR_MENSAGEM]
             segunda = texto[MAX_CARACTERES_POR_MENSAGEM:]
 
-    return (primeira.strip(), segunda.strip())
+    primeira_final = primeira.strip()
+    segunda_final = segunda.strip()
+    if not segunda_final:
+        # A quebra escolhida so tinha espaco em branco depois dela -- o texto
+        # inteiro cabe na primeira parte, e devolver a segunda vazia violaria
+        # a propria promessa do docstring ("uma ou duas mensagens").
+        return (primeira_final,)
+    return (primeira_final, segunda_final)

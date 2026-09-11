@@ -72,3 +72,43 @@ def test_acima_de_1200_a_segunda_parte_estoura_e_isso_e_deliberado() -> None:
 
     assert len(partes) == 2
     assert len(partes[1]) > MAX_CARACTERES_POR_MENSAGEM
+
+
+def test_segunda_parte_vazia_apos_strip_colapsa_para_uma_mensagem_so() -> None:
+    """Artefato comum de saida de LLM: um `\\n` final sozinho depois do ponto.
+
+    Sem o colapso, a funcao devolveria `(conteudo, '')` -- duas partes de
+    nome, mas so uma com conteudo. A Task 3 pareia cada parte com um `kind` e
+    despacha as duas como mensagem; a segunda vazia viraria envio em branco ao
+    lead, com reserva gravada em `outbound_dispatches` para nada.
+    """
+    conteudo = "a" * (MAX_CARACTERES_POR_MENSAGEM - 1) + "."
+    texto = conteudo + "\n"
+
+    assert quebrar_em_mensagens(texto) == (conteudo,)
+
+
+def test_quebra_de_paragrafo_e_fronteira_de_frase() -> None:
+    """`\\n` conta como fronteira de frase tanto quanto pontuacao -- nenhum
+    dos seis testes originais cobria esse ramo.
+
+    A quebra de paragrafo dupla (`\\n\\n`) fica entre as duas partes. O
+    `strip()` da ponta come as DUAS quebras de linha contiguas, nao so a que
+    decidiu o corte -- isso nao perde conteudo, porque linha em branco nao e
+    conteudo, mas so a asercao com normalizacao que tambem desconta `\\n`
+    prova essa invariante: `replace(" ", "")` sozinho, como em
+    `test_nada_se_perde_nunca`, e frouxo demais aqui e passaria mesmo se a
+    funcao perdesse as quebras de linha do meio do texto.
+    """
+    primeira = "a" * 550 + "."
+    segunda = "b" * 100
+    texto = primeira + "\n\n" + segunda
+
+    partes = quebrar_em_mensagens(texto)
+
+    assert len(partes) == 2
+    assert partes[0] == primeira
+    assert partes[1] == segunda
+
+    sem_espaco_e_quebra = "".join(partes).replace(" ", "").replace("\n", "")
+    assert sem_espaco_e_quebra == texto.replace(" ", "").replace("\n", "")
