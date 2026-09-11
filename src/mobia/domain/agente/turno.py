@@ -71,9 +71,18 @@ KIND_DA_RESPOSTA = "reply"
 # O primeiro continua sendo `KIND_DA_RESPOSTA` e nao um nome novo: ha linhas
 # gravadas com "reply" e testes que afirmam `_kinds_reservados() == ["reply"]`.
 #
-# Efeito colateral util da reserva por kind: se a segunda mensagem falhar no
-# envio, a retentativa do sweeper reentrega SO ela -- a primeira ja tem reserva
-# e e suprimida.
+# A reserva por kind faz a parte ja entregue ser suprimida de novo numa
+# retentativa -- mas isso NAO quer dizer "a retentativa completa a mesma
+# resposta". `sweep_stalled` reenfileira a MENSAGEM, e o turno roda inteiro de
+# novo, com uma chamada NOVA ao classificador: texto diferente do da tentativa
+# anterior. A parte com reserva (`reply`, se foi ela que ja saiu) devolve False
+# de novo e e suprimida; a parte sem reserva sai, mas com o texto da chamada
+# NOVA -- nao com a continuacao do texto antigo. O lead pode acabar com a
+# primeira metade de uma resposta seguida da segunda metade de outra. Fix
+# review final (TEC-140): este comentario prometia "reentrega SO ela", que e
+# falso -- a parte que falta reentrega, mas o texto ao redor dela mudou. Ver o
+# `except EnvioRetentavel` do laco de entrega em `executar_turno`, que so torna
+# isso visivel em log, sem evitar.
 KINDS_DA_RESPOSTA = (KIND_DA_RESPOSTA, "reply_2")
 
 # TEC-162. Kinds fixos POR POSICAO, e nao derivados do id do imovel: o
@@ -701,6 +710,15 @@ async def executar_turno(
     if identificar:
         texto = f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{texto}"
 
+    # Fix de revisao final (Critical 1 e Important 2, TEC-140). So o caminho
+    # de texto (o `else:` abaixo) pode marcar as duas True -- `_apresentar` ja
+    # tem a forma certa e nao precisa delas --, mas os valores precisam existir
+    # para os dois caminhos porque o `if suprimida_apos_entrega:` e o guard de
+    # `marcar_perguntados`, mais abaixo, rodam incondicional de qual ramo
+    # executou.
+    suprimida_apos_entrega = False
+    entrega_parcial = False
+
     try:
         if apresentando:
             if await e_conversa_nova(session_factory, message, agora=datetime.now(UTC)):
@@ -803,9 +821,13 @@ async def executar_turno(
             # "nada saiu" pela mentira "saiu tudo".
             entregue = False
             partes_entregues: list[str] = []
-            entrega_parcial = False
-            # strict=False e a garantia, nao um detalhe: o zip trunca pela
-            # menor sequencia de proposito (ver comentario acima do bloco).
+            # strict=False nao e detalhe de estilo: `quebrar_em_mensagens`
+            # devolve uma 1-tupla quando o texto cabe numa mensagem so (o
+            # caminho comum), e `KINDS_DA_RESPOSTA` tem sempre dois kinds. Com
+            # strict=True isso levantaria `ValueError` no caminho de 99% dos
+            # turnos. `strict=False` deixa o zip parar no mais curto -- que e
+            # exatamente o efeito querido: so tenta o segundo kind quando ha
+            # uma segunda parte para ele.
             for kind, parte in zip(KINDS_DA_RESPOSTA, quebrar_em_mensagens(texto), strict=False):
                 try:
                     entrou = await outbound.send(
@@ -817,6 +839,37 @@ async def executar_turno(
                             "texto": parte,
                         },
                     )
+                except EnvioRetentavel:
+                    # Fix de revisao final (Critical 2, TEC-140), espelhando o
+                    # `except EnvioRetentavel` de `_apresentar` (mais abaixo
+                    # neste arquivo). Antes desta clausula a excecao subia crua
+                    # por este `try`, atravessava os `except` la embaixo (que
+                    # so pegam `EnvioForaDaJanela`/`EnvioRecusado`) e chegava
+                    # ao chamador do mesmo jeito -- entao a clausula NAO muda o
+                    # desfecho: a linha ainda vira FAILED e o sweeper ainda
+                    # reenfileira. O unico acrescimo e este log, para uma
+                    # entrega PARCIAL (a parte 1 ja saida quando o 5xx bateu
+                    # nesta) nao ficar invisivel ate a proxima tentativa
+                    # reaparecer no mesmo lugar.
+                    #
+                    # E essa proxima tentativa e o proprio risco que o
+                    # comentario no topo do modulo (perto de `KINDS_DA_RESPOSTA`)
+                    # documenta: `sweep_stalled` roda o turno inteiro de novo,
+                    # com uma chamada NOVA ao classificador. A parte que ja
+                    # tem reserva volta a ser suprimida (devolve False, nao
+                    # levanta -- e o `if entregue:` abaixo cobre isso na
+                    # proxima passada); a parte que falhou aqui sai com o texto
+                    # da chamada nova. O lead pode acabar recebendo a primeira
+                    # metade deste texto seguida da segunda metade de outro --
+                    # este log so torna isso visivel, nao evita.
+                    log.error(
+                        "turno.entrega_parcial_antes_de_falha_retentavel",
+                        channel=message.channel,
+                        message_id=str(message.id),
+                        kind=kind,
+                        partes_entregues=len(partes_entregues),
+                    )
+                    raise
                 except (EnvioForaDaJanela, EnvioRecusado) as exc:
                     if not entregue:
                         # Nada saiu ainda: mesmo desfecho de antes desta
@@ -831,9 +884,35 @@ async def executar_turno(
                         reason=str(exc),
                     )
                     break
-                if entrou:
-                    partes_entregues.append(parte)
-                entregue = entrou or entregue
+                if not entrou:
+                    # `send()` devolveu False SEM levantar -- reentrega
+                    # suprimida pela reserva ou bloqueio da guarda de opt-out
+                    # (as duas causas que o docstring de `OutboundPort`
+                    # nomeia; `_bloqueado_por_optout_concorrente` abaixo e quem
+                    # distingue qual das duas foi).
+                    if entregue:
+                        # Fix de revisao final (Critical 1, TEC-140). Ja saiu
+                        # pelo menos uma parte antes desta: tratar esta parte
+                        # do MESMO jeito que a excecao acima -- para de tentar
+                        # as proximas e marca a entrega como parcial -- e nao
+                        # do jeito de antes desta card, que so olhava para
+                        # excecao e deixava `entregue` virar True mesmo com uma
+                        # parte suprimida em silencio. Sem isto, o recorder
+                        # gravava o texto INTEIRO (incluindo a parte que nunca
+                        # saiu) e os dois desfechos de alarme abaixo --
+                        # `reentrega_suprimida` e `bloqueado_por_optout` --
+                        # nunca disparavam porque `entregue` ja estava True.
+                        entrega_parcial = True
+                        suprimida_apos_entrega = True
+                        break
+                    # Nada saiu ainda: comportamento de sempre, tenta a
+                    # proxima parte. E o caso legitimo da retentativa do
+                    # sweeper (comentario do topo do modulo): a parte com
+                    # reserva de uma tentativa anterior devolve False aqui, e a
+                    # parte sem reserva ainda tem a vez de sair.
+                    continue
+                partes_entregues.append(parte)
+                entregue = True
             if entrega_parcial:
                 texto = "\n\n".join(partes_entregues)
     except EnvioForaDaJanela as exc:
@@ -903,6 +982,37 @@ async def executar_turno(
         )
         return "reentrega_suprimida"
 
+    # Fix de revisao final (Critical 1, TEC-140). `entregue` e True aqui --
+    # pelo menos uma parte saiu --, mas `suprimida_apos_entrega` (marcada no
+    # laco acima) diz que uma parte POSTERIOR devolveu False sem levantar. Sao
+    # as MESMAS duas causas do `if not entregue:` logo acima -- reentrega
+    # suprimida pela reserva, ou a guarda de opt-out barrando um envio
+    # concorrente --, so que com uma parte ja entregue em vez de nenhuma. O
+    # desfecho de alarme (`reentrega_suprimida`) ou o de guarda-funcionou
+    # (`bloqueado_por_optout`) tem de sobreviver do mesmo jeito: gravar
+    # "respondido" aqui esconderia exatamente a corrida que
+    # `_bloqueado_por_optout_concorrente` existe para nomear. O recorder ainda
+    # roda logo abaixo -- `texto` ja foi cortado para so as partes que sairam
+    # -- porque o que saiu e real e precisa ficar na transcricao.
+    desfecho_da_supressao_parcial: ResultadoDoTurno | None = None
+    if suprimida_apos_entrega:
+        if await _bloqueado_por_optout_concorrente(session_factory, message):
+            log.info(
+                "turno.bloqueado_por_optout_concorrente",
+                channel=message.channel,
+                message_id=str(message.id),
+                entrega_parcial=True,
+            )
+            desfecho_da_supressao_parcial = "bloqueado_por_optout"
+        else:
+            log.error(
+                "turno.reentrega_suprimida",
+                channel=message.channel,
+                message_id=str(message.id),
+                entrega_parcial=True,
+            )
+            desfecho_da_supressao_parcial = "reentrega_suprimida"
+
     if desambiguando and not saida_bloqueada and not citacao_bloqueada:
         # Depois da entrega confirmada, nunca antes: ver `marcar_desambiguacao`.
         # A ordem entre esta gravacao e a da fala do agente nao e carregada --
@@ -937,7 +1047,7 @@ async def executar_turno(
             message_id=str(message.id),
         )
 
-    if not desambiguando and not saida_bloqueada and not citacao_bloqueada:
+    if not desambiguando and not saida_bloqueada and not citacao_bloqueada and not entrega_parcial:
         # A marca de `perguntou` (TEC-257) e, ao contrario da intencao e da
         # extracao gravadas la em cima, um fato sobre a NOSSA resposta -- e
         # por isso nao pode entrar naquele commit pre-entrega. Ela so pode ser
@@ -947,11 +1057,20 @@ async def executar_turno(
         # caminho de desambiguacao a resposta da chamada 1 foi descartada --
         # paga e nao entregue -- e o lead recebeu a pergunta do desambiguador,
         # nao a de `gerada`; com a saida bloqueada o lead recebeu
-        # `TEXTO_NEUTRO_DE_SAIDA`, que tambem nao pergunta nada; e com a
+        # `TEXTO_NEUTRO_DE_SAIDA`, que tambem nao pergunta nada; com a
         # citacao bloqueada (TEC-161) o lead recebeu `TEXTO_DA_BUSCA_INCONCLUSIVA`
-        # ou a ficha pura -- tambem nao a pergunta de `gerada`. Marcar aqui
-        # queimaria, para sempre e em silencio, a chance de perguntar aquele
-        # campo de verdade -- a uniao no SQL nunca remove.
+        # ou a ficha pura -- tambem nao a pergunta de `gerada`; e com a entrega
+        # PARCIAL (Important 2 da revisao final da TEC-140) a pergunta de
+        # `gerada`, se houve, pode estar inteira, pela metade ou nem ter
+        # existido na parte que de fato saiu -- `entrega_parcial` nao diz ONDE
+        # dentro do texto a quebra caiu, so que uma parte foi suprimida.
+        # Decisao: suprimir a marca tambem aqui, e nao so nos tres casos de
+        # cima. O custo de nao marcar quando a pergunta saiu inteira e perguntar
+        # de novo depois -- irritante, mas reversivel. O custo de marcar quando
+        # a pergunta ficou na parte suprimida e queimar, para sempre e em
+        # silencio, a chance de perguntar aquele campo de verdade -- o MESMO
+        # dano que os outros tres casos existem para evitar, e a uniao no SQL
+        # nunca remove. Entre os dois, o repeticao e o lado barato.
         #
         # `marcar_perguntados`, e NAO `gravar_estado` de novo: regravar
         # `intencao`/`extracao` aqui e idempotente so contra si mesmo. Contra
@@ -996,7 +1115,12 @@ async def executar_turno(
         sender_external_id=message.recipient_external_id,
         recipient_external_id=message.conversation_key,
     )
-    return "respondido"
+    # `desfecho_da_supressao_parcial` (Critical 1) vence "respondido" quando
+    # setado: o recorder acima ja gravou so o que saiu, mas o DESFECHO do
+    # turno precisa continuar contando a historia de reentrega-suprimida ou
+    # opt-out-concorrente, e nao a de "respondido" -- ver o comentario onde a
+    # variavel e definida.
+    return desfecho_da_supressao_parcial or "respondido"
 
 
 async def _bloqueado_por_optout_concorrente(

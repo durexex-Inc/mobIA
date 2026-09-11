@@ -4,8 +4,11 @@ Basename distinto de tudo em `tests/unit/`, e rima com
 `test_apresentacao_no_turno.py` e `test_citacao_no_turno.py`.
 """
 
+import logging
+import uuid
 from typing import Any
 
+import pytest
 from sqlalchemy import select
 
 from mobia.domain.outbound.models import OutboundDispatch
@@ -295,3 +298,202 @@ async def test_segunda_parte_recusada_nao_apaga_a_primeira_ja_entregue(
     # parte tambem).
     assert gravado == primeira_parte
     assert len(gravado) < len(longa)
+
+
+async def test_reserva_duplicada_na_segunda_parte_apos_entrega_vira_reentrega_suprimida(
+    session: Any,
+    classificador_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    caplog: Any,
+) -> None:
+    """Critical 1 da revisao final (TEC-140), a outra causa nomeada pelo
+    docstring de `OutboundPort`: reentrega suprimida pela RESERVA, nao pela
+    guarda de opt-out (esse caso concreto esta em `test_turno_optout.py`).
+
+    Antes deste fix, `outbound.send` devolvendo False SEM levantar para a
+    SEGUNDA parte (reserva ja existente em `outbound_dispatches`) deixava
+    `entregue` True por causa da PRIMEIRA parte -- e o bloco que decide entre
+    "reentrega_suprimida" e "bloqueado_por_optout" nunca rodava, porque aquele
+    bloco so olhava para `not entregue`. O turno devolvia "respondido" com o
+    texto INTEIRO gravado no recorder, mesmo a segunda parte nunca tendo
+    saido -- e sem o `error` de `turno.reentrega_suprimida`, o alarme de dado
+    sumido ficava mudo.
+    """
+    from conftest import OutboundFake, _entrada_do_lead  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.formato import quebrar_em_mensagens
+    from mobia.domain.agente.turno import KINDS_DA_RESPOSTA, executar_turno
+    from mobia.domain.messages.enums import MessageRole
+    from mobia.domain.messages.models import Message
+    from mobia.infra.crypto import aad_de, decrypt
+
+    await _conversa_ja_existe(session)
+    mensagem = await _entrada_do_lead(session, texto="quero saber mais sobre apartamentos")
+    longa = "Encontrei uma opcao muito boa para voce no centro da cidade. " * 12
+    primeira_parte, _segunda_parte = quebrar_em_mensagens(longa)
+
+    # A reserva da SEGUNDA parte ja existe -- simula uma tentativa anterior
+    # que ja reservou (message_id, "reply_2"), do jeito real que
+    # `GuardedOutbound.send` produziria com um `IntegrityError` na UNIQUE.
+    session.add(
+        OutboundDispatch(id=uuid.uuid4(), message_id=mensagem.id, kind=KINDS_DA_RESPOSTA[1])
+    )
+    await session.commit()
+
+    outbound = OutboundFake(get_sessionmaker())
+
+    with caplog.at_level(logging.INFO):
+        resultado = await executar_turno(
+            get_sessionmaker(),
+            message=mensagem,
+            classificador=classificador_fake(resposta=longa),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+        )
+
+    assert resultado == "reentrega_suprimida", (
+        "a segunda parte foi suprimida por reserva duplicada -- o desfecho de "
+        "dado sumido tem de sobreviver mesmo com a primeira parte entregue"
+    )
+    assert outbound.entregues == [primeira_parte]
+    assert await _kinds_reservados() == ["reply", "reply_2"]
+
+    faladas = (
+        await session.scalars(select(Message).where(Message.role == MessageRole.AGENTE))
+    ).all()
+    assert len(faladas) == 1
+    gravado = decrypt(faladas[0].text_body, aad_de(faladas[0].id, "text_body"))
+    assert gravado == primeira_parte, (
+        "so a parte que de fato saiu -- gravar `longa` inteira e a mentira que este fix corrige"
+    )
+
+    eventos = [
+        registro
+        for registro in caplog.records
+        if "turno.reentrega_suprimida" in registro.getMessage()
+    ]
+    assert eventos and all(r.levelno == logging.ERROR for r in eventos), (
+        "o alarme de dado sumido nao pode ficar mudo so porque a primeira parte entrou"
+    )
+
+
+async def test_falha_retentavel_na_segunda_parte_loga_entrega_parcial_antes_de_propagar(
+    session: Any,
+    classificador_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    rodar_turno: Any,
+    caplog: Any,
+) -> None:
+    """Critical 2 da revisao final (TEC-140). `EnvioRetentavel` na SEGUNDA
+    parte, com a primeira ja entregue, subia crua por este laco sem log
+    nenhum antes desta clausula -- a mesma excecao, capturada em
+    `_apresentar`, ja loga ha mais tempo. O desfecho NAO muda (FAILED, o
+    sweeper reenfileira); so a visibilidade da entrega parcial antes da falha
+    muda.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.formato import quebrar_em_mensagens
+    from mobia.domain.agente.turno import KINDS_DA_RESPOSTA
+    from mobia.domain.outbound.port import EnvioRetentavel
+
+    await _conversa_ja_existe(session)
+    longa = "Encontrei uma opcao muito boa para voce no centro da cidade. " * 12
+    primeira_parte, _segunda_parte = quebrar_em_mensagens(longa)
+
+    class _RetentavelNaSegunda(OutboundFake):
+        async def _deliver(self, message_id: Any, kind: Any, payload: Any) -> None:
+            if kind == KINDS_DA_RESPOSTA[1]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    outbound = _RetentavelNaSegunda(get_sessionmaker())
+
+    with caplog.at_level(logging.INFO), pytest.raises(EnvioRetentavel):
+        await rodar_turno(
+            session,
+            classificador_fake(resposta=longa),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+            moderador_fake(),
+        )
+
+    assert outbound.entregues == [primeira_parte]
+    # A reserva da segunda parte foi LIBERADA -- `EnvioRetentavel` libera,
+    # diferente de `EnvioRecusado` (ver `GuardedOutbound.send`). So a primeira
+    # fica reservada.
+    assert await _kinds_reservados() == ["reply"]
+
+    eventos = [
+        registro
+        for registro in caplog.records
+        if "turno.entrega_parcial_antes_de_falha_retentavel" in registro.getMessage()
+    ]
+    assert eventos and all(r.levelno == logging.ERROR for r in eventos), (
+        "sem este log, uma entrega parcial antes de um 5xx fica invisivel ate "
+        "a proxima tentativa reaparecer no mesmo lugar"
+    )
+
+
+async def test_entrega_parcial_nao_marca_pergunta_como_feita(
+    session: Any,
+    classificador_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """Important 2 da revisao final (TEC-140). Decisao tomada: com entrega
+    PARCIAL, `marcar_perguntados` NAO roda.
+
+    `entrega_parcial` nao diz ONDE dentro do texto a quebra caiu -- a pergunta
+    de `gerada.perguntou` pode estar inteira na parte que saiu, ou pode estar
+    na parte suprimida. Marcar quando ela estava na parte suprimida queimaria,
+    para sempre e em silencio, a chance de perguntar aquele campo de verdade
+    (a uniao no SQL nunca remove, mesmo comentario do bloco em `turno.py`).
+    Nao marcar quando ela estava na parte entregue custa uma repeticao da
+    pergunta depois -- irritante, mas reversivel. Entre os dois, a repeticao e
+    o lado barato.
+    """
+    from conftest import CANAL, CONVERSA, OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DA_RESPOSTA
+    from mobia.domain.context.repositorio import ler_estado
+    from mobia.domain.outbound.port import EnvioRecusado
+
+    await _conversa_ja_existe(session)
+    longa = "Encontrei uma opcao muito boa para voce no centro da cidade. " * 12
+
+    class _RecusaASegundaMensagem(OutboundFake):
+        async def _deliver(self, message_id: Any, kind: Any, payload: Any) -> None:
+            if kind == KINDS_DA_RESPOSTA[1]:
+                raise EnvioRecusado("http 400 codigo 131053")
+            await super()._deliver(message_id, kind, payload)
+
+    outbound = _RecusaASegundaMensagem(get_sessionmaker())
+
+    resultado = await rodar_turno(
+        session,
+        classificador_fake(resposta=longa, perguntou=("regiao",)),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(),
+    )
+
+    assert resultado == "respondido"
+
+    async with get_sessionmaker()() as outra:
+        estado = await ler_estado(outra, CANAL, CONVERSA)
+    assert estado is not None
+    assert estado.perguntados_sem_resposta == [], (
+        "entrega parcial: a pergunta de `gerada` pode estar na parte "
+        "suprimida, entao a marca nao pode ser gravada"
+    )

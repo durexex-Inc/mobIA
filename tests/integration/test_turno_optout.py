@@ -448,6 +448,102 @@ async def test_bloqueio_da_guarda_na_entrada_bloqueada_tambem_nao_vira_reentrega
     )
 
 
+class _OutboundQueOptaEntreAsPartes(OutboundFake):
+    """Mesma corrida de `_OutboundQueOptaNoMeio`, mas dentro de uma UNICA
+    resposta quebrada em duas mensagens (TEC-140) -- o caso concreto do
+    Critical 1 da revisao final: o lead pede opt-out ENTRE a parte 1 e a
+    parte 2 da mesma resposta, nao entre dois turnos inteiros.
+
+    Regista o opt-out na SEGUNDA chamada a `send()`, depois da primeira parte
+    ja ter passado pela guarda -- por isso conta chamadas em vez de registrar
+    incondicionalmente como `_OutboundQueOptaNoMeio` faz.
+    """
+
+    def __init__(self, session_factory: Any, *, channel: str, conversation_key: str) -> None:
+        super().__init__(session_factory)
+        self._channel = channel
+        self._conversation_key = conversation_key
+        self._chamadas = 0
+
+    async def send(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> bool:
+        self._chamadas += 1
+        if self._chamadas == 2:
+            await registrar_optout(
+                self._session_factory,
+                channel=self._channel,
+                conversation_key=self._conversation_key,
+                message_id=uuid.uuid4(),
+            )
+        return await super().send(message_id, kind, payload)
+
+
+async def test_optout_entre_a_primeira_e_a_segunda_parte_nao_vira_respondido(
+    session, classificador_fake, resumidor_fake, contador_fake, caplog
+) -> None:
+    """Critical 1 da revisao final (TEC-140) -- o caso concreto que a card
+    descreve: o lead registra opt-out entre a parte 1 e a parte 2 de uma
+    resposta longa.
+
+    Antes deste fix, a parte 1 entregue deixava `entregue` True e o bloco que
+    decide entre `reentrega_suprimida` e `bloqueado_por_optout` nunca rodava
+    -- o turno devolvia "respondido" com o texto INTEIRO gravado no recorder,
+    como se o lead tivesse recebido tudo, quando recebeu so a metade.
+    """
+    from mobia.domain.agente.formato import quebrar_em_mensagens
+
+    # Conversa ja existente (duas mensagens seguidas), para o prefixo de
+    # identificacao (TEC-139) nao entrar no texto e contaminar a comparacao
+    # com `primeira_parte` abaixo.
+    await _mensagem_gravada(session, texto="ja tinha falado com o assistente antes")
+    mensagem = await _mensagem_gravada(session, texto="quero saber mais sobre apartamentos")
+    longa = "Encontrei uma opcao muito boa para voce no centro da cidade. " * 12
+    primeira_parte, _segunda_parte = quebrar_em_mensagens(longa)
+
+    outbound = _OutboundQueOptaEntreAsPartes(
+        get_sessionmaker(), channel=mensagem.channel, conversation_key=mensagem.conversation_key
+    )
+
+    with caplog.at_level(logging.INFO):
+        resultado = await executar_turno(
+            get_sessionmaker(),
+            message=mensagem,
+            classificador=classificador_fake(resposta=longa),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=ModeradorFake(),
+        )
+
+    assert resultado == "bloqueado_por_optout"
+    assert resultado != "respondido"
+    assert outbound.entregues == [primeira_parte]
+
+    faladas = (
+        await session.scalars(select(Message).where(Message.role == MessageRole.AGENTE))
+    ).all()
+    assert len(faladas) == 1
+    gravado = decrypt(faladas[0].text_body, aad_de(faladas[0].id, "text_body"))
+    # So a parte que de fato saiu -- gravar `longa` inteira aqui trocaria a
+    # mentira "nada saiu" pela mentira "saiu tudo".
+    assert gravado == primeira_parte
+    assert len(gravado) < len(longa)
+
+    eventos = [
+        registro
+        for registro in caplog.records
+        if "turno.bloqueado_por_optout_concorrente" in registro.getMessage()
+    ]
+    assert eventos, "o desfecho tem de aparecer no log mesmo com entrega parcial"
+    assert all(registro.levelno == logging.INFO for registro in eventos)
+
+    eventos_de_perda = [
+        registro
+        for registro in caplog.records
+        if "turno.reentrega_suprimida" in registro.getMessage()
+    ]
+    assert eventos_de_perda == [], "a guarda funcionando nao pode se disfarcar de dado sumido"
+
+
 async def test_confirmacao_de_optout_que_nao_entrega_nunca_vira_bloqueado_por_optout(
     session, classificador_fake, resumidor_fake, contador_fake, caplog
 ) -> None:
