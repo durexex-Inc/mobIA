@@ -11,7 +11,7 @@ proprio titulo. Usar outro criaria duas definicoes antes de a primeira
 existir.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,6 +26,8 @@ DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA = 30
 async def e_conversa_nova(
     session_factory: async_sessionmaker[AsyncSession],
     message: Message,
+    *,
+    agora: datetime,
 ) -> bool:
     """Houve silencio longo o bastante antes desta mensagem?
 
@@ -40,18 +42,13 @@ async def e_conversa_nova(
     abre conversa nova. Nao repetir a identificacao incomoda menos que
     repeti-la, e o empate ficar ao acaso e o defeito que a TEC-229 documentou.
 
-    **O corte trunca para o inicio do dia em UTC antes de subtrair os 30
-    dias -- nao usa `datetime.now(UTC)` bruto.** Entre o teste marcar a
-    mensagem anterior como "exatamente ha 30 dias" e esta funcao ler o
-    relogio, passa tempo de parede real (grava a linha, comita, grava a
-    proxima). A precisao de microssegundo faz esse intervalo, por menor que
-    seja, empurrar a mensagem para "mais de 30 dias" e virar o lado do
-    empate que o paragrafo acima fixa. Truncar para a meia-noite absorve
-    essa folga de execucao sem afetar os casos de 29 ou 31 dias, que tem um
-    dia inteiro de margem.
+    `agora` entra por parametro e nao sai de `datetime.now()` aqui dentro,
+    como `candidatos_a_followup` (`followup/repositorio.py`) e
+    `tentativa_devida` (`followup/cadencia.py`) ja fazem: sem isso nenhum
+    teste consegue posicionar o relogio no exato instante em que carimbou a
+    mensagem anterior, e o teste do empate deixaria de exercitar um empate.
     """
-    inicio_do_dia = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-    corte = inicio_do_dia - timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
+    corte = agora - timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
     async with session_factory() as session:
         anterior = await session.scalar(
             select(Message.id)
