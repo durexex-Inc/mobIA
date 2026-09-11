@@ -97,7 +97,7 @@ executar_turno
 
 ## Testes
 
-**Unitários, a função de quebra** (pura, sem I/O): texto curto devolve uma parte só; texto longo quebra na fronteira de frase e não no meio da palavra; sem fronteira de frase, cai para fronteira de palavra; o resultado concatenado é **igual ao texto de entrada**, sempre — nenhum caractere se perde, que é a invariante da D2; texto acima de 1.200 devolve duas partes, a segunda maior que 600.
+**Unitários, a função de quebra** (pura, sem I/O): texto curto devolve uma parte só; texto longo quebra na fronteira de frase e não no meio da palavra; sem fronteira de frase, cai para fronteira de palavra; o resultado concatenado é **igual ao texto de entrada depois de normalizar espaço em branco** (o `strip()` das pontas descarta espaços e quebras de linha do próprio corte, nunca caractere de conteúdo) — nenhum caractere de conteúdo se perde, que é a invariante da D2; texto acima de 1.200 devolve duas partes, a segunda maior que 600.
 
 **Unitários, os kinds**: `KINDS_DA_RESPOSTA[0] == "reply"`, os dois são distintos, e o conjunto não colide com `KINDS_DAS_FICHAS` nem com o kind da confirmação de opt-out.
 
