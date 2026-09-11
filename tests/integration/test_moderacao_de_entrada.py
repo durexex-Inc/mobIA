@@ -388,3 +388,56 @@ async def test_a_auditoria_nao_carrega_o_texto_julgado(
     for valor in (evento.categoria, evento.direcao, evento.conversation_key):
         assert "tipo de gente" not in valor
     assert "tipo de gente" not in caplog.text
+
+
+async def test_recusa_de_entrada_nao_encerra_o_atendimento(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """Segundo criterio de aceite da TEC-142: a recusa nao encerra o atendimento.
+
+    Dada uma recusa ja emitida na conversa, quando o lead informa um criterio
+    legitimo (numero de quartos), o turno seguinte tem de seguir normalmente --
+    classificador chamado, resposta entregue. A propriedade sai de graca do
+    codigo hoje: nada em `executar_turno` olha para uma recusa passada da
+    mesma conversa antes de decidir se roda o turno. Mas nenhum teste ate esta
+    card exercitava dois turnos de verdade sobre a mesma conversa, e o
+    caminho vizinho mais proximo (`test_fala_bloqueada_nao_entra_na_janela`,
+    em `test_montagem.py`) prova so a metade dificil -- que a fala bloqueada
+    nao envenena o contexto. Este teste existe para que a outra metade, a que
+    ja sai de graca, nao deixe de sair em silencio se um refactor futuro
+    passar a tratar recusa como fim de conversa.
+    """
+    outbound = outbound_fake()
+
+    primeiro = await rodar_turno(
+        session,
+        classificador_fake(),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(bloqueia_entrada=True),
+    )
+
+    assert primeiro == "respondido"
+    assert outbound.entregues[-1] == TEXTO_DA_RECUSA_DE_ENTRADA
+
+    classificador = classificador_fake()
+    segundo = await rodar_turno(
+        session,
+        classificador,
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(),
+        texto="preciso de 3 quartos",
+    )
+
+    assert segundo == "respondido"
+    assert classificador.chamadas == 1
+    assert outbound.entregues[-1] != TEXTO_DA_RECUSA_DE_ENTRADA
