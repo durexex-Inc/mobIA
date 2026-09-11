@@ -134,6 +134,76 @@ async def test_o_recorder_grava_o_texto_inteiro_numa_linha_so(
     assert gravado == longa
 
 
+async def test_o_prefixo_da_identificacao_conta_para_os_600(
+    session: Any,
+    classificador_fake: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """A identificacao da TEC-139 e prefixada ANTES da quebra, entao ela
+    empurra o texto para cima dos 600. Uma resposta que caberia sozinha pode
+    passar a quebrar por causa dela -- e a interacao que ninguem conferiria,
+    porque cada card sozinha esta certa.
+
+    Nao chama `_conversa_ja_existe` DE PROPOSITO -- ao contrario de todo outro
+    teste deste arquivo. O ponto aqui e o oposto do que aquele helper garante:
+    este teste precisa que a conversa seja NOVA para que
+    `TEXTO_DA_IDENTIFICACAO` (131 caracteres) mais o separador (2) sejam
+    prefixados a `texto` antes da quebra. Chamar o helper apagaria a propria
+    soma que o teste existe para provar, e ele passaria medindo outra coisa.
+    """
+    # 131 (identificacao) + 2 (separador) + 510 (este texto) = 643 > 600.
+    quase = "Uma frase de tamanho medio para encher a resposta. " * 10  # 510 chars
+    outbound = outbound_fake()
+
+    await rodar_turno(
+        session,
+        classificador_fake(resposta=quase),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(),
+    )
+
+    assert len(outbound.entregues) == 2, (
+        "em conversa nova a identificacao soma 133 chars e deveria empurrar "
+        "este texto de 510 para duas mensagens"
+    )
+
+
+async def test_o_teto_de_duas_mensagens_de_texto_vale_no_pior_caso(
+    session: Any,
+    classificador_fake: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """A terceira clausula da RN-04.2, que ate agora era verdade por
+    construcao e nao tinha nada travando. O pior caso soma identificacao e
+    quebra: se alguem acrescentar uma terceira mensagem de texto no futuro,
+    reprova aqui.
+    """
+    await _conversa_ja_existe(session)
+    longa = "Uma frase bem longa para forcar a quebra da resposta. " * 30
+    outbound = outbound_fake()
+
+    await rodar_turno(
+        session,
+        classificador_fake(resposta=longa),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(),
+    )
+
+    assert len(outbound.entregues) <= 2
+
+
 async def test_segunda_parte_recusada_nao_apaga_a_primeira_ja_entregue(
     session: Any,
     classificador_fake: Any,
@@ -152,7 +222,7 @@ async def test_segunda_parte_recusada_nao_apaga_a_primeira_ja_entregue(
 
     Copia o padrao de `test_recusa_permanente_numa_ficha_nao_cala_as_outras`
     em `test_apresentacao_no_turno.py`: subclasse de `OutboundFake` que
-    recusa so um `kind` especifico, porque o dublê compartilhado
+    recusa so um `kind` especifico, porque o duble compartilhado
     (`outbound_fake`) so aceita um erro para TODAS as chamadas.
     """
     from conftest import OutboundFake  # type: ignore[import-not-found]

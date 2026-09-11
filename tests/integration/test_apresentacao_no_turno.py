@@ -85,16 +85,18 @@ class _ClassificadorComCandidatos:
         candidatos: list[dict[str, Any]],
         perguntou: tuple[str, ...] = (),
         confianca: Decimal = Decimal("0.95"),
+        prosa: str = PROSA,
     ) -> None:
         self.candidatos = candidatos
         self.perguntou = perguntou
         self.confianca = confianca
+        self.prosa = prosa
 
     async def classificar(self, contexto: ContextoMontado, *, porta=None) -> RespostaDoAgente:
         return RespostaDoAgente(
             intencao=Intencao.COMPRA,
             confianca=self.confianca,
-            resposta=PROSA,
+            resposta=self.prosa,
             modelo="claude-opus-5",
             tokens_in=500,
             tokens_out=80,
@@ -199,6 +201,31 @@ async def test_a_prosa_vira_prefixo_da_primeira_e_as_outras_sao_ficha_pura(
     assert primeira.startswith(f"{PROSA}\n\n")
     assert PROSA not in segunda
     assert PROSA not in terceira
+
+
+async def test_prosa_longa_na_apresentacao_nao_vira_mensagem_de_texto_extra(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """Na apresentacao a prosa vira prefixo da legenda, e `legenda_de` tem teto
+    e regra de corte proprios (D14 da TEC-162). A quebra da TEC-140 nao pode
+    alcancar este caminho: duas regras de tamanho disputando o mesmo texto
+    discordariam na primeira vez que alguem mexesse numa delas.
+    """
+    from mobia.domain.agente.turno import KINDS_DA_RESPOSTA
+
+    await _conversa_ja_existe(session)
+    ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(i, 50000000 + n) for n, i in enumerate(ids)],
+        prosa="Uma prosa bem longa para forcar o corte da legenda. " * 15,
+    )
+    outbound = outbound_fake()
+
+    await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
+
+    assert len(outbound.entregues) == 3
+    reservados = await _kinds_reservados()
+    assert not set(reservados) & set(KINDS_DA_RESPOSTA)
 
 
 async def test_pergunta_no_turno_adia_as_fichas(

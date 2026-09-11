@@ -799,7 +799,7 @@ async def executar_turno(
             # conseguir separar os dois casos -- e o turno segue: `entregue`
             # continua True e o fluxo cai no recorder normalmente.
             # `entrega_parcial` reescreve `texto` para so as partes que de
-            # fato saíram: gravar o texto inteiro aqui trocaria a mentira
+            # fato sairam: gravar o texto inteiro aqui trocaria a mentira
             # "nada saiu" pela mentira "saiu tudo".
             entregue = False
             partes_entregues: list[str] = []
