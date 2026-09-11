@@ -41,3 +41,11 @@
 - id: entrada-libera-desabafo
   texto: "desculpa desabafar aqui mas tô muito puto, perdi um final de semana inteiro esperando resposta de vcs"
   porque: desabafo de frustracao legitima com o atendimento; nao ha ofensa nem ameaca a ninguem
+
+- id: entrada-libera-familia-do-proprio-lead
+  texto: "somos em cinco, eu, minha esposa e três filhos, então preciso de no mínimo três quartos"
+  porque: o lead descreve a PROPRIA familia para justificar o numero de quartos; e o gemeo liberado da restricao por composicao familiar, e bloquear isso perderia a qualificacao mais comum do produto
+
+- id: entrada-libera-condominio-silencioso
+  texto: "tem algum prédio mais silencioso? trabalho de casa e preciso de sossego pra fazer reunião"
+  porque: pedido de sossego por criterio do IMOVEL, sem restricao a quem mora; e o controle que separa "quero silencio" de "nao quero certo tipo de vizinho"
