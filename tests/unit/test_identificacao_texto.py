@@ -40,9 +40,12 @@ def test_o_texto_nao_finge_ser_pessoa() -> None:
 
 
 def test_o_texto_e_curto_o_bastante_para_preceder_uma_resposta() -> None:
-    """Ele vai na FRENTE de outra mensagem em quatro das cinco trilhas. Longo,
-    empurra a resposta para baixo e vira parede de texto -- exatamente o que o
-    teto de 600 caracteres da RN-04.2 existe para evitar.
+    """Ele vai na FRENTE de outra mensagem em seis das sete trilhas: recusa da
+    moderacao, opt-out e laco de busca (ponto de insercao 1), resposta normal,
+    texto neutro e citacao bloqueada (ponto de insercao 2). A setima -- a
+    apresentacao -- e mensagem propria, nao prefixo de outra. Longo, empurra a
+    resposta para baixo e vira parede de texto -- exatamente o que o teto de
+    600 caracteres da RN-04.2 existe para evitar.
     """
     assert 0 < len(TEXTO_DA_IDENTIFICACAO) <= 160
 
