@@ -88,6 +88,25 @@ def test_segunda_parte_vazia_apos_strip_colapsa_para_uma_mensagem_so() -> None:
     assert quebrar_em_mensagens(texto) == (conteudo,)
 
 
+def test_primeira_parte_vazia_apos_strip_colapsa_para_uma_mensagem_so() -> None:
+    """Gemeo do teste da segunda parte vazia (Important 1, revisao final da
+    TEC-140). Uma resposta comecando com quebra de linha faz a ULTIMA
+    fronteira de frase dentro dos 600 primeiros caracteres ser um `\\n` sem
+    nada alem de espaco antes dele -- a primeira parte sai vazia depois do
+    strip().
+
+    Sem o colapso, `quebrar_em_mensagens` devolveria `("", "a"*700)`: a Task 3
+    despacharia a primeira parte como `{"texto": ""}`, o adaptador devolveria
+    4xx (`EnvioRecusado`), e como NENHUMA parte teria saido ainda a excecao
+    subiria crua -- o turno inteiro (as 700 letras incluidas) se perderia como
+    "sem_resposta".
+    """
+    conteudo = "a" * 700
+    texto = "\n\n" + conteudo
+
+    assert quebrar_em_mensagens(texto) == (conteudo,)
+
+
 def test_quebra_de_paragrafo_e_fronteira_de_frase() -> None:
     """`\\n` conta como fronteira de frase tanto quanto pontuacao -- nenhum
     dos seis testes originais cobria esse ramo.
