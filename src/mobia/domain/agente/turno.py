@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import structlog
@@ -10,6 +11,11 @@ from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
 from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo, porta_de_busca
+from mobia.domain.agente.identificacao import (
+    SEPARADOR_DA_IDENTIFICACAO,
+    TEXTO_DA_IDENTIFICACAO,
+    e_conversa_nova,
+)
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.gatilhos import gatilhos_de
@@ -908,6 +914,13 @@ async def _entregar_texto_fixo(
     `message_telemetry.subagent = "moderacao"`, rotulando errado quem olhar a
     telemetria depois.
     """
+    # A identificacao entra AQUI e nao em cada chamador: este e o funil de
+    # quatro das cinco trilhas de saida -- recusa da moderacao, texto neutro,
+    # confirmacao de opt-out e busca inconclusiva. Espalhada pelos chamadores,
+    # a proxima trilha que surgisse sairia sem ela, e em silencio.
+    if await e_conversa_nova(session_factory, message, agora=datetime.now(UTC)):
+        recorder_texto = f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{recorder_texto}"
+
     try:
         entregue = await outbound.send(
             message.id,

@@ -70,7 +70,10 @@ async def test_entrada_bloqueada_entrega_recusa_e_nao_chama_o_modelo(
     assert resultado == "respondido"
     assert chamadas_de_montagem == []
     assert classificador.chamadas == 0
-    assert outbound.entregues[-1] == TEXTO_DA_RECUSA_DE_ENTRADA
+    # `in` e nao `==` desde a TEC-139: em conversa nova a entrega carrega o
+    # prefixo de identificacao antes deste texto -- este teste so precisa
+    # saber que a recusa saiu, nao que ela veio sozinha.
+    assert TEXTO_DA_RECUSA_DE_ENTRADA in outbound.entregues[-1]
 
 
 async def test_entrada_liberada_segue_o_turno(
@@ -425,7 +428,10 @@ async def test_recusa_de_entrada_nao_encerra_o_atendimento(
     )
 
     assert primeiro == "respondido"
-    assert outbound.entregues[-1] == TEXTO_DA_RECUSA_DE_ENTRADA
+    # `in` e nao `==` pelo mesmo motivo do teste acima: e a primeira
+    # mensagem da conversa, e desde a TEC-139 ela carrega o prefixo de
+    # identificacao junto da recusa.
+    assert TEXTO_DA_RECUSA_DE_ENTRADA in outbound.entregues[-1]
 
     classificador = classificador_fake()
     segundo = await rodar_turno(
