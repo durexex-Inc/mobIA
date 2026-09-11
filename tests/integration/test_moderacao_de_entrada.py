@@ -319,3 +319,72 @@ async def test_a_marca_e_gravada_mesmo_quando_a_recusa_nao_e_entregue(
     ).all()[-1]
     await session.refresh(linha)
     assert linha.bloqueada_em is not None, "a recusa nao saiu, mas a fala foi bloqueada do mesmo"
+
+
+async def test_a_recusa_de_entrada_vira_linha_de_auditoria(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """O terceiro criterio de aceite da TEC-142: timestamp, conversa e
+    categoria. O log nao servia -- rotaciona, nao traz a conversa, e o motivo
+    binario nao distingue discriminacao de ameaca.
+    """
+    from mobia.domain.moderacao.models import ModerationEvent
+
+    await rodar_turno(
+        session,
+        classificador_fake(),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(bloqueia_entrada=True, categoria_de_entrada="DISCRIMINACAO"),
+    )
+
+    evento = await session.scalar(select(ModerationEvent))
+    assert evento is not None
+    assert evento.direcao == "ENTRADA"
+    assert evento.categoria == "DISCRIMINACAO"
+    assert evento.conversation_key
+    assert evento.created_at is not None
+
+
+async def test_a_auditoria_nao_carrega_o_texto_julgado(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+    caplog,
+) -> None:
+    """O quarto criterio de aceite: o conteudo ofensivo nao aparece em claro.
+
+    Checa as duas superficies de uma vez -- a linha de auditoria e o log --
+    porque a regra vale para as duas e so uma delas tem teste hoje.
+    """
+    from mobia.domain.moderacao.models import ModerationEvent
+
+    ofensivo = "queria um predio sem aquele tipo de gente que vem do norte"
+
+    with caplog.at_level(logging.ERROR):
+        await rodar_turno(
+            session,
+            classificador_fake(),
+            outbound_fake(),
+            resumidor_fake(),
+            contador_fake(),
+            moderador_fake(bloqueia_entrada=True),
+            texto=ofensivo,
+        )
+
+    evento = await session.scalar(select(ModerationEvent))
+    assert evento is not None
+    for valor in (evento.categoria, evento.direcao, evento.conversation_key):
+        assert "tipo de gente" not in valor
+    assert "tipo de gente" not in caplog.text
