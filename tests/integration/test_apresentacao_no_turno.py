@@ -11,6 +11,13 @@ from typing import Any
 
 from sqlalchemy import select
 
+from mobia.domain.agente.apresentacao import (
+    MAX_CARACTERES_DA_LEGENDA,
+    Ficha,
+    diferencial_de,
+    legenda_de,
+)
+from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO
 from mobia.domain.agente.schemas import (
     LIMIAR_DE_DESAMBIGUACAO,
     Extracao,
@@ -138,10 +145,28 @@ async def _texto_gravado() -> str:
         return decrypt(falada.text_body, aad_de(falada.id, "text_body"))
 
 
+async def _conversa_ja_existe(session: Any) -> None:
+    """Semeia uma entrada anterior para que `e_conversa_nova` veja a
+    conversa como NAO nova (TEC-139).
+
+    Os testes que chamam isto provam coisas sobre FICHAS (RN-10.2, D5, D6,
+    D9, D10, D13, D16) ou sobre a trilha de texto comum (D4) -- nenhum e
+    sobre identificacao, que tem arquivo proprio
+    (`test_identificacao_no_turno.py`). Sem isto, `banco_limpo` (autouse)
+    deixa cada teste comecar em silencio total, `e_conversa_nova` devolveria
+    True e a mensagem de identificacao extra contaminaria contagens e
+    unpacking que nao sao sobre ela.
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    await _entrada_do_lead(session, texto="ja tinha falado com o assistente antes")
+
+
 async def test_dez_candidatos_produzem_exatamente_tres_fichas(
     session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
 ) -> None:
     """RN-10.2: maximo de 3 por turno, mesmo com 10 candidatos."""
+    await _conversa_ja_existe(session)
     ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(10)]
     classificador = _ClassificadorComCandidatos(
         [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
@@ -161,6 +186,7 @@ async def test_a_prosa_vira_prefixo_da_primeira_e_as_outras_sao_ficha_pura(
     session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
 ) -> None:
     """D5. A voz do agente sobrevive no turno mais importante da conversa."""
+    await _conversa_ja_existe(session)
     ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
     classificador = _ClassificadorComCandidatos(
         [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
@@ -184,6 +210,7 @@ async def test_pergunta_no_turno_adia_as_fichas(
     proximo turno -- senao o lead recebe tres fotos e uma pergunta sobre zona
     no mesmo turno, que e a parede que a RN-04.2 existe para evitar.
     """
+    await _conversa_ja_existe(session)
     identificador = await _imovel(session, "AP-001", 50000000)
     classificador = _ClassificadorComCandidatos(
         [_candidato(identificador, 50000000)], perguntou=("regiao",)
@@ -211,6 +238,7 @@ async def test_desambiguacao_com_candidatos_nao_manda_ficha(
     parede que a RN-04.2 fecha. Sem este teste, apagar `not desambiguando`
     passa nos outros sete.
     """
+    await _conversa_ja_existe(session)
     identificador = await _imovel(session, "AP-001", 50000000)
     classificador = _ClassificadorComCandidatos(
         [_candidato(identificador, 50000000)], confianca=Decimal("0.4")
@@ -244,6 +272,7 @@ async def test_a_retentativa_nao_reentrega_nenhuma_ficha(
 
     from mobia.domain.agente.turno import executar_turno
 
+    await _conversa_ja_existe(session)
     ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
     classificador = _ClassificadorComCandidatos(
         [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
@@ -285,6 +314,7 @@ async def test_recusa_permanente_numa_ficha_nao_cala_as_outras(
     # `test_busca_no_turno.py` importa o `EmbedadorFake`.
     from conftest import OutboundFake  # type: ignore[import-not-found]
 
+    await _conversa_ja_existe(session)
     ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
     classificador = _ClassificadorComCandidatos(
         [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
@@ -320,6 +350,7 @@ async def test_janela_fechada_na_primeira_ficha_expira_o_turno(
     """
     from conftest import OutboundFake  # type: ignore[import-not-found]
 
+    await _conversa_ja_existe(session)
     ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
     classificador = _ClassificadorComCandidatos(
         [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
@@ -374,6 +405,7 @@ async def test_candidato_que_sumiu_do_catalogo_nao_vira_turno_mudo_sem_log(
     silencio tambem para quem opera -- por isso a asserta e sobre o evento, e
     nao so sobre o desfecho.
     """
+    await _conversa_ja_existe(session)
     fantasma = uuid.uuid4()  # nenhuma linha em `imoveis` com este id
     classificador = _ClassificadorComCandidatos([_candidato(fantasma, 50000000)])
     outbound = outbound_fake()
@@ -402,6 +434,7 @@ async def test_a_linha_do_tempo_grava_as_tres_legendas(
     Gravar so a prosa faria o turno seguinte reapresentar os mesmos tres
     imoveis por nao saber que ja os mostrou.
     """
+    await _conversa_ja_existe(session)
     ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
     classificador = _ClassificadorComCandidatos(
         [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
@@ -428,6 +461,7 @@ async def test_imovel_sem_foto_sai_como_texto(
     tomaria 400. Checar o `payload` cru pina a decisao real da D13: sem foto,
     o payload nao tem `tipo` nenhum e cai no mesmo formato que o texto comum.
     """
+    await _conversa_ja_existe(session)
     identificador = await _imovel(session, "AP-001", 50000000, fotos=[])
     classificador = _ClassificadorComCandidatos([_candidato(identificador, 50000000)])
     outbound = outbound_fake()
@@ -451,6 +485,7 @@ async def test_imovel_com_foto_sai_como_imagem_com_link(
     teste, `_apresentar` podia mandar `link: None` mesmo com foto cadastrada e
     nenhuma asserta desta suite pegaria -- `outbound.entregues` so guarda a
     legenda, nunca o link."""
+    await _conversa_ja_existe(session)
     identificador = await _imovel(session, "AP-001", 50000000)
     classificador = _ClassificadorComCandidatos([_candidato(identificador, 50000000)])
     outbound = outbound_fake()
@@ -463,3 +498,82 @@ async def test_imovel_com_foto_sai_como_imagem_com_link(
     (payload,) = outbound.payloads
     assert payload["tipo"] == "imagem"
     assert payload["link"] == "https://exemplo.com/AP-001.jpg"
+
+
+async def test_apresentacao_em_conversa_nova_identifica_sem_perder_ficha(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """A ficha e o que a RN-10.1 exige; a identificacao e o que a RN-04.1 exige.
+    Nenhuma e ornamento da outra, entao nenhuma pode despejar a outra.
+
+    O titulo tem 160 caracteres DE PROPOSITO -- o maximo que `imoveis.titulo`
+    aceita (`String(160)` em `catalogo/models.py`) --, e as duas
+    `caracteristicas` da PRIMEIRA ficha sao longas de proposito. Nenhum dos
+    dois sozinho bastava: o titulo capado em 160 (Fix 1 deste teste) so daria
+    um corpo de ~237 caracteres, que cabe do lado da identificacao mesmo
+    dentro do teto de 600 -- a pre-condicao abaixo existe para nunca deixar
+    isso passar em silencio de novo. Com as caracteristicas longas, o CORPO
+    da legenda (titulo + bairro/preco + quartos/vagas/area + condominio +
+    `Destaque: ...`) passa dos 467 caracteres que a identificacao (131
+    caracteres) mais o separador (2) precisariam para caber junto dentro do
+    teto de 600.
+
+    Prefixar a identificacao a prosa a submeteria ao corte de
+    `_prosa_que_cabe`, que devolve string vazia quando nao sobra espaco -- e
+    o turno mais comum de uma conversa nova (o lead diz o que procura, o
+    agente busca e apresenta) sairia sem identificacao nenhuma, em silencio.
+    """
+    titulo_longo = "Apartamento reformado com vista " + "A" * 128
+    caracteristica_longa_1 = "vista panoramica para o mar e para a lagoa " + "B" * 80
+    caracteristica_longa_2 = "reforma completa recente com acabamento premium " + "C" * 80
+
+    primeiro_id = await _imovel(
+        session,
+        "AP-000",
+        50000000,
+        titulo=titulo_longo,
+        caracteristicas=[caracteristica_longa_1, caracteristica_longa_2],
+    )
+    outros_ids = [
+        await _imovel(session, f"AP-{n:03d}", 50000000 + n, titulo=titulo_longo)
+        for n in range(1, 3)
+    ]
+    ids = [primeiro_id, *outros_ids]
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
+    )
+    outbound = outbound_fake()
+
+    # Pre-condicao: sem ela este teste e um falso guarda. Reconstroi, pelas
+    # mesmas funcoes puras que a producao usa, o CORPO da primeira ficha --
+    # sem prosa nem identificacao -- e confere que nem a identificacao
+    # sozinha caberia do lado dele dentro do teto de 600. Se esta asserta
+    # falhar, o cenario deixou de ser de estouro e as asserta abaixo
+    # passariam mesmo com a identificacao viajando ERRADA, prefixada a
+    # prosa (o defeito que este teste existe para pegar).
+    corpo_da_primeira_ficha = legenda_de(
+        Ficha(
+            id=primeiro_id,
+            titulo=titulo_longo,
+            bairro="Lagoa da Conceicao",
+            preco_centavos=50000000,
+            quartos=4,
+            vagas=2,
+            area_util_m2=54,
+            condominio_centavos=55000,
+            diferencial=diferencial_de([caracteristica_longa_1, caracteristica_longa_2]),
+            foto=None,
+        )
+    )
+    # 2 == o tamanho do separador entre prosa e ficha em `legenda_de`
+    # (`_SEPARADOR_DA_PROSA`, privado -- repetido aqui como literal comentado
+    # em vez de importado).
+    assert (
+        len(corpo_da_primeira_ficha) + 2 + len(TEXTO_DA_IDENTIFICACAO) > MAX_CARACTERES_DA_LEGENDA
+    ), "cenario nao esta em estouro: este teste passaria mesmo com a implementacao errada"
+
+    await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
+
+    tudo = "\n".join(outbound.entregues)
+    assert TEXTO_DA_IDENTIFICACAO in tudo, "a identificacao foi cortada pela legenda"
+    assert titulo_longo in tudo, "a ficha foi truncada para caber a identificacao"

@@ -113,8 +113,12 @@ async def test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo(
     assert classificador.chamadas == 0
     assert moderador.entradas == 0, "opt-out e checado antes da moderacao -- ela nem roda"
     # `OutboundFake._deliver` grava o texto entregue (payload["texto"]), nao o
-    # kind -- e o texto que confirma o registro ao lead.
-    assert outbound.entregues == [TEXTO_DA_CONFIRMACAO_DE_OPTOUT]
+    # kind -- e o texto que confirma o registro ao lead. So um item porque a
+    # confirmacao e a unica entrega deste turno; `in` e nao `==` no texto
+    # porque desde a TEC-139 a primeira mensagem da conversa carrega o
+    # prefixo de identificacao antes da confirmacao.
+    assert len(outbound.entregues) == 1
+    assert TEXTO_DA_CONFIRMACAO_DE_OPTOUT in outbound.entregues[0]
     assert await esta_em_optout(
         session, channel=mensagem.channel, conversation_key=mensagem.conversation_key
     )
@@ -130,7 +134,10 @@ async def test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo(
         .all()
     )
     textos = [decrypt(linha.text_body, aad_de(linha.id, "text_body")) for linha in faladas]
-    assert textos == [TEXTO_DA_CONFIRMACAO_DE_OPTOUT]
+    # `in` e nao `==` pelo mesmo motivo da asserta de `outbound.entregues`
+    # acima: o gravado tem de ser o mesmo texto entregue, prefixo incluso.
+    assert len(textos) == 1
+    assert TEXTO_DA_CONFIRMACAO_DE_OPTOUT in textos[0]
 
 
 async def test_pedido_de_optout_e_registrado_mesmo_com_entrada_bloqueada_pela_moderacao(
@@ -166,7 +173,10 @@ async def test_pedido_de_optout_e_registrado_mesmo_com_entrada_bloqueada_pela_mo
 
     assert resultado == "opt_out"
     assert moderador.entradas == 0, "o opt-out e checado antes -- a moderacao nunca roda"
-    assert outbound.entregues == [TEXTO_DA_CONFIRMACAO_DE_OPTOUT]
+    # `in` e nao `==`: primeira mensagem da conversa, entao a entrega carrega
+    # o prefixo de identificacao da TEC-139 antes da confirmacao.
+    assert len(outbound.entregues) == 1
+    assert TEXTO_DA_CONFIRMACAO_DE_OPTOUT in outbound.entregues[0]
     assert await esta_em_optout(
         session, channel=mensagem.channel, conversation_key=mensagem.conversation_key
     )
@@ -325,7 +335,11 @@ async def test_confirmacao_e_reentregue_depois_de_uma_falha_retentavel(
     )
 
     assert resultado == "opt_out", "a retentativa nao pode virar 'silenciado'"
-    assert outbound.entregues == [TEXTO_DA_CONFIRMACAO_DE_OPTOUT]
+    # `in` e nao `==`: nenhuma fala de AGENTE foi gravada na tentativa 1 (o
+    # `EnvioRetentavel` interrompeu antes do recorder), entao esta ainda e a
+    # primeira mensagem visivel da conversa e carrega o prefixo da TEC-139.
+    assert len(outbound.entregues) == 1
+    assert TEXTO_DA_CONFIRMACAO_DE_OPTOUT in outbound.entregues[0]
 
 
 class _OutboundQueOptaNoMeio(OutboundFake):

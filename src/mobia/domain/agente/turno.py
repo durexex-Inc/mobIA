@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import structlog
@@ -10,6 +11,11 @@ from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
 from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo, porta_de_busca
+from mobia.domain.agente.identificacao import (
+    SEPARADOR_DA_IDENTIFICACAO,
+    TEXTO_DA_IDENTIFICACAO,
+    e_conversa_nova,
+)
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.gatilhos import gatilhos_de
@@ -659,8 +665,53 @@ async def executar_turno(
         # ele E a proposta de verificacao com o corretor que a card pede.
         texto = "" if apresentando else TEXTO_DA_BUSCA_INCONCLUSIVA
 
+    # Depois da moderacao de saida, de proposito: o texto e constante deste
+    # repositorio e nao saida de modelo -- moderar dado nosso seria gastar
+    # chamada sobre texto que nao inventamos, o mesmo argumento que a TEC-162
+    # escreveu para as fichas.
+    #
+    # Este ponto fica DEPOIS das duas reatribuicoes de `texto` acima, e por
+    # isso cobre tres trilhas, nao uma: a resposta normal, o
+    # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada e o
+    # TEXTO_DA_BUSCA_INCONCLUSIVA da citacao bloqueada da TEC-161. A
+    # apresentacao NAO e uma quarta trilha aqui -- e excluida de proposito,
+    # tratada em separado dentro do `if apresentando:` abaixo (Task 5).
+    #
+    # `apresentando` fica de FORA aqui: naquele caminho `texto` vira prefixo de
+    # legenda, e `legenda_de` corta o prefixo antes da ficha (D14 da TEC-162).
+    # A identificacao seria descartada em silencio. A Task 5 trata dele.
+    identificar = not apresentando and await e_conversa_nova(
+        session_factory, message, agora=datetime.now(UTC)
+    )
+    if identificar:
+        texto = f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{texto}"
+
     try:
         if apresentando:
+            if await e_conversa_nova(session_factory, message, agora=datetime.now(UTC)):
+                # Mensagem propria, e NAO prefixo da prosa (que e o mecanismo
+                # das outras tres trilhas, acima). Na apresentacao a prosa
+                # vira prefixo da legenda da PRIMEIRA ficha (D16 da TEC-162),
+                # e `legenda_de` corta o prefixo antes de cortar a ficha
+                # (D14): "estourado o teto, o que se corta e o PREFIXO, nunca
+                # a ficha" -- `_prosa_que_cabe` devolve string vazia quando
+                # nao sobra espaco. Se a identificacao viajasse ali dentro,
+                # ela sairia truncada ou nao sairia nenhuma, em silencio, no
+                # turno mais comum de uma conversa nova: o lead diz o que
+                # procura e o agente ja busca e apresenta.
+                #
+                # Cabe na RN-04.2 sem emenda: a E-02 da TEC-162 separou os
+                # tetos em ate 2 mensagens de TEXTO e ate 3 de APRESENTACAO,
+                # e isto e 1 texto mais ate 3 fichas.
+                await outbound.send(
+                    message.id,
+                    KIND_DA_RESPOSTA,
+                    {
+                        "para": message.conversation_key,
+                        "de": message.recipient_external_id,
+                        "texto": TEXTO_DA_IDENTIFICACAO,
+                    },
+                )
             # `prosa=texto` le o valor ANTES da atribuicao: a chamada e
             # avaliada primeiro, e o `texto` que sai sao as legendas
             # concatenadas (D16).
@@ -894,7 +945,8 @@ async def _entregar_texto_fixo(
     kind: str = KIND_DA_RESPOSTA,
     subagent: str = SUBAGENTE_MODERACAO,
 ) -> ResultadoDoTurno:
-    """Entrega um texto que nao veio do modelo, e grava o que entregou.
+    """Entrega um texto que nao veio do modelo, grava o que entregou e decide
+    se prefixa a identificacao do assistente.
 
     Bloqueio nunca produz silencio: e a mesma escolha que a TEC-134 e a
     TEC-227 fizeram ao preferir a duplicata a perda, porque a duplicata e
@@ -908,6 +960,17 @@ async def _entregar_texto_fixo(
     `message_telemetry.subagent = "moderacao"`, rotulando errado quem olhar a
     telemetria depois.
     """
+    # A identificacao entra AQUI e nao em cada chamador: este e o funil das
+    # tres trilhas que passam por `_entregar_texto_fixo` -- recusa da
+    # moderacao de entrada, confirmacao de opt-out e laco de busca excedido.
+    # (O texto neutro da moderacao de saida e a busca inconclusiva da citacao
+    # bloqueada nao chamam esta funcao -- reatribuem `texto` e caem no bloco
+    # de entrega compartilhado de `executar_turno`, que tem o ponto de
+    # insercao proprio da Task 4.) Espalhada pelos chamadores, a proxima
+    # trilha que surgisse sairia sem ela, e em silencio.
+    if await e_conversa_nova(session_factory, message, agora=datetime.now(UTC)):
+        recorder_texto = f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{recorder_texto}"
+
     try:
         entregue = await outbound.send(
             message.id,
