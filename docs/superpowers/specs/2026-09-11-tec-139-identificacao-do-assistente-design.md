@@ -93,10 +93,14 @@ executar_turno
               └─ demais trilhas ────────> texto = IDENTIFICACAO + separador + texto
 
 Dois pontos de insercao no codigo:
-  1. `_entregar_texto_fixo`  -> cobre recusa da moderacao, texto neutro,
-                                confirmacao de opt-out e busca inconclusiva
-  2. antes do bloco de entrega -> cobre resposta normal e apresentacao
+  1. `_entregar_texto_fixo`  -> cobre as TRES trilhas que passam por ele:
+                                confirmacao de opt-out, recusa da moderacao
+                                de entrada, e laco de busca excedido
+  2. antes do bloco de entrega -> cobre resposta normal, apresentacao,
+                                TEXTO_NEUTRO_DE_SAIDA e citacao bloqueada
 ```
+
+**Correção de fato, feita durante a execução (11/09/2026).** Uma versão anterior desta seção dizia que o `TEXTO_NEUTRO_DE_SAIDA` passava pelo ponto 1. **Não passa.** Há exatamente três chamadas a `_entregar_texto_fixo` em `turno.py`; a moderação de saída bloqueada apenas reatribui a variável `texto` e cai no bloco de entrega compartilhado com a resposta normal — o mesmo caminho da citação bloqueada da TEC-161. A cobertura final continua completa, porque o ponto 2 fica **depois** dessa reatribuição e as apanha; o que estava errado era a atribuição de qual ponto cobre qual trilha. Registrado aqui porque um implementador que lesse a versão antiga poderia descartar essas duas trilhas como "já resolvidas", e elas sairiam sem identificação em silêncio.
 
 ## Testes
 
