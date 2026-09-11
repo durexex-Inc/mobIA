@@ -223,7 +223,10 @@ async def test_prosa_inventada_sem_ficha_vira_verificacao_humana(
     )
 
     assert resultado == "respondido"
-    assert outbound.entregues == [TEXTO_DA_BUSCA_INCONCLUSIVA]
+    # `in` e nao `==` desde a TEC-139: em conversa nova a entrega carrega o
+    # prefixo de identificacao antes do fallback.
+    assert len(outbound.entregues) == 1
+    assert TEXTO_DA_BUSCA_INCONCLUSIVA in outbound.entregues[0]
     assert await _kinds_reservados() == ["reply"]
 
     async with get_sessionmaker()() as leitura:
@@ -249,7 +252,10 @@ async def test_sem_busca_a_cifra_inventada_bloqueia(
     )
 
     assert resultado == "respondido"
-    assert outbound.entregues == [TEXTO_DA_BUSCA_INCONCLUSIVA]
+    # `in` e nao `==` desde a TEC-139: em conversa nova a entrega carrega o
+    # prefixo de identificacao antes do fallback.
+    assert len(outbound.entregues) == 1
+    assert TEXTO_DA_BUSCA_INCONCLUSIVA in outbound.entregues[0]
 
 
 async def test_nenhuma_reserva_e_gravada_antes_da_validacao(

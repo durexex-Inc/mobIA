@@ -37,7 +37,11 @@ async def test_turno_classifica_entrega_e_grava(
     )
 
     assert resultado == "respondido"
-    assert outbound.entregues == ["Ola! Em qual regiao voce procura?"]
+    # `in` e nao `==` desde a TEC-139: em conversa nova a entrega carrega o
+    # prefixo de identificacao antes da resposta -- este teste so precisa
+    # saber que a resposta certa saiu.
+    assert len(outbound.entregues) == 1
+    assert "Ola! Em qual regiao voce procura?" in outbound.entregues[0]
 
     async with get_sessionmaker()() as outra:
         gravada = await ler_intencao(outra, CANAL, CONVERSA)
@@ -164,7 +168,10 @@ async def test_laco_de_busca_excedido_entrega_texto_conservador(
     assert resultado == "respondido"
     # O texto conservador, nao silencio nem a resposta normal do fake -- ver
     # `outbound.entregues` (ja existente, sem atributo novo no duble).
-    assert outbound.entregues == [TEXTO_DA_BUSCA_INCONCLUSIVA]
+    # `in` e nao `==` desde a TEC-139: em conversa nova a entrega carrega o
+    # prefixo de identificacao antes do texto conservador.
+    assert len(outbound.entregues) == 1
+    assert TEXTO_DA_BUSCA_INCONCLUSIVA in outbound.entregues[0]
 
     linha = (
         await session.execute(
@@ -306,7 +313,11 @@ async def test_confianca_baixa_entrega_a_pergunta_no_lugar_da_resposta(
 
     assert resultado == "respondido"
     assert classificador.desambiguacoes == 1
-    assert outbound.entregues == [classificador.pergunta]
+    # `in` e nao `==` desde a TEC-139: em conversa nova a entrega carrega o
+    # prefixo de identificacao antes da pergunta -- este teste so precisa
+    # saber que a pergunta saiu, nao a resposta que assumia COMPRA.
+    assert len(outbound.entregues) == 1
+    assert classificador.pergunta in outbound.entregues[0]
     assert "Em qual regiao" not in outbound.entregues[0], "a resposta que assumia COMPRA nao sai"
 
     async with get_sessionmaker()() as outra:
@@ -325,7 +336,10 @@ async def test_confianca_no_limiar_exato_responde_sem_perguntar(
     await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
 
     assert classificador.desambiguacoes == 0
-    assert outbound.entregues == ["Ola! Em qual regiao voce procura?"]
+    # `in` e nao `==` desde a TEC-139: em conversa nova a entrega carrega o
+    # prefixo de identificacao antes da resposta.
+    assert len(outbound.entregues) == 1
+    assert "Ola! Em qual regiao voce procura?" in outbound.entregues[0]
 
     async with get_sessionmaker()() as outra:
         gravada = await ler_intencao(outra, CANAL, CONVERSA)

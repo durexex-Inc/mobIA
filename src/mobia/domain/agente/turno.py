@@ -665,6 +665,27 @@ async def executar_turno(
         # ele E a proposta de verificacao com o corretor que a card pede.
         texto = "" if apresentando else TEXTO_DA_BUSCA_INCONCLUSIVA
 
+    # Depois da moderacao de saida, de proposito: o texto e constante deste
+    # repositorio e nao saida de modelo -- moderar dado nosso seria gastar
+    # chamada sobre texto que nao inventamos, o mesmo argumento que a TEC-162
+    # escreveu para as fichas.
+    #
+    # Este ponto fica DEPOIS das duas reatribuicoes de `texto` acima, e por
+    # isso cobre quatro trilhas, nao uma: a resposta normal, o
+    # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada, o
+    # TEXTO_DA_BUSCA_INCONCLUSIVA da citacao bloqueada da TEC-161 e -- via
+    # `apresentando` abaixo -- o caminho excluido de proposito, tratado na
+    # Task 5.
+    #
+    # `apresentando` fica de FORA aqui: naquele caminho `texto` vira prefixo de
+    # legenda, e `legenda_de` corta o prefixo antes da ficha (D14 da TEC-162).
+    # A identificacao seria descartada em silencio. A Task 5 trata dele.
+    identificar = not apresentando and await e_conversa_nova(
+        session_factory, message, agora=datetime.now(UTC)
+    )
+    if identificar:
+        texto = f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{texto}"
+
     try:
         if apresentando:
             # `prosa=texto` le o valor ANTES da atribuicao: a chamada e
@@ -900,7 +921,8 @@ async def _entregar_texto_fixo(
     kind: str = KIND_DA_RESPOSTA,
     subagent: str = SUBAGENTE_MODERACAO,
 ) -> ResultadoDoTurno:
-    """Entrega um texto que nao veio do modelo, e grava o que entregou.
+    """Entrega um texto que nao veio do modelo, grava o que entregou e decide
+    se prefixa a identificacao do assistente.
 
     Bloqueio nunca produz silencio: e a mesma escolha que a TEC-134 e a
     TEC-227 fizeram ao preferir a duplicata a perda, porque a duplicata e
@@ -914,10 +936,14 @@ async def _entregar_texto_fixo(
     `message_telemetry.subagent = "moderacao"`, rotulando errado quem olhar a
     telemetria depois.
     """
-    # A identificacao entra AQUI e nao em cada chamador: este e o funil de
-    # quatro das cinco trilhas de saida -- recusa da moderacao, texto neutro,
-    # confirmacao de opt-out e busca inconclusiva. Espalhada pelos chamadores,
-    # a proxima trilha que surgisse sairia sem ela, e em silencio.
+    # A identificacao entra AQUI e nao em cada chamador: este e o funil das
+    # tres trilhas que passam por `_entregar_texto_fixo` -- recusa da
+    # moderacao de entrada, confirmacao de opt-out e laco de busca excedido.
+    # (O texto neutro da moderacao de saida e a busca inconclusiva da citacao
+    # bloqueada nao chamam esta funcao -- reatribuem `texto` e caem no bloco
+    # de entrega compartilhado de `executar_turno`, que tem o ponto de
+    # insercao proprio da Task 4.) Espalhada pelos chamadores, a proxima
+    # trilha que surgisse sairia sem ela, e em silencio.
     if await e_conversa_nova(session_factory, message, agora=datetime.now(UTC)):
         recorder_texto = f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{recorder_texto}"
 
