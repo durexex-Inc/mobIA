@@ -373,6 +373,21 @@ def rodar_turno():
     return _rodar
 
 
+@pytest.fixture
+def semear_entrada():
+    """Semeia a entrada do lead SEM rodar o turno.
+
+    `rodar_turno` semeia e executa junto, e os testes de escrita da auditoria
+    precisam da linha sem o turno em volta -- eles exercitam o escritor
+    diretamente, e um turno no meio tornaria ambiguo quem gravou o evento.
+    """
+
+    async def _semear(session, *, texto: str = TEXTO_PADRAO_DO_LEAD):
+        return await _entrada_do_lead(session, texto=texto)
+
+    return _semear
+
+
 class ResumidorFake:
     """Duble do provedor. Nenhum teste desta suite toca a rede."""
 
