@@ -68,9 +68,15 @@ class ModeradorPort(Protocol):
 # Curto, neutro, e nao explica o criterio -- explicar ensina a contornar. Nao
 # acusa o lead: falso positivo em moderacao e comum, e o legitimo que caiu nele
 # nao pode ser tratado como infrator.
+#
+# Nomear o criterio LEGITIMO (TEC-142) e o que satisfaz a card sem quebrar
+# nenhuma das duas regras acima: diz o que e aceito em vez do que foi
+# recusado. Por isso continua sendo UM texto para todas as categorias -- um
+# texto por categoria contaria ao lead qual filtro disparou.
 TEXTO_DA_RECUSA_DE_ENTRADA = (
-    "Nao consigo seguir com essa mensagem. Se quiser, me diga de outro jeito o "
-    "que voce procura em imovel que eu ajudo."
+    "Nao consigo seguir com essa mensagem. A busca aqui e feita por criterio "
+    "do imovel -- regiao, preco, quartos, vagas. Me diga o que voce procura "
+    "assim que eu ajudo."
 )
 
 # Nao finge ser resposta. O lead precisa perceber que algo nao saiu, senao

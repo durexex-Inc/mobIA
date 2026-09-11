@@ -38,6 +38,18 @@ def test_o_texto_da_recusa_nao_explica_o_criterio() -> None:
     assert 0 < len(TEXTO_DA_RECUSA_DE_ENTRADA) <= 200
 
 
+def test_a_recusa_nomeia_o_criterio_legitimo() -> None:
+    """O segundo passo do criterio de aceite da TEC-142: explicar que a busca e
+    por criterio do imovel. Dizer o que E aceito, em vez do que foi recusado,
+    cumpre a card sem quebrar as duas regras do texto -- nao explica o criterio
+    de bloqueio e nao acusa o lead.
+    """
+    baixo = TEXTO_DA_RECUSA_DE_ENTRADA.lower()
+    assert "imovel" in baixo
+    for criterio in ("regiao", "preco", "quartos"):
+        assert criterio in baixo
+
+
 def test_o_texto_neutro_de_saida_nao_finge_ser_resposta() -> None:
     """Ele nao pode parecer que respondeu a pergunta do lead. O lead precisa
     perceber que algo nao saiu, senao espera por uma resposta que nao vem.
