@@ -14,10 +14,10 @@ novo a moderacao, que e barata perto de vazar a fala para dentro do prompt.
 **A TEC-142 estende o mesmo argumento a auditoria.** `marcar_bloqueada` agora
 grava a marca e o `ModerationEvent` no mesmo commit, e
 `registrar_bloqueio_de_saida` grava so o evento (a saida nao tem linha propria
-para carimbar). As duas propagam pelo motivo do paragrafo acima: um bloqueio
-sem auditoria e o risco reputacional da RN-B04 acontecendo sem deixar rastro,
-e o sweeper nao volta numa linha ja marcada -- se o evento nao sair junto com a
-marca, ele nao sai nunca.
+para carimbar). As duas propagam pelo motivo do paragrafo acima: sem a
+transacao unica existiria o estado duravel "mensagem marcada como bloqueada,
+recusa nao auditada" -- o estado em que o controle de risco da RN-B04 falha
+em silencio.
 """
 
 from datetime import UTC, datetime
@@ -48,9 +48,9 @@ async def marcar_bloqueada(
     deixar de ser NULL, nao o instante exato.
 
     **As duas escritas sao uma so (TEC-142).** Duas transacoes deixariam
-    existir "marcada, nao auditada": a marca protege o contexto do agente e
-    nao diz nada sobre a auditoria, e o sweeper nao volta numa linha ja
-    marcada -- a recusa ficaria sem registro para sempre. Se qualquer uma
+    existir o estado duravel "marcada, nao auditada": a marca protege o
+    contexto do agente e nao diz nada sobre a auditoria, e esse e o estado em
+    que o controle de risco da RN-B04 falha em silencio. Se qualquer uma
     falhar, nenhuma vale e a excecao sobe, pelo motivo no topo deste modulo.
 
     O evento da segunda passada do sweeper e uma linha a mais numa tabela

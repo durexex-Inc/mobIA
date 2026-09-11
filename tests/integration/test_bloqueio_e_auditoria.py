@@ -46,8 +46,9 @@ async def test_falha_na_gravacao_nao_deixa_marca_sem_evento(
     session: AsyncSession, semear_entrada, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A transacao unica so vale se ela reverter junto. Com dois commits, a
-    marca sobreviveria a falha do evento e a recusa ficaria sem auditoria para
-    sempre -- o sweeper nao volta numa linha ja marcada.
+    marca sobreviveria a falha do evento e produziria o estado duravel
+    "marcada, nao auditada" -- o estado em que o controle de risco da RN-B04
+    falha em silencio.
     """
     linha = await semear_entrada(session)
 
