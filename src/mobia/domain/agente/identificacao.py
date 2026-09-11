@@ -61,3 +61,24 @@ async def e_conversa_nova(
             .limit(1)
         )
     return anterior is None
+
+
+# Generico de proposito: nao ha nome de imobiliaria configuravel em
+# `app/config.py`, e a propria RN-04.1 e generica ("assistente virtual da
+# imobiliaria"). Inventar um campo de configuracao que ninguem pediu seria
+# maior que esta card.
+#
+# Nao se apresenta com nome de gente: a mesma regra proibe fingir ser pessoa
+# fisica, e "Oi, sou a Marina" violaria o que este texto existe para cumprir.
+#
+# Oferece o corretor porque a terceira regra da card pede isso ao se
+# identificar -- aqui no caminho proativo.
+TEXTO_DA_IDENTIFICACAO = (
+    "Oi! Sou o assistente virtual da imobiliaria. Posso te ajudar a encontrar "
+    "um imovel, e a qualquer momento te passo para um corretor."
+)
+
+# Linha em branco e nao espaco: as duas frases tem autores diferentes -- uma e
+# constante do repositorio, a outra e resposta ao lead -- e coladas parecem
+# uma frase so mal pontuada.
+SEPARADOR_DA_IDENTIFICACAO = "\n\n"
