@@ -234,3 +234,33 @@ async def test_moderador_fora_do_ar_nas_duas_pontas_paga_o_turno_e_nao_entrega(
     assert classificador.chamadas == 1, "falha aberta na entrada custa a chamada paga"
     assert moderador.saidas == 1
     assert outbound.entregues == [], "falha fechada na saida: nada sai sem ter sido moderado"
+
+
+async def test_o_bloqueio_de_saida_vira_linha_de_auditoria(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """A card fala da recusa de entrada; o registro cobre as duas pontas
+    porque o que distingue e a coluna `categoria`, nao a existencia da linha.
+    Um bloqueio de saida e o risco reputacional da RN-B04 tendo acontecido.
+    """
+    from mobia.domain.moderacao.models import ModerationEvent
+
+    await rodar_turno(
+        session,
+        classificador_fake(),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(bloqueia_saida=True, categoria_de_saida="NEGOCIACAO"),
+    )
+
+    evento = await session.scalar(select(ModerationEvent))
+    assert evento is not None
+    assert evento.direcao == "SAIDA"
+    assert evento.categoria == "NEGOCIACAO"

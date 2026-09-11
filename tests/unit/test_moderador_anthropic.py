@@ -354,3 +354,94 @@ async def test_excecao_sem_corpo_do_provedor_continua_so_com_o_nome_da_classe(
 
     assert str(capturado.value) == "TimeoutError"
     assert segredo not in str(capturado.value)
+
+
+@pytest.mark.parametrize(
+    ("bruto", "categoria"),
+    [
+        ("BLOQUEAR DISCRIMINACAO", "DISCRIMINACAO"),
+        ("BLOQUEAR AMEACA", "AMEACA"),
+        ("bloquear discriminacao", "DISCRIMINACAO"),
+        ("BLOQUEAR DISCRIMINACAO.", "DISCRIMINACAO"),
+    ],
+)
+async def test_a_segunda_palavra_vira_categoria(
+    monkeypatch: pytest.MonkeyPatch, bruto: str, categoria: str
+) -> None:
+    """A mesma tolerancia de forma da primeira palavra vale para a segunda:
+    minuscula e pontuacao nas pontas nao podem custar um turno.
+    """
+    cliente = ClienteFalso(RespostaFalsa(bruto))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == categoria
+
+
+@pytest.mark.parametrize("bruto", ["BLOQUEAR ZORGLUB", "BLOQUEAR"])
+async def test_categoria_desconhecida_bloqueia_como_outro(
+    monkeypatch: pytest.MonkeyPatch, bruto: str
+) -> None:
+    """Toda folga cai do lado que bloqueia.
+
+    Antes desta card um `BLOQUEAR` enfeitado virava `ModeracaoIndisponivel`, e
+    na saida isso propaga: a linha vira FAILED, o sweeper repaga o turno ate
+    `sweep_max_attempts` e depois o lead nunca recebe nada. Um rotulo que o
+    vocabulario nao reconhece nao desfaz a decisao de bloquear que o modelo ja
+    tomou -- vira bloqueio auditado com rotulo de fracasso do protocolo.
+    """
+    from mobia.domain.moderacao.port import CATEGORIA_OUTRO
+
+    cliente = ClienteFalso(RespostaFalsa(bruto))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.SAIDA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == CATEGORIA_OUTRO
+
+
+async def test_categoria_da_outra_direcao_nao_vale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`OFENSA` e categoria da saida. Vinda da entrada, e rotulo que aquele
+    prompt nao ofereceu -- bloqueia, mas como OUTRO.
+    """
+    from mobia.domain.moderacao.port import CATEGORIA_OUTRO
+
+    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR OFENSA"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == CATEGORIA_OUTRO
+
+
+async def test_liberar_nao_aceita_segunda_palavra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A invariante do subsistema: o desconhecido nunca vira liberado.
+
+    Se a leitura olhasse so a primeira palavra, `LIBERAR NAO` viraria
+    liberacao -- e o custo de errar para esse lado e entregar ao lead o texto
+    que a moderacao existia para barrar.
+    """
+    cliente = ClienteFalso(RespostaFalsa("LIBERAR NAO"))
+
+    with pytest.raises(ModeracaoIndisponivel):
+        await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.SAIDA)
+
+
+async def test_veredito_liberado_nao_ganha_categoria(monkeypatch: pytest.MonkeyPatch) -> None:
+    cliente = ClienteFalso(RespostaFalsa("LIBERAR"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is False
+    assert veredito.categoria is None
+
+
+def test_o_protocolo_pedido_nomeia_as_categorias_da_direcao() -> None:
+    """O que se pede e o que se le nao podem divergir: um prompt que nao lista
+    a palavra produz resposta fora do vocabulario, e a leitura devolve OUTRO
+    para todo bloqueio -- auditoria cheia de linha sem informacao.
+    """
+    from mobia.domain.moderacao.port import CATEGORIAS_POR_DIRECAO, Direcao
+    from mobia.infra.moderacao import SISTEMA_DA_ENTRADA, SISTEMA_DA_SAIDA
+
+    for categoria in CATEGORIAS_POR_DIRECAO[Direcao.ENTRADA]:
+        assert categoria in SISTEMA_DA_ENTRADA
+    for categoria in CATEGORIAS_POR_DIRECAO[Direcao.SAIDA]:
+        assert categoria in SISTEMA_DA_SAIDA

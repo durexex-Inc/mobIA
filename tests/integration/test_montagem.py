@@ -1215,7 +1215,17 @@ class _ResumidorEspiao(ResumidorFake):
 async def _bloquear(session, mensagem: Message) -> None:
     from mobia.domain.messages.bloqueio import marcar_bloqueada
 
-    await marcar_bloqueada(get_sessionmaker(), mensagem.id)
+    # channel/conversation_key vem da propria linha semeada, e nao de um
+    # literal, para o helper nao fixar valores que o teste em volta pode
+    # mudar. A categoria e indiferente aqui -- estes testes sao sobre a fala
+    # bloqueada nao entrar no contexto, nao sobre qual categoria bloqueou.
+    await marcar_bloqueada(
+        get_sessionmaker(),
+        mensagem.id,
+        channel=mensagem.channel,
+        conversation_key=mensagem.conversation_key,
+        categoria="DISCRIMINACAO",
+    )
     await session.refresh(mensagem)
 
 

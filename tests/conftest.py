@@ -50,6 +50,11 @@ TABELAS = (
     # o UNIQUE por (channel, conversation_key, ancora_em, tentativa_numero) faz
     # o registro de um teste colidir com o do proximo sem o truncate.
     "followups",
+    # Append-only como `lead_score_audit` e `optout_events`: sem o truncate, as
+    # recusas de um teste viram auditoria do proximo. Custa um TRUNCATE por
+    # teste da suite inteira, e o custo e conhecido -- a alternativa e teste de
+    # auditoria que passa sozinho e falha em conjunto.
+    "moderation_events",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
@@ -306,11 +311,15 @@ class ModeradorFake:
         bloqueia_saida: bool = False,
         erro_na_entrada: Exception | None = None,
         erro_na_saida: Exception | None = None,
+        categoria_de_entrada: str = "DISCRIMINACAO",
+        categoria_de_saida: str = "NEGOCIACAO",
     ) -> None:
         self.bloqueia_entrada = bloqueia_entrada
         self.bloqueia_saida = bloqueia_saida
         self.erro_na_entrada = erro_na_entrada
         self.erro_na_saida = erro_na_saida
+        self.categoria_de_entrada = categoria_de_entrada
+        self.categoria_de_saida = categoria_de_saida
         self.entradas = 0
         self.saidas = 0
         self.direcoes: list = []
@@ -323,11 +332,22 @@ class ModeradorFake:
             self.entradas += 1
             if self.erro_na_entrada is not None:
                 raise self.erro_na_entrada
-            return Veredito(bloqueado=self.bloqueia_entrada, motivo="fake")
+            return Veredito(
+                bloqueado=self.bloqueia_entrada,
+                motivo="fake",
+                # `None` quando libera: o duble nao pode inventar categoria em
+                # veredito liberado, senao um teste passaria por causa de um
+                # valor que o moderador real nunca produz.
+                categoria=self.categoria_de_entrada if self.bloqueia_entrada else None,
+            )
         self.saidas += 1
         if self.erro_na_saida is not None:
             raise self.erro_na_saida
-        return Veredito(bloqueado=self.bloqueia_saida, motivo="fake")
+        return Veredito(
+            bloqueado=self.bloqueia_saida,
+            motivo="fake",
+            categoria=self.categoria_de_saida if self.bloqueia_saida else None,
+        )
 
 
 @pytest.fixture
@@ -366,6 +386,21 @@ def rodar_turno():
         )
 
     return _rodar
+
+
+@pytest.fixture
+def semear_entrada():
+    """Semeia a entrada do lead SEM rodar o turno.
+
+    `rodar_turno` semeia e executa junto, e os testes de escrita da auditoria
+    precisam da linha sem o turno em volta -- eles exercitam o escritor
+    diretamente, e um turno no meio tornaria ambiguo quem gravou o evento.
+    """
+
+    async def _semear(session, *, texto: str = TEXTO_PADRAO_DO_LEAD):
+        return await _entrada_do_lead(session, texto=texto)
+
+    return _semear
 
 
 class ResumidorFake:

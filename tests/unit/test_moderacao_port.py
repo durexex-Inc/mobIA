@@ -38,6 +38,18 @@ def test_o_texto_da_recusa_nao_explica_o_criterio() -> None:
     assert 0 < len(TEXTO_DA_RECUSA_DE_ENTRADA) <= 200
 
 
+def test_a_recusa_nomeia_o_criterio_legitimo() -> None:
+    """O segundo passo do criterio de aceite da TEC-142: explicar que a busca e
+    por criterio do imovel. Dizer o que E aceito, em vez do que foi recusado,
+    cumpre a card sem quebrar as duas regras do texto -- nao explica o criterio
+    de bloqueio e nao acusa o lead.
+    """
+    baixo = TEXTO_DA_RECUSA_DE_ENTRADA.lower()
+    assert "imovel" in baixo
+    for criterio in ("regiao", "preco", "quartos"):
+        assert criterio in baixo
+
+
 def test_o_texto_neutro_de_saida_nao_finge_ser_resposta() -> None:
     """Ele nao pode parecer que respondeu a pergunta do lead. O lead precisa
     perceber que algo nao saiu, senao espera por uma resposta que nao vem.
@@ -56,3 +68,56 @@ def test_o_modelo_da_moderacao_e_campo_proprio() -> None:
     settings = get_settings()
     assert settings.modelo_moderacao
     assert hasattr(settings, "modelo_agente")
+
+
+def test_o_vocabulario_difere_por_direcao() -> None:
+    """As duas listas nao sao a mesma porque os dois prompts nunca foram o
+    mesmo: ofensa ao lead so a saida bloqueia, incitacao so a entrada nomeia.
+    """
+    from mobia.domain.moderacao.port import CATEGORIAS_POR_DIRECAO
+
+    entrada = CATEGORIAS_POR_DIRECAO[Direcao.ENTRADA]
+    saida = CATEGORIAS_POR_DIRECAO[Direcao.SAIDA]
+
+    assert entrada == frozenset({"DISCRIMINACAO", "AMEACA", "ASSEDIO", "VIOLENCIA"})
+    assert saida == frozenset(
+        {"DISCRIMINACAO", "AMEACA", "ASSEDIO", "OFENSA", "ACONSELHAMENTO", "NEGOCIACAO"}
+    )
+    assert "OFENSA" not in entrada
+    assert "VIOLENCIA" not in saida
+
+
+def test_negociacao_e_categoria_da_saida() -> None:
+    """A TEC-141 mandou a saida bloquear negociacao de valor. Sem a palavra no
+    vocabulario o modelo responderia fora do protocolo justo no caso que
+    aquela card criou.
+    """
+    from mobia.domain.moderacao.port import CATEGORIAS_POR_DIRECAO
+
+    assert "NEGOCIACAO" in CATEGORIAS_POR_DIRECAO[Direcao.SAIDA]
+
+
+def test_outro_nao_pertence_a_nenhum_vocabulario() -> None:
+    """`OUTRO` e fracasso de protocolo, nao categoria do dominio: o modelo
+    nunca deve escolhe-lo, so cair nele. Ofertar a palavra convidaria o
+    modelo a usar a saida facil em vez de decidir.
+    """
+    from mobia.domain.moderacao.port import CATEGORIA_OUTRO, CATEGORIAS_POR_DIRECAO
+
+    for categorias in CATEGORIAS_POR_DIRECAO.values():
+        assert CATEGORIA_OUTRO not in categorias
+
+
+def test_veredito_liberado_nao_tem_categoria() -> None:
+    """Nao ha categoria de liberacao a inventar: `None` e o veredito liberado."""
+    assert Veredito(bloqueado=False, motivo="x").categoria is None
+
+
+def test_veredito_continua_imutavel_com_a_categoria() -> None:
+    import dataclasses
+
+    import pytest
+
+    v = Veredito(bloqueado=True, motivo="x", categoria="DISCRIMINACAO")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        v.categoria = "AMEACA"  # type: ignore[misc]

@@ -19,10 +19,11 @@ from mobia.domain.context.qualificacao import esta_qualificado
 from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados, registrar_recalculo
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
-from mobia.domain.messages.bloqueio import marcar_bloqueada
+from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
 from mobia.domain.moderacao.port import (
+    CATEGORIA_OUTRO,
     TEXTO_DA_RECUSA_DE_ENTRADA,
     TEXTO_NEUTRO_DE_SAIDA,
     Direcao,
@@ -293,6 +294,7 @@ async def executar_turno(
                     "moderacao.entrada_bloqueada",
                     message_id=str(message.id),
                     motivo=veredito.motivo,
+                    categoria=veredito.categoria,
                 )
                 # A marca vem ANTES da entrega, e a ordem e o ponto (TEC-236).
                 # `_entregar_texto_fixo` tem quatro saidas que nao entregam
@@ -306,7 +308,20 @@ async def executar_turno(
                 # Se a marca falhar, a excecao sobe: a linha vira FAILED e o
                 # sweeper retenta. Custa uma moderacao paga a mais e nao vaza a
                 # fala -- ver `messages/bloqueio.py`.
-                await marcar_bloqueada(session_factory, message.id)
+                #
+                # `TEC-142`: a marca e a auditoria de ENTRADA saem no mesmo
+                # commit (ver `marcar_bloqueada`). `categoria or CATEGORIA_OUTRO`
+                # porque `ModeradorPort` e um `Protocol` -- um adaptador futuro
+                # pode devolver `Veredito(bloqueado=True)` sem categoria, e a
+                # coluna e `not null`. A alternativa seria o turno estourar por
+                # causa de um campo de auditoria.
+                await marcar_bloqueada(
+                    session_factory,
+                    message.id,
+                    channel=message.channel,
+                    conversation_key=message.conversation_key,
+                    categoria=veredito.categoria or CATEGORIA_OUTRO,
+                )
                 return await _entregar_texto_fixo(
                     session_factory,
                     message=message,
@@ -570,6 +585,18 @@ async def executar_turno(
             message_id=str(message.id),
             motivo=veredito_da_saida.motivo,
             subagente=subagente,
+            categoria=veredito_da_saida.categoria,
+        )
+        # Antes da entrega, pelo mesmo precedente de `marcar_bloqueada`: se a
+        # auditoria falhar, o turno falha e o sweeper retenta. Um bloqueio de
+        # saida entregue e nao auditado e o caso em que o risco da RN-B04
+        # aconteceu sem deixar registro.
+        await registrar_bloqueio_de_saida(
+            session_factory,
+            message_id=message.id,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+            categoria=veredito_da_saida.categoria or CATEGORIA_OUTRO,
         )
         texto = TEXTO_NEUTRO_DE_SAIDA
 
