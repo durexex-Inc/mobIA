@@ -11,6 +11,7 @@ from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
 from mobia.domain.agente.desambiguacao import deve_desambiguar
 from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo, porta_de_busca
+from mobia.domain.agente.formato import quebrar_em_mensagens
 from mobia.domain.agente.identificacao import (
     SEPARADOR_DA_IDENTIFICACAO,
     TEXTO_DA_IDENTIFICACAO,
@@ -751,15 +752,45 @@ async def executar_turno(
                 # mudo, sem uma linha para quem opera.
                 return "sem_resposta"
         else:
-            entregue = await outbound.send(
-                message.id,
-                KIND_DA_RESPOSTA,
-                {
-                    "para": message.conversation_key,
-                    "de": message.recipient_external_id,
-                    "texto": texto,
-                },
-            )
+            # So o TAMANHO ganha guarda aqui. As outras duas clausulas da RN-04.2
+            # continuam vigiadas so pelo gate (`aderencia_ao_tom`, piso de 90%), e
+            # o motivo e que fecha-las em runtime custaria mais do que resolvem:
+            #
+            # - Perguntas: exigiria regenerar a resposta, que a TEC-161 ja recusou
+            #   com emenda no SRS -- a segunda chamada reexecuta o laco de tool use
+            #   dentro de um `job_timeout` que o pior caso ja estoura. Descartar
+            #   perguntas do texto muda o que o agente quis dizer, e a regra existe
+            #   contra questionario, nao contra a segunda pergunta (emenda E-01,
+            #   medida sobre 294 turnos).
+            # - Emoji: a RNF-42 fala de COMPREENSAO ("a informacao essencial nunca
+            #   depende de emoji"), e o comentario de `evals/metricas.py` registra
+            #   que por isso a metrica reporta presenca e quantidade como
+            #   diagnostico, sem reprovar. Uma guarda deterministica contaria
+            #   figurinhas em vez de checar se a frase sobrevive sem elas.
+            #
+            # `entregue` fica True se QUALQUER parte entrou. A alternativa --
+            # exigir todas -- trataria "a segunda caiu na janela fechada" como
+            # turno sem resposta, quando o lead ja recebeu a primeira.
+            #
+            # Se a segunda falhar, a excecao sobe e o tratamento existente
+            # decide o desfecho. A retentativa do sweeper reentrega so ela: a
+            # primeira ja tem reserva por kind e e suprimida.
+            entregue = False
+            # strict=False e a garantia, nao um detalhe: o zip trunca pela
+            # menor sequencia de proposito (ver comentario acima).
+            for kind, parte in zip(KINDS_DA_RESPOSTA, quebrar_em_mensagens(texto), strict=False):
+                entregue = (
+                    await outbound.send(
+                        message.id,
+                        kind,
+                        {
+                            "para": message.conversation_key,
+                            "de": message.recipient_external_id,
+                            "texto": parte,
+                        },
+                    )
+                    or entregue
+                )
     except EnvioForaDaJanela as exc:
         log.warning(
             "outbound.fora_da_janela",

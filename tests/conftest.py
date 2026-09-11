@@ -158,6 +158,7 @@ class ClassificadorFake:
         erro_da_desambiguacao: Exception | None = None,
         perguntou: tuple[str, ...] = (),
         recusou: tuple[str, ...] = (),
+        resposta: str = RESPOSTA_DO_CLASSIFICADOR_FAKE,
     ) -> None:
         from mobia.domain.agente.schemas import Extracao as _Extracao
         from mobia.domain.agente.schemas import Intencao as _Intencao
@@ -170,6 +171,7 @@ class ClassificadorFake:
         self.erro_da_desambiguacao = erro_da_desambiguacao
         self.perguntou = perguntou
         self.recusou = recusou
+        self.resposta = resposta
         self.chamadas = 0
         self.desambiguacoes = 0
         self.candidatos: list[dict[str, object]] = []
@@ -187,7 +189,7 @@ class ClassificadorFake:
         return RespostaDoAgente(
             intencao=self.intencao,
             confianca=self.confianca,
-            resposta=RESPOSTA_DO_CLASSIFICADOR_FAKE,
+            resposta=self.resposta,
             modelo="claude-opus-5",
             tokens_in=1200,
             tokens_out=180,
