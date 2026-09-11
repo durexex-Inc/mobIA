@@ -183,12 +183,28 @@ async def test_o_teto_de_duas_mensagens_de_texto_vale_no_pior_caso(
     moderador_fake: Any,
     rodar_turno: Any,
 ) -> None:
-    """A terceira clausula da RN-04.2, que ate agora era verdade por
-    construcao e nao tinha nada travando. O pior caso soma identificacao e
-    quebra: se alguem acrescentar uma terceira mensagem de texto no futuro,
-    reprova aqui.
+    """A terceira clausula da RN-04.2 (emenda E-02): no maximo
+    `MAX_MENSAGENS_DE_TEXTO` mensagens de texto por turno. Ate esta card, isso
+    era verdade so por construcao -- nada no repositorio reprovava se deixasse
+    de ser.
+
+    NAO chama `_conversa_ja_existe`, ao contrario dos outros dois testes deste
+    arquivo, e pelo MESMO motivo do primeiro: a conversa precisa ficar NOVA
+    para a identificacao (133 caracteres) somar ao texto e o pior caso ser o
+    de verdade -- identificacao MAIS quebra, nao so a quebra sozinha (que
+    `test_resposta_longa_sai_em_duas_mensagens_com_kinds_distintos` ja cobre
+    com `_conversa_ja_existe`). Chamar o helper aqui removeria exatamente a
+    soma que faz este ser o pior caso, e o teste voltaria a nao travar nada
+    que o outro teste de quebra nao trave.
+
+    Honestidade sobre o alcance: hoje `quebrar_em_mensagens` nunca devolve
+    mais que duas partes (ver o docstring dela, em `formato.py`), entao este
+    teste nao reprova por acidente -- e guarda contra mudanca FUTURA e
+    deliberada: quebra virar recursiva, `MAX_MENSAGENS_DE_TEXTO` subir, ou a
+    identificacao passar a virar mensagem propria tambem no caminho sem
+    apresentacao. Se algum desses acontecer, o teto de duas mensagens de texto
+    da RN-04.2 seria estourado e este teste e quem reprova.
     """
-    await _conversa_ja_existe(session)
     longa = "Uma frase bem longa para forcar a quebra da resposta. " * 30
     outbound = outbound_fake()
 
