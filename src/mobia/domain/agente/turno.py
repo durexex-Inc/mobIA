@@ -671,11 +671,11 @@ async def executar_turno(
     # escreveu para as fichas.
     #
     # Este ponto fica DEPOIS das duas reatribuicoes de `texto` acima, e por
-    # isso cobre quatro trilhas, nao uma: a resposta normal, o
-    # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada, o
-    # TEXTO_DA_BUSCA_INCONCLUSIVA da citacao bloqueada da TEC-161 e -- via
-    # `apresentando` abaixo -- o caminho excluido de proposito, tratado na
-    # Task 5.
+    # isso cobre tres trilhas, nao uma: a resposta normal, o
+    # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada e o
+    # TEXTO_DA_BUSCA_INCONCLUSIVA da citacao bloqueada da TEC-161. A
+    # apresentacao NAO e uma quarta trilha aqui -- e excluida de proposito,
+    # tratada em separado dentro do `if apresentando:` abaixo (Task 5).
     #
     # `apresentando` fica de FORA aqui: naquele caminho `texto` vira prefixo de
     # legenda, e `legenda_de` corta o prefixo antes da ficha (D14 da TEC-162).
@@ -688,6 +688,30 @@ async def executar_turno(
 
     try:
         if apresentando:
+            if await e_conversa_nova(session_factory, message, agora=datetime.now(UTC)):
+                # Mensagem propria, e NAO prefixo da prosa (que e o mecanismo
+                # das outras tres trilhas, acima). Na apresentacao a prosa
+                # vira prefixo da legenda da PRIMEIRA ficha (D16 da TEC-162),
+                # e `legenda_de` corta o prefixo antes de cortar a ficha
+                # (D14): "estourado o teto, o que se corta e o PREFIXO, nunca
+                # a ficha" -- `_prosa_que_cabe` devolve string vazia quando
+                # nao sobra espaco. Se a identificacao viajasse ali dentro,
+                # ela sairia truncada ou nao sairia nenhuma, em silencio, no
+                # turno mais comum de uma conversa nova: o lead diz o que
+                # procura e o agente ja busca e apresenta.
+                #
+                # Cabe na RN-04.2 sem emenda: a E-02 da TEC-162 separou os
+                # tetos em ate 2 mensagens de TEXTO e ate 3 de APRESENTACAO,
+                # e isto e 1 texto mais ate 3 fichas.
+                await outbound.send(
+                    message.id,
+                    KIND_DA_RESPOSTA,
+                    {
+                        "para": message.conversation_key,
+                        "de": message.recipient_external_id,
+                        "texto": TEXTO_DA_IDENTIFICACAO,
+                    },
+                )
             # `prosa=texto` le o valor ANTES da atribuicao: a chamada e
             # avaliada primeiro, e o `texto` que sai sao as legendas
             # concatenadas (D16).
