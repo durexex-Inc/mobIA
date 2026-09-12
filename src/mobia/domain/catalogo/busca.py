@@ -188,6 +188,7 @@ async def buscar(
     consulta_texto: str | None = None,
     limite: int = MAX_CANDIDATOS,
     embedador: Embedador | None = None,
+    vetor: list[float] | None = None,
 ) -> ResultadoDaBusca:
     """Os candidatos que atendem ao filtro, ordenados pela relevancia da RN-09.6.
 
@@ -197,6 +198,13 @@ async def buscar(
     `ge=1` para informar o cliente; este clamp garante a regra nos dois
     sentidos para quem chama por dentro -- sem ele, `0` devolveria uma busca
     vazia sem motivo e `-1` faria o `LIMIT` do Postgres levantar. Ver D10.
+
+    `vetor` presente manda, e `consulta_texto`/`embedador` sao ignorados.
+    Ausente (ou `None`), deriva como sempre. Nao precisa de sentinela porque
+    "passei None" e "nao passei" querem a mesma coisa: derive se puder. Quem
+    usa isto e `buscar_com_relaxamento`, que vetoriza UMA vez e entrega o
+    mesmo vetor aos dois passes -- sem isso, todo turno relaxado pagaria duas
+    chamadas ao provedor pelo mesmo texto. Ver D9.
     """
     teto_de_candidatos = max(1, min(limite, MAX_CANDIDATOS))
 
@@ -207,7 +215,7 @@ async def buscar(
     regioes = tuple(dobrar(regiao) for regiao in filtro.regioes if regiao.strip())
     zonas = zonas_de(regioes)
 
-    vetor = await _vetor_da_consulta(consulta_texto, embedador)
+    vetor = vetor if vetor is not None else await vetor_da_consulta(consulta_texto, embedador)
 
     preco = getattr(Imovel, COLUNA_DE_PRECO[filtro.operacao])
 
@@ -328,7 +336,7 @@ async def buscar(
     )
 
 
-async def _vetor_da_consulta(
+async def vetor_da_consulta(
     consulta_texto: str | None, embedador: Embedador | None
 ) -> list[float] | None:
     """O vetor da consulta, ou None -- e None nunca e erro. D8 e D9.

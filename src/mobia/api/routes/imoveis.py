@@ -236,7 +236,7 @@ async def busca(pedido: PedidoDeBusca, _: None = Depends(exigir_admin)) -> dict[
     defeito. Trocar isto e uma linha.
 
     **`consultaTexto` e aceito e INERTE NESTA ROTA.** O campo entra no
-    pedido e e repassado, mas sem embedador `_vetor_da_consulta` devolve
+    pedido e e repassado, mas sem embedador `vetor_da_consulta` devolve
     `None` sempre, entao ele nao muda um resultado sequer. Relevancia ou
     latencia medidas atraves DESTE endpoint descrevem so o caminho degradado
     -- a chamada de embedding, que e a parte cara, nunca acontece. No turno,

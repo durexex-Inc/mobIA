@@ -386,12 +386,12 @@ async def executar_turno(
             # `embedador=embedar` liga a busca do turno ao provedor de verdade
             # -- o mesmo `embedar` que `indexar_catalogo` usa para o catalogo.
             # Sem isto, `consulta_texto` do tool call seria aceito e nunca
-            # mudaria um resultado: `_vetor_da_consulta` (busca.py) devolve
+            # mudaria um resultado: `vetor_da_consulta` (busca.py) devolve
             # None sem embedador injetado, a similaridade fica 0 para todo
             # candidato, e a busca hibrida da TEC-158 nunca aconteceria dentro
             # de um turno -- so pela rota HTTP, que nao injeta embedador (ver
             # `api/routes/imoveis.py`). A degradacao por falha continua
-            # coberta pelo mesmo `except Exception` de `_vetor_da_consulta`:
+            # coberta pelo mesmo `except Exception` de `vetor_da_consulta`:
             # o embedador real pode falhar, e a busca segue pelo filtro
             # estruturado -- D9.
             porta=porta_de_busca(session_factory, embedador=embedar),

@@ -112,3 +112,26 @@ async def test_relaxado_sem_teto_nem_piso_nao_muda_nada(session: Any) -> None:
     resultado = await buscar(session, FiltroDeBusca(operacao=Operacao.VENDA, relaxado=True))
 
     assert [candidato.imovel_id for candidato in resultado.candidatos] == [dentro]
+
+
+async def test_vetor_pronto_dispensa_o_embedador(session: Any) -> None:
+    """D9. Com o vetor na mao, `buscar` nao chama o provedor.
+
+    O embedador injetado aqui EXPLODE se chamado: o teste falha por excecao,
+    e nao por assercao sobre contagem, porque o que importa e que a segunda
+    chamada nao aconteca -- nao que ela aconteca N vezes.
+    """
+    await _imovel(session, "AP-205")
+
+    async def embedador_proibido(textos: list[str]) -> list[list[float]]:
+        raise AssertionError("o embedador nao devia ser chamado com vetor pronto")
+
+    resultado = await buscar(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA),
+        consulta_texto="apartamento com varanda",
+        vetor=[0.0] * 1536,
+        embedador=embedador_proibido,
+    )
+
+    assert resultado.consulta_vetorizada is True
