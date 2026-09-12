@@ -6,7 +6,13 @@ TEC-163. Sem banco, sem I/O. Basename distinto de tudo em
 
 import uuid
 
-from mobia.domain.agente.recomendacao import motivo_do_match, resolver_ordinais
+from mobia.domain.agente.recomendacao import (
+    LIMIAR_DE_DESCARTES,
+    DescartePorBairro,
+    bairros_a_excluir,
+    motivo_do_match,
+    resolver_ordinais,
+)
 from mobia.domain.agente.schemas import CategoriaDescarte, ReacaoDoImovel, ReacaoLead
 
 PRIMEIRO = uuid.uuid4()
@@ -74,3 +80,64 @@ def test_ordinal_zero_e_negativo_tambem_saem() -> None:
     )
 
     assert resolver_ordinais(reacoes, apresentados) == ()
+
+
+# ---------------------------------------------------------------------------
+# Task 9: o limiar de descartes por distancia. RN-10.4, D11-D14.
+# ---------------------------------------------------------------------------
+
+
+def test_o_limiar_e_dois() -> None:
+    """Constante nomeada e nao literal espalhado -- o valor da RN-10.4."""
+    assert LIMIAR_DE_DESCARTES == 2
+
+
+def test_um_descarte_por_distancia_nao_exclui() -> None:
+    """Um descarte pode ser sobre a foto, o andar ou o condominio -- so dois
+    na mesma direcao viram sinal."""
+    descartes = (DescartePorBairro(bairro="centro", categoria=CategoriaDescarte.DISTANCIA),)
+
+    assert bairros_a_excluir(descartes) == ()
+
+
+def test_dois_descartes_por_distancia_excluem() -> None:
+    descartes = (
+        DescartePorBairro(bairro="centro", categoria=CategoriaDescarte.DISTANCIA),
+        DescartePorBairro(bairro="centro", categoria=CategoriaDescarte.DISTANCIA),
+    )
+
+    assert bairros_a_excluir(descartes) == ("centro",)
+
+
+def test_dois_descartes_de_categorias_diferentes_nao_excluem() -> None:
+    """So DISTANCIA conta -- um descarte por preco nao diz nada sobre o
+    bairro, e contá-lo estreitaria a busca por um motivo que o lead nunca
+    deu."""
+    descartes = (
+        DescartePorBairro(bairro="centro", categoria=CategoriaDescarte.DISTANCIA),
+        DescartePorBairro(bairro="centro", categoria=CategoriaDescarte.PRECO),
+    )
+
+    assert bairros_a_excluir(descartes) == ()
+
+
+def test_descarte_com_categoria_ausente_nao_conta() -> None:
+    """Sem motivo registrado nao ha como saber que foi sobre distancia --
+    contar mesmo assim estreitaria a busca pelo motivo errado."""
+    descartes = (
+        DescartePorBairro(bairro="centro", categoria=CategoriaDescarte.DISTANCIA),
+        DescartePorBairro(bairro="centro", categoria=None),
+    )
+
+    assert bairros_a_excluir(descartes) == ()
+
+
+def test_bairros_diferentes_nao_se_somam() -> None:
+    """Dois descartes por distancia em bairros DIFERENTES nao excluem
+    nenhum dos dois -- o sinal e por bairro."""
+    descartes = (
+        DescartePorBairro(bairro="centro", categoria=CategoriaDescarte.DISTANCIA),
+        DescartePorBairro(bairro="trindade", categoria=CategoriaDescarte.DISTANCIA),
+    )
+
+    assert bairros_a_excluir(descartes) == ()

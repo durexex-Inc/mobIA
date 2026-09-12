@@ -13,11 +13,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from mobia.domain.agente.ferramenta_de_busca import porta_de_busca
 from mobia.domain.agente.models import Recomendacao
+from mobia.domain.agente.recomendacao import DescartePorBairro
 from mobia.domain.agente.repositorio import (
     _TABELA_IMOVEIS,
     gravar_reacoes,
     gravar_recomendacoes,
+    ler_descartes_por_distancia,
     ler_pendentes,
 )
 from mobia.domain.agente.schemas import (
@@ -31,6 +34,7 @@ from mobia.domain.agente.schemas import (
     RespostaDoAgente,
 )
 from mobia.domain.catalogo.models import Imovel
+from mobia.domain.catalogo.schemas import ResultadoDaBusca
 from mobia.domain.texto import dobrar
 
 CANAL = "whatsapp"
@@ -377,22 +381,186 @@ def test_a_tabela_sombra_ainda_bate_com_as_colunas_de_imovel() -> None:
     porque `ferramenta_de_busca.py` reserva para si ser "o unico arquivo em
     que domain/agente toca domain/catalogo" -- um import aqui tornaria essa
     frase falsa. O preco desse desvio e nao ter mais uma unica fonte para o
-    formato de `imoveis`: se alguem renomear `id`, `titulo` ou `bairro` em
-    `Imovel`, nada falha em import nem em mypy, porque `_TABELA_IMOVEIS` nao
-    referencia `Imovel` nenhum -- o JOIN de `ler_pendentes` so quebraria em
-    tempo de consulta, em producao. E o mesmo risco que `COLUNA_DE_PRECO`
+    formato de `imoveis`: se alguem renomear `id`, `titulo`, `bairro` ou
+    `bairro_busca` em `Imovel`, nada falha em import nem em mypy, porque
+    `_TABELA_IMOVEIS` nao referencia `Imovel` nenhum -- o JOIN de
+    `ler_pendentes` ou `ler_descartes_por_distancia` so quebraria em tempo de
+    consulta, em producao. E o mesmo risco que `COLUNA_DE_PRECO`
     (`catalogo/schemas.py`) existe para fechar do lado do preco; aqui, este
     teste e a guarda: ele roda no arquivo de teste, que ja importa `Imovel`
     porque a fronteira de `ferramenta_de_busca.py` e sobre `src/`, nao sobre
     `tests/`.
     """
     colunas_de_imovel = Imovel.__table__.columns
-    for nome in ("id", "titulo", "bairro"):
+    for nome in ("id", "titulo", "bairro", "bairro_busca"):
         assert nome in colunas_de_imovel, (
             f"'{nome}' sumiu de Imovel.__table__.columns -- _TABELA_IMOVEIS em "
-            "repositorio.py ainda a nomeia, e ler_pendentes quebraria em consulta"
+            "repositorio.py ainda a nomeia, e a consulta que a usa quebraria em consulta"
         )
-    assert set(_TABELA_IMOVEIS.columns.keys()) == {"id", "titulo", "bairro"}
+    assert set(_TABELA_IMOVEIS.columns.keys()) == {"id", "titulo", "bairro", "bairro_busca"}
+
+
+# ---------------------------------------------------------------------------
+# Task 9: a consulta de exclusao, ligada ao filtro. RN-10.4, D11-D14.
+# ---------------------------------------------------------------------------
+
+
+async def test_ler_descartes_por_distancia_le_bairro_dobrado_e_categoria(
+    session: Any, session_factory: Any
+) -> None:
+    """A consulta le TODO descarte da conversa -- de qualquer categoria,
+    inclusive sem nenhuma -- e devolve o bairro na forma dobrada que
+    `FiltroDeBusca.bairros_excluidos` compara. Quem filtra por DISTANCIA e
+    `bairros_a_excluir`, nao esta consulta."""
+    com_categoria = await _imovel(session, "AP-730", bairro="Trindade")
+    sem_categoria = await _imovel(session, "AP-731", bairro="Itacorubi")
+    nao_descartado = await _imovel(session, "AP-732", bairro="Centro")
+    de_outra_conversa = await _imovel(session, "AP-733", bairro="Campeche")
+
+    await _recomendar(
+        session,
+        com_categoria,
+        reacao_lead=ReacaoLead.DESCARTE.value,
+        motivo_descarte=CategoriaDescarte.DISTANCIA.value,
+    )
+    await _recomendar(session, sem_categoria, reacao_lead=ReacaoLead.DESCARTE.value)
+    await _recomendar(session, nao_descartado, reacao_lead=ReacaoLead.INTERESSE.value)
+    await _recomendar(
+        session,
+        de_outra_conversa,
+        conversation_key="5548999993333",
+        reacao_lead=ReacaoLead.DESCARTE.value,
+        motivo_descarte=CategoriaDescarte.DISTANCIA.value,
+    )
+
+    resultado = await ler_descartes_por_distancia(
+        session_factory, channel=CANAL, conversation_key=CONVERSA
+    )
+
+    assert set(resultado) == {
+        DescartePorBairro(bairro="trindade", categoria=CategoriaDescarte.DISTANCIA),
+        DescartePorBairro(bairro="itacorubi", categoria=None),
+    }
+
+
+class _BuscaEspia:
+    """Substitui `buscar`: guarda o filtro recebido, sem candidato nenhum.
+
+    Molde de `_BuscaEspia` de `tests/unit/test_ferramenta_de_busca.py` -- o
+    assunto aqui e o QUE ENTRA no filtro (`bairros_excluidos`), nao o que a
+    busca devolve.
+    """
+
+    def __init__(self) -> None:
+        self.filtros: list[Any] = []
+
+    async def __call__(
+        self, session: Any, filtro: Any, consulta_texto: str | None = None, **_: object
+    ) -> ResultadoDaBusca:
+        self.filtros.append(filtro)
+        return ResultadoDaBusca(candidatos=(), total_candidatos=0, consulta_vetorizada=False)
+
+
+async def test_um_descarte_nao_exclui_da_busca_seguinte(session: Any, session_factory: Any) -> None:
+    """A ligacao inteira (porta_de_busca -> ler_descartes_por_distancia ->
+    bairros_a_excluir -> FiltroDeBusca) com um descarte so: abaixo do limiar,
+    nada entra em `bairros_excluidos`."""
+    imovel = await _imovel(session, "AP-740", bairro="Campeche")
+    await _recomendar(
+        session,
+        imovel,
+        reacao_lead=ReacaoLead.DESCARTE.value,
+        motivo_descarte=CategoriaDescarte.DISTANCIA.value,
+    )
+
+    espia = _BuscaEspia()
+    porta = porta_de_busca(session_factory, buscar=espia, channel=CANAL, conversation_key=CONVERSA)
+
+    await porta({"operacao": "VENDA"})
+
+    assert espia.filtros[0].bairros_excluidos == ()
+
+
+async def test_dois_descartes_por_distancia_excluem_bairro_da_busca_seguinte(
+    session: Any, session_factory: Any
+) -> None:
+    """`ferramenta_de_busca.py` e o UNICO lugar que consulta a recomendacao e
+    poe o resultado no filtro (D11-D13) -- a busca continua sem saber que
+    recomendacao existe."""
+    primeiro = await _imovel(session, "AP-741", bairro="Campeche")
+    segundo = await _imovel(session, "AP-742", bairro="Campeche")
+    for imovel in (primeiro, segundo):
+        await _recomendar(
+            session,
+            imovel,
+            reacao_lead=ReacaoLead.DESCARTE.value,
+            motivo_descarte=CategoriaDescarte.DISTANCIA.value,
+        )
+
+    espia = _BuscaEspia()
+    porta = porta_de_busca(session_factory, buscar=espia, channel=CANAL, conversation_key=CONVERSA)
+
+    await porta({"operacao": "VENDA"})
+
+    assert espia.filtros[0].bairros_excluidos == ("campeche",)
+
+
+async def test_conversa_sem_identidade_nao_ativa_a_exclusao(
+    session: Any, session_factory: Any
+) -> None:
+    """`channel`/`conversation_key` default `None` -- quem chama `porta_de_busca`
+    sem conversa (como os testes de `test_ferramenta_de_busca.py`) continua
+    tendo a busca de sempre, sem exclusao nenhuma."""
+    primeiro = await _imovel(session, "AP-743", bairro="Campeche")
+    segundo = await _imovel(session, "AP-744", bairro="Campeche")
+    for imovel in (primeiro, segundo):
+        await _recomendar(
+            session,
+            imovel,
+            reacao_lead=ReacaoLead.DESCARTE.value,
+            motivo_descarte=CategoriaDescarte.DISTANCIA.value,
+        )
+
+    espia = _BuscaEspia()
+    porta = porta_de_busca(session_factory, buscar=espia)
+
+    await porta({"operacao": "VENDA"})
+
+    assert espia.filtros[0].bairros_excluidos == ()
+
+
+async def test_lead_nomeia_bairro_excluido_tira_da_exclusao_neste_turno(
+    session: Any, session_factory: Any
+) -> None:
+    """D14: nomear vence inferir. Exclusao e inferencia nossa (duas
+    rejeicoes); o lead dizendo o nome do bairro NESTE turno e declaracao, e
+    declaracao vence.
+
+    `"CORREGO GRANDE"` cru, maiusculo -- o caminho de um lead de verdade, e
+    nao um literal ja dobrado --, tem de bater contra o excluido que
+    `ler_descartes_por_distancia` devolve dobrado. Comparar um lado dobrado
+    contra o outro cru foi o defeito exato que a TEC-160 pagou com um
+    Critical.
+    """
+    primeiro = await _imovel(session, "AP-745", bairro="Corrego Grande")
+    segundo = await _imovel(session, "AP-746", bairro="Corrego Grande")
+    for imovel in (primeiro, segundo):
+        await _recomendar(
+            session,
+            imovel,
+            reacao_lead=ReacaoLead.DESCARTE.value,
+            motivo_descarte=CategoriaDescarte.DISTANCIA.value,
+        )
+
+    espia = _BuscaEspia()
+    porta = porta_de_busca(session_factory, buscar=espia, channel=CANAL, conversation_key=CONVERSA)
+
+    await porta({"operacao": "VENDA", "regioes": ["CORREGO GRANDE"]})
+
+    assert espia.filtros[0].bairros_excluidos == ()
+    # A regiao nomeada ainda entra no filtro normalmente -- D14 tira SO da
+    # exclusao, a busca por aquele bairro continua acontecendo.
+    assert espia.filtros[0].regioes == ("CORREGO GRANDE",)
 
 
 # ---------------------------------------------------------------------------

@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agente.desambiguacao import intencao_efetiva
 from mobia.domain.agente.models import ConversationIntent, Recomendacao
-from mobia.domain.agente.recomendacao import motivo_do_match
+from mobia.domain.agente.recomendacao import DescartePorBairro, motivo_do_match
 from mobia.domain.agente.schemas import (
     LIMIAR_DE_DESAMBIGUACAO,
+    CategoriaDescarte,
     Intencao,
     ReacaoDoImovel,
     ReacaoLead,
@@ -221,14 +222,21 @@ async def gravar_recomendacoes(
         await session.commit()
 
 
-# So as tres colunas que `ler_pendentes` le de `imoveis`, declaradas como Core
-# table e nao importadas de `mobia.domain.catalogo.models.Imovel`.
-# `ferramenta_de_busca.py` registra no proprio docstring ser "o unico arquivo
-# em que domain/agente toca domain/catalogo" -- espalhar o import por aqui
-# tambem tornaria essa fronteira invisivel. O join precisa do nome da tabela
-# e das colunas, nao da classe ORM, entao a tabela Core basta e nao quebra a
-# regra.
-_TABELA_IMOVEIS = table("imoveis", column("id"), column("titulo"), column("bairro"))
+# As quatro colunas que `ler_pendentes` e `ler_descartes_por_distancia` leem
+# de `imoveis`, declaradas como Core table e nao importadas de
+# `mobia.domain.catalogo.models.Imovel`. `ferramenta_de_busca.py` registra no
+# proprio docstring ser "o unico arquivo em que domain/agente toca
+# domain/catalogo" -- espalhar o import por aqui tambem tornaria essa
+# fronteira invisivel. O join precisa do nome da tabela e das colunas, nao da
+# classe ORM, entao a tabela Core basta e nao quebra a regra.
+#
+# `bairro_busca` (TEC-163) e nao `bairro`: e a forma dobrada que
+# `FiltroDeBusca.bairros_excluidos` compara, e `ler_descartes_por_distancia`
+# tem de devolver o bairro na MESMA forma que o filtro espera -- ver o
+# docstring de `DescartePorBairro`.
+_TABELA_IMOVEIS = table(
+    "imoveis", column("id"), column("titulo"), column("bairro"), column("bairro_busca")
+)
 
 
 @dataclass(frozen=True)
@@ -294,6 +302,50 @@ async def ler_pendentes(
 
     return tuple(
         RecomendacaoPendente(imovel_id=linha.imovel_id, titulo=linha.titulo, bairro=linha.bairro)
+        for linha in linhas
+    )
+
+
+async def ler_descartes_por_distancia(
+    session_factory: Any, *, channel: str, conversation_key: str
+) -> tuple[DescartePorBairro, ...]:
+    """Os descartes desta conversa, um por imovel, com o bairro dobrado e a categoria. TEC-163.
+
+    **Le TODO descarte, de qualquer categoria -- inclusive sem categoria.**
+    O nome cita distancia porque e o unico consumidor de hoje
+    (`recomendacao.bairros_a_excluir`), nao porque o `WHERE` filtra por ela: a
+    regra "so DISTANCIA conta" e decisao de negocio (RN-10.4), e decisao de
+    negocio mora na funcao pura que se testa sem banco, nao numa clausula
+    SQL que so se confere rodando contra o Postgres. Filtrar aqui tambem
+    criaria uma segunda copia da regra, e as duas copias podem divergir no
+    dia em que uma mudar sozinha.
+
+    `bairro_busca` e nao `bairro`: e a forma que `FiltroDeBusca.
+    bairros_excluidos` compara (ver `catalogo/schemas.py`), e devolver a
+    forma crua aqui obrigaria `ferramenta_de_busca.py` a dobrar de novo --
+    ou, pior, a esquecer de dobrar, o mesmo defeito que a TEC-160 pagou caro.
+    """
+    consulta = (
+        select(_TABELA_IMOVEIS.c.bairro_busca, Recomendacao.motivo_descarte)
+        .join(_TABELA_IMOVEIS, _TABELA_IMOVEIS.c.id == Recomendacao.imovel_id)
+        .where(
+            Recomendacao.channel == channel,
+            Recomendacao.conversation_key == conversation_key,
+            Recomendacao.reacao_lead == str(ReacaoLead.DESCARTE),
+        )
+    )
+    async with session_factory() as session:
+        linhas = (await session.execute(consulta)).all()
+
+    return tuple(
+        DescartePorBairro(
+            bairro=linha.bairro_busca,
+            categoria=(
+                CategoriaDescarte(linha.motivo_descarte)
+                if linha.motivo_descarte is not None
+                else None
+            ),
+        )
         for linha in linhas
     )
 
