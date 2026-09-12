@@ -33,7 +33,7 @@ from mobia.domain.agente.repositorio import (
     ler_pendentes,
     marcar_desambiguacao,
 )
-from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
+from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
@@ -172,6 +172,15 @@ TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO = (
 # de KINDS_DAS_FICHAS registra: kind que muda entre retentativas perde a dedup
 # justamente quando ela importa. A coluna e String(32); isto tem 17.
 KIND_DO_CRITERIO_AMPLIADO = "criterio_ampliado"
+
+# RN-03.4: estas duas intencoes nao sao trabalho de SDR, e o comentario de
+# `qualificacao.py` ja dizia que elas vao "direto para handoff" -- um destino
+# que so passou a existir na TEC-174. O lead segue recebendo a resposta deste
+# turno: silenciar e a RN-16.4, que e a TEC-179.
+_GATILHO_DA_INTENCAO = {
+    Intencao.VENDER_IMOVEL: Gatilho.VENDA_IMOVEL,
+    Intencao.SUPORTE_CONTRATO: Gatilho.SUPORTE_CONTRATO,
+}
 
 
 def aviso_de_ampliacao(relaxou_preco: bool, relaxou_bairro: bool) -> str:
@@ -770,6 +779,14 @@ async def executar_turno(
                 channel=message.channel,
                 conversation_key=message.conversation_key,
                 gatilho=Gatilho.LEAD_QUENTE,
+            )
+
+        if (gatilho_da_intencao := _GATILHO_DA_INTENCAO.get(gerada.intencao)) is not None:
+            await registrar_handoff(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                gatilho=gatilho_da_intencao,
             )
         await session.commit()
 
