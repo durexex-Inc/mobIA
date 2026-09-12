@@ -108,7 +108,11 @@ Mesma regra para a spec: emendas ao SRS (`docs/srs/`) entram como item aninhado 
 
 ## Fluxo de trabalho
 
-Card no Jira (projeto TEC) → desenho em `docs/superpowers/specs/` → plano em `docs/superpowers/plans/` → branch `feat/tec-nnn-<slug>` → PR contra `main`.
+Card no Jira (projeto TEC) → **mover para Fazendo e pôr Eduardo como responsável** → desenho em `docs/superpowers/specs/` → plano em `docs/superpowers/plans/` → branch `feat/tec-nnn-<slug>` → PR contra `main`.
+
+**Antes de começar, mova a card para "Fazendo" e ponha Eduardo como responsável.** Antes do desenho, não depois de escrever código: enquanto a card não se mexe, o quadro diz que ninguém pegou o trabalho, e quem olha não consegue distinguir uma card parada de uma card em curso. É a primeira ação da sequência acima, não um acerto de contas no fim.
+
+O responsável é **`eduardodurieuxlopes@gmail.com`** — a conta do Jira, que não é a mesma identidade do git (`eduardo.lopes@instivo.com.br`). Resolva o account ID por `lookupJiraAccountId` a partir desse e-mail em vez de guardar o ID aqui: ID copiado para prosa é o tipo de dado que ninguém revalida quando muda.
 
 As cards são escritas antes da implementação e são a fonte de requisitos — **nunca chute número de card**. O SRS v1.0 está em `docs/srs/srs-agente-sdr-imobiliario-v1.0.md`; cite o arquivo, não a lembrança, porque as emendas mudam o que a regra diz sem mudar o número dela.
 
