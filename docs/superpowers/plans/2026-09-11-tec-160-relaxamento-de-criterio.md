@@ -191,7 +191,7 @@ E a `ResultadoDaBusca`, depois de `consulta_vetorizada`:
 - [ ] **Step 5: Rode para ver passar**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/unit/test_relaxamento_alargar.py -v`
-Expected: 3 passed.
+Expected: 4 passed.
 
 - [ ] **Step 6: Gates e commit**
 
