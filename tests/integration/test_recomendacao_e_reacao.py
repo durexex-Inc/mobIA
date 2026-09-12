@@ -6,6 +6,7 @@ Basename distinto de tudo em `tests/unit/`.
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -19,7 +20,16 @@ from mobia.domain.agente.repositorio import (
     gravar_recomendacoes,
     ler_pendentes,
 )
-from mobia.domain.agente.schemas import CategoriaDescarte, ReacaoDoImovel, ReacaoLead
+from mobia.domain.agente.schemas import (
+    CategoriaDescarte,
+    Extracao,
+    Intencao,
+    PerguntaDeDesambiguacao,
+    ReacaoDoImovel,
+    ReacaoLead,
+    ReacoesDoTurno,
+    RespostaDoAgente,
+)
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.texto import dobrar
 
@@ -383,3 +393,224 @@ def test_a_tabela_sombra_ainda_bate_com_as_colunas_de_imovel() -> None:
             "repositorio.py ainda a nomeia, e ler_pendentes quebraria em consulta"
         )
     assert set(_TABELA_IMOVEIS.columns.keys()) == {"id", "titulo", "bairro"}
+
+
+# ---------------------------------------------------------------------------
+# Task 7: a reacao ligada no turno, antes da busca. D9.
+# ---------------------------------------------------------------------------
+
+
+def _conversa_do_turno() -> str:
+    """A conversation_key que `rodar_turno`/`_entrada_do_lead` de fato usa.
+
+    Distinta de `CONVERSA` (a constante deste arquivo, usada pelos testes
+    acima que escrevem `Recomendacao` direto): os testes que rodam o TURNO
+    inteiro semeiam a mensagem do lead com `_entrada_do_lead`
+    (`tests/conftest.py`), que fixa `conversation_key=CONVERSA_AGENTE` --
+    um valor diferente do `CONVERSA` deste modulo. As `Recomendacao` que
+    estes testes plantam tem de usar a MESMA chave que o turno vai usar, ou
+    `ler_pendentes` nao encontra nenhuma pendente e `reagir` nunca e chamado.
+    """
+    from conftest import CONVERSA_AGENTE  # type: ignore[import-not-found]
+
+    return CONVERSA_AGENTE
+
+
+async def _conversa_ja_existe(session: Any) -> None:
+    """Semeia uma entrada anterior para `e_conversa_nova` ver a conversa como
+    NAO nova. Copia de `test_apresentacao_no_turno.py`: identificacao tem
+    arquivo proprio, e sem isto a mensagem extra de identificacao
+    contaminaria a comparacao do texto entregue nestes testes, que nao sao
+    sobre ela.
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    await _entrada_do_lead(session, texto="ja tinha falado com o assistente antes")
+
+
+class _ClassificadorDeReacao:
+    """Fake minimo para a Task 7: separa a reacao (chamada 3) da classificacao
+    (chamada 1) do turno, sem candidato nenhum.
+
+    Molde de `_ClassificadorComCandidatos`
+    (`tests/integration/test_apresentacao_no_turno.py`), reduzido ao que estes
+    testes precisam -- o assunto aqui e a ORDEM entre `reagir` e a busca deste
+    turno, nao a apresentacao das fichas, entao `classificar` nunca devolve
+    candidato.
+    """
+
+    def __init__(
+        self,
+        reacoes: tuple[ReacaoDoImovel, ...] = (),
+        *,
+        erro_ao_reagir: Exception | None = None,
+        resposta: str = "Beleza, deixa eu ver.",
+    ) -> None:
+        self.reacoes = reacoes
+        self.erro_ao_reagir = erro_ao_reagir
+        self.resposta = resposta
+        # Capturado para o cenario 1 conferir o que `reagir` de fato recebeu
+        # -- a prova de que `apresentados` e os ids resolvidos vem da mesma
+        # ordem.
+        self.apresentados_recebidos: list[str] | None = None
+
+    async def classificar(self, contexto: Any, *, porta: Any = None) -> RespostaDoAgente:
+        return RespostaDoAgente(
+            intencao=Intencao.COMPRA,
+            confianca=Decimal("0.95"),
+            resposta=self.resposta,
+            modelo="claude-opus-5",
+            tokens_in=500,
+            tokens_out=80,
+            latency_ms=50,
+            extracao=Extracao(),
+        )
+
+    async def desambiguar(self, contexto: Any) -> PerguntaDeDesambiguacao:
+        raise AssertionError("confianca alta o bastante para nao desambiguar")
+
+    async def reagir(self, contexto: Any, *, apresentados: list[str]) -> ReacoesDoTurno:
+        self.apresentados_recebidos = apresentados
+        if self.erro_ao_reagir is not None:
+            raise self.erro_ao_reagir
+        return ReacoesDoTurno(reacoes=self.reacoes, modelo="claude-opus-5")
+
+
+async def test_cenario_1_gostei_do_segundo_marca_o_imovel_certo_como_interesse(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """Cenario 1 do Gherkin: tres imoveis apresentados, "gostei do segundo"
+    marca o CORRETO -- pela posicao, nao pelo id.
+
+    Titulo e bairro distintos por imovel, de proposito: se o ordinal casasse
+    com o imovel errado, esta asserta pegaria mesmo sem olhar para
+    `apresentados_recebidos`.
+    """
+    conversa = _conversa_do_turno()
+    agora = datetime.now(UTC)
+    primeiro = await _imovel(session, "AP-601", titulo="Apto Um", bairro="Centro")
+    segundo = await _imovel(session, "AP-602", titulo="Apto Dois", bairro="Trindade")
+    terceiro = await _imovel(session, "AP-603", titulo="Apto Tres", bairro="Itacorubi")
+    await _recomendar(session, primeiro, conversation_key=conversa, apresentado_em=agora)
+    await _recomendar(
+        session, segundo, conversation_key=conversa, apresentado_em=agora + timedelta(seconds=1)
+    )
+    await _recomendar(
+        session, terceiro, conversation_key=conversa, apresentado_em=agora + timedelta(seconds=2)
+    )
+
+    classificador = _ClassificadorDeReacao(
+        reacoes=(ReacaoDoImovel(ordinal=2, reacao=ReacaoLead.INTERESSE),)
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session,
+        classificador,
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        texto="gostei do segundo",
+    )
+
+    assert resultado == "respondido"
+    # A prova de que `apresentados` e `ids` vieram da MESMA ordem: a linha
+    # numerada com "Apto Dois -- Trindade" e a que o classificador de fato viu
+    # na posicao 2, e a reacao de ordinal 2 gruda no imovel que
+    # `_recomendar` gravou naquela mesma posicao.
+    assert classificador.apresentados_recebidos == [
+        "1. Apto Um -- Centro",
+        "2. Apto Dois -- Trindade",
+        "3. Apto Tres -- Itacorubi",
+    ]
+    reacoes = {
+        linha.imovel_id: linha.reacao_lead
+        for linha in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert reacoes[segundo] == "INTERESSE"
+    # D8: as duas nao mencionadas fecham NEUTRO, nunca ficam NULL -- senao a
+    # proxima mensagem do lead pagaria `reagir` de novo pelos mesmos imoveis.
+    assert reacoes[primeiro] == "NEUTRO"
+    assert reacoes[terceiro] == "NEUTRO"
+
+
+async def test_cenario_4_tem_mais_alguma_coisa_nao_marca_descarte_em_ninguem(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """Cenario 4 do Gherkin: perguntar por mais opcoes nao e opiniao sobre os
+    ja mostrados. Ninguem vira DESCARTE -- as pendentes so fecham NEUTRO,
+    porque nao houve reacao nenhuma, so uma pergunta por mais."""
+    conversa = _conversa_do_turno()
+    primeiro = await _imovel(session, "AP-610")
+    segundo = await _imovel(session, "AP-611")
+    await _recomendar(session, primeiro, conversation_key=conversa)
+    await _recomendar(
+        session,
+        segundo,
+        conversation_key=conversa,
+        apresentado_em=datetime.now(UTC) + timedelta(seconds=1),
+    )
+
+    classificador = _ClassificadorDeReacao(reacoes=())
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session,
+        classificador,
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        texto="tem mais alguma coisa?",
+    )
+
+    assert resultado == "respondido"
+    reacoes = {
+        linha.imovel_id: linha.reacao_lead
+        for linha in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert reacoes == {primeiro: "NEUTRO", segundo: "NEUTRO"}
+
+
+async def test_falha_de_reagir_nao_derruba_o_turno_e_deixa_pendente(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """D9/D6 da TEC-265: derrubar a DIMENSAO, nao o turno.
+
+    Provedor fora na chamada de reacao nao pode custar a resposta do lead --
+    a linha continua pendente, o filtro deste turno nao se ajusta, e o lead
+    recebe a mensagem normal do classificador.
+    """
+    # `_conversa_ja_existe` evita a identificacao ("Oi! Sou o assistente...")
+    # entrar como prefixo do texto -- ela e de um subsistema diferente
+    # (`identificacao.py`) e so atrapalharia a comparacao abaixo.
+    await _conversa_ja_existe(session)
+    conversa = _conversa_do_turno()
+    imovel = await _imovel(session, "AP-620")
+    await _recomendar(session, imovel, conversation_key=conversa)
+
+    classificador = _ClassificadorDeReacao(erro_ao_reagir=TimeoutError("provedor fora"))
+    outbound = outbound_fake()
+
+    with caplog.at_level("WARNING"):
+        resultado = await rodar_turno(
+            session, classificador, outbound, resumidor_fake(), contador_fake()
+        )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [classificador.resposta]
+    linha = (await session.execute(select(Recomendacao))).scalars().one()
+    assert linha.reacao_lead is None
+    assert "turno.reacao_nao_capturada" in caplog.text

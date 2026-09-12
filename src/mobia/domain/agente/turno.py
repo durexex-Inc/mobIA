@@ -22,10 +22,13 @@ from mobia.domain.agente.identificacao import (
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
 )
+from mobia.domain.agente.recomendacao import resolver_ordinais
 from mobia.domain.agente.repositorio import (
     gravar_intencao,
+    gravar_reacoes,
     gravar_recomendacoes,
     ler_intencao,
+    ler_pendentes,
     marcar_desambiguacao,
 )
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
@@ -471,6 +474,55 @@ async def executar_turno(
             reason=str(exc),
         )
         return "sem_resposta"
+
+    # D9. A reacao e capturada ANTES da busca deste turno, e nao depois.
+    # O lead escreve "nao gostei desses, tem outros?" -- reacao e busca nova no
+    # MESMO turno. Capturando depois, a busca deste turno nao saberia do
+    # descarte e devolveria mais do mesmo, que e literalmente a dor da
+    # historia da card.
+    #
+    # `except Exception` amplo: provedor fora, timeout e resposta malformada
+    # tem a mesma consequencia aqui, e distinguir nao muda o que o turno faz.
+    # Molde de `vetor_da_consulta` e da D6 da TEC-265 -- derrubar a dimensao,
+    # nao a busca. O lead perde o ajuste neste turno, nao o atendimento.
+    pendentes = await ler_pendentes(
+        session_factory, channel=message.channel, conversation_key=message.conversation_key
+    )
+    if pendentes:
+        # `apresentados` (o texto que o modelo le) e `ids` (o que
+        # `resolver_ordinais` casa contra o ordinal devolvido) nascem da MESMA
+        # iteracao sobre `pendentes`, de proposito: a posicao N de uma tem de
+        # ser o mesmo imovel que a posicao N da outra. Monta-las em dois
+        # lacos, ou a partir de duas consultas, arriscaria as duas listas
+        # divergirem -- e a reacao do lead grudaria no imovel errado, em
+        # silencio.
+        apresentados = [
+            f"{ordinal}. {pendente.titulo} -- {pendente.bairro}"
+            for ordinal, pendente in enumerate(pendentes, start=1)
+        ]
+        ids = [pendente.imovel_id for pendente in pendentes]
+        try:
+            reacoes_do_turno = await classificador.reagir(contexto, apresentados=apresentados)
+        except Exception as exc:
+            log.warning(
+                "turno.reacao_nao_capturada",
+                channel=message.channel,
+                tipo=type(exc).__name__,
+                detalhe="linhas seguem pendentes, o filtro nao se ajusta neste turno",
+            )
+        else:
+            # Chamada incondicional, mesmo com `reacoes` vazio (cenario 4 do
+            # Gherkin: "tem mais alguma coisa?" nao fala de nenhum imovel
+            # especifico): `gravar_reacoes` fecha toda pendente nao
+            # mencionada como NEUTRO, e e essa uniao que garante no maximo
+            # uma chamada de reacao por apresentacao -- ver o docstring dela.
+            resolvidas = resolver_ordinais(reacoes_do_turno.reacoes, ids)
+            await gravar_reacoes(
+                session_factory,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                resolvidas=resolvidas,
+            )
 
     # `cast`: `porta_de_busca` declara devolver `PortaDeBusca` (o Callable que
     # o classificador precisa -- D3 do desenho), mas sempre constroi e
