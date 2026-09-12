@@ -490,17 +490,20 @@ async def executar_turno(
     )
     if pendentes:
         # `apresentados` (o texto que o modelo le) e `ids` (o que
-        # `resolver_ordinais` casa contra o ordinal devolvido) nascem da MESMA
-        # iteracao sobre `pendentes`, de proposito: a posicao N de uma tem de
-        # ser o mesmo imovel que a posicao N da outra. Monta-las em dois
-        # lacos, ou a partir de duas consultas, arriscaria as duas listas
-        # divergirem -- e a reacao do lead grudaria no imovel errado, em
-        # silencio.
-        apresentados = [
-            f"{ordinal}. {pendente.titulo} -- {pendente.bairro}"
-            for ordinal, pendente in enumerate(pendentes, start=1)
-        ]
-        ids = [pendente.imovel_id for pendente in pendentes]
+        # `resolver_ordinais` casa contra o ordinal devolvido) sao montadas
+        # num UNICO laco sobre `pendentes`, e nao em duas list comprehensions
+        # separadas: e o proprio laco -- um `pendentes[i]` alimentando as
+        # duas listas na mesma iteracao -- que torna a posicao N de uma
+        # SEMPRE a mesma posicao N da outra, por construcao. Com dois lacos
+        # (ou duas consultas) o alinhamento seria acidental, nao garantido:
+        # bastaria um filtro, uma ordenacao ou um `continue` entrar num dos
+        # dois no futuro para as listas dessincronizarem em silencio, e a
+        # reacao do lead grudaria no imovel errado sem nada acusar.
+        apresentados: list[str] = []
+        ids: list[uuid.UUID] = []
+        for ordinal, pendente in enumerate(pendentes, start=1):
+            apresentados.append(f"{ordinal}. {pendente.titulo} -- {pendente.bairro}")
+            ids.append(pendente.imovel_id)
         try:
             reacoes_do_turno = await classificador.reagir(contexto, apresentados=apresentados)
         except Exception as exc:
