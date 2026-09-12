@@ -172,13 +172,33 @@ A card exige que *"o lead é sempre avisado, de forma explícita, de que o crit�
 
 Os nomes dos bairros também ficam de fora, e essa é a escolha mais discutível das três: nome de bairro é fato do catálogo e não reabriria o problema da TEC-161. Ficam fora porque a lista é variável — a Trindade do Gherkin amplia para três, o Itacorubi para quatro — e uma mensagem que cresce com o grau do nó é mensagem cujo pior caso ninguém mediu. O lead vê o bairro de cada imóvel na ficha, que é onde ele importa.
 
-### D12 — O modelo sabe que relaxou, e isso custa uma frase do orçamento
+### D12 — O modelo sabe que relaxou, e a instrução viaja no `tool_result`, não no prompt
 
-`relaxamento_aplicado` entra no `tool_result`, e `SISTEMA_DO_AGENTE` ganha uma frase curta explicando o campo — candidata: *"relaxamento_aplicado true: os imoveis passam do pedido; nao diga que atendem."*
+**Emenda de implementação (11/09/2026).** O desenho original mandava `SISTEMA_DO_AGENTE` ganhar uma frase curta explicando o campo, e registrava que o plano mediria antes de gastar. A medição foi feita e **reprovou a frase**:
 
-**Sem a frase, o campo é decorativo e o defeito é ao lead.** O modelo escreveria prosa afirmando que achou o que o lead pediu, sobre um imóvel 10% acima do orçamento em bairro vizinho — afirmação falsa, vizinha do RT-01. O aviso determinístico sairia logo em seguida, e o lead leria uma contradição dentro da mesma entrega.
+| | tokens |
+|---|---|
+| teto fixo de `test_a_margem_do_orcamento_do_prompt_e_deliberada` | 793 |
+| subcontagem atual | 786,8 |
+| **margem** | **6,2** |
+| teto derivado (`contexto_headroom_de_tokens` 1060 × 0,75) | 795 |
+| frase candidata (~77 caracteres pelo proxy `len/4`) | ~19,25 |
 
-**O campo no `tool_result` não passa pelo teto**: o teto mede `SISTEMA_DO_AGENTE`, o schema compilado e a definição em `tools=`; o `tool_result` é conteúdo de turno, contado por `montar_contexto`. **A frase passa.** Este desenho não escreve quanto ainda cabe, pela mesma razão que o comentário de `classificador.py` não escreve: é derivado, muda a cada mudança de prompt ou schema, e transcrito à mão envelhece sem ninguém notar. O plano começa por rodar `pytest -q -k margem_do_orcamento -s`; se a frase não couber, a pergunta é *o que sai do prompt para ela entrar*, e subir o teto fixo só depois de calcular o derivado de `test_diferenca_entre_o_contado_e_o_enviado` e confirmar que ele continua maior.
+A frase não cabe, e as três saídas do manual estavam fechadas. Subir o teto fixo acima de 795 o tornaria **decorativo** — quem passaria a prender seria o derivado, e a folga que o teste imprime deixaria de ser a folga real. Subir `contexto_headroom_de_tokens` custa 180 tokens por turno da conversa do lead, pelo registro do comentário daquele campo. E a pergunta que o `CLAUDE.md` manda fazer — *o que sai do prompt para o novo texto entrar?* — não tem resposta barata aqui: a definição de confiança alimenta a desambiguação da TEC-135; *"nao negocie valor"*, *"orcamento vago"*, *"o imovel que o lead ja tem"* e *"urgencia so com marco temporal"* vieram cada uma de uma card. Cortar qualquer uma paga a TEC-160 com uma regressão em outra.
+
+**A saída foi não pôr a instrução no prompt.** Ela viaja dentro do próprio `tool_result`, como uma chave `aviso` presente **somente quando houve relaxamento**:
+
+```python
+"aviso": "criterio ampliado: estes imoveis passam do que o lead pediu; nao afirme que atendem"
+```
+
+O `tool_result` é conteúdo de turno, contado por `montar_contexto` como o resto da conversa, e **não passa pelo teto fixo** — que mede `SISTEMA_DO_AGENTE`, o schema compilado e a definição em `tools=`. A instrução chega ao modelo exatamente quando é relevante, adjacente aos candidatos que ela descreve, e custa **zero** nos ~99% dos turnos em que nada relaxa — enquanto uma frase no `system` custaria em toda chamada, inclusive nas que nem buscam.
+
+**O que continua verdadeiro da versão original:** sem alguma forma de instrução o campo é decorativo e o defeito chega ao lead — o modelo escreveria prosa afirmando que achou o que ele pediu, sobre um imóvel 10% acima do orçamento em bairro vizinho, e o aviso determinístico sairia logo em seguida, fazendo o lead ler uma contradição dentro da mesma entrega.
+
+**Custo declarado da troca.** Instrução entregue como dado tem menos peso que instrução de sistema, e o modelo pode ignorá-la com mais facilidade. O que limita o estrago é que o aviso ao lead (D10 e D11) é mensagem determinística nossa e não depende do modelo: o pior caso é prosa destoando do aviso, não lead desinformado. Se a eval da TEC-210 mostrar o modelo afirmando que os imóveis atendem ao pedido, o caminho é reabrir o orçamento com card própria — não remendar aqui.
+
+**Este desenho não transcreve o teto de hoje**, pela mesma razão que o comentário de `classificador.py` não transcreve: é derivado, muda a cada mudança de prompt ou schema, e transcrito à mão envelhece sem ninguém notar. A tabela acima é a medição de 11/09/2026, datada de propósito. Rode `pytest -q -k margem_do_orcamento -s` para saber a de hoje.
 
 **Uma consequência que declaro para ninguém se assustar com o log.** Se o modelo inventar o teto ampliado em prosa — "achei até R$ 660 mil" — e nenhum candidato custar isso, a TEC-161 bloqueia e um `citacao.bloqueada` aparece em turno relaxado. É correto: `_cabe_em_algum` aceita preço que bata com algum candidato, e o teto ampliado não é candidato nenhum. Preço **de** candidato relaxado passa normalmente, porque é candidato.
 
@@ -214,7 +234,7 @@ Log e segue com a dimensão que sobrou, no molde de `_vetor_da_consulta` e da D6
 3. `buscar()` com o parâmetro `vetor` e a leitura de `relaxado` no `WHERE` de preço.
 4. Migration `0021_bairros_adjacentes.py`, com schema e os 30 pares.
 5. `relaxamento_aplicado` e `relaxamento_sem_resultado` no `tool_result`; `relaxamentoAplicado` no `POST` da seção 6.3; os dois chamadores migrados para `buscar_com_relaxamento`.
-6. A frase nova em `SISTEMA_DO_AGENTE`.
+6. A chave `aviso` no `tool_result`, presente so quando houve relaxamento (ver a D12 — a frase no prompt foi medida e nao coube).
 7. As três variantes do aviso, `KIND_DO_CRITERIO_AMPLIADO` e o envio no caminho de apresentação.
 8. `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` e a substituição no caminho de não-apresentação (D14).
 9. As duas emendas ao SRS, e as duas linhas no índice do topo.
