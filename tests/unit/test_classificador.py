@@ -773,6 +773,54 @@ async def test_reagir_devolve_categoria_no_descarte(monkeypatch: pytest.MonkeyPa
     )
 
 
+async def test_reacao_malformada_nao_derruba_as_bem_formadas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O contrato central de `_reacoes_de`, no mesmo espirito de
+    `test_extracao_malformada_nao_derruba_o_turno`: um item ruim no meio da
+    lista nao pode apagar os itens bons do mesmo turno.
+
+    Cobre, num so turno, os tres jeitos que a docstring de `_reacoes_de`
+    promete sobreviver dentro de um item: item que nao e dict, ordinal que
+    nao e int (string), ordinal booleano (a armadilha de `bool` ser
+    subclasse de `int` em Python) e `reacao` que o enum nao reconhece.
+    """
+    boa = {"ordinal": 3, "reacao": "DESCARTE", "categoria": "PRECO"}
+    reacoes = [
+        "isto nao e um objeto",
+        {"ordinal": "1", "reacao": "INTERESSE", "categoria": None},
+        {"ordinal": True, "reacao": "INTERESSE", "categoria": None},
+        {"ordinal": 2, "reacao": "SATISFEITO", "categoria": None},
+        boa,
+    ]
+    _instalar_cliente_falso(monkeypatch, _resposta_reacao(reacoes=reacoes))
+
+    resultado = await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+    assert resultado.reacoes == (
+        ReacaoDoImovel(ordinal=3, reacao=ReacaoLead.DESCARTE, categoria=CategoriaDescarte.PRECO),
+    )
+
+
+async def test_reacoes_que_nao_e_lista_devolve_tupla_vazia_sem_levantar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O quarto jeito que a docstring de `_reacoes_de` promete sobreviver: o
+    proprio campo `reacoes` vindo num formato que nem chega a ser lista.
+
+    Nao ha item bom para sobreviver aqui -- o topo inteiro esta errado --,
+    entao o que este teste guarda e so a segunda metade do contrato: nao
+    levanta, e devolve tupla vazia em vez de propagar o erro.
+    """
+    _instalar_cliente_falso(
+        monkeypatch, _resposta_falsa(texto=json.dumps({"reacoes": "nao e uma lista"}))
+    )
+
+    resultado = await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+    assert resultado.reacoes == ()
+
+
 async def test_reagir_nao_manda_tools_nem_porta(monkeypatch: pytest.MonkeyPatch) -> None:
     """Esta chamada nunca busca imovel -- ver docstring de `reagir`."""
     cliente = _instalar_e_capturar(monkeypatch, _resposta_reacao(reacoes=[]))
