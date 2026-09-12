@@ -9,6 +9,7 @@ from mobia.domain.agente.turno import (
     TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
     TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
     TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
+    TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
     aviso_de_ampliacao,
 )
 from mobia.domain.catalogo.enums import EstadoDoRelaxamento, Operacao
@@ -131,12 +132,13 @@ def test_o_aviso_sem_preco_nem_bairro_levanta() -> None:
 
     O brief caia para a variante de bairro quando os dois argumentos eram
     False -- avisando "inclui bairros vizinhos" mesmo sem bairro nenhum
-    relaxado. Esse estado e inalcancavel quando `relaxou_e_achou` e True (um
-    passe que nao alargou nada nao poderia achar o que o passe identico
-    anterior ja tinha perdido), entao torna-lo um `ValueError` e de graca: a
+    relaxado. Esse par nao chega a existir porque `buscar_com_relaxamento` so
+    faz o segundo passe depois de confirmar que preco ou bairro mudou, e nao
+    porque um passe identico nao pudesse achar nada (pode: o catalogo muda
+    entre os dois round-trips). Torna-lo um `ValueError` sai de graca: a
     guarda em `executar_turno` so chama esta funcao sob
-    `relaxou_preco or relaxou_bairro`, e o turno nao morre se o impossivel
-    acontecer -- so deixa de mandar o aviso.
+    `relaxou_preco or relaxou_bairro`, e o turno nao morre se a invariante do
+    outro modulo se quebrar -- so deixa de mandar o aviso.
     """
     with pytest.raises(ValueError, match="aviso_de_ampliacao"):
         aviso_de_ampliacao(False, False)
@@ -159,10 +161,16 @@ def test_o_aviso_nao_cita_valor() -> None:
 
 def test_os_textos_do_aviso_sao_ascii() -> None:
     """Todo texto que sai para o lead e ASCII sem acento -- a disciplina de
-    `apresentacao.py` e de `TEXTO_DA_BUSCA_INCONCLUSIVA`."""
+    `apresentacao.py` e de `TEXTO_DA_BUSCA_INCONCLUSIVA`.
+
+    `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` entra na mesma lista: e a outra
+    constante que a TEC-160 criou para sair no `outbound`, e a regra vale pelo
+    DESTINO do texto, nao pela funcao que o escolhe.
+    """
     for texto in (
         TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
         TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
         TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
+        TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
     ):
         assert texto.isascii()

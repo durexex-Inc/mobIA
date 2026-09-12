@@ -160,16 +160,23 @@ KIND_DO_CRITERIO_AMPLIADO = "criterio_ampliado"
 def aviso_de_ampliacao(relaxou_preco: bool, relaxou_bairro: bool) -> str:
     """A variante que corresponde ao que de fato foi relaxado. D11.
 
-    Levanta `ValueError` quando os dois sao False. Esse estado e
-    inalcancavel no unico lugar que chama esta funcao (`executar_turno`, sob
-    `gerada.relaxou_e_achou`): um passe que nao alargou preco nem bairro e
-    byte a byte igual ao primeiro passe, que ja tinha voltado sem nada -- ele
-    nao pode ter achado o que o primeiro nao achou. Cair no caso do bairro por
-    default aqui repetiria exatamente o erro que a doc do modulo (acima)
-    existe para evitar: dizer "inclui bairros vizinhos" para quem nao teve
-    bairro nenhum ampliado, so porque nenhum booleano chegou True. Barulhento
-    e melhor que uma mentira silenciosa -- e o chamador trata a excecao como
-    guarda, nao como erro fatal do turno.
+    Levanta `ValueError` quando os dois sao False. Esse par e inalcancavel
+    porque NINGUEM O CONSTROI, e nao porque a natureza o proiba: o catalogo
+    nao congela entre dois round-trips, e uma importacao concorrente ou um
+    `RESERVADO -> DISPONIVEL` faz uma consulta identica a anterior devolver
+    linha. O que fecha o caso e o unico produtor: `buscar_com_relaxamento` so
+    faz o segundo passe depois de confirmar que preco ou bairro de fato
+    mudou, entao `APLICADO` com as duas dimensoes False nao chega a existir
+    para `executar_turno` propagar.
+
+    Cair no caso do bairro por default aqui repetiria exatamente o erro que a
+    doc do modulo (acima) existe para evitar: dizer "inclui bairros vizinhos"
+    para quem nao teve bairro nenhum ampliado, so porque nenhum booleano
+    chegou True. Barulhento e melhor que uma mentira silenciosa. E a guarda do
+    chamador (`relaxou_preco or relaxou_bairro`) nao e cinto-e-suspensorio: a
+    invariante que torna o par impossivel mora em OUTRO modulo, e e ela que
+    mantem o turno vivo -- perdendo so o aviso -- no dia em que aquele modulo
+    mudar de ideia.
     """
     if relaxou_preco and relaxou_bairro:
         return TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO

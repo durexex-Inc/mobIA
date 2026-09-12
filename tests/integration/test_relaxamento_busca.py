@@ -1,8 +1,15 @@
 """O relaxamento da RN-09.3 contra o banco.
 
-TEC-160. Os quatro cenarios do Gherkin da card, mais a divida que a TEC-158
-deixou nomeada: o clamp em 0 da aderencia e o decaimento para 0,9, que so sao
-alcancaveis quando o filtro deixa de ser duro.
+TEC-160. Os quatro cenarios do Gherkin da card, mais METADE da divida que a
+TEC-158 deixou nomeada.
+
+A metade paga e o decaimento para 0,9, que so e alcancavel quando o filtro
+deixa de ser duro -- `test_a_ancora_da_ordenacao_nao_se_move_com_o_where`. A
+outra metade, o clamp em 0 da aderencia, continua sem teste porque continua
+inalcancavel por este caminho: `_aderencia` so zera em `preco >= 2 x teto`, e
+o `WHERE` do passe relaxado para em `1,10 x teto` -- nenhuma linha que a busca
+devolve chega la. Paga-la exige exercitar `_aderencia` por fora da busca, e
+isso nao esta nesta card.
 
 Basename distinto de tudo em `tests/unit/`.
 """
@@ -372,3 +379,109 @@ async def test_o_vetor_e_calculado_uma_vez_para_os_dois_passes(session: Any) -> 
 
     assert chamadas == 1
     assert resultado.relaxamento is EstadoDoRelaxamento.APLICADO
+
+
+async def test_regiao_com_acento_e_maiuscula_amplia_o_bairro(session: Any) -> None:
+    """A forma que a `porta_de_busca` REALMENTE monta, e nao o literal dobrado
+    que todo outro teste deste arquivo escreve.
+
+    `porta_de_busca` faz `tuple(str(regiao) for regiao in ...)` -- sem
+    normalizar --, entao o que chega aqui e o que o modelo escreveu:
+    "Agronomica" com maiuscula, e com acento quando o lead usou. A tabela de
+    adjacencia guarda a forma dobrada. Sem dobrar antes do `IN`, ele nao casa
+    linha nenhuma, `adjacentes` volta vazia e a METADE DE BAIRRO da RN-09.3
+    fica morta em producao -- com a suite inteira verde, porque a suite
+    inteira escreve `("trindade",)`.
+
+    O imovel cabe no teto ORIGINAL: se ele voltar, foi a regiao que cedeu, e
+    nao o preco.
+    """
+    vizinho = await _imovel(session, "AP-360", preco_venda=35000000, bairro="Trindade")
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(
+            operacao=Operacao.VENDA,
+            preco_max_centavos=TETO,
+            regioes=("Agronômica",),
+        ),
+    )
+
+    assert resultado.relaxamento is EstadoDoRelaxamento.APLICADO
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [vizinho]
+    assert resultado.relaxou_bairro is True
+
+
+async def _fecho_da_adjacencia(session: Any) -> tuple[str, ...]:
+    """Todos os bairros da tabela -- o unico conjunto FECHADO que o seed tem.
+
+    O grafo dos 15 pares e conexo, entao qualquer subconjunto proprio vaza
+    para fora quando se pedem seus adjacentes. Derivar do banco em vez de
+    escrever os 12 nomes a mao mantem o teste correto quando o seed crescer.
+    """
+    linhas = (await session.execute(select(BairroAdjacente))).scalars().all()
+    return tuple(
+        {linha.bairro_busca for linha in linhas} | {linha.adjacente_busca for linha in linhas}
+    )
+
+
+async def test_adjacente_que_o_lead_ja_pediu_nao_conta_como_bairro_ampliado(
+    session: Any,
+) -> None:
+    """`relaxou_bairro` mede o que MUDOU, e nao o que a tabela devolveu.
+
+    Pedindo o fecho inteiro da adjacencia, a consulta traz linha para todo
+    bairro -- mas todo adjacente ja estava no pedido, e o `IN` do segundo
+    passe e identico ao do primeiro. Um `bool(adjacentes)` diria True aqui, e
+    o lead ouviria "inclui bairros vizinhos" sobre uma busca que nao incluiu
+    vizinho nenhum: a mentira que as tres variantes do aviso existem para
+    impedir.
+
+    O preco cedeu de verdade, entao o segundo passe acontece e o aviso sai --
+    na variante de preco, que e a verdadeira.
+    """
+    acima = await _imovel(session, "AP-361", preco_venda=43000000, bairro="Trindade")
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(
+            operacao=Operacao.VENDA,
+            preco_max_centavos=TETO,
+            regioes=await _fecho_da_adjacencia(session),
+        ),
+    )
+
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [acima]
+    assert (resultado.relaxou_preco, resultado.relaxou_bairro) == (True, False)
+
+
+async def test_regiao_sem_preco_e_sem_bairro_novo_nao_faz_segunda_consulta(
+    session: Any,
+) -> None:
+    """`e_relaxavel` diz "talvez"; quem diz "nao" e o que `alargar` mudou.
+
+    "zona sul" nao e nome de bairro (L2) e nao casa linha da adjacencia, e sem
+    teto nem piso nao ha faixa para ceder. O segundo passe seria byte a byte o
+    primeiro: uma consulta a mais contra o p95 de 400 ms da TEC-159, e um
+    `SEM_RESULTADO` que faria o turno dizer ao lead que procurou alem do
+    pedido sem ter procurado.
+    """
+    await _imovel(session, "AP-362", bairro="Centro", zona="CENTRO")
+
+    chamadas = 0
+    original = modulo_de_busca.buscar
+
+    async def contando(*args: Any, **kwargs: Any) -> Any:
+        nonlocal chamadas
+        chamadas += 1
+        return await original(*args, **kwargs)
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA, regioes=("zona norte",)),
+        buscar=contando,
+    )
+
+    assert chamadas == 1
+    assert resultado.relaxamento is EstadoDoRelaxamento.NAO_HOUVE
+    assert resultado.candidatos == ()

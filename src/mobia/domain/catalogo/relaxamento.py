@@ -24,6 +24,7 @@ from mobia.domain.catalogo.busca import buscar as buscar_de_verdade
 from mobia.domain.catalogo.enums import EstadoDoRelaxamento
 from mobia.domain.catalogo.models import BairroAdjacente
 from mobia.domain.catalogo.schemas import Embedador, FiltroDeBusca, ResultadoDaBusca
+from mobia.domain.texto import dobrar
 
 log = structlog.get_logger(__name__)
 
@@ -39,6 +40,13 @@ def e_relaxavel(filtro: FiltroDeBusca) -> bool:
     E tambem a lacuna que o desenho da TEC-262 nomeou -- "relaxaria preco e
     bairro de uma busca que nunca teve chance". Ela fechou o caso do tipo;
     quartos e vagas seguem abertos (L3).
+
+    **Condicao necessaria, nao suficiente, e barata de proposito.** Regiao sem
+    teto nem piso passa por aqui, mas so ha o que alargar se a tabela de
+    adjacencia devolver bairro que o lead ja nao tinha pedido -- e descobrir
+    isso custa uma consulta. Esta funcao evita pagar ate essa consulta quando
+    nem ela poderia ajudar; quem de fato decide fazer o segundo passe e
+    `buscar_com_relaxamento`, depois de olhar o que `alargar` mudou.
     """
     return (
         filtro.preco_max_centavos is not None
@@ -77,6 +85,12 @@ def alargar(filtro: FiltroDeBusca, adjacentes: Sequence[str]) -> FiltroDeBusca:
 
 async def adjacentes_de(session: AsyncSession, regioes: Sequence[str]) -> tuple[str, ...]:
     """Os bairros vizinhos dos que o lead pediu, na forma dobrada. D8.
+
+    **`regioes` tem de chegar JA DOBRADA.** A tabela guarda nome dobrado (a
+    migration grava `dobrar(...)`), e esta funcao nao dobra: `IN ('Trindade')`
+    contra `bairro_busca = 'trindade'` nao casa linha nenhuma e devolve vazio
+    -- indistinguivel do caso legitimo da L2 abaixo. `buscar_com_relaxamento`
+    dobra antes de chamar; quem chamar de outro lugar tem a mesma obrigacao.
 
     Um `IN` simples sobre a PK: a tabela guarda as duas direcoes justamente
     para que esta consulta nao precise ser um OR sobre duas colunas com uniao.
@@ -128,12 +142,22 @@ async def buscar_com_relaxamento(
     if resultado.candidatos or not e_relaxavel(filtro):
         return resultado
 
+    # As regioes dobradas UMA vez, aqui, e e a forma que segue para os tres
+    # usos. `buscar` dobra por dentro, mas `adjacentes_de` nao: a tabela guarda
+    # nome dobrado e o `IN` com o cru que a `porta_de_busca` monta ("Trindade")
+    # nao casa linha nenhuma. Sem esta linha a metade de bairro da RN-09.3
+    # morre em silencio -- so o preco alarga, e todo teste continua verde
+    # porque todo teste escreve a regiao ja dobrada. `dobrar` e idempotente,
+    # entao passar a forma dobrada adiante nao muda o que a busca enxerga -- e
+    # e o que deixa a comparacao de `relaxou_bairro` abaixo ser entre iguais.
+    dobradas = tuple(dobrar(regiao) for regiao in filtro.regioes if regiao.strip())
+
     # D13: falha aqui derruba a DIMENSAO, nao a busca -- e o molde de
     # `vetor_da_consulta` e da D6 da TEC-265. `Exception` ampla de proposito:
     # timeout, conexao caida e resposta malformada tem a mesma consequencia
     # aqui, e distinguir a causa nao muda o que o relaxamento faz.
     try:
-        adjacentes = await adjacentes_de(session, filtro.regioes)
+        adjacentes = await adjacentes_de(session, dobradas)
     except Exception as erro:
         log.warning(
             "busca.adjacencia_indisponivel",
@@ -142,7 +166,32 @@ async def buscar_com_relaxamento(
         )
         adjacentes = ()
 
-    relaxado = await executar(session, alargar(filtro, adjacentes), vetor=vetor, limite=limite)
+    alargado = alargar(replace(filtro, regioes=dobradas), adjacentes)
+
+    # D11: o aviso tem tres variantes e escolhe por estes dois. As duas sao
+    # medidas do que MUDOU, e nao do que se tentou: `bool(adjacentes)` diria
+    # "inclui bairros vizinhos" tambem para o lead que nomeou um agrupamento
+    # ja fechado ("Centro, Trindade, Agronomica, Itacorubi"), onde todo
+    # adjacente que a tabela devolve ja estava no pedido e o `IN` do segundo
+    # passe e o mesmo do primeiro. E exatamente a mentira que as tres
+    # variantes existem para impedir.
+    relaxou_preco = filtro.preco_max_centavos is not None or filtro.preco_min_centavos is not None
+    # Contra `dobradas`, NUNCA contra `filtro.regioes`: comparar o alargado
+    # (dobrado) com o cru daria True sempre que o lead escreveu com maiuscula
+    # ou acento, e a mentira acima voltaria com outra roupa.
+    relaxou_bairro = set(alargado.regioes) != set(dobradas)
+
+    if not (relaxou_preco or relaxou_bairro):
+        # Nada mudou: o `WHERE` do segundo passe seria byte a byte o do
+        # primeiro, que ja voltou vazio. Pagariamos uma consulta contra o p95
+        # de 400 ms da TEC-159 para carimbar `SEM_RESULTADO` no mesmo zero, e
+        # o turno diria ao lead que "procurou tambem um pouco alem" de um
+        # criterio que nao se mexeu. Depois do try/except de proposito:
+        # adjacencia indisponivel sem teto nem piso e um dos jeitos de chegar
+        # aqui.
+        return resultado
+
+    relaxado = await executar(session, alargado, vetor=vetor, limite=limite)
 
     # D6: `APLICADO` significa "o que voce esta vendo veio do passe relaxado".
     # Relaxou e continuou zero e `SEM_RESULTADO`, e nao `APLICADO` com lista
@@ -156,12 +205,6 @@ async def buscar_com_relaxamento(
             if relaxado.candidatos
             else EstadoDoRelaxamento.SEM_RESULTADO
         ),
-        # D11: o aviso tem tres variantes e escolhe por estes dois. Afirmar
-        # "inclui bairros vizinhos" quando `adjacentes` veio vazio seria o
-        # aviso mentindo -- e e o caso de todo lead que nao deu regiao, e de
-        # toda busca por zona (L2).
-        relaxou_preco=(
-            filtro.preco_max_centavos is not None or filtro.preco_min_centavos is not None
-        ),
-        relaxou_bairro=bool(adjacentes),
+        relaxou_preco=relaxou_preco,
+        relaxou_bairro=relaxou_bairro,
     )
