@@ -35,9 +35,11 @@ def create_app() -> FastAPI:
     # existe nao pode ser exposta por engano de configuracao, e este projeto
     # ainda nao tem camada de autenticacao. Ver D1 do desenho da TEC-156.
     if settings.catalogo_admin_token:
+        from mobia.api.routes.corretores import router as corretores_router
         from mobia.api.routes.imoveis import router as imoveis_router
 
         app.include_router(imoveis_router)
+        app.include_router(corretores_router)
     else:
         log.warning("catalogo.rota_de_importacao_desligada", motivo="sem CATALOGO_ADMIN_TOKEN")
 
