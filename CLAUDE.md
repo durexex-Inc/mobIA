@@ -27,18 +27,26 @@ Local, com a venv do projeto:
 ## Testes
 
 ```bash
-./.venv/Scripts/python.exe -m pytest          # suíte inteira
+./.venv/Scripts/python.exe -m pytest -n 8 --dist loadfile   # suíte inteira
+./.venv/Scripts/python.exe -m pytest tests/unit             # só os unitários
+./.venv/Scripts/python.exe -m pytest                        # serial, quando precisar
 ```
 
-**Números medidos em 12/09/2026, Python 3.13.15, máquina ociosa: a suíte completa leva ~2,5 minutos e são 1540 testes.** O número de 07/09/2026 (TEC-156), **~22 minutos**, está velho.
+**Para a suíte inteira, use `-n 8 --dist loadfile`.** Medido em 12/09/2026, Python 3.13.15, máquina ociosa, 1614 testes: serial são **170,9s**, com `-n 8` são **~49s** (cinco execuções entre 48,7s e 51,1s). `-n 12` quase não melhora sobre o 8. O número de 07/09/2026 (TEC-156), ~22 minutos, está velho.
 
-A referência menos ruidosa não é esta máquina, é o CI: o passo `Rodar a suite`, mesmo runner e mesmo Python, levava **168s** em `53f7e55` e passou a levar **71s** em `2e87349`. Localmente, no mesmo dia e no mesmo interpretador, a suíte inteira foi de **413,1s para 153,8s** e `tests/unit` de **227,0s para 5,7s**.
+`--dist loadfile` não é enfeite: mantém cada arquivo inteiro num worker só, preservando qualquer ordem interna de que um arquivo dependa. E cada worker roda contra uma base Postgres e um índice de Redis só dele — ver `_isolar_por_worker` em `tests/conftest.py`. Sem esse isolamento o paralelismo não é "mais rápido com algum flake", é vermelho: `banco_limpo` faz `TRUNCATE` e `redis_pool` faz `flushdb()`, e cada worker apagaria o estado dos outros.
 
-Nada disso explica sozinho a distância até os 22 minutos de setembro: parte veio das fixtures, parte do ambiente. Desconfie de qualquer número aqui que não diga em que máquina e em que Python foi medido — e prefira comparar durações de CI, que é o único lugar onde as duas pontas rodam igual.
+**O `-n` não está no `addopts`, e não o ponha lá.** Paralelizar só compensa na suíte inteira: medido, `tests/unit` sozinho PIORA de 4,4s para 8,6s, porque a partida dos workers custa mais que os testes.
+
+O teto é 16 workers — é quantos bancos lógicos um Redis serve por padrão, e cada worker precisa do seu. Acima disso o conftest reprova na hora, com a razão escrita.
+
+A referência menos ruidosa não é esta máquina, é o CI: o passo `Rodar a suite`, mesmo runner e mesmo Python, levava **168s** antes das mudanças de fixture e passou a levar **71s** depois. O paralelismo rende bem menos lá que aqui — ~85s serial contra ~73s com `-n auto`, duas amostras de cada lado — porque o runner tem poucos cores e cada worker ainda paga um `alembic upgrade head` próprio. **O ganho do `-n` é da máquina de quem desenvolve, não do CI.**
+
+Nada disso explica sozinho a distância até os 22 minutos de setembro: parte veio das fixtures, parte do ambiente. Desconfie de qualquer número aqui que não diga em que máquina e em que Python foi medido — e, ao comparar durações de CI, colha mais de uma amostra: uma execução da `main` marcou 29s num dia em que as vizinhas marcaram 80 e 89.
 
 Se ainda assim parecer travado: com `-q` o pytest só imprime no fim, então saída vazia por um tempo é normal, não deadlock. Para ver progresso, use `python -u -m pytest -v`.
 
-**Rodar só a parte unitária não precisa de `docker compose` de pé.** `./.venv/Scripts/python.exe -m pytest tests/unit` roda os 988 testes em ~6s sem Postgres e sem Redis — é o loop certo enquanto se escreve código. `tests/integration` e `tests/features` continuam exigindo os containers.
+**Rodar só a parte unitária não precisa de `docker compose` de pé.** `./.venv/Scripts/python.exe -m pytest tests/unit` roda os 1027 testes em ~4,4s sem Postgres e sem Redis — é o loop certo enquanto se escreve código, e sem `-n`. `tests/integration` e `tests/features` continuam exigindo os containers.
 
 **A suíte cresce rápido — confira a data antes de confiar no número.** Em 02/09/2026 eram 857 testes em ~7,5 minutos; em 04/09, 1140 em ~22 minutos. Quem lê um número velho como se fosse o de hoje mata execuções boas achando que travaram.
 
