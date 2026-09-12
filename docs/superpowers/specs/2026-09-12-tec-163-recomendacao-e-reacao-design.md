@@ -175,6 +175,22 @@ As três variantes do aviso de ampliação, o kind `criterio_ampliado` e a lógi
 
 **Duas consequências, e a segunda é um ganho.** A primeira: o pior caso passa a ter três mensagens de texto, e a RN-04.2 precisa da emenda E-03. A segunda: com os avisos separados, a interação entre exclusão e relaxamento ficou visível — é a D12, e ela não teria aparecido se as duas frases estivessem fundidas numa redação só.
 
+### D17 — O `score` chega ao turno pela porta, não pelo `tool_result`
+
+**Encontrado ao escrever o plano, e ele derruba a D4 se não for resolvido.**
+
+`score_match` é `NOT NULL`, e a D4 justifica o `motivo_match` idêntico entre imóveis dizendo que *"o que distingue os imóveis é o `score_match`"*. Mas `_candidato_serializavel` **não expõe `score`**: a D7 da TEC-265 o removeu de propósito — *"`score` no prompt convida o modelo a dizer '97% de compatibilidade' ao lead — dado inventado com aparência de número"*. O turno só vê o que passou pelo `tool_result`, e ali não há score.
+
+Gravar `0.0` em toda linha tornaria a coluna decorativa **e a D4 falsa**: sem score, nada distingue os imóveis de uma recomendação, e o motivo idêntico deixaria de ser aceitável.
+
+**Recusado: passar o `score` pelo `tool_result`.** Desfaria a D7 da TEC-265 pelo motivo exato que ela nomeia.
+
+**A solução:** `porta_de_busca` é uma closure criada **por turno** — `porta_de_busca(session_factory, embedador=embedar)` é chamada dentro do turno, e o objeto morre com ele. A porta guarda os scores da última busca num dicionário capturado, por `imovel_id`, e o turno o lê na hora de gravar. O score nunca entra no contexto do modelo, e a coluna recebe o número real.
+
+**Por que isso não é estado escondido perigoso:** a closure é por turno, não global; dois turnos concorrentes têm portas distintas. E o turno já depende da porta para buscar — não há acoplamento novo, só um valor a mais atravessando um canal que já existe.
+
+**Consequência declarada:** a porta passa a ter estado, o que ela não tinha. O teste que a cobre precisa afirmar que duas portas distintas não compartilham scores, senão a próxima card que a tornar reutilizável introduz vazamento entre conversas sem ninguém notar.
+
 ## Os quatro cenários do Gherkin
 
 | Cenário da card | Onde é verificado |
