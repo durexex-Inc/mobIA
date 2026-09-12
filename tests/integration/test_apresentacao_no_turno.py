@@ -28,6 +28,8 @@ from mobia.domain.agente.schemas import (
 from mobia.domain.agente.turno import (
     KIND_DO_CRITERIO_AMPLIADO,
     KINDS_DAS_FICHAS,
+    TEXTO_DA_BUSCA_INCONCLUSIVA,
+    TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
     aviso_de_ampliacao,
 )
 from mobia.domain.catalogo.models import Imovel
@@ -91,6 +93,7 @@ class _ClassificadorComCandidatos:
         confianca: Decimal = Decimal("0.95"),
         prosa: str = PROSA,
         relaxou_e_achou: bool = False,
+        relaxou_sem_resultado: bool = False,
         relaxou_preco: bool = False,
         relaxou_bairro: bool = False,
     ) -> None:
@@ -105,6 +108,9 @@ class _ClassificadorComCandidatos:
         # extrai o fato do laco de tool use (isso ja tem cobertura propria em
         # `test_relaxamento_alargar.py` e em `test_busca_no_turno.py`).
         self.relaxou_e_achou = relaxou_e_achou
+        # Task 10. `relaxou_sem_resultado` e o outro lado da mesma extracao --
+        # o passe relaxado que continuou sem candidato nenhum.
+        self.relaxou_sem_resultado = relaxou_sem_resultado
         self.relaxou_preco = relaxou_preco
         self.relaxou_bairro = relaxou_bairro
 
@@ -121,6 +127,7 @@ class _ClassificadorComCandidatos:
             perguntou=self.perguntou,
             candidatos=self.candidatos,
             relaxou_e_achou=self.relaxou_e_achou,
+            relaxou_sem_resultado=self.relaxou_sem_resultado,
             relaxou_preco=self.relaxou_preco,
             relaxou_bairro=self.relaxou_bairro,
         )
@@ -772,3 +779,62 @@ async def test_relaxou_e_achou_sem_dimensao_nenhuma_nao_quebra_o_turno(
     assert resultado == "respondido"
     assert len(outbound.entregues) == 3, "so as fichas, sem aviso"
     assert KIND_DO_CRITERIO_AMPLIADO not in await _kinds_reservados()
+
+
+async def test_relaxou_e_nao_achou_oferece_o_corretor(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """Cenario 2 do Gherkin e regra 4 da card: "informa e oferece a lista de
+    espera ou conversa com o corretor". A lista de espera esta fora de escopo
+    (E5), entao o desfecho oferece o corretor. TEC-160, Task 10."""
+    await _conversa_ja_existe(session)
+    classificador = _ClassificadorComCandidatos([], relaxou_sem_resultado=True)
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [TEXTO_SEM_RESULTADO_APOS_AMPLIAR]
+
+
+async def test_zero_de_nada_relaxavel_mantem_a_prosa_do_modelo(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """D14. O card so legisla sobre o zero POS-relaxamento. No outro, o modelo
+    ainda pode fazer algo util que nos nao sabemos fazer -- perguntar se o lead
+    aceita dois quartos, por exemplo -- e cala-lo custaria mais do que
+    padroniza. TEC-160, Task 10."""
+    await _conversa_ja_existe(session)
+    classificador = _ClassificadorComCandidatos([], relaxou_sem_resultado=False)
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [PROSA]
+
+
+async def test_citacao_bloqueada_vence_o_desfecho(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """Se o modelo inventou imovel, a mensagem da TEC-161 e a que importa: ela
+    e sobre um defeito nosso, e o desfecho da Task 10 e sobre o catalogo.
+    TEC-160, Task 10."""
+    await _conversa_ja_existe(session)
+    classificador = _ClassificadorComCandidatos(
+        [],
+        prosa="Achei um otimo por R$ 900 mil.",
+        relaxou_sem_resultado=True,
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [TEXTO_DA_BUSCA_INCONCLUSIVA]

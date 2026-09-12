@@ -101,6 +101,23 @@ TEXTO_DA_BUSCA_INCONCLUSIVA = (
     "informacao errada. Ja te retorno com as opcoes."
 )
 
+# Regra 4 da card e cenario 2 do Gherkin. TEC-160, D14.
+#
+# **Constante nova, e nao reuso de TEXTO_DA_BUSCA_INCONCLUSIVA.** Aquele
+# promete "ja te retorno com as opcoes", e aqui nao ha opcao nenhuma para
+# retornar -- seria o sistema prometendo o que sabe que nao tem. O laco
+# excedido e a citacao bloqueada podem prometer porque nos dois casos os
+# imoveis existem e o problema e nosso.
+#
+# A card manda oferecer "a lista de espera ou o corretor", e poe a lista de
+# espera fora de escopo (E5). Este texto entrega a metade disponivel; quando o
+# E5 existir, e aqui que se volta.
+TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
+    "Procurei tambem um pouco alem do que voce pediu e mesmo assim nao achei "
+    "nada que valha a pena te mostrar agora. Quer que um corretor olhe isso "
+    "com voce?"
+)
+
 # RN-09.3 / CA-09.3, e a regra "avisado ... e EM QUE" da card. TEC-160, D11.
 #
 # Tres variantes e nao uma constante: quando so o preco foi relaxado (o lead
@@ -751,16 +768,28 @@ async def executar_turno(
         # ele E a proposta de verificacao com o corretor que a card pede.
         texto = "" if apresentando else TEXTO_DA_BUSCA_INCONCLUSIVA
 
+    # D14. Relaxou e continuou zero tem desfecho nosso, e nao prosa do modelo:
+    # e o cenario 2 do Gherkin. `not citacao_bloqueada` porque, se o modelo
+    # inventou imovel, a mensagem da TEC-161 e a que importa -- ela fala de um
+    # defeito nosso, e este texto fala do catalogo.
+    #
+    # So no zero POS-relaxamento. O zero de "nada relaxavel" (D5) segue com a
+    # prosa do modelo: ali ele ainda pode perguntar algo util que nos nao
+    # sabemos perguntar, e cala-lo custaria mais do que padroniza.
+    if gerada.relaxou_sem_resultado and not citacao_bloqueada:
+        texto = TEXTO_SEM_RESULTADO_APOS_AMPLIAR
+
     # Depois da moderacao de saida, de proposito: o texto e constante deste
     # repositorio e nao saida de modelo -- moderar dado nosso seria gastar
     # chamada sobre texto que nao inventamos, o mesmo argumento que a TEC-162
     # escreveu para as fichas.
     #
-    # Este ponto fica DEPOIS das duas reatribuicoes de `texto` acima, e por
-    # isso cobre tres trilhas, nao uma: a resposta normal, o
-    # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada e o
-    # TEXTO_DA_BUSCA_INCONCLUSIVA da citacao bloqueada da TEC-161. A
-    # apresentacao NAO e uma quarta trilha aqui -- e excluida de proposito,
+    # Este ponto fica DEPOIS das tres reatribuicoes de `texto` acima, e por
+    # isso cobre quatro trilhas, nao uma: a resposta normal, o
+    # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada, o
+    # TEXTO_DA_BUSCA_INCONCLUSIVA da citacao bloqueada da TEC-161 e o
+    # TEXTO_SEM_RESULTADO_APOS_AMPLIAR do zero pos-relaxamento da TEC-160. A
+    # apresentacao NAO e uma quinta trilha aqui -- e excluida de proposito,
     # tratada em separado dentro do `if apresentando:` abaixo (Task 5).
     #
     # `apresentando` fica de FORA aqui: naquele caminho `texto` vira prefixo de
