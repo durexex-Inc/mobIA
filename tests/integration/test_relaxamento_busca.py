@@ -10,9 +10,11 @@ Basename distinto de tudo em `tests/unit/`.
 import uuid
 from typing import Any
 
+from sqlalchemy import select
+
 from mobia.domain.catalogo.busca import buscar
 from mobia.domain.catalogo.enums import Operacao
-from mobia.domain.catalogo.models import Imovel
+from mobia.domain.catalogo.models import BairroAdjacente, Imovel
 from mobia.domain.catalogo.schemas import FiltroDeBusca
 from mobia.domain.texto import dobrar
 
@@ -135,3 +137,56 @@ async def test_vetor_pronto_dispensa_o_embedador(session: Any) -> None:
     )
 
     assert resultado.consulta_vetorizada is True
+
+
+async def test_a_adjacencia_e_simetrica(session: Any) -> None:
+    """D8. As duas direcoes sao gravadas, e a simetria e teste e nao convencao.
+
+    Sem isto, a consulta seria um OR sobre duas colunas -- e o caminho e
+    quente, com o p95 de 400 ms da TEC-159 a cumprir.
+    """
+    linhas = (await session.execute(select(BairroAdjacente))).scalars().all()
+    pares = {(linha.bairro_busca, linha.adjacente_busca) for linha in linhas}
+
+    assert pares, "a migration 0021 devia ter semeado a tabela"
+    faltando = {(b, a) for (a, b) in pares if (b, a) not in pares}
+    assert faltando == set()
+
+
+async def test_todo_nome_da_adjacencia_existe_no_catalogo_seed(session: Any) -> None:
+    """D8. Sem FK -- nao existe entidade de bairro para referenciar --, entao a
+    integridade e este teste. Nome errado na tabela falharia em silencio: o
+    bairro nunca ampliaria, e ninguem veria erro nenhum.
+
+    Os nomes esperados sao os 12 bairros do catalogo simulado
+    (`data/seed/imoveis.csv`), na forma dobrada.
+    """
+    esperados = {
+        dobrar(nome)
+        for nome in (
+            "Agronomica",
+            "Balneario",
+            "Campeche",
+            "Canasvieiras",
+            "Centro",
+            "Coqueiros",
+            "Estreito",
+            "Itacorubi",
+            "Jurere",
+            "Lagoa da Conceicao",
+            "Santo Antonio de Lisboa",
+            "Trindade",
+        )
+    }
+
+    linhas = (await session.execute(select(BairroAdjacente))).scalars().all()
+    nomes = {linha.bairro_busca for linha in linhas} | {linha.adjacente_busca for linha in linhas}
+
+    assert nomes <= esperados
+
+
+async def test_a_adjacencia_guarda_os_quinze_pares(session: Any) -> None:
+    """30 linhas: 15 pares nao ordenados, cada um nas duas direcoes."""
+    linhas = (await session.execute(select(BairroAdjacente))).scalars().all()
+
+    assert len(linhas) == 30

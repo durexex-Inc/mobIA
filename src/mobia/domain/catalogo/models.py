@@ -186,3 +186,30 @@ class Importacao(Base):
         DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
     )
     concluida_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BairroAdjacente(Base):
+    """A tabela de adjacencia pre-carregada da RN-09.3. TEC-160, D8.
+
+    **Chaveada pelo bairro DOBRADO, nunca pelo nome bonito.** `regioes` chega
+    dobrada a `buscar` e `Imovel.bairro_busca` e a coluna que o WHERE compara;
+    guardar "Lagoa da Conceicao" com acento obrigaria a dobrar em tempo de
+    consulta e faria um acento divergente no seed nunca casar, calado.
+
+    **As duas direcoes sao gravadas.** Adjacencia e simetrica no mundo, mas
+    guardar um lado so obrigaria a consulta a ser um OR sobre duas colunas com
+    uniao -- e o caminho e quente (p95 de 400 ms, TEC-159). Com as duas, a
+    consulta e um IN simples que a PK serve direto. A simetria e afirmada por
+    `test_a_adjacencia_e_simetrica`, nao por convencao.
+
+    **Sem FK, porque nao ha entidade de bairro**: `bairro_busca` e coluna
+    desnormalizada de `imoveis`. Consequencia: linha que nomeie bairro
+    inexistente e inerte, e erro de digitacao do lado esquerdo faz aquele
+    bairro nunca ampliar -- as duas falham em silencio. A integridade que o
+    schema nao da e `test_todo_nome_da_adjacencia_existe_no_catalogo_seed`.
+    """
+
+    __tablename__ = "bairros_adjacentes"
+
+    bairro_busca: Mapped[str] = mapped_column(Text, primary_key=True)
+    adjacente_busca: Mapped[str] = mapped_column(Text, primary_key=True)
