@@ -1,5 +1,7 @@
+import os
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
@@ -30,6 +32,94 @@ if TYPE_CHECKING:
     from arq.connections import ArqRedis
 
     from mobia.domain.agente.schemas import Extracao, Intencao
+
+# Maximo de bancos logicos que um Redis serve por padrao (`databases 16` no
+# redis.conf). E o teto real de workers: cada um precisa do seu.
+_BANCOS_DO_REDIS = 16
+
+
+def _isolar_por_worker() -> None:
+    """Da a cada worker do xdist um Postgres e um Redis so dele.
+
+    Sem isto, `-n` nao acelera nada: quebra. Os dois recursos que a suite usa sao
+    globais ao servidor, nao ao processo -- `banco_limpo` faz `TRUNCATE` e
+    `redis_pool` faz `flushdb()`, e cada um deles apaga o estado dos OUTROS
+    workers no meio da execucao deles. O sintoma e falha em massa que nao se
+    reproduz sozinha; foi medido nesta suite, por acidente, quando duas invocacoes
+    de pytest rodaram juntas contra a mesma base.
+
+    Roda na importacao do conftest, e nao numa fixture, porque precisa acontecer
+    antes do primeiro `get_settings()` -- que e `@lru_cache` e le do ambiente. E
+    seguro mexer em `os.environ` aqui: cada worker do xdist e um processo
+    proprio, entao nao existe o vizinho que essa escrita poderia atrapalhar.
+    Sem `-n`, `PYTEST_XDIST_WORKER` nao existe e esta funcao nao faz nada -- o
+    comportamento de quem roda `pytest` puro nao muda em nada.
+    """
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker:
+        return
+    indice = int(worker.removeprefix("gw"))
+    if indice >= _BANCOS_DO_REDIS:
+        raise RuntimeError(
+            f"worker {worker}: o Redis serve {_BANCOS_DO_REDIS} bancos, entao "
+            f"esta suite nao roda com mais de {_BANCOS_DO_REDIS} workers"
+        )
+    global _URL_BASE
+    padrao = Settings()
+    _URL_BASE = padrao.database_url
+    os.environ["DATABASE_URL"] = f"{padrao.database_url.rsplit('/', 1)[0]}/mobia_{worker}"
+    os.environ["REDIS_URL"] = f"{padrao.redis_url.rsplit('/', 1)[0]}/{indice}"
+    get_settings.cache_clear()
+
+
+# A URL do banco ANTES da troca por worker -- e nela que se conecta para criar a
+# base do worker, porque nao da para criar um banco estando dentro dele. Fica
+# `None` quando nao ha xdist, e e esse `None` que diz a `migrar_banco` que nao ha
+# base nenhuma para criar.
+_URL_BASE: str | None = None
+
+# Roda em subprocesso porque `migrar_banco` e puxada por `banco_limpo`, que e
+# async: quando ela executa ja existe event loop rodando, e `asyncio.run()` ali
+# levanta. O Alembic logo abaixo vai por subprocesso pelo mesmo motivo.
+_CRIAR_BANCO = """
+import asyncio, sys, asyncpg
+
+async def main(dsn, nome):
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute('CREATE DATABASE "%s"' % nome)
+    except asyncpg.DuplicateDatabaseError:
+        pass
+    finally:
+        await conn.close()
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))
+"""
+
+
+def _criar_banco_do_worker() -> None:
+    """Cria a base deste worker, se ela ainda nao existir.
+
+    Retenta porque `CREATE DATABASE` toma lock sobre o template, e doze workers
+    criando a sua base no mesmo instante fazem o Postgres recusar com "source
+    database is being accessed by other users". O nome de cada base e unico, entao
+    a colisao e so de timing -- esperar e repetir resolve.
+    """
+    if _URL_BASE is None:
+        return
+    alvo = get_settings().database_url.rsplit("/", 1)[1]
+    dsn = _URL_BASE.replace("+asyncpg", "")
+    for tentativa in range(5):
+        resultado = subprocess.run(
+            [sys.executable, "-c", _CRIAR_BANCO, dsn, alvo], capture_output=True
+        )
+        if resultado.returncode == 0:
+            return
+        time.sleep(0.5 * (tentativa + 1))
+    raise RuntimeError(f"nao foi possivel criar {alvo}: {resultado.stderr.decode()}")
+
+
+_isolar_por_worker()
 
 # Acrescentar uma tabela aqui NAO custa mais um statement por teste: desde
 # 12/09/2026 a limpeza e um `TRUNCATE a, b, c CASCADE` unico, e `tests/unit/`
@@ -518,7 +608,12 @@ def migrar_banco() -> None:
     teste da vez precisa de banco. Sendo autouse, uma sessao so com testes de
     `tests/unit/` pagava o Alembic -- e, pior, exigia Postgres de pe para rodar
     testes que nao tocam banco nenhum.
+
+    Sob `-n`, cada worker migra a SUA base, entao o Alembic roda N vezes em vez
+    de uma. E o preco do isolamento de `_isolar_por_worker`, e ele e pago uma vez
+    por worker, nao por teste.
     """
+    _criar_banco_do_worker()
     subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         check=True,
