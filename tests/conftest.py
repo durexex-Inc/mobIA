@@ -4,6 +4,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -492,12 +493,28 @@ def configurar_logging() -> None:
     configure_logging(get_settings().log_level)
 
 
-@pytest.fixture(scope="session", autouse=True)
+# `tests/unit/` nao fala com banco: conferido nos 50 arquivos do diretorio --
+# zero pedem `session`, `session_factory` ou `client`, e zero chamam
+# `get_sessionmaker()`. As duas unicas mencoes a `AsyncSession` e
+# `session_factory` la estao em docstring, descrevendo um duble.
+DIRETORIO_SEM_BANCO = Path(__file__).parent / "unit"
+
+
+def _precisa_de_banco(request: pytest.FixtureRequest) -> bool:
+    return DIRETORIO_SEM_BANCO not in request.path.parents
+
+
+@pytest.fixture(scope="session")
 def migrar_banco() -> None:
     """Aplica as migrations uma vez por sessao de teste.
 
     Roda o Alembic de verdade em vez de `metadata.create_all` para que as
     migrations sejam exercitadas pelos testes.
+
+    NAO e autouse desde 12/09/2026: quem a puxa e `banco_limpo`, e so quando o
+    teste da vez precisa de banco. Sendo autouse, uma sessao so com testes de
+    `tests/unit/` pagava o Alembic -- e, pior, exigia Postgres de pe para rodar
+    testes que nao tocam banco nenhum.
     """
     subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
@@ -506,19 +523,83 @@ def migrar_banco() -> None:
     )
 
 
+# O comando de limpeza, descoberto uma vez e reusado pelo resto da sessao. Ver
+# `_comando_de_truncate`.
+_TRUNCATE: str | None = None
+
+
+async def _comando_de_truncate(sessao: AsyncSession) -> str:
+    """Monta (uma vez) o `TRUNCATE` unico que limpa `TABELAS`.
+
+    Antes de 12/09/2026 `banco_limpo` fazia, para CADA teste, um
+    `SELECT to_regclass` por tabela e depois um `TRUNCATE` por tabela existente
+    -- ate 26 ida-e-volta ao Postgres por teste, numa conexao recem aberta. A
+    pergunta que o `to_regclass` responde nao muda durante a sessao: `migrar_banco`
+    ja rodou, e nenhuma tabela de `TABELAS` aparece ou some no meio do caminho.
+    Entao o primeiro teste que precisa de banco paga a descoberta e os outros
+    reusam a string.
+
+    Um `TRUNCATE a, b, c CASCADE` unico nao e so menos round-trip: ele toma o
+    lock das tabelas todas de uma vez, em vez de ir acumulando lock tabela a
+    tabela. Menos janela para a contencao que o CLAUDE.md registra como origem
+    dos flakes de integracao quando a suite roda junta.
+
+    O `to_regclass` continua existindo, em vez de virar lista fixa, porque e ele
+    que deixa `TABELAS` citar uma tabela que so uma migration futura cria sem
+    quebrar a suite inteira nesse intervalo.
+
+    O cache e modulo-global, e nao fixture de sessao, porque descobrir exige
+    `await`: uma fixture sincrona nao pode, e uma fixture async de escopo de
+    sessao colidiria com o `asyncio_default_fixture_loop_scope = "function"` do
+    pyproject.
+    """
+    global _TRUNCATE
+    if _TRUNCATE is None:
+        existentes = [
+            tabela
+            for tabela in TABELAS
+            if await sessao.scalar(text(f"SELECT to_regclass('public.{tabela}')"))
+        ]
+        _TRUNCATE = f"TRUNCATE TABLE {', '.join(existentes)} CASCADE"
+    return _TRUNCATE
+
+
 @pytest.fixture(autouse=True)
-async def banco_limpo(migrar_banco: None) -> AsyncIterator[None]:
+async def banco_limpo(request: pytest.FixtureRequest) -> AsyncIterator[None]:
     """Trunca antes do teste e descarta o engine depois.
 
     Truncar na entrada (nao na saida) evita disputar lock com a sessao do teste.
     O dispose no fim e obrigatorio: cada teste roda no seu proprio event loop e
     conexoes asyncpg nao sobrevivem a troca de loop.
+
+    Sai cedo para `tests/unit/` desde 12/09/2026. O custo era por teste da suite
+    INTEIRA -- 13 `SELECT to_regclass` mais ate 13 `TRUNCATE ... CASCADE`, e um
+    connect asyncpg novo, ja que o `dispose_engine()` abaixo descarta a engine e
+    o teste seguinte nao reaproveita conexao. Medido sobre 53f7e55: `tests/unit`
+    caiu de 161,3s para 4,4s (988 testes). Somado ao `TRUNCATE` unico de
+    `_comando_de_truncate`, a suite inteira caiu de 270,6s para ~184s, com os
+    mesmos 1540 passed em duas execucoes seguidas.
+
+    O ganho aqui e maior no loop de quem desenvolve do que no total: `tests/unit`
+    passou a rodar SEM Postgres e SEM Redis, entao rodar so a parte unitaria
+    durante um card nao precisa de `docker compose` de pe.
+
+    A decisao por caminho parece torta -- o natural seria um
+    `tests/unit/conftest.py` sobrescrevendo a fixture pelo nome. Nao da: 15
+    arquivos de teste fazem `from conftest import ...` (por exemplo
+    `_entrada_do_lead` em `integration/test_apresentacao_no_turno.py`), o que so
+    funciona porque no import mode `prepend` existe UM modulo de topo chamado
+    `conftest`. Um segundo `conftest.py` em qualquer subdiretorio sombreia o
+    raiz em `sys.modules` e derruba esses 15 arquivos com ImportError -- medido,
+    35 falhas. Enquanto esses imports existirem, este arquivo e o unico conftest
+    possivel, e a condicao tem de morar aqui dentro.
     """
+    if not _precisa_de_banco(request):
+        yield
+        return
+    request.getfixturevalue("migrar_banco")
     async with get_sessionmaker()() as sessao:
-        for tabela in TABELAS:
-            existe = await sessao.scalar(text(f"SELECT to_regclass('public.{tabela}')"))
-            if existe:
-                await sessao.execute(text(f"TRUNCATE TABLE {tabela} CASCADE"))
+        await sessao.execute(text(await _comando_de_truncate(sessao)))
         await sessao.commit()
     yield
     await dispose_engine()
