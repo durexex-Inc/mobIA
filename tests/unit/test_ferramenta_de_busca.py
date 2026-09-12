@@ -250,6 +250,52 @@ async def test_o_tool_result_leva_as_duas_dimensoes_do_relaxamento() -> None:
     assert saida["relaxamento_de_bairro"] is False
 
 
+async def test_o_tool_result_leva_os_criterios_da_busca() -> None:
+    """TEC-163, D4. Um campo por BUSCA, nao um por candidato.
+
+    Sao os criterios que de fato entraram no WHERE -- o turno renderiza a
+    frase do `motivo_match` a partir deles, em Python, fora do contexto do
+    modelo.
+    """
+    saida = await _porta(_BuscaEspia())(
+        {"operacao": "VENDA", "quartos_min": 3, "regioes": ["Trindade"]}
+    )
+
+    assert saida["criterios"] == ["3 quartos", "Trindade"]
+
+
+async def test_busca_sem_filtro_leva_lista_de_criterios_vazia() -> None:
+    saida = await _porta(_BuscaEspia())({"operacao": "VENDA"})
+
+    assert saida["criterios"] == []
+
+
+async def test_o_score_do_candidato_fica_acessivel_fora_do_tool_result() -> None:
+    """TEC-163, D17. O turno precisa do `score` para gravar
+    `Recomendacao.score_match`, mas o D7 da TEC-265 proibe manda-lo no
+    `tool_result` que o modelo le -- por isso ele nao aparece em `saida` e so
+    e alcancavel por `score_de`."""
+    porta = _porta(_BuscaEspia())
+
+    saida = await porta({"operacao": "VENDA"})
+
+    assert "score" not in saida["candidatos"][0]
+    assert porta.score_de(CANDIDATO.imovel_id) == CANDIDATO.score
+
+
+async def test_duas_portas_nao_compartilham_scores() -> None:
+    """TEC-163, D17. `porta_de_busca` e chamada uma vez por turno; sem este
+    teste, a proxima card que tornar a porta reusavel entre turnos vazaria o
+    score de uma conversa para outra sem que ninguem percebesse."""
+    porta_a = _porta(_BuscaEspia())
+    porta_b = _porta(_BuscaEspia())
+
+    await porta_a({"operacao": "VENDA"})
+
+    assert porta_a.score_de(CANDIDATO.imovel_id) == CANDIDATO.score
+    assert porta_b.score_de(CANDIDATO.imovel_id) is None
+
+
 async def test_o_tool_result_leva_as_duas_dimensoes_juntas() -> None:
     """O cenario 1 do Gherkin da card -- "preco ate R$ 440.000 E bairros
     adjacentes" -- e o unico que produz a variante de aviso com as duas

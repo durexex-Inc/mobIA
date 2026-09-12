@@ -17,7 +17,7 @@ from typing import Any
 
 import structlog
 
-from mobia.domain.agente.apresentacao import Ficha, diferencial_de
+from mobia.domain.agente.apresentacao import Ficha, diferencial_de, reais_de
 from mobia.domain.catalogo.enums import EstadoDoRelaxamento, Operacao, TipoImovel
 from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
 from mobia.domain.catalogo.repositorio import imoveis_por_ids
@@ -97,6 +97,68 @@ def _candidato_serializavel(candidato: Candidato) -> dict[str, Any]:
     }
 
 
+def _criterios_de(filtro: FiltroDeBusca) -> list[str]:
+    """Os criterios que entraram no WHERE, em forma legivel. TEC-163, D4.
+
+    Um por BUSCA e nao por candidato: e a mesma lista para todos os imoveis
+    daquela apresentacao, e repeti-la por candidato pagaria tokens no
+    `tool_result` para dizer tres vezes a mesma coisa.
+
+    `operacao` fica de fora de proposito: ela nao restringe o que o lead
+    pediu, escolhe a coluna de preco. "VENDA" como motivo de match nao
+    explica nada a quem le a linha depois.
+    """
+    criterios: list[str] = []
+    if filtro.quartos_min is not None:
+        criterios.append(f"{filtro.quartos_min} quartos")
+    if filtro.vagas_min is not None:
+        criterios.append(f"{filtro.vagas_min} vagas")
+    if filtro.tipo is not None:
+        criterios.append(filtro.tipo.value.lower())
+    if filtro.regioes:
+        criterios.extend(filtro.regioes)
+    if filtro.preco_max_centavos is not None:
+        criterios.append(f"ate {reais_de(filtro.preco_max_centavos)}")
+    return criterios
+
+
+class _PortaComScore:
+    """A porta de busca, com um canal de scores que o `tool_result` nao carrega.
+
+    TEC-163, D17. `porta_de_busca` e fabrica chamada UMA VEZ POR TURNO (ver
+    `turno.py`) -- o dict de scores desta instancia nasce vazio a cada
+    chamada e morre com o turno que a criou.
+
+    **Por que um canal separado, e nao a rota obvia.** O obvio seria devolver
+    `score` dentro do dict que `__call__` retorna, porque e dali que o
+    classificador pega tudo o mais. A TEC-265 (D7) proibiu isso de proposito:
+    `score` no prompt convida o modelo a dizer "97% de compatibilidade" ao
+    lead, um numero inventado com aparencia de fato. Escrever `0.0` no lugar
+    do score real evitaria o prompt mas tornaria a coluna `score_match`
+    decorativa -- e falsificaria a premissa do D4 ("o que distingue os
+    candidatos e o `score_match`"). Por isso o score viaja por um metodo que
+    o modelo nunca chama: quem le e o turno, depois da busca, para montar a
+    `Recomendacao` (Task 3). Se algum dia isto for "arrumado" para voltar ao
+    dict devolvido, o D7 volta a valer e o motivo de ele existir se repete.
+
+    Continua servindo de `PortaDeBusca` (`Callable[[dict], Awaitable[dict]]`)
+    para o classificador, que so sabe chamar um callable -- D3 nao muda.
+    """
+
+    def __init__(self, chamar: PortaDeBusca, scores: dict[uuid.UUID, float]) -> None:
+        self._chamar = chamar
+        self._scores = scores
+
+    async def __call__(self, entrada: dict[str, Any]) -> dict[str, Any]:
+        return await self._chamar(entrada)
+
+    def score_de(self, imovel_id: uuid.UUID) -> float | None:
+        """O `score_match` do candidato, da ultima busca deste turno que o
+        trouxe. `None` se este imovel nunca apareceu numa busca desta porta.
+        """
+        return self._scores.get(imovel_id)
+
+
 def porta_de_busca(
     session_factory: Any,
     *,
@@ -108,8 +170,16 @@ def porta_de_busca(
     `buscar` e `embedador` sao injetaveis para o teste unitario nao precisar de
     banco nem de chave -- o mesmo molde do `embedador` que `indexar_catalogo`
     recebe pelo `ctx`.
+
+    Devolve um `_PortaComScore` e nao a funcao `porta` diretamente: TEC-163
+    precisa que o turno recupere o `score` de cada candidato para gravar
+    `Recomendacao`, sem que esse numero passe pelo `tool_result` que o modelo
+    le (D7 da TEC-265). O dict `scores` e criado aqui, por chamada de
+    `porta_de_busca`, para que duas portas (dois turnos) nunca compartilhem
+    score um do outro -- ver `test_duas_portas_nao_compartilham_scores`.
     """
     executar = buscar or buscar_com_relaxamento
+    scores: dict[uuid.UUID, float] = {}
 
     async def porta(entrada: dict[str, Any]) -> dict[str, Any]:
         operacao_bruta = str(entrada.get("operacao"))
@@ -160,6 +230,13 @@ def porta_de_busca(
             log.warning("catalogo.tool_call_falhou", tipo=type(erro).__name__)
             return {"erro": "a busca nao pode ser feita agora"}
 
+        # TEC-163, D17. Guarda o score de cada candidato desta busca no dict
+        # da porta -- NUNCA no `saida` abaixo, que e o `tool_result` que o
+        # modelo le. O turno recupera via `_PortaComScore.score_de` depois da
+        # busca, para gravar `Recomendacao.score_match`.
+        for candidato in resultado.candidatos:
+            scores[candidato.imovel_id] = candidato.score
+
         saida: dict[str, Any] = {
             "candidatos": [_candidato_serializavel(c) for c in resultado.candidatos],
             # RN-09.2: o agente precisa saber que ve 10 de 40.
@@ -175,6 +252,11 @@ def porta_de_busca(
             # redige o aviso, o turno redige (Task 9).
             "relaxamento_de_preco": resultado.relaxou_preco,
             "relaxamento_de_bairro": resultado.relaxou_bairro,
+            # TEC-163, D4. Um campo por busca: o turno monta o `motivo_match`
+            # a partir daqui, em Python. Sem isto, ou o motivo seria escrito
+            # pelo modelo (D5 recusa) ou o turno nao teria como saber o que
+            # o filtro pediu -- ele so ve os candidatos.
+            "criterios": _criterios_de(filtro),
         }
 
         if saida["relaxamento_aplicado"]:
@@ -194,7 +276,7 @@ def porta_de_busca(
 
         return saida
 
-    return porta
+    return _PortaComScore(porta, scores)
 
 
 async def fichas_do_catalogo(
