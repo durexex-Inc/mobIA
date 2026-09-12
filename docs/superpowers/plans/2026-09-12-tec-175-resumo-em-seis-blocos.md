@@ -53,7 +53,7 @@
 
 **Interfaces:**
 - Consumes: nada.
-- Produces: `Dossie`, `ImovelApresentado`, `montar_dossie(...) -> Dossie`, `renderizar(dossie: Dossie) -> str`, `reais(centavos: int | None) -> str`.
+- Produces: `Dossie`, `ImovelApresentado`, `renderizar(dossie: Dossie) -> str`, `reais(centavos: int | None) -> str`. **Não** há função de montagem aqui: quem lê as quatro tabelas e constrói o `Dossie` é `carregar_dossie`, na Task 6 — este módulo fica puro, como a docstring dele promete.
 
 - [ ] **Step 1: Write the failing test**
 
