@@ -13,7 +13,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from mobia.domain.agente.models import Recomendacao
-from mobia.domain.agente.repositorio import gravar_reacoes, gravar_recomendacoes, ler_pendentes
+from mobia.domain.agente.repositorio import (
+    _TABELA_IMOVEIS,
+    gravar_reacoes,
+    gravar_recomendacoes,
+    ler_pendentes,
+)
 from mobia.domain.agente.schemas import CategoriaDescarte, ReacaoDoImovel, ReacaoLead
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.texto import dobrar
@@ -353,3 +358,28 @@ async def test_gravar_reacoes_fecha_pendentes_nao_mencionadas_como_neutro(
     }
     assert linhas[mencionado].reacao_lead == "INTERESSE"
     assert linhas[esquecido].reacao_lead == "NEUTRO"
+
+
+def test_a_tabela_sombra_ainda_bate_com_as_colunas_de_imovel() -> None:
+    """`_TABELA_IMOVEIS` e uma SEGUNDA definicao do formato de `imoveis`, de proposito.
+
+    `repositorio.py` declara essa Core table em vez de importar `Imovel`
+    porque `ferramenta_de_busca.py` reserva para si ser "o unico arquivo em
+    que domain/agente toca domain/catalogo" -- um import aqui tornaria essa
+    frase falsa. O preco desse desvio e nao ter mais uma unica fonte para o
+    formato de `imoveis`: se alguem renomear `id`, `titulo` ou `bairro` em
+    `Imovel`, nada falha em import nem em mypy, porque `_TABELA_IMOVEIS` nao
+    referencia `Imovel` nenhum -- o JOIN de `ler_pendentes` so quebraria em
+    tempo de consulta, em producao. E o mesmo risco que `COLUNA_DE_PRECO`
+    (`catalogo/schemas.py`) existe para fechar do lado do preco; aqui, este
+    teste e a guarda: ele roda no arquivo de teste, que ja importa `Imovel`
+    porque a fronteira de `ferramenta_de_busca.py` e sobre `src/`, nao sobre
+    `tests/`.
+    """
+    colunas_de_imovel = Imovel.__table__.columns
+    for nome in ("id", "titulo", "bairro"):
+        assert nome in colunas_de_imovel, (
+            f"'{nome}' sumiu de Imovel.__table__.columns -- _TABELA_IMOVEIS em "
+            "repositorio.py ainda a nomeia, e ler_pendentes quebraria em consulta"
+        )
+    assert set(_TABELA_IMOVEIS.columns.keys()) == {"id", "titulo", "bairro"}
