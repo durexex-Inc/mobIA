@@ -401,6 +401,8 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 
 **Regras de negócio:**
 - RN-16.1: Gatilhos de handoff: lead atinge `QUENTE`; agendamento confirmado; pedido explícito de humano; intenção `VENDER_IMOVEL` ou `SUPORTE_CONTRATO`; limite de 8 perguntas atingido; erro irrecuperável do agente.
+  - **Emenda E-01 (TEC-174, 12/09/2026):** a prioridade de um handoff **aberto** escala para `ALTA` e **nunca desce**. A regra original fixa a prioridade pelo gatilho (`ALTA` para pedido explícito de humano, `NORMAL` para os demais) mas é silenciosa sobre o gatilho que chega depois, sobre um handoff que já existe — e a regra de deduplicação manda o gatilho novo atualizar o existente em vez de criar outro. Sem esta emenda, a leitura literal rebaixaria um pedido explícito a `NORMAL` sempre que houvesse handoff anterior, violando a RN-04.6, que manda o pedido explícito *"interromper o fluxo imediatamente e criar handoff prioritário"*. A **etiqueta**, ao contrário da prioridade, permanece a do gatilho que criou o handoff: é por ela que a fila do dashboard (RF-18) é filtrada, e etiqueta que muda sozinha embaralha filtro salvo. Ver a D6 e a D7 do desenho.
+  - **Emenda E-02 (TEC-174, 12/09/2026):** `corretor_id` é **opcional** enquanto não existirem corretores. O modelo de dados da seção 5 o declara obrigatório e como FK, mas a entidade Corretor só nasce na TEC-196 — FK exige tabela alvo. A coluna nasce nulável e sem restrição de chave estrangeira; a TEC-196 acrescenta a restrição quando criar a tabela. **Provisória por construção**, ao contrário da ausência de FK em `moderation_events` e `lead_score_audit`, que é permanente e tem outra causa (descompasso de retenção). Consequência declarada: o critério de aceite *"Handoff aponta o corretor já alocado"* não é exercitável até a TEC-196. Ver a D3 e a L1 do desenho.
 - RN-16.2: Notificação por e-mail e WhatsApp ao corretor designado em até 60 s, com resumo e link direto para o lead no dashboard.
 - RN-16.3: Handoff cria uma tarefa com SLA de aceite: 15 min para `QUENTE`, 4 h para os demais. Estourado o SLA, escala para o gerente comercial.
 - RN-16.4: Ao assumir, o corretor coloca o agente em modo silencioso naquela conversa. O agente não envia mais nada até ser reativado, mas continua registrando as mensagens.
@@ -844,7 +846,8 @@ Campos marcados com **DP** são dados pessoais sob LGPD e estão sujeitos aos RN
 | Campo | Tipo | Obrig. | Observação |
 |---|---|---|---|
 | id | UUID | Sim | PK |
-| conversa_id / corretor_id | UUID | Sim | FKs |
+| channel + conversation_key | varchar | Sim | **Emenda E-03 (TEC-174, 12/09/2026):** a identidade do lead é este par, e não `conversa_id`. Não existe tabela `conversas` — a entidade foi deferida para a TEC-130 — e o par já é a identidade em `lead_qualification`, `followups`, `optout_events` e `moderation_events`. Criar `conversa_id` agora instituiria uma segunda identidade concorrente com a que quatro tabelas usam. Ver a D2 do desenho. |
+| corretor_id | UUID | Não | Ver a Emenda E-02 da RN-16.1: nulável e sem FK até a TEC-196 |
 | gatilho | enum | Sim | Ver RN-16.1 |
 | prioridade | enum | Sim | `ALTA`, `NORMAL` |
 | resumo | text | Sim | Gerado no RF-15 |
