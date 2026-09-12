@@ -95,4 +95,14 @@ jobs:
       - name: Rodar a suite
         # O teste de latencia fica fora pelo `addopts = "-m 'not perf'"` do
         # pyproject: medir p95 em runner compartilhado seria flake, nao sinal.
-        run: python -m pytest -v
+        #
+        # `-n auto` casa com os cores do runner; `--dist loadfile` mantem cada
+        # arquivo inteiro num worker so, preservando qualquer ordem interna de
+        # que um arquivo dependa. Cada worker roda contra um Postgres e um Redis
+        # so dele -- ver `_isolar_por_worker` em tests/conftest.py --, senao o
+        # TRUNCATE de um apagaria o estado dos outros.
+        #
+        # O `-n` NAO esta no `addopts` de proposito: paralelizar so compensa na
+        # suite inteira. Medido, `tests/unit` sozinho piora de 4,4s para 8,6s,
+        # porque a partida dos workers custa mais que os testes.
+        run: python -m pytest -v -n auto --dist loadfile
