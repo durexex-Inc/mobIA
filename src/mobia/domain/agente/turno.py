@@ -33,7 +33,7 @@ from mobia.domain.agente.repositorio import (
     ler_pendentes,
     marcar_desambiguacao,
 )
-from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
+from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
@@ -41,6 +41,8 @@ from mobia.domain.context.qualificacao import esta_qualificado
 from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados, registrar_recalculo
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
+from mobia.domain.handoff.repositorio import registrar_handoff
+from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
@@ -170,6 +172,15 @@ TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO = (
 # de KINDS_DAS_FICHAS registra: kind que muda entre retentativas perde a dedup
 # justamente quando ela importa. A coluna e String(32); isto tem 17.
 KIND_DO_CRITERIO_AMPLIADO = "criterio_ampliado"
+
+# RN-03.4: estas duas intencoes nao sao trabalho de SDR, e o comentario de
+# `qualificacao.py` ja dizia que elas vao "direto para handoff" -- um destino
+# que so passou a existir na TEC-174. O lead segue recebendo a resposta deste
+# turno: silenciar e a RN-16.4, que e a TEC-179.
+_GATILHO_DA_INTENCAO = {
+    Intencao.VENDER_IMOVEL: Gatilho.VENDA_IMOVEL,
+    Intencao.SUPORTE_CONTRATO: Gatilho.SUPORTE_CONTRATO,
+}
 
 
 def aviso_de_ampliacao(relaxou_preco: bool, relaxou_bairro: bool) -> str:
@@ -683,7 +694,9 @@ async def executar_turno(
         # Nao propaga: `process_message` marcaria FAILED e o sweeper
         # reenfileiraria o mesmo turno, que pediria a ferramenta duas vezes de
         # novo -- gastando duas chamadas ao modelo por tentativa para chegar
-        # ao mesmo lugar. O lead recebe texto conservador e o corretor entra.
+        # ao mesmo lugar. O lead recebe texto conservador; nenhum handoff nasce
+        # aqui -- este `return` sai por `_entregar_texto_fixo`, ANTES do bloco
+        # transacional que registra handoff mais abaixo.
         log.warning("turno.laco_de_busca_excedido", channel=message.channel)
         return await _entregar_texto_fixo(
             session_factory,
@@ -716,6 +729,12 @@ async def executar_turno(
     # do lead, nao sobre a nossa resposta. Saida bloqueada e envio fora da
     # janela nao descartam uma recusa que o lead de fato disse.
     antes = esta_qualificado(contexto.estado, _recusados_de(contexto.estado))
+    # TEC-174, fix wave (Important 2). Os dois ficam None quando a condicao que
+    # os preenche nao roda -- e viram o booleano de `registrar_handoff` quando
+    # roda. `registrar_handoff` nao loga mais (ver o comentario de la); quem
+    # loga e este modulo, e so DEPOIS do commit abaixo.
+    handoff_do_quente: bool | None = None
+    handoff_da_intencao: bool | None = None
     async with session_factory() as session:
         anterior = await ler_intencao(session, message.channel, message.conversation_key)
         await gravar_intencao(
@@ -753,7 +772,44 @@ async def executar_turno(
             conversation_key=message.conversation_key,
             gatilhos=gatilhos,
         )
+        # TEC-174. Aqui dentro, e nao junto ao `lead.esquentou` la embaixo: este
+        # `commit` e o que torna indivisivel "o lead esquentou" e "o corretor
+        # tem tarefa". Do lado de fora seria sessao nova, e existiria a janela
+        # em que o lead esta QUENTE e ninguem foi avisado -- que e o "lead
+        # qualificado morre no banco" que a card existe para impedir.
+        if (
+            recalculo is not None
+            and recalculo.anterior is not Temperatura.QUENTE
+            and recalculo.temperatura is Temperatura.QUENTE
+        ):
+            handoff_do_quente = await registrar_handoff(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                gatilho=Gatilho.LEAD_QUENTE,
+            )
+
+        if (gatilho_da_intencao := _GATILHO_DA_INTENCAO.get(gerada.intencao)) is not None:
+            handoff_da_intencao = await registrar_handoff(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                gatilho=gatilho_da_intencao,
+            )
         await session.commit()
+
+    # TEC-174, fix wave (Important 2). Depois do commit acima -- o gatilho da
+    # intencao dispara em todo turno com a classificacao certa (sem condicao
+    # de borda, ao contrario do QUENTE logo abaixo), entao nao ha um evento
+    # vizinho pronto para emprestar a posicao; loga aqui, e so aqui.
+    if gatilho_da_intencao is not None and handoff_da_intencao is not None:
+        log.info(
+            "handoff.criado" if handoff_da_intencao else "handoff.gatilho_adicional",
+            channel=message.channel,
+            gatilho=gatilho_da_intencao.value,
+            etiqueta=ETIQUETA_DE[gatilho_da_intencao],
+            prioridade=PRIORIDADE_DE[gatilho_da_intencao].value,
+        )
 
     # A borda, nao o estado: um lead ja qualificado que segue conversando nao
     # gera o evento de novo, senao a taxa de qualificacao da RN-17.1 contaria
@@ -819,11 +875,11 @@ async def executar_turno(
     # Depois do commit, como `lead.qualificado`: logar uma transicao que o
     # rollback desfez e mentir para quem le o log.
     #
-    # **Isto NAO e a notificacao da RN-06.5, e a lacuna esta declarada no
-    # desenho.** A entrega depende do handoff (E7), que nao existe -- nao ha
-    # epico, nao ha consumidor, e o conteudo da mensagem esta fora do escopo
-    # da card. Os 60 segundos da regra sao triviais porque o evento e sincrono
-    # no turno; o que nao existe e alguem do outro lado.
+    # **A notificacao da RN-06.5 continua sem existir, mas o registro dela nao.**
+    # Desde a TEC-174 a travessia para QUENTE cria um `handoff` na MESMA
+    # transacao deste recalculo -- ou o lead vira QUENTE e tem handoff, ou nem
+    # uma coisa nem outra. O que falta e a entrega ao corretor (TEC-177): os 60
+    # segundos da regra seguem triviais porque o evento e sincrono no turno.
     #
     # O texto do lead nao entra: `motivos` e vocabulario nosso, nao fala dele.
     # Mesma regra de PII que `moderacao.entrada_bloqueada` respeita.
@@ -845,6 +901,19 @@ async def executar_turno(
             motivos=list(recalculo.gatilhos),
             total=recalculo.total,
         )
+        # TEC-174, fix wave (Important 2). Depois do commit, junto de
+        # `lead.esquentou` -- mesma condicao, mesma borda, mesmo motivo de
+        # nao logar dentro de `registrar_handoff`. `handoff_do_quente` so e
+        # None quando esta condicao e falsa, entao aqui ele sempre carrega o
+        # booleano que o `registrar_handoff` de cima devolveu.
+        if handoff_do_quente is not None:
+            log.info(
+                "handoff.criado" if handoff_do_quente else "handoff.gatilho_adicional",
+                channel=message.channel,
+                gatilho=Gatilho.LEAD_QUENTE.value,
+                etiqueta=ETIQUETA_DE[Gatilho.LEAD_QUENTE],
+                prioridade=PRIORIDADE_DE[Gatilho.LEAD_QUENTE].value,
+            )
 
     desambiguando = deve_desambiguar(
         gerada.confianca, anterior.desambiguado_em if anterior else None

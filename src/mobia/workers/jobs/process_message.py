@@ -7,11 +7,32 @@ import structlog
 from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.app.config import get_settings
 from mobia.domain.agente.turno import ResultadoDoTurno, executar_turno
+from mobia.domain.handoff.repositorio import registrar_handoff
+from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
+from mobia.domain.outbound.port import OutboundPort
 
 log = structlog.get_logger(__name__)
+
+# String fixa, sem id dentro, pelo mesmo argumento de idempotencia que os KINDs
+# de `turno.py` registram: kind que muda entre retentativas perde a dedup da
+# reserva justamente quando ela importa. A coluna e String(32); isto tem 13.
+KIND_DO_AVISO_DE_ERRO = "aviso_de_erro"
+
+# Nao promete prazo nem explica a falha: o lead nao tem o que fazer com
+# "timeout do provedor", e prometer horario e promessa que esta card nao tem
+# como cumprir -- a alocacao de corretor e a TEC-166. E nao promete um AVISO
+# que este sistema nao pratica -- notificar o corretor e a TEC-177, fora do
+# escopo desta card. "Passei sua conversa para" descreve o que de fato ocorre
+# (a linha PENDENTE em `handoffs`, que e por onde o time humano pega o caso)
+# sem afirmar que alguem do outro lado ja foi avisado.
+TEXTO_DO_AVISO_DE_ERRO = (
+    "Tive um problema tecnico aqui e nao consegui seguir. "
+    "Passei sua conversa para um corretor assumir."
+)
 
 # "skipped" e deste modulo -- claim recusado ou a mensagem sumiu entre o claim
 # e a busca -- os outros sete vem do turno (Task 6, Literal de proposito: ver
@@ -53,14 +74,18 @@ SEGUNDOS_PARA_REGISTRAR_CANCELAMENTO = 10
 
 async def _marcar_falha(
     session_factory: async_sessionmaker[AsyncSession], identifier: uuid.UUID, detalhe: str
-) -> None:
-    """Fecha a linha como FAILED e conta a tentativa.
+) -> int:
+    """Fecha a linha como FAILED, conta a tentativa e devolve o novo total.
 
     Nao loga: os dois chamadores emitem eventos diferentes de proposito, e o
     que eles compartilham e so a escrita.
+
+    **Devolve o total desde a TEC-174.** O incremento e expressao SQL, entao
+    sem o `returning` ninguem em Python sabe quantas tentativas ja houve -- e
+    "irrecuperavel" e a falha que ESGOTA as tentativas, nao qualquer falha.
     """
     async with session_factory() as session:
-        await session.execute(
+        resultado = await session.execute(
             update(Message)
             .where(Message.id == identifier)
             .values(
@@ -68,8 +93,72 @@ async def _marcar_falha(
                 attempts=Message.attempts + 1,
                 last_error=detalhe,
             )
+            .returning(Message.attempts)
         )
         await session.commit()
+        return resultado.scalar_one()
+
+
+async def _encaminhar_por_erro(
+    session_factory: async_sessionmaker[AsyncSession],
+    outbound: OutboundPort,
+    message: Message,
+) -> None:
+    """Cria o handoff do erro irrecuperavel e avisa o lead, nessa ordem.
+
+    **Sessao propria**: a do turno morreu com a excecao.
+
+    **Nada daqui pode escapar.** Uma excecao neste bloco SUBSTITUIRIA o erro
+    original do turno e apagaria a causa real da falha -- e o mesmo argumento
+    que o `except asyncio.CancelledError` deste arquivo ja faz para si.
+
+    **Handoff primeiro, aviso depois**: o turno falhou, entao nao se sabe se o
+    `outbound` responde. Se o aviso falhar, o handoff PERMANECE -- o corretor
+    ser avisado nao pode depender de o lead ter sido avisado.
+    """
+    try:
+        async with session_factory() as session:
+            criou = await registrar_handoff(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                gatilho=Gatilho.ERRO_DO_AGENTE,
+            )
+            await session.commit()
+    except Exception as falha:
+        log.error(
+            "handoff.nao_registrado",
+            message_id=str(message.id),
+            reason=type(falha).__name__,
+        )
+        return
+
+    # Depois do commit acima -- ver o comentario em `registrar_handoff` sobre
+    # por que ela mesma nao loga.
+    log.info(
+        "handoff.criado" if criou else "handoff.gatilho_adicional",
+        channel=message.channel,
+        gatilho=Gatilho.ERRO_DO_AGENTE.value,
+        etiqueta=ETIQUETA_DE[Gatilho.ERRO_DO_AGENTE],
+        prioridade=PRIORIDADE_DE[Gatilho.ERRO_DO_AGENTE].value,
+    )
+
+    try:
+        await outbound.send(
+            message.id,
+            KIND_DO_AVISO_DE_ERRO,
+            {
+                "para": message.conversation_key,
+                "de": message.recipient_external_id,
+                "texto": TEXTO_DO_AVISO_DE_ERRO,
+            },
+        )
+    except Exception as falha:
+        log.warning(
+            "handoff.aviso_nao_entregue",
+            message_id=str(message.id),
+            reason=type(falha).__name__,
+        )
 
 
 async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
@@ -119,6 +208,10 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
             return "skipped"
         await session.commit()
 
+    # Fora do try: se o proprio `get` falhar, o except abaixo nao teria
+    # como montar o handoff (precisa de `channel`/`conversation_key`) e
+    # `linha` continua None -- ver a guarda antes de `_encaminhar_por_erro`.
+    linha: Message | None = None
     try:
         async with session_factory() as session:
             linha = await session.get(Message, identifier)
@@ -145,10 +238,17 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
             await session.commit()
     except Exception as exc:
         detalhe = _detalhe_do_erro(exc)
-        await _marcar_falha(session_factory, identifier, detalhe)
+        tentativas = await _marcar_falha(session_factory, identifier, detalhe)
         # Mesmo valor da coluna, e pelo mesmo motivo: o log estruturado nao
         # mascara `error`, e a chave nao esta na lista de campos redigidos.
         log.warning("message.failed", message_id=message_id, error=detalhe)
+        # So encaminha quando as tentativas ESGOTARAM (D9) -- na primeira
+        # falha a proxima retentativa ainda pode resolver, e handoff aqui
+        # seria alarme falso para o corretor. `linha is not None` cobre o
+        # caso raro de o `session.get` acima ser o que falhou: sem a linha
+        # nao ha `channel`/`conversation_key` para o handoff.
+        if linha is not None and tentativas >= get_settings().sweep_max_attempts:
+            await _encaminhar_por_erro(session_factory, outbound, linha)
         raise
     except asyncio.CancelledError as exc:
         # `CancelledError` e BaseException, nao Exception: o `except` acima nao

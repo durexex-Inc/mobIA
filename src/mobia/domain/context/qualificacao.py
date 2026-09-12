@@ -21,6 +21,10 @@ CAMPOS_OBRIGATORIOS: tuple[str, ...] = ("intencao", CAMPO_DO_ORCAMENTO, "regiao"
 # motivo: significam ausencia de intencao utilizavel, e a coluna raramente e nula
 # depois do primeiro turno, entao "preenchida" precisa desta lista para
 # significar alguma coisa.
+#
+# Desde a TEC-174 esse handoff existe de verdade: `turno.py` chama
+# `registrar_handoff` com VENDA_IMOVEL ou SUPORTE_CONTRATO, que sao filas
+# diferentes para o corretor.
 INTENCOES_QUALIFICAVEIS = frozenset(
     {Intencao.COMPRA.value, Intencao.ALUGUEL.value, Intencao.INVESTIMENTO.value}
 )
