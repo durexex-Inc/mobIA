@@ -5,7 +5,10 @@ TEC-163. Sem I/O e sem banco: o que precisa de sessao mora em
 ficam as decisoes que se testam sem nada de pe.
 """
 
+import uuid
 from collections.abc import Sequence
+
+from mobia.domain.agente.schemas import ReacaoDoImovel
 
 _SEM_CRITERIO = "sem filtro: o lead nao restringiu a busca"
 
@@ -27,3 +30,24 @@ def motivo_do_match(criterios: Sequence[str]) -> str:
     sem saber se nao houve filtro ou se alguem esqueceu de gravar.
     """
     return ", ".join(criterios) if criterios else _SEM_CRITERIO
+
+
+def resolver_ordinais(
+    reacoes: Sequence[ReacaoDoImovel], apresentados: Sequence[uuid.UUID]
+) -> tuple[tuple[uuid.UUID, ReacaoDoImovel], ...]:
+    """Casa cada reacao com o imovel daquela posicao. D7.
+
+    **Ordinal fora de 1..N sai, e os outros ficam.** Um ordinal inventado nao
+    pode invalidar as reacoes que o modelo acertou: o lead perderia a opiniao
+    correta junto com a errada, e o turno nao tem como perguntar de novo.
+
+    A guarda e `1 <= ordinal <= len(apresentados)` e nao um `try/except
+    IndexError`, porque `apresentados[-1]` em Python devolve o ULTIMO item em
+    vez de levantar -- um ordinal negativo marcaria o imovel errado, em
+    silencio, e o lead veria a reacao dele aplicada a outro imovel.
+    """
+    return tuple(
+        (apresentados[reacao.ordinal - 1], reacao)
+        for reacao in reacoes
+        if 1 <= reacao.ordinal <= len(apresentados)
+    )

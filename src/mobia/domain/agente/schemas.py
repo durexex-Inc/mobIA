@@ -239,6 +239,32 @@ def normalizar_regiao(texto: str) -> str:
     return limpo
 
 
+@dataclass(frozen=True, slots=True)
+class ReacaoDoImovel:
+    """A reacao do lead a UM imovel apresentado, por ordinal. TEC-163, D7.
+
+    **Ordinal e nao `imovel_id`.** Um UUID inventado pelo modelo e
+    indistinguivel de um verdadeiro ate bater no banco; um ordinal fora de
+    1..N e rejeitado por comparacao com um inteiro. E a disciplina da TEC-161
+    aplicada na ENTRADA: o modelo nunca produz identificador que o codigo nao
+    consiga conferir.
+    """
+
+    ordinal: int
+    reacao: ReacaoLead
+    categoria: CategoriaDescarte | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReacoesDoTurno:
+    """O que a segunda chamada devolve. Vazio nao e erro: o lead pode ter
+    respondido sem falar de imovel nenhum, e ai todas as linhas pendentes
+    fecham como NEUTRO."""
+
+    reacoes: tuple[ReacaoDoImovel, ...]
+    modelo: str
+
+
 @dataclass(frozen=True)
 class Extracao:
     """O que o lead disse sobre o que procura, neste turno.
