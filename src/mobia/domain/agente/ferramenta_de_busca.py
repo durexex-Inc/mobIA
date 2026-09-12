@@ -101,7 +101,18 @@ def _candidato_serializavel(candidato: Candidato) -> dict[str, Any]:
 
 
 def _criterios_de(filtro: FiltroDeBusca) -> list[str]:
-    """Os criterios que entraram no WHERE, em forma legivel. TEC-163, D4.
+    """Os criterios que o lead PEDIU, em forma legivel. TEC-163, D4.
+
+    **O que o lead pediu, nao necessariamente o que os candidatos satisfazem.**
+    `filtro` e o filtro do PRIMEIRO passe; o alargado da RN-09.3 e montado
+    dentro de `buscar_com_relaxamento` e nunca chega aqui, entao um resultado
+    relaxado sai desta funcao descrito pelo teto (ou pelos bairros) que ele
+    justamente nao respeita. A funcao nao tem como saber -- quando ela roda, a
+    busca nem aconteceu. Quem fecha a diferenca e `motivo_do_match`
+    (`recomendacao.py`), que recebe `relaxou_preco`/`relaxou_bairro` do
+    RESULTADO e diz na frase gravada que o criterio foi ampliado. Ate a fix
+    wave desta card esta docstring dizia "os criterios que entraram no WHERE",
+    o que e falso exatamente no caso relaxado, e nada dizia a diferenca.
 
     Um por BUSCA e nao por candidato: e a mesma lista para todos os imoveis
     daquela apresentacao, e repeti-la por candidato pagaria tokens no
@@ -160,8 +171,10 @@ async def _bairros_excluidos_desta_busca(
         # ninguem passou identidade de conversa" e "nao havia nada para
         # excluir" ficam indistinguiveis em producao -- mesmo retorno `()`,
         # nenhum log, nenhuma metrica. A causa e o CHAMADOR nao ter ligado a
-        # conversa (hoje, `turno.py` nao passa `channel`/`conversation_key`),
-        # nunca "o lead nao rejeitou nada".
+        # conversa, nunca "o lead nao rejeitou nada" -- e `turno.py` PASSA os
+        # dois desde a Task 10 desta card, entao em turno de producao esta
+        # linha nao sai. Quem a vir no log esta olhando uma chamada de fora do
+        # turno (teste unitario, script), e e para la que a investigacao vai.
         log.info("recomendacao.exclusao_desligada_sem_identidade")
         return ()
     try:

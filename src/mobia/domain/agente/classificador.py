@@ -344,6 +344,20 @@ def _reacoes_de(bruto: Any) -> tuple[ReacaoDoImovel, ...]:
     resolve ordinal contra a lista apresentada e `resolver_ordinais`
     (`recomendacao.py`, Task 6). Aqui so se descarta o que nem chega a ser um
     ordinal (nao inteiro, ou `bool`, que e subclasse de `int` em Python).
+
+    **`categoria` so sobrevive com DESCARTE, e e aqui que ela cai.** O schema
+    EXIGE a chave em todo item (anulavel, nao opcional -- o compilador da API
+    nao expressa "obrigatoria quando `reacao` vale X"), entao o modelo
+    preencher `categoria` num item de INTERESSE nao e caso exotico. Sem esta
+    guarda, `gravar_reacoes` escrevia `reacao_lead='INTERESSE'` com
+    `motivo_descarte='DISTANCIA'`: um motivo de descarte numa linha que nao e
+    descarte. Nenhum consumidor de hoje le errado por causa disso -- a
+    contagem da RN-10.4 filtra por DESCARTE antes --, mas a coluna e definida
+    pela D13 como a categoria do DESCARTE, e a linha estaria afirmando algo
+    que nao aconteceu. O comentario de `SCHEMA_DA_REACAO` ja prometia esta
+    guarda ("o codigo, nao o schema, e quem descarta uma `categoria` presente
+    com INTERESSE") desde antes de ela existir; a fix wave desta card a
+    escreveu em vez de apagar a promessa, porque a promessa estava certa.
     """
     if not isinstance(bruto, list):
         return ()
@@ -355,13 +369,12 @@ def _reacoes_de(bruto: Any) -> tuple[ReacaoDoImovel, ...]:
         reacao = _membro(ReacaoLead, item.get("reacao"))
         if isinstance(ordinal, bool) or not isinstance(ordinal, int) or reacao is None:
             continue
-        resultado.append(
-            ReacaoDoImovel(
-                ordinal=ordinal,
-                reacao=reacao,
-                categoria=_membro(CategoriaDescarte, item.get("categoria")),
-            )
+        categoria = (
+            _membro(CategoriaDescarte, item.get("categoria"))
+            if reacao is ReacaoLead.DESCARTE
+            else None
         )
+        resultado.append(ReacaoDoImovel(ordinal=ordinal, reacao=reacao, categoria=categoria))
     return tuple(resultado)
 
 
@@ -499,7 +512,14 @@ def _candidatos_de(blocos: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _criterios_de(blocos: list[dict[str, Any]]) -> list[str]:
-    """Os criterios de busca que sairam dos `tool_result` deste turno. TEC-163.
+    """Os criterios PEDIDOS que sairam dos `tool_result` deste turno. TEC-163.
+
+    Repassa, sem interpretar, o que `_criterios_de` de `ferramenta_de_busca.py`
+    montou -- e o de la e o filtro ANTES do relaxamento, nao o que os
+    candidatos satisfazem. A distincao importa para quem grava
+    `motivo_match`, e o docstring daquela funcao a explica por inteiro; o
+    relaxamento viaja por fora, nos quatro booleanos de
+    `_CHAVES_DO_RELAXAMENTO`.
 
     Mesmo padrao de `_candidatos_de`: concatena em vez de sobrescrever. Hoje
     ha no maximo um bloco de busca por turno (D4 da TEC-265), mas se um dia

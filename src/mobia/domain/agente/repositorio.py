@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 import structlog
-from sqlalchemy import column, select, table, update
+from sqlalchemy import column, delete, select, table, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -137,6 +137,8 @@ async def gravar_recomendacoes(
     candidatos: Sequence[Mapping[str, Any]],
     scores: Mapping[uuid.UUID, float],
     criterios: Sequence[str],
+    relaxou_preco: bool,
+    relaxou_bairro: bool,
     agora: datetime,
 ) -> None:
     """Uma linha por imovel apresentado. RN-10.3, e a L1 da TEC-162.
@@ -154,7 +156,14 @@ async def gravar_recomendacoes(
     **Gravada ANTES da entrega**, por quem chama. O docstring de `_apresentar`
     registra que uma falha parcial perde o conjunto escolhido e o turno
     seguinte pode reapresentar os mesmos imoveis; gravar depois manteria esse
-    buraco aberto.
+    buraco aberto. Gravar antes tambem significa gravar linha para ficha que
+    pode nao sair -- quem desfaz essas e `conciliar_apresentacao`, chamada
+    depois do laco de entrega.
+
+    **`relaxou_preco`/`relaxou_bairro` sao do RESULTADO, `criterios` e do
+    PEDIDO.** Os dois entram na frase por `motivo_do_match`, e o porque esta
+    la: sem eles, um candidato que so apareceu porque o teto cedeu ficaria
+    gravado com o criterio que ele nao satisfaz.
 
     **Toda apresentacao vira linha, sem excecao (RN-10.3).** A regra nao tem
     clausula de excecao -- "toda apresentacao e registrada como
@@ -188,7 +197,7 @@ async def gravar_recomendacoes(
     if not candidatos:
         return
 
-    motivo = motivo_do_match(criterios)
+    motivo = motivo_do_match(criterios, relaxou_preco=relaxou_preco, relaxou_bairro=relaxou_bairro)
     linhas: list[dict[str, Any]] = []
     for candidato in candidatos:
         imovel_id = uuid.UUID(str(candidato["imovel_id"]))
@@ -219,6 +228,99 @@ async def gravar_recomendacoes(
 
     async with session_factory() as session:
         await session.execute(pg_insert(Recomendacao).values(linhas).on_conflict_do_nothing())
+        await session.commit()
+
+
+async def conciliar_apresentacao(
+    session_factory: Any,
+    *,
+    channel: str,
+    conversation_key: str,
+    agora: datetime,
+    nao_entregues: Sequence[uuid.UUID],
+    houve_entrega: bool,
+) -> None:
+    """Faz `ler_pendentes` voltar a ser "o que o lead viu, na ordem em que viu".
+
+    Chamada DEPOIS do laco de entrega de `_apresentar`, e a contraparte de
+    `gravar_recomendacoes` ser chamada ANTES dele. Gravar antes e o que salva
+    o conjunto escolhido de uma falha de rede no meio (a L1 da TEC-162), mas
+    deixa duas classes de linha que o lead nunca viu na lista que o ordinal
+    dele indexa -- e a posicao N daquela lista E o ordinal N (D7). Uma linha a
+    mais nao e um registro a mais: e a opiniao do lead grudando no imovel
+    errado, e, se for descarte por distancia, um bairro saindo da busca sem
+    ele ter rejeitado nada ali.
+
+    **(a) Pendente ANTIGA que a apresentacao de hoje supera -> `SEM_RESPOSTA`.**
+    E o valor que o enum e a D8 descrevem ("uma apresentacao nova superou esta
+    linha antes de o lead reagir") e que, ate aqui, nada escrevia -- a
+    docstring de `gravar_reacoes` dizia que a marcacao era "de quem apresenta
+    de novo (`turno.py`)", e `turno.py` nao a fazia. No caminho feliz nao
+    sobra nenhuma: `gravar_reacoes` fecha tudo como NEUTRO no comeco do turno.
+    Sobra quando `reagir` falhou (o `except Exception` amplo de `turno.py`,
+    que esta certo em si) -- e ai o turno seguinte veria SEIS imoveis numa
+    lista so, tres deles de uma apresentacao que o lead ja deixou para tras,
+    com "o segundo" apontando para o segundo da lista VELHA.
+
+    **`houve_entrega` e a condicao, e nao "esta funcao foi chamada".** So uma
+    apresentacao que CHEGOU supera a anterior (D8, L5). Se nenhuma ficha saiu
+    -- todas recusadas, ou nenhuma sobrou depois de `fichas_do_catalogo` --, o
+    lead continua com a lista antiga na tela, e fecha-la o deixaria sem como
+    reagir ao unico conjunto que ele tem.
+
+    **(b) Linha desta apresentacao cuja ficha NAO saiu -> apagada, nao
+    fechada.** Recusa permanente da Meta (`apresentacao.ficha_recusada`) ou
+    reserva ja existente (`send` devolvendo False): nos dois casos nada chegou
+    ao lead, e RN-10.3 registra o que foi APRESENTADO -- uma ficha que nao saiu
+    nao e apresentacao, entao nao ha fato para guardar.
+
+    Apagar, e nao fechar com `SEM_RESPOSTA`, porque o UNIQUE
+    (`channel`, `conversation_key`, `imovel_id`) e por conversa e para sempre:
+    uma linha fechada continuaria ocupando o lugar daquele imovel nesta
+    conversa, e a proxima apresentacao dele -- a que de fato sair -- cairia no
+    `ON CONFLICT DO NOTHING`, sem nunca gerar pendente. O imovel ficaria
+    inalcancavel pela reacao do lead pelo resto da conversa, por causa de uma
+    foto que a Meta recusou uma vez. Fechar tambem contaria uma apresentacao
+    que nao houve na medida de conversao que a tabela existe para dar.
+
+    O recorte e `apresentado_em == agora` E `reacao_lead IS NULL`, e ele e
+    estreito de proposito: `gravar_recomendacoes` grava o lote inteiro com um
+    unico `agora` (ver `ler_pendentes`), entao so as linhas que ESTA chamada
+    inseriu batem. Uma reapresentacao cuja ficha foi recusada agora nao apaga
+    nada -- a linha original guarda o `apresentado_em` da vez em que o lead de
+    fato viu o imovel, junto com a reacao que ele deu. E o mesmo recorte que
+    protege o caso da reserva suprimida: se `send` devolveu False, a tentativa
+    anterior desta MESMA mensagem ja passou por aqui e gravou a linha com o
+    `agora` dela.
+
+    Commita ao final, como as outras escritas deste modulo.
+    """
+    async with session_factory() as session:
+        if nao_entregues:
+            await session.execute(
+                delete(Recomendacao).where(
+                    Recomendacao.channel == channel,
+                    Recomendacao.conversation_key == conversation_key,
+                    Recomendacao.imovel_id.in_(tuple(nao_entregues)),
+                    Recomendacao.apresentado_em == agora,
+                    Recomendacao.reacao_lead.is_(None),
+                )
+            )
+
+        if houve_entrega:
+            await session.execute(
+                update(Recomendacao)
+                .where(
+                    Recomendacao.channel == channel,
+                    Recomendacao.conversation_key == conversation_key,
+                    Recomendacao.reacao_lead.is_(None),
+                    # `< agora` e nao `!=`: o lote de hoje fica de fora por ser
+                    # o mais novo, e as linhas que o `delete` acima ja tirou
+                    # nao existem mais para serem fechadas.
+                    Recomendacao.apresentado_em < agora,
+                )
+                .values(reacao_lead=str(ReacaoLead.SEM_RESPOSTA))
+            )
         await session.commit()
 
 
@@ -374,7 +476,12 @@ async def gravar_reacoes(
     nao mencionada aqui significa. `SEM_RESPOSTA` e para quando uma
     apresentacao NOVA supera uma pendente antiga sem o lead ter dito nada
     sobre nenhuma das duas -- nenhuma resposta existiu, e essa marcacao e de
-    quem apresenta de novo (`turno.py`), nao desta funcao.
+    quem apresenta de novo: `conciliar_apresentacao`, logo abaixo, chamada no
+    fim de `_apresentar`. **Ate a fix wave desta card a frase terminava em
+    "e de quem apresenta de novo (`turno.py`)" e ninguem a cumpria** -- o
+    valor era declarado pelo enum, documentado aqui e nunca escrito, e uma
+    pendente sobrevivente de um `reagir` que falhou entrava na lista numerada
+    do turno seguinte deslocando todos os ordinais.
 
     A atualizacao por resolvida ja filtra `reacao_lead IS NULL`: um ordinal
     resolvido so pode ter vindo de uma linha que `ler_pendentes` devolveu

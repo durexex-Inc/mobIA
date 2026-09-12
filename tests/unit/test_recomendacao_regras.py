@@ -23,28 +23,77 @@ SEGUNDO = uuid.uuid4()
 TERCEIRO = uuid.uuid4()
 
 
+def _motivo(criterios: list[str], **relaxamento: bool) -> str:
+    """`motivo_do_match` com as duas dimensoes em False por default.
+
+    As duas sao obrigatorias na funcao de proposito (ver o docstring dela): um
+    default la deixaria um chamador novo gravar "nao houve ampliacao" sem ter
+    decidido nada. Aqui, num arquivo cujo assunto e a FRASE, repetir
+    `relaxou_preco=False, relaxou_bairro=False` em todo teste esconderia o
+    unico argumento que cada um esta exercitando.
+    """
+    return motivo_do_match(
+        criterios,
+        relaxou_preco=relaxamento.get("relaxou_preco", False),
+        relaxou_bairro=relaxamento.get("relaxou_bairro", False),
+    )
+
+
 def test_o_motivo_lista_os_criterios_que_casaram() -> None:
     """D5: derivado do que a busca sabe, nunca escrito pelo modelo."""
-    assert motivo_do_match(["3 quartos", "Trindade", "ate R$ 400 mil"]) == (
+    assert _motivo(["3 quartos", "Trindade", "ate R$ 400 mil"]) == (
         "3 quartos, Trindade, ate R$ 400 mil"
     )
 
 
 def test_um_criterio_so_nao_ganha_virgula() -> None:
-    assert motivo_do_match(["Trindade"]) == "Trindade"
+    assert _motivo(["Trindade"]) == "Trindade"
 
 
 def test_busca_sem_criterio_diz_isso_em_vez_de_ficar_vazia() -> None:
     """`motivo_match` e NOT NULL, e string vazia num campo de explicabilidade
     e pior que uma frase honesta: quem le a linha meses depois precisa saber
     que nao houve filtro, nao ficar sem saber o que aconteceu."""
-    assert motivo_do_match([]) == "sem filtro: o lead nao restringiu a busca"
+    assert _motivo([]) == "sem filtro: o lead nao restringiu a busca"
 
 
 def test_o_motivo_e_ascii() -> None:
     """Vai para o banco e pode ser lido em relatorio; segue a disciplina do
     repo para texto que nao e prosa de docs."""
-    assert motivo_do_match(["3 quartos", "Trindade"]).isascii()
+    assert _motivo(["3 quartos", "Trindade"]).isascii()
+    assert _motivo(["ate R$ 400.000"], relaxou_preco=True).isascii()
+
+
+def test_o_motivo_do_passe_relaxado_diz_que_o_criterio_foi_ampliado() -> None:
+    """D5 pede a frase montada de "quais filtros bateram, E se houve
+    relaxamento" -- e a segunda metade e o que separa um motivo verdadeiro de
+    um inventado.
+
+    `criterios` vem do filtro do PRIMEIRO passe (`_criterios_de` em
+    `ferramenta_de_busca.py`): um imovel de R$ 430.000 achado so porque o teto
+    cedeu 10% seria gravado com "ate R$ 400.000", criterio que ele nao
+    satisfaz. Quem lesse a linha depois leria como fato uma frase falsa -- o
+    dano exato que a D5 existe para impedir.
+    """
+    assert _motivo(["3 quartos", "ate R$ 400.000"], relaxou_preco=True) == (
+        "3 quartos, ate R$ 400.000 (criterio ampliado: preco)"
+    )
+
+
+def test_o_motivo_nomeia_a_dimensao_ampliada() -> None:
+    """As tres variantes da RN-09.3, as mesmas que `aviso_de_ampliacao`
+    distingue -- o lead ouve qual criterio cedeu, e a linha do banco diz o
+    mesmo em vez de um "relaxado" generico."""
+    assert _motivo(["Trindade"], relaxou_bairro=True) == "Trindade (criterio ampliado: bairro)"
+    assert _motivo(["Trindade"], relaxou_preco=True, relaxou_bairro=True) == (
+        "Trindade (criterio ampliado: preco e bairro)"
+    )
+
+
+def test_busca_sem_relaxamento_nao_ganha_sufixo_nenhum() -> None:
+    """~99% dos turnos. O controle dos dois testes acima: sem isto, um sufixo
+    colado sempre passaria neles e mentiria em todo o resto."""
+    assert _motivo(["Trindade"], relaxou_preco=False, relaxou_bairro=False) == "Trindade"
 
 
 def test_o_ordinal_vira_o_imovel_daquela_posicao() -> None:

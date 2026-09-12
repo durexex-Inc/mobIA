@@ -155,6 +155,8 @@ async def test_cenario_2_a_recomendacao_registra_motivo_e_momento(
         candidatos=[{"imovel_id": str(imovel)}],
         scores={imovel: 0.87},
         criterios=["3 quartos", "Trindade"],
+        relaxou_preco=False,
+        relaxou_bairro=False,
         agora=agora,
     )
 
@@ -183,6 +185,8 @@ async def test_gravar_duas_vezes_o_mesmo_imovel_nao_levanta(
         candidatos=candidatos,
         scores=scores,
         criterios=["Trindade"],
+        relaxou_preco=False,
+        relaxou_bairro=False,
         agora=datetime.now(UTC),
     )
     await gravar_recomendacoes(
@@ -192,6 +196,8 @@ async def test_gravar_duas_vezes_o_mesmo_imovel_nao_levanta(
         candidatos=candidatos,
         scores=scores,
         criterios=["Trindade"],
+        relaxou_preco=False,
+        relaxou_bairro=False,
         agora=datetime.now(UTC),
     )
 
@@ -222,6 +228,8 @@ async def test_candidato_sem_score_ainda_grava_linha_com_zero(
         candidatos=[{"imovel_id": str(com_score)}, {"imovel_id": str(sem_score)}],
         scores={com_score: 0.5},
         criterios=["Trindade"],
+        relaxou_preco=False,
+        relaxou_bairro=False,
         agora=datetime.now(UTC),
     )
 
@@ -243,6 +251,8 @@ async def test_lista_de_candidatos_vazia_nao_grava_nada(session: Any, session_fa
         candidatos=[],
         scores={},
         criterios=[],
+        relaxou_preco=False,
+        relaxou_bairro=False,
         agora=datetime.now(UTC),
     )
 
@@ -822,6 +832,16 @@ class _ClassificadorQueBuscaSemFiltroExtra:
             extracao=Extracao(),
             candidatos=saida.get("candidatos", []),
             criterios=saida.get("criterios", []),
+            # Fix wave. As mesmas quatro chaves que `_relaxamento_de`
+            # (`classificador.py`) le do `tool_result` num turno de verdade --
+            # copiadas aqui pelo mesmo motivo que `criterios` acima ja era: sem
+            # elas, `gerada.relaxou_preco` chega False em todo teste que usa
+            # este duble, e um turno relaxado passaria por aqui indistinguivel
+            # de um turno normal.
+            relaxou_e_achou=bool(saida.get("relaxamento_aplicado")),
+            relaxou_sem_resultado=bool(saida.get("relaxamento_sem_resultado")),
+            relaxou_preco=bool(saida.get("relaxamento_de_preco")),
+            relaxou_bairro=bool(saida.get("relaxamento_de_bairro")),
         )
         return self.resultado
 
@@ -879,3 +899,277 @@ async def test_a_exclusao_de_bairro_atravessa_um_turno_de_verdade(
         "este log e o sinal de que o turno nao passou identidade de conversa para "
         "porta_de_busca -- ele nao pode aparecer num turno normal"
     )
+
+
+# ---------------------------------------------------------------------------
+# Fix wave: `ler_pendentes` devolve o que o lead VIU, e so isso.
+#
+# A posicao N daquela lista e o ordinal N da resposta do lead (D7). Duas
+# rotas colocavam la linha que ele nunca viu -- uma pendente velha que
+# `reagir` nao fechou, e a ficha que nao saiu --, e nas duas o ordinal dele
+# gruda no imovel errado.
+# ---------------------------------------------------------------------------
+
+
+class _ClassificadorQueBuscaEFalhaAoReagir(_ClassificadorQueBuscaSemFiltroExtra):
+    """`_ClassificadorQueBuscaSemFiltroExtra` com `reagir` estourando.
+
+    E a combinacao que nenhum duble deste repo tinha: o turno que NAO consegue
+    capturar a reacao (o `except Exception` amplo de `turno.py`, que esta
+    certo em si) e mesmo assim busca e apresenta. E exatamente ai que as
+    pendentes do turno anterior sobrevivem ate a lista numerada do turno
+    seguinte.
+    """
+
+    async def reagir(self, contexto: Any, *, apresentados: list[str]) -> ReacoesDoTurno:
+        raise TimeoutError("provedor fora")
+
+
+async def _pendentes_da_conversa(session_factory: Any) -> tuple[uuid.UUID, ...]:
+    """Os ids que o PROXIMO turno numeraria, na ordem em que os numeraria."""
+    return tuple(
+        pendente.imovel_id
+        for pendente in await ler_pendentes(
+            session_factory, channel=CANAL, conversation_key=_conversa_do_turno()
+        )
+    )
+
+
+async def test_pendente_que_reagir_nao_fechou_nao_entra_na_lista_da_proxima_reacao(
+    session: Any,
+    session_factory: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """D8/L5: a apresentacao nova supera a pendente antiga, que fecha `SEM_RESPOSTA`.
+
+    O enum declara o valor, a D8 o especifica, `gravar_reacoes` documentava
+    que marca-lo era "de quem apresenta de novo (`turno.py`)" -- e ninguem o
+    escrevia. Sem isso: `reagir` estoura neste turno (provedor fora), as tres
+    linhas do turno anterior continuam NULL, este turno apresenta outras tres,
+    e no proximo `ler_pendentes` devolve SEIS numa lista so. "Gostei do
+    segundo", dito sobre a lista de tres que ele acabou de ver, cairia no
+    segundo da lista VELHA -- um imovel que ele ja tinha deixado para tras.
+
+    `quartos=1` nos tres antigos os mantem fora da busca deste turno
+    (`quartos_min=3`): sem isso a busca real os traria de volta entre os
+    candidatos e a asserta nao separaria "pendente velha fechada" de
+    "reapresentado".
+    """
+    await _conversa_ja_existe(session)
+    conversa = _conversa_do_turno()
+    antes = datetime.now(UTC) - timedelta(minutes=5)
+    antigos = []
+    for posicao, codigo in enumerate(("AP-940", "AP-941", "AP-942")):
+        antigo = await _imovel(session, codigo, quartos=1)
+        await _recomendar(
+            session,
+            antigo,
+            conversation_key=conversa,
+            apresentado_em=antes + timedelta(seconds=posicao),
+        )
+        antigos.append(antigo)
+
+    novos = {await _imovel(session, f"AP-95{n}", quartos=3) for n in range(3)}
+    classificador = _ClassificadorQueBuscaEFalhaAoReagir({"operacao": "VENDA", "quartos_min": 3})
+    outbound = outbound_fake()
+
+    with caplog.at_level("WARNING"):
+        resultado = await rodar_turno(
+            session, classificador, outbound, resumidor_fake(), contador_fake()
+        )
+
+    assert resultado == "respondido"
+    assert "turno.reacao_nao_capturada" in caplog.text, (
+        "o teste so vale se `reagir` de fato falhou -- e a falha que deixa a pendente aberta"
+    )
+    assert classificador.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
+
+    reacoes = {
+        linha.imovel_id: linha.reacao_lead
+        for linha in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert {reacoes[antigo] for antigo in antigos} == {"SEM_RESPOSTA"}, (
+        "a apresentacao nova supera as tres antigas -- NEUTRO diria que o lead respondeu "
+        "sobre elas, e NULL as deixaria na lista numerada do proximo turno"
+    )
+    assert await _pendentes_da_conversa(session_factory) == tuple(apresentados), (
+        "a lista que o proximo turno numera tem de ser exatamente o que o lead acabou "
+        "de ver, na ordem em que viu"
+    )
+    assert set(apresentados) == novos
+
+
+async def test_o_ordinal_do_turno_seguinte_aponta_para_o_imovel_recem_visto(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """A mesma falha do teste acima, cobrada no lugar em que ela custa caro: o
+    imovel que a opiniao do lead marca.
+
+    Turno 1 apresenta tres e `reagir` estoura. Turno 2 apresenta outros tres.
+    Turno 3 o lead diz "gostei do segundo" -- e o segundo e o segundo da
+    lista que ele acabou de ver. Com as pendentes do turno 1 ainda abertas, o
+    ordinal 2 cairia no segundo imovel do turno 1.
+    """
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-96{n}", quartos=3, preco_venda=30000000 + n)
+
+    primeiro_turno = _ClassificadorQueBuscaEFalhaAoReagir({"operacao": "VENDA", "quartos_min": 3})
+    outbound = outbound_fake()
+    assert (
+        await rodar_turno(session, primeiro_turno, outbound, resumidor_fake(), contador_fake())
+        == "respondido"
+    )
+
+    # Imoveis novos para o turno 2, e os tres do turno 1 fora da busca dele:
+    # `ON CONFLICT DO NOTHING` nao gera pendente nova para quem ja tem linha,
+    # e um reapresentado no lote 2 confundiria a asserta.
+    for n in range(3):
+        await _imovel(session, f"AP-97{n}", quartos=4, preco_venda=30000000 + n)
+    segundo_turno = _ClassificadorQueBuscaEFalhaAoReagir({"operacao": "VENDA", "quartos_min": 4})
+    assert (
+        await rodar_turno(session, segundo_turno, outbound, resumidor_fake(), contador_fake())
+        == "respondido"
+    )
+    assert segundo_turno.resultado is not None
+    vistos_por_ultimo = [uuid.UUID(c["imovel_id"]) for c in segundo_turno.resultado.candidatos]
+    assert len(vistos_por_ultimo) == 3
+
+    terceiro_turno = _ClassificadorDeReacao(
+        reacoes=(ReacaoDoImovel(ordinal=2, reacao=ReacaoLead.INTERESSE),)
+    )
+    assert (
+        await rodar_turno(
+            session,
+            terceiro_turno,
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+            texto="gostei do segundo",
+        )
+        == "respondido"
+    )
+
+    interessados = [
+        linha.imovel_id
+        for linha in (await session.execute(select(Recomendacao))).scalars().all()
+        if linha.reacao_lead == "INTERESSE"
+    ]
+    assert interessados == [vistos_por_ultimo[1]], (
+        "'o segundo' e o segundo da lista que o lead acabou de ver, e nao o segundo "
+        "de uma apresentacao anterior que ficou aberta"
+    )
+
+
+async def test_ficha_recusada_nao_deixa_linha_de_imovel_que_o_lead_nunca_viu(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """RN-10.3 registra o que foi APRESENTADO, e ficha recusada nao e apresentacao.
+
+    `gravar_recomendacoes` roda ANTES do laco de entrega -- de proposito, e a
+    L1 da TEC-162 --, entao a linha da ficha 2 ja existe quando a Meta recusa
+    a midia (D10: a recusa nao cala as outras duas). Sem a conciliacao, o
+    proximo turno numera `["1. A", "2. B", "3. C"]` com o lead tendo visto so
+    A e C: "o segundo" marcaria B, que ele nunca recebeu.
+
+    A linha e APAGADA e nao fechada porque o UNIQUE (channel, conversa,
+    imovel) e para sempre: fechada, ela bloquearia com `ON CONFLICT DO
+    NOTHING` a apresentacao futura de B -- aquela que de fato sair -- de
+    gerar pendente, e B ficaria inalcancavel pela reacao do lead pelo resto
+    da conversa por causa de uma foto recusada uma vez.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS
+    from mobia.domain.outbound.port import EnvioRecusado
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-98{n}", quartos=3, preco_venda=30000000 + n)
+
+    class _RecusaASegunda(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[1]:
+                raise EnvioRecusado("http 400 codigo 131053")
+            await super()._deliver(message_id, kind, payload)
+
+    outbound = _RecusaASegunda(get_sessionmaker())
+    classificador = _ClassificadorQueBuscaSemFiltroExtra({"operacao": "VENDA", "quartos_min": 3})
+
+    with caplog.at_level("ERROR"):
+        resultado = await rodar_turno(
+            session, classificador, outbound, resumidor_fake(), contador_fake()
+        )
+
+    assert resultado == "respondido"
+    assert "apresentacao.ficha_recusada" in caplog.text, (
+        "o teste so vale se a segunda ficha de fato foi recusada"
+    )
+    assert classificador.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
+    recusado = apresentados[1]
+
+    gravados = {
+        linha.imovel_id for linha in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert recusado not in gravados, "linha gravada para ficha que a Meta recusou"
+    assert gravados == {apresentados[0], apresentados[2]}
+    assert await _pendentes_da_conversa(session_factory) == (apresentados[0], apresentados[2]), (
+        "a lista numerada do proximo turno tem de pular o imovel cuja ficha nao saiu -- "
+        "senao 'o segundo' marca um imovel que o lead nunca recebeu"
+    )
+
+
+async def test_o_motivo_gravado_diz_quando_a_busca_precisou_ampliar(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """D5, segunda metade: "quais filtros bateram, E se houve relaxamento".
+
+    O unico teste desta suite em que o relaxamento de VERDADE acontece dentro
+    de um turno: os outros trocam `buscar_com_relaxamento` inteira por um
+    duble, e com ela fora nenhum passe relaxado existe para ser descrito.
+    Aqui a busca real roda contra o catalogo real -- um imovel de R$ 430.000
+    com teto de R$ 400.000 so aparece porque o segundo passe cede 10% --, e a
+    linha gravada tem de dizer isso. Sem as duas flags, `motivo_match` sairia
+    "ate R$ 400.000": um criterio que este imovel nao satisfaz, gravado no
+    banco como se fosse fato -- o dano que a D5 existe para impedir.
+    """
+    await _conversa_ja_existe(session)
+    imovel = await _imovel(session, "AP-990", quartos=3, preco_venda=43000000)
+
+    classificador = _ClassificadorQueBuscaSemFiltroExtra(
+        {"operacao": "VENDA", "quartos_min": 3, "preco_max_centavos": 40000000}
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert classificador.resultado is not None
+    assert classificador.resultado.relaxou_preco is True, (
+        "sem relaxamento de verdade este teste nao exercita nada"
+    )
+    linha = (await session.execute(select(Recomendacao))).scalars().one()
+    assert linha.imovel_id == imovel
+    assert linha.motivo_match == "3 quartos, ate R$ 400.000 (criterio ampliado: preco)"
