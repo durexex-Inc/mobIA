@@ -568,10 +568,26 @@ async def executar_turno(
         # Nenhuma tabela nova para lembrar "ja avisei este conjunto": os
         # descartes JA sao o estado persistido, e append-only -- RN-10.4 nao
         # tem caminho de remocao, entao o conjunto excluido so cresce, nunca
-        # encolhe, e comparar os dois retratos DESTE turno basta. Mesmo molde
-        # de `buscar_com_relaxamento` (TEC-160): o aviso de ampliacao tambem
-        # compara um antes e um depois dentro da mesma chamada, em vez de
-        # lembrar do turno anterior.
+        # encolhe. Mesmo molde de `buscar_com_relaxamento` (TEC-160): o aviso
+        # de ampliacao tambem compara um antes e um depois dentro da mesma
+        # chamada, em vez de lembrar do turno anterior.
+        #
+        # **Isto NAO basta, e a lacuna e conhecida, nao corrigida.** O retrato
+        # decide se o aviso PRECISA sair neste turno, mas nao se ele CONSEGUE:
+        # mais abaixo, o envio mora dentro de `if apresentando:`, e o turno em
+        # que a exclusao nasce pode nunca chegar la -- zero candidato (busca
+        # sem resultado), uma excecao no meio do turno, ou uma desambiguacao
+        # que adia as fichas. Quando isso acontece, o aviso nao fica adiado
+        # para o proximo turno: ele se PERDE para sempre. O `bairros_antes_da_
+        # reacao` do PROXIMO turno ja e lido DEPOIS que este `gravar_reacoes`
+        # commitou, entao ja inclui a mudanca de hoje -- os dois retratos
+        # batem, nada parece ter mudado, e o aviso nunca mais dispara para
+        # este conjunto. Um caso nada raro: e exatamente numa busca que
+        # devolve zero que duas rejeicoes por distancia tem mais chance de
+        # ter acabado de se acumular. Fechar isto de verdade exige um estado
+        # persistido de "ja avisei este conjunto" (uma coluna ou tabela nova),
+        # fora do alcance desta task -- que so tem `turno.py` e testes no
+        # escopo.
         bairros_antes_da_reacao = bairros_a_excluir(
             await ler_descartes_por_distancia(
                 session_factory,
