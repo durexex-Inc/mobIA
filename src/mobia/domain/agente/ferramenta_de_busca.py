@@ -18,8 +18,8 @@ from typing import Any
 import structlog
 
 from mobia.domain.agente.apresentacao import Ficha, diferencial_de
-from mobia.domain.catalogo.busca import buscar as buscar_de_verdade
-from mobia.domain.catalogo.enums import Operacao, TipoImovel
+from mobia.domain.catalogo.enums import EstadoDoRelaxamento, Operacao, TipoImovel
+from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
 from mobia.domain.catalogo.repositorio import imoveis_por_ids
 from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, Candidato, FiltroDeBusca
 
@@ -109,7 +109,7 @@ def porta_de_busca(
     banco nem de chave -- o mesmo molde do `embedador` que `indexar_catalogo`
     recebe pelo `ctx`.
     """
-    executar = buscar or buscar_de_verdade
+    executar = buscar or buscar_com_relaxamento
 
     async def porta(entrada: dict[str, Any]) -> dict[str, Any]:
         operacao_bruta = str(entrada.get("operacao"))
@@ -160,11 +160,39 @@ def porta_de_busca(
             log.warning("catalogo.tool_call_falhou", tipo=type(erro).__name__)
             return {"erro": "a busca nao pode ser feita agora"}
 
-        return {
+        saida: dict[str, Any] = {
             "candidatos": [_candidato_serializavel(c) for c in resultado.candidatos],
             # RN-09.2: o agente precisa saber que ve 10 de 40.
             "total_candidatos": resultado.total_candidatos,
+            # RN-09.3, D6. Booleanos derivados do tri-estado do dominio, num
+            # lugar so -- o estado impossivel ("nao tentei, mas apliquei") fica
+            # irrepresentavel tambem aqui.
+            "relaxamento_aplicado": resultado.relaxamento is EstadoDoRelaxamento.APLICADO,
+            "relaxamento_sem_resultado": (
+                resultado.relaxamento is EstadoDoRelaxamento.SEM_RESULTADO
+            ),
+            # D11. QUAIS dimensoes cederam. Nao explicado ao modelo: ele nao
+            # redige o aviso, o turno redige (Task 9).
+            "relaxamento_de_preco": resultado.relaxou_preco,
+            "relaxamento_de_bairro": resultado.relaxou_bairro,
         }
+
+        if saida["relaxamento_aplicado"]:
+            # A frase abaixo NAO entra em SISTEMA_DO_AGENTE (classificador.py),
+            # de proposito -- decisao da TEC-160. Medido nesta card: o teto
+            # fixo tinha 6,2 tokens de margem contra os ~19,25 tokens desta
+            # frase, e o teto derivado (contexto_headroom_de_tokens * 0,75)
+            # ficava so 2 tokens acima do fixo -- subir o fixo o tornaria
+            # decorativo, e toda linha cortavel do prompt vem de uma card
+            # anterior. Aqui dentro o aviso e `tool_result`, contado por
+            # `montar_contexto`: nunca toca o teto fixo e custa zero nos
+            # turnos (~99%) em que nada relaxou.
+            saida["aviso"] = (
+                "criterio ampliado: estes imoveis passam do que o lead pediu; "
+                "nao afirme que atendem"
+            )
+
+        return saida
 
     return porta
 
