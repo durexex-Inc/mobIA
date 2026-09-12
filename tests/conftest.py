@@ -567,10 +567,10 @@ async def banco_limpo(request: pytest.FixtureRequest) -> AsyncIterator[None]:
     Sai cedo para `tests/unit/` desde 12/09/2026. O custo era por teste da suite
     INTEIRA -- 13 `SELECT to_regclass` mais ate 13 `TRUNCATE ... CASCADE`, e um
     connect asyncpg novo, ja que o `dispose_engine()` abaixo descarta a engine e
-    o teste seguinte nao reaproveita conexao. Medido sobre 53f7e55: `tests/unit`
-    caiu de 161,3s para 4,4s (988 testes). Somado ao `TRUNCATE` unico de
-    `_comando_de_truncate`, a suite inteira caiu de 270,6s para ~184s, com os
-    mesmos 1540 passed em duas execucoes seguidas.
+    o teste seguinte nao reaproveita conexao. Medido sobre 53f7e55, Python
+    3.13.15: `tests/unit` caiu de 227,0s para 5,7s (988 testes). Somado ao
+    `TRUNCATE` unico de `_comando_de_truncate`, a suite inteira caiu de 413,1s
+    para 153,8s, e no CI o passo `Rodar a suite` foi de 168s para 71s.
 
     O ganho aqui e maior no loop de quem desenvolve do que no total: `tests/unit`
     passou a rodar SEM Postgres e SEM Redis, entao rodar so a parte unitaria
