@@ -1344,7 +1344,7 @@ def semear_lead_completo(session: AsyncSession):
     return _semear
 ```
 
-> **Ao criar `Imovel`, confira os campos obrigatórios em `src/mobia/domain/catalogo/models.py` antes de rodar** — a tabela tem mais colunas `nullable=False` do que as três acima, e o teste vai reprovar com `IntegrityError` se faltar alguma. Preencha-as com valores mínimos plausíveis.
+> **Defeitos deste esboço, encontrados na execução (12/09/2026):** `Imovel` não tem `preco_centavos` — tem `preco_venda` e `preco_aluguel`, e o dossiê rotula qual dos dois usou (Ruling R5); `MessageRole` vive em `mobia.domain.messages.enums`, não em `.models`; e a fixture precisa de `await session.flush()` após cada `Imovel`, antes do `Recomendacao` correspondente, porque a FK é crua e o unit-of-work não ordena os INSERTs sozinho. **Ao criar `Imovel`, confira os campos obrigatórios em `src/mobia/domain/catalogo/models.py` antes de rodar** — a tabela tem mais colunas `nullable=False` do que as três acima, e o teste vai reprovar com `IntegrityError` se faltar alguma. Preencha-as com valores mínimos plausíveis.
 
 - [ ] **Step 2: Run test to verify it fails**
 
