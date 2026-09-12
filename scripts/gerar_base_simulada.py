@@ -57,10 +57,29 @@ CARACTERISTICAS = [
 ]
 
 CABECALHO = [
-    "codigo", "titulo", "descricao", "tipo", "operacao", "preco_venda",
-    "preco_aluguel", "condominio", "iptu_mensal", "bairro", "cidade", "uf",
-    "zona", "latitude", "longitude", "area_util_m2", "quartos", "suites",
-    "banheiros", "vagas", "caracteristicas", "fotos", "status",
+    "codigo",
+    "titulo",
+    "descricao",
+    "tipo",
+    "operacao",
+    "preco_venda",
+    "preco_aluguel",
+    "condominio",
+    "iptu_mensal",
+    "bairro",
+    "cidade",
+    "uf",
+    "zona",
+    "latitude",
+    "longitude",
+    "area_util_m2",
+    "quartos",
+    "suites",
+    "banheiros",
+    "vagas",
+    "caracteristicas",
+    "fotos",
+    "status",
 ]
 
 # Piso de aluguel em reais. O parser (src/mobia/domain/catalogo/parser.py,
@@ -98,9 +117,7 @@ def gerar(quantidade: int = 520) -> list[list[str]]:
         operacao = rng.choices(["VENDA", "ALUGUEL", "AMBOS"], weights=[0.72, 0.18, 0.10])[0]
         # Ver ALUGUEL_MINIMO_EM_REAIS acima: o max() garante que nenhum
         # aluguel emitido caia sob o piso de plausibilidade do parser.
-        aluguel = round(
-            max(preco_venda * rng.uniform(0.0035, 0.0055), ALUGUEL_MINIMO_EM_REAIS), 2
-        )
+        aluguel = round(max(preco_venda * rng.uniform(0.0035, 0.0055), ALUGUEL_MINIMO_EM_REAIS), 2)
 
         status = rng.choices(
             ["DISPONIVEL", "RESERVADO", "VENDIDO", "ALUGADO", "INATIVO"],
@@ -109,34 +126,36 @@ def gerar(quantidade: int = 520) -> list[list[str]]:
 
         caracteristicas = rng.sample(CARACTERISTICAS, rng.randint(0, 4))
 
-        linhas.append([
-            f"{prefixo}-{1000 + n}",
-            f"{tipo.capitalize()} em {bairro}",
-            f"{tipo.capitalize()} de {area} m2 em {bairro}, "
-            f"{quartos} quarto(s) e {vagas} vaga(s). "
-            + (", ".join(caracteristicas) if caracteristicas else "Sem diferenciais listados")
-            + ".",
-            tipo,
-            operacao,
-            f"{preco_venda:.2f}" if operacao in ("VENDA", "AMBOS") else "",
-            f"{aluguel:.2f}" if operacao in ("ALUGUEL", "AMBOS") else "",
-            f"{rng.randint(200, 2500)}.00",
-            f"{rng.randint(80, 900)}.00",
-            bairro,
-            "Florianopolis",
-            "SC",
-            zona,
-            f"{rng.uniform(-27.75, -27.40):.6f}",
-            f"{rng.uniform(-48.60, -48.40):.6f}",
-            str(area),
-            str(quartos),
-            str(suites),
-            str(banheiros),
-            str(vagas),
-            "|".join(caracteristicas),
-            f"https://exemplo.com/{prefixo.lower()}-{1000 + n}-1.jpg",
-            status,
-        ])
+        linhas.append(
+            [
+                f"{prefixo}-{1000 + n}",
+                f"{tipo.capitalize()} em {bairro}",
+                f"{tipo.capitalize()} de {area} m2 em {bairro}, "
+                f"{quartos} quarto(s) e {vagas} vaga(s). "
+                + (", ".join(caracteristicas) if caracteristicas else "Sem diferenciais listados")
+                + ".",
+                tipo,
+                operacao,
+                f"{preco_venda:.2f}" if operacao in ("VENDA", "AMBOS") else "",
+                f"{aluguel:.2f}" if operacao in ("ALUGUEL", "AMBOS") else "",
+                f"{rng.randint(200, 2500)}.00",
+                f"{rng.randint(80, 900)}.00",
+                bairro,
+                "Florianopolis",
+                "SC",
+                zona,
+                f"{rng.uniform(-27.75, -27.40):.6f}",
+                f"{rng.uniform(-48.60, -48.40):.6f}",
+                str(area),
+                str(quartos),
+                str(suites),
+                str(banheiros),
+                str(vagas),
+                "|".join(caracteristicas),
+                f"https://exemplo.com/{prefixo.lower()}-{1000 + n}-1.jpg",
+                status,
+            ]
+        )
     return linhas
 
 

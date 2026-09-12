@@ -7,18 +7,18 @@ Agente SDR imobiliário. FastAPI + SQLAlchemy async + ARQ, Postgres e Redis via 
 O job **Lint e tipos** (`.github/workflows/ci.yml`) roda estes três, nesta ordem. Rode os três antes de qualquer commit — **o formatador é um gate separado do linter, e passar num não diz nada sobre o outro**:
 
 ```bash
-ruff check src tests alembic evals
-ruff format --check src tests alembic evals
+ruff check src tests alembic evals scripts
+ruff format --check src tests alembic evals scripts
 mypy src
 ```
 
-**O escopo é `src tests alembic evals`, não `src tests`.** `alembic` entra porque as migrations importam código da aplicação (a `0004` chama `mobia.infra.crypto`); `evals` entra porque de outra forma ficaria fora de todo gate. O mypy segue só em `src` — cobrir `alembic` exige antes um `src/mobia/py.typed`.
+**O escopo é `src tests alembic evals scripts`, não `src tests`.** `alembic` entra porque as migrations importam código da aplicação (a `0004` chama `mobia.infra.crypto`); `evals` e `scripts` entram porque de outra forma ficariam fora de todo gate — e `scripts` de fato ficou, até 12/09/2026: quando entrou, o `ruff format --check` reprovou `gerar_base_simulada.py` de primeira. O mypy segue só em `src` — cobrir `alembic` exige antes um `src/mobia/py.typed`.
 
 Local, com a venv do projeto:
 
 ```bash
-./.venv/Scripts/python.exe -m ruff check src tests alembic evals
-./.venv/Scripts/python.exe -m ruff format --check src tests alembic evals
+./.venv/Scripts/python.exe -m ruff check src tests alembic evals scripts
+./.venv/Scripts/python.exe -m ruff format --check src tests alembic evals scripts
 ./.venv/Scripts/python.exe -m mypy
 ```
 
@@ -103,6 +103,16 @@ Subir `contexto_headroom_de_tokens` para abrir espaço **não é de graça**: a 
 Este repo comenta o **porquê**, não o quê, e trata comentário desatualizado como defeito, não como sujeira.
 
 Não é retórica. Na TEC-146, um comentário em `_faixa_de` justificava a ordem de duas checagens com um perigo que não existia; ele escondeu um bug que gravava orçamento 40% abaixo do que o lead dissera, e sobreviveu a duas rodadas de revisão porque quem lia acreditava nele. Se você mudar código que um comentário descreve, o comentário muda junto ou some.
+
+**Antes do PR, rode a listagem:**
+
+```bash
+./.venv/Scripts/python.exe scripts/comentarios_tocados.py
+```
+
+Ela imprime todo comentário e docstring que a branch precisa reconferir, em duas categorias. `ALTERADO` é o que mudou no diff. **`VIZINHO` é o que não mudou, mas está dentro de um `def`/`class` cujo código mudou** — e é essa a categoria que pega o defeito da TEC-146, porque um comentário que ninguém editou não aparece no diff e por isso ninguém o relê.
+
+Não é gate e não reprova nada: decidir sozinho se um comentário está certo é justamente o julgamento que ele existe para devolver a uma pessoa. Medido no histórico: **~51 commits** existem só para corrigir afirmação que o próprio repo escreveu errado antes — a regra acima já existia e mesmo assim não pegava, porque nenhum dos três gates olha para comentário.
 
 Mesma regra para a spec: emendas ao SRS (`docs/srs/`) entram como item aninhado **`Emenda E-nn (TEC-nnn, data)`** abaixo da regra que alteram, **nunca** reescrevendo o texto de 22/08/2026.
 
