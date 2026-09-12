@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 
     from mobia.domain.agente.schemas import Extracao, Intencao
 
+# Acrescentar uma tabela aqui NAO custa mais um statement por teste: desde
+# 12/09/2026 a limpeza e um `TRUNCATE a, b, c CASCADE` unico, e `tests/unit/`
+# nem paga. Custa uma tabela a mais no mesmo statement e um lock tomado junto
+# com os outros. Ver `_comando_de_truncate` e `banco_limpo`.
 TABELAS = (
     "conversation_intent",
     "conversation_summaries",
@@ -52,17 +56,16 @@ TABELAS = (
     # o registro de um teste colidir com o do proximo sem o truncate.
     "followups",
     # Append-only como `lead_score_audit` e `optout_events`: sem o truncate, as
-    # recusas de um teste viram auditoria do proximo. Custa um TRUNCATE por
-    # teste da suite inteira, e o custo e conhecido -- a alternativa e teste de
-    # auditoria que passa sozinho e falha em conjunto.
+    # recusas de um teste viram auditoria do proximo. O custo e conhecido e
+    # aceito -- a alternativa e teste de auditoria que passa sozinho e falha em
+    # conjunto.
     "moderation_events",
     # TEC-163. Entra aqui, ao contrario de `bairros_adjacentes`, porque e
     # escrita pelos TESTES e nao pelo schema: sem o truncate, as recomendacoes
     # de um teste viram historico do proximo e o ajuste de filtro da RN-10.4
-    # dispara onde ninguem pediu. Custo conhecido e aceito -- um TRUNCATE por
-    # teste da suite inteira --, pelo mesmo argumento que `imoveis` e
-    # `lead_score_audit` ja registram acima: a alternativa e teste que passa
-    # sozinho e falha em conjunto.
+    # dispara onde ninguem pediu. Custo conhecido e aceito pelo mesmo argumento
+    # que `imoveis` e `lead_score_audit` ja registram acima: a alternativa e
+    # teste que passa sozinho e falha em conjunto.
     "recomendacoes",
 )
 
@@ -575,10 +578,10 @@ async def banco_limpo(request: pytest.FixtureRequest) -> AsyncIterator[None]:
     Sai cedo para `tests/unit/` desde 12/09/2026. O custo era por teste da suite
     INTEIRA -- 13 `SELECT to_regclass` mais ate 13 `TRUNCATE ... CASCADE`, e um
     connect asyncpg novo, ja que o `dispose_engine()` abaixo descarta a engine e
-    o teste seguinte nao reaproveita conexao. Medido sobre 53f7e55: `tests/unit`
-    caiu de 161,3s para 4,4s (988 testes). Somado ao `TRUNCATE` unico de
-    `_comando_de_truncate`, a suite inteira caiu de 270,6s para ~184s, com os
-    mesmos 1540 passed em duas execucoes seguidas.
+    o teste seguinte nao reaproveita conexao. Medido sobre 53f7e55, Python
+    3.13.15: `tests/unit` caiu de 227,0s para 5,7s (988 testes). Somado ao
+    `TRUNCATE` unico de `_comando_de_truncate`, a suite inteira caiu de 413,1s
+    para 153,8s, e no CI o passo `Rodar a suite` foi de 168s para 71s.
 
     O ganho aqui e maior no loop de quem desenvolve do que no total: `tests/unit`
     passou a rodar SEM Postgres e SEM Redis, entao rodar so a parte unitaria

@@ -30,13 +30,15 @@ Local, com a venv do projeto:
 ./.venv/Scripts/python.exe -m pytest          # suíte inteira
 ```
 
-**Números medidos em 12/09/2026, máquina ociosa: a suíte completa leva ~3 minutos e são 1540 testes.** O número de 07/09/2026 (TEC-156), **~22 minutos**, está velho — mas cuidado com a conta fácil: no mesmo dia 12/09, a árvore SEM as mudanças de fixture já rodava em 270,6s. Os 22 minutos não viraram 3 por causa delas. O que elas fizeram, medido no mesmo commit e no mesmo interpretador, foi 270,6s → ~184s; o resto da diferença veio do ambiente e ninguém sabe exatamente de quê. Desconfie de qualquer número aqui que não diga sobre qual máquina foi medido.
+**Números medidos em 12/09/2026, Python 3.13.15, máquina ociosa: a suíte completa leva ~2,5 minutos e são 1540 testes.** O número de 07/09/2026 (TEC-156), **~22 minutos**, está velho.
 
-> Ressalva do medidor: essas medições saíram de uma venv com **Python 3.14.5**, porque a máquina não tinha 3.13. O CI roda 3.13. Os absolutos podem diferir; as razões antes/depois foram tiradas no mesmo interpretador.
+A referência menos ruidosa não é esta máquina, é o CI: o passo `Rodar a suite`, mesmo runner e mesmo Python, levava **168s** em `53f7e55` e passou a levar **71s** em `2e87349`. Localmente, no mesmo dia e no mesmo interpretador, a suíte inteira foi de **413,1s para 153,8s** e `tests/unit` de **227,0s para 5,7s**.
+
+Nada disso explica sozinho a distância até os 22 minutos de setembro: parte veio das fixtures, parte do ambiente. Desconfie de qualquer número aqui que não diga em que máquina e em que Python foi medido — e prefira comparar durações de CI, que é o único lugar onde as duas pontas rodam igual.
 
 Se ainda assim parecer travado: com `-q` o pytest só imprime no fim, então saída vazia por um tempo é normal, não deadlock. Para ver progresso, use `python -u -m pytest -v`.
 
-**Rodar só a parte unitária não precisa de `docker compose` de pé.** `./.venv/Scripts/python.exe -m pytest tests/unit` roda os 988 testes em ~4s sem Postgres e sem Redis — é o loop certo enquanto se escreve código. `tests/integration` e `tests/features` continuam exigindo os containers.
+**Rodar só a parte unitária não precisa de `docker compose` de pé.** `./.venv/Scripts/python.exe -m pytest tests/unit` roda os 988 testes em ~6s sem Postgres e sem Redis — é o loop certo enquanto se escreve código. `tests/integration` e `tests/features` continuam exigindo os containers.
 
 **A suíte cresce rápido — confira a data antes de confiar no número.** Em 02/09/2026 eram 857 testes em ~7,5 minutos; em 04/09, 1140 em ~22 minutos. Quem lê um número velho como se fosse o de hoje mata execuções boas achando que travaram.
 
