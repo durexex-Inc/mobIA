@@ -315,7 +315,7 @@ git commit -m "feat(TEC-174): a tabela de handoffs, com a deduplicacao como inva
 - Test: `tests/unit/test_handoff_vocabulario.py`
 
 **Interfaces:**
-- Produces: `Gatilho` e `Prioridade` (StrEnum), `Status` (StrEnum), `ETIQUETA_DE: dict[Gatilho, str]`, `PRIORIDADE_DE: dict[Gatilho, Prioridade]`, `escalada(atual: Prioridade, nova: Prioridade) -> Prioridade`
+- Produces: `Gatilho`, `Prioridade` e `Status` (StrEnum), `ETIQUETA_DE: dict[Gatilho, str]`, `PRIORIDADE_DE: dict[Gatilho, Prioridade]`
 
 - [ ] **Step 1: Escrever o teste que falha**
 
@@ -327,13 +327,7 @@ Criar `tests/unit/test_handoff_vocabulario.py` — **sem banco**, este arquivo r
 Nao toca banco. Ver o conftest raiz: `tests/unit/` sai cedo de `banco_limpo`.
 """
 
-from mobia.domain.handoff.vocabulario import (
-    ETIQUETA_DE,
-    PRIORIDADE_DE,
-    Gatilho,
-    Prioridade,
-    escalada,
-)
+from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho, Prioridade
 
 
 def test_todo_gatilho_tem_etiqueta_e_prioridade() -> None:
@@ -366,13 +360,6 @@ def test_as_etiquetas_cabem_na_coluna() -> None:
     assert all(len(e) <= 32 for e in ETIQUETA_DE.values())
     assert all(len(g.value) <= 32 for g in Gatilho)
 
-
-def test_a_escalada_sobe_e_nunca_desce() -> None:
-    """Emenda E-01 da RN-16.1."""
-    assert escalada(Prioridade.NORMAL, Prioridade.ALTA) is Prioridade.ALTA
-    assert escalada(Prioridade.ALTA, Prioridade.NORMAL) is Prioridade.ALTA
-    assert escalada(Prioridade.ALTA, Prioridade.ALTA) is Prioridade.ALTA
-    assert escalada(Prioridade.NORMAL, Prioridade.NORMAL) is Prioridade.NORMAL
 ```
 
 - [ ] **Step 2: Rodar e ver falhar**
@@ -455,22 +442,17 @@ PRIORIDADE_DE: dict[Gatilho, Prioridade] = {
 }
 
 
-def escalada(atual: Prioridade, nova: Prioridade) -> Prioridade:
-    """A prioridade de um handoff aberto sobe e nunca desce (emenda E-01).
-
-    Sem isto, um lead que virou QUENTE as 9h e as 9h05 pede uma pessoa teria o
-    pedido rebaixado a NORMAL -- e a RN-04.6 manda o pedido explicito criar
-    handoff PRIORITARIO.
-    """
-    if Prioridade.ALTA in (atual, nova):
-        return Prioridade.ALTA
-    return Prioridade.NORMAL
+# A escalada da emenda E-01 -- prioridade de handoff aberto sobe e nunca desce --
+# NAO mora aqui. Ela e um `CASE` dentro do `ON CONFLICT DO UPDATE` de
+# `repositorio.py`, porque quem decide precisa ver a linha existente, e o Python
+# nao a ve naquele caminho. Uma gemea em Python seria segunda implementacao da
+# mesma regra, livre para divergir em silencio da que roda de verdade.
 ```
 
 - [ ] **Step 4: Rodar e ver passar**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/unit/test_handoff_vocabulario.py -q`
-Expected: PASS, 5 testes
+Expected: PASS, 4 testes
 
 - [ ] **Step 5: Gates e commit**
 
@@ -479,7 +461,7 @@ Expected: PASS, 5 testes
 ./.venv/Scripts/python.exe -m ruff format --check src tests alembic evals scripts
 ./.venv/Scripts/python.exe -m mypy
 git add src/mobia/domain/handoff/vocabulario.py tests/unit/test_handoff_vocabulario.py
-git commit -m "feat(TEC-174): o vocabulario do handoff, com a escalada de prioridade"
+git commit -m "feat(TEC-174): o vocabulario do handoff: gatilho, etiqueta e prioridade"
 ```
 
 ---
@@ -804,30 +786,45 @@ As cinco fixtures do conftest raiz sao **factories**, e nao instancias: chame
 Run: `./.venv/Scripts/python.exe -m pytest tests/integration/test_handoff_no_turno.py -q`
 Expected: FAIL — `UndefinedTable` não; a tabela existe. Falha na asserção: `len(linhas) == 1` com `linhas == []`
 
-- [ ] **Step 3: Fiar o gatilho**
+- [ ] **Step 3: Fiar o gatilho — DENTRO do bloco de sessão, não junto ao log**
 
-Em `turno.py`, na condição que já existe, acrescentar a chamada **antes** do `log.info` — a escrita entra na transação aberta, e o commit da linha 756 a leva junto:
+**Leia este passo inteiro antes de editar.** O ponto óbvio é errado.
+
+A condição do `lead.esquentou` está por volta da linha 836, **fora** do bloco `async with session_factory() as session:`, que abre na 719 e fecha com `await session.commit()` na **756**. Escrever o handoff ali exigiria sessão nova — e a D8 do desenho exige a mesma transação do recálculo: *"ou o lead vira QUENTE e tem handoff, ou nem uma coisa nem outra."*
+
+Então a escrita e o log ficam em lados opostos do commit.
+
+**A escrita entra no bloco**, logo depois do `registrar_recalculo` da linha 750 e antes do `await session.commit()` da 756:
 
 ```python
-    if (
-        recalculo is not None
-        and recalculo.anterior is not Temperatura.QUENTE
-        and recalculo.temperatura is Temperatura.QUENTE
-    ):
-        await registrar_handoff(
+        recalculo = await registrar_recalculo(
             session,
             channel=message.channel,
             conversation_key=message.conversation_key,
-            gatilho=Gatilho.LEAD_QUENTE,
+            gatilhos=gatilhos,
         )
-        log.info(
-            "lead.esquentou",
-            channel=message.channel,
-            message_id=str(message.id),
-            motivos=list(recalculo.gatilhos),
-            total=recalculo.total,
-        )
+        # TEC-174. Aqui dentro, e nao junto ao `lead.esquentou` la embaixo: este
+        # `commit` e o que torna indivisivel "o lead esquentou" e "o corretor
+        # tem tarefa". Do lado de fora seria sessao nova, e existiria a janela
+        # em que o lead esta QUENTE e ninguem foi avisado -- que e o "lead
+        # qualificado morre no banco" que a card existe para impedir.
+        if (
+            recalculo is not None
+            and recalculo.anterior is not Temperatura.QUENTE
+            and recalculo.temperatura is Temperatura.QUENTE
+        ):
+            await registrar_handoff(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                gatilho=Gatilho.LEAD_QUENTE,
+            )
+        await session.commit()
 ```
+
+**O `log.info("lead.esquentou")` NÃO se move.** Ele fica onde está, depois do commit, e o comentário das linhas 819-820 diz por quê com todas as letras: *"Depois do commit, como `lead.qualificado`: logar uma transicao que o rollback desfez e mentir para quem le o log."* Mover o log para dentro do bloco reintroduziria exatamente o defeito que aquele comentário previne.
+
+A condição aparece duas vezes no arquivo depois desta mudança — uma para escrever, outra para logar. É duplicação deliberada, e o comentário acima registra a razão: as duas metades pertencem a lados opostos do commit.
 
 - [ ] **Step 4: Corrigir o comentário que passou a mentir**
 
@@ -1219,7 +1216,7 @@ git commit -m "feat(TEC-174): a falha que esgota as tentativas encaminha, e avis
 | D3 — `corretor_id` nulável sem FK | 1 |
 | D4 — tabela mutável, com `atualizado_em` | 1 |
 | D5 — `UNIQUE` parcial e `ON CONFLICT` | 1 e 3 |
-| D6 — prioridade escala e nunca desce | 2 e 3 |
+| D6 — prioridade escala e nunca desce | 3 (só no SQL — ver o comentário em `vocabulario.py`) |
 | D7 — etiqueta fixa | 2 e 3 |
 | D8 — recebe sessão, não commita | 3 e 4 |
 | D9 — irrecuperável é esgotar `attempts` | 6 |
