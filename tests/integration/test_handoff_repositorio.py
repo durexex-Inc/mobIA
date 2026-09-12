@@ -1,6 +1,7 @@
 """A deduplicacao do handoff: o que so o Postgres prova."""
 
 import asyncio
+from typing import cast
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -98,19 +99,37 @@ async def test_duas_escritas_concorrentes_produzem_uma_linha(
 
     Duas sessoes de verdade, e nao duas chamadas em sequencia -- o que se quer
     provar e que quem arbitra e o indice parcial, nao a ordem do codigo.
-    """
 
-    async def escrever(gatilho: Gatilho) -> None:
+    `total == 1` sozinho nao prova isso: um `ON CONFLICT DO UPDATE` tambem
+    produz uma linha so se as duas chamadas rodassem em sequencia, sem
+    concorrencia nenhuma. Quem fecha a prova e o par de retornos -- exatamente
+    um `True` (quem criou) e um `False` (quem so atualizou) -- porque isso so
+    acontece se o xmax do Postgres, e nao uma coincidencia de carimbo de
+    tempo, decidiu quem venceu. Tambem nao basta rodar `gather` com
+    `return_exceptions=True` e ignorar o resultado: uma excecao engolida
+    esconderia um gatilho perdido em silencio e o teste continuaria verde.
+    """
+    gatilhos = (Gatilho.LEAD_QUENTE, Gatilho.VENDA_IMOVEL)
+
+    async def escrever(gatilho: Gatilho) -> bool:
         async with session_factory() as propria:
-            await registrar_handoff(
+            criou = await registrar_handoff(
                 propria, channel=CANAL, conversation_key=CONVERSA, gatilho=gatilho
             )
             await propria.commit()
+            return criou
 
-    await asyncio.gather(
-        escrever(Gatilho.LEAD_QUENTE),
-        escrever(Gatilho.VENDA_IMOVEL),
+    resultados = await asyncio.gather(
+        *(escrever(gatilho) for gatilho in gatilhos),
         return_exceptions=True,
     )
+    assert not any(isinstance(resultado, BaseException) for resultado in resultados)
+    booleanos = cast("list[bool]", resultados)
+    assert sorted(booleanos) == [False, True]
+
     total = await session.scalar(text("SELECT count(*) FROM handoffs"))
     assert total == 1
+
+    perdedor = gatilhos[booleanos.index(False)]
+    linhas = await _linhas(session)
+    assert linhas[0]["gatilhos_adicionais"] == [perdedor.value]

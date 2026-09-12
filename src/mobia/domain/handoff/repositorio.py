@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import case, func, literal, text
+from sqlalchemy import case, func, literal, literal_column, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -71,11 +71,23 @@ async def registrar_handoff(
                 ),
                 "atualizado_em": agora,
             },
-        ).returning(Handoff.criado_em)
+        ).returning(
+            # xmax e o sinal nativo do Postgres para distinguir INSERT de
+            # UPDATE num ON CONFLICT: vale 0 na linha recem-inserida e
+            # diferente de zero na que foi atualizada. NAO comparar carimbos
+            # de tempo aqui -- `agora` e calculado em Python antes do
+            # statement, e duas escritas concorrentes para a mesma conversa
+            # podem calcular o MESMO valor. Nesse caso a chamada que fez
+            # UPDATE bateria com o `criado_em` que a vencedora gravou e
+            # devolveria True por coincidencia de relogio, nao por sinal do
+            # banco -- exatamente a corrida que este statement existe para
+            # arbitrar, so que agora no booleano de retorno em vez de na
+            # linha.
+            (literal_column("xmax") == 0).label("inseriu")
+        )
     )
 
-    criado_em = resultado.scalar_one()
-    criou = criado_em == agora
+    criou = resultado.scalar_one()
     log.info(
         "handoff.criado" if criou else "handoff.gatilho_adicional",
         channel=channel,
