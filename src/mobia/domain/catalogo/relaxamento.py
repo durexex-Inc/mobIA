@@ -13,8 +13,19 @@ A seta aponta num sentido so: este modulo importa `busca`, nunca o contrario.
 
 from collections.abc import Sequence
 from dataclasses import replace
+from typing import Any
 
-from mobia.domain.catalogo.schemas import FiltroDeBusca
+import structlog
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from mobia.domain.catalogo.busca import MAX_CANDIDATOS, vetor_da_consulta
+from mobia.domain.catalogo.busca import buscar as buscar_de_verdade
+from mobia.domain.catalogo.enums import EstadoDoRelaxamento
+from mobia.domain.catalogo.models import BairroAdjacente
+from mobia.domain.catalogo.schemas import Embedador, FiltroDeBusca, ResultadoDaBusca
+
+log = structlog.get_logger(__name__)
 
 
 def e_relaxavel(filtro: FiltroDeBusca) -> bool:
@@ -61,4 +72,96 @@ def alargar(filtro: FiltroDeBusca, adjacentes: Sequence[str]) -> FiltroDeBusca:
         filtro,
         relaxado=True,
         regioes=tuple(sorted(set(filtro.regioes) | set(adjacentes))),
+    )
+
+
+async def adjacentes_de(session: AsyncSession, regioes: Sequence[str]) -> tuple[str, ...]:
+    """Os bairros vizinhos dos que o lead pediu, na forma dobrada. D8.
+
+    Um `IN` simples sobre a PK: a tabela guarda as duas direcoes justamente
+    para que esta consulta nao precise ser um OR sobre duas colunas com uniao.
+
+    Regiao que nao e nome de bairro -- "zona sul", por exemplo -- simplesmente
+    nao casa linha nenhuma, e o resultado e vazio. Nao e erro: e a L2, e o
+    passe relaxa so o preco.
+    """
+    if not regioes:
+        return ()
+
+    linhas = await session.execute(
+        select(BairroAdjacente.adjacente_busca).where(
+            BairroAdjacente.bairro_busca.in_(tuple(regioes))
+        )
+    )
+    return tuple(sorted({linha[0] for linha in linhas}))
+
+
+async def buscar_com_relaxamento(
+    session: AsyncSession,
+    filtro: FiltroDeBusca,
+    *,
+    consulta_texto: str | None = None,
+    limite: int = MAX_CANDIDATOS,
+    embedador: Embedador | None = None,
+    buscar: Any = None,
+) -> ResultadoDaBusca:
+    """A busca da RN-09.1 com a politica de zero-resultado da RN-09.3.
+
+    **Um passe a mais, no maximo, e nunca uma cascata.** A regra poe "um" em
+    negrito e a card repete: "nunca uma cascata de tentativas". Uma escada
+    (relaxa preco, se ainda zero amplia bairro) devolveria resultado mais
+    proximo do pedido, mas custaria ate tres consultas contra o p95 de 400 ms
+    que a TEC-159 mede. Ver D4.
+
+    `buscar` e injetavel para o teste contar chamadas sem banco falso -- mesmo
+    molde do `buscar` injetavel de `porta_de_busca`.
+    """
+    executar = buscar or buscar_de_verdade
+
+    # D9: UMA vez, e o mesmo vetor vai para os dois passes. Sem isto, o passe 2
+    # recebe `consulta_texto` de novo e chama o embedador outra vez -- segunda
+    # chamada paga ao provedor e segunda latencia, para o mesmo texto, em todo
+    # turno relaxado.
+    vetor = await vetor_da_consulta(consulta_texto, embedador)
+
+    resultado = await executar(session, filtro, vetor=vetor, limite=limite)
+    if resultado.candidatos or not e_relaxavel(filtro):
+        return resultado
+
+    # D13: falha aqui derruba a DIMENSAO, nao a busca -- e o molde de
+    # `vetor_da_consulta` e da D6 da TEC-265. `Exception` ampla de proposito:
+    # timeout, conexao caida e resposta malformada tem a mesma consequencia
+    # aqui, e distinguir a causa nao muda o que o relaxamento faz.
+    try:
+        adjacentes = await adjacentes_de(session, filtro.regioes)
+    except Exception as erro:
+        log.warning(
+            "busca.adjacencia_indisponivel",
+            tipo=type(erro).__name__,
+            detalhe="o relaxamento segue so na faixa de preco",
+        )
+        adjacentes = ()
+
+    relaxado = await executar(session, alargar(filtro, adjacentes), vetor=vetor, limite=limite)
+
+    # D6: `APLICADO` significa "o que voce esta vendo veio do passe relaxado".
+    # Relaxou e continuou zero e `SEM_RESULTADO`, e nao `APLICADO` com lista
+    # vazia -- senao o aviso ao lead anunciaria "ampliei o criterio" seguido de
+    # nada, e o turno nao teria como oferecer o desfecho que a regra 4 da card
+    # exige.
+    return replace(
+        relaxado,
+        relaxamento=(
+            EstadoDoRelaxamento.APLICADO
+            if relaxado.candidatos
+            else EstadoDoRelaxamento.SEM_RESULTADO
+        ),
+        # D11: o aviso tem tres variantes e escolhe por estes dois. Afirmar
+        # "inclui bairros vizinhos" quando `adjacentes` veio vazio seria o
+        # aviso mentindo -- e e o caso de todo lead que nao deu regiao, e de
+        # toda busca por zona (L2).
+        relaxou_preco=(
+            filtro.preco_max_centavos is not None or filtro.preco_min_centavos is not None
+        ),
+        relaxou_bairro=bool(adjacentes),
     )

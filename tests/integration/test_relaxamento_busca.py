@@ -12,9 +12,11 @@ from typing import Any
 
 from sqlalchemy import select
 
+from mobia.domain.catalogo import busca as modulo_de_busca
 from mobia.domain.catalogo.busca import buscar
-from mobia.domain.catalogo.enums import Operacao
+from mobia.domain.catalogo.enums import EstadoDoRelaxamento, Operacao
 from mobia.domain.catalogo.models import BairroAdjacente, Imovel
+from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
 from mobia.domain.catalogo.schemas import FiltroDeBusca
 from mobia.domain.texto import dobrar
 
@@ -190,3 +192,183 @@ async def test_a_adjacencia_guarda_os_quinze_pares(session: Any) -> None:
     linhas = (await session.execute(select(BairroAdjacente))).scalars().all()
 
     assert len(linhas) == 30
+
+
+async def test_cenario_1_amplia_faixa_e_bairro_quando_nao_ha_resultado(session: Any) -> None:
+    """Cenario 1 do Gherkin, com os numeros da card.
+
+    "Dado o filtro de 3 quartos ate R$ 400.000 na Trindade, sem nenhum
+    resultado, quando o relaxamento e aplicado, entao a busca e refeita com
+    preco ate R$ 440.000 e bairros adjacentes."
+    """
+    vizinho = await _imovel(
+        session, "AP-301", preco_venda=43000000, bairro="Agronomica", zona="CENTRO"
+    )
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(
+            operacao=Operacao.VENDA,
+            preco_max_centavos=TETO,
+            quartos_min=3,
+            regioes=("trindade",),
+        ),
+    )
+
+    assert resultado.relaxamento is EstadoDoRelaxamento.APLICADO
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [vizinho]
+    # As duas dimensoes cederam: o aviso vai ser a variante que diz as duas.
+    assert (resultado.relaxou_preco, resultado.relaxou_bairro) == (True, True)
+
+
+async def test_cenario_2_relaxamento_acontece_uma_unica_vez(session: Any) -> None:
+    """Cenario 2: continua sem resultado depois de relaxar, e nao tenta de novo.
+
+    A contagem de chamadas e a afirmacao: DUAS, nunca tres. A RN-09.3 poe "um"
+    em negrito, e uma escada custaria ate tres consultas contra o p95 da
+    TEC-159.
+    """
+    await _imovel(session, "AP-302", preco_venda=90000000, bairro="Jurere", zona="NORTE")
+
+    chamadas = 0
+    original = modulo_de_busca.buscar
+
+    async def contando(*args: Any, **kwargs: Any) -> Any:
+        nonlocal chamadas
+        chamadas += 1
+        return await original(*args, **kwargs)
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA, preco_max_centavos=TETO, regioes=("trindade",)),
+        buscar=contando,
+    )
+
+    assert chamadas == 2
+    assert resultado.relaxamento is EstadoDoRelaxamento.SEM_RESULTADO
+    assert resultado.candidatos == ()
+
+
+async def test_cenario_3_busca_com_resultado_nao_e_relaxada(session: Any) -> None:
+    """Cenario 3: quatro imoveis no filtro original, nenhum relaxamento."""
+    for numero in range(4):
+        await _imovel(session, f"AP-31{numero}", preco_venda=35000000)
+
+    chamadas = 0
+    original = modulo_de_busca.buscar
+
+    async def contando(*args: Any, **kwargs: Any) -> Any:
+        nonlocal chamadas
+        chamadas += 1
+        return await original(*args, **kwargs)
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA, preco_max_centavos=TETO, regioes=("trindade",)),
+        buscar=contando,
+    )
+
+    assert chamadas == 1
+    assert resultado.relaxamento is EstadoDoRelaxamento.NAO_HOUVE
+    assert len(resultado.candidatos) == 4
+
+
+async def test_cenario_4_so_bairro_marcado_adjacente_entra(session: Any) -> None:
+    """Cenario 4: a ampliacao se limita a tabela.
+
+    Campeche NAO e adjacente a Trindade; Itacorubi e. O de Campeche fica fora
+    mesmo cabendo no preco relaxado -- e o que separa "ampliar" de "desistir
+    do filtro de regiao".
+    """
+    dentro = await _imovel(
+        session, "AP-320", preco_venda=43000000, bairro="Itacorubi", zona="NORTE"
+    )
+    await _imovel(session, "AP-321", preco_venda=43000000, bairro="Campeche", zona="SUL")
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA, preco_max_centavos=TETO, regioes=("trindade",)),
+    )
+
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [dentro]
+
+
+async def test_o_bairro_pedido_continua_na_busca_relaxada(session: Any) -> None:
+    """A leitura do "apenas" do cenario 4: uniao, nao substituicao.
+
+    O imovel da Trindade nao cabia no teto duro e cabe no relaxado. Exclui-lo
+    seria devolver o vizinho e esconder o bairro que o lead pediu.
+    """
+    na_trindade = await _imovel(session, "AP-322", preco_venda=43000000, bairro="Trindade")
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA, preco_max_centavos=TETO, regioes=("trindade",)),
+    )
+
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [na_trindade]
+
+
+async def test_nada_relaxavel_nao_faz_segunda_consulta(session: Any) -> None:
+    """D5. Sem teto, sem piso e sem regiao, a segunda consulta seria identica."""
+    await _imovel(session, "AP-330", quartos=2)
+
+    chamadas = 0
+    original = modulo_de_busca.buscar
+
+    async def contando(*args: Any, **kwargs: Any) -> Any:
+        nonlocal chamadas
+        chamadas += 1
+        return await original(*args, **kwargs)
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA, quartos_min=4),
+        buscar=contando,
+    )
+
+    assert chamadas == 1
+    assert resultado.relaxamento is EstadoDoRelaxamento.NAO_HOUVE
+
+
+async def test_busca_por_zona_relaxa_preco_e_nao_amplia_bairro(session: Any) -> None:
+    """L2. "zona sul" nao e nome de bairro e nao casa linha nenhuma da tabela.
+
+    E a decisao correta -- a zona ja e o agregado de bairros --, mas e
+    comportamento que alguem vai encontrar e achar que e bug.
+    """
+    no_sul = await _imovel(session, "AP-340", preco_venda=43000000, bairro="Campeche", zona="SUL")
+    await _imovel(session, "AP-341", preco_venda=43000000, bairro="Centro", zona="CENTRO")
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA, preco_max_centavos=TETO, regioes=("zona sul",)),
+    )
+
+    assert resultado.relaxamento is EstadoDoRelaxamento.APLICADO
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [no_sul]
+    # So o preco cedeu -- e por isso o aviso nao pode ser uma constante fixa
+    # que diga "inclui bairros vizinhos" (D11).
+    assert (resultado.relaxou_preco, resultado.relaxou_bairro) == (True, False)
+
+
+async def test_o_vetor_e_calculado_uma_vez_para_os_dois_passes(session: Any) -> None:
+    """D9. Sem isto, todo turno relaxado paga duas chamadas ao provedor."""
+    await _imovel(session, "AP-350", preco_venda=43000000, bairro="Agronomica", zona="CENTRO")
+
+    chamadas = 0
+
+    async def embedador(textos: list[str]) -> list[list[float]]:
+        nonlocal chamadas
+        chamadas += 1
+        return [[0.0] * 1536]
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(operacao=Operacao.VENDA, preco_max_centavos=TETO, regioes=("trindade",)),
+        consulta_texto="apartamento com varanda",
+        embedador=embedador,
+    )
+
+    assert chamadas == 1
+    assert resultado.relaxamento is EstadoDoRelaxamento.APLICADO
