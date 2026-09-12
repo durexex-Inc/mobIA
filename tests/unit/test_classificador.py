@@ -924,6 +924,33 @@ async def test_classificar_executa_a_ferramenta_e_chama_de_novo(
     assert resposta.candidatos == [{"imovel_id": "abc", "preco_centavos": 100}]
 
 
+async def test_classificar_traz_os_criterios_do_tool_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEC-163: `criterios` viaja do `tool_result` ate `RespostaDoAgente`,
+    pelo mesmo caminho que `candidatos` -- espelha
+    `test_classificar_executa_a_ferramenta_e_chama_de_novo` acima. Sem este
+    teste, `_criterios_de`, a 9a posicao da tupla de `_chamar` e o campo
+    `RespostaDoAgente.criterios` ficavam sem cobertura -- so `candidatos`
+    tinha um teste analogo.
+    """
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_json()]
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {
+            "candidatos": [{"imovel_id": "abc", "preco_centavos": 100}],
+            "total_candidatos": 1,
+            "criterios": ["3 quartos", "Trindade"],
+        }
+
+    resposta = await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert cliente.messages.create.await_count == 2
+    assert resposta.criterios == ["3 quartos", "Trindade"]
+
+
 async def test_a_segunda_chamada_leva_o_tool_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

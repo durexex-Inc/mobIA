@@ -150,17 +150,34 @@ async def gravar_recomendacoes(
     seguinte pode reapresentar os mesmos imoveis; gravar depois manteria esse
     buraco aberto.
 
-    **Um candidato sem entrada em `scores` fica de fora da gravacao -- nunca
-    vira `0.0`.** Por construcao (D17 do desenho, `_PortaComScore` em
-    `ferramenta_de_busca.py`), o turno monta `scores` chamando `score_de` para
-    cada imovel de `candidatos` logo apos a mesma busca que os gerou, entao a
-    ausencia so acontece se as duas listas vieram de buscas diferentes -- um
-    descompasso de chamada, nao uma situacao normal. Gravar `0.0` no lugar
-    tornaria `score_match` decorativa e derrubaria a premissa do D4 (o que
-    distingue os candidatos de uma recomendacao E o score). Descartar so
-    aquele candidato, e nao a chamada inteira, segue o mesmo padrao do log de
-    `apresentacao.fichas_sumiram_do_catalogo`: um dado incoerente nao apaga em
-    silencio os outros que estao bons, mas tambem nao e inventado.
+    **Toda apresentacao vira linha, sem excecao (RN-10.3).** A regra nao tem
+    clausula de excecao -- "toda apresentacao e registrada como
+    `Recomendacao`" -- e uma linha faltando quebra tres coisas por quem le
+    depois: o UNIQUE que e a garantia do cenario 4 do Gherkin (o proximo
+    candidato deste imovel nesta conversa nao teria contra o que colidir), o
+    gatilho `reacao_lead IS NULL` que a Task 5 usa para saber quem perguntar,
+    e a propria medida de conversao que esta tabela existe para dar.
+
+    **Um candidato sem entrada em `scores` AINDA vira linha, com
+    `score_match = 0.0` e um `log.error`.** Isto e decisao de ruling, nao a
+    original desta funcao -- a original recusava `0.0` como valor ROTINEIRO,
+    e continua certa sobre isso: se este caminho fosse o normal, `0.0`
+    tornaria a coluna decorativa e derrubaria o D4 (o que distingue os
+    candidatos de uma recomendacao e o score). Mas o `0.0` daqui so e
+    alcancado quando um invariante que deveria ser impossivel ja quebrou --
+    por construcao (D17, `_PortaComScore` em `ferramenta_de_busca.py`), o
+    turno monta `scores` chamando `score_de` para cada imovel de
+    `candidatos` logo apos a MESMA busca que os gerou, entao a ausencia so
+    acontece se as duas listas vieram de chamadas diferentes. Entre um numero
+    errado que berra (`error` no log, `0.0` que salta aos olhos em qualquer
+    consulta) e um fato que falta em silencio (a linha simplesmente nao
+    existe, e ninguem que le a tabela depois sabe que o imovel foi
+    apresentado), a regra escolhe o que berra: a linha existir e a Task 5 ter
+    o que reagir importa mais que o numero dela estar certo neste caso que
+    nunca deveria acontecer. **Nao filtre o candidato da ENTREGA por causa
+    disto** -- o lead ja recebeu a ficha nesse ponto do turno, e transformar
+    um defeito de contabilidade nosso numa apresentacao que ele nunca ve so
+    troca nosso problema pelo dele.
     """
     if not candidatos:
         return
@@ -171,13 +188,17 @@ async def gravar_recomendacoes(
         imovel_id = uuid.UUID(str(candidato["imovel_id"]))
         score = scores.get(imovel_id)
         if score is None:
-            log.warning(
+            # Nunca deveria acontecer (ver docstring) -- `error`, nao
+            # `warning`, porque e sinal de invariante quebrado, e `0.0` fica
+            # gravado de proposito para o numero errado saltar aos olhos em
+            # vez de a linha faltar em silencio.
+            log.error(
                 "recomendacao.score_ausente",
                 channel=channel,
                 conversation_key=conversation_key,
                 imovel_id=str(imovel_id),
             )
-            continue
+            score = 0.0
         linhas.append(
             {
                 "id": uuid.uuid4(),
@@ -189,9 +210,6 @@ async def gravar_recomendacoes(
                 "apresentado_em": agora,
             }
         )
-
-    if not linhas:
-        return
 
     async with session_factory() as session:
         await session.execute(pg_insert(Recomendacao).values(linhas).on_conflict_do_nothing())

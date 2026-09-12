@@ -180,14 +180,18 @@ async def test_gravar_duas_vezes_o_mesmo_imovel_nao_levanta(
     assert len(linhas) == 1
 
 
-async def test_candidato_sem_score_fica_de_fora_e_nao_vira_zero(
+async def test_candidato_sem_score_ainda_grava_linha_com_zero(
     session: Any, session_factory: Any
 ) -> None:
-    """Um candidato ausente de `scores` e descartado, nunca gravado com 0.0.
+    """RN-10.3 nao tem clausula de excecao: toda apresentacao vira linha.
 
-    `0.0` tornaria `score_match` decorativa e derrubaria a premissa do D4 --
-    ver o docstring de `gravar_recomendacoes`. O outro candidato da mesma
-    chamada, que TEM score, grava normalmente.
+    Ruling do round 1 de review: um candidato ausente de `scores` NAO fica de
+    fora -- a linha faltando quebraria o UNIQUE (cenario 4 do Gherkin), o
+    gatilho `reacao_lead IS NULL` da Task 5 e a medida de conversao. `0.0` e
+    gravado como marca de bug (nunca deveria acontecer, ver docstring de
+    `gravar_recomendacoes`), alto o bastante para saltar aos olhos em
+    qualquer consulta -- ao contrario da linha que faltava antes. O outro
+    candidato da mesma chamada, que TEM score, grava com o score real.
     """
     com_score = await _imovel(session, "AP-412")
     sem_score = await _imovel(session, "AP-413")
@@ -202,8 +206,13 @@ async def test_candidato_sem_score_fica_de_fora_e_nao_vira_zero(
         agora=datetime.now(UTC),
     )
 
-    linhas = (await session.execute(select(Recomendacao))).scalars().all()
-    assert {linha.imovel_id for linha in linhas} == {com_score}
+    linhas = {
+        linha.imovel_id: linha
+        for linha in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert linhas.keys() == {com_score, sem_score}
+    assert float(linhas[com_score].score_match) == 0.5
+    assert float(linhas[sem_score].score_match) == 0.0
 
 
 async def test_lista_de_candidatos_vazia_nao_grava_nada(session: Any, session_factory: Any) -> None:

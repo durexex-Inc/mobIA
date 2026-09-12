@@ -1481,25 +1481,24 @@ async def _apresentar(
     lacuna L1 do desenho da TEC-162 fecha aqui: o conjunto escolhido
     sobrevive mesmo quando a ficha 2 toma um 5xx, porque ja esta gravado
     antes de a primeira ficha sair.
+
+    **A gravacao acontece depois de `fichas_do_catalogo`, nao antes dela --
+    e a ordem importa.** `Recomendacao.imovel_id` tem FK para `imoveis`, e o
+    candidato fantasma que o comentario de `encontrados` descreve (D6: o
+    imovel saiu do catalogo entre a busca e agora) violaria essa FK se a
+    linha fosse tentada para ele. Um candidato assim tambem nunca chega a
+    ser apresentado -- nenhuma ficha sai para ele --, entao gravar
+    `Recomendacao` so para quem tem `Ficha` de verdade e correto tanto pela
+    integridade referencial quanto pelo significado da RN-10.3 ("apresentado"
+    exige ter sido apresentado). Isto continua sendo "antes da entrega": o
+    laco que fala com a Meta, que e a parte que pode falhar em rede, so
+    comeca depois.
     """
     escolhidos = candidatos[:MAX_IMOVEIS_POR_TURNO]
-    # RN-10.3, e a L1 desta funcao. Gravado ANTES da entrega de proposito: o
-    # paragrafo acima registra que uma falha parcial perde o conjunto
-    # escolhido e o turno seguinte pode reapresentar os mesmos imoveis.
-    # Gravando aqui, o conjunto e recuperavel mesmo quando a segunda ficha
-    # toma um 5xx -- que e a correcao que aquele paragrafo prometeu.
-    await gravar_recomendacoes(
-        session_factory,
-        channel=message.channel,
-        conversation_key=message.conversation_key,
-        candidatos=escolhidos,
-        scores=scores,
-        criterios=criterios,
-        agora=datetime.now(UTC),
-    )
     ids = [uuid.UUID(c["imovel_id"]) for c in escolhidos]
     precos = {uuid.UUID(c["imovel_id"]): int(c["preco_centavos"]) for c in escolhidos}
     fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)
+    encontrados = {ficha.id for ficha in fichas}
 
     if len(fichas) < len(escolhidos):
         # `imoveis_por_ids` derruba id sem linha, e a D6 chama isso de caminho
@@ -1519,7 +1518,6 @@ async def _apresentar(
         # sumiu, nao so quantos. O id nao aparece em nenhuma outra linha deste
         # arquivo -- sem isto ele e irrecuperavel. `Ficha.id` (fix wave, mesma
         # entrega) e o que torna a diferenca calculavel aqui.
-        encontrados = {ficha.id for ficha in fichas}
         faltantes = [i for i in ids if i not in encontrados]
         registrar = log.error if not fichas else log.warning
         registrar(
@@ -1530,6 +1528,24 @@ async def _apresentar(
             encontradas=len(fichas),
             imovel_ids_faltantes=[str(i) for i in faltantes],
         )
+
+    # RN-10.3, e a L1 desta funcao. Gravado ANTES do laco de entrega (a parte
+    # que fala com a Meta e pode falhar em rede): o docstring acima registra
+    # que uma falha parcial perde o conjunto escolhido e o turno seguinte
+    # pode reapresentar os mesmos imoveis. Gravando aqui, o conjunto e
+    # recuperavel mesmo quando a segunda ficha toma um 5xx -- que e a
+    # correcao que aquele paragrafo prometeu. So os candidatos com `Ficha` de
+    # verdade entram (`encontrados` acima): um candidato fantasma nunca foi
+    # apresentado e nao pode ganhar linha que violaria a FK para `imoveis`.
+    await gravar_recomendacoes(
+        session_factory,
+        channel=message.channel,
+        conversation_key=message.conversation_key,
+        candidatos=[c for c in escolhidos if uuid.UUID(c["imovel_id"]) in encontrados],
+        scores=scores,
+        criterios=criterios,
+        agora=datetime.now(UTC),
+    )
 
     legendas: list[str] = []
     entregues = suprimidas = 0
