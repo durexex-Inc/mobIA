@@ -418,7 +418,7 @@ Sem isto o passe 2 chama o embedador uma segunda vez, para o mesmo texto, em tod
 
 **Interfaces:**
 - Consumes: nada de tasks anteriores.
-- Produces: `buscar(session, filtro, *, consulta_texto=None, vetor=None, limite=MAX_CANDIDATOS, embedador=None)` — `vetor: list[float] | None`.
+- Produces: `buscar(session, filtro, consulta_texto=None, limite=MAX_CANDIDATOS, embedador=None, vetor=None)` — `vetor: list[float] | None`, acrescentado **no fim** da assinatura para nao mexer na posicao de nenhum parametro existente. Chamadores passam tudo depois de `filtro` por palavra-chave.
 
 - [ ] **Step 1: Escreva o teste que falha**
 
