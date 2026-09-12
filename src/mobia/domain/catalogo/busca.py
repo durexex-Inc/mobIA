@@ -263,6 +263,12 @@ async def buscar(
                 Imovel.zona.in_([zona.value for zona in zonas]),
             )
         )
+    if filtro.bairros_excluidos:
+        # TEC-163, D12. Excluido e excluido, relaxado ou nao. Necessario mesmo
+        # sem relaxamento: se o lead pediu "zona sul" e o Campeche foi
+        # excluido, o filtro de zona o casa pelo outro lado do OR de regiao --
+        # so esta condicao, em AND, o segura.
+        condicoes.append(Imovel.bairro_busca.not_in(filtro.bairros_excluidos))
 
     # `round` do Postgres com duas casas exige `numeric`: sobre `double
     # precision` ele so aceita um argumento. As tres casas vem do

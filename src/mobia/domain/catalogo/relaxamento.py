@@ -76,10 +76,18 @@ def alargar(filtro: FiltroDeBusca, adjacentes: Sequence[str]) -> FiltroDeBusca:
     ordem, e um IN que muda de ordem muda o SQL e invalida plano em cache sem
     motivo. E o mesmo argumento de `zonas_de`, em `busca.py`.
     """
+    # TEC-163, D12. Nao e redundancia do NOT IN da busca: sem esta subtracao,
+    # `relaxou_bairro` sairia True num relaxamento cujo unico bairro novo era
+    # um excluido -- que o WHERE descarta em seguida --, e o lead ouviria
+    # "inclui bairros vizinhos" tendo recebido zero bairro novo.
+    #
+    # O WHERE garante que o imovel excluido NAO VOLTA; esta linha garante que
+    # o AVISO NAO MENTE. Um protege o lead do resultado, o outro da frase.
+    adjacentes_validos = set(adjacentes) - set(filtro.bairros_excluidos)
     return replace(
         filtro,
         relaxado=True,
-        regioes=tuple(sorted(set(filtro.regioes) | set(adjacentes))),
+        regioes=tuple(sorted(set(filtro.regioes) | adjacentes_validos)),
     )
 
 
