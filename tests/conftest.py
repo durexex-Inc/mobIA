@@ -157,6 +157,11 @@ TABELAS = (
     # que `imoveis` e `lead_score_audit` ja registram acima: a alternativa e
     # teste que passa sozinho e falha em conjunto.
     "recomendacoes",
+    # TEC-174. Mutavel, ao contrario das append-only acima: o UNIQUE parcial
+    # sobre status='PENDENTE' faz um handoff de um teste bloquear a criacao no
+    # proximo, e a falha apareceria so a partir do segundo teste do arquivo --
+    # o mesmo sintoma que `imoveis` ja registra.
+    "handoffs",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
