@@ -37,6 +37,9 @@ async def test_dossie_traz_os_numeros_das_quatro_tabelas(
     dossie = await carregar_dossie(session, handoff_id=handoff_id)
 
     assert dossie is not None
+    # 72 e o score CORRENTE que `semear_lead_completo` grava -- ela tambem
+    # grava um registro mais antigo com outro score, entao esta asserta so
+    # passa se `carregar_dossie` de fato ler o ultimo por `created_at`.
     assert dossie.score_total == 72
     assert dossie.faixa_max_centavos == 60_000_000
     assert len(dossie.imoveis) == 3

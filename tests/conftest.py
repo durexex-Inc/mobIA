@@ -803,19 +803,49 @@ def semear_lead_completo(session: AsyncSession):
                 perguntados_sem_resposta=["prazo"],
             )
         )
+        # Dois registros, e nao um: `carregar_dossie` faz ORDER BY
+        # created_at DESC LIMIT 1, e com um registro so o teste passaria
+        # igual se esse ORDER BY sumisse, virasse ASC ou trocasse de coluna
+        # -- a trilha e append-only e so o mais novo e o score de hoje. O
+        # antigo tem um score diferente (`score - 1`) para que o dossie so
+        # bata com a asserta do teste se ele de fato ler o CORRENTE.
+        # Tudo em `completude` e o resto zero: `ck_lead_score_audit_total`
+        # exige total_novo = soma dos cinco fatores, e este jeito soma certo
+        # para qualquer `score` sem amarrar o antigo a uma composicao fixa.
+        antigo = score - 1
         session.add(
             LeadScoreAudit(
                 id=uuid.uuid4(),
                 channel=CANAL_AGENTE,
                 conversation_key=CONVERSA_AGENTE,
                 total_anterior=None,
+                total_novo=antigo,
+                completude=antigo,
+                urgencia=0,
+                catalogo=0,
+                engajamento=0,
+                capacidade=0,
+                causas=["PRIMEIRO_CALCULO"],
+            )
+        )
+        # Flush entre os dois INSERTs: cada um vira um statement proprio, e
+        # `clock_timestamp()` (o server_default de `created_at`) e avaliado
+        # de novo em cada um -- carimbo do antigo garantidamente anterior ao
+        # do corrente, sem depender de os dois carem no mesmo batch.
+        await session.flush()
+        session.add(
+            LeadScoreAudit(
+                id=uuid.uuid4(),
+                channel=CANAL_AGENTE,
+                conversation_key=CONVERSA_AGENTE,
+                total_anterior=antigo,
                 total_novo=score,
                 completude=25,
                 urgencia=20,
                 catalogo=12,
                 engajamento=10,
                 capacidade=5,
-                causas=["PRIMEIRO_CALCULO"],
+                causas=["CAMPOS_OBRIGATORIOS"],
             )
         )
         for indice in range(imoveis):

@@ -139,7 +139,7 @@ async def registrar_handoff(
     return HandoffRegistrado(id=linha.id, criado=linha.inseriu)
 
 
-def _preco_centavos(imovel: Imovel) -> tuple[int, str]:
+def _preco_e_tipo(imovel: Imovel) -> tuple[int, str]:
     """O preco a exibir de um imovel apresentado, com o rotulo de qual e.
 
     `Imovel` nao tem uma coluna `preco_centavos` unica -- ela so existe em
@@ -159,7 +159,7 @@ def _preco_centavos(imovel: Imovel) -> tuple[int, str]:
 
 
 def _imovel_apresentado(recomendacao: Recomendacao, imovel: Imovel) -> ImovelApresentado:
-    preco, tipo_de_preco = _preco_centavos(imovel)
+    preco, tipo_de_preco = _preco_e_tipo(imovel)
     return ImovelApresentado(
         codigo=imovel.codigo,
         preco_centavos=preco,
