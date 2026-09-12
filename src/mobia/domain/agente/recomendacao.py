@@ -13,8 +13,14 @@ from mobia.domain.agente.schemas import CategoriaDescarte, ReacaoDoImovel
 
 _SEM_CRITERIO = "sem filtro: o lead nao restringiu a busca"
 
+# A mesma palavra que o `aviso` do `tool_result` e o aviso ao lead usam para o
+# segundo passe da RN-09.3 ("criterio ampliado"). Repetir o vocabulario e de
+# proposito: quem le a linha meses depois encontra o mesmo termo no log, na
+# conversa e aqui.
+_MARCA_DA_AMPLIACAO = "criterio ampliado"
 
-def motivo_do_match(criterios: Sequence[str]) -> str:
+
+def motivo_do_match(criterios: Sequence[str], *, relaxou_preco: bool, relaxou_bairro: bool) -> str:
     """A frase de explicabilidade da RN-10.3, montada dos criterios da busca.
 
     **Derivada, nunca escrita pelo modelo (D5).** Um motivo inventado ficaria
@@ -29,8 +35,28 @@ def motivo_do_match(criterios: Sequence[str]) -> str:
     Lista vazia devolve uma frase e nao string vazia: a coluna e NOT NULL, e
     um campo de explicabilidade em branco deixa quem le a linha meses depois
     sem saber se nao houve filtro ou se alguem esqueceu de gravar.
+
+    **`criterios` e o que a busca PEDIU, e por isso as duas flags nao sao
+    enfeite.** `criterios` nasce em `_criterios_de` (`ferramenta_de_busca.py`)
+    a partir do filtro ANTES do relaxamento -- o filtro alargado e montado
+    dentro de `buscar_com_relaxamento` e nunca chega a porta. Um imovel que so
+    apareceu porque o teto cedeu 10% seria gravado com "ate R$ 400.000", um
+    criterio que ele NAO satisfaz: exatamente o motivo inventado que a D5
+    existe para impedir, so que escrito por nos em vez de pelo modelo. A D5
+    pede a frase montada de "quais filtros bateram, **e se houve
+    relaxamento**"; e esta a segunda metade.
+
+    **Sem default para as duas.** Um `False` implicito deixaria um chamador
+    novo gravar "nao houve ampliacao" sem ter decidido nada -- a mesma mentira
+    silenciosa, de volta pela porta do default. Quem grava tem de dizer.
     """
-    return ", ".join(criterios) if criterios else _SEM_CRITERIO
+    base = ", ".join(criterios) if criterios else _SEM_CRITERIO
+    ampliadas = [
+        nome for nome, relaxou in (("preco", relaxou_preco), ("bairro", relaxou_bairro)) if relaxou
+    ]
+    if not ampliadas:
+        return base
+    return f"{base} ({_MARCA_DA_AMPLIACAO}: {' e '.join(ampliadas)})"
 
 
 def resolver_ordinais(

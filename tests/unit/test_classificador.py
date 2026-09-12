@@ -821,6 +821,44 @@ async def test_reacoes_que_nao_e_lista_devolve_tupla_vazia_sem_levantar(
     assert resultado.reacoes == ()
 
 
+async def test_categoria_em_item_de_interesse_e_descartada(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D13: `motivo_descarte` e a categoria do DESCARTE, e nada mais.
+
+    `SCHEMA_DA_REACAO` EXIGE a chave `categoria` em todo item (anulavel, nao
+    opcional -- o compilador da API nao expressa "obrigatoria quando `reacao`
+    vale X"), entao o modelo preenche-la num item de INTERESSE e provavel, nao
+    exotico. Sem a guarda, `gravar_reacoes` escrevia `reacao_lead='INTERESSE'`
+    com `motivo_descarte='DISTANCIA'` -- uma linha afirmando um motivo de
+    descarte para quem nao descartou. O comentario de `SCHEMA_DA_REACAO`
+    prometia esta guarda antes de ela existir; agora ela existe, e este teste
+    e quem a mantem.
+
+    O item de DESCARTE no mesmo turno e o controle: a guarda tem de cortar a
+    categoria do INTERESSE sem tocar na do DESCARTE, senao a RN-10.4 -- que
+    conta "dois descartes por DISTANCIA" -- perderia a dimensao inteira.
+    """
+    _instalar_cliente_falso(
+        monkeypatch,
+        _resposta_reacao(
+            reacoes=[
+                {"ordinal": 1, "reacao": "INTERESSE", "categoria": "DISTANCIA"},
+                {"ordinal": 2, "reacao": "DESCARTE", "categoria": "DISTANCIA"},
+            ]
+        ),
+    )
+
+    resultado = await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+    assert resultado.reacoes == (
+        ReacaoDoImovel(ordinal=1, reacao=ReacaoLead.INTERESSE, categoria=None),
+        ReacaoDoImovel(
+            ordinal=2, reacao=ReacaoLead.DESCARTE, categoria=CategoriaDescarte.DISTANCIA
+        ),
+    )
+
+
 async def test_reagir_nao_manda_tools_nem_porta(monkeypatch: pytest.MonkeyPatch) -> None:
     """Esta chamada nunca busca imovel -- ver docstring de `reagir`."""
     cliente = _instalar_e_capturar(monkeypatch, _resposta_reacao(reacoes=[]))

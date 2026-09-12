@@ -370,11 +370,17 @@ class RespostaDoAgente:
     # achou" para tomar a MESMA decisao nos dois casos.
     candidatos: list[dict[str, Any]] = field(default_factory=list)
 
-    # TEC-163. Os criterios que entraram no WHERE da busca deste turno, em
-    # forma legivel -- vazio quando nao houve busca. O turno usa isto para
-    # gravar `Recomendacao.motivo_match` (`motivo_do_match`, em
+    # TEC-163. Os criterios que a busca deste turno PEDIU, em forma legivel --
+    # vazio quando nao houve busca. O turno usa isto para gravar
+    # `Recomendacao.motivo_match` (`motivo_do_match`, em
     # `agente/recomendacao.py`) sem que o proprio modelo escreva o motivo
     # (D5 do desenho: motivo escrito pelo modelo podia inventar).
+    #
+    # **Pedido, e nao "o que entrou no WHERE"** -- que e o que esta linha
+    # dizia ate a fix wave desta card. Num turno relaxado (RN-09.3) o WHERE
+    # que devolveu os candidatos e mais largo que este, e quem conta a
+    # diferenca sao os dois booleanos de relaxamento logo abaixo: eles entram
+    # em `motivo_do_match` junto com esta lista.
     criterios: list[str] = field(default_factory=list)
 
     # TEC-160. Os fatos que o turno precisa e que `candidatos` nao carrega.

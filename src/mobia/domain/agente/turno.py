@@ -24,6 +24,7 @@ from mobia.domain.agente.identificacao import (
 )
 from mobia.domain.agente.recomendacao import bairros_a_excluir, resolver_ordinais
 from mobia.domain.agente.repositorio import (
+    conciliar_apresentacao,
     gravar_intencao,
     gravar_reacoes,
     gravar_recomendacoes,
@@ -1135,6 +1136,16 @@ async def executar_turno(
                 candidatos=gerada.candidatos,
                 scores=scores,
                 criterios=gerada.criterios,
+                # TEC-163, fix wave. `criterios` e o que a busca PEDIU (o
+                # filtro antes do relaxamento -- o alargado nunca sai de
+                # `buscar_com_relaxamento`); sem estes dois, um candidato que
+                # so apareceu porque o teto cedeu 10% seria gravado com o
+                # criterio que ele nao satisfaz. Sao os mesmos booleanos que
+                # `aviso_de_ampliacao` usa logo acima: o lead ouve que o
+                # criterio foi ampliado e a linha do banco passa a dizer o
+                # mesmo.
+                relaxou_preco=gerada.relaxou_preco,
+                relaxou_bairro=gerada.relaxou_bairro,
                 prosa=texto,
             )
             entregue = quantas > 0
@@ -1668,6 +1679,8 @@ async def _apresentar(
     candidatos: list[dict[str, Any]],
     scores: Mapping[uuid.UUID, float],
     criterios: Sequence[str],
+    relaxou_preco: bool,
+    relaxou_bairro: bool,
     prosa: str,
 ) -> tuple[str, int, int]:
     """Entrega ate 3 fichas e devolve (texto para gravar, entregues, suprimidas).
@@ -1717,6 +1730,15 @@ async def _apresentar(
     exige ter sido apresentado). Isto continua sendo "antes da entrega": o
     laco que fala com a Meta, que e a parte que pode falhar em rede, so
     comeca depois.
+
+    **Gravar antes cobra um preco, e `conciliar_apresentacao` e quem o paga.**
+    Ter `Ficha` nao e ter ENTREGUE: o laco abaixo pode ter uma recusada (D10)
+    ou encontrar reserva ja feita, e a linha daquele imovel ficaria dizendo
+    que ele foi apresentado. Como a lista de pendentes e indexada por ORDINAL
+    (D7), uma linha a mais desloca todas as seguintes -- "o segundo" do lead
+    cai no imovel errado. Por isso a chamada no fim desta funcao, com o que o
+    laco de fato entregou: ela apaga as linhas das fichas que nao sairam e
+    fecha como `SEM_RESPOSTA` as pendentes que esta apresentacao supera.
     """
     escolhidos = candidatos[:MAX_IMOVEIS_POR_TURNO]
     ids = [uuid.UUID(c["imovel_id"]) for c in escolhidos]
@@ -1761,6 +1783,12 @@ async def _apresentar(
     # correcao que aquele paragrafo prometeu. So os candidatos com `Ficha` de
     # verdade entram (`encontrados` acima): um candidato fantasma nunca foi
     # apresentado e nao pode ganhar linha que violaria a FK para `imoveis`.
+    # `agora` num nome, e nao `datetime.now(UTC)` inline: e a marca deste lote,
+    # e `conciliar_apresentacao` (no fim desta funcao) usa o MESMO valor para
+    # separar as linhas que esta chamada acabou de inserir das que ja estavam
+    # na conversa. Com duas leituras do relogio, a de la nao casaria nenhuma
+    # linha e as fichas que nao sairam ficariam gravadas como apresentadas.
+    agora = datetime.now(UTC)
     await gravar_recomendacoes(
         session_factory,
         channel=message.channel,
@@ -1768,10 +1796,17 @@ async def _apresentar(
         candidatos=[c for c in escolhidos if uuid.UUID(c["imovel_id"]) in encontrados],
         scores=scores,
         criterios=criterios,
-        agora=datetime.now(UTC),
+        relaxou_preco=relaxou_preco,
+        relaxou_bairro=relaxou_bairro,
+        agora=agora,
     )
 
     legendas: list[str] = []
+    # Os imoveis deste lote cuja ficha nao chegou ao lead -- recusa permanente
+    # ou reserva ja existente. `conciliar_apresentacao` apaga a linha de cada
+    # um: `ler_pendentes` tem de devolver exatamente o que ele viu, porque a
+    # posicao N daquela lista e o ordinal N da resposta dele (D7).
+    nao_entregues: list[uuid.UUID] = []
     entregues = suprimidas = 0
     for posicao, ficha in enumerate(fichas):
         # So a primeira leva a prosa (D5); as outras sao ficha pura.
@@ -1833,13 +1868,35 @@ async def _apresentar(
                 kind=KINDS_DAS_FICHAS[posicao],
                 reason=str(exc),
             )
+            nao_entregues.append(ficha.id)
             continue
 
         if not entrou:
             suprimidas += 1
+            nao_entregues.append(ficha.id)
             continue
 
         entregues += 1
         legendas.append(legenda)
+
+    # Depois do laco, e nao antes: so aqui se sabe o que de fato saiu. Fecha as
+    # pendentes que esta apresentacao supera e apaga as linhas das fichas que
+    # nao chegaram -- as duas coisas que fazem `ler_pendentes` do proximo turno
+    # devolver exatamente o que o lead viu, na ordem em que viu. Ver o
+    # docstring de `conciliar_apresentacao`.
+    #
+    # Fora do `try` do laco de proposito: as duas excecoes que sobem dali
+    # (`EnvioForaDaJanela`, `EnvioRetentavel`) terminam o turno sem
+    # apresentacao completa, e numa delas o sweeper reprocessa a MESMA
+    # mensagem -- conciliar no meio apagaria linha de ficha que a retentativa
+    # ainda vai entregar.
+    await conciliar_apresentacao(
+        session_factory,
+        channel=message.channel,
+        conversation_key=message.conversation_key,
+        agora=agora,
+        nao_entregues=nao_entregues,
+        houve_entrega=entregues > 0,
+    )
 
     return "\n\n".join(legendas), entregues, suprimidas
