@@ -76,3 +76,22 @@ class StatusImportacao(StrEnum):
 class OrigemImportacao(StrEnum):
     CLI = "CLI"
     HTTP = "HTTP"
+
+
+class EstadoDoRelaxamento(StrEnum):
+    """O que aconteceu com o relaxamento da RN-09.3 nesta busca. TEC-160, D6.
+
+    **Tres estados e nao um booleano, e a regra 4 da card e quem exige.** Ela
+    manda que, sem resultado mesmo depois de relaxar, o agente informe e
+    ofereca o corretor. O turno precisa entao separar "nao relaxei" de
+    "relaxei e nao achei" -- as duas mensagens ao lead sao diferentes, e um
+    `relaxamento_aplicado: false` colapsa as duas num valor so.
+
+    Com o enum, o estado impossivel ("nao tentei, mas apliquei") deixa de ser
+    representavel. As bordas (tool_result e o POST da secao 6.3) continuam
+    expondo booleano, derivado num lugar so.
+    """
+
+    NAO_HOUVE = "NAO_HOUVE"
+    APLICADO = "APLICADO"
+    SEM_RESULTADO = "SEM_RESULTADO"
