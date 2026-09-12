@@ -295,6 +295,18 @@ O p95 ≤ 400 ms passa a cobrir, no caminho de zero resultado, duas consultas ma
 
 Depois desta card, conversa nova com relaxamento gasta as duas mensagens de texto que a E-02 da TEC-162 permite. **Não sobra folga.** A próxima trilha que quiser mensagem própria vai precisar de emenda à RN-04.2 — e não vai descobrir isso sozinha se ninguém registrar agora.
 
+### L7 — O aviso pode ser entregue sem ficha nenhuma atrás dele
+
+Achado na revisão final da branch, e **deliberadamente não corrigido nesta card**.
+
+O aviso é enviado antes de `_apresentar`, e `_apresentar` pode entregar zero fichas: `fichas_do_catalogo` descarta os `id` sem linha, e quando descarta todos o laço não roda — o repo loga `apresentacao.fichas_sumiram_do_catalogo` em nível `error` justamente porque "o lead nao recebe nada". Nesse turno o lead lê exatamente uma mensagem: *"Nao achei nada exatamente no que voce pediu, entao ampliei um pouco a busca... **Veja se algum destes serve.**"* — seguida de nada.
+
+É a mesma falha que a D6 usa para justificar o tri-estado (*"o aviso ao lead anunciaria 'ampliei o critério' seguido de nada"*), entrando por outra porta.
+
+**Por que fica.** O conserto exige reordenar o caminho de apresentação — resolver as fichas antes dos dois envios de texto —, e isso o desenho não previu. O gatilho é um estado que o próprio repo já trata como anomalia e registra em `error`. E a mensagem de identificação carrega a **mesma** forma desde a TEC-139 sem nunca ter sido tratada como defeito: o aviso não introduz o problema, herda-o.
+
+**O que esta card muda, e por isso a lacuna existe:** o texto do aviso torna o órfão **autocontraditório** em vez de apenas solitário. A identificação sozinha é estranha; *"Veja se algum destes serve"* sobre coisa nenhuma é uma promessa quebrada. Quem for consertar a forma herdada tem aqui o motivo para tratar as duas de uma vez.
+
 ### L6 — O desfecho oferece o corretor, e não a lista de espera
 
 A regra 4 da card diz *"informa e oferece a lista de espera **ou** o corretor"*, e a mesma card põe a lista de espera fora de escopo (E5). A D14 entrega a metade disponível. Quando o E5 existir, o texto de `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` é o lugar a revisitar — e esta lacuna é o bilhete para quem chegar lá.
