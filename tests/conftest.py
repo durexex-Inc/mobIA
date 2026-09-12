@@ -162,6 +162,10 @@ TABELAS = (
     # proximo, e a falha apareceria so a partir do segundo teste do arquivo --
     # o mesmo sintoma que `imoveis` ja registra.
     "handoffs",
+    # TEC-196. Mesmo raciocinio de `imoveis`: o UNIQUE em `email` faz o
+    # corretor de um teste colidir com o do proximo, e a falha so apareceria a
+    # partir do segundo teste do arquivo sem o truncate.
+    "corretores",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
