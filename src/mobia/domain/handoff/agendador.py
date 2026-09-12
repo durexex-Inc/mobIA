@@ -7,10 +7,7 @@ mesmo padrao do `outbound/noop.py` para o duble de teste.
 import uuid
 from typing import Protocol
 
-import structlog
 from arq.connections import ArqRedis
-
-log = structlog.get_logger(__name__)
 
 GERAR_RESUMO_JOB = "gerar_resumo"
 

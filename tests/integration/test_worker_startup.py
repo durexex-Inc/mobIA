@@ -27,13 +27,21 @@ async def test_startup_sobe_com_token_configurado(
 ) -> None:
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
 
-    ctx: dict = {}
+    # `redis` entra a mao aqui porque este teste chama `startup` direto, sem o
+    # ARQ em volta -- em producao e o proprio ARQ que grava `ctx["redis"]`
+    # antes de chamar o hook (ver o docstring de `startup`). Um objeto
+    # qualquer basta: `AgendadorArq.__init__` so guarda a referencia, nunca
+    # conecta, e a fixture `redis_pool` chamaria `get_settings()` cedo demais
+    # -- antes do `monkeypatch.setenv` acima -- e deixaria o cache de
+    # `Settings` sem o token, furando este proprio teste.
+    ctx: dict = {"redis": object()}
     await startup(ctx)
 
     assert isinstance(ctx["outbound"], WhatsAppOutbound)
     assert "classificador" in ctx
     assert "resumidor" in ctx
     assert "contador" in ctx
+    assert "agendador" in ctx
 
 
 def _producao(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,7 +86,9 @@ async def test_startup_sobe_em_desenvolvimento_sem_a_chave_de_embedding(
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
     monkeypatch.setenv("OPENAI_API_KEY", "")
 
-    ctx: dict = {}
+    # Mesmo motivo do outro teste "sobe": sem o ARQ em volta, `ctx["redis"]`
+    # nao existe sozinho, e um objeto qualquer basta -- ver o comentario la.
+    ctx: dict = {"redis": object()}
     await startup(ctx)
 
     assert ctx["settings"].openai_api_key in (None, "")

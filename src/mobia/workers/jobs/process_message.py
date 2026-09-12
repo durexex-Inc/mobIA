@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
 from mobia.domain.agente.turno import ResultadoDoTurno, executar_turno
+from mobia.domain.handoff.agendador import AgendadorDeResumoPort, AgendadorNoop
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.models import Message
@@ -103,6 +104,7 @@ async def _encaminhar_por_erro(
     session_factory: async_sessionmaker[AsyncSession],
     outbound: OutboundPort,
     message: Message,
+    agendador: AgendadorDeResumoPort,
 ) -> None:
     """Cria o handoff do erro irrecuperavel e avisa o lead, nessa ordem.
 
@@ -142,6 +144,21 @@ async def _encaminhar_por_erro(
         etiqueta=ETIQUETA_DE[Gatilho.ERRO_DO_AGENTE],
         prioridade=PRIORIDADE_DE[Gatilho.ERRO_DO_AGENTE].value,
     )
+
+    # Mesma guarda de nao-propagacao do docstring acima, aplicada aqui: uma
+    # excecao nesta chamada SUBSTITUIRIA a excecao original do turno e
+    # apagaria a causa real da falha -- o mesmo argumento do `except
+    # asyncio.CancelledError` deste arquivo. Falha ao agendar vira log e
+    # segue -- o handoff permanece, e fica sem resumo ate a regeneracao.
+    if registro.criado:
+        try:
+            await agendador.agendar(registro.id)
+        except Exception as falha:
+            log.warning(
+                "resumo_handoff.nao_agendado",
+                handoff_id=str(registro.id),
+                reason=type(falha).__name__,
+            )
 
     try:
         await outbound.send(
@@ -199,6 +216,11 @@ async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
 async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoProcessamento:
     session_factory = ctx["session_factory"]
     outbound = ctx["outbound"]
+    # `ctx.get(...) or` e nao `ctx[...]`, mesmo molde de `ctx.get("settings")`
+    # em `sweep_stalled.py`/`sweep_followups.py`: varios testes desta suite
+    # montam um ctx minimo, sem "agendador", e o worker de verdade
+    # (`workers/main.py`) sempre o preenche -- o fallback so cobre o teste.
+    agendador = ctx.get("agendador") or AgendadorNoop()
     identifier = uuid.UUID(message_id)
 
     async with session_factory() as session:
@@ -227,6 +249,7 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
             contador=ctx["contador"],
             outbound=outbound,
             moderador=ctx["moderador"],
+            agendador=agendador,
         )
 
         async with session_factory() as session:
@@ -248,7 +271,7 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # caso raro de o `session.get` acima ser o que falhou: sem a linha
         # nao ha `channel`/`conversation_key` para o handoff.
         if linha is not None and tentativas >= get_settings().sweep_max_attempts:
-            await _encaminhar_por_erro(session_factory, outbound, linha)
+            await _encaminhar_por_erro(session_factory, outbound, linha, agendador)
         raise
     except asyncio.CancelledError as exc:
         # `CancelledError` e BaseException, nao Exception: o `except` acima nao

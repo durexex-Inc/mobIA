@@ -353,6 +353,7 @@ async def test_a_retentativa_nao_reentrega_nenhuma_ficha(
     from conftest import ModeradorFake, _entrada_do_lead  # type: ignore[import-not-found]
 
     from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
 
     await _conversa_ja_existe(session)
     ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
@@ -371,6 +372,7 @@ async def test_a_retentativa_nao_reentrega_nenhuma_ficha(
             contador=contador_fake(),
             outbound=outbound,
             moderador=ModeradorFake(),
+            agendador=AgendadorNoop(),
         )
 
     assert await _turno() == "respondido"

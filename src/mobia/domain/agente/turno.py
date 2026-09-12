@@ -41,6 +41,7 @@ from mobia.domain.context.qualificacao import esta_qualificado
 from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados, registrar_recalculo
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
+from mobia.domain.handoff.agendador import AgendadorDeResumoPort
 from mobia.domain.handoff.repositorio import HandoffRegistrado, registrar_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
@@ -316,6 +317,27 @@ def _faixa_declarada(estado: LeadQualification | None) -> tuple[int | None, int 
     return (estado.faixa_preco_min_centavos, estado.faixa_preco_max_centavos)
 
 
+async def _agendar_resumo(agendador: AgendadorDeResumoPort, registro: HandoffRegistrado) -> None:
+    """Pede a geracao do resumo, mas so quando o handoff e NOVO.
+
+    Gatilho adicional nao reagenda: a intencao dispara em TODO turno com a
+    classificacao certa -- o `CASE` do `ON CONFLICT` em `repositorio.py` ja
+    documenta isso --, entao reagendar aqui seria uma chamada de LLM por
+    turno para um resumo que ninguem pediu. Ver a D3 do desenho.
+
+    **Nao propaga excecao.** O handoff ja esta commitado neste ponto; uma
+    falha do Redis aqui derrubaria o turno DEPOIS de o lead ter sido
+    atendido, e o que se perde e so o resumo, que a rota de regeneracao
+    recupera.
+    """
+    if not registro.criado:
+        return
+    try:
+        await agendador.agendar(registro.id)
+    except Exception:
+        log.warning("resumo_handoff.nao_agendado", handoff_id=str(registro.id), exc_info=True)
+
+
 async def executar_turno(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -325,6 +347,7 @@ async def executar_turno(
     contador: ContadorPort,
     outbound: OutboundPort,
     moderador: ModeradorPort,
+    agendador: AgendadorDeResumoPort,
 ) -> ResultadoDoTurno:
     """Um turno inteiro: contexto, classificacao, entrega, registro.
 
@@ -810,6 +833,7 @@ async def executar_turno(
             etiqueta=ETIQUETA_DE[gatilho_da_intencao],
             prioridade=PRIORIDADE_DE[gatilho_da_intencao].value,
         )
+        await _agendar_resumo(agendador, handoff_da_intencao)
 
     # A borda, nao o estado: um lead ja qualificado que segue conversando nao
     # gera o evento de novo, senao a taxa de qualificacao da RN-17.1 contaria
@@ -914,6 +938,7 @@ async def executar_turno(
                 etiqueta=ETIQUETA_DE[Gatilho.LEAD_QUENTE],
                 prioridade=PRIORIDADE_DE[Gatilho.LEAD_QUENTE].value,
             )
+            await _agendar_resumo(agendador, handoff_do_quente)
 
     desambiguando = deve_desambiguar(
         gerada.confianca, anterior.desambiguado_em if anterior else None

@@ -6,6 +6,7 @@ from mobia.app.config import ConfiguracaoInsegura, get_settings
 from mobia.app.logging import configure_logging
 from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
+from mobia.domain.handoff.agendador import AgendadorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
 from mobia.domain.outbound.whatsapp import WhatsAppOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
@@ -78,6 +79,7 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["contador"] = ContadorAnthropic()
     ctx["moderador"] = ModeradorAnthropic()
     ctx["redator"] = RedatorAnthropic()
+    ctx["agendador"] = AgendadorArq(ctx["redis"])
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:

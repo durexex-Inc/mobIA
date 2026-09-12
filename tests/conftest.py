@@ -483,10 +483,12 @@ def rodar_turno():
         resumidor,
         contador,
         moderador=None,
+        agendador=None,
         *,
         texto: str = TEXTO_PADRAO_DO_LEAD,
     ) -> str:
         from mobia.domain.agente.turno import executar_turno
+        from mobia.domain.handoff.agendador import AgendadorNoop
 
         linha = await _entrada_do_lead(session, texto=texto)
         return await executar_turno(
@@ -497,6 +499,7 @@ def rodar_turno():
             contador=contador,
             outbound=outbound,
             moderador=moderador if moderador is not None else ModeradorFake(),
+            agendador=agendador if agendador is not None else AgendadorNoop(),
         )
 
     return _rodar

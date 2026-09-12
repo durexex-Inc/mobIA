@@ -17,6 +17,7 @@ from conftest import ModeradorFake, OutboundFake
 from sqlalchemy import func, select
 
 from mobia.domain.agente.turno import KIND_DA_RESPOSTA, executar_turno
+from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -107,6 +108,7 @@ async def test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo(
         contador=contador_fake(),
         outbound=outbound,
         moderador=moderador,
+        agendador=AgendadorNoop(),
     )
 
     assert resultado == "opt_out"
@@ -169,6 +171,7 @@ async def test_pedido_de_optout_e_registrado_mesmo_com_entrada_bloqueada_pela_mo
         contador=contador_fake(),
         outbound=outbound,
         moderador=moderador,
+        agendador=AgendadorNoop(),
     )
 
     assert resultado == "opt_out"
@@ -210,6 +213,7 @@ async def test_lead_ja_silenciado_nao_recebe_nada_e_nao_paga(
         contador=contador_fake(),
         outbound=outbound,
         moderador=ModeradorFake(),
+        agendador=AgendadorNoop(),
     )
 
     assert resultado == "silenciado"
@@ -249,6 +253,7 @@ async def test_mensagem_sem_texto_de_lead_silenciado_tambem_fica_em_silencio(
         contador=contador_fake(),
         outbound=outbound,
         moderador=ModeradorFake(),
+        agendador=AgendadorNoop(),
     )
 
     assert resultado == "silenciado"
@@ -275,6 +280,7 @@ async def test_optout_gravado_mesmo_quando_a_confirmacao_nao_sai(
         contador=contador_fake(),
         outbound=outbound_fake(EnvioRecusado("400")),
         moderador=ModeradorFake(),
+        agendador=AgendadorNoop(),
     )
 
     assert resultado == "sem_resposta"
@@ -317,6 +323,7 @@ async def test_confirmacao_e_reentregue_depois_de_uma_falha_retentavel(
             contador=contador_fake(),
             outbound=outbound_fake(EnvioRetentavel("http 503")),
             moderador=ModeradorFake(),
+            agendador=AgendadorNoop(),
         )
 
     assert await esta_em_optout(
@@ -332,6 +339,7 @@ async def test_confirmacao_e_reentregue_depois_de_uma_falha_retentavel(
         contador=contador_fake(),
         outbound=outbound,
         moderador=ModeradorFake(),
+        agendador=AgendadorNoop(),
     )
 
     assert resultado == "opt_out", "a retentativa nao pode virar 'silenciado'"
@@ -393,6 +401,7 @@ async def test_bloqueio_da_guarda_por_optout_nao_vira_reentrega_suprimida(
             contador=contador_fake(),
             outbound=outbound,
             moderador=ModeradorFake(),
+            agendador=AgendadorNoop(),
         )
 
     assert resultado == "bloqueado_por_optout"
@@ -438,6 +447,7 @@ async def test_bloqueio_da_guarda_na_entrada_bloqueada_tambem_nao_vira_reentrega
             contador=contador_fake(),
             outbound=outbound,
             moderador=ModeradorFake(bloqueia_entrada=True),
+            agendador=AgendadorNoop(),
         )
 
     assert resultado == "bloqueado_por_optout"
@@ -512,6 +522,7 @@ async def test_optout_entre_a_primeira_e_a_segunda_parte_nao_vira_respondido(
             contador=contador_fake(),
             outbound=outbound,
             moderador=ModeradorFake(),
+            agendador=AgendadorNoop(),
         )
 
     assert resultado == "bloqueado_por_optout"
@@ -583,6 +594,7 @@ async def test_confirmacao_de_optout_que_nao_entrega_nunca_vira_bloqueado_por_op
             contador=contador_fake(),
             outbound=outbound,
             moderador=ModeradorFake(),
+            agendador=AgendadorNoop(),
         )
 
     assert resultado == "reentrega_suprimida", (
@@ -629,6 +641,7 @@ async def test_kind_da_entrega_de_texto_fixo_continua_reply_por_default(
         contador=contador_fake(),
         outbound=outbound,
         moderador=ModeradorFake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
     )
 
     assert resultado == "respondido"
