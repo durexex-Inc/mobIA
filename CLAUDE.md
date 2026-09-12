@@ -118,11 +118,22 @@ Mesma regra para a spec: emendas ao SRS (`docs/srs/`) entram como item aninhado 
 
 ## Fluxo de trabalho
 
-Card no Jira (projeto TEC) → **mover para Fazendo e pôr Eduardo como responsável** → desenho em `docs/superpowers/specs/` → plano em `docs/superpowers/plans/` → branch `feat/tec-nnn-<slug>` → PR contra `main`.
+Card no Jira (projeto TEC) → **mover para Fazendo e pôr Eduardo como responsável** → desenho em `docs/superpowers/specs/` → plano em `docs/superpowers/plans/` → branch `feat/tec-nnn-<slug>` → PR contra `main` → **comentar na card e mover para Em análise**.
 
 **Antes de começar, mova a card para "Fazendo" e ponha Eduardo como responsável.** Antes do desenho, não depois de escrever código: enquanto a card não se mexe, o quadro diz que ninguém pegou o trabalho, e quem olha não consegue distinguir uma card parada de uma card em curso. É a primeira ação da sequência acima, não um acerto de contas no fim.
 
 O responsável é **`eduardodurieuxlopes@gmail.com`** — a conta do Jira, que não é a mesma identidade do git (`eduardo.lopes@instivo.com.br`). Resolva o account ID por `lookupJiraAccountId` a partir desse e-mail em vez de guardar o ID aqui: ID copiado para prosa é o tipo de dado que ninguém revalida quando muda.
+
+**Ao abrir o PR, a card recebe um comentário e vai para "Em análise".** Não para "Feito": quem mergeia é que fecha. Uma card em "Fazendo" com PR aberto mente sobre onde o trabalho está — e quem olha o quadro não tem como saber que já existe algo para revisar.
+
+O comentário não é um "pronto, segue o PR". Ele existe para registrar o que **some se ficar só no PR**, porque a card é o que alguém vai reler daqui a seis meses:
+
+- **Toda divergência em relação ao texto da card**, com o porquê. Se a implementação separou em dois o que a card juntava, ou escolheu outra chave, ou decidiu uma regra que a card não decidia, está aí.
+- **Critério de aceite que não foi exercitado**, e a razão. Melhor a card dizer que o critério ficou sem teste do que o revisor descobrir sozinho — ou, pior, do que um teste inventar a entidade que falta só para se auto-satisfazer.
+- **Lacuna que é decisão de produto, não de código.** Comportamento que decorre do desenho aprovado e que talvez não seja o desejado. Quem decide isso não lê `docs/superpowers/specs/`.
+- **O que a card não entrega**, com a consequência prática dita sem rodeio. Na TEC-174, "a notificação é outra card" significa que *nada notifica ninguém ainda* — e foi por isso que o texto que o lead recebe teve de ser reescrito, porque a primeira versão dizia "já avisei um corretor".
+
+As emendas ao SRS entram no comentário também, nomeadas: quem revisa precisa saber que a spec mudou.
 
 As cards são escritas antes da implementação e são a fonte de requisitos — **nunca chute número de card**. O SRS v1.0 está em `docs/srs/srs-agente-sdr-imobiliario-v1.0.md`; cite o arquivo, não a lembrança, porque as emendas mudam o que a regra diz sem mudar o número dela.
 
