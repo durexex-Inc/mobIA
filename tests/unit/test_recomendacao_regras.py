@@ -111,7 +111,7 @@ def test_dois_descartes_por_distancia_excluem() -> None:
 
 def test_dois_descartes_de_categorias_diferentes_nao_excluem() -> None:
     """So DISTANCIA conta -- um descarte por preco nao diz nada sobre o
-    bairro, e contá-lo estreitaria a busca por um motivo que o lead nunca
+    bairro, e conta-lo estreitaria a busca por um motivo que o lead nunca
     deu."""
     descartes = (
         DescartePorBairro(bairro="centro", categoria=CategoriaDescarte.DISTANCIA),

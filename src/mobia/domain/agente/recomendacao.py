@@ -88,7 +88,7 @@ def bairros_a_excluir(descartes: Sequence[DescartePorBairro]) -> tuple[str, ...]
     """Os bairros que RN-10.4 tira das buscas seguintes desta conversa.
 
     **So conta descarte de categoria `DISTANCIA`.** Um descarte por preco ou
-    por tamanho nao diz nada sobre o BAIRRO -- contá-lo estreitaria a busca
+    por tamanho nao diz nada sobre o BAIRRO -- conta-lo estreitaria a busca
     por um motivo que o lead nunca deu. Pelo mesmo raciocinio, um descarte
     SEM categoria (`None`) tambem nao conta: sem motivo registrado nao ha
     como saber que foi sobre distancia, e contar mesmo assim estreitaria a

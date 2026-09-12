@@ -156,6 +156,13 @@ async def _bairros_excluidos_desta_busca(
     calada.
     """
     if channel is None or conversation_key is None:
+        # `info`, nao silencio: sem isto, "a exclusao esta desligada porque
+        # ninguem passou identidade de conversa" e "nao havia nada para
+        # excluir" ficam indistinguiveis em producao -- mesmo retorno `()`,
+        # nenhum log, nenhuma metrica. A causa e o CHAMADOR nao ter ligado a
+        # conversa (hoje, `turno.py` nao passa `channel`/`conversation_key`),
+        # nunca "o lead nao rejeitou nada".
+        log.info("recomendacao.exclusao_desligada_sem_identidade")
         return ()
     try:
         descartes = await ler_descartes_por_distancia(
