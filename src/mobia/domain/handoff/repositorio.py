@@ -1,6 +1,7 @@
 """A escrita do handoff, com a deduplicacao que a RN-16.1 exige."""
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import any_, case, func, literal, literal_column, or_, text
@@ -11,17 +12,35 @@ from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho, Prioridade, Status
 
 
+@dataclass(frozen=True)
+class HandoffRegistrado:
+    """O que `registrar_handoff` devolve.
+
+    Dataclass e nao tupla porque os tres chamadores leem pelo nome, e porque
+    `ResumoGerado` e `Score` ja estabeleceram a forma neste repo.
+
+    `id` e sempre o da linha que EXISTE no banco depois do statement -- a
+    recem-inserida quando `criado`, a que ja estava aberta quando nao. O
+    `values()` calcula um uuid novo a cada chamada e o descarta no caminho do
+    UPDATE; devolver aquele daria um id fantasma a quem chama.
+    """
+
+    id: uuid.UUID
+    criado: bool
+
+
 async def registrar_handoff(
     session: AsyncSession,
     *,
     channel: str,
     conversation_key: str,
     gatilho: Gatilho,
-) -> bool:
+) -> HandoffRegistrado:
     """Cria o handoff da conversa, ou acumula o gatilho no que ja esta aberto.
 
-    Devolve `True` quando criou linha nova e `False` quando atualizou uma
-    aberta. **Nao commita** -- o commit e de quem chama, como em
+    Devolve `HandoffRegistrado`, com `criado=True` quando criou linha nova e
+    `criado=False` quando atualizou uma aberta. **Nao commita** -- o commit e
+    de quem chama, como em
     `registrar_recalculo`. E isso que poe o handoff na MESMA transacao do
     recalculo no gatilho QUENTE: ou o lead vira QUENTE e tem handoff, ou nem
     uma coisa nem outra. O estado intermediario -- lead quente, ninguem
@@ -84,6 +103,7 @@ async def registrar_handoff(
                 "atualizado_em": agora,
             },
         ).returning(
+            Handoff.id,
             # xmax e o sinal nativo do Postgres para distinguir INSERT de
             # UPDATE num ON CONFLICT: vale 0 na linha recem-inserida e
             # diferente de zero na que foi atualizada. NAO comparar carimbos
@@ -95,12 +115,18 @@ async def registrar_handoff(
             # banco -- exatamente a corrida que este statement existe para
             # arbitrar, so que agora no booleano de retorno em vez de na
             # linha.
-            (literal_column("xmax") == 0).label("inseriu")
+            (literal_column("xmax") == 0).label("inseriu"),
         )
     )
 
     # TEC-174, fix wave (Important 2). Nao loga aqui: esta funcao nao commita,
     # entao um log daqui roda dentro da transacao de quem chama e sobrevive a
     # um rollback -- log sem linha, se o commit do chamador falhar. Quem
-    # chama ja recebe o booleano e loga DEPOIS do proprio commit.
-    return resultado.scalar_one()
+    # chama ja recebe o registro e loga DEPOIS do proprio commit.
+    #
+    # O id vem do RETURNING, e nao do uuid calculado no values() acima: esse
+    # uuid e descartado quando o statement cai no caminho do UPDATE, e o
+    # RETURNING devolve a linha que de fato existe no banco -- a recem-criada
+    # ou a que ja estava aberta, conforme `inseriu`.
+    linha = resultado.one()
+    return HandoffRegistrado(id=linha.id, criado=linha.inseriu)

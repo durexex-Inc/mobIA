@@ -3,9 +3,10 @@
 import asyncio
 from typing import cast
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
 
@@ -24,11 +25,11 @@ async def _linhas(session: AsyncSession) -> list[dict]:
 
 
 async def test_o_gatilho_quente_cria_com_etiqueta_e_prioridade(session: AsyncSession) -> None:
-    criou = await registrar_handoff(
+    registro = await registrar_handoff(
         session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
     )
     await session.commit()
-    assert criou is True
+    assert registro.criado is True
     linhas = await _linhas(session)
     assert len(linhas) == 1
     assert linhas[0]["etiqueta"] == "lead-quente"
@@ -42,11 +43,11 @@ async def test_gatilho_repetido_nao_duplica_e_acumula(session: AsyncSession) -> 
         session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
     )
     await session.commit()
-    criou = await registrar_handoff(
+    registro = await registrar_handoff(
         session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.VENDA_IMOVEL
     )
     await session.commit()
-    assert criou is False
+    assert registro.criado is False
     linhas = await _linhas(session)
     assert len(linhas) == 1
     assert linhas[0]["gatilhos_adicionais"] == ["VENDA_IMOVEL"]
@@ -160,11 +161,11 @@ async def test_duas_escritas_concorrentes_produzem_uma_linha(
 
     async def escrever(gatilho: Gatilho) -> bool:
         async with session_factory() as propria:
-            criou = await registrar_handoff(
+            registro = await registrar_handoff(
                 propria, channel=CANAL, conversation_key=CONVERSA, gatilho=gatilho
             )
             await propria.commit()
-            return criou
+            return registro.criado
 
     resultados = await asyncio.gather(
         *(escrever(gatilho) for gatilho in gatilhos),
@@ -180,3 +181,41 @@ async def test_duas_escritas_concorrentes_produzem_uma_linha(
     perdedor = gatilhos[booleanos.index(False)]
     linhas = await _linhas(session)
     assert linhas[0]["gatilhos_adicionais"] == [perdedor.value]
+
+
+async def test_registrar_devolve_o_id_da_linha_criada(session: AsyncSession) -> None:
+    registro = await registrar_handoff(
+        session, channel="whatsapp", conversation_key="5511911112222", gatilho=Gatilho.LEAD_QUENTE
+    )
+    await session.commit()
+
+    assert registro.criado is True
+    gravado = (await session.execute(select(Handoff.id))).scalar_one()
+    assert registro.id == gravado
+
+
+async def test_o_gatilho_adicional_devolve_o_id_do_handoff_ABERTO(
+    session: AsyncSession,
+) -> None:
+    """O id e o da linha que sobreviveu, nao o do INSERT que perdeu.
+
+    O `ON CONFLICT DO UPDATE` gera um id novo no `values()` a cada chamada e o
+    descarta quando cai no UPDATE. Devolver o descartado daria ao chamador um
+    id que nao existe no banco -- e o job de resumo procuraria um handoff
+    fantasma.
+    """
+    primeiro = await registrar_handoff(
+        session, channel="whatsapp", conversation_key="5511911112222", gatilho=Gatilho.LEAD_QUENTE
+    )
+    await session.commit()
+
+    segundo = await registrar_handoff(
+        session,
+        channel="whatsapp",
+        conversation_key="5511911112222",
+        gatilho=Gatilho.PEDIDO_DE_HUMANO,
+    )
+    await session.commit()
+
+    assert segundo.criado is False
+    assert segundo.id == primeiro.id

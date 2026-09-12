@@ -118,7 +118,7 @@ async def _encaminhar_por_erro(
     """
     try:
         async with session_factory() as session:
-            criou = await registrar_handoff(
+            registro = await registrar_handoff(
                 session,
                 channel=message.channel,
                 conversation_key=message.conversation_key,
@@ -136,7 +136,7 @@ async def _encaminhar_por_erro(
     # Depois do commit acima -- ver o comentario em `registrar_handoff` sobre
     # por que ela mesma nao loga.
     log.info(
-        "handoff.criado" if criou else "handoff.gatilho_adicional",
+        "handoff.criado" if registro.criado else "handoff.gatilho_adicional",
         channel=message.channel,
         gatilho=Gatilho.ERRO_DO_AGENTE.value,
         etiqueta=ETIQUETA_DE[Gatilho.ERRO_DO_AGENTE],
