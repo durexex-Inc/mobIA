@@ -33,13 +33,16 @@ jobs:
       # `alembic` entra nos dois: as migrations importam codigo da aplicacao
       # (a 0004 chama mobia.infra.crypto) e ficavam fora de todo gate estatico.
       # `evals` entra pelo mesmo motivo: estao fora de todo gate de linting se
-      # ficarmos so com `src tests`. O mypy segue so em `src` -- cobrir alembic
-      # exige antes um src/mobia/py.typed, que e outra mudanca.
+      # ficarmos so com `src tests`. `scripts` entra pelo terceiro caso do mesmo
+      # argumento -- estava fora dos tres, e o `ruff format --check` reprovava
+      # `gerar_base_simulada.py` sem que nada o dissesse. O mypy segue so em
+      # `src` -- cobrir alembic exige antes um src/mobia/py.typed, que e outra
+      # mudanca.
       - name: ruff check
-        run: ruff check src tests alembic evals
+        run: ruff check src tests alembic evals scripts
 
       - name: ruff format
-        run: ruff format --check src tests alembic evals
+        run: ruff format --check src tests alembic evals scripts
 
       - name: mypy
         run: mypy src
