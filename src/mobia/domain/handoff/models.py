@@ -7,11 +7,23 @@ identidade, do UNIQUE parcial e do `corretor_id` sem FK.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ARRAY, CheckConstraint, DateTime, Index, String, text
+from sqlalchemy import ARRAY, CheckConstraint, DateTime, Index, LargeBinary, String, text
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from mobia.domain.messages.models import Base
+from mobia.infra.crypto import aad_de
+
+
+def aad_do_resumo_de_handoff(handoff_id: uuid.UUID) -> str:
+    """Amarra o resumo ao handoff que ele descreve.
+
+    Diferente do `aad_do_resumo` de `context/models.py`, que precisa compor o
+    par `(channel, conversation_key)` e por isso prefixa cada parte pelo
+    tamanho: aqui a identidade da linha e um UUID, que nao tem como colidir
+    com outro por concatenacao ambigua. `aad_de` basta.
+    """
+    return aad_de(handoff_id, "resumo")
 
 
 class Handoff(Base):
@@ -45,6 +57,31 @@ class Handoff(Base):
     gatilhos_adicionais: Mapped[list[str]] = mapped_column(
         ARRAY(String(32)), nullable=False, server_default=text("'{}'::varchar[]")
     )
+
+    # Cifrado com AES-GCM, AAD de `aad_do_resumo_de_handoff`. Nulavel por
+    # construcao: a geracao e assincrona (ver a D1 do desenho), entao todo
+    # handoff existe por alguns segundos sem resumo -- e permanece sem quando
+    # a geracao falha, que e o caso que a TEC-176 vai atender.
+    resumo: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    resumo_gerado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Qual modelo escreveu. Mesmo papel do `modelo` de `conversation_summaries`:
+    # quando a saida piorar, e por ele que se descobre o que mudou.
+    resumo_modelo: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    @validates("resumo")
+    def _recusar_texto_claro(self, coluna: str, valor: object) -> object:
+        """Mesma guarda de `Message` e de `ConversationSummary`.
+
+        O driver embute o argumento recusado na propria mensagem de excecao,
+        antes de o SQLAlchemy ver qualquer coisa, e essa mensagem chega ao log.
+        """
+        if valor is not None and not isinstance(valor, bytes | bytearray | memoryview):
+            raise TypeError(
+                f"{coluna} aceita apenas bytes cifrados, recebeu {type(valor).__name__}"
+            )
+        return valor
 
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
