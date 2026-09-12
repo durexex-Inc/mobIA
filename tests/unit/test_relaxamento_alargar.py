@@ -3,6 +3,14 @@
 TEC-160. Basename distinto de tudo em `tests/integration/`.
 """
 
+import pytest
+
+from mobia.domain.agente.turno import (
+    TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
+    TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
+    TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
+    aviso_de_ampliacao,
+)
 from mobia.domain.catalogo.enums import EstadoDoRelaxamento, Operacao
 from mobia.domain.catalogo.relaxamento import alargar, e_relaxavel
 from mobia.domain.catalogo.schemas import FiltroDeBusca, ResultadoDaBusca
@@ -103,3 +111,58 @@ def test_regiao_sozinha_ja_torna_relaxavel() -> None:
 def test_piso_sozinho_ja_torna_relaxavel() -> None:
     """A faixa cede nas duas pontas (D3), entao o piso tambem e relaxavel."""
     assert e_relaxavel(FiltroDeBusca(operacao=Operacao.VENDA, preco_min_centavos=20000000)) is True
+
+
+def test_a_variante_do_aviso_corresponde_ao_que_mudou() -> None:
+    """D11. A card exige "avisado ... e EM QUE".
+
+    Uma constante fixa que dissesse sempre as duas coisas seria o aviso
+    mentindo: o lead que nao deu regiao teve so o preco relaxado, e ouvir
+    "inclui bairros vizinhos" e informacao falsa sobre o que o sistema fez --
+    num aviso cujo proposito inteiro e ser explicito.
+    """
+    assert aviso_de_ampliacao(True, True) == TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO
+    assert aviso_de_ampliacao(True, False) == TEXTO_DO_CRITERIO_AMPLIADO_PRECO
+    assert aviso_de_ampliacao(False, True) == TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO
+
+
+def test_o_aviso_sem_preco_nem_bairro_levanta() -> None:
+    """Ruling do controller, e nao do brief original.
+
+    O brief caia para a variante de bairro quando os dois argumentos eram
+    False -- avisando "inclui bairros vizinhos" mesmo sem bairro nenhum
+    relaxado. Esse estado e inalcancavel quando `relaxou_e_achou` e True (um
+    passe que nao alargou nada nao poderia achar o que o passe identico
+    anterior ja tinha perdido), entao torna-lo um `ValueError` e de graca: a
+    guarda em `executar_turno` so chama esta funcao sob
+    `relaxou_preco or relaxou_bairro`, e o turno nao morre se o impossivel
+    acontecer -- so deixa de mandar o aviso.
+    """
+    with pytest.raises(ValueError, match="aviso_de_ampliacao"):
+        aviso_de_ampliacao(False, False)
+
+
+def test_o_aviso_nao_cita_valor() -> None:
+    """D11. O numero ampliado e conta nossa, nao fato do banco.
+
+    E o que mantem o aviso fora da discussao da TEC-161: texto nosso nao passa
+    por `divergencias_de`, mas um texto nosso que cita valor convida o proximo
+    leitor a achar que passa.
+    """
+    for texto in (
+        TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
+        TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
+        TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
+    ):
+        assert not any(caractere.isdigit() for caractere in texto)
+
+
+def test_os_textos_do_aviso_sao_ascii() -> None:
+    """Todo texto que sai para o lead e ASCII sem acento -- a disciplina de
+    `apresentacao.py` e de `TEXTO_DA_BUSCA_INCONCLUSIVA`."""
+    for texto in (
+        TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
+        TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
+        TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
+    ):
+        assert texto.isascii()

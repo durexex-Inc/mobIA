@@ -101,6 +101,68 @@ TEXTO_DA_BUSCA_INCONCLUSIVA = (
     "informacao errada. Ja te retorno com as opcoes."
 )
 
+# RN-09.3 / CA-09.3, e a regra "avisado ... e EM QUE" da card. TEC-160, D11.
+#
+# Tres variantes e nao uma constante: quando so o preco foi relaxado (o lead
+# nao deu regiao), dizer "inclui bairros vizinhos" e informacao falsa sobre o
+# que o sistema fez -- num aviso cujo proposito inteiro e ser explicito.
+#
+# Nenhum numero, de proposito: o teto ampliado e conta nossa, e nao fato do
+# banco. Os nomes dos bairros tambem ficam de fora, e essa e a escolha mais
+# discutivel -- nome de bairro E fato do catalogo. Ficam fora porque a lista e
+# variavel (a Trindade amplia para tres, o Itacorubi para quatro) e uma
+# mensagem que cresce com o grau do no e uma mensagem cujo pior caso ninguem
+# mediu. O lead ve o bairro na ficha, que e onde ele importa.
+_ABERTURA_DA_AMPLIACAO = "Nao achei nada exatamente no que voce pediu, entao "
+
+TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO = (
+    f"{_ABERTURA_DA_AMPLIACAO}ampliei um pouco a busca: valor um pouco acima e "
+    "bairros vizinhos. Veja se algum destes serve."
+)
+TEXTO_DO_CRITERIO_AMPLIADO_PRECO = (
+    f"{_ABERTURA_DA_AMPLIACAO}ampliei um pouco o valor. Veja se algum destes serve."
+)
+TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO = (
+    f"{_ABERTURA_DA_AMPLIACAO}inclui bairros vizinhos. Veja se algum destes serve."
+)
+
+# Kind proprio e OBRIGATORIO, nao preferencia: `outbound_dispatches` tem
+# UNIQUE (message_id, kind) -- a constraint `uq_outbound_message_kind`, criada
+# na `0002` e nomeada em `outbound/port.py` --, e no caminho de apresentacao a
+# identificacao ja envia com KIND_DA_RESPOSTA. Duas mensagens com o mesmo kind
+# no mesmo message_id colidiriam na reserva, e a segunda seria descartada como
+# se fosse reprocessamento. E o mesmo motivo que deu `reply_2` a segunda
+# mensagem de texto da TEC-140.
+#
+# String fixa, sem id dentro, pelo argumento de idempotencia que o comentario
+# de KINDS_DAS_FICHAS registra: kind que muda entre retentativas perde a dedup
+# justamente quando ela importa. A coluna e String(32); isto tem 17.
+KIND_DO_CRITERIO_AMPLIADO = "criterio_ampliado"
+
+
+def aviso_de_ampliacao(relaxou_preco: bool, relaxou_bairro: bool) -> str:
+    """A variante que corresponde ao que de fato foi relaxado. D11.
+
+    Levanta `ValueError` quando os dois sao False. Esse estado e
+    inalcancavel no unico lugar que chama esta funcao (`executar_turno`, sob
+    `gerada.relaxou_e_achou`): um passe que nao alargou preco nem bairro e
+    byte a byte igual ao primeiro passe, que ja tinha voltado sem nada -- ele
+    nao pode ter achado o que o primeiro nao achou. Cair no caso do bairro por
+    default aqui repetiria exatamente o erro que a doc do modulo (acima)
+    existe para evitar: dizer "inclui bairros vizinhos" para quem nao teve
+    bairro nenhum ampliado, so porque nenhum booleano chegou True. Barulhento
+    e melhor que uma mentira silenciosa -- e o chamador trata a excecao como
+    guarda, nao como erro fatal do turno.
+    """
+    if relaxou_preco and relaxou_bairro:
+        return TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO
+    if relaxou_preco:
+        return TEXTO_DO_CRITERIO_AMPLIADO_PRECO
+    if relaxou_bairro:
+        return TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO
+    raise ValueError("aviso_de_ampliacao chamado sem preco nem bairro relaxados")
+
+
 SUBAGENTE_CLASSIFICADOR = "classificador"
 SUBAGENTE_DESAMBIGUADOR = "desambiguador"
 SUBAGENTE_MODERACAO = "moderacao"
@@ -743,6 +805,34 @@ async def executar_turno(
                         "para": message.conversation_key,
                         "de": message.recipient_external_id,
                         "texto": TEXTO_DA_IDENTIFICACAO,
+                    },
+                )
+            if gerada.relaxou_e_achou and (gerada.relaxou_preco or gerada.relaxou_bairro):
+                # CA-09.3. Mensagem propria, e NAO prefixo da legenda: no
+                # caminho de apresentacao `legenda_de` corta o PREFIXO antes
+                # da ficha, e `_prosa_que_cabe` devolve string vazia quando
+                # nao sobra espaco. A TEC-139 ja pagou para descobrir isso com
+                # a identificacao -- "ela sairia truncada ou nao sairia
+                # nenhuma, em silencio". Um aviso que some em silencio quebra
+                # a CA-09.3 exatamente no turno em que ela existe para valer.
+                #
+                # Cabe na RN-04.2 sem emenda: a E-02 da TEC-162 separou os
+                # tetos em ate 2 mensagens de TEXTO e ate 3 de APRESENTACAO, e
+                # isto e identificacao + aviso + ate 3 fichas. **Depois desta
+                # card nao sobra folga de texto** -- a proxima trilha que
+                # quiser mensagem propria precisa de emenda.
+                #
+                # `relaxou_preco or relaxou_bairro` e a guarda contra o
+                # estado impossivel que `aviso_de_ampliacao` recusa
+                # (ValueError): se ele ocorrer de qualquer jeito, o turno nao
+                # morre por causa de um aviso -- so deixa de mandar um.
+                await outbound.send(
+                    message.id,
+                    KIND_DO_CRITERIO_AMPLIADO,
+                    {
+                        "para": message.conversation_key,
+                        "de": message.recipient_external_id,
+                        "texto": aviso_de_ampliacao(gerada.relaxou_preco, gerada.relaxou_bairro),
                     },
                 )
             # `prosa=texto` le o valor ANTES da atribuicao: a chamada e
