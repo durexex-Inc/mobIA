@@ -6,14 +6,19 @@ from decimal import Decimal
 from typing import Any
 
 import structlog
-from sqlalchemy import update
+from sqlalchemy import column, select, table, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agente.desambiguacao import intencao_efetiva
 from mobia.domain.agente.models import ConversationIntent, Recomendacao
 from mobia.domain.agente.recomendacao import motivo_do_match
-from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
+from mobia.domain.agente.schemas import (
+    LIMIAR_DE_DESAMBIGUACAO,
+    Intencao,
+    ReacaoDoImovel,
+    ReacaoLead,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -213,4 +218,141 @@ async def gravar_recomendacoes(
 
     async with session_factory() as session:
         await session.execute(pg_insert(Recomendacao).values(linhas).on_conflict_do_nothing())
+        await session.commit()
+
+
+# So as tres colunas que `ler_pendentes` le de `imoveis`, declaradas como Core
+# table e nao importadas de `mobia.domain.catalogo.models.Imovel`.
+# `ferramenta_de_busca.py` registra no proprio docstring ser "o unico arquivo
+# em que domain/agente toca domain/catalogo" -- espalhar o import por aqui
+# tambem tornaria essa fronteira invisivel. O join precisa do nome da tabela
+# e das colunas, nao da classe ORM, entao a tabela Core basta e nao quebra a
+# regra.
+_TABELA_IMOVEIS = table("imoveis", column("id"), column("titulo"), column("bairro"))
+
+
+@dataclass(frozen=True)
+class RecomendacaoPendente:
+    """Um imovel apresentado que ainda espera a reacao do lead. TEC-163.
+
+    **Sem preco, de proposito -- ruling do round de revisao.** `recomendacoes`
+    nao guarda qual OPERACAO foi buscada, e `Imovel` carrega `preco_venda` e
+    `preco_aluguel` ao mesmo tempo; reconstruir um preco aqui a partir so do
+    `imovel_id` devolveria o de venda numa busca de aluguel, ou vice-versa.
+    E o mesmo defeito que `Candidato.preco_centavos` (`catalogo/schemas.py`)
+    existe para evitar -- o comentario de la e explicito: "numa busca de
+    aluguel, devolver o preco de venda seria devolver o campo errado".
+    Titulo e bairro bastam para desambiguar "o segundo" e "o do Campeche",
+    que sao as duas formas que o criterio de aceite desta card nomeia.
+    """
+
+    imovel_id: uuid.UUID
+    titulo: str
+    bairro: str
+
+
+async def ler_pendentes(
+    session_factory: Any, *, channel: str, conversation_key: str
+) -> tuple[RecomendacaoPendente, ...]:
+    """As linhas desta conversa ainda sem reacao, na ordem em que foram apresentadas.
+
+    **A ordem E o ordinal (D7).** "O segundo" na resposta do lead significa o
+    segundo imovel apresentado, e quem le esta lista de volta (`turno.py`,
+    junto com `resolver_ordinais`) casa o ordinal do modelo com a posicao
+    aqui. Se a ordem mudar entre a apresentacao e a leitura da reacao, a
+    opiniao do lead gruda no imovel errado.
+
+    **`apresentado_em` sozinho empata, e nao e caso raro.**
+    `gravar_recomendacoes` grava toda apresentacao com o MESMO `agora` para
+    todas as linhas do lote -- sempre que mais de um imovel sai numa mesma
+    apresentacao, essas linhas empatam em `apresentado_em` por construcao.
+    O desempate e `score_match DESC, imovel_id ASC`, e essa escolha nao e
+    arbitraria: e a MESMA ordem que `buscar` (`catalogo/busca.py`) usa no
+    proprio `ORDER BY` (score decrescente, id como desempate), e nem
+    `turno.py` nem `gravar_recomendacoes` reordenam os candidatos entre a
+    busca e a gravacao. Reproduzir aquela ordem aqui reconstroi a ordem de
+    apresentacao real -- nao serve so para tornar o teste deterministico.
+
+    Ver `RecomendacaoPendente` para o porque de nao ter preco.
+    """
+    consulta = (
+        select(Recomendacao.imovel_id, _TABELA_IMOVEIS.c.titulo, _TABELA_IMOVEIS.c.bairro)
+        .join(_TABELA_IMOVEIS, _TABELA_IMOVEIS.c.id == Recomendacao.imovel_id)
+        .where(
+            Recomendacao.channel == channel,
+            Recomendacao.conversation_key == conversation_key,
+            Recomendacao.reacao_lead.is_(None),
+        )
+        .order_by(
+            Recomendacao.apresentado_em,
+            Recomendacao.score_match.desc(),
+            Recomendacao.imovel_id,
+        )
+    )
+    async with session_factory() as session:
+        linhas = (await session.execute(consulta)).all()
+
+    return tuple(
+        RecomendacaoPendente(imovel_id=linha.imovel_id, titulo=linha.titulo, bairro=linha.bairro)
+        for linha in linhas
+    )
+
+
+async def gravar_reacoes(
+    session_factory: Any,
+    *,
+    channel: str,
+    conversation_key: str,
+    resolvidas: Sequence[tuple[uuid.UUID, ReacaoDoImovel]],
+) -> None:
+    """Grava a reacao de cada imovel resolvido, e fecha o resto da conversa como NEUTRO. D8.
+
+    **Fechar as pendentes nao mencionadas nao e cortesia, e a garantia de
+    frequencia da chamada.** `classificador.reagir` dispara toda vez que
+    existe linha com `reacao_lead IS NULL` na conversa (`ler_pendentes`). Se
+    uma pendente nao mencionada continuasse em aberto, um lead que mudasse de
+    assunto por tres turnos pagaria tres chamadas pelo MESMO imovel. Fechar
+    aqui, no mesmo commit que grava as reacoes resolvidas, e o que faz a
+    chamada disparar no MAXIMO uma vez por apresentacao.
+
+    **`NEUTRO`, nunca `SEM_RESPOSTA`.** As duas significam ausencia de opiniao
+    e RN-10.4 as conta diferente (ver o docstring de `ReacaoLead`): `NEUTRO`
+    e "o lead respondeu neste turno, so nao falou deste imovel" -- ha
+    resposta, so nao cobre esta linha, que e exatamente o que uma pendente
+    nao mencionada aqui significa. `SEM_RESPOSTA` e para quando uma
+    apresentacao NOVA supera uma pendente antiga sem o lead ter dito nada
+    sobre nenhuma das duas -- nenhuma resposta existiu, e essa marcacao e de
+    quem apresenta de novo (`turno.py`), nao desta funcao.
+
+    A atualizacao por resolvida ja filtra `reacao_lead IS NULL`: um ordinal
+    resolvido so pode ter vindo de uma linha que `ler_pendentes` devolveu
+    pendente no mesmo turno, e a guarda evita que uma corrida ou uma segunda
+    chamada sobrescreva uma reacao ja gravada.
+
+    Commita ao final, como `gravar_recomendacoes` -- o chamador nao abre
+    sessao propria para esta escrita.
+    """
+    async with session_factory() as session:
+        for imovel_id, reacao in resolvidas:
+            categoria = None if reacao.categoria is None else str(reacao.categoria)
+            await session.execute(
+                update(Recomendacao)
+                .where(
+                    Recomendacao.channel == channel,
+                    Recomendacao.conversation_key == conversation_key,
+                    Recomendacao.imovel_id == imovel_id,
+                    Recomendacao.reacao_lead.is_(None),
+                )
+                .values(reacao_lead=str(reacao.reacao), motivo_descarte=categoria)
+            )
+
+        await session.execute(
+            update(Recomendacao)
+            .where(
+                Recomendacao.channel == channel,
+                Recomendacao.conversation_key == conversation_key,
+                Recomendacao.reacao_lead.is_(None),
+            )
+            .values(reacao_lead=str(ReacaoLead.NEUTRO))
+        )
         await session.commit()

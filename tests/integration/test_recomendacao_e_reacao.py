@@ -5,7 +5,7 @@ Basename distinto de tudo em `tests/unit/`.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -13,8 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from mobia.domain.agente.models import Recomendacao
-from mobia.domain.agente.repositorio import gravar_recomendacoes
-from mobia.domain.agente.schemas import CategoriaDescarte, ReacaoLead
+from mobia.domain.agente.repositorio import gravar_reacoes, gravar_recomendacoes, ler_pendentes
+from mobia.domain.agente.schemas import CategoriaDescarte, ReacaoDoImovel, ReacaoLead
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.texto import dobrar
 
@@ -229,3 +229,127 @@ async def test_lista_de_candidatos_vazia_nao_grava_nada(session: Any, session_fa
 
     linhas = (await session.execute(select(Recomendacao))).scalars().all()
     assert linhas == []
+
+
+async def test_ler_pendentes_devolve_so_as_sem_reacao_desta_conversa(
+    session: Any, session_factory: Any
+) -> None:
+    """`ler_pendentes` filtra por `reacao_lead IS NULL` E pelo par (channel, conversa).
+
+    Tres linhas plantadas, tres motivos de exclusao diferentes: uma ja tem
+    reacao, outra e de OUTRA conversa. So a pendente desta conversa volta.
+    """
+    pendente = await _imovel(session, "AP-530", titulo="Casa Pendente", bairro="Centro")
+    ja_reagida = await _imovel(session, "AP-531")
+    de_outra_conversa = await _imovel(session, "AP-532")
+
+    await _recomendar(session, pendente)
+    await _recomendar(session, ja_reagida, reacao_lead=ReacaoLead.INTERESSE.value)
+    await _recomendar(session, de_outra_conversa, conversation_key="5548999992222")
+
+    resultado = await ler_pendentes(session_factory, channel=CANAL, conversation_key=CONVERSA)
+
+    assert [linha.imovel_id for linha in resultado] == [pendente]
+    assert resultado[0].titulo == "Casa Pendente"
+    assert resultado[0].bairro == "Centro"
+
+
+async def test_ler_pendentes_ordena_por_apresentado_em(session: Any, session_factory: Any) -> None:
+    """A ordem devolvida e a ordem de apresentacao, nao a ordem de insercao.
+
+    D7: "o segundo" e o segundo APRESENTADO. Os tres sao gravados fora de
+    ordem cronologica de proposito, para a asssercao nao passar por acidente
+    de ordem de insercao coincidir com `apresentado_em`.
+    """
+    agora = datetime.now(UTC)
+    primeiro = await _imovel(session, "AP-540")
+    segundo = await _imovel(session, "AP-541")
+    terceiro = await _imovel(session, "AP-542")
+
+    await _recomendar(session, terceiro, apresentado_em=agora + timedelta(seconds=2))
+    await _recomendar(session, primeiro, apresentado_em=agora)
+    await _recomendar(session, segundo, apresentado_em=agora + timedelta(seconds=1))
+
+    resultado = await ler_pendentes(session_factory, channel=CANAL, conversation_key=CONVERSA)
+
+    assert [linha.imovel_id for linha in resultado] == [primeiro, segundo, terceiro]
+
+
+async def test_ler_pendentes_desempata_por_score_quando_apresentado_em_empata(
+    session: Any, session_factory: Any
+) -> None:
+    """Duas linhas da MESMA apresentacao empatam em `apresentado_em` por construcao.
+
+    `gravar_recomendacoes` grava o lote inteiro com um unico `agora` -- ver o
+    docstring de `ler_pendentes`. O desempate e `score_match DESC`, a mesma
+    ordem que `buscar` usa para gerar a lista de candidatos, entao o de score
+    mais alto tem de voltar primeiro mesmo tendo sido gravado depois.
+    """
+    mesmo_instante = datetime.now(UTC)
+    score_baixo = await _imovel(session, "AP-550")
+    score_alto = await _imovel(session, "AP-551")
+
+    await _recomendar(session, score_baixo, apresentado_em=mesmo_instante, score_match=0.500)
+    await _recomendar(session, score_alto, apresentado_em=mesmo_instante, score_match=0.900)
+
+    resultado = await ler_pendentes(session_factory, channel=CANAL, conversation_key=CONVERSA)
+
+    assert [linha.imovel_id for linha in resultado] == [score_alto, score_baixo]
+
+
+async def test_gravar_reacoes_grava_reacao_e_categoria(session: Any, session_factory: Any) -> None:
+    """A reacao e a categoria de cada imovel resolvido gravam na linha certa."""
+    interessou = await _imovel(session, "AP-560")
+    descartou = await _imovel(session, "AP-561")
+    await _recomendar(session, interessou)
+    await _recomendar(session, descartou)
+
+    resolvidas = (
+        (interessou, ReacaoDoImovel(ordinal=1, reacao=ReacaoLead.INTERESSE)),
+        (
+            descartou,
+            ReacaoDoImovel(
+                ordinal=2, reacao=ReacaoLead.DESCARTE, categoria=CategoriaDescarte.PRECO
+            ),
+        ),
+    )
+    await gravar_reacoes(
+        session_factory, channel=CANAL, conversation_key=CONVERSA, resolvidas=resolvidas
+    )
+
+    linhas = {
+        linha.imovel_id: linha
+        for linha in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert linhas[interessou].reacao_lead == "INTERESSE"
+    assert linhas[interessou].motivo_descarte is None
+    assert linhas[descartou].reacao_lead == "DESCARTE"
+    assert linhas[descartou].motivo_descarte == "PRECO"
+
+
+async def test_gravar_reacoes_fecha_pendentes_nao_mencionadas_como_neutro(
+    session: Any, session_factory: Any
+) -> None:
+    """D8: a pendente que o lead nao mencionou fecha como NEUTRO, nunca fica NULL.
+
+    Sem isto, a proxima mensagem do lead ainda encontraria linha com
+    `reacao_lead IS NULL` e pagaria uma chamada de reacao de novo pelo MESMO
+    imovel -- a garantia de "no maximo uma chamada por apresentacao" depende
+    disto.
+    """
+    mencionado = await _imovel(session, "AP-570")
+    esquecido = await _imovel(session, "AP-571")
+    await _recomendar(session, mencionado)
+    await _recomendar(session, esquecido)
+
+    resolvidas = ((mencionado, ReacaoDoImovel(ordinal=1, reacao=ReacaoLead.INTERESSE)),)
+    await gravar_reacoes(
+        session_factory, channel=CANAL, conversation_key=CONVERSA, resolvidas=resolvidas
+    )
+
+    linhas = {
+        linha.imovel_id: linha
+        for linha in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert linhas[mencionado].reacao_lead == "INTERESSE"
+    assert linhas[esquecido].reacao_lead == "NEUTRO"
