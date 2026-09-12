@@ -1,6 +1,7 @@
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -10,14 +11,23 @@ from mobia.domain.agente.apresentacao import legenda_de
 from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
 from mobia.domain.agente.desambiguacao import deve_desambiguar
-from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo, porta_de_busca
+from mobia.domain.agente.ferramenta_de_busca import (
+    _PortaComScore,
+    fichas_do_catalogo,
+    porta_de_busca,
+)
 from mobia.domain.agente.formato import quebrar_em_mensagens
 from mobia.domain.agente.identificacao import (
     SEPARADOR_DA_IDENTIFICACAO,
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
 )
-from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
+from mobia.domain.agente.repositorio import (
+    gravar_intencao,
+    gravar_recomendacoes,
+    ler_intencao,
+    marcar_desambiguacao,
+)
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
@@ -462,6 +472,13 @@ async def executar_turno(
         )
         return "sem_resposta"
 
+    # `cast`: `porta_de_busca` declara devolver `PortaDeBusca` (o Callable que
+    # o classificador precisa -- D3 do desenho), mas sempre constroi e
+    # devolve um `_PortaComScore` por baixo (TEC-163, D17). O turno precisa
+    # do `.score_de` dessa classe concreta depois da busca, para gravar
+    # `Recomendacao.score_match` sem que o score passe pelo `tool_result`
+    # que o modelo le.
+    porta = cast(_PortaComScore, porta_de_busca(session_factory, embedador=embedar))
     try:
         gerada = await classificador.classificar(
             contexto,
@@ -480,7 +497,7 @@ async def executar_turno(
             # coberta pelo mesmo `except Exception` de `vetor_da_consulta`:
             # o embedador real pode falhar, e a busca segue pelo filtro
             # estruturado -- D9.
-            porta=porta_de_busca(session_factory, embedador=embedar),
+            porta=porta,
         )
     except LacoDeBuscaExcedido:
         # Nao propaga: `process_message` marcaria FAILED e o sweeper
@@ -871,6 +888,19 @@ async def executar_turno(
                         "texto": aviso_de_ampliacao(gerada.relaxou_preco, gerada.relaxou_bairro),
                     },
                 )
+            # TEC-163, D17. O score de cada candidato desta busca, lido da
+            # PORTA que a fez -- nunca do `tool_result` que o modelo viu (D7
+            # da TEC-265, ver `_PortaComScore` em `ferramenta_de_busca.py`).
+            # `_apresentar` usa isto para gravar `Recomendacao.score_match`
+            # antes de comecar a entrega. Um candidato sem score aqui (nunca
+            # deveria acontecer: a porta guarda score de TODO candidato que
+            # ela mesma devolveu) fica de fora do dict e `gravar_recomendacoes`
+            # decide o resto.
+            scores = {
+                uuid.UUID(candidato["imovel_id"]): score
+                for candidato in gerada.candidatos
+                if (score := porta.score_de(uuid.UUID(candidato["imovel_id"]))) is not None
+            }
             # `prosa=texto` le o valor ANTES da atribuicao: a chamada e
             # avaliada primeiro, e o `texto` que sai sao as legendas
             # concatenadas (D16).
@@ -879,6 +909,8 @@ async def executar_turno(
                 message=message,
                 outbound=outbound,
                 candidatos=gerada.candidatos,
+                scores=scores,
+                criterios=gerada.criterios,
                 prosa=texto,
             )
             entregue = quantas > 0
@@ -1410,6 +1442,8 @@ async def _apresentar(
     message: Message,
     outbound: OutboundPort,
     candidatos: list[dict[str, Any]],
+    scores: Mapping[uuid.UUID, float],
+    criterios: Sequence[str],
     prosa: str,
 ) -> tuple[str, int, int]:
     """Entrega ate 3 fichas e devolve (texto para gravar, entregues, suprimidas).
@@ -1443,9 +1477,26 @@ async def _apresentar(
     FAILED escreve na linha do tempo, no caminho de entrega que TODA conversa
     usa, e nenhum teste deste repo consegue reproduzir um 5xx no meio da
     apresentacao. A correcao de verdade e persistir o conjunto escolhido --
-    a `Recomendacao` da TEC-163. Ate la, isto e custo herdado e nao surpresa.
+    a `Recomendacao` da TEC-163. **Isto e o que a linha abaixo faz** -- a
+    lacuna L1 do desenho da TEC-162 fecha aqui: o conjunto escolhido
+    sobrevive mesmo quando a ficha 2 toma um 5xx, porque ja esta gravado
+    antes de a primeira ficha sair.
     """
     escolhidos = candidatos[:MAX_IMOVEIS_POR_TURNO]
+    # RN-10.3, e a L1 desta funcao. Gravado ANTES da entrega de proposito: o
+    # paragrafo acima registra que uma falha parcial perde o conjunto
+    # escolhido e o turno seguinte pode reapresentar os mesmos imoveis.
+    # Gravando aqui, o conjunto e recuperavel mesmo quando a segunda ficha
+    # toma um 5xx -- que e a correcao que aquele paragrafo prometeu.
+    await gravar_recomendacoes(
+        session_factory,
+        channel=message.channel,
+        conversation_key=message.conversation_key,
+        candidatos=escolhidos,
+        scores=scores,
+        criterios=criterios,
+        agora=datetime.now(UTC),
+    )
     ids = [uuid.UUID(c["imovel_id"]) for c in escolhidos]
     precos = {uuid.UUID(c["imovel_id"]): int(c["preco_centavos"]) for c in escolhidos}
     fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)

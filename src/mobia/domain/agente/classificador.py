@@ -402,6 +402,22 @@ def _candidatos_de(blocos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return encontrados
 
 
+def _criterios_de(blocos: list[dict[str, Any]]) -> list[str]:
+    """Os criterios de busca que sairam dos `tool_result` deste turno. TEC-163.
+
+    Mesmo padrao de `_candidatos_de`: concatena em vez de sobrescrever. Hoje
+    ha no maximo um bloco de busca por turno (D4 da TEC-265), mas se um dia
+    houver dois, a soma continua sendo os criterios que produziram os
+    candidatos que o modelo viu -- nao so os da ultima busca.
+    """
+    encontrados: list[str] = []
+    for bloco in blocos:
+        if bloco.get("is_error"):
+            continue
+        encontrados.extend(json.loads(bloco["content"]).get("criterios", []))
+    return encontrados
+
+
 # As quatro chaves de relaxamento do `tool_result`, na ordem em que
 # `_relaxamento_de` as devolve. Uma tupla e nao quatro variaveis soltas: os
 # quatro sao o MESMO tipo de fato lido do MESMO lugar, e a lista evita que
@@ -453,7 +469,7 @@ class ClassificadorAnthropic:
         output_config: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
         porta: PortaDeBusca | None = None,
-    ) -> tuple[str, Message, int, list[dict[str, Any]], bool, bool, bool, bool]:
+    ) -> tuple[str, Message, int, list[dict[str, Any]], bool, bool, bool, bool, list[str]]:
         """Chama o modelo e recusa qualquer parada que nao valha a pena aproveitar.
 
         Comum a `classificar` e `desambiguar`: as duas fazem uma chamada, medem
@@ -515,6 +531,10 @@ class ClassificadorAnthropic:
 
         candidatos: list[dict[str, Any]] = []
         # Mesmo default de `candidatos`, e pelo mesmo motivo: sem tool_use
+        # neste turno, nao houve busca -- e portanto nenhum criterio para
+        # relatar.
+        criterios: list[str] = []
+        # Mesmo default de `candidatos`, e pelo mesmo motivo: sem tool_use
         # neste turno, nao houve relaxamento nenhum para relatar.
         relaxou_e_achou = relaxou_sem_resultado = relaxou_preco = relaxou_bairro = False
         # Somados ao longo do laco pelo mesmo motivo que a latencia sai dele:
@@ -558,6 +578,7 @@ class ClassificadorAnthropic:
                     {"role": "user", "content": [await _tool_result(porta, b) for b in blocos]},
                 ]
                 candidatos = _candidatos_de(kwargs["messages"][-1]["content"])
+                criterios = _criterios_de(kwargs["messages"][-1]["content"])
                 relaxou_e_achou, relaxou_sem_resultado, relaxou_preco, relaxou_bairro = (
                     _relaxamento_de(kwargs["messages"][-1]["content"])
                 )
@@ -589,6 +610,7 @@ class ClassificadorAnthropic:
                 relaxou_sem_resultado,
                 relaxou_preco,
                 relaxou_bairro,
+                criterios,
             )
 
         raise LacoDeBuscaExcedido("laco de tool use nao convergiu")
@@ -610,6 +632,7 @@ class ClassificadorAnthropic:
             relaxou_sem_resultado,
             relaxou_preco,
             relaxou_bairro,
+            criterios,
         ) = await self._chamar(
             contexto,
             modelo=settings.modelo_agente,
@@ -693,6 +716,7 @@ class ClassificadorAnthropic:
                 cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
                 cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
                 candidatos=candidatos,
+                criterios=criterios,
                 relaxou_e_achou=relaxou_e_achou,
                 relaxou_sem_resultado=relaxou_sem_resultado,
                 relaxou_preco=relaxou_preco,
@@ -768,9 +792,9 @@ class ClassificadorAnthropic:
         # para qualquer stop_reason != end_turn que impede isso de chegar ao
         # lead.
         # Sem `tools`/`porta`: a desambiguacao nunca busca imovel, entao o
-        # quarto item (candidatos) e os quatro booleanos de relaxamento saem
-        # sempre vazios/False e nao servem a esta chamada -- so `classificar`
-        # devolve algo la.
+        # quarto item (candidatos), os quatro booleanos de relaxamento e a
+        # lista de criterios (TEC-163) saem sempre vazios/False e nao servem
+        # a esta chamada -- so `classificar` devolve algo la.
         (
             texto,
             resposta,
@@ -780,6 +804,7 @@ class ClassificadorAnthropic:
             _relaxou_sem_resultado,
             _relaxou_preco,
             _relaxou_bairro,
+            _criterios,
         ) = await self._chamar(
             contexto,
             modelo=settings.modelo_agente,

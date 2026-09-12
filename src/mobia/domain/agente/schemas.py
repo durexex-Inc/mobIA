@@ -344,6 +344,13 @@ class RespostaDoAgente:
     # achou" para tomar a MESMA decisao nos dois casos.
     candidatos: list[dict[str, Any]] = field(default_factory=list)
 
+    # TEC-163. Os criterios que entraram no WHERE da busca deste turno, em
+    # forma legivel -- vazio quando nao houve busca. O turno usa isto para
+    # gravar `Recomendacao.motivo_match` (`motivo_do_match`, em
+    # `agente/recomendacao.py`) sem que o proprio modelo escreva o motivo
+    # (D5 do desenho: motivo escrito pelo modelo podia inventar).
+    criterios: list[str] = field(default_factory=list)
+
     # TEC-160. Os fatos que o turno precisa e que `candidatos` nao carrega.
     #
     # Os dois primeiros decidem QUAL mensagem sai: se o que o modelo viu veio

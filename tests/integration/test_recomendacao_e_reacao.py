@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from mobia.domain.agente.models import Recomendacao
+from mobia.domain.agente.repositorio import gravar_recomendacoes
 from mobia.domain.agente.schemas import CategoriaDescarte, ReacaoLead
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.texto import dobrar
@@ -119,3 +120,103 @@ async def test_a_reacao_e_a_categoria_gravam(session: Any) -> None:
     linha = (await session.execute(select(Recomendacao))).scalars().one()
     assert linha.reacao_lead == "DESCARTE"
     assert linha.motivo_descarte == "DISTANCIA"
+
+
+async def test_cenario_2_a_recomendacao_registra_motivo_e_momento(
+    session: Any, session_factory: Any
+) -> None:
+    """Cenario 2 do Gherkin: "ela registra o motivo do match e o momento"."""
+    imovel = await _imovel(session, "AP-410")
+    agora = datetime.now(UTC)
+
+    await gravar_recomendacoes(
+        session_factory,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        candidatos=[{"imovel_id": str(imovel)}],
+        scores={imovel: 0.87},
+        criterios=["3 quartos", "Trindade"],
+        agora=agora,
+    )
+
+    linha = (await session.execute(select(Recomendacao))).scalars().one()
+    assert linha.motivo_match == "3 quartos, Trindade"
+    assert linha.apresentado_em == agora
+    assert float(linha.score_match) == 0.87
+
+
+async def test_gravar_duas_vezes_o_mesmo_imovel_nao_levanta(
+    session: Any, session_factory: Any
+) -> None:
+    """A reapresentacao acontece: o lead pede "mostra de novo aquele".
+
+    O UNIQUE existe para impedir DUPLICATA, nao para derrubar o turno. Gravar
+    de novo e no-op -- a linha original, com a reacao que ja tiver, sobrevive.
+    """
+    imovel = await _imovel(session, "AP-411")
+    candidatos = [{"imovel_id": str(imovel)}]
+    scores = {imovel: 0.87}
+
+    await gravar_recomendacoes(
+        session_factory,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        candidatos=candidatos,
+        scores=scores,
+        criterios=["Trindade"],
+        agora=datetime.now(UTC),
+    )
+    await gravar_recomendacoes(
+        session_factory,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        candidatos=candidatos,
+        scores=scores,
+        criterios=["Trindade"],
+        agora=datetime.now(UTC),
+    )
+
+    linhas = (await session.execute(select(Recomendacao))).scalars().all()
+    assert len(linhas) == 1
+
+
+async def test_candidato_sem_score_fica_de_fora_e_nao_vira_zero(
+    session: Any, session_factory: Any
+) -> None:
+    """Um candidato ausente de `scores` e descartado, nunca gravado com 0.0.
+
+    `0.0` tornaria `score_match` decorativa e derrubaria a premissa do D4 --
+    ver o docstring de `gravar_recomendacoes`. O outro candidato da mesma
+    chamada, que TEM score, grava normalmente.
+    """
+    com_score = await _imovel(session, "AP-412")
+    sem_score = await _imovel(session, "AP-413")
+
+    await gravar_recomendacoes(
+        session_factory,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        candidatos=[{"imovel_id": str(com_score)}, {"imovel_id": str(sem_score)}],
+        scores={com_score: 0.5},
+        criterios=["Trindade"],
+        agora=datetime.now(UTC),
+    )
+
+    linhas = (await session.execute(select(Recomendacao))).scalars().all()
+    assert {linha.imovel_id for linha in linhas} == {com_score}
+
+
+async def test_lista_de_candidatos_vazia_nao_grava_nada(session: Any, session_factory: Any) -> None:
+    """Sem candidato nenhum, `gravar_recomendacoes` e no-op -- nao ha o que gravar."""
+    await gravar_recomendacoes(
+        session_factory,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        candidatos=[],
+        scores={},
+        criterios=[],
+        agora=datetime.now(UTC),
+    )
+
+    linhas = (await session.execute(select(Recomendacao))).scalars().all()
+    assert linhas == []
