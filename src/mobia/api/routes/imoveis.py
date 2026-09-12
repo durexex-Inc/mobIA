@@ -23,10 +23,17 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from mobia.api.deps import exigir_admin
-from mobia.domain.catalogo.busca import MAX_CANDIDATOS, buscar
-from mobia.domain.catalogo.enums import Operacao, OrigemImportacao, StatusImportacao, TipoImovel
+from mobia.domain.catalogo.busca import MAX_CANDIDATOS
+from mobia.domain.catalogo.enums import (
+    EstadoDoRelaxamento,
+    Operacao,
+    OrigemImportacao,
+    StatusImportacao,
+    TipoImovel,
+)
 from mobia.domain.catalogo.importacao import registrar
 from mobia.domain.catalogo.models import Importacao
+from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
 from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, FiltroDeBusca
 from mobia.infra.db import get_sessionmaker
 
@@ -242,6 +249,11 @@ async def busca(pedido: PedidoDeBusca, _: None = Depends(exigir_admin)) -> dict[
     -- a chamada de embedding, que e a parte cara, nunca acontece. No turno,
     desde a TEC-265, o mesmo campo do tool call NAO e inerte: ver
     `domain/agente/ferramenta_de_busca.py` e `domain/agente/turno.py`.
+
+    **Desde a TEC-160 esta rota tambem relaxa.** Zero candidatos no filtro
+    duro aciona a politica de zero-resultado da RN-09.3
+    (`buscar_com_relaxamento`), e o corpo devolve `relaxamentoAplicado` --
+    o booleano que a secao 6.3 do SRS ja mostrava no exemplo de resposta.
     """
     filtro = FiltroDeBusca(
         operacao=pedido.filtros.operacao,
@@ -254,7 +266,7 @@ async def busca(pedido: PedidoDeBusca, _: None = Depends(exigir_admin)) -> dict[
     )
 
     async with get_sessionmaker()() as session:
-        resultado = await buscar(
+        resultado = await buscar_com_relaxamento(
             session, filtro, consulta_texto=pedido.consulta_texto, limite=pedido.limite
         )
 
@@ -276,4 +288,9 @@ async def busca(pedido: PedidoDeBusca, _: None = Depends(exigir_admin)) -> dict[
         "totalCandidatos": resultado.total_candidatos,
         "consultaVetorizada": resultado.consulta_vetorizada,
         "candidatosSemVetor": resultado.candidatos_sem_vetor,
+        # RN-09.3, e o campo que o exemplo da secao 6.3 ja escrevia. Booleano
+        # na borda, tri-estado no dominio: `SEM_RESULTADO` sai como `false`
+        # aqui porque, do ponto de vista do chamador HTTP, nao ha nada
+        # relaxado para ver. Quem precisa dos tres estados e o turno (D6).
+        "relaxamentoAplicado": resultado.relaxamento is EstadoDoRelaxamento.APLICADO,
     }
