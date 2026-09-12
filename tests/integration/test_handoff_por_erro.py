@@ -8,6 +8,7 @@ from conftest import ClassificadorFake, ContadorFake, ModeradorFake, OutboundFak
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.models import Message
 from mobia.domain.outbound.port import EnvioRecusado
 from mobia.infra.db import get_sessionmaker
@@ -26,6 +27,7 @@ def _ctx(outbound, classificador) -> dict[str, Any]:
         "resumidor": ResumidorFake(),
         "contador": ContadorFake(),
         "moderador": ModeradorFake(),
+        "agendador": AgendadorNoop(),
     }
 
 

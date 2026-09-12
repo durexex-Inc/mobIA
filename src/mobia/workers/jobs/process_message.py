@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
 from mobia.domain.agente.turno import ResultadoDoTurno, executar_turno
-from mobia.domain.handoff.agendador import AgendadorDeResumoPort, AgendadorNoop
+from mobia.domain.handoff.agendador import AgendadorDeResumoPort
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.models import Message
@@ -153,12 +153,14 @@ async def _encaminhar_por_erro(
     if registro.criado:
         try:
             await agendador.agendar(registro.id)
-        except Exception as falha:
-            log.warning(
-                "resumo_handoff.nao_agendado",
-                handoff_id=str(registro.id),
-                reason=type(falha).__name__,
-            )
+        except Exception:
+            # `exc_info=True`, e nao so `reason=type(falha).__name__`: este e
+            # justamente o caminho de erro, onde o diagnostico mais importa.
+            # O traceback aqui e da falha de AGENDAMENTO, no bloco que a
+            # envolve -- nao o da excecao original do turno, que ja subiu e
+            # foi tratada mais acima -- entao nao ha risco de confundir as
+            # duas. Mesma fidelidade de `_agendar_resumo` em `turno.py`.
+            log.warning("resumo_handoff.nao_agendado", handoff_id=str(registro.id), exc_info=True)
 
     try:
         await outbound.send(
@@ -216,11 +218,16 @@ async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
 async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoProcessamento:
     session_factory = ctx["session_factory"]
     outbound = ctx["outbound"]
-    # `ctx.get(...) or` e nao `ctx[...]`, mesmo molde de `ctx.get("settings")`
-    # em `sweep_stalled.py`/`sweep_followups.py`: varios testes desta suite
-    # montam um ctx minimo, sem "agendador", e o worker de verdade
-    # (`workers/main.py`) sempre o preenche -- o fallback so cobre o teste.
-    agendador = ctx.get("agendador") or AgendadorNoop()
+    # `ctx[...]` direto, e nao `ctx.get(...) or AgendadorNoop()`: ao contrario
+    # de `ctx.get("settings") or get_settings()` (`sweep_stalled.py`), onde o
+    # fallback constroi um `Settings` real e equivalente ao que a chave daria,
+    # aqui o fallback trocaria uma porta real por um duble de teste dentro de
+    # producao -- e o sintoma de um `startup` que deixe de popular a chave
+    # seria nenhum resumo agendado, para sempre, sem log e sem erro. Um
+    # `ctx["agendador"]` ausente deve estourar `KeyError` alto, na primeira
+    # mensagem -- o mesmo raciocinio que a guarda de `WHATSAPP_ACCESS_TOKEN`
+    # em `workers/main.py` ja aplica a outras portas.
+    agendador = ctx["agendador"]
     identifier = uuid.UUID(message_id)
 
     async with session_factory() as session:
