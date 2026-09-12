@@ -19,15 +19,19 @@ log = structlog.get_logger(__name__)
 
 # String fixa, sem id dentro, pelo mesmo argumento de idempotencia que os KINDs
 # de `turno.py` registram: kind que muda entre retentativas perde a dedup da
-# reserva justamente quando ela importa. A coluna e String(32); isto tem 14.
+# reserva justamente quando ela importa. A coluna e String(32); isto tem 13.
 KIND_DO_AVISO_DE_ERRO = "aviso_de_erro"
 
 # Nao promete prazo nem explica a falha: o lead nao tem o que fazer com
 # "timeout do provedor", e prometer horario e promessa que esta card nao tem
-# como cumprir -- a alocacao de corretor e a TEC-166.
+# como cumprir -- a alocacao de corretor e a TEC-166. E nao promete um AVISO
+# que este sistema nao pratica -- notificar o corretor e a TEC-177, fora do
+# escopo desta card. "Passei sua conversa para" descreve o que de fato ocorre
+# (a linha PENDENTE em `handoffs`, que e por onde o time humano pega o caso)
+# sem afirmar que alguem do outro lado ja foi avisado.
 TEXTO_DO_AVISO_DE_ERRO = (
     "Tive um problema tecnico aqui e nao consegui seguir. "
-    "Ja avisei um corretor, que vai continuar com voce por aqui."
+    "Passei sua conversa para um corretor assumir."
 )
 
 # "skipped" e deste modulo -- claim recusado ou a mensagem sumiu entre o claim
