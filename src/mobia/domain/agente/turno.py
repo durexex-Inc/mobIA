@@ -22,11 +22,12 @@ from mobia.domain.agente.identificacao import (
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
 )
-from mobia.domain.agente.recomendacao import resolver_ordinais
+from mobia.domain.agente.recomendacao import bairros_a_excluir, resolver_ordinais
 from mobia.domain.agente.repositorio import (
     gravar_intencao,
     gravar_reacoes,
     gravar_recomendacoes,
+    ler_descartes_por_distancia,
     ler_intencao,
     ler_pendentes,
     marcar_desambiguacao,
@@ -198,6 +199,54 @@ def aviso_de_ampliacao(relaxou_preco: bool, relaxou_bairro: bool) -> str:
     if relaxou_bairro:
         return TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO
     raise ValueError("aviso_de_ampliacao chamado sem preco nem bairro relaxados")
+
+
+# TEC-163, Task 10. RN-10.4: o lead sabe que um bairro que ele descartou duas
+# vezes parou de entrar nas buscas seguintes desta conversa -- a mesma
+# exigencia de "nunca silencioso" que fez a TEC-160 escrever
+# `KIND_DO_CRITERIO_AMPLIADO`.
+#
+# Kind proprio e OBRIGATORIO, pelo mesmo motivo daquele: `outbound_dispatches`
+# tem UNIQUE (message_id, kind) -- a constraint `uq_outbound_message_kind`,
+# criada na `0002` --, e no caminho de apresentacao a identificacao ja envia
+# com KIND_DA_RESPOSTA. Duas mensagens com o mesmo kind no mesmo message_id
+# colidiriam na reserva, e este aviso seria descartado como reprocessamento.
+#
+# String fixa, sem id dentro, pelo argumento de idempotencia que o comentario
+# de `KINDS_DAS_FICHAS` registra: kind que muda entre retentativas perde a
+# dedup justamente quando ela importa. A coluna e String(32); isto tem 15.
+KIND_DO_FILTRO_AJUSTADO = "filtro_ajustado"
+
+TEXTO_DO_FILTRO_AJUSTADO = "Tirei {bairros} da busca, que voce ja descartou."
+
+
+def aviso_de_ajuste(bairros: Sequence[str]) -> str:
+    """O aviso da RN-10.4, com os NOMES dos bairros que saem da busca. D15.
+
+    **Diverge de proposito de `aviso_de_ampliacao` (D11 da TEC-160), que NAO
+    nomeia bairro nenhum.** La os bairros incluidos sao escolha NOSSA (a
+    tabela de adjacencia), e calar o nome evita uma mensagem cujo tamanho
+    cresce com o grau do no, sem teto medido. Aqui os bairros sao os que o
+    LEAD rejeitou -- duas ou tres vezes, nunca a arvore de adjacencia inteira
+    --, e nomea-los e a propria confirmacao de que ele foi ouvido: "Tirei o
+    Campeche da busca, que voce descartou" faz um trabalho que "ajustei o
+    filtro" nao faz.
+
+    `bairros` chega na forma dobrada (`recomendacao.bairros_a_excluir`,
+    minuscula e sem acento -- ver `texto.dobrar`); `.title()` basta para virar
+    nome legivel, e o dobrado ja garante ASCII -- nao ha acento para perder
+    na volta.
+
+    Levanta `ValueError` com a lista vazia: o chamador (`executar_turno`) so
+    invoca isto quando o conjunto excluido mudou desde antes deste turno, e o
+    par vazio nao chega a existir por construcao -- mesmo molde de guarda que
+    `aviso_de_ampliacao` documenta para o par impossivel dela.
+    """
+    if not bairros:
+        raise ValueError("aviso_de_ajuste chamado sem bairro nenhum")
+    nomes = [bairro.title() for bairro in bairros]
+    lista = nomes[0] if len(nomes) == 1 else f"{', '.join(nomes[:-1])} e {nomes[-1]}"
+    return TEXTO_DO_FILTRO_AJUSTADO.format(bairros=lista)
 
 
 SUBAGENTE_CLASSIFICADOR = "classificador"
@@ -488,6 +537,12 @@ async def executar_turno(
     pendentes = await ler_pendentes(
         session_factory, channel=message.channel, conversation_key=message.conversation_key
     )
+    # TEC-163, Task 10. RN-10.4: o aviso de ajuste (`aviso_de_ajuste`, acima)
+    # so sai quando o conjunto excluido NASCE ou MUDA neste turno -- avisar em
+    # toda busca repetiria a mesma frase por todo o tempo em que a exclusao
+    # durasse. Comeca vazio; so o `else:` de sucesso logo abaixo (a reacao
+    # deste turno foi capturada e gravada) pode preenche-lo.
+    bairros_do_ajuste: tuple[str, ...] = ()
     if pendentes:
         # `apresentados` (o texto que o modelo le) e `ids` (o que
         # `resolver_ordinais` casa contra o ordinal devolvido) sao montadas
@@ -504,6 +559,26 @@ async def executar_turno(
         for ordinal, pendente in enumerate(pendentes, start=1):
             apresentados.append(f"{ordinal}. {pendente.titulo} -- {pendente.bairro}")
             ids.append(pendente.imovel_id)
+        # TEC-163, Task 10. O retrato de ANTES desta reacao. Se `reagir`
+        # descartar um imovel e esse for o SEGUNDO descarte por distancia
+        # naquele bairro (RN-10.4, `recomendacao.LIMIAR_DE_DESCARTES`), a
+        # exclusao nasce ou cresce NESTE turno -- e comparar este retrato com
+        # o de depois (no `else:` abaixo) e o que decide se o aviso sai.
+        #
+        # Nenhuma tabela nova para lembrar "ja avisei este conjunto": os
+        # descartes JA sao o estado persistido, e append-only -- RN-10.4 nao
+        # tem caminho de remocao, entao o conjunto excluido so cresce, nunca
+        # encolhe, e comparar os dois retratos DESTE turno basta. Mesmo molde
+        # de `buscar_com_relaxamento` (TEC-160): o aviso de ampliacao tambem
+        # compara um antes e um depois dentro da mesma chamada, em vez de
+        # lembrar do turno anterior.
+        bairros_antes_da_reacao = bairros_a_excluir(
+            await ler_descartes_por_distancia(
+                session_factory,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+            )
+        )
         try:
             reacoes_do_turno = await classificador.reagir(contexto, apresentados=apresentados)
         except Exception as exc:
@@ -526,6 +601,22 @@ async def executar_turno(
                 conversation_key=message.conversation_key,
                 resolvidas=resolvidas,
             )
+            # O retrato de DEPOIS, contra o de antes. `set(...)` e nao
+            # comparacao de tupla: as duas consultas nao tem `ORDER BY`
+            # (`ler_descartes_por_distancia`), e a ordem devolvida nao e
+            # garantia de schema nenhuma -- comparar tupla arriscaria um
+            # aviso disparando por reordenacao, sem bairro nenhum novo.
+            # `sorted(...)` na gravacao final e so para a mensagem sair
+            # estavel, nao para a comparacao.
+            bairros_depois_da_reacao = bairros_a_excluir(
+                await ler_descartes_por_distancia(
+                    session_factory,
+                    channel=message.channel,
+                    conversation_key=message.conversation_key,
+                )
+            )
+            if set(bairros_depois_da_reacao) != set(bairros_antes_da_reacao):
+                bairros_do_ajuste = tuple(sorted(bairros_depois_da_reacao))
 
     # `cast`: `porta_de_busca` declara devolver `PortaDeBusca` (o Callable que
     # o classificador precisa -- D3 do desenho), mas sempre constroi e
@@ -533,7 +624,24 @@ async def executar_turno(
     # do `.score_de` dessa classe concreta depois da busca, para gravar
     # `Recomendacao.score_match` sem que o score passe pelo `tool_result`
     # que o modelo le.
-    porta = cast(_PortaComScore, porta_de_busca(session_factory, embedador=embedar))
+    #
+    # `channel=message.channel, conversation_key=message.conversation_key`:
+    # TEC-163, Task 10. Ate aqui esta chamada nao passava os dois, e
+    # `_bairros_excluidos_desta_busca` (`ferramenta_de_busca.py`) desliga a
+    # exclusao inteira sem identidade de conversa -- a feature das Tasks 7-9
+    # inteira (limiar, categoria, dobra, o lift de D14) rodava em teste e
+    # NUNCA em producao. Sem os dois nomeados aqui, `recomendacao.
+    # exclusao_desligada_sem_identidade` loga em TODO turno; com eles, so
+    # loga quando de fato faltar identidade -- nenhum turno normal.
+    porta = cast(
+        _PortaComScore,
+        porta_de_busca(
+            session_factory,
+            embedador=embedar,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+        ),
+    )
     try:
         gerada = await classificador.classificar(
             contexto,
@@ -903,9 +1011,14 @@ async def executar_turno(
                 # turno mais comum de uma conversa nova: o lead diz o que
                 # procura e o agente ja busca e apresenta.
                 #
-                # Cabe na RN-04.2 sem emenda: a E-02 da TEC-162 separou os
-                # tetos em ate 2 mensagens de TEXTO e ate 3 de APRESENTACAO,
-                # e isto e 1 texto mais ate 3 fichas.
+                # A E-02 da TEC-162 separou os tetos da RN-04.2 em ate 2
+                # mensagens de TEXTO e ate 3 de APRESENTACAO. TEC-163, Task 10
+                # acrescenta uma TERCEIRA trilha de texto propria (o aviso de
+                # ajuste, poucas linhas abaixo) -- com identificacao + ajuste +
+                # ampliacao, um turno pode ter ate 3 textos mais ate 3 fichas,
+                # e o teto de 2 deixa de valer sem emenda. Nao corrigido aqui
+                # de proposito: a emenda formal da RN-04.2 e a Task 11 desta
+                # card, nao esta.
                 await outbound.send(
                     message.id,
                     KIND_DA_RESPOSTA,
@@ -913,6 +1026,41 @@ async def executar_turno(
                         "para": message.conversation_key,
                         "de": message.recipient_external_id,
                         "texto": TEXTO_DA_IDENTIFICACAO,
+                    },
+                )
+            if bairros_do_ajuste:
+                # TEC-163, Task 10, RN-10.4. Mensagem propria, e NAO prefixo
+                # da legenda -- mesmo motivo do aviso de ampliacao logo
+                # abaixo: `legenda_de` corta o PREFIXO antes da ficha, e
+                # `_prosa_que_cabe` devolve string vazia quando nao sobra
+                # espaco. A TEC-139 ja pagou para descobrir isso com a
+                # identificacao; um aviso que confirma ter ouvido o lead e
+                # some em silencio e pior que nao existir.
+                #
+                # ANTES do aviso de ampliacao, de proposito -- ordem
+                # narrativa da conversa: quem fala (identificacao), o que
+                # fizemos com o que o LEAD disse (o ajuste responde a ele),
+                # so depois o que tivemos de esticar por CONTA PROPRIA (a
+                # ampliacao e iniciativa nossa), e so entao o resultado
+                # (fichas).
+                #
+                # `bairros_do_ajuste` so vem preenchido quando a exclusao
+                # nasceu ou mudou NESTE turno (ver o retrato antes/depois no
+                # bloco da reacao, acima) -- avisar em toda busca repetiria a
+                # mesma frase por todo o tempo em que a exclusao durasse,
+                # ensinando o lead a ignorar o aviso.
+                #
+                # Kind proprio e OBRIGATORIO: `outbound_dispatches` tem
+                # UNIQUE (message_id, kind), e a identificacao acima ja usa
+                # KIND_DA_RESPOSTA -- reusar colidiria e este aviso seria
+                # descartado como reprocessamento.
+                await outbound.send(
+                    message.id,
+                    KIND_DO_FILTRO_AJUSTADO,
+                    {
+                        "para": message.conversation_key,
+                        "de": message.recipient_external_id,
+                        "texto": aviso_de_ajuste(bairros_do_ajuste),
                     },
                 )
             if gerada.relaxou_e_achou and (gerada.relaxou_preco or gerada.relaxou_bairro):
@@ -924,11 +1072,16 @@ async def executar_turno(
                 # nenhuma, em silencio". Um aviso que some em silencio quebra
                 # a CA-09.3 exatamente no turno em que ela existe para valer.
                 #
-                # Cabe na RN-04.2 sem emenda: a E-02 da TEC-162 separou os
-                # tetos em ate 2 mensagens de TEXTO e ate 3 de APRESENTACAO, e
-                # isto e identificacao + aviso + ate 3 fichas. **Depois desta
-                # card nao sobra folga de texto** -- a proxima trilha que
-                # quiser mensagem propria precisa de emenda.
+                # A E-02 da TEC-162 separou os tetos em ate 2 mensagens de
+                # TEXTO e ate 3 de APRESENTACAO -- e ISTO, sozinho, ainda
+                # cabe: identificacao + este aviso sao os 2 textos que a E-02
+                # previu. **A proxima trilha que quisesse mensagem propria
+                # precisaria de emenda -- e a TEC-163, Task 10 e essa
+                # trilha.** O aviso de ajuste (RN-10.4) entra ANTES deste, no
+                # mesmo `if apresentando:` (ver acima), e as tres mensagens de
+                # texto juntas (identificacao, ajuste, ampliacao) passam do
+                # teto de 2. Nao corrigido aqui: a emenda formal da RN-04.2
+                # fica para a Task 11 desta card.
                 #
                 # `relaxou_preco or relaxou_bairro` e a guarda contra o
                 # estado impossivel que `aviso_de_ampliacao` recusa

@@ -782,3 +782,100 @@ async def test_falha_de_reagir_nao_derruba_o_turno_e_deixa_pendente(
     linha = (await session.execute(select(Recomendacao))).scalars().one()
     assert linha.reacao_lead is None
     assert "turno.reacao_nao_capturada" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Task 10: a exclusao ligada de verdade -- pelo TURNO, nao pela porta chamada
+# direto. RN-10.4.
+# ---------------------------------------------------------------------------
+
+
+class _ClassificadorQueBuscaSemFiltroExtra:
+    """Pede a ferramenta com o filtro dado e devolve os candidatos que a porta
+    real trouxe.
+
+    Molde de `_ClassificadorQuePedeAFerramenta`
+    (`tests/integration/test_busca_no_turno.py`), copiado e nao importado --
+    arquivos de integracao deste repo sao autocontidos. Existe para provar que
+    a exclusao da RN-10.4 atravessa `executar_turno` de ponta a ponta: os
+    testes de cima (`test_dois_descartes_por_distancia_excluem_bairro_da_
+    busca_seguinte` etc.) chamam `porta_de_busca` DIRETO, com `channel`/
+    `conversation_key` passados a mao -- e nunca teriam pego o defeito real
+    (`executar_turno` montando a porta sem os dois).
+    """
+
+    def __init__(self, filtro: dict[str, object]) -> None:
+        self.filtro = filtro
+        self.resultado: RespostaDoAgente | None = None
+
+    async def classificar(self, contexto: Any, *, porta: Any = None) -> RespostaDoAgente:
+        assert porta is not None, "o turno tem de montar e passar a porta (D3)"
+        saida = await porta(self.filtro)
+        self.resultado = RespostaDoAgente(
+            intencao=Intencao.COMPRA,
+            confianca=Decimal("0.90"),
+            resposta="Encontrei uma opcao que pode te interessar.",
+            modelo="claude-opus-5",
+            tokens_in=500,
+            tokens_out=80,
+            latency_ms=50,
+            extracao=Extracao(),
+            candidatos=saida.get("candidatos", []),
+            criterios=saida.get("criterios", []),
+        )
+        return self.resultado
+
+    async def desambiguar(self, contexto: Any) -> PerguntaDeDesambiguacao:
+        raise AssertionError("confianca alta o bastante para nao desambiguar neste teste")
+
+
+async def test_a_exclusao_de_bairro_atravessa_um_turno_de_verdade(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """TEC-163, Task 10. A lacuna que este teste fecha: ate esta task,
+    `executar_turno` montava `porta_de_busca` SEM `channel`/`conversation_key`,
+    e `_bairros_excluidos_desta_busca` desliga a exclusao inteira sem os
+    dois -- a feature inteira das Tasks 7-9 (limiar, categoria, dobra, o lift
+    de D14) rodava so em teste de porta direta e NUNCA num turno de verdade.
+
+    Dois descartes por distancia no Campeche, ja registrados (de "turnos
+    anteriores" desta mesma conversa) excluem o bairro; o imovel que a busca
+    DESTE turno encontraria, se a exclusao nao valesse, tambem esta no
+    Campeche e nao pode aparecer entre os candidatos que o TURNO devolveu.
+    """
+    conversa = _conversa_do_turno()
+    for codigo in ("AP-900", "AP-901"):
+        descartado = await _imovel(session, codigo, bairro="Campeche")
+        await _recomendar(
+            session,
+            descartado,
+            conversation_key=conversa,
+            reacao_lead=ReacaoLead.DESCARTE.value,
+            motivo_descarte=CategoriaDescarte.DISTANCIA.value,
+        )
+    procurado = await _imovel(session, "AP-902", bairro="Campeche")
+
+    classificador = _ClassificadorQueBuscaSemFiltroExtra({"operacao": "VENDA"})
+    outbound = outbound_fake()
+
+    with caplog.at_level("INFO"):
+        resultado = await rodar_turno(
+            session, classificador, outbound, resumidor_fake(), contador_fake()
+        )
+
+    assert resultado == "respondido"
+    assert classificador.resultado is not None
+    ids_encontrados = {c["imovel_id"] for c in classificador.resultado.candidatos}
+    assert str(procurado) not in ids_encontrados, (
+        "o Campeche tinha de sair da busca deste turno -- se este imovel aparece, "
+        "a exclusao da RN-10.4 nao esta ligada de verdade no turno"
+    )
+    assert "recomendacao.exclusao_desligada_sem_identidade" not in caplog.text, (
+        "este log e o sinal de que o turno nao passou identidade de conversa para "
+        "porta_de_busca -- ele nao pode aparecer num turno normal"
+    )
