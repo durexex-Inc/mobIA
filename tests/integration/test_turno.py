@@ -118,7 +118,7 @@ async def test_a_porta_do_turno_carrega_o_embedador_de_verdade(
 ) -> None:
     """Achado 1 do fix-wave: sem isto a busca do turno nao e hibrida.
 
-    `porta_de_busca(session_factory)` sem `embedador=` faz `_vetor_da_consulta`
+    `porta_de_busca(session_factory)` sem `embedador=` faz `vetor_da_consulta`
     (busca.py) devolver None sempre -- `consulta_texto` do tool call vira
     campo inerte em producao, e a busca ordena so por aderencia de preco. O
     turno tem de passar o mesmo `embedar` que `indexar_catalogo` usa para o

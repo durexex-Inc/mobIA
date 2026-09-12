@@ -402,6 +402,45 @@ def _candidatos_de(blocos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return encontrados
 
 
+# As quatro chaves de relaxamento do `tool_result`, na ordem em que
+# `_relaxamento_de` as devolve. Uma tupla e nao quatro variaveis soltas: os
+# quatro sao o MESMO tipo de fato lido do MESMO lugar, e a lista evita que
+# acrescentar um quinto vire um quinto `or` copiado a mao.
+_CHAVES_DO_RELAXAMENTO = (
+    "relaxamento_aplicado",
+    "relaxamento_sem_resultado",
+    "relaxamento_de_preco",
+    "relaxamento_de_bairro",
+)
+
+
+def _relaxamento_de(blocos: list[dict[str, Any]]) -> tuple[bool, bool, bool, bool]:
+    """O que o relaxamento fez neste turno, na ordem de `_CHAVES_DO_RELAXAMENTO`.
+
+    **Qualquer bloco basta**, e nao o ultimo: se algum dos candidatos que o
+    modelo viu veio de um passe relaxado, o lead tem de ser avisado -- a card
+    diz "sempre avisado". E o mesmo raciocinio pelo qual `_candidatos_de`
+    concatena em vez de sobrescrever.
+
+    Hoje `blocos` tem exatamente um elemento: `_chamar` levanta
+    `LacoDeBuscaExcedido` no `tool_use` da tentativa 2 (o teto da D4) e o
+    `tool_choice` manda `disable_parallel_tool_use: True`, entao nao ha nem
+    segunda rodada nem duas buscas na mesma. O laco fica assim mesmo porque a
+    API entrega uma LISTA de blocos e acumular e a semantica certa no dia em
+    que qualquer um dos dois limites sair -- e, nesse dia, ler so o ultimo
+    bloco apagaria o aviso em silencio, que e o modo de falha caro.
+    """
+    encontrados = [False] * len(_CHAVES_DO_RELAXAMENTO)
+    for bloco in blocos:
+        if bloco.get("is_error"):
+            continue
+        conteudo = json.loads(bloco["content"])
+        for indice, chave in enumerate(_CHAVES_DO_RELAXAMENTO):
+            encontrados[indice] = encontrados[indice] or bool(conteudo.get(chave))
+    aplicado, sem_resultado, de_preco, de_bairro = encontrados
+    return aplicado, sem_resultado, de_preco, de_bairro
+
+
 class ClassificadorAnthropic:
     async def _chamar(
         self,
@@ -414,7 +453,7 @@ class ClassificadorAnthropic:
         output_config: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
         porta: PortaDeBusca | None = None,
-    ) -> tuple[str, Message, int, list[dict[str, Any]]]:
+    ) -> tuple[str, Message, int, list[dict[str, Any]], bool, bool, bool, bool]:
         """Chama o modelo e recusa qualquer parada que nao valha a pena aproveitar.
 
         Comum a `classificar` e `desambiguar`: as duas fazem uma chamada, medem
@@ -475,6 +514,9 @@ class ClassificadorAnthropic:
             kwargs["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
 
         candidatos: list[dict[str, Any]] = []
+        # Mesmo default de `candidatos`, e pelo mesmo motivo: sem tool_use
+        # neste turno, nao houve relaxamento nenhum para relatar.
+        relaxou_e_achou = relaxou_sem_resultado = relaxou_preco = relaxou_bairro = False
         # Somados ao longo do laco pelo mesmo motivo que a latencia sai dele:
         # um turno com busca faz DUAS chamadas de verdade, cada uma cobrando
         # tokens de verdade. Os quatro contadores, nao so entrada/saida --
@@ -516,6 +558,9 @@ class ClassificadorAnthropic:
                     {"role": "user", "content": [await _tool_result(porta, b) for b in blocos]},
                 ]
                 candidatos = _candidatos_de(kwargs["messages"][-1]["content"])
+                relaxou_e_achou, relaxou_sem_resultado, relaxou_preco, relaxou_bairro = (
+                    _relaxamento_de(kwargs["messages"][-1]["content"])
+                )
                 continue
 
             # `end_turn` e a unica parada aproveitavel: `max_tokens` e
@@ -535,7 +580,16 @@ class ClassificadorAnthropic:
             resposta.usage.output_tokens = tokens_out_do_turno
             resposta.usage.cache_creation_input_tokens = cache_write_do_turno
             resposta.usage.cache_read_input_tokens = cache_read_do_turno
-            return texto, resposta, latency_ms, candidatos
+            return (
+                texto,
+                resposta,
+                latency_ms,
+                candidatos,
+                relaxou_e_achou,
+                relaxou_sem_resultado,
+                relaxou_preco,
+                relaxou_bairro,
+            )
 
         raise LacoDeBuscaExcedido("laco de tool use nao convergiu")
 
@@ -547,7 +601,16 @@ class ClassificadorAnthropic:
         # de um json_schema estrito, alem de end_turn -- e nenhum dos dois
         # produz um JSON que valha a pena tentar decodificar. A recusa de
         # `_chamar` para qualquer stop_reason != end_turn cobre os dois.
-        texto, resposta, latency_ms, candidatos = await self._chamar(
+        (
+            texto,
+            resposta,
+            latency_ms,
+            candidatos,
+            relaxou_e_achou,
+            relaxou_sem_resultado,
+            relaxou_preco,
+            relaxou_bairro,
+        ) = await self._chamar(
             contexto,
             modelo=settings.modelo_agente,
             max_tokens=MAX_TOKENS_DA_RESPOSTA,
@@ -630,6 +693,10 @@ class ClassificadorAnthropic:
                 cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
                 cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
                 candidatos=candidatos,
+                relaxou_e_achou=relaxou_e_achou,
+                relaxou_sem_resultado=relaxou_sem_resultado,
+                relaxou_preco=relaxou_preco,
+                relaxou_bairro=relaxou_bairro,
             )
         except (
             json.JSONDecodeError,
@@ -701,9 +768,19 @@ class ClassificadorAnthropic:
         # para qualquer stop_reason != end_turn que impede isso de chegar ao
         # lead.
         # Sem `tools`/`porta`: a desambiguacao nunca busca imovel, entao o
-        # quarto item (candidatos) sai sempre vazio e nao serve a esta
-        # chamada -- so `classificar` devolve algo la.
-        texto, resposta, latency_ms, _candidatos = await self._chamar(
+        # quarto item (candidatos) e os quatro booleanos de relaxamento saem
+        # sempre vazios/False e nao servem a esta chamada -- so `classificar`
+        # devolve algo la.
+        (
+            texto,
+            resposta,
+            latency_ms,
+            _candidatos,
+            _relaxou_e_achou,
+            _relaxou_sem_resultado,
+            _relaxou_preco,
+            _relaxou_bairro,
+        ) = await self._chamar(
             contexto,
             modelo=settings.modelo_agente,
             max_tokens=MAX_TOKENS_DA_PERGUNTA,

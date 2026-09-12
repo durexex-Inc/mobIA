@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from mobia.domain.catalogo.enums import (
+    EstadoDoRelaxamento,
     Operacao,
     StatusImovel,
     StatusImportacao,
@@ -177,6 +178,16 @@ class FiltroDeBusca:
     quartos_min: int | None = None
     vagas_min: int | None = None
     regioes: tuple[str, ...] = ()
+    # TEC-160, D2. Este filtro e o segundo passe da RN-09.3: o WHERE de preco
+    # ganha a folga de `MARGEM_DO_RELAXAMENTO_PCT`, e a ancora da ordenacao
+    # NAO se move -- `_aderencia` continua recebendo `preco_max_centavos` cru.
+    #
+    # **A divergencia mora aqui e nao num parametro de `buscar()`** porque um
+    # `ancora_de_preco: int | None = None` teria default indistinguivel do
+    # caso real: `None` ja significa "o lead nao deu teto" (aderencia
+    # constante 1), e o default precisaria de sentinela. Com o campo no
+    # filtro, os dois fatos ficam visiveis na mesma funcao.
+    relaxado: bool = False
 
     def __post_init__(self) -> None:
         # `not in COLUNA_DE_PRECO`, e nao `is Operacao.AMBOS`: uma guarda que
@@ -229,6 +240,18 @@ class ResultadoDaBusca:
     candidatos: tuple[Candidato, ...]
     total_candidatos: int
     consulta_vetorizada: bool
+    # TEC-160, D6. `buscar` devolve SEMPRE NAO_HOUVE -- ela e um passe e nao
+    # sabe se e o primeiro ou o segundo. Quem afirma outra coisa e
+    # `buscar_com_relaxamento`, por `dataclasses.replace`.
+    relaxamento: EstadoDoRelaxamento = EstadoDoRelaxamento.NAO_HOUVE
+
+    # TEC-160, D11. QUAIS dimensoes o passe relaxado alargou -- que o estado
+    # nao carrega, porque `APLICADO` vale tanto para "so preco" quanto para
+    # "preco e bairro". O aviso ao lead tem tres variantes e escolhe por estes
+    # dois: uma constante fixa dizendo sempre "valor e bairros vizinhos"
+    # mentiria para todo lead que nao deu regiao.
+    relaxou_preco: bool = False
+    relaxou_bairro: bool = False
 
     @property
     def candidatos_sem_vetor(self) -> int:

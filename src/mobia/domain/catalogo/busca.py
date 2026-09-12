@@ -59,6 +59,12 @@ PESO_ADERENCIA = 0.4
 # TEC-162.
 MAX_CANDIDATOS = 10
 
+# RN-09.3. A folga que o segundo passe da TEC-160 aplica as duas pontas da
+# faixa. Pontos percentuais inteiros de proposito: `* 1.10` em float produz
+# tetos que variam no ultimo centavo, e num catalogo de precos densos isso
+# vira desempate invisivel numa suite que ja flakeia sob carga.
+MARGEM_DO_RELAXAMENTO_PCT = 10
+
 # O vocabulario que faz "zona sul" virar `Zona.SUL`. Cada zona entra com o
 # nome nu e com o prefixo `zona `, porque o lead diz os dois -- e
 # `normalizar_regiao` deixa `zona` passar de proposito: o comentario de
@@ -168,12 +174,21 @@ def _similaridade(vetor: list[float] | None) -> ColumnElement[Any]:
     return func.coalesce(func.greatest(0.0, 1.0 - Imovel.embedding.cosine_distance(vetor)), 0.0)
 
 
+def _com_folga(valor: int, sinal: int) -> int:
+    """O limite de preco do passe relaxado. `sinal` e +1 para o teto, -1 para o piso.
+
+    Aritmetica inteira sobre centavos, sem ponto flutuante entrando no SQL.
+    """
+    return valor * (100 + sinal * MARGEM_DO_RELAXAMENTO_PCT) // 100
+
+
 async def buscar(
     session: AsyncSession,
     filtro: FiltroDeBusca,
     consulta_texto: str | None = None,
     limite: int = MAX_CANDIDATOS,
     embedador: Embedador | None = None,
+    vetor: list[float] | None = None,
 ) -> ResultadoDaBusca:
     """Os candidatos que atendem ao filtro, ordenados pela relevancia da RN-09.6.
 
@@ -183,6 +198,13 @@ async def buscar(
     `ge=1` para informar o cliente; este clamp garante a regra nos dois
     sentidos para quem chama por dentro -- sem ele, `0` devolveria uma busca
     vazia sem motivo e `-1` faria o `LIMIT` do Postgres levantar. Ver D10.
+
+    `vetor` presente manda, e `consulta_texto`/`embedador` sao ignorados.
+    Ausente (ou `None`), deriva como sempre. Nao precisa de sentinela porque
+    "passei None" e "nao passei" querem a mesma coisa: derive se puder. Quem
+    usa isto e `buscar_com_relaxamento`, que vetoriza UMA vez e entrega o
+    mesmo vetor aos dois passes -- sem isso, todo turno relaxado pagaria duas
+    chamadas ao provedor pelo mesmo texto. Ver D9.
     """
     teto_de_candidatos = max(1, min(limite, MAX_CANDIDATOS))
 
@@ -193,7 +215,7 @@ async def buscar(
     regioes = tuple(dobrar(regiao) for regiao in filtro.regioes if regiao.strip())
     zonas = zonas_de(regioes)
 
-    vetor = await _vetor_da_consulta(consulta_texto, embedador)
+    vetor = vetor if vetor is not None else await vetor_da_consulta(consulta_texto, embedador)
 
     preco = getattr(Imovel, COLUNA_DE_PRECO[filtro.operacao])
 
@@ -208,10 +230,17 @@ async def buscar(
         preco.is_not(None),
     ]
 
+    # TEC-160, D2 e D3. O `WHERE` cede quando este e o passe relaxado; a
+    # ANCORA de `_aderencia`, mais abaixo, NAO -- ela continua recebendo
+    # `filtro.preco_max_centavos` cru. Os dois fatos estao nesta funcao de
+    # proposito: separa-los faria a promessa da emenda E-01 da RN-09.6 ("10%
+    # acima do teto sai com 0,9") depender de dois campos coincidirem.
     if filtro.preco_max_centavos is not None:
-        condicoes.append(preco <= filtro.preco_max_centavos)
+        teto = filtro.preco_max_centavos
+        condicoes.append(preco <= (_com_folga(teto, +1) if filtro.relaxado else teto))
     if filtro.preco_min_centavos is not None:
-        condicoes.append(preco >= filtro.preco_min_centavos)
+        piso = filtro.preco_min_centavos
+        condicoes.append(preco >= (_com_folga(piso, -1) if filtro.relaxado else piso))
     if filtro.tipo is not None:
         condicoes.append(Imovel.tipo.in_([tipo.value for tipo in _inclusoes_de(filtro.tipo)]))
     if filtro.quartos_min is not None:
@@ -307,7 +336,7 @@ async def buscar(
     )
 
 
-async def _vetor_da_consulta(
+async def vetor_da_consulta(
     consulta_texto: str | None, embedador: Embedador | None
 ) -> list[float] | None:
     """O vetor da consulta, ou None -- e None nunca e erro. D8 e D9.

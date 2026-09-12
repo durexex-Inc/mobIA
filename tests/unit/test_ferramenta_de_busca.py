@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA, porta_de_busca
-from mobia.domain.catalogo.enums import Operacao, TipoImovel
+from mobia.domain.catalogo.enums import EstadoDoRelaxamento, Operacao, TipoImovel
 from mobia.domain.catalogo.schemas import Candidato, ResultadoDaBusca
 
 CANDIDATO = Candidato(
@@ -174,3 +174,104 @@ def test_a_ferramenta_declara_operacao_como_enum() -> None:
     assert propriedades["operacao"]["enum"] == ["VENDA", "ALUGUEL"]
     assert "enum" not in propriedades["tipo"]
     assert FERRAMENTA_DE_BUSCA["input_schema"]["additionalProperties"] is False
+
+
+async def test_o_tool_result_diz_que_relaxou_e_avisa_o_modelo() -> None:
+    """D6 e D12. O modelo precisa saber, senao afirma ao lead que achou o
+    pedido exato sobre um imovel fora do criterio original."""
+    busca = _BuscaEspia(
+        ResultadoDaBusca(
+            candidatos=(CANDIDATO,),
+            total_candidatos=1,
+            consulta_vetorizada=True,
+            relaxamento=EstadoDoRelaxamento.APLICADO,
+        )
+    )
+
+    saida = await _porta(busca)({"operacao": "VENDA"})
+
+    assert saida["relaxamento_aplicado"] is True
+    assert saida["relaxamento_sem_resultado"] is False
+    assert saida["aviso"] == (
+        "criterio ampliado: estes imoveis passam do que o lead pediu; nao afirme que atendem"
+    )
+
+
+async def test_o_tool_result_distingue_relaxou_e_nao_achou() -> None:
+    """Regra 4 da card: o turno precisa dos tres estados, e dois booleanos
+    derivados de um enum os carregam sem permitir o estado impossivel.
+
+    Sem resultado mesmo apos relaxar nao carrega `aviso` -- o modelo nao
+    redige esse aviso, o turno redige (Task 9), a partir do proprio enum.
+    """
+    busca = _BuscaEspia(
+        ResultadoDaBusca(
+            candidatos=(),
+            total_candidatos=0,
+            consulta_vetorizada=True,
+            relaxamento=EstadoDoRelaxamento.SEM_RESULTADO,
+        )
+    )
+
+    saida = await _porta(busca)({"operacao": "VENDA"})
+
+    assert saida["relaxamento_aplicado"] is False
+    assert saida["relaxamento_sem_resultado"] is True
+    assert "aviso" not in saida
+
+
+async def test_o_tool_result_sem_relaxamento_nao_carrega_aviso() -> None:
+    """`NAO_HOUVE` e o caso comum (~99% dos turnos): nenhum dos dois booleanos
+    e verdadeiro, e a chave `aviso` nem aparece -- custo zero no tool_result."""
+    saida = await _porta(_BuscaEspia())({"operacao": "VENDA"})
+
+    assert saida["relaxamento_aplicado"] is False
+    assert saida["relaxamento_sem_resultado"] is False
+    assert "aviso" not in saida
+
+
+async def test_o_tool_result_leva_as_duas_dimensoes_do_relaxamento() -> None:
+    """D11: o aviso ao lead tem variantes por dimensao, e o turno (Task 9) e
+    quem escolhe -- os dois booleanos precisam viajar independentes."""
+    busca = _BuscaEspia(
+        ResultadoDaBusca(
+            candidatos=(CANDIDATO,),
+            total_candidatos=1,
+            consulta_vetorizada=True,
+            relaxamento=EstadoDoRelaxamento.APLICADO,
+            relaxou_preco=True,
+            relaxou_bairro=False,
+        )
+    )
+
+    saida = await _porta(busca)({"operacao": "VENDA"})
+
+    assert saida["relaxamento_de_preco"] is True
+    assert saida["relaxamento_de_bairro"] is False
+
+
+async def test_o_tool_result_leva_as_duas_dimensoes_juntas() -> None:
+    """O cenario 1 do Gherkin da card -- "preco ate R$ 440.000 E bairros
+    adjacentes" -- e o unico que produz a variante de aviso com as duas
+    dimensoes.
+
+    Separado do teste acima de proposito: aquele prova que os booleanos viajam
+    INDEPENDENTES, e um `True`/`False` nao distingue "carrega os dois" de
+    "carrega o primeiro e zera o segundo".
+    """
+    busca = _BuscaEspia(
+        ResultadoDaBusca(
+            candidatos=(CANDIDATO,),
+            total_candidatos=1,
+            consulta_vetorizada=True,
+            relaxamento=EstadoDoRelaxamento.APLICADO,
+            relaxou_preco=True,
+            relaxou_bairro=True,
+        )
+    )
+
+    saida = await _porta(busca)({"operacao": "VENDA"})
+
+    assert saida["relaxamento_aplicado"] is True
+    assert saida["relaxamento_de_preco"] is True
+    assert saida["relaxamento_de_bairro"] is True

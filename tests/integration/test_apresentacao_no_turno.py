@@ -25,7 +25,13 @@ from mobia.domain.agente.schemas import (
     PerguntaDeDesambiguacao,
     RespostaDoAgente,
 )
-from mobia.domain.agente.turno import KINDS_DAS_FICHAS
+from mobia.domain.agente.turno import (
+    KIND_DO_CRITERIO_AMPLIADO,
+    KINDS_DAS_FICHAS,
+    TEXTO_DA_BUSCA_INCONCLUSIVA,
+    TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
+    aviso_de_ampliacao,
+)
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.montagem import ContextoMontado
 from mobia.domain.messages.enums import MessageRole
@@ -86,11 +92,28 @@ class _ClassificadorComCandidatos:
         perguntou: tuple[str, ...] = (),
         confianca: Decimal = Decimal("0.95"),
         prosa: str = PROSA,
+        relaxou_e_achou: bool = False,
+        relaxou_sem_resultado: bool = False,
+        relaxou_preco: bool = False,
+        relaxou_bairro: bool = False,
     ) -> None:
         self.candidatos = candidatos
         self.perguntou = perguntou
         self.confianca = confianca
         self.prosa = prosa
+        # TEC-160, Task 9. Os quatro booleanos que `_relaxamento_de` extrairia
+        # do `tool_result` num turno de verdade -- aqui fixados direto, pelo
+        # mesmo motivo que `candidatos` ja e fixado direto: o assunto destes
+        # testes e o que o TURNO faz com o fato, nao como o classificador
+        # extrai o fato do laco de tool use -- essa extracao (`_relaxamento_de`
+        # e a tupla que `_chamar` devolve) tem cobertura propria em
+        # `tests/unit/test_classificador.py`.
+        self.relaxou_e_achou = relaxou_e_achou
+        # Task 10. `relaxou_sem_resultado` e o outro lado da mesma extracao --
+        # o passe relaxado que continuou sem candidato nenhum.
+        self.relaxou_sem_resultado = relaxou_sem_resultado
+        self.relaxou_preco = relaxou_preco
+        self.relaxou_bairro = relaxou_bairro
 
     async def classificar(self, contexto: ContextoMontado, *, porta=None) -> RespostaDoAgente:
         return RespostaDoAgente(
@@ -104,6 +127,10 @@ class _ClassificadorComCandidatos:
             extracao=Extracao(),
             perguntou=self.perguntou,
             candidatos=self.candidatos,
+            relaxou_e_achou=self.relaxou_e_achou,
+            relaxou_sem_resultado=self.relaxou_sem_resultado,
+            relaxou_preco=self.relaxou_preco,
+            relaxou_bairro=self.relaxou_bairro,
         )
 
     async def desambiguar(self, contexto: ContextoMontado) -> PerguntaDeDesambiguacao:
@@ -604,3 +631,211 @@ async def test_apresentacao_em_conversa_nova_identifica_sem_perder_ficha(
     tudo = "\n".join(outbound.entregues)
     assert TEXTO_DA_IDENTIFICACAO in tudo, "a identificacao foi cortada pela legenda"
     assert titulo_longo in tudo, "a ficha foi truncada para caber a identificacao"
+
+
+async def test_o_aviso_de_ampliacao_sai_como_mensagem_propria(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """CA-09.3. Kind proprio, antes das fichas, nunca prefixo de legenda.
+
+    `_conversa_ja_existe` mantem a identificacao fora do caminho -- o assunto
+    aqui e o aviso, nao a interacao dele com a TEC-139 (que tem teste
+    proprio acima). Sem prefixo: o aviso e a PRIMEIRA mensagem entregue e a
+    prosa (`PROSA`) continua sendo o prefixo da legenda da primeira ficha,
+    como em `test_a_prosa_vira_prefixo_da_primeira_e_as_outras_sao_ficha_pura`.
+    """
+    await _conversa_ja_existe(session)
+    ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(i, 50000000 + n) for n, i in enumerate(ids)],
+        relaxou_e_achou=True,
+        relaxou_preco=True,
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert len(outbound.entregues) == 4, "aviso + tres fichas"
+    assert outbound.entregues[0] == aviso_de_ampliacao(True, False)
+    assert outbound.entregues[1].startswith(f"{PROSA}\n\n")
+    assert KIND_DO_CRITERIO_AMPLIADO in await _kinds_reservados()
+
+
+async def test_identificacao_e_aviso_saem_juntos_e_na_ordem_numa_conversa_nova(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """O caso real que amarra as duas trilhas de texto da RN-04.2, TEC-160.
+
+    O teste acima chama `_conversa_ja_existe` de proposito, para isolar o
+    aviso da identificacao -- e por isso nunca prova nada sobre a ORDEM entre
+    os dois. Este teste NAO chama `_conversa_ja_existe`: e o primeiro lead
+    novo cuja primeira busca ja relaxou e achou algo, e as duas mensagens de
+    texto (`turno.py`, dentro do mesmo `if apresentando:`) disparam
+    incondicionais e em sequencia, uma depois da outra, sem nada que force a
+    ordem alem da posicao do codigo.
+
+    **E o turno em que o orcamento da RN-04.2 fica exatamente no limite.** A
+    E-02 da TEC-162 permite ate 2 mensagens de TEXTO e ate 3 de APRESENTACAO
+    por turno; identificacao + aviso ja gastam as duas de texto, sobrando so
+    as fichas para a cota de apresentacao. Uma card futura que queira uma
+    TERCEIRA trilha de texto (identificacao, aviso, e mais alguma) precisa
+    emendar a RN-04.2 antes -- e e aqui, se alguem prefixar o aviso a
+    identificacao ou trocar a ordem sem querer, que a regressao vai aparecer:
+    silenciosa, do mesmo jeito que o comentario de `turno.py` sobre a TEC-139
+    descreve para o par identificacao/prosa.
+    """
+    ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(i, 50000000 + n) for n, i in enumerate(ids)],
+        relaxou_e_achou=True,
+        relaxou_bairro=True,
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert len(outbound.entregues) == 5, "identificacao + aviso + tres fichas"
+    assert outbound.entregues[0] == TEXTO_DA_IDENTIFICACAO, "identificacao vem primeiro"
+    assert outbound.entregues[1] == aviso_de_ampliacao(False, True), "aviso vem logo depois"
+    assert outbound.entregues[2].startswith(f"{PROSA}\n\n"), "so entao a primeira ficha"
+    assert KIND_DO_CRITERIO_AMPLIADO in await _kinds_reservados()
+
+
+async def test_o_aviso_nao_sai_quando_o_modelo_perguntou(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """D10. Pergunta adia as fichas, e avisar "ampliei o criterio" sem mostrar
+    alternativa e aviso sobre nada. A CA-09.3 diz "o lead recebe alternativas
+    COM aviso": os dois andam juntos ou nenhum anda.
+    """
+    await _conversa_ja_existe(session)
+    identificador = await _imovel(session, "AP-001", 50000000)
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(identificador, 50000000)],
+        perguntou=("regiao",),
+        relaxou_e_achou=True,
+        relaxou_preco=True,
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [PROSA]
+    assert KIND_DO_CRITERIO_AMPLIADO not in await _kinds_reservados()
+
+
+async def test_busca_sem_relaxamento_nao_avisa(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """Cenario 3 do Gherkin: "nenhum aviso de ampliacao e enviado"."""
+    await _conversa_ja_existe(session)
+    ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert len(outbound.entregues) == 3, "so as fichas, sem aviso"
+    assert KIND_DO_CRITERIO_AMPLIADO not in await _kinds_reservados()
+
+
+async def test_relaxou_e_achou_sem_dimensao_nenhuma_nao_quebra_o_turno(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """Ruling do controller sobre o Task 9: o estado impossivel (`relaxou_e_achou`
+    True com as duas dimensoes False) nao pode matar o turno.
+
+    `aviso_de_ampliacao` levanta `ValueError` para este par -- ver
+    `test_relaxamento_alargar.py` --, e a guarda em `executar_turno`
+    (`relaxou_preco or relaxou_bairro`) existe exatamente para nunca chamar a
+    funcao com este par. Sem este teste, remover a guarda so quebraria em
+    producao, no dia em que o estado impossivel de fato ocorresse.
+    """
+    await _conversa_ja_existe(session)
+    ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(i, 50000000 + n) for n, i in enumerate(ids)],
+        relaxou_e_achou=True,
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert len(outbound.entregues) == 3, "so as fichas, sem aviso"
+    assert KIND_DO_CRITERIO_AMPLIADO not in await _kinds_reservados()
+
+
+async def test_relaxou_e_nao_achou_oferece_o_corretor(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """Cenario 2 do Gherkin e regra 4 da card: "informa e oferece a lista de
+    espera ou conversa com o corretor". A lista de espera esta fora de escopo
+    (E5), entao o desfecho oferece o corretor. TEC-160, Task 10."""
+    await _conversa_ja_existe(session)
+    classificador = _ClassificadorComCandidatos([], relaxou_sem_resultado=True)
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [TEXTO_SEM_RESULTADO_APOS_AMPLIAR]
+
+
+async def test_zero_de_nada_relaxavel_mantem_a_prosa_do_modelo(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """D14. O card so legisla sobre o zero POS-relaxamento. No outro, o modelo
+    ainda pode fazer algo util que nos nao sabemos fazer -- perguntar se o lead
+    aceita dois quartos, por exemplo -- e cala-lo custaria mais do que
+    padroniza. TEC-160, Task 10."""
+    await _conversa_ja_existe(session)
+    classificador = _ClassificadorComCandidatos([], relaxou_sem_resultado=False)
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [PROSA]
+
+
+async def test_citacao_bloqueada_vence_o_desfecho(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """Se o modelo inventou imovel, a mensagem da TEC-161 e a que importa: ela
+    e sobre um defeito nosso, e o desfecho da Task 10 e sobre o catalogo.
+    TEC-160, Task 10."""
+    await _conversa_ja_existe(session)
+    classificador = _ClassificadorComCandidatos(
+        [],
+        prosa="Achei um otimo por R$ 900 mil.",
+        relaxou_sem_resultado=True,
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [TEXTO_DA_BUSCA_INCONCLUSIVA]

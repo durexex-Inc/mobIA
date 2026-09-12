@@ -348,7 +348,7 @@ async def test_provedor_caido_devolve_candidatos_filtrados_e_nao_erro(session: A
     A TEC-157 derivava de TOPOLOGIA a regra "falha de embedding nao bloqueia
     o atendimento" -- nao havia caminho em que o turno chamasse o provedor.
     Esta card criou o caminho, entao a regra passou a precisar de teste. Sem
-    esta assercao, um `raise` no lugar do `except` de `_vetor_da_consulta`
+    esta assercao, um `raise` no lugar do `except` de `vetor_da_consulta`
     deixaria a suite verde e o atendimento parado.
     """
     identificador = await _imovel(session, "AP-210")

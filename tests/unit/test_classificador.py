@@ -1130,3 +1130,65 @@ async def test_a_latencia_e_os_contadores_cobrem_as_duas_chamadas_do_laco(
     assert resultado.tokens_out == 200
     assert resultado.cache_write == 30
     assert resultado.cache_read == 20
+
+
+async def test_as_quatro_chaves_do_relaxamento_chegam_na_resposta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEC-160. A junta entre `ferramenta_de_busca` e `classificador` e feita
+    de STRING, e um typo nela desliga a feature inteira em silencio.
+
+    `porta_de_busca` escreve `relaxamento_de_preco` no `tool_result`;
+    `_CHAVES_DO_RELAXAMENTO` le com `conteudo.get(chave)`, que devolve `None`
+    -- e vira `False` -- para qualquer chave que nao exista. Renomear so um
+    dos lados nao levanta nada: o lead simplesmente para de ser avisado de que
+    o criterio foi ampliado, com a suite toda verde. Este teste e o que faz
+    esse rename falhar.
+
+    Os quatro juntos, e nao um por teste: sao a mesma tupla lida do mesmo
+    lugar, e o modo de falha que interessa (uma chave trocada) aparece em
+    qualquer um deles.
+    """
+    _instalar_sequencia(monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_json()])
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {
+            "candidatos": [],
+            "total_candidatos": 0,
+            "relaxamento_aplicado": True,
+            "relaxamento_sem_resultado": True,
+            "relaxamento_de_preco": True,
+            "relaxamento_de_bairro": True,
+        }
+
+    resposta = await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert resposta.relaxou_e_achou is True
+    assert resposta.relaxou_sem_resultado is True
+    assert resposta.relaxou_preco is True
+    assert resposta.relaxou_bairro is True
+
+
+async def test_turno_sem_relaxamento_deixa_os_quatro_em_falso(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O caso comum (~99% dos turnos): o `tool_result` nao traz chave nenhuma
+    de relaxamento e nada e avisado ao lead.
+
+    Mesmo motivo de `test_turno_sem_ferramenta_tem_candidatos_vazio`: o
+    default precisa ser teste, senao um `get` que passasse a devolver
+    `True` por engano so apareceria em producao.
+    """
+    _instalar_sequencia(monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_json()])
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"candidatos": [], "total_candidatos": 0}
+
+    resposta = await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert (
+        resposta.relaxou_e_achou,
+        resposta.relaxou_sem_resultado,
+        resposta.relaxou_preco,
+        resposta.relaxou_bairro,
+    ) == (False, False, False, False)

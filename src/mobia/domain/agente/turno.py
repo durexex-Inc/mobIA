@@ -101,6 +101,92 @@ TEXTO_DA_BUSCA_INCONCLUSIVA = (
     "informacao errada. Ja te retorno com as opcoes."
 )
 
+# Regra 4 da card e cenario 2 do Gherkin. TEC-160, D14.
+#
+# **Constante nova, e nao reuso de TEXTO_DA_BUSCA_INCONCLUSIVA.** Aquele
+# promete "ja te retorno com as opcoes", e aqui nao ha opcao nenhuma para
+# retornar -- seria o sistema prometendo o que sabe que nao tem. O laco
+# excedido e a citacao bloqueada podem prometer porque nos dois casos os
+# imoveis existem e o problema e nosso.
+#
+# A card manda oferecer "a lista de espera ou o corretor", e poe a lista de
+# espera fora de escopo (E5). Este texto entrega a metade disponivel; quando o
+# E5 existir, e aqui que se volta.
+TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
+    "Procurei tambem um pouco alem do que voce pediu e mesmo assim nao achei "
+    "nada que valha a pena te mostrar agora. Quer que um corretor olhe isso "
+    "com voce?"
+)
+
+# RN-09.3 / CA-09.3, e a regra "avisado ... e EM QUE" da card. TEC-160, D11.
+#
+# Tres variantes e nao uma constante: quando so o preco foi relaxado (o lead
+# nao deu regiao), dizer "inclui bairros vizinhos" e informacao falsa sobre o
+# que o sistema fez -- num aviso cujo proposito inteiro e ser explicito.
+#
+# Nenhum numero, de proposito: o teto ampliado e conta nossa, e nao fato do
+# banco. Os nomes dos bairros tambem ficam de fora, e essa e a escolha mais
+# discutivel -- nome de bairro E fato do catalogo. Ficam fora porque a lista e
+# variavel (a Trindade amplia para tres, o Itacorubi para quatro) e uma
+# mensagem que cresce com o grau do no e uma mensagem cujo pior caso ninguem
+# mediu. O lead ve o bairro na ficha, que e onde ele importa.
+_ABERTURA_DA_AMPLIACAO = "Nao achei nada exatamente no que voce pediu, entao "
+
+TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO = (
+    f"{_ABERTURA_DA_AMPLIACAO}ampliei um pouco a busca: valor um pouco acima e "
+    "bairros vizinhos. Veja se algum destes serve."
+)
+TEXTO_DO_CRITERIO_AMPLIADO_PRECO = (
+    f"{_ABERTURA_DA_AMPLIACAO}ampliei um pouco o valor. Veja se algum destes serve."
+)
+TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO = (
+    f"{_ABERTURA_DA_AMPLIACAO}inclui bairros vizinhos. Veja se algum destes serve."
+)
+
+# Kind proprio e OBRIGATORIO, nao preferencia: `outbound_dispatches` tem
+# UNIQUE (message_id, kind) -- a constraint `uq_outbound_message_kind`, criada
+# na `0002` e nomeada em `outbound/port.py` --, e no caminho de apresentacao a
+# identificacao ja envia com KIND_DA_RESPOSTA. Duas mensagens com o mesmo kind
+# no mesmo message_id colidiriam na reserva, e a segunda seria descartada como
+# se fosse reprocessamento. E o mesmo motivo que deu `reply_2` a segunda
+# mensagem de texto da TEC-140.
+#
+# String fixa, sem id dentro, pelo argumento de idempotencia que o comentario
+# de KINDS_DAS_FICHAS registra: kind que muda entre retentativas perde a dedup
+# justamente quando ela importa. A coluna e String(32); isto tem 17.
+KIND_DO_CRITERIO_AMPLIADO = "criterio_ampliado"
+
+
+def aviso_de_ampliacao(relaxou_preco: bool, relaxou_bairro: bool) -> str:
+    """A variante que corresponde ao que de fato foi relaxado. D11.
+
+    Levanta `ValueError` quando os dois sao False. Esse par e inalcancavel
+    porque NINGUEM O CONSTROI, e nao porque a natureza o proiba: o catalogo
+    nao congela entre dois round-trips, e uma importacao concorrente ou um
+    `RESERVADO -> DISPONIVEL` faz uma consulta identica a anterior devolver
+    linha. O que fecha o caso e o unico produtor: `buscar_com_relaxamento` so
+    faz o segundo passe depois de confirmar que preco ou bairro de fato
+    mudou, entao `APLICADO` com as duas dimensoes False nao chega a existir
+    para `executar_turno` propagar.
+
+    Cair no caso do bairro por default aqui repetiria exatamente o erro que a
+    doc do modulo (acima) existe para evitar: dizer "inclui bairros vizinhos"
+    para quem nao teve bairro nenhum ampliado, so porque nenhum booleano
+    chegou True. Barulhento e melhor que uma mentira silenciosa. E a guarda do
+    chamador (`relaxou_preco or relaxou_bairro`) nao e cinto-e-suspensorio: a
+    invariante que torna o par impossivel mora em OUTRO modulo, e e ela que
+    mantem o turno vivo -- perdendo so o aviso -- no dia em que aquele modulo
+    mudar de ideia.
+    """
+    if relaxou_preco and relaxou_bairro:
+        return TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO
+    if relaxou_preco:
+        return TEXTO_DO_CRITERIO_AMPLIADO_PRECO
+    if relaxou_bairro:
+        return TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO
+    raise ValueError("aviso_de_ampliacao chamado sem preco nem bairro relaxados")
+
+
 SUBAGENTE_CLASSIFICADOR = "classificador"
 SUBAGENTE_DESAMBIGUADOR = "desambiguador"
 SUBAGENTE_MODERACAO = "moderacao"
@@ -386,12 +472,12 @@ async def executar_turno(
             # `embedador=embedar` liga a busca do turno ao provedor de verdade
             # -- o mesmo `embedar` que `indexar_catalogo` usa para o catalogo.
             # Sem isto, `consulta_texto` do tool call seria aceito e nunca
-            # mudaria um resultado: `_vetor_da_consulta` (busca.py) devolve
+            # mudaria um resultado: `vetor_da_consulta` (busca.py) devolve
             # None sem embedador injetado, a similaridade fica 0 para todo
             # candidato, e a busca hibrida da TEC-158 nunca aconteceria dentro
             # de um turno -- so pela rota HTTP, que nao injeta embedador (ver
             # `api/routes/imoveis.py`). A degradacao por falha continua
-            # coberta pelo mesmo `except Exception` de `_vetor_da_consulta`:
+            # coberta pelo mesmo `except Exception` de `vetor_da_consulta`:
             # o embedador real pode falhar, e a busca segue pelo filtro
             # estruturado -- D9.
             porta=porta_de_busca(session_factory, embedador=embedar),
@@ -689,16 +775,28 @@ async def executar_turno(
         # ele E a proposta de verificacao com o corretor que a card pede.
         texto = "" if apresentando else TEXTO_DA_BUSCA_INCONCLUSIVA
 
+    # D14. Relaxou e continuou zero tem desfecho nosso, e nao prosa do modelo:
+    # e o cenario 2 do Gherkin. `not citacao_bloqueada` porque, se o modelo
+    # inventou imovel, a mensagem da TEC-161 e a que importa -- ela fala de um
+    # defeito nosso, e este texto fala do catalogo.
+    #
+    # So no zero POS-relaxamento. O zero de "nada relaxavel" (D5) segue com a
+    # prosa do modelo: ali ele ainda pode perguntar algo util que nos nao
+    # sabemos perguntar, e cala-lo custaria mais do que padroniza.
+    if gerada.relaxou_sem_resultado and not citacao_bloqueada:
+        texto = TEXTO_SEM_RESULTADO_APOS_AMPLIAR
+
     # Depois da moderacao de saida, de proposito: o texto e constante deste
     # repositorio e nao saida de modelo -- moderar dado nosso seria gastar
     # chamada sobre texto que nao inventamos, o mesmo argumento que a TEC-162
     # escreveu para as fichas.
     #
-    # Este ponto fica DEPOIS das duas reatribuicoes de `texto` acima, e por
-    # isso cobre tres trilhas, nao uma: a resposta normal, o
-    # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada e o
-    # TEXTO_DA_BUSCA_INCONCLUSIVA da citacao bloqueada da TEC-161. A
-    # apresentacao NAO e uma quarta trilha aqui -- e excluida de proposito,
+    # Este ponto fica DEPOIS das tres reatribuicoes de `texto` acima, e por
+    # isso cobre quatro trilhas, nao uma: a resposta normal, o
+    # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada, o
+    # TEXTO_DA_BUSCA_INCONCLUSIVA da citacao bloqueada da TEC-161 e o
+    # TEXTO_SEM_RESULTADO_APOS_AMPLIAR do zero pos-relaxamento da TEC-160. A
+    # apresentacao NAO e uma quinta trilha aqui -- e excluida de proposito,
     # tratada em separado dentro do `if apresentando:` abaixo (Task 5).
     #
     # `apresentando` fica de FORA aqui: naquele caminho `texto` vira prefixo de
@@ -743,6 +841,34 @@ async def executar_turno(
                         "para": message.conversation_key,
                         "de": message.recipient_external_id,
                         "texto": TEXTO_DA_IDENTIFICACAO,
+                    },
+                )
+            if gerada.relaxou_e_achou and (gerada.relaxou_preco or gerada.relaxou_bairro):
+                # CA-09.3. Mensagem propria, e NAO prefixo da legenda: no
+                # caminho de apresentacao `legenda_de` corta o PREFIXO antes
+                # da ficha, e `_prosa_que_cabe` devolve string vazia quando
+                # nao sobra espaco. A TEC-139 ja pagou para descobrir isso com
+                # a identificacao -- "ela sairia truncada ou nao sairia
+                # nenhuma, em silencio". Um aviso que some em silencio quebra
+                # a CA-09.3 exatamente no turno em que ela existe para valer.
+                #
+                # Cabe na RN-04.2 sem emenda: a E-02 da TEC-162 separou os
+                # tetos em ate 2 mensagens de TEXTO e ate 3 de APRESENTACAO, e
+                # isto e identificacao + aviso + ate 3 fichas. **Depois desta
+                # card nao sobra folga de texto** -- a proxima trilha que
+                # quiser mensagem propria precisa de emenda.
+                #
+                # `relaxou_preco or relaxou_bairro` e a guarda contra o
+                # estado impossivel que `aviso_de_ampliacao` recusa
+                # (ValueError): se ele ocorrer de qualquer jeito, o turno nao
+                # morre por causa de um aviso -- so deixa de mandar um.
+                await outbound.send(
+                    message.id,
+                    KIND_DO_CRITERIO_AMPLIADO,
+                    {
+                        "para": message.conversation_key,
+                        "de": message.recipient_external_id,
+                        "texto": aviso_de_ampliacao(gerada.relaxou_preco, gerada.relaxou_bairro),
                     },
                 )
             # `prosa=texto` le o valor ANTES da atribuicao: a chamada e

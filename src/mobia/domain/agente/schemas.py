@@ -309,6 +309,22 @@ class RespostaDoAgente:
     # achou" para tomar a MESMA decisao nos dois casos.
     candidatos: list[dict[str, Any]] = field(default_factory=list)
 
+    # TEC-160. Os fatos que o turno precisa e que `candidatos` nao carrega.
+    #
+    # Os dois primeiros decidem QUAL mensagem sai: se o que o modelo viu veio
+    # do passe relaxado (aviso da CA-09.3), e se relaxamos e continuamos sem
+    # nada (o desfecho da regra 4 da card). Um booleano so colapsaria o
+    # segundo com "nao relaxei", e as duas situacoes pedem mensagens
+    # diferentes ao lead.
+    #
+    # Os dois ultimos decidem QUAL VARIANTE do aviso: `relaxou_e_achou` vale
+    # tanto para "so preco" quanto para "preco e bairro", e um texto fixo que
+    # dissesse sempre os dois mentiria para todo lead que nao deu regiao.
+    relaxou_e_achou: bool = False
+    relaxou_sem_resultado: bool = False
+    relaxou_preco: bool = False
+    relaxou_bairro: bool = False
+
 
 @dataclass(frozen=True)
 class PerguntaDeDesambiguacao:
