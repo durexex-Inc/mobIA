@@ -656,6 +656,49 @@ async def test_o_aviso_de_ampliacao_sai_como_mensagem_propria(
     assert KIND_DO_CRITERIO_AMPLIADO in await _kinds_reservados()
 
 
+async def test_identificacao_e_aviso_saem_juntos_e_na_ordem_numa_conversa_nova(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """O caso real que amarra as duas trilhas de texto da RN-04.2, TEC-160.
+
+    O teste acima chama `_conversa_ja_existe` de proposito, para isolar o
+    aviso da identificacao -- e por isso nunca prova nada sobre a ORDEM entre
+    os dois. Este teste NAO chama `_conversa_ja_existe`: e o primeiro lead
+    novo cuja primeira busca ja relaxou e achou algo, e as duas mensagens de
+    texto (`turno.py`, dentro do mesmo `if apresentando:`) disparam
+    incondicionais e em sequencia, uma depois da outra, sem nada que force a
+    ordem alem da posicao do codigo.
+
+    **E o turno em que o orcamento da RN-04.2 fica exatamente no limite.** A
+    E-02 da TEC-162 permite ate 2 mensagens de TEXTO e ate 3 de APRESENTACAO
+    por turno; identificacao + aviso ja gastam as duas de texto, sobrando so
+    as fichas para a cota de apresentacao. Uma card futura que queira uma
+    TERCEIRA trilha de texto (identificacao, aviso, e mais alguma) precisa
+    emendar a RN-04.2 antes -- e e aqui, se alguem prefixar o aviso a
+    identificacao ou trocar a ordem sem querer, que a regressao vai aparecer:
+    silenciosa, do mesmo jeito que o comentario de `turno.py` sobre a TEC-139
+    descreve para o par identificacao/prosa.
+    """
+    ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(i, 50000000 + n) for n, i in enumerate(ids)],
+        relaxou_e_achou=True,
+        relaxou_bairro=True,
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert len(outbound.entregues) == 5, "identificacao + aviso + tres fichas"
+    assert outbound.entregues[0] == TEXTO_DA_IDENTIFICACAO, "identificacao vem primeiro"
+    assert outbound.entregues[1] == aviso_de_ampliacao(False, True), "aviso vem logo depois"
+    assert outbound.entregues[2].startswith(f"{PROSA}\n\n"), "so entao a primeira ficha"
+    assert KIND_DO_CRITERIO_AMPLIADO in await _kinds_reservados()
+
+
 async def test_o_aviso_nao_sai_quando_o_modelo_perguntou(
     session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
 ) -> None:
