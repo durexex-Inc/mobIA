@@ -45,6 +45,17 @@ class ResumoDeHandoffInvalido(RuntimeError):
     """
 
 
+class ResumoAcimaDoLimite(ResumoDeHandoffInvalido):
+    """Resumo excedeu o limite de caracteres.
+
+    E o unico caso de ResumoDeHandoffInvalido com segunda chance: se o tamanho
+    passar do limite, a compressao pode trazê-lo de volta. Bloco ausente ou fora
+    de ordem nao tem segunda chance -- comprimir nao resolve. Separa-la aqui
+    tira o controle de fluxo de cima do texto da mensagem de erro, eliminando
+    a fragilidade de um `if "acima do limite" not in str(falha)`.
+    """
+
+
 def validar(texto: str) -> str:
     """Devolve o texto quando ele e um resumo valido; levanta quando nao e.
 
@@ -57,7 +68,7 @@ def validar(texto: str) -> str:
         raise ResumoDeHandoffInvalido("resumo vazio ou so com espaco em branco")
 
     if len(limpo) > LIMITE_DE_CARACTERES:
-        raise ResumoDeHandoffInvalido(
+        raise ResumoAcimaDoLimite(
             f"resumo acima do limite: {len(limpo)} de {LIMITE_DE_CARACTERES} caracteres"
         )
 
@@ -122,27 +133,28 @@ class RedatorAnthropic:
     """
 
     async def redigir(self, dossie_em_texto: str) -> ResumoDeHandoffGerado:
+        settings = get_settings()
         comeco = time.monotonic()
-        bruto, uso = await self._chamar(INSTRUCAO_REDIGIR, dossie_em_texto)
+        bruto, uso = await self._chamar(INSTRUCAO_REDIGIR, dossie_em_texto, settings.modelo_resumo)
 
         comprimiu = False
         try:
             texto = validar(bruto)
-        except ResumoDeHandoffInvalido as falha:
+        except ResumoAcimaDoLimite:
             # SO o estouro de tamanho tem segunda chance. Bloco ausente ou
             # fora de ordem nao e problema de tamanho, e comprimir um resumo
             # que ja perdeu um bloco nao o traz de volta -- so gastaria a
             # segunda chamada para falhar igual.
-            if "acima do limite" not in str(falha):
-                raise
             comprimiu = True
-            bruto, uso_da_compressao = await self._chamar(INSTRUCAO_COMPRIMIR, bruto)
+            bruto, uso_da_compressao = await self._chamar(
+                INSTRUCAO_COMPRIMIR, bruto, settings.modelo_resumo
+            )
             uso = (uso[0] + uso_da_compressao[0], uso[1] + uso_da_compressao[1])
             texto = validar(bruto)
 
         gerado = ResumoDeHandoffGerado(
             texto=texto,
-            modelo=get_settings().modelo_resumo,
+            modelo=settings.modelo_resumo,
             tokens_in=uso[0],
             tokens_out=uso[1],
             latency_ms=int((time.monotonic() - comeco) * 1000),
@@ -165,9 +177,11 @@ class RedatorAnthropic:
         )
         return gerado
 
-    async def _chamar(self, instrucao: str, conteudo: str) -> tuple[str, tuple[int, int]]:
+    async def _chamar(
+        self, instrucao: str, conteudo: str, modelo: str
+    ) -> tuple[str, tuple[int, int]]:
         resposta = await get_client().messages.create(
-            model=get_settings().modelo_resumo,
+            model=modelo,
             max_tokens=MAX_TOKENS_DO_RESUMO,
             system=instrucao,
             messages=[{"role": "user", "content": conteudo}],
