@@ -53,7 +53,7 @@ class Dossie:
     # guarda um -- ver a emenda E-02 da RN-15.1 e a L1 do desenho.
     canal: str
     conversa: str
-    primeira_mensagem_em: datetime
+    primeira_mensagem_em: datetime | None
     mensagens_do_lead: int
 
     # (b) o que procura.
@@ -114,6 +114,12 @@ def _ou_ausente(valor: object | None) -> str:
     return AUSENTE if valor is None else str(valor)
 
 
+def _isoformat_ou_none(valor: datetime | None) -> str | None:
+    """`.isoformat()` so roda quando ha data -- sem handoff sem mensagem do
+    lead, `primeira_mensagem_em` e `None`, e `None.isoformat()` estouraria."""
+    return None if valor is None else valor.isoformat()
+
+
 def _faixa(dossie: Dossie) -> str:
     """A faixa como o lead a declarou, e nao um intervalo inventado.
 
@@ -134,7 +140,9 @@ def _imoveis(dossie: Dossie) -> str:
     if not dossie.imoveis:
         return "nenhum imovel apresentado ainda"
 
-    linhas = [f"{len(dossie.imoveis)} imoveis apresentados:"]
+    quantidade = len(dossie.imoveis)
+    substantivo = "imovel apresentado" if quantidade == 1 else "imoveis apresentados"
+    linhas = [f"{quantidade} {substantivo}:"]
     for imovel in dossie.imoveis:
         reacao = imovel.reacao or "sem reacao ate agora"
         descarte = f", motivo {imovel.motivo_descarte}" if imovel.motivo_descarte else ""
@@ -185,7 +193,7 @@ def renderizar(dossie: Dossie) -> str:
             "ORIGEM",
             f"canal: {dossie.canal}",
             f"chave da conversa: {dossie.conversa}",
-            f"primeira mensagem: {dossie.primeira_mensagem_em.isoformat()}",
+            f"primeira mensagem: {_ou_ausente(_isoformat_ou_none(dossie.primeira_mensagem_em))}",
             f"mensagens do lead: {dossie.mensagens_do_lead}",
             "",
             "CRITERIOS",

@@ -83,6 +83,15 @@ def test_renderizar_sem_pontos_de_atencao_diz_que_nao_ha() -> None:
     assert "nenhum ponto de atencao registrado" in texto
 
 
+def test_renderizar_sem_primeira_mensagem_nao_inventa_data() -> None:
+    """Sem mensagem do lead, primeira_mensagem_em e None -- ver fix wave da
+    TEC-175. Renderizar como AUSENTE, nunca como uma data que nao e fato
+    sobre mensagem nenhuma (o criado_em do handoff, por exemplo)."""
+    texto = renderizar(_dossie(primeira_mensagem_em=None, mensagens_do_lead=0))
+
+    assert "primeira mensagem: nao informado" in texto
+
+
 def test_renderizar_rotula_o_preco_por_tipo() -> None:
     """RN-15.3: todo numero citado e o do banco. Um imovel de aluguel nao
     pode sair com o preco de venda, e o rotulo e o que prova a distincao."""

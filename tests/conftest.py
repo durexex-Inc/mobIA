@@ -812,9 +812,14 @@ def semear_lead_completo(session: AsyncSession):
         # -- a trilha e append-only e so o mais novo e o score de hoje. O
         # antigo tem um score diferente (`score - 1`) para que o dossie so
         # bata com a asserta do teste se ele de fato ler o CORRENTE.
-        # Tudo em `completude` e o resto zero: `ck_lead_score_audit_total`
-        # exige total_novo = soma dos cinco fatores, e este jeito soma certo
-        # para qualquer `score` sem amarrar o antigo a uma composicao fixa.
+        # `ck_lead_score_audit_total` exige total_novo = soma dos cinco
+        # fatores. O registro ANTIGO poe tudo em `completude` e o resto zero
+        # -- soma certo para qualquer `score` sem amarrar o antigo a uma
+        # composicao fixa. O registro CORRENTE, logo abaixo, faz o oposto:
+        # 25/20/12/10/5 fixos, que so somam 72 -- por isso os testes deste
+        # modulo usam score=72. Quem passar outro `score` aqui tem de ajustar
+        # os cinco fatores do registro corrente tambem, ou o INSERT viola a
+        # constraint.
         antigo = score - 1
         session.add(
             LeadScoreAudit(

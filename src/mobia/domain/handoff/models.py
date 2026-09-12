@@ -23,7 +23,7 @@ def aad_do_resumo_de_handoff(handoff_id: uuid.UUID) -> str:
     tamanho: aqui a identidade da linha e um UUID, que nao tem como colidir
     com outro por concatenacao ambigua. `aad_de` basta.
     """
-    return aad_de(handoff_id, "resumo")
+    return aad_de(handoff_id, "resumo_handoff")
 
 
 class Handoff(Base):

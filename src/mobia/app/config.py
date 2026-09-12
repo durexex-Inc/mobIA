@@ -62,11 +62,13 @@ class Settings(BaseSettings):
     # grava dado com valor publicamente conhecido e nao reclama.
     anthropic_api_key: str = ""
 
+    # Dois consumidores: o resumo de conversa (`context/resumo.py`) e, desde a
+    # TEC-175, o redator de resumo de handoff (`handoff/resumo.py:155`).
     # Trocado de `claude-opus-5` para `claude-sonnet-5` por custo, junto com o
     # `modelo_agente`. **A troca do resumo nao foi medida, e hoje nao ha como
     # medir**: nada em `evals/` toca `modelo_resumo`, e a unica guarda que ele
-    # tem e `test_todo_modelo_configurado_tem_preco_cadastrado`, que confere
-    # preco e nao qualidade.
+    # tem em qualquer das duas saidas e `test_todo_modelo_configurado_tem_preco_cadastrado`,
+    # que confere preco e nao qualidade.
     #
     # A diferenca com o agente e essa, e importa: o agente trocou com gate --
     # 91,8% VERDE medido depois, contra 85,4% antes --, e o resumo trocou sem

@@ -10,6 +10,7 @@ from typing import Protocol
 import structlog
 
 from mobia.app.config import get_settings
+from mobia.domain.handoff.dossie import AUSENTE
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.infra.anthropic import get_client
 
@@ -66,7 +67,7 @@ class ResumoAcimaDoLimite(ResumoDeHandoffInvalido):
     """Resumo excedeu o limite de caracteres.
 
     E o unico caso de ResumoDeHandoffInvalido com segunda chance: se o tamanho
-    passar do limite, a compressao pode trazê-lo de volta. Bloco ausente ou fora
+    passar do limite, a compressao pode traze-lo de volta. Bloco ausente ou fora
     de ordem nao tem segunda chance -- comprimir nao resolve. Separa-la aqui
     tira o controle de fluxo de cima do texto da mensagem de erro, eliminando
     a fragilidade de um `if "acima do limite" not in str(falha)`.
@@ -115,7 +116,7 @@ INSTRUCAO_REDIGIR = (
     + "\n\nEscreva em portugues, em terceira pessoa, direto ao ponto. "
     f"O texto inteiro deve caber em {LIMITE_DE_CARACTERES} caracteres.\n\n"
     "**Use apenas os dados do dossie abaixo.** Nao estime, nao arredonde, nao "
-    "complete o que estiver como 'nao informado' -- escreva que nao foi "
+    f"complete o que estiver como {AUSENTE!r} -- escreva que nao foi "
     "informado. Todo numero que voce citar tem de aparecer literalmente no "
     "dossie."
 )

@@ -117,8 +117,10 @@ class WorkerSettings:
         importar_catalogo,
         indexar_catalogo,
         # `keep_result=0` pela mesma razao do `process_message`: o `_job_id` e
-        # fixo por handoff, e uma chave de resultado sobrevivente recusaria em
-        # silencio a regeneracao pedida pela rota da D8.
+        # fixo por handoff, e uma chave de resultado sobrevivente bloquearia
+        # um reenqueue futuro em silencio. Nao protege a rota da D8 -- ela
+        # chama `gerar_resumo` em processo e nunca enfileira, entao nao ha
+        # regeneracao por fila para recusar.
         func(gerar_resumo, keep_result=0),
     ]
     cron_jobs = [

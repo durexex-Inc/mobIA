@@ -98,4 +98,4 @@ async def test_regenerar_substitui_o_resumo_anterior(
     segundo = (
         await session.execute(select(Handoff.resumo_gerado_em).where(Handoff.id == handoff_id))
     ).scalar_one()
-    assert segundo >= primeiro
+    assert segundo > primeiro

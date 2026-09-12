@@ -179,6 +179,13 @@ async def carregar_dossie(session: AsyncSession, *, handoff_id: uuid.UUID) -> Do
     Le em quatro consultas e nao num JOIN so: `recomendacoes` e um-para-muitos
     e o JOIN multiplicaria as linhas das outras tres, obrigando a desduplicar
     em Python o que quatro SELECTs simples ja entregam prontos.
+
+    As quatro consultas rodam em READ COMMITTED sem snapshot comum entre elas.
+    Com dois turnos concorrentes do mesmo lead, o dossie pode casar o score de
+    um commit com as recomendacoes de antes dele -- cada numero
+    individualmente verdadeiro, a combinacao possivelmente torta. Janela
+    estreita e decisao deliberada de nao mudar o isolamento (mexeria num
+    caminho que roda sob 8 workers); ver o fix wave da TEC-175.
     """
     handoff = (
         await session.execute(select(Handoff).where(Handoff.id == handoff_id))
@@ -240,7 +247,7 @@ async def carregar_dossie(session: AsyncSession, *, handoff_id: uuid.UUID) -> Do
     return Dossie(
         canal=handoff.channel,
         conversa=handoff.conversation_key,
-        primeira_mensagem_em=origem[0] or handoff.criado_em,
+        primeira_mensagem_em=origem[0],
         mensagens_do_lead=origem[1],
         intencao=qualificacao.intencao if qualificacao else None,
         faixa_min_centavos=qualificacao.faixa_preco_min_centavos if qualificacao else None,
@@ -301,5 +308,6 @@ async def gravar_resumo(
             resumo=encrypt(texto, aad_do_resumo_de_handoff(handoff_id)),
             resumo_gerado_em=datetime.now(UTC),
             resumo_modelo=modelo,
+            atualizado_em=datetime.now(UTC),
         )
     )

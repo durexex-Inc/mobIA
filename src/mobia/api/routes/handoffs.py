@@ -29,11 +29,15 @@ async def regenerar(handoff_id: uuid.UUID, _: None = Depends(exigir_admin)) -> d
 
     gravou = await gerar_resumo(session_factory, redator=RedatorAnthropic(), handoff_id=handoff_id)
     if not gravou:
-        # 404 cobre o handoff que nao existe; 502 seria mais preciso para a
-        # falha do provedor, mas `gerar_resumo` devolve o mesmo False para os
-        # dois de proposito (ver a docstring de la). Distingui-los aqui exige
-        # consultar o banco depois: se a linha existe, a falha foi do
-        # provedor, e nao do handoff que sumiu.
+        # 404 cobre o handoff que nao existe. O 502 nao cobre toda excecao do
+        # provedor -- uma excecao real (APIError, timeout) escapa de
+        # `gerar_resumo`, que so captura ResumoDeHandoffInvalido, e vira HTTP
+        # 500; o que chega aqui como False e so a resposta bem formada que
+        # reprova em `validar` (bloco ausente, fora de ordem, ou acima do
+        # limite mesmo apos a compressao). `gerar_resumo` devolve o mesmo
+        # False tambem para o handoff que sumiu (ver a docstring de la), e
+        # distingui-los aqui exige consultar o banco depois: se a linha
+        # existe, a falha foi do redator, e nao do handoff.
         async with session_factory() as session:
             existe = (
                 await session.execute(select(Handoff.id).where(Handoff.id == handoff_id))
