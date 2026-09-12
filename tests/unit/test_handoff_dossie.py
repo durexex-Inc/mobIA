@@ -27,9 +27,9 @@ def _dossie(**trocas: object) -> Dossie:
         "temperatura": "QUENTE",
         "temperatura_forcada_motivos": (),
         "imoveis": (
-            ImovelApresentado("AP-001", 58_000_000, "GOSTOU", None),
-            ImovelApresentado("AP-002", 59_500_000, "DESCARTOU", "PRECO"),
-            ImovelApresentado("AP-003", 55_000_000, None, None),
+            ImovelApresentado("AP-001", 58_000_000, "venda", "GOSTOU", None),
+            ImovelApresentado("AP-002", 59_500_000, "venda", "DESCARTOU", "PRECO"),
+            ImovelApresentado("AP-003", 55_000_000, "venda", None, None),
         ),
         "campos_recusados": ("renda",),
         "perguntados_sem_resposta": ("prazo",),
@@ -76,8 +76,24 @@ def test_renderizar_sem_pontos_de_atencao_diz_que_nao_ha() -> None:
         _dossie(
             campos_recusados=(),
             perguntados_sem_resposta=(),
-            imoveis=(ImovelApresentado("AP-001", 58_000_000, "GOSTOU", None),),
+            imoveis=(ImovelApresentado("AP-001", 58_000_000, "venda", "GOSTOU", None),),
         )
     )
 
     assert "nenhum ponto de atencao registrado" in texto
+
+
+def test_renderizar_rotula_o_preco_por_tipo() -> None:
+    """RN-15.3: todo numero citado e o do banco. Um imovel de aluguel nao
+    pode sair com o preco de venda, e o rotulo e o que prova a distincao."""
+    texto = renderizar(
+        _dossie(
+            imoveis=(
+                ImovelApresentado("AP-100", 58_000_000, "venda", "GOSTOU", None),
+                ImovelApresentado("AP-200", 320_000, "aluguel", None, None),
+            )
+        )
+    )
+
+    assert "R$ 580.000 (venda)" in texto
+    assert "R$ 3.200 (aluguel)" in texto

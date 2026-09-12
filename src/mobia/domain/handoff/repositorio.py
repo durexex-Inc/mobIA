@@ -139,19 +139,34 @@ async def registrar_handoff(
     return HandoffRegistrado(id=linha.id, criado=linha.inseriu)
 
 
-def _preco_centavos(imovel: Imovel) -> int:
-    """O preco a exibir de um imovel apresentado.
+def _preco_centavos(imovel: Imovel) -> tuple[int, str]:
+    """O preco a exibir de um imovel apresentado, com o rotulo de qual e.
 
     `Imovel` nao tem uma coluna `preco_centavos` unica -- ela so existe em
     `Candidato` (`catalogo/schemas.py`), derivada da OPERACAO que a busca
     pediu (`COLUNA_DE_PRECO`). Aqui nao ha filtro de busca para escolher a
-    coluna, entao o dossie usa o preco de venda quando existe e cai para o
-    de aluguel -- o `ck_imoveis_ao_menos_um_preco` garante que ao menos um
-    dos dois esta preenchido.
+    coluna -- `recomendacoes` nao guarda qual operacao a busca pediu --,
+    entao esta funcao usa o preco de venda quando existe e cai para o de
+    aluguel (`ck_imoveis_ao_menos_um_preco` garante que ao menos um dos dois
+    esta preenchido), mas devolve o ROTULO junto: escolher em silencio
+    poria um preco de venda no resumo de um lead que quer alugar, e rotular
+    e mais barato que casar o preco com a intencao do lead.
     """
-    preco = imovel.preco_venda if imovel.preco_venda is not None else imovel.preco_aluguel
-    assert preco is not None, "ck_imoveis_ao_menos_um_preco garante que um dos dois existe"
-    return preco
+    if imovel.preco_venda is not None:
+        return imovel.preco_venda, "venda"
+    assert imovel.preco_aluguel is not None, "ck_imoveis_ao_menos_um_preco garante que existe"
+    return imovel.preco_aluguel, "aluguel"
+
+
+def _imovel_apresentado(recomendacao: Recomendacao, imovel: Imovel) -> ImovelApresentado:
+    preco, tipo_de_preco = _preco_centavos(imovel)
+    return ImovelApresentado(
+        codigo=imovel.codigo,
+        preco_centavos=preco,
+        tipo_de_preco=tipo_de_preco,
+        reacao=recomendacao.reacao_lead,
+        motivo_descarte=recomendacao.motivo_descarte,
+    )
 
 
 async def carregar_dossie(session: AsyncSession, *, handoff_id: uuid.UUID) -> Dossie | None:
@@ -258,13 +273,7 @@ async def carregar_dossie(session: AsyncSession, *, handoff_id: uuid.UUID) -> Do
             (qualificacao.temperatura_forcada_motivos if qualificacao else None) or ()
         ),
         imoveis=tuple(
-            ImovelApresentado(
-                codigo=imovel.codigo,
-                preco_centavos=_preco_centavos(imovel),
-                reacao=recomendacao.reacao_lead,
-                motivo_descarte=recomendacao.motivo_descarte,
-            )
-            for recomendacao, imovel in recomendacoes
+            _imovel_apresentado(recomendacao, imovel) for recomendacao, imovel in recomendacoes
         ),
         campos_recusados=tuple((qualificacao.campos_recusados if qualificacao else None) or ()),
         perguntados_sem_resposta=tuple(

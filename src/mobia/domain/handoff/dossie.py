@@ -33,6 +33,14 @@ class ImovelApresentado:
 
     codigo: str
     preco_centavos: int
+    # "venda" ou "aluguel": qual preco `preco_centavos` e. `Imovel` pode ter
+    # os dois precos preenchidos ao mesmo tempo, e escolher um em silencio
+    # poria um preco de VENDA no resumo de um lead que quer ALUGAR --
+    # exatamente o numero errado na frase que a RN-15.3 promete vir do
+    # banco. Rotular e mais barato que casar o preco com a intencao do lead:
+    # isso exigiria saber qual operacao aquela `Recomendacao` buscou, dado
+    # que a tabela nao guarda hoje.
+    tipo_de_preco: str
     reacao: str | None
     motivo_descarte: str | None
 
@@ -130,7 +138,10 @@ def _imoveis(dossie: Dossie) -> str:
     for imovel in dossie.imoveis:
         reacao = imovel.reacao or "sem reacao ate agora"
         descarte = f", motivo {imovel.motivo_descarte}" if imovel.motivo_descarte else ""
-        linhas.append(f"- {imovel.codigo}, {reais(imovel.preco_centavos)}: {reacao}{descarte}")
+        linhas.append(
+            f"- {imovel.codigo}, {reais(imovel.preco_centavos)} ({imovel.tipo_de_preco}): "
+            f"{reacao}{descarte}"
+        )
     return "\n".join(linhas)
 
 
