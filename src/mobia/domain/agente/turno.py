@@ -41,6 +41,8 @@ from mobia.domain.context.qualificacao import esta_qualificado
 from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados, registrar_recalculo
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
+from mobia.domain.handoff.repositorio import registrar_handoff
+from mobia.domain.handoff.vocabulario import Gatilho
 from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
@@ -753,6 +755,22 @@ async def executar_turno(
             conversation_key=message.conversation_key,
             gatilhos=gatilhos,
         )
+        # TEC-174. Aqui dentro, e nao junto ao `lead.esquentou` la embaixo: este
+        # `commit` e o que torna indivisivel "o lead esquentou" e "o corretor
+        # tem tarefa". Do lado de fora seria sessao nova, e existiria a janela
+        # em que o lead esta QUENTE e ninguem foi avisado -- que e o "lead
+        # qualificado morre no banco" que a card existe para impedir.
+        if (
+            recalculo is not None
+            and recalculo.anterior is not Temperatura.QUENTE
+            and recalculo.temperatura is Temperatura.QUENTE
+        ):
+            await registrar_handoff(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                gatilho=Gatilho.LEAD_QUENTE,
+            )
         await session.commit()
 
     # A borda, nao o estado: um lead ja qualificado que segue conversando nao
@@ -819,11 +837,11 @@ async def executar_turno(
     # Depois do commit, como `lead.qualificado`: logar uma transicao que o
     # rollback desfez e mentir para quem le o log.
     #
-    # **Isto NAO e a notificacao da RN-06.5, e a lacuna esta declarada no
-    # desenho.** A entrega depende do handoff (E7), que nao existe -- nao ha
-    # epico, nao ha consumidor, e o conteudo da mensagem esta fora do escopo
-    # da card. Os 60 segundos da regra sao triviais porque o evento e sincrono
-    # no turno; o que nao existe e alguem do outro lado.
+    # **A notificacao da RN-06.5 continua sem existir, mas o registro dela nao.**
+    # Desde a TEC-174 a travessia para QUENTE cria um `handoff` na MESMA
+    # transacao deste recalculo -- ou o lead vira QUENTE e tem handoff, ou nem
+    # uma coisa nem outra. O que falta e a entrega ao corretor (TEC-177): os 60
+    # segundos da regra seguem triviais porque o evento e sincrono no turno.
     #
     # O texto do lead nao entra: `motivos` e vocabulario nosso, nao fala dele.
     # Mesma regra de PII que `moderacao.entrada_bloqueada` respeita.
