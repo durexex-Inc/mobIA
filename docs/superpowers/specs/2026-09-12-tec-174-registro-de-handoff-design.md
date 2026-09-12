@@ -35,7 +35,9 @@ Não existe tabela `corretores` (TEC-196) nem tabela `conversas`. O repo identif
 
 ## Decisões
 
-### D1 — O enum nasce com os seis gatilhos; só três têm fiação
+### D1 — O enum nasce com sete gatilhos; só três têm fiação
+
+A RN-16.1 fala em seis gatilhos, juntando `VENDER_IMOVEL` e `SUPORTE_CONTRATO` num item só. O enum os separa: são duas etiquetas (`venda-imovel`, `suporte-contrato`) e duas filas diferentes para o corretor — quem quer vender um imóvel e quem tem dúvida de contrato vigente não são o mesmo trabalho. Por isso `Gatilho` nasce com **sete** valores, não seis.
 
 Acrescentar valor a um enum depois custa migration; acrescentar um **chamador** não custa nada. TEC-143, TEC-149 e TEC-170 chegarão e apenas chamarão `registrar_handoff` com o gatilho que já existe.
 

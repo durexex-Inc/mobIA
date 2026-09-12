@@ -81,6 +81,53 @@ async def test_a_prioridade_nunca_desce(session: AsyncSession) -> None:
     assert linhas[0]["prioridade"] == "ALTA"
 
 
+async def test_gatilhos_distintos_acumulam_na_ordem(session: AsyncSession) -> None:
+    """Fix wave, Important 3. Tres gatilhos diferentes entram um a um, na ordem."""
+    await registrar_handoff(
+        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+    )
+    await session.commit()
+    await registrar_handoff(
+        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.VENDA_IMOVEL
+    )
+    await session.commit()
+    await registrar_handoff(
+        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.SUPORTE_CONTRATO
+    )
+    await session.commit()
+    linhas = await _linhas(session)
+    assert len(linhas) == 1
+    assert linhas[0]["gatilhos_adicionais"] == ["VENDA_IMOVEL", "SUPORTE_CONTRATO"]
+
+
+async def test_gatilho_repetido_nao_acumula_alem_de_um(session: AsyncSession) -> None:
+    """Fix wave, Important 3.
+
+    O gatilho de intencao dispara em todo turno com a classificacao certa,
+    sem condicao de borda -- ao contrario do QUENTE. Repetido tres vezes,
+    `gatilhos_adicionais` fica com um elemento so. E o gatilho que CRIOU o
+    handoff, se voltar, nao entra nos adicionais -- ele ja esta na coluna
+    `gatilho`.
+    """
+    await registrar_handoff(
+        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+    )
+    await session.commit()
+    for _ in range(3):
+        await registrar_handoff(
+            session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.VENDA_IMOVEL
+        )
+        await session.commit()
+    # O gatilho que criou o handoff, repetido, nao entra nos adicionais.
+    await registrar_handoff(
+        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+    )
+    await session.commit()
+    linhas = await _linhas(session)
+    assert len(linhas) == 1
+    assert linhas[0]["gatilhos_adicionais"] == ["VENDA_IMOVEL"]
+
+
 async def test_conversas_diferentes_tem_handoffs_diferentes(session: AsyncSession) -> None:
     await registrar_handoff(
         session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE

@@ -3,15 +3,12 @@
 import uuid
 from datetime import UTC, datetime
 
-import structlog
-from sqlalchemy import case, func, literal, literal_column, text
+from sqlalchemy import any_, case, func, literal, literal_column, or_, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho, Prioridade, Status
-
-log = structlog.get_logger(__name__)
 
 
 async def registrar_handoff(
@@ -56,8 +53,23 @@ async def registrar_handoff(
             index_elements=["channel", "conversation_key"],
             index_where=text("status = 'PENDENTE'"),
             set_={
-                "gatilhos_adicionais": func.array_append(
-                    Handoff.gatilhos_adicionais, literal(gatilho.value)
+                # TEC-174, fix wave (Important 3). So acrescenta quando o
+                # gatilho ainda NAO esta presente -- nem como o que CRIOU o
+                # handoff (coluna `gatilho`), nem como um dos
+                # `gatilhos_adicionais` ja gravados. Sem isto, um gatilho sem
+                # condicao de borda (a intencao dispara em TODO turno com a
+                # classificacao certa, ao contrario do QUENTE) acumulava o
+                # mesmo valor uma vez por turno. `= ANY(...)` testa
+                # pertinencia a array em Postgres.
+                "gatilhos_adicionais": case(
+                    (
+                        or_(
+                            literal(gatilho.value) == Handoff.gatilho,
+                            literal(gatilho.value) == any_(Handoff.gatilhos_adicionais),
+                        ),
+                        Handoff.gatilhos_adicionais,
+                    ),
+                    else_=func.array_append(Handoff.gatilhos_adicionais, literal(gatilho.value)),
                 ),
                 # A escalada de `vocabulario.escalada`, em SQL: o Python nao ve
                 # a linha existente neste caminho, e ler antes para decidir
@@ -87,12 +99,8 @@ async def registrar_handoff(
         )
     )
 
-    criou = resultado.scalar_one()
-    log.info(
-        "handoff.criado" if criou else "handoff.gatilho_adicional",
-        channel=channel,
-        gatilho=gatilho.value,
-        etiqueta=ETIQUETA_DE[gatilho],
-        prioridade=prioridade.value,
-    )
-    return criou
+    # TEC-174, fix wave (Important 2). Nao loga aqui: esta funcao nao commita,
+    # entao um log daqui roda dentro da transacao de quem chama e sobrevive a
+    # um rollback -- log sem linha, se o commit do chamador falhar. Quem
+    # chama ja recebe o booleano e loga DEPOIS do proprio commit.
+    return resultado.scalar_one()

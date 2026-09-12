@@ -42,7 +42,7 @@ from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados, 
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.handoff.repositorio import registrar_handoff
-from mobia.domain.handoff.vocabulario import Gatilho
+from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
@@ -694,7 +694,9 @@ async def executar_turno(
         # Nao propaga: `process_message` marcaria FAILED e o sweeper
         # reenfileiraria o mesmo turno, que pediria a ferramenta duas vezes de
         # novo -- gastando duas chamadas ao modelo por tentativa para chegar
-        # ao mesmo lugar. O lead recebe texto conservador e o corretor entra.
+        # ao mesmo lugar. O lead recebe texto conservador; nenhum handoff nasce
+        # aqui -- este `return` sai por `_entregar_texto_fixo`, ANTES do bloco
+        # transacional que registra handoff mais abaixo.
         log.warning("turno.laco_de_busca_excedido", channel=message.channel)
         return await _entregar_texto_fixo(
             session_factory,
@@ -727,6 +729,12 @@ async def executar_turno(
     # do lead, nao sobre a nossa resposta. Saida bloqueada e envio fora da
     # janela nao descartam uma recusa que o lead de fato disse.
     antes = esta_qualificado(contexto.estado, _recusados_de(contexto.estado))
+    # TEC-174, fix wave (Important 2). Os dois ficam None quando a condicao que
+    # os preenche nao roda -- e viram o booleano de `registrar_handoff` quando
+    # roda. `registrar_handoff` nao loga mais (ver o comentario de la); quem
+    # loga e este modulo, e so DEPOIS do commit abaixo.
+    handoff_do_quente: bool | None = None
+    handoff_da_intencao: bool | None = None
     async with session_factory() as session:
         anterior = await ler_intencao(session, message.channel, message.conversation_key)
         await gravar_intencao(
@@ -774,7 +782,7 @@ async def executar_turno(
             and recalculo.anterior is not Temperatura.QUENTE
             and recalculo.temperatura is Temperatura.QUENTE
         ):
-            await registrar_handoff(
+            handoff_do_quente = await registrar_handoff(
                 session,
                 channel=message.channel,
                 conversation_key=message.conversation_key,
@@ -782,13 +790,26 @@ async def executar_turno(
             )
 
         if (gatilho_da_intencao := _GATILHO_DA_INTENCAO.get(gerada.intencao)) is not None:
-            await registrar_handoff(
+            handoff_da_intencao = await registrar_handoff(
                 session,
                 channel=message.channel,
                 conversation_key=message.conversation_key,
                 gatilho=gatilho_da_intencao,
             )
         await session.commit()
+
+    # TEC-174, fix wave (Important 2). Depois do commit acima -- o gatilho da
+    # intencao dispara em todo turno com a classificacao certa (sem condicao
+    # de borda, ao contrario do QUENTE logo abaixo), entao nao ha um evento
+    # vizinho pronto para emprestar a posicao; loga aqui, e so aqui.
+    if gatilho_da_intencao is not None and handoff_da_intencao is not None:
+        log.info(
+            "handoff.criado" if handoff_da_intencao else "handoff.gatilho_adicional",
+            channel=message.channel,
+            gatilho=gatilho_da_intencao.value,
+            etiqueta=ETIQUETA_DE[gatilho_da_intencao],
+            prioridade=PRIORIDADE_DE[gatilho_da_intencao].value,
+        )
 
     # A borda, nao o estado: um lead ja qualificado que segue conversando nao
     # gera o evento de novo, senao a taxa de qualificacao da RN-17.1 contaria
@@ -880,6 +901,19 @@ async def executar_turno(
             motivos=list(recalculo.gatilhos),
             total=recalculo.total,
         )
+        # TEC-174, fix wave (Important 2). Depois do commit, junto de
+        # `lead.esquentou` -- mesma condicao, mesma borda, mesmo motivo de
+        # nao logar dentro de `registrar_handoff`. `handoff_do_quente` so e
+        # None quando esta condicao e falsa, entao aqui ele sempre carrega o
+        # booleano que o `registrar_handoff` de cima devolveu.
+        if handoff_do_quente is not None:
+            log.info(
+                "handoff.criado" if handoff_do_quente else "handoff.gatilho_adicional",
+                channel=message.channel,
+                gatilho=Gatilho.LEAD_QUENTE.value,
+                etiqueta=ETIQUETA_DE[Gatilho.LEAD_QUENTE],
+                prioridade=PRIORIDADE_DE[Gatilho.LEAD_QUENTE].value,
+            )
 
     desambiguando = deve_desambiguar(
         gerada.confianca, anterior.desambiguado_em if anterior else None

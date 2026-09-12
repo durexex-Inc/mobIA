@@ -83,6 +83,34 @@ async def test_falha_que_atinge_o_teto_cria_handoff(
     assert linhas[0]["etiqueta"] == "erro-do-agente"
 
 
+async def test_aviso_ao_lead_tem_as_tres_chaves_do_outbound(
+    session, semear_entrada, settings
+) -> None:
+    """Fix wave, Critical 1.
+
+    O payload cru precisa ter `para`/`de`/`texto` -- as tres chaves que
+    `WhatsAppOutbound._deliver` le. Um payload so com `texto` PARECE certo
+    quando o teste compara so o texto entregue (`entregues`, `list[str]`);
+    e por isso a asserta aqui e contra `.payloads`, que guarda o dict cru.
+    """
+    linha = await semear_entrada(session)
+    await session.execute(
+        update(Message)
+        .where(Message.id == linha.id)
+        .values(attempts=settings.sweep_max_attempts - 1)
+    )
+    await session.commit()
+    outbound = OutboundFake(get_sessionmaker())
+    classificador = ClassificadorFake(erro=RuntimeError("turno falhou de proposito"))
+    with pytest.raises(RuntimeError):
+        await process_message(_ctx(outbound, classificador), str(linha.id))
+    assert len(outbound.payloads) == 1
+    payload = outbound.payloads[0]
+    assert payload["para"] == linha.conversation_key
+    assert payload["de"] == linha.recipient_external_id
+    assert "texto" in payload
+
+
 async def test_aviso_quebrado_nao_desfaz_o_handoff(
     session, semear_entrada, processar_com_turno_que_falha, settings
 ) -> None:
@@ -102,10 +130,20 @@ async def test_aviso_quebrado_nao_desfaz_o_handoff(
 async def test_cancelamento_nao_cria_handoff(
     session, semear_entrada, processar_com_turno_que_falha, settings
 ) -> None:
-    """Desligamento limpo nao e falha do agente.
+    """Cancelamento nao cria handoff porque nao e falha do agente (D9).
 
-    A mensagem volta para a fila e o sweeper a recupera. Handoff aqui
-    encaminharia ao corretor um lead que so pegou um deploy no meio.
+    Desligamento limpo nao e falha do agente -- handoff aqui encaminharia ao
+    corretor um lead que so pegou um deploy no meio. Isto NAO muda: e decisao
+    aprovada do desenho (D9), nao desta correcao para reabrir.
+
+    **Fix wave, Important 4.** O docstring anterior dizia que a mensagem
+    "volta para a fila e o sweeper a recupera" -- falso NESTA montagem
+    especifica. `attempts` comeca em `sweep_max_attempts - 1`, e o ramo de
+    cancelamento chama `_marcar_falha`, que incrementa e marca FAILED do
+    mesmo jeito que uma falha comum -- entao `attempts` termina exatamente no
+    teto. `sweep_stalled.py` so revarre enquanto `attempts < sweep_max_attempts`,
+    entao aqui a linha fica FAILED permanente, sem handoff e sem ser
+    revarrida. Lacuna conhecida, nao corrigida aqui.
     """
     linha = await semear_entrada(session)
     await session.execute(

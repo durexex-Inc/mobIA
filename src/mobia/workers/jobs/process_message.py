@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mobia.app.config import get_settings
 from mobia.domain.agente.turno import ResultadoDoTurno, executar_turno
 from mobia.domain.handoff.repositorio import registrar_handoff
-from mobia.domain.handoff.vocabulario import Gatilho
+from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
 from mobia.domain.outbound.port import OutboundPort
@@ -118,7 +118,7 @@ async def _encaminhar_por_erro(
     """
     try:
         async with session_factory() as session:
-            await registrar_handoff(
+            criou = await registrar_handoff(
                 session,
                 channel=message.channel,
                 conversation_key=message.conversation_key,
@@ -133,8 +133,26 @@ async def _encaminhar_por_erro(
         )
         return
 
+    # Depois do commit acima -- ver o comentario em `registrar_handoff` sobre
+    # por que ela mesma nao loga.
+    log.info(
+        "handoff.criado" if criou else "handoff.gatilho_adicional",
+        channel=message.channel,
+        gatilho=Gatilho.ERRO_DO_AGENTE.value,
+        etiqueta=ETIQUETA_DE[Gatilho.ERRO_DO_AGENTE],
+        prioridade=PRIORIDADE_DE[Gatilho.ERRO_DO_AGENTE].value,
+    )
+
     try:
-        await outbound.send(message.id, KIND_DO_AVISO_DE_ERRO, {"texto": TEXTO_DO_AVISO_DE_ERRO})
+        await outbound.send(
+            message.id,
+            KIND_DO_AVISO_DE_ERRO,
+            {
+                "para": message.conversation_key,
+                "de": message.recipient_external_id,
+                "texto": TEXTO_DO_AVISO_DE_ERRO,
+            },
+        )
     except Exception as falha:
         log.warning(
             "handoff.aviso_nao_entregue",
