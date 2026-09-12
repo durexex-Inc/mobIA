@@ -59,6 +59,12 @@ PESO_ADERENCIA = 0.4
 # TEC-162.
 MAX_CANDIDATOS = 10
 
+# RN-09.3. A folga que o segundo passe da TEC-160 aplica as duas pontas da
+# faixa. Pontos percentuais inteiros de proposito: `* 1.10` em float produz
+# tetos que variam no ultimo centavo, e num catalogo de precos densos isso
+# vira desempate invisivel numa suite que ja flakeia sob carga.
+MARGEM_DO_RELAXAMENTO_PCT = 10
+
 # O vocabulario que faz "zona sul" virar `Zona.SUL`. Cada zona entra com o
 # nome nu e com o prefixo `zona `, porque o lead diz os dois -- e
 # `normalizar_regiao` deixa `zona` passar de proposito: o comentario de
@@ -168,6 +174,14 @@ def _similaridade(vetor: list[float] | None) -> ColumnElement[Any]:
     return func.coalesce(func.greatest(0.0, 1.0 - Imovel.embedding.cosine_distance(vetor)), 0.0)
 
 
+def _com_folga(valor: int, sinal: int) -> int:
+    """O limite de preco do passe relaxado. `sinal` e +1 para o teto, -1 para o piso.
+
+    Aritmetica inteira sobre centavos, sem ponto flutuante entrando no SQL.
+    """
+    return valor * (100 + sinal * MARGEM_DO_RELAXAMENTO_PCT) // 100
+
+
 async def buscar(
     session: AsyncSession,
     filtro: FiltroDeBusca,
@@ -208,10 +222,17 @@ async def buscar(
         preco.is_not(None),
     ]
 
+    # TEC-160, D2 e D3. O `WHERE` cede quando este e o passe relaxado; a
+    # ANCORA de `_aderencia`, logo abaixo, NAO -- ela continua recebendo
+    # `filtro.preco_max_centavos` cru. Os dois fatos estao nesta funcao de
+    # proposito: separa-los faria a promessa da emenda E-01 da RN-09.6 ("10%
+    # acima do teto sai com 0,9") depender de dois campos coincidirem.
     if filtro.preco_max_centavos is not None:
-        condicoes.append(preco <= filtro.preco_max_centavos)
+        teto = filtro.preco_max_centavos
+        condicoes.append(preco <= (_com_folga(teto, +1) if filtro.relaxado else teto))
     if filtro.preco_min_centavos is not None:
-        condicoes.append(preco >= filtro.preco_min_centavos)
+        piso = filtro.preco_min_centavos
+        condicoes.append(preco >= (_com_folga(piso, -1) if filtro.relaxado else piso))
     if filtro.tipo is not None:
         condicoes.append(Imovel.tipo.in_([tipo.value for tipo in _inclusoes_de(filtro.tipo)]))
     if filtro.quartos_min is not None:
