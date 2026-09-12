@@ -419,8 +419,16 @@ def _relaxamento_de(blocos: list[dict[str, Any]]) -> tuple[bool, bool, bool, boo
 
     **Qualquer bloco basta**, e nao o ultimo: se algum dos candidatos que o
     modelo viu veio de um passe relaxado, o lead tem de ser avisado -- a card
-    diz "sempre avisado". O laco de tool use pode chamar a busca mais de uma
-    vez, e `_candidatos_de` ja concatena todos pelo mesmo raciocinio.
+    diz "sempre avisado". E o mesmo raciocinio pelo qual `_candidatos_de`
+    concatena em vez de sobrescrever.
+
+    Hoje `blocos` tem exatamente um elemento: `_chamar` levanta
+    `LacoDeBuscaExcedido` no `tool_use` da tentativa 2 (o teto da D4) e o
+    `tool_choice` manda `disable_parallel_tool_use: True`, entao nao ha nem
+    segunda rodada nem duas buscas na mesma. O laco fica assim mesmo porque a
+    API entrega uma LISTA de blocos e acumular e a semantica certa no dia em
+    que qualquer um dos dois limites sair -- e, nesse dia, ler so o ultimo
+    bloco apagaria o aviso em silencio, que e o modo de falha caro.
     """
     encontrados = [False] * len(_CHAVES_DO_RELAXAMENTO)
     for bloco in blocos:

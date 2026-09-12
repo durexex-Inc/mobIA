@@ -248,3 +248,30 @@ async def test_o_tool_result_leva_as_duas_dimensoes_do_relaxamento() -> None:
 
     assert saida["relaxamento_de_preco"] is True
     assert saida["relaxamento_de_bairro"] is False
+
+
+async def test_o_tool_result_leva_as_duas_dimensoes_juntas() -> None:
+    """O cenario 1 do Gherkin da card -- "preco ate R$ 440.000 E bairros
+    adjacentes" -- e o unico que produz a variante de aviso com as duas
+    dimensoes.
+
+    Separado do teste acima de proposito: aquele prova que os booleanos viajam
+    INDEPENDENTES, e um `True`/`False` nao distingue "carrega os dois" de
+    "carrega o primeiro e zera o segundo".
+    """
+    busca = _BuscaEspia(
+        ResultadoDaBusca(
+            candidatos=(CANDIDATO,),
+            total_candidatos=1,
+            consulta_vetorizada=True,
+            relaxamento=EstadoDoRelaxamento.APLICADO,
+            relaxou_preco=True,
+            relaxou_bairro=True,
+        )
+    )
+
+    saida = await _porta(busca)({"operacao": "VENDA"})
+
+    assert saida["relaxamento_aplicado"] is True
+    assert saida["relaxamento_de_preco"] is True
+    assert saida["relaxamento_de_bairro"] is True

@@ -105,8 +105,9 @@ class _ClassificadorComCandidatos:
         # do `tool_result` num turno de verdade -- aqui fixados direto, pelo
         # mesmo motivo que `candidatos` ja e fixado direto: o assunto destes
         # testes e o que o TURNO faz com o fato, nao como o classificador
-        # extrai o fato do laco de tool use (isso ja tem cobertura propria em
-        # `test_relaxamento_alargar.py` e em `test_busca_no_turno.py`).
+        # extrai o fato do laco de tool use -- essa extracao (`_relaxamento_de`
+        # e a tupla que `_chamar` devolve) tem cobertura propria em
+        # `tests/unit/test_classificador.py`.
         self.relaxou_e_achou = relaxou_e_achou
         # Task 10. `relaxou_sem_resultado` e o outro lado da mesma extracao --
         # o passe relaxado que continuou sem candidato nenhum.

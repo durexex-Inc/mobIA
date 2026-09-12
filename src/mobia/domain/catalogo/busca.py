@@ -231,7 +231,7 @@ async def buscar(
     ]
 
     # TEC-160, D2 e D3. O `WHERE` cede quando este e o passe relaxado; a
-    # ANCORA de `_aderencia`, logo abaixo, NAO -- ela continua recebendo
+    # ANCORA de `_aderencia`, mais abaixo, NAO -- ela continua recebendo
     # `filtro.preco_max_centavos` cru. Os dois fatos estao nesta funcao de
     # proposito: separa-los faria a promessa da emenda E-01 da RN-09.6 ("10%
     # acima do teto sai com 0,9") depender de dois campos coincidirem.
