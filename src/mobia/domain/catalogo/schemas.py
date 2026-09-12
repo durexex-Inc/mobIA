@@ -189,6 +189,17 @@ class FiltroDeBusca:
     # filtro, os dois fatos ficam visiveis na mesma funcao.
     relaxado: bool = False
 
+    # TEC-163, D12. Bairros que o lead JA REJEITOU nesta conversa -- excluidos
+    # da busca, relaxada ou nao (Task 9 decide QUAIS bairros entram aqui; esta
+    # task so garante que, uma vez presentes, eles nao voltam).
+    #
+    # Chega SEMPRE na forma dobrada (`mobia.domain.texto.dobrar`). O WHERE
+    # compara direto contra `Imovel.bairro_busca`, que e dobrado, e nao dobra
+    # este campo -- um valor cru aqui deixaria a exclusao silenciosamente
+    # inerte, a mesma classe de bug que a TEC-160 pagou em `adjacentes_de`
+    # comparando regiao crua contra tabela dobrada.
+    bairros_excluidos: tuple[str, ...] = ()
+
     def __post_init__(self) -> None:
         # `not in COLUNA_DE_PRECO`, e nao `is Operacao.AMBOS`: uma guarda que
         # nomeasse AMBOS seria uma segunda copia da regra, e o proximo membro

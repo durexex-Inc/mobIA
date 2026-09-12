@@ -12,10 +12,14 @@ from mobia.app.config import get_settings
 from mobia.domain.agente.dinheiro import Recusa, parsear
 from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA, PortaDeBusca
 from mobia.domain.agente.schemas import (
+    CategoriaDescarte,
     Extracao,
     FormaPagamento,
     Intencao,
     PerguntaDeDesambiguacao,
+    ReacaoDoImovel,
+    ReacaoLead,
+    ReacoesDoTurno,
     RespostaDoAgente,
     TipoImovel,
     Urgencia,
@@ -124,6 +128,24 @@ SISTEMA_DA_DESAMBIGUACAO = (
     "pergunta. Devolva apenas o texto da pergunta, sem aspas e sem comentario."
 )
 
+# TEC-163, D6. Segunda chamada, no molde de SISTEMA_DA_DESAMBIGUACAO: este
+# texto NAO entra na subcontagem de `test_a_margem_do_orcamento_do_prompt_e_
+# deliberada`, que mede SISTEMA_DO_AGENTE, o schema compilado, os rotulos de
+# montar_prompt e o `tools=`. Os campos de reacao no schema PRINCIPAL
+# custariam ~50 tokens contra uma margem de 6,2 -- por isso a chamada e
+# separada, e por isso alongar ESTE texto e barato enquanto alongar aquele nao e.
+#
+# "Use o numero do imovel" e a D7: ordinal, nunca UUID. O modelo nunca produz
+# identificador que o codigo nao consiga conferir.
+SISTEMA_DA_REACAO = (
+    "O lead acabou de ver os imoveis abaixo, numerados. Diga, para cada um que "
+    "ele mencionou, se houve INTERESSE ou DESCARTE, e no descarte a categoria: "
+    "DISTANCIA, PRECO, TAMANHO ou OUTRO. Use o numero do imovel. Imovel que ele "
+    "nao mencionou fica de fora da lista."
+)
+
+MAX_TOKENS_DA_REACAO = 300
+
 # Derivado do enum de proposito: duas listas mantidas a mao divergem, e a
 # divergencia so aparece quando o modelo devolve um valor que o codigo nao
 # sabe converter. `minimum`/`maximum` ficam aqui como parte do contrato do
@@ -181,6 +203,37 @@ def _anulavel(tipo: dict[str, Any]) -> dict[str, Any]:
 
 def _enum_anulavel(enum: type[StrEnum]) -> dict[str, Any]:
     return _anulavel({"type": "string", "enum": [membro.value for membro in enum]})
+
+
+# Lista de objetos, cada um com o ordinal (1..N, nunca UUID -- D7) e a reacao;
+# `categoria` so faz sentido com DESCARTE, mas fica anulavel em vez de exigido
+# condicionalmente porque o compilador de schema da API nao expressa "campo A
+# obrigatorio quando campo B vale X" (mesma razao de `_anulavel` acima). O
+# codigo, nao o schema, e quem descarta uma `categoria` presente com
+# INTERESSE -- ver `_reacoes_de`.
+SCHEMA_DA_REACAO: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "reacoes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ordinal": {"type": "integer"},
+                    "reacao": {
+                        "type": "string",
+                        "enum": [ReacaoLead.INTERESSE.value, ReacaoLead.DESCARTE.value],
+                    },
+                    "categoria": _enum_anulavel(CategoriaDescarte),
+                },
+                "required": ["ordinal", "reacao", "categoria"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["reacoes"],
+    "additionalProperties": False,
+}
 
 
 SCHEMA_DA_EXTRACAO: dict[str, Any] = {
@@ -279,6 +332,39 @@ def _membro(enum: type[StrEnum], bruto: Any) -> Any:
         return None
 
 
+def _reacoes_de(bruto: Any) -> tuple[ReacaoDoImovel, ...]:
+    """Converte a lista `reacoes` do modelo, descartando o item que nao serve.
+
+    `SCHEMA_DA_REACAO` e estrito (`output_config.format`), entao um item bem
+    formado ja chega com `ordinal` inteiro e `reacao` em INTERESSE/DESCARTE --
+    esta guarda e defesa a mais, no mesmo espirito de `extrair`: um item
+    malformado nao pode derrubar os outros itens do mesmo turno.
+
+    Ordinal fora de faixa (1..N) nao e responsabilidade desta funcao -- quem
+    resolve ordinal contra a lista apresentada e `resolver_ordinais`
+    (`recomendacao.py`, Task 6). Aqui so se descarta o que nem chega a ser um
+    ordinal (nao inteiro, ou `bool`, que e subclasse de `int` em Python).
+    """
+    if not isinstance(bruto, list):
+        return ()
+    resultado: list[ReacaoDoImovel] = []
+    for item in bruto:
+        if not isinstance(item, dict):
+            continue
+        ordinal = item.get("ordinal")
+        reacao = _membro(ReacaoLead, item.get("reacao"))
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int) or reacao is None:
+            continue
+        resultado.append(
+            ReacaoDoImovel(
+                ordinal=ordinal,
+                reacao=reacao,
+                categoria=_membro(CategoriaDescarte, item.get("categoria")),
+            )
+        )
+    return tuple(resultado)
+
+
 def _regiao(bruto: Any) -> str | None:
     """Normaliza antes de truncar, e descarta o que sobra vazio.
 
@@ -354,6 +440,13 @@ def extrair(bruto: Any, intencao: Intencao) -> Extracao:
 # pura do dict acima, que nao muda em runtime.
 _SCHEMA_COMPILADO = transform_schema(SCHEMA_DA_RESPOSTA)
 
+# Mesmo tratamento por simetria e seguranca, nao por uma chave incompativel
+# conhecida: SCHEMA_DA_REACAO nao tem `minimum`/`maximum`, so `anyOf`+`null`
+# (mesmo padrao de SCHEMA_DA_EXTRACAO, que ja atravessa este mesmo
+# `transform_schema` dentro de SCHEMA_DA_RESPOSTA). Compilado uma vez no
+# import, como o de cima.
+_SCHEMA_DA_REACAO_COMPILADO = transform_schema(SCHEMA_DA_REACAO)
+
 
 class RespostaInvalida(RuntimeError):
     """O modelo nao devolveu algo utilizavel neste turno."""
@@ -374,6 +467,9 @@ class ClassificadorPort(Protocol):
         self, contexto: ContextoMontado, *, porta: PortaDeBusca | None = None
     ) -> RespostaDoAgente: ...
     async def desambiguar(self, contexto: ContextoMontado) -> PerguntaDeDesambiguacao: ...
+    async def reagir(
+        self, contexto: ContextoMontado, *, apresentados: list[str]
+    ) -> ReacoesDoTurno: ...
 
 
 async def _tool_result(porta: PortaDeBusca, bloco: Any) -> dict[str, Any]:
@@ -399,6 +495,22 @@ def _candidatos_de(blocos: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if bloco.get("is_error"):
             continue
         encontrados.extend(json.loads(bloco["content"]).get("candidatos", []))
+    return encontrados
+
+
+def _criterios_de(blocos: list[dict[str, Any]]) -> list[str]:
+    """Os criterios de busca que sairam dos `tool_result` deste turno. TEC-163.
+
+    Mesmo padrao de `_candidatos_de`: concatena em vez de sobrescrever. Hoje
+    ha no maximo um bloco de busca por turno (D4 da TEC-265), mas se um dia
+    houver dois, a soma continua sendo os criterios que produziram os
+    candidatos que o modelo viu -- nao so os da ultima busca.
+    """
+    encontrados: list[str] = []
+    for bloco in blocos:
+        if bloco.get("is_error"):
+            continue
+        encontrados.extend(json.loads(bloco["content"]).get("criterios", []))
     return encontrados
 
 
@@ -453,20 +565,30 @@ class ClassificadorAnthropic:
         output_config: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
         porta: PortaDeBusca | None = None,
-    ) -> tuple[str, Message, int, list[dict[str, Any]], bool, bool, bool, bool]:
+        texto_adicional: str | None = None,
+    ) -> tuple[str, Message, int, list[dict[str, Any]], bool, bool, bool, bool, list[str]]:
         """Chama o modelo e recusa qualquer parada que nao valha a pena aproveitar.
 
-        Comum a `classificar` e `desambiguar`: as duas fazem uma chamada, medem
-        a latencia e tem o mesmo criterio do que e uma resposta utilizavel --
-        `end_turn` com texto nao vazio. O que muda entre elas fica nos
-        parametros (schema, teto de tokens, system prompt, mensagem de erro
-        para o caso vazio) e no que cada uma faz com o texto depois de
+        Comum a `classificar`, `desambiguar` e `reagir`: as tres fazem uma
+        chamada, medem a latencia e tem o mesmo criterio do que e uma resposta
+        utilizavel -- `end_turn` com texto nao vazio. O que muda entre elas
+        fica nos parametros (schema, teto de tokens, system prompt, mensagem
+        de erro para o caso vazio) e no que cada uma faz com o texto depois de
         receber -- isso continua em cada metodo, nao aqui.
 
-        `tools`/`porta` so chegam de `classificar`: `desambiguar` nao declara
-        ferramenta, entao para ela o laco abaixo sempre sai na primeira volta.
+        `tools`/`porta` so chegam de `classificar`: `desambiguar` e `reagir`
+        nao declaram ferramenta, entao para elas o laco abaixo sempre sai na
+        primeira volta.
+
+        `texto_adicional` so chega de `reagir`: os imoveis apresentados, numa
+        lista numerada, anexados ao turno montado normalmente. Nenhum dos
+        outros dois metodos precisa anexar nada alem do que `montar_prompt` ja
+        produz.
         """
         comeco = time.monotonic()
+        conteudo_do_turno = montar_prompt(contexto, omitir_sistema=True)
+        if texto_adicional is not None:
+            conteudo_do_turno = f"{conteudo_do_turno}\n\n{texto_adicional}"
         kwargs: dict[str, Any] = {
             "model": modelo,
             "max_tokens": max_tokens,
@@ -487,7 +609,7 @@ class ClassificadorAnthropic:
             # omitir_sistema=True: o `system` dedicado acima ja cobre a
             # persona. Reenviar `contexto.sistema` aqui duplicaria a mesma
             # instrucao, mais fraca, dentro do turno do usuario.
-            "messages": [{"role": "user", "content": montar_prompt(contexto, omitir_sistema=True)}],
+            "messages": [{"role": "user", "content": conteudo_do_turno}],
         }
         if output_config is not None:
             kwargs["output_config"] = output_config
@@ -514,6 +636,10 @@ class ClassificadorAnthropic:
             kwargs["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
 
         candidatos: list[dict[str, Any]] = []
+        # Mesmo default de `candidatos`, e pelo mesmo motivo: sem tool_use
+        # neste turno, nao houve busca -- e portanto nenhum criterio para
+        # relatar.
+        criterios: list[str] = []
         # Mesmo default de `candidatos`, e pelo mesmo motivo: sem tool_use
         # neste turno, nao houve relaxamento nenhum para relatar.
         relaxou_e_achou = relaxou_sem_resultado = relaxou_preco = relaxou_bairro = False
@@ -558,6 +684,7 @@ class ClassificadorAnthropic:
                     {"role": "user", "content": [await _tool_result(porta, b) for b in blocos]},
                 ]
                 candidatos = _candidatos_de(kwargs["messages"][-1]["content"])
+                criterios = _criterios_de(kwargs["messages"][-1]["content"])
                 relaxou_e_achou, relaxou_sem_resultado, relaxou_preco, relaxou_bairro = (
                     _relaxamento_de(kwargs["messages"][-1]["content"])
                 )
@@ -589,6 +716,7 @@ class ClassificadorAnthropic:
                 relaxou_sem_resultado,
                 relaxou_preco,
                 relaxou_bairro,
+                criterios,
             )
 
         raise LacoDeBuscaExcedido("laco de tool use nao convergiu")
@@ -610,6 +738,7 @@ class ClassificadorAnthropic:
             relaxou_sem_resultado,
             relaxou_preco,
             relaxou_bairro,
+            criterios,
         ) = await self._chamar(
             contexto,
             modelo=settings.modelo_agente,
@@ -693,6 +822,7 @@ class ClassificadorAnthropic:
                 cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
                 cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
                 candidatos=candidatos,
+                criterios=criterios,
                 relaxou_e_achou=relaxou_e_achou,
                 relaxou_sem_resultado=relaxou_sem_resultado,
                 relaxou_preco=relaxou_preco,
@@ -750,14 +880,16 @@ class ClassificadorAnthropic:
     async def desambiguar(self, contexto: ContextoMontado) -> PerguntaDeDesambiguacao:
         """A segunda chamada do turno ambiguo: uma pergunta, sem schema.
 
-        Recebe o mesmo contexto da primeira, montado de novo do zero -- este
-        projeto nao declara nenhum `cache_control` (ver `grep -rn
-        "cache_control" src/ tests/`), entao nao ha prefixo quente para
-        aproveitar, e mesmo que houvesse, `system` precede `messages` no
-        corpo da requisicao: trocar o system prompt invalidaria qualquer
-        cache do que vem depois dele. O turno ambiguo paga o contexto de
-        entrada inteiro (ate `contexto_teto_de_tokens`) **duas vezes**, uma
-        por chamada -- e input domina a contagem de tokens. Sem
+        Recebe o mesmo contexto da primeira, montado de novo do zero -- o
+        `system` desta chamada e enviado com `cache_control` como qualquer
+        outro (`_chamar` nao distingue), mas e um texto DIFERENTE do de
+        `classificar` (`SISTEMA_DA_DESAMBIGUACAO`, nao `SISTEMA_DO_AGENTE`),
+        entao nao aproveita o prefixo quente que aquela chamada escreveu. E
+        `system` precede `messages` no corpo da requisicao: trocar o system
+        prompt invalidaria qualquer cache do que vem depois dele. O turno
+        ambiguo paga o contexto de entrada inteiro (ate
+        `contexto_teto_de_tokens`) **duas vezes**, uma por chamada -- e input
+        domina a contagem de tokens. Sem
         `output_config`: a saida e uma frase, nao ha campo para validar, e o
         compilador de schema do servidor e uma chance a mais de 400 num
         caminho que ja e o de excecao.
@@ -768,9 +900,9 @@ class ClassificadorAnthropic:
         # para qualquer stop_reason != end_turn que impede isso de chegar ao
         # lead.
         # Sem `tools`/`porta`: a desambiguacao nunca busca imovel, entao o
-        # quarto item (candidatos) e os quatro booleanos de relaxamento saem
-        # sempre vazios/False e nao servem a esta chamada -- so `classificar`
-        # devolve algo la.
+        # quarto item (candidatos), os quatro booleanos de relaxamento e a
+        # lista de criterios (TEC-163) saem sempre vazios/False e nao servem
+        # a esta chamada -- so `classificar` devolve algo la.
         (
             texto,
             resposta,
@@ -780,6 +912,7 @@ class ClassificadorAnthropic:
             _relaxou_sem_resultado,
             _relaxou_preco,
             _relaxou_bairro,
+            _criterios,
         ) = await self._chamar(
             contexto,
             modelo=settings.modelo_agente,
@@ -820,3 +953,79 @@ class ClassificadorAnthropic:
             tokens_out=resposta.usage.output_tokens,
             latency_ms=latency_ms,
         )
+
+    async def reagir(self, contexto: ContextoMontado, *, apresentados: list[str]) -> ReacoesDoTurno:
+        """A terceira chamada possivel do turno: o que o lead achou do que viu.
+
+        TEC-163, D6. Chamada dedicada, separada de `classificar`, pela mesma
+        razao estrutural de `desambiguar`: um schema proprio, fora da
+        subcontagem que `test_a_margem_do_orcamento_do_prompt_e_deliberada`
+        mede. Ao contrario de `desambiguar`, esta SEMPRE manda `output_config`
+        -- a saida e uma lista estruturada (ordinal, reacao, categoria), nao
+        uma frase livre.
+
+        `apresentados` e a lista numerada que `resolver_ordinais` (Task 6) vai
+        ler de volta contra o ordinal que o modelo devolver -- esta chamada so
+        a repassa como texto, na mesma mensagem do turno.
+
+        Sem `tools`/`porta`: esta chamada nunca busca imovel, entao o quarto
+        item (candidatos), os quatro booleanos de relaxamento e a lista de
+        criterios saem sempre vazios/False, do mesmo jeito que em
+        `desambiguar`.
+        """
+        settings = get_settings()
+        (
+            texto,
+            resposta,
+            latency_ms,
+            _candidatos,
+            _relaxou_e_achou,
+            _relaxou_sem_resultado,
+            _relaxou_preco,
+            _relaxou_bairro,
+            _criterios,
+        ) = await self._chamar(
+            contexto,
+            modelo=settings.modelo_agente,
+            max_tokens=MAX_TOKENS_DA_REACAO,
+            system=SISTEMA_DA_REACAO,
+            mensagem_se_vazia="reacoes vieram vazias",
+            output_config={
+                "format": {"type": "json_schema", "schema": _SCHEMA_DA_REACAO_COMPILADO}
+            },
+            texto_adicional="Imoveis apresentados:\n" + "\n".join(apresentados),
+        )
+
+        try:
+            dados = json.loads(texto)
+            reacoes = _reacoes_de(dados.get("reacoes"))
+        except (json.JSONDecodeError, AttributeError) as exc:
+            # AttributeError cobre o topo nao vir como objeto (`dados.get`
+            # falhando num JSON valido mas com forma errada, ex.: uma lista
+            # solta) -- o compilador de schema do servidor deveria impedir
+            # isso, mas a guarda nao custa e evita um traceback cru.
+            #
+            # Mesma disciplina de `classificar`: nunca interpola `texto`, que
+            # carrega a lista de imoveis apresentados.
+            raise RespostaInvalida(type(exc).__name__) from exc
+
+        # So numeros e id de modelo -- nenhum destes conta o que o lead disse.
+        log.info(
+            "agente.reacao_gerada",
+            modelo=settings.modelo_agente,
+            tokens_in=resposta.usage.input_tokens,
+            tokens_out=resposta.usage.output_tokens,
+            cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
+            latency_ms=latency_ms,
+            custo_usd=str(
+                custo_em_dolar(
+                    settings.modelo_agente,
+                    resposta.usage.input_tokens,
+                    resposta.usage.output_tokens,
+                    cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
+                    cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
+                )
+            ),
+        )
+        return ReacoesDoTurno(reacoes=reacoes, modelo=settings.modelo_agente)

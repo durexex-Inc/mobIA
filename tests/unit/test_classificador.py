@@ -12,15 +12,17 @@ from anthropic import transform_schema
 from mobia.domain.agente import classificador as classificador_mod
 from mobia.domain.agente.classificador import (
     MAX_TOKENS_DA_PERGUNTA,
+    MAX_TOKENS_DA_REACAO,
     SCHEMA_DA_RESPOSTA,
     SISTEMA_DA_DESAMBIGUACAO,
+    SISTEMA_DA_REACAO,
     SISTEMA_DO_AGENTE,
     ClassificadorAnthropic,
     RespostaInvalida,
     _lista_de_nomes,
 )
 from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA
-from mobia.domain.agente.schemas import Intencao
+from mobia.domain.agente.schemas import CategoriaDescarte, Intencao, ReacaoDoImovel, ReacaoLead
 from mobia.domain.context.montagem import ContextoMontado
 
 # Strings que nao podem, sob nenhuma circunstancia, sobreviver ao log nem a
@@ -723,6 +725,170 @@ async def test_desambiguar_nao_loga_a_pergunta_nem_o_prompt(
     assert "agente.desambiguacao_gerada" in caplog.text
 
 
+APRESENTADOS = ["1. Apto na Trindade", "2. Casa no Centro"]
+
+
+def _resposta_reacao(*, reacoes: list[dict[str, object]]) -> SimpleNamespace:
+    return _resposta_falsa(texto=json.dumps({"reacoes": reacoes}))
+
+
+async def test_reagir_devolve_as_reacoes_por_ordinal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D6: segunda chamada dedicada, fora do orcamento do prompt principal."""
+    _instalar_cliente_falso(
+        monkeypatch,
+        _resposta_reacao(reacoes=[{"ordinal": 2, "reacao": "INTERESSE", "categoria": None}]),
+    )
+
+    resultado = await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+    assert resultado.reacoes == (
+        ReacaoDoImovel(ordinal=2, reacao=ReacaoLead.INTERESSE, categoria=None),
+    )
+    assert resultado.modelo
+
+
+async def test_reagir_com_resposta_vazia_devolve_tupla_vazia(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vazio nao e erro: o lead pode ter respondido sem falar de imovel."""
+    _instalar_cliente_falso(monkeypatch, _resposta_reacao(reacoes=[]))
+
+    resultado = await ClassificadorAnthropic().reagir(_contexto(), apresentados=["1. Apto"])
+
+    assert resultado.reacoes == ()
+
+
+async def test_reagir_devolve_categoria_no_descarte(monkeypatch: pytest.MonkeyPatch) -> None:
+    _instalar_cliente_falso(
+        monkeypatch,
+        _resposta_reacao(reacoes=[{"ordinal": 1, "reacao": "DESCARTE", "categoria": "DISTANCIA"}]),
+    )
+
+    resultado = await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+    assert resultado.reacoes == (
+        ReacaoDoImovel(
+            ordinal=1, reacao=ReacaoLead.DESCARTE, categoria=CategoriaDescarte.DISTANCIA
+        ),
+    )
+
+
+async def test_reacao_malformada_nao_derruba_as_bem_formadas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O contrato central de `_reacoes_de`, no mesmo espirito de
+    `test_extracao_malformada_nao_derruba_o_turno`: um item ruim no meio da
+    lista nao pode apagar os itens bons do mesmo turno.
+
+    Cobre, num so turno, os tres jeitos que a docstring de `_reacoes_de`
+    promete sobreviver dentro de um item: item que nao e dict, ordinal que
+    nao e int (string), ordinal booleano (a armadilha de `bool` ser
+    subclasse de `int` em Python) e `reacao` que o enum nao reconhece.
+    """
+    boa = {"ordinal": 3, "reacao": "DESCARTE", "categoria": "PRECO"}
+    reacoes = [
+        "isto nao e um objeto",
+        {"ordinal": "1", "reacao": "INTERESSE", "categoria": None},
+        {"ordinal": True, "reacao": "INTERESSE", "categoria": None},
+        {"ordinal": 2, "reacao": "SATISFEITO", "categoria": None},
+        boa,
+    ]
+    _instalar_cliente_falso(monkeypatch, _resposta_reacao(reacoes=reacoes))
+
+    resultado = await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+    assert resultado.reacoes == (
+        ReacaoDoImovel(ordinal=3, reacao=ReacaoLead.DESCARTE, categoria=CategoriaDescarte.PRECO),
+    )
+
+
+async def test_reacoes_que_nao_e_lista_devolve_tupla_vazia_sem_levantar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O quarto jeito que a docstring de `_reacoes_de` promete sobreviver: o
+    proprio campo `reacoes` vindo num formato que nem chega a ser lista.
+
+    Nao ha item bom para sobreviver aqui -- o topo inteiro esta errado --,
+    entao o que este teste guarda e so a segunda metade do contrato: nao
+    levanta, e devolve tupla vazia em vez de propagar o erro.
+    """
+    _instalar_cliente_falso(
+        monkeypatch, _resposta_falsa(texto=json.dumps({"reacoes": "nao e uma lista"}))
+    )
+
+    resultado = await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+    assert resultado.reacoes == ()
+
+
+async def test_reagir_nao_manda_tools_nem_porta(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Esta chamada nunca busca imovel -- ver docstring de `reagir`."""
+    cliente = _instalar_e_capturar(monkeypatch, _resposta_reacao(reacoes=[]))
+
+    await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+    kwargs = cliente.messages.create.call_args.kwargs
+    assert "tools" not in kwargs
+    assert "tool_choice" not in kwargs
+    assert kwargs["max_tokens"] == MAX_TOKENS_DA_REACAO
+    assert kwargs["system"] == [
+        {"type": "text", "text": SISTEMA_DA_REACAO, "cache_control": {"type": "ephemeral"}}
+    ]
+    assert "output_config" in kwargs
+
+
+async def test_reagir_manda_os_imoveis_apresentados_na_mensagem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cliente = _instalar_e_capturar(monkeypatch, _resposta_reacao(reacoes=[]))
+
+    await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+    conteudo_do_turno = cliente.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "1. Apto na Trindade" in conteudo_do_turno
+    assert "2. Casa no Centro" in conteudo_do_turno
+
+
+async def test_reagir_recusa_json_invalido(monkeypatch: pytest.MonkeyPatch) -> None:
+    _instalar_cliente_falso(monkeypatch, _resposta_falsa(texto="isto nao e json"))
+
+    with pytest.raises(RespostaInvalida):
+        await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+
+async def test_reagir_recusa_parada_anormal(monkeypatch: pytest.MonkeyPatch) -> None:
+    _instalar_cliente_falso(
+        monkeypatch,
+        _resposta_falsa(texto=json.dumps({"reacoes": []}), stop_reason="max_tokens"),
+    )
+
+    with pytest.raises(RespostaInvalida):
+        await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+
+async def test_reagir_nao_loga_o_prompt(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Mesma regra de `classificar`/`desambiguar`: so numeros e id de modelo."""
+    _instalar_cliente_falso(monkeypatch, _resposta_reacao(reacoes=[]))
+
+    with caplog.at_level(logging.INFO):
+        await ClassificadorAnthropic().reagir(_contexto(), apresentados=APRESENTADOS)
+
+    assert "SENTINELA-SISTEMA" not in caplog.text
+    assert "SENTINELA-RESUMO" not in caplog.text
+    assert "agente.reacao_gerada" in caplog.text
+
+
+def test_reagir_esta_fora_da_subcontagem_do_orcamento() -> None:
+    """SISTEMA_DA_REACAO nao pode ser o mesmo texto que SISTEMA_DO_AGENTE nem
+    SISTEMA_DA_DESAMBIGUACAO -- os tres tem de ser objetos distintos, cada um
+    medido (ou deliberadamente NAO medido) pelo teste certo em test_config.py.
+    """
+    assert SISTEMA_DA_REACAO != SISTEMA_DO_AGENTE
+    assert SISTEMA_DA_REACAO != SISTEMA_DA_DESAMBIGUACAO
+
+
 async def test_extracao_entra_na_resposta_do_agente(monkeypatch: pytest.MonkeyPatch) -> None:
     dados = dict(_DADOS_VALIDOS, extracao={"quartos": 3, "regiao": "moema"})
     resposta = _resposta_falsa(texto=json.dumps(dados))
@@ -922,6 +1088,33 @@ async def test_classificar_executa_a_ferramenta_e_chama_de_novo(
     assert chamadas == [{"operacao": "VENDA"}]
     assert cliente.messages.create.await_count == 2
     assert resposta.candidatos == [{"imovel_id": "abc", "preco_centavos": 100}]
+
+
+async def test_classificar_traz_os_criterios_do_tool_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEC-163: `criterios` viaja do `tool_result` ate `RespostaDoAgente`,
+    pelo mesmo caminho que `candidatos` -- espelha
+    `test_classificar_executa_a_ferramenta_e_chama_de_novo` acima. Sem este
+    teste, `_criterios_de`, a 9a posicao da tupla de `_chamar` e o campo
+    `RespostaDoAgente.criterios` ficavam sem cobertura -- so `candidatos`
+    tinha um teste analogo.
+    """
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_json()]
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {
+            "candidatos": [{"imovel_id": "abc", "preco_centavos": 100}],
+            "total_candidatos": 1,
+            "criterios": ["3 quartos", "Trindade"],
+        }
+
+    resposta = await ClassificadorAnthropic().classificar(_contexto(), porta=porta)
+
+    assert cliente.messages.create.await_count == 2
+    assert resposta.criterios == ["3 quartos", "Trindade"]
 
 
 async def test_a_segunda_chamada_leva_o_tool_result(

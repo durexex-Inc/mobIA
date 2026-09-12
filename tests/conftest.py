@@ -55,6 +55,14 @@ TABELAS = (
     # teste da suite inteira, e o custo e conhecido -- a alternativa e teste de
     # auditoria que passa sozinho e falha em conjunto.
     "moderation_events",
+    # TEC-163. Entra aqui, ao contrario de `bairros_adjacentes`, porque e
+    # escrita pelos TESTES e nao pelo schema: sem o truncate, as recomendacoes
+    # de um teste viram historico do proximo e o ajuste de filtro da RN-10.4
+    # dispara onde ninguem pediu. Custo conhecido e aceito -- um TRUNCATE por
+    # teste da suite inteira --, pelo mesmo argumento que `imoveis` e
+    # `lead_score_audit` ja registram acima: a alternativa e teste que passa
+    # sozinho e falha em conjunto.
+    "recomendacoes",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto

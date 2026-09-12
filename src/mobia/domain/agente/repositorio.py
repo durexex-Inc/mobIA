@@ -1,15 +1,27 @@
+import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import update
+import structlog
+from sqlalchemy import column, select, table, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agente.desambiguacao import intencao_efetiva
-from mobia.domain.agente.models import ConversationIntent
-from mobia.domain.agente.schemas import LIMIAR_DE_DESAMBIGUACAO, Intencao
+from mobia.domain.agente.models import ConversationIntent, Recomendacao
+from mobia.domain.agente.recomendacao import DescartePorBairro, motivo_do_match
+from mobia.domain.agente.schemas import (
+    LIMIAR_DE_DESAMBIGUACAO,
+    CategoriaDescarte,
+    Intencao,
+    ReacaoDoImovel,
+    ReacaoLead,
+)
+
+log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -115,3 +127,284 @@ async def marcar_desambiguacao(
         )
         .values(desambiguado_em=quando or datetime.now(UTC))
     )
+
+
+async def gravar_recomendacoes(
+    session_factory: Any,
+    *,
+    channel: str,
+    conversation_key: str,
+    candidatos: Sequence[Mapping[str, Any]],
+    scores: Mapping[uuid.UUID, float],
+    criterios: Sequence[str],
+    agora: datetime,
+) -> None:
+    """Uma linha por imovel apresentado. RN-10.3, e a L1 da TEC-162.
+
+    **`ON CONFLICT DO NOTHING`, e nao um `raise`.** O UNIQUE existe para
+    impedir DUPLICATA, nao para derrubar o turno: o lead pede "mostra de novo
+    aquele do Campeche" e a reapresentacao e legitima. Deixar o IntegrityError
+    subir mataria o turno por causa de um registro, e a D9 da TEC-265 ja
+    escreveu a regra oposta para este caminho.
+
+    A linha original sobrevive com a reacao que ja tiver -- que e o
+    comportamento certo: a opiniao do lead sobre aquele imovel nao muda porque
+    ele o viu de novo.
+
+    **Gravada ANTES da entrega**, por quem chama. O docstring de `_apresentar`
+    registra que uma falha parcial perde o conjunto escolhido e o turno
+    seguinte pode reapresentar os mesmos imoveis; gravar depois manteria esse
+    buraco aberto.
+
+    **Toda apresentacao vira linha, sem excecao (RN-10.3).** A regra nao tem
+    clausula de excecao -- "toda apresentacao e registrada como
+    `Recomendacao`" -- e uma linha faltando quebra tres coisas por quem le
+    depois: o UNIQUE que e a garantia do cenario 4 do Gherkin (o proximo
+    candidato deste imovel nesta conversa nao teria contra o que colidir), o
+    gatilho `reacao_lead IS NULL` que a Task 5 usa para saber quem perguntar,
+    e a propria medida de conversao que esta tabela existe para dar.
+
+    **Um candidato sem entrada em `scores` AINDA vira linha, com
+    `score_match = 0.0` e um `log.error`.** Isto e decisao de ruling, nao a
+    original desta funcao -- a original recusava `0.0` como valor ROTINEIRO,
+    e continua certa sobre isso: se este caminho fosse o normal, `0.0`
+    tornaria a coluna decorativa e derrubaria o D4 (o que distingue os
+    candidatos de uma recomendacao e o score). Mas o `0.0` daqui so e
+    alcancado quando um invariante que deveria ser impossivel ja quebrou --
+    por construcao (D17, `_PortaComScore` em `ferramenta_de_busca.py`), o
+    turno monta `scores` chamando `score_de` para cada imovel de
+    `candidatos` logo apos a MESMA busca que os gerou, entao a ausencia so
+    acontece se as duas listas vieram de chamadas diferentes. Entre um numero
+    errado que berra (`error` no log, `0.0` que salta aos olhos em qualquer
+    consulta) e um fato que falta em silencio (a linha simplesmente nao
+    existe, e ninguem que le a tabela depois sabe que o imovel foi
+    apresentado), a regra escolhe o que berra: a linha existir e a Task 5 ter
+    o que reagir importa mais que o numero dela estar certo neste caso que
+    nunca deveria acontecer. **Nao filtre o candidato da ENTREGA por causa
+    disto** -- o lead ja recebeu a ficha nesse ponto do turno, e transformar
+    um defeito de contabilidade nosso numa apresentacao que ele nunca ve so
+    troca nosso problema pelo dele.
+    """
+    if not candidatos:
+        return
+
+    motivo = motivo_do_match(criterios)
+    linhas: list[dict[str, Any]] = []
+    for candidato in candidatos:
+        imovel_id = uuid.UUID(str(candidato["imovel_id"]))
+        score = scores.get(imovel_id)
+        if score is None:
+            # Nunca deveria acontecer (ver docstring) -- `error`, nao
+            # `warning`, porque e sinal de invariante quebrado, e `0.0` fica
+            # gravado de proposito para o numero errado saltar aos olhos em
+            # vez de a linha faltar em silencio.
+            log.error(
+                "recomendacao.score_ausente",
+                channel=channel,
+                conversation_key=conversation_key,
+                imovel_id=str(imovel_id),
+            )
+            score = 0.0
+        linhas.append(
+            {
+                "id": uuid.uuid4(),
+                "channel": channel,
+                "conversation_key": conversation_key,
+                "imovel_id": imovel_id,
+                "score_match": Decimal(str(score)),
+                "motivo_match": motivo,
+                "apresentado_em": agora,
+            }
+        )
+
+    async with session_factory() as session:
+        await session.execute(pg_insert(Recomendacao).values(linhas).on_conflict_do_nothing())
+        await session.commit()
+
+
+# As quatro colunas que `ler_pendentes` e `ler_descartes_por_distancia` leem
+# de `imoveis`, declaradas como Core table e nao importadas de
+# `mobia.domain.catalogo.models.Imovel`. `ferramenta_de_busca.py` registra no
+# proprio docstring ser "o unico arquivo em que domain/agente toca
+# domain/catalogo" -- espalhar o import por aqui tambem tornaria essa
+# fronteira invisivel. O join precisa do nome da tabela e das colunas, nao da
+# classe ORM, entao a tabela Core basta e nao quebra a regra.
+#
+# `bairro_busca` (TEC-163) e nao `bairro`: e a forma dobrada que
+# `FiltroDeBusca.bairros_excluidos` compara, e `ler_descartes_por_distancia`
+# tem de devolver o bairro na MESMA forma que o filtro espera -- ver o
+# docstring de `DescartePorBairro`.
+_TABELA_IMOVEIS = table(
+    "imoveis", column("id"), column("titulo"), column("bairro"), column("bairro_busca")
+)
+
+
+@dataclass(frozen=True)
+class RecomendacaoPendente:
+    """Um imovel apresentado que ainda espera a reacao do lead. TEC-163.
+
+    **Sem preco, de proposito -- ruling do round de revisao.** `recomendacoes`
+    nao guarda qual OPERACAO foi buscada, e `Imovel` carrega `preco_venda` e
+    `preco_aluguel` ao mesmo tempo; reconstruir um preco aqui a partir so do
+    `imovel_id` devolveria o de venda numa busca de aluguel, ou vice-versa.
+    E o mesmo defeito que `Candidato.preco_centavos` (`catalogo/schemas.py`)
+    existe para evitar -- o comentario de la e explicito: "numa busca de
+    aluguel, devolver o preco de venda seria devolver o campo errado".
+    Titulo e bairro bastam para desambiguar "o segundo" e "o do Campeche",
+    que sao as duas formas que o criterio de aceite desta card nomeia.
+    """
+
+    imovel_id: uuid.UUID
+    titulo: str
+    bairro: str
+
+
+async def ler_pendentes(
+    session_factory: Any, *, channel: str, conversation_key: str
+) -> tuple[RecomendacaoPendente, ...]:
+    """As linhas desta conversa ainda sem reacao, na ordem em que foram apresentadas.
+
+    **A ordem E o ordinal (D7).** "O segundo" na resposta do lead significa o
+    segundo imovel apresentado, e quem le esta lista de volta (`turno.py`,
+    junto com `resolver_ordinais`) casa o ordinal do modelo com a posicao
+    aqui. Se a ordem mudar entre a apresentacao e a leitura da reacao, a
+    opiniao do lead gruda no imovel errado.
+
+    **`apresentado_em` sozinho empata, e nao e caso raro.**
+    `gravar_recomendacoes` grava toda apresentacao com o MESMO `agora` para
+    todas as linhas do lote -- sempre que mais de um imovel sai numa mesma
+    apresentacao, essas linhas empatam em `apresentado_em` por construcao.
+    O desempate e `score_match DESC, imovel_id ASC`, e essa escolha nao e
+    arbitraria: e a MESMA ordem que `buscar` (`catalogo/busca.py`) usa no
+    proprio `ORDER BY` (score decrescente, id como desempate), e nem
+    `turno.py` nem `gravar_recomendacoes` reordenam os candidatos entre a
+    busca e a gravacao. Reproduzir aquela ordem aqui reconstroi a ordem de
+    apresentacao real -- nao serve so para tornar o teste deterministico.
+
+    Ver `RecomendacaoPendente` para o porque de nao ter preco.
+    """
+    consulta = (
+        select(Recomendacao.imovel_id, _TABELA_IMOVEIS.c.titulo, _TABELA_IMOVEIS.c.bairro)
+        .join(_TABELA_IMOVEIS, _TABELA_IMOVEIS.c.id == Recomendacao.imovel_id)
+        .where(
+            Recomendacao.channel == channel,
+            Recomendacao.conversation_key == conversation_key,
+            Recomendacao.reacao_lead.is_(None),
+        )
+        .order_by(
+            Recomendacao.apresentado_em,
+            Recomendacao.score_match.desc(),
+            Recomendacao.imovel_id,
+        )
+    )
+    async with session_factory() as session:
+        linhas = (await session.execute(consulta)).all()
+
+    return tuple(
+        RecomendacaoPendente(imovel_id=linha.imovel_id, titulo=linha.titulo, bairro=linha.bairro)
+        for linha in linhas
+    )
+
+
+async def ler_descartes_por_distancia(
+    session_factory: Any, *, channel: str, conversation_key: str
+) -> tuple[DescartePorBairro, ...]:
+    """Os descartes desta conversa, um por imovel, com o bairro dobrado e a categoria. TEC-163.
+
+    **Le TODO descarte, de qualquer categoria -- inclusive sem categoria.**
+    O nome cita distancia porque e o unico consumidor de hoje
+    (`recomendacao.bairros_a_excluir`), nao porque o `WHERE` filtra por ela: a
+    regra "so DISTANCIA conta" e decisao de negocio (RN-10.4), e decisao de
+    negocio mora na funcao pura que se testa sem banco, nao numa clausula
+    SQL que so se confere rodando contra o Postgres. Filtrar aqui tambem
+    criaria uma segunda copia da regra, e as duas copias podem divergir no
+    dia em que uma mudar sozinha.
+
+    `bairro_busca` e nao `bairro`: e a forma que `FiltroDeBusca.
+    bairros_excluidos` compara (ver `catalogo/schemas.py`), e devolver a
+    forma crua aqui obrigaria `ferramenta_de_busca.py` a dobrar de novo --
+    ou, pior, a esquecer de dobrar, o mesmo defeito que a TEC-160 pagou caro.
+    """
+    consulta = (
+        select(_TABELA_IMOVEIS.c.bairro_busca, Recomendacao.motivo_descarte)
+        .join(_TABELA_IMOVEIS, _TABELA_IMOVEIS.c.id == Recomendacao.imovel_id)
+        .where(
+            Recomendacao.channel == channel,
+            Recomendacao.conversation_key == conversation_key,
+            Recomendacao.reacao_lead == str(ReacaoLead.DESCARTE),
+        )
+    )
+    async with session_factory() as session:
+        linhas = (await session.execute(consulta)).all()
+
+    return tuple(
+        DescartePorBairro(
+            bairro=linha.bairro_busca,
+            categoria=(
+                CategoriaDescarte(linha.motivo_descarte)
+                if linha.motivo_descarte is not None
+                else None
+            ),
+        )
+        for linha in linhas
+    )
+
+
+async def gravar_reacoes(
+    session_factory: Any,
+    *,
+    channel: str,
+    conversation_key: str,
+    resolvidas: Sequence[tuple[uuid.UUID, ReacaoDoImovel]],
+) -> None:
+    """Grava a reacao de cada imovel resolvido, e fecha o resto da conversa como NEUTRO. D8.
+
+    **Fechar as pendentes nao mencionadas nao e cortesia, e a garantia de
+    frequencia da chamada.** `classificador.reagir` dispara toda vez que
+    existe linha com `reacao_lead IS NULL` na conversa (`ler_pendentes`). Se
+    uma pendente nao mencionada continuasse em aberto, um lead que mudasse de
+    assunto por tres turnos pagaria tres chamadas pelo MESMO imovel. Fechar
+    aqui, no mesmo commit que grava as reacoes resolvidas, e o que faz a
+    chamada disparar no MAXIMO uma vez por apresentacao.
+
+    **`NEUTRO`, nunca `SEM_RESPOSTA`.** As duas significam ausencia de opiniao
+    e RN-10.4 as conta diferente (ver o docstring de `ReacaoLead`): `NEUTRO`
+    e "o lead respondeu neste turno, so nao falou deste imovel" -- ha
+    resposta, so nao cobre esta linha, que e exatamente o que uma pendente
+    nao mencionada aqui significa. `SEM_RESPOSTA` e para quando uma
+    apresentacao NOVA supera uma pendente antiga sem o lead ter dito nada
+    sobre nenhuma das duas -- nenhuma resposta existiu, e essa marcacao e de
+    quem apresenta de novo (`turno.py`), nao desta funcao.
+
+    A atualizacao por resolvida ja filtra `reacao_lead IS NULL`: um ordinal
+    resolvido so pode ter vindo de uma linha que `ler_pendentes` devolveu
+    pendente no mesmo turno, e a guarda evita que uma corrida ou uma segunda
+    chamada sobrescreva uma reacao ja gravada.
+
+    Commita ao final, como `gravar_recomendacoes` -- o chamador nao abre
+    sessao propria para esta escrita.
+    """
+    async with session_factory() as session:
+        for imovel_id, reacao in resolvidas:
+            categoria = None if reacao.categoria is None else str(reacao.categoria)
+            await session.execute(
+                update(Recomendacao)
+                .where(
+                    Recomendacao.channel == channel,
+                    Recomendacao.conversation_key == conversation_key,
+                    Recomendacao.imovel_id == imovel_id,
+                    Recomendacao.reacao_lead.is_(None),
+                )
+                .values(reacao_lead=str(reacao.reacao), motivo_descarte=categoria)
+            )
+
+        await session.execute(
+            update(Recomendacao)
+            .where(
+                Recomendacao.channel == channel,
+                Recomendacao.conversation_key == conversation_key,
+                Recomendacao.reacao_lead.is_(None),
+            )
+            .values(reacao_lead=str(ReacaoLead.NEUTRO))
+        )
+        await session.commit()

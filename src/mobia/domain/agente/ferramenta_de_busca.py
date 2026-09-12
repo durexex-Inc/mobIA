@@ -17,11 +17,14 @@ from typing import Any
 
 import structlog
 
-from mobia.domain.agente.apresentacao import Ficha, diferencial_de
+from mobia.domain.agente.apresentacao import Ficha, diferencial_de, reais_de
+from mobia.domain.agente.recomendacao import bairros_a_excluir
+from mobia.domain.agente.repositorio import ler_descartes_por_distancia
 from mobia.domain.catalogo.enums import EstadoDoRelaxamento, Operacao, TipoImovel
 from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
 from mobia.domain.catalogo.repositorio import imoveis_por_ids
 from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, Candidato, FiltroDeBusca
+from mobia.domain.texto import dobrar
 
 log = structlog.get_logger(__name__)
 
@@ -97,19 +100,154 @@ def _candidato_serializavel(candidato: Candidato) -> dict[str, Any]:
     }
 
 
+def _criterios_de(filtro: FiltroDeBusca) -> list[str]:
+    """Os criterios que entraram no WHERE, em forma legivel. TEC-163, D4.
+
+    Um por BUSCA e nao por candidato: e a mesma lista para todos os imoveis
+    daquela apresentacao, e repeti-la por candidato pagaria tokens no
+    `tool_result` para dizer tres vezes a mesma coisa.
+
+    `operacao` fica de fora de proposito: ela nao restringe o que o lead
+    pediu, escolhe a coluna de preco. "VENDA" como motivo de match nao
+    explica nada a quem le a linha depois.
+    """
+    criterios: list[str] = []
+    if filtro.quartos_min is not None:
+        criterios.append(f"{filtro.quartos_min} quartos")
+    if filtro.vagas_min is not None:
+        criterios.append(f"{filtro.vagas_min} vagas")
+    if filtro.tipo is not None:
+        criterios.append(filtro.tipo.value.lower())
+    if filtro.regioes:
+        criterios.extend(filtro.regioes)
+    if filtro.preco_max_centavos is not None:
+        criterios.append(f"ate {reais_de(filtro.preco_max_centavos)}")
+    return criterios
+
+
+async def _bairros_excluidos_desta_busca(
+    session_factory: Any,
+    *,
+    channel: str | None,
+    conversation_key: str | None,
+    regioes: Sequence[str],
+) -> tuple[str, ...]:
+    """Os bairros que RN-10.4 tira desta busca -- ou nenhum, se a conversa
+    nao for conhecida. TEC-163, D11-D14.
+
+    **`None` em `channel`/`conversation_key` desliga a exclusao, nao levanta.**
+    Sao os dois casos de quem chama `porta_de_busca` sem conversa (teste
+    unitario, uso fora de turno): sem identidade de conversa nao ha o que
+    consultar, e a busca segue como sempre foi.
+
+    **A consulta falhar tambem desliga a exclusao, e nao a busca (D6/D9).**
+    Um bairro descartado que continua entrando por mais um turno e uma
+    degradacao pequena; derrubar a busca inteira por causa dela seria trocar
+    um problema pequeno por um grande.
+
+    **D14: o bairro que o lead nomeia NESTE turno sai da exclusao.**
+    Exclusao e inferencia nossa (duas rejeicoes por distancia); nomear e
+    declaracao dele, e declaracao vence inferencia. `regioes` chega crua do
+    tool call -- dobra-la aqui e o que faz a comparacao contra o excluido
+    (que ja chega dobrado de `ler_descartes_por_distancia`) bater mesmo
+    quando o lead escreve "Campeche" com maiuscula e acento. Comparar um
+    lado dobrado contra o outro cru e o defeito exato que a TEC-160 pagou
+    com um Critical -- 1534 testes verdes e a metade da RN-09.3 desligada,
+    calada.
+    """
+    if channel is None or conversation_key is None:
+        # `info`, nao silencio: sem isto, "a exclusao esta desligada porque
+        # ninguem passou identidade de conversa" e "nao havia nada para
+        # excluir" ficam indistinguiveis em producao -- mesmo retorno `()`,
+        # nenhum log, nenhuma metrica. A causa e o CHAMADOR nao ter ligado a
+        # conversa (hoje, `turno.py` nao passa `channel`/`conversation_key`),
+        # nunca "o lead nao rejeitou nada".
+        log.info("recomendacao.exclusao_desligada_sem_identidade")
+        return ()
+    try:
+        descartes = await ler_descartes_por_distancia(
+            session_factory, channel=channel, conversation_key=conversation_key
+        )
+    except Exception as erro:
+        log.warning("recomendacao.exclusao_de_bairro_falhou", tipo=type(erro).__name__)
+        return ()
+
+    excluidos = bairros_a_excluir(descartes)
+    if not excluidos:
+        return excluidos
+
+    regioes_dobradas = {dobrar(regiao) for regiao in regioes}
+    return tuple(bairro for bairro in excluidos if bairro not in regioes_dobradas)
+
+
+class _PortaComScore:
+    """A porta de busca, com um canal de scores que o `tool_result` nao carrega.
+
+    TEC-163, D17. `porta_de_busca` e fabrica chamada UMA VEZ POR TURNO (ver
+    `turno.py`) -- o dict de scores desta instancia nasce vazio a cada
+    chamada e morre com o turno que a criou.
+
+    **Por que um canal separado, e nao a rota obvia.** O obvio seria devolver
+    `score` dentro do dict que `__call__` retorna, porque e dali que o
+    classificador pega tudo o mais. A TEC-265 (D7) proibiu isso de proposito:
+    `score` no prompt convida o modelo a dizer "97% de compatibilidade" ao
+    lead, um numero inventado com aparencia de fato. Escrever `0.0` no lugar
+    do score real evitaria o prompt mas tornaria a coluna `score_match`
+    decorativa -- e falsificaria a premissa do D4 ("o que distingue os
+    candidatos e o `score_match`"). Por isso o score viaja por um metodo que
+    o modelo nunca chama: quem le e o turno, depois da busca, para montar a
+    `Recomendacao` (Task 3). Se algum dia isto for "arrumado" para voltar ao
+    dict devolvido, o D7 volta a valer e o motivo de ele existir se repete.
+
+    Continua servindo de `PortaDeBusca` (`Callable[[dict], Awaitable[dict]]`)
+    para o classificador, que so sabe chamar um callable -- D3 nao muda.
+    """
+
+    def __init__(self, chamar: PortaDeBusca, scores: dict[uuid.UUID, float]) -> None:
+        self._chamar = chamar
+        self._scores = scores
+
+    async def __call__(self, entrada: dict[str, Any]) -> dict[str, Any]:
+        return await self._chamar(entrada)
+
+    def score_de(self, imovel_id: uuid.UUID) -> float | None:
+        """O `score_match` do candidato, da ultima busca deste turno que o
+        trouxe. `None` se este imovel nunca apareceu numa busca desta porta.
+        """
+        return self._scores.get(imovel_id)
+
+
 def porta_de_busca(
     session_factory: Any,
     *,
     buscar: Any = None,
     embedador: Any = None,
+    channel: str | None = None,
+    conversation_key: str | None = None,
 ) -> PortaDeBusca:
     """A porta que o classificador chama quando o modelo pede a ferramenta.
 
     `buscar` e `embedador` sao injetaveis para o teste unitario nao precisar de
     banco nem de chave -- o mesmo molde do `embedador` que `indexar_catalogo`
     recebe pelo `ctx`.
+
+    Devolve um `_PortaComScore` e nao a funcao `porta` diretamente: TEC-163
+    precisa que o turno recupere o `score` de cada candidato para gravar
+    `Recomendacao`, sem que esse numero passe pelo `tool_result` que o modelo
+    le (D7 da TEC-265). O dict `scores` e criado aqui, por chamada de
+    `porta_de_busca`, para que duas portas (dois turnos) nunca compartilhem
+    score um do outro -- ver `test_duas_portas_nao_compartilham_scores`.
+
+    **`channel` e `conversation_key` sao opcionais, default `None`, e com
+    `None` a exclusao da RN-10.4 simplesmente nao roda** -- a busca sai igual
+    a antes desta card. Este e o UNICO arquivo em que `domain/agente` toca
+    `domain/catalogo` (ver o docstring do modulo), e por isso e ele, e so
+    ele, que consulta `ler_descartes_por_distancia` e poe o resultado em
+    `FiltroDeBusca.bairros_excluidos`: a busca (`domain/catalogo`) continua
+    sem saber que recomendacao existe.
     """
     executar = buscar or buscar_com_relaxamento
+    scores: dict[uuid.UUID, float] = {}
 
     async def porta(entrada: dict[str, Any]) -> dict[str, Any]:
         operacao_bruta = str(entrada.get("operacao"))
@@ -134,6 +272,12 @@ def porta_de_busca(
             return {"erro": "operacao invalida: use VENDA ou ALUGUEL"}
 
         regioes = tuple(str(regiao) for regiao in entrada.get("regioes") or ())
+        bairros_excluidos = await _bairros_excluidos_desta_busca(
+            session_factory,
+            channel=channel,
+            conversation_key=conversation_key,
+            regioes=regioes,
+        )
         filtro = FiltroDeBusca(
             operacao=operacao,
             preco_max_centavos=entrada.get("preco_max_centavos"),
@@ -141,6 +285,7 @@ def porta_de_busca(
             quartos_min=entrada.get("quartos_min"),
             vagas_min=entrada.get("vagas_min"),
             regioes=regioes,
+            bairros_excluidos=bairros_excluidos,
         )
 
         consulta = entrada.get("consulta_texto")
@@ -160,6 +305,13 @@ def porta_de_busca(
             log.warning("catalogo.tool_call_falhou", tipo=type(erro).__name__)
             return {"erro": "a busca nao pode ser feita agora"}
 
+        # TEC-163, D17. Guarda o score de cada candidato desta busca no dict
+        # da porta -- NUNCA no `saida` abaixo, que e o `tool_result` que o
+        # modelo le. O turno recupera via `_PortaComScore.score_de` depois da
+        # busca, para gravar `Recomendacao.score_match`.
+        for candidato in resultado.candidatos:
+            scores[candidato.imovel_id] = candidato.score
+
         saida: dict[str, Any] = {
             "candidatos": [_candidato_serializavel(c) for c in resultado.candidatos],
             # RN-09.2: o agente precisa saber que ve 10 de 40.
@@ -175,6 +327,11 @@ def porta_de_busca(
             # redige o aviso, o turno redige (Task 9).
             "relaxamento_de_preco": resultado.relaxou_preco,
             "relaxamento_de_bairro": resultado.relaxou_bairro,
+            # TEC-163, D4. Um campo por busca: o turno monta o `motivo_match`
+            # a partir daqui, em Python. Sem isto, ou o motivo seria escrito
+            # pelo modelo (D5 recusa) ou o turno nao teria como saber o que
+            # o filtro pediu -- ele so ve os candidatos.
+            "criterios": _criterios_de(filtro),
         }
 
         if saida["relaxamento_aplicado"]:
@@ -194,7 +351,7 @@ def porta_de_busca(
 
         return saida
 
-    return porta
+    return _PortaComScore(porta, scores)
 
 
 async def fichas_do_catalogo(

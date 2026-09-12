@@ -1,6 +1,7 @@
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -10,14 +11,27 @@ from mobia.domain.agente.apresentacao import legenda_de
 from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
 from mobia.domain.agente.desambiguacao import deve_desambiguar
-from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo, porta_de_busca
+from mobia.domain.agente.ferramenta_de_busca import (
+    _PortaComScore,
+    fichas_do_catalogo,
+    porta_de_busca,
+)
 from mobia.domain.agente.formato import quebrar_em_mensagens
 from mobia.domain.agente.identificacao import (
     SEPARADOR_DA_IDENTIFICACAO,
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
 )
-from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
+from mobia.domain.agente.recomendacao import bairros_a_excluir, resolver_ordinais
+from mobia.domain.agente.repositorio import (
+    gravar_intencao,
+    gravar_reacoes,
+    gravar_recomendacoes,
+    ler_descartes_por_distancia,
+    ler_intencao,
+    ler_pendentes,
+    marcar_desambiguacao,
+)
 from mobia.domain.agente.schemas import PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
@@ -185,6 +199,54 @@ def aviso_de_ampliacao(relaxou_preco: bool, relaxou_bairro: bool) -> str:
     if relaxou_bairro:
         return TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO
     raise ValueError("aviso_de_ampliacao chamado sem preco nem bairro relaxados")
+
+
+# TEC-163, Task 10. RN-10.4: o lead sabe que um bairro que ele descartou duas
+# vezes parou de entrar nas buscas seguintes desta conversa -- a mesma
+# exigencia de "nunca silencioso" que fez a TEC-160 escrever
+# `KIND_DO_CRITERIO_AMPLIADO`.
+#
+# Kind proprio e OBRIGATORIO, pelo mesmo motivo daquele: `outbound_dispatches`
+# tem UNIQUE (message_id, kind) -- a constraint `uq_outbound_message_kind`,
+# criada na `0002` --, e no caminho de apresentacao a identificacao ja envia
+# com KIND_DA_RESPOSTA. Duas mensagens com o mesmo kind no mesmo message_id
+# colidiriam na reserva, e este aviso seria descartado como reprocessamento.
+#
+# String fixa, sem id dentro, pelo argumento de idempotencia que o comentario
+# de `KINDS_DAS_FICHAS` registra: kind que muda entre retentativas perde a
+# dedup justamente quando ela importa. A coluna e String(32); isto tem 15.
+KIND_DO_FILTRO_AJUSTADO = "filtro_ajustado"
+
+TEXTO_DO_FILTRO_AJUSTADO = "Tirei {bairros} da busca, que voce ja descartou."
+
+
+def aviso_de_ajuste(bairros: Sequence[str]) -> str:
+    """O aviso da RN-10.4, com os NOMES dos bairros que saem da busca. D15.
+
+    **Diverge de proposito de `aviso_de_ampliacao` (D11 da TEC-160), que NAO
+    nomeia bairro nenhum.** La os bairros incluidos sao escolha NOSSA (a
+    tabela de adjacencia), e calar o nome evita uma mensagem cujo tamanho
+    cresce com o grau do no, sem teto medido. Aqui os bairros sao os que o
+    LEAD rejeitou -- duas ou tres vezes, nunca a arvore de adjacencia inteira
+    --, e nomea-los e a propria confirmacao de que ele foi ouvido: "Tirei o
+    Campeche da busca, que voce descartou" faz um trabalho que "ajustei o
+    filtro" nao faz.
+
+    `bairros` chega na forma dobrada (`recomendacao.bairros_a_excluir`,
+    minuscula e sem acento -- ver `texto.dobrar`); `.title()` basta para virar
+    nome legivel, e o dobrado ja garante ASCII -- nao ha acento para perder
+    na volta.
+
+    Levanta `ValueError` com a lista vazia: o chamador (`executar_turno`) so
+    invoca isto quando o conjunto excluido mudou desde antes deste turno, e o
+    par vazio nao chega a existir por construcao -- mesmo molde de guarda que
+    `aviso_de_ampliacao` documenta para o par impossivel dela.
+    """
+    if not bairros:
+        raise ValueError("aviso_de_ajuste chamado sem bairro nenhum")
+    nomes = [bairro.title() for bairro in bairros]
+    lista = nomes[0] if len(nomes) == 1 else f"{', '.join(nomes[:-1])} e {nomes[-1]}"
+    return TEXTO_DO_FILTRO_AJUSTADO.format(bairros=lista)
 
 
 SUBAGENTE_CLASSIFICADOR = "classificador"
@@ -462,6 +524,140 @@ async def executar_turno(
         )
         return "sem_resposta"
 
+    # D9. A reacao e capturada ANTES da busca deste turno, e nao depois.
+    # O lead escreve "nao gostei desses, tem outros?" -- reacao e busca nova no
+    # MESMO turno. Capturando depois, a busca deste turno nao saberia do
+    # descarte e devolveria mais do mesmo, que e literalmente a dor da
+    # historia da card.
+    #
+    # `except Exception` amplo: provedor fora, timeout e resposta malformada
+    # tem a mesma consequencia aqui, e distinguir nao muda o que o turno faz.
+    # Molde de `vetor_da_consulta` e da D6 da TEC-265 -- derrubar a dimensao,
+    # nao a busca. O lead perde o ajuste neste turno, nao o atendimento.
+    pendentes = await ler_pendentes(
+        session_factory, channel=message.channel, conversation_key=message.conversation_key
+    )
+    # TEC-163, Task 10. RN-10.4: o aviso de ajuste (`aviso_de_ajuste`, acima)
+    # so sai quando o conjunto excluido NASCE ou MUDA neste turno -- avisar em
+    # toda busca repetiria a mesma frase por todo o tempo em que a exclusao
+    # durasse. Comeca vazio; so o `else:` de sucesso logo abaixo (a reacao
+    # deste turno foi capturada e gravada) pode preenche-lo.
+    bairros_do_ajuste: tuple[str, ...] = ()
+    if pendentes:
+        # `apresentados` (o texto que o modelo le) e `ids` (o que
+        # `resolver_ordinais` casa contra o ordinal devolvido) sao montadas
+        # num UNICO laco sobre `pendentes`, e nao em duas list comprehensions
+        # separadas: e o proprio laco -- um `pendentes[i]` alimentando as
+        # duas listas na mesma iteracao -- que torna a posicao N de uma
+        # SEMPRE a mesma posicao N da outra, por construcao. Com dois lacos
+        # (ou duas consultas) o alinhamento seria acidental, nao garantido:
+        # bastaria um filtro, uma ordenacao ou um `continue` entrar num dos
+        # dois no futuro para as listas dessincronizarem em silencio, e a
+        # reacao do lead grudaria no imovel errado sem nada acusar.
+        apresentados: list[str] = []
+        ids: list[uuid.UUID] = []
+        for ordinal, pendente in enumerate(pendentes, start=1):
+            apresentados.append(f"{ordinal}. {pendente.titulo} -- {pendente.bairro}")
+            ids.append(pendente.imovel_id)
+        # TEC-163, Task 10. O retrato de ANTES desta reacao. Se `reagir`
+        # descartar um imovel e esse for o SEGUNDO descarte por distancia
+        # naquele bairro (RN-10.4, `recomendacao.LIMIAR_DE_DESCARTES`), a
+        # exclusao nasce ou cresce NESTE turno -- e comparar este retrato com
+        # o de depois (no `else:` abaixo) e o que decide se o aviso sai.
+        #
+        # Nenhuma tabela nova para lembrar "ja avisei este conjunto": os
+        # descartes JA sao o estado persistido, e append-only -- RN-10.4 nao
+        # tem caminho de remocao, entao o conjunto excluido so cresce, nunca
+        # encolhe. Mesmo molde de `buscar_com_relaxamento` (TEC-160): o aviso
+        # de ampliacao tambem compara um antes e um depois dentro da mesma
+        # chamada, em vez de lembrar do turno anterior.
+        #
+        # **Isto NAO basta, e a lacuna e conhecida, nao corrigida.** O retrato
+        # decide se o aviso PRECISA sair neste turno, mas nao se ele CONSEGUE:
+        # mais abaixo, o envio mora dentro de `if apresentando:`, e o turno em
+        # que a exclusao nasce pode nunca chegar la -- zero candidato (busca
+        # sem resultado), uma excecao no meio do turno, ou uma desambiguacao
+        # que adia as fichas. Quando isso acontece, o aviso nao fica adiado
+        # para o proximo turno: ele se PERDE para sempre. O `bairros_antes_da_
+        # reacao` do PROXIMO turno ja e lido DEPOIS que este `gravar_reacoes`
+        # commitou, entao ja inclui a mudanca de hoje -- os dois retratos
+        # batem, nada parece ter mudado, e o aviso nunca mais dispara para
+        # este conjunto. Um caso nada raro: e exatamente numa busca que
+        # devolve zero que duas rejeicoes por distancia tem mais chance de
+        # ter acabado de se acumular. Fechar isto de verdade exige um estado
+        # persistido de "ja avisei este conjunto" (uma coluna ou tabela nova),
+        # fora do alcance desta task -- que so tem `turno.py` e testes no
+        # escopo.
+        bairros_antes_da_reacao = bairros_a_excluir(
+            await ler_descartes_por_distancia(
+                session_factory,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+            )
+        )
+        try:
+            reacoes_do_turno = await classificador.reagir(contexto, apresentados=apresentados)
+        except Exception as exc:
+            log.warning(
+                "turno.reacao_nao_capturada",
+                channel=message.channel,
+                tipo=type(exc).__name__,
+                detalhe="linhas seguem pendentes, o filtro nao se ajusta neste turno",
+            )
+        else:
+            # Chamada incondicional, mesmo com `reacoes` vazio (cenario 4 do
+            # Gherkin: "tem mais alguma coisa?" nao fala de nenhum imovel
+            # especifico): `gravar_reacoes` fecha toda pendente nao
+            # mencionada como NEUTRO, e e essa uniao que garante no maximo
+            # uma chamada de reacao por apresentacao -- ver o docstring dela.
+            resolvidas = resolver_ordinais(reacoes_do_turno.reacoes, ids)
+            await gravar_reacoes(
+                session_factory,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                resolvidas=resolvidas,
+            )
+            # O retrato de DEPOIS, contra o de antes. `set(...)` e nao
+            # comparacao de tupla: as duas consultas nao tem `ORDER BY`
+            # (`ler_descartes_por_distancia`), e a ordem devolvida nao e
+            # garantia de schema nenhuma -- comparar tupla arriscaria um
+            # aviso disparando por reordenacao, sem bairro nenhum novo.
+            # `sorted(...)` na gravacao final e so para a mensagem sair
+            # estavel, nao para a comparacao.
+            bairros_depois_da_reacao = bairros_a_excluir(
+                await ler_descartes_por_distancia(
+                    session_factory,
+                    channel=message.channel,
+                    conversation_key=message.conversation_key,
+                )
+            )
+            if set(bairros_depois_da_reacao) != set(bairros_antes_da_reacao):
+                bairros_do_ajuste = tuple(sorted(bairros_depois_da_reacao))
+
+    # `cast`: `porta_de_busca` declara devolver `PortaDeBusca` (o Callable que
+    # o classificador precisa -- D3 do desenho), mas sempre constroi e
+    # devolve um `_PortaComScore` por baixo (TEC-163, D17). O turno precisa
+    # do `.score_de` dessa classe concreta depois da busca, para gravar
+    # `Recomendacao.score_match` sem que o score passe pelo `tool_result`
+    # que o modelo le.
+    #
+    # `channel=message.channel, conversation_key=message.conversation_key`:
+    # TEC-163, Task 10. Ate aqui esta chamada nao passava os dois, e
+    # `_bairros_excluidos_desta_busca` (`ferramenta_de_busca.py`) desliga a
+    # exclusao inteira sem identidade de conversa -- a feature das Tasks 7-9
+    # inteira (limiar, categoria, dobra, o lift de D14) rodava em teste e
+    # NUNCA em producao. Sem os dois nomeados aqui, `recomendacao.
+    # exclusao_desligada_sem_identidade` loga em TODO turno; com eles, so
+    # loga quando de fato faltar identidade -- nenhum turno normal.
+    porta = cast(
+        _PortaComScore,
+        porta_de_busca(
+            session_factory,
+            embedador=embedar,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+        ),
+    )
     try:
         gerada = await classificador.classificar(
             contexto,
@@ -480,7 +676,7 @@ async def executar_turno(
             # coberta pelo mesmo `except Exception` de `vetor_da_consulta`:
             # o embedador real pode falhar, e a busca segue pelo filtro
             # estruturado -- D9.
-            porta=porta_de_busca(session_factory, embedador=embedar),
+            porta=porta,
         )
     except LacoDeBuscaExcedido:
         # Nao propaga: `process_message` marcaria FAILED e o sweeper
@@ -831,9 +1027,14 @@ async def executar_turno(
                 # turno mais comum de uma conversa nova: o lead diz o que
                 # procura e o agente ja busca e apresenta.
                 #
-                # Cabe na RN-04.2 sem emenda: a E-02 da TEC-162 separou os
-                # tetos em ate 2 mensagens de TEXTO e ate 3 de APRESENTACAO,
-                # e isto e 1 texto mais ate 3 fichas.
+                # A E-02 da TEC-162 separou os tetos da RN-04.2 em ate 2
+                # mensagens de TEXTO e ate 3 de APRESENTACAO. TEC-163, Task 10
+                # acrescenta uma TERCEIRA trilha de texto propria (o aviso de
+                # ajuste, poucas linhas abaixo) -- com identificacao + ajuste +
+                # ampliacao, um turno pode ter ate 3 textos mais ate 3 fichas,
+                # e o teto de 2 deixa de valer sem emenda. Nao corrigido aqui
+                # de proposito: a emenda formal da RN-04.2 e a Task 11 desta
+                # card, nao esta.
                 await outbound.send(
                     message.id,
                     KIND_DA_RESPOSTA,
@@ -841,6 +1042,41 @@ async def executar_turno(
                         "para": message.conversation_key,
                         "de": message.recipient_external_id,
                         "texto": TEXTO_DA_IDENTIFICACAO,
+                    },
+                )
+            if bairros_do_ajuste:
+                # TEC-163, Task 10, RN-10.4. Mensagem propria, e NAO prefixo
+                # da legenda -- mesmo motivo do aviso de ampliacao logo
+                # abaixo: `legenda_de` corta o PREFIXO antes da ficha, e
+                # `_prosa_que_cabe` devolve string vazia quando nao sobra
+                # espaco. A TEC-139 ja pagou para descobrir isso com a
+                # identificacao; um aviso que confirma ter ouvido o lead e
+                # some em silencio e pior que nao existir.
+                #
+                # ANTES do aviso de ampliacao, de proposito -- ordem
+                # narrativa da conversa: quem fala (identificacao), o que
+                # fizemos com o que o LEAD disse (o ajuste responde a ele),
+                # so depois o que tivemos de esticar por CONTA PROPRIA (a
+                # ampliacao e iniciativa nossa), e so entao o resultado
+                # (fichas).
+                #
+                # `bairros_do_ajuste` so vem preenchido quando a exclusao
+                # nasceu ou mudou NESTE turno (ver o retrato antes/depois no
+                # bloco da reacao, acima) -- avisar em toda busca repetiria a
+                # mesma frase por todo o tempo em que a exclusao durasse,
+                # ensinando o lead a ignorar o aviso.
+                #
+                # Kind proprio e OBRIGATORIO: `outbound_dispatches` tem
+                # UNIQUE (message_id, kind), e a identificacao acima ja usa
+                # KIND_DA_RESPOSTA -- reusar colidiria e este aviso seria
+                # descartado como reprocessamento.
+                await outbound.send(
+                    message.id,
+                    KIND_DO_FILTRO_AJUSTADO,
+                    {
+                        "para": message.conversation_key,
+                        "de": message.recipient_external_id,
+                        "texto": aviso_de_ajuste(bairros_do_ajuste),
                     },
                 )
             if gerada.relaxou_e_achou and (gerada.relaxou_preco or gerada.relaxou_bairro):
@@ -852,11 +1088,16 @@ async def executar_turno(
                 # nenhuma, em silencio". Um aviso que some em silencio quebra
                 # a CA-09.3 exatamente no turno em que ela existe para valer.
                 #
-                # Cabe na RN-04.2 sem emenda: a E-02 da TEC-162 separou os
-                # tetos em ate 2 mensagens de TEXTO e ate 3 de APRESENTACAO, e
-                # isto e identificacao + aviso + ate 3 fichas. **Depois desta
-                # card nao sobra folga de texto** -- a proxima trilha que
-                # quiser mensagem propria precisa de emenda.
+                # A E-02 da TEC-162 separou os tetos em ate 2 mensagens de
+                # TEXTO e ate 3 de APRESENTACAO -- e ISTO, sozinho, ainda
+                # cabe: identificacao + este aviso sao os 2 textos que a E-02
+                # previu. **A proxima trilha que quisesse mensagem propria
+                # precisaria de emenda -- e a TEC-163, Task 10 e essa
+                # trilha.** O aviso de ajuste (RN-10.4) entra ANTES deste, no
+                # mesmo `if apresentando:` (ver acima), e as tres mensagens de
+                # texto juntas (identificacao, ajuste, ampliacao) passam do
+                # teto de 2. Nao corrigido aqui: a emenda formal da RN-04.2
+                # fica para a Task 11 desta card.
                 #
                 # `relaxou_preco or relaxou_bairro` e a guarda contra o
                 # estado impossivel que `aviso_de_ampliacao` recusa
@@ -871,6 +1112,19 @@ async def executar_turno(
                         "texto": aviso_de_ampliacao(gerada.relaxou_preco, gerada.relaxou_bairro),
                     },
                 )
+            # TEC-163, D17. O score de cada candidato desta busca, lido da
+            # PORTA que a fez -- nunca do `tool_result` que o modelo viu (D7
+            # da TEC-265, ver `_PortaComScore` em `ferramenta_de_busca.py`).
+            # `_apresentar` usa isto para gravar `Recomendacao.score_match`
+            # antes de comecar a entrega. Um candidato sem score aqui (nunca
+            # deveria acontecer: a porta guarda score de TODO candidato que
+            # ela mesma devolveu) fica de fora do dict e `gravar_recomendacoes`
+            # decide o resto.
+            scores = {
+                uuid.UUID(candidato["imovel_id"]): score
+                for candidato in gerada.candidatos
+                if (score := porta.score_de(uuid.UUID(candidato["imovel_id"]))) is not None
+            }
             # `prosa=texto` le o valor ANTES da atribuicao: a chamada e
             # avaliada primeiro, e o `texto` que sai sao as legendas
             # concatenadas (D16).
@@ -879,6 +1133,8 @@ async def executar_turno(
                 message=message,
                 outbound=outbound,
                 candidatos=gerada.candidatos,
+                scores=scores,
+                criterios=gerada.criterios,
                 prosa=texto,
             )
             entregue = quantas > 0
@@ -1410,6 +1666,8 @@ async def _apresentar(
     message: Message,
     outbound: OutboundPort,
     candidatos: list[dict[str, Any]],
+    scores: Mapping[uuid.UUID, float],
+    criterios: Sequence[str],
     prosa: str,
 ) -> tuple[str, int, int]:
     """Entrega ate 3 fichas e devolve (texto para gravar, entregues, suprimidas).
@@ -1443,12 +1701,28 @@ async def _apresentar(
     FAILED escreve na linha do tempo, no caminho de entrega que TODA conversa
     usa, e nenhum teste deste repo consegue reproduzir um 5xx no meio da
     apresentacao. A correcao de verdade e persistir o conjunto escolhido --
-    a `Recomendacao` da TEC-163. Ate la, isto e custo herdado e nao surpresa.
+    a `Recomendacao` da TEC-163. **Isto e o que a linha abaixo faz** -- a
+    lacuna L1 do desenho da TEC-162 fecha aqui: o conjunto escolhido
+    sobrevive mesmo quando a ficha 2 toma um 5xx, porque ja esta gravado
+    antes de a primeira ficha sair.
+
+    **A gravacao acontece depois de `fichas_do_catalogo`, nao antes dela --
+    e a ordem importa.** `Recomendacao.imovel_id` tem FK para `imoveis`, e o
+    candidato fantasma que o comentario de `encontrados` descreve (D6: o
+    imovel saiu do catalogo entre a busca e agora) violaria essa FK se a
+    linha fosse tentada para ele. Um candidato assim tambem nunca chega a
+    ser apresentado -- nenhuma ficha sai para ele --, entao gravar
+    `Recomendacao` so para quem tem `Ficha` de verdade e correto tanto pela
+    integridade referencial quanto pelo significado da RN-10.3 ("apresentado"
+    exige ter sido apresentado). Isto continua sendo "antes da entrega": o
+    laco que fala com a Meta, que e a parte que pode falhar em rede, so
+    comeca depois.
     """
     escolhidos = candidatos[:MAX_IMOVEIS_POR_TURNO]
     ids = [uuid.UUID(c["imovel_id"]) for c in escolhidos]
     precos = {uuid.UUID(c["imovel_id"]): int(c["preco_centavos"]) for c in escolhidos}
     fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)
+    encontrados = {ficha.id for ficha in fichas}
 
     if len(fichas) < len(escolhidos):
         # `imoveis_por_ids` derruba id sem linha, e a D6 chama isso de caminho
@@ -1468,7 +1742,6 @@ async def _apresentar(
         # sumiu, nao so quantos. O id nao aparece em nenhuma outra linha deste
         # arquivo -- sem isto ele e irrecuperavel. `Ficha.id` (fix wave, mesma
         # entrega) e o que torna a diferenca calculavel aqui.
-        encontrados = {ficha.id for ficha in fichas}
         faltantes = [i for i in ids if i not in encontrados]
         registrar = log.error if not fichas else log.warning
         registrar(
@@ -1479,6 +1752,24 @@ async def _apresentar(
             encontradas=len(fichas),
             imovel_ids_faltantes=[str(i) for i in faltantes],
         )
+
+    # RN-10.3, e a L1 desta funcao. Gravado ANTES do laco de entrega (a parte
+    # que fala com a Meta e pode falhar em rede): o docstring acima registra
+    # que uma falha parcial perde o conjunto escolhido e o turno seguinte
+    # pode reapresentar os mesmos imoveis. Gravando aqui, o conjunto e
+    # recuperavel mesmo quando a segunda ficha toma um 5xx -- que e a
+    # correcao que aquele paragrafo prometeu. So os candidatos com `Ficha` de
+    # verdade entram (`encontrados` acima): um candidato fantasma nunca foi
+    # apresentado e nao pode ganhar linha que violaria a FK para `imoveis`.
+    await gravar_recomendacoes(
+        session_factory,
+        channel=message.channel,
+        conversation_key=message.conversation_key,
+        candidatos=[c for c in escolhidos if uuid.UUID(c["imovel_id"]) in encontrados],
+        scores=scores,
+        criterios=criterios,
+        agora=datetime.now(UTC),
+    )
 
     legendas: list[str] = []
     entregues = suprimidas = 0

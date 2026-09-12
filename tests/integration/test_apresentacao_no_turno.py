@@ -6,6 +6,7 @@ Basename distinto de tudo em `tests/unit/`, e rima com
 
 import json
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -18,18 +19,25 @@ from mobia.domain.agente.apresentacao import (
     legenda_de,
 )
 from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO
+from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import (
     LIMIAR_DE_DESAMBIGUACAO,
+    CategoriaDescarte,
     Extracao,
     Intencao,
     PerguntaDeDesambiguacao,
+    ReacaoDoImovel,
+    ReacaoLead,
+    ReacoesDoTurno,
     RespostaDoAgente,
 )
 from mobia.domain.agente.turno import (
     KIND_DO_CRITERIO_AMPLIADO,
+    KIND_DO_FILTRO_AJUSTADO,
     KINDS_DAS_FICHAS,
     TEXTO_DA_BUSCA_INCONCLUSIVA,
     TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
+    aviso_de_ajuste,
     aviso_de_ampliacao,
 )
 from mobia.domain.catalogo.models import Imovel
@@ -143,6 +151,26 @@ class _ClassificadorComCandidatos:
             tokens_out=30,
             latency_ms=40,
         )
+
+
+class _ClassificadorComCandidatosEReacao(_ClassificadorComCandidatos):
+    """`_ClassificadorComCandidatos` acrescido de `.reagir` configuravel.
+
+    TEC-163, Task 10. Nenhum teste ANTERIOR desta task tinha pendente nenhuma
+    para reagir -- `_ClassificadorComCandidatos` nunca precisou de `.reagir`.
+    Os testes do aviso de ajuste (RN-10.4) precisam das DUAS chamadas no MESMO
+    turno: a reacao (que pode fazer a exclusao nascer ou mudar) e a
+    classificacao (que traz os candidatos e o relaxamento). Subclasse, e nao
+    editar a classe original, para nenhum dos testes de cima -- que passam
+    `pendentes` vazia por construcao -- ganhar um `.reagir` que nunca usam.
+    """
+
+    def __init__(self, *args: Any, reacoes: tuple[ReacaoDoImovel, ...] = (), **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._reacoes = reacoes
+
+    async def reagir(self, contexto: ContextoMontado, *, apresentados: list[str]) -> ReacoesDoTurno:
+        return ReacoesDoTurno(reacoes=self._reacoes, modelo="claude-opus-5")
 
 
 def _candidato(identificador: uuid.UUID, preco: int) -> dict[str, Any]:
@@ -839,3 +867,224 @@ async def test_citacao_bloqueada_vence_o_desfecho(
 
     assert resultado == "respondido"
     assert outbound.entregues == [TEXTO_DA_BUSCA_INCONCLUSIVA]
+
+
+# ---------------------------------------------------------------------------
+# TEC-163, Task 10: o aviso de ajuste (RN-10.4) dentro do turno.
+# ---------------------------------------------------------------------------
+
+
+async def _recomendacao(session: Any, imovel_id: uuid.UUID, **sobrescritas: object) -> None:
+    """Planta uma `Recomendacao` na conversa que `rodar_turno` de fato usa.
+
+    Molde de `_recomendar` (`tests/integration/test_recomendacao_e_reacao.py`),
+    copiado e nao importado -- arquivos de integracao deste repo sao
+    autocontidos. `channel`/`conversation_key` default para
+    `CANAL_AGENTE`/`CONVERSA_AGENTE` (`tests/conftest.py`): a mesma identidade
+    que `_entrada_do_lead` grava na `Message` que `rodar_turno` semeia, ou
+    `ler_pendentes`/`ler_descartes_por_distancia` nunca acham a linha.
+    """
+    from conftest import CANAL_AGENTE, CONVERSA_AGENTE  # type: ignore[import-not-found]
+
+    campos: dict[str, object] = {
+        "id": uuid.uuid4(),
+        "channel": CANAL_AGENTE,
+        "conversation_key": CONVERSA_AGENTE,
+        "imovel_id": imovel_id,
+        "score_match": 0.5,
+        "motivo_match": "Campeche",
+        "apresentado_em": datetime.now(UTC),
+    }
+    campos.update(sobrescritas)
+    session.add(Recomendacao(**campos))
+    await session.commit()
+
+
+async def test_identificacao_ajuste_e_ampliacao_saem_na_ordem_certa(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """A ordem completa da RN-04.2 e da RN-10.4 juntas: identificacao -> ajuste
+    -> ampliacao -> fichas, POR POSICAO em `outbound.entregues` -- nao por
+    presenca. Nenhum outro teste desta suite tem as quatro trilhas de uma vez:
+    a asserta de ordem so vale alguma coisa quando as quatro concorrem pela
+    MESMA lista, na MESMA passada de codigo.
+
+    Um descarte por distancia no Campeche ja existe (de um "turno anterior");
+    a pendente desta reacao e o SEGUNDO, e a exclusao nasce NESTE turno -- e
+    e essa mudanca, dentro do mesmo turno, que faz o aviso sair (ver o
+    comentario de `bairros_do_ajuste` em `turno.py`).
+    """
+    ja_descartado = await _imovel(
+        session, "AP-900", 50000000, bairro="Campeche", bairro_busca="campeche"
+    )
+    await _recomendacao(
+        session,
+        ja_descartado,
+        reacao_lead=ReacaoLead.DESCARTE.value,
+        motivo_descarte=CategoriaDescarte.DISTANCIA.value,
+    )
+    pendente = await _imovel(
+        session, "AP-901", 50000000, bairro="Campeche", bairro_busca="campeche"
+    )
+    await _recomendacao(session, pendente)
+
+    ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
+    classificador = _ClassificadorComCandidatosEReacao(
+        [_candidato(i, 50000000 + n) for n, i in enumerate(ids)],
+        relaxou_e_achou=True,
+        relaxou_preco=True,
+        reacoes=(
+            ReacaoDoImovel(
+                ordinal=1, reacao=ReacaoLead.DESCARTE, categoria=CategoriaDescarte.DISTANCIA
+            ),
+        ),
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert len(outbound.entregues) == 6, "identificacao + ajuste + ampliacao + tres fichas"
+    assert outbound.entregues[0] == TEXTO_DA_IDENTIFICACAO, "identificacao vem primeiro"
+    assert outbound.entregues[1] == aviso_de_ajuste(("campeche",)), "o ajuste vem logo depois"
+    assert outbound.entregues[2] == aviso_de_ampliacao(True, False), "so entao a ampliacao"
+    assert outbound.entregues[3].startswith(f"{PROSA}\n\n"), "e so entao a primeira ficha"
+    reservados = await _kinds_reservados()
+    assert KIND_DO_FILTRO_AJUSTADO in reservados
+    assert KIND_DO_CRITERIO_AMPLIADO in reservados
+
+
+async def test_o_aviso_de_ajuste_nomeia_o_bairro_e_e_ascii(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """D15: diverge de proposito do aviso de ampliacao (TEC-160, D11), que
+    nunca nomeia bairro -- aqui o bairro e o que o LEAD rejeitou, e nomea-lo e
+    a confirmacao de que ele foi ouvido.
+
+    `_conversa_ja_existe` isola o ajuste da identificacao -- a ordem entre os
+    dois ja tem teste proprio acima.
+    """
+    await _conversa_ja_existe(session)
+    ja_descartado = await _imovel(
+        session, "AP-910", 50000000, bairro="Campeche", bairro_busca="campeche"
+    )
+    await _recomendacao(
+        session,
+        ja_descartado,
+        reacao_lead=ReacaoLead.DESCARTE.value,
+        motivo_descarte=CategoriaDescarte.DISTANCIA.value,
+    )
+    pendente = await _imovel(
+        session, "AP-911", 50000000, bairro="Campeche", bairro_busca="campeche"
+    )
+    await _recomendacao(session, pendente)
+
+    identificador = await _imovel(session, "AP-912", 50000000)
+    classificador = _ClassificadorComCandidatosEReacao(
+        [_candidato(identificador, 50000000)],
+        reacoes=(
+            ReacaoDoImovel(
+                ordinal=1, reacao=ReacaoLead.DESCARTE, categoria=CategoriaDescarte.DISTANCIA
+            ),
+        ),
+    )
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues[0] == "Tirei Campeche da busca, que voce ja descartou."
+    assert outbound.entregues[0].isascii()
+    assert KIND_DO_FILTRO_AJUSTADO in await _kinds_reservados()
+
+
+async def test_o_aviso_de_ajuste_nao_sai_sem_exclusao_nova(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """Sem descarte nenhum registrado, `bairros_do_ajuste` fica vazio e o
+    aviso nunca dispara -- e o controle do teste acima."""
+    await _conversa_ja_existe(session)
+    identificador = await _imovel(session, "AP-920", 50000000)
+    classificador = _ClassificadorComCandidatos([_candidato(identificador, 50000000)])
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    assert len(outbound.entregues) == 1, "so a ficha, sem aviso nenhum"
+    assert KIND_DO_FILTRO_AJUSTADO not in await _kinds_reservados()
+
+
+async def test_o_aviso_de_ajuste_nao_repete_enquanto_a_exclusao_nao_muda(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """RN-10.4: "avisado" nao e "avisado em toda busca". O segundo turno reage
+    a uma pendente NOVA com INTERESSE (nao descarte) -- o conjunto excluido
+    continua sendo so o Campeche, sem mudar --, e o aviso nao pode sair de
+    novo so porque o turno apresentou fichas outra vez.
+    """
+    await _conversa_ja_existe(session)
+    ja_descartado = await _imovel(
+        session, "AP-930", 50000000, bairro="Campeche", bairro_busca="campeche"
+    )
+    await _recomendacao(
+        session,
+        ja_descartado,
+        reacao_lead=ReacaoLead.DESCARTE.value,
+        motivo_descarte=CategoriaDescarte.DISTANCIA.value,
+    )
+    pendente_1 = await _imovel(
+        session, "AP-931", 50000000, bairro="Campeche", bairro_busca="campeche"
+    )
+    await _recomendacao(session, pendente_1)
+    imovel_1 = await _imovel(session, "AP-932", 50000000)
+    outbound = outbound_fake()
+
+    primeiro = await rodar_turno(
+        session,
+        _ClassificadorComCandidatosEReacao(
+            [_candidato(imovel_1, 50000000)],
+            reacoes=(
+                ReacaoDoImovel(
+                    ordinal=1, reacao=ReacaoLead.DESCARTE, categoria=CategoriaDescarte.DISTANCIA
+                ),
+            ),
+        ),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+    )
+    assert primeiro == "respondido"
+    assert KIND_DO_FILTRO_AJUSTADO in await _kinds_reservados(), "o primeiro turno tem de avisar"
+
+    # Segundo turno: uma pendente NOVA (outro bairro), reagida com INTERESSE.
+    # O Campeche continua excluido, mas o CONJUNTO nao mudou neste turno.
+    pendente_2 = await _imovel(session, "AP-933", 50000000, bairro="Centro")
+    await _recomendacao(session, pendente_2)
+    imovel_2 = await _imovel(session, "AP-934", 50000000)
+
+    segundo = await rodar_turno(
+        session,
+        _ClassificadorComCandidatosEReacao(
+            [_candidato(imovel_2, 50000000)],
+            reacoes=(ReacaoDoImovel(ordinal=1, reacao=ReacaoLead.INTERESSE),),
+        ),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+    )
+
+    assert segundo == "respondido"
+    async with get_sessionmaker()() as leitura:
+        avisos = (
+            await leitura.scalars(
+                select(OutboundDispatch).where(OutboundDispatch.kind == KIND_DO_FILTRO_AJUSTADO)
+            )
+        ).all()
+    assert len(avisos) == 1, "o segundo turno reapresentou sem a exclusao mudar -- nao repete"

@@ -55,6 +55,41 @@ class FormaPagamento(StrEnum):
     INDEFINIDA = "INDEFINIDA"
 
 
+class ReacaoLead(StrEnum):
+    """O que o lead fez com um imovel apresentado. RN-10.4.
+
+    `NEUTRO` e "o lead respondeu, mas nao falou deste imovel"; `SEM_RESPOSTA`
+    e "uma apresentacao nova superou esta linha antes de o lead reagir". Os
+    dois significam ausencia de opiniao e sao contados diferente: NEUTRO e
+    evidencia de que o lead viu, SEM_RESPOSTA nao e evidencia de nada.
+    """
+
+    INTERESSE = "INTERESSE"
+    DESCARTE = "DESCARTE"
+    NEUTRO = "NEUTRO"
+    SEM_RESPOSTA = "SEM_RESPOSTA"
+
+
+class CategoriaDescarte(StrEnum):
+    """Por que o lead descartou, em forma comparavel. TEC-163, D13.
+
+    **Categoria e nao a frase do lead**, e a RN-10.4 e quem exige: ela conta
+    "dois descartes por DISTANCIA", o que so e computavel se o motivo for
+    comparavel. A observacao do campo no modelo de dados do SRS diz
+    "Realimenta o filtro", e texto livre nao realimenta nada.
+
+    A frase do lead nao se perde -- ela esta na mensagem, que a linha do tempo
+    ja guarda. Duplica-la aqui criaria uma segunda copia que envelhece
+    sozinha, e o campo passaria a ter dois propositos incompativeis: ser lido
+    por humano e ser contado por codigo.
+    """
+
+    DISTANCIA = "DISTANCIA"
+    PRECO = "PRECO"
+    TAMANHO = "TAMANHO"
+    OUTRO = "OUTRO"
+
+
 # Limiar da RN-03.2. `Decimal` e nao `float` porque a coluna e `numeric(3,2)` e
 # a comparacao e de igualdade na borda: `0.6` em binario nao e 0,6, e "confianca
 # exatamente 0,6 nao desambigua" e criterio de aceite.
@@ -204,6 +239,32 @@ def normalizar_regiao(texto: str) -> str:
     return limpo
 
 
+@dataclass(frozen=True, slots=True)
+class ReacaoDoImovel:
+    """A reacao do lead a UM imovel apresentado, por ordinal. TEC-163, D7.
+
+    **Ordinal e nao `imovel_id`.** Um UUID inventado pelo modelo e
+    indistinguivel de um verdadeiro ate bater no banco; um ordinal fora de
+    1..N e rejeitado por comparacao com um inteiro. E a disciplina da TEC-161
+    aplicada na ENTRADA: o modelo nunca produz identificador que o codigo nao
+    consiga conferir.
+    """
+
+    ordinal: int
+    reacao: ReacaoLead
+    categoria: CategoriaDescarte | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReacoesDoTurno:
+    """O que a segunda chamada devolve. Vazio nao e erro: o lead pode ter
+    respondido sem falar de imovel nenhum, e ai todas as linhas pendentes
+    fecham como NEUTRO."""
+
+    reacoes: tuple[ReacaoDoImovel, ...]
+    modelo: str
+
+
 @dataclass(frozen=True)
 class Extracao:
     """O que o lead disse sobre o que procura, neste turno.
@@ -308,6 +369,13 @@ class RespostaDoAgente:
     # tipo opcional a obrigaria a distinguir "nao buscou" de "buscou e nao
     # achou" para tomar a MESMA decisao nos dois casos.
     candidatos: list[dict[str, Any]] = field(default_factory=list)
+
+    # TEC-163. Os criterios que entraram no WHERE da busca deste turno, em
+    # forma legivel -- vazio quando nao houve busca. O turno usa isto para
+    # gravar `Recomendacao.motivo_match` (`motivo_do_match`, em
+    # `agente/recomendacao.py`) sem que o proprio modelo escreva o motivo
+    # (D5 do desenho: motivo escrito pelo modelo podia inventar).
+    criterios: list[str] = field(default_factory=list)
 
     # TEC-160. Os fatos que o turno precisa e que `candidatos` nao carrega.
     #

@@ -485,3 +485,91 @@ async def test_regiao_sem_preco_e_sem_bairro_novo_nao_faz_segunda_consulta(
     assert chamadas == 1
     assert resultado.relaxamento is EstadoDoRelaxamento.NAO_HOUVE
     assert resultado.candidatos == ()
+
+
+async def test_bairro_excluido_nao_volta_pela_zona(session: Any) -> None:
+    """D12. O filtro de zona casa o bairro excluido pelo outro lado do OR;
+    so a condicao de exclusao, em AND, o segura."""
+    aceito = await _imovel(session, "AP-370", preco_venda=35000000, bairro="Praia Mole", zona="SUL")
+    await _imovel(session, "AP-371", preco_venda=35000000, bairro="Campeche", zona="SUL")
+
+    resultado = await buscar(
+        session,
+        FiltroDeBusca(
+            operacao=Operacao.VENDA,
+            regioes=("zona sul",),
+            bairros_excluidos=(dobrar("Campeche"),),
+        ),
+    )
+
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [aceito]
+
+
+async def test_bairro_excluido_nao_volta_pelo_relaxamento(session: Any) -> None:
+    """**D12, metade 1.** O relaxamento amplia para adjacentes, e o vizinho do
+    bairro excluido pode ser o proprio excluido por outro caminho. Iniciativa
+    nossa nao anula pedido do lead.
+
+    Lagoa da Conceicao (par 0021) e adjacente tanto a Itacorubi quanto a
+    Campeche. Excluindo Campeche, o segundo passe alarga a partir de Lagoa da
+    Conceicao e o unico imovel que deve voltar e o de Itacorubi.
+    """
+    aceito = await _imovel(
+        session, "AP-372", preco_venda=43000000, bairro="Itacorubi", zona="NORTE"
+    )
+    await _imovel(session, "AP-373", preco_venda=43000000, bairro="Campeche", zona="SUL")
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(
+            operacao=Operacao.VENDA,
+            preco_max_centavos=TETO,
+            regioes=("lagoa da conceicao",),
+            bairros_excluidos=(dobrar("Campeche"),),
+        ),
+    )
+
+    assert resultado.relaxamento is EstadoDoRelaxamento.APLICADO
+    assert [candidato.imovel_id for candidato in resultado.candidatos] == [aceito]
+
+
+async def test_relaxou_bairro_e_falso_quando_o_unico_adjacente_era_excluido(
+    session: Any,
+) -> None:
+    """**D12, metade 2.** Sem a subtracao em `alargar`, `relaxou_bairro` sairia
+    True e o lead ouviria "inclui bairros vizinhos" tendo recebido zero bairro
+    novo -- a mesma classe de mentira que a revisao final da TEC-160 pegou em
+    `relaxou_bairro=bool(adjacentes)`.
+
+    Campeche tem um vizinho so na tabela (Lagoa da Conceicao). Excluindo-o, o
+    unico adjacente que a consulta devolveria some na subtracao, e o segundo
+    passe nao tem bairro novo nenhum para oferecer.
+
+    A exclusao chega aqui na forma que um chamador real produziria -- dobrada
+    a partir de texto com maiuscula e acento, e nao ja digitada dobrada como o
+    resto deste arquivo faz.
+    """
+    await _imovel(session, "AP-374", preco_venda=35000000, bairro="Lagoa da Conceicao")
+
+    chamadas = 0
+    original = modulo_de_busca.buscar
+
+    async def contando(*args: Any, **kwargs: Any) -> Any:
+        nonlocal chamadas
+        chamadas += 1
+        return await original(*args, **kwargs)
+
+    resultado = await buscar_com_relaxamento(
+        session,
+        FiltroDeBusca(
+            operacao=Operacao.VENDA,
+            regioes=("campeche",),
+            bairros_excluidos=(dobrar("Lagoa da Conceição"),),
+        ),
+        buscar=contando,
+    )
+
+    assert chamadas == 1
+    assert resultado.relaxamento is EstadoDoRelaxamento.NAO_HOUVE
+    assert resultado.candidatos == ()
+    assert resultado.relaxou_bairro is False

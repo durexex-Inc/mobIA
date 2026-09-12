@@ -11,6 +11,7 @@ from conftest import EmbedadorFake
 from sqlalchemy import select
 
 from mobia.domain.agente.ferramenta_de_busca import porta_de_busca
+from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import Extracao, Intencao, RespostaDoAgente
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.montagem import ContextoMontado
@@ -187,6 +188,7 @@ class _ClassificadorQuePedeAFerramenta:
             latency_ms=50,
             extracao=Extracao(),
             candidatos=saida.get("candidatos", []),
+            criterios=saida.get("criterios", []),
         )
         return self.resultado
 
@@ -225,3 +227,35 @@ async def test_turno_completo_com_candidatos_chegando_a_geracao(
     (candidato,) = classificador.resultado.candidatos
     assert candidato["imovel_id"] == str(identificador)
     assert candidato["preco_centavos"] == 74900000
+
+
+async def test_turno_completo_grava_recomendacao_com_score_real(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """TEC-163: a `Recomendacao` gravada carrega o score da busca de verdade.
+
+    Round 1 de review: nenhum teste deste repo levava o `scores` que
+    `turno.py` monta com `porta.score_de(...)` ate a tabela `recomendacoes`
+    passando por uma porta de verdade -- so por leitura de codigo. Este teste
+    usa o mesmo duble de `test_turno_completo_com_candidatos_chegando_a_geracao`
+    (a porta real busca no catalogo real, sem rede), mas olha a tabela em vez
+    de `RespostaDoAgente.candidatos`: se `turno.py` parasse de ler
+    `porta.score_de` (ou lesse a porta errada), o unico sintoma seria
+    `score_match == 0` com um `log.error` -- o que este teste rejeita
+    explicitamente.
+    """
+    identificador = await _imovel(session)
+    classificador = _ClassificadorQuePedeAFerramenta({"operacao": "VENDA"})
+
+    resultado = await rodar_turno(
+        session, classificador, outbound_fake(), resumidor_fake(), contador_fake()
+    )
+
+    assert resultado == "respondido"
+    linha = (await session.execute(select(Recomendacao))).scalars().one()
+    assert linha.imovel_id == identificador
+    assert float(linha.score_match) > 0
