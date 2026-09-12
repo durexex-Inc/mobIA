@@ -104,3 +104,25 @@ async def test_atualizar_corretor_inexistente_devolve_none(session: AsyncSession
 
 async def test_obter_corretor_inexistente_devolve_none(session: AsyncSession) -> None:
     assert await obter_corretor(session, corretor_id=uuid.uuid4()) is None
+
+
+async def test_atualizar_recusa_campo_fora_da_lista(session: AsyncSession) -> None:
+    """ "id" e o caso perigoso: reatribuir a chave primaria corrompe o identity map."""
+    corretor = await criar_corretor(session, _dados())
+    await session.commit()
+
+    with pytest.raises(ValueError, match="id"):
+        await atualizar_corretor(session, corretor_id=corretor.id, mudancas={"id": uuid.uuid4()})
+
+
+async def test_atualizar_campo_da_lista_continua_funcionando(session: AsyncSession) -> None:
+    corretor = await criar_corretor(session, _dados())
+    await session.commit()
+
+    atualizado = await atualizar_corretor(
+        session, corretor_id=corretor.id, mudancas={"nome": " Paulo Novo "}
+    )
+    await session.commit()
+
+    assert atualizado is not None
+    assert atualizado.nome == "Paulo Novo"

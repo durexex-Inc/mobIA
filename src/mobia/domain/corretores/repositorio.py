@@ -80,6 +80,30 @@ def _regioes_dobradas(regioes: list[str]) -> list[str]:
     return [dobrar(regiao) for regiao in regioes]
 
 
+# O que `atualizar_corretor` aceita mudar. Existe para a funcao nao depender
+# da disciplina de quem chama: sem esta lista, um `setattr` generico
+# aceitaria "id" (reatribuindo a chave primaria de uma instancia ja
+# carregada -- corrompe o identity map) e absorveria em silencio qualquer
+# chave sem atributo mapeado correspondente, sem gravar nada e sem avisar.
+# `id`, `criado_em` (identidade e origem) e `atualizado_em` (a propria
+# funcao ja carimba) ficam de fora de proposito.
+CAMPOS_EDITAVEIS = frozenset(
+    {
+        "nome",
+        "email",
+        "telefone",
+        "creci",
+        "especialidades",
+        "regioes_atuacao",
+        "horario_inicio",
+        "horario_fim",
+        "capacidade_diaria",
+        "plantao",
+        "ativo",
+    }
+)
+
+
 async def criar_corretor(session: AsyncSession, dados: DadosDoCorretor) -> Corretor:
     """Cria o corretor. **Nao commita** -- o commit e de quem chama.
 
@@ -136,7 +160,16 @@ async def atualizar_corretor(
     nao uma operacao propria: apagar a linha quebraria a FK que `handoffs`
     tem para `corretores`, e a RESTRICT recusaria -- um DELETE existiria so
     para devolver erro.
+
+    Levanta `ValueError` para chave fora de `CAMPOS_EDITAVEIS`: chave
+    desconhecida e erro de programacao de quem chama, e engoli-la em
+    silencio reproduziria o defeito que a lista existe para evitar -- quem
+    chamou acha que gravou e nao gravou.
     """
+    campos_invalidos = set(mudancas) - CAMPOS_EDITAVEIS
+    if campos_invalidos:
+        raise ValueError(f"campo(s) nao editavel(is): {sorted(campos_invalidos)}")
+
     corretor = await obter_corretor(session, corretor_id=corretor_id)
     if corretor is None:
         return None
@@ -146,6 +179,8 @@ async def atualizar_corretor(
             valor = _email_canonico(str(valor))
         elif campo == "regioes_atuacao":
             valor = _regioes_dobradas(list(valor))
+        elif campo in ("nome", "telefone"):
+            valor = str(valor).strip()
         setattr(corretor, campo, valor)
 
     corretor.atualizado_em = datetime.now(UTC)
