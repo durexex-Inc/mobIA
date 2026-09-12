@@ -17,7 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mobia.app.config import Settings, get_settings
 from mobia.app.logging import configure_logging
 from mobia.app.main import create_app
+from mobia.domain.agente.models import Recomendacao
+from mobia.domain.catalogo.models import Imovel
+from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.context.resumo import ResumoGerado
+from mobia.domain.handoff.repositorio import registrar_handoff
+from mobia.domain.handoff.vocabulario import Gatilho
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -774,3 +779,95 @@ async def client(banco_limpo: None, redis_pool) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client
+
+
+@pytest.fixture
+def semear_lead_completo(session: AsyncSession):
+    """Um lead com qualificacao, score, recomendacoes e handoff aberto.
+
+    Existe porque o dossie cruza quatro tabelas e montar isso a mao em cada
+    teste seria quatro copias do mesmo setup, livres para divergir.
+    """
+
+    async def _semear(*, score: int, faixa_max_centavos: int, imoveis: int) -> uuid.UUID:
+        agora = datetime.now(UTC)
+        session.add(
+            LeadQualification(
+                channel=CANAL_AGENTE,
+                conversation_key=CONVERSA_AGENTE,
+                intencao="COMPRAR",
+                faixa_preco_max_centavos=faixa_max_centavos,
+                regiao="Pinheiros",
+                temperatura="QUENTE",
+                campos_recusados=["renda"],
+                perguntados_sem_resposta=["prazo"],
+            )
+        )
+        session.add(
+            LeadScoreAudit(
+                id=uuid.uuid4(),
+                channel=CANAL_AGENTE,
+                conversation_key=CONVERSA_AGENTE,
+                total_anterior=None,
+                total_novo=score,
+                completude=25,
+                urgencia=20,
+                catalogo=12,
+                engajamento=10,
+                capacidade=5,
+                causas=["PRIMEIRO_CALCULO"],
+            )
+        )
+        for indice in range(imoveis):
+            imovel_id = uuid.uuid4()
+            codigo = f"AP-{indice:03d}"
+            session.add(
+                Imovel(
+                    id=imovel_id,
+                    codigo=codigo,
+                    titulo=f"Apartamento {codigo}",
+                    descricao="Sala ampla com varanda.",
+                    tipo="APARTAMENTO",
+                    operacao="VENDA",
+                    preco_venda=58_000_000 + indice,
+                    bairro="Pinheiros",
+                    bairro_busca="pinheiros",
+                    cidade="Sao Paulo",
+                    uf="SP",
+                    area_util_m2=54,
+                    quartos=2,
+                    suites=1,
+                    banheiros=2,
+                    vagas=1,
+                    status="DISPONIVEL",
+                )
+            )
+            # Flush antes da Recomendacao: `imovel_id` e FK crua, sem
+            # `relationship()` entre as duas classes, entao o unit-of-work
+            # nao sabe ordenar as duas tabelas sozinho no commit final -- sem
+            # isto o Postgres pode ver a Recomendacao antes do Imovel que ela
+            # referencia e recusar com ForeignKeyViolationError.
+            await session.flush()
+            session.add(
+                Recomendacao(
+                    id=uuid.uuid4(),
+                    channel=CANAL_AGENTE,
+                    conversation_key=CONVERSA_AGENTE,
+                    imovel_id=imovel_id,
+                    score_match=Decimal("0.900"),
+                    motivo_match="faixa e regiao",
+                    apresentado_em=agora,
+                )
+            )
+        await session.commit()
+
+        registro = await registrar_handoff(
+            session,
+            channel=CANAL_AGENTE,
+            conversation_key=CONVERSA_AGENTE,
+            gatilho=Gatilho.LEAD_QUENTE,
+        )
+        await session.commit()
+        return registro.id
+
+    return _semear

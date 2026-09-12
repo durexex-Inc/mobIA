@@ -4,12 +4,19 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import any_, case, func, literal, literal_column, or_, text
+from sqlalchemy import any_, case, func, literal, literal_column, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.domain.handoff.models import Handoff
+from mobia.domain.agente.models import Recomendacao
+from mobia.domain.catalogo.models import Imovel
+from mobia.domain.context.models import LeadQualification, LeadScoreAudit
+from mobia.domain.handoff.dossie import Dossie, ImovelApresentado
+from mobia.domain.handoff.models import Handoff, aad_do_resumo_de_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho, Prioridade, Status
+from mobia.domain.messages.enums import MessageRole
+from mobia.domain.messages.models import Message
+from mobia.infra.crypto import encrypt
 
 
 @dataclass(frozen=True)
@@ -130,3 +137,160 @@ async def registrar_handoff(
     # ou a que ja estava aberta, conforme `inseriu`.
     linha = resultado.one()
     return HandoffRegistrado(id=linha.id, criado=linha.inseriu)
+
+
+def _preco_centavos(imovel: Imovel) -> int:
+    """O preco a exibir de um imovel apresentado.
+
+    `Imovel` nao tem uma coluna `preco_centavos` unica -- ela so existe em
+    `Candidato` (`catalogo/schemas.py`), derivada da OPERACAO que a busca
+    pediu (`COLUNA_DE_PRECO`). Aqui nao ha filtro de busca para escolher a
+    coluna, entao o dossie usa o preco de venda quando existe e cai para o
+    de aluguel -- o `ck_imoveis_ao_menos_um_preco` garante que ao menos um
+    dos dois esta preenchido.
+    """
+    preco = imovel.preco_venda if imovel.preco_venda is not None else imovel.preco_aluguel
+    assert preco is not None, "ck_imoveis_ao_menos_um_preco garante que um dos dois existe"
+    return preco
+
+
+async def carregar_dossie(session: AsyncSession, *, handoff_id: uuid.UUID) -> Dossie | None:
+    """Monta o dossie das quatro tabelas. `None` quando o handoff nao existe.
+
+    `None` e nao excecao: o job pode chegar depois de a linha sumir (um
+    TRUNCATE de teste, uma limpeza futura), e isso nao e erro do job -- e
+    trabalho que perdeu o objeto. Quem chama loga e sai.
+
+    Le em quatro consultas e nao num JOIN so: `recomendacoes` e um-para-muitos
+    e o JOIN multiplicaria as linhas das outras tres, obrigando a desduplicar
+    em Python o que quatro SELECTs simples ja entregam prontos.
+    """
+    handoff = (
+        await session.execute(select(Handoff).where(Handoff.id == handoff_id))
+    ).scalar_one_or_none()
+    if handoff is None:
+        return None
+
+    qualificacao = (
+        await session.execute(
+            select(LeadQualification).where(
+                LeadQualification.channel == handoff.channel,
+                LeadQualification.conversation_key == handoff.conversation_key,
+            )
+        )
+    ).scalar_one_or_none()
+
+    # O ultimo recalculo, que e o score corrente: a trilha e append-only e so
+    # grava quando o resultado muda, entao a linha mais nova E o estado de
+    # hoje. Mesmo ORDER BY do `registrar_recalculo`, e servido pelo mesmo
+    # indice `ix_lead_score_audit_lead`.
+    auditoria = (
+        await session.execute(
+            select(LeadScoreAudit)
+            .where(
+                LeadScoreAudit.channel == handoff.channel,
+                LeadScoreAudit.conversation_key == handoff.conversation_key,
+            )
+            .order_by(LeadScoreAudit.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    recomendacoes = (
+        (
+            await session.execute(
+                select(Recomendacao, Imovel)
+                .join(Imovel, Imovel.id == Recomendacao.imovel_id)
+                .where(
+                    Recomendacao.channel == handoff.channel,
+                    Recomendacao.conversation_key == handoff.conversation_key,
+                )
+                .order_by(Recomendacao.apresentado_em)
+            )
+        )
+        .tuples()
+        .all()
+    )
+
+    origem = (
+        await session.execute(
+            select(func.min(Message.created_at), func.count()).where(
+                Message.channel == handoff.channel,
+                Message.conversation_key == handoff.conversation_key,
+                Message.role == MessageRole.LEAD,
+            )
+        )
+    ).one()
+
+    return Dossie(
+        canal=handoff.channel,
+        conversa=handoff.conversation_key,
+        primeira_mensagem_em=origem[0] or handoff.criado_em,
+        mensagens_do_lead=origem[1],
+        intencao=qualificacao.intencao if qualificacao else None,
+        faixa_min_centavos=qualificacao.faixa_preco_min_centavos if qualificacao else None,
+        faixa_max_centavos=qualificacao.faixa_preco_max_centavos if qualificacao else None,
+        regiao=qualificacao.regiao if qualificacao else None,
+        tipo_imovel=qualificacao.tipo_imovel if qualificacao else None,
+        quartos=qualificacao.quartos if qualificacao else None,
+        vagas=qualificacao.vagas if qualificacao else None,
+        urgencia=qualificacao.urgencia if qualificacao else None,
+        forma_pagamento=qualificacao.forma_pagamento if qualificacao else None,
+        tem_imovel_para_vender=qualificacao.tem_imovel_para_vender if qualificacao else None,
+        score_total=auditoria.total_novo if auditoria else None,
+        score_fatores=(
+            (
+                ("completude", auditoria.completude),
+                ("urgencia", auditoria.urgencia),
+                ("catalogo", auditoria.catalogo),
+                ("engajamento", auditoria.engajamento),
+                ("capacidade", auditoria.capacidade),
+            )
+            if auditoria
+            else ()
+        ),
+        score_causas=tuple(auditoria.causas) if auditoria else (),
+        temperatura=qualificacao.temperatura if qualificacao else None,
+        # `or ()` nas duas: NULL e vazio nao sao sinonimos na gravacao, mas na
+        # LEITURA sao -- e o que os comentarios das colunas em
+        # `context/models.py` mandam fazer.
+        temperatura_forcada_motivos=tuple(
+            (qualificacao.temperatura_forcada_motivos if qualificacao else None) or ()
+        ),
+        imoveis=tuple(
+            ImovelApresentado(
+                codigo=imovel.codigo,
+                preco_centavos=_preco_centavos(imovel),
+                reacao=recomendacao.reacao_lead,
+                motivo_descarte=recomendacao.motivo_descarte,
+            )
+            for recomendacao, imovel in recomendacoes
+        ),
+        campos_recusados=tuple((qualificacao.campos_recusados if qualificacao else None) or ()),
+        perguntados_sem_resposta=tuple(
+            (qualificacao.perguntados_sem_resposta if qualificacao else None) or ()
+        ),
+        gatilho=handoff.gatilho,
+        etiqueta=handoff.etiqueta,
+        prioridade=handoff.prioridade,
+        criado_em=handoff.criado_em,
+    )
+
+
+async def gravar_resumo(
+    session: AsyncSession, *, handoff_id: uuid.UUID, texto: str, modelo: str
+) -> None:
+    """Grava o resumo cifrado. **Nao commita** -- o commit e de quem chama.
+
+    Mesma disciplina de `registrar_handoff`, e pela mesma razao: e o chamador
+    que sabe o que mais precisa entrar na transacao.
+    """
+    await session.execute(
+        update(Handoff)
+        .where(Handoff.id == handoff_id)
+        .values(
+            resumo=encrypt(texto, aad_do_resumo_de_handoff(handoff_id)),
+            resumo_gerado_em=datetime.now(UTC),
+            resumo_modelo=modelo,
+        )
+    )
