@@ -30,13 +30,19 @@ Local, com a venv do projeto:
 ./.venv/Scripts/python.exe -m pytest          # suíte inteira
 ```
 
-**A suíte é lenta, e lentidão aqui parece travamento.** Números medidos em 07/09/2026 (TEC-156): a suíte completa leva **~22 minutos e 1236 testes** em máquina ociosa. Com `-q` o pytest só imprime no fim, então um arquivo de saída vazio depois de dez minutos é normal, não deadlock. Para ver progresso, use `python -u -m pytest -v`.
+**Números medidos em 12/09/2026, máquina ociosa: a suíte completa leva ~3 minutos e são 1540 testes.** O número de 07/09/2026 (TEC-156), **~22 minutos**, está velho — mas cuidado com a conta fácil: no mesmo dia 12/09, a árvore SEM as mudanças de fixture já rodava em 270,6s. Os 22 minutos não viraram 3 por causa delas. O que elas fizeram, medido no mesmo commit e no mesmo interpretador, foi 270,6s → ~184s; o resto da diferença veio do ambiente e ninguém sabe exatamente de quê. Desconfie de qualquer número aqui que não diga sobre qual máquina foi medido.
+
+> Ressalva do medidor: essas medições saíram de uma venv com **Python 3.14.5**, porque a máquina não tinha 3.13. O CI roda 3.13. Os absolutos podem diferir; as razões antes/depois foram tiradas no mesmo interpretador.
+
+Se ainda assim parecer travado: com `-q` o pytest só imprime no fim, então saída vazia por um tempo é normal, não deadlock. Para ver progresso, use `python -u -m pytest -v`.
+
+**Rodar só a parte unitária não precisa de `docker compose` de pé.** `./.venv/Scripts/python.exe -m pytest tests/unit` roda os 988 testes em ~4s sem Postgres e sem Redis — é o loop certo enquanto se escreve código. `tests/integration` e `tests/features` continuam exigindo os containers.
 
 **A suíte cresce rápido — confira a data antes de confiar no número.** Em 02/09/2026 eram 857 testes em ~7,5 minutos; em 04/09, 1140 em ~22 minutos. Quem lê um número velho como se fosse o de hoje mata execuções boas achando que travaram.
 
-**Carga muda a duração em ordem de grandeza, não em percentual.** A mesma árvore que roda em 22 minutos levou **1h12** numa sessão em que onze subagentes já haviam rodado. Não compare durações entre execuções sem saber o que mais estava na máquina.
+**Carga muda a duração em ordem de grandeza, não em percentual.** Quando a suíte levava 22 minutos ociosa, a mesma árvore levou **1h12** numa sessão em que onze subagentes já haviam rodado. O fator não some porque a suíte ficou mais rápida: ele multiplica o número de hoje do mesmo jeito. Não compare durações entre execuções sem saber o que mais estava na máquina.
 
-**Use `-q` só quando não for precisar do diagnóstico.** `-q` imprime apenas o `short test summary info` — o nome do teste que falhou, sem uma linha de traceback. Numa suíte de vinte minutos, descobrir a causa exige rodar tudo de novo. Se você vai ter de diagnosticar o resultado, peça `--tb=short` desde o início.
+**Use `-q` só quando não for precisar do diagnóstico.** `-q` imprime apenas o `short test summary info` — o nome do teste que falhou, sem uma linha de traceback. Descobrir a causa passa a exigir rodar tudo de novo, e agora que a regra é uma execução só (ver abaixo), jogar fora o traceback da única que você fez é o desperdício caro, não os minutos. Peça `--tb=short` desde o início.
 
 `addopts = "-m 'not perf'"` no `pyproject.toml` já exclui os testes de latência — medir p95 em runner compartilhado seria flake, não sinal.
 
@@ -52,9 +58,11 @@ Duas consequências práticas. Uma falha isolada com esse traceback **não autor
 
 **Testes de integração flakeiam sob carga, não isolados.** `test_montagem.py`, `test_sweep_stalled.py`, `test_dedup_por_message_id.py` e `test_optout_repositorio.py` falham com `ConnectionResetError` ou erro de Redis quando a suíte inteira roda junta, e passam 100% em isolamento. Antes de atribuir uma falha dessas a uma mudança sua, rode o arquivo sozinho.
 
-**A evidência que fecha o argumento é a mesma árvore duas vezes.** Rodar isolado ajuda, mas não prova: um teste pode passar sozinho e falhar junto por um defeito real de isolamento. O que descarta regressão é o mesmo commit dando dois resultados — na TEC-156, `b35069d` passou 1236/1236 e, na execução seguinte sobre árvore idêntica e limpa, falhou 1. Guarde o hash junto com o resultado de cada execução.
+**Rode a suíte inteira UMA vez.** Uma execução verde é o suficiente para seguir. Guarde o hash junto com o resultado.
 
-**Cada tabela nova em `TABELAS` (`tests/conftest.py`) custa um `TRUNCATE ... CASCADE` por teste.** A fixture `banco_limpo` é autouse, então acrescentar duas tabelas numa suíte de 1200 testes são ~2.400 TRUNCATEs a mais. Não introduz incorreção, mas aumenta a contenção de lock que produz os flakes acima.
+A segunda execução não é ritual de rotina — é ferramenta de diagnóstico, e só quando a primeira **falha**. Aí ela é a única coisa que separa flake de regressão: rodar isolado ajuda mas não prova, porque um teste pode passar sozinho e falhar junto por um defeito real de isolamento. O precedente é a TEC-156, em que `b35069d` passou 1236/1236 e, na execução seguinte sobre árvore idêntica e limpa, falhou 1 — mesmo commit, dois resultados. Se a sua primeira execução falhou, repita sobre a mesma árvore antes de culpar a sua mudança.
+
+**Cada tabela nova em `TABELAS` (`tests/conftest.py`) entra no `TRUNCATE ... CASCADE` de todo teste que toca banco.** Desde 12/09/2026 são duas coisas que já não valem do jeito antigo: `banco_limpo` sai cedo para `tests/unit/`, então os testes unitários não pagam nada; e a limpeza é **um** `TRUNCATE a, b, c CASCADE`, não um por tabela. Acrescentar uma tabela não custa mais um statement por teste — custa uma tabela a mais no mesmo statement, e mais um lock tomado junto com os outros. Continua valendo que isso aumenta a contenção que produz os flakes acima, só que numa escala bem menor.
 
 ## Acentos: onde sim, onde não
 
