@@ -55,6 +55,41 @@ class FormaPagamento(StrEnum):
     INDEFINIDA = "INDEFINIDA"
 
 
+class ReacaoLead(StrEnum):
+    """O que o lead fez com um imovel apresentado. RN-10.4.
+
+    `NEUTRO` e "o lead respondeu, mas nao falou deste imovel"; `SEM_RESPOSTA`
+    e "uma apresentacao nova superou esta linha antes de o lead reagir". Os
+    dois significam ausencia de opiniao e sao contados diferente: NEUTRO e
+    evidencia de que o lead viu, SEM_RESPOSTA nao e evidencia de nada.
+    """
+
+    INTERESSE = "INTERESSE"
+    DESCARTE = "DESCARTE"
+    NEUTRO = "NEUTRO"
+    SEM_RESPOSTA = "SEM_RESPOSTA"
+
+
+class CategoriaDescarte(StrEnum):
+    """Por que o lead descartou, em forma comparavel. TEC-163, D13.
+
+    **Categoria e nao a frase do lead**, e a RN-10.4 e quem exige: ela conta
+    "dois descartes por DISTANCIA", o que so e computavel se o motivo for
+    comparavel. A observacao do campo no modelo de dados do SRS diz
+    "Realimenta o filtro", e texto livre nao realimenta nada.
+
+    A frase do lead nao se perde -- ela esta na mensagem, que a linha do tempo
+    ja guarda. Duplica-la aqui criaria uma segunda copia que envelhece
+    sozinha, e o campo passaria a ter dois propositos incompativeis: ser lido
+    por humano e ser contado por codigo.
+    """
+
+    DISTANCIA = "DISTANCIA"
+    PRECO = "PRECO"
+    TAMANHO = "TAMANHO"
+    OUTRO = "OUTRO"
+
+
 # Limiar da RN-03.2. `Decimal` e nao `float` porque a coluna e `numeric(3,2)` e
 # a comparacao e de igualdade na borda: `0.6` em binario nao e 0,6, e "confianca
 # exatamente 0,6 nao desambigua" e criterio de aceite.
