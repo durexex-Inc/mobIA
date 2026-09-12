@@ -131,6 +131,12 @@ class Settings(BaseSettings):
     whatsapp_access_token: str = ""
     whatsapp_api_base: str = "https://graph.facebook.com/v21.0"
 
+    # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
+    # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link
+    # composto sobre uma base vazia continua sendo um caminho valido -- ver a
+    # L4 do desenho.
+    dashboard_base_url: str = ""
+
     # RN-02.5: teto por chamada. RN-02.2: piso de mensagens literais.
     contexto_teto_de_tokens: int = 12000
     contexto_literais_minimas: int = 20

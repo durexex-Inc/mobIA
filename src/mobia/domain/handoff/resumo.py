@@ -34,6 +34,23 @@ MARCADORES = (
 )
 
 
+def link_da_transcricao(canal: str, conversa: str) -> str:
+    """O link da RN-15.5, composto aqui e nunca pelo modelo.
+
+    Campo separado e nao conteudo do resumo (D10): se entrasse no texto,
+    gastaria orcamento dos 1.500 caracteres da RN-15.2 e passaria a depender
+    de o modelo transcrever uma URL sem errar um caractere.
+
+    Vive aqui e nao em `dossie.py`: aquele modulo se declara sem I/O, e
+    `get_settings()` o quebraria na primeira linha depois de uma docstring
+    que promete o contrario. Este modulo ja importa `get_settings` desde a
+    RedatorAnthropic.
+
+    **O destino ainda nao existe** -- e a E8. Ver a L4 do desenho.
+    """
+    return f"{get_settings().dashboard_base_url}/conversas/{canal}/{conversa}"
+
+
 class ResumoDeHandoffInvalido(RuntimeError):
     """A resposta do modelo nao e um resumo utilizavel.
 
