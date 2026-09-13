@@ -145,16 +145,21 @@ async def test_cenario_2_a_recomendacao_registra_motivo_e_momento(
     session: Any, session_factory: Any
 ) -> None:
     """Cenario 2 do Gherkin: "ela registra o motivo do match e o momento"."""
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
     imovel = await _imovel(session, "AP-410")
+    mensagem = await _entrada_do_lead(session)
     agora = datetime.now(UTC)
 
     await gravar_recomendacoes(
         session_factory,
         channel=CANAL,
         conversation_key=CONVERSA,
-        candidatos=[{"imovel_id": str(imovel)}],
+        candidatos=[{"imovel_id": str(imovel), "preco_centavos": 41000000}],
         scores={imovel: 0.87},
         criterios=["3 quartos", "Trindade"],
+        message_id=mensagem.id,
+        kinds=["ficha_1"],
         relaxou_preco=False,
         relaxou_bairro=False,
         agora=agora,
@@ -174,8 +179,11 @@ async def test_gravar_duas_vezes_o_mesmo_imovel_nao_levanta(
     O UNIQUE existe para impedir DUPLICATA, nao para derrubar o turno. Gravar
     de novo e no-op -- a linha original, com a reacao que ja tiver, sobrevive.
     """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
     imovel = await _imovel(session, "AP-411")
-    candidatos = [{"imovel_id": str(imovel)}]
+    mensagem = await _entrada_do_lead(session)
+    candidatos = [{"imovel_id": str(imovel), "preco_centavos": 41000000}]
     scores = {imovel: 0.87}
 
     await gravar_recomendacoes(
@@ -185,6 +193,8 @@ async def test_gravar_duas_vezes_o_mesmo_imovel_nao_levanta(
         candidatos=candidatos,
         scores=scores,
         criterios=["Trindade"],
+        message_id=mensagem.id,
+        kinds=["ficha_1"],
         relaxou_preco=False,
         relaxou_bairro=False,
         agora=datetime.now(UTC),
@@ -196,6 +206,8 @@ async def test_gravar_duas_vezes_o_mesmo_imovel_nao_levanta(
         candidatos=candidatos,
         scores=scores,
         criterios=["Trindade"],
+        message_id=mensagem.id,
+        kinds=["ficha_1"],
         relaxou_preco=False,
         relaxou_bairro=False,
         agora=datetime.now(UTC),
@@ -218,16 +230,24 @@ async def test_candidato_sem_score_ainda_grava_linha_com_zero(
     qualquer consulta -- ao contrario da linha que faltava antes. O outro
     candidato da mesma chamada, que TEM score, grava com o score real.
     """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
     com_score = await _imovel(session, "AP-412")
     sem_score = await _imovel(session, "AP-413")
+    mensagem = await _entrada_do_lead(session)
 
     await gravar_recomendacoes(
         session_factory,
         channel=CANAL,
         conversation_key=CONVERSA,
-        candidatos=[{"imovel_id": str(com_score)}, {"imovel_id": str(sem_score)}],
+        candidatos=[
+            {"imovel_id": str(com_score), "preco_centavos": 41200000},
+            {"imovel_id": str(sem_score), "preco_centavos": 41300000},
+        ],
         scores={com_score: 0.5},
         criterios=["Trindade"],
+        message_id=mensagem.id,
+        kinds=["ficha_1", "ficha_2"],
         relaxou_preco=False,
         relaxou_bairro=False,
         agora=datetime.now(UTC),
@@ -251,6 +271,8 @@ async def test_lista_de_candidatos_vazia_nao_grava_nada(session: Any, session_fa
         candidatos=[],
         scores={},
         criterios=[],
+        message_id=uuid.uuid4(),
+        kinds=[],
         relaxou_preco=False,
         relaxou_bairro=False,
         agora=datetime.now(UTC),
@@ -1416,3 +1438,50 @@ async def test_a_recomendacao_guarda_dono_preco_e_kind(session: Any) -> None:
     assert gravada.message_id == linha_da_mensagem.id
     assert gravada.preco_centavos == 30000000
     assert gravada.kind == "ficha_1"
+
+
+async def test_cada_linha_apresentada_guarda_o_kind_com_que_saiu(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """TEC-275, D9. O kind da linha e o kind com que a ficha saiu, na ordem.
+
+    Trava o alinhamento entre a lista que `gravar_recomendacoes` recebe e a
+    que o laco de entrega enumera: as duas saem de `escolhidos` filtrado por
+    `encontrados`, na mesma ordem, entao o indice de uma e o da outra. Se
+    alguem inserir um filtro ou uma reordenacao em so uma delas, o kind passa
+    a apontar para a ficha errada e este teste cai.
+    """
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-91{n}", quartos=3, preco_venda=30000000 + n)
+
+    classificador = _ClassificadorQueBuscaSemFiltroExtra({"operacao": "VENDA", "quartos_min": 3})
+    outbound = outbound_fake()
+    assert (
+        await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
+        == "respondido"
+    )
+
+    assert classificador.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
+    linhas = {
+        registro.imovel_id: registro
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert len(linhas) == 3
+    for posicao, imovel_id in enumerate(apresentados):
+        assert linhas[imovel_id].kind == KINDS_DAS_FICHAS[posicao]
+        assert linhas[imovel_id].message_id is not None
+        # Nao "30000000 + posicao": a ordem de apresentacao vem do ranking
+        # (score_match DESC), nao da ordem de criacao dos imoveis. A invariante
+        # de verdade e a linha guardar o preco do candidato que esta NAQUELA
+        # posicao, seja ele qual for.
+        assert linhas[imovel_id].preco_centavos == int(
+            classificador.resultado.candidatos[posicao]["preco_centavos"]
+        )

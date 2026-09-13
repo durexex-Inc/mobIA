@@ -2032,6 +2032,8 @@ async def _apresentar(
         candidatos=[c for c in escolhidos if uuid.UUID(c["imovel_id"]) in encontrados],
         scores=scores,
         criterios=criterios,
+        message_id=message.id,
+        kinds=KINDS_DAS_FICHAS[: len(fichas)],
         relaxou_preco=relaxou_preco,
         relaxou_bairro=relaxou_bairro,
         agora=agora,

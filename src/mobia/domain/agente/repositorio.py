@@ -137,6 +137,8 @@ async def gravar_recomendacoes(
     candidatos: Sequence[Mapping[str, Any]],
     scores: Mapping[uuid.UUID, float],
     criterios: Sequence[str],
+    message_id: uuid.UUID,
+    kinds: Sequence[str],
     relaxou_preco: bool,
     relaxou_bairro: bool,
     agora: datetime,
@@ -164,6 +166,14 @@ async def gravar_recomendacoes(
     PEDIDO.** Os dois entram na frase por `motivo_do_match`, e o porque esta
     la: sem eles, um candidato que so apareceu porque o teto cedeu ficaria
     gravado com o criterio que ele nao satisfaz.
+
+    **`kinds` vem do chamador, e nao e derivado aqui.** O kind e posicional
+    (`KINDS_DAS_FICHAS[posicao]`) e quem enumera as posicoes e o laco de
+    entrega. Esta funcao recebe `candidatos` com a MESMA ordem e o MESMO
+    filtro que aquele laco usa, entao o indice bate -- mas depender disso em
+    silencio seria frageis: quem passa os kinds e quem sabe deles. Ver a D9
+    do desenho da TEC-275 para por que reconstruir a posicao depois nao
+    funciona.
 
     **Toda apresentacao vira linha, sem excecao (RN-10.3).** A regra nao tem
     clausula de excecao -- "toda apresentacao e registrada como
@@ -199,7 +209,7 @@ async def gravar_recomendacoes(
 
     motivo = motivo_do_match(criterios, relaxou_preco=relaxou_preco, relaxou_bairro=relaxou_bairro)
     linhas: list[dict[str, Any]] = []
-    for candidato in candidatos:
+    for posicao, candidato in enumerate(candidatos):
         imovel_id = uuid.UUID(str(candidato["imovel_id"]))
         score = scores.get(imovel_id)
         if score is None:
@@ -223,6 +233,9 @@ async def gravar_recomendacoes(
                 "score_match": Decimal(str(score)),
                 "motivo_match": motivo,
                 "apresentado_em": agora,
+                "message_id": message_id,
+                "preco_centavos": int(candidato["preco_centavos"]),
+                "kind": kinds[posicao],
             }
         )
 
