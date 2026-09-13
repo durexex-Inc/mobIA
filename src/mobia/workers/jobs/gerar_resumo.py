@@ -1,4 +1,4 @@
-"""O job que redige o resumo do handoff. TEC-175."""
+"""O job que redige o resumo do handoff e enfileira a notificacao do corretor. TEC-175, TEC-177."""
 
 import uuid
 from typing import Any
