@@ -4,11 +4,13 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.handoff.models import Handoff
+from mobia.domain.handoff.repositorio import registrar_handoff
+from mobia.domain.handoff.vocabulario import Gatilho
 
 CANAL = "whatsapp"
 CONVERSA = "5511911112222"
@@ -117,3 +119,26 @@ async def test_o_resumo_recusa_texto_claro(session: AsyncSession) -> None:
             status="PENDENTE",
             resumo="texto em claro",
         )
+
+
+async def test_as_colunas_da_notificacao_nascem_com_o_default_certo(
+    session: AsyncSession,
+) -> None:
+    """`notificado_em` nulo e `aviso_manual_pendente` falso: ninguem tentou ainda.
+
+    O default de `aviso_manual_pendente` e FALSO e nao verdadeiro, e a
+    distincao importa: verdadeiro significaria que todo handoff nasce pedindo
+    intervencao humana, e o dashboard da E8 mostraria a fila inteira como
+    problema. O estado "ainda nao tentei" e falso com `notificado_em` nulo.
+    """
+    registro = await registrar_handoff(
+        session,
+        channel="whatsapp",
+        conversation_key="5511911112222",
+        gatilho=Gatilho.LEAD_QUENTE,
+    )
+    await session.commit()
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == registro.id))).scalar_one()
+    assert linha.notificado_em is None
+    assert linha.aviso_manual_pendente is False

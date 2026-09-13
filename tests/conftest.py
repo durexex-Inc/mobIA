@@ -21,7 +21,8 @@ from mobia.domain.agente.models import Recomendacao
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.context.resumo import ResumoGerado
-from mobia.domain.handoff.repositorio import registrar_handoff
+from mobia.domain.corretores.models import Corretor
+from mobia.domain.handoff.repositorio import gravar_resumo, registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
@@ -167,6 +168,10 @@ TABELAS = (
     # proximo, e a falha apareceria so a partir do segundo teste do arquivo --
     # o mesmo sintoma que `imoveis` ja registra.
     "handoffs",
+    # TEC-196. Mesmo raciocinio de `imoveis`: o UNIQUE em `email` faz o
+    # corretor de um teste colidir com o do proximo, e a falha so apareceria a
+    # partir do segundo teste do arquivo sem o truncate.
+    "corretores",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
@@ -905,6 +910,78 @@ def semear_lead_completo(session: AsyncSession):
             conversation_key=CONVERSA_AGENTE,
             gatilho=Gatilho.LEAD_QUENTE,
         )
+        await session.commit()
+        return registro.id
+
+    return _semear
+
+
+@pytest.fixture
+def semear_corretor(session: AsyncSession):
+    """Cria um `Corretor` direto no modelo, sem passar por `criar_corretor`.
+
+    O repositorio nao aceita `criado_em` -- ele sempre carimba com `agora` --,
+    e o teste dos dois plantoes (TEC-177) precisa fixar carimbos diferentes
+    para provar que a cascata escolhe o mais antigo. Por isso o modelo entra
+    direto, preenchendo os mesmos campos obrigatorios e CHECKs que
+    `criar_corretor` preenche (jornada, capacidade, especialidades, regioes).
+    """
+
+    async def _semear(
+        *,
+        email: str,
+        plantao: bool = False,
+        ativo: bool = True,
+        criado_em: datetime | None = None,
+        horario_inicio: int = 9,
+        horario_fim: int = 18,
+    ) -> Corretor:
+        agora = criado_em if criado_em is not None else datetime.now(UTC)
+        corretor = Corretor(
+            id=uuid.uuid4(),
+            nome="Corretor de Teste",
+            email=email,
+            telefone="11999999999",
+            creci=None,
+            especialidades=["COMPRA"],
+            regioes_atuacao=["pinheiros"],
+            horario_inicio=horario_inicio,
+            horario_fim=horario_fim,
+            capacidade_diaria=5,
+            plantao=plantao,
+            ativo=ativo,
+            criado_em=agora,
+            atualizado_em=agora,
+        )
+        session.add(corretor)
+        await session.commit()
+        return corretor
+
+    return _semear
+
+
+@pytest.fixture
+def semear_handoff_com_resumo(session: AsyncSession):
+    """Um handoff de LEAD_QUENTE, com resumo cifrado quando `resumo` e dado.
+
+    `resumo=None` deixa a coluna nula por construcao -- o caminho do D2 que
+    `TEXTO_SEM_RESUMO` cobre (TEC-177): a geracao pode falhar ou ainda nao ter
+    rodado, e a notificacao sai mesmo assim.
+    """
+
+    async def _semear(
+        *,
+        resumo: str | None,
+        canal: str = "whatsapp",
+        conversa: str = "5511900000000",
+    ) -> uuid.UUID:
+        registro = await registrar_handoff(
+            session, channel=canal, conversation_key=conversa, gatilho=Gatilho.LEAD_QUENTE
+        )
+        if resumo is not None:
+            await gravar_resumo(
+                session, handoff_id=registro.id, texto=resumo, modelo="modelo-de-teste"
+            )
         await session.commit()
         return registro.id
 

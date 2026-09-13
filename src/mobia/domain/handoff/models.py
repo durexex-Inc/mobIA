@@ -1,16 +1,28 @@
 """O handoff: a tarefa que o lead pronto vira para o corretor.
 
 TEC-174. Ver `alembic/versions/0023_handoffs.py` para o porque do par como
-identidade, do UNIQUE parcial e do `corretor_id` sem FK.
+identidade e do UNIQUE parcial. A FK de `corretor_id` para `corretores.id`
+entrou na migration da TEC-196.
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ARRAY, CheckConstraint, DateTime, Index, LargeBinary, String, text
+from sqlalchemy import (
+    ARRAY,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    String,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
+from mobia.domain.corretores.models import Corretor
 from mobia.domain.messages.models import Base
 from mobia.infra.crypto import aad_de
 
@@ -51,8 +63,20 @@ class Handoff(Base):
     # depois custa migration, e o `IN` do CHECK e o unico lugar a mexer.
     status: Mapped[str] = mapped_column(String(16), nullable=False)
 
-    # Nulavel e sem FK ate a TEC-196 criar `corretores`. Nada escreve aqui hoje.
-    corretor_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # FK para `corretores.id` desde a TEC-196. Continua NULAVEL, mas agora
+    # por outra razao -- nao falta mais tabela alvo, falta quem aloque, e
+    # alocar e a TEC-166.
+    #
+    # `ForeignKey(Corretor.id)` em vez da string "corretores.id": o alvo
+    # precisa estar no mesmo `MetaData` para o SQLAlchemy resolver a FK, e a
+    # string so funciona se ALGUEM MAIS ja tiver importado `Corretor` antes
+    # (o que a suite inteira faz por acidente). Sem o import explicito acima,
+    # `test_handoff_schema.py` reprova com `NoReferencedTableError` quando
+    # roda sozinho -- e "rodar o arquivo sozinho" e o proprio procedimento que
+    # este repo usa para separar flake de regressao.
+    corretor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey(Corretor.id), nullable=True
+    )
 
     gatilhos_adicionais: Mapped[list[str]] = mapped_column(
         ARRAY(String(32)), nullable=False, server_default=text("'{}'::varchar[]")
@@ -82,6 +106,17 @@ class Handoff(Base):
                 f"{coluna} aceita apenas bytes cifrados, recebeu {type(valor).__name__}"
             )
         return valor
+
+    # Quando ao menos um canal aceitou a mensagem. Nulo enquanto ninguem
+    # tentou -- e continua nulo quando os dois recusam, caso em que a coluna
+    # ao lado e que conta a historia.
+    notificado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # O "pendente de aviso manual" do terceiro cenario da TEC-177: nenhum
+    # canal aceitou, ou nao havia destinatario. Nasce FALSO -- ver a migration.
+    aviso_manual_pendente: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
