@@ -455,23 +455,31 @@ async def executar_turno(
                 )
                 return "silenciado"
 
-    # A guarda de atendimento humano (TEC-179, RN-16.4). Depois da de opt-out
-    # e nao antes: o opt-out e direito do lead e vence tudo, inclusive um
-    # corretor que tenha assumido.
+    # A guarda de atendimento humano (TEC-179, RN-16.4). `if not
+    # pedido_de_optout:`, espelhando a checagem de opt-out logo acima -- e NAO
+    # incondicional, que era o bug (fix de revisao, Critical). O opt-out e
+    # direito do lead e vence tudo, inclusive um corretor que tenha assumido,
+    # mas so vence de fato se este bloco nunca rodar antes do registro do
+    # proprio pedido (`if pedido_de_optout:`, logo abaixo). Incondicional, um
+    # lead que digitasse "pare" numa conversa ja assumida caia aqui, devolvia
+    # "atendimento_humano" e o opt-out nunca era gravado -- o oposto do que
+    # este comentario ja afirmava, e defeito de LGPD: a pessoa pediu para sair
+    # e o sistema fica sem o registro.
     #
     # Barata de proposito -- antes do classificador, entao um turno silenciado
     # nao paga chamada ao modelo. A guarda autoritativa e a da porta de saida
     # (`outbound/port.py`); esta so evita o trabalho.
-    async with session_factory() as sessao:
-        if await esta_silenciada(
-            sessao, channel=message.channel, conversation_key=message.conversation_key
-        ):
-            log.info(
-                "turno.atendimento_humano",
-                channel=message.channel,
-                message_id=str(message.id),
-            )
-            return "atendimento_humano"
+    if not pedido_de_optout:
+        async with session_factory() as sessao:
+            if await esta_silenciada(
+                sessao, channel=message.channel, conversation_key=message.conversation_key
+            ):
+                log.info(
+                    "turno.atendimento_humano",
+                    channel=message.channel,
+                    message_id=str(message.id),
+                )
+                return "atendimento_humano"
 
     if pedido_de_optout:
         # ANTES da moderacao de entrada, de proposito -- fix de revisao

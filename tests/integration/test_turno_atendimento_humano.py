@@ -24,6 +24,7 @@ from mobia.domain.agente.turno import executar_turno
 from mobia.domain.atendimento.repositorio import assumir, devolver
 from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.models import Message
+from mobia.domain.optout.repositorio import esta_em_optout
 from mobia.infra.db import get_sessionmaker
 
 pytestmark = pytest.mark.asyncio
@@ -269,3 +270,62 @@ async def test_bloqueio_da_guarda_na_entrada_bloqueada_tambem_nao_vira_reentrega
     assert not any(
         "turno.reentrega_suprimida" in registro.getMessage() for registro in eventos_de_erro
     )
+
+
+async def test_pedido_de_optout_numa_conversa_assumida_e_registrado(
+    session,
+    semear_corretor,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """Fix Critical da revisao. A guarda de atendimento humano so pode ser
+    `if not pedido_de_optout:` -- espelhando a checagem de opt-out logo
+    acima dela --, nunca incondicional.
+
+    Incondicional (o defeito original desta task), um lead que digitasse
+    "parar" numa conversa ja assumida caia na saida barata, devolvia
+    "atendimento_humano" e o `if pedido_de_optout:` que registra o opt-out
+    NUNCA rodava -- o pedido de saida se perdia, sem NENHUM registro. E
+    defeito de LGPD: a pessoa pediu para sair e o sistema nao tem como provar
+    que o pedido chegou.
+
+    A asserção que prova a correcao 1 e a de `esta_em_optout`: ela tem de ser
+    True depois do turno, INDEPENDENTE de a confirmacao ter saido ou nao. As
+    demais (resultado == "opt_out", outbound.entregues) provam que a
+    correcao 2 (a escotilha de `KIND_DA_CONFIRMACAO_DE_OPTOUT` na guarda de
+    atendimento humano, em `GuardedOutbound.send`) tambem funciona -- sem
+    ela, o registro aconteceria mas a confirmacao seria barrada pela mesma
+    guarda que a conversa assumida ativa, e o turno devolveria
+    "bloqueado_por_atendimento_humano" em vez de "opt_out".
+    """
+    corretor = await semear_corretor(email=f"corretor-{uuid.uuid4().hex[:8]}@ex.com")
+    await assumir(
+        session,
+        channel=CANAL_AGENTE,
+        conversation_key=CONVERSA_AGENTE,
+        corretor_id=corretor.id,
+    )
+    await session.commit()
+
+    classificador = classificador_fake()
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session, classificador, outbound, resumidor_fake(), contador_fake(), texto="parar"
+    )
+
+    # A asserção que falsifica a saida barata incondicional: com o bug, esta
+    # linha reprova (esta_em_optout devolve False -- o registro nunca rodou).
+    assert await esta_em_optout(session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE), (
+        "o opt-out tem de ser registrado mesmo numa conversa assumida"
+    )
+
+    # A escotilha da correcao 2: a confirmacao atravessa a guarda de
+    # atendimento humano e o turno fecha em "opt_out", nao em
+    # "bloqueado_por_atendimento_humano".
+    assert resultado == "opt_out"
+    assert outbound.entregues != [], "a confirmacao do proprio pedido tem de sair"
+    assert classificador.chamadas == 0

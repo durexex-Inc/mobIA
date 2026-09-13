@@ -85,7 +85,7 @@ class OutboundPort(Protocol):
     fora. A guarda a trata como retentavel (libera a reserva e propaga) --
     ver TEC-227.
 
-    `send` devolve `False`, sem levantar, em duas situacoes distintas, e
+    `send` devolve `False`, sem levantar, em tres situacoes distintas, e
     quem le o retorno nao consegue distinguir uma da outra so pelo booleano:
 
     - Reentrega suprimida: a reserva em `outbound_dispatches` ja existia
@@ -97,8 +97,10 @@ class OutboundPort(Protocol):
       `esta_em_optout_por_mensagem`.
     - Envio barrado pela guarda de atendimento humano: um corretor assumiu
       esta conversa e ainda nao a devolveu (TEC-179, RN-16.4) -- ver
-      `GuardedOutbound.send` e `esta_silenciada_por_mensagem`. Ao contrario
-      da guarda de opt-out, esta nao tem excecao por `kind`.
+      `GuardedOutbound.send` e `esta_silenciada_por_mensagem`. Mesma excecao
+      por `kind` que a guarda de opt-out (emenda TEC-179, Task 7 -- a D5
+      original barrava todo kind sem escotilha; ver `GuardedOutbound` para o
+      raciocinio).
 
     `OutboundPort` e um Protocol estrutural: qualquer classe com um metodo
     `send` de assinatura compativel satisfaz o tipo, herdando de
@@ -151,9 +153,21 @@ class GuardedOutbound:
     antes da reserva, e sao a razao de o docstring de `OutboundPort` apontar
     esta classe como a rota segura: herdar daqui e o que garante que um
     caminho de envio novo nao fale com quem pediu silencio nem por cima de
-    quem assumiu a conversa. O unico kind que atravessa a de opt-out e
-    `KIND_DA_CONFIRMACAO_DE_OPTOUT` -- ver `send`. A de atendimento humano nao
-    tem excecao nenhuma: barra qualquer kind, sem escotilha (D5 do desenho).
+    quem assumiu a conversa. As duas tem a MESMA excecao unica --
+    `KIND_DA_CONFIRMACAO_DE_OPTOUT` atravessa as duas, ver `send`.
+
+    A guarda de atendimento humano nao nasceu com essa excecao: a D5 original
+    do desenho decidia "barra TODO kind, sem escotilha", e o argumento era
+    sobre o caminho HUMANO de envio (a rota `POST /conversas/{id}/mensagens`
+    do SRS, que nao existe ainda). Emenda TEC-179 (Task 7): esse argumento
+    nunca cobriu a confirmacao de opt-out, que nao e mensagem de conversa --
+    e reconhecimento legal de um pedido que o LEAD fez, e o unico envio que
+    a D1 da TEC-182 autoriza depois do registro. Sem esta excecao, a
+    correcao que fez a guarda de atendimento humano nao mais engolir o
+    registro do opt-out (ver `executar_turno`) deixava a confirmacao ser
+    barrada pela MESMA guarda que acabou de deixar o registro passar -- o
+    lead pedia para sair, o pedido era gravado, e a unica prova disso que ele
+    recebe nunca saia.
 
     A linha em outbound_dispatches e commitada antes do efeito externo. Queda
     entre a reserva e a entrega so perde aquele envio quando a falha e
@@ -198,29 +212,41 @@ class GuardedOutbound:
         # `OutboundPort` ja escreve: quem herda ganha a guarda de graca. No
         # turno ela protegeria so o caminho de hoje.
         #
-        # **Barra TODO kind, sem a escotilha que o opt-out tem.** A D5 do
-        # desenho decide isso: nao existe caminho humano de envio para deixar
-        # passar -- a rota `POST /conversas/{id}/mensagens` do SRS nao esta
-        # implementada --, e uma lista de excecoes construida agora seria para
-        # um chamador hipotetico. Quando aquela rota chegar ela vai encontrar
-        # o proprio envio barrado aqui, e tera de decidir como o humano
-        # atravessa. Falhar fechado e o lado certo de errar, e a L3 do desenho
-        # existe para que ninguem descubra isso por um teste vermelho sem
-        # explicacao.
+        # **`kind != KIND_DA_CONFIRMACAO_DE_OPTOUT` -- a MESMA excecao unica
+        # que a guarda de opt-out tem, e nao a copia distraida do padrao dela
+        # que parece a primeira vista.** A D5 original do desenho decidia
+        # "barra TODO kind, sem escotilha", e o argumento era sobre o caminho
+        # HUMANO de envio -- a rota `POST /conversas/{id}/mensagens` do SRS,
+        # que nao existe ainda; nao existe caminho humano para deixar passar,
+        # entao uma lista de excecoes seria para um chamador hipotetico.
+        # Emenda TEC-179 (Task 7): esse argumento nunca cobriu a confirmacao
+        # de opt-out. Ela nao e mensagem de conversa, e reconhecimento legal
+        # de um pedido que o proprio lead fez -- o unico envio que a D1 da
+        # TEC-182 autoriza depois do registro. Sem esta excecao, a correcao
+        # que fez `executar_turno` parar de deixar esta guarda engolir o
+        # registro do opt-out (ver o comentario la, na saida barata) ficava
+        # incompleta: o registro passava a acontecer, mas a confirmacao dele
+        # -- gravada com o kind proprio -- seria barrada por ESTA MESMA
+        # guarda, e o lead que pediu para sair nao receberia reconhecimento
+        # nenhum. A L3 do desenho continua valendo: quando a rota de envio
+        # manual do corretor chegar, ela ainda encontra o proprio envio
+        # barrado aqui -- esta excecao e so para o reconhecimento do
+        # opt-out, nao abre um segundo caminho para envio humano.
         #
         # Antes da reserva pelo mesmo motivo do bloco acima: barrar depois
         # deixaria linha orfa em `outbound_dispatches`.
-        async with self._session_factory() as session:
-            if await esta_silenciada_por_mensagem(session, message_id):
-                # `warning` e nao `info`, pelo mesmo criterio do opt-out: um
-                # envio barrado aqui significa que algum caminho tentou falar
-                # por cima do corretor que assumiu.
-                log.warning(
-                    "outbound.atendimento_humano_bloqueou",
-                    message_id=str(message_id),
-                    kind=kind,
-                )
-                return False
+        if kind != KIND_DA_CONFIRMACAO_DE_OPTOUT:
+            async with self._session_factory() as session:
+                if await esta_silenciada_por_mensagem(session, message_id):
+                    # `warning` e nao `info`, pelo mesmo criterio do opt-out:
+                    # um envio barrado aqui significa que algum caminho tentou
+                    # falar por cima do corretor que assumiu.
+                    log.warning(
+                        "outbound.atendimento_humano_bloqueou",
+                        message_id=str(message_id),
+                        kind=kind,
+                    )
+                    return False
 
         async with self._session_factory() as session:
             session.add(OutboundDispatch(id=uuid.uuid4(), message_id=message_id, kind=kind))
