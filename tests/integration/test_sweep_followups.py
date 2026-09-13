@@ -15,6 +15,7 @@ from sqlalchemy import select
 import mobia.workers.jobs.sweep_followups as sweep_followups_module
 from mobia.app.config import Settings
 from mobia.domain.agente.schemas import Intencao, Urgencia
+from mobia.domain.atendimento.repositorio import assumir
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.models import FollowUp
@@ -142,6 +143,32 @@ async def test_o_lead_com_optout_nao_recebe_nada(session, caplog) -> None:
             evento=EVENTO_OPT_OUT,
         )
     )
+    await session.commit()
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA)
+
+    assert gravadas == 0
+    assert (await session.scalars(select(FollowUp))).all() == []
+    assert sum(1 for r in caplog.records if "followup.devido" in r.getMessage()) == 0
+
+
+async def test_a_conversa_silenciada_nao_recebe_followup(
+    session, semear_corretor, banco_limpo, caplog
+) -> None:
+    """O terceiro cenario do Gherkin da TEC-179: conversa assumida por um
+    corretor nao dispara automacao nenhuma.
+
+    A assercao cobre as DUAS consequencias, nao so o retorno: sem a guarda no
+    laco, a tentativa seria gravada em `followups` (append-only) mesmo com a
+    guarda da porta de saida barrando o envio depois -- e essas tentativas
+    fantasma contariam contra o lead na RN-13.1 quando a conversa fosse
+    devolvida. Checar so `gravadas == 0` passaria mesmo com a guarda no lugar
+    errado.
+    """
+    await _lead(session, calado_ha=timedelta(days=30))
+    corretor_id = (await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")).id
+    await assumir(session, channel=CANAL, conversation_key=CONVERSA, corretor_id=corretor_id)
     await session.commit()
 
     with caplog.at_level(logging.INFO):
