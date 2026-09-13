@@ -10,6 +10,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     ARRAY,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -96,6 +97,17 @@ class Handoff(Base):
                 f"{coluna} aceita apenas bytes cifrados, recebeu {type(valor).__name__}"
             )
         return valor
+
+    # Quando ao menos um canal aceitou a mensagem. Nulo enquanto ninguem
+    # tentou -- e continua nulo quando os dois recusam, caso em que a coluna
+    # ao lado e que conta a historia.
+    notificado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # O "pendente de aviso manual" do terceiro cenario da TEC-177: nenhum
+    # canal aceitou, ou nao havia destinatario. Nasce FALSO -- ver a migration.
+    aviso_manual_pendente: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
