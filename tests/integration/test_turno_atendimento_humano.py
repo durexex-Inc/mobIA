@@ -12,14 +12,19 @@ COMMITADO antes de `rodar_turno` rodar, ou a guarda le um banco sem o estado
 que o teste acabou de escrever.
 """
 
+import logging
 import uuid
+from typing import Any
 
 import pytest
-from conftest import CANAL_AGENTE, CONVERSA_AGENTE
+from conftest import CANAL_AGENTE, CONVERSA_AGENTE, ModeradorFake, OutboundFake
 from sqlalchemy import func, select
 
+from mobia.domain.agente.turno import executar_turno
 from mobia.domain.atendimento.repositorio import assumir, devolver
+from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.models import Message
+from mobia.infra.db import get_sessionmaker
 
 pytestmark = pytest.mark.asyncio
 
@@ -135,3 +140,132 @@ async def test_devolvida_o_turno_volta_a_responder(
     assert resultado == "respondido"
     assert outbound.entregues != []
     assert classificador.chamadas == 1
+
+
+class _OutboundQueAssumeNoMeio(OutboundFake):
+    """Simula a corrida do recheque concorrente: um corretor assume a MESMA
+    conversa depois que o turno passou pela guarda barata do topo (ou nunca
+    passou por ela porque o kind e o da recusa de entrada, que nao tem
+    guarda barata equivalente), mas ANTES deste `send()`.
+
+    Espelha `_OutboundQueOptaNoMeio` de `test_turno_optout.py`: assumir
+    DENTRO de `send()`, antes de `super().send()`, e o unico jeito de a
+    reserva ver o estado novo -- `GuardedOutbound.send` consulta
+    `esta_silenciada_por_mensagem` antes da reserva.
+    """
+
+    def __init__(
+        self,
+        session_factory: Any,
+        *,
+        channel: str,
+        conversation_key: str,
+        corretor_id: uuid.UUID,
+    ) -> None:
+        super().__init__(session_factory)
+        self._channel = channel
+        self._conversation_key = conversation_key
+        self._corretor_id = corretor_id
+
+    async def send(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> bool:
+        async with self._session_factory() as sessao:
+            await assumir(
+                sessao,
+                channel=self._channel,
+                conversation_key=self._conversation_key,
+                corretor_id=self._corretor_id,
+            )
+            await sessao.commit()
+        return await super().send(message_id, kind, payload)
+
+
+async def test_bloqueio_da_guarda_concorrente_nao_vira_reentrega_suprimida(
+    session,
+    semear_corretor,
+    semear_entrada,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    caplog,
+) -> None:
+    """A guarda (`GuardedOutbound.send`) barra o envio porque OUTRO turno da
+    mesma conversa assumiu entre a checagem do topo deste turno e este envio.
+
+    Mesmo criterio de `test_bloqueio_da_guarda_por_optout_nao_vira_reentrega_suprimida`
+    em `test_turno_optout.py`, mas para a terceira causa: a guarda funcionou
+    como desenhada -- nada foi perdido --, entao este desfecho nao pode se
+    disfarcar de `reentrega_suprimida`.
+    """
+    corretor = await semear_corretor(email=f"corretor-{uuid.uuid4().hex[:8]}@ex.com")
+    outbound = _OutboundQueAssumeNoMeio(
+        get_sessionmaker(),
+        channel=CANAL_AGENTE,
+        conversation_key=CONVERSA_AGENTE,
+        corretor_id=corretor.id,
+    )
+
+    with caplog.at_level(logging.INFO):
+        resultado = await executar_turno(
+            get_sessionmaker(),
+            message=await semear_entrada(session),
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=ModeradorFake(),
+            agendador=AgendadorNoop(),
+        )
+
+    assert resultado == "bloqueado_por_atendimento_humano"
+    assert resultado != "reentrega_suprimida"
+    assert outbound.entregues == [], "a guarda nunca chega a chamar _deliver"
+
+    eventos_de_erro = [registro for registro in caplog.records if registro.levelno == logging.ERROR]
+    assert eventos_de_erro == [], "a guarda funcionando nao e um alarme de error"
+
+    eventos = [
+        registro
+        for registro in caplog.records
+        if "turno.bloqueado_por_atendimento_humano_concorrente" in registro.getMessage()
+    ]
+    assert eventos, "o desfecho tem de aparecer no log"
+    assert all(registro.levelno == logging.INFO for registro in eventos)
+
+
+async def test_bloqueio_da_guarda_na_entrada_bloqueada_tambem_nao_vira_reentrega(
+    session, semear_corretor, semear_entrada, resumidor_fake, contador_fake, caplog
+) -> None:
+    """Mesma corrida, mas no terceiro sitio do recheque -- dentro de
+    `_entregar_texto_fixo`, no caminho da recusa de entrada. Este sitio nao
+    esta no brief da task (que so nomeava os dois do bloco principal), mas
+    tem o mesmo problema: a guarda de atendimento humano barra TODO kind,
+    inclusive o da recusa de entrada, e sem este recheque o bloqueio virava
+    `reentrega_suprimida` -- o mesmo alarme falso que o resto da task existe
+    para evitar.
+    """
+    corretor = await semear_corretor(email=f"corretor-{uuid.uuid4().hex[:8]}@ex.com")
+    outbound = _OutboundQueAssumeNoMeio(
+        get_sessionmaker(),
+        channel=CANAL_AGENTE,
+        conversation_key=CONVERSA_AGENTE,
+        corretor_id=corretor.id,
+    )
+
+    with caplog.at_level(logging.INFO):
+        resultado = await executar_turno(
+            get_sessionmaker(),
+            message=await semear_entrada(session),
+            classificador=None,  # type: ignore[arg-type]
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=ModeradorFake(bloqueia_entrada=True),
+            agendador=AgendadorNoop(),
+        )
+
+    assert resultado == "bloqueado_por_atendimento_humano"
+    assert resultado != "reentrega_suprimida"
+    eventos_de_erro = [registro for registro in caplog.records if registro.levelno == logging.ERROR]
+    assert not any(
+        "turno.reentrega_suprimida" in registro.getMessage() for registro in eventos_de_erro
+    )
