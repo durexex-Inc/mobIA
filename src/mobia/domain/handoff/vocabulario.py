@@ -36,7 +36,7 @@ class Prioridade(StrEnum):
 
 
 class Status(StrEnum):
-    """CONCLUIDO ainda nao tem escritor (TEC-179). Ver o modelo."""
+    """CONCLUIDO ainda nao tem escritor -- a TEC-179 nao o trouxe. Ver o modelo."""
 
     PENDENTE = "PENDENTE"
     ACEITO = "ACEITO"

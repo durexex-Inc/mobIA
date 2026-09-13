@@ -34,6 +34,7 @@ from mobia.domain.agente.repositorio import (
     marcar_desambiguacao,
 )
 from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
+from mobia.domain.atendimento.repositorio import esta_silenciada
 from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
@@ -289,6 +290,19 @@ ResultadoDoTurno = Literal[
     "opt_out",
     "silenciado",
     "bloqueado_por_optout",
+    # A TEC-179 acrescentou os dois abaixo, separados pelo mesmo criterio que
+    # o comentario acima aplica aos tres do opt-out:
+    # "atendimento_humano" e o turno que nao fez nada porque um corretor ja
+    # tinha assumido a conversa; "bloqueado_por_atendimento_humano" e o turno
+    # que tentou responder e a guarda da porta barrou, porque alguem assumiu
+    # ENTRE a checagem do topo deste turno e este envio.
+    #
+    # Nao reuse "silenciado": aquele valor ja significa opt-out, e soma-los
+    # tornaria impossivel saber se o agente calou por pedido do lead ou por
+    # um corretor ter assumido -- duas historias diferentes, com donos
+    # diferentes.
+    "atendimento_humano",
+    "bloqueado_por_atendimento_humano",
 ]
 
 
@@ -441,6 +455,32 @@ async def executar_turno(
                 )
                 return "silenciado"
 
+    # A guarda de atendimento humano (TEC-179, RN-16.4). `if not
+    # pedido_de_optout:`, espelhando a checagem de opt-out logo acima -- e NAO
+    # incondicional, que era o bug (fix de revisao, Critical). O opt-out e
+    # direito do lead e vence tudo, inclusive um corretor que tenha assumido,
+    # mas so vence de fato se este bloco nunca rodar antes do registro do
+    # proprio pedido (`if pedido_de_optout:`, logo abaixo). Incondicional, um
+    # lead que digitasse "pare" numa conversa ja assumida caia aqui, devolvia
+    # "atendimento_humano" e o opt-out nunca era gravado -- o oposto do que
+    # este comentario ja afirmava, e defeito de LGPD: a pessoa pediu para sair
+    # e o sistema fica sem o registro.
+    #
+    # Barata de proposito -- antes do classificador, entao um turno silenciado
+    # nao paga chamada ao modelo. A guarda autoritativa e a da porta de saida
+    # (`outbound/port.py`); esta so evita o trabalho.
+    if not pedido_de_optout:
+        async with session_factory() as sessao:
+            if await esta_silenciada(
+                sessao, channel=message.channel, conversation_key=message.conversation_key
+            ):
+                log.info(
+                    "turno.atendimento_humano",
+                    channel=message.channel,
+                    message_id=str(message.id),
+                )
+                return "atendimento_humano"
+
     if pedido_de_optout:
         # ANTES da moderacao de entrada, de proposito -- fix de revisao
         # (Critical): o bloco de moderacao logo abaixo tem `return` proprio.
@@ -477,11 +517,15 @@ async def executar_turno(
             kind=KIND_DA_CONFIRMACAO_DE_OPTOUT,
             subagent=SUBAGENTE_OPTOUT,
         )
-        # `_entregar_texto_fixo` devolve "expirado", "sem_resposta",
-        # "reentrega_suprimida" ou "bloqueado_por_optout" quando nao entrega.
-        # Esses desfechos sao sobre o ENVIO da confirmacao, e o opt-out ja
-        # esta gravado -- entao eles passam adiante como estao, e so o
-        # caminho de sucesso vira "opt_out".
+        # `_entregar_texto_fixo` devolve "expirado", "sem_resposta" ou
+        # "reentrega_suprimida" quando nao entrega -- nunca
+        # "bloqueado_por_optout" nem "bloqueado_por_atendimento_humano" NESTE
+        # chamador especifico, porque o proprio `_entregar_texto_fixo` pula as
+        # DUAS checagens para o kind da confirmacao (ver o comentario la
+        # dentro, nos dois `if kind != KIND_DA_CONFIRMACAO_DE_OPTOUT`). Esses
+        # desfechos sao sobre o ENVIO da confirmacao, e o opt-out ja esta
+        # gravado -- entao eles passam adiante como estao, e so o caminho de
+        # sucesso vira "opt_out".
         return "opt_out" if desfecho_da_confirmacao == "respondido" else desfecho_da_confirmacao
 
     if corpo:
@@ -510,9 +554,10 @@ async def executar_turno(
                     categoria=veredito.categoria,
                 )
                 # A marca vem ANTES da entrega, e a ordem e o ponto (TEC-236).
-                # `_entregar_texto_fixo` tem quatro saidas que nao entregam
+                # `_entregar_texto_fixo` tem cinco saidas que nao entregam
                 # nada -- janela fechada, recusa permanente da Meta, reentrega
-                # suprimida, bloqueio por opt-out concorrente (TEC-182) --, e
+                # suprimida, bloqueio por opt-out concorrente (TEC-182),
+                # bloqueio por atendimento humano concorrente (TEC-179) --, e
                 # a maioria delas fecha a linha em PROCESSED, que e terminal.
                 # Marcar depois deixaria a fala bloqueada sem marca exatamente
                 # nos casos em que ninguem mais volta nesta linha, e ela
@@ -1381,10 +1426,12 @@ async def executar_turno(
                     break
                 if not entrou:
                     # `send()` devolveu False SEM levantar -- reentrega
-                    # suprimida pela reserva ou bloqueio da guarda de opt-out
-                    # (as duas causas que o docstring de `OutboundPort`
-                    # nomeia; `_bloqueado_por_optout_concorrente` abaixo e quem
-                    # distingue qual das duas foi).
+                    # suprimida pela reserva, bloqueio da guarda de opt-out ou
+                    # bloqueio da guarda de atendimento humano (TEC-179; as
+                    # tres causas que o docstring de `OutboundPort` nomeia;
+                    # `_bloqueado_por_optout_concorrente` e
+                    # `_bloqueado_por_atendimento_humano_concorrente` abaixo
+                    # sao quem distingue qual das tres foi).
                     if entregue:
                         # Fix de revisao final (Critical 1, TEC-140). Ja saiu
                         # pelo menos uma parte antes desta: tratar esta parte
@@ -1394,9 +1441,11 @@ async def executar_turno(
                         # excecao e deixava `entregue` virar True mesmo com uma
                         # parte suprimida em silencio. Sem isto, o recorder
                         # gravava o texto INTEIRO (incluindo a parte que nunca
-                        # saiu) e os dois desfechos de alarme abaixo --
-                        # `reentrega_suprimida` e `bloqueado_por_optout` --
-                        # nunca disparavam porque `entregue` ja estava True.
+                        # saiu) e os desfechos abaixo -- `reentrega_suprimida`,
+                        # `bloqueado_por_optout` e `bloqueado_por_atendimento_humano`
+                        # (o primeiro de alarme, os outros dois de guarda
+                        # funcionando) -- nunca disparavam porque `entregue`
+                        # ja estava True.
                         entrega_parcial = True
                         suprimida_apos_entrega = True
                         break
@@ -1450,6 +1499,19 @@ async def executar_turno(
             )
             return "bloqueado_por_optout"
 
+        if await _bloqueado_por_atendimento_humano_concorrente(session_factory, message):
+            # Mesmo raciocinio do bloco de opt-out logo acima, terceira causa:
+            # um corretor assumiu a conversa entre a checagem do topo deste
+            # turno (a guarda barata, la em cima) e este envio. A guarda da
+            # porta de saida barrou exatamente como desenhada -- nada sumiu,
+            # o lead so nao recebe porque o atendimento e humano agora.
+            log.info(
+                "turno.bloqueado_por_atendimento_humano_concorrente",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
+            return "bloqueado_por_atendimento_humano"
+
         # `send()` devolve False sem levantar quando a guarda (Task 3) suprime
         # uma reentrega: ja existe uma reserva em outbound_dispatches para este
         # (message_id, kind), de uma tentativa anterior. `_deliver` nunca foi
@@ -1480,15 +1542,18 @@ async def executar_turno(
     # Fix de revisao final (Critical 1, TEC-140). `entregue` e True aqui --
     # pelo menos uma parte saiu --, mas `suprimida_apos_entrega` (marcada no
     # laco acima) diz que uma parte POSTERIOR devolveu False sem levantar. Sao
-    # as MESMAS duas causas do `if not entregue:` logo acima -- reentrega
-    # suprimida pela reserva, ou a guarda de opt-out barrando um envio
-    # concorrente --, so que com uma parte ja entregue em vez de nenhuma. O
-    # desfecho de alarme (`reentrega_suprimida`) ou o de guarda-funcionou
-    # (`bloqueado_por_optout`) tem de sobreviver do mesmo jeito: gravar
-    # "respondido" aqui esconderia exatamente a corrida que
-    # `_bloqueado_por_optout_concorrente` existe para nomear. O recorder ainda
-    # roda logo abaixo -- `texto` ja foi cortado para so as partes que sairam
-    # -- porque o que saiu e real e precisa ficar na transcricao.
+    # as MESMAS tres causas do `if not entregue:` logo acima -- reentrega
+    # suprimida pela reserva, a guarda de opt-out barrando um envio
+    # concorrente, ou a guarda de atendimento humano barrando pelo mesmo
+    # motivo (TEC-179) --, so que com uma parte ja entregue em vez de
+    # nenhuma. O desfecho de alarme (`reentrega_suprimida`) ou os de
+    # guarda-funcionou (`bloqueado_por_optout`, `bloqueado_por_atendimento_humano`)
+    # tem de sobreviver do mesmo jeito: gravar "respondido" aqui esconderia
+    # exatamente a corrida que `_bloqueado_por_optout_concorrente` e
+    # `_bloqueado_por_atendimento_humano_concorrente` existem para nomear. O
+    # recorder ainda roda logo abaixo -- `texto` ja foi cortado para so as
+    # partes que sairam -- porque o que saiu e real e precisa ficar na
+    # transcricao.
     desfecho_da_supressao_parcial: ResultadoDoTurno | None = None
     if suprimida_apos_entrega:
         if await _bloqueado_por_optout_concorrente(session_factory, message):
@@ -1499,6 +1564,14 @@ async def executar_turno(
                 entrega_parcial=True,
             )
             desfecho_da_supressao_parcial = "bloqueado_por_optout"
+        elif await _bloqueado_por_atendimento_humano_concorrente(session_factory, message):
+            log.info(
+                "turno.bloqueado_por_atendimento_humano_concorrente",
+                channel=message.channel,
+                message_id=str(message.id),
+                entrega_parcial=True,
+            )
+            desfecho_da_supressao_parcial = "bloqueado_por_atendimento_humano"
         else:
             log.error(
                 "turno.reentrega_suprimida",
@@ -1612,16 +1685,17 @@ async def executar_turno(
     )
     # `desfecho_da_supressao_parcial` (Critical 1) vence "respondido" quando
     # setado: o recorder acima ja gravou so o que saiu, mas o DESFECHO do
-    # turno precisa continuar contando a historia de reentrega-suprimida ou
-    # opt-out-concorrente, e nao a de "respondido" -- ver o comentario onde a
-    # variavel e definida.
+    # turno precisa continuar contando a historia de reentrega-suprimida,
+    # opt-out-concorrente ou atendimento-humano-concorrente (TEC-179), e nao
+    # a de "respondido" -- ver o comentario onde a variavel e definida.
     return desfecho_da_supressao_parcial or "respondido"
 
 
 async def _bloqueado_por_optout_concorrente(
     session_factory: async_sessionmaker[AsyncSession], message: Message
 ) -> bool:
-    """Distingue as duas causas de `outbound.send` devolver False sem levantar.
+    """Distingue, entre as TRES causas de `outbound.send` devolver False sem
+    levantar, a de reentrega suprimida da de opt-out concorrente.
 
     `OutboundPort.send` documenta que quem le so o retorno NAO consegue
     separar uma reentrega genuinamente suprimida (reserva duplicada em
@@ -1631,7 +1705,11 @@ async def _bloqueado_por_optout_concorrente(
     historia certa para o log: se o lead esta em opt-out agora, a guarda e a
     explicacao mais provavel para o False, e as duas causas nao podem levar
     o mesmo nivel de log nem o mesmo `ResultadoDoTurno` -- uma e alarme de
-    dado sumido, a outra e a guarda funcionando como desenhada.
+    dado sumido, a outra e a guarda funcionando como desenhada. A terceira
+    causa (atendimento humano concorrente) e quem `_bloqueado_por_atendimento_humano_concorrente`,
+    logo abaixo, distingue -- esta funcao nao a cobre, entao um `False` que
+    sobra depois desta checagem NAO pode ser assumido como
+    `reentrega_suprimida` sem checar a outra tambem.
 
     Best-effort de proposito: entre o `send()` e esta consulta o estado ainda
     pode mudar (uma reativacao, por exemplo). Isso so muda qual historia o
@@ -1641,6 +1719,28 @@ async def _bloqueado_por_optout_concorrente(
     """
     async with session_factory() as sessao:
         return await esta_em_optout(
+            sessao, channel=message.channel, conversation_key=message.conversation_key
+        )
+
+
+async def _bloqueado_por_atendimento_humano_concorrente(
+    session_factory: async_sessionmaker[AsyncSession], message: Message
+) -> bool:
+    """A terceira causa de `outbound.send` devolver False sem levantar.
+
+    `OutboundPort.send` documenta que o retorno booleano nao distingue
+    reentrega suprimida, opt-out concorrente e atendimento humano
+    concorrente. Sem esta consulta, um envio barrado porque o corretor
+    assumiu no meio do turno seria logado como reentrega suprimida -- alarme
+    de dado sumido onde a guarda so fez o trabalho dela.
+
+    Best-effort pelo mesmo argumento de `_bloqueado_por_optout_concorrente`:
+    entre o `send()` e esta consulta o estado ainda pode mudar (uma devolucao,
+    por exemplo). Isso so muda qual historia o log conta -- em nenhum dos dois
+    casos ha texto reenviado ou dado perdido.
+    """
+    async with session_factory() as sessao:
+        return await esta_silenciada(
             sessao, channel=message.channel, conversation_key=message.conversation_key
         )
 
@@ -1741,6 +1841,37 @@ async def _entregar_texto_fixo(
                 message_id=str(message.id),
             )
             return "bloqueado_por_optout"
+
+        # Terceiro sitio do recheque (TEC-179) -- o brief da task so nomeava
+        # os dois do bloco principal, mas este chamador tem o mesmo problema:
+        # sem esta consulta, um corretor que assumiu a conversa ENTRE a
+        # checagem do topo e este envio (recusa de entrada ou laco de busca
+        # excedido) seria logado como reentrega suprimida -- o mesmo alarme
+        # de dado sumido que o bloco principal existe para evitar.
+        #
+        # `kind != KIND_DA_CONFIRMACAO_DE_OPTOUT` guarda esta checagem tambem,
+        # pela MESMA razao da linha equivalente para o opt-out, tres linhas
+        # acima -- fix de revisao (Major, rodada 2). A guarda de atendimento
+        # humano deixou de barrar TODO kind na emenda que abriu a excecao de
+        # `KIND_DA_CONFIRMACAO_DE_OPTOUT` (ver `GuardedOutbound.send`): para
+        # esse kind especifico, ela nao pode mais ser a causa de um `False`
+        # aqui -- ela deixa passar. Sem esta excecao, a confirmacao de
+        # opt-out retentada com a reserva ja existente E a conversa ainda
+        # assumida seria atribuida a guarda errada: "bloqueado_por_atendimento_humano"
+        # em `info`, quando a causa real e reserva duplicada --
+        # "reentrega_suprimida" em `error`, o alarme de dado sumido que
+        # importa exatamente aqui (mesmo raciocinio do comentario do opt-out,
+        # tres linhas acima, so que para a guarda seguinte).
+        if (
+            kind != KIND_DA_CONFIRMACAO_DE_OPTOUT
+            and await _bloqueado_por_atendimento_humano_concorrente(session_factory, message)
+        ):
+            log.info(
+                "turno.bloqueado_por_atendimento_humano_concorrente",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
+            return "bloqueado_por_atendimento_humano"
 
         # Mesmo raciocinio do bloco principal (ver `turno.reentrega_suprimida`
         # la embaixo): `send()` devolve False sem levantar quando a guarda ja

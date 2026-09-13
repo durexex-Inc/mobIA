@@ -16,6 +16,7 @@ from typing import Any
 import structlog
 
 from mobia.app.config import Settings, get_settings
+from mobia.domain.atendimento.repositorio import esta_silenciada
 from mobia.domain.followup.cadencia import CADENCIA, tentativa_devida
 from mobia.domain.followup.repositorio import candidatos_a_followup, registrar_followup
 from mobia.domain.optout.repositorio import esta_em_optout
@@ -30,27 +31,23 @@ async def sweep_followups(
 ) -> int:
     """Registra as tentativas de follow-up que venceram. Devolve quantas.
 
-    **A ordem das tres guardas POR CANDIDATO e proposital: `tentativa_devida`,
-    depois `antispam_permite_envio`, e `esta_em_optout` so para quem passou as
-    duas primeiras.** As duas primeiras sao funcao pura, sem I/O; a terceira e
-    uma ida ao banco. Checar o opt-out antes pagaria essa consulta para todo
-    candidato, inclusive os que nem estao devidos ou ja esgotaram o maximo --
-    e a premissa que justifica consultar por candidato em vez de juntar na
-    query (comentario abaixo) e que o conjunto que sobra depois dos cortes
-    puros e pequeno. Invertida, essa premissa deixa de valer.
+    **A ordem das quatro guardas POR CANDIDATO e proposital: `tentativa_devida`,
+    depois `antispam_permite_envio`, depois `esta_em_optout`, e por ultimo
+    `esta_silenciada` (TEC-179) -- as duas ultimas so para quem passou todas as
+    anteriores.** As duas primeiras sao funcao pura, sem I/O; as duas ultimas
+    sao ida ao banco. Checar opt-out ou silencio antes pagaria essa consulta
+    para todo candidato, inclusive os que nem estao devidos ou ja esgotaram o
+    maximo -- e a premissa que justifica consultar por candidato em vez de
+    juntar na query (comentario abaixo) e que o conjunto que sobra depois dos
+    cortes puros e pequeno. Invertida, essa premissa deixa de valer.
 
-    O opt-out e consultado por candidato, e nao juntado na consulta:
-    `esta_em_optout` e a unica implementacao daquele fato, e escreve-lo uma
-    segunda vez em SQL criaria duas fontes que divergem em silencio -- o
-    defeito que a TEC-146 gastou uma card inteira consertando. O preco e uma
-    consulta por candidato devido, e esses sao poucos por construcao: so quem
-    tem temperatura, calou ha mais de duas horas, ainda nao esgotou e tem
-    tentativa vencida agora.
-
-    **A conversa silenciada NAO e checada, e o criterio de aceite pede.** O
-    estado nao existe -- e a TEC-179, e nada no produto o produz hoje. Quando
-    ela existir, o predicado entra nesta mesma lista de guardas, ao lado do
-    opt-out. Lacuna declarada.
+    O opt-out e a conversa silenciada sao consultados por candidato, e nao
+    juntados na consulta: `esta_em_optout` e `esta_silenciada` sao a unica
+    implementacao de cada fato, e escreve-los uma segunda vez em SQL criaria
+    duas fontes que divergem em silencio -- o defeito que a TEC-146 gastou uma
+    card inteira consertando. O preco e duas consultas por candidato devido, e
+    esses sao poucos por construcao: so quem tem temperatura, calou ha mais de
+    duas horas, ainda nao esgotou e tem tentativa vencida agora.
 
     Um `registrar_followup` que devolve `None` significa que outra varredura
     chegou primeiro (o `ON CONFLICT DO NOTHING` absorveu). Nao e erro e nao
@@ -180,6 +177,20 @@ async def sweep_followups(
                 continue
 
             if await esta_em_optout(
+                session,
+                channel=candidato.channel,
+                conversation_key=candidato.conversation_key,
+            ):
+                continue
+
+            # TEC-179, RN-16.4: nenhuma automacao dispara em conversa que um
+            # corretor assumiu. A guarda da porta de saida (`outbound/port.py`)
+            # barraria o envio de qualquer jeito, mas so DEPOIS de esta funcao
+            # registrar a tentativa em `followups`, que e append-only. Sem a
+            # checagem aqui, uma conversa silenciada acumularia tentativas que
+            # nunca sairam, e o antispam da RN-13.1 as contaria contra o lead
+            # quando a conversa fosse devolvida.
+            if await esta_silenciada(
                 session,
                 channel=candidato.channel,
                 conversation_key=candidato.conversation_key,

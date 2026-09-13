@@ -36,7 +36,7 @@ TEXTO_DO_AVISO_DE_ERRO = (
 )
 
 # "skipped" e deste modulo -- claim recusado ou a mensagem sumiu entre o claim
-# e a busca -- os outros sete vem do turno (Task 6, Literal de proposito: ver
+# e a busca -- os outros nove vem do turno (Task 6, Literal de proposito: ver
 # `ResultadoDoTurno`).
 ResultadoDoProcessamento = Literal["skipped"] | ResultadoDoTurno
 

@@ -172,6 +172,10 @@ TABELAS = (
     # corretor de um teste colidir com o do proximo, e a falha so apareceria a
     # partir do segundo teste do arquivo sem o truncate.
     "corretores",
+    # TEC-179. Mutavel, como `handoffs`: o UNIQUE por (channel,
+    # conversation_key) faz a conversa de um teste bloquear o assumir do
+    # proximo, e a falha apareceria so a partir do segundo teste do arquivo.
+    "atendimento_humano",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
