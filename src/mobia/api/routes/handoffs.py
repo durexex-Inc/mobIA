@@ -29,24 +29,14 @@ async def regenerar(handoff_id: uuid.UUID, _: None = Depends(exigir_admin)) -> d
 
     gravou = await gerar_resumo(session_factory, redator=RedatorAnthropic(), handoff_id=handoff_id)
     if not gravou:
-        # 404 cobre o handoff que nao existe. O 502 nao cobre toda excecao do
-        # provedor -- uma excecao real (APIError, timeout) escapa de
-        # `gerar_resumo`, que so captura ResumoDeHandoffInvalido, e vira HTTP
-        # 500; o que chega aqui como False e so a resposta bem formada que
-        # reprova em `validar` (bloco ausente, fora de ordem, ou acima do
-        # limite mesmo apos a compressao). `gerar_resumo` devolve o mesmo
-        # False tambem para o handoff que sumiu (ver a docstring de la), e
-        # distingui-los aqui exige consultar o banco depois: se a linha
-        # existe, a falha foi do redator, e nao do handoff.
-        async with session_factory() as session:
-            existe = (
-                await session.execute(select(Handoff.id).where(Handoff.id == handoff_id))
-            ).scalar_one_or_none()
-        if existe is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="handoff nao existe")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="resumo nao pode ser gerado"
-        )
+        # Desde a TEC-176, `gerar_resumo` so devolve False quando o dossie
+        # esta ausente (RN-15.4: o corretor nunca fica sem resumo). Uma
+        # resposta invalida do redator e qualquer excecao do provedor agora
+        # caem no template deterministico e gravam -- ja nao ha mais "resposta
+        # bem formada que reprova em validar()" para separar de um 404 aqui.
+        # O ramo 502 que existia para essa distincao deixou de ser
+        # alcancavel; ver a Task 3 (TEC-176) e `test_rota_de_resumo.py`.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="handoff nao existe")
 
     async with session_factory() as session:
         linha = (
