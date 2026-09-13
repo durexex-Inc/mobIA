@@ -90,9 +90,19 @@ class Handoff(Base):
     resumo_gerado_em: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Qual modelo escreveu. Mesmo papel do `modelo` de `conversation_summaries`:
-    # quando a saida piorar, e por ele que se descobre o que mudou.
+    # Qual modelo escreveu. Nulo quando o resumo veio do template -- nenhum
+    # modelo o escreveu, e e `resumo_fallback` que diz por que.
     resumo_modelo: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # RN-15.4. Nasce FALSO -- verdadeiro faria todo handoff nascer marcado
+    # como simplificado, e o painel mostraria a fila inteira como degradada
+    # antes mesmo de a geracao rodar. "Ainda nao gerei" nao e contingencia.
+    # `gravar_resumo` grava esta coluna nos dois sentidos: um handoff que caiu
+    # no template e depois foi regenerado com sucesso precisa ver a marca
+    # LIMPA, ou o painel mostraria "simplificado" sobre um texto redigido.
+    resumo_fallback: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     @validates("resumo")
     def _recusar_texto_claro(self, coluna: str, valor: object) -> object:

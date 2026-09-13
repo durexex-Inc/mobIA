@@ -55,8 +55,15 @@ async def gerar_resumo(
         return False
 
     async with session_factory() as session:
+        # fallback=False: este caminho so chega aqui quando `redator.redigir`
+        # teve sucesso -- a Task 3 (TEC-176) e quem ensina esta funcao a cair
+        # no template e gravar fallback=True.
         await gravar_resumo(
-            session, handoff_id=handoff_id, texto=gerado.texto, modelo=gerado.modelo
+            session,
+            handoff_id=handoff_id,
+            texto=gerado.texto,
+            modelo=gerado.modelo,
+            fallback=False,
         )
         await session.commit()
 

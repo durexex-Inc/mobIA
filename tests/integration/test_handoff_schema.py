@@ -142,3 +142,21 @@ async def test_as_colunas_da_notificacao_nascem_com_o_default_certo(
     linha = (await session.execute(select(Handoff).where(Handoff.id == registro.id))).scalar_one()
     assert linha.notificado_em is None
     assert linha.aviso_manual_pendente is False
+
+
+async def test_resumo_fallback_nasce_falso(session: AsyncSession) -> None:
+    """Falso e nao verdadeiro: o estado "ainda nao gerei" nao e contingencia.
+
+    Com default verdadeiro, todo handoff nasceria marcado como simplificado, e
+    o painel da E8 mostraria a fila inteira como degradada.
+    """
+    registro = await registrar_handoff(
+        session,
+        channel="whatsapp",
+        conversation_key="5511911112222",
+        gatilho=Gatilho.LEAD_QUENTE,
+    )
+    await session.commit()
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == registro.id))).scalar_one()
+    assert linha.resumo_fallback is False
