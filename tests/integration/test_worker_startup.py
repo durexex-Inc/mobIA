@@ -42,6 +42,7 @@ async def test_startup_sobe_com_token_configurado(
     assert "resumidor" in ctx
     assert "contador" in ctx
     assert "agendador" in ctx
+    assert "reenfileirador" in ctx
 
 
 def _producao(monkeypatch: pytest.MonkeyPatch) -> None:

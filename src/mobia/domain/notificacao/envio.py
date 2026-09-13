@@ -25,6 +25,15 @@ from mobia.infra.crypto import DecryptionError, decrypt
 
 log = structlog.get_logger(__name__)
 
+# Mora aqui, e nao em `workers/jobs/notificar.py` (onde nasceu na TEC-177),
+# porque `domain/handoff/recuperacao.py` (TEC-279) precisa da constante para
+# reenfileirar este job pelo mesmo `_job_id` -- e nenhum modulo de
+# `src/mobia/domain/` importa `mobia.workers` hoje; a direcao e sempre a
+# inversa. Mesma razao de `GERAR_RESUMO_JOB` morar em
+# `domain/handoff/agendador.py`. `workers/jobs/notificar.py` importa esta
+# constante daqui, para o nome do job ARQ continuar unico.
+NOTIFICAR_JOB = "notificar_corretor"
+
 # O `kind` do aviso ao lead. Chaveado na ULTIMA mensagem DO LEAD da conversa, e
 # nao no handoff: a UNIQUE (message_id, kind) de `outbound_dispatches` da a
 # deduplicacao, e a guarda de opt-out de `GuardedOutbound` vem junto -- um lead
@@ -211,10 +220,14 @@ async def notificar(
             # `notificado_em` preenchido E `aviso_manual_pendente` ainda
             # verdadeiro -- as duas dizendo coisas incompativeis ao mesmo
             # tempo. A TEC-178 chegou e NAO le este par: ela escala por
-            # `status` e `sla_limite_em`. Entao o unico leitor previsto
-            # destas duas colunas continua sendo o painel da E8, que nao
-            # existe -- manter as duas coerentes e disciplina paga
-            # adiantado, nao requisito de quem le hoje.
+            # `status` e `sla_limite_em`. Mas a TEC-279 le, sim:
+            # `recuperar_sem_prazo` (`domain/handoff/recuperacao.py`) so
+            # reenfileira um handoff PENDENTE quando `notificado_em IS NULL`
+            # E `aviso_manual_pendente = false` -- o mesmo par que este bloco
+            # mantem coerente. Manter as duas coerentes deixou de ser
+            # disciplina paga adiantado: e requisito de quem le hoje, porque
+            # um `aviso_manual_pendente` verdadeiro por engano tira da
+            # selecao dela um handoff que devia entrar.
             await session.execute(
                 update(Handoff)
                 .where(Handoff.id == handoff_id)

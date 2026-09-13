@@ -7,6 +7,7 @@ from mobia.app.logging import configure_logging
 from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
 from mobia.domain.handoff.agendador import AgendadorArq
+from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
 from mobia.domain.notificacao.canais import EmailRegistrado, WhatsAppRegistrado
 from mobia.domain.outbound.whatsapp import WhatsAppOutbound
@@ -83,6 +84,10 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["moderador"] = ModeradorAnthropic()
     ctx["redator"] = RedatorAnthropic()
     ctx["agendador"] = AgendadorArq(ctx["redis"])
+    # Mesmo `ctx["redis"]` do `agendador` acima -- ver o docstring do
+    # `startup` no topo do modulo: o ARQ ja o gravou antes deste hook, e um
+    # segundo pool seria redundante.
+    ctx["reenfileirador"] = ReenfileiradorArq(ctx["redis"])
     # Os dois adaptadores de `canais.py` REGISTRAM e nao entregam -- ver o
     # docstring do modulo. E' o `startup` que decide a implementacao, no mesmo
     # raciocinio de `outbound`/`redator`/etc acima; o teste troca a chave sem
@@ -139,7 +144,8 @@ class WorkerSettings:
         # e o que ABRE espaco para a duplicata, nao o que a impede -- e a L3
         # do desenho, declarada e nao corrigida (ver o comentario do `_job_id`
         # em `workers/jobs/gerar_resumo.py`). Nao entra em `cron_jobs`: quem
-        # dispara este job e sempre `gerar_resumo`, nunca o relogio.
+        # dispara este job e `gerar_resumo` ao terminar, ou `recuperar_sem_prazo`
+        # pela varredura -- nunca um `cron` deste job.
         func(notificar_corretor, keep_result=0),
         # `keep_result=0` pela mesma razao do `WorkerSettings.keep_result` da
         # classe (ver o docstring dela): o resultado deste job (um `int`) nao

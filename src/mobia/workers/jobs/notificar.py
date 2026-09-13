@@ -3,9 +3,12 @@
 import uuid
 from typing import Any
 
+# A constante mudou de casa para `envio.py` na TEC-279 (comentario la explica
+# o porque); o `as NOTIFICAR_JOB` e reexportacao deliberada -- e o que
+# `workers/jobs/gerar_resumo.py` ainda importa daqui -- e evita o F401 de
+# "importado e nao usado" que um import comum levaria.
+from mobia.domain.notificacao.envio import NOTIFICAR_JOB as NOTIFICAR_JOB
 from mobia.domain.notificacao.envio import notificar
-
-NOTIFICAR_JOB = "notificar_corretor"
 
 
 async def notificar_corretor(ctx: dict[str, Any], handoff_id: str) -> str:
@@ -13,8 +16,9 @@ async def notificar_corretor(ctx: dict[str, Any], handoff_id: str) -> str:
 
     Os canais e o `outbound` vem do `ctx`, no mesmo molde de `gerar_resumo`: e
     o `startup` do worker que decide a implementacao, e o teste troca a
-    decisao sem tocar no job. Este job nunca e disparado por relogio -- so
-    `gerar_resumo` o enfileira, ao terminar, com ou sem resumo gravado.
+    decisao sem tocar no job. Alem de `gerar_resumo`, `recuperar_sem_prazo`
+    (TEC-279) o reenfileira, pelo mesmo `_job_id` -- e essa via e disparada
+    pelo cron de `sweep_sla`.
     """
     aceitou = await notificar(
         ctx["session_factory"],

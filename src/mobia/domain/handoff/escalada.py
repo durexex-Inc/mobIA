@@ -40,7 +40,8 @@ async def escalar_vencidos(
     significa "ainda nao notificado" ou "nao havia a quem cobrar" (o handoff
     sem destinatario ja nasce ESCALADO na notificacao da TEC-177, com
     `sla_limite_em` nulo para sempre) -- NUNCA "prazo zero". Um handoff sem
-    prazo nao pode ser varrido.
+    prazo nao pode ser varrido por esta -- quem varre esse caso e a rede
+    irma, `recuperar_sem_prazo` (`domain/handoff/recuperacao.py`, TEC-279).
 
     **A corrida real, e a razao de o UPDATE repetir a condicao do SELECT.** A
     rota de aceite (Task 6), e desde a TEC-179 tambem `assumir`
