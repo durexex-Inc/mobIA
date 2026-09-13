@@ -381,6 +381,48 @@ async def test_telefone_so_espaco_e_422(app_com_token) -> None:
     assert resposta.status_code == 422
 
 
+async def test_cadastrar_com_gerente_true_cria_um_gerente(app_com_token) -> None:
+    """I3/Ruling R4 da revisao final: `gerente` vira cadastravel pela rota,
+    espelhando `plantao` (D7 do desenho)."""
+    resposta = await app_com_token.post(
+        "/api/v1/corretores",
+        json=CORPO | {"gerente": True},
+        headers={"X-Admin-Token": TOKEN},
+    )
+
+    assert resposta.status_code == 201
+    assert resposta.json()["gerente"] is True
+
+
+async def test_cadastrar_sem_gerente_nasce_falso(app_com_token) -> None:
+    resposta = await app_com_token.post(
+        "/api/v1/corretores", json=CORPO, headers={"X-Admin-Token": TOKEN}
+    )
+
+    assert resposta.status_code == 201
+    assert resposta.json()["gerente"] is False
+
+
+async def test_editar_liga_e_desliga_gerente(app_com_token) -> None:
+    """D7: `gerente` e `plantao` nao sao exclusivos -- o PATCH liga e desliga
+    a flag como qualquer outro booleano do cadastro."""
+    cabecalho = {"X-Admin-Token": TOKEN}
+    criado = (await app_com_token.post("/api/v1/corretores", json=CORPO, headers=cabecalho)).json()
+    assert criado["gerente"] is False
+
+    ligado = await app_com_token.patch(
+        f"/api/v1/corretores/{criado['id']}", json={"gerente": True}, headers=cabecalho
+    )
+    assert ligado.status_code == 200
+    assert ligado.json()["gerente"] is True
+
+    desligado = await app_com_token.patch(
+        f"/api/v1/corretores/{criado['id']}", json={"gerente": False}, headers=cabecalho
+    )
+    assert desligado.status_code == 200
+    assert desligado.json()["gerente"] is False
+
+
 async def test_regioes_duplicadas_apos_dobra_sao_unificadas(app_com_token) -> None:
     """A dobra existe para casar "Zona Sul" e "zona sul" como uma regiao so."""
     resposta = await app_com_token.post(

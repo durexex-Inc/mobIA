@@ -9,7 +9,11 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
+from mobia.domain.context.models import LeadQualification
+from mobia.domain.corretores.models import Corretor
 from mobia.domain.handoff.models import Handoff
+from mobia.domain.handoff.sla import PRAZO_PADRAO_MINUTOS, PRAZO_QUENTE_MINUTOS, limite_de_aceite
+from mobia.domain.handoff.vocabulario import Status
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.notificacao.canais import FalhaDeCanal
@@ -167,7 +171,12 @@ async def test_falha_dos_dois_marca_aviso_manual(
 async def test_sem_destinatario_marca_aviso_manual(
     session, session_factory, semear_handoff_com_resumo
 ) -> None:
-    """D4: nenhum corretor cadastrado."""
+    """D4: nenhum corretor cadastrado.
+
+    Escala na hora (emenda E-02 da RN-16.3): sem corretor nao ha jornada
+    contra a qual contar um prazo, entao `sla_limite_em` fica nulo PARA
+    SEMPRE -- dar um prazo generico inventaria um dono que nao existe.
+    """
     handoff_id = await semear_handoff_com_resumo(resumo="texto")
 
     assert not await notificar(
@@ -179,6 +188,147 @@ async def test_sem_destinatario_marca_aviso_manual(
 
     linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
     assert linha.aviso_manual_pendente is True
+    assert linha.status == Status.ESCALADO
+    assert linha.sla_limite_em is None
+
+
+async def _semear_qualificacao(
+    session: AsyncSession, *, channel: str, conversation_key: str, temperatura: str | None
+) -> None:
+    session.add(
+        LeadQualification(
+            channel=channel, conversation_key=conversation_key, temperatura=temperatura
+        )
+    )
+    await session.commit()
+
+
+# Jornada quase o dia inteiro (o CHECK `ck_corretores_jornada` proibe `fim=24`,
+# que nao e expressavel -- mesma borda de `followup_horario_fim`, ver
+# `app/config.py`). Existe para que os prazos de 15 min (QUENTE) e 240 min
+# (MORNO/nulo) caibam no MESMO dia relativo ao instante em que o teste roda,
+# na maioria das horas -- e para as poucas que nao cabem (perto de 23h), o
+# proprio `limite_de_aceite` resolve o estouro para o dia seguinte, e as
+# fronteiras `antes`/`depois` abaixo continuam validas porque a funcao e
+# monotona no instante de entrada.
+_JORNADA_QUASE_INTEIRA = (0, 23)
+
+
+async def _grava_sla_esperado(
+    handoff_id, session_factory, *, canais, temperatura: str | None
+) -> tuple[datetime, datetime]:
+    """Chama `notificar` e devolve os limites [antes, depois] do `sla_limite_em`.
+
+    `notificar` le `datetime.now(UTC)` por dentro -- o teste nao controla esse
+    relogio -- entao em vez de comparar por igualdade, calcula o mesmo
+    `limite_de_aceite` nas duas pontas do instante em que a chamada rodou.
+    `limite_de_aceite` e monotona nao-decrescente no `inicio` (mais cedo nunca
+    produz um limite mais tarde), entao o valor gravado tem de cair entre as
+    duas pontas, qualquer que seja a hora em que a suite rode.
+    """
+    antes = datetime.now(UTC)
+    await notificar(
+        session_factory, canais=canais, outbound=_OutboundFalso(), handoff_id=handoff_id
+    )
+    depois = datetime.now(UTC)
+
+    fuso = get_settings().fuso_de_envio
+    minutos = PRAZO_QUENTE_MINUTOS if temperatura == "QUENTE" else PRAZO_PADRAO_MINUTOS
+    inicio, fim = _JORNADA_QUASE_INTEIRA
+    limite_min = limite_de_aceite(
+        inicio=antes, minutos=minutos, jornada_inicio=inicio, jornada_fim=fim, fuso=fuso
+    )
+    limite_max = limite_de_aceite(
+        inicio=depois, minutos=minutos, jornada_inicio=inicio, jornada_fim=fim, fuso=fuso
+    )
+    return limite_min, limite_max
+
+
+async def test_handoff_de_lead_quente_grava_sla_de_quinze_minutos(
+    session: AsyncSession, session_factory, semear_handoff_com_resumo, semear_corretor
+) -> None:
+    """D2/emenda E-01 da RN-16.3: a temperatura vem de `lead_qualification`,
+    NUNCA do gatilho -- `semear_handoff_com_resumo` sempre abre com
+    `Gatilho.LEAD_QUENTE`, e mesmo assim so o registro QUENTE em
+    `lead_qualification` deveria produzir os 15 minutos.
+    """
+    canal, conversa = "whatsapp", "5511900000001"
+    await semear_corretor(
+        email="plantao@x.com",
+        plantao=True,
+        horario_inicio=_JORNADA_QUASE_INTEIRA[0],
+        horario_fim=_JORNADA_QUASE_INTEIRA[1],
+    )
+    handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=canal, conversa=conversa)
+    await _semear_qualificacao(
+        session, channel=canal, conversation_key=conversa, temperatura="QUENTE"
+    )
+
+    limite_min, limite_max = await _grava_sla_esperado(
+        handoff_id,
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        temperatura="QUENTE",
+    )
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.sla_limite_em is not None
+    assert limite_min <= linha.sla_limite_em <= limite_max
+
+
+async def test_handoff_de_lead_morno_grava_sla_de_quatro_horas(
+    session: AsyncSession, session_factory, semear_handoff_com_resumo, semear_corretor
+) -> None:
+    canal, conversa = "whatsapp", "5511900000002"
+    await semear_corretor(
+        email="plantao@x.com",
+        plantao=True,
+        horario_inicio=_JORNADA_QUASE_INTEIRA[0],
+        horario_fim=_JORNADA_QUASE_INTEIRA[1],
+    )
+    handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=canal, conversa=conversa)
+    await _semear_qualificacao(
+        session, channel=canal, conversation_key=conversa, temperatura="MORNO"
+    )
+
+    limite_min, limite_max = await _grava_sla_esperado(
+        handoff_id,
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        temperatura="MORNO",
+    )
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.sla_limite_em is not None
+    assert limite_min <= linha.sla_limite_em <= limite_max
+
+
+async def test_handoff_de_lead_sem_temperatura_grava_as_quatro_horas_padrao(
+    session: AsyncSession, session_factory, semear_handoff_com_resumo, semear_corretor
+) -> None:
+    """`temperatura` nula (linha anterior a TEC-151) conta como nao-QUENTE --
+    NUNCA como os 15 minutos do QUENTE.
+    """
+    canal, conversa = "whatsapp", "5511900000003"
+    await semear_corretor(
+        email="plantao@x.com",
+        plantao=True,
+        horario_inicio=_JORNADA_QUASE_INTEIRA[0],
+        horario_fim=_JORNADA_QUASE_INTEIRA[1],
+    )
+    handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=canal, conversa=conversa)
+    await _semear_qualificacao(session, channel=canal, conversation_key=conversa, temperatura=None)
+
+    limite_min, limite_max = await _grava_sla_esperado(
+        handoff_id,
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        temperatura=None,
+    )
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.sla_limite_em is not None
+    assert limite_min <= linha.sla_limite_em <= limite_max
 
 
 def _eventos_de_log(caplog, evento: str) -> list[dict]:
@@ -278,6 +428,59 @@ async def test_sucesso_apos_falha_anterior_limpa_aviso_manual_pendente(
     linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
     assert linha.notificado_em is not None
     assert linha.aviso_manual_pendente is False
+
+
+async def test_notificar_duas_vezes_nao_recalcula_o_sla(
+    session: AsyncSession, session_factory, semear_handoff_com_resumo, semear_corretor
+) -> None:
+    """Ruling R3 (I2 da revisao final): D1 -- "gravado uma vez e nao recalculado".
+
+    A retentativa e caminho declarado (L3 da TEC-177), nao hipotese: uma
+    segunda chamada de `notificar` sobre o MESMO handoff nao pode mover
+    `sla_limite_em`. A prova exige que um recalculo desse um valor DIFERENTE
+    do original -- senao a assercao passaria mesmo sem guarda nenhuma. Por
+    isso a jornada do corretor muda para uma janela hoje FECHADA
+    (`_janela_fechada_para_agora`, ja usada acima) entre as duas chamadas: se
+    a segunda chamada recalculasse, o novo limite so comecaria a contar na
+    proxima abertura -- um valor bem posterior ao gravado na primeira vez.
+    """
+    email_corretor = "plantao_recalculo@x.com"
+    await semear_corretor(
+        email=email_corretor,
+        plantao=True,
+        horario_inicio=_JORNADA_QUASE_INTEIRA[0],
+        horario_fim=_JORNADA_QUASE_INTEIRA[1],
+    )
+    handoff_id = await semear_handoff_com_resumo(resumo="texto")
+
+    assert await notificar(
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        outbound=_OutboundFalso(),
+        handoff_id=handoff_id,
+    )
+    primeira = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    sla_original = primeira.sla_limite_em
+    assert sla_original is not None
+
+    inicio_fechado, fim_fechado = _janela_fechada_para_agora()
+    await session.execute(
+        update(Corretor)
+        .where(Corretor.email == email_corretor)
+        .values(horario_inicio=inicio_fechado, horario_fim=fim_fechado)
+    )
+    await session.commit()
+
+    assert await notificar(
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        outbound=_OutboundFalso(),
+        handoff_id=handoff_id,
+    )
+
+    session.expire(primeira)
+    segunda = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert segunda.sla_limite_em == sla_original
 
 
 async def test_handoff_sem_resumo_notifica_mesmo_assim(

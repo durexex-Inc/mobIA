@@ -36,7 +36,7 @@ class Prioridade(StrEnum):
 
 
 class Status(StrEnum):
-    """Nesta card so PENDENTE e escrito. Ver o modelo."""
+    """CONCLUIDO ainda nao tem escritor (TEC-179). Ver o modelo."""
 
     PENDENTE = "PENDENTE"
     ACEITO = "ACEITO"

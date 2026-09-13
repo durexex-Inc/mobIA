@@ -58,9 +58,14 @@ class Handoff(Base):
     # contraria a RN-04.6.
     prioridade: Mapped[str] = mapped_column(String(8), nullable=False)
 
-    # Nasce e permanece PENDENTE nesta card. ACEITO/ESCALADO vem da TEC-178 e
-    # CONCLUIDO da TEC-179 -- o enum nasce completo porque mudar valor de enum
-    # depois custa migration, e o `IN` do CHECK e o unico lugar a mexer.
+    # Nasce PENDENTE (TEC-174). Desde a TEC-178 tres dos quatro valores tem
+    # escritor: ACEITO vem da rota de aceite (`api/routes/handoffs.py`), e
+    # ESCALADO vem de dois lugares -- `handoff/escalada.py`, quando o prazo
+    # vence, e `notificacao/envio.py`, quando nao ha destinatario nenhum a
+    # quem cobrar. CONCLUIDO segue sem escritor, e e a TEC-179.
+    #
+    # O enum nasceu completo na TEC-174 porque mudar valor de enum depois
+    # custa migration, e o `IN` do CHECK e o unico lugar a mexer.
     status: Mapped[str] = mapped_column(String(16), nullable=False)
 
     # FK para `corretores.id` desde a TEC-196. Continua NULAVEL, mas agora
@@ -132,6 +137,23 @@ class Handoff(Base):
     aviso_manual_pendente: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+
+    # Quando o prazo de aceite vence -- `handoff.sla.limite_de_aceite`, contado
+    # dentro da jornada do corretor DESTINATARIO. NULAVEL contra o "Sim" do
+    # modelo da secao 5 do SRS: a emenda E-01 da RN-16.3 explica que a jornada
+    # so e conhecida no job de notificacao (TEC-177), entao a coluna e gravada
+    # alguns segundos depois da criacao do handoff e fica nula nesse
+    # intervalo. Fica nula PARA SEMPRE no handoff sem destinatario, que escala
+    # na hora e nao tem prazo porque nao ha a quem cobrar (emenda E-02). Nulo
+    # significa "ainda nao notificado" ou "nao havia a quem cobrar" -- NUNCA
+    # "prazo zero". Ver a migration 0028 para o detalhe.
+    sla_limite_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Quando o corretor aceitou o handoff. Nulo ate a rota de aceite (TEC-178,
+    # Task 6) gravar -- ou seja, na maior parte da vida de um handoff: nao so
+    # todo PENDENTE, como ESCALADO e ate CONCLUIDO sem aceite formal tambem
+    # ficam sem este carimbo.
+    aceito_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

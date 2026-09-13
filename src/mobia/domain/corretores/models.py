@@ -65,6 +65,15 @@ class Corretor(Base):
     # plantao por turno.
     plantao: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
+    # A marcacao de quem recebe a escalada de SLA vencido (TEC-178, RN-16.3).
+    # Nasce FALSO pela mesma razao de `plantao`: verdadeiro faria todo
+    # corretor cadastrado virar gerente, e a fila de escalonamento trataria o
+    # cadastro inteiro como alvo de cobranca. **Independente de `plantao`, e
+    # de proposito** -- uma imobiliaria pequena tem a mesma pessoa nos dois
+    # papeis, e um CHECK de exclusividade inventaria regra que nem o SRS nem
+    # a RN-16.3 escrevem. Ver a migration 0028.
+    gerente: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
     # Desativar e isto, e nao apagar a linha: a FK de `handoffs` a referencia,
     # e o historico tem de sobreviver (D6).
     ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))

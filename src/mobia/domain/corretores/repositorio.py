@@ -57,6 +57,7 @@ class DadosDoCorretor:
     horario_fim: int
     capacidade_diaria: int
     plantao: bool
+    gerente: bool
 
 
 def _email_canonico(email: str) -> str:
@@ -109,6 +110,7 @@ CAMPOS_EDITAVEIS = frozenset(
         "horario_fim",
         "capacidade_diaria",
         "plantao",
+        "gerente",
         "ativo",
     }
 )
@@ -134,6 +136,7 @@ async def criar_corretor(session: AsyncSession, dados: DadosDoCorretor) -> Corre
         horario_fim=dados.horario_fim,
         capacidade_diaria=dados.capacidade_diaria,
         plantao=dados.plantao,
+        gerente=dados.gerente,
         ativo=True,
         criado_em=agora,
         atualizado_em=agora,

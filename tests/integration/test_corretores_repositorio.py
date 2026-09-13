@@ -27,6 +27,7 @@ def _dados(**sobrescritas: object) -> DadosDoCorretor:
         "horario_fim": 18,
         "capacidade_diaria": 4,
         "plantao": False,
+        "gerente": False,
     }
     return DadosDoCorretor(**(campos | sobrescritas))  # type: ignore[arg-type]
 
