@@ -381,10 +381,10 @@ async def _continuar_entrega(
     deixam de ser `apresentado_em < agora` e a conciliacao nao tem o que
     fechar. Com um carimbo novo, fechava as tres -- que era o defeito.
 
-    **Imovel que sumiu do catalogo entre as passadas entra em
-    `nao_entregues`** (D7): a conciliacao apaga a linha dele e o lead recebe o
-    que restou, sem aviso. A lista de pendentes fica com o que ele de fato
-    viu, que e a invariante que esta card existe para proteger.
+    **O ramo do imovel que sumiu do catalogo (D7) e defensivo: hoje ele nao
+    dispara**, porque a FK de `recomendacoes.imovel_id` impede que um imovel
+    deste lote seja apagado. O comentario no corpo diz por que ele fica assim
+    mesmo, e por que so os ainda NAO entregues podem entrar nele.
     """
     apresentado_em = lote[0].apresentado_em
     ids = [linha.imovel_id for linha in lote]
@@ -393,7 +393,30 @@ async def _continuar_entrega(
 
     fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)
     encontrados = {ficha.id for ficha in fichas}
-    sumiram = [imovel_id for imovel_id in ids if imovel_id not in encontrados]
+
+    # **Este ramo e defensivo e hoje NAO dispara** -- dizer o contrario seria a
+    # justificativa falsa que este repo trata como defeito. `recomendacoes.
+    # imovel_id` tem FK para `imoveis` sem `ON DELETE`, entao um imovel
+    # referenciado por linha deste lote nao pode ser apagado: todo id daqui tem
+    # linha em `imoveis` por construcao, e `fichas_do_catalogo` nao derruba
+    # nenhum. A D7 foi escrita para o caminho de `_apresentar`, onde os ids vem
+    # da busca vetorial e NAO de linhas com FK -- la o imovel some entre a
+    # busca e a entrega, e o ramo equivalente dispara de verdade.
+    #
+    # Fica porque a FK e que o torna inalcancavel, e ela pode mudar: no dia em
+    # que ganhar `ON DELETE CASCADE`, sem este ramo o lead receberia uma ficha
+    # a menos com a linha dela viva como pendente -- ordinal deslocado, que e
+    # exatamente o defeito que esta card existe para fechar.
+    #
+    # **So os ainda NAO entregues entram.** Um imovel cuja ficha ja saiu na
+    # passada anterior o lead VIU; manda-lo para `nao_entregues` faria a
+    # conciliacao apagar a linha dele e deslocar todo ordinal seguinte -- o
+    # mesmo defeito, entrando pela porta do conserto.
+    sumiram = [
+        linha.imovel_id
+        for linha in lote
+        if linha.imovel_id not in encontrados and linha.kind not in ja_reservados
+    ]
     if sumiram:
         # Mesmo criterio de nivel do `fichas_sumiram_do_catalogo` de
         # `_apresentar`: quem opera precisa saber QUAL imovel sumiu.
@@ -404,16 +427,35 @@ async def _continuar_entrega(
             imovel_ids_faltantes=[str(i) for i in sumiram],
         )
 
-    entrega = await _entregar_fichas(
-        session_factory,
-        message=message,
-        outbound=outbound,
-        fichas=fichas,
-        kinds=[kind_de[ficha.id] for ficha in fichas],
-        apresentado_em=apresentado_em,
-        prosa=None,
-        pular=ja_reservados,
-    )
+    try:
+        entrega = await _entregar_fichas(
+            session_factory,
+            message=message,
+            outbound=outbound,
+            fichas=fichas,
+            kinds=[kind_de[ficha.id] for ficha in fichas],
+            apresentado_em=apresentado_em,
+            prosa=None,
+            pular=ja_reservados,
+        )
+    except EnvioForaDaJanela as exc:
+        # Espelha o handler do turno normal, e a clausula precisa existir AQUI
+        # porque o desvio que chama esta funcao esta fora daquele `try`: sem
+        # ela a excecao sai crua de `executar_turno`, a linha vira FAILED, a
+        # varredura queima as tentativas restantes reentrando numa continuacao
+        # que nunca vai suceder, e o fim e handoff de erro para um corretor.
+        #
+        # E a janela fechar entre as passadas nao e hipotese remota: a
+        # retentativa e atrasada POR CONSTRUCAO -- ela depende da varredura.
+        # `_entregar_fichas` repropaga de proposito (ver o comentario dela) e
+        # quem converte em desfecho e o chamador; aqui o chamador e este.
+        log.warning(
+            "outbound.fora_da_janela",
+            channel=message.channel,
+            message_id=str(message.id),
+            reason=str(exc),
+        )
+        return "expirado"
 
     await conciliar_apresentacao(
         session_factory,
@@ -423,6 +465,41 @@ async def _continuar_entrega(
         nao_entregues=tuple(entrega.nao_entregues) + tuple(sumiram),
         houve_entrega=True,
     )
+
+    if entrega.entregues:
+        # Sem esta gravacao a apresentacao some da linha do tempo para sempre,
+        # e o dano nao e de auditoria: a protecao contra o turno SEGUINTE
+        # reapresentar estes mesmos imoveis E o texto gravado (D16 da TEC-162),
+        # nao exclusao por id. O docstring de `_apresentar` descreve o buraco
+        # por extenso.
+        #
+        # **So as legendas que ESTA passada entregou.** As da passada anterior
+        # sairam com ela; regrava-las duplicaria a fala do agente na linha do
+        # tempo. `_entregar_fichas` ja devolve so o que passou por `send` aqui
+        # -- o que `pular` deixou de fora nao entra em `legendas`.
+        #
+        # `MODELO_SEM_CHAMADA` pelo mesmo motivo de `_entregar_texto_fixo`:
+        # nesta passada nao houve chamada ao modelo. A legenda e montada por
+        # `legenda_de` a partir da ficha, e a prosa -- a unica parte que veio
+        # do modelo -- saiu com a ficha 1, na passada anterior. Com "" a
+        # telemetria abriria um `telemetry.unknown_model`.
+        recorder = MessageRecorder(session_factory)
+        await recorder.record_agent_message(
+            conversation_key=message.conversation_key,
+            channel=message.channel,
+            text="\n\n".join(entrega.legendas),
+            model=MODELO_SEM_CHAMADA,
+            # O rotulo de quem originou a apresentacao, e nao um valor novo:
+            # estas fichas saem da busca que o classificador fez na passada
+            # anterior. Um rotulo proprio partiria a MESMA apresentacao em dois
+            # valores de `subagent` para quem le a telemetria depois.
+            subagent=SUBAGENTE_CLASSIFICADOR,
+            tokens_in=0,
+            tokens_out=0,
+            latency_ms=0,
+            sender_external_id=message.recipient_external_id,
+            recipient_external_id=message.conversation_key,
+        )
 
     log.info(
         "turno.entrega_continuada",
@@ -2186,19 +2263,29 @@ async def _apresentar(
     inteira e impossivel e o desfecho e o mesmo de hoje.
 
     **Custo conhecido, e nao acidente: entrega parcial seguida de falha
-    retentavel perde o registro do que ja saiu.** `EnvioRetentavel` e
-    capturado logo abaixo, mas so para logar `entregues` e repropagar sem
-    mudar nada -- o desfecho continua passando por cima de
-    `record_agent_message`. Se a ficha 1 entregou e a 2 tomou um 5xx, a
-    reserva da 2 e liberada, a linha vira FAILED, o sweeper roda o turno
-    inteiro de novo, a posicao 1 e suprimida pela reserva que sobreviveu -- e
-    a legenda que o lead viu nunca e gravada na linha do tempo, por nenhuma
-    das duas tentativas. E exatamente o dano que a D16 existe para evitar,
-    entrando pela porta da falha parcial; a consequencia pratica e o turno
-    seguinte poder reapresentar aqueles imoveis. `EnvioForaDaJanela` depois de
-    uma ficha ter entrado abre o mesmo buraco. O log torna o caso visivel para
-    quem opera; nao torna o dado recuperavel -- a lacuna L1 do desenho registra
-    o custo por extenso, e a correcao de verdade e a mesma citada abaixo.
+    retentavel perde o registro do que ja saiu -- hoje so das fichas que esta
+    passada chegou a entregar.** `EnvioRetentavel` e capturado logo abaixo, mas
+    so para logar `entregues` e repropagar sem mudar nada -- o desfecho
+    continua passando por cima de `record_agent_message`. Se a ficha 1 entregou
+    e a 2 tomou um 5xx, a reserva da 2 e liberada e a linha vira FAILED com a
+    legenda da ficha 1 nao gravada.
+
+    **O que a varredura faz dali em diante mudou com a TEC-275**, e este
+    paragrafo dizia o contrario ate ela: o sweeper NAO roda mais o turno
+    inteiro de novo. O desvio no topo de `executar_turno` ve o lote com este
+    `message_id` e devolve `_continuar_entrega`, que pula a posicao 1 por
+    `pular` -- explicitamente, e nao por supressao da reserva sobrevivente --,
+    entrega as fichas 2 e 3 e GRAVA as legendas delas. O buraco encolheu para
+    a parte que saiu na passada que morreu: a legenda da ficha 1 continua sem
+    ser gravada por nenhuma das duas, porque a passada 1 morreu antes do
+    `record_agent_message` e a continuacao so grava o que ela propria
+    entregou. E o mesmo dano da D16, menor -- a consequencia pratica e o turno
+    seguinte poder reapresentar a ficha 1. O log torna o caso visivel para quem
+    opera; nao torna o dado recuperavel -- a lacuna L1 do desenho registra o
+    custo por extenso, e a correcao de verdade e a mesma citada abaixo.
+
+    `EnvioForaDaJanela` depois de uma ficha ter entrado abre o mesmo buraco, e
+    na continuacao ele e capturado la (desfecho "expirado"), nao aqui.
 
     Gravar as parciais antes de deixar a excecao sair mudaria o que um turno
     FAILED escreve na linha do tempo, no caminho de entrega que TODA conversa
