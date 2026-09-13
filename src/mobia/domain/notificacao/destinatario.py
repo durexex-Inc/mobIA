@@ -53,3 +53,29 @@ async def _corretor_ativo(session: AsyncSession, *, corretor_id: uuid.UUID) -> C
             select(Corretor).where(Corretor.id == corretor_id, Corretor.ativo.is_(True))
         )
     ).scalar_one_or_none()
+
+
+async def gerente_ativo(session: AsyncSession) -> Corretor | None:
+    """O gerente que recebe a escalada de um handoff sem aceite, ou `None`.
+
+    Espelha `destinatario_do_handoff`: mesma cascata de decisao, aplicada a
+    `gerente` em vez de `plantao`.
+
+    **O mais antigo entre varios gerentes**, por `criado_em` ascendente: e o
+    que nao muda quando alguem cadastra outro gerente. `ORDER BY criado_em
+    DESC` faria a escalada trocar de destinatario sozinha a cada cadastro, e
+    um lead cobrado hoje seria cobrado de outra pessoa amanha sem ninguem ter
+    decidido nada.
+
+    **Gerente inativo nao conta.** `None` significa "nao ha gerente
+    cadastrado" -- estado previsto deste sistema, nao erro -- e quem chama
+    decide o que fazer.
+    """
+    return (
+        await session.execute(
+            select(Corretor)
+            .where(Corretor.gerente.is_(True), Corretor.ativo.is_(True))
+            .order_by(Corretor.criado_em)
+            .limit(1)
+        )
+    ).scalar_one_or_none()

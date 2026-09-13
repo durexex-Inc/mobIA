@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
-from mobia.domain.notificacao.destinatario import destinatario_do_handoff
+from mobia.domain.notificacao.destinatario import destinatario_do_handoff, gerente_ativo
 
 CANAL = "whatsapp"
 CONVERSA = "5511911112222"
@@ -90,3 +90,63 @@ async def test_alocado_inativo_cai_para_o_plantao(session: AsyncSession, semear_
 
     assert escolhido is not None
     assert escolhido.id == plantao.id
+
+
+async def test_sem_gerente_nenhum_devolve_none(session: AsyncSession) -> None:
+    """A ausencia de gerente e estado previsto -- quem chama decide o resto."""
+    assert await gerente_ativo(session) is None
+
+
+async def test_com_um_gerente_devolve_ele(session: AsyncSession, semear_corretor) -> None:
+    gerente = await semear_corretor(email="gerente@x.com", gerente=True)
+
+    escolhido = await gerente_ativo(session)
+
+    assert escolhido is not None
+    assert escolhido.id == gerente.id
+
+
+async def test_com_dois_gerentes_devolve_o_mais_antigo(
+    session: AsyncSession, semear_corretor
+) -> None:
+    """O mais antigo e o que nao muda quando alguem cadastra outro gerente.
+
+    Cadastrado por ultimo mas com `criado_em` mais antigo -- se a cascata
+    usasse ordem de insercao, ou `ORDER BY criado_em DESC`, este teste
+    escolheria o gerente errado.
+    """
+    agora = datetime.now(UTC)
+    await semear_corretor(email="novo@x.com", gerente=True, criado_em=agora)
+    antigo = await semear_corretor(
+        email="antigo@x.com", gerente=True, criado_em=agora - timedelta(days=2)
+    )
+
+    escolhido = await gerente_ativo(session)
+
+    assert escolhido is not None
+    assert escolhido.id == antigo.id
+
+
+async def test_gerente_inativo_nao_conta(session: AsyncSession, semear_corretor) -> None:
+    await semear_corretor(email="gerente@x.com", gerente=True, ativo=False)
+
+    assert await gerente_ativo(session) is None
+
+
+async def test_gerente_e_plantao_sao_cascatas_independentes(
+    session: AsyncSession, semear_corretor
+) -> None:
+    """Um corretor pode ser gerente e plantao ao mesmo tempo (RN-16.3, D3).
+
+    As duas funcoes resolvem o mesmo corretor cada uma pela sua propria
+    coluna -- a prova de que uma cascata nao influencia a outra.
+    """
+    corretor = await semear_corretor(email="dobrado@x.com", plantao=True, gerente=True)
+
+    escolhido_plantao = await destinatario_do_handoff(session, handoff=await _handoff(session))
+    escolhido_gerente = await gerente_ativo(session)
+
+    assert escolhido_plantao is not None
+    assert escolhido_plantao.id == corretor.id
+    assert escolhido_gerente is not None
+    assert escolhido_gerente.id == corretor.id
