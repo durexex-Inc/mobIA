@@ -21,6 +21,7 @@ from mobia.domain.agente.models import Recomendacao
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.context.resumo import ResumoGerado
+from mobia.domain.corretores.models import Corretor
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -911,5 +912,47 @@ def semear_lead_completo(session: AsyncSession):
         )
         await session.commit()
         return registro.id
+
+    return _semear
+
+
+@pytest.fixture
+def semear_corretor(session: AsyncSession):
+    """Cria um `Corretor` direto no modelo, sem passar por `criar_corretor`.
+
+    O repositorio nao aceita `criado_em` -- ele sempre carimba com `agora` --,
+    e o teste dos dois plantoes (TEC-177) precisa fixar carimbos diferentes
+    para provar que a cascata escolhe o mais antigo. Por isso o modelo entra
+    direto, preenchendo os mesmos campos obrigatorios e CHECKs que
+    `criar_corretor` preenche (jornada, capacidade, especialidades, regioes).
+    """
+
+    async def _semear(
+        *,
+        email: str,
+        plantao: bool = False,
+        ativo: bool = True,
+        criado_em: datetime | None = None,
+    ) -> Corretor:
+        agora = criado_em if criado_em is not None else datetime.now(UTC)
+        corretor = Corretor(
+            id=uuid.uuid4(),
+            nome="Corretor de Teste",
+            email=email,
+            telefone="11999999999",
+            creci=None,
+            especialidades=["COMPRA"],
+            regioes_atuacao=["pinheiros"],
+            horario_inicio=9,
+            horario_fim=18,
+            capacidade_diaria=5,
+            plantao=plantao,
+            ativo=ativo,
+            criado_em=agora,
+            atualizado_em=agora,
+        )
+        session.add(corretor)
+        await session.commit()
+        return corretor
 
     return _semear
