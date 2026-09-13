@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
+from mobia.domain.corretores.models import Corretor
 from mobia.domain.messages.models import Base
 from mobia.infra.crypto import aad_de
 
@@ -65,8 +66,16 @@ class Handoff(Base):
     # FK para `corretores.id` desde a TEC-196. Continua NULAVEL, mas agora
     # por outra razao -- nao falta mais tabela alvo, falta quem aloque, e
     # alocar e a TEC-166.
+    #
+    # `ForeignKey(Corretor.id)` em vez da string "corretores.id": o alvo
+    # precisa estar no mesmo `MetaData` para o SQLAlchemy resolver a FK, e a
+    # string so funciona se ALGUEM MAIS ja tiver importado `Corretor` antes
+    # (o que a suite inteira faz por acidente). Sem o import explicito acima,
+    # `test_handoff_schema.py` reprova com `NoReferencedTableError` quando
+    # roda sozinho -- e "rodar o arquivo sozinho" e o proprio procedimento que
+    # este repo usa para separar flake de regressao.
     corretor_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("corretores.id"), nullable=True
+        PgUUID(as_uuid=True), ForeignKey(Corretor.id), nullable=True
     )
 
     gatilhos_adicionais: Mapped[list[str]] = mapped_column(
