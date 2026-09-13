@@ -1,8 +1,20 @@
 from datetime import UTC, datetime
 
-from mobia.domain.handoff.contingencia import TETO_DE_IMOVEIS, TEXTO_DE_CONTINGENCIA, montar
+import pytest
+
+from mobia.domain.handoff.contingencia import (
+    TETO_DE_IMOVEIS,
+    TETO_POR_LISTA_DE_ATENCAO,
+    TEXTO_DE_CONTINGENCIA,
+    montar,
+)
 from mobia.domain.handoff.dossie import Dossie, ImovelApresentado
-from mobia.domain.handoff.resumo import LIMITE_DE_CARACTERES, MARCADORES, validar
+from mobia.domain.handoff.resumo import (
+    LIMITE_DE_CARACTERES,
+    MARCADORES,
+    ResumoAcimaDoLimite,
+    validar,
+)
 
 QUANDO = datetime(2026, 9, 12, 14, 30, tzinfo=UTC)
 
@@ -63,9 +75,82 @@ def _vazio() -> Dossie:
     )
 
 
-def test_o_template_passa_no_validador_dos_seis_blocos() -> None:
-    """D3: a mesma estrutura dos dois modos, e o mesmo validador."""
-    assert validar(montar(_dossie())) == montar(_dossie()).strip()
+def test_um_campo_fora_de_qualquer_teto_ainda_faz_montar_levantar() -> None:
+    """D3, na direcao que prova algo: `montar` nao devolve texto truncado
+    em silencio quando o conteudo nao cabe -- ele levanta.
+
+    Depois do teto nas duas listas do bloco de pontos de atencao (revisao da
+    Task 1), um dossie no pior caso REALISTA -- respeitando os tamanhos de
+    coluna do banco (`regiao` e VARCHAR(120), por exemplo) -- ja cabe nos
+    1.500 por construcao; ver `test_o_pior_caso_combinado_ainda_cabe_no_limite`
+    logo abaixo. `Dossie` e um dataclass sem validacao de tamanho, porem, e
+    nao ha teto hoje sobre o comprimento de um campo de valor unico como
+    `regiao` -- so sobre quantos itens as listas mostram. Um valor unico
+    absurdamente longo (impossivel vindo do banco, possivel neste teste)
+    ainda estoura o limite, e e esse caminho que este teste prova que
+    continua protegido.
+    """
+    with pytest.raises(ResumoAcimaDoLimite):
+        montar(_dossie(regiao="x" * 2000))
+
+
+def test_o_sufixo_de_temperatura_forcada_e_o_mesmo_texto_literal() -> None:
+    """Regressao do Critical da revisao: `renderizar` e `montar` reescreviam
+    a mesma expressao ("(forcada por ...)") cada um por conta propria, sem
+    teste nenhum que afirmasse o texto literal -- so o tamanho e o
+    validar(). Depois da correcao os dois chamam `forcada_por` de
+    `dossie.py`; este teste afirma o texto exato, para a proxima divergencia
+    quebrar em vez de passar calada."""
+    texto = montar(_dossie(temperatura_forcada_motivos=("PEDIU_VISITA", "FALOU_EM_PROPOSTA")))
+
+    assert "temperatura: QUENTE (forcada por PEDIU_VISITA, FALOU_EM_PROPOSTA)" in texto
+
+
+def test_o_pior_caso_combinado_ainda_cabe_no_limite() -> None:
+    """D6, com os DOIS pontos que a revisao da Task 1 achou sem teto ao
+    mesmo tempo: a lista de imoveis (ja tinha teto) E as duas listas do
+    bloco de pontos de atencao (`campos_recusados`,
+    `perguntados_sem_resposta`) -- que sao `ARRAY(String(32))` sem
+    cardinalidade maxima no banco. Este e o pior caso plausivel que a coluna
+    permite: 50 itens de 32 caracteres em cada lista, e 40 imoveis com a
+    linha mais longa que `imoveis()` escreve."""
+
+    def item_de_32_caracteres(prefixo: str, i: int) -> str:
+        # 32 e o teto real da coluna (`ARRAY(String(32))`); o pior caso usa
+        # o tamanho maximo que o banco aceita por item.
+        return f"{prefixo}{i:02d}".ljust(32, "x")[:32]
+
+    muitos_imoveis = tuple(
+        ImovelApresentado(f"AP-{i:03d}", 50_000_000 + i, "aluguel", "DESCARTOU", "PRECO")
+        for i in range(40)
+    )
+    prefixo_recusado = "recusado_"
+    prefixo_pergunta = "pergunta_"
+    muitos_campos = tuple(item_de_32_caracteres(prefixo_recusado, i) for i in range(50))
+    muitas_perguntas = tuple(item_de_32_caracteres(prefixo_pergunta, i) for i in range(50))
+
+    texto = montar(
+        _dossie(
+            imoveis=muitos_imoveis,
+            regiao="Vila Madalena, Pinheiros, Perdizes e adjacencias",
+            campos_recusados=muitos_campos,
+            perguntados_sem_resposta=muitas_perguntas,
+            score_fatores=(
+                ("completude", 25),
+                ("urgencia", 20),
+                ("catalogo", 12),
+                ("engajamento", 10),
+                ("capacidade", 5),
+            ),
+            temperatura_forcada_motivos=("PEDIU_VISITA", "FALOU_EM_PROPOSTA"),
+        )
+    )
+
+    assert len(texto) <= LIMITE_DE_CARACTERES
+    assert validar(texto)
+    assert "50 no total" in texto
+    assert texto.count(prefixo_recusado) == TETO_POR_LISTA_DE_ATENCAO
+    assert texto.count(prefixo_pergunta) == TETO_POR_LISTA_DE_ATENCAO
 
 
 def test_o_template_se_identifica_como_tal() -> None:

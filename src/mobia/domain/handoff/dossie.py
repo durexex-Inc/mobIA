@@ -166,13 +166,39 @@ def imoveis(dossie: Dossie, teto: int | None = None) -> str:
     return "\n".join(linhas)
 
 
-def pontos_de_atencao(dossie: Dossie) -> str:
-    """O bloco (e), montado do que existe. Ver o cabecalho do modulo."""
+def _lista_com_teto(rotulo: str, itens: tuple[str, ...], teto: int | None) -> str:
+    """Uma lista rotulada, com corte opcional e o total dito por extenso.
+
+    `campos_recusados` e `perguntados_sem_resposta` sao `ARRAY(String(32))`
+    sem cardinalidade maxima (ver `context/models.py`) -- ao contrario de
+    `motivo_descarte`, que vem de um enum pequeno (`CategoriaDescarte`) e por
+    isso nunca precisou de teto. Sem corte, um lead com muitos campos
+    recusados estouraria os 1.500 caracteres da RN-15.2 do mesmo jeito que a
+    lista de imoveis estourava antes de `imoveis()` ganhar `teto`.
+    """
+    if teto is not None and len(itens) > teto:
+        mostrados = ", ".join(itens[:teto])
+        return f"{rotulo} ({len(itens)} no total, primeiros {teto}): {mostrados}"
+    return f"{rotulo}: {', '.join(itens)}"
+
+
+def pontos_de_atencao(dossie: Dossie, teto: int | None = None) -> str:
+    """O bloco (e), montado do que existe. Ver o cabecalho do modulo.
+
+    `teto` corta `campos_recusados` e `perguntados_sem_resposta`, no mesmo
+    papel que tem em `imoveis()`: `renderizar` chama sem `teto` porque o
+    modelo recebe a lista inteira; o resumo de contingencia (TEC-176) chama
+    com `teto` porque tem 1.500 caracteres de orcamento. Motivos de descarte
+    nao precisam de corte -- vem de um enum pequeno, entao a lista deduplicada
+    ja e curta independente de quantos imoveis existirem.
+    """
     partes = []
     if dossie.campos_recusados:
-        partes.append(f"recusou informar: {', '.join(dossie.campos_recusados)}")
+        partes.append(_lista_com_teto("recusou informar", dossie.campos_recusados, teto))
     if dossie.perguntados_sem_resposta:
-        partes.append(f"perguntado e sem resposta: {', '.join(dossie.perguntados_sem_resposta)}")
+        partes.append(
+            _lista_com_teto("perguntado e sem resposta", dossie.perguntados_sem_resposta, teto)
+        )
 
     descartes = sorted({i.motivo_descarte for i in dossie.imoveis if i.motivo_descarte})
     if descartes:
@@ -189,6 +215,19 @@ def fatores(dossie: Dossie) -> str:
     return ", ".join(f"{nome} {valor}" for nome, valor in dossie.score_fatores)
 
 
+def forcada_por(dossie: Dossie) -> str:
+    """O sufixo "(forcada por ...)" da temperatura, ou vazio.
+
+    Promovido de dentro de `renderizar` (TEC-176, revisao da Task 1): existia
+    so ali ate o resumo de contingencia precisar do mesmo sufixo e reescreve-
+    lo por conta propria -- exatamente o defeito que este modulo existe para
+    evitar, e que a TEC-146 gastou uma card inteira consertando.
+    """
+    if not dossie.temperatura_forcada_motivos:
+        return ""
+    return f" (forcada por {', '.join(dossie.temperatura_forcada_motivos)})"
+
+
 def renderizar(dossie: Dossie) -> str:
     """O dossie em texto, que e tudo o que o modelo recebe.
 
@@ -196,11 +235,7 @@ def renderizar(dossie: Dossie) -> str:
     valor ausente de um valor zero, e prosa corrida apaga essa diferenca --
     que e exatamente o erro que a RN-15.3 existe para impedir.
     """
-    forcada = (
-        f" (forcada por {', '.join(dossie.temperatura_forcada_motivos)})"
-        if dossie.temperatura_forcada_motivos
-        else ""
-    )
+    forcada = forcada_por(dossie)
     return "\n".join(
         (
             "ORIGEM",

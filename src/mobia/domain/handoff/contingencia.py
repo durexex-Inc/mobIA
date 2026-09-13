@@ -18,6 +18,7 @@ from mobia.domain.handoff.dossie import (
     Dossie,
     faixa,
     fatores,
+    forcada_por,
     imoveis,
     isoformat_ou_none,
     ou_ausente,
@@ -36,21 +37,37 @@ TEXTO_DE_CONTINGENCIA = (
     "registrados, sem redacao]"
 )
 
-# Teto da lista de "## Imoveis apresentados".
+# Teto da lista de "## Imoveis apresentados" e teto de cada lista do bloco
+# "## Pontos de atencao" (`campos_recusados` e `perguntados_sem_resposta`).
 #
-# Como se chegou a 7: montei o texto do pior caso do teste
-# `test_um_dossie_grande_ainda_cabe_no_limite` -- 40 imoveis com todos os
-# campos preenchidos (reacao "DESCARTOU" e motivo_descarte "PRECO" em todos,
-# a linha mais longa que `imoveis()` escreve por item), mais regiao,
-# campos_recusados, perguntados_sem_resposta e score_fatores no maior
-# tamanho plausivel -- e medi `len(montar(...))` variando o teto:
+# Os dois foram medidos JUNTOS, e nao um de cada vez: um primeiro corte so
+# stressando `imoveis` (a task original) achou TETO_DE_IMOVEIS = 7 sozinho,
+# mas a revisao da Task 1 apontou que `campos_recusados` e
+# `perguntados_sem_resposta` sao `ARRAY(String(32))` sem cardinalidade
+# maxima -- ver `context/models.py` --, e sem corte elas estouravam os 1.500
+# do mesmo jeito que a lista de imoveis estourava antes de ganhar teto.
+# `motivo_descarte` nao entra nessa conta: vem de `CategoriaDescarte`, um
+# enum pequeno, entao a lista deduplicada em `pontos_de_atencao` ja e curta
+# sozinha, corte ou nao.
 #
-#   teto  6 -> 1392   teto  7 -> 1448   teto  8 -> 1504   teto 10 -> 1617
+# Pior caso medido: 40 imoveis com a linha mais longa que `imoveis()`
+# escreve (reacao "DESCARTOU", motivo "PRECO"), mais `campos_recusados` e
+# `perguntados_sem_resposta` com 50 itens de 32 caracteres cada -- o maximo
+# que a coluna aceita por item --, mais regiao, score_fatores e motivos de
+# temperatura forcada no maior tamanho plausivel. Variando os dois tetos
+# juntos (`len(contingencia.montar(pior_caso))`, com os modulos reais):
 #
-# 8 ja estoura os 1.500 da RN-15.2 nesse cenario; 7 e o maior valor que ainda
-# cabe, com 52 caracteres de folga. Nao e arredondado por estetica: e o maior
-# testado que passa.
-TETO_DE_IMOVEIS = 7
+#   imoveis=7 lista=1 -> 1498   imoveis=6 lista=1 -> 1442
+#   imoveis=5 lista=1 -> 1386   imoveis=5 lista=2 -> 1454
+#   imoveis=4 lista=2 -> 1398   imoveis=4 lista=3 -> 1466
+#
+# `imoveis=7, lista=1` cabe, mas com 2 caracteres de folga -- frouxo demais
+# para sobreviver a qualquer ajuste futuro de texto. `imoveis=5, lista=2` da
+# 46 caracteres de folga (1454) e mostra pelo menos dois itens em cada lista
+# de atencao, em vez de um so; foi a escolha, trocando dois imoveis visiveis
+# por uma folga que nao desaparece no primeiro commit seguinte.
+TETO_DE_IMOVEIS = 5
+TETO_POR_LISTA_DE_ATENCAO = 2
 
 
 def montar(dossie: Dossie) -> str:
@@ -60,11 +77,7 @@ def montar(dossie: Dossie) -> str:
     isto e o que sobra para o corretor, e por isso nao pode falhar por sua
     vez. `validar()` e o mesmo dos dois modos -- ver o cabecalho do modulo.
     """
-    forcada = (
-        f" (forcada por {', '.join(dossie.temperatura_forcada_motivos)})"
-        if dossie.temperatura_forcada_motivos
-        else ""
-    )
+    forcada = forcada_por(dossie)
     texto = "\n".join(
         (
             TEXTO_DE_CONTINGENCIA,
@@ -95,7 +108,7 @@ def montar(dossie: Dossie) -> str:
             imoveis(dossie, teto=TETO_DE_IMOVEIS),
             "",
             MARCADORES[4],
-            pontos_de_atencao(dossie),
+            pontos_de_atencao(dossie, teto=TETO_POR_LISTA_DE_ATENCAO),
             "",
             # Apresenta FATOS -- gatilho, etiqueta, prioridade --, nunca uma
             # recomendacao. Recomendar e julgamento, e e o que o resumo
