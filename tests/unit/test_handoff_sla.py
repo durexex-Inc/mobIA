@@ -125,7 +125,7 @@ def test_o_limite_devolvido_e_aware_e_em_utc() -> None:
     """`tzinfo is not None` nao provaria UTC -- `limite_de_aceite` recusa
     `inicio` ingenuo, entao o resultado e sempre aware, mesmo trocando o
     `.astimezone(UTC)` final por `.astimezone(fuso)`. `utcoffset() ==
-    timedelta(0)` e a asserção que so passa mesmo em UTC.
+    timedelta(0)` e a assercao que so passa mesmo em UTC.
     """
     limite = limite_de_aceite(
         inicio=datetime(2026, 9, 15, 13, 0, tzinfo=UTC),

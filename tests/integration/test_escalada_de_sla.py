@@ -127,7 +127,7 @@ async def test_escalada_nao_vaza_o_resumo_no_log_nem_no_canal(
 ) -> None:
     """M9 da revisao final: o precedente e `test_resumir_loga_metricas_sem_conteudo`
     (`tests/unit/test_resumo.py`). Hoje `escalar_vencidos` nao decifra o
-    resumo e o `corpo` da cobrança e texto fixo -- mas nada testado impede
+    resumo e o `corpo` da cobranca e texto fixo -- mas nada testado impede
     que a proxima mao acrescente o resumo ao corpo ou ao log da escalada.
     """
     texto_do_resumo_do_lead = "## Quem e o lead\nfulano de tal, cpf 000.000.000-00"

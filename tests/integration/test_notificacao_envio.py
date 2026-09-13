@@ -438,7 +438,7 @@ async def test_notificar_duas_vezes_nao_recalcula_o_sla(
     A retentativa e caminho declarado (L3 da TEC-177), nao hipotese: uma
     segunda chamada de `notificar` sobre o MESMO handoff nao pode mover
     `sla_limite_em`. A prova exige que um recalculo desse um valor DIFERENTE
-    do original -- senao a asserção passaria mesmo sem guarda nenhuma. Por
+    do original -- senao a assercao passaria mesmo sem guarda nenhuma. Por
     isso a jornada do corretor muda para uma janela hoje FECHADA
     (`_janela_fechada_para_agora`, ja usada acima) entre as duas chamadas: se
     a segunda chamada recalculasse, o novo limite so comecaria a contar na

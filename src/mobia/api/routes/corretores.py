@@ -176,7 +176,7 @@ class CorretorEditado(BaseModel):
     @model_validator(mode="after")
     def _so_creci_aceita_nulo(self) -> "CorretorEditado":
         # `creci` e a UNICA coluna nulavel do cadastro (models.py): "informei
-        # que e nulo" so faz sentido nela. Nos outros dez campos, nulo nao e
+        # que e nulo" so faz sentido nela. Nos outros onze campos, nulo nao e
         # um valor -- e AUSENCIA de valor, e ausencia se expressa nao mandando
         # a chave. Sem esta checagem, `exclude_unset=True` mantem a chave
         # quando o cliente manda null explicito, e o repositorio normaliza
