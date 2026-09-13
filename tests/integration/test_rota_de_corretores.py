@@ -6,8 +6,10 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from mobia.api.routes.corretores import CorretorEditado
 from mobia.app.config import get_settings
 from mobia.app.main import create_app
+from mobia.domain.corretores.repositorio import CAMPOS_EDITAVEIS
 
 TOKEN = "token-de-teste-de-corretores"
 
@@ -258,3 +260,134 @@ async def test_editar_creci_para_nulo_limpa_o_campo(app_com_token) -> None:
 
     assert resposta.status_code == 200
     assert resposta.json()["creci"] is None
+
+
+async def test_editar_nome_para_nulo_e_422(app_com_token) -> None:
+    """`creci` e a unica coluna nulavel -- nos outros campos, nulo e recusado.
+
+    Sem isto, `PATCH {"nome": null}` respondia 200 e gravava a string
+    literal "None" (`str(None)` no repositorio, sem checagem).
+    """
+    cabecalho = {"X-Admin-Token": TOKEN}
+    criado = (await app_com_token.post("/api/v1/corretores", json=CORPO, headers=cabecalho)).json()
+
+    resposta = await app_com_token.patch(
+        f"/api/v1/corretores/{criado['id']}", json={"nome": None}, headers=cabecalho
+    )
+
+    assert resposta.status_code == 422
+
+
+async def test_editar_email_para_nulo_e_422(app_com_token) -> None:
+    """Sem isto, `PATCH {"email": null}` gravava "none" na coluna que e a
+    unica defesa contra corretor duplicado (D1 do desenho)."""
+    cabecalho = {"X-Admin-Token": TOKEN}
+    criado = (await app_com_token.post("/api/v1/corretores", json=CORPO, headers=cabecalho)).json()
+
+    resposta = await app_com_token.patch(
+        f"/api/v1/corretores/{criado['id']}", json={"email": None}, headers=cabecalho
+    )
+
+    assert resposta.status_code == 422
+
+
+async def test_editar_especialidades_para_nulo_e_422(app_com_token) -> None:
+    """Antes desta correcao, `[str(e) for e in None]` estourava TypeError e a
+    rota devolvia 500 em vez de 422."""
+    cabecalho = {"X-Admin-Token": TOKEN}
+    criado = (await app_com_token.post("/api/v1/corretores", json=CORPO, headers=cabecalho)).json()
+
+    resposta = await app_com_token.patch(
+        f"/api/v1/corretores/{criado['id']}", json={"especialidades": None}, headers=cabecalho
+    )
+
+    assert resposta.status_code == 422
+
+
+def test_campos_editaveis_cobre_todo_o_corretor_editado() -> None:
+    """`CorretorEditado` e `CAMPOS_EDITAVEIS` tem de concordar manualmente.
+
+    Sem esta amarra, acrescentar um campo ao modelo Pydantic sem tocar o
+    frozenset do repositorio produz `ValueError` (campo nao editavel) e a
+    rota devolve 500 em vez do 422/200 esperado -- mesmo genero de verdade
+    duplicada que `test_check_de_especialidades_cobre_todo_o_enum` amarra
+    para o vocabulario de especialidades.
+    """
+    assert set(CorretorEditado.model_fields) <= CAMPOS_EDITAVEIS
+
+
+async def test_campo_desconhecido_no_patch_e_422(app_com_token) -> None:
+    """Erro de digitacao (`horarioIncio`) nao pode ser engolido em silencio.
+
+    Antes de `extra="forbid"`, `model_dump(exclude_unset=True)` devolvia
+    `{}` para este corpo e a rota respondia 200 sem ter mudado nada -- o
+    mesmo defeito que o comentario de `CAMPOS_EDITAVEIS` diz que a lista
+    existe para evitar, reintroduzido uma camada acima pela rota HTTP.
+    """
+    cabecalho = {"X-Admin-Token": TOKEN}
+    criado = (await app_com_token.post("/api/v1/corretores", json=CORPO, headers=cabecalho)).json()
+
+    resposta = await app_com_token.patch(
+        f"/api/v1/corretores/{criado['id']}", json={"horarioIncio": 10}, headers=cabecalho
+    )
+
+    assert resposta.status_code == 422
+
+
+async def test_campo_desconhecido_no_cadastro_e_422(app_com_token) -> None:
+    resposta = await app_com_token.post(
+        "/api/v1/corretores",
+        json=CORPO | {"horarioIncio": 10},
+        headers={"X-Admin-Token": TOKEN},
+    )
+    assert resposta.status_code == 422
+
+
+async def test_regiao_acima_de_120_caracteres_e_422(app_com_token) -> None:
+    """O unico campo string cujo limite nao batia com a coluna (`String(120)`)."""
+    resposta = await app_com_token.post(
+        "/api/v1/corretores",
+        json=CORPO | {"regioesAtuacao": ["z" * 121]},
+        headers={"X-Admin-Token": TOKEN},
+    )
+    assert resposta.status_code == 422
+
+
+async def test_regiao_so_espaco_e_422(app_com_token) -> None:
+    """Passa o `min_length` da LISTA e o CHECK de cardinalidade; so a borda pega."""
+    resposta = await app_com_token.post(
+        "/api/v1/corretores",
+        json=CORPO | {"regioesAtuacao": ["   "]},
+        headers={"X-Admin-Token": TOKEN},
+    )
+    assert resposta.status_code == 422
+
+
+async def test_nome_so_espaco_e_422(app_com_token) -> None:
+    resposta = await app_com_token.post(
+        "/api/v1/corretores",
+        json=CORPO | {"nome": "   "},
+        headers={"X-Admin-Token": TOKEN},
+    )
+    assert resposta.status_code == 422
+
+
+async def test_telefone_so_espaco_e_422(app_com_token) -> None:
+    resposta = await app_com_token.post(
+        "/api/v1/corretores",
+        json=CORPO | {"telefone": "        "},
+        headers={"X-Admin-Token": TOKEN},
+    )
+    assert resposta.status_code == 422
+
+
+async def test_regioes_duplicadas_apos_dobra_sao_unificadas(app_com_token) -> None:
+    """A dobra existe para casar "Zona Sul" e "zona sul" como uma regiao so."""
+    resposta = await app_com_token.post(
+        "/api/v1/corretores",
+        json=CORPO | {"regioesAtuacao": ["Zona Sul", "zona sul"]},
+        headers={"X-Admin-Token": TOKEN},
+    )
+
+    assert resposta.status_code == 201
+    assert resposta.json()["regioesAtuacao"] == ["zona sul"]

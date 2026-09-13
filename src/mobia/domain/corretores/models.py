@@ -1,8 +1,8 @@
 """O corretor: a pessoa para quem o handoff aponta.
 
-TEC-196, RF-19 e RN-19.2. Ver `alembic/versions/0024_corretores.py` para o
-porque do contato em claro, do UNIQUE no e-mail e da FK que esta migration
-enfim acrescenta a `handoffs`.
+TEC-196, RF-19 e RN-19.2. Ver a migration da TEC-196 para o porque do
+contato em claro, do UNIQUE no e-mail e da FK que ela acrescenta a
+`handoffs`.
 """
 
 import uuid

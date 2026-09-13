@@ -38,9 +38,8 @@ def _e_email_duplicado(exc: IntegrityError) -> bool:
 class EmailJaCadastrado(Exception):
     """Ja existe corretor com este e-mail.
 
-    Excecao propria e nao IntegrityError cru porque a rota (proxima task)
-    precisa distinguir este caso (409) de qualquer outra falha de
-    integridade (500).
+    Excecao propria e nao IntegrityError cru porque a rota precisa distinguir
+    este caso (409) de qualquer outra falha de integridade (500).
     """
 
 
@@ -72,12 +71,23 @@ def _email_canonico(email: str) -> str:
 
 
 def _regioes_dobradas(regioes: list[str]) -> list[str]:
-    """A mesma dobra que produz `bairro_busca` no catalogo.
+    """A mesma dobra que produz `bairro_busca` no catalogo, sem repetir regiao.
 
-    Sem isto, "Zona Sul" e "zona sul" viram duas regioes e a alocacao de uma
-    card futura falha por acidente de digitacao em vez de por regra.
+    Sem a dobra, "Zona Sul" e "zona sul" viram duas regioes e a alocacao de
+    uma card futura falha por acidente de digitacao em vez de por regra. Sem
+    a deduplicacao que vem a seguir, as duas continuam sendo duas linhas --
+    so que agora identicas ("zona sul", "zona sul") -- e a dobra deixa de
+    cumprir o que promete. Preserva a ordem da primeira ocorrencia: nao ha
+    razao para reordenar o que o administrador digitou.
     """
-    return [dobrar(regiao) for regiao in regioes]
+    vistas: set[str] = set()
+    resultado: list[str] = []
+    for regiao in regioes:
+        dobrada = dobrar(regiao)
+        if dobrada not in vistas:
+            vistas.add(dobrada)
+            resultado.append(dobrada)
+    return resultado
 
 
 # O que `atualizar_corretor` aceita mudar. Existe para a funcao nao depender

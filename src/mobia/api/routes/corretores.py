@@ -41,26 +41,73 @@ from mobia.infra.db import get_sessionmaker
 router = APIRouter(prefix="/api/v1/corretores", tags=["corretores"])
 
 
+# Uma regiao, com o mesmo teto da coluna (`ARRAY(String(120))` em models.py).
+# Sem o limite por item, uma regiao com mais de 120 caracteres passa no
+# Pydantic e vira `DataError` no flush -- que nao e `IntegrityError`, escapa
+# do `except` do repositorio e vira 500 em vez de 422.
+_Regiao = Annotated[str, Field(min_length=1, max_length=120)]
+
+
+def _recusar_vazio_apos_strip(valor: str, campo: str) -> str:
+    """Recusa string que so vira vazia depois do `.strip()` da escrita.
+
+    `min_length` do Pydantic mede a string crua: "   " tem length 3 e passa.
+    O `.strip()` de `criar_corretor`/`atualizar_corretor` so esvazia depois
+    -- e a essa altura ja gravou. Recusar aqui evita o 200 que parece
+    sucesso e grava nome/telefone vazio.
+    """
+    if not valor.strip():
+        raise ValueError(f"{campo} nao pode ser so espaco")
+    return valor
+
+
+def _recusar_regiao_vazia(regioes: list[str]) -> list[str]:
+    """Mesma razao de `_recusar_vazio_apos_strip`, por item da lista.
+
+    `min_length=1` do Pydantic mede a LISTA (pelo menos um item), nao o
+    item -- `["   "]` passa por ele, passa por `ck_corretores_regioes`
+    (cardinalidade > 0) e vira `[""]` depois da dobra.
+    """
+    for regiao in regioes:
+        if not regiao.strip():
+            raise ValueError("regioesAtuacao nao aceita item que seja so espaco")
+    return regioes
+
+
 class CorretorNovo(BaseModel):
     """O corpo do cadastro, no camelCase da secao 6 do SRS.
 
     `alias` e nao atributos em camelCase: o corpo HTTP fala camelCase e o
     Python deste repo fala snake_case -- mesmo molde de `FiltrosDaBusca` em
     `imoveis.py`.
+
+    `extra="forbid"`: sem isto, uma chave desconhecida no corpo (erro de
+    digitacao como `horarioIncio`) e ignorada em silencio -- o Pydantic so
+    usa o que reconhece, e quem chamou acha que mandou o campo.
     """
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     nome: str = Field(min_length=1, max_length=120)
     email: str = Field(min_length=3, max_length=160)
     telefone: str = Field(min_length=8, max_length=20)
     creci: str | None = Field(default=None, max_length=20)
     especialidades: list[Especialidade] = Field(min_length=1)
-    regioes_atuacao: list[str] = Field(alias="regioesAtuacao", min_length=1)
+    regioes_atuacao: list[_Regiao] = Field(alias="regioesAtuacao", min_length=1)
     horario_inicio: int = Field(alias="horarioInicio", ge=HORA_MINIMA, le=HORA_MAXIMA)
     horario_fim: int = Field(alias="horarioFim", ge=HORA_MINIMA, le=HORA_MAXIMA)
     capacidade_diaria: int = Field(alias="capacidadeDiaria", ge=CAPACIDADE_MINIMA)
     plantao: bool = False
+
+    @field_validator("nome", "telefone")
+    @classmethod
+    def _nao_vira_vazio_no_strip(cls, valor: str, info: object) -> str:
+        return _recusar_vazio_apos_strip(valor, info.field_name)  # type: ignore[attr-defined]
+
+    @field_validator("regioes_atuacao")
+    @classmethod
+    def _regioes_nao_vazias(cls, valor: list[str]) -> list[str]:
+        return _recusar_regiao_vazia(valor)
 
     @field_validator("horario_fim")
     @classmethod
@@ -82,16 +129,22 @@ class CorretorEditado(BaseModel):
     campo" de "informei que e nulo", e isso tornaria impossivel limpar o
     `creci` de volta para nulo. `exclude_unset` distingue os dois casos, que e
     o comportamento certo para um PATCH parcial.
+
+    `extra="forbid"`: mesma razao de `CorretorNovo` -- uma chave desconhecida
+    num PATCH e ainda mais enganosa, porque `exclude_unset` a descarta e a
+    rota responde 200 sem ter mudado nada.
     """
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     nome: str | None = Field(default=None, min_length=1, max_length=120)
     email: str | None = Field(default=None, min_length=3, max_length=160)
     telefone: str | None = Field(default=None, min_length=8, max_length=20)
     creci: str | None = Field(default=None, max_length=20)
     especialidades: list[Especialidade] | None = Field(default=None, min_length=1)
-    regioes_atuacao: list[str] | None = Field(default=None, alias="regioesAtuacao", min_length=1)
+    regioes_atuacao: list[_Regiao] | None = Field(
+        default=None, alias="regioesAtuacao", min_length=1
+    )
     horario_inicio: int | None = Field(
         default=None, alias="horarioInicio", ge=HORA_MINIMA, le=HORA_MAXIMA
     )
@@ -103,6 +156,39 @@ class CorretorEditado(BaseModel):
     )
     plantao: bool | None = None
     ativo: bool | None = None
+
+    @field_validator("nome", "telefone")
+    @classmethod
+    def _nao_vira_vazio_no_strip(cls, valor: str | None, info: object) -> str | None:
+        if valor is None:
+            return valor
+        return _recusar_vazio_apos_strip(valor, info.field_name)  # type: ignore[attr-defined]
+
+    @field_validator("regioes_atuacao")
+    @classmethod
+    def _regioes_nao_vazias(cls, valor: list[str] | None) -> list[str] | None:
+        if valor is None:
+            return valor
+        return _recusar_regiao_vazia(valor)
+
+    @model_validator(mode="after")
+    def _so_creci_aceita_nulo(self) -> "CorretorEditado":
+        # `creci` e a UNICA coluna nulavel do cadastro (models.py): "informei
+        # que e nulo" so faz sentido nela. Nos outros dez campos, nulo nao e
+        # um valor -- e AUSENCIA de valor, e ausencia se expressa nao mandando
+        # a chave. Sem esta checagem, `exclude_unset=True` mantem a chave
+        # quando o cliente manda null explicito, e o repositorio normaliza
+        # sem checar: `str(None)` vira a string "None" (nome/telefone),
+        # `_email_canonico(str(None))` vira "none" (email), e
+        # `[str(e) for e in None]` / `list(None)` estouram TypeError
+        # (especialidades/regioesAtuacao) -- tudo isso hoje sai como 200 ou
+        # 500 em vez de 422. Usa `model_fields_set`, nao `is None`, porque o
+        # que importa e o campo ter vindo no corpo, nao o valor dele. Levanta
+        # `ValueError`, nunca `assert`: `assert` some sob `python -O`.
+        for campo in self.model_fields_set:
+            if campo != "creci" and getattr(self, campo) is None:
+                raise ValueError(f"campo '{campo}' nao aceita nulo")
+        return self
 
     @model_validator(mode="after")
     def _jornada_se_edita_em_par(self) -> "CorretorEditado":

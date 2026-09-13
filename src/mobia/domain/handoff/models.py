@@ -2,7 +2,7 @@
 
 TEC-174. Ver `alembic/versions/0023_handoffs.py` para o porque do par como
 identidade e do UNIQUE parcial. A FK de `corretor_id` para `corretores.id`
-entrou na TEC-196, em `alembic/versions/0024_corretores.py`.
+entrou na migration da TEC-196.
 """
 
 import uuid
@@ -40,9 +40,9 @@ class Handoff(Base):
     # depois custa migration, e o `IN` do CHECK e o unico lugar a mexer.
     status: Mapped[str] = mapped_column(String(16), nullable=False)
 
-    # FK para `corretores.id` desde a TEC-196 (ver a migration 0024). Continua
-    # NULAVEL, mas agora por outra razao -- nao falta mais tabela alvo, falta
-    # quem aloque, e alocar e a TEC-166.
+    # FK para `corretores.id` desde a TEC-196. Continua NULAVEL, mas agora
+    # por outra razao -- nao falta mais tabela alvo, falta quem aloque, e
+    # alocar e a TEC-166.
     corretor_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("corretores.id"), nullable=True
     )

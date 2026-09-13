@@ -33,10 +33,9 @@ class Especialidade(StrEnum):
     **Nao reusa o enum `Intencao`** porque os conjuntos nao coincidem:
     `Intencao` tem VENDER_IMOVEL, SUPORTE_CONTRATO, INDEFINIDA e
     FORA_DE_ESCOPO, que nao sao especialidade de ninguem. E acrescentar
-    INVESTIMENTO_ALTO_TICKET la
-    mudaria o schema estrito da chamada ao modelo -- a docstring de `Intencao`
-    avisa que acrescentar um membro muda o conjunto que o modelo pode
-    devolver.
+    INVESTIMENTO_ALTO_TICKET la mudaria o schema estrito da chamada ao
+    modelo -- a docstring de `Intencao` avisa que acrescentar um membro muda
+    o conjunto que o modelo pode devolver.
     """
 
     COMPRA = "COMPRA"
