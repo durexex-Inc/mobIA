@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.handoff.contingencia import TEXTO_DE_CONTINGENCIA
 from mobia.domain.handoff.geracao import gerar_resumo
 from mobia.domain.handoff.models import Handoff, aad_do_resumo_de_handoff
 from mobia.domain.handoff.resumo import MARCADORES, ResumoDeHandoffGerado, ResumoDeHandoffInvalido
@@ -38,6 +39,23 @@ class _RedatorQueFalha:
         raise ResumoDeHandoffInvalido("bloco ausente: '## Proxima acao'")
 
 
+class _RedatorQueOProvedorDerrubou:
+    """O provedor fora do ar: uma excecao que NAO e ResumoDeHandoffInvalido.
+
+    Conta as chamadas: e o que permite ao teste provar "sem retentativa"
+    (D2) pelo NUMERO de chamadas, e nao so pelo efeito final -- um
+    regressor que reintroduzisse retentativa antes de cair no template
+    ainda produziria o mesmo `resumo_fallback=True` ao final.
+    """
+
+    def __init__(self) -> None:
+        self.chamadas = 0
+
+    async def redigir(self, dossie_em_texto: str) -> ResumoDeHandoffGerado:
+        self.chamadas += 1
+        raise RuntimeError("connection reset by peer")
+
+
 async def test_gera_e_grava_o_resumo(
     session: AsyncSession, session_factory: async_sessionmaker[AsyncSession], semear_lead_completo
 ) -> None:
@@ -56,22 +74,93 @@ async def test_gera_e_grava_o_resumo(
     assert decrypt(linha.resumo, aad_do_resumo_de_handoff(handoff_id)) is not None
     assert linha.resumo_modelo == "claude-sonnet-5"
     assert linha.resumo_gerado_em is not None
+    # D5: o caminho feliz precisa provar a AUSENCIA da marca, ou a asserta
+    # de que o fallback fica limpo na regeneracao fica meio testada.
+    assert linha.resumo_fallback is False
 
 
 async def test_handoff_que_sumiu_nao_e_erro(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """A excecao declarada da D1: dossie ausente e a UNICA falha que ainda
+    devolve `False` sem gravar nada -- sem fatos nao ha template possivel.
+    Todo o resto (redator invalido, provedor fora do ar) grava e devolve
+    `True`; ver os testes de fallback acima.
+    """
     assert (
         await gerar_resumo(session_factory, redator=_RedatorFalso(), handoff_id=uuid.uuid4())
         is False
     )
 
 
-async def test_falha_do_redator_deixa_o_resumo_nulo(
-    session: AsyncSession, session_factory: async_sessionmaker[AsyncSession], semear_lead_completo
+async def test_provedor_fora_do_ar_grava_o_template(
+    session, session_factory, semear_lead_completo
 ) -> None:
-    """Resumo nulo, e nao resumo truncado. Ver a D7 do desenho."""
+    """Primeiro cenario do Gherkin. D2: sem retentativa, template na hora."""
+    handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=3)
+    redator = _RedatorQueOProvedorDerrubou()
+
+    assert await gerar_resumo(session_factory, redator=redator, handoff_id=handoff_id)
+
+    # A prova do "sem retentativa" e o NUMERO de chamadas, nao so o efeito
+    # final -- uma retentativa reintroduzida ainda cairia no template.
+    assert redator.chamadas == 1
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.resumo_fallback is True
+    assert linha.resumo_modelo is None
+    assert TEXTO_DE_CONTINGENCIA in decrypt(linha.resumo, aad_do_resumo_de_handoff(handoff_id))
+
+
+async def test_resumo_malformado_tambem_grava_o_template(
+    session, session_factory, semear_lead_completo
+) -> None:
+    """D1: a emenda E-01 alarga o fallback para alem da falha do provedor.
+
+    Antes desta card este caminho terminava com `resumo` nulo, e a RN-15.4
+    seguia violada pela metade.
+    """
     handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
+
+    assert await gerar_resumo(session_factory, redator=_RedatorQueFalha(), handoff_id=handoff_id)
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.resumo_fallback is True
+
+
+async def test_regenerar_com_o_provedor_de_volta_limpa_a_marca(
+    session, session_factory, semear_lead_completo
+) -> None:
+    """Terceiro cenario do Gherkin, com a limpeza da D5."""
+    handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
+    await gerar_resumo(session_factory, redator=_RedatorQueFalha(), handoff_id=handoff_id)
+
+    assert await gerar_resumo(session_factory, redator=_RedatorFalso(), handoff_id=handoff_id)
+
+    session.expire_all()
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.resumo_fallback is False
+    assert linha.resumo_modelo == "claude-sonnet-5"
+
+
+async def test_template_que_falha_devolve_false_sem_levantar(
+    session, session_factory, semear_lead_completo, monkeypatch
+) -> None:
+    """Critical da revisao final (1b). `montar()` e o ultimo recurso -- se
+    ELE tambem falhar, `gerar_resumo` nao pode deixar a excecao escapar:
+    isso reabriria `handoffs.resumo` nulo (a violacao da RN-15.4 que esta
+    card existe para fechar) e faria o ARQ retentar `redigir()`, a chamada
+    cara que a Emenda E-02 existe para evitar. `False` aqui e a MESMA saida
+    de "dossie ausente" -- ver `test_handoff_que_sumiu_nao_e_erro` acima --
+    e a notificacao (`workers/jobs/gerar_resumo.py`) ainda a alcanca com
+    `TEXTO_SEM_RESUMO`.
+    """
+    handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
+
+    def _quebrado(_dossie: object) -> str:
+        raise RuntimeError("teto errado")
+
+    monkeypatch.setattr("mobia.domain.handoff.geracao.montar", _quebrado)
 
     assert (
         await gerar_resumo(session_factory, redator=_RedatorQueFalha(), handoff_id=handoff_id)

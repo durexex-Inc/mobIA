@@ -218,6 +218,11 @@ async def carregar_dossie(session: AsyncSession, *, handoff_id: uuid.UUID) -> Do
         )
     ).scalar_one_or_none()
 
+    # Ascendente por `apresentado_em`, de proposito: o resumo de contingencia
+    # (`contingencia.imoveis`, TEC-176) pega os mais RECENTES pelo FIM desta
+    # tupla (`dossie.imoveis[-teto:]`) -- inverter esta ordem para descendente
+    # inverteria qual ponta vira "os mais recentes" sem nenhum sinal aqui.
+    # `renderizar` recebe a lista inteira e nao depende da ordem.
     recomendacoes = (
         (
             await session.execute(
@@ -294,12 +299,24 @@ async def carregar_dossie(session: AsyncSession, *, handoff_id: uuid.UUID) -> Do
 
 
 async def gravar_resumo(
-    session: AsyncSession, *, handoff_id: uuid.UUID, texto: str, modelo: str
+    session: AsyncSession, *, handoff_id: uuid.UUID, texto: str, modelo: str | None, fallback: bool
 ) -> None:
     """Grava o resumo cifrado. **Nao commita** -- o commit e de quem chama.
 
     Mesma disciplina de `registrar_handoff`, e pela mesma razao: e o chamador
     que sabe o que mais precisa entrar na transacao.
+
+    `fallback` e obrigatorio e sem default, de proposito: um default faria o
+    chamador esquecer de dizer qual modo e, e esse esquecimento silencioso e
+    justamente o defeito que esta coluna existe para evitar. `modelo=None`
+    quando `fallback=True` -- nenhum modelo escreveu o template.
+
+    Grava `resumo_fallback` sempre, nos dois sentidos, nunca so quando e
+    verdadeiro: um handoff que caiu no template e depois foi regenerado com
+    sucesso precisa ver a marca LIMPA, ou o painel mostraria "simplificado"
+    sobre um texto redigido. Mesma classe de defeito que a revisao final da
+    TEC-177 encontrou em `notificado_em`/`aviso_manual_pendente`, prevista
+    aqui desde a primeira versao.
     """
     await session.execute(
         update(Handoff)
@@ -308,6 +325,7 @@ async def gravar_resumo(
             resumo=encrypt(texto, aad_do_resumo_de_handoff(handoff_id)),
             resumo_gerado_em=datetime.now(UTC),
             resumo_modelo=modelo,
+            resumo_fallback=fallback,
             atualizado_em=datetime.now(UTC),
         )
     )

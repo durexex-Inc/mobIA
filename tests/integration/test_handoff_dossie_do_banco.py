@@ -52,7 +52,11 @@ async def test_gravar_resumo_cifra_em_repouso(session: AsyncSession) -> None:
     await session.commit()
 
     await gravar_resumo(
-        session, handoff_id=registro.id, texto="## Quem e o lead\nfulano", modelo="claude-sonnet-5"
+        session,
+        handoff_id=registro.id,
+        texto="## Quem e o lead\nfulano",
+        modelo="claude-sonnet-5",
+        fallback=False,
     )
     await session.commit()
 
@@ -70,7 +74,9 @@ async def test_o_aad_amarra_o_resumo_ao_proprio_handoff(session: AsyncSession) -
         session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
     )
     await session.commit()
-    await gravar_resumo(session, handoff_id=registro.id, texto="segredo", modelo="m")
+    await gravar_resumo(
+        session, handoff_id=registro.id, texto="segredo", modelo="m", fallback=False
+    )
     await session.commit()
 
     bruto = (
@@ -81,3 +87,42 @@ async def test_o_aad_amarra_o_resumo_ao_proprio_handoff(session: AsyncSession) -
 
     with pytest.raises(DecryptionError):
         decrypt(bruto, aad_do_resumo_de_handoff(uuid.uuid4()))
+
+
+async def test_gravar_resumo_marca_e_desmarca_a_contingencia(
+    session: AsyncSession,
+) -> None:
+    """D5: o sucesso posterior LIMPA a marca.
+
+    Um handoff que caiu no template e depois foi regenerado com sucesso nao
+    pode ficar marcado como simplificado sobre um texto redigido -- quem lesse
+    o painel veria "simplificado" sobre algo que nao e. E a mesma classe de
+    defeito que a revisao final da TEC-177 encontrou nas colunas de
+    notificacao, prevista desta vez.
+    """
+    registro = await registrar_handoff(
+        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+    )
+    await session.commit()
+
+    await gravar_resumo(
+        session, handoff_id=registro.id, texto="template", modelo=None, fallback=True
+    )
+    await session.commit()
+    session.expire_all()
+    linha = (await session.execute(select(Handoff).where(Handoff.id == registro.id))).scalar_one()
+    assert linha.resumo_fallback is True
+    assert linha.resumo_modelo is None
+
+    await gravar_resumo(
+        session,
+        handoff_id=registro.id,
+        texto="redigido",
+        modelo="claude-sonnet-5",
+        fallback=False,
+    )
+    await session.commit()
+    session.expire_all()
+    linha = (await session.execute(select(Handoff).where(Handoff.id == registro.id))).scalar_one()
+    assert linha.resumo_fallback is False
+    assert linha.resumo_modelo == "claude-sonnet-5"

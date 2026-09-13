@@ -20,10 +20,11 @@ def _resumo_valido() -> str:
 
 
 def _resumo_invalido() -> str:
-    """Falta o ultimo marcador: `validar()` reprova e `gerar_resumo` devolve False.
+    """Falta o ultimo marcador: `validar()` reprova e o redator levanta.
 
-    E o texto que faz o redator FALHAR sem o handoff sumir -- o unico jeito de
-    chegar ao ramo 502 da rota em vez do 404.
+    Desde a TEC-176 isso nao produz mais um ramo de erro na rota -- o redator
+    que falha cai no template deterministico e `gerar_resumo` grava mesmo
+    assim. Este texto continua util para exercitar exatamente esse caminho.
     """
     return "\n".join(f"{marcador}\ntexto padrao de teste." for marcador in MARCADORES[:-1])
 
@@ -75,9 +76,9 @@ async def cliente_http_redator_falha(
 ):
     """Mesmo app de `cliente_http`, mas o redator devolve um resumo invalido.
 
-    Existe so para o teste do ramo 502: o handoff precisa estar no banco e
-    `gerar_resumo` precisa devolver False por falha do redator, nao por
-    handoff ausente.
+    Existe para o teste do fallback pela rota: o handoff precisa estar no
+    banco e o redator precisa falhar de verdade, para provar que a rota
+    devolve o template em vez de propagar o erro (RN-15.4, TEC-176).
     """
     async for cliente in _cliente_com_redator(
         monkeypatch, redis_pool, texto_do_redator=_resumo_invalido()
@@ -91,12 +92,13 @@ async def test_sem_token_e_403(cliente_http) -> None:
 
 
 async def test_handoff_inexistente_e_404(cliente_http) -> None:
-    """O uuid nunca foi gravado -- este e o ramo "handoff nao existe" da rota.
+    """O uuid nunca foi gravado -- este e o unico ramo "nao gravou" da rota.
 
-    Nao confundir com `test_falha_do_redator_e_502_e_nao_404` logo abaixo: la
-    o handoff EXISTE e quem falha e o redator. Sao os dois ramos que
-    `gerar_resumo -> False` esconde atras do mesmo booleano, e a rota so os
-    distingue com o SELECT que este teste prova estar certo.
+    Antes da TEC-176 havia um segundo ramo (502, handoff existente com
+    redator que falhou) que este mesmo `not gravou` escondia atras do
+    booleano de `gerar_resumo`. Desde a TEC-176 esse redator que falha grava
+    o template e devolve `gravou=True` -- ver `test_geracao_de_resumo.py` --,
+    entao dossie ausente e a UNICA causa que sobra para este 404.
     """
     resposta = await cliente_http.post(
         f"/api/v1/handoffs/{uuid.uuid4()}/resumo", headers={"X-Admin-Token": TOKEN}
@@ -105,14 +107,17 @@ async def test_handoff_inexistente_e_404(cliente_http) -> None:
     assert resposta.json()["detail"] == "handoff nao existe"
 
 
-async def test_falha_do_redator_e_502_e_nao_404(
+async def test_regenera_com_falha_do_redator_devolve_o_template(
     cliente_http_redator_falha, semear_lead_completo
 ) -> None:
-    """O handoff existe; quem falhou foi o redator (RN-15.1, bloco ausente).
+    """RN-15.4: mesmo pela rota de regeneracao manual, o corretor nao fica
+    sem resumo -- o redator que falha (bloco ausente) grava o template
+    deterministico e a rota devolve 200, nao mais 502.
 
-    Sem este teste, um regressor que colapsasse os dois ramos em 404 para
-    sempre atravessaria a suite inteira sem sintoma -- e o 502 e a informacao
-    que diz a quem chama "tente de novo" em vez de "esse handoff nao existe".
+    `resumoFallback` e a UNICA indicacao disso que existe hoje -- o painel e
+    a E8 e nao existe -- entao e ela que prova o segundo cenario do Gherkin
+    ("fica indicado que se trata de resumo automatico simplificado"), e nao
+    so o texto do template.
     """
     handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
 
@@ -120,8 +125,11 @@ async def test_falha_do_redator_e_502_e_nao_404(
         f"/api/v1/handoffs/{handoff_id}/resumo", headers={"X-Admin-Token": TOKEN}
     )
 
-    assert resposta.status_code == 502
-    assert resposta.json()["detail"] == "resumo nao pode ser gerado"
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["modelo"] is None
+    assert corpo["resumoFallback"] is True
+    assert "[resumo automatico simplificado" in corpo["resumo"]
 
 
 async def test_regenera_e_devolve_o_resumo_com_o_link(cliente_http, semear_lead_completo) -> None:
@@ -138,6 +146,9 @@ async def test_regenera_e_devolve_o_resumo_com_o_link(cliente_http, semear_lead_
     # O link e campo separado, e nao conteudo do resumo -- ver a D10.
     assert corpo["link"].endswith("/conversas/whatsapp/5511911112222")
     assert corpo["link"] not in corpo["resumo"]
+    # O caminho feliz precisa provar a AUSENCIA da marca, ou a asserta do
+    # teste de fallback acima fica meio testada -- mesmo argumento da D5.
+    assert corpo["resumoFallback"] is False
 
 
 def test_o_link_nao_e_composto_pelo_modelo() -> None:

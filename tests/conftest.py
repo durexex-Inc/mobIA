@@ -980,7 +980,11 @@ def semear_handoff_com_resumo(session: AsyncSession):
         )
         if resumo is not None:
             await gravar_resumo(
-                session, handoff_id=registro.id, texto=resumo, modelo="modelo-de-teste"
+                session,
+                handoff_id=registro.id,
+                texto=resumo,
+                modelo="modelo-de-teste",
+                fallback=False,
             )
         await session.commit()
         return registro.id

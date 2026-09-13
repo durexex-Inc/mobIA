@@ -3,11 +3,13 @@
 Modulo sem I/O, no molde de `handoff/dossie.py` e de `handoff/vocabulario.py`.
 """
 
-# O que entra no lugar do resumo quando ele nao existe. A geracao pode falhar
-# -- a D7 da TEC-175 deixa `handoffs.resumo` nulo de proposito nesse caso, e o
-# resumo de contingencia e a TEC-176, que nao existe. A notificacao sai mesmo
-# assim: a card diz que "o handoff que ninguem ve nao existe", e um corretor
-# com aviso magro ainda atende o lead. Ver a D2.
+# O que entra no lugar do resumo quando ele nao existe. Desde a TEC-176
+# (RN-15.4), so o dossie ausente ainda deixa `handoffs.resumo` nulo -- toda
+# falha do redator (resposta invalida ou excecao do provedor) agora grava o
+# template deterministico de `handoff/contingencia.py` em vez de nada. Este
+# texto so aparece nesse caso raro que sobrou. A notificacao sai mesmo assim:
+# a card diz que "o handoff que ninguem ve nao existe", e um corretor com
+# aviso magro ainda atende o lead. Ver a D2.
 #
 # O link que este texto manda abrir nao resolve ainda: `link_da_transcricao`
 # (`handoff/resumo.py`) documenta em negrito que o destino e a E8, que nao

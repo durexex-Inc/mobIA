@@ -56,10 +56,16 @@ class ResumoDeHandoffInvalido(RuntimeError):
     """A resposta do modelo nao e um resumo utilizavel.
 
     Mesmo papel do `ResumoInvalido` de `context/resumo.py`: levantar aqui, em
-    vez de gravar um resumo manco, e o que da ao chamador a chance de nao
-    gravar nada. Um resumo truncado e pior que resumo nenhum -- ele corta o
-    fim, e o fim e o bloco da proxima acao, que e o que diz ao corretor o que
-    fazer. Ver a D7 do desenho.
+    vez de gravar um resumo manco, e o que evita que um resumo truncado ou
+    fora de ordem vire o resumo do handoff. Um resumo truncado e pior que
+    resumo nenhum -- ele corta o fim, e o fim e o bloco da proxima acao, que e
+    o que diz ao corretor o que fazer. Ver a D7 do desenho.
+
+    Desde a TEC-176 (RN-15.4) o chamador (`geracao.gerar_resumo`) NAO fica
+    sem gravar nada quando esta excecao e levantada -- ele cai no template
+    deterministico de `contingencia.py` e grava isso. O argumento acima
+    continua valendo para o texto REDIGIDO (nunca grava o truncado); so muda
+    o que acontece depois de recusa-lo.
     """
 
 
