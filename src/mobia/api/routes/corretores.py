@@ -98,6 +98,7 @@ class CorretorNovo(BaseModel):
     horario_fim: int = Field(alias="horarioFim", ge=HORA_MINIMA, le=HORA_MAXIMA)
     capacidade_diaria: int = Field(alias="capacidadeDiaria", ge=CAPACIDADE_MINIMA)
     plantao: bool = False
+    gerente: bool = False
 
     @field_validator("nome", "telefone")
     @classmethod
@@ -155,6 +156,7 @@ class CorretorEditado(BaseModel):
         default=None, alias="capacidadeDiaria", ge=CAPACIDADE_MINIMA
     )
     plantao: bool | None = None
+    gerente: bool | None = None
     ativo: bool | None = None
 
     @field_validator("nome", "telefone")
@@ -226,6 +228,7 @@ def _resposta(corretor: Corretor) -> dict[str, object]:
         "horarioFim": corretor.horario_fim,
         "capacidadeDiaria": corretor.capacidade_diaria,
         "plantao": corretor.plantao,
+        "gerente": corretor.gerente,
         "ativo": corretor.ativo,
     }
 
@@ -247,6 +250,7 @@ async def cadastrar(pedido: CorretorNovo, _: None = Depends(exigir_admin)) -> di
                     horario_fim=pedido.horario_fim,
                     capacidade_diaria=pedido.capacidade_diaria,
                     plantao=pedido.plantao,
+                    gerente=pedido.gerente,
                 ),
             )
         except EmailJaCadastrado as erro:
