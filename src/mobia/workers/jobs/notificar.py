@@ -3,9 +3,12 @@
 import uuid
 from typing import Any
 
+# A constante mudou de casa para `envio.py` na TEC-279 (comentario la explica
+# o porque); o `as NOTIFICAR_JOB` e reexportacao deliberada -- e o que
+# `workers/jobs/gerar_resumo.py` ainda importa daqui -- e evita o F401 de
+# "importado e nao usado" que um import comum levaria.
+from mobia.domain.notificacao.envio import NOTIFICAR_JOB as NOTIFICAR_JOB
 from mobia.domain.notificacao.envio import notificar
-
-NOTIFICAR_JOB = "notificar_corretor"
 
 
 async def notificar_corretor(ctx: dict[str, Any], handoff_id: str) -> str:

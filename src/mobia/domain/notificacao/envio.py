@@ -25,6 +25,15 @@ from mobia.infra.crypto import DecryptionError, decrypt
 
 log = structlog.get_logger(__name__)
 
+# Mora aqui, e nao em `workers/jobs/notificar.py` (onde nasceu na TEC-177),
+# porque `domain/handoff/recuperacao.py` (TEC-279) precisa da constante para
+# reenfileirar este job pelo mesmo `_job_id` -- e nenhum modulo de
+# `src/mobia/domain/` importa `mobia.workers` hoje; a direcao e sempre a
+# inversa. Mesma razao de `GERAR_RESUMO_JOB` morar em
+# `domain/handoff/agendador.py`. `workers/jobs/notificar.py` importa esta
+# constante daqui, para o nome do job ARQ continuar unico.
+NOTIFICAR_JOB = "notificar_corretor"
+
 # O `kind` do aviso ao lead. Chaveado na ULTIMA mensagem DO LEAD da conversa, e
 # nao no handoff: a UNIQUE (message_id, kind) de `outbound_dispatches` da a
 # deduplicacao, e a guarda de opt-out de `GuardedOutbound` vem junto -- um lead
