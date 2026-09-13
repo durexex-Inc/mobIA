@@ -218,6 +218,11 @@ async def carregar_dossie(session: AsyncSession, *, handoff_id: uuid.UUID) -> Do
         )
     ).scalar_one_or_none()
 
+    # Ascendente por `apresentado_em`, de proposito: o resumo de contingencia
+    # (`contingencia.imoveis`, TEC-176) pega os mais RECENTES pelo FIM desta
+    # tupla (`dossie.imoveis[-teto:]`) -- inverter esta ordem para descendente
+    # inverteria qual ponta vira "os mais recentes" sem nenhum sinal aqui.
+    # `renderizar` recebe a lista inteira e nao depende da ordem.
     recomendacoes = (
         (
             await session.execute(

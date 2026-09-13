@@ -143,6 +143,34 @@ async def test_regenerar_com_o_provedor_de_volta_limpa_a_marca(
     assert linha.resumo_modelo == "claude-sonnet-5"
 
 
+async def test_template_que_falha_devolve_false_sem_levantar(
+    session, session_factory, semear_lead_completo, monkeypatch
+) -> None:
+    """Critical da revisao final (1b). `montar()` e o ultimo recurso -- se
+    ELE tambem falhar, `gerar_resumo` nao pode deixar a excecao escapar:
+    isso reabriria `handoffs.resumo` nulo (a violacao da RN-15.4 que esta
+    card existe para fechar) e faria o ARQ retentar `redigir()`, a chamada
+    cara que a Emenda E-02 existe para evitar. `False` aqui e a MESMA saida
+    de "dossie ausente" -- ver `test_handoff_que_sumiu_nao_e_erro` acima --
+    e a notificacao (`workers/jobs/gerar_resumo.py`) ainda a alcanca com
+    `TEXTO_SEM_RESUMO`.
+    """
+    handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
+
+    def _quebrado(_dossie: object) -> str:
+        raise RuntimeError("teto errado")
+
+    monkeypatch.setattr("mobia.domain.handoff.geracao.montar", _quebrado)
+
+    assert (
+        await gerar_resumo(session_factory, redator=_RedatorQueFalha(), handoff_id=handoff_id)
+        is False
+    )
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.resumo is None
+
+
 async def test_regenerar_substitui_o_resumo_anterior(
     session: AsyncSession, session_factory: async_sessionmaker[AsyncSession], semear_lead_completo
 ) -> None:

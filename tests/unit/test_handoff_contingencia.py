@@ -1,20 +1,24 @@
 from datetime import UTC, datetime
 
-import pytest
-
 from mobia.domain.handoff.contingencia import (
+    TETO_CANAL,
+    TETO_CODIGO,
+    TETO_CONVERSA,
     TETO_DE_IMOVEIS,
+    TETO_ETIQUETA,
+    TETO_FORMA_PAGAMENTO,
+    TETO_GATILHO,
+    TETO_INTENCAO,
+    TETO_MOTIVO_DESCARTE,
     TETO_POR_LISTA_DE_ATENCAO,
+    TETO_REGIAO,
+    TETO_TIPO_IMOVEL,
+    TETO_URGENCIA,
     TEXTO_DE_CONTINGENCIA,
     montar,
 )
 from mobia.domain.handoff.dossie import Dossie, ImovelApresentado
-from mobia.domain.handoff.resumo import (
-    LIMITE_DE_CARACTERES,
-    MARCADORES,
-    ResumoAcimaDoLimite,
-    validar,
-)
+from mobia.domain.handoff.resumo import LIMITE_DE_CARACTERES, MARCADORES, validar
 
 QUANDO = datetime(2026, 9, 12, 14, 30, tzinfo=UTC)
 
@@ -75,23 +79,75 @@ def _vazio() -> Dossie:
     )
 
 
-def test_um_campo_fora_de_qualquer_teto_ainda_faz_montar_levantar() -> None:
-    """D3, na direcao que prova algo: `montar` nao devolve texto truncado
-    em silencio quando o conteudo nao cabe -- ele levanta.
+def test_um_campo_absurdamente_longo_e_truncado_e_nao_faz_montar_levantar() -> None:
+    """Ate a revisao final da TEC-176, este teste provava o OPOSTO do que
+    prova agora: que um valor impossivel de vir do banco (`regiao` com 2000
+    de um `VARCHAR(120)` real) ainda fazia `montar` levantar. A docstring
+    antiga chamava isso de pior caso "REALISTA -- respeitando os tamanhos de
+    coluna do banco (regiao e VARCHAR(120), por exemplo)" e apontava para
+    `test_o_pior_caso_combinado_ainda_cabe_no_limite` como quem provava que
+    esse caso cabia -- so que aquele teste usava `regiao` com 47 de 120,
+    nunca o maximo real da coluna. Quem lesse os dois testes juntos nao via
+    a lacuna: `regiao=120` SOZINHO ja estourava (1521 de 1500), e foi essa
+    lacuna que o Critical da revisao final encontrou (ver o comentario de
+    `contingencia.TETO_DE_IMOVEIS` para as medicoes).
 
-    Depois do teto nas duas listas do bloco de pontos de atencao (revisao da
-    Task 1), um dossie no pior caso REALISTA -- respeitando os tamanhos de
-    coluna do banco (`regiao` e VARCHAR(120), por exemplo) -- ja cabe nos
-    1.500 por construcao; ver `test_o_pior_caso_combinado_ainda_cabe_no_limite`
-    logo abaixo. `Dossie` e um dataclass sem validacao de tamanho, porem, e
-    nao ha teto hoje sobre o comprimento de um campo de valor unico como
-    `regiao` -- so sobre quantos itens as listas mostram. Um valor unico
-    absurdamente longo (impossivel vindo do banco, possivel neste teste)
-    ainda estoura o limite, e e esse caminho que este teste prova que
-    continua protegido.
+    A correcao (Critical 1a) deu teto a TODO campo de texto livre, nao so as
+    listas. Consequencia: `montar` agora TRUNCA um valor absurdo em vez de
+    deixa-lo estourar -- nao ha mais entrada, possivel ou impossivel de vir
+    do banco, que faca `montar` levantar por tamanho. Este teste prova essa
+    garantia, e nao mais o caminho antigo.
     """
-    with pytest.raises(ResumoAcimaDoLimite):
-        montar(_dossie(regiao="x" * 2000))
+    texto = montar(_dossie(regiao="x" * 2000))
+
+    assert len(texto) <= LIMITE_DE_CARACTERES
+    assert validar(texto)
+    assert "x" * TETO_REGIAO in texto
+    assert "x" * (TETO_REGIAO + 1) not in texto
+
+
+def test_todo_campo_de_valor_unico_no_maximo_da_coluna_ainda_cabe() -> None:
+    """Critical da revisao final (1a): o teste ao lado (o `_combinado`, mais
+    abaixo) so nunca colocou TODOS os campos de valor unico no maximo da
+    coluna ao mesmo tempo -- so variava `regiao`, e so ate 47 de 120. Este
+    teste poe cada campo de valor unico (e os por-item de `imoveis`) no
+    maior tamanho REAL que ele assume -- o da coluna quando o campo e texto
+    livre, o do enum quando e um vocabulario fechado -- simultaneamente, e
+    confere que `montar` ainda cabe. Ver a tabela de medicao no comentario
+    de `contingencia.TETO_DE_IMOVEIS` para os valores que NAO cabem.
+    """
+    muitos_imoveis = tuple(
+        ImovelApresentado(
+            "A" * TETO_CODIGO,
+            50_000_000 + i,
+            "aluguel",
+            "SEM_RESPOSTA",
+            "D" * TETO_MOTIVO_DESCARTE,
+        )
+        for i in range(40)
+    )
+    muitos_campos = tuple(f"recusado_{i:02d}".ljust(32, "x")[:32] for i in range(50))
+    muitas_perguntas = tuple(f"pergunta_{i:02d}".ljust(32, "x")[:32] for i in range(50))
+
+    texto = montar(
+        _dossie(
+            canal="c" * TETO_CANAL,
+            conversa="k" * TETO_CONVERSA,
+            intencao="i" * TETO_INTENCAO,
+            regiao="r" * TETO_REGIAO,
+            tipo_imovel="t" * TETO_TIPO_IMOVEL,
+            urgencia="u" * TETO_URGENCIA,
+            forma_pagamento="f" * TETO_FORMA_PAGAMENTO,
+            imoveis=muitos_imoveis,
+            campos_recusados=muitos_campos,
+            perguntados_sem_resposta=muitas_perguntas,
+            gatilho="g" * TETO_GATILHO,
+            etiqueta="e" * TETO_ETIQUETA,
+        )
+    )
+
+    assert len(texto) <= LIMITE_DE_CARACTERES
+    assert validar(texto)
 
 
 def test_o_sufixo_de_temperatura_forcada_e_o_mesmo_texto_literal() -> None:
@@ -193,6 +249,34 @@ def test_a_lista_de_imoveis_tem_teto_e_diz_o_total() -> None:
     assert str(TETO_DE_IMOVEIS + 7) in texto
     assert texto.count("AP-") == TETO_DE_IMOVEIS
     assert len(texto) <= LIMITE_DE_CARACTERES
+
+
+def test_a_lista_de_imoveis_mostra_os_mais_recentes_do_mais_novo_ao_mais_antigo() -> None:
+    """Important 3 da revisao final. `carregar_dossie` ordena por
+    `apresentado_em` ASCENDENTE (`repositorio.py`), e ate a correcao
+    `imoveis()` fazia `dossie.imoveis[:teto]` -- os PRIMEIROS da lista, ou
+    seja, os mais VELHOS. A D6 do desenho pede o oposto, com exemplo
+    literal: "30 imoveis apresentados, os 5 mais recentes". Este teste prova
+    que os `TETO_DE_IMOVEIS` mostrados sao os ULTIMOS da lista (os mais
+    recentes) e aparecem do mais novo para o mais antigo -- ver o porque
+    dessa ordem no docstring de `dossie.imoveis`.
+    """
+    imoveis_em_ordem_de_apresentacao = tuple(
+        ImovelApresentado(f"AP-{i:03d}", 50_000_000 + i, "venda", None, None)
+        for i in range(TETO_DE_IMOVEIS + 3)
+    )
+    texto = montar(_dossie(imoveis=imoveis_em_ordem_de_apresentacao))
+
+    mais_recentes_do_mais_novo_ao_mais_antigo = list(
+        reversed(imoveis_em_ordem_de_apresentacao[-TETO_DE_IMOVEIS:])
+    )
+    codigos_no_texto = [
+        linha.split(",")[0].removeprefix("- ")
+        for linha in texto.splitlines()
+        if linha.startswith("- AP-")
+    ]
+
+    assert codigos_no_texto == [i.codigo for i in mais_recentes_do_mais_novo_ao_mais_antigo]
 
 
 def test_um_dossie_grande_ainda_cabe_no_limite() -> None:

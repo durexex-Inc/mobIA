@@ -85,9 +85,12 @@ class Handoff(Base):
     # Cifrado com AES-GCM, AAD de `aad_do_resumo_de_handoff`. Nulavel por
     # construcao: a geracao e assincrona (ver a D1 do desenho), entao todo
     # handoff existe por alguns segundos sem resumo. Desde a TEC-176 (RN-15.4)
-    # so o dossie ausente deixa `resumo` nulo por muito tempo -- toda falha do
-    # redator (invalido ou excecao do provedor) grava o template em vez de
-    # deixar a coluna vazia.
+    # so duas causas deixam `resumo` nulo por muito tempo: dossie ausente, e
+    # o template de contingencia (`contingencia.montar`) tendo estourado o
+    # limite mesmo depois de todo campo entrar com teto -- a rede de
+    # seguranca de `geracao._montar_ou_none`, que so deveria disparar por
+    # defeito de montagem. Toda falha do redator (invalido ou excecao do
+    # provedor), por si so, grava o template em vez de deixar a coluna vazia.
     resumo: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     resumo_gerado_em: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
