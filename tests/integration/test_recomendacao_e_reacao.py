@@ -1173,3 +1173,213 @@ async def test_o_motivo_gravado_diz_quando_a_busca_precisou_ampliar(
     linha = (await session.execute(select(Recomendacao))).scalars().one()
     assert linha.imovel_id == imovel
     assert linha.motivo_match == "3 quartos, ate R$ 400.000 (criterio ampliado: preco)"
+
+
+# ---------------------------------------------------------------------------
+# TEC-275: a retentativa de uma apresentacao parcial.
+#
+# `EnvioRetentavel` no meio do laco propaga ANTES de `conciliar_apresentacao`
+# (de proposito: conciliar no meio apagaria linha de ficha que a retentativa
+# ainda vai entregar), o turno termina FAILED e `sweep_stalled` reenfileira a
+# MESMA mensagem -- FAILED e reivindicavel (`CLAIMABLE_STATUSES`). O que a
+# segunda passada faz com as linhas que a primeira deixou abertas e o assunto
+# daqui.
+# ---------------------------------------------------------------------------
+
+
+class _ClassificadorQueBuscaESemReacao(_ClassificadorQueBuscaSemFiltroExtra):
+    """`_ClassificadorQueBuscaSemFiltroExtra` com `reagir` que FUNCIONA e nao
+    acha reacao nenhuma.
+
+    E o que um modelo de verdade devolve na retentativa: a mensagem
+    reprocessada e a MESMA de antes -- o pedido que originou a busca --, e ela
+    nao fala de imovel nenhum. A base nao define `reagir` porque nos testes
+    dela nunca ha pendente quando o turno chega la; aqui ha, e um
+    `AttributeError` cairia no `except Exception` amplo de `turno.py` e o teste
+    passaria a medir o duble em vez do sistema.
+    """
+
+    def __init__(self, filtro: dict[str, object]) -> None:
+        super().__init__(filtro)
+        self.apresentados_recebidos: list[str] | None = None
+
+    async def reagir(self, contexto: Any, *, apresentados: list[str]) -> ReacoesDoTurno:
+        self.apresentados_recebidos = apresentados
+        return ReacoesDoTurno(reacoes=(), modelo="claude-opus-5")
+
+
+async def test_retentativa_de_apresentacao_parcial_deixa_o_lead_sem_lista(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275. Depois da retentativa o lead viu as tres fichas e nao tem lista.
+
+    Passada 1: a ficha 2 levanta `EnvioRetentavel`. As tres linhas ja estao
+    gravadas com um `agora` unico (a L1 da TEC-162 grava o lote ANTES do laco),
+    o lead recebeu so a ficha 1, e a excecao propaga antes da conciliacao --
+    nenhuma das tres e fechada nem apagada.
+
+    Passada 2, a MESMA mensagem: o turno reentra pelo topo. `ler_pendentes`
+    devolve as tres, `reagir` e chamado sobre elas com a mensagem original do
+    lead (que nao e reacao a nada), e `gravar_reacoes` fecha como NEUTRO toda
+    pendente nao mencionada -- as tres, antes de qualquer ficha ser reenviada.
+
+    O turno entao reentrega, e o turno SEGUINTE nao tem lista: o lead acabou
+    de ver tres fichas e `ler_pendentes` devolve vazio. "Gostei do segundo"
+    nao tem contra o que resolver o ordinal.
+
+    Este teste afirma o comportamento CERTO e por isso reprova hoje. A
+    mensagem da asserta que quebrar diz qual dos dois caminhos fechou as
+    linhas -- NEUTRO (a passagem de reacao) ou SEM_RESPOSTA (o `< agora` de
+    `conciliar_apresentacao`).
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-93{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelNaSegunda(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[1]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    primeira = _RetentavelNaSegunda(get_sessionmaker())
+    classificador_1 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(primeira, classificador_1)
+
+    assert len(primeira.entregues) == 1, (
+        "o teste so vale se a primeira passada entregou UMA ficha e parou na segunda"
+    )
+    assert classificador_1.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador_1.resultado.candidatos]
+    assert len(apresentados) == 3
+    assert await _pendentes_da_conversa(session_factory) == tuple(apresentados), (
+        "sem conciliacao, as tres linhas da passada 1 ficam abertas -- e a premissa "
+        "de que o resto do teste depende"
+    )
+
+    segunda = OutboundFake(get_sessionmaker())
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "respondido"
+
+    assert classificador_2.apresentados_recebidos is not None, (
+        "a retentativa tem de ter chamado `reagir` sobre as pendentes da passada 1 -- "
+        "e isso que torna a passagem de reacao o primeiro caminho"
+    )
+
+    fechadas = {
+        str(registro.imovel_id): registro.reacao_lead
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    vistos_agora = sorted(str(i) for i in apresentados)
+    assert await _pendentes_da_conversa(session_factory) == tuple(apresentados), (
+        "o lead acabou de receber as tres fichas e nao tem lista contra a qual "
+        f"responder 'gostei do segundo'. Reacoes gravadas: {fechadas}; "
+        f"imoveis que ele viu: {vistos_agora}"
+    )
+
+
+async def test_retentativa_com_reagir_falhando_fecha_as_mesmas_linhas_pelo_outro_caminho(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275. O mesmo fim por `conciliar_apresentacao`, quando `reagir` estoura.
+
+    Identico ao teste acima, com uma diferenca na passada 2: `reagir` levanta,
+    cai no `except Exception` amplo de `turno.py`, e `gravar_reacoes` nao roda
+    -- as tres linhas seguem `NULL`. A apresentacao reentrega; como
+    `gravar_recomendacoes` nao insere nada (`ON CONFLICT DO NOTHING` sobre as
+    tres que ja existem), elas mantem o `apresentado_em` da passada 1, e o
+    `apresentado_em < agora` de `conciliar_apresentacao` casa as tres.
+
+    Existe para provar que sao DOIS caminhos para o mesmo fim: um conserto
+    que so distinga as apresentacoes dentro de `conciliar_apresentacao` faz
+    este teste passar e deixa o de cima reprovando.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-92{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelNaSegunda(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[1]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    primeira = _RetentavelNaSegunda(get_sessionmaker())
+    classificador_1 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(primeira, classificador_1)
+
+    assert classificador_1.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador_1.resultado.candidatos]
+    assert len(apresentados) == 3
+
+    segunda = OutboundFake(get_sessionmaker())
+    assert (
+        await _rodar(
+            segunda,
+            _ClassificadorQueBuscaEFalhaAoReagir({"operacao": "VENDA", "quartos_min": 3}),
+        )
+        == "respondido"
+    )
+
+    fechadas = {
+        str(registro.imovel_id): registro.reacao_lead
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert await _pendentes_da_conversa(session_factory) == tuple(apresentados), (
+        "com `reagir` estourando na retentativa quem fecha as tres e o "
+        f"`apresentado_em < agora` de `conciliar_apresentacao`. Reacoes gravadas: {fechadas}"
+    )
