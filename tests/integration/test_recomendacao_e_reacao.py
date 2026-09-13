@@ -1674,7 +1674,7 @@ async def test_kinds_reservados_devolve_o_que_ja_tem_reserva(session: Any) -> No
 
 
 async def _falas_do_agente(session: Any) -> list[str]:
-    """O que o agente gravou na linha do tempo desta conversa, decifrado.
+    """O que o agente gravou na linha do tempo, decifrado e na ordem.
 
     `text_body` e bytea cifrado desde a TEC-126, entao `decrypt` com o AAD da
     propria linha -- mesmo molde de `_texto_gravado`
@@ -1706,14 +1706,17 @@ async def test_continuacao_entrega_o_que_restou_quando_uma_linha_do_lote_sumiu(
 ) -> None:
     """TEC-275. Lote incompleto: a linha que a D8 apagou nao volta na passada 2.
 
-    Esta e a unica forma pela qual uma linha do lote de fato some entre as
-    passadas -- a ficha 2 e recusada e a D8 apaga a linha dela na hora --,
-    porque `recomendacoes.imovel_id` tem FK para `imoveis` SEM `ON DELETE`:
-    imovel referenciado por linha do lote nao pode ser apagado do catalogo.
-    (O ramo `sumiram` de `_continuar_entrega` e defensivo e hoje inalcancavel
-    por causa dessa FK; o comentario dele diz isso. Um teste que apagasse a
-    linha antes do imovel provaria nada -- sem a linha, o imovel nem entra no
-    lote, e o ramo ficaria vazio de qualquer jeito.)
+    A rota real para o lote chegar incompleto na passada 2 e a D8: a ficha 2 e
+    recusada e a linha dela e apagada NA HORA, ainda dentro da passada 1 -- a
+    conciliacao, que e a outra rota de delecao, nao chega a rodar quando o laco
+    morre numa ficha seguinte.
+
+    Nao e o imovel que sai do catalogo: `recomendacoes.imovel_id` tem FK para
+    `imoveis` SEM `ON DELETE`, entao imovel referenciado por linha do lote nao
+    pode ser apagado. E por isso que o ramo `sumiram` de `_continuar_entrega` e
+    defensivo e hoje inalcancavel -- o comentario dele diz isso --, e por isso
+    que um teste que apagasse a linha antes do imovel provaria nada: sem a
+    linha, o imovel nem entra no lote e o ramo ficaria vazio de qualquer jeito.
 
     O que tem de valer: a continuacao entrega SO a ficha que faltava, o imovel
     recusado nao ressuscita como pendente, e o ordinal dos outros dois nao se
@@ -2131,13 +2134,15 @@ async def test_continuacao_le_o_lote_inteiro_mesmo_com_linha_ja_reagida(
 
     O caso e real: a retentativa depende da varredura, e nesse intervalo o
     lead pode reagir a ficha 1, que ELE JA RECEBEU, por outra mensagem. Com o
-    filtro, a linha dela cai fora do lote, o lote passa a ter so os kinds
-    `ficha_2` e `ficha_3` -- nenhum dos dois reservado --, e o desvio nao cai
-    na continuacao: cai no ramo do meio, que APAGA o lote e roda o turno
-    inteiro. Resultado: o classificador rebusca, a reacao que o lead acabou de
-    dar e jogada fora junto com a linha, e as fichas 2 e 3 saem de uma
-    apresentacao nova -- com prosa nova e o lead recebendo duas vezes o que
-    pediu uma.
+    filtro, a linha dela cai fora do lote; sobram os kinds `ficha_2` e
+    `ficha_3`, nenhum dos dois reservado, e o desvio deixa de cair na
+    continuacao -- cai no ramo do meio, que apaga o resto do lote e roda o
+    turno INTEIRO. O classificador rebusca e monta uma apresentacao NOVA, com
+    prosa nova, para um pedido que ja foi atendido pela metade, em vez de
+    terminar a que ficou pendurada.
+
+    A asserta que separa os dois ramos e a do classificador: so um deles o
+    chama.
     """
     from conftest import OutboundFake  # type: ignore[import-not-found]
 
@@ -2199,11 +2204,17 @@ async def test_continuacao_le_o_lote_inteiro_mesmo_com_linha_ja_reagida(
 
     assert classificador_2.resultado is None, (
         "com a linha reagida dentro do lote o desvio continua a entrega; se ela cair "
-        "fora, o ramo do meio apaga o lote e este classificador teria buscado"
+        "fora, o ramo do meio apaga o resto do lote e este classificador teria buscado"
     )
     assert len(segunda.entregues) == 2
     assert titulos[apresentados[1]] in segunda.entregues[0]
     assert titulos[apresentados[2]] in segunda.entregues[1]
+
+    gravados = {
+        registro.imovel_id
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert gravados == set(apresentados), "a continuacao nao apaga linha nenhuma do lote"
     assert await _pendentes_da_conversa(session_factory) == (apresentados[1], apresentados[2]), (
         "a reagida sai da lista por ter reacao, e nao por ter sido apagada -- as duas "
         "que o lead acabou de receber continuam sendo a lista do proximo ordinal"
