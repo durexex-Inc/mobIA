@@ -1109,6 +1109,7 @@ Autenticação: Bearer JWT | Query: `?status=PENDENTE&prioridade=ALTA` — fila 
 
 #### POST /api/v1/handoffs/{id}/aceitar
 `200 OK`: `{ "status": "ACEITO", "aceitoEm": "ISO-8601", "dentroDoSla": true }`. Erros: 409 (já aceito), 410 (escalado por SLA).
+- **Emenda E-01 (TEC-178, 13/09/2026):** o 410 acima **nunca é levantado**. Aceitar um handoff `ESCALADO` passa a ser **permitido** — o mesmo 200 desta seção, gravando `aceito_em` e movendo o status para `ACEITO` — e não recusado. Aceitar depois da escalada é o caso real: o gerente cobrou e alguém pegou o lead; recusar puniria justamente o comportamento que a RN-16.3 quer produzir. O 409 continua reservado a handoff que já está `ACEITO` (ou `CONCLUIDO`, fora do escopo desta card) — a idempotência é até o primeiro aceite, não depois dele. `dentroDoSla` reflete o carimbo real: para um handoff aceito depois de escalado, `aceitoEm` vem depois de `sla_limite_em` e o campo sai `false`, sem que isso bloqueie o aceite. Autenticação: `X-Admin-Token` via `exigir_admin`, não Bearer JWT — mesma exposição que a Emenda E-01 da RN-19.5 já declarou para o módulo administrativo, aqui estendida a esta rota por não existir ainda a infraestrutura de papéis da TEC-201. Ver `src/mobia/api/routes/handoffs.py` e o relatório da Task 6.
 
 #### POST /api/v1/leads/{leadId}/resumo
 Autenticação: Bearer JWT | Regeneração sob demanda (RN-15.2).
