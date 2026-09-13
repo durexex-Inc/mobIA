@@ -3,13 +3,14 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.recuperacao import recuperar_sem_prazo
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho, Status
+from mobia.workers.jobs.sweep_sla import sweep_sla
 
 
 class _ReenfileiradorEspiao:
@@ -180,3 +181,54 @@ async def test_handoff_escalado_sem_destinatario_nao_e_recuperado(
     total = await recuperar_sem_prazo(session_factory, reenfileirador=espiao)
 
     assert total == 0
+
+
+class _CanalEspiao:
+    """Duplicata minima de `_CanalEspiao` em `test_escalada_de_sla.py`: este
+    arquivo nao importa daquele para nao acoplar dois modulos de teste por um
+    detalhe de fixture.
+    """
+
+    def __init__(self, nome: str) -> None:
+        self.nome = nome
+        self.recebidas: list[tuple[str, str, str]] = []
+
+    async def enviar(self, *, destino: str, assunto: str, corpo: str) -> None:
+        self.recebidas.append((destino, assunto, corpo))
+
+
+async def test_sweep_sla_escala_o_vencido_e_recupera_o_perdido_na_mesma_passagem(
+    session: AsyncSession, session_factory, banco_limpo
+):
+    """A prova de que a Task 2 ligou a recuperacao na varredura.
+
+    Um handoff com prazo vencido (o caso da TEC-178) e um handoff sem prazo
+    ha muito tempo (o caso desta card) sao conjuntos disjuntos por
+    construcao -- ver o docstring de `sweep_sla`. Uma passagem so precisa
+    tratar os dois.
+    """
+    vencido_id = await _semear_handoff(session, conversa="5511900000007")
+    await _marcar(
+        session,
+        handoff_id=vencido_id,
+        sla_limite_em=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    perdido_id = await _semear_handoff(session, conversa="5511900000008")
+    await _marcar(
+        session, handoff_id=perdido_id, criado_em=datetime.now(UTC) - timedelta(minutes=20)
+    )
+    espiao = _ReenfileiradorEspiao()
+    ctx = {
+        "session_factory": session_factory,
+        "canais_de_notificacao": (_CanalEspiao("email"),),
+        "reenfileirador": espiao,
+    }
+
+    total = await sweep_sla(ctx)
+
+    assert total == 2
+    linha_vencida = (
+        await session.execute(select(Handoff).where(Handoff.id == vencido_id))
+    ).scalar_one()
+    assert linha_vencida.status == Status.ESCALADO
+    assert espiao.resumos == [perdido_id]

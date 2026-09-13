@@ -7,6 +7,7 @@ from mobia.app.logging import configure_logging
 from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
 from mobia.domain.handoff.agendador import AgendadorArq
+from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
 from mobia.domain.notificacao.canais import EmailRegistrado, WhatsAppRegistrado
 from mobia.domain.outbound.whatsapp import WhatsAppOutbound
@@ -83,6 +84,10 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["moderador"] = ModeradorAnthropic()
     ctx["redator"] = RedatorAnthropic()
     ctx["agendador"] = AgendadorArq(ctx["redis"])
+    # Mesmo `ctx["redis"]` do `agendador` acima -- ver o docstring do
+    # `startup` no topo do modulo: o ARQ ja o gravou antes deste hook, e um
+    # segundo pool seria redundante.
+    ctx["reenfileirador"] = ReenfileiradorArq(ctx["redis"])
     # Os dois adaptadores de `canais.py` REGISTRAM e nao entregam -- ver o
     # docstring do modulo. E' o `startup` que decide a implementacao, no mesmo
     # raciocinio de `outbound`/`redator`/etc acima; o teste troca a chave sem
