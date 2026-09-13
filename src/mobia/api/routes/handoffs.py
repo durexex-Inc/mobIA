@@ -48,4 +48,9 @@ async def regenerar(handoff_id: uuid.UUID, _: None = Depends(exigir_admin)) -> d
         "link": link_da_transcricao(linha.channel, linha.conversation_key),
         "geradoEm": linha.resumo_gerado_em.isoformat() if linha.resumo_gerado_em else None,
         "modelo": linha.resumo_modelo,
+        # L1 do desenho: a rota e hoje o unico lugar de onde alguem pode ler
+        # que o resumo e o template (o painel e a E8 e nao existe). Segundo
+        # cenario do Gherkin: "fica indicado que se trata de resumo
+        # automatico simplificado".
+        "resumoFallback": linha.resumo_fallback,
     }

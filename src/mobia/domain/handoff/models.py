@@ -84,8 +84,10 @@ class Handoff(Base):
 
     # Cifrado com AES-GCM, AAD de `aad_do_resumo_de_handoff`. Nulavel por
     # construcao: a geracao e assincrona (ver a D1 do desenho), entao todo
-    # handoff existe por alguns segundos sem resumo -- e permanece sem quando
-    # a geracao falha, que e o caso que a TEC-176 vai atender.
+    # handoff existe por alguns segundos sem resumo. Desde a TEC-176 (RN-15.4)
+    # so o dossie ausente deixa `resumo` nulo por muito tempo -- toda falha do
+    # redator (invalido ou excecao do provedor) grava o template em vez de
+    # deixar a coluna vazia.
     resumo: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     resumo_gerado_em: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

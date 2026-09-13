@@ -113,6 +113,11 @@ async def test_regenera_com_falha_do_redator_devolve_o_template(
     """RN-15.4: mesmo pela rota de regeneracao manual, o corretor nao fica
     sem resumo -- o redator que falha (bloco ausente) grava o template
     deterministico e a rota devolve 200, nao mais 502.
+
+    `resumoFallback` e a UNICA indicacao disso que existe hoje -- o painel e
+    a E8 e nao existe -- entao e ela que prova o segundo cenario do Gherkin
+    ("fica indicado que se trata de resumo automatico simplificado"), e nao
+    so o texto do template.
     """
     handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
 
@@ -123,6 +128,7 @@ async def test_regenera_com_falha_do_redator_devolve_o_template(
     assert resposta.status_code == 200
     corpo = resposta.json()
     assert corpo["modelo"] is None
+    assert corpo["resumoFallback"] is True
     assert "[resumo automatico simplificado" in corpo["resumo"]
 
 
@@ -140,6 +146,9 @@ async def test_regenera_e_devolve_o_resumo_com_o_link(cliente_http, semear_lead_
     # O link e campo separado, e nao conteudo do resumo -- ver a D10.
     assert corpo["link"].endswith("/conversas/whatsapp/5511911112222")
     assert corpo["link"] not in corpo["resumo"]
+    # O caminho feliz precisa provar a AUSENCIA da marca, ou a asserta do
+    # teste de fallback acima fica meio testada -- mesmo argumento da D5.
+    assert corpo["resumoFallback"] is False
 
 
 def test_o_link_nao_e_composto_pelo_modelo() -> None:

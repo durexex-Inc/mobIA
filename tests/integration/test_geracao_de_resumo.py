@@ -40,9 +40,19 @@ class _RedatorQueFalha:
 
 
 class _RedatorQueOProvedorDerrubou:
-    """O provedor fora do ar: uma excecao que NAO e ResumoDeHandoffInvalido."""
+    """O provedor fora do ar: uma excecao que NAO e ResumoDeHandoffInvalido.
+
+    Conta as chamadas: e o que permite ao teste provar "sem retentativa"
+    (D2) pelo NUMERO de chamadas, e nao so pelo efeito final -- um
+    regressor que reintroduzisse retentativa antes de cair no template
+    ainda produziria o mesmo `resumo_fallback=True` ao final.
+    """
+
+    def __init__(self) -> None:
+        self.chamadas = 0
 
     async def redigir(self, dossie_em_texto: str) -> ResumoDeHandoffGerado:
+        self.chamadas += 1
         raise RuntimeError("connection reset by peer")
 
 
@@ -72,6 +82,11 @@ async def test_gera_e_grava_o_resumo(
 async def test_handoff_que_sumiu_nao_e_erro(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """A excecao declarada da D1: dossie ausente e a UNICA falha que ainda
+    devolve `False` sem gravar nada -- sem fatos nao ha template possivel.
+    Todo o resto (redator invalido, provedor fora do ar) grava e devolve
+    `True`; ver os testes de fallback acima.
+    """
     assert (
         await gerar_resumo(session_factory, redator=_RedatorFalso(), handoff_id=uuid.uuid4())
         is False
@@ -83,10 +98,13 @@ async def test_provedor_fora_do_ar_grava_o_template(
 ) -> None:
     """Primeiro cenario do Gherkin. D2: sem retentativa, template na hora."""
     handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=3)
+    redator = _RedatorQueOProvedorDerrubou()
 
-    assert await gerar_resumo(
-        session_factory, redator=_RedatorQueOProvedorDerrubou(), handoff_id=handoff_id
-    )
+    assert await gerar_resumo(session_factory, redator=redator, handoff_id=handoff_id)
+
+    # A prova do "sem retentativa" e o NUMERO de chamadas, nao so o efeito
+    # final -- uma retentativa reintroduzida ainda cairia no template.
+    assert redator.chamadas == 1
 
     linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
     assert linha.resumo_fallback is True
@@ -123,11 +141,6 @@ async def test_regenerar_com_o_provedor_de_volta_limpa_a_marca(
     linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
     assert linha.resumo_fallback is False
     assert linha.resumo_modelo == "claude-sonnet-5"
-
-
-async def test_dossie_ausente_continua_sem_resumo(session_factory) -> None:
-    """A excecao declarada da D1: sem fatos nao ha template possivel."""
-    assert not await gerar_resumo(session_factory, redator=_RedatorFalso(), handoff_id=uuid.uuid4())
 
 
 async def test_regenerar_substitui_o_resumo_anterior(
