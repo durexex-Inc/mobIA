@@ -144,6 +144,27 @@ async def test_as_colunas_da_notificacao_nascem_com_o_default_certo(
     assert linha.aviso_manual_pendente is False
 
 
+async def test_sla_limite_em_e_aceito_em_nascem_nulas(session: AsyncSession) -> None:
+    """TEC-178: nulo aqui nao e "prazo zero", e "ainda nao notificado".
+
+    `sla_limite_em` so e gravada pelo job de notificacao, que conhece a
+    jornada do corretor destinatario -- a criacao do handoff (aqui, via
+    `registrar_handoff`) nao. `aceito_em` so existe depois da rota de aceite,
+    que esta card nem implementa ainda.
+    """
+    registro = await registrar_handoff(
+        session,
+        channel="whatsapp",
+        conversation_key="5511911112222",
+        gatilho=Gatilho.LEAD_QUENTE,
+    )
+    await session.commit()
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == registro.id))).scalar_one()
+    assert linha.sla_limite_em is None
+    assert linha.aceito_em is None
+
+
 async def test_resumo_fallback_nasce_falso(session: AsyncSession) -> None:
     """Falso e nao verdadeiro: o estado "ainda nao gerei" nao e contingencia.
 

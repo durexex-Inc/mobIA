@@ -48,6 +48,30 @@ async def test_corretor_completo_grava(session: AsyncSession) -> None:
     assert linha.ativo is True
 
 
+async def test_gerente_nasce_falso(session: AsyncSession) -> None:
+    """TEC-178. Mesma razao de `plantao`: verdadeiro faria todo corretor
+    cadastrado virar gerente, e a escalada de SLA cobraria o cadastro
+    inteiro."""
+    corretor = _corretor()
+    session.add(corretor)
+    await session.commit()
+
+    linha = (await session.execute(select(Corretor).where(Corretor.id == corretor.id))).scalar_one()
+    assert linha.gerente is False
+
+
+async def test_gerente_e_plantao_sao_independentes(session: AsyncSession) -> None:
+    """A prova de que nao ha exclusividade: numa imobiliaria pequena a mesma
+    pessoa e as duas coisas, e nenhum CHECK impede a combinacao."""
+    corretor = _corretor(plantao=True, gerente=True)
+    session.add(corretor)
+    await session.commit()
+
+    linha = (await session.execute(select(Corretor).where(Corretor.id == corretor.id))).scalar_one()
+    assert linha.plantao is True
+    assert linha.gerente is True
+
+
 async def test_email_e_unico(session: AsyncSession) -> None:
     """A unica defesa contra corretor duplicado -- ver a D1 do desenho.
 

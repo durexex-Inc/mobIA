@@ -86,6 +86,11 @@ def limite_de_aceite(
         )
 
     cursor = inicio.astimezone(fuso)
+    # float e nao int: `disponivel_minutos` (abaixo) vem de uma divisao e e
+    # sempre float, e `restante -= disponivel_minutos` precisa dos dois lados
+    # no mesmo tipo para o mypy aceitar. Nao e uma porta para minutos
+    # fracionarios -- os dez casos de teste so operam em inteiros, e
+    # `timedelta(minutes=...)` aceita float de qualquer forma.
     restante: float = minutos
 
     while True:
