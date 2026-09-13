@@ -329,3 +329,87 @@ async def test_pedido_de_optout_numa_conversa_assumida_e_registrado(
     assert resultado == "opt_out"
     assert outbound.entregues != [], "a confirmacao do proprio pedido tem de sair"
     assert classificador.chamadas == 0
+
+
+async def test_confirmacao_de_optout_com_reserva_duplicada_numa_conversa_assumida(
+    session,
+    semear_corretor,
+    semear_entrada,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    caplog,
+) -> None:
+    """Achado Major da rodada 2 de revisao: a escotilha de
+    `KIND_DA_CONFIRMACAO_DE_OPTOUT` na guarda de atendimento humano (correcao
+    2) muda o que e verdade no terceiro sitio do recheque, tres funcoes
+    adiante (`_entregar_texto_fixo`).
+
+    Depois da correcao 2, a guarda de atendimento humano NAO PODE MAIS ser a
+    causa de um `send()` falhar para `KIND_DA_CONFIRMACAO_DE_OPTOUT` -- ela
+    deixa esse kind passar. Numa conversa assumida, se a confirmacao for
+    retentada com uma reserva ja existente em `outbound_dispatches` (a mesma
+    situacao que `test_confirmacao_de_optout_que_nao_entrega_nunca_vira_bloqueado_por_optout`
+    de `test_turno_optout.py` cobre para o opt-out), a UNICA causa possivel do
+    `False` e a reserva duplicada -- nunca a guarda de atendimento humano,
+    mesmo com a conversa assumida. O desfecho tem de ser
+    `reentrega_suprimida` em `error`, nao `bloqueado_por_atendimento_humano`
+    em `info`: senao um alarme real de dado sumido fica escondido atras de
+    uma guarda que nao foi a responsavel.
+    """
+    from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
+    from mobia.domain.outbound.models import OutboundDispatch
+
+    corretor = await semear_corretor(email=f"corretor-{uuid.uuid4().hex[:8]}@ex.com")
+    await assumir(
+        session,
+        channel=CANAL_AGENTE,
+        conversation_key=CONVERSA_AGENTE,
+        corretor_id=corretor.id,
+    )
+    mensagem = await semear_entrada(session, texto="parar")
+    session.add(
+        OutboundDispatch(
+            id=uuid.uuid4(), message_id=mensagem.id, kind=KIND_DA_CONFIRMACAO_DE_OPTOUT
+        )
+    )
+    await session.commit()
+
+    outbound = OutboundFake(get_sessionmaker())
+
+    with caplog.at_level(logging.INFO):
+        resultado = await executar_turno(
+            get_sessionmaker(),
+            message=mensagem,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=ModeradorFake(),
+            agendador=AgendadorNoop(),
+        )
+
+    assert resultado == "reentrega_suprimida", (
+        "reserva duplicada de verdade -- nao pode se disfarcar de "
+        "bloqueado_por_atendimento_humano so porque a conversa esta assumida"
+    )
+    eventos_de_erro = [
+        registro
+        for registro in caplog.records
+        if "turno.reentrega_suprimida" in registro.getMessage()
+    ]
+    assert eventos_de_erro and all(r.levelno == logging.ERROR for r in eventos_de_erro), (
+        "o alarme de dado sumido nao pode ser engolido pela guarda de atendimento humano"
+    )
+    eventos_da_guarda_errada = [
+        registro
+        for registro in caplog.records
+        if "turno.bloqueado_por_atendimento_humano_concorrente" in registro.getMessage()
+    ]
+    assert eventos_da_guarda_errada == [], (
+        "a guarda de atendimento humano nao e a causa quando o kind e a "
+        "confirmacao de opt-out -- ela deixa esse kind passar"
+    )
+    # O opt-out em si foi registrado (aconteceu antes da tentativa de envio):
+    # so a confirmacao nao saiu, pela reserva duplicada.
+    assert await esta_em_optout(session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE)

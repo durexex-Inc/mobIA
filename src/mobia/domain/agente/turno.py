@@ -1693,7 +1693,8 @@ async def executar_turno(
 async def _bloqueado_por_optout_concorrente(
     session_factory: async_sessionmaker[AsyncSession], message: Message
 ) -> bool:
-    """Distingue as duas causas de `outbound.send` devolver False sem levantar.
+    """Distingue, entre as TRES causas de `outbound.send` devolver False sem
+    levantar, a de reentrega suprimida da de opt-out concorrente.
 
     `OutboundPort.send` documenta que quem le so o retorno NAO consegue
     separar uma reentrega genuinamente suprimida (reserva duplicada em
@@ -1703,7 +1704,11 @@ async def _bloqueado_por_optout_concorrente(
     historia certa para o log: se o lead esta em opt-out agora, a guarda e a
     explicacao mais provavel para o False, e as duas causas nao podem levar
     o mesmo nivel de log nem o mesmo `ResultadoDoTurno` -- uma e alarme de
-    dado sumido, a outra e a guarda funcionando como desenhada.
+    dado sumido, a outra e a guarda funcionando como desenhada. A terceira
+    causa (atendimento humano concorrente) e quem `_bloqueado_por_atendimento_humano_concorrente`,
+    logo abaixo, distingue -- esta funcao nao a cobre, entao um `False` que
+    sobra depois desta checagem NAO pode ser assumido como
+    `reentrega_suprimida` sem checar a outra tambem.
 
     Best-effort de proposito: entre o `send()` e esta consulta o estado ainda
     pode mudar (uma reativacao, por exemplo). Isso so muda qual historia o
@@ -1840,13 +1845,26 @@ async def _entregar_texto_fixo(
         # os dois do bloco principal, mas este chamador tem o mesmo problema:
         # sem esta consulta, um corretor que assumiu a conversa ENTRE a
         # checagem do topo e este envio (recusa de entrada ou laco de busca
-        # excedido, os dois kinds que passam por aqui) seria logado como
-        # reentrega suprimida -- o mesmo alarme de dado sumido que o bloco
-        # principal existe para evitar. Sem excecao por kind, ao contrario do
-        # opt-out logo acima: a guarda de atendimento humano barra TODO kind
-        # (ver `GuardedOutbound.send`), entao nao ha aqui um caminho
-        # equivalente a confirmacao de opt-out para excluir.
-        if await _bloqueado_por_atendimento_humano_concorrente(session_factory, message):
+        # excedido) seria logado como reentrega suprimida -- o mesmo alarme
+        # de dado sumido que o bloco principal existe para evitar.
+        #
+        # `kind != KIND_DA_CONFIRMACAO_DE_OPTOUT` guarda esta checagem tambem,
+        # pela MESMA razao da linha equivalente para o opt-out, tres linhas
+        # acima -- fix de revisao (Major, rodada 2). A guarda de atendimento
+        # humano deixou de barrar TODO kind na emenda que abriu a excecao de
+        # `KIND_DA_CONFIRMACAO_DE_OPTOUT` (ver `GuardedOutbound.send`): para
+        # esse kind especifico, ela nao pode mais ser a causa de um `False`
+        # aqui -- ela deixa passar. Sem esta excecao, a confirmacao de
+        # opt-out retentada com a reserva ja existente E a conversa ainda
+        # assumida seria atribuida a guarda errada: "bloqueado_por_atendimento_humano"
+        # em `info`, quando a causa real e reserva duplicada --
+        # "reentrega_suprimida" em `error`, o alarme de dado sumido que
+        # importa exatamente aqui (mesmo raciocinio do comentario do opt-out,
+        # tres linhas acima, so que para a guarda seguinte).
+        if (
+            kind != KIND_DA_CONFIRMACAO_DE_OPTOUT
+            and await _bloqueado_por_atendimento_humano_concorrente(session_factory, message)
+        ):
             log.info(
                 "turno.bloqueado_por_atendimento_humano_concorrente",
                 channel=message.channel,
