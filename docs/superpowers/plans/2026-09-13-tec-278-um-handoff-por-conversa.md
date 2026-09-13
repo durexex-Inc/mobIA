@@ -427,16 +427,19 @@ Expected: PASSAM, porque as Tasks 1 e 2 já entregaram o comportamento. **Se alg
 
 **Não basta mexer no modelo.** O `postgresql_where` de `handoff/models.py` **não tem efeito em runtime**: o índice que existe no banco vem da migration, e quem o seleciona no `ON CONFLICT` é o `index_where` de `handoff/repositorio.py`. Revertê-lo só no modelo é no-op, e o teste passaria — o que provaria nada sobre o teste e tudo sobre a falsificação.
 
-São dois passos, juntos:
+**E `alembic downgrade -1` também não basta** — descoberto na revisão da Task 1. A fixture `migrar_banco` (`tests/conftest.py:623`) roda `alembic upgrade head` **de verdade** a cada sessão de pytest, então um downgrade manual é desfeito antes de qualquer teste rodar. O teste passaria e você concluiria, errado, que ele é vácuo.
+
+**A falsificação que funciona:** edite temporariamente o `upgrade()` da migration `0030` para instalar o predicado antigo (`status = 'PENDENTE'`), reverta o `index_where` em `src/mobia/domain/handoff/repositorio.py` para o mesmo, e rode:
 
 ```bash
 ./.venv/Scripts/python.exe -m alembic downgrade -1
+./.venv/Scripts/python.exe -m alembic upgrade head
+./.venv/Scripts/python.exe -m pytest tests/integration/test_um_handoff_por_conversa.py -k escalado -v
 ```
-e reverter o `index_where` em `src/mobia/domain/handoff/repositorio.py` para `text("status = 'PENDENTE'")`. Aí rode `test_lead_escalado_que_continua_conversando_nao_gera_handoff_novo`.
 
 Expected: REPROVA — nasce um segundo handoff e `escalar_vencidos` devolve 1 na segunda passagem.
 
-Restaure com `git checkout -- src/mobia/domain/handoff/repositorio.py` e `./.venv/Scripts/python.exe -m alembic upgrade head`. Confirme que o teste volta a passar antes de seguir.
+**Restaurar exige os dois passos, nesta ordem:** `git checkout -- alembic/ src/`, e **depois** `alembic downgrade -1 && alembic upgrade head`. O Alembic rastreia por número de revisão, não por conteúdo do arquivo: restaurar o arquivo sozinho deixa o banco carimbado em `0030` com o índice errado, e aí o `ON CONFLICT` estoura com "no unique or exclusion constraint matching". Confirme que o teste volta a passar antes de seguir.
 
 Se o teste **passar** com o índice antigo, ele não prova nada e precisa ser reescrito.
 
