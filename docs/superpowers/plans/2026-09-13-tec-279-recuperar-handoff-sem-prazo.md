@@ -25,7 +25,9 @@
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `src/mobia/domain/handoff/recuperacao.py` | a porta, o dublê noop, o adaptador ARQ e `recuperar_sem_prazo` (criar) |
+| `src/mobia/domain/handoff/recuperacao.py` | a porta, o adaptador ARQ e `recuperar_sem_prazo` (criar) |
+| `src/mobia/domain/notificacao/envio.py` | passa a ser a casa de `NOTIFICAR_JOB` (modificar) |
+| `src/mobia/workers/jobs/notificar.py` | importa `NOTIFICAR_JOB` do domínio (modificar) |
 | `src/mobia/workers/jobs/sweep_sla.py` | chama a recuperação junto com a escalada (modificar) |
 | `src/mobia/workers/main.py` | `ctx["reenfileirador"]` (modificar) |
 | `tests/integration/test_recuperacao_sem_prazo.py` | os quatro cenários do Gherkin (criar) |
@@ -39,11 +41,10 @@
 - Test: `tests/integration/test_recuperacao_sem_prazo.py`
 
 **Interfaces:**
-- Consumes: `Handoff` e `Status` de `mobia.domain.handoff`; `GERAR_RESUMO_JOB` de `mobia.domain.handoff.agendador`; `NOTIFICAR_JOB` de `mobia.workers.jobs.notificar`
+- Consumes: `Handoff` e `Status` de `mobia.domain.handoff`; `GERAR_RESUMO_JOB` de `mobia.domain.handoff.agendador`; `NOTIFICAR_JOB` de `mobia.domain.notificacao.envio` (**ver a mudança de casa abaixo**)
 - Produces:
   - `INTERVALO_DE_RECUPERACAO: timedelta` (dez minutos)
   - `class ReenfileiradorPort(Protocol)` com `agendar_resumo(handoff_id: uuid.UUID) -> None` e `agendar_notificacao(handoff_id: uuid.UUID) -> None`
-  - `class ReenfileiradorNoop` — o dublê
   - `class ReenfileiradorArq` — `__init__(self, pool: ArqRedis)`
   - `async def recuperar_sem_prazo(session_factory, *, reenfileirador: ReenfileiradorPort, limite: int = 100) -> int`
 
@@ -51,7 +52,11 @@
 
 **Abra `src/mobia/domain/handoff/escalada.py` inteiro antes de escrever uma linha.** É o molde: mesma assinatura (`session_factory` posicional, porta por keyword, `limite` com default 100), mesmo formato de docstring, mesmo estilo de log. `recuperar_sem_prazo` é a irmã dela.
 
-**Abra também `src/mobia/domain/handoff/agendador.py`** — é o molde da porta, do noop e do adaptador ARQ, incluindo a convenção de `_job_id`.
+**Abra também `src/mobia/domain/handoff/agendador.py`** — é o molde da porta e do adaptador ARQ, incluindo a convenção de `_job_id`. **Não** copie o `AgendadorNoop`: ele existe porque ~30 testes de turno o passam como default, e um noop de reenfileirador não teria usuário nenhum — seria código morto, que o rubrico de revisão trata como defeito.
+
+**`NOTIFICAR_JOB` muda de casa, e isto é parte da task.** Hoje ele é definido em `src/mobia/workers/jobs/notificar.py`. Importá-lo de lá faria `domain/` depender de `workers/` — e **nenhum módulo de `src/mobia/domain/` importa `mobia.workers` hoje**; a direção é sempre a inversa. `GERAR_RESUMO_JOB` mora em `domain/handoff/agendador.py` exatamente por isso, e é o worker que o importa.
+
+Mova `NOTIFICAR_JOB = "notificar_corretor"` para `src/mobia/domain/notificacao/envio.py`, onde mora a função `notificar` do domínio, e faça `workers/jobs/notificar.py` importá-lo de lá. `workers/jobs/gerar_resumo.py` já o importa de `workers/jobs/notificar.py` e **continua funcionando sem mudança**. Escreva um comentário na constante dizendo por que ela mora no domínio.
 
 Os dois `_job_id` que você tem de reusar, **exatamente como já existem**:
 - `gerar_resumo` → `_job_id=f"resumo:{handoff_id}"` (em `agendador.py:48`)
@@ -175,7 +180,7 @@ Expected: FAIL com `ModuleNotFoundError: No module named 'mobia.domain.handoff.r
 
 - Docstring de módulo dizendo **por que a rede de segurança de hoje não pega este caso**: `escalar_vencidos` exige `sla_limite_em IS NOT NULL`, o prazo é gravado pelo job de notificação, e se o enfileiramento falha o prazo nunca existe — a rede depende da peça que falhou.
 - `INTERVALO_DE_RECUPERACAO = timedelta(minutes=10)`, com comentário dizendo **as duas razões** do número: folgado para o caminho normal concluir com provedor lento e uma retentativa do ARQ, e **dentro do SLA de 15 minutos do lead QUENTE**, para a recuperação não gravar um prazo que já nasce vencido.
-- `ReenfileiradorPort`, `ReenfileiradorNoop`, `ReenfileiradorArq` — no molde de `agendador.py`, com os dois `_job_id` reusados verbatim.
+- `ReenfileiradorPort` e `ReenfileiradorArq` — no molde de `agendador.py`, com os dois `_job_id` reusados verbatim. **Sem noop** (ver acima).
 - `recuperar_sem_prazo(session_factory, *, reenfileirador, limite=100) -> int`.
 
 O `SELECT`, com as cinco condições da D1:
@@ -243,7 +248,7 @@ Restaure depois de cada uma e registre as saídas no relatório. Um teste que pa
 ./.venv/Scripts/python.exe -m ruff check src tests alembic evals scripts
 ./.venv/Scripts/python.exe -m ruff format --check src tests alembic evals scripts
 ./.venv/Scripts/python.exe -m mypy src
-git add src/mobia/domain/handoff/recuperacao.py tests/integration/test_recuperacao_sem_prazo.py
+git add src/mobia/domain/handoff/recuperacao.py src/mobia/domain/notificacao/envio.py src/mobia/workers/jobs/notificar.py tests/integration/test_recuperacao_sem_prazo.py
 git commit -m "feat(TEC-279): o handoff perdido pela fila volta a ser visto"
 ```
 
@@ -268,7 +273,7 @@ git commit -m "feat(TEC-279): o handoff perdido pela fila volta a ser visto"
 
 **A ordem entre as duas não importa funcionalmente** — os conjuntos são disjuntos por construção (`sla_limite_em IS NULL` contra `IS NOT NULL`). Escreva a recuperação **depois** da escalada e diga no comentário que a ordem é indiferente e por quê; sem isso, o próximo leitor vai supor que há uma dependência e não mexer com medo.
 
-**`ctx["reenfileirador"]` vem do `startup`, nunca com default.** Ver a guarda de `WHATSAPP_ACCESS_TOKEN` em `workers/main.py`: um `ctx.get("reenfileirador") or ReenfileiradorNoop()` faria a recuperação **descartar em silêncio** se alguém esquecesse de popular a chave, e o sintoma seria nenhum handoff recuperado, para sempre, sem log e sem erro. Use `ctx["reenfileirador"]` direto, para o `KeyError` subir alto na primeira passagem.
+**`ctx["reenfileirador"]` vem do `startup`, nunca com default.** Ver a guarda de `WHATSAPP_ACCESS_TOKEN` em `workers/main.py`: um `ctx.get("reenfileirador") or <qualquer dublê>` faria a recuperação **descartar em silêncio** se alguém esquecesse de popular a chave, e o sintoma seria nenhum handoff recuperado, para sempre, sem log e sem erro. Use `ctx["reenfileirador"]` direto, para o `KeyError` subir alto na primeira passagem.
 
 - [ ] **Step 1: Escreva o teste que falha**
 
