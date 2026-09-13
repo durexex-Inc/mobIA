@@ -22,7 +22,7 @@ from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.context.resumo import ResumoGerado
 from mobia.domain.corretores.models import Corretor
-from mobia.domain.handoff.repositorio import registrar_handoff
+from mobia.domain.handoff.repositorio import gravar_resumo, registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
@@ -933,6 +933,8 @@ def semear_corretor(session: AsyncSession):
         plantao: bool = False,
         ativo: bool = True,
         criado_em: datetime | None = None,
+        horario_inicio: int = 9,
+        horario_fim: int = 18,
     ) -> Corretor:
         agora = criado_em if criado_em is not None else datetime.now(UTC)
         corretor = Corretor(
@@ -943,8 +945,8 @@ def semear_corretor(session: AsyncSession):
             creci=None,
             especialidades=["COMPRA"],
             regioes_atuacao=["pinheiros"],
-            horario_inicio=9,
-            horario_fim=18,
+            horario_inicio=horario_inicio,
+            horario_fim=horario_fim,
             capacidade_diaria=5,
             plantao=plantao,
             ativo=ativo,
@@ -954,5 +956,33 @@ def semear_corretor(session: AsyncSession):
         session.add(corretor)
         await session.commit()
         return corretor
+
+    return _semear
+
+
+@pytest.fixture
+def semear_handoff_com_resumo(session: AsyncSession):
+    """Um handoff de LEAD_QUENTE, com resumo cifrado quando `resumo` e dado.
+
+    `resumo=None` deixa a coluna nula por construcao -- o caminho do D2 que
+    `TEXTO_SEM_RESUMO` cobre (TEC-177): a geracao pode falhar ou ainda nao ter
+    rodado, e a notificacao sai mesmo assim.
+    """
+
+    async def _semear(
+        *,
+        resumo: str | None,
+        canal: str = "whatsapp",
+        conversa: str = "5511900000000",
+    ) -> uuid.UUID:
+        registro = await registrar_handoff(
+            session, channel=canal, conversation_key=conversa, gatilho=Gatilho.LEAD_QUENTE
+        )
+        if resumo is not None:
+            await gravar_resumo(
+                session, handoff_id=registro.id, texto=resumo, modelo="modelo-de-teste"
+            )
+        await session.commit()
+        return registro.id
 
     return _semear
