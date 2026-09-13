@@ -1,13 +1,23 @@
 """O handoff: a tarefa que o lead pronto vira para o corretor.
 
 TEC-174. Ver `alembic/versions/0023_handoffs.py` para o porque do par como
-identidade, do UNIQUE parcial e do `corretor_id` sem FK.
+identidade e do UNIQUE parcial. A FK de `corretor_id` para `corretores.id`
+entrou na migration da TEC-196.
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ARRAY, CheckConstraint, DateTime, Index, LargeBinary, String, text
+from sqlalchemy import (
+    ARRAY,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    String,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
@@ -51,8 +61,12 @@ class Handoff(Base):
     # depois custa migration, e o `IN` do CHECK e o unico lugar a mexer.
     status: Mapped[str] = mapped_column(String(16), nullable=False)
 
-    # Nulavel e sem FK ate a TEC-196 criar `corretores`. Nada escreve aqui hoje.
-    corretor_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # FK para `corretores.id` desde a TEC-196. Continua NULAVEL, mas agora
+    # por outra razao -- nao falta mais tabela alvo, falta quem aloque, e
+    # alocar e a TEC-166.
+    corretor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("corretores.id"), nullable=True
+    )
 
     gatilhos_adicionais: Mapped[list[str]] = mapped_column(
         ARRAY(String(32)), nullable=False, server_default=text("'{}'::varchar[]")
