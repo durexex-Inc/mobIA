@@ -62,11 +62,13 @@ class Settings(BaseSettings):
     # grava dado com valor publicamente conhecido e nao reclama.
     anthropic_api_key: str = ""
 
+    # Dois consumidores: o resumo de conversa (`context/resumo.py`) e, desde a
+    # TEC-175, o redator de resumo de handoff (`handoff/resumo.py:155`).
     # Trocado de `claude-opus-5` para `claude-sonnet-5` por custo, junto com o
     # `modelo_agente`. **A troca do resumo nao foi medida, e hoje nao ha como
     # medir**: nada em `evals/` toca `modelo_resumo`, e a unica guarda que ele
-    # tem e `test_todo_modelo_configurado_tem_preco_cadastrado`, que confere
-    # preco e nao qualidade.
+    # tem em qualquer das duas saidas e `test_todo_modelo_configurado_tem_preco_cadastrado`,
+    # que confere preco e nao qualidade.
     #
     # A diferenca com o agente e essa, e importa: o agente trocou com gate --
     # 91,8% VERDE medido depois, contra 85,4% antes --, e o resumo trocou sem
@@ -130,6 +132,12 @@ class Settings(BaseSettings):
     # mensagem ser consumida, em vez de deixar o 401 acontecer em producao.
     whatsapp_access_token: str = ""
     whatsapp_api_base: str = "https://graph.facebook.com/v21.0"
+
+    # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
+    # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link
+    # composto sobre uma base vazia continua sendo um caminho valido -- ver a
+    # L4 do desenho.
+    dashboard_base_url: str = ""
 
     # RN-02.5: teto por chamada. RN-02.2: piso de mensagens literais.
     contexto_teto_de_tokens: int = 12000

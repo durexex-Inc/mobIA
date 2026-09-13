@@ -1,5 +1,6 @@
 import uuid
 
+from mobia.domain.handoff.agendador import GERAR_RESUMO_JOB
 from mobia.infra.queue import PROCESS_MESSAGE_JOB, enqueue_process_message
 from mobia.workers.main import WorkerSettings
 
@@ -43,3 +44,14 @@ def test_process_message_registrado_sem_reter_resultado() -> None:
     assert registrada.keep_result_s == 0
     # O finish_failed_job ignora a configuracao por funcao e le so a do worker.
     assert WorkerSettings.keep_result == 0
+
+
+def test_gerar_resumo_registrado_com_o_nome_esperado() -> None:
+    """Amarra GERAR_RESUMO_JOB (usado por AgendadorArq para montar o `_job_id`)
+    ao nome que WorkerSettings de fato registra. Renomear a corrotina sem
+    mexer aqui produziria jobs que nenhum worker sabe rodar, sem sintoma na
+    suite -- mesmo molde de test_process_message_registrado_sem_reter_resultado."""
+    registrada = next(
+        f for f in WorkerSettings.functions if getattr(f, "name", None) == GERAR_RESUMO_JOB
+    )
+    assert registrada.keep_result_s == 0

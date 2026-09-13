@@ -14,6 +14,7 @@ import pytest
 from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFake, _entrada_do_lead
 from sqlalchemy import func, select
 
+from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.outbound.models import OutboundDispatch
@@ -59,6 +60,7 @@ def _ctx(outbound, classificador=None) -> dict[str, Any]:
         "resumidor": ResumidorFake(),
         "contador": ContadorFake(),
         "moderador": ModeradorFake(),
+        "agendador": AgendadorNoop(),
     }
 
 

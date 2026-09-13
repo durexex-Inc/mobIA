@@ -74,3 +74,46 @@ async def test_gatilhos_adicionais_nasce_vazio_e_nao_nulo(session: AsyncSession)
         text("SELECT gatilhos_adicionais FROM handoffs WHERE id = :i"), {"i": linha.id}
     )
     assert valor == []
+
+
+async def test_a_coluna_do_resumo_nasce_nulavel_e_binaria(session: AsyncSession) -> None:
+    """Nulavel por construcao: a geracao e assincrona (D1 do desenho).
+
+    Todo handoff existe por alguns segundos sem resumo, e NULL e o nome desse
+    intervalo -- e tambem o estado em que ele fica quando a geracao falha, que
+    e o que a TEC-176 vai ler.
+    """
+    linhas = (
+        await session.execute(
+            text(
+                "SELECT column_name, data_type, is_nullable "
+                "FROM information_schema.columns "
+                "WHERE table_name = 'handoffs' "
+                "AND column_name IN ('resumo', 'resumo_gerado_em', 'resumo_modelo')"
+            )
+        )
+    ).all()
+
+    por_nome = {linha[0]: (linha[1], linha[2]) for linha in linhas}
+    assert por_nome["resumo"] == ("bytea", "YES")
+    assert por_nome["resumo_gerado_em"] == ("timestamp with time zone", "YES")
+    assert por_nome["resumo_modelo"] == ("character varying", "YES")
+
+
+async def test_o_resumo_recusa_texto_claro(session: AsyncSession) -> None:
+    """Mesma guarda de `Message` e de `ConversationSummary`.
+
+    O driver embute o argumento recusado na propria mensagem de excecao, antes
+    de o SQLAlchemy ver qualquer coisa, e essa mensagem chega ao log.
+    """
+    with pytest.raises(TypeError, match="apenas bytes cifrados"):
+        Handoff(
+            id=uuid.uuid4(),
+            channel="whatsapp",
+            conversation_key="5511911112222",
+            gatilho="LEAD_QUENTE",
+            etiqueta="lead-quente",
+            prioridade="NORMAL",
+            status="PENDENTE",
+            resumo="texto em claro",
+        )

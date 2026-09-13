@@ -41,7 +41,8 @@ from mobia.domain.context.qualificacao import esta_qualificado
 from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados, registrar_recalculo
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
-from mobia.domain.handoff.repositorio import registrar_handoff
+from mobia.domain.handoff.agendador import AgendadorDeResumoPort
+from mobia.domain.handoff.repositorio import HandoffRegistrado, registrar_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
 from mobia.domain.messages.models import Message
@@ -316,6 +317,27 @@ def _faixa_declarada(estado: LeadQualification | None) -> tuple[int | None, int 
     return (estado.faixa_preco_min_centavos, estado.faixa_preco_max_centavos)
 
 
+async def _agendar_resumo(agendador: AgendadorDeResumoPort, registro: HandoffRegistrado) -> None:
+    """Pede a geracao do resumo, mas so quando o handoff e NOVO.
+
+    Gatilho adicional nao reagenda: a intencao dispara em TODO turno com a
+    classificacao certa -- o `CASE` do `ON CONFLICT` em `repositorio.py` ja
+    documenta isso --, entao reagendar aqui seria uma chamada de LLM por
+    turno para um resumo que ninguem pediu. Ver a D3 do desenho.
+
+    **Nao propaga excecao.** O handoff ja esta commitado neste ponto; uma
+    falha do Redis aqui derrubaria o turno DEPOIS de o lead ter sido
+    atendido, e o que se perde e so o resumo, que a rota de regeneracao
+    recupera.
+    """
+    if not registro.criado:
+        return
+    try:
+        await agendador.agendar(registro.id)
+    except Exception:
+        log.warning("resumo_handoff.nao_agendado", handoff_id=str(registro.id), exc_info=True)
+
+
 async def executar_turno(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -325,6 +347,7 @@ async def executar_turno(
     contador: ContadorPort,
     outbound: OutboundPort,
     moderador: ModeradorPort,
+    agendador: AgendadorDeResumoPort,
 ) -> ResultadoDoTurno:
     """Um turno inteiro: contexto, classificacao, entrega, registro.
 
@@ -730,11 +753,11 @@ async def executar_turno(
     # janela nao descartam uma recusa que o lead de fato disse.
     antes = esta_qualificado(contexto.estado, _recusados_de(contexto.estado))
     # TEC-174, fix wave (Important 2). Os dois ficam None quando a condicao que
-    # os preenche nao roda -- e viram o booleano de `registrar_handoff` quando
-    # roda. `registrar_handoff` nao loga mais (ver o comentario de la); quem
-    # loga e este modulo, e so DEPOIS do commit abaixo.
-    handoff_do_quente: bool | None = None
-    handoff_da_intencao: bool | None = None
+    # os preenche nao roda -- e viram o `HandoffRegistrado` de `registrar_handoff`
+    # quando roda. `registrar_handoff` nao loga mais (ver o comentario de la);
+    # quem loga e este modulo, e so DEPOIS do commit abaixo.
+    handoff_do_quente: HandoffRegistrado | None = None
+    handoff_da_intencao: HandoffRegistrado | None = None
     async with session_factory() as session:
         anterior = await ler_intencao(session, message.channel, message.conversation_key)
         await gravar_intencao(
@@ -804,12 +827,13 @@ async def executar_turno(
     # vizinho pronto para emprestar a posicao; loga aqui, e so aqui.
     if gatilho_da_intencao is not None and handoff_da_intencao is not None:
         log.info(
-            "handoff.criado" if handoff_da_intencao else "handoff.gatilho_adicional",
+            "handoff.criado" if handoff_da_intencao.criado else "handoff.gatilho_adicional",
             channel=message.channel,
             gatilho=gatilho_da_intencao.value,
             etiqueta=ETIQUETA_DE[gatilho_da_intencao],
             prioridade=PRIORIDADE_DE[gatilho_da_intencao].value,
         )
+        await _agendar_resumo(agendador, handoff_da_intencao)
 
     # A borda, nao o estado: um lead ja qualificado que segue conversando nao
     # gera o evento de novo, senao a taxa de qualificacao da RN-17.1 contaria
@@ -905,15 +929,16 @@ async def executar_turno(
         # `lead.esquentou` -- mesma condicao, mesma borda, mesmo motivo de
         # nao logar dentro de `registrar_handoff`. `handoff_do_quente` so e
         # None quando esta condicao e falsa, entao aqui ele sempre carrega o
-        # booleano que o `registrar_handoff` de cima devolveu.
+        # registro que o `registrar_handoff` de cima devolveu.
         if handoff_do_quente is not None:
             log.info(
-                "handoff.criado" if handoff_do_quente else "handoff.gatilho_adicional",
+                "handoff.criado" if handoff_do_quente.criado else "handoff.gatilho_adicional",
                 channel=message.channel,
                 gatilho=Gatilho.LEAD_QUENTE.value,
                 etiqueta=ETIQUETA_DE[Gatilho.LEAD_QUENTE],
                 prioridade=PRIORIDADE_DE[Gatilho.LEAD_QUENTE].value,
             )
+            await _agendar_resumo(agendador, handoff_do_quente)
 
     desambiguando = deve_desambiguar(
         gerada.confianca, anterior.desambiguado_em if anterior else None

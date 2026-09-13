@@ -325,6 +325,7 @@ async def test_reserva_duplicada_na_segunda_parte_apos_entrega_vira_reentrega_su
 
     from mobia.domain.agente.formato import quebrar_em_mensagens
     from mobia.domain.agente.turno import KINDS_DA_RESPOSTA, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
     from mobia.domain.messages.enums import MessageRole
     from mobia.domain.messages.models import Message
     from mobia.infra.crypto import aad_de, decrypt
@@ -353,6 +354,7 @@ async def test_reserva_duplicada_na_segunda_parte_apos_entrega_vira_reentrega_su
             contador=contador_fake(),
             outbound=outbound,
             moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
         )
 
     assert resultado == "reentrega_suprimida", (

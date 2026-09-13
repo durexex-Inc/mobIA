@@ -6,10 +6,13 @@ from mobia.app.config import ConfiguracaoInsegura, get_settings
 from mobia.app.logging import configure_logging
 from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
+from mobia.domain.handoff.agendador import AgendadorArq
+from mobia.domain.handoff.resumo import RedatorAnthropic
 from mobia.domain.outbound.whatsapp import WhatsAppOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
+from mobia.workers.jobs.gerar_resumo import gerar_resumo
 from mobia.workers.jobs.importar_catalogo import importar_catalogo
 from mobia.workers.jobs.indexar_catalogo import indexar_catalogo
 from mobia.workers.jobs.process_message import process_message
@@ -75,6 +78,8 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["resumidor"] = ResumidorAnthropic()
     ctx["contador"] = ContadorAnthropic()
     ctx["moderador"] = ModeradorAnthropic()
+    ctx["redator"] = RedatorAnthropic()
+    ctx["agendador"] = AgendadorArq(ctx["redis"])
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -111,6 +116,12 @@ class WorkerSettings:
         sweep_followups,
         importar_catalogo,
         indexar_catalogo,
+        # `keep_result=0` pela mesma razao do `process_message`: o `_job_id` e
+        # fixo por handoff, e uma chave de resultado sobrevivente bloquearia
+        # um reenqueue futuro em silencio. Nao protege a rota da D8 -- ela
+        # chama `gerar_resumo` em processo e nunca enfileira, entao nao ha
+        # regeneracao por fila para recusar.
+        func(gerar_resumo, keep_result=0),
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),

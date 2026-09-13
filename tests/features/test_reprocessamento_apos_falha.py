@@ -8,6 +8,7 @@ import pytest
 from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFake
 from sqlalchemy import func, select
 
+from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -22,9 +23,13 @@ def _ctx(session_factory, outbound) -> dict[str, Any]:
     """Monta o ctx completo que `process_message` agora exige.
 
     Desde a TEC-134 `process_message` roda o turno inteiro, entao alem de
-    `session_factory`/`outbound` ele precisa das tres portas do agente -- este
-    modulo testa reprocessamento e reserva de outbound, nao classificacao, daí
+    `session_factory`/`outbound` ele precisa das cinco portas do agente -- este
+    modulo testa reprocessamento e reserva de outbound, nao classificacao, dai
     os dubles fixos em vez das fixtures parametrizaveis de `test_turno.py`.
+    `agendador` entrou na TEC-175: `process_message` le `ctx["agendador"]`
+    direto, sem fallback -- ver o comentario em `process_message.py` sobre por
+    que um `ctx.get(...) or AgendadorNoop()` esconderia em silencio um
+    `startup` que deixasse de popular a chave.
     """
     return {
         "session_factory": session_factory,
@@ -33,6 +38,7 @@ def _ctx(session_factory, outbound) -> dict[str, Any]:
         "resumidor": ResumidorFake(),
         "contador": ContadorFake(),
         "moderador": ModeradorFake(),
+        "agendador": AgendadorNoop(),
     }
 
 

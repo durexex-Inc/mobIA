@@ -18,6 +18,7 @@ from mobia.domain.agente.turno import (
 )
 from mobia.domain.context.montagem import ContextoIrreducivel
 from mobia.domain.context.repositorio import ler_estado
+from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.outbound.models import OutboundDispatch
 from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, EnvioRetentavel
 from mobia.infra.db import get_sessionmaker
@@ -272,6 +273,7 @@ async def test_reentrega_suprimida_nao_grava_fala_fantasma(
             contador=contador_fake(),
             outbound=outbound,
             moderador=ModeradorFake(),
+            agendador=AgendadorNoop(),
         )
 
     assert resultado == "reentrega_suprimida"
@@ -492,6 +494,7 @@ async def test_reentrega_suprimida_nao_marca_o_episodio(
         contador=contador_fake(),
         outbound=outbound_fake(),
         moderador=ModeradorFake(),
+        agendador=AgendadorNoop(),
     )
 
     assert resultado == "reentrega_suprimida"
