@@ -147,9 +147,11 @@ async def notificar(
         # outro ambiente) degrada para None em vez de subir: sem esta guarda
         # e o unico modo de falha desta funcao sem caminho degradado, e nao e
         # mais raro que a queda de um canal -- o job falharia, retentaria,
-        # falharia de novo, e o handoff terminaria sem `notificado_em` e sem
-        # `aviso_manual_pendente`, invisivel para qualquer fila futura (E8,
-        # TEC-178). Mesmo argumento e mesmo molde do `contexto.resumo_ilegivel`
+        # falharia de novo, e o handoff terminaria sem `notificado_em`, sem
+        # `aviso_manual_pendente` e -- o que custa mais caro -- sem
+        # `sla_limite_em`, que e o que a varredura da TEC-178 le: sem prazo
+        # gravado o handoff nunca escala, e some tambem da fila futura da E8.
+        # Mesmo argumento e mesmo molde do `contexto.resumo_ilegivel`
         # em `domain/context/montagem.py`. `TEXTO_SEM_RESUMO` (`mensagem.py`)
         # ja e o caminho degradado testado da D2 -- reusado aqui, nao um novo.
         try:
@@ -199,7 +201,11 @@ async def notificar(
             # e que depois e aceito numa retentativa do ARQ terminaria com
             # `notificado_em` preenchido E `aviso_manual_pendente` ainda
             # verdadeiro -- as duas dizendo coisas incompativeis ao mesmo
-            # tempo, que e exatamente o sinal que a E8 e a TEC-178 vao ler.
+            # tempo. A TEC-178 chegou e NAO le este par: ela escala por
+            # `status` e `sla_limite_em`. Entao o unico leitor previsto
+            # destas duas colunas continua sendo o painel da E8, que nao
+            # existe -- manter as duas coerentes e disciplina paga
+            # adiantado, nao requisito de quem le hoje.
             await session.execute(
                 update(Handoff)
                 .where(Handoff.id == handoff_id)

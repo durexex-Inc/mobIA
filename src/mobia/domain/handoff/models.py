@@ -58,9 +58,14 @@ class Handoff(Base):
     # contraria a RN-04.6.
     prioridade: Mapped[str] = mapped_column(String(8), nullable=False)
 
-    # Nasce e permanece PENDENTE nesta card. ACEITO/ESCALADO vem da TEC-178 e
-    # CONCLUIDO da TEC-179 -- o enum nasce completo porque mudar valor de enum
-    # depois custa migration, e o `IN` do CHECK e o unico lugar a mexer.
+    # Nasce PENDENTE (TEC-174). Desde a TEC-178 tres dos quatro valores tem
+    # escritor: ACEITO vem da rota de aceite (`api/routes/handoffs.py`), e
+    # ESCALADO vem de dois lugares -- `handoff/escalada.py`, quando o prazo
+    # vence, e `notificacao/envio.py`, quando nao ha destinatario nenhum a
+    # quem cobrar. CONCLUIDO segue sem escritor, e e a TEC-179.
+    #
+    # O enum nasceu completo na TEC-174 porque mudar valor de enum depois
+    # custa migration, e o `IN` do CHECK e o unico lugar a mexer.
     status: Mapped[str] = mapped_column(String(16), nullable=False)
 
     # FK para `corretores.id` desde a TEC-196. Continua NULAVEL, mas agora
