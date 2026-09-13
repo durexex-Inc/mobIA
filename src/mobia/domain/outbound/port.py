@@ -145,13 +145,15 @@ class EnvioForaDaJanela(EnvioRecusado):
 
 
 class GuardedOutbound:
-    """Barra quem pediu opt-out, reserva, e so entao entrega.
+    """Barra quem pediu opt-out, barra quem esta em atendimento humano, reserva, e so entao entrega.
 
-    A guarda de opt-out (TEC-182) roda antes da reserva, e e a razao de o
-    docstring de `OutboundPort` apontar esta classe como a rota segura: herdar
-    daqui e o que garante que um caminho de envio novo nao fale com quem pediu
-    silencio. O unico kind que a atravessa e
-    `KIND_DA_CONFIRMACAO_DE_OPTOUT` -- ver `send`.
+    As duas guardas (opt-out, TEC-182; atendimento humano, TEC-179) rodam
+    antes da reserva, e sao a razao de o docstring de `OutboundPort` apontar
+    esta classe como a rota segura: herdar daqui e o que garante que um
+    caminho de envio novo nao fale com quem pediu silencio nem por cima de
+    quem assumiu a conversa. O unico kind que atravessa a de opt-out e
+    `KIND_DA_CONFIRMACAO_DE_OPTOUT` -- ver `send`. A de atendimento humano nao
+    tem excecao nenhuma: barra qualquer kind, sem escotilha (D5 do desenho).
 
     A linha em outbound_dispatches e commitada antes do efeito externo. Queda
     entre a reserva e a entrega so perde aquele envio quando a falha e
