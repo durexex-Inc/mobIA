@@ -104,23 +104,23 @@ def reais(centavos: int | None) -> str:
     return f"R$ {centavos // 100:,}".replace(",", ".")
 
 
-def _sim_nao(valor: bool | None) -> str:
+def sim_nao(valor: bool | None) -> str:
     if valor is None:
         return AUSENTE
     return "sim" if valor else "nao"
 
 
-def _ou_ausente(valor: object | None) -> str:
+def ou_ausente(valor: object | None) -> str:
     return AUSENTE if valor is None else str(valor)
 
 
-def _isoformat_ou_none(valor: datetime | None) -> str | None:
+def isoformat_ou_none(valor: datetime | None) -> str | None:
     """`.isoformat()` so roda quando ha data -- sem handoff sem mensagem do
     lead, `primeira_mensagem_em` e `None`, e `None.isoformat()` estouraria."""
     return None if valor is None else valor.isoformat()
 
 
-def _faixa(dossie: Dossie) -> str:
+def faixa(dossie: Dossie) -> str:
     """A faixa como o lead a declarou, e nao um intervalo inventado.
 
     Minimo ausente com maximo presente e o caso comum ("ate 600 mil"), e
@@ -136,14 +136,27 @@ def _faixa(dossie: Dossie) -> str:
     return f"de {reais(minimo)} ate {reais(maximo)}"
 
 
-def _imoveis(dossie: Dossie) -> str:
+def imoveis(dossie: Dossie, teto: int | None = None) -> str:
+    """A lista de imoveis apresentados, com corte opcional.
+
+    `teto` existe para o resumo de contingencia (TEC-176): o dossie inteiro
+    pode ter dezenas de imoveis, e o resumo tem o limite de 1.500 caracteres
+    da RN-15.2. `renderizar` chama sem `teto` porque o modelo recebe o
+    dossie inteiro -- ele e quem decide o que resumir.
+    """
     if not dossie.imoveis:
         return "nenhum imovel apresentado ainda"
 
     quantidade = len(dossie.imoveis)
     substantivo = "imovel apresentado" if quantidade == 1 else "imoveis apresentados"
-    linhas = [f"{quantidade} {substantivo}:"]
-    for imovel in dossie.imoveis:
+    cortado = teto is not None and quantidade > teto
+    mostrados = dossie.imoveis[:teto] if teto is not None else dossie.imoveis
+    if cortado:
+        cabecalho = f"{quantidade} {substantivo}, mostrando os primeiros {teto}:"
+    else:
+        cabecalho = f"{quantidade} {substantivo}:"
+    linhas = [cabecalho]
+    for imovel in mostrados:
         reacao = imovel.reacao or "sem reacao ate agora"
         descarte = f", motivo {imovel.motivo_descarte}" if imovel.motivo_descarte else ""
         linhas.append(
@@ -153,7 +166,7 @@ def _imoveis(dossie: Dossie) -> str:
     return "\n".join(linhas)
 
 
-def _pontos_de_atencao(dossie: Dossie) -> str:
+def pontos_de_atencao(dossie: Dossie) -> str:
     """O bloco (e), montado do que existe. Ver o cabecalho do modulo."""
     partes = []
     if dossie.campos_recusados:
@@ -170,7 +183,7 @@ def _pontos_de_atencao(dossie: Dossie) -> str:
     return "\n".join(f"- {parte}" for parte in partes)
 
 
-def _fatores(dossie: Dossie) -> str:
+def fatores(dossie: Dossie) -> str:
     if not dossie.score_fatores:
         return AUSENTE
     return ", ".join(f"{nome} {valor}" for nome, valor in dossie.score_fatores)
@@ -193,31 +206,31 @@ def renderizar(dossie: Dossie) -> str:
             "ORIGEM",
             f"canal: {dossie.canal}",
             f"chave da conversa: {dossie.conversa}",
-            f"primeira mensagem: {_ou_ausente(_isoformat_ou_none(dossie.primeira_mensagem_em))}",
+            f"primeira mensagem: {ou_ausente(isoformat_ou_none(dossie.primeira_mensagem_em))}",
             f"mensagens do lead: {dossie.mensagens_do_lead}",
             "",
             "CRITERIOS",
-            f"intencao: {_ou_ausente(dossie.intencao)}",
-            f"faixa de preco: {_faixa(dossie)}",
-            f"regiao: {_ou_ausente(dossie.regiao)}",
-            f"tipo de imovel: {_ou_ausente(dossie.tipo_imovel)}",
-            f"quartos: {_ou_ausente(dossie.quartos)}",
-            f"vagas: {_ou_ausente(dossie.vagas)}",
-            f"urgencia: {_ou_ausente(dossie.urgencia)}",
-            f"forma de pagamento: {_ou_ausente(dossie.forma_pagamento)}",
-            f"tem imovel para vender: {_sim_nao(dossie.tem_imovel_para_vender)}",
+            f"intencao: {ou_ausente(dossie.intencao)}",
+            f"faixa de preco: {faixa(dossie)}",
+            f"regiao: {ou_ausente(dossie.regiao)}",
+            f"tipo de imovel: {ou_ausente(dossie.tipo_imovel)}",
+            f"quartos: {ou_ausente(dossie.quartos)}",
+            f"vagas: {ou_ausente(dossie.vagas)}",
+            f"urgencia: {ou_ausente(dossie.urgencia)}",
+            f"forma de pagamento: {ou_ausente(dossie.forma_pagamento)}",
+            f"tem imovel para vender: {sim_nao(dossie.tem_imovel_para_vender)}",
             "",
             "SCORE",
-            f"total: {_ou_ausente(dossie.score_total)}",
-            f"fatores: {_fatores(dossie)}",
+            f"total: {ou_ausente(dossie.score_total)}",
+            f"fatores: {fatores(dossie)}",
             f"ultimo recalculo por: {', '.join(dossie.score_causas) or AUSENTE}",
-            f"temperatura: {_ou_ausente(dossie.temperatura)}{forcada}",
+            f"temperatura: {ou_ausente(dossie.temperatura)}{forcada}",
             "",
             "IMOVEIS",
-            _imoveis(dossie),
+            imoveis(dossie),
             "",
             "PONTOS DE ATENCAO",
-            _pontos_de_atencao(dossie),
+            pontos_de_atencao(dossie),
             "",
             "HANDOFF",
             f"gatilho: {dossie.gatilho}",
