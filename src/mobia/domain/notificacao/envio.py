@@ -220,10 +220,14 @@ async def notificar(
             # `notificado_em` preenchido E `aviso_manual_pendente` ainda
             # verdadeiro -- as duas dizendo coisas incompativeis ao mesmo
             # tempo. A TEC-178 chegou e NAO le este par: ela escala por
-            # `status` e `sla_limite_em`. Entao o unico leitor previsto
-            # destas duas colunas continua sendo o painel da E8, que nao
-            # existe -- manter as duas coerentes e disciplina paga
-            # adiantado, nao requisito de quem le hoje.
+            # `status` e `sla_limite_em`. Mas a TEC-279 le, sim:
+            # `recuperar_sem_prazo` (`domain/handoff/recuperacao.py`) so
+            # reenfileira um handoff PENDENTE quando `notificado_em IS NULL`
+            # E `aviso_manual_pendente = false` -- o mesmo par que este bloco
+            # mantem coerente. Manter as duas coerentes deixou de ser
+            # disciplina paga adiantado: e requisito de quem le hoje, porque
+            # um `aviso_manual_pendente` verdadeiro por engano tira da
+            # selecao dela um handoff que devia entrar.
             await session.execute(
                 update(Handoff)
                 .where(Handoff.id == handoff_id)
