@@ -4,11 +4,12 @@ TEC-177, Task 5.
 """
 
 import logging
+import uuid
 from typing import Any
 
 import pytest
 
-from mobia.domain.handoff.resumo import MARCADORES, ResumoDeHandoffGerado, ResumoDeHandoffInvalido
+from mobia.domain.handoff.resumo import MARCADORES, ResumoDeHandoffGerado
 from mobia.workers.jobs.gerar_resumo import gerar_resumo
 from mobia.workers.jobs.notificar import NOTIFICAR_JOB, notificar_corretor
 
@@ -23,11 +24,6 @@ class _RedatorFalso:
             latency_ms=120,
             comprimiu=False,
         )
-
-
-class _RedatorQueFalha:
-    async def redigir(self, dossie_em_texto: str) -> ResumoDeHandoffGerado:
-        raise ResumoDeHandoffInvalido("bloco ausente: '## Proxima acao'")
 
 
 class _RedisEspiao:
@@ -66,16 +62,24 @@ async def test_resumo_gerado_enfileira_a_notificacao(semear_lead_completo) -> No
     assert job_id == f"notificar:{handoff_id}"
 
 
-async def test_resumo_falhado_enfileira_a_notificacao_do_mesmo_jeito(semear_lead_completo) -> None:
+async def test_resumo_sem_dossie_enfileira_a_notificacao_do_mesmo_jeito() -> None:
     """D2: o handoff sem resumo e o que MAIS precisa do aviso, nao um caso a pular.
+
+    Ate a TEC-176, uma falha do redator deixava `gerar_resumo` sem gravar
+    nada e este teste exercitava esse caminho com `_RedatorQueFalha`. Depois
+    da TEC-176 (fallback deterministico -- RN-15.4), essa mesma falha grava o
+    template e devolve "gravado" (ver `test_geracao_de_resumo.py` e
+    `domain/handoff/geracao.gerar_resumo`); a UNICA falha que ainda deixa
+    `gerar_resumo` sem gravar e o dossie ausente, entao e esse o caminho que
+    prova a decisao "enfileira mesmo sem resumo".
 
     A forma ingenua (`if gravou: enfileira`) inverteria essa decisao em
     silencio -- este teste existe para que a inversao quebre a suite, nao
     para so documentar a intencao em prosa.
     """
-    handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
+    handoff_id = uuid.uuid4()
     redis = _RedisEspiao()
-    ctx: dict[str, Any] = {"redator": _RedatorQueFalha(), "redis": redis}
+    ctx: dict[str, Any] = {"redator": _RedatorFalso(), "redis": redis}
 
     resultado = await gerar_resumo(ctx, str(handoff_id))
 
