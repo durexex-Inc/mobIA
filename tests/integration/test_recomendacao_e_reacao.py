@@ -1245,19 +1245,24 @@ async def test_retentativa_de_apresentacao_parcial_deixa_o_lead_sem_lista(
     o lead recebeu so a ficha 1, e a excecao propaga antes da conciliacao --
     nenhuma das tres e fechada nem apagada.
 
-    Passada 2, a MESMA mensagem: o turno reentra pelo topo. `ler_pendentes`
-    devolve as tres, `reagir` e chamado sobre elas com a mensagem original do
-    lead (que nao e reacao a nada), e `gravar_reacoes` fecha como NEUTRO toda
-    pendente nao mencionada -- as tres, antes de qualquer ficha ser reenviada.
+    Passada 2, a MESMA mensagem: o turno NAO reentra pelo topo. O desvio da
+    TEC-275 (D1) ve que ha um lote com este `message_id` e que parte dele ja
+    tem reserva, e devolve `_continuar_entrega` antes de montar contexto --
+    entao a passada 2 nao rebusca, nao chama o classificador e nao chama
+    `reagir`. Ela entrega as fichas 2 e 3 que faltavam e concilia com o
+    `apresentado_em` PERSISTIDO do lote.
 
-    O turno entao reentrega, e o turno SEGUINTE nao tem lista: o lead acabou
-    de ver tres fichas e `ler_pendentes` devolve vazio. "Gostei do segundo"
-    nao tem contra o que resolver o ordinal.
+    O fim e o que o lead precisa: ele viu as tres fichas E as tres seguem
+    pendentes, entao "gostei do segundo" no turno seguinte tem contra o que
+    resolver o ordinal.
 
-    Este teste afirma o comportamento CERTO e por isso reprova hoje. A
-    mensagem da asserta que quebrar diz qual dos dois caminhos fechou as
-    linhas -- NEUTRO (a passagem de reacao) ou SEM_RESPOSTA (o `< agora` de
-    `conciliar_apresentacao`).
+    Antes da correcao a passada 2 rodava o turno inteiro: `ler_pendentes`
+    devolvia as tres, `reagir` era chamado sobre elas com a mensagem original
+    do lead (que nao e reacao a nada), e `gravar_reacoes` fechava como NEUTRO
+    toda pendente nao mencionada -- as tres, antes de qualquer ficha ser
+    reenviada; o lead acabava com as fichas e sem lista. Era o primeiro dos
+    dois caminhos; o outro (o `< agora` de `conciliar_apresentacao` fechando
+    como SEM_RESPOSTA) esta no teste seguinte.
     """
     from conftest import OutboundFake  # type: ignore[import-not-found]
 
@@ -1310,9 +1315,14 @@ async def test_retentativa_de_apresentacao_parcial_deixa_o_lead_sem_lista(
     classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
     assert await _rodar(segunda, classificador_2) == "respondido"
 
-    assert classificador_2.apresentados_recebidos is not None, (
-        "a retentativa tem de ter chamado `reagir` sobre as pendentes da passada 1 -- "
-        "e isso que torna a passagem de reacao o primeiro caminho"
+    assert classificador_2.apresentados_recebidos is None, (
+        "a retentativa NAO pode ter chamado `reagir`, e isso e o conserto (D1), nao "
+        "regressao: a continuacao retorna antes da passagem de reacao. Se `reagir` "
+        "rodasse aqui, receberia a mensagem ORIGINAL do lead -- o pedido que originou a "
+        "busca, que nao e reacao a ficha nenhuma -- e `gravar_reacoes` fecharia como "
+        "NEUTRO toda pendente nao mencionada, ou seja, as tres, deixando o lead com as "
+        "fichas e sem lista contra a qual resolver o ordinal. Esta linha nasceu afirmando "
+        "o oposto (a4e1a2d), como DIAGNOSTICO de qual caminho rodava no sistema quebrado"
     )
 
     fechadas = {
