@@ -25,11 +25,14 @@ from mobia.domain.agente.identificacao import (
 )
 from mobia.domain.agente.recomendacao import bairros_a_excluir, resolver_ordinais
 from mobia.domain.agente.repositorio import (
+    LinhaDaApresentacao,
+    apagar_apresentacao_da_mensagem,
     apagar_recomendacao_nao_entregue,
     conciliar_apresentacao,
     gravar_intencao,
     gravar_reacoes,
     gravar_recomendacoes,
+    ler_apresentacao_da_mensagem,
     ler_descartes_por_distancia,
     ler_intencao,
     ler_pendentes,
@@ -76,6 +79,7 @@ from mobia.domain.outbound.port import (
     EnvioRetentavel,
     OutboundPort,
 )
+from mobia.domain.outbound.repositorio import kinds_reservados
 from mobia.infra.crypto import aad_de, decrypt
 from mobia.infra.embeddings import embedar
 
@@ -357,6 +361,79 @@ async def _agendar_resumo(agendador: AgendadorDeResumoPort, registro: HandoffReg
         log.warning("resumo_handoff.nao_agendado", handoff_id=str(registro.id), exc_info=True)
 
 
+async def _continuar_entrega(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    message: Message,
+    outbound: OutboundPort,
+    lote: Sequence[LinhaDaApresentacao],
+    ja_reservados: frozenset[str],
+) -> ResultadoDoTurno:
+    """Termina a entrega que a passada anterior comecou. TEC-275, D1.
+
+    **Nao rebusca, nao chama o classificador, nao chama `reagir`.** E isso que
+    fecha os DOIS caminhos pelos quais a retentativa apagava a lista de
+    pendentes: nenhum dos dois chega a rodar. Fechar cada um com uma guarda
+    propria seria frageis -- a terceira rota que aparecesse ficaria de fora.
+
+    **Concilia com o carimbo ORIGINAL do lote, e nao com um `now()` novo.**
+    E a outra metade do conserto: com o carimbo do lote, as linhas dele
+    deixam de ser `apresentado_em < agora` e a conciliacao nao tem o que
+    fechar. Com um carimbo novo, fechava as tres -- que era o defeito.
+
+    **Imovel que sumiu do catalogo entre as passadas entra em
+    `nao_entregues`** (D7): a conciliacao apaga a linha dele e o lead recebe o
+    que restou, sem aviso. A lista de pendentes fica com o que ele de fato
+    viu, que e a invariante que esta card existe para proteger.
+    """
+    apresentado_em = lote[0].apresentado_em
+    ids = [linha.imovel_id for linha in lote]
+    precos = {linha.imovel_id: linha.preco_centavos for linha in lote}
+    kind_de = {linha.imovel_id: linha.kind for linha in lote}
+
+    fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)
+    encontrados = {ficha.id for ficha in fichas}
+    sumiram = [imovel_id for imovel_id in ids if imovel_id not in encontrados]
+    if sumiram:
+        # Mesmo criterio de nivel do `fichas_sumiram_do_catalogo` de
+        # `_apresentar`: quem opera precisa saber QUAL imovel sumiu.
+        log.warning(
+            "continuacao.fichas_sumiram_do_catalogo",
+            channel=message.channel,
+            message_id=str(message.id),
+            imovel_ids_faltantes=[str(i) for i in sumiram],
+        )
+
+    entrega = await _entregar_fichas(
+        session_factory,
+        message=message,
+        outbound=outbound,
+        fichas=fichas,
+        kinds=[kind_de[ficha.id] for ficha in fichas],
+        apresentado_em=apresentado_em,
+        prosa=None,
+        pular=ja_reservados,
+    )
+
+    await conciliar_apresentacao(
+        session_factory,
+        channel=message.channel,
+        conversation_key=message.conversation_key,
+        agora=apresentado_em,
+        nao_entregues=tuple(entrega.nao_entregues) + tuple(sumiram),
+        houve_entrega=True,
+    )
+
+    log.info(
+        "turno.entrega_continuada",
+        channel=message.channel,
+        message_id=str(message.id),
+        entregues=entrega.entregues,
+        ja_estavam_fora=len(ja_reservados),
+    )
+    return "respondido" if entrega.entregues else "reentrega_suprimida"
+
+
 async def executar_turno(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -591,6 +668,37 @@ async def executar_turno(
                     outbound=outbound,
                     recorder_texto=TEXTO_DA_RECUSA_DE_ENTRADA,
                 )
+
+    # TEC-275, D4. Antes de montar contexto de proposito: a continuacao nao
+    # precisa de contexto, nao chama o classificador e nao chama `reagir` --
+    # e e justamente por nao chamar `reagir` que ela nao fecha como NEUTRO as
+    # pendentes da passada anterior.
+    #
+    # Tres ramos, e o do meio existe por um caso limite real: se a ficha que
+    # falhou foi a PRIMEIRA, nada chegou ao lead -- nem as fichas, nem a prosa,
+    # que viaja junto com a ficha 1 e nao esta persistida em lugar nenhum se
+    # nao chegou a sair. Continuar uma entrega em que nada saiu nao e
+    # continuar; e recomecar. E as linhas orfas tem de ser APAGADAS, nao
+    # ignoradas: o `ON CONFLICT DO NOTHING` da passada nova preservaria o
+    # carimbo velho, e o UNIQUE por conversa impediria a linha nova de nascer.
+    lote = await ler_apresentacao_da_mensagem(session_factory, message_id=message.id)
+    if lote:
+        ja_reservados = await kinds_reservados(session_factory, message_id=message.id)
+        if ja_reservados & {linha.kind for linha in lote}:
+            return await _continuar_entrega(
+                session_factory,
+                message=message,
+                outbound=outbound,
+                lote=lote,
+                ja_reservados=ja_reservados,
+            )
+        log.warning(
+            "turno.apresentacao_sem_entrega_descartada",
+            channel=message.channel,
+            message_id=str(message.id),
+            linhas=len(lote),
+        )
+        await apagar_apresentacao_da_mensagem(session_factory, message_id=message.id)
 
     try:
         contexto = await montar_contexto(

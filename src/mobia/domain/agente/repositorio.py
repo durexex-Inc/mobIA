@@ -286,6 +286,33 @@ async def apagar_recomendacao_nao_entregue(
         await session.commit()
 
 
+async def apagar_apresentacao_da_mensagem(session_factory: Any, *, message_id: uuid.UUID) -> None:
+    """Apaga o lote de uma apresentacao que nao chegou ao lead. TEC-275, D4.
+
+    So e chamada quando NENHUMA ficha daquele lote saiu -- nao ha reserva
+    nenhuma dos kinds dele. As linhas existem porque `gravar_recomendacoes`
+    roda ANTES do laco de entrega (a L1 da TEC-162), e o turno morreu antes de
+    qualquer envio.
+
+    **Apagar, e nao deixar para a passada nova.** O `ON CONFLICT DO NOTHING`
+    preservaria o `apresentado_em` velho, e o UNIQUE por conversa impediria a
+    linha da apresentacao nova de nascer -- o imovel ficaria com carimbo de
+    uma apresentacao que nunca aconteceu.
+
+    `reacao_lead IS NULL` na clausula porque uma linha que ganhou reacao veio
+    de apresentacao que o lead VIU; se ela carrega este `message_id`, algo
+    fora deste caminho a escreveu, e apagar destruiria opiniao do lead.
+    """
+    async with session_factory() as session:
+        await session.execute(
+            delete(Recomendacao).where(
+                Recomendacao.message_id == message_id,
+                Recomendacao.reacao_lead.is_(None),
+            )
+        )
+        await session.commit()
+
+
 async def conciliar_apresentacao(
     session_factory: Any,
     *,
