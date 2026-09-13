@@ -79,9 +79,15 @@ async def registrar_handoff(
             index_elements=["channel", "conversation_key"],
             # TEC-278. Este predicado e o `postgresql_where` do Index de
             # `handoff/models.py` tem de casar exatamente: e ele que diz ao
-            # Postgres qual indice parcial usar para resolver o conflito, e se
-            # divergir o Postgres nao acha indice correspondente e o ON
-            # CONFLICT estoura, nao degrada em silencio.
+            # Postgres qual indice parcial usar para resolver o conflito. Mas
+            # a protecao so vale numa direcao -- medido no Postgres real: uma
+            # clausula MAIS LARGA que o predicado do indice faz o Postgres nao
+            # achar indice correspondente e o ON CONFLICT estoura; uma
+            # clausula mais estreita o Postgres aceita em silencio (a
+            # inferencia de indice parcial so exige que a clausula implique o
+            # predicado do indice), e quem governa passa a ser o indice real.
+            # Por isso os dois textos tem de ser identicos, nao so
+            # compativeis.
             index_where=text("status <> 'CONCLUIDO'"),
             set_={
                 # TEC-174, fix wave (Important 3). So acrescenta quando o

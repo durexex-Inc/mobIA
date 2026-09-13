@@ -172,8 +172,8 @@ class Handoff(Base):
         # CONCLUIDO ganhou o primeiro escritor em `POST
         # /api/v1/conversas/devolver`, e e ele que separa "aberto" de
         # "encerrado". O nome do indice ficou impreciso de proposito: ele
-        # aparece em comentario e em teste, e renomear e churn sem ganho.
-        # Ver `alembic/versions/0030_handoff_aberto.py`.
+        # aparece em comentario e na migration 0023, e renomear e churn sem
+        # ganho. Ver `alembic/versions/0030_handoff_aberto.py`.
         Index(
             "uq_handoffs_conversa_pendente",
             "channel",

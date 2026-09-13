@@ -1,7 +1,8 @@
 """As duas rotas que escrevem o silencio do agente sobre uma conversa.
 
-TEC-179, RN-16.4, D6 do desenho (o aceite do handoff junto) e a Emenda E-01
-da secao 6.5 do SRS (aceitar depois da escalada e permitido).
+TEC-179, RN-16.4, D6 do desenho (o aceite do handoff junto), a Emenda E-01
+da secao 6.5 do SRS (aceitar depois da escalada e permitido) e a TEC-278
+(D2: devolver conclui o handoff aberto da mesma conversa).
 
 **Nao existe `conversaId` (D9 do desenho).** O SRS escreve
 `/conversas/{conversaId}`, mas essa entidade nao existe neste sistema -- a
@@ -138,6 +139,9 @@ async def devolver(
     pedido: PedidoDeAtendimento, _: None = Depends(exigir_admin)
 ) -> dict[str, object]:
     """O corretor devolve a conversa: o agente volta a falar.
+
+    **Conclui junto o handoff aberto da mesma conversa (D2), na mesma
+    transacao** -- ver o comentario do UPDATE abaixo.
 
     Qualquer corretor pode devolver, nao so quem assumiu -- ver o docstring
     de `devolver` em `domain/atendimento/repositorio.py` (mesma D2: nao ha

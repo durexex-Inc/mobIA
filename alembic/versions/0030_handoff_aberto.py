@@ -19,8 +19,8 @@ o primeiro em `POST /api/v1/conversas/devolver`. Sem aquele escritor este
 indice prenderia cada conversa ao primeiro handoff dela para sempre.
 
 **Drop e create, porque o Postgres nao altera predicado de indice parcial.** O
-nome fica como estava: ele aparece em comentario e em teste, e renomear seria
-churn.
+nome fica como estava: ele aparece em comentario e na migration 0023, e
+renomear seria churn.
 
 **A criacao REPROVA se existir conversa com dois handoffs abertos**, e isso e
 deliberado (L4 do desenho). Esse estado e o que esta card declara impossivel;
