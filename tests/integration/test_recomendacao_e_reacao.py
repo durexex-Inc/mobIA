@@ -36,7 +36,7 @@ from mobia.domain.agente.schemas import (
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.catalogo.schemas import ResultadoDaBusca
 from mobia.domain.messages.enums import MessageRole
-from mobia.domain.messages.models import Message
+from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.texto import dobrar
 from mobia.infra.crypto import aad_de, decrypt
 
@@ -1673,27 +1673,42 @@ async def test_kinds_reservados_devolve_o_que_ja_tem_reserva(session: Any) -> No
 # ---------------------------------------------------------------------------
 
 
-async def _falas_do_agente(session: Any) -> list[str]:
-    """O que o agente gravou na linha do tempo, decifrado e na ordem.
+async def _falas_do_agente(session: Any) -> list[tuple[str, str | None, str | None]]:
+    """Cada fala do agente na linha do tempo como `(texto, model, subagent)`.
 
     `text_body` e bytea cifrado desde a TEC-126, entao `decrypt` com o AAD da
     propria linha -- mesmo molde de `_texto_gravado`
     (`test_apresentacao_no_turno.py`). Olhar aqui e diferente de olhar para
     `outbound.entregues`: o duble registra o que SAIU, e esta tabela registra
     o que ficou gravado, que e a fonte do contexto do turno seguinte.
+
+    **`model` e `subagent` vem junto porque os comentarios que os escolhem em
+    `_continuar_entrega` afirmam consequencia concreta** -- `""` abriria um
+    `telemetry.unknown_model`, e um rotulo de subagente proprio partiria a
+    MESMA apresentacao em dois valores para quem le a telemetria depois. Ate
+    esta task nada na suite lia aquelas duas colunas, entao as duas
+    afirmacoes eram promessa sem fiador, que e o que este repo trata como
+    defeito.
+
+    `outerjoin` e nao `join`: a telemetria e gravada num commit proprio,
+    depois do da mensagem, e `_registrar_telemetria` engole a falha dela. Com
+    `join`, uma fala sem telemetria sumiria desta lista e o teste culparia a
+    gravacao da fala; com `outerjoin` ela aparece com `None` nos dois campos,
+    e a asserta que compara contra `MODELO_SEM_CHAMADA` acusa o que de fato
+    faltou.
     """
     linhas = (
-        (
-            await session.execute(
-                select(Message)
-                .where(Message.role == MessageRole.AGENTE)
-                .order_by(Message.created_at)
-            )
+        await session.execute(
+            select(Message, MessageTelemetry.model, MessageTelemetry.subagent)
+            .outerjoin(MessageTelemetry, MessageTelemetry.message_id == Message.id)
+            .where(Message.role == MessageRole.AGENTE)
+            .order_by(Message.created_at)
         )
-        .scalars()
-        .all()
-    )
-    return [decrypt(linha.text_body, aad_de(linha.id, "text_body")) for linha in linhas]
+    ).all()
+    return [
+        (decrypt(linha.text_body, aad_de(linha.id, "text_body")), model, subagent)
+        for linha, model, subagent in linhas
+    ]
 
 
 async def test_continuacao_entrega_o_que_restou_quando_uma_linha_do_lote_sumiu(
@@ -1931,11 +1946,13 @@ async def test_continuacao_usa_o_kind_persistido_e_nao_a_posicao(
     apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
 
     segunda = OutboundFake(get_sessionmaker())
-    assert (
-        await _rodar(segunda, _ClassificadorQueBuscaESemReacao({"operacao": "VENDA"}))
-        == "respondido"
-    )
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "respondido"
 
+    assert classificador_2.resultado is None, (
+        "a continuacao nao chama o classificador (D1); `resultado` preenchido aqui "
+        "significa que o desvio nao foi tomado e o turno recomecou do zero"
+    )
     assert len(segunda.entregues) == 1, "so a ficha 3 faltava sair"
     assert await _pendentes_da_conversa(session_factory) == (apresentados[1], apresentados[2]), (
         "a recusada nao pode estar na lista, e a terceira tem de estar -- se a "
@@ -1970,7 +1987,12 @@ async def test_continuacao_grava_so_as_legendas_que_ela_entregou(
     """
     from conftest import OutboundFake  # type: ignore[import-not-found]
 
-    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.app.config import MODELO_SEM_CHAMADA
+    from mobia.domain.agente.turno import (
+        KINDS_DAS_FICHAS,
+        SUBAGENTE_CLASSIFICADOR,
+        executar_turno,
+    )
     from mobia.domain.handoff.agendador import AgendadorNoop
     from mobia.domain.outbound.port import EnvioRetentavel
     from mobia.infra.db import get_sessionmaker
@@ -2016,16 +2038,29 @@ async def test_continuacao_grava_so_as_legendas_que_ela_entregou(
     )
 
     segunda = OutboundFake(get_sessionmaker())
-    assert (
-        await _rodar(segunda, _ClassificadorQueBuscaESemReacao({"operacao": "VENDA"}))
-        == "respondido"
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "respondido"
+
+    assert classificador_2.resultado is None, (
+        "a continuacao nao chama o classificador (D1); `resultado` preenchido aqui "
+        "significa que o desvio nao foi tomado e o turno recomecou do zero"
     )
 
-    (fala,) = await _falas_do_agente(session)
+    ((fala, modelo, subagente),) = await _falas_do_agente(session)
     assert titulos[apresentados[1]] in fala
     assert titulos[apresentados[2]] in fala
     assert titulos[apresentados[0]] not in fala, (
         "a legenda da ficha 1 saiu na passada 1; regrava-la duplicaria a fala do agente"
+    )
+    assert modelo == MODELO_SEM_CHAMADA, (
+        "nesta passada nao houve chamada ao modelo -- a prosa, a unica parte que veio "
+        'dele, saiu com a ficha 1 na passada anterior. Com `""` a telemetria abriria '
+        "um `telemetry.unknown_model` por continuacao"
+    )
+    assert subagente == SUBAGENTE_CLASSIFICADOR, (
+        "estas fichas saem da busca que o classificador fez na passada anterior; um "
+        "rotulo proprio partiria a MESMA apresentacao em dois valores de `subagent` "
+        "para quem le a telemetria depois"
     )
 
     terceira = OutboundFake(get_sessionmaker())
@@ -2034,7 +2069,7 @@ async def test_continuacao_grava_so_as_legendas_que_ela_entregou(
         == "reentrega_suprimida"
     )
     assert terceira.entregues == []
-    assert await _falas_do_agente(session) == [fala], (
+    assert await _falas_do_agente(session) == [(fala, modelo, subagente)], (
         "sem entrega nao ha o que gravar -- uma linha a mais aqui seria texto que o "
         "lead nunca recebeu entrando no contexto do proximo turno"
     )
@@ -2107,10 +2142,13 @@ async def test_janela_fechada_na_continuacao_devolve_expirado(
     apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
 
     segunda = _JanelaJaFechada(get_sessionmaker())
-    assert (
-        await _rodar(segunda, _ClassificadorQueBuscaESemReacao({"operacao": "VENDA"})) == "expirado"
-    )
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "expirado"
 
+    assert classificador_2.resultado is None, (
+        "a continuacao nao chama o classificador (D1); `resultado` preenchido aqui "
+        "significa que o desvio nao foi tomado e o turno recomecou do zero"
+    )
     assert segunda.entregues == []
     assert await _pendentes_da_conversa(session_factory) == tuple(apresentados), (
         "o desfecho sai antes da conciliacao, entao o lote continua inteiro: o lead viu "
