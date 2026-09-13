@@ -31,9 +31,10 @@ def create_app() -> FastAPI:
     app = FastAPI(title="mobIA", version="0.1.0", lifespan=lifespan)
     app.include_router(whatsapp_router)
 
-    # Sem token configurado o router NAO entra no app. Nao e 401: rota que nao
-    # existe nao pode ser exposta por engano de configuracao, e este projeto
-    # ainda nao tem camada de autenticacao. Ver D1 do desenho da TEC-156.
+    # Sem token configurado os routers NAO entram no app. Nao e 401: rota que
+    # nao existe nao pode ser exposta por engano de configuracao, e este
+    # projeto ainda nao tem camada de autenticacao. Ver D1 do desenho da
+    # TEC-156.
     if settings.catalogo_admin_token:
         from mobia.api.routes.corretores import router as corretores_router
         from mobia.api.routes.imoveis import router as imoveis_router

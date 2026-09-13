@@ -212,6 +212,24 @@ async def test_editar_jornada_invertida_em_par_e_422(app_com_token) -> None:
     assert resposta.status_code == 422
 
 
+async def test_editar_jornada_em_par_ambos_nulos_e_422(app_com_token) -> None:
+    """Os dois vem informados, mas nulos -- 422 por checagem explicita, nao por `assert`.
+
+    `assert` some sob `python -O`, entao a guarda do model_validator tem de
+    levantar `ValueError` sozinha em vez de depender da captura do Pydantic.
+    """
+    cabecalho = {"X-Admin-Token": TOKEN}
+    criado = (await app_com_token.post("/api/v1/corretores", json=CORPO, headers=cabecalho)).json()
+
+    resposta = await app_com_token.patch(
+        f"/api/v1/corretores/{criado['id']}",
+        json={"horarioInicio": None, "horarioFim": None},
+        headers=cabecalho,
+    )
+
+    assert resposta.status_code == 422
+
+
 async def test_editar_jornada_em_par_funciona(app_com_token) -> None:
     cabecalho = {"X-Admin-Token": TOKEN}
     criado = (await app_com_token.post("/api/v1/corretores", json=CORPO, headers=cabecalho)).json()

@@ -118,8 +118,10 @@ class CorretorEditado(BaseModel):
                 "jornada se edita em par: horarioInicio e horarioFim vem juntos ou nenhum"
             )
         if veio_inicio and veio_fim:
-            assert self.horario_inicio is not None
-            assert self.horario_fim is not None
+            if self.horario_inicio is None or self.horario_fim is None:
+                raise ValueError(
+                    "jornada nao aceita nulo: horarioInicio e horarioFim tem de vir preenchidos"
+                )
             if not jornada_valida(self.horario_inicio, self.horario_fim):
                 raise ValueError("jornada invalida: o inicio tem de vir antes do fim")
         return self
