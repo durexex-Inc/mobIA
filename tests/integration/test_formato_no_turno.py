@@ -428,10 +428,14 @@ async def test_falha_retentavel_na_segunda_parte_loga_entrega_parcial_antes_de_p
         )
 
     assert outbound.entregues == [primeira_parte]
-    # A reserva da segunda parte foi LIBERADA -- `EnvioRetentavel` libera,
-    # diferente de `EnvioRecusado` (ver `GuardedOutbound.send`). So a primeira
-    # fica reservada.
-    assert await _kinds_reservados() == ["reply"]
+    # `EnvioRetentavel` libera, diferente de `EnvioRecusado` (ver
+    # `GuardedOutbound.send`) -- e desde a TEC-273 libera o GRUPO, nao so o
+    # kind que falhou. A retentativa do sweeper roda o turno inteiro de novo,
+    # com uma chamada NOVA ao modelo; se a reserva da primeira parte
+    # sobrevivesse, a retentativa suprimiria a parte 1 da geracao nova e
+    # entregaria so a parte 2 -- metade de um texto colada na metade de
+    # outro. Por isso nenhuma reserva sobra aqui.
+    assert await _kinds_reservados() == []
 
     eventos = [
         registro

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mobia.domain.atendimento.repositorio import esta_silenciada_por_mensagem
 from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
 from mobia.domain.optout.repositorio import esta_em_optout_por_mensagem
+from mobia.domain.outbound.kinds import grupo_de
 from mobia.domain.outbound.models import OutboundDispatch
 
 log = structlog.get_logger(__name__)
@@ -315,15 +316,44 @@ class GuardedOutbound:
         return True
 
     async def _liberar(self, message_id: uuid.UUID, kind: str) -> None:
+        """Apaga a reserva de `kind` e as dos kinds do mesmo grupo. TEC-273.
+
+        **Por que o grupo, e nao so o kind que falhou.** Uma resposta longa sai
+        em duas mensagens, com kind proprio para cada (TEC-140). Liberando so
+        a que falhou, a retentativa do sweeper -- que roda o turno inteiro, com
+        uma chamada NOVA ao modelo -- encontra a reserva da parte 1 viva, tem
+        essa parte suprimida, e entrega a parte 2 do texto NOVO. O lead le a
+        primeira metade de um texto colada na segunda metade de outro.
+
+        Este repo ja decidiu que duplicata e melhor que perda ("a duplicata e
+        visivel e recuperavel e o silencio nao", TEC-134/TEC-227). O caso acima
+        nao e nenhum dos dois: e corrupcao silenciosa de conteudo, e o lead nao
+        tem como saber que leu duas fontes. Liberando o grupo, a retentativa
+        reentrega a parte 1 da geracao nova -- uma duplicata visivel, que e o
+        lado que aquele precedente ja escolheu.
+
+        **Grupo, e nao `message_id`.** As fichas compartilham a mensagem com a
+        resposta e NAO formam grupo (ver `kinds.py`): a retentativa delas
+        repete o lote persistido em vez de regenerar, e a reserva de cada uma
+        e o sinal que `_continuar_entrega` (TEC-275) le para saber o que ja
+        saiu. Apagar por `message_id` esvaziaria esse sinal e faria a
+        continuacao nunca ser tomada.
+        """
+        irmaos = grupo_de(kind)
         async with self._session_factory() as session:
             await session.execute(
                 delete(OutboundDispatch).where(
                     OutboundDispatch.message_id == message_id,
-                    OutboundDispatch.kind == kind,
+                    OutboundDispatch.kind.in_(irmaos),
                 )
             )
             await session.commit()
-        log.warning("outbound.reserva_liberada", message_id=str(message_id), kind=kind)
+        log.warning(
+            "outbound.reserva_liberada",
+            message_id=str(message_id),
+            kind=kind,
+            kinds_liberados=list(irmaos),
+        )
 
     async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> None:
         raise NotImplementedError

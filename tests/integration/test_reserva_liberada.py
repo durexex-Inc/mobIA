@@ -166,7 +166,11 @@ async def test_falha_ao_liberar_nao_mascara_o_erro_original(session, caplog) -> 
 
 
 async def test_liberar_so_apaga_a_reserva_do_kind_que_falhou(session) -> None:
-    """AND kind = :k e o que impede um reply liberado de arrastar o ack junto."""
+    """O `IN (grupo)` e o que impede um reply liberado de arrastar o ack junto.
+
+    Era `AND kind = :k` ate a TEC-273. O que mudou foi o recorte, nao a
+    garantia: `ack` nao pertence a grupo nenhum, entao continua de pe.
+    """
     message_id = await uma_mensagem(session)
     ack_outbound = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("nunca"), falhas=0)
     assert await ack_outbound.send(message_id, "ack", {}) is True
@@ -209,3 +213,60 @@ async def test_excecao_nao_mapeada_mantem_a_reserva(session) -> None:
         pass
 
     assert await reservas(session, message_id) == 1
+
+
+async def test_liberar_apaga_a_reserva_da_parte_irma(session) -> None:
+    """TEC-273. A parte 1 entregue perde a reserva quando a parte 2 falha.
+
+    Sem isto, a retentativa do sweeper reentrega so a parte 2 -- com o texto
+    de uma chamada NOVA ao modelo --, e o lead le a primeira metade de um
+    texto colada na segunda metade de outro. Corrupcao silenciosa: ele nao
+    tem como saber que leu duas fontes, e nada no sistema diz.
+    """
+    from mobia.domain.outbound.kinds import KINDS_DA_RESPOSTA
+
+    message_id = await uma_mensagem(session)
+
+    parte_1 = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("nunca"), falhas=0)
+    assert await parte_1.send(message_id, KINDS_DA_RESPOSTA[0], {}) is True
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[0]) == 1
+
+    parte_2 = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("http 429"))
+    try:
+        await parte_2.send(message_id, KINDS_DA_RESPOSTA[1], {})
+    except EnvioRetentavel:
+        pass
+
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[1]) == 0
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[0]) == 0, (
+        "a reserva da parte JA ENTREGUE tem de cair junto -- e ela que faria a "
+        "retentativa suprimir a parte 1 da geracao nova"
+    )
+
+
+async def test_liberar_uma_ficha_nao_arrasta_as_outras(session) -> None:
+    """TEC-273, fronteira com a TEC-275. As fichas NAO formam grupo.
+
+    A retentativa de uma apresentacao repete o lote persistido em vez de
+    chamar o modelo, entao nao ha geracoes para misturar -- e a reserva de
+    cada ficha e o sinal de que `_continuar_entrega` depende para saber o que
+    ja saiu. Se alguem "simplificar" a liberacao para o `message_id` inteiro,
+    este teste cai, e a continuacao da TEC-275 deixaria de ser tomada em
+    silencio.
+    """
+    message_id = await uma_mensagem(session)
+
+    entregue = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("nunca"), falhas=0)
+    assert await entregue.send(message_id, "ficha_1", {}) is True
+
+    falha = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("http 503"))
+    try:
+        await falha.send(message_id, "ficha_2", {})
+    except EnvioRetentavel:
+        pass
+
+    assert await reservas_por_kind(session, message_id, "ficha_1") == 1, (
+        "a reserva da ficha entregue tem de SOBREVIVER -- e ela que diz a "
+        "continuacao da TEC-275 que aquela ficha ja chegou ao lead"
+    )
+    assert await reservas_por_kind(session, message_id, "ficha_2") == 0
