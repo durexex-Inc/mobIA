@@ -24,6 +24,7 @@ from mobia.domain.agente.identificacao import (
 )
 from mobia.domain.agente.recomendacao import bairros_a_excluir, resolver_ordinais
 from mobia.domain.agente.repositorio import (
+    apagar_recomendacao_nao_entregue,
     conciliar_apresentacao,
     gravar_intencao,
     gravar_reacoes,
@@ -2105,6 +2106,17 @@ async def _apresentar(
                 message_id=str(message.id),
                 kind=KINDS_DAS_FICHAS[posicao],
                 reason=str(exc),
+            )
+            # D8 da TEC-275: apaga AGORA, e nao no fim do laco. A conciliacao
+            # la embaixo nao roda se o laco morrer numa ficha seguinte -- e
+            # falha permanente MANTEM a reserva, entao a continuacao leria
+            # esta recusa como entrega feita.
+            await apagar_recomendacao_nao_entregue(
+                session_factory,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                imovel_id=ficha.id,
+                apresentado_em=agora,
             )
             nao_entregues.append(ficha.id)
             continue

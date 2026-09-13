@@ -1407,6 +1407,67 @@ async def test_retentativa_com_reagir_falhando_fecha_as_mesmas_linhas_pelo_outro
     )
 
 
+async def test_ficha_recusada_some_mesmo_quando_o_turno_morre_depois(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275, D8. A delecao da linha recusada nao pode depender do fim do laco.
+
+    Ficha 1 recusada (permanente, a reserva FICA), ficha 3 retentavel -- o
+    turno morre antes da conciliacao. Sem a delecao antecipada a linha da
+    ficha 1 sobrevive, e ela e um imovel que o lead nunca viu ocupando um
+    ordinal.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-9A{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RecusaAPrimeiraEFalhaNaTerceira(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[0]:
+                raise EnvioRecusado("http 400 codigo 131053")
+            if kind == KINDS_DAS_FICHAS[2]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=_RecusaAPrimeiraEFalhaNaTerceira(get_sessionmaker()),
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    assert classificador.resultado is not None
+    recusado = uuid.UUID(classificador.resultado.candidatos[0]["imovel_id"])
+    gravados = {
+        registro.imovel_id
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert recusado not in gravados, (
+        "a linha da ficha recusada tem de sumir na hora da recusa -- esperar o fim "
+        "do laco perde a limpeza quando o turno morre no meio"
+    )
+
+
 async def test_a_recomendacao_guarda_dono_preco_e_kind(session: Any) -> None:
     """TEC-275, D2. As tres colunas que tornam a apresentacao continuavel.
 

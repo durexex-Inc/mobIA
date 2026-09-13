@@ -244,6 +244,48 @@ async def gravar_recomendacoes(
         await session.commit()
 
 
+async def apagar_recomendacao_nao_entregue(
+    session_factory: Any,
+    *,
+    channel: str,
+    conversation_key: str,
+    imovel_id: uuid.UUID,
+    apresentado_em: datetime,
+) -> None:
+    """A linha de uma ficha que NAO chegou ao lead, apagada na hora. TEC-275, D8.
+
+    Mesmo recorte de `conciliar_apresentacao` no ramo `nao_entregues`, e pelas
+    mesmas razoes: apaga em vez de fechar (o UNIQUE por conversa e para
+    sempre, e linha fechada tornaria o imovel inalcancavel pelo resto da
+    conversa), e exige `reacao_lead IS NULL` mais o carimbo deste lote, para
+    nunca tocar a linha de uma apresentacao anterior em que o lead de fato viu
+    o imovel.
+
+    **Por que existe separada da conciliacao.** La a delecao roda DEPOIS do
+    laco, junto com o fechamento -- que precisa de `houve_entrega`, e
+    `houve_entrega` so se conhece no fim. A delecao nao precisa: ela depende
+    so do que acabou de acontecer com esta ficha. Enquanto as duas andavam
+    juntas, um turno que morria no meio do laco levava a limpeza junto, e a
+    linha de um imovel que o lead nunca viu sobrevivia como pendente.
+
+    Isso deixou de ser um detalhe quando a continuacao (D4) passou a ler as
+    reservas de `outbound_dispatches` para saber o que ja saiu: falha
+    permanente MANTEM a reserva de proposito, entao sem esta delecao a
+    continuacao leria a recusa como entrega feita.
+    """
+    async with session_factory() as session:
+        await session.execute(
+            delete(Recomendacao).where(
+                Recomendacao.channel == channel,
+                Recomendacao.conversation_key == conversation_key,
+                Recomendacao.imovel_id == imovel_id,
+                Recomendacao.apresentado_em == apresentado_em,
+                Recomendacao.reacao_lead.is_(None),
+            )
+        )
+        await session.commit()
+
+
 async def conciliar_apresentacao(
     session_factory: Any,
     *,
