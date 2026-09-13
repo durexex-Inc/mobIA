@@ -130,13 +130,24 @@ async def notificar(
             )
         ).scalar_one_or_none()
         temperatura = qualificacao.temperatura if qualificacao is not None else None
-        handoff.sla_limite_em = limite_de_aceite(
-            inicio=agora,
-            minutos=prazo_em_minutos(temperatura),
-            jornada_inicio=corretor.horario_inicio,
-            jornada_fim=corretor.horario_fim,
-            fuso=get_settings().fuso_de_envio,
-        )
+        # D1: "gravado uma vez e nao recalculado" -- e nao e hipotese: a L3 da
+        # TEC-177 (`keep_result=0` em `gerar_resumo`) deixa uma retentativa do
+        # ARQ enfileirar `notificar` de novo DEPOIS de uma execucao anterior ja
+        # ter concluido, e o proprio `notificar_corretor` retenta sozinho ate
+        # `max_tries=5`. Recalcular incondicionalmente moveria o prazo para
+        # frente a cada retentativa -- o mesmo defeito que a D8 evita para
+        # `aceito_em`, aberto na coluna vizinha. `status == PENDENTE` importa
+        # tanto quanto o prazo ja gravado: sem essa condicao, uma retentativa
+        # tardia escreveria um prazo novo sobre um handoff ja ESCALADO ou
+        # ACEITO, inventando um SLA depois do desfecho.
+        if handoff.sla_limite_em is None and handoff.status == Status.PENDENTE.value:
+            handoff.sla_limite_em = limite_de_aceite(
+                inicio=agora,
+                minutos=prazo_em_minutos(temperatura),
+                jornada_inicio=corretor.horario_inicio,
+                jornada_fim=corretor.horario_fim,
+                fuso=get_settings().fuso_de_envio,
+            )
         await session.commit()
 
         # Tudo que sobrevive ao fechamento desta sessao vira variavel local --

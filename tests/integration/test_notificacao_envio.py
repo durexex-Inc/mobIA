@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.corretores.models import Corretor
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.sla import PRAZO_PADRAO_MINUTOS, PRAZO_QUENTE_MINUTOS, limite_de_aceite
 from mobia.domain.handoff.vocabulario import Status
@@ -427,6 +428,53 @@ async def test_sucesso_apos_falha_anterior_limpa_aviso_manual_pendente(
     linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
     assert linha.notificado_em is not None
     assert linha.aviso_manual_pendente is False
+
+
+async def test_notificar_duas_vezes_nao_recalcula_o_sla(
+    session: AsyncSession, session_factory, semear_handoff_com_resumo, semear_corretor
+) -> None:
+    """Ruling R3 (I2 da revisao final): D1 -- "gravado uma vez e nao recalculado".
+
+    A retentativa e caminho declarado (L3 da TEC-177), nao hipotese: uma
+    segunda chamada de `notificar` sobre o MESMO handoff nao pode mover
+    `sla_limite_em`. A prova exige que um recalculo desse um valor DIFERENTE
+    do original -- senao a asserção passaria mesmo sem guarda nenhuma. Por
+    isso a jornada do corretor muda para uma janela hoje FECHADA
+    (`_janela_fechada_para_agora`, ja usada acima) entre as duas chamadas: se
+    a segunda chamada recalculasse, o novo limite so comecaria a contar na
+    proxima abertura -- um valor bem posterior ao gravado na primeira vez.
+    """
+    email_corretor = "plantao_recalculo@x.com"
+    await semear_corretor(
+        email=email_corretor,
+        plantao=True,
+        horario_inicio=_JORNADA_QUASE_INTEIRA[0],
+        horario_fim=_JORNADA_QUASE_INTEIRA[1],
+    )
+    handoff_id = await semear_handoff_com_resumo(resumo="texto")
+
+    assert await notificar(
+        session_factory, canais=(_CanalEspiao("email"),), outbound=_OutboundFalso(), handoff_id=handoff_id
+    )
+    primeira = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    sla_original = primeira.sla_limite_em
+    assert sla_original is not None
+
+    inicio_fechado, fim_fechado = _janela_fechada_para_agora()
+    await session.execute(
+        update(Corretor)
+        .where(Corretor.email == email_corretor)
+        .values(horario_inicio=inicio_fechado, horario_fim=fim_fechado)
+    )
+    await session.commit()
+
+    assert await notificar(
+        session_factory, canais=(_CanalEspiao("email"),), outbound=_OutboundFalso(), handoff_id=handoff_id
+    )
+
+    session.expire(primeira)
+    segunda = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert segunda.sla_limite_em == sla_original
 
 
 async def test_handoff_sem_resumo_notifica_mesmo_assim(
