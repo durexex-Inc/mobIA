@@ -1383,3 +1383,36 @@ async def test_retentativa_com_reagir_falhando_fecha_as_mesmas_linhas_pelo_outro
         "com `reagir` estourando na retentativa quem fecha as tres e o "
         f"`apresentado_em < agora` de `conciliar_apresentacao`. Reacoes gravadas: {fechadas}"
     )
+
+
+async def test_a_recomendacao_guarda_dono_preco_e_kind(session: Any) -> None:
+    """TEC-275, D2. As tres colunas que tornam a apresentacao continuavel.
+
+    Nullable as tres: linha anterior a esta card nao tem dono, e inventar um
+    seria mentira (L2 do desenho).
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    linha_da_mensagem = await _entrada_do_lead(session, texto="quero tres quartos")
+    imovel = await _imovel(session, "AP-910")
+
+    session.add(
+        Recomendacao(
+            id=uuid.uuid4(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            imovel_id=imovel,
+            score_match=Decimal("0.900"),
+            motivo_match="3 quartos",
+            apresentado_em=datetime.now(UTC),
+            message_id=linha_da_mensagem.id,
+            preco_centavos=30000000,
+            kind="ficha_1",
+        )
+    )
+    await session.commit()
+
+    gravada = (await session.execute(select(Recomendacao))).scalars().one()
+    assert gravada.message_id == linha_da_mensagem.id
+    assert gravada.preco_centavos == 30000000
+    assert gravada.kind == "ficha_1"
