@@ -68,6 +68,12 @@ Duas consequências práticas. Uma falha isolada com esse traceback **não autor
 
 **Testes de integração flakeiam sob carga, não isolados.** `test_montagem.py`, `test_sweep_stalled.py`, `test_dedup_por_message_id.py` e `test_optout_repositorio.py` falham com `ConnectionResetError` ou erro de Redis quando a suíte inteira roda junta, e passam 100% em isolamento. Antes de atribuir uma falha dessas a uma mudança sua, rode o arquivo sozinho.
 
+**`relation ... does not exist` em dezenas de testes quase nunca é a sua migration — são os bancos dos workers com o carimbo adiantado.** Cada worker tem o seu (`mobia_gw0` … `mobia_gw7`), e eles **persistem entre sessões**. Se um `alembic upgrade` for interrompido no meio — uma queda de conexão, um `[WinError 64]` na hora errada, uma troca de branch entre execuções —, o banco fica com `alembic_version` já no head e **sem o DDL correspondente**. A fixture `migrar_banco` não pega isso: para ela, carimbo no head significa nada a fazer.
+
+O sintoma engana de propósito: dezenas de falhas, todas dizendo que uma tabela recém-criada não existe, exatamente na branch que a criou. Em 12/09/2026 foram 34 falhas que se repetiram idênticas numa segunda execução — ou seja, **nem a regra do "rode de novo antes de culpar sua mudança" separa este caso**, porque ele não é flake: é estado errado e determinístico.
+
+Confirme antes de mexer em código: conecte num banco de worker e compare `SELECT version_num FROM alembic_version` com a existência da tabela que falta. Batendo a suspeita, o conserto é por banco — `alembic stamp` para a revisão anterior e `upgrade head` de novo, nos oito. Um `-n 2` reproduz em dois bancos e é bem mais barato para diagnosticar que a suíte inteira.
+
 **Rode a suíte inteira UMA vez.** Uma execução verde é o suficiente para seguir. Guarde o hash junto com o resultado.
 
 A segunda execução não é ritual de rotina — é ferramenta de diagnóstico, e só quando a primeira **falha**. Aí ela é a única coisa que separa flake de regressão: rodar isolado ajuda mas não prova, porque um teste pode passar sozinho e falhar junto por um defeito real de isolamento. O precedente é a TEC-156, em que `b35069d` passou 1236/1236 e, na execução seguinte sobre árvore idêntica e limpa, falhou 1 — mesmo commit, dois resultados. Se a sua primeira execução falhou, repita sobre a mesma árvore antes de culpar a sua mudança.
