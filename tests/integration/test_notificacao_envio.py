@@ -43,23 +43,61 @@ class _OutboundFalso:
         return True
 
 
+# Dois candidatos fixos, ~12h opostos no relogio (2h-9h e 14h-21h). A escolha
+# entre os dois -- nunca um horario calculado a partir da hora atual -- e o
+# que evita a virada de meia-noite: um par assim so precisaria wrap-around se
+# a janela em si cruzasse a meia-noite, e nenhum dos dois cruza.
+_CANDIDATOS_DE_JANELA: tuple[tuple[int, int], ...] = ((2, 9), (14, 21))
+
+
+def _folga_em_minutos(momento_min: int, inicio_hora: int, fim_hora: int) -> int:
+    """Distancia, em minutos, de `momento_min` (0..1439) ate a janela [inicio_hora,
+    fim_hora] (horas cheias), pelo lado mais curto do relogio de 24h -- CICLICA,
+    entao 23:59 fica a 1 minuto de 00:00 e nao a quase um dia, que e exatamente
+    a virada que o docstring de `_janela_fechada_para_agora` explica. Devolve
+    -1 quando `momento_min` ja esta dentro da janela (nunca deveria ser
+    escolhida nesse caso).
+    """
+    inicio_min = inicio_hora * 60
+    fim_min = fim_hora * 60
+    if inicio_min <= momento_min <= fim_min:
+        return -1
+    ida = (inicio_min - momento_min) % 1440
+    volta = (momento_min - fim_min) % 1440
+    return min(ida, volta)
+
+
 def _janela_fechada_para_agora() -> tuple[int, int]:
     """Uma janela (inicio, fim) que NAO contem a hora local de agora, com folga.
 
     `notificar` nao recebe `momento` por parametro -- le `datetime.now(UTC)`
-    por dentro --, entao o teste nao pode fixar o relogio. A janela e
-    escolhida em funcao da hora ATUAL, no mesmo fuso que `notificar` usa
-    (`fuso_de_envio`), com pelo menos ~2h01min de folga para os dois lados
-    (pior caso: hora 9:59 no ramo `hora<10`, e 11:59 no ramo `hora in {10,
-    11}`) -- o suficiente para absorver o tempo entre este calculo e a
-    chamada real, sem tornar o teste dependente da hora em que a suite roda.
+    por dentro --, entao o teste nao pode fixar o relogio: ele calcula a
+    janela num instante e `notificar` le o relogio de novo, um pouco depois.
+    A folga existe para que essa segunda leitura nao caia dentro da janela --
+    sem ela, o teste flakearia raramente (contando so em minutos por dia) mas
+    de verdade, exatamente quando o relogio vira de um lado da janela para o
+    outro entre as duas leituras.
+
+    **A escolha e entre dois candidatos fixos, nunca um horario calculado a
+    partir da hora atual.** Uma primeira versao devolvia janelas como `(0, 9)`
+    sempre que a hora atual fosse maior que 11 -- e com a hora atual em 23,
+    a folga ate a borda `inicio=0` da propria janela, contada CICLICAMENTE
+    (23:59 esta a 1 MINUTO de 00:00, nao a quase um dia), caia para cerca de
+    um minuto: exatamente o cenario da virada de meia-noite que o paragrafo
+    acima descreve. Escolher sempre entre os mesmos dois candidatos -- nunca
+    construir a janela a partir da hora atual -- elimina essa classe de erro
+    por construcao: nenhum dos dois cruza a meia-noite, e a escolha (pelo
+    maior `_folga_em_minutos` dentre os dois) so decide QUAL usar, nunca
+    onde colocar a borda.
+
+    Verificado numericamente para os 1440 minutos do dia (nao so as 24 horas
+    cheias): a pior folga entre os dois candidatos e de **150 minutos
+    (2h30min)**, no minuto 11:30 (e, por simetria, 23:30) -- o ponto medio
+    exato entre as duas janelas, onde as duas ficam igualmente distantes.
     """
-    hora = datetime.now(UTC).astimezone(get_settings().fuso_de_envio).hour
-    if hora < 10:
-        return 12, 23
-    if hora > 11:
-        return 0, 9
-    return 14, 23
+    agora = datetime.now(UTC).astimezone(get_settings().fuso_de_envio)
+    momento_min = agora.hour * 60 + agora.minute
+    return max(_CANDIDATOS_DE_JANELA, key=lambda janela: _folga_em_minutos(momento_min, *janela))
 
 
 async def test_notifica_os_dois_canais_com_resumo_e_link(

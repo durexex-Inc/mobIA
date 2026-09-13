@@ -3,7 +3,10 @@
 TEC-177, Task 5.
 """
 
+import logging
 from typing import Any
+
+import pytest
 
 from mobia.domain.handoff.resumo import MARCADORES, ResumoDeHandoffGerado, ResumoDeHandoffInvalido
 from mobia.workers.jobs.gerar_resumo import gerar_resumo
@@ -85,16 +88,23 @@ async def test_resumo_falhado_enfileira_a_notificacao_do_mesmo_jeito(semear_lead
 
 
 async def test_falha_no_enfileiramento_nao_derruba_o_job_do_resumo(
-    semear_lead_completo,
+    semear_lead_completo, caplog: pytest.LogCaptureFixture
 ) -> None:
     """O resumo ja esta gravado quando o enqueue acontece -- uma falha do Redis
-    ali perde so a notificacao, nunca o trabalho que `_gerar` ja fez."""
+    ali perde so a notificacao, nunca o trabalho que `_gerar` ja fez.
+
+    A asserta sobre `caplog` prova que o `except` de fato loga e nao so
+    engole a falha em silencio -- sem ela, um `except Exception: pass` no
+    lugar do `log.warning` deixaria este teste verde do mesmo jeito.
+    """
     handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
     ctx: dict[str, Any] = {"redator": _RedatorFalso(), "redis": _RedisQueFalha()}
 
-    resultado = await gerar_resumo(ctx, str(handoff_id))
+    with caplog.at_level(logging.WARNING):
+        resultado = await gerar_resumo(ctx, str(handoff_id))
 
     assert resultado == "gravado"
+    assert "notificacao.nao_agendada" in caplog.text
 
 
 class _CanalEspiao:
