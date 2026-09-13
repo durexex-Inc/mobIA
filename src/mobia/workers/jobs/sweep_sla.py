@@ -1,4 +1,4 @@
-"""O job que escala o handoff sem aceite dentro do prazo. TEC-178."""
+"""O job que escala o handoff vencido e recupera o handoff perdido sem prazo. TEC-178, TEC-279."""
 
 from typing import Any
 
