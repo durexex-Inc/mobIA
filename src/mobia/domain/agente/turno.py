@@ -1,5 +1,6 @@
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
@@ -7,7 +8,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import MODELO_SEM_CHAMADA
-from mobia.domain.agente.apresentacao import legenda_de
+from mobia.domain.agente.apresentacao import Ficha, legenda_de
 from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
 from mobia.domain.agente.desambiguacao import deve_desambiguar
@@ -1908,6 +1909,150 @@ async def _entregar_texto_fixo(
     return "respondido"
 
 
+@dataclass(frozen=True, slots=True)
+class ResultadoDaEntrega:
+    """O que o laco de entrega de fato conseguiu. TEC-275."""
+
+    legendas: tuple[str, ...]
+    entregues: int
+    suprimidas: int
+    nao_entregues: tuple[uuid.UUID, ...]
+
+
+async def _entregar_fichas(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    message: Message,
+    outbound: OutboundPort,
+    fichas: Sequence[Ficha],
+    kinds: Sequence[str],
+    apresentado_em: datetime,
+    prosa: str | None,
+    pular: frozenset[str] = frozenset(),
+) -> ResultadoDaEntrega:
+    """O laco que fala com a Meta, um por ficha. TEC-275.
+
+    Extraido de `_apresentar` para ter UM laco, e nao dois: a continuacao
+    (D4) entrega pelo mesmo caminho. Duas copias de um laco de entrega
+    divergem -- o comentario de `KINDS_DA_RESPOSTA`, neste arquivo, registra o
+    que isso ja custou.
+
+    **`kinds` e paralelo a `fichas`**, e vem de quem chama porque e quem chama
+    que sabe de onde ele veio: na apresentacao e `KINDS_DAS_FICHAS[:n]`; na
+    continuacao e o kind PERSISTIDO de cada linha, que nao e reconstruivel
+    pela posicao (D9).
+
+    **`prosa` e `None` na continuacao.** A prosa viaja na primeira ficha (D5
+    da TEC-162), e uma continuacao so existe se alguma ficha ja saiu -- entao
+    a primeira ja saiu, e com ela a prosa.
+
+    **`pular` sao os kinds que ja tem reserva.** A guarda de `send` suprimiria
+    esses envios de qualquer jeito, mas pular explicitamente evita usar a
+    reserva como controle de fluxo e evita contar como `suprimidas` algo que
+    nem foi tentado.
+    """
+    legendas: list[str] = []
+    # Os imoveis deste lote cuja ficha nao chegou ao lead -- recusa permanente
+    # ou reserva ja existente. `conciliar_apresentacao` apaga a linha de cada
+    # um: `ler_pendentes` tem de devolver exatamente o que ele viu, porque a
+    # posicao N daquela lista e o ordinal N da resposta dele (D7).
+    nao_entregues: list[uuid.UUID] = []
+    entregues = suprimidas = 0
+
+    for posicao, ficha in enumerate(fichas):
+        kind = kinds[posicao]
+        if kind in pular:
+            continue
+
+        # So a primeira leva a prosa (D5); as outras sao ficha pura.
+        legenda = legenda_de(ficha, prefixo=prosa if posicao == 0 else None)
+        payload: dict[str, Any] = {
+            "para": message.conversation_key,
+            "de": message.recipient_external_id,
+        }
+        if ficha.foto is None:
+            # D13: sem foto, cai no caminho de texto que ja existe em vez de
+            # ganhar um ramo proprio.
+            payload["texto"] = legenda
+        else:
+            payload["tipo"] = "imagem"
+            payload["link"] = ficha.foto
+            payload["legenda"] = legenda
+
+        try:
+            entrou = await outbound.send(message.id, kind, payload)
+        except EnvioForaDaJanela:
+            # Repropaga, e esta clausula tem de vir ANTES da de baixo:
+            # `EnvioForaDaJanela` HERDA de `EnvioRecusado` (port.py), entao um
+            # `except EnvioRecusado` sozinho engoliria a janela de 24h
+            # fechada: o turno devolveria "sem_resposta" (se todas as tres
+            # batessem na janela) ou "respondido" com as fichas restantes (se
+            # a janela fechasse no meio) em vez de "expirado", e o alerta que
+            # observa janela fechada ficaria cego -- alem de o desfecho passar
+            # a mentir sobre por que o lead nao recebeu. Janela fechada torna
+            # a apresentacao inteira impossivel; nao e uma ficha ruim entre
+            # tres.
+            raise
+        except EnvioRetentavel:
+            # Fix de revisao (aceito do revisor). `EnvioRetentavel` nao herda
+            # de `EnvioRecusado` nem de `EnvioForaDaJanela` (port.py) -- as
+            # tres sao ramos distintos, entao esta clausula nao disputa MRO
+            # com as duas de cima e a ordem entre elas nao muda qual excecao
+            # cada uma pega. Propaga sem alterar o desfecho -- FAILED e o
+            # sweeper reenfileira, exatamente como sem esta clausula --, e o
+            # unico acrescimo e este log: sem ele, uma entrega PARCIAL (uma ou
+            # duas fichas ja saidas quando o 5xx bateu nesta) fica invisivel
+            # para quem opera ate a proxima tentativa reaparecer no mesmo
+            # lugar. `entregues` conta so as que JA passaram por
+            # `entregues += 1` abaixo -- a que estourou agora nao entra.
+            log.error(
+                "apresentacao.entrega_parcial_antes_de_falha_retentavel",
+                channel=message.channel,
+                message_id=str(message.id),
+                kind=kind,
+                entregues=entregues,
+            )
+            raise
+        except EnvioRecusado as exc:
+            # `error` pelo mesmo criterio do caminho de texto: o estado da
+            # linha sera terminal e a visibilidade vem do nivel do log.
+            log.error(
+                "apresentacao.ficha_recusada",
+                channel=message.channel,
+                message_id=str(message.id),
+                kind=kind,
+                reason=str(exc),
+            )
+            # D8 da TEC-275: apaga AGORA, e nao no fim do laco. A conciliacao
+            # la embaixo nao roda se o laco morrer numa ficha seguinte -- e
+            # falha permanente MANTEM a reserva, entao a continuacao leria
+            # esta recusa como entrega feita.
+            await apagar_recomendacao_nao_entregue(
+                session_factory,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                imovel_id=ficha.id,
+                apresentado_em=apresentado_em,
+            )
+            nao_entregues.append(ficha.id)
+            continue
+
+        if not entrou:
+            suprimidas += 1
+            nao_entregues.append(ficha.id)
+            continue
+
+        entregues += 1
+        legendas.append(legenda)
+
+    return ResultadoDaEntrega(
+        legendas=tuple(legendas),
+        entregues=entregues,
+        suprimidas=suprimidas,
+        nao_entregues=tuple(nao_entregues),
+    )
+
+
 async def _apresentar(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -2040,94 +2185,15 @@ async def _apresentar(
         agora=agora,
     )
 
-    legendas: list[str] = []
-    # Os imoveis deste lote cuja ficha nao chegou ao lead -- recusa permanente
-    # ou reserva ja existente. `conciliar_apresentacao` apaga a linha de cada
-    # um: `ler_pendentes` tem de devolver exatamente o que ele viu, porque a
-    # posicao N daquela lista e o ordinal N da resposta dele (D7).
-    nao_entregues: list[uuid.UUID] = []
-    entregues = suprimidas = 0
-    for posicao, ficha in enumerate(fichas):
-        # So a primeira leva a prosa (D5); as outras sao ficha pura.
-        legenda = legenda_de(ficha, prefixo=prosa if posicao == 0 else None)
-        payload: dict[str, Any] = {
-            "para": message.conversation_key,
-            "de": message.recipient_external_id,
-        }
-        if ficha.foto is None:
-            # D13: sem foto, cai no caminho de texto que ja existe em vez de
-            # ganhar um ramo proprio.
-            payload["texto"] = legenda
-        else:
-            payload["tipo"] = "imagem"
-            payload["link"] = ficha.foto
-            payload["legenda"] = legenda
-
-        try:
-            entrou = await outbound.send(message.id, KINDS_DAS_FICHAS[posicao], payload)
-        except EnvioForaDaJanela:
-            # Repropaga, e esta clausula tem de vir ANTES da de baixo:
-            # `EnvioForaDaJanela` HERDA de `EnvioRecusado` (port.py), entao um
-            # `except EnvioRecusado` sozinho engoliria a janela de 24h
-            # fechada: o turno devolveria "sem_resposta" (se todas as tres
-            # batessem na janela) ou "respondido" com as fichas restantes (se
-            # a janela fechasse no meio) em vez de "expirado", e o alerta que
-            # observa janela fechada ficaria cego -- alem de o desfecho passar
-            # a mentir sobre por que o lead nao recebeu. Janela fechada torna
-            # a apresentacao inteira impossivel; nao e uma ficha ruim entre
-            # tres.
-            raise
-        except EnvioRetentavel:
-            # Fix de revisao (aceito do revisor). `EnvioRetentavel` nao herda
-            # de `EnvioRecusado` nem de `EnvioForaDaJanela` (port.py) -- as
-            # tres sao ramos distintos, entao esta clausula nao disputa MRO
-            # com as duas de cima e a ordem entre elas nao muda qual excecao
-            # cada uma pega. Propaga sem alterar o desfecho -- FAILED e o
-            # sweeper reenfileira, exatamente como sem esta clausula --, e o
-            # unico acrescimo e este log: sem ele, uma entrega PARCIAL (uma ou
-            # duas fichas ja saidas quando o 5xx bateu nesta) fica invisivel
-            # para quem opera ate a proxima tentativa reaparecer no mesmo
-            # lugar. `entregues` conta so as que JA passaram por
-            # `entregues += 1` abaixo -- a que estourou agora nao entra.
-            log.error(
-                "apresentacao.entrega_parcial_antes_de_falha_retentavel",
-                channel=message.channel,
-                message_id=str(message.id),
-                kind=KINDS_DAS_FICHAS[posicao],
-                entregues=entregues,
-            )
-            raise
-        except EnvioRecusado as exc:
-            # `error` pelo mesmo criterio do caminho de texto: o estado da
-            # linha sera terminal e a visibilidade vem do nivel do log.
-            log.error(
-                "apresentacao.ficha_recusada",
-                channel=message.channel,
-                message_id=str(message.id),
-                kind=KINDS_DAS_FICHAS[posicao],
-                reason=str(exc),
-            )
-            # D8 da TEC-275: apaga AGORA, e nao no fim do laco. A conciliacao
-            # la embaixo nao roda se o laco morrer numa ficha seguinte -- e
-            # falha permanente MANTEM a reserva, entao a continuacao leria
-            # esta recusa como entrega feita.
-            await apagar_recomendacao_nao_entregue(
-                session_factory,
-                channel=message.channel,
-                conversation_key=message.conversation_key,
-                imovel_id=ficha.id,
-                apresentado_em=agora,
-            )
-            nao_entregues.append(ficha.id)
-            continue
-
-        if not entrou:
-            suprimidas += 1
-            nao_entregues.append(ficha.id)
-            continue
-
-        entregues += 1
-        legendas.append(legenda)
+    entrega = await _entregar_fichas(
+        session_factory,
+        message=message,
+        outbound=outbound,
+        fichas=fichas,
+        kinds=KINDS_DAS_FICHAS[: len(fichas)],
+        apresentado_em=agora,
+        prosa=prosa,
+    )
 
     # Depois do laco, e nao antes: so aqui se sabe o que de fato saiu. Fecha as
     # pendentes que esta apresentacao supera e apaga as linhas das fichas que
@@ -2145,8 +2211,8 @@ async def _apresentar(
         channel=message.channel,
         conversation_key=message.conversation_key,
         agora=agora,
-        nao_entregues=nao_entregues,
-        houve_entrega=entregues > 0,
+        nao_entregues=entrega.nao_entregues,
+        houve_entrega=entrega.entregues > 0,
     )
 
-    return "\n\n".join(legendas), entregues, suprimidas
+    return "\n\n".join(entrega.legendas), entrega.entregues, entrega.suprimidas
