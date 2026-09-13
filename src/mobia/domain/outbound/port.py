@@ -7,6 +7,7 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.atendimento.repositorio import esta_silenciada_por_mensagem
 from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
 from mobia.domain.optout.repositorio import esta_em_optout_por_mensagem
 from mobia.domain.outbound.models import OutboundDispatch
@@ -94,17 +95,23 @@ class OutboundPort(Protocol):
       para parar de receber mensagem, e `kind` nao e
       `KIND_DA_CONFIRMACAO_DE_OPTOUT` -- ver `GuardedOutbound.send` e
       `esta_em_optout_por_mensagem`.
+    - Envio barrado pela guarda de atendimento humano: um corretor assumiu
+      esta conversa e ainda nao a devolveu (TEC-179, RN-16.4) -- ver
+      `GuardedOutbound.send` e `esta_silenciada_por_mensagem`. Ao contrario
+      da guarda de opt-out, esta nao tem excecao por `kind`.
 
     `OutboundPort` e um Protocol estrutural: qualquer classe com um metodo
     `send` de assinatura compativel satisfaz o tipo, herdando de
-    `GuardedOutbound` ou nao. A guarda de opt-out, porem, so existe dentro do
-    corpo de `GuardedOutbound.send` -- nao ha nada no `Protocol` em si, nem
-    no `mypy`, que a force. Um adaptador novo escrito direto contra este
-    Protocol, sem herdar de `GuardedOutbound`, tipa igual e passa em
-    qualquer checagem estatica, mas nao tem a guarda: ele manda mensagem
-    para quem pediu para parar. Isso nao e um bug de performance ou um
-    turno errado -- e uma violacao de LGPD. Quem for por esse caminho
-    precisa reimplementar a checagem de opt-out por conta propria; a rota
+    `GuardedOutbound` ou nao. As guardas de opt-out e de atendimento humano,
+    porem, so existem dentro do corpo de `GuardedOutbound.send` -- nao ha
+    nada no `Protocol` em si, nem no `mypy`, que as force. Um adaptador novo
+    escrito direto contra este Protocol, sem herdar de `GuardedOutbound`,
+    tipa igual e passa em qualquer checagem estatica, mas nao tem guarda
+    nenhuma: ele manda mensagem para quem pediu para parar, e fala por cima
+    do corretor que assumiu a conversa. Isso nao e um bug de performance ou
+    um turno errado -- e uma violacao de LGPD no primeiro caso, e no segundo
+    o proprio motivo de existir da TEC-179. Quem for por esse caminho
+    precisa reimplementar as duas checagens por conta propria; a rota
     segura e herdar de `GuardedOutbound`.
     """
 
@@ -183,6 +190,35 @@ class GuardedOutbound:
                         kind=kind,
                     )
                     return False
+
+        # A guarda de atendimento humano (TEC-179, RN-16.4). Mora aqui pela
+        # mesma razao que a de opt-out logo acima, e o docstring do
+        # `OutboundPort` ja escreve: quem herda ganha a guarda de graca. No
+        # turno ela protegeria so o caminho de hoje.
+        #
+        # **Barra TODO kind, sem a escotilha que o opt-out tem.** A D5 do
+        # desenho decide isso: nao existe caminho humano de envio para deixar
+        # passar -- a rota `POST /conversas/{id}/mensagens` do SRS nao esta
+        # implementada --, e uma lista de excecoes construida agora seria para
+        # um chamador hipotetico. Quando aquela rota chegar ela vai encontrar
+        # o proprio envio barrado aqui, e tera de decidir como o humano
+        # atravessa. Falhar fechado e o lado certo de errar, e a L3 do desenho
+        # existe para que ninguem descubra isso por um teste vermelho sem
+        # explicacao.
+        #
+        # Antes da reserva pelo mesmo motivo do bloco acima: barrar depois
+        # deixaria linha orfa em `outbound_dispatches`.
+        async with self._session_factory() as session:
+            if await esta_silenciada_por_mensagem(session, message_id):
+                # `warning` e nao `info`, pelo mesmo criterio do opt-out: um
+                # envio barrado aqui significa que algum caminho tentou falar
+                # por cima do corretor que assumiu.
+                log.warning(
+                    "outbound.atendimento_humano_bloqueou",
+                    message_id=str(message_id),
+                    kind=kind,
+                )
+                return False
 
         async with self._session_factory() as session:
             session.add(OutboundDispatch(id=uuid.uuid4(), message_id=message_id, kind=kind))
