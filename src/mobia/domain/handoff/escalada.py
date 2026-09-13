@@ -149,13 +149,23 @@ async def escalar_vencidos(
 
         # Nunca `corpo` nem `assunto` com o resumo -- so o que permite saber
         # SE e PARA QUEM o aviso saiu, mesma disciplina de `notificar`.
+        #
+        # `algum_canal_aceitou`, e NAO `gerente_avisado` ou equivalente: os
+        # dois adaptadores de `canais.py` (D4 daquele modulo) REGISTRAM e
+        # NUNCA levantam `FalhaDeCanal` -- entao este campo e sempre `True`
+        # na implementacao de hoje, e um nome que sugerisse entrega
+        # prometeria algo que nenhum dos dois canais cumpre. Mesmo raciocinio
+        # do comentario de `TEXTO_DA_JANELA_HUMANA` em `notificacao/envio.py`:
+        # este repo ja pagou por essa frase exata uma vez (TEC-174), e o
+        # `log` e hoje o UNICO artefato observavel da escalada -- nao
+        # reintroduza a promessa aqui so porque ela sumiu do texto.
         log.info(
             "handoff.escalado",
             handoff_id=str(linha.id),
             conversation_key=linha.conversation_key,
             etiqueta=linha.etiqueta,
             prioridade=linha.prioridade,
-            gerente_avisado=algum_canal_aceitou,
+            algum_canal_aceitou=algum_canal_aceitou,
         )
         if not algum_canal_aceitou:
             log.warning("handoff.escalado_sem_entrega", handoff_id=str(linha.id), motivos=motivos)
