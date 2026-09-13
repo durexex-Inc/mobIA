@@ -1,6 +1,8 @@
+import asyncio
 import uuid
 from typing import Any
 
+import pytest
 from sqlalchemy import text as sql
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -241,6 +243,69 @@ async def test_liberar_apaga_a_reserva_da_parte_irma(session) -> None:
     assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[0]) == 0, (
         "a reserva da parte JA ENTREGUE tem de cair junto -- e ela que faria a "
         "retentativa suprimir a parte 1 da geracao nova"
+    )
+
+
+class OutboundTravaNaSegundaParte(GuardedOutbound):
+    """Reserva a parte 2, entra no `_deliver` dela e nunca sai.
+
+    Precisa de um cancelamento de VERDADE (`tarefa.cancel()` numa task em
+    voo), nao de um `raise asyncio.CancelledError()` direto -- e o mesmo
+    ponto que `test_cancelamento_do_worker.py` ja registra: um cancelamento
+    fabricado nao passa pelos mesmos pontos de suspensao do asyncio que o
+    `except (EnvioRetentavel, asyncio.CancelledError)` de `GuardedOutbound.send`
+    de fato intercepta em producao (`job_timeout` do worker, shutdown).
+    """
+
+    def __init__(self, session_factory) -> None:
+        super().__init__(session_factory)
+        self.entrou = asyncio.Event()
+
+    async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> None:
+        self.entrou.set()
+        await asyncio.Event().wait()
+
+
+async def test_cancelamento_libera_a_reserva_da_parte_irma(session) -> None:
+    """TEC-273, D3. Um CancelledError no meio da parte 2 libera a reserva da
+    parte 1 tambem -- a mesma garantia que
+    `test_liberar_apaga_a_reserva_da_parte_irma` ja prova para EnvioRetentavel,
+    agora para o outro gatilho que passa pela MESMA clausula `except` em
+    `GuardedOutbound.send`.
+
+    O comentario daquela clausula diz que o que fazer e identico para as duas
+    excecoes, e que duas copias divergiriam -- mas nada ali IMPEDE que
+    divirjam de fato: um teste que so cobrisse EnvioRetentavel deixaria a
+    metade do cancelamento sem fiador algum. Se `_liberar` regredisse para
+    apagar so o kind que cancelou (a versao anterior a TEC-273, `AND kind =
+    :k`), a reserva da parte 1 -- ja entregue -- sobreviveria, e a proxima
+    retentativa do sweeper suprimiria a parte 1 da geracao nova e entregaria
+    so a parte 2: a mesma corrupcao silenciosa que esta card fecha para o
+    caminho retentavel, agora pelo caminho do cancelamento.
+
+    `asyncio.CancelledError` e `BaseException`, nao `Exception` -- por isso
+    `pytest.raises(asyncio.CancelledError)`, e nao um `except Exception` no
+    corpo do teste, que simplesmente nao o capturaria.
+    """
+    from mobia.domain.outbound.kinds import KINDS_DA_RESPOSTA
+
+    message_id = await uma_mensagem(session)
+
+    parte_1 = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("nunca"), falhas=0)
+    assert await parte_1.send(message_id, KINDS_DA_RESPOSTA[0], {}) is True
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[0]) == 1
+
+    travado = OutboundTravaNaSegundaParte(get_sessionmaker())
+    tarefa = asyncio.create_task(travado.send(message_id, KINDS_DA_RESPOSTA[1], {}))
+    await travado.entrou.wait()
+    tarefa.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await tarefa
+
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[1]) == 0
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[0]) == 0, (
+        "o cancelamento tem de liberar o GRUPO, igual ao EnvioRetentavel -- "
+        "senao a parte 1 ja entregue fica presa e a proxima retentativa mistura geracoes"
     )
 
 

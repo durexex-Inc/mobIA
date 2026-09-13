@@ -503,3 +503,77 @@ async def test_entrega_parcial_nao_marca_pergunta_como_feita(
         "entrega parcial: a pergunta de `gerada` pode estar na parte "
         "suprimida, entao a marca nao pode ser gravada"
     )
+
+
+async def test_retentativa_da_parte_2_nao_mistura_geracoes(
+    session: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-273, cenario 1 do Gherkin. As duas partes vem da MESMA geracao.
+
+    Passada 1: a parte 1 sai, a parte 2 toma um 429. Antes desta card a
+    reserva de `reply` sobrevivia, e na passada 2 -- que roda o turno inteiro
+    com uma chamada NOVA ao modelo -- a parte 1 do texto B era suprimida e so
+    a parte 2 de B saia. O lead lia a primeira metade de A colada a segunda
+    metade de B, sem nada no sistema dizer.
+
+    Com a liberacao em grupo, a passada 2 reentrega as DUAS partes de B. O
+    lead ve uma duplicata da primeira metade -- visivel e recuperavel, que e o
+    lado que o precedente TEC-134/TEC-227 escolheu.
+
+    Duas instancias simples de `ClassificadorFake(resposta=...)` bastam --
+    cada `_rodar` constroi um classificador NOVO, entao nenhum roteiro de
+    passadas dentro de uma unica instancia chegaria a avancar.
+    """
+    from conftest import ClassificadorFake, OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DA_RESPOSTA, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    texto_a = "A" * 400 + " " + "a" * 400
+    texto_b = "B" * 400 + " " + "b" * 400
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelNaParte2(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DA_RESPOSTA[1]:
+                raise EnvioRetentavel("http 429")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    primeira = _RetentavelNaParte2(get_sessionmaker())
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(primeira, ClassificadorFake(resposta=texto_a))
+
+    assert len(primeira.entregues) == 1, (
+        "o teste so vale se a passada 1 entregou UMA parte e parou na segunda"
+    )
+
+    segunda = OutboundFake(get_sessionmaker())
+    assert await _rodar(segunda, ClassificadorFake(resposta=texto_b)) == "respondido"
+
+    assert len(segunda.entregues) == 2, (
+        "a passada 2 tem de reentregar as DUAS partes -- se so uma saiu, a "
+        "reserva da parte 1 sobreviveu e a mistura continua"
+    )
+    entregue = "".join(segunda.entregues)
+    assert "A" not in entregue, (
+        f"nenhuma parte da geracao anterior pode sobrar colada a esta. Entregue: {entregue[:120]}"
+    )
