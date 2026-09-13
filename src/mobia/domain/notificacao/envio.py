@@ -9,8 +9,11 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
+from mobia.domain.context.models import LeadQualification
 from mobia.domain.handoff.models import Handoff, aad_do_resumo_de_handoff
 from mobia.domain.handoff.resumo import link_da_transcricao
+from mobia.domain.handoff.sla import limite_de_aceite, prazo_em_minutos
+from mobia.domain.handoff.vocabulario import Status
 from mobia.domain.messages.enums import MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.notificacao.canais import CanalDeNotificacaoPort, FalhaDeCanal
@@ -96,15 +99,45 @@ async def notificar(
 
         corretor = await destinatario_do_handoff(session, handoff=handoff)
         if corretor is None:
+            # Sem corretor nao ha jornada contra a qual contar um prazo -- dar
+            # um prazo generico inventaria um dono que nao existe. Escala na
+            # hora, com `sla_limite_em` nulo PARA SEMPRE (emenda E-02 da
+            # RN-16.3): "ninguem sequer foi avisado" e a versao mais forte do
+            # que esta card leva ao gerente.
             handoff.aviso_manual_pendente = True
+            handoff.status = Status.ESCALADO
             handoff.atualizado_em = agora
             await session.commit()
             log.error(
                 "notificacao.sem_destinatario",
                 handoff_id=str(handoff_id),
-                motivo="nenhum corretor alocado nem de plantao",
+                motivo="nenhum corretor alocado nem de plantao, escalado na hora",
             )
             return False
+
+        # A temperatura vem de `lead_qualification`, NUNCA do `gatilho` do
+        # handoff (D2, emenda E-01 da RN-16.3): `LEAD_QUENTE` significa
+        # "acabou de atravessar a borda", e um handoff aberto por
+        # `PEDIDO_DE_HUMANO` sobre um lead que JA estava quente merece o
+        # mesmo prazo de 15 minutos. `None` (par sem linha, ou linha anterior
+        # a TEC-151) conta como nao-QUENTE em `prazo_em_minutos`.
+        qualificacao = (
+            await session.execute(
+                select(LeadQualification).where(
+                    LeadQualification.channel == handoff.channel,
+                    LeadQualification.conversation_key == handoff.conversation_key,
+                )
+            )
+        ).scalar_one_or_none()
+        temperatura = qualificacao.temperatura if qualificacao is not None else None
+        handoff.sla_limite_em = limite_de_aceite(
+            inicio=agora,
+            minutos=prazo_em_minutos(temperatura),
+            jornada_inicio=corretor.horario_inicio,
+            jornada_fim=corretor.horario_fim,
+            fuso=get_settings().fuso_de_envio,
+        )
+        await session.commit()
 
         # Tudo que sobrevive ao fechamento desta sessao vira variavel local --
         # o objeto `handoff`/`corretor` nao atravessa as sessoes seguintes.
