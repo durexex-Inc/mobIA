@@ -2,7 +2,16 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -94,6 +103,31 @@ class Recomendacao(Base):
     motivo_descarte: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     apresentado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # TEC-275, D2. Quem apresentou esta linha. Sem isto, "a apresentacao desta
+    # mensagem" nao e consultavel -- so inferivel pelo `apresentado_em` mais
+    # recente da conversa, que e inferencia e nao fato. Nullable: linha
+    # anterior a TEC-275 nao tem dono (L2 do desenho).
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # TEC-275, D3. O unico dos dez campos de `Ficha` que NAO sai da linha de
+    # `imoveis`: a linha tem `preco_venda` e `preco_aluguel` e nao diz qual foi
+    # mostrado, porque a operacao so existe dentro de `porta_de_busca`. Guarda
+    # o preco JA RESOLVIDO -- o numero que o lead viu --, que e o que uma
+    # continuacao precisa reproduzir.
+    #
+    # Isto NAO e uma segunda copia do preco do imovel: e um fato historico
+    # sobre o que foi apresentado, e continua certo depois de o preco do
+    # imovel mudar.
+    preco_centavos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    # TEC-275, D9. O kind com que esta linha saiu. NAO reconstrua pela posicao:
+    # quando a linha de uma ficha recusada e apagada (D8), ou quando um imovel
+    # some do catalogo (D7), as linhas restantes re-indexam e toda posicao
+    # depois do buraco desloca -- a continuacao leria a reserva errada.
+    kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     __table_args__ = (
         UniqueConstraint(

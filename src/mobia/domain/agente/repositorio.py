@@ -137,6 +137,8 @@ async def gravar_recomendacoes(
     candidatos: Sequence[Mapping[str, Any]],
     scores: Mapping[uuid.UUID, float],
     criterios: Sequence[str],
+    message_id: uuid.UUID,
+    kinds: Sequence[str],
     relaxou_preco: bool,
     relaxou_bairro: bool,
     agora: datetime,
@@ -157,13 +159,26 @@ async def gravar_recomendacoes(
     registra que uma falha parcial perde o conjunto escolhido e o turno
     seguinte pode reapresentar os mesmos imoveis; gravar depois manteria esse
     buraco aberto. Gravar antes tambem significa gravar linha para ficha que
-    pode nao sair -- quem desfaz essas e `conciliar_apresentacao`, chamada
-    depois do laco de entrega.
+    pode nao sair, e desde a TEC-275 sao TRES quem desfazem essas, cada um num
+    momento: `apagar_recomendacao_nao_entregue` apaga a linha da ficha recusada
+    na hora da recusa (D8), `conciliar_apresentacao` apaga no fim do laco as que
+    sobraram e fecha as pendentes que esta apresentacao supera, e
+    `apagar_apresentacao_da_mensagem` apaga o lote inteiro quando nenhum kind
+    DESTE lote tem reserva -- quase sempre porque nenhuma ficha saiu, mas nao
+    so (D4; ver a L4 do desenho da TEC-275).
 
     **`relaxou_preco`/`relaxou_bairro` sao do RESULTADO, `criterios` e do
     PEDIDO.** Os dois entram na frase por `motivo_do_match`, e o porque esta
     la: sem eles, um candidato que so apareceu porque o teto cedeu ficaria
     gravado com o criterio que ele nao satisfaz.
+
+    **`kinds` vem do chamador, e nao e derivado aqui.** O kind e posicional
+    (`KINDS_DAS_FICHAS[posicao]`) e quem enumera as posicoes e o laco de
+    entrega. Esta funcao recebe `candidatos` com a MESMA ordem e o MESMO
+    filtro que aquele laco usa, entao o indice bate -- mas depender disso em
+    silencio seria fragil: quem passa os kinds e quem sabe deles. Ver a D9
+    do desenho da TEC-275 para por que reconstruir a posicao depois nao
+    funciona.
 
     **Toda apresentacao vira linha, sem excecao (RN-10.3).** A regra nao tem
     clausula de excecao -- "toda apresentacao e registrada como
@@ -199,7 +214,7 @@ async def gravar_recomendacoes(
 
     motivo = motivo_do_match(criterios, relaxou_preco=relaxou_preco, relaxou_bairro=relaxou_bairro)
     linhas: list[dict[str, Any]] = []
-    for candidato in candidatos:
+    for posicao, candidato in enumerate(candidatos):
         imovel_id = uuid.UUID(str(candidato["imovel_id"]))
         score = scores.get(imovel_id)
         if score is None:
@@ -223,11 +238,92 @@ async def gravar_recomendacoes(
                 "score_match": Decimal(str(score)),
                 "motivo_match": motivo,
                 "apresentado_em": agora,
+                "message_id": message_id,
+                "preco_centavos": int(candidato["preco_centavos"]),
+                "kind": kinds[posicao],
             }
         )
 
     async with session_factory() as session:
         await session.execute(pg_insert(Recomendacao).values(linhas).on_conflict_do_nothing())
+        await session.commit()
+
+
+async def apagar_recomendacao_nao_entregue(
+    session_factory: Any,
+    *,
+    channel: str,
+    conversation_key: str,
+    imovel_id: uuid.UUID,
+    apresentado_em: datetime,
+) -> None:
+    """A linha de uma ficha que NAO chegou ao lead, apagada na hora. TEC-275, D8.
+
+    Mesmo recorte de `conciliar_apresentacao` no ramo `nao_entregues`, e pelas
+    mesmas razoes: apaga em vez de fechar (o UNIQUE por conversa e para
+    sempre, e linha fechada tornaria o imovel inalcancavel pelo resto da
+    conversa), e exige `reacao_lead IS NULL` mais o carimbo deste lote, para
+    nunca tocar a linha de uma apresentacao anterior em que o lead de fato viu
+    o imovel.
+
+    **Por que existe separada da conciliacao.** La a delecao roda DEPOIS do
+    laco, junto com o fechamento -- que precisa de `houve_entrega`, e
+    `houve_entrega` so se conhece no fim. A delecao nao precisa: ela depende
+    so do que acabou de acontecer com esta ficha. Enquanto as duas andavam
+    juntas, um turno que morria no meio do laco levava a limpeza junto, e a
+    linha de um imovel que o lead nunca viu sobrevivia como pendente.
+
+    Isso deixou de ser um detalhe quando a continuacao (D4) passou a ler as
+    reservas de `outbound_dispatches` para saber o que ja saiu: falha
+    permanente MANTEM a reserva de proposito, entao sem esta delecao a
+    continuacao leria a recusa como entrega feita.
+    """
+    async with session_factory() as session:
+        await session.execute(
+            delete(Recomendacao).where(
+                Recomendacao.channel == channel,
+                Recomendacao.conversation_key == conversation_key,
+                Recomendacao.imovel_id == imovel_id,
+                Recomendacao.apresentado_em == apresentado_em,
+                Recomendacao.reacao_lead.is_(None),
+            )
+        )
+        await session.commit()
+
+
+async def apagar_apresentacao_da_mensagem(session_factory: Any, *, message_id: uuid.UUID) -> None:
+    """Apaga o lote de uma apresentacao que nao chegou ao lead. TEC-275, D4.
+
+    Chamada quando nenhum kind DESTE lote tem reserva. Quase sempre isso
+    significa que nenhuma ficha saiu: as linhas existem porque
+    `gravar_recomendacoes` roda ANTES do laco de entrega (a L1 da TEC-162) e o
+    turno morreu antes de qualquer envio.
+
+    **Mas nao so.** O `ON CONFLICT DO NOTHING` de `gravar_recomendacoes`
+    preserva a linha de um imovel que esta conversa ja apresentou -- e nada
+    exclui da busca um imovel ja apresentado. A linha repetida fica com o
+    `message_id` e o `kind` da mensagem ANTERIOR, entao a ficha dela pode ter
+    saido sem que o kind correspondente pertenca a este lote. Uma entrega
+    parcial chega aqui por essa porta, e o lote (as fichas que NAO sairam) e
+    apagado do mesmo jeito -- que e o certo para elas; o que fica errado e o
+    turno inteiro rodar de novo. Ver a L4 do desenho da TEC-275.
+
+    **Apagar, e nao deixar para a passada nova.** O `ON CONFLICT DO NOTHING`
+    preservaria o `apresentado_em` velho, e o UNIQUE por conversa impediria a
+    linha da apresentacao nova de nascer -- o imovel ficaria com carimbo de
+    uma apresentacao que nunca aconteceu.
+
+    `reacao_lead IS NULL` na clausula porque uma linha que ganhou reacao veio
+    de apresentacao que o lead VIU; se ela carrega este `message_id`, algo
+    fora deste caminho a escreveu, e apagar destruiria opiniao do lead.
+    """
+    async with session_factory() as session:
+        await session.execute(
+            delete(Recomendacao).where(
+                Recomendacao.message_id == message_id,
+                Recomendacao.reacao_lead.is_(None),
+            )
+        )
         await session.commit()
 
 
@@ -242,7 +338,7 @@ async def conciliar_apresentacao(
 ) -> None:
     """Faz `ler_pendentes` voltar a ser "o que o lead viu, na ordem em que viu".
 
-    Chamada DEPOIS do laco de entrega de `_apresentar`, e a contraparte de
+    Chamada DEPOIS do laco de entrega, e a contraparte de
     `gravar_recomendacoes` ser chamada ANTES dele. Gravar antes e o que salva
     o conjunto escolhido de uma falha de rede no meio (a L1 da TEC-162), mas
     deixa duas classes de linha que o lead nunca viu na lista que o ordinal
@@ -250,6 +346,15 @@ async def conciliar_apresentacao(
     mais nao e um registro a mais: e a opiniao do lead grudando no imovel
     errado, e, se for descarte por distancia, um bairro saindo da busca sem
     ele ter rejeitado nada ali.
+
+    **Sao DOIS chamadores, e `agora` nao quer dizer o mesmo nos dois.** Em
+    `_apresentar` e o `now()` do lote que aquela chamada acabou de inserir. Em
+    `_continuar_entrega` (TEC-275, D4) e o `apresentado_em` PERSISTIDO do lote
+    da passada anterior, lido de volta de `recomendacoes`: a continuacao nao
+    insere linha nenhuma -- as linhas ja existem desde a passada que morreu no
+    meio --, ela so termina de entregar as fichas que faltaram. O parametro nao
+    e "o relogio de agora", e sim **o carimbo do lote que esta sendo
+    conciliado**, e e dele que os dois recortes abaixo dependem.
 
     **(a) Pendente ANTIGA que a apresentacao de hoje supera -> `SEM_RESPOSTA`.**
     E o valor que o enum e a D8 descrevem ("uma apresentacao nova superou esta
@@ -266,7 +371,11 @@ async def conciliar_apresentacao(
     apresentacao que CHEGOU supera a anterior (D8, L5). Se nenhuma ficha saiu
     -- todas recusadas, ou nenhuma sobrou depois de `fichas_do_catalogo` --, o
     lead continua com a lista antiga na tela, e fecha-la o deixaria sem como
-    reagir ao unico conjunto que ele tem.
+    reagir ao unico conjunto que ele tem. `_continuar_entrega` passa `True`
+    sem calcular nada, e nao por atalho: uma continuacao so existe porque
+    alguma ficha DESTE lote ja tinha reserva, ou seja o lead ja viu parte dele
+    -- ele superou a apresentacao anterior na passada 1, mesmo que a passada 2
+    nao consiga entregar mais nada.
 
     **(b) Linha desta apresentacao cuja ficha NAO saiu -> apagada, nao
     fechada.** Recusa permanente da Meta (`apresentacao.ficha_recusada`) ou
@@ -285,8 +394,10 @@ async def conciliar_apresentacao(
 
     O recorte e `apresentado_em == agora` E `reacao_lead IS NULL`, e ele e
     estreito de proposito: `gravar_recomendacoes` grava o lote inteiro com um
-    unico `agora` (ver `ler_pendentes`), entao so as linhas que ESTA chamada
-    inseriu batem. Uma reapresentacao cuja ficha foi recusada agora nao apaga
+    unico `agora` (ver `ler_pendentes`), entao so as linhas DESTE lote batem --
+    as da apresentacao que o chamador esta conciliando, tenha ele acabado de
+    inseri-las (`_apresentar`) ou lido o carimbo delas de volta
+    (`_continuar_entrega`). Uma reapresentacao cuja ficha foi recusada agora nao apaga
     nada -- a linha original guarda o `apresentado_em` da vez em que o lead de
     fato viu o imovel, junto com a reacao que ele deu. E o mesmo recorte que
     protege o caso da reserva suprimida: se `send` devolveu False, a tentativa
@@ -314,9 +425,19 @@ async def conciliar_apresentacao(
                     Recomendacao.channel == channel,
                     Recomendacao.conversation_key == conversation_key,
                     Recomendacao.reacao_lead.is_(None),
-                    # `< agora` e nao `!=`: o lote de hoje fica de fora por ser
-                    # o mais novo, e as linhas que o `delete` acima ja tirou
+                    # `< agora` e nao `!=`: o que fica de fora e o lote que
+                    # esta sendo conciliado -- as linhas dele carregam
+                    # exatamente `agora` --, e as que o `delete` acima ja tirou
                     # nao existem mais para serem fechadas.
+                    #
+                    # Chamada por `_apresentar`, `<` e `!=` dariam no mesmo: o
+                    # lote e o mais novo da conversa. Chamada pela continuacao
+                    # (TEC-275, D4) nao: `agora` e o carimbo de um lote gravado
+                    # numa passada anterior, e `!=` tambem fecharia uma
+                    # apresentacao POSTERIOR a ele -- a que o lead tem na tela
+                    # e ainda pode responder. O que separa o lote dos outros
+                    # deixou de ser "e o mais recente" e passou a ser o carimbo
+                    # que o chamador entrega.
                     Recomendacao.apresentado_em < agora,
                 )
                 .values(reacao_lead=str(ReacaoLead.SEM_RESPOSTA))
@@ -404,6 +525,87 @@ async def ler_pendentes(
 
     return tuple(
         RecomendacaoPendente(imovel_id=linha.imovel_id, titulo=linha.titulo, bairro=linha.bairro)
+        for linha in linhas
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class LinhaDaApresentacao:
+    """Uma linha do lote que uma mensagem apresentou. TEC-275.
+
+    Distinta de `RecomendacaoPendente`, que e o que o MODELO le (titulo e
+    bairro, sem preco -- ver o docstring dela). Esta e o que a continuacao
+    precisa para remontar a ficha: o preco apresentado e o kind com que ela
+    saiu. Duas leituras diferentes da mesma tabela, com dois consumidores
+    diferentes; fundi-las obrigaria uma das duas a carregar campo que nao usa.
+    """
+
+    imovel_id: uuid.UUID
+    preco_centavos: int
+    kind: str
+    apresentado_em: datetime
+
+
+async def ler_apresentacao_da_mensagem(
+    session_factory: Any, *, message_id: uuid.UUID
+) -> tuple[LinhaDaApresentacao, ...]:
+    """O lote que ESTA mensagem apresentou, na ordem em que apresentou. TEC-275.
+
+    **Mesma ordenacao de `ler_pendentes`** (`apresentado_em`, `score_match`
+    DESC, `imovel_id`), e a mesma razao: aquela ordem reproduz a ordem de
+    apresentacao real, porque e a ordem que `buscar` usa e nada entre a busca
+    e a gravacao reordena. Escrever uma segunda regra aqui criaria duas copias
+    que podem divergir, e o preco da divergencia e o ordinal do lead apontando
+    para outro imovel.
+
+    **NAO filtra `reacao_lead IS NULL`, e essa e a diferenca para
+    `ler_pendentes`.** A continuacao precisa do lote inteiro para saber qual
+    kind pertence a qual imovel; uma linha que ja ganhou reacao continua sendo
+    parte do que aquela mensagem apresentou.
+
+    **Linha sem `message_id` DESTA mensagem nunca entra**, e o filtro por
+    igualdade ja garante isso. Sao duas as origens, e so uma envelhece:
+    apresentacao anterior a TEC-275 nao tem dono nenhum e nao e continuavel
+    (L2 do desenho, que some sozinha conforme as conversas avancam); e o `ON
+    CONFLICT DO NOTHING` de `gravar_recomendacoes`, que ao reapresentar um
+    imovel desta mesma conversa deixa a linha dele com o `message_id` da
+    mensagem ANTERIOR -- essa segunda via nao envelhece, porque nada exclui da
+    busca um imovel ja apresentado. O efeito e o mesmo daqui: a linha fica de
+    fora do lote. O efeito la em cima, no desvio de `turno.py`, e o da L4.
+
+    Devolve so linha completa -- as tres colunas da D2 preenchidas. Uma linha
+    com dono mas sem kind seria de uma gravacao pela metade, que nenhum
+    caminho de hoje produz; se aparecer, ficar de fora e mais seguro que
+    entrar e deslocar posicao.
+    """
+    consulta = (
+        select(
+            Recomendacao.imovel_id,
+            Recomendacao.preco_centavos,
+            Recomendacao.kind,
+            Recomendacao.apresentado_em,
+        )
+        .where(
+            Recomendacao.message_id == message_id,
+            Recomendacao.preco_centavos.is_not(None),
+            Recomendacao.kind.is_not(None),
+        )
+        .order_by(
+            Recomendacao.apresentado_em,
+            Recomendacao.score_match.desc(),
+            Recomendacao.imovel_id,
+        )
+    )
+    async with session_factory() as session:
+        linhas = (await session.execute(consulta)).all()
+
+    return tuple(
+        LinhaDaApresentacao(
+            imovel_id=linha.imovel_id,
+            preco_centavos=linha.preco_centavos,
+            kind=linha.kind,
+            apresentado_em=linha.apresentado_em,
+        )
         for linha in linhas
     )
 

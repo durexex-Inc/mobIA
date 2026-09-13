@@ -394,10 +394,10 @@ async def test_falha_retentavel_na_segunda_parte_loga_entrega_parcial_antes_de_p
 ) -> None:
     """Critical 2 da revisao final (TEC-140). `EnvioRetentavel` na SEGUNDA
     parte, com a primeira ja entregue, subia crua por este laco sem log
-    nenhum antes desta clausula -- a mesma excecao, capturada em
-    `_apresentar`, ja loga ha mais tempo. O desfecho NAO muda (FAILED, o
-    sweeper reenfileira); so a visibilidade da entrega parcial antes da falha
-    muda.
+    nenhum antes desta clausula -- a mesma excecao, capturada no laco de
+    fichas (`_entregar_fichas` desde a TEC-275), ja loga ha mais tempo. O
+    desfecho NAO muda (FAILED, o sweeper reenfileira); so a visibilidade da
+    entrega parcial antes da falha muda.
     """
     from conftest import OutboundFake  # type: ignore[import-not-found]
 

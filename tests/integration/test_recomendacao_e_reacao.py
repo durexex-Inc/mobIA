@@ -35,7 +35,10 @@ from mobia.domain.agente.schemas import (
 )
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.catalogo.schemas import ResultadoDaBusca
+from mobia.domain.messages.enums import MessageRole
+from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.texto import dobrar
+from mobia.infra.crypto import aad_de, decrypt
 
 CANAL = "whatsapp"
 CONVERSA = "5548999990000"
@@ -145,16 +148,21 @@ async def test_cenario_2_a_recomendacao_registra_motivo_e_momento(
     session: Any, session_factory: Any
 ) -> None:
     """Cenario 2 do Gherkin: "ela registra o motivo do match e o momento"."""
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
     imovel = await _imovel(session, "AP-410")
+    mensagem = await _entrada_do_lead(session)
     agora = datetime.now(UTC)
 
     await gravar_recomendacoes(
         session_factory,
         channel=CANAL,
         conversation_key=CONVERSA,
-        candidatos=[{"imovel_id": str(imovel)}],
+        candidatos=[{"imovel_id": str(imovel), "preco_centavos": 41000000}],
         scores={imovel: 0.87},
         criterios=["3 quartos", "Trindade"],
+        message_id=mensagem.id,
+        kinds=["ficha_1"],
         relaxou_preco=False,
         relaxou_bairro=False,
         agora=agora,
@@ -174,8 +182,11 @@ async def test_gravar_duas_vezes_o_mesmo_imovel_nao_levanta(
     O UNIQUE existe para impedir DUPLICATA, nao para derrubar o turno. Gravar
     de novo e no-op -- a linha original, com a reacao que ja tiver, sobrevive.
     """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
     imovel = await _imovel(session, "AP-411")
-    candidatos = [{"imovel_id": str(imovel)}]
+    mensagem = await _entrada_do_lead(session)
+    candidatos = [{"imovel_id": str(imovel), "preco_centavos": 41000000}]
     scores = {imovel: 0.87}
 
     await gravar_recomendacoes(
@@ -185,6 +196,8 @@ async def test_gravar_duas_vezes_o_mesmo_imovel_nao_levanta(
         candidatos=candidatos,
         scores=scores,
         criterios=["Trindade"],
+        message_id=mensagem.id,
+        kinds=["ficha_1"],
         relaxou_preco=False,
         relaxou_bairro=False,
         agora=datetime.now(UTC),
@@ -196,6 +209,8 @@ async def test_gravar_duas_vezes_o_mesmo_imovel_nao_levanta(
         candidatos=candidatos,
         scores=scores,
         criterios=["Trindade"],
+        message_id=mensagem.id,
+        kinds=["ficha_1"],
         relaxou_preco=False,
         relaxou_bairro=False,
         agora=datetime.now(UTC),
@@ -218,16 +233,24 @@ async def test_candidato_sem_score_ainda_grava_linha_com_zero(
     qualquer consulta -- ao contrario da linha que faltava antes. O outro
     candidato da mesma chamada, que TEM score, grava com o score real.
     """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
     com_score = await _imovel(session, "AP-412")
     sem_score = await _imovel(session, "AP-413")
+    mensagem = await _entrada_do_lead(session)
 
     await gravar_recomendacoes(
         session_factory,
         channel=CANAL,
         conversation_key=CONVERSA,
-        candidatos=[{"imovel_id": str(com_score)}, {"imovel_id": str(sem_score)}],
+        candidatos=[
+            {"imovel_id": str(com_score), "preco_centavos": 41200000},
+            {"imovel_id": str(sem_score), "preco_centavos": 41300000},
+        ],
         scores={com_score: 0.5},
         criterios=["Trindade"],
+        message_id=mensagem.id,
+        kinds=["ficha_1", "ficha_2"],
         relaxou_preco=False,
         relaxou_bairro=False,
         agora=datetime.now(UTC),
@@ -251,6 +274,8 @@ async def test_lista_de_candidatos_vazia_nao_grava_nada(session: Any, session_fa
         candidatos=[],
         scores={},
         criterios=[],
+        message_id=uuid.uuid4(),
+        kinds=[],
         relaxou_preco=False,
         relaxou_bairro=False,
         agora=datetime.now(UTC),
@@ -1173,3 +1198,1211 @@ async def test_o_motivo_gravado_diz_quando_a_busca_precisou_ampliar(
     linha = (await session.execute(select(Recomendacao))).scalars().one()
     assert linha.imovel_id == imovel
     assert linha.motivo_match == "3 quartos, ate R$ 400.000 (criterio ampliado: preco)"
+
+
+# ---------------------------------------------------------------------------
+# TEC-275: a retentativa de uma apresentacao parcial.
+#
+# `EnvioRetentavel` no meio do laco propaga ANTES de `conciliar_apresentacao`
+# (de proposito: conciliar no meio apagaria linha de ficha que a retentativa
+# ainda vai entregar), o turno termina FAILED e `sweep_stalled` reenfileira a
+# MESMA mensagem -- FAILED e reivindicavel (`CLAIMABLE_STATUSES`). O que a
+# segunda passada faz com as linhas que a primeira deixou abertas e o assunto
+# daqui.
+# ---------------------------------------------------------------------------
+
+
+class _ClassificadorQueBuscaESemReacao(_ClassificadorQueBuscaSemFiltroExtra):
+    """`_ClassificadorQueBuscaSemFiltroExtra` com `reagir` que FUNCIONA e nao
+    acha reacao nenhuma.
+
+    E o que um modelo de verdade devolveria na retentativa: a mensagem
+    reprocessada e a MESMA de antes -- o pedido que originou a busca --, e ela
+    nao fala de imovel nenhum.
+
+    Com o conserto da TEC-275 a continuacao nao chama `reagir`, e `reagir`
+    definido aqui e o que torna isso VERIFICAVEL: `apresentados_recebidos`
+    continua `None`, e varios testes abaixo assertam exatamente isso. A base
+    nao define `reagir` porque nos testes dela nunca ha pendente quando o turno
+    chega la; numa regressao em que a passada 2 voltasse a rodar o turno
+    inteiro ha, e um `AttributeError` cairia no `except Exception` amplo de
+    `turno.py` -- a regressao passaria calada e o teste mediria o duble em vez
+    do sistema.
+    """
+
+    def __init__(self, filtro: dict[str, object]) -> None:
+        super().__init__(filtro)
+        self.apresentados_recebidos: list[str] | None = None
+
+    async def reagir(self, contexto: Any, *, apresentados: list[str]) -> ReacoesDoTurno:
+        self.apresentados_recebidos = apresentados
+        return ReacoesDoTurno(reacoes=(), modelo="claude-opus-5")
+
+
+async def test_retentativa_de_apresentacao_parcial_mantem_a_lista_do_lead(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275. Depois da retentativa o lead viu as tres fichas E ainda tem lista.
+
+    Passada 1: a ficha 2 levanta `EnvioRetentavel`. As tres linhas ja estao
+    gravadas com um `agora` unico (a L1 da TEC-162 grava o lote ANTES do laco),
+    o lead recebeu so a ficha 1, e a excecao propaga antes da conciliacao --
+    nenhuma das tres e fechada nem apagada.
+
+    Passada 2, a MESMA mensagem: o turno NAO reentra pelo topo. O desvio da
+    TEC-275 (D1) ve que ha um lote com este `message_id` e que parte dele ja
+    tem reserva, e devolve `_continuar_entrega` antes de montar contexto --
+    entao a passada 2 nao rebusca, nao chama o classificador e nao chama
+    `reagir`. Ela entrega as fichas 2 e 3 que faltavam e concilia com o
+    `apresentado_em` PERSISTIDO do lote.
+
+    O fim e o que o lead precisa: ele viu as tres fichas E as tres seguem
+    pendentes, entao "gostei do segundo" no turno seguinte tem contra o que
+    resolver o ordinal.
+
+    Antes da correcao a passada 2 rodava o turno inteiro: `ler_pendentes`
+    devolvia as tres, `reagir` era chamado sobre elas com a mensagem original
+    do lead (que nao e reacao a nada), e `gravar_reacoes` fechava como NEUTRO
+    toda pendente nao mencionada -- as tres, antes de qualquer ficha ser
+    reenviada; o lead acabava com as fichas e sem lista. Era o primeiro dos
+    dois caminhos; o outro (o `< agora` de `conciliar_apresentacao` fechando
+    como SEM_RESPOSTA) esta no teste seguinte.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-93{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelNaSegunda(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[1]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    primeira = _RetentavelNaSegunda(get_sessionmaker())
+    classificador_1 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(primeira, classificador_1)
+
+    assert len(primeira.entregues) == 1, (
+        "o teste so vale se a primeira passada entregou UMA ficha e parou na segunda"
+    )
+    assert classificador_1.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador_1.resultado.candidatos]
+    assert len(apresentados) == 3
+    assert await _pendentes_da_conversa(session_factory) == tuple(apresentados), (
+        "sem conciliacao, as tres linhas da passada 1 ficam abertas -- e a premissa "
+        "de que o resto do teste depende"
+    )
+
+    segunda = OutboundFake(get_sessionmaker())
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "respondido"
+
+    assert len(segunda.entregues) == 2, (
+        "a passada 2 entrega as fichas 2 e 3 -- as duas que faltavam. A asserta final "
+        "desta funcao olha so para as pendentes, e as tres continuariam pendentes mesmo "
+        "se a continuacao tivesse entregue UMA ficha: o lead ficaria sem a terceira e "
+        "nada aqui acusaria. Neste lote o kind por posicao coincide com o persistido "
+        "(tres linhas, nenhuma apagada), entao quem pega a reconstrucao posicional e "
+        "`test_continuacao_usa_o_kind_persistido_e_nao_a_posicao`, com o lote furado"
+    )
+
+    assert classificador_2.apresentados_recebidos is None, (
+        "a retentativa NAO pode ter chamado `reagir`, e isso e o conserto (D1), nao "
+        "regressao: a continuacao retorna antes da passagem de reacao. Se `reagir` "
+        "rodasse aqui, receberia a mensagem ORIGINAL do lead -- o pedido que originou a "
+        "busca, que nao e reacao a ficha nenhuma -- e `gravar_reacoes` fecharia como "
+        "NEUTRO toda pendente nao mencionada, ou seja, as tres, deixando o lead com as "
+        "fichas e sem lista contra a qual resolver o ordinal. Esta linha nasceu afirmando "
+        "o oposto (a4e1a2d), como DIAGNOSTICO de qual caminho rodava no sistema quebrado"
+    )
+
+    fechadas = {
+        str(registro.imovel_id): registro.reacao_lead
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    vistos_agora = sorted(str(i) for i in apresentados)
+    assert await _pendentes_da_conversa(session_factory) == tuple(apresentados), (
+        "o lead acabou de receber as tres fichas e nao tem lista contra a qual "
+        f"responder 'gostei do segundo'. Reacoes gravadas: {fechadas}; "
+        f"imoveis que ele viu: {vistos_agora}"
+    )
+
+
+async def test_retentativa_com_reagir_falhando_mantem_as_linhas_pelo_outro_caminho(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275. As linhas sobrevivem tambem ao caminho de `conciliar_apresentacao`.
+
+    Identico ao teste acima, e a unica diferenca e o duble: aqui o
+    classificador da passada 2 estoura em `reagir`. Hoje isso nao muda nada,
+    porque a passada 2 nao chega a chamar `reagir` -- o desvio da TEC-275
+    devolve `_continuar_entrega` antes --, e e justamente esse "nao muda nada"
+    que o teste afirma.
+
+    O duble existe por causa do mundo ANTERIOR ao conserto, em que a passada 2
+    rodava o turno inteiro: `reagir` levantava, caia no `except Exception`
+    amplo de `turno.py`, `gravar_reacoes` nao rodava e as tres linhas seguiam
+    `NULL` -- e ai quem as fechava era o outro caminho, o `apresentado_em <
+    agora` de `conciliar_apresentacao`, porque `gravar_recomendacoes` nao
+    inseria nada (`ON CONFLICT DO NOTHING` sobre as tres que ja existiam) e
+    elas mantinham o carimbo da passada 1.
+
+    Existe para provar que eram DOIS caminhos para o mesmo defeito: um
+    conserto que so distinguisse as apresentacoes dentro de
+    `conciliar_apresentacao` faz este teste passar e deixa o de cima
+    reprovando.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-92{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelNaSegunda(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[1]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    primeira = _RetentavelNaSegunda(get_sessionmaker())
+    classificador_1 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(primeira, classificador_1)
+
+    assert classificador_1.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador_1.resultado.candidatos]
+    assert len(apresentados) == 3
+
+    segunda = OutboundFake(get_sessionmaker())
+    assert (
+        await _rodar(
+            segunda,
+            _ClassificadorQueBuscaEFalhaAoReagir({"operacao": "VENDA", "quartos_min": 3}),
+        )
+        == "respondido"
+    )
+
+    fechadas = {
+        str(registro.imovel_id): registro.reacao_lead
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert await _pendentes_da_conversa(session_factory) == tuple(apresentados), (
+        "a passada 2 e continuacao e concilia com o carimbo do PROPRIO lote, entao nada "
+        "tem o que fechar. Se as tres vierem fechadas, ela voltou a rodar o turno "
+        "inteiro: `reagir` estourou, `gravar_reacoes` nao rodou, e quem fechou foi o "
+        f"`apresentado_em < agora` de `conciliar_apresentacao`. Reacoes gravadas: {fechadas}"
+    )
+
+
+async def test_ficha_recusada_some_mesmo_quando_o_turno_morre_depois(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275, D8. A delecao da linha recusada nao pode depender do fim do laco.
+
+    Ficha 1 recusada (permanente, a reserva FICA), ficha 3 retentavel -- o
+    turno morre antes da conciliacao. Sem a delecao antecipada a linha da
+    ficha 1 sobrevive, e ela e um imovel que o lead nunca viu ocupando um
+    ordinal.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-9A{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RecusaAPrimeiraEFalhaNaTerceira(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[0]:
+                raise EnvioRecusado("http 400 codigo 131053")
+            if kind == KINDS_DAS_FICHAS[2]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=_RecusaAPrimeiraEFalhaNaTerceira(get_sessionmaker()),
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    assert classificador.resultado is not None
+    recusado = uuid.UUID(classificador.resultado.candidatos[0]["imovel_id"])
+    gravados = {
+        registro.imovel_id
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert recusado not in gravados, (
+        "a linha da ficha recusada tem de sumir na hora da recusa -- esperar o fim "
+        "do laco perde a limpeza quando o turno morre no meio"
+    )
+
+
+async def test_a_recomendacao_guarda_dono_preco_e_kind(session: Any) -> None:
+    """TEC-275, D2. As tres colunas que tornam a apresentacao continuavel.
+
+    Nullable as tres: linha anterior a esta card nao tem dono, e inventar um
+    seria mentira (L2 do desenho).
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    linha_da_mensagem = await _entrada_do_lead(session, texto="quero tres quartos")
+    imovel = await _imovel(session, "AP-910")
+
+    session.add(
+        Recomendacao(
+            id=uuid.uuid4(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            imovel_id=imovel,
+            score_match=Decimal("0.900"),
+            motivo_match="3 quartos",
+            apresentado_em=datetime.now(UTC),
+            message_id=linha_da_mensagem.id,
+            preco_centavos=30000000,
+            kind="ficha_1",
+        )
+    )
+    await session.commit()
+
+    gravada = (await session.execute(select(Recomendacao))).scalars().one()
+    assert gravada.message_id == linha_da_mensagem.id
+    assert gravada.preco_centavos == 30000000
+    assert gravada.kind == "ficha_1"
+
+
+async def test_cada_linha_apresentada_guarda_o_kind_com_que_saiu(
+    session: Any,
+    outbound_fake: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    rodar_turno: Any,
+) -> None:
+    """TEC-275, D9. O kind da linha e o kind com que a ficha saiu, na ordem.
+
+    Trava o alinhamento entre a lista que `gravar_recomendacoes` recebe e a
+    que o laco de entrega enumera: as duas saem de `escolhidos` filtrado por
+    `encontrados`, na mesma ordem, entao o indice de uma e o da outra. Se
+    alguem inserir um filtro ou uma reordenacao em so uma delas, o kind passa
+    a apontar para a ficha errada e este teste cai.
+    """
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-91{n}", quartos=3, preco_venda=30000000 + n)
+
+    classificador = _ClassificadorQueBuscaSemFiltroExtra({"operacao": "VENDA", "quartos_min": 3})
+    outbound = outbound_fake()
+    assert (
+        await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
+        == "respondido"
+    )
+
+    assert classificador.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
+    linhas = {
+        registro.imovel_id: registro
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert len(linhas) == 3
+    for posicao, imovel_id in enumerate(apresentados):
+        assert linhas[imovel_id].kind == KINDS_DAS_FICHAS[posicao]
+        assert linhas[imovel_id].message_id is not None
+        # Nao "30000000 + posicao": a ordem de apresentacao vem do ranking
+        # (score_match DESC), nao da ordem de criacao dos imoveis. A invariante
+        # de verdade e a linha guardar o preco do candidato que esta NAQUELA
+        # posicao, seja ele qual for.
+        assert linhas[imovel_id].preco_centavos == int(
+            classificador.resultado.candidatos[posicao]["preco_centavos"]
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 4 da TEC-275: os dois leitores -- o lote de uma mensagem, e as reservas
+# dela. Juntos respondem "esta mensagem ja apresentou um lote, e quais fichas
+# dele ainda nao sairam?" -- a pergunta que a Task 6 (continuacao) precisa.
+# ---------------------------------------------------------------------------
+
+
+async def test_ler_apresentacao_da_mensagem_devolve_o_lote_na_ordem_apresentada(
+    session: Any, session_factory: Any
+) -> None:
+    """TEC-275, D5. Mesma ordenacao de `ler_pendentes`, escopo por mensagem.
+
+    A ordem e o ordinal, e reusar a regra de `ler_pendentes` em vez de
+    escrever uma segunda e o ponto: duas copias podem divergir, e o preco da
+    divergencia e a reacao do lead grudando no imovel errado.
+
+    Ao contrario de `ler_pendentes`, NAO filtra por `reacao_lead IS NULL`: a
+    continuacao precisa do lote inteiro para mapear kind, inclusive linha que
+    ja tenha reacao.
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.repositorio import ler_apresentacao_da_mensagem
+
+    linha_da_mensagem = await _entrada_do_lead(session, texto="quero tres quartos")
+    agora = datetime.now(UTC)
+    esperados = []
+    for posicao, (codigo, score) in enumerate(
+        (("AP-9B0", "0.900"), ("AP-9B1", "0.800"), ("AP-9B2", "0.700"))
+    ):
+        imovel = await _imovel(session, codigo)
+        esperados.append(imovel)
+        session.add(
+            Recomendacao(
+                id=uuid.uuid4(),
+                channel=CANAL,
+                conversation_key=CONVERSA,
+                imovel_id=imovel,
+                score_match=Decimal(score),
+                motivo_match="3 quartos",
+                apresentado_em=agora,
+                message_id=linha_da_mensagem.id,
+                preco_centavos=30000000 + posicao,
+                kind=f"ficha_{posicao + 1}",
+            )
+        )
+    # Linha de OUTRA mensagem, na mesma conversa: nao pode entrar no lote.
+    outra = await _imovel(session, "AP-9B9")
+    session.add(
+        Recomendacao(
+            id=uuid.uuid4(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            imovel_id=outra,
+            score_match=Decimal("0.950"),
+            motivo_match="3 quartos",
+            apresentado_em=agora - timedelta(hours=1),
+            message_id=None,
+            preco_centavos=1,
+            kind="ficha_1",
+        )
+    )
+    await session.commit()
+
+    lote = await ler_apresentacao_da_mensagem(session_factory, message_id=linha_da_mensagem.id)
+    assert [linha.imovel_id for linha in lote] == esperados
+    assert [linha.kind for linha in lote] == ["ficha_1", "ficha_2", "ficha_3"]
+    assert [linha.preco_centavos for linha in lote] == [30000000, 30000001, 30000002]
+    assert all(linha.apresentado_em == agora for linha in lote)
+
+
+async def test_kinds_reservados_devolve_o_que_ja_tem_reserva(session: Any) -> None:
+    """TEC-275, D4. A reserva e o que diz se aquela ficha ja saiu.
+
+    Reserva committada ANTES do efeito externo, liberada so em
+    `EnvioRetentavel`/cancelamento -- entao presenca significa "esta posicao
+    esta encerrada, nao reenviamos", que e o contrato que a continuacao usa.
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    from mobia.domain.outbound.models import OutboundDispatch
+    from mobia.domain.outbound.repositorio import kinds_reservados
+    from mobia.infra.db import get_sessionmaker
+
+    linha_da_mensagem = await _entrada_do_lead(session, texto="quero tres quartos")
+    session.add(OutboundDispatch(id=uuid.uuid4(), message_id=linha_da_mensagem.id, kind="ficha_1"))
+    await session.commit()
+
+    assert await kinds_reservados(get_sessionmaker(), message_id=linha_da_mensagem.id) == frozenset(
+        {"ficha_1"}
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 7 da TEC-275: os casos de borda da continuacao.
+#
+# Os dois testes de aceite acima cobrem o caminho inteiro e feliz da
+# retentativa. O que segue sao as bordas dele -- o lote incompleto, o lote que
+# nao da para continuar, o kind que a posicao erraria, a fala que a passada 2
+# grava, a janela que fecha no meio e a linha que o lead ja reagiu.
+# ---------------------------------------------------------------------------
+
+
+async def _falas_do_agente(session: Any) -> list[tuple[str, str | None, str | None]]:
+    """Cada fala do agente na linha do tempo como `(texto, model, subagent)`.
+
+    `text_body` e bytea cifrado desde a TEC-126, entao `decrypt` com o AAD da
+    propria linha -- mesmo molde de `_texto_gravado`
+    (`test_apresentacao_no_turno.py`). Olhar aqui e diferente de olhar para
+    `outbound.entregues`: o duble registra o que SAIU, e esta tabela registra
+    o que ficou gravado, que e a fonte do contexto do turno seguinte.
+
+    **`model` e `subagent` vem junto porque os comentarios que os escolhem em
+    `_continuar_entrega` afirmam consequencia concreta** -- `""` abriria um
+    `telemetry.unknown_model`, e um rotulo de subagente proprio partiria a
+    MESMA apresentacao em dois valores para quem le a telemetria depois. Ate
+    esta task nada na suite lia aquelas duas colunas, entao as duas
+    afirmacoes eram promessa sem fiador, que e o que este repo trata como
+    defeito.
+
+    `outerjoin` e nao `join`: a telemetria e gravada num commit proprio,
+    depois do da mensagem, e `_registrar_telemetria` engole a falha dela. Com
+    `join`, uma fala sem telemetria sumiria desta lista e o teste culparia a
+    gravacao da fala; com `outerjoin` ela aparece com `None` nos dois campos,
+    e a asserta que compara contra `MODELO_SEM_CHAMADA` acusa o que de fato
+    faltou.
+    """
+    linhas = (
+        await session.execute(
+            select(Message, MessageTelemetry.model, MessageTelemetry.subagent)
+            .outerjoin(MessageTelemetry, MessageTelemetry.message_id == Message.id)
+            .where(Message.role == MessageRole.AGENTE)
+            .order_by(Message.created_at)
+        )
+    ).all()
+    return [
+        (decrypt(linha.text_body, aad_de(linha.id, "text_body")), model, subagent)
+        for linha, model, subagent in linhas
+    ]
+
+
+async def test_continuacao_entrega_o_que_restou_quando_uma_linha_do_lote_sumiu(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275. Lote incompleto: a linha que a D8 apagou nao volta na passada 2.
+
+    A rota real para o lote chegar incompleto na passada 2 e a D8: a ficha 2 e
+    recusada e a linha dela e apagada NA HORA, ainda dentro da passada 1 -- a
+    conciliacao, que e a outra rota de delecao, nao chega a rodar quando o laco
+    morre numa ficha seguinte.
+
+    Nao e o imovel que sai do catalogo: `recomendacoes.imovel_id` tem FK para
+    `imoveis` SEM `ON DELETE`, entao imovel referenciado por linha do lote nao
+    pode ser apagado. E por isso que o ramo `sumiram` de `_continuar_entrega` e
+    defensivo e hoje inalcancavel -- o comentario dele diz isso --, e por isso
+    que um teste que apagasse a linha antes do imovel provaria nada: sem a
+    linha, o imovel nem entra no lote e o ramo ficaria vazio de qualquer jeito.
+
+    O que tem de valer: a continuacao entrega SO a ficha que faltava, o imovel
+    recusado nao ressuscita como pendente, e o ordinal dos outros dois nao se
+    desloca. Reprova se a continuacao conciliar com um `now()` novo -- as duas
+    linhas sobreviventes viram `apresentado_em < agora` e fecham como
+    SEM_RESPOSTA, deixando o lead com as fichas e sem lista -- ou se ela
+    deixar de pular o kind ja reservado, porque ai `send` devolve False, a
+    ficha 1 entra em `nao_entregues` e a conciliacao apaga a linha do unico
+    imovel que o lead viu nas duas passadas.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-9C{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RecusaASegundaEFalhaNaTerceira(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[1]:
+                raise EnvioRecusado("http 400 codigo 131053")
+            if kind == KINDS_DAS_FICHAS[2]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RecusaASegundaEFalhaNaTerceira(get_sessionmaker()), classificador)
+
+    assert classificador.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
+    assert len(apresentados) == 3
+    gravados = {
+        registro.imovel_id
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert gravados == {apresentados[0], apresentados[2]}, (
+        "premissa: a D8 apagou a linha da ficha recusada ainda na passada 1, entao o "
+        "lote que a passada 2 le tem DUAS linhas e nao tres"
+    )
+
+    segunda = OutboundFake(get_sessionmaker())
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "respondido"
+
+    assert classificador_2.resultado is None, (
+        "a continuacao nao rebusca e nao chama o classificador (D1)"
+    )
+    assert len(segunda.entregues) == 1, "so a ficha 3 faltava sair"
+    assert await _pendentes_da_conversa(session_factory) == (apresentados[0], apresentados[2]), (
+        "o recusado nao pode ressuscitar como pendente, e os dois que o lead viu tem de "
+        "continuar na mesma ordem -- e essa ordem que o ordinal do proximo turno indexa"
+    )
+
+
+async def test_quando_nada_saiu_a_retentativa_roda_o_turno_inteiro(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275, D4. Ficha 1 falha retentavel: nada chegou, entao recomeca.
+
+    Nao ha o que continuar -- nem fichas, nem a prosa, que viaja com a ficha 1
+    e nao esta persistida em lugar nenhum se nao chegou a sair. E o ramo do
+    meio do desvio: ha lote, mas nenhum kind dele tem reserva.
+
+    Reprova se o desvio olhar so para a existencia do lote e entrar na
+    continuacao -- e o que pega isso e a PROSA, nao a contagem de fichas: a
+    continuacao entregaria as tres do mesmo jeito (nenhum kind esta
+    reservado), so que mudas. A prosa viaja com a ficha 1 (D5 da TEC-162) e
+    nao esta persistida em lugar nenhum, entao so um turno inteiro a regenera;
+    sem ela o lead recebe tres fichas soltas e nunca sabe por que.
+
+    E reprova tambem se as linhas orfas da passada 1 forem ignoradas em vez de
+    APAGADAS: o `ON CONFLICT DO NOTHING` da gravacao nova preservaria o
+    carimbo velho, e `reagir` deste turno receberia tres pendentes de uma
+    apresentacao que nunca aconteceu.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-9D{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelNaPrimeira(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[0]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    primeiro = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RetentavelNaPrimeira(get_sessionmaker()), primeiro)
+
+    segunda = OutboundFake(get_sessionmaker())
+    segundo = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, segundo) == "respondido"
+
+    assert len(segunda.entregues) == 3, (
+        "nada tinha saido, entao a retentativa apresenta as tres do zero"
+    )
+    assert segundo.resultado is not None, (
+        "este ramo roda o turno INTEIRO, e o classificador e quem prova isso"
+    )
+    assert segundo.resultado.resposta in segunda.entregues[0], (
+        "a prosa vai na primeira ficha, e e ela que separa este ramo da continuacao: "
+        "a continuacao entregaria as tres fichas tambem (nenhum kind tem reserva), so "
+        "que sem prosa nenhuma -- a da passada 1 morreu com ela e nao esta persistida"
+    )
+    assert segundo.apresentados_recebidos is None, (
+        "as linhas orfas da passada 1 foram apagadas, entao nao havia pendente "
+        "para `reagir` receber"
+    )
+    assert len(await _pendentes_da_conversa(session_factory)) == 3
+
+
+async def test_continuacao_usa_o_kind_persistido_e_nao_a_posicao(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275, D9. O caso que a reconstrucao posicional erra.
+
+    Ficha 1 recusada (a linha dela some na hora, D8) e ficha 3 retentavel. Na
+    continuacao o lote tem DUAS linhas, e a que falta e a de kind `ficha_3`.
+    Reconstruindo o kind pela posicao dentro do lote, ela viraria `ficha_2` --
+    que ja tem reserva --, `send` devolveria False, e a continuacao nao
+    enviaria nada: o lead ficaria sem a terceira ficha e com uma pendente que
+    nunca viu, que e o defeito de ordinal que esta card existe para fechar.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-9E{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RecusaAPrimeiraEFalhaNaTerceira(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[0]:
+                raise EnvioRecusado("http 400 codigo 131053")
+            if kind == KINDS_DAS_FICHAS[2]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RecusaAPrimeiraEFalhaNaTerceira(get_sessionmaker()), classificador)
+
+    assert classificador.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
+
+    segunda = OutboundFake(get_sessionmaker())
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "respondido"
+
+    assert classificador_2.resultado is None, (
+        "a continuacao nao chama o classificador (D1); `resultado` preenchido aqui "
+        "significa que o desvio nao foi tomado e o turno recomecou do zero"
+    )
+    assert len(segunda.entregues) == 1, "so a ficha 3 faltava sair"
+    assert await _pendentes_da_conversa(session_factory) == (apresentados[1], apresentados[2]), (
+        "a recusada nao pode estar na lista, e a terceira tem de estar -- se a "
+        "continuacao reconstruiu o kind pela posicao, a terceira nunca saiu"
+    )
+
+
+async def test_continuacao_grava_so_as_legendas_que_ela_entregou(
+    session: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275. A fala do agente que a passada 2 gravou e a dela, e so uma vez.
+
+    A gravacao existe porque a protecao contra o turno SEGUINTE reapresentar
+    estes mesmos imoveis e o TEXTO gravado (D16 da TEC-162), nao exclusao por
+    id: sem ela o lead receberia as fichas 2 e 3 de novo no proximo turno.
+    Sem esta asserta a chamada podia sumir inteira e os dois testes de aceite
+    seguiriam verdes -- eles olham para pendentes, nao para a linha do tempo.
+
+    Duas metades. Regravar as legendas da passada 1 duplicaria a fala do
+    agente na linha do tempo (a ficha 1 ja saiu la, e a legenda dela chegaria
+    ao contexto duas vezes), entao o titulo do primeiro imovel NAO pode estar
+    no texto -- e o que `pular` garante ao deixar a ficha 1 fora de
+    `legendas`. E uma passada que nao entrega nada nao grava nada: a terceira
+    chamada e a varredura reprocessando uma linha cuja continuacao ja tinha
+    sucedido (o turno morreu depois dela, antes de a linha virar PROCESSED);
+    com os tres kinds reservados ela nao envia ficha nenhuma, e gravar ali
+    seria fala fantasma -- texto na linha do tempo que o lead nunca recebeu.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.app.config import MODELO_SEM_CHAMADA
+    from mobia.domain.agente.turno import (
+        KINDS_DAS_FICHAS,
+        SUBAGENTE_CLASSIFICADOR,
+        executar_turno,
+    )
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    # Titulo distinto por imovel: o `_imovel` deste arquivo da o mesmo titulo a
+    # todos e os precos so diferem em centavos, que `reais_de` trunca -- as
+    # tres legendas sairiam identicas e nenhuma asserta sobre o TEXTO gravado
+    # conseguiria dizer de qual ficha ele veio.
+    titulos = {}
+    for n in range(3):
+        titulo = f"Apartamento numero {n}"
+        titulos[await _imovel(session, f"AP-9F{n}", quartos=3, titulo=titulo)] = titulo
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelNaSegunda(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[1]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RetentavelNaSegunda(get_sessionmaker()), classificador)
+
+    assert classificador.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
+    assert await _falas_do_agente(session) == [], (
+        "premissa: a passada 1 morreu dentro do laco, antes de gravar coisa alguma"
+    )
+
+    segunda = OutboundFake(get_sessionmaker())
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "respondido"
+
+    assert classificador_2.resultado is None, (
+        "a continuacao nao chama o classificador (D1); `resultado` preenchido aqui "
+        "significa que o desvio nao foi tomado e o turno recomecou do zero"
+    )
+
+    ((fala, modelo, subagente),) = await _falas_do_agente(session)
+    assert titulos[apresentados[1]] in fala
+    assert titulos[apresentados[2]] in fala
+    assert titulos[apresentados[0]] not in fala, (
+        "a legenda da ficha 1 saiu na passada 1; regrava-la duplicaria a fala do agente"
+    )
+    assert modelo == MODELO_SEM_CHAMADA, (
+        "nesta passada nao houve chamada ao modelo -- a prosa, a unica parte que veio "
+        'dele, saiu com a ficha 1 na passada anterior. Com `""` a telemetria abriria '
+        "um `telemetry.unknown_model` por continuacao"
+    )
+    assert subagente == SUBAGENTE_CLASSIFICADOR, (
+        "estas fichas saem da busca que o classificador fez na passada anterior; um "
+        "rotulo proprio partiria a MESMA apresentacao em dois valores de `subagent` "
+        "para quem le a telemetria depois"
+    )
+
+    terceira = OutboundFake(get_sessionmaker())
+    assert (
+        await _rodar(terceira, _ClassificadorQueBuscaESemReacao({"operacao": "VENDA"}))
+        == "reentrega_suprimida"
+    )
+    assert terceira.entregues == []
+    assert await _falas_do_agente(session) == [(fala, modelo, subagente)], (
+        "sem entrega nao ha o que gravar -- uma linha a mais aqui seria texto que o "
+        "lead nunca recebeu entrando no contexto do proximo turno"
+    )
+
+
+async def test_janela_fechada_na_continuacao_devolve_expirado(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275. A janela de 24h fechando entre as passadas vira desfecho, nao crash.
+
+    A retentativa e atrasada por construcao -- ela depende da varredura --,
+    entao a janela fechar entre as duas passadas nao e hipotese remota. O
+    desvio que chama `_continuar_entrega` fica FORA do `try` que o caminho
+    normal usa: sem a clausula propria dentro dela, `EnvioForaDaJanela` sai
+    crua de `executar_turno`, a linha vira FAILED, a varredura queima as
+    tentativas restantes reentrando numa continuacao que nunca vai suceder, e
+    o fim e handoff de erro para um corretor.
+
+    Reprova de duas formas: se a clausula sumir, a excecao escapa e o teste
+    estoura; se alguem trocar `EnvioForaDaJanela` por `EnvioRecusado` na
+    captura de `_entregar_fichas`, a janela fechada seria engolida como "uma
+    ficha ruim entre tres" e o desfecho viria "reentrega_suprimida" -- um
+    desfecho que mente sobre por que o lead nao recebeu nada.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-9G{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelNaSegunda(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[1]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    class _JanelaJaFechada(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            raise EnvioForaDaJanela("http 400 codigo 131047")
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RetentavelNaSegunda(get_sessionmaker()), classificador)
+
+    assert classificador.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
+
+    segunda = _JanelaJaFechada(get_sessionmaker())
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "expirado"
+
+    assert classificador_2.resultado is None, (
+        "a continuacao nao chama o classificador (D1); `resultado` preenchido aqui "
+        "significa que o desvio nao foi tomado e o turno recomecou do zero"
+    )
+    assert segunda.entregues == []
+    assert await _pendentes_da_conversa(session_factory) == tuple(apresentados), (
+        "o desfecho sai antes da conciliacao, entao o lote continua inteiro: o lead viu "
+        "a ficha 1 e as tres linhas seguem sendo a lista contra a qual ele responde"
+    )
+
+
+async def test_continuacao_le_o_lote_inteiro_mesmo_com_linha_ja_reagida(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-275, D5. `ler_apresentacao_da_mensagem` nao filtra `reacao_lead IS NULL`.
+
+    A ausencia daquele filtro e deliberada e, sem este teste, o codigo passaria
+    identico se alguem o acrescentasse por simetria com `ler_pendentes` -- que
+    e de onde a ordenacao foi copiada.
+
+    O caso e real: a retentativa depende da varredura, e nesse intervalo o
+    lead pode reagir a ficha 1, que ELE JA RECEBEU, por outra mensagem. Com o
+    filtro, a linha dela cai fora do lote; sobram os kinds `ficha_2` e
+    `ficha_3`, nenhum dos dois reservado, e o desvio deixa de cair na
+    continuacao -- cai no ramo do meio, que apaga o resto do lote e roda o
+    turno INTEIRO. O classificador rebusca e monta uma apresentacao NOVA, com
+    prosa nova, para um pedido que ja foi atendido pela metade, em vez de
+    terminar a que ficou pendurada.
+
+    A asserta que separa os dois ramos e a do classificador: so um deles o
+    chama.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    titulos = {}
+    for n in range(3):
+        titulo = f"Apartamento numero {n}"
+        titulos[await _imovel(session, f"AP-9H{n}", quartos=3, titulo=titulo)] = titulo
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelNaSegunda(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[1]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RetentavelNaSegunda(get_sessionmaker()), classificador)
+
+    assert classificador.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador.resultado.candidatos]
+
+    # O lead reagiu a ficha que JA recebeu, por outra mensagem, antes de a
+    # varredura reprocessar esta.
+    reagida = (
+        (
+            await session.execute(
+                select(Recomendacao).where(Recomendacao.imovel_id == apresentados[0])
+            )
+        )
+        .scalars()
+        .one()
+    )
+    reagida.reacao_lead = ReacaoLead.INTERESSE.value
+    await session.commit()
+
+    segunda = OutboundFake(get_sessionmaker())
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "respondido"
+
+    assert classificador_2.resultado is None, (
+        "com a linha reagida dentro do lote o desvio continua a entrega; se ela cair "
+        "fora, o ramo do meio apaga o resto do lote e este classificador teria buscado"
+    )
+    assert len(segunda.entregues) == 2
+    assert titulos[apresentados[1]] in segunda.entregues[0]
+    assert titulos[apresentados[2]] in segunda.entregues[1]
+
+    gravados = {
+        registro.imovel_id
+        for registro in (await session.execute(select(Recomendacao))).scalars().all()
+    }
+    assert gravados == set(apresentados), "a continuacao nao apaga linha nenhuma do lote"
+    assert await _pendentes_da_conversa(session_factory) == (apresentados[1], apresentados[2]), (
+        "a reagida sai da lista por ter reacao, e nao por ter sido apagada -- as duas "
+        "que o lead acabou de receber continuam sendo a lista do proximo ordinal"
+    )
+
+
+async def test_continuacao_concilia_com_o_carimbo_mais_recente_do_message_id(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """Fix wave. Um `message_id` pode acabar com DOIS carimbos, e a continuacao
+    tem de conciliar com o mais recente.
+
+    `gravar_recomendacoes` grava o lote inteiro com um `agora` unico, e o resto
+    da continuacao depende disso. Mas `apagar_apresentacao_da_mensagem` -- o
+    ramo do meio -- carrega `reacao_lead IS NULL`: uma linha que um
+    `gravar_reacoes` intercalado ja fechou NAO e apagada. Dai o turno inteiro
+    roda de novo sobre a MESMA mensagem e grava linhas novas com o mesmo
+    `message_id` e carimbo novo, e a mensagem fica com dois.
+
+    A montagem abaixo produz exatamente isso em tres passadas:
+
+    1. ficha 1 estoura retentavel -- nada sai, as tres linhas ficam com `t1`;
+    2. o lead reage, por outra mensagem, a um imovel daquele lote; a
+       retentativa cai no ramo do meio, apaga as duas sem reacao, a reagida
+       fica, e o turno inteiro apresenta tres imoveis NOVOS com `t2`. A ficha 2
+       estoura retentavel, entao a ficha 1 saiu e ficou reservada;
+    3. a terceira passada e continuacao, e a ficha 3 dela e recusada em
+       definitivo pela Meta.
+
+    Com `lote[0].apresentado_em` a continuacao pega `t1`, o carimbo da linha
+    SOBREVIVENTE. O recorte de `apagar_recomendacao_nao_entregue` e de
+    `conciliar_apresentacao` e `apresentado_em == agora`, entao nenhum dos dois
+    casa a linha da ficha recusada: ela sobrevive como pendente, e a lista
+    volta a ter um imovel que o lead nunca viu -- o ordinal deslocado que e o
+    defeito-alvo desta card.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-9J{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelEm(OutboundFake):  # type: ignore[misc, valid-type]
+        alvo = KINDS_DAS_FICHAS[0]
+
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == self.alvo:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    class _RetentavelNaSegunda(_RetentavelEm):  # type: ignore[misc, valid-type]
+        alvo = KINDS_DAS_FICHAS[1]
+
+    class _RecusadaNaTerceira(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[2]:
+                raise EnvioRecusado("http 400 codigo 131053")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    primeiro = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RetentavelEm(get_sessionmaker()), primeiro)
+    assert primeiro.resultado is not None
+    antigos = [uuid.UUID(c["imovel_id"]) for c in primeiro.resultado.candidatos]
+    assert len(antigos) == 3
+
+    # O lead reage, por OUTRA mensagem, a um imovel deste lote. E a linha que
+    # sobrevive ao ramo do meio, porque ele so apaga `reacao_lead IS NULL`.
+    reagida = (
+        (await session.execute(select(Recomendacao).where(Recomendacao.imovel_id == antigos[0])))
+        .scalars()
+        .one()
+    )
+    reagida.reacao_lead = ReacaoLead.INTERESSE.value
+    await session.commit()
+
+    # Imoveis que so a busca da passada 2 alcanca: sem eles o `ON CONFLICT DO
+    # NOTHING` preservaria o carimbo antigo e a mensagem ficaria com um so.
+    for n in range(3):
+        await _imovel(session, f"AP-9K{n}", quartos=5, preco_venda=40000000 + n)
+
+    segundo = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 5})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RetentavelNaSegunda(get_sessionmaker()), segundo)
+    assert segundo.resultado is not None
+    novos = [uuid.UUID(c["imovel_id"]) for c in segundo.resultado.candidatos]
+    assert len(novos) == 3
+    assert set(novos).isdisjoint(antigos), "a passada 2 tem de apresentar imoveis NOVOS"
+
+    carimbos = {
+        registro.apresentado_em
+        for registro in (
+            await session.execute(select(Recomendacao).where(Recomendacao.message_id == linha.id))
+        )
+        .scalars()
+        .all()
+    }
+    assert len(carimbos) == 2, (
+        "a montagem so exercita a defesa se a mensagem de fato ficou com dois "
+        f"carimbos; veio {len(carimbos)}"
+    )
+
+    terceira = _RecusadaNaTerceira(get_sessionmaker())
+    classificador_3 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 5})
+    assert await _rodar(terceira, classificador_3) == "respondido"
+    assert classificador_3.resultado is None, "a passada 3 e continuacao, e nao turno novo"
+
+    assert await _pendentes_da_conversa(session_factory) == (novos[0], novos[1]), (
+        "a ficha 3 foi recusada em definitivo e o lead nunca a viu, entao a linha dela "
+        "tem de sumir. Com o carimbo da linha sobrevivente (o mais ANTIGO) nem "
+        "`apagar_recomendacao_nao_entregue` nem `conciliar_apresentacao` casam o lote "
+        "real, e ela fica na lista que o proximo ordinal numera"
+    )
