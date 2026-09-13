@@ -2271,3 +2271,136 @@ async def test_continuacao_le_o_lote_inteiro_mesmo_com_linha_ja_reagida(
         "a reagida sai da lista por ter reacao, e nao por ter sido apagada -- as duas "
         "que o lead acabou de receber continuam sendo a lista do proximo ordinal"
     )
+
+
+async def test_continuacao_concilia_com_o_carimbo_mais_recente_do_message_id(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """Fix wave. Um `message_id` pode acabar com DOIS carimbos, e a continuacao
+    tem de conciliar com o mais recente.
+
+    `gravar_recomendacoes` grava o lote inteiro com um `agora` unico, e o resto
+    da continuacao depende disso. Mas `apagar_apresentacao_da_mensagem` -- o
+    ramo do meio -- carrega `reacao_lead IS NULL`: uma linha que um
+    `gravar_reacoes` intercalado ja fechou NAO e apagada. Dai o turno inteiro
+    roda de novo sobre a MESMA mensagem e grava linhas novas com o mesmo
+    `message_id` e carimbo novo, e a mensagem fica com dois.
+
+    A montagem abaixo produz exatamente isso em tres passadas:
+
+    1. ficha 1 estoura retentavel -- nada sai, as tres linhas ficam com `t1`;
+    2. o lead reage, por outra mensagem, a um imovel daquele lote; a
+       retentativa cai no ramo do meio, apaga as duas sem reacao, a reagida
+       fica, e o turno inteiro apresenta tres imoveis NOVOS com `t2`. A ficha 2
+       estoura retentavel, entao a ficha 1 saiu e ficou reservada;
+    3. a terceira passada e continuacao, e a ficha 3 dela e recusada em
+       definitivo pela Meta.
+
+    Com `lote[0].apresentado_em` a continuacao pega `t1`, o carimbo da linha
+    SOBREVIVENTE. O recorte de `apagar_recomendacao_nao_entregue` e de
+    `conciliar_apresentacao` e `apresentado_em == agora`, entao nenhum dos dois
+    casa a linha da ficha recusada: ela sobrevive como pendente, e a lista
+    volta a ter um imovel que o lead nunca viu -- o ordinal deslocado que e o
+    defeito-alvo desta card.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-9J{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelEm(OutboundFake):  # type: ignore[misc, valid-type]
+        alvo = KINDS_DAS_FICHAS[0]
+
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == self.alvo:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    class _RetentavelNaSegunda(_RetentavelEm):  # type: ignore[misc, valid-type]
+        alvo = KINDS_DAS_FICHAS[1]
+
+    class _RecusadaNaTerceira(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[2]:
+                raise EnvioRecusado("http 400 codigo 131053")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    primeiro = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RetentavelEm(get_sessionmaker()), primeiro)
+    assert primeiro.resultado is not None
+    antigos = [uuid.UUID(c["imovel_id"]) for c in primeiro.resultado.candidatos]
+    assert len(antigos) == 3
+
+    # O lead reage, por OUTRA mensagem, a um imovel deste lote. E a linha que
+    # sobrevive ao ramo do meio, porque ele so apaga `reacao_lead IS NULL`.
+    reagida = (
+        (await session.execute(select(Recomendacao).where(Recomendacao.imovel_id == antigos[0])))
+        .scalars()
+        .one()
+    )
+    reagida.reacao_lead = ReacaoLead.INTERESSE.value
+    await session.commit()
+
+    # Imoveis que so a busca da passada 2 alcanca: sem eles o `ON CONFLICT DO
+    # NOTHING` preservaria o carimbo antigo e a mensagem ficaria com um so.
+    for n in range(3):
+        await _imovel(session, f"AP-9K{n}", quartos=5, preco_venda=40000000 + n)
+
+    segundo = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 5})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RetentavelNaSegunda(get_sessionmaker()), segundo)
+    assert segundo.resultado is not None
+    novos = [uuid.UUID(c["imovel_id"]) for c in segundo.resultado.candidatos]
+    assert len(novos) == 3
+    assert set(novos).isdisjoint(antigos), "a passada 2 tem de apresentar imoveis NOVOS"
+
+    carimbos = {
+        registro.apresentado_em
+        for registro in (
+            await session.execute(select(Recomendacao).where(Recomendacao.message_id == linha.id))
+        )
+        .scalars()
+        .all()
+    }
+    assert len(carimbos) == 2, (
+        "a montagem so exercita a defesa se a mensagem de fato ficou com dois "
+        f"carimbos; veio {len(carimbos)}"
+    )
+
+    terceira = _RecusadaNaTerceira(get_sessionmaker())
+    classificador_3 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 5})
+    assert await _rodar(terceira, classificador_3) == "respondido"
+    assert classificador_3.resultado is None, "a passada 3 e continuacao, e nao turno novo"
+
+    assert await _pendentes_da_conversa(session_factory) == (novos[0], novos[1]), (
+        "a ficha 3 foi recusada em definitivo e o lead nunca a viu, entao a linha dela "
+        "tem de sumir. Com o carimbo da linha sobrevivente (o mais ANTIGO) nem "
+        "`apagar_recomendacao_nao_entregue` nem `conciliar_apresentacao` casam o lote "
+        "real, e ela fica na lista que o proximo ordinal numera"
+    )

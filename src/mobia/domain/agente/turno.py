@@ -386,7 +386,23 @@ async def _continuar_entrega(
     deste lote seja apagado. O comentario no corpo diz por que ele fica assim
     mesmo, e por que so os ainda NAO entregues podem entrar nele.
     """
-    apresentado_em = lote[0].apresentado_em
+    # **Um `message_id` quase sempre tem UM carimbo, mas pode ter dois.**
+    # `gravar_recomendacoes` grava o lote inteiro com um `agora` unico, so que
+    # `apagar_apresentacao_da_mensagem` (o ramo do meio) carrega
+    # `reacao_lead IS NULL`: uma linha que um `gravar_reacoes` intercalado ja
+    # fechou SOBREVIVE ao descarte, o turno inteiro roda de novo e grava linhas
+    # novas com o MESMO `message_id` e carimbo NOVO. `lote` vem ordenado por
+    # `apresentado_em` ASC, entao `lote[0]` pegaria o carimbo MAIS ANTIGO --
+    # o da linha sobrevivente, que nao e o lote que esta sendo continuado --, e
+    # com ele a conciliacao nao casa nada: o recorte dela e
+    # `apresentado_em == agora`, entao nem a linha da ficha que nao saiu e
+    # apagada nem as pendentes anteriores sao fechadas.
+    #
+    # O carimbo e o MAIS RECENTE, e o lote se restringe as linhas que o
+    # carregam: a sobrevivente pertence a uma apresentacao anterior desta mesma
+    # mensagem, e continua-la significaria reentregar o que o lead ja reagiu.
+    apresentado_em = max(linha.apresentado_em for linha in lote)
+    lote = [linha for linha in lote if linha.apresentado_em == apresentado_em]
     ids = [linha.imovel_id for linha in lote]
     precos = {linha.imovel_id: linha.preco_centavos for linha in lote}
     kind_de = {linha.imovel_id: linha.kind for linha in lote}
