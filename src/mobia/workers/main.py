@@ -129,11 +129,15 @@ class WorkerSettings:
         # chama `gerar_resumo` em processo e nunca enfileira, entao nao ha
         # regeneracao por fila para recusar.
         func(gerar_resumo, keep_result=0),
-        # `keep_result=0` pelo mesmo motivo dos dois acima: `gerar_resumo`
-        # enfileira este job com `_job_id=f"notificar:{handoff_id}"` (fixo por
-        # handoff) para nao duplicar o aviso se uma retentativa do ARQ rodar o
-        # job do resumo de novo -- uma chave de resultado sobrevivente
-        # bloquearia esse reenqueue em silencio. Nao entra em `cron_jobs`: quem
+        # `keep_result=0` NAO e pelo mesmo motivo dos dois acima. La, a chave
+        # de resultado sobrevivente bloquearia um reenqueue LEGITIMO -- um
+        # recurso que se perderia. Aqui e o oposto: `gerar_resumo` enfileira
+        # este job com `_job_id=f"notificar:{handoff_id}"` (fixo por handoff)
+        # para tentar nao duplicar o aviso se uma retentativa do ARQ rodar o
+        # job do resumo de novo, mas a chave de resultado sumindo ao terminar
+        # e o que ABRE espaco para a duplicata, nao o que a impede -- e a L3
+        # do desenho, declarada e nao corrigida (ver o comentario do `_job_id`
+        # em `workers/jobs/gerar_resumo.py`). Nao entra em `cron_jobs`: quem
         # dispara este job e sempre `gerar_resumo`, nunca o relogio.
         func(notificar_corretor, keep_result=0),
     ]

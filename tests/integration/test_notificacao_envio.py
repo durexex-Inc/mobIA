@@ -1,10 +1,11 @@
 """A notificacao de ponta a ponta, com canais falsos."""
 
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
@@ -13,6 +14,7 @@ from mobia.domain.messages.enums import MessageContentType, MessageDirection, Me
 from mobia.domain.messages.models import Message
 from mobia.domain.notificacao.canais import FalhaDeCanal
 from mobia.domain.notificacao.envio import KIND_DA_JANELA_HUMANA, notificar
+from mobia.infra.crypto import encrypt
 
 
 class _CanalEspiao:
@@ -177,6 +179,105 @@ async def test_sem_destinatario_marca_aviso_manual(
 
     linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
     assert linha.aviso_manual_pendente is True
+
+
+def _eventos_de_log(caplog, evento: str) -> list[dict]:
+    """Decodifica os registros JSON do structlog que carregam `evento`."""
+    encontrados = []
+    for registro in caplog.records:
+        try:
+            dados = json.loads(registro.getMessage())
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if dados.get("event") == evento:
+            encontrados.append(dados)
+    return encontrados
+
+
+async def test_resumo_que_nao_decifra_notifica_mesmo_assim(
+    session, session_factory, semear_handoff_com_resumo, semear_corretor, caplog
+) -> None:
+    """Important 1 da revisao final: `DecryptionError` degrada, nao derruba.
+
+    Cifra o `resumo` com um AAD errado -- rotacao de chave, escrita parcial e
+    restore de outro ambiente produzem o mesmo `InvalidTag` na leitura. Sem a
+    guarda em `notificar`, isto subiria cru e deixaria o handoff sem
+    `notificado_em` e sem `aviso_manual_pendente`, invisivel para sempre.
+    """
+    await semear_corretor(email="plantao@x.com", plantao=True)
+    handoff_id = await semear_handoff_com_resumo(resumo="## Quem e o lead\nfulano")
+    await session.execute(
+        update(Handoff)
+        .where(Handoff.id == handoff_id)
+        .values(resumo=encrypt("outro texto", "aad errado"))
+    )
+    await session.commit()
+    email = _CanalEspiao("email")
+
+    with caplog.at_level("WARNING"):
+        assert await notificar(
+            session_factory, canais=(email,), outbound=_OutboundFalso(), handoff_id=handoff_id
+        )
+
+    _, _, corpo = email.recebidas[0]
+    assert "nao pode ser gerado" in corpo
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.notificado_em is not None
+    assert linha.aviso_manual_pendente is False
+
+    avisos = _eventos_de_log(caplog, "notificacao.resumo_ilegivel")
+    assert len(avisos) == 1
+    assert avisos[0]["handoff_id"] == str(handoff_id)
+    assert avisos[0]["erro"] == "DecryptionError"
+    # Nunca o blob nem o texto decifrado -- so o tipo do erro e o handoff_id.
+    assert "fulano" not in json.dumps(avisos[0])
+    assert "outro texto" not in json.dumps(avisos[0])
+
+
+async def test_sucesso_apos_falha_anterior_limpa_aviso_manual_pendente(
+    session, session_factory, semear_handoff_com_resumo, semear_corretor
+) -> None:
+    """Important 2 da revisao final: as duas colunas nao sao independentes.
+
+    Caminho alcancavel hoje, descrito na revisao: handoff criado SEM plantao
+    cadastrado termina `aviso_manual_pendente=True`; alguem cadastra o
+    plantao; uma retentativa do ARQ roda `notificar` de novo e aceita. O
+    handoff nao pode terminar com `notificado_em` preenchido E
+    `aviso_manual_pendente` ainda verdadeiro -- as duas tem de descrever o
+    estado CORRENTE, nunca um historico.
+    """
+    handoff_id = await semear_handoff_com_resumo(resumo="texto")
+
+    assert not await notificar(
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        outbound=_OutboundFalso(),
+        handoff_id=handoff_id,
+    )
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.aviso_manual_pendente is True
+    assert linha.notificado_em is None
+
+    await semear_corretor(email="plantao@x.com", plantao=True)
+
+    assert await notificar(
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        outbound=_OutboundFalso(),
+        handoff_id=handoff_id,
+    )
+
+    # `session` e `get_sessionmaker()` abre com `expire_on_commit=False`
+    # (`infra/db.py`) -- sem este `expire`, o SELECT abaixo devolveria o
+    # objeto ja identity-mapped pelo SELECT anterior, com os valores de ANTES
+    # do UPDATE que `notificar` fez por uma sessao propria. Mesmo motivo do
+    # `session.expire` em `test_fora_da_jornada_e_nenhum_canal_aceitou_ainda_assim_avisa_o_lead`
+    # acima.
+    session.expire(linha)
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.notificado_em is not None
+    assert linha.aviso_manual_pendente is False
 
 
 async def test_handoff_sem_resumo_notifica_mesmo_assim(

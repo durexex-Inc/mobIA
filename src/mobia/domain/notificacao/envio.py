@@ -18,7 +18,7 @@ from mobia.domain.notificacao.destinatario import destinatario_do_handoff
 from mobia.domain.notificacao.mensagem import montar
 from mobia.domain.outbound.horario import horario_permite_envio
 from mobia.domain.outbound.port import OutboundPort
-from mobia.infra.crypto import decrypt
+from mobia.infra.crypto import DecryptionError, decrypt
 
 log = structlog.get_logger(__name__)
 
@@ -39,6 +39,14 @@ KIND_DA_JANELA_HUMANA = "janela_humana"
 # TEC-174 tambem dizia "ja avisei um corretor" e teve de ser reescrito
 # porque a notificacao (esta card, TEC-177) ainda nao existia -- ver o
 # fluxo de saida de card no CLAUDE.md. Nao reintroduza a promessa.
+#
+# "de segunda a sabado" e literal fixo, nao vem do `Corretor`: a L2 do
+# desenho declara que o modelo nao tem dia da semana, so uma janela unica de
+# horas (`horario_inicio`/`horario_fim`), e a checagem de `horario_permite_envio`
+# compara so a hora. O texto bate com o PR-06 do SRS hoje, mas o sistema trata
+# domingo como dia util enquanto esta frase promete que nao -- ela vai
+# divergir em silencio quando a agenda por dia (TEC-170) chegar, e tera de
+# mudar junto.
 TEXTO_DA_JANELA_HUMANA = (
     "O atendimento humano funciona de segunda a sabado, das {inicio}h as {fim}h. "
     "Fora desse horario a resposta pode demorar mais."
@@ -89,6 +97,7 @@ async def notificar(
         corretor = await destinatario_do_handoff(session, handoff=handoff)
         if corretor is None:
             handoff.aviso_manual_pendente = True
+            handoff.atualizado_em = agora
             await session.commit()
             log.error(
                 "notificacao.sem_destinatario",
@@ -101,7 +110,24 @@ async def notificar(
         # o objeto `handoff`/`corretor` nao atravessa as sessoes seguintes.
         channel = handoff.channel
         conversation_key = handoff.conversation_key
-        resumo_texto = decrypt(handoff.resumo, aad_do_resumo_de_handoff(handoff.id))
+        # `DecryptionError` (rotacao de chave, escrita parcial, restore de
+        # outro ambiente) degrada para None em vez de subir: sem esta guarda
+        # e o unico modo de falha desta funcao sem caminho degradado, e nao e
+        # mais raro que a queda de um canal -- o job falharia, retentaria,
+        # falharia de novo, e o handoff terminaria sem `notificado_em` e sem
+        # `aviso_manual_pendente`, invisivel para qualquer fila futura (E8,
+        # TEC-178). Mesmo argumento e mesmo molde do `contexto.resumo_ilegivel`
+        # em `domain/context/montagem.py`. `TEXTO_SEM_RESUMO` (`mensagem.py`)
+        # ja e o caminho degradado testado da D2 -- reusado aqui, nao um novo.
+        try:
+            resumo_texto = decrypt(handoff.resumo, aad_do_resumo_de_handoff(handoff.id))
+        except DecryptionError as falha:
+            resumo_texto = None
+            log.warning(
+                "notificacao.resumo_ilegivel",
+                handoff_id=str(handoff_id),
+                erro=type(falha).__name__,
+            )
         link = link_da_transcricao(handoff.channel, handoff.conversation_key)
         assunto, corpo = montar(
             resumo=resumo_texto,
@@ -134,10 +160,17 @@ async def notificar(
 
     async with session_factory() as session:
         if algum_canal_aceitou:
+            # `aviso_manual_pendente=False` junto: as duas colunas dizem o
+            # estado CORRENTE (D6 do desenho), nao um historico de tentativas.
+            # Sem isto, um handoff que falhou (plantao ainda nao cadastrado)
+            # e que depois e aceito numa retentativa do ARQ terminaria com
+            # `notificado_em` preenchido E `aviso_manual_pendente` ainda
+            # verdadeiro -- as duas dizendo coisas incompativeis ao mesmo
+            # tempo, que e exatamente o sinal que a E8 e a TEC-178 vao ler.
             await session.execute(
                 update(Handoff)
                 .where(Handoff.id == handoff_id)
-                .values(notificado_em=agora, atualizado_em=agora)
+                .values(notificado_em=agora, aviso_manual_pendente=False, atualizado_em=agora)
             )
         else:
             await session.execute(

@@ -32,8 +32,11 @@ _UUID = re.compile(
 
 # Conteudo de lead: nao ha versao segura de logar, entao some inteiro.
 # `resumo` (TEC-127) entra pela mesma razao de `text_body`: destila as mesmas
-# frases do lead, so que condensadas.
-_CHAVES_REDIGIDAS = frozenset({"text_body", "raw_payload", "envelope_context", "resumo"})
+# frases do lead, so que condensadas. `corpo` (TEC-177) e o texto da
+# notificacao ao corretor, que carrega o resumo decifrado (ou o literal de
+# `TEXTO_SEM_RESUMO`) -- mesmo motivo de `resumo`, so que para o dia em que
+# alguem esquecer.
+_CHAVES_REDIGIDAS = frozenset({"text_body", "raw_payload", "envelope_context", "resumo", "corpo"})
 
 # Chaves estruturalmente livres de PII: digest, id de correlacao e id de
 # mensagem. Sem esta lista o mascaramento come um sha256 sempre que ele tem 10

@@ -899,16 +899,19 @@ async def executar_turno(
     # Depois do commit, como `lead.qualificado`: logar uma transicao que o
     # rollback desfez e mentir para quem le o log.
     #
-    # **A notificacao da RN-06.5 existe desde a TEC-177, e roda FORA deste
-    # turno.** Desde a TEC-174 a travessia para QUENTE cria um `handoff` na
-    # MESMA transacao deste recalculo -- ou o lead vira QUENTE e tem handoff,
-    # ou nem uma coisa nem outra. A entrega ao corretor sai daqui: e
+    # **A fiacao da RN-06.5 existe desde a TEC-177, e roda FORA deste
+    # turno -- a ENTREGA ao corretor, nao.** Desde a TEC-174 a travessia para
+    # QUENTE cria um `handoff` na MESMA transacao deste recalculo -- ou o lead
+    # vira QUENTE e tem handoff, ou nem uma coisa nem outra. E
     # `_agendar_resumo` (chamada abaixo, para este mesmo handoff) que
-    # enfileira o job que redige o resumo e, ao terminar, enfileira a
-    # notificacao (`workers/jobs/gerar_resumo.py`). O orcamento de 60
-    # segundos da RN-16.2 fecha pela soma das duas etapas assincronas --
-    # resumo com p95 de 8s (RNF-05) mais uma chamada por canal --, e nao
-    # porque o evento seja sincrono no turno: ele nunca foi.
+    # enfileira o job que redige o resumo e, ao terminar, enfileira
+    # `notificar_corretor` (`workers/jobs/gerar_resumo.py`), que so REGISTRA:
+    # os dois canais de `notificacao/canais.py` aceitam a chamada e nao
+    # entregam nada a corretor nenhum ainda -- Emenda E-02 da RN-16.2 no SRS.
+    # O orcamento de 60 segundos da RN-16.2 fecharia pela soma das duas
+    # etapas assincronas -- resumo com p95 de 8s (RNF-05) mais uma chamada
+    # por canal --, mas isso descreve o encadeamento, nao uma entrega que
+    # ainda nao existe.
     #
     # O texto do lead nao entra: `motivos` e vocabulario nosso, nao fala dele.
     # Mesma regra de PII que `moderacao.entrada_bloqueada` respeita.

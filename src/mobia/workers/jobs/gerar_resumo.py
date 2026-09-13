@@ -34,9 +34,14 @@ async def gerar_resumo(ctx: dict[str, Any], handoff_id: str) -> str:
     # Nao propaga: o resumo (ou a ausencia dele) ja esta gravado neste ponto,
     # e uma falha do Redis aqui perderia so a notificacao, nunca o trabalho
     # que `_gerar` ja fez. Mesmo molde do `_agendar_resumo` em
-    # `domain/agente/turno.py`. O `_job_id` fixo por handoff evita duplicar a
-    # notificacao se uma retentativa do ARQ rodar este job de novo para o
-    # mesmo handoff.
+    # `domain/agente/turno.py`. O `_job_id` fixo por handoff so evita duplicar
+    # a notificacao enquanto o job `notificar:<id>` estiver VIVO -- o
+    # `enqueue_job` do ARQ recusa quando a chave do job OU a de resultado
+    # existe, e este job entra com `keep_result=0` (`workers/main.py`), entao
+    # a chave de resultado some ao terminar. Uma retentativa que chegue DEPOIS
+    # do `notificar_corretor` original ja ter concluido nao encontra nenhuma
+    # das duas chaves e duplica a notificacao mesmo assim -- e a L3 do
+    # desenho, declarada e nao corrigida aqui.
     try:
         await ctx["redis"].enqueue_job(NOTIFICAR_JOB, handoff_id, _job_id=f"notificar:{handoff_id}")
     except Exception:
