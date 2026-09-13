@@ -1,0 +1,30 @@
+"""O texto que o corretor recebe. TEC-177, RN-16.2.
+
+Modulo sem I/O, no molde de `handoff/dossie.py` e de `handoff/vocabulario.py`.
+"""
+
+# O que entra no lugar do resumo quando ele nao existe. A geracao pode falhar
+# -- a D7 da TEC-175 deixa `handoffs.resumo` nulo de proposito nesse caso, e o
+# resumo de contingencia e a TEC-176, que nao existe. A notificacao sai mesmo
+# assim: a card diz que "o handoff que ninguem ve nao existe", e um corretor
+# com aviso magro ainda atende o lead. Ver a D2.
+TEXTO_SEM_RESUMO = (
+    "O resumo automatico nao pode ser gerado para este lead. "
+    "Abra o link abaixo para ler a conversa inteira."
+)
+
+
+def montar(*, resumo: str | None, link: str, etiqueta: str, prioridade: str) -> tuple[str, str]:
+    """Devolve (assunto, corpo).
+
+    Tudo keyword-only: `etiqueta` e `prioridade` sao dois `str` adjacentes, e
+    troca-los nao levanta, nao da erro de tipo e o mypy nao ve -- mesma razao
+    dos dois `int` de `horario_permite_envio`.
+
+    O link fica no corpo e NAO no assunto: assunto e o que o corretor le na
+    notificacao do celular, e uma URL longa ali empurra a etiqueta para fora
+    da tela, que e justamente o que ele precisa ver para decidir se abre.
+    """
+    assunto = f"Lead pronto [{etiqueta}] prioridade {prioridade}"
+    corpo = "\n\n".join((resumo or TEXTO_SEM_RESUMO, f"Conversa completa: {link}"))
+    return assunto, corpo
