@@ -1546,3 +1546,96 @@ async def test_cada_linha_apresentada_guarda_o_kind_com_que_saiu(
         assert linhas[imovel_id].preco_centavos == int(
             classificador.resultado.candidatos[posicao]["preco_centavos"]
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 4 da TEC-275: os dois leitores -- o lote de uma mensagem, e as reservas
+# dela. Juntos respondem "esta mensagem ja apresentou um lote, e quais fichas
+# dele ainda nao sairam?" -- a pergunta que a Task 6 (continuacao) precisa.
+# ---------------------------------------------------------------------------
+
+
+async def test_ler_apresentacao_da_mensagem_devolve_o_lote_na_ordem_apresentada(
+    session: Any, session_factory: Any
+) -> None:
+    """TEC-275, D5. Mesma ordenacao de `ler_pendentes`, escopo por mensagem.
+
+    A ordem e o ordinal, e reusar a regra de `ler_pendentes` em vez de
+    escrever uma segunda e o ponto: duas copias podem divergir, e o preco da
+    divergencia e a reacao do lead grudando no imovel errado.
+
+    Ao contrario de `ler_pendentes`, NAO filtra por `reacao_lead IS NULL`: a
+    continuacao precisa do lote inteiro para mapear kind, inclusive linha que
+    ja tenha reacao.
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.repositorio import ler_apresentacao_da_mensagem
+
+    linha_da_mensagem = await _entrada_do_lead(session, texto="quero tres quartos")
+    agora = datetime.now(UTC)
+    esperados = []
+    for posicao, (codigo, score) in enumerate(
+        (("AP-9B0", "0.900"), ("AP-9B1", "0.800"), ("AP-9B2", "0.700"))
+    ):
+        imovel = await _imovel(session, codigo)
+        esperados.append(imovel)
+        session.add(
+            Recomendacao(
+                id=uuid.uuid4(),
+                channel=CANAL,
+                conversation_key=CONVERSA,
+                imovel_id=imovel,
+                score_match=Decimal(score),
+                motivo_match="3 quartos",
+                apresentado_em=agora,
+                message_id=linha_da_mensagem.id,
+                preco_centavos=30000000 + posicao,
+                kind=f"ficha_{posicao + 1}",
+            )
+        )
+    # Linha de OUTRA mensagem, na mesma conversa: nao pode entrar no lote.
+    outra = await _imovel(session, "AP-9B9")
+    session.add(
+        Recomendacao(
+            id=uuid.uuid4(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            imovel_id=outra,
+            score_match=Decimal("0.950"),
+            motivo_match="3 quartos",
+            apresentado_em=agora - timedelta(hours=1),
+            message_id=None,
+            preco_centavos=1,
+            kind="ficha_1",
+        )
+    )
+    await session.commit()
+
+    lote = await ler_apresentacao_da_mensagem(session_factory, message_id=linha_da_mensagem.id)
+    assert [linha.imovel_id for linha in lote] == esperados
+    assert [linha.kind for linha in lote] == ["ficha_1", "ficha_2", "ficha_3"]
+    assert [linha.preco_centavos for linha in lote] == [30000000, 30000001, 30000002]
+    assert all(linha.apresentado_em == agora for linha in lote)
+
+
+async def test_kinds_reservados_devolve_o_que_ja_tem_reserva(session: Any) -> None:
+    """TEC-275, D4. A reserva e o que diz se aquela ficha ja saiu.
+
+    Reserva committada ANTES do efeito externo, liberada so em
+    `EnvioRetentavel`/cancelamento -- entao presenca significa "esta posicao
+    esta encerrada, nao reenviamos", que e o contrato que a continuacao usa.
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    from mobia.domain.outbound.models import OutboundDispatch
+    from mobia.domain.outbound.repositorio import kinds_reservados
+    from mobia.infra.db import get_sessionmaker
+
+    linha_da_mensagem = await _entrada_do_lead(session, texto="quero tres quartos")
+    session.add(OutboundDispatch(id=uuid.uuid4(), message_id=linha_da_mensagem.id, kind="ficha_1"))
+    await session.commit()
+
+    assert await kinds_reservados(get_sessionmaker(), message_id=linha_da_mensagem.id) == frozenset(
+        {"ficha_1"}
+    )

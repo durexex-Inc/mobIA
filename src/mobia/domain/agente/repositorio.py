@@ -463,6 +463,81 @@ async def ler_pendentes(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class LinhaDaApresentacao:
+    """Uma linha do lote que uma mensagem apresentou. TEC-275.
+
+    Distinta de `RecomendacaoPendente`, que e o que o MODELO le (titulo e
+    bairro, sem preco -- ver o docstring dela). Esta e o que a continuacao
+    precisa para remontar a ficha: o preco apresentado e o kind com que ela
+    saiu. Duas leituras diferentes da mesma tabela, com dois consumidores
+    diferentes; fundi-las obrigaria uma das duas a carregar campo que nao usa.
+    """
+
+    imovel_id: uuid.UUID
+    preco_centavos: int
+    kind: str
+    apresentado_em: datetime
+
+
+async def ler_apresentacao_da_mensagem(
+    session_factory: Any, *, message_id: uuid.UUID
+) -> tuple[LinhaDaApresentacao, ...]:
+    """O lote que ESTA mensagem apresentou, na ordem em que apresentou. TEC-275.
+
+    **Mesma ordenacao de `ler_pendentes`** (`apresentado_em`, `score_match`
+    DESC, `imovel_id`), e a mesma razao: aquela ordem reproduz a ordem de
+    apresentacao real, porque e a ordem que `buscar` usa e nada entre a busca
+    e a gravacao reordena. Escrever uma segunda regra aqui criaria duas copias
+    que podem divergir, e o preco da divergencia e o ordinal do lead apontando
+    para outro imovel.
+
+    **NAO filtra `reacao_lead IS NULL`, e essa e a diferenca para
+    `ler_pendentes`.** A continuacao precisa do lote inteiro para saber qual
+    kind pertence a qual imovel; uma linha que ja ganhou reacao continua sendo
+    parte do que aquela mensagem apresentou.
+
+    **Linha sem `message_id` nunca entra**, e o filtro por igualdade ja
+    garante isso: apresentacao anterior a TEC-275 nao tem dono e nao e
+    continuavel (L2 do desenho).
+
+    Devolve so linha completa -- as tres colunas da D2 preenchidas. Uma linha
+    com dono mas sem kind seria de uma gravacao pela metade, que nenhum
+    caminho de hoje produz; se aparecer, ficar de fora e mais seguro que
+    entrar e deslocar posicao.
+    """
+    consulta = (
+        select(
+            Recomendacao.imovel_id,
+            Recomendacao.preco_centavos,
+            Recomendacao.kind,
+            Recomendacao.apresentado_em,
+        )
+        .where(
+            Recomendacao.message_id == message_id,
+            Recomendacao.preco_centavos.is_not(None),
+            Recomendacao.kind.is_not(None),
+        )
+        .order_by(
+            Recomendacao.apresentado_em,
+            Recomendacao.score_match.desc(),
+            Recomendacao.imovel_id,
+        )
+    )
+    async with session_factory() as session:
+        linhas = (await session.execute(consulta)).all()
+
+    return tuple(
+        LinhaDaApresentacao(
+            imovel_id=linha.imovel_id,
+            preco_centavos=linha.preco_centavos,
+            kind=linha.kind,
+            apresentado_em=linha.apresentado_em,
+        )
+        for linha in linhas
+    )
+
+
 async def ler_descartes_por_distancia(
     session_factory: Any, *, channel: str, conversation_key: str
 ) -> tuple[DescartePorBairro, ...]:
