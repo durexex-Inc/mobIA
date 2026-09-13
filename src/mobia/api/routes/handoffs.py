@@ -68,6 +68,12 @@ async def regenerar(handoff_id: uuid.UUID, _: None = Depends(exigir_admin)) -> d
 # justamente o comportamento que a card quer provocar. Ver a Emenda E-01 da
 # secao 6.5 do SRS: o 410 "escalado por SLA" que o texto original previa
 # nunca e levantado por este codigo.
+#
+# **Segundo escritor desde a TEC-179:** `api/routes/conversas.py` importa
+# esta mesma constante para o UPDATE que `assumir` roda (D6) -- as duas
+# rotas decidem a mesma pergunta ("isto ainda pode virar ACEITO?"), e as
+# duas listas TEM DE andar juntas. Mudar aqui sem olhar la reabre a chance
+# de as duas divergirem em silencio.
 _ACEITAVEIS = (Status.PENDENTE.value, Status.ESCALADO.value)
 
 
