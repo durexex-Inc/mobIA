@@ -19,6 +19,7 @@ from mobia.workers.jobs.indexar_catalogo import indexar_catalogo
 from mobia.workers.jobs.notificar import notificar_corretor
 from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_followups import sweep_followups
+from mobia.workers.jobs.sweep_sla import sweep_sla
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
 
 
@@ -140,6 +141,13 @@ class WorkerSettings:
         # em `workers/jobs/gerar_resumo.py`). Nao entra em `cron_jobs`: quem
         # dispara este job e sempre `gerar_resumo`, nunca o relogio.
         func(notificar_corretor, keep_result=0),
+        # `keep_result=0` pela mesma razao do `WorkerSettings.keep_result` da
+        # classe (ver o docstring dela): o resultado deste job (um `int`) nao
+        # serve para nada depois que o log saiu, e nao ha motivo para pagar a
+        # retencao padrao do arq. Entra em `cron_jobs` tambem, como
+        # `sweep_followups` -- e o relogio que dispara este job, nunca um
+        # enqueue manual.
+        func(sweep_sla, keep_result=0),
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
@@ -156,6 +164,17 @@ class WorkerSettings:
         # janela de duas horas.
         cron(
             sweep_followups,
+            minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
+            run_at_startup=False,
+        ),
+        # De 5 em 5 minutos, como o `sweep_followups` acima e pela mesma
+        # razao: o menor prazo de aceite da RN-16.3 e de QUINZE MINUTOS
+        # (`PRAZO_QUENTE_MINUTOS` em `handoff/sla.py`), entao precisao de
+        # segundos nao compra nada e custa uma varredura a mais a cada
+        # passagem. O erro maximo de disparo fica em cinco minutos sobre uma
+        # janela de quinze.
+        cron(
+            sweep_sla,
             minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
             run_at_startup=False,
         ),

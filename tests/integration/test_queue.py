@@ -3,6 +3,7 @@ import uuid
 from mobia.domain.handoff.agendador import GERAR_RESUMO_JOB
 from mobia.infra.queue import PROCESS_MESSAGE_JOB, enqueue_process_message
 from mobia.workers.jobs.notificar import NOTIFICAR_JOB
+from mobia.workers.jobs.sweep_sla import SWEEP_SLA_JOB
 from mobia.workers.main import WorkerSettings
 
 
@@ -65,5 +66,18 @@ def test_notificar_corretor_registrado_com_o_nome_esperado() -> None:
     mesmo molde de test_gerar_resumo_registrado_com_o_nome_esperado."""
     registrada = next(
         f for f in WorkerSettings.functions if getattr(f, "name", None) == NOTIFICAR_JOB
+    )
+    assert registrada.keep_result_s == 0
+
+
+def test_sweep_sla_registrado_com_o_nome_esperado() -> None:
+    """Amarra SWEEP_SLA_JOB ao nome que WorkerSettings de fato registra.
+
+    Renomear a corrotina sem mexer aqui produziria um job de cron que nenhum
+    worker sabe rodar, sem sintoma na suite -- mesmo molde de
+    test_notificar_corretor_registrado_com_o_nome_esperado.
+    """
+    registrada = next(
+        f for f in WorkerSettings.functions if getattr(f, "name", None) == SWEEP_SLA_JOB
     )
     assert registrada.keep_result_s == 0
