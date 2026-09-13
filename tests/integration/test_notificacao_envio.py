@@ -156,6 +156,25 @@ async def test_handoff_sem_resumo_notifica_mesmo_assim(
     assert "nao pode ser gerado" in corpo
 
 
+async def _semear_mensagem_do_lead(session: AsyncSession, *, handoff: Handoff) -> Message:
+    mensagem = Message(
+        id=uuid.uuid4(),
+        channel=handoff.channel,
+        provider_message_id=f"wamid.{uuid.uuid4().hex[:8]}",
+        sender_external_id=handoff.conversation_key,
+        recipient_external_id="222222222",
+        conversation_key=handoff.conversation_key,
+        role=MessageRole.LEAD,
+        direction=MessageDirection.INBOUND,
+        content_type=MessageContentType.TEXTO,
+        text_body=None,
+        raw_payload=None,
+    )
+    session.add(mensagem)
+    await session.commit()
+    return mensagem
+
+
 async def test_fora_da_jornada_do_corretor_avisa_o_lead_da_janela_humana(
     session: AsyncSession,
     session_factory: async_sessionmaker[AsyncSession],
@@ -177,22 +196,7 @@ async def test_fora_da_jornada_do_corretor_avisa_o_lead_da_janela_humana(
     )
     handoff_id = await semear_handoff_com_resumo(resumo="texto", canal="whatsapp")
     handoff = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
-
-    mensagem_do_lead = Message(
-        id=uuid.uuid4(),
-        channel=handoff.channel,
-        provider_message_id=f"wamid.{uuid.uuid4().hex[:8]}",
-        sender_external_id=handoff.conversation_key,
-        recipient_external_id="222222222",
-        conversation_key=handoff.conversation_key,
-        role=MessageRole.LEAD,
-        direction=MessageDirection.INBOUND,
-        content_type=MessageContentType.TEXTO,
-        text_body=None,
-        raw_payload=None,
-    )
-    session.add(mensagem_do_lead)
-    await session.commit()
+    mensagem_do_lead = await _semear_mensagem_do_lead(session, handoff=handoff)
 
     email = _CanalEspiao("email")
     outbound = _OutboundFalso()
@@ -209,5 +213,55 @@ async def test_fora_da_jornada_do_corretor_avisa_o_lead_da_janela_humana(
     assert kind == KIND_DA_JANELA_HUMANA
     assert payload["para"] == handoff.conversation_key
     assert payload["de"] == "222222222"
+    assert f"{inicio}h" in payload["texto"]
+    assert f"{fim}h" in payload["texto"]
+    # O texto NAO pode afirmar que um corretor foi avisado nem que alguem vai
+    # responder -- nenhuma das duas coisas e garantida hoje, ver o comentario
+    # de `TEXTO_DA_JANELA_HUMANA`.
+    assert "avisei" not in payload["texto"].lower()
+
+
+async def test_fora_da_jornada_e_nenhum_canal_aceitou_ainda_assim_avisa_o_lead(
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    semear_handoff_com_resumo,
+    semear_corretor,
+) -> None:
+    """O aviso da janela humana nao promete entrega, entao roda mesmo quando
+    `notificar` devolve `False` -- o handoff existe e a jornada do corretor
+    designado esta fechada nos dois casos, aceite o canal ou nao.
+    """
+    inicio, fim = _janela_fechada_para_agora()
+    await semear_corretor(
+        email="plantao@x.com", plantao=True, horario_inicio=inicio, horario_fim=fim
+    )
+    handoff_id = await semear_handoff_com_resumo(resumo="texto", canal="whatsapp")
+    handoff = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    mensagem_do_lead = await _semear_mensagem_do_lead(session, handoff=handoff)
+
+    outbound = _OutboundFalso()
+
+    assert not await notificar(
+        session_factory,
+        canais=(_CanalQueFalha("email"), _CanalQueFalha("whatsapp")),
+        outbound=outbound,
+        handoff_id=handoff_id,
+    )
+
+    # `session` ja tinha `handoff` na identity map (a leitura acima, antes de
+    # `notificar`, para seguir a message do lead) -- sem isto a releitura
+    # devolveria o objeto cacheado, com os valores de antes do UPDATE que
+    # `notificar` fez por uma sessao propria. So este objeto, e nao
+    # `expire_all()`: expirar `mensagem_do_lead` tambem faria o acesso a
+    # `.id` mais abaixo tentar um refresh assincrono fora de um `await`.
+    session.expire(handoff)
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.notificado_em is None
+    assert linha.aviso_manual_pendente is True
+
+    assert len(outbound.chamadas) == 1
+    message_id, kind, payload = outbound.chamadas[0]
+    assert message_id == mensagem_do_lead.id
+    assert kind == KIND_DA_JANELA_HUMANA
     assert f"{inicio}h" in payload["texto"]
     assert f"{fim}h" in payload["texto"]

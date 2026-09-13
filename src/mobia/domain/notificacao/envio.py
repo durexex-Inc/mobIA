@@ -29,10 +29,19 @@ log = structlog.get_logger(__name__)
 # para isso. Ver a D5 do desenho.
 KIND_DA_JANELA_HUMANA = "janela_humana"
 
+# **Nao afirma que um corretor foi avisado, nem que alguem vai responder.**
+# Nenhuma das duas coisas e garantida hoje: os dois adaptadores de `canais.py`
+# REGISTRAM e NAO ENTREGAM -- o e-mail nao tem provedor configurado neste
+# projeto, o whatsapp ao corretor exige template aprovado pela Meta que nao
+# existe --, entao `notificar` devolver `True` so significa "um canal aceitou
+# a mensagem", nunca "um corretor recebeu" ou "um corretor vai responder".
+# Este repo ja pagou por essa frase exata uma vez: o aviso ao lead da
+# TEC-174 tambem dizia "ja avisei um corretor" e teve de ser reescrito
+# porque a notificacao (esta card, TEC-177) ainda nao existia -- ver o
+# fluxo de saida de card no CLAUDE.md. Nao reintroduza a promessa.
 TEXTO_DA_JANELA_HUMANA = (
-    "Ja avisei um corretor sobre a sua conversa. "
-    "O atendimento humano funciona de segunda a sabado, das {inicio}h as {fim}h, "
-    "entao a resposta deve vir na proxima janela."
+    "O atendimento humano funciona de segunda a sabado, das {inicio}h as {fim}h. "
+    "Fora desse horario a resposta pode demorar mais."
 )
 
 
@@ -58,6 +67,12 @@ async def notificar(
 
     **NUNCA loga `corpo` nem o resumo decifrado.** E prosa destilada do que o
     lead escreveu, a mesma razao de `handoffs.resumo` ser cifrado em repouso.
+
+    **O aviso ao lead sobre a janela humana roda independente do retorno.**
+    Ele so informa o horario de atendimento -- nunca que um corretor foi
+    avisado -- entao dispara sempre que ha destinatario e a jornada dele
+    esta fechada, mesmo quando nenhum canal aceitou a notificacao. Ver o
+    comentario de `TEXTO_DA_JANELA_HUMANA`.
     """
     agora = datetime.now(UTC)
 
@@ -134,11 +149,16 @@ async def notificar(
 
     if not algum_canal_aceitou:
         log.error("notificacao.nenhum_canal_aceitou", handoff_id=str(handoff_id), motivos=motivos)
-        return False
 
-    # O corretor ja foi avisado nesta altura -- o que segue e secundario, e
-    # nao pode derrubar o `True` que a linha acima ja ganhou. Mesmo molde do
-    # `_agendar_resumo`/`_encaminhar_por_erro`: falha aqui vira log e segue.
+    # **Roda independente de `algum_canal_aceitou`.** O texto de
+    # `TEXTO_DA_JANELA_HUMANA` nao promete que um corretor foi avisado -- so
+    # informa a janela de atendimento humano, que e verdadeira nos dois casos:
+    # o handoff existe quer o canal tenha aceitado quer nao, e a jornada do
+    # corretor designado esta fechada (ou nao) independente disso. Gatear
+    # pelo resultado dos canais faria sentido SE o texto ainda prometesse
+    # entrega, mas ele nao promete mais -- ver o comentario da constante.
+    # Falha aqui nunca derruba o retorno: mesmo molde do
+    # `_agendar_resumo`/`_encaminhar_por_erro`.
     if not horario_permite_envio(
         momento=datetime.now(UTC),
         inicio=corretor_horario_inicio,
@@ -154,7 +174,7 @@ async def notificar(
             fim=corretor_horario_fim,
         )
 
-    return True
+    return algum_canal_aceitou
 
 
 async def _avisar_lead_da_janela_humana(
@@ -183,9 +203,10 @@ async def _avisar_lead_da_janela_humana(
     producao; mas sem uma linha de onde tirar o `message_id` e o `"de"`, nao
     ha como montar a chamada -- so um log marca a lacuna.
 
-    **Excecao daqui nunca sobe.** O corretor ja foi avisado antes desta
-    chamada; perder o aviso ao lead e secundario e vira log, no mesmo molde
-    do `_agendar_resumo` da TEC-175.
+    **Excecao daqui nunca sobe.** Chamada depois de `notificar` ja ter
+    decidido o desfecho do handoff (gravado `notificado_em` ou
+    `aviso_manual_pendente`, tanto faz); perder o aviso ao lead e secundario e
+    vira log, no mesmo molde do `_agendar_resumo` da TEC-175.
     """
     async with session_factory() as session:
         ultima_do_lead = (
