@@ -49,9 +49,10 @@ def _janela_fechada_para_agora() -> tuple[int, int]:
     `notificar` nao recebe `momento` por parametro -- le `datetime.now(UTC)`
     por dentro --, entao o teste nao pode fixar o relogio. A janela e
     escolhida em funcao da hora ATUAL, no mesmo fuso que `notificar` usa
-    (`fuso_de_envio`), com pelo menos tres horas de folga para os dois lados:
-    o suficiente para absorver o tempo entre este calculo e a chamada real,
-    sem tornar o teste dependente da hora em que a suite roda.
+    (`fuso_de_envio`), com pelo menos ~2h01min de folga para os dois lados
+    (pior caso: hora 9:59 no ramo `hora<10`, e 11:59 no ramo `hora in {10,
+    11}`) -- o suficiente para absorver o tempo entre este calculo e a
+    chamada real, sem tornar o teste dependente da hora em que a suite roda.
     """
     hora = datetime.now(UTC).astimezone(get_settings().fuso_de_envio).hour
     if hora < 10:

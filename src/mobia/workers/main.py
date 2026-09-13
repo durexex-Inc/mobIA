@@ -8,6 +8,7 @@ from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
 from mobia.domain.handoff.agendador import AgendadorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
+from mobia.domain.notificacao.canais import EmailRegistrado, WhatsAppRegistrado
 from mobia.domain.outbound.whatsapp import WhatsAppOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
@@ -15,6 +16,7 @@ from mobia.infra.queue import redis_settings
 from mobia.workers.jobs.gerar_resumo import gerar_resumo
 from mobia.workers.jobs.importar_catalogo import importar_catalogo
 from mobia.workers.jobs.indexar_catalogo import indexar_catalogo
+from mobia.workers.jobs.notificar import notificar_corretor
 from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_followups import sweep_followups
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
@@ -80,6 +82,11 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["moderador"] = ModeradorAnthropic()
     ctx["redator"] = RedatorAnthropic()
     ctx["agendador"] = AgendadorArq(ctx["redis"])
+    # Os dois adaptadores de `canais.py` REGISTRAM e nao entregam -- ver o
+    # docstring do modulo. E' o `startup` que decide a implementacao, no mesmo
+    # raciocinio de `outbound`/`redator`/etc acima; o teste troca a chave sem
+    # tocar no job.
+    ctx["canais_de_notificacao"] = (EmailRegistrado(), WhatsAppRegistrado())
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -122,6 +129,13 @@ class WorkerSettings:
         # chama `gerar_resumo` em processo e nunca enfileira, entao nao ha
         # regeneracao por fila para recusar.
         func(gerar_resumo, keep_result=0),
+        # `keep_result=0` pelo mesmo motivo dos dois acima: `gerar_resumo`
+        # enfileira este job com `_job_id=f"notificar:{handoff_id}"` (fixo por
+        # handoff) para nao duplicar o aviso se uma retentativa do ARQ rodar o
+        # job do resumo de novo -- uma chave de resultado sobrevivente
+        # bloquearia esse reenqueue em silencio. Nao entra em `cron_jobs`: quem
+        # dispara este job e sempre `gerar_resumo`, nunca o relogio.
+        func(notificar_corretor, keep_result=0),
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
