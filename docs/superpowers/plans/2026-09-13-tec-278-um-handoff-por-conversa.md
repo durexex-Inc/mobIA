@@ -259,13 +259,18 @@ async def test_devolver_sem_handoff_nenhum_funciona(...):
     caso comum, pelo mesmo argumento que `assumir` ja aplica."""
 
 
-async def test_devolver_duas_vezes_nao_toca_o_handoff_na_segunda(...):
-    """A segunda devolucao ja e 409 (a conversa nao esta assumida), entao o
-    UPDATE do handoff nem chega a rodar. Este teste prova que o 409 vem
-    ANTES, e nao que o UPDATE e idempotente por acaso."""
+async def test_devolver_duas_vezes_e_409_e_o_handoff_segue_concluido(...):
+    """A segunda devolucao e 409 (a conversa nao esta assumida) e o handoff
+    continua CONCLUIDO.
+
+    **O que este teste NAO prova:** que o 409 acontece antes do UPDATE. Ele
+    nao consegue distinguir isso -- depois da primeira devolucao o handoff ja
+    esta CONCLUIDO, entao o `WHERE status != CONCLUIDO` nao casaria de
+    qualquer jeito, e o teste passa pelas duas razoes. Dizer o contrario
+    seria docstring que afirma o que o teste nao exercita."""
 ```
 
-**Escreva os corpos**, seguindo o estilo do arquivo. Para o último, assere o `atualizado_em` do handoff — se o `UPDATE` rodasse na segunda chamada, ele andaria.
+**Escreva os corpos**, seguindo o estilo do arquivo.
 
 - [ ] **Step 2: Rode e confirme que falham**
 
@@ -420,7 +425,18 @@ Expected: PASSAM, porque as Tasks 1 e 2 já entregaram o comportamento. **Se alg
 
 - [ ] **Step 3: Falsifique o primeiro**
 
-Reverta o predicado do índice para `status = 'PENDENTE'` (só no modelo, não na migration — é temporário), rode `test_lead_escalado_que_continua_conversando_nao_gera_handoff_novo`, confirme que reprova, restaure com `git checkout --`. Registre a saída.
+**Não basta mexer no modelo.** O `postgresql_where` de `handoff/models.py` **não tem efeito em runtime**: o índice que existe no banco vem da migration, e quem o seleciona no `ON CONFLICT` é o `index_where` de `handoff/repositorio.py`. Revertê-lo só no modelo é no-op, e o teste passaria — o que provaria nada sobre o teste e tudo sobre a falsificação.
+
+São dois passos, juntos:
+
+```bash
+./.venv/Scripts/python.exe -m alembic downgrade -1
+```
+e reverter o `index_where` em `src/mobia/domain/handoff/repositorio.py` para `text("status = 'PENDENTE'")`. Aí rode `test_lead_escalado_que_continua_conversando_nao_gera_handoff_novo`.
+
+Expected: REPROVA — nasce um segundo handoff e `escalar_vencidos` devolve 1 na segunda passagem.
+
+Restaure com `git checkout -- src/mobia/domain/handoff/repositorio.py` e `./.venv/Scripts/python.exe -m alembic upgrade head`. Confirme que o teste volta a passar antes de seguir.
 
 Se o teste **passar** com o índice antigo, ele não prova nada e precisa ser reescrito.
 
