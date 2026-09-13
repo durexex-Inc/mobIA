@@ -423,7 +423,7 @@ async def test_recusa_permanente_numa_ficha_nao_cala_as_outras(
 async def test_janela_fechada_na_primeira_ficha_expira_o_turno(
     session: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
 ) -> None:
-    """A ordem das duas clausulas `except` em `_apresentar` e carregada.
+    """A ordem das duas clausulas `except` de `_entregar_fichas` e carregada.
 
     `EnvioForaDaJanela` HERDA de `EnvioRecusado`, entao inverter as clausulas
     faria a janela de 24h fechada cair no ramo da D10: o turno seguiria e

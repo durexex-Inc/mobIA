@@ -1216,12 +1216,18 @@ class _ClassificadorQueBuscaESemReacao(_ClassificadorQueBuscaSemFiltroExtra):
     """`_ClassificadorQueBuscaSemFiltroExtra` com `reagir` que FUNCIONA e nao
     acha reacao nenhuma.
 
-    E o que um modelo de verdade devolve na retentativa: a mensagem
+    E o que um modelo de verdade devolveria na retentativa: a mensagem
     reprocessada e a MESMA de antes -- o pedido que originou a busca --, e ela
-    nao fala de imovel nenhum. A base nao define `reagir` porque nos testes
-    dela nunca ha pendente quando o turno chega la; aqui ha, e um
-    `AttributeError` cairia no `except Exception` amplo de `turno.py` e o teste
-    passaria a medir o duble em vez do sistema.
+    nao fala de imovel nenhum.
+
+    Com o conserto da TEC-275 a continuacao nao chama `reagir`, e `reagir`
+    definido aqui e o que torna isso VERIFICAVEL: `apresentados_recebidos`
+    continua `None`, e varios testes abaixo assertam exatamente isso. A base
+    nao define `reagir` porque nos testes dela nunca ha pendente quando o turno
+    chega la; numa regressao em que a passada 2 voltasse a rodar o turno
+    inteiro ha, e um `AttributeError` cairia no `except Exception` amplo de
+    `turno.py` -- a regressao passaria calada e o teste mediria o duble em vez
+    do sistema.
     """
 
     def __init__(self, filtro: dict[str, object]) -> None:
@@ -1233,7 +1239,7 @@ class _ClassificadorQueBuscaESemReacao(_ClassificadorQueBuscaSemFiltroExtra):
         return ReacoesDoTurno(reacoes=(), modelo="claude-opus-5")
 
 
-async def test_retentativa_de_apresentacao_parcial_deixa_o_lead_sem_lista(
+async def test_retentativa_de_apresentacao_parcial_mantem_a_lista_do_lead(
     session: Any,
     session_factory: Any,
     resumidor_fake: Any,
@@ -1241,7 +1247,7 @@ async def test_retentativa_de_apresentacao_parcial_deixa_o_lead_sem_lista(
     moderador_fake: Any,
     semear_entrada: Any,
 ) -> None:
-    """TEC-275. Depois da retentativa o lead viu as tres fichas e nao tem lista.
+    """TEC-275. Depois da retentativa o lead viu as tres fichas E ainda tem lista.
 
     Passada 1: a ficha 2 levanta `EnvioRetentavel`. As tres linhas ja estao
     gravadas com um `agora` unico (a L1 da TEC-162 grava o lote ANTES do laco),
@@ -1349,7 +1355,7 @@ async def test_retentativa_de_apresentacao_parcial_deixa_o_lead_sem_lista(
     )
 
 
-async def test_retentativa_com_reagir_falhando_fecha_as_mesmas_linhas_pelo_outro_caminho(
+async def test_retentativa_com_reagir_falhando_mantem_as_linhas_pelo_outro_caminho(
     session: Any,
     session_factory: Any,
     resumidor_fake: Any,
@@ -1357,18 +1363,26 @@ async def test_retentativa_com_reagir_falhando_fecha_as_mesmas_linhas_pelo_outro
     moderador_fake: Any,
     semear_entrada: Any,
 ) -> None:
-    """TEC-275. O mesmo fim por `conciliar_apresentacao`, quando `reagir` estoura.
+    """TEC-275. As linhas sobrevivem tambem ao caminho de `conciliar_apresentacao`.
 
-    Identico ao teste acima, com uma diferenca na passada 2: `reagir` levanta,
-    cai no `except Exception` amplo de `turno.py`, e `gravar_reacoes` nao roda
-    -- as tres linhas seguem `NULL`. A apresentacao reentrega; como
-    `gravar_recomendacoes` nao insere nada (`ON CONFLICT DO NOTHING` sobre as
-    tres que ja existem), elas mantem o `apresentado_em` da passada 1, e o
-    `apresentado_em < agora` de `conciliar_apresentacao` casa as tres.
+    Identico ao teste acima, e a unica diferenca e o duble: aqui o
+    classificador da passada 2 estoura em `reagir`. Hoje isso nao muda nada,
+    porque a passada 2 nao chega a chamar `reagir` -- o desvio da TEC-275
+    devolve `_continuar_entrega` antes --, e e justamente esse "nao muda nada"
+    que o teste afirma.
 
-    Existe para provar que sao DOIS caminhos para o mesmo fim: um conserto
-    que so distinga as apresentacoes dentro de `conciliar_apresentacao` faz
-    este teste passar e deixa o de cima reprovando.
+    O duble existe por causa do mundo ANTERIOR ao conserto, em que a passada 2
+    rodava o turno inteiro: `reagir` levantava, caia no `except Exception`
+    amplo de `turno.py`, `gravar_reacoes` nao rodava e as tres linhas seguiam
+    `NULL` -- e ai quem as fechava era o outro caminho, o `apresentado_em <
+    agora` de `conciliar_apresentacao`, porque `gravar_recomendacoes` nao
+    inseria nada (`ON CONFLICT DO NOTHING` sobre as tres que ja existiam) e
+    elas mantinham o carimbo da passada 1.
+
+    Existe para provar que eram DOIS caminhos para o mesmo defeito: um
+    conserto que so distinguisse as apresentacoes dentro de
+    `conciliar_apresentacao` faz este teste passar e deixa o de cima
+    reprovando.
     """
     from conftest import OutboundFake  # type: ignore[import-not-found]
 

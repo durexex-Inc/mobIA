@@ -374,7 +374,7 @@ async def _continuar_entrega(
     **Nao rebusca, nao chama o classificador, nao chama `reagir`.** E isso que
     fecha os DOIS caminhos pelos quais a retentativa apagava a lista de
     pendentes: nenhum dos dois chega a rodar. Fechar cada um com uma guarda
-    propria seria frageis -- a terceira rota que aparecesse ficaria de fora.
+    propria seria fragil -- a terceira rota que aparecesse ficaria de fora.
 
     **Concilia com o carimbo ORIGINAL do lote, e nao com um `now()` novo.**
     E a outra metade do conserto: com o carimbo do lote, as linhas dele
@@ -523,6 +523,11 @@ async def executar_turno(
     agendador: AgendadorDeResumoPort,
 ) -> ResultadoDoTurno:
     """Um turno inteiro: contexto, classificacao, entrega, registro.
+
+    **Nem sempre inteiro, desde a TEC-275 (D4).** Reprocessada uma mensagem
+    cuja apresentacao parou no meio, o desvio logo antes de montar contexto
+    devolve `_continuar_entrega` e nada abaixo dele roda: sem contexto, sem
+    classificador, sem `reagir`. O comentario daquele desvio diz por que.
 
     A ordem no fim nao e arbitraria. Gravar a fala **depois** da entrega
     significa que uma queda no meio deixa o lead com a resposta e a linha do
@@ -1571,8 +1576,9 @@ async def executar_turno(
                     )
                 except EnvioRetentavel:
                     # Fix de revisao final (Critical 2, TEC-140), espelhando o
-                    # `except EnvioRetentavel` de `_apresentar` (mais abaixo
-                    # neste arquivo). Antes desta clausula a excecao subia crua
+                    # `except EnvioRetentavel` de `_entregar_fichas` (mais
+                    # abaixo neste arquivo; ele morava em `_apresentar` ate a
+                    # TEC-275 extrair o laco). Antes desta clausula a excecao subia crua
                     # por este `try`, atravessava os `except` la embaixo (que
                     # so pegam `EnvioForaDaJanela`/`EnvioRecusado`) e chegava
                     # ao chamador do mesmo jeito -- entao a clausula NAO muda o
@@ -2396,11 +2402,12 @@ async def _apresentar(
     # devolver exatamente o que o lead viu, na ordem em que viu. Ver o
     # docstring de `conciliar_apresentacao`.
     #
-    # Fora do `try` do laco de proposito: as duas excecoes que sobem dali
-    # (`EnvioForaDaJanela`, `EnvioRetentavel`) terminam o turno sem
-    # apresentacao completa, e numa delas o sweeper reprocessa a MESMA
-    # mensagem -- conciliar no meio apagaria linha de ficha que a retentativa
-    # ainda vai entregar.
+    # Fora do alcance de `_entregar_fichas` de proposito -- e la, e nao aqui,
+    # que fica o `try` do laco desde que a TEC-275 o extraiu. As duas excecoes
+    # que ela repropaga (`EnvioForaDaJanela`, `EnvioRetentavel`) terminam o
+    # turno sem apresentacao completa, e numa delas o sweeper reprocessa a
+    # MESMA mensagem -- conciliar no meio apagaria linha de ficha que a
+    # retentativa ainda vai entregar.
     await conciliar_apresentacao(
         session_factory,
         channel=message.channel,

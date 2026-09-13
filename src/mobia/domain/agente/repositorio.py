@@ -159,8 +159,12 @@ async def gravar_recomendacoes(
     registra que uma falha parcial perde o conjunto escolhido e o turno
     seguinte pode reapresentar os mesmos imoveis; gravar depois manteria esse
     buraco aberto. Gravar antes tambem significa gravar linha para ficha que
-    pode nao sair -- quem desfaz essas e `conciliar_apresentacao`, chamada
-    depois do laco de entrega.
+    pode nao sair, e desde a TEC-275 sao TRES quem desfazem essas, cada um num
+    momento: `apagar_recomendacao_nao_entregue` apaga a linha da ficha recusada
+    na hora da recusa (D8), `conciliar_apresentacao` apaga no fim do laco as que
+    sobraram e fecha as pendentes que esta apresentacao supera, e
+    `apagar_apresentacao_da_mensagem` apaga o lote inteiro quando a retentativa
+    descobre que NENHUMA ficha chegou a sair (D4).
 
     **`relaxou_preco`/`relaxou_bairro` sao do RESULTADO, `criterios` e do
     PEDIDO.** Os dois entram na frase por `motivo_do_match`, e o porque esta
@@ -171,7 +175,7 @@ async def gravar_recomendacoes(
     (`KINDS_DAS_FICHAS[posicao]`) e quem enumera as posicoes e o laco de
     entrega. Esta funcao recebe `candidatos` com a MESMA ordem e o MESMO
     filtro que aquele laco usa, entao o indice bate -- mas depender disso em
-    silencio seria frageis: quem passa os kinds e quem sabe deles. Ver a D9
+    silencio seria fragil: quem passa os kinds e quem sabe deles. Ver a D9
     do desenho da TEC-275 para por que reconstruir a posicao depois nao
     funciona.
 
@@ -324,7 +328,7 @@ async def conciliar_apresentacao(
 ) -> None:
     """Faz `ler_pendentes` voltar a ser "o que o lead viu, na ordem em que viu".
 
-    Chamada DEPOIS do laco de entrega de `_apresentar`, e a contraparte de
+    Chamada DEPOIS do laco de entrega, e a contraparte de
     `gravar_recomendacoes` ser chamada ANTES dele. Gravar antes e o que salva
     o conjunto escolhido de uma falha de rede no meio (a L1 da TEC-162), mas
     deixa duas classes de linha que o lead nunca viu na lista que o ordinal
@@ -332,6 +336,15 @@ async def conciliar_apresentacao(
     mais nao e um registro a mais: e a opiniao do lead grudando no imovel
     errado, e, se for descarte por distancia, um bairro saindo da busca sem
     ele ter rejeitado nada ali.
+
+    **Sao DOIS chamadores, e `agora` nao quer dizer o mesmo nos dois.** Em
+    `_apresentar` e o `now()` do lote que aquela chamada acabou de inserir. Em
+    `_continuar_entrega` (TEC-275, D4) e o `apresentado_em` PERSISTIDO do lote
+    da passada anterior, lido de volta de `recomendacoes`: a continuacao nao
+    insere linha nenhuma -- as linhas ja existem desde a passada que morreu no
+    meio --, ela so termina de entregar as fichas que faltaram. O parametro nao
+    e "o relogio de agora", e sim **o carimbo do lote que esta sendo
+    conciliado**, e e dele que os dois recortes abaixo dependem.
 
     **(a) Pendente ANTIGA que a apresentacao de hoje supera -> `SEM_RESPOSTA`.**
     E o valor que o enum e a D8 descrevem ("uma apresentacao nova superou esta
@@ -348,7 +361,11 @@ async def conciliar_apresentacao(
     apresentacao que CHEGOU supera a anterior (D8, L5). Se nenhuma ficha saiu
     -- todas recusadas, ou nenhuma sobrou depois de `fichas_do_catalogo` --, o
     lead continua com a lista antiga na tela, e fecha-la o deixaria sem como
-    reagir ao unico conjunto que ele tem.
+    reagir ao unico conjunto que ele tem. `_continuar_entrega` passa `True`
+    sem calcular nada, e nao por atalho: uma continuacao so existe porque
+    alguma ficha DESTE lote ja tinha reserva, ou seja o lead ja viu parte dele
+    -- ele superou a apresentacao anterior na passada 1, mesmo que a passada 2
+    nao consiga entregar mais nada.
 
     **(b) Linha desta apresentacao cuja ficha NAO saiu -> apagada, nao
     fechada.** Recusa permanente da Meta (`apresentacao.ficha_recusada`) ou
@@ -367,8 +384,10 @@ async def conciliar_apresentacao(
 
     O recorte e `apresentado_em == agora` E `reacao_lead IS NULL`, e ele e
     estreito de proposito: `gravar_recomendacoes` grava o lote inteiro com um
-    unico `agora` (ver `ler_pendentes`), entao so as linhas que ESTA chamada
-    inseriu batem. Uma reapresentacao cuja ficha foi recusada agora nao apaga
+    unico `agora` (ver `ler_pendentes`), entao so as linhas DESTE lote batem --
+    as da apresentacao que o chamador esta conciliando, tenha ele acabado de
+    inseri-las (`_apresentar`) ou lido o carimbo delas de volta
+    (`_continuar_entrega`). Uma reapresentacao cuja ficha foi recusada agora nao apaga
     nada -- a linha original guarda o `apresentado_em` da vez em que o lead de
     fato viu o imovel, junto com a reacao que ele deu. E o mesmo recorte que
     protege o caso da reserva suprimida: se `send` devolveu False, a tentativa
@@ -396,9 +415,19 @@ async def conciliar_apresentacao(
                     Recomendacao.channel == channel,
                     Recomendacao.conversation_key == conversation_key,
                     Recomendacao.reacao_lead.is_(None),
-                    # `< agora` e nao `!=`: o lote de hoje fica de fora por ser
-                    # o mais novo, e as linhas que o `delete` acima ja tirou
+                    # `< agora` e nao `!=`: o que fica de fora e o lote que
+                    # esta sendo conciliado -- as linhas dele carregam
+                    # exatamente `agora` --, e as que o `delete` acima ja tirou
                     # nao existem mais para serem fechadas.
+                    #
+                    # Chamada por `_apresentar`, `<` e `!=` dariam no mesmo: o
+                    # lote e o mais novo da conversa. Chamada pela continuacao
+                    # (TEC-275, D4) nao: `agora` e o carimbo de um lote gravado
+                    # numa passada anterior, e `!=` tambem fecharia uma
+                    # apresentacao POSTERIOR a ele -- a que o lead tem na tela
+                    # e ainda pode responder. O que separa o lote dos outros
+                    # deixou de ser "e o mais recente" e passou a ser o carimbo
+                    # que o chamador entrega.
                     Recomendacao.apresentado_em < agora,
                 )
                 .values(reacao_lead=str(ReacaoLead.SEM_RESPOSTA))
