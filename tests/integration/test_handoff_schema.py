@@ -54,7 +54,7 @@ async def test_dois_pendentes_na_mesma_conversa_sao_recusados_pelo_banco(
 
 
 async def test_um_concluido_nao_bloqueia_um_pendente_novo(session: AsyncSession) -> None:
-    """O indice so olha para PENDENTE.
+    """O indice olha para todo handoff ABERTO -- CONCLUIDO e a unica saida (TEC-278).
 
     Um lead atendido meses atras que volta merece handoff novo -- por isso o
     `postgresql_where`, e nao um UNIQUE simples sobre o par.
@@ -65,6 +65,34 @@ async def test_um_concluido_nao_bloqueia_um_pendente_novo(session: AsyncSession)
     await session.commit()
     total = await session.scalar(text("SELECT count(*) FROM handoffs"))
     assert total == 2
+
+
+async def test_um_escalado_bloqueia_um_pendente_novo(session: AsyncSession) -> None:
+    """O caso que a card existe para fechar (TEC-278).
+
+    Antes desta card o handoff escalado liberava a conversa: o proximo
+    gatilho criava outro, com resumo novo e prazo novo, e cinco minutos
+    depois a varredura cobrava a gerente pela SEGUNDA vez pelo mesmo lead.
+    """
+    session.add(_linha(status="ESCALADO"))
+    await session.commit()
+    session.add(_linha())
+    with pytest.raises(IntegrityError):
+        await session.commit()
+
+
+async def test_um_aceito_bloqueia_um_pendente_novo(session: AsyncSession) -> None:
+    """Mesmo invariante pelo outro lado: handoff aceito e handoff aberto.
+
+    A TEC-179 ja impedia este caminho por outra via -- assumir silencia a
+    conversa, e sem turno nao ha gatilho. Aqui a garantia vira do banco, que
+    e onde ela nao depende de nenhum caminho de codigo continuar existindo.
+    """
+    session.add(_linha(status="ACEITO"))
+    await session.commit()
+    session.add(_linha())
+    with pytest.raises(IntegrityError):
+        await session.commit()
 
 
 async def test_gatilhos_adicionais_nasce_vazio_e_nao_nulo(session: AsyncSession) -> None:

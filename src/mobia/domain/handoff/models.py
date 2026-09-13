@@ -167,11 +167,18 @@ class Handoff(Base):
             "status IN ('PENDENTE', 'ACEITO', 'ESCALADO', 'CONCLUIDO')",
             name="ck_handoffs_status",
         ),
+        # TEC-278: o handoff bloqueia a conversa ate ser CONCLUIDO, nao ate
+        # sair de PENDENTE. ACEITO e ESCALADO tambem contam como aberto --
+        # CONCLUIDO ganhou o primeiro escritor em `POST
+        # /api/v1/conversas/devolver`, e e ele que separa "aberto" de
+        # "encerrado". O nome do indice ficou impreciso de proposito: ele
+        # aparece em comentario e em teste, e renomear e churn sem ganho.
+        # Ver `alembic/versions/0030_handoff_aberto.py`.
         Index(
             "uq_handoffs_conversa_pendente",
             "channel",
             "conversation_key",
             unique=True,
-            postgresql_where=text("status = 'PENDENTE'"),
+            postgresql_where=text("status <> 'CONCLUIDO'"),
         ),
     )
