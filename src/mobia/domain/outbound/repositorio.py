@@ -23,9 +23,21 @@ async def kinds_reservados(session_factory: Any, *, message_id: uuid.UUID) -> fr
     que reenviar esta perguntando "esta posicao ainda vai sair?", e a resposta
     certa para uma recusa permanente e nao.
 
-    A linha que a recusa deixa em `recomendacoes` e apagada na hora da recusa
-    (`apagar_recomendacao_nao_entregue`, D8 da TEC-275), entao a assimetria
-    entre "reservado" e "entregue" nao vaza para a lista de pendentes.
+    A linha que a recusa PERMANENTE deixa em `recomendacoes` e apagada na hora
+    da recusa (`apagar_recomendacao_nao_entregue`, D8 da TEC-275), entao por
+    esse lado a assimetria entre "reservado" e "entregue" nao vaza para a lista
+    de pendentes.
+
+    **Por outro lado ela vaza, e o comentario anterior dizia que nao.** A
+    reserva tambem sobrevive quando a ficha NAO saiu: a liberacao do
+    `EnvioRetentavel` pode falhar -- o proprio `send` antecipa deadlock e
+    conexao caida e loga `outbound.liberacao_falhou` -- e um kill entre o
+    commit da reserva e o `_deliver` deixa o mesmo estado. Nao houve recusa,
+    entao nada apaga a linha, e quem le isto pula aquele kind achando que o
+    lead viu a ficha: `ler_pendentes` devolve uma linha a mais e o ordinal do
+    lead desloca. Fechar isso exige um fato de ENTREGA separado da reserva;
+    enquanto ele nao existir, "reservado => encerrado" segue sendo o default,
+    e este paragrafo e o preco dele.
     """
     async with session_factory() as session:
         linhas = await session.execute(

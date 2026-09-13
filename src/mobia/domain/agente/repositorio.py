@@ -293,10 +293,19 @@ async def apagar_recomendacao_nao_entregue(
 async def apagar_apresentacao_da_mensagem(session_factory: Any, *, message_id: uuid.UUID) -> None:
     """Apaga o lote de uma apresentacao que nao chegou ao lead. TEC-275, D4.
 
-    So e chamada quando NENHUMA ficha daquele lote saiu -- nao ha reserva
-    nenhuma dos kinds dele. As linhas existem porque `gravar_recomendacoes`
-    roda ANTES do laco de entrega (a L1 da TEC-162), e o turno morreu antes de
-    qualquer envio.
+    Chamada quando nenhum kind DESTE lote tem reserva. Quase sempre isso
+    significa que nenhuma ficha saiu: as linhas existem porque
+    `gravar_recomendacoes` roda ANTES do laco de entrega (a L1 da TEC-162) e o
+    turno morreu antes de qualquer envio.
+
+    **Mas nao so.** O `ON CONFLICT DO NOTHING` de `gravar_recomendacoes`
+    preserva a linha de um imovel que esta conversa ja apresentou -- e nada
+    exclui da busca um imovel ja apresentado. A linha repetida fica com o
+    `message_id` e o `kind` da mensagem ANTERIOR, entao a ficha dela pode ter
+    saido sem que o kind correspondente pertenca a este lote. Uma entrega
+    parcial chega aqui por essa porta, e o lote (as fichas que NAO sairam) e
+    apagado do mesmo jeito -- que e o certo para elas; o que fica errado e o
+    turno inteiro rodar de novo. Ver a L4 do desenho da TEC-275.
 
     **Apagar, e nao deixar para a passada nova.** O `ON CONFLICT DO NOTHING`
     preservaria o `apresentado_em` velho, e o UNIQUE por conversa impediria a
@@ -553,9 +562,15 @@ async def ler_apresentacao_da_mensagem(
     kind pertence a qual imovel; uma linha que ja ganhou reacao continua sendo
     parte do que aquela mensagem apresentou.
 
-    **Linha sem `message_id` nunca entra**, e o filtro por igualdade ja
-    garante isso: apresentacao anterior a TEC-275 nao tem dono e nao e
-    continuavel (L2 do desenho).
+    **Linha sem `message_id` DESTA mensagem nunca entra**, e o filtro por
+    igualdade ja garante isso. Sao duas as origens, e so uma envelhece:
+    apresentacao anterior a TEC-275 nao tem dono nenhum e nao e continuavel
+    (L2 do desenho, que some sozinha conforme as conversas avancam); e o `ON
+    CONFLICT DO NOTHING` de `gravar_recomendacoes`, que ao reapresentar um
+    imovel desta mesma conversa deixa a linha dele com o `message_id` da
+    mensagem ANTERIOR -- essa segunda via nao envelhece, porque nada exclui da
+    busca um imovel ja apresentado. O efeito e o mesmo daqui: a linha fica de
+    fora do lote. O efeito la em cima, no desvio de `turno.py`, e o da L4.
 
     Devolve so linha completa -- as tres colunas da D2 preenchidas. Uma linha
     com dono mas sem kind seria de uma gravacao pela metade, que nenhum

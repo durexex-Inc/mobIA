@@ -772,13 +772,30 @@ async def executar_turno(
     # e e justamente por nao chamar `reagir` que ela nao fecha como NEUTRO as
     # pendentes da passada anterior.
     #
-    # Tres ramos, e o do meio existe por um caso limite real: se a ficha que
-    # falhou foi a PRIMEIRA, nada chegou ao lead -- nem as fichas, nem a prosa,
-    # que viaja junto com a ficha 1 e nao esta persistida em lugar nenhum se
-    # nao chegou a sair. Continuar uma entrega em que nada saiu nao e
-    # continuar; e recomecar. E as linhas orfas tem de ser APAGADAS, nao
-    # ignoradas: o `ON CONFLICT DO NOTHING` da passada nova preservaria o
-    # carimbo velho, e o UNIQUE por conversa impediria a linha nova de nascer.
+    # Tres ramos, e o do meio tem DUAS entradas -- so a primeira foi desenhada.
+    #
+    # (a) Nada saiu: a ficha que falhou foi a PRIMEIRA, entao nem as fichas nem
+    # a prosa chegaram ao lead -- a prosa viaja junto com a ficha 1 e nao esta
+    # persistida em lugar nenhum se nao chegou a sair. Continuar uma entrega em
+    # que nada saiu nao e continuar; e recomecar.
+    #
+    # (b) Algo saiu, mas a linha da ficha que saiu nao pertence a ESTE lote.
+    # `gravar_recomendacoes` usa `ON CONFLICT DO NOTHING` e nada exclui da
+    # busca um imovel ja apresentado nesta conversa (nao ha anti-join contra
+    # `recomendacoes` em `ferramenta_de_busca.py` nem em `catalogo/busca.py`, e
+    # o docstring de `gravar_recomendacoes` chama a reapresentacao de
+    # legitima). Um imovel repetido colide e a linha dele fica INTOCADA, com o
+    # `message_id`, o `kind` e o `apresentado_em` da mensagem ANTERIOR. Se a
+    # ficha que saiu foi justamente a dele, a reserva existe mas o kind dela
+    # nao esta neste lote, a intersecao abaixo da vazia, e uma entrega PARCIAL
+    # cai aqui: o turno inteiro roda de novo para um lead que ja recebeu uma
+    # ficha. Nao e regressao -- a `main` fazia o mesmo --, e o conserto mexe na
+    # semantica do UNIQUE e de `reacao_lead`, entao e card propria. Ver a L4 do
+    # desenho, que registra tambem o que a reapresentacao ja custava antes.
+    #
+    # Em ambas as entradas as linhas orfas tem de ser APAGADAS, nao ignoradas:
+    # o `ON CONFLICT DO NOTHING` da passada nova preservaria o carimbo velho, e
+    # o UNIQUE por conversa impediria a linha nova de nascer.
     lote = await ler_apresentacao_da_mensagem(session_factory, message_id=message.id)
     if lote:
         ja_reservados = await kinds_reservados(session_factory, message_id=message.id)
@@ -2157,6 +2174,20 @@ async def _entregar_fichas(
     esses envios de qualquer jeito, mas pular explicitamente evita usar a
     reserva como controle de fluxo e evita contar como `suprimidas` algo que
     nem foi tentado.
+
+    **O que "de qualquer jeito" nao cobre e a consequencia para a LINHA.**
+    Reserva significa "encerrado", nao "entregue" (ver `kinds_reservados`), e
+    ela pode ficar presa sem que a ficha tenha saido: `port.py` antecipa a
+    liberacao do `EnvioRetentavel` FALHAR -- deadlock, conexao caida -- e um
+    kill entre o commit da reserva e o `_deliver` da no mesmo. Nesse estado,
+    chamar `send` devolveria False, o imovel entraria em `nao_entregues` e a
+    conciliacao o tiraria da lista de pendentes -- era o que a passada seguinte
+    fazia antes desta card, rodando o turno inteiro. Pulando, a linha
+    sobrevive: `ler_pendentes` devolve tres onde o lead viu duas, e o ordinal
+    dele desloca, que e o defeito-alvo desta card. A troca continua sendo a
+    certa -- o caso e raro e o contrario reenviaria ficha ja vista a cada
+    retentativa --, mas esta frase existe para ele nao ficar escrito como
+    impossivel.
     """
     legendas: list[str] = []
     # Os imoveis deste lote cuja ficha nao chegou ao lead -- recusa permanente

@@ -1438,7 +1438,9 @@ async def test_retentativa_com_reagir_falhando_mantem_as_linhas_pelo_outro_camin
         for registro in (await session.execute(select(Recomendacao))).scalars().all()
     }
     assert await _pendentes_da_conversa(session_factory) == tuple(apresentados), (
-        "com `reagir` estourando na retentativa quem fecha as tres e o "
+        "a passada 2 e continuacao e concilia com o carimbo do PROPRIO lote, entao nada "
+        "tem o que fechar. Se as tres vierem fechadas, ela voltou a rodar o turno "
+        "inteiro: `reagir` estourou, `gravar_reacoes` nao rodou, e quem fechou foi o "
         f"`apresentado_em < agora` de `conciliar_apresentacao`. Reacoes gravadas: {fechadas}"
     )
 

@@ -82,6 +82,8 @@ As linhas órfãs precisam ser apagadas, e não ignoradas: o `ON CONFLICT DO NOT
 
 O ramo de baixo cobre também o caso "tudo entregue e o turno morreu depois do laço": a continuação entrega zero fichas, concilia e retorna. Um ramo, não dois.
 
+**O ramo do meio acabou com uma segunda entrada, que este desenho não previu:** quando a ficha que saiu é a de um imóvel repetido, a linha dela pertence à mensagem anterior e o kind dela não está neste lote, então a interseção dá vazio mesmo tendo havido entrega. Ver a L4.
+
 ### D5 — A ordem do lote é a mesma regra de `ler_pendentes`
 
 A posição N é o ordinal N (D7 da TEC-163). A continuação reconstrói o lote ordenando por `apresentado_em, score_match DESC, imovel_id` — **a mesma ordenação de `ler_pendentes`**, cujo docstring já argumenta por que ela reproduz a ordem de apresentação real.
@@ -152,4 +154,25 @@ Somam-se:
 
 **L2 — `message_id` nullable deixa as linhas antigas sem dono.** Uma apresentação anterior a esta card que esteja pendente no momento do deploy não é continuável: cai no ramo "turno normal". É o comportamento de hoje, não uma regressão, e some sozinho conforme as conversas avançam.
 
-**L3 — Duas mensagens da mesma conversa processadas concorrentemente não são cobertas.** O desenho assume processamento serial por conversa. Se duas mensagens da mesma conversa estiverem em voo ao mesmo tempo, a continuação de uma pode conciliar sobre linhas da outra. Nada neste desenho piora esse cenário — a conciliação de hoje já é por conversa — mas ele também não o fecha.
+**L3 — Mensagens da mesma conversa intercaladas não são cobertas, e intercalação não é só concorrência.** O desenho assume processamento serial por conversa. Se duas mensagens da mesma conversa estiverem em voo ao mesmo tempo, a continuação de uma pode conciliar sobre linhas da outra.
+
+Mas o caso que importa não exige corrida nenhuma: uma M1 em `FAILED` esperando a varredura enquanto M2 é processada na hora é **rotina**, não exceção. Nessa ordem, o `gravar_reacoes` do turno de M2 fecha como `NEUTRO` as pendentes da conversa — inclusive as linhas de M1 que ainda não foram entregues, porque ele fecha por conversa e não por mensagem — e só depois a varredura roda a continuação de M1. A continuação entrega aquelas fichas assim mesmo: ela não consulta `reacao_lead`, e a conciliação dela não reabre nada. O lead recebe cartões cujas linhas já estão fechadas, `ler_pendentes` não os endereça, e "gostei do segundo" no turno seguinte não resolve para eles.
+
+**Este parágrafo dizia "nada neste desenho piora esse cenário", e isso não se sustenta.** Na `main` a segunda passada rodava o turno inteiro, e quando a busca dela trazia ao menos um imóvel que a conversa ainda não tinha visto, nascia um lote novo, com carimbo novo, que a lista de pendentes endereçava. A continuação nunca produz lote novo — ela termina um lote que outra mensagem pode ter fechado no meio. (Quando a busca da segunda passada devolvia exatamente os mesmos imóveis, o `ON CONFLICT DO NOTHING` já deixava a `main` no mesmo buraco; a diferença não é universal, mas existe.) Fechar isso exige serialização por conversa, ou a continuação reabrir as linhas do próprio lote — nenhuma das duas está neste desenho.
+
+**L4 — Uma apresentação que REPETE um imóvel da mesma conversa não é continuável, e cai no ramo do meio.** `gravar_recomendacoes` usa `ON CONFLICT DO NOTHING` sobre o `UNIQUE (channel, conversation_key, imovel_id)`, e **nada exclui da busca um imóvel já apresentado** — não há anti-join contra `recomendacoes` em `ferramenta_de_busca.py` nem em `catalogo/busca.py`, e o docstring de `gravar_recomendacoes` chama a reapresentação de legítima ("mostra de novo aquele do Campeche"). A linha do imóvel repetido fica **intocada**: mantém `message_id`, `kind` e `apresentado_em` da mensagem **anterior**.
+
+A sequência, com a ficha 1 sendo a repetida — a posição mais provável, porque é a de maior score e os critérios do lead mudam devagar:
+
+1. M1 apresenta A, B e C. Três linhas com `message_id = M1` e carimbo `t1`.
+2. O lead pergunta "tem algo mais barato?" → M2. A busca devolve **A**, D e E.
+3. `gravar_recomendacoes(M2)`: A colide e fica intocada, ainda de M1; D e E nascem com `message_id = M2` e carimbo `t2`.
+4. Entrega: a `ficha_1` (A) **chega ao lead**; a `ficha_2` (D) levanta `EnvioRetentavel` e a mensagem termina `FAILED`.
+5. A varredura reprocessa M2. `ler_apresentacao_da_mensagem(M2)` devolve `{D (ficha_2), E (ficha_3)}` — A não está lá. `kinds_reservados(M2)` devolve `{ficha_1}`, porque a reserva de D foi liberada pelo retentável.
+6. O desvio calcula `{ficha_1} ∩ {ficha_2, ficha_3}` = ∅ e cai no **ramo do meio**: loga `apresentacao_sem_entrega_descartada`, apaga D e E, e roda o turno **inteiro** — chamada paga ao modelo, `reagir`, busca nova, prosa nova — para um lead que já recebeu uma ficha daquele turno.
+
+**Não é regressão.** A `main` fazia o mesmo neste caso, porque lá toda retentativa rodava o turno inteiro. O que a TEC-275 acrescenta é a expectativa de que uma entrega parcial seja continuada; este é o caso em que ela não é.
+
+**A metade de código é card própria, e por isso não entra na onda de conserto desta revisão.** Fazer a linha repetida virar um fato de M2 mexe na semântica de duas coisas: o `UNIQUE (channel, conversation_key, imovel_id)`, que é por conversa e para sempre, e o `reacao_lead`, que hoje guarda a opinião do lead sobre o **imóvel** e não sobre a **apresentação**. Nenhuma das duas cabe num conserto local, e as duas mudam o que `ler_pendentes` significa.
+
+**E o buraco já existe antes desta card.** Para **toda** reapresentação, a linha repetida carrega o `reacao_lead` da vez anterior; se o lead já tinha reagido a ela, `ler_pendentes` a omite, e a lista que o ordinal do turno seguinte numera não contém o cartão que ele acabou de ver — "gostei do segundo" cai no terceiro. Isso vem da TEC-163 (D7, o ordinal como posição na lista de pendentes) e a TEC-275 **herda**; quanto ao ordinal, ela não cria nem agrava.
