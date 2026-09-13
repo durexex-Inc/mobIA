@@ -194,13 +194,65 @@ async def test_devolver_reativa_o_agente(cliente_http, semear_corretor) -> None:
     assert resposta["assumidoPor"] == str(corretor.id)
 
 
-async def test_devolver_o_que_ninguem_assumiu_e_409(cliente_http) -> None:
+async def test_devolver_o_que_ninguem_assumiu_e_409(cliente_http, semear_corretor) -> None:
+    """Corretor existente e ativo, para exercitar o 409 e nao o 404 da
+    validacao acrescentada pela revisao -- ver `test_devolver_com_corretor_*`
+    para os dois casos que o `corretor_id` invalido cobre.
+    """
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+
     resposta = await cliente_http.post(
         "/api/v1/conversas/devolver",
-        json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(uuid.uuid4())},
+        json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
         headers={"X-Admin-Token": TOKEN},
     )
     assert resposta.status_code == 409
+
+
+async def test_devolver_com_corretor_inexistente_e_404(cliente_http, semear_corretor) -> None:
+    """Achado da revisao (Major): sem validar, um `corretor_id` inexistente
+    numa conversa de fato assumida faz o UPDATE achar a linha e violar a FK
+    `fk_atendimento_devolvido_por` -- 500 em vez de 404. `devolver` valida o
+    corretor do mesmo jeito que `assumir` (`_corretor_apto`), fechando o
+    buraco.
+    """
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+    cabecalho = {"X-Admin-Token": TOKEN}
+    await cliente_http.post(
+        "/api/v1/conversas/assumir",
+        json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
+        headers=cabecalho,
+    )
+
+    resposta = await cliente_http.post(
+        "/api/v1/conversas/devolver",
+        json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(uuid.uuid4())},
+        headers=cabecalho,
+    )
+
+    assert resposta.status_code == 404
+
+
+async def test_devolver_com_corretor_inativo_e_recusado(cliente_http, semear_corretor) -> None:
+    """Mesmo desfecho que `assumir` da para corretor inativo -- 404, pela
+    mesma `_corretor_apto`.
+    """
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+    inativo = await semear_corretor(email=f"i-{uuid.uuid4().hex[:8]}@ex.com", ativo=False)
+    cabecalho = {"X-Admin-Token": TOKEN}
+    await cliente_http.post(
+        "/api/v1/conversas/assumir",
+        json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
+        headers=cabecalho,
+    )
+
+    resposta = await cliente_http.post(
+        "/api/v1/conversas/devolver",
+        json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(inativo.id)},
+        headers=cabecalho,
+    )
+
+    assert resposta.status_code == 404
 
 
 async def test_assumir_aceita_o_handoff_pendente_junto(

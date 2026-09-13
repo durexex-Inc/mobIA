@@ -137,7 +137,14 @@ async def devolver(
     Qualquer corretor pode devolver, nao so quem assumiu -- ver o docstring
     de `devolver` em `domain/atendimento/repositorio.py` (mesma D2: nao ha
     identidade provada, exigir o mesmo corretor travaria o caso real de
-    quem assumiu e saiu de ferias).
+    quem assumiu e saiu de ferias). Isso e sobre QUEM devolve nao precisar
+    ser quem assumiu -- nao sobre dispensar a validacao do corretor: o
+    `corretor_id` grava em `devolvido_por`, que tem a mesma FK para
+    `corretores.id` que `assumido_por` tem, entao esta rota valida o
+    corretor do mesmo jeito que `assumir` (`_corretor_apto`, existe e
+    ativo). Sem isto, um `corretor_id` inexistente numa conversa de fato
+    assumida faria o UPDATE achar a linha, tentar gravar o FK invalido, e
+    estourar `IntegrityError` -- 500 em vez do 404 previsivel.
 
     A resposta confirma quem tinha a conversa e desde quando -- nao "quem
     devolveu". Duas razoes: `corretor_id` ja e informacao que quem chamou
@@ -150,6 +157,12 @@ async def devolver(
     """
     session_factory = get_sessionmaker()
     async with session_factory() as session:
+        if not await _corretor_apto(session, pedido.corretor_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="corretor nao existe ou esta inativo",
+            )
+
         atendimento = await atendimento_repo.devolver(
             session,
             channel=pedido.channel,
