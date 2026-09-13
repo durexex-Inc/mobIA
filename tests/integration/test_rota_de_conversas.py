@@ -380,3 +380,88 @@ async def test_handoff_aceito_ao_assumir_para_de_ser_varrido(
     assert total == 0
     linha = await _handoff(session, handoff_id)
     assert linha.status == Status.ACEITO
+
+
+async def test_devolver_conclui_o_handoff_aberto(
+    cliente_http, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
+) -> None:
+    """D2: o espelho da D6 da TEC-179. Assumir aceita, devolver conclui.
+
+    E a valvula de saida do indice da Task 1: sem ela a conversa ficaria
+    presa ao mesmo handoff para sempre, porque `CONCLUIDO` nao tinha
+    escritor nenhum antes desta card.
+    """
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+    handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=CHANNEL, conversa=CHAVE)
+    cabecalho = {"X-Admin-Token": TOKEN}
+    corpo = {"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)}
+
+    await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    resposta = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+
+    assert resposta.status_code == 200
+    linha = await _handoff(session, handoff_id)
+    assert linha.status == Status.CONCLUIDO
+
+
+async def test_devolver_conclui_tambem_o_handoff_escalado(
+    cliente_http, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
+) -> None:
+    """Nao ha lista de estados: o criterio e "nao esta CONCLUIDO".
+
+    Um handoff escalado que alguem assumiu e devolveu esta tao encerrado
+    quanto um aceito.
+    """
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+    handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=CHANNEL, conversa=CHAVE)
+    cabecalho = {"X-Admin-Token": TOKEN}
+    corpo = {"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)}
+
+    await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    await _marcar_handoff(session, handoff_id=handoff_id, status=Status.ESCALADO)
+
+    resposta = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+
+    assert resposta.status_code == 200
+    linha = await _handoff(session, handoff_id)
+    assert linha.status == Status.CONCLUIDO
+
+
+async def test_devolver_sem_handoff_nenhum_funciona(cliente_http, semear_corretor) -> None:
+    """Nem toda conversa assumida gerou handoff -- exigir um quebraria o
+    caso comum, pelo mesmo argumento que `assumir` ja aplica."""
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+    cabecalho = {"X-Admin-Token": TOKEN}
+    corpo = {"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)}
+
+    await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    resposta = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+
+    assert resposta.status_code == 200
+
+
+async def test_devolver_duas_vezes_e_409_e_o_handoff_segue_concluido(
+    cliente_http, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
+) -> None:
+    """A segunda devolucao e 409 (a conversa nao esta assumida) e o handoff
+    continua CONCLUIDO.
+
+    **O que este teste NAO prova:** que o 409 acontece antes do UPDATE. Ele
+    nao consegue distinguir isso -- depois da primeira devolucao o handoff ja
+    esta CONCLUIDO, entao o `WHERE status != CONCLUIDO` nao casaria de
+    qualquer jeito, e o teste passa pelas duas razoes. Dizer o contrario
+    seria docstring que afirma o que o teste nao exercita."""
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+    handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=CHANNEL, conversa=CHAVE)
+    cabecalho = {"X-Admin-Token": TOKEN}
+    corpo = {"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)}
+
+    await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    primeira = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+    assert primeira.status_code == 200
+
+    segunda = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+
+    assert segunda.status_code == 409
+    linha = await _handoff(session, handoff_id)
+    assert linha.status == Status.CONCLUIDO

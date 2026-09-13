@@ -1,7 +1,8 @@
 """As duas rotas que escrevem o silencio do agente sobre uma conversa.
 
-TEC-179, RN-16.4, D6 do desenho (o aceite do handoff junto) e a Emenda E-01
-da secao 6.5 do SRS (aceitar depois da escalada e permitido).
+TEC-179, RN-16.4, D6 do desenho (o aceite do handoff junto), a Emenda E-01
+da secao 6.5 do SRS (aceitar depois da escalada e permitido) e a TEC-278
+(D2: devolver conclui o handoff aberto da mesma conversa).
 
 **Nao existe `conversaId` (D9 do desenho).** O SRS escreve
 `/conversas/{conversaId}`, mas essa entidade nao existe neste sistema -- a
@@ -139,6 +140,9 @@ async def devolver(
 ) -> dict[str, object]:
     """O corretor devolve a conversa: o agente volta a falar.
 
+    **Conclui junto o handoff aberto da mesma conversa (D2), na mesma
+    transacao** -- ver o comentario do UPDATE abaixo.
+
     Qualquer corretor pode devolver, nao so quem assumiu -- ver o docstring
     de `devolver` em `domain/atendimento/repositorio.py` (mesma D2: nao ha
     identidade provada, exigir o mesmo corretor travaria o caso real de
@@ -179,6 +183,36 @@ async def devolver(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="conversa nao esta assumida",
             )
+
+        agora = datetime.now(UTC)
+        # D2 do desenho: o espelho da Emenda E-02 da RN-16.4, que fez
+        # `assumir` aceitar o handoff. Aqui ele e CONCLUIDO -- o handoff
+        # existe para entregar o lead a um humano, e quando o humano devolve
+        # a conversa ao agente essa entrega acabou.
+        #
+        # **`!= CONCLUIDO` e nao uma lista de estados**, ao contrario do
+        # `_ACEITAVEIS` que `assumir` usa tres funcoes acima. Duas razoes: o
+        # criterio aqui e literalmente "ainda esta aberto", e uma lista
+        # precisaria de manutencao toda vez que o enum crescesse; e este e
+        # exatamente o predicado do indice parcial
+        # `uq_handoffs_conversa_pendente` (ver `handoff/models.py`), que os
+        # dois precisam espelhar para nao divergirem em silencio.
+        #
+        # Casar zero linhas nao e erro: nem toda conversa assumida gerou
+        # handoff, mesmo argumento que `assumir` ja aplica.
+        #
+        # **Concluir o handoff NAO encerra a conversa** -- a RN-02.3 junta os
+        # dois e a emenda da TEC-278 os separa. Devolver a conversa ao agente
+        # e retomar o atendimento automatico, nao encerra-lo.
+        await session.execute(
+            update(Handoff)
+            .where(
+                Handoff.channel == pedido.channel,
+                Handoff.conversation_key == pedido.conversation_key,
+                Handoff.status != Status.CONCLUIDO.value,
+            )
+            .values(status=Status.CONCLUIDO.value, atualizado_em=agora)
+        )
         await session.commit()
 
     return {

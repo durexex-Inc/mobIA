@@ -36,7 +36,7 @@ class Prioridade(StrEnum):
 
 
 class Status(StrEnum):
-    """CONCLUIDO ainda nao tem escritor -- a TEC-179 nao o trouxe. Ver o modelo."""
+    """CONCLUIDO ganhou escritor na TEC-278 -- `devolver` em `conversas.py`. Ver o modelo."""
 
     PENDENTE = "PENDENTE"
     ACEITO = "ACEITO"

@@ -58,14 +58,14 @@ class Handoff(Base):
     # contraria a RN-04.6.
     prioridade: Mapped[str] = mapped_column(String(8), nullable=False)
 
-    # Nasce PENDENTE (TEC-174). Desde a TEC-178 tres dos quatro valores tem
+    # Nasce PENDENTE (TEC-174). Desde a TEC-278 os quatro valores tem
     # escritor: ACEITO vem de DOIS lugares -- a rota de aceite
     # (`api/routes/handoffs.py`) e, desde a TEC-179, o `assumir` de
     # `api/routes/conversas.py` (D6: assumir a conversa aceita junto o
     # handoff PENDENTE ou ESCALADO dela). ESCALADO vem de dois lugares --
     # `handoff/escalada.py`, quando o prazo vence, e `notificacao/envio.py`,
-    # quando nao ha destinatario nenhum a quem cobrar. CONCLUIDO segue sem
-    # escritor -- a TEC-179 so cobriu ACEITO, nao esse ultimo valor.
+    # quando nao ha destinatario nenhum a quem cobrar. CONCLUIDO vem do
+    # `devolver` da TEC-278 (`api/routes/conversas.py`), o unico escritor dele.
     #
     # O enum nasceu completo na TEC-174 porque mudar valor de enum depois
     # custa migration, e o `IN` do CHECK e o unico lugar a mexer.
@@ -167,11 +167,18 @@ class Handoff(Base):
             "status IN ('PENDENTE', 'ACEITO', 'ESCALADO', 'CONCLUIDO')",
             name="ck_handoffs_status",
         ),
+        # TEC-278: o handoff bloqueia a conversa ate ser CONCLUIDO, nao ate
+        # sair de PENDENTE. ACEITO e ESCALADO tambem contam como aberto --
+        # CONCLUIDO ganhou o primeiro escritor em `POST
+        # /api/v1/conversas/devolver`, e e ele que separa "aberto" de
+        # "encerrado". O nome do indice ficou impreciso de proposito: ele
+        # aparece em comentario e na migration 0023, e renomear e churn sem
+        # ganho. Ver `alembic/versions/0030_handoff_aberto.py`.
         Index(
             "uq_handoffs_conversa_pendente",
             "channel",
             "conversation_key",
             unique=True,
-            postgresql_where=text("status = 'PENDENTE'"),
+            postgresql_where=text("status <> 'CONCLUIDO'"),
         ),
     )
