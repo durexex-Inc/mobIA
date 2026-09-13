@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from mobia.domain.handoff.sla import (
@@ -89,6 +89,23 @@ def test_um_prazo_maior_que_o_dia_atravessa_varios_dias() -> None:
     assert limite == _em_sp(2026, 9, 16, 12, 30)
 
 
+def test_jornada_degenerada_levanta() -> None:
+    """M4 da revisao final: a validacao (Task 1, ledger) nao tinha teste --
+    quem apagasse o `raise` ficaria com a suite verde e um `while True` que
+    nunca termina, porque a janela disponivel por dia nunca seria positiva.
+    """
+    import pytest
+
+    with pytest.raises(ValueError, match="degenerada"):
+        limite_de_aceite(
+            inicio=_em_sp(2026, 9, 15, 10, 0),
+            minutos=15,
+            jornada_inicio=18,
+            jornada_fim=9,
+            fuso=SP,
+        )
+
+
 def test_instante_ingenuo_levanta() -> None:
     """Mesma razao de `horario_permite_envio`: `astimezone` num naive assume o
     fuso do SISTEMA, e esta maquina difere do runner do CI."""
@@ -105,6 +122,11 @@ def test_instante_ingenuo_levanta() -> None:
 
 
 def test_o_limite_devolvido_e_aware_e_em_utc() -> None:
+    """`tzinfo is not None` nao provaria UTC -- `limite_de_aceite` recusa
+    `inicio` ingenuo, entao o resultado e sempre aware, mesmo trocando o
+    `.astimezone(UTC)` final por `.astimezone(fuso)`. `utcoffset() ==
+    timedelta(0)` e a asserção que so passa mesmo em UTC.
+    """
     limite = limite_de_aceite(
         inicio=datetime(2026, 9, 15, 13, 0, tzinfo=UTC),
         minutos=15,
@@ -112,4 +134,4 @@ def test_o_limite_devolvido_e_aware_e_em_utc() -> None:
         jornada_fim=18,
         fuso=SP,
     )
-    assert limite.tzinfo is not None
+    assert limite.utcoffset() == timedelta(0)

@@ -28,7 +28,7 @@ async def escalar_vencidos(
     canais: Sequence[CanalDeNotificacaoPort],
     limite: int = 100,
 ) -> int:
-    """Escala os handoffs PENDENTE vencidos e avisa o gerente. Devolve quantos.
+    """Escala os handoffs PENDENTE vencidos e tenta avisar o gerente. Devolve quantos.
 
     **A selecao e a garantia de nao repetir -- D6.** `status = 'PENDENTE' AND
     sla_limite_em IS NOT NULL AND sla_limite_em < agora`. Escalar muda o
@@ -64,6 +64,17 @@ async def escalar_vencidos(
     **Sem gerente cadastrado, o handoff escala do mesmo jeito.** A marcacao e
     o que importa -- e o gatilho para a rota da Task 6 seguinte parar de
     valer para este handoff; o aviso e so o que falta, e vira log.
+
+    **M7 da revisao final, declarada e nao corrigida aqui:** o `commit()`
+    acima vem ANTES de `gerente_ativo` e do laco que loga por handoff. Uma
+    excecao no meio do laco (um `KeyError` de `destino_por_canal` por canal
+    mal configurado, ou uma falha de banco em `gerente_ativo`) interrompe
+    tudo depois do commit -- as linhas ja ficaram `ESCALADO`, mas nem todo
+    handoff escalado nesta passagem ganha o `handoff.escalado` ou
+    `handoff.escalado_sem_gerente` correspondente. Pela L4, o log e hoje o
+    unico artefato observavel da escalada -- entao esse evento fica
+    invisivel para quem so olha o log, embora o estado no banco continue
+    correto.
     """
     agora = datetime.now(UTC)
 

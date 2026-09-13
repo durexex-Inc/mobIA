@@ -149,8 +149,8 @@ async def test_sla_limite_em_e_aceito_em_nascem_nulas(session: AsyncSession) -> 
 
     `sla_limite_em` so e gravada pelo job de notificacao, que conhece a
     jornada do corretor destinatario -- a criacao do handoff (aqui, via
-    `registrar_handoff`) nao. `aceito_em` so existe depois da rota de aceite,
-    que esta card nem implementa ainda.
+    `registrar_handoff`) nao. `aceito_em` so e gravado pela rota de aceite
+    (`api/routes/handoffs.py`).
     """
     registro = await registrar_handoff(
         session,

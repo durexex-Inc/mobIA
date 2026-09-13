@@ -454,7 +454,10 @@ async def test_notificar_duas_vezes_nao_recalcula_o_sla(
     handoff_id = await semear_handoff_com_resumo(resumo="texto")
 
     assert await notificar(
-        session_factory, canais=(_CanalEspiao("email"),), outbound=_OutboundFalso(), handoff_id=handoff_id
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        outbound=_OutboundFalso(),
+        handoff_id=handoff_id,
     )
     primeira = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
     sla_original = primeira.sla_limite_em
@@ -469,7 +472,10 @@ async def test_notificar_duas_vezes_nao_recalcula_o_sla(
     await session.commit()
 
     assert await notificar(
-        session_factory, canais=(_CanalEspiao("email"),), outbound=_OutboundFalso(), handoff_id=handoff_id
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        outbound=_OutboundFalso(),
+        handoff_id=handoff_id,
     )
 
     session.expire(primeira)

@@ -118,6 +118,27 @@ async def test_segundo_aceite_devolve_409_e_nao_sobrescreve_aceito_em(
     assert linha.aceito_em == aceito_em_original
 
 
+async def test_aceitar_dentro_do_prazo_com_sla_real_e_true(
+    cliente_http, session: AsyncSession, semear_handoff_com_resumo
+) -> None:
+    """M5 da revisao final: o ramo com `sla_limite_em` NAO nulo e aceite
+    dentro do prazo nunca era exercitado -- so o nulo (por vacuidade, linha
+    88 acima) e o vencido (linha ~142 abaixo). Este e o cenario "Aceite
+    dentro do prazo" do Gherkin, listado como exercitado na tabela do
+    desenho.
+    """
+    handoff_id = await semear_handoff_com_resumo(resumo="texto")
+    prazo_futuro = datetime.now(UTC) + timedelta(hours=1)
+    await _marcar(session, handoff_id=handoff_id, sla_limite_em=prazo_futuro)
+
+    resposta = await cliente_http.post(
+        f"/api/v1/handoffs/{handoff_id}/aceitar", headers={"X-Admin-Token": TOKEN}
+    )
+
+    assert resposta.status_code == 200
+    assert resposta.json()["dentroDoSla"] is True
+
+
 async def test_aceitar_handoff_escalado_e_permitido(
     cliente_http, session: AsyncSession, semear_handoff_com_resumo
 ) -> None:

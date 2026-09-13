@@ -80,6 +80,8 @@ Decisão do Eduardo em 13/09/2026, entre três alternativas. Não existe gerente
 
 **Custo declarado:** mistura "papel" numa tabela que a TEC-201 e a TEC-202 vão querer governar depois, quando houver `usuarios` e papéis de verdade. É dívida consciente, e a alternativa — inventar a entidade Gerente agora — seria inventar duas vezes.
 
+**M8 da revisão final:** `gerente` e `plantão` são cascatas independentes de propósito (sem `CHECK` de exclusividade — `test_gerente_e_plantao_sao_cascatas_independentes` prova as duas ligadas no mesmo corretor), e isso significa que o mesmo corretor pode ser tanto o destinatário original quanto o gerente que recebe a escalada. Um handoff que ele não aceitou dentro do prazo é escalado de volta para ele mesmo — a cobrança vira eco. Numa imobiliária de uma pessoa só isso é inevitável; numa maior, é uma consequência do desenho que ninguém decidiu explicitamente.
+
 **Vira emenda à RN-16.3.**
 
 ### D8 — Entra a rota de aceite que o SRS especifica e nada implementa
@@ -130,6 +132,22 @@ O PR-06 do SRS diz que o corretor atende *"de segunda a sábado"*. Corrigir exig
 ### L4 — Nada mostra a escalada a ninguém
 
 O handoff fica `ESCALADO` no banco e o evento sai no log. **Não há painel** — é a E8 —, e a notificação não entrega (L2). Na prática, hoje a escalada é visível para quem consultar o banco.
+
+### L5 — Um handoff que sai de `PENDENTE` libera a conversa para um segundo handoff (Ruling R5, revisão final)
+
+O índice parcial único `uq_handoffs_conversa_pendente` (`domain/handoff/repositorio.py`) só cobre `status = 'PENDENTE'`, e é ele que o `ON CONFLICT` de `registrar_handoff` usa para decidir se atualiza o handoff existente ou insere um novo. A L4 da TEC-174 declarou que isso era inócuo *"enquanto a TEC-178 e a TEC-179 não existirem"* — e esta card é a TEC-178, a primeira a tirar um handoff de `PENDENTE` (para `ACEITO` ou `ESCALADO`).
+
+Consequência: um lead cujo handoff foi aceito às 10:00 e que dispara de novo o gatilho de intenção às 10:05 gera um **segundo** handoff completo — novo resumo, nova notificação, novo `sla_limite_em` — porque `registrar_handoff` não encontra mais linha `PENDENTE` para atualizar. Às 10:20 a varredura pode escalar esse segundo handoff e cobrar o gerente por um lead que já tem dono, ainda que o primeiro handoff siga `ACEITO`.
+
+Fechar isso exige decidir quando uma conversa deixa de estar em handoff (por exemplo alargar o índice parcial para `status IN ('PENDENTE', 'ACEITO')`) — decisão de produto que muda um índice desenhado pela TEC-174, e por isso é da **TEC-179**, não desta card.
+
+### L6 — Um handoff pode ficar `PENDENTE` com prazo nulo para sempre, sem que a varredura o veja (Ruling R7, revisão final)
+
+`escalar_vencidos` exige `sla_limite_em IS NOT NULL`, e o prazo só é gravado dentro de `notificar` (D3). Quem enfileira `notificar` é `gerar_resumo` (`workers/jobs/gerar_resumo.py`), dentro de um `try/except Exception` que **engole a falha de `enqueue_job`** e só loga `notificacao.nao_agendada` — decisão da TEC-175/177, para que uma falha do Redis não perca o resumo já gravado.
+
+Se o `enqueue_job` falhar (Redis indisponível no instante, ou as retentativas de `notificar_corretor` esgotadas por erro de banco antes de gravar o prazo), o handoff fica `PENDENTE`, com `sla_limite_em` e `notificado_em` nulos — e a varredura, por desenho (D6), nunca o toca. É o "handoff que ninguém viu fica parado" do próprio Objetivo desta card, chegando por uma porta que a D3 não cobre: o cálculo do prazo ficou acoplado ao mesmo job que deveria ser a rede de segurança dele.
+
+Fechar isso é decisão de produto (por exemplo um segundo braço na varredura, `status = 'PENDENTE' AND sla_limite_em IS NULL AND criado_em < agora - <piso>`, com um piso a definir) e não deve entrar sem uma card própria.
 
 ## Fora de escopo
 

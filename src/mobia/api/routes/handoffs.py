@@ -111,9 +111,13 @@ async def aceitar(handoff_id: uuid.UUID, _: None = Depends(exigir_admin)) -> dic
             return {
                 "status": Status.ACEITO.value,
                 "aceitoEm": agora.isoformat(),
-                # Sem prazo (handoff sem destinatario, Emenda E-02 da
-                # RN-16.3), nao ha o que estourar -- conta como dentro do
-                # prazo por vacuidade, nunca como "prazo zero".
+                # `sla_limite_em` nulo tem DOIS significados possiveis (ver o
+                # modelo e a migration 0028): "ainda nao notificado" (o
+                # handoff acabou de nascer e `notificar` nao rodou) ou "nao
+                # havia a quem cobrar" (handoff sem destinatario, Emenda E-02
+                # da RN-16.3, nulo PARA SEMPRE). Nos dois casos nao ha prazo
+                # para estourar -- conta como dentro do prazo por vacuidade,
+                # nunca como "prazo zero".
                 "dentroDoSla": linha.sla_limite_em is None or agora <= linha.sla_limite_em,
             }
 

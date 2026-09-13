@@ -136,7 +136,7 @@ async def test_gerente_inativo_nao_conta(session: AsyncSession, semear_corretor)
 async def test_gerente_e_plantao_sao_cascatas_independentes(
     session: AsyncSession, semear_corretor
 ) -> None:
-    """Um corretor pode ser gerente e plantao ao mesmo tempo (RN-16.3, D3).
+    """Um corretor pode ser gerente e plantao ao mesmo tempo (D7, Emenda E-03 da RN-16.3).
 
     As duas funcoes resolvem o mesmo corretor cada uma pela sua propria
     coluna -- a prova de que uma cascata nao influencia a outra.

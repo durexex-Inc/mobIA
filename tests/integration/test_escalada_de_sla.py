@@ -50,7 +50,7 @@ def _eventos_de_log(caplog, evento: str) -> list[dict]:
     return encontrados
 
 
-async def test_handoff_vencido_escala_e_avisa_o_gerente(
+async def test_handoff_vencido_escala_e_tenta_avisar_o_gerente(
     session: AsyncSession, session_factory, semear_handoff_com_resumo, semear_corretor
 ) -> None:
     await semear_corretor(email="gerente@x.com", gerente=True)
@@ -120,6 +120,32 @@ async def test_handoff_com_sla_nulo_nao_e_tocado(
     linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
     assert linha.status == Status.PENDENTE
     assert linha.sla_limite_em is None
+
+
+async def test_escalada_nao_vaza_o_resumo_no_log_nem_no_canal(
+    session: AsyncSession, session_factory, semear_handoff_com_resumo, semear_corretor, caplog
+) -> None:
+    """M9 da revisao final: o precedente e `test_resumir_loga_metricas_sem_conteudo`
+    (`tests/unit/test_resumo.py`). Hoje `escalar_vencidos` nao decifra o
+    resumo e o `corpo` da cobrança e texto fixo -- mas nada testado impede
+    que a proxima mao acrescente o resumo ao corpo ou ao log da escalada.
+    """
+    texto_do_resumo_do_lead = "## Quem e o lead\nfulano de tal, cpf 000.000.000-00"
+    await semear_corretor(email="gerente@x.com", gerente=True)
+    handoff_id = await semear_handoff_com_resumo(resumo=texto_do_resumo_do_lead)
+    await _marcar_sla(
+        session, handoff_id=handoff_id, sla_limite_em=datetime.now(UTC) - timedelta(minutes=1)
+    )
+    email = _CanalEspiao("email")
+
+    with caplog.at_level("INFO"):
+        total = await escalar_vencidos(session_factory, canais=(email,))
+
+    assert total == 1
+    assert len(email.recebidas) == 1
+    _, _, corpo = email.recebidas[0]
+    assert "fulano" not in corpo
+    assert "fulano" not in caplog.text
 
 
 async def test_sem_gerente_cadastrado_escala_mesmo_assim_e_loga(
