@@ -71,7 +71,7 @@ No topo de `executar_turno`, antes da passagem de reação:
 | Estado | O que o lead viu | Ramo |
 |---|---|---|
 | Nenhuma linha com este `message_id` | — | Turno normal |
-| Linhas, nenhuma reserva de ficha | Nada | **Apaga as órfãs** e roda o turno inteiro |
+| Linhas, nenhuma reserva de ficha | Nada — salvo a entrada (b) da L4 | **Apaga as órfãs** e roda o turno inteiro |
 | Linhas + reservas parciais ou totais | Parte ou tudo | **Continuação** |
 
 O ramo do meio existe por um caso limite real: **se a ficha que falha é a primeira, nada chegou ao lead** — nem as fichas, nem a prosa do agente, que viaja junto com a ficha 1 (D5 da TEC-162) e não está persistida em lugar nenhum se não chegou a sair. Continuar uma entrega em que nada saiu não é continuar; é recomeçar.
@@ -97,6 +97,8 @@ Esta decisão governa a ORDEM em que a continuação entrega. Ela **não** gover
 `conciliar_apresentacao` recebe hoje o `agora` do lote. A continuação passa o `apresentado_em` **persistido**, não um `now()` novo.
 
 Metade do conserto está aqui: com o carimbo original, as linhas do próprio lote deixam de ser `apresentado_em < agora` e o Caminho 2 não tem o que fechar. E o ramo que apaga (`apresentado_em == agora`) volta a casar as linhas do lote, que é o que permite aplicar a D7 abaixo.
+
+**Um `message_id` quase sempre tem um só carimbo persistido, mas pode ter dois.** `apagar_apresentacao_da_mensagem` (o ramo do meio da D4) carrega `reacao_lead IS NULL`, e a L3 já registra que um `gravar_reacoes` intercalado de OUTRA mensagem da mesma conversa fecha pendências por conversa, não por mensagem — inclusive as deste lote. Uma linha fechada assim sobrevive ao descarte; o ramo do meio roda o turno inteiro de novo e grava linhas novas com o MESMO `message_id` e um carimbo NOVO. O resultado é duas famílias de linha sob um único `message_id`: a sobrevivente, mais antiga, e a do lote que acabou de nascer. Nesse caso a continuação usa o carimbo **mais recente** e restringe o lote às linhas que o carregam — a sobrevivente pertence a uma apresentação anterior desta mesma mensagem, e continuá-la reentregaria o que o lead já reagiu.
 
 ### D7 — Conjunto incompleto: entrega o que restou
 

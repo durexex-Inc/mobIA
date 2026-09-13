@@ -163,8 +163,9 @@ async def gravar_recomendacoes(
     momento: `apagar_recomendacao_nao_entregue` apaga a linha da ficha recusada
     na hora da recusa (D8), `conciliar_apresentacao` apaga no fim do laco as que
     sobraram e fecha as pendentes que esta apresentacao supera, e
-    `apagar_apresentacao_da_mensagem` apaga o lote inteiro quando a retentativa
-    descobre que NENHUMA ficha chegou a sair (D4).
+    `apagar_apresentacao_da_mensagem` apaga o lote inteiro quando nenhum kind
+    DESTE lote tem reserva -- quase sempre porque nenhuma ficha saiu, mas nao
+    so (D4; ver a L4 do desenho da TEC-275).
 
     **`relaxou_preco`/`relaxou_bairro` sao do RESULTADO, `criterios` e do
     PEDIDO.** Os dois entram na frase por `motivo_do_match`, e o porque esta
