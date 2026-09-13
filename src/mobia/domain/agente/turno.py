@@ -517,14 +517,15 @@ async def executar_turno(
             kind=KIND_DA_CONFIRMACAO_DE_OPTOUT,
             subagent=SUBAGENTE_OPTOUT,
         )
-        # `_entregar_texto_fixo` devolve "expirado", "sem_resposta",
-        # "reentrega_suprimida" ou "bloqueado_por_atendimento_humano" quando
-        # nao entrega -- nunca "bloqueado_por_optout" NESTE chamador
-        # especifico, porque o proprio `_entregar_texto_fixo` pula aquela
-        # checagem para o kind da confirmacao (ver o comentario la dentro).
-        # Esses desfechos sao sobre o ENVIO da confirmacao, e o opt-out ja
-        # esta gravado -- entao eles passam adiante como estao, e so o
-        # caminho de sucesso vira "opt_out".
+        # `_entregar_texto_fixo` devolve "expirado", "sem_resposta" ou
+        # "reentrega_suprimida" quando nao entrega -- nunca
+        # "bloqueado_por_optout" nem "bloqueado_por_atendimento_humano" NESTE
+        # chamador especifico, porque o proprio `_entregar_texto_fixo` pula as
+        # DUAS checagens para o kind da confirmacao (ver o comentario la
+        # dentro, nos dois `if kind != KIND_DA_CONFIRMACAO_DE_OPTOUT`). Esses
+        # desfechos sao sobre o ENVIO da confirmacao, e o opt-out ja esta
+        # gravado -- entao eles passam adiante como estao, e so o caminho de
+        # sucesso vira "opt_out".
         return "opt_out" if desfecho_da_confirmacao == "respondido" else desfecho_da_confirmacao
 
     if corpo:

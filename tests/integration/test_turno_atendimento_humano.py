@@ -2,9 +2,11 @@
 
 Espelha `tests/integration/test_turno_optout.py` na forma -- mesmas fixtures
 (`rodar_turno`, os dubles de `tests/conftest.py`) --, mas exercita a guarda de
-atendimento humano em vez da de opt-out. So os tres cenarios do Gherkin desta
-task: a saida barata do topo, a mensagem do lead que continua registrada, e a
-devolucao que reabre o turno.
+atendimento humano em vez da de opt-out. Os tres cenarios do Gherkin desta
+task -- a saida barata do topo, a mensagem do lead que continua registrada, e
+a devolucao que reabre o turno -- mais a corrida do recheque concorrente (nos
+dois sitios) e o opt-out numa conversa assumida (registro e reserva
+duplicada), que nao sao cenarios do Gherkin.
 
 A armadilha do setup: `rodar_turno` chama `executar_turno(get_sessionmaker(),
 ...)`, e o turno abre sessoes proprias. `assumir` (e `devolver`) tem de estar
@@ -239,10 +241,10 @@ async def test_bloqueio_da_guarda_na_entrada_bloqueada_tambem_nao_vira_reentrega
     """Mesma corrida, mas no terceiro sitio do recheque -- dentro de
     `_entregar_texto_fixo`, no caminho da recusa de entrada. Este sitio nao
     esta no brief da task (que so nomeava os dois do bloco principal), mas
-    tem o mesmo problema: a guarda de atendimento humano barra TODO kind,
-    inclusive o da recusa de entrada, e sem este recheque o bloqueio virava
-    `reentrega_suprimida` -- o mesmo alarme falso que o resto da task existe
-    para evitar.
+    tem o mesmo problema: a guarda de atendimento humano barra TODO kind
+    exceto `KIND_DA_CONFIRMACAO_DE_OPTOUT`, inclusive o da recusa de entrada,
+    e sem este recheque o bloqueio virava `reentrega_suprimida` -- o mesmo
+    alarme falso que o resto da task existe para evitar.
     """
     corretor = await semear_corretor(email=f"corretor-{uuid.uuid4().hex[:8]}@ex.com")
     outbound = _OutboundQueAssumeNoMeio(
@@ -292,7 +294,7 @@ async def test_pedido_de_optout_numa_conversa_assumida_e_registrado(
     defeito de LGPD: a pessoa pediu para sair e o sistema nao tem como provar
     que o pedido chegou.
 
-    A asserção que prova a correcao 1 e a de `esta_em_optout`: ela tem de ser
+    A assercao que prova a correcao 1 e a de `esta_em_optout`: ela tem de ser
     True depois do turno, INDEPENDENTE de a confirmacao ter saido ou nao. As
     demais (resultado == "opt_out", outbound.entregues) provam que a
     correcao 2 (a escotilha de `KIND_DA_CONFIRMACAO_DE_OPTOUT` na guarda de
@@ -317,7 +319,7 @@ async def test_pedido_de_optout_numa_conversa_assumida_e_registrado(
         session, classificador, outbound, resumidor_fake(), contador_fake(), texto="parar"
     )
 
-    # A asserção que falsifica a saida barata incondicional: com o bug, esta
+    # A assercao que falsifica a saida barata incondicional: com o bug, esta
     # linha reprova (esta_em_optout devolve False -- o registro nunca rodou).
     assert await esta_em_optout(session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE), (
         "o opt-out tem de ser registrado mesmo numa conversa assumida"

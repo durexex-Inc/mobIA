@@ -168,6 +168,16 @@ A quinta regra da card manda que a reativação seja sempre explícita, e é o q
 
 Não há varredura que devolva por inatividade, e não há prazo. Diferente do handoff, que tem SLA e escalada desde a TEC-178, o silêncio não tem relógio. Criar um contraria a regra da card; deixá-lo assim é o desenho aprovado, e a consequência é esta.
 
+### L5 — Aceitar o handoff pela rota da TEC-178 não silencia a conversa
+
+`assumir` virou segundo escritor de `Status.ACEITO` (D6). O inverso não existe: `POST /api/v1/handoffs/{id}/aceitar` (TEC-178) move o handoff para ACEITO e **a conversa continua falante**.
+
+**Cenário concreto.** Handoff PENDENTE. O corretor faz exatamente o que a TEC-178 lhe deu para fazer — bate em `/handoffs/{id}/aceitar`, o 200 volta com `aceitoEm` e `dentroDoSla`, e ele começa a falar com o lead pelo WhatsApp. `atendimento_humano` continua sem linha, `esta_silenciada` devolve False, e o agente responde a próxima mensagem do lead por cima dele. É a história literal desta card — "agente e corretor respondendo em paralelo é pior do que não ter agente" —, alcançável pela rota que o próprio épico entregou uma card antes (TEC-178).
+
+**Não há painel (E8/L1) avisando ninguém que existem dois botões e que só um deles cala o agente.** Quem aceita pelo caminho do handoff tem todo motivo para achar que já assumiu a conversa.
+
+**Não é defeito de código.** Fechar essa lacuna significaria fazer `aceitar` silenciar também — e isso acoplaria a rota da TEC-178 a esta card na direção **inversa** da D6 (que acopla só assumir→aceitar, não aceitar→silenciar). É decisão de produto, não de implementação: qual dos dois botões (ou os dois) deve calar o agente é pergunta para quem escreveu a história, não para quem lê o código. Fica declarada e não implementada nesta card — mesmo argumento das lacunas L1 a L4.
+
 ## Fora de escopo
 
 A interface do dashboard para assumir e devolver (E8, exclusão da própria card). A rota de envio manual do corretor. Identidade autenticada e papéis (TEC-201, TEC-202). A trilha de auditoria imutável (TEC-206). O caminho da escalada da TEC-278.

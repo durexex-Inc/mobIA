@@ -2,8 +2,8 @@
 
 Molde do `sweep_followups`: um job `cron` que consulta trabalho vencido e
 age. A diferenca esta na corrida com a rota de aceite (TEC-178, Task 6, que
-tira o handoff de PENDENTE) -- ver o comentario do UPDATE em
-`escalar_vencidos`.
+tira o handoff de PENDENTE), e desde a TEC-179 tambem `assumir`
+(`routes/conversas.py`) -- ver o comentario do UPDATE em `escalar_vencidos`.
 """
 
 from collections.abc import Sequence
@@ -43,7 +43,9 @@ async def escalar_vencidos(
     prazo nao pode ser varrido.
 
     **A corrida real, e a razao de o UPDATE repetir a condicao do SELECT.** A
-    rota de aceite (Task 6) tira o handoff de PENDENTE. Se ela commitar entre
+    rota de aceite (Task 6), e desde a TEC-179 tambem `assumir`
+    (`routes/conversas.py`), tira o handoff de PENDENTE. Se qualquer uma
+    commitar entre
     o SELECT abaixo e o UPDATE, marcar ESCALADO cobraria o gerente por um
     lead que ja tem dono -- e o gerente e quem paga o preco de um sinal
     errado. Por isso o UPDATE condiciona `status = 'PENDENTE'` no proprio

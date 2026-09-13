@@ -721,6 +721,8 @@ Esta é a guarda que importa. O docstring de `OutboundPort` já argumenta por qu
 
 **A guarda de silêncio barra TUDO — não há escotilha por `kind`.** O opt-out abre exceção para `KIND_DA_CONFIRMACAO_DE_OPTOUT`; esta não abre nenhuma. A D5 do desenho explica: não existe caminho humano de envio para deixar passar (a rota `POST /conversas/{id}/mensagens` do SRS não existe), e construir a lista de exceções hoje seria construí-la para um chamador hipotético.
 
+**Isto não sobreviveu à Task 3.** Ver a "Emenda à execução" ao fim da D5 no desenho: a guarda ganhou uma exceção, `KIND_DA_CONFIRMACAO_DE_OPTOUT`, pelo mesmo motivo que a do opt-out já tinha. O parágrafo acima descreve a decisão original, não o código entregue.
+
 **Ordem:** a guarda de silêncio vai **depois** da de opt-out e **antes** da reserva. Antes da reserva pela razão que o comentário existente já dá — barrar depois deixaria linha órfã em `outbound_dispatches`, e o sweeper leria isso como tentativa feita.
 
 - [ ] **Step 1: Escreva o teste que falha**

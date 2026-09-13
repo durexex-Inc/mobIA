@@ -118,6 +118,49 @@ async def test_sem_token_configurado_a_rota_nao_existe(
     get_settings.cache_clear()
 
 
+async def test_assumir_com_conversation_key_acima_de_64_caracteres_e_422(
+    cliente_http, semear_corretor
+) -> None:
+    """Achado da revisao final (Minor, reproduzido): sem `max_length`, uma
+    `conversation_key` maior que a coluna `String(64)` (migration 0029) passa
+    no Pydantic e estoura `StringDataRightTruncationError` no flush -- que
+    nao e `IntegrityError`, escapa do `except` do repositorio e vira 500 em
+    vez de 422. Mesmo defeito, mesmo precedente de `corretores.py:44-49`
+    (`test_regiao_acima_de_120_caracteres_e_422`).
+    """
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+
+    resposta = await cliente_http.post(
+        "/api/v1/conversas/assumir",
+        json={
+            "channel": CHANNEL,
+            "conversation_key": "5" * 65,
+            "corretor_id": str(corretor.id),
+        },
+        headers={"X-Admin-Token": TOKEN},
+    )
+
+    assert resposta.status_code == 422
+
+
+async def test_assumir_com_channel_acima_de_32_caracteres_e_422(
+    cliente_http, semear_corretor
+) -> None:
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+
+    resposta = await cliente_http.post(
+        "/api/v1/conversas/assumir",
+        json={
+            "channel": "w" * 33,
+            "conversation_key": CHAVE,
+            "corretor_id": str(corretor.id),
+        },
+        headers={"X-Admin-Token": TOKEN},
+    )
+
+    assert resposta.status_code == 422
+
+
 async def test_assumir_com_corretor_inexistente_e_404(cliente_http) -> None:
     resposta = await cliente_http.post(
         "/api/v1/conversas/assumir",

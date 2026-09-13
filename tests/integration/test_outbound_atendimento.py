@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from mobia.domain.atendimento.repositorio import assumir
+from mobia.domain.atendimento.repositorio import assumir, devolver
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
@@ -94,8 +94,17 @@ async def test_confirmacao_de_optout_atravessa_a_guarda_de_atendimento_humano(
     assert outbound.entregas == [(mensagem.id, KIND_DA_CONFIRMACAO_DE_OPTOUT)]
 
 
-async def test_conversa_devolvida_volta_a_receber(session, banco_limpo) -> None:
-    """Prova que a guarda le o estado CORRENTE, nao "ja foi assumida um dia"."""
+async def test_conversa_devolvida_volta_a_receber(session, semear_corretor, banco_limpo) -> None:
+    """Prova que a guarda le o estado CORRENTE, nao "ja foi assumida um dia".
+
+    Achado da revisao final (Important): a versao anterior deste teste nunca
+    chamava `assumir` nem `devolver` -- so provava o default (sem linha, nao
+    silenciada), nao a devolucao. Este exercita o ciclo completo: assume,
+    commita, devolve, commita, e so entao manda -- e o unico teste do
+    arquivo que fala em devolucao, entao e ele quem tem de pegar uma
+    regressao em `devolver`.
+    """
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
     mensagem = Message(
         id=uuid.uuid4(),
         channel=CHANNEL,
@@ -106,6 +115,9 @@ async def test_conversa_devolvida_volta_a_receber(session, banco_limpo) -> None:
         status="PROCESSED",
     )
     session.add(mensagem)
+    await assumir(session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor.id)
+    await session.commit()
+    await devolver(session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor.id)
     await session.commit()
 
     outbound = OutboundEspiao(get_sessionmaker())

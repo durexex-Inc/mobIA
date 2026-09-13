@@ -19,7 +19,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,8 +47,13 @@ class PedidoDeAtendimento(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    channel: str
-    conversation_key: str
+    # Mesmo teto das colunas (`String(32)`/`String(64)` na migration 0029).
+    # Sem o limite, uma `conversation_key` de mais de 64 caracteres passa no
+    # Pydantic e vira `StringDataRightTruncationError` no flush -- que nao e
+    # `IntegrityError`, escapa do `except` do repositorio e vira 500 em vez de
+    # 422. Precedente: `corretores.py:44-49`.
+    channel: str = Field(max_length=32)
+    conversation_key: str = Field(max_length=64)
     corretor_id: uuid.UUID
 
     @field_validator("channel", "conversation_key")
