@@ -16,8 +16,9 @@ async def notificar_corretor(ctx: dict[str, Any], handoff_id: str) -> str:
 
     Os canais e o `outbound` vem do `ctx`, no mesmo molde de `gerar_resumo`: e
     o `startup` do worker que decide a implementacao, e o teste troca a
-    decisao sem tocar no job. Este job nunca e disparado por relogio -- so
-    `gerar_resumo` o enfileira, ao terminar, com ou sem resumo gravado.
+    decisao sem tocar no job. Alem de `gerar_resumo`, `recuperar_sem_prazo`
+    (TEC-279) o reenfileira, pelo mesmo `_job_id` -- e essa via e disparada
+    pelo cron de `sweep_sla`.
     """
     aceitou = await notificar(
         ctx["session_factory"],

@@ -144,7 +144,8 @@ class WorkerSettings:
         # e o que ABRE espaco para a duplicata, nao o que a impede -- e a L3
         # do desenho, declarada e nao corrigida (ver o comentario do `_job_id`
         # em `workers/jobs/gerar_resumo.py`). Nao entra em `cron_jobs`: quem
-        # dispara este job e sempre `gerar_resumo`, nunca o relogio.
+        # dispara este job e `gerar_resumo` ao terminar, ou `recuperar_sem_prazo`
+        # pela varredura -- nunca um `cron` deste job.
         func(notificar_corretor, keep_result=0),
         # `keep_result=0` pela mesma razao do `WorkerSettings.keep_result` da
         # classe (ver o docstring dela): o resultado deste job (um `int`) nao

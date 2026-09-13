@@ -341,8 +341,11 @@ async def _agendar_resumo(agendador: AgendadorDeResumoPort, registro: HandoffReg
 
     **Nao propaga excecao.** O handoff ja esta commitado neste ponto; uma
     falha do Redis aqui derrubaria o turno DEPOIS de o lead ter sido
-    atendido, e o que se perde e so o resumo, que a rota de regeneracao
-    recupera.
+    atendido, e o que se perde e o resumo e, com ele, a notificacao e o
+    prazo -- `gerar_resumo` e quem enfileira `notificar`. A rota de
+    regeneracao (`POST /handoffs/{id}/resumo`) recupera so o resumo, em
+    processo, sem enfileirar nada; quem recupera o handoff inteiro e
+    `recuperar_sem_prazo` (`domain/handoff/recuperacao.py`, TEC-279).
     """
     if not registro.criado:
         return

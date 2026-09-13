@@ -71,8 +71,6 @@ Decisão do Eduardo em 13/09/2026.
 
 Folgado o bastante para o caminho normal concluir mesmo com o provedor lento e uma retentativa do ARQ — reenfileirar um job que ainda ia rodar é o risco de um limiar curto, e o `_job_id` fixo só protege enquanto o job original está vivo.
 
-E **dentro do SLA de 15 minutos do lead `QUENTE`**: a recuperação acontece antes de o prazo que ela vai gravar já ter nascido vencido. Com a varredura de cinco em cinco minutos, o handoff é pego entre 10 e 15 minutos depois de criado.
-
 Decisão do Eduardo em 13/09/2026.
 
 ### D6 — Mora no domínio com uma porta, e entra no `sweep_sla`
@@ -94,11 +92,17 @@ Entra no `sweep_sla`, que já roda de cinco em cinco minutos e já é a rede de 
 
 ## Lacunas declaradas
 
-### L1 — A recuperação notifica, e nenhum canal entrega
+### L1 — A recuperação notifica; para o corretor e a gerente isso é invisível, para o lead não é
 
 O primeiro cenário diz *"então o handoff é notificado ou levado ao gerente, e deixa de estar invisível"*. Ele deixa de estar invisível **no banco**: ganha prazo, entra na varredura de SLA, pode ser escalado.
 
-Para uma pessoa, continua invisível. A emenda E-02 da RN-16.2 declara que nenhum canal entrega, e não há painel. **É a quarta card seguida do épico a entregar estado sem leitor humano** — e aqui a ironia é própria: a card existe para que um handoff perdido volte a ser visto, e o que ele volta a ser é visto pelo Postgres.
+Para o **corretor** e para a **gerente**, continua invisível: a emenda E-02 da RN-16.2 declara que os dois canais de `canais.py` (`EmailRegistrado`/`WhatsAppRegistrado`) só registram, não entregam, e não há painel.
+
+Para o **lead**, não. `notificar` termina chamando `_avisar_lead_da_janela_humana` (`domain/notificacao/envio.py:274`), que roda independente de qualquer canal ter aceitado e envia pelo `ctx["outbound"]` — em produção o `WhatsAppOutbound` real (`domain/outbound/whatsapp.py`, `workers/main.py:79`), que entrega de verdade pela Cloud API da Meta. Um handoff preso seis horas (Redis fora durante a noite, por exemplo) faz o lead receber o texto da janela humana seis horas depois de ter pedido um atendimento humano — sem nada antes disso. Combinado com a **L4** (sem teto de idade), a primeira passagem depois de um deploy sobre um banco com handoffs presos dispara essa mensagem para todos eles de uma vez.
+
+Atenuante: a janela de 24h da Meta (`CODIGO_FORA_DA_JANELA = 131047`) recusa a mensagem livre quando o lead não fala há mais de um dia, o que limita o efeito prático a essa faixa (10 minutos a 24 horas) em vez de qualquer atraso. Isso não anula o ponto — só o limita.
+
+**É a quarta card seguida do épico a entregar estado sem leitor humano para o corretor e a gerente** — e aqui a ironia é própria: a card existe para que um handoff perdido volte a ser visto, e o que ele volta a ser, para essas duas pessoas, é visto pelo Postgres. Para o lead, a recuperação tem um efeito real e pode chegar tarde demais para ser útil. Se isso não for desejado (por exemplo, gatear `_avisar_lead_da_janela_humana` por idade do handoff), a decisão é de produto, e é outra card.
 
 ### L2 — Nada recupera o handoff cujo `notificar` rodou e falhou no meio
 

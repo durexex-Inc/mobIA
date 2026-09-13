@@ -28,14 +28,10 @@ from mobia.domain.notificacao.envio import NOTIFICAR_JOB
 
 log = structlog.get_logger(__name__)
 
-# As duas razoes do numero. Folgado o bastante para o caminho normal
-# concluir mesmo com o provedor de resumo lento e uma retentativa do ARQ
-# pelo meio -- dez minutos nao e o tempo de UMA chamada, e o de sobrar
-# margem para ela falhar uma vez e tentar de novo. E, ao mesmo tempo, dentro
-# do SLA de 15 minutos do lead QUENTE (`handoff/sla.py`, `prazo_em_minutos`):
-# se a recuperacao demorasse mais que isso, o prazo que `notificar` gravaria
-# ao ser reenfileirado ja nasceria vencido, e o handoff cairia direto em
-# `escalar_vencidos` sem nunca ter dado ao corretor a chance de aceitar.
+# A razao do numero: folga o bastante para o caminho normal concluir mesmo
+# com o provedor de resumo lento e uma retentativa do ARQ pelo meio -- dez
+# minutos nao e o tempo de UMA chamada, e o de sobrar margem para ela
+# falhar uma vez e tentar de novo.
 INTERVALO_DE_RECUPERACAO = timedelta(minutes=10)
 
 
@@ -80,7 +76,13 @@ async def recuperar_sem_prazo(
     reenfileirador: ReenfileiradorPort,
     limite: int = 100,
 ) -> int:
-    """Reenfileira o handoff PENDENTE ha muito tempo sem prazo. Devolve quantos.
+    """Reenfileira o handoff PENDENTE ha muito tempo sem prazo.
+
+    Devolve quantos handoffs este passe tocou -- nao quantos jobs foram de
+    fato enfileirados. `enqueue_job` recusa em silencio quando o `_job_id` ja
+    esta vivo (o caso comum: worker atrasado, job original ainda rodando), e
+    mesmo assim o handoff entra na conta e no log abaixo -- porque o estado
+    dele nao mudou, e a proxima passagem vai tocar nele de novo do mesmo jeito.
 
     **A D1 tem cinco condicoes, e as tres do meio existem JUNTAS.**
     `notificar` grava `sla_limite_em` cedo -- antes de tentar qualquer canal
@@ -105,7 +107,7 @@ async def recuperar_sem_prazo(
     async with session_factory() as session:
         candidatos = (
             await session.execute(
-                select(Handoff.id, Handoff.resumo)
+                select(Handoff.id, Handoff.resumo.is_(None).label("sem_resumo"))
                 .where(
                     Handoff.status == Status.PENDENTE.value,
                     Handoff.sla_limite_em.is_(None),
@@ -126,7 +128,7 @@ async def recuperar_sem_prazo(
     # rede e exatamente o que este desenho evita -- mesmo raciocinio de
     # `notificar` e de `_agendar_resumo`.
     for linha in candidatos:
-        if linha.resumo is None:
+        if linha.sem_resumo:
             # Sem resumo, `gerar_resumo` ainda tem de rodar -- e ele mesmo
             # enfileira `notificar` ao terminar. Reenfileirar `notificar`
             # direto aqui perderia o resumo para sempre: o corretor
@@ -140,10 +142,13 @@ async def recuperar_sem_prazo(
             # redator, entao reenfileira-lo pagaria uma segunda chamada ao
             # provedor por nada.
             await reenfileirador.agendar_notificacao(linha.id)
+        # Loga mesmo quando o ARQ recusou o enqueue por `_job_id` vivo -- ver
+        # o docstring desta funcao. Nao ha como distinguir os dois casos
+        # daqui: `ReenfileiradorPort` nao devolve o resultado do enqueue.
         log.warning(
             "handoff.recuperado_sem_prazo",
             handoff_id=str(linha.id),
-            tinha_resumo=linha.resumo is not None,
+            tinha_resumo=not linha.sem_resumo,
         )
 
     return len(candidatos)
