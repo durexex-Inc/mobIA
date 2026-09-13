@@ -78,40 +78,17 @@ from mobia.domain.corretores.models import Corretor
 pytestmark = pytest.mark.asyncio
 
 
-async def _corretor(session) -> uuid.UUID:
-    agora = datetime.now(UTC)
-    linha = Corretor(
-        id=uuid.uuid4(),
-        nome="Paulo",
-        email=f"paulo-{uuid.uuid4().hex[:8]}@exemplo.com",
-        telefone="5511999990000",
-        creci=None,
-        especialidades=[],
-        regioes_atuacao=[],
-        horario_inicio=9,
-        horario_fim=18,
-        capacidade_diaria=10,
-        criado_em=agora,
-        atualizado_em=agora,
-    )
-    session.add(linha)
-    # `flush` e nao `commit`: a FK precisa da linha visivel na MESMA
-    # transacao, e o teste ainda vai escrever o atendimento nela.
-    await session.flush()
-    return linha.id
-
-
-async def test_uma_conversa_so_tem_uma_linha(sessao, banco_limpo):
+async def test_uma_conversa_so_tem_uma_linha(session, semear_corretor, banco_limpo):
     """O UNIQUE e o que faz o 409 "ja assumida por outro" ser do banco.
 
     Sem ele, duas abas do painel clicando "assumir" ao mesmo tempo gravariam
     duas linhas e as duas se achariam vencedoras -- exatamente o padrao que a
     D6 da TEC-178 e a L4 da TEC-174 existem para eliminar.
     """
-    corretor_id = await _corretor(sessao)
+    corretor_id = (await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")).id
     agora = datetime.now(UTC)
     for _ in range(2):
-        sessao.add(
+        session.add(
             AtendimentoHumano(
                 id=uuid.uuid4(),
                 channel="whatsapp",
@@ -123,19 +100,19 @@ async def test_uma_conversa_so_tem_uma_linha(sessao, banco_limpo):
             )
         )
     with pytest.raises(IntegrityError):
-        await sessao.flush()
+        await session.flush()
 
 
-async def test_devolvido_nasce_nulo_e_e_isso_que_significa_silenciada(sessao, banco_limpo):
+async def test_devolvido_nasce_nulo_e_e_isso_que_significa_silenciada(session, semear_corretor, banco_limpo):
     """Nao ha coluna `ativo`: silenciada E `devolvido_em IS NULL` (D4).
 
     Uma booleana ao lado dos carimbos seria uma segunda representacao do
     mesmo fato, e as duas podem divergir -- a classe de defeito que a revisao
     final da TEC-177 encontrou em `notificado_em`/`aviso_manual_pendente`.
     """
-    corretor_id = await _corretor(sessao)
+    corretor_id = (await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")).id
     agora = datetime.now(UTC)
-    sessao.add(
+    session.add(
         AtendimentoHumano(
             id=uuid.uuid4(),
             channel="whatsapp",
@@ -146,9 +123,9 @@ async def test_devolvido_nasce_nulo_e_e_isso_que_significa_silenciada(sessao, ba
             atualizado_em=agora,
         )
     )
-    await sessao.flush()
+    await session.flush()
 
-    linha = (await sessao.execute(select(AtendimentoHumano))).scalar_one()
+    linha = (await session.execute(select(AtendimentoHumano))).scalar_one()
     assert linha.devolvido_em is None
     assert linha.devolvido_por is None
     assert not hasattr(linha, "ativo"), "coluna `ativo` viola a D4 do desenho"
@@ -390,7 +367,6 @@ from mobia.domain.atendimento.repositorio import (
     esta_silenciada,
     esta_silenciada_por_mensagem,
 )
-from mobia.domain.corretores.models import Corretor
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 
@@ -400,60 +376,39 @@ CHANNEL = "whatsapp"
 CHAVE = "5511988887777"
 
 
-async def _corretor(session, nome: str = "Paulo") -> uuid.UUID:
-    agora = datetime.now(UTC)
-    linha = Corretor(
-        id=uuid.uuid4(),
-        nome=nome,
-        email=f"{nome.lower()}-{uuid.uuid4().hex[:8]}@exemplo.com",
-        telefone="5511999990000",
-        creci=None,
-        especialidades=[],
-        regioes_atuacao=[],
-        horario_inicio=9,
-        horario_fim=18,
-        capacidade_diaria=10,
-        criado_em=agora,
-        atualizado_em=agora,
-    )
-    session.add(linha)
-    await session.flush()
-    return linha.id
-
-
-async def test_sem_linha_nenhuma_a_conversa_nao_esta_silenciada(sessao, banco_limpo):
+async def test_sem_linha_nenhuma_a_conversa_nao_esta_silenciada(session, semear_corretor, banco_limpo):
     """O estado default e "o agente pode falar" -- mesma forma do opt-out."""
-    assert not await esta_silenciada(sessao, channel=CHANNEL, conversation_key=CHAVE)
+    assert not await esta_silenciada(session, channel=CHANNEL, conversation_key=CHAVE)
 
 
-async def test_assumir_silencia(sessao, banco_limpo):
-    corretor_id = await _corretor(sessao)
+async def test_assumir_silencia(session, semear_corretor, banco_limpo):
+    corretor_id = (await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")).id
     assert await assumir(
-        sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
+        session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
     ) is not None
-    assert await esta_silenciada(sessao, channel=CHANNEL, conversation_key=CHAVE)
+    assert await esta_silenciada(session, channel=CHANNEL, conversation_key=CHAVE)
 
 
-async def test_devolver_devolve_a_voz_ao_agente(sessao, banco_limpo):
-    corretor_id = await _corretor(sessao)
-    await assumir(sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id)
+async def test_devolver_devolve_a_voz_ao_agente(session, semear_corretor, banco_limpo):
+    corretor_id = (await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")).id
+    await assumir(session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id)
     assert await devolver(
-        sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
+        session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
     ) is not None
-    assert not await esta_silenciada(sessao, channel=CHANNEL, conversation_key=CHAVE)
+    assert not await esta_silenciada(session, channel=CHANNEL, conversation_key=CHAVE)
 
 
-async def test_outro_corretor_nao_assume_o_que_ja_tem_dono(sessao, banco_limpo):
+async def test_outro_corretor_nao_assume_o_que_ja_tem_dono(session, semear_corretor, banco_limpo):
     """O 409 do SRS: "ja assumida por outro"."""
-    paulo = await _corretor(sessao, "Paulo")
-    marina = await _corretor(sessao, "Marina")
-    await assumir(sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=paulo)
+    paulo = (await semear_corretor(email=f"paulo-{uuid.uuid4().hex[:8]}@ex.com")).id
+    marina = (await semear_corretor(email=f"marina-{uuid.uuid4().hex[:8]}@ex.com")).id
+    await assumir(session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=paulo)
     assert await assumir(
-        sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=marina
+        session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=marina
     ) is None
 
 
-async def test_reassumir_pela_mesma_pessoa_nao_move_o_carimbo(sessao, banco_limpo):
+async def test_reassumir_pela_mesma_pessoa_nao_move_o_carimbo(session, semear_corretor, banco_limpo):
     """D3: idempotente, e `assumido_em` fica onde estava.
 
     Mesmo argumento que a D8 da TEC-178 faz sobre `aceito_em`: um carimbo que
@@ -461,56 +416,56 @@ async def test_reassumir_pela_mesma_pessoa_nao_move_o_carimbo(sessao, banco_limp
     do que pegou. Este teste falharia se o `ON CONFLICT` gravasse `agora` sem
     condicao -- os dois `datetime.now(UTC)` das duas chamadas nao coincidem.
     """
-    corretor_id = await _corretor(sessao)
+    corretor_id = (await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")).id
     primeiro = await assumir(
-        sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
+        session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
     )
     assert primeiro is not None
     segundo = await assumir(
-        sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
+        session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
     )
     assert segundo is not None
     assert segundo.assumido_em == primeiro.assumido_em
 
 
-async def test_depois_de_devolvida_qualquer_um_reassume(sessao, banco_limpo):
+async def test_depois_de_devolvida_qualquer_um_reassume(session, semear_corretor, banco_limpo):
     """E a linha e reusada -- o UNIQUE impede uma segunda."""
-    paulo = await _corretor(sessao, "Paulo")
-    marina = await _corretor(sessao, "Marina")
-    primeiro = await assumir(sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=paulo)
+    paulo = (await semear_corretor(email=f"paulo-{uuid.uuid4().hex[:8]}@ex.com")).id
+    marina = (await semear_corretor(email=f"marina-{uuid.uuid4().hex[:8]}@ex.com")).id
+    primeiro = await assumir(session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=paulo)
     assert primeiro is not None
-    await devolver(sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=paulo)
+    await devolver(session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=paulo)
 
-    segundo = await assumir(sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=marina)
+    segundo = await assumir(session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=marina)
     assert segundo is not None
     assert segundo.assumido_por == marina
     # O carimbo ANDA aqui, ao contrario do teste acima: e um assumir novo.
     assert segundo.assumido_em > primeiro.assumido_em
-    assert await esta_silenciada(sessao, channel=CHANNEL, conversation_key=CHAVE)
+    assert await esta_silenciada(session, channel=CHANNEL, conversation_key=CHAVE)
 
 
-async def test_devolver_o_que_ninguem_assumiu_e_recusado(sessao, banco_limpo):
+async def test_devolver_o_que_ninguem_assumiu_e_recusado(session, semear_corretor, banco_limpo):
     """Nao e 200 silencioso: devolver exige que alguem tenha assumido."""
-    corretor_id = await _corretor(sessao)
+    corretor_id = (await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")).id
     assert await devolver(
-        sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
+        session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
     ) is None
 
 
-async def test_devolver_duas_vezes_e_recusado_na_segunda(sessao, banco_limpo):
-    corretor_id = await _corretor(sessao)
-    await assumir(sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id)
+async def test_devolver_duas_vezes_e_recusado_na_segunda(session, semear_corretor, banco_limpo):
+    corretor_id = (await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")).id
+    await assumir(session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id)
     assert await devolver(
-        sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
+        session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
     ) is not None
     assert await devolver(
-        sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
+        session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id
     ) is None
 
 
-async def test_por_mensagem_resolve_o_par_e_responde_o_mesmo(sessao, banco_limpo):
+async def test_por_mensagem_resolve_o_par_e_responde_o_mesmo(session, semear_corretor, banco_limpo):
     """A forma que o `GuardedOutbound.send` precisa -- so tem o message_id."""
-    corretor_id = await _corretor(sessao)
+    corretor_id = (await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")).id
     mensagem = Message(
         id=uuid.uuid4(),
         channel=CHANNEL,
@@ -520,21 +475,21 @@ async def test_por_mensagem_resolve_o_par_e_responde_o_mesmo(sessao, banco_limpo
         content_type=MessageContentType.TEXTO,
         status="PROCESSED",
     )
-    sessao.add(mensagem)
-    await sessao.flush()
+    session.add(mensagem)
+    await session.flush()
 
-    assert not await esta_silenciada_por_mensagem(sessao, mensagem.id)
-    await assumir(sessao, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id)
-    assert await esta_silenciada_por_mensagem(sessao, mensagem.id)
+    assert not await esta_silenciada_por_mensagem(session, mensagem.id)
+    await assumir(session, channel=CHANNEL, conversation_key=CHAVE, corretor_id=corretor_id)
+    assert await esta_silenciada_por_mensagem(session, mensagem.id)
 
 
-async def test_mensagem_inexistente_nao_esta_silenciada(sessao, banco_limpo):
+async def test_mensagem_inexistente_nao_esta_silenciada(session, semear_corretor, banco_limpo):
     """Mesma decisao de `esta_em_optout_por_mensagem`: sem lead, nada a barrar.
 
     Recusar o envio aqui esconderia o defeito real -- um `message_id` que nao
     existe e problema de quem chamou, nao uma conversa assumida.
     """
-    assert not await esta_silenciada_por_mensagem(sessao, uuid.uuid4())
+    assert not await esta_silenciada_por_mensagem(session, uuid.uuid4())
 ```
 
 **Antes de escrever a implementação**, confira os campos obrigatórios de `Message` em `src/mobia/domain/messages/models.py` e o enum em `src/mobia/domain/messages/enums.py`. Se `Message` exigir colunas que o teste acima não preenche, acrescente-as ao teste — **não** invente campos que não existem.
@@ -782,7 +737,6 @@ from typing import Any
 import pytest
 
 from mobia.domain.atendimento.repositorio import assumir
-from mobia.domain.corretores.models import Corretor
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.outbound.port import GuardedOutbound
@@ -801,29 +755,15 @@ class _Espia(GuardedOutbound):
         self.entregues.append(kind)
 
 
-async def test_conversa_assumida_nao_recebe_nada_do_agente(session_factory, banco_limpo):
+async def test_conversa_assumida_nao_recebe_nada_do_agente(session_factory, semear_corretor, banco_limpo):
     """A guarda barra TODO kind -- nao ha escotilha (D5 do desenho).
 
     Se algum dia alguem acrescentar uma excecao por `kind` aqui, este teste
     reprova, e e o alarme certo: a rota de envio manual do corretor tem de
     decidir isso explicitamente, nao herda-la por acidente.
     """
-    agora = datetime.now(UTC)
-    async with session_factory() as session:
-        corretor = Corretor(
-            id=uuid.uuid4(),
-            nome="Paulo",
-            email=f"paulo-{uuid.uuid4().hex[:8]}@exemplo.com",
-            telefone="5511999990000",
-            creci=None,
-            especialidades=[],
-            regioes_atuacao=[],
-            horario_inicio=9,
-            horario_fim=18,
-            capacidade_diaria=10,
-            criado_em=agora,
-            atualizado_em=agora,
-        )
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+    async with session_factory() as sessao:
         mensagem = Message(
             id=uuid.uuid4(),
             channel="whatsapp",
@@ -833,15 +773,14 @@ async def test_conversa_assumida_nao_recebe_nada_do_agente(session_factory, banc
             content_type=MessageContentType.TEXTO,
             status="PROCESSED",
         )
-        session.add_all([corretor, mensagem])
-        await session.flush()
+        sessao.add(mensagem)
         await assumir(
-            session,
+            sessao,
             channel="whatsapp",
             conversation_key="5511988887777",
             corretor_id=corretor.id,
         )
-        await session.commit()
+        await sessao.commit()
         message_id = mensagem.id
 
     porta = _Espia(session_factory)
@@ -972,7 +911,22 @@ git commit -m "feat(TEC-179): a porta de saida cala o agente na conversa assumid
 
 - [ ] **Step 1: Escreva o teste que falha**
 
-Crie `tests/integration/test_turno_atendimento_humano.py`. **Abra `tests/integration/` e encontre o teste existente que exercita `executar_turno` com opt-out** (procure por `silenciado_por_optout` ou `esta_em_optout`) e copie a montagem dele — fixtures, dublês de classificador/outbound/resumidor, e a forma de chamar. A assinatura real é `executar_turno(session_factory, message=..., classificador=..., resumidor=..., outbound=..., ...)`; **confirme-a no arquivo** e não a invente.
+Crie `tests/integration/test_turno_atendimento_humano.py`.
+
+**Use a fixture `rodar_turno` que já existe** (`tests/conftest.py:481`) — ela semeia a entrada e roda o turno inteiro. Assinatura exata:
+
+```python
+await rodar_turno(
+    session, classificador, outbound, resumidor, contador,
+    moderador=None, agendador=None, *, texto=TEXTO_PADRAO_DO_LEAD,
+) -> str
+```
+
+Os dublês também já existem como fixtures: `classificador_fake`, `outbound_fake`, `resumidor_fake`, `contador_fake`, `moderador_fake`. Abra `tests/conftest.py` e veja o que cada um expõe (o `outbound_fake` é onde você verifica que nada saiu).
+
+**A armadilha que você precisa conhecer antes de escrever o primeiro teste:** `rodar_turno` chama `executar_turno(get_sessionmaker(), ...)` — **o turno abre sessões próprias**. O `assumir` do seu setup tem de ser **commitado** antes de você chamar `rodar_turno`, ou a guarda não enxerga o estado e o teste falha por um motivo que não é o que ele testa. Se você usar a fixture `session`, chame `await session.commit()` depois do `assumir`.
+
+**Abra também o teste existente de opt-out no turno** (procure por `silenciado_por_optout` em `tests/integration/`) e espelhe o formato das asserções — ele já resolveu como provar "o classificador não foi chamado".
 
 Os três testes a escrever:
 
@@ -1310,8 +1264,7 @@ Expected: todos PASSAM. Os dois últimos porque a D6 acrescentou um segundo escr
 ./.venv/Scripts/python.exe -m ruff check src tests alembic evals scripts
 ./.venv/Scripts/python.exe -m ruff format --check src tests alembic evals scripts
 ./.venv/Scripts/python.exe -m mypy src
-git add src/mobia/api/routes/conversas.py tests/integration/test_rota_de_conversas.py
-git add -u
+git add src/mobia/api/routes/conversas.py tests/integration/test_rota_de_conversas.py src/mobia/app/main.py
 git commit -m "feat(TEC-179): assumir a conversa cala o agente e aceita o handoff junto"
 ```
 
