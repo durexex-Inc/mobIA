@@ -41,7 +41,9 @@ A intenção `INVESTIMENTO` já é classificada desde a TEC-134, e não muda nad
 
 No turno em que a intenção passa a ser `INVESTIMENTO`, a resposta da chamada 1 é descartada e uma segunda chamada roda com `SISTEMA_DO_INVESTIDOR`. É o padrão que `desambiguar` já estabeleceu, e pela mesma razão estrutural: o prompt precisa de um fato que só a primeira chamada produz.
 
-**Do segundo turno em diante não há chamada extra.** A intenção anterior já está gravada, então o prompt do investidor é escolhido antes da chamada única. O custo é pago uma vez por conversa, não por turno.
+**Do segundo turno em diante não há chamada extra.** A intenção anterior já está gravada em `contexto.estado.intencao`, disponível **antes** da chamada, então o prompt e o schema do investidor são escolhidos ali e a chamada é única. O custo é pago uma vez por conversa, não por turno.
+
+**Correção após a leitura do código (14/09/2026): `qualificar_investidor` é irmã de `classificar`, não de `desambiguar`.** A versão original desta seção dizia "no molde do desambiguador", e o desambiguador não recebe `tools`/`porta` — a docstring dele explica que a desambiguação nunca busca imóvel. Copiar aquele molde deixaria o investidor **sem poder receber ficha de imóvel nenhuma** a partir do segundo turno, que é quando ele passa a ser a única chamada do turno. A ferramenta de busca entra, como em `classificar`; o que muda entre as duas é `system` e `output_config`, e mais nada.
 
 Isto importa porque a Emenda E-01 da RN-09.4 (TEC-161) registra que *"o pior caso das chamadas atuais já estoura"* o `job_timeout` de 240 s. Duas chamadas em todo turno de investidor dobrariam o pior caso da trilha inteira; duas chamadas uma vez por conversa não.
 
@@ -49,7 +51,11 @@ Isto importa porque a Emenda E-01 da RN-09.4 (TEC-161) registra que *"o pior cas
 
 ### D2 — Schema próprio do investidor, e `perguntas_contaveis` aprende os nomes dele
 
-Os seis campos entram em `ExtracaoDoInvestidor`, schema usado **apenas** na chamada do investidor. Não em `Extracao`.
+**Correção desta seção após a leitura do código (14/09/2026).** A versão original dizia "schema próprio com os seis campos", como se ele substituísse `SCHEMA_DA_RESPOSTA`. Não substitui: o turno do investidor **continua precisando de tudo o que o turno normal precisa** — intenção, confiança, resposta, `perguntou`, `recusou` e a `Extracao` padrão, porque um investidor também diz região, tipo e faixa de preço ("quero investir na zona sul até 800 mil"). O schema do investidor é o **mesmo envelope, com um objeto `investidor` a mais**.
+
+O argumento do orçamento sobrevive intacto, e é ele que justifica a separação: `SCHEMA_DA_RESPOSTA_DO_INVESTIDOR` é um segundo schema compilado, enviado **apenas** nas chamadas do investidor. `SCHEMA_DA_RESPOSTA` não ganha campo nenhum, e quem nunca falou de investimento não paga nada.
+
+Os seis campos entram em `ExtracaoDoInvestidor`, dentro desse envelope. Não em `Extracao`.
 
 A razão é o orçamento: o schema compilado é enviado em toda chamada e medido contra o teto fixo. Seis campos que a maioria dos leads nunca preenche não podem custar tokens a todos eles — e a pergunta que o teste do orçamento obriga a fazer é *"o que sai do prompt para o novo texto entrar?"*, cuja melhor resposta aqui é "nada, porque o novo texto não entra no prompt de todo mundo".
 

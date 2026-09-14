@@ -740,7 +740,132 @@ A regra, na ordem:
 O `ClassificadorFake` de `tests/conftest.py` vai precisar de um método `qualificar_investidor` e de um contador próprio. **Estenda o fake, não crie um segundo** — dois dublês do mesmo protocolo divergiriam.
 
 - [ ] **Step 2: Rode e veja falhar** — o primeiro teste falha com uma chamada em vez de duas.
-- [ ] **Step 3: Implemente** a fiação e a função de gravação.
+
+- [ ] **Step 3: A escolha do prompt, ANTES da chamada**
+
+Âncora: a linha `gerada = await classificador.classificar(` (hoje em `turno.py:982`). **Imediatamente acima dela:**
+
+```python
+    # TEC-153, RN-07.1. Do SEGUNDO turno do investidor em diante nao ha
+    # chamada extra: a intencao anterior ja esta no estado, que `montar_contexto`
+    # leu antes desta linha, entao o prompt e o schema do investidor sao
+    # escolhidos aqui e a chamada continua sendo uma so.
+    #
+    # `contexto.estado.intencao` e a coluna (str), e nao o enum -- por isso a
+    # comparacao e contra `.value`.
+    ja_e_investidor = (
+        contexto.estado is not None
+        and contexto.estado.intencao == Intencao.INVESTIMENTO.value
+    )
+```
+
+E a chamada passa a escolher entre as duas irmãs. `qualificar_investidor` recebe os mesmos argumentos que `classificar` — inclusive `porta` —, porque a partir daqui ela **é** a chamada do turno, e sem a ferramenta de busca o investidor nunca receberia ficha de imóvel:
+
+```python
+        gerada = await (
+            classificador.qualificar_investidor if ja_e_investidor else classificador.classificar
+        )(
+            contexto,
+            porta=porta,
+        )
+```
+
+Confira a lista real de argumentos de `classificar` no arquivo antes de escrever — se ela tiver mais parâmetros, repasse todos. **Se as assinaturas não forem idênticas, pare e reporte**: o desenho depende de elas serem intercambiáveis.
+
+- [ ] **Step 4: A virada e o ramo da segunda chamada**
+
+Âncora: o bloco `if desambiguando:` / `else:` que atribui `texto, telemetria, subagente` (hoje em `turno.py:1283-1294`). `anterior` foi lido dentro do bloco transacional acima e **continua em escopo** — é a mesma leitura que `desambiguando` usa na linha logo acima.
+
+Acima do `if`, junto de `desambiguando`:
+
+```python
+    # TEC-153. A virada: a intencao passou a ser INVESTIMENTO NESTE turno e
+    # nao era antes. So aqui ha segunda chamada -- nos turnos seguintes
+    # `ja_e_investidor`, la em cima, ja escolheu o prompt certo para a chamada
+    # unica.
+    virou_investidor = gerada.intencao is Intencao.INVESTIMENTO and (
+        anterior is None or anterior.intencao is not Intencao.INVESTIMENTO
+    )
+```
+
+E o ramo novo entra como `elif`, **entre** os dois que existem:
+
+```python
+    elif virou_investidor:
+        # A resposta da chamada 1 foi escrita pelo prompt generico: ela
+        # pergunta metragem e quartos, que e exatamente o que a RN-07.1 existe
+        # para evitar. Descartada -- paga e nao entregue --, como no ramo da
+        # desambiguacao e pelo mesmo motivo estrutural: o prompt precisa de um
+        # fato que so a primeira chamada produz.
+        do_investidor = await classificador.qualificar_investidor(contexto, porta=porta)
+        texto, telemetria, subagente = (
+            do_investidor.resposta,
+            do_investidor,
+            SUBAGENTE_INVESTIDOR,
+        )
+```
+
+**A ordem dos ramos É a precedência, e não é acidente:** com o turno ambíguo **e** investidor ao mesmo tempo, desambigua. Sem intenção confiável não há trilha a escolher, e chamar o subagente do investidor sobre um palpite que a confiança não sustenta gastaria a chamada e ainda erraria a trilha. Acrescente essa frase como comentário no `elif`, senão o próximo leitor vai achar que a ordem é arbitrária e reordenar.
+
+Declare `SUBAGENTE_INVESTIDOR = "investidor"` junto das outras constantes de subagente (hoje em `turno.py:284-287`).
+
+O tipo anotado de `telemetria`, logo acima do `if`, ganha o terceiro membro:
+
+```python
+    telemetria: RespostaDoAgente | PerguntaDeDesambiguacao | RespostaDoInvestidor
+```
+
+- [ ] **Step 5: A gravação dos campos e do perfil**
+
+Os campos do investidor são **fato sobre a fala do lead**, como `recusou` — e não sobre a nossa resposta, como `perguntou`. O comentário que separa os dois já está no arquivo, acima do bloco transacional. Mas eles só existem depois da segunda chamada, que acontece **abaixo** daquele bloco, então não cabem nele.
+
+Grave-os numa transação curta própria, **logo depois do ramo acima e antes da entrega começar**:
+
+```python
+    if isinstance(telemetria, RespostaDoInvestidor):
+        # Transacao propria, e nao o bloco transacional la de cima: os campos
+        # do investidor so existem depois da chamada que os produz, e aquele
+        # bloco ja commitou. Antes da entrega, e nao depois, porque sao fato
+        # sobre a fala do LEAD -- perde-los numa falha de entrega apagaria o
+        # que ele acabou de responder. E a mesma razao pela qual `recusou`
+        # entra no commit pre-entrega e `perguntou` nao.
+        async with session_factory() as session:
+            await gravar_investidor(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                investidor=telemetria.investidor,
+            )
+            await session.commit()
+```
+
+E `gravar_investidor`, em `src/mobia/domain/context/repositorio.py`, ao lado de `gravar_estado`:
+
+```python
+async def gravar_investidor(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    investidor: ExtracaoDoInvestidor,
+) -> None:
+    """Grava os campos da RN-05.2 e o perfil derivado da RN-07.2. TEC-153.
+
+    **So grava campo que veio.** A qualificacao e progressiva: `None` num
+    campo significa "o lead ainda nao disse", e sobrescrever um valor antigo
+    com `None` apagaria o que ele ja tinha dito num turno anterior -- o mesmo
+    cuidado que `campos_a_gravar` toma para a trilha padrao.
+
+    O perfil e DERIVADO e gravado junto, e nao calculado na leitura: quem le
+    o lead precisa dele sem reexecutar a regra, e a TEC-154 le a coluna
+    direto. Ele e recalculado a partir do estado JA MESCLADO -- horizonte
+    pode ter vindo num turno e o tipo de retorno noutro, e classificar so com
+    o que chegou neste turno daria `None` para um lead que ja respondeu os
+    dois.
+    """
+```
+
+O corpo lê a linha, mescla campo a campo (só os não-`None`), chama `ticket_de` sobre `ticket_expressao` quando ele veio, chama `perfil_de(horizonte, retorno_esperado_tipo)` sobre o resultado **mesclado**, e faz um `UPDATE` único. Sem linha existente, não há o que atualizar — retorne cedo, como `contar_perguntas` faz, e declare a consequência na docstring (é a mesma lacuna L4 da TEC-149).
 - [ ] **Step 4: Rode e veja passar**, e rode `tests/integration` inteiro (`-n 4 --dist loadfile --tb=short`), porque esta task mexe no caminho que dezenas de outros testes exercitam.
 - [ ] **Step 5: Gates e commit** — `feat(TEC-153): o turno ativa a trilha do investidor na virada`.
 
