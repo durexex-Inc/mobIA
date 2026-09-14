@@ -307,6 +307,11 @@ _SELECIONAR_DORMENTES = text(
                        AND f.ancora_em = u.ancora),
                    0
                ) AS ja_disparada,
+               (SELECT COUNT(*)
+                  FROM followups f
+                 WHERE f.channel = lq.channel
+                   AND f.conversation_key = lq.conversation_key
+                   AND f.ancora_em = u.ancora) AS ja_enviadas,
                (SELECT MAX(f.created_at)
                   FROM followups f
                  WHERE f.channel = lq.channel
@@ -318,7 +323,7 @@ _SELECIONAR_DORMENTES = text(
            AND u.conversation_key = lq.conversation_key
          WHERE lq.temperatura IN :temperaturas_validas
     )
-    SELECT channel, conversation_key, temperatura, ancora, ja_disparada, adormeceu_em
+    SELECT channel, conversation_key, temperatura, ancora, ja_disparada, ja_enviadas, adormeceu_em
       FROM esgotados
      WHERE ja_disparada >= CASE temperatura {_CASE_TETO_POR_TEMPERATURA} END
      ORDER BY adormeceu_em DESC, channel, conversation_key
@@ -331,10 +336,11 @@ _SELECIONAR_DORMENTES = text(
 class LeadDormente:
     """Um lead que esgotou a cadencia da sua temperatura (RN-13.5).
 
-    `tentativas` e `adormeceu_em` sao a "data e a quantidade de tentativas
-    realizadas" que a card exige da transicao. Nenhum dos dois e gravado por
-    esta card: sao o `tentativa_numero` e o `created_at` da linha de
-    `followups` de maior tentativa sob a ancora atual.
+    `ja_disparada` e `ja_enviadas` sao a mesma distincao POSICAO-contra-CONTAGEM
+    que a docstring de `Candidato` explica -- nenhum dos dois e gravado por
+    esta card, e os dois saem da mesma agregacao sobre `followups` sob a
+    ancora atual. `adormeceu_em` e a outra metade da "data e a quantidade de
+    tentativas realizadas" que a card exige da transicao.
 
     **`adormeceu_em` e `MAX(created_at)`, e isso so coincide com a linha de
     maior `tentativa_numero` porque `tentativa_devida` nunca devolve tentativa
@@ -347,7 +353,8 @@ class LeadDormente:
     conversation_key: str
     temperatura: Temperatura
     ancora_em: datetime
-    tentativas: int
+    ja_disparada: int
+    ja_enviadas: int
     adormeceu_em: datetime
 
 
@@ -369,14 +376,21 @@ async def listar_dormentes(
     intencao que nao existe.
 
     **O opt-out e consultado por lead, e nao juntado no SQL.**
-    `esta_em_optout` e a funcao que decide o que e opt-out, e a varredura ja a
-    chama assim; um JOIN aqui seria uma segunda fonte para a mesma pergunta --
-    o defeito que a TEC-146 gastou uma card inteira consertando. E a razao de
-    EXCLUIR, em vez de so marcar: esta lista existe para alimentar campanha
-    manual, e a RN-14.3 condiciona qualquer novo contato de quem pediu opt-out
-    a acao humana explicita com justificativa registrada. Entrega-lo numa
-    lista rotulada "elegivel a campanha" convida exatamente o disparo que a
-    regra proibe.
+    `esta_em_optout` e a funcao que decide o que e opt-out; um JOIN aqui seria
+    uma segunda fonte para a mesma pergunta -- o defeito que a TEC-146 gastou
+    uma card inteira consertando. E a razao de EXCLUIR, em vez de so marcar:
+    esta lista existe para alimentar campanha manual, e a RN-14.3 condiciona
+    qualquer novo contato de quem pediu opt-out a acao humana explicita com
+    justificativa registrada. Entrega-lo numa lista rotulada "elegivel a
+    campanha" convida exatamente o disparo que a regra proibe.
+
+    **A escolha de fonte unica continua certa aqui, mas o preco NAO e o da
+    varredura.** A docstring de `sweep_followups` justifica consultar por
+    candidato dizendo que o conjunto residual, depois dos cortes puros, e
+    pequeno -- e e explicita que, invertida, essa premissa deixa de valer.
+    Aqui ela esta invertida: o conjunto residual desta consulta E o alvo, sem
+    corte nenhum alem do `LIMIT`, entao o preco real e de ate `:limite`
+    consultas de opt-out por chamada.
 
     **O `LIMIT` e aplicado antes do filtro de opt-out**, entao a lista pode vir
     com menos que `limite` havendo mais dormentes. E o mesmo comportamento de
@@ -403,6 +417,14 @@ async def listar_dormentes(
             },
         )
     )
+    # `dormentes_saturados` ESPELHA o nome de `candidatos_saturados`, mas
+    # "saturar" nao e a mesma coisa nos dois: la e FOME -- leads devidos
+    # ficando de fora, uma patologia -- porque a candidatura reavalia o mesmo
+    # lote a cada passagem e um lote saturado nunca deixa quem esta realmente
+    # devido furar a fila. Aqui e so o fim de uma pagina: uma listagem que
+    # bate em `:limite` esta se comportando como desenhada, nao presa. Ver a
+    # docstring desta funcao sobre o `LIMIT` cortar antes do filtro de
+    # opt-out.
     if len(resultado) == limite:
         log.warning("followup.dormentes_saturados", limite=limite)
     dormentes = []
@@ -417,7 +439,8 @@ async def listar_dormentes(
                 conversation_key=linha.conversation_key,
                 temperatura=Temperatura(linha.temperatura),
                 ancora_em=linha.ancora,
-                tentativas=linha.ja_disparada,
+                ja_disparada=linha.ja_disparada,
+                ja_enviadas=linha.ja_enviadas,
                 adormeceu_em=linha.adormeceu_em,
             )
         )

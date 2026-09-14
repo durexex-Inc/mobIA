@@ -114,12 +114,23 @@ def esta_dormente(*, temperatura: Temperatura, ja_disparada: int) -> bool:
     fontes que podem divergir: aquele `CASE` e GERADO a partir de `CADENCIA`
     por `_TETOS_POR_TEMPERATURA`, e esta funcao le o mesmo dict. Quem alongar a
     tabela move os dois. `test_dormente_e_a_negacao_exata_do_corte_de_candidatura`
-    e a guarda de que continuam iguais.
+    prova a metade Python dessa afirmacao -- que esta funcao nao se descola de
+    `CADENCIA` --, comparando contra `ja_disparada < len(CADENCIA[temperatura])`
+    calculado no proprio teste; ele nao le o `CASE` do SQL, entao nao e garantia
+    de que o lado do banco continua igual.
 
-    **`>=` e nao `==`**: `ja_disparada` pode passar do teto vigente sem erro
-    nenhum -- um lead esgota QUENTE em 4 e depois esfria para MORNO, cujo teto
-    e 3. Com `==` ele deixaria de ser dormente ao esfriar, que e o contrario do
-    que a temperatura mais fria significa.
+    **`>=` e nao `==`**: se `ja_disparada` um dia puder passar do teto vigente
+    sem a ancora se mover -- um lead que esgotasse QUENTE em 4 e so depois
+    esfriasse para MORNO, cujo teto e 3 --, `==` o faria deixar de ser
+    dormente ao esfriar, o contrario do que a temperatura mais fria significa.
+    **Esse caminho e hoje INALCANCAVEL, nao so hipotetico**: o unico gravador
+    de `lead_qualification.temperatura` e `registrar_recalculo`, chamado so
+    por `executar_turno`, que so roda por uma fala INBOUND do lead nao
+    bloqueada -- e essa mesma fala move a ancora e zera `ja_disparada`, o que
+    impede o esfriamento de acontecer sem o corte de candidatura tambem
+    reagir. Tornar o caminho alcancavel e a lacuna L4 do desenho (TEC-158,
+    TEC-192); ate la o `>=` continua certo por seguranca, so a alegacao de
+    alcancabilidade e que era falsa.
 
     **`temperatura` e `Temperatura`, e nao `str | None`.** Lead com
     `temperatura IS NULL` (escreveu antes da TEC-151 e nunca mais falou) fica

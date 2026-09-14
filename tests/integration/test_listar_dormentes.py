@@ -113,16 +113,62 @@ async def test_a_data_e_a_contagem_da_transicao(session) -> None:
     """Cenario 2 da card.
 
     Nada disto e gravado por esta card: sai da linha de `followups` de maior
-    `tentativa_numero`, que a TEC-183 ja grava.
+    `tentativa_numero`, que a TEC-183 ja grava. Aqui MAX e COUNT coincidem
+    (tres linhas, tentativas 1-2-3 sem salto) -- o teste abaixo, com uma
+    unica linha e salto, e quem separa os dois campos.
     """
     ancora = await _lead_dormente(session, conversa="5511900000003")
 
     (dormente,) = await listar_dormentes(session, agora=AGORA)
 
-    assert dormente.tentativas == TETO_MORNO
+    assert dormente.ja_disparada == TETO_MORNO
+    assert dormente.ja_enviadas == TETO_MORNO
     assert dormente.adormeceu_em == ancora + timedelta(days=TETO_MORNO)
     assert dormente.ancora_em == ancora
     assert dormente.temperatura is Temperatura.MORNO
+
+
+async def test_ja_disparada_e_ja_enviadas_divergem_com_salto(session) -> None:
+    """O caso real que a TEC-187 deixou passar: um lead MORNO que sumiu por
+    30 dias e recebeu SO a ultima tentativa vencida, sem as intermediarias.
+
+    `ja_disparada` (MAX) ve a POSICAO na regua e acha 3 -- o teto do MORNO, o
+    que corretamente marca o lead como dormente. `ja_enviadas` (COUNT) ve
+    quantas mensagens de fato sairam e acha 1. Com os testes anteriores
+    (tentativas 1, 2, 3 sem salto) os dois campos sempre coincidem porque
+    MAX == COUNT quando nao ha lacuna -- este teste e o unico que os separa.
+    """
+    ancora = AGORA - timedelta(days=30)
+    session.add(
+        LeadQualification(
+            channel=CANAL,
+            conversation_key="5511900000007",
+            intencao=Intencao.COMPRA.value,
+            faixa_preco_max_centavos=50_000_000,
+            regiao="vila mariana",
+            urgencia=Urgencia.IMEDIATA.value,
+            temperatura="MORNO",
+        )
+    )
+    await _falar(session, conversa="5511900000007", em=ancora)
+    session.add(
+        FollowUp(
+            id=uuid.uuid4(),
+            channel=CANAL,
+            conversation_key="5511900000007",
+            tentativa_numero=TETO_MORNO,
+            temperatura="MORNO",
+            ancora_em=ancora,
+            devido_em=ancora + timedelta(days=TETO_MORNO),
+            created_at=ancora + timedelta(days=TETO_MORNO),
+        )
+    )
+    await session.commit()
+
+    (dormente,) = await listar_dormentes(session, agora=AGORA)
+
+    assert dormente.ja_disparada == TETO_MORNO
+    assert dormente.ja_enviadas == 1
 
 
 async def test_quem_respondeu_depois_de_esgotar_deixa_de_ser_dormente(session) -> None:

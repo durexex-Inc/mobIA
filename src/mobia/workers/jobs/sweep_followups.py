@@ -322,6 +322,11 @@ async def sweep_followups(
     jeito. O evento de maximo nao entra nessa contagem -- gravar e atingir o
     maximo sao fatos diferentes, e somar os dois faria o retorno mentir para
     quem mede a varredura.
+
+    **RN-13.5 tambem sai desta varredura**: quando a tentativa recem-gravada
+    fecha o teto da temperatura (`esta_dormente`), sai `followup.dormente` --
+    o instante em que o lead sai do alcance da automacao, e nao um estado
+    gravado em lugar nenhum. Quem quiser o estado consulta `listar_dormentes`.
     """
     session_factory = ctx["session_factory"]
     # A mesma chave que `process_message` e `notificar_corretor` leem, e nao

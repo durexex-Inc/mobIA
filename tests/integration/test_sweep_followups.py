@@ -4,6 +4,7 @@ TEC-183. Integracao: a decisao mora na funcao pura, mas quem entra na
 varredura e o que ela grava so da para verificar contra o banco.
 """
 
+import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -1133,7 +1134,17 @@ async def test_a_tentativa_que_fecha_o_teto_emite_followup_dormente(session, cap
         gravadas = await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA)
 
     assert gravadas == 1
-    assert sum(1 for r in caplog.records if "followup.dormente" in r.getMessage()) == 1
+    registros_dormente = [
+        json.loads(r.getMessage()) for r in caplog.records if "followup.dormente" in r.getMessage()
+    ]
+    assert len(registros_dormente) == 1
+    # O payload, e nao so a ocorrencia da string: trocar `tentativas=tentativa`
+    # por outra coisa no corpo do job passaria na contagem acima sem que
+    # ninguem percebesse. A tentativa 3 e o que fecha o teto do MORNO
+    # (RN-13.5), e e essa tentativa -- a terceira, nao a primeira ou a
+    # segunda -- que o evento precisa nomear.
+    assert registros_dormente[0]["temperatura"] == "MORNO"
+    assert registros_dormente[0]["tentativas"] == 3
 
 
 async def test_a_tentativa_antes_do_teto_nao_emite_followup_dormente(session, caplog) -> None:

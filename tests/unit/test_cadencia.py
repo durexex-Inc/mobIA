@@ -173,8 +173,12 @@ def test_alcancar_o_teto_da_temperatura_adormece(temperatura: Temperatura) -> No
 
 @pytest.mark.parametrize("temperatura", list(Temperatura))
 def test_passar_do_teto_continua_dormente(temperatura: Temperatura) -> None:
-    """Alcancavel de verdade: um lead esgota QUENTE em 4 e depois esfria para
-    MORNO, cujo teto e 3 -- `ja_disparada` fica acima do teto vigente."""
+    """O `>=` continua certo mesmo que o caminho seja hoje INALCANCAVEL: um
+    lead que esgotasse QUENTE em 4 e so depois esfriasse para MORNO (teto 3)
+    teria `ja_disparada` acima do teto vigente -- mas esfriar exige a mesma
+    fala INBOUND que move a ancora e zera `ja_disparada` (ver a docstring de
+    `esta_dormente`). Tornar isto alcancavel e a lacuna L4 do desenho
+    (TEC-158, TEC-192)."""
     teto = len(CADENCIA[temperatura])
     assert esta_dormente(temperatura=temperatura, ja_disparada=teto + 1) is True
 
