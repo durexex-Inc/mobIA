@@ -1,5 +1,6 @@
 """A varredura que encerra importacao parada em PROCESSANDO. TEC-261."""
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -76,9 +77,12 @@ async def test_importacao_parada_alem_do_limite_e_encerrada(session: Any) -> Non
 async def test_importacao_recente_nao_e_tocada(session: Any) -> None:
     """Cenario 2. O limite existe para nao matar trabalho vivo.
 
-    Uma importacao pode legitimamente levar ate 20 minutos de processamento
-    (5 tentativas de `job_timeout=240`), e fechar uma que ainda esta rodando e
-    a mentira que esta card existe para acabar.
+    Uma importacao dentro da janela (`job_timeout=240` mais a espera na fila)
+    ainda pode estar rodando de verdade -- um estouro de `job_timeout` vira
+    `TimeoutError` para o ARQ, nao `CancelledError`, e por isso NAO e
+    retentado (ver o comentario de `sweep_importacao_travada_after_seconds`
+    em `app/config.py`). Fechar uma linha que ainda esta viva e a mentira que
+    esta card existe para acabar.
     """
     importacao_id = await _importacao(
         session, status=StatusImportacao.PROCESSANDO, idade_segundos=60
@@ -125,6 +129,12 @@ async def test_duas_varreduras_nao_encerram_a_mesma_linha_duas_vezes(session: An
     Com `SKIP LOCKED` ela pula e devolve zero; sem ele, ela BLOQUEIA esperando
     o lock e o teste trava ate o timeout -- que e o comportamento que a
     clausula existe para evitar, com um sweeper concorrente segurando o outro.
+
+    `pytest-timeout` NAO esta instalado neste venv, e sob `-n 8` no CI um
+    travamento aqui vira job pendurado ate o timeout do workflow, nao uma
+    falha nomeada. O `asyncio.timeout` abaixo nao afrouxa a prova: se o
+    SKIP LOCKED sumir do SQL, o teste ainda falha -- so que rapido, e com
+    mensagem, em vez de travar para sempre.
     """
     from sqlalchemy import text as sql
 
@@ -141,10 +151,11 @@ async def test_duas_varreduras_nao_encerram_a_mesma_linha_duas_vezes(session: An
             sql("SELECT id FROM importacoes WHERE id = :i FOR UPDATE"),
             {"i": importacao_id},
         )
-        assert await sweep_importacoes_travadas(_ctx()) == 0, (
-            "com a linha travada por outra sessao, a varredura tem de PULAR -- "
-            "sem SKIP LOCKED ela ficaria bloqueada esperando"
-        )
+        async with asyncio.timeout(10):
+            assert await sweep_importacoes_travadas(_ctx()) == 0, (
+                "com a linha travada por outra sessao, a varredura tem de PULAR -- "
+                "sem SKIP LOCKED ela ficaria bloqueada esperando"
+            )
         await bloqueadora.rollback()
 
     # Solto o lock, a linha e encerrada -- uma vez, e so uma.

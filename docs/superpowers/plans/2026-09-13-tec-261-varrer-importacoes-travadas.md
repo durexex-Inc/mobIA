@@ -427,7 +427,7 @@ async def test_duas_varreduras_nao_encerram_a_mesma_linha_duas_vezes(session: An
 - [ ] **Step 2: Run it**
 
 ```bash
-./.venv/Scripts/python.exe -m pytest tests/integration/test_sweep_importacoes_travadas.py -k concorrentes --tb=short
+./.venv/Scripts/python.exe -m pytest tests/integration/test_sweep_importacoes_travadas.py -k duas_varreduras --tb=short
 ```
 
 Esperado: PASS.
@@ -439,7 +439,7 @@ Esperado: PASS.
 Sonda temporária: tire ` SKIP LOCKED` do `_ENCERRAR_TRAVADAS` (deixando só `FOR UPDATE`) e rode de novo com timeout curto:
 
 ```bash
-./.venv/Scripts/python.exe -m pytest tests/integration/test_sweep_importacoes_travadas.py -k concorrentes --tb=short --timeout=30
+./.venv/Scripts/python.exe -m pytest tests/integration/test_sweep_importacoes_travadas.py -k duas_varreduras --tb=short --timeout=30
 ```
 
 Esperado: o teste **trava e estoura o timeout** em vez de passar. Reverta a sonda e confirme `git diff --stat src/` vazio.

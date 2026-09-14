@@ -260,21 +260,43 @@ class Settings(BaseSettings):
     sweep_inflight_after_seconds: int = 300
     sweep_max_attempts: int = 5
 
-    # TEC-261. O piso deste numero nao e gosto: e o orcamento de retentativa do
-    # worker. `job_timeout = 240` e `max_tries = 5` (`workers/main.py`), e um
-    # `job_timeout` do ARQ vira `CancelledError` -- uma das tres excecoes que
-    # ele REAGENDA. Entao uma importacao que estoura o tempo pode ser
-    # legitimamente retentada cinco vezes: 20 minutos de processamento no pior
-    # caso, mais a espera na fila e o backoff entre tentativas.
+    # TEC-261. O piso deste numero NAO vem do reagendamento do ARQ por
+    # `job_timeout`. Verificado empiricamente neste venv: `job_timeout` vira
+    # `CancelledError` DENTRO da corrotina, mas `asyncio.wait_for`
+    # (`arq/worker.py:599`) converte o estouro em `TimeoutError` para quem
+    # chama. `TimeoutError` e uma `Exception` comum, e o despacho
+    # (`arq/worker.py:613-628`) cai no `else`: `finish = True`,
+    # `jobs_failed += 1`. Um `importar_catalogo` que estoura o tempo e
+    # TERMINAL e NUNCA e retentado -- e nada o reenfileira: a rota em
+    # `imoveis.py` e o unico `enqueue_job("importar_catalogo", ...)`, e nao ha
+    # `sweep_stalled` equivalente para importacao. Mesma distincao que
+    # `workers/jobs/sweep_stalled.py` ja documenta: o ARQ so reagenda `Retry`,
+    # `RetryJob` e `CancelledError` de verdade -- nao qualquer `Exception`.
     #
-    # 30 minutos ficam ~50% acima disso, cobrindo fila e backoff sem precisar
-    # calcula-los. Importacao e rara: uma linha travada esperar meia hora antes
-    # de ser fechada nao custa nada, e o custo do outro lado -- fechar uma que
-    # ainda esta viva -- e a mentira de relatorio que esta card existe para
-    # acabar.
+    # A sensibilidade real e outra: um cancelamento por REINICIO do worker (o
+    # processo mata a corrotina em voo, sem passar pelo `wait_for`) chega como
+    # `CancelledError` de verdade, e esse SIM e retentado ate `max_tries = 5`
+    # vezes -- sem backoff, o job volta a fila com `incr_score=None`,
+    # imediatamente. O piso pelo caminho do ARQ e uma tentativa de
+    # `job_timeout = 240` mais a espera na fila, nao 20 minutos: subir
+    # `max_tries` nao move nada aqui, porque o estouro de tempo em si nao e
+    # retentado por essa via -- so o reinicio o e.
     #
-    # **Quem subir `job_timeout` ou `max_tries` tem de reconferir este numero.**
-    # Ele nao se move sozinho, e nada acusa quando o piso cresce.
+    # 30 minutos ficam bem acima desse piso, cobrindo tambem os reinicios que
+    # de fato retentam. Importacao e rara: uma linha travada esperar meia hora
+    # antes de ser fechada nao custa nada, e o custo do outro lado -- fechar
+    # uma que ainda esta viva -- e a mentira de relatorio que esta card existe
+    # para acabar.
+    #
+    # **Quem subir `job_timeout` tem de reconferir este numero** -- `max_tries`
+    # sozinho nao move o piso, so os reinicios de worker o fazem. Ele nao se
+    # move sozinho, e nada acusa quando o piso cresce.
+    #
+    # O caminho da CLI (`admin/seed_catalogo.py`) chama `registrar` + `executar`
+    # em processo, sem ARQ e sem `job_timeout` nenhum -- esta varredura nao
+    # filtra por origem, entao uma linha `CLI` parada tambem entra. Efeito
+    # bom: um seed interrompido (Ctrl+C) fica fechado, o que a card nao
+    # prometia.
     sweep_importacao_travada_after_seconds: int = 1800
 
     # TEC-157. A chave do provedor de embedding, que NAO e a da Anthropic: a

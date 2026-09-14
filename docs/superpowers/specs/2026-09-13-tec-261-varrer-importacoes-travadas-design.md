@@ -37,9 +37,11 @@ max_tries = 5
 job_timeout = 240
 ```
 
-Um `job_timeout` do ARQ vira `CancelledError`, e `CancelledError` é uma das três exceções que o ARQ **reagenda** — então uma importação que estoura o tempo pode ser legitimamente retentada até cinco vezes. São **20 minutos de processamento no pior caso**, mais a espera na fila e o backoff entre tentativas.
+**Isso não vem do reagendamento do ARQ por `job_timeout`, e a revisão final verificou o mecanismo empiricamente.** `job_timeout` vira `CancelledError` DENTRO da corrotina, mas `asyncio.wait_for` (`arq/worker.py:599`) converte o estouro em `TimeoutError` para quem chama. `TimeoutError` é uma `Exception` comum, e o despacho (`arq/worker.py:613-628`) cai no `else`: `finish = True`, `jobs_failed += 1`. Um `importar_catalogo` que estoura o tempo é **terminal e nunca é retentado** — e nada o reenfileira, porque a rota em `imoveis.py` é o único `enqueue_job("importar_catalogo", ...)` e não há `sweep_stalled` equivalente para importação. Mesma distinção que `workers/jobs/sweep_stalled.py` já documenta: o ARQ só reagenda `Retry`, `RetryJob` e `CancelledError` de verdade — não qualquer `Exception`.
 
-Um limite abaixo disso faz a varredura fechar em `FALHOU` uma linha cujo job ainda está vivo — e o relatório passa a mentir no meio do caminho, que é exatamente o que esta card existe para acabar.
+A sensibilidade real é outra: um cancelamento por **reinício do worker** (o processo mata a corrotina em voo, sem passar pelo `wait_for`) chega como `CancelledError` de verdade, e esse sim é retentado até `max_tries = 5` vezes — sem backoff, o job volta à fila com `incr_score=None`, imediatamente. O piso pelo caminho do ARQ é uma tentativa de `job_timeout = 240` mais a espera na fila, não 20 minutos: subir `max_tries` não move nada aqui, porque o estouro de tempo em si não é retentado por essa via — só o reinício é.
+
+Um limite abaixo desse piso faz a varredura fechar em `FALHOU` uma linha cujo job ainda está vivo — e o relatório passa a mentir no meio do caminho, que é exatamente o que esta card existe para acabar.
 
 ## Decisões
 
@@ -47,9 +49,11 @@ Um limite abaixo disso faz a varredura fechar em `FALHOU` uma linha cujo job ain
 
 `sweep_importacao_travada_after_seconds: int = 1800`, em `app/config.py`, ao lado dos três `sweep_*` existentes.
 
-Trinta minutos ficam ~50% acima dos 20 do pior caso, cobrindo também a fila e o backoff sem precisar calculá-los com precisão. Importação é rara: uma linha travada esperar meia hora antes de ser fechada não custa nada, e o custo do outro lado — fechar uma que ainda está viva — é a mentira que a card quer eliminar.
+Trinta minutos ficam bem acima desse piso — uma tentativa de `job_timeout = 240` mais a espera na fila —, cobrindo também os reinícios de worker que de fato retentam. Importação é rara: uma linha travada esperar meia hora antes de ser fechada não custa nada, e o custo do outro lado — fechar uma que ainda está viva — é a mentira que a card quer eliminar.
 
-**O comentário do campo registra a derivação** (`job_timeout` × `max_tries`), para o número não virar mágico. Este repo já tem precedente do contrário: um teto transcrito em prosa que envelheceu sozinho e mandou gente procurar problema inexistente.
+**O comentário do campo registra a derivação**, para o número não virar mágico. Este repo já tem precedente do contrário: um teto transcrito em prosa que envelheceu sozinho e mandou gente procurar problema inexistente.
+
+**A derivação cobre só metade dos caminhos que gravam `importacoes`.** `admin/seed_catalogo.py` chama `registrar` + `executar` em processo — mesma tabela, mesma coluna `status`, **sem ARQ e sem `job_timeout` nenhum**. A varredura não filtra por `origem`, então uma linha `CLI` parada também é encerrada. Efeito líquido bom: um seed interrompido com Ctrl+C deixa de ficar `PROCESSANDO` para sempre — o que esta card não prometia, mas não contradiz.
 
 ### D2 — Um statement só, e não as duas fases da `sweep_stalled`
 
@@ -134,4 +138,4 @@ Os quatro cenários da card são o critério de aceite:
 
 **L2 — Nada avisa o administrador.** A linha passa a dizer a verdade quando ele consultar, mas ninguém o procura. Notificação de importação é outra card; a consequência prática é que ele só descobre se voltar a olhar.
 
-**L3 — O limite não se move sozinho.** Se alguém subir `job_timeout` ou `max_tries` em `workers/main.py`, o piso de 20 minutos cresce e o limite de 30 pode ficar apertado — sem nada acusar. Derivá-lo em runtime foi descartado porque os dois são atributos da classe do worker, não campos de `Settings`, e puxá-los para o config é mudança maior que esta card. O comentário do campo nomeia a dependência para quem mexer nos dois ter chance de lembrar.
+**L3 — O limite não se move sozinho.** Se alguém subir `job_timeout` em `workers/main.py`, o piso cresce e o limite de 30 minutos pode ficar apertado — sem nada acusar. `max_tries` sozinho não move este piso, porque um estouro de `job_timeout` vira `TimeoutError` (não `CancelledError`) e o ARQ não o retenta — só um reinício de worker retenta, e esse caminho não depende de `max_tries` subir. Derivá-lo em runtime foi descartado porque os dois são atributos da classe do worker, não campos de `Settings`, e puxá-los para o config é mudança maior que esta card. O comentário do campo nomeia a dependência para quem mexer em `job_timeout` ter chance de lembrar.
