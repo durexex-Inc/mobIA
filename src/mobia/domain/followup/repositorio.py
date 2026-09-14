@@ -40,6 +40,12 @@ class Candidato:
     conversation_key: str
     temperatura: Temperatura
     ancora_em: datetime
+    # TEC-184, D1. O id da mesma fala cujo `created_at` e `ancora_em` -- sai da
+    # MESMA agregacao, e nao de uma segunda consulta. E ele que ancora a
+    # reserva de `outbound_dispatches` (FK para `messages`), o que da
+    # idempotencia por tentativa de graca: a UNIQUE (message_id, kind) de la
+    # espelha a UNIQUE (channel, conversation_key, ancora_em, tentativa) daqui.
+    ancora_message_id: uuid.UUID
     ja_disparada: int
     ja_enviadas: int
 
@@ -49,9 +55,13 @@ class Candidato:
 # leitura desse fato: e a mesma regra, e a docstring daquela funcao existe
 # precisamente para que a proxima card nao escreva uma terceira.
 #
-# O `HAVING` e o corte barato: nada abaixo de `INTERVALO_MINIMO` pode estar
-# devido em temperatura nenhuma, entao o lead sai antes de qualquer outro
-# trabalho.
+# O `created_at <= :corte` de `ultima_fala` e o corte barato: nada abaixo de
+# `INTERVALO_MINIMO` pode estar devido em temperatura nenhuma, entao o lead
+# sai antes de qualquer outro trabalho. O filtro mora nesta CTE, e nao em
+# `falas_do_lead`, porque so faz sentido depois do `ROW_NUMBER` ter escolhido
+# a fala mais recente -- filtrar antes poderia aceitar uma fala velha como se
+# fosse a ultima, quando na verdade existe uma mais nova ainda dentro da
+# janela.
 #
 # **`candidatos` e uma CTE, e nao um SELECT unico, porque o filtro de
 # `ja_disparada` precisa do valor JA calculado.** Postgres nao deixa referenciar
@@ -135,19 +145,28 @@ _CASE_TETO_POR_TEMPERATURA = " ".join(
 
 _SELECIONAR_CANDIDATOS = text(
     f"""
-    WITH ultima_fala AS (
-        SELECT channel, conversation_key, MAX(created_at) AS ancora
+    WITH falas_do_lead AS (
+        SELECT channel, conversation_key, created_at, id,
+               ROW_NUMBER() OVER (
+                   PARTITION BY channel, conversation_key
+                   ORDER BY created_at DESC
+               ) AS posicao
           FROM messages
          WHERE direction = 'INBOUND'
            AND bloqueada_em IS NULL
-         GROUP BY channel, conversation_key
-        HAVING MAX(created_at) <= :corte
+    ),
+    ultima_fala AS (
+        SELECT channel, conversation_key, created_at AS ancora, id AS mensagem_id
+          FROM falas_do_lead
+         WHERE posicao = 1
+           AND created_at <= :corte
     ),
     candidatos AS (
         SELECT lq.channel,
                lq.conversation_key,
                lq.temperatura,
                u.ancora,
+               u.mensagem_id,
                COALESCE(
                    (SELECT MAX(f.tentativa_numero)
                       FROM followups f
@@ -167,7 +186,7 @@ _SELECIONAR_CANDIDATOS = text(
            AND u.conversation_key = lq.conversation_key
          WHERE lq.temperatura IN :temperaturas_validas
     )
-    SELECT channel, conversation_key, temperatura, ancora, ja_disparada, ja_enviadas
+    SELECT channel, conversation_key, temperatura, ancora, mensagem_id, ja_disparada, ja_enviadas
       FROM candidatos
      WHERE ja_disparada < CASE temperatura {_CASE_TETO_POR_TEMPERATURA} END
      ORDER BY ancora, channel, conversation_key
@@ -231,6 +250,7 @@ async def candidatos_a_followup(
             conversation_key=linha.conversation_key,
             temperatura=Temperatura(linha.temperatura),
             ancora_em=linha.ancora,
+            ancora_message_id=linha.mensagem_id,
             ja_disparada=linha.ja_disparada,
             ja_enviadas=linha.ja_enviadas,
         )

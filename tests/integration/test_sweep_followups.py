@@ -19,7 +19,7 @@ from mobia.domain.atendimento.repositorio import assumir
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.models import FollowUp
-from mobia.domain.followup.repositorio import Candidato
+from mobia.domain.followup.repositorio import Candidato, candidatos_a_followup
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -52,23 +52,30 @@ async def _lead(
     temperatura: str | None = "QUENTE",
     calado_ha: timedelta,
     agora: datetime = DENTRO_DA_JANELA,
-) -> None:
+    semear_qualificacao: bool = True,
+) -> uuid.UUID:
     """Um lead com temperatura e uma fala de entrada com a idade pedida.
 
     `agora` e a referencia da idade, e nao `datetime.now()`: a varredura
     tambem recebe um momento fixo, e os dois tem de concordar.
+
+    Devolve o id da mensagem semeada -- e a ancora que `candidatos_a_followup`
+    deve carregar. `semear_qualificacao=False` pula a `LeadQualification`: a
+    PK dela e por conversa, entao uma segunda fala na MESMA conversa (para
+    testar qual das duas vira a ancora) nao pode semear-la de novo.
     """
-    session.add(
-        LeadQualification(
-            channel=CANAL,
-            conversation_key=CONVERSA,
-            intencao=Intencao.COMPRA.value,
-            faixa_preco_max_centavos=50_000_000,
-            regiao="vila mariana",
-            urgencia=Urgencia.IMEDIATA.value,
-            temperatura=temperatura,
+    if semear_qualificacao:
+        session.add(
+            LeadQualification(
+                channel=CANAL,
+                conversation_key=CONVERSA,
+                intencao=Intencao.COMPRA.value,
+                faixa_preco_max_centavos=50_000_000,
+                regiao="vila mariana",
+                urgencia=Urgencia.IMEDIATA.value,
+                temperatura=temperatura,
+            )
         )
-    )
     identificador = uuid.uuid4()
     session.add(
         Message(
@@ -88,6 +95,7 @@ async def _lead(
         )
     )
     await session.commit()
+    return identificador
 
 
 def _ctx() -> dict:
@@ -113,6 +121,25 @@ def _ctx() -> dict:
             followup_fuso=NOME_DO_FUSO,
         ),
     }
+
+
+async def test_o_candidato_traz_o_id_da_mensagem_ancora(session) -> None:
+    """D1: e este id que ancora a reserva de saida do follow-up.
+
+    Sem ele, `outbound_dispatches` (que tem FK para `messages`) nao teria a
+    que se prender, e as guardas de opt-out e silencio -- que resolvem o lead
+    PELA mensagem -- ficariam sem sujeito.
+    """
+    antiga = await _lead(session, calado_ha=timedelta(days=2))
+    recente = await _lead(session, calado_ha=timedelta(hours=3), semear_qualificacao=False)
+
+    (candidato,) = await candidatos_a_followup(session, agora=DENTRO_DA_JANELA)
+
+    assert candidato.ancora_message_id == recente, (
+        "a ancora e a ULTIMA fala do lead, nao a primeira -- com uma fala so "
+        "este teste nao distinguiria as duas"
+    )
+    assert candidato.ancora_message_id != antiga
 
 
 async def test_o_quente_calado_ha_duas_horas_recebe_a_primeira(session, caplog) -> None:
@@ -249,6 +276,10 @@ async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(
         conversation_key=CONVERSA,
         temperatura=Temperatura.QUENTE,
         ancora_em=ancora,
+        # ancora_message_id virou campo obrigatorio com a TEC-184. Este teste
+        # mocka a fronteira da consulta e nao exercita a D1 -- so precisa de
+        # um id qualquer, sem FK nenhuma a validar aqui.
+        ancora_message_id=uuid.uuid4(),
         ja_disparada=0,
         # ja_enviadas virou campo obrigatorio com a TEC-188. Este teste e da
         # TEC-183 e nao exercita o antispam -- so precisa de um valor que nao
@@ -483,6 +514,10 @@ async def test_a_guarda_do_maximo_barra_o_candidato(
         conversation_key=CONVERSA,
         temperatura=Temperatura.QUENTE,
         ancora_em=ancora,
+        # ancora_message_id virou campo obrigatorio com a TEC-184. Este teste
+        # mocka a fronteira da consulta e nao exercita a D1 -- so precisa de
+        # um id qualquer, sem FK nenhuma a validar aqui.
+        ancora_message_id=uuid.uuid4(),
         ja_disparada=0,
         ja_enviadas=4,
     )
