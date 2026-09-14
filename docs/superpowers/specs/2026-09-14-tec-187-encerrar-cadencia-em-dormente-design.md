@@ -53,7 +53,13 @@ Logo, `DORMENTE` derivado é **estável hoje**, e a instabilidade é uma consequ
 
 ### D2 — `listar_dormentes` inverte o corte e reusa as CTEs da âncora
 
-As três CTEs de `_SELECIONAR_CANDIDATOS` (`falas_do_lead`, `ultima_fala`, `candidatos`, `repositorio.py:152-206`) passam a ser uma constante de módulo compartilhada. As duas consultas diferem **só no `WHERE` final e na projeção**: `ja_disparada < CASE ...` devolve quem ainda deve receber, `ja_disparada >= CASE ...` devolve quem adormeceu. Extrair é reuso real, não abstração especulativa: sem isso seriam duas cópias de cinquenta linhas de SQL que precisam concordar sobre o que é a âncora, e a segunda cópia envelheceria sozinha.
+**Duas** das três CTEs de `_SELECIONAR_CANDIDATOS` viram uma constante de módulo compartilhada, `_CTES_DA_ANCORA`: `falas_do_lead` e `ultima_fala` (`repositorio.py:154-181`). A terceira, `candidatos`, **não** é partilhada.
+
+O seam é esse e não outro porque é ali que está a sutileza. `falas_do_lead` carrega a definição de "fala do lead" (`direction = 'INBOUND' AND bloqueada_em IS NULL`, a mesma que `contar_mensagens_do_lead` fixou) e o desempate `ORDER BY created_at DESC, id DESC`, cujo comentário de treze linhas explica que o `server_default` é constante dentro de um mesmo `INSERT` multi-VALUES e que sem o desempate duas falas do mesmo envelope alternariam a âncora entre execuções. Duas cópias disso concordando por acidente é exatamente o defeito que a TEC-146 gastou uma card consertando.
+
+A agregação, ao contrário, **diverge de verdade** e copiá-la seria mentir sobre o parentesco: `listar_dormentes` precisa de `MAX(f.created_at)`, que a consulta de candidatos não calcula, e **não** precisa de `ja_enviadas` (não há anti-spam a checar em quem não vai receber nada) nem de `mensagem_id` (não há o que ancorar, porque não há envio). Forçar as duas na mesma CTE acrescentaria uma terceira subconsulta correlacionada por linha à varredura que roda de cinco em cinco minutos, para alimentar uma coluna que ela descarta.
+
+As duas consultas diferem, então, na agregação e no sinal do corte: `ja_disparada < CASE ...` devolve quem ainda deve receber, `ja_disparada >= CASE ...` devolve quem adormeceu. O `CASE` continua sendo o mesmo `_CASE_TETO_POR_TEMPERATURA` gerado de `CADENCIA`, nos dois.
 
 ```python
 @dataclass(frozen=True)
