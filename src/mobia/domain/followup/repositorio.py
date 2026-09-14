@@ -282,17 +282,28 @@ async def registrar_followup(
     """Grava a tentativa. Devolve `None` quando outra varredura chegou primeiro.
 
     `ON CONFLICT DO NOTHING` e nao `try/except IntegrityError`: o conflito
-    aqui NAO e erro -- e a corrida entre duas varreduras sendo absorvida --, e
-    uma excecao envenenaria a transacao daquele candidato, que ainda tem
-    trabalho pela frente (a montagem e o envio, em `sweep_followups`). O
-    desfecho seria perder o follow-up de quem ja estava servido por outra
-    passagem, em vez de so nao gravar de novo.
+    aqui NAO e erro -- e a corrida entre duas varreduras sendo absorvida.
 
-    O argumento ANTIGO desta docstring -- "a varredura processa varios
-    candidatos numa so transacao, e um conflito no terceiro derrubaria os dois
-    primeiros junto" -- foi falsificado pela TEC-184, que passou a commitar
-    POR CANDIDATO. A conclusao continua a mesma; a premissa e que nao vale
-    mais.
+    **Quem a excecao custaria nao e o candidato que conflitou: sao os
+    SEGUINTES.** Aquele ja foi gravado pela outra passagem e nao perde nada. A
+    sessao, porem, e UMA para o laco inteiro (`sweep_followups` a abre antes
+    do `for`), e um `IntegrityError` a deixa em rollback pendente -- a
+    operacao seguinte levanta `PendingRollbackError`, e o laco morre no
+    PROXIMO candidato, no `esta_em_optout` dele. E o mesmo modo de falha que
+    o `except Exception` em volta do bloco pos-commit daquele job existe para
+    conter, e o comentario de la descreve o caminho por extenso.
+
+    **Nao e a transacao deste candidato que estaria em risco**, ao contrario
+    do que esta docstring afirmou entre a TEC-184 e a correcao dela: quando
+    este INSERT roda, o que falta na transacao dele e so o commit. A montagem
+    da mensagem e o envio acontecem DEPOIS dele, ja fora dela.
+
+    O argumento ORIGINAL -- "a varredura processa varios candidatos numa so
+    transacao, e um conflito no terceiro derrubaria os dois primeiros junto"
+    -- foi falsificado pela TEC-184, que passou a commitar POR CANDIDATO. A
+    conclusao sobreviveu as duas correcoes; a premissa nao: os dois primeiros
+    ja estao commitados e sobrevivem, e quem morre sao os que ainda nao
+    rodaram.
 
     Nao commita: a sessao e emprestada, e quem chama e dono da fronteira da
     transacao, como em `gravar_estado` e `registrar_recalculo`.
