@@ -1700,20 +1700,49 @@ async def executar_turno(
                     # lido -- quem decide o desfecho e o bloco `if not
                     # entregue:` abaixo, inalterado.
                     #
-                    # Sem `log.error` aqui: as duas causas (reserva presa vs
-                    # guarda concorrente) so se distinguem reconsultando o
-                    # banco, e `_bloqueado_por_optout_concorrente` /
-                    # `_bloqueado_por_atendimento_humano_concorrente` ja fazem
-                    # isso -- correto e testado -- nos blocos depois do laco
-                    # (`if not entregue:` e `if suprimida_apos_entrega:`
-                    # abaixo). Logar `error` aqui, sem essa checagem, tornava
-                    # `outbound.atendimento_humano_bloqueou` e
-                    # `outbound.optout_bloqueou` -- guarda funcionando, nao
-                    # alarme -- indistinguiveis de uma reserva presa de
-                    # verdade: dois testes desta suite (`test_turno_optout.py`,
+                    # O cenario 2 do Gherkin exige um log que distinga isto de
+                    # "nada saiu" -- mas `error` incondicional aqui repetiria o
+                    # erro de uma versao anterior deste fix: as duas guardas
+                    # concorrentes (opt-out, atendimento humano) TAMBEM fazem
+                    # `send()` devolver False sem levantar, e sao guarda
+                    # FUNCIONANDO, nao anomalia. `_bloqueado_por_optout_concorrente`
+                    # e `_bloqueado_por_atendimento_humano_concorrente` (abaixo
+                    # nesta funcao) sao quem ja separa as tres causas nos
+                    # blocos depois do laco -- reconsultamos as duas AQUI
+                    # tambem, so para decidir SE loga, porque o log observavel
+                    # (o alarme que faz alguem investigar a reserva presa)
+                    # nao pode esperar o fim do laco: se uma parte POSTERIOR
+                    # nunca sair, `suprimida_apos_entrega` fica sem efeito (a
+                    # variavel so e lida quando `entregue` acaba True) e o
+                    # unico sinal deste evento especifico seria este log.
+                    # Best-effort, mesmo criterio das duas funcoes chamadas:
+                    # entre esta consulta e o desfecho final pode haver uma
+                    # reativacao ou uma devolucao, e isso so muda qual
+                    # historia o log conta, nunca perde ou duplica envio.
+                    #
+                    # Dois testes desta suite (`test_turno_optout.py`,
                     # `test_turno_atendimento_humano.py`) afirmam que bloqueio
-                    # de guarda concorrente NAO produz log de `error`, e um
-                    # `log.error` incondicional aqui os quebrava.
+                    # de guarda concorrente NAO produz log de `error` -- um
+                    # `log.error` incondicional aqui os quebrava, e foi
+                    # exatamente o que uma versao anterior deste fix fez.
+                    bloqueado_por_optout = await _bloqueado_por_optout_concorrente(
+                        session_factory, message
+                    )
+                    bloqueado_por_atendimento_humano = (
+                        not bloqueado_por_optout
+                        and await _bloqueado_por_atendimento_humano_concorrente(
+                            session_factory, message
+                        )
+                    )
+                    if not bloqueado_por_optout and not bloqueado_por_atendimento_humano:
+                        log.error(
+                            "turno.entrega_parcial_da_resposta",
+                            channel=message.channel,
+                            message_id=str(message.id),
+                            kind=kind,
+                            reason="reserva presa: nem opt-out nem atendimento "
+                            "humano concorrente explicam a supressao",
+                        )
                     entrega_parcial = True
                     suprimida_apos_entrega = True
                     continue
