@@ -1824,14 +1824,23 @@ async def executar_turno(
         )
         return "reentrega_suprimida"
 
-    # Fix de revisao final (Critical 1, TEC-140). `entregue` e True aqui --
-    # pelo menos uma parte saiu --, mas `suprimida_apos_entrega` (marcada no
-    # laco acima) diz que uma parte POSTERIOR devolveu False sem levantar. Sao
-    # as MESMAS tres causas do `if not entregue:` logo acima -- reentrega
+    # Fix de revisao final (Critical 1, TEC-140; texto corrigido na TEC-273,
+    # cenario 2 do Gherkin). `entregue` e True aqui -- pelo menos uma parte
+    # saiu --, e `suprimida_apos_entrega` (marcada no laco acima) diz que
+    # ALGUMA parte devolveu False sem levantar -- nao necessariamente
+    # POSTERIOR a que entrou. Ate a TEC-273 a flag so nascia no ramo `if
+    # entregue:` do laco, com uma parte ja entregue quando a suprimida
+    # apareceu -- dai o nome. A D4 da TEC-273 passou a setar a MESMA flag
+    # tambem no ramo `not entregue` (reserva presa achada na PRIMEIRA parte do
+    # laco, ZERO partes entregues naquele instante) quando uma parte seguinte
+    # sai depois -- o nome continua pensando na ordem cronologica, mas o que
+    # ele de fato controla e so isto: alguma parte foi suprimida sem
+    # levantar, com ou sem parte entregue ANTES dela. Sao as MESMAS tres
+    # causas do `if not entregue:` logo acima -- reentrega
     # suprimida pela reserva, a guarda de opt-out barrando um envio
     # concorrente, ou a guarda de atendimento humano barrando pelo mesmo
-    # motivo (TEC-179) --, so que com uma parte ja entregue em vez de
-    # nenhuma. O desfecho de alarme (`reentrega_suprimida`) ou os de
+    # motivo (TEC-179) --, so que com pelo menos uma parte entregue no laco,
+    # em vez de nenhuma. O desfecho de alarme (`reentrega_suprimida`) ou os de
     # guarda-funcionou (`bloqueado_por_optout`, `bloqueado_por_atendimento_humano`)
     # tem de sobreviver do mesmo jeito: gravar "respondido" aqui esconderia
     # exatamente a corrida que `_bloqueado_por_optout_concorrente` e

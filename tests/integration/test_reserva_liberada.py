@@ -167,7 +167,7 @@ async def test_falha_ao_liberar_nao_mascara_o_erro_original(session, caplog) -> 
     assert "RuntimeError" in caplog.text
 
 
-async def test_liberar_so_apaga_a_reserva_do_kind_que_falhou(session) -> None:
+async def test_liberar_nao_arrasta_kind_de_outro_grupo(session) -> None:
     """O `IN (grupo)` e o que impede um reply liberado de arrastar o ack junto.
 
     Era `AND kind = :k` ate a TEC-273. O que mudou foi o recorte, nao a

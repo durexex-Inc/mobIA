@@ -1,12 +1,20 @@
-"""O vocabulario de kinds de saida, e quais deles formam uma resposta so.
+"""Os kinds da resposta de texto, e quais deles formam uma resposta so.
 
-TEC-273. Mora aqui, e nao dentro de `port.py`, pelo padrao que
-`KIND_DA_CONFIRMACAO_DE_OPTOUT` ja estabelece: o kind vive no modulo que
-possui o comportamento, e o port importa de la.
+TEC-273. NAO e o vocabulario inteiro de kinds de saida do sistema -- so o da
+resposta de texto (`reply`, `reply_2`). `KINDS_DAS_FICHAS`,
+`KIND_DO_CRITERIO_AMPLIADO` e `KIND_DO_FILTRO_AJUSTADO` moram em
+`domain/agente/turno.py`; `KIND_DA_CONFIRMACAO_DE_OPTOUT`,
+`KIND_DA_JANELA_HUMANA` e `KIND_DO_AVISO_DE_ERRO` moram cada um no modulo do
+proprio comportamento. Este modulo existe pelo mesmo padrao que aqueles tres
+ja seguem: o kind vive no modulo que possui o comportamento, e quem precisa
+dele importa de la.
 
-E nao pode continuar em `domain/agente/turno.py`, de onde veio: `port.py`
-precisa dele agora, e `domain/outbound` nao pode importar de `domain/agente`
--- a dependencia ja corre no sentido contrario.
+`reply`/`reply_2` nao tem um modulo de comportamento proprio para morar --
+sao produzidos dentro de `executar_turno`, em `domain/agente/turno.py` -- e
+por isso precisaram de um lar novo: `port.py` passou a precisar do
+agrupamento (D1, `grupo_de`) para liberar as reservas do grupo inteiro numa
+falha retentavel, e `domain/outbound` nao pode importar de `domain/agente`,
+que ja importa dele -- a dependencia so corre num sentido.
 """
 
 KIND_DA_RESPOSTA = "reply"

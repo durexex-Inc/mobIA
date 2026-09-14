@@ -669,17 +669,19 @@ async def test_parte_suprimida_antes_de_uma_entregue_nao_e_gravada_como_entregue
     # Dois logs distintos, os dois em `error`, e os dois sao esperados aqui:
     #
     # `turno.entrega_parcial_da_resposta` e o alarme do cenario 2 do Gherkin
-    # ("um log distingue este caso de 'nada saiu'"), emitido no proprio laco
-    # SO quando nem opt-out nem atendimento humano concorrente explicam a
+    # ("um log distingue este caso de 'nada saiu'"), emitido DEPOIS do laco,
+    # no ramo `else` do bloco `if suprimida_apos_entrega:` de `executar_turno`
+    # -- SO quando nem opt-out nem atendimento humano concorrente explicam a
     # supressao -- ver o comentario onde ele e emitido, em `turno.py`. Um
     # `log.error` incondicional ali, sem essa checagem, tornaria a guarda de
     # opt-out/atendimento humano concorrente -- que NAO e alarme -- indistinguivel
     # de uma reserva presa de verdade, e quebraria os dois testes que afirmam
     # isso em `test_turno_optout.py` e `test_turno_atendimento_humano.py`.
     #
-    # `turno.reentrega_suprimida` e o desfecho, emitido depois do laco pelo
-    # bloco `if suprimida_apos_entrega:` de `executar_turno` -- o mesmo bloco
-    # que ja cobre
+    # `turno.reentrega_suprimida` e o desfecho, emitido logo em seguida, no
+    # MESMO ramo `else` daquele bloco -- o commit `c0d4bfe` tirou os dois de
+    # dentro do laco de proposito, entao nenhum roda mais "no proprio laco".
+    # E o mesmo bloco que ja cobre
     # `test_reserva_duplicada_na_segunda_parte_apos_entrega_vira_reentrega_suprimida`
     # neste arquivo, para a ordem simetrica (parte posterior suprimida depois
     # de uma entregue).
