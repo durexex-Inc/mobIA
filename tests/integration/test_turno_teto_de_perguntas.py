@@ -1,8 +1,13 @@
 """O teto de 8 perguntas visto do turno inteiro. TEC-149, RN-05.5.
 
-Cenarios 1, 3 e 4 do Gherkin da card. O cenario 2 -- desambiguacao nao conta
--- vive em `tests/unit/`, porque la a garantia e estrutural e nao precisa de
-turno em volta.
+Cenarios 1, 3 e 4 do Gherkin da card. A garantia de CONTAGEM do cenario 2 --
+desambiguacao nao soma ao contador -- vive em `tests/unit/`, porque la ela e
+estrutural e nao precisa de turno em volta.
+
+Mais dois testes de precedencia, que so o turno inteiro consegue exercitar: o
+texto do teto nao pode pisar na pergunta do desambiguador nem no
+`TEXTO_NEUTRO_DE_SAIDA` da moderacao de saida. Sao as duas guardas que a
+substituicao em `turno.py` carrega alem de `teto_atingido`.
 """
 
 from decimal import Decimal
@@ -118,6 +123,11 @@ async def test_a_prosa_do_modelo_nao_vaza_no_turno_do_teto(
         contador_fake(),
     )
 
+    # Lista exata, e nao so a negativa: `prosa not in entregues` passaria com
+    # `entregues` VAZIO, ou seja com o turno sem entregar nada. A forma de
+    # lista fixa que houve entrega, que houve UMA so, e deixa o "a prosa nao
+    # saiu" como consequencia dela.
+    assert entregador.entregues == [TEXTO_DO_LIMITE_DE_PERGUNTAS]
     assert prosa not in entregador.entregues
 
 
@@ -146,6 +156,13 @@ async def test_turno_de_desambiguacao_no_teto_entrega_a_pergunta_do_desambiguado
     await rodar_turno(session, classificador, entregador, resumidor_fake(), contador_fake())
 
     assert classificador.desambiguacoes == 1, "o turno de fato desambiguou"
+    # A precondicao, fixada: o teto FOI atingido neste turno -- o handoff e a
+    # prova, porque ele nasce no caminho de desambiguacao tambem (a
+    # assimetria aceita). Sem esta linha, o dia em que `teto_atingido`
+    # parasse de ser True para 8 + `urgencia` deixaria a negativa abaixo
+    # verde pelo motivo errado, e o teste pararia de guardar a guarda que da
+    # nome a ele.
+    assert "LIMITE_DE_PERGUNTAS" in await _gatilhos(session)
     assert pergunta in entregador.entregues
     assert TEXTO_DO_LIMITE_DE_PERGUNTAS not in entregador.entregues
     # O contador nao anda, e isso ja valia antes desta card: a guarda

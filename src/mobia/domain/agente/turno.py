@@ -1350,6 +1350,12 @@ async def executar_turno(
         # se perde: a guarda pos-entrega ja exclui `saida_bloqueada`, entao
         # nada foi contado, e o teto dispara normalmente no proximo turno sem
         # bloqueio.
+        #
+        # E NAO e a ultima palavra sobre `texto`: a citacao bloqueada da
+        # TEC-161 e o zero pos-relaxamento da TEC-160 reatribuem depois daqui
+        # e vencem. Esta certo assim -- politica mais especifica ganha --, e
+        # as duas substituem por constante NOSSA, entao a pergunta que o teto
+        # suprimiu nao vaza por nenhuma delas.
         texto = TEXTO_DO_LIMITE_DE_PERGUNTAS
 
     # TEC-162, D4. Candidatos sem pergunta e turno de apresentacao. As tres
@@ -1427,12 +1433,13 @@ async def executar_turno(
     # chamada sobre texto que nao inventamos, o mesmo argumento que a TEC-162
     # escreveu para as fichas.
     #
-    # Este ponto fica DEPOIS das tres reatribuicoes de `texto` acima, e por
-    # isso cobre quatro trilhas, nao uma: a resposta normal, o
+    # Este ponto fica DEPOIS das quatro reatribuicoes de `texto` acima, e por
+    # isso cobre cinco trilhas, nao uma: a resposta normal, o
     # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada, o
+    # TEXTO_DO_LIMITE_DE_PERGUNTAS do teto de perguntas da TEC-149, o
     # TEXTO_DA_BUSCA_INCONCLUSIVA da citacao bloqueada da TEC-161 e o
     # TEXTO_SEM_RESULTADO_APOS_AMPLIAR do zero pos-relaxamento da TEC-160. A
-    # apresentacao NAO e uma quinta trilha aqui -- e excluida de proposito,
+    # apresentacao NAO e uma sexta trilha aqui -- e excluida de proposito,
     # tratada em separado dentro do `if apresentando:` abaixo (Task 5).
     #
     # `apresentando` fica de FORA aqui: naquele caminho `texto` vira prefixo de
