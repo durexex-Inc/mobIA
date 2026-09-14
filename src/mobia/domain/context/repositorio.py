@@ -690,6 +690,19 @@ async def contar_perguntas(
 
     Sem nada contavel, nenhum UPDATE: um turno que so respondeu duvida nao
     gasta orcamento, e um `SET` que soma zero so produziria escrita morta.
+
+    **Consequencia declarada: o `UPDATE` e no-op enquanto o lead nao tem
+    linha.** O unico gravador de `lead_qualification` e o upsert dentro de
+    `gravar_estado`, e ele retorna cedo -- "Deliberadamente NAO cria linha"
+    -- quando `campos_a_gravar` devolve vazio, o que vale sempre para
+    FORA_DE_ESCOPO e para INDEFINIDA sem extracao. No primeiro turno em que
+    o lead so diz "oi", nada e extraido, o agente pode perguntar mesmo
+    assim, e este UPDATE nao casa linha nenhuma: a pergunta foi FEITA E
+    ENTREGUE e nao e contada. Criar a linha aqui foi cogitado e rejeitado --
+    moveria o score do lead de 0 para o piso documentado e gravaria uma
+    entrada na trilha de score por causa de um lead que nao disse nada, um
+    efeito colateral maior que a subcontagem. O erro fica contido: assim que
+    QUALQUER linha existir para o lead, toda pergunta seguinte conta.
     """
     quantas = len(perguntas_contaveis(perguntou))
     if not quantas:

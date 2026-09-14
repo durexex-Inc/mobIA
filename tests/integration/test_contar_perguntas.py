@@ -80,6 +80,36 @@ async def test_nome_desconhecido_nao_conta(session: Any) -> None:
     assert await _contador(session) == 0
 
 
+async def test_lead_sem_linha_nao_e_contado_por_decisao_nao_por_acidente(session: Any) -> None:
+    """O UPDATE e no-op quando o lead nao tem linha, e isso e o comportamento
+    escolhido -- nao um bug a corrigir.
+
+    `gravar_estado` recusa de proposito criar linha para um lead que nao
+    extraiu nada ("Deliberadamente NAO cria linha", no docstring dela), e
+    `contar_perguntas` roda sobre um UPDATE simples que so acha linha para
+    atualizar. A alternativa -- fazer esta funcao criar a linha -- moveria o
+    score do lead do zero para o piso documentado e geraria entrada na
+    trilha de score por causa de uma pergunta feita a um lead que ainda nao
+    disse nada, um efeito colateral maior que a subcontagem aceita aqui. Ver
+    o paragrafo de consequencia declarada no docstring de `contar_perguntas`.
+
+    Sem `_semear`: e exatamente a ausencia de linha que este teste tranca.
+    """
+    await contar_perguntas(
+        session, channel=CANAL, conversation_key=CONVERSA, perguntou=("urgencia",)
+    )
+    await session.commit()
+
+    session.expire_all()
+    linha = await session.scalar(
+        select(LeadQualification).where(
+            LeadQualification.channel == CANAL,
+            LeadQualification.conversation_key == CONVERSA,
+        )
+    )
+    assert linha is None
+
+
 async def test_dois_turnos_concorrentes_nao_perdem_incremento(session: Any) -> None:
     """A razao de o incremento ser SQL, e nao leitura em Python seguida de
     escrita (D2).

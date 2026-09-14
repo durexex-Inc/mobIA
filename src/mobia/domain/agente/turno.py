@@ -132,7 +132,12 @@ TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
 )
 
 # TEC-149, RN-05.5. Substitui a prosa do modelo no turno em que a pergunta
-# seguinte passaria do teto.
+# seguinte passaria do teto -- o caso comum, e nao a regra sem excecao: a
+# substituicao so acontece com `not desambiguando` e `not saida_bloqueada`,
+# e `TEXTO_DA_BUSCA_INCONCLUSIVA`/`TEXTO_SEM_RESULTADO_APOS_AMPLIAR` ainda
+# podem sobrescrever `texto` depois. Ver o `if teto_atingido and not
+# desambiguando and not saida_bloqueada:` mais abaixo, onde as duas guardas
+# e a ordem de precedencia estao escritas por extenso.
 #
 # **Nao promete que alguem foi avisado, e isso e deliberado.** Criar handoff
 # nao notifica ninguem: as cards de notificacao por e-mail e WhatsApp
@@ -1038,7 +1043,7 @@ async def executar_turno(
         contexto.estado.perguntas_feitas if contexto.estado is not None else 0,
         len(perguntas_contaveis(gerada.perguntou)),
     )
-    # TEC-174, fix wave (Important 2). Os dois ficam None quando a condicao que
+    # TEC-174, fix wave (Important 2). Os tres ficam None quando a condicao que
     # os preenche nao roda -- e viram o `HandoffRegistrado` de `registrar_handoff`
     # quando roda. `registrar_handoff` nao loga mais (ver o comentario de la);
     # quem loga e este modulo, e so DEPOIS do commit abaixo.
@@ -1109,13 +1114,19 @@ async def executar_turno(
 
         if teto_atingido:
             # Registrado aqui mesmo nos turnos em que o texto do teto NAO vai
-            # sair. `desambiguando` e `saida_bloqueada` -- as duas guardas da
-            # substituicao la embaixo -- so passam a existir depois deste
-            # bloco, entao nao ha como consulta-las daqui. A assimetria e
-            # deliberada e nao um esquecimento: o handoff nasce, o lead recebe
-            # o texto no proximo turno que qualificar, e `registrar_handoff` e
-            # idempotente -- nenhum handoff duplicado aparece. Nao mova isto
-            # para baixo para emparelhar as condicoes.
+            # sair. Das duas guardas da substituicao la embaixo, `saida_bloqueada`
+            # de fato nao existe ainda neste ponto -- depende da chamada de
+            # moderacao de saida, que so roda depois. `desambiguando` e
+            # diferente: ele depende de `anterior`, que este mesmo bloco ja leu
+            # (`ler_intencao`, logo acima), entao dar hoisting nele seria
+            # possivel. A escolha e nao fazer isso -- `desambiguando` mora perto
+            # de onde e usado, e duplicar a leitura de `anterior` aqui so para
+            # antecipar uma guarda economizaria uma variavel as custas de dois
+            # lugares para manter em sincronia. A assimetria e deliberada e nao
+            # um esquecimento: o handoff nasce, o lead recebe o texto no proximo
+            # turno que qualificar, e `registrar_handoff` e idempotente --
+            # nenhum handoff duplicado aparece. Nao mova isto para baixo para
+            # emparelhar as condicoes.
             handoff_do_teto = await registrar_handoff(
                 session,
                 channel=message.channel,

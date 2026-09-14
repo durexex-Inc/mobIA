@@ -3,6 +3,9 @@
 TEC-147, RN-05.3. Pura de proposito: sem I/O, sem banco, sem chamada ao
 modelo. Nao ha coluna `status` -- "qualificado" e funcao dos campos, e uma
 segunda fonte para o mesmo fato divergiria da primeira. Ver D1 do desenho.
+
+Tambem hospeda `TETO_DE_PERGUNTAS` e `excedeu_o_teto`, a regra irma da
+RN-05.5 (TEC-149): mesma pureza, mesma ausencia de I/O.
 """
 
 from mobia.domain.agente.schemas import Intencao
