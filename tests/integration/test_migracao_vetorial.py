@@ -54,3 +54,32 @@ async def test_o_indice_ivfflat_existe_com_cosseno() -> None:
     assert definicao is not None
     assert "ivfflat" in definicao
     assert "vector_cosine_ops" in definicao
+
+
+async def test_o_indice_continua_com_lists_1() -> None:
+    """TEC-266: `lists` so sobe depois que a consulta puder usar o indice.
+
+    A `0017` deixou uma receita para o futuro -- subir `lists` com `REINDEX`
+    quando o catalogo crescer -- e a receita nao funciona. Subir `lists` so
+    ajuda quem consegue usar o indice, e `buscar()` nao consegue: ordena por
+    score computado e carrega uma window function sem particao, dois
+    bloqueios que nao dependem de volume. Quem seguir a receita paga o
+    `REINDEX`, perde recall e nao ganha latencia nenhuma.
+
+    Prosa nao segura isso -- a nota da TEC-159 ja estava na `0017` e a receita
+    continuou la, acima dela, para quem lesse de cima para baixo. Esta
+    assercao segura: uma migration que suba `lists` reprova aqui.
+
+    **Se voce veio parar neste teste por te-lo reprovado, a pergunta nao e
+    "qual numero ponho".** E se a consulta de `domain/catalogo/busca.py` ja
+    foi mudada para a forma `ORDER BY embedding <=> :vetor LIMIT n`. Enquanto
+    ela nao for, `lists = 1` e a unica escolha que nao cobra sem entregar.
+    """
+    async with get_sessionmaker()() as session:
+        definicao = await session.scalar(
+            text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_imoveis_embedding'")
+        )
+    assert definicao is not None
+    assert "lists='1'" in definicao.replace(" ", ""), (
+        f"o indice saiu de lists = 1 sem que a consulta tenha mudado: {definicao}"
+    )
