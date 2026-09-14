@@ -379,6 +379,11 @@ async def imovel_novo_compativel(
         Imovel.id.not_in(ja_vistos),
     )
 
+    # `estado is None` e inalcancavel pelo caminho pretendido: `candidatos_a_followup`
+    # monta cada `Candidato` com um INNER JOIN contra `lead_qualification` (e e de
+    # la que vem a propria `temperatura`), entao todo channel/conversation_key que
+    # chega aqui pela varredura ja tem linha. O guard fica para um chamador direto
+    # que nao passe por `candidatos_a_followup`.
     if estado is not None:
         if estado.regiao is not None:
             # `bairro_busca` guarda o bairro DOBRADO -- caixa e acento (TEC-158,
