@@ -58,9 +58,22 @@ Então: função nova `contar_perguntas`, no mesmo módulo e chamada no mesmo bl
 
 O incremento é `len(perguntou)`, restrito aos campos de qualificação conhecidos — a mesma tradução de nome que `_NOME_DA_MARCA` já faz. A card manda contar *"perguntas de qualificação, não mensagens"*, e a Emenda E-01 da RN-05.4 permite duas perguntas por turno desde a TEC-255: contar turnos daria ao lead até dezesseis perguntas sob um teto que diz oito.
 
+**Lacuna conhecida, não bug: `intencao` não é um nome contável.** `perguntas_contaveis` só aceita chaves de `_NOME_DA_MARCA` e nomes de campo de `Extracao`, e `Extracao` não tem campo `intencao` — ela chega por fora, do classificador (ver o comentário de `campos_a_gravar`). Uma pergunta sobre intenção, portanto, nunca consome o teto, embora a RN-05.1/RN-05.3 listem intenção entre os campos de qualificação. Ficará assim até uma card decidir se vale a pena tratar esse nome também.
+
 ### D4 — Suprime-se o turno que perguntaria, não a conversa
 
-Quando `perguntas_feitas + len(perguntou) > 8`, a prosa do modelo não é entregue: `texto` passa a ser `TEXTO_DO_LIMITE_DE_PERGUNTAS`, na mesma substituição em lugar que a moderação de saída já faz com `TEXTO_NEUTRO_DE_SAIDA`, e pelo mesmo caminho de entrega.
+**Emenda desta seção após a implementação.** A versão original desta seção dizia que a substituição dispara sempre que `perguntas_feitas + len(perguntou) > 8`. O que foi entregue é mais estreito, por duas razões independentes.
+
+Primeiro, `perguntas_feitas` cresce (D2) contando `len(perguntas_contaveis(perguntou))`, não `len(perguntou)` — a mesma tradução de nome que D3 já exige para o incremento tem de valer também para a condição que decide a substituição; usar `len(perguntou)` aqui contradiria D3 sobre a mesma pergunta.
+
+Segundo, a condição que de fato dispara a substituição é `teto_atingido and not desambiguando and not saida_bloqueada`, com duas guardas e uma ordem de precedência depois dela:
+
+- **`not desambiguando`**: a RN-05.5 limita pergunta de qualificação, e no caminho de desambiguação quem sai é a pergunta do desambiguador — `gerada.perguntou` fala da chamada 1, que foi descartada. Sem esta guarda, um lead que bateu o teto nunca mais poderia ser desambiguado.
+- **`not saida_bloqueada`**: `TEXTO_NEUTRO_DE_SAIDA` é a resposta declarada da política de moderação de saída, e sobrepor a nossa a ela tornaria impossível saber depois qual das duas agiu. O teto não se perde: nada foi contado nesse turno (a contagem só acontece pós-entrega, e a entrega não aconteceu), e ele dispara normalmente no turno seguinte sem bloqueio.
+
+E mesmo passando as duas guardas, `TEXTO_DO_LIMITE_DE_PERGUNTAS` não é a última palavra sobre `texto`: `TEXTO_DA_BUSCA_INCONCLUSIVA` (citação bloqueada, TEC-161) e `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` (zero pós-relaxamento, TEC-160) reatribuem `texto` depois e vencem — política mais específica ganha, e as duas substituem por constante nossa, então a pergunta que o teto suprimiu não vaza por nenhuma delas.
+
+Quando a condição dispara, a prosa do modelo não é entregue: `texto` passa a ser `TEXTO_DO_LIMITE_DE_PERGUNTAS`, na mesma substituição em lugar que a moderação de saída já faz com `TEXTO_NEUTRO_DE_SAIDA`, e pelo mesmo caminho de entrega.
 
 **Sem kind próprio, e isso é correção de uma versão anterior deste desenho.** `KIND_DO_CRITERIO_AMPLIADO` e `KIND_DO_FILTRO_AJUSTADO` existem porque são mensagens **adicionais**, e `outbound_dispatches` tem `UNIQUE (message_id, kind)` — duas mensagens com o mesmo kind no mesmo `message_id` colidiriam na reserva e uma seria descartada como reprocessamento. Aqui não há segunda mensagem: há uma substituição. Criar kind para ela inventaria uma colisão que não existe. **Consequência declarada:** no log da conversa a mensagem do teto não se distingue de uma resposta normal pelo kind; quem precisa distinguir tem o handoff com gatilho `LIMITE_DE_PERGUNTAS`, que é registro próprio, datado e consultável.
 
@@ -76,13 +89,17 @@ Determinístico em código, e não instrução no prompt, por três razões. O G
 
 `registrar_handoff(..., gatilho=Gatilho.LIMITE_DE_PERGUNTAS)`, no mesmo bloco em que a TEC-174 registra `VENDA_IMOVEL` e `SUPORTE_CONTRATO`, com o log **depois** do commit — o comentário de lá explica que `registrar_handoff` não loga mais, e que quem loga é o turno.
 
-Nada de deduplicação nova: `registrar_handoff` é um statement só, arbitrado pelo índice parcial `uq_handoffs_conversa_pendente`, e acumula o gatilho num handoff já aberto em vez de criar outro. Um lead que insista depois do teto não gera uma fila de handoffs.
+Nada de deduplicação nova: `registrar_handoff` é um statement só, arbitrado pelo índice parcial `uq_handoffs_conversa_pendente`, e acumula o gatilho num handoff já aberto em vez de criar outro **enquanto esse handoff continuar pendente**. O índice é parcial, não total — o mesmo precedente já vale para `VENDA_IMOVEL` — então a garantia é só "não duplica enquanto pendente": assim que um corretor fechar o handoff, o próximo turno em que o teto disparar de novo abre um handoff novo, não reabre o antigo.
 
 **O handoff e o contador ficam em lados opostos da entrega, e é deliberado.** O handoff entra no bloco transacional que roda *antes* da entrega; o contador cresce *depois* dela. Numa falha de entrega, portanto, existe handoff e o contador não subiu — o corretor é avisado de um lead que continuará sendo perguntado no próximo turno. É o erro na direção certa, e o inverso seria o caro: contador gasto numa pergunta que o lead nunca viu. É a mesma assimetria que a TEC-174 aceitou para `VENDA_IMOVEL`, e a mesma que o comentário de `marcar_perguntados` defende para a marca.
 
-### D6 — Desambiguação não conta, e isso já é verdade por construção
+### D6 — Desambiguação não conta, e isso é uma garantia estrutural mais uma guarda de código; a versão original desta seção só via a primeira
 
-`PerguntaDeDesambiguacao` não tem campo `perguntou` — aquela chamada não classifica nem declara pergunta, e `marcar_perguntados` só recebe `gerada.perguntou`. O cenário 2 do Gherkin não pede código: pede um teste que trave a garantia estrutural, para que reintroduzir `perguntou` naquele schema um dia não a desfaça em silêncio.
+**Emenda desta seção após a implementação.** A frase original dizia *"o cenário 2 do Gherkin não pede código: pede um teste que trave a garantia estrutural"*. Isso vale só para metade do cenário — a metade da **contagem** — e é falso para a outra metade, a da **substituição de texto**, que precisou de guarda em `turno.py` mais um teste de integração.
+
+**A garantia estrutural cobre só a contagem.** `PerguntaDeDesambiguacao` não tem campo `perguntou` — aquela chamada não classifica nem declara pergunta —, e `marcar_perguntados`/`contar_perguntas` só recebem `gerada.perguntou`, nunca o retorno do desambiguador. Por isso o contador nunca sobe no caminho de desambiguação, sem precisar de `if` nenhum: a estrutura do schema já fecha o caso. `tests/unit/test_desambiguacao_nao_conta_no_teto.py` trava essa garantia, para que reintroduzir `perguntou` naquele schema um dia não a desfaça em silêncio.
+
+**A substituição de texto exigiu código, porque `gerada.perguntou` da chamada 1 descartada ainda influencia `teto_atingido`.** `teto_atingido` (D2) é calculado a partir de `gerada.perguntou` **antes** de o turno saber se vai desambiguar — e no caminho de desambiguação, `gerada` é a resposta da chamada 1, que é descartada e substituída pela chamada a `classificador.desambiguar`. Um lead que já bateu o teto e manda uma mensagem vaga o suficiente para desambiguar teria `teto_atingido = True` vindo de uma chamada descartada, e sem guarda `TEXTO_DO_LIMITE_DE_PERGUNTAS` pisaria na pergunta do desambiguador — o lead nunca mais seria desambiguado depois do teto. A guarda `not desambiguando` na condição de substituição (D4) existe exatamente para isso, e `tests/integration/test_turno_teto_de_perguntas.py::test_turno_de_desambiguacao_no_teto_entrega_a_pergunta_do_desambiguador` é o teste que a trava — ele não podia viver em `tests/unit/` porque precisa do turno inteiro em volta para exercitar a precedência entre as duas trilhas de texto.
 
 ## Emendas ao SRS
 
@@ -97,7 +114,7 @@ Nada de deduplicação nova: `registrar_handoff` é um statement só, arbitrado 
 | Lead qualificado antes do teto segue o fluxo normal | integração | O teto não dispara com 4 perguntas |
 | Contador sobrevive à retomada da conversa | integração | É o que D1 e D2 compram: a coluna, não a memória do turno |
 
-Mais dois que o Gherkin não pede e o desenho exige: o lead pré-existente (linha sem a coluna, `DEFAULT 0`) e a concorrência de dois turnos incrementando (D2).
+Mais dois que o Gherkin não pede e o desenho exige: um proxy estrutural de que a coluna nova tem `DEFAULT 0` — não, como esta seção dizia antes, um teste que releia uma linha gravada antes da migration e a veja voltar como 0, cenário que os testes desta card não constroem — e a concorrência de dois turnos incrementando (D2).
 
 ## Lacunas declaradas
 
@@ -112,6 +129,12 @@ Não há caminho — nem rota, nem painel — para zerar `perguntas_feitas` de u
 ### L3 — O contador não distingue pergunta útil de pergunta repetida
 
 Se o modelo perguntar duas vezes o mesmo campo em turnos diferentes, o contador cresce duas vezes. `perguntados_sem_resposta` existe justamente para o prompt não repetir, mas ele não é garantia, e o teto pune o lead por um defeito nosso.
+
+### L4 — `contar_perguntas` não conta enquanto o lead não tem linha
+
+O `UPDATE` de `contar_perguntas` é no-op quando `lead_qualification` ainda não tem linha para o par `(channel, conversation_key)`. O único gravador dessa linha é o upsert dentro de `gravar_estado`, e ele recusa de propósito criar linha — "Deliberadamente NÃO cria linha" — quando `campos_a_gravar` devolve vazio, o que vale sempre para `FORA_DE_ESCOPO` e para `INDEFINIDA` sem extração nenhuma. No primeiro turno em que o lead só diz "oi", nada é extraído, o agente pode perguntar mesmo assim, e essa pergunta feita e entregue não é contada.
+
+Criar a linha dentro de `contar_perguntas` foi cogitado e rejeitado: geraria um efeito colateral maior que a subcontagem, porque uma linha nova move o score do lead de 0 para o piso documentado e grava uma entrada na trilha de score — consequência que esta card nunca decidiu, por causa de um lead que não disse nada. A subcontagem fica documentada e contida: assim que qualquer linha existir para o lead, toda pergunta seguinte é contada normalmente.
 
 ## Fora de escopo
 
