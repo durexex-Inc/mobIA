@@ -281,9 +281,18 @@ async def registrar_followup(
 ) -> FollowUp | None:
     """Grava a tentativa. Devolve `None` quando outra varredura chegou primeiro.
 
-    `ON CONFLICT DO NOTHING` e nao `try/except IntegrityError`: a excecao
-    envenenaria a transacao inteira, e a varredura processa varios candidatos
-    numa so -- um conflito no terceiro derrubaria os dois primeiros junto.
+    `ON CONFLICT DO NOTHING` e nao `try/except IntegrityError`: o conflito
+    aqui NAO e erro -- e a corrida entre duas varreduras sendo absorvida --, e
+    uma excecao envenenaria a transacao daquele candidato, que ainda tem
+    trabalho pela frente (a montagem e o envio, em `sweep_followups`). O
+    desfecho seria perder o follow-up de quem ja estava servido por outra
+    passagem, em vez de so nao gravar de novo.
+
+    O argumento ANTIGO desta docstring -- "a varredura processa varios
+    candidatos numa so transacao, e um conflito no terceiro derrubaria os dois
+    primeiros junto" -- foi falsificado pela TEC-184, que passou a commitar
+    POR CANDIDATO. A conclusao continua a mesma; a premissa e que nao vale
+    mais.
 
     Nao commita: a sessao e emprestada, e quem chama e dono da fronteira da
     transacao, como em `gravar_estado` e `registrar_recalculo`.
@@ -319,6 +328,17 @@ async def queda_de_preco(
 
     A maior, e nao qualquer uma: a D2 manda uma informacao nova por mensagem,
     e entre duas quedas a que mais reengaja e a maior.
+
+    **So imovel DISPONIVEL**, o mesmo filtro que `imovel_novo_compativel` e
+    `catalogo/busca.py` ja aplicam. Nao e cautela extra desta fonte: as duas
+    fontes de novidade da mesma feature nao podem discordar sobre o que pode
+    ser oferecido ao lead. O caso que doi e rotineiro, e nao hipotetico -- o
+    CSV grava `preco_venda` e `status` no MESMO upsert (`CAMPOS_COMPARADOS`
+    em `catalogo/repositorio.py`), entao uma venda fechada abaixo do pedido
+    produz exatamente `(preco menor, status=VENDIDO)` numa linha que o lead ja
+    viu e que tem `Recomendacao.preco_centavos` gravado. Sem este filtro essa
+    linha vence a precedencia da D2 e o lead recebe `De R$ 620.000 por R$
+    590.000` sobre um imovel ja vendido: oferta falsa.
     """
     resultado = await session.execute(
         select(
@@ -331,6 +351,11 @@ async def queda_de_preco(
             Recomendacao.channel == channel,
             Recomendacao.conversation_key == conversation_key,
             Recomendacao.preco_centavos.is_not(None),
+            # Ver o docstring: a queda so vale para imovel que ainda pode ser
+            # vendido. `status` e uma COLUNA, e nao um DELETE -- nenhuma etapa
+            # a jusante encurta a lista por causa dela, entao este e o unico
+            # lugar onde o imovel vendido sai da fonte.
+            Imovel.status == StatusImovel.DISPONIVEL.value,
             Imovel.preco_venda.is_not(None),
             Imovel.preco_venda < Recomendacao.preco_centavos,
         )

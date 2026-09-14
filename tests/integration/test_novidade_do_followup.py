@@ -129,6 +129,22 @@ async def test_recomendacao_sem_preco_e_ignorada(session: Any) -> None:
     assert await queda_de_preco(session, channel=CANAL, conversation_key=CONVERSA) is None
 
 
+async def test_imovel_vendido_nao_e_queda(session: Any) -> None:
+    """Espelha `test_imovel_indisponivel_nao_e_novidade`: as duas fontes de
+    novidade filtram a MESMA invariante, e discordar seria o defeito.
+
+    O cenario e o rotineiro, e nao um caso de borda: `CAMPOS_COMPARADOS` grava
+    `preco_venda` e `status` no mesmo upsert do CSV, entao uma venda fechada
+    abaixo do pedido produz exatamente esta linha -- preco menor que o
+    apresentado E `status=VENDIDO`. Sem o filtro, o lead recebia
+    `De R$ 620.000 por R$ 590.000` sobre um imovel ja vendido.
+    """
+    imovel = await _imovel(session, "AP-408", preco_venda=59_000_000, status="VENDIDO")
+    await _recomendar(session, imovel, preco_centavos=62_000_000)
+
+    assert await queda_de_preco(session, channel=CANAL, conversation_key=CONVERSA) is None
+
+
 ANCORA = datetime(2026, 1, 10, 12, 0, tzinfo=UTC)
 
 
