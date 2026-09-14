@@ -80,8 +80,15 @@ class ExtracaoDoInvestidor:
 
 # Derivado do dataclass, nunca escrito a mao: uma segunda lista de nomes
 # divergiria em silencio, que e o defeito que a TEC-146 gastou uma card
-# inteira consertando. Quem le isto e `_marca_de`, para que a trilha do
-# investidor conte no teto da RN-05.5 (TEC-149).
+# inteira consertando. Quem le isto e `_nome_contavel` (em
+# `context/repositorio.py`), para que a trilha do investidor conte no teto da
+# RN-05.5 (TEC-149) -- e nao `_marca_de`, que e o vocabulario da MARCA e
+# ignora estes nomes de proposito: campo de investidor nunca sai de
+# `Extracao.preenchidos()`, entao marca-lo seria marcar de mais, para sempre.
+# Quem mudar de novo quem le esta constante move esta frase junto: ela ja
+# esteve errada tres vezes, e nenhuma delas apareceu no diff -- o que muda e
+# o CONSUMIDOR, noutro arquivo, e `scripts/comentarios_tocados.py` nao tem
+# como ver isso daqui.
 CAMPOS_DO_INVESTIDOR: frozenset[str] = frozenset(
     campo.name for campo in dataclasses.fields(ExtracaoDoInvestidor)
 )

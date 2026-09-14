@@ -65,7 +65,7 @@ Então `perguntas_contaveis` passa a reconhecer também os nomes de `ExtracaoDoI
 
 **O vocabulário do teto e o vocabulário da marca são dois, e não um** (correção da onda final). `perguntas_contaveis` era a única consumidora pretendida, mas a tradução que ela usa é lida também por `campos_a_marcar` e `campos_a_recusar` — que subtraem `Extracao.preenchidos()`, onde campo de investidor nunca aparece. Com um vocabulário só, toda pergunta do subagente virava marca permanente de "perguntado, sem resposta" mesmo quando o lead respondia no mesmo turno, e uma recusa de campo de investidor era registrada sem nada que a honrasse. O teto consulta o superconjunto; a marca continua só na trilha padrão.
 
-**No turno da virada a regra do teto não é consultada** — ver a L5.
+**No turno da virada, o que não acontece é o incremento de `perguntas_feitas`** — a regra do teto *é* consultada ali, sobre o `perguntou` do subagente (`teto_da_entrega`), e pode tanto suprimir a prosa quanto registrar `LIMITE_DE_PERGUNTAS`. Ver a L5.
 
 ### D3 — Os campos persistem em `lead_qualification`
 
