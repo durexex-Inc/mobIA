@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -8,6 +9,7 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
+    Numeric,
     SmallInteger,
     String,
     func,
@@ -152,6 +154,29 @@ class LeadQualification(Base):
     # duas perguntas por turno desde a TEC-255, e contar turnos daria dezesseis
     # perguntas sob um teto que diz oito.
     perguntas_feitas: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
+
+    # TEC-153, RN-05.2. Os campos que o subagente do investidor pergunta, e
+    # que a trilha padrao nao tem onde guardar. Nulaveis pela mesma razao das
+    # vizinhas: qualificacao e progressiva.
+    ticket_investimento_centavos: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Centavos como todo dinheiro deste schema (RN-05.6), e `Numeric` para o
+    # percentual porque ele e taxa, nao dinheiro: `numeric(4,2)` vem do
+    # dicionario de dados do SRS.
+    retorno_esperado_pct: Mapped[Decimal | None] = mapped_column(Numeric(4, 2), nullable=True)
+    # O campo QUALITATIVO que a RN-07.2 pressupoe sem nomear. O percentual
+    # acima nao separa renda de valorizacao -- e este que separa, e e ele que
+    # `perfil_de` le. Ver a Emenda E-01 da RN-07.2.
+    retorno_esperado_tipo: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    horizonte: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    tolerancia_reforma: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ja_investe_em_imoveis: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # DERIVADO de `horizonte` + `retorno_esperado_tipo` por `perfil_de`, e
+    # gravado em vez de recalculado na leitura: a TEC-154 le o perfil direto.
+    #
+    # **NULL nao e MISTO.** NULL e "falta um dos dois campos, ainda nao sei";
+    # MISTO e "sei, e os sinais se contradizem". Colapsar os dois faria a
+    # TEC-154 exibir indicador de perfil para quem nunca respondeu.
+    perfil_investidor: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     # TEC-151, RN-06.2. A temperatura corrente do lead.
     #
