@@ -662,6 +662,52 @@ async def marcar_perguntados(
     )
 
 
+async def contar_perguntas(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    perguntou: Iterable[str],
+) -> None:
+    """Soma ao contador do teto da RN-05.5 as perguntas deste turno. TEC-149.
+
+    **Funcao irma de `marcar_perguntados`, e nao um trecho dentro dela.** As
+    duas rodam no mesmo commit pos-entrega e pela mesma razao -- a pergunta
+    so conta depois de o lead te-la recebido --, mas as guardas sao
+    diferentes e incompativeis. `marcar_perguntados` sai cedo quando o turno
+    nao extraiu campo nenhum, e o comentario de la declara que "marcar de
+    menos e o erro seguro". Aqui o mesmo atalho inverte o sinal: o turno em
+    que o lead escreve "oi" e o agente pergunta o orcamento nao extrai nada,
+    sairia naquele `return`, e a pergunta FEITA E ENTREGUE nao contaria --
+    dando ao lead mais perguntas do que as oito que a regra promete.
+
+    **Incremento em SQL, nunca lendo em Python para regravar.** E a mesma
+    razao pela qual a uniao da marca foi para o SQL: dois turnos concorrentes
+    da mesma conversa, em que o commit pos-entrega mais lento sobrescreve o
+    valor mais novo pelo mais velho, em silencio. `coluna = coluna + :n` nao
+    tem esse problema, e um contador errado nao tem sintoma nenhum ate o
+    lead ser cortado cedo ou tarde demais.
+
+    Sem nada contavel, nenhum UPDATE: um turno que so respondeu duvida nao
+    gasta orcamento, e um `SET` que soma zero so produziria escrita morta.
+    """
+    quantas = len(perguntas_contaveis(perguntou))
+    if not quantas:
+        return
+
+    await session.execute(
+        update(LeadQualification)
+        .where(
+            LeadQualification.channel == channel,
+            LeadQualification.conversation_key == conversation_key,
+        )
+        .values(
+            perguntas_feitas=LeadQualification.perguntas_feitas + quantas,
+            updated_at=datetime.now(UTC),
+        )
+    )
+
+
 async def contar_mensagens_do_lead(
     session: AsyncSession, *, channel: str, conversation_key: str
 ) -> int:
