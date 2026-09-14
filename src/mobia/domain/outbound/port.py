@@ -49,9 +49,20 @@ class OutboundPort(Protocol):
     um adaptador novo (a TEC-124 traz o canal web) escolhe o tipo errado e
     muda o desfecho do turno sem tocar em nenhuma linha do dominio:
 
-    - `EnvioRetentavel` -- rede, 5xx, 408, 429. A guarda libera a reserva e
-      propaga: a mensagem vira FAILED e o sweeper retenta. O lead recebe
-      eventualmente.
+    - `EnvioRetentavel` -- rede, 5xx, 408, 429. A guarda libera as reservas do
+      GRUPO de `kind` e propaga: a mensagem vira FAILED e o sweeper retenta. O
+      lead recebe eventualmente. **Grupo** (TEC-273, `outbound/kinds.py`) e o
+      conjunto de kinds que carregam UMA resposta regeneravel -- hoje so
+      `KINDS_DA_RESPOSTA`, as duas partes de um texto longo. Liberar so o kind
+      que falhou era o que a TEC-140 deixava: a retentativa roda o turno
+      inteiro, com uma chamada NOVA ao modelo, e a reserva viva da parte ja
+      entregue fazia essa parte da geracao NOVA ser suprimida -- o lead lia a
+      primeira metade de um texto colada na segunda metade de outro. As fichas
+      da apresentacao NAO formam grupo, e e decisao: a retentativa delas
+      repete o lote persistido (TEC-275) em vez de chamar o modelo de novo,
+      entao nao ha duas geracoes para misturar, e a reserva de cada ficha e o
+      sinal que `_continuar_entrega` le para saber o que ja saiu -- poe-las num
+      grupo apagaria esse sinal. Ver `GuardedOutbound._liberar`.
     - `EnvioForaDaJanela` -- o canal nao aceita mais mensagem livre nesta
       conversa. Turno `expirado`, PROCESSED, aviso no log. Expirar nao e
       falhar, e retentar nunca entregaria.
@@ -83,8 +94,8 @@ class OutboundPort(Protocol):
 
     `asyncio.CancelledError` nao esta nessa lista porque nao e escolha de
     adaptador nenhum: e o `job_timeout` do worker ou o shutdown chegando de
-    fora. A guarda a trata como retentavel (libera a reserva e propaga) --
-    ver TEC-227.
+    fora. A guarda a trata como retentavel (libera as reservas do grupo e
+    propaga) -- ver TEC-227.
 
     `send` devolve `False`, sem levantar, em tres situacoes distintas, e
     quem le o retorno nao consegue distinguir uma da outra so pelo booleano:
@@ -174,7 +185,8 @@ class GuardedOutbound:
     entre a reserva e a entrega so perde aquele envio quando a falha e
     permanente (EnvioRecusado); queda depois nunca duplica. Falha retentavel
     (EnvioRetentavel) e cancelamento (`asyncio.CancelledError`, TEC-227)
-    liberam a reserva para a proxima tentativa poder entregar. O criterio de
+    liberam as reservas do GRUPO do kind -- nao so a dele (TEC-273, ver
+    `_liberar`) -- para a proxima tentativa poder entregar. O criterio de
     aceite exige "nenhuma resposta duplicada" -- a troca e essa, e continua
     valendo no caminho de sucesso e na falha permanente.
     """

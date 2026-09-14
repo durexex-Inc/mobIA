@@ -1606,19 +1606,22 @@ async def executar_turno(
                     # desfecho: a linha ainda vira FAILED e o sweeper ainda
                     # reenfileira. O unico acrescimo e este log, para uma
                     # entrega PARCIAL (a parte 1 ja saida quando o 5xx bateu
-                    # nesta) nao ficar invisivel ate a proxima tentativa
-                    # reaparecer no mesmo lugar.
+                    # nesta) nao ficar invisivel para quem opera.
                     #
-                    # E essa proxima tentativa e o proprio risco que o
-                    # comentario no topo do modulo (perto de `KINDS_DA_RESPOSTA`)
-                    # documenta: `sweep_stalled` roda o turno inteiro de novo,
-                    # com uma chamada NOVA ao classificador. A parte que ja
-                    # tem reserva volta a ser suprimida (devolve False, nao
-                    # levanta -- e o `if entregue:` abaixo cobre isso na
-                    # proxima passada); a parte que falhou aqui sai com o texto
-                    # da chamada nova. O lead pode acabar recebendo a primeira
-                    # metade deste texto seguida da segunda metade de outro --
-                    # este log so torna isso visivel, nao evita.
+                    # O que essa proxima tentativa faz mudou na TEC-273, e
+                    # este paragrafo dizia o contrario ate ela: `sweep_stalled`
+                    # continua rodando o turno inteiro de novo, com uma chamada
+                    # NOVA ao classificador, mas a parte ja entregue NAO tem
+                    # mais reserva quando ele chega. `GuardedOutbound.send`
+                    # libera as reservas do GRUPO de `kind` -- as duas de
+                    # `KINDS_DA_RESPOSTA` -- antes de deixar esta excecao
+                    # subir; ver `_liberar` e o comentario de `KINDS_DA_RESPOSTA`
+                    # em `domain/outbound/kinds.py`, que registra o que a
+                    # liberacao por kind unico custava. A retentativa entrega
+                    # as duas partes da geracao nova: o lead le a parte 1 duas
+                    # vezes -- duplicata visivel, o lado que TEC-134/TEC-227 ja
+                    # escolheram -- em vez da primeira metade deste texto
+                    # costurada na segunda metade de outro.
                     log.error(
                         "turno.entrega_parcial_antes_de_falha_retentavel",
                         channel=message.channel,
@@ -2243,8 +2246,8 @@ async def _entregar_fichas(
 
     Extraido de `_apresentar` para ter UM laco, e nao dois: a continuacao
     (D4) entrega pelo mesmo caminho. Duas copias de um laco de entrega
-    divergem -- o comentario de `KINDS_DA_RESPOSTA`, neste arquivo, registra o
-    que isso ja custou.
+    divergem -- o comentario de `KINDS_DA_RESPOSTA`, em
+    `domain/outbound/kinds.py` desde a TEC-273, registra o que isso ja custou.
 
     **`kinds` e paralelo a `fichas`**, e vem de quem chama porque e quem chama
     que sabe de onde ele veio: na apresentacao e `KINDS_DAS_FICHAS[:n]`; na
