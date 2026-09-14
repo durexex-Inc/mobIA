@@ -64,7 +64,14 @@ class LeadDormente:
     ancora_em: datetime
     tentativas: int          # MAX(tentativa_numero) sob a ancora
     adormeceu_em: datetime   # MAX(created_at) sob a mesma ancora
+
+
+async def listar_dormentes(
+    session: AsyncSession, *, agora: datetime, limite: int = 500
+) -> list[LeadDormente]: ...
 ```
+
+`agora` existe por duas razões, e nenhuma é simetria com `candidatos_a_followup`: é o que torna a consulta determinística num teste, e é o que a CTE `ultima_fala` liga a `:corte`. **`listar_dormentes` liga `corte = agora`, e não `agora - INTERVALO_MINIMO`.** A subtração é um corte barato que só faz sentido para quem vai disparar — não há por que considerar candidato quem falou há cinco minutos. Para a lista de dormentes ela seria inócua (o dormente mais recente possível falou há sete dias, o deslocamento da quarta tentativa do `QUENTE`), e ligá-la mesmo assim seria escrever no código uma intenção que não existe. `limite` acompanha o default de `candidatos_a_followup` pela mesma razão de ordem de grandeza, não por acoplamento.
 
 `tentativas` e `adormeceu_em` são a *"data e a quantidade de tentativas realizadas"* que a card exige da transição. Elas não são gravadas por esta card: são lidas da linha que a TEC-183 já grava.
 
