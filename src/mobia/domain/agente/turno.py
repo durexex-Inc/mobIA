@@ -1883,7 +1883,7 @@ async def executar_turno(
             )
             desfecho_da_supressao_parcial = "reentrega_suprimida"
 
-    if desambiguando and not saida_bloqueada and not citacao_bloqueada:
+    if desambiguando and not saida_bloqueada and not citacao_bloqueada and not entrega_parcial:
         # Depois da entrega confirmada, nunca antes: ver `marcar_desambiguacao`.
         # A ordem entre esta gravacao e a da fala do agente nao e carregada --
         # as duas sao pos-entrega, e a guarda do outbound suprime qualquer
@@ -1904,6 +1904,18 @@ async def executar_turno(
         # chegou ao lead foi `TEXTO_DA_BUSCA_INCONCLUSIVA` (ou a ficha pura),
         # nao a pergunta -- marcar aqui seria o mesmo dano que `saida_bloqueada`
         # evita, so que pela guarda nova em vez da moderacao.
+        #
+        # `not entrega_parcial` (TEC-273), quarta causa, mesmo argumento que
+        # `marcar_perguntados` mais abaixo ja escreve para a marca dele:
+        # `entrega_parcial` nao diz ONDE dentro do texto a quebra caiu, entao
+        # a pergunta do desambiguador -- que atravessa o MESMO laco de
+        # `KINDS_DA_RESPOSTA` que a resposta normal -- pode ter saido inteira,
+        # pela metade, ou nem ter existido na parte que o lead recebeu.
+        # Marcar aqui gastaria, para sempre e em silencio, a unica pergunta do
+        # episodio numa entrega que talvez nunca a tenha feito -- o MESMO dano
+        # que `saida_bloqueada` e `citacao_bloqueada` evitam acima, so que
+        # pela guarda de formato em vez da moderacao ou da citacao. Esta
+        # guarda tinha tres condicoes ate a TEC-273.
         async with session_factory() as session:
             await marcar_desambiguacao(
                 session,
