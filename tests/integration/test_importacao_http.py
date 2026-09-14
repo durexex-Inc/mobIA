@@ -189,10 +189,12 @@ async def test_sem_enqueue_o_post_nao_finge_202(app_sem_pool):
     """Sem pool, o POST devolvia 202 PROCESSANDO e logava "enfileirada".
 
     Nada tinha sido enfileirado. A linha ficava em PROCESSANDO para sempre --
-    nao ha job para roda-la e nao ha sweep que varra importacao parada --,
-    guardando ate 10 MB e indistinguivel de "ainda trabalhando". E o log
-    afirmava um evento que nao aconteceu, que nesta base e o mesmo defeito de
-    um comentario que mente.
+    nao havia job para roda-la, e a varredura de importacoes travadas so nasceu
+    na TEC-261 --, guardando ate 10 MB e indistinguivel de "ainda trabalhando".
+    Hoje a varredura encerraria a linha, mas so meia hora depois e sem
+    desmentir o 202 que ja teria sido devolvido. E o log afirmava um evento que
+    nao aconteceu, que nesta base e o mesmo defeito de um comentario que
+    mente.
     """
     resposta = await app_sem_pool.post(
         "/api/v1/imoveis/importar",

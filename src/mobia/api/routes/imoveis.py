@@ -9,9 +9,11 @@ SRS duas vezes em duas cards. Ver D2 do desenho.
 **A linha e comitada antes do enqueue, e isso obriga a fechar o buraco.** O
 job recebe so o `importacao_id` e le os bytes da propria linha (D9), entao a
 linha precisa existir antes. Se o enqueue nao acontece -- Redis fora, app sem
-pool --, ninguem mais toca nessa linha: nao ha job para roda-la e nao ha sweep
-que varra importacao parada. Por isso o handler a fecha em FALHOU com motivo e
-responde 503 com o id, em vez de devolver 202 sobre trabalho que nao comecou.
+pool --, nao ha job para rodar essa linha. A varredura da TEC-261
+(`workers/jobs/sweep_importacoes_travadas.py`) a encerraria, mas so meia hora
+depois e sem nada a dizer a quem esta esperando o POST. Por isso o handler a
+fecha em FALHOU com motivo e responde 503 com o id, em vez de devolver 202
+sobre trabalho que nao comecou.
 """
 
 import uuid
@@ -107,13 +109,16 @@ async def importar(
 
 
 async def _marcar_falha(importacao_id: uuid.UUID, motivo: str) -> None:
-    """Fecha em FALHOU a linha que ficaria orfa em PROCESSANDO.
+    """Fecha em FALHOU a linha que ficaria em PROCESSANDO sem job que a rode.
 
     A linha e comitada antes do enqueue -- e tem de ser, porque o job recebe
-    so o id e precisa achar os bytes. Quando o enqueue nao acontece, ninguem
-    mais vai tocar nessa linha: nao ha job para roda-la e nao ha sweep que
-    varra importacao parada. Deixa-la em PROCESSANDO faz um trabalho que nunca
-    comecou parecer trabalho em andamento, e prende ate 10 MB por vez.
+    so o id e precisa achar os bytes. Quando o enqueue nao acontece, nao ha job
+    para roda-la: deixa-la em PROCESSANDO faz um trabalho que nunca comecou
+    parecer trabalho em andamento. Desde a TEC-261 a varredura
+    (`workers/jobs/sweep_importacoes_travadas.py`) tambem alcanca essa linha,
+    mas so meia hora depois -- fechar aqui e o que permite responder 503 com o
+    id na hora. Os ate 10 MB de `arquivo` ficam presos de um jeito ou de outro:
+    nem este caminho nem a varredura limpam a coluna.
 
     A excecao de quem chama e ampla de proposito: qualquer falha do Redis
     (timeout, conexao recusada, serializacao) tem a mesma consequencia para
