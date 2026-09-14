@@ -14,6 +14,7 @@ consertar a politica.
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import ROUND_DOWN, Decimal
 
 # RN-04.2. O mesmo numero de `evals/metricas.MAX_CARACTERES_DA_RESPOSTA`, que
 # mede a regra nas evals; este e o primeiro lugar de `src/` que a respeita por
@@ -64,6 +65,78 @@ def reais_de(centavos: int) -> str:
     (`516464.30`), entao isto nao e hipotese.
     """
     return f"R$ {centavos // 100:,}".replace(",", ".")
+
+
+@dataclass(frozen=True, slots=True)
+class Rentabilidade:
+    """Os indicadores da RN-07.3, e so para a trilha do investidor. TEC-154.
+
+    Objeto proprio, e nao tres campos soltos em `Ficha`: a docstring de la
+    promete "os oito campos da RN-10.1", e este repo trata comentario
+    desatualizado como defeito. `Ficha.rentabilidade is None` significa
+    trilha PADRAO -- o que distingue "nao e investidor" de "e investidor e o
+    catalogo nao tem o dado", dois estados que a mesma ficha precisa
+    diferenciar porque o segundo imprime uma linha e o primeiro nao imprime
+    nada.
+
+    Os tres campos sao independentes, com UMA invariante: `yield_pct` nao
+    nulo implica `aluguel_centavos` nao nulo. As combinacoes que existem:
+
+    | aluguel | preco de venda | linha do aluguel   | ressalva |
+    |---------|----------------|--------------------|----------|
+    | tem     | tem            | valor E yield      | sim      |
+    | tem     | nulo           | valor, sem yield   | sim      |
+    | nulo    | qualquer       | `nao informado`    | nao      |
+
+    `custos_centavos` nao entra na tabela porque nao depende de nenhum dos
+    dois: condominio e IPTU sao fato do catalogo, nao estimativa, e saem
+    mesmo sem aluguel.
+    """
+
+    aluguel_centavos: int | None
+    yield_pct: Decimal | None
+    custos_centavos: int | None
+
+
+def yield_bruto_anual(
+    aluguel_centavos: int | None, preco_venda_centavos: int | None
+) -> Decimal | None:
+    """O yield bruto anual em pontos percentuais, ou `None` sem os dois precos.
+
+    `aluguel * 12 / preco_venda`, que e a RN-07.3 literal.
+
+    **Trunca para BAIXO, como `reais_de` faz com centavos, e pelo argumento
+    invertido:** arredondar preco para cima cota ao lead acima do real;
+    arredondar yield para cima PROMETE retorno acima do real. 4,3479% sai
+    como 4,3, nunca 4,4.
+
+    **Zero entra pela mesma porta que `None`.** Preco de venda zero daria
+    ZeroDivisionError e derrubaria a apresentacao inteira por causa de um
+    imovel -- `ck_imoveis_ao_menos_um_preco` recusa NULL nos dois, nao zero
+    num deles. Aluguel zero nao e indicador de rentabilidade, e omitir e mais
+    honesto que exibir "0,0% ao ano".
+
+    **Quem passa o preco de venda e `fichas_do_catalogo`, lendo
+    `Imovel.preco_venda` -- nunca `Ficha.preco_centavos`**, que e o preco da
+    operacao BUSCADA: num investidor que buscasse ALUGUEL ele e o aluguel, e
+    a conta daria 1200% ao ano numa ficha que o lead le como fato.
+    """
+    if not aluguel_centavos or not preco_venda_centavos:
+        return None
+    bruto = Decimal(aluguel_centavos) * 12 * 100 / Decimal(preco_venda_centavos)
+    return bruto.quantize(Decimal("0.1"), rounding=ROUND_DOWN)
+
+
+def custos_recorrentes(condominio_centavos: int | None, iptu_centavos: int | None) -> int | None:
+    """Condominio somado ao IPTU, ou `None` quando os DOIS faltam.
+
+    Um so ausente nao zera o outro: somar apenas o que existe e o que mantem
+    a linha verdadeira. `None` nos dois omite a linha, como `condominio` ja
+    faz na ficha padrao.
+    """
+    if condominio_centavos is None and iptu_centavos is None:
+        return None
+    return (condominio_centavos or 0) + (iptu_centavos or 0)
 
 
 def diferencial_de(caracteristicas: Sequence[str]) -> str | None:

@@ -6,13 +6,16 @@ da suite inteira e nao aparece em execucao isolada.
 
 import uuid
 from dataclasses import replace
+from decimal import Decimal
 
 from mobia.domain.agente.apresentacao import (
     MAX_CARACTERES_DA_LEGENDA,
     Ficha,
+    custos_recorrentes,
     diferencial_de,
     legenda_de,
     reais_de,
+    yield_bruto_anual,
 )
 
 # `replace` e nao `Ficha(**ficha.__dict__)`: `Ficha` e `slots=True` e nao tem
@@ -125,3 +128,52 @@ def test_prosa_que_nao_cabe_de_jeito_nenhum_sai_de_cena() -> None:
 
     assert legenda == legenda_de(gigante)
     assert not legenda.startswith("Achei")
+
+
+def test_o_yield_do_gherkin_sai_com_uma_casa_e_zero_a_direita() -> None:
+    """Cenario 1 da TEC-154: R$ 500.000 com aluguel de R$ 2.500 dao 6,0% ao ano.
+
+    O zero a direita nao e enfeite: `6%` e `6,0%` dizem coisas diferentes
+    sobre precisao.
+    """
+    assert yield_bruto_anual(250000, 50000000) == Decimal("6.0")
+
+
+def test_o_yield_trunca_para_baixo_e_nunca_arredonda() -> None:
+    """D4: arredondar para cima promete retorno acima do real.
+
+    8760,04 * 12 / 2417514,29 = 4,3479...%, e o que sai e 4,3 -- nao 4,4.
+    Sao os valores da linha TE-1007 do seed.
+    """
+    assert yield_bruto_anual(876004, 241751429) == Decimal("4.3")
+
+
+def test_sem_aluguel_nao_ha_yield() -> None:
+    assert yield_bruto_anual(None, 50000000) is None
+
+
+def test_sem_preco_de_venda_nao_ha_yield() -> None:
+    """Imovel so de aluguel: a RN-07.3 define o yield sobre o preco de venda."""
+    assert yield_bruto_anual(250000, None) is None
+
+
+def test_preco_de_venda_zero_nao_levanta_divisao_por_zero() -> None:
+    """Nao ha linha assim no catalogo hoje (`ck_imoveis_ao_menos_um_preco` nao
+    proibe zero, so NULL), e um ZeroDivisionError aqui derrubaria a
+    apresentacao inteira por causa de um imovel."""
+    assert yield_bruto_anual(250000, 0) is None
+
+
+def test_os_custos_recorrentes_somam_condominio_e_iptu() -> None:
+    assert custos_recorrentes(184400, 77100) == 261500
+
+
+def test_um_custo_ausente_nao_zera_o_outro() -> None:
+    """Ausente e zero sao coisas diferentes: somar so o que existe e o que
+    mantem a linha verdadeira."""
+    assert custos_recorrentes(184400, None) == 184400
+    assert custos_recorrentes(None, 77100) == 77100
+
+
+def test_sem_condominio_e_sem_iptu_nao_ha_linha_de_custos() -> None:
+    assert custos_recorrentes(None, None) is None
