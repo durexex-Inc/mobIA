@@ -390,7 +390,14 @@ async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(
         ancora_em=ancora,
         # ancora_message_id virou campo obrigatorio com a TEC-184. Este teste
         # mocka a fronteira da consulta e nao exercita a D1 -- so precisa de
-        # um id qualquer, sem FK nenhuma a validar aqui.
+        # um id qualquer.
+        #
+        # Um id sem linha em `messages` so passa porque o laco NUNCA chega ao
+        # envio neste cenario: `registrar_followup` devolve `None` (o conflito
+        # que o teste monta) e a iteracao para ali, antes da reserva de
+        # `outbound_dispatches`, que tem FK para `messages`. Se alguem mover o
+        # envio para antes do registro, este teste passa a falhar por
+        # `IntegrityError` de FK -- e essa falha e informacao, nao ruido.
         ancora_message_id=uuid.uuid4(),
         ja_disparada=0,
         # ja_enviadas virou campo obrigatorio com a TEC-188. Este teste e da
@@ -628,7 +635,13 @@ async def test_a_guarda_do_maximo_barra_o_candidato(
         ancora_em=ancora,
         # ancora_message_id virou campo obrigatorio com a TEC-184. Este teste
         # mocka a fronteira da consulta e nao exercita a D1 -- so precisa de
-        # um id qualquer, sem FK nenhuma a validar aqui.
+        # um id qualquer.
+        #
+        # Um id sem linha em `messages` so passa porque a guarda do maximo
+        # corta este candidato antes de qualquer envio, e a reserva de
+        # `outbound_dispatches` tem FK para `messages`. Se a guarda deixar de
+        # cortar, este teste falha por FK antes de falhar pela assertiva -- o
+        # que ainda e reprovar pelo motivo certo.
         ancora_message_id=uuid.uuid4(),
         ja_disparada=0,
         ja_enviadas=4,
