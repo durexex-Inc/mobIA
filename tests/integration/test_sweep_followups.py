@@ -1098,3 +1098,69 @@ async def test_a_queda_de_preco_e_a_abertura_falam_do_mesmo_imovel(
     assert vistos["queda"].imovel_id == imovel
     assert vistos["ficha"].id == imovel
     assert vistos["ficha"].preco_centavos == 59_000_000
+
+
+async def test_a_tentativa_que_fecha_o_teto_emite_followup_dormente(session, caplog) -> None:
+    """RN-13.5, cenario 1 da card. O evento marca o INSTANTE em que o lead
+    adormece.
+
+    Lead MORNO calado ha onze dias, com as tentativas 1 e 2 ja gravadas sob a
+    ancora. A terceira vence (+10d) e e o teto do MORNO, entao grava-la
+    adormece o lead.
+
+    MORNO e nao QUENTE porque este evento nao pode depender do teto coincidir
+    com `MAXIMO_SEM_RESPOSTA` -- e o defeito que deixou o
+    `followup.antispam_atingido` alcancavel so no QUENTE.
+    """
+    parou_ha = timedelta(days=11)
+    await _lead(session, temperatura="MORNO", calado_ha=parou_ha, agora=DENTRO_DA_JANELA)
+    ancora = DENTRO_DA_JANELA - parou_ha
+    for numero in (1, 2):
+        session.add(
+            FollowUp(
+                id=uuid.uuid4(),
+                channel=CANAL,
+                conversation_key=CONVERSA,
+                tentativa_numero=numero,
+                temperatura="MORNO",
+                ancora_em=ancora,
+                devido_em=ancora + timedelta(days=numero),
+            )
+        )
+    await session.commit()
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA)
+
+    assert gravadas == 1
+    assert sum(1 for r in caplog.records if "followup.dormente" in r.getMessage()) == 1
+
+
+async def test_a_tentativa_antes_do_teto_nao_emite_followup_dormente(session, caplog) -> None:
+    """A outra metade: adormecer cedo e adormecer sempre sao defeitos
+    diferentes, e um teste so nao separa os dois.
+
+    Mesmo lead MORNO, uma tentativa gravada em vez de duas, e silencio de
+    cinco dias -- bastante para a tentativa 2 (+4d) e nao para a 3 (+10d).
+    """
+    parou_ha = timedelta(days=5)
+    await _lead(session, temperatura="MORNO", calado_ha=parou_ha, agora=DENTRO_DA_JANELA)
+    ancora = DENTRO_DA_JANELA - parou_ha
+    session.add(
+        FollowUp(
+            id=uuid.uuid4(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            tentativa_numero=1,
+            temperatura="MORNO",
+            ancora_em=ancora,
+            devido_em=ancora + timedelta(days=1),
+        )
+    )
+    await session.commit()
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(), agora=DENTRO_DA_JANELA)
+
+    assert gravadas == 1
+    assert sum(1 for r in caplog.records if "followup.dormente" in r.getMessage()) == 0
