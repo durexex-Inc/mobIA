@@ -7,26 +7,35 @@ varredura e o que ela grava so da para verificar contra o banco.
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+from conftest import OutboundFake  # type: ignore[import-not-found]
 from sqlalchemy import select
 
 import mobia.workers.jobs.sweep_followups as sweep_followups_module
 from mobia.app.config import Settings
+from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import Intencao, Urgencia
 from mobia.domain.atendimento.repositorio import assumir
+from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
+from mobia.domain.followup.mensagem import CONVITE_PARA_AGENDAR
 from mobia.domain.followup.models import FollowUp
 from mobia.domain.followup.repositorio import Candidato, candidatos_a_followup
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.optout.models import EVENTO_OPT_OUT, OptoutEvent
+from mobia.domain.outbound.models import OutboundDispatch
+from mobia.domain.outbound.port import EnvioForaDaJanela
+from mobia.domain.texto import dobrar
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
-from mobia.workers.jobs.sweep_followups import sweep_followups
+from mobia.workers.jobs.sweep_followups import MAXIMO_DE_ENVIOS_POR_EXECUCAO, sweep_followups
 
 CANAL = "whatsapp"
 CONVERSA = "5511944443333"
@@ -53,6 +62,7 @@ async def _lead(
     calado_ha: timedelta,
     agora: datetime = DENTRO_DA_JANELA,
     semear_qualificacao: bool = True,
+    conversa: str = CONVERSA,
 ) -> uuid.UUID:
     """Um lead com temperatura e uma fala de entrada com a idade pedida.
 
@@ -63,12 +73,17 @@ async def _lead(
     deve carregar. `semear_qualificacao=False` pula a `LeadQualification`: a
     PK dela e por conversa, entao uma segunda fala na MESMA conversa (para
     testar qual das duas vira a ancora) nao pode semear-la de novo.
+
+    `conversa` existe para os testes que precisam de VARIOS leads devidos ao
+    mesmo tempo (o teto por execucao, o lote que nao pode ser derrubado por um
+    candidato): a PK de `lead_qualification` e por conversa, entao dois leads
+    distintos so existem com chaves distintas.
     """
     if semear_qualificacao:
         session.add(
             LeadQualification(
                 channel=CANAL,
-                conversation_key=CONVERSA,
+                conversation_key=conversa,
                 intencao=Intencao.COMPRA.value,
                 faixa_preco_max_centavos=50_000_000,
                 regiao="vila mariana",
@@ -82,9 +97,9 @@ async def _lead(
             id=identificador,
             channel=CANAL,
             provider_message_id=f"wamid.{identificador.hex[:10]}",
-            sender_external_id=CONVERSA,
+            sender_external_id=conversa,
             recipient_external_id="222222222",
-            conversation_key=CONVERSA,
+            conversation_key=conversa,
             role=MessageRole.LEAD,
             direction=MessageDirection.INBOUND,
             content_type=MessageContentType.TEXTO,
@@ -98,9 +113,16 @@ async def _lead(
     return identificador
 
 
-def _ctx() -> dict:
+def _ctx(outbound: object | None = None) -> dict:
     """A janela default da card (9h-20h, fuso `NOME_DO_FUSO`) explicita, e nao
     herdada do ambiente -- as TRES pontas, nao so duas.
+
+    **A chave `outbound` e a MESMA que producao usa** (TEC-184): `startup`
+    grava `ctx["outbound"] = WhatsAppOutbound(...)` em `workers/main.py`, e o
+    job le dali -- nenhum default de producao mudou para este teste existir.
+    Sem argumento vale um `OutboundFake` novo por chamada, porque quase todo
+    teste deste arquivo so precisa que a porta EXISTA; quem inspeciona o que
+    saiu passa o seu (da fixture `outbound_fake`, ou uma subclasse).
 
     `_env_file=None` desliga o `.env`, mas nao a variavel de ambiente do
     PROCESSO -- e kwarg de construtor vence env var, entao `inicio` e `fim`
@@ -114,6 +136,7 @@ def _ctx() -> dict:
     """
     return {
         "session_factory": get_sessionmaker(),
+        "outbound": outbound if outbound is not None else OutboundFake(get_sessionmaker()),
         "settings": Settings(
             _env_file=None,
             followup_horario_inicio=9,
@@ -121,6 +144,38 @@ def _ctx() -> dict:
             followup_fuso=NOME_DO_FUSO,
         ),
     }
+
+
+@pytest.fixture(autouse=True)
+def sem_prosa(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nenhum teste deste arquivo fala com o provedor.
+
+    `redigir_abertura` chama `get_client()` direto (molde de
+    `handoff/resumo.py`), entao sem esta troca cada candidato tentaria um POST
+    de verdade. Ele nao quebraria o teste -- o `except Exception` de la
+    devolve `None` e o follow-up sai sem prefixo --, mas pagaria o timeout do
+    cliente por candidato, e o teste do teto tem VINTE E SEIS deles.
+
+    `autouse` e nao fixture pedida: esquecer de pedi-la num teste novo nao
+    daria erro nenhum, so uma suite lenta que ninguem associa a isto. Quem
+    precisa de prefixo troca de novo por cima -- o ultimo `setattr` vence.
+
+    O que a prosa faz com a ficha e com a queda esta em
+    `tests/unit/test_prosa_do_followup.py`; aqui o que se verifica e a
+    varredura.
+    """
+
+    async def _sem_abertura(
+        session: object,
+        *,
+        channel: str,
+        conversation_key: str,
+        ficha: object,
+        queda: object,
+    ) -> None:
+        return None
+
+    monkeypatch.setattr(sweep_followups_module, "redigir_abertura", _sem_abertura)
 
 
 async def test_o_candidato_traz_o_id_da_mensagem_ancora(session) -> None:
@@ -593,3 +648,266 @@ async def test_a_guarda_do_maximo_barra_o_candidato(
     assert (await session.scalars(select(FollowUp))).all() == []
     assert sum(1 for r in caplog.records if "followup.devido" in r.getMessage()) == 0
     assert sum(1 for r in caplog.records if "followup.antispam_atingido" in r.getMessage()) == 0
+
+
+async def _imovel(session: Any, codigo: str, **sobrescritas: object) -> uuid.UUID:
+    """Copiado e nao importado de proposito: os arquivos de integracao deste
+    repo sao autocontidos. Molde de `tests/integration/test_novidade_do_followup.py`."""
+    identificador = uuid.uuid4()
+    campos: dict[str, object] = {
+        "id": identificador,
+        "codigo": codigo,
+        "titulo": "Apartamento na Trindade",
+        "descricao": "Sala ampla com varanda.",
+        "tipo": "APARTAMENTO",
+        "operacao": "VENDA",
+        "preco_venda": 59_000_000,
+        "bairro": "Trindade",
+        "cidade": "Florianopolis",
+        "uf": "SC",
+        "area_util_m2": 78,
+        "quartos": 3,
+        "suites": 1,
+        "banheiros": 2,
+        "vagas": 2,
+        "caracteristicas": ["varanda"],
+        "fotos": [],
+        "status": "DISPONIVEL",
+    }
+    campos.update(sobrescritas)
+    campos.setdefault("bairro_busca", dobrar(str(campos["bairro"])))
+    session.add(Imovel(**campos))
+    await session.commit()
+    return identificador
+
+
+async def _recomendar(session: Any, imovel_id: uuid.UUID, **sobrescritas: object) -> None:
+    campos: dict[str, object] = {
+        "id": uuid.uuid4(),
+        "channel": CANAL,
+        "conversation_key": CONVERSA,
+        "imovel_id": imovel_id,
+        "score_match": Decimal("0.870"),
+        "motivo_match": "3 quartos, Trindade, dentro do teto",
+        "apresentado_em": DENTRO_DA_JANELA,
+    }
+    campos.update(sobrescritas)
+    session.add(Recomendacao(**campos))
+    await session.commit()
+
+
+async def test_o_followup_sai_pela_porta_ancorado_na_ultima_fala(session, outbound_fake) -> None:
+    """D1: `message_id` e o da mensagem-ancora, `kind` e `followup_<n>`.
+
+    A ancora nao e detalhe de implementacao: e ela que da a idempotencia por
+    tentativa (a UNIQUE `(message_id, kind)` de `outbound_dispatches` espelha
+    a de `followups`) e e por ela que as guardas de opt-out e de atendimento
+    humano de `GuardedOutbound` resolvem o lead. Um `message_id` de outra
+    mensagem passaria num teste de "algo saiu" e quebraria as duas coisas.
+
+    Sem catalogo semeado nao ha queda nem imovel novo, entao o corpo e o
+    convite -- o fundo da precedencia da D2, e o que torna a mensagem vazia
+    impossivel (D6).
+    """
+    ancora = await _lead(session, calado_ha=timedelta(hours=2, minutes=5))
+    outbound = outbound_fake()
+
+    assert await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA) == 1
+
+    assert outbound.entregues, "nada saiu -- o teste nao afirmaria nada"
+    assert outbound.entregues == [CONVITE_PARA_AGENDAR]
+    assert outbound.payloads[0]["para"] == CONVERSA
+    # O nosso numero, que so existe na linha da mensagem -- `Candidato` nao o
+    # carrega. Sem ele o POST iria para a URL errada da Meta.
+    assert outbound.payloads[0]["de"] == "222222222"
+
+    reservas = (await session.scalars(select(OutboundDispatch))).all()
+    assert [(reserva.message_id, reserva.kind) for reserva in reservas] == [(ancora, "followup_1")]
+
+
+async def test_a_segunda_varredura_nao_reenvia_a_mesma_tentativa(session, outbound_fake) -> None:
+    """O lead recebe UMA mensagem por tentativa, mesmo com a varredura rodando
+    de novo sobre o mesmo instante.
+
+    **Qual das duas UNIQUEs absorve depende do caminho, e neste e a de
+    `followups`**: a segunda passagem encontra `ja_disparada=1` e
+    `tentativa_devida` nao devolve nada (a proxima posicao do QUENTE so vence
+    em +24h), entao o laco para antes da porta. A UNIQUE `(message_id, kind)`
+    de `outbound_dispatches` e a segunda tranca, para a corrida real entre
+    duas varreduras concorrentes -- ela e exercitada em
+    `test_a_reserva_de_saida_absorve_a_entrega_repetida`, logo abaixo.
+
+    O que este teste prende e o observavel que importa para o lead, e ele
+    reprovaria se alguem movesse o envio para antes de `registrar_followup`.
+    """
+    await _lead(session, calado_ha=timedelta(hours=2, minutes=5))
+    outbound = outbound_fake()
+
+    assert await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA) == 1
+    assert await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA) == 0
+
+    assert len(outbound.entregues) == 1
+    assert len((await session.scalars(select(FollowUp))).all()) == 1
+
+
+async def test_a_reserva_de_saida_absorve_a_entrega_repetida(session, outbound_fake) -> None:
+    """A outra tranca, a que a corrida entre duas varreduras usa.
+
+    Com a reserva `(ancora, followup_1)` ja gravada -- o que uma varredura
+    concorrente teria deixado --, `GuardedOutbound.send` devolve `False` sem
+    chamar `_deliver`. A linha de `followups` e gravada do mesmo jeito, porque
+    a supressao acontece do lado de fora do job.
+
+    Sem esta tranca, duas varreduras simultaneas mandariam a mesma tentativa
+    duas vezes -- e e por ela que `KIND_DO_FOLLOWUP` da um kind por tentativa
+    em vez de um kind unico repetido: com kind unico, a supressao que protege
+    a tentativa 1 engoliria tambem a 2.
+    """
+    ancora = await _lead(session, calado_ha=timedelta(hours=2, minutes=5))
+    session.add(OutboundDispatch(id=uuid.uuid4(), message_id=ancora, kind="followup_1"))
+    await session.commit()
+    outbound = outbound_fake()
+
+    assert await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA) == 1
+
+    assert outbound.entregues == []
+    assert len((await session.scalars(select(FollowUp))).all()) == 1
+
+
+class _JanelaFechadaNoPrimeiro(OutboundFake):
+    """Recusa so a PRIMEIRA entrega. Molde das subclasses de
+    `test_apresentacao_no_turno.py`."""
+
+    def __init__(self, session_factory) -> None:
+        super().__init__(session_factory)
+        self.tentativas = 0
+
+    async def _deliver(self, message_id, kind, payload) -> None:
+        self.tentativas += 1
+        if self.tentativas == 1:
+            raise EnvioForaDaJanela("fora da janela de 24h")
+        await super()._deliver(message_id, kind, payload)
+
+
+async def test_fora_da_janela_de_24h_vira_log_e_nao_derruba_o_lote(session, caplog) -> None:
+    """L1: hoje so a tentativa de 2h do QUENTE chega. As outras oito posicoes
+    batem em `EnvioForaDaJanela`, e a varredura tem de seguir para o proximo
+    candidato -- um lead fora da janela nao pode custar o follow-up dos
+    outros.
+
+    A recusa e no PRIMEIRO da fila, e nao no segundo: com ela no segundo o
+    teste passaria mesmo sem o `except`, porque nao sobraria candidato para
+    perder. A ordem da fila e `ORDER BY ancora_em`, entao quem calou ha mais
+    tempo vem antes.
+    """
+    await _lead(session, calado_ha=timedelta(hours=3), conversa=CONVERSA)
+    await _lead(session, calado_ha=timedelta(hours=2, minutes=5), conversa="5511944443334")
+    outbound = _JanelaFechadaNoPrimeiro(get_sessionmaker())
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA)
+
+    assert outbound.tentativas == 2, "o laco parou no primeiro candidato"
+    assert len(outbound.entregues) == 1  # o segundo candidato saiu
+    assert gravadas == 2
+    assert sum(1 for r in caplog.records if "followup.fora_da_janela_de_24h" in r.getMessage()) == 1
+
+
+async def test_a_linha_de_followups_permanece_quando_o_envio_e_recusado(
+    session, outbound_fake
+) -> None:
+    """L1, a parte que custa: a tentativa e CONSUMIDA. `followups` e
+    append-only e a linha e gravada antes do envio, entao ela nao volta
+    quando a TEC-186 entrar. Este teste existe para que isso seja uma decisao
+    visivel e nao um efeito colateral.
+
+    O retorno continua sendo 1: ele conta linhas GRAVADAS, e nao mensagens
+    entregues. Desfazer a linha aqui faria a varredura reprocessar a mesma
+    tentativa a cada cinco minutos, pagando a chamada de prosa toda vez para
+    bater na mesma recusa.
+    """
+    await _lead(session, calado_ha=timedelta(hours=2, minutes=5))
+    outbound = outbound_fake(EnvioForaDaJanela("fora da janela de 24h"))
+
+    assert await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA) == 1
+
+    assert outbound.entregues == []
+    linhas = (await session.scalars(select(FollowUp))).all()
+    assert len(linhas) == 1
+    assert linhas[0].tentativa_numero == 1
+
+
+async def test_o_teto_de_envios_por_execucao_corta_o_excedente(session, outbound_fake) -> None:
+    """D7: com 26 candidatos devidos, 25 saem e 1 fica -- e ele continua
+    devido na varredura seguinte, porque a cadencia e ancorada e nao
+    encadeada.
+
+    A segunda passagem e a metade que importa: um teto que DESCARTASSE o
+    excedente em vez de adia-lo passaria na primeira assertiva e falharia
+    aqui. Os 25 ja atendidos nao voltam -- `ja_disparada=1`, e a proxima
+    posicao do QUENTE so vence em +24h.
+    """
+    total = MAXIMO_DE_ENVIOS_POR_EXECUCAO + 1
+    for indice in range(total):
+        await _lead(
+            session,
+            # Idades decrescentes para a ordem da fila (`ORDER BY ancora_em`)
+            # ser determinada e nao sorteada pelo banco: quem sobra tem de ser
+            # sempre o que calou ha menos tempo.
+            calado_ha=timedelta(hours=2, minutes=5) + timedelta(minutes=total - indice),
+            conversa=f"55119444{indice:05d}",
+        )
+    outbound = outbound_fake()
+
+    gravadas = await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA)
+
+    assert gravadas == MAXIMO_DE_ENVIOS_POR_EXECUCAO
+    assert len(outbound.entregues) == MAXIMO_DE_ENVIOS_POR_EXECUCAO
+
+    segunda = outbound_fake()
+    assert await sweep_followups(_ctx(segunda), agora=DENTRO_DA_JANELA) == 1
+    assert len(segunda.entregues) == 1
+    assert len((await session.scalars(select(FollowUp))).all()) == total
+
+
+async def test_a_queda_de_preco_e_a_abertura_falam_do_mesmo_imovel(
+    session, outbound_fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A montagem inteira, ponta a ponta: novidade escolhida, prosa na frente,
+    ficha e linha da queda no corpo.
+
+    **A assertiva sobre os argumentos da prosa nao e cosmetica.** A abertura e
+    o corpo tem de falar do MESMO imovel, e a unica coisa que garante isso e a
+    `ficha` e a `queda` serem escolhidas uma vez e passadas as duas funcoes.
+    Uma implementacao que consultasse a novidade de novo para a prosa
+    entregaria um texto que parece certo e cita outro imovel -- e nenhuma
+    assertiva sobre o texto entregue pegaria isso.
+
+    A queda vence o convite pela precedencia da D2, e o preco da FICHA e o de
+    hoje: quem carrega o valor antigo e a linha da queda.
+    """
+    vistos: dict[str, Any] = {}
+
+    async def _abertura(session, *, channel, conversation_key, ficha, queda):
+        vistos["ficha"] = ficha
+        vistos["queda"] = queda
+        return "Vi que voce procurava perto do centro"
+
+    monkeypatch.setattr(sweep_followups_module, "redigir_abertura", _abertura)
+
+    imovel = await _imovel(session, "AP-901", preco_venda=59_000_000)
+    await _recomendar(session, imovel, preco_centavos=62_000_000)
+    await _lead(session, calado_ha=timedelta(hours=2, minutes=5))
+    outbound = outbound_fake()
+
+    assert await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA) == 1
+
+    (texto,) = outbound.entregues
+    assert texto.startswith("Vi que voce procurava perto do centro")
+    assert "Apartamento na Trindade" in texto
+    assert "De R$ 620.000 por R$ 590.000" in texto
+    assert CONVITE_PARA_AGENDAR not in texto
+
+    assert vistos["queda"].imovel_id == imovel
+    assert vistos["ficha"].id == imovel
+    assert vistos["ficha"].preco_centavos == 59_000_000

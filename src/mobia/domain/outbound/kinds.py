@@ -77,3 +77,25 @@ def grupo_de(kind: str) -> tuple[str, ...]:
         if kind in grupo:
             return grupo
     return (kind,)
+
+
+# TEC-184. Um kind por tentativa, e nao um so repetido: a UNIQUE
+# (message_id, kind) de `outbound_dispatches` e o que impede duas varreduras
+# concorrentes de mandarem a mesma tentativa duas vezes, e com um kind unico a
+# SEGUNDA tentativa do mesmo lead seria absorvida como se fosse repeticao da
+# primeira -- o lead receberia so o primeiro follow-up da cadencia, em
+# silencio.
+#
+# O teto e quatro porque a cadencia mais longa (QUENTE) tem quatro posicoes --
+# ver `CADENCIA` em `domain/followup/cadencia.py`. Nao ha validacao do
+# argumento aqui: quem o produz e `tentativa_devida`, que so devolve posicao
+# existente na regua, e uma guarda nesta funcao seria uma segunda opiniao
+# sobre o que aquela ja garante.
+#
+# **Nao entra em `_GRUPOS`.** Grupo e o conjunto de kinds que carregam UMA
+# resposta regeneravel, e cada tentativa de follow-up e uma mensagem propria,
+# de uma varredura propria: liberar a reserva da tentativa 1 porque a 2 falhou
+# reabriria o envio de uma mensagem que o lead ja recebeu dias antes.
+def KIND_DO_FOLLOWUP(tentativa: int) -> str:
+    """O kind da n-esima tentativa de follow-up: `followup_1`..`followup_4`."""
+    return f"followup_{tentativa}"
