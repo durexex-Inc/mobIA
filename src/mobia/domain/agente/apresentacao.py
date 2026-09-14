@@ -62,24 +62,28 @@ class Rentabilidade:
 
 @dataclass(frozen=True, slots=True)
 class Ficha:
-    """Os oito campos da RN-10.1, resolvidos e agnosticos de canal -- mais o
-    `id` do imovel, que nao e um dos oito e nao aparece na legenda, e mais
-    `rentabilidade`, o decimo campo.
+    """Os oito campos da RN-10.1, resolvidos e agnosticos de canal -- mais
+    tres campos fora dessa contagem: `id`, `foto` e `rentabilidade`.
+    `dataclasses.fields(Ficha)` devolve onze ao todo, nao dez.
 
     `id` existe para quem opera, nao para o lead: fix wave da TEC-162
     (Minor). Sem ele, `turno.py` nao tinha como dizer QUAL imovel sumiu do
-    catalogo entre a busca e a apresentacao -- so quantos.
+    catalogo entre a busca e a apresentacao -- so quantos. `foto` e a
+    RN-10.2, uma regra sobre midia e canal, nao um dos oito campos
+    descritivos da RN-10.1 -- por isso tambem fica de fora da contagem.
 
     `rentabilidade` fica de fora da contagem "os oito" de proposito: e o
     bloco do investidor da RN-07.3, uma regra diferente da RN-10.1, e so
     existe (nao-`None`) na trilha do investidor -- ver a docstring de
     `Rentabilidade`. Omiti-lo aqui pareceria descuido a quem conta os campos
-    e encontra dez; ele existe e nao e um dos oito.
+    e encontra onze; a conta fecha porque `id` e `foto` tambem estao de fora
+    dos oito, cada um pela sua propria razao.
 
-    Tres dos oito campos sao opcionais porque o catalogo os tem vazios de
-    verdade -- 117 dos 520 imoveis do seed nao tem caracteristica nenhuma.
-    Ausencia omite a linha e nunca esconde o imovel, que e a regra da propria
-    RN-10.2 sobre foto.
+    Dois dos oito campos sao opcionais -- `condominio_centavos` e
+    `diferencial` -- porque o catalogo os tem vazios de verdade:
+    `diferencial` fica `None` em 117 dos 520 imoveis do seed, que nao tem
+    caracteristica nenhuma. Ausencia omite a linha e nunca esconde o imovel,
+    que e a regra da propria RN-10.2 sobre foto.
     """
 
     id: uuid.UUID
@@ -181,9 +185,12 @@ def _pluralizado(quantidade: int, singular: str, plural: str) -> str:
 # justamente a ressalva.
 RESSALVA_DE_ESTIMATIVA = "Estimativa, nao e garantia de retorno."
 
-# Cenario 3 do Gherkin. NAO e silencio: medido no seed, 467 dos 520 imoveis
-# caem aqui -- inclusive todos os 375 que sao so VENDA --, e uma linha
-# ausente pareceria esquecimento nosso em vez de lacuna do catalogo.
+# Cenario 3 do Gherkin. NAO e silencio: medido no seed, 375 dos 520 imoveis
+# caem aqui -- os que nao tem `preco_aluguel` --, e uma linha ausente
+# pareceria esquecimento nosso em vez de lacuna do catalogo. Os outros 92 que
+# tambem nao mostram yield (tem aluguel, mas nao tem `preco_venda`) NAO caem
+# aqui: eles tem o dado, entram no `else` abaixo e saem com o valor do
+# aluguel, so sem o sufixo do yield.
 _ALUGUEL_AUSENTE = "Aluguel estimado: nao informado"
 
 
@@ -194,7 +201,13 @@ def _linhas_da_rentabilidade(rentabilidade: Rentabilidade) -> list[str]:
     um --, e nao so o yield. Sem numero nenhum ela nao sai.
     """
     linhas: list[str] = []
-    if rentabilidade.aluguel_centavos is None:
+    # Falsy e nao `is None`: `yield_bruto_anual` ja trata aluguel zero como
+    # ausente ("omitir e mais honesto que exibir 0,0% ao ano", na docstring
+    # dela) e o `CHECK` do banco nao proibe zero -- so NULL. Duas regras
+    # diferentes para o mesmo valor no mesmo modulo seriam a inconsistencia,
+    # e aqui as duas checagens de `aluguel_centavos` (esta e a da ressalva,
+    # abaixo) tem de concordar com aquela.
+    if not rentabilidade.aluguel_centavos:
         linhas.append(_ALUGUEL_AUSENTE)
     else:
         linha = f"Aluguel estimado {reais_de(rentabilidade.aluguel_centavos)}"
@@ -205,8 +218,15 @@ def _linhas_da_rentabilidade(rentabilidade: Rentabilidade) -> list[str]:
             linha += f" - yield bruto {percentual}% ao ano"
         linhas.append(linha)
     if rentabilidade.custos_centavos is not None:
+        # O rotulo nomeia dois componentes (condominio e IPTU) mas reporta um
+        # numero so: se `iptu_mensal` for NULL, `custos_recorrentes` cai para
+        # so o condominio e esta linha repete o valor da linha `Condominio`
+        # acima -- o lead le isso como "IPTU = 0". Inalcancavel no seed (as
+        # 520 linhas tem os dois campos preenchidos), mas o schema permite, e
+        # decidimos nao desdobrar o rotulo em dois so por essa lacuna hoje
+        # hipotetica.
         linhas.append(f"Condominio + IPTU {reais_de(rentabilidade.custos_centavos)}/mes")
-    if rentabilidade.aluguel_centavos is not None:
+    if rentabilidade.aluguel_centavos:
         linhas.append(RESSALVA_DE_ESTIMATIVA)
     return linhas
 
