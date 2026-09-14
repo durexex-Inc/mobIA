@@ -49,6 +49,7 @@ from mobia.domain.context.repositorio import (
     contar_perguntas,
     gravar_estado,
     gravar_investidor,
+    ler_estado,
     marcar_perguntados,
     perguntas_contaveis,
     registrar_recalculo,
@@ -403,6 +404,11 @@ async def _continuar_entrega(
     dispara**, porque a FK de `recomendacoes.imovel_id` impede que um imovel
     deste lote seja apagado. O comentario no corpo diz por que ele fica assim
     mesmo, e por que so os ainda NAO entregues podem entrar nele.
+
+    **Le o estado de qualificacao so para escolher a FORMA da ficha (TEC-154,
+    D7)** -- se a trilha e a do investidor, a ficha sai com os indicadores de
+    rentabilidade; senao, sai sem. A leitura nunca muda O QUE e entregue: o
+    lote, os ids e os precos ja vieram fixados pela passada anterior.
     """
     # **Um `message_id` quase sempre tem UM carimbo, mas pode ter dois.**
     # `gravar_recomendacoes` grava o lote inteiro com um `agora` unico, so que
@@ -425,7 +431,28 @@ async def _continuar_entrega(
     precos = {linha.imovel_id: linha.preco_centavos for linha in lote}
     kind_de = {linha.imovel_id: linha.kind for linha in lote}
 
-    fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)
+    # TEC-154, D7. Esta funcao roda ANTES de `montar_contexto` e por isso nao
+    # tem `contexto.estado` nem `ja_e_investidor` -- e a mesma cegueira que o
+    # comentario de `record_agent_message`, mais abaixo, declara para a
+    # telemetria. Ali a consequencia so aparece para quem opera; aqui
+    # apareceria para o LEAD, que receberia a ficha 1 com yield e as fichas 2
+    # e 3 sem. Uma consulta fecha isso.
+    #
+    # **Custo declarado: o estado lido e o de AGORA, nao o do instante da
+    # apresentacao original.** Coincidem em praticamente todo caso, porque a
+    # continuacao reprocessa a MESMA mensagem e o turno que moveria a intencao
+    # e justamente o que esta sendo continuado. A alternativa exata -- gravar a
+    # trilha na linha de `recomendacoes` -- custa coluna, migration e mais uma
+    # tabela no TRUNCATE de todo teste que toca banco.
+    async with session_factory() as session:
+        estado = await ler_estado(session, message.channel, message.conversation_key)
+    # Contra `.value` porque a coluna e str, e nao o enum -- mesma comparacao
+    # que `ja_e_investidor` faz em `executar_turno`.
+    investidor = estado is not None and estado.intencao == Intencao.INVESTIMENTO.value
+
+    fichas = await fichas_do_catalogo(
+        session_factory, ids=ids, precos=precos, com_rentabilidade=investidor
+    )
     encontrados = {ficha.id for ficha in fichas}
 
     # **Este ramo e defensivo e hoje NAO dispara** -- dizer o contrario seria a

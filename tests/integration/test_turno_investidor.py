@@ -36,15 +36,20 @@ from mobia.domain.agente.investidor import (
     RetornoEsperadoTipo,
 )
 from mobia.domain.agente.models import Recomendacao
+from mobia.domain.agente.repositorio import LinhaDaApresentacao
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.agente.turno import (
     SUBAGENTE_INVESTIDOR,
     TEXTO_DA_BUSCA_INCONCLUSIVA,
     TEXTO_DO_LIMITE_DE_PERGUNTAS,
+    _continuar_entrega,
 )
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification
-from mobia.domain.messages.models import MessageTelemetry
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
+from mobia.domain.messages.models import Message, MessageTelemetry
+from mobia.domain.messages.status import MessageStatus
+from mobia.infra.db import get_sessionmaker
 
 # Os mesmos valores que `CANAL_AGENTE`/`CONVERSA_AGENTE` em `tests/conftest.py`,
 # porque `rodar_turno` semeia a fala nessa conversa e o estado tem de casar com
@@ -430,6 +435,26 @@ async def _imovel(session: Any, codigo: str, **sobrescritas: object) -> uuid.UUI
     return identificador
 
 
+async def _mensagem_do_lead(session: Any) -> Message:
+    """Uma mensagem ja processada, para a continuacao ter o que continuar."""
+    identificador = uuid.uuid4()
+    mensagem = Message(
+        id=identificador,
+        channel=CANAL,
+        provider_message_id=f"wamid.{identificador.hex[:10]}",
+        conversation_key=CONVERSA,
+        role=MessageRole.LEAD,
+        direction=MessageDirection.INBOUND,
+        content_type=MessageContentType.TEXTO,
+        text_body=None,
+        raw_payload=None,
+        status=MessageStatus.PROCESSED,
+    )
+    session.add(mensagem)
+    await session.commit()
+    return mensagem
+
+
 async def test_a_virada_apresenta_as_fichas_da_busca_do_investidor(
     session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
 ) -> None:
@@ -512,3 +537,41 @@ async def test_a_ficha_de_comprador_nao_traz_indicador_nenhum(
     assert fichas, "nenhuma ficha foi entregue -- o teste nao afirmaria nada"
     assert "yield" not in fichas[0]
     assert "Estimativa" not in fichas[0]
+
+
+async def test_a_continuacao_de_um_investidor_mantem_os_indicadores(session, outbound_fake) -> None:
+    """D7: sem isto a ficha 1 sai com yield e a 2, minutos depois, sem -- a
+    mesma apresentacao em dois formatos, e quem ve a diferenca e o LEAD.
+
+    `_continuar_entrega` roda ANTES de `montar_contexto` e por isso nao tem
+    `contexto.estado` nem `ja_e_investidor`; quem responde "que trilha e
+    esta?" e `ler_estado`.
+    """
+    from datetime import UTC, datetime
+
+    await _semear_estado(session, intencao=Intencao.INVESTIMENTO.value)
+    mensagem = await _mensagem_do_lead(session)
+    imovel = await _imovel(
+        session, "AP-1006", preco_venda=50_000_000, preco_aluguel=250_000, iptu_mensal=32_000
+    )
+    lote = [
+        LinhaDaApresentacao(
+            imovel_id=imovel,
+            preco_centavos=50_000_000,
+            kind="ficha_2",
+            apresentado_em=datetime.now(UTC),
+        )
+    ]
+    outbound = outbound_fake()
+
+    await _continuar_entrega(
+        get_sessionmaker(),
+        message=mensagem,
+        outbound=outbound,
+        lote=lote,
+        ja_reservados=frozenset(),
+    )
+
+    assert outbound.entregues, "nada foi entregue -- o teste nao afirmaria nada"
+    assert "yield bruto 6,0% ao ano" in outbound.entregues[0]
+    assert outbound.entregues[0].endswith("Estimativa, nao e garantia de retorno.")
