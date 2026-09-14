@@ -1370,6 +1370,12 @@ async def executar_turno(
     # executou.
     suprimida_apos_entrega = False
     entrega_parcial = False
+    # O `kind` cuja supressao setou `suprimida_apos_entrega`, so para o log
+    # que o bloco `if suprimida_apos_entrega:` emite mais abaixo -- ver la.
+    # `None` nunca chega a ser lido: so e consultado dentro daquele `if`, que
+    # so roda quando `suprimida_apos_entrega` e True, e as duas unicas
+    # atribuicoes ficam juntas com as de `suprimida_apos_entrega = True`.
+    kind_suprimido: str | None = None
 
     try:
         if apresentando:
@@ -1659,6 +1665,7 @@ async def executar_turno(
                         # ja estava True.
                         entrega_parcial = True
                         suprimida_apos_entrega = True
+                        kind_suprimido = kind
                         break
                     # Ate a TEC-273 isto fazia `continue` liso, sem marcar
                     # nada, e o comentario chamava o caso de "a retentativa
@@ -1666,17 +1673,27 @@ async def executar_turno(
                     # tentativa anterior devolvia False aqui, e a parte sem
                     # reserva ainda tinha a vez de sair.
                     #
-                    # Aquela retentativa deixou de existir. A TEC-273 libera as
-                    # reservas do GRUPO inteiro numa falha retentavel, entao a
-                    # passada seguinte nao encontra reserva de parte nenhuma.
-                    # O que ainda chega aqui e anomalia -- tipicamente uma
-                    # reserva PRESA (o delete da liberacao falhando por
-                    # deadlock ou conexao caida, que `port.py` ja antecipa e
-                    # loga como `outbound.liberacao_falhou`), mas pode ser
-                    # tambem a MESMA guarda de opt-out ou de atendimento
-                    # humano que bloqueou a parte anterior (`if entregue:`
-                    # logo acima cobre o caso simetrico, depois de uma parte
-                    # ja ter saido).
+                    # A TEC-273 libera as reservas do GRUPO inteiro, mas so
+                    # quando a falha e RETENTAVEL -- `except (EnvioRetentavel,
+                    # asyncio.CancelledError)` em `GuardedOutbound.send`
+                    # (`port.py`). Qualquer OUTRA morte do turno depois do
+                    # `send()` -- queda do worker, `job_timeout`, excecao no
+                    # recorder -- nao passa por ali, a reserva fica viva, e o
+                    # reprocessamento cai exatamente aqui com uma reserva SAUDAVEL
+                    # de uma entrega que ja aconteceu de verdade: caminho
+                    # normal, nao anomalia (`tests/features/test_reprocessamento_apos_falha.py`
+                    # documenta esse caso). Fix de revisao (Important 2): uma
+                    # versao anterior deste comentario dizia que aquela
+                    # retentativa "deixou de existir" e chamava isto de
+                    # anomalia sem ressalva -- falso para qualquer morte do
+                    # turno que nao seja uma das duas excecoes acima. Uma
+                    # reserva de verdade PRESA (o delete da liberacao falhando
+                    # por deadlock ou conexao caida, que `port.py` ja antecipa
+                    # e loga como `outbound.liberacao_falhou`) e so UMA das
+                    # causas possiveis -- a MESMA guarda de opt-out ou de
+                    # atendimento humano que bloqueou a parte anterior
+                    # (`if entregue:` logo acima cobre o caso simetrico) e
+                    # outra.
                     #
                     # `continue`, e nao `break`: a proxima parte ainda pode
                     # sair de verdade, e reter o quanto foi entregue (visivel,
@@ -1700,51 +1717,25 @@ async def executar_turno(
                     # lido -- quem decide o desfecho e o bloco `if not
                     # entregue:` abaixo, inalterado.
                     #
-                    # O cenario 2 do Gherkin exige um log que distinga isto de
-                    # "nada saiu" -- mas `error` incondicional aqui repetiria o
-                    # erro de uma versao anterior deste fix: as duas guardas
-                    # concorrentes (opt-out, atendimento humano) TAMBEM fazem
-                    # `send()` devolver False sem levantar, e sao guarda
-                    # FUNCIONANDO, nao anomalia. `_bloqueado_por_optout_concorrente`
-                    # e `_bloqueado_por_atendimento_humano_concorrente` (abaixo
-                    # nesta funcao) sao quem ja separa as tres causas nos
-                    # blocos depois do laco -- reconsultamos as duas AQUI
-                    # tambem, so para decidir SE loga, porque o log observavel
-                    # (o alarme que faz alguem investigar a reserva presa)
-                    # nao pode esperar o fim do laco: se uma parte POSTERIOR
-                    # nunca sair, `suprimida_apos_entrega` fica sem efeito (a
-                    # variavel so e lida quando `entregue` acaba True) e o
-                    # unico sinal deste evento especifico seria este log.
-                    # Best-effort, mesmo criterio das duas funcoes chamadas:
-                    # entre esta consulta e o desfecho final pode haver uma
-                    # reativacao ou uma devolucao, e isso so muda qual
-                    # historia o log conta, nunca perde ou duplica envio.
-                    #
-                    # Dois testes desta suite (`test_turno_optout.py`,
-                    # `test_turno_atendimento_humano.py`) afirmam que bloqueio
-                    # de guarda concorrente NAO produz log de `error` -- um
-                    # `log.error` incondicional aqui os quebrava, e foi
-                    # exatamente o que uma versao anterior deste fix fez.
-                    bloqueado_por_optout = await _bloqueado_por_optout_concorrente(
-                        session_factory, message
-                    )
-                    bloqueado_por_atendimento_humano = (
-                        not bloqueado_por_optout
-                        and await _bloqueado_por_atendimento_humano_concorrente(
-                            session_factory, message
-                        )
-                    )
-                    if not bloqueado_por_optout and not bloqueado_por_atendimento_humano:
-                        log.error(
-                            "turno.entrega_parcial_da_resposta",
-                            channel=message.channel,
-                            message_id=str(message.id),
-                            kind=kind,
-                            reason="reserva presa: nem opt-out nem atendimento "
-                            "humano concorrente explicam a supressao",
-                        )
+                    # Sem log aqui, de proposito (fix de revisao, Important 1):
+                    # uma versao anterior deste fix logava `error` NESTE ponto,
+                    # e disparava tambem quando NENHUMA parte saia em turno
+                    # nenhum -- o caso de supressao TOTAL, que e exatamente o
+                    # que `if not entregue:` abaixo ja cobre com
+                    # `turno.reentrega_suprimida`.
+                    # `test_reentrega_suprimida_nao_grava_fala_fantasma`
+                    # (`test_turno.py`) tem um unico kind, reserva plantada, e
+                    # ZERO partes saem -- e ainda assim aquele log incondicional
+                    # disparava ali, afirmando "entrega parcial" num turno sem
+                    # entrega nenhuma. O alarme certo so pode nascer depois do
+                    # laco, quando `entregue` e sabidamente True -- ver o
+                    # bloco `if suprimida_apos_entrega:` mais abaixo, que e
+                    # onde `turno.entrega_parcial_da_resposta` agora mora.
+                    # `kind_suprimido` guarda so o dado que aquele log precisa
+                    # e que so existe aqui dentro do laco.
                     entrega_parcial = True
                     suprimida_apos_entrega = True
+                    kind_suprimido = kind
                     continue
                 partes_entregues.append(parte)
                 entregue = True
@@ -1864,6 +1855,26 @@ async def executar_turno(
             )
             desfecho_da_supressao_parcial = "bloqueado_por_atendimento_humano"
         else:
+            # TEC-273, cenario 2 do Gherkin: "um log distingue este caso de
+            # 'nada saiu'". `turno.entrega_parcial_da_resposta` e esse log --
+            # deliberadamente NAO emitido la dentro do laco (fix de revisao,
+            # Important 1): so aqui, depois do laco inteiro, `entregue` e
+            # sabidamente True (este `if` inteiro so roda quando e), entao so
+            # aqui da para afirmar "parcial" sem risco de mentir para o caso
+            # de supressao TOTAL (zero partes), que e o que `if not entregue:`
+            # acima ja cobre com `turno.reentrega_suprimida` sozinho.
+            # `kind_suprimido` sempre esta preenchido quando chegamos aqui: as
+            # duas atribuicoes de `suprimida_apos_entrega = True`, no laco
+            # acima, guardam o `kind` junto na mesma linha.
+            log.error(
+                "turno.entrega_parcial_da_resposta",
+                channel=message.channel,
+                message_id=str(message.id),
+                kind=kind_suprimido,
+                reason="reserva presa ou reprocessamento apos morte do turno: "
+                "nem opt-out nem atendimento humano concorrente explicam a "
+                "supressao",
+            )
             log.error(
                 "turno.reentrega_suprimida",
                 channel=message.channel,

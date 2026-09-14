@@ -294,6 +294,23 @@ async def test_reentrega_suprimida_nao_grava_fala_fantasma(
     assert eventos, "o desfecho tem de aparecer no log"
     assert all(registro.levelno == logging.ERROR for registro in eventos)
 
+    # Fix de revisao da TEC-273 (Important 1). Este teste tem um UNICO kind
+    # (`classificador_fake()` sem `resposta=` gera texto curto, uma parte so),
+    # a reserva plantada suprime essa unica parte, e ZERO partes saem --
+    # supressao TOTAL, nao parcial. Uma versao anterior do fix de TEC-273
+    # logava `turno.entrega_parcial_da_resposta` de dentro do laco de entrega
+    # sempre que `send()` devolvia False sem levantar e nenhuma guarda
+    # concorrente explicava -- e disparava tambem AQUI, afirmando "entrega
+    # parcial" num turno que nao entregou nada. Este teste passava mesmo
+    # assim porque so filtrava o caplog por `turno.reentrega_suprimida`; a
+    # regressao so aparecia numa leitura atenta do caplog inteiro. O fix
+    # correto move aquele log para depois do laco, no ramo `else` de
+    # `if suprimida_apos_entrega:`, que so roda quando `entregue` e
+    # sabidamente True -- e aqui `entregue` nunca chega a ser True.
+    assert "turno.entrega_parcial_da_resposta" not in caplog.text, (
+        "zero partes sairam -- isto e supressao TOTAL, nao entrega parcial"
+    )
+
 
 BAIXA = Decimal("0.45")
 
