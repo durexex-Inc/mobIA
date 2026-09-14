@@ -44,14 +44,20 @@ from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, EnvioRe
 
 log = structlog.get_logger(__name__)
 
-# TEC-184, D7. Nao e medicao -- a chamada que ele limita nao existia quando o
-# numero foi escolhido. E um limite derivado do `job_timeout = 240 s`: supondo
-# ~4 s de pior caso por follow-up (uma chamada de prosa com `max_tokens`
-# pequeno, mais o POST para a Meta), 25 envios sao ~100 s, menos da metade do
-# orcamento. Quem medir o custo real deve corrigir este numero -- e a direcao
-# certa e medir, nao subir por intuicao quando a varredura parecer lenta.
-# Com 25 por execucao e uma varredura a cada 5 minutos, a vazao e de 300
-# follow-ups por hora, muito acima de qualquer acumulo plausivel.
+# TEC-184, D7. O teto de CONTAGEM, e so isso -- **quem limita o tempo de
+# execucao e o `TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS` logo abaixo, nao este
+# numero.** A D7 escolheu o 25 a partir de uma estimativa de ~4 s por
+# follow-up, que dava ~100 s de pior caso; essa estimativa **esta errada** --
+# o bloco de baixo refaz a conta com os clientes reais e chega a ~3250 s --, e
+# e por isso que ela nao esta repetida aqui como se fosse fato. Nao e
+# medicao: a chamada que o 25 limita nao existia quando o numero foi
+# escolhido.
+#
+# O que o 25 continua valendo: um limite de VOLUME por passagem. Com 25 por
+# execucao e uma varredura a cada 5 minutos, a vazao e de 300 follow-ups por
+# hora, muito acima de qualquer acumulo plausivel -- e o excedente continua
+# devido. Quem medir o custo real deve corrigir este numero, e a direcao certa
+# e medir, nao subir por intuicao quando a varredura parecer lenta.
 MAXIMO_DE_ENVIOS_POR_EXECUCAO = 25
 
 # O segundo teto, e ele tambem NAO e medido -- emenda a D7. Existe porque o de
@@ -62,13 +68,15 @@ MAXIMO_DE_ENVIOS_POR_EXECUCAO = 25
 # `infra/anthropic.py`, que tem `TIMEOUT_SEGUNDOS = 60.0` e `MAX_TENTATIVAS =
 # 1` -- 60 s na primeira tentativa mais 60 s na retentativa, ate 120 s por
 # follow-up. O POST para a Meta custa no maximo os `TIMEOUT_SEGUNDOS = 10.0`
-# de `outbound/whatsapp.py`, que nao retenta (o 5xx/408/429 vira
-# `EnvioRetentavel` e quem retenta e a varredura seguinte). Nao confunda os
-# dois clientes: e o de `infra/anthropic.py` que domina esta conta.
+# de `outbound/whatsapp.py`, que nao retenta -- o 5xx/408/429 vira
+# `EnvioRetentavel`, e **nesta varredura ninguem retenta**: ver o `except
+# EnvioRetentavel` no corpo, que registra por que o nome do tipo desmente o
+# desfecho aqui. Nao confunda os dois clientes: e o de `infra/anthropic.py`
+# que domina esta conta.
 #
-# Com isso, o pior caso de 25 envios nao e o de ~100 s que o numero de cima
-# supoe -- e de ~3250 s contra um `job_timeout` de 240. Um teto que so vale na
-# media e decorativo no unico cenario em que um teto importa.
+# Com isso, o pior caso de 25 envios nao e o de ~100 s que a estimativa da D7
+# supunha -- e de ~3250 s contra um `job_timeout` de 240. Um teto que so vale
+# na media e decorativo no unico cenario em que um teto importa.
 #
 # **110 s, e a conta e 110 + 130 = 240.** A checagem roda no TOPO do laco, o
 # que significa que mais um candidato inteiro pode comecar imediatamente
