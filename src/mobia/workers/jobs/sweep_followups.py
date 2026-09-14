@@ -543,7 +543,14 @@ async def sweep_followups(
                     channel=candidato.channel,
                     conversation_key=candidato.conversation_key,
                     temperatura=candidato.temperatura.value,
-                    tentativas=tentativa,
+                    # `ja_disparada`, e nao `tentativas`: no instante em que
+                    # este evento sai, `tentativa` E o maior numero de
+                    # tentativa gravado sob a ancora -- a mesma grandeza que
+                    # `Candidato.ja_disparada` e `LeadDormente.ja_disparada`
+                    # nomeiam no resto do dominio. "Tentativas" no plural e a
+                    # mesma ambiguidade contagem-vs-posicao que o dataclass
+                    # deixou de ter, e este e o evento que uma pessoa le.
+                    ja_disparada=tentativa,
                     ancora_em=candidato.ancora_em.isoformat(),
                 )
 

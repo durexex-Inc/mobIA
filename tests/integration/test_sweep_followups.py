@@ -1138,13 +1138,13 @@ async def test_a_tentativa_que_fecha_o_teto_emite_followup_dormente(session, cap
         json.loads(r.getMessage()) for r in caplog.records if "followup.dormente" in r.getMessage()
     ]
     assert len(registros_dormente) == 1
-    # O payload, e nao so a ocorrencia da string: trocar `tentativas=tentativa`
+    # O payload, e nao so a ocorrencia da string: trocar `ja_disparada=tentativa`
     # por outra coisa no corpo do job passaria na contagem acima sem que
     # ninguem percebesse. A tentativa 3 e o que fecha o teto do MORNO
     # (RN-13.5), e e essa tentativa -- a terceira, nao a primeira ou a
     # segunda -- que o evento precisa nomear.
     assert registros_dormente[0]["temperatura"] == "MORNO"
-    assert registros_dormente[0]["tentativas"] == 3
+    assert registros_dormente[0]["ja_disparada"] == 3
 
 
 async def test_a_tentativa_antes_do_teto_nao_emite_followup_dormente(session, caplog) -> None:
