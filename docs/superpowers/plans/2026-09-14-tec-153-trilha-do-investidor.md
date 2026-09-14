@@ -193,7 +193,9 @@ Os três gates, depois commit com heredoc: `feat(TEC-153): lead_qualification ga
 - Test: `tests/unit/test_vocabulario_do_investidor.py`
 
 **Interfaces:**
-- Produces: `Horizonte` (CURTO/MEDIO/LONGO), `RetornoEsperadoTipo` (ALUGUEL/REVENDA/AMBOS), `ToleranciaReforma` (NENHUMA/LEVE/PESADA), `PerfilInvestidor` (RENDA/VALORIZACAO/MISTO) — todos `StrEnum` —, o dataclass `ExtracaoDoInvestidor` e `CAMPOS_DO_INVESTIDOR: frozenset[str]`.
+- Produces: `Horizonte` (CURTO/MEDIO/LONGO), `RetornoEsperadoTipo` (ALUGUEL/REVENDA/AMBOS), `ToleranciaReforma` (NENHUMA/LEVE/PESADA), `PerfilInvestidor` (RENDA/VALORIZACAO/MISTO) — todos `StrEnum` —, os dataclasses `ExtracaoDoInvestidor` e `RespostaDoInvestidor`, e `CAMPOS_DO_INVESTIDOR: frozenset[str]`.
+
+**`RespostaDoInvestidor` é o que a chamada do investidor devolve**, e a Task 8 depende dela: mesmos campos de `RespostaDoAgente` (`intencao`, `confianca`, `resposta`, `modelo`, `tokens_in`, `tokens_out`, `latency_ms`, `extracao`, `perguntou`, `recusou`, `cache_write`, `cache_read`, `candidatos` e o que mais aquele dataclass carregar hoje) **mais** `investidor: ExtracaoDoInvestidor`. Leia `RespostaDoAgente` em `schemas.py` e espelhe os campos que `turno.py` e `record_agent_message` leem — se algum faltar, o turno quebra no ramo do investidor e só no ramo dele, que é o pior tipo de falha para achar. Declare-a neste módulo, ao lado de `ExtracaoDoInvestidor`; `CAMPOS_DO_INVESTIDOR` continua derivado de `ExtracaoDoInvestidor`, **não** desta.
 
 **Módulo novo, e não `schemas.py`:** `schemas.py` define o schema estrito da chamada principal, e a docstring de `Intencao` avisa que acrescentar membro ali muda o conjunto que o modelo pode devolver. O vocabulário do investidor não pertence àquela chamada.
 
@@ -661,14 +663,34 @@ from mobia.domain.agente.classificador import (
 )
 
 
-def test_o_schema_do_investidor_nao_entra_no_schema_principal() -> None:
+def test_o_objeto_do_investidor_nao_entra_no_schema_principal() -> None:
     """E disto que depende o custo zero para quem nao e investidor: o schema
     compilado e uma das quatro parcelas do orcamento de prompt, e seis campos
     que a maioria dos leads nunca preenche nao podem custar tokens a todos.
-    TEC-153, D2."""
+    TEC-153, D2.
+
+    A asserta e sobre o OBJETO `investidor`, e nao sobre as chaves em comum:
+    o schema do investidor e o MESMO envelope com um objeto a mais, entao
+    `intencao`, `resposta` e `extracao` aparecem nos dois de proposito.
+    """
     assert "investidor" not in SCHEMA_DA_RESPOSTA["properties"]
-    for nome in SCHEMA_DO_INVESTIDOR["properties"]:
-        assert nome not in SCHEMA_DA_RESPOSTA["properties"]
+    assert "investidor" in SCHEMA_DO_INVESTIDOR["properties"]
+
+
+def test_o_schema_do_investidor_carrega_o_envelope_inteiro() -> None:
+    """Um investidor tambem diz regiao, tipo e faixa de preco, e o turno dele
+    continua precisando classificar intencao. Trocar a extracao inteira pelo
+    objeto do investidor perderia tudo isso."""
+    for campo in ("intencao", "confianca", "resposta", "extracao", "perguntou", "recusou"):
+        assert campo in SCHEMA_DO_INVESTIDOR["properties"], campo
+
+
+def test_os_dois_schemas_sao_objetos_distintos() -> None:
+    """Montar um a partir do outro por referencia faria uma mutacao futura no
+    do investidor vazar para o principal -- e o orcamento so e protegido
+    porque eles nao se tocam."""
+    assert SCHEMA_DO_INVESTIDOR is not SCHEMA_DA_RESPOSTA
+    assert SCHEMA_DO_INVESTIDOR["properties"] is not SCHEMA_DA_RESPOSTA["properties"]
 
 
 def test_o_prompt_do_investidor_e_diferente_do_principal() -> None:
