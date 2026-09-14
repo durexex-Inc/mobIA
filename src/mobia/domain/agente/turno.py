@@ -43,8 +43,14 @@ from mobia.domain.atendimento.repositorio import esta_silenciada
 from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
-from mobia.domain.context.qualificacao import esta_qualificado
-from mobia.domain.context.repositorio import gravar_estado, marcar_perguntados, registrar_recalculo
+from mobia.domain.context.qualificacao import esta_qualificado, excedeu_o_teto
+from mobia.domain.context.repositorio import (
+    contar_perguntas,
+    gravar_estado,
+    marcar_perguntados,
+    perguntas_contaveis,
+    registrar_recalculo,
+)
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.handoff.agendador import AgendadorDeResumoPort
@@ -123,6 +129,25 @@ TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
     "Procurei tambem um pouco alem do que voce pediu e mesmo assim nao achei "
     "nada que valha a pena te mostrar agora. Quer que um corretor olhe isso "
     "com voce?"
+)
+
+# TEC-149, RN-05.5. Substitui a prosa do modelo no turno em que a pergunta
+# seguinte passaria do teto.
+#
+# **Nao promete que alguem foi avisado, e isso e deliberado.** Criar handoff
+# nao notifica ninguem: as cards de notificacao por e-mail e WhatsApp
+# (TEC-280 e TEC-281) estao abertas. A TEC-174 escreveu "ja avisei um
+# corretor" e teve de reescrever o texto depois, porque nada notificava.
+#
+# Sem kind proprio, ao contrario de KIND_DO_CRITERIO_AMPLIADO: aquele e
+# mensagem ADICIONAL e precisa de kind distinto por causa do
+# UNIQUE (message_id, kind). Isto aqui e substituicao, como o
+# TEXTO_NEUTRO_DE_SAIDA da moderacao -- nao ha segunda mensagem com que
+# colidir.
+TEXTO_DO_LIMITE_DE_PERGUNTAS = (
+    "Ja perguntei bastante e nao quero virar interrogatorio. "
+    "Prefiro passar para um corretor, que vai conseguir te ajudar melhor daqui. "
+    "Pode deixar que ele entra em contato."
 )
 
 # RN-09.3 / CA-09.3, e a regra "avisado ... e EM QUE" da card. TEC-160, D11.
@@ -1007,12 +1032,19 @@ async def executar_turno(
     # do lead, nao sobre a nossa resposta. Saida bloqueada e envio fora da
     # janela nao descartam uma recusa que o lead de fato disse.
     antes = esta_qualificado(contexto.estado, _recusados_de(contexto.estado))
+    # TEC-149, RN-05.5. Depois da geracao, porque depende de `gerada.perguntou`;
+    # antes do bloco transacional, porque e ele quem registra o handoff.
+    teto_atingido = excedeu_o_teto(
+        contexto.estado.perguntas_feitas if contexto.estado is not None else 0,
+        len(perguntas_contaveis(gerada.perguntou)),
+    )
     # TEC-174, fix wave (Important 2). Os dois ficam None quando a condicao que
     # os preenche nao roda -- e viram o `HandoffRegistrado` de `registrar_handoff`
     # quando roda. `registrar_handoff` nao loga mais (ver o comentario de la);
     # quem loga e este modulo, e so DEPOIS do commit abaixo.
     handoff_do_quente: HandoffRegistrado | None = None
     handoff_da_intencao: HandoffRegistrado | None = None
+    handoff_do_teto: HandoffRegistrado | None = None
     async with session_factory() as session:
         anterior = await ler_intencao(session, message.channel, message.conversation_key)
         await gravar_intencao(
@@ -1074,6 +1106,14 @@ async def executar_turno(
                 conversation_key=message.conversation_key,
                 gatilho=gatilho_da_intencao,
             )
+
+        if teto_atingido:
+            handoff_do_teto = await registrar_handoff(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                gatilho=Gatilho.LIMITE_DE_PERGUNTAS,
+            )
         await session.commit()
 
     # TEC-174, fix wave (Important 2). Depois do commit acima -- o gatilho da
@@ -1089,6 +1129,19 @@ async def executar_turno(
             prioridade=PRIORIDADE_DE[gatilho_da_intencao].value,
         )
         await _agendar_resumo(agendador, handoff_da_intencao)
+
+    # TEC-149, RN-05.5. Depois do commit acima, pelo mesmo motivo dos outros
+    # dois: logar um handoff que o rollback desfez e mentir para quem le o
+    # log. `registrar_handoff` nao loga -- quem loga e este modulo.
+    if handoff_do_teto is not None:
+        log.info(
+            "handoff.criado" if handoff_do_teto.criado else "handoff.gatilho_adicional",
+            channel=message.channel,
+            gatilho=Gatilho.LIMITE_DE_PERGUNTAS.value,
+            etiqueta=ETIQUETA_DE[Gatilho.LIMITE_DE_PERGUNTAS],
+            prioridade=PRIORIDADE_DE[Gatilho.LIMITE_DE_PERGUNTAS].value,
+        )
+        await _agendar_resumo(agendador, handoff_do_teto)
 
     # A borda, nao o estado: um lead ja qualificado que segue conversando nao
     # gera o evento de novo, senao a taxa de qualificacao da RN-17.1 contaria
@@ -1269,6 +1322,12 @@ async def executar_turno(
             categoria=veredito_da_saida.categoria or CATEGORIA_OUTRO,
         )
         texto = TEXTO_NEUTRO_DE_SAIDA
+
+    if teto_atingido:
+        # A prosa do modelo nao sai: ela contem a pergunta que o teto proibe,
+        # e nao da para entregar meia pergunta -- a prosa e um texto so.
+        # Substituicao em lugar, como a moderacao de saida faz logo acima.
+        texto = TEXTO_DO_LIMITE_DE_PERGUNTAS
 
     # TEC-162, D4. Candidatos sem pergunta e turno de apresentacao. As tres
     # condicoes sao a mesma regra: pergunta adia as fichas. `desambiguando`
@@ -1941,7 +2000,13 @@ async def executar_turno(
             message_id=str(message.id),
         )
 
-    if not desambiguando and not saida_bloqueada and not citacao_bloqueada and not entrega_parcial:
+    if (
+        not desambiguando
+        and not saida_bloqueada
+        and not citacao_bloqueada
+        and not entrega_parcial
+        and not teto_atingido
+    ):
         # A marca de `perguntou` (TEC-257) e, ao contrario da intencao e da
         # extracao gravadas la em cima, um fato sobre a NOSSA resposta -- e
         # por isso nao pode entrar naquele commit pre-entrega. Ela so pode ser
@@ -1977,6 +2042,11 @@ async def executar_turno(
         # velha de A -- "mais novo vence" invertido, em silencio, para as
         # mesmas colunas que a marca foi desenhada para nao arriscar.
         # `marcar_perguntados` faz so o UPDATE da marca, ver o docstring la.
+        #
+        # `not teto_atingido` pela mesma razao das outras quatro: o texto de
+        # `gerada` nao foi o que saiu. A pergunta foi SUPRIMIDA, nao feita --
+        # marcar ou contar aqui gastaria orcamento do lead por uma pergunta
+        # que ele nunca viu, e o proximo turno ja nasceria acima do teto.
         async with session_factory() as session:
             await marcar_perguntados(
                 session,
@@ -1984,6 +2054,12 @@ async def executar_turno(
                 conversation_key=message.conversation_key,
                 intencao=gerada.intencao,
                 extracao=gerada.extracao,
+                perguntou=gerada.perguntou,
+            )
+            await contar_perguntas(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
                 perguntou=gerada.perguntou,
             )
             await session.commit()
