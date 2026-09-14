@@ -197,6 +197,12 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
     compara. Quem grava a marca ja traduz (`_NOME_DA_MARCA`, em
     `repositorio.py`), e `test_toda_chave_do_estado_tem_marca_alcancavel`
     pina os dois lados contra este dicionario.
+
+    TEC-153: os seis campos do investidor saem aqui tambem, sob os nomes que
+    o subagente usa. Eles nunca recebem marca -- `_marca_de` nao os conhece,
+    de proposito (ver `_nome_contavel`, em `repositorio.py`) --, entao o que
+    esta funcao leva ao prompt deles e o VALOR, que e o que impede a
+    repergunta. Ver o comentario no corpo.
     """
     if estado is None:
         return ""
@@ -212,6 +218,40 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
         "urgencia": estado.urgencia,
         "forma_pagamento": estado.forma_pagamento,
         "tem_imovel_para_vender": estado.tem_imovel_para_vender,
+        # TEC-153. A memoria da trilha do investidor. `SISTEMA_DO_INVESTIDOR`
+        # manda o subagente usar "o resumo e o estado de qualificacao como
+        # memoria: nao repergunte o preenchido nem o ignorado" -- sem estas
+        # linhas o estado nunca chegava, e a promessa do prompt era falsa: o
+        # subagente repergunta ticket, horizonte e o resto a cada turno.
+        #
+        # **Custa zero a quem nunca falou de investimento**: o laco abaixo so
+        # emite valor nao-`None`, e para esse lead as sete colunas sao nulas,
+        # entao o texto sai byte-identico ao de antes desta branch.
+        #
+        # As chaves sao os nomes que o SUBAGENTE escreve em `investidor`
+        # (campos de `ExtracaoDoInvestidor`), e nao os nomes das colunas. E a
+        # licao da TEC-146 aplicada antes de doer: quando o nome que o modelo
+        # diz e o nome que o prompt renderiza coincidem, a pergunta contada
+        # (`perguntas_contaveis`) e a chave lida aqui sao a mesma palavra e
+        # nao ha traducao para manter certa -- que e a divergencia que
+        # `_NOME_DA_MARCA` existe para remendar do lado do orcamento. Nada
+        # aqui esta preso a historico: estas linhas nascem nesta branch.
+        #
+        # O ticket sai em reais pela mesma ruling R6 do orcamento: a coluna e
+        # centavos porque inteiro nao arredonda, e quem le -- humano ou
+        # modelo -- le reais.
+        #
+        # `perfil_investidor` fica FORA, e e a unica das sete colunas que
+        # fica. Ele e DERIVADO (`perfil_de`), o modelo nunca declara te-lo
+        # perguntado e o subagente nao pergunta perfil a ninguem -- renderiza-lo
+        # custaria uma linha em todo turno do investidor sem evitar uma unica
+        # repergunta. Mesma razao pela qual `intencao` nao e marcavel.
+        "ticket_expressao": _em_reais(estado.ticket_investimento_centavos),
+        "retorno_esperado_pct": estado.retorno_esperado_pct,
+        "retorno_esperado_tipo": estado.retorno_esperado_tipo,
+        "horizonte": estado.horizonte,
+        "tolerancia_reforma": estado.tolerancia_reforma,
+        "ja_investe_em_imoveis": estado.ja_investe_em_imoveis,
     }
     linhas = []
     for chave, valor in campos.items():

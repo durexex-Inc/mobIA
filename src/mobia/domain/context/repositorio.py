@@ -3,6 +3,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 import structlog
@@ -11,6 +12,13 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agente.dinheiro import ticket_de
+from mobia.domain.agente.investidor import (
+    CAMPOS_DO_INVESTIDOR,
+    ExtracaoDoInvestidor,
+    Horizonte,
+    RetornoEsperadoTipo,
+)
 from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.auditoria import causas_do_recalculo
 from mobia.domain.context.models import (
@@ -19,7 +27,7 @@ from mobia.domain.context.models import (
     LeadScoreAudit,
     aad_do_resumo,
 )
-from mobia.domain.context.qualificacao import esta_qualificado
+from mobia.domain.context.qualificacao import esta_qualificado, perfil_de
 from mobia.domain.context.score import Score, calcular_score
 from mobia.domain.context.temperatura import Temperatura, temperatura_de
 from mobia.domain.messages.enums import MessageDirection
@@ -78,28 +86,67 @@ _NOME_DA_MARCA = {
 
 
 def _marca_de(nome: str) -> str | None:
-    """O nome sob o qual a marca deste campo e gravada, ou `None` se o nome
-    nao pertence a vocabulario nenhum que este modulo conheca."""
+    """O nome sob o qual a MARCA deste campo e gravada, ou `None` se o nome
+    nao pertence ao vocabulario que este modulo sabe marcar.
+
+    **So a trilha padrao, e os nomes do investidor ficam de fora de
+    proposito** -- quem os conhece e `_nome_contavel`, logo abaixo. Marcar e
+    contar sao vocabularios diferentes desde a TEC-153; o porque esta la.
+    """
     if nome in _NOME_DA_MARCA:
         return _NOME_DA_MARCA[nome]
     return nome if nome in _CAMPOS_DA_EXTRACAO else None
+
+
+def _nome_contavel(nome: str) -> str | None:
+    """O nome sob o qual esta pergunta CONTA para o teto da RN-05.5, ou
+    `None` se o nome nao pertence a vocabulario nenhum. TEC-153.
+
+    Superconjunto de `_marca_de`: tudo que se marca tambem se conta, e os
+    nomes do investidor se contam **sem** se marcar. A trilha do investidor
+    tem schema proprio (o schema compilado e parcela do orcamento de prompt),
+    entao os nomes dela nao estao em `_CAMPOS_DA_EXTRACAO`; sem esta funcao
+    toda pergunta do investidor sairia de graca do teto da RN-05.5, e um
+    investidor seria interrogado sem fim enquanto um comprador e cortado na
+    oitava.
+
+    **Os dois vocabularios sao separados porque marcar campo de investidor
+    esta errado, e do jeito caro.** `campos_a_marcar` e `campos_a_recusar`
+    subtraem os campos que o turno gravou, e esses campos saem de
+    `Extracao.preenchidos()` -- que nunca carrega campo de investidor, porque
+    eles moram em `ExtracaoDoInvestidor` e sao gravados por
+    `gravar_investidor`, noutra chamada e noutra transacao. Um vocabulario
+    unico faria toda pergunta do subagente virar marca PERMANENTE de
+    "perguntado, sem resposta" mesmo quando o lead respondeu no mesmo turno:
+    exatamente o "marcar de mais" que os docstrings de la chamam de erro
+    caro. Do lado da recusa o dano e irmao: registrar-se-ia uma recusa que
+    nada honra.
+
+    Contar de mais nao tem essa assimetria -- o teto e sobre perguntas
+    FEITAS, e a pergunta do investidor foi feita.
+    """
+    marca = _marca_de(nome)
+    if marca is not None:
+        return marca
+    return nome if nome in CAMPOS_DO_INVESTIDOR else None
 
 
 def perguntas_contaveis(perguntou: Iterable[str]) -> frozenset[str]:
     """Os nomes de `perguntou` que contam para o teto da RN-05.5. TEC-149, D3.
 
     Conjunto e nao lista: os dois extremos do orcamento chegam como nomes
-    distintos e sao UMA pergunta -- `_marca_de` ja os colapsa no mesmo nome
-    logico, e o conjunto termina o servico. Nome que nao pertence a
-    vocabulario nenhum sai fora: o modelo as vezes devolve o texto da
-    pergunta em lugar do nome do campo, e contar isso gastaria o orcamento
-    do lead com um defeito nosso.
+    distintos e sao UMA pergunta -- `_nome_contavel` ja os colapsa no mesmo
+    nome logico (por `_marca_de`), e o conjunto termina o servico. Nome que
+    nao pertence a vocabulario nenhum sai fora: o modelo as vezes devolve o
+    texto da pergunta em lugar do nome do campo, e contar isso gastaria o
+    orcamento do lead com um defeito nosso.
 
-    Reusa `_marca_de` de proposito, em vez de uma segunda lista de nomes:
-    duas fontes para o mesmo vocabulario divergiriam em silencio, que e o
-    defeito que a TEC-146 gastou uma card inteira consertando.
+    Passa por `_marca_de` de proposito, em vez de uma segunda lista de nomes
+    da trilha padrao: duas fontes para o mesmo vocabulario divergiriam em
+    silencio, que e o defeito que a TEC-146 gastou uma card inteira
+    consertando.
     """
-    marcas = (_marca_de(nome) for nome in perguntou)
+    marcas = (_nome_contavel(nome) for nome in perguntou)
     return frozenset(marca for marca in marcas if marca is not None)
 
 
@@ -298,6 +345,13 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
     visivel --
     era a critica que a card fazia ao proxy de palavra-chave.
 
+    **Campo do investidor nunca e marcado, e a exclusao e deliberada**
+    (TEC-153). Ele nao passa por `_marca_de` e nao entra no log de
+    desconhecidos: a subtracao abaixo usa `Extracao.preenchidos()`, que nunca
+    carrega campo de investidor, entao marcar aqui seria marcar de mais --
+    permanente -- ate quando o lead responde no mesmo turno. O teto da
+    RN-05.5 continua contando essa pergunta, por `_nome_contavel`.
+
     `preenchidos` sao os campos que este turno gravou. A subtracao e o que
     separa esta marca do proxy irmao: campo que o estado JA SABE e
     reperguntado e assunto de `_reperguntou`, nao daqui.
@@ -319,10 +373,17 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
     # que esta card tem para essa deriva.
     for nome in dict.fromkeys(perguntou):
         marca = _marca_de(nome)
-        if marca is None:
-            ignorados.append(nome)
-        else:
+        if marca is not None:
             conhecidos.add(marca)
+        elif _nome_contavel(nome) is None:
+            # TEC-153: nome do investidor nao e "desconhecido" -- ele pertence
+            # ao vocabulario contavel e nao ao marcavel, de proposito (ver
+            # `_nome_contavel`). Ele cai fora da marca do mesmo jeito, mas sem
+            # entrar neste log: registra-lo como deriva de vocabulario faria o
+            # unico instrumento que temos para a deriva disparar em todo turno
+            # do investidor, dizendo "desconhecido" sobre um nome que este
+            # modulo conhece.
+            ignorados.append(nome)
 
     if ignorados:
         plausiveis = sorted({n for n in ignorados if _NOME_PLAUSIVEL.fullmatch(n)})
@@ -357,6 +418,13 @@ def campos_a_recusar(recusou: Iterable[str], preenchidos: Iterable[str]) -> set[
     campo obrigatorio e `esta_qualificado` devolver False para sempre, sem o
     lead perceber. Descartar custa uma pergunta a mais.
 
+    **Campo do investidor nao entra aqui** (TEC-153), como nao entra na marca
+    irma: a recusa so alcanca o modelo pela marca que `_texto_do_estado`
+    renderiza, e la o campo do investidor sai como VALOR, nunca como marca.
+    Registra-la produziria uma coluna com um nome que nada honra -- promessa
+    de RN-05.7 que o prompt nao cumpre. Descartar custa uma pergunta a mais,
+    que e o preco que o resto deste docstring ja aceita.
+
     **A recusa aceita tambem e logada**, e nao so a descartada. Uma recusa
     sobre campo que ainda nao tinha valor nao move o score nem gera linha na
     trilha da TEC-152 -- sem esta linha de log ela nao existiria em lugar
@@ -381,10 +449,14 @@ def campos_a_recusar(recusou: Iterable[str], preenchidos: Iterable[str]) -> set[
     # `campos_a_marcar`, ver o comentario la.
     for nome in dict.fromkeys(recusou):
         marca = _marca_de(nome)
-        if marca is None:
-            ignorados.append(nome)
-        else:
+        if marca is not None:
             conhecidos.add(marca)
+        elif _nome_contavel(nome) is None:
+            # Mesma excecao de `campos_a_marcar`, pela mesma razao: o nome do
+            # investidor nao e deriva de vocabulario, e este log so serve se
+            # disser a verdade sobre o que o modelo inventou. Ver
+            # `_nome_contavel`.
+            ignorados.append(nome)
 
     if ignorados:
         plausiveis = sorted({n for n in ignorados if _NOME_PLAUSIVEL.fullmatch(n)})
@@ -595,6 +667,145 @@ async def gravar_estado(
         .execution_options(populate_existing=True)
     )
     return resultado.scalar_one()
+
+
+def _do_vocabulario[V: StrEnum](vocabulario: type[V], bruto: str | None) -> V | None:
+    """Rele uma coluna de vocabulario com tolerancia: valor fora do enum vira
+    `None`, e nao `ValueError`. TEC-153.
+
+    Mesmo formato de `_membro` (`agente/classificador.py`), que faz isto para
+    o que o MODELO devolve; nao e um import dele porque `domain/context` nao
+    depende de `domain/agente/classificador` em lugar nenhum e aquela funcao e
+    privada de la. Nao ha vocabulario duplicado por causa disto -- as duas
+    leem o mesmo enum, que segue sendo a fonte unica.
+
+    **Hoje nada pode chegar aqui fora do enum**: so `gravar_investidor`
+    escreve estas colunas, e sempre a partir do enum. A guarda existe para o
+    dia em que uma card encolher um vocabulario e esquecer a migracao de
+    dados: com o construtor cru, o `ValueError` estouraria DENTRO da transacao
+    pre-entrega e derrubaria o turno inteiro -- a mensagem volta para a fila e
+    o lead nao recebe resposta nenhuma. Com a tolerancia, o custo e um perfil
+    que fica como esta ate o lead responder de novo.
+
+    O valor sai no log inteiro, e nao so o nome do enum: descobrir QUAL valor
+    sumiu do vocabulario e o ponto do alerta, e aqui nao ha risco de PII --
+    esta coluna nunca carregou texto do lead, so membro de enum escrito por
+    este modulo.
+    """
+    if bruto is None:
+        return None
+    try:
+        return vocabulario(bruto)
+    except ValueError:
+        log.warning(
+            "estado.vocabulario_fora_do_enum", vocabulario=vocabulario.__name__, valor=bruto
+        )
+        return None
+
+
+async def gravar_investidor(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    investidor: ExtracaoDoInvestidor,
+) -> None:
+    """Grava os campos da RN-05.2 e o perfil derivado da RN-07.2. TEC-153.
+
+    **So grava campo que veio.** A qualificacao e progressiva: `None` num
+    campo significa "o lead ainda nao disse", e sobrescrever um valor antigo
+    com `None` apagaria o que ele ja tinha dito num turno anterior -- o mesmo
+    cuidado que `campos_a_gravar` toma para a trilha padrao.
+
+    O perfil e DERIVADO e gravado junto, e nao calculado na leitura: quem le
+    o lead precisa dele sem reexecutar a regra, e a TEC-154 le a coluna
+    direto. Ele e recalculado a partir do estado JA MESCLADO -- horizonte
+    pode ter vindo num turno e o tipo de retorno noutro, e classificar so com
+    o que chegou neste turno daria `None` para um lead que ja respondeu os
+    dois.
+
+    Nao commita, como as irmas deste arquivo: a sessao e emprestada e quem
+    chama e dono da fronteira da transacao.
+
+    **Consequencia declarada: sem linha, nada e gravado.** O unico criador de
+    `lead_qualification` e o upsert de `gravar_estado`, que retorna cedo --
+    "Deliberadamente NAO cria linha" -- quando `campos_a_gravar` devolve
+    vazio. Um turno INDEFINIDA ou FORA_DE_ESCOPO sem extracao nenhuma no
+    primeiro contato deixa o lead sem linha, e o que ele disser sobre ticket
+    ou horizonte nesse mesmo turno se perde. E a mesma lacuna L4 que
+    `contar_perguntas` ja declara, pela mesma causa e com a mesma razao para
+    nao criar linha aqui: criar moveria o score de 0 para o piso documentado
+    e gravaria na trilha da TEC-152 por um lead que ainda nao se qualificou.
+    Fica contido do mesmo jeito -- assim que QUALQUER linha existir, todo
+    turno seguinte grava.
+    """
+    # `populate_existing`: esta leitura nao serve so para saber se a linha
+    # existe -- o perfil e derivado das colunas que ela carrega. Numa sessao
+    # que ja tivesse carregado a linha, o identity map devolveria a instancia
+    # velha e a mescla usaria o horizonte de antes, gravando um perfil errado
+    # em silencio. E o mesmo cuidado, e pelo mesmo mecanismo, que `gravar_estado`
+    # documenta no `RETURNING` dela.
+    linha = await session.scalar(
+        select(LeadQualification)
+        .where(
+            LeadQualification.channel == channel,
+            LeadQualification.conversation_key == conversation_key,
+        )
+        .execution_options(populate_existing=True)
+    )
+    if linha is None:
+        return
+
+    valores: dict[str, Any] = {}
+    if investidor.ticket_expressao is not None:
+        # `ticket_de` devolvendo `None` e "o lead falou algo que nao e
+        # dinheiro", ou recusou -- e ai nao ha o que gravar. Escrever `None`
+        # aqui apagaria o ticket de um turno anterior por causa de uma frase
+        # que nao dizia valor nenhum.
+        centavos = ticket_de(investidor.ticket_expressao)
+        if centavos is not None:
+            valores["ticket_investimento_centavos"] = centavos
+    if investidor.retorno_esperado_pct is not None:
+        valores["retorno_esperado_pct"] = investidor.retorno_esperado_pct
+    if investidor.retorno_esperado_tipo is not None:
+        valores["retorno_esperado_tipo"] = investidor.retorno_esperado_tipo.value
+    if investidor.horizonte is not None:
+        valores["horizonte"] = investidor.horizonte.value
+    if investidor.tolerancia_reforma is not None:
+        valores["tolerancia_reforma"] = investidor.tolerancia_reforma.value
+    if investidor.ja_investe_em_imoveis is not None:
+        valores["ja_investe_em_imoveis"] = investidor.ja_investe_em_imoveis
+
+    # O estado MESCLADO, e nao os campos deste turno: o que este turno trouxe
+    # vence, e o que ele nao trouxe continua sendo o que a coluna ja tinha.
+    # As colunas sao `str` (`String(16)`), os enums e que sao o vocabulario --
+    # a conversao acontece aqui, na borda, e nao no modelo. Ela e TOLERANTE de
+    # proposito: `_do_vocabulario` explica o que o construtor cru custaria.
+    horizonte_mesclado = investidor.horizonte or _do_vocabulario(Horizonte, linha.horizonte)
+    tipo_mesclado = investidor.retorno_esperado_tipo or _do_vocabulario(
+        RetornoEsperadoTipo, linha.retorno_esperado_tipo
+    )
+    perfil = perfil_de(horizonte_mesclado, tipo_mesclado)
+    if perfil is not None:
+        # `None` nao entra pela mesma regra dos campos acima: falta um dos dois
+        # e "ainda nao da para saber", nao "o perfil sumiu". E `perfil_de` e
+        # total sobre os nove pares possiveis, entao um perfil ja gravado so
+        # pode ser reescrito por outro perfil, nunca apagado.
+        valores["perfil_investidor"] = perfil.value
+
+    if not valores:
+        # Turno do investidor em que o lead nao disse nada novo: um `SET` so
+        # com `updated_at` seria escrita morta.
+        return
+
+    await session.execute(
+        update(LeadQualification)
+        .where(
+            LeadQualification.channel == channel,
+            LeadQualification.conversation_key == conversation_key,
+        )
+        .values(**valores, updated_at=datetime.now(UTC))
+    )
 
 
 async def marcar_perguntados(

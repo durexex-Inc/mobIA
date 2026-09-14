@@ -12,14 +12,20 @@ usa.
 """
 
 import logging
+from decimal import Decimal
 
 from sqlalchemy.dialects import postgresql
 
-from mobia.domain.agente.classificador import SCHEMA_DA_EXTRACAO
+from mobia.domain.agente.classificador import SCHEMA_DA_EXTRACAO, SCHEMA_DO_PERFIL_INVESTIDOR
 from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import _texto_do_estado
-from mobia.domain.context.repositorio import campos_a_marcar, gravar_estado, marcar_perguntados
+from mobia.domain.context.repositorio import (
+    campos_a_marcar,
+    gravar_estado,
+    marcar_perguntados,
+    perguntas_contaveis,
+)
 
 
 def test_marca_o_que_foi_perguntado_e_nao_esta_preenchido():
@@ -147,6 +153,83 @@ def test_orcamento_respondido_por_qualquer_extremo_nao_e_marcado():
     assert campos_a_marcar(["faixa_preco_expressao"], {"faixa_preco_max_centavos"}) == set()
 
 
+def test_campo_do_investidor_nao_vira_marca():
+    """Contar e marcar sao vocabularios diferentes desde a TEC-153.
+
+    `campos_a_marcar` subtrai os campos que o turno GRAVOU, e esses vem de
+    `Extracao.preenchidos()` -- que nunca carrega campo de investidor, porque
+    eles moram em `ExtracaoDoInvestidor` e sao gravados por
+    `gravar_investidor`, noutra chamada e noutra transacao. Se o nome
+    entrasse aqui, toda pergunta do subagente viraria marca PERMANENTE de
+    "perguntado, sem resposta" mesmo com o lead respondendo no mesmo turno --
+    o "marcar de mais" que esta funcao declara ser o erro caro.
+
+    O teto continua contando a pergunta -- ver
+    `test_campo_do_investidor_tambem_conta`, em `test_perguntas_contaveis.py`.
+    """
+    assert campos_a_marcar(["horizonte", "ticket_expressao", "regiao"], set()) == {"regiao"}
+
+
+def test_o_estado_do_investidor_chega_ao_prompt():
+    """`SISTEMA_DO_INVESTIDOR` promete memoria; sem estas linhas ela nao existia.
+
+    O prompt do subagente manda usar "o estado de qualificacao como memoria:
+    nao repergunte o preenchido nem o ignorado". Enquanto `_texto_do_estado`
+    so renderizava as dez colunas da trilha padrao, a promessa era falsa para
+    os seis campos que o proprio subagente coletou -- ele reperguntava ticket
+    e horizonte a cada turno.
+
+    O ticket sai em REAIS, como o orcamento (ruling R6): a coluna e centavos
+    porque inteiro nao arredonda, e quem le le reais.
+    """
+    estado = LeadQualification(
+        channel="whatsapp",
+        conversation_key="c-1",
+        intencao="INVESTIMENTO",
+        ticket_investimento_centavos=80_000_000,
+        retorno_esperado_pct=Decimal("8.00"),
+        retorno_esperado_tipo="ALUGUEL",
+        horizonte="LONGO",
+        tolerancia_reforma="LEVE",
+        ja_investe_em_imoveis=True,
+        perfil_investidor="RENDA",
+    )
+    linhas = _texto_do_estado(estado).splitlines()
+
+    assert linhas == [
+        "intencao: INVESTIMENTO",
+        "ticket_expressao: 800000.00",
+        "retorno_esperado_pct: 8.00",
+        "retorno_esperado_tipo: ALUGUEL",
+        "horizonte: LONGO",
+        "tolerancia_reforma: LEVE",
+        "ja_investe_em_imoveis: True",
+    ]
+    assert "perfil_investidor" not in _texto_do_estado(estado), (
+        "o perfil e derivado e o subagente nunca pergunta por ele -- renderiza-lo "
+        "custaria uma linha por turno sem evitar repergunta nenhuma"
+    )
+
+
+def test_quem_nunca_falou_de_investimento_nao_paga_nada():
+    """As seis linhas novas custam zero a quem nao e investidor.
+
+    `_texto_do_estado` so emite valor nao-`None`, e as colunas do investidor
+    sao nulas para todo lead que nunca falou de investimento -- o texto sai
+    byte-identico ao de antes da TEC-153. E o que sustenta a D2: o custo da
+    trilha nova fica com quem a usa.
+    """
+    estado = LeadQualification(
+        channel="whatsapp",
+        conversation_key="c-1",
+        intencao="COMPRA",
+        regiao="pinheiros",
+        quartos=2,
+    )
+
+    assert _texto_do_estado(estado) == "intencao: COMPRA\nregiao: pinheiros\nquartos: 2"
+
+
 def test_toda_chave_do_estado_tem_marca_alcancavel():
     """Pina o MECANISMO que a ruling R6 criou, e nao a instancia dele.
 
@@ -166,6 +249,16 @@ def test_toda_chave_do_estado_tem_marca_alcancavel():
     As duas falham em SILENCIO -- o agente so repergunta mais -- e e por isso
     que elas precisam de um teste derivado das tres fontes em vez de uma
     lista escrita a mao.
+
+    **TEC-153: `alcancaveis` e a UNIAO dos dois vocabularios**, o marcavel
+    (`campos_a_marcar`) e o contavel (`perguntas_contaveis`), que deixaram de
+    ser o mesmo conjunto. Sem a uniao este teste ficava verde exatamente no
+    caso que ele nomeia como primeiro modo de falha: os seis campos do
+    investidor nao entravam na comparacao, e nada reprovava um subagente cujo
+    estado nunca chegava ao prompt -- a falha em silencio, de novo, so que na
+    trilha nova. Para o investidor a "marca alcancavel" e o VALOR: a chave
+    renderizada e o nome que ele declara em `perguntou`, e e isso que fecha a
+    serie.
     """
     cheio = LeadQualification(
         channel="whatsapp",
@@ -180,12 +273,22 @@ def test_toda_chave_do_estado_tem_marca_alcancavel():
         urgencia="IMEDIATA",
         forma_pagamento="FINANCIAMENTO",
         tem_imovel_para_vender=False,
+        ticket_investimento_centavos=80_000_000,
+        retorno_esperado_pct=Decimal("8.00"),
+        retorno_esperado_tipo="ALUGUEL",
+        horizonte="LONGO",
+        tolerancia_reforma="LEVE",
+        ja_investe_em_imoveis=True,
     )
     chaves = {linha.split(":", 1)[0] for linha in _texto_do_estado(cheio).splitlines()}
     alcancaveis = {
         marca
         for nome in SCHEMA_DA_EXTRACAO["properties"]
         for marca in campos_a_marcar([nome], set())
+    } | {
+        contavel
+        for nome in SCHEMA_DO_PERFIL_INVESTIDOR["properties"]
+        for contavel in perguntas_contaveis([nome])
     }
 
     # `intencao` nao e campo de extracao -- vem do classificador, e o modelo

@@ -7,7 +7,10 @@ estrutural e nao precisa de turno em volta.
 Mais dois testes de precedencia, que so o turno inteiro consegue exercitar: o
 texto do teto nao pode pisar na pergunta do desambiguador nem no
 `TEXTO_NEUTRO_DE_SAIDA` da moderacao de saida. Sao as duas guardas que a
-substituicao em `turno.py` carrega alem de `teto_atingido`.
+substituicao em `turno.py` carrega alem de `teto_da_entrega` -- que desde a
+TEC-153 e o nome da bandeira que decide a substituicao. A irma dela,
+`teto_do_handoff`, decide o handoff e le a chamada 1; nos turnos deste arquivo
+as duas valem o mesmo, porque nenhum deles e a virada do investidor.
 """
 
 from decimal import Decimal
@@ -158,7 +161,7 @@ async def test_turno_de_desambiguacao_no_teto_entrega_a_pergunta_do_desambiguado
     assert classificador.desambiguacoes == 1, "o turno de fato desambiguou"
     # A precondicao, fixada: o teto FOI atingido neste turno -- o handoff e a
     # prova, porque ele nasce no caminho de desambiguacao tambem (a
-    # assimetria aceita). Sem esta linha, o dia em que `teto_atingido`
+    # assimetria aceita). Sem esta linha, o dia em que `teto_do_handoff`
     # parasse de ser True para 8 + `urgencia` deixaria a negativa abaixo
     # verde pelo motivo errado, e o teste pararia de guardar a guarda que da
     # nome a ele.

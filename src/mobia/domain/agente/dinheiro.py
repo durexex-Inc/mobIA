@@ -459,3 +459,26 @@ def parsear(expressao: str, intencao: Intencao) -> FaixaDePreco | Recusa:
             return Recusa(MotivoDaRecusa.AMBIGUA)
 
     return faixa
+
+
+def ticket_de(expressao: str) -> int | None:
+    """O ticket do investidor, em centavos. TEC-153, RN-05.2.
+
+    **Reusa `parsear` e colapsa na borda**, em vez de um segundo parser
+    monetario: a TEC-146 gastou uma card inteira consertando uma segunda
+    fonte para a mesma verdade, e a normalizacao de "uns 800 mil" nao muda
+    porque o campo mudou de nome.
+
+    O colapso e necessario porque a SEMANTICA difere. Numa busca, "ate 800
+    mil" e um teto e a faixa tem dois extremos. Num ticket, e o montante
+    disponivel: um valor so. Toma-se `max_centavos`, e `min_centavos` quando
+    so ele veio -- "a partir de 800 mil" como ticket ainda descreve 800 mil
+    de dinheiro na mao.
+
+    `Recusa` devolve `None` sem levantar: recusa de valor e caminho normal
+    desde a TEC-148.
+    """
+    resultado = parsear(expressao, Intencao.INVESTIMENTO)
+    if not isinstance(resultado, FaixaDePreco):
+        return None
+    return resultado.max_centavos if resultado.max_centavos is not None else resultado.min_centavos

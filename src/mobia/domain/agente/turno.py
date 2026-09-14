@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -23,6 +23,7 @@ from mobia.domain.agente.identificacao import (
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
 )
+from mobia.domain.agente.investidor import RespostaDoInvestidor
 from mobia.domain.agente.recomendacao import bairros_a_excluir, resolver_ordinais
 from mobia.domain.agente.repositorio import (
     LinhaDaApresentacao,
@@ -47,6 +48,7 @@ from mobia.domain.context.qualificacao import esta_qualificado, excedeu_o_teto
 from mobia.domain.context.repositorio import (
     contar_perguntas,
     gravar_estado,
+    gravar_investidor,
     marcar_perguntados,
     perguntas_contaveis,
     registrar_recalculo,
@@ -135,9 +137,12 @@ TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
 # seguinte passaria do teto -- o caso comum, e nao a regra sem excecao: a
 # substituicao so acontece com `not desambiguando` e `not saida_bloqueada`,
 # e `TEXTO_DA_BUSCA_INCONCLUSIVA`/`TEXTO_SEM_RESULTADO_APOS_AMPLIAR` ainda
-# podem sobrescrever `texto` depois. Ver o `if teto_atingido and not
+# podem sobrescrever `texto` depois. Ver o `if teto_da_entrega and not
 # desambiguando and not saida_bloqueada:` mais abaixo, onde as duas guardas
-# e a ordem de precedencia estao escritas por extenso.
+# e a ordem de precedencia estao escritas por extenso. (`teto_da_entrega`, e
+# nao `teto_do_handoff`: desde a TEC-153 sao dois -- um decide o handoff a partir
+# da chamada 1, o outro decide esta substituicao a partir do texto ENTREGUE,
+# que na virada do investidor nao e o mesmo.)
 #
 # **Nao promete que alguem foi avisado, e isso e deliberado.** Criar handoff
 # nao notifica ninguem: as cards de notificacao por e-mail e WhatsApp
@@ -283,6 +288,7 @@ def aviso_de_ajuste(bairros: Sequence[str]) -> str:
 
 SUBAGENTE_CLASSIFICADOR = "classificador"
 SUBAGENTE_DESAMBIGUADOR = "desambiguador"
+SUBAGENTE_INVESTIDOR = "investidor"
 SUBAGENTE_MODERACAO = "moderacao"
 SUBAGENTE_OPTOUT = "optout"
 
@@ -518,9 +524,22 @@ async def _continuar_entrega(
             text="\n\n".join(entrega.legendas),
             model=MODELO_SEM_CHAMADA,
             # O rotulo de quem originou a apresentacao, e nao um valor novo:
-            # estas fichas saem da busca que o classificador fez na passada
-            # anterior. Um rotulo proprio partiria a MESMA apresentacao em dois
-            # valores de `subagent` para quem le a telemetria depois.
+            # estas fichas saem da busca da passada anterior. Um rotulo proprio
+            # partiria a MESMA apresentacao em dois valores de `subagent` para
+            # quem le a telemetria depois.
+            #
+            # **Mas este rotulo nao distingue as duas buscas que podem te-las
+            # produzido, e desde a TEC-153 sao duas.** A trilha do investidor
+            # tambem busca e apresenta, entao a passada anterior pode ter sido
+            # um turno do subagente investidor -- e esta continuacao grava
+            # `classificador` do mesmo jeito. Nao ha como saber daqui: esta
+            # funcao roda ANTES de `montar_contexto`, nao tem `contexto.estado`
+            # e portanto nao tem `ja_e_investidor`; e o `subagent` da passada
+            # anterior nao e lido de lugar nenhum aqui. A consequencia e real e
+            # esta declarada, nao corrigida: a telemetria subconta as
+            # continuacoes da trilha do investidor, jogando-as no balde do
+            # classificador. Fechar isto exige ler o `subagent` da linha que a
+            # passada anterior gravou -- consulta que esta funcao hoje nao faz.
             subagent=SUBAGENTE_CLASSIFICADOR,
             tokens_in=0,
             tokens_out=0,
@@ -577,14 +596,27 @@ async def executar_turno(
     saida bloqueada queimaria a mesma chance por um texto neutro que nao
     pergunta nada.
 
+    A trilha do investidor (TEC-153, RN-07.1) tem uma segunda chamada
+    parecida, e uma diferenca que importa: ela acontece **uma vez por
+    virada**, e nao em todo turno. Dali em diante a intencao ja esta no
+    estado que montou o prompt, o subagente do investidor e escolhido antes
+    da chamada unica e nao ha chamada extra nenhuma. Quando o turno e ambiguo
+    e investidor ao mesmo tempo, a desambiguacao vence -- sem intencao
+    confiavel nao ha trilha a escolher.
+
+    Por VIRADA, e nao por lead: `campos_a_gravar` deixa COMPRA sobrescrever a
+    intencao gravada, entao um lead que sai da trilha e volta paga a segunda
+    chamada outra vez.
+
     A marca de `perguntou` da TEC-257 segue a mesma regra, pelo mesmo motivo:
     e um fato sobre a nossa resposta, nao sobre a fala do lead, entao so entra
     depois da entrega confirmada e so quando `gerada` foi de fato o texto
-    entregue -- nunca no caminho de desambiguacao (a chamada 1 foi descartada)
-    nem com a saida bloqueada (o texto neutro nao pergunta nada). Diferente do
-    marcador de desambiguacao, esta marca e permanente e a uniao no SQL nunca
-    remove: marcar de mais aqui perde a chance de perguntar aquele campo para
-    sempre e em silencio, nao so ate o proximo episodio.
+    entregue -- nunca no caminho de desambiguacao nem na virada do investidor
+    (nos dois a chamada 1 foi descartada) nem com a saida bloqueada (o texto
+    neutro nao pergunta nada). Diferente do marcador de desambiguacao, esta
+    marca e permanente e a uniao no SQL nunca remove: marcar de mais aqui perde
+    a chance de perguntar aquele campo para sempre e em silencio, nao so ate o
+    proximo episodio.
     """
     # Antes de montar contexto de proposito: bloquear aqui economiza o turno
     # inteiro, inclusive as chamadas pagas ao modelo. E o texto do lead ainda
@@ -978,8 +1010,26 @@ async def executar_turno(
             conversation_key=message.conversation_key,
         ),
     )
+    # TEC-153, RN-07.1. Do SEGUNDO turno do investidor em diante nao ha
+    # chamada extra: a intencao anterior ja esta no estado, que `montar_contexto`
+    # leu antes desta linha, entao o prompt e o schema do investidor sao
+    # escolhidos aqui e a chamada continua sendo uma so.
+    #
+    # `contexto.estado.intencao` e a coluna (str), e nao o enum -- por isso a
+    # comparacao e contra `.value`.
+    ja_e_investidor = (
+        contexto.estado is not None and contexto.estado.intencao == Intencao.INVESTIMENTO.value
+    )
+    # As duas irmas tem assinatura identica (`ClassificadorPort` declara as
+    # duas assim, e o comentario de la diz por que): a escolha cabe num unico
+    # ponto de chamada, e nao em dois blocos que teriam de ser mantidos em
+    # sincronia. A anotacao existe porque o mypy nao une sozinho dois
+    # callables que so diferem no tipo de retorno.
+    chamada: Callable[..., Awaitable[RespostaDoAgente | RespostaDoInvestidor]] = (
+        classificador.qualificar_investidor if ja_e_investidor else classificador.classificar
+    )
     try:
-        gerada = await classificador.classificar(
+        gerada = await chamada(
             contexto,
             # A porta e montada aqui porque e aqui que existe `session_factory`.
             # O classificador recebe um callable pronto e nao sabe o que e uma
@@ -1011,7 +1061,11 @@ async def executar_turno(
             message=message,
             outbound=outbound,
             recorder_texto=TEXTO_DA_BUSCA_INCONCLUSIVA,
-            subagent=SUBAGENTE_CLASSIFICADOR,
+            # TEC-153. Quem estourou o laco foi a chamada que `ja_e_investidor`
+            # escolheu, e o rotulo tem de dizer qual trilha o turno era -- do
+            # contrario o custo e as falhas da trilha do investidor apareceriam
+            # no balde do classificador. Mesma regra do `else` do ramo, abaixo.
+            subagent=SUBAGENTE_INVESTIDOR if ja_e_investidor else SUBAGENTE_CLASSIFICADOR,
         )
 
     # Gravada antes da entrega de proposito: a classificacao e sobre a mensagem
@@ -1039,7 +1093,28 @@ async def executar_turno(
     antes = esta_qualificado(contexto.estado, _recusados_de(contexto.estado))
     # TEC-149, RN-05.5. Depois da geracao, porque depende de `gerada.perguntou`;
     # antes do bloco transacional, porque e ele quem registra o handoff.
-    teto_atingido = excedeu_o_teto(
+    #
+    # **O nome diz o escopo, e o par tem de ser lido junto** (TEC-153). Desde a
+    # virada do investidor sao DOIS tetos, e os nomes sao simetricos de
+    # proposito -- `teto_do_handoff` e `teto_da_entrega` -- para ninguem ter de
+    # ler comentario para escolher entre dois nomes parecidos que guardam
+    # decisoes diferentes:
+    #
+    # - `teto_do_handoff` (este): "o turno QUIS perguntar demais". Le a chamada
+    #   1, que e a unica que existe aqui -- a do investidor depende de
+    #   `gerada.intencao` e so acontece depois. Registra o handoff.
+    # - `teto_da_entrega` (la embaixo): "o texto ENTREGUE contem pergunta que
+    #   passa do teto". Le `resposta_do_turno`. Substitui o texto e trava a
+    #   marca pos-entrega.
+    #
+    # Nos caminhos que nao sao a virada os dois valem o mesmo. Na virada eles
+    # divergem, e o comentario do `if teto_da_entrega:` la embaixo explica o
+    # que fecha o buraco quando a divergencia cai para o lado de haver texto do
+    # teto sem handoff -- que seria prometer corretor e nao registrar nenhum.
+    # Registrar o handoff a partir da chamada 1 e conservador e ja tinha
+    # precedente declarado: o comentario do `if teto_do_handoff:` abaixo diz
+    # por que ele nasce mesmo nos turnos em que o texto do teto nao sai.
+    teto_do_handoff = excedeu_o_teto(
         contexto.estado.perguntas_feitas if contexto.estado is not None else 0,
         len(perguntas_contaveis(gerada.perguntou)),
     )
@@ -1112,11 +1187,14 @@ async def executar_turno(
                 gatilho=gatilho_da_intencao,
             )
 
-        if teto_atingido:
+        if teto_do_handoff:
             # Registrado aqui mesmo nos turnos em que o texto do teto NAO vai
-            # sair. Das duas guardas da substituicao la embaixo, `saida_bloqueada`
+            # sair. Das guardas da substituicao la embaixo, `saida_bloqueada`
             # de fato nao existe ainda neste ponto -- depende da chamada de
-            # moderacao de saida, que so roda depois. `desambiguando` e
+            # moderacao de saida, que so roda depois. O mesmo vale, desde a
+            # TEC-153, para o proprio `teto_da_entrega`: ele le a resposta
+            # ENTREGUE, e na virada do investidor ela so existe depois do ramo,
+            # bem abaixo deste bloco. `desambiguando` e
             # diferente: ele depende de `anterior`, que este mesmo bloco ja leu
             # (`ler_intencao`, logo acima), entao dar hoisting nele seria
             # possivel. A escolha e nao fazer isso -- `desambiguando` mora perto
@@ -1278,23 +1356,127 @@ async def executar_turno(
     desambiguando = deve_desambiguar(
         gerada.confianca, anterior.desambiguado_em if anterior else None
     )
+    # TEC-153. A virada: a intencao passou a ser INVESTIMENTO NESTE turno e
+    # nao era antes. So aqui ha segunda chamada -- nos turnos seguintes
+    # `ja_e_investidor`, la em cima, ja escolheu o prompt certo para a chamada
+    # unica. `anterior` e a linha que `ler_intencao` devolveu dentro do bloco
+    # transacional acima, a mesma leitura que `desambiguando` usa.
+    #
+    # **`not ja_e_investidor` nao e redundante com o resto da expressao.** As
+    # duas condicoes leem FONTES DIFERENTES do mesmo fato: `ja_e_investidor`
+    # le `lead_qualification.intencao` (o estado que montou o prompt) e
+    # `anterior` le `conversation_intent` (o que o classificador disse no
+    # turno passado). Elas divergem por desenho, nao por bug: `gravar_intencao`
+    # grava INDEFINIDA em `conversation_intent`, e `campos_a_gravar` NAO deixa
+    # INDEFINIDA sobrescrever a coluna do estado (TEC-147). Um investidor que
+    # mande um "obrigado" no meio da conversa deixa `conversation_intent` em
+    # INDEFINIDA e a coluna em INVESTIMENTO -- e no turno seguinte a chamada
+    # unica ja seria a do investidor e ESTA expressao, sem a guarda, pediria
+    # uma segunda. Duas chamadas do investidor no mesmo turno, a primeira paga
+    # e jogada fora, num turno que a RN-07.1 promete ser de chamada unica.
+    virou_investidor = (
+        not ja_e_investidor
+        and gerada.intencao is Intencao.INVESTIMENTO
+        and (anterior is None or anterior.intencao is not Intencao.INVESTIMENTO)
+    )
     # Anotado explicitamente: sem isso o mypy infere o tipo de `telemetria` a
     # partir so do primeiro ramo que ve (`PerguntaDeDesambiguacao`) e recusa a
-    # atribuicao do segundo. Os dois tipos so precisam ter em comum os campos
+    # atribuicao dos outros. Os tres tipos so precisam ter em comum os campos
     # de telemetria que `record_agent_message` le abaixo.
     texto: str
-    telemetria: RespostaDoAgente | PerguntaDeDesambiguacao
+    telemetria: RespostaDoAgente | PerguntaDeDesambiguacao | RespostaDoInvestidor
     subagente: str
+    # TEC-153. A resposta de modelo de que as decisoes ABAIXO dependem: a que
+    # de fato foi entregue, e nao a que foi paga. Em todo caminho menos a
+    # virada ela E `gerada` -- inclusive no turno seguinte do investidor, em
+    # que `ja_e_investidor` ja fez de `gerada` a resposta do subagente.
+    #
+    # Existe porque na virada `gerada` foi descartada, e daqui para baixo TUDO
+    # o que o turno decide sobre busca e sobre pergunta lia dela: a
+    # substituicao pelo texto do teto, a guarda de citacao, `apresentando`, as
+    # fichas que saem, os criterios gravados e os avisos de ampliacao. Ou o
+    # bloco inteiro le a mesma resposta, ou o turno mistura duas -- fichas de
+    # uma busca com a prosa de outra.
+    #
+    # A pior era a citacao: comparar a prosa do INVESTIDOR contra os
+    # candidatos da busca GENERICA bloqueia como alucinacao um imovel que a
+    # busca do investidor de fato achou, e o lead recebe o texto de fallback
+    # no lugar da resposta certa -- o falso positivo que a doc de `citacao.py`
+    # diz nao poder ter.
+    #
+    # A desambiguacao continua excluida por `not desambiguando` nas mesmas
+    # condicoes, e nao migra para ca: `PerguntaDeDesambiguacao` nao tem
+    # candidato nem `perguntou` nenhum, entao excluir o CAMINHO e a resposta
+    # certa la. O investidor busca e apresenta como a trilha padrao -- excluir
+    # o caminho dele calaria uma capacidade que o desenho lhe da; o que ele
+    # precisa e que estas linhas leiam a resposta CERTA.
+    resposta_do_turno: RespostaDoAgente | RespostaDoInvestidor = gerada
     if desambiguando:
         # A resposta da chamada 1 foi escrita assumindo um palpite que a
         # confianca nao sustenta. Ela e descartada -- paga e nao entregue.
         pergunta = await classificador.desambiguar(contexto)
         texto, telemetria, subagente = pergunta.texto, pergunta, SUBAGENTE_DESAMBIGUADOR
+    elif virou_investidor:
+        # **A ORDEM DOS RAMOS E A PRECEDENCIA, e nao acidente de escrita.** Com
+        # o turno ambiguo E investidor ao mesmo tempo, desambigua: sem intencao
+        # confiavel nao ha trilha a escolher (D1), e chamar o subagente do
+        # investidor sobre um palpite que a confianca nao sustenta gastaria a
+        # chamada e ainda erraria a trilha. Nao reordene estes dois ramos.
+        #
+        # A resposta da chamada 1 foi escrita pelo prompt generico: ela
+        # pergunta metragem e quartos, que e exatamente o que a RN-07.1 existe
+        # para evitar. Descartada -- paga e nao entregue --, como no ramo da
+        # desambiguacao e pelo mesmo motivo estrutural: o prompt precisa de um
+        # fato que so a primeira chamada produz.
+        do_investidor = await classificador.qualificar_investidor(contexto, porta=porta)
+        texto, telemetria, subagente = (
+            do_investidor.resposta,
+            do_investidor,
+            SUBAGENTE_INVESTIDOR,
+        )
+        # O unico caminho em que `resposta_do_turno` deixa de ser `gerada`.
+        resposta_do_turno = do_investidor
     else:
-        texto, telemetria, subagente = gerada.resposta, gerada, SUBAGENTE_CLASSIFICADOR
+        texto, telemetria, subagente = (
+            gerada.resposta,
+            gerada,
+            # TEC-153. O rotulo diz qual PROMPT gerou o texto, e nao qual ramo
+            # rodou: do segundo turno do investidor em diante e este `else` que
+            # entrega a resposta do subagente, porque `ja_e_investidor` escolheu
+            # o prompt dele la em cima. Rotular esses turnos de "classificador"
+            # faria a telemetria mostrar a trilha do investidor acontecendo
+            # so nas viradas, e quem lesse o painel nao teria
+            # como saber o que a trilha custa nem quantos turnos ela atende.
+            SUBAGENTE_INVESTIDOR if ja_e_investidor else SUBAGENTE_CLASSIFICADOR,
+        )
+
+    if isinstance(telemetria, RespostaDoInvestidor):
+        # Transacao propria, e nao o bloco transacional la de cima: os campos
+        # do investidor so existem depois da chamada que os produz, e aquele
+        # bloco ja commitou. Antes da entrega, e nao depois, porque sao fato
+        # sobre a fala do LEAD -- perde-los numa falha de entrega apagaria o
+        # que ele acabou de responder. E a mesma razao pela qual `recusou`
+        # entra no commit pre-entrega e `perguntou` nao.
+        #
+        # O `isinstance` cobre os DOIS caminhos do investidor: o ramo da
+        # virada logo acima e o turno seguinte, em que `ja_e_investidor` fez
+        # de `gerada` -- e portanto de `telemetria`, pelo `else` -- a propria
+        # resposta do investidor.
+        async with session_factory() as session:
+            await gravar_investidor(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                investidor=telemetria.investidor,
+            )
+            await session.commit()
 
     # Uma vez por turno: so um texto vem do modelo. No caminho ambiguo a
-    # resposta da chamada 1 foi descartada e so a pergunta e entregue. Na
+    # resposta da chamada 1 foi descartada e so a pergunta e entregue; na
+    # virada do investidor (TEC-153) o descarte e o mesmo e quem e moderado e
+    # a prosa do subagente -- em qualquer dos tres caminhos `texto` ja e o
+    # unico texto candidato a sair, e e por isso que esta chamada nao precisa
+    # saber qual deles rodou. Na
     # apresentacao da TEC-162 saem tres mensagens, mas o unico texto gerado
     # continua sendo esta prosa -- a ficha e dado do banco montado por codigo,
     # e moderar dado nosso seria gastar chamada sobre texto que nao inventamos.
@@ -1342,15 +1524,28 @@ async def executar_turno(
         )
         texto = TEXTO_NEUTRO_DE_SAIDA
 
-    if teto_atingido and not desambiguando and not saida_bloqueada:
+    # TEC-153. A outra metade da pergunta que `teto_do_handoff` fazia sozinho, e
+    # agora sobre a resposta ENTREGUE: o texto que vai sair contem pergunta que
+    # passa do teto? Em todo caminho menos a virada este valor e igual ao de
+    # cima, porque `resposta_do_turno is gerada`. Na virada eles divergem nos
+    # dois sentidos: a chamada 1 pode ter perguntado e o subagente nao (e
+    # substituir calaria uma resposta que nao pergunta nada), ou o contrario
+    # (e nao substituir entregaria a nona pergunta que a RN-05.5 proibe).
+    teto_da_entrega = excedeu_o_teto(
+        contexto.estado.perguntas_feitas if contexto.estado is not None else 0,
+        len(perguntas_contaveis(resposta_do_turno.perguntou)),
+    )
+    if teto_da_entrega and not desambiguando and not saida_bloqueada:
         # A prosa do modelo nao sai: ela contem a pergunta que o teto proibe,
         # e nao da para entregar meia pergunta -- a prosa e um texto so.
         # Substituicao em lugar, como a moderacao de saida faz logo acima.
         #
         # `not desambiguando`: a RN-05.5 limita pergunta de QUALIFICACAO, e
         # nesse caminho quem sai e a pergunta do desambiguador --
-        # `gerada.perguntou` fala da chamada 1, que foi DESCARTADA, pela
-        # mesma razao que `apresentando` logo abaixo a exclui. Sem isto, um
+        # `resposta_do_turno.perguntou` fala da chamada 1, que foi DESCARTADA,
+        # pela mesma razao que `apresentando` logo abaixo a exclui. (A virada
+        # do investidor nao precisa de exclusao equivalente: la
+        # `resposta_do_turno` ja E a resposta entregue.) Sem isto, um
         # lead que bateu o teto nunca mais poderia ser desambiguado: toda
         # mensagem vaga receberia o texto do corretor em lugar da pergunta
         # que teria resolvido a intencao.
@@ -1369,11 +1564,71 @@ async def executar_turno(
         # suprimiu nao vaza por nenhuma delas.
         texto = TEXTO_DO_LIMITE_DE_PERGUNTAS
 
+        if not teto_do_handoff:
+            # **O texto promete corretor; sem isto, na virada, nao haveria
+            # corretor nenhum para prometer.** Os dois tetos divergem so na
+            # virada do investidor, e este e o sentido que machuca: a chamada 1
+            # nao perguntou nada, entao `teto_do_handoff` foi False e o bloco
+            # transacional la em cima nao registrou handoff; o subagente
+            # perguntou e passou do teto, entao `teto_da_entrega` e True e o
+            # lead recebe "prefiro passar para um corretor... ele entra em
+            # contato" -- com linha nenhuma em `handoffs` para alguem agir.
+            #
+            # E a falha da TEC-174 de novo, e pior: la o texto prometia um
+            # aviso que nao existia; aqui nao existe nem o registro. O
+            # comentario de `TEXTO_DO_LIMITE_DE_PERGUNTAS`, no topo deste
+            # modulo, guarda essa historia. O handoff de intencao nao cobre o
+            # turno: INVESTIMENTO nao esta em `_GATILHO_DA_INTENCAO`. O de
+            # LEAD_QUENTE pode cobrir -- se o recalculo esquentou o lead neste
+            # mesmo turno, ja existe linha em `handoffs` para alguem agir --,
+            # mas isso e coincidencia e nao garantia: o teto nao sabe nada da
+            # temperatura. Quando os dois acontecem no mesmo turno,
+            # `registrar_handoff` e idempotente e esta chamada so acrescenta
+            # LIMITE_DE_PERGUNTAS aos `gatilhos_adicionais` do registro que ja
+            # existe.
+            #
+            # A contagem nao sobe (a guarda pos-entrega exclui
+            # `teto_da_entrega`), entao sem esta linha o handoff so apareceria
+            # num turno futuro em que o investidor perguntasse de novo -- uma
+            # mitigacao que depende do modelo repetir o comportamento, o que
+            # nao e garantia nenhuma.
+            #
+            # Transacao curta propria, como a de `gravar_investidor` logo
+            # acima, e pelo mesmo motivo: o fato so existe depois do ramo, e o
+            # bloco transacional de la em cima ja commitou. `registrar_handoff`
+            # e idempotente, entao um retry do sweeper nao duplica.
+            #
+            # `not teto_do_handoff` e nao incondicional: com os dois True o
+            # handoff ja nasceu no bloco transacional, com `_agendar_resumo`
+            # junto -- repetir aqui so gastaria uma transacao para o mesmo
+            # `gatilho_adicional`.
+            async with session_factory() as session:
+                handoff_da_entrega = await registrar_handoff(
+                    session,
+                    channel=message.channel,
+                    conversation_key=message.conversation_key,
+                    gatilho=Gatilho.LIMITE_DE_PERGUNTAS,
+                )
+                await session.commit()
+            log.info(
+                "handoff.criado" if handoff_da_entrega.criado else "handoff.gatilho_adicional",
+                channel=message.channel,
+                gatilho=Gatilho.LIMITE_DE_PERGUNTAS.value,
+                etiqueta=ETIQUETA_DE[Gatilho.LIMITE_DE_PERGUNTAS],
+                prioridade=PRIORIDADE_DE[Gatilho.LIMITE_DE_PERGUNTAS].value,
+            )
+            await _agendar_resumo(agendador, handoff_da_entrega)
+
     # TEC-162, D4. Candidatos sem pergunta e turno de apresentacao. As tres
     # condicoes sao a mesma regra: pergunta adia as fichas. `desambiguando`
-    # entra porque `gerada.perguntou` fala da chamada 1, que foi DESCARTADA
-    # nesse caminho -- o texto entregue e a pergunta do desambiguador.
-    apresentando = bool(gerada.candidatos) and not gerada.perguntou and not desambiguando
+    # entra porque `resposta_do_turno.perguntou` fala da chamada 1, que foi
+    # DESCARTADA nesse caminho -- o texto entregue e a pergunta do
+    # desambiguador, e `PerguntaDeDesambiguacao` nao tem candidato nenhum para
+    # apresentar. A virada do investidor nao entra: ela tem a sua propria busca
+    # e as suas proprias fichas, e `resposta_do_turno` ja aponta para elas.
+    apresentando = (
+        bool(resposta_do_turno.candidatos) and not resposta_do_turno.perguntou and not desambiguando
+    )
 
     # TEC-161. A ultima coisa que acontece antes de a entrega comecar, e a
     # ordem e a invariante da card: `_apresentar` grava reserva em
@@ -1402,7 +1657,7 @@ async def executar_turno(
     # este turno nao gravou nada novo.
     divergencias = divergencias_de(
         texto,
-        candidatos=gerada.candidatos,
+        candidatos=resposta_do_turno.candidatos,
         faixa=_faixa_declarada(depois_do_estado or contexto.estado),
     )
     citacao_bloqueada = bool(divergencias)
@@ -1418,7 +1673,7 @@ async def executar_turno(
             message_id=str(message.id),
             tipos=[d.tipo for d in divergencias],
             citados=[d.citado for d in divergencias],
-            candidatos=len(gerada.candidatos),
+            candidatos=len(resposta_do_turno.candidatos),
             apresentando=apresentando,
         )
         # Apresentando, a prosa vira prefixo vazio e `legenda_de` a omite: o
@@ -1436,7 +1691,7 @@ async def executar_turno(
     # So no zero POS-relaxamento. O zero de "nada relaxavel" (D5) segue com a
     # prosa do modelo: ali ele ainda pode perguntar algo util que nos nao
     # sabemos perguntar, e cala-lo custaria mais do que padroniza.
-    if gerada.relaxou_sem_resultado and not citacao_bloqueada:
+    if resposta_do_turno.relaxou_sem_resultado and not citacao_bloqueada:
         texto = TEXTO_SEM_RESULTADO_APOS_AMPLIAR
 
     # Depois da moderacao de saida, de proposito: o texto e constante deste
@@ -1543,7 +1798,9 @@ async def executar_turno(
                         "texto": aviso_de_ajuste(bairros_do_ajuste),
                     },
                 )
-            if gerada.relaxou_e_achou and (gerada.relaxou_preco or gerada.relaxou_bairro):
+            if resposta_do_turno.relaxou_e_achou and (
+                resposta_do_turno.relaxou_preco or resposta_do_turno.relaxou_bairro
+            ):
                 # CA-09.3. Mensagem propria, e NAO prefixo da legenda: no
                 # caminho de apresentacao `legenda_de` corta o PREFIXO antes
                 # da ficha, e `_prosa_que_cabe` devolve string vazia quando
@@ -1573,7 +1830,9 @@ async def executar_turno(
                     {
                         "para": message.conversation_key,
                         "de": message.recipient_external_id,
-                        "texto": aviso_de_ampliacao(gerada.relaxou_preco, gerada.relaxou_bairro),
+                        "texto": aviso_de_ampliacao(
+                            resposta_do_turno.relaxou_preco, resposta_do_turno.relaxou_bairro
+                        ),
                     },
                 )
             # TEC-163, D17. O score de cada candidato desta busca, lido da
@@ -1586,7 +1845,7 @@ async def executar_turno(
             # decide o resto.
             scores = {
                 uuid.UUID(candidato["imovel_id"]): score
-                for candidato in gerada.candidatos
+                for candidato in resposta_do_turno.candidatos
                 if (score := porta.score_de(uuid.UUID(candidato["imovel_id"]))) is not None
             }
             # `prosa=texto` le o valor ANTES da atribuicao: a chamada e
@@ -1596,9 +1855,9 @@ async def executar_turno(
                 session_factory,
                 message=message,
                 outbound=outbound,
-                candidatos=gerada.candidatos,
+                candidatos=resposta_do_turno.candidatos,
                 scores=scores,
-                criterios=gerada.criterios,
+                criterios=resposta_do_turno.criterios,
                 # TEC-163, fix wave. `criterios` e o que a busca PEDIU (o
                 # filtro antes do relaxamento -- o alargado nunca sai de
                 # `buscar_com_relaxamento`); sem estes dois, um candidato que
@@ -1607,8 +1866,8 @@ async def executar_turno(
                 # `aviso_de_ampliacao` usa logo acima: o lead ouve que o
                 # criterio foi ampliado e a linha do banco passa a dizer o
                 # mesmo.
-                relaxou_preco=gerada.relaxou_preco,
-                relaxou_bairro=gerada.relaxou_bairro,
+                relaxou_preco=resposta_do_turno.relaxou_preco,
+                relaxou_bairro=resposta_do_turno.relaxou_bairro,
                 prosa=texto,
             )
             entregue = quantas > 0
@@ -2043,10 +2302,11 @@ async def executar_turno(
 
     if (
         not desambiguando
+        and not virou_investidor
         and not saida_bloqueada
         and not citacao_bloqueada
         and not entrega_parcial
-        and not teto_atingido
+        and not teto_da_entrega
     ):
         # A marca de `perguntou` (TEC-257) e, ao contrario da intencao e da
         # extracao gravadas la em cima, um fato sobre a NOSSA resposta -- e
@@ -2056,7 +2316,26 @@ async def executar_turno(
         # `marcar_desambiguacao` espera a entrega (ver o bloco acima): no
         # caminho de desambiguacao a resposta da chamada 1 foi descartada --
         # paga e nao entregue -- e o lead recebeu a pergunta do desambiguador,
-        # nao a de `gerada`; com a saida bloqueada o lead recebeu
+        # nao a de `gerada`; na VIRADA do investidor (TEC-153) a chamada 1 foi
+        # descartada pelo mesmo motivo estrutural e o lead recebeu a prosa do
+        # subagente, entao `gerada.perguntou` descreve um texto que ninguem
+        # leu -- marca-lo queimaria para sempre a chance de perguntar aquele
+        # campo, que e exatamente o dano que esta guarda existe para evitar
+        # (repare que o TURNO SEGUINTE do investidor nao entra aqui: la
+        # `ja_e_investidor` fez de `gerada` a propria resposta entregue, e a
+        # marca vale normalmente).
+        #
+        # **A guarda e uma so, e leva `contar_perguntas` junto -- inclusive na
+        # virada, onde a pergunta ENTREGUE foi a do subagente.** Isso e
+        # declarado, e nao esquecido: e a L5 do desenho. O teto efetivo do
+        # investidor e 8 mais o turno da virada, no maximo duas perguntas por
+        # virada. Contar `do_investidor.perguntou` aqui seria contar o
+        # `perguntou` de uma resposta cujos campos irmaos (`intencao`,
+        # `extracao`, que `marcar_perguntados` tambem recebe) foram todos
+        # descartados. O comportamento tem teste:
+        # `test_a_virada_nao_marca_a_pergunta_da_chamada_descartada`.
+        #
+        # Com a saida bloqueada o lead recebeu
         # `TEXTO_NEUTRO_DE_SAIDA`, que tambem nao pergunta nada; com a
         # citacao bloqueada (TEC-161) o lead recebeu `TEXTO_DA_BUSCA_INCONCLUSIVA`
         # ou a ficha pura -- tambem nao a pergunta de `gerada`; e com a entrega
@@ -2084,10 +2363,22 @@ async def executar_turno(
         # mesmas colunas que a marca foi desenhada para nao arriscar.
         # `marcar_perguntados` faz so o UPDATE da marca, ver o docstring la.
         #
-        # `not teto_atingido` pela mesma razao das outras quatro: o texto de
+        # `not teto_da_entrega` pela mesma razao das outras: o texto de
         # `gerada` nao foi o que saiu. A pergunta foi SUPRIMIDA, nao feita --
         # marcar ou contar aqui gastaria orcamento do lead por uma pergunta
-        # que ele nunca viu, e o proximo turno ja nasceria acima do teto.
+        # que ele nunca viu, e o proximo turno ja nasceria acima do teto. E
+        # `teto_da_entrega`, e nao `teto_do_handoff`: a pergunta que importa aqui
+        # e sobre o texto ENTREGUE, e e so ele que o lead pode ter lido. Nos
+        # caminhos que chegam ate aqui os dois valem o mesmo, porque
+        # `resposta_do_turno is gerada`.
+        #
+        # **E este bloco continua lendo `gerada`, de proposito.** A guarda
+        # `not virou_investidor` la em cima ja exclui o unico caminho em que
+        # `gerada` difere de `resposta_do_turno`; e `marcar_perguntados` recebe
+        # tambem `intencao` e `extracao`, que foram as de `gerada` no commit
+        # pre-entrega -- misturar aqui o `perguntou` de uma chamada com a
+        # extracao de outra decidiria a marca sobre um estado que nunca
+        # existiu.
         async with session_factory() as session:
             await marcar_perguntados(
                 session,

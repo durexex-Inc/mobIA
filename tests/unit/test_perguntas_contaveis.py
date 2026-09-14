@@ -22,3 +22,15 @@ def test_nome_desconhecido_nao_conta() -> None:
 
 def test_entrada_vazia_e_conjunto_vazio() -> None:
     assert perguntas_contaveis(()) == frozenset()
+
+
+def test_campo_do_investidor_tambem_conta() -> None:
+    """Sem isto a trilha do investidor escapa inteira do teto da RN-05.5, e um
+    investidor e interrogado sem fim enquanto um comprador e cortado na
+    oitava. TEC-153."""
+    assert len(perguntas_contaveis(("horizonte",))) == 1
+    assert len(perguntas_contaveis(("ticket_expressao",))) == 1
+
+
+def test_campo_do_investidor_e_campo_padrao_somam_juntos() -> None:
+    assert len(perguntas_contaveis(("horizonte", "urgencia"))) == 2
