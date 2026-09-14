@@ -21,3 +21,10 @@ def test_faixa_colapsa_no_extremo_superior() -> None:
     """Numa busca "ate 800 mil" e teto; num ticket e o montante disponivel.
     A semantica difere, e o colapso acontece aqui, na borda."""
     assert ticket_de("ate 800 mil") == 80_000_000
+
+
+def test_faixa_so_com_minimo_colapsa_no_minimo() -> None:
+    """O outro lado do colapso, que o `else` de `ticket_de` promete e nenhum
+    teste exercitava: "a partir de 800 mil" parseia com `max_centavos` nulo, e
+    como ticket ainda descreve 800 mil de dinheiro na mao."""
+    assert ticket_de("a partir de 800 mil") == 80_000_000

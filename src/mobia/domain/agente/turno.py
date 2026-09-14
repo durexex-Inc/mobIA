@@ -1573,8 +1573,15 @@ async def executar_turno(
             # E a falha da TEC-174 de novo, e pior: la o texto prometia um
             # aviso que nao existia; aqui nao existe nem o registro. O
             # comentario de `TEXTO_DO_LIMITE_DE_PERGUNTAS`, no topo deste
-            # modulo, guarda essa historia. E nenhum outro handoff cobre o
-            # turno: INVESTIMENTO nao esta em `_GATILHO_DA_INTENCAO`.
+            # modulo, guarda essa historia. O handoff de intencao nao cobre o
+            # turno: INVESTIMENTO nao esta em `_GATILHO_DA_INTENCAO`. O de
+            # LEAD_QUENTE pode cobrir -- se o recalculo esquentou o lead neste
+            # mesmo turno, ja existe linha em `handoffs` para alguem agir --,
+            # mas isso e coincidencia e nao garantia: o teto nao sabe nada da
+            # temperatura. Quando os dois acontecem no mesmo turno,
+            # `registrar_handoff` e idempotente e esta chamada so acrescenta
+            # LIMITE_DE_PERGUNTAS aos `gatilhos_adicionais` do registro que ja
+            # existe.
             #
             # A contagem nao sobe (a guarda pos-entrega exclui
             # `teto_da_entrega`), entao sem esta linha o handoff so apareceria

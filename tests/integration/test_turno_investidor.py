@@ -434,10 +434,14 @@ async def test_a_virada_apresenta_as_fichas_da_busca_do_investidor(
 ) -> None:
     """As fichas entregues saem da busca do INVESTIDOR, nao da descartada.
 
-    `apresentando`, os `scores` e o `candidatos=` de `_apresentar` liam a
-    chamada 1 ate a correcao. Um turno de virada entregaria fichas de uma busca
-    ao lado da prosa de outra -- e o lead nao tem como saber que as duas nao
-    se conversam.
+    O `candidatos=` de `_apresentar` lia a chamada 1 ate a correcao. Um turno
+    de virada entregaria fichas de uma busca ao lado da prosa de outra -- e o
+    lead nao tem como saber que as duas nao se conversam.
+
+    E so o `candidatos=` que este corpo prende: `apresentando` sai verdadeiro
+    com qualquer uma das duas respostas (as duas tem candidato e nenhuma
+    pergunta) e os `scores` saem vazios dos dois lados, entao nem um nem outro
+    reprovaria se voltasse a ler `gerada`.
 
     A linha em `recomendacoes` e a evidencia mais direta: ela guarda o
     `imovel_id` do que foi de fato apresentado.
