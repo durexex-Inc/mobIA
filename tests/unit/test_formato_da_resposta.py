@@ -38,7 +38,7 @@ def test_quebra_na_fronteira_de_frase() -> None:
 def test_sem_fronteira_de_frase_cai_para_fronteira_de_palavra() -> None:
     """Um paragrafo unico e longo nao tem ponto final para cortar. Cortar no
     meio da palavra pareceria bug ao lead -- o mesmo argumento que
-    `_prosa_que_cabe` ja usa em `apresentacao.py`.
+    `prosa_que_cabe` ja usa em `apresentacao.py`.
     """
     partes = quebrar_em_mensagens("palavra " * 100)
 

@@ -65,7 +65,7 @@ def quebrar_em_mensagens(texto: str) -> tuple[str, ...]:
     parte termina ali -- pontuacao incluida -- e a segunda comeca depois dela.
     Nao achando fronteira de frase, cai para a ultima fronteira de PALAVRA no
     mesmo intervalo: cortar no meio de uma palavra pareceria bug ao lead, o
-    mesmo argumento que `_prosa_que_cabe` ja usa em `apresentacao.py`. Na
+    mesmo argumento que `prosa_que_cabe` ja usa em `apresentacao.py`. Na
     ausencia de qualquer fronteira -- um bloco sem espaco nem pontuacao --
     corta na marca exata, porque nao ha onde mais cortar.
 

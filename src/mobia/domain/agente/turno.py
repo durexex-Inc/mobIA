@@ -1800,7 +1800,7 @@ async def executar_turno(
                 # vira prefixo da legenda da PRIMEIRA ficha (D16 da TEC-162),
                 # e `legenda_de` corta o prefixo antes de cortar a ficha
                 # (D14): "estourado o teto, o que se corta e o PREFIXO, nunca
-                # a ficha" -- `_prosa_que_cabe` devolve string vazia quando
+                # a ficha" -- `prosa_que_cabe` devolve string vazia quando
                 # nao sobra espaco. Se a identificacao viajasse ali dentro,
                 # ela sairia truncada ou nao sairia nenhuma, em silencio, no
                 # turno mais comum de uma conversa nova: o lead diz o que
@@ -1827,7 +1827,7 @@ async def executar_turno(
                 # TEC-163, Task 10, RN-10.4. Mensagem propria, e NAO prefixo
                 # da legenda -- mesmo motivo do aviso de ampliacao logo
                 # abaixo: `legenda_de` corta o PREFIXO antes da ficha, e
-                # `_prosa_que_cabe` devolve string vazia quando nao sobra
+                # `prosa_que_cabe` devolve string vazia quando nao sobra
                 # espaco. A TEC-139 ja pagou para descobrir isso com a
                 # identificacao; um aviso que confirma ter ouvido o lead e
                 # some em silencio e pior que nao existir.
@@ -1863,7 +1863,7 @@ async def executar_turno(
             ):
                 # CA-09.3. Mensagem propria, e NAO prefixo da legenda: no
                 # caminho de apresentacao `legenda_de` corta o PREFIXO antes
-                # da ficha, e `_prosa_que_cabe` devolve string vazia quando
+                # da ficha, e `prosa_que_cabe` devolve string vazia quando
                 # nao sobra espaco. A TEC-139 ja pagou para descobrir isso com
                 # a identificacao -- "ela sairia truncada ou nao sairia
                 # nenhuma, em silencio". Um aviso que some em silencio quebra

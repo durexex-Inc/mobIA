@@ -9,13 +9,19 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import structlog
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agente.models import Recomendacao
+from mobia.domain.catalogo.enums import StatusImovel
+from mobia.domain.catalogo.models import Imovel
+from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.cadencia import CADENCIA, INTERVALO_MINIMO
+from mobia.domain.followup.mensagem import QuedaDePreco
 from mobia.domain.followup.models import FollowUp
+from mobia.domain.texto import dobrar
 
 log = structlog.get_logger(__name__)
 
@@ -40,6 +46,12 @@ class Candidato:
     conversation_key: str
     temperatura: Temperatura
     ancora_em: datetime
+    # TEC-184, D1. O id da mesma fala cujo `created_at` e `ancora_em` -- sai da
+    # MESMA agregacao, e nao de uma segunda consulta. E ele que ancora a
+    # reserva de `outbound_dispatches` (FK para `messages`), o que da
+    # idempotencia por tentativa de graca: a UNIQUE (message_id, kind) de la
+    # espelha a UNIQUE (channel, conversation_key, ancora_em, tentativa) daqui.
+    ancora_message_id: uuid.UUID
     ja_disparada: int
     ja_enviadas: int
 
@@ -49,9 +61,13 @@ class Candidato:
 # leitura desse fato: e a mesma regra, e a docstring daquela funcao existe
 # precisamente para que a proxima card nao escreva uma terceira.
 #
-# O `HAVING` e o corte barato: nada abaixo de `INTERVALO_MINIMO` pode estar
-# devido em temperatura nenhuma, entao o lead sai antes de qualquer outro
-# trabalho.
+# O `created_at <= :corte` de `ultima_fala` e o corte barato: nada abaixo de
+# `INTERVALO_MINIMO` pode estar devido em temperatura nenhuma, entao o lead
+# sai antes de qualquer outro trabalho. O filtro mora nesta CTE, e nao em
+# `falas_do_lead`, porque so faz sentido depois do `ROW_NUMBER` ter escolhido
+# a fala mais recente -- filtrar antes poderia aceitar uma fala velha como se
+# fosse a ultima, quando na verdade existe uma mais nova ainda dentro da
+# janela.
 #
 # **`candidatos` e uma CTE, e nao um SELECT unico, porque o filtro de
 # `ja_disparada` precisa do valor JA calculado.** Postgres nao deixa referenciar
@@ -135,19 +151,40 @@ _CASE_TETO_POR_TEMPERATURA = " ".join(
 
 _SELECIONAR_CANDIDATOS = text(
     f"""
-    WITH ultima_fala AS (
-        SELECT channel, conversation_key, MAX(created_at) AS ancora
+    WITH falas_do_lead AS (
+        -- `id DESC` desempata, e nao e arbitrario: `IngestionService._persist`
+        -- grava o lote inteiro de um envelope num unico INSERT multi-VALUES,
+        -- sem passar `created_at` -- a coluna cai no `server_default`
+        -- `now()`, que e CONSTANTE dentro do mesmo statement. Duas mensagens
+        -- do mesmo lead entregues no mesmo envelope gravam o MESMO carimbo, e
+        -- sem desempate o Postgres escolheria qualquer uma das duas para
+        -- `posicao = 1` -- nao de forma estavel entre execucoes (plano,
+        -- indice ou paralelismo mudam a ordem fisica). Qual delas ganha nao
+        -- importa para o negocio (o carimbo empatado faz `ancora_em` sair
+        -- igual de qualquer jeito); o que importa e que a mesma consulta
+        -- sobre o mesmo dado sempre escolha a MESMA linha, porque e essa
+        -- linha que ancora a reserva de `outbound_dispatches`.
+        SELECT channel, conversation_key, created_at, id,
+               ROW_NUMBER() OVER (
+                   PARTITION BY channel, conversation_key
+                   ORDER BY created_at DESC, id DESC
+               ) AS posicao
           FROM messages
          WHERE direction = 'INBOUND'
            AND bloqueada_em IS NULL
-         GROUP BY channel, conversation_key
-        HAVING MAX(created_at) <= :corte
+    ),
+    ultima_fala AS (
+        SELECT channel, conversation_key, created_at AS ancora, id AS mensagem_id
+          FROM falas_do_lead
+         WHERE posicao = 1
+           AND created_at <= :corte
     ),
     candidatos AS (
         SELECT lq.channel,
                lq.conversation_key,
                lq.temperatura,
                u.ancora,
+               u.mensagem_id,
                COALESCE(
                    (SELECT MAX(f.tentativa_numero)
                       FROM followups f
@@ -167,7 +204,7 @@ _SELECIONAR_CANDIDATOS = text(
            AND u.conversation_key = lq.conversation_key
          WHERE lq.temperatura IN :temperaturas_validas
     )
-    SELECT channel, conversation_key, temperatura, ancora, ja_disparada, ja_enviadas
+    SELECT channel, conversation_key, temperatura, ancora, mensagem_id, ja_disparada, ja_enviadas
       FROM candidatos
      WHERE ja_disparada < CASE temperatura {_CASE_TETO_POR_TEMPERATURA} END
      ORDER BY ancora, channel, conversation_key
@@ -231,6 +268,7 @@ async def candidatos_a_followup(
             conversation_key=linha.conversation_key,
             temperatura=Temperatura(linha.temperatura),
             ancora_em=linha.ancora,
+            ancora_message_id=linha.mensagem_id,
             ja_disparada=linha.ja_disparada,
             ja_enviadas=linha.ja_enviadas,
         )
@@ -243,9 +281,18 @@ async def registrar_followup(
 ) -> FollowUp | None:
     """Grava a tentativa. Devolve `None` quando outra varredura chegou primeiro.
 
-    `ON CONFLICT DO NOTHING` e nao `try/except IntegrityError`: a excecao
-    envenenaria a transacao inteira, e a varredura processa varios candidatos
-    numa so -- um conflito no terceiro derrubaria os dois primeiros junto.
+    `ON CONFLICT DO NOTHING` e nao `try/except IntegrityError`: o conflito
+    aqui NAO e erro -- e a corrida entre duas varreduras sendo absorvida --, e
+    uma excecao envenenaria a transacao daquele candidato, que ainda tem
+    trabalho pela frente (a montagem e o envio, em `sweep_followups`). O
+    desfecho seria perder o follow-up de quem ja estava servido por outra
+    passagem, em vez de so nao gravar de novo.
+
+    O argumento ANTIGO desta docstring -- "a varredura processa varios
+    candidatos numa so transacao, e um conflito no terceiro derrubaria os dois
+    primeiros junto" -- foi falsificado pela TEC-184, que passou a commitar
+    POR CANDIDATO. A conclusao continua a mesma; a premissa e que nao vale
+    mais.
 
     Nao commita: a sessao e emprestada, e quem chama e dono da fronteira da
     transacao, como em `gravar_estado` e `registrar_recalculo`.
@@ -265,3 +312,147 @@ async def registrar_followup(
         .returning(FollowUp)
     )
     return (await session.scalars(statement)).first()
+
+
+async def queda_de_preco(
+    session: AsyncSession, *, channel: str, conversation_key: str
+) -> QuedaDePreco | None:
+    """A MAIOR queda de preco entre os imoveis ja apresentados a esta conversa.
+
+    **So queda.** O Gherkin da card diz "reducao" onde a regra de negocio diz
+    "mudanca", e a divergencia foi decidida a favor do Gherkin: aumento nao
+    reengaja, e a historia pede que a mensagem traga algo util.
+
+    `None` quando nao ha nenhuma -- inclusive quando o lead nunca recebeu
+    ficha (L3) ou quando a linha e anterior a TEC-275 e nao tem preco gravado.
+
+    A maior, e nao qualquer uma: a D2 manda uma informacao nova por mensagem,
+    e entre duas quedas a que mais reengaja e a maior.
+
+    **So imovel DISPONIVEL**, o mesmo filtro que `imovel_novo_compativel` e
+    `catalogo/busca.py` ja aplicam. Nao e cautela extra desta fonte: as duas
+    fontes de novidade da mesma feature nao podem discordar sobre o que pode
+    ser oferecido ao lead. O caso que doi e rotineiro, e nao hipotetico -- o
+    CSV grava `preco_venda` e `status` no MESMO upsert (`CAMPOS_COMPARADOS`
+    em `catalogo/repositorio.py`), entao uma venda fechada abaixo do pedido
+    produz exatamente `(preco menor, status=VENDIDO)` numa linha que o lead ja
+    viu e que tem `Recomendacao.preco_centavos` gravado. Sem este filtro essa
+    linha vence a precedencia da D2 e o lead recebe `De R$ 620.000 por R$
+    590.000` sobre um imovel ja vendido: oferta falsa.
+    """
+    resultado = await session.execute(
+        select(
+            Recomendacao.imovel_id,
+            Recomendacao.preco_centavos,
+            Imovel.preco_venda,
+        )
+        .join(Imovel, Imovel.id == Recomendacao.imovel_id)
+        .where(
+            Recomendacao.channel == channel,
+            Recomendacao.conversation_key == conversation_key,
+            Recomendacao.preco_centavos.is_not(None),
+            # Ver o docstring: a queda so vale para imovel que ainda pode ser
+            # vendido. `status` e uma COLUNA, e nao um DELETE -- nenhuma etapa
+            # a jusante encurta a lista por causa dela, entao este e o unico
+            # lugar onde o imovel vendido sai da fonte.
+            Imovel.status == StatusImovel.DISPONIVEL.value,
+            Imovel.preco_venda.is_not(None),
+            Imovel.preco_venda < Recomendacao.preco_centavos,
+        )
+        .order_by((Recomendacao.preco_centavos - Imovel.preco_venda).desc())
+        .limit(1)
+    )
+    linha = resultado.first()
+    if linha is None:
+        return None
+    return QuedaDePreco(
+        imovel_id=linha.imovel_id,
+        preco_antes_centavos=linha.preco_centavos,
+        preco_agora_centavos=linha.preco_venda,
+    )
+
+
+async def imovel_novo_compativel(
+    session: AsyncSession, *, channel: str, conversation_key: str, desde: datetime
+) -> uuid.UUID | None:
+    """Um imovel que entrou no catalogo depois da ultima fala do lead, que
+    casa os criterios que ele declarou, e que ele ainda nao viu. TEC-184, D2.
+
+    **Filtro literal, e nao `buscar`.** A busca do agente e hibrida, relaxa
+    criterio (RN-09.3) e ordena por relevancia -- nenhum dos tres serve aqui.
+    Um follow-up que relaxasse apresentaria como novidade um imovel que o
+    lead justamente NAO pediu, e nao ha consulta em texto livre para
+    vetorizar.
+
+    **Criterio nulo nao filtra.** Nulo significa "o lead nao disse", nunca
+    "nenhum imovel serve": filtrar por campo ausente devolveria sempre vazio e
+    mataria esta fonte para quem mal comecou a conversar.
+
+    **O ja apresentado sai pela UNIQUE de `recomendacoes`.** Reapresentar o
+    que o lead ja viu e o "robo carente" que a historia da card nomeia.
+
+    **Esta fonte cobre so VENDA, e isso e filtro explicito e nao acidente.**
+    Ver `preco_venda IS NOT NULL` no corpo. Estender o follow-up para locacao
+    -- qual preco entra na ficha, contra que faixa ele e comparado, como o
+    `operacao` do imovel casa com o que o lead quer -- e decisao de produto, e
+    esta card nao a tomou.
+    """
+    estado = await session.get(LeadQualification, (channel, conversation_key))
+
+    ja_vistos = select(Recomendacao.imovel_id).where(
+        Recomendacao.channel == channel,
+        Recomendacao.conversation_key == conversation_key,
+    )
+
+    consulta = select(Imovel.id).where(
+        Imovel.created_at > desde,
+        Imovel.status == StatusImovel.DISPONIVEL.value,
+        Imovel.id.not_in(ja_vistos),
+        # **O filtro que torna a consulta honesta** (fix de revisao, TEC-184
+        # Task 6). O CHECK de `imoveis` exige UM dos dois precos, entao um
+        # imovel so de locacao tem `preco_venda` nulo -- e para um lead que
+        # nao declarou faixa nenhum dos filtros abaixo o excluiria. Sem esta
+        # linha ele era escolhido como novidade e depois descartado em
+        # silencio pelo job, por falta de preco para a ficha: o lead caia no
+        # convite e nada no log dizia por que.
+        #
+        # A escolha e filtrar aqui, e nao ensinar o job a montar ficha de
+        # aluguel: apresentar imovel que o lead nao pode transacionar erra nas
+        # duas direcoes, e estender a fonte para locacao e decisao de produto
+        # (ver o docstring).
+        Imovel.preco_venda.is_not(None),
+    )
+
+    # `estado is None` e inalcancavel pelo caminho pretendido: `candidatos_a_followup`
+    # monta cada `Candidato` com um INNER JOIN contra `lead_qualification` (e e de
+    # la que vem a propria `temperatura`), entao todo channel/conversation_key que
+    # chega aqui pela varredura ja tem linha. O guard fica para um chamador direto
+    # que nao passe por `candidatos_a_followup`.
+    if estado is not None:
+        if estado.regiao is not None:
+            # `bairro_busca` guarda o bairro DOBRADO -- caixa e acento (TEC-158,
+            # D5). Comparar a regiao crua do lead contra ele e o defeito exato
+            # que a TEC-160 pagou com um Critical.
+            consulta = consulta.where(Imovel.bairro_busca == dobrar(estado.regiao))
+        if estado.tipo_imovel is not None:
+            # `lead_qualification.tipo_imovel` grava o vocabulario do AGENTE
+            # (`agente/schemas.py`), que nao e o mesmo StrEnum do catalogo
+            # (`catalogo/enums.py`) -- ver a docstring de `TipoImovel` la. Os
+            # cinco membros que o agente pode gravar (nunca COBERTURA: o
+            # modelo devolve APARTAMENTO para quem diz isso, TEC-242 D1) tem
+            # o MESMO nome e o MESMO valor no vocabulario do catalogo, entao a
+            # comparacao de string crua e segura -- nao ha conversao por nome
+            # para fazer aqui.
+            consulta = consulta.where(Imovel.tipo == estado.tipo_imovel)
+        if estado.quartos is not None:
+            consulta = consulta.where(Imovel.quartos >= estado.quartos)
+        if estado.vagas is not None:
+            consulta = consulta.where(Imovel.vagas >= estado.vagas)
+        if estado.faixa_preco_max_centavos is not None:
+            consulta = consulta.where(Imovel.preco_venda <= estado.faixa_preco_max_centavos)
+        if estado.faixa_preco_min_centavos is not None:
+            consulta = consulta.where(Imovel.preco_venda >= estado.faixa_preco_min_centavos)
+
+    # O mais recente primeiro: entre dois novos, a novidade e o que chegou
+    # depois. `LIMIT 1` porque a D2 manda uma informacao nova por mensagem.
+    return await session.scalar(consulta.order_by(Imovel.created_at.desc()).limit(1))
