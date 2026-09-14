@@ -46,6 +46,18 @@ def test_nome_fora_do_vocabulario_e_descartado_e_nao_adivinhado():
     assert campos_a_recusar(["bairro_favorito"], []) == set()
 
 
+def test_campo_do_investidor_e_descartado_como_qualquer_nome_de_fora():
+    """TEC-153: contar e registrar recusa sao vocabularios diferentes.
+
+    Registrar a recusa de um campo de investidor produziria uma marca que
+    NADA honra: quem leva a recusa ao modelo e `_texto_do_estado`, e la o
+    campo do investidor renderiza VALOR, nunca marca -- a coluna `recusou`
+    ficaria com um nome que so aparece no banco. Como em toda esta funcao,
+    descartar e o erro barato: custa uma pergunta a mais.
+    """
+    assert campos_a_recusar(["horizonte", "ticket_expressao"], []) == set()
+
+
 def test_campo_preenchido_neste_turno_nao_entra_como_recusado():
     """Cenario 2 da card: valor vence recusa. Se o lead informou o campo, ele
     nao esta recusando o campo."""

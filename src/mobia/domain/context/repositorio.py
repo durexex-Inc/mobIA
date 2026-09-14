@@ -85,32 +85,67 @@ _NOME_DA_MARCA = {
 
 
 def _marca_de(nome: str) -> str | None:
-    """O nome sob o qual a marca deste campo e gravada, ou `None` se o nome
-    nao pertence a vocabulario nenhum que este modulo conheca."""
+    """O nome sob o qual a MARCA deste campo e gravada, ou `None` se o nome
+    nao pertence ao vocabulario que este modulo sabe marcar.
+
+    **So a trilha padrao, e os nomes do investidor ficam de fora de
+    proposito** -- quem os conhece e `_nome_contavel`, logo abaixo. Marcar e
+    contar sao vocabularios diferentes desde a TEC-153; o porque esta la.
+    """
     if nome in _NOME_DA_MARCA:
         return _NOME_DA_MARCA[nome]
-    # TEC-153: a trilha do investidor tem schema proprio (o schema compilado e
-    # parcela do orcamento de prompt), entao os nomes dela nao estao em
-    # `_CAMPOS_DA_EXTRACAO`. Sem esta linha, toda pergunta do investidor
-    # sairia de graca do teto da RN-05.5.
-    return nome if nome in _CAMPOS_DA_EXTRACAO or nome in CAMPOS_DO_INVESTIDOR else None
+    return nome if nome in _CAMPOS_DA_EXTRACAO else None
+
+
+def _nome_contavel(nome: str) -> str | None:
+    """O nome sob o qual esta pergunta CONTA para o teto da RN-05.5, ou
+    `None` se o nome nao pertence a vocabulario nenhum. TEC-153.
+
+    Superconjunto de `_marca_de`: tudo que se marca tambem se conta, e os
+    nomes do investidor se contam **sem** se marcar. A trilha do investidor
+    tem schema proprio (o schema compilado e parcela do orcamento de prompt),
+    entao os nomes dela nao estao em `_CAMPOS_DA_EXTRACAO`; sem esta funcao
+    toda pergunta do investidor sairia de graca do teto da RN-05.5, e um
+    investidor seria interrogado sem fim enquanto um comprador e cortado na
+    oitava.
+
+    **Os dois vocabularios sao separados porque marcar campo de investidor
+    esta errado, e do jeito caro.** `campos_a_marcar` e `campos_a_recusar`
+    subtraem os campos que o turno gravou, e esses campos saem de
+    `Extracao.preenchidos()` -- que nunca carrega campo de investidor, porque
+    eles moram em `ExtracaoDoInvestidor` e sao gravados por
+    `gravar_investidor`, noutra chamada e noutra transacao. Um vocabulario
+    unico faria toda pergunta do subagente virar marca PERMANENTE de
+    "perguntado, sem resposta" mesmo quando o lead respondeu no mesmo turno:
+    exatamente o "marcar de mais" que os docstrings de la chamam de erro
+    caro. Do lado da recusa o dano e irmao: registrar-se-ia uma recusa que
+    nada honra.
+
+    Contar de mais nao tem essa assimetria -- o teto e sobre perguntas
+    FEITAS, e a pergunta do investidor foi feita.
+    """
+    marca = _marca_de(nome)
+    if marca is not None:
+        return marca
+    return nome if nome in CAMPOS_DO_INVESTIDOR else None
 
 
 def perguntas_contaveis(perguntou: Iterable[str]) -> frozenset[str]:
     """Os nomes de `perguntou` que contam para o teto da RN-05.5. TEC-149, D3.
 
     Conjunto e nao lista: os dois extremos do orcamento chegam como nomes
-    distintos e sao UMA pergunta -- `_marca_de` ja os colapsa no mesmo nome
-    logico, e o conjunto termina o servico. Nome que nao pertence a
-    vocabulario nenhum sai fora: o modelo as vezes devolve o texto da
-    pergunta em lugar do nome do campo, e contar isso gastaria o orcamento
-    do lead com um defeito nosso.
+    distintos e sao UMA pergunta -- `_nome_contavel` ja os colapsa no mesmo
+    nome logico (por `_marca_de`), e o conjunto termina o servico. Nome que
+    nao pertence a vocabulario nenhum sai fora: o modelo as vezes devolve o
+    texto da pergunta em lugar do nome do campo, e contar isso gastaria o
+    orcamento do lead com um defeito nosso.
 
-    Reusa `_marca_de` de proposito, em vez de uma segunda lista de nomes:
-    duas fontes para o mesmo vocabulario divergiriam em silencio, que e o
-    defeito que a TEC-146 gastou uma card inteira consertando.
+    Passa por `_marca_de` de proposito, em vez de uma segunda lista de nomes
+    da trilha padrao: duas fontes para o mesmo vocabulario divergiriam em
+    silencio, que e o defeito que a TEC-146 gastou uma card inteira
+    consertando.
     """
-    marcas = (_marca_de(nome) for nome in perguntou)
+    marcas = (_nome_contavel(nome) for nome in perguntou)
     return frozenset(marca for marca in marcas if marca is not None)
 
 
@@ -309,6 +344,13 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
     visivel --
     era a critica que a card fazia ao proxy de palavra-chave.
 
+    **Campo do investidor nunca e marcado, e a exclusao e deliberada**
+    (TEC-153). Ele nao passa por `_marca_de` e nao entra no log de
+    desconhecidos: a subtracao abaixo usa `Extracao.preenchidos()`, que nunca
+    carrega campo de investidor, entao marcar aqui seria marcar de mais --
+    permanente -- ate quando o lead responde no mesmo turno. O teto da
+    RN-05.5 continua contando essa pergunta, por `_nome_contavel`.
+
     `preenchidos` sao os campos que este turno gravou. A subtracao e o que
     separa esta marca do proxy irmao: campo que o estado JA SABE e
     reperguntado e assunto de `_reperguntou`, nao daqui.
@@ -330,10 +372,17 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
     # que esta card tem para essa deriva.
     for nome in dict.fromkeys(perguntou):
         marca = _marca_de(nome)
-        if marca is None:
-            ignorados.append(nome)
-        else:
+        if marca is not None:
             conhecidos.add(marca)
+        elif _nome_contavel(nome) is None:
+            # TEC-153: nome do investidor nao e "desconhecido" -- ele pertence
+            # ao vocabulario contavel e nao ao marcavel, de proposito (ver
+            # `_nome_contavel`). Ele cai fora da marca do mesmo jeito, mas sem
+            # entrar neste log: registra-lo como deriva de vocabulario faria o
+            # unico instrumento que temos para a deriva disparar em todo turno
+            # do investidor, dizendo "desconhecido" sobre um nome que este
+            # modulo conhece.
+            ignorados.append(nome)
 
     if ignorados:
         plausiveis = sorted({n for n in ignorados if _NOME_PLAUSIVEL.fullmatch(n)})
@@ -368,6 +417,13 @@ def campos_a_recusar(recusou: Iterable[str], preenchidos: Iterable[str]) -> set[
     campo obrigatorio e `esta_qualificado` devolver False para sempre, sem o
     lead perceber. Descartar custa uma pergunta a mais.
 
+    **Campo do investidor nao entra aqui** (TEC-153), como nao entra na marca
+    irma: a recusa so alcanca o modelo pela marca que `_texto_do_estado`
+    renderiza, e la o campo do investidor sai como VALOR, nunca como marca.
+    Registra-la produziria uma coluna com um nome que nada honra -- promessa
+    de RN-05.7 que o prompt nao cumpre. Descartar custa uma pergunta a mais,
+    que e o preco que o resto deste docstring ja aceita.
+
     **A recusa aceita tambem e logada**, e nao so a descartada. Uma recusa
     sobre campo que ainda nao tinha valor nao move o score nem gera linha na
     trilha da TEC-152 -- sem esta linha de log ela nao existiria em lugar
@@ -392,10 +448,14 @@ def campos_a_recusar(recusou: Iterable[str], preenchidos: Iterable[str]) -> set[
     # `campos_a_marcar`, ver o comentario la.
     for nome in dict.fromkeys(recusou):
         marca = _marca_de(nome)
-        if marca is None:
-            ignorados.append(nome)
-        else:
+        if marca is not None:
             conhecidos.add(marca)
+        elif _nome_contavel(nome) is None:
+            # Mesma excecao de `campos_a_marcar`, pela mesma razao: o nome do
+            # investidor nao e deriva de vocabulario, e este log so serve se
+            # disser a verdade sobre o que o modelo inventou. Ver
+            # `_nome_contavel`.
+            ignorados.append(nome)
 
     if ignorados:
         plausiveis = sorted({n for n in ignorados if _NOME_PLAUSIVEL.fullmatch(n)})
