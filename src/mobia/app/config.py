@@ -260,6 +260,23 @@ class Settings(BaseSettings):
     sweep_inflight_after_seconds: int = 300
     sweep_max_attempts: int = 5
 
+    # TEC-261. O piso deste numero nao e gosto: e o orcamento de retentativa do
+    # worker. `job_timeout = 240` e `max_tries = 5` (`workers/main.py`), e um
+    # `job_timeout` do ARQ vira `CancelledError` -- uma das tres excecoes que
+    # ele REAGENDA. Entao uma importacao que estoura o tempo pode ser
+    # legitimamente retentada cinco vezes: 20 minutos de processamento no pior
+    # caso, mais a espera na fila e o backoff entre tentativas.
+    #
+    # 30 minutos ficam ~50% acima disso, cobrindo fila e backoff sem precisar
+    # calcula-los. Importacao e rara: uma linha travada esperar meia hora antes
+    # de ser fechada nao custa nada, e o custo do outro lado -- fechar uma que
+    # ainda esta viva -- e a mentira de relatorio que esta card existe para
+    # acabar.
+    #
+    # **Quem subir `job_timeout` ou `max_tries` tem de reconferir este numero.**
+    # Ele nao se move sozinho, e nada acusa quando o piso cresce.
+    sweep_importacao_travada_after_seconds: int = 1800
+
     # TEC-157. A chave do provedor de embedding, que NAO e a da Anthropic: a
     # API da Anthropic nao tem endpoint de embeddings, entao a indexacao usa
     # um segundo provedor e o agente segue no `infra/anthropic.py`.
