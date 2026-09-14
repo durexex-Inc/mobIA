@@ -254,7 +254,7 @@ def legenda_de(ficha: Ficha, *, prefixo: str | None = None) -> str:
     if ficha.diferencial is not None:
         linhas.append(f"Destaque: {ficha.diferencial}")
     if ficha.rentabilidade is not None:
-        # No CORPO, e nao no prefixo: e o que faz `_prosa_que_cabe` proteger o
+        # No CORPO, e nao no prefixo: e o que faz `prosa_que_cabe` proteger o
         # bloco de graca quando o teto de 600 aperta. A prioridade da D14
         # (corta-se a prosa, nunca a ficha) segue valendo sem mudanca.
         linhas.extend(_linhas_da_rentabilidade(ficha.rentabilidade))

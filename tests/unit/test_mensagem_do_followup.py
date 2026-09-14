@@ -74,6 +74,14 @@ def test_o_prefixo_do_modelo_entra_antes_e_cede_primeiro() -> None:
     assert len(texto) <= 600
     assert "Apartamento em Lagoa da Conceicao" in texto
     assert "Condominio R$ 550" in texto
+    # A prosa sobrevive truncada, e nao e descartada inteira: sem esta linha,
+    # um `_com_prefixo` quebrado que jogasse o prefixo fora passaria nas tres
+    # asserta acima do mesmo jeito, porque a legenda sozinha ja tem 147
+    # caracteres, ja contem o titulo e ja contem o condominio. Mesmo risco que
+    # `test_o_teto_de_600_corta_a_prosa_e_nunca_o_bloco_do_investidor` documenta
+    # em `test_apresentacao.py`.
+    assert texto.startswith("palavra palavra")
+    assert "\n\n" in texto
 
 
 def test_a_ficha_da_queda_e_a_do_imovel_que_caiu() -> None:
