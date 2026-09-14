@@ -5,6 +5,7 @@ Cenarios 1, 3 e 4 do Gherkin da card. O cenario 2 -- desambiguacao nao conta
 turno em volta.
 """
 
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select, text
@@ -12,6 +13,7 @@ from sqlalchemy import select, text
 from mobia.domain.agente.schemas import Intencao, Urgencia
 from mobia.domain.agente.turno import TEXTO_DO_LIMITE_DE_PERGUNTAS
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.moderacao.port import TEXTO_NEUTRO_DE_SAIDA
 
 # Os mesmos valores que `CANAL_AGENTE`/`CONVERSA_AGENTE` em `tests/conftest.py`,
 # porque `rodar_turno` semeia a fala nessa conversa e o estado tem de casar com
@@ -19,6 +21,10 @@ from mobia.domain.context.models import LeadQualification
 # jeito; e o padrao da casa para constante de fixture.
 CANAL = "whatsapp"
 CONVERSA = "5511911112222"
+
+# Abaixo de `LIMIAR_DE_DESAMBIGUACAO`, que e o que poe o turno no caminho do
+# desambiguador. O mesmo valor que `BAIXA` em `test_turno.py`.
+CONFIANCA_BAIXA = Decimal("0.45")
 
 
 async def _semear_estado(session: Any, *, perguntas_feitas: int, **campos: object) -> None:
@@ -113,6 +119,75 @@ async def test_a_prosa_do_modelo_nao_vaza_no_turno_do_teto(
     )
 
     assert prosa not in entregador.entregues
+
+
+async def test_turno_de_desambiguacao_no_teto_entrega_a_pergunta_do_desambiguador(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """A RN-05.5 limita pergunta de QUALIFICACAO, e a do desambiguador nao e uma.
+
+    O que sai neste caminho e a pergunta do desambiguador; `gerada.perguntou`
+    fala da chamada 1, que foi DESCARTADA. Sem a guarda `not desambiguando` na
+    substituicao, um lead que gastou as oito nunca mais poderia ser
+    desambiguado: toda mensagem vaga receberia o texto do corretor em lugar da
+    pergunta que teria resolvido a intencao.
+    """
+    await _conversa_ja_existe(session)
+    await _semear_estado(session, perguntas_feitas=8)
+    entregador = outbound_fake()
+    pergunta = "Voce procura para comprar ou para alugar?"
+    classificador = classificador_fake(
+        Intencao.COMPRA,
+        confianca=CONFIANCA_BAIXA,
+        perguntou=("urgencia",),
+        pergunta=pergunta,
+    )
+
+    await rodar_turno(session, classificador, entregador, resumidor_fake(), contador_fake())
+
+    assert classificador.desambiguacoes == 1, "o turno de fato desambiguou"
+    assert pergunta in entregador.entregues
+    assert TEXTO_DO_LIMITE_DE_PERGUNTAS not in entregador.entregues
+    # O contador nao anda, e isso ja valia antes desta card: a guarda
+    # pos-entrega exclui `desambiguando` desde a TEC-257.
+    assert await _contador(session) == 8
+
+
+async def test_saida_bloqueada_no_teto_entrega_o_neutro_da_moderacao(
+    session,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+) -> None:
+    """`TEXTO_NEUTRO_DE_SAIDA` e a resposta declarada da moderacao de saida.
+
+    Sobrepor o texto do teto a ele tornaria impossivel saber depois qual das
+    duas politicas agiu. O teto nao se perde: nada foi contado neste turno, e
+    ele dispara normalmente no proximo turno sem bloqueio.
+    """
+    await _conversa_ja_existe(session)
+    await _semear_estado(session, perguntas_feitas=8)
+    entregador = outbound_fake()
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.COMPRA, perguntou=("urgencia",)),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(bloqueia_saida=True),
+    )
+
+    assert TEXTO_NEUTRO_DE_SAIDA in entregador.entregues
+    assert TEXTO_DO_LIMITE_DE_PERGUNTAS not in entregador.entregues
+    # O handoff nasce mesmo assim, e e o comportamento aceito: ele e registrado
+    # no bloco transacional, que roda antes de a moderacao de saida ter
+    # veredito, entao `saida_bloqueada` nem existe naquele ponto.
+    assert "LIMITE_DE_PERGUNTAS" in await _gatilhos(session)
+    assert await _contador(session) == 8
 
 
 async def test_lead_qualificado_antes_do_teto_segue_o_fluxo_normal(

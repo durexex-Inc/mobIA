@@ -1108,6 +1108,14 @@ async def executar_turno(
             )
 
         if teto_atingido:
+            # Registrado aqui mesmo nos turnos em que o texto do teto NAO vai
+            # sair. `desambiguando` e `saida_bloqueada` -- as duas guardas da
+            # substituicao la embaixo -- so passam a existir depois deste
+            # bloco, entao nao ha como consulta-las daqui. A assimetria e
+            # deliberada e nao um esquecimento: o handoff nasce, o lead recebe
+            # o texto no proximo turno que qualificar, e `registrar_handoff` e
+            # idempotente -- nenhum handoff duplicado aparece. Nao mova isto
+            # para baixo para emparelhar as condicoes.
             handoff_do_teto = await registrar_handoff(
                 session,
                 channel=message.channel,
@@ -1323,10 +1331,25 @@ async def executar_turno(
         )
         texto = TEXTO_NEUTRO_DE_SAIDA
 
-    if teto_atingido:
+    if teto_atingido and not desambiguando and not saida_bloqueada:
         # A prosa do modelo nao sai: ela contem a pergunta que o teto proibe,
         # e nao da para entregar meia pergunta -- a prosa e um texto so.
         # Substituicao em lugar, como a moderacao de saida faz logo acima.
+        #
+        # `not desambiguando`: a RN-05.5 limita pergunta de QUALIFICACAO, e
+        # nesse caminho quem sai e a pergunta do desambiguador --
+        # `gerada.perguntou` fala da chamada 1, que foi DESCARTADA, pela
+        # mesma razao que `apresentando` logo abaixo a exclui. Sem isto, um
+        # lead que bateu o teto nunca mais poderia ser desambiguado: toda
+        # mensagem vaga receberia o texto do corretor em lugar da pergunta
+        # que teria resolvido a intencao.
+        #
+        # `not saida_bloqueada`: `TEXTO_NEUTRO_DE_SAIDA` e a resposta
+        # declarada da politica de moderacao de saida, e sobrepor a nossa a
+        # ela tornaria impossivel saber depois qual das duas agiu. O teto nao
+        # se perde: a guarda pos-entrega ja exclui `saida_bloqueada`, entao
+        # nada foi contado, e o teto dispara normalmente no proximo turno sem
+        # bloqueio.
         texto = TEXTO_DO_LIMITE_DE_PERGUNTAS
 
     # TEC-162, D4. Candidatos sem pergunta e turno de apresentacao. As tres
