@@ -112,3 +112,47 @@ async def test_importacao_concluida_nao_e_tocada(session: Any) -> None:
     assert lida.status == str(StatusImportacao.CONCLUIDO)
     assert lida.processados == 42
     assert lida.erros == []
+
+
+async def test_duas_varreduras_nao_encerram_a_mesma_linha_duas_vezes(session: Any) -> None:
+    """Cenario 4. `FOR UPDATE SKIP LOCKED`, provado com lock de verdade.
+
+    **Chamar a varredura duas vezes em sequencia NAO prova nada**: a segunda
+    passagem nao acha a linha porque a primeira ja mudou o status, e o
+    `SKIP LOCKED` nunca e exercitado -- o teste passaria identico sem ele.
+
+    Aqui uma sessao segura a linha com `FOR UPDATE` enquanto a varredura roda.
+    Com `SKIP LOCKED` ela pula e devolve zero; sem ele, ela BLOQUEIA esperando
+    o lock e o teste trava ate o timeout -- que e o comportamento que a
+    clausula existe para evitar, com um sweeper concorrente segurando o outro.
+    """
+    from sqlalchemy import text as sql
+
+    importacao_id = await _importacao(
+        session, status=StatusImportacao.PROCESSANDO, idade_segundos=3600
+    )
+
+    async with get_sessionmaker()() as bloqueadora:
+        await bloqueadora.execute(
+            sql("SELECT id FROM importacoes WHERE id = :i FOR UPDATE"),
+            {"i": importacao_id},
+        )
+        assert await sweep_importacoes_travadas(_ctx()) == 0, (
+            "com a linha travada por outra sessao, a varredura tem de PULAR -- "
+            "sem SKIP LOCKED ela ficaria bloqueada esperando"
+        )
+        await bloqueadora.rollback()
+
+    # Solto o lock, a linha e encerrada -- uma vez, e so uma.
+    assert await sweep_importacoes_travadas(_ctx()) == 1
+    assert await sweep_importacoes_travadas(_ctx()) == 0, (
+        "a segunda passagem nao acha mais nada: o status ja nao e PROCESSANDO"
+    )
+
+    async with get_sessionmaker()() as outra:
+        lida = await outra.get(Importacao, importacao_id)
+    assert lida is not None
+    assert lida.erros == [{"linha": 0, "motivo": MOTIVO_DA_VARREDURA}], (
+        "encerrada uma unica vez -- dois encerramentos deixariam dois erros "
+        "ou sobrescreveriam o timestamp"
+    )
