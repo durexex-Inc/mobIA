@@ -146,10 +146,22 @@ _CASE_TETO_POR_TEMPERATURA = " ".join(
 _SELECIONAR_CANDIDATOS = text(
     f"""
     WITH falas_do_lead AS (
+        -- `id DESC` desempata, e nao e arbitrario: `IngestionService._persist`
+        -- grava o lote inteiro de um envelope num unico INSERT multi-VALUES,
+        -- sem passar `created_at` -- a coluna cai no `server_default`
+        -- `now()`, que e CONSTANTE dentro do mesmo statement. Duas mensagens
+        -- do mesmo lead entregues no mesmo envelope gravam o MESMO carimbo, e
+        -- sem desempate o Postgres escolheria qualquer uma das duas para
+        -- `posicao = 1` -- nao de forma estavel entre execucoes (plano,
+        -- indice ou paralelismo mudam a ordem fisica). Qual delas ganha nao
+        -- importa para o negocio (o carimbo empatado faz `ancora_em` sair
+        -- igual de qualquer jeito); o que importa e que a mesma consulta
+        -- sobre o mesmo dado sempre escolha a MESMA linha, porque e essa
+        -- linha que ancora a reserva de `outbound_dispatches`.
         SELECT channel, conversation_key, created_at, id,
                ROW_NUMBER() OVER (
                    PARTITION BY channel, conversation_key
-                   ORDER BY created_at DESC
+                   ORDER BY created_at DESC, id DESC
                ) AS posicao
           FROM messages
          WHERE direction = 'INBOUND'

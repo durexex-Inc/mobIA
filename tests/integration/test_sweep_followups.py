@@ -142,6 +142,63 @@ async def test_o_candidato_traz_o_id_da_mensagem_ancora(session) -> None:
     assert candidato.ancora_message_id != antiga
 
 
+async def test_o_desempate_por_id_e_estavel_quando_duas_falas_empatam_no_carimbo(
+    session,
+) -> None:
+    """A defesa contra o empate que `IngestionService._persist` produz de
+    verdade: um envelope com duas mensagens do mesmo lead entregues juntas
+    grava as duas com o MESMO `created_at`, porque `_persist` faz um unico
+    INSERT multi-VALUES sem passar `created_at` -- a coluna cai no
+    `server_default` `now()`, que e constante dentro do mesmo statement.
+
+    Sem desempate por `id`, qual das duas vira `ancora_message_id` seria
+    indefinido -- o Postgres poderia escolher qualquer uma, e nao de forma
+    estavel entre execucoes. Este teste prende as duas pontas: chama
+    `candidatos_a_followup` duas vezes e afirma que as duas devolvem o MESMO
+    id, e que esse id e o que o desempate `id DESC` de fato escolhe (o maior
+    dos dois).
+    """
+    session.add(
+        LeadQualification(
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            intencao=Intencao.COMPRA.value,
+            faixa_preco_max_centavos=50_000_000,
+            regiao="vila mariana",
+            urgencia=Urgencia.IMEDIATA.value,
+            temperatura="QUENTE",
+        )
+    )
+    empatada_em = DENTRO_DA_JANELA - timedelta(hours=3)
+    identificadores = [uuid.uuid4(), uuid.uuid4()]
+    esperado = max(identificadores)
+    for identificador in identificadores:
+        session.add(
+            Message(
+                id=identificador,
+                channel=CANAL,
+                provider_message_id=f"wamid.{identificador.hex[:10]}",
+                sender_external_id=CONVERSA,
+                recipient_external_id="222222222",
+                conversation_key=CONVERSA,
+                role=MessageRole.LEAD,
+                direction=MessageDirection.INBOUND,
+                content_type=MessageContentType.TEXTO,
+                text_body=encrypt("oi", aad_de(identificador, "text_body")),
+                raw_payload=None,
+                status=MessageStatus.PROCESSED,
+                created_at=empatada_em,
+            )
+        )
+    await session.commit()
+
+    (primeira,) = await candidatos_a_followup(session, agora=DENTRO_DA_JANELA)
+    (segunda,) = await candidatos_a_followup(session, agora=DENTRO_DA_JANELA)
+
+    assert primeira.ancora_message_id == esperado
+    assert segunda.ancora_message_id == esperado
+
+
 async def test_o_quente_calado_ha_duas_horas_recebe_a_primeira(session, caplog) -> None:
     """A CA-13.1, ponta a ponta."""
     await _lead(session, calado_ha=timedelta(hours=2, minutes=5))
