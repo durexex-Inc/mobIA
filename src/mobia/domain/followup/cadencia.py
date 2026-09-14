@@ -98,3 +98,32 @@ def tentativa_devida(
         if decorrido >= CADENCIA[temperatura][numero - 1]:
             return numero
     return None
+
+
+def esta_dormente(*, temperatura: Temperatura, ja_disparada: int) -> bool:
+    """RN-13.5: o lead esgotou a cadencia e saiu da automacao.
+
+    **E derivado, e nao um estado gravado.** Nao ha coluna `status` em lugar
+    nenhum, e esta funcao nao le nem escreve banco: a pergunta e respondida
+    pela tabela da RN-13.1 e pelo que `followups` ja guarda. A data e a
+    contagem que a card pede da transicao sao o `created_at` e o
+    `tentativa_numero` da linha da ultima tentativa. Ver a D1 do desenho.
+
+    **Esta expressao e a negacao exata do corte de candidatura** em
+    `repositorio.py` (`ja_disparada < CASE temperatura ... END`). Nao sao duas
+    fontes que podem divergir: aquele `CASE` e GERADO a partir de `CADENCIA`
+    por `_TETOS_POR_TEMPERATURA`, e esta funcao le o mesmo dict. Quem alongar a
+    tabela move os dois. `test_dormente_e_a_negacao_exata_do_corte_de_candidatura`
+    e a guarda de que continuam iguais.
+
+    **`>=` e nao `==`**: `ja_disparada` pode passar do teto vigente sem erro
+    nenhum -- um lead esgota QUENTE em 4 e depois esfria para MORNO, cujo teto
+    e 3. Com `==` ele deixaria de ser dormente ao esfriar, que e o contrario do
+    que a temperatura mais fria significa.
+
+    **`temperatura` e `Temperatura`, e nao `str | None`.** Lead com
+    `temperatura IS NULL` (escreveu antes da TEC-151 e nunca mais falou) nao e
+    candidato nem dormente: as duas consultas o excluem pelo `IN`. A tipagem
+    recusa a pergunta em vez de inventar uma resposta -- lacuna L3 do desenho.
+    """
+    return ja_disparada >= len(CADENCIA[temperatura])
