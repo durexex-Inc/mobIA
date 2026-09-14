@@ -63,11 +63,18 @@ class Rentabilidade:
 @dataclass(frozen=True, slots=True)
 class Ficha:
     """Os oito campos da RN-10.1, resolvidos e agnosticos de canal -- mais o
-    `id` do imovel, que nao e um dos oito e nao aparece na legenda.
+    `id` do imovel, que nao e um dos oito e nao aparece na legenda, e mais
+    `rentabilidade`, o decimo campo.
 
     `id` existe para quem opera, nao para o lead: fix wave da TEC-162
     (Minor). Sem ele, `turno.py` nao tinha como dizer QUAL imovel sumiu do
     catalogo entre a busca e a apresentacao -- so quantos.
+
+    `rentabilidade` fica de fora da contagem "os oito" de proposito: e o
+    bloco do investidor da RN-07.3, uma regra diferente da RN-10.1, e so
+    existe (nao-`None`) na trilha do investidor -- ver a docstring de
+    `Rentabilidade`. Omiti-lo aqui pareceria descuido a quem conta os campos
+    e encontra dez; ele existe e nao e um dos oito.
 
     Tres dos oito campos sao opcionais porque o catalogo os tem vazios de
     verdade -- 117 dos 520 imoveis do seed nao tem caracteristica nenhuma.
@@ -207,9 +214,10 @@ def _linhas_da_rentabilidade(rentabilidade: Rentabilidade) -> list[str]:
 def legenda_de(ficha: Ficha, *, prefixo: str | None = None) -> str:
     """A legenda de uma ficha, com a prosa do modelo opcionalmente na frente.
 
-    Estourado o teto, o que se corta e o PREFIXO -- nunca a ficha. A ficha e
-    o conteudo que a RN-10.1 exige e a prosa e ornamento, e essa ordem de
-    prioridade e a D14 do desenho.
+    Estourado o teto, o que se corta e o PREFIXO -- nunca a ficha. A ficha
+    carrega o que a RN-10.1 exige e, na trilha do investidor, o bloco da
+    RN-07.3 tambem: os dois sao conteudo e nenhum dos dois cede espaco, so a
+    prosa e ornamento -- essa ordem de prioridade e a D14 do desenho.
     """
     quartos = _pluralizado(ficha.quartos, "quarto", "quartos")
     vagas = _pluralizado(ficha.vagas, "vaga", "vagas")

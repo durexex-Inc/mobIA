@@ -133,7 +133,7 @@ async def test_o_yield_sai_do_preco_de_venda_e_nao_do_preco_apresentado(
     O `precos` passado aqui e o ALUGUEL, que e o que um investidor buscando
     ALUGUEL produziria. Se o yield saisse dele, a conta seria 1200% ao ano.
     Saindo de `preco_venda`, e 6,0% -- e 5,8% se alguem trocar a fonte pelo
-    `preco_centavos` do default do helper, entao o numero desta asserta
+    `preco_centavos` do default do helper, entao o numero desta assercao
     distingue as tres possibilidades.
     """
     identificador = await _imovel(
