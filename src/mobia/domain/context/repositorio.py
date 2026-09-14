@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agente.investidor import CAMPOS_DO_INVESTIDOR
 from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.auditoria import causas_do_recalculo
 from mobia.domain.context.models import (
@@ -82,7 +83,11 @@ def _marca_de(nome: str) -> str | None:
     nao pertence a vocabulario nenhum que este modulo conheca."""
     if nome in _NOME_DA_MARCA:
         return _NOME_DA_MARCA[nome]
-    return nome if nome in _CAMPOS_DA_EXTRACAO else None
+    # TEC-153: a trilha do investidor tem schema proprio (o schema compilado e
+    # parcela do orcamento de prompt), entao os nomes dela nao estao em
+    # `_CAMPOS_DA_EXTRACAO`. Sem esta linha, toda pergunta do investidor
+    # sairia de graca do teto da RN-05.5.
+    return nome if nome in _CAMPOS_DA_EXTRACAO or nome in CAMPOS_DO_INVESTIDOR else None
 
 
 def perguntas_contaveis(perguntou: Iterable[str]) -> frozenset[str]:
