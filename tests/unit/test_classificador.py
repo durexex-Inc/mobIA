@@ -13,15 +13,19 @@ from mobia.domain.agente import classificador as classificador_mod
 from mobia.domain.agente.classificador import (
     MAX_TOKENS_DA_PERGUNTA,
     MAX_TOKENS_DA_REACAO,
+    MAX_TOKENS_DO_INVESTIDOR,
     SCHEMA_DA_RESPOSTA,
+    SCHEMA_DO_INVESTIDOR,
     SISTEMA_DA_DESAMBIGUACAO,
     SISTEMA_DA_REACAO,
     SISTEMA_DO_AGENTE,
+    SISTEMA_DO_INVESTIDOR,
     ClassificadorAnthropic,
     RespostaInvalida,
     _lista_de_nomes,
 )
 from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA
+from mobia.domain.agente.investidor import Horizonte
 from mobia.domain.agente.schemas import CategoriaDescarte, Intencao, ReacaoDoImovel, ReacaoLead
 from mobia.domain.context.montagem import ContextoMontado
 
@@ -1423,3 +1427,156 @@ async def test_turno_sem_relaxamento_deixa_os_quatro_em_falso(
         resposta.relaxou_preco,
         resposta.relaxou_bairro,
     ) == (False, False, False, False)
+
+
+# --- A chamada do subagente investidor (TEC-153, D1) -------------------------
+#
+# Moram aqui, e nao em `test_classificador_investidor.py`, porque o que estes
+# testes exercitam e a FORMA DA REQUISICAO, e os dubles que a leem
+# (`_ClienteFalso`, `_instalar_sequencia`, `_instalar_e_capturar`) vivem neste
+# arquivo. Aquele outro testa o vocabulario -- prompt, schema, conversores --,
+# que nao precisa de cliente nenhum. Duplicar o duble para agrupar por card
+# custaria mais do que a separacao por card renderia.
+
+
+def _resposta_do_investidor(
+    *,
+    intencao: str = "INVESTIMENTO",
+    confianca: object = 0.9,
+    resposta: object = TEXTO_DA_RESPOSTA,
+    investidor: dict[str, object] | None = None,
+) -> SimpleNamespace:
+    """O envelope do investidor: o mesmo de `_resposta_json` mais `investidor`.
+
+    Helper proprio em vez de um parametro a mais em `_resposta_json` porque
+    os dois envelopes SAO diferentes -- e a diferenca e o assunto da D2.
+    """
+    corpo: dict[str, object] = {
+        "intencao": intencao,
+        "confianca": confianca,
+        "resposta": resposta,
+        "extracao": {"regiao": "zona sul", "faixa_preco_expressao": "ate 800 mil"},
+        "investidor": investidor
+        if investidor is not None
+        else {"ticket_expressao": "uns 800 mil", "horizonte": "LONGO"},
+    }
+    return _resposta_falsa(texto=json.dumps(corpo))
+
+
+async def test_o_investidor_declara_a_ferramenta_quando_ha_porta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**A propriedade que o desenho desta card gastou uma reescrita para
+    acertar**, e que so este teste guarda.
+
+    `qualificar_investidor` e irma de `classificar`, nao de `desambiguar`: a
+    partir do segundo turno ela e a UNICA chamada do turno do investidor, e
+    sem `tools` o lead que investe nunca receberia ficha de imovel nenhuma.
+    Sem esta asserta, alguem "consertando" o metodo para o molde de
+    `desambiguar` -- que de proposito nao declara ferramenta -- deixaria a
+    suite inteira verde.
+    """
+    cliente = _instalar_sequencia(
+        monkeypatch, [_resposta_tool_use({"operacao": "VENDA"}), _resposta_do_investidor()]
+    )
+
+    async def porta(_: dict[str, object]) -> dict[str, object]:
+        return {"candidatos": [], "total_candidatos": 0}
+
+    await ClassificadorAnthropic().qualificar_investidor(_contexto(), porta=porta)
+
+    primeira = cliente.messages.create.await_args_list[0].kwargs
+    assert primeira["tools"] == [FERRAMENTA_DE_BUSCA]
+    assert primeira["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
+    # Duas chamadas: o laco de tool use converge, como em `classificar`.
+    assert cliente.messages.create.await_count == 2
+
+
+async def test_o_investidor_sem_porta_nao_declara_a_ferramenta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Espelho de `test_sem_porta_a_ferramenta_nao_e_declarada`, e pela mesma
+    razao: sem porta injetada `_chamar` nao teria como executar o `tool_use`,
+    e o teto da D4 derrubaria o turno a toa."""
+    cliente = _instalar_sequencia(monkeypatch, [_resposta_do_investidor()])
+
+    await ClassificadorAnthropic().qualificar_investidor(_contexto())
+
+    assert "tools" not in cliente.messages.create.await_args.kwargs
+    assert "tool_choice" not in cliente.messages.create.await_args.kwargs
+    assert cliente.messages.create.await_count == 1
+
+
+async def test_o_investidor_manda_o_proprio_system_e_o_proprio_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O que difere de `classificar` e so isto -- `system`, `output_config` e
+    `max_tokens` --, e e disto que depende o custo zero da D2: o schema
+    compilado do investidor sai desta chamada e de nenhuma outra."""
+    cliente = _instalar_e_capturar(monkeypatch, _resposta_do_investidor())
+
+    await ClassificadorAnthropic().qualificar_investidor(_contexto())
+
+    kwargs = cliente.messages.create.call_args.kwargs
+    assert kwargs["system"] == [
+        {"type": "text", "text": SISTEMA_DO_INVESTIDOR, "cache_control": {"type": "ephemeral"}}
+    ]
+    assert kwargs["max_tokens"] == MAX_TOKENS_DO_INVESTIDOR
+    enviado = kwargs["output_config"]["format"]["schema"]
+    assert enviado == transform_schema(SCHEMA_DO_INVESTIDOR)
+    # E nao o principal: se os dois schemas colapsarem num so, esta linha cai
+    # antes de qualquer coisa aparecer na conta do provedor.
+    assert enviado != transform_schema(SCHEMA_DA_RESPOSTA)
+
+
+async def test_o_investidor_devolve_o_envelope_inteiro_e_o_perfil(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A extracao padrao continua valendo na trilha do investidor: ele tambem
+    diz regiao e faixa de preco."""
+    _instalar_cliente_falso(monkeypatch, _resposta_do_investidor(confianca=0.75))
+
+    resultado = await ClassificadorAnthropic().qualificar_investidor(_contexto())
+
+    assert resultado.intencao is Intencao.INVESTIMENTO
+    assert resultado.confianca == Decimal("0.75")
+    assert resultado.resposta == TEXTO_DA_RESPOSTA
+    assert resultado.extracao.regiao == "zona sul"
+    assert resultado.investidor.ticket_expressao == "uns 800 mil"
+    assert resultado.investidor.horizonte is Horizonte.LONGO
+    assert resultado.tokens_in == 4000
+    assert resultado.tokens_out == 200
+
+
+async def test_o_investidor_recusa_campo_resposta_vazio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mesma guarda de `classificar`: um envelope bem formado com a resposta
+    em branco nao pode ser entregue ao lead como silencio."""
+    _instalar_cliente_falso(monkeypatch, _resposta_do_investidor(resposta="   "))
+
+    with pytest.raises(RespostaInvalida) as erro:
+        await ClassificadorAnthropic().qualificar_investidor(_contexto())
+
+    assert "vazio" in str(erro.value)
+
+
+async def test_o_investidor_loga_no_proprio_evento_e_sem_conteudo(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Evento proprio, senao o turno da virada -- duas chamadas, uma paga e
+    descartada -- fica indistinguivel de um turno normal no painel. E a mesma
+    disciplina de PII dos outros tres caminhos."""
+    _instalar_cliente_falso(monkeypatch, _resposta_do_investidor())
+
+    with caplog.at_level(logging.INFO):
+        await ClassificadorAnthropic().qualificar_investidor(_contexto())
+
+    assert "agente.investidor_gerado" in caplog.text
+    assert "agente.turno_gerado" not in caplog.text
+    assert '"custo_usd"' in caplog.text
+    # Nem a resposta ao lead, nem o prompt, nem o resumo -- e nem o ticket,
+    # que e o que o lead disse e nao telemetria.
+    assert TEXTO_DA_RESPOSTA not in caplog.text
+    assert RESUMO_DO_PROMPT not in caplog.text
+    assert "uns 800 mil" not in caplog.text

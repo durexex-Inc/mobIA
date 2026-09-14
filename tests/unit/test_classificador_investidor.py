@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from mobia.domain.agente.classificador import (
     MAX_RETORNO_ESPERADO_PCT,
+    SCHEMA_DA_EXTRACAO,
     SCHEMA_DA_RESPOSTA,
     SCHEMA_DO_INVESTIDOR,
     SISTEMA_DO_INVESTIDOR,
@@ -43,9 +44,47 @@ def test_o_schema_do_investidor_carrega_o_envelope_inteiro() -> None:
 def test_os_dois_schemas_sao_objetos_distintos() -> None:
     """Montar um a partir do outro por referencia faria uma mutacao futura no
     do investidor vazar para o principal -- e o orcamento so e protegido
-    porque eles nao se tocam."""
+    porque eles nao se tocam.
+
+    **A asserta desce ate os valores de cada chave, e nao para no topo.**
+    Um `{**SCHEMA_DA_RESPOSTA, "properties": {**SCHEMA_DA_RESPOSTA["properties"]}}`
+    satisfaria as duas primeiras linhas e mesmo assim apelidaria TODO valor
+    aninhado: o `dict` de `confianca` seria o mesmo objeto nos dois, e um
+    `description` acrescentado no do investidor apareceria no principal, que
+    e enviado em toda chamada e medido contra o teto fixo.
+
+    **`extracao` e a unica excecao, e e deliberada** (TEC-153, Task 7): os
+    dois apontam para o MESMO `SCHEMA_DA_EXTRACAO` porque e literalmente a
+    mesma extracao -- um investidor tambem diz regiao, tipo e faixa de preco
+    --, e uma copia divergiria no dia em que um campo entrasse so num dos
+    dois. O apelidamento e seguro justamente aqui, e so aqui, porque o modo
+    de falha e alto: mutar `SCHEMA_DA_EXTRACAO` muda tambem o schema
+    compilado principal, e `test_a_margem_do_orcamento_do_prompt_e_deliberada`
+    reprova na hora. Este teste existe para que a excecao continue sendo uma,
+    e nao vire a regra por descuido.
+    """
     assert SCHEMA_DO_INVESTIDOR is not SCHEMA_DA_RESPOSTA
     assert SCHEMA_DO_INVESTIDOR["properties"] is not SCHEMA_DA_RESPOSTA["properties"]
+
+    do_investidor = SCHEMA_DO_INVESTIDOR["properties"]
+    do_principal = SCHEMA_DA_RESPOSTA["properties"]
+    compartilhadas = set(do_investidor) & set(do_principal)
+    # Se o envelope mudar de campos, esta linha avisa antes que o laco abaixo
+    # passe a medir menos do que este teste promete medir.
+    assert compartilhadas == {
+        "intencao",
+        "confianca",
+        "extracao",
+        "resposta",
+        "perguntou",
+        "recusou",
+    }
+
+    for chave in compartilhadas - {"extracao"}:
+        assert do_investidor[chave] is not do_principal[chave], chave
+
+    assert SCHEMA_DO_INVESTIDOR["properties"]["extracao"] is SCHEMA_DA_EXTRACAO
+    assert SCHEMA_DA_RESPOSTA["properties"]["extracao"] is SCHEMA_DA_EXTRACAO
 
 
 def test_o_prompt_do_investidor_e_diferente_do_principal() -> None:

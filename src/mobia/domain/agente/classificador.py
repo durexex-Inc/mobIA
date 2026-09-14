@@ -1297,7 +1297,10 @@ class ClassificadorAnthropic:
         # Sem `tools`/`porta`: a desambiguacao nunca busca imovel, entao o
         # quarto item (candidatos), os quatro booleanos de relaxamento e a
         # lista de criterios (TEC-163) saem sempre vazios/False e nao servem
-        # a esta chamada -- so `classificar` devolve algo la.
+        # a esta chamada. Quem devolve algo la sao as duas chamadas que
+        # declaram a ferramenta: `classificar` e, desde a TEC-153,
+        # `qualificar_investidor` -- a trilha do investidor tambem apresenta
+        # imovel, e os candidatos dela atravessam por este mesmo caminho.
         (
             texto,
             resposta,
@@ -1350,7 +1353,7 @@ class ClassificadorAnthropic:
         )
 
     async def reagir(self, contexto: ContextoMontado, *, apresentados: list[str]) -> ReacoesDoTurno:
-        """A terceira chamada possivel do turno: o que o lead achou do que viu.
+        """A chamada da reacao: o que o lead achou do que viu.
 
         TEC-163, D6. Chamada dedicada, separada de `classificar`, pela mesma
         razao estrutural de `desambiguar`: um schema proprio, fora da
