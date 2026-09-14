@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from conftest import OutboundFake  # type: ignore[import-not-found]
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 import mobia.workers.jobs.sweep_followups as sweep_followups_module
 from mobia.app.config import Settings
@@ -893,6 +894,50 @@ async def test_a_falha_retentavel_de_um_candidato_nao_derruba_o_lote(session, ca
     assert [d.kind for d in (await session.scalars(select(OutboundDispatch))).all()] == [
         "followup_1"
     ]
+
+
+async def test_a_falha_de_montagem_de_um_candidato_nao_derruba_o_lote(
+    session, outbound_fake, caplog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fix de revisao (TEC-184): o trabalho POS-COMMIT tambem e protegido.
+
+    Entre o `commit` -- que consome a tentativa -- e o envio ha tres idas ao
+    banco: `_novidade_do_followup`, o `ler_resumo` de dentro de
+    `redigir_abertura` e o `scalar` do `de`. Fora de um `except`, um
+    `ConnectionResetError` em qualquer uma delas subia pelo `for` e abortava o
+    job: o candidato ficava com a linha gravada e nenhuma mensagem, e os
+    SEGUINTES perdiam a propria posicao da cadencia por uma falha que nao era
+    deles.
+
+    A falha e posta no PRIMEIRO candidato pela mesma razao que
+    `_dois_leads_devidos` explica: no segundo, o teste passaria mesmo sem
+    `except` nenhum.
+    """
+    chamadas = {"n": 0}
+
+    async def _prosa_que_levanta(session, *, channel, conversation_key, ficha, queda):
+        chamadas["n"] += 1
+        if chamadas["n"] == 1:
+            raise OperationalError(
+                "SELECT conversation_summaries", {}, ConnectionResetError("[WinError 64]")
+            )
+        return None
+
+    monkeypatch.setattr(sweep_followups_module, "redigir_abertura", _prosa_que_levanta)
+    await _dois_leads_devidos(session)
+    outbound = outbound_fake()
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA)
+
+    assert chamadas["n"] == 2, "o laco parou no primeiro candidato"
+    assert len(outbound.entregues) == 1, "o segundo candidato tinha de sair"
+    # As duas linhas ficam: o commit e ANTES da montagem, e a tabela e
+    # append-only -- o primeiro candidato perdeu a posicao da cadencia, e o
+    # log e a unica coisa que impede essa perda de ser silenciosa.
+    assert gravadas == 2
+    assert len((await session.scalars(select(FollowUp))).all()) == 2
+    assert sum(1 for r in caplog.records if "followup.montagem_falhou" in r.getMessage()) == 1
 
 
 async def test_a_linha_de_followups_permanece_quando_o_envio_e_recusado(

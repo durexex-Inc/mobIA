@@ -59,17 +59,36 @@ SENTINELA_RESUMO = "SENTINELA-RESUMO o lead mora na Rua das Palmeiras"
 SENTINELA_PROSA = "SENTINELA-PROSA vi que voce procurava perto da praia"
 
 
-class _SessaoSemResumo:
+class _Sessao:
+    """O que `redigir_abertura` toca numa sessao: `get` e, no caminho de
+    falha, `rollback`.
+
+    `rollback` mora na base porque as tres sessoes o expoem pela mesma razao:
+    o `except` de `redigir_abertura` desfaz a transacao antes de devolver
+    `None`, e sem isso o contrato "nunca levanta" valeria aqui e mentiria uma
+    chamada adiante, no `PendingRollbackError` de quem emprestou a sessao.
+    `rollbacks` conta para o teste poder afirmar que ele aconteceu.
+    """
+
+    def __init__(self) -> None:
+        self.rollbacks = 0
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+class _SessaoSemResumo(_Sessao):
     """Duble da sessao: `ler_resumo` so chama `get`, e sem linha devolve None."""
 
     async def get(self, *_args: object, **_kwargs: object) -> None:
         return None
 
 
-class _SessaoComResumo:
+class _SessaoComResumo(_Sessao):
     """A linha existe e esta cifrada como em producao."""
 
     def __init__(self, texto: str) -> None:
+        super().__init__()
         self._texto = texto
 
     async def get(self, _modelo: object, chave: tuple[str, str], **_kwargs: object) -> object:
@@ -85,7 +104,7 @@ class _SessaoComResumo:
         )
 
 
-class _SessaoQueLevanta:
+class _SessaoQueLevanta(_Sessao):
     async def get(self, *_args: object, **_kwargs: object) -> None:
         raise ConnectionResetError("[WinError 64] a conexao caiu")
 
@@ -183,10 +202,19 @@ async def test_falha_ao_ler_o_resumo_vira_none_e_nao_excecao(
 ) -> None:
     """A leitura do resumo esta dentro da mesma guarda que a chamada. Um
     `ConnectionResetError` -- rotineiro neste repo -- nao pode custar o
-    follow-up, que nao depende do resumo para ter conteudo."""
-    _instalar(monkeypatch, _resposta("Vi que voce procurava perto da praia."))
+    follow-up, que nao depende do resumo para ter conteudo.
 
-    assert await _redigir(_SessaoQueLevanta()) is None
+    **E a sessao volta USAVEL, nao so a funcao volta `None`.** Depois de um
+    erro de statement a transacao fica desativada, e a proxima operacao de
+    quem emprestou a sessao levantaria `PendingRollbackError` -- em
+    `sweep_followups` a proxima e o `scalar` do `de`, e o candidato SEGUINTE
+    morreria no `esta_em_optout`. Sem o `rollback`, o contrato "nunca levanta"
+    seria verdade aqui e mentira uma chamada adiante."""
+    _instalar(monkeypatch, _resposta("Vi que voce procurava perto da praia."))
+    sessao = _SessaoQueLevanta()
+
+    assert await _redigir(sessao) is None
+    assert sessao.rollbacks == 1
 
 
 async def test_parada_anormal_vira_none(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -213,11 +241,17 @@ async def test_prosa_boa_volta_inteira(monkeypatch: pytest.MonkeyPatch) -> None:
     assert prosa == "Vi que voce procurava 3 quartos no Centro."
 
 
-async def test_nenhum_preco_chega_ao_modelo(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_nenhum_preco_do_imovel_chega_ao_modelo(monkeypatch: pytest.MonkeyPatch) -> None:
     """A regra que esta card firma pela terceira vez (D7 da TEC-265, D8 da
-    TEC-154): numero de preco nao passa pelo modelo. Confere o payload
+    TEC-154): preco DO IMOVEL nao passa pelo modelo. Confere o payload
     inteiro -- system e turno --, nas tres formas em que o preco poderia
-    escapar: centavos, reais e o texto ja formatado."""
+    escapar: centavos, reais e o texto ja formatado.
+
+    **"Do imovel" e o limite exato, e a sessao sem resumo e o que o isola.**
+    O turno leva tambem `resumo.texto`, e o resumo carrega rotineiramente o
+    orcamento que o LEAD declarou, em reais -- "nenhum numero de preco passa
+    pelo modelo" seria mais forte do que o codigo garante. O que este teste
+    prende e o preco do imovel: o de hoje, da ficha, e o antigo, da queda."""
     cliente = _instalar(monkeypatch, _resposta("Lembrei de voce ao ver uma novidade na Lagoa."))
 
     await _redigir(_SessaoSemResumo(), ficha=FICHA, queda=QUEDA)

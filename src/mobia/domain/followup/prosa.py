@@ -24,11 +24,19 @@ tokens entre duas chamadas, `cache_control` sobre um prefixo que se repete --
 nao tem consumidor aqui: esta chamada nao declara ferramenta, nao pede JSON,
 acontece uma vez por follow-up e o prefixo e curto de mais para cachear.
 
-**Nenhum numero de preco passa pelo modelo** -- e a terceira vez que o repo
+**Nenhum preco DO IMOVEL passa pelo modelo** -- e a terceira vez que o repo
 firma isso (D7 da TEC-265, D8 da TEC-154). Por isso o texto da novidade e
 montado AQUI, por `_novidade_em_palavras`, em vez de o chamador passar a
 legenda pronta: a legenda carrega preco, e um parametro de texto livre
 deixaria a regra na mao de quem chama.
+
+**"Do imovel" nao e ressalva: e o limite exato do que o codigo garante.** O
+turno que sobe leva tambem `resumo.texto` (ver `_turno`), e o resumo da
+conversa carrega rotineiramente o orcamento que o LEAD declarou, em reais --
+"nenhum numero de preco passa pelo modelo" seria afirmacao mais forte do que
+a implementacao sustenta. O que nao sobe nunca e o preco do imovel: nem o de
+hoje, nem o antigo da queda. E esta frase e citada como precedente, entao ela
+tem de ser exata.
 
 **Este modulo faz I/O; `mensagem.py` nao faz.** A separacao e a mesma que
 aquele modulo ja declara na docstring -- a regra de qual novidade vence e
@@ -221,9 +229,20 @@ async def redigir_abertura(
         # Entram a leitura do resumo (um `ConnectionResetError` e rotineiro
         # nesta base) e a chamada ao provedor.
         #
+        # **O `rollback` e o que faz esse contrato valer de verdade.** A
+        # sessao e emprestada, e a falha mais provavel aqui e justamente a do
+        # `ler_resumo` -- um erro de statement deixa a transacao DESATIVADA, e
+        # a proxima operacao de quem chamou levantaria `PendingRollbackError`.
+        # Sem esta linha, "devolver `None` e nunca levantar" seria verdade
+        # nesta funcao e mentira uma chamada adiante: o `ConnectionResetError`
+        # que o paragrafo acima chama de rotineiro viraria aborto do lote da
+        # varredura. Nada foi escrito aqui, entao o rollback nao pode custar
+        # trabalho de ninguem.
+        #
         # `Exception` e nao `BaseException`: o `CancelledError` do ARQ
         # cancelando o job tem de continuar subindo, senao a varredura
         # seguiria enviando depois de cancelada.
+        await session.rollback()
         log.warning(
             "followup.abertura_descartada",
             channel=channel,

@@ -63,8 +63,10 @@ MAXIMO_DE_ENVIOS_POR_EXECUCAO = 25
 # O segundo teto, e ele tambem NAO e medido -- emenda a D7. Existe porque o de
 # cima, sozinho, nao limita o que diz limitar.
 #
-# **O pior caso de um candidato sao ~130 s, e 120 deles sao do provedor de
-# MODELO, nao da Meta.** A chamada de `redigir_abertura` usa o cliente de
+# **Os dois CLIENTES EXTERNOS de um candidato custam ate ~130 s, e 120 deles
+# sao do provedor de MODELO, nao da Meta** -- e esses ~130 s sao a parte
+# grande do custo de um candidato, nunca o custo inteiro dele (ver a conta do
+# teto, mais abaixo). A chamada de `redigir_abertura` usa o cliente de
 # `infra/anthropic.py`, que tem `TIMEOUT_SEGUNDOS = 60.0` e `MAX_TENTATIVAS =
 # 1` -- 60 s na primeira tentativa mais 60 s na retentativa, ate 120 s por
 # follow-up. O POST para a Meta custa no maximo os `TIMEOUT_SEGUNDOS = 10.0`
@@ -78,12 +80,27 @@ MAXIMO_DE_ENVIOS_POR_EXECUCAO = 25
 # supunha -- e de ~3250 s contra um `job_timeout` de 240. Um teto que so vale
 # na media e decorativo no unico cenario em que um teto importa.
 #
-# **110 s, e a conta e 110 + 130 = 240.** A checagem roda no TOPO do laco, o
-# que significa que mais um candidato inteiro pode comecar imediatamente
-# depois de ela passar: o tempo total no pior caso e o teto MAIS um candidato.
-# Com 180 seriam 310 s contra um `job_timeout` de 240 -- o teto estouraria o
-# orcamento que existe para proteger. 110 fecha exatamente em 240, sem margem
-# sobrando, e e isso que o numero diz.
+# **90 s, e a conta NAO fecha em igualdade -- ela deixa margem de proposito.**
+# A checagem roda no TOPO do laco, o que significa que mais um candidato
+# inteiro pode comecar imediatamente depois de ela passar: o tempo total no
+# pior caso e o teto MAIS um candidato.
+#
+# **E um candidato nao custa os ~130 s dos dois clientes externos: custa esses
+# ~130 s MAIS o proprio custo de banco.** Depois da checagem ele ainda paga
+# `esta_em_optout`, `esta_silenciada`, `registrar_followup` e o commit, as
+# tres consultas de `_novidade_do_followup`, a sessao de `fichas_do_catalogo`,
+# o `ler_resumo` de dentro de `redigir_abertura`, o `scalar` do `de` e as tres
+# sessoes proprias que `GuardedOutbound.send` abre. A versao anterior deste
+# comentario dizia `110 + 130 = 240` como igualdade exata; o proprio codigo a
+# desmentia, porque nenhuma dessas idas ao banco entrava na soma -- e um teto
+# que fecha exatamente numa soma incompleta nao tem margem nenhuma, tem margem
+# NEGATIVA.
+#
+# A conta honesta: 240 (`job_timeout`) - 130 (os dois clientes externos) - 20
+# = 90. Os 20 s sao uma RESERVA declarada para o custo de banco do candidato,
+# e nao uma medicao -- ninguem mediu, e e exatamente por isso que ela e
+# generosa em vez de justa. Quem medir o custo real corrige este numero; a
+# direcao certa continua sendo medir, e nao subir por intuicao.
 #
 # O teto e um numero so, e nao uma condicao com o pior caso subtraido dentro
 # dela, de proposito: dois termos derivados multiplicam o palpite, e um numero
@@ -96,7 +113,7 @@ MAXIMO_DE_ENVIOS_POR_EXECUCAO = 25
 # Quem sobra CONTINUA DEVIDO e entra na varredura seguinte, cinco minutos
 # depois -- a cadencia e ancorada e nao encadeada (docstring de
 # `cadencia.py`), entao nada se desloca por causa do corte.
-TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS = 110
+TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS = 90
 
 
 async def _novidade_do_followup(
@@ -135,10 +152,20 @@ async def _novidade_do_followup(
         )
         if fichas:
             return fichas[0], queda
-        # Imovel inativado entre a consulta da queda e a montagem da ficha:
-        # `imoveis_por_ids` devolve a tupla mais curta em vez de `None` no meio
-        # dela. Cair para a proxima fonte e o unico desfecho possivel -- queda
-        # sem ficha e exatamente o par que `texto_do_followup` recusa.
+        # Tupla vazia aqui e a LINHA do imovel ter sumido entre as duas
+        # consultas -- `imoveis_por_ids` filtra so por id, entao ela encurta a
+        # tupla quando nao ha linha, e NAO quando o status muda. "Inativado"
+        # neste repo e valor de coluna, nao DELETE.
+        #
+        # **Nao existe rede de seguranca a jusante para o status**: quem
+        # garante que a queda e de imovel ainda disponivel e o
+        # `Imovel.status == DISPONIVEL` de `queda_de_preco`, e nada aqui. A
+        # versao anterior deste comentario afirmava o contrario, e foi por
+        # acreditar nela que aquele filtro passou sete tasks faltando --
+        # anunciando queda de preco em imovel VENDIDO.
+        #
+        # Cair para a proxima fonte e o unico desfecho possivel -- queda sem
+        # ficha e exatamente o par que `texto_do_followup` recusa.
 
     novo = await imovel_novo_compativel(
         session,
@@ -227,11 +254,24 @@ async def sweep_followups(
     a tentativa e CONSUMIDA. Para as recusas isso e a L1, declarada; para o
     retentavel e uma perda que o nome do tipo desmente, e o `warning` existe
     para que ela nao seja silenciosa (ver o comentario no corpo).
+
+    **E nenhuma falha POS-COMMIT derruba o lote tampouco** (fix de revisao,
+    TEC-184): a escolha da novidade, a prosa e a leitura do `de` acontecem
+    DEPOIS do commit que consome a tentativa, e as tres vao ao banco. Um erro
+    ali vira `followup.montagem_falhou` em `error`, com `rollback` antes do
+    `continue` -- sem o rollback a sessao ficaria envenenada e o candidato
+    SEGUINTE morreria no `esta_em_optout`, que roda fora do bloco protegido.
+    A promessa acima so era verdadeira sobre o envio ate esta correcao, e a
+    superficie pos-commit desta card e maior que a do envio.
+
     `asyncio.CancelledError` continua propagando: nao e `Exception`.
 
     **Dois tetos por execucao** (D7 e a emenda dela): `MAXIMO_DE_ENVIOS_POR_EXECUCAO`
     e `TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS`, ambos no topo do modulo. Quem
-    fica de fora continua devido e entra na varredura seguinte.
+    fica de fora continua devido e entra na varredura seguinte. A conta que
+    justifica o segundo mora no comentario da constante, e nao aqui, para nao
+    existir em duas copias -- e ela inclui uma reserva declarada para o custo
+    de banco do candidato, que nao esta medido.
 
     **A guarda de horario (TEC-185, RN-13.3) roda antes da consulta, e e a
     unica das quatro que roda antes.** Sob fuso unico (PR-04) a janela e
@@ -473,51 +513,87 @@ async def sweep_followups(
             # posicoes da cadencia sao recusadas (L1) -- nunca cortar nada.
             enviados += 1
 
-            ficha, queda = await _novidade_do_followup(session, session_factory, candidato)
-            # `None` daqui e "sem prefixo", NUNCA erro: a prosa e ornamento, e
-            # uma falha nela nao pode custar ao lead o follow-up inteiro. Ver
-            # o docstring de `redigir_abertura`, que ja trata as quatro causas
-            # la dentro e nunca levanta.
+            # **Todo o trabalho POS-COMMIT deste candidato mora dentro deste
+            # `try`** (fix de revisao, TEC-184). O commit acima tornou a
+            # tentativa CONSUMIDA e irrecuperavel -- a linha e append-only e
+            # `ja_disparada` nao volta --, e o que vem depois dele ainda sao
+            # tres idas ao banco antes do envio: `_novidade_do_followup`, o
+            # `ler_resumo` de dentro de `redigir_abertura`, e o `scalar` do
+            # `de`. Com elas fora de qualquer `except`, um `DBAPIError` num
+            # candidato subia pelo `for` e abortava o job: aquele candidato
+            # ficava com a linha commitada e nenhuma mensagem, e os SEGUINTES
+            # perdiam a propria posicao da cadencia por uma falha que nao era
+            # deles. E a mesma razao que ja justificava o `except
+            # EnvioRecusado` logo abaixo, estendida para a causa que escapava.
             #
-            # A MESMA `ficha` e a MESMA `queda` vao para as duas chamadas:
-            # escolher a novidade duas vezes deixaria a abertura falar de um
-            # imovel e o corpo de outro, e o par invalido (ficha=None com
-            # queda) faria `texto_do_followup` levantar depois de a chamada ao
-            # modelo ja ter sido paga.
-            prefixo = await redigir_abertura(
-                session,
-                channel=candidato.channel,
-                conversation_key=candidato.conversation_key,
-                ficha=ficha,
-                queda=queda,
-            )
-            texto = texto_do_followup(ficha=ficha, queda=queda, prefixo=prefixo)
-
-            # O `de` do payload e o nosso numero, que so existe na linha da
-            # mensagem -- `Candidato` nao o carrega. Mesma leitura que
-            # `notificacao/envio.py` ja faz para montar o aviso ao lead, so
-            # que aqui a mensagem certa e conhecida: e a propria ancora.
+            # A mais provavel delas nao e nem um erro de statement aqui:
+            # `redigir_abertura` engole a propria excecao por contrato (o
+            # `None` dela e "sem prefixo", nunca erro) e, depois de um erro de
+            # statement, a transacao fica desativada -- a operacao seguinte, o
+            # `scalar` do `de`, levantaria `PendingRollbackError`. Por isso o
+            # `except` de la faz `rollback` e este aqui tambem faz: sem o
+            # rollback, o candidato SEGUINTE morreria no `esta_em_optout`, que
+            # roda fora deste bloco.
             #
-            # `None` e inalcancavel pelo caminho da varredura --
-            # `ancora_message_id` sai de uma agregacao sobre `messages` e a FK
-            # de `outbound_dispatches` aponta para a mesma tabela --, e o
-            # guard existe porque `scalar` devolve `str | None` e engolir isso
-            # com um `cast` esconderia o dia em que alguem chamar o job com um
-            # candidato construido a mao.
-            de = await session.scalar(
-                select(Message.recipient_external_id).where(
-                    Message.id == candidato.ancora_message_id
-                )
-            )
-            if de is None:
-                log.warning(
-                    "followup.ancora_sem_mensagem",
-                    channel=candidato.channel,
-                    tentativa=tentativa,
-                )
-                continue
-
+            # `asyncio.CancelledError` continua propagando em todos os tres:
+            # nao e `Exception`.
             try:
+                ficha, queda = await _novidade_do_followup(session, session_factory, candidato)
+                # `None` daqui e "sem prefixo", NUNCA erro: a prosa e ornamento, e
+                # uma falha nela nao pode custar ao lead o follow-up inteiro. Ver
+                # o docstring de `redigir_abertura`, que ja trata as quatro causas
+                # la dentro e nunca levanta.
+                #
+                # A MESMA `ficha` e a MESMA `queda` vao para as duas chamadas:
+                # escolher a novidade duas vezes deixaria a abertura falar de um
+                # imovel e o corpo de outro, e o par invalido (ficha=None com
+                # queda) faria `texto_do_followup` levantar depois de a chamada ao
+                # modelo ja ter sido paga.
+                prefixo = await redigir_abertura(
+                    session,
+                    channel=candidato.channel,
+                    conversation_key=candidato.conversation_key,
+                    ficha=ficha,
+                    queda=queda,
+                )
+                texto = texto_do_followup(ficha=ficha, queda=queda, prefixo=prefixo)
+
+                # O `de` do payload e o nosso numero, que so existe na linha da
+                # mensagem -- `Candidato` nao o carrega. Mesma leitura que
+                # `notificacao/envio.py` ja faz para montar o aviso ao lead, so
+                # que aqui a mensagem certa e conhecida: e a propria ancora.
+                #
+                # **A ancora ser uma fala do LEAD e o que torna este valor CERTO,
+                # e nao so nao-nulo.** `falas_do_lead` filtra `direction =
+                # 'INBOUND'`, e numa linha de ENTRADA `recipient_external_id`
+                # responde "para quem foi" -- o NOSSO numero. Numa linha de SAIDA
+                # a mesma coluna guarda o numero do LEAD, e e por isso que
+                # `notificacao/envio.py` se chaveia na mensagem mais recente DO
+                # LEAD e nao na mais recente da conversa: a outra faria o envio
+                # sair do numero errado.
+                #
+                # `None` e inalcancavel hoje pela COLUNA, e nao pela existencia da
+                # linha: `Message.recipient_external_id` e `nullable=True`
+                # (`messages/models.py`), entao a FK nao diz nada sobre isto --
+                # quem garante o valor e a ingestao, onde
+                # `ParsedMessage.recipient_external_id` e `str` obrigatorio
+                # (`messages/schemas.py`). O guard fica porque `scalar` devolve
+                # `str | None` e porque essa garantia mora noutro modulo: engolir
+                # com um `cast` esconderia tanto a ingestao afrouxar quanto alguem
+                # chamar o job com um candidato construido a mao.
+                de = await session.scalar(
+                    select(Message.recipient_external_id).where(
+                        Message.id == candidato.ancora_message_id
+                    )
+                )
+                if de is None:
+                    log.warning(
+                        "followup.ancora_sem_mensagem",
+                        channel=candidato.channel,
+                        tentativa=tentativa,
+                    )
+                    continue
+
                 await outbound.send(
                     candidato.ancora_message_id,
                     KIND_DO_FOLLOWUP(tentativa),
@@ -595,8 +671,9 @@ async def sweep_followups(
                 # deixar de ser append-only ou uma coluna de desfecho, e e
                 # decisao de outra card.
                 #
-                # `asyncio.CancelledError` NAO cai em nenhum destes dois
-                # `except`: nao e `Exception`, e propaga sozinho. E o desfecho
+                # `asyncio.CancelledError` NAO cai em nenhum dos tres
+                # `except` deste bloco -- nem no `except Exception` mais
+                # abaixo: nao e `Exception`, e propaga sozinho. E o desfecho
                 # certo -- o `job_timeout` ou o shutdown chegou, e seguir
                 # enviando depois de cancelado seria pior.
                 log.warning(
@@ -604,6 +681,30 @@ async def sweep_followups(
                     channel=candidato.channel,
                     tentativa=tentativa,
                     reason=type(falha).__name__,
+                )
+                continue
+            except Exception as falha:
+                # A rede que faltava. Nivel `error` e nao `warning`: ao
+                # contrario da recusa da Meta, isto nao e caminho esperado de
+                # nenhuma posicao da cadencia -- e a tentativa ja foi
+                # consumida pelo commit, entao o lead perdeu essa posicao sem
+                # nunca ter recebido nada.
+                #
+                # O `rollback` vem ANTES do `continue` e e o que torna o
+                # `continue` honesto: depois de um erro de statement a sessao
+                # fica em estado de rollback pendente, e o proximo candidato
+                # bateria nisso no `esta_em_optout` -- fora deste `try` --,
+                # transformando uma falha em aborto do lote pelo caminho
+                # longo.
+                #
+                # So o nome da classe, como no resto do projeto: o texto da
+                # excecao pode carregar corpo de resposta ou dado do lead.
+                await session.rollback()
+                log.error(
+                    "followup.montagem_falhou",
+                    channel=candidato.channel,
+                    tentativa=tentativa,
+                    erro=type(falha).__name__,
                 )
                 continue
 
