@@ -25,7 +25,10 @@ MAX_CARACTERES_DA_LEGENDA = 600
 # legenda de foto.
 CARACTERISTICAS_NO_DESTAQUE = 2
 
-_SEPARADOR_DA_PROSA = "\n\n"
+# Publico pelo mesmo motivo de `prosa_que_cabe`, abaixo: `legenda_de` e o
+# followup (TEC-184) montam a mesma juncao prosa+corpo e precisam do mesmo
+# separador, sem duplicar o literal.
+SEPARADOR_DA_PROSA = "\n\n"
 _RETICENCIA = "..."
 
 
@@ -257,20 +260,25 @@ def legenda_de(ficha: Ficha, *, prefixo: str | None = None) -> str:
         linhas.extend(_linhas_da_rentabilidade(ficha.rentabilidade))
     corpo = "\n".join(linhas)
 
-    prosa = _prosa_que_cabe(prefixo, len(corpo)) if prefixo else ""
+    prosa = prosa_que_cabe(prefixo, len(corpo)) if prefixo else ""
     if not prosa:
         return corpo
-    return f"{prosa}{_SEPARADOR_DA_PROSA}{corpo}"
+    return f"{prosa}{SEPARADOR_DA_PROSA}{corpo}"
 
 
-def _prosa_que_cabe(prefixo: str, tamanho_do_corpo: int) -> str:
+def prosa_que_cabe(prefixo: str, tamanho_do_corpo: int) -> str:
     """O prefixo truncado na ultima fronteira de palavra que couber.
 
     Devolve string vazia quando nao sobra espaco nem para a reticencia --
     prosa cortada no meio de uma palavra sem marca nenhuma pareceria bug ao
     lead, e a ficha nunca cede espaco para evitar isso.
+
+    Publica porque tem dois consumidores: `legenda_de` acima e
+    `mensagem.texto_do_followup` (TEC-184), que aplica o mesmo teto de 600
+    caracteres ao prefixo do follow-up. A aritmetica do corte -- separador,
+    fronteira de palavra, reticencia -- mora so aqui.
     """
-    disponivel = MAX_CARACTERES_DA_LEGENDA - tamanho_do_corpo - len(_SEPARADOR_DA_PROSA)
+    disponivel = MAX_CARACTERES_DA_LEGENDA - tamanho_do_corpo - len(SEPARADOR_DA_PROSA)
     if len(prefixo) <= disponivel:
         return prefixo
     if disponivel <= len(_RETICENCIA):

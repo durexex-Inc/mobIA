@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from mobia.domain.agente.apresentacao import (
     MAX_CARACTERES_DA_LEGENDA,
+    SEPARADOR_DA_PROSA,
     Ficha,
     diferencial_de,
     legenda_de,
@@ -603,7 +604,7 @@ async def test_apresentacao_em_conversa_nova_identifica_sem_perder_ficha(
     teto de 600.
 
     Prefixar a identificacao a prosa a submeteria ao corte de
-    `_prosa_que_cabe`, que devolve string vazia quando nao sobra espaco -- e
+    `prosa_que_cabe`, que devolve string vazia quando nao sobra espaco -- e
     o turno mais comum de uma conversa nova (o lead diz o que procura, o
     agente busca e apresenta) sairia sem identificacao nenhuma, em silencio.
     """
@@ -649,11 +650,9 @@ async def test_apresentacao_em_conversa_nova_identifica_sem_perder_ficha(
             foto=None,
         )
     )
-    # 2 == o tamanho do separador entre prosa e ficha em `legenda_de`
-    # (`_SEPARADOR_DA_PROSA`, privado -- repetido aqui como literal comentado
-    # em vez de importado).
     assert (
-        len(corpo_da_primeira_ficha) + 2 + len(TEXTO_DA_IDENTIFICACAO) > MAX_CARACTERES_DA_LEGENDA
+        len(corpo_da_primeira_ficha) + len(SEPARADOR_DA_PROSA) + len(TEXTO_DA_IDENTIFICACAO)
+        > MAX_CARACTERES_DA_LEGENDA
     ), "cenario nao esta em estouro: este teste passaria mesmo com a implementacao errada"
 
     await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())

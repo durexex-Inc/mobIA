@@ -133,7 +133,7 @@ def test_aluguel_sem_preco_de_venda_mostra_o_valor_sem_o_sufixo_do_yield() -> No
 
 
 def test_o_teto_de_600_corta_a_prosa_e_nunca_o_bloco_do_investidor() -> None:
-    """O bloco entra no CORPO, entao `_prosa_que_cabe` ja o protege de graca:
+    """O bloco entra no CORPO, entao `prosa_que_cabe` ja o protege de graca:
     a prioridade da D14 da TEC-162 nao muda."""
     prosa = "palavra " * 200
     legenda = legenda_de(COM_YIELD, prefixo=prosa)
