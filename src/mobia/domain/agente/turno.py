@@ -49,6 +49,7 @@ from mobia.domain.context.repositorio import (
     contar_perguntas,
     gravar_estado,
     gravar_investidor,
+    ler_estado,
     marcar_perguntados,
     perguntas_contaveis,
     registrar_recalculo,
@@ -403,6 +404,11 @@ async def _continuar_entrega(
     dispara**, porque a FK de `recomendacoes.imovel_id` impede que um imovel
     deste lote seja apagado. O comentario no corpo diz por que ele fica assim
     mesmo, e por que so os ainda NAO entregues podem entrar nele.
+
+    **Le o estado de qualificacao so para escolher a FORMA da ficha (TEC-154,
+    D7)** -- se a trilha e a do investidor, a ficha sai com os indicadores de
+    rentabilidade; senao, sai sem. A leitura nunca muda O QUE e entregue: o
+    lote, os ids e os precos ja vieram fixados pela passada anterior.
     """
     # **Um `message_id` quase sempre tem UM carimbo, mas pode ter dois.**
     # `gravar_recomendacoes` grava o lote inteiro com um `agora` unico, so que
@@ -425,7 +431,53 @@ async def _continuar_entrega(
     precos = {linha.imovel_id: linha.preco_centavos for linha in lote}
     kind_de = {linha.imovel_id: linha.kind for linha in lote}
 
-    fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)
+    # TEC-154, D7. Esta funcao roda ANTES de `montar_contexto` e por isso nao
+    # tem `contexto.estado` nem `ja_e_investidor` -- e a mesma cegueira que o
+    # comentario de `record_agent_message`, mais abaixo, declara para a
+    # telemetria. Ali a consequencia so aparece para quem opera; aqui
+    # apareceria para o LEAD, que receberia a ficha 1 com yield e as fichas 2
+    # e 3 sem. Uma consulta fecha isso.
+    #
+    # **Custo declarado: o estado lido e o de AGORA, nao o do instante da
+    # apresentacao original.** Na maioria dos casos os dois coincidem, mas nao
+    # pelo motivo que este comentario chegou a afirmar (que o turno que
+    # moveria a intencao e o mesmo que esta sendo continuado): o turno
+    # continuado GRAVA o estado antes de apresentar (`gravar_estado`, por
+    # volta da linha 1173, roda antes de `_apresentar`, por volta da 1889, no
+    # mesmo turno) -- ele e justamente o turno capaz de produzir a
+    # divergencia, e nao o que a impede.
+    #
+    # A borda real e estreita: um turno de investidor (`ja_e_investidor` ja
+    # travado desde o inicio do turno) em que o subagente devolve uma
+    # `intencao` definida e NAO-INVESTIMENTO -- o schema aceita qualquer
+    # membro do enum -- e que TAMBEM apresenta. A ficha 1 sai com o bloco
+    # (decidido por `ja_e_investidor`, ja travado, nao pela `intencao` nova),
+    # o estado grava a intencao nova antes do commit, e as fichas 2 e 3 desta
+    # mesma apresentacao, entregues por uma continuacao que rele o estado ja
+    # trocado, saem sem bloco. Exige a virada de intencao MAIS uma entrega
+    # parcial no mesmo turno.
+    #
+    # **A direcao inversa (ficha 1 sem bloco, fichas 2 e 3 com) e
+    # inalcancavel.** `gravar_intencao` sobrescreve `conversation_intent` a
+    # cada turno com a MESMA `gerada.intencao` que `gravar_estado` grava no
+    # estado, entao `anterior.intencao == INVESTIMENTO` (o `anterior` lido
+    # logo abaixo) implica `ja_e_investidor` no turno seguinte. Para a
+    # continuacao reler INVESTIMENTO, este turno teria de gravar
+    # `gerada.intencao == INVESTIMENTO` -- e nesse caso `virou_investidor` (ou
+    # `ja_e_investidor`, se ja fosse) ja forca o bloco na propria ficha 1, o
+    # que fecha exatamente a direcao inversa. A alternativa exata para fechar
+    # a borda estreita que sobra -- gravar a trilha na linha de
+    # `recomendacoes` -- custa coluna, migration e mais uma tabela no
+    # TRUNCATE de todo teste que toca banco.
+    async with session_factory() as session:
+        estado = await ler_estado(session, message.channel, message.conversation_key)
+    # Contra `.value` porque a coluna e str, e nao o enum -- mesma comparacao
+    # que `ja_e_investidor` faz em `executar_turno`.
+    investidor = estado is not None and estado.intencao == Intencao.INVESTIMENTO.value
+
+    fichas = await fichas_do_catalogo(
+        session_factory, ids=ids, precos=precos, com_rentabilidade=investidor
+    )
     encontrados = {ficha.id for ficha in fichas}
 
     # **Este ramo e defensivo e hoje NAO dispara** -- dizer o contrario seria a
@@ -532,14 +584,22 @@ async def _continuar_entrega(
             # produzido, e desde a TEC-153 sao duas.** A trilha do investidor
             # tambem busca e apresenta, entao a passada anterior pode ter sido
             # um turno do subagente investidor -- e esta continuacao grava
-            # `classificador` do mesmo jeito. Nao ha como saber daqui: esta
-            # funcao roda ANTES de `montar_contexto`, nao tem `contexto.estado`
-            # e portanto nao tem `ja_e_investidor`; e o `subagent` da passada
-            # anterior nao e lido de lugar nenhum aqui. A consequencia e real e
-            # esta declarada, nao corrigida: a telemetria subconta as
-            # continuacoes da trilha do investidor, jogando-as no balde do
-            # classificador. Fechar isto exige ler o `subagent` da linha que a
-            # passada anterior gravou -- consulta que esta funcao hoje nao faz.
+            # `classificador` do mesmo jeito.
+            #
+            # **Desde a TEC-154 esta funcao TEM um sinal, e "nao ha como saber
+            # daqui" deixou de ser verdade.** `investidor`, calculado acima, e
+            # a mesma leitura e o mesmo custo ja declarados ali -- o estado e
+            # o de AGORA, nao o do instante da apresentacao original, e por
+            # isso e uma aproximacao da trilha da passada anterior, nao uma
+            # leitura exata dela. Esta card deliberadamente NAO o usou para
+            # este rotulo: trocar `subagent` e mudanca de comportamento de
+            # telemetria, fora do escopo da TEC-154 (que e sobre a ficha), e
+            # entraria sem teste que a prendesse. A consequencia segue real e
+            # declarada, nao corrigida: a telemetria subconta as continuacoes
+            # da trilha do investidor, jogando-as no balde do classificador.
+            # Fechar isto agora e um caminho curto -- `SUBAGENTE_INVESTIDOR if
+            # investidor else SUBAGENTE_CLASSIFICADOR` aqui embaixo -- e nao
+            # mais uma consulta que esta funcao nao faz.
             subagent=SUBAGENTE_CLASSIFICADOR,
             tokens_in=0,
             tokens_out=0,
@@ -1869,6 +1929,18 @@ async def executar_turno(
                 relaxou_preco=resposta_do_turno.relaxou_preco,
                 relaxou_bairro=resposta_do_turno.relaxou_bairro,
                 prosa=texto,
+                # TEC-154, D9. O gatilho e a TRILHA, nunca `perfil_investidor`:
+                # a Emenda E-01 da RN-07.2 fixa que perfil ausente e NULL e nao
+                # MISTO, e proibiu esta card de tratar os dois como um so. Um
+                # Ricardo que ainda nao respondeu horizonte e investidor do
+                # mesmo jeito, e a ficha dele leva os numeros.
+                #
+                # As duas variaveis, e nao so `ja_e_investidor`: no turno da
+                # VIRADA a intencao ainda nao esta no estado que
+                # `montar_contexto` leu, e sem `virou_investidor` a primeira
+                # apresentacao do investidor sairia sem bloco -- justo a que
+                # ele esperava.
+                investidor=ja_e_investidor or virou_investidor,
             )
             entregue = quantas > 0
             # Nenhuma ficha entrou e TODAS foram suprimidas pela reserva: e o
@@ -2807,8 +2879,13 @@ async def _apresentar(
     relaxou_preco: bool,
     relaxou_bairro: bool,
     prosa: str,
+    investidor: bool,
 ) -> tuple[str, int, int]:
     """Entrega ate 3 fichas e devolve (texto para gravar, entregues, suprimidas).
+
+    **`investidor` liga o bloco da RN-07.3 e nada mais.** Ele decide a forma
+    da ficha, nunca quais imoveis entram nela: a busca e a escolha sao as
+    mesmas das duas trilhas.
 
     O texto devolvido sao as legendas concatenadas -- o que o lead recebeu, e
     nao a prosa sozinha. Gravar so a prosa faria o turno seguinte reapresentar
@@ -2878,7 +2955,9 @@ async def _apresentar(
     escolhidos = candidatos[:MAX_IMOVEIS_POR_TURNO]
     ids = [uuid.UUID(c["imovel_id"]) for c in escolhidos]
     precos = {uuid.UUID(c["imovel_id"]): int(c["preco_centavos"]) for c in escolhidos}
-    fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)
+    fichas = await fichas_do_catalogo(
+        session_factory, ids=ids, precos=precos, com_rentabilidade=investidor
+    )
     encontrados = {ficha.id for ficha in fichas}
 
     if len(fichas) < len(escolhidos):

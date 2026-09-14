@@ -100,6 +100,17 @@ def test_o_prompt_do_investidor_nao_pede_quartos_nem_vagas() -> None:
     assert "vaga" not in baixo
 
 
+def test_o_prompt_do_investidor_proibe_projetar_valorizacao() -> None:
+    """Cenario 4 da TEC-154, atendido pela TEC-153 e sem teste ate agora.
+
+    Sem esta assercao, alguem que encurtasse o prompt por orcamento levaria a
+    proibicao junto e nenhum teste reclamaria -- e a RN-04.4 proibe afirmar
+    rentabilidade futura como certa.
+    """
+    baixo = SISTEMA_DO_INVESTIDOR.lower()
+    assert "nao prometa rentabilidade nem projete valorizacao" in baixo
+
+
 def test_o_objeto_ausente_nao_derruba_o_turno() -> None:
     """Mesmo contrato de `extrair`: qualificacao perdida e barata perto de uma
     resposta paga e nao entregue ao lead."""

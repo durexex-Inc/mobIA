@@ -17,7 +17,14 @@ from typing import Any
 
 import structlog
 
-from mobia.domain.agente.apresentacao import Ficha, diferencial_de, reais_de
+from mobia.domain.agente.apresentacao import (
+    Ficha,
+    Rentabilidade,
+    custos_recorrentes,
+    diferencial_de,
+    reais_de,
+    yield_bruto_anual,
+)
 from mobia.domain.agente.recomendacao import bairros_a_excluir
 from mobia.domain.agente.repositorio import ler_descartes_por_distancia
 from mobia.domain.catalogo.enums import EstadoDoRelaxamento, Operacao, TipoImovel
@@ -372,6 +379,7 @@ async def fichas_do_catalogo(
     *,
     ids: Sequence[uuid.UUID],
     precos: Mapping[uuid.UUID, int],
+    com_rentabilidade: bool = False,
 ) -> tuple[Ficha, ...]:
     """As fichas dos imoveis pedidos, na ordem pedida. TEC-162.
 
@@ -385,6 +393,17 @@ async def fichas_do_catalogo(
     buscada so existe dentro de `porta_de_busca`. Ler a coluna aqui faria
     toda busca de aluguel mostrar preco de venda ao lead -- ver a D7 do
     desenho.
+
+    `com_rentabilidade` liga os indicadores da TEC-154, default `False` --
+    quem ja chama esta funcao continua recebendo `Ficha.rentabilidade is
+    None`, sem custo. Quando ligado, o yield sai de `imovel.preco_venda` e
+    NUNCA de `precos[...]`: `precos` traz o preco da operacao BUSCADA, que
+    para um investidor buscando ALUGUEL e o aluguel -- usa-lo como base do
+    yield anual daria 1200% ao ano numa ficha que o lead le como fato. O
+    parametro chama-se `com_rentabilidade`, e nao `rentabilidade`, porque no
+    corpo desta funcao ele conviveria com o argumento `rentabilidade=` do
+    `Ficha(...)` abaixo -- dois nomes iguais e tipos diferentes na mesma
+    expressao.
     """
     async with session_factory() as session:
         imoveis = await imoveis_por_ids(session, ids)
@@ -401,6 +420,22 @@ async def fichas_do_catalogo(
             condominio_centavos=imovel.condominio,
             diferencial=diferencial_de(imovel.caracteristicas),
             foto=imovel.fotos[0] if imovel.fotos else None,
+            # TEC-154. Default `False`, entao a trilha padrao nao paga nada.
+            # O yield sai de `imovel.preco_venda` e NUNCA de `precos[...]`:
+            # aquele e o preco da operacao BUSCADA, e num investidor que
+            # buscasse ALUGUEL ele seria o aluguel -- yield de 1200% ao ano
+            # numa ficha que o lead le como fato. E a D7 desta funcao ao
+            # contrario: la a coluna nao podia ser lida, aqui ela e a unica
+            # fonte correta.
+            rentabilidade=(
+                Rentabilidade(
+                    aluguel_centavos=imovel.preco_aluguel,
+                    yield_pct=yield_bruto_anual(imovel.preco_aluguel, imovel.preco_venda),
+                    custos_centavos=custos_recorrentes(imovel.condominio, imovel.iptu_mensal),
+                )
+                if com_rentabilidade
+                else None
+            ),
         )
         for imovel in imoveis
     )

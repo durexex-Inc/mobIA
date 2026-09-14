@@ -36,15 +36,20 @@ from mobia.domain.agente.investidor import (
     RetornoEsperadoTipo,
 )
 from mobia.domain.agente.models import Recomendacao
+from mobia.domain.agente.repositorio import LinhaDaApresentacao
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.agente.turno import (
     SUBAGENTE_INVESTIDOR,
     TEXTO_DA_BUSCA_INCONCLUSIVA,
     TEXTO_DO_LIMITE_DE_PERGUNTAS,
+    _continuar_entrega,
 )
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification
-from mobia.domain.messages.models import MessageTelemetry
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
+from mobia.domain.messages.models import Message, MessageTelemetry
+from mobia.domain.messages.status import MessageStatus
+from mobia.infra.db import get_sessionmaker
 
 # Os mesmos valores que `CANAL_AGENTE`/`CONVERSA_AGENTE` em `tests/conftest.py`,
 # porque `rodar_turno` semeia a fala nessa conversa e o estado tem de casar com
@@ -394,39 +399,60 @@ async def test_o_teto_ainda_vale_quando_e_o_investidor_que_pergunta_demais(
     assert "LIMITE_DE_PERGUNTAS" in await _gatilhos(session)
 
 
-async def _imovel(session: Any, codigo: str) -> uuid.UUID:
+async def _imovel(session: Any, codigo: str, **sobrescritas: object) -> uuid.UUID:
     """Uma linha de catalogo para a ficha ter de onde sair.
 
     Copiado de `test_citacao_no_turno.py`: os arquivos de integracao deste repo
     sao autocontidos de proposito.
     """
     identificador = uuid.uuid4()
-    session.add(
-        Imovel(
-            id=identificador,
-            codigo=codigo,
-            titulo=f"Apartamento {codigo}",
-            descricao="Sala ampla com varanda.",
-            tipo="APARTAMENTO",
-            operacao="VENDA",
-            preco_venda=51_646_430,
-            condominio=55000,
-            bairro="Lagoa da Conceicao",
-            bairro_busca="lagoa da conceicao",
-            cidade="Florianopolis",
-            uf="SC",
-            area_util_m2=54,
-            quartos=4,
-            suites=1,
-            banheiros=2,
-            vagas=2,
-            caracteristicas=["churrasqueira", "mobiliado"],
-            fotos=[f"https://exemplo.com/{codigo}.jpg"],
-            status="DISPONIVEL",
-        )
-    )
+    campos: dict[str, object] = {
+        "id": identificador,
+        "codigo": codigo,
+        "titulo": f"Apartamento {codigo}",
+        "descricao": "Sala ampla com varanda.",
+        "tipo": "APARTAMENTO",
+        "operacao": "VENDA",
+        "preco_venda": 51_646_430,
+        "preco_aluguel": 350000,
+        "condominio": 55000,
+        "bairro": "Lagoa da Conceicao",
+        "bairro_busca": "lagoa da conceicao",
+        "cidade": "Florianopolis",
+        "uf": "SC",
+        "area_util_m2": 54,
+        "quartos": 4,
+        "suites": 1,
+        "banheiros": 2,
+        "vagas": 2,
+        "caracteristicas": ["churrasqueira", "mobiliado"],
+        "fotos": [f"https://exemplo.com/{codigo}.jpg"],
+        "status": "DISPONIVEL",
+    }
+    campos.update(sobrescritas)
+    session.add(Imovel(**campos))
     await session.commit()
     return identificador
+
+
+async def _mensagem_do_lead(session: Any) -> Message:
+    """Uma mensagem ja processada, para a continuacao ter o que continuar."""
+    identificador = uuid.uuid4()
+    mensagem = Message(
+        id=identificador,
+        channel=CANAL,
+        provider_message_id=f"wamid.{identificador.hex[:10]}",
+        conversation_key=CONVERSA,
+        role=MessageRole.LEAD,
+        direction=MessageDirection.INBOUND,
+        content_type=MessageContentType.TEXTO,
+        text_body=None,
+        raw_payload=None,
+        status=MessageStatus.PROCESSED,
+    )
+    session.add(mensagem)
+    await session.commit()
+    return mensagem
 
 
 async def test_a_virada_apresenta_as_fichas_da_busca_do_investidor(
@@ -459,3 +485,135 @@ async def test_a_virada_apresenta_as_fichas_da_busca_do_investidor(
     session.expire_all()
     apresentados = list(await session.scalars(select(Recomendacao.imovel_id)))
     assert apresentados == [do_investidor]
+
+
+async def test_a_ficha_do_investidor_traz_os_indicadores(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """RN-07.3: quem esta na trilha do investidor recebe os numeros na ficha.
+
+    O yield afirmado aqui vale por uma assercao da D2 tambem: `_candidato_de`
+    manda `preco_centavos=51_646_430` e a linha tem `preco_venda=50_000_000`.
+    6,0% so sai se a conta usar a COLUNA; usar o preco apresentado daria 5,8%.
+    """
+    await _conversa_ja_existe(session)
+    await _semear_estado(session, intencao=Intencao.INVESTIMENTO.value)
+    imovel = await _imovel(
+        session, "AP-1004", preco_venda=50_000_000, preco_aluguel=250_000, iptu_mensal=32_000
+    )
+    classificador = classificador_fake(Intencao.INVESTIMENTO)
+    classificador.candidatos_do_investidor = [_candidato_de("AP-1004", imovel)]
+    outbound = outbound_fake()
+
+    await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
+
+    fichas = [texto for texto in outbound.entregues if "Apartamento AP-1004" in texto]
+    assert fichas, "nenhuma ficha foi entregue -- o teste nao afirmaria nada"
+    assert "Aluguel estimado R$ 2.500 - yield bruto 6,0% ao ano" in fichas[0]
+    assert "Condominio + IPTU R$ 870/mes" in fichas[0]
+    assert fichas[0].endswith("Estimativa, nao e garantia de retorno.")
+
+
+async def test_a_ficha_de_comprador_nao_traz_indicador_nenhum(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """A trilha padrao nao mudou: o MESMO imovel, sem numero de rentabilidade.
+
+    Sem este par, um bug que ligasse o bloco para todo mundo passaria -- o
+    teste irmao continuaria verde.
+    """
+    await _conversa_ja_existe(session)
+    await _semear_estado(session, intencao=Intencao.COMPRA.value)
+    imovel = await _imovel(
+        session, "AP-1005", preco_venda=50_000_000, preco_aluguel=250_000, iptu_mensal=32_000
+    )
+    classificador = classificador_fake(Intencao.COMPRA)
+    classificador.candidatos = [_candidato_de("AP-1005", imovel)]
+    outbound = outbound_fake()
+
+    await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
+
+    fichas = [texto for texto in outbound.entregues if "Apartamento AP-1005" in texto]
+    assert fichas, "nenhuma ficha foi entregue -- o teste nao afirmaria nada"
+    assert "yield" not in fichas[0]
+    assert "Estimativa" not in fichas[0]
+
+
+async def test_a_continuacao_de_um_investidor_mantem_os_indicadores(session, outbound_fake) -> None:
+    """D7: sem isto a ficha 1 sai com yield e a 2, minutos depois, sem -- a
+    mesma apresentacao em dois formatos, e quem ve a diferenca e o LEAD.
+
+    `_continuar_entrega` roda ANTES de `montar_contexto` e por isso nao tem
+    `contexto.estado` nem `ja_e_investidor`; quem responde "que trilha e
+    esta?" e `ler_estado`.
+    """
+    from datetime import UTC, datetime
+
+    await _semear_estado(session, intencao=Intencao.INVESTIMENTO.value)
+    mensagem = await _mensagem_do_lead(session)
+    imovel = await _imovel(
+        session, "AP-1006", preco_venda=50_000_000, preco_aluguel=250_000, iptu_mensal=32_000
+    )
+    lote = [
+        LinhaDaApresentacao(
+            imovel_id=imovel,
+            preco_centavos=50_000_000,
+            kind="ficha_2",
+            apresentado_em=datetime.now(UTC),
+        )
+    ]
+    outbound = outbound_fake()
+
+    await _continuar_entrega(
+        get_sessionmaker(),
+        message=mensagem,
+        outbound=outbound,
+        lote=lote,
+        ja_reservados=frozenset(),
+    )
+
+    assert outbound.entregues, "nada foi entregue -- o teste nao afirmaria nada"
+    assert "yield bruto 6,0% ao ano" in outbound.entregues[0]
+    assert outbound.entregues[0].endswith("Estimativa, nao e garantia de retorno.")
+
+
+async def test_a_continuacao_de_um_comprador_nao_ganha_indicador_nenhum(
+    session, outbound_fake
+) -> None:
+    """Contraprova do teste acima, mesma disciplina do par investidor/
+    comprador que este arquivo ja segue para `_apresentar`
+    (`test_a_ficha_do_investidor_traz_os_indicadores` e
+    `test_a_ficha_de_comprador_nao_traz_indicador_nenhum`).
+
+    Sem isto, trocar `investidor` por `True` fixo em `_continuar_entrega`
+    continuaria verde no teste irmao -- ele so afirma que o investidor
+    MANTEM o bloco, nunca que o comprador continua sem.
+    """
+    from datetime import UTC, datetime
+
+    await _semear_estado(session, intencao=Intencao.COMPRA.value)
+    mensagem = await _mensagem_do_lead(session)
+    imovel = await _imovel(
+        session, "AP-1007", preco_venda=50_000_000, preco_aluguel=250_000, iptu_mensal=32_000
+    )
+    lote = [
+        LinhaDaApresentacao(
+            imovel_id=imovel,
+            preco_centavos=50_000_000,
+            kind="ficha_2",
+            apresentado_em=datetime.now(UTC),
+        )
+    ]
+    outbound = outbound_fake()
+
+    await _continuar_entrega(
+        get_sessionmaker(),
+        message=mensagem,
+        outbound=outbound,
+        lote=lote,
+        ja_reservados=frozenset(),
+    )
+
+    assert outbound.entregues, "nada foi entregue -- o teste nao afirmaria nada"
+    assert "yield" not in outbound.entregues[0]
+    assert "Estimativa" not in outbound.entregues[0]

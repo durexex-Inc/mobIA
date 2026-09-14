@@ -32,6 +32,7 @@
 > | E-01 | RN-05.5 | [TEC-149](https://eduardodurieuxlopes.atlassian.net/browse/TEC-149) | 14/09/2026 |
 > | E-01 | RN-07.2 | [TEC-153](https://eduardodurieuxlopes.atlassian.net/browse/TEC-153) | 14/09/2026 |
 > | E-01 | RN-05.2 | [TEC-153](https://eduardodurieuxlopes.atlassian.net/browse/TEC-153) | 14/09/2026 |
+> | E-01 | RN-07.3, RN-07.5, RN-10.1 | [TEC-154](https://eduardodurieuxlopes.atlassian.net/browse/TEC-154) | 14/09/2026 |
 >
 > **Este índice está incompleto e a linha acima não o conserta.** Emendas do corpo de várias cards (TEC-139, TEC-142, TEC-161, TEC-162, TEC-174 a TEC-179, TEC-196, TEC-278) nunca foram indexadas — a TEC-275 acrescentou só a sua. Quem procura a lista completa lê o corpo do documento, não esta tabela.
 
@@ -244,8 +245,10 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 - RN-07.2: Perfil classificado em `RENDA` (foco em aluguel recorrente), `VALORIZACAO` (revenda) ou `MISTO`, a partir das respostas sobre horizonte e expectativa de retorno.
   - **Emenda E-01 (TEC-153, 14/09/2026):** A regra manda classificar o perfil *"a partir das respostas sobre horizonte e expectativa de retorno"*, e a única expectativa que o dicionário de dados modela é `retorno_esperado_pct numeric(4,2)`, em % a.a. Percentual não separa renda de valorização — a mesma taxa descreve os dois. A emenda fixa que a expectativa usada na classificação é **qualitativa**, num campo próprio (`retorno_esperado_tipo`: `ALUGUEL`, `REVENDA`, `AMBOS`), e que o percentual permanece como dado, sem papel na classificação. Fica declarado também que o perfil é `NULL` — e não `MISTO` — enquanto qualquer um dos dois campos faltar, porque `MISTO` afirma um perfil e a ausência não afirma nada. **Consequência declarada:** a RN-07.3 e a TEC-154 não podem tratar perfil ausente como misto.
 - RN-07.3: Ao apresentar imóveis para investidor, o sistema exibe indicadores calculados a partir dos dados do catálogo: valor do aluguel estimado, **yield bruto anual** (`aluguel_mensal × 12 ÷ preço_venda`) e valor do condomínio + IPTU. Não projeta valorização futura (RN-04.4).
+  - **Emenda E-01 (TEC-154, 14/09/2026):** A regra diz "valor do aluguel estimado" sem nomear a origem. Fica fixado que a origem é a coluna `preco_aluguel` do catálogo: **não existe coluna de aluguel estimado**, e nada é estimado pelo sistema nem pelo modelo. O yield usa `preco_venda` do catálogo qualquer que tenha sido a operação buscada, e não o preço apresentado ao lead. **Consequência declarada:** imóvel sem `preco_aluguel` ou sem `preco_venda` não exibe yield — no seed de 520 imóveis isso alcança 467 deles, entre eles todos os 375 que são só VENDA.
 - RN-07.4: Investidor com ticket ≥ R$ 1.000.000 é roteado para corretor com especialidade `INVESTIMENTO_ALTO_TICKET`; abaixo disso, para `INVESTIMENTO`.
 - RN-07.5: Todo número de rentabilidade é apresentado como estimativa baseada em dados do catálogo, com ressalva explícita de que não é garantia.
+  - **Emenda E-01 (TEC-154, 14/09/2026):** A ressalva é texto determinístico do código, repetido em **cada** ficha que carregue número estimado, e não redigido pelo modelo — precedente do aviso de ampliação (TEC-160) e do motivo de match (TEC-163). Ela **não** acompanha condomínio e IPTU quando não há número estimado: são fato do catálogo, e ressalvá-los ensinaria o lead a ignorar a ressalva onde ela importa.
 
 **Critérios de aceite:**
 - CA-07.1: Dado "quero investir em imóveis para renda", quando o agente responde, então o subagente investidor assume e a primeira pergunta é sobre ticket ou expectativa de retorno.
@@ -303,6 +306,7 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 
 **Regras de negócio:**
 - RN-10.1: Cada imóvel apresentado traz: título, bairro, preço, quartos, vagas, área útil, condomínio e um diferencial em uma frase.
+  - **Emenda E-01 (TEC-154, 14/09/2026):** A regra fixa oito campos por imóvel apresentado. Na trilha do investidor (RN-07.3), a ficha leva **três linhas além dos oito**, ao fim: aluguel estimado com yield bruto anual, condomínio somado ao IPTU, e a ressalva da RN-07.5. Os oito campos não mudam nem cedem espaço — inclusive a linha de condomínio, que permanece ao lado do somatório com o IPTU. Fora da trilha do investidor a ficha é exatamente a de hoje.
 - RN-10.2: No WhatsApp, envia-se uma imagem por imóvel com legenda estruturada; no widget web, um card clicável. Máximo de 3 por turno.
   - **Emenda E-01 (TEC-162, 09/09/2026):** o *"card clicável"* no widget web fica com a TEC-124, que é quem traz o canal. Na data desta emenda o widget não existe — `channel` conhece `wa` e `eval` — e desenhar o formato do card sem widget contra o qual validá-lo seria palpite sem consumidor. A TEC-162 entrega a ficha agnóstica de canal e o renderizador do WhatsApp; a TEC-124 escreve o renderizador de card contra a ficha que já existirá. A cláusula do *"máximo de 3 por turno"* continua inalterada.
 - RN-10.3: Toda apresentação é registrada como `Recomendacao` com o motivo do match, permitindo medir taxa de conversão por imóvel.
