@@ -394,37 +394,38 @@ async def test_o_teto_ainda_vale_quando_e_o_investidor_que_pergunta_demais(
     assert "LIMITE_DE_PERGUNTAS" in await _gatilhos(session)
 
 
-async def _imovel(session: Any, codigo: str) -> uuid.UUID:
+async def _imovel(session: Any, codigo: str, **sobrescritas: object) -> uuid.UUID:
     """Uma linha de catalogo para a ficha ter de onde sair.
 
     Copiado de `test_citacao_no_turno.py`: os arquivos de integracao deste repo
     sao autocontidos de proposito.
     """
     identificador = uuid.uuid4()
-    session.add(
-        Imovel(
-            id=identificador,
-            codigo=codigo,
-            titulo=f"Apartamento {codigo}",
-            descricao="Sala ampla com varanda.",
-            tipo="APARTAMENTO",
-            operacao="VENDA",
-            preco_venda=51_646_430,
-            condominio=55000,
-            bairro="Lagoa da Conceicao",
-            bairro_busca="lagoa da conceicao",
-            cidade="Florianopolis",
-            uf="SC",
-            area_util_m2=54,
-            quartos=4,
-            suites=1,
-            banheiros=2,
-            vagas=2,
-            caracteristicas=["churrasqueira", "mobiliado"],
-            fotos=[f"https://exemplo.com/{codigo}.jpg"],
-            status="DISPONIVEL",
-        )
-    )
+    campos: dict[str, object] = {
+        "id": identificador,
+        "codigo": codigo,
+        "titulo": f"Apartamento {codigo}",
+        "descricao": "Sala ampla com varanda.",
+        "tipo": "APARTAMENTO",
+        "operacao": "VENDA",
+        "preco_venda": 51_646_430,
+        "preco_aluguel": 350000,
+        "condominio": 55000,
+        "bairro": "Lagoa da Conceicao",
+        "bairro_busca": "lagoa da conceicao",
+        "cidade": "Florianopolis",
+        "uf": "SC",
+        "area_util_m2": 54,
+        "quartos": 4,
+        "suites": 1,
+        "banheiros": 2,
+        "vagas": 2,
+        "caracteristicas": ["churrasqueira", "mobiliado"],
+        "fotos": [f"https://exemplo.com/{codigo}.jpg"],
+        "status": "DISPONIVEL",
+    }
+    campos.update(sobrescritas)
+    session.add(Imovel(**campos))
     await session.commit()
     return identificador
 
@@ -459,3 +460,55 @@ async def test_a_virada_apresenta_as_fichas_da_busca_do_investidor(
     session.expire_all()
     apresentados = list(await session.scalars(select(Recomendacao.imovel_id)))
     assert apresentados == [do_investidor]
+
+
+async def test_a_ficha_do_investidor_traz_os_indicadores(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """RN-07.3: quem esta na trilha do investidor recebe os numeros na ficha.
+
+    O yield afirmado aqui vale por uma asserta da D2 tambem: `_candidato_de`
+    manda `preco_centavos=51_646_430` e a linha tem `preco_venda=50_000_000`.
+    6,0% so sai se a conta usar a COLUNA; usar o preco apresentado daria 5,8%.
+    """
+    await _conversa_ja_existe(session)
+    await _semear_estado(session, intencao=Intencao.INVESTIMENTO.value)
+    imovel = await _imovel(
+        session, "AP-1004", preco_venda=50_000_000, preco_aluguel=250_000, iptu_mensal=32_000
+    )
+    classificador = classificador_fake(Intencao.INVESTIMENTO)
+    classificador.candidatos_do_investidor = [_candidato_de("AP-1004", imovel)]
+    outbound = outbound_fake()
+
+    await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
+
+    fichas = [texto for texto in outbound.entregues if "Apartamento AP-1004" in texto]
+    assert fichas, "nenhuma ficha foi entregue -- o teste nao afirmaria nada"
+    assert "Aluguel estimado R$ 2.500 - yield bruto 6,0% ao ano" in fichas[0]
+    assert "Condominio + IPTU R$ 870/mes" in fichas[0]
+    assert fichas[0].endswith("Estimativa, nao e garantia de retorno.")
+
+
+async def test_a_ficha_de_comprador_nao_traz_indicador_nenhum(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """A trilha padrao nao mudou: o MESMO imovel, sem numero de rentabilidade.
+
+    Sem este par, um bug que ligasse o bloco para todo mundo passaria -- o
+    teste irmao continuaria verde.
+    """
+    await _conversa_ja_existe(session)
+    await _semear_estado(session, intencao=Intencao.COMPRA.value)
+    imovel = await _imovel(
+        session, "AP-1005", preco_venda=50_000_000, preco_aluguel=250_000, iptu_mensal=32_000
+    )
+    classificador = classificador_fake(Intencao.COMPRA)
+    classificador.candidatos = [_candidato_de("AP-1005", imovel)]
+    outbound = outbound_fake()
+
+    await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
+
+    fichas = [texto for texto in outbound.entregues if "Apartamento AP-1005" in texto]
+    assert fichas, "nenhuma ficha foi entregue -- o teste nao afirmaria nada"
+    assert "yield" not in fichas[0]
+    assert "Estimativa" not in fichas[0]

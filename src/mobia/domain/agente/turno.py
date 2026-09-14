@@ -1869,6 +1869,18 @@ async def executar_turno(
                 relaxou_preco=resposta_do_turno.relaxou_preco,
                 relaxou_bairro=resposta_do_turno.relaxou_bairro,
                 prosa=texto,
+                # TEC-154, D9. O gatilho e a TRILHA, nunca `perfil_investidor`:
+                # a Emenda E-01 da RN-07.2 fixa que perfil ausente e NULL e nao
+                # MISTO, e proibiu esta card de tratar os dois como um so. Um
+                # Ricardo que ainda nao respondeu horizonte e investidor do
+                # mesmo jeito, e a ficha dele leva os numeros.
+                #
+                # As duas variaveis, e nao so `ja_e_investidor`: no turno da
+                # VIRADA a intencao ainda nao esta no estado que
+                # `montar_contexto` leu, e sem `virou_investidor` a primeira
+                # apresentacao do investidor sairia sem bloco -- justo a que
+                # ele esperava.
+                investidor=ja_e_investidor or virou_investidor,
             )
             entregue = quantas > 0
             # Nenhuma ficha entrou e TODAS foram suprimidas pela reserva: e o
@@ -2807,8 +2819,13 @@ async def _apresentar(
     relaxou_preco: bool,
     relaxou_bairro: bool,
     prosa: str,
+    investidor: bool,
 ) -> tuple[str, int, int]:
     """Entrega ate 3 fichas e devolve (texto para gravar, entregues, suprimidas).
+
+    **`investidor` liga o bloco da RN-07.3 e nada mais.** Ele decide a forma
+    da ficha, nunca quais imoveis entram nela: a busca e a escolha sao as
+    mesmas das duas trilhas.
 
     O texto devolvido sao as legendas concatenadas -- o que o lead recebeu, e
     nao a prosa sozinha. Gravar so a prosa faria o turno seguinte reapresentar
@@ -2878,7 +2895,9 @@ async def _apresentar(
     escolhidos = candidatos[:MAX_IMOVEIS_POR_TURNO]
     ids = [uuid.UUID(c["imovel_id"]) for c in escolhidos]
     precos = {uuid.UUID(c["imovel_id"]): int(c["preco_centavos"]) for c in escolhidos}
-    fichas = await fichas_do_catalogo(session_factory, ids=ids, precos=precos)
+    fichas = await fichas_do_catalogo(
+        session_factory, ids=ids, precos=precos, com_rentabilidade=investidor
+    )
     encontrados = {ficha.id for ficha in fichas}
 
     if len(fichas) < len(escolhidos):
