@@ -11,6 +11,7 @@ from decimal import Decimal
 from mobia.domain.agente.apresentacao import (
     MAX_CARACTERES_DA_LEGENDA,
     Ficha,
+    Rentabilidade,
     custos_recorrentes,
     diferencial_de,
     legenda_de,
@@ -33,6 +34,86 @@ COMPLETA = Ficha(
     diferencial="churrasqueira e mobiliado",
     foto="https://exemplo.com/ap-1004-1.jpg",
 )
+
+
+COM_YIELD = replace(
+    COMPLETA,
+    rentabilidade=Rentabilidade(
+        aluguel_centavos=876004,
+        yield_pct=Decimal("4.3"),
+        custos_centavos=261500,
+    ),
+)
+
+
+def test_sem_rentabilidade_a_legenda_e_identica_a_de_hoje() -> None:
+    """A trilha padrao nao paga nada por esta card -- nem um caractere."""
+    assert legenda_de(COMPLETA) == (
+        "Apartamento em Lagoa da Conceicao\n"
+        "Lagoa da Conceicao - R$ 516.464\n"
+        "4 quartos - 2 vagas - 54 m2\n"
+        "Condominio R$ 550\n"
+        "Destaque: churrasqueira e mobiliado"
+    )
+
+
+def test_o_bloco_do_investidor_sai_no_fim_com_a_ressalva_por_ultimo() -> None:
+    """D6: a ficha padrao nao muda de forma e o extra e um apendice coeso.
+
+    A linha `Condominio R$ 550` PERMANECE ao lado do somatorio: condominio e
+    um dos oito campos da RN-10.1, e suprimi-lo para o investidor quebraria
+    aquela regra para ganhar 20 caracteres. De quebra, as duas linhas juntas
+    revelam o IPTU, que nao tem linha propria.
+    """
+    assert legenda_de(COM_YIELD) == (
+        "Apartamento em Lagoa da Conceicao\n"
+        "Lagoa da Conceicao - R$ 516.464\n"
+        "4 quartos - 2 vagas - 54 m2\n"
+        "Condominio R$ 550\n"
+        "Destaque: churrasqueira e mobiliado\n"
+        "Aluguel estimado R$ 8.760 - yield bruto 4,3% ao ano\n"
+        "Condominio + IPTU R$ 2.615/mes\n"
+        "Estimativa, nao e garantia de retorno."
+    )
+
+
+def test_sem_aluguel_a_ficha_diz_que_o_dado_nao_existe_e_nao_ressalva_nada() -> None:
+    """Cenario 3 do Gherkin, que e o caminho de ~88% dos candidatos de VENDA.
+
+    Sem numero estimado nao ha o que ressalvar: condominio e IPTU sao fato do
+    catalogo, e ressalva-los ensinaria o lead a ignorar a ressalva onde ela
+    importa.
+    """
+    sem_aluguel = replace(
+        COMPLETA,
+        rentabilidade=Rentabilidade(aluguel_centavos=None, yield_pct=None, custos_centavos=261500),
+    )
+    assert legenda_de(sem_aluguel).endswith(
+        "Aluguel estimado: nao informado\nCondominio + IPTU R$ 2.615/mes"
+    )
+
+
+def test_aluguel_sem_preco_de_venda_mostra_o_valor_sem_o_sufixo_do_yield() -> None:
+    """D2: trocar por `nao informado` seria negar um aluguel que esta no
+    catalogo -- a mentira do cenario 3 na direcao contraria. A ressalva sai,
+    porque ha numero estimado."""
+    so_aluguel = replace(
+        COMPLETA,
+        rentabilidade=Rentabilidade(aluguel_centavos=876004, yield_pct=None, custos_centavos=None),
+    )
+    assert legenda_de(so_aluguel).endswith(
+        "Aluguel estimado R$ 8.760\nEstimativa, nao e garantia de retorno."
+    )
+    assert "yield" not in legenda_de(so_aluguel)
+
+
+def test_o_teto_de_600_corta_a_prosa_e_nunca_o_bloco_do_investidor() -> None:
+    """O bloco entra no CORPO, entao `_prosa_que_cabe` ja o protege de graca:
+    a prioridade da D14 da TEC-162 nao muda."""
+    prosa = "palavra " * 200
+    legenda = legenda_de(COM_YIELD, prefixo=prosa)
+    assert len(legenda) <= MAX_CARACTERES_DA_LEGENDA
+    assert legenda.endswith("Estimativa, nao e garantia de retorno.")
 
 
 def test_a_legenda_traz_os_oito_campos_da_rn_10_1() -> None:

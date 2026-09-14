@@ -30,44 +30,6 @@ _RETICENCIA = "..."
 
 
 @dataclass(frozen=True, slots=True)
-class Ficha:
-    """Os oito campos da RN-10.1, resolvidos e agnosticos de canal -- mais o
-    `id` do imovel, que nao e um dos oito e nao aparece na legenda.
-
-    `id` existe para quem opera, nao para o lead: fix wave da TEC-162
-    (Minor). Sem ele, `turno.py` nao tinha como dizer QUAL imovel sumiu do
-    catalogo entre a busca e a apresentacao -- so quantos.
-
-    Tres dos oito campos sao opcionais porque o catalogo os tem vazios de
-    verdade -- 117 dos 520 imoveis do seed nao tem caracteristica nenhuma.
-    Ausencia omite a linha e nunca esconde o imovel, que e a regra da propria
-    RN-10.2 sobre foto.
-    """
-
-    id: uuid.UUID
-    titulo: str
-    bairro: str
-    preco_centavos: int
-    quartos: int
-    vagas: int
-    area_util_m2: int
-    condominio_centavos: int | None
-    diferencial: str | None
-    foto: str | None
-
-
-def reais_de(centavos: int) -> str:
-    """`R$ 516.464` a partir de 51646430.
-
-    Trunca os centavos para BAIXO e nunca arredonda: arredondar para cima
-    cota ao lead um preco acima do real, e e essa a direcao que vira
-    reclamacao na visita. O seed tem preco com centavos de verdade
-    (`516464.30`), entao isto nao e hipotese.
-    """
-    return f"R$ {centavos // 100:,}".replace(",", ".")
-
-
-@dataclass(frozen=True, slots=True)
 class Rentabilidade:
     """Os indicadores da RN-07.3, e so para a trilha do investidor. TEC-154.
 
@@ -96,6 +58,48 @@ class Rentabilidade:
     aluguel_centavos: int | None
     yield_pct: Decimal | None
     custos_centavos: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class Ficha:
+    """Os oito campos da RN-10.1, resolvidos e agnosticos de canal -- mais o
+    `id` do imovel, que nao e um dos oito e nao aparece na legenda.
+
+    `id` existe para quem opera, nao para o lead: fix wave da TEC-162
+    (Minor). Sem ele, `turno.py` nao tinha como dizer QUAL imovel sumiu do
+    catalogo entre a busca e a apresentacao -- so quantos.
+
+    Tres dos oito campos sao opcionais porque o catalogo os tem vazios de
+    verdade -- 117 dos 520 imoveis do seed nao tem caracteristica nenhuma.
+    Ausencia omite a linha e nunca esconde o imovel, que e a regra da propria
+    RN-10.2 sobre foto.
+    """
+
+    id: uuid.UUID
+    titulo: str
+    bairro: str
+    preco_centavos: int
+    quartos: int
+    vagas: int
+    area_util_m2: int
+    condominio_centavos: int | None
+    diferencial: str | None
+    foto: str | None
+    # TEC-154. `None` e a trilha PADRAO, e nao "investidor sem dado" -- ver a
+    # docstring de `Rentabilidade`. Com default e no fim de proposito: `Ficha`
+    # e `slots=True` e toda construcao existente tem de seguir valida.
+    rentabilidade: Rentabilidade | None = None
+
+
+def reais_de(centavos: int) -> str:
+    """`R$ 516.464` a partir de 51646430.
+
+    Trunca os centavos para BAIXO e nunca arredonda: arredondar para cima
+    cota ao lead um preco acima do real, e e essa a direcao que vira
+    reclamacao na visita. O seed tem preco com centavos de verdade
+    (`516464.30`), entao isto nao e hipotese.
+    """
+    return f"R$ {centavos // 100:,}".replace(",", ".")
 
 
 def yield_bruto_anual(
@@ -162,6 +166,44 @@ def _pluralizado(quantidade: int, singular: str, plural: str) -> str:
     return singular if quantidade == 1 else plural
 
 
+# RN-07.5 e RN-04.4 na mesma frase: "estimativa" cobre a ressalva de que o
+# numero e estimado, e "nao e garantia" cobre a proibicao de apresentar
+# rentabilidade como garantida. Texto do CODIGO, nao do modelo -- precedente
+# do aviso de ampliacao (TEC-160) e do motivo de match (TEC-163): texto de
+# modelo some num turno e muda de palavra no outro, e aqui o que sumiria e
+# justamente a ressalva.
+RESSALVA_DE_ESTIMATIVA = "Estimativa, nao e garantia de retorno."
+
+# Cenario 3 do Gherkin. NAO e silencio: medido no seed, 467 dos 520 imoveis
+# caem aqui -- inclusive todos os 375 que sao so VENDA --, e uma linha
+# ausente pareceria esquecimento nosso em vez de lacuna do catalogo.
+_ALUGUEL_AUSENTE = "Aluguel estimado: nao informado"
+
+
+def _linhas_da_rentabilidade(rentabilidade: Rentabilidade) -> list[str]:
+    """As ate tres linhas do bloco do investidor, na ordem em que saem.
+
+    A ressalva acompanha QUALQUER numero estimado -- o aluguel sozinho ja e
+    um --, e nao so o yield. Sem numero nenhum ela nao sai.
+    """
+    linhas: list[str] = []
+    if rentabilidade.aluguel_centavos is None:
+        linhas.append(_ALUGUEL_AUSENTE)
+    else:
+        linha = f"Aluguel estimado {reais_de(rentabilidade.aluguel_centavos)}"
+        if rentabilidade.yield_pct is not None:
+            # Virgula decimal porque o lead e brasileiro, e `:.1f` para o zero
+            # a direita: "6%" e "6,0%" dizem coisas diferentes sobre precisao.
+            percentual = f"{rentabilidade.yield_pct:.1f}".replace(".", ",")
+            linha += f" - yield bruto {percentual}% ao ano"
+        linhas.append(linha)
+    if rentabilidade.custos_centavos is not None:
+        linhas.append(f"Condominio + IPTU {reais_de(rentabilidade.custos_centavos)}/mes")
+    if rentabilidade.aluguel_centavos is not None:
+        linhas.append(RESSALVA_DE_ESTIMATIVA)
+    return linhas
+
+
 def legenda_de(ficha: Ficha, *, prefixo: str | None = None) -> str:
     """A legenda de uma ficha, com a prosa do modelo opcionalmente na frente.
 
@@ -180,6 +222,11 @@ def legenda_de(ficha: Ficha, *, prefixo: str | None = None) -> str:
         linhas.append(f"Condominio {reais_de(ficha.condominio_centavos)}")
     if ficha.diferencial is not None:
         linhas.append(f"Destaque: {ficha.diferencial}")
+    if ficha.rentabilidade is not None:
+        # No CORPO, e nao no prefixo: e o que faz `_prosa_que_cabe` proteger o
+        # bloco de graca quando o teto de 600 aperta. A prioridade da D14
+        # (corta-se a prosa, nunca a ficha) segue valendo sem mudanca.
+        linhas.extend(_linhas_da_rentabilidade(ficha.rentabilidade))
     corpo = "\n".join(linhas)
 
     prosa = _prosa_que_cabe(prefixo, len(corpo)) if prefixo else ""
