@@ -3,6 +3,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 import structlog
@@ -668,6 +669,40 @@ async def gravar_estado(
     return resultado.scalar_one()
 
 
+def _do_vocabulario[V: StrEnum](vocabulario: type[V], bruto: str | None) -> V | None:
+    """Rele uma coluna de vocabulario com tolerancia: valor fora do enum vira
+    `None`, e nao `ValueError`. TEC-153.
+
+    Mesmo formato de `_membro` (`agente/classificador.py`), que faz isto para
+    o que o MODELO devolve; nao e um import dele porque `domain/context` nao
+    depende de `domain/agente/classificador` em lugar nenhum e aquela funcao e
+    privada de la. Nao ha vocabulario duplicado por causa disto -- as duas
+    leem o mesmo enum, que segue sendo a fonte unica.
+
+    **Hoje nada pode chegar aqui fora do enum**: so `gravar_investidor`
+    escreve estas colunas, e sempre a partir do enum. A guarda existe para o
+    dia em que uma card encolher um vocabulario e esquecer a migracao de
+    dados: com o construtor cru, o `ValueError` estouraria DENTRO da transacao
+    pre-entrega e derrubaria o turno inteiro -- a mensagem volta para a fila e
+    o lead nao recebe resposta nenhuma. Com a tolerancia, o custo e um perfil
+    que fica como esta ate o lead responder de novo.
+
+    O valor sai no log inteiro, e nao so o nome do enum: descobrir QUAL valor
+    sumiu do vocabulario e o ponto do alerta, e aqui nao ha risco de PII --
+    esta coluna nunca carregou texto do lead, so membro de enum escrito por
+    este modulo.
+    """
+    if bruto is None:
+        return None
+    try:
+        return vocabulario(bruto)
+    except ValueError:
+        log.warning(
+            "estado.vocabulario_fora_do_enum", vocabulario=vocabulario.__name__, valor=bruto
+        )
+        return None
+
+
 async def gravar_investidor(
     session: AsyncSession,
     *,
@@ -744,14 +779,11 @@ async def gravar_investidor(
     # O estado MESCLADO, e nao os campos deste turno: o que este turno trouxe
     # vence, e o que ele nao trouxe continua sendo o que a coluna ja tinha.
     # As colunas sao `str` (`String(16)`), os enums e que sao o vocabulario --
-    # a conversao acontece aqui, na borda, e nao no modelo.
-    horizonte_mesclado = investidor.horizonte or (
-        Horizonte(linha.horizonte) if linha.horizonte is not None else None
-    )
-    tipo_mesclado = investidor.retorno_esperado_tipo or (
-        RetornoEsperadoTipo(linha.retorno_esperado_tipo)
-        if linha.retorno_esperado_tipo is not None
-        else None
+    # a conversao acontece aqui, na borda, e nao no modelo. Ela e TOLERANTE de
+    # proposito: `_do_vocabulario` explica o que o construtor cru custaria.
+    horizonte_mesclado = investidor.horizonte or _do_vocabulario(Horizonte, linha.horizonte)
+    tipo_mesclado = investidor.retorno_esperado_tipo or _do_vocabulario(
+        RetornoEsperadoTipo, linha.retorno_esperado_tipo
     )
     perfil = perfil_de(horizonte_mesclado, tipo_mesclado)
     if perfil is not None:
