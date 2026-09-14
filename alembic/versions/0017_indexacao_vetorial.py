@@ -1,4 +1,4 @@
-"""a indexacao vetorial do catalogo
+r"""a indexacao vetorial do catalogo
 
 TEC-157, RN-08.2 e RN-08.3. Fecha a divida que a `0016` declarou: ela deixou
 `embedding` de fora porque a imagem do compose nao tinha pgvector, e a troca
@@ -94,6 +94,10 @@ foi so o que enganava: a receita de subir `lists`, retirada acima.
 
 As tres colunas sao nulaveis porque hash nulo E a definicao de pendencia: e
 o que faz o catalogo ja importado entrar na fila sem caminho de backfill.
+
+O `r` que prefixa esta docstring nao e enfeite: ela cita o `grep` acima com
+`"cosine_distance\|<=>"`, e sem o prefixo esse `\|` e escape invalido --
+SyntaxWarning hoje, SyntaxError num Python futuro. Nenhum ruff pega isso.
 
 Revision ID: 0017
 Revises: 0016
