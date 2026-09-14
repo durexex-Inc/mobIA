@@ -439,11 +439,36 @@ async def _continuar_entrega(
     # e 3 sem. Uma consulta fecha isso.
     #
     # **Custo declarado: o estado lido e o de AGORA, nao o do instante da
-    # apresentacao original.** Coincidem em praticamente todo caso, porque a
-    # continuacao reprocessa a MESMA mensagem e o turno que moveria a intencao
-    # e justamente o que esta sendo continuado. A alternativa exata -- gravar a
-    # trilha na linha de `recomendacoes` -- custa coluna, migration e mais uma
-    # tabela no TRUNCATE de todo teste que toca banco.
+    # apresentacao original.** Na maioria dos casos os dois coincidem, mas nao
+    # pelo motivo que este comentario chegou a afirmar (que o turno que
+    # moveria a intencao e o mesmo que esta sendo continuado): o turno
+    # continuado GRAVA o estado antes de apresentar (`gravar_estado`, por
+    # volta da linha 1173, roda antes de `_apresentar`, por volta da 1889, no
+    # mesmo turno) -- ele e justamente o turno capaz de produzir a
+    # divergencia, e nao o que a impede.
+    #
+    # A borda real e estreita: um turno de investidor (`ja_e_investidor` ja
+    # travado desde o inicio do turno) em que o subagente devolve uma
+    # `intencao` definida e NAO-INVESTIMENTO -- o schema aceita qualquer
+    # membro do enum -- e que TAMBEM apresenta. A ficha 1 sai com o bloco
+    # (decidido por `ja_e_investidor`, ja travado, nao pela `intencao` nova),
+    # o estado grava a intencao nova antes do commit, e as fichas 2 e 3 desta
+    # mesma apresentacao, entregues por uma continuacao que rele o estado ja
+    # trocado, saem sem bloco. Exige a virada de intencao MAIS uma entrega
+    # parcial no mesmo turno.
+    #
+    # **A direcao inversa (ficha 1 sem bloco, fichas 2 e 3 com) e
+    # inalcancavel.** `gravar_intencao` sobrescreve `conversation_intent` a
+    # cada turno com a MESMA `gerada.intencao` que `gravar_estado` grava no
+    # estado, entao `anterior.intencao == INVESTIMENTO` (o `anterior` lido
+    # logo abaixo) implica `ja_e_investidor` no turno seguinte. Para a
+    # continuacao reler INVESTIMENTO, este turno teria de gravar
+    # `gerada.intencao == INVESTIMENTO` -- e nesse caso `virou_investidor` (ou
+    # `ja_e_investidor`, se ja fosse) ja forca o bloco na propria ficha 1, o
+    # que fecha exatamente a direcao inversa. A alternativa exata para fechar
+    # a borda estreita que sobra -- gravar a trilha na linha de
+    # `recomendacoes` -- custa coluna, migration e mais uma tabela no
+    # TRUNCATE de todo teste que toca banco.
     async with session_factory() as session:
         estado = await ler_estado(session, message.channel, message.conversation_key)
     # Contra `.value` porque a coluna e str, e nao o enum -- mesma comparacao
