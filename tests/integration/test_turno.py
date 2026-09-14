@@ -30,7 +30,13 @@ CONVERSA = "5511911112222"
 async def test_turno_classifica_entrega_e_grava(
     session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, rodar_turno
 ) -> None:
-    classificador = classificador_fake(Intencao.INVESTIMENTO)
+    # COMPRA, e nao INVESTIMENTO: desde a TEC-153 a intencao INVESTIMENTO
+    # desvia o turno para o subagente do investidor, e a resposta entregue
+    # passaria a ser a dele. Este teste e sobre o caminho GENERICO -- classifica,
+    # entrega, grava --, e a intencao aqui e so um valor qualquer que precisa
+    # sobreviver ate `conversation_intent`. A trilha do investidor tem arquivo
+    # proprio (`test_turno_investidor.py`).
+    classificador = classificador_fake(Intencao.COMPRA)
     outbound = outbound_fake()
 
     resultado = await rodar_turno(
@@ -47,7 +53,7 @@ async def test_turno_classifica_entrega_e_grava(
     async with get_sessionmaker()() as outra:
         gravada = await ler_intencao(outra, CANAL, CONVERSA)
     assert gravada is not None
-    assert gravada.intencao is Intencao.INVESTIMENTO
+    assert gravada.intencao is Intencao.COMPRA
     assert gravada.confianca == Decimal("0.91")
 
     total = await session.scalar(sql("SELECT count(*) FROM messages WHERE direction = 'OUTBOUND'"))

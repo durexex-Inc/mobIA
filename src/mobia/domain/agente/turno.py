@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -23,6 +23,7 @@ from mobia.domain.agente.identificacao import (
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
 )
+from mobia.domain.agente.investidor import RespostaDoInvestidor
 from mobia.domain.agente.recomendacao import bairros_a_excluir, resolver_ordinais
 from mobia.domain.agente.repositorio import (
     LinhaDaApresentacao,
@@ -47,6 +48,7 @@ from mobia.domain.context.qualificacao import esta_qualificado, excedeu_o_teto
 from mobia.domain.context.repositorio import (
     contar_perguntas,
     gravar_estado,
+    gravar_investidor,
     marcar_perguntados,
     perguntas_contaveis,
     registrar_recalculo,
@@ -283,6 +285,7 @@ def aviso_de_ajuste(bairros: Sequence[str]) -> str:
 
 SUBAGENTE_CLASSIFICADOR = "classificador"
 SUBAGENTE_DESAMBIGUADOR = "desambiguador"
+SUBAGENTE_INVESTIDOR = "investidor"
 SUBAGENTE_MODERACAO = "moderacao"
 SUBAGENTE_OPTOUT = "optout"
 
@@ -577,14 +580,23 @@ async def executar_turno(
     saida bloqueada queimaria a mesma chance por um texto neutro que nao
     pergunta nada.
 
+    A trilha do investidor (TEC-153, RN-07.1) tem uma segunda chamada
+    parecida, e uma diferenca que importa: ela acontece **uma vez so por
+    lead**, no turno da virada. Dali em diante a intencao ja esta no estado
+    que montou o prompt, o subagente do investidor e escolhido antes da
+    chamada unica e nao ha chamada extra nenhuma. Quando o turno e ambiguo e
+    investidor ao mesmo tempo, a desambiguacao vence -- sem intencao confiavel
+    nao ha trilha a escolher.
+
     A marca de `perguntou` da TEC-257 segue a mesma regra, pelo mesmo motivo:
     e um fato sobre a nossa resposta, nao sobre a fala do lead, entao so entra
     depois da entrega confirmada e so quando `gerada` foi de fato o texto
-    entregue -- nunca no caminho de desambiguacao (a chamada 1 foi descartada)
-    nem com a saida bloqueada (o texto neutro nao pergunta nada). Diferente do
-    marcador de desambiguacao, esta marca e permanente e a uniao no SQL nunca
-    remove: marcar de mais aqui perde a chance de perguntar aquele campo para
-    sempre e em silencio, nao so ate o proximo episodio.
+    entregue -- nunca no caminho de desambiguacao nem na virada do investidor
+    (nos dois a chamada 1 foi descartada) nem com a saida bloqueada (o texto
+    neutro nao pergunta nada). Diferente do marcador de desambiguacao, esta
+    marca e permanente e a uniao no SQL nunca remove: marcar de mais aqui perde
+    a chance de perguntar aquele campo para sempre e em silencio, nao so ate o
+    proximo episodio.
     """
     # Antes de montar contexto de proposito: bloquear aqui economiza o turno
     # inteiro, inclusive as chamadas pagas ao modelo. E o texto do lead ainda
@@ -978,8 +990,26 @@ async def executar_turno(
             conversation_key=message.conversation_key,
         ),
     )
+    # TEC-153, RN-07.1. Do SEGUNDO turno do investidor em diante nao ha
+    # chamada extra: a intencao anterior ja esta no estado, que `montar_contexto`
+    # leu antes desta linha, entao o prompt e o schema do investidor sao
+    # escolhidos aqui e a chamada continua sendo uma so.
+    #
+    # `contexto.estado.intencao` e a coluna (str), e nao o enum -- por isso a
+    # comparacao e contra `.value`.
+    ja_e_investidor = (
+        contexto.estado is not None and contexto.estado.intencao == Intencao.INVESTIMENTO.value
+    )
+    # As duas irmas tem assinatura identica (`ClassificadorPort` declara as
+    # duas assim, e o comentario de la diz por que): a escolha cabe num unico
+    # ponto de chamada, e nao em dois blocos que teriam de ser mantidos em
+    # sincronia. A anotacao existe porque o mypy nao une sozinho dois
+    # callables que so diferem no tipo de retorno.
+    chamada: Callable[..., Awaitable[RespostaDoAgente | RespostaDoInvestidor]] = (
+        classificador.qualificar_investidor if ja_e_investidor else classificador.classificar
+    )
     try:
-        gerada = await classificador.classificar(
+        gerada = await chamada(
             contexto,
             # A porta e montada aqui porque e aqui que existe `session_factory`.
             # O classificador recebe um callable pronto e nao sabe o que e uma
@@ -1278,23 +1308,89 @@ async def executar_turno(
     desambiguando = deve_desambiguar(
         gerada.confianca, anterior.desambiguado_em if anterior else None
     )
+    # TEC-153. A virada: a intencao passou a ser INVESTIMENTO NESTE turno e
+    # nao era antes. So aqui ha segunda chamada -- nos turnos seguintes
+    # `ja_e_investidor`, la em cima, ja escolheu o prompt certo para a chamada
+    # unica. `anterior` e a linha que `ler_intencao` devolveu dentro do bloco
+    # transacional acima, a mesma leitura que `desambiguando` usa.
+    #
+    # **`not ja_e_investidor` nao e redundante com o resto da expressao.** As
+    # duas condicoes leem FONTES DIFERENTES do mesmo fato: `ja_e_investidor`
+    # le `lead_qualification.intencao` (o estado que montou o prompt) e
+    # `anterior` le `conversation_intent` (o que o classificador disse no
+    # turno passado). Elas divergem por desenho, nao por bug: `gravar_intencao`
+    # grava INDEFINIDA em `conversation_intent`, e `campos_a_gravar` NAO deixa
+    # INDEFINIDA sobrescrever a coluna do estado (TEC-147). Um investidor que
+    # mande um "obrigado" no meio da conversa deixa `conversation_intent` em
+    # INDEFINIDA e a coluna em INVESTIMENTO -- e no turno seguinte a chamada
+    # unica ja seria a do investidor e ESTA expressao, sem a guarda, pediria
+    # uma segunda. Duas chamadas do investidor no mesmo turno, a primeira paga
+    # e jogada fora, num turno que a RN-07.1 promete ser de chamada unica.
+    virou_investidor = (
+        not ja_e_investidor
+        and gerada.intencao is Intencao.INVESTIMENTO
+        and (anterior is None or anterior.intencao is not Intencao.INVESTIMENTO)
+    )
     # Anotado explicitamente: sem isso o mypy infere o tipo de `telemetria` a
     # partir so do primeiro ramo que ve (`PerguntaDeDesambiguacao`) e recusa a
-    # atribuicao do segundo. Os dois tipos so precisam ter em comum os campos
+    # atribuicao dos outros. Os tres tipos so precisam ter em comum os campos
     # de telemetria que `record_agent_message` le abaixo.
     texto: str
-    telemetria: RespostaDoAgente | PerguntaDeDesambiguacao
+    telemetria: RespostaDoAgente | PerguntaDeDesambiguacao | RespostaDoInvestidor
     subagente: str
     if desambiguando:
         # A resposta da chamada 1 foi escrita assumindo um palpite que a
         # confianca nao sustenta. Ela e descartada -- paga e nao entregue.
         pergunta = await classificador.desambiguar(contexto)
         texto, telemetria, subagente = pergunta.texto, pergunta, SUBAGENTE_DESAMBIGUADOR
+    elif virou_investidor:
+        # **A ORDEM DOS RAMOS E A PRECEDENCIA, e nao acidente de escrita.** Com
+        # o turno ambiguo E investidor ao mesmo tempo, desambigua: sem intencao
+        # confiavel nao ha trilha a escolher (D1), e chamar o subagente do
+        # investidor sobre um palpite que a confianca nao sustenta gastaria a
+        # chamada e ainda erraria a trilha. Nao reordene estes dois ramos.
+        #
+        # A resposta da chamada 1 foi escrita pelo prompt generico: ela
+        # pergunta metragem e quartos, que e exatamente o que a RN-07.1 existe
+        # para evitar. Descartada -- paga e nao entregue --, como no ramo da
+        # desambiguacao e pelo mesmo motivo estrutural: o prompt precisa de um
+        # fato que so a primeira chamada produz.
+        do_investidor = await classificador.qualificar_investidor(contexto, porta=porta)
+        texto, telemetria, subagente = (
+            do_investidor.resposta,
+            do_investidor,
+            SUBAGENTE_INVESTIDOR,
+        )
     else:
         texto, telemetria, subagente = gerada.resposta, gerada, SUBAGENTE_CLASSIFICADOR
 
+    if isinstance(telemetria, RespostaDoInvestidor):
+        # Transacao propria, e nao o bloco transacional la de cima: os campos
+        # do investidor so existem depois da chamada que os produz, e aquele
+        # bloco ja commitou. Antes da entrega, e nao depois, porque sao fato
+        # sobre a fala do LEAD -- perde-los numa falha de entrega apagaria o
+        # que ele acabou de responder. E a mesma razao pela qual `recusou`
+        # entra no commit pre-entrega e `perguntou` nao.
+        #
+        # O `isinstance` cobre os DOIS caminhos do investidor: o ramo da
+        # virada logo acima e o turno seguinte, em que `ja_e_investidor` fez
+        # de `gerada` -- e portanto de `telemetria`, pelo `else` -- a propria
+        # resposta do investidor.
+        async with session_factory() as session:
+            await gravar_investidor(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                investidor=telemetria.investidor,
+            )
+            await session.commit()
+
     # Uma vez por turno: so um texto vem do modelo. No caminho ambiguo a
-    # resposta da chamada 1 foi descartada e so a pergunta e entregue. Na
+    # resposta da chamada 1 foi descartada e so a pergunta e entregue; na
+    # virada do investidor (TEC-153) o descarte e o mesmo e quem e moderado e
+    # a prosa do subagente -- em qualquer dos tres caminhos `texto` ja e o
+    # unico texto candidato a sair, e e por isso que esta chamada nao precisa
+    # saber qual deles rodou. Na
     # apresentacao da TEC-162 saem tres mensagens, mas o unico texto gerado
     # continua sendo esta prosa -- a ficha e dado do banco montado por codigo,
     # e moderar dado nosso seria gastar chamada sobre texto que nao inventamos.
@@ -2043,6 +2139,7 @@ async def executar_turno(
 
     if (
         not desambiguando
+        and not virou_investidor
         and not saida_bloqueada
         and not citacao_bloqueada
         and not entrega_parcial
@@ -2056,7 +2153,14 @@ async def executar_turno(
         # `marcar_desambiguacao` espera a entrega (ver o bloco acima): no
         # caminho de desambiguacao a resposta da chamada 1 foi descartada --
         # paga e nao entregue -- e o lead recebeu a pergunta do desambiguador,
-        # nao a de `gerada`; com a saida bloqueada o lead recebeu
+        # nao a de `gerada`; na VIRADA do investidor (TEC-153) a chamada 1 foi
+        # descartada pelo mesmo motivo estrutural e o lead recebeu a prosa do
+        # subagente, entao `gerada.perguntou` descreve um texto que ninguem
+        # leu -- marca-lo queimaria para sempre a chance de perguntar aquele
+        # campo, que e exatamente o dano que esta guarda existe para evitar
+        # (repare que o TURNO SEGUINTE do investidor nao entra aqui: la
+        # `ja_e_investidor` fez de `gerada` a propria resposta entregue, e a
+        # marca vale normalmente); com a saida bloqueada o lead recebeu
         # `TEXTO_NEUTRO_DE_SAIDA`, que tambem nao pergunta nada; com a
         # citacao bloqueada (TEC-161) o lead recebeu `TEXTO_DA_BUSCA_INCONCLUSIVA`
         # ou a ficha pura -- tambem nao a pergunta de `gerada`; e com a entrega

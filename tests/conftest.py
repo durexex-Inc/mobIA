@@ -37,6 +37,7 @@ from mobia.infra.queue import create_redis_pool
 if TYPE_CHECKING:
     from arq.connections import ArqRedis
 
+    from mobia.domain.agente.investidor import ExtracaoDoInvestidor
     from mobia.domain.agente.schemas import Extracao, Intencao
 
 # Maximo de bancos logicos que um Redis serve por padrao (`databases 16` no
@@ -265,6 +266,12 @@ async def _entrada_do_lead(session: AsyncSession, *, texto: str = TEXTO_PADRAO_D
 
 RESPOSTA_DO_CLASSIFICADOR_FAKE = "Ola! Em qual regiao voce procura?"
 
+# TEC-153. Texto DIFERENTE do de cima, de proposito: e ele que permite a um
+# teste afirmar que o que saiu foi a resposta da trilha do investidor e nao a
+# da chamada generica. Com os dois iguais, o ramo do investidor poderia nunca
+# rodar e a asserta de texto continuaria verde.
+RESPOSTA_DO_INVESTIDOR_FAKE = "Qual retorno voce espera desse investimento?"
+
 
 class ClassificadorFake:
     """Duble do provedor. Nenhum teste desta suite toca a rede."""
@@ -280,7 +287,10 @@ class ClassificadorFake:
         perguntou: tuple[str, ...] = (),
         recusou: tuple[str, ...] = (),
         resposta: str = RESPOSTA_DO_CLASSIFICADOR_FAKE,
+        investidor: "ExtracaoDoInvestidor | None" = None,
+        resposta_do_investidor: str = RESPOSTA_DO_INVESTIDOR_FAKE,
     ) -> None:
+        from mobia.domain.agente.investidor import ExtracaoDoInvestidor as _ExtracaoDoInvestidor
         from mobia.domain.agente.schemas import Extracao as _Extracao
         from mobia.domain.agente.schemas import Intencao as _Intencao
 
@@ -293,10 +303,23 @@ class ClassificadorFake:
         self.perguntou = perguntou
         self.recusou = recusou
         self.resposta = resposta
+        self.investidor = investidor if investidor is not None else _ExtracaoDoInvestidor()
+        self.resposta_do_investidor = resposta_do_investidor
         self.chamadas = 0
         self.desambiguacoes = 0
+        # TEC-153. Contador PROPRIO, e nao somado a `chamadas`: a afirmacao que
+        # o desenho exige e "do segundo turno do investidor em diante a chamada
+        # continua sendo UMA so", e ela e indizivel num contador unico -- duas
+        # chamadas genericas e uma generica mais uma do investidor dariam o
+        # mesmo numero.
+        self.investidores = 0
         self.candidatos: list[dict[str, object]] = []
         self.portas: list[object] = []
+        # Lista propria pela mesma razao do contador: a ferramenta de busca
+        # precisa chegar a chamada do INVESTIDOR (sem ela o investidor nunca
+        # receberia ficha de imovel), e uma lista unica nao diria qual das
+        # duas chamadas recebeu a porta.
+        self.portas_do_investidor: list[object] = []
 
     async def classificar(self, contexto, *, porta=None):
         from mobia.domain.agente.schemas import RespostaDoAgente
@@ -316,6 +339,36 @@ class ClassificadorFake:
             tokens_out=180,
             latency_ms=900,
             extracao=self.extracao,
+            perguntou=self.perguntou,
+            recusou=self.recusou,
+            candidatos=self.candidatos,
+        )
+
+    async def qualificar_investidor(self, contexto, *, porta=None):
+        """A irma de `classificar` para a trilha do investidor. TEC-153.
+
+        Devolve os MESMOS valores de telemetria e de conteudo que
+        `classificar`, so que no envelope `RespostaDoInvestidor` e com o texto
+        proprio: o turno le o mesmo conjunto de campos das duas, e um duble
+        que devolvesse menos aqui esconderia a quebra no unico ramo que a
+        trilha padrao nao exercita.
+        """
+        from mobia.domain.agente.investidor import RespostaDoInvestidor
+
+        self.investidores += 1
+        self.portas_do_investidor.append(porta)
+        if self.erro is not None:
+            raise self.erro
+        return RespostaDoInvestidor(
+            intencao=self.intencao,
+            confianca=self.confianca,
+            resposta=self.resposta_do_investidor,
+            modelo="claude-opus-5",
+            tokens_in=1300,
+            tokens_out=200,
+            latency_ms=950,
+            extracao=self.extracao,
+            investidor=self.investidor,
             perguntou=self.perguntou,
             recusou=self.recusou,
             candidatos=self.candidatos,

@@ -11,7 +11,13 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.domain.agente.investidor import CAMPOS_DO_INVESTIDOR
+from mobia.domain.agente.dinheiro import ticket_de
+from mobia.domain.agente.investidor import (
+    CAMPOS_DO_INVESTIDOR,
+    ExtracaoDoInvestidor,
+    Horizonte,
+    RetornoEsperadoTipo,
+)
 from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.auditoria import causas_do_recalculo
 from mobia.domain.context.models import (
@@ -20,7 +26,7 @@ from mobia.domain.context.models import (
     LeadScoreAudit,
     aad_do_resumo,
 )
-from mobia.domain.context.qualificacao import esta_qualificado
+from mobia.domain.context.qualificacao import esta_qualificado, perfil_de
 from mobia.domain.context.score import Score, calcular_score
 from mobia.domain.context.temperatura import Temperatura, temperatura_de
 from mobia.domain.messages.enums import MessageDirection
@@ -600,6 +606,114 @@ async def gravar_estado(
         .execution_options(populate_existing=True)
     )
     return resultado.scalar_one()
+
+
+async def gravar_investidor(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    investidor: ExtracaoDoInvestidor,
+) -> None:
+    """Grava os campos da RN-05.2 e o perfil derivado da RN-07.2. TEC-153.
+
+    **So grava campo que veio.** A qualificacao e progressiva: `None` num
+    campo significa "o lead ainda nao disse", e sobrescrever um valor antigo
+    com `None` apagaria o que ele ja tinha dito num turno anterior -- o mesmo
+    cuidado que `campos_a_gravar` toma para a trilha padrao.
+
+    O perfil e DERIVADO e gravado junto, e nao calculado na leitura: quem le
+    o lead precisa dele sem reexecutar a regra, e a TEC-154 le a coluna
+    direto. Ele e recalculado a partir do estado JA MESCLADO -- horizonte
+    pode ter vindo num turno e o tipo de retorno noutro, e classificar so com
+    o que chegou neste turno daria `None` para um lead que ja respondeu os
+    dois.
+
+    Nao commita, como as irmas deste arquivo: a sessao e emprestada e quem
+    chama e dono da fronteira da transacao.
+
+    **Consequencia declarada: sem linha, nada e gravado.** O unico criador de
+    `lead_qualification` e o upsert de `gravar_estado`, que retorna cedo --
+    "Deliberadamente NAO cria linha" -- quando `campos_a_gravar` devolve
+    vazio. Um turno INDEFINIDA ou FORA_DE_ESCOPO sem extracao nenhuma no
+    primeiro contato deixa o lead sem linha, e o que ele disser sobre ticket
+    ou horizonte nesse mesmo turno se perde. E a mesma lacuna L4 que
+    `contar_perguntas` ja declara, pela mesma causa e com a mesma razao para
+    nao criar linha aqui: criar moveria o score de 0 para o piso documentado
+    e gravaria na trilha da TEC-152 por um lead que ainda nao se qualificou.
+    Fica contido do mesmo jeito -- assim que QUALQUER linha existir, todo
+    turno seguinte grava.
+    """
+    # `populate_existing`: esta leitura nao serve so para saber se a linha
+    # existe -- o perfil e derivado das colunas que ela carrega. Numa sessao
+    # que ja tivesse carregado a linha, o identity map devolveria a instancia
+    # velha e a mescla usaria o horizonte de antes, gravando um perfil errado
+    # em silencio. E o mesmo cuidado, e pelo mesmo mecanismo, que `gravar_estado`
+    # documenta no `RETURNING` dela.
+    linha = await session.scalar(
+        select(LeadQualification)
+        .where(
+            LeadQualification.channel == channel,
+            LeadQualification.conversation_key == conversation_key,
+        )
+        .execution_options(populate_existing=True)
+    )
+    if linha is None:
+        return
+
+    valores: dict[str, Any] = {}
+    if investidor.ticket_expressao is not None:
+        # `ticket_de` devolvendo `None` e "o lead falou algo que nao e
+        # dinheiro", ou recusou -- e ai nao ha o que gravar. Escrever `None`
+        # aqui apagaria o ticket de um turno anterior por causa de uma frase
+        # que nao dizia valor nenhum.
+        centavos = ticket_de(investidor.ticket_expressao)
+        if centavos is not None:
+            valores["ticket_investimento_centavos"] = centavos
+    if investidor.retorno_esperado_pct is not None:
+        valores["retorno_esperado_pct"] = investidor.retorno_esperado_pct
+    if investidor.retorno_esperado_tipo is not None:
+        valores["retorno_esperado_tipo"] = investidor.retorno_esperado_tipo.value
+    if investidor.horizonte is not None:
+        valores["horizonte"] = investidor.horizonte.value
+    if investidor.tolerancia_reforma is not None:
+        valores["tolerancia_reforma"] = investidor.tolerancia_reforma.value
+    if investidor.ja_investe_em_imoveis is not None:
+        valores["ja_investe_em_imoveis"] = investidor.ja_investe_em_imoveis
+
+    # O estado MESCLADO, e nao os campos deste turno: o que este turno trouxe
+    # vence, e o que ele nao trouxe continua sendo o que a coluna ja tinha.
+    # As colunas sao `str` (`String(16)`), os enums e que sao o vocabulario --
+    # a conversao acontece aqui, na borda, e nao no modelo.
+    horizonte_mesclado = investidor.horizonte or (
+        Horizonte(linha.horizonte) if linha.horizonte is not None else None
+    )
+    tipo_mesclado = investidor.retorno_esperado_tipo or (
+        RetornoEsperadoTipo(linha.retorno_esperado_tipo)
+        if linha.retorno_esperado_tipo is not None
+        else None
+    )
+    perfil = perfil_de(horizonte_mesclado, tipo_mesclado)
+    if perfil is not None:
+        # `None` nao entra pela mesma regra dos campos acima: falta um dos dois
+        # e "ainda nao da para saber", nao "o perfil sumiu". E `perfil_de` e
+        # total sobre os nove pares possiveis, entao um perfil ja gravado so
+        # pode ser reescrito por outro perfil, nunca apagado.
+        valores["perfil_investidor"] = perfil.value
+
+    if not valores:
+        # Turno do investidor em que o lead nao disse nada novo: um `SET` so
+        # com `updated_at` seria escrita morta.
+        return
+
+    await session.execute(
+        update(LeadQualification)
+        .where(
+            LeadQualification.channel == channel,
+            LeadQualification.conversation_key == conversation_key,
+        )
+        .values(**valores, updated_at=datetime.now(UTC))
+    )
 
 
 async def marcar_perguntados(
