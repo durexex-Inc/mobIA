@@ -289,6 +289,14 @@ class ClassificadorFake:
         resposta: str = RESPOSTA_DO_CLASSIFICADOR_FAKE,
         investidor: "ExtracaoDoInvestidor | None" = None,
         resposta_do_investidor: str = RESPOSTA_DO_INVESTIDOR_FAKE,
+        # `None` significa "o mesmo da chamada generica", e nao "vazio": um
+        # default vazio faria o duble engolir em silencio o que a chamada do
+        # investidor devolveu, e o unico ramo que a trilha padrao nao exercita
+        # e justamente onde a quebra apareceria. Quem precisa que as DUAS
+        # chamadas divirjam -- e so o turno da virada precisa -- passa os dois
+        # explicitamente.
+        candidatos_do_investidor: "list[dict[str, object]] | None" = None,
+        perguntou_do_investidor: tuple[str, ...] | None = None,
     ) -> None:
         from mobia.domain.agente.investidor import ExtracaoDoInvestidor as _ExtracaoDoInvestidor
         from mobia.domain.agente.schemas import Extracao as _Extracao
@@ -305,6 +313,8 @@ class ClassificadorFake:
         self.resposta = resposta
         self.investidor = investidor if investidor is not None else _ExtracaoDoInvestidor()
         self.resposta_do_investidor = resposta_do_investidor
+        self.candidatos_do_investidor = candidatos_do_investidor
+        self.perguntou_do_investidor = perguntou_do_investidor
         self.chamadas = 0
         self.desambiguacoes = 0
         # TEC-153. Contador PROPRIO, e nao somado a `chamadas`: a afirmacao que
@@ -369,9 +379,17 @@ class ClassificadorFake:
             latency_ms=950,
             extracao=self.extracao,
             investidor=self.investidor,
-            perguntou=self.perguntou,
+            perguntou=(
+                self.perguntou
+                if self.perguntou_do_investidor is None
+                else self.perguntou_do_investidor
+            ),
             recusou=self.recusou,
-            candidatos=self.candidatos,
+            candidatos=(
+                self.candidatos
+                if self.candidatos_do_investidor is None
+                else self.candidatos_do_investidor
+            ),
         )
 
     async def desambiguar(self, contexto):

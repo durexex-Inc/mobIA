@@ -8,9 +8,12 @@ o que sobra gravado em `lead_qualification` depois de tudo.
 Mais dois que sao as armadilhas desta task. O perfil da RN-07.2 depende de
 DOIS campos, e eles podem chegar em turnos diferentes -- classificar so com o
 que veio neste turno devolveria `None` para um lead que ja respondeu os dois.
-E na virada a chamada 1 foi descartada, entao a pergunta dela nao pode ser
-marcada nem contada: seria queimar em silencio a chance de perguntar aquele
-campo.
+E na virada a chamada 1 foi descartada -- e esse descarte e o assunto do
+ultimo bloco de testes. A pergunta dela nao pode ser marcada nem contada, o
+texto do teto nao pode substituir a prosa do subagente por causa dela, e a
+guarda de citacao nao pode comparar a prosa do INVESTIDOR contra os candidatos
+que ela achou: nesse ultimo caso o lead recebe o texto de fallback em lugar de
+uma resposta correta, que e o falso positivo que a TEC-161 diz nao poder ter.
 """
 
 from decimal import Decimal
@@ -25,7 +28,13 @@ from mobia.domain.agente.investidor import (
     RetornoEsperadoTipo,
 )
 from mobia.domain.agente.schemas import Intencao
+from mobia.domain.agente.turno import (
+    SUBAGENTE_INVESTIDOR,
+    TEXTO_DA_BUSCA_INCONCLUSIVA,
+    TEXTO_DO_LIMITE_DE_PERGUNTAS,
+)
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.messages.models import MessageTelemetry
 
 # Os mesmos valores que `CANAL_AGENTE`/`CONVERSA_AGENTE` em `tests/conftest.py`,
 # porque `rodar_turno` semeia a fala nessa conversa e o estado tem de casar com
@@ -62,6 +71,21 @@ async def _conversa_ja_existe(session: Any) -> None:
     from conftest import _entrada_do_lead  # type: ignore[import-not-found]
 
     await _entrada_do_lead(session, texto="ja tinha falado com o assistente antes")
+
+
+def _candidato(codigo: str) -> dict[str, Any]:
+    """Um candidato de busca, no formato que o turno repassa a guarda de
+    citacao. Mesmos campos que `_candidato` em `tests/unit/test_citacao.py`."""
+    return {
+        "imovel_id": "00000000-0000-0000-0000-000000000001",
+        "codigo": codigo,
+        "titulo": f"Apartamento {codigo}",
+        "bairro": "Lagoa da Conceicao",
+        "preco_centavos": 51_646_430,
+        "quartos": 4,
+        "vagas": 2,
+        "area_util_m2": 54,
+    }
 
 
 async def _linha(session: Any) -> LeadQualification:
@@ -223,3 +247,113 @@ async def test_o_perfil_sai_do_estado_mesclado_e_nao_so_deste_turno(
     # O horizonte antigo SOBREVIVEU: este turno nao o trouxe, e `None` nao apaga.
     assert linha.horizonte == "LONGO"
     assert linha.perfil_investidor == "RENDA"
+
+
+async def test_a_virada_e_rotulada_como_investidor_e_o_turno_seguinte_tambem(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """O rotulo do subagente diz qual PROMPT gerou o texto, nao qual ramo rodou.
+
+    Do segundo turno em diante quem entrega a resposta do subagente e o `else`
+    do ramo, porque `ja_e_investidor` escolheu o prompt dele antes da chamada.
+    Rotular esses turnos de "classificador" faria a telemetria mostrar a trilha
+    do investidor acontecendo uma vez por lead -- so na virada -- e ninguem
+    conseguiria medir o que ela custa.
+    """
+    await _conversa_ja_existe(session)
+    await _semear_estado(session, intencao=Intencao.INVESTIMENTO.value)
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.INVESTIMENTO),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+    )
+
+    session.expire_all()
+    rotulos = list(await session.scalars(select(MessageTelemetry.subagent)))
+    assert rotulos == [SUBAGENTE_INVESTIDOR]
+
+
+async def test_a_citacao_do_investidor_nao_e_bloqueada_pelos_candidatos_descartados(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """O falso positivo que a TEC-161 diz nao poder ter.
+
+    Na virada, `texto` e a prosa do INVESTIDOR e os candidatos da chamada 1
+    foram descartados junto com ela. Comparar um contra o outro bloqueia como
+    alucinacao um imovel que a busca do investidor de fato achou, e o lead
+    recebe `TEXTO_DA_BUSCA_INCONCLUSIVA` em lugar da resposta certa.
+
+    `perguntou_do_investidor` nao-vazio mantem `apresentando` False de
+    proposito: o assunto aqui e a guarda de citacao sobre a prosa, e um turno
+    de apresentacao exigiria semear o imovel no catalogo sem acrescentar nada
+    a afirmacao.
+    """
+    await _conversa_ja_existe(session)
+    prosa = "O AP-1004 te atende."
+    classificador = classificador_fake(
+        Intencao.INVESTIMENTO,
+        resposta_do_investidor=prosa,
+        # A chamada 1 (generica) nao achou este imovel; a do investidor achou.
+        candidatos_do_investidor=[_candidato("AP-1004")],
+        perguntou_do_investidor=("horizonte",),
+    )
+    entregador = outbound_fake()
+
+    await rodar_turno(session, classificador, entregador, resumidor_fake(), contador_fake())
+
+    assert classificador.investidores == 1, "sem a virada o teste nao afirma nada"
+    assert prosa in entregador.entregues
+    assert TEXTO_DA_BUSCA_INCONCLUSIVA not in entregador.entregues
+
+
+async def test_o_teto_nao_substitui_a_prosa_do_investidor_por_pergunta_descartada(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """A pergunta que estouraria o teto estava na chamada DESCARTADA.
+
+    O lead nunca a recebeu: quem saiu foi a prosa do subagente, que aqui nao
+    pergunta nada. Substituir por `TEXTO_DO_LIMITE_DE_PERGUNTAS` calaria uma
+    resposta que nao gasta orcamento nenhum.
+    """
+    await _conversa_ja_existe(session)
+    await _semear_estado(session, intencao=Intencao.COMPRA.value, perguntas_feitas=8)
+    classificador = classificador_fake(
+        Intencao.INVESTIMENTO,
+        perguntou=("urgencia",),
+        perguntou_do_investidor=(),
+    )
+    entregador = outbound_fake()
+
+    await rodar_turno(session, classificador, entregador, resumidor_fake(), contador_fake())
+
+    assert classificador.investidores == 1, "sem a virada o teste nao afirma nada"
+    assert RESPOSTA_DO_INVESTIDOR_FAKE in entregador.entregues
+    assert TEXTO_DO_LIMITE_DE_PERGUNTAS not in entregador.entregues
+
+
+async def test_o_teto_ainda_vale_quando_e_o_investidor_que_pergunta_demais(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """O outro sentido da mesma troca, e o que impede a correcao de virar buraco.
+
+    Ler a resposta ENTREGUE nao e so deixar de suprimir: quando quem passa do
+    teto e o subagente -- e a chamada 1 nao perguntou nada --, a RN-05.5
+    continua valendo e a prosa dele e que tem de ser substituida.
+    """
+    await _conversa_ja_existe(session)
+    await _semear_estado(session, intencao=Intencao.COMPRA.value, perguntas_feitas=8)
+    classificador = classificador_fake(
+        Intencao.INVESTIMENTO,
+        perguntou=(),
+        perguntou_do_investidor=("urgencia",),
+    )
+    entregador = outbound_fake()
+
+    await rodar_turno(session, classificador, entregador, resumidor_fake(), contador_fake())
+
+    assert classificador.investidores == 1, "sem a virada o teste nao afirma nada"
+    assert TEXTO_DO_LIMITE_DE_PERGUNTAS in entregador.entregues
+    assert RESPOSTA_DO_INVESTIDOR_FAKE not in entregador.entregues
