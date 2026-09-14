@@ -14,11 +14,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agente.models import Recomendacao
+from mobia.domain.catalogo.enums import StatusImovel
 from mobia.domain.catalogo.models import Imovel
+from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.cadencia import CADENCIA, INTERVALO_MINIMO
 from mobia.domain.followup.mensagem import QuedaDePreco
 from mobia.domain.followup.models import FollowUp
+from mobia.domain.texto import dobrar
 
 log = structlog.get_logger(__name__)
 
@@ -342,3 +345,65 @@ async def queda_de_preco(
         preco_antes_centavos=linha.preco_centavos,
         preco_agora_centavos=linha.preco_venda,
     )
+
+
+async def imovel_novo_compativel(
+    session: AsyncSession, *, channel: str, conversation_key: str, desde: datetime
+) -> uuid.UUID | None:
+    """Um imovel que entrou no catalogo depois da ultima fala do lead, que
+    casa os criterios que ele declarou, e que ele ainda nao viu. TEC-184, D2.
+
+    **Filtro literal, e nao `buscar`.** A busca do agente e hibrida, relaxa
+    criterio (RN-09.3) e ordena por relevancia -- nenhum dos tres serve aqui.
+    Um follow-up que relaxasse apresentaria como novidade um imovel que o
+    lead justamente NAO pediu, e nao ha consulta em texto livre para
+    vetorizar.
+
+    **Criterio nulo nao filtra.** Nulo significa "o lead nao disse", nunca
+    "nenhum imovel serve": filtrar por campo ausente devolveria sempre vazio e
+    mataria esta fonte para quem mal comecou a conversar.
+
+    **O ja apresentado sai pela UNIQUE de `recomendacoes`.** Reapresentar o
+    que o lead ja viu e o "robo carente" que a historia da card nomeia.
+    """
+    estado = await session.get(LeadQualification, (channel, conversation_key))
+
+    ja_vistos = select(Recomendacao.imovel_id).where(
+        Recomendacao.channel == channel,
+        Recomendacao.conversation_key == conversation_key,
+    )
+
+    consulta = select(Imovel.id).where(
+        Imovel.created_at > desde,
+        Imovel.status == StatusImovel.DISPONIVEL.value,
+        Imovel.id.not_in(ja_vistos),
+    )
+
+    if estado is not None:
+        if estado.regiao is not None:
+            # `bairro_busca` guarda o bairro DOBRADO -- caixa e acento (TEC-158,
+            # D5). Comparar a regiao crua do lead contra ele e o defeito exato
+            # que a TEC-160 pagou com um Critical.
+            consulta = consulta.where(Imovel.bairro_busca == dobrar(estado.regiao))
+        if estado.tipo_imovel is not None:
+            # `lead_qualification.tipo_imovel` grava o vocabulario do AGENTE
+            # (`agente/schemas.py`), que nao e o mesmo StrEnum do catalogo
+            # (`catalogo/enums.py`) -- ver a docstring de `TipoImovel` la. Os
+            # cinco membros que o agente pode gravar (nunca COBERTURA: o
+            # modelo devolve APARTAMENTO para quem diz isso, TEC-242 D1) tem
+            # o MESMO nome e o MESMO valor no vocabulario do catalogo, entao a
+            # comparacao de string crua e segura -- nao ha conversao por nome
+            # para fazer aqui.
+            consulta = consulta.where(Imovel.tipo == estado.tipo_imovel)
+        if estado.quartos is not None:
+            consulta = consulta.where(Imovel.quartos >= estado.quartos)
+        if estado.vagas is not None:
+            consulta = consulta.where(Imovel.vagas >= estado.vagas)
+        if estado.faixa_preco_max_centavos is not None:
+            consulta = consulta.where(Imovel.preco_venda <= estado.faixa_preco_max_centavos)
+        if estado.faixa_preco_min_centavos is not None:
+            consulta = consulta.where(Imovel.preco_venda >= estado.faixa_preco_min_centavos)
+
+    # O mais recente primeiro: entre dois novos, a novidade e o que chegou
+    # depois. `LIMIT 1` porque a D2 manda uma informacao nova por mensagem.
+    return await session.scalar(consulta.order_by(Imovel.created_at.desc()).limit(1))

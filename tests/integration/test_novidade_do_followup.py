@@ -4,13 +4,14 @@ TEC-184. Basename distinto de tudo em `tests/unit/`.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.catalogo.models import Imovel
-from mobia.domain.followup.repositorio import queda_de_preco
+from mobia.domain.context.models import LeadQualification
+from mobia.domain.followup.repositorio import imovel_novo_compativel, queda_de_preco
 from mobia.domain.texto import dobrar
 
 CANAL = "whatsapp"
@@ -126,3 +127,117 @@ async def test_recomendacao_sem_preco_e_ignorada(session: Any) -> None:
     await _recomendar(session, imovel, preco_centavos=None)
 
     assert await queda_de_preco(session, channel=CANAL, conversation_key=CONVERSA) is None
+
+
+ANCORA = datetime(2026, 1, 10, 12, 0, tzinfo=UTC)
+
+
+async def _qualificar(session: Any, **sobrescritas: object) -> None:
+    campos: dict[str, object] = {"channel": CANAL, "conversation_key": CONVERSA}
+    campos.update(sobrescritas)
+    session.add(LeadQualification(**campos))
+    await session.commit()
+
+
+async def test_imovel_criado_depois_da_ancora_e_novidade(session: Any) -> None:
+    """`regiao` chega crua do lead ("sao francisco", sem acento) e compara
+    contra `bairro_busca`, que guarda o bairro DOBRADO ("Sao Francisco" com
+    cedilha e til). So casam porque os dois lados passam por `dobrar` -- e a
+    TEC-160 pagou um Critical justamente por comparar um lado dobrado contra
+    o outro cru."""
+    await _qualificar(session, regiao="sao francisco", tipo_imovel="APARTAMENTO", quartos=3)
+    imovel = await _imovel(
+        session,
+        "AP-501",
+        bairro="São Francisco",
+        tipo="APARTAMENTO",
+        quartos=3,
+        created_at=ANCORA + timedelta(days=1),
+    )
+
+    achado = await imovel_novo_compativel(
+        session, channel=CANAL, conversation_key=CONVERSA, desde=ANCORA
+    )
+
+    assert achado == imovel
+
+
+async def test_imovel_anterior_a_ancora_nao_e_novidade(session: Any) -> None:
+    """ "Novo" e relativo a ultima fala do lead: o que ja existia quando ele
+    falou nao e novidade para ele."""
+    await _qualificar(session, regiao="sao francisco", tipo_imovel="APARTAMENTO", quartos=3)
+    await _imovel(
+        session,
+        "AP-502",
+        bairro="São Francisco",
+        tipo="APARTAMENTO",
+        quartos=3,
+        created_at=ANCORA - timedelta(days=1),
+    )
+
+    achado = await imovel_novo_compativel(
+        session, channel=CANAL, conversation_key=CONVERSA, desde=ANCORA
+    )
+
+    assert achado is None
+
+
+async def test_imovel_ja_apresentado_nao_e_novidade(session: Any) -> None:
+    """Reapresentar o que o lead ja viu e exatamente o "robo carente" que a
+    historia da card quer evitar."""
+    await _qualificar(session)
+    imovel = await _imovel(session, "AP-503", created_at=ANCORA + timedelta(days=1))
+    await _recomendar(session, imovel)
+
+    achado = await imovel_novo_compativel(
+        session, channel=CANAL, conversation_key=CONVERSA, desde=ANCORA
+    )
+
+    assert achado is None
+
+
+async def test_imovel_fora_dos_criterios_nao_e_novidade(session: Any) -> None:
+    await _qualificar(session, regiao="Centro", quartos=3)
+    await _imovel(
+        session,
+        "AP-504",
+        bairro="Centro",
+        quartos=1,
+        created_at=ANCORA + timedelta(days=1),
+    )
+
+    achado = await imovel_novo_compativel(
+        session, channel=CANAL, conversation_key=CONVERSA, desde=ANCORA
+    )
+
+    assert achado is None
+
+
+async def test_lead_sem_criterio_nenhum_aceita_qualquer_imovel_novo(session: Any) -> None:
+    """Todo criterio e nulavel, e nulo significa "o lead nao disse" -- nao
+    "nenhum imovel serve". Filtrar por campo ausente devolveria sempre vazio e
+    mataria a fonte para quem mal comecou a conversar."""
+    await _qualificar(session)
+    imovel = await _imovel(session, "AP-505", created_at=ANCORA + timedelta(days=1))
+
+    achado = await imovel_novo_compativel(
+        session, channel=CANAL, conversation_key=CONVERSA, desde=ANCORA
+    )
+
+    assert achado == imovel
+
+
+async def test_imovel_indisponivel_nao_e_novidade(session: Any) -> None:
+    await _qualificar(session)
+    await _imovel(
+        session,
+        "AP-506",
+        status="VENDIDO",
+        created_at=ANCORA + timedelta(days=1),
+    )
+
+    achado = await imovel_novo_compativel(
+        session, channel=CANAL, conversation_key=CONVERSA, desde=ANCORA
+    )
+
+    assert achado is None
