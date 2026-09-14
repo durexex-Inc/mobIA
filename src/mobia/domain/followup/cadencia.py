@@ -122,8 +122,10 @@ def esta_dormente(*, temperatura: Temperatura, ja_disparada: int) -> bool:
     que a temperatura mais fria significa.
 
     **`temperatura` e `Temperatura`, e nao `str | None`.** Lead com
-    `temperatura IS NULL` (escreveu antes da TEC-151 e nunca mais falou) nao e
-    candidato nem dormente: as duas consultas o excluem pelo `IN`. A tipagem
-    recusa a pergunta em vez de inventar uma resposta -- lacuna L3 do desenho.
+    `temperatura IS NULL` (escreveu antes da TEC-151 e nunca mais falou) fica
+    fora do alcance da cadencia: o filtro `IN` de `candidatos_a_followup`
+    (`repositorio.py:205`) ja o exclui antes de qualquer chamada a esta
+    funcao. A tipagem recusa a pergunta em vez de inventar uma resposta --
+    lacuna L3 do desenho.
     """
     return ja_disparada >= len(CADENCIA[temperatura])
