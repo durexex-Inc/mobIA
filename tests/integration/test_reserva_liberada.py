@@ -1,6 +1,8 @@
+import asyncio
 import uuid
 from typing import Any
 
+import pytest
 from sqlalchemy import text as sql
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -165,8 +167,12 @@ async def test_falha_ao_liberar_nao_mascara_o_erro_original(session, caplog) -> 
     assert "RuntimeError" in caplog.text
 
 
-async def test_liberar_so_apaga_a_reserva_do_kind_que_falhou(session) -> None:
-    """AND kind = :k e o que impede um reply liberado de arrastar o ack junto."""
+async def test_liberar_nao_arrasta_kind_de_outro_grupo(session) -> None:
+    """O `IN (grupo)` e o que impede um reply liberado de arrastar o ack junto.
+
+    Era `AND kind = :k` ate a TEC-273. O que mudou foi o recorte, nao a
+    garantia: `ack` nao pertence a grupo nenhum, entao continua de pe.
+    """
     message_id = await uma_mensagem(session)
     ack_outbound = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("nunca"), falhas=0)
     assert await ack_outbound.send(message_id, "ack", {}) is True
@@ -209,3 +215,123 @@ async def test_excecao_nao_mapeada_mantem_a_reserva(session) -> None:
         pass
 
     assert await reservas(session, message_id) == 1
+
+
+async def test_liberar_apaga_a_reserva_da_parte_irma(session) -> None:
+    """TEC-273. A parte 1 entregue perde a reserva quando a parte 2 falha.
+
+    Sem isto, a retentativa do sweeper reentrega so a parte 2 -- com o texto
+    de uma chamada NOVA ao modelo --, e o lead le a primeira metade de um
+    texto colada na segunda metade de outro. Corrupcao silenciosa: ele nao
+    tem como saber que leu duas fontes, e nada no sistema diz.
+    """
+    from mobia.domain.outbound.kinds import KINDS_DA_RESPOSTA
+
+    message_id = await uma_mensagem(session)
+
+    parte_1 = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("nunca"), falhas=0)
+    assert await parte_1.send(message_id, KINDS_DA_RESPOSTA[0], {}) is True
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[0]) == 1
+
+    parte_2 = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("http 429"))
+    try:
+        await parte_2.send(message_id, KINDS_DA_RESPOSTA[1], {})
+    except EnvioRetentavel:
+        pass
+
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[1]) == 0
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[0]) == 0, (
+        "a reserva da parte JA ENTREGUE tem de cair junto -- e ela que faria a "
+        "retentativa suprimir a parte 1 da geracao nova"
+    )
+
+
+class OutboundTravaNaSegundaParte(GuardedOutbound):
+    """Reserva a parte 2, entra no `_deliver` dela e nunca sai.
+
+    Precisa de um cancelamento de VERDADE (`tarefa.cancel()` numa task em
+    voo), nao de um `raise asyncio.CancelledError()` direto -- e o mesmo
+    ponto que `test_cancelamento_do_worker.py` ja registra: um cancelamento
+    fabricado nao passa pelos mesmos pontos de suspensao do asyncio que o
+    `except (EnvioRetentavel, asyncio.CancelledError)` de `GuardedOutbound.send`
+    de fato intercepta em producao (`job_timeout` do worker, shutdown).
+    """
+
+    def __init__(self, session_factory) -> None:
+        super().__init__(session_factory)
+        self.entrou = asyncio.Event()
+
+    async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> None:
+        self.entrou.set()
+        await asyncio.Event().wait()
+
+
+async def test_cancelamento_libera_a_reserva_da_parte_irma(session) -> None:
+    """TEC-273, D3. Um CancelledError no meio da parte 2 libera a reserva da
+    parte 1 tambem -- a mesma garantia que
+    `test_liberar_apaga_a_reserva_da_parte_irma` ja prova para EnvioRetentavel,
+    agora para o outro gatilho que passa pela MESMA clausula `except` em
+    `GuardedOutbound.send`.
+
+    O comentario daquela clausula diz que o que fazer e identico para as duas
+    excecoes, e que duas copias divergiriam -- mas nada ali IMPEDE que
+    divirjam de fato: um teste que so cobrisse EnvioRetentavel deixaria a
+    metade do cancelamento sem fiador algum. Se `_liberar` regredisse para
+    apagar so o kind que cancelou (a versao anterior a TEC-273, `AND kind =
+    :k`), a reserva da parte 1 -- ja entregue -- sobreviveria, e a proxima
+    retentativa do sweeper suprimiria a parte 1 da geracao nova e entregaria
+    so a parte 2: a mesma corrupcao silenciosa que esta card fecha para o
+    caminho retentavel, agora pelo caminho do cancelamento.
+
+    `asyncio.CancelledError` e `BaseException`, nao `Exception` -- por isso
+    `pytest.raises(asyncio.CancelledError)`, e nao um `except Exception` no
+    corpo do teste, que simplesmente nao o capturaria.
+    """
+    from mobia.domain.outbound.kinds import KINDS_DA_RESPOSTA
+
+    message_id = await uma_mensagem(session)
+
+    parte_1 = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("nunca"), falhas=0)
+    assert await parte_1.send(message_id, KINDS_DA_RESPOSTA[0], {}) is True
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[0]) == 1
+
+    travado = OutboundTravaNaSegundaParte(get_sessionmaker())
+    tarefa = asyncio.create_task(travado.send(message_id, KINDS_DA_RESPOSTA[1], {}))
+    await travado.entrou.wait()
+    tarefa.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await tarefa
+
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[1]) == 0
+    assert await reservas_por_kind(session, message_id, KINDS_DA_RESPOSTA[0]) == 0, (
+        "o cancelamento tem de liberar o GRUPO, igual ao EnvioRetentavel -- "
+        "senao a parte 1 ja entregue fica presa e a proxima retentativa mistura geracoes"
+    )
+
+
+async def test_liberar_uma_ficha_nao_arrasta_as_outras(session) -> None:
+    """TEC-273, fronteira com a TEC-275. As fichas NAO formam grupo.
+
+    A retentativa de uma apresentacao repete o lote persistido em vez de
+    chamar o modelo, entao nao ha geracoes para misturar -- e a reserva de
+    cada ficha e o sinal de que `_continuar_entrega` depende para saber o que
+    ja saiu. Se alguem "simplificar" a liberacao para o `message_id` inteiro,
+    este teste cai, e a continuacao da TEC-275 deixaria de ser tomada em
+    silencio.
+    """
+    message_id = await uma_mensagem(session)
+
+    entregue = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("nunca"), falhas=0)
+    assert await entregue.send(message_id, "ficha_1", {}) is True
+
+    falha = OutboundQueFalha(get_sessionmaker(), EnvioRetentavel("http 503"))
+    try:
+        await falha.send(message_id, "ficha_2", {})
+    except EnvioRetentavel:
+        pass
+
+    assert await reservas_por_kind(session, message_id, "ficha_1") == 1, (
+        "a reserva da ficha entregue tem de SOBREVIVER -- e ela que diz a "
+        "continuacao da TEC-275 que aquela ficha ja chegou ao lead"
+    )
+    assert await reservas_por_kind(session, message_id, "ficha_2") == 0

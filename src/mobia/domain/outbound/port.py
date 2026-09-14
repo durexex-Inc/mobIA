@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mobia.domain.atendimento.repositorio import esta_silenciada_por_mensagem
 from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
 from mobia.domain.optout.repositorio import esta_em_optout_por_mensagem
+from mobia.domain.outbound.kinds import grupo_de
 from mobia.domain.outbound.models import OutboundDispatch
 
 log = structlog.get_logger(__name__)
@@ -48,9 +49,20 @@ class OutboundPort(Protocol):
     um adaptador novo (a TEC-124 traz o canal web) escolhe o tipo errado e
     muda o desfecho do turno sem tocar em nenhuma linha do dominio:
 
-    - `EnvioRetentavel` -- rede, 5xx, 408, 429. A guarda libera a reserva e
-      propaga: a mensagem vira FAILED e o sweeper retenta. O lead recebe
-      eventualmente.
+    - `EnvioRetentavel` -- rede, 5xx, 408, 429. A guarda libera as reservas do
+      GRUPO de `kind` e propaga: a mensagem vira FAILED e o sweeper retenta. O
+      lead recebe eventualmente. **Grupo** (TEC-273, `outbound/kinds.py`) e o
+      conjunto de kinds que carregam UMA resposta regeneravel -- hoje so
+      `KINDS_DA_RESPOSTA`, as duas partes de um texto longo. Liberar so o kind
+      que falhou era o que a TEC-140 deixava: a retentativa roda o turno
+      inteiro, com uma chamada NOVA ao modelo, e a reserva viva da parte ja
+      entregue fazia essa parte da geracao NOVA ser suprimida -- o lead lia a
+      primeira metade de um texto colada na segunda metade de outro. As fichas
+      da apresentacao NAO formam grupo, e e decisao: a retentativa delas
+      repete o lote persistido (TEC-275) em vez de chamar o modelo de novo,
+      entao nao ha duas geracoes para misturar, e a reserva de cada ficha e o
+      sinal que `_continuar_entrega` le para saber o que ja saiu -- poe-las num
+      grupo apagaria esse sinal. Ver `GuardedOutbound._liberar`.
     - `EnvioForaDaJanela` -- o canal nao aceita mais mensagem livre nesta
       conversa. Turno `expirado`, PROCESSED, aviso no log. Expirar nao e
       falhar, e retentar nunca entregaria.
@@ -82,8 +94,8 @@ class OutboundPort(Protocol):
 
     `asyncio.CancelledError` nao esta nessa lista porque nao e escolha de
     adaptador nenhum: e o `job_timeout` do worker ou o shutdown chegando de
-    fora. A guarda a trata como retentavel (libera a reserva e propaga) --
-    ver TEC-227.
+    fora. A guarda a trata como retentavel (libera as reservas do grupo e
+    propaga) -- ver TEC-227.
 
     `send` devolve `False`, sem levantar, em tres situacoes distintas, e
     quem le o retorno nao consegue distinguir uma da outra so pelo booleano:
@@ -173,7 +185,8 @@ class GuardedOutbound:
     entre a reserva e a entrega so perde aquele envio quando a falha e
     permanente (EnvioRecusado); queda depois nunca duplica. Falha retentavel
     (EnvioRetentavel) e cancelamento (`asyncio.CancelledError`, TEC-227)
-    liberam a reserva para a proxima tentativa poder entregar. O criterio de
+    liberam as reservas do GRUPO do kind -- nao so a dele (TEC-273, ver
+    `_liberar`) -- para a proxima tentativa poder entregar. O criterio de
     aceite exige "nenhuma resposta duplicada" -- a troca e essa, e continua
     valendo no caminho de sucesso e na falha permanente.
     """
@@ -315,15 +328,44 @@ class GuardedOutbound:
         return True
 
     async def _liberar(self, message_id: uuid.UUID, kind: str) -> None:
+        """Apaga a reserva de `kind` e as dos kinds do mesmo grupo. TEC-273.
+
+        **Por que o grupo, e nao so o kind que falhou.** Uma resposta longa sai
+        em duas mensagens, com kind proprio para cada (TEC-140). Liberando so
+        a que falhou, a retentativa do sweeper -- que roda o turno inteiro, com
+        uma chamada NOVA ao modelo -- encontra a reserva da parte 1 viva, tem
+        essa parte suprimida, e entrega a parte 2 do texto NOVO. O lead le a
+        primeira metade de um texto colada na segunda metade de outro.
+
+        Este repo ja decidiu que duplicata e melhor que perda ("a duplicata e
+        visivel e recuperavel e o silencio nao", TEC-134/TEC-227). O caso acima
+        nao e nenhum dos dois: e corrupcao silenciosa de conteudo, e o lead nao
+        tem como saber que leu duas fontes. Liberando o grupo, a retentativa
+        reentrega a parte 1 da geracao nova -- uma duplicata visivel, que e o
+        lado que aquele precedente ja escolheu.
+
+        **Grupo, e nao `message_id`.** As fichas compartilham a mensagem com a
+        resposta e NAO formam grupo (ver `kinds.py`): a retentativa delas
+        repete o lote persistido em vez de regenerar, e a reserva de cada uma
+        e o sinal que `_continuar_entrega` (TEC-275) le para saber o que ja
+        saiu. Apagar por `message_id` esvaziaria esse sinal e faria a
+        continuacao nunca ser tomada.
+        """
+        irmaos = grupo_de(kind)
         async with self._session_factory() as session:
             await session.execute(
                 delete(OutboundDispatch).where(
                     OutboundDispatch.message_id == message_id,
-                    OutboundDispatch.kind == kind,
+                    OutboundDispatch.kind.in_(irmaos),
                 )
             )
             await session.commit()
-        log.warning("outbound.reserva_liberada", message_id=str(message_id), kind=kind)
+        log.warning(
+            "outbound.reserva_liberada",
+            message_id=str(message_id),
+            kind=kind,
+            kinds_liberados=list(irmaos),
+        )
 
     async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> None:
         raise NotImplementedError

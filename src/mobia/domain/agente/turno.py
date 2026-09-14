@@ -73,6 +73,7 @@ from mobia.domain.optout.deteccao import (
     pediu_optout,
 )
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
+from mobia.domain.outbound.kinds import KIND_DA_RESPOSTA, KINDS_DA_RESPOSTA
 from mobia.domain.outbound.port import (
     EnvioForaDaJanela,
     EnvioRecusado,
@@ -85,30 +86,11 @@ from mobia.infra.embeddings import embedar
 
 log = structlog.get_logger(__name__)
 
-KIND_DA_RESPOSTA = "reply"
-
-# Dois kinds e nao um repetido, pelo mesmo motivo de `KINDS_DAS_FICHAS`: a
-# `UNIQUE (message_id, kind)` de `outbound_dispatches` e o que torna o
-# reprocessamento seguro, e duas mensagens com o mesmo kind fariam a segunda
-# ser suprimida como reentrega -- o lead receberia metade da resposta em
-# silencio.
-#
-# O primeiro continua sendo `KIND_DA_RESPOSTA` e nao um nome novo: ha linhas
-# gravadas com "reply" e testes que afirmam `_kinds_reservados() == ["reply"]`.
-#
-# A reserva por kind faz a parte ja entregue ser suprimida de novo numa
-# retentativa -- mas isso NAO quer dizer "a retentativa completa a mesma
-# resposta". `sweep_stalled` reenfileira a MENSAGEM, e o turno roda inteiro de
-# novo, com uma chamada NOVA ao classificador: texto diferente do da tentativa
-# anterior. A parte com reserva (`reply`, se foi ela que ja saiu) devolve False
-# de novo e e suprimida; a parte sem reserva sai, mas com o texto da chamada
-# NOVA -- nao com a continuacao do texto antigo. O lead pode acabar com a
-# primeira metade de uma resposta seguida da segunda metade de outra. Fix
-# review final (TEC-140): este comentario prometia "reentrega SO ela", que e
-# falso -- a parte que falta reentrega, mas o texto ao redor dela mudou. Ver o
-# `except EnvioRetentavel` do laco de entrega em `executar_turno`, que so torna
-# isso visivel em log, sem evitar.
-KINDS_DA_RESPOSTA = (KIND_DA_RESPOSTA, "reply_2")
+# `KIND_DA_RESPOSTA` e `KINDS_DA_RESPOSTA` mudaram para
+# `domain/outbound/kinds.py` na TEC-273: `port.py` passou a precisar deles
+# para liberar as reservas irmas, e `domain/outbound` nao pode importar de
+# `domain/agente`. Quem importava daqui continua funcionando -- o nome fica no
+# namespace deste modulo por causa do import acima.
 
 # TEC-162. Kinds fixos POR POSICAO, e nao derivados do id do imovel: o
 # UNIQUE (message_id, kind) de `outbound_dispatches` precisa de um valor que
@@ -1388,6 +1370,12 @@ async def executar_turno(
     # executou.
     suprimida_apos_entrega = False
     entrega_parcial = False
+    # O `kind` cuja supressao setou `suprimida_apos_entrega`, so para o log
+    # que o bloco `if suprimida_apos_entrega:` emite mais abaixo -- ver la.
+    # `None` nunca chega a ser lido: so e consultado dentro daquele `if`, que
+    # so roda quando `suprimida_apos_entrega` e True, e as duas unicas
+    # atribuicoes ficam juntas com as de `suprimida_apos_entrega = True`.
+    kind_suprimido: str | None = None
 
     try:
         if apresentando:
@@ -1618,19 +1606,22 @@ async def executar_turno(
                     # desfecho: a linha ainda vira FAILED e o sweeper ainda
                     # reenfileira. O unico acrescimo e este log, para uma
                     # entrega PARCIAL (a parte 1 ja saida quando o 5xx bateu
-                    # nesta) nao ficar invisivel ate a proxima tentativa
-                    # reaparecer no mesmo lugar.
+                    # nesta) nao ficar invisivel para quem opera.
                     #
-                    # E essa proxima tentativa e o proprio risco que o
-                    # comentario no topo do modulo (perto de `KINDS_DA_RESPOSTA`)
-                    # documenta: `sweep_stalled` roda o turno inteiro de novo,
-                    # com uma chamada NOVA ao classificador. A parte que ja
-                    # tem reserva volta a ser suprimida (devolve False, nao
-                    # levanta -- e o `if entregue:` abaixo cobre isso na
-                    # proxima passada); a parte que falhou aqui sai com o texto
-                    # da chamada nova. O lead pode acabar recebendo a primeira
-                    # metade deste texto seguida da segunda metade de outro --
-                    # este log so torna isso visivel, nao evita.
+                    # O que essa proxima tentativa faz mudou na TEC-273, e
+                    # este paragrafo dizia o contrario ate ela: `sweep_stalled`
+                    # continua rodando o turno inteiro de novo, com uma chamada
+                    # NOVA ao classificador, mas a parte ja entregue NAO tem
+                    # mais reserva quando ele chega. `GuardedOutbound.send`
+                    # libera as reservas do GRUPO de `kind` -- as duas de
+                    # `KINDS_DA_RESPOSTA` -- antes de deixar esta excecao
+                    # subir; ver `_liberar` e o comentario de `KINDS_DA_RESPOSTA`
+                    # em `domain/outbound/kinds.py`, que registra o que a
+                    # liberacao por kind unico custava. A retentativa entrega
+                    # as duas partes da geracao nova: o lead le a parte 1 duas
+                    # vezes -- duplicata visivel, o lado que TEC-134/TEC-227 ja
+                    # escolheram -- em vez da primeira metade deste texto
+                    # costurada na segunda metade de outro.
                     log.error(
                         "turno.entrega_parcial_antes_de_falha_retentavel",
                         channel=message.channel,
@@ -1677,12 +1668,77 @@ async def executar_turno(
                         # ja estava True.
                         entrega_parcial = True
                         suprimida_apos_entrega = True
+                        kind_suprimido = kind
                         break
-                    # Nada saiu ainda: comportamento de sempre, tenta a
-                    # proxima parte. E o caso legitimo da retentativa do
-                    # sweeper (comentario do topo do modulo): a parte com
-                    # reserva de uma tentativa anterior devolve False aqui, e a
-                    # parte sem reserva ainda tem a vez de sair.
+                    # Ate a TEC-273 isto fazia `continue` liso, sem marcar
+                    # nada, e o comentario chamava o caso de "a retentativa
+                    # legitima do sweeper": a parte com reserva de uma
+                    # tentativa anterior devolvia False aqui, e a parte sem
+                    # reserva ainda tinha a vez de sair.
+                    #
+                    # A TEC-273 libera as reservas do GRUPO inteiro, mas so
+                    # quando a falha e RETENTAVEL -- `except (EnvioRetentavel,
+                    # asyncio.CancelledError)` em `GuardedOutbound.send`
+                    # (`port.py`). Qualquer OUTRA morte do turno depois do
+                    # `send()` -- queda do worker, `job_timeout`, excecao no
+                    # recorder -- nao passa por ali, a reserva fica viva, e o
+                    # reprocessamento cai exatamente aqui com uma reserva SAUDAVEL
+                    # de uma entrega que ja aconteceu de verdade: caminho
+                    # normal, nao anomalia (`tests/features/test_reprocessamento_apos_falha.py`
+                    # documenta esse caso). Fix de revisao (Important 2): uma
+                    # versao anterior deste comentario dizia que aquela
+                    # retentativa "deixou de existir" e chamava isto de
+                    # anomalia sem ressalva -- falso para qualquer morte do
+                    # turno que nao seja uma das duas excecoes acima. Uma
+                    # reserva de verdade PRESA (o delete da liberacao falhando
+                    # por deadlock ou conexao caida, que `port.py` ja antecipa
+                    # e loga como `outbound.liberacao_falhou`) e so UMA das
+                    # causas possiveis -- a MESMA guarda de opt-out ou de
+                    # atendimento humano que bloqueou a parte anterior
+                    # (`if entregue:` logo acima cobre o caso simetrico) e
+                    # outra.
+                    #
+                    # `continue`, e nao `break`: a proxima parte ainda pode
+                    # sair de verdade, e reter o quanto foi entregue (visivel,
+                    # recuperavel) e melhor que ficar em silencio total --
+                    # o mesmo criterio de TEC-134/TEC-227 que ja rege este
+                    # arquivo. `entrega_parcial` reescreve `texto` mais abaixo
+                    # para so as partes que de fato sairam, entao a parte
+                    # suprimida nunca chega no recorder.
+                    #
+                    # `suprimida_apos_entrega = True`, e nao False: o NOME diz
+                    # "apos entrega" pensando na ORDEM cronologica, mas o que a
+                    # variavel de fato controla, la embaixo, e se o desfecho
+                    # final pode virar "respondido" quando pelo menos uma
+                    # parte saiu -- e aqui, se uma parte POSTERIOR sair, e
+                    # exatamente essa a duvida (reserva presa vs guarda) que
+                    # nao pode ficar disfarcada de "respondido". Sem isto,
+                    # exatamente o defeito que o comentario do `if entregue:`
+                    # acima descreve se repetiria aqui, so que com a ordem das
+                    # partes invertida. Se NENHUMA parte posterior sair,
+                    # `entregue` continua False e este valor nem chega a ser
+                    # lido -- quem decide o desfecho e o bloco `if not
+                    # entregue:` abaixo, inalterado.
+                    #
+                    # Sem log aqui, de proposito (fix de revisao, Important 1):
+                    # uma versao anterior deste fix logava `error` NESTE ponto,
+                    # e disparava tambem quando NENHUMA parte saia em turno
+                    # nenhum -- o caso de supressao TOTAL, que e exatamente o
+                    # que `if not entregue:` abaixo ja cobre com
+                    # `turno.reentrega_suprimida`.
+                    # `test_reentrega_suprimida_nao_grava_fala_fantasma`
+                    # (`test_turno.py`) tem um unico kind, reserva plantada, e
+                    # ZERO partes saem -- e ainda assim aquele log incondicional
+                    # disparava ali, afirmando "entrega parcial" num turno sem
+                    # entrega nenhuma. O alarme certo so pode nascer depois do
+                    # laco, quando `entregue` e sabidamente True -- ver o
+                    # bloco `if suprimida_apos_entrega:` mais abaixo, que e
+                    # onde `turno.entrega_parcial_da_resposta` agora mora.
+                    # `kind_suprimido` guarda so o dado que aquele log precisa
+                    # e que so existe aqui dentro do laco.
+                    entrega_parcial = True
+                    suprimida_apos_entrega = True
+                    kind_suprimido = kind
                     continue
                 partes_entregues.append(parte)
                 entregue = True
@@ -1768,14 +1824,23 @@ async def executar_turno(
         )
         return "reentrega_suprimida"
 
-    # Fix de revisao final (Critical 1, TEC-140). `entregue` e True aqui --
-    # pelo menos uma parte saiu --, mas `suprimida_apos_entrega` (marcada no
-    # laco acima) diz que uma parte POSTERIOR devolveu False sem levantar. Sao
-    # as MESMAS tres causas do `if not entregue:` logo acima -- reentrega
+    # Fix de revisao final (Critical 1, TEC-140; texto corrigido na TEC-273,
+    # cenario 2 do Gherkin). `entregue` e True aqui -- pelo menos uma parte
+    # saiu --, e `suprimida_apos_entrega` (marcada no laco acima) diz que
+    # ALGUMA parte devolveu False sem levantar -- nao necessariamente
+    # POSTERIOR a que entrou. Ate a TEC-273 a flag so nascia no ramo `if
+    # entregue:` do laco, com uma parte ja entregue quando a suprimida
+    # apareceu -- dai o nome. A D4 da TEC-273 passou a setar a MESMA flag
+    # tambem no ramo `not entregue` (reserva presa achada na PRIMEIRA parte do
+    # laco, ZERO partes entregues naquele instante) quando uma parte seguinte
+    # sai depois -- o nome continua pensando na ordem cronologica, mas o que
+    # ele de fato controla e so isto: alguma parte foi suprimida sem
+    # levantar, com ou sem parte entregue ANTES dela. Sao as MESMAS tres
+    # causas do `if not entregue:` logo acima -- reentrega
     # suprimida pela reserva, a guarda de opt-out barrando um envio
     # concorrente, ou a guarda de atendimento humano barrando pelo mesmo
-    # motivo (TEC-179) --, so que com uma parte ja entregue em vez de
-    # nenhuma. O desfecho de alarme (`reentrega_suprimida`) ou os de
+    # motivo (TEC-179) --, so que com pelo menos uma parte entregue no laco,
+    # em vez de nenhuma. O desfecho de alarme (`reentrega_suprimida`) ou os de
     # guarda-funcionou (`bloqueado_por_optout`, `bloqueado_por_atendimento_humano`)
     # tem de sobreviver do mesmo jeito: gravar "respondido" aqui esconderia
     # exatamente a corrida que `_bloqueado_por_optout_concorrente` e
@@ -1802,6 +1867,26 @@ async def executar_turno(
             )
             desfecho_da_supressao_parcial = "bloqueado_por_atendimento_humano"
         else:
+            # TEC-273, cenario 2 do Gherkin: "um log distingue este caso de
+            # 'nada saiu'". `turno.entrega_parcial_da_resposta` e esse log --
+            # deliberadamente NAO emitido la dentro do laco (fix de revisao,
+            # Important 1): so aqui, depois do laco inteiro, `entregue` e
+            # sabidamente True (este `if` inteiro so roda quando e), entao so
+            # aqui da para afirmar "parcial" sem risco de mentir para o caso
+            # de supressao TOTAL (zero partes), que e o que `if not entregue:`
+            # acima ja cobre com `turno.reentrega_suprimida` sozinho.
+            # `kind_suprimido` sempre esta preenchido quando chegamos aqui: as
+            # duas atribuicoes de `suprimida_apos_entrega = True`, no laco
+            # acima, guardam o `kind` junto na mesma linha.
+            log.error(
+                "turno.entrega_parcial_da_resposta",
+                channel=message.channel,
+                message_id=str(message.id),
+                kind=kind_suprimido,
+                reason="reserva presa ou reprocessamento apos morte do turno: "
+                "nem opt-out nem atendimento humano concorrente explicam a "
+                "supressao",
+            )
             log.error(
                 "turno.reentrega_suprimida",
                 channel=message.channel,
@@ -1810,7 +1895,7 @@ async def executar_turno(
             )
             desfecho_da_supressao_parcial = "reentrega_suprimida"
 
-    if desambiguando and not saida_bloqueada and not citacao_bloqueada:
+    if desambiguando and not saida_bloqueada and not citacao_bloqueada and not entrega_parcial:
         # Depois da entrega confirmada, nunca antes: ver `marcar_desambiguacao`.
         # A ordem entre esta gravacao e a da fala do agente nao e carregada --
         # as duas sao pos-entrega, e a guarda do outbound suprime qualquer
@@ -1831,6 +1916,18 @@ async def executar_turno(
         # chegou ao lead foi `TEXTO_DA_BUSCA_INCONCLUSIVA` (ou a ficha pura),
         # nao a pergunta -- marcar aqui seria o mesmo dano que `saida_bloqueada`
         # evita, so que pela guarda nova em vez da moderacao.
+        #
+        # `not entrega_parcial` (TEC-273), quarta causa, mesmo argumento que
+        # `marcar_perguntados` mais abaixo ja escreve para a marca dele:
+        # `entrega_parcial` nao diz ONDE dentro do texto a quebra caiu, entao
+        # a pergunta do desambiguador -- que atravessa o MESMO laco de
+        # `KINDS_DA_RESPOSTA` que a resposta normal -- pode ter saido inteira,
+        # pela metade, ou nem ter existido na parte que o lead recebeu.
+        # Marcar aqui gastaria, para sempre e em silencio, a unica pergunta do
+        # episodio numa entrega que talvez nunca a tenha feito -- o MESMO dano
+        # que `saida_bloqueada` e `citacao_bloqueada` evitam acima, so que
+        # pela guarda de formato em vez da moderacao ou da citacao. Esta
+        # guarda tinha tres condicoes ate a TEC-273.
         async with session_factory() as session:
             await marcar_desambiguacao(
                 session,
@@ -2158,8 +2255,8 @@ async def _entregar_fichas(
 
     Extraido de `_apresentar` para ter UM laco, e nao dois: a continuacao
     (D4) entrega pelo mesmo caminho. Duas copias de um laco de entrega
-    divergem -- o comentario de `KINDS_DA_RESPOSTA`, neste arquivo, registra o
-    que isso ja custou.
+    divergem -- o comentario de `KINDS_DA_RESPOSTA`, em
+    `domain/outbound/kinds.py` desde a TEC-273, registra o que isso ja custou.
 
     **`kinds` e paralelo a `fichas`**, e vem de quem chama porque e quem chama
     que sabe de onde ele veio: na apresentacao e `KINDS_DAS_FICHAS[:n]`; na

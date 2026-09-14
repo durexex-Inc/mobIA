@@ -208,6 +208,76 @@ async def test_saida_bloqueada_no_caminho_ambiguo_nao_marca_a_desambiguacao(
     )
 
 
+async def test_entrega_parcial_nao_marca_a_desambiguacao(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """TEC-273, D5. A marca so entra quando a pergunta chegou inteira.
+
+    Irmao de `test_saida_bloqueada_no_caminho_ambiguo_nao_marca_a_desambiguacao`,
+    pelo quarto ramo da mesma guarda. `entrega_parcial` nao diz ONDE dentro do
+    texto a quebra caiu: a pergunta do desambiguador pode ter saido inteira,
+    pela metade, ou nem ter existido na parte que o lead recebeu. Marcar aqui
+    gastaria a unica pergunta do episodio numa entrega que talvez nunca a
+    tenha feito, e o lead ficaria em INDEFINIDA sem ninguem ter perguntado --
+    o MESMO dano que `saida_bloqueada` e `citacao_bloqueada` ja evitam.
+
+    E o argumento que a TEC-140 escreveu para `marcar_perguntados`, que tem as
+    quatro condicoes. Esta guarda tinha tres ate a TEC-273.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DA_RESPOSTA
+    from mobia.domain.outbound.port import EnvioRecusado
+
+    await _conversa_ja_existe(session)
+
+    # `confianca=0.5` e o que leva o turno ao caminho ambiguo -- com o padrao
+    # do duble (0,91) nada passa por `desambiguar`, e era esse ponto cego que
+    # mantinha o defeito irmao vivo (ver o docstring do teste ao lado).
+    # A pergunta longa e o que a faz quebrar em duas partes.
+    classificador = classificador_fake(
+        confianca=Decimal("0.5"),
+        pergunta="Me conta: " + "x" * 400 + " ou " + "y" * 400 + "?",
+    )
+
+    class _RecusaAParte2(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id, kind, payload) -> None:
+            if kind == KINDS_DA_RESPOSTA[1]:
+                raise EnvioRecusado("http 400")
+            await super()._deliver(message_id, kind, payload)
+
+    resultado = await rodar_turno(
+        session,
+        classificador,
+        _RecusaAParte2(get_sessionmaker()),
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(),
+    )
+
+    assert classificador.desambiguacoes == 1, "o caminho ambiguo tem de ter sido exercitado"
+    # "respondido" e o resultado CERTO aqui, nao um sintoma do defeito: uma
+    # `EnvioRecusado` na segunda parte apos a primeira ja ter saido e o mesmo
+    # caso que `test_segunda_parte_recusada_nao_apaga_a_primeira_ja_entregue`
+    # (test_formato_no_turno.py) trava como "respondido" por desenho -- a
+    # primeira parte chegou, entao nao e turno mudo. O que este teste prova
+    # nao e o valor de `resultado`, e sim que a marca abaixo fica de fora.
+    assert resultado == "respondido"
+
+    async with get_sessionmaker()() as outra:
+        gravada = await ler_intencao(outra, CANAL_AGENTE, CONVERSA_AGENTE)
+    assert gravada is not None
+    assert gravada.desambiguado_em is None, (
+        "a pergunta pode ter ficado na parte que nao saiu -- o episodio ainda tem direito a ela"
+    )
+
+
 async def test_moderador_fora_do_ar_nas_duas_pontas_paga_o_turno_e_nao_entrega(
     session: AsyncSession,
     classificador_fake,
