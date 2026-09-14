@@ -85,6 +85,24 @@ def _marca_de(nome: str) -> str | None:
     return nome if nome in _CAMPOS_DA_EXTRACAO else None
 
 
+def perguntas_contaveis(perguntou: Iterable[str]) -> frozenset[str]:
+    """Os nomes de `perguntou` que contam para o teto da RN-05.5. TEC-149, D3.
+
+    Conjunto e nao lista: os dois extremos do orcamento chegam como nomes
+    distintos e sao UMA pergunta -- `_marca_de` ja os colapsa no mesmo nome
+    logico, e o conjunto termina o servico. Nome que nao pertence a
+    vocabulario nenhum sai fora: o modelo as vezes devolve o texto da
+    pergunta em lugar do nome do campo, e contar isso gastaria o orcamento
+    do lead com um defeito nosso.
+
+    Reusa `_marca_de` de proposito, em vez de uma segunda lista de nomes:
+    duas fontes para o mesmo vocabulario divergiriam em silencio, que e o
+    defeito que a TEC-146 gastou uma card inteira consertando.
+    """
+    marcas = (_marca_de(nome) for nome in perguntou)
+    return frozenset(marca for marca in marcas if marca is not None)
+
+
 # Um nome de campo e minusculas e underscore. O que nao casa nao vai para o
 # log: o modelo pode devolver o texto da pergunta em vez do nome, e texto de
 # pergunta carrega o que o lead disse.
@@ -639,6 +657,65 @@ async def marcar_perguntados(
                 LeadQualification.perguntados_sem_resposta,
                 literal_column("'{}'::varchar[]"),
             ).op("||")(marcados),
+            updated_at=datetime.now(UTC),
+        )
+    )
+
+
+async def contar_perguntas(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    perguntou: Iterable[str],
+) -> None:
+    """Soma ao contador do teto da RN-05.5 as perguntas deste turno. TEC-149.
+
+    **Funcao irma de `marcar_perguntados`, e nao um trecho dentro dela.** As
+    duas rodam no mesmo commit pos-entrega e pela mesma razao -- a pergunta
+    so conta depois de o lead te-la recebido --, mas as guardas sao
+    diferentes e incompativeis. `marcar_perguntados` sai cedo quando o turno
+    nao extraiu campo nenhum, e o comentario de la declara que "marcar de
+    menos e o erro seguro". Aqui o mesmo atalho inverte o sinal: o turno em
+    que o lead escreve "oi" e o agente pergunta o orcamento nao extrai nada,
+    sairia naquele `return`, e a pergunta FEITA E ENTREGUE nao contaria --
+    dando ao lead mais perguntas do que as oito que a regra promete.
+
+    **Incremento em SQL, nunca lendo em Python para regravar.** E a mesma
+    razao pela qual a uniao da marca foi para o SQL: dois turnos concorrentes
+    da mesma conversa, em que o commit pos-entrega mais lento sobrescreve o
+    valor mais novo pelo mais velho, em silencio. `coluna = coluna + :n` nao
+    tem esse problema, e um contador errado nao tem sintoma nenhum ate o
+    lead ser cortado cedo ou tarde demais.
+
+    Sem nada contavel, nenhum UPDATE: um turno que so respondeu duvida nao
+    gasta orcamento, e um `SET` que soma zero so produziria escrita morta.
+
+    **Consequencia declarada: o `UPDATE` e no-op enquanto o lead nao tem
+    linha.** O unico gravador de `lead_qualification` e o upsert dentro de
+    `gravar_estado`, e ele retorna cedo -- "Deliberadamente NAO cria linha"
+    -- quando `campos_a_gravar` devolve vazio, o que vale sempre para
+    FORA_DE_ESCOPO e para INDEFINIDA sem extracao. No primeiro turno em que
+    o lead so diz "oi", nada e extraido, o agente pode perguntar mesmo
+    assim, e este UPDATE nao casa linha nenhuma: a pergunta foi FEITA E
+    ENTREGUE e nao e contada. Criar a linha aqui foi cogitado e rejeitado --
+    moveria o score do lead de 0 para o piso documentado e gravaria uma
+    entrada na trilha de score por causa de um lead que nao disse nada, um
+    efeito colateral maior que a subcontagem. O erro fica contido: assim que
+    QUALQUER linha existir para o lead, toda pergunta seguinte conta.
+    """
+    quantas = len(perguntas_contaveis(perguntou))
+    if not quantas:
+        return
+
+    await session.execute(
+        update(LeadQualification)
+        .where(
+            LeadQualification.channel == channel,
+            LeadQualification.conversation_key == conversation_key,
+        )
+        .values(
+            perguntas_feitas=LeadQualification.perguntas_feitas + quantas,
             updated_at=datetime.now(UTC),
         )
     )

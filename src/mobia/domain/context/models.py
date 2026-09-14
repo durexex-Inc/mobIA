@@ -8,6 +8,7 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
+    SmallInteger,
     String,
     func,
     text,
@@ -136,6 +137,21 @@ class LeadQualification(Base):
     # Em claro, como o resto desta tabela: e o que o sistema concluiu, nao o
     # que o lead escreveu.
     campos_recusados: Mapped[list[str] | None] = mapped_column(ARRAY(String(32)), nullable=True)
+
+    # TEC-149, RN-05.5. Quantas perguntas de qualificacao ja foram FEITAS E
+    # ENTREGUES a este lead. Cresce so no commit pos-entrega do turno -- ver
+    # `contar_perguntas` no repositorio, e o porque no comentario que chama
+    # `marcar_perguntados` em `turno.py`.
+    #
+    # `NOT NULL DEFAULT 0`, ao contrario das colunas acima: ali o `NULL`
+    # distingue "linha anterior a card" de "nao havia nada", e para um
+    # contador isso nao paga. Zero numa linha antiga significa "ninguem
+    # contava", e o lead antigo recomeca com orcamento cheio.
+    #
+    # Conta CAMPO perguntado, nao turno: a Emenda E-01 da RN-05.4 permite
+    # duas perguntas por turno desde a TEC-255, e contar turnos daria dezesseis
+    # perguntas sob um teto que diz oito.
+    perguntas_feitas: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
 
     # TEC-151, RN-06.2. A temperatura corrente do lead.
     #

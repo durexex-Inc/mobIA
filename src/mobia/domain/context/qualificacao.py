@@ -3,6 +3,9 @@
 TEC-147, RN-05.3. Pura de proposito: sem I/O, sem banco, sem chamada ao
 modelo. Nao ha coluna `status` -- "qualificado" e funcao dos campos, e uma
 segunda fonte para o mesmo fato divergiria da primeira. Ver D1 do desenho.
+
+Tambem hospeda `TETO_DE_PERGUNTAS` e `excedeu_o_teto`, a regra irma da
+RN-05.5 (TEC-149): mesma pureza, mesma ausencia de I/O.
 """
 
 from mobia.domain.agente.schemas import Intencao
@@ -15,6 +18,9 @@ CAMPO_DO_ORCAMENTO = "faixa_preco"
 # Os quatro da RN-05.3. `faixa_preco` e um nome logico, nao uma coluna: sao
 # duas colunas (`_min_centavos` e `_max_centavos`) e qualquer uma delas basta.
 CAMPOS_OBRIGATORIOS: tuple[str, ...] = ("intencao", CAMPO_DO_ORCAMENTO, "regiao", "urgencia")
+
+# RN-05.5. O unico lugar em que este numero esta escrito.
+TETO_DE_PERGUNTAS = 8
 
 # RN-03.4: VENDER_IMOVEL e SUPORTE_CONTRATO vao direto para handoff, e o SDR
 # nao os qualifica. INDEFINIDA e FORA_DE_ESCOPO ficam de fora por outro
@@ -125,3 +131,25 @@ def _preenchido(estado: LeadQualification, campo: str) -> bool:
             or estado.faixa_preco_max_centavos is not None
         )
     return getattr(estado, campo) is not None
+
+
+def excedeu_o_teto(perguntas_feitas: int, perguntas_deste_turno: int) -> bool:
+    """O turno passaria do teto da RN-05.5 se entregasse suas perguntas.
+
+    Recebe DOIS inteiros, e nao o estado nem a tupla `perguntou`: a regra e
+    aritmetica, e quem sabe traduzir nome de campo em pergunta contavel e
+    `perguntas_contaveis`, no repositorio, onde o vocabulario mora. Manter
+    esta funcao sem dependencia e o que a deixa em `tests/unit/`.
+
+    `>` e nao `>=` porque a regra diz "nao mais de 8": a oitava pergunta e
+    permitida, a nona nao. Com duas perguntas num turno sobre sete ja gastas,
+    o turno inteiro e suprimido e a oitava nunca e feita -- consequencia
+    declarada na D4, e a alternativa seria entregar meia pergunta.
+
+    Zero perguntas neste turno nunca excede, por maior que seja o contador:
+    depois do teto o agente continua respondendo duvida e mostrando imovel,
+    so nunca mais qualifica.
+    """
+    if perguntas_deste_turno == 0:
+        return False
+    return perguntas_feitas + perguntas_deste_turno > TETO_DE_PERGUNTAS
