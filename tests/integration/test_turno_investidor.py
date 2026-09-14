@@ -9,30 +9,40 @@ Mais dois que sao as armadilhas desta task. O perfil da RN-07.2 depende de
 DOIS campos, e eles podem chegar em turnos diferentes -- classificar so com o
 que veio neste turno devolveria `None` para um lead que ja respondeu os dois.
 E na virada a chamada 1 foi descartada -- e esse descarte e o assunto do
-ultimo bloco de testes. A pergunta dela nao pode ser marcada nem contada, o
-texto do teto nao pode substituir a prosa do subagente por causa dela, e a
-guarda de citacao nao pode comparar a prosa do INVESTIDOR contra os candidatos
-que ela achou: nesse ultimo caso o lead recebe o texto de fallback em lugar de
-uma resposta correta, que e o falso positivo que a TEC-161 diz nao poder ter.
+ultimo bloco. Nada que ela disse pode decidir o que o lead recebe: nem marcar
+pergunta, nem substituir a prosa pelo texto do teto, nem escolher as fichas,
+nem servir de referencia para a guarda de citacao. Esse ultimo e o pior: o
+lead recebe o texto de fallback em lugar de uma resposta correta, que e o
+falso positivo que a TEC-161 diz nao poder ter.
+
+E o teto tem um caso proprio, porque a TEC-153 o partiu em dois: quando quem
+passa do teto e o subagente, o texto que promete corretor sai de um turno em
+que o bloco transacional nao registrou handoff nenhum. Prometer e nao
+registrar e a falha da TEC-174, e aqui sem nem a linha para alguem agir --
+`test_o_teto_ainda_vale_quando_e_o_investidor_que_pergunta_demais` e quem
+guarda isso.
 """
 
+import uuid
 from decimal import Decimal
 from typing import Any
 
 from conftest import RESPOSTA_DO_INVESTIDOR_FAKE  # type: ignore[import-not-found]
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from mobia.domain.agente.investidor import (
     ExtracaoDoInvestidor,
     Horizonte,
     RetornoEsperadoTipo,
 )
+from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.agente.turno import (
     SUBAGENTE_INVESTIDOR,
     TEXTO_DA_BUSCA_INCONCLUSIVA,
     TEXTO_DO_LIMITE_DE_PERGUNTAS,
 )
+from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.messages.models import MessageTelemetry
 
@@ -73,11 +83,21 @@ async def _conversa_ja_existe(session: Any) -> None:
     await _entrada_do_lead(session, texto="ja tinha falado com o assistente antes")
 
 
-def _candidato(codigo: str) -> dict[str, Any]:
-    """Um candidato de busca, no formato que o turno repassa a guarda de
-    citacao. Mesmos campos que `_candidato` em `tests/unit/test_citacao.py`."""
+async def _gatilhos(session: Any) -> list[str]:
+    resultado = await session.execute(text("SELECT gatilho FROM handoffs"))
+    return [linha.gatilho for linha in resultado]
+
+
+def _candidato_de(codigo: str, imovel_id: uuid.UUID) -> dict[str, Any]:
+    """Um candidato de busca, no formato que o turno repassa a guarda de citacao
+    e a `_apresentar`. Mesmos campos que `_candidato` em
+    `tests/unit/test_citacao.py`.
+
+    `imovel_id` e parametro porque quem apresenta precisa achar a linha de
+    catalogo; quem so exercita a guarda de citacao pode passar qualquer id.
+    """
     return {
-        "imovel_id": "00000000-0000-0000-0000-000000000001",
+        "imovel_id": str(imovel_id),
         "codigo": codigo,
         "titulo": f"Apartamento {codigo}",
         "bairro": "Lagoa da Conceicao",
@@ -254,26 +274,34 @@ async def test_a_virada_e_rotulada_como_investidor_e_o_turno_seguinte_tambem(
 ) -> None:
     """O rotulo do subagente diz qual PROMPT gerou o texto, nao qual ramo rodou.
 
-    Do segundo turno em diante quem entrega a resposta do subagente e o `else`
-    do ramo, porque `ja_e_investidor` escolheu o prompt dele antes da chamada.
-    Rotular esses turnos de "classificador" faria a telemetria mostrar a trilha
-    do investidor acontecendo uma vez por lead -- so na virada -- e ninguem
-    conseguiria medir o que ela custa.
+    **Dois turnos em sequencia, e nao um estado semeado**, porque a afirmacao e
+    sobre os DOIS ramos: o `elif` da virada e o `else` do turno seguinte. Com
+    um turno so, um deles ficaria por conta da leitura -- e um teste cujo nome
+    promete dois casos e afirma um e a mesma classe de defeito que este repo
+    trata comentario desatualizado.
+
+    O turno 1 e a virada (o `elif`). Ele grava `intencao=INVESTIMENTO` em
+    `lead_qualification` e em `conversation_intent`, entao o turno 2 nasce com
+    `ja_e_investidor` verdadeiro e cai no `else`. Rotular o turno 2 de
+    "classificador" faria a telemetria mostrar a trilha do investidor
+    acontecendo uma vez por lead -- so na virada -- e ninguem conseguiria medir
+    o que ela custa.
     """
     await _conversa_ja_existe(session)
-    await _semear_estado(session, intencao=Intencao.INVESTIMENTO.value)
+    classificador = classificador_fake(Intencao.INVESTIMENTO)
 
-    await rodar_turno(
-        session,
-        classificador_fake(Intencao.INVESTIMENTO),
-        outbound_fake(),
-        resumidor_fake(),
-        contador_fake(),
-    )
+    await rodar_turno(session, classificador, outbound_fake(), resumidor_fake(), contador_fake())
+    await rodar_turno(session, classificador, outbound_fake(), resumidor_fake(), contador_fake())
+
+    # Uma generica (a do turno 1, descartada) e duas do investidor: a virada e
+    # a chamada unica do turno seguinte. Sem isto o teste nao saberia dizer que
+    # os dois rotulos vieram de ramos diferentes.
+    assert classificador.chamadas == 1
+    assert classificador.investidores == 2
 
     session.expire_all()
     rotulos = list(await session.scalars(select(MessageTelemetry.subagent)))
-    assert rotulos == [SUBAGENTE_INVESTIDOR]
+    assert rotulos == [SUBAGENTE_INVESTIDOR, SUBAGENTE_INVESTIDOR]
 
 
 async def test_a_citacao_do_investidor_nao_e_bloqueada_pelos_candidatos_descartados(
@@ -297,7 +325,7 @@ async def test_a_citacao_do_investidor_nao_e_bloqueada_pelos_candidatos_descarta
         Intencao.INVESTIMENTO,
         resposta_do_investidor=prosa,
         # A chamada 1 (generica) nao achou este imovel; a do investidor achou.
-        candidatos_do_investidor=[_candidato("AP-1004")],
+        candidatos_do_investidor=[_candidato_de("AP-1004", uuid.uuid4())],
         perguntou_do_investidor=("horizonte",),
     )
     entregador = outbound_fake()
@@ -357,3 +385,73 @@ async def test_o_teto_ainda_vale_quando_e_o_investidor_que_pergunta_demais(
     assert classificador.investidores == 1, "sem a virada o teste nao afirma nada"
     assert TEXTO_DO_LIMITE_DE_PERGUNTAS in entregador.entregues
     assert RESPOSTA_DO_INVESTIDOR_FAKE not in entregador.entregues
+    # **O texto promete um corretor, entao tem de existir um handoff.** Este e
+    # o unico estado em que os dois tetos divergem para o lado que machuca: a
+    # chamada 1 nao perguntou nada, entao o bloco transacional nao registrou
+    # nada, e sem o registro do bloco de substituicao o lead sairia com a
+    # promessa e ninguem com a tarefa. E a falha da TEC-174 outra vez, so que
+    # sem nem a linha para alguem agir.
+    assert "LIMITE_DE_PERGUNTAS" in await _gatilhos(session)
+
+
+async def _imovel(session: Any, codigo: str) -> uuid.UUID:
+    """Uma linha de catalogo para a ficha ter de onde sair.
+
+    Copiado de `test_citacao_no_turno.py`: os arquivos de integracao deste repo
+    sao autocontidos de proposito.
+    """
+    identificador = uuid.uuid4()
+    session.add(
+        Imovel(
+            id=identificador,
+            codigo=codigo,
+            titulo=f"Apartamento {codigo}",
+            descricao="Sala ampla com varanda.",
+            tipo="APARTAMENTO",
+            operacao="VENDA",
+            preco_venda=51_646_430,
+            condominio=55000,
+            bairro="Lagoa da Conceicao",
+            bairro_busca="lagoa da conceicao",
+            cidade="Florianopolis",
+            uf="SC",
+            area_util_m2=54,
+            quartos=4,
+            suites=1,
+            banheiros=2,
+            vagas=2,
+            caracteristicas=["churrasqueira", "mobiliado"],
+            fotos=[f"https://exemplo.com/{codigo}.jpg"],
+            status="DISPONIVEL",
+        )
+    )
+    await session.commit()
+    return identificador
+
+
+async def test_a_virada_apresenta_as_fichas_da_busca_do_investidor(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """As fichas entregues saem da busca do INVESTIDOR, nao da descartada.
+
+    `apresentando`, os `scores` e o `candidatos=` de `_apresentar` liam a
+    chamada 1 ate a correcao. Um turno de virada entregaria fichas de uma busca
+    ao lado da prosa de outra -- e o lead nao tem como saber que as duas nao
+    se conversam.
+
+    A linha em `recomendacoes` e a evidencia mais direta: ela guarda o
+    `imovel_id` do que foi de fato apresentado.
+    """
+    await _conversa_ja_existe(session)
+    do_generico = await _imovel(session, "AP-1001")
+    do_investidor = await _imovel(session, "AP-1004")
+    classificador = classificador_fake(Intencao.INVESTIMENTO)
+    classificador.candidatos = [_candidato_de("AP-1001", do_generico)]
+    classificador.candidatos_do_investidor = [_candidato_de("AP-1004", do_investidor)]
+
+    await rodar_turno(session, classificador, outbound_fake(), resumidor_fake(), contador_fake())
+
+    assert classificador.investidores == 1, "sem a virada o teste nao afirma nada"
+    session.expire_all()
+    apresentados = list(await session.scalars(select(Recomendacao.imovel_id)))
+    assert apresentados == [do_investidor]

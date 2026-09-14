@@ -140,7 +140,7 @@ TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
 # podem sobrescrever `texto` depois. Ver o `if teto_da_entrega and not
 # desambiguando and not saida_bloqueada:` mais abaixo, onde as duas guardas
 # e a ordem de precedencia estao escritas por extenso. (`teto_da_entrega`, e
-# nao `teto_atingido`: desde a TEC-153 sao dois -- um decide o handoff a partir
+# nao `teto_do_handoff`: desde a TEC-153 sao dois -- um decide o handoff a partir
 # da chamada 1, o outro decide esta substituicao a partir do texto ENTREGUE,
 # que na virada do investidor nao e o mesmo.)
 #
@@ -524,9 +524,22 @@ async def _continuar_entrega(
             text="\n\n".join(entrega.legendas),
             model=MODELO_SEM_CHAMADA,
             # O rotulo de quem originou a apresentacao, e nao um valor novo:
-            # estas fichas saem da busca que o classificador fez na passada
-            # anterior. Um rotulo proprio partiria a MESMA apresentacao em dois
-            # valores de `subagent` para quem le a telemetria depois.
+            # estas fichas saem da busca da passada anterior. Um rotulo proprio
+            # partiria a MESMA apresentacao em dois valores de `subagent` para
+            # quem le a telemetria depois.
+            #
+            # **Mas este rotulo nao distingue as duas buscas que podem te-las
+            # produzido, e desde a TEC-153 sao duas.** A trilha do investidor
+            # tambem busca e apresenta, entao a passada anterior pode ter sido
+            # um turno do subagente investidor -- e esta continuacao grava
+            # `classificador` do mesmo jeito. Nao ha como saber daqui: esta
+            # funcao roda ANTES de `montar_contexto`, nao tem `contexto.estado`
+            # e portanto nao tem `ja_e_investidor`; e o `subagent` da passada
+            # anterior nao e lido de lugar nenhum aqui. A consequencia e real e
+            # esta declarada, nao corrigida: a telemetria subconta as
+            # continuacoes da trilha do investidor, jogando-as no balde do
+            # classificador. Fechar isto exige ler o `subagent` da linha que a
+            # passada anterior gravou -- consulta que esta funcao hoje nao faz.
             subagent=SUBAGENTE_CLASSIFICADOR,
             tokens_in=0,
             tokens_out=0,
@@ -1077,17 +1090,27 @@ async def executar_turno(
     # TEC-149, RN-05.5. Depois da geracao, porque depende de `gerada.perguntou`;
     # antes do bloco transacional, porque e ele quem registra o handoff.
     #
-    # **Este valor decide o HANDOFF, e nao mais a substituicao do texto**
-    # (TEC-153). A virada do investidor separou as duas perguntas: aqui so da
-    # para ler a chamada 1, porque a do investidor ainda nao aconteceu -- ela
-    # depende de `gerada.intencao`. "O turno quis perguntar demais" e o que
-    # registra o handoff e pode ser respondido agora; "o texto ENTREGUE contem
-    # pergunta que passa do teto" so pode ser respondido depois do ramo, e vive
-    # em `teto_da_entrega`, la embaixo. Registrar o handoff a partir da chamada
-    # 1 e conservador e ja tinha precedente declarado: o comentario do `if
-    # teto_atingido:` abaixo explica por que ele nasce mesmo nos turnos em que o
-    # texto do teto nao sai.
-    teto_atingido = excedeu_o_teto(
+    # **O nome diz o escopo, e o par tem de ser lido junto** (TEC-153). Desde a
+    # virada do investidor sao DOIS tetos, e os nomes sao simetricos de
+    # proposito -- `teto_do_handoff` e `teto_da_entrega` -- para ninguem ter de
+    # ler comentario para escolher entre dois nomes parecidos que guardam
+    # decisoes diferentes:
+    #
+    # - `teto_do_handoff` (este): "o turno QUIS perguntar demais". Le a chamada
+    #   1, que e a unica que existe aqui -- a do investidor depende de
+    #   `gerada.intencao` e so acontece depois. Registra o handoff.
+    # - `teto_da_entrega` (la embaixo): "o texto ENTREGUE contem pergunta que
+    #   passa do teto". Le `resposta_do_turno`. Substitui o texto e trava a
+    #   marca pos-entrega.
+    #
+    # Nos caminhos que nao sao a virada os dois valem o mesmo. Na virada eles
+    # divergem, e o comentario do `if teto_da_entrega:` la embaixo explica o
+    # que fecha o buraco quando a divergencia cai para o lado de haver texto do
+    # teto sem handoff -- que seria prometer corretor e nao registrar nenhum.
+    # Registrar o handoff a partir da chamada 1 e conservador e ja tinha
+    # precedente declarado: o comentario do `if teto_do_handoff:` abaixo diz
+    # por que ele nasce mesmo nos turnos em que o texto do teto nao sai.
+    teto_do_handoff = excedeu_o_teto(
         contexto.estado.perguntas_feitas if contexto.estado is not None else 0,
         len(perguntas_contaveis(gerada.perguntou)),
     )
@@ -1160,7 +1183,7 @@ async def executar_turno(
                 gatilho=gatilho_da_intencao,
             )
 
-        if teto_atingido:
+        if teto_do_handoff:
             # Registrado aqui mesmo nos turnos em que o texto do teto NAO vai
             # sair. Das guardas da substituicao la embaixo, `saida_bloqueada`
             # de fato nao existe ainda neste ponto -- depende da chamada de
@@ -1497,7 +1520,7 @@ async def executar_turno(
         )
         texto = TEXTO_NEUTRO_DE_SAIDA
 
-    # TEC-153. A outra metade da pergunta que `teto_atingido` fazia sozinho, e
+    # TEC-153. A outra metade da pergunta que `teto_do_handoff` fazia sozinho, e
     # agora sobre a resposta ENTREGUE: o texto que vai sair contem pergunta que
     # passa do teto? Em todo caminho menos a virada este valor e igual ao de
     # cima, porque `resposta_do_turno is gerada`. Na virada eles divergem nos
@@ -1536,6 +1559,54 @@ async def executar_turno(
         # as duas substituem por constante NOSSA, entao a pergunta que o teto
         # suprimiu nao vaza por nenhuma delas.
         texto = TEXTO_DO_LIMITE_DE_PERGUNTAS
+
+        if not teto_do_handoff:
+            # **O texto promete corretor; sem isto, na virada, nao haveria
+            # corretor nenhum para prometer.** Os dois tetos divergem so na
+            # virada do investidor, e este e o sentido que machuca: a chamada 1
+            # nao perguntou nada, entao `teto_do_handoff` foi False e o bloco
+            # transacional la em cima nao registrou handoff; o subagente
+            # perguntou e passou do teto, entao `teto_da_entrega` e True e o
+            # lead recebe "prefiro passar para um corretor... ele entra em
+            # contato" -- com linha nenhuma em `handoffs` para alguem agir.
+            #
+            # E a falha da TEC-174 de novo, e pior: la o texto prometia um
+            # aviso que nao existia; aqui nao existe nem o registro. O
+            # comentario de `TEXTO_DO_LIMITE_DE_PERGUNTAS`, no topo deste
+            # modulo, guarda essa historia. E nenhum outro handoff cobre o
+            # turno: INVESTIMENTO nao esta em `_GATILHO_DA_INTENCAO`.
+            #
+            # A contagem nao sobe (a guarda pos-entrega exclui
+            # `teto_da_entrega`), entao sem esta linha o handoff so apareceria
+            # num turno futuro em que o investidor perguntasse de novo -- uma
+            # mitigacao que depende do modelo repetir o comportamento, o que
+            # nao e garantia nenhuma.
+            #
+            # Transacao curta propria, como a de `gravar_investidor` logo
+            # acima, e pelo mesmo motivo: o fato so existe depois do ramo, e o
+            # bloco transacional de la em cima ja commitou. `registrar_handoff`
+            # e idempotente, entao um retry do sweeper nao duplica.
+            #
+            # `not teto_do_handoff` e nao incondicional: com os dois True o
+            # handoff ja nasceu no bloco transacional, com `_agendar_resumo`
+            # junto -- repetir aqui so gastaria uma transacao para o mesmo
+            # `gatilho_adicional`.
+            async with session_factory() as session:
+                handoff_da_entrega = await registrar_handoff(
+                    session,
+                    channel=message.channel,
+                    conversation_key=message.conversation_key,
+                    gatilho=Gatilho.LIMITE_DE_PERGUNTAS,
+                )
+                await session.commit()
+            log.info(
+                "handoff.criado" if handoff_da_entrega.criado else "handoff.gatilho_adicional",
+                channel=message.channel,
+                gatilho=Gatilho.LIMITE_DE_PERGUNTAS.value,
+                etiqueta=ETIQUETA_DE[Gatilho.LIMITE_DE_PERGUNTAS],
+                prioridade=PRIORIDADE_DE[Gatilho.LIMITE_DE_PERGUNTAS].value,
+            )
+            await _agendar_resumo(agendador, handoff_da_entrega)
 
     # TEC-162, D4. Candidatos sem pergunta e turno de apresentacao. As tres
     # condicoes sao a mesma regra: pergunta adia as fichas. `desambiguando`
@@ -2273,7 +2344,7 @@ async def executar_turno(
         # `gerada` nao foi o que saiu. A pergunta foi SUPRIMIDA, nao feita --
         # marcar ou contar aqui gastaria orcamento do lead por uma pergunta
         # que ele nunca viu, e o proximo turno ja nasceria acima do teto. E
-        # `teto_da_entrega`, e nao `teto_atingido`: a pergunta que importa aqui
+        # `teto_da_entrega`, e nao `teto_do_handoff`: a pergunta que importa aqui
         # e sobre o texto ENTREGUE, e e so ele que o lead pode ter lido. Nos
         # caminhos que chegam ate aqui os dois valem o mesmo, porque
         # `resposta_do_turno is gerada`.
