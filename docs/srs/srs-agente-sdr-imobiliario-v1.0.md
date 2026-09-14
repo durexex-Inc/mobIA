@@ -33,6 +33,7 @@
 > | E-01 | RN-07.2 | [TEC-153](https://eduardodurieuxlopes.atlassian.net/browse/TEC-153) | 14/09/2026 |
 > | E-01 | RN-05.2 | [TEC-153](https://eduardodurieuxlopes.atlassian.net/browse/TEC-153) | 14/09/2026 |
 > | E-01 | RN-07.3, RN-07.5, RN-10.1 | [TEC-154](https://eduardodurieuxlopes.atlassian.net/browse/TEC-154) | 14/09/2026 |
+> | E-01 | RN-13.2 | [TEC-184](https://eduardodurieuxlopes.atlassian.net/browse/TEC-184) | 14/09/2026 |
 >
 > **Este índice está incompleto e a linha acima não o conserta.** Emendas do corpo de várias cards (TEC-139, TEC-142, TEC-161, TEC-162, TEC-174 a TEC-179, TEC-196, TEC-278) nunca foram indexadas — a TEC-275 acrescentou só a sua. Quem procura a lista completa lê o corpo do documento, não esta tabela.
 
@@ -366,6 +367,7 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 | FRIO | 2 | 3 dias, 14 dias |
 
 - RN-13.2: Cada follow-up é gerado com o contexto da conversa e **traz informação nova** (novo imóvel compatível, mudança de preço, convite para agendar). Proibido "oi, tudo bem?" solto.
+  - **Emenda E-01 (TEC-184, 14/09/2026):** a regra manda que o follow-up traga informação nova e proíba mensagem vazia. Fica fixado que: a informação nova é escolhida **por código**, numa ordem fixa (queda de preço, depois imóvel novo compatível, depois convite para agendar), e que **só queda** de preço qualifica — a regra de negócio da card diz "mudança" e o critério de aceite diz "redução", e aumento de preço não reengaja. Fica declarado também que a mensagem vazia é **irrepresentável** e não bloqueada: como o convite é sempre uma alternativa, a geração nunca produz mensagem sem conteúdo; o que a validação descarta é a prosa do modelo, não o envio.
 - RN-13.3: Envio apenas entre 9h e 20h no fuso do lead. Disparo agendado fora da janela é adiado para a próxima abertura.
   - **Emenda E-01 (TEC-185, 04/09/2026):** a janela é **guarda de disparo, e não ajuste de agendamento**. `devido_em` continua sendo a hora da aritmética da RN-13.1 — `ancora_em` mais o intervalo da tentativa — e pode cair fora da janela, inclusive de madrugada; o que a janela impede é o disparo naquele instante. O efeito observável da regra é o descrito: nenhum envio automático fora de 9h–20h, e o disparo recusado é adiado para a próxima abertura sem consumir a tentativa, porque na cadência derivada nada é gravado quando a janela recusa e `ja_disparada` não se move. **Consequência declarada:** a afirmação do modelo de dados da seção 5 de que `agendado_para` está *"já ajustado à janela da RN-13.3"* não vale para `devido_em` — a Emenda E-01 da RN-13.4 já havia renomeado a coluna e apontado para esta card, e esta fecha o ponto escolhendo **não** ajustar, porque `created_at` já registra a hora do disparo real e ajustar `devido_em` gravaria a mesma informação duas vezes, apagando o atraso. A janela vale para todo envio automático, mas hoje só existe um sítio de automação (a varredura da cadência); lembrete de visita e reengajamento a herdarão quando existirem (TEC-171, TEC-172).
 - RN-13.4: Resposta do lead cancela a cadência pendente e reinicia o ciclo a partir do novo estado.
