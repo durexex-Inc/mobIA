@@ -40,7 +40,7 @@ from mobia.domain.optout.repositorio import esta_em_optout
 from mobia.domain.outbound.antispam import MAXIMO_SEM_RESPOSTA, antispam_permite_envio
 from mobia.domain.outbound.horario import horario_permite_envio
 from mobia.domain.outbound.kinds import KIND_DO_FOLLOWUP
-from mobia.domain.outbound.port import EnvioForaDaJanela
+from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, EnvioRetentavel
 
 log = structlog.get_logger(__name__)
 
@@ -55,22 +55,40 @@ log = structlog.get_logger(__name__)
 MAXIMO_DE_ENVIOS_POR_EXECUCAO = 25
 
 # O segundo teto, e ele tambem NAO e medido -- emenda a D7. Existe porque o de
-# cima, sozinho, nao limita o que diz limitar: o cliente do provedor tem
-# `TIMEOUT_SEGUNDOS = 60` com uma retentativa (ate 120 s por chamada), entao o
-# pior caso de 25 envios nao e o de ~100 s que aquele numero supoe -- e de
-# 3000 s contra um `job_timeout` de 240. Um teto que so vale na media e
-# decorativo no unico cenario em que um teto importa.
+# cima, sozinho, nao limita o que diz limitar.
 #
-# 180 s e derivado do mesmo `job_timeout = 240`, deixando ~60 s de margem para
-# a agregacao que produz os candidatos e para o commit do ultimo envio. O que
-# muda esta conta e o TIMEOUT do cliente (`outbound/whatsapp.py`) ou o proprio
-# `job_timeout`: mexer num dos dois sem mexer aqui volta a deixar o teto
-# frouxo.
+# **O pior caso de um candidato sao ~130 s, e 120 deles sao do provedor de
+# MODELO, nao da Meta.** A chamada de `redigir_abertura` usa o cliente de
+# `infra/anthropic.py`, que tem `TIMEOUT_SEGUNDOS = 60.0` e `MAX_TENTATIVAS =
+# 1` -- 60 s na primeira tentativa mais 60 s na retentativa, ate 120 s por
+# follow-up. O POST para a Meta custa no maximo os `TIMEOUT_SEGUNDOS = 10.0`
+# de `outbound/whatsapp.py`, que nao retenta (o 5xx/408/429 vira
+# `EnvioRetentavel` e quem retenta e a varredura seguinte). Nao confunda os
+# dois clientes: e o de `infra/anthropic.py` que domina esta conta.
+#
+# Com isso, o pior caso de 25 envios nao e o de ~100 s que o numero de cima
+# supoe -- e de ~3250 s contra um `job_timeout` de 240. Um teto que so vale na
+# media e decorativo no unico cenario em que um teto importa.
+#
+# **110 s, e a conta e 110 + 130 = 240.** A checagem roda no TOPO do laco, o
+# que significa que mais um candidato inteiro pode comecar imediatamente
+# depois de ela passar: o tempo total no pior caso e o teto MAIS um candidato.
+# Com 180 seriam 310 s contra um `job_timeout` de 240 -- o teto estouraria o
+# orcamento que existe para proteger. 110 fecha exatamente em 240, sem margem
+# sobrando, e e isso que o numero diz.
+#
+# O teto e um numero so, e nao uma condicao com o pior caso subtraido dentro
+# dela, de proposito: dois termos derivados multiplicam o palpite, e um numero
+# unico com a conta escrita e mais facil de corrigir quando alguem medir.
+#
+# O que muda esta conta: o `TIMEOUT_SEGUNDOS`/`MAX_TENTATIVAS` de
+# `infra/anthropic.py` e o `job_timeout` do worker. Mexer num dos dois sem
+# refazer a soma acima volta a deixar o teto frouxo.
 #
 # Quem sobra CONTINUA DEVIDO e entra na varredura seguinte, cinco minutos
 # depois -- a cadencia e ancorada e nao encadeada (docstring de
 # `cadencia.py`), entao nada se desloca por causa do corte.
-TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS = 180
+TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS = 110
 
 
 async def _novidade_do_followup(
@@ -121,12 +139,15 @@ async def _novidade_do_followup(
         desde=candidato.ancora_em,
     )
     if novo is not None:
-        # `preco_venda` e nulavel: o CHECK de `imoveis` exige UM dos dois
-        # precos, entao um imovel so de aluguel tem esta coluna vazia, e
-        # `imovel_novo_compativel` so filtra por ela quando o lead declarou
-        # faixa. Sem numero nao ha legenda -- `reais_de` precisa de um --,
-        # entao a novidade cede o lugar ao convite em vez de o follow-up
-        # inteiro quebrar por um imovel de aluguel no catalogo.
+        # `preco_venda` e nulavel na tabela, mas NAO no que chega aqui:
+        # `imovel_novo_compativel` filtra `preco_venda IS NOT NULL` desde o fix
+        # de revisao desta task -- um imovel so de locacao nao e novidade
+        # entregavel, e escolher um para descartar depois em silencio era o
+        # defeito que aquele filtro fechou.
+        #
+        # O guard abaixo sobrevive porque `scalar` devolve `int | None` e
+        # engolir isso com um `cast` esconderia a unica forma de ele voltar a
+        # acontecer: alguem afrouxar o filtro de la sem olhar para ca.
         preco = await session.scalar(select(Imovel.preco_venda).where(Imovel.id == novo))
         if preco is not None:
             fichas = await fichas_do_catalogo(session_factory, ids=(novo,), precos={novo: preco})
@@ -174,10 +195,12 @@ async def sweep_followups(
     `job_timeout` do ARQ cancelando a meio caminho: o rollback desfaz a linha,
     mas o log ja saiu, e a proxima varredura reemite o mesmo evento para a
     mesma tentativa porque o UNIQUE nao tem o que absorver -- nunca houve
-    linha para conflitar. Os eventos ficam numa lista e so saem no fim, depois
-    de a sessao fechar: com o commit por candidato eles ja poderiam sair
-    dentro do laco sem mentir, e continuam na lista porque o retorno da funcao
-    e `len(eventos)` e emitir junto mantem uma leitura so do lote.
+    linha para conflitar. **O evento sai imediatamente DEPOIS do commit
+    daquele candidato, e nao de uma lista lida no fim** (TEC-184): com o
+    commit por candidato, guardar os eventos para o fim faria um aborto no
+    meio do lote apagar o registro de trabalho que ja aconteceu e ja foi
+    entregue. Ate esta card a lista era coerente, porque o mesmo aborto
+    desfazia as linhas junto.
 
     **Depois de gravar, a varredura MONTA e ENTREGA** (TEC-184): escolhe a
     informacao nova (`_novidade_do_followup`), pede a abertura ao modelo
@@ -187,13 +210,16 @@ async def sweep_followups(
     `(message_id, kind)` de `outbound_dispatches` espelha a UNIQUE
     `(channel, conversation_key, ancora_em, tentativa)` de `followups`.
 
-    **`EnvioForaDaJanela` e capturado por candidato e vira log.** Hoje so a
-    tentativa de 2h do QUENTE cabe na janela de 24h da Meta (L1 do desenho);
-    as outras oito posicoes batem nessa recusa, e um lead fora da janela nao
-    pode custar o follow-up dos outros. **A linha de `followups` permanece** --
-    a tabela e append-only e a linha e gravada antes do envio, entao a
-    tentativa e CONSUMIDA e nao volta quando a TEC-186 entrar. E decisao da
-    L1, nao descuido.
+    **Nenhuma falha de envio derruba o lote: as tres viram log e o laco
+    segue.** `EnvioForaDaJanela` em `info` (hoje so a tentativa de 2h do
+    QUENTE cabe na janela de 24h da Meta -- L1 do desenho --, e as outras oito
+    posicoes batem nessa recusa), qualquer outro `EnvioRecusado` em `error`, e
+    `EnvioRetentavel` em `warning`. **A linha de `followups` permanece nos
+    tres** -- a tabela e append-only e a linha e gravada antes do envio, entao
+    a tentativa e CONSUMIDA. Para as recusas isso e a L1, declarada; para o
+    retentavel e uma perda que o nome do tipo desmente, e o `warning` existe
+    para que ela nao seja silenciosa (ver o comentario no corpo).
+    `asyncio.CancelledError` continua propagando: nao e `Exception`.
 
     **Dois tetos por execucao** (D7 e a emenda dela): `MAXIMO_DE_ENVIOS_POR_EXECUCAO`
     e `TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS`, ambos no topo do modulo. Quem
@@ -243,8 +269,9 @@ async def sweep_followups(
     duas torna a guarda alcancavel -- isso exige um segundo produtor que
     componha a propria contagem em `ja_enviadas` (lacuna 4 do desenho).
 
-    O retorno continua sendo o numero de linhas GRAVADAS. O evento de maximo
-    sai numa lista propria e nao entra nessa contagem: gravar e atingir o
+    O retorno continua sendo o numero de linhas GRAVADAS, e nao o de mensagens
+    entregues: uma recusa da Meta consome a tentativa e conta aqui do mesmo
+    jeito. O evento de maximo nao entra nessa contagem -- gravar e atingir o
     maximo sao fatos diferentes, e somar os dois faria o retorno mentir para
     quem mede a varredura.
     """
@@ -261,9 +288,8 @@ async def sweep_followups(
     # numeros sem sentido. O teto de tempo e de parede.
     comeco = time.monotonic()
     enviados = 0
+    gravadas = 0
     corte: str | None = None
-    eventos: list[dict[str, Any]] = []
-    eventos_de_maximo: list[dict[str, Any]] = []
 
     if not horario_permite_envio(
         momento=agora,
@@ -377,16 +403,29 @@ async def sweep_followups(
             # CONSUMIDA mesmo quando a Meta recusa (L1).
             await session.commit()
 
+            gravadas += 1
+
+            # **Emitido AQUI, logo depois do commit deste candidato, e nao
+            # numa lista lida no fim.** A regra da TEC-183 continua a mesma --
+            # o evento nunca sai antes de a linha estar confirmada --, o que
+            # mudou foi onde o commit acontece. Com o commit por candidato, a
+            # lista passou a ter uma assimetria nova e errada: um aborto no
+            # meio do lote (um `ConnectionResetError` no decimo, o
+            # `job_timeout` cancelando) deixaria as linhas dos candidatos
+            # anteriores gravadas E AS MENSAGENS ENTREGUES, mas jogaria fora
+            # os eventos de todos eles -- silencio sobre trabalho que de fato
+            # aconteceu. Antes desta card a lista era coerente, porque o
+            # mesmo aborto desfazia as linhas junto.
+            #
             # O texto do lead nao entra: a regra de PII que
             # `moderacao.entrada_bloqueada` respeita vale igual aqui.
-            eventos.append(
-                {
-                    "channel": candidato.channel,
-                    "tentativa": tentativa,
-                    "temperatura": candidato.temperatura.value,
-                    "ancora_em": candidato.ancora_em.isoformat(),
-                    "devido_em": devido_em.isoformat(),
-                }
+            log.info(
+                "followup.devido",
+                channel=candidato.channel,
+                tentativa=tentativa,
+                temperatura=candidato.temperatura.value,
+                ancora_em=candidato.ancora_em.isoformat(),
+                devido_em=devido_em.isoformat(),
             )
 
             # `==` e nao `>=` porque a guarda acima ja garante
@@ -398,13 +437,25 @@ async def sweep_followups(
             # nunca responde nunca sai do estado. "Atingir o teto" e um
             # instante; o estado e derivavel da tabela a qualquer momento.
             if candidato.ja_enviadas + 1 == MAXIMO_SEM_RESPOSTA:
-                eventos_de_maximo.append(
-                    {
-                        "channel": candidato.channel,
-                        "conversation_key": candidato.conversation_key,
-                        "ancora_em": candidato.ancora_em.isoformat(),
-                        "ja_enviadas": MAXIMO_SEM_RESPOSTA,
-                    }
+                # `warning` e nao `info`: nao e erro, mas e um lead saindo do
+                # alcance da automacao, que a RN-13.7 quer visivel para a
+                # gerente. Mesmo nivel de `followup.candidatos_saturados` e
+                # `outbound.optout_bloqueou`, que tambem sao "funcionou como
+                # desenhado, e alguem precisa saber".
+                #
+                # `conversation_key` viaja aqui e nao em `followup.devido`: o
+                # proposito da propria regra e que alguem consiga agir sobre O
+                # LEAD especifico que saiu do alcance da automacao, e um evento
+                # sem identificador nao da para isso. `structlog` mascara o
+                # campo (`_CHAVES_MASCARADAS` em `app/logging.py`) para os
+                # quatro ultimos digitos antes de qualquer coisa chegar ao log
+                # de verdade.
+                log.warning(
+                    "followup.antispam_atingido",
+                    channel=candidato.channel,
+                    conversation_key=candidato.conversation_key,
+                    ancora_em=candidato.ancora_em.isoformat(),
+                    ja_enviadas=MAXIMO_SEM_RESPOSTA,
                 )
 
             # Conta TENTATIVAS de envio, e nao entregas: o que os dois tetos
@@ -468,30 +519,83 @@ async def sweep_followups(
                         "texto": texto,
                     },
                 )
-            except EnvioForaDaJanela:
-                # Por candidato, e o laco SEGUE: um lead fora da janela de 24h
-                # da Meta nao pode custar o follow-up dos outros. Hoje so a
-                # tentativa de 2h do QUENTE cabe na janela, entao esta e a
-                # ramificacao mais percorrida da varredura (L1 do desenho).
+            except EnvioRecusado as falha:
+                # **`EnvioRecusado`, a superclasse, e nao so a
+                # `EnvioForaDaJanela`.** As duas sao permanentes -- retentar
+                # nao muda nada -- e nenhuma pode custar o follow-up dos
+                # outros candidatos do lote. Capturar so a filha deixava um
+                # 4xx de payload ou um 401 de token abortar a varredura
+                # inteira, com os candidatos seguintes adiados por uma falha
+                # que nao e deles.
                 #
-                # **A linha de `followups` permanece, e a tentativa e
-                # CONSUMIDA.** A tabela e append-only e a linha foi commitada
-                # antes do envio, entao ela nao volta a vencer quando a
-                # TEC-186 (template fora da janela) entrar -- o lead perde
+                # **A linha de `followups` permanece nos dois casos, e a
+                # tentativa e CONSUMIDA.** A tabela e append-only e a linha foi
+                # commitada antes do envio, entao ela nao volta a vencer quando
+                # a TEC-186 (template fora da janela) entrar -- o lead perde
                 # aquela posicao da cadencia para sempre. E decisao da L1, com
                 # o custo declarado, e nao efeito colateral: desfaze-la aqui
                 # faria a varredura reprocessar a mesma tentativa a cada cinco
                 # minutos, pagando a prosa toda vez para bater na mesma
                 # recusa.
                 #
-                # `info` e nao `warning`: enquanto a TEC-186 nao entra, isto e
-                # o caminho esperado para oito das nove posicoes da cadencia, e
-                # alarmar em cada uma afogaria o log.
-                log.info(
-                    "followup.fora_da_janela_de_24h",
+                # Os NIVEIS e que separam as duas, porque quem opera precisa
+                # distinguir: fora da janela e `info`, porque enquanto a
+                # TEC-186 nao entra e o caminho esperado para oito das nove
+                # posicoes da cadencia e alarmar em cada uma afogaria o log;
+                # qualquer outra recusa e `error`, o mesmo nivel de
+                # `outbound.recusado_permanente`, porque ai o payload ou a
+                # credencial estao errados e ninguem vai descobrir isso sozinho.
+                if isinstance(falha, EnvioForaDaJanela):
+                    log.info(
+                        "followup.fora_da_janela_de_24h",
+                        channel=candidato.channel,
+                        tentativa=tentativa,
+                        temperatura=candidato.temperatura.value,
+                    )
+                else:
+                    log.error(
+                        "followup.recusado_permanente",
+                        channel=candidato.channel,
+                        tentativa=tentativa,
+                        # So o nome da classe, como no resto do projeto: o
+                        # texto da excecao pode carregar corpo de resposta.
+                        reason=type(falha).__name__,
+                    )
+                continue
+            except EnvioRetentavel as falha:
+                # **O laco segue aqui tambem, e este e o caso que mais merece
+                # o cuidado.** `whatsapp.py` levanta `EnvioRetentavel` para
+                # 5xx, erro de rede e 408/429 -- e 429 e exatamente o que uma
+                # rajada de ate 25 mensagens provoca. Propagando, UM 429
+                # abortaria o lote inteiro e adiaria todos os seguintes; e
+                # como cada um deles ja teria commitado a propria linha, o
+                # adiamento seria definitivo.
+                #
+                # **Retentavel aqui NAO quer dizer que alguem vai retentar.**
+                # `GuardedOutbound.send` libera a reserva antes de propagar
+                # (`_liberar`), mas a linha de `followups` ja esta commitada e
+                # e append-only: `ja_disparada` nao volta, a tentativa nao
+                # vence de novo, e nao ha sweeper deste lado -- o
+                # `sweep_stalled` reenfileira MENSAGEM do lead, nao follow-up.
+                # A tentativa se perde igual a uma recusa permanente. E por
+                # isso que isto e `warning` e carrega o tipo da falha: sem esta
+                # linha, a perda seria silenciosa, que e o unico desfecho que
+                # este repo trata como inaceitavel.
+                #
+                # O caminho de retentativa de verdade -- reentregar a tentativa
+                # perdida numa varredura seguinte -- exigiria `followups`
+                # deixar de ser append-only ou uma coluna de desfecho, e e
+                # decisao de outra card.
+                #
+                # `asyncio.CancelledError` NAO cai em nenhum destes dois
+                # `except`: nao e `Exception`, e propaga sozinho. E o desfecho
+                # certo -- o `job_timeout` ou o shutdown chegou, e seguir
+                # enviando depois de cancelado seria pior.
+                log.warning(
+                    "followup.envio_falhou",
                     channel=candidato.channel,
                     tentativa=tentativa,
-                    temperatura=candidato.temperatura.value,
+                    reason=type(falha).__name__,
                 )
                 continue
 
@@ -507,21 +611,4 @@ async def sweep_followups(
                 decorrido_s=int(time.monotonic() - comeco),
             )
 
-    for evento in eventos:
-        log.info("followup.devido", **evento)
-
-    for evento in eventos_de_maximo:
-        # `warning` e nao `info`: nao e erro, mas e um lead saindo do alcance
-        # da automacao, que a RN-13.7 quer visivel para a gerente. Mesmo nivel
-        # de `followup.candidatos_saturados` e `outbound.optout_bloqueou`, que
-        # tambem sao "funcionou como desenhado, e alguem precisa saber".
-        #
-        # `conversation_key` viaja aqui e nao em `followup.devido`: o proposito
-        # da propria regra e que alguem consiga agir sobre O LEAD especifico
-        # que saiu do alcance da automacao, e um evento sem identificador nao
-        # da para isso. `structlog` mascara o campo (`_CHAVES_MASCARADAS` em
-        # `app/logging.py`) para os quatro ultimos digitos antes de qualquer
-        # coisa chegar ao log de verdade.
-        log.warning("followup.antispam_atingido", **evento)
-
-    return len(eventos)
+    return gravadas

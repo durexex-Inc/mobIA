@@ -31,11 +31,15 @@ from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.optout.models import EVENTO_OPT_OUT, OptoutEvent
 from mobia.domain.outbound.models import OutboundDispatch
-from mobia.domain.outbound.port import EnvioForaDaJanela
+from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, EnvioRetentavel
 from mobia.domain.texto import dobrar
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
-from mobia.workers.jobs.sweep_followups import MAXIMO_DE_ENVIOS_POR_EXECUCAO, sweep_followups
+from mobia.workers.jobs.sweep_followups import (
+    MAXIMO_DE_ENVIOS_POR_EXECUCAO,
+    TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS,
+    sweep_followups,
+)
 
 CANAL = "whatsapp"
 CONVERSA = "5511944443333"
@@ -787,19 +791,36 @@ async def test_a_reserva_de_saida_absorve_a_entrega_repetida(session, outbound_f
     assert len((await session.scalars(select(FollowUp))).all()) == 1
 
 
-class _JanelaFechadaNoPrimeiro(OutboundFake):
-    """Recusa so a PRIMEIRA entrega. Molde das subclasses de
-    `test_apresentacao_no_turno.py`."""
+class _FalhaNoPrimeiro(OutboundFake):
+    """Levanta `erro` so na PRIMEIRA entrega, e entrega as demais. Molde das
+    subclasses de `test_apresentacao_no_turno.py`.
 
-    def __init__(self, session_factory) -> None:
+    Um duble so para as tres falhas de envio porque o que se verifica e o
+    mesmo nos tres casos -- o laco SEGUE --, e tres copias divergiriam.
+    """
+
+    def __init__(self, session_factory, erro: Exception) -> None:
         super().__init__(session_factory)
+        self.erro_do_primeiro = erro
         self.tentativas = 0
 
     async def _deliver(self, message_id, kind, payload) -> None:
         self.tentativas += 1
         if self.tentativas == 1:
-            raise EnvioForaDaJanela("fora da janela de 24h")
+            raise self.erro_do_primeiro
         await super()._deliver(message_id, kind, payload)
+
+
+async def _dois_leads_devidos(session) -> None:
+    """Dois leads devidos na mesma varredura, em ordem determinada.
+
+    A fila e `ORDER BY ancora_em`, entao quem calou ha mais tempo vem antes --
+    e e nele que os testes abaixo poem a falha. Com a falha no SEGUNDO, todos
+    eles passariam mesmo sem `except` nenhum, porque nao sobraria candidato
+    para perder.
+    """
+    await _lead(session, calado_ha=timedelta(hours=3), conversa=CONVERSA)
+    await _lead(session, calado_ha=timedelta(hours=2, minutes=5), conversa="5511944443334")
 
 
 async def test_fora_da_janela_de_24h_vira_log_e_nao_derruba_o_lote(session, caplog) -> None:
@@ -807,15 +828,9 @@ async def test_fora_da_janela_de_24h_vira_log_e_nao_derruba_o_lote(session, capl
     batem em `EnvioForaDaJanela`, e a varredura tem de seguir para o proximo
     candidato -- um lead fora da janela nao pode custar o follow-up dos
     outros.
-
-    A recusa e no PRIMEIRO da fila, e nao no segundo: com ela no segundo o
-    teste passaria mesmo sem o `except`, porque nao sobraria candidato para
-    perder. A ordem da fila e `ORDER BY ancora_em`, entao quem calou ha mais
-    tempo vem antes.
     """
-    await _lead(session, calado_ha=timedelta(hours=3), conversa=CONVERSA)
-    await _lead(session, calado_ha=timedelta(hours=2, minutes=5), conversa="5511944443334")
-    outbound = _JanelaFechadaNoPrimeiro(get_sessionmaker())
+    await _dois_leads_devidos(session)
+    outbound = _FalhaNoPrimeiro(get_sessionmaker(), EnvioForaDaJanela("fora da janela de 24h"))
 
     with caplog.at_level(logging.INFO):
         gravadas = await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA)
@@ -824,6 +839,60 @@ async def test_fora_da_janela_de_24h_vira_log_e_nao_derruba_o_lote(session, capl
     assert len(outbound.entregues) == 1  # o segundo candidato saiu
     assert gravadas == 2
     assert sum(1 for r in caplog.records if "followup.fora_da_janela_de_24h" in r.getMessage()) == 1
+
+
+async def test_a_recusa_permanente_de_um_candidato_nao_derruba_o_lote(session, caplog) -> None:
+    """`EnvioForaDaJanela` e uma FILHA de `EnvioRecusado`, e capturar so ela
+    deixava um 4xx de payload ou um 401 de token abortar a varredura inteira.
+
+    O nivel separa os dois: fora da janela e `info` (caminho esperado enquanto
+    a TEC-186 nao entra), qualquer outra recusa e `error` -- ali o payload ou
+    a credencial estao errados, e ninguem descobre isso sozinho. A assertiva
+    sobre o evento e o que impede a correcao de virar "capturei tudo e calei".
+    """
+    await _dois_leads_devidos(session)
+    outbound = _FalhaNoPrimeiro(get_sessionmaker(), EnvioRecusado("http 400"))
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA)
+
+    assert outbound.tentativas == 2, "o laco parou no primeiro candidato"
+    assert len(outbound.entregues) == 1
+    assert gravadas == 2
+    assert sum(1 for r in caplog.records if "followup.recusado_permanente" in r.getMessage()) == 1
+    assert sum(1 for r in caplog.records if "followup.fora_da_janela_de_24h" in r.getMessage()) == 0
+
+
+async def test_a_falha_retentavel_de_um_candidato_nao_derruba_o_lote(session, caplog) -> None:
+    """O caso que mais custa se propagar: `whatsapp.py` levanta
+    `EnvioRetentavel` para 5xx, erro de rede e **408/429** -- e 429 e
+    exatamente o que uma rajada de ate 25 mensagens provoca. Um unico 429
+    abortaria o lote e adiaria todos os seguintes, cada um ja com a propria
+    linha commitada.
+
+    **"Retentavel" aqui nao quer dizer que alguem retenta.** A reserva e
+    liberada por `GuardedOutbound` (por isso `outbound_dispatches` fica
+    vazia), mas a linha de `followups` esta commitada e e append-only:
+    `ja_disparada` nao volta e a tentativa nao vence de novo. O `warning` e a
+    unica coisa que impede essa perda de ser silenciosa, e e por isso que ele
+    e assertado aqui.
+    """
+    await _dois_leads_devidos(session)
+    outbound = _FalhaNoPrimeiro(get_sessionmaker(), EnvioRetentavel("http 429"))
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA)
+
+    assert outbound.tentativas == 2, "o laco parou no primeiro candidato"
+    assert len(outbound.entregues) == 1
+    assert gravadas == 2
+    assert sum(1 for r in caplog.records if "followup.envio_falhou" in r.getMessage()) == 1
+    # A tentativa foi consumida e nao ha reserva para reentregar: a linha de
+    # `followups` ficou, a de `outbound_dispatches` foi liberada.
+    assert len((await session.scalars(select(FollowUp))).all()) == 2
+    assert [d.kind for d in (await session.scalars(select(OutboundDispatch))).all()] == [
+        "followup_1"
+    ]
 
 
 async def test_a_linha_de_followups_permanece_quando_o_envio_e_recusado(
@@ -881,6 +950,66 @@ async def test_o_teto_de_envios_por_execucao_corta_o_excedente(session, outbound
     assert await sweep_followups(_ctx(segunda), agora=DENTRO_DA_JANELA) == 1
     assert len(segunda.entregues) == 1
     assert len((await session.scalars(select(FollowUp))).all()) == total
+
+
+class _RelogioQueSalta:
+    """Um `time` falso com so o `monotonic` que o job usa.
+
+    Troca o NOME `time` que `sweep_followups.py` enxerga, e nao o modulo
+    `time` de verdade -- mesma tecnica e mesma razao de
+    `tests/unit/test_classificador.py`: `time` e singleton do interpretador, e
+    mutar `time.monotonic` in-place afetaria o event loop do asyncio para o
+    processo inteiro.
+
+    Os valores sao consumidos em ordem e o ultimo se repete para sempre, para
+    o teste nao ficar preso a quantas vezes o job chama o relogio -- o que
+    importa e que o segundo candidato encontre o teto ja estourado.
+    """
+
+    def __init__(self, valores: list[float]) -> None:
+        self._valores = list(valores)
+
+    def monotonic(self) -> float:
+        return self._valores.pop(0) if len(self._valores) > 1 else self._valores[0]
+
+
+async def test_o_teto_de_tempo_para_de_iniciar_envios(
+    session, outbound_fake, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """O segundo teto (emenda a D7), que o teto de contagem nao alcanca.
+
+    Dois candidatos e um relogio que salta o teto inteiro entre o primeiro e o
+    segundo: o primeiro sai, o segundo nem comeca. **E o teto de TEMPO que
+    corta aqui** -- dois candidatos estao longe dos 25 --, entao apagar as
+    duas linhas do `break` por tempo faz este teste reprovar e nenhum outro.
+
+    O `followup.corte_por_teto` e assertado junto porque um teto que corta em
+    silencio faz a varredura entregar menos do que deve sem nada no log
+    dizendo por que.
+
+    O que sobra continua devido, e a segunda varredura -- ja com o relogio
+    parado no mesmo instante, ou seja sem tempo decorrido -- o atende.
+    """
+    await _dois_leads_devidos(session)
+    monkeypatch.setattr(
+        sweep_followups_module,
+        "time",
+        _RelogioQueSalta([0.0, 0.0, float(TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS + 1)]),
+    )
+    outbound = outbound_fake()
+
+    with caplog.at_level(logging.INFO):
+        gravadas = await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA)
+
+    assert gravadas == 1, "o segundo candidato nem chegou a ser gravado"
+    assert len(outbound.entregues) == 1
+    cortes = [r for r in caplog.records if "followup.corte_por_teto" in r.getMessage()]
+    assert len(cortes) == 1
+    assert "teto_de_tempo" in cortes[0].getMessage()
+
+    segunda = outbound_fake()
+    assert await sweep_followups(_ctx(segunda), agora=DENTRO_DA_JANELA) == 1
+    assert len(segunda.entregues) == 1
 
 
 async def test_a_queda_de_preco_e_a_abertura_falam_do_mesmo_imovel(
