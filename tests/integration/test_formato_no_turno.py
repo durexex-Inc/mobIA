@@ -11,7 +11,10 @@ from typing import Any
 import pytest
 from sqlalchemy import select
 
+from mobia.domain.messages.enums import MessageRole
+from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.outbound.models import OutboundDispatch
+from mobia.infra.crypto import aad_de, decrypt
 from mobia.infra.db import get_sessionmaker
 
 
@@ -577,3 +580,107 @@ async def test_retentativa_da_parte_2_nao_mistura_geracoes(
     assert "A" not in entregue, (
         f"nenhuma parte da geracao anterior pode sobrar colada a esta. Entregue: {entregue[:120]}"
     )
+
+
+async def _falas_do_agente(session: Any) -> list[tuple[str, str | None, str | None]]:
+    """Cada fala do agente na linha do tempo como `(texto, model, subagent)`.
+
+    Copiado de `_falas_do_agente` em `test_recomendacao_e_reacao.py:1692` --
+    arquivos de integracao deste repo sao autocontidos, entao a funcao e
+    copiada e nao importada. `text_body` e bytea cifrado desde a TEC-126,
+    entao `decrypt` com o AAD da propria linha. `outerjoin` e nao `join`: a
+    telemetria e gravada num commit proprio, depois do da mensagem, e
+    `_registrar_telemetria` engole a falha dela -- com `join`, uma fala sem
+    telemetria sumiria desta lista e o teste culparia a gravacao da fala.
+    """
+    linhas = (
+        await session.execute(
+            select(Message, MessageTelemetry.model, MessageTelemetry.subagent)
+            .outerjoin(MessageTelemetry, MessageTelemetry.message_id == Message.id)
+            .where(Message.role == MessageRole.AGENTE)
+            .order_by(Message.created_at)
+        )
+    ).all()
+    return [
+        (decrypt(linha.text_body, aad_de(linha.id, "text_body")), model, subagent)
+        for linha, model, subagent in linhas
+    ]
+
+
+async def test_parte_suprimida_antes_de_uma_entregue_nao_e_gravada_como_entregue(
+    session: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """TEC-273, cenario 2 do Gherkin. A transcricao carrega so o que saiu.
+
+    Uma reserva presa (a liberacao que falha por deadlock, que `port.py` ja
+    antecipa) faz a parte 1 ser suprimida e a parte 2 sair. Antes desta card o
+    laco fazia `continue`, `entrega_parcial` nunca era marcada, e o recorder
+    gravava o texto INTEIRO -- a transcricao que o corretor le no handoff
+    afirmava que o texto novo saiu completo.
+    """
+    from conftest import ClassificadorFake, OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DA_RESPOSTA, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.models import OutboundDispatch
+    from mobia.infra.db import get_sessionmaker
+
+    # Sem isto a conversa fica NOVA, `executar_turno` prefixa
+    # `TEXTO_DA_IDENTIFICACAO` ao texto ANTES da quebra (TEC-139), e a
+    # fronteira de frase daquele prefixo (o "." de "corretor.") vira a ULTIMA
+    # dentro dos 600 primeiros caracteres -- `quebrar_em_mensagens` corta ali,
+    # e a segunda parte sai como "P"*400 + " " + "q"*400 inteira, sem quebra
+    # nenhuma entre P e q. O padrao e o mesmo de `_conversa_ja_existe` (topo
+    # deste arquivo): sem ele, a comparacao caractere-a-caractere que este
+    # teste faz entre kind e conteudo fica contaminada pelo prefixo.
+    await _conversa_ja_existe(session)
+    texto = "P" * 400 + " " + "q" * 400
+    linha = await semear_entrada(session)
+
+    # A reserva PRESA, plantada a mao: e exatamente o estado que sobra quando
+    # o delete da liberacao falha por deadlock ou conexao caida -- o caso que
+    # `port.py` ja antecipa e loga como `outbound.liberacao_falhou`.
+    session.add(OutboundDispatch(id=uuid.uuid4(), message_id=linha.id, kind=KINDS_DA_RESPOSTA[0]))
+    await session.commit()
+
+    with caplog.at_level("ERROR"):
+        resultado = await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=ClassificadorFake(resposta=texto),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=OutboundFake(get_sessionmaker()),
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    gravado = "".join(texto for texto, _, _ in await _falas_do_agente(session))
+    assert "q" * 400 in gravado, "premissa: a parte 2 saiu e tem de estar na transcricao"
+    assert "P" * 400 not in gravado, (
+        "a parte que a reserva suprimiu nao pode entrar na transcricao -- e ela "
+        "que o corretor le no handoff"
+    )
+    # `turno.reentrega_suprimida`, e nao um evento novo: a causa exata (reserva
+    # presa vs guarda de opt-out vs guarda de atendimento humano) so se
+    # distingue reconsultando o banco, e quem ja faz essa checagem, correta e
+    # testada, e `_bloqueado_por_optout_concorrente` /
+    # `_bloqueado_por_atendimento_humano_concorrente` no bloco
+    # `if suprimida_apos_entrega:` de `executar_turno` -- o mesmo bloco que ja
+    # cobre `test_reserva_duplicada_na_segunda_parte_apos_entrega_vira_reentrega_suprimida`
+    # neste arquivo, para a ordem simetrica (parte posterior suprimida depois
+    # de uma entregue). Um `log.error` novo e incondicional bem no laco, sem
+    # essa checagem, tornaria a guarda de opt-out/atendimento humano
+    # concorrente -- que NAO e alarme -- indistinguivel de uma reserva presa
+    # de verdade, e quebraria os dois testes que afirmam isso em
+    # `test_turno_optout.py` e `test_turno_atendimento_humano.py`.
+    assert "turno.reentrega_suprimida" in caplog.text
+    assert resultado != "respondido", (
+        "um turno cuja primeira parte nunca saiu nao respondeu por inteiro"
+    )
+    assert resultado == "reentrega_suprimida"

@@ -1660,11 +1660,62 @@ async def executar_turno(
                         entrega_parcial = True
                         suprimida_apos_entrega = True
                         break
-                    # Nada saiu ainda: comportamento de sempre, tenta a
-                    # proxima parte. E o caso legitimo da retentativa do
-                    # sweeper (comentario do topo do modulo): a parte com
-                    # reserva de uma tentativa anterior devolve False aqui, e a
-                    # parte sem reserva ainda tem a vez de sair.
+                    # Ate a TEC-273 isto fazia `continue` liso, sem marcar
+                    # nada, e o comentario chamava o caso de "a retentativa
+                    # legitima do sweeper": a parte com reserva de uma
+                    # tentativa anterior devolvia False aqui, e a parte sem
+                    # reserva ainda tinha a vez de sair.
+                    #
+                    # Aquela retentativa deixou de existir. A TEC-273 libera as
+                    # reservas do GRUPO inteiro numa falha retentavel, entao a
+                    # passada seguinte nao encontra reserva de parte nenhuma.
+                    # O que ainda chega aqui e anomalia -- tipicamente uma
+                    # reserva PRESA (o delete da liberacao falhando por
+                    # deadlock ou conexao caida, que `port.py` ja antecipa e
+                    # loga como `outbound.liberacao_falhou`), mas pode ser
+                    # tambem a MESMA guarda de opt-out ou de atendimento
+                    # humano que bloqueou a parte anterior (`if entregue:`
+                    # logo acima cobre o caso simetrico, depois de uma parte
+                    # ja ter saido).
+                    #
+                    # `continue`, e nao `break`: a proxima parte ainda pode
+                    # sair de verdade, e reter o quanto foi entregue (visivel,
+                    # recuperavel) e melhor que ficar em silencio total --
+                    # o mesmo criterio de TEC-134/TEC-227 que ja rege este
+                    # arquivo. `entrega_parcial` reescreve `texto` mais abaixo
+                    # para so as partes que de fato sairam, entao a parte
+                    # suprimida nunca chega no recorder.
+                    #
+                    # `suprimida_apos_entrega = True`, e nao False: o NOME diz
+                    # "apos entrega" pensando na ORDEM cronologica, mas o que a
+                    # variavel de fato controla, la embaixo, e se o desfecho
+                    # final pode virar "respondido" quando pelo menos uma
+                    # parte saiu -- e aqui, se uma parte POSTERIOR sair, e
+                    # exatamente essa a duvida (reserva presa vs guarda) que
+                    # nao pode ficar disfarcada de "respondido". Sem isto,
+                    # exatamente o defeito que o comentario do `if entregue:`
+                    # acima descreve se repetiria aqui, so que com a ordem das
+                    # partes invertida. Se NENHUMA parte posterior sair,
+                    # `entregue` continua False e este valor nem chega a ser
+                    # lido -- quem decide o desfecho e o bloco `if not
+                    # entregue:` abaixo, inalterado.
+                    #
+                    # Sem `log.error` aqui: as duas causas (reserva presa vs
+                    # guarda concorrente) so se distinguem reconsultando o
+                    # banco, e `_bloqueado_por_optout_concorrente` /
+                    # `_bloqueado_por_atendimento_humano_concorrente` ja fazem
+                    # isso -- correto e testado -- nos blocos depois do laco
+                    # (`if not entregue:` e `if suprimida_apos_entrega:`
+                    # abaixo). Logar `error` aqui, sem essa checagem, tornava
+                    # `outbound.atendimento_humano_bloqueou` e
+                    # `outbound.optout_bloqueou` -- guarda funcionando, nao
+                    # alarme -- indistinguiveis de uma reserva presa de
+                    # verdade: dois testes desta suite (`test_turno_optout.py`,
+                    # `test_turno_atendimento_humano.py`) afirmam que bloqueio
+                    # de guarda concorrente NAO produz log de `error`, e um
+                    # `log.error` incondicional aqui os quebrava.
+                    entrega_parcial = True
+                    suprimida_apos_entrega = True
                     continue
                 partes_entregues.append(parte)
                 entregue = True
