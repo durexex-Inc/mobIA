@@ -128,6 +128,10 @@ async def test_duas_varreduras_nao_encerram_a_mesma_linha_duas_vezes(session: An
     """
     from sqlalchemy import text as sql
 
+    # A elegibilidade desta linha (velha o bastante, ainda PROCESSANDO) nao e
+    # afirmada aqui -- so e provada retroativamente pela asserta `== 1` mais
+    # abaixo, depois que o lock solta. Se aquela asserta for enfraquecida no
+    # futuro, esta premissa quebra em silencio.
     importacao_id = await _importacao(
         session, status=StatusImportacao.PROCESSANDO, idade_segundos=3600
     )
@@ -153,6 +157,9 @@ async def test_duas_varreduras_nao_encerram_a_mesma_linha_duas_vezes(session: An
         lida = await outra.get(Importacao, importacao_id)
     assert lida is not None
     assert lida.erros == [{"linha": 0, "motivo": MOTIVO_DA_VARREDURA}], (
-        "encerrada uma unica vez -- dois encerramentos deixariam dois erros "
-        "ou sobrescreveriam o timestamp"
+        "o conteudo gravado e o erro unico esperado, no mesmo formato de "
+        "_marcar_falha -- a prova de que o encerramento aconteceu uma unica "
+        "vez esta nas contagens acima (== 1 e depois == 0), nao aqui: um "
+        "encerramento duplicado gravaria este mesmo `erros`, porque o UPDATE "
+        "substitui a coluna inteira em vez de anexar"
     )
