@@ -2406,3 +2406,75 @@ async def test_continuacao_concilia_com_o_carimbo_mais_recente_do_message_id(
         "`apagar_recomendacao_nao_entregue` nem `conciliar_apresentacao` casam o lote "
         "real, e ela fica na lista que o proximo ordinal numera"
     )
+
+
+# ---------------------------------------------------------------------------
+# TEC-273: a liberacao em grupo nao pode alcancar as fichas da TEC-275.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_continuacao_sobrevive_a_liberacao_em_grupo_da_tec_273(
+    session: Any,
+    session_factory: Any,
+    resumidor_fake: Any,
+    contador_fake: Any,
+    moderador_fake: Any,
+    semear_entrada: Any,
+) -> None:
+    """TEC-273, fronteira. A liberacao de irmas nao alcanca as fichas.
+
+    A TEC-275 le as reservas de ficha para saber o que ja saiu. Se a TEC-273
+    liberasse por `message_id`, elas sumiriam numa falha retentavel, a
+    intersecao ficaria vazia, e `_continuar_entrega` nunca seria tomada -- o
+    turno inteiro rodaria de novo, com chamada paga ao modelo, e o lead
+    receberia fichas de qualquer jeito. A regressao seria invisivel sem esta
+    asserta.
+    """
+    from conftest import OutboundFake  # type: ignore[import-not-found]
+
+    from mobia.domain.agente.turno import KINDS_DAS_FICHAS, executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.domain.outbound.port import EnvioRetentavel
+    from mobia.infra.db import get_sessionmaker
+
+    await _conversa_ja_existe(session)
+    for n in range(3):
+        await _imovel(session, f"AP-8A{n}", quartos=3, preco_venda=30000000 + n)
+
+    linha = await semear_entrada(session)
+
+    class _RetentavelNaSegunda(OutboundFake):  # type: ignore[misc, valid-type]
+        async def _deliver(self, message_id: Any, kind: str, payload: Any) -> None:
+            if kind == KINDS_DAS_FICHAS[1]:
+                raise EnvioRetentavel("http 503")
+            await super()._deliver(message_id, kind, payload)
+
+    async def _rodar(outbound: Any, classificador: Any) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador,
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    classificador_1 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    with pytest.raises(EnvioRetentavel):
+        await _rodar(_RetentavelNaSegunda(get_sessionmaker()), classificador_1)
+
+    assert classificador_1.resultado is not None
+    apresentados = [uuid.UUID(c["imovel_id"]) for c in classificador_1.resultado.candidatos]
+
+    segunda = OutboundFake(get_sessionmaker())
+    classificador_2 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
+    assert await _rodar(segunda, classificador_2) == "respondido"
+
+    assert classificador_2.resultado is None, (
+        "a continuacao nao chama o classificador -- ver `resultado` preenchido significa "
+        "que o desvio nao foi tomado, e a liberacao em grupo alcancou as fichas"
+    )
+    assert len(segunda.entregues) == 2, "so as fichas 2 e 3 faltavam sair"
+    assert await _pendentes_da_conversa(session_factory) == tuple(apresentados)
