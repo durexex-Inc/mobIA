@@ -241,3 +241,35 @@ async def test_imovel_indisponivel_nao_e_novidade(session: Any) -> None:
     )
 
     assert achado is None
+
+
+async def test_imovel_so_de_locacao_nao_e_novidade(session: Any) -> None:
+    """Fix de revisao (Task 6): a fonte "imovel novo" cobre so VENDA.
+
+    O CHECK de `imoveis` exige UM dos dois precos, entao um imovel so de
+    locacao tem `preco_venda` nulo -- e para um lead que nao declarou faixa,
+    nenhum dos filtros de criterio o excluiria. Sem `preco_venda IS NOT NULL`
+    ele era escolhido como novidade e depois descartado pelo job, em silencio,
+    por falta de preco para a ficha: o lead caia no convite e nada no log
+    dizia por que.
+
+    O lead deste teste NAO declara faixa de preco de proposito: com faixa, o
+    proprio `preco_venda <= :teto` ja excluiria a linha (NULL nao satisfaz
+    comparacao), e o teste passaria com ou sem a correcao.
+    """
+    await _qualificar(session, regiao="trindade")
+    await _imovel(
+        session,
+        "AP-507",
+        bairro="Trindade",
+        operacao="LOCACAO",
+        preco_venda=None,
+        preco_aluguel=450_000,
+        created_at=ANCORA + timedelta(days=1),
+    )
+
+    achado = await imovel_novo_compativel(
+        session, channel=CANAL, conversation_key=CONVERSA, desde=ANCORA
+    )
+
+    assert achado is None

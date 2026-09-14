@@ -365,6 +365,12 @@ async def imovel_novo_compativel(
 
     **O ja apresentado sai pela UNIQUE de `recomendacoes`.** Reapresentar o
     que o lead ja viu e o "robo carente" que a historia da card nomeia.
+
+    **Esta fonte cobre so VENDA, e isso e filtro explicito e nao acidente.**
+    Ver `preco_venda IS NOT NULL` no corpo. Estender o follow-up para locacao
+    -- qual preco entra na ficha, contra que faixa ele e comparado, como o
+    `operacao` do imovel casa com o que o lead quer -- e decisao de produto, e
+    esta card nao a tomou.
     """
     estado = await session.get(LeadQualification, (channel, conversation_key))
 
@@ -377,6 +383,19 @@ async def imovel_novo_compativel(
         Imovel.created_at > desde,
         Imovel.status == StatusImovel.DISPONIVEL.value,
         Imovel.id.not_in(ja_vistos),
+        # **O filtro que torna a consulta honesta** (fix de revisao, TEC-184
+        # Task 6). O CHECK de `imoveis` exige UM dos dois precos, entao um
+        # imovel so de locacao tem `preco_venda` nulo -- e para um lead que
+        # nao declarou faixa nenhum dos filtros abaixo o excluiria. Sem esta
+        # linha ele era escolhido como novidade e depois descartado em
+        # silencio pelo job, por falta de preco para a ficha: o lead caia no
+        # convite e nada no log dizia por que.
+        #
+        # A escolha e filtrar aqui, e nao ensinar o job a montar ficha de
+        # aluguel: apresentar imovel que o lead nao pode transacionar erra nas
+        # duas direcoes, e estender a fonte para locacao e decisao de produto
+        # (ver o docstring).
+        Imovel.preco_venda.is_not(None),
     )
 
     # `estado is None` e inalcancavel pelo caminho pretendido: `candidatos_a_followup`
