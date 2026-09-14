@@ -97,7 +97,7 @@ que sabemos deste lead" e entraria no TRUNCATE de todo teste que toca banco.
 
 Tres destas colunas -- `horizonte`, `tolerancia_reforma`,
 `ja_investe_em_imoveis` -- nao estao no dicionario de dados do SRS, embora a
-RN-05.2 as nomeie. Ver a Emenda E-02 da RN-05.2.
+RN-05.2 as nomeie. Ver a Emenda E-01 da RN-05.2.
 
 `retorno_esperado_tipo` nao existe no SRS de forma nenhuma: e o campo
 QUALITATIVO que a RN-07.2 pressupoe sem nomear, porque `retorno_esperado_pct`
@@ -902,7 +902,7 @@ O corpo lê a linha, mescla campo a campo (só os não-`None`), chama `ticket_de
 **Files:**
 - Modify: `docs/srs/srs-agente-sdr-imobiliario-v1.0.md`
 
-O texto das duas emendas está pronto na seção **"Emendas ao SRS"** do spec — copie de lá, não componha outro. A E-01 entra aninhada abaixo da RN-07.2; a E-02, abaixo da RN-05.2. **Nunca reescreva o texto de 22/08/2026.** Acrescente as duas linhas correspondentes à tabela de emendas do cabeçalho.
+O texto das duas emendas está pronto na seção **"Emendas ao SRS"** do spec — copie de lá, não componha outro. A E-01 entra aninhada abaixo da RN-07.2; a outra E-01, abaixo da RN-05.2. **Nunca reescreva o texto de 22/08/2026.** Acrescente as duas linhas correspondentes à tabela de emendas do cabeçalho.
 
 - [ ] **Step 1: Leia as emendas existentes sob RN-05.4 e RN-05.7** como template de formatação.
 - [ ] **Step 2: Aplique as duas emendas e as duas linhas da tabela.**

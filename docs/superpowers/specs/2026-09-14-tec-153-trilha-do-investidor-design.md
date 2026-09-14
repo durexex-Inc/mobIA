@@ -41,11 +41,11 @@ A intenção `INVESTIMENTO` já é classificada desde a TEC-134, e não muda nad
 
 No turno em que a intenção passa a ser `INVESTIMENTO`, a resposta da chamada 1 é descartada e uma segunda chamada roda com `SISTEMA_DO_INVESTIDOR`. É o padrão que `desambiguar` já estabeleceu, e pela mesma razão estrutural: o prompt precisa de um fato que só a primeira chamada produz.
 
-**Do segundo turno em diante não há chamada extra.** A intenção anterior já está gravada em `contexto.estado.intencao`, disponível **antes** da chamada, então o prompt e o schema do investidor são escolhidos ali e a chamada é única. O custo é pago uma vez por conversa, não por turno.
+**Do segundo turno em diante não há chamada extra.** A intenção anterior já está gravada em `contexto.estado.intencao`, disponível **antes** da chamada, então o prompt e o schema do investidor são escolhidos ali e a chamada é única. O custo é pago uma vez por **virada**, e não por turno. Por virada, e não por lead: `campos_a_gravar` deixa `COMPRA` sobrescrever a intenção gravada, então um lead que sai da trilha e volta paga a segunda chamada de novo.
 
 **Correção após a leitura do código (14/09/2026): `qualificar_investidor` é irmã de `classificar`, não de `desambiguar`.** A versão original desta seção dizia "no molde do desambiguador", e o desambiguador não recebe `tools`/`porta` — a docstring dele explica que a desambiguação nunca busca imóvel. Copiar aquele molde deixaria o investidor **sem poder receber ficha de imóvel nenhuma** a partir do segundo turno, que é quando ele passa a ser a única chamada do turno. A ferramenta de busca entra, como em `classificar`; o que muda entre as duas é `system` e `output_config`, e mais nada.
 
-Isto importa porque a Emenda E-01 da RN-09.4 (TEC-161) registra que *"o pior caso das chamadas atuais já estoura"* o `job_timeout` de 240 s. Duas chamadas em todo turno de investidor dobrariam o pior caso da trilha inteira; duas chamadas uma vez por conversa não.
+Isto importa porque a Emenda E-01 da RN-09.4 (TEC-161) registra que *"o pior caso das chamadas atuais já estoura"* o `job_timeout` de 240 s. Duas chamadas em todo turno de investidor dobrariam o pior caso da trilha inteira; duas chamadas uma vez por virada não.
 
 **Consequência declarada:** o turno da virada custa duas chamadas ao provedor, e a resposta da primeira é paga e jogada fora — exatamente como no desambiguador. Se as duas rotas coincidirem no mesmo turno (lead vago **e** investidor), a desambiguação vence, porque sem intenção confiável não há trilha a escolher.
 
@@ -53,7 +53,7 @@ Isto importa porque a Emenda E-01 da RN-09.4 (TEC-161) registra que *"o pior cas
 
 **Correção desta seção após a leitura do código (14/09/2026).** A versão original dizia "schema próprio com os seis campos", como se ele substituísse `SCHEMA_DA_RESPOSTA`. Não substitui: o turno do investidor **continua precisando de tudo o que o turno normal precisa** — intenção, confiança, resposta, `perguntou`, `recusou` e a `Extracao` padrão, porque um investidor também diz região, tipo e faixa de preço ("quero investir na zona sul até 800 mil"). O schema do investidor é o **mesmo envelope, com um objeto `investidor` a mais**.
 
-O argumento do orçamento sobrevive intacto, e é ele que justifica a separação: `SCHEMA_DA_RESPOSTA_DO_INVESTIDOR` é um segundo schema compilado, enviado **apenas** nas chamadas do investidor. `SCHEMA_DA_RESPOSTA` não ganha campo nenhum, e quem nunca falou de investimento não paga nada.
+O argumento do orçamento sobrevive intacto, e é ele que justifica a separação: `SCHEMA_DO_INVESTIDOR` é um segundo schema compilado, enviado **apenas** nas chamadas do investidor. `SCHEMA_DA_RESPOSTA` não ganha campo nenhum, e quem nunca falou de investimento não paga nada.
 
 Os seis campos entram em `ExtracaoDoInvestidor`, dentro desse envelope. Não em `Extracao`.
 
@@ -62,6 +62,10 @@ A razão é o orçamento: o schema compilado é enviado em toda chamada e medido
 **Mas o schema separado tem um preço, e ele é pago explicitamente.** `perguntas_contaveis` (TEC-149) reconhece um nome perguntado comparando com `_CAMPOS_DA_EXTRACAO` e `_NOME_DA_MARCA`. Um campo de investidor não estaria em nenhum dos dois, e **toda pergunta da trilha do investidor sairia de graça do teto de 8 da RN-05.5**. Um investidor poderia ser perguntado indefinidamente enquanto um comprador é cortado na oitava — e nada no código diria por quê.
 
 Então `perguntas_contaveis` passa a reconhecer também os nomes de `ExtracaoDoInvestidor`. A regra do teto não muda; o vocabulário que ela consulta, sim.
+
+**O vocabulário do teto e o vocabulário da marca são dois, e não um** (correção da onda final). `perguntas_contaveis` era a única consumidora pretendida, mas a tradução que ela usa é lida também por `campos_a_marcar` e `campos_a_recusar` — que subtraem `Extracao.preenchidos()`, onde campo de investidor nunca aparece. Com um vocabulário só, toda pergunta do subagente virava marca permanente de "perguntado, sem resposta" mesmo quando o lead respondia no mesmo turno, e uma recusa de campo de investidor era registrada sem nada que a honrasse. O teto consulta o superconjunto; a marca continua só na trilha padrão.
+
+**No turno da virada a regra do teto não é consultada** — ver a L5.
 
 ### D3 — Os campos persistem em `lead_qualification`
 
@@ -80,6 +84,8 @@ Os campos, com o nome do SRS onde ele existe:
 | `perfil_investidor` | `text` | dicionário de dados, derivado por D4 |
 
 Nuláveis pela mesma razão das vizinhas: qualificação é progressiva, e o campo ausente é o estado normal.
+
+**E o que se persiste é lido de volta para o prompt.** `_texto_do_estado` (`domain/context/montagem.py`) renderiza os seis campos sob os nomes que o subagente declara, ao lado das dez colunas da trilha padrão — sem isso, a instrução do `SISTEMA_DO_INVESTIDOR` de usar o estado "como memória: não repergunte o preenchido nem o ignorado" seria uma promessa que o código não cumpre, e o subagente reperguntaria ticket e horizonte a cada turno. O `perfil_investidor` fica de fora: é derivado, e ninguém pergunta por ele. Custa zero a quem nunca falou de investimento — só valor não nulo é emitido.
 
 ### D4 — O perfil sai de uma tabela determinística, com um campo qualitativo novo
 
@@ -146,7 +152,15 @@ Declarada na E-01 acima. Um investidor que só quer comercial, ou só temporada,
 
 ### L4 — O turno da virada paga duas chamadas
 
-Consequência da D1, e é o pior caso de latência da trilha. O `job_timeout` de 240 s não é folgado — a E-01 da RN-09.4 registra que o pior caso atual já o estoura. Esta card não piora o caso médio, mas acrescenta um turno por conversa ao conjunto dos piores.
+Consequência da D1, e é o pior caso de latência da trilha. O `job_timeout` de 240 s não é folgado — a E-01 da RN-09.4 registra que o pior caso atual já o estoura. Esta card não piora o caso médio, mas acrescenta um turno por virada ao conjunto dos piores.
+
+### L5 — No turno da virada, as perguntas do subagente não contam para o teto
+
+O teto efetivo do investidor é **8 mais o turno da virada**. Naquele turno, a guarda pós-entrega pula `contar_perguntas` junto com `marcar_perguntados`, e o texto entregue — o do subagente — pode ter feito uma ou duas perguntas de qualificação (E-01 da RN-05.4) que nunca entram em `perguntas_feitas`. `test_a_virada_nao_marca_a_pergunta_da_chamada_descartada` fixa esse comportamento: ele é deliberado, não um esquecimento.
+
+**Por que o contador não se separa da marca.** As duas rodam sob uma guarda só, e ela lê `gerada` — a resposta da chamada 1, que foi descartada. Pular a **marca** é o que essa guarda existe para fazer: `gerada.perguntou` descreve um texto que ninguém leu, e a marca é permanente. Contar `do_investidor.perguntou` no lugar seria possível, mas `marcar_perguntados` recebe também a `intencao` e a `extracao` da chamada 1, e contar o `perguntou` de uma resposta cujos campos irmãos foram todos descartados é decidir sobre um estado que nunca existiu. Separar os dois é mudança de comportamento, e ela não cabe numa onda de correção final.
+
+**O limite é por virada, não por lead.** Uma virada acontece quando a intenção passa a ser `INVESTIMENTO` e não era antes; `campos_a_gravar` deixa `COMPRA` sobrescrever a intenção gravada, então um lead que muda de assunto e volta paga outra virada — e ganha outro turno de perguntas fora da conta. O desvio é limitado a duas perguntas por virada, contra um teto de oito.
 
 ## Fora de escopo
 

@@ -597,12 +597,16 @@ async def executar_turno(
     pergunta nada.
 
     A trilha do investidor (TEC-153, RN-07.1) tem uma segunda chamada
-    parecida, e uma diferenca que importa: ela acontece **uma vez so por
-    lead**, no turno da virada. Dali em diante a intencao ja esta no estado
-    que montou o prompt, o subagente do investidor e escolhido antes da
-    chamada unica e nao ha chamada extra nenhuma. Quando o turno e ambiguo e
-    investidor ao mesmo tempo, a desambiguacao vence -- sem intencao confiavel
-    nao ha trilha a escolher.
+    parecida, e uma diferenca que importa: ela acontece **uma vez por
+    virada**, e nao em todo turno. Dali em diante a intencao ja esta no
+    estado que montou o prompt, o subagente do investidor e escolhido antes
+    da chamada unica e nao ha chamada extra nenhuma. Quando o turno e ambiguo
+    e investidor ao mesmo tempo, a desambiguacao vence -- sem intencao
+    confiavel nao ha trilha a escolher.
+
+    Por VIRADA, e nao por lead: `campos_a_gravar` deixa COMPRA sobrescrever a
+    intencao gravada, entao um lead que sai da trilha e volta paga a segunda
+    chamada outra vez.
 
     A marca de `perguntou` da TEC-257 segue a mesma regra, pelo mesmo motivo:
     e um fato sobre a nossa resposta, nao sobre a fala do lead, entao so entra
@@ -1440,8 +1444,8 @@ async def executar_turno(
             # rodou: do segundo turno do investidor em diante e este `else` que
             # entrega a resposta do subagente, porque `ja_e_investidor` escolheu
             # o prompt dele la em cima. Rotular esses turnos de "classificador"
-            # faria a telemetria mostrar a trilha do investidor acontecendo uma
-            # vez por lead -- so na virada --, e quem lesse o painel nao teria
+            # faria a telemetria mostrar a trilha do investidor acontecendo
+            # so nas viradas, e quem lesse o painel nao teria
             # como saber o que a trilha custa nem quantos turnos ela atende.
             SUBAGENTE_INVESTIDOR if ja_e_investidor else SUBAGENTE_CLASSIFICADOR,
         )
@@ -2319,7 +2323,19 @@ async def executar_turno(
         # campo, que e exatamente o dano que esta guarda existe para evitar
         # (repare que o TURNO SEGUINTE do investidor nao entra aqui: la
         # `ja_e_investidor` fez de `gerada` a propria resposta entregue, e a
-        # marca vale normalmente); com a saida bloqueada o lead recebeu
+        # marca vale normalmente).
+        #
+        # **A guarda e uma so, e leva `contar_perguntas` junto -- inclusive na
+        # virada, onde a pergunta ENTREGUE foi a do subagente.** Isso e
+        # declarado, e nao esquecido: e a L5 do desenho. O teto efetivo do
+        # investidor e 8 mais o turno da virada, no maximo duas perguntas por
+        # virada. Contar `do_investidor.perguntou` aqui seria contar o
+        # `perguntou` de uma resposta cujos campos irmaos (`intencao`,
+        # `extracao`, que `marcar_perguntados` tambem recebe) foram todos
+        # descartados. O comportamento tem teste:
+        # `test_a_virada_nao_marca_a_pergunta_da_chamada_descartada`.
+        #
+        # Com a saida bloqueada o lead recebeu
         # `TEXTO_NEUTRO_DE_SAIDA`, que tambem nao pergunta nada; com a
         # citacao bloqueada (TEC-161) o lead recebeu `TEXTO_DA_BUSCA_INCONCLUSIVA`
         # ou a ficha pura -- tambem nao a pergunta de `gerada`; e com a entrega
