@@ -714,7 +714,11 @@ Três peças, seguindo os padrões que já existem no arquivo:
 
 1. `SISTEMA_DO_INVESTIDOR`, junto de `SISTEMA_DA_DESAMBIGUACAO` e `SISTEMA_DA_REACAO`. O texto pede ticket, expectativa (tipo e percentual), horizonte, tolerância a reforma e se já investe — e **não** menciona quartos, vagas nem metragem. Comentário acima dele registrando que ele não entra no orçamento do prompt principal porque é `system` de outra chamada.
 2. `SCHEMA_DO_INVESTIDOR`, no molde de `SCHEMA_DA_EXTRACAO`, com `additionalProperties: False` e os seis campos. Se você usar uma ordem declarada (como `_ORDEM_DOS_CAMPOS` faz para o principal), replique a guarda de import que aquele bloco usa — `RuntimeError`, não `assert`, pela razão que o comentário de lá dá (`python -O` removeria o assert).
-3. `qualificar_investidor`, no molde de `desambiguar`: chama `self._chamar` com `system=SISTEMA_DO_INVESTIDOR`, `max_tokens` próprio e `output_config` montado do schema. **Sem `tools`/`porta`** — a qualificação do investidor não busca imóvel, e a docstring de `desambiguar` explica por que os campos de busca saem vazios nesse caminho. Acrescente o método ao `Protocol` também.
+3. `qualificar_investidor`, **no molde de `classificar` e não no de `desambiguar`**: chama `self._chamar` com `system=SISTEMA_DO_INVESTIDOR`, `max_tokens` próprio, `output_config` montado do schema **e `tools`/`porta`, como `classificar`**. Acrescente o método ao `Protocol` também.
+
+**`tools`/`porta` entram, e isto é a correção que custou uma reescrita ao desenho — não a desfaça.** `desambiguar` não os recebe porque desambiguação nunca busca imóvel. Copiar aquele molde deixaria o investidor **sem poder receber ficha de imóvel nenhuma** a partir do segundo turno, que é exatamente quando esta chamada passa a ser a única do turno. Ver a D1 do desenho, e a Task 8, que chama `qualificar_investidor(contexto, porta=porta)`.
+
+As assinaturas de `classificar` e `qualificar_investidor` têm de ser **intercambiáveis**: a Task 8 escolhe entre as duas no ponto de chamada.
 
 A docstring de `qualificar_investidor` deve registrar o que a de `desambiguar` registra e vale igual aqui: **o turno paga o contexto de entrada inteiro duas vezes**, porque trocar o `system` invalida o cache do que vem depois dele.
 
