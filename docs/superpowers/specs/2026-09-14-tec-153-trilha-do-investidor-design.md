@@ -119,7 +119,7 @@ Uma `Recusa` devolvida pelo parser mantém o ticket nulo, sem exceção: recusa 
 
 **Emenda E-01 à RN-07.2 (TEC-153, 14/09/2026).** A regra manda classificar o perfil *"a partir das respostas sobre horizonte e expectativa de retorno"*, e a única expectativa que o dicionário de dados modela é `retorno_esperado_pct numeric(4,2)`, em % a.a. Percentual não separa renda de valorização — a mesma taxa descreve os dois. A emenda fixa que a expectativa usada na classificação é **qualitativa**, num campo próprio (`retorno_esperado_tipo`: `ALUGUEL`, `REVENDA`, `AMBOS`), e que o percentual permanece como dado, sem papel na classificação. Fica declarado também que o perfil é `NULL` — e não `MISTO` — enquanto qualquer um dos dois campos faltar, porque `MISTO` afirma um perfil e a ausência não afirma nada. **Consequência declarada:** a RN-07.3 e a TEC-154 não podem tratar perfil ausente como misto.
 
-**Emenda E-02 à RN-05.2 (TEC-153, 14/09/2026).** A regra nomeia seis campos de qualificação do investidor; o dicionário de dados registra três. A emenda declara os três que faltavam — `horizonte`, `tolerancia_reforma`, `ja_investe_em_imoveis` — como colunas de `lead_qualification`, na mesma chave por lead que a E-01 da RN-05.7 estabeleceu. **Fica fora, e é a única redução deliberada:** *preferência por tipo (residencial, comercial, temporada)*. Aquele vocabulário é um eixo diferente do `TipoImovel` do catálogo — um apartamento residencial pode ser de temporada —, não alimenta perfil nem roteamento, e nenhum critério de aceite o exercita. Gravar um campo meio modelado que ninguém lê é pior que declarar a ausência. Ver a L3.
+**Emenda E-01 à RN-05.2 (TEC-153, 14/09/2026).** A regra nomeia seis campos de qualificação do investidor; o dicionário de dados registra três. A emenda declara os três que faltavam — `horizonte`, `tolerancia_reforma`, `ja_investe_em_imoveis` — como colunas de `lead_qualification`, na mesma chave por lead que a E-01 da RN-05.7 estabeleceu. **Fica fora, e é a única redução deliberada:** *preferência por tipo (residencial, comercial, temporada)*. Aquele vocabulário é um eixo diferente do `TipoImovel` do catálogo — um apartamento residencial pode ser de temporada —, não alimenta perfil nem roteamento, e nenhum critério de aceite o exercita. Gravar um campo meio modelado que ninguém lê é pior que declarar a ausência. Ver a L3.
 
 ## Os cenários do Gherkin
 
@@ -142,7 +142,7 @@ Classificar `RENDA` ou `VALORIZACAO` não altera candidato nem ordenação: a bu
 
 ### L3 — A preferência por tipo do investidor não existe
 
-Declarada na E-02 acima. Um investidor que só quer comercial, ou só temporada, não tem onde dizer isso, e o subagente não pergunta.
+Declarada na E-01 acima. Um investidor que só quer comercial, ou só temporada, não tem onde dizer isso, e o subagente não pergunta.
 
 ### L4 — O turno da virada paga duas chamadas
 

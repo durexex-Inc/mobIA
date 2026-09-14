@@ -31,7 +31,7 @@
 > | E-02 | RN-10.3 | [TEC-275](https://eduardodurieuxlopes.atlassian.net/browse/TEC-275) | 13/09/2026 |
 > | E-01 | RN-05.5 | [TEC-149](https://eduardodurieuxlopes.atlassian.net/browse/TEC-149) | 14/09/2026 |
 > | E-01 | RN-07.2 | [TEC-153](https://eduardodurieuxlopes.atlassian.net/browse/TEC-153) | 14/09/2026 |
-> | E-02 | RN-05.2 | [TEC-153](https://eduardodurieuxlopes.atlassian.net/browse/TEC-153) | 14/09/2026 |
+> | E-01 | RN-05.2 | [TEC-153](https://eduardodurieuxlopes.atlassian.net/browse/TEC-153) | 14/09/2026 |
 >
 > **Este índice está incompleto e a linha acima não o conserta.** Emendas do corpo de várias cards (TEC-139, TEC-142, TEC-161, TEC-162, TEC-174 a TEC-179, TEC-196, TEC-278) nunca foram indexadas — a TEC-275 acrescentou só a sua. Quem procura a lista completa lê o corpo do documento, não esta tabela.
 
@@ -194,7 +194,7 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 **Regras de negócio:**
 - RN-05.1: Campos de qualificação para `COMPRA`/`ALUGUEL`: intenção, faixa de preço (mín/máx), região(ões), tipo de imóvel, número de quartos, vagas, urgência (prazo de decisão), forma de pagamento (à vista/financiamento), se já tem imóvel para vender.
 - RN-05.2: Campos para `INVESTIMENTO`: ticket disponível, expectativa de retorno (% a.a. ou valor de aluguel), horizonte (curto/médio/longo), tolerância a reforma, preferência por tipo (residencial, comercial, temporada), se já investe em imóveis.
-  - **Emenda E-02 (TEC-153, 14/09/2026):** A regra nomeia seis campos de qualificação do investidor; o dicionário de dados registra três. A emenda declara os três que faltavam — `horizonte`, `tolerancia_reforma`, `ja_investe_em_imoveis` — como colunas de `lead_qualification`, na mesma chave por lead que a E-01 da RN-05.7 estabeleceu. **Fica fora, e é a única redução deliberada:** *preferência por tipo (residencial, comercial, temporada)*. Aquele vocabulário é um eixo diferente do `TipoImovel` do catálogo — um apartamento residencial pode ser de temporada —, não alimenta perfil nem roteamento, e nenhum critério de aceite o exercita. Gravar um campo meio modelado que ninguém lê é pior que declarar a ausência. Ver a L3.
+  - **Emenda E-01 (TEC-153, 14/09/2026):** A regra nomeia seis campos de qualificação do investidor; o dicionário de dados registra três. A emenda declara os três que faltavam — `horizonte`, `tolerancia_reforma`, `ja_investe_em_imoveis` — como colunas de `lead_qualification`, na mesma chave por lead que a E-01 da RN-05.7 estabeleceu. **Fica fora, e é a única redução deliberada:** *preferência por tipo (residencial, comercial, temporada)*. Aquele vocabulário é um eixo diferente do `TipoImovel` do catálogo — um apartamento residencial pode ser de temporada —, não alimenta perfil nem roteamento, e nenhum critério de aceite o exercita. Gravar um campo meio modelado que ninguém lê é pior que declarar a ausência. Ver a L3.
 - RN-05.3: Campos **obrigatórios mínimos** para considerar o lead qualificado: intenção + faixa de preço (ou ticket) + região + urgência. Os demais são desejáveis.
 - RN-05.4: Uma pergunta por turno. Se o lead responde espontaneamente três campos de uma vez, todos são extraídos e nenhum é reperguntado.
   - **Emenda E-01 (TEC-255, 01/09/2026):** *"uma pergunta por turno"* passa a *"até duas perguntas por turno"*, pela mesma medição e pelo mesmo motivo da emenda a RN-04.2. A segunda metade da regra — extrair tudo que o lead informa de uma vez e não reperguntar — fica inalterada.
