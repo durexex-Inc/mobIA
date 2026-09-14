@@ -4,6 +4,7 @@ Basename distinto de tudo em `tests/unit/`.
 """
 
 import uuid
+from decimal import Decimal
 from typing import Any
 
 from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo
@@ -111,3 +112,67 @@ async def test_a_ordem_pedida_atravessa_a_ponte(session: Any) -> None:
     )
 
     assert [f.preco_centavos for f in fichas] == [20000000, 10000000]
+
+
+async def test_sem_a_flag_a_ficha_nao_traz_rentabilidade(session: Any) -> None:
+    """A trilha padrao nao muda de comportamento por causa desta card."""
+    identificador = await _imovel(session, "AP-2001", iptu_mensal=32000)
+
+    (ficha,) = await fichas_do_catalogo(
+        get_sessionmaker(), ids=[identificador], precos={identificador: 51646430}
+    )
+
+    assert ficha.rentabilidade is None
+
+
+async def test_o_yield_sai_do_preco_de_venda_e_nao_do_preco_apresentado(
+    session: Any,
+) -> None:
+    """D2: NUNCA de `Ficha.preco_centavos`.
+
+    O `precos` passado aqui e o ALUGUEL, que e o que um investidor buscando
+    ALUGUEL produziria. Se o yield saisse dele, a conta seria 1200% ao ano.
+    Saindo de `preco_venda`, e 6,0% -- e 5,8% se alguem trocar a fonte pelo
+    `preco_centavos` do default do helper, entao o numero desta asserta
+    distingue as tres possibilidades.
+    """
+    identificador = await _imovel(
+        session,
+        "AP-2002",
+        preco_venda=50_000_000,
+        preco_aluguel=250_000,
+        iptu_mensal=32000,
+    )
+
+    (ficha,) = await fichas_do_catalogo(
+        get_sessionmaker(),
+        ids=[identificador],
+        precos={identificador: 250_000},
+        com_rentabilidade=True,
+    )
+
+    assert ficha.rentabilidade is not None
+    assert ficha.rentabilidade.aluguel_centavos == 250_000
+    assert ficha.rentabilidade.yield_pct == Decimal("6.0")
+    assert ficha.rentabilidade.custos_centavos == 55000 + 32000
+
+
+async def test_imovel_sem_aluguel_ganha_rentabilidade_sem_numero(session: Any) -> None:
+    """O objeto EXISTE (e investidor) e o aluguel e None (o catalogo nao tem).
+
+    Devolver `None` no lugar do objeto colapsaria os dois estados, e a ficha
+    nao teria como imprimir `Aluguel estimado: nao informado`.
+    """
+    identificador = await _imovel(session, "AP-2003", preco_aluguel=None, iptu_mensal=32000)
+
+    (ficha,) = await fichas_do_catalogo(
+        get_sessionmaker(),
+        ids=[identificador],
+        precos={identificador: 51646430},
+        com_rentabilidade=True,
+    )
+
+    assert ficha.rentabilidade is not None
+    assert ficha.rentabilidade.aluguel_centavos is None
+    assert ficha.rentabilidade.yield_pct is None
+    assert ficha.rentabilidade.custos_centavos == 55000 + 32000
