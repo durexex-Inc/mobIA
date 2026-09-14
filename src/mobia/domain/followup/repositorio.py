@@ -21,6 +21,7 @@ from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.cadencia import CADENCIA, INTERVALO_MINIMO
 from mobia.domain.followup.mensagem import QuedaDePreco
 from mobia.domain.followup.models import FollowUp
+from mobia.domain.optout.repositorio import esta_em_optout
 from mobia.domain.texto import dobrar
 
 log = structlog.get_logger(__name__)
@@ -149,9 +150,16 @@ _CASE_TETO_POR_TEMPERATURA = " ".join(
     for temperatura in CADENCIA
 )
 
-_SELECIONAR_CANDIDATOS = text(
-    f"""
-    WITH falas_do_lead AS (
+# As duas consultas da cadencia -- quem esta devido e quem adormeceu --
+# precisam concordar sobre o que e "a ultima fala do lead", e e por isso que
+# estas duas CTEs sao uma constante e nao duas copias. A terceira CTE, a da
+# agregacao, NAO e partilhada: `listar_dormentes` precisa de MAX(created_at),
+# que a varredura nao calcula, e nao precisa de `ja_enviadas` nem de
+# `mensagem_id`. Junta-las acrescentaria uma subconsulta correlacionada por
+# linha a varredura que roda de cinco em cinco minutos, para alimentar uma
+# coluna que ela descarta.
+_CTES_DA_ANCORA = """
+    falas_do_lead AS (
         -- `id DESC` desempata, e nao e arbitrario: `IngestionService._persist`
         -- grava o lote inteiro de um envelope num unico INSERT multi-VALUES,
         -- sem passar `created_at` -- a coluna cai no `server_default`
@@ -178,7 +186,12 @@ _SELECIONAR_CANDIDATOS = text(
           FROM falas_do_lead
          WHERE posicao = 1
            AND created_at <= :corte
-    ),
+    )
+"""
+
+_SELECIONAR_CANDIDATOS = text(
+    f"""
+    WITH {_CTES_DA_ANCORA},
     candidatos AS (
         SELECT lq.channel,
                lq.conversation_key,
@@ -243,6 +256,8 @@ async def candidatos_a_followup(
     da candidatura; se esquentar depois, a proxima varredura o ve com a nova
     temperatura e o teto certo, porque o corte nunca olha um valor congelado.
     Ver o comentario da query para o porque de um teto GLOBAL nao bastar.
+    E `listar_dormentes`, neste mesmo arquivo, e quem encontra esse lead do
+    outro lado do corte.
 
     **Um resultado do tamanho de `limite` significa que leads podem ter
     ficado de fora desta passagem.** Fica um aviso no log -- silencioso, isso
@@ -274,6 +289,162 @@ async def candidatos_a_followup(
         )
         for linha in resultado
     ]
+
+
+_SELECIONAR_DORMENTES = text(
+    f"""
+    WITH {_CTES_DA_ANCORA},
+    esgotados AS (
+        SELECT lq.channel,
+               lq.conversation_key,
+               lq.temperatura,
+               u.ancora,
+               COALESCE(
+                   (SELECT MAX(f.tentativa_numero)
+                      FROM followups f
+                     WHERE f.channel = lq.channel
+                       AND f.conversation_key = lq.conversation_key
+                       AND f.ancora_em = u.ancora),
+                   0
+               ) AS ja_disparada,
+               (SELECT COUNT(*)
+                  FROM followups f
+                 WHERE f.channel = lq.channel
+                   AND f.conversation_key = lq.conversation_key
+                   AND f.ancora_em = u.ancora) AS ja_enviadas,
+               (SELECT MAX(f.created_at)
+                  FROM followups f
+                 WHERE f.channel = lq.channel
+                   AND f.conversation_key = lq.conversation_key
+                   AND f.ancora_em = u.ancora) AS adormeceu_em
+          FROM lead_qualification lq
+          JOIN ultima_fala u
+            ON u.channel = lq.channel
+           AND u.conversation_key = lq.conversation_key
+         WHERE lq.temperatura IN :temperaturas_validas
+    )
+    SELECT channel, conversation_key, temperatura, ancora, ja_disparada, ja_enviadas, adormeceu_em
+      FROM esgotados
+     WHERE ja_disparada >= CASE temperatura {_CASE_TETO_POR_TEMPERATURA} END
+     ORDER BY adormeceu_em DESC, channel, conversation_key
+     LIMIT :limite
+    """
+).bindparams(bindparam("temperaturas_validas", expanding=True))
+
+
+@dataclass(frozen=True)
+class LeadDormente:
+    """Um lead que esgotou a cadencia da sua temperatura (RN-13.5).
+
+    `ja_disparada` e `ja_enviadas` sao a mesma distincao POSICAO-contra-CONTAGEM
+    que a docstring de `Candidato` explica -- nenhum dos dois e gravado por
+    esta card, e os dois saem da mesma agregacao sobre `followups` sob a
+    ancora atual. `adormeceu_em` e a outra metade da "data e a quantidade de
+    tentativas realizadas" que a card exige da transicao.
+
+    **`adormeceu_em` e `MAX(created_at)`, e isso so coincide com a linha de
+    maior `tentativa_numero` porque `tentativa_devida` nunca devolve tentativa
+    menor que `ja_disparada`** -- as insercoes sob uma ancora sao monotonicas.
+    Se a regua um dia passar a devolver tentativa intermediaria, a igualdade
+    quebra, e o lugar de consertar e aqui.
+    """
+
+    channel: str
+    conversation_key: str
+    temperatura: Temperatura
+    ancora_em: datetime
+    ja_disparada: int
+    ja_enviadas: int
+    adormeceu_em: datetime
+
+
+async def listar_dormentes(
+    session: AsyncSession, *, agora: datetime, limite: int = 500
+) -> list[LeadDormente]:
+    """Os leads que esgotaram a cadencia e seguem elegiveis a campanha manual.
+
+    A inversa de `candidatos_a_followup`: la o corte e
+    `ja_disparada < CASE temperatura ... END`, aqui e `>=`. O mesmo `CASE`
+    gerado de `CADENCIA` nos dois, e `esta_dormente` diz a mesma coisa em
+    Python -- ver a D1 do desenho.
+
+    **`corte` e ligado a `agora`, e nao a `agora - INTERVALO_MINIMO`.** A
+    subtracao e um corte barato que so serve a quem vai disparar: nao vale
+    consultar a regua para quem falou ha cinco minutos. Aqui ela seria inocua
+    -- o dormente mais recente possivel falou ha sete dias, o deslocamento da
+    quarta tentativa do QUENTE -- e liga-la seria escrever no codigo uma
+    intencao que nao existe.
+
+    **O opt-out e consultado por lead, e nao juntado no SQL.**
+    `esta_em_optout` e a funcao que decide o que e opt-out; um JOIN aqui seria
+    uma segunda fonte para a mesma pergunta -- o defeito que a TEC-146 gastou
+    uma card inteira consertando. E a razao de EXCLUIR, em vez de so marcar:
+    esta lista existe para alimentar campanha manual, e a RN-14.3 condiciona
+    qualquer novo contato de quem pediu opt-out a acao humana explicita com
+    justificativa registrada. Entrega-lo numa lista rotulada "elegivel a
+    campanha" convida exatamente o disparo que a regra proibe.
+
+    **A escolha de fonte unica continua certa aqui, mas o preco NAO e o da
+    varredura.** A docstring de `sweep_followups` justifica consultar por
+    candidato dizendo que o conjunto residual, depois dos cortes puros, e
+    pequeno -- e e explicita que, invertida, essa premissa deixa de valer.
+    Aqui ela esta invertida: o conjunto residual desta consulta E o alvo, sem
+    corte nenhum alem do `LIMIT`, entao o preco real e de ate `:limite`
+    consultas de opt-out por chamada.
+
+    **O `LIMIT` e aplicado antes do filtro de opt-out**, entao a lista pode vir
+    com menos que `limite` havendo mais dormentes. E o mesmo comportamento de
+    `candidatos_a_followup`, que corta em `:limite` e depois descarta nas
+    guardas.
+
+    `ORDER BY adormeceu_em DESC` poe quem adormeceu ha menos tempo primeiro:
+    e o lead com mais chance de responder a uma campanha, e o unico criterio
+    de ordem que a card sugere ao falar em segmentar a base.
+
+    **Nao ha rota HTTP para isto, de proposito.** O projeto nao tem camada de
+    autenticacao, e uma listagem sem auth expoe a base inteira de leads --
+    mesmo argumento pelo qual a reativacao de opt-out da TEC-182 ficou sem
+    rota. A TEC-189 chama esta funcao quando existir.
+    """
+    resultado = list(
+        await session.execute(
+            _SELECIONAR_DORMENTES,
+            {
+                "corte": agora,
+                "limite": limite,
+                "temperaturas_validas": _VALORES_TEMPERATURA_VALIDOS,
+                **_TETOS_POR_TEMPERATURA,
+            },
+        )
+    )
+    # `dormentes_saturados` ESPELHA o nome de `candidatos_saturados`, mas
+    # "saturar" nao e a mesma coisa nos dois: la e FOME -- leads devidos
+    # ficando de fora, uma patologia -- porque a candidatura reavalia o mesmo
+    # lote a cada passagem e um lote saturado nunca deixa quem esta realmente
+    # devido furar a fila. Aqui e so o fim de uma pagina: uma listagem que
+    # bate em `:limite` esta se comportando como desenhada, nao presa. Ver a
+    # docstring desta funcao sobre o `LIMIT` cortar antes do filtro de
+    # opt-out.
+    if len(resultado) == limite:
+        log.warning("followup.dormentes_saturados", limite=limite)
+    dormentes = []
+    for linha in resultado:
+        if await esta_em_optout(
+            session, channel=linha.channel, conversation_key=linha.conversation_key
+        ):
+            continue
+        dormentes.append(
+            LeadDormente(
+                channel=linha.channel,
+                conversation_key=linha.conversation_key,
+                temperatura=Temperatura(linha.temperatura),
+                ancora_em=linha.ancora,
+                ja_disparada=linha.ja_disparada,
+                ja_enviadas=linha.ja_enviadas,
+                adormeceu_em=linha.adormeceu_em,
+            )
+        )
+    return dormentes
 
 
 async def registrar_followup(

@@ -8,7 +8,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from mobia.domain.context.temperatura import Temperatura
-from mobia.domain.followup.cadencia import CADENCIA, INTERVALO_MINIMO, tentativa_devida
+from mobia.domain.followup.cadencia import (
+    CADENCIA,
+    INTERVALO_MINIMO,
+    esta_dormente,
+    tentativa_devida,
+)
 
 ANCORA = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 
@@ -143,3 +148,60 @@ def test_os_argumentos_sao_keyword_only() -> None:
     tentativa errada em silencio. Mesma razao dos flags de `temperatura_de`."""
     with pytest.raises(TypeError):
         tentativa_devida(Temperatura.QUENTE, ANCORA, 0, ANCORA)  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("temperatura", list(Temperatura))
+def test_quem_nunca_recebeu_nada_nao_esta_dormente(temperatura: Temperatura) -> None:
+    """Zero e o valor de "nunca disparou sob esta ancora"."""
+    assert esta_dormente(temperatura=temperatura, ja_disparada=0) is False
+
+
+@pytest.mark.parametrize("temperatura", list(Temperatura))
+def test_uma_tentativa_antes_do_teto_ainda_nao_esta_dormente(temperatura: Temperatura) -> None:
+    teto = len(CADENCIA[temperatura])
+    assert esta_dormente(temperatura=temperatura, ja_disparada=teto - 1) is False
+
+
+@pytest.mark.parametrize("temperatura", list(Temperatura))
+def test_alcancar_o_teto_da_temperatura_adormece(temperatura: Temperatura) -> None:
+    """O teto sai de CADENCIA, nunca escrito a mao aqui: um numero literal
+    neste teste seria uma segunda fonte, e passaria a mentir no dia em que
+    alguem alongasse a tabela da RN-13.1."""
+    teto = len(CADENCIA[temperatura])
+    assert esta_dormente(temperatura=temperatura, ja_disparada=teto) is True
+
+
+@pytest.mark.parametrize("temperatura", list(Temperatura))
+def test_passar_do_teto_continua_dormente(temperatura: Temperatura) -> None:
+    """O `>=` continua certo mesmo que o caminho seja hoje INALCANCAVEL: um
+    lead que esgotasse QUENTE em 4 e so depois esfriasse para MORNO (teto 3)
+    teria `ja_disparada` acima do teto vigente -- mas esfriar exige a mesma
+    fala INBOUND que move a ancora e zera `ja_disparada` (ver a docstring de
+    `esta_dormente`). Tornar isto alcancavel e a lacuna L4 do desenho
+    (TEC-158, TEC-192)."""
+    teto = len(CADENCIA[temperatura])
+    assert esta_dormente(temperatura=temperatura, ja_disparada=teto + 1) is True
+
+
+@pytest.mark.parametrize("temperatura", list(Temperatura))
+@pytest.mark.parametrize("ja_disparada", [0, 1, 2, 3, 4, 5])
+def test_dormente_e_a_negacao_exata_do_corte_de_candidatura(
+    temperatura: Temperatura, ja_disparada: int
+) -> None:
+    """A guarda central desta card.
+
+    `esta_dormente` e o corte SQL `ja_disparada < CASE temperatura ... END` de
+    `repositorio.py` sao a mesma afirmacao escrita duas vezes, uma em Python e
+    outra em SQL. Elas nao divergem porque as duas derivam de `CADENCIA` -- e
+    este teste e o que falha se alguem quebrar essa derivacao num dos lados.
+    """
+    seria_candidato = ja_disparada < len(CADENCIA[temperatura])
+    assert esta_dormente(temperatura=temperatura, ja_disparada=ja_disparada) is not seria_candidato
+
+
+def test_os_argumentos_de_esta_dormente_sao_keyword_only() -> None:
+    """Mesma razao de `tentativa_devida`: `temperatura` e `ja_disparada` nao
+    sao confundiveis por tipo, mas a chamada posicional convida a inverter com
+    os outros argumentos da familia, e o mypy nao veria."""
+    with pytest.raises(TypeError):
+        esta_dormente(Temperatura.MORNO, 3)  # type: ignore[misc]

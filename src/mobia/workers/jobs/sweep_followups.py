@@ -25,7 +25,7 @@ from mobia.domain.agente.apresentacao import Ficha
 from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo
 from mobia.domain.atendimento.repositorio import esta_silenciada
 from mobia.domain.catalogo.models import Imovel
-from mobia.domain.followup.cadencia import CADENCIA, tentativa_devida
+from mobia.domain.followup.cadencia import CADENCIA, esta_dormente, tentativa_devida
 from mobia.domain.followup.mensagem import QuedaDePreco, texto_do_followup
 from mobia.domain.followup.prosa import redigir_abertura
 from mobia.domain.followup.repositorio import (
@@ -322,6 +322,11 @@ async def sweep_followups(
     jeito. O evento de maximo nao entra nessa contagem -- gravar e atingir o
     maximo sao fatos diferentes, e somar os dois faria o retorno mentir para
     quem mede a varredura.
+
+    **RN-13.5 tambem sai desta varredura**: quando a tentativa recem-gravada
+    fecha o teto da temperatura (`esta_dormente`), sai `followup.dormente` --
+    o instante em que o lead sai do alcance da automacao, e nao um estado
+    gravado em lugar nenhum. Quem quiser o estado consulta `listar_dormentes`.
     """
     session_factory = ctx["session_factory"]
     # A mesma chave que `process_message` e `notificar_corretor` leem, e nao
@@ -504,6 +509,49 @@ async def sweep_followups(
                     conversation_key=candidato.conversation_key,
                     ancora_em=candidato.ancora_em.isoformat(),
                     ja_enviadas=MAXIMO_SEM_RESPOSTA,
+                )
+
+            # RN-13.5. Depois do `commit` acima, pela mesma regra do
+            # `followup.devido` logo acima: nada e logado antes de estar
+            # gravado.
+            #
+            # **`DORMENTE` nao e gravado em lugar nenhum** -- e derivado de
+            # `followups` por `esta_dormente`, e esta linha e so o instante
+            # ficando visivel. Quem quiser o estado consulta
+            # `listar_dormentes`; quem quiser o momento le este evento.
+            #
+            # **Dispara quando a ultima tentativa E ENVIADA, e nao depois de
+            # ela ficar sem resposta.** O cenario 1 da card diz "quando a
+            # ultima tentativa se esgota", e no desenho derivado esse instante
+            # nao existe: nao ha tentativa pendente que expire, ha uma linha
+            # que e gravada. Um lead que responder dez minutos depois ja tera
+            # gerado esta linha -- e saira de dormente na varredura seguinte,
+            # porque a fala move a ancora. Divergencia declarada na D3.
+            #
+            # `esta_dormente` e nao `tentativa == len(CADENCIA[...])`: a conta
+            # e a mesma, mas escrita aqui seria uma quarta copia do teto.
+            if esta_dormente(temperatura=candidato.temperatura, ja_disparada=tentativa):
+                # `warning` e nao `info`, mesmo nivel do
+                # `followup.antispam_atingido` logo acima e pela mesma razao:
+                # funcionou como desenhado, e alguem precisa saber -- um lead
+                # acabou de sair do alcance da automacao. `conversation_key`
+                # viaja porque o proposito da RN-13.5 e que a gerente consiga
+                # agir sobre ESTE lead; `structlog` o mascara para os quatro
+                # ultimos digitos antes de chegar ao log de verdade.
+                log.warning(
+                    "followup.dormente",
+                    channel=candidato.channel,
+                    conversation_key=candidato.conversation_key,
+                    temperatura=candidato.temperatura.value,
+                    # `ja_disparada`, e nao `tentativas`: no instante em que
+                    # este evento sai, `tentativa` E o maior numero de
+                    # tentativa gravado sob a ancora -- a mesma grandeza que
+                    # `Candidato.ja_disparada` e `LeadDormente.ja_disparada`
+                    # nomeiam no resto do dominio. "Tentativas" no plural e a
+                    # mesma ambiguidade contagem-vs-posicao que o dataclass
+                    # deixou de ter, e este e o evento que uma pessoa le.
+                    ja_disparada=tentativa,
+                    ancora_em=candidato.ancora_em.isoformat(),
                 )
 
             # Conta TENTATIVAS de envio, e nao entregas: o que os dois tetos
