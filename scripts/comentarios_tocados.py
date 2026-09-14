@@ -47,6 +47,13 @@ class Achado:
     linha: int
     texto: str
     alterado: bool
+    # Distancia em linhas ate a alteracao mais proxima do mesmo arquivo, e o
+    # nome do menor bloco que contem este achado. Os dois existem para o teto
+    # de `main`: `distancia` ordena quem fica, `bloco` agrupa e nomeia o que
+    # foi omitido. Um ALTERADO tem distancia 0 e bloco vazio -- o teto nao o
+    # alcanca, entao nao precisa de nenhum dos dois.
+    distancia: int = 0
+    bloco: str = ""
 
 
 def _rodar(*argumentos: str) -> str:
@@ -128,18 +135,22 @@ def _docstrings(arvore: ast.AST) -> list[tuple[int, int, str]]:
     return achados
 
 
-def _blocos(arvore: ast.AST) -> list[tuple[int, int]]:
-    """Faixa de linhas de cada def/class, para decidir o que e VIZINHO.
+def _blocos(arvore: ast.AST) -> list[tuple[int, int, str]]:
+    """Faixa de linhas e nome de cada def/class, para decidir o que e VIZINHO.
 
     O def e a unidade certa: e o escopo que um comentario costuma descrever.
     Usar o arquivo inteiro marcaria comentario nenhum como seguro, e usar so as
     linhas coladas perderia o comentario de topo de funcao, que e justamente o
     que envelhece quando o corpo dela muda.
+
+    O nome nao entra na classificacao -- entra no teto de `main`, que precisa
+    dizer em QUAL bloco ficaram os vizinhos que ele omitiu. Sem ele a linha de
+    resumo seria "+703 vizinhos omitidos", que nao diz onde procurar.
     """
     faixas = []
     for no in ast.walk(arvore):
         if isinstance(no, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-            faixas.append((no.lineno, no.end_lineno or no.lineno))
+            faixas.append((no.lineno, no.end_lineno or no.lineno, no.name))
     return faixas
 
 
@@ -150,22 +161,38 @@ def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
     except (OSError, SyntaxError):
         return []
 
-    blocos = [(i, f) for i, f in _blocos(arvore) if any(i <= n <= f for n in alteradas)]
+    blocos = [(i, f, n) for i, f, n in _blocos(arvore) if any(i <= x <= f for x in alteradas)]
 
     def dentro_de_bloco_mexido(inicio: int, fim: int) -> bool:
-        return any(i <= inicio and fim <= f for i, f in blocos)
+        return any(i <= inicio and fim <= f for i, f, _ in blocos)
+
+    def distancia(inicio: int, fim: int) -> int:
+        # Zero quando a alteracao cai DENTRO da faixa do achado. Para uma
+        # docstring longa isso importa: medir sempre da primeira linha faria
+        # uma alteracao colada no fim dela parecer distante.
+        return min(
+            0 if inicio <= n <= fim else min(abs(n - inicio), abs(n - fim)) for n in alteradas
+        )
+
+    def dono(inicio: int, fim: int) -> str:
+        # O MENOR bloco que contem o achado. Usar o maior diria "+703 em C"
+        # para um comentario que esta em `C.m`, e quem le nao saberia onde
+        # procurar. Isto e atribuicao, nao classificacao: o desenho mediu que
+        # trocar a classificacao para o menor bloco rende 0,036%.
+        candidatos = [(f - i, n) for i, f, n in blocos if i <= inicio and fim <= f]
+        return min(candidatos)[1] if candidatos else ""
 
     achados = []
     for linha, texto in _comentarios(fonte):
         if linha in alteradas:
             achados.append(Achado(linha, texto, alterado=True))
         elif dentro_de_bloco_mexido(linha, linha):
-            achados.append(Achado(linha, texto, alterado=False))
+            achados.append(Achado(linha, texto, False, distancia(linha, linha), dono(linha, linha)))
     for inicio, fim, texto in _docstrings(arvore):
         if any(n in alteradas for n in range(inicio, fim + 1)):
             achados.append(Achado(inicio, texto, alterado=True))
         elif dentro_de_bloco_mexido(inicio, fim):
-            achados.append(Achado(inicio, texto, alterado=False))
+            achados.append(Achado(inicio, texto, False, distancia(inicio, fim), dono(inicio, fim)))
     return sorted(achados, key=lambda a: a.linha)
 
 

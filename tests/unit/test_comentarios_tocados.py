@@ -159,6 +159,89 @@ def test_arquivo_que_nao_parseia_devolve_lista_vazia(tmp_path: Path) -> None:
     assert examinar(arquivo, {1}) == []
 
 
+def test_a_distancia_e_ate_a_linha_alterada_mais_proxima(tmp_path: Path) -> None:
+    arquivo = _escrever(
+        tmp_path,
+        """
+        def f():
+            # comentario
+            a = 1
+            b = 2
+            c = 3
+            return a
+    """,
+    )
+    # alteradas: 6 e 7. O comentario esta na 3, entao a mais proxima e a 6.
+    (achado,) = [a for a in examinar(arquivo, {6, 7}) if not a.alterado]
+    assert achado.distancia == 3
+
+
+def test_a_distancia_de_um_alterado_e_zero(tmp_path: Path) -> None:
+    arquivo = _escrever(
+        tmp_path,
+        """
+        def f():
+            # comentario
+            return 1
+    """,
+    )
+    (achado,) = examinar(arquivo, {3})
+    assert achado.distancia == 0
+
+
+def test_a_distancia_de_docstring_mede_da_faixa_inteira(tmp_path: Path) -> None:
+    """A docstring ocupa varias linhas; a distancia sai da borda mais proxima,
+    nao da primeira linha -- senao uma docstring longa parece longe de uma
+    alteracao colada no fim dela."""
+    arquivo = _escrever(
+        tmp_path,
+        '''
+        def f():
+            """linha um
+            linha dois
+            linha tres
+            """
+            return 1
+    ''',
+    )
+    (achado,) = [a for a in examinar(arquivo, {7}) if not a.alterado]
+    assert achado.distancia == 1
+
+
+def test_o_bloco_dono_e_o_menor_que_contem_o_achado(tmp_path: Path) -> None:
+    """Para ATRIBUIR, e nao para classificar.
+
+    O desenho mediu que usar o menor bloco para CLASSIFICAR rende 0,036% e nao
+    vale. Mas para dizer "+K em qual funcao" o menor bloco e o unico nome util:
+    dizer "+703 em C" quando o comentario esta em `C.m` nao ajuda ninguem.
+    """
+    arquivo = _escrever(
+        tmp_path,
+        """
+        class C:
+            def m(self):
+                # comentario
+                return 1
+    """,
+    )
+    (achado,) = [a for a in examinar(arquivo, {5}) if not a.alterado]
+    assert achado.bloco == "m"
+
+
+def test_alterado_nao_recebe_bloco(tmp_path: Path) -> None:
+    """O teto nao morde ALTERADO, entao ele nao precisa de dono."""
+    arquivo = _escrever(
+        tmp_path,
+        """
+        def f():
+            # comentario
+            return 1
+    """,
+    )
+    (achado,) = examinar(arquivo, {3})
+    assert achado.bloco == ""
+
+
 def _com_diff(monkeypatch, saida: str) -> dict:
     monkeypatch.setattr(ferramenta, "_rodar", lambda *_: saida)
     return ferramenta.linhas_alteradas("qualquer")
