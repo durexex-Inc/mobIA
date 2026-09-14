@@ -46,6 +46,32 @@ class Especialidade(StrEnum):
     INVESTIMENTO_ALTO_TICKET = "INVESTIMENTO_ALTO_TICKET"
 
 
+# RN-07.4, em centavos como todo dinheiro deste dominio. O unico lugar em que
+# este numero esta escrito.
+#
+# Constante de modulo e nao configuracao: a card fixa o valor e ninguem pediu
+# configurabilidade -- superficie que ninguem pediu e superficie a mais, o
+# mesmo argumento que as bandas de `dinheiro.py` usam.
+TICKET_DE_ALTO_TICKET_CENTAVOS = 100_000_000
+
+
+def especialidade_de(ticket_centavos: int) -> Especialidade:
+    """A especialidade que o ticket exige. RN-07.4, TEC-153.
+
+    `>=` e nao `>`: a regra diz "a partir de R$ 1.000.000", entao o limiar
+    pertence ao alto ticket.
+
+    **Nasce sem chamador, e isso e declarado.** Alocar corretor e a TEC-166, e
+    a TEC-153 poe a alocacao fora de escopo -- o Gherkin dela diz "quando o
+    corretor e alocado", um passo que ainda nao existe. E a mesma situacao em
+    que `Gatilho.LIMITE_DE_PERGUNTAS` ficou desde a TEC-174 ate a TEC-149
+    chegar: a regra existe, testada, esperando quem a chame.
+    """
+    if ticket_centavos >= TICKET_DE_ALTO_TICKET_CENTAVOS:
+        return Especialidade.INVESTIMENTO_ALTO_TICKET
+    return Especialidade.INVESTIMENTO
+
+
 def jornada_valida(inicio: int, fim: int) -> bool:
     """A jornada cabe no relogio e comeca antes de terminar.
 
