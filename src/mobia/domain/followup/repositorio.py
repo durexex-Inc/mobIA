@@ -256,6 +256,8 @@ async def candidatos_a_followup(
     da candidatura; se esquentar depois, a proxima varredura o ve com a nova
     temperatura e o teto certo, porque o corte nunca olha um valor congelado.
     Ver o comentario da query para o porque de um teto GLOBAL nao bastar.
+    E `listar_dormentes`, neste mesmo arquivo, e quem encontra esse lead do
+    outro lado do corte.
 
     **Um resultado do tamanho de `limite` significa que leads podem ter
     ficado de fora desta passagem.** Fica um aviso no log -- silencioso, isso
