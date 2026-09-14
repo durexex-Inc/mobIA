@@ -85,6 +85,24 @@ def _marca_de(nome: str) -> str | None:
     return nome if nome in _CAMPOS_DA_EXTRACAO else None
 
 
+def perguntas_contaveis(perguntou: Iterable[str]) -> frozenset[str]:
+    """Os nomes de `perguntou` que contam para o teto da RN-05.5. TEC-149, D3.
+
+    Conjunto e nao lista: os dois extremos do orcamento chegam como nomes
+    distintos e sao UMA pergunta -- `_marca_de` ja os colapsa no mesmo nome
+    logico, e o conjunto termina o servico. Nome que nao pertence a
+    vocabulario nenhum sai fora: o modelo as vezes devolve o texto da
+    pergunta em lugar do nome do campo, e contar isso gastaria o orcamento
+    do lead com um defeito nosso.
+
+    Reusa `_marca_de` de proposito, em vez de uma segunda lista de nomes:
+    duas fontes para o mesmo vocabulario divergiriam em silencio, que e o
+    defeito que a TEC-146 gastou uma card inteira consertando.
+    """
+    marcas = (_marca_de(nome) for nome in perguntou)
+    return frozenset(marca for marca in marcas if marca is not None)
+
+
 # Um nome de campo e minusculas e underscore. O que nao casa nao vai para o
 # log: o modelo pode devolver o texto da pergunta em vez do nome, e texto de
 # pergunta carrega o que o lead disse.
