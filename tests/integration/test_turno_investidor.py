@@ -492,7 +492,7 @@ async def test_a_ficha_do_investidor_traz_os_indicadores(
 ) -> None:
     """RN-07.3: quem esta na trilha do investidor recebe os numeros na ficha.
 
-    O yield afirmado aqui vale por uma asserta da D2 tambem: `_candidato_de`
+    O yield afirmado aqui vale por uma assercao da D2 tambem: `_candidato_de`
     manda `preco_centavos=51_646_430` e a linha tem `preco_venda=50_000_000`.
     6,0% so sai se a conta usar a COLUNA; usar o preco apresentado daria 5,8%.
     """
@@ -575,3 +575,45 @@ async def test_a_continuacao_de_um_investidor_mantem_os_indicadores(session, out
     assert outbound.entregues, "nada foi entregue -- o teste nao afirmaria nada"
     assert "yield bruto 6,0% ao ano" in outbound.entregues[0]
     assert outbound.entregues[0].endswith("Estimativa, nao e garantia de retorno.")
+
+
+async def test_a_continuacao_de_um_comprador_nao_ganha_indicador_nenhum(
+    session, outbound_fake
+) -> None:
+    """Contraprova do teste acima, mesma disciplina do par investidor/
+    comprador que este arquivo ja segue para `_apresentar`
+    (`test_a_ficha_do_investidor_traz_os_indicadores` e
+    `test_a_ficha_de_comprador_nao_traz_indicador_nenhum`).
+
+    Sem isto, trocar `investidor` por `True` fixo em `_continuar_entrega`
+    continuaria verde no teste irmao -- ele so afirma que o investidor
+    MANTEM o bloco, nunca que o comprador continua sem.
+    """
+    from datetime import UTC, datetime
+
+    await _semear_estado(session, intencao=Intencao.COMPRA.value)
+    mensagem = await _mensagem_do_lead(session)
+    imovel = await _imovel(
+        session, "AP-1007", preco_venda=50_000_000, preco_aluguel=250_000, iptu_mensal=32_000
+    )
+    lote = [
+        LinhaDaApresentacao(
+            imovel_id=imovel,
+            preco_centavos=50_000_000,
+            kind="ficha_2",
+            apresentado_em=datetime.now(UTC),
+        )
+    ]
+    outbound = outbound_fake()
+
+    await _continuar_entrega(
+        get_sessionmaker(),
+        message=mensagem,
+        outbound=outbound,
+        lote=lote,
+        ja_reservados=frozenset(),
+    )
+
+    assert outbound.entregues, "nada foi entregue -- o teste nao afirmaria nada"
+    assert "yield" not in outbound.entregues[0]
+    assert "Estimativa" not in outbound.entregues[0]
