@@ -47,7 +47,16 @@ COM_YIELD = replace(
 
 
 def test_sem_rentabilidade_a_legenda_e_identica_a_de_hoje() -> None:
-    """A trilha padrao nao paga nada por esta card -- nem um caractere."""
+    """A trilha padrao nao paga nada por esta card -- nem um caractere.
+
+    Duplica byte a byte o assert de `test_a_legenda_traz_os_oito_campos_da_
+    rn_10_1`, la embaixo, e de proposito: aquele e o guarda da RN-10.1, e
+    este e o guarda de regressao desta card (TEC-154). Hoje sao a mesma
+    string porque os dois escopos coincidem -- "a ficha padrao nao muda" e
+    "a ficha padrao traz os oito campos" --, mas os dois testes tem donos
+    diferentes e podem divergir no futuro se um dos dois escopos mudar
+    sozinho.
+    """
     assert legenda_de(COMPLETA) == (
         "Apartamento em Lagoa da Conceicao\n"
         "Lagoa da Conceicao - R$ 516.464\n"
@@ -93,6 +102,22 @@ def test_sem_aluguel_a_ficha_diz_que_o_dado_nao_existe_e_nao_ressalva_nada() -> 
     )
 
 
+def test_aluguel_zero_cai_na_linha_nao_informado_e_nao_leva_ressalva() -> None:
+    """`yield_bruto_anual` ja trata aluguel zero como ausente -- "omitir e
+    mais honesto que exibir 0,0% ao ano", diz a docstring dela -- e o `CHECK`
+    do banco nao proibe zero, so NULL. Duas regras diferentes para o mesmo
+    valor no mesmo modulo seria a inconsistencia; este teste prende que
+    `_linhas_da_rentabilidade` trata os dois (`None` e `0`) do mesmo jeito.
+    """
+    aluguel_zero = replace(
+        COMPLETA,
+        rentabilidade=Rentabilidade(aluguel_centavos=0, yield_pct=None, custos_centavos=None),
+    )
+    legenda = legenda_de(aluguel_zero)
+    assert legenda.endswith("Aluguel estimado: nao informado")
+    assert "Estimativa" not in legenda
+
+
 def test_aluguel_sem_preco_de_venda_mostra_o_valor_sem_o_sufixo_do_yield() -> None:
     """D2: trocar por `nao informado` seria negar um aluguel que esta no
     catalogo -- a mentira do cenario 3 na direcao contraria. A ressalva sai,
@@ -114,6 +139,13 @@ def test_o_teto_de_600_corta_a_prosa_e_nunca_o_bloco_do_investidor() -> None:
     legenda = legenda_de(COM_YIELD, prefixo=prosa)
     assert len(legenda) <= MAX_CARACTERES_DA_LEGENDA
     assert legenda.endswith("Estimativa, nao e garantia de retorno.")
+    # A prosa sobrevive truncada -- 40 das 200 palavras cabem antes da ficha
+    # de 593 caracteres. Sem esta linha, descartar a prosa INTEIRA passaria
+    # neste mesmo teste: `len <= 600` e `endswith(ressalva)` valem tanto para
+    # "prosa cortada" quanto para "prosa ausente", que sao comportamentos
+    # diferentes.
+    assert legenda.startswith("palavra palavra")
+    assert "\n\n" in legenda
 
 
 def test_a_legenda_traz_os_oito_campos_da_rn_10_1() -> None:
