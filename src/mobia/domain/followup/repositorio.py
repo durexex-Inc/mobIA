@@ -9,12 +9,15 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import structlog
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agente.models import Recomendacao
+from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.cadencia import CADENCIA, INTERVALO_MINIMO
+from mobia.domain.followup.mensagem import QuedaDePreco
 from mobia.domain.followup.models import FollowUp
 
 log = structlog.get_logger(__name__)
@@ -297,3 +300,45 @@ async def registrar_followup(
         .returning(FollowUp)
     )
     return (await session.scalars(statement)).first()
+
+
+async def queda_de_preco(
+    session: AsyncSession, *, channel: str, conversation_key: str
+) -> QuedaDePreco | None:
+    """A MAIOR queda de preco entre os imoveis ja apresentados a esta conversa.
+
+    **So queda.** O Gherkin da card diz "reducao" onde a regra de negocio diz
+    "mudanca", e a divergencia foi decidida a favor do Gherkin: aumento nao
+    reengaja, e a historia pede que a mensagem traga algo util.
+
+    `None` quando nao ha nenhuma -- inclusive quando o lead nunca recebeu
+    ficha (L3) ou quando a linha e anterior a TEC-275 e nao tem preco gravado.
+
+    A maior, e nao qualquer uma: a D2 manda uma informacao nova por mensagem,
+    e entre duas quedas a que mais reengaja e a maior.
+    """
+    resultado = await session.execute(
+        select(
+            Recomendacao.imovel_id,
+            Recomendacao.preco_centavos,
+            Imovel.preco_venda,
+        )
+        .join(Imovel, Imovel.id == Recomendacao.imovel_id)
+        .where(
+            Recomendacao.channel == channel,
+            Recomendacao.conversation_key == conversation_key,
+            Recomendacao.preco_centavos.is_not(None),
+            Imovel.preco_venda.is_not(None),
+            Imovel.preco_venda < Recomendacao.preco_centavos,
+        )
+        .order_by((Recomendacao.preco_centavos - Imovel.preco_venda).desc())
+        .limit(1)
+    )
+    linha = resultado.first()
+    if linha is None:
+        return None
+    return QuedaDePreco(
+        imovel_id=linha.imovel_id,
+        preco_antes_centavos=linha.preco_centavos,
+        preco_agora_centavos=linha.preco_venda,
+    )
