@@ -20,6 +20,7 @@ from mobia.workers.jobs.indexar_catalogo import indexar_catalogo
 from mobia.workers.jobs.notificar import notificar_corretor
 from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_followups import sweep_followups
+from mobia.workers.jobs.sweep_importacoes_travadas import sweep_importacoes_travadas
 from mobia.workers.jobs.sweep_sla import sweep_sla
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
 
@@ -154,6 +155,7 @@ class WorkerSettings:
         # `sweep_followups` -- e o relogio que dispara este job, nunca um
         # enqueue manual.
         func(sweep_sla, keep_result=0),
+        sweep_importacoes_travadas,
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
@@ -181,6 +183,18 @@ class WorkerSettings:
         # janela de quinze.
         cron(
             sweep_sla,
+            minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
+            run_at_startup=False,
+        ),
+        # De 5 em 5 minutos, como o `sweep_followups` e o `sweep_sla` acima, e
+        # nao de 30 em 30 segundos como a `sweep_stalled`. O limite desta
+        # varredura e de TRINTA MINUTOS
+        # (`sweep_importacao_travada_after_seconds`), entao precisao de
+        # segundos nao compra nada e custaria uma varredura a cada passagem.
+        # O erro maximo de disparo fica em cinco minutos sobre uma janela de
+        # trinta.
+        cron(
+            sweep_importacoes_travadas,
             minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
             run_at_startup=False,
         ),
