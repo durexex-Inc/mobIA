@@ -559,14 +559,22 @@ async def _continuar_entrega(
             # produzido, e desde a TEC-153 sao duas.** A trilha do investidor
             # tambem busca e apresenta, entao a passada anterior pode ter sido
             # um turno do subagente investidor -- e esta continuacao grava
-            # `classificador` do mesmo jeito. Nao ha como saber daqui: esta
-            # funcao roda ANTES de `montar_contexto`, nao tem `contexto.estado`
-            # e portanto nao tem `ja_e_investidor`; e o `subagent` da passada
-            # anterior nao e lido de lugar nenhum aqui. A consequencia e real e
-            # esta declarada, nao corrigida: a telemetria subconta as
-            # continuacoes da trilha do investidor, jogando-as no balde do
-            # classificador. Fechar isto exige ler o `subagent` da linha que a
-            # passada anterior gravou -- consulta que esta funcao hoje nao faz.
+            # `classificador` do mesmo jeito.
+            #
+            # **Desde a TEC-154 esta funcao TEM um sinal, e "nao ha como saber
+            # daqui" deixou de ser verdade.** `investidor`, calculado acima, e
+            # a mesma leitura e o mesmo custo ja declarados ali -- o estado e
+            # o de AGORA, nao o do instante da apresentacao original, e por
+            # isso e uma aproximacao da trilha da passada anterior, nao uma
+            # leitura exata dela. Esta card deliberadamente NAO o usou para
+            # este rotulo: trocar `subagent` e mudanca de comportamento de
+            # telemetria, fora do escopo da TEC-154 (que e sobre a ficha), e
+            # entraria sem teste que a prendesse. A consequencia segue real e
+            # declarada, nao corrigida: a telemetria subconta as continuacoes
+            # da trilha do investidor, jogando-as no balde do classificador.
+            # Fechar isto agora e um caminho curto -- `SUBAGENTE_INVESTIDOR if
+            # investidor else SUBAGENTE_CLASSIFICADOR` aqui embaixo -- e nao
+            # mais uma consulta que esta funcao nao faz.
             subagent=SUBAGENTE_CLASSIFICADOR,
             tokens_in=0,
             tokens_out=0,
