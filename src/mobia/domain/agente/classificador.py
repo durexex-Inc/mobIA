@@ -11,6 +11,14 @@ from anthropic.types import Message
 from mobia.app.config import get_settings
 from mobia.domain.agente.dinheiro import Recusa, parsear
 from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA, PortaDeBusca
+from mobia.domain.agente.investidor import (
+    CAMPOS_DO_INVESTIDOR,
+    ExtracaoDoInvestidor,
+    Horizonte,
+    RespostaDoInvestidor,
+    RetornoEsperadoTipo,
+    ToleranciaReforma,
+)
 from mobia.domain.agente.schemas import (
     CategoriaDescarte,
     Extracao,
@@ -145,6 +153,65 @@ SISTEMA_DA_REACAO = (
 )
 
 MAX_TOKENS_DA_REACAO = 300
+
+# TEC-153, D1 e RN-07.1. O `system` da chamada do subagente investidor.
+#
+# **Nao entra na subcontagem de `test_a_margem_do_orcamento_do_prompt_e_
+# deliberada`**, pela mesma razao que SISTEMA_DA_DESAMBIGUACAO e
+# SISTEMA_DA_REACAO nao entram: aquele teste mede o que TODA chamada do
+# classificador manda -- SISTEMA_DO_AGENTE, o schema compilado principal, os
+# rotulos de montar_prompt e o `tools=` --, e este texto e `system` de outra
+# chamada, paga so por quem falou de investimento. Alongar ESTE texto e
+# barato; alongar SISTEMA_DO_AGENTE nao e. O que continua custando caro aqui
+# e o oposto: cada palavra daqui reaparece em todo turno do investidor a
+# partir do segundo, quando esta vira a unica chamada do turno.
+#
+# **A lista de intencoes nao e repetida aqui, e isso e deliberado.** Copiar as
+# sete glosas de SISTEMA_DO_AGENTE criaria uma segunda lista mantida a mao
+# para a mesma verdade -- o defeito que a TEC-146 gastou uma card inteira
+# consertando --, e os valores ja chegam ao modelo pelo `enum` do schema
+# estrito. So o par que pode virar a trilha inteira (INVESTIMENTO contra
+# COMPRA) ganha glosa: e o unico em que errar reclassifica o lead de volta
+# para o prompt generico no turno seguinte.
+#
+# A ultima frase da lista do que perguntar diz o que NAO perguntar sem nomear
+# quartos, vagas nem metragem. Nomea-los para proibi-los seria escrever no
+# prompt exatamente as palavras que a RN-07.1 quer fora dele, e
+# `test_o_prompt_do_investidor_nao_pede_quartos_nem_vagas` recusa a forma
+# negativa por isso: para o modelo, a proibicao ainda e a mencao.
+SISTEMA_DO_INVESTIDOR = (
+    "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo por "
+    "mensagem um lead que compra imovel para investir, e nao para morar. A cada "
+    "turno voce faz tres coisas: classifica a intencao do lead, extrai o que "
+    "ele procura e o perfil de investimento dele, e responde a ele.\n\n"
+    "Os valores de intencao estao no schema. INVESTIMENTO e comprar para renda "
+    "ou revenda; se a fala deste turno disser que o imovel e para o proprio "
+    "lead morar, classifique COMPRA.\n\n"
+    "A confianca e o quanto voce considera a classificacao segura.\n\n"
+    "Responda em portugues do Brasil, em tom de conversa. Use o resumo e o "
+    "estado de qualificacao como memoria: nao repergunte o preenchido nem o "
+    "ignorado. Nao invente informacao sobre imoveis que nao esteja no "
+    "contexto. Nao prometa rentabilidade nem projete valorizacao, e nao "
+    "negocie valor: e com o corretor.\n\n"
+    "O que falta saber deste lead, e o que vale perguntar: quanto ele pretende "
+    "investir; se o retorno que ele quer vem de aluguel, de revenda ou dos "
+    "dois; quanto ele espera de retorno em porcentagem ao ano; em quanto tempo "
+    "pretende sair do investimento; se aceita imovel para reformar; e se ja "
+    "investe em imoveis hoje. Nao pergunte detalhe de moradia: quem investe "
+    "escolhe por conta, nao por gosto de morar.\n\n"
+    "Na extracao e no objeto investidor, preencha so o que a fala DESTE turno "
+    "afirma, mesmo que ja esteja no estado; o resto e null. "
+    'null e "nao falou disso agora", nunca "nao sei". Nao infira. Em '
+    "ticket_expressao copie o valor como o lead falou, sem converter. "
+    "Orcamento vago: peca confirmacao."
+)
+
+# Mesmo teto de MAX_TOKENS_DA_RESPOSTA, e constante propria mesmo assim: a
+# saida desta chamada e o mesmo envelope mais um objeto pequeno, entao o
+# numero coincide hoje -- mas afrouxar o teto de uma das duas chamadas nao e
+# razao para afrouxar o da outra, e uma constante compartilhada faria disso
+# um efeito colateral invisivel.
+MAX_TOKENS_DO_INVESTIDOR = 1500
 
 # Derivado do enum de proposito: duas listas mantidas a mao divergem, e a
 # divergencia so aparece quando o modelo devolve um valor que o codigo nao
@@ -296,6 +363,88 @@ SCHEMA_DA_RESPOSTA["properties"] = {
 SCHEMA_DA_RESPOSTA["required"] = list(_ORDEM_DOS_CAMPOS)
 
 
+# TEC-153, D2. O objeto que so a chamada do investidor manda -- os seis campos
+# da RN-05.2, no molde de SCHEMA_DA_EXTRACAO: todos obrigatorios e todos
+# anulaveis, porque forcar o modelo a dizer `null` e mais confiavel que
+# aceitar chave ausente.
+#
+# `retorno_esperado_pct` e `number`, e nao `string`, ao contrario de
+# `ticket_expressao`: percentual ao ano nao tem as formas coloquiais que
+# obrigam `faixa_preco_expressao` e `ticket_expressao` a passar por
+# `dinheiro.py` ("uns 800 mil", "800k", "meio milhao"). Quem converte para o
+# `Numeric(4, 2)` da coluna e `_extracao_do_investidor`, abaixo.
+SCHEMA_DO_PERFIL_INVESTIDOR: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "ticket_expressao": _anulavel({"type": "string"}),
+        "retorno_esperado_pct": _anulavel({"type": "number"}),
+        "retorno_esperado_tipo": _enum_anulavel(RetornoEsperadoTipo),
+        "horizonte": _enum_anulavel(Horizonte),
+        "tolerancia_reforma": _enum_anulavel(ToleranciaReforma),
+        "ja_investe_em_imoveis": _anulavel({"type": "boolean"}),
+    },
+    "additionalProperties": False,
+}
+# `required` derivado das proprias chaves, e nao de uma segunda lista escrita
+# a mao como a de SCHEMA_DA_EXTRACAO: um campo novo la em cima entraria no
+# schema sem entrar em `required`, e o modelo passaria a poder omiti-lo em
+# silencio.
+SCHEMA_DO_PERFIL_INVESTIDOR["required"] = list(SCHEMA_DO_PERFIL_INVESTIDOR["properties"])
+
+if set(SCHEMA_DO_PERFIL_INVESTIDOR["properties"]) != CAMPOS_DO_INVESTIDOR:
+    # Guarda de import, nao assert, pela mesma razao do bloco de
+    # _ORDEM_DOS_CAMPOS: `python -O` removeria o assert, e a divergencia
+    # entre o schema e `ExtracaoDoInvestidor` so apareceria como campo
+    # silenciosamente nunca preenchido -- `_extracao_do_investidor` le pelo
+    # nome do dataclass, entao um nome que so exista no schema e um campo que
+    # o modelo preenche e o codigo joga fora.
+    raise RuntimeError(
+        "SCHEMA_DO_PERFIL_INVESTIDOR divergiu de ExtracaoDoInvestidor: "
+        f"{sorted(SCHEMA_DO_PERFIL_INVESTIDOR['properties'])} != {sorted(CAMPOS_DO_INVESTIDOR)}"
+    )
+
+# **O mesmo envelope de SCHEMA_DA_RESPOSTA, com `investidor` a mais.** Nao e
+# um schema de seis campos no lugar da extracao: um investidor tambem diz
+# regiao, tipo e faixa de preco ("quero investir na zona sul ate 800 mil"), e
+# o turno dele continua classificando intencao e carregando `resposta`,
+# `perguntou` e `recusou`. Trocar a extracao inteira perderia tudo isso.
+#
+# **Escrito como objeto independente, e nao montado a partir do principal.**
+# Um `dict(SCHEMA_DA_RESPOSTA)` compartilharia o dict de `properties`, e
+# acrescentar `investidor` aqui o acrescentaria la -- ou seja, no schema que
+# TODA chamada manda, contra o teto fixo do orcamento, que hoje tem margem de
+# poucos tokens. A separacao e o que faz o investidor custar zero a quem
+# nunca falou de investimento (D2), e
+# `test_os_dois_schemas_sao_objetos_distintos` e quem a guarda.
+#
+# A excecao deliberada e `extracao`, que e o MESMO `SCHEMA_DA_EXTRACAO` dos
+# dois lados, por referencia: e literalmente a mesma extracao, e uma copia
+# divergiria no dia em que um campo entrasse so num dos dois. Compartilha-la
+# nao abre o buraco que a duplicacao do envelope fecha -- uma mutacao dela
+# muda o schema principal e a subcontagem do orcamento junto, entao o teto
+# fixo reprova na hora, em vez de deixar passar em silencio.
+#
+# A ordem e a de _ORDEM_DOS_CAMPOS com `investidor` logo depois de `extracao`,
+# pelo argumento da TEC-244: o modelo preenche na ordem declarada, e isolar o
+# que a fala afirma antes de formular o que dizer ao lead e o ponto. Sem
+# tupla de ordem separada, porque aqui nao ha nada para reordenar -- o
+# literal ja e a ordem, e uma segunda lista so poderia divergir dele.
+SCHEMA_DO_INVESTIDOR: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "intencao": {"type": "string", "enum": [membro.value for membro in Intencao]},
+        "confianca": {"type": "number", "minimum": 0, "maximum": 1},
+        "extracao": SCHEMA_DA_EXTRACAO,
+        "investidor": SCHEMA_DO_PERFIL_INVESTIDOR,
+        "resposta": {"type": "string"},
+        "perguntou": {"type": "array", "items": {"type": "string"}},
+        "recusou": {"type": "array", "items": {"type": "string"}},
+    },
+    "additionalProperties": False,
+}
+SCHEMA_DO_INVESTIDOR["required"] = list(SCHEMA_DO_INVESTIDOR["properties"])
+
+
 def _lista_de_nomes(bruto: Any) -> tuple[str, ...]:
     """Nomes de campo que o modelo declara sobre o proprio turno.
 
@@ -315,6 +464,62 @@ def _lista_de_nomes(bruto: Any) -> tuple[str, ...]:
     if not isinstance(bruto, list):
         return ()
     return tuple(item for item in bruto if isinstance(item, str))
+
+
+def _confianca_de(bruto: Any) -> Decimal:
+    """O campo `confianca` do envelope, validado e quantizado. Levanta.
+
+    Uma funcao, e nao duas copias, porque `classificar` e
+    `qualificar_investidor` mandam o MESMO envelope e leem o mesmo campo: as
+    duas guardas abaixo existem por razoes finas, e uma segunda copia delas
+    divergiria exatamente onde ninguem olha. Foi extraida na TEC-153, quando
+    o envelope ganhou o segundo consumidor.
+
+    **Levanta `RespostaInvalida`, ao contrario de `extrair` e
+    `_extracao_do_investidor`**, que nunca levantam: `confianca` nao e
+    enriquecimento, e o que decide se o turno desambigua. Um valor
+    inaproveitavel aqui nao tem descarte seguro.
+
+    additionalProperties/enum/type sao os unicos campos que o compilador do
+    servidor de fato impoe (ver `_SCHEMA_COMPILADO`) -- o intervalo [0, 1]
+    nunca foi garantido la.
+
+    A comparacao de faixa e a **primeira** checagem depois do tipo, e a ordem
+    importa. Um `math.isfinite` aqui na frente recebe o int arbitrario que
+    `json.loads` aceita sem reclamar (um inteiro JSON de ~320 digitos) e
+    levanta OverflowError ao converter para float -- ArithmeticError, fora do
+    `except` de quem chama, escapando cru e quebrando o contrato de que
+    RespostaInvalida e o unico modo de falha deste modulo. `0 <= x <= 1`
+    trabalha em precisao arbitraria e rejeita o valor sem converter nada.
+
+    E ela sozinha ja cobre `NaN`/`Infinity`/`-Infinity`, os literais
+    nao-padrao que `json.loads` aceita: toda comparacao com NaN e falsa e os
+    infinitos caem fora da faixa. Nenhum deles chega ao `Decimal(str(...))`
+    -- um NaN ali nunca satisfaria o `< LIMIAR_DE_DESAMBIGUACAO` de quem
+    consome depois, e a ramificacao simplesmente nao aconteceria, em
+    silencio.
+
+    `conversation_intent.confianca` e `numeric(3,2)`: o Postgres arredonda ao
+    gravar, e um `Decimal` sem arredondar aqui vira dois valores para o mesmo
+    limiar -- o em-memoria (usado por `deve_desambiguar` neste turno) e o
+    gravado (usado por `efetiva` em todo turno seguinte) podem discordar
+    sobre o mesmo par (intencao, confianca) quando o valor bruto cai perto da
+    borda (ex.: 0.599 nao desambigua se arredondar para 0.60, mas o turno ja
+    decidiu desambiguar com o valor cru). Quantizar aqui, com a mesma escala
+    da coluna, elimina essa divergencia: o que este turno decide e exatamente
+    o que fica gravado.
+
+    `ROUND_HALF_UP`, nao o `ROUND_HALF_EVEN` default do `Decimal` -- e o modo
+    que o Postgres usa para `numeric` (round half away from zero). Os dois so
+    divergem exatamente na borda de 0,005: 0.585 vira 0.59 no Postgres e 0.58
+    no bankers' rounding do Python.
+    """
+    if isinstance(bruto, bool) or not isinstance(bruto, int | float) or not (0 <= bruto <= 1):
+        # RuntimeError nao esta no tuple do except de quem chama -- propaga
+        # direto, sem virar `type(exc).__name__`. Mensagem fixa, sem o valor:
+        # e erro de contrato, nao motivo para expor o que veio.
+        raise RespostaInvalida("campo confianca fora do intervalo [0, 1]")
+    return Decimal(str(bruto)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _ambientes(bruto: Any) -> int | None:
@@ -441,6 +646,69 @@ def extrair(bruto: Any, intencao: Intencao) -> Extracao:
     )
 
 
+# `Numeric(4, 2)` em `lead_qualification.retorno_esperado_pct`: 99,99 e o
+# maior valor que a coluna aceita, e um percentual acima disso e erro de
+# leitura do modelo, nao investidor otimista.
+MAX_RETORNO_ESPERADO_PCT = Decimal("99.99")
+
+
+def _retorno_pct(bruto: Any) -> Decimal | None:
+    """O percentual ao ano, quantizado na escala da coluna.
+
+    Quantizar aqui, e nao deixar para o Postgres, e a mesma disciplina de
+    `confianca` em `classificar`: o valor em memoria deste turno e o valor
+    gravado precisam ser o mesmo numero, senao `perfil_de` e o que fica no
+    banco podem discordar sobre a mesma fala. `ROUND_HALF_UP` porque e o modo
+    do `numeric` do Postgres, e nao o `ROUND_HALF_EVEN` default do `Decimal`.
+
+    A comparacao de faixa vem ANTES de qualquer conversao, tambem como la:
+    `json.loads` aceita inteiro de centenas de digitos e os literais
+    `NaN`/`Infinity`, e `Decimal(str(...))` de um deles produziria um valor
+    que nenhuma guarda posterior pega. `0 <= x <= 99.99` trabalha em precisao
+    arbitraria, e toda comparacao com NaN e falsa.
+
+    Negativo cai fora de proposito: prejuizo esperado nao e expectativa de
+    retorno, e a coluna o aceitaria em silencio.
+    """
+    if isinstance(bruto, bool) or not isinstance(bruto, int | float):
+        return None
+    if not 0 <= bruto <= MAX_RETORNO_ESPERADO_PCT:
+        return None
+    return Decimal(str(bruto)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _extracao_do_investidor(bruto: Any) -> ExtracaoDoInvestidor:
+    """Converte o objeto `investidor` do modelo, descartando o que nao serve.
+
+    **Nunca levanta**, pela mesma razao que `extrair` nunca levanta: estes
+    campos viajam na mesma chamada que a resposta ao lead, e qualificacao
+    perdida e barata perto de uma resposta paga e nao entregue. Campo que
+    falha na guarda e descartado; os outros campos do mesmo turno seguem.
+
+    `ticket_expressao` fica como o lead falou, sem converter -- quem
+    normaliza e `ticket_de` (`dinheiro.py`), no momento da gravacao, para que
+    a conversao de "uns 800 mil" seja a MESMA da trilha padrao. Por isso aqui
+    nao ha parse de dinheiro nenhum: so o descarte da string vazia, que e o
+    turno comum em que o lead nao falou de valor.
+    """
+    if not isinstance(bruto, dict):
+        return ExtracaoDoInvestidor()
+
+    expressao = bruto.get("ticket_expressao")
+    return ExtracaoDoInvestidor(
+        ticket_expressao=(
+            expressao.strip() if isinstance(expressao, str) and expressao.strip() else None
+        ),
+        retorno_esperado_pct=_retorno_pct(bruto.get("retorno_esperado_pct")),
+        retorno_esperado_tipo=_membro(RetornoEsperadoTipo, bruto.get("retorno_esperado_tipo")),
+        horizonte=_membro(Horizonte, bruto.get("horizonte")),
+        tolerancia_reforma=_membro(ToleranciaReforma, bruto.get("tolerancia_reforma")),
+        ja_investe_em_imoveis=(
+            valor if isinstance(valor := bruto.get("ja_investe_em_imoveis"), bool) else None
+        ),
+    )
+
+
 # `output_config.format` bruto (sem `output_format=` Pydantic) vai direto pro
 # corpo da requisicao sem passar pelo `transform_schema` do SDK -- essa
 # funcao so roda no caminho de `client.messages.parse()`. `minimum`/`maximum`
@@ -459,6 +727,13 @@ _SCHEMA_COMPILADO = transform_schema(SCHEMA_DA_RESPOSTA)
 # `transform_schema` dentro de SCHEMA_DA_RESPOSTA). Compilado uma vez no
 # import, como o de cima.
 _SCHEMA_DA_REACAO_COMPILADO = transform_schema(SCHEMA_DA_REACAO)
+
+# Segundo schema compilado, enviado SO nas chamadas do investidor (D2). Ele
+# carrega o mesmo `minimum`/`maximum` de `confianca` que o principal, entao
+# passar por `transform_schema` nao e simetria: sem isso, a primeira chamada
+# real do investidor seria 400. E `transform_schema` nao muta a entrada --
+# `SCHEMA_DO_INVESTIDOR` continua sendo o dict que os testes leem.
+_SCHEMA_DO_INVESTIDOR_COMPILADO = transform_schema(SCHEMA_DO_INVESTIDOR)
 
 
 class RespostaInvalida(RuntimeError):
@@ -479,6 +754,13 @@ class ClassificadorPort(Protocol):
     async def classificar(
         self, contexto: ContextoMontado, *, porta: PortaDeBusca | None = None
     ) -> RespostaDoAgente: ...
+    # Assinatura deliberadamente identica a de `classificar`, menos o tipo de
+    # retorno: `turno.py` escolhe entre as duas no MESMO ponto de chamada
+    # (TEC-153, Task 8), e um parametro a mais em uma delas viraria um `if`
+    # no call site que a diferenca de prompt nao justifica.
+    async def qualificar_investidor(
+        self, contexto: ContextoMontado, *, porta: PortaDeBusca | None = None
+    ) -> RespostaDoInvestidor: ...
     async def desambiguar(self, contexto: ContextoMontado) -> PerguntaDeDesambiguacao: ...
     async def reagir(
         self, contexto: ContextoMontado, *, apresentados: list[str]
@@ -589,20 +871,22 @@ class ClassificadorAnthropic:
     ) -> tuple[str, Message, int, list[dict[str, Any]], bool, bool, bool, bool, list[str]]:
         """Chama o modelo e recusa qualquer parada que nao valha a pena aproveitar.
 
-        Comum a `classificar`, `desambiguar` e `reagir`: as tres fazem uma
-        chamada, medem a latencia e tem o mesmo criterio do que e uma resposta
-        utilizavel -- `end_turn` com texto nao vazio. O que muda entre elas
-        fica nos parametros (schema, teto de tokens, system prompt, mensagem
-        de erro para o caso vazio) e no que cada uma faz com o texto depois de
-        receber -- isso continua em cada metodo, nao aqui.
+        Comum a `classificar`, `qualificar_investidor`, `desambiguar` e
+        `reagir`: as quatro fazem uma chamada, medem a latencia e tem o mesmo
+        criterio do que e uma resposta utilizavel -- `end_turn` com texto nao
+        vazio. O que muda entre elas fica nos parametros (schema, teto de
+        tokens, system prompt, mensagem de erro para o caso vazio) e no que
+        cada uma faz com o texto depois de receber -- isso continua em cada
+        metodo, nao aqui.
 
-        `tools`/`porta` so chegam de `classificar`: `desambiguar` e `reagir`
-        nao declaram ferramenta, entao para elas o laco abaixo sempre sai na
-        primeira volta.
+        `tools`/`porta` chegam de `classificar` e de `qualificar_investidor`,
+        as duas que atendem o lead: `desambiguar` e `reagir` nao declaram
+        ferramenta, entao para elas o laco abaixo sempre sai na primeira
+        volta.
 
         `texto_adicional` so chega de `reagir`: os imoveis apresentados, numa
         lista numerada, anexados ao turno montado normalmente. Nenhum dos
-        outros dois metodos precisa anexar nada alem do que `montar_prompt` ja
+        outros tres metodos precisa anexar nada alem do que `montar_prompt` ja
         produz.
         """
         comeco = time.monotonic()
@@ -719,7 +1003,7 @@ class ClassificadorAnthropic:
             if not texto:
                 raise RespostaInvalida(mensagem_se_vazia)
             latency_ms = int((time.monotonic() - comeco) * 1000)
-            # `classificar`/`desambiguar` leem os quatro contadores de
+            # Quem chama le os quatro contadores de
             # `resposta.usage`, nao de itens a mais na tupla -- sobrescrever
             # aqui com o total do turno evita duplicar o dado em dois lugares
             # que podiam divergir.
@@ -777,60 +1061,13 @@ class ClassificadorAnthropic:
             dados = json.loads(texto)
             intencao = Intencao(dados["intencao"])
 
-            confianca_bruta = dados["confianca"]
-            # additionalProperties/enum/type sao os unicos campos que o
-            # compilador do servidor de fato impoe (ver _SCHEMA_COMPILADO
-            # acima) -- o intervalo [0, 1] de `confianca` nunca foi garantido
-            # la.
-            #
-            # A comparacao de faixa e a **primeira** checagem depois do tipo, e
-            # a ordem importa. Um `math.isfinite` aqui na frente recebe o int
-            # arbitrario que `json.loads` aceita sem reclamar (um inteiro JSON
-            # de ~320 digitos) e levanta OverflowError ao converter para float
-            # -- ArithmeticError, fora do `except` abaixo, escapando cru e
-            # quebrando o contrato de que RespostaInvalida e o unico modo de
-            # falha deste modulo. `0 <= x <= 1` trabalha em precisao
-            # arbitraria e rejeita o valor sem converter nada.
-            #
-            # E ela sozinha ja cobre `NaN`/`Infinity`/`-Infinity`, os literais
-            # nao-padrao que `json.loads` aceita: toda comparacao com NaN e
-            # falsa e os infinitos caem fora da faixa. Nenhum deles chega ao
-            # `Decimal(str(...))` -- um NaN ali nunca satisfaria o
-            # `< LIMIAR_DE_DESAMBIGUACAO` de quem consome depois, e a
-            # ramificacao simplesmente nao aconteceria, em silencio.
-            if (
-                isinstance(confianca_bruta, bool)
-                or not isinstance(confianca_bruta, int | float)
-                or not (0 <= confianca_bruta <= 1)
-            ):
-                # RuntimeError nao esta no tuple do except abaixo -- propaga
-                # direto, sem virar `type(exc).__name__`. Mensagem fixa, sem
-                # o valor: e erro de contrato, nao motivo para expor o que
-                # veio.
-                raise RespostaInvalida("campo confianca fora do intervalo [0, 1]")
-
             resultado = RespostaDoAgente(
                 intencao=intencao,
-                # `conversation_intent.confianca` e `numeric(3,2)`: o Postgres
-                # arredonda ao gravar, e um `Decimal` sem arredondar aqui vira
-                # dois valores para o mesmo limiar -- o em-memoria (usado por
-                # `deve_desambiguar` neste turno) e o gravado (usado por
-                # `efetiva` em todo turno seguinte) podem discordar sobre o
-                # mesmo par (intencao, confianca) quando o valor bruto cai
-                # perto da borda (ex.: 0.599 nao desambigua se arredondar para
-                # 0.60, mas o turno ja decidiu desambiguar com o valor cru).
-                # Quantizar aqui, com a mesma escala da coluna, elimina essa
-                # divergencia: o que este turno decide e exatamente o que fica
-                # gravado.
-                #
-                # `ROUND_HALF_UP`, nao o `ROUND_HALF_EVEN` default do
-                # `Decimal` -- e o modo que o Postgres usa para `numeric`
-                # (round half away from zero). Os dois so divergem exatamente
-                # na borda de 0,005: 0.585 vira 0.59 no Postgres e 0.58 no
-                # bankers' rounding do Python.
-                confianca=Decimal(str(confianca_bruta)).quantize(
-                    Decimal("0.01"), rounding=ROUND_HALF_UP
-                ),
+                # Validacao de faixa e quantizacao na escala da coluna vivem
+                # em `_confianca_de` desde a TEC-153, quando
+                # `qualificar_investidor` passou a ler o mesmo campo do mesmo
+                # envelope. As razoes finas das duas guardas estao la.
+                confianca=_confianca_de(dados["confianca"]),
                 resposta=dados["resposta"].strip(),
                 modelo=settings.modelo_agente,
                 tokens_in=resposta.usage.input_tokens,
@@ -885,6 +1122,144 @@ class ClassificadorAnthropic:
             # junto com `tokens_in` sem o gasto ter caido tanto, e o painel
             # passaria a subestimar -- ver TEC-251 no docstring de
             # `custo_em_dolar`.
+            custo_usd=str(
+                custo_em_dolar(
+                    resultado.modelo,
+                    resultado.tokens_in,
+                    resultado.tokens_out,
+                    cache_write=escrito_no_cache,
+                    cache_read=lido_do_cache,
+                )
+            ),
+        )
+        return resultado
+
+    async def qualificar_investidor(
+        self, contexto: ContextoMontado, *, porta: PortaDeBusca | None = None
+    ) -> RespostaDoInvestidor:
+        """O turno do lead que compra para investir. TEC-153, D1 e RN-07.1.
+
+        **Irma de `classificar`, e nao de `desambiguar`.** A plumbing e a
+        mesma da chamada principal, `tools`/`porta` inclusive; o que muda e o
+        `system` e o `output_config`, e nada mais. Copiar o molde de
+        `desambiguar` -- que nao declara ferramenta porque a desambiguacao
+        nunca busca imovel -- deixaria o investidor sem poder receber ficha de
+        imovel nenhuma a partir do SEGUNDO turno, que e exatamente quando esta
+        deixa de ser a segunda chamada e vira a unica do turno.
+
+        **A assinatura e a de `classificar` de proposito**: `turno.py` escolhe
+        entre as duas no mesmo ponto de chamada, e a unica diferenca visivel
+        la e qual das duas e chamada.
+
+        **No turno da virada, o contexto de entrada e pago duas vezes** -- o
+        mesmo preco que `desambiguar` cobra, e pela mesma mecanica. O `system`
+        desta chamada vai com `cache_control` como qualquer outro (`_chamar`
+        nao distingue), mas e um texto DIFERENTE do de `classificar`, entao
+        nao aproveita o prefixo quente que aquela chamada acabou de escrever;
+        e como `system` precede `messages` no corpo da requisicao, trocar o
+        system prompt invalida qualquer cache do que vem depois dele. Input
+        domina a contagem de tokens, entao o turno da virada custa perto do
+        dobro.
+
+        **Isso acontece uma vez por conversa, nao por turno** (D1): do segundo
+        turno em diante a intencao anterior ja esta em
+        `contexto.estado.intencao`, disponivel ANTES da chamada, e `turno.py`
+        chama so esta. E por isso que a E-01 da RN-09.4 -- o pior caso ja
+        estoura o `job_timeout` de 240 s -- nao vira problema novo aqui.
+        """
+        settings = get_settings()
+        (
+            texto,
+            resposta,
+            latency_ms,
+            candidatos,
+            relaxou_e_achou,
+            relaxou_sem_resultado,
+            relaxou_preco,
+            relaxou_bairro,
+            criterios,
+        ) = await self._chamar(
+            contexto,
+            modelo=settings.modelo_agente,
+            max_tokens=MAX_TOKENS_DO_INVESTIDOR,
+            system=SISTEMA_DO_INVESTIDOR,
+            mensagem_se_vazia="resposta do investidor veio vazia",
+            output_config={
+                "format": {"type": "json_schema", "schema": _SCHEMA_DO_INVESTIDOR_COMPILADO}
+            },
+            # Mesma condicao de `classificar`, e pelo mesmo motivo: sem porta
+            # injetada, `_chamar` nao tem como executar o `tool_use` e o teto
+            # da D4 derrubaria o turno a toa.
+            tools=[FERRAMENTA_DE_BUSCA] if porta is not None else None,
+            porta=porta,
+        )
+
+        try:
+            dados = json.loads(texto)
+            intencao = Intencao(dados["intencao"])
+            resultado = RespostaDoInvestidor(
+                intencao=intencao,
+                confianca=_confianca_de(dados["confianca"]),
+                resposta=dados["resposta"].strip(),
+                modelo=settings.modelo_agente,
+                tokens_in=resposta.usage.input_tokens,
+                tokens_out=resposta.usage.output_tokens,
+                latency_ms=latency_ms,
+                # A extracao padrao continua valendo: um investidor tambem diz
+                # regiao, tipo e faixa de preco. E ela passa pelo MESMO
+                # `extrair`, com a mesma `intencao`, para que a banda de
+                # plausibilidade de preco (`dinheiro.parsear`) seja a mesma
+                # das duas trilhas.
+                extracao=extrair(dados.get("extracao"), intencao),
+                investidor=_extracao_do_investidor(dados.get("investidor")),
+                perguntou=_lista_de_nomes(dados.get("perguntou")),
+                recusou=_lista_de_nomes(dados.get("recusou")),
+                cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
+                cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,
+                candidatos=candidatos,
+                criterios=criterios,
+                relaxou_e_achou=relaxou_e_achou,
+                relaxou_sem_resultado=relaxou_sem_resultado,
+                relaxou_preco=relaxou_preco,
+                relaxou_bairro=relaxou_bairro,
+            )
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            ValueError,
+            TypeError,
+            AttributeError,
+            InvalidOperation,
+        ) as exc:
+            # Mesma disciplina de `classificar`: nunca interpola `texto` nem
+            # `dados`, que carregam a resposta destinada ao lead. So o nome da
+            # classe, nunca `str(exc)`.
+            raise RespostaInvalida(type(exc).__name__) from exc
+
+        if not resultado.resposta:
+            raise RespostaInvalida("campo resposta veio vazio")
+
+        escrito_no_cache = resultado.cache_write
+        lido_do_cache = resultado.cache_read
+        # So numeros e id de modelo, como nos outros tres caminhos. Nenhum
+        # campo do investidor entra: ticket e horizonte sao o que o lead
+        # disse, nao telemetria.
+        #
+        # Evento proprio, e nao `agente.turno_gerado`: sem ele, o custo do
+        # turno da virada -- duas chamadas, uma paga e descartada -- ficaria
+        # indistinguivel de um turno normal no painel, que e justamente o
+        # numero que a D1 promete controlar.
+        log.info(
+            "agente.investidor_gerado",
+            modelo=resultado.modelo,
+            tokens_in=resultado.tokens_in,
+            tokens_out=resultado.tokens_out,
+            # Esta chamada tem prefixo cacheavel proprio (system + schema +
+            # tools), separado do de `classificar`: os dois contadores sao a
+            # unica guarda contra ele falhar em silencio.
+            cache_write=escrito_no_cache,
+            cache_read=lido_do_cache,
+            latency_ms=resultado.latency_ms,
             custo_usd=str(
                 custo_em_dolar(
                     resultado.modelo,
