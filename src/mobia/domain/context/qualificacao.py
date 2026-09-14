@@ -6,8 +6,12 @@ segunda fonte para o mesmo fato divergiria da primeira. Ver D1 do desenho.
 
 Tambem hospeda `TETO_DE_PERGUNTAS` e `excedeu_o_teto`, a regra irma da
 RN-05.5 (TEC-149): mesma pureza, mesma ausencia de I/O.
+
+E hospeda `perfil_de`, a RN-07.2 (TEC-153): o perfil do investidor derivado
+de horizonte e tipo de retorno esperado, mesma pureza, mesma ausencia de I/O.
 """
 
+from mobia.domain.agente.investidor import Horizonte, PerfilInvestidor, RetornoEsperadoTipo
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.models import LeadQualification
 
@@ -153,3 +157,48 @@ def excedeu_o_teto(perguntas_feitas: int, perguntas_deste_turno: int) -> bool:
     if perguntas_deste_turno == 0:
         return False
     return perguntas_feitas + perguntas_deste_turno > TETO_DE_PERGUNTAS
+
+
+# A tabela da D4 (RN-07.2). Nove celulas, uma por combinacao de horizonte e
+# tipo de retorno esperado. Duas delas sao as diagonais discordantes:
+# ALUGUEL+CURTO ("quero aluguel mas saio em um ano") e REVENDA+LONGO ("quero
+# revender mas fico dez anos") sao pares de sinais que se contradizem, e
+# escolher RENDA ou VALORIZACAO ali seria chute -- por isso MISTO, igual as
+# celulas em que o lead literalmente disse os dois (AMBOS).
+_TABELA_DO_PERFIL: dict[tuple[Horizonte, RetornoEsperadoTipo], PerfilInvestidor] = {
+    (Horizonte.CURTO, RetornoEsperadoTipo.ALUGUEL): PerfilInvestidor.MISTO,
+    (Horizonte.MEDIO, RetornoEsperadoTipo.ALUGUEL): PerfilInvestidor.RENDA,
+    (Horizonte.LONGO, RetornoEsperadoTipo.ALUGUEL): PerfilInvestidor.RENDA,
+    (Horizonte.CURTO, RetornoEsperadoTipo.REVENDA): PerfilInvestidor.VALORIZACAO,
+    (Horizonte.MEDIO, RetornoEsperadoTipo.REVENDA): PerfilInvestidor.VALORIZACAO,
+    (Horizonte.LONGO, RetornoEsperadoTipo.REVENDA): PerfilInvestidor.MISTO,
+    (Horizonte.CURTO, RetornoEsperadoTipo.AMBOS): PerfilInvestidor.MISTO,
+    (Horizonte.MEDIO, RetornoEsperadoTipo.AMBOS): PerfilInvestidor.MISTO,
+    (Horizonte.LONGO, RetornoEsperadoTipo.AMBOS): PerfilInvestidor.MISTO,
+}
+
+
+def perfil_de(
+    horizonte: Horizonte | None, retorno_tipo: RetornoEsperadoTipo | None
+) -> PerfilInvestidor | None:
+    """O perfil do investidor da RN-07.2, derivado de horizonte e tipo de
+    retorno esperado.
+
+    `None` e `MISTO` nao sao a mesma coisa. `None` quer dizer "falta um dos
+    dois campos, ainda nao da para saber"; `MISTO` quer dizer "os dois
+    campos estao preenchidos, e o par diz sinais opostos ou os dois ao mesmo
+    tempo". Colapsar os dois faria a TEC-154 mostrar um indicador de perfil
+    para um lead que nunca respondeu a pergunta -- por isso o retorno cedo
+    de `None` vem antes de qualquer consulta a tabela.
+
+    A tabela em si tem duas diagonais discordantes, que sao MISTO de
+    proposito e nao por omissao: ALUGUEL+CURTO ("quero aluguel mas saio em
+    um ano") e REVENDA+LONGO ("quero revender mas fico dez anos") sao pares
+    de sinais que se contradizem entre si. Escolher RENDA ou VALORIZACAO
+    para qualquer um dos dois seria chute -- o mesmo raciocinio que ja
+    justifica AMBOS ser MISTO nos tres horizontes, so que aqui a
+    contradicao vem do horizonte, nao do tipo.
+    """
+    if horizonte is None or retorno_tipo is None:
+        return None
+    return _TABELA_DO_PERFIL[(horizonte, retorno_tipo)]
