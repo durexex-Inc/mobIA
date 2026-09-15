@@ -3,6 +3,9 @@
 TEC-143.
 """
 
+import uuid
+
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +20,24 @@ from mobia.domain.humano.deteccao import (
 )
 from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
-from mobia.domain.optout.repositorio import esta_em_optout
+from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
+from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
+from mobia.infra.db import get_sessionmaker
+
+
+class _AgendadorEspiao:
+    """Mesmo duble de `test_handoff_agenda_resumo.py`, e de proposito.
+
+    A esteira que se afirma aqui e a mesma daquele arquivo -- `_agendar_resumo`
+    e o primeiro elo de `gerar_resumo` -> `NOTIFICAR_JOB` -> `sla_limite_em` ->
+    `escalar_vencidos` --, entao o duble tambem e o mesmo.
+    """
+
+    def __init__(self) -> None:
+        self.pedidos: list[uuid.UUID] = []
+
+    async def agendar(self, handoff_id: uuid.UUID) -> None:
+        self.pedidos.append(handoff_id)
 
 
 async def test_sem_handoff_a_conversa_nao_esta_esperando_humano(session: AsyncSession) -> None:
@@ -294,3 +314,258 @@ async def test_fora_do_horario_o_texto_muda_e_o_handoff_e_criado_do_mesmo_jeito(
     assert texto_esperado in outbound.entregues[-1]
     assert str(settings.atendimento_horario_inicio) in outbound.entregues[-1]
     assert str(settings.atendimento_horario_fim) in outbound.entregues[-1]
+
+
+async def test_pedido_de_humano_agenda_o_resumo(
+    session: AsyncSession,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """Critical 1 da revisao final. O handoff do pedido entrava na fila e saia da esteira.
+
+    Os outros cinco sitios de `registrar_handoff` chamam `_agendar_resumo`
+    depois do commit; este bloco nascia sem a chamada, e a cadeia inteira caia
+    atras dela: sem `_agendar_resumo` nao ha `gerar_resumo`, sem ele nao ha
+    `enqueue_job(NOTIFICAR_JOB)`, sem ele nao ha `sla_limite_em`, e
+    `escalar_vencidos` nunca via o handoff. Quem o pegava era a rede de
+    recuperacao da TEC-279, 10 a 15 minutos depois e em warning -- a rede de
+    seguranca como caminho normal do UNICO gatilho `ALTA` da RN-16.1.
+    """
+    from conftest import CANAL_AGENTE, CONVERSA_AGENTE
+
+    espiao = _AgendadorEspiao()
+
+    resultado = await rodar_turno(
+        session,
+        classificador_fake(),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        agendador=espiao,
+        texto="quero falar com uma pessoa",
+    )
+
+    assert resultado == "pedido_de_humano"
+    handoff = await _handoff_da_conversa(
+        session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE
+    )
+    assert handoff is not None
+    assert espiao.pedidos == [handoff.id], (
+        "sem o agendamento o handoff ALTA nunca ganha prazo nem notificacao"
+    )
+
+
+async def test_repetir_o_pedido_nao_reagenda_o_resumo(
+    session: AsyncSession,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """A acumulacao de gatilho continua correta sem condicao extra no chamador.
+
+    `_agendar_resumo` ja sai cedo quando `not registro.criado`. E o que permite
+    o `not pedido_de_humano` da guarda de silencio (Critical 2) sem pagar uma
+    geracao de resumo por mensagem repetida.
+    """
+    espiao = _AgendadorEspiao()
+    for _ in range(2):
+        await rodar_turno(
+            session,
+            classificador_fake(),
+            outbound_fake(),
+            resumidor_fake(),
+            contador_fake(),
+            agendador=espiao,
+            texto="quero falar com uma pessoa",
+        )
+
+    assert len(espiao.pedidos) == 1
+
+
+async def test_falha_retentavel_no_aviso_e_reentregue_no_turno_seguinte(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """Critical 2 da revisao final. O aviso se perdia PARA SEMPRE numa falha retentavel.
+
+    `_entregar_texto_fixo` nao captura `EnvioRetentavel`: a excecao sobe,
+    `process_message` marca a linha FAILED e o sweeper reenfileira a MESMA
+    mensagem. No turno 2 `pedido_de_optout` e False, a guarda de silencio
+    rodava, `tem_handoff_de_humano_aberto` ja devolvia True (o turno 1 commitou
+    o handoff antes de entregar), o turno fechava em "atendimento_humano" --
+    PROCESSED -- e o lead nunca era avisado de nada.
+
+    O mesmo defeito, pela fonte de silencio do opt-out, ja esta descrito no
+    comentario daquela guarda em `turno.py`. Esta card o reintroduziu uma
+    guarda abaixo, pela fonte de silencio nova.
+    """
+    from conftest import CANAL_AGENTE, CONVERSA_AGENTE, ModeradorFake, _entrada_do_lead
+
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    linha = await _entrada_do_lead(session, texto="quero falar com uma pessoa")
+
+    async def _turno(outbound) -> str:
+        return await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound,
+            moderador=ModeradorFake(),
+            agendador=AgendadorNoop(),
+        )
+
+    with pytest.raises(EnvioRetentavel):
+        await _turno(outbound_fake(erro=EnvioRetentavel("http 503")))
+
+    # O handoff ja esta gravado: o commit vem antes da entrega, de proposito.
+    assert (
+        await _handoff_da_conversa(session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE)
+        is not None
+    )
+
+    # Turno 2 sobre a MESMA Message, como o sweeper faz. Uma Message nova nao
+    # provaria nada: a reserva de saida e por (message_id, kind), e a guarda de
+    # silencio que este teste exercita so passa a valer com o handoff do turno
+    # 1 ja no banco.
+    segundo = outbound_fake()
+    assert await _turno(segundo) == "pedido_de_humano"
+    assert segundo.entregues != [], "o aviso tem de ser reentregue, nao perdido"
+    assert TEXTO_DO_PEDIDO_DE_HUMANO in segundo.entregues[-1]
+
+
+async def test_o_handoff_esta_gravado_quando_a_entrega_falha(
+    session: AsyncSession,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """Important 6 da revisao final, ordem 3: commit do handoff antes da entrega.
+
+    O comentario em `turno.py` afirma que o commit vem primeiro para o lead nao
+    receber o aviso sem a linha existir; nenhum teste exercitava o outro lado
+    dessa ordem -- entrega falhando com o handoff ja gravado. `EnvioRecusado` e
+    a falha PERMANENTE: o turno devolve "sem_resposta" sem levantar, o lead
+    fica transferido e em silencio, e essa e uma das saidas terminais que o
+    comentario do fim do bloco declara como aceitas.
+    """
+    from conftest import CANAL_AGENTE, CONVERSA_AGENTE
+
+    resultado = await rodar_turno(
+        session,
+        classificador_fake(),
+        outbound_fake(erro=EnvioRecusado("http 400")),
+        resumidor_fake(),
+        contador_fake(),
+        texto="quero falar com uma pessoa",
+    )
+
+    assert resultado == "sem_resposta"
+    handoff = await _handoff_da_conversa(
+        session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE
+    )
+    assert handoff is not None, "a transferencia acontece mesmo quando o aviso nao sai"
+    assert handoff.prioridade == Prioridade.ALTA.value
+
+
+async def test_pedido_de_humano_passa_antes_da_moderacao_de_entrada(
+    session: AsyncSession,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+) -> None:
+    """Important 6 da revisao final, ordem 1: a guarda corre ANTES da moderacao.
+
+    A D4 do desenho fixou a ordem por razao de LGPD, e ela nao muda aqui -- o
+    que faltava era um teste que a fixasse. A consequencia esta declarada no
+    comentario do bloco em `turno.py` e e esta: uma mensagem que a moderacao
+    REPROVARIA e que contenha um termo da lista cria handoff e recebe o aviso
+    sem ter sido moderada. O moderador nem chega a ser chamado.
+
+    O outro lado da mesma moeda e o motivo de a ordem ser essa: o lead irritado
+    que xinga e pede uma pessoa na mesma frase e justamente quem a card existe
+    para tirar do robo.
+    """
+    from conftest import CANAL_AGENTE, CONVERSA_AGENTE
+
+    moderador = moderador_fake(bloqueia_entrada=True)
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session,
+        classificador_fake(),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador,
+        texto="quero falar com uma pessoa, seus incompetentes",
+    )
+
+    assert resultado == "pedido_de_humano"
+    assert moderador.entradas == 0, "a moderacao de entrada nem chega a rodar"
+    assert (
+        await _handoff_da_conversa(session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE)
+        is not None
+    )
+    assert outbound.entregues != []
+
+
+async def test_optout_ja_registrado_vence_o_pedido_de_humano(
+    session: AsyncSession,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+) -> None:
+    """Important 6 da revisao final, ordem 2: quem ja pediu silencio nao vira handoff.
+
+    `esta_em_optout` corre antes -- a guarda barata do topo do turno --, entao
+    um lead ja em opt-out que peca humano recebe "silenciado" e nenhum handoff
+    nasce. E o comportamento certo (nada pode ser enviado a quem pediu para
+    sair, nem o aviso de transferencia) e ninguem o fixava. Repare que o
+    `not pedido_de_humano` do Critical 2 NAO alcanca esta guarda: ele entrou so
+    na guarda de atendimento humano, a de baixo.
+    """
+    from conftest import CANAL_AGENTE, CONVERSA_AGENTE, _entrada_do_lead
+
+    anterior = await _entrada_do_lead(session, texto="pare de me mandar mensagens")
+    await registrar_optout(
+        get_sessionmaker(),
+        channel=CANAL_AGENTE,
+        conversation_key=CONVERSA_AGENTE,
+        message_id=anterior.id,
+    )
+
+    outbound = outbound_fake()
+    resultado = await rodar_turno(
+        session,
+        classificador_fake(),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        texto="quero falar com uma pessoa",
+    )
+
+    assert resultado == "silenciado"
+    assert outbound.entregues == []
+    assert (
+        await _handoff_da_conversa(session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE)
+        is None
+    )

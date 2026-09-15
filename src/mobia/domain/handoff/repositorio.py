@@ -1,4 +1,4 @@
-"""A escrita do handoff, com a deduplicacao que a RN-16.1 exige."""
+"""O acesso ao handoff, com a deduplicacao que a RN-16.1 exige na escrita."""
 
 import uuid
 from dataclasses import dataclass
@@ -23,7 +23,7 @@ from mobia.infra.crypto import encrypt
 class HandoffRegistrado:
     """O que `registrar_handoff` devolve.
 
-    Dataclass e nao tupla porque os tres chamadores leem pelo nome, e porque
+    Dataclass e nao tupla porque os seis chamadores leem pelo nome, e porque
     `ResumoGerado` e `Score` ja estabeleceram a forma neste repo.
 
     `id` e sempre o da linha que EXISTE no banco depois do statement -- a

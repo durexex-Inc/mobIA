@@ -9,7 +9,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from mobia.domain.humano.deteccao import dentro_da_janela_de_atendimento, pediu_humano
+from mobia.domain.humano.deteccao import (
+    TEXTO_DO_PEDIDO_DE_HUMANO,
+    TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO,
+    dentro_da_janela_de_atendimento,
+    pediu_humano,
+)
 
 
 @pytest.mark.parametrize(
@@ -121,6 +126,81 @@ def test_falar_com_uma_pessoa_juridica_dispara_e_isso_e_aceito() -> None:
     assert pediu_humano("posso falar com uma pessoa juridica sobre esse contrato?") is True
 
 
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "nao quero falar com atendente, so me manda os imoveis",
+        "nao precisa falar com um humano, resolvo por aqui",
+        "nao queria falar com uma pessoa agora, depois eu vejo",
+        # A negacao vale mesmo com o verbo DENTRO do termo: aqui o prefixo e
+        # so "nao ", porque "quero" e a primeira palavra de
+        # "quero uma pessoa de verdade".
+        "nao quero uma pessoa de verdade, o robo resolve",
+        # Sujeito antes da negacao nao a desfaz.
+        "eu nao quero falar com atendente",
+    ],
+)
+def test_negacao_imediata_nao_dispara(texto: str) -> None:
+    """Important 4 da revisao final. O invariante dos tres papeis nao olha polaridade.
+
+    As duas primeiras frases DISPARAVAM -- conferido rodando antes do fix. O
+    argumento do desenho para aceitar falso positivo ("errar por sobra manda o
+    lead para um humano, que e o destino que ele teria de qualquer forma") nao
+    cobre este caso: aqui o lead disse o contrario, e o preco nao e uma
+    transferencia a mais -- e o agente calar para sempre numa conversa que o
+    lead quis seguir com o robo.
+    """
+    assert pediu_humano(texto) is False
+
+
+def test_a_negacao_sobre_o_robo_continua_disparando() -> None:
+    """A guarda de negacao nao pode matar "nao quero falar com robo".
+
+    Ali a negacao e sobre o ROBO, nao sobre o humano -- e a frase e um pedido
+    de transferencia, nao a recusa de um. O termo INTEIRO esta na lista de
+    inequivocos e casa no comeco da mensagem, sem prefixo nenhum para a guarda
+    olhar; e essa a razao de ela so olhar o que vem IMEDIATAMENTE antes do
+    termo casado.
+    """
+    assert pediu_humano("nao quero falar com robo") is True
+    assert pediu_humano("ja falei, nao quero falar com robo") is True
+
+
+def test_duvida_no_meio_nao_e_negacao() -> None:
+    """So nega o que esta imediatamente antes. Palavra no meio devolve o caso a duvida.
+
+    "nao sei se quero falar com uma pessoa" nao e uma recusa -- e uma duvida,
+    e ali o desenho vale: errar por sobra manda o lead para um humano.
+    """
+    assert pediu_humano("nao sei se quero falar com uma pessoa") is True
+    assert pediu_humano("nao aguento mais robo, quero falar com uma pessoa") is True
+
+
+def test_uma_ocorrencia_limpa_basta() -> None:
+    """A guarda percorre todas as ocorrencias, nao so a primeira.
+
+    Parar na primeira transformaria a guarda de negacao numa guarda de ordem
+    das frases: quem nega e depois pede continuaria sem ser transferido.
+    """
+    texto = "nao quero falar com atendente agora, mas amanha quero falar com atendente"
+    assert pediu_humano(texto) is True
+
+
+def test_o_interlocutor_de_terceiro_dispara_e_e_lacuna_declarada() -> None:
+    """Important 5 da revisao final, fixado como LACUNA e nao como conserto.
+
+    "falar com uma pessoa" e a frase literal do criterio de aceite da card;
+    qualifica-la para exigir que o interlocutor seja nosso mataria o caso
+    central. O preco e este: banco, cartorio, financiamento, familia e
+    prefeitura disparam. Esta assercao existe para o dia em que alguem
+    "consertar" isso descobrir que a decisao foi deliberada -- ver o quarto
+    eixo do invariante em `deteccao.py` e as lacunas declaradas do desenho.
+    """
+    assert pediu_humano("preciso falar com uma pessoa do banco antes de fechar") is True
+    assert pediu_humano("tenho que falar com uma pessoa do cartorio sobre a escritura") is True
+    assert pediu_humano("vou falar com uma pessoa da minha familia e te retorno") is True
+
+
 # `America/Sao_Paulo` e UTC-3 sem horario de verao desde 2019 (Brasil aboliu a
 # troca), entao todo horario abaixo e o UTC do teste menos 3h -- conferido
 # rodando, nao presumido. O default da janela e 9-18.
@@ -146,3 +226,20 @@ def test_a_janela_inclui_a_hora_de_fechamento() -> None:
 def test_um_minuto_apos_o_fechamento_ja_e_fora() -> None:
     """18:01 local = 21:01 UTC recusa, e e essa recusa que a borda inclusiva de fim admite."""
     assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 21, 1, tzinfo=UTC)) is False
+
+
+@pytest.mark.parametrize(
+    "texto", [TEXTO_DO_PEDIDO_DE_HUMANO, TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO]
+)
+def test_o_texto_ao_lead_nao_promete_que_alguem_foi_avisado(texto: str) -> None:
+    """Critical 3 da revisao final, e a mesma guarda que `test_notificacao_envio.py` ja tem.
+
+    Criar handoff nao notifica ninguem: os dois adaptadores de
+    `notificacao/canais.py` REGISTRAM e NAO ENTREGAM. As duas constantes
+    diziam "Ja avisei nossa equipe" -- a TERCEIRA aparicao da frase no repo,
+    depois de a TEC-174 ter reescrito "ja avisei um corretor" e de
+    `notificacao/envio.py` ter escrito "Nao reintroduza a promessa". Esta
+    assercao existe para nao haver uma quarta.
+    """
+    assert "avisei" not in texto.lower()
+    assert "avisamos" not in texto.lower()

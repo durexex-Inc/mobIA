@@ -44,6 +44,23 @@ _ESPACOS = re.compile(r"\s+")
 # mesmo um humano, e essa colisao erra na direcao barata (transferencia extra,
 # nao silencio).
 #
+# **QUARTO EIXO, acrescentado na revisao final: o termo tem de fixar que o
+# interlocutor e NOSSO, e tem de ser falso sob negacao.** Os tres papeis acima
+# falam so de papel gramatical -- nao olham polaridade, nem de quem e a pessoa
+# do outro lado. As quatro rodadas de revisao anteriores geraram CASOS e nao
+# CRITERIO, e por isso os dois buracos passaram. Quem acrescentar termo aqui
+# roda estas duas frases antes de commitar, e as duas tem de devolver False:
+#
+#     pediu_humano("nao quero <termo>")
+#     pediu_humano("<termo> do banco")
+#
+# A primeira e coberta de graca pela guarda de negacao abaixo
+# (`_NEGACAO_ANTES`); a segunda nao tem guarda nenhuma e depende so do termo.
+# `"falar com uma pessoa"` REPROVA a segunda e fica assim mesmo -- e a frase
+# literal do criterio de aceite da card, e qualifica-la mataria o caso central.
+# O residual esta declarado como lacuna nomeada no desenho (banco, cartorio,
+# financiamento, familia, prefeitura): e a excecao conhecida, nao a regra.
+#
 # Foram removidos por falso positivo durante as revisoes:
 # - "quero uma pessoa", "queria uma pessoa": colisao com pessoa fisica/juridica
 #   (papel de DESTINO)
@@ -85,6 +102,27 @@ _TERMOS_INEQUIVOCOS: tuple[str, ...] = (
 # o mesmo substantivo dentro de uma frase e assunto, nao pedido.
 _TERMOS_AMBIGUOS: frozenset[str] = frozenset({"atendente", "humano", "pessoa real"})
 
+# Guarda de negacao (fix de revisao final, Important 4). Sem ela,
+# "nao quero falar com atendente, so me manda os imoveis" e "nao precisa falar
+# com um humano, resolvo por aqui" DISPARAVAM -- conferido rodando. O
+# argumento do desenho para aceitar falso positivo ("errar por sobra manda o
+# lead para um humano, que e o destino que ele teria de qualquer forma") nao
+# cobre este caso: aqui o lead disse o CONTRARIO, e o preco nao e uma
+# transferencia a mais -- e o agente calar para sempre numa conversa que o
+# lead quis seguir com o robo.
+#
+# So nega o que esta IMEDIATAMENTE antes do termo. O verbo e opcional porque
+# os dois formatos existem: "nao quero " + "falar com atendente" (o verbo fica
+# FORA do termo) e "nao " + "quero uma pessoa de verdade" (o verbo e a
+# PRIMEIRA palavra do termo). "nao sei se quero falar com uma pessoa" nao e
+# negado -- ha palavras no meio, e a duvida erra na direcao barata.
+#
+# **"nao quero falar com robo" continua disparando, e e por construcao.** Ali
+# a negacao e sobre o ROBO e nao sobre o humano, e o termo INTEIRO esta na
+# lista: ele casa no comeco da mensagem, sem nada antes dele, entao nao ha
+# prefixo para esta guarda olhar.
+_NEGACAO_ANTES = re.compile(r"(?:^| )nao(?: (?:quero|queria|quis|preciso|precisa))? $")
+
 
 def _normalizar(texto: str) -> str:
     """Minusculas, sem acento, sem pontuacao, espacos colapsados.
@@ -98,6 +136,22 @@ def _normalizar(texto: str) -> str:
     return _ESPACOS.sub(" ", _SO_LETRAS_E_ESPACO.sub(" ", sem_acento)).strip()
 
 
+def _casa_sem_negacao(normalizado: str, termo: str) -> bool:
+    """Se `termo` aparece ao menos uma vez sem negacao imediatamente antes.
+
+    Percorre TODAS as ocorrencias, e nao so a primeira: "nao quero falar com
+    atendente agora, mas amanha quero falar com atendente" tem duas, e basta
+    uma limpa para o pedido valer. Parar na primeira transformaria a guarda de
+    negacao numa guarda de ordem das frases.
+    """
+    inicio = normalizado.find(termo)
+    while inicio != -1:
+        if _NEGACAO_ANTES.search(normalizado[:inicio]) is None:
+            return True
+        inicio = normalizado.find(termo, inicio + 1)
+    return False
+
+
 def pediu_humano(texto: str) -> bool:
     """O lead pediu explicitamente para ser atendido por uma pessoa."""
     normalizado = _normalizar(texto)
@@ -105,7 +159,7 @@ def pediu_humano(texto: str) -> bool:
         return False
     if normalizado in _TERMOS_AMBIGUOS:
         return True
-    return any(termo in normalizado for termo in _TERMOS_INEQUIVOCOS)
+    return any(_casa_sem_negacao(normalizado, termo) for termo in _TERMOS_INEQUIVOCOS)
 
 
 def dentro_da_janela_de_atendimento(agora: datetime) -> bool:
@@ -153,15 +207,39 @@ def dentro_da_janela_de_atendimento(agora: datetime) -> bool:
 # ao assunto, nao ao orquestrador que o entrega.
 #
 # COM acento: e texto que chega ao lead (TEC-267).
+#
+# **Nenhum dos dois afirma que alguem foi avisado, e a proibicao e por escrito.**
+# Criar handoff nao notifica ninguem hoje: os dois adaptadores de
+# `notificacao/canais.py` REGISTRAM e NAO ENTREGAM -- o e-mail nao tem provedor
+# configurado neste projeto e o WhatsApp ao corretor exige template aprovado
+# pela Meta que nao existe. A primeira versao desta card escreveu
+# "Ja avisei nossa equipe" nas duas constantes, e essa e a TERCEIRA aparicao da
+# mesma frase no repo: a TEC-174 escreveu "ja avisei um corretor" e teve de
+# reescrever o texto inteiro depois; o comentario de `TEXTO_DA_JANELA_HUMANA`
+# (`notificacao/envio.py`) registrou "Nao reintroduza a promessa"; e o plano
+# desta card a reintroduziu assim mesmo. A forma aceita e a que
+# `TEXTO_DO_LIMITE_DE_PERGUNTAS` e `TEXTO_DA_JANELA_HUMANA` ja usam: falar do
+# ENCAMINHAMENTO e do HORARIO, nunca do aviso.
+#
+# **Sobreposicao declarada com `TEXTO_DA_JANELA_HUMANA` (TEC-177).** Aquele
+# texto tambem diz um horario ao lead, e com as horas do CORRETOR
+# (`corretores.horario_inicio`/`horario_fim`, resolvidas no job de notificacao);
+# o daqui diz as horas da IMOBILIARIA (`Settings.atendimento_horario_*`, a D5
+# do desenho). Um mesmo lead pode receber os dois na mesma conversa, com
+# numeros diferentes. Nao e consertado aqui de proposito: as duas janelas
+# respondem perguntas diferentes -- "quando ha gente na imobiliaria" contra "a
+# jornada de quem vai te atender" -- e unifica-las e decisao de produto, nao de
+# codigo. Ver as lacunas declaradas do desenho.
 TEXTO_DO_PEDIDO_DE_HUMANO = (
-    "Claro! Já avisei nossa equipe e um corretor vai falar com você por aqui. "
+    "Claro! Já estou passando esta conversa para um corretor da nossa equipe. "
     "Pode continuar escrevendo que fica tudo registrado."
 )
 
 # `{inicio}` e `{fim}` sao preenchidos com as horas locais da janela.
 TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO = (
-    "Claro! Já avisei nossa equipe. Nosso atendimento é das {inicio}h às {fim}h, "
-    "então um corretor vai falar com você no próximo horário. "
+    "Claro! Já estou passando esta conversa para um corretor da nossa equipe. "
+    "Nosso atendimento é das {inicio}h às {fim}h, "
+    "então a resposta pode demorar até o próximo horário. "
     "Pode continuar escrevendo que fica tudo registrado."
 )
 

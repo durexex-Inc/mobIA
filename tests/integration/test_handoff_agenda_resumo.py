@@ -1,4 +1,11 @@
-"""O enfileiramento da geracao nos tres pontos que criam handoff."""
+"""O enfileiramento da geracao nos pontos que criam handoff.
+
+Sem numero de proposito: eram tres quando este arquivo nasceu, sao seis desde
+a TEC-143 (quatro em `turno.py`, o de `process_message.py` e o do pedido de
+humano), e um numero escrito aqui envelhece a cada card que acrescenta
+chamador. O enfileiramento do pedido de humano e afirmado em
+`test_pedido_de_humano.py`, junto do resto daquela guarda.
+"""
 
 import uuid
 
