@@ -161,6 +161,20 @@ Eles trazem a frase como string solta. Acentue **o literal duplicado**, exatamen
 
 São as **cinco** asserções, nos quatro arquivos. A guarda no sentido novo entra na Task 3; não a escreva aqui.
 
+- [ ] **Step 3c: A asserção semântica escrita com a grafia antiga**
+
+**Terceira classe de dependência**, e a última: `tests/unit/test_moderacao_port.py:48-49`, em `test_a_recusa_nomeia_o_criterio_legitimo`.
+
+```python
+    assert "imovel" in baixo
+    for criterio in ("regiao", "preco", "quartos"):
+        assert criterio in baixo
+```
+
+Não é literal duplicado nem asserção de propriedade: é uma pergunta **semântica** — *"a recusa nomeia o critério legítimo?"* — escrita com a grafia que o texto tinha. A pergunta continua válida; a grafia não. Troque para `"imóvel"`, `"região"`, `"preço"` (e `"quartos"`, que não muda).
+
+> **Varri o resto da suíte procurando mais casos desta classe e não há.** As outras ~50 ocorrências de `"regiao"`/`"preco"` em asserções são **nome de campo** — chave de schema, entrada de `perguntados_sem_resposta`, coluna —, não prosa, e são imunes. `test_prosa_do_followup.py:153` assevera sobre `SISTEMA_DO_FOLLOWUP`, que é prompt de sistema e esta card não acentua.
+
 - [ ] **Step 4: Rodar unitários e integração**
 
 ```bash
