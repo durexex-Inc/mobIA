@@ -17,6 +17,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from mobia.app.config import get_settings
+from mobia.domain.outbound.horario import horario_permite_envio
 
 _SO_LETRAS_E_ESPACO = re.compile(r"[^a-z ]+")
 _ESPACOS = re.compile(r"\s+")
@@ -115,29 +116,36 @@ def dentro_da_janela_de_atendimento(agora: datetime) -> bool:
     janela e da imobiliaria e nao do corretor designado, e por que reaproveita
     o fuso do follow-up em vez de um campo proprio.
 
-    **Convencao de borda: inclusiva nas duas pontas, igual `followup_horario_fim`
-    documenta em `config.py` e `horario_permite_envio` (`domain/outbound/horario.py`)
-    aplica.** `fim` nomeia o ultimo MINUTO em que a janela ainda vale, nao a
-    ultima hora inteira -- com o default 18 a comparacao e `<=`, entao 18:00
-    esta dentro e 18:01 esta fora. Confirmado rodando
-    `test_a_janela_inclui_a_hora_de_abertura` (9:00 dentro, borda de inicio) e
-    o teste da borda de fim deste modulo.
+    **A aritmetica e delegada a `horario_permite_envio` (`domain/outbound/horario.py`)
+    de proposito, para nao existir uma segunda formula da mesma conta de
+    borda.** O docstring daquela funcao registra que a TEC-146 gastou uma
+    card inteira consertando exatamente esse defeito de duas fontes -- e o
+    plano desta card repetiu o erro, mandando escrever esta funcao do zero em
+    vez de mandar procurar a existente. `horario_permite_envio` e nome de
+    outro dominio (envio automatico, RN-13.3) e nao descreve o uso daqui;
+    isso e aceito e nao corrigido por renomear -- a funcao pertence aquela
+    card, e testada la, e trocar o nome dela por causa deste uso e que criaria
+    o acoplamento errado.
+
+    **Isto NAO funde as duas perguntas.** `horario_permite_envio` decide se um
+    envio AUTOMATICO pode comecar; esta funcao decide se existe gente para
+    ATENDER um pedido explicito do lead -- e as duas leem configuracao
+    separada de proposito (`atendimento_horario_*` contra `followup_horario_*`).
+    Hoje as duas contas coincidem -- mesma borda inclusiva de minuto, mesmo
+    fuso -- e e so essa coincidencia que faz delegar funcionar. **Se as duas
+    um dia divergirem, e esta funcao que para de delegar e ganha aritmetica
+    propria; `horario_permite_envio` nao ganha um parametro para as duas.**
 
     `agora` precisa ser aware pela mesma razao que `horario_permite_envio`
-    exige: um naive faria `astimezone` assumir o fuso do SISTEMA, que diverge
-    entre esta maquina e o runner de CI, e o erro apareceria so em um dos dois.
+    exige -- ver o docstring dela; a excecao de `tzinfo` ausente vem de la.
     """
-    if agora.tzinfo is None:
-        raise ValueError(
-            "agora sem tzinfo: astimezone assumiria o fuso do sistema, que "
-            "diverge entre esta maquina e o runner de CI. Passe um datetime aware."
-        )
     settings = get_settings()
-    local = agora.astimezone(ZoneInfo(settings.followup_fuso))
-    minuto_do_dia = local.hour * 60 + local.minute
-    inicio = settings.atendimento_horario_inicio * 60
-    fim = settings.atendimento_horario_fim * 60
-    return inicio <= minuto_do_dia <= fim
+    return horario_permite_envio(
+        momento=agora,
+        inicio=settings.atendimento_horario_inicio,
+        fim=settings.atendimento_horario_fim,
+        fuso=ZoneInfo(settings.followup_fuso),
+    )
 
 
 # Mora aqui, e nao em `turno.py`, pelo mesmo motivo que

@@ -445,6 +445,29 @@ class Settings(BaseSettings):
             ) from exc
         return self
 
+    @model_validator(mode="after")
+    def _recusar_janela_de_atendimento_impossivel(self) -> "Settings":
+        """Horario invertido ou vazio fecha a janela de atendimento para sempre.
+
+        Ao contrario da cadencia de follow-up, aqui o sintoma nao e ausencia
+        de alguma coisa -- e presenca da errada, sempre. `inicio >= fim` torna
+        `[inicio*60, fim*60]` vazio ou invertido em `dentro_da_janela_de_atendimento`
+        (`domain/humano/deteccao.py`), e nenhum minuto do dia satisfaz as duas
+        pontas ao mesmo tempo: todo lead que pedir humano recebe
+        `TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO`, nunca o outro texto, em
+        qualquer hora que escreva. Nada quebra, nada loga erro -- so a
+        imobiliaria aparenta nunca ter ninguem disponivel, e e essa mentira
+        silenciosa que a guarda existe para recusar na subida do processo.
+        """
+        if not 0 <= self.atendimento_horario_inicio < self.atendimento_horario_fim <= 23:
+            raise ValueError(
+                "atendimento_horario_inicio e atendimento_horario_fim precisam satisfazer "
+                f"0 <= inicio < fim <= 23; recebi inicio={self.atendimento_horario_inicio} "
+                f"e fim={self.atendimento_horario_fim}. Horario invertido ou vazio faz todo "
+                "lead que pedir humano receber o texto de fora do horario, sempre."
+            )
+        return self
+
     @property
     def fuso_de_envio(self) -> ZoneInfo:
         """O fuso do horario da RN-13.3, ja validado na construcao.
