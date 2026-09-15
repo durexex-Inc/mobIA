@@ -1,8 +1,9 @@
-"""A ferramenta que lista comentarios a reconferir, testada.
+"""A ferramenta que lista comentarios, docstrings e prosa a reconferir, testada.
 
-TEC-277. Pura: as partes que decidem o que e ALTERADO e o que e VIZINHO nao
-tocam git nem disco -- recebem texto de diff, fonte e um conjunto de linhas.
-Antes desta card o script nao tinha teste nenhum.
+TEC-277 e TEC-282. Pura: as partes que decidem as cinco marcas -- ALTERADO,
+VIZINHO, PROSA, FALSO e NOMEIA -- nao tocam git nem disco, recebem texto de
+diff, fonte, documento e conjuntos de linhas e nomes. Antes da TEC-277 o script
+nao tinha teste nenhum.
 """
 
 import ast
@@ -653,6 +654,27 @@ def test_examinar_prosa_preenche_o_destino_so_quando_ele_acrescenta() -> None:
     assert [c.destino for c in achados] == ["a/repositorio.py", ""]
 
 
+def test_examinar_prosa_preenche_linhas_do_arquivo_so_para_falso() -> None:
+    """A evidencia da unica marca que afirma em vez de suspeitar.
+
+    `classificar` so devolve FALSO com resolucao inequivoca, entao o indice 0
+    de `candidatos` e seguro. PROSA nao ganha a contagem -- ela nao afirma
+    nada sobre o tamanho do arquivo.
+    """
+    achados = examinar_prosa(
+        "d.md",
+        "turno.py:9 esta ok, mas test_x.py:900 aponta alem do fim\n",
+        arquivos_py={"t/test_x.py", "a/turno.py"},
+        alterados={"t/test_x.py", "a/turno.py"},
+        scripts=set(),
+        tamanho_de=lambda c: 300,
+    )
+    assert [(c.marca, c.linhas_do_arquivo) for c in achados] == [
+        ("PROSA", 0),
+        ("FALSO", 300),
+    ]
+
+
 def test_examinar_prosa_nao_marca_nada_sem_script_alterado() -> None:
     achados = examinar_prosa(
         "CLAUDE.md",
@@ -743,3 +765,4 @@ def test_main_continua_devolvendo_zero_com_prosa_falsa(monkeypatch, capsys, tmp_
     saida = capsys.readouterr().out
     assert "FALSO" in saida
     assert "comprovadamente falsa" in saida
+    assert "(o arquivo tem 10 linhas)" in saida

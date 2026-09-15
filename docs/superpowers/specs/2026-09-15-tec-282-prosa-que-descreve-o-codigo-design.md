@@ -108,7 +108,7 @@ src/mobia/domain/followup/repositorio.py
   VIZINHO  src/mobia/domain/followup/repositorio.py:154  # as duas CTEs
 
 docs/superpowers/specs/2026-09-14-tec-187-encerrar-cadencia-em-dormente-design.md
-  PROSA  :112  repositorio.py:209  -> src/mobia/domain/followup/repositorio.py
+  PROSA  :112  followup/repositorio.py:209  -> src/mobia/domain/followup/repositorio.py
   PROSA  :140  repositorio.py:154-181
   ... +3 citação(ões) omitida(s) -- use --tudo
 
@@ -142,6 +142,14 @@ Reutilizar `MAXIMO_DE_VIZINHOS_POR_BLOCO` faria o nome mentir sobre o que ele li
 **Citação em documento fora de `plans/` que aponte arquivo não alterado não é conferida.** A ferramenta continua sendo sobre o que a branch tocou.
 
 **A ambiguidade produz suspeita a mais, nunca a menos.** Uma citação a `repositorio.py:209` numa branch que altera dois `repositorio.py` diferentes aparece uma vez, sem dizer qual dos dois motivou. São 6 citações ambíguas no escopo inteiro, e o custo é uma linha que o revisor descarta em segundos.
+
+**Apagar ou renomear um `.py` some da varredura, exatamente quando toda citação a ele deveria virar `FALSO`.** `linhas_alteradas` zera o acumulador ao ver `+++ /dev/null`, então um arquivo apagado nunca entra no conjunto de alterados; renomear tem o mesmo efeito para o nome antigo. Comportamento herdado da TEC-277 — a função já existia assim —, mas esta card o torna material, porque é justamente o caso em que a citação vira falsa com certeza.
+
+**Docstring de nível de MÓDULO nunca vira `VIZINHO`.** `_blocos` só percorre `ClassDef` e `FunctionDef`; um módulo que cresce por baixo não move a docstring de topo para nenhuma marca. A própria `tests/unit/test_comentarios_tocados.py` desta branch é o caso: cresceu mais de 400 linhas sem que a ferramenta apontasse a docstring de módulo, que ficou desatualizada.
+
+**`NOMEIA` não distingue prosa que descreve o script de prosa que só o menciona.** É a mesma tolerância que a docstring de `scripts_nomeados` já declara: separar os dois casos é semântica, fora de escopo desta card, e o custo é uma marca que o revisor descarta em segundos.
+
+**`NOMEIA` só localiza o script pelo nome, sem considerar subdiretório, e só compara contra `.py`.** `f"descreve scripts/{nome}"` imprimiria caminho errado para um script dentro de um subdiretório de `scripts/`, e a marca não alcançaria um script não-`.py`, porque o diff que alimenta `scripts_alterados` usa o pathspec `*.py`. Teórico hoje — não há subdiretório nem script fora de `.py` em `scripts/` —, não implementado.
 
 ## Testes
 

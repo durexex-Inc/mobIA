@@ -1,4 +1,4 @@
-"""Lista os comentarios e docstrings que a branch precisa reconferir.
+"""Lista os comentarios, docstrings e a prosa que a branch precisa reconferir.
 
 Este repo trata comentario desatualizado como defeito, nao como sujeira, e a
 regra esta escrita no CLAUDE.md ("Comentario nao mente"). Mesmo assim, ~51
@@ -30,9 +30,9 @@ ultimas, sobre a prosa versionada que descreve o codigo (TEC-282):
             branch mexeu. Suspeita, nao veredito: a ferramenta nao decide se a
             citacao ficou errada, so diz que precisa ser reconferida.
 
-  FALSO     a citacao aponta alem do fim do arquivo. E a unica marca que
-            afirma em vez de suspeitar, e por isso exige que o alvo resolva
-            para um arquivo so.
+  FALSO     entre as citacoes que ja apontam arquivo que esta branch mexeu, a
+            que vai alem do fim dele. E a unica marca que afirma em vez de
+            suspeitar, e por isso exige que o alvo resolva para um arquivo so.
 
   NOMEIA    a branch mexeu num arquivo sob `scripts/` e um documento nomeia
             aquele script -- o unico casamento por nome desta ferramenta. Nao
@@ -42,6 +42,13 @@ ultimas, sobre a prosa versionada que descreve o codigo (TEC-282):
 
 Planos de implementacao (`docs/superpowers/plans/`) ficam fora da varredura de
 prosa; a razao esta em PREFIXO_DOS_PLANOS.
+
+Duas cegueiras conhecidas, nenhuma nova desta card. Apagar ou renomear um .py
+nunca entra no conjunto de alterados -- `linhas_alteradas` para de acumular em
+`+++ /dev/null` --, entao toda citacao aquele arquivo escapa justo quando
+ficaria FALSO. E docstring de nivel de MODULO nunca vira VIZINHO, porque
+`_blocos` so anda por ClassDef e FunctionDef; um modulo que cresce por baixo de
+uma docstring desatualizada nao aciona marca nenhuma.
 
 Uso:
 
@@ -149,11 +156,15 @@ class Citacao:
     # .md. `destino` so e preenchido quando a resolucao foi inequivoca e diz
     # algo que o alvo cru nao dizia -- para `turno.py:50` ele mostra onde o
     # arquivo mora; para um alvo que ja veio com caminho completo, fica vazio.
+    # `linhas_do_arquivo` so e preenchido para FALSO: e a evidencia da unica
+    # marca que afirma em vez de suspeitar, e substitui `destino` na saida --
+    # ver `main`.
     documento: str
     linha: int
     texto: str
     marca: str
     destino: str = ""
+    linhas_do_arquivo: int = 0
 
 
 def _rodar(*argumentos: str) -> str:
@@ -411,12 +422,12 @@ def _pendentes_fora_do_commit() -> list[str]:
 def _documentos_no_escopo() -> list[str]:
     """Os .md versionados que a varredura de prosa examina."""
     saida = _rodar("ls-files", "*.md")
-    return [d for d in saida.split() if not d.startswith(PREFIXO_DOS_PLANOS)]
+    return [d for d in saida.splitlines() if not d.startswith(PREFIXO_DOS_PLANOS)]
 
 
 def _arquivos_versionados() -> set[str]:
     """Todo .py versionado, que e o universo contra o qual um alvo resolve."""
-    return {p for p in _rodar("ls-files", "*.py").split()}
+    return set(_rodar("ls-files", "*.py").splitlines())
 
 
 def examinar_prosa(
@@ -442,11 +453,17 @@ def examinar_prosa(
         # cru nao dizia. Repetir um caminho completo que o revisor acabou de
         # ler dois centimetros antes e ruido.
         destino = candidatos[0] if len(candidatos) == 1 and candidatos[0] != alvo else ""
+        # So FALSO ganha a contagem: e a evidencia da unica marca que afirma
+        # em vez de suspeitar, e classificar() so devolve FALSO com um
+        # candidato so, entao o indice 0 e seguro aqui.
+        linhas_do_arquivo = tamanho_de(candidatos[0]) if marca == "FALSO" else 0
         # Reproduz a faixa como o documento a escreveu. Mostrar so o fim daria
         # uma string que nao existe no .md, e quem fosse procura-la nao acharia
         # nada -- a listagem estaria mentindo sobre o texto que manda reconferir.
         citada = f"{inicio}-{fim}" if inicio != fim else f"{inicio}"
-        achados.append(Citacao(documento, linha, f"{alvo}:{citada}", marca, destino))
+        achados.append(
+            Citacao(documento, linha, f"{alvo}:{citada}", marca, destino, linhas_do_arquivo)
+        )
     for linha, nome in scripts_nomeados(texto, scripts):
         achados.append(Citacao(documento, linha, f"descreve scripts/{nome}", "NOMEIA"))
     return sorted(achados, key=lambda c: c.linha)
@@ -523,7 +540,7 @@ def limitar_citacoes(citacoes: list[Citacao], *, teto: int) -> tuple[list[Citaca
 
 def main() -> int:
     analisador = argparse.ArgumentParser(
-        description="Lista comentarios e docstrings que a branch precisa reconferir."
+        description="Lista comentarios, docstrings e prosa que a branch precisa reconferir."
     )
     analisador.add_argument(
         "base",
@@ -622,8 +639,15 @@ def main() -> int:
         ficam_citacoes, omitidas = limitar_citacoes(citacoes, teto=teto_da_prosa)
         print(f"\n{documento}")
         for citacao in ficam_citacoes:
-            destino = f"  -> {citacao.destino}" if citacao.destino else ""
-            print(f"  {citacao.marca:<6} :{citacao.linha}  {citacao.texto}{destino}")
+            if citacao.marca == "FALSO":
+                # A evidencia da unica marca que afirma em vez de suspeitar,
+                # no lugar do destino: ver D5 do desenho da TEC-282.
+                extra = f"  (o arquivo tem {citacao.linhas_do_arquivo} linhas)"
+            elif citacao.destino:
+                extra = f"  -> {citacao.destino}"
+            else:
+                extra = ""
+            print(f"  {citacao.marca:<6} :{citacao.linha}  {citacao.texto}{extra}")
             if citacao.marca == "FALSO":
                 falsas += 1
             else:
@@ -644,7 +668,9 @@ def main() -> int:
     print(
         f"{resumo}.\n"
         "VIZINHO e o que nao aparece no diff: confira se ainda descreve o codigo.\n"
-        "PROSA e suspeita e FALSO e certeza: a citacao aponta alem do fim do arquivo."
+        "PROSA e suspeita e FALSO e certeza: entre as citacoes de arquivo que a "
+        "branch mexeu, FALSO e a que aponta alem do fim dele.\n"
+        "NOMEIA e o documento que nomeia um script que a branch alterou."
     )
     # Sempre 0: este script informa, nao reprova. Virar gate exigiria decidir
     # automaticamente se um comentario esta certo, que e o julgamento que ele
