@@ -72,16 +72,17 @@ from mobia.workers.jobs.process_message import TEXTO_DO_AVISO_DE_ERRO
 # com "area" -- e ambas reprovariam texto certo o tempo todo, exatamente o
 # erro que esta guarda existe para nao cometer.
 #
-# "inclui" NAO esta na lista, e de proposito. A analise antiga so checava
-# se `\binclui\b` colidia com "incluí" (nao colide -- "i" e "í" sao
-# codepoints diferentes) e chamava isso de seguranca. Mas a colisao
-# perigosa nunca foi com a forma acentuada: e que "inclui" tambem e
-# portugues correto sem acento nenhum, terceira pessoa do presente de
-# "incluir" ("a busca inclui bairros vizinhos"). Um literal futuro como
-# "Isso ja inclui o condominio.", com acentuacao impecavel, seria
-# reprovado por esta guarda -- exatamente o erro que ela existe para nao
-# cometer. A perda desta forma e alinhada ao principio: a guarda erra por
-# falta, nunca por sobra.
+# O teste antes de acrescentar qualquer forma nova: ela so entra aqui se a
+# grafia SEM acento nao for, por si so, palavra portuguesa valida. "voce",
+# "imovel", "regiao" passam nesse teste -- nao existem sem o acento. Duas
+# formas ficaram de fora por reprovarem nele: "inclui" e "ultima" existem
+# sem acento nenhum -- sao a terceira pessoa do presente de "incluir" ("a
+# busca inclui bairros vizinhos") e de "ultimar" ("o corretor ultima o
+# contrato antes de enviar") --, e uma guarda que as contivesse reprovaria
+# um literal certo como "Isso ja inclui o condominio." ou "O corretor
+# ultima os detalhes", que e o unico erro que esta guarda nao pode
+# cometer. A perda destas duas formas e alinhada ao principio: a guarda
+# erra por falta, nunca por sobra.
 FORMAS_SEM_ACENTO = (
     "voce",
     "nao",
@@ -91,7 +92,6 @@ FORMAS_SEM_ACENTO = (
     "preco",
     "condominio",
     "criterio",
-    "ultima",
     "sabado",
     "horario",
     "tecnico",
