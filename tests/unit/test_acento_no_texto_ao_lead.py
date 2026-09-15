@@ -8,6 +8,21 @@ A versao obvia -- "todo literal ao lead tem ao menos um caractere acentuado"
 acento, e excetua-las viraria uma lista a mao que reprova texto certo. Esta
 aqui tem a assimetria oposta: uma palavra faltando na lista so deixa de pegar
 um caso, nunca reprova um caso correto.
+
+**Esta guarda cobre CONSTANTES DE MODULO, e nao todo texto que o lead le.**
+Os rotulos da ficha de imovel -- "Condominio", "Destaque:", "Aluguel
+estimado" e o "/mes" do bloco do investidor -- sao a mensagem mais visivel
+do produto e ficam de fora de proposito: eles nascem de f-strings montados
+em tempo de execucao dentro de `_linhas_da_rentabilidade` e `legenda_de`
+(`apresentacao.py`), nao de constantes `TEXTO_...` importaveis, e cobri-los
+aqui exigiria renderizar uma ficha dentro deste arquivo -- duplicando o que
+`tests/unit/test_apresentacao.py` ja faz com snapshots exatos, e criando
+duas fontes para a mesma verificacao. Nao e lacuna teorica: uma sabotagem
+que tirou o acento de "/mês" em `apresentacao.py` nao fez esta guarda
+falhar (a string nao esta em `LITERAIS_AO_LEAD`), e fez o
+`test_apresentacao.py` falhar, porque e ele que compara a legenda inteira
+contra o texto esperado por extenso. Quem cobre os rotulos da ficha e
+aquele arquivo, nao este.
 """
 
 import re
@@ -47,6 +62,18 @@ from mobia.workers.jobs.process_message import TEXTO_DO_AVISO_DE_ERRO
 # `\b` resolve os dois: barra e inicio de string sao fronteira de palavra
 # tanto quanto espaco, e "veja se"/"mesmo"/"mesa" continuam fora porque ali
 # nao ha fronteira nenhuma entre "ja"/"mes" e as letras vizinhas.
+#
+# De proposito, NAO ha forma de uma ou duas letras aqui (nao ha "as" para
+# "as", nem "e" para "e"/"os"). "as" colidiria com "mas" e com o "as" de
+# qualquer plural feminino; "e" colidiria com a conjuncao "e", com "gas",
+# com "area" -- e ambas reprovariam texto certo o tempo todo, exatamente o
+# erro que esta guarda existe para nao cometer.
+#
+# "inclui" e a forma de maior risco da lista: precisa NAO casar em "inclui"
+# (a forma certa, com acento no i). Confirmado -- `\binclui\b` compara
+# ASCII "inclui" contra a string real, que tem "incluí", e o "i" final
+# sem acento nao e o mesmo caractere que o "i" com acento, entao nao ha
+# match.
 FORMAS_SEM_ACENTO = (
     "voce",
     "nao",
@@ -69,6 +96,9 @@ FORMAS_SEM_ACENTO = (
     "e so",
     "mes",
     "area",
+    "imobiliaria",
+    "entao",
+    "inclui",
 )
 
 LITERAIS_AO_LEAD = (
