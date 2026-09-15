@@ -273,11 +273,19 @@ def scripts_nomeados(texto: str, scripts: set[str]) -> list[tuple[int, str]]:
     duas vezes e e UM documento a reconferir. Repetir por ocorrencia encheria a
     secao com o mesmo aviso, que e o volume que a TEC-277 mediu e cortou.
 
-    Busca literal, inclusive dentro de bloco de codigo cercado. Medido na
-    TEC-282: no CLAUDE.md as duas mencoes estao dentro de fences e fora deles
-    ha zero, entao filtrar bloco de codigo excluiria justamente o documento que
-    esta regra existe para pegar -- a prosa que descreve o script vive ao redor
-    do bloco, sem repetir o nome do arquivo.
+    Busca com fronteira de palavra, inclusive dentro de bloco de codigo cercado.
+    O caractere antes do nome nao pode ser parte de um nome de arquivo (word char,
+    ponto ou hifen), exigindo a mesma protecao que `_CITACAO` ja tem. Medido na
+    TEC-282: no CLAUDE.md as duas mencoes estao dentro de fences e fora deles ha
+    zero, entao filtrar bloco de codigo excluiria justamente o documento que esta
+    regra existe para pegar -- a prosa que descreve o script vive ao redor do
+    bloco, sem repetir o nome do arquivo.
+
+    Nao distingue prosa que descreve o script de prosa que apenas o menciona.
+    O CLAUDE.md cita `gerar_base_simulada.py` num relato historico sobre o gate
+    de formatacao, que nao descreve o script. A regra nao separa os dois casos
+    porque e semantica, que esta card poe fora de escopo -- e a marca e suspeita
+    e nao veredito, entao o revisor descarta em segundos.
 
     Este e o unico casamento por NOME da ferramenta, e e estreito de proposito:
     a TEC-277 mediu 83,8% de homonimia ao casar prosa com codigo por nome de
@@ -286,8 +294,9 @@ def scripts_nomeados(texto: str, scripts: set[str]) -> list[tuple[int, str]]:
     """
     achados = []
     for nome in sorted(scripts):
+        padrao = rf"(?<![\w.-]){re.escape(nome)}(?![\w.-])"
         for numero, linha in enumerate(texto.splitlines(), 1):
-            if nome in linha:
+            if re.search(padrao, linha):
                 achados.append((numero, nome))
                 break
     return achados

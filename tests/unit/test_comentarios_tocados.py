@@ -527,3 +527,26 @@ def test_nomeia_encontra_dentro_de_bloco_de_codigo() -> None:
     """
     texto = "```bash\n./.venv/Scripts/python.exe scripts/comentarios_tocados.py\n```"
     assert scripts_nomeados(texto, {"comentarios_tocados.py"}) == [(2, "comentarios_tocados.py")]
+
+
+def test_nomeia_exige_fronteira_e_nao_casa_dentro_de_outro_nome() -> None:
+    """Mesma protecao que `_CITACAO` e o terceiro degrau de `resolver` ja tinham.
+
+    Um script de nome curto casaria dentro de outro nome de arquivo. Nao acontece
+    com os dois scripts de hoje, e e por isso que a protecao precisa de teste: e o
+    script futuro de nome curto que a quebraria em silencio.
+    """
+    assert scripts_nomeados("veja ba.py para outro contexto", {"a.py"}) == []
+    assert scripts_nomeados("rode scripts/a.py agora", {"a.py"}) == [(1, "a.py")]
+
+
+def test_nomeia_tolera_mencao_que_nao_descreve_o_script() -> None:
+    """A tolerancia declarada: a busca nao distingue descricao de mencao.
+
+    O CLAUDE.md cita `gerar_base_simulada.py` num relato historico sobre o gate
+    de formatacao, que nao descreve o script. Ele sai como NOMEIA do mesmo jeito.
+    Separar os dois casos e semantica, que esta card poe fora de escopo, e a marca
+    e suspeita e nao veredito -- o revisor descarta em segundos.
+    """
+    texto = "o `ruff format --check` reprovou `gerar_base_simulada.py` de primeira"
+    assert scripts_nomeados(texto, {"gerar_base_simulada.py"}) == [(1, "gerar_base_simulada.py")]
