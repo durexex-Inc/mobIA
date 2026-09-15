@@ -6,6 +6,7 @@ Antes desta card o script nao tinha teste nenhum.
 """
 
 import ast
+import sys
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
@@ -471,6 +472,18 @@ def test_faixa_alem_do_fim_do_arquivo_e_falso() -> None:
 def test_a_ultima_linha_do_arquivo_ainda_e_prosa() -> None:
     """A fronteira e `>`, nao `>=`: citar a ultima linha e citacao valida."""
     marca = classificar(["a/turno.py"], 300, {"a/turno.py"}, _tamanhos({"a/turno.py": 300}))
+    assert marca == "PROSA"
+
+
+def test_arquivo_ilegivel_nao_vira_falso() -> None:
+    """Falha de leitura nao autoriza afirmar que a citacao e falsa.
+
+    Um tamanho 0 faria qualquer citacao parecer alem do fim do arquivo, e FALSO e
+    a marca que dispensa o revisor de conferir. O fallback e `maxsize` para a
+    citacao cair em PROSA: errar por sobra de suspeita e barato, afirmar o que nao
+    se sabe nao e.
+    """
+    marca = classificar(["x.py"], 5, {"x.py"}, lambda _: sys.maxsize)
     assert marca == "PROSA"
 
 

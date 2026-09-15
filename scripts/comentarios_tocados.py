@@ -37,6 +37,7 @@ import ast
 import io
 import re
 import subprocess
+import sys
 import tokenize
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -539,11 +540,15 @@ def main() -> int:
         if not achados:
             continue
         ficam, omitidos = limitar(achados, teto=teto)
-        print(f"\n{arquivo}")
+        # Impresso com barra normal, como o git devolve: a secao de prosa e o
+        # aviso de pendentes ja usam essa forma, e um Path no Windows sairia
+        # com barra invertida, misturando os dois separadores na mesma saida.
+        caminho_impresso = str(arquivo).replace("\\", "/")
+        print(f"\n{caminho_impresso}")
         for achado in ficam:
             marca = "ALTERADO" if achado.alterado else "VIZINHO "
             texto = achado.texto if len(achado.texto) <= 96 else achado.texto[:93] + "..."
-            print(f"  {marca} {arquivo}:{achado.linha}  {texto}")
+            print(f"  {marca} {caminho_impresso}:{achado.linha}  {texto}")
             if achado.alterado:
                 alterados += 1
             else:
@@ -567,13 +572,18 @@ def main() -> int:
     tamanhos: dict[str, int] = {}
 
     def tamanho_de(caminho: str) -> int:
-        # Memorizado porque um documento pode citar o mesmo arquivo dezenas de
-        # vezes, e cada citacao perguntaria o tamanho de novo.
+        # Memorizado porque um documento pode citar o mesmo arquivo varias vezes,
+        # e cada citacao perguntaria o tamanho de novo.
+        #
+        # Arquivo ilegivel devolve `maxsize`, nao 0. Zero faria QUALQUER citacao
+        # parecer alem do fim e sair como FALSO -- a unica marca que afirma em vez
+        # de suspeitar. Falha de leitura nao autoriza afirmar nada: a citacao cai
+        # em PROSA e quem revisa confere.
         if caminho not in tamanhos:
             try:
                 tamanhos[caminho] = len(Path(caminho).read_text(encoding="utf-8").splitlines())
             except OSError:
-                tamanhos[caminho] = 0
+                tamanhos[caminho] = sys.maxsize
         return tamanhos[caminho]
 
     for documento in _documentos_no_escopo():
