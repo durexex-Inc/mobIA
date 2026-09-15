@@ -11,6 +11,14 @@ a cifra acontece em Python e o banco nao tem a chave, entao la foi preciso
 coluna nova, backfill em lote e troca. Aqui nao ha o que cifrar: a coluna esta
 vazia por construcao. A guarda abaixo e que torna essa afirmacao verificavel em
 vez de suposta.
+
+**Consequencia que quem procura "como reverter isto" precisa saber de antemao:**
+no dia em que o TEC-217 gravar a primeira linha, o `downgrade` desta revisao
+para de ser executavel -- a mesma guarda o aborta, de proposito, porque descer
+para JSONB descartaria o conteudo. A partir dali, reverter a decisao de cifrar
+exige uma migracao nova no padrao da 0004, que decifra em Python antes de
+trocar o tipo. Isso e falhar fechado: preferir a reversao travada a uma que
+apaga dado pessoal em silencio.
 """
 
 import sqlalchemy as sa

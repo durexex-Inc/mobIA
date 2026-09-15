@@ -276,6 +276,25 @@ def test_bytes_e_none_atravessam_a_guarda(valor: object) -> None:
     assert Message(text_body=valor).text_body == valor
 
 
+def test_dict_em_envelope_context_e_recusado() -> None:
+    """O engano que o TEC-217 vai cometer, e o unico que a guarda existe para pegar aqui.
+
+    A coluna era JSONB ate o TEC-221, entao gravar o `change.value` direto e o
+    reflexo natural de quem escrever aquele card. O teste acima ja cobre `str`
+    generico; este fixa a forma real, com o nome e o telefone que o envelope
+    da Meta carrega, e confirma que nenhum dos dois aparece na excecao.
+    """
+    envelope = {"contacts": [{"profile": {"name": "Ana Souza"}, "wa_id": "5511911112222"}]}
+
+    with pytest.raises(TypeError) as erro:
+        Message(envelope_context=envelope)
+
+    assert "envelope_context" in str(erro.value)
+    assert "dict" in str(erro.value)
+    assert "Ana Souza" not in str(erro.value)
+    assert "5511911112222" not in str(erro.value)
+
+
 async def test_envelope_context_persiste_cifrado_e_decifra_pelo_orm(session) -> None:
     """A TEC-217 vai gravar aqui nome e telefone do lead; a coluna tem de estar cifrada antes.
 
