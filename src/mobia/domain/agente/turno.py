@@ -7,7 +7,7 @@ from typing import Any, Literal, cast
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from mobia.app.config import MODELO_SEM_CHAMADA
+from mobia.app.config import MODELO_SEM_CHAMADA, get_settings
 from mobia.domain.agente.apresentacao import Ficha, legenda_de
 from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
@@ -57,8 +57,20 @@ from mobia.domain.context.repositorio import (
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.handoff.agendador import AgendadorDeResumoPort
-from mobia.domain.handoff.repositorio import HandoffRegistrado, registrar_handoff
+from mobia.domain.handoff.repositorio import (
+    HandoffRegistrado,
+    registrar_handoff,
+    tem_handoff_de_humano_aberto,
+)
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
+from mobia.domain.humano.deteccao import (
+    KIND_DO_PEDIDO_DE_HUMANO,
+    SUBAGENTE_PEDIDO_DE_HUMANO,
+    TEXTO_DO_PEDIDO_DE_HUMANO,
+    TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO,
+    dentro_da_janela_de_atendimento,
+    pediu_humano,
+)
 from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
@@ -334,6 +346,12 @@ ResultadoDoTurno = Literal[
     # diferentes.
     "atendimento_humano",
     "bloqueado_por_atendimento_humano",
+    # A TEC-143 acrescentou este. Nao reuse "atendimento_humano": aquele e o
+    # turno que nao fez nada porque um corretor JA tinha assumido; este e o
+    # turno em que o LEAD pediu e o handoff acabou de nascer. Duas historias
+    # com donos diferentes -- mesmo criterio que o comentario acima aplica aos
+    # tres do opt-out.
+    "pedido_de_humano",
 ]
 
 
@@ -759,11 +777,24 @@ async def executar_turno(
     # Barata de proposito -- antes do classificador, entao um turno silenciado
     # nao paga chamada ao modelo. A guarda autoritativa e a da porta de saida
     # (`outbound/port.py`); esta so evita o trabalho.
+    #
+    # `tem_handoff_de_humano_aberto` (TEC-143) e a SEGUNDA fonte de silencio,
+    # ao lado de `esta_silenciada`. Sao perguntas diferentes -- "um corretor
+    # assumiu" contra "o lead pediu e tem handoff na fila" --, e o docstring
+    # daquela funcao e explicito: e dali que vem o silencio da TEC-143, nao de
+    # `esta_silenciada`. No PRIMEIRO turno em que o lead pede humano nao ha
+    # handoff ainda (o bloco novo, mais abaixo, e quem cria), entao esta
+    # checagem so passa a valer do SEGUNDO turno em diante -- e o resultado
+    # continua "atendimento_humano" nos dois casos, porque para o lead o
+    # efeito e o mesmo (o agente calou).
     if not pedido_de_optout:
         async with session_factory() as sessao:
-            if await esta_silenciada(
+            se_calar = await esta_silenciada(
                 sessao, channel=message.channel, conversation_key=message.conversation_key
-            ):
+            ) or await tem_handoff_de_humano_aberto(
+                sessao, channel=message.channel, conversation_key=message.conversation_key
+            )
+            if se_calar:
                 log.info(
                     "turno.atendimento_humano",
                     channel=message.channel,
@@ -817,6 +848,81 @@ async def executar_turno(
         # gravado -- entao eles passam adiante como estao, e so o caminho de
         # sucesso vira "opt_out".
         return "opt_out" if desfecho_da_confirmacao == "respondido" else desfecho_da_confirmacao
+
+    # ORDEM: depois do opt-out, antes do classificador.
+    #
+    # Depois do opt-out porque opt-out e direito do lead e vence tudo -- uma
+    # mensagem que pede humano E pede saida grava a saida. O comentario da
+    # guarda de atendimento humano, algumas linhas acima, registra o Critical
+    # em que uma guarda incondicional engoliu exatamente esse registro.
+    #
+    # Antes do classificador porque um pedido de humano nao precisa de modelo
+    # para ser atendido, e a card pede handoff em ate 5 segundos. Pulando a
+    # chamada, o prazo vira consequencia da arquitetura em vez de aposta na
+    # latencia do provedor -- e nao ha chamada paga para falhar justamente
+    # quando o lead ja esta irritado.
+    if corpo and pediu_humano(corpo):
+        async with session_factory() as sessao:
+            await registrar_handoff(
+                sessao,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                gatilho=Gatilho.PEDIDO_DE_HUMANO,
+            )
+            # `registrar_handoff` NAO commita -- a docstring dela diz que o
+            # commit e de quem chama, para o handoff poder entrar na mesma
+            # transacao de um recalculo. Aqui nao ha nada para juntar, entao o
+            # commit e imediato: o lead nao pode receber "ja avisei a equipe"
+            # sem a linha existir.
+            await sessao.commit()
+
+        settings = get_settings()
+        # Nome proprio (`texto_do_aviso`, nao `texto`) pelo mesmo motivo do
+        # `desfecho_do_aviso` abaixo: mypy infere um tipo unico por nome de
+        # variavel na funcao inteira, e `texto` ja e outra coisa la embaixo.
+        texto_do_aviso = (
+            TEXTO_DO_PEDIDO_DE_HUMANO
+            if dentro_da_janela_de_atendimento(datetime.now(UTC))
+            else TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO.format(
+                inicio=settings.atendimento_horario_inicio,
+                fim=settings.atendimento_horario_fim,
+            )
+        )
+        log.info(
+            "turno.pedido_de_humano",
+            channel=message.channel,
+            message_id=str(message.id),
+        )
+        # Nome distinto de `entregue` pelo mesmo motivo que o bloco do opt-out
+        # explica: o mypy infere um tipo unico por nome de variavel na funcao
+        # inteira, e este e o `ResultadoDoTurno` de `_entregar_texto_fixo`.
+        #
+        # `kind=KIND_DO_PEDIDO_DE_HUMANO` atravessa a guarda de atendimento
+        # humano em `GuardedOutbound.send` sem escotilha nenhuma -- CONFERIDO
+        # rodando, nao so lendo. Aquela guarda consulta
+        # `esta_silenciada_por_mensagem`, que le `AtendimentoHumano`
+        # (corretor ASSUMIU, `atendimento/repositorio.py`); o
+        # `registrar_handoff` acima grava em `Handoff` (a fila, RN-16.1), uma
+        # tabela diferente. O aviso do PRIMEIRO pedido so seria barrado se um
+        # corretor JA tivesse assumido a conversa antes deste turno -- nesse
+        # caso o bloqueio e correto (ha gente cuidando de verdade) e o
+        # desfecho vira "bloqueado_por_atendimento_humano" abaixo, nao
+        # "pedido_de_humano". O mesmo vale para o recheque em
+        # `_entregar_texto_fixo` (`_bloqueado_por_atendimento_humano_concorrente`):
+        # ele tambem le `AtendimentoHumano`, nao `Handoff`, entao o handoff que
+        # este bloco acabou de registrar nao o faz disparar.
+        desfecho_do_aviso = await _entregar_texto_fixo(
+            session_factory,
+            message=message,
+            outbound=outbound,
+            recorder_texto=texto_do_aviso,
+            kind=KIND_DO_PEDIDO_DE_HUMANO,
+            subagent=SUBAGENTE_PEDIDO_DE_HUMANO,
+        )
+        # O handoff JA esta gravado. Se o aviso nao saiu, o desfecho do envio
+        # passa adiante como esta -- mas a transferencia aconteceu de qualquer
+        # forma, que e o que a card garante ao lead.
+        return "pedido_de_humano" if desfecho_do_aviso == "respondido" else desfecho_do_aviso
 
     if corpo:
         try:
