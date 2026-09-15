@@ -13,7 +13,8 @@ tambem: ele nao valida nada e nao reprova nada. Ele so poe na frente de quem
 revisa a lista exata do que precisa ser reconferido, para que a verificacao pare
 de depender de alguem lembrar.
 
-Duas categorias, e a segunda e a que pega o defeito da TEC-146:
+Cinco marcas. As duas primeiras sao sobre comentario dentro do codigo; as tres
+ultimas, sobre a prosa versionada que descreve o codigo (TEC-282):
 
   ALTERADO  o comentario mudou nesta branch. Releia o codigo e confirme que ele
             ainda descreve o que esta ali.
@@ -24,6 +25,23 @@ Duas categorias, e a segunda e a que pega o defeito da TEC-146:
             saida padrao mostra so os VIZINHO mais proximos da alteracao em
             cada bloco e resume o resto numa linha, porque a listagem inteira
             costuma passar de 100 linhas e deixar de caber numa leitura.
+
+  PROSA     um .md versionado cita `arquivo.py:linha` de um arquivo que esta
+            branch mexeu. Suspeita, nao veredito: a ferramenta nao decide se a
+            citacao ficou errada, so diz que precisa ser reconferida.
+
+  FALSO     a citacao aponta alem do fim do arquivo. E a unica marca que
+            afirma em vez de suspeitar, e por isso exige que o alvo resolva
+            para um arquivo so.
+
+  NOMEIA    a branch mexeu num arquivo sob `scripts/` e um documento nomeia
+            aquele script -- o unico casamento por nome desta ferramenta. Nao
+            distingue prosa que descreve o script de prosa que so o menciona
+            -- tolerado de proposito, porque a marca e suspeita e o revisor
+            descarta em segundos (ver `scripts_nomeados`).
+
+Planos de implementacao (`docs/superpowers/plans/`) ficam fora da varredura de
+prosa; a razao esta em PREFIXO_DOS_PLANOS.
 
 Uso:
 

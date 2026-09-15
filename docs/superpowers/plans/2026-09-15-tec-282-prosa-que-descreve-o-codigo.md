@@ -393,8 +393,8 @@ def classificar(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `./.venv/Scripts/python.exe -m pytest tests/unit/test_comentarios_tocados.py -k "classificar or falso or prosa or ambigua" --tb=short`
-Expected: 6 passed
+Run: `./.venv/Scripts/python.exe -m pytest tests/unit/test_comentarios_tocados.py --tb=short`
+Expected: 62 passed (o `-k` desta etapa seleciona mais do que os testes desta task sozinha, porque termos como "prosa" e "falso" tambem casam com testes de tasks posteriores; rodar o arquivo inteiro e a contagem que nao diverge)
 
 - [ ] **Step 5: Gates e commit**
 
@@ -624,8 +624,8 @@ def limitar_citacoes(citacoes: list[Citacao], *, teto: int) -> tuple[list[Citaca
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `./.venv/Scripts/python.exe -m pytest tests/unit/test_comentarios_tocados.py -k "limitar_citacoes or teto_zero_desliga_o_corte_das or escapam or ordem_de_linha_do_documento or abaixo_do_teto_passa" --tb=short`
-Expected: 5 passed
+Run: `./.venv/Scripts/python.exe -m pytest tests/unit/test_comentarios_tocados.py --tb=short`
+Expected: 62 passed (o `-k` desta etapa casa por acidente com `test_bloco_abaixo_do_teto_passa_inteiro`, de uma task anterior, e deixa de fora `test_o_teto_corta_prosa_e_conta_o_que_omitiu`, desta mesma task -- 5 selecionados, mas nao os 5 certos; rodar o arquivo inteiro e a contagem que nao diverge)
 
 - [ ] **Step 5: Gates e commit**
 
