@@ -29,12 +29,15 @@ _ESPACOS = re.compile(r"\s+")
 # ("quero uma ___", "me transfere pra uma ___", "me passa pra uma ___"),
 # carregam qualificador explicitado.** Quando ocupam papel de INTERLOCUTOR
 # ("falar com uma ___"), nao carregam qualificador porque o verbo ja os
-# desambigua. "Pessoa fisica" e "pessoa juridica" sao vocabulario de contrato
-# imobiliario neste dominio -- "quero uma pessoa fisica no contrato" nao e
-# pedido de transferencia, e "mudar o titular para uma pessoa juridica" e
-# assunto de reescritura. Mas "falar com uma pessoa juridica" e pedido legítimo
-# -- quem pergunta "posso falar com uma pessoa juridica?" quer mesmo um humano,
-# e essa colisao erra na direcao barata (transferencia extra, nao silencio).
+# desambigua. Quando ocupam papel de ATRIBUTO, qualificando outro substantivo
+# ("atendimento humano"), nao carregam qualificador porque nao ocupam o lugar
+# onde "fisica/juridica" apareceria. "Pessoa fisica" e "pessoa juridica" sao
+# vocabulario de contrato imobiliario neste dominio -- "quero uma pessoa fisica
+# no contrato" nao e pedido de transferencia, e "mudar o titular para uma pessoa
+# juridica" e assunto de reescritura. Mas "falar com uma pessoa juridica" e
+# pedido legitimo -- quem pergunta "posso falar com uma pessoa juridica?" quer
+# mesmo um humano, e essa colisao erra na direcao barata (transferencia extra,
+# nao silencio).
 #
 # Foram removidos por falso positivo durante as revisoes:
 # - "quero uma pessoa", "queria uma pessoa": colisao com pessoa fisica/juridica

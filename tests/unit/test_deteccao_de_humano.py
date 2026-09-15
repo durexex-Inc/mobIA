@@ -92,10 +92,11 @@ def test_vocabulario_de_contrato_e_de_pagamento_nao_dispara(texto: str) -> None:
     """Os falsos positivos que as revisoes da TEC-143 acharam, fixados.
 
     A colisao com "pessoa" tem multiplas portas: "quero uma pessoa" (round 1),
-    "me transfere pra uma pessoa" (round 2), todas resolvidas pela regra: todo
-    termo com "pessoa", "humano" ou "alguem" carrega qualificador. O modulo de
-    opt-out registra a mesma licao com "nada" -- termo curto demais casa dentro
-    de frase que nao e pedido.
+    "me transfere pra uma pessoa" (round 2), resolvidas pelo invariante: quando
+    pessoa/humano ocupam papel de DESTINO, carregam qualificador (pessoa fisica/
+    juridica e vocabulario de contrato). Quando ocupam papel de INTERLOCUTOR ou
+    ATRIBUTO, nao carregam. O modulo de opt-out registra a mesma licao com
+    "nada" -- termo curto demais casa dentro de frase que nao e pedido.
     """
     assert pediu_humano(texto) is False
 
