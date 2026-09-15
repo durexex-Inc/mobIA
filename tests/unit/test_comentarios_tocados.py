@@ -76,7 +76,7 @@ def test_string_solta_no_corpo_nao_e_docstring() -> None:
     assert _docstrings(ast.parse(fonte)) == []
 
 
-def test_blocos_devolve_faixa_de_cada_def_e_class(tmp_path: Path) -> None:
+def test_blocos_devolve_faixa_de_cada_def_e_class() -> None:
     fonte = textwrap.dedent("""
         class C:
             def m(self):
@@ -86,7 +86,7 @@ def test_blocos_devolve_faixa_de_cada_def_e_class(tmp_path: Path) -> None:
     # A classe contem o metodo: as duas faixas se sobrepoem, e e por isso que
     # mexer no metodo marca os comentarios de todos os outros metodos da
     # classe. Lacuna medida na TEC-277: cortar isso renderia 0,036%.
-    assert len(faixas) == 2
+    assert faixas == [(2, 4, "C"), (3, 4, "m")]
 
 
 def _escrever(tmp_path: Path, fonte: str) -> Path:

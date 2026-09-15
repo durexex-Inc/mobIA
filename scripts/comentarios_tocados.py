@@ -70,10 +70,12 @@ class Achado:
     texto: str
     alterado: bool
     # Distancia em linhas ate a alteracao mais proxima do mesmo arquivo, e o
-    # nome do menor bloco que contem este achado. Os dois existem para o teto
-    # de `main`: `distancia` ordena quem fica, `bloco` agrupa e nomeia o que
-    # foi omitido. Um ALTERADO tem distancia 0 e bloco vazio -- o teto nao o
-    # alcanca, entao nao precisa de nenhum dos dois.
+    # nome do menor bloco MEXIDO que contem este achado -- um achado dentro de
+    # um metodo intocado nao tem candidato proprio e herda o nome da classe
+    # mexida. Os dois existem para o teto de `main`: `distancia` ordena quem
+    # fica, `bloco` agrupa e nomeia o que foi omitido. Um ALTERADO tem
+    # distancia 0 e bloco vazio -- o teto nao o alcanca, entao nao precisa de
+    # nenhum dos dois.
     distancia: int = 0
     bloco: str = ""
 
@@ -189,18 +191,19 @@ def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
         return any(i <= inicio and fim <= f for i, f, _ in blocos)
 
     def distancia(inicio: int, fim: int) -> int:
-        # Zero quando a alteracao cai DENTRO da faixa do achado. Para uma
+        # Da borda mais proxima da faixa, nao da primeira linha. Para uma
         # docstring longa isso importa: medir sempre da primeira linha faria
         # uma alteracao colada no fim dela parecer distante.
-        return min(
-            0 if inicio <= n <= fim else min(abs(n - inicio), abs(n - fim)) for n in alteradas
-        )
+        return min(min(abs(n - inicio), abs(n - fim)) for n in alteradas)
 
     def dono(inicio: int, fim: int) -> str:
-        # O MENOR bloco que contem o achado. Usar o maior diria "+703 em C"
-        # para um comentario que esta em `C.m`, e quem le nao saberia onde
-        # procurar. Isto e atribuicao, nao classificacao: o desenho mediu que
-        # trocar a classificacao para o menor bloco rende 0,036%.
+        # O MENOR bloco MEXIDO que contem o achado -- "blocos" ja veio filtrado
+        # para quem tem linha alterada, entao um achado dentro de um metodo
+        # intocado nao tem candidato proprio e herda o nome da classe mexida.
+        # Usar o maior bloco sempre diria "+703 em C" para um comentario que
+        # esta em `C.m`, e quem le nao saberia onde procurar. Isto e
+        # atribuicao, nao classificacao: o desenho mediu que trocar a
+        # classificacao para o menor bloco rende 0,036%.
         candidatos = [(f - i, n) for i, f, n in blocos if i <= inicio and fim <= f]
         return min(candidatos)[1] if candidatos else ""
 
@@ -251,6 +254,13 @@ def limitar(achados: list[Achado], *, teto: int) -> tuple[list[Achado], dict[str
     if teto <= 0:
         return achados, {}
 
+    # Chaveado pelo NOME do bloco, nao pela faixa de linhas: dois def/class
+    # homonimos no mesmo arquivo caem no mesmo balde e dividem um teto so, e a
+    # linha de resumo nao diz qual dos dois. A CONTAGEM final continua certa
+    # nos dois; o que fica ambiguo e so "quais 5" e "onde". Medido: 0 casos num
+    # range de 18 commits e 1 caso num de 40, e nesse 1 nada se perdeu.
+    # Chavear por faixa exigiria Achado carregar a faixa do bloco, e o ganho
+    # medido nao paga o custo.
     por_bloco: dict[str, list[Achado]] = {}
     ficam = [a for a in achados if a.alterado]
     for achado in achados:
@@ -275,7 +285,12 @@ def main() -> int:
     analisador = argparse.ArgumentParser(
         description="Lista comentarios e docstrings que a branch precisa reconferir."
     )
-    analisador.add_argument("base", nargs="?", default="origin/main")
+    analisador.add_argument(
+        "base",
+        nargs="?",
+        default="origin/main",
+        help="ref de comparacao (branch, commit ou tag); default origin/main",
+    )
     analisador.add_argument(
         "--tudo",
         action="store_true",
@@ -315,7 +330,9 @@ def main() -> int:
             # Conta o que EXISTE, nao o que coube na tela -- senao o resumo
             # mente sobre o proprio tamanho da listagem que omitiu.
             vizinhos += quantos
-            print(f"  ... +{quantos} vizinho(s) em {bloco}, os mais distantes -- use --tudo")
+            print(
+                f"  ... +{quantos} vizinho(s) em {bloco}, os mais distantes omitidos -- use --tudo"
+            )
 
     if not alterados and not vizinhos:
         print(f"Nenhum comentario ou docstring a reconferir em relacao a {base}.")
