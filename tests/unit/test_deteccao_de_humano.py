@@ -149,6 +149,10 @@ def test_negacao_imediata_nao_dispara(texto: str) -> None:
     cobre este caso: aqui o lead disse o contrario, e o preco nao e uma
     transferencia a mais -- e o agente calar para sempre numa conversa que o
     lead quis seguir com o robo.
+
+    Repare que nenhuma destas tem pontuacao entre o "nao" e o pedido: e esse o
+    sinal que separa a recusa do contraste ("Nao, quero falar com atendente"),
+    e `test_nao_de_contraste_nao_e_negacao_do_pedido` cobre o outro lado.
     """
     assert pediu_humano(texto) is False
 
@@ -243,3 +247,57 @@ def test_o_texto_ao_lead_nao_promete_que_alguem_foi_avisado(texto: str) -> None:
     """
     assert "avisei" not in texto.lower()
     assert "avisamos" not in texto.lower()
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "Nao, quero falar com atendente",
+        "nao, prefiro falar com um humano",
+        "Nao. Quero falar com uma pessoa",
+    ],
+)
+def test_nao_de_contraste_nao_e_negacao_do_pedido(texto: str) -> None:
+    """O "nao" que nega o que veio ANTES, e nao o pedido que vem depois.
+
+    "Nao, quero falar com atendente" e pedido: o lead esta negando seguir com o
+    robo. A guarda de negacao introduzida contra "nao quero falar com atendente"
+    matava estes tambem, porque o normalizador tira a virgula e as duas formas
+    colapsam na mesma string. Falso negativo aqui e a direcao cara -- o lead pede
+    e continua no loop.
+
+    A assimetria era a pista de que a guarda acertava por acaso:
+    "nao, prefiro falar com um humano" escapava (ha uma palavra a mais entre o
+    "nao" e o termo) enquanto "Nao, quero falar com atendente" nao.
+    """
+    assert pediu_humano(texto) is True
+
+
+def test_a_pausa_pode_partir_o_proprio_termo_e_o_lado_barato_e_disparar() -> None:
+    """ "nao quero falar com robo" e termo inequivoco, e a pontuacao o parte em dois.
+
+    Na normalizacao com pausa a frase vira "nao | quero falar com robo", e o
+    termo deixa de ser encontrado ali -- a guarda nao tem como julgar negacao
+    de um termo que ela nao acha. `_dispara` resolve pelo lado barato: o termo
+    esta na string normalizada, entao dispara. Antes da pausa isto ja
+    disparava, e nao podia parar de disparar por causa de um fix de negacao.
+    """
+    assert pediu_humano("Nao. Quero falar com robo") is True
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "nao quero falar com atendente, so me manda os imoveis",
+        "nao precisa falar com um humano",
+        "nao precisa falar com um humano, resolvo por aqui",
+    ],
+)
+def test_a_negacao_sem_pontuacao_continua_barrando(texto: str) -> None:
+    """A re-revisao nao afrouxou a guarda -- ela so deixou de confundir os dois usos.
+
+    Sem pontuacao entre o "nao" e o pedido, o "nao" nega o pedido: continua
+    `False`. E a contraprova do teste de contraste acima; sem ela, "consertar"
+    o contraste desligando a guarda inteira passaria despercebido.
+    """
+    assert pediu_humano(texto) is False

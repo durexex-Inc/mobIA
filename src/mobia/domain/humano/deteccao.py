@@ -121,7 +121,49 @@ _TERMOS_AMBIGUOS: frozenset[str] = frozenset({"atendente", "humano", "pessoa rea
 # a negacao e sobre o ROBO e nao sobre o humano, e o termo INTEIRO esta na
 # lista: ele casa no comeco da mensagem, sem nada antes dele, entao nao ha
 # prefixo para esta guarda olhar.
+#
+# **A PONTUACAO DEPOIS DO "nao" IMPORTA, e ela e o unico sinal que separa os
+# dois usos.** Este e o achado da re-revisao, e foi uma quebra que a propria
+# guarda acima introduziu: "Nao, quero falar com atendente" e "Nao. Quero
+# falar com uma pessoa" sao PEDIDOS, nao recusas. O "nao" ali e de CONTRASTE
+# -- o lead esta negando o que veio antes ("nao [quero seguir com o robo],
+# quero falar com atendente"), e nao o pedido que vem depois. `_normalizar`
+# apaga a virgula antes de qualquer comparacao, entao "nao, quero" e "nao
+# quero" colapsavam na mesma string e a guarda barrava os dois.
+#
+# Barrar o pedido e FALSO NEGATIVO, que e a direcao cara: o lead pede uma
+# pessoa e continua preso no loop de robo, que e literalmente a dor que a card
+# existe para resolver. Os falsos positivos das quatro rodadas anteriores eram
+# baratos em comparacao. E a guarda estava acertando "nao, prefiro falar com
+# um humano" por ACIDENTE -- ali ha uma palavra a mais entre o "nao" e o termo
+# --, nao por regra; assimetria e sinal de que a regra nao existia.
+#
+# Por isso a guarda NAO le a string normalizada: ela le uma segunda
+# normalizacao que troca cada corrida de pontuacao por um token de pausa
+# (`_PAUSA`). "nao , quero ..." vira "nao | quero ...", e a expressao abaixo,
+# que exige o "nao" colado no verbo ou no termo, deixa de casar. **Nao
+# "simplifique" isto reusando `_normalizar`:** a unica coisa que distingue um
+# pedido de uma recusa aqui e a pontuacao que ele apaga.
 _NEGACAO_ANTES = re.compile(r"(?:^| )nao(?: (?:quero|queria|quis|preciso|precisa))? $")
+
+# Token de pausa. Fora de `[a-z ]`, entao `_normalizar` o apagaria -- e e por
+# isso que ele so existe na normalizacao paralela. Nenhum termo das listas
+# acima o contem, entao a presenca dele nunca quebra um casamento por
+# substring: ela so o EMPURRA para longe do "nao", que e o efeito desejado.
+_PAUSA = "|"
+_PONTUACAO_DE_PAUSA = re.compile(r"[,.;:!?]+")
+_SO_LETRAS_ESPACO_E_PAUSA = re.compile(r"[^a-z |]+")
+
+
+def _sem_acento(texto: str) -> str:
+    """Minusculas e sem acento, com a pontuacao ainda no lugar.
+
+    Extraido de `_normalizar` para `_normalizar_com_pausa` nao repetir a
+    decomposicao NFKD -- e para as duas normalizacoes nao poderem divergir no
+    que consideram "a mesma letra".
+    """
+    decomposto = unicodedata.normalize("NFKD", texto.casefold())
+    return "".join(c for c in decomposto if not unicodedata.combining(c))
 
 
 def _normalizar(texto: str) -> str:
@@ -131,25 +173,61 @@ def _normalizar(texto: str) -> str:
     "atendente" sao a forma que um lead irritado escreve, e a faixa estrita
     compara a mensagem inteira.
     """
-    sem_acento = unicodedata.normalize("NFKD", texto.casefold())
-    sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
-    return _ESPACOS.sub(" ", _SO_LETRAS_E_ESPACO.sub(" ", sem_acento)).strip()
+    return _ESPACOS.sub(" ", _SO_LETRAS_E_ESPACO.sub(" ", _sem_acento(texto))).strip()
 
 
-def _casa_sem_negacao(normalizado: str, termo: str) -> bool:
+def _normalizar_com_pausa(texto: str) -> str:
+    """Igual a `_normalizar`, mas a pontuacao vira `_PAUSA` em vez de sumir.
+
+    Existe so para a guarda de negacao, e o comentario de `_NEGACAO_ANTES`
+    explica por que ela nao pode ler a outra: "nao, quero falar com atendente"
+    e um pedido e "nao quero falar com atendente" e uma recusa, e depois de
+    `_normalizar` as duas sao a mesma string.
+
+    **Os deslocamentos das duas NAO batem**, porque a pausa ocupa lugar. Por
+    isso quem casa termo trabalha sobre esta aqui do comeco ao fim, em vez de
+    achar o indice numa e ler o prefixo na outra -- ver `_dispara`.
+    """
+    marcado = _PONTUACAO_DE_PAUSA.sub(f" {_PAUSA} ", _sem_acento(texto))
+    return _ESPACOS.sub(" ", _SO_LETRAS_ESPACO_E_PAUSA.sub(" ", marcado)).strip()
+
+
+def _casa_sem_negacao(com_pausa: str, termo: str) -> bool:
     """Se `termo` aparece ao menos uma vez sem negacao imediatamente antes.
 
     Percorre TODAS as ocorrencias, e nao so a primeira: "nao quero falar com
     atendente agora, mas amanha quero falar com atendente" tem duas, e basta
     uma limpa para o pedido valer. Parar na primeira transformaria a guarda de
     negacao numa guarda de ordem das frases.
+
+    Le a normalizacao COM PAUSA, nunca a outra -- ver `_NEGACAO_ANTES`.
     """
-    inicio = normalizado.find(termo)
+    inicio = com_pausa.find(termo)
     while inicio != -1:
-        if _NEGACAO_ANTES.search(normalizado[:inicio]) is None:
+        if _NEGACAO_ANTES.search(com_pausa[:inicio]) is None:
             return True
-        inicio = normalizado.find(termo, inicio + 1)
+        inicio = com_pausa.find(termo, inicio + 1)
     return False
+
+
+def _dispara(normalizado: str, com_pausa: str, termo: str) -> bool:
+    """Se `termo` conta como pedido nesta mensagem.
+
+    Quem decide se o termo ESTA na mensagem e a string normalizada de sempre;
+    quem decide se ele esta NEGADO e a string com pausa. Sao duas perguntas e
+    duas strings, porque os deslocamentos de uma nao valem na outra.
+
+    O caso do meio e a pontuacao DENTRO do termo ("falar com uma, pessoa"):
+    ela existe na normalizada e parte o termo na com pausa. A guarda nao tem
+    como julgar negacao de um termo que ela nao acha, e o lado barato e
+    disparar -- falso negativo aqui e o lead pedindo uma pessoa e continuando
+    no loop de robo.
+    """
+    if termo not in normalizado:
+        return False
+    if termo not in com_pausa:
+        return True
+    return _casa_sem_negacao(com_pausa, termo)
 
 
 def pediu_humano(texto: str) -> bool:
@@ -159,7 +237,8 @@ def pediu_humano(texto: str) -> bool:
         return False
     if normalizado in _TERMOS_AMBIGUOS:
         return True
-    return any(_casa_sem_negacao(normalizado, termo) for termo in _TERMOS_INEQUIVOCOS)
+    com_pausa = _normalizar_com_pausa(texto)
+    return any(_dispara(normalizado, com_pausa, termo) for termo in _TERMOS_INEQUIVOCOS)
 
 
 def dentro_da_janela_de_atendimento(agora: datetime) -> bool:
