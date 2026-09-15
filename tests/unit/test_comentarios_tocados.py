@@ -22,6 +22,7 @@ from scripts.comentarios_tocados import (
     examinar,
     limitar,
     resolver,
+    scripts_nomeados,
 )
 
 
@@ -496,3 +497,33 @@ def test_arquivo_intocado_vence_a_faixa_alem_do_fim() -> None:
     """
     marca = classificar(["a/turno.py"], 900, {"outro.py"}, _tamanhos({"a/turno.py": 300}))
     assert marca is None
+
+
+def test_nomeia_encontra_o_script_alterado_no_texto() -> None:
+    texto = "rode `scripts/comentarios_tocados.py` antes do PR"
+    assert scripts_nomeados(texto, {"comentarios_tocados.py"}) == [(1, "comentarios_tocados.py")]
+
+
+def test_nomeia_ignora_script_que_a_branch_nao_tocou() -> None:
+    assert scripts_nomeados("veja gerar_base_simulada.py", {"comentarios_tocados.py"}) == []
+
+
+def test_nomeia_sai_uma_vez_so_por_script() -> None:
+    """O CLAUDE.md nomeia o script duas vezes e e um documento a reconferir, nao dois.
+
+    Repetir a marca por ocorrencia encheria a secao com o mesmo aviso e e
+    exatamente o volume que a TEC-277 mediu e cortou.
+    """
+    texto = "comentarios_tocados.py\noutra linha\ncomentarios_tocados.py --tudo"
+    assert scripts_nomeados(texto, {"comentarios_tocados.py"}) == [(1, "comentarios_tocados.py")]
+
+
+def test_nomeia_encontra_dentro_de_bloco_de_codigo() -> None:
+    """Medido na TEC-282: no CLAUDE.md as duas mencoes estao DENTRO de fences.
+
+    Filtrar bloco de codigo excluiria justamente o documento que a card existe
+    para pegar -- a prosa que descreve o script vive ao redor do bloco, sem
+    repetir o nome do arquivo.
+    """
+    texto = "```bash\n./.venv/Scripts/python.exe scripts/comentarios_tocados.py\n```"
+    assert scripts_nomeados(texto, {"comentarios_tocados.py"}) == [(2, "comentarios_tocados.py")]

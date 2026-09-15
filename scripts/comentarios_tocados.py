@@ -266,6 +266,33 @@ def classificar(
     return "PROSA"
 
 
+def scripts_nomeados(texto: str, scripts: set[str]) -> list[tuple[int, str]]:
+    """A primeira linha em que este documento nomeia cada script alterado.
+
+    Uma entrada por script, nao por ocorrencia: o CLAUDE.md nomeia a ferramenta
+    duas vezes e e UM documento a reconferir. Repetir por ocorrencia encheria a
+    secao com o mesmo aviso, que e o volume que a TEC-277 mediu e cortou.
+
+    Busca literal, inclusive dentro de bloco de codigo cercado. Medido na
+    TEC-282: no CLAUDE.md as duas mencoes estao dentro de fences e fora deles
+    ha zero, entao filtrar bloco de codigo excluiria justamente o documento que
+    esta regra existe para pegar -- a prosa que descreve o script vive ao redor
+    do bloco, sem repetir o nome do arquivo.
+
+    Este e o unico casamento por NOME da ferramenta, e e estreito de proposito:
+    a TEC-277 mediu 83,8% de homonimia ao casar prosa com codigo por nome de
+    simbolo. Nome de script nao tem esse problema porque o conjunto e minusculo
+    e os nomes sao longos.
+    """
+    achados = []
+    for nome in sorted(scripts):
+        for numero, linha in enumerate(texto.splitlines(), 1):
+            if nome in linha:
+                achados.append((numero, nome))
+                break
+    return achados
+
+
 def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
     try:
         fonte = arquivo.read_text(encoding="utf-8")
