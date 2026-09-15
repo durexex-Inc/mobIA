@@ -25,26 +25,32 @@ _ESPACOS = re.compile(r"\s+")
 # dos inequivocos porque "nada" aceita complemento partitivo e cada refinamento
 # de busca silenciava um comprador.
 #
-# **INVARIANTE: todo termo que contenha "pessoa", "humano" ou "alguem" carrega
-# qualificador.** "Pessoa fisica" e "pessoa juridica" sao vocabulario de contrato
-# imobiliario neste dominio -- "quero uma pessoa fisica no contrato" nao e pedido
-# de transferencia, e "mudar o titular para uma pessoa juridica" e assunto de
-# reescritura, nao de atendimento. O qualificador desambigua: "quero uma pessoa
-# de verdade" escapa porque nenhum lead fala em "pessoa de verdade fisica" ou
-# "pessoa de verdade juridica". Mesma licao vale para "humano": "quero humano"
-# sozinho nao aparece nos dados, mas "falar com humano" aparece e e pedido.
+# **INVARIANTE: quando "pessoa", "humano" ou "alguem" ocupam papel de DESTINO
+# ("quero uma ___", "me transfere pra uma ___", "me passa pra uma ___"),
+# carregam qualificador explicitado.** Quando ocupam papel de INTERLOCUTOR
+# ("falar com uma ___"), nao carregam qualificador porque o verbo ja os
+# desambigua. "Pessoa fisica" e "pessoa juridica" sao vocabulario de contrato
+# imobiliario neste dominio -- "quero uma pessoa fisica no contrato" nao e
+# pedido de transferencia, e "mudar o titular para uma pessoa juridica" e
+# assunto de reescritura. Mas "falar com uma pessoa juridica" e pedido legítimo
+# -- quem pergunta "posso falar com uma pessoa juridica?" quer mesmo um humano,
+# e essa colisao erra na direcao barata (transferencia extra, nao silencio).
 #
 # Foram removidos por falso positivo durante as revisoes:
 # - "quero uma pessoa", "queria uma pessoa": colisao com pessoa fisica/juridica
+#   (papel de DESTINO)
 # - "me passa pra uma pessoa", "me passa para uma pessoa": objeto "pessoa" nua
-# - "atendimento humano" bare: violava invariante de verbo/preposicao
+#   (papel de DESTINO)
 # - "me transfere": verbo sem objeto
 # - "me transfere pra uma pessoa", "me transfere para uma pessoa": objeto nua
+#   (papel de DESTINO)
+# - "atendimento humano" bare: violava invariante de verbo/preposicao
 #
 # Em lugar deles, os termos mantidos sao formas com qualificador explicitado
-# ("de verdade", "da equipe", "de alguem") ou com objeto que nao colide
-# ("atendente", "corretor", "robo"). Custo de recall e aceitavel -- o desenho
-# ja declara recall como lacuna.
+# ("de verdade", "da equipe", "de alguem") quando pessoa/humano sao DESTINO,
+# ou termos onde pessoa/humano sao INTERLOCUTOR ("falar com uma ___"), ou
+# formas com objeto que nao colide ("atendente", "corretor", "robo"). Custo de
+# recall e aceitavel -- o desenho ja declara recall como lacuna.
 _TERMOS_INEQUIVOCOS: tuple[str, ...] = (
     "falar com uma pessoa",
     "falar com um humano",

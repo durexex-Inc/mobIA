@@ -104,3 +104,15 @@ def test_a_forma_com_objeto_continua_disparando() -> None:
     assert pediu_humano("quero uma pessoa de verdade, nao um robo") is True
     assert pediu_humano("me transfere pra um atendente") is True
     assert pediu_humano("quero atendimento humano") is True
+
+
+def test_falar_com_uma_pessoa_juridica_dispara_e_isso_e_aceito() -> None:
+    """O residual que o invariante deixa de pe, declarado em vez de escondido.
+
+    "pessoa" como INTERLOCUTOR nao leva qualificador, porque "falar com" ja a
+    desambigua -- e sem isso "quero falar com uma pessoa", a frase do criterio
+    de aceite da card, deixaria de disparar. O preco e este caso: quem pergunta
+    sobre PJ usando "falar com" vai para um humano. Erra na direcao barata,
+    porque quem pergunta assim provavelmente quer mesmo falar com alguem.
+    """
+    assert pediu_humano("posso falar com uma pessoa juridica sobre esse contrato?") is True
