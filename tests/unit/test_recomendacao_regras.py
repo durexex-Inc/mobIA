@@ -57,6 +57,16 @@ def test_busca_sem_criterio_diz_isso_em_vez_de_ficar_vazia() -> None:
     assert _motivo([]) == "sem filtro: o lead nao restringiu a busca"
 
 
+def test_o_motivo_e_ascii() -> None:
+    """Vai para o banco (coluna `motivo_match`) e pode ser lido em relatorio;
+    segue a disciplina do repo para texto que nao e prosa de docs. Fora da
+    fronteira da TEC-267 (texto que o LEAD le): isto e explicabilidade da
+    RN-10.3 para quem le o banco, nao mensagem de turno, e por isso continua
+    sem acento mesmo depois daquela task."""
+    assert _motivo(["3 quartos", "Trindade"]).isascii()
+    assert _motivo(["ate R$ 400.000"], relaxou_preco=True).isascii()
+
+
 def test_o_motivo_do_passe_relaxado_diz_que_o_criterio_foi_ampliado() -> None:
     """D5 pede a frase montada de "quais filtros bateram, E se houve
     relaxamento" -- e a segunda metade e o que separa um motivo verdadeiro de

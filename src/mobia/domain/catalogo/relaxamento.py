@@ -193,7 +193,7 @@ async def buscar_com_relaxamento(
         # Nada mudou: o `WHERE` do segundo passe seria byte a byte o do
         # primeiro, que ja voltou vazio. Pagariamos uma consulta contra o p95
         # de 400 ms da TEC-159 para carimbar `SEM_RESULTADO` no mesmo zero, e
-        # o turno diria ao lead que "procurou tambem um pouco alem" de um
+        # o turno diria ao lead que "procurou também um pouco além" de um
         # criterio que nao se mexeu. Depois do try/except de proposito:
         # adjacencia indisponivel sem teto nem piso e um dos jeitos de chegar
         # aqui.

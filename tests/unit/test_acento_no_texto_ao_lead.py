@@ -10,12 +10,15 @@ aqui tem a assimetria oposta: uma palavra faltando na lista so deixa de pegar
 um caso, nunca reprova um caso correto.
 
 **Esta guarda cobre CONSTANTES DE MODULO, e nao todo texto que o lead le.**
-Os rotulos da ficha de imovel -- "Condominio", "Destaque:", "Aluguel
-estimado" e o "/mes" do bloco do investidor -- sao a mensagem mais visivel
-do produto e ficam de fora de proposito: eles nascem de f-strings montados
-em tempo de execucao dentro de `_linhas_da_rentabilidade` e `legenda_de`
-(`apresentacao.py`), nao de constantes `TEXTO_...` importaveis, e cobri-los
-aqui exigiria renderizar uma ficha dentro deste arquivo -- duplicando o que
+Os rotulos da ficha de imovel -- "Condomínio", "Destaque:" e o "/mês" do
+bloco do investidor -- sao a mensagem mais visivel do produto e ficam de
+fora de proposito: eles nascem de f-strings montados em tempo de execucao
+dentro de `_linhas_da_rentabilidade` e `legenda_de` (`apresentacao.py`), nao
+de constantes `TEXTO_...` importaveis. "Aluguel estimado: não informado" e
+excecao dentro da excecao -- e a constante de modulo `_ALUGUEL_AUSENTE`
+(mesmo arquivo), e fica de fora por ser **privada** (`_nome`), nao por
+nascer de f-string. Cobrir qualquer um deles aqui exigiria renderizar uma
+ficha dentro deste arquivo -- duplicando o que
 `tests/unit/test_apresentacao.py` ja faz com snapshots exatos, e criando
 duas fontes para a mesma verificacao. Nao e lacuna teorica: uma sabotagem
 que tirou o acento de "/mês" em `apresentacao.py` nao fez esta guarda
@@ -69,11 +72,16 @@ from mobia.workers.jobs.process_message import TEXTO_DO_AVISO_DE_ERRO
 # com "area" -- e ambas reprovariam texto certo o tempo todo, exatamente o
 # erro que esta guarda existe para nao cometer.
 #
-# "inclui" e a forma de maior risco da lista: precisa NAO casar em "inclui"
-# (a forma certa, com acento no i). Confirmado -- `\binclui\b` compara
-# ASCII "inclui" contra a string real, que tem "incluí", e o "i" final
-# sem acento nao e o mesmo caractere que o "i" com acento, entao nao ha
-# match.
+# "inclui" NAO esta na lista, e de proposito. A analise antiga so checava
+# se `\binclui\b` colidia com "incluí" (nao colide -- "i" e "í" sao
+# codepoints diferentes) e chamava isso de seguranca. Mas a colisao
+# perigosa nunca foi com a forma acentuada: e que "inclui" tambem e
+# portugues correto sem acento nenhum, terceira pessoa do presente de
+# "incluir" ("a busca inclui bairros vizinhos"). Um literal futuro como
+# "Isso ja inclui o condominio.", com acentuacao impecavel, seria
+# reprovado por esta guarda -- exatamente o erro que ela existe para nao
+# cometer. A perda desta forma e alinhada ao principio: a guarda erra por
+# falta, nunca por sobra.
 FORMAS_SEM_ACENTO = (
     "voce",
     "nao",
@@ -98,7 +106,6 @@ FORMAS_SEM_ACENTO = (
     "area",
     "imobiliaria",
     "entao",
-    "inclui",
 )
 
 LITERAIS_AO_LEAD = (

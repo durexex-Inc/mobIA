@@ -471,7 +471,7 @@ Acrescente ao parágrafo, **em português sem acento** (é docstring):
 
 ```
     **A moldura tem acento e o nome nao** (TEC-267, L2): o lead le "Tirei
-    Aclimacao da busca, que voce ja descartou". Restaurar a forma de exibicao
+    Aclimacao da busca, que você já descartou". Restaurar a forma de exibicao
     exigiria carrega-la ao lado da chave dobrada por toda a cadeia de
     recomendacao, ou consultar o catalogo aqui dentro -- as duas
     desproporcionais, e a segunda errada. Lacuna declarada, nao esquecimento.

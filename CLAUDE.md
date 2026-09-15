@@ -83,10 +83,10 @@ A segunda execução não é ritual de rotina — é ferramenta de diagnóstico,
 ## Acentos: onde sim, onde não
 
 - **Texto que o lead recebe: português COM acento** (TEC-267). Vale para todo literal que chega ao lead — a ficha de imóvel, os avisos, os fallbacks. A razão é que o modelo já escreve acentuado e nada normaliza a saída dele: manter os literais sem acento não produzia uniformidade, produzia metade da conversa com cara de descuido. **Prompt de sistema não conta** — é instrução para o modelo, não texto de produto, e continua sem acento.
-- **Comentários e docstrings em `src/` e `tests/`: português SEM acento.** Convenção do repo, não checada por linter nenhum — é responsabilidade de quem escreve. Nenhum linter checa esta fronteira nem a de cima.
+- **Comentários e docstrings em `src/` e `tests/`: português SEM acento** (exceto valor citado — ver abaixo). Convenção do repo, não checada por linter nenhum — é responsabilidade de quem escreve. Nenhum linter checa esta fronteira nem a de cima.
 - **Prosa em `docs/`, `README.md` e este arquivo: com acento**, normalmente.
 - **Acento DENTRO de padrão regex é correto e intencional** — `milhões|milhão` em `domain/agente/dinheiro.py` existe porque leads digitam acento. Não "corrija".
-- **Valor citado dentro de comentário não segue a convenção do comentário — segue o valor.** Uma docstring que escreve entre crases o que o lead vê na tela (`` `não informado` ``, `` `Condomínio` ``) tem de bater com o literal, mesmo estando num comentário que por convenção não leva acento. A regra sem acento é sobre a **prosa**; a citação é sobre o **produto**, e uma citação que não bate mente sobre o que o usuário recebe. A TEC-267 achou três dessas depois de já ter varrido o repo três vezes.
+- **Valor citado dentro de comentário não segue a convenção do comentário — segue o valor, qualquer que seja o delimitador.** Uma docstring pode citar o que o lead vê entre crases (`` `Condomínio` ``), entre aspas duplas ("Condomínio") ou sem delimitador nenhum — o delimitador é irrelevante, o que importa é estar citando um valor real. A citação tem de bater com o literal, mesmo estando num comentário que por convenção não leva acento: a regra sem acento é sobre a **prosa**; a citação é sobre o **produto**, e uma citação que não bate mente sobre o que o usuário recebe. A TEC-267 achou mais de dez sítios assim, espalhados pelas três convenções, depois de já ter varrido o repo três vezes.
 
 ## O orçamento do prompt é apertado e tem ritual
 

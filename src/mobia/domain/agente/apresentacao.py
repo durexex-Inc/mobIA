@@ -6,7 +6,7 @@ o unico arquivo em que `domain/agente` toca `domain/catalogo` -- a invariante
 esta no docstring dele, e quebra-la aqui a tornaria invisivel.
 
 Todo texto daqui sai para o lead e por isso leva acento (TEC-267), com a
-excecao de `m2`: nao ha vogal ali para acentuar, e trocar por `m2`
+excecao de `m2`: nao ha vogal ali para acentuar, e trocar por `m²`
 sobrescrito e mudanca de outra natureza. E a mesma disciplina de
 `TEXTO_DA_BUSCA_INCONCLUSIVA` em `turno.py`, tambem acentuado desde a
 TEC-267.
