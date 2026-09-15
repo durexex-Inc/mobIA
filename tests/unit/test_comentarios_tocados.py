@@ -483,3 +483,16 @@ def test_citacao_ambigua_alem_do_fim_sai_como_prosa_e_nao_falso() -> None:
         _tamanhos({"a/repositorio.py": 300, "b/repositorio.py": 1000}),
     )
     assert marca == "PROSA"
+
+
+def test_arquivo_intocado_vence_a_faixa_alem_do_fim() -> None:
+    """A ordem das duas checagens em `classificar`, fixada por teste.
+
+    Candidato unico, faixa que estoura o arquivo, mas arquivo que a branch nao
+    tocou: o certo e None. Invertendo as duas checagens, sairia FALSO para
+    arquivo intocado -- e a ferramenta afirmaria coisa sobre codigo que esta
+    branch nao mexeu. O CLAUDE.md registra na TEC-146 o preco de ordem de
+    checagem sem rede.
+    """
+    marca = classificar(["a/turno.py"], 900, {"outro.py"}, _tamanhos({"a/turno.py": 300}))
+    assert marca is None
