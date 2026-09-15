@@ -29,7 +29,7 @@
 
 **Files:**
 - Modify: `src/mobia/domain/agente/identificacao.py`, `src/mobia/domain/agente/turno.py`, `src/mobia/domain/moderacao/port.py`, `src/mobia/domain/notificacao/envio.py`, `src/mobia/domain/followup/mensagem.py`, `src/mobia/workers/jobs/process_message.py`
-- Test: `tests/unit/test_recomendacao_regras.py`, `tests/integration/test_apresentacao_no_turno.py`
+- Test: `tests/unit/test_recomendacao_regras.py`, `tests/integration/test_apresentacao_no_turno.py`, `tests/unit/test_relaxamento_alargar.py`, `tests/unit/test_mensagem_do_followup.py`
 
 **Interfaces:**
 - Produces: os mesmos nomes de constante, com valores acentuados. Nada consome estrutura nova.
@@ -136,7 +136,10 @@ TEXTO_DO_AVISO_DE_ERRO = (
 - [ ] **Step 2: Rodar e ver o que quebra**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/unit -q --tb=short`
-Expected: FAIL em `tests/unit/test_recomendacao_regras.py` (4 asserções sobre `TEXTO_DO_FILTRO_AJUSTADO`). **Se quebrar em mais lugares que os previstos aqui e no Step 3, pare e me diga** — a medição do desenho previu exatamente cinco arquivos de teste, e um sexto significaria que ela errou.
+
+Expected: FAIL em quatro arquivos, e os Steps 3 e 3b cobrem os quatro — `test_recomendacao_regras.py` (literais duplicados **e** asserções ASCII), `test_relaxamento_alargar.py` e `test_mensagem_do_followup.py` (asserções ASCII), mais `test_apresentacao_no_turno.py` na integração.
+
+> **Se quebrar um quinto arquivo, pare e reporte.** O levantamento original desta card errou uma vez — previu dois arquivos onde eram quatro, porque procurou literal duplicado e não viu asserção sobre propriedade. Um quinto significaria que ele errou de novo, e eu preciso saber antes da Task 2.
 
 - [ ] **Step 3: Corrigir os literais duplicados**
 
