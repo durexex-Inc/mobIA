@@ -16,6 +16,7 @@ from scripts.comentarios_tocados import (
     _blocos,
     _comentarios,
     _docstrings,
+    citacoes_do_texto,
     examinar,
     limitar,
 )
@@ -333,3 +334,43 @@ def test_teto_zero_desliga_o_corte() -> None:
     ficam, omitidos = limitar(achados, teto=0)
     assert len(ficam) == 50
     assert omitidos == {}
+
+
+def test_citacao_reconhece_linha_unica_e_faixa() -> None:
+    """As duas formas que a prosa deste repo usa, medidas na TEC-282.
+
+    Faixa devolve inicio e fim distintos; linha unica devolve os dois iguais,
+    para o resto do codigo nao precisar de dois caminhos.
+    """
+    texto = "olha `tests/conftest.py:464` e tambem turno.py:132-142 aqui"
+    assert citacoes_do_texto(texto) == [
+        (1, "tests/conftest.py", 464, 464),
+        (1, "turno.py", 132, 142),
+    ]
+
+
+def test_citacao_nao_casa_no_meio_de_um_caminho() -> None:
+    """O lookbehind existe para o alvo sair inteiro, nao pela metade.
+
+    Sem ele `src/mobia/turno.py:10` poderia casar comecando em `mobia/`, e a
+    resolucao receberia um caminho que nao existe.
+    """
+    assert citacoes_do_texto("src/mobia/turno.py:10") == [(1, "src/mobia/turno.py", 10, 10)]
+
+
+def test_citacao_ignora_o_que_nao_e_citacao() -> None:
+    """Extensao vizinha e link com `#L` nao sao a forma `arquivo.py:linha`.
+
+    O link markdown deste repo traz o texto visivel `turno.py:508` junto, e e
+    ele que casa -- o alvo do link nao precisa casar tambem, sob pena de o
+    mesmo ponto virar dois achados.
+    """
+    assert citacoes_do_texto("nada.pyc:12 nem x.py sozinho") == []
+    assert citacoes_do_texto("[`turno.py:508`](../src/turno.py#L508)") == [
+        (1, "turno.py", 508, 508)
+    ]
+
+
+def test_citacao_informa_a_linha_do_documento() -> None:
+    """A linha e a do .md, nao a citada -- e por ela que o revisor abre o texto."""
+    assert citacoes_do_texto("primeira\nsegunda\nveja turno.py:50") == [(3, "turno.py", 50, 50)]

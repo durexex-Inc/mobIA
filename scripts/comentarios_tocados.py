@@ -45,6 +45,18 @@ from pathlib import Path
 # ficaram, e e contra o arquivo atual que os comentarios sao localizados.
 _CABECALHO = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
+# `arquivo.py:12` e `arquivo.py:12-34`, com ou sem caminho antes do nome.
+#
+# O lookbehind existe para o alvo sair inteiro: sem ele o motor casaria
+# `mobia/turno.py:10` dentro de `src/mobia/turno.py:10`, e a resolucao
+# receberia um caminho que nao existe em lugar nenhum.
+#
+# Exige `:` colado no `.py`, o que descarta de graca `.pyc`, `.pyi` e o
+# `arquivo.py#L508` dos links markdown -- este ultimo importa, porque o link
+# deste repo traz o texto visivel `turno.py:508` junto, e casar os dois faria
+# um ponto so virar dois achados.
+_CITACAO = re.compile(r"(?<![\w/.-])((?:[\w./-]+/)?[\w-]+\.py):(\d+)(?:-(\d+))?")
+
 # O teto de VIZINHOS impressos por bloco na saida padrao.
 #
 # Medido na TEC-277 sobre 19 branches ja mergeadas (PRs #87 a #108): a saida
@@ -176,6 +188,22 @@ def _blocos(arvore: ast.AST) -> list[tuple[int, int, str]]:
         if isinstance(no, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             faixas.append((no.lineno, no.end_lineno or no.lineno, no.name))
     return faixas
+
+
+def citacoes_do_texto(texto: str) -> list[tuple[int, str, int, int]]:
+    """Cada citacao como (linha do documento, alvo cru, primeira, ultima).
+
+    A linha e a do documento, nao a citada: e por ela que quem revisa abre o
+    .md para reconferir. Linha unica devolve `inicio == fim` para o resto do
+    codigo nao precisar de dois caminhos.
+    """
+    achados = []
+    for numero, linha in enumerate(texto.splitlines(), 1):
+        for casa in _CITACAO.finditer(linha):
+            inicio = int(casa.group(2))
+            fim = int(casa.group(3)) if casa.group(3) is not None else inicio
+            achados.append((numero, casa.group(1), inicio, fim))
+    return achados
 
 
 def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
