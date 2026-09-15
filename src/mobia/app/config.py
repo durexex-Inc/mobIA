@@ -345,6 +345,25 @@ class Settings(BaseSettings):
     # volta dele virar um erro silencioso de uma hora em todo disparo.
     followup_fuso: str = "America/Sao_Paulo"
 
+    # RN-16.1 (TEC-143): a janela em que existe gente para atender, em horas
+    # locais do `followup_fuso` acima -- mesmo fuso, reaproveitado, e nao um
+    # terceiro campo `atendimento_fuso`. Fora dela o handoff e criado do mesmo
+    # jeito -- so o texto que o lead recebe muda (`TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO`
+    # em `domain/humano/deteccao.py`), porque a card e explicita em que ele
+    # nunca fica em espera silenciosa.
+    #
+    # Janela da imobiliaria, e nao a jornada do corretor designado: no instante
+    # do pedido ninguem foi designado ainda, e a alocacao por especialidade e
+    # regiao e outra card (TEC-166). Uma janela unica responde "quando alguem
+    # te atende" sem precisar saber quem.
+    #
+    # Mesma convencao de borda que `followup_horario_fim` documenta acima --
+    # `fim` e o ultimo MINUTO em que a janela ainda vale, nao a ultima hora
+    # inteira: `atendimento_horario_fim=18` inclui 18:00 e recusa 18:01. Ver
+    # `dentro_da_janela_de_atendimento` para a comparacao.
+    atendimento_horario_inicio: int = 9
+    atendimento_horario_fim: int = 18
+
     @property
     def em_producao(self) -> bool:
         """O unico lugar que decide o que "producao" quer dizer.

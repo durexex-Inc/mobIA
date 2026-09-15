@@ -5,9 +5,11 @@ pode depender de um provedor estar de pe, pelo mesmo motivo que a de opt-out
 nao pode -- ver `domain/optout/deteccao.py`.
 """
 
+from datetime import UTC, datetime
+
 import pytest
 
-from mobia.domain.humano.deteccao import pediu_humano
+from mobia.domain.humano.deteccao import dentro_da_janela_de_atendimento, pediu_humano
 
 
 @pytest.mark.parametrize(
@@ -117,3 +119,30 @@ def test_falar_com_uma_pessoa_juridica_dispara_e_isso_e_aceito() -> None:
     porque quem pergunta assim provavelmente quer mesmo falar com alguem.
     """
     assert pediu_humano("posso falar com uma pessoa juridica sobre esse contrato?") is True
+
+
+# `America/Sao_Paulo` e UTC-3 sem horario de verao desde 2019 (Brasil aboliu a
+# troca), entao todo horario abaixo e o UTC do teste menos 3h -- conferido
+# rodando, nao presumido. O default da janela e 9-18.
+def test_a_janela_inclui_a_hora_de_abertura() -> None:
+    """9h em ponto ja e atendimento, com o default de inicio 9."""
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 12, 0, tzinfo=UTC)) is True
+
+
+def test_fora_da_janela_de_madrugada() -> None:
+    """As 23h de uma terca -- o cenario Gherkin da card."""
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 16, 2, 0, tzinfo=UTC)) is False
+
+
+def test_a_janela_inclui_a_hora_de_fechamento() -> None:
+    """18h em ponto ainda e atendimento -- fim e o ultimo MINUTO valido, nao a ultima hora.
+
+    Mesma convencao de `followup_horario_fim`/`horario_permite_envio`: a borda
+    de fim e inclusiva. 18:00 local = 21:00 UTC.
+    """
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 21, 0, tzinfo=UTC)) is True
+
+
+def test_um_minuto_apos_o_fechamento_ja_e_fora() -> None:
+    """18:01 local = 21:01 UTC recusa, e e essa recusa que a borda inclusiva de fim admite."""
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 21, 1, tzinfo=UTC)) is False
