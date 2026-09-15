@@ -449,6 +449,14 @@ Acrescente um marcador **antes** dele, porque é a regra mais visível para o pr
 
 E ao primeiro marcador existente, acrescente ao fim: `Nenhum linter checa esta fronteira nem a de cima.`
 
+Acrescente também um quarto marcador, com a sub-regra que esta card descobriu na marra:
+
+```markdown
+- **Valor citado dentro de comentário não segue a convenção do comentário — segue o valor.** Uma docstring que escreve entre crases o que o lead vê na tela (`` `não informado` ``, `` `Condomínio` ``) tem de bater com o literal, mesmo estando num comentário que por convenção não leva acento. A regra sem acento é sobre a **prosa**; a citação é sobre o **produto**, e uma citação que não bate mente sobre o que o usuário recebe. A TEC-267 achou três dessas depois de já ter varrido o repo três vezes.
+```
+
+> Esta sub-regra é a que ninguém infere sozinho, e é a que mais custou nesta card: sem ela, a próxima pessoa "corrige" a citação de volta para sem acento achando que está seguindo a convenção.
+
 - [ ] **Step 2: A docstring de `aviso_de_ajuste`**
 
 Em `src/mobia/domain/agente/turno.py`, a docstring afirma:
