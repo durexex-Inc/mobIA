@@ -77,6 +77,22 @@ _CITACAO = re.compile(r"(?<![\w/.-])((?:[\w./-]+/)?[\w-]+\.py):(\d+)(?:-(\d+))?"
 # funcao existir, esta saida vive de teto -- ver a L1 do desenho.
 MAXIMO_DE_VIZINHOS_POR_BLOCO = 5
 
+# O teto de citacoes impressas por documento na saida padrao.
+#
+# Constante propria, e nao o MAXIMO_DE_VIZINHOS_POR_BLOCO acima, porque sao
+# dois cortes diferentes: aquele limita vizinhanca dentro de um def, este
+# limita citacoes dentro de um .md. Reutilizar aquele nome o faria mentir
+# sobre o que limita, e este repo trata nome que mente como defeito.
+#
+# **O valor foi herdado da TEC-277, nao calibrado.** Medido na TEC-282 sobre
+# os 11 merges mais recentes, ele quase nunca morde: mediana de 9 citacoes
+# espalhadas por ate 8 documentos da 1 a 3 por documento, e o maximo observado
+# (25 em 8 documentos) tambem passa longe. Ele existe como rede contra o
+# documento que venha a concentrar citacoes, nao como corte rotineiro -- se um
+# dia a secao ficar longa, a calibracao e dele, e a medicao acima e o ponto de
+# partida.
+MAXIMO_DE_CITACOES_POR_DOCUMENTO = 5
+
 
 @dataclass(frozen=True)
 class Achado:
@@ -403,6 +419,29 @@ def limitar(achados: list[Achado], *, teto: int) -> tuple[list[Achado], dict[str
             omitidos[bloco] = sobrando
 
     return sorted(ficam, key=lambda a: a.linha), omitidos
+
+
+def limitar_citacoes(citacoes: list[Citacao], *, teto: int) -> tuple[list[Citacao], int]:
+    """As citacoes que ficam neste documento, e quantas ficaram de fora.
+
+    So `PROSA` e cortada. `FALSO` e `NOMEIA` escapam pela mesma razao que
+    `ALTERADO` escapa em `limitar`: o teto existe contra ruido de vizinhanca e
+    nenhuma das duas e vizinhanca. Um `FALSO` cortado seria a ferramenta
+    escondendo a unica coisa que ela sabe com certeza estar errada.
+
+    `teto` de 0 desliga o corte -- e assim que `--tudo` e implementado, pelo
+    mesmo caminho que `limitar` usa, sem um ramo separado que possa divergir.
+
+    Ordena por linha do documento, que e a unica ordem estavel disponivel: ao
+    contrario de `VIZINHO`, uma citacao nao tem distancia ate a alteracao.
+    """
+    ordenadas = sorted(citacoes, key=lambda c: c.linha)
+    if teto <= 0:
+        return ordenadas, 0
+    ficam = [c for c in ordenadas if c.marca != "PROSA"]
+    prosa = [c for c in ordenadas if c.marca == "PROSA"]
+    ficam.extend(prosa[:teto])
+    return sorted(ficam, key=lambda c: c.linha), max(len(prosa) - teto, 0)
 
 
 def main() -> int:

@@ -12,8 +12,10 @@ from pathlib import Path
 
 import scripts.comentarios_tocados as ferramenta
 from scripts.comentarios_tocados import (
+    MAXIMO_DE_CITACOES_POR_DOCUMENTO,
     MAXIMO_DE_VIZINHOS_POR_BLOCO,
     Achado,
+    Citacao,
     _blocos,
     _comentarios,
     _docstrings,
@@ -21,6 +23,7 @@ from scripts.comentarios_tocados import (
     classificar,
     examinar,
     limitar,
+    limitar_citacoes,
     resolver,
     scripts_nomeados,
 )
@@ -550,3 +553,48 @@ def test_nomeia_tolera_mencao_que_nao_descreve_o_script() -> None:
     """
     texto = "o `ruff format --check` reprovou `gerar_base_simulada.py` de primeira"
     assert scripts_nomeados(texto, {"gerar_base_simulada.py"}) == [(1, "gerar_base_simulada.py")]
+
+
+def _prosa(linha: int, marca: str = "PROSA") -> Citacao:
+    return Citacao(documento="d.md", linha=linha, texto="x.py:1", marca=marca)
+
+
+def test_documento_abaixo_do_teto_passa_inteiro() -> None:
+    citacoes = [_prosa(n) for n in range(1, MAXIMO_DE_CITACOES_POR_DOCUMENTO + 1)]
+    ficam, omitidas = limitar_citacoes(citacoes, teto=MAXIMO_DE_CITACOES_POR_DOCUMENTO)
+    assert len(ficam) == MAXIMO_DE_CITACOES_POR_DOCUMENTO
+    assert omitidas == 0
+
+
+def test_o_teto_corta_prosa_e_conta_o_que_omitiu() -> None:
+    citacoes = [_prosa(n) for n in range(1, 10)]
+    ficam, omitidas = limitar_citacoes(citacoes, teto=5)
+    assert [c.linha for c in ficam] == [1, 2, 3, 4, 5]
+    assert omitidas == 4
+
+
+def test_falso_e_nomeia_escapam_do_teto() -> None:
+    """Pela mesma razao que ALTERADO escapa: o teto existe contra vizinhanca.
+
+    Um FALSO cortado seria a ferramenta escondendo a unica coisa que ela sabe
+    com certeza estar errada.
+    """
+    citacoes = [_prosa(n) for n in range(1, 10)]
+    citacoes.append(_prosa(20, marca="FALSO"))
+    citacoes.append(_prosa(21, marca="NOMEIA"))
+    ficam, omitidas = limitar_citacoes(citacoes, teto=2)
+    assert [c.linha for c in ficam] == [1, 2, 20, 21]
+    assert omitidas == 7
+
+
+def test_teto_zero_desliga_o_corte_das_citacoes() -> None:
+    """E assim que --tudo e implementado, sem caminho separado que possa divergir."""
+    citacoes = [_prosa(n) for n in range(1, 10)]
+    ficam, omitidas = limitar_citacoes(citacoes, teto=0)
+    assert len(ficam) == 9
+    assert omitidas == 0
+
+
+def test_as_citacoes_saem_em_ordem_de_linha_do_documento() -> None:
+    ficam, _ = limitar_citacoes([_prosa(9), _prosa(2), _prosa(5)], teto=0)
+    assert [c.linha for c in ficam] == [2, 5, 9]
