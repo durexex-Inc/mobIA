@@ -515,11 +515,12 @@ def main() -> int:
     analisador.add_argument(
         "--tudo",
         action="store_true",
-        help="imprime todos os vizinhos, sem o teto por bloco",
+        help="imprime todos os vizinhos e todas as citacoes, sem teto",
     )
     argumentos = analisador.parse_args()
     base = argumentos.base
     teto = 0 if argumentos.tudo else MAXIMO_DE_VIZINHOS_POR_BLOCO
+    teto_da_prosa = 0 if argumentos.tudo else MAXIMO_DE_CITACOES_POR_DOCUMENTO
     por_arquivo = linhas_alteradas(base)
 
     if pendentes := _pendentes_fora_do_commit():
@@ -555,13 +556,67 @@ def main() -> int:
                 f"  ... +{quantos} vizinho(s) em {bloco}, os mais distantes omitidos -- use --tudo"
             )
 
-    if not alterados and not vizinhos:
-        print(f"Nenhum comentario ou docstring a reconferir em relacao a {base}.")
+    em_prosa = falsas = 0
+    alterados_como_texto = {str(caminho).replace("\\", "/") for caminho in por_arquivo}
+    scripts_alterados = {
+        caminho.rsplit("/", 1)[-1]
+        for caminho in alterados_como_texto
+        if caminho.startswith("scripts/")
+    }
+    arquivos_py = _arquivos_versionados()
+    tamanhos: dict[str, int] = {}
+
+    def tamanho_de(caminho: str) -> int:
+        # Memorizado porque um documento pode citar o mesmo arquivo dezenas de
+        # vezes, e cada citacao perguntaria o tamanho de novo.
+        if caminho not in tamanhos:
+            try:
+                tamanhos[caminho] = len(Path(caminho).read_text(encoding="utf-8").splitlines())
+            except OSError:
+                tamanhos[caminho] = 0
+        return tamanhos[caminho]
+
+    for documento in _documentos_no_escopo():
+        try:
+            texto = Path(documento).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        citacoes = examinar_prosa(
+            documento,
+            texto,
+            arquivos_py,
+            alterados_como_texto,
+            scripts_alterados,
+            tamanho_de,
+        )
+        if not citacoes:
+            continue
+        ficam, omitidas = limitar_citacoes(citacoes, teto=teto_da_prosa)
+        print(f"\n{documento}")
+        for citacao in ficam:
+            destino = f"  -> {citacao.destino}" if citacao.destino else ""
+            print(f"  {citacao.marca:<6} :{citacao.linha}  {citacao.texto}{destino}")
+            if citacao.marca == "FALSO":
+                falsas += 1
+            else:
+                em_prosa += 1
+        if omitidas:
+            # Conta o que EXISTE, nao o que coube na tela -- mesma regra do
+            # resumo de vizinhos, pelo mesmo motivo.
+            em_prosa += omitidas
+            print(f"  ... +{omitidas} citacao(oes) omitida(s) -- use --tudo")
+
+    if not alterados and not vizinhos and not em_prosa and not falsas:
+        print(f"Nenhum comentario, docstring ou prosa a reconferir em relacao a {base}.")
         return 0
 
+    resumo = f"\n{alterados} alterado(s) nesta branch, {vizinhos} vizinho(s) de codigo que mudou"
+    if em_prosa or falsas:
+        resumo += f", {em_prosa + falsas} em prosa ({falsas} comprovadamente falsa(s))"
     print(
-        f"\n{alterados} alterado(s) nesta branch, {vizinhos} vizinho(s) de codigo que mudou.\n"
-        "VIZINHO e o que nao aparece no diff: confira se ainda descreve o codigo."
+        f"{resumo}.\n"
+        "VIZINHO e o que nao aparece no diff: confira se ainda descreve o codigo.\n"
+        "PROSA e suspeita e FALSO e certeza: a citacao aponta alem do fim do arquivo."
     )
     # Sempre 0: este script informa, nao reprova. Virar gate exigiria decidir
     # automaticamente se um comentario esta certo, que e o julgamento que ele

@@ -678,3 +678,55 @@ def test_o_escopo_exclui_planos_e_inclui_o_claude_md(monkeypatch) -> None:
         lambda *a: "CLAUDE.md\ndocs/superpowers/plans/x.md\ndocs/superpowers/specs/y.md\n",
     )
     assert ferramenta._documentos_no_escopo() == ["CLAUDE.md", "docs/superpowers/specs/y.md"]
+
+
+def test_main_imprime_a_secao_de_prosa(monkeypatch, capsys, tmp_path) -> None:
+    """O caminho inteiro, de ponta a ponta, com git e disco falsos."""
+    alvo = tmp_path / "turno.py"
+    alvo.write_text("x = 1\n" * 300, encoding="utf-8")
+    documento = tmp_path / "CLAUDE.md"
+    documento.write_text("o corte em turno.py:50 explica tudo\n", encoding="utf-8")
+
+    def _git(*argumentos: str) -> str:
+        if argumentos[0] == "diff":
+            return "+++ b/turno.py\n@@ -1 +40,3 @@\n"
+        if argumentos[:2] == ("ls-files", "*.md"):
+            return "CLAUDE.md\n"
+        if argumentos[:2] == ("ls-files", "*.py"):
+            return "turno.py\n"
+        return ""
+
+    monkeypatch.setattr(ferramenta, "_rodar", _git)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["comentarios_tocados.py"])
+
+    assert ferramenta.main() == 0
+    saida = capsys.readouterr().out
+    assert "CLAUDE.md" in saida
+    assert "PROSA" in saida
+    assert "turno.py:50" in saida
+    assert "1 em prosa" in saida
+
+
+def test_main_continua_devolvendo_zero_com_prosa_falsa(monkeypatch, capsys, tmp_path) -> None:
+    """A ferramenta informa e nao reprova, e a marca FALSO nao muda isso."""
+    (tmp_path / "turno.py").write_text("x = 1\n" * 10, encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("veja turno.py:900\n", encoding="utf-8")
+
+    def _git(*argumentos: str) -> str:
+        if argumentos[0] == "diff":
+            return "+++ b/turno.py\n@@ -1 +5,1 @@\n"
+        if argumentos[:2] == ("ls-files", "*.md"):
+            return "CLAUDE.md\n"
+        if argumentos[:2] == ("ls-files", "*.py"):
+            return "turno.py\n"
+        return ""
+
+    monkeypatch.setattr(ferramenta, "_rodar", _git)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["comentarios_tocados.py"])
+
+    assert ferramenta.main() == 0
+    saida = capsys.readouterr().out
+    assert "FALSO" in saida
+    assert "comprovadamente falsa" in saida
