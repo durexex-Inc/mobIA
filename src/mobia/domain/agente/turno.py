@@ -903,8 +903,12 @@ async def executar_turno(
         # `esta_silenciada_por_mensagem`, que le `AtendimentoHumano`
         # (corretor ASSUMIU, `atendimento/repositorio.py`); o
         # `registrar_handoff` acima grava em `Handoff` (a fila, RN-16.1), uma
-        # tabela diferente. O aviso do PRIMEIRO pedido so seria barrado se um
-        # corretor JA tivesse assumido a conversa antes deste turno -- nesse
+        # tabela diferente. Um corretor assumido ANTES deste turno ja teria
+        # barrado na guarda de silencio do topo (`tem_handoff_de_humano_aberto`/
+        # `esta_silenciada`, algumas linhas acima) -- nem `registrar_handoff`
+        # nem este envio chegam a rodar, e nenhum handoff nasce. O aviso do
+        # PRIMEIRO pedido so seria barrado por um corretor que assumiu a
+        # conversa entre a checagem do topo deste turno e este envio -- nesse
         # caso o bloqueio e correto (ha gente cuidando de verdade) e o
         # desfecho vira "bloqueado_por_atendimento_humano" abaixo, nao
         # "pedido_de_humano". O mesmo vale para o recheque em

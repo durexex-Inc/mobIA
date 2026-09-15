@@ -11,7 +11,10 @@ from mobia.domain.agente import turno as turno_mod
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff, tem_handoff_de_humano_aberto
 from mobia.domain.handoff.vocabulario import Gatilho, Prioridade
-from mobia.domain.humano.deteccao import TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO
+from mobia.domain.humano.deteccao import (
+    TEXTO_DO_PEDIDO_DE_HUMANO,
+    TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO,
+)
 from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.optout.repositorio import esta_em_optout
@@ -151,6 +154,18 @@ async def test_pedido_de_humano_cria_handoff_alta_e_nao_chama_o_modelo(
     assert classificador.chamadas == 0
     assert resultado == "pedido_de_humano"
     assert outbound.entregues != [], "o aviso tem de sair"
+    # Fecha a simetria com o teste de fora do horario: aquele confere o texto
+    # da outra metade do if/else. Sem esta assercao uma inversao das duas
+    # branches passaria despercebida -- "algo foi entregue" e verdade nos dois
+    # casos.
+    assert TEXTO_DO_PEDIDO_DE_HUMANO in outbound.entregues[-1]
+    assert (
+        TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO.format(
+            inicio=get_settings().atendimento_horario_inicio,
+            fim=get_settings().atendimento_horario_fim,
+        )
+        not in outbound.entregues[-1]
+    )
 
 
 async def test_optout_na_mesma_mensagem_vence_o_pedido_de_humano(
