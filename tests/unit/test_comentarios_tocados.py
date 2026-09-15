@@ -652,6 +652,24 @@ def test_examinar_prosa_nao_marca_nada_sem_script_alterado() -> None:
     assert achados == []
 
 
+def test_examinar_prosa_reproduz_a_faixa_como_o_documento_a_escreveu() -> None:
+    """A saida tem de ser encontravel no .md que ela manda reconferir.
+
+    Mostrar so o fim de `turno.py:132-142` daria `turno.py:142`, string que nao
+    existe no documento -- e quem fosse procura-la nao acharia nada. Medido na
+    TEC-282: 24 das 62 citacoes no escopo sao faixas.
+    """
+    achados = examinar_prosa(
+        "d.md",
+        "veja a/turno.py:132-142 aqui",
+        arquivos_py={"a/turno.py"},
+        alterados={"a/turno.py"},
+        scripts=set(),
+        tamanho_de=lambda c: 300,
+    )
+    assert [c.texto for c in achados] == ["a/turno.py:132-142"]
+
+
 def test_o_escopo_exclui_planos_e_inclui_o_claude_md(monkeypatch) -> None:
     """D1 do desenho: 70% do volume medido vinha de planos de branches fechadas."""
     monkeypatch.setattr(

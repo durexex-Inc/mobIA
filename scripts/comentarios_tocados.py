@@ -414,7 +414,7 @@ def examinar_prosa(
     disco nem de git. Quem le e o chamador.
     """
     achados = []
-    for linha, alvo, _, fim in citacoes_do_texto(texto):
+    for linha, alvo, inicio, fim in citacoes_do_texto(texto):
         candidatos = resolver(alvo, arquivos_py)
         marca = classificar(candidatos, fim, alterados, tamanho_de)
         if marca is None:
@@ -423,7 +423,11 @@ def examinar_prosa(
         # cru nao dizia. Repetir um caminho completo que o revisor acabou de
         # ler dois centimetros antes e ruido.
         destino = candidatos[0] if len(candidatos) == 1 and candidatos[0] != alvo else ""
-        achados.append(Citacao(documento, linha, f"{alvo}:{fim}", marca, destino))
+        # Reproduz a faixa como o documento a escreveu. Mostrar so o fim daria
+        # uma string que nao existe no .md, e quem fosse procura-la nao acharia
+        # nada -- a listagem estaria mentindo sobre o texto que manda reconferir.
+        citada = f"{inicio}-{fim}" if inicio != fim else f"{inicio}"
+        achados.append(Citacao(documento, linha, f"{alvo}:{citada}", marca, destino))
     for linha, nome in scripts_nomeados(texto, scripts):
         achados.append(Citacao(documento, linha, f"descreve scripts/{nome}", "NOMEIA"))
     return sorted(achados, key=lambda c: c.linha)
