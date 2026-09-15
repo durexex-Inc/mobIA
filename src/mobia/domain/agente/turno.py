@@ -173,6 +173,47 @@ TEXTO_DO_LIMITE_DE_PERGUNTAS = (
     "Pode deixar que ele entra em contato."
 )
 
+# RN-03.4 (TEC-137). Substituem a prosa do modelo quando a intencao e
+# VENDER_IMOVEL ou SUPORTE_CONTRATO -- duas conversas que nao sao trabalho de
+# SDR e que o `_GATILHO_DA_INTENCAO` ja manda para a fila humana desde a
+# TEC-174. O que faltava era o lead saber disso: ate aqui ele recebia a prosa
+# do modelo, que podia conter a pergunta de qualificacao de COMPRADOR que a
+# regra proibe.
+#
+# **Dois textos e nao um.** Quem quer vender um imovel e quem tem duvida sobre
+# contrato vigente vao para filas diferentes (`venda-imovel` e
+# `suporte-contrato` em ETIQUETA_DE), e a segunda pessoa JA e cliente. "Vou
+# passar para um corretor que te ajuda a encontrar" serviria mal a ela.
+#
+# **Nenhum dos dois promete que alguem foi avisado**, pela razao que o
+# comentario de TEXTO_DO_LIMITE_DE_PERGUNTAS acima ja registra e que
+# `notificacao/envio.py` proibe nominalmente: criar handoff nao notifica
+# ninguem enquanto TEC-280 e TEC-281 estiverem abertas. A TEC-174 escreveu
+# "ja avisei um corretor" e teve de reescrever; a TEC-143 reintroduziu a frase
+# e a revisao final a pegou. `test_textos_do_encaminhamento.py` guarda isso.
+#
+# Sem kind proprio, como TEXTO_DO_LIMITE_DE_PERGUNTAS: isto e substituicao em
+# lugar, nao mensagem adicional, entao nao ha segunda mensagem com que colidir
+# na UNIQUE (message_id, kind).
+TEXTO_DO_ENCAMINHAMENTO_DE_VENDA = (
+    "Que bom que pensou na gente para vender seu imóvel! Isso quem cuida é um "
+    "corretor da equipe, não eu — já coloquei sua conversa na fila deles."
+)
+
+TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE = (
+    "Dúvida de contrato é com a equipe, não comigo — já coloquei sua conversa "
+    "na fila deles para te responderem com segurança."
+)
+
+# Acrescentado aos dois textos acima quando o pedido chega fora da janela de
+# atendimento. As horas vem de `Settings`, e nao de um literal, porque o
+# Gherkin da card diz "das 9h as 19h" enquanto a janela real (TEC-143) e
+# 9h-18h: citar o numero da card faria o texto mentir sobre o que o sistema
+# faz. Ver a D3 do desenho.
+SUFIXO_FORA_DA_JANELA = (
+    " O atendimento é das {inicio}h às {fim}h, então a resposta vem no próximo horário."
+)
+
 # RN-09.3 / CA-09.3, e a regra "avisado ... e EM QUE" da card. TEC-160, D11.
 #
 # Tres variantes e nao uma constante: quando so o preco foi relaxado (o lead
