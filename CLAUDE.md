@@ -119,11 +119,11 @@ Não é retórica. Na TEC-146, um comentário em `_faixa_de` justificava a ordem
 ./.venv/Scripts/python.exe scripts/comentarios_tocados.py --tudo   # sem o teto
 ```
 
-Ela lista os comentários e docstrings que a branch precisa reconferir, em duas categorias. `ALTERADO` é o que mudou no diff. **`VIZINHO` é o que não mudou, mas está dentro de um `def`/`class` cujo código mudou** — e é essa a categoria que pega o defeito da TEC-146, porque um comentário que ninguém editou não aparece no diff e por isso ninguém o relê.
+Ela lista os comentários e docstrings que a branch precisa reconferir, em cinco marcas. As duas primeiras são sobre comentário dentro do código: `ALTERADO` é o que mudou no diff. **`VIZINHO` é o que não mudou, mas está dentro de um `def`/`class` cujo código mudou** — e é essa a categoria que pega o defeito da TEC-146, porque um comentário que ninguém editou não aparece no diff e por isso ninguém o relê.
 
 **Desde a TEC-282 a listagem também aponta a prosa.** `PROSA` é um `.md` versionado que cita `arquivo.py:linha` de um arquivo que a branch mexeu — suspeita, não veredito. `FALSO` é a citação que aponta além do fim do arquivo, a única marca que afirma em vez de suspeitar. `NOMEIA` é o documento que nomeia um script que a branch alterou, e existe por um caso concreto: o merge da TEC-277 tornou este arquivo falso na mesma hora, e ninguém notou por horas, porque `CLAUDE.md` não é `.py`.
 
-**Planos de implementação ficam de fora, de propósito.** Um plano registra o que se fez num dia; envelhecer é o esperado dele. Medido na TEC-282, incluí-los triplicaria o volume — a mediana por branch vai de 9 para 39 citações — sem apontar nada que ainda afirme algo sobre o código de hoje.
+**Planos de implementação ficam de fora, de propósito.** Um plano registra o que se fez num dia; envelhecer é o esperado dele. Medido na TEC-282, incluí-los levaria a mediana por branch de 9 para 39 citações — sem apontar nada que ainda afirme algo sobre o código de hoje.
 
 **A saída padrão não é completa, e isso é deliberado (TEC-277).** Ela mostra os cinco `VIZINHO` mais próximos do que mudou em cada bloco e resume o resto numa linha que nomeia o bloco e conta o que omitiu; `--tudo` devolve a listagem inteira. O motivo é medido: sem teto, a saída tinha mediana de **890 linhas** e chegava a 1928 — volume que treina quem lê a ignorar, que é o oposto do que a ferramenta existe para fazer. Com o teto, a mediana é **188**.
 
