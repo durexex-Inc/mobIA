@@ -52,7 +52,7 @@ class Rentabilidade:
     |---------|----------------|--------------------|----------|
     | tem     | tem            | valor E yield      | sim      |
     | tem     | nulo           | valor, sem yield   | sim      |
-    | nulo    | qualquer       | `nao informado`    | nao      |
+    | nulo    | qualquer       | `não informado`    | nao      |
 
     `custos_centavos` nao entra na tabela porque nao depende de nenhum dos
     dois: condominio e IPTU sao fato do catalogo, nao estimativa, e saem

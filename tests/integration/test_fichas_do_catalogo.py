@@ -161,7 +161,7 @@ async def test_imovel_sem_aluguel_ganha_rentabilidade_sem_numero(session: Any) -
     """O objeto EXISTE (e investidor) e o aluguel e None (o catalogo nao tem).
 
     Devolver `None` no lugar do objeto colapsaria os dois estados, e a ficha
-    nao teria como imprimir `Aluguel estimado: nao informado`.
+    nao teria como imprimir `Aluguel estimado: não informado`.
     """
     identificador = await _imovel(session, "AP-2003", preco_aluguel=None, iptu_mensal=32000)
 

@@ -119,7 +119,7 @@ def test_aluguel_zero_cai_na_linha_nao_informado_e_nao_leva_ressalva() -> None:
 
 
 def test_aluguel_sem_preco_de_venda_mostra_o_valor_sem_o_sufixo_do_yield() -> None:
-    """D2: trocar por `nao informado` seria negar um aluguel que esta no
+    """D2: trocar por `não informado` seria negar um aluguel que esta no
     catalogo -- a mentira do cenario 3 na direcao contraria. A ressalva sai,
     porque ha numero estimado."""
     so_aluguel = replace(
