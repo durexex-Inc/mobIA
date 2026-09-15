@@ -417,10 +417,21 @@ def test_resolver_devolve_vazio_para_arquivo_que_nao_existe() -> None:
     assert resolver("inventado.py", _PY) == []
 
 
-def test_resolver_nao_confunde_sufixo_parcial_de_nome() -> None:
-    """`no.py` nao e sufixo de caminho de `turno.py` -- a fronteira e a barra.
+def test_resolver_exige_fronteira_de_diretorio_no_sufixo() -> None:
+    """A barra na comparacao de sufixo, e o alvo que a exercita de verdade.
 
-    Sem a barra na comparacao, qualquer nome que termine igual casaria, e a
-    listagem apontaria arquivos que a prosa nunca citou.
+    `tout/repositorio.py` e um truncamento de `optout/repositorio.py`. Sem a
+    barra na comparacao, ele casaria; com ela, nao casa nada -- que e o certo,
+    porque `tout/` nao e diretorio nenhum.
+    """
+    assert resolver("tout/repositorio.py", _PY) == []
+    assert resolver("followup/repositorio.py", _PY) == ["src/mobia/domain/followup/repositorio.py"]
+
+
+def test_resolver_exige_nome_inteiro_no_terceiro_degrau() -> None:
+    """`no.py` nao casa com `turno.py`, e quem o impede e a igualdade de nome.
+
+    O alvo nao tem barra, entao o ramo de sufixo nem roda: a protecao aqui vem
+    do terceiro degrau comparar o nome inteiro, nao por sufixo.
     """
     assert resolver("no.py", _PY) == []

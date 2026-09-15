@@ -215,8 +215,11 @@ def resolver(alvo: str, arquivos_py: set[str]) -> list[str]:
     medido na TEC-282, 145 das 155 citacoes do repo resolvem para um arquivo
     so, porque quase todo nome citado e unico.
 
-    A comparacao de sufixo leva a barra junto, senao `no.py` casaria com
-    `turno.py` e a listagem apontaria arquivo que a prosa nunca citou.
+    A comparacao de sufixo leva a barra junto para a correspondencia casar em
+    fronteira de diretorio: sem a barra, `tout/repositorio.py` casaria com
+    caminhos que terminam em `optout/repositorio.py`. A protecao contra
+    `no.py` casar com `turno.py` vem do terceiro degrau, que exige igualdade
+    exata de nome.
     """
     if alvo in arquivos_py:
         return [alvo]
