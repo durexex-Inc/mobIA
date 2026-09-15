@@ -267,13 +267,19 @@ def aviso_de_ajuste(bairros: Sequence[str]) -> str:
     cresce com o grau do no, sem teto medido. Aqui os bairros sao os que o
     LEAD rejeitou -- duas ou tres vezes, nunca a arvore de adjacencia inteira
     --, e nomea-los e a propria confirmacao de que ele foi ouvido: "Tirei o
-    Campeche da busca, que voce descartou" faz um trabalho que "ajustei o
+    Campeche da busca, que você descartou" faz um trabalho que "ajustei o
     filtro" nao faz.
 
     `bairros` chega na forma dobrada (`recomendacao.bairros_a_excluir`,
     minuscula e sem acento -- ver `texto.dobrar`); `.title()` basta para virar
     nome legivel, e o dobrado ja garante ASCII -- nao ha acento para perder
     na volta.
+
+    **A moldura tem acento e o nome nao** (TEC-267, L2): o lead le "Tirei
+    Aclimacao da busca, que voce ja descartou". Restaurar a forma de exibicao
+    exigiria carrega-la ao lado da chave dobrada por toda a cadeia de
+    recomendacao, ou consultar o catalogo aqui dentro -- as duas
+    desproporcionais, e a segunda errada. Lacuna declarada, nao esquecimento.
 
     Levanta `ValueError` com a lista vazia: o chamador (`executar_turno`) so
     invoca isto quando o conjunto excluido mudou desde antes deste turno, e o
