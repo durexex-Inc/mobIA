@@ -31,7 +31,7 @@ A card é, portanto, sobre **o que o lead recebe** — não sobre o handoff, que
 
 ### D1 — Texto fixo substitui a prosa do modelo, no sítio que já faz isso
 
-`turno.py:1807` tem o bloco `if teto_da_entrega and not desambiguando and not saida_bloqueada:`, que substitui a prosa do modelo por `TEXTO_DO_LIMITE_DE_PERGUNTAS` quando a pergunta seguinte passaria do teto. É o mecanismo exato de que esta card precisa, e o comentário dele escreve a ordem de precedência por extenso.
+`turno.py:1861` tem o bloco `if teto_da_entrega and not desambiguando and not saida_bloqueada:`, que substitui a prosa do modelo por `TEXTO_DO_LIMITE_DE_PERGUNTAS` quando a pergunta seguinte passaria do teto. É o mecanismo exato de que esta card precisa, e o comentário dele escreve a ordem de precedência por extenso.
 
 A alternativa — instruir o modelo no prompt de sistema — foi recusada por duas razões. A primeira é medida: a margem do orçamento de prompt está em **1,2 tokens** depois da TEC-143, e instrução nova não cabe. A segunda é mais forte: o prompt não garante comportamento. A regra de negócio diz que essas intenções **não passam pela qualificação**, e um texto fixo é o único jeito de saber que nenhuma pergunta escapou.
 

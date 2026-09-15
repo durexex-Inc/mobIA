@@ -265,8 +265,10 @@ KIND_DO_CRITERIO_AMPLIADO = "criterio_ampliado"
 
 # RN-03.4: estas duas intencoes nao sao trabalho de SDR, e o comentario de
 # `qualificacao.py` ja dizia que elas vao "direto para handoff" -- um destino
-# que so passou a existir na TEC-174. O lead segue recebendo a resposta deste
-# turno: silenciar e a RN-16.4, que e a TEC-179.
+# que so passou a existir na TEC-174. O lead segue recebendo resposta neste
+# turno -- desde a TEC-137 o texto fixo de `_TEXTO_DO_ENCAMINHAMENTO`, nao
+# mais a prosa do modelo -- e isso nao e a mesma coisa que ser silenciado:
+# silenciar e a RN-16.4, que e a TEC-179, e esta card nao faz isso.
 _GATILHO_DA_INTENCAO = {
     Intencao.VENDER_IMOVEL: Gatilho.VENDA_IMOVEL,
     Intencao.SUPORTE_CONTRATO: Gatilho.SUPORTE_CONTRATO,
