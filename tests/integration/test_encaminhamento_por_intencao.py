@@ -7,6 +7,7 @@ prosa do modelo, que podia carregar a pergunta de qualificacao de COMPRADOR
 que a RN-03.4 tira destas duas conversas.
 """
 
+import uuid
 from typing import Any
 
 import pytest
@@ -14,6 +15,10 @@ from sqlalchemy import text
 
 from mobia.app.config import get_settings
 from mobia.domain.agente import turno as turno_mod
+from mobia.domain.agente.identificacao import (
+    SEPARADOR_DA_IDENTIFICACAO,
+    TEXTO_DA_IDENTIFICACAO,
+)
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.agente.turno import (
     SUFIXO_FORA_DA_JANELA,
@@ -21,6 +26,7 @@ from mobia.domain.agente.turno import (
     TEXTO_DO_ENCAMINHAMENTO_DE_VENDA,
     TEXTO_DO_LIMITE_DE_PERGUNTAS,
 )
+from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.moderacao.port import TEXTO_NEUTRO_DE_SAIDA
 
@@ -130,7 +136,7 @@ async def test_suporte_de_contrato_entrega_o_outro_texto(
 
     A asserta contra o texto de VENDA nao e enfeite -- com um literal unico
     para as duas intencoes este teste continuaria verde, e o lead de suporte
-    ouviria "que bom que pensou na gente para vender seu imóvel".
+    ouviria "Que bom que pensou na gente para vender seu imóvel!".
     """
     await _conversa_ja_existe(session)
     entregador = outbound_fake()
@@ -363,3 +369,150 @@ async def test_saida_bloqueada_vence_o_encaminhamento(
 
     assert entregador.entregues == [TEXTO_NEUTRO_DE_SAIDA]
     assert TEXTO_DO_ENCAMINHAMENTO_DE_VENDA not in entregador.entregues
+
+
+async def _imovel(session: Any, codigo: str = "AP-1001") -> uuid.UUID:
+    """Uma linha de catalogo para a ficha ter de onde sair.
+
+    Copiado e nao importado de proposito: os arquivos de integracao deste repo
+    sao autocontidos, como `test_turno_investidor.py` e `test_citacao_no_turno.py`
+    tambem registram. `operacao="VENDA"` nao e detalhe -- e o catalogo de VENDA
+    que o proprietario nao pode receber de volta como se fosse comprador.
+    """
+    identificador = uuid.uuid4()
+    session.add(
+        Imovel(
+            id=identificador,
+            codigo=codigo,
+            titulo=f"Apartamento {codigo}",
+            descricao="Sala ampla com varanda.",
+            tipo="APARTAMENTO",
+            operacao="VENDA",
+            preco_venda=51_646_430,
+            condominio=55000,
+            bairro="Lagoa da Conceicao",
+            bairro_busca="lagoa da conceicao",
+            cidade="Florianopolis",
+            uf="SC",
+            area_util_m2=54,
+            quartos=4,
+            suites=1,
+            banheiros=2,
+            vagas=2,
+            caracteristicas=["churrasqueira"],
+            fotos=[f"https://exemplo.com/{codigo}.jpg"],
+            status="DISPONIVEL",
+        )
+    )
+    await session.commit()
+    return identificador
+
+
+def _candidato_de(codigo: str, imovel_id: uuid.UUID) -> dict[str, Any]:
+    """Um candidato de busca, no formato que o turno repassa a `_apresentar`."""
+    return {
+        "imovel_id": str(imovel_id),
+        "codigo": codigo,
+        "titulo": f"Apartamento {codigo}",
+        "bairro": "Lagoa da Conceicao",
+        "preco_centavos": 51_646_430,
+        "quartos": 4,
+        "vagas": 2,
+    }
+
+
+async def test_a_venda_com_candidatos_nao_apresenta_ficha_do_catalogo(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """R6 da revisao final: `apresentando` tambem tem de excluir o encaminhamento.
+
+    `tool_choice` e `auto` e o enum de `operacao` da ferramenta tem VENDA, entao
+    nada impede o modelo de buscar no mesmo turno em que classifica
+    `VENDER_IMOVEL`. Com candidatos e sem pergunta, `apresentando` era True e o
+    texto do encaminhamento virava PREFIXO de legenda -- `prosa_que_cabe` o
+    truncaria com reticencia, ou o devolveria VAZIO quando a ficha nao deixasse
+    espaco. O proprietario recebia ate tres fichas do catalogo de venda: o
+    defeito da propria card, so que mais forte -- o dono tratado como comprador
+    e com o catalogo na mao.
+    """
+    await _conversa_ja_existe(session)
+    imovel = await _imovel(session)
+    classificador = classificador_fake(Intencao.VENDER_IMOVEL, resposta=PROSA_DO_MODELO)
+    classificador.candidatos = [_candidato_de("AP-1001", imovel)]
+    entregador = outbound_fake()
+
+    await rodar_turno(
+        session,
+        classificador,
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto="quero colocar meu apartamento a venda",
+    )
+
+    assert entregador.entregues == [TEXTO_DO_ENCAMINHAMENTO_DE_VENDA]
+    # A negativa explicita, porque a lista exata acima ja falharia por varias
+    # razoes: o que se afirma e que NENHUMA ficha do catalogo de venda saiu.
+    assert not any("AP-1001" in entregue for entregue in entregador.entregues)
+
+
+async def test_o_primeiro_contato_de_venda_recebe_identificacao_e_encaminhamento(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """A forma mais comum da card, e a unica sem `_conversa_ja_existe`.
+
+    "quero vender meu imovel" como PRIMEIRA mensagem e o caso real; os outros
+    testes deste arquivo semeiam uma fala anterior justamente para isolar o
+    encaminhamento do prefixo da RN-04.1, e com isso ninguem afirmava o que o
+    lead de fato le.
+
+    A justaposicao que a asserta expoe -- o assistente se oferece para ajudar a
+    encontrar um imovel e em seguida diz que isso nao e com ele -- e decisao de
+    produto, nao defeito: esta fixada aqui como ESTA, e a R8 da revisao final
+    manda registra-la na card em vez de reescrever o texto.
+    """
+    entregador = outbound_fake()
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.VENDER_IMOVEL, resposta=PROSA_DO_MODELO),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto="quero vender meu imovel",
+    )
+
+    assert entregador.entregues == [
+        f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{TEXTO_DO_ENCAMINHAMENTO_DE_VENDA}"
+    ]
+
+
+async def test_o_primeiro_contato_de_venda_com_candidatos_tambem_se_identifica(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """A intersecao dos dois testes acima, e o que a R6 DESTRAVA.
+
+    Enquanto `apresentando` era True neste turno, `identificar` era False por
+    construcao (`not apresentando and ...`) e a identificacao saia como mensagem
+    propria de dentro do `if apresentando:`, junto das fichas. Com a exclusao no
+    lugar, o turno cai no caminho de texto e as duas coisas viram UMA mensagem
+    -- que e o comportamento pretendido, e nao efeito colateral.
+    """
+    imovel = await _imovel(session)
+    classificador = classificador_fake(Intencao.VENDER_IMOVEL, resposta=PROSA_DO_MODELO)
+    classificador.candidatos = [_candidato_de("AP-1001", imovel)]
+    entregador = outbound_fake()
+
+    await rodar_turno(
+        session,
+        classificador,
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto="quero vender meu imovel",
+    )
+
+    assert entregador.entregues == [
+        f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{TEXTO_DO_ENCAMINHAMENTO_DE_VENDA}"
+    ]
+    assert not any("AP-1001" in entregue for entregue in entregador.entregues)

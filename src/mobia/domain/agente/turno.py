@@ -211,8 +211,18 @@ TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE = (
 # Gherkin da card diz "das 9h as 19h" enquanto a janela real (TEC-143) e
 # 9h-18h: citar o numero da card faria o texto mentir sobre o que o sistema
 # faz. Ver a D3 do desenho.
+#
+# **"pode demorar ate", e nao "vem".** Enquanto TEC-280 e TEC-281 estiverem
+# abertas nada notifica ninguem: a resposta depende de uma PESSOA abrir a fila,
+# e marcar hora seria prometer o que o sistema nao controla. Nao e a frase
+# banida de "alguem foi avisado" -- e a vizinha dela, e este repo ja recuou
+# duas vezes da primeira. A redacao espelha de proposito a irma que a TEC-143
+# escreveu ontem para a MESMA situacao, em `domain/humano/deteccao.py`:
+# `TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO` ja dizia "pode demorar ate o
+# proximo horario". Duas redacoes para o mesmo fato seriam duas coisas para
+# manter em sincronia.
 SUFIXO_FORA_DA_JANELA = (
-    " O atendimento é das {inicio}h às {fim}h, então a resposta vem no próximo horário."
+    " O atendimento é das {inicio}h às {fim}h, então a resposta pode demorar até o próximo horário."
 )
 
 # Espelha `_GATILHO_DA_INTENCAO` deliberadamente: as duas intencoes que vao
@@ -1251,9 +1261,11 @@ async def executar_turno(
         # decide se o aviso PRECISA sair neste turno, mas nao se ele CONSEGUE:
         # mais abaixo, o envio mora dentro de `if apresentando:`, e o turno em
         # que a exclusao nasce pode nunca chegar la -- zero candidato (busca
-        # sem resultado), uma excecao no meio do turno, ou uma desambiguacao
-        # que adia as fichas. Quando isso acontece, o aviso nao fica adiado
-        # para o proximo turno: ele se PERDE para sempre. O `bairros_antes_da_
+        # sem resultado), uma excecao no meio do turno, uma desambiguacao que
+        # adia as fichas, ou (desde a TEC-137) o encaminhamento por intencao,
+        # que exclui `apresentando` para nao devolver ficha de catalogo a quem
+        # esta indo para a fila humana. Quando isso acontece, o aviso nao fica
+        # adiado para o proximo turno: ele se PERDE para sempre. O `bairros_antes_da_
         # reacao` do PROXIMO turno ja e lido DEPOIS que este `gravar_reacoes`
         # commitou, entao ja inclui a mudanca de hoje -- os dois retratos
         # batem, nada parece ter mudado, e o aviso nunca mais dispara para
@@ -1946,22 +1958,33 @@ async def executar_turno(
     # RN-03.4 (TEC-137). Precedencia ACIMA do teto de perguntas -- e por isso
     # este bloco vem DEPOIS dele, nao antes: neste trecho quem atribui `texto`
     # por ultimo e quem vence, e o bloco do teto acima atribui
-    # `TEXTO_DO_LIMITE_DE_PERGUNTAS`. E o mesmo idioma da citacao bloqueada da
-    # TEC-161 e do zero pos-relaxamento da TEC-160, que reatribuem mais abaixo
-    # e vencem os dois. Quem vai para a fila de venda nao precisa ouvir "Já
-    # perguntei bastante": o teto e sobre qualificacao, que estas duas
+    # `TEXTO_DO_LIMITE_DE_PERGUNTAS`. Quem vai para a fila de venda nao precisa
+    # ouvir "Já perguntei bastante": o teto e sobre qualificacao, que estas duas
     # intencoes nao recebem.
+    #
+    # **Os dois blocos abaixo reatribuem depois daqui, mas so um deles alcanca
+    # o lead encaminhado -- e a diferenca esta medida, nao suposta.** A citacao
+    # bloqueada da TEC-161 roda sobre o `texto` JA substituido, e para os nossos
+    # dois literais (com e sem o sufixo) `divergencias_de` devolve vazio: nenhum
+    # deles carrega valor citavel. `valores_em` exige marca de dinheiro (`R$`,
+    # "reais", palavra de magnitude), entao "9h" e "18h" nao sao preco, e
+    # `_CODIGO` quer `[A-Z]{2,3}-\d{3,6}`. Ela vence por estrutura e e
+    # inalcancavel na pratica. Ja o zero pos-relaxamento da TEC-160 le apenas
+    # `resposta_do_turno.relaxou_sem_resultado` e nunca olha para o texto: ele
+    # ALCANCA, e um lead de venda cujo turno relaxou e continuou sem resultado
+    # recebe `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` no lugar do encaminhamento.
+    # Aceito e declarado (R5 da revisao final, e as lacunas declaradas do
+    # desenho), nao esquecido: e raro e o lead ainda recebe resposta.
     #
     # O teto continua rodando primeiro, e o `gatilho_adicional`
     # LIMITE_DE_PERGUNTAS que ele registra no handoff que ja existe fica --
     # `registrar_handoff` e idempotente, e o gatilho a mais nao mente sobre
     # nada: a pergunta de fato foi suprimida. So o TEXTO e que e nosso.
     #
-    # As mesmas duas guardas do bloco de cima, pelas mesmas razoes que o
-    # comentario dele escreve por extenso: `not desambiguando` porque nesse
-    # caminho quem sai e a pergunta do desambiguador, e `not saida_bloqueada`
-    # porque `TEXTO_NEUTRO_DE_SAIDA` e a resposta declarada da politica de
-    # moderacao e sobrepor a nossa a ela tornaria impossivel saber qual agiu.
+    # As mesmas duas guardas do bloco do teto (`not desambiguando` e
+    # `not saida_bloqueada`), pelas mesmas razoes que o comentario dele escreve
+    # por extenso -- ver la, e nao aqui: duas copias de uma razao so sao duas
+    # coisas para manter em sincronia.
     #
     # Le `gerada.intencao` e nao `gatilho_da_intencao`, que tambem estaria em
     # escopo aqui (o walrus la em cima liga o nome no escopo da FUNCAO, nao no
@@ -1994,14 +2017,40 @@ async def executar_turno(
             )
 
     # TEC-162, D4. Candidatos sem pergunta e turno de apresentacao. As tres
-    # condicoes sao a mesma regra: pergunta adia as fichas. `desambiguando`
-    # entra porque `resposta_do_turno.perguntou` fala da chamada 1, que foi
-    # DESCARTADA nesse caminho -- o texto entregue e a pergunta do
-    # desambiguador, e `PerguntaDeDesambiguacao` nao tem candidato nenhum para
-    # apresentar. A virada do investidor nao entra: ela tem a sua propria busca
-    # e as suas proprias fichas, e `resposta_do_turno` ja aponta para elas.
+    # primeiras condicoes sao a mesma regra: pergunta adia as fichas.
+    # `desambiguando` entra porque `resposta_do_turno.perguntou` fala da
+    # chamada 1, que foi DESCARTADA nesse caminho -- o texto entregue e a
+    # pergunta do desambiguador, e `PerguntaDeDesambiguacao` nao tem candidato
+    # nenhum para apresentar. A virada do investidor nao entra: ela tem a sua
+    # propria busca e as suas proprias fichas, e `resposta_do_turno` ja aponta
+    # para elas.
+    #
+    # **`not encaminhou` (R6 da revisao final da TEC-137) e de outra natureza,
+    # e por isso vale dizer por que.** As reatribuicoes de `texto` acima sao
+    # todas do mesmo idioma -- quem atribui por ultimo vence --, e por isso
+    # toda analise de precedencia desta branch passou reto por aqui:
+    # `apresentando` NAO reatribui `texto`, ele o REAPROVEITA como prefixo de
+    # legenda da primeira ficha (D16 da TEC-162). Nao ha ordem que resolva
+    # isso, so exclusao.
+    #
+    # O que a exclusao impede: `tool_choice` e `auto` (`classificador.py`) e o
+    # enum de `operacao` da ferramenta de busca tem "VENDA", entao nada impede
+    # o modelo de buscar no mesmo turno em que classifica `VENDER_IMOVEL`. Com
+    # candidato e sem pergunta, o proprietario recebia ate tres fichas do
+    # catalogo de VENDA, e o encaminhamento ia junto truncado -- ou sumia, que
+    # e o que `prosa_que_cabe` faz quando a ficha nao deixa espaco nem para a
+    # reticencia. E o defeito da propria card numa forma mais forte: o dono
+    # tratado como comprador, agora com o catalogo na mao.
+    #
+    # Destrava `identificar` (logo abaixo, que le `not apresentando`) nestes
+    # turnos: o vendedor de primeiro contato passa a receber identificacao e
+    # encaminhamento como UMA mensagem. Pretendido, e coberto por
+    # `test_o_primeiro_contato_de_venda_com_candidatos_tambem_se_identifica`.
     apresentando = (
-        bool(resposta_do_turno.candidatos) and not resposta_do_turno.perguntou and not desambiguando
+        bool(resposta_do_turno.candidatos)
+        and not resposta_do_turno.perguntou
+        and not desambiguando
+        and not encaminhou
     )
 
     # TEC-161. A ultima coisa que acontece antes de a entrega comecar, e a

@@ -69,3 +69,22 @@ def test_nenhum_texto_faz_pergunta_de_qualificacao(texto: str) -> None:
     comprador entrando pela porta que a card fechou.
     """
     assert not texto.rstrip().endswith("?")
+
+
+def test_o_sufixo_nao_promete_quando_a_resposta_chega() -> None:
+    """R7 da revisao final: o sufixo hedgea, e nao marca hora.
+
+    Nada notifica ninguem enquanto TEC-280 e TEC-281 estiverem abertas -- a
+    resposta depende de uma PESSOA abrir a fila. "a resposta vem no proximo
+    horario" nao e a promessa banida de `test_nenhum_texto_promete_que_alguem_
+    foi_avisado`, mas e a vizinha dela: afirma um prazo que o sistema nao
+    controla.
+
+    A frase espelha a irma escrita ontem pela TEC-143 para a MESMA situacao,
+    `TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO` em `domain/humano/deteccao.py`,
+    que ja dizia "pode demorar ate o proximo horario". Duas redacoes para o
+    mesmo fato seriam duas coisas para manter em sincronia.
+    """
+    formatado = SUFIXO_FORA_DA_JANELA.format(inicio=9, fim=18)
+    assert "pode demorar" in formatado
+    assert "vem no próximo" not in formatado

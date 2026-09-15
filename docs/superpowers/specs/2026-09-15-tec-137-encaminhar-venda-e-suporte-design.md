@@ -31,7 +31,7 @@ A card é, portanto, sobre **o que o lead recebe** — não sobre o handoff, que
 
 ### D1 — Texto fixo substitui a prosa do modelo, no sítio que já faz isso
 
-`turno.py:1861` tem o bloco `if teto_da_entrega and not desambiguando and not saida_bloqueada:`, que substitui a prosa do modelo por `TEXTO_DO_LIMITE_DE_PERGUNTAS` quando a pergunta seguinte passaria do teto. É o mecanismo exato de que esta card precisa, e o comentário dele escreve a ordem de precedência por extenso.
+`executar_turno` (`turno.py`) tem o bloco `if teto_da_entrega and not desambiguando and not saida_bloqueada:`, que substitui a prosa do modelo por `TEXTO_DO_LIMITE_DE_PERGUNTAS` quando a pergunta seguinte passaria do teto. É o mecanismo exato de que esta card precisa, e o comentário dele escreve a ordem de precedência por extenso.
 
 A alternativa — instruir o modelo no prompt de sistema — foi recusada por duas razões. A primeira é medida: a margem do orçamento de prompt está em **1,2 tokens** depois da TEC-143, e instrução nova não cabe. A segunda é mais forte: o prompt não garante comportamento. A regra de negócio diz que essas intenções **não passam pela qualificação**, e um texto fixo é o único jeito de saber que nenhuma pergunta escapou.
 
@@ -78,6 +78,12 @@ Os dois textos novos falam de **encaminhamento**, nunca de aviso, e ganham comen
 
 **A intenção pode mudar no meio da conversa.** Um lead classificado como `VENDER_IMOVEL` que depois pergunta sobre comprar volta a ser qualificado, porque a substituição segue a classificação de cada turno. É o comportamento certo — a TEC-136 é quem trata mudança de intenção —, mas significa que o encaminhamento não é terminal.
 
+**O zero pós-relaxamento da TEC-160 ainda vence o encaminhamento.** Acrescentada pela revisão final (R5). O bloco `if resposta_do_turno.relaxou_sem_resultado and not citacao_bloqueada:` reatribui `texto` depois da substituição desta card e lê **apenas** aquele booleano — nunca a intenção nem o texto. Um lead de venda cujo turno chamou a busca, relaxou o critério e mesmo assim não achou nada recebe `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` no lugar do encaminhamento. Estimado bem abaixo de 1% dos turnos com essas intenções, mas real e silencioso. **Aceito, não corrigido:** o lead continua recebendo resposta e o handoff continua nascendo certo; o texto é que fala do catálogo em vez da fila.
+
+A irmã dessa substituição — a citação bloqueada da TEC-161 — **não** alcança: ela roda sobre o `texto` já substituído, e `divergencias_de` devolve vazio para os dois literais, com e sem o sufixo de horário. `valores_em` exige marca de dinheiro (`R$`, "reais", palavra de magnitude), então `9h`/`18h` não são preço, e `_CODIGO` quer `[A-Z]{2,3}-\d{3,6}`. Vence por estrutura, é inalcançável na prática — verificado executando `divergencias_de` sobre as quatro combinações.
+
+**A apresentação precisou de exclusão explícita, e a razão vale registro.** Também da revisão final (R6). `apresentando` não reatribui `texto`: ele o **reaproveita** como prefixo de legenda da primeira ficha (D16 da TEC-162). Como toda análise de precedência desta branch olhou para "quem atribui por último", ninguém viu. Com `tool_choice: auto` e `"VENDA"` no enum de `operacao` da ferramenta de busca, um proprietário podia receber até três fichas do catálogo de venda, com o texto de encaminhamento truncado — ou vazio, que é o que `prosa_que_cabe` devolve quando a ficha não deixa espaço. **Corrigido:** `and not encaminhou` entra na expressão. Consequência pretendida: `identificar` (`not apresentando and ...`) passa a valer nesses turnos, e o vendedor de primeiro contato recebe identificação e encaminhamento numa mensagem só.
+
 ## Testes
 
 **Integração**, no padrão de `tests/integration/test_pedido_de_humano.py`:
@@ -89,6 +95,13 @@ Os dois textos novos falam de **encaminhamento**, nunca de aviso, e ganham comen
 - O segundo turno com a mesma intenção entrega o texto de novo e não duplica handoff.
 - A substituição vence o teto de perguntas quando os dois valeriam.
 - `saida_bloqueada` continua vencendo, e desambiguação continua possível.
+
+Acrescentados pela revisão final:
+
+- Um turno de venda **com candidatos** não apresenta ficha nenhuma (R6) — o teste que provou o defeito antes do conserto.
+- O **primeiro contato** de venda recebe identificação e encaminhamento como uma mensagem só, com e sem candidatos.
+
+**Unitário:** o sufixo de fora da janela diz "pode demorar até", e não marca hora (R7).
 
 **Unitário:** os dois textos não contêm "avisei", no molde do teste que a TEC-143 deixou.
 
