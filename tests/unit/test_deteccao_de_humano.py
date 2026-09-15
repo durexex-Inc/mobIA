@@ -68,3 +68,33 @@ def test_termo_ambiguo_so_casa_a_mensagem_inteira(texto: str) -> None:
     """
     assert pediu_humano(texto) is True
     assert pediu_humano("o atendente anterior me falou outro valor") is False
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # Pessoa fisica vs juridica e vocabulario de contrato imobiliario, nao
+        # pedido de transferencia. Foi o que tirou "quero uma pessoa" da lista.
+        "quero uma pessoa fisica no contrato, nao pessoa juridica",
+        "pode ser em nome de pessoa juridica? quero uma pessoa juridica",
+        # Comentario sobre o atendimento de OUTRA empresa. Foi o que tirou
+        # "atendimento humano" bare.
+        "o atendimento humano la na outra imobiliaria era horrivel",
+        # Verbo sem objeto, numa conversa sobre pagamento.
+        "me transfere o comprovante do pix por favor",
+    ],
+)
+def test_vocabulario_de_contrato_e_de_pagamento_nao_dispara(texto: str) -> None:
+    """Os tres falsos positivos que a revisao da TEC-143 achou, fixados.
+
+    Todos os tres vinham de termo sem objeto: "quero uma pessoa", "atendimento
+    humano" e "me transfere". O modulo de opt-out registra a mesma licao com
+    "nada" -- termo curto demais casa dentro de frase que nao e pedido.
+    """
+    assert pediu_humano(texto) is False
+
+
+def test_a_forma_com_objeto_continua_disparando() -> None:
+    assert pediu_humano("quero uma pessoa de verdade, nao um robo") is True
+    assert pediu_humano("me transfere pra um atendente") is True
+    assert pediu_humano("quero atendimento humano") is True

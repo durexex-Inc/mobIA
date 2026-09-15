@@ -26,6 +26,17 @@ _ESPACOS = re.compile(r"\s+")
 # de busca silenciava um comprador. O analogo aqui e "pessoa" -- medido contra
 # as 147 mensagens de lead do corpus de evals, ele aparece 2 vezes, as duas
 # dentro de "pessoalmente", em perguntas sobre assinar a distancia.
+#
+# Foram removidos por falso positivo (TEC-143, revisao fix round 1):
+# - "quero uma pessoa" e "queria uma pessoa" casavam "pessoa fisica" vs
+#   "pessoa juridica", vocabulario corriqueiro de contrato imobiliario que nao e
+#   pedido de transferencia. O custo de recall e aceitavel.
+# - "atendimento humano" bare violava o invariante -- todo termo deve carregar o
+#   verbo ou preposicao. Um lead reclamando do atendimento de OUTRA imobiliaria
+#   nao pede transferencia. "quero atendimento humano" permanece e cobre o caso
+#   real.
+# - "me transfere" e verbo sem objeto -- "me transfere o comprovante do pix"
+#   aparece em conversa sobre pagamento. Substituido por formas com objeto.
 _TERMOS_INEQUIVOCOS: tuple[str, ...] = (
     "falar com uma pessoa",
     "falar com um humano",
@@ -35,15 +46,18 @@ _TERMOS_INEQUIVOCOS: tuple[str, ...] = (
     "falar com atendente",
     "falar com alguem de verdade",
     "falar com um corretor de verdade",
-    "quero uma pessoa",
-    "queria uma pessoa",
+    "quero uma pessoa de verdade",
+    "quero uma pessoa da equipe",
+    "queria uma pessoa de verdade",
     "me passa pra uma pessoa",
     "me passa para uma pessoa",
     "me passa pra um atendente",
     "me passa para um atendente",
-    "me transfere",
+    "me transfere pra um atendente",
+    "me transfere para um atendente",
+    "me transfere pra uma pessoa",
+    "me transfere para uma pessoa",
     "quero atendimento humano",
-    "atendimento humano",
     "nao quero falar com robo",
     "cansei de robo",
     "para de robo",
