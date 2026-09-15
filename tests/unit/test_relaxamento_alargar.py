@@ -9,7 +9,6 @@ from mobia.domain.agente.turno import (
     TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
     TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
     TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
-    TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
     aviso_de_ampliacao,
 )
 from mobia.domain.catalogo.enums import EstadoDoRelaxamento, Operacao
@@ -157,20 +156,3 @@ def test_o_aviso_nao_cita_valor() -> None:
         TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
     ):
         assert not any(caractere.isdigit() for caractere in texto)
-
-
-def test_os_textos_do_aviso_sao_ascii() -> None:
-    """Todo texto que sai para o lead e ASCII sem acento -- a disciplina de
-    `apresentacao.py` e de `TEXTO_DA_BUSCA_INCONCLUSIVA`.
-
-    `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` entra na mesma lista: e a outra
-    constante que a TEC-160 criou para sair no `outbound`, e a regra vale pelo
-    DESTINO do texto, nao pela funcao que o escolhe.
-    """
-    for texto in (
-        TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
-        TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
-        TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
-        TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
-    ):
-        assert texto.isascii()

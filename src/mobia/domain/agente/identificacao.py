@@ -93,8 +93,8 @@ async def e_conversa_nova(
 # Oferece o corretor porque a terceira regra da card pede isso ao se
 # identificar -- aqui no caminho proativo.
 TEXTO_DA_IDENTIFICACAO = (
-    "Oi! Sou o assistente virtual da imobiliaria. Posso te ajudar a encontrar "
-    "um imovel, e a qualquer momento te passo para um corretor."
+    "Oi! Sou o assistente virtual da imobiliária. Posso te ajudar a encontrar "
+    "um imóvel, e a qualquer momento te passo para um corretor."
 )
 
 # Linha em branco e nao espaco: as duas frases tem autores diferentes -- uma e

@@ -113,8 +113,8 @@ MAX_IMOVEIS_POR_TURNO = len(KINDS_DAS_FICHAS)
 
 # TEC-265, D4. O lead nunca fica em silencio porque o teto do laco funcionou.
 TEXTO_DA_BUSCA_INCONCLUSIVA = (
-    "Deixa eu confirmar algumas coisas com um corretor para nao te passar "
-    "informacao errada. Ja te retorno com as opcoes."
+    "Deixa eu confirmar algumas coisas com um corretor para não te passar "
+    "informação errada. Já te retorno com as opções."
 )
 
 # Regra 4 da card e cenario 2 do Gherkin. TEC-160, D14.
@@ -129,9 +129,9 @@ TEXTO_DA_BUSCA_INCONCLUSIVA = (
 # espera fora de escopo (E5). Este texto entrega a metade disponivel; quando o
 # E5 existir, e aqui que se volta.
 TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
-    "Procurei tambem um pouco alem do que voce pediu e mesmo assim nao achei "
+    "Procurei também um pouco além do que você pediu e mesmo assim não achei "
     "nada que valha a pena te mostrar agora. Quer que um corretor olhe isso "
-    "com voce?"
+    "com você?"
 )
 
 # TEC-149, RN-05.5. Substitui a prosa do modelo no turno em que a pergunta
@@ -156,7 +156,7 @@ TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
 # TEXTO_NEUTRO_DE_SAIDA da moderacao -- nao ha segunda mensagem com que
 # colidir.
 TEXTO_DO_LIMITE_DE_PERGUNTAS = (
-    "Ja perguntei bastante e nao quero virar interrogatorio. "
+    "Já perguntei bastante e não quero virar interrogatório. "
     "Prefiro passar para um corretor, que vai conseguir te ajudar melhor daqui. "
     "Pode deixar que ele entra em contato."
 )
@@ -173,7 +173,7 @@ TEXTO_DO_LIMITE_DE_PERGUNTAS = (
 # variavel (a Trindade amplia para tres, o Itacorubi para quatro) e uma
 # mensagem que cresce com o grau do no e uma mensagem cujo pior caso ninguem
 # mediu. O lead ve o bairro na ficha, que e onde ele importa.
-_ABERTURA_DA_AMPLIACAO = "Nao achei nada exatamente no que voce pediu, entao "
+_ABERTURA_DA_AMPLIACAO = "Não achei nada exatamente no que você pediu, então "
 
 TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO = (
     f"{_ABERTURA_DA_AMPLIACAO}ampliei um pouco a busca: valor um pouco acima e "
@@ -183,7 +183,7 @@ TEXTO_DO_CRITERIO_AMPLIADO_PRECO = (
     f"{_ABERTURA_DA_AMPLIACAO}ampliei um pouco o valor. Veja se algum destes serve."
 )
 TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO = (
-    f"{_ABERTURA_DA_AMPLIACAO}inclui bairros vizinhos. Veja se algum destes serve."
+    f"{_ABERTURA_DA_AMPLIACAO}incluí bairros vizinhos. Veja se algum destes serve."
 )
 
 # Kind proprio e OBRIGATORIO, nao preferencia: `outbound_dispatches` tem
@@ -255,7 +255,7 @@ def aviso_de_ampliacao(relaxou_preco: bool, relaxou_bairro: bool) -> str:
 # dedup justamente quando ela importa. A coluna e String(32); isto tem 15.
 KIND_DO_FILTRO_AJUSTADO = "filtro_ajustado"
 
-TEXTO_DO_FILTRO_AJUSTADO = "Tirei {bairros} da busca, que voce ja descartou."
+TEXTO_DO_FILTRO_AJUSTADO = "Tirei {bairros} da busca, que você já descartou."
 
 
 def aviso_de_ajuste(bairros: Sequence[str]) -> str:

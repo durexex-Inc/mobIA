@@ -101,13 +101,3 @@ def test_a_ficha_da_queda_e_a_do_imovel_que_caiu() -> None:
     )
     with pytest.raises(ValueError):
         texto_do_followup(ficha=outra, queda=QUEDA)
-
-
-def test_tudo_que_sai_para_o_lead_e_ascii() -> None:
-    """Acento aqui chega ao WhatsApp do lead."""
-    for texto in (
-        CONVITE_PARA_AGENDAR,
-        linha_da_queda(QUEDA),
-        texto_do_followup(ficha=FICHA, queda=None),
-    ):
-        assert texto.isascii(), texto

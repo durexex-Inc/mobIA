@@ -74,8 +74,8 @@ class ModeradorPort(Protocol):
 # recusado. Por isso continua sendo UM texto para todas as categorias -- um
 # texto por categoria contaria ao lead qual filtro disparou.
 TEXTO_DA_RECUSA_DE_ENTRADA = (
-    "Nao consigo seguir com essa mensagem. A busca aqui e feita por criterio "
-    "do imovel -- regiao, preco, quartos, vagas. Me diga o que voce procura "
+    "Não consigo seguir com essa mensagem. A busca aqui é feita por critério "
+    "do imóvel -- região, preço, quartos, vagas. Me diga o que você procura "
     "assim que eu ajudo."
 )
 
@@ -83,6 +83,6 @@ TEXTO_DA_RECUSA_DE_ENTRADA = (
 # espera por uma resposta que nao vem -- e o evento no log leva um humano ate
 # ali.
 TEXTO_NEUTRO_DE_SAIDA = (
-    "Tive um problema para montar a resposta agora. Pode repetir sua ultima "
+    "Tive um problema para montar a resposta agora. Pode repetir sua última "
     "mensagem que eu tento de novo?"
 )

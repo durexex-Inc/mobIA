@@ -45,8 +45,8 @@ def test_a_recusa_nomeia_o_criterio_legitimo() -> None:
     de bloqueio e nao acusa o lead.
     """
     baixo = TEXTO_DA_RECUSA_DE_ENTRADA.lower()
-    assert "imovel" in baixo
-    for criterio in ("regiao", "preco", "quartos"):
+    assert "imóvel" in baixo
+    for criterio in ("região", "preço", "quartos"):
         assert criterio in baixo
 
 

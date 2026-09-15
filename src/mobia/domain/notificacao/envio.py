@@ -60,8 +60,8 @@ KIND_DA_JANELA_HUMANA = "janela_humana"
 # divergir em silencio quando a agenda por dia (TEC-170) chegar, e tera de
 # mudar junto.
 TEXTO_DA_JANELA_HUMANA = (
-    "O atendimento humano funciona de segunda a sabado, das {inicio}h as {fim}h. "
-    "Fora desse horario a resposta pode demorar mais."
+    "O atendimento humano funciona de segunda a sábado, das {inicio}h às {fim}h. "
+    "Fora desse horário a resposta pode demorar mais."
 )
 
 

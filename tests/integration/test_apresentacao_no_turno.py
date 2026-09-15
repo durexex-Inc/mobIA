@@ -998,8 +998,7 @@ async def test_o_aviso_de_ajuste_nomeia_o_bairro_e_e_ascii(
     )
 
     assert resultado == "respondido"
-    assert outbound.entregues[0] == "Tirei Campeche da busca, que voce ja descartou."
-    assert outbound.entregues[0].isascii()
+    assert outbound.entregues[0] == "Tirei Campeche da busca, que você já descartou."
     assert KIND_DO_FILTRO_AJUSTADO in await _kinds_reservados()
 
 
