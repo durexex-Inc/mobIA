@@ -7,6 +7,7 @@ Antes desta card o script nao tinha teste nenhum.
 
 import ast
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
 
 import scripts.comentarios_tocados as ferramenta
@@ -17,6 +18,7 @@ from scripts.comentarios_tocados import (
     _comentarios,
     _docstrings,
     citacoes_do_texto,
+    classificar,
     examinar,
     limitar,
     resolver,
@@ -435,3 +437,49 @@ def test_resolver_exige_nome_inteiro_no_terceiro_degrau() -> None:
     do terceiro degrau comparar o nome inteiro, nao por sufixo.
     """
     assert resolver("no.py", _PY) == []
+
+
+def _tamanhos(mapa: dict[str, int]) -> Callable[[str], int]:
+    return lambda caminho: mapa[caminho]
+
+
+def test_citacao_a_arquivo_alterado_e_prosa() -> None:
+    marca = classificar(["a/turno.py"], 50, {"a/turno.py"}, _tamanhos({"a/turno.py": 300}))
+    assert marca == "PROSA"
+
+
+def test_citacao_a_arquivo_intocado_nao_vira_achado() -> None:
+    """A ferramenta continua sendo sobre o que a branch tocou."""
+    assert classificar(["a/turno.py"], 50, {"outro.py"}, _tamanhos({"a/turno.py": 300})) is None
+
+
+def test_citacao_que_nao_resolve_nao_vira_achado() -> None:
+    assert classificar([], 50, {"a/turno.py"}, _tamanhos({})) is None
+
+
+def test_faixa_alem_do_fim_do_arquivo_e_falso() -> None:
+    """A unica marca que afirma, em vez de suspeitar."""
+    marca = classificar(["a/turno.py"], 900, {"a/turno.py"}, _tamanhos({"a/turno.py": 300}))
+    assert marca == "FALSO"
+
+
+def test_a_ultima_linha_do_arquivo_ainda_e_prosa() -> None:
+    """A fronteira e `>`, nao `>=`: citar a ultima linha e citacao valida."""
+    marca = classificar(["a/turno.py"], 300, {"a/turno.py"}, _tamanhos({"a/turno.py": 300}))
+    assert marca == "PROSA"
+
+
+def test_citacao_ambigua_alem_do_fim_sai_como_prosa_e_nao_falso() -> None:
+    """FALSO exige resolucao inequivoca, e a razao e a direcao do erro.
+
+    Declarar falsa uma citacao que talvez aponte o OUTRO candidato seria a
+    ferramenta afirmando o que nao sabe -- o unico erro que ela nao pode
+    cometer, porque `FALSO` e a marca que dispensa o revisor de conferir.
+    """
+    marca = classificar(
+        ["a/repositorio.py", "b/repositorio.py"],
+        900,
+        {"a/repositorio.py"},
+        _tamanhos({"a/repositorio.py": 300, "b/repositorio.py": 1000}),
+    )
+    assert marca == "PROSA"

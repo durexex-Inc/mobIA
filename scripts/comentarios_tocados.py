@@ -38,6 +38,7 @@ import io
 import re
 import subprocess
 import tokenize
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -91,6 +92,19 @@ class Achado:
     # nenhum dos dois.
     distancia: int = 0
     bloco: str = ""
+
+
+@dataclass(frozen=True)
+class Citacao:
+    # `linha` e a do DOCUMENTO, nao a citada: e por ela que quem revisa abre o
+    # .md. `destino` so e preenchido quando a resolucao foi inequivoca e diz
+    # algo que o alvo cru nao dizia -- para `turno.py:50` ele mostra onde o
+    # arquivo mora; para um alvo que ja veio com caminho completo, fica vazio.
+    documento: str
+    linha: int
+    texto: str
+    marca: str
+    destino: str = ""
 
 
 def _rodar(*argumentos: str) -> str:
@@ -226,6 +240,30 @@ def resolver(alvo: str, arquivos_py: set[str]) -> list[str]:
     if "/" in alvo:
         return sorted(p for p in arquivos_py if p.endswith("/" + alvo))
     return sorted(p for p in arquivos_py if p.rsplit("/", 1)[-1] == alvo)
+
+
+def classificar(
+    candidatos: list[str],
+    fim: int,
+    alterados: set[str],
+    tamanho_de: Callable[[str], int],
+) -> str | None:
+    """A marca desta citacao, ou None quando ela nao diz respeito a esta branch.
+
+    `FALSO` exige resolucao inequivoca porque e a unica marca que AFIRMA algo
+    em vez de suspeitar: ela dispensa o revisor de conferir. Declarar falsa uma
+    citacao que talvez aponte o outro candidato seria errar justamente na
+    direcao em que esta ferramenta nao pode errar. Citacao ambigua alem do fim
+    de um dos candidatos sai como `PROSA` e o revisor decide.
+
+    A comparacao e `>` e nao `>=`: citar a ultima linha do arquivo e citacao
+    valida, nao afirmacao falsa.
+    """
+    if not any(caminho in alterados for caminho in candidatos):
+        return None
+    if len(candidatos) == 1 and fim > tamanho_de(candidatos[0]):
+        return "FALSO"
+    return "PROSA"
 
 
 def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
