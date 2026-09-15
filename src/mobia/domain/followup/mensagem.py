@@ -11,7 +11,7 @@ monta o texto.
 imovel novo, que vence o convite. E regra da card, nao orquestracao, e no job
 ela ficaria misturada com guardas, laco e entrega.
 
-Todo texto daqui sai para o lead e e ASCII sem acento, como em
+Todo texto daqui sai para o lead e por isso leva acento (TEC-267), como em
 `apresentacao.py`.
 """
 

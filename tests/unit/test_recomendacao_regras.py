@@ -57,11 +57,6 @@ def test_busca_sem_criterio_diz_isso_em_vez_de_ficar_vazia() -> None:
     assert _motivo([]) == "sem filtro: o lead nao restringiu a busca"
 
 
-def test_o_motivo_e_ascii() -> None:
-    """Vai para o banco e pode ser lido em relatorio; segue a disciplina do
-    repo para texto que nao e prosa de docs."""
-
-
 def test_o_motivo_do_passe_relaxado_diz_que_o_criterio_foi_ampliado() -> None:
     """D5 pede a frase montada de "quais filtros bateram, E se houve
     relaxamento" -- e a segunda metade e o que separa um motivo verdadeiro de
