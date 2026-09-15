@@ -10,6 +10,8 @@ aqui tem a assimetria oposta: uma palavra faltando na lista so deixa de pegar
 um caso, nunca reprova um caso correto.
 """
 
+import re
+
 import pytest
 
 from mobia.domain.agente.apresentacao import RESSALVA_DE_ESTIMATIVA
@@ -36,13 +38,15 @@ from mobia.workers.jobs.process_message import TEXTO_DO_AVISO_DE_ERRO
 # e a lista das palavras que apareciam nos literais desta card, mais as que
 # um texto de imobiliaria escreve toda hora.
 #
-# " ja " e " mes " tem espaco nas duas pontas de proposito, e nao so ao
-# final: "ja " (so com espaco a direita) casava dentro de "veja se" -- a
-# palavra "veja" termina em "ja" e o espaco que vem depois do "se" fechava o
-# padrao por acidente. "mes" sem espaco casava dentro de "mesmo"/"mesa". Os
-# dois foram encontrados rodando esta guarda contra os 15 literais reais
-# antes de commitar; sem o espaco nas duas pontas, cada um reprovava um
-# literal certo.
+# A comparacao usa fronteira de palavra (`\b`), nao substring nem espaco nas
+# pontas. Espaco nas pontas foi a primeira tentativa e tinha dois buracos
+# simetricos: " mes " (com espaco dos dois lados) nao casa em "R$ 2.615/mes"
+# -- a barra cola no "mes", sem espaco a esquerda, e e assim que a palavra
+# aparece de verdade em `apresentacao.py` --, e " ja " nao casa em "Ja
+# perguntei..." quando "ja" e a PRIMEIRA palavra da frase, sem espaco antes.
+# `\b` resolve os dois: barra e inicio de string sao fronteira de palavra
+# tanto quanto espaco, e "veja se"/"mesmo"/"mesa" continuam fora porque ali
+# nao ha fronteira nenhuma entre "ja"/"mes" e as letras vizinhas.
 FORMAS_SEM_ACENTO = (
     "voce",
     "nao",
@@ -61,9 +65,9 @@ FORMAS_SEM_ACENTO = (
     "interrogatorio",
     "tambem",
     "alem",
-    " ja ",
+    "ja",
     "e so",
-    " mes ",
+    "mes",
     "area",
 )
 
@@ -90,7 +94,9 @@ LITERAIS_AO_LEAD = (
 def test_nenhum_literal_ao_lead_tem_forma_sem_acento(texto: str) -> None:
     """A TEC-267 fixou que o texto que o lead le e portugues acentuado."""
     minusculo = texto.lower()
-    achadas = [forma for forma in FORMAS_SEM_ACENTO if forma in minusculo]
+    achadas = [
+        forma for forma in FORMAS_SEM_ACENTO if re.search(rf"\b{re.escape(forma)}\b", minusculo)
+    ]
     assert not achadas, f"{achadas} em {texto!r}"
 
 
