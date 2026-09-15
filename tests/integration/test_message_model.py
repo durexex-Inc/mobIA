@@ -9,7 +9,14 @@ from sqlalchemy.exc import IntegrityError
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
-from mobia.infra.crypto import aad_de, decrypt, decrypt_json, encrypt, encrypt_json
+from mobia.infra.crypto import (
+    DecryptionError,
+    aad_de,
+    decrypt,
+    decrypt_json,
+    encrypt,
+    encrypt_json,
+)
 
 
 def test_statuses_reivindicaveis() -> None:
@@ -247,7 +254,7 @@ async def test_colunas_reservadas_nascem_nulas(session) -> None:
     assert linha.claimed_at is None
 
 
-@pytest.mark.parametrize("coluna", ["text_body", "raw_payload"])
+@pytest.mark.parametrize("coluna", ["text_body", "raw_payload", "envelope_context"])
 def test_texto_claro_nas_colunas_cifradas_e_recusado(coluna: str) -> None:
     """Fecha por construcao o canal de vazamento pelo texto da excecao.
 
@@ -267,3 +274,95 @@ def test_texto_claro_nas_colunas_cifradas_e_recusado(coluna: str) -> None:
 @pytest.mark.parametrize("valor", [None, b"\x01cifrado", bytearray(b"\x01cifrado")])
 def test_bytes_e_none_atravessam_a_guarda(valor: object) -> None:
     assert Message(text_body=valor).text_body == valor
+
+
+def test_dict_em_envelope_context_e_recusado() -> None:
+    """O engano que o TEC-217 vai cometer, e o unico que a guarda existe para pegar aqui.
+
+    A coluna era JSONB ate o TEC-221, entao gravar o `change.value` direto e o
+    reflexo natural de quem escrever aquele card. O teste acima ja cobre `str`
+    generico; este fixa a forma real, com o nome e o telefone que o envelope
+    da Meta carrega, e confirma que nenhum dos dois aparece na excecao.
+    """
+    envelope = {"contacts": [{"profile": {"name": "Ana Souza"}, "wa_id": "5511911112222"}]}
+
+    with pytest.raises(TypeError) as erro:
+        Message(envelope_context=envelope)
+
+    assert "envelope_context" in str(erro.value)
+    assert "dict" in str(erro.value)
+    assert "Ana Souza" not in str(erro.value)
+    assert "5511911112222" not in str(erro.value)
+
+
+async def test_envelope_context_persiste_cifrado_e_decifra_pelo_orm(session) -> None:
+    """A TEC-217 vai gravar aqui nome e telefone do lead; a coluna tem de estar cifrada antes.
+
+    O `change.value` da Meta sem o array `messages` carrega
+    `contacts[].profile.name` e `wa_id`. A coluna nasceu JSONB em claro e ficou
+    de fora da TEC-126 porque nao tinha escritor -- cifrar agora custa uma
+    migracao de coluna vazia; depois da TEC-217, custaria backfill.
+    """
+    contexto = {
+        "messaging_product": "whatsapp",
+        "contacts": [{"profile": {"name": "Ana Souza"}, "wa_id": "5511911112222"}],
+    }
+    message = nova_mensagem("wamid.ENVELOPE")
+    message.envelope_context = encrypt_json(contexto, aad_de(message.id, "envelope_context"))
+    session.add(message)
+    await session.commit()
+
+    linha = await session.scalar(
+        select(Message).where(Message.provider_message_id == "wamid.ENVELOPE")
+    )
+    assert linha is not None
+    assert decrypt_json(linha.envelope_context, aad_de(linha.id, "envelope_context")) == contexto
+
+
+async def test_envelope_context_nulo_atravessa_a_cifra(session) -> None:
+    """O caminho NULL e o de hoje: nenhum escritor existe ate a TEC-217 chegar."""
+    message = nova_mensagem("wamid.ENVELOPE_NULO")
+    message.envelope_context = encrypt_json(None, aad_de(message.id, "envelope_context"))
+    session.add(message)
+    await session.commit()
+
+    linha = await session.scalar(
+        select(Message).where(Message.provider_message_id == "wamid.ENVELOPE_NULO")
+    )
+    assert linha.envelope_context is None
+    assert decrypt_json(linha.envelope_context, aad_de(linha.id, "envelope_context")) is None
+
+
+async def test_o_aad_amarra_o_envelope_context_a_propria_linha(session) -> None:
+    """Mover o ciphertext para a linha de outro lead tem de falhar a decifra.
+
+    E a mesma garantia que `text_body` e `raw_payload` ja tem: quem tem UPDATE
+    no banco mas nao a chave nao consegue transplantar o contexto de um lead
+    para o de outro.
+    """
+    contexto = {"contacts": [{"profile": {"name": "Ana Souza"}, "wa_id": "5511911112222"}]}
+    de_um = nova_mensagem("wamid.AAD_UM")
+    de_outro = nova_mensagem("wamid.AAD_OUTRO")
+    de_um.envelope_context = encrypt_json(contexto, aad_de(de_um.id, "envelope_context"))
+    session.add_all([de_um, de_outro])
+    await session.commit()
+
+    with pytest.raises(DecryptionError):
+        decrypt_json(de_um.envelope_context, aad_de(de_outro.id, "envelope_context"))
+
+
+async def test_envelope_context_cru_no_banco_nao_tem_nome_nem_telefone(session) -> None:
+    """O criterio de pronto da TEC-221, lido direto do banco e nao pelo ORM."""
+    contexto = {"contacts": [{"profile": {"name": "Ana Souza"}, "wa_id": "5511911112222"}]}
+    message = nova_mensagem("wamid.ENVELOPE_CRU")
+    message.envelope_context = encrypt_json(contexto, aad_de(message.id, "envelope_context"))
+    session.add(message)
+    await session.commit()
+
+    cru = await session.scalar(
+        text("SELECT envelope_context FROM messages WHERE provider_message_id = :pid").bindparams(
+            pid="wamid.ENVELOPE_CRU"
+        )
+    )
+    assert b"Ana Souza" not in bytes(cru)
+    assert b"5511911112222" not in bytes(cru)

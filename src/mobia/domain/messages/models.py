@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
 
 from sqlalchemy import (
     DateTime,
@@ -16,7 +15,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, validates
 
 
@@ -91,13 +90,23 @@ class Message(Base):
 
     # Contexto do envelope da Meta -- `change.value` sem o array `messages`.
     # Coluna reservada pelo TEC-217; nada escreve nela ainda.
-    envelope_context: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    #
+    # Cifrada em repouso desde o TEC-221, ANTES de existir escritor. O que o
+    # TEC-217 vai gravar aqui carrega `contacts[].profile.name` e `wa_id` --
+    # nome e telefone do lead --, e a premissa desta tabela desde o TEC-126 e
+    # que conteudo pessoal nao fica em claro. Cifrar com a coluna vazia custou
+    # uma migracao trivial; depois do escritor, custaria backfill.
+    #
+    # Mesma troca que o TEC-126 aceitou para `raw_payload`: deixa de ser
+    # consultavel por operador JSONB. Quem precisar filtrar por dentro do
+    # envelope tera de decifrar na aplicacao.
+    envelope_context: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
     # Instante da reivindicacao, para o lease de exclusao mutua entre workers.
     # Coluna reservada pelo TEC-218; nada escreve nela ainda.
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    @validates("text_body", "raw_payload")
+    @validates("text_body", "raw_payload", "envelope_context")
     def _exigir_bytes(self, coluna: str, valor: object) -> object:
         """Fecha por construcao o canal de vazamento pelo texto da excecao.
 
