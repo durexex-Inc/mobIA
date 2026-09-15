@@ -22,6 +22,7 @@ from scripts.comentarios_tocados import (
     citacoes_do_texto,
     classificar,
     examinar,
+    examinar_prosa,
     limitar,
     limitar_citacoes,
     resolver,
@@ -598,3 +599,64 @@ def test_teto_zero_desliga_o_corte_das_citacoes() -> None:
 def test_as_citacoes_saem_em_ordem_de_linha_do_documento() -> None:
     ficam, _ = limitar_citacoes([_prosa(9), _prosa(2), _prosa(5)], teto=0)
     assert [c.linha for c in ficam] == [2, 5, 9]
+
+
+def test_examinar_prosa_monta_as_tres_marcas() -> None:
+    texto = (
+        "o corte em repositorio.py:209 explica tudo\n"
+        "e test_x.py:900 aponta alem do fim\n"
+        "rode scripts/comentarios_tocados.py antes do PR\n"
+        "mas intocado.py:5 nao interessa\n"
+    )
+    achados = examinar_prosa(
+        "CLAUDE.md",
+        texto,
+        arquivos_py={"a/repositorio.py", "t/test_x.py", "intocado.py"},
+        alterados={"a/repositorio.py", "t/test_x.py"},
+        scripts={"comentarios_tocados.py"},
+        tamanho_de=lambda c: 300,
+    )
+    assert [(c.linha, c.marca) for c in achados] == [
+        (1, "PROSA"),
+        (2, "FALSO"),
+        (3, "NOMEIA"),
+    ]
+
+
+def test_examinar_prosa_preenche_o_destino_so_quando_ele_acrescenta() -> None:
+    """Para `repositorio.py:209` o destino diz onde o arquivo mora.
+
+    Para um alvo que ja veio com caminho completo, repetir o caminho na saida
+    seria ruido -- o revisor ja leu a mesma string dois centimetros antes.
+    """
+    achados = examinar_prosa(
+        "d.md",
+        "repositorio.py:9 e a/turno.py:9",
+        arquivos_py={"a/repositorio.py", "a/turno.py"},
+        alterados={"a/repositorio.py", "a/turno.py"},
+        scripts=set(),
+        tamanho_de=lambda c: 300,
+    )
+    assert [c.destino for c in achados] == ["a/repositorio.py", ""]
+
+
+def test_examinar_prosa_nao_marca_nada_sem_script_alterado() -> None:
+    achados = examinar_prosa(
+        "CLAUDE.md",
+        "rode scripts/comentarios_tocados.py",
+        arquivos_py=set(),
+        alterados=set(),
+        scripts=set(),
+        tamanho_de=lambda c: 300,
+    )
+    assert achados == []
+
+
+def test_o_escopo_exclui_planos_e_inclui_o_claude_md(monkeypatch) -> None:
+    """D1 do desenho: 70% do volume medido vinha de planos de branches fechadas."""
+    monkeypatch.setattr(
+        ferramenta,
+        "_rodar",
+        lambda *a: "CLAUDE.md\ndocs/superpowers/plans/x.md\ndocs/superpowers/specs/y.md\n",
+    )
+    assert ferramenta._documentos_no_escopo() == ["CLAUDE.md", "docs/superpowers/specs/y.md"]

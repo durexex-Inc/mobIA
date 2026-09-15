@@ -93,6 +93,20 @@ MAXIMO_DE_VIZINHOS_POR_BLOCO = 5
 # partida.
 MAXIMO_DE_CITACOES_POR_DOCUMENTO = 5
 
+# Planos de implementacao ficam fora da varredura de prosa.
+#
+# Um plano registra o que se fez numa branch num dia: ele nao afirma o que o
+# codigo E hoje, afirma o que se pretendia mexer naquela ocasiao. Envelhecer e
+# o comportamento esperado dele, e "corrigir" um plano fechado seria reescrever
+# historico -- o mesmo raciocinio que mantem as emendas do SRS como itens
+# aninhados em vez de reescrita.
+#
+# Medido na TEC-282: o corte leva a mediana de citacoes por branch de 39 para
+# 9, e leva os documentos que nomeiam este script de 21 para 2. **Custo real e
+# declarado:** 3 das 6 citacoes comprovadamente falsas de hoje estao em planos
+# e deixam de ser apontadas.
+PREFIXO_DOS_PLANOS = "docs/superpowers/plans/"
+
 
 @dataclass(frozen=True)
 class Achado:
@@ -373,6 +387,46 @@ def _pendentes_fora_do_commit() -> list[str]:
     return sorted(
         linha[3:] for linha in saida.splitlines() if linha[3:].endswith(".py") and linha[3:]
     )
+
+
+def _documentos_no_escopo() -> list[str]:
+    """Os .md versionados que a varredura de prosa examina."""
+    saida = _rodar("ls-files", "*.md")
+    return [d for d in saida.split() if not d.startswith(PREFIXO_DOS_PLANOS)]
+
+
+def _arquivos_versionados() -> set[str]:
+    """Todo .py versionado, que e o universo contra o qual um alvo resolve."""
+    return {p for p in _rodar("ls-files", "*.py").split()}
+
+
+def examinar_prosa(
+    documento: str,
+    texto: str,
+    arquivos_py: set[str],
+    alterados: set[str],
+    scripts: set[str],
+    tamanho_de: Callable[[str], int],
+) -> list[Citacao]:
+    """As citacoes deste documento que esta branch obriga a reconferir.
+
+    Puro de proposito: recebe o texto ja lido, para o teste nao precisar de
+    disco nem de git. Quem le e o chamador.
+    """
+    achados = []
+    for linha, alvo, _, fim in citacoes_do_texto(texto):
+        candidatos = resolver(alvo, arquivos_py)
+        marca = classificar(candidatos, fim, alterados, tamanho_de)
+        if marca is None:
+            continue
+        # O destino so acrescenta quando a resolucao descobriu algo que o alvo
+        # cru nao dizia. Repetir um caminho completo que o revisor acabou de
+        # ler dois centimetros antes e ruido.
+        destino = candidatos[0] if len(candidatos) == 1 and candidatos[0] != alvo else ""
+        achados.append(Citacao(documento, linha, f"{alvo}:{fim}", marca, destino))
+    for linha, nome in scripts_nomeados(texto, scripts):
+        achados.append(Citacao(documento, linha, f"descreve scripts/{nome}", "NOMEIA"))
+    return sorted(achados, key=lambda c: c.linha)
 
 
 def limitar(achados: list[Achado], *, teto: int) -> tuple[list[Achado], dict[str, int]]:
