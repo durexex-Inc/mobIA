@@ -795,41 +795,46 @@ async def executar_turno(
     # continua "atendimento_humano" nos dois casos, porque para o lead o
     # efeito e o mesmo (o agente calou).
     #
-    # `and not pedido_de_humano` e fix de revisao final (Critical 2), e e a
-    # mesma simetria que o `not pedido_de_optout` acima ja tinha. Sem ele o
-    # aviso da transferencia se perdia PARA SEMPRE numa falha retentavel:
-    # `_entregar_texto_fixo` nao captura `EnvioRetentavel`, entao a excecao
-    # sobe, `process_message` marca a linha FAILED e o sweeper reenfileira a
-    # MESMA mensagem -- e no turno 2 `tem_handoff_de_humano_aberto` ja devolve
-    # True (o turno 1 commita o handoff ANTES de entregar), esta guarda
-    # disparava, o turno fechava em "atendimento_humano" e o lead nunca era
-    # avisado de nada. E exatamente o defeito que o comentario da guarda de
-    # opt-out, logo acima, descreve para a confirmacao de opt-out: o repo ja
-    # pagou por ele uma vez e esta card o reintroduziu uma guarda abaixo, pela
-    # fonte de silencio nova.
+    # **`not pedido_de_humano` condiciona SO a fonte de handoff, e nao a guarda
+    # inteira** -- fix de revisao final (Critical 2), e a forma estreita e
+    # deliberada. Sem ele o aviso da transferencia se perdia PARA SEMPRE numa
+    # falha retentavel: `_entregar_texto_fixo` nao captura `EnvioRetentavel`,
+    # entao a excecao sobe, `process_message` marca a linha FAILED e o sweeper
+    # reenfileira a MESMA mensagem -- e no turno 2
+    # `tem_handoff_de_humano_aberto` ja devolve True (o turno 1 commita o
+    # handoff ANTES de entregar), esta guarda disparava, o turno fechava em
+    # "atendimento_humano" e o lead nunca era avisado de nada. E exatamente o
+    # defeito que o comentario da guarda de opt-out, logo acima, descreve para
+    # a confirmacao de opt-out: o repo ja pagou por ele uma vez e esta card o
+    # reintroduziu uma guarda abaixo, pela fonte de silencio nova.
     #
     # O custo aceito e o mesmo que a guarda de opt-out declara:
     # `registrar_handoff` e idempotente (acumula o gatilho na linha aberta em
     # vez de criar outra, e `_agendar_resumo` sai cedo quando `not criado`),
     # entao um lead que repete o pedido so recebe o aviso de novo.
     #
-    # **Consequencia que nao existia antes: a condicao tambem pula
-    # `esta_silenciada`.** Um lead cuja conversa um corretor JA assumiu
-    # (TEC-179) e que pede humano atravessa esta guarda e cai no bloco abaixo.
-    # O gatilho e acumulado no handoff que aquele corretor aceitou -- `assumir`
-    # carimba `aceito_em` sem concluir a linha (Emenda E-02 da RN-16.4), e o
-    # indice parcial cobre todo status menos `CONCLUIDO`, entao `criado` e
-    # False e nada e reagendado -- e o aviso e barrado pela guarda de
-    # atendimento humano de `GuardedOutbound.send`. O lead continua sem receber
-    # mensagem, que e o que a RN-16.4 exige; o que muda e so o desfecho
-    # registrado, que vira "bloqueado_por_atendimento_humano" em vez de
-    # "atendimento_humano".
-    if not pedido_de_optout and not pedido_de_humano:
+    # **`esta_silenciada` continua valendo, e a versao ampla desta condicao
+    # (`if not pedido_de_optout and not pedido_de_humano:`) foi recusada por
+    # isso.** So a fonte de handoff causava o Critical 2; `esta_silenciada`
+    # responde outra pergunta -- um corretor ASSUMIU esta conversa (TEC-179,
+    # RN-16.4) -- e nao tem nada a ver com a falha retentavel. Pulando-a, um
+    # lead cuja conversa ja esta sendo atendida por gente de verdade e que
+    # pedisse humano caia no bloco abaixo e, quando nao houvesse handoff
+    # aberto (o corretor que assume por conta propria, sem handoff nenhum),
+    # nascia um handoff NOVO com `criado=True` -- e desde o fix da esteira
+    # (Critical 1) isso agenda resumo e notificacao para uma conversa que ja
+    # tem dono. Ruido operacional que chega a um corretor. Conversa assumida
+    # nao gera handoff nem notificacao nova: ela devolve "atendimento_humano"
+    # aqui, como sempre devolveu.
+    if not pedido_de_optout:
         async with session_factory() as sessao:
             se_calar = await esta_silenciada(
                 sessao, channel=message.channel, conversation_key=message.conversation_key
-            ) or await tem_handoff_de_humano_aberto(
-                sessao, channel=message.channel, conversation_key=message.conversation_key
+            ) or (
+                not pedido_de_humano
+                and await tem_handoff_de_humano_aberto(
+                    sessao, channel=message.channel, conversation_key=message.conversation_key
+                )
             )
             if se_calar:
                 log.info(

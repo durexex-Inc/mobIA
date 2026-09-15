@@ -540,8 +540,9 @@ async def test_optout_ja_registrado_vence_o_pedido_de_humano(
     um lead ja em opt-out que peca humano recebe "silenciado" e nenhum handoff
     nasce. E o comportamento certo (nada pode ser enviado a quem pediu para
     sair, nem o aviso de transferencia) e ninguem o fixava. Repare que o
-    `not pedido_de_humano` do Critical 2 NAO alcanca esta guarda: ele entrou so
-    na guarda de atendimento humano, a de baixo.
+    `not pedido_de_humano` do Critical 2 NAO alcanca esta guarda: ele
+    condiciona so a fonte de handoff da guarda de atendimento humano, a de
+    baixo.
     """
     from conftest import CANAL_AGENTE, CONVERSA_AGENTE, _entrada_do_lead
 
@@ -569,3 +570,65 @@ async def test_optout_ja_registrado_vence_o_pedido_de_humano(
         await _handoff_da_conversa(session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE)
         is None
     )
+
+
+async def test_conversa_ja_assumida_nao_gera_handoff_nem_notificacao(
+    session: AsyncSession,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    semear_corretor,
+) -> None:
+    """O caso que a forma ESTREITA do Critical 2 protege, e a ampla estragava.
+
+    A primeira versao do fix condicionava a guarda inteira
+    (`if not pedido_de_optout and not pedido_de_humano:`), o que pulava
+    `esta_silenciada` junto. So a fonte de handoff causava o Critical 2;
+    `esta_silenciada` responde outra pergunta -- um corretor ASSUMIU esta
+    conversa (TEC-179, RN-16.4).
+
+    Pulando-a, um lead ja atendido por gente de verdade que pedisse humano
+    caia no bloco de baixo e, sem handoff aberto na conversa -- o corretor que
+    assume por conta propria --, nascia handoff NOVO com `criado=True`. Desde o
+    fix da esteira (Critical 1) isso agenda resumo e notificacao para uma
+    conversa que ja tem dono: ruido operacional que chega a um corretor.
+
+    Aqui a conversa e assumida SEM handoff nenhum, de proposito -- e a unica
+    montagem em que a versao ampla criava linha nova em vez de so acumular
+    gatilho.
+    """
+    from conftest import CANAL_AGENTE, CONVERSA_AGENTE
+
+    from mobia.domain.atendimento.repositorio import assumir
+
+    corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
+    await assumir(
+        session,
+        channel=CANAL_AGENTE,
+        conversation_key=CONVERSA_AGENTE,
+        corretor_id=corretor.id,
+    )
+    await session.commit()
+
+    espiao = _AgendadorEspiao()
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session,
+        classificador_fake(),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        agendador=espiao,
+        texto="quero falar com uma pessoa",
+    )
+
+    assert resultado == "atendimento_humano"
+    assert outbound.entregues == [], "quem ja tem corretor nao recebe aviso de transferencia"
+    assert (
+        await _handoff_da_conversa(session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE)
+        is None
+    ), "conversa assumida nao gera handoff novo"
+    assert espiao.pedidos == [], "e por isso nada e notificado"
