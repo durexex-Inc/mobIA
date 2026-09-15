@@ -62,15 +62,30 @@ async def _conversa_ja_existe(session: Any) -> None:
     await _entrada_do_lead(session, texto="ja tinha falado com o assistente antes")
 
 
-async def _semear_estado(session: Any, *, perguntas_feitas: int) -> None:
+async def _semear_estado(session: Any, *, perguntas_feitas: int, **campos: object) -> None:
     session.add(
         LeadQualification(
             channel=CANAL,
             conversation_key=CONVERSA,
             perguntas_feitas=perguntas_feitas,
+            **campos,
         )
     )
     await session.commit()
+
+
+async def _estado_relido() -> Any:
+    """Rele o estado numa sessao NOVA.
+
+    `marcar_perguntados` e `contar_perguntas` escrevem em SQL, numa transacao
+    propria do turno; o objeto que a sessao do teste tem em memoria nao sabe
+    disso. `test_formato_no_turno.py` rele do mesmo jeito, e pela mesma razao.
+    """
+    from mobia.domain.context.repositorio import ler_estado
+    from mobia.infra.db import get_sessionmaker
+
+    async with get_sessionmaker()() as outra:
+        return await ler_estado(outra, CANAL, CONVERSA)
 
 
 async def _handoffs(session: Any) -> list[dict]:
@@ -115,7 +130,7 @@ async def test_suporte_de_contrato_entrega_o_outro_texto(
 
     A asserta contra o texto de VENDA nao e enfeite -- com um literal unico
     para as duas intencoes este teste continuaria verde, e o lead de suporte
-    ouviria "que bom que pensou na gente para vender seu imovel".
+    ouviria "que bom que pensou na gente para vender seu imóvel".
     """
     await _conversa_ja_existe(session)
     entregador = outbound_fake()
@@ -243,10 +258,59 @@ async def test_o_segundo_turno_com_a_mesma_intencao_entrega_de_novo(
     assert len(await _handoffs(session)) == 1
 
 
+async def test_a_pergunta_suprimida_pelo_encaminhamento_nao_e_marcada_nem_contada(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """O encaminhamento e a QUARTA trilha de supressao da guarda pos-entrega.
+
+    A prosa do modelo perguntou `regiao` e NAO saiu -- o lead recebeu o texto
+    de encaminhamento. Marcar ou contar aqui queimaria o campo e gastaria
+    orcamento do lead por uma pergunta que ele nunca viu, que e o dano que
+    aquela guarda existe para evitar nas outras tres trilhas.
+
+    O estrago nao para nesta conversa de venda: a intencao e POR TURNO e o
+    contador e compartilhado entre elas. O lead que fala de venda hoje e volta
+    como COMPRA amanha chegaria com `regiao` marcada como ja perguntada -- a
+    uniao no SQL nunca remove -- e com `perguntas_feitas` gasto; depois de
+    turnos suficientes, o teto da TEC-149 dispararia "Já perguntei bastante"
+    contra quem nao foi perguntado de nada.
+
+    **`perguntas_feitas=2`, longe do teto, e a parte que faz o teste valer.**
+    Com 8, `teto_da_entrega` ja seria True e a guarda excluiria o bloco pela
+    razao PRE-EXISTENTE -- o teste passaria sem afirmar nada sobre o
+    encaminhamento.
+    """
+    await _conversa_ja_existe(session)
+    await _semear_estado(session, perguntas_feitas=2, perguntados_sem_resposta=[])
+    entregador = outbound_fake()
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.VENDER_IMOVEL, perguntou=("regiao",), resposta=PROSA_DO_MODELO),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto="quero colocar meu apartamento a venda",
+    )
+
+    # Primeiro fixa que a supressao de fato aconteceu: sem isto as duas
+    # assertas de baixo passariam tambem num turno em que a prosa saiu inteira.
+    assert entregador.entregues == [TEXTO_DO_ENCAMINHAMENTO_DE_VENDA]
+
+    estado = await _estado_relido()
+    assert estado is not None
+    assert estado.perguntados_sem_resposta == [], (
+        "a pergunta foi suprimida, nao feita -- marca-la queima o campo para sempre"
+    )
+    assert estado.perguntas_feitas == 2, (
+        "o contador nao pode crescer por uma pergunta que o lead nunca viu"
+    )
+
+
 async def test_o_encaminhamento_vence_o_teto_de_perguntas(
     session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
 ) -> None:
-    """Quem vai para a fila de venda nao precisa ouvir "ja perguntei bastante".
+    """Quem vai para a fila de venda nao precisa ouvir "Já perguntei bastante".
 
     Os dois textos prometem corretor, entao a diferenca nao e de gentileza: o
     do teto fala de qualificacao, que estas duas intencoes nao recebem.

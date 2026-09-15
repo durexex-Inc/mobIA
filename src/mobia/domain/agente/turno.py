@@ -149,7 +149,8 @@ TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
 # TEC-149, RN-05.5. Substitui a prosa do modelo no turno em que a pergunta
 # seguinte passaria do teto -- o caso comum, e nao a regra sem excecao: a
 # substituicao so acontece com `not desambiguando` e `not saida_bloqueada`,
-# e `TEXTO_DA_BUSCA_INCONCLUSIVA`/`TEXTO_SEM_RESULTADO_APOS_AMPLIAR` ainda
+# e o encaminhamento por intencao da TEC-137,
+# `TEXTO_DA_BUSCA_INCONCLUSIVA` e `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` ainda
 # podem sobrescrever `texto` depois. Ver o `if teto_da_entrega and not
 # desambiguando and not saida_bloqueada:` mais abaixo, onde as duas guardas
 # e a ordem de precedencia estao escritas por extenso. (`teto_da_entrega`, e
@@ -1877,11 +1878,12 @@ async def executar_turno(
         # nada foi contado, e o teto dispara normalmente no proximo turno sem
         # bloqueio.
         #
-        # E NAO e a ultima palavra sobre `texto`: a citacao bloqueada da
-        # TEC-161 e o zero pos-relaxamento da TEC-160 reatribuem depois daqui
-        # e vencem. Esta certo assim -- politica mais especifica ganha --, e
-        # as duas substituem por constante NOSSA, entao a pergunta que o teto
-        # suprimiu nao vaza por nenhuma delas.
+        # E NAO e a ultima palavra sobre `texto`: o encaminhamento por
+        # intencao da TEC-137, a citacao bloqueada da TEC-161 e o zero
+        # pos-relaxamento da TEC-160 reatribuem depois daqui e vencem. Esta
+        # certo assim -- politica mais especifica ganha --, e as tres
+        # substituem por constante NOSSA, entao a pergunta que o teto suprimiu
+        # nao vaza por nenhuma delas.
         texto = TEXTO_DO_LIMITE_DE_PERGUNTAS
 
         if not teto_do_handoff:
@@ -1944,7 +1946,7 @@ async def executar_turno(
     # por ultimo e quem vence, e o bloco do teto acima atribui
     # `TEXTO_DO_LIMITE_DE_PERGUNTAS`. E o mesmo idioma da citacao bloqueada da
     # TEC-161 e do zero pos-relaxamento da TEC-160, que reatribuem mais abaixo
-    # e vencem os dois. Quem vai para a fila de venda nao precisa ouvir "ja
+    # e vencem os dois. Quem vai para a fila de venda nao precisa ouvir "Já
     # perguntei bastante": o teto e sobre qualificacao, que estas duas
     # intencoes nao recebem.
     #
@@ -1959,15 +1961,29 @@ async def executar_turno(
     # porque `TEXTO_NEUTRO_DE_SAIDA` e a resposta declarada da politica de
     # moderacao e sobrepor a nossa a ela tornaria impossivel saber qual agiu.
     #
-    # Le `gerada.intencao` e nao `gatilho_da_intencao`: aquela variavel vive no
-    # bloco transacional la em cima e nao chega aqui, e o mapa e o mesmo.
+    # Le `gerada.intencao` e nao `gatilho_da_intencao`, que tambem estaria em
+    # escopo aqui (o walrus la em cima liga o nome no escopo da FUNCAO, nao no
+    # do `async with`). A razao nao e alcance, e o que cada mapa responde:
+    # `_GATILHO_DA_INTENCAO` responde "qual gatilho de handoff" e
+    # `_TEXTO_DO_ENCAMINHAMENTO` responde "qual texto para o lead". Sao dois
+    # objetos com o mesmo conjunto de CHAVES, e e por isso que os dois lados
+    # disparam juntos -- o comentario do mapa, no topo do modulo, escreve por
+    # extenso por que nao sao um so.
+    #
     # Consequencia da D2 do desenho: isto roda em TODO turno com a intencao,
     # nao so no primeiro. O lead que insiste recebe a mesma frase de novo --
     # aceito, porque a alternativa devolveria ao modelo a palavra no segundo
     # turno, com ela a pergunta de qualificacao que a regra proibe.
-    encaminhando = _TEXTO_DO_ENCAMINHAMENTO.get(gerada.intencao)
-    if encaminhando is not None and not desambiguando and not saida_bloqueada:
-        texto = encaminhando
+    #
+    # A condicao vira um nome porque a guarda pos-entrega la embaixo precisa
+    # dela: esta e mais uma trilha em que o texto de `gerada` NAO foi o que
+    # saiu, e marcar ou contar a pergunta suprimida queimaria o campo e o
+    # orcamento do lead por uma pergunta que ele nunca viu.
+    encaminhou = (
+        gerada.intencao in _TEXTO_DO_ENCAMINHAMENTO and not desambiguando and not saida_bloqueada
+    )
+    if encaminhou:
+        texto = _TEXTO_DO_ENCAMINHAMENTO[gerada.intencao]
         if not dentro_da_janela_de_atendimento(datetime.now(UTC)):
             settings_do_turno = get_settings()
             texto += SUFIXO_FORA_DA_JANELA.format(
@@ -2055,14 +2071,16 @@ async def executar_turno(
     # chamada sobre texto que nao inventamos, o mesmo argumento que a TEC-162
     # escreveu para as fichas.
     #
-    # Este ponto fica DEPOIS das quatro reatribuicoes de `texto` acima, e por
-    # isso cobre cinco trilhas, nao uma: a resposta normal, o
+    # Este ponto fica DEPOIS das cinco reatribuicoes de `texto` acima, e por
+    # isso cobre seis trilhas, nao uma: a resposta normal, o
     # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada, o
     # TEXTO_DO_LIMITE_DE_PERGUNTAS do teto de perguntas da TEC-149, o
-    # TEXTO_DA_BUSCA_INCONCLUSIVA da citacao bloqueada da TEC-161 e o
-    # TEXTO_SEM_RESULTADO_APOS_AMPLIAR do zero pos-relaxamento da TEC-160. A
-    # apresentacao NAO e uma sexta trilha aqui -- e excluida de proposito,
-    # tratada em separado dentro do `if apresentando:` abaixo (Task 5).
+    # TEXTO_DO_ENCAMINHAMENTO_DE_VENDA/TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE do
+    # encaminhamento por intencao da TEC-137, o TEXTO_DA_BUSCA_INCONCLUSIVA da
+    # citacao bloqueada da TEC-161 e o TEXTO_SEM_RESULTADO_APOS_AMPLIAR do zero
+    # pos-relaxamento da TEC-160. A apresentacao NAO e uma setima trilha aqui
+    # -- e excluida de proposito, tratada em separado dentro do
+    # `if apresentando:` abaixo (Task 5).
     #
     # `apresentando` fica de FORA aqui: naquele caminho `texto` vira prefixo de
     # legenda, e `legenda_de` corta o prefixo antes da ficha (D14 da TEC-162).
@@ -2675,6 +2693,7 @@ async def executar_turno(
         and not citacao_bloqueada
         and not entrega_parcial
         and not teto_da_entrega
+        and not encaminhou
     ):
         # A marca de `perguntou` (TEC-257) e, ao contrario da intencao e da
         # extracao gravadas la em cima, um fato sobre a NOSSA resposta -- e
@@ -2718,6 +2737,17 @@ async def executar_turno(
         # silencio, a chance de perguntar aquele campo de verdade -- o MESMO
         # dano que os outros tres casos existem para evitar, e a uniao no SQL
         # nunca remove. Entre os dois, o repeticao e o lado barato.
+        #
+        # `not encaminhou` (TEC-137) pela mesma razao das anteriores: o lead
+        # recebeu `TEXTO_DO_ENCAMINHAMENTO_DE_VENDA` ou o de suporte, que
+        # tambem nao perguntam nada. Aqui o dano e o menos obvio de todos, e
+        # por isso vale dizer por extenso: a intencao e POR TURNO e o contador
+        # e COMPARTILHADO entre elas, entao "esses leads nunca sao qualificados
+        # mesmo" nao fecha o caso. O lead que fala de venda hoje e volta como
+        # COMPRA amanha chegaria com o campo marcado -- a uniao no SQL nunca
+        # remove -- e com `perguntas_feitas` ja gasto; depois de turnos
+        # suficientes o teto da TEC-149 dispara "Já perguntei bastante" contra
+        # quem nao foi perguntado de nada.
         #
         # `marcar_perguntados`, e NAO `gravar_estado` de novo: regravar
         # `intencao`/`extracao` aqui e idempotente so contra si mesmo. Contra
