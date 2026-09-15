@@ -207,6 +207,24 @@ def citacoes_do_texto(texto: str) -> list[tuple[int, str, int, int]]:
     return achados
 
 
+def resolver(alvo: str, arquivos_py: set[str]) -> list[str]:
+    """Os .py versionados que este alvo pode designar, em tres degraus.
+
+    Caminho exato, depois sufixo de caminho (`agente/turno.py`), depois o nome
+    sozinho (`turno.py`). Devolver mais de um e o caso ambiguo e nao um erro:
+    medido na TEC-282, 145 das 155 citacoes do repo resolvem para um arquivo
+    so, porque quase todo nome citado e unico.
+
+    A comparacao de sufixo leva a barra junto, senao `no.py` casaria com
+    `turno.py` e a listagem apontaria arquivo que a prosa nunca citou.
+    """
+    if alvo in arquivos_py:
+        return [alvo]
+    if "/" in alvo:
+        return sorted(p for p in arquivos_py if p.endswith("/" + alvo))
+    return sorted(p for p in arquivos_py if p.rsplit("/", 1)[-1] == alvo)
+
+
 def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
     try:
         fonte = arquivo.read_text(encoding="utf-8")

@@ -19,6 +19,7 @@ from scripts.comentarios_tocados import (
     citacoes_do_texto,
     examinar,
     limitar,
+    resolver,
 )
 
 
@@ -376,3 +377,50 @@ def test_citacao_ignora_o_que_nao_e_citacao() -> None:
 def test_citacao_informa_a_linha_do_documento() -> None:
     """A linha e a do .md, nao a citada -- e por ela que o revisor abre o texto."""
     assert citacoes_do_texto("primeira\nsegunda\nveja turno.py:50") == [(3, "turno.py", 50, 50)]
+
+
+_PY = {
+    "src/mobia/domain/agente/turno.py",
+    "src/mobia/domain/followup/repositorio.py",
+    "src/mobia/domain/outbound/repositorio.py",
+    "tests/conftest.py",
+}
+
+
+def test_resolver_aceita_o_caminho_exato() -> None:
+    assert resolver("tests/conftest.py", _PY) == ["tests/conftest.py"]
+
+
+def test_resolver_aceita_sufixo_de_caminho() -> None:
+    """`agente/turno.py` designa o arquivo sem que a prosa repita src/mobia/."""
+    assert resolver("agente/turno.py", _PY) == ["src/mobia/domain/agente/turno.py"]
+
+
+def test_resolver_aceita_o_nome_sozinho() -> None:
+    """55 das 155 citacoes medidas na TEC-282 sao so o nome, sem caminho."""
+    assert resolver("turno.py", _PY) == ["src/mobia/domain/agente/turno.py"]
+
+
+def test_resolver_devolve_os_dois_quando_o_nome_e_ambiguo() -> None:
+    """`repositorio.py` bate 9 arquivos no repo real.
+
+    A ferramenta nao escolhe um: devolve os candidatos e deixa a classificacao
+    decidir, que e onde a regra de errar por sobra e nao por falta mora.
+    """
+    assert resolver("repositorio.py", _PY) == [
+        "src/mobia/domain/followup/repositorio.py",
+        "src/mobia/domain/outbound/repositorio.py",
+    ]
+
+
+def test_resolver_devolve_vazio_para_arquivo_que_nao_existe() -> None:
+    assert resolver("inventado.py", _PY) == []
+
+
+def test_resolver_nao_confunde_sufixo_parcial_de_nome() -> None:
+    """`no.py` nao e sufixo de caminho de `turno.py` -- a fronteira e a barra.
+
+    Sem a barra na comparacao, qualquer nome que termine igual casaria, e a
+    listagem apontaria arquivos que a prosa nunca citou.
+    """
+    assert resolver("no.py", _PY) == []
