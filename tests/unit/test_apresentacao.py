@@ -61,7 +61,7 @@ def test_sem_rentabilidade_a_legenda_e_identica_a_de_hoje() -> None:
         "Apartamento em Lagoa da Conceicao\n"
         "Lagoa da Conceicao - R$ 516.464\n"
         "4 quartos - 2 vagas - 54 m2\n"
-        "Condominio R$ 550\n"
+        "Condomínio R$ 550\n"
         "Destaque: churrasqueira e mobiliado"
     )
 
@@ -69,7 +69,7 @@ def test_sem_rentabilidade_a_legenda_e_identica_a_de_hoje() -> None:
 def test_o_bloco_do_investidor_sai_no_fim_com_a_ressalva_por_ultimo() -> None:
     """D6: a ficha padrao nao muda de forma e o extra e um apendice coeso.
 
-    A linha `Condominio R$ 550` PERMANECE ao lado do somatorio: condominio e
+    A linha `Condomínio R$ 550` PERMANECE ao lado do somatorio: condominio e
     um dos oito campos da RN-10.1, e suprimi-lo para o investidor quebraria
     aquela regra para ganhar 20 caracteres. De quebra, as duas linhas juntas
     revelam o IPTU, que nao tem linha propria.
@@ -78,11 +78,11 @@ def test_o_bloco_do_investidor_sai_no_fim_com_a_ressalva_por_ultimo() -> None:
         "Apartamento em Lagoa da Conceicao\n"
         "Lagoa da Conceicao - R$ 516.464\n"
         "4 quartos - 2 vagas - 54 m2\n"
-        "Condominio R$ 550\n"
+        "Condomínio R$ 550\n"
         "Destaque: churrasqueira e mobiliado\n"
         "Aluguel estimado R$ 8.760 - yield bruto 4,3% ao ano\n"
-        "Condominio + IPTU R$ 2.615/mes\n"
-        "Estimativa, nao e garantia de retorno."
+        "Condomínio + IPTU R$ 2.615/mês\n"
+        "Estimativa, não é garantia de retorno."
     )
 
 
@@ -98,7 +98,7 @@ def test_sem_aluguel_a_ficha_diz_que_o_dado_nao_existe_e_nao_ressalva_nada() -> 
         rentabilidade=Rentabilidade(aluguel_centavos=None, yield_pct=None, custos_centavos=261500),
     )
     assert legenda_de(sem_aluguel).endswith(
-        "Aluguel estimado: nao informado\nCondominio + IPTU R$ 2.615/mes"
+        "Aluguel estimado: não informado\nCondomínio + IPTU R$ 2.615/mês"
     )
 
 
@@ -114,7 +114,7 @@ def test_aluguel_zero_cai_na_linha_nao_informado_e_nao_leva_ressalva() -> None:
         rentabilidade=Rentabilidade(aluguel_centavos=0, yield_pct=None, custos_centavos=None),
     )
     legenda = legenda_de(aluguel_zero)
-    assert legenda.endswith("Aluguel estimado: nao informado")
+    assert legenda.endswith("Aluguel estimado: não informado")
     assert "Estimativa" not in legenda
 
 
@@ -127,7 +127,7 @@ def test_aluguel_sem_preco_de_venda_mostra_o_valor_sem_o_sufixo_do_yield() -> No
         rentabilidade=Rentabilidade(aluguel_centavos=876004, yield_pct=None, custos_centavos=None),
     )
     assert legenda_de(so_aluguel).endswith(
-        "Aluguel estimado R$ 8.760\nEstimativa, nao e garantia de retorno."
+        "Aluguel estimado R$ 8.760\nEstimativa, não é garantia de retorno."
     )
     assert "yield" not in legenda_de(so_aluguel)
 
@@ -138,7 +138,7 @@ def test_o_teto_de_600_corta_a_prosa_e_nunca_o_bloco_do_investidor() -> None:
     prosa = "palavra " * 200
     legenda = legenda_de(COM_YIELD, prefixo=prosa)
     assert len(legenda) <= MAX_CARACTERES_DA_LEGENDA
-    assert legenda.endswith("Estimativa, nao e garantia de retorno.")
+    assert legenda.endswith("Estimativa, não é garantia de retorno.")
     # A prosa sobrevive truncada -- 40 das 200 palavras cabem antes da ficha
     # de 593 caracteres. Sem esta linha, descartar a prosa INTEIRA passaria
     # neste mesmo teste: `len <= 600` e `endswith(ressalva)` valem tanto para
@@ -155,7 +155,7 @@ def test_a_legenda_traz_os_oito_campos_da_rn_10_1() -> None:
         "Apartamento em Lagoa da Conceicao\n"
         "Lagoa da Conceicao - R$ 516.464\n"
         "4 quartos - 2 vagas - 54 m2\n"
-        "Condominio R$ 550\n"
+        "Condomínio R$ 550\n"
         "Destaque: churrasqueira e mobiliado"
     )
 
@@ -181,7 +181,7 @@ def test_os_centavos_sao_truncados_para_baixo_e_nunca_arredondados() -> None:
 def test_condominio_nulo_omite_a_linha_e_nao_esconde_o_imovel() -> None:
     """D13. Ausencia omite a linha; o imovel e apresentado de todo jeito."""
     legenda = legenda_de(replace(COMPLETA, condominio_centavos=None))
-    assert "Condominio" not in legenda
+    assert "Condomínio" not in legenda
     assert "Apartamento em Lagoa da Conceicao" in legenda
     assert "Destaque: churrasqueira e mobiliado" in legenda
 

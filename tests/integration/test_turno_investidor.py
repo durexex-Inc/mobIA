@@ -510,8 +510,8 @@ async def test_a_ficha_do_investidor_traz_os_indicadores(
     fichas = [texto for texto in outbound.entregues if "Apartamento AP-1004" in texto]
     assert fichas, "nenhuma ficha foi entregue -- o teste nao afirmaria nada"
     assert "Aluguel estimado R$ 2.500 - yield bruto 6,0% ao ano" in fichas[0]
-    assert "Condominio + IPTU R$ 870/mes" in fichas[0]
-    assert fichas[0].endswith("Estimativa, nao e garantia de retorno.")
+    assert "Condomínio + IPTU R$ 870/mês" in fichas[0]
+    assert fichas[0].endswith("Estimativa, não é garantia de retorno.")
 
 
 async def test_a_ficha_de_comprador_nao_traz_indicador_nenhum(
@@ -574,7 +574,7 @@ async def test_a_continuacao_de_um_investidor_mantem_os_indicadores(session, out
 
     assert outbound.entregues, "nada foi entregue -- o teste nao afirmaria nada"
     assert "yield bruto 6,0% ao ano" in outbound.entregues[0]
-    assert outbound.entregues[0].endswith("Estimativa, nao e garantia de retorno.")
+    assert outbound.entregues[0].endswith("Estimativa, não é garantia de retorno.")
 
 
 async def test_a_continuacao_de_um_comprador_nao_ganha_indicador_nenhum(
