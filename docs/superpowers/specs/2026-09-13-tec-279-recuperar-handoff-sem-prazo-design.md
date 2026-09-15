@@ -18,7 +18,7 @@ O resultado é o *"um handoff que ninguém viu fica parado, e nada o levanta"* q
 
 | Onde | O que se perde | A card nomeia? |
 |---|---|---|
-| `turno.py:350`, `_agendar_resumo` | resumo, notificação e prazo — o handoff nasce e nada mais acontece | de passagem |
+| `_agendar_resumo` (`turno.py`) | resumo, notificação e prazo — o handoff nasce e nada mais acontece | de passagem |
 | `gerar_resumo.py:46` | notificação e prazo; o resumo existe | sim |
 | o job é enfileirado e o worker nunca o roda (worker caído, `max_tries` esgotado) | notificação e prazo | **não** |
 

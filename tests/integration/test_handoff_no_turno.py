@@ -55,9 +55,20 @@ async def test_vender_imovel_cria_handoff_e_o_lead_ainda_recebe_resposta(
 ) -> None:
     """RN-03.4 ganha destino.
 
-    O lead CONTINUA recebendo a resposta do turno: silenciar e a RN-16.4, que e
-    a TEC-179. Esta card so registra -- e a segunda asserta e a nao-regressao
-    dessa decisao, nao enfeite.
+    O lead CONTINUA recebendo resposta neste turno -- desde a TEC-137 o texto
+    fixo de `_TEXTO_DO_ENCAMINHAMENTO`, nao mais a prosa do modelo -- e isso
+    nao e a mesma coisa que ser silenciado: silenciar e a RN-16.4, que e a
+    TEC-179, e nenhuma das duas cards faz isso. A segunda asserta e a
+    nao-regressao dessa decisao, nao enfeite.
+
+    De proposito ela afirma so que ALGO saiu, e nao O QUE saiu: qual texto e
+    assunto de `test_encaminhamento_por_intencao.py`, e duplicar o literal aqui
+    daria duas coisas para manter em sincronia. Foi essa divisao que deixou
+    este docstring mentir por tres commits -- ate este, a branch nao tocava
+    este arquivo, entao `comentarios_tocados.py` nao tinha como aponta-lo nem
+    como ALTERADO nem como VIZINHO. (Este commit o toca, e por isso ele agora
+    aparece como ALTERADO -- o que so vale para a correcao, nao para o defeito
+    que ela conserta.)
     """
     entregador = outbound_fake()
     await rodar_turno(
