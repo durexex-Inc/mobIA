@@ -138,13 +138,25 @@ TEXTO_DO_AVISO_DE_ERRO = (
 Run: `./.venv/Scripts/python.exe -m pytest tests/unit -q --tb=short`
 Expected: FAIL em `tests/unit/test_recomendacao_regras.py` (4 asserções sobre `TEXTO_DO_FILTRO_AJUSTADO`). **Se quebrar em mais lugares que os previstos aqui e no Step 3, pare e me diga** — a medição do desenho previu exatamente cinco arquivos de teste, e um sexto significaria que ela errou.
 
-- [ ] **Step 3: Corrigir os dois testes que duplicam `TEXTO_DO_FILTRO_AJUSTADO`**
+- [ ] **Step 3: Corrigir os literais duplicados**
 
 `tests/unit/test_recomendacao_regras.py`, linhas 209, 215, 222 e 231, e `tests/integration/test_apresentacao_no_turno.py`, linha 1001.
 
 Eles trazem a frase como string solta. Acentue **o literal duplicado**, exatamente como ficou na fonte — `"Tirei ... da busca, que você já descartou."`. Não troque por `from ... import TEXTO_DO_FILTRO_AJUSTADO`.
 
 > Abra cada linha e confira a forma exata antes de editar: alguns podem conter só um pedaço da frase (`"que voce ja descartou"`), e trocar a frase inteira onde havia um pedaço quebra a asserção de outro jeito.
+
+- [ ] **Step 3b: Apagar as asserções `.isascii()` desta task**
+
+**Correção ao levantamento** (`D5` do desenho): o repositório guarda a política antiga em asserções de propriedade, e o inventário original não as viu porque procurou literal duplicado. Três das cinco caem nesta task:
+
+- `tests/unit/test_recomendacao_regras.py:63` e `:64` — asserções soltas dentro de outro teste. **Apague as duas linhas**, e nada mais do teste que as hospeda.
+- `tests/unit/test_recomendacao_regras.py:244-247` — o teste `test_o_aviso_e_ascii` inteiro, docstring incluída. **Apague a função.**
+- `tests/unit/test_relaxamento_alargar.py:169-176` — o teste `test_os_textos_do_aviso_sao_ascii` inteiro. **Apague a função**, e confira se o `import` de `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` e dos três `CRITERIO_AMPLIADO` fica sem uso — se ficar, o `ruff` acusa `F401` e você remove o import também.
+- `tests/integration/test_apresentacao_no_turno.py:1002` — asserção solta ao fim de um teste. **Apague a linha.**
+- `tests/unit/test_mensagem_do_followup.py:107-113` — o teste `test_tudo_que_sai_para_o_lead_e_ascii` inteiro. **Apague a função.** Ele cai nesta task e não na 2: a primeira coisa que ele assevera é `CONVITE_PARA_AGENDAR`, que esta task acentua. (A linha 76 do mesmo arquivo, que duplica `"Condominio"`, é da Task 2 — não a toque aqui.)
+
+São as **cinco** asserções, nos quatro arquivos. A guarda no sentido novo entra na Task 3; não a escreva aqui.
 
 - [ ] **Step 4: Rodar unitários e integração**
 
@@ -251,7 +263,145 @@ MSG
 
 ---
 
-### Task 3: A fronteira escrita, no `CLAUDE.md` e na docstring que ficou ambígua
+### Task 3: A guarda, no sentido novo
+
+**Files:**
+- Create: `tests/unit/test_acento_no_texto_ao_lead.py`
+
+**Interfaces:**
+- Consumes: as constantes acentuadas das Tasks 1 e 2.
+- Produces: nada que outra task use.
+
+**Por que esta task existe:** as Tasks 1 e 2 apagaram cinco asserções `.isascii()` que guardavam a política revogada (`D5` do desenho). Sem isto, a card sai deixando a fronteira **menos** protegida do que a encontrou.
+
+- [ ] **Step 1: Escrever a guarda**
+
+```python
+"""A fronteira do acento, no sentido que a TEC-267 fixou.
+
+Substitui as cinco assercoes `.isascii()` que guardavam a politica anterior.
+
+**Esta guarda erra de menos, nunca de mais, e e isso que a torna aceitavel.**
+A versao obvia -- "todo literal ao lead tem ao menos um caractere acentuado"
+-- e FALSA: `m2`, `Destaque:` e `De {} por {}` nao tem vogal que receba
+acento, e excetua-las viraria uma lista a mao que reprova texto certo. Esta
+aqui tem a assimetria oposta: uma palavra faltando na lista so deixa de pegar
+um caso, nunca reprova um caso correto.
+"""
+
+import pytest
+
+from mobia.domain.agente.apresentacao import RESSALVA_DE_ESTIMATIVA
+from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO
+from mobia.domain.agente.turno import (
+    TEXTO_DA_BUSCA_INCONCLUSIVA,
+    TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
+    TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
+    TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
+    TEXTO_DO_FILTRO_AJUSTADO,
+    TEXTO_DO_LIMITE_DE_PERGUNTAS,
+    TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
+)
+from mobia.domain.followup.mensagem import CONVITE_PARA_AGENDAR
+from mobia.domain.moderacao.port import (
+    TEXTO_DA_RECUSA_DE_ENTRADA,
+    TEXTO_NEUTRO_DE_SAIDA,
+)
+from mobia.domain.notificacao.envio import TEXTO_DA_JANELA_HUMANA
+from mobia.domain.optout.deteccao import TEXTO_DA_CONFIRMACAO_DE_OPTOUT
+from mobia.workers.jobs.process_message import TEXTO_DO_AVISO_DE_ERRO
+
+# As formas sem acento que o dominio usa de fato. Nao e o portugues inteiro:
+# e a lista das palavras que apareciam nos literais desta card, mais as que
+# um texto de imobiliaria escreve toda hora.
+FORMAS_SEM_ACENTO = (
+    "voce",
+    "nao",
+    "imovel",
+    "imoveis",
+    "regiao",
+    "preco",
+    "condominio",
+    "criterio",
+    "ultima",
+    "sabado",
+    "horario",
+    "tecnico",
+    "informacao",
+    "opcoes",
+    "interrogatorio",
+    "tambem",
+    "alem",
+    "ja ",
+    "e so",
+    "mes",
+    "area",
+)
+
+LITERAIS_AO_LEAD = (
+    TEXTO_DA_IDENTIFICACAO,
+    TEXTO_DA_BUSCA_INCONCLUSIVA,
+    TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
+    TEXTO_DO_LIMITE_DE_PERGUNTAS,
+    TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
+    TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
+    TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
+    TEXTO_DO_FILTRO_AJUSTADO,
+    CONVITE_PARA_AGENDAR,
+    TEXTO_DA_RECUSA_DE_ENTRADA,
+    TEXTO_NEUTRO_DE_SAIDA,
+    TEXTO_DA_JANELA_HUMANA,
+    TEXTO_DA_CONFIRMACAO_DE_OPTOUT,
+    TEXTO_DO_AVISO_DE_ERRO,
+    RESSALVA_DE_ESTIMATIVA,
+)
+
+
+@pytest.mark.parametrize("texto", LITERAIS_AO_LEAD)
+def test_nenhum_literal_ao_lead_tem_forma_sem_acento(texto: str) -> None:
+    """A TEC-267 fixou que o texto que o lead le e portugues acentuado."""
+    minusculo = texto.lower()
+    achadas = [forma for forma in FORMAS_SEM_ACENTO if forma in minusculo]
+    assert not achadas, f"{achadas} em {texto!r}"
+
+
+def test_a_lista_de_literais_nao_encolheu_sem_querer() -> None:
+    """Guarda da guarda: um literal removido da tupla acima faria o teste de
+    cima passar sem checar nada, e ninguem notaria."""
+    assert len(LITERAIS_AO_LEAD) == 15
+```
+
+> **Confira os nomes de import antes de rodar.** Escrevi esta lista a partir do inventário; se algum módulo ou constante tiver outro nome, use o real e diga no relatório. `_ALUGUEL_AUSENTE` fica de fora de propósito: é privado, e importar um `_nome` de outro módulo num teste é pior que não cobri-lo.
+
+- [ ] **Step 2: Rodar**
+
+Run: `./.venv/Scripts/python.exe -m pytest tests/unit/test_acento_no_texto_ao_lead.py -q --tb=short`
+Expected: PASS.
+
+> **Se alguma forma da lista der falso positivo, não relaxe a asserção — conserte a lista.** `"ja "` tem espaço ao fim de propósito, para não casar dentro de outra palavra; `"mes"` casaria em "mesmo", então **confira**: se casar, ou tire da lista ou torne-a mais específica (`"/mes"`). Registre no relatório o que ajustou e por quê.
+
+- [ ] **Step 3: Os três gates, e commitar**
+
+```bash
+git add tests/unit/test_acento_no_texto_ao_lead.py
+git commit -F- <<'MSG'
+test(TEC-267): a fronteira do acento ganha guarda no sentido novo
+
+Substitui as cinco assercoes .isascii() que guardavam a politica revogada e
+que as duas tasks anteriores apagaram. Sem isto a card sairia deixando a
+fronteira menos protegida do que a encontrou.
+
+Guarda por LISTA DE FORMAS SEM ACENTO, e nao por "tem ao menos um acentuado":
+a segunda e falsa para m2, Destaque: e De {} por {}. Esta erra de menos --
+uma palavra faltando so deixa de pegar um caso, nunca reprova um certo.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+MSG
+```
+
+---
+
+### Task 4: A fronteira escrita, no `CLAUDE.md` e na docstring que ficou ambígua
 
 **Files:**
 - Modify: `CLAUDE.md`, `src/mobia/domain/agente/turno.py` (docstring de `aviso_de_ajuste`)
@@ -310,7 +460,7 @@ MSG
 
 ---
 
-### Task 4: Fechamento
+### Task 5: Fechamento
 
 - [ ] **Step 1: Procurar o que ficou para trás**
 

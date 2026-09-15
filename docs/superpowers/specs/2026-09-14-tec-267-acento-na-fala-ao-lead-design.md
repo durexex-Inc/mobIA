@@ -101,7 +101,9 @@ Nenhum dos outros 16 literais quebra teste nenhum, porque todos os testes que os
 
 ## Lacunas declaradas
 
-**L1 — A fronteira não é checada por nada.** Nenhum dos três gates olha para acento, nem antes nem depois desta card. Um literal novo voltado ao lead pode nascer sem acento e ninguém vê. Não há guarda automática possível barata: detectar "esta frase em português deveria ter acento" é o mesmo problema que nenhum linter resolve. O que muda é que agora a regra está escrita nos dois lados, em vez de existir só como hábito.
+**L1 — Nenhum dos três gates olha para acento, e a guarda que existe é parcial.** Nem antes nem depois desta card o `ruff` ou o `mypy` veem a fronteira. O que existe é a guarda de teste da `D5`, e ela cobre uma lista de formas escrita à mão: pega `voce` e `imovel`, não pega uma palavra que ninguém pensou em listar. Detectar "esta frase em português deveria ter acento" em geral é problema que nenhum linter resolve.
+
+Esta lacuna foi redigida errado na primeira versão deste desenho, que afirmava não haver guarda automática barata possível. **Havia uma, em produção, apontando para o lado contrário** — as cinco asserções `.isascii()` da `D5` —, e o levantamento não a viu. O erro vale registrar porque é a mesma classe que a card conserta: uma afirmação confiante sobre o repositório, escrita sem conferir.
 
 **L2 — Nome de bairro continua ASCII dentro de frase acentuada** (`D2`). O lead lê *"Tirei Aclimacao da busca, que você já descartou."* Restaurar a forma de exibição é card própria.
 
@@ -123,11 +125,29 @@ Nenhum uso de `.encode("ascii")` ou `errors=` em `src/`.
 
 ## Testes
 
-Esta card **não acrescenta teste novo**, e a razão é que não há o que asseverar que já não esteja asseverado: o valor dos literais é comparado pelos testes que os importam, e esses continuam passando por construção.
+### D5 — As guardas de ASCII são substituídas, não apagadas
 
-O que muda são os **cinco arquivos da D4**, cujos literais duplicados passam a trazer acento. Depois deles, a suíte inteira roda uma vez.
+**Correção ao levantamento, descoberta durante a implementação.** O repositório **já tinha** uma guarda automática desta fronteira, e ela aponta para o lado que esta card revoga: **cinco asserções `.isascii()` em quatro arquivos**, deliberadas e documentadas —
 
-**Um teste que eu não vou escrever, e por quê:** seria possível listar as constantes voltadas ao lead num registro e asseverar que cada uma contém ao menos um caractere acentuado. Ele passaria sem provar nada — `"m2"` e `"De {} por {}"` não têm vogal que receba acento, e a asserção teria de excetuá-las, virando uma lista escrita à mão que envelhece sozinha. É o tipo de teste que dá confiança sem dar garantia.
+| Local | Docstring |
+| --- | --- |
+| `tests/unit/test_mensagem_do_followup.py:113` (`test_tudo_que_sai_para_o_lead_e_ascii`) | *"Acento aqui chega ao WhatsApp do lead."* |
+| `tests/unit/test_relaxamento_alargar.py:176` (`test_os_textos_do_aviso_sao_ascii`) | *"Todo texto que sai para o lead e ASCII sem acento -- a disciplina de `apresentacao.py`"* |
+| `tests/unit/test_recomendacao_regras.py:246-247` (`test_o_aviso_e_ascii`) | *"A disciplina do texto que sai para o lead"* |
+| `tests/unit/test_recomendacao_regras.py:63-64` | soltas, dentro de outro teste |
+| `tests/integration/test_apresentacao_no_turno.py:1002` | solta, ao fim de um teste de entrega |
+
+O levantamento inicial não as viu porque procurou **literal duplicado**, não **asserção sobre propriedade**. São duas formas diferentes de um teste depender de um texto, e a primeira busca só encontra a primeira.
+
+**Elas são apagadas e substituídas por uma guarda no sentido novo:** um literal voltado ao lead não pode conter formas conhecidas sem acento — `voce`, `nao`, `imovel`, `regiao`, `preco`, `condominio`, `criterio`, `ultima`, `sabado`, `horario`, `tecnico`, `informacao`, `opcoes`.
+
+**Por que esta guarda e não a que recusei.** A versão óbvia — "todo literal ao lead tem ao menos um caractere acentuado" — é falsa: `m2`, `Destaque:` e `De {} por {}` não têm vogal que receba acento, e excetuá-las viraria uma lista à mão que reprova texto certo. A guarda por formas sem acento tem a assimetria oposta, e é ela que a torna aceitável: **uma palavra faltando na lista só deixa de pegar um caso; nunca reprova um caso certo.** Ela erra de menos, nunca de mais.
+
+**O que se perde:** a lista é escrita à mão e não cobre todo o português. Ela pega a regressão que esta card conserta — um literal novo nascendo sem acento com as palavras mais comuns do domínio — e não pretende mais que isso.
+
+### O resto
+
+Fora a guarda, esta card não acrescenta teste: o valor dos literais é comparado pelos testes que os **importam**, e esses passam por construção. O que muda são os arquivos que **duplicam** o literal como string solta (`D4`) e os que asseveram ASCII (`D5`). Depois deles, a suíte inteira roda uma vez.
 
 ## Fora de escopo
 
