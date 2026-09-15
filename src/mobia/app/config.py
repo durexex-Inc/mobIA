@@ -345,6 +345,25 @@ class Settings(BaseSettings):
     # volta dele virar um erro silencioso de uma hora em todo disparo.
     followup_fuso: str = "America/Sao_Paulo"
 
+    # RN-16.1 (TEC-143): a janela em que existe gente para atender, em horas
+    # locais do `followup_fuso` acima -- mesmo fuso, reaproveitado, e nao um
+    # terceiro campo `atendimento_fuso`. Fora dela o handoff e criado do mesmo
+    # jeito -- so o texto que o lead recebe muda (`TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO`
+    # em `domain/humano/deteccao.py`), porque a card e explicita em que ele
+    # nunca fica em espera silenciosa.
+    #
+    # Janela da imobiliaria, e nao a jornada do corretor designado: no instante
+    # do pedido ninguem foi designado ainda, e a alocacao por especialidade e
+    # regiao e outra card (TEC-166). Uma janela unica responde "quando alguem
+    # te atende" sem precisar saber quem.
+    #
+    # Mesma convencao de borda que `followup_horario_fim` documenta acima --
+    # `fim` e o ultimo MINUTO em que a janela ainda vale, nao a ultima hora
+    # inteira: `atendimento_horario_fim=18` inclui 18:00 e recusa 18:01. Ver
+    # `dentro_da_janela_de_atendimento` para a comparacao.
+    atendimento_horario_inicio: int = 9
+    atendimento_horario_fim: int = 18
+
     @property
     def em_producao(self) -> bool:
         """O unico lugar que decide o que "producao" quer dizer.
@@ -424,6 +443,29 @@ class Settings(BaseSettings):
                 "Se o nome estiver certo, confira a dependencia `tzdata` no "
                 "pyproject.toml -- o Windows nao tem base de fusos do sistema."
             ) from exc
+        return self
+
+    @model_validator(mode="after")
+    def _recusar_janela_de_atendimento_impossivel(self) -> "Settings":
+        """Horario invertido ou vazio fecha a janela de atendimento para sempre.
+
+        Ao contrario da cadencia de follow-up, aqui o sintoma nao e ausencia
+        de alguma coisa -- e presenca da errada, sempre. `inicio >= fim` torna
+        `[inicio*60, fim*60]` vazio ou invertido em `dentro_da_janela_de_atendimento`
+        (`domain/humano/deteccao.py`), e nenhum minuto do dia satisfaz as duas
+        pontas ao mesmo tempo: todo lead que pedir humano recebe
+        `TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO`, nunca o outro texto, em
+        qualquer hora que escreva. Nada quebra, nada loga erro -- so a
+        imobiliaria aparenta nunca ter ninguem disponivel, e e essa mentira
+        silenciosa que a guarda existe para recusar na subida do processo.
+        """
+        if not 0 <= self.atendimento_horario_inicio < self.atendimento_horario_fim <= 23:
+            raise ValueError(
+                "atendimento_horario_inicio e atendimento_horario_fim precisam satisfazer "
+                f"0 <= inicio < fim <= 23; recebi inicio={self.atendimento_horario_inicio} "
+                f"e fim={self.atendimento_horario_fim}. Horario invertido ou vazio faz todo "
+                "lead que pedir humano receber o texto de fora do horario, sempre."
+            )
         return self
 
     @property

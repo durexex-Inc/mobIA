@@ -532,6 +532,31 @@ def test_o_horario_de_envio_no_limite_das_bordas_sobe(monkeypatch: pytest.Monkey
     assert settings.followup_horario_fim == 23
 
 
+def test_a_janela_de_atendimento_invertida_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Par de `test_o_horario_de_envio_invertido_nao_sobe`, mas para a janela de atendimento.
+
+    Invertida, `dentro_da_janela_de_atendimento` nunca reconheceria nenhum
+    minuto do dia como dentro -- todo lead que pedir humano receberia o
+    texto de fora do horario, sempre, sem nenhum sintoma alem desse.
+    """
+    monkeypatch.setenv("ATENDIMENTO_HORARIO_INICIO", "18")
+    monkeypatch.setenv("ATENDIMENTO_HORARIO_FIM", "9")
+
+    with pytest.raises(ValidationError, match="atendimento_horario"):
+        Settings(_env_file=None)
+
+
+def test_a_janela_de_atendimento_no_limite_das_bordas_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`inicio=0, fim=23` e o extremo permitido dos dois lados ao mesmo tempo."""
+    monkeypatch.setenv("ATENDIMENTO_HORARIO_INICIO", "0")
+    monkeypatch.setenv("ATENDIMENTO_HORARIO_FIM", "23")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.atendimento_horario_inicio == 0
+    assert settings.atendimento_horario_fim == 23
+
+
 def test_o_fuso_de_envio_invalido_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sem esta guarda, o typo explodiria dentro da varredura a cada 5 minutos
     em vez de na subida do worker."""

@@ -7,7 +7,7 @@ from typing import Any, Literal, cast
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from mobia.app.config import MODELO_SEM_CHAMADA
+from mobia.app.config import MODELO_SEM_CHAMADA, get_settings
 from mobia.domain.agente.apresentacao import Ficha, legenda_de
 from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
@@ -57,8 +57,20 @@ from mobia.domain.context.repositorio import (
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.handoff.agendador import AgendadorDeResumoPort
-from mobia.domain.handoff.repositorio import HandoffRegistrado, registrar_handoff
+from mobia.domain.handoff.repositorio import (
+    HandoffRegistrado,
+    registrar_handoff,
+    tem_handoff_de_humano_aberto,
+)
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
+from mobia.domain.humano.deteccao import (
+    KIND_DO_PEDIDO_DE_HUMANO,
+    SUBAGENTE_PEDIDO_DE_HUMANO,
+    TEXTO_DO_PEDIDO_DE_HUMANO,
+    TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO,
+    dentro_da_janela_de_atendimento,
+    pediu_humano,
+)
 from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import MessageRecorder
@@ -334,6 +346,12 @@ ResultadoDoTurno = Literal[
     # diferentes.
     "atendimento_humano",
     "bloqueado_por_atendimento_humano",
+    # A TEC-143 acrescentou este. Nao reuse "atendimento_humano": aquele e o
+    # turno que nao fez nada porque um corretor JA tinha assumido; este e o
+    # turno em que o LEAD pediu e o handoff acabou de nascer. Duas historias
+    # com donos diferentes -- mesmo criterio que o comentario acima aplica aos
+    # tres do opt-out.
+    "pedido_de_humano",
 ]
 
 
@@ -693,6 +711,13 @@ async def executar_turno(
     # circuitada estreita `corpo` de `str | None` para `str` dentro da chamada.
     pedido_de_optout = bool(corpo and pediu_optout(corpo))
 
+    # Ao lado do opt-out, e pela mesma razao que o `not pedido_de_optout` da
+    # guarda de silencio existe -- fix de revisao final (Critical 2). So o
+    # CALCULO subiu para ca; o bloco que age sobre ele continua la embaixo,
+    # depois do opt-out, porque a ordem da D4 do desenho nao mudou. Mesma forma
+    # de `bool()` por fora, pelo mesmo motivo de estreitamento de tipo.
+    pedido_de_humano = bool(corpo and pediu_humano(corpo))
+
     # Ao lado do opt-out de proposito: mesmo insumo (o texto decifrado), mesmo
     # ponto do fluxo, e nenhuma consulta. A fala bloqueada pela moderacao nunca
     # chega ao gancho -- `executar_turno` retorna por `_entregar_texto_fixo`
@@ -759,11 +784,59 @@ async def executar_turno(
     # Barata de proposito -- antes do classificador, entao um turno silenciado
     # nao paga chamada ao modelo. A guarda autoritativa e a da porta de saida
     # (`outbound/port.py`); esta so evita o trabalho.
+    #
+    # `tem_handoff_de_humano_aberto` (TEC-143) e a SEGUNDA fonte de silencio,
+    # ao lado de `esta_silenciada`. Sao perguntas diferentes -- "um corretor
+    # assumiu" contra "o lead pediu e tem handoff na fila" --, e o docstring
+    # daquela funcao e explicito: e dali que vem o silencio da TEC-143, nao de
+    # `esta_silenciada`. No PRIMEIRO turno em que o lead pede humano nao ha
+    # handoff ainda (o bloco novo, mais abaixo, e quem cria), entao esta
+    # checagem so passa a valer do SEGUNDO turno em diante -- e o resultado
+    # continua "atendimento_humano" nos dois casos, porque para o lead o
+    # efeito e o mesmo (o agente calou).
+    #
+    # **`not pedido_de_humano` condiciona SO a fonte de handoff, e nao a guarda
+    # inteira** -- fix de revisao final (Critical 2), e a forma estreita e
+    # deliberada. Sem ele o aviso da transferencia se perdia PARA SEMPRE numa
+    # falha retentavel: `_entregar_texto_fixo` nao captura `EnvioRetentavel`,
+    # entao a excecao sobe, `process_message` marca a linha FAILED e o sweeper
+    # reenfileira a MESMA mensagem -- e no turno 2
+    # `tem_handoff_de_humano_aberto` ja devolve True (o turno 1 commita o
+    # handoff ANTES de entregar), esta guarda disparava, o turno fechava em
+    # "atendimento_humano" e o lead nunca era avisado de nada. E exatamente o
+    # defeito que o comentario da guarda de opt-out, logo acima, descreve para
+    # a confirmacao de opt-out: o repo ja pagou por ele uma vez e esta card o
+    # reintroduziu uma guarda abaixo, pela fonte de silencio nova.
+    #
+    # O custo aceito e o mesmo que a guarda de opt-out declara:
+    # `registrar_handoff` e idempotente (acumula o gatilho na linha aberta em
+    # vez de criar outra, e `_agendar_resumo` sai cedo quando `not criado`),
+    # entao um lead que repete o pedido so recebe o aviso de novo.
+    #
+    # **`esta_silenciada` continua valendo, e a versao ampla desta condicao
+    # (`if not pedido_de_optout and not pedido_de_humano:`) foi recusada por
+    # isso.** So a fonte de handoff causava o Critical 2; `esta_silenciada`
+    # responde outra pergunta -- um corretor ASSUMIU esta conversa (TEC-179,
+    # RN-16.4) -- e nao tem nada a ver com a falha retentavel. Pulando-a, um
+    # lead cuja conversa ja esta sendo atendida por gente de verdade e que
+    # pedisse humano caia no bloco abaixo e, quando nao houvesse handoff
+    # aberto (o corretor que assume por conta propria, sem handoff nenhum),
+    # nascia um handoff NOVO com `criado=True` -- e desde o fix da esteira
+    # (Critical 1) isso agenda resumo e notificacao para uma conversa que ja
+    # tem dono. Ruido operacional que chega a um corretor. Conversa assumida
+    # nao gera handoff nem notificacao nova: ela devolve "atendimento_humano"
+    # aqui, como sempre devolveu.
     if not pedido_de_optout:
         async with session_factory() as sessao:
-            if await esta_silenciada(
+            se_calar = await esta_silenciada(
                 sessao, channel=message.channel, conversation_key=message.conversation_key
-            ):
+            ) or (
+                not pedido_de_humano
+                and await tem_handoff_de_humano_aberto(
+                    sessao, channel=message.channel, conversation_key=message.conversation_key
+                )
+            )
+            if se_calar:
                 log.info(
                     "turno.atendimento_humano",
                     channel=message.channel,
@@ -817,6 +890,136 @@ async def executar_turno(
         # gravado -- entao eles passam adiante como estao, e so o caminho de
         # sucesso vira "opt_out".
         return "opt_out" if desfecho_da_confirmacao == "respondido" else desfecho_da_confirmacao
+
+    # ORDEM: depois do opt-out, antes do classificador.
+    #
+    # Depois do opt-out porque opt-out e direito do lead e vence tudo -- uma
+    # mensagem que pede humano E pede saida grava a saida. O comentario da
+    # guarda de atendimento humano, algumas linhas acima, registra o Critical
+    # em que uma guarda incondicional engoliu exatamente esse registro.
+    #
+    # Antes do classificador porque um pedido de humano nao precisa de modelo
+    # para ser atendido, e a card pede handoff em ate 5 segundos. Pulando a
+    # chamada, o prazo vira consequencia da arquitetura em vez de aposta na
+    # latencia do provedor -- e nao ha chamada paga para falhar justamente
+    # quando o lead ja esta irritado.
+    #
+    # **E antes da moderacao de entrada, com a consequencia declarada.** A D4
+    # do desenho fixou esta ordem pela mesma razao de LGPD que o bloco de
+    # opt-out acima registra: o bloco de moderacao logo abaixo tem `return`
+    # proprio, e rodar depois dele faria uma mensagem que e AO MESMO TEMPO
+    # pedido de humano e algo que a moderacao reprova nunca chegar aqui -- o
+    # lead irritado que xinga e pede uma pessoa na mesma frase ficaria preso no
+    # robo, que e exatamente a dor da card. O preco, dito sem rodeio: uma
+    # mensagem que a moderacao reprovaria e que contenha um termo da lista cria
+    # handoff e RECEBE o aviso sem ter sido moderada, e o
+    # `turno.py` escreve o principio oposto algumas linhas abaixo. O que escapa
+    # e a classificacao do turno como reprovavel -- nada do texto do lead entra
+    # na resposta (o aviso e literal fixo) e nada dele vai para o modelo.
+    # `test_pedido_de_humano_passa_antes_da_moderacao_de_entrada` fixa a ordem,
+    # para que inverte-la seja uma decisao e nao um acidente.
+    if pedido_de_humano:
+        async with session_factory() as sessao:
+            handoff_do_pedido = await registrar_handoff(
+                sessao,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                gatilho=Gatilho.PEDIDO_DE_HUMANO,
+            )
+            # `registrar_handoff` NAO commita -- a docstring dela diz que o
+            # commit e de quem chama, para o handoff poder entrar na mesma
+            # transacao de um recalculo. Aqui nao ha nada para juntar, entao o
+            # commit e imediato: o lead nao pode receber o aviso de que a
+            # conversa esta indo para um corretor sem a linha existir.
+            await sessao.commit()
+
+        # Fix de revisao final (Critical 1). Depois do commit, no molde exato
+        # dos outros CINCO sitios de `registrar_handoff` (os quatro daqui e o
+        # de `workers/jobs/process_message.py`) -- este bloco nasceu sem as
+        # duas linhas, e a falta da segunda quebrava a esteira inteira: sem
+        # `_agendar_resumo` nao ha `gerar_resumo`, sem ele nao ha
+        # `enqueue_job(NOTIFICAR_JOB)`, sem ele nao ha `sla_limite_em`, e
+        # `escalar_vencidos` nunca via este handoff. Quem o pegava era a rede
+        # de recuperacao da TEC-279 (`handoff/recuperacao.py`), 10 a 15 minutos
+        # depois e logando `handoff.recuperado_sem_prazo` em warning -- a rede
+        # de seguranca virando o caminho normal do unico gatilho `ALTA` da
+        # RN-16.1, e o alarme dela virando ruido permanente.
+        #
+        # `_agendar_resumo` ja sai cedo quando `not registro.criado`, entao a
+        # acumulacao de gatilho num handoff que ja existia nao reagenda nada e
+        # nao precisa de condicao extra aqui.
+        log.info(
+            "handoff.criado" if handoff_do_pedido.criado else "handoff.gatilho_adicional",
+            channel=message.channel,
+            gatilho=Gatilho.PEDIDO_DE_HUMANO.value,
+            etiqueta=ETIQUETA_DE[Gatilho.PEDIDO_DE_HUMANO],
+            prioridade=PRIORIDADE_DE[Gatilho.PEDIDO_DE_HUMANO].value,
+        )
+        await _agendar_resumo(agendador, handoff_do_pedido)
+
+        settings = get_settings()
+        # Nome proprio (`texto_do_aviso`, nao `texto`) pelo mesmo motivo do
+        # `desfecho_do_aviso` abaixo: mypy infere um tipo unico por nome de
+        # variavel na funcao inteira, e `texto` ja e outra coisa la embaixo.
+        texto_do_aviso = (
+            TEXTO_DO_PEDIDO_DE_HUMANO
+            if dentro_da_janela_de_atendimento(datetime.now(UTC))
+            else TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO.format(
+                inicio=settings.atendimento_horario_inicio,
+                fim=settings.atendimento_horario_fim,
+            )
+        )
+        log.info(
+            "turno.pedido_de_humano",
+            channel=message.channel,
+            message_id=str(message.id),
+        )
+        # Nome distinto de `entregue` pelo mesmo motivo que o bloco do opt-out
+        # explica: o mypy infere um tipo unico por nome de variavel na funcao
+        # inteira, e este e o `ResultadoDoTurno` de `_entregar_texto_fixo`.
+        #
+        # `kind=KIND_DO_PEDIDO_DE_HUMANO` atravessa a guarda de atendimento
+        # humano em `GuardedOutbound.send` sem escotilha nenhuma -- CONFERIDO
+        # rodando, nao so lendo. Aquela guarda consulta
+        # `esta_silenciada_por_mensagem`, que le `AtendimentoHumano`
+        # (corretor ASSUMIU, `atendimento/repositorio.py`); o
+        # `registrar_handoff` acima grava em `Handoff` (a fila, RN-16.1), uma
+        # tabela diferente. Um corretor assumido ANTES deste turno ja teria
+        # barrado na guarda de silencio do topo (`tem_handoff_de_humano_aberto`/
+        # `esta_silenciada`, algumas linhas acima) -- nem `registrar_handoff`
+        # nem este envio chegam a rodar, e nenhum handoff nasce. O aviso do
+        # PRIMEIRO pedido so seria barrado por um corretor que assumiu a
+        # conversa entre a checagem do topo deste turno e este envio -- nesse
+        # caso o bloqueio e correto (ha gente cuidando de verdade) e o
+        # desfecho vira "bloqueado_por_atendimento_humano" abaixo, nao
+        # "pedido_de_humano". O mesmo vale para o recheque em
+        # `_entregar_texto_fixo` (`_bloqueado_por_atendimento_humano_concorrente`):
+        # ele tambem le `AtendimentoHumano`, nao `Handoff`, entao o handoff que
+        # este bloco acabou de registrar nao o faz disparar.
+        desfecho_do_aviso = await _entregar_texto_fixo(
+            session_factory,
+            message=message,
+            outbound=outbound,
+            recorder_texto=texto_do_aviso,
+            kind=KIND_DO_PEDIDO_DE_HUMANO,
+            subagent=SUBAGENTE_PEDIDO_DE_HUMANO,
+        )
+        # O handoff JA esta gravado e o resumo ja foi agendado: a transferencia
+        # acontece mesmo que o aviso nao saia. O que NAO e verdade -- e a
+        # versao anterior deste comentario afirmava -- e que o lead fique
+        # sabendo. Nas saidas TERMINAIS de `_entregar_texto_fixo` (janela de
+        # 24h fechada, recusa permanente da Meta, reentrega suprimida, bloqueio
+        # por opt-out ou por atendimento humano concorrente) o desfecho do
+        # envio passa adiante como esta e o lead fica transferido e em
+        # silencio, sem nunca ter sido avisado -- nao e o que a card promete, e
+        # e aceito pelo mesmo criterio da D5 do opt-out: o registro vale mais
+        # que o aviso, e nenhuma dessas saidas tem retentativa.
+        #
+        # A falha RETENTAVEL nao e nenhuma delas: ela sobe como excecao daqui,
+        # a linha vira FAILED, o sweeper reenfileira a mesma mensagem, e o
+        # `not pedido_de_humano` da guarda de silencio la em cima e o que faz o
+        # aviso ser reentregue no turno seguinte em vez de se perder.
+        return "pedido_de_humano" if desfecho_do_aviso == "respondido" else desfecho_do_aviso
 
     if corpo:
         try:
