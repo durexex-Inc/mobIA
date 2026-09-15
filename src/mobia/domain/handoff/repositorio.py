@@ -340,3 +340,45 @@ async def gravar_resumo(
             atualizado_em=datetime.now(UTC),
         )
     )
+
+
+async def tem_handoff_de_humano_aberto(
+    session: AsyncSession, *, channel: str, conversation_key: str
+) -> bool:
+    """A conversa esta esperando uma pessoa porque o lead pediu.
+
+    **E daqui que vem o silencio do agente na TEC-143, e nao de
+    `atendimento.esta_silenciada`.** Aquela responde "um corretor assumiu", e
+    `assumir` exige `corretor_id`: no instante do pedido nao ha corretor
+    nenhum, o handoff acabou de nascer e esta na fila. Esta funcao responde a
+    pergunta que existe nesse instante -- "tem gente a caminho?".
+
+    Olha as DUAS colunas de gatilho. Um lead que esquentou e so depois pediu
+    uma pessoa tem `PEDIDO_DE_HUMANO` em `gatilhos_adicionais`, nao em
+    `gatilho` -- e o silencio vale igual. `registrar_handoff` acumula em vez de
+    criar linha nova, e a `0030` garante no banco no maximo um handoff aberto
+    por conversa.
+
+    So o gatilho `PEDIDO_DE_HUMANO` cala. Calar por qualquer handoff aberto
+    tiraria o agente de toda conversa que virou QUENTE, que e o oposto do que
+    aquele gatilho significa.
+
+    "Aberto" e `status <> CONCLUIDO`, o mesmo criterio do `index_where` do
+    indice parcial que arbitra a deduplicacao -- um handoff ACEITO ou ESCALADO
+    continua sendo gente a caminho.
+    """
+    alvo = Gatilho.PEDIDO_DE_HUMANO.value
+    existe = await session.scalar(
+        select(Handoff.id)
+        .where(
+            Handoff.channel == channel,
+            Handoff.conversation_key == conversation_key,
+            Handoff.status != Status.CONCLUIDO.value,
+            or_(
+                Handoff.gatilho == alvo,
+                literal(alvo) == any_(Handoff.gatilhos_adicionais),
+            ),
+        )
+        .limit(1)
+    )
+    return existe is not None
