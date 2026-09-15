@@ -114,9 +114,16 @@ Não é retórica. Na TEC-146, um comentário em `_faixa_de` justificava a ordem
 
 ```bash
 ./.venv/Scripts/python.exe scripts/comentarios_tocados.py
+./.venv/Scripts/python.exe scripts/comentarios_tocados.py --tudo   # sem o teto
 ```
 
-Ela imprime todo comentário e docstring que a branch precisa reconferir, em duas categorias. `ALTERADO` é o que mudou no diff. **`VIZINHO` é o que não mudou, mas está dentro de um `def`/`class` cujo código mudou** — e é essa a categoria que pega o defeito da TEC-146, porque um comentário que ninguém editou não aparece no diff e por isso ninguém o relê.
+Ela lista os comentários e docstrings que a branch precisa reconferir, em duas categorias. `ALTERADO` é o que mudou no diff. **`VIZINHO` é o que não mudou, mas está dentro de um `def`/`class` cujo código mudou** — e é essa a categoria que pega o defeito da TEC-146, porque um comentário que ninguém editou não aparece no diff e por isso ninguém o relê.
+
+**A saída padrão não é completa, e isso é deliberado (TEC-277).** Ela mostra os cinco `VIZINHO` mais próximos do que mudou em cada bloco e resume o resto numa linha que nomeia o bloco e conta o que omitiu; `--tudo` devolve a listagem inteira. O motivo é medido: sem teto, a saída tinha mediana de **890 linhas** e chegava a 1928 — volume que treina quem lê a ignorar, que é o oposto do que a ferramenta existe para fazer. Com o teto, a mediana é **188**.
+
+`ALTERADO` nunca é cortado, então numa branch que reescreve muito é ele que domina o que resta. E a contagem do rodapé conta o que **existe**, não o que coube na tela: se ela disser 715 e você tiver lido 12, os outros 703 estão atrás do `--tudo`.
+
+O teto existe porque não há regra melhor, e isso também foi medido: **75,9% do ruído vem de `executar_turno`**, que tem 1877 linhas, e dentro dela todo comentário está longe de toda edição. Uma regra de vizinhança por distância deixa 65,9% de pé num raio de 50 linhas. Enquanto aquela função não for partida, esta listagem vive de teto.
 
 Não é gate e não reprova nada: decidir sozinho se um comentário está certo é justamente o julgamento que ele existe para devolver a uma pessoa. Medido no histórico: **~51 commits** existem só para corrigir afirmação que o próprio repo escreveu errado antes — a regra acima já existia e mesmo assim não pegava, porque nenhum dos três gates olha para comentário.
 
