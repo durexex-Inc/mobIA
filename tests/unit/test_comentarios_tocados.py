@@ -11,10 +11,13 @@ from pathlib import Path
 
 import scripts.comentarios_tocados as ferramenta
 from scripts.comentarios_tocados import (
+    MAXIMO_DE_VIZINHOS_POR_BLOCO,
+    Achado,
     _blocos,
     _comentarios,
     _docstrings,
     examinar,
+    limitar,
 )
 
 
@@ -268,3 +271,65 @@ def test_hunk_de_remocao_pura_nao_gera_linha(monkeypatch) -> None:
 def test_arquivo_deletado_e_ignorado(monkeypatch) -> None:
     resultado = _com_diff(monkeypatch, "+++ /dev/null\n@@ -1,3 +0,0 @@\n")
     assert resultado == {}
+
+
+def _vizinho(linha: int, distancia: int, bloco: str = "f") -> Achado:
+    return Achado(linha, f"# {linha}", False, distancia, bloco)
+
+
+def test_bloco_abaixo_do_teto_passa_inteiro() -> None:
+    achados = [_vizinho(n, n) for n in range(1, MAXIMO_DE_VIZINHOS_POR_BLOCO + 1)]
+    ficam, omitidos = limitar(achados, teto=MAXIMO_DE_VIZINHOS_POR_BLOCO)
+    assert len(ficam) == MAXIMO_DE_VIZINHOS_POR_BLOCO
+    assert omitidos == {}
+
+
+def test_bloco_com_menos_vizinhos_que_o_teto_nao_reporta_omissao() -> None:
+    """Um inteiro negativo e verdadeiro em Python: sem a comparacao explicita,
+    tres vizinhos sob teto cinco gravariam -2 como omitidos, e a saida diria
+    "+-2 vizinho(s)"."""
+    achados = [_vizinho(n, n) for n in range(1, 4)]
+    ficam, omitidos = limitar(achados, teto=5)
+    assert len(ficam) == 3
+    assert omitidos == {}
+
+
+def test_o_teto_guarda_os_mais_proximos() -> None:
+    achados = [_vizinho(n, distancia=n) for n in range(1, 11)]
+    ficam, omitidos = limitar(achados, teto=3)
+    assert [a.distancia for a in ficam] == [1, 2, 3]
+    assert omitidos == {"f": 7}
+
+
+def test_o_teto_e_por_bloco_e_nao_global() -> None:
+    achados = [_vizinho(n, n, "f") for n in range(1, 6)] + [
+        _vizinho(n, n, "g") for n in range(1, 6)
+    ]
+    ficam, omitidos = limitar(achados, teto=2)
+    assert len(ficam) == 4
+    assert omitidos == {"f": 3, "g": 3}
+
+
+def test_alterado_nao_e_limitado() -> None:
+    """A obrigacao sobre ALTERADO e de outra natureza: e o comentario que voce
+    mesmo acabou de tocar. O teto existe contra ruido de vizinhanca."""
+    achados = [Achado(n, f"# {n}", True) for n in range(1, 21)]
+    ficam, omitidos = limitar(achados, teto=3)
+    assert len(ficam) == 20
+    assert omitidos == {}
+
+
+def test_o_que_fica_sai_em_ordem_de_linha() -> None:
+    """Ordena por distancia para ESCOLHER, por linha para IMPRIMIR -- a saida
+    tem de continuar navegavel de cima para baixo no arquivo."""
+    achados = [_vizinho(10, 1), _vizinho(2, 2), _vizinho(30, 3)]
+    ficam, _ = limitar(achados, teto=3)
+    assert [a.linha for a in ficam] == [2, 10, 30]
+
+
+def test_teto_zero_desliga_o_corte() -> None:
+    """E como `--tudo` e implementado: um teto que nao morde."""
+    achados = [_vizinho(n, n) for n in range(1, 51)]
+    ficam, omitidos = limitar(achados, teto=0)
+    assert len(ficam) == 50
+    assert omitidos == {}

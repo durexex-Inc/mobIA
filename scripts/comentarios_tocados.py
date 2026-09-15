@@ -20,19 +20,23 @@ Duas categorias, e a segunda e a que pega o defeito da TEC-146:
 
   VIZINHO   o comentario NAO mudou, mas o codigo dentro do mesmo def/class
             mudou. E o caso perigoso: ninguem olha para o que nao aparece no
-            diff, e e exatamente assim que um comentario passa a mentir.
+            diff, e e exatamente assim que um comentario passa a mentir. A
+            saida padrao mostra so os VIZINHO mais proximos da alteracao em
+            cada bloco e resume o resto numa linha, porque a listagem inteira
+            costuma passar de 100 linhas e deixar de caber numa leitura.
 
 Uso:
 
     ./.venv/Scripts/python.exe scripts/comentarios_tocados.py
     ./.venv/Scripts/python.exe scripts/comentarios_tocados.py main
+    ./.venv/Scripts/python.exe scripts/comentarios_tocados.py main --tudo
 """
 
+import argparse
 import ast
 import io
 import re
 import subprocess
-import sys
 import tokenize
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +44,24 @@ from pathlib import Path
 # `@@ -antes,n +depois,n @@`. So o lado `+` interessa: sao as linhas como elas
 # ficaram, e e contra o arquivo atual que os comentarios sao localizados.
 _CABECALHO = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+# O teto de VIZINHOS impressos por bloco na saida padrao.
+#
+# Medido na TEC-277 sobre 19 branches ja mergeadas (PRs #87 a #108): a saida
+# tinha mediana de 890 linhas e maximo de 1928, e 16 das 19 passavam de 100.
+# Com este teto a mediana cai para 188.
+#
+# **5 nao e um otimo, e o joelho de uma curva plana.** Medido para 3, 5, 10 e
+# 20, a diferenca de itens omitidos entre 3 e 20 e de ~9%: o volume nao vem de
+# poucos blocos com muitos achados, vem de MUITOS blocos batendo o teto. Como
+# 3 e 5 custam quase o mesmo, 5 e o maior que nao paga nada a mais.
+#
+# O teto existe porque nao ha regra melhor, e isso foi medido, nao suposto:
+# 75,9% do ruido sai de `executar_turno`, que tem 1877 linhas. Uma regra de
+# vizinhanca por distancia deixaria 65,9% de pe num raio de 50 linhas, e
+# "menor bloco que contem a linha alterada" rende 0,036%. Enquanto aquela
+# funcao existir, esta saida vive de teto -- ver a L1 do desenho.
+MAXIMO_DE_VIZINHOS_POR_BLOCO = 5
 
 
 @dataclass(frozen=True)
@@ -210,8 +232,58 @@ def _pendentes_fora_do_commit() -> list[str]:
     )
 
 
+def limitar(achados: list[Achado], *, teto: int) -> tuple[list[Achado], dict[str, int]]:
+    """Os achados que ficam, e quantos ficaram de fora em cada bloco.
+
+    `teto` de 0 desliga o corte: e assim que `--tudo` e implementado, sem um
+    caminho separado que possa divergir do normal.
+
+    ALTERADO nunca e cortado. A obrigacao sobre ele e de outra natureza -- e o
+    comentario que quem abre o PR acabou de tocar --, e o teto existe contra
+    ruido de vizinhanca. **Consequencia declarada:** numa branch que reescreve
+    muito, e ALTERADO que domina o que resta (a TEC-153 tem 623 e a TEC-184,
+    525), e a saida continua longa apesar do teto.
+
+    Ordena por distancia para ESCOLHER e por linha para DEVOLVER: a escolha
+    quer os mais perto da alteracao, a saida quer ser navegavel de cima para
+    baixo no arquivo.
+    """
+    if teto <= 0:
+        return achados, {}
+
+    por_bloco: dict[str, list[Achado]] = {}
+    ficam = [a for a in achados if a.alterado]
+    for achado in achados:
+        if not achado.alterado:
+            por_bloco.setdefault(achado.bloco, []).append(achado)
+
+    omitidos = {}
+    for bloco, do_bloco in por_bloco.items():
+        # `a.linha` desempata distancia igual, para a escolha ser estavel entre
+        # execucoes em vez de depender da ordem de `ast.walk`.
+        ordenados = sorted(do_bloco, key=lambda a: (a.distancia, a.linha))
+        ficam.extend(ordenados[:teto])
+        # `> 0`, nao truthiness: um inteiro negativo e verdadeiro em Python, e
+        # um bloco com menos vizinhos que o teto daria `sobrando` negativo.
+        if (sobrando := len(ordenados) - teto) > 0:
+            omitidos[bloco] = sobrando
+
+    return sorted(ficam, key=lambda a: a.linha), omitidos
+
+
 def main() -> int:
-    base = sys.argv[1] if len(sys.argv) > 1 else "origin/main"
+    analisador = argparse.ArgumentParser(
+        description="Lista comentarios e docstrings que a branch precisa reconferir."
+    )
+    analisador.add_argument("base", nargs="?", default="origin/main")
+    analisador.add_argument(
+        "--tudo",
+        action="store_true",
+        help="imprime todos os vizinhos, sem o teto por bloco",
+    )
+    argumentos = analisador.parse_args()
+    base = argumentos.base
+    teto = 0 if argumentos.tudo else MAXIMO_DE_VIZINHOS_POR_BLOCO
     por_arquivo = linhas_alteradas(base)
 
     if pendentes := _pendentes_fora_do_commit():
@@ -229,8 +301,9 @@ def main() -> int:
         achados = examinar(arquivo, por_arquivo[arquivo])
         if not achados:
             continue
+        ficam, omitidos = limitar(achados, teto=teto)
         print(f"\n{arquivo}")
-        for achado in achados:
+        for achado in ficam:
             marca = "ALTERADO" if achado.alterado else "VIZINHO "
             texto = achado.texto if len(achado.texto) <= 96 else achado.texto[:93] + "..."
             print(f"  {marca} {arquivo}:{achado.linha}  {texto}")
@@ -238,6 +311,11 @@ def main() -> int:
                 alterados += 1
             else:
                 vizinhos += 1
+        for bloco, quantos in sorted(omitidos.items()):
+            # Conta o que EXISTE, nao o que coube na tela -- senao o resumo
+            # mente sobre o proprio tamanho da listagem que omitiu.
+            vizinhos += quantos
+            print(f"  ... +{quantos} vizinho(s) em {bloco}, os mais distantes -- use --tudo")
 
     if not alterados and not vizinhos:
         print(f"Nenhum comentario ou docstring a reconferir em relacao a {base}.")
