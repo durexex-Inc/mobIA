@@ -64,9 +64,11 @@ async def test_vender_imovel_cria_handoff_e_o_lead_ainda_recebe_resposta(
     De proposito ela afirma so que ALGO saiu, e nao O QUE saiu: qual texto e
     assunto de `test_encaminhamento_por_intencao.py`, e duplicar o literal aqui
     daria duas coisas para manter em sincronia. Foi essa divisao que deixou
-    este docstring mentir por tres commits -- a branch nao toca este arquivo,
-    entao `comentarios_tocados.py` nao tinha como aponta-lo nem como ALTERADO
-    nem como VIZINHO.
+    este docstring mentir por tres commits -- ate este, a branch nao tocava
+    este arquivo, entao `comentarios_tocados.py` nao tinha como aponta-lo nem
+    como ALTERADO nem como VIZINHO. (Este commit o toca, e por isso ele agora
+    aparece como ALTERADO -- o que so vale para a correcao, nao para o defeito
+    que ela conserta.)
     """
     entregador = outbound_fake()
     await rodar_turno(

@@ -212,14 +212,14 @@ TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE = (
 # 9h-18h: citar o numero da card faria o texto mentir sobre o que o sistema
 # faz. Ver a D3 do desenho.
 #
-# **"pode demorar ate", e nao "vem".** Enquanto TEC-280 e TEC-281 estiverem
+# **"pode demorar até", e nao "vem".** Enquanto TEC-280 e TEC-281 estiverem
 # abertas nada notifica ninguem: a resposta depende de uma PESSOA abrir a fila,
 # e marcar hora seria prometer o que o sistema nao controla. Nao e a frase
 # banida de "alguem foi avisado" -- e a vizinha dela, e este repo ja recuou
 # duas vezes da primeira. A redacao espelha de proposito a irma que a TEC-143
 # escreveu ontem para a MESMA situacao, em `domain/humano/deteccao.py`:
-# `TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO` ja dizia "pode demorar ate o
-# proximo horario". Duas redacoes para o mesmo fato seriam duas coisas para
+# `TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO` ja dizia "pode demorar até o
+# próximo horário". Duas redacoes para o mesmo fato seriam duas coisas para
 # manter em sincronia.
 SUFIXO_FORA_DA_JANELA = (
     " O atendimento é das {inicio}h às {fim}h, então a resposta pode demorar até o próximo horário."
