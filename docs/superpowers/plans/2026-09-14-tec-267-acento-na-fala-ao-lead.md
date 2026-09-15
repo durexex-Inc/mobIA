@@ -242,6 +242,18 @@ _ALUGUEL_AUSENTE = "Aluguel estimado: não informado"
 
 > **`m2` fica.** Trocar por `m²` é superscrito, não acento — mudança de outra natureza, fora desta card.
 
+- [ ] **Step 1b: A docstring de módulo de `apresentacao.py`**
+
+As linhas 8-11 do arquivo dizem:
+
+> Todo texto daqui sai para o lead e e ASCII, sem acento [...] E a mesma disciplina de `TEXTO_DA_BUSCA_INCONCLUSIVA` em `turno.py`.
+
+Os dois lados ficam falsos: o texto daqui passa a ter acento **neste commit**, e `TEXTO_DA_BUSCA_INCONCLUSIVA`, citado nominalmente como exemplo da disciplina, foi acentuado na Task 1.
+
+Reescreva para a política nova, **em português sem acento** (é docstring). A referência cruzada a `turno.py` continua útil — lá vale a mesma regra —, só inverte de sentido.
+
+> **Esta docstring é de MÓDULO, e `scripts/comentarios_tocados.py` é cego a ela** — docstring de módulo fica fora de `_blocos()`, que só enumera `ClassDef` e `FunctionDef`. É a lacuna `L2` declarada no desenho da TEC-277. Não confie no script para achar este tipo de coisa nesta card.
+
 - [ ] **Step 2: Rodar e ver quebrar**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/unit/test_apresentacao.py tests/unit/test_mensagem_do_followup.py -q --tb=short`
