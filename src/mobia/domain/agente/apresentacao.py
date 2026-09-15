@@ -5,10 +5,11 @@ traduz `Imovel` em `Ficha` e `ferramenta_de_busca.fichas_do_catalogo`, que e
 o unico arquivo em que `domain/agente` toca `domain/catalogo` -- a invariante
 esta no docstring dele, e quebra-la aqui a tornaria invisivel.
 
-Todo texto daqui sai para o lead e e ASCII, sem acento: `Condominio`, `m2`,
-separador `-`. E a mesma disciplina de `TEXTO_DA_BUSCA_INCONCLUSIVA` em
-`turno.py`, e a D12 do desenho explica por que a card a segue em vez de
-consertar a politica.
+Todo texto daqui sai para o lead e por isso leva acento (TEC-267), com a
+excecao de `m2`: nao ha vogal ali para acentuar, e trocar por `m²`
+sobrescrito e mudanca de outra natureza. E a mesma disciplina de
+`TEXTO_DA_BUSCA_INCONCLUSIVA` em `turno.py`, tambem acentuado desde a
+TEC-267.
 """
 
 import uuid
@@ -51,7 +52,7 @@ class Rentabilidade:
     |---------|----------------|--------------------|----------|
     | tem     | tem            | valor E yield      | sim      |
     | tem     | nulo           | valor, sem yield   | sim      |
-    | nulo    | qualquer       | `nao informado`    | nao      |
+    | nulo    | qualquer       | `não informado`    | nao      |
 
     `custos_centavos` nao entra na tabela porque nao depende de nenhum dos
     dois: condominio e IPTU sao fato do catalogo, nao estimativa, e saem
@@ -186,7 +187,7 @@ def _pluralizado(quantidade: int, singular: str, plural: str) -> str:
 # do aviso de ampliacao (TEC-160) e do motivo de match (TEC-163): texto de
 # modelo some num turno e muda de palavra no outro, e aqui o que sumiria e
 # justamente a ressalva.
-RESSALVA_DE_ESTIMATIVA = "Estimativa, nao e garantia de retorno."
+RESSALVA_DE_ESTIMATIVA = "Estimativa, não é garantia de retorno."
 
 # Cenario 3 do Gherkin. NAO e silencio: medido no seed, 375 dos 520 imoveis
 # caem aqui -- os que nao tem `preco_aluguel` --, e uma linha ausente
@@ -194,7 +195,7 @@ RESSALVA_DE_ESTIMATIVA = "Estimativa, nao e garantia de retorno."
 # tambem nao mostram yield (tem aluguel, mas nao tem `preco_venda`) NAO caem
 # aqui: eles tem o dado, entram no `else` abaixo e saem com o valor do
 # aluguel, so sem o sufixo do yield.
-_ALUGUEL_AUSENTE = "Aluguel estimado: nao informado"
+_ALUGUEL_AUSENTE = "Aluguel estimado: não informado"
 
 
 def _linhas_da_rentabilidade(rentabilidade: Rentabilidade) -> list[str]:
@@ -223,12 +224,12 @@ def _linhas_da_rentabilidade(rentabilidade: Rentabilidade) -> list[str]:
     if rentabilidade.custos_centavos is not None:
         # O rotulo nomeia dois componentes (condominio e IPTU) mas reporta um
         # numero so: se `iptu_mensal` for NULL, `custos_recorrentes` cai para
-        # so o condominio e esta linha repete o valor da linha `Condominio`
+        # so o condominio e esta linha repete o valor da linha `Condomínio`
         # acima -- o lead le isso como "IPTU = 0". Inalcancavel no seed (as
         # 520 linhas tem os dois campos preenchidos), mas o schema permite, e
         # decidimos nao desdobrar o rotulo em dois so por essa lacuna hoje
         # hipotetica.
-        linhas.append(f"Condominio + IPTU {reais_de(rentabilidade.custos_centavos)}/mes")
+        linhas.append(f"Condomínio + IPTU {reais_de(rentabilidade.custos_centavos)}/mês")
     if rentabilidade.aluguel_centavos:
         linhas.append(RESSALVA_DE_ESTIMATIVA)
     return linhas
@@ -250,7 +251,7 @@ def legenda_de(ficha: Ficha, *, prefixo: str | None = None) -> str:
         f"{ficha.quartos} {quartos} - {ficha.vagas} {vagas} - {ficha.area_util_m2} m2",
     ]
     if ficha.condominio_centavos is not None:
-        linhas.append(f"Condominio {reais_de(ficha.condominio_centavos)}")
+        linhas.append(f"Condomínio {reais_de(ficha.condominio_centavos)}")
     if ficha.diferencial is not None:
         linhas.append(f"Destaque: {ficha.diferencial}")
     if ficha.rentabilidade is not None:

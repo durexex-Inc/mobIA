@@ -11,7 +11,7 @@ monta o texto.
 imovel novo, que vence o convite. E regra da card, nao orquestracao, e no job
 ela ficaria misturada com guardas, laco e entrega.
 
-Todo texto daqui sai para o lead e e ASCII sem acento, como em
+Todo texto daqui sai para o lead e por isso leva acento (TEC-267), como em
 `apresentacao.py`.
 """
 
@@ -47,7 +47,7 @@ class QuedaDePreco:
 # algo concreto. A regra de negocio oferece "ou tarefa para o corretor" como
 # alternativa, mas quem notifica corretor e a TEC-280/281, ainda abertas --
 # entao este e o unico caminho vivo (L2 do desenho).
-CONVITE_PARA_AGENDAR = "Quer agendar uma visita para conhecer algum dos imoveis que vimos?"
+CONVITE_PARA_AGENDAR = "Quer agendar uma visita para conhecer algum dos imóveis que vimos?"
 
 
 def linha_da_queda(queda: QuedaDePreco) -> str:

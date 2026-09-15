@@ -31,7 +31,7 @@ KIND_DO_AVISO_DE_ERRO = "aviso_de_erro"
 # (a linha PENDENTE em `handoffs`, que e por onde o time humano pega o caso)
 # sem afirmar que alguem do outro lado ja foi avisado.
 TEXTO_DO_AVISO_DE_ERRO = (
-    "Tive um problema tecnico aqui e nao consegui seguir. "
+    "Tive um problema técnico aqui e não consegui seguir. "
     "Passei sua conversa para um corretor assumir."
 )
 

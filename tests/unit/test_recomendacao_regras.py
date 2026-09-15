@@ -16,7 +16,7 @@ from mobia.domain.agente.recomendacao import (
     resolver_ordinais,
 )
 from mobia.domain.agente.schemas import CategoriaDescarte, ReacaoDoImovel, ReacaoLead
-from mobia.domain.agente.turno import TEXTO_DO_FILTRO_AJUSTADO, aviso_de_ajuste
+from mobia.domain.agente.turno import aviso_de_ajuste
 
 PRIMEIRO = uuid.uuid4()
 SEGUNDO = uuid.uuid4()
@@ -58,8 +58,11 @@ def test_busca_sem_criterio_diz_isso_em_vez_de_ficar_vazia() -> None:
 
 
 def test_o_motivo_e_ascii() -> None:
-    """Vai para o banco e pode ser lido em relatorio; segue a disciplina do
-    repo para texto que nao e prosa de docs."""
+    """Vai para o banco (coluna `motivo_match`) e pode ser lido em relatorio;
+    segue a disciplina do repo para texto que nao e prosa de docs. Fora da
+    fronteira da TEC-267 (texto que o LEAD le): isto e explicabilidade da
+    RN-10.3 para quem le o banco, nao mensagem de turno, e por isso continua
+    sem acento mesmo depois daquela task."""
     assert _motivo(["3 quartos", "Trindade"]).isascii()
     assert _motivo(["ate R$ 400.000"], relaxou_preco=True).isascii()
 
@@ -206,20 +209,20 @@ def test_bairros_diferentes_nao_se_somam() -> None:
 
 def test_o_aviso_nomeia_um_bairro_so() -> None:
     """D15: diverge de proposito do aviso de ampliacao, que nunca nomeia."""
-    assert aviso_de_ajuste(("campeche",)) == "Tirei Campeche da busca, que voce ja descartou."
+    assert aviso_de_ajuste(("campeche",)) == "Tirei Campeche da busca, que você já descartou."
 
 
 def test_o_aviso_nomeia_dois_bairros() -> None:
     assert (
         aviso_de_ajuste(("campeche", "trindade"))
-        == "Tirei Campeche e Trindade da busca, que voce ja descartou."
+        == "Tirei Campeche e Trindade da busca, que você já descartou."
     )
 
 
 def test_o_aviso_nomeia_tres_bairros() -> None:
     assert (
         aviso_de_ajuste(("campeche", "trindade", "itacorubi"))
-        == "Tirei Campeche, Trindade e Itacorubi da busca, que voce ja descartou."
+        == "Tirei Campeche, Trindade e Itacorubi da busca, que você já descartou."
     )
 
 
@@ -228,7 +231,7 @@ def test_o_aviso_recompoe_o_bairro_dobrado_em_nome_legivel() -> None:
     e sem acento. `.title()` e o bastante para o lead reconhecer o nome; nao ha
     acento para recuperar porque a forma dobrada nunca teve nenhum."""
     assert aviso_de_ajuste(("corrego grande",)) == (
-        "Tirei Corrego Grande da busca, que voce ja descartou."
+        "Tirei Corrego Grande da busca, que você já descartou."
     )
 
 
@@ -238,10 +241,3 @@ def test_o_aviso_sem_bairro_nenhum_levanta() -> None:
     docstring de `aviso_de_ajuste`."""
     with pytest.raises(ValueError, match="aviso_de_ajuste"):
         aviso_de_ajuste(())
-
-
-def test_o_aviso_e_ascii() -> None:
-    """A disciplina do texto que sai para o lead -- mesma regra de
-    `TEXTO_DO_CRITERIO_AMPLIADO_*` em `test_relaxamento_alargar.py`."""
-    assert aviso_de_ajuste(("corrego grande", "campeche")).isascii()
-    assert TEXTO_DO_FILTRO_AJUSTADO.isascii()

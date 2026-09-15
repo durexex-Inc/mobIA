@@ -79,7 +79,7 @@ def alargar(filtro: FiltroDeBusca, adjacentes: Sequence[str]) -> FiltroDeBusca:
     # TEC-163, D12. Nao e redundancia do NOT IN da busca: sem esta subtracao,
     # `relaxou_bairro` sairia True num relaxamento cujo unico bairro novo era
     # um excluido -- que o WHERE descarta em seguida --, e o lead ouviria
-    # "inclui bairros vizinhos" tendo recebido zero bairro novo.
+    # "incluí bairros vizinhos" tendo recebido zero bairro novo.
     #
     # O WHERE garante que o imovel excluido NAO VOLTA; esta linha garante que
     # o AVISO NAO MENTE. Um protege o lead do resultado, o outro da frase.
@@ -178,7 +178,7 @@ async def buscar_com_relaxamento(
 
     # D11: o aviso tem tres variantes e escolhe por estes dois. As duas sao
     # medidas do que MUDOU, e nao do que se tentou: `bool(adjacentes)` diria
-    # "inclui bairros vizinhos" tambem para o lead que nomeou um agrupamento
+    # "incluí bairros vizinhos" tambem para o lead que nomeou um agrupamento
     # ja fechado ("Centro, Trindade, Agronomica, Itacorubi"), onde todo
     # adjacente que a tabela devolve ja estava no pedido e o `IN` do segundo
     # passe e o mesmo do primeiro. E exatamente a mentira que as tres
@@ -193,7 +193,7 @@ async def buscar_com_relaxamento(
         # Nada mudou: o `WHERE` do segundo passe seria byte a byte o do
         # primeiro, que ja voltou vazio. Pagariamos uma consulta contra o p95
         # de 400 ms da TEC-159 para carimbar `SEM_RESULTADO` no mesmo zero, e
-        # o turno diria ao lead que "procurou tambem um pouco alem" de um
+        # o turno diria ao lead que "procurou também um pouco além" de um
         # criterio que nao se mexeu. Depois do try/except de proposito:
         # adjacencia indisponivel sem teto nem piso e um dos jeitos de chegar
         # aqui.
