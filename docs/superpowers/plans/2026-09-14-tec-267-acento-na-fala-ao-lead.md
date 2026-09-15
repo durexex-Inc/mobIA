@@ -463,7 +463,11 @@ Em `src/mobia/domain/agente/turno.py`, a docstring afirma:
 
 > `bairros` chega na forma dobrada (`recomendacao.bairros_a_excluir`, minuscula e sem acento -- ver `texto.dobrar`); `.title()` basta para virar nome legivel, e o dobrado ja garante ASCII -- nao ha acento para perder na volta.
 
-Continua verdadeira **sobre o nome**, mas agora convive com uma moldura acentuada, e sem uma palavra a mais o próximo leitor a entende como se valesse para a frase inteira. Acrescente ao parágrafo, **em português sem acento** (é docstring):
+Continua verdadeira **sobre o nome**, mas agora convive com uma moldura acentuada, e sem uma palavra a mais o próximo leitor a entende como se valesse para a frase inteira.
+
+**Na mesma docstring, acentue também a frase de exemplo** das linhas 268-269 — `"Tirei o Campeche da busca, que voce descartou"`. Ela é **paráfrase e não citação exata** (tem um "o" a mais e falta o "já"), e por isso a varredura de citações a deixou de fora de propósito. Mas ela ilustra o que o lead lê, e uma ilustração na grafia antiga ensina errado sobre o produto. Vira `"Tirei o Campeche da busca, que você descartou"` — mantendo a inexatidão, que é deliberada: o ponto dela é a **forma** da mensagem, não o texto literal.
+
+Acrescente ao parágrafo, **em português sem acento** (é docstring):
 
 ```
     **A moldura tem acento e o nome nao** (TEC-267, L2): o lead le "Tirei
