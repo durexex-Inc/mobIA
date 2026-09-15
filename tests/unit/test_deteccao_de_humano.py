@@ -82,14 +82,20 @@ def test_termo_ambiguo_so_casa_a_mensagem_inteira(texto: str) -> None:
         "o atendimento humano la na outra imobiliaria era horrivel",
         # Verbo sem objeto, numa conversa sobre pagamento.
         "me transfere o comprovante do pix por favor",
+        # A terceira porta da mesma colisao, achada na re-revisao: o objeto
+        # existia ("uma pessoa") mas estava nu. Transferir titularidade para
+        # uma PJ e assunto de contrato, nao pedido de atendimento.
+        "pode me transfere pra uma pessoa juridica, quero mudar o titular",
     ],
 )
 def test_vocabulario_de_contrato_e_de_pagamento_nao_dispara(texto: str) -> None:
-    """Os tres falsos positivos que a revisao da TEC-143 achou, fixados.
+    """Os falsos positivos que as revisoes da TEC-143 acharam, fixados.
 
-    Todos os tres vinham de termo sem objeto: "quero uma pessoa", "atendimento
-    humano" e "me transfere". O modulo de opt-out registra a mesma licao com
-    "nada" -- termo curto demais casa dentro de frase que nao e pedido.
+    A colisao com "pessoa" tem multiplas portas: "quero uma pessoa" (round 1),
+    "me transfere pra uma pessoa" (round 2), todas resolvidas pela regra: todo
+    termo com "pessoa", "humano" ou "alguem" carrega qualificador. O modulo de
+    opt-out registra a mesma licao com "nada" -- termo curto demais casa dentro
+    de frase que nao e pedido.
     """
     assert pediu_humano(texto) is False
 

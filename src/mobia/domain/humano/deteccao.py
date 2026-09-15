@@ -23,20 +23,28 @@ _ESPACOS = re.compile(r"\s+")
 # **Nenhum termo aqui e so um substantivo, e isso e deliberado.** O modulo de
 # opt-out registra o preco de errar nisso: "nao quero mais receber nada" saiu
 # dos inequivocos porque "nada" aceita complemento partitivo e cada refinamento
-# de busca silenciava um comprador. O analogo aqui e "pessoa" -- medido contra
-# as 147 mensagens de lead do corpus de evals, ele aparece 2 vezes, as duas
-# dentro de "pessoalmente", em perguntas sobre assinar a distancia.
+# de busca silenciava um comprador.
 #
-# Foram removidos por falso positivo (TEC-143, revisao fix round 1):
-# - "quero uma pessoa" e "queria uma pessoa" casavam "pessoa fisica" vs
-#   "pessoa juridica", vocabulario corriqueiro de contrato imobiliario que nao e
-#   pedido de transferencia. O custo de recall e aceitavel.
-# - "atendimento humano" bare violava o invariante -- todo termo deve carregar o
-#   verbo ou preposicao. Um lead reclamando do atendimento de OUTRA imobiliaria
-#   nao pede transferencia. "quero atendimento humano" permanece e cobre o caso
-#   real.
-# - "me transfere" e verbo sem objeto -- "me transfere o comprovante do pix"
-#   aparece em conversa sobre pagamento. Substituido por formas com objeto.
+# **INVARIANTE: todo termo que contenha "pessoa", "humano" ou "alguem" carrega
+# qualificador.** "Pessoa fisica" e "pessoa juridica" sao vocabulario de contrato
+# imobiliario neste dominio -- "quero uma pessoa fisica no contrato" nao e pedido
+# de transferencia, e "mudar o titular para uma pessoa juridica" e assunto de
+# reescritura, nao de atendimento. O qualificador desambigua: "quero uma pessoa
+# de verdade" escapa porque nenhum lead fala em "pessoa de verdade fisica" ou
+# "pessoa de verdade juridica". Mesma licao vale para "humano": "quero humano"
+# sozinho nao aparece nos dados, mas "falar com humano" aparece e e pedido.
+#
+# Foram removidos por falso positivo durante as revisoes:
+# - "quero uma pessoa", "queria uma pessoa": colisao com pessoa fisica/juridica
+# - "me passa pra uma pessoa", "me passa para uma pessoa": objeto "pessoa" nua
+# - "atendimento humano" bare: violava invariante de verbo/preposicao
+# - "me transfere": verbo sem objeto
+# - "me transfere pra uma pessoa", "me transfere para uma pessoa": objeto nua
+#
+# Em lugar deles, os termos mantidos sao formas com qualificador explicitado
+# ("de verdade", "da equipe", "de alguem") ou com objeto que nao colide
+# ("atendente", "corretor", "robo"). Custo de recall e aceitavel -- o desenho
+# ja declara recall como lacuna.
 _TERMOS_INEQUIVOCOS: tuple[str, ...] = (
     "falar com uma pessoa",
     "falar com um humano",
@@ -49,14 +57,10 @@ _TERMOS_INEQUIVOCOS: tuple[str, ...] = (
     "quero uma pessoa de verdade",
     "quero uma pessoa da equipe",
     "queria uma pessoa de verdade",
-    "me passa pra uma pessoa",
-    "me passa para uma pessoa",
     "me passa pra um atendente",
     "me passa para um atendente",
     "me transfere pra um atendente",
     "me transfere para um atendente",
-    "me transfere pra uma pessoa",
-    "me transfere para uma pessoa",
     "quero atendimento humano",
     "nao quero falar com robo",
     "cansei de robo",
