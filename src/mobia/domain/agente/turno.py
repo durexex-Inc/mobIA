@@ -214,6 +214,16 @@ SUFIXO_FORA_DA_JANELA = (
     " O atendimento é das {inicio}h às {fim}h, então a resposta vem no próximo horário."
 )
 
+# Espelha `_GATILHO_DA_INTENCAO` deliberadamente: as duas intencoes que vao
+# para a fila humana sao as mesmas que recebem texto proprio. Sao dois mapas e
+# nao um porque respondem perguntas diferentes -- um diz "qual gatilho de
+# handoff", o outro "qual texto para o lead" --, e um dicionario de tuplas
+# obrigaria todo leitor de um dos lados a entender o outro.
+_TEXTO_DO_ENCAMINHAMENTO = {
+    Intencao.VENDER_IMOVEL: TEXTO_DO_ENCAMINHAMENTO_DE_VENDA,
+    Intencao.SUPORTE_CONTRATO: TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE,
+}
+
 # RN-09.3 / CA-09.3, e a regra "avisado ... e EM QUE" da card. TEC-160, D11.
 #
 # Tres variantes e nao uma constante: quando so o preco foi relaxado (o lead
@@ -1928,6 +1938,42 @@ async def executar_turno(
                 prioridade=PRIORIDADE_DE[Gatilho.LIMITE_DE_PERGUNTAS].value,
             )
             await _agendar_resumo(agendador, handoff_da_entrega)
+
+    # RN-03.4 (TEC-137). Precedencia ACIMA do teto de perguntas -- e por isso
+    # este bloco vem DEPOIS dele, nao antes: neste trecho quem atribui `texto`
+    # por ultimo e quem vence, e o bloco do teto acima atribui
+    # `TEXTO_DO_LIMITE_DE_PERGUNTAS`. E o mesmo idioma da citacao bloqueada da
+    # TEC-161 e do zero pos-relaxamento da TEC-160, que reatribuem mais abaixo
+    # e vencem os dois. Quem vai para a fila de venda nao precisa ouvir "ja
+    # perguntei bastante": o teto e sobre qualificacao, que estas duas
+    # intencoes nao recebem.
+    #
+    # O teto continua rodando primeiro, e o `gatilho_adicional`
+    # LIMITE_DE_PERGUNTAS que ele registra no handoff que ja existe fica --
+    # `registrar_handoff` e idempotente, e o gatilho a mais nao mente sobre
+    # nada: a pergunta de fato foi suprimida. So o TEXTO e que e nosso.
+    #
+    # As mesmas duas guardas do bloco de cima, pelas mesmas razoes que o
+    # comentario dele escreve por extenso: `not desambiguando` porque nesse
+    # caminho quem sai e a pergunta do desambiguador, e `not saida_bloqueada`
+    # porque `TEXTO_NEUTRO_DE_SAIDA` e a resposta declarada da politica de
+    # moderacao e sobrepor a nossa a ela tornaria impossivel saber qual agiu.
+    #
+    # Le `gerada.intencao` e nao `gatilho_da_intencao`: aquela variavel vive no
+    # bloco transacional la em cima e nao chega aqui, e o mapa e o mesmo.
+    # Consequencia da D2 do desenho: isto roda em TODO turno com a intencao,
+    # nao so no primeiro. O lead que insiste recebe a mesma frase de novo --
+    # aceito, porque a alternativa devolveria ao modelo a palavra no segundo
+    # turno, com ela a pergunta de qualificacao que a regra proibe.
+    encaminhando = _TEXTO_DO_ENCAMINHAMENTO.get(gerada.intencao)
+    if encaminhando is not None and not desambiguando and not saida_bloqueada:
+        texto = encaminhando
+        if not dentro_da_janela_de_atendimento(datetime.now(UTC)):
+            settings_do_turno = get_settings()
+            texto += SUFIXO_FORA_DA_JANELA.format(
+                inicio=settings_do_turno.atendimento_horario_inicio,
+                fim=settings_do_turno.atendimento_horario_fim,
+            )
 
     # TEC-162, D4. Candidatos sem pergunta e turno de apresentacao. As tres
     # condicoes sao a mesma regra: pergunta adia as fichas. `desambiguando`
