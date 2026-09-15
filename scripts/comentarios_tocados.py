@@ -47,9 +47,10 @@ _CABECALHO = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 # `arquivo.py:12` e `arquivo.py:12-34`, com ou sem caminho antes do nome.
 #
-# O lookbehind existe para o alvo sair inteiro: sem ele o motor casaria
-# `mobia/turno.py:10` dentro de `src/mobia/turno.py:10`, e a resolucao
-# receberia um caminho que nao existe em lugar nenhum.
+# O lookbehind existe para impedir que o motor case a cauda de um nome
+# pontuado: em `mobia.infra.crypto.py:10`, ele barraria `crypto.py`, que nao e
+# caminho de arquivo nenhum e resolveria para vazio. O caminho com barra
+# continua saindo inteiro -- o quantificador guloso ja garantia isso sozinho.
 #
 # Exige `:` colado no `.py`, o que descarta de graca `.pyc`, `.pyi` e o
 # `arquivo.py#L508` dos links markdown -- este ultimo importa, porque o link

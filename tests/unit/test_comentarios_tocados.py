@@ -349,12 +349,14 @@ def test_citacao_reconhece_linha_unica_e_faixa() -> None:
     ]
 
 
-def test_citacao_nao_casa_no_meio_de_um_caminho() -> None:
-    """O lookbehind existe para o alvo sair inteiro, nao pela metade.
+def test_citacao_ignora_a_cauda_de_um_nome_pontuado() -> None:
+    """O que o lookbehind de fato impede, medido contra a regex sem ele.
 
-    Sem ele `src/mobia/turno.py:10` poderia casar comecando em `mobia/`, e a
-    resolucao receberia um caminho que nao existe.
+    Em `mobia.infra.crypto.py:10` o motor casaria `crypto.py`, que nao e
+    caminho de arquivo nenhum e resolveria para vazio. O caminho com barra
+    continua saindo inteiro -- esse o guloso ja garantia sozinho.
     """
+    assert citacoes_do_texto("veja mobia.infra.crypto.py:10 aqui") == []
     assert citacoes_do_texto("src/mobia/turno.py:10") == [(1, "src/mobia/turno.py", 10, 10)]
 
 
