@@ -601,9 +601,9 @@ def main() -> int:
         )
         if not citacoes:
             continue
-        ficam, omitidas = limitar_citacoes(citacoes, teto=teto_da_prosa)
+        ficam_citacoes, omitidas = limitar_citacoes(citacoes, teto=teto_da_prosa)
         print(f"\n{documento}")
-        for citacao in ficam:
+        for citacao in ficam_citacoes:
             destino = f"  -> {citacao.destino}" if citacao.destino else ""
             print(f"  {citacao.marca:<6} :{citacao.linha}  {citacao.texto}{destino}")
             if citacao.marca == "FALSO":
