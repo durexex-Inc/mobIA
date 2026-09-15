@@ -355,7 +355,7 @@ async def test_busca_por_zona_relaxa_preco_e_nao_amplia_bairro(session: Any) -> 
     assert resultado.relaxamento is EstadoDoRelaxamento.APLICADO
     assert [candidato.imovel_id for candidato in resultado.candidatos] == [no_sul]
     # So o preco cedeu -- e por isso o aviso nao pode ser uma constante fixa
-    # que diga "inclui bairros vizinhos" (D11).
+    # que diga "incluí bairros vizinhos" (D11).
     assert (resultado.relaxou_preco, resultado.relaxou_bairro) == (True, False)
 
 
@@ -433,7 +433,7 @@ async def test_adjacente_que_o_lead_ja_pediu_nao_conta_como_bairro_ampliado(
     Pedindo o fecho inteiro da adjacencia, a consulta traz linha para todo
     bairro -- mas todo adjacente ja estava no pedido, e o `IN` do segundo
     passe e identico ao do primeiro. Um `bool(adjacentes)` diria True aqui, e
-    o lead ouviria "inclui bairros vizinhos" sobre uma busca que nao incluiu
+    o lead ouviria "incluí bairros vizinhos" sobre uma busca que nao incluiu
     vizinho nenhum: a mentira que as tres variantes do aviso existem para
     impedir.
 
@@ -537,7 +537,7 @@ async def test_relaxou_bairro_e_falso_quando_o_unico_adjacente_era_excluido(
     session: Any,
 ) -> None:
     """**D12, metade 2.** Sem a subtracao em `alargar`, `relaxou_bairro` sairia
-    True e o lead ouviria "inclui bairros vizinhos" tendo recebido zero bairro
+    True e o lead ouviria "incluí bairros vizinhos" tendo recebido zero bairro
     novo -- a mesma classe de mentira que a revisao final da TEC-160 pegou em
     `relaxou_bairro=bool(adjacentes)`.
 

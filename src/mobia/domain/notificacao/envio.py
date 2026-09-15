@@ -52,7 +52,7 @@ KIND_DA_JANELA_HUMANA = "janela_humana"
 # porque a notificacao (esta card, TEC-177) ainda nao existia -- ver o
 # fluxo de saida de card no CLAUDE.md. Nao reintroduza a promessa.
 #
-# "de segunda a sabado" e literal fixo, nao vem do `Corretor`: a L2 do
+# "de segunda a sábado" e literal fixo, nao vem do `Corretor`: a L2 do
 # desenho declara que o modelo nao tem dia da semana, so uma janela unica de
 # horas (`horario_inicio`/`horario_fim`), e a checagem de `horario_permite_envio`
 # compara so a hora. O texto bate com o PR-06 do SRS hoje, mas o sistema trata

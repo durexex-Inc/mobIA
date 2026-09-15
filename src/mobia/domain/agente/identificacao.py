@@ -84,7 +84,7 @@ async def e_conversa_nova(
 
 # Generico de proposito: nao ha nome de imobiliaria configuravel em
 # `app/config.py`, e a propria RN-04.1 e generica ("assistente virtual da
-# imobiliaria"). Inventar um campo de configuracao que ninguem pediu seria
+# imobiliária"). Inventar um campo de configuracao que ninguem pediu seria
 # maior que esta card.
 #
 # Nao se apresenta com nome de gente: a mesma regra proibe fingir ser pessoa

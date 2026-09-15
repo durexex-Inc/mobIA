@@ -118,7 +118,7 @@ def test_a_variante_do_aviso_corresponde_ao_que_mudou() -> None:
 
     Uma constante fixa que dissesse sempre as duas coisas seria o aviso
     mentindo: o lead que nao deu regiao teve so o preco relaxado, e ouvir
-    "inclui bairros vizinhos" e informacao falsa sobre o que o sistema fez --
+    "incluí bairros vizinhos" e informacao falsa sobre o que o sistema fez --
     num aviso cujo proposito inteiro e ser explicito.
     """
     assert aviso_de_ampliacao(True, True) == TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO
@@ -130,7 +130,7 @@ def test_o_aviso_sem_preco_nem_bairro_levanta() -> None:
     """Ruling do controller, e nao do brief original.
 
     O brief caia para a variante de bairro quando os dois argumentos eram
-    False -- avisando "inclui bairros vizinhos" mesmo sem bairro nenhum
+    False -- avisando "incluí bairros vizinhos" mesmo sem bairro nenhum
     relaxado. Esse par nao chega a existir porque `buscar_com_relaxamento` so
     faz o segundo passe depois de confirmar que preco ou bairro mudou, e nao
     porque um passe identico nao pudesse achar nada (pode: o catalogo muda

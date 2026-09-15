@@ -120,7 +120,7 @@ TEXTO_DA_BUSCA_INCONCLUSIVA = (
 # Regra 4 da card e cenario 2 do Gherkin. TEC-160, D14.
 #
 # **Constante nova, e nao reuso de TEXTO_DA_BUSCA_INCONCLUSIVA.** Aquele
-# promete "ja te retorno com as opcoes", e aqui nao ha opcao nenhuma para
+# promete "já te retorno com as opções", e aqui nao ha opcao nenhuma para
 # retornar -- seria o sistema prometendo o que sabe que nao tem. O laco
 # excedido e a citacao bloqueada podem prometer porque nos dois casos os
 # imoveis existem e o problema e nosso.
@@ -164,7 +164,7 @@ TEXTO_DO_LIMITE_DE_PERGUNTAS = (
 # RN-09.3 / CA-09.3, e a regra "avisado ... e EM QUE" da card. TEC-160, D11.
 #
 # Tres variantes e nao uma constante: quando so o preco foi relaxado (o lead
-# nao deu regiao), dizer "inclui bairros vizinhos" e informacao falsa sobre o
+# nao deu regiao), dizer "incluí bairros vizinhos" e informacao falsa sobre o
 # que o sistema fez -- num aviso cujo proposito inteiro e ser explicito.
 #
 # Nenhum numero, de proposito: o teto ampliado e conta nossa, e nao fato do
@@ -222,7 +222,7 @@ def aviso_de_ampliacao(relaxou_preco: bool, relaxou_bairro: bool) -> str:
     para `executar_turno` propagar.
 
     Cair no caso do bairro por default aqui repetiria exatamente o erro que a
-    doc do modulo (acima) existe para evitar: dizer "inclui bairros vizinhos"
+    doc do modulo (acima) existe para evitar: dizer "incluí bairros vizinhos"
     para quem nao teve bairro nenhum ampliado, so porque nenhum booleano
     chegou True. Barulhento e melhor que uma mentira silenciosa. E a guarda do
     chamador (`relaxou_preco or relaxou_bairro`) nao e cinto-e-suspensorio: a
