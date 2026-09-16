@@ -1464,7 +1464,10 @@ async def executar_turno(
     handoff_do_teto: HandoffRegistrado | None = None
     async with session_factory() as session:
         anterior = await ler_intencao(session, message.channel, message.conversation_key)
-        await gravar_intencao(
+        # TEC-138. O retorno e `fora_de_escopo_seguidas` pos-incremento; a
+        # Task 4 (RN-03.5) o usa para decidir o encerramento. Sem consumidor
+        # ainda, capturado aqui porque e aqui que `gravar_intencao` roda.
+        _fora_de_escopo_seguidas = await gravar_intencao(
             session,
             channel=message.channel,
             conversation_key=message.conversation_key,

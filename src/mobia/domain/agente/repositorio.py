@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 import structlog
-from sqlalchemy import column, delete, select, table, update
+from sqlalchemy import case, column, delete, select, table, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,11 +63,16 @@ async def gravar_intencao(
     intencao: Intencao,
     confianca: Decimal,
     modelo: str,
-) -> None:
+) -> int:
     """Upsert. **Nao commita** -- o chamador e dono da transacao.
 
     Mesma fronteira que `gravar_resumo` da TEC-127 passou a respeitar depois de
     uma review: quem abre a sessao e quem a finaliza.
+
+    Devolve `fora_de_escopo_seguidas` **pos-incremento** (RN-03.5, TEC-138) --
+    o valor que este proprio statement acabou de gravar, via `RETURNING`, para
+    quem chama nao precisar de uma segunda consulta so para reler a linha que
+    aqui foi escrita.
     """
     valores = {
         "channel": channel,
@@ -79,6 +84,10 @@ async def gravar_intencao(
         # uma conversa tem de poder perguntar.
         "desambiguado_em": None,
         "updated_at": datetime.now(UTC),
+        # RN-03.5, TEC-138. O `set_` abaixo so roda no CONFLICT -- a primeira
+        # mensagem de uma conversa nova passa por AQUI, e se essa primeira
+        # mensagem for FORA_DE_ESCOPO a contagem tem de nascer em 1, nao em 0.
+        "fora_de_escopo_seguidas": 1 if intencao is Intencao.FORA_DE_ESCOPO else 0,
     }
     statement = pg_insert(ConversationIntent).values(valores)
 
@@ -93,12 +102,32 @@ async def gravar_intencao(
     # Abaixo do limiar o marcador **nao** entra no set_: a ambiguidade e a
     # mesma, e a pergunta dela ja foi gasta.
 
-    await session.execute(
+    # RN-03.5, TEC-138. Sobe quando a intencao deste turno e FORA_DE_ESCOPO e
+    # ZERA em qualquer outra -- o "voltar ao assunto zera o contador" da card e
+    # este `ELSE`, e por isso nao tem codigo proprio em lugar nenhum.
+    #
+    # A aritmetica mora no SQL pela razao que `contar_perguntas` e a uniao de
+    # `perguntados_sem_resposta` ja registram: ler o valor, somar em Python e
+    # gravar abre a janela em que dois turnos concorrentes da mesma conversa
+    # leem o mesmo numero e o mais lento sobrescreve o mais rapido.
+    #
+    # `Intencao` e StrEnum e esta funcao grava `str(intencao)`, entao a coluna
+    # guarda o literal e a comparacao com `excluded` e direta.
+    atualizacoes["fora_de_escopo_seguidas"] = case(
+        (
+            statement.excluded.intencao == Intencao.FORA_DE_ESCOPO.value,
+            ConversationIntent.fora_de_escopo_seguidas + 1,
+        ),
+        else_=0,
+    )
+
+    resultado = await session.execute(
         statement.on_conflict_do_update(
             index_elements=["channel", "conversation_key"],
             set_=atualizacoes,
-        )
+        ).returning(ConversationIntent.fora_de_escopo_seguidas)
     )
+    return resultado.scalar_one()
 
 
 async def marcar_desambiguacao(

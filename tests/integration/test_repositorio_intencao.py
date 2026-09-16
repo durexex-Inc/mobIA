@@ -9,8 +9,8 @@ CANAL = "whatsapp"
 CONVERSA = "5511911112222"
 
 
-async def gravar(session, intencao: Intencao, confianca: str) -> None:
-    await gravar_intencao(
+async def gravar(session, intencao: Intencao, confianca: str) -> int:
+    fora_de_escopo_seguidas = await gravar_intencao(
         session,
         channel=CANAL,
         conversation_key=CONVERSA,
@@ -19,6 +19,7 @@ async def gravar(session, intencao: Intencao, confianca: str) -> None:
         modelo="claude-opus-5",
     )
     await session.commit()
+    return fora_de_escopo_seguidas
 
 
 async def test_intencao_faz_roundtrip(session) -> None:
@@ -135,3 +136,36 @@ async def test_efetiva_devolve_a_intencao_quando_ha_confianca(session) -> None:
     lida = await ler_intencao(session, CANAL, CONVERSA)
     assert lida is not None
     assert lida.efetiva is Intencao.ALUGUEL
+
+
+async def test_fora_de_escopo_seguidas_sobe_a_cada_chamada(session) -> None:
+    """RN-03.5, TEC-138. Duas mensagens fora de escopo seguidas contam 1 e 2."""
+    primeira = await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+    segunda = await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+
+    assert primeira == 1
+    assert segunda == 2
+
+
+async def test_voltar_ao_assunto_zera_o_contador(session) -> None:
+    """O "ELSE 0" do CASE em `gravar_intencao`: qualquer intencao que nao seja
+    FORA_DE_ESCOPO zera, sem excecao -- e por isso o teste usa COMPRA, e nao
+    precisa repetir para as outras seis.
+    """
+    await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+
+    zerado = await gravar(session, Intencao.COMPRA, "0.91")
+
+    assert zerado == 0
+
+
+async def test_primeira_mensagem_fora_de_escopo_ja_conta_um(session) -> None:
+    """O INSERT tambem tem de contar, e nao so o ON CONFLICT.
+
+    Medido: sem `fora_de_escopo_seguidas` em `valores`, o INSERT gravava 0 na
+    primeira mensagem de uma conversa nova, porque o CASE que soma so vive no
+    `set_` do ON CONFLICT -- que nao roda quando a linha nasce agora.
+    """
+    primeira = await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+
+    assert primeira == 1
