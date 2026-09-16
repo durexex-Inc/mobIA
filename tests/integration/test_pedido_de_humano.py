@@ -25,6 +25,36 @@ from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
 from mobia.infra.db import get_sessionmaker
 
 
+@pytest.fixture(autouse=True)
+def janela_aberta(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Congela a janela de atendimento em ABERTA para todo teste deste arquivo.
+
+    TEC-288. Sem isto o arquivo passava ou reprovava conforme a HORA em que a
+    suite rodasse: `dentro_da_janela_de_atendimento` le o relogio real, e fora
+    do expediente o lead recebe `TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO` em
+    lugar da variante que dois testes aqui afirmam. A `main` ficava vermelha em
+    toda execucao noturna.
+
+    **O custo disso nao era o teste, era o sinal.** A regra de diagnostico do
+    CLAUDE.md -- rode de novo antes de culpar sua mudanca -- NAO separa este
+    caso: a falha e deterministica dentro da janela de tempo errada e reproduz
+    identica nas duas execucoes, entao quem seguisse a regra a risca concluia
+    que a propria mudanca tinha quebrado algo.
+
+    Aberta, e nao fechada, porque e o estado que a maioria dos testes daqui
+    pressupoe: o texto de dentro do horario e o caminho principal do pedido de
+    humano. `test_fora_do_horario_o_texto_muda_e_o_handoff_e_criado_do_mesmo_jeito`
+    desfaz isto localmente -- o `setattr` dele roda depois desta fixture e
+    vence -- e continua sendo o unico que precisa.
+
+    O alvo e `turno_mod.dentro_da_janela_de_atendimento`, o nome COMO IMPORTADO
+    em `turno.py`, e nao a definicao em `deteccao.py`: e no modulo do turno que
+    o nome e resolvido. Mesma forma da fixture que a TEC-137 escreveu em
+    `test_encaminhamento_por_intencao.py`, que e o molde.
+    """
+    monkeypatch.setattr(turno_mod, "dentro_da_janela_de_atendimento", lambda agora: True)
+
+
 class _AgendadorEspiao:
     """Mesmo duble de `test_handoff_agenda_resumo.py`, e de proposito.
 
