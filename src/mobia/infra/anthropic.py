@@ -74,8 +74,11 @@ TETO_DO_INVESTIDOR = 35.0
 # O pior turno, fatia a fatia, com quantas REQUISICOES cada uma pode fazer.
 #
 # Sao cinco fatias, e nao as tres que a TEC-228 supunha: `count_tokens` e
-# `resumir` em `montar_contexto`, `reagir` (`turno.py:1463`), a chamada 1
-# (`turno.py:1541`) e a chamada 2 (`turno.py:2028` ou `2042`).
+# `resumir` em `montar_contexto`, `reagir`, a chamada 1 (`classificar` ou
+# `qualificar_investidor`, conforme o lead ja seja investidor) e a chamada 2
+# (`desambiguar`, ou `qualificar_investidor` na virada). Todas em `turno.py`,
+# citadas pelo nome e nao pela linha: este bloco ja nasceu de um comentario que
+# envelheceu, e numero de linha e a parte que envelhece primeiro.
 #
 # **Duas fatias custam DUAS requisicoes.** O laco `for tentativa in (1, 2)` de
 # `_chamar` bate no provedor de novo quando o modelo pede a ferramenta de
@@ -83,8 +86,8 @@ TETO_DO_INVESTIDOR = 35.0
 # duas fatias mais caras -- foi assim que o comentario anterior deste arquivo
 # chegou a 360s quando o numero real era 840s.
 #
-# As duas chamadas de investidor sao exclusivas entre si: a de `turno.py:2042`
-# so dispara quando a de `1541` NAO foi a do investidor. Por isso o pior par e
+# As duas chamadas de investidor sao exclusivas entre si: a da virada so
+# dispara quando a chamada 1 NAO foi a do investidor. Por isso o pior par e
 # `classificar` com busca seguido de `qualificar_investidor` com busca, e nao
 # investidor duas vezes.
 _PIOR_TURNO = (

@@ -75,14 +75,14 @@ As chamadas de geração pequenas ganham teto pequeno **porque a falha delas é 
 | `count_tokens` | `montar_contexto` | 1 |
 | `resumir` | `montar_contexto`, a cada ~40 mensagens | 1 |
 | `reagir` | `turno.py:1463` | 1 |
-| chamada 1 — `classificar` ou `qualificar_investidor` | `turno.py:1541` | até 2 (laço de `tool_use`) |
-| chamada 2 — `desambiguar` ou `qualificar_investidor` | `turno.py:2028` / `2042` | até 2 |
+| chamada 1 — `classificar` ou `qualificar_investidor` | `turno.py:1544` | até 2 (laço de `tool_use`) |
+| chamada 2 — `desambiguar` ou `qualificar_investidor` | `turno.py:2035` / `2049` | até 2 |
 
-O laço é o `for tentativa in (1, 2)` de `_chamar`: quando o modelo pede a ferramenta de busca, a mesma fatia bate no provedor duas vezes. As duas chamadas de investidor são exclusivas entre si — a de `2042` só dispara quando a `1541` **não** foi a do investidor —, então o pior par é `classificar` com busca seguido de `qualificar_investidor` com busca.
+O laço é o `for tentativa in (1, 2)` de `_chamar`: quando o modelo pede a ferramenta de busca, a mesma fatia bate no provedor duas vezes. As duas chamadas de investidor são exclusivas entre si — a de `2049` só dispara quando a `1544` **não** foi a do investidor —, então o pior par é `classificar` com busca seguido de `qualificar_investidor` com busca.
 
 **O comentário de `infra/anthropic.py` também subconta.** Ele diz 360s; com cinco fatias e o laço de busca, o pior caso de hoje é **840s** contra os 240s do `job_timeout` — pior do que o próprio código admite.
 
-### D6 — `max_retries = 0` no cliente do turno, e é ela que fecha a conta
+### D4 — `max_retries = 0` no cliente do turno, e é ela que fecha a conta
 
 Os tetos por tipo sozinhos **não bastam**:
 
@@ -102,7 +102,7 @@ A medição sustenta o argumento: as chamadas levam de 0,25s a 9,3s. Um estouro 
 
 **`TIMEOUT_SEGUNDOS` fica**, como piso de construção. Ele deixa de governar as cinco fatias e passa a governar só quem não pede teto próprio.
 
-### D4 — O log do estouro do `resumir`, e o critério da card já está meio atendido
+### D5 — O log do estouro do `resumir`, e o critério da card já está meio atendido
 
 A card pede que o timeout do `resumir` deixe de ser indistinguível de outras degradações. **Ele já é distinguível hoje:** `contexto.degradado` carrega `reason=type(exc).__name__`, e o SDK levanta `APITimeoutError` — então filtrar timeouts das demais degradações é uma consulta por campo, não um problema em aberto.
 
@@ -110,13 +110,41 @@ O que falta é diferente e menor: saber **em que teto** a chamada morreu. Com te
 
 **Não se cria evento próprio.** Um nome novo obrigaria todo consumidor de `contexto.degradado` a conhecer os dois, para uma distinção que um campo já faz — e o comentário daquele bloco argumenta exatamente nessa direção quando a TEC-237 escolheu acrescentar `motivo` em vez de um evento novo.
 
-### D5 — A medição entra no repositório
+### D6 — A medição entra no repositório
 
 `evals/relatorios/`, no molde dos relatórios que já existem lá, com data, modelo, máquina, as amostras cruas e as limitações — inclusive o alarme falso do investidor. Sem isso, quem mexer nos tetos daqui a seis meses recomeça do palpite, que é o estado que esta card existe para encerrar.
 
-### D7 — As duas chamadas de fora do turno ficam no piso, e isso tem consequência
+### D7 — O maior termo do orçamento não era da Anthropic
 
-Há **seis** sítios que chamam o provedor, não os três que a card lista. Além das cinco fatias do turno e da moderação (que já tem cliente próprio desde a TEC-233), duas vivem fora do turno:
+A D4 fechou a conta em 162s e **ela ainda estava incompleta**. Um turno que busca chama o OpenAI: `turno.py` injeta o embedador na porta de busca, e `busca.py` o usa para vetorizar a `consulta_texto` que o modelo escreveu. O cliente de `infra/embeddings.py` tinha `TIMEOUT_SEGUNDOS = 50.0` e `MAX_TENTATIVAS = 1` — **100s por busca, até duas buscas por turno, 200s**. Sozinho, mais que todas as chamadas de modelo somadas.
+
+| termo | pior caso |
+| --- | --- |
+| Anthropic, com os tetos da D2 e sem retentativa | 162s |
+| embed da busca, antes | 200s |
+| moderação das duas pontas | 10s |
+| POST para a Meta | 10s |
+| **total** | **382s** contra `job_timeout` 240 |
+
+Escrever um teste de orçamento que omitisse os 200s repetiria exatamente o defeito que esta card encontrou no comentário antigo: somar a própria parcela e chamá-la de total.
+
+**A consulta do turno ganha o mesmo tratamento, o indexador não.** `embedar_do_turno` manda 10s sem retentativa; `embedar` continua com 50s e uma retentativa, porque na indexação o lote é grande, a varredura tem o tempo dela e retentar vale o que custa. Duas funções e não um parâmetro opcional: um default deixaria o caro como padrão, e quem esquecesse de passá-lo no turno voltaria aos 100s em silêncio.
+
+**Os 10s não foram medidos, e isso está escrito no código.** Não há `OPENAI_API_KEY` nesta máquina, então a sonda não rodou. O número é o dobro do teto que a medição deu para `count_tokens` — a chamada de forma mais parecida que este projeto tem medida: ida-e-volta de rede, payload minúsculo, sem geração, 0,28s de pior caso. O dobro porque é outro provedor e nenhuma amostra o cobre. **É o número menos sustentado desta card**, e medir é outra card.
+
+Com ele, o total fecha em **202s**, com 38s de folga para o banco.
+
+### D8 — O orçamento inteiro mora no teste, e não em nenhum módulo
+
+Nenhum dos quatro módulos conhece a conta toda, e cada um deles já teve um comentário que somava a própria parcela e a chamava de total — foi assim que `infra/anthropic.py` chegou a afirmar 360s quando o real era 840s, e foi quase assim que esta card fechou 162s sem notar 200s.
+
+`tests/unit/test_orcamento_do_turno.py` importa cada termo de quem o define e o `job_timeout` do `WorkerSettings` de verdade. **Nenhum número está escrito lá.** O que ele protege é a relação: subir qualquer teto sem olhar o orçamento fica vermelho.
+
+Um segundo teste afirma que a folga cobre pelo menos 30s de banco — caber por 1s seria caber e estourar na primeira consulta. Os 30s são declarados e não medidos, como os 20s que a varredura de follow-ups reserva pelo mesmo motivo.
+
+### D9 — As duas chamadas de fora do turno ficam no piso, e isso tem consequência
+
+Há **seis** sítios que chamam a Anthropic, não os três que a card lista (e mais o OpenAI da D7). Além das cinco fatias do turno e da moderação (que já tem cliente próprio desde a TEC-233), duas vivem fora do turno:
 
 - `followup/prosa.py:216` — a frase de abertura do follow-up, no job de varredura.
 - `handoff/resumo.py:207` — o resumo do dossiê, no job `gerar_resumo`.
@@ -137,19 +165,25 @@ O comentário daquele bloco avisava: *"Mexer num dos dois sem refazer a soma aci
 
 **A qualidade do resumo continua sem instrumento.** A troca opus→sonnet não foi medida nesse eixo, e esta card mede **latência**, não qualidade. O comentário de `config.py` já diz que se o resumo regrediu nada acusaria; isto continua verdade depois desta card.
 
+**O teto do embed é palpite, e é o único.** Todo outro número desta card saiu de medição contra a API real. O de `TETO_DA_CONSULTA_DO_TURNO` não: não há `OPENAI_API_KEY` nesta máquina. Ele é o dobro do teto que a medição deu para a chamada de forma mais parecida (`count_tokens`), e está declarado como não medido no comentário do próprio código. **É o termo mais frágil do orçamento, e é o segundo maior.**
+
 **Os tetos não protegem contra provedor lento de verdade.** Se a API degradar como um todo, 25s viram estouro onde antes havia 60s — ou seja, esta card **aumenta** a taxa de falha tipada nesse cenário, em troca de falhar mais cedo e mais barato. É a escolha que a TEC-227 já fez ao preferir erro tipado a cancelamento.
 
 ## Testes
 
-- Unitário: a soma das cinco fatias, com o laço de busca contado em dobro e as tentativas do cliente, cabe no `job_timeout`. Importa as duas pontas em vez de repetir os números, para que subir um teto sem olhar o orçamento fique vermelho (D3, D6).
+- Unitário: a soma das cinco fatias, com o laço de busca contado em dobro e as tentativas do cliente, cabe no `job_timeout`. Importa as duas pontas em vez de repetir os números, para que subir um teto sem olhar o orçamento fique vermelho (D3, D4).
 - Unitário: cada tipo de chamada manda o SEU teto ao SDK — que o override chega, não que o número está certo.
-- Unitário: as duas chamadas de fora do turno **não** mandam teto, e por isso caem no piso de construção (D7).
-- O log de degradação carrega o teto.
+- Unitário: as duas chamadas de fora do turno **não** mandam teto, e por isso caem no piso de construção (D9).
+- Unitário: a folga sobre o `job_timeout` cobre pelo menos 30s de banco — caber por 1s seria caber e estourar na primeira consulta (D8).
+- Unitário: o turno injeta `embedar_do_turno` na porta de busca, e **não** o `embedar` da indexação (D7).
+- Integração: o log de degradação carrega `teto_s` quando a causa foi `APITimeoutError`, e `None` quando não foi — um campo que afirmasse teto numa falha de schema mentiria sobre o que aconteceu (D5).
 
 ## Fora de escopo
 
 - Medir qualidade de resumo (não há corpus nem critério; o `config.py` registra que a TEC-140 seria o lugar e não existe).
 - O cliente de moderação, que já tem teto próprio desde a TEC-233.
-- Subir o `TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS` da varredura de follow-ups (D7).
+- Subir o `TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS` da varredura de follow-ups (D9).
 - Medir as duas chamadas de fora do turno.
+- Medir o embed da busca e derivar o teto dele (D7) — bloqueado por falta de chave nesta máquina.
+- Reclamar a folga que a D4 abriu na varredura de follow-ups.
 - Subir o `job_timeout`.
