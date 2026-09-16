@@ -1246,6 +1246,18 @@ async def registrar_recalculo(
     `gravar_estado` e este e redundante; no turno SEM campos nao ha upsert, e e
     exatamente o caminho em que a unica mudanca vem da contagem de mensagens.
 
+    **Desde a TEC-136 o upsert nao e mais o primeiro a tomar este cadeado.**
+    `aplicar_mudanca_de_intencao` roda antes dos dois e, quando a intencao do
+    turno e gravavel, faz `SELECT ... FOR UPDATE` sobre a mesma linha ate nos
+    turnos em que devolve `None` -- e sao a maioria, porque a intencao
+    acumulada raramente muda. Nesses turnos o lock daqui e redundante mesmo sem
+    campo nenhum, que era o caso que o paragrafo acima dizia nao ter upsert. Nos
+    outros -- INDEFINIDA e FORA_DE_ESCOPO, que aquela funcao recusa antes de
+    tocar o banco -- nada muda. A ordem de aquisicao e a mesma linha nos dois
+    casos, entao nao ha deadlock novo; a docstring daquela funcao argumenta isso
+    do outro lado, e esta nota existe para a referencia cruzada valer nos dois
+    sentidos.
+
     **A temperatura e resolvida ANTES da trilha, e a ordem e o ponto
     (TEC-151).** Ate esta card a funcao retornava cedo quando `causas` estava
     vazio; nao pode mais, porque um gatilho da RN-06.3 dispara em turno em que

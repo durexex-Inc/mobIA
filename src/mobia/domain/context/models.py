@@ -350,10 +350,19 @@ class ConversationIntentAudit(Base):
     orcamento caiu junto. Uma causa num array de texto nao responde nenhuma
     dessas tres.
 
-    `de` e nulo na primeira vez que a conversa ganha intencao acumulada. A
+    `de` e nulo quando a conversa ja TINHA linha de qualificacao com a coluna
+    `intencao` vazia e so agora ganhou uma -- a porta que INDEFINIDA abre:
+    `campos_a_gravar` grava a extracao e nao grava a intencao, entao um lead
+    que diz "tenho ate 2.500" antes de se decidir deixa numero sem intencao. A
     linha existe mesmo assim, e nao so nas trocas de verdade, porque e ela que
     explica o descarte: NULL -> COMPRA apaga o orcamento dito sob banda
     frouxa, e sem esta linha o orcamento sumiria sem registro nenhum.
+
+    **Nao e o caso comum do primeiro turno.** Ali a linha de qualificacao ainda
+    nao existe quando `aplicar_mudanca_de_intencao` roda -- ela e criada logo
+    depois, por `gravar_estado` --, e aquela funcao retorna `None` no `estado is
+    None`: nao ha o que invalidar e nao se escreve linha nenhuma aqui. A
+    primeira intencao da maioria das conversas nao aparece nesta tabela.
 
     `clock_timestamp()` e nao `now()`, pela razao que `lead_score_audit`
     escreve por extenso: `now()` congela no primeiro statement da transacao, e
@@ -367,7 +376,8 @@ class ConversationIntentAudit(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
     conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    # Nulo so na primeira vez. Ver o docstring acima.
+    # Nulo so quando a linha de qualificacao ja existia sem intencao. Ver o
+    # docstring acima, que diz por que isso nao e o primeiro turno.
     de: Mapped[str | None] = mapped_column(String(16), nullable=True)
     para: Mapped[str] = mapped_column(String(16), nullable=False)
     # Redundante com `de`/`para` mais a tabela de bandas, e deliberado: quem le
