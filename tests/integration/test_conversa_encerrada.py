@@ -16,6 +16,7 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from conftest import CANAL_AGENTE, CONVERSA_AGENTE, ClassificadorFake
@@ -803,7 +804,7 @@ MOTIVO_DE_OUTRA_CARD = "INATIVIDADE"
 PERGUNTA_DA_DESAMBIGUACAO = "Voce procura para comprar ou para alugar?"
 
 
-def _eventos_de_log(caplog, evento: str) -> list[tuple[str, dict]]:
+def _eventos_de_log(caplog: Any, evento: str) -> list[tuple[str, dict[str, Any]]]:
     """(nivel, corpo) de cada registro JSON do structlog que carrega `evento`.
 
     Mesmo molde de `_eventos_de_log` em `test_citacao_no_turno.py` e em
@@ -1004,7 +1005,13 @@ async def test_o_log_do_encerramento_sai_sem_o_texto_das_mensagens(
     # A contagem de ANTES do zero -- e o numero que decidiu, e depois dele a
     # coluna nao o guarda mais em lugar nenhum.
     assert corpo["seguidas"] == TETO_DE_FORA_DE_ESCOPO
-    corpo_serializado = json.dumps(corpo)
+    # `ensure_ascii=False`, e nao o default: com o escape ligado, `nao` do
+    # literal viraria `não` na serializacao e a asserta da despedida --
+    # que tem `a` com til, travessao e `o` com acento -- nunca poderia
+    # reprovar, dissesse o log o que dissesse. As outras duas sao ASCII puro e
+    # passariam de qualquer jeito; esta linha e o que torna a terceira uma
+    # asserta de verdade.
+    corpo_serializado = json.dumps(corpo, ensure_ascii=False)
     assert FALA_FORA_DE_ESCOPO not in corpo_serializado
     assert PROSA_DO_MODELO not in corpo_serializado
     assert TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO not in corpo_serializado
