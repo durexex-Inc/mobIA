@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -58,6 +59,25 @@ class ConversationIntent(Base):
     # Timestamp e nao booleano porque ocupa o mesmo espaco e responde "quando"
     # numa investigacao, igual ao `updated_at` logo abaixo.
     desambiguado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Quantas mensagens FORA_DE_ESCOPO seguidas. RN-03.5, TEC-138.
+    #
+    # Mora aqui, e nao em `lead_qualification`, por um motivo mecanico: aquela
+    # tabela NAO ganha linha em turno fora de escopo -- `campos_a_gravar`
+    # devolve {} e `gravar_estado` retorna cedo com "Deliberadamente NAO cria
+    # linha" --, entao um lead cujo historico inteiro e fora de escopo nunca
+    # teria onde ser contado. Esta tabela e a unica escrita em TODO turno.
+    #
+    # Sobe ou zera dentro do proprio `ON CONFLICT DO UPDATE` de
+    # `gravar_intencao`: o reset e o `ELSE 0` do mesmo CASE, e por isso o
+    # "voltar ao assunto zera" da card nao tem codigo proprio.
+    #
+    # **O encerramento zera este contador.** Sem isso o lead que volta depois
+    # dos 30 dias iria de 3 para 4 e seria encerrado na primeira mensagem, sem
+    # as tres tentativas que a regra lhe da.
+    fora_de_escopo_seguidas: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="0"
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
