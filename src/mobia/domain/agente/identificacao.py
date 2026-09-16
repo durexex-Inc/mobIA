@@ -4,11 +4,12 @@
 TEC-138 ja tenha criado uma entidade `Conversa`.** A emenda E-01 da TEC-148
 sob a RN-05.7 registra que `conversation_key` e o id externo do LEAD, que
 nenhuma tabela distinguia conversas, e que introduzir a entidade foi
-deferido para a TEC-130. A TEC-138 chegou primeiro, mas `Conversa`
-(`domain/conversa/models.py`) guarda SE a conversa esta encerrada, com a
-MESMA chave de sempre -- nao QUANDO uma sessao comeca e a proxima termina,
-que e o que este modulo perguntaria se pudesse. Ate isso existir, o
-substituto abaixo continua de pe.
+deferido -- sem dizer para quem. Quem nomeia a TEC-130 como a criadora e a
+propria emenda E-01 desta card (TEC-139) sob a RN-04.1. A TEC-138 chegou
+primeiro, mas `Conversa` (`domain/conversa/models.py`) guarda SE a conversa
+esta encerrada, com a MESMA chave de sempre -- nao QUANDO uma sessao comeca
+e a proxima termina, que e o que este modulo perguntaria se pudesse. Ate
+isso existir, o substituto abaixo continua de pe.
 
 "Conversa nova" e uma janela de silencio: nada deste lead nos ultimos 30
 dias. O numero e `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA`, que a TEC-138
