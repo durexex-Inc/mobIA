@@ -64,13 +64,41 @@ O `count_tokens` fica em 5s por ser ida-e-volta de rede e não geração: 18× o
 
 As chamadas de geração pequenas ganham teto pequeno **porque a falha delas é barata**: `desambiguar` perde a pergunta de desambiguação daquele turno, não a conversa.
 
-### D3 — A soma do pior caminho vira teste
+### D3 — A soma do pior caminho vira teste, e ela não é a que eu escrevi primeiro
 
-Pior caminho de um turno: `resumir` + `classificar` + `investidor` = 85s de teto; com `max_retries=1`, 170s; mais `count_tokens`, ~180s. Cabe nos **240s** do `job_timeout` com 60s de sobra.
+**A primeira versão desta decisão contava três chamadas e estava errada.** O turno paga até **cinco fatias**, e duas delas custam **duas requisições cada**:
 
-Hoje a mesma conta dá 360s e **não cabe** — o que o comentário do código já admite e nenhum teste impede.
+| fatia | onde | requisições |
+| --- | --- | --- |
+| `count_tokens` | `montar_contexto` | 1 |
+| `resumir` | `montar_contexto`, a cada ~40 mensagens | 1 |
+| `reagir` | `turno.py:1463` | 1 |
+| chamada 1 — `classificar` ou `qualificar_investidor` | `turno.py:1541` | até 2 (laço de `tool_use`) |
+| chamada 2 — `desambiguar` ou `qualificar_investidor` | `turno.py:2028` / `2042` | até 2 |
 
-O teste soma as constantes e compara com `job_timeout`, importando as duas pontas em vez de repetir os números. É o que torna a relação explícita: quem subir um teto sem olhar o orçamento vê vermelho.
+O laço é o `for tentativa in (1, 2)` de `_chamar`: quando o modelo pede a ferramenta de busca, a mesma fatia bate no provedor duas vezes. As duas chamadas de investidor são exclusivas entre si — a de `2042` só dispara quando a `1541` **não** foi a do investidor —, então o pior par é `classificar` com busca seguido de `qualificar_investidor` com busca.
+
+**O comentário de `infra/anthropic.py` também subconta.** Ele diz 360s; com cinco fatias e o laço de busca, o pior caso de hoje é **840s** contra os 240s do `job_timeout` — pior do que o próprio código admite.
+
+### D6 — `max_retries = 0` no cliente do turno, e é ela que fecha a conta
+
+Os tetos por tipo sozinhos **não bastam**:
+
+| | por tentativa | com `max_retries=1` | contra 240s |
+| --- | --- | --- | --- |
+| hoje, tudo a 60s | 420s | **840s** | estoura |
+| tetos da D2, retry 1 | 162s | **324s** | ainda estoura |
+| tetos da D2, retry 0 | 162s | **162s** | 78s de folga |
+
+`APITimeoutError` é retentado — `_should_retry_exception` do SDK trata `APIConnectionError` como retentável e o timeout herda dele —, então a retentativa dobra tudo. **É ela que come metade do orçamento.**
+
+Zerar não é decisão nova deste documento: **a moderação já a tomou, e citou esta card pelo nome.** O comentário de `MAX_TENTATIVAS_DA_MODERACAO = 0` diz *"uma segunda tentativa dobraria o teto para ganhar pouco"* e *"Reduzir a chance de o turno estourar e a TEC-228"*. O que muda aqui é só o alcance: o mesmo argumento vale para o cliente que faz as cinco fatias, não só para o que modera as duas pontas.
+
+A medição sustenta o argumento: as chamadas levam de 0,25s a 9,3s. Um estouro contra 25s não é lentidão — é pane. Retentar uma pane custa outros 25s pelo mesmo desfecho.
+
+**O que se perde, dito sem rodeio.** A retentativa não servia só para timeout: ela cobria 429, 5xx e queda de conexão, onde retentar é barato e costuma funcionar. Sem ela, um 429 deixa de ser reparado dentro da requisição e passa a ser reparado pelo **sweeper**, que refaz o turno inteiro — mais caro, porque repaga as chamadas que já tinham dado certo. A troca é deliberada: um orçamento que fecha vale mais que uma retentativa barata num caminho raro, e o sweeper garante que nada se perde.
+
+**`TIMEOUT_SEGUNDOS` fica**, como piso de construção. Ele deixa de governar as cinco fatias e passa a governar só quem não pede teto próprio.
 
 ### D4 — O log do estouro do `resumir`, e o critério da card já está meio atendido
 
@@ -84,6 +112,21 @@ O que falta é diferente e menor: saber **em que teto** a chamada morreu. Com te
 
 `evals/relatorios/`, no molde dos relatórios que já existem lá, com data, modelo, máquina, as amostras cruas e as limitações — inclusive o alarme falso do investidor. Sem isso, quem mexer nos tetos daqui a seis meses recomeça do palpite, que é o estado que esta card existe para encerrar.
 
+### D7 — As duas chamadas de fora do turno ficam no piso, e isso tem consequência
+
+Há **seis** sítios que chamam o provedor, não os três que a card lista. Além das cinco fatias do turno e da moderação (que já tem cliente próprio desde a TEC-233), duas vivem fora do turno:
+
+- `followup/prosa.py:216` — a frase de abertura do follow-up, no job de varredura.
+- `handoff/resumo.py:207` — o resumo do dossiê, no job `gerar_resumo`.
+
+**Nenhuma das duas foi medida, e nenhuma disputa o orçamento do turno.** Elas ficam no `TIMEOUT_SEGUNDOS` de construção. Inventar teto medido para chamada que ninguém mediu seria exatamente o palpite que esta card existe para encerrar.
+
+**Mas o `max_retries` as alcança, e aí está o efeito colateral.** `sweep_followups.py` deriva o `TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS = 90` de uma conta que cita `TIMEOUT_SEGUNDOS`/`MAX_TENTATIVAS` pelo nome: `240 - 130 - 20 = 90`, em que os 130 são "os dois clientes externos" com os 120s de pior caso do cliente do modelo. Com retry 0 esse termo cai para 60, os externos custam ~70, e a conta daria `240 - 70 - 20 = 150`.
+
+**O número fica em 90 assim mesmo.** Subir para 150 mudaria quantos follow-ups uma varredura entrega — efeito visível para o lead, decidido por uma card que fala de timeout. Um teto mais apertado que o necessário é seguro (o que sobra continua devido e entra na varredura seguinte, cinco minutos depois), e o comentário de lá passa a dizer que os 90 são conservadores por escolha, não derivados da fórmula. Subir é outra card.
+
+O comentário daquele bloco avisava: *"Mexer num dos dois sem refazer a soma acima volta a deixar o teto frouxo."* Refeita — e na direção segura.
+
 ## Lacunas declaradas
 
 **A medição é de uma máquina, num momento, com 5 amostras.** Não é p95 de produção, e não pretende ser: é a ordem de grandeza que faltava para escolher teto. A folga de 3× existe porque ela é o que é.
@@ -96,13 +139,15 @@ O que falta é diferente e menor: saber **em que teto** a chamada morreu. Com te
 
 ## Testes
 
-- Unitário: a soma dos tetos do pior caminho, vezes as tentativas, cabe no `job_timeout` (D3).
-- Unitário: cada tipo de chamada usa o seu teto — que o override chega ao SDK, e não que o número está certo.
+- Unitário: a soma das cinco fatias, com o laço de busca contado em dobro e as tentativas do cliente, cabe no `job_timeout`. Importa as duas pontas em vez de repetir os números, para que subir um teto sem olhar o orçamento fique vermelho (D3, D6).
+- Unitário: cada tipo de chamada manda o SEU teto ao SDK — que o override chega, não que o número está certo.
+- Unitário: as duas chamadas de fora do turno **não** mandam teto, e por isso caem no piso de construção (D7).
 - O log de degradação carrega o teto.
 
 ## Fora de escopo
 
 - Medir qualidade de resumo (não há corpus nem critério; o `config.py` registra que a TEC-140 seria o lugar e não existe).
-- Mexer em `max_retries`.
 - O cliente de moderação, que já tem teto próprio desde a TEC-233.
+- Subir o `TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS` da varredura de follow-ups (D7).
+- Medir as duas chamadas de fora do turno.
 - Subir o `job_timeout`.
