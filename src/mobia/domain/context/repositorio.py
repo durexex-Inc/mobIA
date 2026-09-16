@@ -373,10 +373,20 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
 
     A subtracao usa os campos **deste** turno, e nao o estado acumulado, para
     nao pagar uma consulta a mais. Uma marca sobre campo que ja estava
-    preenchido de um turno anterior e possivel por esse caminho, e e inerte:
-    `_texto_do_estado` mostra o valor quando ele existe, e a marca so aparece
-    onde nao ha valor. Valor vence marca -- e um valor, uma vez gravado,
-    nunca e apagado (`None` nao apaga).
+    preenchido de um turno anterior e possivel por esse caminho, e fica inerte
+    enquanto o valor existir: `_texto_do_estado` mostra o valor quando ele ha,
+    e a marca so aparece onde nao ha valor. Valor vence marca.
+
+    **Inerte nao e permanente, desde a TEC-136.** Ate ela, era: nenhum caminho
+    de gravacao apagava coluna, entao um valor gravado nunca sumia e a marca
+    escondida atras dele nunca voltava a aparecer. `aplicar_mudanca_de_intencao`
+    (neste arquivo) abriu a excecao de proposito e anula as duas colunas do
+    orcamento quando a intencao troca de banda -- e por isso ela remove a marca
+    do orcamento das duas colunas de marca no mesmo UPDATE. Sem essa remocao,
+    a marca que dormia atras do valor acordaria no instante em que o valor
+    sumisse, e o agente trataria como ja perguntado um orcamento que ele nunca
+    perguntou naquela banda. Qualquer descarte futuro de coluna tem de fazer o
+    mesmo pela marca dela.
     """
     conhecidos: set[str] = set()
     ignorados: list[str] = []
@@ -721,6 +731,12 @@ async def aplicar_mudanca_de_intencao(
     e criar linha aqui moveria o score do lead pelo mesmo argumento que o
     `if not campos:` de `gravar_estado` registra por extenso.
 
+    **Nao escreve `updated_at`, e isso depende da ordem acima.** Quem descarta
+    tem intencao gravavel por construcao (a guarda e a primeira linha), entao
+    `gravar_estado` sempre vem atras na mesma transacao e carimba a coluna.
+    Quem mudar a ordem, ou passar a chamar esta funcao sem `gravar_estado`
+    depois, deixa a linha com valor apagado e `updated_at` velho.
+
     **O lock nao e decorativo.** Turnos da mesma conversa nao sao
     serializados -- a deduplicacao do ARQ e por mensagem, nao por conversa --,
     e sem ele dois turnos concorrentes leem a mesma intencao anterior e ambos
@@ -786,6 +802,25 @@ async def aplicar_mudanca_de_intencao(
                 # sozinho: o agente trataria o orcamento como ja perguntado e
                 # nunca reperguntaria o da banda nova.
                 #
+                # **As DUAS colunas de marca, e nao so a primeira.**
+                # `_texto_do_estado` monta os marcados como a uniao delas
+                # (`montagem.py`), e as duas guardam o orcamento sob o mesmo
+                # nome canonico. Limpar so uma deixa a outra emitindo
+                # `faixa_preco_max: (perguntado, sem resposta)` sobre um valor
+                # que acabou de ser apagado -- o pior dos dois mundos: o lead
+                # perde o numero E nao e reperguntado.
+                #
+                # Sim, isto apaga uma recusa, e a TEC-148 promete nao
+                # reperguntar o que o lead recusou. A promessa continua de pe
+                # porque o sujeito dela mudou: recusar dizer o orcamento de
+                # ALUGUEL nao e recusar dizer o de COMPRA, pelo mesmo
+                # argumento que faz o NUMERO cair -- um valor de uma banda nao
+                # significa nada na outra, e uma recusa tampouco. Nao limpar
+                # tambem nao seria neutro: `esta_qualificado` e
+                # `calcular_score` leem `campos_recusados`, entao a recusa da
+                # era de aluguel seguiria descontando do score um orcamento
+                # que nem existe mais.
+                #
                 # `array_remove` e o mesmo built-in que `_sem_os_respondidos`
                 # usa, e pela mesma razao: Postgres nao tem subtracao de array.
                 # O nome vem de `_MARCA_DO_ORCAMENTO` porque a marca tem tres
@@ -793,6 +828,9 @@ async def aplicar_mudanca_de_intencao(
                 # a divergencia que aquela constante fechou.
                 perguntados_sem_resposta=func.array_remove(
                     LeadQualification.perguntados_sem_resposta, _MARCA_DO_ORCAMENTO
+                ),
+                campos_recusados=func.array_remove(
+                    LeadQualification.campos_recusados, _MARCA_DO_ORCAMENTO
                 ),
             )
         )

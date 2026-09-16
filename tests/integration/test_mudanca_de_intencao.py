@@ -328,3 +328,106 @@ async def test_a_decisao_sai_da_linha_sob_o_cadeado_e_nao_do_cache_da_sessao(
         )
     ).all()
     assert linhas == []
+
+
+async def test_a_recusa_do_orcamento_de_aluguel_nao_cala_o_de_compra(session) -> None:
+    """A outra metade da D4: a marca do orcamento mora em DUAS colunas.
+
+    `_texto_do_estado` monta os marcados como a UNIAO de
+    `perguntados_sem_resposta` e `campos_recusados`, e as duas guardam o
+    orcamento sob o mesmo nome canonico. Limpar so uma faz o descarte se fechar
+    sozinho: o prompt continua emitindo
+    `faixa_preco_max: (perguntado, sem resposta)` pela coluna que sobrou, o
+    agente segue tratando o assunto como encerrado e o cenario 2 do Gherkin nao
+    acontece -- agora com o valor apagado por cima, que e o pior dos dois
+    mundos.
+
+    O caminho e comum, nao exotico: o lead de aluguel a quem se perguntou o
+    orcamento e que respondeu "prefiro nao falar disso" e exatamente o cenario
+    titular da TEC-148.
+    """
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000010",
+        intencao=Intencao.ALUGUEL,
+        extracao=Extracao(regiao="centro"),
+        recusou=("faixa_preco_expressao",),
+    )
+    await session.flush()
+    antes = await ler_estado(session, CANAL, "5511900000010")
+    assert antes is not None
+    assert "faixa_preco_max" in (antes.campos_recusados or [])
+    assert f"faixa_preco_max: {_MARCA_SEM_RESPOSTA}" in _texto_do_estado(antes)
+
+    mudanca = await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000010",
+        intencao=Intencao.COMPRA,
+    )
+
+    assert mudanca is not None
+    assert mudanca.faixa_descartada is True
+    depois = await ler_estado(session, CANAL, "5511900000010")
+    assert depois is not None
+    assert "faixa_preco_max" not in _texto_do_estado(depois)
+    # A coluna, e nao so o texto: `esta_qualificado` e `calcular_score` leem
+    # `campos_recusados` direto. Deixar a recusa da era de aluguel la dentro
+    # seguiria descontando do score um orcamento que nem existe mais.
+    assert "faixa_preco_max" not in (depois.campos_recusados or [])
+
+
+async def test_a_primeira_intencao_descarta_o_numero_dito_sob_banda_frouxa(session) -> None:
+    """A segunda porta do defeito: `de` nulo, que `mudou_de_banda` abre de proposito.
+
+    O produtor e banal. Um primeiro turno que diz "tenho ate 2.500" sem deixar
+    claro se compra ou aluga classifica INDEFINIDA: `campos_a_gravar` grava a
+    extracao e NAO grava `intencao`, entao a linha nasce com a coluna nula e o
+    numero entrou validado so pela banda frouxa, que e a uniao das duas e
+    portanto nao validou nada. Quando a intencao finalmente chega, o numero tem
+    de cair pelo mesmo motivo que cai numa troca de banda.
+
+    A linha de historico existe mesmo sem origem, e e ela que explica o
+    descarte: sem ela o orcamento sumiria sem registro nenhum.
+    """
+    await _semear(
+        session,
+        "5511900000011",
+        Intencao.INDEFINIDA,
+        faixa_preco_max_centavos=250_000,
+        regiao="centro",
+    )
+    partida = await ler_estado(session, CANAL, "5511900000011")
+    assert partida is not None
+    assert partida.intencao is None
+    assert partida.faixa_preco_max_centavos == 250_000
+
+    mudanca = await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000011",
+        intencao=Intencao.COMPRA,
+    )
+    await session.flush()
+
+    assert mudanca is not None
+    assert mudanca.de is None
+    assert mudanca.faixa_descartada is True
+
+    estado = await ler_estado(session, CANAL, "5511900000011")
+    assert estado is not None
+    assert estado.faixa_preco_max_centavos is None
+    assert estado.regiao == "centro"
+
+    linhas = (
+        await session.scalars(
+            select(ConversationIntentAudit).where(
+                ConversationIntentAudit.conversation_key == "5511900000011"
+            )
+        )
+    ).all()
+    assert len(linhas) == 1
+    assert linhas[0].de is None
+    assert linhas[0].para == Intencao.COMPRA.value
+    assert linhas[0].faixa_descartada is True
