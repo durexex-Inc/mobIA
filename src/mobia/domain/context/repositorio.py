@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.domain.agente.dinheiro import ticket_de
+from mobia.domain.agente.dinheiro import mudou_de_banda, ticket_de
 from mobia.domain.agente.investidor import (
     CAMPOS_DO_INVESTIDOR,
     ExtracaoDoInvestidor,
@@ -22,6 +22,7 @@ from mobia.domain.agente.investidor import (
 from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.auditoria import causas_do_recalculo
 from mobia.domain.context.models import (
+    ConversationIntentAudit,
     ConversationSummary,
     LeadQualification,
     LeadScoreAudit,
@@ -271,6 +272,17 @@ async def ler_estado(
     return resultado.scalar_one_or_none()
 
 
+def intencao_e_gravavel(intencao: Intencao) -> bool:
+    """Esta intencao chega a ser gravada em `lead_qualification.intencao`?
+
+    Extraida de `campos_a_gravar` na TEC-136 para ter UM dono. A pergunta
+    passou a ter um segundo interessado (`aplicar_mudanca_de_intencao`, que so
+    descarta quando a intencao de fato muda a coluna), e duas copias da regra
+    divergiriam no dia em que uma oitava intencao entrasse no enum.
+    """
+    return intencao not in (Intencao.FORA_DE_ESCOPO, Intencao.INDEFINIDA)
+
+
 def campos_a_gravar(intencao: Intencao, extracao: Extracao) -> dict[str, Any]:
     """A regra unica de acumulacao do estado de qualificacao.
 
@@ -321,7 +333,7 @@ def campos_a_gravar(intencao: Intencao, extracao: Extracao) -> dict[str, Any]:
     """
     if intencao is Intencao.FORA_DE_ESCOPO:
         return {}
-    if intencao is Intencao.INDEFINIDA:
+    if not intencao_e_gravavel(intencao):
         return extracao.preenchidos()
     return {"intencao": intencao.value, **extracao.preenchidos()}
 
@@ -667,6 +679,135 @@ async def gravar_estado(
         .execution_options(populate_existing=True)
     )
     return resultado.scalar_one()
+
+
+@dataclass(frozen=True)
+class MudancaDeIntencao:
+    """O que a troca de intencao deste turno mudou. TEC-136."""
+
+    de: str | None
+    para: str
+    faixa_descartada: bool
+
+
+async def aplicar_mudanca_de_intencao(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    intencao: Intencao,
+) -> MudancaDeIntencao | None:
+    """Descarta o que a intencao nova invalida e registra a troca. RN-03.3.
+
+    Devolve `None` quando nao houve mudanca a aplicar: intencao que nao se
+    grava, conversa sem estado ainda, ou intencao igual a que ja estava.
+
+    **A excecao ao "None no campo nao apaga" mora aqui, e so aqui.** A regra de
+    `campos_a_gravar` e de `gravar_estado` segue intacta: nada que venha da
+    extracao apaga coluna nenhuma. Esta funcao e um caminho SEPARADO, que nao
+    apaga por ausencia de valor e sim porque a banda de plausibilidade mudou --
+    e por isso ela toca UMA coisa, o orcamento, e nenhum outro campo.
+
+    **Roda ANTES de `gravar_estado`, e a ordem e o desenho.** O descarte e um
+    UPDATE que anula a faixa; o upsert de `gravar_estado` vem depois e escreve
+    por cima o valor novo quando o lead o disse no mesmo turno ("na verdade
+    quero comprar, ate 800 mil"). Invertendo a ordem, o descarte apagaria o
+    numero que o lead acabou de dar.
+
+    **Nao cria linha.** Primeiro turno da conversa nao tem estado a invalidar,
+    e criar linha aqui moveria o score do lead pelo mesmo argumento que o
+    `if not campos:` de `gravar_estado` registra por extenso.
+
+    **O lock nao e decorativo.** Turnos da mesma conversa nao sao
+    serializados -- a deduplicacao do ARQ e por mensagem, nao por conversa --,
+    e sem ele dois turnos concorrentes leem a mesma intencao anterior e ambos
+    gravam linha de historico para a mesma troca. E a corrida que
+    `registrar_recalculo` fechou com este mesmo cadeado. Ele ja e tomado nesta
+    transacao, mais adiante, por aquela funcao: tomar aqui antes preserva a
+    ordem de aquisicao e nao cria deadlock novo.
+    """
+    if not intencao_e_gravavel(intencao):
+        return None
+
+    estado = (
+        await session.execute(
+            select(LeadQualification)
+            .where(
+                LeadQualification.channel == channel,
+                LeadQualification.conversation_key == conversation_key,
+            )
+            .with_for_update()
+            # `populate_existing` aqui NAO e o mesmo caso do `RETURNING` de
+            # `gravar_estado`, que protege o valor devolvido a quem chama: aqui
+            # ele protege o LOCK. Quem chama esta funcao no turno ja leu o
+            # estado nesta sessao para montar o prompt, entao a linha esta no
+            # identity map; sem isto o ORM devolveria a instancia velha e
+            # jogaria fora justamente as colunas que o `FOR UPDATE` acabou de
+            # reler depois de esperar o concorrente. A decisao sairia do
+            # snapshot de ANTES do cadeado, que e a corrida que o cadeado
+            # existe para fechar. Tirar esta linha nao quebra nenhum teste que
+            # so use uma sessao, entao ela tem um teste proprio:
+            # `test_a_decisao_sai_da_linha_sob_o_cadeado_e_nao_do_cache_da_sessao`.
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if estado is None:
+        return None
+
+    # Sem guarda de valor fora do enum de proposito: `lead_qualification.intencao`
+    # so e escrita por `campos_a_gravar`, sempre a partir de `Intencao.value`, e
+    # defender de um caso que nenhum caminho produz esconderia a corrupcao real
+    # no dia em que um caminho novo a produzisse.
+    antiga = Intencao(estado.intencao) if estado.intencao is not None else None
+    if antiga is intencao:
+        return None
+
+    # A origem sai da instancia ANTES do UPDATE abaixo. Ele e um UPDATE ORM, e
+    # a sincronizacao de sessao expira os atributos da linha que ele casou:
+    # ler `estado.intencao` depois dispararia recarga, e o historico passaria a
+    # depender do que a recarga devolvesse em vez do que o cadeado leu.
+    de = estado.intencao
+
+    descartar = mudou_de_banda(antiga, intencao)
+    if descartar:
+        await session.execute(
+            update(LeadQualification)
+            .where(
+                LeadQualification.channel == channel,
+                LeadQualification.conversation_key == conversation_key,
+            )
+            .values(
+                faixa_preco_min_centavos=None,
+                faixa_preco_max_centavos=None,
+                # A marca sai junto com o valor, senao o descarte se fecha
+                # sozinho: o agente trataria o orcamento como ja perguntado e
+                # nunca reperguntaria o da banda nova.
+                #
+                # `array_remove` e o mesmo built-in que `_sem_os_respondidos`
+                # usa, e pela mesma razao: Postgres nao tem subtracao de array.
+                # O nome vem de `_MARCA_DO_ORCAMENTO` porque a marca tem tres
+                # grafias no repo e escrever qualquer uma a mao reintroduziria
+                # a divergencia que aquela constante fechou.
+                perguntados_sem_resposta=func.array_remove(
+                    LeadQualification.perguntados_sem_resposta, _MARCA_DO_ORCAMENTO
+                ),
+            )
+        )
+
+    session.add(
+        ConversationIntentAudit(
+            id=uuid.uuid4(),
+            channel=channel,
+            conversation_key=conversation_key,
+            de=de,
+            para=intencao.value,
+            faixa_descartada=descartar,
+        )
+    )
+    # Flush e nao commit: a sessao e emprestada, como em `gravar_estado`, e a
+    # linha tem de estar visivel a uma leitura posterior na mesma transacao.
+    await session.flush()
+    return MudancaDeIntencao(de=de, para=intencao.value, faixa_descartada=descartar)
 
 
 def _do_vocabulario[V: StrEnum](vocabulario: type[V], bruto: str | None) -> V | None:
