@@ -1205,6 +1205,7 @@ async def registrar_recalculo(
     channel: str,
     conversation_key: str,
     gatilhos: tuple[str, ...] = (),
+    causas_externas: tuple[str, ...] = (),
 ) -> Recalculo | None:
     """Recalcula o score do lead e grava a trilha se ele mudou.
 
@@ -1245,6 +1246,22 @@ async def registrar_recalculo(
     nenhum dos cinco fatores se move -- o lead pede visita, e o `return None`
     antecipado engoliria o forcamento. Ha teste de guarda para isso:
     `test_o_turno_sem_mudanca_de_score_ainda_resolve_a_temperatura`.
+
+    **`causas_externas` entra na tupla ANTES da guarda `if not causas`, e e ai
+    que esta o ponto (TEC-136).** A tupla vazia continua sendo o sinal de "nao
+    grave" -- nenhum `if` novo decide gravar --, mas ela deixou de sair toda de
+    `causas_do_recalculo`, que so enxerga os cinco fatores. Uma causa informada
+    pelo chamador e um fato sobre a ORIGEM do gatilho, e nao sobre o que se
+    moveu: e razao suficiente para a linha existir mesmo com os cinco fatores
+    identicos. O caso concreto e a troca de intencao do lead, que pode nao
+    mexer em fator nenhum e que a card pede registrada com o motivo. Unindo
+    DEPOIS da guarda, essa troca sumiria da trilha -- que e exatamente o
+    defeito que o parametro existe para fechar.
+
+    **Nao confundir com `gatilhos`.** Aquele alimenta o forcamento de
+    temperatura da RN-06.3 e nao decide nada sobre a trilha; este decide a
+    trilha e nao toca na temperatura. Sao dois assuntos e por isso dois
+    parametros.
     """
     estado = (
         await session.execute(
@@ -1391,7 +1408,11 @@ async def registrar_recalculo(
         )
     ).first()
 
-    causas = causas_do_recalculo(_score_do_registro(ultimo), novo)
+    # As externas primeiro, e nao por estilo: quem le a trilha quer saber o que
+    # DISPAROU o registro antes de ler o que se moveu, e a ordem das derivadas
+    # ja e a de `Score` (a docstring de `causas_do_recalculo` conta com isso
+    # para o teste comparar por igualdade). Prefixar preserva as duas ordens.
+    causas = causas_externas + causas_do_recalculo(_score_do_registro(ultimo), novo)
     if not causas:
         return Recalculo(
             trilha=None,

@@ -4,10 +4,19 @@ TEC-152. Pura de proposito: sem I/O, sem banco, sem chamada ao modelo --
 mesma forma de `score.py` e `qualificacao.py`. Quem grava e o repositorio;
 aqui so se decide o que mudou.
 
-**Tupla vazia e o sinal de "nao grave".** A regra da RN-06.4 emendada -- so
-grava quando o resultado muda -- nao e um `if` no chamador: e a ausencia de
-causa. Assim a regra de QUANDO gravar mora no mesmo lugar que a de O QUE
-gravar, e as duas nao tem como divergir.
+**Tupla vazia e o sinal de "nao grave" para o que ESTE modulo deriva.** A
+regra da RN-06.4 emendada -- so grava quando o resultado muda -- nao e um `if`
+no chamador: e a ausencia de causa. Assim a regra de QUANDO gravar a partir de
+um diff mora no mesmo lugar que a de O QUE o diff produz, e as duas nao tem
+como divergir.
+
+**A TEC-136 abriu a segunda metade da regra, de proposito.** `causas_do_recalculo`
+so enxerga os cinco fatores, e ha fato que merece trilha sem mover nenhum
+deles -- a troca de intencao do lead e o primeiro. Por isso `registrar_recalculo`
+recebe `causas_externas` e as une ANTES da guarda: causa informada pelo
+chamador e razao suficiente para gravar. O que continua valendo e a forma
+negativa da frase acima -- nenhum `if` decide gravar; quem decide e a tupla,
+agora somada. O que deixou de valer e que a tupla saia toda daqui.
 """
 
 from mobia.domain.context.score import Score
@@ -27,6 +36,13 @@ CAUSA_FORMA_DE_PAGAMENTO = "FORMA_DE_PAGAMENTO"
 # lista de vocabulario em outro arquivo.
 CAUSA_EDICAO_MANUAL = "EDICAO_MANUAL"
 CAUSA_NAO_COMPARECIMENTO = "NAO_COMPARECIMENTO"
+
+# Da mesma natureza das duas acima -- fato sobre a ORIGEM do gatilho, e nao
+# sobre o que se moveu --, e por isso tambem informada pelo chamador em vez de
+# derivada do diff. A diferenca e que esta e a PRIMEIRA da familia a ter
+# produtor: a TEC-136, no bloco transacional de `executar_turno`, quando
+# `aplicar_mudanca_de_intencao` devolve uma troca.
+CAUSA_MUDANCA_DE_INTENCAO = "MUDANCA_DE_INTENCAO"
 
 # Os nomes sao do dominio e nao da direcao: um vocabulario com _SUBIU/_CAIU
 # dobraria de tamanho para dizer o que as colunas de fator ja dizem.

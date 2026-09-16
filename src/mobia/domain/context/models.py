@@ -331,11 +331,15 @@ class ConversationIntentAudit(Base):
     uma linha por turno da conversa inteira para responder uma pergunta que
     muda meia duzia de vezes.
 
-    Nao e `lead_score_audit`: aquela so grava quando o resultado MUDA (a tupla
-    vazia de `causas_do_recalculo` e o sinal de nao gravar), entao uma troca de
-    intencao que nao mexesse em nenhum dos cinco fatores sumiria -- e o
-    Gherkin da card pede que a mudanca fique registrada, mexendo ou nao no
-    score.
+    Nao e `lead_score_audit`: aquela responde "quanto o lead vale e por que
+    mudou", e nao "o que ele passou a procurar". Desde que esta card ligou o
+    descarte ao turno, a troca TAMBEM aparece la -- `registrar_recalculo`
+    recebe `CAUSA_MUDANCA_DE_INTENCAO` do chamador e grava a linha mesmo com
+    os cinco fatores parados, que ate entao seria a tupla vazia de
+    `causas_do_recalculo` e portanto o sinal de nao gravar. O que aquela trilha
+    nao guarda, e esta guarda, e o conteudo da troca: de onde para onde, e se o
+    orcamento caiu junto. Uma causa num array de texto nao responde nenhuma
+    dessas tres.
 
     `de` e nulo na primeira vez que a conversa ganha intencao acumulada. A
     linha existe mesmo assim, e nao so nas trocas de verdade, porque e ela que

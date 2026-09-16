@@ -41,11 +41,13 @@ from mobia.domain.agente.repositorio import (
 )
 from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.atendimento.repositorio import esta_silenciada
+from mobia.domain.context.auditoria import CAUSA_MUDANCA_DE_INTENCAO
 from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
 from mobia.domain.context.qualificacao import esta_qualificado, excedeu_o_teto
 from mobia.domain.context.repositorio import (
+    aplicar_mudanca_de_intencao,
     contar_perguntas,
     gravar_estado,
     gravar_investidor,
@@ -1470,6 +1472,25 @@ async def executar_turno(
             confianca=gerada.confianca,
             modelo=gerada.modelo,
         )
+        # TEC-136, RN-03.3. **Antes de `gravar_estado`, e a ordem e o desenho.**
+        # Esta chamada anula a faixa de preco quando a banda de plausibilidade
+        # muda; o upsert de `gravar_estado` vem depois e escreve por cima o
+        # numero novo quando o lead o disse no MESMO turno ("na verdade quero
+        # comprar, ate 800 mil"). Invertidas, o descarte apagaria justamente o
+        # numero que o lead acabou de dar.
+        #
+        # **E antes de `registrar_recalculo` pela outra metade da razao.**
+        # Aquele toma o mesmo `SELECT ... FOR UPDATE` de `lead_qualification`;
+        # tomar o cadeado aqui primeiro preserva a ordem de aquisicao, que e o
+        # que sustenta o "nao cria deadlock novo" da docstring de
+        # `aplicar_mudanca_de_intencao`. As duas metades estao escritas la por
+        # extenso -- quem for mover esta linha leia aquela docstring antes.
+        mudanca = await aplicar_mudanca_de_intencao(
+            session,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+            intencao=gerada.intencao,
+        )
         depois_do_estado = await gravar_estado(
             session,
             channel=message.channel,
@@ -1496,6 +1517,12 @@ async def executar_turno(
             channel=message.channel,
             conversation_key=message.conversation_key,
             gatilhos=gatilhos,
+            # TEC-136. A troca de intencao pode nao mexer em nenhum dos cinco
+            # fatores, e a tupla vazia de `causas_do_recalculo` seria o sinal
+            # de nao gravar -- a mudanca sumiria da trilha. Informada aqui, ela
+            # e razao propria para a linha existir; a docstring de
+            # `registrar_recalculo` explica por que a uniao vem antes da guarda.
+            causas_externas=(CAUSA_MUDANCA_DE_INTENCAO,) if mudanca is not None else (),
         )
         # TEC-174. Aqui dentro, e nao junto ao `lead.esquentou` la embaixo: este
         # `commit` e o que torna indivisivel "o lead esquentou" e "o corretor

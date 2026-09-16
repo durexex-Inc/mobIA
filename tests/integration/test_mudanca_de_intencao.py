@@ -7,7 +7,16 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.agente.schemas import Extracao, Intencao
-from mobia.domain.context.models import ConversationIntentAudit, LeadQualification
+from mobia.domain.context.auditoria import (
+    CAUSA_CAMPOS_OBRIGATORIOS,
+    CAUSA_MUDANCA_DE_INTENCAO,
+    CAUSA_PRIMEIRO_CALCULO,
+)
+from mobia.domain.context.models import (
+    ConversationIntentAudit,
+    LeadQualification,
+    LeadScoreAudit,
+)
 from mobia.domain.context.montagem import _MARCA_SEM_RESPOSTA, _texto_do_estado
 from mobia.domain.context.repositorio import (
     aplicar_mudanca_de_intencao,
@@ -16,6 +25,14 @@ from mobia.domain.context.repositorio import (
 )
 
 CANAL = "whatsapp"
+
+# A conversa que `rodar_turno` semeia, igual a `CONVERSA_AGENTE` de
+# `tests/conftest.py`. E ela que faz os dois turnos dos testes de turno cairem
+# na MESMA conversa -- sem isso o segundo turno nao enxergaria o estado do
+# primeiro e nao haveria troca de intencao para registrar. Repetida aqui como
+# `test_encaminhamento_por_intencao.py` a repete; e o padrao da casa para
+# constante de fixture.
+CONVERSA_DO_TURNO = "5511911112222"
 
 
 async def _semear(session, chave: str, intencao: Intencao, **extras) -> None:
@@ -431,3 +448,106 @@ async def test_a_primeira_intencao_descarta_o_numero_dito_sob_banda_frouxa(sessi
     assert linhas[0].de is None
     assert linhas[0].para == Intencao.COMPRA.value
     assert linhas[0].faixa_descartada is True
+
+
+async def test_a_troca_de_intencao_aparece_na_trilha_do_score(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """O cenario 3 do Gherkin, e o unico ponto em que a D7 muda um invariante.
+
+    `registrar_recalculo` grava a trilha quando `causas_do_recalculo` devolve
+    alguma coisa, e tupla vazia e o sinal declarado de NAO gravar. Uma troca de
+    intencao que nao mova nenhum dos cinco fatores cairia nesse vazio e sumiria
+    -- e a card pede que a mudanca fique registrada COM o motivo. A causa vem
+    do chamador, como as duas que `auditoria.py` ja declara sem produtor.
+
+    **Este teste nao isola a D7 sozinho, e nao tem como.** O descarte do
+    orcamento tira um campo obrigatorio, entao a completude cai 5 pontos e
+    `causas_do_recalculo` acha diferenca por conta propria -- a linha existiria
+    mesmo sem a causa do chamador. O que se afirma aqui e que a causa da troca
+    entra JUNTO das outras, que e o cenario da card. Quem prova que a causa
+    externa e o que FAZ a linha existir e o teste seguinte, em que nenhum dos
+    cinco fatores se move.
+    """
+    await rodar_turno(
+        session,
+        classificador_fake(
+            Intencao.ALUGUEL,
+            extracao=Extracao(faixa_preco_max_centavos=250_000, regiao="zona sul"),
+        ),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="procuro apartamento para alugar na zona sul ate 2500",
+    )
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.COMPRA, extracao=Extracao()),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="na verdade quero comprar",
+    )
+
+    trilha = (
+        await session.scalars(
+            select(LeadScoreAudit)
+            .where(LeadScoreAudit.conversation_key == CONVERSA_DO_TURNO)
+            .order_by(LeadScoreAudit.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    assert trilha is not None
+    assert CAUSA_MUDANCA_DE_INTENCAO in trilha.causas
+    # A companheira que o descarte produz, afirmada de proposito: sem ela este
+    # teste nao diria que a uniao PRESERVA o que o diff achou, e uma
+    # implementacao que substituisse as causas derivadas pela externa passaria.
+    assert CAUSA_CAMPOS_OBRIGATORIOS in trilha.causas
+
+
+async def test_a_troca_que_nao_move_fator_nenhum_ainda_grava_a_trilha(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """A D7 isolada: a uniao vem ANTES da guarda `if not causas`.
+
+    Aqui o lead nunca disse orcamento, entao o descarte nao tira campo
+    obrigatorio nenhum e os cinco fatores ficam identicos entre os dois turnos
+    -- completude 10 (intencao e regiao), urgencia 0, catalogo 0, engajamento
+    10 (a faixa de baixo vai de 1 a 5 mensagens) e capacidade 6. Sem a causa
+    do chamador, `causas_do_recalculo` devolveria tupla vazia e a troca de
+    ALUGUEL para COMPRA sumiria da trilha.
+
+    A asserta e por igualdade, e nao por pertinencia: e ela que afirma que a
+    linha existe SO por causa da causa externa. Se algum fator se mexesse, a
+    lista viria maior e o teste nao provaria mais nada sobre a guarda.
+    """
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.ALUGUEL, extracao=Extracao(regiao="zona sul")),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="procuro apartamento para alugar na zona sul",
+    )
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.COMPRA, extracao=Extracao()),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="na verdade quero comprar",
+    )
+
+    trilhas = (
+        await session.scalars(
+            select(LeadScoreAudit)
+            .where(LeadScoreAudit.conversation_key == CONVERSA_DO_TURNO)
+            .order_by(LeadScoreAudit.created_at)
+        )
+    ).all()
+    assert [linha.causas for linha in trilhas] == [
+        [CAUSA_PRIMEIRO_CALCULO],
+        [CAUSA_MUDANCA_DE_INTENCAO],
+    ]
