@@ -247,19 +247,28 @@ class LeadQualification(Base):
 
 
 class LeadScoreAudit(Base):
-    """Um registro por recalculo que mudou o score. Append-only e imutavel.
+    """Um registro por recalculo com causa. Append-only e imutavel.
 
     TEC-152, RN-06.4. Mesmo molde de `optout_events`: uma linha por evento,
     carimbo pelo relogio do servidor, e sem FK para `messages` nem para
     `lead_qualification` -- a retencao da trilha (12 meses, RNF-18) nao pode
     ser encurtada por cascata da limpeza de outra tabela.
 
-    **So os fatores do score NOVO sao gravados.** Como o registro so entra
-    quando o resultado muda, o registro anterior da mesma conversa **e** o
-    score anterior; guardar os dois criaria duas fontes para o mesmo fato, que
-    e o defeito que a TEC-146 gastou uma card inteira consertando.
-    `total_anterior` fica mesmo assim porque e o que a card nomeia e poupa a
-    segunda leitura de quem so quer o delta.
+    **So os fatores do score NOVO sao gravados.** O registro anterior da mesma
+    conversa **e** o score anterior, e continua sendo; guardar os dois criaria
+    duas fontes para o mesmo fato, que e o defeito que a TEC-146 gastou uma
+    card inteira consertando. `total_anterior` fica mesmo assim porque e o que
+    a card nomeia e poupa a segunda leitura de quem so quer o delta.
+
+    **A premissa dessa frase e "nenhuma mudanca de score fica sem linha", e
+    nao a reciproca.** Ate a TEC-136 as duas valiam juntas -- so entrava linha
+    quando o resultado mudava -- e era facil confundi-las. Desde que
+    `registrar_recalculo` aceita `causas_externas`, a reciproca caiu: uma troca
+    de intencao grava linha com os cinco fatores parados. A conclusao nao se
+    mexe, porque o que a sustenta e o outro lado: toda linha carrega os cinco
+    fatores COMPLETOS do instante dela, e nada mais escreve historico de score.
+    Duas linhas consecutivas continuam ladrilhando a evolucao da conversa sem
+    buraco -- uma linha a mais, identica a anterior, nao abre nenhum.
     """
 
     __tablename__ = "lead_score_audit"

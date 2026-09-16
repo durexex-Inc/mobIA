@@ -1639,12 +1639,16 @@ async def executar_turno(
 
     # A borda, e nao o estado: um lead que continua QUENTE nao reemite, senao
     # a RN-06.5 viraria um ping por mensagem. `recalculo.anterior` sai da
-    # coluna `temperatura`, e nao da trilha de auditoria -- a trilha grava so
-    # quando o score muda e tem retencao de 12 meses (RNF-18), entao um lead
-    # cujo ultimo registro fosse expurgado voltaria a parecer nunca-calculado
-    # e reemitiria como se tivesse acabado de esquentar. (`anterior`, sem
-    # prefixo, e OUTRA variavel nesta funcao -- a linha de intencao que
-    # `ler_intencao` devolveu, la em cima; nao confundir as duas.)
+    # coluna `temperatura`, e nao da trilha de auditoria -- a trilha tem
+    # retencao de 12 meses (RNF-18), entao um lead cujo ultimo registro fosse
+    # expurgado voltaria a parecer nunca-calculado e reemitiria como se
+    # tivesse acabado de esquentar. Ate a TEC-136 este argumento vinha com uma
+    # segunda perna, "a trilha grava so quando o score muda", que deixou de
+    # ser verdade quando `causas_externas` passou a gravar linha com os cinco
+    # fatores parados; ela nao faz falta, e a retencao sozinha ja fecha o
+    # caso. (`anterior`, sem prefixo, e OUTRA variavel nesta funcao -- a linha
+    # de intencao que `ler_intencao` devolveu, la em cima; nao confundir as
+    # duas.)
     #
     # `recalculo.anterior is None` (coluna nula) com QUENTE emite: um lead
     # cujo primeiro recalculo ja cai em QUENTE de fato esquentou, e tratar

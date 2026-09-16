@@ -504,6 +504,13 @@ async def test_a_troca_de_intencao_aparece_na_trilha_do_score(
     # teste nao diria que a uniao PRESERVA o que o diff achou, e uma
     # implementacao que substituisse as causas derivadas pela externa passaria.
     assert CAUSA_CAMPOS_OBRIGATORIOS in trilha.causas
+    # A ORDEM, e nao so a presenca. `registrar_recalculo` argumenta por extenso
+    # que as externas vem primeiro -- quem le a trilha quer saber o que
+    # disparou o registro antes de ler o que se moveu --, e este e o unico
+    # ponto que prende o argumento: sem esta linha, trocar a soma para
+    # `causas_do_recalculo(...) + causas_externas` tornaria aquele comentario
+    # falso sem reprovar teste nenhum.
+    assert trilha.causas[0] == CAUSA_MUDANCA_DE_INTENCAO
 
 
 async def test_a_troca_que_nao_move_fator_nenhum_ainda_grava_a_trilha(

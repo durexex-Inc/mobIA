@@ -1210,8 +1210,11 @@ async def registrar_recalculo(
     """Recalcula o score do lead e grava a trilha se ele mudou.
 
     Devolve `None` quando **nao havia estado a pontuar**, e um `Recalculo`
-    com `trilha is None` quando havia estado e o resultado foi identico ao
-    ultimo registrado. Os dois casos eram o mesmo `None` ate a TEC-151, e ela
+    com `trilha is None` quando havia estado, o resultado foi identico ao
+    ultimo registrado **e o chamador nao informou `causas_externas`** -- com
+    causa externa a linha nasce mesmo com o resultado identico, que e o ponto
+    do parametro (ver abaixo). Os dois casos eram o mesmo `None` ate a
+    TEC-151, e ela
     os separou porque a temperatura pode mudar num turno em que nenhum dos
     cinco fatores se move -- um gatilho da RN-06.3 e exatamente isso.
 
