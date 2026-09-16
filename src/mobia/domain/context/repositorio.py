@@ -312,8 +312,11 @@ def campos_a_gravar(intencao: Intencao, extracao: Extracao) -> dict[str, Any]:
       vem de fora, do classificador, e nunca da extracao -- a tabela
       `conversation_intent` e esta coluna guardam o mesmo fato, e duas fontes
       para ele divergiriam, o que apareceria como bug de score na TEC-150.
-    - **`INDEFINIDA` nao sobrescreve `intencao`** (TEC-147). Era a unica
-      coluna desta tabela que violava o "None nao apaga" logo acima:
+    - **`INDEFINIDA` nao sobrescreve `intencao`** (TEC-147). Quem responde
+      "esta intencao chega a ser gravada?" e `intencao_e_gravavel`, a funcao
+      imediatamente anterior, desde que a TEC-136 lhe deu um segundo
+      interessado. Era a unica coluna desta tabela que violava o "None nao
+      apaga" logo acima:
       `INDEFINIDA` e, no comentario do proprio enum, "ainda nao da para
       saber", e o classificador pode devolve-la em qualquer turno -- um
       "obrigado" no meio da conversa basta. Deixando-a sobrescrever, um lead
