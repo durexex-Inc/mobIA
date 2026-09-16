@@ -321,3 +321,56 @@ class LeadScoreAudit(Base):
             text("created_at DESC"),
         ),
     )
+
+
+class ConversationIntentAudit(Base):
+    """Uma linha por mudanca da intencao ACUMULADA. Append-only. TEC-136.
+
+    Nao e `conversation_intent`: aquela guarda a saida crua do classificador e
+    e sobrescrita a cada turno, de proposito. Virar historico la escreveria
+    uma linha por turno da conversa inteira para responder uma pergunta que
+    muda meia duzia de vezes.
+
+    Nao e `lead_score_audit`: aquela so grava quando o resultado MUDA (a tupla
+    vazia de `causas_do_recalculo` e o sinal de nao gravar), entao uma troca de
+    intencao que nao mexesse em nenhum dos cinco fatores sumiria -- e o
+    Gherkin da card pede que a mudanca fique registrada, mexendo ou nao no
+    score.
+
+    `de` e nulo na primeira vez que a conversa ganha intencao acumulada. A
+    linha existe mesmo assim, e nao so nas trocas de verdade, porque e ela que
+    explica o descarte: NULL -> COMPRA apaga o orcamento dito sob banda
+    frouxa, e sem esta linha o orcamento sumiria sem registro nenhum.
+
+    `clock_timestamp()` e nao `now()`, pela razao que `lead_score_audit`
+    escreve por extenso: `now()` congela no primeiro statement da transacao, e
+    dois turnos concorrentes da mesma conversa sairiam carimbados pela ordem em
+    que COMECARAM. O INSERT acontece com o lock de `lead_qualification` na
+    mao, entao o relogio de statement da uma ordem total igual a do lock.
+    """
+
+    __tablename__ = "conversation_intent_audit"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Nulo so na primeira vez. Ver o docstring acima.
+    de: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    para: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Redundante com `de`/`para` mais a tabela de bandas, e deliberado: quem le
+    # a trilha quer saber se o lead perdeu o que tinha dito sem ter de
+    # reimplementar `mudou_de_banda` em SQL. E a mesma razao que `total_novo`
+    # e denormalizado em `lead_score_audit`.
+    faixa_descartada: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_conversation_intent_audit_conversa",
+            "channel",
+            "conversation_key",
+            text("created_at DESC"),
+        ),
+    )

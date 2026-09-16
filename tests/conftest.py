@@ -177,6 +177,9 @@ TABELAS = (
     # conversation_key) faz a conversa de um teste bloquear o assumir do
     # proximo, e a falha apareceria so a partir do segundo teste do arquivo.
     "atendimento_humano",
+    # TEC-136. Append-only como `lead_score_audit` e `followups`: sem o
+    # truncate, as trocas de intencao de um teste virariam trilha do proximo.
+    "conversation_intent_audit",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
