@@ -112,6 +112,33 @@ async def test_janela_de_29_dias_ainda_esta_encerrada(session: AsyncSession) -> 
     )
 
 
+async def test_o_limite_exato_de_30_dias_ainda_esta_encerrada(session: AsyncSession) -> None:
+    """O empate nao fica ao acaso (fix da revisao, Important 1).
+
+    Mesmo raciocinio de `test_o_limite_exato_de_30_dias_tem_lado_definido`
+    em `test_identificacao_fronteira.py`, e tem de dar o mesmo lado: as duas
+    funcoes compartilham `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA`, e a reabertura
+    tem de coincidir com o instante em que `e_conversa_nova` passa a
+    considerar conversa nova, nao acontecer um instante antes. Exatamente 30
+    dias depois do encerramento AINDA e encerrada; reabre so depois disso.
+    Sem este teste, um `<=` trocado de volta por `<` nao ficaria vermelho.
+    """
+    encerrada_em = datetime.now(UTC)
+    agora = encerrada_em + timedelta(days=30)
+
+    await encerrar_conversa(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        motivo=MotivoDoEncerramento.FORA_DE_ESCOPO,
+        agora=encerrada_em,
+    )
+
+    assert (
+        await esta_encerrada(session, channel=CANAL, conversation_key=CONVERSA, agora=agora) is True
+    )
+
+
 async def test_reabrir_volta_para_ativa_e_limpa_motivo_e_carimbo(session: AsyncSession) -> None:
     await encerrar_conversa(
         session,

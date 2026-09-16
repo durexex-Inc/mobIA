@@ -32,7 +32,10 @@ async def encerrar_conversa(
     valores = {
         "channel": channel,
         "conversation_key": conversation_key,
-        "status": Status.ENCERRADA,
+        # `Status` e StrEnum e esta funcao grava `str(...)`, entao a coluna
+        # guarda o literal, no mesmo molde de `gravar_intencao`
+        # (`agente/repositorio.py`) com `Intencao`.
+        "status": str(Status.ENCERRADA),
         "motivo_do_encerramento": motivo,
         "encerrada_em": agora,
     }
@@ -69,6 +72,16 @@ async def esta_encerrada(
     `agora` entra por parametro, e nao de `datetime.now()` aqui dentro, pelo
     mesmo motivo que `e_conversa_nova` o recebe: e o que torna a janela
     testavel sem congelar relogio.
+
+    **Empate em exatamente 30 dias resolvido para o lado fechado**, com `<=`
+    e nao `<`: exatamente 30 dias ainda esta encerrada, e reabre so depois
+    disso. E o mesmo lado que `e_conversa_nova` escolhe para o empate dela --
+    "exatamente 30 dias ainda nao abre conversa nova" -- e tem de ser, porque
+    as duas funcoes compartilham `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA`: se
+    esta reabrisse no instante exato em que `e_conversa_nova` ainda considera
+    silencio, a reabertura e a identificacao de conversa nova deixariam de
+    coincidir, que e o motivo de as duas usarem a mesma constante. Deixar o
+    empate ao acaso e o defeito que a TEC-229 documentou.
     """
     linha = (
         await session.execute(
@@ -80,7 +93,7 @@ async def esta_encerrada(
     ).one_or_none()
     if linha is None or linha.status != Status.ENCERRADA or linha.encerrada_em is None:
         return False
-    return agora - linha.encerrada_em < timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
+    return agora - linha.encerrada_em <= timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
 
 
 async def reabrir_conversa(session: AsyncSession, *, channel: str, conversation_key: str) -> None:
@@ -93,5 +106,8 @@ async def reabrir_conversa(session: AsyncSession, *, channel: str, conversation_
     await session.execute(
         update(Conversa)
         .where(Conversa.channel == channel, Conversa.conversation_key == conversation_key)
-        .values(status=Status.ATIVA, motivo_do_encerramento=None, encerrada_em=None)
+        # `str(...)` pela mesma razao do `valores` de `encerrar_conversa`
+        # acima: `Status` e StrEnum, e gravar o literal mantem a coluna no
+        # mesmo formato dos dois lados.
+        .values(status=str(Status.ATIVA), motivo_do_encerramento=None, encerrada_em=None)
     )
