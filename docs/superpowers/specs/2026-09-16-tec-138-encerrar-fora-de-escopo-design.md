@@ -87,7 +87,7 @@ A guarda nova entra **depois das duas primeiras** e antes da chamada paga:
 
 - **Opt-out ganha** porque é LGPD, e o comentário daquele bloco já registra que ele passa antes até da moderação.
 - **O silêncio de atendimento humano ganha** porque uma pessoa assumiu a conversa, e decisão humana vence automação.
-- **A guarda nova ganha de tudo que vem depois** porque o ponto dela é não pagar a chamada.
+- **A guarda nova ganha de quase tudo que vem depois** porque o ponto dela é não pagar a chamada — mas abre uma exceção para o pedido explícito de humano (TEC-143), que continua sendo servido e ainda **reabre** a conversa dentro da janela. A exceção não custa a chamada que a guarda existe para poupar: o bloco que atende o pedido de humano devolve antes da moderação de entrada, da montagem de contexto e da chamada paga — zero chamadas ao modelo. E o custo de não abrir a exceção seria pior: calar quem pede uma pessoa explicitamente inverteria o "decisão de pessoa vence política automática" que as duas guardas de cima já praticam, justamente no caso em que a pessoa que pede é o próprio lead.
 
 `ResultadoDoTurno` ganha o valor `"fora_de_escopo"`, distinto de `"silenciado"` e de `"atendimento_humano"` pela mesma razão que aqueles dois são distintos entre si: quem lê o log precisa saber qual das políticas agiu.
 

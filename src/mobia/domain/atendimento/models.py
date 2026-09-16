@@ -25,8 +25,11 @@ class AtendimentoHumano(Base):
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
 
     # O par que identifica a conversa, o mesmo de `optout_events` e
-    # `handoffs`. Nao existe entidade "conversa" neste sistema -- ela e este
-    # par, espalhado por oito tabelas (D9 do desenho).
+    # `handoffs`. Ate a TEC-138 nao existia entidade "conversa" neste sistema
+    # -- era este par, espalhado por oito tabelas (D9 do desenho). A TEC-138
+    # criou `Conversa` (`domain/conversa/models.py`), mas com o MESMO par
+    # como chave primaria; esta tabela nao ganhou FK para ela e continua com
+    # sua propria copia do par.
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
     conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
 

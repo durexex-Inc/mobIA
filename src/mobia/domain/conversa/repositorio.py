@@ -117,8 +117,13 @@ async def esta_encerrada(
     """A conversa esta encerrada AGORA?
 
     Delega a `situacao_da_conversa` e devolve so a metade do tempo: a regra da
-    janela mora uma vez so, e nao duas -- duas copias seriam duas coisas para
-    manter em sincronia, e a de baixo e a que o turno usa.
+    janela mora uma vez so, em `situacao_da_conversa` (acima, neste arquivo)
+    -- duas copias seriam duas coisas para manter em sincronia. **Quem o
+    turno chama e `situacao_da_conversa` direto, e nao esta funcao**: ele
+    precisa das duas metades do par (`SituacaoDaConversa`) para decidir se
+    cala e se reabre, e `esta_encerrada` devolve so uma delas. Esta funcao e
+    para quem so precisa da resposta booleana simples -- hoje, os testes de
+    repositorio.
 
     Sem linha, nao esta -- o estado default e "pode receber", igual ao de
     `esta_em_optout`.
@@ -160,8 +165,9 @@ async def reabrir_conversa(session: AsyncSession, *, channel: str, conversation_
     Minor 8): dois turnos concorrentes da mesma conversa, ambos fora de
     escopo, podem deixar o contador em 1 depois do zero -- o segundo espera o
     cadeado de linha que `gravar_intencao` tomou, le o zero e grava 1. Zerar
-    aqui tambem nao consertaria isso (o encerramento e a reabertura estao a 30
-    dias de distancia, e nesse intervalo nada escreve o contador), e
+    aqui tambem nao consertaria isso -- entre o encerramento e a reabertura,
+    seja pela janela de 30 dias vencida, seja pelo pedido de humano que reabre
+    em minutos (`agente/turno.py`), nada escreve o contador -- e
     acrescentaria a esta funcao uma escrita numa tabela de outro modulo. O
     custo do caso raro e o lead ter duas tentativas em vez de tres; o
     comentario do encerramento em `agente/turno.py` guarda a conta.
