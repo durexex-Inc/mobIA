@@ -64,6 +64,8 @@ ATENDIMENTO_HORARIO_INICIO=0 ATENDIMENTO_HORARIO_FIM=1 ./.venv/Scripts/python.ex
 
 **Medido em 16/09/2026, 12:13 local:** com a janela assim, exatamente os dois testes reprovam e os outros catorze passam. Depois do conserto, o arquivo inteiro tem de passar **com e sem** essas variáveis — e as duas execuções são o critério de pronto, porque só a primeira prova que a fixture funciona e só a segunda prova que ela não quebrou o caminho normal.
 
+**O truque é de arquivo, não de suíte, e quem repetir precisa saber por quê.** Rodar a suíte **inteira** com essas variáveis faz reprovarem dois testes unitários de `test_deteccao_de_humano.py` — `test_a_janela_inclui_a_hora_de_abertura` e `test_a_janela_inclui_a_hora_de_fechamento`. **Não é dependência de relógio:** os dois passam um `datetime` fixo e afirmam o predicado *"com o default de inicio 9"*, então o que os quebra é a configuração ter mudado debaixo deles, não a hora. São testes corretos. O que a variável simula é a noite **para quem lê o relógio**; para quem lê a configuração, ela simula outra coisa. Use-a no arquivo, não na suíte.
+
 ## Lacunas declaradas
 
 **A varredura é de hoje, não é um gate.** Nada impede que a próxima card escreva um teste com dependência implícita do relógio; o que esta card deixa é o registro dos dois padrões e a prosa que os nomeia. Um gate automático — algo que detecte `datetime.now` alcançável a partir de uma asserção — seria outra card, e provavelmente cara demais para o que evita.
