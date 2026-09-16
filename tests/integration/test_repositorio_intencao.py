@@ -169,3 +169,18 @@ async def test_primeira_mensagem_fora_de_escopo_ja_conta_um(session) -> None:
     primeira = await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
 
     assert primeira == 1
+
+
+async def test_fora_de_escopo_depois_de_intencao_no_assunto_sobe_de_zero(session) -> None:
+    """O lead fala de apartamento, depois sai do assunto: 0 -> 1.
+
+    A quarta situacao (o contador ja existe em zero, numa linha que uma
+    intencao no assunto criou, e o turno seguinte e FORA_DE_ESCOPO) e o
+    caminho real de um lead -- as tres outras cobrem seguidas, reset e a
+    linha nascendo direto em FORA_DE_ESCOPO, mas nenhuma cobre esta.
+    """
+    zero = await gravar(session, Intencao.COMPRA, "0.91")
+    um = await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+
+    assert zero == 0
+    assert um == 1

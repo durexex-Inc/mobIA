@@ -68,9 +68,14 @@ class ConversationIntent(Base):
     # linha" --, entao um lead cujo historico inteiro e fora de escopo nunca
     # teria onde ser contado. Esta tabela e a unica escrita em TODO turno.
     #
-    # Sobe ou zera dentro do proprio `ON CONFLICT DO UPDATE` de
-    # `gravar_intencao`: o reset e o `ELSE 0` do mesmo CASE, e por isso o
-    # "voltar ao assunto zera" da card nao tem codigo proprio.
+    # Sobe ou zera em `gravar_intencao`, em DOIS lugares que tem de andar
+    # juntos: o INSERT (a linha nasce, e a primeira mensagem de uma conversa
+    # nova precisa nascer em 1 quando ela mesma e FORA_DE_ESCOPO) e o CASE do
+    # `set_` do ON CONFLICT DO UPDATE (turnos seguintes da mesma conversa).
+    # Nao e so o segundo: a primeira mensagem de uma conversa nunca passa por
+    # um CONFLICT, e um contador que so soubesse dele gravaria 0 nela --
+    # exatamente o bug que a TEC-138 mediu antes de duplicar a regra no
+    # INSERT.
     #
     # **O encerramento zera este contador.** Sem isso o lead que volta depois
     # dos 30 dias iria de 3 para 4 e seria encerrado na primeira mensagem, sem

@@ -84,9 +84,13 @@ async def gravar_intencao(
         # uma conversa tem de poder perguntar.
         "desambiguado_em": None,
         "updated_at": datetime.now(UTC),
-        # RN-03.5, TEC-138. O `set_` abaixo so roda no CONFLICT -- a primeira
-        # mensagem de uma conversa nova passa por AQUI, e se essa primeira
-        # mensagem for FORA_DE_ESCOPO a contagem tem de nascer em 1, nao em 0.
+        # RN-03.5, TEC-138. Mesma regra do CASE la embaixo (soma se
+        # FORA_DE_ESCOPO, senao zero), DUPLICADA aqui porque o `set_` so roda
+        # no CONFLICT -- a primeira mensagem de uma conversa nova passa por
+        # AQUI, no INSERT puro, e sem isto ficaria com o `server_default` de
+        # 0. As duas copias tem de mudar juntas: foi exatamente uma mudanca
+        # so no CASE, sem esta, que produziu o bug que a TEC-138 mediu
+        # (INSERT gravando 0 na primeira mensagem fora de escopo).
         "fora_de_escopo_seguidas": 1 if intencao is Intencao.FORA_DE_ESCOPO else 0,
     }
     statement = pg_insert(ConversationIntent).values(valores)
@@ -103,8 +107,11 @@ async def gravar_intencao(
     # mesma, e a pergunta dela ja foi gasta.
 
     # RN-03.5, TEC-138. Sobe quando a intencao deste turno e FORA_DE_ESCOPO e
-    # ZERA em qualquer outra -- o "voltar ao assunto zera o contador" da card e
-    # este `ELSE`, e por isso nao tem codigo proprio em lugar nenhum.
+    # ZERA em qualquer outra -- o "voltar ao assunto zera o contador" da card
+    # e este `ELSE`. **A mesma regra esta duplicada em `valores`, acima**,
+    # para o INSERT puro que nao passa por este `set_`; as duas copias tem de
+    # mudar juntas -- mudar uma sem a outra reabre a lacuna que a TEC-138
+    # mediu (a primeira mensagem fora de escopo de uma conversa gravando 0).
     #
     # A aritmetica mora no SQL pela razao que `contar_perguntas` e a uniao de
     # `perguntados_sem_resposta` ja registram: ler o valor, somar em Python e
