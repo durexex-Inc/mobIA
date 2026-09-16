@@ -534,7 +534,10 @@ async def gravar_estado(
     perguntou: Iterable[str] = (),
     recusou: Iterable[str] = (),
 ) -> LeadQualification | None:
-    """Upsert do estado de qualificacao. `None` no campo nao apaga o que havia.
+    """Upsert do estado de qualificacao. `None` no campo nao apaga o que havia
+    -- a unica excecao mora em `aplicar_mudanca_de_intencao`, e so la (RN-03.3,
+    TEC-136): aquele caminho descarta o orcamento por um UPDATE proprio,
+    ANTES desta funcao na mesma transacao, quando a intencao troca de banda.
 
     Devolve a linha que o `RETURNING` trouxe -- o que o banco de fato gravou,
     ja acumulado com o que a linha tinha antes deste turno, e nao so os

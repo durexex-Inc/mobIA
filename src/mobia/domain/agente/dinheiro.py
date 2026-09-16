@@ -452,11 +452,13 @@ def parsear(expressao: str, intencao: Intencao) -> FaixaDePreco | Recusa:
     # O motivo e que a banda frouxa nao e uma banda de verdade: e a ausencia de
     # uma. Sem esta linha, "uns 500" com intencao INDEFINIDA -- o momento comum
     # da PRIMEIRA mencao de orcamento -- era aceito como R$ 500, que e
-    # exatamente o defeito que abre o desenho desta card. E ele nao se corrige
-    # sozinho depois: `campos_a_gravar` nunca APAGA e turno nenhum revalida o
-    # que ja esta gravado, entao o valor admitido enquanto a intencao era
-    # INDEFINIDA sobrevive para dentro de uma conversa depois classificada
-    # COMPRA e vira o filtro da busca la.
+    # exatamente o defeito que abre o desenho desta card. `campos_a_gravar`
+    # continua nunca apagando por si so, e turno nenhum revalida o que ja esta
+    # gravado -- mas desde a TEC-136 quem fecha esta porta e
+    # `aplicar_mudanca_de_intencao` (RN-03.3, repositorio.py): no turno em que
+    # `mudou_de_banda` acha a troca, ela descarta a faixa gravada antes que o
+    # valor admitido sob INDEFINIDA sobreviva para virar o filtro de uma busca
+    # ja classificada COMPRA.
     #
     # Vale para as tres intencoes sem banda propria, e nao so para INDEFINIDA:
     # a regra e da banda frouxa, e o modulo nao tem por que saber qual dos
