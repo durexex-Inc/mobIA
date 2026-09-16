@@ -210,20 +210,39 @@ class WorkerSettings:
     # conversa roda duas vezes em paralelo. Os 60s vieram da TEC-122, quando o
     # job era claim + ACK. Hoje o turno faz `count_tokens` (as vezes -- so
     # quando a estimativa barata fica perto do teto), `resumir` (as vezes, a
-    # cada ~40 mensagens, max_tokens=2000), `classificar` (sempre,
-    # max_tokens=1500), desde a TEC-135 `desambiguar` (so no turno ambiguo,
-    # max_tokens=300) e o POST para a Meta -- um turno com dobra ja passava de
-    # 60s sem nada estar errado.
+    # cada ~40 mensagens, max_tokens=2000), `reagir` (so depois de um turno que
+    # apresentou imoveis, max_tokens=300), `classificar` ou
+    # `qualificar_investidor` (sempre, max_tokens=1500), desde a TEC-135
+    # `desambiguar` (so no turno ambiguo, max_tokens=300) e o POST para a Meta
+    # -- um turno com dobra ja passava de 60s sem nada estar errado.
     #
-    # Nao ha folga garantida nem nestes 240s: `resumir` + `classificar` sozinhos
-    # ja somam o pior caso do cliente Anthropic (120s cada, ver
-    # `infra/anthropic.py`) igual ao teto, e o turno ambiguo acrescenta
-    # `desambiguar` depois dos dois -- 360s no pior caso, sem contar
-    # `count_tokens` nem o POST. Isso nao e hipotetico: qualquer chamada perto
-    # do seu proprio pior caso, nao so uma pane total, ja e o suficiente para
-    # a soma passar do teto. Ver a secao "Lacunas conhecidas" do spec do
-    # TEC-135 -- subir `job_timeout` exige medir a taxa real de retentativa
-    # antes, nao e uma correcao que este comentario decide sozinho.
+    # **Ate a TEC-228 nao havia folga, e a versao anterior deste comentario
+    # subcontava o proprio buraco.** Ela dizia 360s somando tres chamadas a
+    # 120s; o turno paga CINCO fatias, e duas delas fazem duas requisicoes cada
+    # quando o modelo usa a busca -- o numero real era 840s contra estes 240.
+    #
+    # **E o maior termo nao era nem da Anthropic.** O embed da busca
+    # (`infra/embeddings.py`) tinha 50s com retentativa, e um turno busca ate
+    # duas vezes: 200s sozinho, mais que todas as chamadas de modelo somadas.
+    #
+    # Hoje a conta fecha, com os quatro clientes externos contados:
+    #
+    #   162s  Anthropic (`segundos_do_modelo_no_pior_turno`)
+    #    20s  embed da busca, 2 buscas x 10s, sem retentativa
+    #    10s  moderacao das duas pontas
+    #    10s  POST para a Meta
+    #   ----
+    #   202s  contra estes 240 -- 38s de folga para o banco
+    #
+    # `test_o_pior_turno_cabe_no_job_timeout` monta essa soma importando cada
+    # termo do modulo dele e compara com este numero: subir um teto la sem
+    # olhar para ca fica vermelho. E onde a conta INTEIRA esta escrita -- cada
+    # modulo so conhece a propria parcela, e foi somar uma parcela achando que
+    # era o todo que produziu o 360s desta versao anterior.
+    #
+    # Continua valendo o que a "Lacunas conhecidas" do spec do TEC-135 diz:
+    # subir `job_timeout` exige medir a taxa real de retentativa antes. So que
+    # agora nao ha por que subir.
     #
     # Estourar aqui nao e so custo: o ARQ cancela a corrotina, e
     # `asyncio.CancelledError` e BaseException -- nenhum `except Exception` a
@@ -240,9 +259,9 @@ class WorkerSettings:
     # modelo inclusas, e pode duplicar a entrega se o cancelamento cair depois
     # de o POST ter chegado a Meta. So deixou de ser invisivel.
     #
-    # Ver tambem o `timeout` explicito do cliente em `infra/anthropic.py`: ele
-    # existe para que uma chamada lenta vire erro tipado (recuperavel) antes
-    # de virar cancelamento.
+    # Ver tambem os tetos explicitos em `infra/anthropic.py`: eles existem
+    # para que uma chamada lenta vire erro tipado (recuperavel) antes de virar
+    # cancelamento.
     job_timeout = 240
 
     # SIGTERM: espera os jobs em voo terminarem em vez de cancela-los na hora.

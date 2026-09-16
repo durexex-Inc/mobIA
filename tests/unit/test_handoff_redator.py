@@ -110,3 +110,24 @@ async def test_log_carrega_metrica_e_nunca_conteudo(
     assert "resumo_handoff.gerado" in caplog.text
     assert SENTINELA_DOSSIE not in caplog.text
     assert SENTINELA_SAIDA not in caplog.text
+
+
+async def test_o_resumo_de_handoff_nao_manda_teto_proprio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fica no piso de construcao do cliente, e isso e deliberado (TEC-228).
+
+    A TEC-228 deu teto proprio as cinco fatias do TURNO porque elas dividem um
+    `job_timeout` de 240s. Esta nao e uma delas: roda no job `gerar_resumo`,
+    sozinha, e ninguem mediu quanto ela leva -- o dossie e entrada bem maior
+    que a de `context/resumo.py`. Inventar um numero de aparencia medida para
+    ela seria o palpite que aquela card existe para acabar.
+
+    O teste afirma a AUSENCIA porque a ausencia e a decisao. Um `timeout=` que
+    aparecesse aqui sem medicao passaria despercebido em revisao.
+    """
+    cliente = _instalar(monkeypatch, _resposta(_resumo()))
+
+    await RedatorAnthropic().redigir("ORIGEM\ncanal: whatsapp")
+
+    assert "timeout" not in cliente.messages.create.call_args.kwargs

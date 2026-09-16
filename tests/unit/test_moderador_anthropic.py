@@ -128,11 +128,23 @@ async def test_a_direcao_escolhe_o_system_prompt(monkeypatch: pytest.MonkeyPatch
 
 
 def test_o_cliente_da_moderacao_tem_teto_proprio_e_nao_retenta() -> None:
-    """O cliente do turno tem pior caso de 120s por chamada (60s x 2 tentativas)
-    contra um `job_timeout` de 240 que o turno ja estoura. Moderar com o mesmo
-    cliente somaria 240s; com teto de 5s e sem retentativa, soma 10s.
+    """Moderar as duas pontas nao pode custar uma fracao sensivel do turno.
+
+    **A comparacao de retentativas saiu daqui na TEC-228, e a razao e boa
+    noticia.** Este teste afirmava `MAX_TENTATIVAS_DA_MODERACAO < MAX_TENTATIVAS`
+    quando o cliente do turno ainda retentava; hoje os dois sao 0, porque o
+    argumento escrito no comentario deste modulo -- "uma segunda tentativa
+    dobraria o teto para ganhar pouco" -- acabou valendo para o turno tambem.
+    Manter a desigualdade estrita obrigaria o turno a retentar para este teste
+    passar, que e o oposto do que ele quer.
+
+    O que resta e o que sempre importou: o teto daqui e menor que o piso de
+    construcao do cliente, e as duas pontas juntas cabem em 15s. Quem quiser
+    ver a conta inteira do turno, ela esta em
+    `tests/unit/test_orcamento_do_turno.py`, onde esta moderacao entra como um
+    dos quatro termos.
     """
-    from mobia.infra.anthropic import MAX_TENTATIVAS, TIMEOUT_SEGUNDOS
+    from mobia.infra.anthropic import TIMEOUT_SEGUNDOS
     from mobia.infra.moderacao import (
         MAX_TENTATIVAS_DA_MODERACAO,
         TIMEOUT_DA_MODERACAO_SEGUNDOS,
@@ -140,7 +152,6 @@ def test_o_cliente_da_moderacao_tem_teto_proprio_e_nao_retenta() -> None:
 
     assert TIMEOUT_DA_MODERACAO_SEGUNDOS < TIMEOUT_SEGUNDOS
     assert MAX_TENTATIVAS_DA_MODERACAO == 0
-    assert MAX_TENTATIVAS_DA_MODERACAO < MAX_TENTATIVAS
     pior_caso = TIMEOUT_DA_MODERACAO_SEGUNDOS * (1 + MAX_TENTATIVAS_DA_MODERACAO)
     assert pior_caso * 2 <= 15
 

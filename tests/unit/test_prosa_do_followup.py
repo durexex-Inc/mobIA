@@ -308,3 +308,23 @@ async def test_o_log_carrega_metrica_e_nunca_conteudo(
     assert "followup.abertura_redigida" in caplog.text
     assert SENTINELA_RESUMO not in caplog.text
     assert SENTINELA_PROSA not in caplog.text
+
+
+async def test_a_abertura_do_followup_nao_manda_teto_proprio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fica no piso de construcao do cliente, e isso e deliberado (TEC-228).
+
+    Mesma razao de `handoff/resumo.py`: esta chamada nao disputa o
+    `job_timeout` do turno, e ninguem a mediu. O que a governa e outro teto --
+    o `TETO_DE_TEMPO_POR_EXECUCAO_SEGUNDOS` da varredura, cuja conta cita o
+    `TIMEOUT_SEGUNDOS`/`MAX_TENTATIVAS` deste cliente pelo nome.
+
+    Por isso a ausencia e testada: um `timeout=` aqui mudaria uma conta que
+    mora noutro arquivo, e o comentario de la avisa exatamente disso.
+    """
+    cliente = _instalar(monkeypatch, _resposta("Vi que voce procurava 3 quartos."))
+
+    await _redigir(_SessaoSemResumo())
+
+    assert "timeout" not in cliente.messages.create.call_args.kwargs

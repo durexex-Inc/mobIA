@@ -22,6 +22,30 @@ from mobia.app.config import ConfiguracaoInsegura, get_settings
 TIMEOUT_SEGUNDOS = 50.0
 MAX_TENTATIVAS = 1
 
+# O embed da busca DO TURNO tem teto proprio, e a razao e a mesma da TEC-228 no
+# cliente da Anthropic: os 50s acima com uma retentativa dao 100s por busca, e
+# um turno pode buscar duas vezes (uma em cada chamada paga de `turno.py`) --
+# 200s sozinhos contra um `job_timeout` de 240s. Era o MAIOR termo do orcamento
+# do turno, e nao era da Anthropic.
+#
+# Os 50s nao mudam para quem indexa: la o lote e grande, a varredura tem o
+# tempo dela e a retentativa vale o que custa. O que muda e so a consulta do
+# turno, que manda UMA frase curta (ver `busca.py:374`).
+#
+# **ESTE NUMERO NAO FOI MEDIDO, e isso e dito aqui em vez de escondido.** A
+# TEC-228 mediu a Anthropic contra a API de verdade; para o OpenAI nao ha chave
+# nesta maquina, entao a sonda nao rodou. Os 10s sao o dobro do teto que a
+# medicao deu para `count_tokens` -- a chamada de forma mais parecida que
+# existe medida no projeto: ida-e-volta de rede com payload minusculo e sem
+# geracao, 0,28s de pior caso. O dobro porque e outro provedor e nenhuma
+# amostra o cobre. Quem conseguir a chave mede e corrige.
+TETO_DA_CONSULTA_DO_TURNO = 10.0
+
+# Zero pelo mesmo argumento que zerou o da Anthropic: a retentativa dobra o
+# termo mais caro do orcamento, e a busca ja tem desfecho definido para
+# "nao deu" -- `busca.py` cai no filtro sem vetor e o turno segue.
+MAX_TENTATIVAS_DA_CONSULTA_DO_TURNO = 0
+
 MAX_CARACTERES_DO_MOTIVO = 300
 
 
@@ -56,11 +80,32 @@ async def embedar(textos: list[str]) -> list[list[float]]:
     if not textos:
         return []
 
+    return await _embedar(textos, get_client(), TIMEOUT_SEGUNDOS)
+
+
+async def embedar_do_turno(textos: list[str]) -> list[list[float]]:
+    """O mesmo embed, com o teto e as tentativas do TURNO.
+
+    Existe porque `embedar` e usado por dois donos com orcamentos opostos: a
+    indexacao, que tem a varredura inteira e lotes grandes, e a busca do turno,
+    que divide 240s com cinco chamadas pagas ao modelo (TEC-228). Um parametro
+    opcional em `embedar` deixaria o default sendo o caro -- e quem esquecesse
+    de passa-lo no turno voltaria a gastar 100s numa consulta de uma frase.
+    """
+    return await _embedar(
+        textos,
+        get_client().with_options(max_retries=MAX_TENTATIVAS_DA_CONSULTA_DO_TURNO),
+        TETO_DA_CONSULTA_DO_TURNO,
+    )
+
+
+async def _embedar(textos: list[str], cliente: AsyncOpenAI, teto: float) -> list[list[float]]:
     settings = get_settings()
-    resposta = await get_client().embeddings.create(
+    resposta = await cliente.embeddings.create(
         model=settings.embedding_modelo,
         input=textos,
         dimensions=settings.embedding_dimensoes,
+        timeout=teto,
     )
     # A API nao garante a ordem de `data`; `index` e o que amarra cada vetor
     # ao texto que o gerou.

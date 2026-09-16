@@ -20,16 +20,19 @@ from mobia.infra.anthropic import motivo_do_provedor
 
 log = structlog.get_logger(__name__)
 
-# Teto proprio, e nao o do cliente do turno. Aquele tem 60s com uma
-# retentativa, ou 120s de pior caso por chamada, contra um `job_timeout` de
-# 240s que o turno ja estoura (`resumir` + `classificar` + `desambiguar` dao
-# 360s -- ver o comentario de `job_timeout` em `workers/main.py`). Moderar as
-# duas pontas com aquele cliente somaria 240s a um orcamento ja estourado; com
-# 5s e sem retentativa soma 10s, que e ruido contra a folga que ja nao existe.
+# Teto proprio, e nao o piso do cliente do turno (60s). Moderar as duas pontas
+# com aquele piso somaria 120s a um orcamento de 240s que o turno ja consome
+# quase inteiro; com 5s soma 10s, que e ruido contra a folga.
+#
+# **Este comentario era o precedente da TEC-228, e agora ele tem companhia.**
+# Ate ela, o cliente do turno tinha 60s para todas as chamadas e uma
+# retentativa -- e a conta que este bloco citava (360s) subcontava o buraco,
+# que era de 840s. Hoje cada fatia do turno tem o seu teto e `MAX_TENTATIVAS`
+# la tambem e 0, pelo argumento que estava escrito aqui primeiro.
 #
 # Sem retentativa de proposito: uma segunda tentativa dobraria o teto para
 # ganhar pouco, e "nao deu para moderar" ja tem tratamento definido nas duas
-# pontas. Reduzir a chance de o turno estourar e a TEC-228.
+# pontas.
 TIMEOUT_DA_MODERACAO_SEGUNDOS = 5.0
 MAX_TENTATIVAS_DA_MODERACAO = 0
 

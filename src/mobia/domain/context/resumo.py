@@ -6,7 +6,7 @@ import structlog
 
 from mobia.app.config import get_settings
 from mobia.domain.messages.recorder import custo_em_dolar
-from mobia.infra.anthropic import get_client
+from mobia.infra.anthropic import TETO_DO_COUNT_TOKENS, TETO_DO_RESUMO, get_client
 
 log = structlog.get_logger(__name__)
 
@@ -73,6 +73,9 @@ class ResumidorAnthropic:
             max_tokens=MAX_TOKENS_DO_RESUMO,
             system=instrucao,
             messages=[{"role": "user", "content": conteudo}],
+            # Teto proprio, e nao o piso do cliente: esta e uma das cinco
+            # fatias que disputam o `job_timeout`. TEC-228.
+            timeout=TETO_DO_RESUMO,
         )
         latency_ms = int((time.monotonic() - comeco) * 1000)
 
@@ -130,5 +133,8 @@ class ContadorAnthropic:
         resposta = await get_client().messages.count_tokens(
             model=get_settings().modelo_resumo,
             messages=[{"role": "user", "content": texto}],
+            # O menor teto do turno, por ser a unica fatia que nao gera texto:
+            # ida-e-volta de rede, medida em 0,28s no pior caso. TEC-228.
+            timeout=TETO_DO_COUNT_TOKENS,
         )
         return int(resposta.input_tokens)

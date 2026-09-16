@@ -128,11 +128,18 @@ async def test_a_porta_do_turno_carrega_o_embedador_de_verdade(
     `porta_de_busca(session_factory)` sem `embedador=` faz `vetor_da_consulta`
     (busca.py) devolver None sempre -- `consulta_texto` do tool call vira
     campo inerte em producao, e a busca ordena so por aderencia de preco. O
-    turno tem de passar o mesmo `embedar` que `indexar_catalogo` usa para o
-    catalogo -- ver o comentario em `turno.py` no ponto que monta a porta.
+    turno tem de passar um embedador de verdade -- ver o comentario em
+    `turno.py` no ponto que monta a porta.
+
+    **E `embedar_do_turno`, nao `embedar` (TEC-228).** Os dois falam com o
+    mesmo provedor, no mesmo modelo e nas mesmas dimensoes -- e por isso o
+    vetor da consulta continua vivendo no espaco dos vetores indexados. O que
+    muda e teto e retentativa: 10s sem retentar aqui, contra os 50s com
+    retentativa que a indexacao usa. Com `embedar`, uma busca podia custar 100s
+    de um `job_timeout` de 240.
     """
     from mobia.domain.agente import turno as turno_mod
-    from mobia.infra.embeddings import embedar
+    from mobia.infra.embeddings import embedar, embedar_do_turno
 
     chamadas: list[dict[str, object]] = []
     porta_de_busca_original = turno_mod.porta_de_busca
@@ -149,7 +156,10 @@ async def test_a_porta_do_turno_carrega_o_embedador_de_verdade(
 
     assert resultado == "respondido"
     assert len(chamadas) == 1
-    assert chamadas[0].get("embedador") is embedar
+    assert chamadas[0].get("embedador") is embedar_do_turno
+    # E nao o da indexacao: se os dois colapsarem num so, e aqui que
+    # aparece, antes de a busca do turno voltar a valer 100s.
+    assert chamadas[0].get("embedador") is not embedar
 
 
 async def test_laco_de_busca_excedido_entrega_texto_conservador(
