@@ -180,6 +180,10 @@ TABELAS = (
     # TEC-136. Append-only como `lead_score_audit` e `followups`: sem o
     # truncate, as trocas de intencao de um teste virariam trilha do proximo.
     "conversation_intent_audit",
+    # TEC-138. Mutavel: sem o truncate, uma conversa encerrada por um teste
+    # chega encerrada no proximo, e a guarda do topo de turno (Task 4) cala o
+    # turno antes de qualquer asserta.
+    "conversas",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto

@@ -34,7 +34,13 @@ class Message(Base):
 
     # Id externo do lead, invariante a direcao: e por ele que a conversa e
     # agrupada, porque sender e recipient se invertem entre entrada e saida.
-    # `conversations` de verdade e TEC-129/TEC-130.
+    #
+    # A TEC-138 criou `Conversa` (`domain/conversa/models.py`), mas com o MESMO
+    # par como chave -- ela guarda SE a conversa esta encerrada, nao onde uma
+    # sessao termina e a proxima comeca. As duas cards que ainda faltam sao
+    # concerns diferentes: a TEC-130 encerra por inatividade (e estende aquela
+    # entidade, ver a Emenda E-02 da RN-02.3) e a TEC-129 e o historico
+    # multicanal, que e quem daria a esta coluna um id proprio de conversa.
     conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     direction: Mapped[str] = mapped_column(String(8), nullable=False)

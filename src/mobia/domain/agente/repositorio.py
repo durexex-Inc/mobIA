@@ -63,11 +63,28 @@ async def gravar_intencao(
     intencao: Intencao,
     confianca: Decimal,
     modelo: str,
-) -> None:
+    fora_de_escopo_efetivo: bool,
+) -> int:
     """Upsert. **Nao commita** -- o chamador e dono da transacao.
 
     Mesma fronteira que `gravar_resumo` da TEC-127 passou a respeitar depois de
     uma review: quem abre a sessao e quem a finaliza.
+
+    Devolve `fora_de_escopo_seguidas` **pos-incremento** (RN-03.5, TEC-138) --
+    o valor que este proprio statement acabou de gravar, via `RETURNING`, para
+    quem chama nao precisar de uma segunda consulta so para reler a linha que
+    aqui foi escrita.
+
+    **`fora_de_escopo_efetivo` e argumento e nao e derivado de `intencao` aqui
+    dentro, de proposito** (fix da revisao final, Important 3). As duas coisas
+    que esta funcao escreve sobre a intencao querem valores DIFERENTES: a
+    coluna `intencao` guarda o palpite CRU, sem edicao, porque e dele que a
+    TEC-210 precisa para calibrar `LIMIAR_DE_DESAMBIGUACAO`; o contador quer a
+    intencao EFETIVA, porque abaixo do limiar o palpite e "operacionalmente
+    `INDEFINIDA`" (ver `intencao_efetiva`) e nao sustenta decisao nenhuma --
+    muito menos 30 dias de silencio. Quem chama computa a efetiva por
+    `intencao_efetiva` e passa o booleano; esta funcao nao reimplementa o
+    limiar para os dois usos divergirem em silencio depois.
     """
     valores = {
         "channel": channel,
@@ -79,6 +96,13 @@ async def gravar_intencao(
         # uma conversa tem de poder perguntar.
         "desambiguado_em": None,
         "updated_at": datetime.now(UTC),
+        # RN-03.5, TEC-138. O INSERT puro precisa contar tambem, e nao so o
+        # `set_` do ON CONFLICT: a primeira mensagem de uma conversa nova passa
+        # por AQUI, e sem isto ficaria com o `server_default` de 0 -- que foi
+        # exatamente o bug que a TEC-138 mediu antes de escrever esta linha.
+        #
+        # A linha nasce, entao o valor e 1 ou 0, sem `+1` sobre nada.
+        "fora_de_escopo_seguidas": 1 if fora_de_escopo_efetivo else 0,
     }
     statement = pg_insert(ConversationIntent).values(valores)
 
@@ -93,11 +117,71 @@ async def gravar_intencao(
     # Abaixo do limiar o marcador **nao** entra no set_: a ambiguidade e a
     # mesma, e a pergunta dela ja foi gasta.
 
-    await session.execute(
+    # RN-03.5, TEC-138. Sobe quando a intencao EFETIVA deste turno e
+    # FORA_DE_ESCOPO e ZERA em qualquer outra -- o "voltar ao assunto zera o
+    # contador" da card e este `else`.
+    #
+    # **A regra nao esta mais duplicada** (fix da revisao final, Important 3).
+    # Ate aqui ela vivia duas vezes -- um literal Python no INSERT e um `CASE`
+    # SQL sobre `excluded.intencao` neste `set_` --, e os dois comentarios
+    # avisavam que tinham de mudar juntos. O `CASE` existia so porque a regra
+    # estava escrita contra uma COLUNA; escrita contra o booleano que o
+    # chamador passa, ela e conhecida em Python antes de o statement ser
+    # montado, e os dois lados apenas a consultam.
+    #
+    # **A aritmetica continua no SQL**, que e o que importava do `CASE`, pela
+    # razao que `contar_perguntas` e a uniao de `perguntados_sem_resposta` ja
+    # registram: ler o valor, somar em Python e gravar abre a janela em que
+    # dois turnos concorrentes da mesma conversa leem o mesmo numero e o mais
+    # lento sobrescreve o mais rapido. `ConversationIntent.fora_de_escopo_seguidas
+    # + 1` e uma expressao SQL, nao uma soma de Python.
+    atualizacoes["fora_de_escopo_seguidas"] = (
+        ConversationIntent.fora_de_escopo_seguidas + 1 if fora_de_escopo_efetivo else 0
+    )
+
+    resultado = await session.execute(
         statement.on_conflict_do_update(
             index_elements=["channel", "conversation_key"],
             set_=atualizacoes,
+        ).returning(ConversationIntent.fora_de_escopo_seguidas)
+    )
+    return resultado.scalar_one()
+
+
+async def zerar_fora_de_escopo(
+    session: AsyncSession, *, channel: str, conversation_key: str
+) -> None:
+    """Zera `fora_de_escopo_seguidas`. **Nao commita** -- o chamador e o dono.
+
+    RN-03.5, TEC-138. Existe para o ENCERRAMENTO: o turno que encerra tem de
+    deixar o contador em zero, ou o lead que volta depois dos 30 dias iria de
+    3 para 4 e seria encerrado na primeira mensagem, sem as tres tentativas
+    que a regra lhe da. O comentario da coluna em `models.py` e a docstring de
+    `reabrir_conversa` (`domain/conversa/repositorio.py`) dependem disto --
+    aquela diz que a reabertura nao mexe no contador porque "ele ja esta em
+    zero desde o encerramento", e e esta funcao que torna a frase verdadeira.
+
+    **Roda na mesma transacao que `encerrar_conversa`, e nao na que subiu o
+    contador.** O unico chamador e o bloco POS-ENTREGA de `executar_turno`,
+    que so encerra depois de alguma resposta nossa ter chegado INTEIRA ao lead
+    -- a despedida no caminho normal, o texto neutro da moderacao quando ela
+    barra a saida. O comentario de la explica por que a ordem inversa
+    reintroduzia o defeito da entrega retentavel, e por que a saida bloqueada
+    deixou de adiar o encerramento. O que tem de ser indivisivel e o par encerramento+zero: uma
+    conversa encerrada com contador cheio e o estado que quebraria a docstring
+    acima.
+
+    `UPDATE` e nao upsert: `gravar_intencao` ja gravou a linha antes, no mesmo
+    turno. Sem linha o statement e no-op, e esta certo -- nao havia contagem
+    para zerar.
+    """
+    await session.execute(
+        update(ConversationIntent)
+        .where(
+            ConversationIntent.channel == channel,
+            ConversationIntent.conversation_key == conversation_key,
         )
+        .values(fora_de_escopo_seguidas=0)
     )
 
 

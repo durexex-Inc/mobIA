@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -58,6 +59,37 @@ class ConversationIntent(Base):
     # Timestamp e nao booleano porque ocupa o mesmo espaco e responde "quando"
     # numa investigacao, igual ao `updated_at` logo abaixo.
     desambiguado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Quantas mensagens FORA_DE_ESCOPO seguidas. RN-03.5, TEC-138.
+    #
+    # Mora aqui, e nao em `lead_qualification`, por um motivo mecanico: aquela
+    # tabela NAO ganha linha em turno fora de escopo -- `campos_a_gravar`
+    # devolve {} e `gravar_estado` retorna cedo com "Deliberadamente NAO cria
+    # linha" --, entao um lead cujo historico inteiro e fora de escopo nunca
+    # teria onde ser contado. Esta tabela e a unica escrita em TODO turno.
+    #
+    # Sobe ou zera em `gravar_intencao`, que o escreve em dois ramos do mesmo
+    # statement: o INSERT (a linha nasce, e a primeira mensagem de uma conversa
+    # nova precisa nascer em 1 quando ela mesma e FORA_DE_ESCOPO) e o `set_` do
+    # ON CONFLICT DO UPDATE (turnos seguintes da mesma conversa). Nao e so o
+    # segundo: a primeira mensagem de uma conversa nunca passa por um CONFLICT,
+    # e um contador que so soubesse dele gravaria 0 nela -- exatamente o bug
+    # que a TEC-138 mediu. **A REGRA de quando somar vive uma vez so**, no
+    # argumento `fora_de_escopo_efetivo` que o chamador calcula; os dois ramos
+    # so a consultam.
+    #
+    # **Conta a intencao EFETIVA, nao o palpite cru da coluna ao lado.** Uma
+    # classificacao FORA_DE_ESCOPO abaixo de `LIMIAR_DE_DESAMBIGUACAO` deixa
+    # `intencao` gravada como FORA_DE_ESCOPO e ZERA este contador -- as duas
+    # colunas divergem de proposito, e a docstring de `gravar_intencao` diz por
+    # que.
+    #
+    # **O encerramento zera este contador.** Sem isso o lead que volta depois
+    # dos 30 dias iria de 3 para 4 e seria encerrado na primeira mensagem, sem
+    # as tres tentativas que a regra lhe da.
+    fora_de_escopo_seguidas: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="0"
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -67,11 +99,12 @@ class Recomendacao(Base):
     """Um imovel apresentado a um lead, e o que ele fez com isso. RN-10.3.
 
     **Chaveada pelo par `(channel, conversation_key)`, e nao por `conversa_id`.**
-    O SRS especifica uma FK para `Conversa`, e `Conversa` nao e entidade neste
-    sistema e nunca foi: `conversation_summaries`, `lead_qualification` e
-    `conversation_intent` usam todas o par. Seguir o SRS aqui introduziria um
-    SEGUNDO jeito de identificar conversa, que e pior que a divergencia. Ver a
-    D2 e a emenda E-01 da RN-10.3.
+    O SRS especifica uma FK para `Conversa`. A entidade existe desde a
+    TEC-138 (`domain/conversa/models.py`), mas so para o ciclo de vida da
+    conversa -- `conversation_summaries`, `lead_qualification` e
+    `conversation_intent` (e esta tabela) continuam todas usando o par.
+    Seguir o SRS aqui introduziria um SEGUNDO jeito de identificar conversa,
+    que e pior que a divergencia. Ver a D2 e a emenda E-01 da RN-10.3.
 
     **O `UNIQUE` e o cenario 4 do Gherkin.** "Os ja apresentados nao sao
     repetidos" vira garantia de schema em vez de disciplina de consulta: o

@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from sqlalchemy import text as sql
 
+from mobia.domain.agente.desambiguacao import intencao_efetiva
 from mobia.domain.agente.repositorio import gravar_intencao, ler_intencao, marcar_desambiguacao
 from mobia.domain.agente.schemas import Intencao
 
@@ -9,16 +10,27 @@ CANAL = "whatsapp"
 CONVERSA = "5511911112222"
 
 
-async def gravar(session, intencao: Intencao, confianca: str) -> None:
-    await gravar_intencao(
+async def gravar(session, intencao: Intencao, confianca: str) -> int:
+    """Chama o repositorio como `executar_turno` chama.
+
+    `fora_de_escopo_efetivo` sai de `intencao_efetiva` aqui pelo mesmo motivo
+    que sai la: o turno e o unico chamador, e um helper que passasse o booleano
+    a mao testaria uma combinacao (intencao, confianca, contador) que a
+    producao nunca produz.
+    """
+    fora_de_escopo_seguidas = await gravar_intencao(
         session,
         channel=CANAL,
         conversation_key=CONVERSA,
         intencao=intencao,
         confianca=Decimal(confianca),
         modelo="claude-opus-5",
+        fora_de_escopo_efetivo=(
+            intencao_efetiva(intencao, Decimal(confianca)) is Intencao.FORA_DE_ESCOPO
+        ),
     )
     await session.commit()
+    return fora_de_escopo_seguidas
 
 
 async def test_intencao_faz_roundtrip(session) -> None:
@@ -135,3 +147,73 @@ async def test_efetiva_devolve_a_intencao_quando_ha_confianca(session) -> None:
     lida = await ler_intencao(session, CANAL, CONVERSA)
     assert lida is not None
     assert lida.efetiva is Intencao.ALUGUEL
+
+
+async def test_fora_de_escopo_seguidas_sobe_a_cada_chamada(session) -> None:
+    """RN-03.5, TEC-138. Duas mensagens fora de escopo seguidas contam 1 e 2."""
+    primeira = await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+    segunda = await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+
+    assert primeira == 1
+    assert segunda == 2
+
+
+async def test_voltar_ao_assunto_zera_o_contador(session) -> None:
+    """O `else 0` de `gravar_intencao`: qualquer intencao que nao seja
+    FORA_DE_ESCOPO zera, sem excecao -- e por isso o teste usa COMPRA, e nao
+    precisa repetir para as outras seis.
+    """
+    await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+
+    zerado = await gravar(session, Intencao.COMPRA, "0.91")
+
+    assert zerado == 0
+
+
+async def test_primeira_mensagem_fora_de_escopo_ja_conta_um(session) -> None:
+    """O INSERT tambem tem de contar, e nao so o ON CONFLICT.
+
+    Medido: sem `fora_de_escopo_seguidas` em `valores`, o INSERT gravava 0 na
+    primeira mensagem de uma conversa nova, porque a soma so vive no `set_` do
+    ON CONFLICT -- que nao roda quando a linha nasce agora.
+    """
+    primeira = await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+
+    assert primeira == 1
+
+
+async def test_fora_de_escopo_depois_de_intencao_no_assunto_sobe_de_zero(session) -> None:
+    """O lead fala de apartamento, depois sai do assunto: 0 -> 1.
+
+    A quarta situacao (o contador ja existe em zero, numa linha que uma
+    intencao no assunto criou, e o turno seguinte e FORA_DE_ESCOPO) e o
+    caminho real de um lead -- as tres outras cobrem seguidas, reset e a
+    linha nascendo direto em FORA_DE_ESCOPO, mas nenhuma cobre esta.
+    """
+    zero = await gravar(session, Intencao.COMPRA, "0.91")
+    um = await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+
+    assert zero == 0
+    assert um == 1
+
+
+async def test_fora_de_escopo_de_baixa_confianca_nao_conta_e_ainda_grava_o_palpite(
+    session,
+) -> None:
+    """As duas colunas divergem, e essa divergencia e o fix (revisao final,
+    Important 3).
+
+    `intencao` guarda FORA_DE_ESCOPO cru, porque e do par (palpite, confianca)
+    que a TEC-210 precisa para calibrar o limiar. O contador ZERA, porque
+    abaixo de `LIMIAR_DE_DESAMBIGUACAO` o palpite e operacionalmente
+    INDEFINIDA -- e o que ele decide sao 30 dias de silencio.
+    """
+    await gravar(session, Intencao.FORA_DE_ESCOPO, "0.91")
+
+    seguidas = await gravar(session, Intencao.FORA_DE_ESCOPO, "0.45")
+
+    assert seguidas == 0, "o contador conta a intencao efetiva"
+    lida = await ler_intencao(session, CANAL, CONVERSA)
+    assert lida is not None
+    assert lida.intencao is Intencao.FORA_DE_ESCOPO, "a coluna segue crua, sem edicao"
+    assert lida.efetiva is Intencao.INDEFINIDA

@@ -11,7 +11,7 @@ from mobia.app.config import MODELO_SEM_CHAMADA, get_settings
 from mobia.domain.agente.apresentacao import Ficha, legenda_de
 from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
-from mobia.domain.agente.desambiguacao import deve_desambiguar
+from mobia.domain.agente.desambiguacao import deve_desambiguar, intencao_efetiva
 from mobia.domain.agente.ferramenta_de_busca import (
     _PortaComScore,
     fichas_do_catalogo,
@@ -19,6 +19,7 @@ from mobia.domain.agente.ferramenta_de_busca import (
 )
 from mobia.domain.agente.formato import quebrar_em_mensagens
 from mobia.domain.agente.identificacao import (
+    DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA,
     SEPARADOR_DA_IDENTIFICACAO,
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
@@ -38,6 +39,7 @@ from mobia.domain.agente.repositorio import (
     ler_intencao,
     ler_pendentes,
     marcar_desambiguacao,
+    zerar_fora_de_escopo,
 )
 from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.atendimento.repositorio import esta_silenciada
@@ -58,6 +60,13 @@ from mobia.domain.context.repositorio import (
 )
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
+from mobia.domain.conversa.regras import deve_encerrar
+from mobia.domain.conversa.repositorio import (
+    encerrar_conversa,
+    reabrir_conversa,
+    situacao_da_conversa,
+)
+from mobia.domain.conversa.vocabulario import MotivoDoEncerramento
 from mobia.domain.handoff.agendador import AgendadorDeResumoPort
 from mobia.domain.handoff.repositorio import (
     HandoffRegistrado,
@@ -152,8 +161,9 @@ TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
 # seguinte passaria do teto -- o caso comum, e nao a regra sem excecao: a
 # substituicao so acontece com `not desambiguando` e `not saida_bloqueada`,
 # e o encaminhamento por intencao da TEC-137,
-# `TEXTO_DA_BUSCA_INCONCLUSIVA` e `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` ainda
-# podem sobrescrever `texto` depois. Ver o `if teto_da_entrega and not
+# `TEXTO_DA_BUSCA_INCONCLUSIVA`, `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` e a
+# despedida do encerramento da TEC-138 ainda podem sobrescrever `texto`
+# depois. Ver o `if teto_da_entrega and not
 # desambiguando and not saida_bloqueada:` mais abaixo, onde as duas guardas
 # e a ordem de precedencia estao escritas por extenso. (`teto_da_entrega`, e
 # nao `teto_do_handoff`: desde a TEC-153 sao dois -- um decide o handoff a partir
@@ -236,6 +246,48 @@ _TEXTO_DO_ENCAMINHAMENTO = {
     Intencao.VENDER_IMOVEL: TEXTO_DO_ENCAMINHAMENTO_DE_VENDA,
     Intencao.SUPORTE_CONTRATO: TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE,
 }
+
+# RN-03.5 (TEC-138). Substitui a prosa do modelo na TERCEIRA mensagem fora de
+# escopo seguida, e e a ultima coisa que o lead ouve antes dos 30 dias de
+# silencio da D1 -- **exceto quando a moderacao de saida barra o turno**, caso
+# em que quem sai e `TEXTO_NEUTRO_DE_SAIDA` e a conversa fecha atras dele
+# assim mesmo (fix da revisao final, Important 2; ver as duas guardas la
+# embaixo).
+#
+# **Nao promete que alguem foi avisado**, pela razao que o comentario de
+# TEXTO_DO_LIMITE_DE_PERGUNTAS acima ja registra e que `notificacao/envio.py`
+# proibe nominalmente. Aqui a razao e ainda mais direta que nas outras
+# trilhas -- nesta nao ha corretor nenhum: a conversa nao vai para fila, ela
+# para.
+#
+# **Diz que a porta continua aberta E diz QUANDO, e o "quando" nao e enfeite**
+# (ruling R8 da revisao). A primeira versao deste texto terminava em "é só me
+# chamar de novo", que se le como AGORA -- e a guarda do topo cala tambem a
+# mensagem dentro do escopo, entao o lead que aceitasse o convite no dia
+# seguinte nao receberia nada. Era prosa de produto prometendo o que o sistema
+# nao faz, a mesma medida que a TEC-137 aplicou ao sufixo de fora do horario.
+# A redacao de hoje adia o convite para depois da janela, que e quando ele
+# passa a ser verdade.
+#
+# O numero sai de `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA` e nao de um literal,
+# pelo mesmo motivo que `SUFIXO_FORA_DA_JANELA` formata as horas a partir de
+# `Settings`: o texto tem de continuar verdadeiro se alguem mexer na janela, e
+# um "30" escrito a mao aqui viraria mentira em silencio. A MESMA constante
+# que `situacao_da_conversa` usa para medir a janela -- nao ha como as duas
+# divergirem.
+#
+# Continua **sem prometer que alguem foi avisado** e sem mencionar corretor:
+# nesta trilha nao ha fila nem pessoa alguma para procurar o lead, e "volto a
+# responder" fala do agente, que e quem de fato volta.
+#
+# Sem kind proprio, como TEXTO_DO_LIMITE_DE_PERGUNTAS: e substituicao em
+# lugar, nao mensagem adicional, entao nao ha segunda mensagem com que colidir
+# na UNIQUE (message_id, kind).
+TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO = (
+    "Acho que não vou conseguir ajudar com isso — aqui eu falo de imóveis. "
+    f"Vou parar por aqui: volto a responder daqui a {DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA} dias, "
+    "e aí é só me chamar se precisar procurar, alugar ou anunciar um imóvel."
+)
 
 # RN-09.3 / CA-09.3, e a regra "avisado ... e EM QUE" da card. TEC-160, D11.
 #
@@ -418,6 +470,20 @@ ResultadoDoTurno = Literal[
     # com donos diferentes -- mesmo criterio que o comentario acima aplica aos
     # tres do opt-out.
     "pedido_de_humano",
+    # A TEC-138 (RN-03.5) acrescentou este: o turno que nao fez nada porque a
+    # conversa esta ENCERRADA por escopo e a janela de 30 dias ainda corre.
+    #
+    # Nao reuse "silenciado" nem "atendimento_humano", pelo mesmo criterio que
+    # os comentarios acima aplicam entre si: aquele ja significa opt-out e este
+    # significa que um corretor assumiu. Somar o terceiro aos dois tornaria
+    # impossivel saber, no log, se o agente calou por pedido do lead, por
+    # decisao de uma pessoa ou por politica automatica de escopo -- tres
+    # historias com donos diferentes, e so a ultima e nossa para revisar.
+    #
+    # E nao ha valor irmao de "bloqueado_por_..." aqui: esta politica nao tem
+    # guarda na porta de saida. O encerramento e a substituicao acontecem no
+    # MESMO turno, entao nao existe a corrida que os outros dois nomeiam.
+    "fora_de_escopo",
 ]
 
 
@@ -909,6 +975,115 @@ async def executar_turno(
                     message_id=str(message.id),
                 )
                 return "atendimento_humano"
+
+    # A guarda do encerramento por escopo (TEC-138, RN-03.5). A conversa
+    # encerrada POR FORA DE ESCOPO cala o agente enquanto a janela de 30 dias
+    # corre.
+    #
+    # **"Por fora de escopo" e a metade que o motivo carrega, e ela nao e
+    # detalhe** (fix da revisao final, Important 1). Quem decide e
+    # `situacao.silencia_o_agente`, que exige
+    # `MotivoDoEncerramento.FORA_DE_ESCOPO` -- e nao `dentro_da_janela`
+    # sozinho, que so fala do tempo. Calar 30 dias e politica DESTA regra, nao
+    # propriedade do `status`: a Emenda E-02 da RN-02.3 que esta card escreveu
+    # manda a TEC-130 acrescentar `INATIVIDADE` ao vocabulario e o escritor que
+    # fecha por inatividade, e uma guarda cega ao motivo faria disso 30 dias de
+    # silencio em toda conversa inativa -- o oposto do reengajamento que a
+    # RN-02.3 existe para ter. A razao por extenso esta na docstring de
+    # `silencia_o_agente` (`domain/conversa/repositorio.py`).
+    #
+    # **Perde para as duas guardas de cima, e a ordem e a razao.** Opt-out e
+    # direito do lead (LGPD); silencio de atendimento humano e decisao de uma
+    # PESSOA sobre esta conversa. As duas vencem politica automatica nossa, e
+    # inverter nao seria so trocar um rotulo no log: um lead que digitasse
+    # "parar" numa conversa encerrada sairia por aqui sem o opt-out
+    # registrado, que e o mesmo defeito de LGPD que o comentario da guarda
+    # acima ja descreve para o caso dela. Dai o `if not pedido_de_optout:`,
+    # identico ao das duas.
+    #
+    # **Ganha de tudo o que vem abaixo pelo motivo oposto**: daqui para baixo
+    # todo caminho leva a chamada paga -- moderacao de entrada, montagem de
+    # contexto, classificador --, e economiza-las e a unica coisa que esta
+    # guarda faz. Descer um degrau que seja a transformaria em silencio CARO,
+    # que e o oposto do que a card pede. A politica sozinha nao precisava
+    # estar aqui em cima: o silencio funcionaria igual la embaixo, so que
+    # pago.
+    #
+    # **E ela nao morde o turno que encerra.** O encerramento so e gravado
+    # DEPOIS da entrega confirmada (ver o bloco pos-entrega la embaixo), entao
+    # na terceira mensagem fora de escopo esta guarda ainda ve a conversa
+    # aberta e deixa passar. Quem cala e o turno SEGUINTE.
+    #
+    # **O pedido de humano e a excecao, e ele nao cala** (fix da revisao,
+    # Important 1). A versao anterior desta guarda calava tambem quem pedisse
+    # atendente, e justificava com um custo que NAO existe: o bloco da TEC-143
+    # (`if pedido_de_humano:`) fica logo abaixo e devolve ANTES da moderacao de
+    # entrada, ANTES de `montar_contexto` e ANTES da chamada paga -- e a D5 do
+    # desenho enumera essa ordem. O preco real da excecao e um `INSERT`
+    # idempotente, um resumo agendado e um envio de texto fixo: zero chamadas
+    # ao modelo, que e a unica coisa que esta guarda existe para poupar.
+    # Calar custava o oposto -- o lead que escreve "quero falar com um
+    # atendente" nao seria atendido, nenhum handoff nasceria e ninguem ficaria
+    # sabendo que ele pediu, por ate 30 dias. Isso inverteria o "decisao de
+    # pessoa vence politica automatica" das duas guardas de cima justamente no
+    # caso em que a pessoa que pede e o lead. A forma -- `not pedido_de_humano`
+    # sobre o silencio, e nao sobre o bloco inteiro -- e a mesma que a guarda
+    # imediatamente acima usa para a fonte de handoff dela.
+    if not pedido_de_optout:
+        async with session_factory() as sessao:
+            situacao = await situacao_da_conversa(
+                sessao,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                agora=datetime.now(UTC),
+            )
+            if situacao.silencia_o_agente and not pedido_de_humano:
+                # Sem o texto da mensagem, pela mesma razao que a prosa
+                # bloqueada da TEC-161 nao entra no log: o canal registra que
+                # a politica agiu, nao o que o lead escreveu.
+                log.info(
+                    "turno.fora_de_escopo",
+                    channel=message.channel,
+                    message_id=str(message.id),
+                )
+                return "fora_de_escopo"
+
+            # A REABERTURA mora aqui, e o gatilho dela e a mensagem do lead:
+            # nao ha job varrendo conversas vencidas, e por isso a linha fica
+            # dizendo ENCERRADA ate alguem escrever -- `situacao_da_conversa`
+            # ja conta a verdade nesse meio tempo, e o docstring dela explica
+            # por que. Chegando aqui o turno SEGUE, e nao devolve.
+            #
+            # Condicionada a `marcada_como_encerrada` (fix da revisao, Minor
+            # 7). A versao anterior chamava `reabrir_conversa`
+            # incondicionalmente, argumentando que separar "nao ha linha" de
+            # "ha linha vencida" custaria um SELECT a mais -- nao custa: a
+            # leitura acima ja trouxe as colunas, e so devolvia uma delas.
+            # Incondicional, toda conversa ja reaberta pagava um `UPDATE` e um
+            # commit em TODO turno, para sempre, reescrevendo os mesmos tres
+            # valores que ja estavam la.
+            #
+            # **Cobre tres entradas, nao uma.** A janela vencida e a comum; a
+            # segunda e o pedido de humano dentro da janela, que acabou de
+            # passar pela excecao acima. Reabrir nesse caso e deliberado: o
+            # lead voltou com um pedido que nao e fora de escopo, e sem a
+            # reabertura ele ficaria mudo para o agente pelo resto da janela
+            # mesmo depois de o corretor ter resolvido o handoff. A terceira
+            # nasceu do fix da revisao final (Important 1) e ainda nao tem
+            # produtor: um encerramento de OUTRO motivo, dentro da janela --
+            # `silencia_o_agente` nao o cala, e o turno cai aqui. Reabrir e o
+            # certo tambem ali, e e o que a propria RN-02.3 pede ("nova
+            # mensagem apos encerramento abre nova conversa"). **Quem
+            # acrescentar um motivo e quiser outro tratamento muda ESTA linha
+            # de proposito** -- ela nao olha o motivo.
+            #
+            # Sem log: `reabrir_conversa` nao diz se mexeu em alguma linha, e
+            # um `conversa.reaberta` que nao pode afirmar isso mentiria.
+            if situacao.marcada_como_encerrada:
+                await reabrir_conversa(
+                    sessao, channel=message.channel, conversation_key=message.conversation_key
+                )
+                await sessao.commit()
 
     if pedido_de_optout:
         # ANTES da moderacao de entrada, de proposito -- fix de revisao
@@ -1464,14 +1639,84 @@ async def executar_turno(
     handoff_do_teto: HandoffRegistrado | None = None
     async with session_factory() as session:
         anterior = await ler_intencao(session, message.channel, message.conversation_key)
-        await gravar_intencao(
+        # TEC-138, RN-03.5. O retorno e `fora_de_escopo_seguidas`
+        # pos-incremento -- o numero que este mesmo statement acabou de
+        # gravar. Zero em toda intencao que nao seja FORA_DE_ESCOPO (o `else`
+        # de `gravar_intencao`), e por isso `deve_encerrar` abaixo nao precisa
+        # reperguntar qual foi a intencao deste turno: voltar ao assunto ja
+        # zerou a contagem aqui dentro.
+        #
+        # **O contador conta a intencao EFETIVA, e a coluna continua crua**
+        # (fix da revisao final, Important 3, ruling R11). `gerada.intencao` vai
+        # inteiro para a coluna, porque e do par (palpite, confianca) que a
+        # TEC-210 precisa; o que decide o encerramento passa por
+        # `intencao_efetiva`, que abaixo de `LIMIAR_DE_DESAMBIGUACAO` devolve
+        # `INDEFINIDA`. A razao e a convencao do repo, escrita na docstring
+        # daquela funcao: o palpite de baixa confianca e "operacionalmente
+        # `INDEFINIDA`", e a TEC-136 e a TEC-137 ja leem por ela. Esta card era
+        # a unica a decidir sobre o valor cru -- e o que ela decide sao 30 dias
+        # de silencio. O caso e alcancavel: duas mensagens fora de escopo
+        # confiantes e uma terceira de baixa confianca, que e tambem o turno em
+        # que `desambiguando` la embaixo quer PERGUNTAR -- contando o cru, a
+        # despedida substituiria justamente a pergunta que resolveria a
+        # ambiguidade.
+        fora_de_escopo_seguidas = await gravar_intencao(
             session,
             channel=message.channel,
             conversation_key=message.conversation_key,
             intencao=gerada.intencao,
             confianca=gerada.confianca,
             modelo=gerada.modelo,
+            fora_de_escopo_efetivo=(
+                intencao_efetiva(gerada.intencao, gerada.confianca) is Intencao.FORA_DE_ESCOPO
+            ),
         )
+        # RN-03.5. A terceira mensagem fora de escopo seguida encerra -- mas
+        # aqui so se DECIDE. **A gravacao mora depois da entrega confirmada**,
+        # no bloco `if encerrando ...` la embaixo, junto dos outros dois
+        # registros pos-entrega. O nome fica aqui porque e aqui que existe a
+        # contagem que decide, e porque a substituicao do texto e o
+        # `apresentando` la embaixo dependem dele antes de a entrega comecar.
+        #
+        # **Por que a gravacao nao entra neste commit** (fix da revisao,
+        # Important 2). Encerrar antes de entregar repetia, por uma terceira
+        # porta, o defeito que este repo ja pagou duas vezes -- a confirmacao
+        # de opt-out que "se perdia PARA SEMPRE" e o Critical 2 da TEC-143: o
+        # envio levanta `EnvioRetentavel` (5xx da Meta), a excecao sobe, a
+        # linha vira FAILED, o sweeper reenfileira a MESMA mensagem -- e no
+        # turno 2 a guarda do topo ja lia ENCERRADA, devolvia "fora_de_escopo"
+        # e a despedida nunca saia. Conversa encerrada, lead calado por 30
+        # dias, sem nunca ter ouvido por que.
+        #
+        # A ordem inversa e barata aqui, e e essa a diferenca em relacao ao
+        # opt-out: la o registro vale mais que o aviso porque nao registrar e
+        # violacao de LGPD. Aqui, nao encerrar quando a entrega falha custa
+        # UMA mensagem fora de escopo a mais -- a proxima sobe a contagem para
+        # 4 e `deve_encerrar` encerra do mesmo jeito, porque ele usa `>=` e nao
+        # `==` justamente para tolerar contagem acima do teto.
+        #
+        # **O que continua indivisivel e o par encerramento+zero**, que e o
+        # que sustenta a docstring de `reabrir_conversa`: os dois vao juntos na
+        # transacao curta de la embaixo, ou nenhum dos dois vai.
+        #
+        # **O zero e o que faz a maquina se fechar sozinha.** Durante a janela
+        # a guarda do topo devolve ANTES de `gravar_intencao`, entao o contador
+        # nao anda; vencida a janela a guarda reabre e segue, e a contagem
+        # recomeca do zero. Sem ele o lead que volta depois dos 30 dias iria de
+        # 3 para 4 e seria encerrado na PRIMEIRA mensagem, sem nenhuma das tres
+        # tentativas que a regra lhe da.
+        #
+        # **O zero nao e a prova de que ninguem mais escreve o contador**, e a
+        # folga esta declarada: dois turnos concorrentes da MESMA conversa,
+        # ambos fora de escopo, podem ter passado a guarda do topo antes do
+        # encerramento. O segundo espera o cadeado de linha que
+        # `gravar_intencao` tomou, le o zero e grava 1 -- conversa encerrada
+        # com contador em 1. O dano e limitado e conhecido: passada a janela, o
+        # lead tem duas tentativas em vez de tres. E a mesma corrida que o
+        # `>=` de `deve_encerrar` ja admite existir, e o conserto dela seria
+        # serializar o turno inteiro por conversa, caro demais para uma
+        # tentativa a menos.
+        encerrando = deve_encerrar(fora_de_escopo_seguidas)
         # TEC-136, RN-03.3. **Antes de `gravar_estado`, e a ordem e o desenho.**
         # Esta chamada anula a faixa de preco quando a banda de plausibilidade
         # muda; o upsert de `gravar_estado` vem depois e escreve por cima o
@@ -1924,11 +2169,11 @@ async def executar_turno(
         # bloqueio.
         #
         # E NAO e a ultima palavra sobre `texto`: o encaminhamento por
-        # intencao da TEC-137, a citacao bloqueada da TEC-161 e o zero
-        # pos-relaxamento da TEC-160 reatribuem depois daqui e vencem. Esta
-        # certo assim -- politica mais especifica ganha --, e as tres
-        # substituem por constante NOSSA, entao a pergunta que o teto suprimiu
-        # nao vaza por nenhuma delas.
+        # intencao da TEC-137, a citacao bloqueada da TEC-161, o zero
+        # pos-relaxamento da TEC-160 e a despedida do encerramento da TEC-138
+        # reatribuem depois daqui e vencem. Esta certo assim -- politica mais
+        # especifica ganha --, e as quatro substituem por constante NOSSA,
+        # entao a pergunta que o teto suprimiu nao vaza por nenhuma delas.
         texto = TEXTO_DO_LIMITE_DE_PERGUNTAS
 
         if not teto_do_handoff:
@@ -1993,8 +2238,15 @@ async def executar_turno(
     # ouvir "Já perguntei bastante": o teto e sobre qualificacao, que estas duas
     # intencoes nao recebem.
     #
-    # **Os dois blocos abaixo reatribuem depois daqui, mas so um deles alcanca
-    # o lead encaminhado -- e a diferenca esta medida, nao suposta.** A citacao
+    # **Tres blocos abaixo reatribuem depois daqui, e so um deles alcanca o
+    # lead encaminhado -- a diferenca esta medida, nao suposta.** O terceiro e
+    # a despedida do encerramento (TEC-138), e ele nao alcanca por construcao:
+    # `encerrando` exige que a contagem de fora de escopo tenha chegado ao
+    # teto, e qualquer intencao EFETIVA que nao seja FORA_DE_ESCOPO zera essa
+    # contagem em `gravar_intencao` -- entao ele e `encaminhou` sao mutuamente
+    # exclusivos, e nao concorrentes. A efetiva so reforca a exclusao: um
+    # VENDER_IMOVEL de baixa confianca vira INDEFINIDA e zera do mesmo jeito.
+    # Dos outros dois: a citacao
     # bloqueada da TEC-161 roda sobre o `texto` JA substituido, e para os nossos
     # dois literais (com e sem o sufixo) `divergencias_de` devolve vazio: nenhum
     # deles carrega valor citavel. `valores_em` exige marca de dinheiro (`R$`,
@@ -2077,11 +2329,26 @@ async def executar_turno(
     # turnos: o vendedor de primeiro contato passa a receber identificacao e
     # encaminhamento como UMA mensagem. Pretendido, e coberto por
     # `test_o_primeiro_contato_de_venda_com_candidatos_tambem_se_identifica`.
+    #
+    # **`not encerrando` (TEC-138) e da mesma natureza que o `not encaminhou`**
+    # que o paragrafo acima explica, e entra pelo mesmo motivo: `apresentando`
+    # nao REATRIBUI `texto`, ele o reaproveita como prefixo da legenda da
+    # primeira ficha -- entao nenhuma ordem de substituicao resolve, so
+    # exclusao. Sem isto, o lead da terceira mensagem fora de escopo receberia
+    # a despedida colada (ou truncada) numa legenda, com ate tres fichas do
+    # catalogo atras dela, e so depois os 30 dias de silencio. **Aqui
+    # `encerrando` exclui sozinho**, e nao ha `not saida_bloqueada` ao lado que
+    # cubra a folga: no turno que encerra com a saida bloqueada, o texto seria
+    # o neutro da moderacao, e prefixar fichas do catalogo a ele antes de calar
+    # por 30 dias e o mesmo absurdo. `tool_choice` e
+    # `auto`, entao nada impede o modelo de buscar no mesmo turno em que
+    # classifica FORA_DE_ESCOPO.
     apresentando = (
         bool(resposta_do_turno.candidatos)
         and not resposta_do_turno.perguntou
         and not desambiguando
         and not encaminhou
+        and not encerrando
     )
 
     # TEC-161. A ultima coisa que acontece antes de a entrega comecar, e a
@@ -2180,21 +2447,92 @@ async def executar_turno(
     if resposta_do_turno.relaxou_sem_resultado and not citacao_bloqueada:
         texto = TEXTO_SEM_RESULTADO_APOS_AMPLIAR
 
+    # RN-03.5 (TEC-138). A despedida, e ela e a ULTIMA das substituicoes de
+    # proposito -- quem atribui `texto` por ultimo neste trecho e quem vence.
+    #
+    # **Vence as tres que podem estar acima dela porque todas prometem um
+    # depois que esta conversa nao tem.** Entregue esta mensagem, a conversa
+    # sera encerrada (bloco pos-entrega, la embaixo) e a guarda do topo vai
+    # calar o agente pelos proximos 30 dias:
+    # `TEXTO_DO_LIMITE_DE_PERGUNTAS` diz "ele entra em
+    # contato", `TEXTO_DA_BUSCA_INCONCLUSIVA` diz "já te retorno com as
+    # opções" e `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` pergunta "Quer que um
+    # corretor olhe isso com você?" -- as duas primeiras viram promessa que
+    # ninguem cumpre e a terceira, pergunta cuja resposta o agente vai
+    # ignorar. A despedida nao promete nem pergunta nada, e e a unica das
+    # quatro que continua verdadeira depois do encerramento.
+    #
+    # O handoff que o teto porventura tenha registrado FICA --
+    # `registrar_handoff` ja rodou no bloco transacional, e uma pessoa
+    # continua podendo procurar o lead. So o TEXTO e nosso, e o silencio da
+    # guarda e do AGENTE, nao da empresa.
+    #
+    # **Com o encaminhamento da TEC-137 nao ha ordem a decidir: os dois sao
+    # mutuamente exclusivos.** `encaminhou` exige `gerada.intencao` em
+    # VENDER_IMOVEL ou SUPORTE_CONTRATO, e `encerrando` exige que a contagem
+    # tenha chegado ao teto -- o que so acontece com FORA_DE_ESCOPO efetivo,
+    # porque qualquer outra intencao zera o contador no `else` de
+    # `gravar_intencao`. Uma intencao so por turno, entao as duas condicoes
+    # nunca sao verdadeiras juntas.
+    #
+    # `not saida_bloqueada` pela razao que o comentario do teto de perguntas
+    # escreve por extenso -- ver la, e nao aqui: `TEXTO_NEUTRO_DE_SAIDA` e a
+    # resposta declarada da moderacao de saida, e sobrepor a nossa a ela
+    # tornaria impossivel saber depois qual das duas agiu.
+    #
+    # **O ENCERRAMENTO, ao contrario do texto, acontece do mesmo jeito** (fix
+    # da revisao final, Important 2). Esta guarda e so sobre o TEXTO: o bloco
+    # pos-entrega la embaixo ja nao repete `not saida_bloqueada`, entao com a
+    # saida bloqueada a conversa fecha atras do texto neutro e o turno seguinte
+    # ja e silencio barato. O comentario de la carrega a razao e o preco.
+    #
+    # **O preco, dito aqui porque e aqui que ele nasce: neste caminho o lead
+    # nao ouve a despedida.** Ele recebe o texto neutro da moderacao, a
+    # conversa fecha, e ele so descobre pelo silencio dos 30 dias. E o lado
+    # ruim de uma escolha entre dois ruins -- o outro era deixar um sondador
+    # com chamadas pagas sem limite --, e nao um esquecimento.
+    #
+    # `desambiguando` NAO entra na guarda, ao contrario do teto e do
+    # encaminhamento, e a assimetria e deliberada: naqueles dois a conversa
+    # continua e vale mais perguntar; aqui ela ACABOU. Entregar a pergunta do
+    # desambiguador e calar por 30 dias seria perguntar e ignorar a resposta
+    # -- pior que a incoerencia que o `not desambiguando` deles evita. Os dois
+    # marcadores pos-entrega excluem `encerrando` por causa disto; ver la.
+    if encerrando and not saida_bloqueada:
+        texto = TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO
+
     # Depois da moderacao de saida, de proposito: o texto e constante deste
     # repositorio e nao saida de modelo -- moderar dado nosso seria gastar
     # chamada sobre texto que nao inventamos, o mesmo argumento que a TEC-162
     # escreveu para as fichas.
     #
-    # Este ponto fica DEPOIS das cinco reatribuicoes de `texto` acima, e por
-    # isso cobre seis trilhas, nao uma: a resposta normal, o
+    # Este ponto fica DEPOIS das seis reatribuicoes de `texto` acima, e por
+    # isso cobre sete trilhas, nao uma: a resposta normal, o
     # TEXTO_NEUTRO_DE_SAIDA da moderacao de saida bloqueada, o
     # TEXTO_DO_LIMITE_DE_PERGUNTAS do teto de perguntas da TEC-149, o
     # TEXTO_DO_ENCAMINHAMENTO_DE_VENDA/TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE do
     # encaminhamento por intencao da TEC-137, o TEXTO_DA_BUSCA_INCONCLUSIVA da
-    # citacao bloqueada da TEC-161 e o TEXTO_SEM_RESULTADO_APOS_AMPLIAR do zero
-    # pos-relaxamento da TEC-160. A apresentacao NAO e uma setima trilha aqui
-    # -- e excluida de proposito, tratada em separado dentro do
+    # citacao bloqueada da TEC-161, o TEXTO_SEM_RESULTADO_APOS_AMPLIAR do zero
+    # pos-relaxamento da TEC-160 e o TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO do
+    # encerramento por escopo da TEC-138. A apresentacao NAO e uma oitava
+    # trilha aqui -- e excluida de proposito, tratada em separado dentro do
     # `if apresentando:` abaixo (Task 5).
+    #
+    # Na trilha do encerramento a identificacao ainda pode se concatenar: o
+    # lead que sumiu por mais de 30 dias e volta com a TERCEIRA fala fora de
+    # escopo recebe `TEXTO_DA_IDENTIFICACAO` -- "Oi! Sou o assistente virtual
+    # da imobiliária. Posso te ajudar a encontrar um imóvel, e a qualquer
+    # momento te passo para um corretor." -- seguido da despedida.
+    #
+    # **Isso NAO tem o precedente da TEC-137** (fix da revisao, Important 5), e
+    # a versao anterior deste comentario dizia que tinha. La o encaminhamento
+    # de fato registra handoff, entao "te passo para um corretor" continua
+    # verdade na mensagem composta. Aqui nao ha fila nenhuma: o lead le uma
+    # oferta de corretor colada a uma despedida, e nada foi enfileirado. O
+    # composto e raro (exige janela de 30 dias vencida E contagem ja em 2) e
+    # fica DECLARADO, nao consertado: ou a identificacao passa a se calar
+    # quando o turno encerra, ou ela ganha variante propria -- as duas sao
+    # decisao de produto, e estao no comentario da card.
     #
     # `apresentando` fica de FORA aqui: naquele caminho `texto` vira prefixo de
     # legenda, e `legenda_de` corta o prefixo antes da ficha (D14 da TEC-162).
@@ -2754,7 +3092,13 @@ async def executar_turno(
             )
             desfecho_da_supressao_parcial = "reentrega_suprimida"
 
-    if desambiguando and not saida_bloqueada and not citacao_bloqueada and not entrega_parcial:
+    if (
+        desambiguando
+        and not saida_bloqueada
+        and not citacao_bloqueada
+        and not entrega_parcial
+        and not encerrando
+    ):
         # Depois da entrega confirmada, nunca antes: ver `marcar_desambiguacao`.
         # A ordem entre esta gravacao e a da fala do agente nao e carregada --
         # as duas sao pos-entrega, e a guarda do outbound suprime qualquer
@@ -2787,6 +3131,19 @@ async def executar_turno(
         # que `saida_bloqueada` e `citacao_bloqueada` evitam acima, so que
         # pela guarda de formato em vez da moderacao ou da citacao. Esta
         # guarda tinha tres condicoes ate a TEC-273.
+        #
+        # `not encerrando` (TEC-138), quinta causa e o mesmo dano pela quinta
+        # porta: a despedida da RN-03.5 substituiu o texto ANTES deste ponto,
+        # e no caminho de desambiguacao esse texto era a pergunta do
+        # desambiguador. O que chegou ao lead foi
+        # `TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO`, que nao pergunta nada -- ou,
+        # no turno que encerra com a saida bloqueada, o texto neutro da
+        # moderacao, que tambem nao pergunta; ali quem ja exclui este bloco e o
+        # `not saida_bloqueada` logo acima. E a
+        # marca nao se resolveria sozinha: `gravar_intencao` so limpa
+        # `desambiguado_em` quando a confianca sustenta a classificacao, e
+        # neste caminho ela nao sustenta -- a marca atravessaria os 30 dias e
+        # o lead voltaria sem a pergunta a que tinha direito.
         async with session_factory() as session:
             await marcar_desambiguacao(
                 session,
@@ -2808,6 +3165,7 @@ async def executar_turno(
         and not entrega_parcial
         and not teto_da_entrega
         and not encaminhou
+        and not encerrando
     ):
         # A marca de `perguntou` (TEC-257) e, ao contrario da intencao e da
         # extracao gravadas la em cima, um fato sobre a NOSSA resposta -- e
@@ -2863,6 +3221,15 @@ async def executar_turno(
         # suficientes o teto da TEC-149 dispara "Já perguntei bastante" contra
         # quem nao foi perguntado de nada.
         #
+        # `not encerrando` (TEC-138) pela mesma razao, e com o mesmo dano
+        # diferido: o lead recebeu `TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO`, que
+        # nao pergunta nada (ou o texto neutro da moderacao, no turno que
+        # encerra com a saida bloqueada -- caso que o `not saida_bloqueada`
+        # acima ja exclui). O encerramento nao e o fim do lead -- passados os
+        # 30 dias a conversa reabre e a MESMA linha de `lead_qualification`
+        # continua la, com o campo marcado e o orcamento de perguntas gasto
+        # por uma pergunta que ninguem leu.
+        #
         # `marcar_perguntados`, e NAO `gravar_estado` de novo: regravar
         # `intencao`/`extracao` aqui e idempotente so contra si mesmo. Contra
         # a concorrencia real entre dois turnos da mesma conversa -- a razao
@@ -2907,6 +3274,78 @@ async def executar_turno(
                 perguntou=gerada.perguntou,
             )
             await session.commit()
+
+    # RN-03.5 (TEC-138). O encerramento, e ele e pos-entrega pelo mesmo
+    # criterio dos dois blocos acima: **so depois de o lead ter recebido a
+    # despedida**. O comentario de `encerrando`, no bloco transacional, escreve
+    # por extenso por que a ordem inversa reintroduzia o defeito da entrega
+    # retentavel -- conversa fechada e lead calado por 30 dias sem nunca ter
+    # ouvido o porque.
+    #
+    # As duas condicoes dizem "alguma coisa nossa chegou inteira ao lead":
+    # `encerrando` e a decisao da contagem; `not entrega_parcial` pela mesma
+    # razao que os dois blocos acima o excluem -- ele nao diz ONDE a quebra
+    # caiu, entao o texto pode ter saido pela metade. `entregue` e sabidamente
+    # True aqui: o `if not entregue:` la em cima ja devolveu em todos os outros
+    # casos.
+    #
+    # **A saida bloqueada NAO adia mais o encerramento** (fix da revisao final,
+    # Important 2, ruling R9). Ate aqui este bloco exigia tambem
+    # `not saida_bloqueada`, e justificava com "nao encerrar num destes turnos
+    # nao perde a regra, so a adia". So adia se algum turno seguinte vier
+    # desbloqueado -- e nada garante isso. Bloqueando sempre, `encerrando`
+    # ficava True para sempre, a despedida nunca substituia nada, a conversa
+    # nunca fechava e cada mensagem seguia pagando classificador e moderacao,
+    # sem teto. Isso falsifica o dividendo que a D7 declara -- "tres chamadas
+    # pagas por conversa a cada 30 dias, contra ilimitado hoje" --, e
+    # justamente no perfil de abuso que o proprio desenho nomeia
+    # (`borda-injecao-02`, uma prompt injection), que e o mais provavel de
+    # reprovar na moderacao de saida turno apos turno.
+    #
+    # **Fechar atras do texto neutro esta certo, e o turno nao fica mudo.** O
+    # lead recebeu `TEXTO_NEUTRO_DE_SAIDA`, que e a resposta declarada da
+    # politica de moderacao -- nao e silencio, e sim outra resposta nossa. O
+    # preco da escolha esta dito onde ele aparece: **neste caminho o lead nao
+    # ouve a despedida**, porque a substituicao la em cima continua cedendo o
+    # texto a moderacao (ver o `if encerrando and not saida_bloqueada:`, que
+    # guarda a razao). Ele fica sem saber que a conversa parou, e so descobre
+    # pelo silencio. O outro lado da balanca era dar a um sondador chamadas
+    # pagas sem limite, e este bloco escolhe o primeiro.
+    #
+    # **Transacao curta propria**, como a do `registrar_handoff` da entrega e a
+    # de `gravar_investidor`, e pelo mesmo motivo: o bloco transacional la de
+    # cima ja commitou. Os DOIS statements ficam nela juntos -- e essa
+    # indivisibilidade, e nao a de cima, que sustenta a docstring de
+    # `reabrir_conversa`.
+    if encerrando and not entrega_parcial:
+        async with session_factory() as session:
+            await encerrar_conversa(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                motivo=str(MotivoDoEncerramento.FORA_DE_ESCOPO),
+                agora=datetime.now(UTC),
+            )
+            await zerar_fora_de_escopo(
+                session, channel=message.channel, conversation_key=message.conversation_key
+            )
+            await session.commit()
+        # Depois do commit, pelo mesmo motivo dos logs de handoff: logar um
+        # encerramento que o rollback desfez e mentir para quem le o log.
+        #
+        # **Sem o texto das mensagens** (D7), pela mesma razao que a prosa
+        # bloqueada da TEC-161 nao entra no log: o que torna a linha
+        # investigavel e a contagem e o motivo, e o conteudo das tres falas do
+        # lead nao acrescenta nada que justifique guarda-lo fora de `messages`.
+        # A contagem e a de ANTES do zero -- e o numero que decidiu, e depois
+        # dele a coluna nao o guarda mais em lugar nenhum.
+        log.info(
+            "conversa.encerrada",
+            channel=message.channel,
+            message_id=str(message.id),
+            motivo=str(MotivoDoEncerramento.FORA_DE_ESCOPO),
+            seguidas=fora_de_escopo_seguidas,
+        )
 
     recorder = MessageRecorder(session_factory)
     await recorder.record_agent_message(
