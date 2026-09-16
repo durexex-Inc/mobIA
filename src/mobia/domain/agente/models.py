@@ -87,11 +87,12 @@ class Recomendacao(Base):
     """Um imovel apresentado a um lead, e o que ele fez com isso. RN-10.3.
 
     **Chaveada pelo par `(channel, conversation_key)`, e nao por `conversa_id`.**
-    O SRS especifica uma FK para `Conversa`, e `Conversa` nao e entidade neste
-    sistema e nunca foi: `conversation_summaries`, `lead_qualification` e
-    `conversation_intent` usam todas o par. Seguir o SRS aqui introduziria um
-    SEGUNDO jeito de identificar conversa, que e pior que a divergencia. Ver a
-    D2 e a emenda E-01 da RN-10.3.
+    O SRS especifica uma FK para `Conversa`. A entidade existe desde a
+    TEC-138 (`domain/conversa/models.py`), mas so para o ciclo de vida da
+    conversa -- `conversation_summaries`, `lead_qualification` e
+    `conversation_intent` (e esta tabela) continuam todas usando o par.
+    Seguir o SRS aqui introduziria um SEGUNDO jeito de identificar conversa,
+    que e pior que a divergencia. Ver a D2 e a emenda E-01 da RN-10.3.
 
     **O `UNIQUE` e o cenario 4 do Gherkin.** "Os ja apresentados nao sao
     repetidos" vira garantia de schema em vez de disciplina de consulta: o

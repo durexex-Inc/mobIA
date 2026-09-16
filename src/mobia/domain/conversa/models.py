@@ -7,14 +7,13 @@ do SRS sem implementacao, reservada para a TEC-130. A TEC-138 chegou antes e
 precisou do status, entao a entidade nasce aqui.
 
 **Consequencia para quem pegar a TEC-130:** ela ESTENDE isto, nao cria.
-Encerrar por inatividade e acrescentar um motivo ao vocabulario abaixo e um
-escritor novo; nao e uma segunda tabela nem uma segunda nocao de encerrado. A
-Emenda da RN-02.3 registra isso no SRS.
+Encerrar por inatividade e acrescentar um motivo ao vocabulario de
+`vocabulario.py` e um escritor novo; nao e uma segunda tabela nem uma segunda
+nocao de encerrado. A Emenda da RN-02.3 registra isso no SRS.
 
 `motivo_do_encerramento` e vocabulario e nao booleano justamente para essa
-extensao: a regra da card pede que o motivo seja "proprio, separado do
-encerramento por inatividade", e uma booleana `encerrada` obrigaria a TEC-130
-a inventar onde guardar o dela.
+extensao -- ver `MotivoDoEncerramento` em `vocabulario.py` para a razao por
+extenso.
 
 Uma linha por conversa, com UPDATE -- e nao append-only como `optout_events`.
 O historico de encerramentos nao existe por esta card, e a lacuna esta
@@ -26,13 +25,8 @@ from datetime import datetime
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from mobia.domain.conversa.vocabulario import Status
 from mobia.domain.messages.models import Base
-
-STATUS_ATIVA = "ATIVA"
-STATUS_ENCERRADA = "ENCERRADA"
-
-# Unico motivo por enquanto. A TEC-130 acrescenta INATIVIDADE aqui.
-MOTIVO_FORA_DE_ESCOPO = "FORA_DE_ESCOPO"
 
 
 class Conversa(Base):
@@ -41,7 +35,9 @@ class Conversa(Base):
     channel: Mapped[str] = mapped_column(String(32), primary_key=True)
     conversation_key: Mapped[str] = mapped_column(String(64), primary_key=True)
 
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default=STATUS_ATIVA)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=Status.ATIVA, server_default=Status.ATIVA.value
+    )
 
     # Os dois andam juntos e sao nulos juntos: `status = ATIVA` significa
     # nenhum dos dois preenchido. Nao ha booleana `encerrada` ao lado, pela
