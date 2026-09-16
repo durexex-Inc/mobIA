@@ -35,7 +35,13 @@ from mobia.domain.agente.schemas import (
 )
 from mobia.domain.context.montagem import ContextoMontado, montar_prompt
 from mobia.domain.messages.recorder import custo_em_dolar
-from mobia.infra.anthropic import get_client
+from mobia.infra.anthropic import (
+    TETO_DA_CLASSIFICACAO,
+    TETO_DA_DESAMBIGUACAO,
+    TETO_DA_REACAO,
+    TETO_DO_INVESTIDOR,
+    get_client,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -864,6 +870,7 @@ class ClassificadorAnthropic:
         max_tokens: int,
         system: str,
         mensagem_se_vazia: str,
+        timeout: float,
         output_config: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
         porta: PortaDeBusca | None = None,
@@ -888,6 +895,13 @@ class ClassificadorAnthropic:
         lista numerada, anexados ao turno montado normalmente. Nenhum dos
         outros tres metodos precisa anexar nada alem do que `montar_prompt` ja
         produz.
+
+        **`timeout` nao tem default de proposito** (TEC-228). Um default aqui
+        deixaria um metodo novo cair no piso do cliente sem que ninguem
+        percebesse, e o piso e 60s -- mais que o dobro do maior teto do turno.
+        Sem default, esquecer e erro de tipo, que o mypy pega antes do merge.
+        Ele vale POR REQUISICAO, e o laco abaixo pode fazer duas: uma fatia com
+        busca custa ate `2 * timeout`, e e assim que `_PIOR_TURNO` a conta.
         """
         comeco = time.monotonic()
         conteudo_do_turno = montar_prompt(contexto, omitir_sistema=True)
@@ -966,7 +980,7 @@ class ClassificadorAnthropic:
             # `Message` de `AsyncStream` por `stream=`. Nenhuma chamada deste
             # modulo pede streaming -- `stream` nunca entra em `kwargs` --
             # entao o retorno real e sempre `Message`.
-            resposta = cast(Message, await get_client().messages.create(**kwargs))
+            resposta = cast(Message, await get_client().messages.create(**kwargs, timeout=timeout))
             tokens_in_do_turno += resposta.usage.input_tokens
             tokens_out_do_turno += resposta.usage.output_tokens
             # `or 0` cobre o valor real de producao (None quando a chamada
@@ -1049,6 +1063,7 @@ class ClassificadorAnthropic:
             max_tokens=MAX_TOKENS_DA_RESPOSTA,
             system=SISTEMA_DO_AGENTE,
             mensagem_se_vazia="resposta veio vazia",
+            timeout=TETO_DA_CLASSIFICACAO,
             output_config={"format": {"type": "json_schema", "schema": _SCHEMA_COMPILADO}},
             # `tools` so entra quando ha porta injetada: sem ela, `_chamar` nao
             # tem como executar o `tool_use` e o teto da D4 derrubaria o turno
@@ -1184,6 +1199,7 @@ class ClassificadorAnthropic:
             max_tokens=MAX_TOKENS_DO_INVESTIDOR,
             system=SISTEMA_DO_INVESTIDOR,
             mensagem_se_vazia="resposta do investidor veio vazia",
+            timeout=TETO_DO_INVESTIDOR,
             output_config={
                 "format": {"type": "json_schema", "schema": _SCHEMA_DO_INVESTIDOR_COMPILADO}
             },
@@ -1317,6 +1333,7 @@ class ClassificadorAnthropic:
             max_tokens=MAX_TOKENS_DA_PERGUNTA,
             system=SISTEMA_DA_DESAMBIGUACAO,
             mensagem_se_vazia="pergunta veio vazia",
+            timeout=TETO_DA_DESAMBIGUACAO,
         )
 
         # So numeros e id de modelo -- a pergunta vai para o lead, nao para o log.
@@ -1388,6 +1405,7 @@ class ClassificadorAnthropic:
             max_tokens=MAX_TOKENS_DA_REACAO,
             system=SISTEMA_DA_REACAO,
             mensagem_se_vazia="reacoes vieram vazias",
+            timeout=TETO_DA_REACAO,
             output_config={
                 "format": {"type": "json_schema", "schema": _SCHEMA_DA_REACAO_COMPILADO}
             },

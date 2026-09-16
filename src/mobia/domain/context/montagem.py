@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 import structlog
+from anthropic import APITimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
@@ -27,7 +28,7 @@ from mobia.domain.context.resumo import (
 )
 from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.models import Message
-from mobia.infra.anthropic import motivo_do_provedor
+from mobia.infra.anthropic import TETO_DO_RESUMO, motivo_do_provedor
 from mobia.infra.crypto import DecryptionError, aad_de, decrypt
 
 log = structlog.get_logger(__name__)
@@ -593,11 +594,29 @@ async def _dobrar(
         # resto -- inclusive para um resumidor que interpole a propria entrada.
         # A regra acima continua valendo; o que mudou e que "a conta acabou"
         # deixou de ser indistinguivel de "o schema quebrou".
+        #
+        # `teto_s` so aparece quando a degradacao FOI estouro de teto, e nao em
+        # toda linha (TEC-228). A card pedia distinguir o timeout do resumo das
+        # demais degradacoes, e `reason` ja fazia isso -- `APITimeoutError` tem
+        # nome proprio. O que faltava era saber contra QUE teto: desde que cada
+        # fatia do turno tem o seu, o mesmo `APITimeoutError` significa 25s
+        # aqui e 35s no investidor, e quem le o log nao tinha como separar.
+        #
+        # Nao e evento novo pela mesma razao que a TEC-237 preferiu acrescentar
+        # `motivo` a criar um: um nome novo obrigaria todo consumidor de
+        # `contexto.degradado` a conhecer os dois, para uma distincao que um
+        # campo ja faz.
+        #
+        # `None` quando nao foi timeout, e nao o teto sempre: um resumidor
+        # injetado nos testes nao tem teto nenhum, e afirmar 25,0 numa
+        # degradacao que nao foi de tempo seria o campo mentindo sobre o que
+        # aconteceu.
         log.warning(
             "contexto.degradado",
             channel=channel,
             reason=type(exc).__name__,
             motivo=motivo_do_provedor(exc),
+            teto_s=TETO_DO_RESUMO if isinstance(exc, APITimeoutError) else None,
         )
         return texto_do_resumo, literais, cobertas, marca, True
 

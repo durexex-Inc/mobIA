@@ -615,14 +615,22 @@ class ResumidorFake:
         texto: str = "resumo do que veio antes",
         falha: bool = False,
         roteiro: list[str] | None = None,
+        erro: BaseException | None = None,
     ) -> None:
         self.texto = texto
         self.falha = falha
+        # `erro` e para quem precisa de um TIPO especifico de falha, e nao so
+        # de uma falha: desde a TEC-228 o log de degradacao le o tipo da
+        # excecao para decidir se carrega o teto estourado. `falha=True`
+        # continua sendo o atalho para "deu errado, tanto faz como".
+        self.erro = erro
         self.roteiro = roteiro or []
         self.chamadas: list[str] = []
 
     async def resumir(self, instrucao: str, conteudo: str) -> ResumoGerado:
         self.chamadas.append(instrucao)
+        if self.erro is not None:
+            raise self.erro
         if self.falha:
             raise RuntimeError("provedor fora do ar")
         texto = self.roteiro.pop(0) if self.roteiro else self.texto

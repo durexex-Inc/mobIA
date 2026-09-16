@@ -63,21 +63,22 @@ MAXIMO_DE_ENVIOS_POR_EXECUCAO = 25
 # O segundo teto, e ele tambem NAO e medido -- emenda a D7. Existe porque o de
 # cima, sozinho, nao limita o que diz limitar.
 #
-# **Os dois CLIENTES EXTERNOS de um candidato custam ate ~130 s, e 120 deles
-# sao do provedor de MODELO, nao da Meta** -- e esses ~130 s sao a parte
-# grande do custo de um candidato, nunca o custo inteiro dele (ver a conta do
-# teto, mais abaixo). A chamada de `redigir_abertura` usa o cliente de
-# `infra/anthropic.py`, que tem `TIMEOUT_SEGUNDOS = 60.0` e `MAX_TENTATIVAS =
-# 1` -- 60 s na primeira tentativa mais 60 s na retentativa, ate 120 s por
-# follow-up. O POST para a Meta custa no maximo os `TIMEOUT_SEGUNDOS = 10.0`
-# de `outbound/whatsapp.py`, que nao retenta -- o 5xx/408/429 vira
+# **Os dois CLIENTES EXTERNOS de um candidato custam ate ~70 s, e 60 deles sao
+# do provedor de MODELO, nao da Meta** -- e esses ~70 s sao a parte grande do
+# custo de um candidato, nunca o custo inteiro dele (ver a conta do teto, mais
+# abaixo). A chamada de `redigir_abertura` usa o cliente de
+# `infra/anthropic.py` e **nao manda teto proprio**, entao cai no piso de
+# construcao: `TIMEOUT_SEGUNDOS = 60.0`. Desde a TEC-228 o `MAX_TENTATIVAS` de
+# la e 0, entao sao 60 s e nao os 120 s que esta conta usava. O POST para a
+# Meta custa no maximo os `TIMEOUT_SEGUNDOS = 10.0` de
+# `outbound/whatsapp.py`, que nao retenta -- o 5xx/408/429 vira
 # `EnvioRetentavel`, e **nesta varredura ninguem retenta**: ver o `except
 # EnvioRetentavel` no corpo, que registra por que o nome do tipo desmente o
 # desfecho aqui. Nao confunda os dois clientes: e o de `infra/anthropic.py`
 # que domina esta conta.
 #
 # Com isso, o pior caso de 25 envios nao e o de ~100 s que a estimativa da D7
-# supunha -- e de ~3250 s contra um `job_timeout` de 240. Um teto que so vale
+# supunha -- e de ~1750 s contra um `job_timeout` de 240. Um teto que so vale
 # na media e decorativo no unico cenario em que um teto importa.
 #
 # **90 s, e a conta NAO fecha em igualdade -- ela deixa margem de proposito.**
@@ -96,8 +97,16 @@ MAXIMO_DE_ENVIOS_POR_EXECUCAO = 25
 # que fecha exatamente numa soma incompleta nao tem margem nenhuma, tem margem
 # NEGATIVA.
 #
-# A conta honesta: 240 (`job_timeout`) - 130 (os dois clientes externos) - 20
-# = 90. Os 20 s sao uma RESERVA declarada para o custo de banco do candidato,
+# A conta honesta: 240 (`job_timeout`) - 70 (os dois clientes externos) - 20
+# = 150. **E o numero abaixo continua 90, que e MENOS do que a formula
+# permite.** A TEC-228 baixou o custo do cliente de modelo de 120 s para 60 s e
+# abriu 60 s de espaco aqui; reclamar esse espaco mudaria quantos follow-ups
+# uma varredura entrega, que e efeito visivel para o lead e nao cabe a uma card
+# que fala de timeout. Um teto mais apertado que o permitido e seguro: o que
+# sobra continua devido e entra na varredura seguinte, cinco minutos depois.
+# Subir para 150 e outra card.
+#
+# Os 20 s sao uma RESERVA declarada para o custo de banco do candidato,
 # e nao uma medicao -- ninguem mediu, e e exatamente por isso que ela e
 # generosa em vez de justa. Quem medir o custo real corrige este numero; a
 # direcao certa continua sendo medir, e nao subir por intuicao.

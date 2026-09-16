@@ -1,7 +1,10 @@
+import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import anthropic
+import httpx2
 import pytest
 from conftest import CANAL, CONVERSA, ContadorFake, ResumidorFake, semear
 
@@ -30,6 +33,7 @@ from mobia.domain.messages.enums import MessageContentType, MessageDirection, Me
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.domain.messages.status import MessageStatus
+from mobia.infra.anthropic import TETO_DO_RESUMO
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
 
@@ -1299,3 +1303,63 @@ async def test_fala_bloqueada_nao_entra_no_resumo_na_dobra(session) -> None:
     assert len(resumidor.conteudos) == 1, "40 literais nao bloqueados disparam a dobra"
     assert "mensagem 3" not in resumidor.conteudos[0]
     assert "mensagem 2" in resumidor.conteudos[0], "as outras foram dobradas normalmente"
+
+
+async def test_o_timeout_do_resumo_diz_contra_que_teto_estourou(
+    session, caplog, sempre_contar
+) -> None:
+    """TEC-228: `reason` ja separava o timeout; `teto_s` diz de qual teto.
+
+    A card pedia que o estouro do resumo deixasse de ser indistinguivel das
+    outras degradacoes, e `reason=type(exc).__name__` ja fazia isso --
+    `APITimeoutError` tem nome proprio. O que faltava chegou junto com o teto
+    por tipo: desde que cada fatia do turno tem o seu, o mesmo
+    `APITimeoutError` significa 25s aqui e 35s no investidor, e quem le o log
+    nao tinha como saber contra qual deles a chamada morreu.
+    """
+    await semear(session, 40)
+    estouro = anthropic.APITimeoutError(request=httpx2.Request("POST", "https://api.exemplo"))
+
+    with caplog.at_level(logging.WARNING):
+        contexto = await montar_contexto(
+            get_sessionmaker(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumidor=ResumidorFake(erro=estouro),
+            contador=ContadorFake(),
+        )
+
+    assert contexto.degradado is True
+    linha = json.loads(
+        next(r.getMessage() for r in caplog.records if "contexto.degradado" in r.getMessage())
+    )
+    assert linha["reason"] == "APITimeoutError"
+    assert linha["teto_s"] == TETO_DO_RESUMO
+
+
+async def test_degradacao_que_nao_foi_timeout_nao_afirma_teto(
+    session, caplog, sempre_contar
+) -> None:
+    """`teto_s` e `None` quando a causa nao foi tempo, e nao o teto sempre.
+
+    O campo diz "estourou ESTE teto". Numa falha de schema ou de conexao
+    recusada nenhum teto foi estourado, e carimbar 25,0 ali faria o campo
+    mentir sobre o que aconteceu -- pior que nao existir, porque um log que
+    mente e lido como se fosse verdade.
+    """
+    await semear(session, 40)
+
+    with caplog.at_level(logging.WARNING):
+        await montar_contexto(
+            get_sessionmaker(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumidor=ResumidorFake(falha=True),
+            contador=ContadorFake(),
+        )
+
+    linha = json.loads(
+        next(r.getMessage() for r in caplog.records if "contexto.degradado" in r.getMessage())
+    )
+    assert linha["reason"] == "RuntimeError"
+    assert linha["teto_s"] is None

@@ -28,6 +28,12 @@ from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA
 from mobia.domain.agente.investidor import Horizonte
 from mobia.domain.agente.schemas import CategoriaDescarte, Intencao, ReacaoDoImovel, ReacaoLead
 from mobia.domain.context.montagem import ContextoMontado
+from mobia.infra.anthropic import (
+    TETO_DA_CLASSIFICACAO,
+    TETO_DA_DESAMBIGUACAO,
+    TETO_DA_REACAO,
+    TETO_DO_INVESTIDOR,
+)
 
 # Strings que nao podem, sob nenhuma circunstancia, sobreviver ao log nem a
 # uma excecao. Se um destes valores aparecer em `caplog.text` ou em
@@ -1580,3 +1586,56 @@ async def test_o_investidor_loga_no_proprio_evento_e_sem_conteudo(
     assert TEXTO_DA_RESPOSTA not in caplog.text
     assert RESUMO_DO_PROMPT not in caplog.text
     assert "uns 800 mil" not in caplog.text
+
+
+async def test_cada_metodo_manda_o_proprio_teto_de_tempo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEC-228: os quatro metodos passam por `_chamar`, e nenhum herda o piso.
+
+    O que este teste protege nao e o VALOR de cada teto -- esse sai da medicao
+    e muda quando alguem medir de novo -- e sim que os quatro numeros sejam
+    quatro, e cheguem ao SDK. Um teto unico para chamadas que vao de 1,7s a
+    9,3s de pior caso medido e o defeito que a card nomeia; quatro constantes
+    declaradas e um `timeout=` que nao e repassado seriam o mesmo defeito com
+    aparencia de conserto.
+
+    Compara contra as constantes importadas, e nao contra literais: o teste
+    afirma o CAMINHO, e quem afirma os numeros e
+    `test_o_pior_turno_cabe_no_job_timeout`.
+    """
+    esperados = [
+        (
+            lambda c: c.classificar(_contexto()),
+            _resposta_json(),
+            TETO_DA_CLASSIFICACAO,
+        ),
+        (
+            lambda c: c.qualificar_investidor(_contexto()),
+            _resposta_do_investidor(),
+            TETO_DO_INVESTIDOR,
+        ),
+        (
+            lambda c: c.desambiguar(_contexto()),
+            _resposta_falsa(texto="que tipo de imovel voce procura?"),
+            TETO_DA_DESAMBIGUACAO,
+        ),
+        (
+            lambda c: c.reagir(_contexto(), apresentados=APRESENTADOS),
+            _resposta_reacao(reacoes=[]),
+            TETO_DA_REACAO,
+        ),
+    ]
+
+    vistos = []
+    for chamar, resposta, teto in esperados:
+        cliente = _instalar_e_capturar(monkeypatch, resposta)
+        await chamar(ClassificadorAnthropic())
+        enviado = cliente.messages.create.call_args.kwargs["timeout"]
+        assert enviado == teto
+        vistos.append(enviado)
+
+    # Os quatro tetos nao sao quatro copias do mesmo numero. Sem esta linha, um
+    # dia em que todas as constantes valessem 60.0 passaria verde -- e seria
+    # exatamente o estado anterior a esta card.
+    assert len(set(vistos)) > 1

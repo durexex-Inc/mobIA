@@ -60,9 +60,11 @@ O cliente mantém um teto de construção como piso de segurança, para que uma 
 
 **A folga não é arbitrária, e a razão dela é uma limitação da própria medição:** as amostras repetiram o mesmo prompt de sistema, então provavelmente pegaram *prompt cache*. São otimistas para o primeiro turno de uma conversa, que é justamente o caso frio. Três vezes o máximo medido absorve isso sem chegar perto do `job_timeout`.
 
-O `count_tokens` fica em 5s por ser ida-e-volta de rede e não geração: 18× o máximo medido ainda é menos de um décimo do menor teto de geração.
+O `count_tokens` fica em 5s por ser ida-e-volta de rede e não geração. A folga de 18× soa exagerada e não é: 18× um máximo de 0,28s ainda dá 5s, menos da metade do menor teto de geração. **Folga em percentual não é folga em segundos**, e o orçamento se paga em segundos.
 
 As chamadas de geração pequenas ganham teto pequeno **porque a falha delas é barata**: `desambiguar` perde a pergunta de desambiguação daquele turno, não a conversa.
+
+`reagir` não foi medido e não está na tabela. Herda o número de `desambiguar` por ter a mesma forma — 300 tokens de saída, sem ferramenta, uma requisição só. Fica dito, em vez de escondido num número com aparência de medido.
 
 ### D3 — A soma do pior caminho vira teste, e ela não é a que eu escrevi primeiro
 

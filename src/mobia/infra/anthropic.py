@@ -4,24 +4,113 @@ from anthropic import APIStatusError, AsyncAnthropic
 
 from mobia.app.config import ConfiguracaoInsegura, get_settings
 
-# O default do SDK e 10 minutos por requisicao, com retentativa interna --
-# muito acima do `job_timeout` do worker (240s). Sem um teto proprio, uma
-# chamada lenta nao falha: ela e cancelada pelo ARQ. Desde a TEC-227 o
-# cancelamento deixa de ser invisivel -- `process_message` marca FAILED e o
-# `GuardedOutbound` libera a reserva -- mas continua sendo o desfecho pior:
-# custa a passada inteira do turno, com as chamadas pagas ao modelo, e pode
-# duplicar a entrega. Falha tipada e recuperavel de graca; cancelamento nao.
-# 60s por tentativa, uma retentativa: no pior caso 120s por chamada.
+# O default do SDK e 10 minutos por requisicao -- muito acima do `job_timeout`
+# do worker (240s). Sem teto proprio, uma chamada lenta nao falha: ela e
+# cancelada pelo ARQ. Desde a TEC-227 o cancelamento deixa de ser invisivel --
+# `process_message` marca FAILED e o `GuardedOutbound` libera a reserva -- mas
+# continua sendo o desfecho pior: custa a passada inteira do turno, com as
+# chamadas pagas ao modelo, e pode duplicar a entrega. Falha tipada e
+# recuperavel de graca; cancelamento nao.
 #
-# Isso nao sobra folga dentro dos 240s do `job_timeout`. O turno paga entre
-# uma e tres chamadas deste cliente em sequencia -- `resumir` (as vezes, a
-# cada ~40 mensagens), `classificar` (sempre) e, desde a TEC-135,
-# `desambiguar` (so no turno ambiguo, logo depois de `classificar`). Duas
-# delas ja fecham a conta em 240s (2 x 120s); com as tres, o pior caso soma
-# 360s -- acima do teto antes mesmo de contar `count_tokens` ou o POST para a
-# Meta. Ver o comentario de `job_timeout` em `workers/main.py`.
+# Este numero e o PISO, e nao o teto de ninguem no turno: quem faz uma fatia do
+# turno manda o seu proprio (abaixo). Ele governa quem nao pede teto nenhum --
+# hoje `followup/prosa.py` e `handoff/resumo.py`, as duas chamadas de fora do
+# turno, que ninguem mediu e que nao disputam este orcamento. Existe para que
+# uma chamada nova que esqueca o override nao herde os dez minutos do SDK.
 TIMEOUT_SEGUNDOS = 60.0
-MAX_TENTATIVAS = 1
+
+# Zero, e a razao esta na aritmetica logo abaixo: com uma retentativa o pior
+# turno dobra para 324s e continua estourando o `job_timeout`, mesmo com todos
+# os tetos por tipo. E a retentativa que come metade do orcamento.
+#
+# Nao e decisao nova -- a moderacao ja a tomou, citando esta card pelo nome
+# (ver `MAX_TENTATIVAS_DA_MODERACAO` em `infra/moderacao.py`). O que mudou e o
+# alcance: o mesmo argumento vale para o cliente que faz as cinco fatias.
+#
+# A medicao sustenta: as chamadas levam de 0,25s a 9,3s (relatorio de
+# 16/09/2026 em `evals/relatorios/`). Estourar contra 25s nao e lentidao, e
+# pane -- e retentar uma pane custa outros 25s pelo mesmo desfecho.
+#
+# **O que se perde, e nao e nada.** A retentativa tambem cobria 429, 5xx e
+# queda de conexao, onde retentar e barato e costuma funcionar
+# (`_should_retry_exception` do SDK). Sem ela, um 429 deixa de ser reparado
+# dentro da requisicao e passa a ser reparado pelo sweeper, que refaz o turno
+# INTEIRO e repaga as chamadas que ja tinham dado certo. A troca e deliberada:
+# um orcamento que fecha vale mais que uma retentativa barata num caminho raro.
+MAX_TENTATIVAS = 0
+
+# Os tetos por tipo de chamada, derivados da medicao de 16/09/2026 com folga de
+# ~3x sobre o maximo observado. A folga nao e arbitraria: as amostras repetiram
+# o mesmo prompt de sistema e provavelmente pegaram prompt cache, entao sao
+# otimistas para o primeiro turno de uma conversa, que e o caso frio.
+#
+#   chamada        teto   maximo medido   folga
+#   count_tokens    5s        0,28s        18x
+#   desambiguar    12s        1,69s         7x
+#   resumir        25s        3,72s       6,7x
+#   classificar    25s        7,49s       3,3x
+#   investidor     35s        9,26s       3,8x
+#
+# **Por que teto por tipo e nao um numero so.** As chamadas vao de 0,25s a
+# 9,3s. Um teto unico ou e frouxo para a mais rapida ou e apertado para a mais
+# lenta; e as consequencias de estourar tambem sao diferentes -- `desambiguar`
+# perde a pergunta daquele turno, `classificar` perde o turno inteiro.
+#
+# `count_tokens` fica em 5s por ser ida-e-volta de rede e nao geracao. A folga
+# de 18x soa exagerada e nao e: 18x um maximo de 0,28s ainda da 5s, menos da
+# metade do menor teto de geracao. Folga em percentual nao e folga em
+# segundos, e o orcamento se paga em segundos.
+#
+# `reagir` nao foi medido. Herda o numero de `desambiguar` porque tem a mesma
+# forma -- 300 tokens de saida, sem ferramenta, uma requisicao so -- e isso
+# esta dito aqui em vez de escondido num numero de aparencia medida.
+TETO_DO_COUNT_TOKENS = 5.0
+TETO_DA_DESAMBIGUACAO = 12.0
+TETO_DA_REACAO = 12.0
+TETO_DO_RESUMO = 25.0
+TETO_DA_CLASSIFICACAO = 25.0
+TETO_DO_INVESTIDOR = 35.0
+
+# O pior turno, fatia a fatia, com quantas REQUISICOES cada uma pode fazer.
+#
+# Sao cinco fatias, e nao as tres que a TEC-228 supunha: `count_tokens` e
+# `resumir` em `montar_contexto`, `reagir` (`turno.py:1463`), a chamada 1
+# (`turno.py:1541`) e a chamada 2 (`turno.py:2028` ou `2042`).
+#
+# **Duas fatias custam DUAS requisicoes.** O laco `for tentativa in (1, 2)` de
+# `_chamar` bate no provedor de novo quando o modelo pede a ferramenta de
+# busca. Contar uma requisicao por fatia subconta o pior caso pela metade nas
+# duas fatias mais caras -- foi assim que o comentario anterior deste arquivo
+# chegou a 360s quando o numero real era 840s.
+#
+# As duas chamadas de investidor sao exclusivas entre si: a de `turno.py:2042`
+# so dispara quando a de `1541` NAO foi a do investidor. Por isso o pior par e
+# `classificar` com busca seguido de `qualificar_investidor` com busca, e nao
+# investidor duas vezes.
+_PIOR_TURNO = (
+    (TETO_DO_COUNT_TOKENS, 1),
+    (TETO_DO_RESUMO, 1),
+    (TETO_DA_REACAO, 1),
+    (TETO_DA_CLASSIFICACAO, 2),
+    (TETO_DO_INVESTIDOR, 2),
+)
+
+
+def segundos_do_modelo_no_pior_turno() -> float:
+    """O teto de tempo que um turno pode gastar falando com ESTE provedor.
+
+    Existe para entrar na soma que `test_o_pior_turno_cabe_no_job_timeout`
+    compara com o `job_timeout` do worker: e a unica coisa que torna vermelha a
+    mudanca de um teto que nao cabe mais no orcamento.
+
+    **E so a parcela da Anthropic, e o nome diz isso de proposito.** O turno
+    paga outros tres clientes externos -- o embed da busca (`infra/embeddings.py`,
+    o MAIOR termo antes da TEC-228), a moderacao das duas pontas e o POST para a
+    Meta --, alem do banco. Quem somar so esta funcao contra os 240s conclui que
+    ha folga de sobra, que foi exatamente o erro do comentario que esta card
+    encontrou. A soma inteira mora no teste.
+    """
+    return sum(teto * requisicoes for teto, requisicoes in _PIOR_TURNO) * (MAX_TENTATIVAS + 1)
 
 
 @lru_cache

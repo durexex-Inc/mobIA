@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from mobia.domain.context import resumo as resumo_mod
-from mobia.domain.context.resumo import ResumidorAnthropic, ResumoInvalido
+from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic, ResumoInvalido
+from mobia.infra.anthropic import TETO_DO_COUNT_TOKENS, TETO_DO_RESUMO
 
 # Strings que nao podem, sob nenhuma circunstancia, sobreviver ao log. Se um
 # destes valores aparecer em `caplog.text`, o boundary vazou conteudo de lead
@@ -147,3 +148,36 @@ async def test_resumir_remove_espaco_de_borda_do_resumo(monkeypatch: pytest.Monk
     gerado = await ResumidorAnthropic().resumir(INSTRUCAO_DO_PROMPT, CONTEUDO_DO_PROMPT)
 
     assert gerado.texto == TEXTO_DO_RESUMO
+
+
+async def test_resumir_manda_o_proprio_teto_de_tempo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TEC-228: o resumo e uma das cinco fatias e nao herda o piso do cliente.
+
+    Sem o `timeout=` explicito a chamada cai nos `TIMEOUT_SEGUNDOS = 60.0` da
+    construcao -- mais do que o dobro do que esta fatia tem de orcamento, e o
+    que fazia a soma do turno estourar o `job_timeout`.
+    """
+    cliente = _ClienteFalso(_resposta_falsa(texto=TEXTO_DO_RESUMO))
+    monkeypatch.setattr(resumo_mod, "get_client", lambda: cliente)
+
+    await ResumidorAnthropic().resumir(INSTRUCAO_DO_PROMPT, CONTEUDO_DO_PROMPT)
+
+    assert cliente.messages.create.call_args.kwargs["timeout"] == TETO_DO_RESUMO
+
+
+async def test_contar_manda_o_menor_teto_do_turno(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`count_tokens` nao gera texto: e ida-e-volta de rede, e o teto reflete isso.
+
+    E a unica fatia cujo teto nao vem de uma geracao medida -- 0,28s de pior
+    caso medido contra 5s de teto. A folga em percentual assusta e nao importa:
+    o orcamento se paga em segundos, e 5 e menos da metade do menor teto de
+    geracao.
+    """
+    cliente = _ClienteFalso(_resposta_falsa(texto=None))
+    cliente.messages = SimpleNamespace(
+        count_tokens=AsyncMock(return_value=SimpleNamespace(input_tokens=1234))
+    )
+    monkeypatch.setattr(resumo_mod, "get_client", lambda: cliente)
+
+    assert await ContadorAnthropic().contar("texto qualquer") == 1234
+    assert cliente.messages.count_tokens.call_args.kwargs["timeout"] == TETO_DO_COUNT_TOKENS

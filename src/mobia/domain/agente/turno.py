@@ -114,7 +114,7 @@ from mobia.domain.outbound.port import (
 )
 from mobia.domain.outbound.repositorio import kinds_reservados
 from mobia.infra.crypto import aad_de, decrypt
-from mobia.infra.embeddings import embedar
+from mobia.infra.embeddings import embedar_do_turno
 
 log = structlog.get_logger(__name__)
 
@@ -1517,7 +1517,10 @@ async def executar_turno(
         _PortaComScore,
         porta_de_busca(
             session_factory,
-            embedador=embedar,
+            # `embedar_do_turno` e nao `embedar`: teto de 10s e sem
+            # retentativa, contra os 50s com retentativa da indexacao. Esta
+            # busca divide o `job_timeout` com cinco chamadas pagas (TEC-228).
+            embedador=embedar_do_turno,
             channel=message.channel,
             conversation_key=message.conversation_key,
         ),
@@ -1547,8 +1550,12 @@ async def executar_turno(
             # O classificador recebe um callable pronto e nao sabe o que e uma
             # sessao -- D3 do desenho.
             #
-            # `embedador=embedar` liga a busca do turno ao provedor de verdade
-            # -- o mesmo `embedar` que `indexar_catalogo` usa para o catalogo.
+            # `embedador=embedar_do_turno` liga a busca do turno ao provedor de
+            # verdade -- o MESMO provedor que `indexar_catalogo` usa para o
+            # catalogo, com o mesmo modelo e as mesmas dimensoes, so que com o
+            # teto e as tentativas do turno (TEC-228). Fossem clientes de
+            # modelos diferentes, o vetor da consulta nao viveria no mesmo
+            # espaco dos vetores indexados e a similaridade seria ruido.
             # Sem isto, `consulta_texto` do tool call seria aceito e nunca
             # mudaria um resultado: `vetor_da_consulta` (busca.py) devolve
             # None sem embedador injetado, a similaridade fica 0 para todo
