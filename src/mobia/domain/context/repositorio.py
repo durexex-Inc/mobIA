@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.domain.agente.dinheiro import ticket_de
+from mobia.domain.agente.dinheiro import mudou_de_banda, ticket_de
 from mobia.domain.agente.investidor import (
     CAMPOS_DO_INVESTIDOR,
     ExtracaoDoInvestidor,
@@ -22,6 +22,7 @@ from mobia.domain.agente.investidor import (
 from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.auditoria import causas_do_recalculo
 from mobia.domain.context.models import (
+    ConversationIntentAudit,
     ConversationSummary,
     LeadQualification,
     LeadScoreAudit,
@@ -271,6 +272,17 @@ async def ler_estado(
     return resultado.scalar_one_or_none()
 
 
+def intencao_e_gravavel(intencao: Intencao) -> bool:
+    """Esta intencao chega a ser gravada em `lead_qualification.intencao`?
+
+    Extraida de `campos_a_gravar` na TEC-136 para ter UM dono. A pergunta
+    passou a ter um segundo interessado (`aplicar_mudanca_de_intencao`, que so
+    descarta quando a intencao de fato muda a coluna), e duas copias da regra
+    divergiriam no dia em que uma oitava intencao entrasse no enum.
+    """
+    return intencao not in (Intencao.FORA_DE_ESCOPO, Intencao.INDEFINIDA)
+
+
 def campos_a_gravar(intencao: Intencao, extracao: Extracao) -> dict[str, Any]:
     """A regra unica de acumulacao do estado de qualificacao.
 
@@ -300,8 +312,11 @@ def campos_a_gravar(intencao: Intencao, extracao: Extracao) -> dict[str, Any]:
       vem de fora, do classificador, e nunca da extracao -- a tabela
       `conversation_intent` e esta coluna guardam o mesmo fato, e duas fontes
       para ele divergiriam, o que apareceria como bug de score na TEC-150.
-    - **`INDEFINIDA` nao sobrescreve `intencao`** (TEC-147). Era a unica
-      coluna desta tabela que violava o "None nao apaga" logo acima:
+    - **`INDEFINIDA` nao sobrescreve `intencao`** (TEC-147). Quem responde
+      "esta intencao chega a ser gravada?" e `intencao_e_gravavel`, a funcao
+      imediatamente anterior, desde que a TEC-136 lhe deu um segundo
+      interessado. Era a unica coluna desta tabela que violava o "None nao
+      apaga" logo acima:
       `INDEFINIDA` e, no comentario do proprio enum, "ainda nao da para
       saber", e o classificador pode devolve-la em qualquer turno -- um
       "obrigado" no meio da conversa basta. Deixando-a sobrescrever, um lead
@@ -321,7 +336,7 @@ def campos_a_gravar(intencao: Intencao, extracao: Extracao) -> dict[str, Any]:
     """
     if intencao is Intencao.FORA_DE_ESCOPO:
         return {}
-    if intencao is Intencao.INDEFINIDA:
+    if not intencao_e_gravavel(intencao):
         return extracao.preenchidos()
     return {"intencao": intencao.value, **extracao.preenchidos()}
 
@@ -358,10 +373,20 @@ def campos_a_marcar(perguntou: Iterable[str], preenchidos: Iterable[str]) -> set
 
     A subtracao usa os campos **deste** turno, e nao o estado acumulado, para
     nao pagar uma consulta a mais. Uma marca sobre campo que ja estava
-    preenchido de um turno anterior e possivel por esse caminho, e e inerte:
-    `_texto_do_estado` mostra o valor quando ele existe, e a marca so aparece
-    onde nao ha valor. Valor vence marca -- e um valor, uma vez gravado,
-    nunca e apagado (`None` nao apaga).
+    preenchido de um turno anterior e possivel por esse caminho, e fica inerte
+    enquanto o valor existir: `_texto_do_estado` mostra o valor quando ele ha,
+    e a marca so aparece onde nao ha valor. Valor vence marca.
+
+    **Inerte nao e permanente, desde a TEC-136.** Ate ela, era: nenhum caminho
+    de gravacao apagava coluna, entao um valor gravado nunca sumia e a marca
+    escondida atras dele nunca voltava a aparecer. `aplicar_mudanca_de_intencao`
+    (neste arquivo) abriu a excecao de proposito e anula as duas colunas do
+    orcamento quando a intencao troca de banda -- e por isso ela remove a marca
+    do orcamento das duas colunas de marca no mesmo UPDATE. Sem essa remocao,
+    a marca que dormia atras do valor acordaria no instante em que o valor
+    sumisse, e o agente trataria como ja perguntado um orcamento que ele nunca
+    perguntou naquela banda. Qualquer descarte futuro de coluna tem de fazer o
+    mesmo pela marca dela.
     """
     conhecidos: set[str] = set()
     ignorados: list[str] = []
@@ -509,7 +534,10 @@ async def gravar_estado(
     perguntou: Iterable[str] = (),
     recusou: Iterable[str] = (),
 ) -> LeadQualification | None:
-    """Upsert do estado de qualificacao. `None` no campo nao apaga o que havia.
+    """Upsert do estado de qualificacao. `None` no campo nao apaga o que havia
+    -- a unica excecao mora em `aplicar_mudanca_de_intencao`, e so la (RN-03.3,
+    TEC-136): aquele caminho descarta o orcamento por um UPDATE proprio,
+    ANTES desta funcao na mesma transacao, quando a intencao troca de banda.
 
     Devolve a linha que o `RETURNING` trouxe -- o que o banco de fato gravou,
     ja acumulado com o que a linha tinha antes deste turno, e nao so os
@@ -667,6 +695,163 @@ async def gravar_estado(
         .execution_options(populate_existing=True)
     )
     return resultado.scalar_one()
+
+
+@dataclass(frozen=True)
+class MudancaDeIntencao:
+    """O que a troca de intencao deste turno mudou. TEC-136."""
+
+    de: str | None
+    para: str
+    faixa_descartada: bool
+
+
+async def aplicar_mudanca_de_intencao(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    intencao: Intencao,
+) -> MudancaDeIntencao | None:
+    """Descarta o que a intencao nova invalida e registra a troca. RN-03.3.
+
+    Devolve `None` quando nao houve mudanca a aplicar: intencao que nao se
+    grava, conversa sem estado ainda, ou intencao igual a que ja estava.
+
+    **A excecao ao "None no campo nao apaga" mora aqui, e so aqui.** A regra de
+    `campos_a_gravar` e de `gravar_estado` segue intacta: nada que venha da
+    extracao apaga coluna nenhuma. Esta funcao e um caminho SEPARADO, que nao
+    apaga por ausencia de valor e sim porque a banda de plausibilidade mudou --
+    e por isso ela toca UMA coisa, o orcamento, e nenhum outro campo.
+
+    **Roda ANTES de `gravar_estado`, e a ordem e o desenho.** O descarte e um
+    UPDATE que anula a faixa; o upsert de `gravar_estado` vem depois e escreve
+    por cima o valor novo quando o lead o disse no mesmo turno ("na verdade
+    quero comprar, ate 800 mil"). Invertendo a ordem, o descarte apagaria o
+    numero que o lead acabou de dar.
+
+    **Nao cria linha.** Primeiro turno da conversa nao tem estado a invalidar,
+    e criar linha aqui moveria o score do lead pelo mesmo argumento que o
+    `if not campos:` de `gravar_estado` registra por extenso.
+
+    **Nao escreve `updated_at`, e isso depende da ordem acima.** Quem descarta
+    tem intencao gravavel por construcao (a guarda e a primeira linha), entao
+    `gravar_estado` sempre vem atras na mesma transacao e carimba a coluna.
+    Quem mudar a ordem, ou passar a chamar esta funcao sem `gravar_estado`
+    depois, deixa a linha com valor apagado e `updated_at` velho.
+
+    **O lock nao e decorativo.** Turnos da mesma conversa nao sao
+    serializados -- a deduplicacao do ARQ e por mensagem, nao por conversa --,
+    e sem ele dois turnos concorrentes leem a mesma intencao anterior e ambos
+    gravam linha de historico para a mesma troca. E a corrida que
+    `registrar_recalculo` fechou com este mesmo cadeado. Ele ja e tomado nesta
+    transacao, mais adiante, por aquela funcao: tomar aqui antes preserva a
+    ordem de aquisicao e nao cria deadlock novo.
+    """
+    if not intencao_e_gravavel(intencao):
+        return None
+
+    estado = (
+        await session.execute(
+            select(LeadQualification)
+            .where(
+                LeadQualification.channel == channel,
+                LeadQualification.conversation_key == conversation_key,
+            )
+            .with_for_update()
+            # `populate_existing` aqui NAO e o mesmo caso do `RETURNING` de
+            # `gravar_estado`, que protege o valor devolvido a quem chama: aqui
+            # ele protege o LOCK. Quem chama esta funcao no turno ja leu o
+            # estado nesta sessao para montar o prompt, entao a linha esta no
+            # identity map; sem isto o ORM devolveria a instancia velha e
+            # jogaria fora justamente as colunas que o `FOR UPDATE` acabou de
+            # reler depois de esperar o concorrente. A decisao sairia do
+            # snapshot de ANTES do cadeado, que e a corrida que o cadeado
+            # existe para fechar. Tirar esta linha nao quebra nenhum teste que
+            # so use uma sessao, entao ela tem um teste proprio:
+            # `test_a_decisao_sai_da_linha_sob_o_cadeado_e_nao_do_cache_da_sessao`.
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if estado is None:
+        return None
+
+    # Sem guarda de valor fora do enum de proposito: `lead_qualification.intencao`
+    # so e escrita por `campos_a_gravar`, sempre a partir de `Intencao.value`, e
+    # defender de um caso que nenhum caminho produz esconderia a corrupcao real
+    # no dia em que um caminho novo a produzisse.
+    antiga = Intencao(estado.intencao) if estado.intencao is not None else None
+    if antiga is intencao:
+        return None
+
+    # A origem sai da instancia ANTES do UPDATE abaixo. Ele e um UPDATE ORM, e
+    # a sincronizacao de sessao expira os atributos da linha que ele casou:
+    # ler `estado.intencao` depois dispararia recarga, e o historico passaria a
+    # depender do que a recarga devolvesse em vez do que o cadeado leu.
+    de = estado.intencao
+
+    descartar = mudou_de_banda(antiga, intencao)
+    if descartar:
+        await session.execute(
+            update(LeadQualification)
+            .where(
+                LeadQualification.channel == channel,
+                LeadQualification.conversation_key == conversation_key,
+            )
+            .values(
+                faixa_preco_min_centavos=None,
+                faixa_preco_max_centavos=None,
+                # A marca sai junto com o valor, senao o descarte se fecha
+                # sozinho: o agente trataria o orcamento como ja perguntado e
+                # nunca reperguntaria o da banda nova.
+                #
+                # **As DUAS colunas de marca, e nao so a primeira.**
+                # `_texto_do_estado` monta os marcados como a uniao delas
+                # (`montagem.py`), e as duas guardam o orcamento sob o mesmo
+                # nome canonico. Limpar so uma deixa a outra emitindo
+                # `faixa_preco_max: (perguntado, sem resposta)` sobre um valor
+                # que acabou de ser apagado -- o pior dos dois mundos: o lead
+                # perde o numero E nao e reperguntado.
+                #
+                # Sim, isto apaga uma recusa, e a TEC-148 promete nao
+                # reperguntar o que o lead recusou. A promessa continua de pe
+                # porque o sujeito dela mudou: recusar dizer o orcamento de
+                # ALUGUEL nao e recusar dizer o de COMPRA, pelo mesmo
+                # argumento que faz o NUMERO cair -- um valor de uma banda nao
+                # significa nada na outra, e uma recusa tampouco. Nao limpar
+                # tambem nao seria neutro: `esta_qualificado` e
+                # `calcular_score` leem `campos_recusados`, entao a recusa da
+                # era de aluguel seguiria descontando do score um orcamento
+                # que nem existe mais.
+                #
+                # `array_remove` e o mesmo built-in que `_sem_os_respondidos`
+                # usa, e pela mesma razao: Postgres nao tem subtracao de array.
+                # O nome vem de `_MARCA_DO_ORCAMENTO` porque a marca tem tres
+                # grafias no repo e escrever qualquer uma a mao reintroduziria
+                # a divergencia que aquela constante fechou.
+                perguntados_sem_resposta=func.array_remove(
+                    LeadQualification.perguntados_sem_resposta, _MARCA_DO_ORCAMENTO
+                ),
+                campos_recusados=func.array_remove(
+                    LeadQualification.campos_recusados, _MARCA_DO_ORCAMENTO
+                ),
+            )
+        )
+
+    session.add(
+        ConversationIntentAudit(
+            id=uuid.uuid4(),
+            channel=channel,
+            conversation_key=conversation_key,
+            de=de,
+            para=intencao.value,
+            faixa_descartada=descartar,
+        )
+    )
+    # Flush e nao commit: a sessao e emprestada, como em `gravar_estado`, e a
+    # linha tem de estar visivel a uma leitura posterior na mesma transacao.
+    await session.flush()
+    return MudancaDeIntencao(de=de, para=intencao.value, faixa_descartada=descartar)
 
 
 def _do_vocabulario[V: StrEnum](vocabulario: type[V], bruto: str | None) -> V | None:
@@ -1023,12 +1208,16 @@ async def registrar_recalculo(
     channel: str,
     conversation_key: str,
     gatilhos: tuple[str, ...] = (),
+    causas_externas: tuple[str, ...] = (),
 ) -> Recalculo | None:
     """Recalcula o score do lead e grava a trilha se ele mudou.
 
     Devolve `None` quando **nao havia estado a pontuar**, e um `Recalculo`
-    com `trilha is None` quando havia estado e o resultado foi identico ao
-    ultimo registrado. Os dois casos eram o mesmo `None` ate a TEC-151, e ela
+    com `trilha is None` quando havia estado, o resultado foi identico ao
+    ultimo registrado **e o chamador nao informou `causas_externas`** -- com
+    causa externa a linha nasce mesmo com o resultado identico, que e o ponto
+    do parametro (ver abaixo). Os dois casos eram o mesmo `None` ate a
+    TEC-151, e ela
     os separou porque a temperatura pode mudar num turno em que nenhum dos
     cinco fatores se move -- um gatilho da RN-06.3 e exatamente isso.
 
@@ -1057,12 +1246,40 @@ async def registrar_recalculo(
     `gravar_estado` e este e redundante; no turno SEM campos nao ha upsert, e e
     exatamente o caminho em que a unica mudanca vem da contagem de mensagens.
 
+    **Desde a TEC-136 o upsert nao e mais o primeiro a tomar este cadeado.**
+    `aplicar_mudanca_de_intencao` roda antes dos dois e, quando a intencao do
+    turno e gravavel, faz `SELECT ... FOR UPDATE` sobre a mesma linha ate nos
+    turnos em que devolve `None` -- e sao a maioria, porque a intencao
+    acumulada raramente muda. Nesses turnos o lock daqui e redundante mesmo sem
+    campo nenhum, que era o caso que o paragrafo acima dizia nao ter upsert. Nos
+    outros -- INDEFINIDA e FORA_DE_ESCOPO, que aquela funcao recusa antes de
+    tocar o banco -- nada muda. A ordem de aquisicao e a mesma linha nos dois
+    casos, entao nao ha deadlock novo; a docstring daquela funcao argumenta isso
+    do outro lado, e esta nota existe para a referencia cruzada valer nos dois
+    sentidos.
+
     **A temperatura e resolvida ANTES da trilha, e a ordem e o ponto
     (TEC-151).** Ate esta card a funcao retornava cedo quando `causas` estava
     vazio; nao pode mais, porque um gatilho da RN-06.3 dispara em turno em que
     nenhum dos cinco fatores se move -- o lead pede visita, e o `return None`
     antecipado engoliria o forcamento. Ha teste de guarda para isso:
     `test_o_turno_sem_mudanca_de_score_ainda_resolve_a_temperatura`.
+
+    **`causas_externas` entra na tupla ANTES da guarda `if not causas`, e e ai
+    que esta o ponto (TEC-136).** A tupla vazia continua sendo o sinal de "nao
+    grave" -- nenhum `if` novo decide gravar --, mas ela deixou de sair toda de
+    `causas_do_recalculo`, que so enxerga os cinco fatores. Uma causa informada
+    pelo chamador e um fato sobre a ORIGEM do gatilho, e nao sobre o que se
+    moveu: e razao suficiente para a linha existir mesmo com os cinco fatores
+    identicos. O caso concreto e a troca de intencao do lead, que pode nao
+    mexer em fator nenhum e que a card pede registrada com o motivo. Unindo
+    DEPOIS da guarda, essa troca sumiria da trilha -- que e exatamente o
+    defeito que o parametro existe para fechar.
+
+    **Nao confundir com `gatilhos`.** Aquele alimenta o forcamento de
+    temperatura da RN-06.3 e nao decide nada sobre a trilha; este decide a
+    trilha e nao toca na temperatura. Sao dois assuntos e por isso dois
+    parametros.
     """
     estado = (
         await session.execute(
@@ -1209,7 +1426,11 @@ async def registrar_recalculo(
         )
     ).first()
 
-    causas = causas_do_recalculo(_score_do_registro(ultimo), novo)
+    # As externas primeiro, e nao por estilo: quem le a trilha quer saber o que
+    # DISPAROU o registro antes de ler o que se moveu, e a ordem das derivadas
+    # ja e a de `Score` (a docstring de `causas_do_recalculo` conta com isso
+    # para o teste comparar por igualdade). Prefixar preserva as duas ordens.
+    causas = causas_externas + causas_do_recalculo(_score_do_registro(ultimo), novo)
     if not causas:
         return Recalculo(
             trilha=None,

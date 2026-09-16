@@ -361,6 +361,54 @@ _BANDA_FROUXA = (
 )
 
 
+def mudou_de_banda(antiga: Intencao | None, nova: Intencao) -> bool:
+    """A intencao nova admite valores de outra faixa que a antiga? TEC-136.
+
+    Existe aqui, e nao em `context/`, porque a resposta e uma consequencia de
+    `_BANDAS` -- a mesma tabela que `parsear` usa para recusar numero
+    implausivel. Duas copias dessa tabela divergiriam em silencio, e a
+    divergencia so apareceria como orcamento sobrevivendo a uma troca que
+    deveria te-lo apagado.
+
+    `antiga is None` e "a conversa ainda nao tinha intencao acumulada quando o
+    numero foi dito", e devolve True de proposito: o valor entrou sob
+    `_BANDA_FROUXA`, que e a uniao das duas e portanto nao validou nada. E a
+    porta que o comentario de `piso_do_numero_nu` descreve.
+
+    **Intencao fora de `_BANDAS` devolve False nas DUAS pontas, e por razoes
+    diferentes -- e por isso sao duas guardas, e nao uma.**
+    `nova` sem banda devolve False porque a banda frouxa nao restringe: nao ha
+    faixa nova que o numero guardado possa violar. `antiga` sem banda devolve
+    False porque a intencao que estava na coluna nao diz sob que banda o numero
+    entrou, entao ela nao e evidencia de troca nenhuma. Das tres sem banda, so
+    SUPORTE_CONTRATO chega aqui como `antiga`: `intencao_e_gravavel`
+    (repositorio.py) mantem INDEFINIDA e FORA_DE_ESCOPO fora da coluna.
+
+    A guarda de `antiga` e da fix wave desta card, e ela conserta perda de
+    dado: `_BANDAS.get(antiga)` devolvia `None` para toda intencao fora da
+    tabela, e `None` difere de qualquer banda real. Uma conversa de COMPRA com
+    orcamento gravado que desviasse por uma duvida de contrato -- turno
+    SUPORTE_CONTRATO, que e gravavel -- perdia o orcamento na volta a COMPRA,
+    com as duas pontas na MESMA banda. E o defeito da card ao contrario.
+
+    O preco aceito e o simetrico: um numero dito DURANTE o turno de
+    SUPORTE_CONTRATO sobrevive para dentro de COMPRA sem ter sido validado por
+    banda nenhuma. E o vazamento que o comentario de `_BANDA_FROUXA` ja declara
+    fora de escopo (o conserto e no filtro de gravacao, nao aqui), e ele custa
+    menos que apagar orcamento valido a cada desvio pelo suporte.
+    """
+    if nova not in _BANDAS:
+        return False
+    if antiga is None:
+        return True
+    if antiga not in _BANDAS:
+        return False
+    # `is` e nao `==`: as duas bandas de compra sao a MESMA tupla de modulo, e
+    # o que se pergunta e se as duas intencoes partilham a entrada da tabela.
+    # Os dois lados estao em `_BANDAS` por causa das guardas acima.
+    return _BANDAS[antiga] is not _BANDAS[nova]
+
+
 class MotivoDaRecusa(StrEnum):
     """Tres motivos que mandam quem investiga para lados diferentes.
 
@@ -427,13 +475,24 @@ def parsear(expressao: str, intencao: Intencao) -> FaixaDePreco | Recusa:
     # O motivo e que a banda frouxa nao e uma banda de verdade: e a ausencia de
     # uma. Sem esta linha, "uns 500" com intencao INDEFINIDA -- o momento comum
     # da PRIMEIRA mencao de orcamento -- era aceito como R$ 500, que e
-    # exatamente o defeito que abre o desenho desta card. E ele nao se corrige
-    # sozinho depois: `campos_a_gravar` nunca APAGA e turno nenhum revalida o
-    # que ja esta gravado, entao o valor admitido enquanto a intencao era
-    # INDEFINIDA sobrevive para dentro de uma conversa depois classificada
-    # COMPRA e vira o filtro da busca la.
+    # exatamente o defeito que abre o desenho desta card. `campos_a_gravar`
+    # continua nunca apagando por si so, e turno nenhum revalida o que ja esta
+    # gravado -- mas desde a TEC-136 quem fecha esta porta e
+    # `aplicar_mudanca_de_intencao` (RN-03.3, repositorio.py): no turno em que
+    # `mudou_de_banda` acha a troca, ela descarta a faixa gravada antes que o
+    # valor admitido sob INDEFINIDA sobreviva para virar o filtro de uma busca
+    # ja classificada COMPRA.
     #
-    # Vale para as tres intencoes sem banda propria, e nao so para INDEFINIDA:
+    # **Aquela porta so fecha para INDEFINIDA**, e nao para as tres sem banda.
+    # E ela que deixa a coluna `intencao` NULA (`campos_a_gravar` nao a grava),
+    # e e o NULO que `mudou_de_banda` le como "entrou sob banda frouxa".
+    # SUPORTE_CONTRATO vai para a coluna como qualquer intencao gravavel, e
+    # desde a fix wave da TEC-136 nao dispara descarte na volta -- o preco de
+    # nao destruir orcamento valido a cada desvio pelo suporte, escrito por
+    # extenso na docstring de `mudou_de_banda`. FORA_DE_ESCOPO nao chega a
+    # gravar nada, entao nao tem porta.
+    #
+    # A linha ABAIXO, essa sim, vale para as tres intencoes sem banda propria:
     # a regra e da banda frouxa, e o modulo nao tem por que saber qual dos
     # membros dela esta em jogo -- e a mesma razao pela qual `_BANDAS` e
     # tabela parcial com fallback em vez de mapa total do enum.

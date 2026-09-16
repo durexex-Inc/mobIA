@@ -1,0 +1,721 @@
+"""O descarte do orcamento quando a intencao troca de banda. TEC-136."""
+
+import asyncio
+import uuid
+
+import pytest
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from mobia.domain.agente.schemas import Extracao, Intencao
+from mobia.domain.agente.turno import TEXTO_DA_BUSCA_INCONCLUSIVA
+from mobia.domain.context.auditoria import (
+    CAUSA_CAMPOS_OBRIGATORIOS,
+    CAUSA_MUDANCA_DE_INTENCAO,
+    CAUSA_PRIMEIRO_CALCULO,
+)
+from mobia.domain.context.models import (
+    ConversationIntentAudit,
+    LeadQualification,
+    LeadScoreAudit,
+)
+from mobia.domain.context.montagem import _MARCA_SEM_RESPOSTA, _texto_do_estado
+from mobia.domain.context.repositorio import (
+    aplicar_mudanca_de_intencao,
+    gravar_estado,
+    ler_estado,
+)
+
+CANAL = "whatsapp"
+
+# A conversa que `rodar_turno` semeia, igual a `CONVERSA_AGENTE` de
+# `tests/conftest.py`. E ela que faz os dois turnos dos testes de turno cairem
+# na MESMA conversa -- sem isso o segundo turno nao enxergaria o estado do
+# primeiro e nao haveria troca de intencao para registrar. Repetida aqui como
+# `test_encaminhamento_por_intencao.py` a repete; e o padrao da casa para
+# constante de fixture.
+CONVERSA_DO_TURNO = "5511911112222"
+
+
+async def _semear(session, chave: str, intencao: Intencao, **extras) -> None:
+    """Grava um estado inicial pelo caminho de producao, e nao por INSERT cru.
+
+    Passar pelo `gravar_estado` de verdade e o que garante que o estado de
+    partida destes testes e um estado que o turno de fato produz -- um INSERT
+    a mao poderia montar combinacao que `campos_a_gravar` nunca gera.
+    """
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key=chave,
+        intencao=intencao,
+        extracao=Extracao(**extras),
+    )
+    await session.flush()
+
+
+async def test_trocar_de_aluguel_para_compra_descarta_o_orcamento(session) -> None:
+    """O cenario 2 do Gherkin: o valor mensal nao vira faixa de preco de compra.
+
+    R$ 2.500 e um aluguel plausivel e um preco de compra absurdo. Ate esta
+    card ele sobrevivia a troca e virava o filtro da busca de compra.
+    """
+    # 250_000 centavos = R$ 2.500. Dentro de `_BANDA_DE_ALUGUEL` (R$ 300 a
+    # R$ 200 mil) e ABAIXO do piso de `_BANDA_DE_COMPRA` (R$ 30 mil): e o par
+    # de numeros que torna o cenario da card verificavel em vez de plausivel.
+    await _semear(
+        session,
+        "5511900000001",
+        Intencao.ALUGUEL,
+        faixa_preco_max_centavos=250_000,
+        regiao="zona sul",
+        quartos=2,
+    )
+
+    mudanca = await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000001",
+        intencao=Intencao.COMPRA,
+    )
+
+    assert mudanca is not None
+    assert mudanca.faixa_descartada is True
+
+    estado = await ler_estado(session, CANAL, "5511900000001")
+    assert estado is not None
+    assert estado.faixa_preco_min_centavos is None
+    assert estado.faixa_preco_max_centavos is None
+    # O cenario 1 do Gherkin, na mesma asserta: o que continua valido fica.
+    assert estado.regiao == "zona sul"
+    assert estado.quartos == 2
+
+
+async def test_o_orcamento_volta_a_ser_perguntavel(session) -> None:
+    """A D4: descartar o campo sem tirar a marca nao repergunta nada.
+
+    Afirma o EFEITO no texto que o modelo le, e nao o conteudo do array. O
+    array e meio: quem decide se o agente repergunta e `_texto_do_estado`, que
+    emite `faixa_preco_max: (perguntado, sem resposta)` enquanto a marca
+    estiver la. Com essa linha no prompt o orcamento e assunto encerrado, e o
+    cenario 2 do Gherkin ("E o agente pergunta o orcamento de compra") nunca
+    acontece. Sumir do texto -- sem valor e sem marca -- e o unico estado em
+    que o agente volta a perguntar.
+    """
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000002",
+        intencao=Intencao.ALUGUEL,
+        extracao=Extracao(regiao="centro"),
+        perguntou=("faixa_preco_expressao",),
+    )
+    await session.flush()
+    antes = await ler_estado(session, CANAL, "5511900000002")
+    assert antes is not None
+    assert f"faixa_preco_max: {_MARCA_SEM_RESPOSTA}" in _texto_do_estado(antes)
+
+    await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000002",
+        intencao=Intencao.COMPRA,
+    )
+
+    depois = await ler_estado(session, CANAL, "5511900000002")
+    assert depois is not None
+    assert "faixa_preco_max" not in _texto_do_estado(depois)
+
+
+async def test_mesma_banda_preserva_o_orcamento(session) -> None:
+    """A contraprova. Sem ela, um descarte incondicional passaria nos outros."""
+    await _semear(
+        session,
+        "5511900000003",
+        Intencao.COMPRA,
+        faixa_preco_max_centavos=80_000_000,
+    )
+
+    mudanca = await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000003",
+        intencao=Intencao.INVESTIMENTO,
+    )
+
+    assert mudanca is not None
+    assert mudanca.faixa_descartada is False
+    estado = await ler_estado(session, CANAL, "5511900000003")
+    assert estado is not None
+    assert estado.faixa_preco_max_centavos is not None
+
+
+async def test_turno_indefinido_nao_muda_nada(session) -> None:
+    """INDEFINIDA nunca grava intencao, entao nunca pode disparar descarte.
+
+    E o turno mais comum de todos depois do primeiro: um "obrigado" no meio da
+    conversa classifica INDEFINIDA. Se ele descartasse, o orcamento do lead
+    evaporaria por educacao.
+    """
+    await _semear(
+        session,
+        "5511900000004",
+        Intencao.ALUGUEL,
+        faixa_preco_max_centavos=250_000,
+    )
+
+    mudanca = await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000004",
+        intencao=Intencao.INDEFINIDA,
+    )
+
+    assert mudanca is None
+    estado = await ler_estado(session, CANAL, "5511900000004")
+    assert estado is not None
+    assert estado.faixa_preco_max_centavos is not None
+
+
+async def test_a_mudanca_grava_uma_linha_de_historico(session) -> None:
+    """Uma linha por troca, com origem e destino."""
+    await _semear(session, "5511900000005", Intencao.ALUGUEL, regiao="centro")
+
+    await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000005",
+        intencao=Intencao.COMPRA,
+    )
+    await session.flush()
+
+    linhas = (
+        await session.scalars(
+            select(ConversationIntentAudit).where(
+                ConversationIntentAudit.conversation_key == "5511900000005"
+            )
+        )
+    ).all()
+    assert len(linhas) == 1
+    assert linhas[0].de == Intencao.ALUGUEL.value
+    assert linhas[0].para == Intencao.COMPRA.value
+
+
+async def test_a_intencao_repetida_nao_grava_historico(session) -> None:
+    """Todo turno chama esta funcao; so a MUDANCA gera linha.
+
+    Sem esta guarda a tabela ganharia uma linha por turno, que e exatamente o
+    que o docstring do modelo diz que ela nao e.
+    """
+    await _semear(session, "5511900000006", Intencao.COMPRA, regiao="centro")
+
+    mudanca = await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000006",
+        intencao=Intencao.COMPRA,
+    )
+    await session.flush()
+
+    assert mudanca is None
+    linhas = (
+        await session.scalars(
+            select(ConversationIntentAudit).where(
+                ConversationIntentAudit.conversation_key == "5511900000006"
+            )
+        )
+    ).all()
+    assert linhas == []
+
+
+async def test_sem_linha_de_qualificacao_nao_faz_nada(session) -> None:
+    """Primeiro turno da conversa: nao ha estado, nao ha o que descartar.
+
+    `aplicar_mudanca_de_intencao` roda ANTES de `gravar_estado`, entao no
+    primeiro turno a linha ainda nem existe. Devolver None aqui e o que impede
+    a funcao de criar linha -- criar moveria o score do lead pelo mesmo
+    argumento que o `if not campos:` de `gravar_estado` ja registra.
+    """
+    mudanca = await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000007",
+        intencao=Intencao.COMPRA,
+    )
+
+    assert mudanca is None
+    assert await session.get(LeadQualification, (CANAL, "5511900000007")) is None
+
+
+async def test_o_cadeado_serializa_dois_turnos_da_mesma_conversa(
+    session, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """O `FOR UPDATE` e o unico ponto que serializa dois turnos concorrentes.
+
+    A deduplicacao do ARQ e por mensagem, nao por conversa: duas falas do mesmo
+    lead chegando juntas produzem dois jobs em paralelo. Sem o cadeado os dois
+    leem a mesma intencao anterior e ambos gravam linha de historico para a
+    mesma troca. Segue o molde do teste irmao de `registrar_recalculo`: com o
+    cadeado a segunda chamada bloqueia no primeiro statement e o `wait_for`
+    estoura; sem ele a chamada atravessa na hora e nao ha `TimeoutError`.
+
+    A troca e COMPRA -> INVESTIMENTO, da mesma banda, de proposito: ela nao
+    descarta nada, entao a funcao nao emite UPDATE nenhum em
+    `lead_qualification`. E o que faz este teste falar do cadeado na LEITURA.
+    Com uma troca que descarta, o UPDATE tambem bloquearia e o `TimeoutError`
+    apareceria mesmo com o `FOR UPDATE` removido -- o teste passaria afirmando
+    que o cadeado existe quando ele so estaria sendo tomado tarde demais, ja
+    depois da leitura que decide.
+    """
+    await _semear(session, "5511900000008", Intencao.COMPRA, faixa_preco_max_centavos=80_000_000)
+    await session.commit()
+
+    async with session_factory() as segurando, session_factory() as bloqueada:
+        await segurando.execute(
+            select(LeadQualification)
+            .where(
+                LeadQualification.channel == CANAL,
+                LeadQualification.conversation_key == "5511900000008",
+            )
+            .with_for_update()
+        )
+        try:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(
+                    aplicar_mudanca_de_intencao(
+                        bloqueada,
+                        channel=CANAL,
+                        conversation_key="5511900000008",
+                        intencao=Intencao.INVESTIMENTO,
+                    ),
+                    timeout=1,
+                )
+        finally:
+            # Solta o cadeado antes de qualquer outra coisa: sem isto o proximo
+            # teste do arquivo esperaria por ele ate o timeout do pytest.
+            await segurando.rollback()
+            await bloqueada.rollback()
+
+
+async def test_a_decisao_sai_da_linha_sob_o_cadeado_e_nao_do_cache_da_sessao(
+    session, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Tomar o cadeado nao basta: a decisao tem de usar o que ele releu.
+
+    O turno le o estado nesta mesma sessao para montar o prompt, entao a linha
+    ja esta no identity map quando esta funcao roda. Sem `populate_existing`, o
+    ORM devolve a instancia velha e joga fora as colunas que o `FOR UPDATE`
+    acabou de reler -- o cadeado ficaria tomado e inutil.
+
+    Aqui o outro turno ja COMMITOU a troca para COMPRA. Lendo sob o cadeado,
+    `antiga` e COMPRA, nao ha mudanca e nada se grava. Lendo do cache, `antiga`
+    seria ALUGUEL e este turno gravaria uma SEGUNDA linha de historico para a
+    troca que o outro ja registrou -- e descartaria o orcamento de novo.
+    """
+    await _semear(session, "5511900000009", Intencao.ALUGUEL, faixa_preco_max_centavos=250_000)
+    await session.commit()
+
+    cacheado = await ler_estado(session, CANAL, "5511900000009")
+    assert cacheado is not None
+    assert cacheado.intencao == Intencao.ALUGUEL.value
+    await session.commit()
+
+    async with session_factory() as outro_turno:
+        await outro_turno.execute(
+            text(
+                "UPDATE lead_qualification SET intencao = :i "
+                "WHERE channel = :c AND conversation_key = :k"
+            ),
+            {"i": Intencao.COMPRA.value, "c": CANAL, "k": "5511900000009"},
+        )
+        await outro_turno.commit()
+
+    mudanca = await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000009",
+        intencao=Intencao.COMPRA,
+    )
+    await session.flush()
+
+    assert mudanca is None
+    linhas = (
+        await session.scalars(
+            select(ConversationIntentAudit).where(
+                ConversationIntentAudit.conversation_key == "5511900000009"
+            )
+        )
+    ).all()
+    assert linhas == []
+
+
+async def test_a_recusa_do_orcamento_de_aluguel_nao_cala_o_de_compra(session) -> None:
+    """A outra metade da D4: a marca do orcamento mora em DUAS colunas.
+
+    `_texto_do_estado` monta os marcados como a UNIAO de
+    `perguntados_sem_resposta` e `campos_recusados`, e as duas guardam o
+    orcamento sob o mesmo nome canonico. Limpar so uma faz o descarte se fechar
+    sozinho: o prompt continua emitindo
+    `faixa_preco_max: (perguntado, sem resposta)` pela coluna que sobrou, o
+    agente segue tratando o assunto como encerrado e o cenario 2 do Gherkin nao
+    acontece -- agora com o valor apagado por cima, que e o pior dos dois
+    mundos.
+
+    O caminho e comum, nao exotico: o lead de aluguel a quem se perguntou o
+    orcamento e que respondeu "prefiro nao falar disso" e exatamente o cenario
+    titular da TEC-148.
+    """
+    await gravar_estado(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000010",
+        intencao=Intencao.ALUGUEL,
+        extracao=Extracao(regiao="centro"),
+        recusou=("faixa_preco_expressao",),
+    )
+    await session.flush()
+    antes = await ler_estado(session, CANAL, "5511900000010")
+    assert antes is not None
+    assert "faixa_preco_max" in (antes.campos_recusados or [])
+    assert f"faixa_preco_max: {_MARCA_SEM_RESPOSTA}" in _texto_do_estado(antes)
+
+    mudanca = await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000010",
+        intencao=Intencao.COMPRA,
+    )
+
+    assert mudanca is not None
+    assert mudanca.faixa_descartada is True
+    depois = await ler_estado(session, CANAL, "5511900000010")
+    assert depois is not None
+    assert "faixa_preco_max" not in _texto_do_estado(depois)
+    # A coluna, e nao so o texto: `esta_qualificado` e `calcular_score` leem
+    # `campos_recusados` direto. Deixar a recusa da era de aluguel la dentro
+    # seguiria descontando do score um orcamento que nem existe mais.
+    assert "faixa_preco_max" not in (depois.campos_recusados or [])
+
+
+async def test_a_primeira_intencao_descarta_o_numero_dito_sob_banda_frouxa(session) -> None:
+    """A segunda porta do defeito: `de` nulo, que `mudou_de_banda` abre de proposito.
+
+    O produtor e banal. Um primeiro turno que diz "tenho ate 2.500" sem deixar
+    claro se compra ou aluga classifica INDEFINIDA: `campos_a_gravar` grava a
+    extracao e NAO grava `intencao`, entao a linha nasce com a coluna nula e o
+    numero entrou validado so pela banda frouxa, que e a uniao das duas e
+    portanto nao validou nada. Quando a intencao finalmente chega, o numero tem
+    de cair pelo mesmo motivo que cai numa troca de banda.
+
+    A linha de historico existe mesmo sem origem, e e ela que explica o
+    descarte: sem ela o orcamento sumiria sem registro nenhum.
+    """
+    await _semear(
+        session,
+        "5511900000011",
+        Intencao.INDEFINIDA,
+        faixa_preco_max_centavos=250_000,
+        regiao="centro",
+    )
+    partida = await ler_estado(session, CANAL, "5511900000011")
+    assert partida is not None
+    assert partida.intencao is None
+    assert partida.faixa_preco_max_centavos == 250_000
+
+    mudanca = await aplicar_mudanca_de_intencao(
+        session,
+        channel=CANAL,
+        conversation_key="5511900000011",
+        intencao=Intencao.COMPRA,
+    )
+    await session.flush()
+
+    assert mudanca is not None
+    assert mudanca.de is None
+    assert mudanca.faixa_descartada is True
+
+    estado = await ler_estado(session, CANAL, "5511900000011")
+    assert estado is not None
+    assert estado.faixa_preco_max_centavos is None
+    assert estado.regiao == "centro"
+
+    linhas = (
+        await session.scalars(
+            select(ConversationIntentAudit).where(
+                ConversationIntentAudit.conversation_key == "5511900000011"
+            )
+        )
+    ).all()
+    assert len(linhas) == 1
+    assert linhas[0].de is None
+    assert linhas[0].para == Intencao.COMPRA.value
+    assert linhas[0].faixa_descartada is True
+
+
+async def test_a_troca_de_intencao_aparece_na_trilha_do_score(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """O cenario 3 do Gherkin, e o unico ponto em que a D7 muda um invariante.
+
+    `registrar_recalculo` grava a trilha quando `causas_do_recalculo` devolve
+    alguma coisa, e tupla vazia e o sinal declarado de NAO gravar. Uma troca de
+    intencao que nao mova nenhum dos cinco fatores cairia nesse vazio e sumiria
+    -- e a card pede que a mudanca fique registrada COM o motivo. A causa vem
+    do chamador, como as duas que `auditoria.py` ja declara sem produtor.
+
+    **Este teste nao isola a D7 sozinho, e nao tem como.** O descarte do
+    orcamento tira um campo obrigatorio, entao a completude cai 5 pontos e
+    `causas_do_recalculo` acha diferenca por conta propria -- a linha existiria
+    mesmo sem a causa do chamador. O que se afirma aqui e que a causa da troca
+    entra JUNTO das outras, que e o cenario da card. Quem prova que a causa
+    externa e o que FAZ a linha existir e o teste seguinte, em que nenhum dos
+    cinco fatores se move.
+    """
+    await rodar_turno(
+        session,
+        classificador_fake(
+            Intencao.ALUGUEL,
+            extracao=Extracao(faixa_preco_max_centavos=250_000, regiao="zona sul"),
+        ),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="procuro apartamento para alugar na zona sul ate 2500",
+    )
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.COMPRA, extracao=Extracao()),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="na verdade quero comprar",
+    )
+
+    trilha = (
+        await session.scalars(
+            select(LeadScoreAudit)
+            .where(LeadScoreAudit.conversation_key == CONVERSA_DO_TURNO)
+            .order_by(LeadScoreAudit.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    assert trilha is not None
+    assert CAUSA_MUDANCA_DE_INTENCAO in trilha.causas
+    # A companheira que o descarte produz, afirmada de proposito: sem ela este
+    # teste nao diria que a uniao PRESERVA o que o diff achou, e uma
+    # implementacao que substituisse as causas derivadas pela externa passaria.
+    assert CAUSA_CAMPOS_OBRIGATORIOS in trilha.causas
+    # A ORDEM, e nao so a presenca. `registrar_recalculo` argumenta por extenso
+    # que as externas vem primeiro -- quem le a trilha quer saber o que
+    # disparou o registro antes de ler o que se moveu --, e este e o unico
+    # ponto que prende o argumento: sem esta linha, trocar a soma para
+    # `causas_do_recalculo(...) + causas_externas` tornaria aquele comentario
+    # falso sem reprovar teste nenhum.
+    assert trilha.causas[0] == CAUSA_MUDANCA_DE_INTENCAO
+
+
+async def test_a_troca_que_nao_move_fator_nenhum_ainda_grava_a_trilha(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """A D7 isolada: a uniao vem ANTES da guarda `if not causas`.
+
+    Aqui o lead nunca disse orcamento, entao o descarte nao tira campo
+    obrigatorio nenhum e os cinco fatores ficam identicos entre os dois turnos
+    -- completude 10 (intencao e regiao), urgencia 0, catalogo 0, engajamento
+    10 (a faixa de baixo vai de 1 a 5 mensagens) e capacidade 6. Sem a causa
+    do chamador, `causas_do_recalculo` devolveria tupla vazia e a troca de
+    ALUGUEL para COMPRA sumiria da trilha.
+
+    A asserta e por igualdade, e nao por pertinencia: e ela que afirma que a
+    linha existe SO por causa da causa externa. Se algum fator se mexesse, a
+    lista viria maior e o teste nao provaria mais nada sobre a guarda.
+    """
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.ALUGUEL, extracao=Extracao(regiao="zona sul")),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="procuro apartamento para alugar na zona sul",
+    )
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.COMPRA, extracao=Extracao()),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="na verdade quero comprar",
+    )
+
+    trilhas = (
+        await session.scalars(
+            select(LeadScoreAudit)
+            .where(LeadScoreAudit.conversation_key == CONVERSA_DO_TURNO)
+            .order_by(LeadScoreAudit.created_at)
+        )
+    ).all()
+    assert [linha.causas for linha in trilhas] == [
+        [CAUSA_PRIMEIRO_CALCULO],
+        [CAUSA_MUDANCA_DE_INTENCAO],
+    ]
+
+
+async def test_o_eco_do_orcamento_velho_no_turno_da_troca_nao_e_invencao(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake, caplog
+) -> None:
+    """O turno titular do Gherkin nao pode ser engolido pela guarda da TEC-161.
+
+    A prosa deste turno foi gerada contra o prompt de ANTES do descarte, que
+    mostrava `faixa_preco_max: R$ 2.500` -- `montar_contexto` ate instrui o
+    modelo a ecoar o que o lead disse. O descarte roda depois da geracao, e sem
+    a excecao a faixa que a guarda enxerga fica `(None, None)`, que `_na_faixa`
+    le como AUSENCIA de declaracao: todo valor da prosa vira divergencia.
+
+    O estrago e triplo e cai justo no cenario 2 da card: o lead recebe
+    `TEXTO_DA_BUSCA_INCONCLUSIVA` em vez da reperguntada que o descarte existe
+    para provocar, a repergunta some, e sai um ERROR de `citacao.bloqueada` num
+    canal reservado a invencao do modelo -- aqui sobre um numero que o proprio
+    lead deu.
+    """
+    await rodar_turno(
+        session,
+        classificador_fake(
+            Intencao.ALUGUEL,
+            extracao=Extracao(faixa_preco_max_centavos=250_000, regiao="zona sul"),
+        ),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="procuro apartamento para alugar na zona sul ate 2500",
+    )
+
+    eco = "Entendi! Voce procurava aluguel ate R$ 2.500. Para compra, qual seu orcamento?"
+    outbound = outbound_fake()
+    with caplog.at_level("ERROR"):
+        await rodar_turno(
+            session,
+            classificador_fake(
+                Intencao.COMPRA,
+                extracao=Extracao(),
+                resposta=eco,
+                perguntou=("faixa_preco_expressao",),
+            ),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+            texto="na verdade quero comprar",
+        )
+
+    assert outbound.entregues[-1] == eco
+    assert TEXTO_DA_BUSCA_INCONCLUSIVA not in outbound.entregues[-1]
+    assert "citacao.bloqueada" not in caplog.text
+
+
+async def test_o_numero_novo_do_mesmo_turno_sobrevive_ao_descarte(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """O teste que o desenho pede e que prende o PORQUE da ordem das chamadas.
+
+    "ALUGUEL -> COMPRA com numero novo no mesmo turno: a faixa nova e gravada,
+    e nao descartada." O lead que diz "na verdade quero comprar, ate 800 mil"
+    da a troca e o numero na MESMA fala: `aplicar_mudanca_de_intencao` anula a
+    faixa de aluguel e `gravar_estado`, logo atras na mesma transacao, escreve
+    a de compra por cima. Invertida a ordem, o descarte apagaria justamente o
+    numero que o lead acabou de dar -- e nenhum outro teste pega isso, porque
+    todos os demais trocam a intencao sem numero novo.
+
+    A prosa ecoa o numero NOVO de proposito, e isso guarda a segunda passada da
+    guarda de citacao (`turno.py`): trocar aquela passada por "use sempre a
+    faixa de antes do turno" -- que e a leitura curta do conserto -- faria
+    R$ 800 mil virar divergencia contra a faixa de aluguel de R$ 2.500 e o lead
+    receberia `TEXTO_DA_BUSCA_INCONCLUSIVA` no lugar da confirmacao.
+    """
+    eco_do_numero_novo = "Fechado, vou procurar imoveis a venda ate R$ 800.000."
+    await rodar_turno(
+        session,
+        classificador_fake(
+            Intencao.ALUGUEL,
+            extracao=Extracao(faixa_preco_max_centavos=250_000, regiao="zona sul"),
+        ),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="procuro apartamento para alugar na zona sul ate 2500",
+    )
+
+    outbound = outbound_fake()
+    await rodar_turno(
+        session,
+        classificador_fake(
+            Intencao.COMPRA,
+            extracao=Extracao(faixa_preco_max_centavos=80_000_000),
+            resposta=eco_do_numero_novo,
+        ),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        texto="na verdade quero comprar, ate 800 mil",
+    )
+
+    assert outbound.entregues[-1] == eco_do_numero_novo
+    estado = await ler_estado(session, CANAL, CONVERSA_DO_TURNO)
+    assert estado is not None
+    assert estado.faixa_preco_max_centavos == 80_000_000
+    assert estado.intencao == Intencao.COMPRA.value
+    # A linha de historico diz que o descarte ACONTECEU -- o numero novo nao
+    # sobreviveu por o descarte nao ter rodado, e sim por ter rodado antes.
+    linhas = (
+        await session.scalars(
+            select(ConversationIntentAudit).where(
+                ConversationIntentAudit.conversation_key == CONVERSA_DO_TURNO
+            )
+        )
+    ).all()
+    assert [(linha.de, linha.para, linha.faixa_descartada) for linha in linhas] == [
+        (Intencao.ALUGUEL.value, Intencao.COMPRA.value, True)
+    ]
+
+
+def _linha_da_trilha(chave: str) -> ConversationIntentAudit:
+    return ConversationIntentAudit(
+        id=uuid.uuid4(),
+        channel=CANAL,
+        conversation_key=chave,
+        de=Intencao.ALUGUEL.value,
+        para=Intencao.COMPRA.value,
+        faixa_descartada=True,
+    )
+
+
+async def test_update_na_trilha_e_recusado_pela_trigger(session) -> None:
+    """Append-only e a justificativa inteira da tabela, e nada a provava.
+
+    Mesma forma do irmao de `lead_score_audit`
+    (`test_update_e_recusado_pela_trigger`, `test_auditoria_score.py`) e pela
+    mesma razao: a trigger da 0035 nasce de dois `op.execute`, fora do
+    autogenerate, entao nenhum teste de modelo passa perto dela. Apagar aquelas
+    duas linhas da migration deixaria a suite verde com a trilha editavel.
+    """
+    session.add(_linha_da_trilha("5511900000012"))
+    await session.commit()
+
+    with pytest.raises(DBAPIError, match="imutavel"):
+        await session.execute(text("UPDATE conversation_intent_audit SET faixa_descartada = false"))
+
+    # A transacao fica abortada depois da excecao do Postgres; sem isto o
+    # teardown da fixture reclama em vez de fechar limpo.
+    await session.rollback()
+
+
+async def test_delete_na_trilha_continua_livre(session) -> None:
+    """Imutavel e "nao se altera o que foi registrado", e a 0035 diz isso por
+    extenso: a trigger e `BEFORE UPDATE`, nao `BEFORE DELETE`, porque a
+    retencao da RNF-18 precisa que apagar continue possivel."""
+    session.add(_linha_da_trilha("5511900000013"))
+    await session.commit()
+
+    await session.execute(text("DELETE FROM conversation_intent_audit"))
+    await session.commit()

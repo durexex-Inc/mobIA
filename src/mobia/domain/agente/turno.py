@@ -41,11 +41,13 @@ from mobia.domain.agente.repositorio import (
 )
 from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.atendimento.repositorio import esta_silenciada
+from mobia.domain.context.auditoria import CAUSA_MUDANCA_DE_INTENCAO
 from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
 from mobia.domain.context.qualificacao import esta_qualificado, excedeu_o_teto
 from mobia.domain.context.repositorio import (
+    aplicar_mudanca_de_intencao,
     contar_perguntas,
     gravar_estado,
     gravar_investidor,
@@ -1470,6 +1472,25 @@ async def executar_turno(
             confianca=gerada.confianca,
             modelo=gerada.modelo,
         )
+        # TEC-136, RN-03.3. **Antes de `gravar_estado`, e a ordem e o desenho.**
+        # Esta chamada anula a faixa de preco quando a banda de plausibilidade
+        # muda; o upsert de `gravar_estado` vem depois e escreve por cima o
+        # numero novo quando o lead o disse no MESMO turno ("na verdade quero
+        # comprar, ate 800 mil"). Invertidas, o descarte apagaria justamente o
+        # numero que o lead acabou de dar.
+        #
+        # **E antes de `registrar_recalculo` pela outra metade da razao.**
+        # Aquele toma o mesmo `SELECT ... FOR UPDATE` de `lead_qualification`;
+        # tomar o cadeado aqui primeiro preserva a ordem de aquisicao, que e o
+        # que sustenta o "nao cria deadlock novo" da docstring de
+        # `aplicar_mudanca_de_intencao`. As duas metades estao escritas la por
+        # extenso -- quem for mover esta linha leia aquela docstring antes.
+        mudanca = await aplicar_mudanca_de_intencao(
+            session,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+            intencao=gerada.intencao,
+        )
         depois_do_estado = await gravar_estado(
             session,
             channel=message.channel,
@@ -1496,6 +1517,12 @@ async def executar_turno(
             channel=message.channel,
             conversation_key=message.conversation_key,
             gatilhos=gatilhos,
+            # TEC-136. A troca de intencao pode nao mexer em nenhum dos cinco
+            # fatores, e a tupla vazia de `causas_do_recalculo` seria o sinal
+            # de nao gravar -- a mudanca sumiria da trilha. Informada aqui, ela
+            # e razao propria para a linha existir; a docstring de
+            # `registrar_recalculo` explica por que a uniao vem antes da guarda.
+            causas_externas=(CAUSA_MUDANCA_DE_INTENCAO,) if mudanca is not None else (),
         )
         # TEC-174. Aqui dentro, e nao junto ao `lead.esquentou` la embaixo: este
         # `commit` e o que torna indivisivel "o lead esquentou" e "o corretor
@@ -1612,12 +1639,16 @@ async def executar_turno(
 
     # A borda, e nao o estado: um lead que continua QUENTE nao reemite, senao
     # a RN-06.5 viraria um ping por mensagem. `recalculo.anterior` sai da
-    # coluna `temperatura`, e nao da trilha de auditoria -- a trilha grava so
-    # quando o score muda e tem retencao de 12 meses (RNF-18), entao um lead
-    # cujo ultimo registro fosse expurgado voltaria a parecer nunca-calculado
-    # e reemitiria como se tivesse acabado de esquentar. (`anterior`, sem
-    # prefixo, e OUTRA variavel nesta funcao -- a linha de intencao que
-    # `ler_intencao` devolveu, la em cima; nao confundir as duas.)
+    # coluna `temperatura`, e nao da trilha de auditoria -- a trilha tem
+    # retencao de 12 meses (RNF-18), entao um lead cujo ultimo registro fosse
+    # expurgado voltaria a parecer nunca-calculado e reemitiria como se
+    # tivesse acabado de esquentar. Ate a TEC-136 este argumento vinha com uma
+    # segunda perna, "a trilha grava so quando o score muda", que deixou de
+    # ser verdade quando `causas_externas` passou a gravar linha com os cinco
+    # fatores parados; ela nao faz falta, e a retencao sozinha ja fecha o
+    # caso. (`anterior`, sem prefixo, e OUTRA variavel nesta funcao -- a linha
+    # de intencao que `ler_intencao` devolveu, la em cima; nao confundir as
+    # duas.)
     #
     # `recalculo.anterior is None` (coluna nula) com QUENTE emite: um lead
     # cujo primeiro recalculo ja cai em QUENTE de fato esquentou, e tratar
@@ -2083,6 +2114,38 @@ async def executar_turno(
         candidatos=resposta_do_turno.candidatos,
         faixa=_faixa_declarada(depois_do_estado or contexto.estado),
     )
+    # TEC-136, fix wave. **A prosa deste turno foi gerada contra o prompt de
+    # ANTES do descarte, e por isso a faixa de depois nao basta para julga-la.**
+    # Num turno que descartou o orcamento, `depois_do_estado` existe e a faixa
+    # dele e `(None, None)` -- que `_na_faixa` le como AUSENCIA de declaracao, e
+    # nao como faixa aberta. Sozinha, ela transforma em divergencia todo valor
+    # da prosa, inclusive o que o proprio prompt mostrou ao modelo (o comentario
+    # acima registra que `montar_contexto` ate instrui o modelo a ecoa-lo).
+    # Quem paga e o turno titular do Gherkin: "voce procurava aluguel ate
+    # R$ 2.500, para compra qual seu orcamento?" vira `TEXTO_DA_BUSCA_INCONCLUSIVA`
+    # e um ERROR de `citacao.bloqueada` num canal reservado a invencao do modelo.
+    #
+    # **Segunda passada, e nao troca de faixa.** Trocar por `contexto.estado`
+    # seria mais curto e estaria errado no outro caso da mesma card: o lead que
+    # diz "na verdade quero comprar, ate 800 mil" descarta E declara no mesmo
+    # turno, e ai e a faixa NOVA que sustenta o eco -- ela nao esta em
+    # `contexto.estado`. O que se quer e a uniao ("o lead declarou este valor
+    # antes OU depois desta fala"), e uma tupla `(min, max)` unica nao a
+    # expressa quando as duas faixas tem pontas abertas diferentes. Duas
+    # passadas com a intersecao das divergencias dizem exatamente isso.
+    #
+    # Roda so quando ha divergencia E houve descarte: o turno comum paga uma
+    # chamada, como antes.
+    if divergencias and mudanca is not None and mudanca.faixa_descartada:
+        sob_a_faixa_de_antes = divergencias_de(
+            texto,
+            candidatos=resposta_do_turno.candidatos,
+            faixa=_faixa_declarada(contexto.estado),
+        )
+        # As divergencias de codigo nao dependem da faixa, entao saem identicas
+        # das duas passadas e a intersecao as preserva -- so as de preco que a
+        # faixa de antes sustenta e que caem.
+        divergencias = tuple(d for d in divergencias if d in sob_a_faixa_de_antes)
     citacao_bloqueada = bool(divergencias)
     if citacao_bloqueada:
         # A prosa barrada **nao** entra no log, pela mesma razao que o texto

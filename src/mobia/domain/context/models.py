@@ -247,19 +247,28 @@ class LeadQualification(Base):
 
 
 class LeadScoreAudit(Base):
-    """Um registro por recalculo que mudou o score. Append-only e imutavel.
+    """Um registro por recalculo com causa. Append-only e imutavel.
 
     TEC-152, RN-06.4. Mesmo molde de `optout_events`: uma linha por evento,
     carimbo pelo relogio do servidor, e sem FK para `messages` nem para
     `lead_qualification` -- a retencao da trilha (12 meses, RNF-18) nao pode
     ser encurtada por cascata da limpeza de outra tabela.
 
-    **So os fatores do score NOVO sao gravados.** Como o registro so entra
-    quando o resultado muda, o registro anterior da mesma conversa **e** o
-    score anterior; guardar os dois criaria duas fontes para o mesmo fato, que
-    e o defeito que a TEC-146 gastou uma card inteira consertando.
-    `total_anterior` fica mesmo assim porque e o que a card nomeia e poupa a
-    segunda leitura de quem so quer o delta.
+    **So os fatores do score NOVO sao gravados.** O registro anterior da mesma
+    conversa **e** o score anterior, e continua sendo; guardar os dois criaria
+    duas fontes para o mesmo fato, que e o defeito que a TEC-146 gastou uma
+    card inteira consertando. `total_anterior` fica mesmo assim porque e o que
+    a card nomeia e poupa a segunda leitura de quem so quer o delta.
+
+    **A premissa dessa frase e "nenhuma mudanca de score fica sem linha", e
+    nao a reciproca.** Ate a TEC-136 as duas valiam juntas -- so entrava linha
+    quando o resultado mudava -- e era facil confundi-las. Desde que
+    `registrar_recalculo` aceita `causas_externas`, a reciproca caiu: uma troca
+    de intencao grava linha com os cinco fatores parados. A conclusao nao se
+    mexe, porque o que a sustenta e o outro lado: toda linha carrega os cinco
+    fatores COMPLETOS do instante dela, e nada mais escreve historico de score.
+    Duas linhas consecutivas continuam ladrilhando a evolucao da conversa sem
+    buraco -- uma linha a mais, identica a anterior, nao abre nenhum.
     """
 
     __tablename__ = "lead_score_audit"
@@ -316,6 +325,73 @@ class LeadScoreAudit(Base):
         # formato do `ix_optout_events_lead` e do `ix_messages_timeline`.
         Index(
             "ix_lead_score_audit_lead",
+            "channel",
+            "conversation_key",
+            text("created_at DESC"),
+        ),
+    )
+
+
+class ConversationIntentAudit(Base):
+    """Uma linha por mudanca da intencao ACUMULADA. Append-only. TEC-136.
+
+    Nao e `conversation_intent`: aquela guarda a saida crua do classificador e
+    e sobrescrita a cada turno, de proposito. Virar historico la escreveria
+    uma linha por turno da conversa inteira para responder uma pergunta que
+    muda meia duzia de vezes.
+
+    Nao e `lead_score_audit`: aquela responde "quanto o lead vale e por que
+    mudou", e nao "o que ele passou a procurar". Desde que esta card ligou o
+    descarte ao turno, a troca TAMBEM aparece la -- `registrar_recalculo`
+    recebe `CAUSA_MUDANCA_DE_INTENCAO` do chamador e grava a linha mesmo com
+    os cinco fatores parados, que ate entao seria a tupla vazia de
+    `causas_do_recalculo` e portanto o sinal de nao gravar. O que aquela trilha
+    nao guarda, e esta guarda, e o conteudo da troca: de onde para onde, e se o
+    orcamento caiu junto. Uma causa num array de texto nao responde nenhuma
+    dessas tres.
+
+    `de` e nulo quando a conversa ja TINHA linha de qualificacao com a coluna
+    `intencao` vazia e so agora ganhou uma -- a porta que INDEFINIDA abre:
+    `campos_a_gravar` grava a extracao e nao grava a intencao, entao um lead
+    que diz "tenho ate 2.500" antes de se decidir deixa numero sem intencao. A
+    linha existe mesmo assim, e nao so nas trocas de verdade, porque e ela que
+    explica o descarte: NULL -> COMPRA apaga o orcamento dito sob banda
+    frouxa, e sem esta linha o orcamento sumiria sem registro nenhum.
+
+    **Nao e o caso comum do primeiro turno.** Ali a linha de qualificacao ainda
+    nao existe quando `aplicar_mudanca_de_intencao` roda -- ela e criada logo
+    depois, por `gravar_estado` --, e aquela funcao retorna `None` no `estado is
+    None`: nao ha o que invalidar e nao se escreve linha nenhuma aqui. A
+    primeira intencao da maioria das conversas nao aparece nesta tabela.
+
+    `clock_timestamp()` e nao `now()`, pela razao que `lead_score_audit`
+    escreve por extenso: `now()` congela no primeiro statement da transacao, e
+    dois turnos concorrentes da mesma conversa sairiam carimbados pela ordem em
+    que COMECARAM. O INSERT acontece com o lock de `lead_qualification` na
+    mao, entao o relogio de statement da uma ordem total igual a do lock.
+    """
+
+    __tablename__ = "conversation_intent_audit"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Nulo so quando a linha de qualificacao ja existia sem intencao. Ver o
+    # docstring acima, que diz por que isso nao e o primeiro turno.
+    de: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    para: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Redundante com `de`/`para` mais a tabela de bandas, e deliberado: quem le
+    # a trilha quer saber se o lead perdeu o que tinha dito sem ter de
+    # reimplementar `mudou_de_banda` em SQL. E a mesma razao que `total_novo`
+    # e denormalizado em `lead_score_audit`.
+    faixa_descartada: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_conversation_intent_audit_conversa",
             "channel",
             "conversation_key",
             text("created_at DESC"),
