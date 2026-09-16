@@ -12,8 +12,10 @@ niveis, e separa-las esconderia de quem le a segunda que a janela dos 30 dias
 ja tem a sua fronteira coberta pela primeira.
 """
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from conftest import CANAL_AGENTE, CONVERSA_AGENTE, ClassificadorFake
@@ -25,9 +27,11 @@ from mobia.domain.agente.schemas import Intencao
 from mobia.domain.agente.turno import TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO
 from mobia.domain.atendimento.repositorio import assumir
 from mobia.domain.conversa.models import Conversa
+from mobia.domain.conversa.regras import TETO_DE_FORA_DE_ESCOPO
 from mobia.domain.conversa.repositorio import encerrar_conversa, esta_encerrada, reabrir_conversa
 from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
 from mobia.domain.handoff.repositorio import tem_handoff_de_humano_aberto
+from mobia.domain.moderacao.port import TEXTO_NEUTRO_DE_SAIDA
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
 from mobia.domain.outbound.port import EnvioRetentavel
 from mobia.infra.db import get_sessionmaker
@@ -270,6 +274,20 @@ class ClassificadorQueNaoPodeSerChamado:
         raise AssertionError("o reagente foi chamado numa conversa encerrada")
 
 
+class ModeradorQueNaoPodeSerChamado:
+    """Levanta em qualquer moderacao. Companheiro do dublê acima (fix da
+    revisao final, Minor 5).
+
+    A moderacao de ENTRADA tambem e chamada paga, e a D7 a conta entre as
+    economias da card. Com o `ModeradorFake` default -- que responde sem
+    levantar --, a asserta de economia cobria so o classificador e deixaria
+    passar uma guarda que tivesse descido para depois do `moderador.moderar`.
+    """
+
+    async def moderar(self, texto, *, direcao):
+        raise AssertionError(f"o moderador foi chamado ({direcao}) numa conversa encerrada")
+
+
 async def _conversa_ja_existe(session: AsyncSession) -> None:
     """Semeia uma fala anterior para que `e_conversa_nova` veja a conversa como
     NAO nova (TEC-139).
@@ -372,6 +390,11 @@ async def test_a_terceira_fora_de_escopo_encerra_e_despede(
     assert linha is not None
     assert linha.status == Status.ENCERRADA
     assert linha.motivo_do_encerramento == MotivoDoEncerramento.FORA_DE_ESCOPO
+    # O carimbo, e nao so o status: e contra ele que a janela dos 30 dias e
+    # medida (fix da revisao final, Minor 5). Sem esta asserta, um
+    # `encerrada_em` nulo passaria -- e `situacao_da_conversa` trata isso como
+    # "fora da janela", entao a guarda do turno seguinte nem calaria.
+    assert linha.encerrada_em is not None
 
     assert await _seguidas(session) == 0
 
@@ -414,8 +437,10 @@ async def test_a_quarta_mensagem_dentro_da_janela_nao_entrega_nada_nem_paga_o_mo
     """A asserta que prova o ponto inteiro da card.
 
     O silencio sozinho nao bastaria: um turno que pagasse o classificador e
-    descartasse a resposta daria a mesma lista de entregues. O duble que
-    levanta e o que separa silencio barato de silencio caro.
+    descartasse a resposta daria a mesma lista de entregues. Os dois dubles que
+    levantam sao o que separa silencio barato de silencio caro -- e sao DOIS
+    porque a moderacao de entrada tambem e chamada paga, e a D7 a conta entre
+    as economias.
     """
     await _conversa_ja_existe(session)
     entregador = outbound_fake()
@@ -431,6 +456,7 @@ async def test_a_quarta_mensagem_dentro_da_janela_nao_entrega_nada_nem_paga_o_mo
         entregador,
         resumidor_fake(),
         contador_fake(),
+        ModeradorQueNaoPodeSerChamado(),
         texto="e agora, vai chover?",
     )
 
@@ -447,7 +473,7 @@ async def test_uma_mensagem_dentro_do_escopo_depois_de_duas_zera_o_contador(
 ) -> None:
     """O "voltar ao assunto zera" da card, visto de dentro do turno.
 
-    O zero vem do `ELSE` do CASE de `gravar_intencao`; o que este teste
+    O zero vem do `else` de `gravar_intencao`; o que este teste
     acrescenta e que o turno segue normal -- resposta entregue e conversa sem
     encerramento nenhum.
     """
@@ -761,3 +787,224 @@ async def test_a_entrega_que_falha_nao_encerra_a_conversa(
     assert linha is not None
     assert linha.status == Status.ENCERRADA
     assert await _seguidas(session) == 0
+
+
+# --- Os fixes da revisao final ----------------------------------------------
+
+
+# O motivo que a TEC-130 vai acrescentar ao vocabulario, escrito aqui como
+# literal porque `MotivoDoEncerramento` ainda tem UM membro so. Nao e antecipar
+# a card dela: e a unica forma de construir, hoje, o estado que o teste abaixo
+# precisa observar.
+MOTIVO_DE_OUTRA_CARD = "INATIVIDADE"
+
+# Distinta de `PROSA_DO_MODELO` e da despedida, para a asserta do teste de
+# baixa confianca poder dizer QUAL dos tres textos saiu.
+PERGUNTA_DA_DESAMBIGUACAO = "Voce procura para comprar ou para alugar?"
+
+
+def _eventos_de_log(caplog, evento: str) -> list[tuple[str, dict]]:
+    """(nivel, corpo) de cada registro JSON do structlog que carrega `evento`.
+
+    Mesmo molde de `_eventos_de_log` em `test_citacao_no_turno.py` e em
+    `test_apresentacao_no_turno.py`, copiado e nao importado -- os arquivos de
+    integracao deste repo sao autocontidos.
+    """
+    encontrados = []
+    for registro in caplog.records:
+        try:
+            dados = json.loads(registro.getMessage())
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if dados.get("event") == evento:
+            encontrados.append((registro.levelname, dados))
+    return encontrados
+
+
+async def test_conversa_encerrada_por_outro_motivo_nao_cala_o_turno(
+    session, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """A janela de 30 dias e politica do FORA_DE_ESCOPO, e nao propriedade do
+    `status` (fix da revisao final, Important 1).
+
+    **Este teste existe para a TEC-130, e nao para um caminho que esta card
+    alcance.** `MotivoDoEncerramento` tem um membro so hoje, entao o estado que
+    ele observa -- ENCERRADA com OUTRO motivo, dentro dos 30 dias -- so pode
+    ser construido escrevendo o motivo a mao. A Emenda E-02 da RN-02.3 manda a
+    TEC-130 acrescentar `INATIVIDADE` ao vocabulario e o escritor que fecha a
+    conversa por inatividade; uma guarda cega ao motivo faria disso 30 dias de
+    silencio em TODA conversa inativa -- destruindo exatamente o reengajamento
+    que a RN-02.3 existe para ter.
+
+    A reabertura continua valendo para qualquer motivo, e a asserta do `status`
+    registra isso: mensagem nova depois de encerramento reabre a conversa, que
+    e o que a propria RN-02.3 pede. Quem mudar esse lado e a TEC-130, de
+    proposito e nao por acidente.
+    """
+    await _conversa_ja_existe(session)
+    await encerrar_conversa(
+        session,
+        channel=CANAL_AGENTE,
+        conversation_key=CONVERSA_AGENTE,
+        motivo=MOTIVO_DE_OUTRA_CARD,
+        agora=datetime.now(UTC),
+    )
+    await session.commit()
+    entregador = outbound_fake()
+
+    desfecho = await rodar_turno(
+        session,
+        ClassificadorFake(intencao=Intencao.COMPRA, resposta="Em que bairro voce procura?"),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto="quero ver apartamentos de dois quartos",
+    )
+
+    assert desfecho == "respondido", "so o encerramento por FORA_DE_ESCOPO cala o agente"
+    assert entregador.entregues[-1] == "Em que bairro voce procura?"
+    linha = await _linha_da_conversa(session)
+    assert linha is not None
+    assert linha.status == Status.ATIVA
+
+
+async def test_a_saida_bloqueada_no_turno_do_teto_encerra_do_mesmo_jeito(
+    session, outbound_fake, resumidor_fake, contador_fake, moderador_fake, rodar_turno
+) -> None:
+    """Moderacao de saida bloqueando nao adia o encerramento (fix da revisao
+    final, Important 2).
+
+    A versao anterior exigia `not saida_bloqueada` para encerrar, e
+    argumentava que nao encerrar "so adia" a regra. So adia se algum turno
+    seguinte vier desbloqueado -- e o perfil de abuso que o proprio desenho
+    nomeia (`borda-injecao-02`, uma prompt injection) e justamente o mais
+    provavel de reprovar na moderacao de saida TODA vez. Bloqueando sempre, a
+    conversa nunca fechava e cada turno seguia pagando classificador e
+    moderacao, sem teto -- o oposto das "tres chamadas pagas por conversa a
+    cada 30 dias" que a D7 declara.
+
+    As duas metades importam. A primeira: a conversa fecha. A segunda: a
+    despedida NAO saiu -- quem saiu foi `TEXTO_NEUTRO_DE_SAIDA`, que e a
+    resposta declarada da moderacao --, e mesmo assim o turno seguinte ja e
+    silencio barato.
+    """
+    await _conversa_ja_existe(session)
+    entregador = outbound_fake()
+
+    await _fora_de_escopo(
+        rodar_turno, session, entregador, resumidor_fake(), contador_fake(), vezes=2
+    )
+
+    desfecho = await rodar_turno(
+        session,
+        ClassificadorFake(intencao=Intencao.FORA_DE_ESCOPO, resposta=PROSA_DO_MODELO),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(bloqueia_saida=True),
+        texto=FALA_FORA_DE_ESCOPO,
+    )
+
+    assert desfecho == "respondido"
+    assert entregador.entregues[-1] == TEXTO_NEUTRO_DE_SAIDA
+    assert entregador.entregues[-1] != TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO
+
+    linha = await _linha_da_conversa(session)
+    assert linha is not None
+    assert linha.status == Status.ENCERRADA
+    assert linha.motivo_do_encerramento == MotivoDoEncerramento.FORA_DE_ESCOPO
+    assert linha.encerrada_em is not None
+    assert await _seguidas(session) == 0
+
+    desfecho_seguinte = await rodar_turno(
+        session,
+        ClassificadorQueNaoPodeSerChamado(),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        ModeradorQueNaoPodeSerChamado(),
+        texto="e agora, vai chover?",
+    )
+
+    assert desfecho_seguinte == "fora_de_escopo", (
+        "o sondador cujo texto a moderacao sempre barra tambem para de pagar chamada"
+    )
+
+
+async def test_fora_de_escopo_de_baixa_confianca_nao_anda_com_o_contador(
+    session, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """O contador conta a intencao EFETIVA, e nao o palpite cru (fix da revisao
+    final, Important 3).
+
+    Abaixo de `LIMIAR_DE_DESAMBIGUACAO` o palpite do classificador e
+    "operacionalmente `INDEFINIDA`" -- e a docstring de `intencao_efetiva` que
+    diz isso, e e por ela que a TEC-136 e a TEC-137 leem. Esta card era a unica
+    a decidir sobre o valor cru, e o que ela decide sao 30 dias de silencio.
+
+    O cenario e alcancavel e o dano e dobrado: duas mensagens fora de escopo
+    confiantes, uma terceira de baixa confianca. Contando o cru, o lead era
+    calado por uma classificacao que a convencao do repo diz nao sustentar
+    decisao nenhuma -- e a despedida ainda substituia a pergunta de
+    desambiguacao que teria resolvido a ambiguidade.
+    """
+    await _conversa_ja_existe(session)
+    entregador = outbound_fake()
+
+    await _fora_de_escopo(
+        rodar_turno, session, entregador, resumidor_fake(), contador_fake(), vezes=2
+    )
+
+    desfecho = await rodar_turno(
+        session,
+        ClassificadorFake(
+            intencao=Intencao.FORA_DE_ESCOPO,
+            confianca=Decimal("0.45"),
+            resposta=PROSA_DO_MODELO,
+            pergunta=PERGUNTA_DA_DESAMBIGUACAO,
+        ),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto="nao sei bem, talvez",
+    )
+
+    assert desfecho == "respondido"
+    assert await _seguidas(session) == 0, (
+        "INDEFINIDA nao e FORA_DE_ESCOPO -- o contador zera como em qualquer outra intencao"
+    )
+    assert await _linha_da_conversa(session) is None, "e nada foi encerrado"
+    assert entregador.entregues[-1] == PERGUNTA_DA_DESAMBIGUACAO, (
+        "a pergunta que resolveria a ambiguidade nao foi trocada pela despedida"
+    )
+
+
+async def test_o_log_do_encerramento_sai_sem_o_texto_das_mensagens(
+    session, outbound_fake, resumidor_fake, contador_fake, rodar_turno, caplog
+) -> None:
+    """A exigencia da secao Testes do desenho, que a Task 4 do plano deixou
+    cair (fix da revisao final, Minor 4).
+
+    A linha existe para que um pico de encerramentos por escopo seja visivel --
+    e a assinatura de sondagem sistematica que a TEC-204 vai querer. O que ela
+    NAO pode carregar e o texto das falas: registra-lo criaria no log
+    exatamente aquilo que o resto da card evita guardar fora de `messages`.
+    """
+    await _conversa_ja_existe(session)
+    entregador = outbound_fake()
+
+    with caplog.at_level("INFO"):
+        await _fora_de_escopo(
+            rodar_turno, session, entregador, resumidor_fake(), contador_fake(), vezes=3
+        )
+
+    ((nivel, corpo),) = _eventos_de_log(caplog, "conversa.encerrada")
+    assert nivel == "INFO"
+    assert corpo["motivo"] == MotivoDoEncerramento.FORA_DE_ESCOPO
+    # A contagem de ANTES do zero -- e o numero que decidiu, e depois dele a
+    # coluna nao o guarda mais em lugar nenhum.
+    assert corpo["seguidas"] == TETO_DE_FORA_DE_ESCOPO
+    corpo_serializado = json.dumps(corpo)
+    assert FALA_FORA_DE_ESCOPO not in corpo_serializado
+    assert PROSA_DO_MODELO not in corpo_serializado
+    assert TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO not in corpo_serializado

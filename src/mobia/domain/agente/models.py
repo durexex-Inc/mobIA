@@ -68,14 +68,21 @@ class ConversationIntent(Base):
     # linha" --, entao um lead cujo historico inteiro e fora de escopo nunca
     # teria onde ser contado. Esta tabela e a unica escrita em TODO turno.
     #
-    # Sobe ou zera em `gravar_intencao`, em DOIS lugares que tem de andar
-    # juntos: o INSERT (a linha nasce, e a primeira mensagem de uma conversa
-    # nova precisa nascer em 1 quando ela mesma e FORA_DE_ESCOPO) e o CASE do
-    # `set_` do ON CONFLICT DO UPDATE (turnos seguintes da mesma conversa).
-    # Nao e so o segundo: a primeira mensagem de uma conversa nunca passa por
-    # um CONFLICT, e um contador que so soubesse dele gravaria 0 nela --
-    # exatamente o bug que a TEC-138 mediu antes de duplicar a regra no
-    # INSERT.
+    # Sobe ou zera em `gravar_intencao`, que o escreve em dois ramos do mesmo
+    # statement: o INSERT (a linha nasce, e a primeira mensagem de uma conversa
+    # nova precisa nascer em 1 quando ela mesma e FORA_DE_ESCOPO) e o `set_` do
+    # ON CONFLICT DO UPDATE (turnos seguintes da mesma conversa). Nao e so o
+    # segundo: a primeira mensagem de uma conversa nunca passa por um CONFLICT,
+    # e um contador que so soubesse dele gravaria 0 nela -- exatamente o bug
+    # que a TEC-138 mediu. **A REGRA de quando somar vive uma vez so**, no
+    # argumento `fora_de_escopo_efetivo` que o chamador calcula; os dois ramos
+    # so a consultam.
+    #
+    # **Conta a intencao EFETIVA, nao o palpite cru da coluna ao lado.** Uma
+    # classificacao FORA_DE_ESCOPO abaixo de `LIMIAR_DE_DESAMBIGUACAO` deixa
+    # `intencao` gravada como FORA_DE_ESCOPO e ZERA este contador -- as duas
+    # colunas divergem de proposito, e a docstring de `gravar_intencao` diz por
+    # que.
     #
     # **O encerramento zera este contador.** Sem isso o lead que volta depois
     # dos 30 dias iria de 3 para 4 e seria encerrado na primeira mensagem, sem

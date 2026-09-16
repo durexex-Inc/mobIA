@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 import structlog
-from sqlalchemy import case, column, delete, select, table, update
+from sqlalchemy import column, delete, select, table, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,6 +63,7 @@ async def gravar_intencao(
     intencao: Intencao,
     confianca: Decimal,
     modelo: str,
+    fora_de_escopo_efetivo: bool,
 ) -> int:
     """Upsert. **Nao commita** -- o chamador e dono da transacao.
 
@@ -73,6 +74,17 @@ async def gravar_intencao(
     o valor que este proprio statement acabou de gravar, via `RETURNING`, para
     quem chama nao precisar de uma segunda consulta so para reler a linha que
     aqui foi escrita.
+
+    **`fora_de_escopo_efetivo` e argumento e nao e derivado de `intencao` aqui
+    dentro, de proposito** (fix da revisao final, Important 3). As duas coisas
+    que esta funcao escreve sobre a intencao querem valores DIFERENTES: a
+    coluna `intencao` guarda o palpite CRU, sem edicao, porque e dele que a
+    TEC-210 precisa para calibrar `LIMIAR_DE_DESAMBIGUACAO`; o contador quer a
+    intencao EFETIVA, porque abaixo do limiar o palpite e "operacionalmente
+    `INDEFINIDA`" (ver `intencao_efetiva`) e nao sustenta decisao nenhuma --
+    muito menos 30 dias de silencio. Quem chama computa a efetiva por
+    `intencao_efetiva` e passa o booleano; esta funcao nao reimplementa o
+    limiar para os dois usos divergirem em silencio depois.
     """
     valores = {
         "channel": channel,
@@ -84,14 +96,13 @@ async def gravar_intencao(
         # uma conversa tem de poder perguntar.
         "desambiguado_em": None,
         "updated_at": datetime.now(UTC),
-        # RN-03.5, TEC-138. Mesma regra do CASE la embaixo (soma se
-        # FORA_DE_ESCOPO, senao zero), DUPLICADA aqui porque o `set_` so roda
-        # no CONFLICT -- a primeira mensagem de uma conversa nova passa por
-        # AQUI, no INSERT puro, e sem isto ficaria com o `server_default` de
-        # 0. As duas copias tem de mudar juntas: foi exatamente uma mudanca
-        # so no CASE, sem esta, que produziu o bug que a TEC-138 mediu
-        # (INSERT gravando 0 na primeira mensagem fora de escopo).
-        "fora_de_escopo_seguidas": 1 if intencao is Intencao.FORA_DE_ESCOPO else 0,
+        # RN-03.5, TEC-138. O INSERT puro precisa contar tambem, e nao so o
+        # `set_` do ON CONFLICT: a primeira mensagem de uma conversa nova passa
+        # por AQUI, e sem isto ficaria com o `server_default` de 0 -- que foi
+        # exatamente o bug que a TEC-138 mediu antes de escrever esta linha.
+        #
+        # A linha nasce, entao o valor e 1 ou 0, sem `+1` sobre nada.
+        "fora_de_escopo_seguidas": 1 if fora_de_escopo_efetivo else 0,
     }
     statement = pg_insert(ConversationIntent).values(valores)
 
@@ -106,26 +117,26 @@ async def gravar_intencao(
     # Abaixo do limiar o marcador **nao** entra no set_: a ambiguidade e a
     # mesma, e a pergunta dela ja foi gasta.
 
-    # RN-03.5, TEC-138. Sobe quando a intencao deste turno e FORA_DE_ESCOPO e
-    # ZERA em qualquer outra -- o "voltar ao assunto zera o contador" da card
-    # e este `ELSE`. **A mesma regra esta duplicada em `valores`, acima**,
-    # para o INSERT puro que nao passa por este `set_`; as duas copias tem de
-    # mudar juntas -- mudar uma sem a outra reabre a lacuna que a TEC-138
-    # mediu (a primeira mensagem fora de escopo de uma conversa gravando 0).
+    # RN-03.5, TEC-138. Sobe quando a intencao EFETIVA deste turno e
+    # FORA_DE_ESCOPO e ZERA em qualquer outra -- o "voltar ao assunto zera o
+    # contador" da card e este `else`.
     #
-    # A aritmetica mora no SQL pela razao que `contar_perguntas` e a uniao de
-    # `perguntados_sem_resposta` ja registram: ler o valor, somar em Python e
-    # gravar abre a janela em que dois turnos concorrentes da mesma conversa
-    # leem o mesmo numero e o mais lento sobrescreve o mais rapido.
+    # **A regra nao esta mais duplicada** (fix da revisao final, Important 3).
+    # Ate aqui ela vivia duas vezes -- um literal Python no INSERT e um `CASE`
+    # SQL sobre `excluded.intencao` neste `set_` --, e os dois comentarios
+    # avisavam que tinham de mudar juntos. O `CASE` existia so porque a regra
+    # estava escrita contra uma COLUNA; escrita contra o booleano que o
+    # chamador passa, ela e conhecida em Python antes de o statement ser
+    # montado, e os dois lados apenas a consultam.
     #
-    # `Intencao` e StrEnum e esta funcao grava `str(intencao)`, entao a coluna
-    # guarda o literal e a comparacao com `excluded` e direta.
-    atualizacoes["fora_de_escopo_seguidas"] = case(
-        (
-            statement.excluded.intencao == Intencao.FORA_DE_ESCOPO.value,
-            ConversationIntent.fora_de_escopo_seguidas + 1,
-        ),
-        else_=0,
+    # **A aritmetica continua no SQL**, que e o que importava do `CASE`, pela
+    # razao que `contar_perguntas` e a uniao de `perguntados_sem_resposta` ja
+    # registram: ler o valor, somar em Python e gravar abre a janela em que
+    # dois turnos concorrentes da mesma conversa leem o mesmo numero e o mais
+    # lento sobrescreve o mais rapido. `ConversationIntent.fora_de_escopo_seguidas
+    # + 1` e uma expressao SQL, nao uma soma de Python.
+    atualizacoes["fora_de_escopo_seguidas"] = (
+        ConversationIntent.fora_de_escopo_seguidas + 1 if fora_de_escopo_efetivo else 0
     )
 
     resultado = await session.execute(
@@ -152,9 +163,11 @@ async def zerar_fora_de_escopo(
 
     **Roda na mesma transacao que `encerrar_conversa`, e nao na que subiu o
     contador.** O unico chamador e o bloco POS-ENTREGA de `executar_turno`,
-    que so encerra depois de a despedida ter saido -- o comentario de la
-    explica por que a ordem inversa reintroduzia o defeito da entrega
-    retentavel. O que tem de ser indivisivel e o par encerramento+zero: uma
+    que so encerra depois de alguma resposta nossa ter chegado INTEIRA ao lead
+    -- a despedida no caminho normal, o texto neutro da moderacao quando ela
+    barra a saida. O comentario de la explica por que a ordem inversa
+    reintroduzia o defeito da entrega retentavel, e por que a saida bloqueada
+    deixou de adiar o encerramento. O que tem de ser indivisivel e o par encerramento+zero: uma
     conversa encerrada com contador cheio e o estado que quebraria a docstring
     acima.
 

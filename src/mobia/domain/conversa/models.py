@@ -11,6 +11,13 @@ Encerrar por inatividade e acrescentar um motivo ao vocabulario de
 `vocabulario.py` e um escritor novo; nao e uma segunda tabela nem uma segunda
 nocao de encerrado. A Emenda da RN-02.3 registra isso no SRS.
 
+**E o que se ganha com o motivo novo e a escrituracao, nao a janela de
+silencio.** Os 30 dias em que o agente nao responde sao politica da RN-03.5, e
+`SituacaoDaConversa.silencia_o_agente` (`repositorio.py`) exige
+`FORA_DE_ESCOPO` para aplica-los -- motivo novo entra no silencio so se quem o
+acrescentar decidir isso. Por omissao, uma conversa fechada por inatividade
+continua sendo respondida na mensagem seguinte, que e o que a RN-02.3 pede.
+
 `motivo_do_encerramento` e vocabulario e nao booleano justamente para essa
 extensao -- ver `MotivoDoEncerramento` em `vocabulario.py` para a razao por
 extenso.

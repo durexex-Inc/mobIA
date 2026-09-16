@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agente.identificacao import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA
 from mobia.domain.conversa.models import Conversa
-from mobia.domain.conversa.vocabulario import Status
+from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
 
 
 async def encerrar_conversa(
@@ -55,19 +55,50 @@ async def encerrar_conversa(
 
 @dataclass(frozen=True)
 class SituacaoDaConversa:
-    """As duas coisas que uma leitura so de `conversas` responde.
+    """As tres coisas que uma leitura so de `conversas` responde.
 
-    Existe porque o turno precisa das DUAS (TEC-138, Task 4): `dentro_da_janela`
-    decide se ele cala, e `marcada_como_encerrada` decide se ele reabre a linha
-    antes de seguir. Sem este par o turno so tinha o booleano de
-    `esta_encerrada`, que responde False tanto para "nunca houve encerramento"
-    quanto para "houve e a janela venceu" -- e a unica forma de separar os dois
-    era chamar `reabrir_conversa` incondicionalmente, pagando um `UPDATE` e um
-    commit em TODO turno de toda conversa ja reaberta, para sempre.
+    Existe porque o turno precisa de mais de uma (TEC-138, Task 4):
+    `silencia_o_agente` decide se ele cala, e `marcada_como_encerrada` decide se
+    ele reabre a linha antes de seguir. Sem este conjunto o turno so tinha o
+    booleano de `esta_encerrada`, que responde False tanto para "nunca houve
+    encerramento" quanto para "houve e a janela venceu" -- e a unica forma de
+    separar os dois era chamar `reabrir_conversa` incondicionalmente, pagando um
+    `UPDATE` e um commit em TODO turno de toda conversa ja reaberta, para
+    sempre.
     """
 
     marcada_como_encerrada: bool
     dentro_da_janela: bool
+    motivo_do_encerramento: str | None
+
+    @property
+    def silencia_o_agente(self) -> bool:
+        """A politica dos 30 dias de silencio se aplica a esta conversa AGORA?
+
+        **Duas condicoes, e o motivo e a que existe por causa da TEC-130** (fix
+        da revisao final, Important 1). Calar por 30 dias e politica da RN-03.5,
+        do encerramento por FORA_DE_ESCOPO -- nao e propriedade do `status`.
+        A Emenda E-02 da RN-02.3 manda a TEC-130 acrescentar `INATIVIDADE` a
+        `MotivoDoEncerramento` e o escritor que fecha a conversa por
+        inatividade; uma versao desta propriedade que olhasse so o `status`
+        transformaria isso, sem ninguem pedir, em 30 dias de silencio para TODA
+        conversa fechada por inatividade -- destruindo exatamente o
+        reengajamento que a RN-02.3 existe para ter.
+
+        Motivo novo, portanto, **entra no silencio se optar por ele**, e nao
+        por omissao: quem acrescentar um membro ao vocabulario ganha a
+        escrituracao do encerramento e nada mais, ate acrescentar o motivo
+        aqui.
+
+        `dentro_da_janela` fica separado de proposito, e nao dobrado aqui
+        dentro: ele responde sobre o TEMPO e continua verdadeiro para qualquer
+        motivo. Quem quer a politica le esta propriedade; quem quer a janela le
+        aquele campo.
+        """
+        return (
+            self.dentro_da_janela
+            and self.motivo_do_encerramento == MotivoDoEncerramento.FORA_DE_ESCOPO
+        )
 
 
 async def situacao_da_conversa(
@@ -77,61 +108,22 @@ async def situacao_da_conversa(
     conversation_key: str,
     agora: datetime,
 ) -> SituacaoDaConversa:
-    """Le a linha UMA vez e devolve o par. Ver `esta_encerrada` para a regra.
+    """Le a linha UMA vez e devolve a situacao. **A regra da janela mora aqui.**
 
     `marcada_como_encerrada` olha so a coluna; `dentro_da_janela` olha a coluna
-    E o relogio. Uma conversa com `marcada_como_encerrada=True` e
+    E o relogio; `motivo_do_encerramento` e o literal gravado, que
+    `silencia_o_agente` usa para separar a politica da RN-03.5 dos outros
+    motivos. Uma conversa com `marcada_como_encerrada=True` e
     `dentro_da_janela=False` e exatamente a que o turno reabre.
 
     Um `status` ENCERRADA com `encerrada_em` nulo -- estado que o modelo diz
     nao existir, porque "os dois andam juntos" -- conta como marcada e fora da
     janela: sem carimbo nao ha janela para medir, e reabrir e o conserto certo.
-    """
-    linha = (
-        await session.execute(
-            select(Conversa.status, Conversa.encerrada_em).where(
-                Conversa.channel == channel,
-                Conversa.conversation_key == conversation_key,
-            )
-        )
-    ).one_or_none()
-    if linha is None or linha.status != Status.ENCERRADA:
-        return SituacaoDaConversa(marcada_como_encerrada=False, dentro_da_janela=False)
-    if linha.encerrada_em is None:
-        return SituacaoDaConversa(marcada_como_encerrada=True, dentro_da_janela=False)
-    return SituacaoDaConversa(
-        marcada_como_encerrada=True,
-        dentro_da_janela=(
-            agora - linha.encerrada_em <= timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
-        ),
-    )
-
-
-async def esta_encerrada(
-    session: AsyncSession,
-    *,
-    channel: str,
-    conversation_key: str,
-    agora: datetime,
-) -> bool:
-    """A conversa esta encerrada AGORA?
-
-    Delega a `situacao_da_conversa` e devolve so a metade do tempo: a regra da
-    janela mora uma vez so, em `situacao_da_conversa` (acima, neste arquivo)
-    -- duas copias seriam duas coisas para manter em sincronia. **Quem o
-    turno chama e `situacao_da_conversa` direto, e nao esta funcao**: ele
-    precisa das duas metades do par (`SituacaoDaConversa`) para decidir se
-    cala e se reabre, e `esta_encerrada` devolve so uma delas. Esta funcao e
-    para quem so precisa da resposta booleana simples -- hoje, os testes de
-    repositorio.
-
-    Sem linha, nao esta -- o estado default e "pode receber", igual ao de
-    `esta_em_optout`.
 
     **A resposta e do tempo, e nao so do status.** Um encerramento mais velho
-    que a janela devolve False com a coluna ainda dizendo ENCERRADA: quem
-    reabre e o turno, e ele so roda quando chega mensagem. Ate la a linha fica
-    como estava, e esta funcao ja conta a verdade.
+    que a janela devolve `dentro_da_janela=False` com a coluna ainda dizendo
+    ENCERRADA: quem reabre e o turno, e ele so roda quando chega mensagem. Ate
+    la a linha fica como estava, e esta funcao ja conta a verdade.
 
     `agora` entra por parametro, e nao de `datetime.now()` aqui dentro, pelo
     mesmo motivo que `e_conversa_nova` o recebe: e o que torna a janela
@@ -146,6 +138,63 @@ async def esta_encerrada(
     silencio, a reabertura e a identificacao de conversa nova deixariam de
     coincidir, que e o motivo de as duas usarem a mesma constante. Deixar o
     empate ao acaso e o defeito que a TEC-229 documentou.
+    """
+    linha = (
+        await session.execute(
+            select(Conversa.status, Conversa.encerrada_em, Conversa.motivo_do_encerramento).where(
+                Conversa.channel == channel,
+                Conversa.conversation_key == conversation_key,
+            )
+        )
+    ).one_or_none()
+    if linha is None or linha.status != Status.ENCERRADA:
+        return SituacaoDaConversa(
+            marcada_como_encerrada=False, dentro_da_janela=False, motivo_do_encerramento=None
+        )
+    if linha.encerrada_em is None:
+        return SituacaoDaConversa(
+            marcada_como_encerrada=True,
+            dentro_da_janela=False,
+            motivo_do_encerramento=linha.motivo_do_encerramento,
+        )
+    return SituacaoDaConversa(
+        marcada_como_encerrada=True,
+        dentro_da_janela=(
+            agora - linha.encerrada_em <= timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
+        ),
+        motivo_do_encerramento=linha.motivo_do_encerramento,
+    )
+
+
+async def esta_encerrada(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    agora: datetime,
+) -> bool:
+    """A conversa esta encerrada AGORA? **Ver `situacao_da_conversa` para a
+    regra da janela** -- ela mora uma vez so, la, e esta funcao apenas devolve
+    metade do que aquela le.
+
+    Duas copias da regra seriam duas coisas para manter em sincronia, e o
+    ponteiro aponta para cima e nao para baixo de proposito (fix da revisao
+    final, Minor 6): quem o turno chama em producao e `situacao_da_conversa`
+    direto, entao e la que a regra tem de estar escrita, e nao pendurada na
+    funcao que ninguem chama fora de teste.
+
+    **Quem o turno chama nao e esta funcao**: ele precisa de mais de um campo
+    de `SituacaoDaConversa` para decidir se cala e se reabre, e esta devolve so
+    `dentro_da_janela`. Esta funcao e para quem so precisa da resposta booleana
+    simples -- hoje, os testes de repositorio.
+
+    **E ela responde sobre a JANELA, nao sobre a politica de silencio.**
+    `dentro_da_janela` ignora o motivo; quem decide calar e
+    `silencia_o_agente`, que exige `FORA_DE_ESCOPO`. As duas coisas divergem a
+    partir do primeiro motivo novo -- ver a docstring daquela propriedade.
+
+    Sem linha, nao esta -- o estado default e "pode receber", igual ao de
+    `esta_em_optout`.
     """
     return (
         await situacao_da_conversa(
