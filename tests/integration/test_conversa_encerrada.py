@@ -15,6 +15,7 @@ ja tem a sua fronteira coberta pela primeira.
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from conftest import CANAL_AGENTE, CONVERSA_AGENTE, ClassificadorFake
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +27,9 @@ from mobia.domain.atendimento.repositorio import assumir
 from mobia.domain.conversa.models import Conversa
 from mobia.domain.conversa.repositorio import encerrar_conversa, esta_encerrada, reabrir_conversa
 from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
-from mobia.domain.optout.repositorio import registrar_optout
+from mobia.domain.handoff.repositorio import tem_handoff_de_humano_aberto
+from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
+from mobia.domain.outbound.port import EnvioRetentavel
 from mobia.infra.db import get_sessionmaker
 
 CANAL = "whatsapp"
@@ -600,7 +603,7 @@ async def test_a_pergunta_imobiliaria_com_cara_de_sondagem_conta_como_dentro_do_
     Existe para que ninguem leia esta card como defesa contra injection. Uma
     fala que pede instrucao do sistema mas vem redigida como pergunta
     imobiliaria e classificada dentro do escopo -- e entao zera o contador e
-    adia o encerramento indefinidamente. E' o comportamento pretendido: a
+    adia o encerramento indefinidamente. E o comportamento pretendido: a
     RN-03.5 conta INTENCAO, e endurecer isto seria mudar o classificador, nao
     esta regra.
     """
@@ -621,3 +624,140 @@ async def test_a_pergunta_imobiliaria_com_cara_de_sondagem_conta_como_dentro_do_
 
     assert await _seguidas(session) == 0
     assert await _linha_da_conversa(session) is None, "dentro do escopo nao encerra nada"
+
+
+async def test_o_pedido_de_optout_dentro_da_janela_ainda_e_registrado(
+    session, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """A guarda nao pode engolir o pedido de opt-out (fix da revisao,
+    Important 3).
+
+    O teste irmao acima registra o opt-out ANTES do turno, e por isso quem
+    devolve la e a PRIMEIRA guarda -- a nova nem e alcancada. Este aqui e o
+    caso que de fato exercita o `if not pedido_de_optout:` que a envolve: a
+    conversa esta encerrada e a mensagem E o pedido. Sem aquela condicao o
+    lead sairia calado e o opt-out NAO ficaria registrado, que e o defeito de
+    LGPD que o repo ja consertou uma vez como Critical.
+    """
+    await encerrar_conversa(
+        session,
+        channel=CANAL_AGENTE,
+        conversation_key=CONVERSA_AGENTE,
+        motivo=str(MotivoDoEncerramento.FORA_DE_ESCOPO),
+        agora=datetime.now(UTC),
+    )
+    await session.commit()
+    entregador = outbound_fake()
+
+    desfecho = await rodar_turno(
+        session,
+        ClassificadorQueNaoPodeSerChamado(),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto="parar",
+    )
+
+    assert desfecho == "opt_out"
+    assert await esta_em_optout(session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE), (
+        "o pedido foi registrado -- a guarda do encerramento nao o engoliu"
+    )
+    assert entregador.entregues != [], "e a confirmacao saiu"
+
+
+async def test_o_pedido_de_humano_dentro_da_janela_e_atendido_e_reabre(
+    session, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """A excecao da guarda (fix da revisao, Important 1), e as duas metades.
+
+    Atender: o lead que pede uma pessoa recebe o aviso e ganha handoff, ainda
+    que a conversa esteja encerrada -- e sem pagar chamada nenhuma, que e o
+    que o dublê que levanta afirma. Calar aqui inverteria o "decisao de pessoa
+    vence politica automatica" no unico caso em que quem pede e o lead.
+
+    Reabrir: sem isso o lead ficaria mudo para o agente pelo resto da janela
+    mesmo depois de o corretor resolver o handoff.
+    """
+    await encerrar_conversa(
+        session,
+        channel=CANAL_AGENTE,
+        conversation_key=CONVERSA_AGENTE,
+        motivo=str(MotivoDoEncerramento.FORA_DE_ESCOPO),
+        agora=datetime.now(UTC),
+    )
+    await session.commit()
+    entregador = outbound_fake()
+
+    desfecho = await rodar_turno(
+        session,
+        ClassificadorQueNaoPodeSerChamado(),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto="quero falar com uma pessoa",
+    )
+
+    assert desfecho == "pedido_de_humano"
+    assert entregador.entregues != []
+    assert await tem_handoff_de_humano_aberto(
+        session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE
+    )
+    linha = await _linha_da_conversa(session)
+    assert linha is not None
+    assert linha.status == Status.ATIVA, "o pedido de humano reabre a conversa"
+
+
+async def test_a_entrega_que_falha_nao_encerra_a_conversa(
+    session, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """O encerramento espera a despedida SAIR (fix da revisao, Important 2).
+
+    Encerrando antes da entrega, uma falha retentavel (5xx da Meta) deixava a
+    conversa fechada e o lead calado por 30 dias sem nunca ter ouvido o
+    porque: a excecao sobe, a linha vira FAILED, o sweeper reenfileira a MESMA
+    mensagem -- e no turno seguinte a guarda do topo ja devolvia
+    "fora_de_escopo". E o defeito que o repo ja pagou duas vezes (a
+    confirmacao de opt-out e o Critical 2 da TEC-143), por uma terceira porta.
+
+    A segunda metade e o que torna a espera barata: a contagem NAO foi zerada,
+    entao a mensagem seguinte chega em 4 e `deve_encerrar` encerra ali mesmo,
+    porque ele usa `>=` e nao `==`.
+    """
+    await _conversa_ja_existe(session)
+    entregador = outbound_fake()
+
+    await _fora_de_escopo(
+        rodar_turno, session, entregador, resumidor_fake(), contador_fake(), vezes=2
+    )
+
+    com_falha = outbound_fake(erro=EnvioRetentavel("502 da Meta"))
+    with pytest.raises(EnvioRetentavel):
+        await rodar_turno(
+            session,
+            ClassificadorFake(intencao=Intencao.FORA_DE_ESCOPO, resposta=PROSA_DO_MODELO),
+            com_falha,
+            resumidor_fake(),
+            contador_fake(),
+            texto=FALA_FORA_DE_ESCOPO,
+        )
+
+    assert await _linha_da_conversa(session) is None, (
+        "sem a despedida entregue, a conversa nao fecha"
+    )
+    assert await _seguidas(session) == 3, "e a contagem fica onde estava, nao zerada"
+
+    desfecho = await rodar_turno(
+        session,
+        ClassificadorFake(intencao=Intencao.FORA_DE_ESCOPO, resposta=PROSA_DO_MODELO),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto=FALA_FORA_DE_ESCOPO,
+    )
+
+    assert desfecho == "respondido"
+    assert entregador.entregues[-1] == TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO
+    linha = await _linha_da_conversa(session)
+    assert linha is not None
+    assert linha.status == Status.ENCERRADA
+    assert await _seguidas(session) == 0

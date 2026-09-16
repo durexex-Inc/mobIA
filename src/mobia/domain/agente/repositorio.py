@@ -142,19 +142,25 @@ async def zerar_fora_de_escopo(
 ) -> None:
     """Zera `fora_de_escopo_seguidas`. **Nao commita** -- o chamador e o dono.
 
-    RN-03.5, TEC-138. Existe para o ENCERRAMENTO, e roda na mesma transacao
-    que o `gravar_intencao` que acabou de subir o contador ate o teto: o turno
-    que encerra tem de deixar o contador em zero, ou o lead que volta depois
-    dos 30 dias iria de 3 para 4 e seria encerrado na primeira mensagem, sem
-    as tres tentativas que a regra lhe da. O comentario da coluna em
-    `models.py` e a docstring de `reabrir_conversa`
-    (`domain/conversa/repositorio.py`) dependem disto -- aquela diz que a
-    reabertura nao mexe no contador porque "ele ja esta em zero desde o
-    encerramento", e e esta funcao que torna a frase verdadeira.
+    RN-03.5, TEC-138. Existe para o ENCERRAMENTO: o turno que encerra tem de
+    deixar o contador em zero, ou o lead que volta depois dos 30 dias iria de
+    3 para 4 e seria encerrado na primeira mensagem, sem as tres tentativas
+    que a regra lhe da. O comentario da coluna em `models.py` e a docstring de
+    `reabrir_conversa` (`domain/conversa/repositorio.py`) dependem disto --
+    aquela diz que a reabertura nao mexe no contador porque "ele ja esta em
+    zero desde o encerramento", e e esta funcao que torna a frase verdadeira.
 
-    `UPDATE` e nao upsert: quem chama acabou de gravar a linha com
-    `gravar_intencao`, entao ela existe. Sem linha o statement e no-op, e esta
-    certo -- nao havia contagem para zerar.
+    **Roda na mesma transacao que `encerrar_conversa`, e nao na que subiu o
+    contador.** O unico chamador e o bloco POS-ENTREGA de `executar_turno`,
+    que so encerra depois de a despedida ter saido -- o comentario de la
+    explica por que a ordem inversa reintroduzia o defeito da entrega
+    retentavel. O que tem de ser indivisivel e o par encerramento+zero: uma
+    conversa encerrada com contador cheio e o estado que quebraria a docstring
+    acima.
+
+    `UPDATE` e nao upsert: `gravar_intencao` ja gravou a linha antes, no mesmo
+    turno. Sem linha o statement e no-op, e esta certo -- nao havia contagem
+    para zerar.
     """
     await session.execute(
         update(ConversationIntent)
