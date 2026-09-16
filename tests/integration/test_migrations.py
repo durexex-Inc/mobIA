@@ -287,3 +287,52 @@ async def test_a_0013_desce_e_sobe_de_novo() -> None:
             )
             == 1
         )
+
+
+async def test_a_0035_desce_e_sobe_de_novo() -> None:
+    """A trilha de intencao some no downgrade e a trigger volta no upgrade.
+
+    Mesma forma e mesma razao do teste da 0012 logo acima: a funcao e a trigger
+    nascem de `op.execute`, e nao do autogenerate, entao nada garante que o
+    downgrade as derrube. Uma funcao orfa faz o upgrade SEGUINTE reprovar com
+    "function already exists" -- num banco de desenvolvimento que ja subiu e
+    desceu esta revisao uma vez, e nao no CI, que sempre parte do zero.
+    """
+    await dispose_engine()
+    alembic("downgrade", "0034")
+    try:
+        async with get_sessionmaker()() as sessao:
+            assert (
+                await sessao.scalar(text("SELECT to_regclass('public.conversation_intent_audit')"))
+                is None
+            )
+            # A funcao tambem, e ela e o ponto: a tabela sumiria mesmo sem o
+            # `DROP FUNCTION`, porque `drop_table` leva a trigger junto.
+            assert (
+                await sessao.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_proc "
+                        "WHERE proname = 'conversation_intent_audit_recusa_update'"
+                    )
+                )
+                == 0
+            )
+    finally:
+        await dispose_engine()
+        alembic("upgrade", "head")
+        await dispose_engine()
+
+    async with get_sessionmaker()() as sessao:
+        assert (
+            await sessao.scalar(text("SELECT to_regclass('public.conversation_intent_audit')"))
+            is not None
+        )
+        assert (
+            await sessao.scalar(
+                text(
+                    "SELECT count(*) FROM pg_trigger "
+                    "WHERE tgname = 'conversation_intent_audit_imutavel'"
+                )
+            )
+            == 1
+        )

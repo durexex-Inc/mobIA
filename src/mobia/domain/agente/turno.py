@@ -2114,6 +2114,38 @@ async def executar_turno(
         candidatos=resposta_do_turno.candidatos,
         faixa=_faixa_declarada(depois_do_estado or contexto.estado),
     )
+    # TEC-136, fix wave. **A prosa deste turno foi gerada contra o prompt de
+    # ANTES do descarte, e por isso a faixa de depois nao basta para julga-la.**
+    # Num turno que descartou o orcamento, `depois_do_estado` existe e a faixa
+    # dele e `(None, None)` -- que `_na_faixa` le como AUSENCIA de declaracao, e
+    # nao como faixa aberta. Sozinha, ela transforma em divergencia todo valor
+    # da prosa, inclusive o que o proprio prompt mostrou ao modelo (o comentario
+    # acima registra que `montar_contexto` ate instrui o modelo a ecoa-lo).
+    # Quem paga e o turno titular do Gherkin: "voce procurava aluguel ate
+    # R$ 2.500, para compra qual seu orcamento?" vira `TEXTO_DA_BUSCA_INCONCLUSIVA`
+    # e um ERROR de `citacao.bloqueada` num canal reservado a invencao do modelo.
+    #
+    # **Segunda passada, e nao troca de faixa.** Trocar por `contexto.estado`
+    # seria mais curto e estaria errado no outro caso da mesma card: o lead que
+    # diz "na verdade quero comprar, ate 800 mil" descarta E declara no mesmo
+    # turno, e ai e a faixa NOVA que sustenta o eco -- ela nao esta em
+    # `contexto.estado`. O que se quer e a uniao ("o lead declarou este valor
+    # antes OU depois desta fala"), e uma tupla `(min, max)` unica nao a
+    # expressa quando as duas faixas tem pontas abertas diferentes. Duas
+    # passadas com a intersecao das divergencias dizem exatamente isso.
+    #
+    # Roda so quando ha divergencia E houve descarte: o turno comum paga uma
+    # chamada, como antes.
+    if divergencias and mudanca is not None and mudanca.faixa_descartada:
+        sob_a_faixa_de_antes = divergencias_de(
+            texto,
+            candidatos=resposta_do_turno.candidatos,
+            faixa=_faixa_declarada(contexto.estado),
+        )
+        # As divergencias de codigo nao dependem da faixa, entao saem identicas
+        # das duas passadas e a intersecao as preserva -- so as de preco que a
+        # faixa de antes sustenta e que caem.
+        divergencias = tuple(d for d in divergencias if d in sob_a_faixa_de_antes)
     citacao_bloqueada = bool(divergencias)
     if citacao_bloqueada:
         # A prosa barrada **nao** entra no log, pela mesma razao que o texto

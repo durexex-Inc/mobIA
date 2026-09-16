@@ -1,12 +1,15 @@
 """O descarte do orcamento quando a intencao troca de banda. TEC-136."""
 
 import asyncio
+import uuid
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.agente.schemas import Extracao, Intencao
+from mobia.domain.agente.turno import TEXTO_DA_BUSCA_INCONCLUSIVA
 from mobia.domain.context.auditoria import (
     CAUSA_CAMPOS_OBRIGATORIOS,
     CAUSA_MUDANCA_DE_INTENCAO,
@@ -558,3 +561,161 @@ async def test_a_troca_que_nao_move_fator_nenhum_ainda_grava_a_trilha(
         [CAUSA_PRIMEIRO_CALCULO],
         [CAUSA_MUDANCA_DE_INTENCAO],
     ]
+
+
+async def test_o_eco_do_orcamento_velho_no_turno_da_troca_nao_e_invencao(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake, caplog
+) -> None:
+    """O turno titular do Gherkin nao pode ser engolido pela guarda da TEC-161.
+
+    A prosa deste turno foi gerada contra o prompt de ANTES do descarte, que
+    mostrava `faixa_preco_max: R$ 2.500` -- `montar_contexto` ate instrui o
+    modelo a ecoar o que o lead disse. O descarte roda depois da geracao, e sem
+    a excecao a faixa que a guarda enxerga fica `(None, None)`, que `_na_faixa`
+    le como AUSENCIA de declaracao: todo valor da prosa vira divergencia.
+
+    O estrago e triplo e cai justo no cenario 2 da card: o lead recebe
+    `TEXTO_DA_BUSCA_INCONCLUSIVA` em vez da reperguntada que o descarte existe
+    para provocar, a repergunta some, e sai um ERROR de `citacao.bloqueada` num
+    canal reservado a invencao do modelo -- aqui sobre um numero que o proprio
+    lead deu.
+    """
+    await rodar_turno(
+        session,
+        classificador_fake(
+            Intencao.ALUGUEL,
+            extracao=Extracao(faixa_preco_max_centavos=250_000, regiao="zona sul"),
+        ),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="procuro apartamento para alugar na zona sul ate 2500",
+    )
+
+    eco = "Entendi! Voce procurava aluguel ate R$ 2.500. Para compra, qual seu orcamento?"
+    outbound = outbound_fake()
+    with caplog.at_level("ERROR"):
+        await rodar_turno(
+            session,
+            classificador_fake(
+                Intencao.COMPRA,
+                extracao=Extracao(),
+                resposta=eco,
+                perguntou=("faixa_preco_expressao",),
+            ),
+            outbound,
+            resumidor_fake(),
+            contador_fake(),
+            texto="na verdade quero comprar",
+        )
+
+    assert outbound.entregues[-1] == eco
+    assert TEXTO_DA_BUSCA_INCONCLUSIVA not in outbound.entregues[-1]
+    assert "citacao.bloqueada" not in caplog.text
+
+
+async def test_o_numero_novo_do_mesmo_turno_sobrevive_ao_descarte(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """O teste que o desenho pede e que prende o PORQUE da ordem das chamadas.
+
+    "ALUGUEL -> COMPRA com numero novo no mesmo turno: a faixa nova e gravada,
+    e nao descartada." O lead que diz "na verdade quero comprar, ate 800 mil"
+    da a troca e o numero na MESMA fala: `aplicar_mudanca_de_intencao` anula a
+    faixa de aluguel e `gravar_estado`, logo atras na mesma transacao, escreve
+    a de compra por cima. Invertida a ordem, o descarte apagaria justamente o
+    numero que o lead acabou de dar -- e nenhum outro teste pega isso, porque
+    todos os demais trocam a intencao sem numero novo.
+
+    A prosa ecoa o numero NOVO de proposito, e isso guarda a segunda passada da
+    guarda de citacao (`turno.py`): trocar aquela passada por "use sempre a
+    faixa de antes do turno" -- que e a leitura curta do conserto -- faria
+    R$ 800 mil virar divergencia contra a faixa de aluguel de R$ 2.500 e o lead
+    receberia `TEXTO_DA_BUSCA_INCONCLUSIVA` no lugar da confirmacao.
+    """
+    eco_do_numero_novo = "Fechado, vou procurar imoveis a venda ate R$ 800.000."
+    await rodar_turno(
+        session,
+        classificador_fake(
+            Intencao.ALUGUEL,
+            extracao=Extracao(faixa_preco_max_centavos=250_000, regiao="zona sul"),
+        ),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+        texto="procuro apartamento para alugar na zona sul ate 2500",
+    )
+
+    outbound = outbound_fake()
+    await rodar_turno(
+        session,
+        classificador_fake(
+            Intencao.COMPRA,
+            extracao=Extracao(faixa_preco_max_centavos=80_000_000),
+            resposta=eco_do_numero_novo,
+        ),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        texto="na verdade quero comprar, ate 800 mil",
+    )
+
+    assert outbound.entregues[-1] == eco_do_numero_novo
+    estado = await ler_estado(session, CANAL, CONVERSA_DO_TURNO)
+    assert estado is not None
+    assert estado.faixa_preco_max_centavos == 80_000_000
+    assert estado.intencao == Intencao.COMPRA.value
+    # A linha de historico diz que o descarte ACONTECEU -- o numero novo nao
+    # sobreviveu por o descarte nao ter rodado, e sim por ter rodado antes.
+    linhas = (
+        await session.scalars(
+            select(ConversationIntentAudit).where(
+                ConversationIntentAudit.conversation_key == CONVERSA_DO_TURNO
+            )
+        )
+    ).all()
+    assert [(linha.de, linha.para, linha.faixa_descartada) for linha in linhas] == [
+        (Intencao.ALUGUEL.value, Intencao.COMPRA.value, True)
+    ]
+
+
+def _linha_da_trilha(chave: str) -> ConversationIntentAudit:
+    return ConversationIntentAudit(
+        id=uuid.uuid4(),
+        channel=CANAL,
+        conversation_key=chave,
+        de=Intencao.ALUGUEL.value,
+        para=Intencao.COMPRA.value,
+        faixa_descartada=True,
+    )
+
+
+async def test_update_na_trilha_e_recusado_pela_trigger(session) -> None:
+    """Append-only e a justificativa inteira da tabela, e nada a provava.
+
+    Mesma forma do irmao de `lead_score_audit`
+    (`test_update_e_recusado_pela_trigger`, `test_auditoria_score.py`) e pela
+    mesma razao: a trigger da 0035 nasce de dois `op.execute`, fora do
+    autogenerate, entao nenhum teste de modelo passa perto dela. Apagar aquelas
+    duas linhas da migration deixaria a suite verde com a trilha editavel.
+    """
+    session.add(_linha_da_trilha("5511900000012"))
+    await session.commit()
+
+    with pytest.raises(DBAPIError, match="imutavel"):
+        await session.execute(text("UPDATE conversation_intent_audit SET faixa_descartada = false"))
+
+    # A transacao fica abortada depois da excecao do Postgres; sem isto o
+    # teardown da fixture reclama em vez de fechar limpo.
+    await session.rollback()
+
+
+async def test_delete_na_trilha_continua_livre(session) -> None:
+    """Imutavel e "nao se altera o que foi registrado", e a 0035 diz isso por
+    extenso: a trigger e `BEFORE UPDATE`, nao `BEFORE DELETE`, porque a
+    retencao da RNF-18 precisa que apagar continue possivel."""
+    session.add(_linha_da_trilha("5511900000013"))
+    await session.commit()
+
+    await session.execute(text("DELETE FROM conversation_intent_audit"))
+    await session.commit()
