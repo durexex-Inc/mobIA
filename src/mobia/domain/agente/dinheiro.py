@@ -361,6 +361,31 @@ _BANDA_FROUXA = (
 )
 
 
+def mudou_de_banda(antiga: Intencao | None, nova: Intencao) -> bool:
+    """A intencao nova admite valores de outra faixa que a antiga? TEC-136.
+
+    Existe aqui, e nao em `context/`, porque a resposta e uma consequencia de
+    `_BANDAS` -- a mesma tabela que `parsear` usa para recusar numero
+    implausivel. Duas copias dessa tabela divergiriam em silencio, e a
+    divergencia so apareceria como orcamento sobrevivendo a uma troca que
+    deveria te-lo apagado.
+
+    `antiga is None` e "a conversa ainda nao tinha intencao acumulada quando o
+    numero foi dito", e devolve True de proposito: o valor entrou sob
+    `_BANDA_FROUXA`, que e a uniao das duas e portanto nao validou nada. E a
+    porta que o comentario de `piso_do_numero_nu` descreve.
+
+    Intencao fora de `_BANDAS` devolve False -- a banda frouxa nao restringe,
+    entao nao ha o que invalidar. Vale para SUPORTE_CONTRATO, que e gravavel,
+    e nao chega a valer para INDEFINIDA, que `campos_a_gravar` nunca grava.
+    """
+    if nova not in _BANDAS:
+        return False
+    if antiga is None:
+        return True
+    return _BANDAS.get(antiga) is not _BANDAS[nova]
+
+
 class MotivoDaRecusa(StrEnum):
     """Tres motivos que mandam quem investiga para lados diferentes.
 
