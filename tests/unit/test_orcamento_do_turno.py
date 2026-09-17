@@ -9,6 +9,12 @@ momento, um comentario que somava a propria parcela e a chamava de total.
 Foi assim que `infra/anthropic.py` chegou a afirmar 360s quando o pior caso era
 840s, e foi assim que a TEC-228 quase fechou uma conta de 162s sem notar os
 200s do embed. A soma so e confiavel num lugar que enxerga os quatro.
+
+A TEC-229 acrescentou as voltas do laco de `montar_contexto` a conta, e com
+elas a soma passou de 202s para 327s contra um `job_timeout` de 240: os dois
+testes que somam estao `xfail(strict=True)` ate a TEC-290 decidir como fechar.
+Os dois que afirmam a derivacao continuam verdes, e sao o que impede este
+arquivo de virar decoracao no meio-tempo.
 """
 
 import pytest
@@ -61,14 +67,15 @@ def _segundos_da_moderacao_no_pior_turno() -> float:
     ),
 )
 def test_o_pior_turno_cabe_no_job_timeout() -> None:
-    """A soma dos quatro clientes externos cabe no `job_timeout`, com folga.
+    """A soma dos quatro clientes externos contra o `job_timeout` -- hoje NAO cabe.
 
     **O que este teste protege e a RELACAO, nao os numeros.** Nenhum dos tetos
     esta escrito aqui: todos sao importados de quem os define, e o
-    `job_timeout` vem do `WorkerSettings` de verdade. Subir qualquer teto sem
-    olhar para o orcamento fica vermelho aqui, que e a unica coisa que impede o
-    estado que a TEC-228 encontrou -- um comentario afirmando que a conta
-    fechava enquanto ela estourava por 600s.
+    `job_timeout` vem do `WorkerSettings` de verdade. Por isso ficou
+    `xfail(strict=True)` na TEC-229 em vez de reescrito com um numero maior --
+    ver a razao no decorador acima. Enquanto durar o xfail, subir qualquer
+    teto sem olhar para o orcamento nao produz sinal nenhum aqui: quem produz
+    e a prosa do comentario de `job_timeout` em `workers/main.py`.
 
     Estourar o `job_timeout` nao e so custo: o ARQ cancela a corrotina, o turno
     inteiro e repago pelo sweeper e a entrega pode duplicar se o cancelamento

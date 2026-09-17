@@ -141,9 +141,14 @@ def _pior_turno() -> tuple[tuple[float, int], ...]:
 def segundos_do_modelo_no_pior_turno() -> float:
     """O teto de tempo que um turno pode gastar falando com ESTE provedor.
 
-    Existe para entrar na soma que `test_o_pior_turno_cabe_no_job_timeout`
-    compara com o `job_timeout` do worker: e a unica coisa que torna vermelha a
-    mudanca de um teto que nao cabe mais no orcamento.
+    Existe para entrar na soma de `tests/unit/test_orcamento_do_turno.py`, que
+    a compara com o `job_timeout` do worker.
+
+    **Esse teste esta `xfail` desde a TEC-229 e nao guarda mais nada sozinho.**
+    Quem guarda a derivacao sao os dois testes irmaos de la, que afirmam que
+    subir `contexto_max_iteracoes` ou o gatilho move este numero. Enquanto a
+    TEC-290 nao fechar o orcamento, apagar aqueles dois deixa esta funcao livre
+    para voltar a ser constante sem nada perceber.
 
     **E so a parcela da Anthropic, e o nome diz isso de proposito.** O turno
     paga outros tres clientes externos -- o embed da busca (`infra/embeddings.py`,
