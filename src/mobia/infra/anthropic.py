@@ -1,3 +1,4 @@
+import math
 from functools import lru_cache
 
 from anthropic import APIStatusError, AsyncAnthropic
@@ -71,14 +72,15 @@ TETO_DO_RESUMO = 25.0
 TETO_DA_CLASSIFICACAO = 25.0
 TETO_DO_INVESTIDOR = 35.0
 
+
 # O pior turno, fatia a fatia, com quantas REQUISICOES cada uma pode fazer.
 #
-# Sao cinco fatias, e nao as tres que a TEC-228 supunha: `count_tokens` e
-# `resumir` em `montar_contexto`, `reagir`, a chamada 1 (`classificar` ou
-# `qualificar_investidor`, conforme o lead ja seja investidor) e a chamada 2
-# (`desambiguar`, ou `qualificar_investidor` na virada). Todas em `turno.py`,
-# citadas pelo nome e nao pela linha: este bloco ja nasceu de um comentario que
-# envelheceu, e numero de linha e a parte que envelhece primeiro.
+# Sao cinco fatias: `count_tokens` e `resumir` em `montar_contexto`, `reagir`,
+# a chamada 1 (`classificar` ou `qualificar_investidor`, conforme o lead ja
+# seja investidor) e a chamada 2 (`desambiguar`, ou `qualificar_investidor` na
+# virada). Todas em `turno.py`, citadas pelo nome e nao pela linha: este bloco
+# ja nasceu de um comentario que envelheceu, e numero de linha e a parte que
+# envelhece primeiro.
 #
 # **Duas fatias custam DUAS requisicoes.** O laco `for tentativa in (1, 2)` de
 # `_chamar` bate no provedor de novo quando o modelo pede a ferramenta de
@@ -90,13 +92,50 @@ TETO_DO_INVESTIDOR = 35.0
 # dispara quando a chamada 1 NAO foi a do investidor. Por isso o pior par e
 # `classificar` com busca seguido de `qualificar_investidor` com busca, e nao
 # investidor duas vezes.
-_PIOR_TURNO = (
-    (TETO_DO_COUNT_TOKENS, 1),
-    (TETO_DO_RESUMO, 1),
-    (TETO_DA_REACAO, 1),
-    (TETO_DA_CLASSIFICACAO, 2),
-    (TETO_DO_INVESTIDOR, 2),
-)
+#
+# **E duas fatias custam N requisicoes, derivadas da configuracao (TEC-229).**
+# A versao anterior contava `resumir` e `count_tokens` uma vez cada, e era a
+# mesma classe de erro do paragrafo acima, uma camada abaixo: `montar_contexto`
+# nao chama nenhum dos dois uma vez so.
+def _pior_turno() -> tuple[tuple[float, int], ...]:
+    """As fatias do turno e quantas requisicoes cada uma faz no pior caso.
+
+    Funcao e nao constante porque duas fatias dependem de `Settings`, e
+    `get_settings()` no import seria pior que a constante que isto substitui.
+    """
+    settings = get_settings()
+
+    # `resumir`: a dobra do gatilho de acumulacao (`deve_regenerar`), mais uma
+    # por volta do laco `while tokens > teto`, que para em
+    # `contexto_max_iteracoes`.
+    resumos = 1 + settings.contexto_max_iteracoes
+
+    # `count_tokens`: a contagem antes do laco, uma por volta, e as de
+    # `_truncar_ate_caber` -- que corta a janela pela metade a cada passo,
+    # chegando a uma literal em log2(N), mais uma contagem se ainda precisar
+    # descartar o resumo.
+    #
+    # **N vem do gatilho, e isso e suposicao e nao teorema.** O gatilho dobra
+    # em 40 literais, entao em regime normal a janela que chega ao truncamento
+    # tem essa ordem de grandeza; se a dobra falhar, `literais` passa disso. O
+    # `max(..., 1)` existe para que um gatilho mal configurado em 0 nao leve
+    # `log2` a `-inf` -- o teto fica errado, mas a funcao nao explode.
+    #
+    # **O termo e pessimista de proposito.** `_contar_se_valer` so paga o
+    # round trip acima do limiar, e cortar pela metade derruba a contagem
+    # rapido: na pratica o truncamento nao paga todas estas. Um teto nao pode
+    # depender de quao rapido o texto encolhe, e subcontar aqui e o defeito
+    # que a TEC-229 veio matar.
+    cortes = math.ceil(math.log2(max(settings.contexto_gatilho_de_regeneracao, 1))) + 1
+    contagens = 1 + settings.contexto_max_iteracoes + cortes
+
+    return (
+        (TETO_DO_COUNT_TOKENS, contagens),
+        (TETO_DO_RESUMO, resumos),
+        (TETO_DA_REACAO, 1),
+        (TETO_DA_CLASSIFICACAO, 2),
+        (TETO_DO_INVESTIDOR, 2),
+    )
 
 
 def segundos_do_modelo_no_pior_turno() -> float:
@@ -113,7 +152,7 @@ def segundos_do_modelo_no_pior_turno() -> float:
     ha folga de sobra, que foi exatamente o erro do comentario que esta card
     encontrou. A soma inteira mora no teste.
     """
-    return sum(teto * requisicoes for teto, requisicoes in _PIOR_TURNO) * (MAX_TENTATIVAS + 1)
+    return sum(teto * requisicoes for teto, requisicoes in _pior_turno()) * (MAX_TENTATIVAS + 1)
 
 
 @lru_cache

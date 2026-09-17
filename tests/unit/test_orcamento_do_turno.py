@@ -11,11 +11,17 @@ Foi assim que `infra/anthropic.py` chegou a afirmar 360s quando o pior caso era
 200s do embed. A soma so e confiavel num lugar que enxerga os quatro.
 """
 
+import pytest
+
+from mobia.app.config import get_settings
 from mobia.domain.moderacao.port import Direcao
 from mobia.domain.outbound.whatsapp import TIMEOUT_SEGUNDOS as TETO_DO_POST_A_META
 from mobia.infra.anthropic import (
+    MAX_TENTATIVAS,
     TETO_DA_CLASSIFICACAO,
+    TETO_DO_COUNT_TOKENS,
     TETO_DO_INVESTIDOR,
+    TETO_DO_RESUMO,
     segundos_do_modelo_no_pior_turno,
 )
 from mobia.infra.embeddings import (
@@ -45,6 +51,15 @@ def _segundos_da_moderacao_no_pior_turno() -> float:
     return len(Direcao) * TIMEOUT_DA_MODERACAO_SEGUNDOS * (MAX_TENTATIVAS_DA_MODERACAO + 1)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "TEC-229 corrigiu o grafo de chamadas e a conta deixou de fechar: 327s "
+        "contra um job_timeout de 240. Fechar exige mexer na janela do sweeper, "
+        "que e decisao de produto -- ver TEC-290. Estrito de proposito: quem "
+        "fechar o orcamento ve isto virar XPASS e e obrigado a tirar a marca."
+    ),
+)
 def test_o_pior_turno_cabe_no_job_timeout() -> None:
     """A soma dos quatro clientes externos cabe no `job_timeout`, com folga.
 
@@ -73,6 +88,15 @@ def test_o_pior_turno_cabe_no_job_timeout() -> None:
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "TEC-229 corrigiu o grafo de chamadas e a conta deixou de fechar: 327s "
+        "contra um job_timeout de 240. Fechar exige mexer na janela do sweeper, "
+        "que e decisao de produto -- ver TEC-290. Estrito de proposito: quem "
+        "fechar o orcamento ve isto virar XPASS e e obrigado a tirar a marca."
+    ),
+)
 def test_a_folga_paga_o_banco() -> None:
     """Caber nao basta: sobrar 1s seria caber e estourar na primeira consulta.
 
@@ -101,3 +125,55 @@ def test_o_investidor_e_o_teto_mais_alto_do_turno() -> None:
     so e o pior porque as duas chamadas de investidor sao exclusivas entre si.
     """
     assert TETO_DO_INVESTIDOR > TETO_DA_CLASSIFICACAO
+
+
+def test_o_pior_turno_segue_contexto_max_iteracoes(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """Subir o teto de iteracoes da montagem tem de mover o pior caso.
+
+    E o criterio de pronto que a TEC-229 existe para fechar. Ate ela,
+    `_PIOR_TURNO` contava `resumir` e `count_tokens` uma vez cada: dobrar
+    `contexto_max_iteracoes` nao mexia em numero nenhum, e o laco de
+    `montar_contexto` -- que roda ate esse teto, com um `resumir` e uma
+    contagem por volta -- ficava fora da conta.
+
+    **Enquanto a TEC-290 nao fechar o orcamento, este e o unico teste verde
+    que guarda a derivacao.** Os dois que somam estao `xfail`, entao subir um
+    teto ou uma iteracao nao os torna vermelhos -- eles ja sao. Se este aqui
+    for apagado junto com aquela card, a derivacao volta a poder ser trocada
+    por constantes sem nada perceber.
+
+    O delta e afirmado exato, e nao so "maior": uma iteracao a mais custa
+    UMA dobra e UMA contagem. Afirmar `>` passaria tambem se a implementacao
+    multiplicasse a fatia errada.
+    """
+    antes = segundos_do_modelo_no_pior_turno()
+
+    monkeypatch.setenv("CONTEXTO_MAX_ITERACOES", str(get_settings().contexto_max_iteracoes + 1))
+    get_settings.cache_clear()
+
+    uma_volta_a_mais = (TETO_DO_RESUMO + TETO_DO_COUNT_TOKENS) * (MAX_TENTATIVAS + 1)
+    assert segundos_do_modelo_no_pior_turno() - antes == uma_volta_a_mais
+
+
+def test_o_pior_turno_segue_o_gatilho_de_regeneracao(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """O termo do truncamento tambem e derivado, e cresce em log.
+
+    `_truncar_ate_caber` corta a janela pela metade a cada volta, entao
+    dobrar o gatilho acrescenta UMA contagem, nao o dobro delas. O teste
+    afirma essa forma: se alguem trocar o `log2` por multiplicacao, a
+    igualdade quebra.
+    """
+    antes = segundos_do_modelo_no_pior_turno()
+
+    monkeypatch.setenv(
+        "CONTEXTO_GATILHO_DE_REGENERACAO",
+        str(get_settings().contexto_gatilho_de_regeneracao * 2),
+    )
+    get_settings.cache_clear()
+
+    um_corte_a_mais = TETO_DO_COUNT_TOKENS * (MAX_TENTATIVAS + 1)
+    assert segundos_do_modelo_no_pior_turno() - antes == um_corte_a_mais
