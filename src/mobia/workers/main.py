@@ -214,7 +214,9 @@ class WorkerSettings:
     # apresentou imoveis, max_tokens=300), `classificar` ou
     # `qualificar_investidor` (sempre, max_tokens=1500), desde a TEC-135
     # `desambiguar` (so no turno ambiguo, max_tokens=300) e o POST para a Meta
-    # -- um turno com dobra ja passava de 60s sem nada estar errado.
+    # -- lista de QUAIS chamadas existem, nao de quantas vezes cada uma roda
+    # (`count_tokens` e `resumir` repetem por volta do laco de montagem, ver
+    # abaixo) -- um turno com dobra ja passava de 60s sem nada estar errado.
     #
     # **Ate a TEC-228 nao havia folga, e a versao anterior deste comentario
     # subcontava o proprio buraco.** Ela dizia 360s somando tres chamadas a

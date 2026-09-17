@@ -836,10 +836,11 @@ texto é esse.
   turno.** `get_moderation_client()` usa
   `TIMEOUT_DA_MODERACAO_SEGUNDOS = 5.0` e `MAX_TENTATIVAS_DA_MODERACAO = 0`
   (`src/mobia/infra/moderacao.py`). O cliente do turno
-  (`infra/anthropic.py`) tem 60s por tentativa com uma retentativa — 120s de
-  pior caso por chamada — contra um `job_timeout` de 240s que o turno **já**
-  estoura sozinho: `resumir` + `classificar` + `desambiguar` somam 360s no
-  pior caso (comentário de `job_timeout` em `workers/main.py`, e a seção
+  (`infra/anthropic.py`) não tem retentativa (`MAX_TENTATIVAS = 0`, desde a
+  TEC-228) e cada chamada manda o próprio teto — de `TETO_DO_COUNT_TOKENS`
+  (5s) a `TETO_DO_INVESTIDOR` (35s) — contra um `job_timeout` de 240s que o
+  turno **já** estoura sozinho: `resumir` + `classificar` + `desambiguar`
+  somam 360s no pior caso (comentário de `job_timeout` em `workers/main.py`, e a seção
   TEC-135 acima). Moderar as duas pontas com aquele cliente somaria mais 240s
   a um orçamento já estourado; com o teto de 5s e sem retentativa, as duas
   chamadas de moderação somam 10s — ruído contra uma folga que já não existe,
@@ -960,8 +961,11 @@ texto é esse.
   saída, uma vez cada por turno. O número **exclui** `count_tokens`
   (`contador.contar`), de propósito: ela é um round trip a mais que não gera
   token nenhum, e pode acontecer mais de uma vez no mesmo turno — o laço de
-  truncamento de `montar_contexto` reconta a cada corte, então não há um
-  "número de chamadas" fechado que a inclua. `resumir` + `classificar` +
+  truncamento de `montar_contexto` reconta a cada corte. Isto era verdade até
+  a TEC-229: hoje `_pior_turno()` (`src/mobia/infra/anthropic.py`) deriva um
+  número fechado de contagens a partir de `contexto_max_iteracoes` e
+  `contexto_gatilho_de_regeneracao` (11 no valor padrão de hoje), então "não
+  há número de chamadas fechado" deixou de valer. `resumir` + `classificar` +
   `desambiguar` já somavam 360s de pior caso antes desta card (TEC-135,
   cliente de 120s por chamada); a moderação soma 10s, num cliente com teto de
   5s por chamada: marginal contra um orçamento que já estava estourado, não a

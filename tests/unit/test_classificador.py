@@ -1602,7 +1602,7 @@ async def test_cada_metodo_manda_o_proprio_teto_de_tempo(
 
     Compara contra as constantes importadas, e nao contra literais: o teste
     afirma o CAMINHO, e quem afirma os numeros e
-    `test_o_pior_turno_cabe_no_job_timeout`.
+    `tests/unit/test_orcamento_do_turno.py`.
     """
     esperados = [
         (

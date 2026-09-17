@@ -57,6 +57,15 @@ def _segundos_da_moderacao_no_pior_turno() -> float:
     return len(Direcao) * TIMEOUT_DA_MODERACAO_SEGUNDOS * (MAX_TENTATIVAS_DA_MODERACAO + 1)
 
 
+def _soma_do_pior_turno() -> float:
+    return (
+        segundos_do_modelo_no_pior_turno()
+        + _segundos_do_embed_no_pior_turno()
+        + _segundos_da_moderacao_no_pior_turno()
+        + TETO_DO_POST_A_META
+    )
+
+
 @pytest.mark.xfail(
     strict=True,
     reason=(
@@ -81,12 +90,7 @@ def test_o_pior_turno_cabe_no_job_timeout() -> None:
     inteiro e repago pelo sweeper e a entrega pode duplicar se o cancelamento
     cair depois de o POST ter chegado a Meta. Ver o comentario de `job_timeout`.
     """
-    soma = (
-        segundos_do_modelo_no_pior_turno()
-        + _segundos_do_embed_no_pior_turno()
-        + _segundos_da_moderacao_no_pior_turno()
-        + TETO_DO_POST_A_META
-    )
+    soma = _soma_do_pior_turno()
 
     assert soma < WorkerSettings.job_timeout, (
         f"o pior turno soma {soma}s contra um job_timeout de "
@@ -113,12 +117,7 @@ def test_a_folga_paga_o_banco() -> None:
     de derivada: a varredura de follow-ups reservou 20s para o banco de UM
     candidato pelo mesmo motivo e com a mesma honestidade.
     """
-    soma = (
-        segundos_do_modelo_no_pior_turno()
-        + _segundos_do_embed_no_pior_turno()
-        + _segundos_da_moderacao_no_pior_turno()
-        + TETO_DO_POST_A_META
-    )
+    soma = _soma_do_pior_turno()
 
     assert WorkerSettings.job_timeout - soma >= 30
 
@@ -185,3 +184,38 @@ def test_o_pior_turno_segue_o_gatilho_de_regeneracao(
 
     um_corte_a_mais = TETO_DO_COUNT_TOKENS * (MAX_TENTATIVAS + 1)
     assert segundos_do_modelo_no_pior_turno() - antes == um_corte_a_mais
+
+
+# O orcamento de hoje, congelado. Nao e alvo nem meta: e o teto que impede a
+# conta de PIORAR enquanto a TEC-290 nao a fecha.
+#
+# Existe porque o `xfail(strict=True)` dos dois testes acima, sozinho, e uma
+# guarda unidirecional e invertida em relacao ao risco: ele dispara quando
+# alguem MELHORA o orcamento (XPASS), nunca quando alguem o piora. Ate a
+# TEC-229, `test_o_pior_turno_cabe_no_job_timeout` era verde e subir um teto o
+# deixava vermelho -- sem as duas linhas abaixo, esta card teria trocado essa
+# guarda por nada, e subir `TETO_DO_INVESTIDOR` de 35 para 90 passaria a suite
+# inteira em silencio.
+#
+# Os dois numeros sao DECLARADOS, e nao derivados: nao ha de onde derivar um
+# teto para uma conta que nao fecha. Saem junto com os `xfail`, quando a
+# TEC-290 devolver a guarda ao derivado.
+SOMA_DE_HOJE_SEGUNDOS = 327.0
+JOB_TIMEOUT_DE_HOJE = 240
+
+
+def test_o_orcamento_estourado_nao_piora() -> None:
+    """A conta nao fecha, e ate a TEC-290 o que se guarda e que ela nao piore.
+
+    Este e o unico teste VERDE que cobre as tres direcoes que a card pede:
+    subir `contexto_max_iteracoes`, subir um teto por chamada, ou baixar o
+    `job_timeout`. Os dois que somam estao `xfail` e nao cobrem nenhuma --
+    `xfail` estrito so fala quando o teste volta a passar.
+
+    Os testes irmaos de derivacao (`..._segue_contexto_max_iteracoes`,
+    `..._segue_o_gatilho_de_regeneracao`) provam que a funcao LE a
+    configuracao; este prova que o que ela le CABE no que se decidiu tolerar.
+    Sao coisas diferentes, e so as duas juntas fecham o criterio da card.
+    """
+    assert _soma_do_pior_turno() <= SOMA_DE_HOJE_SEGUNDOS
+    assert WorkerSettings.job_timeout >= JOB_TIMEOUT_DE_HOJE

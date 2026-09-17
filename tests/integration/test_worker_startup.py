@@ -167,30 +167,15 @@ def test_job_timeout_cabe_dentro_da_janela_do_sweeper() -> None:
 
     A conta do turno mora em `tests/unit/test_orcamento_do_turno.py`, que soma
     os quatro clientes externos importando cada teto de quem o define. Nao
-    reconstrua o grafo de chamadas aqui.
-
-    Aquele arquivo esta `xfail` desde a TEC-229, entao o piso abaixo e o unico
-    sinal vivo contra o orcamento do turno estourar em silencio ate a TEC-290
-    fechar a conta.
+    reconstrua o grafo de chamadas aqui: dois dos cinco testes daquele arquivo
+    estao `xfail` porque a conta nao fecha, mas `test_o_orcamento_estourado_nao_piora`
+    e verde e afirma `job_timeout >= 240`, mais forte que qualquer piso que
+    este teste poderia declarar aqui.
     """
     from mobia.app.config import get_settings
     from mobia.workers.main import WorkerSettings
 
     assert WorkerSettings.job_timeout < get_settings().sweep_inflight_after_seconds
-    # Piso declarado, e nao derivado, enquanto a TEC-290 nao fechar o orcamento.
-    # O derivado existe -- `test_a_folga_paga_o_banco` exige
-    # `job_timeout >= soma + 30` -- mas esta `xfail` desde a TEC-229, e um
-    # `xfail` que ja falha nao guarda direcao nenhuma: `strict=True` so produz
-    # sinal quando o teste volta a PASSAR, que e o oposto deste risco. Sem esta
-    # linha, baixar o `job_timeout` de 240 para 60 nao ficaria vermelho em
-    # lugar nenhum, e o orcamento voltaria a estourar em silencio -- que e o
-    # estado que a TEC-228 encontrou e que esta card existe para nao repetir.
-    #
-    # O 180 nao tem derivacao e nao finge ter: e o valor que esta linha ja
-    # tinha antes desta card, mantido porque o que importa e haver um piso
-    # vivo, nao qual. Sai junto com os `xfail`, quando a TEC-290 devolver a
-    # guarda ao derivado.
-    assert WorkerSettings.job_timeout >= 180
 
 
 def test_job_completion_wait_passa_do_job_timeout() -> None:

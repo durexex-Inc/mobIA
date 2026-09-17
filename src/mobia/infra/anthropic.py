@@ -20,9 +20,10 @@ from mobia.app.config import ConfiguracaoInsegura, get_settings
 # uma chamada nova que esqueca o override nao herde os dez minutos do SDK.
 TIMEOUT_SEGUNDOS = 60.0
 
-# Zero, e a razao esta na aritmetica logo abaixo: com uma retentativa o pior
-# turno dobra para 324s e continua estourando o `job_timeout`, mesmo com todos
-# os tetos por tipo. E a retentativa que come metade do orcamento.
+# Zero, e a razao esta na aritmetica logo abaixo: a parcela da Anthropic no
+# pior turno e 287s (`segundos_do_modelo_no_pior_turno`), e a base sozinha ja
+# estoura o `job_timeout` de 240s -- antes de qualquer retentativa. Com uma
+# retentativa o pior turno dobraria para 574s, so nesta parcela.
 #
 # Nao e decisao nova -- a moderacao ja a tomou, citando esta card pelo nome
 # (ver `MAX_TENTATIVAS_DA_MODERACAO` em `infra/moderacao.py`). O que mudou e o
@@ -78,9 +79,11 @@ TETO_DO_INVESTIDOR = 35.0
 # Sao cinco fatias: `count_tokens` e `resumir` em `montar_contexto`, `reagir`,
 # a chamada 1 (`classificar` ou `qualificar_investidor`, conforme o lead ja
 # seja investidor) e a chamada 2 (`desambiguar`, ou `qualificar_investidor` na
-# virada). Todas em `turno.py`, citadas pelo nome e nao pela linha: este bloco
-# ja nasceu de um comentario que envelheceu, e numero de linha e a parte que
-# envelhece primeiro.
+# virada). As duas primeiras vivem em `domain/context/montagem.py`, que chama
+# `resumir` e `contador.contar` (a contagem em si, em `domain/context/resumo.py`);
+# as outras tres vivem em `turno.py`, que so chama `montar_contexto`. Citadas
+# pelo nome e nao pela linha: este bloco ja nasceu de um comentario que
+# envelheceu, e numero de linha e a parte que envelhece primeiro.
 #
 # **Duas fatias custam DUAS requisicoes.** O laco `for tentativa in (1, 2)` de
 # `_chamar` bate no provedor de novo quando o modelo pede a ferramenta de
