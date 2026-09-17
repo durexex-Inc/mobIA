@@ -34,7 +34,7 @@ from mobia.infra.moderacao import (
 )
 from mobia.workers.main import WorkerSettings
 
-# Duas, e sao as mesmas duas fatias que `_PIOR_TURNO` conta em dobro: a chamada
+# Duas, e sao as mesmas duas fatias que `_pior_turno()` conta em dobro: a chamada
 # 1 (`turno.py`) e a chamada 2 podem, cada uma, pedir a ferramenta de busca uma
 # vez -- o teto de um round-trip por turno e da D4 da TEC-265, e
 # `disable_parallel_tool_use` impede duas buscas na mesma resposta.
@@ -120,9 +120,10 @@ def test_o_investidor_e_o_teto_mais_alto_do_turno() -> None:
     """A chamada mais cara e a que gera mais, e e ela que manda na folga.
 
     Nao e afirmacao sobre gosto: se um dia `classificar` passar o investidor,
-    a ordem que `_PIOR_TURNO` usa para escolher o pior par deixa de valer -- o
-    pior par e `classificar` com busca SEGUIDO do investidor com busca, e isso
-    so e o pior porque as duas chamadas de investidor sao exclusivas entre si.
+    a ordem que `_pior_turno()` usa para escolher o pior par deixa de valer --
+    o pior par e `classificar` com busca SEGUIDO do investidor com busca, e
+    isso so e o pior porque as duas chamadas de investidor sao exclusivas
+    entre si.
     """
     assert TETO_DO_INVESTIDOR > TETO_DA_CLASSIFICACAO
 
