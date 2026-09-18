@@ -34,6 +34,8 @@ Local, com a venv do projeto:
 
 **Para a suíte inteira, use `-n 8 --dist loadfile`.** Medido em 12/09/2026, Python 3.13.15, máquina ociosa, 1614 testes: serial são **170,9s**, com `-n 8` são **~49s** (cinco execuções entre 48,7s e 51,1s). `-n 12` quase não melhora sobre o 8. O número de 07/09/2026 (TEC-156), ~22 minutos, está velho.
 
+**Só que há dias em que `-n 8` não é executável aqui — ver "Quando o `-n 8` derruba o Postgres", abaixo.** Se a execução voltar com centenas de `ERROR` de setup, não repita o mesmo comando: o problema não é o código nem a sua branch, e insistir no mesmo `-n` só reproduz a queda.
+
 `--dist loadfile` não é enfeite: mantém cada arquivo inteiro num worker só, preservando qualquer ordem interna de que um arquivo dependa. E cada worker roda contra uma base Postgres e um índice de Redis só dele — ver `_isolar_por_worker` em `tests/conftest.py`. Sem esse isolamento o paralelismo não é "mais rápido com algum flake", é vermelho: `banco_limpo` faz `TRUNCATE` e `redis_pool` faz `flushdb()`, e cada worker apagaria o estado dos outros.
 
 **O `-n` não está no `addopts`, e não o ponha lá.** Paralelizar só compensa na suíte inteira: medido, `tests/unit` sozinho PIORA de 4,4s para 8,6s, porque a partida dos workers custa mais que os testes.
@@ -67,6 +69,42 @@ Não é. O socket cru já responde `N` ao SSLRequest e o `psql` interno funciona
 Duas consequências práticas. Uma falha isolada com esse traceback **não autoriza conclusão nenhuma** — nem a favor nem contra a sua mudança. E um critério de aceite do tipo "passa nas 20 seguidas" pode ser inalcançável nesta máquina sem que nada esteja errado com o código: antes de culpar o que você escreveu, rode a versão ANTIGA o mesmo número de vezes.
 
 **Testes de integração flakeiam sob carga, não isolados.** `test_montagem.py`, `test_sweep_stalled.py`, `test_dedup_por_message_id.py` e `test_optout_repositorio.py` falham com `ConnectionResetError` ou erro de Redis quando a suíte inteira roda junta, e passam 100% em isolamento. Antes de atribuir uma falha dessas a uma mudança sua, rode o arquivo sozinho.
+
+## Quando o `-n 8` derruba o Postgres
+
+Medido na TEC-229, 17-18/09/2026. O banco **crasha** sob o paralelismo e entra em recovery, rejeitando todo connect por dezenas de minutos — com o compose reportando `unhealthy`, não `healthy`. Não é o falso-alarme da seção acima, que passa em segundos: aqui o container ficou **37 minutos** inacessível.
+
+A correlação com o `-n` é direta, e é o que identifica o caso:
+
+| execução | passed | errors | causa dominante |
+| --- | --- | --- | --- |
+| `-n 8` | 1391 | 967 | banco em recovery 37 min |
+| `-n 8`, depois de `restart` | 1820 | 535 | 532 × `CannotConnectNowError` |
+| `-n 4` | 2089 | 267 | 223 × `CannotConnectNowError` |
+| serial, por blocos | 2358 | 0 | — |
+
+**A cura é baixar o paralelismo, não esperar.** `docker compose restart postgres` devolve o banco, e ele torna a cair na execução seguinte se o `-n` continuar alto — foi o que aconteceu duas vezes seguidas. O que fecha verde é rodar **por blocos**, que ainda tem a vantagem de um travamento não custar o resultado dos outros:
+
+```bash
+./.venv/Scripts/python.exe -m pytest tests/unit --tb=short -q
+./.venv/Scripts/python.exe -m pytest tests/integration --tb=short -q
+./.venv/Scripts/python.exe -m pytest tests/features --tb=short -q
+```
+
+**O `pytest` serial pode travar de vez, e isso não é a lentidão conhecida.** Na mesma sessão, uma execução serial congelou logo depois de uma falha em `test_reserva_liberada.py` e ficou **~10 horas** parada; dois processos Python vivos, um com **CPU zerada**, e o banco `healthy` o tempo todo. O aviso do `-q` (saída vazia é normal) **não cobre este caso**: o log tinha avançado até 31% e simplesmente parou.
+
+Distinguir travamento de lentidão é barato e leva dois comandos — compare o mtime do log com o relógio e olhe o CPU acumulado:
+
+```bash
+stat -c '%y' /tmp/suite.log; date
+```
+```powershell
+Get-Process python* | Select-Object Id, StartTime, CPU
+```
+
+Log parado há horas **mais** CPU parada é deadlock: mate os processos e rode por blocos.
+
+**`pytest-xdist` pode não estar instalado, apesar de declarado no `pyproject.toml`.** Se `-n 8` reprovar com `unrecognized arguments`, é isso — `pip install pytest-xdist` resolve. Não conclua que o comando desta seção está errado.
 
 **`relation ... does not exist` em dezenas de testes quase nunca é a sua migration — são os bancos dos workers com o carimbo adiantado.** Cada worker tem o seu (`mobia_gw0` … `mobia_gw7`), e eles **persistem entre sessões**. Se um `alembic upgrade` for interrompido no meio — uma queda de conexão, um `[WinError 64]` na hora errada, uma troca de branch entre execuções —, o banco fica com `alembic_version` já no head e **sem o DDL correspondente**. A fixture `migrar_banco` não pega isso: para ela, carimbo no head significa nada a fazer.
 
@@ -144,6 +182,12 @@ Card no Jira (projeto TEC) → **mover para Fazendo e pôr Eduardo como respons�
 **Antes de começar, mova a card para "Fazendo" e ponha Eduardo como responsável.** Antes do desenho, não depois de escrever código: enquanto a card não se mexe, o quadro diz que ninguém pegou o trabalho, e quem olha não consegue distinguir uma card parada de uma card em curso. É a primeira ação da sequência acima, não um acerto de contas no fim.
 
 O responsável é **`eduardodurieuxlopes@gmail.com`** — a conta do Jira, que não é a mesma identidade do git (`eduardo.lopes@instivo.com.br`). Resolva o account ID por `lookupJiraAccountId` a partir desse e-mail em vez de guardar o ID aqui: ID copiado para prosa é o tipo de dado que ninguém revalida quando muda.
+
+**Trabalho de card termina SEMPRE em `git push` e PR. Nunca em merge local, e nunca numa pergunta sobre o que fazer com a branch.** Não há opção "mergear direto na `main`", não há opção "deixo a branch e você resolve": terminou a implementação e a suíte fechou, faz o push e abre o PR. Perguntar qual das três o Eduardo prefere é devolver a ele uma decisão que este arquivo já tomou.
+
+A razão é o que o PR carrega e o merge local joga fora: o diff revisável, o comentário da card apontando para ele, e o CI rodando contra o mesmo commit que vai entrar. Uma branch mergeada localmente chega na `main` sem nada disso — e uma branch que fica parada na máquina de quem escreveu não existe para mais ninguém.
+
+Quem mergeia o PR é o Eduardo. **Depois do merge, a limpeza local é sua**: confirme com `git merge-base --is-ancestor <hash> origin/main` antes de relatar qualquer coisa — o PR pode ter sido mergeado antes do seu último push —, volte para a `main`, dê `pull`, e apague a branch local.
 
 **Ao abrir o PR, a card recebe um comentário e vai para "Em análise".** Não para "Feito": quem mergeia é que fecha. Uma card em "Fazendo" com PR aberto mente sobre onde o trabalho está — e quem olha o quadro não tem como saber que já existe algo para revisar.
 
