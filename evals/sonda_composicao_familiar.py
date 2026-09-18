@@ -61,9 +61,9 @@ CASOS: list[tuple[str, str, bool]] = [
 _ANCORA_BLOQUEAR = "para BLOQUEAR.\n\n"
 _ANCORA_LIBERAR = "sao todos LIBERAR. "
 
-# Candidata A: a fronteira. O que falta no prompt nao e mais um nome de
-# categoria -- a TEC-142 ja nomeou e moveu metade --, e dizer sobre o que o
-# criterio recai.
+# A fronteira que a candidata A media. O que falta no prompt nao e mais um
+# nome de categoria -- a TEC-142 ja nomeou e moveu metade --, e dizer sobre o
+# que o criterio recai.
 _FRONTEIRA = (
     "Pedido de restricao de vizinhanca conta mesmo dito como preferencia "
     "('prefiro um predio so de...', 'queria um lugar sem...') e mesmo "
@@ -98,8 +98,18 @@ def _enxertar(prompt: str, ancora: str, substituto: str) -> str:
     return prompt.replace(ancora, substituto)
 
 
-def _candidata_a() -> str:
-    """Fronteira (BLOQUEAR) + protecao do controle (LIBERAR)."""
+def _atual_com_fronteira_e_protecao() -> str:
+    """Fronteira (BLOQUEAR) + protecao do controle (LIBERAR), enxertadas sobre
+    `mod.SISTEMA_DA_ENTRADA` de HOJE -- que ja carrega a candidata B, vencedora
+    desta card.
+
+    Isto nao e mais a candidata A isolada que a sonda original media contra a
+    linha de base sem endurecimento nenhum: e "atual + fronteira + protecao",
+    que e precisamente o quarto braco que o desenho (secao "Lacunas
+    declaradas") declarou fora do orcamento de 342 chamadas. A parte boa: uma
+    proxima card que queira medir esse braco nao precisa escrever nada, ele ja
+    existe aqui.
+    """
     com_fronteira = _enxertar(
         mod.SISTEMA_DA_ENTRADA, _ANCORA_BLOQUEAR, f"para BLOQUEAR.\n\n{_FRONTEIRA}\n\n"
     )
@@ -108,7 +118,7 @@ def _candidata_a() -> str:
 
 BRACOS: dict[str, str] = {
     "atual": mod.SISTEMA_DA_ENTRADA,
-    "A (fronteira)": _candidata_a(),
+    "atual + fronteira + protecao": _atual_com_fronteira_e_protecao(),
 }
 
 

@@ -44,9 +44,14 @@ def test_os_quatro_ids_do_eixo_existem_no_corpus() -> None:
 
 
 def test_os_dois_bracos_sao_distintos_e_o_atual_e_o_de_producao() -> None:
-    """O braco `atual` e o **antes** da medicao.
+    """O braco `atual` e, byte a byte, o prompt de producao -- qualquer que ele
+    seja hoje.
 
-    Se ele nao for byte a byte o prompt de producao, a comparacao entre bracos
+    Isso ja significou "antes" (linha de base sem endurecimento, na medicao
+    original da TEC-271) e hoje significa "depois" (a candidata B, vencedora,
+    aplicada em `SISTEMA_DA_ENTRADA`). O nome do braco nao muda: o que ele
+    guarda e o vinculo com producao, nao uma posicao fixa num antes/depois. Se
+    ele nao for byte a byte o prompt de producao, a comparacao entre bracos
     deixa de medir a mudanca e passa a medir uma diferenca que ninguem escreveu.
     """
     assert len(BRACOS) == 2
@@ -89,8 +94,6 @@ def test_as_candidatas_nao_citam_o_texto_dos_casos() -> None:
         do_corpus |= _quadrigramas(texto)
 
     for nome, prompt in BRACOS.items():
-        if nome == "atual":
-            continue
         repetidos = _quadrigramas(prompt) & do_corpus
         assert not repetidos, f"o braco {nome} cita o corpus: {sorted(repetidos)}"
 
