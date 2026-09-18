@@ -58,6 +58,8 @@ E venceria sem significar nada. O corpus é ao mesmo tempo o alvo e o instrument
 
 Fica registrado como **decisão**, e não como esquecimento, para ninguém a propor como "o jeito mais simples" numa revisão.
 
+**Onde passa a linha, já que a candidata A dá exemplos.** A ilustra a *forma* do pedido — *"prefiro um prédio só de…"*, com reticências — e nunca o *conteúdo* do caso. A diferença não é de grau: ensinar que enquadrar como preferência não descaracteriza a restrição é literalmente o que a candidata A existe para fazer, e isso exige mostrar o enquadramento; nomear *crianças* ou *casal sem filho* seria decorar o item de teste. A linha objetiva está num unitário — nenhuma candidata pode repetir **quatro palavras seguidas** de nenhum dos quatro textos do corpus. Ela pega a citação literal e não pega paráfrase, e isso está declarado: teste nenhum pegaria paráfrase.
+
 ### D4 — A sonda mede taxa; o gate mede regressão
 
 São dois instrumentos com trabalhos diferentes, e confundi-los foi o que limitou a TEC-142.
