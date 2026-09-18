@@ -7,7 +7,7 @@
 **Runner do gate:** `evals/test_moderacao.py::test_moderacao_no_corpus`
 **Instrumento novo:** `evals/sonda_composicao_familiar.py` — 20 repetições por caso, em três braços (prompt atual, candidata A, candidata B), escrita por esta card. É diagnóstico, não gate: nenhum número dela vira piso de nenhum teste. A única asserção que o runner do gate carrega continua sendo `indisponiveis == 0`, herdada da TEC-210.
 
-**Continuação direta da [TEC-142](https://eduardodurieuxlopes.atlassian.net/browse/TEC-142)**, que nomeou "restrição de vizinhança por composição familiar" em `SISTEMA_DA_ENTRADA` e mediu que isso moveu o gêmeo velado do eixo (`entrada-bloqueia-composicao-familiar-velada`), mas não o caso direto (`entrada-bloqueia-composicao-familiar`).
+**Continuação direta da [TEC-142](https://eduardodurieuxlopes.atlassian.net/browse/TEC-142)**, que nomeou "restricao de vizinhanca por composicao familiar" em `SISTEMA_DA_ENTRADA` e mediu que isso moveu o gêmeo velado do eixo (`entrada-bloqueia-composicao-familiar-velada`), mas não o caso direto (`entrada-bloqueia-composicao-familiar`).
 
 ## A regra de decisão, escrita antes do número (D5 do desenho)
 
@@ -66,7 +66,7 @@ As duas candidatas bateram as três cláusulas da regra de decisão, e bateram n
 
 Diante do empate, entrou o desempate pré-registrado na D5: **"empate → a mais curta"**. A candidata B é mais curta que a A, então venceu a B.
 
-**O contra-argumento, registrado por inteiro porque é forte e ainda assim perde:** a candidata A carrega, além do endurecimento da cláusula BLOQUEAR, uma frase que protege o controle no lado LIBERAR — *"descrever a própria família para justificar tamanho ou número de quartos é qualificação, não restrição"*. A candidata B não carrega nada equivalente. A assimetria de custo entre as duas é torta: errar para o lado da B custa bloquear um lead legítimo, que o próprio repositório chama de o falso positivo mais caro do sistema (ver o parágrafo LIBERAR de `SISTEMA_DA_ENTRADA`: *"bloquear lead legitimo custa atendimento e e erro, nao cautela"*); errar para o lado da A custa apenas os ~60 tokens extras da frase, duas vezes por turno.
+**O contra-argumento, registrado por inteiro porque é forte e ainda assim perde:** a candidata A carrega, além do endurecimento da cláusula BLOQUEAR, uma frase que protege o controle no lado LIBERAR — *"descrever a propria familia para justificar tamanho ou numero de quartos e qualificacao, nao restricao"*. A candidata B não carrega nada equivalente. A assimetria de custo entre as duas é torta: errar para o lado da B custa bloquear um lead legítimo, que o próprio repositório chama de o falso positivo mais caro do sistema (ver o parágrafo LIBERAR de `SISTEMA_DA_ENTRADA`: *"bloquear lead legitimo custa atendimento e e erro, nao cautela"*); errar para o lado da A custa apenas os ~60 tokens extras da frase, duas vezes por turno.
 
 A razão para manter a B mesmo com esse argumento na mesa: o desempate foi escrito **antes** de medir, e foi escrito já sabendo dessa lacuna — a seção "Lacunas declaradas" do desenho já registrava que a A carrega a proteção do controle e a B não. Trocar a regra de desempate depois de ver o número, para favorecer a candidata cujo argumento parece mais forte em retrospecto, é exatamente o movimento que esta card existe para não repetir. O argumento de custo estava disponível antes da medição; o que faltou foi calculá-lo antes, não medir de novo depois.
 
