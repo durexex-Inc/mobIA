@@ -572,6 +572,30 @@ Se **B** vencer, só o parágrafo BLOQUEAR muda, e o LIBERAR fica como está hoj
     "restricao, e vai para BLOQUEAR.\n\n"
 ```
 
+- [ ] **Step 2b: Tirar a vencedora do jogo de braços da sonda**
+
+Não se faz A/B contra si mesmo. Com a vencedora dentro de `SISTEMA_DA_ENTRADA`, `_candidata_A()` ou `_candidata_B()` passaria a enxertar o **mesmo parágrafo duas vezes** — e a sonda, que é um instrumento commitado, mediria um prompt que não existe em lugar nenhum.
+
+Pior no caso da B: com ela aplicada, o texto passa a ser `"de piada. A lista acima…BLOQUEAR.
+
+"`, e a âncora `_ANCORA_BLOQUEAR = "de piada.
+
+"` **deixa de existir**. `_enxertar` levanta `RuntimeError` no import, o unitário da Task 1 quebra, e isso só apareceria na Task 8 — depois das 51 chamadas pagas da Task 5.
+
+Então, na mesma edição:
+
+1. Remova da sonda o fragmento e o builder da **vencedora** (`_FRONTEIRA` + `_PROPRIA_FAMILIA` + `_candidata_a`, ou `_FIRMEZA` + `_candidata_b`), e a entrada dela em `BRACOS`. O registro das duas redações fica no relatório da Task 6 e no git — não precisa viver no código.
+2. **Re-aponte a âncora da perdedora** para uma string que apareça exatamente **uma** vez no prompt novo. Se a A venceu, `_ANCORA_BLOQUEAR = "de piada.
+
+"` continua única e nada muda. Se a B venceu, ela some: use `"para BLOQUEAR.
+
+"`, que é única (o protocolo de `_protocolo_de` não a contém).
+3. Ajuste `test_o_orcamento_da_sonda_e_o_autorizado` para o novo total — 2 braços × 4 casos × 20 = **160** —, e a docstring dele para dizer que é o orçamento de uma **re-execução**, não o desta card.
+
+A conferência é de graça e imediata: `_enxertar` falha no import, então o unitário da Task 1 é quem diz se a âncora nova está certa.
+
+**Se nenhuma candidata venceu, este step inteiro é pulado** — a sonda fica com os três braços, que continuam válidos porque `SISTEMA_DA_ENTRADA` não mudou.
+
 - [ ] **Step 3: Rodar os unitários da moderação e os três gates**
 
 ```bash
@@ -582,7 +606,7 @@ Se **B** vencer, só o parágrafo BLOQUEAR muda, e o LIBERAR fica como está hoj
 ./.venv/Scripts/python.exe -m mypy
 ```
 
-`test_o_orcamento_da_sonda_e_o_autorizado` e `test_os_tres_bracos_sao_distintos_e_o_atual_e_o_de_producao` continuam passando: a sonda enxerta sobre o prompt novo, então o braço "atual" acompanha e os três seguem distintos.
+Os dois unitários da sonda são o gate real do Step 2b: `test_os_tres_bracos_sao_distintos_e_o_atual_e_o_de_producao` passa a esperar **2** braços, e o import falha alto se a âncora re-apontada não for única. Ajuste a contagem no teste junto com o Step 2b — é a mesma edição, não uma correção depois.
 
 - [ ] **Step 4: Commit**
 
