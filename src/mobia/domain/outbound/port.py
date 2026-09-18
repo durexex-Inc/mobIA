@@ -31,11 +31,29 @@ def _e_reserva_duplicada(exc: IntegrityError) -> bool:
     e o lead nunca recebe nada, com uma linha de log que diz "duplicata
     suprimida" e manda quem investiga para o lado errado.
 
-    `constraint_name` vem do asyncpg; a checagem no texto e o fallback para
-    qualquer outro driver, que ainda cita o nome do constraint na mensagem.
+    **O nome estruturado do constraint mora um nivel abaixo de `exc.orig`.**
+    Sondado contra o banco na TEC-230: `orig` e o
+    `sqlalchemy.dialects.postgresql.asyncpg.IntegrityError`, que **nao** tem
+    `constraint_name`; quem tem e o erro do proprio asyncpg, que o dialeto
+    deixa no `__cause__` dele. A versao anterior desta funcao lia o atributo
+    direto de `orig`, nunca o encontrava, e caia sempre no fallback por texto
+    -- o ramo apresentado como principal era o que nunca rodava.
+
+    **E o fallback por texto casa por substring, o que nao basta sozinho.** Um
+    constraint chamado `uq_outbound_message_kind_v2` contem o nome do nosso:
+    a busca no texto responde "duplicata" para uma violacao sem relacao com a
+    reserva, que e exatamente o desfecho descrito acima chegando pela porta
+    que ninguem vigiava. Por isso o nome estruturado, quando existe, e
+    comparado por IGUALDADE e decide sozinho.
+
+    O fallback continua porque serve quem nao expoe o campo -- outro driver,
+    ou um erro que chegue sem `__cause__`. Apagar deixaria esses sem cobertura.
     """
     original = exc.orig
-    nome = getattr(original, "constraint_name", None)
+    # `getattr` nos dois passos, e nao `original.__cause__`: `exc.orig` e
+    # tipado `BaseException | None`, e um erro que chegue sem causa e o caso
+    # que o fallback abaixo existe para atender.
+    nome = getattr(getattr(original, "__cause__", None), "constraint_name", None)
     if nome is not None:
         return bool(nome == UNIQUE_DA_RESERVA)
     return UNIQUE_DA_RESERVA in str(original)
@@ -150,11 +168,16 @@ class EnvioForaDaJanela(EnvioRecusado):
     Mora aqui, e nao no adaptador do WhatsApp que a levanta hoje, porque
     `executar_turno` a captura e o turno e agnostico de canal em todo o resto
     -- ele recebe um `OutboundPort`. O nome ficou como estava, sem um
-    "EnvioExpirado" neutro com subclasse do WhatsApp por cima: a janela de 24h
-    da Meta e a unica encarnacao existente do conceito, e uma hierarquia de
-    dois niveis com um so habitante seria estrutura para um caso hipotetico.
-    O canal web da TEC-124 nao tem janela nenhuma -- ele simplesmente nunca
-    levanta esta excecao.
+    "EnvioExpirado" neutro com subclasse do WhatsApp por cima: hoje ha uma
+    unica encarnacao do conceito (a janela de 24h da Meta, citada aqui como
+    exemplo e definida no adaptador, que e onde ela e regra), e uma hierarquia
+    de dois niveis com um so habitante seria estrutura para um caso
+    hipotetico. O canal web da TEC-124 nao tem janela nenhuma -- ele
+    simplesmente nunca levanta esta excecao.
+
+    **A regra da janela nao se escreve aqui** (TEC-230): que ela dure 24h, e
+    que o gatilho seja um codigo especifico da Meta, e verdade de um canal so.
+    Este modulo so sabe que existe uma janela e que ela fechou.
     """
 
 
