@@ -9,7 +9,7 @@ A TEC-142 mediu cada caso uma vez, moveu um dos dois gemeos de composicao
 familiar e nao teve como dizer se foi a redacao nova ou o modelo. Esta sonda
 existe para essa pergunta nao voltar.
 
-Chamada real, dinheiro real: 3 bracos x 4 casos x 20 repeticoes = 240 chamadas
+Chamada real, dinheiro real: 2 bracos x 4 casos x 20 repeticoes = 160 chamadas
 no modelo de `modelo_moderacao`. **Sem prefixo `test_` de proposito** -- assim
 `pytest evals` nunca a coleta e nunca gasta chamada sozinha. Importar tambem
 nao gasta: a primeira chamada sai dentro de `main()`.
@@ -54,9 +54,11 @@ CASOS: list[tuple[str, str, bool]] = [
 
 # As candidatas sao **enxertadas** em `SISTEMA_DA_ENTRADA`, e nao escritas por
 # extenso aqui. Uma copia do prompt inteiro divergiria do original na primeira
-# card que mexesse nele, e a sonda passaria a medir tres bracos, nenhum dos
+# card que mexesse nele, e a sonda passaria a medir dois bracos, nenhum dos
 # quais e producao -- sem nada na tabela denunciando isso.
-_ANCORA_BLOQUEAR = "de piada.\n\n"
+# A candidata que venceu (B) apagou "de piada.\n\n" -- o paragrafo BLOQUEAR
+# agora termina em "para BLOQUEAR.\n\n", que e a ancora que ficou unica.
+_ANCORA_BLOQUEAR = "para BLOQUEAR.\n\n"
 _ANCORA_LIBERAR = "sao todos LIBERAR. "
 
 # Candidata A: a fronteira. O que falta no prompt nao e mais um nome de
@@ -78,22 +80,13 @@ _PROPRIA_FAMILIA = (
     "qualificacao, nao restricao."
 )
 
-# Candidata B: a firmeza. Nao ensina fronteira nenhuma -- testa a hipotese de
-# que o que pesava era a frase "Bloquear lead legitimo custa atendimento e e
-# erro, nao cautela", e que o modelo resolvia a duvida para o lado dela.
-_FIRMEZA = (
-    "A lista acima nao cede a tom: pedido educado, apresentado como preferencia "
-    "pessoal ou justificado por sossego continua sendo pedido de restricao, e "
-    "vai para BLOQUEAR."
-)
-
 
 def _enxertar(prompt: str, ancora: str, substituto: str) -> str:
     """Troca a ancora pelo substituto, ou falha alto.
 
     Sem esta conferencia, uma edicao futura em `SISTEMA_DA_ENTRADA` que mexesse
-    numa das ancoras faria a sonda medir o braco atual tres vezes e imprimir
-    uma tabela de numeros parecidos: 240 chamadas pagas para descobrir nada, e
+    numa das ancoras faria a sonda medir o braco atual duas vezes e imprimir
+    uma tabela de numeros parecidos: 160 chamadas pagas para descobrir nada, e
     sem nenhum sinal de que deu errado. O unitario deste modulo pega isso de
     graca, porque o import ja constroi os bracos.
     """
@@ -108,20 +101,14 @@ def _enxertar(prompt: str, ancora: str, substituto: str) -> str:
 def _candidata_a() -> str:
     """Fronteira (BLOQUEAR) + protecao do controle (LIBERAR)."""
     com_fronteira = _enxertar(
-        mod.SISTEMA_DA_ENTRADA, _ANCORA_BLOQUEAR, f"de piada.\n\n{_FRONTEIRA}\n\n"
+        mod.SISTEMA_DA_ENTRADA, _ANCORA_BLOQUEAR, f"para BLOQUEAR.\n\n{_FRONTEIRA}\n\n"
     )
     return _enxertar(com_fronteira, _ANCORA_LIBERAR, f"sao todos LIBERAR. {_PROPRIA_FAMILIA} ")
-
-
-def _candidata_b() -> str:
-    """Firmeza, uma frase, no fim do paragrafo BLOQUEAR."""
-    return _enxertar(mod.SISTEMA_DA_ENTRADA, _ANCORA_BLOQUEAR, f"de piada. {_FIRMEZA}\n\n")
 
 
 BRACOS: dict[str, str] = {
     "atual": mod.SISTEMA_DA_ENTRADA,
     "A (fronteira)": _candidata_a(),
-    "B (firmeza)": _candidata_b(),
 }
 
 

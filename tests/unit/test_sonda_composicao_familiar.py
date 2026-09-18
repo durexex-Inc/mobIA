@@ -43,15 +43,15 @@ def test_os_quatro_ids_do_eixo_existem_no_corpus() -> None:
     assert all(textos[caso_id].strip() for caso_id, _, _ in CASOS)
 
 
-def test_os_tres_bracos_sao_distintos_e_o_atual_e_o_de_producao() -> None:
+def test_os_dois_bracos_sao_distintos_e_o_atual_e_o_de_producao() -> None:
     """O braco `atual` e o **antes** da medicao.
 
     Se ele nao for byte a byte o prompt de producao, a comparacao entre bracos
     deixa de medir a mudanca e passa a medir uma diferenca que ninguem escreveu.
     """
-    assert len(BRACOS) == 3
+    assert len(BRACOS) == 2
     assert BRACOS["atual"] == SISTEMA_DA_ENTRADA
-    assert len(set(BRACOS.values())) == 3
+    assert len(set(BRACOS.values())) == 2
 
 
 def test_as_candidatas_preservam_o_prompt_de_producao() -> None:
@@ -96,9 +96,12 @@ def test_as_candidatas_nao_citam_o_texto_dos_casos() -> None:
 
 
 def test_o_orcamento_da_sonda_e_o_autorizado() -> None:
-    """240 chamadas foram autorizadas antes do desenho.
+    """160 chamadas e o orcamento de uma re-execucao, nao o desta card.
 
-    O numero mora em tres constantes que ninguem le juntas; subir `REPETICOES`
-    para 50 e um caractere de diff e 360 chamadas a mais.
+    A card mediu 3 bracos x 4 casos x 20 repeticoes = 240 chamadas; com a
+    vencedora aplicada em `SISTEMA_DA_ENTRADA` e fora de `BRACOS` (Step 2b),
+    uma nova rodada custa 2 bracos x 4 casos x 20 repeticoes. O numero mora em
+    tres constantes que ninguem le juntas; subir `REPETICOES` para 50 e um
+    caractere de diff e 240 chamadas a mais.
     """
-    assert len(BRACOS) * len(CASOS) * REPETICOES == 240
+    assert len(BRACOS) * len(CASOS) * REPETICOES == 160
