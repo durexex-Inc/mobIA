@@ -214,7 +214,9 @@ class WorkerSettings:
     # apresentou imoveis, max_tokens=300), `classificar` ou
     # `qualificar_investidor` (sempre, max_tokens=1500), desde a TEC-135
     # `desambiguar` (so no turno ambiguo, max_tokens=300) e o POST para a Meta
-    # -- um turno com dobra ja passava de 60s sem nada estar errado.
+    # -- lista de QUAIS chamadas existem, nao de quantas vezes cada uma roda
+    # (`count_tokens` e `resumir` repetem por volta do laco de montagem, ver
+    # abaixo) -- um turno com dobra ja passava de 60s sem nada estar errado.
     #
     # **Ate a TEC-228 nao havia folga, e a versao anterior deste comentario
     # subcontava o proprio buraco.** Ela dizia 360s somando tres chamadas a
@@ -225,24 +227,31 @@ class WorkerSettings:
     # (`infra/embeddings.py`) tinha 50s com retentativa, e um turno busca ate
     # duas vezes: 200s sozinho, mais que todas as chamadas de modelo somadas.
     #
-    # Hoje a conta fecha, com os quatro clientes externos contados:
+    # **Hoje a conta NAO fecha, e este numero e o que nao cabe.** A TEC-229
+    # corrigiu o grafo: `montar_contexto` chama `resumir` e `count_tokens`
+    # dentro do laco `while tokens > teto`, que roda ate
+    # `contexto_max_iteracoes`, e `_truncar_ate_caber` acrescenta contagens.
+    # Contadas as voltas, com os valores de hoje:
     #
-    #   162s  Anthropic (`segundos_do_modelo_no_pior_turno`)
+    #   287s  Anthropic (`segundos_do_modelo_no_pior_turno`)
     #    20s  embed da busca, 2 buscas x 10s, sem retentativa
     #    10s  moderacao das duas pontas
     #    10s  POST para a Meta
     #   ----
-    #   202s  contra estes 240 -- 38s de folga para o banco
+    #   327s  contra estes 240 -- deficit de 87s, e a reserva de banco some
     #
-    # `test_o_pior_turno_cabe_no_job_timeout` monta essa soma importando cada
-    # termo do modulo dele e compara com este numero: subir um teto la sem
-    # olhar para ca fica vermelho. E onde a conta INTEIRA esta escrita -- cada
-    # modulo so conhece a propria parcela, e foi somar uma parcela achando que
-    # era o todo que produziu o 360s desta versao anterior.
+    # Por isso `test_o_pior_turno_cabe_no_job_timeout` e
+    # `test_a_folga_paga_o_banco` estao `xfail(strict=True)`. Eles montam essa
+    # soma importando cada termo do modulo dele; e onde a conta INTEIRA esta
+    # escrita -- cada modulo so conhece a propria parcela, e foi somar uma
+    # parcela achando que era o todo que produziu o 360s de duas versoes atras
+    # deste comentario.
     #
-    # Continua valendo o que a "Lacunas conhecidas" do spec do TEC-135 diz:
-    # subir `job_timeout` exige medir a taxa real de retentativa antes. So que
-    # agora nao ha por que subir.
+    # **Subir este numero nao e o conserto obvio.** Ele tem de ficar
+    # estritamente abaixo de `sweep_inflight_after_seconds` (300), entao cabem
+    # no maximo mais 59s -- menos que o deficit. Fechar a conta exige a janela
+    # do sweeper, os tetos, ou um orcamento agregado na montagem: e a TEC-290,
+    # que lista as tres sem escolher.
     #
     # Estourar aqui nao e so custo: o ARQ cancela a corrotina, e
     # `asyncio.CancelledError` e BaseException -- nenhum `except Exception` a

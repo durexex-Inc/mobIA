@@ -152,22 +152,30 @@ def test_job_timeout_cabe_dentro_da_janela_do_sweeper() -> None:
 
     `job_timeout` >= `sweep_inflight_after_seconds` faria o sweeper
     reenfileirar um turno ainda em voo: a mesma conversa rodaria duas vezes em
-    paralelo, pagando duas classificacoes. E o timeout tem de ser maior que o
-    turno real (count_tokens + resumir + classificar + POST na Meta), senao o
-    ARQ cancela e `CancelledError` escapa do `except Exception` de
-    `process_message`.
+    paralelo, pagando duas classificacoes.
+
+    **A outra metade desta invariante -- o turno real caber no `job_timeout` --
+    NAO esta aqui**, e ja esteve. Ate a TEC-229 este teste tambem afirmava
+    `TIMEOUT_SEGUNDOS * 2 <= job_timeout`, supondo duas chamadas ao provedor
+    por turno. O turno faz cinco fatias, duas delas com duas requisicoes e
+    duas com um numero derivado de `contexto_max_iteracoes` -- e
+    `TIMEOUT_SEGUNDOS` nem governa chamada do turno, e o piso de quem nao pede
+    teto proprio (`followup/prosa.py`, `handoff/resumo.py`). A assercao passava
+    por empate exato quando foi escrita e, depois que a TEC-228 zerou
+    `MAX_TENTATIVAS`, passou a passar com folga de 2x sobre um numero que nao
+    mede nada do turno.
+
+    A conta do turno mora em `tests/unit/test_orcamento_do_turno.py`, que soma
+    os quatro clientes externos importando cada teto de quem o define. Nao
+    reconstrua o grafo de chamadas aqui: dois dos cinco testes daquele arquivo
+    estao `xfail` porque a conta nao fecha, mas `test_o_orcamento_estourado_nao_piora`
+    e verde e afirma `job_timeout >= 240`, mais forte que qualquer piso que
+    este teste poderia declarar aqui.
     """
     from mobia.app.config import get_settings
-    from mobia.infra.anthropic import MAX_TENTATIVAS, TIMEOUT_SEGUNDOS
     from mobia.workers.main import WorkerSettings
 
     assert WorkerSettings.job_timeout < get_settings().sweep_inflight_after_seconds
-    assert WorkerSettings.job_timeout >= 180
-    # As duas chamadas pesadas do turno com dobra (resumir + classificar) tem
-    # de caber no pior caso do cliente, senao a falha tipada nunca acontece --
-    # o ARQ cancela antes, e cancelamento nao e recuperavel.
-    pior_caso_por_chamada = TIMEOUT_SEGUNDOS * (1 + MAX_TENTATIVAS)
-    assert pior_caso_por_chamada * 2 <= WorkerSettings.job_timeout
 
 
 def test_job_completion_wait_passa_do_job_timeout() -> None:

@@ -1,3 +1,4 @@
+import math
 from functools import lru_cache
 
 from anthropic import APIStatusError, AsyncAnthropic
@@ -19,9 +20,10 @@ from mobia.app.config import ConfiguracaoInsegura, get_settings
 # uma chamada nova que esqueca o override nao herde os dez minutos do SDK.
 TIMEOUT_SEGUNDOS = 60.0
 
-# Zero, e a razao esta na aritmetica logo abaixo: com uma retentativa o pior
-# turno dobra para 324s e continua estourando o `job_timeout`, mesmo com todos
-# os tetos por tipo. E a retentativa que come metade do orcamento.
+# Zero, e a razao esta na aritmetica logo abaixo: a parcela da Anthropic no
+# pior turno e 287s (`segundos_do_modelo_no_pior_turno`), e a base sozinha ja
+# estoura o `job_timeout` de 240s -- antes de qualquer retentativa. Com uma
+# retentativa o pior turno dobraria para 574s, so nesta parcela.
 #
 # Nao e decisao nova -- a moderacao ja a tomou, citando esta card pelo nome
 # (ver `MAX_TENTATIVAS_DA_MODERACAO` em `infra/moderacao.py`). O que mudou e o
@@ -71,13 +73,16 @@ TETO_DO_RESUMO = 25.0
 TETO_DA_CLASSIFICACAO = 25.0
 TETO_DO_INVESTIDOR = 35.0
 
+
 # O pior turno, fatia a fatia, com quantas REQUISICOES cada uma pode fazer.
 #
-# Sao cinco fatias, e nao as tres que a TEC-228 supunha: `count_tokens` e
-# `resumir` em `montar_contexto`, `reagir`, a chamada 1 (`classificar` ou
-# `qualificar_investidor`, conforme o lead ja seja investidor) e a chamada 2
-# (`desambiguar`, ou `qualificar_investidor` na virada). Todas em `turno.py`,
-# citadas pelo nome e nao pela linha: este bloco ja nasceu de um comentario que
+# Sao cinco fatias: `count_tokens` e `resumir` em `montar_contexto`, `reagir`,
+# a chamada 1 (`classificar` ou `qualificar_investidor`, conforme o lead ja
+# seja investidor) e a chamada 2 (`desambiguar`, ou `qualificar_investidor` na
+# virada). As duas primeiras vivem em `domain/context/montagem.py`, que chama
+# `resumir` e `contador.contar` (a contagem em si, em `domain/context/resumo.py`);
+# as outras tres vivem em `turno.py`, que so chama `montar_contexto`. Citadas
+# pelo nome e nao pela linha: este bloco ja nasceu de um comentario que
 # envelheceu, e numero de linha e a parte que envelhece primeiro.
 #
 # **Duas fatias custam DUAS requisicoes.** O laco `for tentativa in (1, 2)` de
@@ -90,21 +95,63 @@ TETO_DO_INVESTIDOR = 35.0
 # dispara quando a chamada 1 NAO foi a do investidor. Por isso o pior par e
 # `classificar` com busca seguido de `qualificar_investidor` com busca, e nao
 # investidor duas vezes.
-_PIOR_TURNO = (
-    (TETO_DO_COUNT_TOKENS, 1),
-    (TETO_DO_RESUMO, 1),
-    (TETO_DA_REACAO, 1),
-    (TETO_DA_CLASSIFICACAO, 2),
-    (TETO_DO_INVESTIDOR, 2),
-)
+#
+# **E duas fatias custam N requisicoes, derivadas da configuracao (TEC-229).**
+# A versao anterior contava `resumir` e `count_tokens` uma vez cada, e era a
+# mesma classe de erro do paragrafo acima, uma camada abaixo: `montar_contexto`
+# nao chama nenhum dos dois uma vez so.
+def _pior_turno() -> tuple[tuple[float, int], ...]:
+    """As fatias do turno e quantas requisicoes cada uma faz no pior caso.
+
+    Funcao e nao constante porque duas fatias dependem de `Settings`, e
+    `get_settings()` no import seria pior que a constante que isto substitui.
+    """
+    settings = get_settings()
+
+    # `resumir`: a dobra do gatilho de acumulacao (`deve_regenerar`), mais uma
+    # por volta do laco `while tokens > teto`, que para em
+    # `contexto_max_iteracoes`.
+    resumos = 1 + settings.contexto_max_iteracoes
+
+    # `count_tokens`: a contagem antes do laco, uma por volta, e as de
+    # `_truncar_ate_caber` -- que corta a janela pela metade a cada passo,
+    # chegando a uma literal em log2(N), mais uma contagem se ainda precisar
+    # descartar o resumo.
+    #
+    # **N vem do gatilho, e isso e suposicao e nao teorema.** O gatilho dobra
+    # em 40 literais, entao em regime normal a janela que chega ao truncamento
+    # tem essa ordem de grandeza; se a dobra falhar, `literais` passa disso. O
+    # `max(..., 1)` existe para que um gatilho mal configurado em 0 nao leve
+    # `log2` a `-inf` -- o teto fica errado, mas a funcao nao explode.
+    #
+    # **O termo e pessimista de proposito.** `_contar_se_valer` so paga o
+    # round trip acima do limiar, e cortar pela metade derruba a contagem
+    # rapido: na pratica o truncamento nao paga todas estas. Um teto nao pode
+    # depender de quao rapido o texto encolhe, e subcontar aqui e o defeito
+    # que a TEC-229 veio matar.
+    cortes = math.ceil(math.log2(max(settings.contexto_gatilho_de_regeneracao, 1))) + 1
+    contagens = 1 + settings.contexto_max_iteracoes + cortes
+
+    return (
+        (TETO_DO_COUNT_TOKENS, contagens),
+        (TETO_DO_RESUMO, resumos),
+        (TETO_DA_REACAO, 1),
+        (TETO_DA_CLASSIFICACAO, 2),
+        (TETO_DO_INVESTIDOR, 2),
+    )
 
 
 def segundos_do_modelo_no_pior_turno() -> float:
     """O teto de tempo que um turno pode gastar falando com ESTE provedor.
 
-    Existe para entrar na soma que `test_o_pior_turno_cabe_no_job_timeout`
-    compara com o `job_timeout` do worker: e a unica coisa que torna vermelha a
-    mudanca de um teto que nao cabe mais no orcamento.
+    Existe para entrar na soma de `tests/unit/test_orcamento_do_turno.py`, que
+    a compara com o `job_timeout` do worker.
+
+    **Esse teste esta `xfail` desde a TEC-229 e nao guarda mais nada sozinho.**
+    Quem guarda a derivacao sao os dois testes irmaos de la, que afirmam que
+    subir `contexto_max_iteracoes` ou o gatilho move este numero. Enquanto a
+    TEC-290 nao fechar o orcamento, apagar aqueles dois deixa esta funcao livre
+    para voltar a ser constante sem nada perceber.
 
     **E so a parcela da Anthropic, e o nome diz isso de proposito.** O turno
     paga outros tres clientes externos -- o embed da busca (`infra/embeddings.py`,
@@ -113,7 +160,7 @@ def segundos_do_modelo_no_pior_turno() -> float:
     ha folga de sobra, que foi exatamente o erro do comentario que esta card
     encontrou. A soma inteira mora no teste.
     """
-    return sum(teto * requisicoes for teto, requisicoes in _PIOR_TURNO) * (MAX_TENTATIVAS + 1)
+    return sum(teto * requisicoes for teto, requisicoes in _pior_turno()) * (MAX_TENTATIVAS + 1)
 
 
 @lru_cache
