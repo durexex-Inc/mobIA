@@ -485,15 +485,17 @@ class Settings(BaseSettings):
         A contagem mede um proxy menor do que vai ser enviado. `_contar_se_valer`
         monta uma unica mensagem de usuario plana e `ContadorAnthropic.contar` a
         manda como `messages=[{"role": "user", ...}]`, sem `system=`. A
-        requisicao real que a TEC-134 vai montar e um system prompt mais um array
+        requisicao real que a TEC-134 monta e um system prompt mais um array
         multi-turno, e cada turno carrega overhead estrutural que o contador
         nunca ve -- da ordem de 100-200 tokens numa janela de vinte a quarenta
         mensagens. Some a isso que `_texto_do_estado` e explicitamente uma
-        representacao para medir, nao o renderizador que a TEC-134 vai usar.
+        representacao para medir, nao o renderizador que a TEC-134 usa.
 
-        A reserva existe porque contar a forma exata exigiria conhecer a forma
-        exata, e o consumidor que a define ainda nao existe: construir para um
-        palpite e pior que reservar margem. O valor e
+        A reserva nasceu porque contar a forma exata exigiria conhecer a forma
+        exata, e na epoca o consumidor que a define ainda nao existia:
+        construir para um palpite e pior que reservar margem. Hoje ele existe,
+        e a reserva continua -- o que a substituiu nao foi contar a forma
+        exata, e sim a medicao registrada abaixo. O valor e
         `contexto_headroom_de_tokens`, e o comentario da propria constante
         registra por que ele ja subiu duas vezes e o que cada subida custou.
 
