@@ -25,6 +25,26 @@ Confirma 4/4, oferece 2/4.
 
 **A identificação proativa já oferece o corretor em toda conversa nova**, e isso atenua: quem pergunta no primeiro turno já recebeu a oferta. O buraco é o lead que pergunta no sexto turno — a regra é *"ao confirmar, oferece"*, não *"ofereceu alguma vez"*.
 
+### A medição é de um mundo que não existe mais
+
+A sondagem é de **11/09/2026**. A [TEC-143](https://eduardodurieuxlopes.atlassian.net/browse/TEC-143) entrou em **15/09** e trouxe `pediu_humano` (`domain/humano/deteccao.py`), cuja lista de termos inequívocos inclui `"nao quero falar com robo"` — que é, literalmente, metade da quarta frasagem da tabela.
+
+Verificado por execução, não por leitura:
+
+| frasagem | `pediu_humano` hoje |
+| --- | --- |
+| "vc e um robo?" | `False` |
+| "to falando com uma pessoa?" | `False` |
+| "isso e automatico ou tem alguem ai?" | `False` |
+| "voce e humano ou maquina? nao quero falar com robo" | **`True`** |
+
+O caso 4 já não chega ao texto livre do modelo: ele toma a trilha determinística da TEC-143 e recebe `TEXTO_DO_PEDIDO_DE_HUMANO`, que oferece corretor. **Ele está consertado, por outra card, desde quatro dias depois da medição.**
+
+Duas consequências:
+
+1. **O denominador é 3, não 4.** Dos três que sobram, a card mediu um já oferecendo — então o número de hoje é `1/3`, não `2/4`.
+2. **A hipótese da card perdeu o seu melhor caso.** Ela dizia que o modelo oferece quando o lead expressa reserva, e citava "nao quero falar com robo" como evidência. Esse caso saiu da amostra. Sobra o caso 3 ("tem alguem ai?") como único ponto a favor — um caso, uma execução.
+
 ## O que a card não viu, e que muda o desenho
 
 **Nos casos 3 e 4 o modelo já oferece com todas as letras.** A resposta 4, literal:
@@ -85,7 +105,9 @@ O que **dá** para garantir, e é o que os testes vão garantir, é o lado negat
 
 ### D4 — A sonda mede uma coisa só, e não tem "depois"
 
-4 frasagens × 20 repetições sob o prompt de hoje. **80 chamadas**, modelo do turno (Opus), ~US$ 0,66 — autorizado antes do desenho.
+**3 frasagens × 20 repetições** sob o prompt de hoje — não quatro. **60 chamadas**, modelo `claude-sonnet-5` (`modelo_agente`), ~US$ 0,50 pelo custo por chamada que o relatório da TEC-139 registra (`USD 0,008228`). Autorizado até 80; gasto 60, e a diferença não é economia esperta, é a quarta frasagem ter deixado de ser mensurável.
+
+Medir o caso 4 seria gastar 20 chamadas para descobrir que uma trilha determinística é determinística. A sonda replica o método da TEC-139 — `classificar` direto com `SISTEMA_DO_AGENTE`, cada texto sendo o único turno da sua conversa —, então ela nem passa por `pediu_humano`; excluir o caso 4 é decisão de desenho, não consequência do código.
 
 A pergunta é uma: **com que taxa o modelo já oferece sozinho?** O `2/4` da card é uma execução de quatro turnos, que é o mesmo formato de número que a TEC-271 acabou de mostrar ser uma moeda: lá o `11/12` e o `12/12` eram 55%. Se a taxa real aqui for 90%, o append quase nunca dispara e esta card é quase um no-op — e vale saber disso. Se for 10%, é o append que segura o CA-04.1.
 
