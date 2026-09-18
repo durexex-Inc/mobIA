@@ -18,6 +18,8 @@ tambem importa para medir a janela do proprio encerramento
 definicoes de "quanto tempo e silencio" no mesmo sistema.
 """
 
+import re
+import unicodedata
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, or_, select
@@ -108,3 +110,88 @@ TEXTO_DA_IDENTIFICACAO = (
 # constante do repositorio, a outra e resposta ao lead -- e coladas parecem
 # uma frase so mal pontuada.
 SEPARADOR_DA_IDENTIFICACAO = "\n\n"
+
+
+# O lead perguntando se fala com uma maquina (TEC-272), para anexar a oferta
+# de corretor que o CA-04.1 pede junto da confirmacao.
+#
+# **Faixa estrita, pelo argumento de `context/gatilhos.py` e nao pelo do
+# opt-out.** La deixar de detectar e violacao de LGPD e a faixa inequivoca e
+# generosa. Aqui e o inverso: falso negativo devolve o comportamento de hoje
+# (o lead nao recebe a oferta, e a identificacao proativa ja cobriu quem
+# perguntou cedo), e falso positivo gruda uma oferta de corretor numa fala que
+# nao perguntou nada -- que e o segundo criterio de aceite desta card, e e
+# visivel ao lead.
+#
+# **O criterio e o SUJEITO junto do predicado, nunca o substantivo sozinho.**
+# "automatico" qualificando portao ou elevador, "maquina" de lavar e "pessoa"
+# como sujeito sao fala corrente de quem procura imovel. Mesma licao que
+# `optout/deteccao.py` registra sobre "nada" e que `gatilhos.py` registra
+# sobre o verbo de acao.
+#
+# **A recall e inverificavel, e isso esta declarado no desenho (D3).** Nao ha
+# fala real deste eixo em `evals/corpus/` -- zero ocorrencias nos cinco
+# arquivos --, entao estes termos sao invencao. O que o teste prova e o lado
+# negativo: que nenhum dos turnos reais do corpus dispara.
+_TERMOS_DA_PERGUNTA: tuple[str, ...] = (
+    "e um robo",
+    "e um bot",
+    "eh um robo",
+    "e robo",
+    "um robo ou",
+    "e humano ou",
+    "e uma maquina",
+    "e maquina ou",
+    "humano ou maquina",
+    "maquina ou humano",
+    "falando com uma pessoa",
+    "falando com um humano",
+    "falando com uma maquina",
+    "falando com um robo",
+    "falando com gente",
+    "tudo automatico",
+    "e automatico ou",
+    "automatico ou tem",
+    "tem alguem ai",
+    "tem alguem ai ou",
+    "tem gente ai",
+    "e gente ou",
+)
+
+# Um padrao so, com `\b` no inicio de cada alternativa, pelo mesmo motivo de
+# `_PADRAO_POR_MOTIVO` em `context/gatilhos.py`: sem o limite, um termo casaria
+# escondido dentro de uma palavra maior. `re.escape` porque os termos sao
+# literais, nunca regex.
+_PADRAO_DA_PERGUNTA = re.compile(
+    r"\b(?:" + "|".join(re.escape(termo) for termo in _TERMOS_DA_PERGUNTA) + r")"
+)
+
+_SO_LETRAS_E_ESPACO = re.compile(r"[^a-z ]+")
+_ESPACOS = re.compile(r"\s+")
+
+
+def _normalizar(texto: str) -> str:
+    """Minusculas, sem acento, sem pontuacao, espacos colapsados.
+
+    **E o mesmo transform de `optout/deteccao.py` e de `context/gatilhos.py`, e
+    a terceira copia e deliberada pela mesma razao que a segunda.** Aquele
+    modulo registra que compartilhar acoplaria um detector comercial a um
+    detector de decisao de LGPD. Aqui a copia e ainda mais barata de justificar:
+    este detector so decide se uma frase e anexada a uma resposta, e nao tem
+    negocio nenhum puxando mudanca no caminho regulado.
+    """
+    sem_acento = unicodedata.normalize("NFKD", texto.casefold())
+    sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
+    return _ESPACOS.sub(" ", _SO_LETRAS_E_ESPACO.sub(" ", sem_acento)).strip()
+
+
+def perguntou_se_e_robo(texto: str) -> bool:
+    """O lead perguntou se esta falando com uma maquina.
+
+    Nunca levanta: texto sem letra nenhuma normaliza para vazio e devolve
+    False, mesma garantia de `gatilhos_de`.
+    """
+    normalizado = _normalizar(texto)
+    if not normalizado:
+        return False
+    return _PADRAO_DA_PERGUNTA.search(normalizado) is not None
