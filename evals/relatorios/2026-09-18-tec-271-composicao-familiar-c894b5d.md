@@ -5,7 +5,7 @@
 **Commit:** `c894b5d` — árvore com a candidata B aplicada em `SISTEMA_DA_ENTRADA` e o gate de depois medido sobre ela
 **Corpus:** `evals/moderacao/` (51 casos: `entrada_bloqueia`, `entrada_libera`, `saida_bloqueia`, `saida_libera`)
 **Runner do gate:** `evals/test_moderacao.py::test_moderacao_no_corpus`
-**Instrumento novo:** `evals/sonda_composicao_familiar.py` — 20 repetições por caso, em três braços (prompt atual, candidata A, candidata B), escrita por esta card. É diagnóstico, não gate: nenhum número dela vira piso de nenhum teste. A única asserção que o runner do gate carrega continua sendo `indisponiveis == 0`, herdada da TEC-210.
+**Instrumento novo:** `evals/sonda_composicao_familiar.py` — 20 repetições por caso, medida nesta rodada em três braços (prompt atual, candidata A, candidata B). O instrumento commitado na árvore `c894b5d` tem só **dois** braços em `BRACOS`: a candidata B venceu e foi aplicada em `SISTEMA_DA_ENTRADA`, então o braço `atual` passou a carregá-la, e a entrada separada que media a B isolada foi removida do dicionário — nada mais a comparar contra ela mesma. A medição usou três braços; o instrumento guardado no repositório tem dois. É diagnóstico, não gate: nenhum número dela vira piso de nenhum teste. A única asserção que o runner do gate carrega continua sendo `indisponiveis == 0`, herdada da TEC-210.
 
 **Continuação direta da [TEC-142](https://eduardodurieuxlopes.atlassian.net/browse/TEC-142)**, que nomeou "restricao de vizinhanca por composicao familiar" em `SISTEMA_DA_ENTRADA` e mediu que isso moveu o gêmeo velado do eixo (`entrada-bloqueia-composicao-familiar-velada`), mas não o caso direto (`entrada-bloqueia-composicao-familiar`).
 
@@ -70,7 +70,11 @@ Diante do empate, entrou o desempate pré-registrado na D5: **"empate → a mais
 
 A razão para manter a B mesmo com esse argumento na mesa: o desempate foi escrito **antes** de medir, e foi escrito já sabendo dessa lacuna — a seção "Lacunas declaradas" do desenho já registrava que a A carrega a proteção do controle e a B não. Trocar a regra de desempate depois de ver o número, para favorecer a candidata cujo argumento parece mais forte em retrospecto, é exatamente o movimento que esta card existe para não repetir. O argumento de custo estava disponível antes da medição; o que faltou foi calculá-lo antes, não medir de novo depois.
 
-Medido: os dois controles do corpus seguraram 20/20 sob a B, sem a frase de proteção. Não medido: qualquer caso de controle fora do corpus. Reverter, se a lacuna se mostrar real em produção, é barato — a sonda fica commitada e re-medir a A isoladamente custaria 80 chamadas.
+Medido: os dois controles do corpus seguraram 20/20 sob a B, sem a frase de proteção. Não medido: qualquer caso de controle fora do corpus. Reverter, se a lacuna se mostrar real em produção, **não é só o preço das chamadas**: com a sonda como está, o braço `atual` já é a B, e `_ANCORA_BLOQUEAR` é a cauda da própria frase da B — reverter `SISTEMA_DA_ENTRADA` para a linha de base sem também editar a sonda quebra `_enxertar` (`RuntimeError`) e derruba a coleta de `tests/unit` inteira, não só desta sonda. O preço real é as chamadas de uma nova rodada **mais** essa edição — reapontar a âncora e reconstruir o braço da candidata A sobre a linha de base que voltar a existir; 4 casos × 20 repetições = 80 chamadas cobre só a parte que já foi medida antes, não o texto de edição.
+
+## A emenda ao SRS entrou apesar de o desenho condicioná-la à candidata A
+
+O desenho (seção "Emendas ao SRS") previa a **Emenda E-02 à RN-04.5** condicionada à candidata A vencer — "ela é quem codifica a fronteira no prompt; se quem vencer for B, não há regra nova a registrar". Venceu a B, pelo desempate acima — e a emenda entrou mesmo assim, com conteúdo diferente do previsto: não é a fronteira imóvel-vs-quem-mora, é que o enquadramento do pedido (educado, preferência pessoal, sossego) não o descaracteriza. Isso é medido, não decisão de redação: a frase da B que venceu — *"a lista acima não cede a tom"* — só existe porque o enquadramento é exatamente o que fazia o caso direto escapar sob o prompt sem ela (a moeda de 55% acima). A condição do desenho estava errada; a decisão de registrar uma regra nova, não. Ver o adendo de 18/09/2026 na seção "Emendas ao SRS" do desenho.
 
 ## Gate antes e depois (Tasks 2 e 5)
 
