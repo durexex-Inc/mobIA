@@ -111,7 +111,7 @@ Então: preço do dict; condomínio, fotos e características da linha rebuscada
 
 `WhatsAppOutbound._deliver` passa a ler `payload["tipo"]`. Ausente significa `"texto"`, e é isso que mantém intactos os três chamadores de hoje — [`turno.py:543`](../../../src/mobia/domain/agente/turno.py#L543), `_entregar_texto_fixo` e os caminhos de follow-up. `"imagem"` traz `{link, legenda}` e o corpo sai como `type: "image"` com `image.link` e `caption`.
 
-A alternativa de um `OutboundPort` novo para mídia foi recusada por motivo estrutural: quem implementa o Protocol sem herdar de `GuardedOutbound` **perde a guarda de opt-out**, e o docstring do port ([`outbound/port.py:42-53`](../../../src/mobia/domain/outbound/port.py#L42)) avisa exatamente disso. Falaríamos com quem pediu silêncio.
+A alternativa de um `OutboundPort` novo para mídia foi recusada por motivo estrutural: quem implementa o Protocol sem herdar de `GuardedOutbound` **perde a guarda de opt-out**, e o docstring do port ([`outbound/port.py:135-143`](../../../src/mobia/domain/outbound/port.py#L135)) avisa exatamente disso. Falaríamos com quem pediu silêncio.
 
 A alternativa de explodir a lista de fichas dentro do adaptador, com o turno mandando um payload só, foi recusada porque uma reserva para três efeitos externos destrói a garantia do `UNIQUE (message_id, kind)`: falha na segunda imagem deixaria a reserva gravada e nada retentável.
 
