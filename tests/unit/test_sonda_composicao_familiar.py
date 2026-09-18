@@ -2,8 +2,8 @@
 
 A sonda le os textos do corpus por id e enxerta as candidatas em
 `SISTEMA_DA_ENTRADA` por ancora. As duas coisas erram em silencio: um id
-renomeado mede zero caso, uma ancora quebrada mede o braco atual tres vezes --
-e nenhuma das duas apareceria antes de 240 chamadas pagas, numa tabela que
+renomeado mede zero caso, uma ancora quebrada mede o braco atual duas vezes --
+e nenhuma das duas apareceria antes de 160 chamadas pagas, numa tabela que
 parece uma tabela.
 
 Nada aqui chama o modelo. O import da sonda so manipula string, e a primeira
