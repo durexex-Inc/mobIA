@@ -241,6 +241,19 @@ def pediu_humano(texto: str) -> bool:
     return any(_dispara(normalizado, com_pausa, termo) for termo in _TERMOS_INEQUIVOCOS)
 
 
+# `datetime.weekday()` conta a partir de segunda como 0, entao domingo e 6.
+# Constante nomeada porque `6` sozinho nao diz qual das duas convencoes do
+# Python esta em uso: `isoweekday()` chamaria domingo de 7, e as duas formas
+# convivem no ecossistema.
+#
+# **O dia e regra em codigo, e nao configuracao (TEC-285).** As horas vem de
+# `Settings` e os dias nao, e a assimetria e deliberada: um campo cujo unico
+# valor legal mantem um literal verdadeiro seria a armadilha que esta card
+# existe para fechar -- liga-lo faria o texto mentir em silencio. Mudar os
+# dias e mudanca de CODIGO E DE TEXTO, juntos.
+_DOMINGO = 6
+
+
 def dentro_da_janela_de_atendimento(agora: datetime) -> bool:
     """Se `agora` cai dentro da janela local em que existe gente para atender.
 
@@ -264,21 +277,48 @@ def dentro_da_janela_de_atendimento(agora: datetime) -> bool:
     envio AUTOMATICO pode comecar; esta funcao decide se existe gente para
     ATENDER um pedido explicito do lead -- e as duas leem configuracao
     separada de proposito (`atendimento_horario_*` contra `followup_horario_*`).
-    Hoje as duas contas coincidem -- mesma borda inclusiva de minuto, mesmo
-    fuso -- e e so essa coincidencia que faz delegar funcionar. **Se as duas
-    um dia divergirem, e esta funcao que para de delegar e ganha aritmetica
-    propria; `horario_permite_envio` nao ganha um parametro para as duas.**
+
+    **As duas divergiram na TEC-285, e a divergencia foi resolvida sem
+    duplicar a conta de borda.** O paragrafo acima prescrevia que, no dia em
+    que isso acontecesse, esta funcao pararia de delegar e ganharia aritmetica
+    propria. A instrucao foi seguida na intencao e nao na letra: a aritmetica
+    que `horario_permite_envio` possui e a **borda de minuto**, a mesma conta
+    que a TEC-146 gastou uma card inteira para ter num lugar so, e reescreve-la
+    aqui para acrescentar um `weekday()` reabriria aquele defeito. O eixo novo
+    -- o dia da semana -- e separavel do antigo, entao ele entra AQUI, fora da
+    delegacao, e `horario_permite_envio` segue intacta para os seus tres
+    chamadores. Se um dia a BORDA divergir, ai sim a instrucao original vale
+    pela letra.
 
     `agora` precisa ser aware pela mesma razao que `horario_permite_envio`
-    exige -- ver o docstring dela; a excecao de `tzinfo` ausente vem de la.
+    exige -- ver o docstring dela; a excecao de `tzinfo` ausente vem de la, e
+    o comentario do corpo explica por que a ordem das duas checagens a
+    preserva.
     """
     settings = get_settings()
-    return horario_permite_envio(
+    fuso = ZoneInfo(settings.followup_fuso)
+
+    # A ordem importa por duas razoes, e nenhuma e estilo.
+    #
+    # **A excecao do naive vem daqui.** `horario_permite_envio` levanta quando
+    # `momento.tzinfo is None`, e roda primeiro e incondicionalmente para que
+    # continue levantando. Converter o fuso antes, para olhar o dia, faria um
+    # naive ser lido como hora do SISTEMA -- que difere entre esta maquina e o
+    # runner do CI -- e a excecao passaria a depender do dia da semana.
+    #
+    # **E o dia e lido no fuso, nunca em UTC.** Com o `followup_fuso` default a
+    # distincao nao aparece (UTC-3 mantem o mesmo dia dentro da janela), mas o
+    # campo e configuravel: um fuso com offset grande o bastante faz o mesmo
+    # instante ser sabado em UTC e domingo localmente.
+    if not horario_permite_envio(
         momento=agora,
         inicio=settings.atendimento_horario_inicio,
         fim=settings.atendimento_horario_fim,
-        fuso=ZoneInfo(settings.followup_fuso),
-    )
+        fuso=fuso,
+    ):
+        return False
+
+    return agora.astimezone(fuso).weekday() != _DOMINGO
 
 
 # Mora aqui, e nao em `turno.py`, pelo mesmo motivo que
