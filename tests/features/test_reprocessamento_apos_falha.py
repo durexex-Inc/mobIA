@@ -14,6 +14,7 @@ from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.outbound.models import OutboundDispatch
 from mobia.domain.outbound.port import GuardedOutbound
+from mobia.domain.outbound.presenca import IndicadorNoop
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
 from mobia.workers.jobs.process_message import claim_message, process_message
@@ -39,6 +40,7 @@ def _ctx(session_factory, outbound) -> dict[str, Any]:
         "contador": ContadorFake(),
         "moderador": ModeradorFake(),
         "agendador": AgendadorNoop(),
+        "indicador": IndicadorNoop(),
     }
 
 

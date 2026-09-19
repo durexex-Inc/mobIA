@@ -109,3 +109,57 @@ def _codigo_do_erro(resposta: httpx.Response) -> int | None:
         return int(resposta.json()["error"]["code"])
     except (ValueError, KeyError, TypeError):
         return None
+
+
+class WhatsAppIndicador:
+    """O indicador de digitacao da Cloud API. TEC-274, RN-04.7.
+
+    **Nao herda de `GuardedOutbound`**, ao contrario de `WhatsAppOutbound`
+    logo acima. Nao ha o que reservar: o indicador nao e mensagem, nao tem
+    `kind`, e herdar obrigaria a inventar um kind sintetico numa tabela cuja
+    UNIQUE `(message_id, kind)` existe para dedup de MENSAGEM -- um kind
+    sintetico ali e o tipo de coisa que ninguem desfaz depois. As guardas de
+    opt-out e atendimento humano, que a heranca daria de graca, moram no
+    agendador (`domain/outbound/presenca.py`) e rodam no instante do disparo.
+
+    **Mesmo endpoint de `_deliver`, corpo de outra forma.** A Cloud API nao
+    tem rota propria para isto: o indicador sai como uma anotacao sobre a
+    mensagem RECEBIDA, e por isso exige o `wamid` dela e um `status: "read"`
+    que nao e opcional -- enviar o indicador marca a fala do lead como lida.
+    Ver a Emenda E-01 da RN-04.7 no SRS.
+
+    **Nenhuma excecao tipada e levantada daqui**, ao contrario de `_deliver`.
+    Nao ha reserva a liberar nem retentativa a decidir, e um indicador que
+    chega tarde nao vale nada: 4xx e 5xx viram a mesma linha de log. Erro de
+    rede propaga cru e o agendador o engole -- ver o `except Exception` de
+    `_esperar_e_indicar`.
+    """
+
+    def __init__(self, cliente: httpx.AsyncClient | None = None) -> None:
+        self._cliente = cliente
+
+    async def indicar_digitacao(self, *, provider_message_id: str, de: str) -> None:
+        settings = get_settings()
+        url = f"{settings.whatsapp_api_base}/{de}/messages"
+        corpo: dict[str, Any] = {
+            "messaging_product": "whatsapp",
+            "status": "read",
+            "message_id": provider_message_id,
+            "typing_indicator": {"type": "text"},
+        }
+        cliente = self._cliente or httpx.AsyncClient(timeout=TIMEOUT_SEGUNDOS)
+
+        try:
+            resposta = await cliente.post(
+                url,
+                json=corpo,
+                headers={"Authorization": f"Bearer {settings.whatsapp_access_token}"},
+            )
+        finally:
+            if self._cliente is None:
+                await cliente.aclose()
+
+        if resposta.status_code >= 400:
+            # Nunca `resposta.text`: o corpo do erro da Meta pode ecoar o que
+            # foi enviado. So o status, que e o que aponta para a causa.
+            log.warning("presenca.recusado", status=resposta.status_code)

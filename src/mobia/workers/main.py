@@ -10,7 +10,7 @@ from mobia.domain.handoff.agendador import AgendadorArq
 from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
 from mobia.domain.notificacao.canais import EmailRegistrado, WhatsAppRegistrado
-from mobia.domain.outbound.whatsapp import WhatsAppOutbound
+from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
@@ -79,6 +79,11 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["settings"] = settings
     ctx["session_factory"] = session_factory
     ctx["outbound"] = WhatsAppOutbound(session_factory)
+    # TEC-274. Sem `session_factory`: as guardas do indicador moram no
+    # agendador (`domain/outbound/presenca.py`), nao no adaptador. A guarda de
+    # `WHATSAPP_ACCESS_TOKEN` logo acima ja cobre os dois -- sem token, este
+    # tambem levaria 401.
+    ctx["indicador"] = WhatsAppIndicador()
     ctx["classificador"] = ClassificadorAnthropic()
     ctx["resumidor"] = ResumidorAnthropic()
     ctx["contador"] = ContadorAnthropic()
