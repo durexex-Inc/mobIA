@@ -12,9 +12,13 @@ Foi assim que `infra/anthropic.py` chegou a afirmar 360s quando o pior caso era
 
 A TEC-229 acrescentou as voltas do laco de `montar_contexto` a conta, e com
 elas a soma passou de 202s para 327s contra um `job_timeout` de 240: os dois
-testes que somam estao `xfail(strict=True)` ate a TEC-290 decidir como fechar.
-Os dois que afirmam a derivacao continuam verdes, e sao o que impede este
-arquivo de virar decoracao no meio-tempo.
+testes que somam ficaram `xfail(strict=True)` ate a TEC-290 decidir como
+fechar. A TEC-290 fechou com um deadline agregado para a fase de montagem, que
+tira do laco a dependencia de `contexto_max_iteracoes` e do gatilho de
+regeneracao -- por isso nenhum teste deste arquivo e mais `xfail`, e quem
+guarda a derivacao agora sao os dois testes que afirmam que aqueles dois nao
+movem mais o pior caso (`..._nao_cresce_mais_com_...`) mais o que afirma que
+quem move e o deadline (`..._segue_o_deadline_da_montagem`).
 """
 
 import pytest
@@ -65,7 +69,7 @@ def _soma_do_pior_turno() -> float:
 
 
 def test_o_pior_turno_cabe_no_job_timeout() -> None:
-    """A soma dos quatro clientes externos contra o `job_timeout` -- hoje NAO cabe.
+    """A soma dos quatro clientes externos contra o `job_timeout` -- hoje cabe.
 
     **O que este teste protege e a RELACAO, nao os numeros.** Nenhum dos tetos
     esta escrito aqui: todos sao importados de quem os define, e o
