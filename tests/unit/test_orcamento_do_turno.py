@@ -12,22 +12,24 @@ Foi assim que `infra/anthropic.py` chegou a afirmar 360s quando o pior caso era
 
 A TEC-229 acrescentou as voltas do laco de `montar_contexto` a conta, e com
 elas a soma passou de 202s para 327s contra um `job_timeout` de 240: os dois
-testes que somam estao `xfail(strict=True)` ate a TEC-290 decidir como fechar.
-Os dois que afirmam a derivacao continuam verdes, e sao o que impede este
-arquivo de virar decoracao no meio-tempo.
+testes que somam ficaram `xfail(strict=True)` ate a TEC-290 decidir como
+fechar. A TEC-290 fechou com um deadline agregado para a fase de montagem, que
+tira do laco a dependencia de `contexto_max_iteracoes` e do gatilho de
+regeneracao -- por isso nenhum teste deste arquivo e mais `xfail`, e quem
+guarda a derivacao agora sao os dois testes que afirmam que aqueles dois nao
+movem mais o pior caso (`..._nao_cresce_mais_com_...`) mais o que afirma que
+quem move e o deadline (`..._segue_o_deadline_da_montagem`).
 """
 
 import pytest
 
+import mobia.infra.anthropic as anthropic
 from mobia.app.config import get_settings
 from mobia.domain.moderacao.port import Direcao
 from mobia.domain.outbound.whatsapp import TIMEOUT_SEGUNDOS as TETO_DO_POST_A_META
 from mobia.infra.anthropic import (
-    MAX_TENTATIVAS,
     TETO_DA_CLASSIFICACAO,
-    TETO_DO_COUNT_TOKENS,
     TETO_DO_INVESTIDOR,
-    TETO_DO_RESUMO,
     segundos_do_modelo_no_pior_turno,
 )
 from mobia.infra.embeddings import (
@@ -66,25 +68,12 @@ def _soma_do_pior_turno() -> float:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "TEC-229 corrigiu o grafo de chamadas e a conta deixou de fechar: 327s "
-        "contra um job_timeout de 240. Fechar exige mexer na janela do sweeper, "
-        "que e decisao de produto -- ver TEC-290. Estrito de proposito: quem "
-        "fechar o orcamento ve isto virar XPASS e e obrigado a tirar a marca."
-    ),
-)
 def test_o_pior_turno_cabe_no_job_timeout() -> None:
-    """A soma dos quatro clientes externos contra o `job_timeout` -- hoje NAO cabe.
+    """A soma dos quatro clientes externos contra o `job_timeout` -- hoje cabe.
 
     **O que este teste protege e a RELACAO, nao os numeros.** Nenhum dos tetos
     esta escrito aqui: todos sao importados de quem os define, e o
-    `job_timeout` vem do `WorkerSettings` de verdade. Por isso ficou
-    `xfail(strict=True)` na TEC-229 em vez de reescrito com um numero maior --
-    ver a razao no decorador acima. Enquanto durar o xfail, subir qualquer
-    teto sem olhar para o orcamento nao produz sinal nenhum aqui: quem produz
-    e a prosa do comentario de `job_timeout` em `workers/main.py`.
+    `job_timeout` vem do `WorkerSettings` de verdade.
 
     Estourar o `job_timeout` nao e so custo: o ARQ cancela a corrotina, o turno
     inteiro e repago pelo sweeper e a entrega pode duplicar se o cancelamento
@@ -99,15 +88,6 @@ def test_o_pior_turno_cabe_no_job_timeout() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "TEC-229 corrigiu o grafo de chamadas e a conta deixou de fechar: 327s "
-        "contra um job_timeout de 240. Fechar exige mexer na janela do sweeper, "
-        "que e decisao de produto -- ver TEC-290. Estrito de proposito: quem "
-        "fechar o orcamento ve isto virar XPASS e e obrigado a tirar a marca."
-    ),
-)
 def test_a_folga_paga_o_banco() -> None:
     """Caber nao basta: sobrar 1s seria caber e estourar na primeira consulta.
 
@@ -134,45 +114,36 @@ def test_o_investidor_e_o_teto_mais_alto_do_turno() -> None:
     assert TETO_DO_INVESTIDOR > TETO_DA_CLASSIFICACAO
 
 
-def test_o_pior_turno_segue_contexto_max_iteracoes(
+def test_o_pior_turno_nao_cresce_mais_com_contexto_max_iteracoes(
     monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
 ) -> None:
-    """Subir o teto de iteracoes da montagem tem de mover o pior caso.
+    """Este teste afirmava o CONTRARIO ate a TEC-290, e a inversao e o entregavel.
 
-    E o criterio de pronto que a TEC-229 existe para fechar. Ate ela,
-    `_PIOR_TURNO` contava `resumir` e `count_tokens` uma vez cada: dobrar
-    `contexto_max_iteracoes` nao mexia em numero nenhum, e o laco de
-    `montar_contexto` -- que roda ate esse teto, com um `resumir` e uma
-    contagem por volta -- ficava fora da conta.
+    Ate aqui, `_pior_turno` somava uma dobra e uma contagem por volta do laco
+    de `montar_contexto`, entao subir o teto de iteracoes movia o pior caso --
+    e era isso que impedia a conta de fechar, porque ela crescia com uma
+    configuracao que ninguem lia pensando em orcamento.
 
-    **Enquanto a TEC-290 nao fechar o orcamento, este e o unico teste verde
-    que guarda a derivacao.** Os dois que somam estao `xfail`, entao subir um
-    teto ou uma iteracao nao os torna vermelhos -- eles ja sao. Se este aqui
-    for apagado junto com aquela card, a derivacao volta a poder ser trocada
-    por constantes sem nada perceber.
-
-    O delta e afirmado exato, e nao so "maior": uma iteracao a mais custa
-    UMA dobra e UMA contagem. Afirmar `>` passaria tambem se a implementacao
-    multiplicasse a fatia errada.
+    Com o deadline agregado, a fase inteira custa o relogio dela, quantas
+    voltas der. Apagar este teste em vez de inverte-lo deixaria a
+    propriedade que a card comprou sem nada guardando.
     """
     antes = segundos_do_modelo_no_pior_turno()
 
     monkeypatch.setenv("CONTEXTO_MAX_ITERACOES", str(get_settings().contexto_max_iteracoes + 1))
     get_settings.cache_clear()
 
-    uma_volta_a_mais = (TETO_DO_RESUMO + TETO_DO_COUNT_TOKENS) * (MAX_TENTATIVAS + 1)
-    assert segundos_do_modelo_no_pior_turno() - antes == uma_volta_a_mais
+    assert segundos_do_modelo_no_pior_turno() == antes
 
 
-def test_o_pior_turno_segue_o_gatilho_de_regeneracao(
+def test_o_pior_turno_nao_cresce_mais_com_o_gatilho_de_regeneracao(
     monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
 ) -> None:
-    """O termo do truncamento tambem e derivado, e cresce em log.
+    """Mesma inversao, pelo outro caminho.
 
-    `_truncar_ate_caber` corta a janela pela metade a cada volta, entao
-    dobrar o gatilho acrescenta UMA contagem, nao o dobro delas. O teste
-    afirma essa forma: se alguem trocar o `log2` por multiplicacao, a
-    igualdade quebra.
+    O gatilho governava o termo `log2` das contagens de `_truncar_ate_caber`.
+    O truncamento continua existindo e continua contando -- so que agora
+    dentro do relogio da fase, e nao somado por fora dele.
     """
     antes = segundos_do_modelo_no_pior_turno()
 
@@ -182,40 +153,44 @@ def test_o_pior_turno_segue_o_gatilho_de_regeneracao(
     )
     get_settings.cache_clear()
 
-    um_corte_a_mais = TETO_DO_COUNT_TOKENS * (MAX_TENTATIVAS + 1)
-    assert segundos_do_modelo_no_pior_turno() - antes == um_corte_a_mais
+    assert segundos_do_modelo_no_pior_turno() == antes
 
 
-# O orcamento de hoje, congelado. Nao e alvo nem meta: e o teto que impede a
-# conta de PIORAR enquanto a TEC-290 nao a fecha.
-#
-# Existe porque o `xfail(strict=True)` dos dois testes acima, sozinho, e uma
-# guarda unidirecional e invertida em relacao ao risco: ele dispara quando
-# alguem MELHORA o orcamento (XPASS), nunca quando alguem o piora. Ate a
-# TEC-229, `test_o_pior_turno_cabe_no_job_timeout` era verde e subir um teto o
-# deixava vermelho -- sem as duas linhas abaixo, esta card teria trocado essa
-# guarda por nada, e subir `TETO_DO_INVESTIDOR` de 35 para 90 passaria a suite
-# inteira em silencio.
-#
-# Os dois numeros sao DECLARADOS, e nao derivados: nao ha de onde derivar um
-# teto para uma conta que nao fecha. Saem junto com os `xfail`, quando a
-# TEC-290 devolver a guarda ao derivado.
-SOMA_DE_HOJE_SEGUNDOS = 327.0
-JOB_TIMEOUT_DE_HOJE = 240
+def test_o_deadline_da_montagem_entra_uma_vez_e_nao_por_tentativa(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """O deadline e relogio de fase; as outras fatias sao teto por requisicao.
 
+    Uma retentativa repete uma REQUISICAO dentro da fase, e a fase ja esta
+    limitada pelo relogio -- multiplicar o deadline por tentativa contaria
+    duas vezes o que o relogio conta uma.
 
-def test_o_orcamento_estourado_nao_piora() -> None:
-    """A conta nao fecha, e ate a TEC-290 o que se guarda e que ela nao piore.
-
-    Este e o unico teste VERDE que cobre as tres direcoes que a card pede:
-    subir `contexto_max_iteracoes`, subir um teto por chamada, ou baixar o
-    `job_timeout`. Os dois que somam estao `xfail` e nao cobrem nenhuma --
-    `xfail` estrito so fala quando o teste volta a passar.
-
-    Os testes irmaos de derivacao (`..._segue_contexto_max_iteracoes`,
-    `..._segue_o_gatilho_de_regeneracao`) provam que a funcao LE a
-    configuracao; este prova que o que ela le CABE no que se decidiu tolerar.
-    Sao coisas diferentes, e so as duas juntas fecham o criterio da card.
+    Com `MAX_TENTATIVAS = 0` a diferenca e invisivel, e e por isso que este
+    teste mexe na constante: sem isso ele passaria com a implementacao errada.
     """
-    assert _soma_do_pior_turno() <= SOMA_DE_HOJE_SEGUNDOS
-    assert WorkerSettings.job_timeout >= JOB_TIMEOUT_DE_HOJE
+    deadline = get_settings().contexto_deadline_de_montagem_segundos
+    sem_retentativa = segundos_do_modelo_no_pior_turno()
+
+    monkeypatch.setattr(anthropic, "MAX_TENTATIVAS", 1)
+
+    assert segundos_do_modelo_no_pior_turno() == (sem_retentativa - deadline) * 2 + deadline
+
+
+def test_o_pior_turno_segue_o_deadline_da_montagem(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """A derivacao nao sumiu, mudou de dono: quem move o pior caso agora e o deadline.
+
+    Sem este teste, a inversao dos dois acima deixaria `_pior_turno` livre
+    para voltar a ser constante -- que e exatamente o que a TEC-229 tinha
+    acabado de impedir.
+    """
+    antes = segundos_do_modelo_no_pior_turno()
+
+    monkeypatch.setenv(
+        "CONTEXTO_DEADLINE_DE_MONTAGEM_SEGUNDOS",
+        str(get_settings().contexto_deadline_de_montagem_segundos + 10),
+    )
+    get_settings.cache_clear()
+
+    assert segundos_do_modelo_no_pior_turno() - antes == 10

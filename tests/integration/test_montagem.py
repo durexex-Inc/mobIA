@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -13,8 +14,11 @@ from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE
 from mobia.domain.context.janela import Marca, literais_apos
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.domain.context.montagem import (
+    SISTEMA,
     ContextoIrreducivel,
     ContextoMontado,
+    _estimar,
+    _estimar_pessimista,
     _texto_da,
     _texto_das,
     _texto_do_estado,
@@ -614,6 +618,71 @@ async def test_estouro_avanca_a_marca_antes_de_comprimir(session, sempre_contar)
 
     assert contexto.tokens <= get_settings().contexto_teto_de_tokens
     assert resumidor.chamadas[0] == INSTRUCAO_DOBRAR, "primeiro dobra, so depois comprime"
+
+
+class ContadorProibido:
+    """Um contador que falha se alguem o chamar.
+
+    Existe para o modo sem modelo: o ponto dele e nao pagar round trip
+    nenhum, e um contador que apenas devolve um numero nao distingue "nao
+    chamou" de "chamou e coube".
+    """
+
+    async def contar(self, texto: str) -> int:
+        raise AssertionError("o modo sem modelo nao pode falar com o provedor")
+
+
+def test_a_estimativa_sem_modelo_supoe_o_piso_de_caracteres_por_token() -> None:
+    """No modo sem modelo a estimativa e a palavra final, entao ela erra para cima.
+
+    `_estimar` supoe 4 caracteres por token, e o portugues acentuado roda a
+    3,2-3,7 (ver `Settings.limiar_de_contagem_efetivo`): ela SUBCONTA. No
+    caminho normal isso e inofensivo, porque o limiar so a deixa responder
+    onde errar nao muda a decisao. Aqui ela decide sozinha, e subcontar seria
+    dizer "cabe" com um texto que estoura.
+
+    O teste afirma a PROPRIEDADE -- a razao de caracteres por token implicita
+    fica no piso documentado -- e nao a formula, que seria copiar a
+    implementacao para o teste.
+    """
+    literais = [_mensagem_literal(corpo="x" * 4000)]
+    bruto = len(SISTEMA) + len(_texto_das(literais)) + len(_texto_do_estado(None))
+
+    pessimista = _estimar_pessimista(None, literais, None)
+
+    assert bruto / pessimista <= 3.2
+    assert pessimista > _estimar(None, literais, None)
+
+
+async def test_o_truncamento_sem_modelo_corta_sem_falar_com_o_provedor() -> None:
+    """O fallback do deadline nao pode pedir ao modelo justamente quando o tempo dele acabou.
+
+    `_truncar_ate_caber` conta a cada volta, e `_contar_se_valer` paga um
+    round trip acima do limiar. Chamado do estouro do deadline, isso seria
+    gastar a chamada que nao ha mais tempo de fazer.
+
+    5000 caracteres por mensagem, e nao os 4000 do outro teste: com 4000 a
+    estimativa pessimista de oito mensagens fica abaixo do
+    `teto_de_tokens_efetivo` (10940 hoje) e o laco de truncamento nunca
+    dispara -- o teste passaria vazio, sem exercitar `sem_modelo` nenhum.
+    """
+    literais = [_mensagem_literal(corpo="x" * 5000) for _ in range(8)]
+    teto = get_settings().teto_de_tokens_efetivo
+
+    resumo, restantes, tokens = await _truncar_ate_caber(
+        ContadorProibido(),
+        CANAL,
+        "resumo qualquer",
+        literais,
+        None,
+        _estimar_pessimista("resumo qualquer", literais, None),
+        teto,
+        sem_modelo=True,
+    )
+
+    assert len(restantes) < 8, "a janela tinha de encolher"
+    assert tokens <= teto
+    assert resumo == "resumo qualquer", "coube cortando literais; o resumo nao precisou cair"
 
 
 async def test_truncar_reduz_pela_metade_em_vez_de_pular_direto_para_uma(sempre_contar) -> None:
@@ -1363,3 +1432,85 @@ async def test_degradacao_que_nao_foi_timeout_nao_afirma_teto(
     )
     assert linha["reason"] == "RuntimeError"
     assert linha["teto_s"] is None
+
+
+class ResumidorQueTrava:
+    """Um resumidor que nunca devolve, e que avisa quando entrou.
+
+    O aviso (`entrou`) e o que torna o teste de cancelamento deterministico:
+    sem ele, `tarefa.cancel()` pode chegar antes de a corrotina alcancar o
+    await do provedor, e o teste passaria sem exercitar nada.
+    """
+
+    def __init__(self) -> None:
+        self.entrou = asyncio.Event()
+        self.chamadas: list[str] = []
+
+    async def resumir(self, instrucao: str, conteudo: str) -> ResumoGerado:
+        self.chamadas.append(instrucao)
+        self.entrou.set()
+        await asyncio.Event().wait()
+        raise AssertionError("inalcancavel")
+
+
+async def test_deadline_estourado_degrada_em_vez_de_esperar(
+    session, caplog, sempre_contar, caches_de_cliente_limpos, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fase inteira tem relogio proprio, e estourar nao pode devolver contexto acima do teto.
+
+    E o ponto da TEC-290: teto por requisicao nao limita uma fase que faz N
+    requisicoes. Com o resumidor travado, so o deadline termina o turno.
+
+    O contador e o `ContadorProibido`: depois do estouro nao pode haver
+    round trip nenhum, e um contador que responde nao distinguiria
+    "nao chamou" de "chamou e coube".
+    """
+    monkeypatch.setenv("CONTEXTO_DEADLINE_DE_MONTAGEM_SEGUNDOS", "0.05")
+    get_settings.cache_clear()
+    await semear(session, 45)
+
+    contexto = await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorQueTrava(),
+        contador=ContadorProibido(),
+    )
+
+    assert contexto.degradado is True
+    assert contexto.tokens <= get_settings().teto_de_tokens_efetivo
+    assert "contexto.deadline_estourado" in caplog.text
+
+
+async def test_cancelamento_de_fora_nao_vira_degradacao(
+    session, sempre_contar, caches_de_cliente_limpos, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O `CancelledError` do `job_timeout` atravessa a fase inteira.
+
+    E o contrato que a TEC-227 construiu: quem tem de receber o cancelamento
+    e a clausula de `process_message`, que marca FAILED, incrementa
+    `attempts` e loga `message.cancelled`. Engoli-lo aqui devolveria a
+    mensagem perdida em silencio que aquela card veio acabar.
+
+    O deadline e folgado de proposito: se ele disparasse antes do
+    `cancel()`, o teste passaria pela razao errada.
+    """
+    monkeypatch.setenv("CONTEXTO_DEADLINE_DE_MONTAGEM_SEGUNDOS", "30")
+    get_settings.cache_clear()
+    await semear(session, 45)
+    resumidor = ResumidorQueTrava()
+
+    tarefa = asyncio.create_task(
+        montar_contexto(
+            get_sessionmaker(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumidor=resumidor,
+            contador=ContadorProibido(),
+        )
+    )
+    await resumidor.entrou.wait()
+    tarefa.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await tarefa

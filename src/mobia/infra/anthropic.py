@@ -1,4 +1,3 @@
-import math
 from functools import lru_cache
 
 from anthropic import APIStatusError, AsyncAnthropic
@@ -21,9 +20,10 @@ from mobia.app.config import ConfiguracaoInsegura, get_settings
 TIMEOUT_SEGUNDOS = 60.0
 
 # Zero, e a razao esta na aritmetica logo abaixo: a parcela da Anthropic no
-# pior turno e 287s (`segundos_do_modelo_no_pior_turno`), e a base sozinha ja
-# estoura o `job_timeout` de 240s -- antes de qualquer retentativa. Com uma
-# retentativa o pior turno dobraria para 574s, so nesta parcela.
+# pior turno e 167s (`segundos_do_modelo_no_pior_turno`) contra um
+# `job_timeout` de 240s, e a folga inteira do turno e de 33s. Com uma
+# retentativa, as fatias por requisicao dobrariam -- 132s viram 264s -- e
+# sozinhas ja estourariam o `job_timeout`.
 #
 # Nao e decisao nova -- a moderacao ja a tomou, citando esta card pelo nome
 # (ver `MAX_TENTATIVAS_DA_MODERACAO` em `infra/moderacao.py`). O que mudou e o
@@ -76,12 +76,13 @@ TETO_DO_INVESTIDOR = 35.0
 
 # O pior turno, fatia a fatia, com quantas REQUISICOES cada uma pode fazer.
 #
-# Sao cinco fatias: `count_tokens` e `resumir` em `montar_contexto`, `reagir`,
-# a chamada 1 (`classificar` ou `qualificar_investidor`, conforme o lead ja
-# seja investidor) e a chamada 2 (`desambiguar`, ou `qualificar_investidor` na
-# virada). As duas primeiras vivem em `domain/context/montagem.py`, que chama
-# `resumir` e `contador.contar` (a contagem em si, em `domain/context/resumo.py`);
-# as outras tres vivem em `turno.py`, que so chama `montar_contexto`. Citadas
+# Sao tres fatias, e as tres vivem em `turno.py`, que so chama
+# `montar_contexto`: `reagir`, a chamada 1 (`classificar` ou
+# `qualificar_investidor`, conforme o lead ja seja investidor) e a chamada 2
+# (`desambiguar`, ou `qualificar_investidor` na virada). `count_tokens` e
+# `resumir`, que viviam aqui como fatia por requisicao, sairam desde a
+# TEC-290 -- ver o paragrafo de tres blocos abaixo, sobre por que a montagem
+# passou a custar o relogio dela em vez de uma contagem de chamadas. Citadas
 # pelo nome e nao pela linha: este bloco ja nasceu de um comentario que
 # envelheceu, e numero de linha e a parte que envelhece primeiro.
 #
@@ -96,45 +97,25 @@ TETO_DO_INVESTIDOR = 35.0
 # `classificar` com busca seguido de `qualificar_investidor` com busca, e nao
 # investidor duas vezes.
 #
-# **E duas fatias custam N requisicoes, derivadas da configuracao (TEC-229).**
-# A versao anterior contava `resumir` e `count_tokens` uma vez cada, e era a
-# mesma classe de erro do paragrafo acima, uma camada abaixo: `montar_contexto`
-# nao chama nenhum dos dois uma vez so.
+# **E a montagem nao custa requisicoes: custa o relogio dela (TEC-290).** A
+# versao anterior contava `resumir` e `count_tokens` volta a volta do laco de
+# `montar_contexto`, o que estava certo sobre o grafo de chamadas e errado
+# sobre o que limita a fase: o pior caso crescia com `contexto_max_iteracoes`,
+# e a soma do turno chegou a 327s contra um `job_timeout` de 240.
+#
+# Agora `montar_contexto` tem um deadline agregado
+# (`Settings.contexto_deadline_de_montagem_segundos`), e as duas fatias saem
+# desta tupla -- que passa a listar so o que e limitado por requisicao. O
+# deadline entra em `segundos_do_modelo_no_pior_turno`, fora do multiplicador
+# de tentativas, pela razao escrita la.
 def _pior_turno() -> tuple[tuple[float, int], ...]:
-    """As fatias do turno e quantas requisicoes cada uma faz no pior caso.
+    """As fatias do turno limitadas POR REQUISICAO, e quantas cada uma faz.
 
-    Funcao e nao constante porque duas fatias dependem de `Settings`, e
-    `get_settings()` no import seria pior que a constante que isto substitui.
+    Constante de novo desde a TEC-290, e desta vez sem esconder nada: a fatia
+    que dependia de `Settings` saiu daqui para virar o deadline agregado da
+    montagem. O que sobrou nao depende de configuracao nenhuma.
     """
-    settings = get_settings()
-
-    # `resumir`: a dobra do gatilho de acumulacao (`deve_regenerar`), mais uma
-    # por volta do laco `while tokens > teto`, que para em
-    # `contexto_max_iteracoes`.
-    resumos = 1 + settings.contexto_max_iteracoes
-
-    # `count_tokens`: a contagem antes do laco, uma por volta, e as de
-    # `_truncar_ate_caber` -- que corta a janela pela metade a cada passo,
-    # chegando a uma literal em log2(N), mais uma contagem se ainda precisar
-    # descartar o resumo.
-    #
-    # **N vem do gatilho, e isso e suposicao e nao teorema.** O gatilho dobra
-    # em 40 literais, entao em regime normal a janela que chega ao truncamento
-    # tem essa ordem de grandeza; se a dobra falhar, `literais` passa disso. O
-    # `max(..., 1)` existe para que um gatilho mal configurado em 0 nao leve
-    # `log2` a `-inf` -- o teto fica errado, mas a funcao nao explode.
-    #
-    # **O termo e pessimista de proposito.** `_contar_se_valer` so paga o
-    # round trip acima do limiar, e cortar pela metade derruba a contagem
-    # rapido: na pratica o truncamento nao paga todas estas. Um teto nao pode
-    # depender de quao rapido o texto encolhe, e subcontar aqui e o defeito
-    # que a TEC-229 veio matar.
-    cortes = math.ceil(math.log2(max(settings.contexto_gatilho_de_regeneracao, 1))) + 1
-    contagens = 1 + settings.contexto_max_iteracoes + cortes
-
     return (
-        (TETO_DO_COUNT_TOKENS, contagens),
-        (TETO_DO_RESUMO, resumos),
         (TETO_DA_REACAO, 1),
         (TETO_DA_CLASSIFICACAO, 2),
         (TETO_DO_INVESTIDOR, 2),
@@ -147,20 +128,23 @@ def segundos_do_modelo_no_pior_turno() -> float:
     Existe para entrar na soma de `tests/unit/test_orcamento_do_turno.py`, que
     a compara com o `job_timeout` do worker.
 
-    **Esse teste esta `xfail` desde a TEC-229 e nao guarda mais nada sozinho.**
-    Quem guarda a derivacao sao os dois testes irmaos de la, que afirmam que
-    subir `contexto_max_iteracoes` ou o gatilho move este numero. Enquanto a
-    TEC-290 nao fechar o orcamento, apagar aqueles dois deixa esta funcao livre
-    para voltar a ser constante sem nada perceber.
+    **Sao duas parcelas com naturezas diferentes, e por isso a conta nao e uma
+    soma so.** As requisicoes de `_pior_turno()` tem teto POR REQUISICAO, e
+    uma retentativa as repete -- por isso o multiplicador. A montagem tem um
+    relogio de FASE, e uma retentativa dentro dela ja esta limitada por esse
+    relogio: multiplica-lo contaria duas vezes o que ele conta uma.
 
     **E so a parcela da Anthropic, e o nome diz isso de proposito.** O turno
-    paga outros tres clientes externos -- o embed da busca (`infra/embeddings.py`,
-    o MAIOR termo antes da TEC-228), a moderacao das duas pontas e o POST para a
-    Meta --, alem do banco. Quem somar so esta funcao contra os 240s conclui que
-    ha folga de sobra, que foi exatamente o erro do comentario que esta card
-    encontrou. A soma inteira mora no teste.
+    paga outros tres clientes externos -- o embed da busca (`infra/embeddings.py`),
+    a moderacao das duas pontas e o POST para a Meta --, alem do banco. Quem
+    somar so esta funcao contra os 240s conclui que ha folga de sobra, que foi
+    exatamente o erro do comentario que a TEC-228 encontrou. A soma inteira
+    mora no teste.
     """
-    return sum(teto * requisicoes for teto, requisicoes in _pior_turno()) * (MAX_TENTATIVAS + 1)
+    por_requisicao = sum(teto * requisicoes for teto, requisicoes in _pior_turno())
+    return por_requisicao * (MAX_TENTATIVAS + 1) + (
+        get_settings().contexto_deadline_de_montagem_segundos
+    )
 
 
 @lru_cache

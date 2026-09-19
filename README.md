@@ -129,6 +129,12 @@ Os critérios de aceite da história vivem como testes executáveis:
   É exceção visível ao chamador — a TEC-134 tem de tratá-la — e acontecer
   significa que uma mensagem sozinha excede o limite físico da chamada, que o
   provedor recusaria de qualquer jeito.
+- **A fase de montagem tem relógio próprio de 35s**
+  (`Settings.contexto_deadline_de_montagem_segundos`), agregado sobre toda a
+  fase que fala com o provedor (TEC-290). Estourá-lo não é falha, é
+  degradação: o turno segue e o lead recebe resposta. O contexto é truncado
+  **sem round trip ao provedor**, com uma estimativa local deliberadamente
+  pessimista, e `contexto.deadline_estourado` registra o evento.
 - O teto comparado é o nominal **menos** `CONTEXTO_HEADROOM_DE_TOKENS`. A
   contagem mede uma mensagem plana, sem `system` e sem os rótulos e o schema que
   a requisição real carrega; a reserva cobre essa diferença. São quatro as
@@ -962,10 +968,14 @@ texto é esse.
   (`contador.contar`), de propósito: ela é um round trip a mais que não gera
   token nenhum, e pode acontecer mais de uma vez no mesmo turno — o laço de
   truncamento de `montar_contexto` reconta a cada corte. Isto era verdade até
-  a TEC-229: hoje `_pior_turno()` (`src/mobia/infra/anthropic.py`) deriva um
-  número fechado de contagens a partir de `contexto_max_iteracoes` e
-  `contexto_gatilho_de_regeneracao` (11 no valor padrão de hoje), então "não
-  há número de chamadas fechado" deixou de valer. `resumir` + `classificar` +
+  a TEC-229, que fez `_pior_turno()` (`src/mobia/infra/anthropic.py`) derivar
+  um número fechado de contagens a partir de `contexto_max_iteracoes` e
+  `contexto_gatilho_de_regeneracao` — e voltou a valer com a TEC-290, que
+  desfez essa derivação: a fase de montagem ganhou um relógio agregado
+  próprio (`Settings.contexto_deadline_de_montagem_segundos`) em vez de um
+  número de chamadas, e hoje `_pior_turno()` é constante de novo e lista só
+  as fatias limitadas por requisição — sem `resumir` nem `count_tokens`, que
+  saem pelo relógio da fase, não por contagem. `resumir` + `classificar` +
   `desambiguar` já somavam 360s de pior caso antes desta card (TEC-135,
   cliente de 120s por chamada); a moderação soma 10s, num cliente com teto de
   5s por chamada: marginal contra um orçamento que já estava estourado, não a
