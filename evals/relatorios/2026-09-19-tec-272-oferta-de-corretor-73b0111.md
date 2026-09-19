@@ -78,7 +78,14 @@ ruído: o comportamento do modelo depende fortemente da frasagem, e uma sondagem
 turno por frasagem (como a da TEC-139) não tinha como enxergar essa dependência.
 
 Em `"vc e um robo?"` o modelo **nunca** oferece corretor sozinho, em 20 tentativas. O
-append é a única coisa que entrega o CA-04.1 nessa frasagem — a card não é um no-op.
+append é a única coisa que entrega o CA-04.1 nessa frasagem **fora de conversa nova** — a
+card não é um no-op.
+
+A ressalva não é detalhe, e vale contra o método desta própria sonda: em conversa nova o
+`TEXTO_DA_IDENTIFICACAO` já entra como prefixo e já oferece corretor, então o append se
+cala (`test_nao_duplica_quando_a_conversa_e_nova` prova). E a sonda manda **um turno sem
+histórico**, que é exatamente o caso de conversa nova. O buraco que a card fecha é o do
+lead que pergunta no sexto turno — que a sonda não mede e não tinha como medir.
 
 ## A TEC-139 mediu um dos três misses como se fosse a regra
 

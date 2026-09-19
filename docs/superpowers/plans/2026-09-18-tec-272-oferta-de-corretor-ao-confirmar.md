@@ -4,7 +4,7 @@
 
 **Goal:** Anexar uma oferta de transferência para corretor quando o lead pergunta se fala com um robô — e só quando o texto que ele vai receber ainda não oferece um.
 
-**Architecture:** Três funções em `domain/agente/identificacao.py`: `perguntou_se_e_robo` sobre a fala do lead, `ja_oferece_corretor` sobre o texto final de saída, e `texto_com_oferta` compondo as duas. O `turno.py` ganha **uma linha**, logo depois do bloco `if identificar:` (linha 2551) e antes de `quebrar_em_mensagens` (linha 2791) — a regra vive na função para que o unitário exercite o código de produção em vez de uma cópia dela. Zero do orçamento do prompt; nada em `SISTEMA_DO_AGENTE`.
+**Architecture:** Três funções em `domain/agente/identificacao.py`: `perguntou_se_e_robo` sobre a fala do lead, `ja_oferece_corretor` sobre o texto final de saída, e `texto_com_oferta` compondo as duas. O `turno.py` ganha **uma linha**, logo depois do bloco `if identificar:` e antes de `quebrar_em_mensagens` (hoje `turno.py:2574` e `turno.py:2870`; as Tasks 3 e 5 e a revisão final deslocaram os dois números que este plano citava) — a regra vive na função para que o unitário exercite o código de produção em vez de uma cópia dela. Zero do orçamento do prompt; nada em `SISTEMA_DO_AGENTE`.
 
 **Tech Stack:** Python 3.13, `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`), `re` + `unicodedata`, `ruff`, `mypy`.
 
@@ -51,8 +51,14 @@ desenho.** Nao existe fala real deste eixo em `evals/corpus/` -- zero
 ocorrencias nos cinco arquivos --, entao todo termo do detector e invencao, e
 medi-lo contra as frasagens que ele foi escrito para pegar seria medi-lo
 contra o proprio vocabulario. O que da para provar e que ele nao dispara em
-nenhum dos mil e tantos turnos de fala real que o corpus tem, e e isso que
+nenhum dos 147 turnos de fala real que o corpus tem, e e isso que
 `test_nao_dispara_em_nenhum_turno_do_corpus` faz.
+
+**"mil e tantos turnos" era numero inventado, e saiu na fix round 5.** Medido
+em 18/09/2026 com `carregar(CORPUS)`: os cinco arquivos dao **53 conversas e
+147 turnos de lead**. A consequencia nao e so a honestidade da frase -- 147
+turnos sao uma amostra pequena, entao o teste do corpus prova menos do que
+parecia, e a caca por fala inventada carrega mais peso do que se pensava.
 
 A assimetria que justifica a faixa estrita e a de `gatilhos.py`, nao a do
 opt-out: falso negativo devolve o comportamento de hoje, falso positivo gruda
@@ -856,8 +862,10 @@ Assunto do commit: `docs(TEC-272): a sonda de 60 chamadas mede quanto o modelo j
 
 Duas marcas importam:
 
-- **`VIZINHO` em `turno.py`** — a Task 3 editou dentro de `executar_turno`, e o `CLAUDE.md` registra que **75,9% do ruído da listagem vem dessa função**. A saída vem com teto de cinco por bloco; se o resumo disser que omitiu muitos, rode `--tudo` e releia os que cercam a linha 2551. O comentário longo sobre as sete trilhas (linhas 2515-2546) é o que mais importa: ele enumera as trilhas cobertas pelo ponto de concatenação, e a Task 3 acrescentou uma decisão logo abaixo dele.
+- **`VIZINHO` em `turno.py`** — a Task 3 editou dentro de `executar_turno`, e o `CLAUDE.md` registra que **75,9% do ruído da listagem vem dessa função**. A saída vem com teto de cinco por bloco; se o resumo disser que omitiu muitos, rode `--tudo` e releia os que cercam o bloco `if identificar:`. O comentário longo sobre as sete trilhas, logo acima dele, é o que mais importa: ele enumera as trilhas cobertas pelo ponto de concatenação, e a Task 3 acrescentou uma decisão logo abaixo dele.
 - **`PROSA`/`FALSO`** — o desenho e o plano citam `turno.py:2551` e `turno.py:2791`. A Task 3 muda o tamanho do arquivo e **desloca a 2791**. Confira e corrija as citações nos dois documentos.
+
+  **Este Step não foi executado, e a revisão final pegou** (M1): a 2791 já era 2819 e ninguém conferiu. Corrigido nos dois documentos, agora para `turno.py:2574` e `turno.py:2870` — e com o símbolo citado ao lado do número, porque é o símbolo que não envelhece.
 
 - [ ] **Step 2: A suíte inteira, uma vez**
 
