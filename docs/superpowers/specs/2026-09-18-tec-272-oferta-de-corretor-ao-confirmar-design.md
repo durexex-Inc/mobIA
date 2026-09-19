@@ -72,7 +72,7 @@ Duas correções à minha própria primeira leitura, que valem porque a lista vi
 
 `perguntou_se_e_robo(texto)` decide se o lead fez a pergunta. `ja_oferece_corretor(texto)` decide se o append é necessário. Os dois moram em `domain/agente/identificacao.py`, que já é o módulo de "quem o agente diz que é, e quando ele diz".
 
-**O que faz o desenho fechar é onde o segundo roda:** sobre o `texto` já montado, logo depois do bloco `if identificar:` (`turno.py:2574`) — e não sobre a resposta crua do modelo. Uma regra só cobre as três duplicações possíveis:
+**O que faz o desenho fechar é onde o segundo roda:** sobre o `texto` já montado, logo depois do bloco `if identificar:` de `turno.py` — e não sobre a resposta crua do modelo. Uma regra só cobre as três duplicações possíveis:
 
 1. o modelo já ofereceu sozinho;
 2. a conversa é nova e o prefixo da identificação já ofereceu;
@@ -127,7 +127,9 @@ A pergunta é uma: **com que taxa o modelo já oferece sozinho?** O `2/4` da car
 
 **Entra depois do bloco `if identificar:`, não depois de `quebrar_em_mensagens`.** Aquele corte aplica os 600 caracteres da RN-04.2; anexar depois dele estouraria o teto em silêncio. Anexando antes, o cortador já trata o texto maior.
 
-Hoje são `turno.py:2574` e `turno.py:2870`. Este documento dizia 2551 e 2791, que eram os números de 18/09: a Task 3 deslocou o segundo para 2819 sem que ninguém conferisse (o Step 1 da Task 5 do plano mandava), e a revisão final deslocou os dois de novo. Os símbolos estão citados ao lado dos números de propósito — é o símbolo que sobrevive à próxima edição.
+**Este documento passa a citar o símbolo e não a linha, e a razão é empírica.** As duas citações foram números até a revisão final: 2551 e 2791 no desenho de 18/09, corrigidas para 2574 e 2870 na primeira onda de consertos, e já falsas de novo na segunda — **três correções em três edições da mesma branch**, a última causada pela própria edição que consertava a anterior. O Step 1 da Task 5 do plano mandava conferir e não foi executado; quando passou a ser executado, o número envelheceu mais rápido do que o documento.
+
+Um número de linha é verdadeiro até a próxima edição do arquivo, e um documento de desenho é lido meses depois dela. `if identificar:` é único em `turno.py`, e `quebrar_em_mensagens` aparece em quatro linhas das quais só uma é chamada — os dois um `grep` acha em qualquer versão do arquivo, e é isso que fica escrito aqui. Quem precisar do número tira dele; quem lê o número não tem como saber que ele envelheceu.
 
 ### D6 — Por que não no prompt
 
