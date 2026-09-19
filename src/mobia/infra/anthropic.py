@@ -20,9 +20,10 @@ from mobia.app.config import ConfiguracaoInsegura, get_settings
 TIMEOUT_SEGUNDOS = 60.0
 
 # Zero, e a razao esta na aritmetica logo abaixo: a parcela da Anthropic no
-# pior turno e 287s (`segundos_do_modelo_no_pior_turno`), e a base sozinha ja
-# estoura o `job_timeout` de 240s -- antes de qualquer retentativa. Com uma
-# retentativa o pior turno dobraria para 574s, so nesta parcela.
+# pior turno e 167s (`segundos_do_modelo_no_pior_turno`) contra um
+# `job_timeout` de 240s, e a folga inteira do turno e de 33s. Com uma
+# retentativa, as fatias por requisicao dobrariam -- 132s viram 264s -- e
+# sozinhas ja estourariam o `job_timeout`.
 #
 # Nao e decisao nova -- a moderacao ja a tomou, citando esta card pelo nome
 # (ver `MAX_TENTATIVAS_DA_MODERACAO` em `infra/moderacao.py`). O que mudou e o

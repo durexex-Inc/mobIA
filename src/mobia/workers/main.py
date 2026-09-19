@@ -232,31 +232,35 @@ class WorkerSettings:
     # (`infra/embeddings.py`) tinha 50s com retentativa, e um turno busca ate
     # duas vezes: 200s sozinho, mais que todas as chamadas de modelo somadas.
     #
-    # **Hoje a conta NAO fecha, e este numero e o que nao cabe.** A TEC-229
-    # corrigiu o grafo: `montar_contexto` chama `resumir` e `count_tokens`
-    # dentro do laco `while tokens > teto`, que roda ate
-    # `contexto_max_iteracoes`, e `_truncar_ate_caber` acrescenta contagens.
-    # Contadas as voltas, com os valores de hoje:
+    # **A conta fecha desde a TEC-290, e com reserva de banco de pe.** A
+    # TEC-229 corrigiu o grafo e a soma foi a 327s: `montar_contexto` chama
+    # `resumir` e `count_tokens` dentro de um laco que roda ate
+    # `contexto_max_iteracoes`, e o pior caso crescia junto com essa
+    # configuracao. A TEC-290 deu a fase um deadline agregado
+    # (`Settings.contexto_deadline_de_montagem_segundos`), e ela parou de
+    # crescer. Com os valores de hoje:
     #
-    #   287s  Anthropic (`segundos_do_modelo_no_pior_turno`)
+    #   167s  Anthropic (`segundos_do_modelo_no_pior_turno`), dos quais
+    #          35s sao o deadline da fase de montagem, uma vez so
     #    20s  embed da busca, 2 buscas x 10s, sem retentativa
     #    10s  moderacao das duas pontas
     #    10s  POST para a Meta
     #   ----
-    #   327s  contra estes 240 -- deficit de 87s, e a reserva de banco some
+    #   207s  contra estes 240 -- folga de 33s, acima dos 30 reservados ao banco
     #
-    # Por isso `test_o_pior_turno_cabe_no_job_timeout` e
-    # `test_a_folga_paga_o_banco` estao `xfail(strict=True)`. Eles montam essa
-    # soma importando cada termo do modulo dele; e onde a conta INTEIRA esta
-    # escrita -- cada modulo so conhece a propria parcela, e foi somar uma
-    # parcela achando que era o todo que produziu o 360s de duas versoes atras
-    # deste comentario.
+    # `test_o_pior_turno_cabe_no_job_timeout` e `test_a_folga_paga_o_banco`
+    # montam essa soma importando cada termo do modulo dele; e onde a conta
+    # INTEIRA esta escrita -- cada modulo so conhece a propria parcela, e foi
+    # somar uma parcela achando que era o todo que produziu o 360s de tres
+    # versoes atras deste comentario.
     #
-    # **Subir este numero nao e o conserto obvio.** Ele tem de ficar
-    # estritamente abaixo de `sweep_inflight_after_seconds` (300), entao cabem
-    # no maximo mais 59s -- menos que o deficit. Fechar a conta exige a janela
-    # do sweeper, os tetos, ou um orcamento agregado na montagem: e a TEC-290,
-    # que lista as tres sem escolher.
+    # **A folga e de 33s contra um minimo de 30, e isso e apertado de
+    # proposito.** Subir qualquer teto por chamada reabre a conta. A TEC-290
+    # escolheu o deadline agregado entre tres caminhos justamente para nao
+    # mexer neste numero: subi-lo exigiria subir
+    # `sweep_inflight_after_seconds` junto, e com ele a carencia
+    # SIGTERM->SIGKILL exigida do deploy, que nao mora neste repo. Ver
+    # `docs/superpowers/specs/2026-09-19-tec-290-orcamento-agregado-da-montagem-design.md`.
     #
     # Estourar aqui nao e so custo: o ARQ cancela a corrotina, e
     # `asyncio.CancelledError` e BaseException -- nenhum `except Exception` a
