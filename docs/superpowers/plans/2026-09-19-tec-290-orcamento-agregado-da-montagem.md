@@ -293,7 +293,7 @@ async def test_deadline_estourado_degrada_em_vez_de_esperar(
 
     assert contexto.degradado is True
     assert contexto.tokens <= get_settings().teto_de_tokens_efetivo
-    assert any(r.msg == "contexto.deadline_estourado" for r in caplog.records)
+    assert "contexto.deadline_estourado" in caplog.text
 
 
 async def test_cancelamento_de_fora_nao_vira_degradacao(
@@ -489,7 +489,7 @@ Em `tests/unit/test_orcamento_do_turno.py`:
 1. **Remova** os dois decoradores `@pytest.mark.xfail(...)` de `test_o_pior_turno_cabe_no_job_timeout` e `test_a_folga_paga_o_banco`, e os parágrafos das docstrings deles que falam do `xfail` (o resto das docstrings fica).
 2. **Remova** o bloco de comentário sobre o orçamento congelado, as constantes `SOMA_DE_HOJE_SEGUNDOS` e `JOB_TIMEOUT_DE_HOJE`, e o teste `test_o_orcamento_estourado_nao_piora` inteiro. A razão está escrita no próprio comentário: eles saem "quando a TEC-290 devolver a guarda ao derivado".
 3. **Substitua** `test_o_pior_turno_segue_contexto_max_iteracoes` e `test_o_pior_turno_segue_o_gatilho_de_regeneracao` pelos três testes abaixo.
-4. **Ajuste os imports:** `TETO_DO_COUNT_TOKENS` e `TETO_DO_RESUMO` deixam de ser usados neste arquivo e saem do bloco de import; `MAX_TENTATIVAS` continua. Acrescente `import mobia.infra.anthropic as anthropic`.
+4. **Ajuste os imports:** `TETO_DO_COUNT_TOKENS` e `TETO_DO_RESUMO` deixam de ser usados neste arquivo e saem do bloco de import. Acrescente `import mobia.infra.anthropic as anthropic` — o `monkeypatch.setattr` precisa do módulo, porque `segundos_do_modelo_no_pior_turno` lê o global e não a ligação importada. **`MAX_TENTATIVAS` importado por nome provavelmente fica sem uso** depois da remoção dos dois testes de derivação: deixe o `ruff check` decidir e tire-o se ele apontar `F401`. Não invente um uso para salvar o import.
 
 ```python
 def test_o_pior_turno_nao_cresce_mais_com_contexto_max_iteracoes(
