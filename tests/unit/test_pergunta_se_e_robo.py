@@ -12,6 +12,12 @@ A assimetria que justifica a faixa estrita e a de `gatilhos.py`, nao a do
 opt-out: falso negativo devolve o comportamento de hoje, falso positivo gruda
 uma oferta de corretor numa fala que nao pediu -- que e literalmente o segundo
 criterio de aceite desta card.
+
+**Os negativos deste arquivo sao quatro classes de defeito ja medidas, uma por
+rodada de review**, e cada uma tem o seu teste: prefixo de palavra maior
+(round 1), "e" de conjuncao com sujeito errado (round 2), sujeito anaforico
+"isso" (round 3) e pergunta de ROTEAMENTO com o sujeito certo (round 4). Quem
+mexer na tabela reabre alguma delas se apagar o teste correspondente.
 """
 
 from pathlib import Path
@@ -31,22 +37,29 @@ CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
         "você é um robô?",
         "to falando com uma pessoa?",
         "voce e humano ou maquina?",
+        # Fix round 4 (review): a armadilha da regra nova. "de verdade" tem a
+        # MESMA preposicao de "de vendas", e e provavelmente a frasagem mais
+        # natural deste eixo -- qualquer guarda que barre a preposicao em
+        # bloco derruba estas duas. Ver
+        # `test_pergunta_de_roteamento_nao_dispara`.
+        "estou falando com uma pessoa de verdade?",
+        "to falando com uma pessoa de verdade?",
     ],
 )
 def test_a_pergunta_dispara(texto: str) -> None:
-    """Tres das quatro frasagens que a TEC-139 sondou, mais uma variante acentuada.
+    """Tres das quatro frasagens que a TEC-139 sondou, mais o que cada round fixou.
 
     Nenhuma delas e fala real observada -- ver a docstring do modulo. Elas
     fixam a faixa, nao a validam.
 
     **A quarta frasagem da TEC-139, "isso e automatico ou tem alguem ai?", e
-    "isso aqui é um bot?" (variante que dependia da mesma familia) saem daqui
-    na fix round 3 (review).** A familia de sujeito "isso"/"isso ai"/"isso
-    aqui" saiu inteira de `_TERMOS_DA_PERGUNTA`: "isso" e anaforico, e o
-    antecedente pode ser qualquer coisa que a conversa tenha citado -- um
-    robo aspirador de piscina, um contrato --, nunca so o interlocutor. Ver
+    "isso aqui é um bot?" (variante que dependia da mesma familia) sairam
+    daqui na fix round 3 (review).** A familia de sujeito "isso"/"isso ai"/
+    "isso aqui" saiu inteira da tabela: "isso" e anaforico, e o antecedente
+    pode ser qualquer coisa que a conversa tenha citado -- um robo aspirador
+    de piscina, um contrato --, nunca so o interlocutor. Ver
     `test_a_pergunta_com_isso_nao_dispara_e_e_lacuna_declarada`, que fixa
-    essa perda como decisao, e o comentario de `_TERMOS_DA_PERGUNTA` em
+    essa perda como decisao, e o comentario de `_TERMOS_DE_SEGUNDA_PESSOA` em
     `identificacao.py`, que traz o numero que a torna barata.
     """
     assert perguntou_se_e_robo(texto) is True
@@ -90,16 +103,20 @@ def test_fala_vizinha_nao_dispara(texto: str) -> None:
     ],
 )
 def test_prefixo_de_palavra_maior_nao_dispara(texto: str) -> None:
-    """Fix round 1 (review), Critical: o `\\b` de fechamento em `_PADRAO_DA_PERGUNTA`.
+    """Fix round 1 (review), Critical: o `\\b` de fechamento do padrao.
 
-    Antes desta rodada, `_PADRAO_DA_PERGUNTA` so ancorava o INICIO de cada
-    alternativa. "e maquina ou" casava escondido em "e maquina outra vez", "e
-    automatico ou" em "e automatico outro portao", "e humano ou" em "e humano
-    outra pergunta", e "e um bot" em "e um botao" -- e todas as cinco falas
-    acima sao fala corrente de quem pergunta sobre portao/imovel, nao duvida
-    sobre falar com maquina. O comentario de `_PADRAO_DA_PERGUNTA` explica por
-    que `context/gatilhos.py`, o molde, dispensa esse fechamento e por que
-    aqui nao dava para dispensar.
+    Na epoca desta rodada havia um padrao so, e ele ancorava apenas o INICIO
+    de cada alternativa. "e maquina ou" casava escondido em "e maquina outra
+    vez", "e automatico ou" em "e automatico outro portao", "e humano ou" em
+    "e humano outra pergunta", e "e um bot" em "e um botao" -- e todas as
+    cinco falas acima sao fala corrente de quem pergunta sobre portao/imovel,
+    nao duvida sobre falar com maquina.
+
+    Hoje o `\\b` de fechamento vive em `_PADRAO_DE_SEGUNDA_PESSOA`, e o
+    comentario dele explica por que `context/gatilhos.py`, o molde, dispensa
+    esse fechamento e por que aqui nao dava para dispensar.
+    `_PADRAO_DE_PRIMEIRA_PESSOA` fecha mais forte ainda, em `$` -- ver
+    `test_pergunta_de_roteamento_nao_dispara`.
     """
     assert perguntou_se_e_robo(texto) is False
 
@@ -167,8 +184,8 @@ def test_conjuncao_ou_sujeito_errado_nao_dispara(texto: str) -> None:
     automatico/gente, com sujeito nenhum a ver com o interlocutor: o
     apartamento, o condominio, o portao, o bairro. As nove falas acima sao
     fala real de mercado imobiliario com essa forma, e todas disparavam antes
-    do conserto. O comentario da tabela (`_TERMOS_DA_PERGUNTA`) explica por
-    que o sujeito agora entra por extenso em cada termo.
+    do conserto. O comentario de `_TERMOS_DE_SEGUNDA_PESSOA` explica por que
+    o sujeito entra por extenso em cada termo.
     """
     assert perguntou_se_e_robo(texto) is False
 
@@ -217,9 +234,9 @@ def test_a_pergunta_com_isso_nao_dispara_e_e_lacuna_declarada() -> None:
     (`evals/relatorios/2026-09-11-tec-139-identificacao-036d973.md`), e a
     unica que usa "isso" como sujeito. Ela deixou de disparar de proposito: a
     familia de sujeito "isso" e anaforica (ver `test_isso_anaforico_nao_dispara`
-    e o comentario de `_TERMOS_DA_PERGUNTA`), e nao ha como distinguir esta
-    frase de "isso e automatico ou tem alguem que assina esse contrato?" sem
-    ver o discurso anterior.
+    e o comentario de `_TERMOS_DE_SEGUNDA_PESSOA`), e nao ha como distinguir
+    esta frase de "isso e automatico ou tem alguem que assina esse contrato?"
+    sem ver o discurso anterior.
 
     A perda e barata porque tem numero: a propria sonda da TEC-139 mediu essa
     frasagem (caso 3) com "confirma: SIM, oferece corretor: SIM" -- o modelo
@@ -231,6 +248,130 @@ def test_a_pergunta_com_isso_nao_dispara_e_e_lacuna_declarada() -> None:
     que a decisao foi deliberada.
     """
     assert perguntou_se_e_robo("isso e automatico ou tem alguem ai?") is False
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "estou falando com uma pessoa da area de locacao ou de vendas?",
+        "estou falando com uma pessoa da locacao?",
+        "to falando com uma pessoa do financeiro?",
+        "estou falando com uma pessoa de vendas ou de locacao?",
+        "estou falando com uma pessoa do juridico sobre o contrato?",
+        "to falando com uma pessoa da imobiliaria?",
+        "estou falando com um humano do suporte?",
+    ],
+)
+def test_pergunta_de_roteamento_nao_dispara(texto: str) -> None:
+    """Fix round 4 (review), Critical: sujeito certo, pergunta errada.
+
+    As sete falas tem o sujeito inequivoco que as tres rodadas anteriores
+    perseguiram -- primeira pessoa implicita na conjugacao, sempre o proprio
+    lead -- e mesmo assim nenhuma pergunta se quem responde e uma maquina.
+    Todas perguntam por ROTEAMENTO: se o lead caiu no setor certo. "setor de
+    locacao", "financeiro", "juridico", "vendas" e "suporte" sao vocabulario
+    corrente de atendimento imobiliario, entao a classe e frequente, e cada
+    falso positivo aqui staplea a oferta de corretor numa fala que nao
+    perguntou nada.
+
+    O discriminante nao esta no sujeito nem no termo: esta no que vem DEPOIS
+    do sintagma, dentro da mesma frase. "uma pessoa" NU pergunta pela
+    natureza do interlocutor; "uma pessoa da locacao" pergunta por qual
+    interlocutor. `_PADRAO_DE_PRIMEIRA_PESSOA` fecha em `$` com uma allowlist
+    de reforcos de identidade -- ver o comentario dele, e ver
+    `test_a_pergunta_dispara`, que trava as duas frasagens com "de verdade"
+    que uma blocklist de preposicao derrubaria junto com estas sete.
+    """
+    assert perguntou_se_e_robo(texto) is False
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # Modificador por ADJETIVO -- nenhuma blocklist de preposicao pegaria.
+        "estou falando com uma pessoa responsavel pela locacao?",
+        "to falando com uma pessoa autorizada a negociar o valor?",
+        "estou falando com uma pessoa especializada em investimento?",
+        "to falando com uma pessoa credenciada pelo CRECI?",
+        # Modificador por oracao RELATIVA.
+        "estou falando com uma pessoa que cuida da locacao?",
+        "to falando com uma pessoa que entende de financiamento?",
+        # Modificador por preposicao que nao e "de"/"da"/"do".
+        "estou falando com uma pessoa no escritorio de Moema?",
+        "estou falando com uma pessoa com procuracao do proprietario?",
+        # Sintagma seguido de nome proprio ou de papel.
+        "estou falando com uma pessoa chamada Marina?",
+        "to falando com uma pessoa corretora ou com a secretaria?",
+        # Relato de atendimento paralelo -- o lead nao pergunta nada.
+        "ja estou falando com uma pessoa da sua equipe sobre esse apto",
+        "olha, estou falando com uma pessoa que me indicou voces",
+        # Reforco de identidade seguido de setor: o reforco nao pode abrir a
+        # porta que o resto da regra fecha.
+        "to falando com uma pessoa viva la do financeiro?",
+        "estou falando com uma pessoa real de vendas?",
+    ],
+)
+def test_modificador_do_sintagma_nao_dispara(texto: str) -> None:
+    """Fix round 4 (review), cacada propria: a classe e maior que a preposicao.
+
+    O achado da review trouxe sete falas, todas com "da"/"do"/"de" + setor.
+    Estas catorze sao as que eu inventei depois, contra a tabela ja
+    consertada, e elas mostram por que a regra teve de ser uma ALLOWLIST
+    ancorada em `$` e nao uma blocklist: adjetivo ("responsavel pela
+    locacao"), oracao relativa ("que cuida da locacao"), outra preposicao
+    ("no escritorio de Moema") e nome proprio ("chamada Marina") restringem o
+    sintagma do mesmo jeito, e nenhum deles comeca por preposicao de setor.
+    Com allowlist, palavra desconhecida depois do sintagma derruba o
+    casamento por omissao, sem precisar ser prevista.
+
+    As duas ultimas fecham a porta do proprio conserto: um reforco de
+    identidade ("viva", "real") nao pode servir de ponte para o complemento
+    de setor que vem depois dele.
+    """
+    assert perguntou_se_e_robo(texto) is False
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # Reforco de identidade: aperta a mesma pergunta, nao restringe.
+        "estou falando com uma pessoa mesmo?",
+        "to falando com uma pessoa viva?",
+        "estou falando com um humano de carne e osso?",
+        "to falando com uma pessoa ai?",
+        # "ou" + alternativa explicita: a disjuncao e a propria pergunta de
+        # identidade, porque o primeiro membro dela ja e o sintagma nu.
+        "Oi! To falando com uma pessoa ou com um robo?",
+        "estou falando com uma pessoa ou e tudo automatico?",
+    ],
+)
+def test_o_reforco_de_identidade_dispara(texto: str) -> None:
+    """Fix round 4 (review): o outro lado da allowlist de `_REFORCOS_DE_IDENTIDADE`.
+
+    Uma regra que so exigisse o sintagma no fim absoluto da frase mataria
+    estas seis, que sao as frasagens mais naturais deste eixo depois das duas
+    da sonda da TEC-139. Elas existem para que uma proxima rodada que aperte
+    a faixa perceba o que esta pagando por isso.
+    """
+    assert perguntou_se_e_robo(texto) is True
+
+
+def test_a_pergunta_seguida_de_outra_frase_dispara() -> None:
+    """Fix round 4 (review): o corte por frase, e nao pela mensagem inteira.
+
+    `_normalizar` troca pontuacao por espaco, entao um `$` sobre o recado
+    inteiro cairia so no fim do ultimo recado -- e "to falando com uma
+    pessoa? preciso de ajuda" deixaria de disparar, apesar de a pergunta
+    estar inteira e nua na primeira frase. `_FIM_DE_FRASE` corta antes de
+    normalizar, e a regra de primeira pessoa corre frase a frase.
+
+    O corte nao inclui `\\n` de proposito: quebra de linha no meio da frase e
+    comum no WhatsApp, e cortar ali parteria o proprio termo. O custo disso
+    esta na segunda assercao -- sem pontuacao nenhuma, a pergunta com
+    continuacao nao dispara, e essa e a lacuna declarada da round 4.
+    """
+    assert perguntou_se_e_robo("to falando com uma pessoa? preciso de ajuda urgente") is True
+    assert perguntou_se_e_robo("to falando com uma pessoa preciso de ajuda urgente") is False
 
 
 def test_texto_vazio_nao_levanta() -> None:
