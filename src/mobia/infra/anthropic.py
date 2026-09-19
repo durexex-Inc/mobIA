@@ -76,12 +76,13 @@ TETO_DO_INVESTIDOR = 35.0
 
 # O pior turno, fatia a fatia, com quantas REQUISICOES cada uma pode fazer.
 #
-# Sao cinco fatias: `count_tokens` e `resumir` em `montar_contexto`, `reagir`,
-# a chamada 1 (`classificar` ou `qualificar_investidor`, conforme o lead ja
-# seja investidor) e a chamada 2 (`desambiguar`, ou `qualificar_investidor` na
-# virada). As duas primeiras vivem em `domain/context/montagem.py`, que chama
-# `resumir` e `contador.contar` (a contagem em si, em `domain/context/resumo.py`);
-# as outras tres vivem em `turno.py`, que so chama `montar_contexto`. Citadas
+# Sao tres fatias, e as tres vivem em `turno.py`, que so chama
+# `montar_contexto`: `reagir`, a chamada 1 (`classificar` ou
+# `qualificar_investidor`, conforme o lead ja seja investidor) e a chamada 2
+# (`desambiguar`, ou `qualificar_investidor` na virada). `count_tokens` e
+# `resumir`, que viviam aqui como fatia por requisicao, sairam desde a
+# TEC-290 -- ver o paragrafo de tres blocos abaixo, sobre por que a montagem
+# passou a custar o relogio dela em vez de uma contagem de chamadas. Citadas
 # pelo nome e nao pela linha: este bloco ja nasceu de um comentario que
 # envelheceu, e numero de linha e a parte que envelhece primeiro.
 #

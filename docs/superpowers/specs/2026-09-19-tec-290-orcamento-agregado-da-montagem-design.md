@@ -68,7 +68,7 @@ Então esta card **abre um segundo padrão** em vez de seguir o que existe, e a 
 
 No estouro: `degradado = True`, um `log.warning("contexto.deadline_estourado", ...)` com o canal e o deadline em segundos, e o truncamento sem modelo do D3.
 
-O estado em memória sobrevive porque as variáveis são locais de `montar_contexto`: um `_dobrar` cancelado no meio do `resumir` nunca chegou à atribuição, então `texto_do_resumo` e `literais` ficam com o último valor consistente. Um `_dobrar` cancelado **depois** do `gravar_resumo` deixa no banco um resumo com a marca adiantada enquanto a memória segue com os literais antigos — o turno entrega conteúdo duplicado entre resumo e literais, nunca uma lacuna. Duplicação num caminho degradado é aceitável; lacuna não seria, e é a invariante que a marca d'água existe para comprar.
+O estado em memória sobrevive porque as variáveis são locais de `montar_contexto`, e o desempacotamento da tupla que `_dobrar` devolve (`texto_do_resumo, literais, cobertas, marca_atual, falhou = await _dobrar(...)`) é atômico: um `_dobrar` cancelado nunca chega a atribuir, então a memória fica com o resumo **antigo** e os literais **antigos** — autoconsistente, só desatualizada. Entre o `await session.commit()` e o `return` de `_dobrar` não há ponto de suspensão nenhum, então não existe meio-termo: ou o cancelamento chega durante o commit (que não completa, e o banco fica com o resumo antigo também) ou chega depois dele, e aí a atribuição do lado do chamador já acontece na mesma volta síncrona, sem chance de ficar para trás. O turno seguinte lê o resumo novo junto com os literais depois da marca já adiantada — também consistente. Não há lacuna nem duplicação; é a invariante que a marca d'água existe para comprar.
 
 ## D3 — O truncamento sem modelo, e por que ele é pessimista
 
@@ -137,9 +137,9 @@ Levantada antes de escrever o plano, porque decide o que é mudança de assinatu
 | T2 | a folga sobre a soma paga os 30s do banco | `test_a_folga_paga_o_banco`, sem `xfail` |
 | T3 | o pior caso **não** se move com `contexto_max_iteracoes` nem com o gatilho | os dois testes de derivação, invertidos |
 | T4 | o termo da montagem é exatamente o deadline, e não é multiplicado por `MAX_TENTATIVAS + 1` | teste novo em `test_orcamento_do_turno.py` |
-| T5 | estourado o deadline, `montar_contexto` devolve contexto abaixo do teto, `degradado=True` e **nenhuma** chamada ao contador depois do estouro | teste novo em `tests/unit/`, com resumidor e contador injetados que dormem |
+| T5 | estourado o deadline, `montar_contexto` devolve contexto abaixo do teto, `degradado=True` e **nenhuma** chamada ao contador depois do estouro | teste novo em `tests/integration/test_montagem.py`, com resumidor e contador injetados que dormem |
 | T6 | o modo local estima pessimista: um texto que `len//4` diria caber é cortado | teste novo, sobre `_contar_se_valer`/`_truncar_ate_caber` |
-| T7 | `CancelledError` de fora atravessa a fase sem virar degradação | teste novo; é o contrato da TEC-227 |
+| T7 | `CancelledError` de fora atravessa a fase sem virar degradação | teste novo em `tests/integration/test_montagem.py`; é o contrato da TEC-227 |
 
 T5 e T7 são o par que importa: um afirma que o deadline pega o que tem de pegar, o outro que ele não pega o que não é dele.
 

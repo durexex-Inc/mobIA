@@ -1454,7 +1454,7 @@ class ResumidorQueTrava:
 
 
 async def test_deadline_estourado_degrada_em_vez_de_esperar(
-    session, caplog, sempre_contar, monkeypatch: pytest.MonkeyPatch
+    session, caplog, sempre_contar, caches_de_cliente_limpos, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A fase inteira tem relogio proprio, e estourar nao pode devolver contexto acima do teto.
 
@@ -1483,7 +1483,7 @@ async def test_deadline_estourado_degrada_em_vez_de_esperar(
 
 
 async def test_cancelamento_de_fora_nao_vira_degradacao(
-    session, sempre_contar, monkeypatch: pytest.MonkeyPatch
+    session, sempre_contar, caches_de_cliente_limpos, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """O `CancelledError` do `job_timeout` atravessa a fase inteira.
 

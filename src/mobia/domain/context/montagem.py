@@ -593,6 +593,16 @@ async def montar_contexto(
         # clausula de `process_message` da TEC-227, que marca FAILED e conta a
         # tentativa. Engoli-lo aqui devolveria a perda silenciosa que aquela
         # card acabou.
+        #
+        # Overlap conhecido e aceito: `_dobrar` guarda so `resumidor.resumir`
+        # com `except Exception` -- `gravar_resumo` e o `session.commit()`
+        # ficam sem guarda propria dentro deste bloco. Um `TimeoutError` de
+        # driver de banco vindo de la cai aqui tambem (desde o Python 3.11
+        # `TimeoutError` embutido e superclasse do que `asyncio.timeout`
+        # levanta), e a linha de log abaixo nomearia a causa errada -- diria
+        # deadline da fase quando foi o banco. Nao estreitar a captura para
+        # excluir esse caso: exigiria um sentinela so para isso, e a direcao
+        # da degradacao continua segura nos dois casos.
         degradado = True
         log.warning(
             "contexto.deadline_estourado",
