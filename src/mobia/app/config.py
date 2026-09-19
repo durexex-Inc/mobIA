@@ -494,6 +494,14 @@ class Settings(BaseSettings):
         qualquer hora que escreva. Nada quebra, nada loga erro -- so a
         imobiliaria aparenta nunca ter ninguem disponivel, e e essa mentira
         silenciosa que a guarda existe para recusar na subida do processo.
+
+        **Esta guarda nao cobre o dia da semana (TEC-285).** Domingo fecha a
+        janela por regra de codigo (`_DOMINGO`, em `domain/humano/deteccao.py`)
+        e nao por configuracao, entao nao ha o que validar aqui -- e tambem
+        nao ha como uma configuracao errada apagar um dia. O que mudou e o
+        alcance da frase acima: "aparenta nunca ter ninguem disponivel" deixou
+        de ser exclusividade da janela invertida, porque existe um dia inteiro
+        da semana em que todo lead recebe o texto de fora do horario.
         """
         if not 0 <= self.atendimento_horario_inicio < self.atendimento_horario_fim <= 23:
             raise ValueError(
