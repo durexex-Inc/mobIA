@@ -53,6 +53,12 @@ CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
         # `test_pergunta_de_roteamento_nao_dispara`.
         "estou falando com uma pessoa de verdade?",
         "to falando com uma pessoa de verdade?",
+        # Fix da revisao final (M3): "eh" tambem no lado do BOT. A tabela ja
+        # aceitava "vc eh um robo" e recusava "vc eh um bot" -- incoerencia
+        # interna, pelo mesmo argumento que admitiu "neh" em
+        # `_REFORCOS_DE_IDENTIDADE`.
+        "voce eh um bot?",
+        "vc eh um bot?",
     ],
 )
 def test_a_pergunta_dispara(texto: str) -> None:
@@ -552,6 +558,39 @@ def test_conjuncao_sem_pontuacao_e_lacuna_declarada() -> None:
     conjuncao, o que corta frase legitima demais para valer a pena.
     """
     assert perguntou_se_e_robo("no pacote vem voce e um robo aspirador?") is True
+
+
+def test_disjuncao_com_setor_dispara_e_e_lacuna_declarada() -> None:
+    """Residuo 1 do modulo, travado na revisao final (M5).
+
+    Depois de "ou" a regra de primeira pessoa aceita qualquer coisa, entao a
+    frase que mistura as duas perguntas -- identidade no primeiro membro,
+    roteamento no segundo -- dispara. Nao e conserto pendente: fechar exigiria
+    uma segunda allowlist que enumerasse como se nomeia uma maquina, e a
+    frasagem e rara.
+
+    **Existe porque este e um dos dois residuos que DISPARAM.** Os residuos 3
+    e 4 ja tinham teste; estes dois eram os unicos declarados so em prosa, e
+    prosa sozinha nao avisa quando o comportamento muda -- nem para pior nem
+    para melhor. Mesmo molde de `test_conjuncao_sem_pontuacao_e_lacuna_declarada`.
+    """
+    assert perguntou_se_e_robo("estou falando com uma pessoa ou com alguem do financeiro?") is True
+
+
+def test_interrogacao_antes_do_complemento_dispara_e_e_lacuna_declarada() -> None:
+    """Residuo 2 do modulo, travado na revisao final (M5).
+
+    `_FIM_DA_PERGUNTA` corta em `?`, e tem de cortar -- e por isso que "estou
+    falando com uma pessoa? da locacao?" e lida como duas perguntas e a
+    primeira casa, com o sintagma nu. E o mais benigno dos residuos: ao
+    contrario das reticencias que o Critical da round 5 fechou, aqui o lead
+    escreveu duas perguntas de verdade e a primeira E de identidade, entao a
+    oferta nao cai em fala que nao perguntou nada.
+
+    Fecha-lo significaria deixar de cortar em `?`, o que derrubaria
+    `test_a_pergunta_seguida_de_outra_frase_dispara` -- troca ruim.
+    """
+    assert perguntou_se_e_robo("estou falando com uma pessoa? da locacao?") is True
 
 
 def test_texto_vazio_nao_levanta() -> None:

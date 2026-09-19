@@ -115,6 +115,18 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 # O lead perguntando se fala com uma maquina (TEC-272), para anexar a oferta
 # de corretor que o CA-04.1 pede junto da confirmacao.
 #
+# **Sao DUAS regras, com formas diferentes.**
+#
+# 1. `_PADRAO_DE_SEGUNDA_PESSOA` -- sujeito "voce"/"vc" junto do predicado, em
+#    qualquer clausula da fala. "voce" so pode apontar para quem esta
+#    respondendo o lead, entao o sujeito sozinho ja resolve e nada precisa
+#    olhar para o que vem depois.
+#
+# 2. `_PADRAO_DE_PRIMEIRA_PESSOA` -- "to/estou falando com <sintagma>", onde o
+#    sujeito e implicito na conjugacao (1a pessoa do singular, sempre o
+#    proprio LEAD). Aqui o sujeito NAO basta: a regra exige tambem que o
+#    sintagma esteja NU e no fim da pergunta.
+#
 # **Faixa estrita, pelo argumento de `context/gatilhos.py` e nao pelo do
 # opt-out.** La deixar de detectar e violacao de LGPD e a faixa inequivoca e
 # generosa. Aqui e o inverso: falso negativo devolve o comportamento de hoje
@@ -123,22 +135,22 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 # nao perguntou nada -- que e o segundo criterio de aceite desta card, e e
 # visivel ao lead.
 #
-# **Sao DUAS regras, com formas diferentes, e o resto deste comentario e a
-# razao de cada uma ser do jeito que e.**
+# **Acaba aqui o criterio.** As duas regras acima mais a assimetria de erro
+# sao tudo o que este modulo decide; a forma exata de cada padrao esta no
+# comentario dele.
 #
-# 1. `_PADRAO_DE_SEGUNDA_PESSOA` -- sujeito "voce"/"vc" junto do predicado, em
-#    qualquer lugar da fala. "voce" so pode apontar para quem esta respondendo
-#    o lead, entao o sujeito sozinho ja resolve e nada precisa olhar para o
-#    que vem depois.
+# ---------------------------------------------------------------------------
+# **Historico**
+# ---------------------------------------------------------------------------
 #
-# 2. `_PADRAO_DE_PRIMEIRA_PESSOA` -- "to/estou falando com <sintagma>", onde o
-#    sujeito e implicito na conjugacao (1a pessoa do singular, sempre o
-#    proprio LEAD). Aqui o sujeito NAO basta: a regra exige tambem que o
-#    sintagma esteja NU e no fim da pergunta. A razao esta na fix round 4 e
-#    no Critical da fix round 5, mais abaixo.
+# Daqui para baixo nada acrescenta criterio. Sao as cinco rodadas de fix que
+# deram as duas regras a forma que elas tem, os quatro residuos que essas
+# rodadas mediram e decidiram nao consertar, e a declaracao de recall. Cada
+# bloco justifica uma decisao viva -- por isso nenhum saiu --, mas quem so
+# precisa saber o que o detector decide ja leu tudo.
 #
-# **Historico das faixas que ja foram largas, porque cada uma e uma classe de
-# defeito que pode voltar:**
+# **As faixas que ja foram largas, porque cada uma e uma classe de defeito que
+# pode voltar:**
 #
 # - Ate a fix round 1 (review) este comentario afirmava criterio de sujeito e
 #   a tabela nao cumpria: os termos eram so predicado ("e um robo", "tudo
@@ -230,13 +242,22 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 #    uma pessoa ou com alguem do financeiro?" dispara. A frase mistura as duas
 #    perguntas e e rara o bastante para nao valer uma segunda allowlist, que
 #    teria de enumerar como se nomeia uma maquina.
+#    `test_disjuncao_com_setor_dispara_e_e_lacuna_declarada`
+#    (`tests/unit/test_pergunta_se_e_robo.py`) trava a lacuna.
 # 2. **Um `?` antes do complemento ainda corta cedo.** O Critical da round 5
 #    (reticencias, "!" e ";") foi fechado tirando esses sinais do corte, mas o
 #    `?` tem de continuar cortando -- e por isso "estou falando com uma
 #    pessoa? da locacao?" dispara pela primeira frase. Aqui, ao contrario das
 #    reticencias, o lead escreveu duas perguntas de verdade, e a primeira e
 #    mesmo de identidade -- entao a oferta nao cai em fala que nao perguntou
-#    nada. E o residuo mais benigno dos tres.
+#    nada. E o residuo mais benigno dos quatro.
+#    `test_interrogacao_antes_do_complemento_dispara_e_e_lacuna_declarada`
+#    (`tests/unit/test_pergunta_se_e_robo.py`) trava a lacuna.
+#
+#    **Os dois primeiros residuos ganharam teste na revisao final (M5).** Ate
+#    ali eram os unicos declarados so em prosa, enquanto o 3 e o 4 ja tinham o
+#    seu -- e sao justamente os dois que DISPARAM, entao prosa sozinha nao
+#    avisaria se o comportamento mudasse.
 # 3. **O detector nao separa PERGUNTA de AFIRMACAO, e isso atravessa AS DUAS
 #    regras.** Em primeira pessoa, "estou falando com uma pessoa agora."
 #    dispara -- o lead dizendo que fala com outro corretor neste momento --,
@@ -262,7 +283,7 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 #    (`tests/unit/test_pergunta_se_e_robo.py`) trava a lacuna.
 #
 # 4. **O corte por clausula da regra de segunda pessoa (Task 2 do TEC-272,
-#    ver `_CORTE_DE_CLAUSULA` acima) nao fecha conjuncao sem pontuacao.** "no
+#    ver `_CORTE_DE_CLAUSULA` abaixo) nao fecha conjuncao sem pontuacao.** "no
 #    pacote vem voce e um robo aspirador?" e uma clausula so -- nao ha
 #    `[?!.;]` nenhum entre o sujeito e o predicado --, entao o corte nao tem o
 #    que cortar e o termo casa do mesmo jeito. Dos 7 casos medidos da classe
@@ -276,6 +297,17 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 # fala real deste eixo em `evals/corpus/` -- zero ocorrencias nos cinco
 # arquivos --, entao estes termos sao invencao. O que o teste prova e o lado
 # negativo: que nenhum dos turnos reais do corpus dispara.
+#
+# **Inverificavel nao quer dizer informe: a FORMA da perda foi medida, e fica
+# escrita aqui para a proxima rodada saber onde ampliar sem redescobrir.** O
+# eixo robo/bot esta bem coberto nas duas regras; humano/maquina/gente so
+# existe na forma DISJUNTIVA ("voce e humano ou maquina"), entao
+# "voce e uma maquina?" nao dispara; e nada cobre os nomes que o proprio
+# produto usa -- IA, chatbot e "assistente virtual" sao todos False, sendo
+# que **"assistente virtual" e literalmente o termo do CA-04.1**. Tambem fica
+# de fora o pedido de presenca sem sujeito ("tem um humano ai?"), que saiu da
+# tabela na fix round 1. Nenhum destes e bug: a D2 do desenho autoriza a perda
+# de recall, e cada termo novo e uma classe de falso positivo a medir antes.
 _TERMOS_DE_SEGUNDA_PESSOA: tuple[str, ...] = (
     # SUJEITO (voce/vc) + verbo de ligacao (e/eh) + ROBO ou BOT.
     "voce e um robo",
@@ -286,6 +318,14 @@ _TERMOS_DE_SEGUNDA_PESSOA: tuple[str, ...] = (
     "vc eh um robo",
     "voce e um bot",
     "vc e um bot",
+    # "eh" tambem para BOT, e nao so para ROBO (fix da revisao final, M3).
+    # Pelo mesmo argumento que o comentario de `_REFORCOS_DE_IDENTIDADE` usa
+    # para admitir "neh": a tabela ja aceitava "eh" no lado do robo, entao
+    # recusa-lo no lado do bot era incoerencia interna, nao decisao. Custo de
+    # falso positivo zero pelo criterio desta faixa -- o sujeito continua
+    # exigido por extenso, e "eh" e token proprio depois de `_normalizar`.
+    "voce eh um bot",
+    "vc eh um bot",
     # SUJEITO + verbo + HUMANO/MAQUINA, nos dois sentidos -- "voce e humano
     # ou maquina?" e "voce e maquina ou humano?" sao a mesma pergunta.
     "voce e humano ou maquina",
@@ -534,10 +574,17 @@ def ja_oferece_corretor(texto: str) -> bool:
     lado barato.
 
     **Roda sobre o texto FINAL, nao sobre a resposta crua do modelo** -- e essa
-    escolha, feita em `turno.py`, e o que faz uma regra so cobrir as tres
-    duplicacoes possiveis: o modelo ter oferecido sozinho, a identificacao ter
-    oferecido no prefixo, e o turno ter caido numa trilha deterministica que
-    ja oferece.
+    escolha, feita em `turno.py`, e o que faz uma regra so cobrir as
+    duplicacoes possiveis: o modelo ter oferecido sozinho e a identificacao
+    ter oferecido no prefixo.
+
+    **A trilha deterministica era a terceira delas, e desde a revisao final
+    ela ja nao chega aqui:** `turno.py` so chama `texto_com_oferta` quando o
+    texto ainda e a resposta do modelo (`texto_substituido`), porque a
+    precondicao do CA-04.1 e o agente CONFIRMAR -- e texto nosso substituindo
+    a resposta nao confirma nada. A verificacao das sete constantes continua
+    valendo como rede: ela e o que avisa se uma trilha futura passar a
+    duplicar por outro caminho, e o prefixo da identificacao E uma delas.
     """
     return "corretor" in _normalizar(texto)
 
@@ -551,11 +598,19 @@ def texto_com_oferta(corpo_do_lead: str | None, texto: str) -> str:
     parte deles, e os que nao ofereciam eram as perguntas neutras.
 
     **A guarda olha o `texto` ja montado, e nao a resposta crua do modelo.** E
-    o que faz uma regra so cobrir as tres duplicacoes possiveis: o modelo ter
-    oferecido sozinho, a identificacao ter oferecido no prefixo, e o turno ter
-    caido numa das seis trilhas deterministicas de `turno.py` que ja falam em
-    corretor. Nenhuma precisa de caso proprio -- a pergunta nao e QUEM
-    ofereceu, e se a mensagem oferece.
+    o que faz uma regra so cobrir as duplicacoes possiveis: o modelo ter
+    oferecido sozinho e a identificacao ter oferecido no prefixo. Nenhuma
+    precisa de caso proprio -- a pergunta nao e QUEM ofereceu, e se a
+    mensagem oferece.
+
+    **As substituicoes deterministicas de `turno.py` nao dependem mais desta
+    guarda**, porque desde a revisao final o proprio `turno.py` nao chama esta
+    funcao quando substituiu o texto do modelo: ali o agente nao confirmou
+    nada, e a precondicao do CA-04.1 e a confirmacao. Sao seis blocos que
+    trocam o texto, produzindo sete constantes; quatro delas ja diziam
+    "corretor" e se calavam aqui, e as tres que nao diziam -- encaminhamento
+    de suporte, encerramento fora de escopo e o texto neutro da moderacao de
+    saida -- recebiam a oferta e nao deviam.
 
     `corpo_do_lead` e opcional porque em `executar_turno` ele e `str | None`,
     do mesmo jeito que `pediu_optout` e `gatilhos_de` ja tratam la.
