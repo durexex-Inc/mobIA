@@ -161,3 +161,59 @@ async def test_linha_sem_wamid_nao_agenda_nada(session, banco_limpo) -> None:
         await asyncio.sleep(DEVAGAR)
 
     assert espiao.chamadas == []
+
+
+async def test_turno_lento_dispara_o_indicador_de_ponta_a_ponta(
+    session,
+    semear_entrada,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    monkeypatch,
+    caches_de_cliente_limpos,
+    banco_limpo,
+) -> None:
+    """A fiacao inteira: `process_message` -> gerente de contexto -> porta.
+
+    O limiar vem do ambiente e nao do argumento, porque o que este teste
+    exercita e justamente a leitura de `Settings` que `process_message` faz --
+    os testes acima ja cobrem o relogio com o limiar injetado.
+    """
+    from mobia.app.config import get_settings
+    from mobia.domain.handoff.agendador import AgendadorNoop
+    from mobia.workers.jobs.process_message import process_message
+
+    monkeypatch.setenv("INDICADOR_DE_DIGITACAO_APOS_SEGUNDOS", "0.02")
+    get_settings.cache_clear()
+
+    class ClassificadorLento:
+        """Delega para o fake, com uma pausa na frente do relogio."""
+
+        def __init__(self, interno) -> None:
+            self._interno = interno
+
+        def __getattr__(self, nome: str):
+            return getattr(self._interno, nome)
+
+        async def classificar(self, *args, **kwargs):
+            await asyncio.sleep(DEVAGAR)
+            return await self._interno.classificar(*args, **kwargs)
+
+    linha = await semear_entrada(session)
+    espiao = IndicadorEspiao()
+    ctx = {
+        "session_factory": get_sessionmaker(),
+        "outbound": outbound_fake(),
+        "classificador": ClassificadorLento(classificador_fake()),
+        "resumidor": resumidor_fake(),
+        "contador": contador_fake(),
+        "moderador": moderador_fake(),
+        "agendador": AgendadorNoop(),
+        "indicador": espiao,
+    }
+
+    await process_message(ctx, str(linha.id))
+
+    assert len(espiao.chamadas) == 1

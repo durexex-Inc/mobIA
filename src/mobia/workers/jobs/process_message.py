@@ -15,6 +15,7 @@ from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
 from mobia.domain.outbound.port import OutboundPort
+from mobia.domain.outbound.presenca import indicador_de_digitacao
 
 log = structlog.get_logger(__name__)
 
@@ -228,6 +229,10 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
     # mensagem -- o mesmo raciocinio que a guarda de `WHATSAPP_ACCESS_TOKEN`
     # em `workers/main.py` ja aplica a outras portas.
     agendador = ctx["agendador"]
+    # `ctx[...]` direto pela mesma razao que `agendador` logo acima: um
+    # `ctx.get("indicador") or IndicadorNoop()` trocaria a porta real por um
+    # duble dentro de producao, e o sintoma de um `startup` que deixasse de
+    # popular a chave seria nenhum indicador, nunca, sem log e sem erro.
     identifier = uuid.UUID(message_id)
 
     async with session_factory() as session:
@@ -248,16 +253,33 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
             log.warning("message.sumiu", message_id=message_id)
             return "skipped"
 
-        resultado = await executar_turno(
+        # TEC-274, RN-04.7. O relogio mede o turno INTEIRO -- contexto,
+        # resumo, modelo e as duas moderacoes --, e nao so a chamada ao
+        # classificador: e o silencio que o lead percebe. Um turno com tres
+        # segundos de contexto e tres e meio de modelo nao ultrapassa quatro
+        # em nenhuma parte e deixa o lead seis segundos e meio no vazio.
+        #
+        # Mora AQUI e nao dentro de `executar_turno` porque as guardas baratas
+        # ficam no topo daquela funcao e a primeira entrega mil e trezentas
+        # linhas abaixo: o `async with` la dentro reindentaria cerca de duas
+        # mil linhas, e a protecao que a posicao daria e reproduzida -- melhor
+        # -- pela conferencia no disparo. Ver as D2 e D3 do desenho.
+        async with indicador_de_digitacao(
             session_factory,
             message=linha,
-            classificador=ctx["classificador"],
-            resumidor=ctx["resumidor"],
-            contador=ctx["contador"],
-            outbound=outbound,
-            moderador=ctx["moderador"],
-            agendador=agendador,
-        )
+            indicador=ctx["indicador"],
+            apos_segundos=get_settings().indicador_de_digitacao_apos_segundos,
+        ):
+            resultado = await executar_turno(
+                session_factory,
+                message=linha,
+                classificador=ctx["classificador"],
+                resumidor=ctx["resumidor"],
+                contador=ctx["contador"],
+                outbound=outbound,
+                moderador=ctx["moderador"],
+                agendador=agendador,
+            )
 
         async with session_factory() as session:
             await session.execute(
