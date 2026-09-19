@@ -354,10 +354,11 @@ TEXTO_DO_PEDIDO_DE_HUMANO = (
     "Pode continuar escrevendo que fica tudo registrado."
 )
 
-# `{inicio}` e `{fim}` sao preenchidos com as horas locais da janela.
+# `{inicio}` e `{fim}` sao preenchidos com as horas locais da janela. Os DIAS
+# sao literais, e nao vem de `Settings`: ver `_DOMINGO`, acima, para a razao.
 TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO = (
     "Claro! Já estou passando esta conversa para um corretor da nossa equipe. "
-    "Nosso atendimento é das {inicio}h às {fim}h, "
+    "Nosso atendimento é de segunda a sábado, das {inicio}h às {fim}h, "
     "então a resposta pode demorar até o próximo horário. "
     "Pode continuar escrevendo que fica tudo registrado."
 )

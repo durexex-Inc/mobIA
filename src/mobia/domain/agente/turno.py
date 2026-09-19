@@ -220,10 +220,17 @@ TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE = (
 )
 
 # Acrescentado aos dois textos acima quando o pedido chega fora da janela de
-# atendimento. As horas vem de `Settings`, e nao de um literal, porque o
-# Gherkin da card diz "das 9h as 19h" enquanto a janela real (TEC-143) e
-# 9h-18h: citar o numero da card faria o texto mentir sobre o que o sistema
-# faz. Ver a D3 do desenho.
+# atendimento. As horas vem de `Settings`, e nao de um literal: a regra e do
+# repo e nao depende de nenhuma divergencia especifica.
+#
+# **A divergencia que este comentario registrava foi fechada (TEC-285).** Ate
+# ela, o Gherkin da TEC-137 dizia "das 9h as 19h" e a janela real era 9h-18h --
+# citar o numero da card faria o texto mentir. A TEC-285 subiu a janela para
+# segunda-a-sabado 9h-19h, e os dois numeros passaram a bater.
+#
+# **Os dias sao literais, e as horas nao.** Ver `_DOMINGO` em
+# `domain/humano/deteccao.py`: os dias sao regra em codigo, e mudar a regra e
+# mudar este texto junto.
 #
 # **"pode demorar até", e nao "vem".** Enquanto TEC-280 e TEC-281 estiverem
 # abertas nada notifica ninguem: a resposta depende de uma PESSOA abrir a fila,
@@ -235,7 +242,8 @@ TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE = (
 # próximo horário". Duas redacoes para o mesmo fato seriam duas coisas para
 # manter em sincronia.
 SUFIXO_FORA_DA_JANELA = (
-    " O atendimento é das {inicio}h às {fim}h, então a resposta pode demorar até o próximo horário."
+    " O atendimento é de segunda a sábado, das {inicio}h às {fim}h, "
+    "então a resposta pode demorar até o próximo horário."
 )
 
 # Espelha `_GATILHO_DA_INTENCAO` deliberadamente: as duas intencoes que vao

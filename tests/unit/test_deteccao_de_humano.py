@@ -384,3 +384,21 @@ def test_a_negacao_sem_pontuacao_continua_barrando(texto: str) -> None:
     o contraste desligando a guarda inteira passaria despercebido.
     """
     assert pediu_humano(texto) is False
+
+
+def test_o_texto_de_fora_do_horario_nomeia_os_dias_e_formata_as_horas() -> None:
+    """O irmao do sufixo de `turno.py`, e a mesma regra: horas da config, dias literais.
+
+    As duas redacoes sao mantidas em sincronia de proposito -- o comentario de
+    `SUFIXO_FORA_DA_JANELA` registra que duas redacoes para o mesmo fato seriam
+    duas coisas para manter alinhadas.
+    """
+    settings = get_settings()
+    formatado = TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO.format(
+        inicio=settings.atendimento_horario_inicio, fim=settings.atendimento_horario_fim
+    )
+
+    assert str(settings.atendimento_horario_inicio) in formatado
+    assert str(settings.atendimento_horario_fim) in formatado
+    assert "{inicio}" not in formatado
+    assert "de segunda a sábado" in formatado
