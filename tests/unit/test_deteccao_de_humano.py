@@ -220,17 +220,40 @@ def test_fora_da_janela_de_madrugada() -> None:
 
 
 def test_a_janela_inclui_a_hora_de_fechamento() -> None:
-    """18h em ponto ainda e atendimento -- fim e o ultimo MINUTO valido, nao a ultima hora.
+    """19h em ponto ainda e atendimento -- fim e o ultimo MINUTO valido, nao a ultima hora.
 
     Mesma convencao de `followup_horario_fim`/`horario_permite_envio`: a borda
-    de fim e inclusiva. 18:00 local = 21:00 UTC.
+    de fim e inclusiva. 19:00 local = 22:00 UTC. O numero saiu de 18 para 19 na
+    TEC-285; a convencao de borda nao mudou.
     """
-    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 21, 0, tzinfo=UTC)) is True
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 22, 0, tzinfo=UTC)) is True
 
 
 def test_um_minuto_apos_o_fechamento_ja_e_fora() -> None:
-    """18:01 local = 21:01 UTC recusa, e e essa recusa que a borda inclusiva de fim admite."""
-    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 21, 1, tzinfo=UTC)) is False
+    """19:01 local = 22:01 UTC recusa, e e essa recusa que a borda inclusiva de fim admite."""
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 22, 1, tzinfo=UTC)) is False
+
+
+def test_sabado_as_dezoito_e_meia_passou_a_ser_atendimento() -> None:
+    """A mudanca de horas alcanca os seis dias, e nao so o domingo.
+
+    18:30 de sabado ficava FORA da janela ate a TEC-285 (o fim era 18) e passa
+    a ficar dentro. Esta escrito como teste porque e o tipo de consequencia que
+    se descobre por acidente: a card fala de dia da semana, e o numero das
+    horas mudou junto. 18:30 local = 21:30 UTC de 2026-09-19, sabado.
+    """
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 19, 21, 30, tzinfo=UTC)) is True
+
+
+def test_a_borda_de_minuto_vale_no_sabado_tambem() -> None:
+    """O ultimo dia da janela nao ganha regra propria: 19:01 recusa no sabado como na terca.
+
+    Existe porque a guarda de domingo e a checagem de hora sao dois eixos, e
+    um deles roda antes do outro -- um corpo que devolvesse cedo por dia
+    poderia, escrito errado, pular a borda no unico dia que faz fronteira com
+    domingo. 19:01 local = 22:01 UTC de 2026-09-19, sabado.
+    """
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 19, 22, 1, tzinfo=UTC)) is False
 
 
 def test_domingo_dentro_do_intervalo_de_horas_recusa() -> None:

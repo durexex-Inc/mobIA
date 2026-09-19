@@ -389,10 +389,16 @@ class Settings(BaseSettings):
     #
     # Mesma convencao de borda que `followup_horario_fim` documenta acima --
     # `fim` e o ultimo MINUTO em que a janela ainda vale, nao a ultima hora
-    # inteira: `atendimento_horario_fim=18` inclui 18:00 e recusa 18:01. Ver
+    # inteira: `atendimento_horario_fim=19` inclui 19:00 e recusa 19:01. Ver
     # `dentro_da_janela_de_atendimento` para a comparacao.
+    #
+    # **Estas horas nao dizem a janela inteira (TEC-285).** Domingo nao e dia
+    # de atendimento, e isso NAO esta aqui: e regra em codigo, na constante
+    # `_DOMINGO` de `domain/humano/deteccao.py`, que explica por que os dias
+    # ficaram fora da configuracao. Quem ler so estes dois campos conclui que a
+    # janela e todo dia, e e por isso que esta frase existe.
     atendimento_horario_inicio: int = 9
-    atendimento_horario_fim: int = 18
+    atendimento_horario_fim: int = 19
 
     @property
     def em_producao(self) -> bool:
