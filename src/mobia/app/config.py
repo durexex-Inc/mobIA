@@ -133,6 +133,18 @@ class Settings(BaseSettings):
     whatsapp_access_token: str = ""
     whatsapp_api_base: str = "https://graph.facebook.com/v21.0"
 
+    # RN-04.7 (TEC-274). O valor da regra, e configuravel porque os testes
+    # precisam injetar centesimos de segundo: tres cenarios a 4 s reais
+    # custariam mais de doze segundos por execucao da suite.
+    #
+    # `float` e nao `int` como os `sweep_*_after_seconds` vizinhos, pela mesma
+    # razao -- o teste precisa de 0.05, e um `int` o arredondaria para 0.
+    #
+    # Nao ha flag para desligar: a porta e o desligamento. Trocar
+    # `ctx["indicador"]` por `IndicadorNoop` em `workers/main.py` desliga a
+    # feature inteira sem tocar neste numero nem no dominio.
+    indicador_de_digitacao_apos_segundos: float = 4.0
+
     # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
     # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link
     # composto sobre uma base vazia continua sendo um caminho valido -- ver a
