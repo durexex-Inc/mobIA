@@ -683,7 +683,6 @@ Sem código novo. É o gate que este repo não tem: nenhum dos três estáticos 
 **Files:**
 - Modify: `src/mobia/workers/main.py` (comentário de `job_timeout`, linhas ~211-278)
 - Modify: `src/mobia/infra/anthropic.py` (comentário de `MAX_TENTATIVAS`, linhas ~23-41)
-- Modify: `tests/unit/test_orcamento_do_turno.py` (docstring de cabeçalho)
 - Modify: `docs/srs/srs-agente-sdr-imobiliario-v1.0.md` (abaixo da Emenda E-01 da RN-09.4, linha ~306)
 
 - [ ] **Step 1: A tabela do `job_timeout`**
@@ -736,23 +735,9 @@ Em `src/mobia/infra/anthropic.py`, no comentário de `MAX_TENTATIVAS`, troque o 
 
 O resto do comentário (a medição, o que se perde, o 429) **não muda**: o argumento nunca foi o número, foi a forma da conta.
 
-- [ ] **Step 3: O cabeçalho do teste do orçamento**
+- [ ] **Step 3: (removido)**
 
-Em `tests/unit/test_orcamento_do_turno.py`, troque o último parágrafo da docstring do módulo por:
-
-```
-A TEC-229 acrescentou as voltas do laco de `montar_contexto` a conta, e com
-elas a soma passou de 202s para 327s contra um `job_timeout` de 240 -- os dois
-testes que somam ficaram `xfail(strict=True)` ate a TEC-290. Ela fechou a
-conta dando a fase de montagem um deadline agregado em vez de somar teto por
-requisicao: sao 207s contra 240, com 33s de folga.
-
-**Os dois testes de derivacao foram INVERTIDOS, nao apagados.** Ate a
-TEC-290 eles afirmavam que subir `contexto_max_iteracoes` movia o pior caso;
-hoje afirmam que nao move, e um terceiro afirma que quem o move e o
-deadline. A propriedade guardada e a mesma -- que a funcao le a configuracao
---, sobre a configuracao que passou a mandar.
-```
+A docstring de cabeçalho de `tests/unit/test_orcamento_do_turno.py` saiu do escopo desta task e foi para a Task 3, junto com a docstring de `test_o_pior_turno_cabe_no_job_timeout`. **Ruling do controlador, durante a execução:** quem falsifica a prosa de um arquivo conserta a prosa daquele arquivo, na mesma task. A Task 4 fica com os arquivos que só ela toca. Não edite `tests/unit/test_orcamento_do_turno.py` aqui.
 
 - [ ] **Step 4: A emenda ao SRS**
 
