@@ -279,16 +279,20 @@ def dentro_da_janela_de_atendimento(agora: datetime) -> bool:
     separada de proposito (`atendimento_horario_*` contra `followup_horario_*`).
 
     **As duas divergiram na TEC-285, e a divergencia foi resolvida sem
-    duplicar a conta de borda.** O paragrafo acima prescrevia que, no dia em
-    que isso acontecesse, esta funcao pararia de delegar e ganharia aritmetica
-    propria. A instrucao foi seguida na intencao e nao na letra: a aritmetica
+    duplicar a conta de borda.** Ate esta card este docstring prescrevia: "Se
+    as duas um dia divergirem, e esta funcao que para de delegar e ganha
+    aritmetica propria; `horario_permite_envio` nao ganha um parametro para
+    as duas." Hoje as duas contas coincidem -- mesma borda inclusiva de
+    minuto, mesmo fuso -- e e so essa coincidencia que faz delegar funcionar.
+    A instrucao original foi seguida na intencao e nao na letra: a aritmetica
     que `horario_permite_envio` possui e a **borda de minuto**, a mesma conta
     que a TEC-146 gastou uma card inteira para ter num lugar so, e reescreve-la
     aqui para acrescentar um `weekday()` reabriria aquele defeito. O eixo novo
     -- o dia da semana -- e separavel do antigo, entao ele entra AQUI, fora da
     delegacao, e `horario_permite_envio` segue intacta para os seus tres
-    chamadores. Se um dia a BORDA divergir, ai sim a instrucao original vale
-    pela letra.
+    chamadores -- a parte "`horario_permite_envio` nao ganha um parametro
+    para as duas" foi honrada ao pe da letra. Se um dia a BORDA divergir, ai
+    sim a instrucao original vale pela letra.
 
     `agora` precisa ser aware pela mesma razao que `horario_permite_envio`
     exige -- ver o docstring dela; a excecao de `tzinfo` ausente vem de la, e

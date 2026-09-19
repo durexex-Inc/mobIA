@@ -172,9 +172,12 @@ async def test_fora_da_janela_o_texto_nomeia_o_horario(
     """D3: as horas vem de `Settings`, e nao de um literal.
 
     Por isso a asserta compara contra o valor da configuracao formatado, e nao
-    contra "9" e "18" escritos aqui: o Gherkin da card diz "das 9h as 19h"
-    enquanto a janela real (TEC-143) e outra, e um numero transcrito neste
-    arquivo fixaria a mentira em vez do comportamento.
+    contra "9" e "19" escritos aqui: ate a TEC-285 o Gherkin da card dizia
+    "das 9h as 19h" enquanto a janela real (TEC-143) era outra (9h-18h), e um
+    numero transcrito neste arquivo fixaria a mentira em vez do comportamento.
+    A TEC-285 fechou essa divergencia subindo a janela -- o numero passou a
+    bater --, mas a regra de formatar em vez de literalizar fica: ela nao
+    existia por causa daquela divergencia especifica.
     """
     monkeypatch.setattr(turno_mod, "dentro_da_janela_de_atendimento", lambda agora: False)
     await _conversa_ja_existe(session)

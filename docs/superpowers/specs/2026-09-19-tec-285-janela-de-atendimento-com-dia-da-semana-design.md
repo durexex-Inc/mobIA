@@ -22,7 +22,7 @@ Três coisas, e vale registrá-las porque a card foi escrita antes de alguém le
 
 **Há um quarto sítio de dia-da-semana que ninguém listou.** `limite_de_aceite` (`domain/handoff/sla.py`) é a única função do repo que atravessa dias, e rola por dia corrido sem olhar `weekday()`: um prazo de aceite aberto sábado à noite conta domingo como jornada. Fica fora do escopo (D6), mas passa a ser incoerência visível a partir daqui.
 
-## D1 — A guarda de domingo entra na chamadora; a hora continua delegada
+## D1 — A guarda de domingo entra depois da delegação; a hora continua delegada
 
 `dentro_da_janela_de_atendimento` hoje tem quatro linhas de corpo: lê `Settings` e repassa tudo para `horario_permite_envio` (`domain/outbound/horario.py`).
 
@@ -30,20 +30,21 @@ O docstring dela manda "parar de delegar e ganhar aritmética própria". **Esta 
 
 A aritmética que `horario_permite_envio` possui é a **borda de minuto** — `inicio * 60 <= minuto_do_dia <= fim * 60`, com `fim` sendo o último minuto em que a janela vale. O próprio docstring de `deteccao.py` registra que a TEC-146 gastou uma card inteira consertando duas fontes dessa mesma conta. Reescrever a comparação aqui para acrescentar um `weekday()` reabriria exatamente aquilo.
 
-A guarda de domingo **não é** aritmética de borda. Ela entra antes da delegação:
+A guarda de domingo **não é** aritmética de borda. Ela entra depois da delegação, não antes:
 
 ```python
-local = agora.astimezone(ZoneInfo(settings.followup_fuso))
-if local.weekday() == _DOMINGO:
+if not horario_permite_envio(momento=agora, inicio=..., fim=..., fuso=fuso):
     return False
-return horario_permite_envio(momento=agora, inicio=..., fim=..., fuso=...)
+return agora.astimezone(fuso).weekday() != _DOMINGO
 ```
+
+**Esta ordem inverteu a que esta seção previa quando foi escrita, e a execução é quem achou o motivo.** `horario_permite_envio` é quem levanta `ValueError` para um `datetime` ingênuo (sem `tzinfo`), incondicionalmente. Converter o fuso primeiro para olhar o dia — a ordem que este parágrafo chegou a prescrever — faria um naive ser lido como hora do SISTEMA em vez de levantar, e a exceção passaria a depender do dia da semana em vez de ser incondicional. `test_o_momento_ingenuo_continua_levantando` usa um naive de domingo (2026-09-20) exatamente para prender isso: sob a ordem que esta seção descrevia, aquele naive devolveria `False` em silêncio em vez de levantar `ValueError`. A guarda de domingo teve de ir depois de `horario_permite_envio`, não antes.
 
 `_DOMINGO` é `6`, porque `datetime.weekday()` conta a partir de segunda como `0` — e é constante nomeada justamente porque `6` sozinho não diz qual das duas convenções (`weekday` ou `isoweekday`) está em uso.
 
 `horario_permite_envio` mantém assinatura e semântica intactas, e os outros dois chamadores dela — o sweep de follow-up e a jornada do corretor — não sentem nada. É o que a instrução queria comprar; a letra dela só não previu que o eixo novo fosse separável do antigo.
 
-A conversão de fuso acontece duas vezes (uma aqui para o dia, outra dentro de `horario_permite_envio` para a hora). É redundância sem consequência: `astimezone` sobre um aware já convertido é idempotente, e nenhuma semântica de borda é duplicada. Pagar uma conversão para não duplicar a conta de borda é a troca certa.
+A conversão de fuso acontece duas vezes **no caminho aceito** (uma dentro de `horario_permite_envio` para a hora, outra aqui para o dia) — no caminho recusado por hora, a segunda nunca roda, porque a função já retornou. No caminho aceito é redundância sem consequência: `astimezone` sobre um aware já convertido é idempotente, e nenhuma semântica de borda é duplicada. Pagar uma conversão para não duplicar a conta de borda é a troca certa.
 
 **A assinatura continua `(agora: datetime) -> bool`.** Não é detalhe: duas fixtures `janela_aberta` monkeypatcham `lambda agora: True`, e mudar a aridade quebra as duas.
 
@@ -61,7 +62,7 @@ As **horas continuam vindo de `Settings`** via `.format()`, como já vêm, e iss
 
 `TEXTO_DA_JANELA_HUMANA` (`domain/notificacao/envio.py`) **não muda**: já tem a frase.
 
-Os dois literais tocados continuam na lista de `tests/unit/test_acento_no_texto_ao_lead.py`, que reprova se um literal sumir dela.
+Os dois literais tocados passam a estar na lista de `tests/unit/test_acento_no_texto_ao_lead.py`, que reprova se um literal sumir dela. Eles nao estavam antes desta card: a lacuna foi achada durante a execucao, e o contador daquele arquivo foi de 15 para 17.
 
 ## D4 — Os dias são regra em código, não configuração
 
