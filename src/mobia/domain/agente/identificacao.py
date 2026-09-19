@@ -224,7 +224,7 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 # falando com uma pessoa preciso de ajuda" e "to falando com uma pessoa.
 # preciso de ajuda" nao disparam.
 #
-# **Tres residuos conhecidos, medidos e nao consertados.**
+# **Quatro residuos conhecidos, medidos e nao consertados.**
 #
 # 1. Depois de "ou" a regra aceita qualquer coisa, entao "estou falando com
 #    uma pessoa ou com alguem do financeiro?" dispara. A frase mistura as duas
@@ -259,6 +259,17 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 #    piscina, maquina de lavar ou setor. O conserto exigiria o "?", que
 #    derrubaria a pergunta sem ponto de interrogacao.
 #    `test_a_afirmacao_dispara_e_e_lacuna_declarada`
+#    (`tests/unit/test_pergunta_se_e_robo.py`) trava a lacuna.
+#
+# 4. **O corte por clausula da regra de segunda pessoa (Task 2 do TEC-272,
+#    ver `_CORTE_DE_CLAUSULA` acima) nao fecha conjuncao sem pontuacao.** "no
+#    pacote vem voce e um robo aspirador?" e uma clausula so -- nao ha
+#    `[?!.;]` nenhum entre o sujeito e o predicado --, entao o corte nao tem o
+#    que cortar e o termo casa do mesmo jeito. Dos 7 casos medidos da classe
+#    de fronteira de frase, 5 tinham pontuacao no meio e fecharam com o corte;
+#    estes 2 nao. Fechar exigiria cortar tambem por conjuncao ("e"/"ou"), o
+#    que corta frase legitima demais para valer a pena aqui.
+#    `test_conjuncao_sem_pontuacao_e_lacuna_declarada`
 #    (`tests/unit/test_pergunta_se_e_robo.py`) trava a lacuna.
 #
 # **A recall e inverificavel, e isso esta declarado no desenho (D3).** Nao ha
@@ -406,7 +417,34 @@ _PADRAO_DE_PRIMEIRA_PESSOA = re.compile(
 
 # So o ponto de interrogacao -- ver o Critical da fix round 5, no comentario
 # de cima, para por que ponto, exclamacao e ponto-e-virgula sairam daqui.
+# Corta so a regra de PRIMEIRA pessoa -- ver `_CORTE_DE_CLAUSULA`, logo
+# abaixo, para por que a de segunda pessoa corta em sinais diferentes.
 _FIM_DA_PERGUNTA = re.compile(r"\?+")
+
+# Corta a regra de SEGUNDA pessoa em clausula, consertado na Task 2 do
+# TEC-272 (ruling T1-G, achado B2: "sexta classe, fronteira de frase").
+# `_PADRAO_DE_SEGUNDA_PESSOA` corria sobre o recado normalizado inteiro sem
+# nenhum corte, e `_normalizar` troca pontuacao por espaco -- entao o sujeito
+# de uma frase colava com o predicado da frase seguinte: "bom dia pra voce! e
+# um robo aspirador que vem junto no apto?" normalizava para "...pra voce e
+# um robo aspirador..." e casava "voce e um robo", ressuscitando verbatim as
+# classes de portao automatico e robo aspirador de piscina que as rodadas 1 e
+# 3 ja tinham fechado, por um mecanismo diferente.
+#
+# **`[?!.;]`, e nao so `?` como `_FIM_DA_PERGUNTA`.** As duas regras cortam
+# por motivos diferentes: a de primeira pessoa ancora o FIM DE UMA PERGUNTA
+# (por isso so `?` conta, ver o Critical da fix round 5 acima); a de segunda
+# pessoa so precisa impedir que sujeito e predicado de FRASES diferentes se
+# colem, e qualquer um dos quatro sinais termina uma frase para esse fim.
+#
+# Medido: cortar aqui fecha 5 dos 7 casos desta classe e nao quebra nenhuma
+# das 89 falas que este arquivo ja fixava antes da Task 2.
+# `test_fronteira_de_frase_na_segunda_pessoa_nao_dispara`
+# (`tests/unit/test_pergunta_se_e_robo.py`) trava o conserto. Os 2 casos
+# restantes -- conjuncao sem pontuacao entre sujeito e predicado -- nao
+# fecham por corte de clausula nenhum: viram o quarto residuo declarado,
+# abaixo, e `test_conjuncao_sem_pontuacao_e_lacuna_declarada` trava a lacuna.
+_CORTE_DE_CLAUSULA = re.compile(r"[?!.;]+")
 
 _SO_LETRAS_E_ESPACO = re.compile(r"[^a-z ]+")
 _ESPACOS = re.compile(r"\s+")
@@ -430,13 +468,23 @@ def _normalizar(texto: str) -> str:
 def perguntou_se_e_robo(texto: str) -> bool:
     """O lead perguntou se esta falando com uma maquina.
 
-    Duas regras, descritas no comentario de `_TERMOS_DE_SEGUNDA_PESSOA`: a de
-    segunda pessoa corre sobre o recado inteiro normalizado, a de primeira
-    pessoa corre pergunta a pergunta porque precisa do fim da pergunta como
-    ancora.
+    Duas regras, descritas no comentario de `_TERMOS_DE_SEGUNDA_PESSOA`, e as
+    duas correm clausula a clausula -- mas cortadas por sinais diferentes,
+    cada um com a sua razao no comentario do proprio corte:
+    `_PADRAO_DE_SEGUNDA_PESSOA` corta em `[?!.;]` (`_CORTE_DE_CLAUSULA`);
+    `_PADRAO_DE_PRIMEIRA_PESSOA` corta so em `?` (`_FIM_DA_PERGUNTA`), porque
+    precisa do fim de uma PERGUNTA como ancora em `$`.
 
-    A de segunda pessoa NAO corre pergunta a pergunta de proposito: ela nao
-    ganha nada com o corte e perderia o termo que um "?" partisse no meio.
+    **A de segunda pessoa passou a cortar na Task 2 do TEC-272.** Ate ali ela
+    corria sobre o recado inteiro normalizado, e essa afirmacao aqui dizia que
+    ela "nao ganha nada com o corte e perderia o termo que um '?' partisse no
+    meio" -- falso nas duas metades, medido por execucao (ruling T1-G,
+    achado B2): cortar fecha 5 dos 7 casos da classe de fronteira de frase e
+    nao quebra nenhuma das 89 falas que este arquivo ja fixava, e nao ha
+    frasagem da tabela em que um "?" caia DENTRO do termo em vez de nas suas
+    bordas. Custo aceito: uma pergunta de segunda pessoa partida por
+    pontuacao no meio do proprio termo ("voce e... um robo?") deixa de
+    disparar -- falso negativo, devolve o comportamento de hoje.
 
     Nunca levanta: texto sem letra nenhuma normaliza para vazio e devolve
     False, mesma garantia de `gatilhos_de`.
@@ -444,10 +492,51 @@ def perguntou_se_e_robo(texto: str) -> bool:
     normalizado = _normalizar(texto)
     if not normalizado:
         return False
-    if _PADRAO_DE_SEGUNDA_PESSOA.search(normalizado) is not None:
+    segunda_pessoa = any(
+        _PADRAO_DE_SEGUNDA_PESSOA.search(clausula) is not None
+        for clausula in (_normalizar(parte) for parte in _CORTE_DE_CLAUSULA.split(texto))
+        if clausula
+    )
+    if segunda_pessoa:
         return True
     return any(
         _PADRAO_DE_PRIMEIRA_PESSOA.search(frase) is not None
         for frase in (_normalizar(parte) for parte in _FIM_DA_PERGUNTA.split(texto))
         if frase
     )
+
+
+# A oferta que o CA-04.1 pede junto da confirmacao. Texto que o lead recebe,
+# entao COM acento (TEC-267) -- ao contrario dos prompts de sistema deste
+# repo, que sao instrucao para o modelo e continuam sem.
+TEXTO_DA_OFERTA_DE_CORRETOR = "Se preferir falar com um corretor, é só me dizer."
+
+# Linha em branco e nao espaco, pelo mesmo argumento de
+# `SEPARADOR_DA_IDENTIFICACAO` logo acima: as duas frases tem autores
+# diferentes -- uma e resposta ao lead, a outra e constante do repositorio -- e
+# coladas parecem uma frase so mal pontuada.
+SEPARADOR_DA_OFERTA = "\n\n"
+
+
+def ja_oferece_corretor(texto: str) -> bool:
+    """O texto que o lead vai receber ja oferece um corretor?
+
+    **A palavra basta, e e isso que torna este detector barato.** "Corretor"
+    nao aparece na fala do agente por acaso: nas sete trilhas deterministicas
+    que a mencionam -- a identificacao, a busca inconclusiva, o sem-resultado
+    pos-ampliacao, o encaminhamento de venda, as duas variantes do pedido de
+    humano e o teto de perguntas -- ela aparece sempre oferecendo um. O
+    unitario deste modulo deriva essa lista por importacao e confere uma a uma.
+
+    **A assimetria esta na direcao certa.** Falso positivo (achar oferta onde
+    nao ha) nao anexa nada e devolve o comportamento de hoje; falso negativo
+    duplica a oferta na mesma mensagem. Errar para o lado de nao anexar e o
+    lado barato.
+
+    **Roda sobre o texto FINAL, nao sobre a resposta crua do modelo** -- e essa
+    escolha, feita em `turno.py`, e o que faz uma regra so cobrir as tres
+    duplicacoes possiveis: o modelo ter oferecido sozinho, a identificacao ter
+    oferecido no prefixo, e o turno ter caido numa trilha deterministica que
+    ja oferece.
+    """
+    return "corretor" in _normalizar(texto)

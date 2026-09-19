@@ -486,20 +486,72 @@ def test_a_afirmacao_dispara_e_e_lacuna_declarada(texto: str) -> None:
     elogio corrente de brasileiro (que rapidez); em primeira pessoa "estou
     falando com uma pessoa agora." e relato de atendimento paralelo.
 
-    **Por que fica assim, e por que isso nao e a mesma coisa das quatro
-    classes anteriores.** Naquelas -- portao automatico, robo de piscina,
-    maquina de lavar, setor de locacao -- a oferta de corretor caia em fala
-    que nao tinha nada a ver com o interlocutor. Aqui o lead JA esta tratando
-    quem responde como maquina, entao a oferta e inofensiva ou ate oportuna.
-    Separar pergunta de afirmacao exigiria o "?", e isso derrubaria a pergunta
-    sem ponto de interrogacao, que no WhatsApp e comum -- conserto mais caro
-    que a classe evitada.
+    **Por que fica assim para as tres de segunda pessoa -- e por que a mesma
+    razao NAO cobre a quarta.** Naquelas -- portao automatico, robo de
+    piscina, maquina de lavar, setor de locacao -- a oferta de corretor caia
+    em fala que nao tinha nada a ver com o interlocutor. Para "voce e um robo
+    de tao rapido", "ja vi que voce e um robo" e "tanto faz se voce e um
+    robo" o lead JA esta tratando quem responde como maquina, entao a oferta
+    e inofensiva ou ate oportuna.
+
+    **"estou falando com uma pessoa agora." e o oposto, nao a mesma classe.**
+    Ali o lead diz que fala com um HUMANO -- outro corretor, neste momento --,
+    entao ele NAO trata o interlocutor como maquina, e a oferta cai numa fala
+    que nao perguntou nada -- o mesmo dano das quatro classes anteriores, nao
+    o dano baixo das outras tres desta lista. Ela fica sem conserto pela mesma
+    razao pratica das tres, so que mais cara de justificar: separar pergunta
+    de afirmacao exigiria o "?", e isso derrubaria a pergunta sem ponto de
+    interrogacao, que no WhatsApp e comum -- conserto mais caro que a classe
+    evitada, nao "inofensiva" por si.
 
     Esta assercao existe para que a lacuna nao volte como surpresa numa
     proxima review: ela foi medida, avaliada e aceita, e o dia em que alguem
     decidir fecha-la comeca por apagar este teste de proposito.
     """
     assert perguntou_se_e_robo(texto) is True
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "bom dia pra voce! e um robo aspirador que vem junto no apto?",
+        "obrigado voce. e um robo que limpa a piscina, certo?",
+        "quem vai na visita e voce? e um robo que abre o portao ou tem porteiro?",
+        "vou aguardar vc. e um bot que responde de madrugada?",
+        "so confirmando com voce... e um bot que agenda a vistoria?",
+    ],
+)
+def test_fronteira_de_frase_na_segunda_pessoa_nao_dispara(texto: str) -> None:
+    """Task 2 do TEC-272 (ruling T1-G, achado B2): sexta classe, fronteira de frase.
+
+    Sem corte de clausula, `_normalizar` trocava a pontuacao entre as duas
+    frases por espaco e colava o "voce"/"vc" da primeira com "e um robo"/"e um
+    bot" da segunda -- ressuscitando verbatim as classes de portao automatico
+    e robo aspirador de piscina que as rodadas 1 e 3 ja tinham fechado, so que
+    por um mecanismo novo. `_CORTE_DE_CLAUSULA` fecha isto cortando a regra de
+    segunda pessoa em `[?!.;]` antes de normalizar -- ver o comentario dela em
+    `identificacao.py` para a medicao completa (5 dos 7 casos, 0 das 89 falas
+    fixadas quebradas).
+    """
+    assert perguntou_se_e_robo(texto) is False
+
+
+def test_conjuncao_sem_pontuacao_e_lacuna_declarada() -> None:
+    """Task 2 do TEC-272 (ruling T1-G, achado B2), residuo 4 do modulo.
+
+    "no pacote vem voce e um robo aspirador?" e uma clausula so: nao ha
+    `[?!.;]` nenhum entre "voce" e "e um robo", entao `_CORTE_DE_CLAUSULA` nao
+    tem o que cortar e o termo casa do mesmo jeito que casava antes do
+    conserto. Dos 7 casos medidos da classe de fronteira de frase, este e um
+    dos 2 que ficam sem fechar por corte -- ver o residuo 4 do comentario de
+    `_TERMOS_DE_SEGUNDA_PESSOA` em `identificacao.py`.
+
+    Fica declarado e nao consertado no mesmo molde de
+    `test_a_pergunta_com_isso_nao_dispara_e_e_lacuna_declarada` (so que aqui a
+    lacuna dispara True em vez de False): fechar exigiria cortar tambem por
+    conjuncao, o que corta frase legitima demais para valer a pena.
+    """
+    assert perguntou_se_e_robo("no pacote vem voce e um robo aspirador?") is True
 
 
 def test_texto_vazio_nao_levanta() -> None:
