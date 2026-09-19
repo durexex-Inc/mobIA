@@ -19,7 +19,7 @@ from mobia.domain.agente.apresentacao import (
     diferencial_de,
     legenda_de,
 )
-from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO
+from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO, TEXTO_DA_OFERTA_DE_CORRETOR
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import (
     LIMIAR_DE_DESAMBIGUACAO,
@@ -1088,3 +1088,40 @@ async def test_o_aviso_de_ajuste_nao_repete_enquanto_a_exclusao_nao_muda(
             )
         ).all()
     assert len(avisos) == 1, "o segundo turno reapresentou sem a exclusao mudar -- nao repete"
+
+
+async def test_a_oferta_nao_entra_ao_apresentar_e_e_lacuna_declarada(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """Fix round 1 (review) da Task 3 do TEC-272, fixada como LACUNA e nao como conserto.
+
+    Molde: `test_a_pergunta_com_isso_nao_dispara_e_e_lacuna_declarada`
+    (`tests/unit/test_pergunta_se_e_robo.py`).
+
+    `identificacao.texto_com_oferta` anexa a oferta de corretor no FINAL do
+    texto. Neste caminho o mesmo `texto` vira `prosa` de `_apresentar` ->
+    `_entregar_fichas` -> `legenda_de`, que corta o prefixo A PARTIR DO FIM
+    quando ele nao cabe no teto da legenda (`prosa_que_cabe`,
+    `apresentacao.py`) -- exatamente onde a oferta mora, em silencio. Por
+    isso `turno.py` exclui `apresentando` da mesma chamada, no mesmo molde do
+    `identificar` logo acima dela.
+
+    Lead que pergunta se e robo no MESMO turno em que ja recebe fichas fica
+    sem a oferta. Falso negativo, devolve o comportamento de hoje.
+    """
+    await _conversa_ja_existe(session)
+    imovel_id = await _imovel(session, "AP-001", 50000000)
+    classificador = _ClassificadorComCandidatos([_candidato(imovel_id, 50000000)])
+    outbound = outbound_fake()
+
+    resultado = await rodar_turno(
+        session,
+        classificador,
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        texto="vc e um robo? quero um apto de 2 quartos na zona sul",
+    )
+
+    assert resultado == "respondido"
+    assert not any(TEXTO_DA_OFERTA_DE_CORRETOR in mensagem for mensagem in outbound.entregues)

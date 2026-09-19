@@ -68,10 +68,13 @@ def test_corpo_ausente_nao_levanta() -> None:
 def test_nao_duplica_nas_trilhas_deterministicas(texto_deterministico: str) -> None:
     """Quando o turno respondeu por uma trilha que ja oferece, o append se cala.
 
-    Os textos aqui sao parafrase das trilhas reais de proposito: quem guarda as
-    constantes de verdade e
+    Os textos aqui sao excertos verbatim, nao parafrase: o primeiro e a
+    primeira frase de `TEXTO_DA_BUSCA_INCONCLUSIVA` e o segundo e a frase do
+    meio de `TEXTO_DO_LIMITE_DE_PERGUNTAS` (`turno.py`), cada um recortado ate
+    onde basta para exercitar a palavra "corretor". Fica assim, e nao
+    parafraseado, porque quem guarda as constantes de verdade e
     `test_todo_texto_deterministico_com_corretor_e_reconhecido`, que as deriva
-    por importacao. Transcreve-las aqui criaria uma segunda copia para
-    envelhecer.
+    por importacao -- transcreve-las por extenso aqui criaria uma segunda copia
+    para envelhecer.
     """
     assert texto_com_oferta("vc e um robo?", texto_deterministico) == texto_deterministico

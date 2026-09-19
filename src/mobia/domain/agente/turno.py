@@ -2557,7 +2557,26 @@ async def executar_turno(
     #
     # Aqui, e nao depois de `quebrar_em_mensagens`: aquele corte aplica os 600
     # caracteres da RN-04.2, e anexar depois dele estouraria o teto em silencio.
-    texto = texto_com_oferta(corpo, texto)
+    #
+    # `apresentando` fica de FORA pelo mesmo motivo do `identificar` acima, mas
+    # por um mecanismo pior. `texto_com_oferta` anexa a oferta no FINAL, e no
+    # caminho de apresentacao este mesmo `texto` vira `prosa` de `_apresentar`
+    # -> `_entregar_fichas` -> `legenda_de`, que chama `prosa_que_cabe(prefixo,
+    # len(corpo))` (`apresentacao.py`) -- e essa funcao corta o prefixo A
+    # PARTIR DO FIM quando ele nao cabe no teto da legenda. A oferta, por
+    # morar no fim, e exatamente o trecho que cai primeiro, e o corte e mudo:
+    # sem log, sem erro. Mesmo quando cabe, colar a oferta de corretor como
+    # prefixo de legenda de ficha e formato que esta card nunca discutiu --
+    # decisao de produto do desenho da TEC-162, nao desta.
+    #
+    # Lead que pergunta se e robo no MESMO turno em que recebe fichas ("voce e
+    # um robo? quero um apto de 2 quartos na zona sul") fica sem a oferta.
+    # Falso negativo, devolve o comportamento de hoje -- o lado barato da
+    # assimetria declarada em `ja_oferece_corretor`.
+    # `test_a_oferta_nao_entra_ao_apresentar_e_e_lacuna_declarada`
+    # (`tests/integration/test_apresentacao_no_turno.py`) trava a lacuna.
+    if not apresentando:
+        texto = texto_com_oferta(corpo, texto)
 
     # Fix de revisao final (Critical 1 e Important 2, TEC-140). So o caminho
     # de texto (o `else:` abaixo) pode marcar as duas True -- `_apresentar` ja
