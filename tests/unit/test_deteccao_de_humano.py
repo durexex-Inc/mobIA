@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from mobia.app.config import get_settings
 from mobia.domain.humano.deteccao import (
     TEXTO_DO_PEDIDO_DE_HUMANO,
     TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO,
@@ -219,17 +220,99 @@ def test_fora_da_janela_de_madrugada() -> None:
 
 
 def test_a_janela_inclui_a_hora_de_fechamento() -> None:
-    """18h em ponto ainda e atendimento -- fim e o ultimo MINUTO valido, nao a ultima hora.
+    """19h em ponto ainda e atendimento -- fim e o ultimo MINUTO valido, nao a ultima hora.
 
     Mesma convencao de `followup_horario_fim`/`horario_permite_envio`: a borda
-    de fim e inclusiva. 18:00 local = 21:00 UTC.
+    de fim e inclusiva. 19:00 local = 22:00 UTC. O numero saiu de 18 para 19 na
+    TEC-285; a convencao de borda nao mudou.
     """
-    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 21, 0, tzinfo=UTC)) is True
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 22, 0, tzinfo=UTC)) is True
 
 
 def test_um_minuto_apos_o_fechamento_ja_e_fora() -> None:
-    """18:01 local = 21:01 UTC recusa, e e essa recusa que a borda inclusiva de fim admite."""
-    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 21, 1, tzinfo=UTC)) is False
+    """19:01 local = 22:01 UTC recusa, e e essa recusa que a borda inclusiva de fim admite."""
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 15, 22, 1, tzinfo=UTC)) is False
+
+
+def test_sabado_as_dezoito_e_meia_passou_a_ser_atendimento() -> None:
+    """A mudanca de horas alcanca os seis dias, e nao so o domingo.
+
+    18:30 de sabado ficava FORA da janela ate a TEC-285 (o fim era 18) e passa
+    a ficar dentro. Esta escrito como teste porque e o tipo de consequencia que
+    se descobre por acidente: a card fala de dia da semana, e o numero das
+    horas mudou junto. 18:30 local = 21:30 UTC de 2026-09-19, sabado.
+    """
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 19, 21, 30, tzinfo=UTC)) is True
+
+
+def test_a_borda_de_minuto_vale_no_sabado_tambem() -> None:
+    """O ultimo dia da janela nao ganha regra propria: 19:01 recusa no sabado como na terca.
+
+    Existe porque a guarda de domingo e a checagem de hora sao dois eixos, e
+    um deles roda antes do outro -- um corpo que devolvesse cedo por dia
+    poderia, escrito errado, pular a borda no unico dia que faz fronteira com
+    domingo. 19:01 local = 22:01 UTC de 2026-09-19, sabado.
+    """
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 19, 22, 1, tzinfo=UTC)) is False
+
+
+def test_domingo_dentro_do_intervalo_de_horas_recusa() -> None:
+    """Domingo as 15h esta no meio do intervalo e fora do atendimento.
+
+    E o caso que a TEC-285 existe para consertar: ate ela, o unico eixo era a
+    hora, e domingo era dia util como qualquer outro. 15:00 local = 18:00 UTC
+    de 2026-09-20, que e domingo -- conferido rodando, nao presumido.
+    """
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 20, 18, 0, tzinfo=UTC)) is False
+
+
+def test_sabado_dentro_do_intervalo_de_horas_aceita() -> None:
+    """Sabado e dia de atendimento, e e a borda que separa "sem domingo" de "so dia util".
+
+    Sem este teste, uma guarda que recusasse o fim de semana inteiro passaria
+    igual -- o teste de domingo sozinho nao distingue as duas. 17:00 local =
+    20:00 UTC de 2026-09-19, que e sabado.
+    """
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 19, 20, 0, tzinfo=UTC)) is True
+
+
+def test_o_dia_e_lido_no_fuso_local_e_nao_em_utc(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """O mesmo instante e sabado em UTC e domingo no fuso -- e o fuso e que manda.
+
+    Com `America/Sao_Paulo` (UTC-3) esta distincao e inalcancavel: dentro da
+    janela de 9h-19h local o dia coincide com o de UTC, entao uma
+    implementacao que lesse `agora.weekday()` passaria por todos os outros
+    testes deste arquivo. `Pacific/Tarawa` e UTC+12 fixo, sem horario de verao
+    nunca, e faz 22:00 UTC de sabado virar 10:00 de DOMINGO local -- dentro do
+    intervalo de horas, e portanto recusavel so pelo dia.
+
+    Conferido rodando: `datetime(2026, 9, 19, 22, 0, tzinfo=UTC)` e sabado em
+    UTC e domingo 10:00 em Tarawa.
+
+    `caches_de_cliente_limpos` nao e enfeite: o docstring daquela fixture manda
+    que todo teste que mexa em `Settings` dependa dela em vez de chamar
+    `cache_clear()` na mao, senao um fuso do Pacifico vaza para o `Settings`
+    cacheado de todo teste seguinte deste worker.
+    """
+    monkeypatch.setenv("FOLLOWUP_FUSO", "Pacific/Tarawa")
+    get_settings.cache_clear()
+
+    assert dentro_da_janela_de_atendimento(datetime(2026, 9, 19, 22, 0, tzinfo=UTC)) is False
+
+
+def test_o_momento_ingenuo_continua_levantando() -> None:
+    """A guarda de domingo nao pode engolir a excecao de `tzinfo` ausente.
+
+    A ordem do corpo e que garante isso: `horario_permite_envio` roda PRIMEIRO
+    e incondicionalmente, e e de la que a excecao vem. Uma implementacao que
+    convertesse o fuso antes, para olhar o dia, faria um naive ser interpretado
+    como hora do SISTEMA -- que difere entre esta maquina (UTC-3) e o runner do
+    CI (UTC) -- e a excecao so apareceria em alguns dias da semana.
+    """
+    with pytest.raises(ValueError, match="tzinfo"):
+        dentro_da_janela_de_atendimento(datetime(2026, 9, 20, 18, 0))
 
 
 @pytest.mark.parametrize(
@@ -301,3 +384,21 @@ def test_a_negacao_sem_pontuacao_continua_barrando(texto: str) -> None:
     o contraste desligando a guarda inteira passaria despercebido.
     """
     assert pediu_humano(texto) is False
+
+
+def test_o_texto_de_fora_do_horario_nomeia_os_dias_e_formata_as_horas() -> None:
+    """O irmao do sufixo de `turno.py`, e a mesma regra: horas da config, dias literais.
+
+    As duas redacoes sao mantidas em sincronia de proposito -- o comentario de
+    `SUFIXO_FORA_DA_JANELA` registra que duas redacoes para o mesmo fato seriam
+    duas coisas para manter alinhadas.
+    """
+    settings = get_settings()
+    formatado = TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO.format(
+        inicio=settings.atendimento_horario_inicio, fim=settings.atendimento_horario_fim
+    )
+
+    assert str(settings.atendimento_horario_inicio) in formatado
+    assert str(settings.atendimento_horario_fim) in formatado
+    assert "{inicio}" not in formatado
+    assert "de segunda a sábado" in formatado

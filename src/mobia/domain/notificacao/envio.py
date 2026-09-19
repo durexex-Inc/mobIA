@@ -56,9 +56,17 @@ KIND_DA_JANELA_HUMANA = "janela_humana"
 # desenho declara que o modelo nao tem dia da semana, so uma janela unica de
 # horas (`horario_inicio`/`horario_fim`), e a checagem de `horario_permite_envio`
 # compara so a hora. O texto bate com o PR-06 do SRS hoje, mas o sistema trata
-# domingo como dia util enquanto esta frase promete que nao -- ela vai
-# divergir em silencio quando a agenda por dia (TEC-170) chegar, e tera de
-# mudar junto.
+# domingo como dia util NA JORNADA DO CORRETOR enquanto esta frase promete que
+# nao -- ela vai divergir em silencio quando a agenda por dia (TEC-170)
+# chegar, e tera de mudar junto.
+#
+# **A divergencia encolheu pela metade na TEC-285, e a metade que sobrou e
+# esta.** Aquela card fez a janela da IMOBILIARIA ser segunda-a-sabado, entao
+# do lado dela a frase deixou de ser promessa vazia. Mas este texto e guardado
+# pelas horas do CORRETOR, cuja jornada continua sem dia da semana: um corretor
+# com jornada 9-19 e alcancavel por esta checagem no domingo, e a frase continua
+# prometendo que nao. Consertar exige dia na jornada do corretor, que e a
+# TEC-170 -- a TEC-285 declarou isso como lacuna em vez de esticar o escopo.
 TEXTO_DA_JANELA_HUMANA = (
     "O atendimento humano funciona de segunda a sábado, das {inicio}h às {fim}h. "
     "Fora desse horário a resposta pode demorar mais."

@@ -7,6 +7,7 @@ este repo ja reescreveu duas vezes (TEC-174 e TEC-143).
 
 import pytest
 
+from mobia.app.config import get_settings
 from mobia.domain.agente.turno import (
     SUFIXO_FORA_DA_JANELA,
     TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE,
@@ -42,18 +43,28 @@ def test_os_dois_textos_sao_distintos() -> None:
     assert TEXTO_DO_ENCAMINHAMENTO_DE_VENDA != TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE
 
 
-def test_o_sufixo_de_fora_da_janela_nomeia_o_horario() -> None:
-    """O sufixo formata a partir da configuracao, e nao cita numero fixo.
+def test_o_sufixo_de_fora_da_janela_nomeia_o_horario_e_os_dias() -> None:
+    """O sufixo formata as HORAS a partir da configuracao e escreve os DIAS por extenso.
 
-    O Gherkin da card diz "das 9h as 19h" e a janela real da TEC-143 e 9h-18h.
-    Citar o numero da card num literal faria o texto mentir sobre o que o
-    sistema faz -- por isso ele vem de `Settings`. A divergencia esta declarada
-    na D3 do desenho.
+    As horas vem de `Settings` porque ate a TEC-285 o Gherkin da TEC-137 dizia
+    "das 9h as 19h" enquanto a janela real era 9h-18h, e citar o numero da card
+    faria o texto mentir. A TEC-285 fechou essa divergencia subindo a janela --
+    o numero passou a bater --, mas a regra de formatar em vez de literalizar
+    fica: ela nao existia por causa daquela divergencia especifica.
+
+    Os dias sao literais porque eles nao vem de `Settings`: sao regra em
+    codigo, em `_DOMINGO` (`domain/humano/deteccao.py`), e o comentario de la
+    registra que mudar os dias e mudanca de codigo E de texto.
     """
-    formatado = SUFIXO_FORA_DA_JANELA.format(inicio=9, fim=18)
-    assert "9" in formatado
-    assert "18" in formatado
+    settings = get_settings()
+    formatado = SUFIXO_FORA_DA_JANELA.format(
+        inicio=settings.atendimento_horario_inicio, fim=settings.atendimento_horario_fim
+    )
+
+    assert str(settings.atendimento_horario_inicio) in formatado
+    assert str(settings.atendimento_horario_fim) in formatado
     assert "{inicio}" not in formatado
+    assert "de segunda a sábado" in formatado
 
 
 @pytest.mark.parametrize(
@@ -85,6 +96,9 @@ def test_o_sufixo_nao_promete_quando_a_resposta_chega() -> None:
     que ja dizia "pode demorar até o próximo horário". Duas redacoes para o
     mesmo fato seriam duas coisas para manter em sincronia.
     """
-    formatado = SUFIXO_FORA_DA_JANELA.format(inicio=9, fim=18)
+    settings = get_settings()
+    formatado = SUFIXO_FORA_DA_JANELA.format(
+        inicio=settings.atendimento_horario_inicio, fim=settings.atendimento_horario_fim
+    )
     assert "pode demorar" in formatado
     assert "vem no próximo" not in formatado
