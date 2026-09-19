@@ -18,6 +18,7 @@ from mobia.domain.agente import turno as turno_mod
 from mobia.domain.agente.identificacao import (
     SEPARADOR_DA_IDENTIFICACAO,
     TEXTO_DA_IDENTIFICACAO,
+    TEXTO_DA_OFERTA_DE_CORRETOR,
 )
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.agente.turno import (
@@ -369,6 +370,77 @@ async def test_saida_bloqueada_vence_o_encaminhamento(
 
     assert entregador.entregues == [TEXTO_NEUTRO_DE_SAIDA]
     assert TEXTO_DO_ENCAMINHAMENTO_DE_VENDA not in entregador.entregues
+
+
+async def test_o_suporte_nao_recebe_a_oferta_de_corretor(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """Fix da revisao final do TEC-272, Important 1: a precondicao do CA-04.1.
+
+    O criterio de aceite diz "AO CONFIRMAR ser assistente virtual, oferece".
+    Aqui a resposta do modelo foi SUBSTITUIDA por texto nosso -- o agente nao
+    confirmou coisa nenhuma --, entao nao ha confirmacao a que anexar a
+    oferta. `turno.py` marca `texto_substituido` em cada uma das seis
+    substituicoes e o append so roda quando ela e False.
+
+    **E esta trilha e a que mais doia:** o texto acabou de dizer "ja coloquei
+    sua conversa na fila deles", e uma oferta de corretor colada logo depois
+    contradiz o roteamento anunciado uma frase antes. Que o encaminhamento de
+    SUPORTE nao fale em corretor (so o de venda) e decisao registrada no
+    desenho da TEC-272 -- era ela que o append desfazia.
+
+    A asserta e de lista EXATA de proposito: um `not in` passaria tambem se o
+    turno tivesse parado de entregar o texto de suporte.
+    """
+    await _conversa_ja_existe(session)
+    entregador = outbound_fake()
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.SUPORTE_CONTRATO, resposta=PROSA_DO_MODELO),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto="vc e um robo? tenho uma duvida sobre a clausula de reajuste",
+    )
+
+    assert entregador.entregues == [TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE]
+    assert TEXTO_DA_OFERTA_DE_CORRETOR not in TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE
+
+
+async def test_a_saida_bloqueada_nao_recebe_a_oferta_de_corretor(
+    session,
+    rodar_turno,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+) -> None:
+    """Mesma guarda do teste acima, na trilha em que ela e mais obvia.
+
+    `TEXTO_NEUTRO_DE_SAIDA` diz "Tive um problema para montar a resposta
+    agora." O agente nao respondeu nada -- muito menos confirmou ser
+    assistente virtual --, e anexar a oferta ali ainda tinha um segundo
+    defeito: o texto neutro e a resposta declarada da politica de moderacao, e
+    acrescentar frase a ele tornaria impossivel saber depois qual das duas
+    agiu, que e exatamente a razao do `not saida_bloqueada` das outras
+    guardas.
+    """
+    await _conversa_ja_existe(session)
+    entregador = outbound_fake()
+
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.COMPRA, resposta=PROSA_DO_MODELO),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(bloqueia_saida=True),
+        texto="vc e um robo?",
+    )
+
+    assert entregador.entregues == [TEXTO_NEUTRO_DE_SAIDA]
 
 
 async def _imovel(session: Any, codigo: str = "AP-1001") -> uuid.UUID:

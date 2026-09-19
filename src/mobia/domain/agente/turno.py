@@ -23,6 +23,7 @@ from mobia.domain.agente.identificacao import (
     SEPARADOR_DA_IDENTIFICACAO,
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
+    texto_com_oferta,
 )
 from mobia.domain.agente.investidor import RespostaDoInvestidor
 from mobia.domain.agente.recomendacao import bairros_a_excluir, resolver_ordinais
@@ -2068,6 +2069,34 @@ async def executar_turno(
             SUBAGENTE_INVESTIDOR if ja_e_investidor else SUBAGENTE_CLASSIFICADOR,
         )
 
+    # **A resposta de modelo acima ainda esta de pe?** (TEC-272, revisao
+    # final.) Seis blocos abaixo TROCAM `texto` por constante deste
+    # repositorio, e cada um deles marca esta flag. Nos tres ramos acima a
+    # resposta e do modelo -- inclusive a pergunta do desambiguador e a prosa
+    # do subagente do investidor, que sao texto gerado e nao substituicao --,
+    # entao ela nasce False.
+    #
+    # Quem le isto e o append da oferta de corretor, la embaixo: a precondicao
+    # do CA-04.1 e o agente CONFIRMAR ser assistente virtual, e uma resposta
+    # substituida por texto nosso nao confirma nada. Ver o comentario de la
+    # para o que acontecia sem esta guarda.
+    #
+    # A flag e o mecanismo, e nao uma lista de trilhas, de proposito: a proxima
+    # substituicao deterministica marca-a junto com as outras seis, e o append
+    # continua certo sem que ninguem se lembre dele.
+    #
+    # **O que ela afirma e PROCEDENCIA, e isso e um proxy direcional -- lacuna
+    # declarada, nao conserto pendente.** "Substituido => nao confirmou" vale
+    # sempre; a reciproca nao. Os ramos `desambiguando` e `virou_investidor`
+    # entregam texto do modelo, entao a flag nasce False e o append roda --
+    # so que `SISTEMA_DA_DESAMBIGUACAO` manda "Escreva uma unica pergunta" e
+    # "Devolva apenas o texto da pergunta", e pergunta nenhuma confirma ser
+    # assistente virtual. E pre-existente ao conserto de Important 1 e o dano e
+    # baixo: a oferta gruda numa pergunta aberta, sem contradizer nada do que o
+    # turno acabou de dizer -- diferente das tres trilhas deterministicas, em
+    # que ela contradizia. Esta declarada nas "Lacunas declaradas" do desenho.
+    texto_substituido = False
+
     if isinstance(telemetria, RespostaDoInvestidor):
         # Transacao propria, e nao o bloco transacional la de cima: os campos
         # do investidor so existem depois da chamada que os produz, e aquele
@@ -2141,6 +2170,7 @@ async def executar_turno(
             categoria=veredito_da_saida.categoria or CATEGORIA_OUTRO,
         )
         texto = TEXTO_NEUTRO_DE_SAIDA
+        texto_substituido = True
 
     # TEC-153. A outra metade da pergunta que `teto_do_handoff` fazia sozinho, e
     # agora sobre a resposta ENTREGUE: o texto que vai sair contem pergunta que
@@ -2182,6 +2212,7 @@ async def executar_turno(
         # especifica ganha --, e as quatro substituem por constante NOSSA,
         # entao a pergunta que o teto suprimiu nao vaza por nenhuma delas.
         texto = TEXTO_DO_LIMITE_DE_PERGUNTAS
+        texto_substituido = True
 
         if not teto_do_handoff:
             # **O texto promete corretor; sem isto, na virada, nao haveria
@@ -2299,6 +2330,7 @@ async def executar_turno(
     )
     if encaminhou:
         texto = _TEXTO_DO_ENCAMINHAMENTO[gerada.intencao]
+        texto_substituido = True
         if not dentro_da_janela_de_atendimento(datetime.now(UTC)):
             settings_do_turno = get_settings()
             texto += SUFIXO_FORA_DA_JANELA.format(
@@ -2442,6 +2474,7 @@ async def executar_turno(
         # substituto e o mesmo texto que o `LacoDeBuscaExcedido` ja usa --
         # ele E a proposta de verificacao com o corretor que a card pede.
         texto = "" if apresentando else TEXTO_DA_BUSCA_INCONCLUSIVA
+        texto_substituido = True
 
     # D14. Relaxou e continuou zero tem desfecho nosso, e nao prosa do modelo:
     # e o cenario 2 do Gherkin. `not citacao_bloqueada` porque, se o modelo
@@ -2453,6 +2486,7 @@ async def executar_turno(
     # sabemos perguntar, e cala-lo custaria mais do que padroniza.
     if resposta_do_turno.relaxou_sem_resultado and not citacao_bloqueada:
         texto = TEXTO_SEM_RESULTADO_APOS_AMPLIAR
+        texto_substituido = True
 
     # RN-03.5 (TEC-138). A despedida, e ela e a ULTIMA das substituicoes de
     # proposito -- quem atribui `texto` por ultimo neste trecho e quem vence.
@@ -2507,6 +2541,7 @@ async def executar_turno(
     # marcadores pos-entrega excluem `encerrando` por causa disto; ver la.
     if encerrando and not saida_bloqueada:
         texto = TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO
+        texto_substituido = True
 
     # Depois da moderacao de saida, de proposito: o texto e constante deste
     # repositorio e nao saida de modelo -- moderar dado nosso seria gastar
@@ -2549,6 +2584,61 @@ async def executar_turno(
     )
     if identificar:
         texto = f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{texto}"
+
+    # CA-04.1: ao confirmar ser assistente virtual, oferecer corretor. A guarda
+    # inteira vive em `identificacao.texto_com_oferta` -- inclusive a razao de
+    # ela olhar o texto ja montado e nao a resposta crua do modelo.
+    #
+    # Aqui, e nao depois de `quebrar_em_mensagens`: aquele corte aplica os 600
+    # caracteres da RN-04.2, e anexar depois dele estouraria o teto em silencio.
+    #
+    # `apresentando` fica de FORA pelo mesmo motivo do `identificar` acima, mas
+    # por um mecanismo pior. `texto_com_oferta` anexa a oferta no FINAL, e no
+    # caminho de apresentacao este mesmo `texto` vira `prosa` de `_apresentar`
+    # -> `_entregar_fichas` -> `legenda_de`, que chama `prosa_que_cabe(prefixo,
+    # len(corpo))` (`apresentacao.py`) -- e essa funcao corta o prefixo A
+    # PARTIR DO FIM quando ele nao cabe no teto da legenda. A oferta, por
+    # morar no fim, e exatamente o trecho que cai primeiro, e o corte e mudo:
+    # sem log, sem erro. Mesmo quando cabe, colar a oferta de corretor como
+    # prefixo de legenda de ficha e formato que esta card nunca discutiu --
+    # decisao de produto do desenho da TEC-162, nao desta.
+    #
+    # Lead que pergunta se e robo no MESMO turno em que recebe fichas ("voce e
+    # um robo? quero um apto de 2 quartos na zona sul") fica sem a oferta.
+    # Falso negativo, devolve o comportamento de hoje -- o lado barato da
+    # assimetria declarada em `ja_oferece_corretor`.
+    # `test_a_oferta_nao_entra_ao_apresentar_e_e_lacuna_declarada`
+    # (`tests/integration/test_apresentacao_no_turno.py`) trava a lacuna.
+    #
+    # **`texto_substituido` fica de fora porque a PRECONDICAO do CA-04.1 e a
+    # confirmacao, e nao a pergunta do lead** (fix da revisao final,
+    # Important 1). O criterio de aceite diz "AO CONFIRMAR ser assistente
+    # virtual, oferece": quando uma das seis substituicoes deterministicas
+    # rodou, a resposta do modelo nao saiu -- o agente nao confirmou nada, e
+    # nao ha confirmacao a que anexar a oferta. Perguntar "o texto ainda e do
+    # modelo?" fecha as tres trilhas de uma vez, e e por isso que esta e a
+    # formulacao certa: as outras trilhas deterministicas ja dizem "corretor",
+    # entao `ja_oferece_corretor` sozinho ja as calava, e as unicas em que o
+    # append disparava sobre uma substituicao eram estas tres.
+    #
+    # As tres, com o que o lead recebia antes desta guarda:
+    #
+    # - `TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE` -- "ja coloquei sua conversa na
+    #   fila deles" seguido de uma oferta de corretor, contradizendo o
+    #   roteamento que a frase anterior acabou de anunciar. Que o
+    #   encaminhamento de SUPORTE nao fale em corretor (so o de venda) e
+    #   decisao registrada no desenho da TEC-272, nao omissao.
+    # - `TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO` -- e verbatim o defeito que o
+    #   comentario do `identificar`, logo acima, ja declara para a
+    #   identificacao ("o lead le uma oferta de corretor colada a uma
+    #   despedida, e nada foi enfileirado"), e mais alcancavel que ele: aquele
+    #   exige janela de 30 dias vencida E contagem ja em 2, este exige so
+    #   `encerrando` mais a pergunta.
+    # - `TEXTO_NEUTRO_DE_SAIDA` -- "Tive um problema para montar a resposta
+    #   agora." seguido da oferta, num turno em que o agente nao respondeu
+    #   coisa nenhuma.
+    if not apresentando and not texto_substituido:
+        texto = texto_com_oferta(corpo, texto)
 
     # Fix de revisao final (Critical 1 e Important 2, TEC-140). So o caminho
     # de texto (o `else:` abaixo) pode marcar as duas True -- `_apresentar` ja

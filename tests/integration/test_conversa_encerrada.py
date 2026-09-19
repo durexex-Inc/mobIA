@@ -23,6 +23,7 @@ from conftest import CANAL_AGENTE, CONVERSA_AGENTE, ClassificadorFake
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agente.identificacao import TEXTO_DA_OFERTA_DE_CORRETOR
 from mobia.domain.agente.models import ConversationIntent
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.agente.turno import TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO
@@ -430,6 +431,53 @@ async def test_o_turno_que_encerra_entrega_a_despedida(
     assert desfecho == "respondido", "o turno que encerra responde -- nao e o turno silenciado"
     assert len(entregador.entregues) == antes + 1
     assert entregador.entregues[-1] == TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO
+
+
+async def test_a_despedida_nao_recebe_a_oferta_de_corretor(
+    session, outbound_fake, resumidor_fake, contador_fake, rodar_turno
+) -> None:
+    """TEC-272, fix da revisao final (Important 1): a precondicao do CA-04.1.
+
+    O criterio de aceite diz "AO CONFIRMAR ser assistente virtual, oferece".
+    Aqui a resposta do modelo foi SUBSTITUIDA pela despedida -- o agente nao
+    confirmou nada --, entao `turno.py` marca `texto_substituido` e o append
+    de `texto_com_oferta` nao roda.
+
+    **E a trilha mais grave das tres que o append alcancava**, porque produz
+    verbatim o defeito que o comentario do `identificar` (`turno.py`) ja
+    declarava para a identificacao: o lead leria uma oferta de corretor colada
+    a uma despedida, com fila nenhuma atras dela. E e mais alcancavel que
+    aquele -- aquele exige janela de 30 dias vencida E contagem ja em 2, este
+    exige so o encerramento mais a pergunta.
+
+    A asserta de igualdade EXATA e o que trava a lacuna: um `not in` sobre a
+    oferta passaria tambem se o turno tivesse parado de entregar a despedida.
+    Sem este teste, apagar a marcacao da flag nesta trilha nao reprovava nada
+    na suite -- que e o mesmo argumento do M5 sobre os residuos 1 e 2: prosa
+    sozinha nao avisa quando o comportamento muda.
+    """
+    await _conversa_ja_existe(session)
+    entregador = outbound_fake()
+
+    await _fora_de_escopo(
+        rodar_turno, session, entregador, resumidor_fake(), contador_fake(), vezes=2
+    )
+
+    # O terceiro turno e o que encerra, e nele o lead pergunta se fala com uma
+    # maquina -- as duas condicoes do append juntas, que e o que o torna
+    # alcancavel.
+    desfecho = await rodar_turno(
+        session,
+        ClassificadorFake(intencao=Intencao.FORA_DE_ESCOPO, resposta=PROSA_DO_MODELO),
+        entregador,
+        resumidor_fake(),
+        contador_fake(),
+        texto="vc e um robo? qual a previsao do tempo para amanha?",
+    )
+
+    assert desfecho == "respondido"
+    assert entregador.entregues[-1] == TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO
+    assert TEXTO_DA_OFERTA_DE_CORRETOR not in entregador.entregues[-1]
 
 
 async def test_a_quarta_mensagem_dentro_da_janela_nao_entrega_nada_nem_paga_o_modelo(
