@@ -44,7 +44,7 @@ from pathlib import Path
 
 from mobia.app.config import get_settings
 from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE, ClassificadorAnthropic
-from mobia.domain.agente.schemas import Extracao, Intencao
+from mobia.domain.agente.schemas import Extracao, Intencao, RespostaDoAgente
 from mobia.domain.context.repositorio import campos_a_gravar
 from mobia.domain.messages.enums import MessageRole
 from mobia.evals.contexto import contexto_do_historico
@@ -54,17 +54,21 @@ REPETICOES = 3
 DESTINO = Path(__file__).resolve().parent / "relatorios" / "_sonda-tec-287-bruto.md"
 
 # Doze falas de suporte de contrato que CITAM um valor. A variacao e
-# deliberada em tres eixos, porque cada um pode mover a resposta do modelo:
+# deliberada em dois eixos, porque cada um pode mover a resposta do modelo:
 #
-#   - a forma do numero ("2.800", "dois mil e oitocentos", "2,8 mil", "R$ 3500")
-#   - o papel do valor na frase (o que ele paga hoje, o que passaria a pagar,
-#     uma multa, um saldo devedor)
-#   - haver ou nao uma segunda leitura de compra/aluguel na mesma fala
+#   - a forma do numero ("2.800", "dois mil e oitocentos", "2,8 mil", "R$ 4200")
+#   - o papel do valor na frase (o que ele paga hoje, o reajuste, uma multa,
+#     uma caucao, o condominio, um deposito)
 #
-# O ultimo eixo importa mais do que parece: "hoje pago 2.800" e um fato sobre
-# um contrato existente, nao um orcamento, e e exatamente essa distincao que a
-# card afirma que o sistema nao faz. Se o modelo ja a fizer sozinho, o
-# vazamento e teorico.
+# Todas as doze sao suporte de contrato puro, sem uma segunda leitura de
+# compra ou aluguel na mesma fala. E de proposito: misturar as duas mediria a
+# desambiguacao do modelo, e nao o que a card pergunta. O caminho em que o
+# lead PASSA de suporte para compra e medido no corpus, por
+# `borda-suporte-valor-01`, onde a mudanca acontece entre turnos.
+#
+# O que o eixo do papel compra: "hoje pago 2.800" e um fato sobre um contrato
+# existente, nao um orcamento, e e exatamente essa distincao que a card afirma
+# que o sistema nao faz. Se o modelo ja a fizer sozinho, o vazamento e teorico.
 FALAS: tuple[str, ...] = (
     "queria entender o reajuste do meu contrato, hoje pago 2.800",
     "meu aluguel foi de 3.500 pra 3.900 e queria saber se pode isso",
@@ -104,11 +108,16 @@ def _conferir_a_fronteira() -> None:
         )
 
 
-def _tem_faixa(resposta: object) -> bool:
-    extracao = resposta.extracao  # type: ignore[attr-defined]
+def _tem_faixa(resposta: RespostaDoAgente) -> bool:
+    """Qualquer uma das duas pontas conta.
+
+    `min` e `max` sao anulaveis em separado, e o lead que diz "pago 2.800"
+    poderia sair em qualquer uma delas dependendo de o modelo ler o valor como
+    piso ou como teto. Exigir as duas mediria menos do que a pergunta pede.
+    """
     return (
-        extracao.faixa_preco_min_centavos is not None
-        or extracao.faixa_preco_max_centavos is not None
+        resposta.extracao.faixa_preco_min_centavos is not None
+        or resposta.extracao.faixa_preco_max_centavos is not None
     )
 
 
