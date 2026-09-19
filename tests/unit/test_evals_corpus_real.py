@@ -25,13 +25,16 @@ def test_o_corpus_tem_todas_as_conversas_declaradas(
 ) -> None:
     """Cinquenta vieram do card da TEC-134; a TEC-246 acrescentou tres
     arquetipos que o vocabulario exigia e o corpus nao tinha -- chacara,
-    consorcio e pagamento indefinido.
+    consorcio e pagamento indefinido. A TEC-287 acrescentou outras tres, de
+    suporte de contrato com valor citado, que o corpus nao tinha e que eram
+    justamente as que poderiam falhar: os sete turnos `SUPORTE_CONTRATO` de
+    antes nao citavam dinheiro nenhum.
 
     O nome nao diz mais o numero de proposito: `cinquenta` no identificador
     envelheceu junto com o valor, e este repo ja perdeu tempo com numero
     embutido em prosa.
     """
-    assert len(conversas) == 53
+    assert len(conversas) == 56
 
 
 def test_o_corpus_passa_do_piso_de_turnos(conversas: list[ConversaAnotada]) -> None:
