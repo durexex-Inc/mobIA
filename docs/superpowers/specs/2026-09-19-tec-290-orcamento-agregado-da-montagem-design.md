@@ -56,6 +56,10 @@ Em `_pior_turno()`, as fatias `(TETO_DO_COUNT_TOKENS, contagens)` e `(TETO_DO_RE
 
 **O deadline entra FORA do `* (MAX_TENTATIVAS + 1)`.** Não é detalhe de estilo. Uma retentativa repete uma *requisição* dentro da fase, e a fase já está limitada pelo relógio: multiplicar o deadline por retentativa contaria duas vezes o que o relógio conta uma. Hoje `MAX_TENTATIVAS = 0` e a diferença é invisível — é exatamente por isso que ela precisa estar escrita, e é por isso que um teste a afirma (T4).
 
+**Este é o segundo uso de `asyncio.timeout` no repo, e o primeiro fora do pós-cancelamento.** O único existente está em `workers/jobs/process_message.py`, sob `SEGUNDOS_PARA_REGISTRAR_CANCELAMENTO`, e serve para registrar o FAILED depois que o prazo do ARQ já se foi. O padrão da casa para prazo normal é o `timeout=` do SDK por chamada, com o teto vindo de uma constante `TETO_DO_*`.
+
+Então esta card **abre um segundo padrão** em vez de seguir o que existe, e a razão é a que a card inteira existe para resolver: teto por requisição não limita uma fase que faz N requisições. Está escrito aqui para que a próxima card não conclua que sempre foi assim — e é por isso que o deadline não se chama `TETO_DA_MONTAGEM`: ele não é teto de chamada nenhuma, é relógio de fase.
+
 ## D2 — O estouro
 
 `asyncio.timeout` levanta `TimeoutError`. Captura-se **só** ele.
@@ -78,7 +82,9 @@ Então no modo sem modelo a estimativa é **pessimista**, derivada do mesmo piso
 
 O que este modo **não** conserta: emoji (~0,3–0,5 chars/token) e blobs base64/URL (~2) continuam descobertos, exatamente como `limiar_de_contagem_efetivo` já declara. Um turno dominado por qualquer um dos dois pode sair medido para menos tokens do que tem, no modo local como no normal. Risco aceito e já documentado; esta card não o move.
 
-`ContextoIrreducivel` continua sendo levantada quando nem uma literal sem resumo cabe. O modo local não muda esse contrato — muda quem mede, não o que se faz com a medida.
+**`_estimar` não muda.** A pessimização vive só no ramo `sem_modelo`, e essa fronteira é invariante, não detalhe de implementação: cerca de trinta arquivos de teste rodam `executar_turno` → `montar_contexto` pelo caminho barato da estimativa, nenhum deles com a fixture `sempre_contar`. Mexer em `_estimar` moveria o limiar efetivo dos trinta de uma vez, para um ganho que só o caminho degradado precisa.
+
+`ContextoIrreducivel` continua sendo levantada quando nem uma literal sem resumo cabe. O modo local não muda esse contrato — muda quem mede, não o que se faz com a medida. Ela é capturada num lugar só em produção (`domain/agente/turno.py`, que loga `turno.contexto_irreducivel` e devolve `"sem_resposta"`), e esta card não mexe nisso.
 
 ## D4 — Dois testes verdes passam a afirmar o contrário do desenho
 
@@ -113,6 +119,15 @@ Cinco sítios, e o quinto está fora do código:
 `job_timeout` (240), `sweep_inflight_after_seconds` (300), `job_completion_wait` (250), a carência exigida do deploy (~265s) e todos os tetos por chamada de `infra/anthropic.py` ficam exatamente onde estão.
 
 É a razão de ter escolhido o caminho 3 puro, e é o que separa esta branch de uma que precisasse de mudança coordenada fora do repo.
+
+## A superfície que a suíte já prende
+
+Levantada antes de escrever o plano, porque decide o que é mudança de assinatura e o que é mudança de contrato:
+
+- **Nenhum teste importa `_estimar`, `_contar_se_valer` ou `_dobrar`.** A suíte só alcança os três através de `montar_contexto`. Não há assinatura presa a quebrar.
+- **`_truncar_ate_caber` é importado e chamado direto** em dois testes de `tests/integration/test_montagem.py`. O parâmetro novo entra com default `False`, e os dois seguem valendo sem edição.
+- **As duas invariantes de tempo têm assert próprio**, em `tests/integration/test_worker_startup.py`: `job_timeout < sweep_inflight_after_seconds` e `job_completion_wait > job_timeout`. O D6 não as move, então os dois continuam verdes sem serem tocados — e é essa a evidência de que o caminho 3 não invade o território do caminho 1.
+- **Dezessete testes usam `sempre_contar`** (dezesseis em `tests/integration/test_montagem.py`, um em `tests/features/test_janela_de_contexto.py`); são eles que exercitam o laço e a cascata de degraus, e são os que mais sentem o deadline. Os demais rodam pela estimativa barata.
 
 ## Testes
 
