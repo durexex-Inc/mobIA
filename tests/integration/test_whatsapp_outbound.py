@@ -151,3 +151,61 @@ async def test_payload_de_imagem_sai_como_image_com_link_e_caption(session) -> N
         "link": PAYLOAD_DE_IMAGEM["link"],
         "caption": PAYLOAD_DE_IMAGEM["legenda"],
     }
+
+
+async def test_indicador_monta_o_corpo_que_a_meta_exige(session) -> None:
+    """O corpo do indicador nao e um envio de mensagem. TEC-274.
+
+    `status: "read"` nao e opcional -- a Meta nao oferece "digitando..."
+    isolado, e e por isso que a Emenda E-01 da RN-04.7 registra que o
+    indicador marca a fala do lead como lida. Este teste e o unico lugar que
+    exercita o corpo: errar uma chave aqui e uma feature que nao funciona em
+    producao e passa em todo o resto da suite.
+    """
+    from mobia.domain.outbound.whatsapp import WhatsAppIndicador
+
+    corpo: dict[str, object] = {}
+    indicador = WhatsAppIndicador(cliente=cliente_que_captura(corpo))
+    await indicador.indicar_digitacao(provider_message_id="wamid.ABC", de="222222222")
+
+    assert corpo["messaging_product"] == "whatsapp"
+    assert corpo["status"] == "read"
+    assert corpo["message_id"] == "wamid.ABC"
+    assert corpo["typing_indicator"] == {"type": "text"}
+    # O indicador nao e mensagem: nenhuma das chaves de envio pode aparecer,
+    # ou a Meta recusa o corpo inteiro.
+    assert "to" not in corpo
+    assert "type" not in corpo
+
+
+async def test_indicador_usa_o_numero_do_canal_na_url(session) -> None:
+    """A URL leva o `phone_number_id`, que mora em `recipient_external_id`."""
+    from mobia.domain.outbound.whatsapp import WhatsAppIndicador
+
+    urls: list[str] = []
+
+    def _responde(requisicao: httpx.Request) -> httpx.Response:
+        urls.append(str(requisicao.url))
+        return httpx.Response(200, json={"success": True})
+
+    indicador = WhatsAppIndicador(
+        cliente=httpx.AsyncClient(transport=httpx.MockTransport(_responde))
+    )
+    await indicador.indicar_digitacao(provider_message_id="wamid.ABC", de="222222222")
+
+    assert urls[0].endswith("/222222222/messages")
+
+
+async def test_indicador_recusado_nao_levanta(session) -> None:
+    """A D6 do desenho: toda falha e a mesma falha, e nenhuma escapa daqui.
+
+    Nao ha reserva a liberar nem retentativa a decidir, entao 4xx e 5xx nao
+    precisam ser distinguidos -- ao contrario de `_deliver`, onde o TIPO da
+    excecao decide o desfecho do turno.
+    """
+    from mobia.domain.outbound.whatsapp import WhatsAppIndicador
+
+    indicador = WhatsAppIndicador(
+        cliente=cliente_que_responde(httpx.Response(400, json={"error": {"code": 100}}))
+    )
+    await indicador.indicar_digitacao(provider_message_id="wamid.ABC", de="222222222")
