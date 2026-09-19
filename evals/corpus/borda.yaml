@@ -155,3 +155,70 @@
     - lead: "essa taxa pode ser retirada se eu pedir?"
       intencao: SUPORTE_CONTRATO
       campos: {}
+
+# As tres conversas abaixo existem por causa da TEC-287, e o que elas guardam
+# e um numero MEDIDO, nao uma suspeita. A card afirmava que um valor citado
+# num turno de suporte de contrato vira orcamento de compra, porque
+# `campos_a_gravar` nao barra `SUPORTE_CONTRATO` -- e isso e verdade no
+# codigo: `campos_a_gravar(SUPORTE_CONTRATO, faixa)` devolve a faixa.
+#
+# So que o extrator nunca produz a entrada que acionaria isso. A sonda
+# `evals/sonda_valor_sob_suporte_contrato.py` mediu doze falas de suporte de
+# contrato que CITAM dinheiro, tres repeticoes cada: 36 de 36 classificadas
+# `SUPORTE_CONTRATO`, e ZERO com faixa de preco preenchida. O modelo ja
+# distingue sozinho "o que eu pago hoje" de "o que eu posso pagar".
+#
+# **E por isso que elas entram aqui e o filtro de gravacao nao muda.** 0/36 e
+# comportamento do modelo de hoje com o prompt de hoje, nao invariante: uma
+# mudanca de prompt ou de modelo vira isso em silencio, e antes destas
+# conversas nada no repo pegaria -- os sete turnos `SUPORTE_CONTRATO` que o
+# corpus ja tinha nao citam dinheiro nenhum, entao nunca tiveram a chance de
+# falhar. `campos: {}` aqui nao e ausencia de anotacao: e a asercao de que o
+# valor citado NAO e orcamento.
+
+- id: borda-suporte-valor-01
+  descricao: valor do contrato atual citado no suporte e, depois, pergunta de compra sem orcamento
+  turnos:
+    # A fala exata do exemplo da card. Ela e o caso que deu origem a TEC-287.
+    - lead: "queria entender o reajuste do meu contrato, hoje pago 2.800"
+      intencao: SUPORTE_CONTRATO
+      campos: {}
+    # **Este turno e o que de fato guarda o defeito da card.** O estrago nunca
+    # foi gravar 2.800 sob suporte de contrato -- foi esse numero virar teto
+    # de preco de uma busca de COMPRA no turno seguinte, porque a TEC-136 nao
+    # descarta quando a intencao anterior nao tem banda. O lead aqui nao
+    # informa orcamento nenhum, entao `campos` vazio afirma que nada veio
+    # junto do turno anterior.
+    - lead: "aproveitando, voces tem apartamento pra comprar?"
+      intencao: COMPRA
+      campos:
+        tipo_imovel: APARTAMENTO
+
+- id: borda-suporte-valor-02
+  descricao: o mesmo valor em formatos que o extrator poderia ler diferente
+  turnos:
+    # Numero por extenso. A sonda mediu esta forma junto com "2,8 mil" e
+    # "R$ 4200" porque o formato e o eixo mais plausivel de o extrator mudar
+    # de comportamento sem ninguem mexer em regra nenhuma.
+    - lead: "sou inquilino e pago dois mil e oitocentos, o igpm subiu muito esse ano"
+      intencao: SUPORTE_CONTRATO
+      campos: {}
+    - lead: "meu contrato vence mes que vem, hoje eu pago 2,8 mil, como faco pra renovar"
+      intencao: SUPORTE_CONTRATO
+      campos: {}
+
+- id: borda-suporte-valor-03
+  descricao: dinheiro que nao e aluguel nenhum -- multa, caucao, condominio
+  turnos:
+    # O papel do valor na frase e o segundo eixo da sonda. Multa e caucao sao
+    # os casos em que chamar o numero de "orcamento" seria mais absurdo, e por
+    # isso os mais baratos de julgar se um dia o extrator passar a preencher.
+    - lead: "cobraram 780 de multa no meu boleto e eu nao entendi o motivo"
+      intencao: SUPORTE_CONTRATO
+      campos: {}
+    - lead: "paguei 1.900 de caucao e queria saber quando recebo de volta"
+      intencao: SUPORTE_CONTRATO
+      campos: {}
+    - lead: "o condominio subiu pra 1.100 e eu queria entender se isso entra no meu contrato"
+      intencao: SUPORTE_CONTRATO
+      campos: {}
