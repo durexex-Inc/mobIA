@@ -35,6 +35,7 @@ import pytest
 from mobia.domain.agente.apresentacao import RESSALVA_DE_ESTIMATIVA
 from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO
 from mobia.domain.agente.turno import (
+    SUFIXO_FORA_DA_JANELA,
     TEXTO_DA_BUSCA_INCONCLUSIVA,
     TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
     TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
@@ -44,6 +45,7 @@ from mobia.domain.agente.turno import (
     TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
 )
 from mobia.domain.followup.mensagem import CONVITE_PARA_AGENDAR
+from mobia.domain.humano.deteccao import TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO
 from mobia.domain.moderacao.port import (
     TEXTO_DA_RECUSA_DE_ENTRADA,
     TEXTO_NEUTRO_DE_SAIDA,
@@ -124,6 +126,8 @@ LITERAIS_AO_LEAD = (
     TEXTO_DA_CONFIRMACAO_DE_OPTOUT,
     TEXTO_DO_AVISO_DE_ERRO,
     RESSALVA_DE_ESTIMATIVA,
+    TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO,
+    SUFIXO_FORA_DA_JANELA,
 )
 
 
@@ -140,4 +144,4 @@ def test_nenhum_literal_ao_lead_tem_forma_sem_acento(texto: str) -> None:
 def test_a_lista_de_literais_nao_encolheu_sem_querer() -> None:
     """Guarda da guarda: um literal removido da tupla acima faria o teste de
     cima passar sem checar nada, e ninguem notaria."""
-    assert len(LITERAIS_AO_LEAD) == 15
+    assert len(LITERAIS_AO_LEAD) == 17
