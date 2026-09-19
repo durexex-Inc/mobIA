@@ -266,6 +266,24 @@ class Settings(BaseSettings):
     # gastar dinheiro em circulo com um resumo que nao encolhe.
     contexto_max_iteracoes: int = 3
 
+    # TEC-290. O relogio da fase inteira de resumir/contar, e nao o teto de
+    # uma chamada: os tetos por chamada vivem em `infra/anthropic.py` e nao
+    # limitam um laco que faz N chamadas. Enquanto o pior caso era somado
+    # requisicao a requisicao, ele crescia com `contexto_max_iteracoes` acima
+    # -- e foi assim que a soma do turno chegou a 327s contra um
+    # `job_timeout` de 240.
+    #
+    # 35s nao e medida da montagem: e o que sobra do `job_timeout` depois das
+    # outras fatias do turno e da reserva de 30s do banco. O teto duro e 38s.
+    # A conta inteira mora em `tests/unit/test_orcamento_do_turno.py`, que e o
+    # unico lugar que enxerga os quatro clientes externos juntos.
+    #
+    # Estourar aqui NAO e falha: o turno segue com o contexto truncado sem
+    # falar com o provedor (`_estimar_pessimista`), o lead recebe resposta, e
+    # `contexto.deadline_estourado` registra. E a diferenca em relacao a um
+    # teto por chamada, que vira erro tipado.
+    contexto_deadline_de_montagem_segundos: float = 35.0
+
     log_level: str = "INFO"
 
     sweep_received_after_seconds: int = 30

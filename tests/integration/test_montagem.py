@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -1431,3 +1432,85 @@ async def test_degradacao_que_nao_foi_timeout_nao_afirma_teto(
     )
     assert linha["reason"] == "RuntimeError"
     assert linha["teto_s"] is None
+
+
+class ResumidorQueTrava:
+    """Um resumidor que nunca devolve, e que avisa quando entrou.
+
+    O aviso (`entrou`) e o que torna o teste de cancelamento deterministico:
+    sem ele, `tarefa.cancel()` pode chegar antes de a corrotina alcancar o
+    await do provedor, e o teste passaria sem exercitar nada.
+    """
+
+    def __init__(self) -> None:
+        self.entrou = asyncio.Event()
+        self.chamadas: list[str] = []
+
+    async def resumir(self, instrucao: str, conteudo: str) -> ResumoGerado:
+        self.chamadas.append(instrucao)
+        self.entrou.set()
+        await asyncio.Event().wait()
+        raise AssertionError("inalcancavel")
+
+
+async def test_deadline_estourado_degrada_em_vez_de_esperar(
+    session, caplog, sempre_contar, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fase inteira tem relogio proprio, e estourar nao pode devolver contexto acima do teto.
+
+    E o ponto da TEC-290: teto por requisicao nao limita uma fase que faz N
+    requisicoes. Com o resumidor travado, so o deadline termina o turno.
+
+    O contador e o `ContadorProibido`: depois do estouro nao pode haver
+    round trip nenhum, e um contador que responde nao distinguiria
+    "nao chamou" de "chamou e coube".
+    """
+    monkeypatch.setenv("CONTEXTO_DEADLINE_DE_MONTAGEM_SEGUNDOS", "0.05")
+    get_settings.cache_clear()
+    await semear(session, 45)
+
+    contexto = await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorQueTrava(),
+        contador=ContadorProibido(),
+    )
+
+    assert contexto.degradado is True
+    assert contexto.tokens <= get_settings().teto_de_tokens_efetivo
+    assert "contexto.deadline_estourado" in caplog.text
+
+
+async def test_cancelamento_de_fora_nao_vira_degradacao(
+    session, sempre_contar, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O `CancelledError` do `job_timeout` atravessa a fase inteira.
+
+    E o contrato que a TEC-227 construiu: quem tem de receber o cancelamento
+    e a clausula de `process_message`, que marca FAILED, incrementa
+    `attempts` e loga `message.cancelled`. Engoli-lo aqui devolveria a
+    mensagem perdida em silencio que aquela card veio acabar.
+
+    O deadline e folgado de proposito: se ele disparasse antes do
+    `cancel()`, o teste passaria pela razao errada.
+    """
+    monkeypatch.setenv("CONTEXTO_DEADLINE_DE_MONTAGEM_SEGUNDOS", "30")
+    get_settings.cache_clear()
+    await semear(session, 45)
+    resumidor = ResumidorQueTrava()
+
+    tarefa = asyncio.create_task(
+        montar_contexto(
+            get_sessionmaker(),
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumidor=resumidor,
+            contador=ContadorProibido(),
+        )
+    )
+    await resumidor.entrou.wait()
+    tarefa.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await tarefa

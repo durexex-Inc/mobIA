@@ -1,3 +1,4 @@
+import asyncio
 import math
 from dataclasses import dataclass
 from decimal import Decimal
@@ -459,117 +460,153 @@ async def montar_contexto(
     cobertas = resumo_atual.mensagens_cobertas if resumo_atual else 0
     marca_atual = marca_de(resumo_atual)
 
-    # Gatilho por acumulo: quarenta literais dobram as vinte mais antigas e
-    # deixam vinte. Por proximidade, a marca colaria no presente.
-    if deve_regenerar(len(literais), settings.contexto_gatilho_de_regeneracao):
-        texto_do_resumo, literais, cobertas, marca_atual, falhou = await _dobrar(
-            session_factory,
-            channel,
-            conversation_key,
-            resumidor,
-            texto_do_resumo,
-            literais,
-            cobertas,
-            marca_atual,
-            INSTRUCAO_DOBRAR,
-        )
-        degradado = degradado or falhou
-
-    tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
-
     # Teto ja com a reserva descontada: o contador mede um proxy menor que a
     # requisicao real da TEC-134 -- ver `Settings.teto_de_tokens_efetivo`.
+    #
+    # Fica ANTES do deadline porque o caminho degradado tambem precisa dele, e
+    # calcula-lo la dentro o deixaria indisponivel no unico ramo que nao
+    # chegou ao fim.
     teto = settings.teto_de_tokens_efetivo
-    iteracao = 0
-    ja_comprimiu = False
-    while tokens > teto:
-        if iteracao >= settings.contexto_max_iteracoes:
-            degradado = True
-            texto_do_resumo, literais, tokens = await _truncar_ate_caber(
-                contador, channel, texto_do_resumo, literais, estado, tokens, teto
-            )
-            break
 
-        piso_cede = False
-        if len(literais) > settings.contexto_literais_minimas:
-            # Degrau 1: dobrar mensagem em resumo e perda normal, e o piso fica
-            # de pe. E a mesma operacao da regeneracao, disparada por token em
-            # vez de por contagem.
-            instrucao = INSTRUCAO_DOBRAR
-        elif texto_do_resumo is not None and not ja_comprimiu:
-            # Degrau 2: re-resumir o resumo e perda em cascata, entao so
-            # acontece depois que o degrau 1 nao bastou. Uma vez por turno:
-            # comprimir de novo o que ja foi comprimido paga outra chamada de
-            # modelo para tirar cada vez menos e trava o degrau 3, que tira
-            # mais e preserva o conteudo em vez de descarta-lo.
-            instrucao = INSTRUCAO_COMPRIMIR
-        elif len(literais) > 1:
-            # Degrau 3, o unico lugar onde o piso cede -- e o spec diz que
-            # cede-lo e permitido justamente aqui. Vinte mensagens que sozinhas
-            # passam do teto existem (vinte audios transcritos longos chegam
-            # la) e o teto, limite fisico da chamada, vence o piso, que e
-            # preferencia de qualidade.
-            #
-            # O que importa e *como* o piso cede: dobrando, nao descartando. A
-            # dobra manda o conteudo para o resumo e avanca a marca junto,
-            # entao continua nao existindo lacuna entre o que esta resumido e o
-            # que esta literal -- a propriedade que a marca d'agua inteira
-            # existe para comprar. Descartar (o degrau seguinte) poupa uma
-            # chamada de modelo e perde a fala do lead para sempre.
-            instrucao = INSTRUCAO_DOBRAR
-            piso_cede = True
-        else:
-            # Uma unica literal e nada que dobrar. Pedir ao provedor para
-            # comprimir uma string vazia nao produz um resumo, produz um resumo
-            # inventado -- a mesma classe de falha que a Task 4 evita ao
-            # recusar um resumo vazio/so-espaco. Vai direto para o corte de
-            # emergencia em vez de fabricar memoria.
-            degradado = True
-            log.warning("contexto.sem_reducao_possivel", channel=channel, tokens=tokens)
-            texto_do_resumo, literais, tokens = await _truncar_ate_caber(
-                contador, channel, texto_do_resumo, literais, estado, tokens, teto
-            )
-            break
+    # O relogio da fase inteira (TEC-290). As leituras de banco acima ficam de
+    # FORA de proposito: elas pertencem a reserva de banco do orcamento, e
+    # inclui-las faria uma lentidao de Postgres consumir tempo de modelo.
+    #
+    # `asyncio.timeout` aqui e o segundo do repo, e o primeiro fora do
+    # pos-cancelamento (o outro e `SEGUNDOS_PARA_REGISTRAR_CANCELAMENTO`, em
+    # `workers/jobs/process_message.py`). O padrao da casa para prazo normal e
+    # o `timeout=` do SDK por chamada -- que e exatamente o que nao resolve
+    # este caso, porque a fase faz N chamadas.
+    try:
+        async with asyncio.timeout(settings.contexto_deadline_de_montagem_segundos):
+            # Gatilho por acumulo: quarenta literais dobram as vinte mais antigas e
+            # deixam vinte. Por proximidade, a marca colaria no presente.
+            if deve_regenerar(len(literais), settings.contexto_gatilho_de_regeneracao):
+                texto_do_resumo, literais, cobertas, marca_atual, falhou = await _dobrar(
+                    session_factory,
+                    channel,
+                    conversation_key,
+                    resumidor,
+                    texto_do_resumo,
+                    literais,
+                    cobertas,
+                    marca_atual,
+                    INSTRUCAO_DOBRAR,
+                )
+                degradado = degradado or falhou
 
-        texto_do_resumo, literais, cobertas, marca_atual, falhou = await _dobrar(
-            session_factory,
-            channel,
-            conversation_key,
-            resumidor,
-            texto_do_resumo,
-            literais,
-            cobertas,
-            marca_atual,
-            instrucao,
-            piso_pode_ceder=piso_cede,
+            tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
+
+            iteracao = 0
+            ja_comprimiu = False
+            while tokens > teto:
+                if iteracao >= settings.contexto_max_iteracoes:
+                    degradado = True
+                    texto_do_resumo, literais, tokens = await _truncar_ate_caber(
+                        contador, channel, texto_do_resumo, literais, estado, tokens, teto
+                    )
+                    break
+
+                piso_cede = False
+                if len(literais) > settings.contexto_literais_minimas:
+                    # Degrau 1: dobrar mensagem em resumo e perda normal, e o piso fica
+                    # de pe. E a mesma operacao da regeneracao, disparada por token em
+                    # vez de por contagem.
+                    instrucao = INSTRUCAO_DOBRAR
+                elif texto_do_resumo is not None and not ja_comprimiu:
+                    # Degrau 2: re-resumir o resumo e perda em cascata, entao so
+                    # acontece depois que o degrau 1 nao bastou. Uma vez por turno:
+                    # comprimir de novo o que ja foi comprimido paga outra chamada de
+                    # modelo para tirar cada vez menos e trava o degrau 3, que tira
+                    # mais e preserva o conteudo em vez de descarta-lo.
+                    instrucao = INSTRUCAO_COMPRIMIR
+                elif len(literais) > 1:
+                    # Degrau 3, o unico lugar onde o piso cede -- e o spec diz que
+                    # cede-lo e permitido justamente aqui. Vinte mensagens que sozinhas
+                    # passam do teto existem (vinte audios transcritos longos chegam
+                    # la) e o teto, limite fisico da chamada, vence o piso, que e
+                    # preferencia de qualidade.
+                    #
+                    # O que importa e *como* o piso cede: dobrando, nao descartando. A
+                    # dobra manda o conteudo para o resumo e avanca a marca junto,
+                    # entao continua nao existindo lacuna entre o que esta resumido e o
+                    # que esta literal -- a propriedade que a marca d'agua inteira
+                    # existe para comprar. Descartar (o degrau seguinte) poupa uma
+                    # chamada de modelo e perde a fala do lead para sempre.
+                    instrucao = INSTRUCAO_DOBRAR
+                    piso_cede = True
+                else:
+                    # Uma unica literal e nada que dobrar. Pedir ao provedor para
+                    # comprimir uma string vazia nao produz um resumo, produz um resumo
+                    # inventado -- a mesma classe de falha que a Task 4 evita ao
+                    # recusar um resumo vazio/so-espaco. Vai direto para o corte de
+                    # emergencia em vez de fabricar memoria.
+                    degradado = True
+                    log.warning("contexto.sem_reducao_possivel", channel=channel, tokens=tokens)
+                    texto_do_resumo, literais, tokens = await _truncar_ate_caber(
+                        contador, channel, texto_do_resumo, literais, estado, tokens, teto
+                    )
+                    break
+
+                texto_do_resumo, literais, cobertas, marca_atual, falhou = await _dobrar(
+                    session_factory,
+                    channel,
+                    conversation_key,
+                    resumidor,
+                    texto_do_resumo,
+                    literais,
+                    cobertas,
+                    marca_atual,
+                    instrucao,
+                    piso_pode_ceder=piso_cede,
+                )
+                degradado = degradado or falhou
+                if falhou:
+                    # O teto nao negocia: se o provedor falhou e nao da pra dobrar ou
+                    # comprimir, o mesmo corte de emergencia do teto de iteracoes entra
+                    # em cena agora -- nunca devolver contexto acima do teto so porque
+                    # o provedor caiu no meio do laco.
+                    texto_do_resumo, literais, tokens = await _truncar_ate_caber(
+                        contador, channel, texto_do_resumo, literais, estado, tokens, teto
+                    )
+                    break
+                ja_comprimiu = ja_comprimiu or instrucao == INSTRUCAO_COMPRIMIR
+                if piso_cede:
+                    # Aqui, e so aqui na dobra, o piso de fato cedeu -- o outro lugar e
+                    # o truncamento, que avisa por conta propria. E sinal de que a
+                    # conversa tem um formato que ninguem previu, e por isso vale
+                    # paginar em cima dele: o alerta so acorda alguem quando o piso
+                    # realmente quebrou.
+                    degradado = True
+                    log.warning(
+                        "contexto.piso_violado",
+                        channel=channel,
+                        literais=len(literais),
+                        piso=settings.contexto_literais_minimas,
+                        tokens=tokens,
+                    )
+                tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
+                iteracao += 1
+    except TimeoutError:
+        # So `TimeoutError`. O `CancelledError` do `job_timeout` do ARQ e
+        # `BaseException` e continua propagando: quem tem de recebe-lo e a
+        # clausula de `process_message` da TEC-227, que marca FAILED e conta a
+        # tentativa. Engoli-lo aqui devolveria a perda silenciosa que aquela
+        # card acabou.
+        degradado = True
+        log.warning(
+            "contexto.deadline_estourado",
+            channel=channel,
+            deadline_s=settings.contexto_deadline_de_montagem_segundos,
+            literais=len(literais),
         )
-        degradado = degradado or falhou
-        if falhou:
-            # O teto nao negocia: se o provedor falhou e nao da pra dobrar ou
-            # comprimir, o mesmo corte de emergencia do teto de iteracoes entra
-            # em cena agora -- nunca devolver contexto acima do teto so porque
-            # o provedor caiu no meio do laco.
-            texto_do_resumo, literais, tokens = await _truncar_ate_caber(
-                contador, channel, texto_do_resumo, literais, estado, tokens, teto
-            )
-            break
-        ja_comprimiu = ja_comprimiu or instrucao == INSTRUCAO_COMPRIMIR
-        if piso_cede:
-            # Aqui, e so aqui na dobra, o piso de fato cedeu -- o outro lugar e
-            # o truncamento, que avisa por conta propria. E sinal de que a
-            # conversa tem um formato que ninguem previu, e por isso vale
-            # paginar em cima dele: o alerta so acorda alguem quando o piso
-            # realmente quebrou.
-            degradado = True
-            log.warning(
-                "contexto.piso_violado",
-                channel=channel,
-                literais=len(literais),
-                piso=settings.contexto_literais_minimas,
-                tokens=tokens,
-            )
-        tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
-        iteracao += 1
+        # Recontado aqui, e nao herdado do laco: o estouro pode cair antes de
+        # `tokens` receber valor algum, e um `tokens` zerado faria o
+        # truncamento decidir que ja cabe.
+        tokens = _estimar_pessimista(texto_do_resumo, literais, estado)
+        texto_do_resumo, literais, tokens = await _truncar_ate_caber(
+            contador, channel, texto_do_resumo, literais, estado, tokens, teto, sem_modelo=True
+        )
 
     return ContextoMontado(
         sistema=SISTEMA,
