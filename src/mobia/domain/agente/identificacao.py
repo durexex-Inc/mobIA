@@ -127,73 +127,69 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 # INTERLOCUTOR -- nunca o substantivo sozinho, e nunca qualquer sujeito.**
 # Ate a fix round 1 (review) este comentario ja fazia essa afirmacao e a
 # tabela nao cumpria: os termos eram so o predicado ("e um robo", "e humano
-# ou maquina", "tudo automatico"), sem exigir de quem se fala. Isso e o que a
-# fix round 2 (review) explorou: `_normalizar` tira acento, entao "e"
-# (conjuncao) e "e" (verbo "e") viram o mesmo token, e todo termo da forma
-# "e <ancora>" passa a casar qualquer frase que use "e" como conjuncao antes
-# de robo/maquina/automatico/gente. "o apartamento tem ar condicionado e uma
-# maquina de lavar" dispara em "e uma maquina" pela conjuncao, nao pelo verbo
-# -- a fala e sobre o APARTAMENTO, nunca sobre com quem o lead fala. O mesmo
-# vale para "o portao e automatico ou manual" (sujeito e o portao) e "nesse
-# bairro e gente ou mais empresas" (sujeito e o bairro): a ancora
-# "automatico"/"gente" sozinha nao distingue pergunta sobre o interlocutor de
-# pergunta sobre o imovel, porque as duas falam do mesmo jeito.
+# ou maquina", "tudo automatico"), sem exigir de quem se fala. A fix round 2
+# (review) tentou consertar exigindo um sujeito por extenso -- mas um dos
+# sujeitos aceitos, "isso", reabriu a mesma classe pela fix round 3: "isso" e
+# ANAFORICO, e o antecedente pode ser qualquer coisa que a conversa tenha
+# acabado de citar, nunca so o interlocutor. "isso e um robo que limpa a
+# piscina sozinho" tem "isso" apontando para um ROBO ASPIRADOR DE PISCINA, um
+# produto do imovel, nao para quem esta respondendo o lead. O token "isso"
+# aparece na frase; o REFERENTE dele nao e o interlocutor -- e a afirmacao
+# acima fala do referente, nao do token, entao exigir o token nao bastava.
 #
-# **O conserto e exigir o sujeito por extenso em cada termo, nunca so o
-# predicado.** A pergunta desta card e sempre sobre O INTERLOCUTOR: segunda
-# pessoa ("voce", "vc") ou demonstrativo referindo a propria conversa ("isso",
-# "isso ai", "isso aqui"), ou primeira pessoa perguntando com quem fala ("to
-# falando com...", "estou falando com..." -- sujeito implicito na conjugacao,
-# e sempre o LEAD). Nenhum termo aqui e mais predicado sozinho.
+# **A familia "isso"/"isso ai"/"isso aqui" saiu inteira, e nao foi apertada.**
+# Nao ha aperto de palavra-chave que resolva anafora: "isso e automatico ou
+# tem alguem ai?" (a pergunta que a card quer pegar) e "isso e automatico ou
+# tem alguem que assina manualmente esse contrato?" (fala sobre o CONTRATO)
+# sao estruturalmente identicas -- a unica diferenca e o que "isso" retoma, e
+# isso mora no discurso anterior, que este detector nunca ve (recebe um
+# turno so, sem historico). Fechar o segundo caso sem perder o primeiro
+# exigiria casar a frase inteira da card, que e decorar o caso de teste.
+#
+# **A perda e barata, e ela tem numero.** A sonda da TEC-139
+# (`evals/relatorios/2026-09-11-tec-139-identificacao-036d973.md`) mediu
+# exatamente a frasagem que sai, "isso e automatico ou tem alguem ai?" (caso
+# 3): confirma SIM, oferece corretor SIM -- o modelo ja resolve essa sozinha,
+# sem ajuda deste detector. Os dois casos que a sonda mediu FALHANDO --
+# "vc e um robo?" e "to falando com uma pessoa?" (casos 1 e 2), os dois com
+# sujeito inequivoco -- sao a razao desta card existir, e continuam cobertos.
+# `test_a_pergunta_com_isso_nao_dispara_e_e_lacuna_declarada`
+# (`tests/unit/test_pergunta_se_e_robo.py`) fixa esta lacuna como decisao, no
+# molde de `test_o_interlocutor_de_terceiro_dispara_e_e_lacuna_declarada`
+# (`tests/unit/test_deteccao_de_humano.py`).
+#
+# **O sujeito aceito agora e so o que nunca e anaforico:** segunda pessoa
+# ("voce", "vc") -- que so pode se referir a quem esta na conversa -- ou
+# primeira pessoa implicita na conjugacao ("to falando com...", "estou
+# falando com..." -- o sujeito e sempre o proprio LEAD). Nenhum termo aqui e
+# mais predicado sozinho, e nenhum sujeito aqui precisa de antecedente fora
+# da frase.
 #
 # **A recall e inverificavel, e isso esta declarado no desenho (D3).** Nao ha
 # fala real deste eixo em `evals/corpus/` -- zero ocorrencias nos cinco
 # arquivos --, entao estes termos sao invencao. O que o teste prova e o lado
 # negativo: que nenhum dos turnos reais do corpus dispara.
 _TERMOS_DA_PERGUNTA: tuple[str, ...] = (
-    # SUJEITO (voce/vc/isso/isso ai/isso aqui) + verbo de ligacao (e/eh) +
-    # ROBO ou BOT.
+    # SUJEITO (voce/vc) + verbo de ligacao (e/eh) + ROBO ou BOT.
     "voce e um robo",
     "voce e robo",
     "voce eh um robo",
     "vc e um robo",
     "vc e robo",
     "vc eh um robo",
-    "isso e um robo",
-    "isso e robo",
-    "isso eh um robo",
-    "isso ai e um robo",
-    "isso aqui e um robo",
     "voce e um bot",
     "vc e um bot",
-    "isso e um bot",
-    "isso ai e um bot",
-    "isso aqui e um bot",
     # SUJEITO + verbo + HUMANO/MAQUINA, nos dois sentidos -- "voce e humano
     # ou maquina?" e "voce e maquina ou humano?" sao a mesma pergunta.
     "voce e humano ou maquina",
     "voce e maquina ou humano",
     "vc e humano ou maquina",
     "vc e maquina ou humano",
-    "isso e humano ou maquina",
-    "isso e maquina ou humano",
     # SUJEITO + verbo + GENTE, sempre com o "ou" colado: sem ele, "voce e
     # gente" sozinho e afirmacao, nao pergunta, e nao ha frasagem da card
     # que a use assim.
     "voce e gente ou",
     "vc e gente ou",
-    "isso e gente ou",
-    # "isso" (e variantes) + AUTOMATICO, sempre com a segunda metade da
-    # pergunta colada -- nunca "automatico" ou "tudo automatico" sozinho, que
-    # e fala corrente de porta/portao/elevador/condominio ("o portao e
-    # automatico ou manual?", "no condominio e tudo automatico"), com sujeito
-    # que nunca e o interlocutor.
-    "isso e automatico ou tem alguem",
-    "isso ai e automatico ou tem alguem",
-    "isso aqui e automatico ou tem alguem",
-    "isso e tudo automatico",
-    "isso ai e tudo automatico",
-    "isso aqui e tudo automatico",
     # Primeira pessoa: "[eu] to/estou falando com X" -- o sujeito e
     # implicito na conjugacao verbal (1a pessoa do singular), e so pode ser
     # o proprio LEAD perguntando com quem fala.
@@ -220,8 +216,8 @@ _TERMOS_DA_PERGUNTA: tuple[str, ...] = (
 # ...) ser prefixo de palavra maior ("visitante") nunca foi o risco ali.
 # Aqui e exatamente esse risco: sem o `\b` de fechamento, um termo terminado
 # em palavra curta casaria escondido dentro de uma palavra maior --
-# "isso e um bot" dentro de "isso e um botao", por exemplo. `re.escape`
-# porque os termos sao literais, nunca regex.
+# "voce e um bot" dentro de "voce e um botao (esse controle)", por exemplo.
+# `re.escape` porque os termos sao literais, nunca regex.
 _PADRAO_DA_PERGUNTA = re.compile(
     r"\b(?:" + "|".join(re.escape(termo) for termo in _TERMOS_DA_PERGUNTA) + r")\b"
 )

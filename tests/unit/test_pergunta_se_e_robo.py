@@ -30,27 +30,24 @@ CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
         "vc e um robo?",
         "você é um robô?",
         "to falando com uma pessoa?",
-        "isso e automatico ou tem alguem ai?",
         "voce e humano ou maquina?",
-        "isso aqui é um bot?",
     ],
 )
 def test_a_pergunta_dispara(texto: str) -> None:
-    """As quatro frasagens que a TEC-139 sondou, mais a variante acentuada.
+    """Tres das quatro frasagens que a TEC-139 sondou, mais uma variante acentuada.
 
     Nenhuma delas e fala real observada -- ver a docstring do modulo. Elas
     fixam a faixa, nao a validam.
 
-    **"tem alguém aí ou é tudo automático?" saiu daqui na fix round 2
-    (review).** Nao e frasagem da TEC-139 -- e caso inventado do brief desta
-    task --, e nao ha sujeito explicito antes de "e tudo automatico" (o
-    sujeito e elidido, subentendido pelo contexto). Cobri-la exigiria um termo
-    "e tudo automatico" sem exigir "isso" antes, e isso reabre exatamente a
-    classe de falso positivo que a fix round 2 fechou -- "no condominio e
-    tudo automatico, ate a garagem abre sozinha" e "showroom mostra tudo
-    automatico: portao, luz, cortina" sao fala real de mercado imobiliario
-    com a mesma forma. Perda de recall aceita pela D3 do desenho: as quatro
-    frasagens da TEC-139 continuam cobertas.
+    **A quarta frasagem da TEC-139, "isso e automatico ou tem alguem ai?", e
+    "isso aqui é um bot?" (variante que dependia da mesma familia) saem daqui
+    na fix round 3 (review).** A familia de sujeito "isso"/"isso ai"/"isso
+    aqui" saiu inteira de `_TERMOS_DA_PERGUNTA`: "isso" e anaforico, e o
+    antecedente pode ser qualquer coisa que a conversa tenha citado -- um
+    robo aspirador de piscina, um contrato --, nunca so o interlocutor. Ver
+    `test_a_pergunta_com_isso_nao_dispara_e_e_lacuna_declarada`, que fixa
+    essa perda como decisao, e o comentario de `_TERMOS_DA_PERGUNTA` em
+    `identificacao.py`, que traz o numero que a torna barata.
     """
     assert perguntou_se_e_robo(texto) is True
 
@@ -121,9 +118,16 @@ def test_pedido_de_presenca_nu_nao_dispara(texto: str) -> None:
     ai" casava pedido corrente de atencao -- a mesma licao que o comentario
     da tabela ja registra para "automatico"/"maquina"/"pessoa" soltos, so que
     nao tinha sido aplicada a este termo (nem a "tem alguem ai ou" e "tem
-    gente ai", que saem pelo mesmo motivo). A frase canonica da TEC-139 que
-    motivou o termo, "isso e automatico ou tem alguem ai?", continua
-    disparando sem ele -- ver `test_a_pergunta_dispara`.
+    gente ai", que saem pelo mesmo motivo). Na epoca desta rodada (fix round
+    1), a frase canonica da TEC-139 que motivou o termo, "isso e automatico
+    ou tem alguem ai?", continuava disparando sem ele, por "e automatico ou".
+
+    **Nota da fix round 3:** essa frase canonica saiu de `test_a_pergunta_dispara`
+    depois, por um motivo diferente e mais largo -- a familia de sujeito
+    "isso" inteira e anaforica e saiu da tabela. Ver
+    `test_a_pergunta_com_isso_nao_dispara_e_e_lacuna_declarada`. Esta
+    assercao aqui continua valendo (nunca dependeu de "isso"), so a
+    referencia cruzada acima ficou historica.
     """
     assert perguntou_se_e_robo(texto) is False
 
@@ -167,6 +171,66 @@ def test_conjuncao_ou_sujeito_errado_nao_dispara(texto: str) -> None:
     que o sujeito agora entra por extenso em cada termo.
     """
     assert perguntou_se_e_robo(texto) is False
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # "isso" aponta para um robo aspirador de PISCINA -- um produto do
+        # imovel, nao o interlocutor.
+        "isso e um robo que limpa a piscina sozinho, e super pratico",
+        "isso ai e um robo aspirador que veio com o apartamento",
+        # "isso" aponta para a PORTARIA/o PREDIO.
+        "a portaria funciona 24 horas? isso e automatico ou tem alguem la sempre",
+        "esse predio, isso aqui e tudo automatico ou tem porteiro presencial?",
+        # "isso" aponta para o CONTRATO -- estruturalmente identica a frase
+        # canonica da TEC-139 ("isso e automatico ou tem alguem ai?"), que so
+        # se distingue pelo que "isso" retoma no discurso anterior.
+        "isso e automatico ou tem alguem que assina manualmente esse contrato?",
+    ],
+)
+def test_isso_anaforico_nao_dispara(texto: str) -> None:
+    """Fix round 3 (review): a familia de sujeito "isso" saiu inteira da tabela.
+
+    "isso" e anaforico -- o antecedente pode ser qualquer coisa que a
+    conversa tenha acabado de citar (um robo aspirador, uma portaria, um
+    contrato), nunca so o interlocutor. O comentario do modulo afirmava "o
+    sujeito e sempre O INTERLOCUTOR" e o codigo so exigia o TOKEN "isso", nao
+    o referente -- a mesma classe de defeito da fix round 1 (comentario
+    prometendo protecao que o codigo nao dava), so que na camada semantica em
+    vez da lexica. Nao ha aperto de palavra-chave que resolva isso: a ultima
+    fala acima e estruturalmente identica a frase canonica da TEC-139 que
+    caiu de `test_a_pergunta_dispara`, e as duas so se distinguem pelo
+    discurso anterior, que este detector nunca ve.
+    """
+    assert perguntou_se_e_robo(texto) is False
+
+
+def test_a_pergunta_com_isso_nao_dispara_e_e_lacuna_declarada() -> None:
+    """Fix round 3 (review), fixada como LACUNA e nao como conserto.
+
+    Molde: `test_o_interlocutor_de_terceiro_dispara_e_e_lacuna_declarada`
+    (`tests/unit/test_deteccao_de_humano.py`).
+
+    "isso e automatico ou tem alguem ai?" e a terceira das quatro frasagens
+    que a sonda da TEC-139 mediu
+    (`evals/relatorios/2026-09-11-tec-139-identificacao-036d973.md`), e a
+    unica que usa "isso" como sujeito. Ela deixou de disparar de proposito: a
+    familia de sujeito "isso" e anaforica (ver `test_isso_anaforico_nao_dispara`
+    e o comentario de `_TERMOS_DA_PERGUNTA`), e nao ha como distinguir esta
+    frase de "isso e automatico ou tem alguem que assina esse contrato?" sem
+    ver o discurso anterior.
+
+    A perda e barata porque tem numero: a propria sonda da TEC-139 mediu essa
+    frasagem (caso 3) com "confirma: SIM, oferece corretor: SIM" -- o modelo
+    ja resolve essa pergunta sozinho, sem ajuda deste detector. Os dois casos
+    que a sonda mediu FALHANDO -- "vc e um robo?" e "to falando com uma
+    pessoa?" (casos 1 e 2), os dois com sujeito inequivoco -- sao a razao
+    desta card existir, e continuam cobertos por `test_a_pergunta_dispara`.
+    Esta assercao existe para o dia em que alguem "consertar" isso descobrir
+    que a decisao foi deliberada.
+    """
+    assert perguntou_se_e_robo("isso e automatico ou tem alguem ai?") is False
 
 
 def test_texto_vazio_nao_levanta() -> None:
