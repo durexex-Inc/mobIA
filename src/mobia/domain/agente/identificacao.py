@@ -134,8 +134,8 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 # 2. `_PADRAO_DE_PRIMEIRA_PESSOA` -- "to/estou falando com <sintagma>", onde o
 #    sujeito e implicito na conjugacao (1a pessoa do singular, sempre o
 #    proprio LEAD). Aqui o sujeito NAO basta: a regra exige tambem que o
-#    sintagma esteja NU e no fim da frase. A razao esta na fix round 4, mais
-#    abaixo.
+#    sintagma esteja NU e no fim da pergunta. A razao esta na fix round 4 e
+#    no Critical da fix round 5, mais abaixo.
 #
 # **Historico das faixas que ja foram largas, porque cada uma e uma classe de
 # defeito que pode voltar:**
@@ -178,13 +178,14 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 # entao a classe e frequente.
 #
 # O discriminante nao esta no sujeito nem no termo -- esta no que vem DEPOIS
-# do sintagma, dentro da mesma frase. "uma pessoa" sem modificador pergunta
+# do sintagma, dentro da mesma pergunta. "uma pessoa" sem modificador pergunta
 # pela NATUREZA do interlocutor; "uma pessoa da locacao" pergunta QUAL
 # interlocutor. Por isso `_PADRAO_DE_PRIMEIRA_PESSOA` exige que o sintagma
-# termine a frase, admitindo depois dele apenas duas coisas:
+# termine a pergunta, admitindo depois dele apenas duas coisas:
 #
-# - um `_REFORCOS_DE_IDENTIDADE` ("de verdade", "mesmo", "real", ...), que
-#   aperta a mesma pergunta em vez de restringir o sintagma;
+# - um `_REFORCOS_DE_IDENTIDADE` ("de verdade", "mesmo", "real", ...) ou um
+#   encerrador de turno ("hein", "viu", risada), que apertam a mesma pergunta
+#   ou nao dizem nada, em vez de restringir o sintagma;
 # - "ou" seguido do resto da frase, que e a alternativa explicita ("...ou com
 #   um robo?"). O primeiro membro da disjuncao ja e o sintagma NU, entao a
 #   frase comeca perguntando pela natureza do interlocutor mesmo quando o
@@ -200,28 +201,65 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 # falando com uma pessoa responsavel pela locacao?" ou "...com uma pessoa
 # especializada em investimento?", que sao adjetivo e nao preposicao.
 #
-# **O corte e por FRASE, nao pela mensagem inteira** (`_FIM_DE_FRASE`), senao
-# "to falando com uma pessoa? preciso de ajuda" nunca dispararia --
-# `_normalizar` troca pontuacao por espaco, e ai o `$` cairia so no fim do
-# recado. O corte nao inclui `\n` nem virgula: quebra de linha no meio da
-# frase e comum no WhatsApp, e cortar ali parteria o proprio termo. Custo
-# aceito: sem pontuacao nenhuma, "to falando com uma pessoa preciso de ajuda"
-# nao dispara.
+# **O corte e no PONTO DE INTERROGACAO, nao em fim de frase qualquer**
+# (`_FIM_DA_PERGUNTA`). Algum corte e preciso, senao "to falando com uma
+# pessoa? preciso de ajuda" nunca dispararia -- `_normalizar` troca pontuacao
+# por espaco, e ai o `$` cairia so no fim do recado inteiro.
 #
-# **Dois residuos conhecidos da round 4, medidos e nao consertados.**
+# **Mas cortar em `[?!.;]`, como a fix round 4 fazia, reabria a classe que ela
+# existe para fechar** -- foi o Critical da fix round 5. "to falando com uma
+# pessoa... da locacao?" tem reticencias ANTES do complemento, entao o corte
+# caia cedo, o `$` caia junto e o complemento de setor saia da frase sem nunca
+# ser olhado. Reticencias sao a pontuacao mais comum do WhatsApp brasileiro
+# depois do proprio `?`, e o mesmo valia para "!" e ";" no meio do recado.
+#
+# Cortar so em `?` nao e remendo, e a regra certa: a ancora existe para achar
+# o fim de uma PERGUNTA, e `?` e o unico sinal que marca isso. Ponto, ponto e
+# virgula e exclamacao terminam frase sem terminar pergunta -- e uma frase
+# terminada em ponto quase sempre e afirmacao, que nao e o que este detector
+# procura. `\n` e virgula ficam de fora pelo motivo de sempre: quebra de linha
+# no meio da frase e comum no WhatsApp, e cortar ali parteria o proprio termo.
+#
+# Custo aceito, e ele cresceu de proposito nesta rodada: sem `?` nenhum, "to
+# falando com uma pessoa preciso de ajuda" e "to falando com uma pessoa.
+# preciso de ajuda" nao disparam.
+#
+# **Tres residuos conhecidos, medidos e nao consertados.**
 #
 # 1. Depois de "ou" a regra aceita qualquer coisa, entao "estou falando com
 #    uma pessoa ou com alguem do financeiro?" dispara. A frase mistura as duas
 #    perguntas e e rara o bastante para nao valer uma segunda allowlist, que
 #    teria de enumerar como se nomeia uma maquina.
-# 2. O detector nao separa PERGUNTA de AFIRMACAO, porque `_normalizar` come a
-#    pontuacao: "ja estou falando com uma pessoa." dispara igual a "to falando
-#    com uma pessoa?". Exigir "?" fecharia isso, mas derrubaria junto a
-#    pergunta sem ponto de interrogacao, que no WhatsApp e comum -- e ai o
-#    conserto custaria mais recall do que a classe que ele evita, que precisa
-#    de um contexto raro (o lead relatando atendimento paralelo) e cujo
-#    complemento quase sempre nomeia de quem se fala ("...uma pessoa DA SUA
-#    EQUIPE"), o que a propria regra do sintagma nu ja barra.
+# 2. **Um `?` antes do complemento ainda corta cedo.** O Critical da round 5
+#    (reticencias, "!" e ";") foi fechado tirando esses sinais do corte, mas o
+#    `?` tem de continuar cortando -- e por isso "estou falando com uma
+#    pessoa? da locacao?" dispara pela primeira frase. Aqui, ao contrario das
+#    reticencias, o lead escreveu duas perguntas de verdade, e a primeira e
+#    mesmo de identidade -- entao a oferta nao cai em fala que nao perguntou
+#    nada. E o residuo mais benigno dos tres.
+# 3. **O detector nao separa PERGUNTA de AFIRMACAO, e isso atravessa AS DUAS
+#    regras.** Em primeira pessoa, "estou falando com uma pessoa agora."
+#    dispara -- o lead dizendo que fala com outro corretor neste momento --,
+#    porque "agora" e "ai" sao encerradores validos e `_normalizar` come o
+#    ponto. Em segunda pessoa e pior, e e a classe (C) da fix round 5: o
+#    idioma de elogio brasileiro ("nossa, vc e um robo de tao rapido!") e fala
+#    corrente e nao pergunta nada.
+#
+#    **A mitigacao do item anterior nao vale aqui, e e importante nao
+#    confundir as duas.** Em primeira pessoa o caso realista traz complemento
+#    ("...uma pessoa DA SUA EQUIPE"), e a regra do sintagma nu ja o barra. Em
+#    segunda pessoa NAO EXISTE regra de sintagma nu: `_PADRAO_DE_SEGUNDA_PESSOA`
+#    e alternacao de literais com `\b`, sem guarda de complemento, entao nada
+#    ali filtra a afirmacao.
+#
+#    Fica declarado e nao consertado porque o dano e baixo, e por um motivo
+#    que as quatro classes anteriores nao tinham: nessas falas o lead JA esta
+#    tratando o interlocutor como maquina, entao a oferta de corretor e
+#    inofensiva ou ate oportuna -- diferente de cair em fala sobre portao,
+#    piscina, maquina de lavar ou setor. O conserto exigiria o "?", que
+#    derrubaria a pergunta sem ponto de interrogacao.
+#    `test_a_afirmacao_dispara_e_e_lacuna_declarada`
+#    (`tests/unit/test_pergunta_se_e_robo.py`) trava a lacuna.
 #
 # **A recall e inverificavel, e isso esta declarado no desenho (D3).** Nao ha
 # fala real deste eixo em `evals/corpus/` -- zero ocorrencias nos cinco
@@ -254,7 +292,7 @@ _TERMOS_DE_SEGUNDA_PESSOA: tuple[str, ...] = (
 # implicito na conjugacao verbal e so pode ser o proprio LEAD -- mas, ao
 # contrario da segunda pessoa, isso sozinho nao basta (fix round 4, no
 # comentario acima). Quem fecha a regra e `_REFORCOS_DE_IDENTIDADE` mais a
-# ancora de fim de frase em `_PADRAO_DE_PRIMEIRA_PESSOA`.
+# ancora de fim de pergunta em `_PADRAO_DE_PRIMEIRA_PESSOA`.
 _TERMOS_DE_PRIMEIRA_PESSOA: tuple[str, ...] = (
     "to falando com uma pessoa",
     "to falando com um humano",
@@ -269,11 +307,27 @@ _TERMOS_DE_PRIMEIRA_PESSOA: tuple[str, ...] = (
 )
 
 # O que pode vir depois do sintagma sem deixar de ser pergunta de identidade.
-# Todos APERTAM a mesma pergunta ("de verdade", "de carne e osso", "real",
-# "viva", "humana", "mesmo") ou sao deixis sem conteudo restritivo ("ai",
-# "agora", "ne") -- nenhum nomeia setor, papel ou atributo, que e o que
-# viraria roteamento. Concordancia nos dois generos porque o sintagma varia
-# ("uma pessoa viva", "um humano vivo").
+# Duas familias, e nenhuma nomeia setor, papel ou atributo -- que e o que
+# viraria roteamento:
+#
+# 1. **Reforco de identidade** ("de verdade", "de carne e osso", "real",
+#    "viva", "humana"), que aperta a mesma pergunta. Concordancia nos dois
+#    generos porque o sintagma varia ("uma pessoa viva", "um humano vivo").
+# 2. **Encerrador de turno** -- deixis e marcador de discurso sem conteudo
+#    restritivo ("hein", "viu", "certo", "serio", "por favor", "ai", "agora",
+#    "ainda", risada). A fix round 5 acrescentou doze deles: todos disparavam
+#    antes da round 4 e a ancora em `$` os tinha derrubado junto com o
+#    roteamento, o que era perda de recall pura.
+#
+# **"neh" entra porque "eh" ja entrava.** `_TERMOS_DE_SEGUNDA_PESSOA` aceita
+# "vc eh um robo" para "é"; nao aceitar "neh" para "né" era incoerencia
+# interna da tabela, nao decisao.
+#
+# **"certo" e "serio" entram no masculino so, e isso e o que os mantem
+# seguros.** Como marcador de discurso eles sao invariaveis ("..., certo?"),
+# e como adjetivo concordam com o sintagma -- "uma pessoa certa" e roteamento
+# ("a pessoa certa para isso"), e continua barrada porque "certa" nao esta
+# aqui.
 #
 # **"aqui" ficou de fora e "ai" entrou, e a diferenca nao e arbitraria.** "ai"
 # aponta para onde o INTERLOCUTOR esta ("tem uma pessoa ai?"), que e a propria
@@ -281,6 +335,7 @@ _TERMOS_DE_PRIMEIRA_PESSOA: tuple[str, ...] = (
 # sobre quem responde. Mesmo criterio de sempre: o termo tem de falar do
 # interlocutor.
 _REFORCOS_DE_IDENTIDADE: tuple[str, ...] = (
+    # Reforco de identidade.
     "de verdade",
     "de carne e osso",
     "real",
@@ -289,10 +344,29 @@ _REFORCOS_DE_IDENTIDADE: tuple[str, ...] = (
     "humana",
     "humano",
     "mesmo",
+    "de fato",
+    # Encerrador de turno.
+    "hein",
+    "viu",
+    "certo",
+    "serio",
+    "por favor",
+    "pfv",
     "ai",
     "agora",
+    "ainda",
     "ne",
+    "neh",
 )
+
+# A risada e a unica coisa desta allowlist que NAO e literal, e por isso nao
+# passa por `re.escape`: o lead escreve de "kk" a "kkkkkkkk", "rs" ou "rsrs",
+# "haha" ou "hahaha". Enumerar cada comprimento seria pior que um fragmento de
+# regex de uma linha.
+#
+# `{2,}` nos tres, e nao `+`: "ha" com uma silaba so e o verbo "há" ("estou
+# falando com uma pessoa ha meia hora"), e "k" sozinho nao e risada nenhuma.
+_RISADA = r"k{2,}|(?:rs)+|(?:ha){2,}"
 
 # `\b` no INICIO E NO FIM de cada alternativa. O do inicio e pelo mesmo motivo
 # de `_PADRAO_POR_MOTIVO` em `context/gatilhos.py`: sem ele, um termo casaria
@@ -325,12 +399,14 @@ _PADRAO_DE_PRIMEIRA_PESSOA = re.compile(
     + "|".join(re.escape(termo) for termo in _TERMOS_DE_PRIMEIRA_PESSOA)
     + r")(?:\s+(?:"
     + "|".join(re.escape(reforco) for reforco in _REFORCOS_DE_IDENTIDADE)
+    + r"|"
+    + _RISADA
     + r"))*(?:\s+ou\b.*)?$"
 )
 
-# Ponto final, interrogacao, exclamacao e ponto-e-virgula -- sem `\n` e sem
-# virgula, de proposito (ver a fix round 4 no comentario de cima).
-_FIM_DE_FRASE = re.compile(r"[?!.;]+")
+# So o ponto de interrogacao -- ver o Critical da fix round 5, no comentario
+# de cima, para por que ponto, exclamacao e ponto-e-virgula sairam daqui.
+_FIM_DA_PERGUNTA = re.compile(r"\?+")
 
 _SO_LETRAS_E_ESPACO = re.compile(r"[^a-z ]+")
 _ESPACOS = re.compile(r"\s+")
@@ -356,10 +432,11 @@ def perguntou_se_e_robo(texto: str) -> bool:
 
     Duas regras, descritas no comentario de `_TERMOS_DE_SEGUNDA_PESSOA`: a de
     segunda pessoa corre sobre o recado inteiro normalizado, a de primeira
-    pessoa corre frase a frase porque precisa do fim da frase como ancora.
+    pessoa corre pergunta a pergunta porque precisa do fim da pergunta como
+    ancora.
 
-    A de segunda pessoa NAO corre frase a frase de proposito: ela nao ganha
-    nada com o corte e perderia o termo que a pontuacao partisse no meio.
+    A de segunda pessoa NAO corre pergunta a pergunta de proposito: ela nao
+    ganha nada com o corte e perderia o termo que um "?" partisse no meio.
 
     Nunca levanta: texto sem letra nenhuma normaliza para vazio e devolve
     False, mesma garantia de `gatilhos_de`.
@@ -371,6 +448,6 @@ def perguntou_se_e_robo(texto: str) -> bool:
         return True
     return any(
         _PADRAO_DE_PRIMEIRA_PESSOA.search(frase) is not None
-        for frase in (_normalizar(parte) for parte in _FIM_DE_FRASE.split(texto))
+        for frase in (_normalizar(parte) for parte in _FIM_DA_PERGUNTA.split(texto))
         if frase
     )

@@ -5,8 +5,17 @@ desenho.** Nao existe fala real deste eixo em `evals/corpus/` -- zero
 ocorrencias nos cinco arquivos --, entao todo termo do detector e invencao, e
 medi-lo contra as frasagens que ele foi escrito para pegar seria medi-lo
 contra o proprio vocabulario. O que da para provar e que ele nao dispara em
-nenhum dos mil e tantos turnos de fala real que o corpus tem, e e isso que
+nenhum dos turnos de fala real que o corpus tem, e e isso que
 `test_nao_dispara_em_nenhum_turno_do_corpus` faz.
+
+**"mil e tantos turnos" era numero inventado, e saiu na fix round 5.** Medido
+em 18/09/2026 com `carregar(CORPUS)`: os cinco arquivos dao **53 conversas e
+147 turnos de lead**, uma ordem de grandeza abaixo do que este arquivo
+afirmava desde a Task 1 (o numero veio do brief e ninguem o mediu). O que a
+correcao muda nao e so a honestidade da frase: 147 turnos sao uma amostra
+pequena, entao o teste do corpus prova menos do que parecia provar, e a caca
+por fala inventada -- os outros testes deste arquivo -- carrega mais peso do
+que se pensava.
 
 A assimetria que justifica a faixa estrita e a de `gatilhos.py`, nao a do
 opt-out: falso negativo devolve o comportamento de hoje, falso positivo gruda
@@ -275,7 +284,9 @@ def test_pergunta_de_roteamento_nao_dispara(texto: str) -> None:
     perguntou nada.
 
     O discriminante nao esta no sujeito nem no termo: esta no que vem DEPOIS
-    do sintagma, dentro da mesma frase. "uma pessoa" NU pergunta pela
+    do sintagma, dentro da mesma pergunta -- e a fix round 5 teve de apertar o
+    que conta como "mesma pergunta", ver
+    `test_pontuacao_interna_nao_corta_a_frase_cedo`. "uma pessoa" NU pergunta pela
     natureza do interlocutor; "uma pessoa da locacao" pergunta por qual
     interlocutor. `_PADRAO_DE_PRIMEIRA_PESSOA` fecha em `$` com uma allowlist
     de reforcos de identidade -- ver o comentario dele, e ver
@@ -357,21 +368,138 @@ def test_o_reforco_de_identidade_dispara(texto: str) -> None:
 
 
 def test_a_pergunta_seguida_de_outra_frase_dispara() -> None:
-    """Fix round 4 (review): o corte por frase, e nao pela mensagem inteira.
+    """Fix round 4 (review), apertado na round 5: o corte e no `?` e so nele.
 
     `_normalizar` troca pontuacao por espaco, entao um `$` sobre o recado
     inteiro cairia so no fim do ultimo recado -- e "to falando com uma
     pessoa? preciso de ajuda" deixaria de disparar, apesar de a pergunta
-    estar inteira e nua na primeira frase. `_FIM_DE_FRASE` corta antes de
-    normalizar, e a regra de primeira pessoa corre frase a frase.
+    estar inteira e nua antes do `?`. `_FIM_DA_PERGUNTA` corta antes de
+    normalizar, e a regra de primeira pessoa corre pergunta a pergunta.
 
-    O corte nao inclui `\\n` de proposito: quebra de linha no meio da frase e
-    comum no WhatsApp, e cortar ali parteria o proprio termo. O custo disso
-    esta na segunda assercao -- sem pontuacao nenhuma, a pergunta com
-    continuacao nao dispara, e essa e a lacuna declarada da round 4.
+    **As duas ultimas assercoes sao o preco do Critical da round 5** (ver
+    `test_pontuacao_interna_nao_corta_a_frase_cedo`): ponto, exclamacao e
+    ponto-e-virgula sairam do corte, entao a mesma fala com ponto no lugar do
+    `?` nao dispara mais. E o mesmo custo que a round 4 ja aceitava para fala
+    sem pontuacao nenhuma, so que maior -- e continua sendo falso negativo,
+    que devolve o comportamento de hoje.
     """
     assert perguntou_se_e_robo("to falando com uma pessoa? preciso de ajuda urgente") is True
     assert perguntou_se_e_robo("to falando com uma pessoa preciso de ajuda urgente") is False
+    assert perguntou_se_e_robo("to falando com uma pessoa. preciso de ajuda urgente") is False
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # Reticencias, a pontuacao mais comum do WhatsApp brasileiro depois
+        # do proprio "?".
+        "to falando com uma pessoa... da locacao?",
+        "to falando com uma pessoa.. do financeiro?",
+        # Exclamacao e ponto-e-virgula no meio do recado.
+        "estou falando com uma pessoa! da area de vendas?",
+        "to falando com uma pessoa; do juridico?",
+        # Ponto simples, pela mesma razao.
+        "estou falando com uma pessoa. da locacao?",
+    ],
+)
+def test_pontuacao_interna_nao_corta_a_frase_cedo(texto: str) -> None:
+    """Fix round 5 (review), Critical: o corte de frase reabria a round 4.
+
+    `_FIM_DE_FRASE` cortava em `[?!.;]+` sobre o texto CRU. Reticencias antes
+    do complemento cortavam a frase cedo, o `$` ia junto, e o complemento de
+    setor -- a unica coisa que a round 4 existe para olhar -- saia da frase
+    sem nunca ser visto. As cinco falas acima sao a classe de roteamento da
+    round 4 inteira, so que com pontuacao no meio.
+
+    O conserto nao foi remendar a lista de sinais e sim reduzi-la ao `?`
+    (`_FIM_DA_PERGUNTA`): a ancora existe para achar o fim de uma PERGUNTA, e
+    `?` e o unico sinal que marca isso. Ponto, exclamacao e ponto-e-virgula
+    terminam frase sem terminar pergunta. O custo esta na ultima assercao de
+    `test_a_pergunta_seguida_de_outra_frase_dispara`.
+    """
+    assert perguntou_se_e_robo(texto) is False
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "to falando com uma pessoa hein?",
+        "to falando com uma pessoa viu?",
+        "to falando com uma pessoa certo?",
+        "to falando com uma pessoa serio?",
+        "estou falando com uma pessoa por favor?",
+        "estou falando com uma pessoa pfv?",
+        "to falando com uma pessoa ainda?",
+        "estou falando com uma pessoa de fato?",
+        # "neh" entra porque `_TERMOS_DE_SEGUNDA_PESSOA` ja aceita "eh".
+        "estou falando com uma pessoa neh?",
+        # Risada: nao e literal, varia de comprimento -- ver `_RISADA`.
+        "to falando com uma pessoa kk",
+        "to falando com uma pessoa kkkkkkkk",
+        "estou falando com uma pessoa rs",
+        "estou falando com uma pessoa rsrs",
+        "to falando com uma pessoa haha",
+    ],
+)
+def test_encerrador_de_turno_dispara(texto: str) -> None:
+    """Fix round 5 (review), Important: a ancora em `$` tinha levado junto o recall.
+
+    Todos estes disparavam antes da round 4 e pararam quando o sintagma
+    passou a ter de terminar a pergunta. Nenhum deles restringe o sintagma --
+    sao deixis e marcador de discurso, exatamente o que a allowlist ja dizia
+    aceitar --, entao a perda era acidental e nao decisao de faixa.
+
+    **Nenhum deles serve de ponte:** conferido que "to falando com uma pessoa
+    hein do financeiro?" e as outras combinacoes de encerrador + setor
+    continuam False, porque o encerrador tem de encadear ate o `$` como
+    qualquer outro item da allowlist.
+
+    "certo" e "serio" entram no masculino so, de proposito: como marcador de
+    discurso sao invariaveis ("..., certo?"), e como adjetivo concordariam com
+    o sintagma -- "uma pessoa certa" e roteamento e segue barrada.
+    """
+    assert perguntou_se_e_robo(texto) is True
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # O idioma de elogio brasileiro: "voce e um robo!" = que rapidez.
+        "nossa, vc e um robo de tao rapido, respondeu na hora",
+        "ja vi que voce e um robo, tudo bem por mim",
+        "tanto faz se voce e um robo, so quero o valor do condominio",
+        # Primeira pessoa, mesma classe: o lead diz que fala com OUTRO
+        # corretor neste momento.
+        "estou falando com uma pessoa agora.",
+    ],
+)
+def test_a_afirmacao_dispara_e_e_lacuna_declarada(texto: str) -> None:
+    """Fix round 5 (review), classe (C), fixada como LACUNA e nao como conserto.
+
+    Molde: `test_a_pergunta_com_isso_nao_dispara_e_e_lacuna_declarada` (round
+    3) e `test_o_interlocutor_de_terceiro_dispara_e_e_lacuna_declarada`
+    (`tests/unit/test_deteccao_de_humano.py`).
+
+    **Estas quatro disparam de proposito, e nenhuma e pergunta.** O detector
+    nao separa pergunta de afirmacao, porque `_normalizar` come a pontuacao, e
+    a classe atravessa as duas regras: em segunda pessoa "voce e um robo!" e
+    elogio corrente de brasileiro (que rapidez); em primeira pessoa "estou
+    falando com uma pessoa agora." e relato de atendimento paralelo.
+
+    **Por que fica assim, e por que isso nao e a mesma coisa das quatro
+    classes anteriores.** Naquelas -- portao automatico, robo de piscina,
+    maquina de lavar, setor de locacao -- a oferta de corretor caia em fala
+    que nao tinha nada a ver com o interlocutor. Aqui o lead JA esta tratando
+    quem responde como maquina, entao a oferta e inofensiva ou ate oportuna.
+    Separar pergunta de afirmacao exigiria o "?", e isso derrubaria a pergunta
+    sem ponto de interrogacao, que no WhatsApp e comum -- conserto mais caro
+    que a classe evitada.
+
+    Esta assercao existe para que a lacuna nao volte como surpresa numa
+    proxima review: ela foi medida, avaliada e aceita, e o dia em que alguem
+    decidir fecha-la comeca por apagar este teste de proposito.
+    """
+    assert perguntou_se_e_robo(texto) is True
 
 
 def test_texto_vazio_nao_levanta() -> None:
@@ -383,11 +511,16 @@ def test_texto_vazio_nao_levanta() -> None:
 def test_nao_dispara_em_nenhum_turno_do_corpus() -> None:
     """A unica afirmacao forte disponivel sobre a faixa (D3 do desenho).
 
-    Mil e tantos turnos de fala de lead, e nenhum deles e esta pergunta --
-    conferido por grep antes de escrever o detector. Se um deles passar a
+    **147 turnos de lead em 53 conversas**, medido em 18/09/2026, e nenhum
+    deles e esta pergunta -- conferido por grep antes de escrever o detector,
+    e remedido na fix round 5, que corrigiu o "mil e tantos" que este arquivo
+    dizia desde a Task 1 (ver a docstring do modulo). Se um deles passar a
     disparar, ou o corpus ganhou um caso deste eixo (e ai o teste conta uma
     novidade boa) ou a faixa ficou larga demais (e ai ele pegou o defeito que
     o corpus inventado nunca pegaria).
+
+    Com 147 turnos, um verde aqui e condicao necessaria e longe de
+    suficiente -- nao o leia como medida de precisao da faixa.
 
     Sem chamada paga: `carregar` so le YAML.
     """
