@@ -152,18 +152,39 @@ _TERMOS_DA_PERGUNTA: tuple[str, ...] = (
     "tudo automatico",
     "e automatico ou",
     "automatico ou tem",
-    "tem alguem ai",
-    "tem alguem ai ou",
-    "tem gente ai",
     "e gente ou",
 )
 
-# Um padrao so, com `\b` no inicio de cada alternativa, pelo mesmo motivo de
-# `_PADRAO_POR_MOTIVO` em `context/gatilhos.py`: sem o limite, um termo casaria
-# escondido dentro de uma palavra maior. `re.escape` porque os termos sao
+# Fix round 1 (review): "tem alguem ai", "tem alguem ai ou" e "tem gente ai"
+# sairam daqui. Os tres sao pedido de presenca NU, sem nenhuma palavra de
+# ancora (automatico/robo/humano/maquina) por perto -- exatamente o defeito
+# que o comentario acima ja nomeia para "automatico"/"maquina"/"pessoa"
+# soltos, so que nao tinha sido aplicado a estes tres. "oi, tem alguem ai?
+# preciso de uma info rapida" e "tem alguem ai disponivel pra me passar as
+# opcoes de apartamento no bairro?" sao pedido de atencao comum, nao duvida
+# sobre falar com maquina, e disparavam antes desta rodada. A frase canonica
+# da TEC-139 que motivou os tres ("isso e automatico ou tem alguem ai?")
+# continua disparando sem eles, por "e automatico ou" -- conferido rodando.
+
+# Um padrao so, com `\b` no INICIO E NO FIM de cada alternativa. O do inicio
+# e pelo mesmo motivo de `_PADRAO_POR_MOTIVO` em `context/gatilhos.py`: sem
+# ele, um termo casaria escondido dentro de uma palavra maior.
+#
+# **O do fim nao tem equivalente em `gatilhos.py`, e foi bug ate a fix round
+# 1 (review) -- este comentario chegou a afirmar uma protecao que o codigo
+# nao dava.** `gatilhos.py` dispensa o fechamento porque o problema que
+# aquela correcao resolvia era outro: o OBJETO (`visita`, `proposta`, ...)
+# ser prefixo de palavra maior ("visitante") nunca foi o risco ali. Aqui e
+# exatamente esse risco, porque o vocabulario tem termos terminados em "ou"
+# e em palavras curtas: sem o `\b` de fechamento, "e maquina ou" casava
+# escondido em "e maquina outra vez que quebrou", "e automatico ou" em "e
+# automatico outro portao", "e humano ou" em "e humano outra pergunta", e "e
+# um bot" em "e um botao" -- e imovel com portao automatico fala em botao o
+# tempo todo. As cinco falas que provam os quatro casos viraram
+# `test_fala_vizinha_nao_dispara`, abaixo. `re.escape` porque os termos sao
 # literais, nunca regex.
 _PADRAO_DA_PERGUNTA = re.compile(
-    r"\b(?:" + "|".join(re.escape(termo) for termo in _TERMOS_DA_PERGUNTA) + r")"
+    r"\b(?:" + "|".join(re.escape(termo) for termo in _TERMOS_DA_PERGUNTA) + r")\b"
 )
 
 _SO_LETRAS_E_ESPACO = re.compile(r"[^a-z ]+")

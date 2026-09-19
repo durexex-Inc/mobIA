@@ -67,6 +67,57 @@ def test_fala_vizinha_nao_dispara(texto: str) -> None:
     assert perguntou_se_e_robo(texto) is False
 
 
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # Fix round 1 (review), Critical: sem `\b` de fechamento, o termo
+        # casava como PREFIXO da palavra seguinte. Estas tres provam o buraco
+        # dos termos terminados em "ou".
+        "e maquina outra vez que quebrou, poderiam consertar antes da entrega?",
+        "e automatico outro portao que tem la no fundo?",
+        "e humano outra pergunta, quantos quartos tem mesmo?",
+        # Mesmo buraco, termo "e um bot": imovel com portao automatico fala
+        # em "botao" o tempo todo, e "bot" e prefixo de "botao".
+        "quero saber se e um botao ou controle remoto pro portao",
+        "e um botao vermelho que abre o portao?",
+    ],
+)
+def test_prefixo_de_palavra_maior_nao_dispara(texto: str) -> None:
+    """Fix round 1 (review), Critical: o `\\b` de fechamento em `_PADRAO_DA_PERGUNTA`.
+
+    Antes desta rodada, `_PADRAO_DA_PERGUNTA` so ancorava o INICIO de cada
+    alternativa. "e maquina ou" casava escondido em "e maquina outra vez", "e
+    automatico ou" em "e automatico outro portao", "e humano ou" em "e humano
+    outra pergunta", e "e um bot" em "e um botao" -- e todas as cinco falas
+    acima sao fala corrente de quem pergunta sobre portao/imovel, nao duvida
+    sobre falar com maquina. O comentario de `_PADRAO_DA_PERGUNTA` explica por
+    que `context/gatilhos.py`, o molde, dispensa esse fechamento e por que
+    aqui nao dava para dispensar.
+    """
+    assert perguntou_se_e_robo(texto) is False
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "oi, tem alguem ai? preciso de uma info rapida",
+        "tem alguem ai disponivel pra me passar as opcoes de apartamento no bairro?",
+    ],
+)
+def test_pedido_de_presenca_nu_nao_dispara(texto: str) -> None:
+    """Fix round 1 (review), Important: "tem alguem ai" saiu da tabela.
+
+    Sem exigir "automatico"/"robo"/"humano"/"maquina" por perto, "tem alguem
+    ai" casava pedido corrente de atencao -- a mesma licao que o comentario
+    da tabela ja registra para "automatico"/"maquina"/"pessoa" soltos, so que
+    nao tinha sido aplicada a este termo (nem a "tem alguem ai ou" e "tem
+    gente ai", que saem pelo mesmo motivo). A frase canonica da TEC-139 que
+    motivou o termo, "isso e automatico ou tem alguem ai?", continua
+    disparando sem ele -- ver `test_a_pergunta_dispara`.
+    """
+    assert perguntou_se_e_robo(texto) is False
+
+
 def test_texto_vazio_nao_levanta() -> None:
     """Mesma garantia de `gatilhos_de`: texto sem letra nenhuma devolve False."""
     assert perguntou_se_e_robo("") is False
