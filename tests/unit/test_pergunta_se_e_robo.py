@@ -33,14 +33,24 @@ CORPUS = Path(__file__).resolve().parents[2] / "evals" / "corpus"
         "isso e automatico ou tem alguem ai?",
         "voce e humano ou maquina?",
         "isso aqui é um bot?",
-        "tem alguém aí ou é tudo automático?",
     ],
 )
 def test_a_pergunta_dispara(texto: str) -> None:
-    """As frasagens que a TEC-139 sondou, mais as variantes acentuadas.
+    """As quatro frasagens que a TEC-139 sondou, mais a variante acentuada.
 
     Nenhuma delas e fala real observada -- ver a docstring do modulo. Elas
     fixam a faixa, nao a validam.
+
+    **"tem alguém aí ou é tudo automático?" saiu daqui na fix round 2
+    (review).** Nao e frasagem da TEC-139 -- e caso inventado do brief desta
+    task --, e nao ha sujeito explicito antes de "e tudo automatico" (o
+    sujeito e elidido, subentendido pelo contexto). Cobri-la exigiria um termo
+    "e tudo automatico" sem exigir "isso" antes, e isso reabre exatamente a
+    classe de falso positivo que a fix round 2 fechou -- "no condominio e
+    tudo automatico, ate a garagem abre sozinha" e "showroom mostra tudo
+    automatico: portao, luz, cortina" sao fala real de mercado imobiliario
+    com a mesma forma. Perda de recall aceita pela D3 do desenho: as quatro
+    frasagens da TEC-139 continuam cobertas.
     """
     assert perguntou_se_e_robo(texto) is True
 
@@ -114,6 +124,47 @@ def test_pedido_de_presenca_nu_nao_dispara(texto: str) -> None:
     gente ai", que saem pelo mesmo motivo). A frase canonica da TEC-139 que
     motivou o termo, "isso e automatico ou tem alguem ai?", continua
     disparando sem ele -- ver `test_a_pergunta_dispara`.
+    """
+    assert perguntou_se_e_robo(texto) is False
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # "e uma maquina" via CONJUNCAO, nao verbo: o sujeito e o
+        # apartamento/a area de servico, nunca o interlocutor.
+        "o apartamento tem ar condicionado e uma maquina de lavar",
+        "a area de servico tem tanque e uma maquina de lavar nova",
+        # Mesma classe: sujeito e o condominio, nao quem fala.
+        "o condominio tem piscina e robo aspirador de folhas",
+        # "e automatico ou" sem sujeito interlocutor: sujeito e o
+        # portao/elevador, fala corrente de quem pergunta sobre o imovel.
+        "o portao e automatico ou manual, esse do prospecto?",
+        "o elevador e automatico ou precisa de chave?",
+        # "tudo automatico" sem "isso" antes: sujeito e o condominio/o
+        # showroom.
+        "no condominio e tudo automatico, ate a garagem abre sozinha",
+        "showroom mostra tudo automatico: portao, luz, cortina",
+        # "e gente ou" com sujeito que e o bairro, nao o interlocutor.
+        "nesse bairro e gente ou mais empresas que moram",
+        # "humano ou maquina" como assunto de atendimento, sem "voce e"/"isso
+        # e" antes -- o lead fala da PREFERENCIA dele, nao pergunta com quem
+        # fala.
+        "prefiro atendimento humano ou maquina, tanto faz pra mim resolver isso",
+    ],
+)
+def test_conjuncao_ou_sujeito_errado_nao_dispara(texto: str) -> None:
+    """Fix round 2 (review): a tabela passou a exigir o SUJEITO por extenso.
+
+    `_normalizar` tira acento, entao "e" (conjuncao) e "e" (verbo "e") viram
+    o mesmo token depois da normalizacao. Antes desta rodada, todo termo da
+    forma "e <ancora>" -- sem exigir "voce"/"vc"/"isso" antes -- casava
+    qualquer frase que usasse "e" como CONJUNCAO perto de robo/maquina/
+    automatico/gente, com sujeito nenhum a ver com o interlocutor: o
+    apartamento, o condominio, o portao, o bairro. As nove falas acima sao
+    fala real de mercado imobiliario com essa forma, e todas disparavam antes
+    do conserto. O comentario da tabela (`_TERMOS_DA_PERGUNTA`) explica por
+    que o sujeito agora entra por extenso em cada termo.
     """
     assert perguntou_se_e_robo(texto) is False
 

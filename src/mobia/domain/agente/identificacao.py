@@ -123,66 +123,105 @@ SEPARADOR_DA_IDENTIFICACAO = "\n\n"
 # nao perguntou nada -- que e o segundo criterio de aceite desta card, e e
 # visivel ao lead.
 #
-# **O criterio e o SUJEITO junto do predicado, nunca o substantivo sozinho.**
-# "automatico" qualificando portao ou elevador, "maquina" de lavar e "pessoa"
-# como sujeito sao fala corrente de quem procura imovel. Mesma licao que
-# `optout/deteccao.py` registra sobre "nada" e que `gatilhos.py` registra
-# sobre o verbo de acao.
+# **O criterio e o SUJEITO junto do predicado, e o sujeito e sempre O
+# INTERLOCUTOR -- nunca o substantivo sozinho, e nunca qualquer sujeito.**
+# Ate a fix round 1 (review) este comentario ja fazia essa afirmacao e a
+# tabela nao cumpria: os termos eram so o predicado ("e um robo", "e humano
+# ou maquina", "tudo automatico"), sem exigir de quem se fala. Isso e o que a
+# fix round 2 (review) explorou: `_normalizar` tira acento, entao "e"
+# (conjuncao) e "e" (verbo "e") viram o mesmo token, e todo termo da forma
+# "e <ancora>" passa a casar qualquer frase que use "e" como conjuncao antes
+# de robo/maquina/automatico/gente. "o apartamento tem ar condicionado e uma
+# maquina de lavar" dispara em "e uma maquina" pela conjuncao, nao pelo verbo
+# -- a fala e sobre o APARTAMENTO, nunca sobre com quem o lead fala. O mesmo
+# vale para "o portao e automatico ou manual" (sujeito e o portao) e "nesse
+# bairro e gente ou mais empresas" (sujeito e o bairro): a ancora
+# "automatico"/"gente" sozinha nao distingue pergunta sobre o interlocutor de
+# pergunta sobre o imovel, porque as duas falam do mesmo jeito.
+#
+# **O conserto e exigir o sujeito por extenso em cada termo, nunca so o
+# predicado.** A pergunta desta card e sempre sobre O INTERLOCUTOR: segunda
+# pessoa ("voce", "vc") ou demonstrativo referindo a propria conversa ("isso",
+# "isso ai", "isso aqui"), ou primeira pessoa perguntando com quem fala ("to
+# falando com...", "estou falando com..." -- sujeito implicito na conjugacao,
+# e sempre o LEAD). Nenhum termo aqui e mais predicado sozinho.
 #
 # **A recall e inverificavel, e isso esta declarado no desenho (D3).** Nao ha
 # fala real deste eixo em `evals/corpus/` -- zero ocorrencias nos cinco
 # arquivos --, entao estes termos sao invencao. O que o teste prova e o lado
 # negativo: que nenhum dos turnos reais do corpus dispara.
 _TERMOS_DA_PERGUNTA: tuple[str, ...] = (
-    "e um robo",
-    "e um bot",
-    "eh um robo",
-    "e robo",
-    "um robo ou",
-    "e humano ou",
-    "e uma maquina",
-    "e maquina ou",
-    "humano ou maquina",
-    "maquina ou humano",
-    "falando com uma pessoa",
-    "falando com um humano",
-    "falando com uma maquina",
-    "falando com um robo",
-    "falando com gente",
-    "tudo automatico",
-    "e automatico ou",
-    "automatico ou tem",
-    "e gente ou",
+    # SUJEITO (voce/vc/isso/isso ai/isso aqui) + verbo de ligacao (e/eh) +
+    # ROBO ou BOT.
+    "voce e um robo",
+    "voce e robo",
+    "voce eh um robo",
+    "vc e um robo",
+    "vc e robo",
+    "vc eh um robo",
+    "isso e um robo",
+    "isso e robo",
+    "isso eh um robo",
+    "isso ai e um robo",
+    "isso aqui e um robo",
+    "voce e um bot",
+    "vc e um bot",
+    "isso e um bot",
+    "isso ai e um bot",
+    "isso aqui e um bot",
+    # SUJEITO + verbo + HUMANO/MAQUINA, nos dois sentidos -- "voce e humano
+    # ou maquina?" e "voce e maquina ou humano?" sao a mesma pergunta.
+    "voce e humano ou maquina",
+    "voce e maquina ou humano",
+    "vc e humano ou maquina",
+    "vc e maquina ou humano",
+    "isso e humano ou maquina",
+    "isso e maquina ou humano",
+    # SUJEITO + verbo + GENTE, sempre com o "ou" colado: sem ele, "voce e
+    # gente" sozinho e afirmacao, nao pergunta, e nao ha frasagem da card
+    # que a use assim.
+    "voce e gente ou",
+    "vc e gente ou",
+    "isso e gente ou",
+    # "isso" (e variantes) + AUTOMATICO, sempre com a segunda metade da
+    # pergunta colada -- nunca "automatico" ou "tudo automatico" sozinho, que
+    # e fala corrente de porta/portao/elevador/condominio ("o portao e
+    # automatico ou manual?", "no condominio e tudo automatico"), com sujeito
+    # que nunca e o interlocutor.
+    "isso e automatico ou tem alguem",
+    "isso ai e automatico ou tem alguem",
+    "isso aqui e automatico ou tem alguem",
+    "isso e tudo automatico",
+    "isso ai e tudo automatico",
+    "isso aqui e tudo automatico",
+    # Primeira pessoa: "[eu] to/estou falando com X" -- o sujeito e
+    # implicito na conjugacao verbal (1a pessoa do singular), e so pode ser
+    # o proprio LEAD perguntando com quem fala.
+    "to falando com uma pessoa",
+    "to falando com um humano",
+    "to falando com uma maquina",
+    "to falando com um robo",
+    "to falando com gente",
+    "estou falando com uma pessoa",
+    "estou falando com um humano",
+    "estou falando com uma maquina",
+    "estou falando com um robo",
+    "estou falando com gente",
 )
-
-# Fix round 1 (review): "tem alguem ai", "tem alguem ai ou" e "tem gente ai"
-# sairam daqui. Os tres sao pedido de presenca NU, sem nenhuma palavra de
-# ancora (automatico/robo/humano/maquina) por perto -- exatamente o defeito
-# que o comentario acima ja nomeia para "automatico"/"maquina"/"pessoa"
-# soltos, so que nao tinha sido aplicado a estes tres. "oi, tem alguem ai?
-# preciso de uma info rapida" e "tem alguem ai disponivel pra me passar as
-# opcoes de apartamento no bairro?" sao pedido de atencao comum, nao duvida
-# sobre falar com maquina, e disparavam antes desta rodada. A frase canonica
-# da TEC-139 que motivou os tres ("isso e automatico ou tem alguem ai?")
-# continua disparando sem eles, por "e automatico ou" -- conferido rodando.
 
 # Um padrao so, com `\b` no INICIO E NO FIM de cada alternativa. O do inicio
 # e pelo mesmo motivo de `_PADRAO_POR_MOTIVO` em `context/gatilhos.py`: sem
 # ele, um termo casaria escondido dentro de uma palavra maior.
 #
 # **O do fim nao tem equivalente em `gatilhos.py`, e foi bug ate a fix round
-# 1 (review) -- este comentario chegou a afirmar uma protecao que o codigo
-# nao dava.** `gatilhos.py` dispensa o fechamento porque o problema que
-# aquela correcao resolvia era outro: o OBJETO (`visita`, `proposta`, ...)
-# ser prefixo de palavra maior ("visitante") nunca foi o risco ali. Aqui e
-# exatamente esse risco, porque o vocabulario tem termos terminados em "ou"
-# e em palavras curtas: sem o `\b` de fechamento, "e maquina ou" casava
-# escondido em "e maquina outra vez que quebrou", "e automatico ou" em "e
-# automatico outro portao", "e humano ou" em "e humano outra pergunta", e "e
-# um bot" em "e um botao" -- e imovel com portao automatico fala em botao o
-# tempo todo. As cinco falas que provam os quatro casos viraram
-# `test_fala_vizinha_nao_dispara`, abaixo. `re.escape` porque os termos sao
-# literais, nunca regex.
+# 1 (review) -- o comentario daquela rodada chegou a afirmar uma protecao que
+# o codigo nao dava.** `gatilhos.py` dispensa o fechamento porque o problema
+# que aquela correcao resolvia era outro: o OBJETO (`visita`, `proposta`,
+# ...) ser prefixo de palavra maior ("visitante") nunca foi o risco ali.
+# Aqui e exatamente esse risco: sem o `\b` de fechamento, um termo terminado
+# em palavra curta casaria escondido dentro de uma palavra maior --
+# "isso e um bot" dentro de "isso e um botao", por exemplo. `re.escape`
+# porque os termos sao literais, nunca regex.
 _PADRAO_DA_PERGUNTA = re.compile(
     r"\b(?:" + "|".join(re.escape(termo) for termo in _TERMOS_DA_PERGUNTA) + r")\b"
 )
