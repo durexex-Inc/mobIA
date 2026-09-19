@@ -2084,6 +2084,17 @@ async def executar_turno(
     # A flag e o mecanismo, e nao uma lista de trilhas, de proposito: a proxima
     # substituicao deterministica marca-a junto com as outras seis, e o append
     # continua certo sem que ninguem se lembre dele.
+    #
+    # **O que ela afirma e PROCEDENCIA, e isso e um proxy direcional -- lacuna
+    # declarada, nao conserto pendente.** "Substituido => nao confirmou" vale
+    # sempre; a reciproca nao. Os ramos `desambiguando` e `virou_investidor`
+    # entregam texto do modelo, entao a flag nasce False e o append roda --
+    # so que `SISTEMA_DA_DESAMBIGUACAO` manda "Escreva uma unica pergunta" e
+    # "Devolva apenas o texto da pergunta", e pergunta nenhuma confirma ser
+    # assistente virtual. E pre-existente ao conserto de Important 1 e o dano e
+    # baixo: a oferta gruda numa pergunta aberta, sem contradizer nada do que o
+    # turno acabou de dizer -- diferente das tres trilhas deterministicas, em
+    # que ela contradizia. Esta declarada nas "Lacunas declaradas" do desenho.
     texto_substituido = False
 
     if isinstance(telemetria, RespostaDoInvestidor):
