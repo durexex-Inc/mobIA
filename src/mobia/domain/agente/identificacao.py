@@ -540,3 +540,28 @@ def ja_oferece_corretor(texto: str) -> bool:
     ja oferece.
     """
     return "corretor" in _normalizar(texto)
+
+
+def texto_com_oferta(corpo_do_lead: str | None, texto: str) -> str:
+    """A oferta do CA-04.1, anexada so quando falta.
+
+    O CA-04.1 pede duas coisas ao confirmar ser assistente virtual: confirmar
+    E oferecer corretor. A TEC-139 mediu e so a primeira acontecia de forma
+    confiavel -- o modelo confirmava em todos os casos sondados e oferecia em
+    parte deles, e os que nao ofereciam eram as perguntas neutras.
+
+    **A guarda olha o `texto` ja montado, e nao a resposta crua do modelo.** E
+    o que faz uma regra so cobrir as tres duplicacoes possiveis: o modelo ter
+    oferecido sozinho, a identificacao ter oferecido no prefixo, e o turno ter
+    caido numa das seis trilhas deterministicas de `turno.py` que ja falam em
+    corretor. Nenhuma precisa de caso proprio -- a pergunta nao e QUEM
+    ofereceu, e se a mensagem oferece.
+
+    `corpo_do_lead` e opcional porque em `executar_turno` ele e `str | None`,
+    do mesmo jeito que `pediu_optout` e `gatilhos_de` ja tratam la.
+    """
+    if not corpo_do_lead or not perguntou_se_e_robo(corpo_do_lead):
+        return texto
+    if ja_oferece_corretor(texto):
+        return texto
+    return f"{texto}{SEPARADOR_DA_OFERTA}{TEXTO_DA_OFERTA_DE_CORRETOR}"

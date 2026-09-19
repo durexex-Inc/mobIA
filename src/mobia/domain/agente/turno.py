@@ -23,6 +23,7 @@ from mobia.domain.agente.identificacao import (
     SEPARADOR_DA_IDENTIFICACAO,
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
+    texto_com_oferta,
 )
 from mobia.domain.agente.investidor import RespostaDoInvestidor
 from mobia.domain.agente.recomendacao import bairros_a_excluir, resolver_ordinais
@@ -2549,6 +2550,14 @@ async def executar_turno(
     )
     if identificar:
         texto = f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{texto}"
+
+    # CA-04.1: ao confirmar ser assistente virtual, oferecer corretor. A guarda
+    # inteira vive em `identificacao.texto_com_oferta` -- inclusive a razao de
+    # ela olhar o texto ja montado e nao a resposta crua do modelo.
+    #
+    # Aqui, e nao depois de `quebrar_em_mensagens`: aquele corte aplica os 600
+    # caracteres da RN-04.2, e anexar depois dele estouraria o teto em silencio.
+    texto = texto_com_oferta(corpo, texto)
 
     # Fix de revisao final (Critical 1 e Important 2, TEC-140). So o caminho
     # de texto (o `else:` abaixo) pode marcar as duas True -- `_apresentar` ja
