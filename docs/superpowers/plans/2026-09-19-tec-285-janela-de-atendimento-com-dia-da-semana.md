@@ -123,12 +123,9 @@ Em `src/mobia/domain/humano/deteccao.py`, **imediatamente antes** de `def dentro
 #
 # **O dia e regra em codigo, e nao configuracao (TEC-285).** As horas vem de
 # `Settings` e os dias nao, e a assimetria e deliberada: um campo cujo unico
-# valor legal mantem os literais verdadeiros seria a armadilha que esta card
-# existe para fechar -- liga-lo faria tres textos mentirem em silencio. Mudar
-# os dias e mudanca de CODIGO E DE TEXTO, juntos: os literais de
-# `TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO`, de `SUFIXO_FORA_DA_JANELA`
-# (`domain/agente/turno.py`) e de `TEXTO_DA_JANELA_HUMANA`
-# (`domain/notificacao/envio.py`) dizem "de segunda a sabado" por extenso.
+# valor legal mantem um literal verdadeiro seria a armadilha que esta card
+# existe para fechar -- liga-lo faria o texto mentir em silencio. Mudar os
+# dias e mudanca de CODIGO E DE TEXTO, juntos.
 _DOMINGO = 6
 ```
 
@@ -477,7 +474,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ### Task 4: A prosa que passou a mentir
 
-Sem código novo. Dois dos seis sítios já foram consertados nas Tasks 1–3 (o docstring de `dentro_da_janela_de_atendimento`, o comentário de `SUFIXO_FORA_DA_JANELA`), porque eram do arquivo que aquelas tasks editavam. Sobram quatro.
+Sem código novo. **Três** dos seis sítios já saíram nas Tasks 1–3, porque eram do arquivo que aquelas tasks já editavam: o docstring de `dentro_da_janela_de_atendimento` (Task 1), o comentário dos campos de `Settings` (Task 2) e o comentário de `SUFIXO_FORA_DA_JANELA` (Task 3). Sobram três.
 
 **Files:**
 - Modify: `src/mobia/app/config.py` (docstring de `_recusar_janela_de_atendimento_impossivel`, por volta da linha 480)
