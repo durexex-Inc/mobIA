@@ -62,7 +62,7 @@ As **horas continuam vindo de `Settings`** via `.format()`, como já vêm, e iss
 
 `TEXTO_DA_JANELA_HUMANA` (`domain/notificacao/envio.py`) **não muda**: já tem a frase.
 
-Os dois literais tocados passam a estar na lista de `tests/unit/test_acento_no_texto_ao_lead.py`, que reprova se um literal sumir dela. Eles nao estavam antes desta card: a lacuna foi achada durante a execucao, e o contador daquele arquivo foi de 15 para 17.
+Os dois literais tocados passam a estar na lista de `tests/unit/test_acento_no_texto_ao_lead.py`, que reprova se um literal sumir dela. Eles não estavam antes desta card: a lacuna foi achada durante a execução, e o contador daquele arquivo foi de 15 para 17.
 
 ## D4 — Os dias são regra em código, não configuração
 
