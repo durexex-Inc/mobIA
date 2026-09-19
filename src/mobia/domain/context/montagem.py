@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -270,11 +271,52 @@ def _estimar(resumo: str | None, literais: list[Message], estado: LeadQualificat
     return bruto // 4
 
 
+# O piso de caracteres por token que `Settings.limiar_de_contagem_efetivo`
+# documenta: portugues acentuado roda a 3,2-3,7, e `_estimar` supoe 4.
+#
+# No caminho normal essa diferenca e coberta pelo limiar, cuja razao de ser e
+# deixar a estimativa responder so onde errar nao muda a decisao. No modo sem
+# modelo ela e a palavra final, e ai a mesma diferenca vira o defeito: dizer
+# "cabe" sobre um texto que estoura.
+#
+# O que este piso NAO cobre continua sendo o que o limiar ja declara -- emoji
+# (~0,3-0,5 chars/token) e blobs base64/URL (~2). Um turno dominado por
+# qualquer um dos dois sai subcontado aqui como sai la. Risco aceito e
+# documentado, nao defeito escondido.
+_CHARS_POR_TOKEN_NO_PIOR_CASO = 3.2
+
+# Derivado dos dois numeros acima, e nao escrito como 1.25: o fator existe
+# porque `_estimar` supoe 4 e o piso e 3,2. Escrever o produto esconderia de
+# onde ele vem, e mudaria de significado em silencio se um dos dois mudasse.
+_FATOR_PESSIMISTA = 4 / _CHARS_POR_TOKEN_NO_PIOR_CASO
+
+
+def _estimar_pessimista(
+    resumo: str | None, literais: list[Message], estado: LeadQualification | None
+) -> int:
+    """A estimativa de `_estimar` corrigida para errar para cima.
+
+    Usada so pelo modo sem modelo. Cortar literais a mais num caminho que ja
+    e degradacao declarada e a direcao segura do erro; devolver contexto
+    acima do teto nao e.
+
+    O `+ 1` compensa a divisao inteira da propria `_estimar`: `bruto // 4`
+    pode descartar ate quase um token inteiro (o resto de 0 a 3 caracteres
+    perdido no truncamento), e escalar esse valor ja truncado por
+    `_FATOR_PESSIMISTA` sem repor essa perda deixaria o pior resto (3)
+    abaixo do piso de 3,2 chars/token -- exatamente o que esta funcao existe
+    para impedir.
+    """
+    return math.ceil((_estimar(resumo, literais, estado) + 1) * _FATOR_PESSIMISTA)
+
+
 async def _contar_se_valer(
     contador: ContadorPort,
     resumo: str | None,
     literais: list[Message],
     estado: LeadQualification | None,
+    *,
+    sem_modelo: bool = False,
 ) -> int:
     """Estimativa barata decide se vale pagar o round trip da contagem real.
 
@@ -290,6 +332,12 @@ async def _contar_se_valer(
     completa e os casos que este limiar **nao** cobre (emoji, base64/URL) em
     `Settings.limiar_de_contagem_efetivo`.
     """
+    # O modo sem modelo nao consulta o limiar: ele nao esta escolhendo entre a
+    # estimativa e a contagem, esta declarando que a contagem nao esta
+    # disponivel. Ver `_estimar_pessimista`.
+    if sem_modelo:
+        return _estimar_pessimista(resumo, literais, estado)
+
     settings = get_settings()
     estimativa = _estimar(resumo, literais, estado)
     # Backstop duro, independente do limiar: `estimativa >= teto` e o mesmo que
@@ -316,6 +364,8 @@ async def _truncar_ate_caber(
     estado: LeadQualification | None,
     tokens: int,
     teto: int,
+    *,
+    sem_modelo: bool = False,
 ) -> tuple[str | None, list[Message], int]:
     """Ultimo recurso: o teto e limite fisico da chamada, o piso e preferencia
     de qualidade. Quando se contradizem, o teto vence -- ate o fim, nao so na
@@ -332,6 +382,10 @@ async def _truncar_ate_caber(
     mas ainda e melhor que nada. Se nem isso bastar, quem chama nao tem
     contexto nenhum que caiba: a excecao tipada avisa em vez de devolver algo
     acima do teto.
+
+    `sem_modelo` existe para o estouro do deadline de `montar_contexto`:
+    contar aqui pagaria um round trip ao provedor no unico momento em que
+    ja se sabe que nao ha tempo para ele.
     """
     piso = get_settings().contexto_literais_minimas
     avisou_do_piso = False
@@ -347,12 +401,16 @@ async def _truncar_ate_caber(
             log.warning("contexto.piso_violado", channel=channel, literais=len(literais), piso=piso)
             avisou_do_piso = True
         log.warning("contexto.truncado", channel=channel, descartadas=descartadas, tokens=tokens)
-        tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
+        tokens = await _contar_se_valer(
+            contador, texto_do_resumo, literais, estado, sem_modelo=sem_modelo
+        )
 
     if tokens > teto and texto_do_resumo is not None:
         texto_do_resumo = None
         log.warning("contexto.resumo_descartado", channel=channel, tokens=tokens)
-        tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
+        tokens = await _contar_se_valer(
+            contador, texto_do_resumo, literais, estado, sem_modelo=sem_modelo
+        )
 
     if tokens > teto:
         raise ContextoIrreducivel(
