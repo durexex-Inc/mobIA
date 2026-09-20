@@ -120,8 +120,8 @@ def motivo_do_provedor(exc: BaseException) -> str | None:
     nao carrega texto do lead. Para qualquer outra excecao, devolve None --
     `str(exc)` de excecao arbitraria pode carregar o que nao deve ir para log.
 
-    **Ate a TEC-292 esta funcao tinha o mesmo nome e o mesmo docstring do
-    vizinho, mas nao a mesma garantia**: repassava `str(exc)[:300]` cru em vez
+    **Ate a TEC-292 esta funcao tinha a mesma primeira linha e a mesma
+    promessa do vizinho, mas nao a mesma garantia**: repassava `str(exc)[:300]` cru em vez
     de extrair campos do `body`. O SDK da OpenAI renderiza `str()` de
     `APIStatusError` como `Error code: 400 - <corpo inteiro>`, entao o texto
     que vazava era o mesmo corpo que esta funcao existe para nao logar -- no

@@ -230,7 +230,7 @@ async def test_sem_enqueue_a_linha_fica_em_falhou_com_motivo(app_sem_pool):
 async def test_enqueue_que_levanta_tambem_marca_falhou(app_com_token, monkeypatch, redis_pool):
     """Redis no ar mas `enqueue_job` levantando: mesma consequencia, mesmo desfecho.
 
-    Ate a TEC-292 esta asserção conferia que o texto da excecao ("redis fora
+    Ate a TEC-292 esta assercao conferia que o texto da excecao ("redis fora
     do ar") chegava ao `motivo`. Isso e exatamente o vetor que a TEC-292
     fecha: `importacao.erros` e coluna duravel que o GET devolve por HTTP, e
     texto de terceiro (aqui, um `ConnectionError` que um teste escreveu, mas

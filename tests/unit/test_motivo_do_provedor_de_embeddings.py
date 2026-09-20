@@ -41,8 +41,11 @@ def test_o_texto_cru_do_sdk_nao_atravessa() -> None:
 
 
 def test_sem_corpo_sobra_o_codigo_de_status() -> None:
-    """Degradar para `400` e o comportamento certo: o codigo sozinho ja separa
-    erro de conta de erro de contrato, que e o que a TEC-237 comprou.
+    """Sem `body` nao ha campo a extrair, e `400` sozinho e o resultado certo
+    mesmo assim -- mas e a situacao CEGA que a TEC-237 descreve, so que aqui
+    inevitavel em vez de escolhida: sem mensagem, nao ha como separar erro de
+    conta de erro de contrato. O que a TEC-237 comprou foi a mensagem,
+    justamente porque o codigo sozinho nao basta.
     """
     exc = _erro_do_provedor(None)
 

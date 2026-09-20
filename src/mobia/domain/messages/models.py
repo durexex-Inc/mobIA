@@ -118,10 +118,16 @@ class Message(Base):
 
         `hide_parameters=True` cala o eco de parametros da propria SQLAlchemy,
         mas o asyncpg monta a mensagem de erro dele com o valor ofensivo dentro
-        antes de a SQLAlchemy ver qualquer coisa -- e esse texto chega ao log
-        via `detail=str(exc)`. Escrever `Message(text_body="oi")` e o engano
-        natural e e o que abre o canal. Aqui a falha vira erro de aplicacao com
-        mensagem que nos controlamos, e ela nunca cita o valor.
+        antes de a SQLAlchemy ver qualquer coisa. Ate a TEC-292 esse texto
+        chegava ao log via `detail=str(exc)`; desde entao os quatro sitios de
+        banco trocaram isso por `motivo_do_erro_de_banco`, que extrai campos em
+        vez de repassar texto -- mas cada um desses sitios continua chamando
+        `log.exception`, que despeja o traceback completo independente do que
+        `detail=` carrega, e o texto da excecao do asyncpg vive nesse
+        traceback. E esse canal que a guarda continua fechando por construcao:
+        escrever `Message(text_body="oi")` e o engano natural, e e o que o
+        abriria. Aqui a falha vira erro de aplicacao com mensagem que nos
+        controlamos, e ela nunca cita o valor.
         """
         if valor is None or isinstance(valor, bytes | bytearray | memoryview):
             return valor

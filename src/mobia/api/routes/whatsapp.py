@@ -86,7 +86,7 @@ async def ingest(
         # o parser pode encontrar qualquer coisa dentro de um JSON de terceiro.
         # `reason` (o nome da classe) basta para saber ONDE olhar. O
         # `log.exception` continua emitindo o traceback completo, e isso fica
-        # de fora desta card -- e classe D no desenho, nao classe C.
+        # de fora desta card -- e classe D no desenho, nao classe A.
         log.exception(
             "webhook.error",
             reason=type(exc).__name__,
@@ -113,6 +113,12 @@ async def ingest(
     try:
         await service.ingest(parsed)
     except Exception as exc:
+        # `detail` vem curado por `motivo_do_erro_de_banco`, mas o
+        # `log.exception` abaixo continua despejando o traceback completo --
+        # que termina no `IntegrityError: ... DETAIL: ...` do asyncpg do jeito
+        # que `hide_parameters` nao alcanca. A curadoria do `detail` convive
+        # com esse traceback; fecha-lo e classe D no desenho e ficou fora
+        # desta card, mesma ressalva do `webhook.error` acima.
         log.exception(
             "webhook.persist_failed",
             reason=type(exc).__name__,
