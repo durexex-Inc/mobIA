@@ -1,9 +1,9 @@
 """A varredura que escala o handoff sem aceite dentro do prazo. TEC-178."""
 
-import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from conftest import eventos_de_log  # type: ignore[import-not-found]
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,19 +35,6 @@ async def _marcar_status(session: AsyncSession, *, handoff_id: uuid.UUID, status
         update(Handoff).where(Handoff.id == handoff_id).values(status=status.value)
     )
     await session.commit()
-
-
-def _eventos_de_log(caplog, evento: str) -> list[dict]:
-    """Decodifica os registros JSON do structlog que carregam `evento`."""
-    encontrados = []
-    for registro in caplog.records:
-        try:
-            dados = json.loads(registro.getMessage())
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if dados.get("event") == evento:
-            encontrados.append(dados)
-    return encontrados
 
 
 async def test_handoff_vencido_escala_e_tenta_avisar_o_gerente(
@@ -164,6 +151,6 @@ async def test_sem_gerente_cadastrado_escala_mesmo_assim_e_loga(
     linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
     assert linha.status == Status.ESCALADO
 
-    avisos = _eventos_de_log(caplog, "handoff.escalado_sem_gerente")
+    avisos = eventos_de_log(caplog, "handoff.escalado_sem_gerente")
     assert len(avisos) == 1
-    assert avisos[0]["handoff_id"] == str(handoff_id)
+    assert avisos[0].corpo["handoff_id"] == str(handoff_id)

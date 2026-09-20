@@ -5,12 +5,15 @@ Basename distinto de tudo em `tests/unit/`, e rima com
 arquivos de integracao deste repo sao autocontidos de proposito.
 """
 
-import json
 import uuid
 from decimal import Decimal
 from typing import Any
 
-from conftest import CANAL_AGENTE, CONVERSA_AGENTE
+from conftest import (
+    CANAL_AGENTE,
+    CONVERSA_AGENTE,
+    eventos_de_log,  # type: ignore[import-not-found]
+)
 from sqlalchemy import select
 
 from mobia.domain.agente.schemas import Extracao, Intencao, RespostaDoAgente
@@ -138,23 +141,6 @@ async def _conversa_ja_existe(session: Any) -> None:
     await _entrada_do_lead(session, texto="ja tinha falado com o assistente antes")
 
 
-def _eventos_de_log(caplog: Any, evento: str) -> list[tuple[str, dict[str, Any]]]:
-    """(nivel, corpo) de cada registro JSON do structlog que carrega `evento`.
-
-    Mesmo molde de `_eventos_de_log` em `test_apresentacao_no_turno.py`, copiado
-    e nao importado -- os arquivos de integracao deste repo sao autocontidos.
-    """
-    encontrados = []
-    for registro in caplog.records:
-        try:
-            dados = json.loads(registro.getMessage())
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if dados.get("event") == evento:
-            encontrados.append((registro.levelname, dados))
-    return encontrados
-
-
 async def test_prosa_consistente_segue_como_prefixo(
     session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
 ) -> None:
@@ -214,7 +200,7 @@ async def test_prosa_inventada_vira_ficha_pura(
     assert "Apartamento AP-1004" in outbound.entregues[0]
     assert await _kinds_reservados() == [KINDS_DAS_FICHAS[0]]
 
-    ((nivel, evento),) = _eventos_de_log(caplog, "citacao.bloqueada")
+    ((nivel, evento),) = eventos_de_log(caplog, "citacao.bloqueada")
     assert nivel == "ERROR"
     assert "R$ 900.000" in evento["citados"]
     assert PROSA_INVENTADA not in caplog.text, (
