@@ -32,7 +32,7 @@ Local, com a venv do projeto:
 ./.venv/Scripts/python.exe -m pytest                        # serial, quando precisar
 ```
 
-**Para a suíte inteira, use `-n 8 --dist loadfile`.** Medido em 12/09/2026, Python 3.13.15, máquina ociosa, 1614 testes: serial são **170,9s**, com `-n 8` são **~49s** (cinco execuções entre 48,7s e 51,1s). `-n 12` quase não melhora sobre o 8. O número de 07/09/2026 (TEC-156), ~22 minutos, está velho.
+**Para a suíte inteira, use `-n 8 --dist loadfile`.** Medido em 12/09/2026, Python 3.13.15, máquina ociosa, 1614 testes: serial são **170,9s**, com `-n 8` são **~49s** (cinco execuções entre 48,7s e 51,1s). `-n 12` quase não melhora sobre o 8. O número de 07/09/2026 (TEC-156), ~22 minutos, está velho. Remedido em 19/09/2026, mesma máquina e mesmo Python, já com **2513 testes**: **67,0s** com `-n 8 --dist loadfile` — a suíte cresceu 56% e continuou abaixo de 70 segundos.
 
 **Só que há dias em que `-n 8` não é executável aqui — ver "Quando o `-n 8` derruba o Postgres", abaixo.** Se a execução voltar com centenas de `ERROR` de setup, não repita o mesmo comando: o problema não é o código nem a sua branch, e insistir no mesmo `-n` só reproduz a queda.
 
@@ -103,6 +103,28 @@ Get-Process python* | Select-Object Id, StartTime, CPU
 ```
 
 Log parado há horas **mais** CPU parada é deadlock: mate os processos e rode por blocos.
+
+**Desde a TEC-291 um travamento à espera de lock se denuncia sozinho, em segundos, e diz quem o causou.** O `TRUNCATE` de `banco_limpo` era o ponto onde qualquer contenção virava espera infinita — ele pede `ACCESS EXCLUSIVE` nas 19 tabelas de `TABELAS` antes de cada teste que toca banco, e basta um backend com um `SELECT` de transação aberta, um `ACCESS SHARE`, para pendurar a suíte. Agora ele tem `lock_timeout` e, ao estourar, consulta `pg_locks` e reprova nomeando o bloqueador:
+
+```
+RuntimeError: o TRUNCATE de `banco_limpo` esperou mais de 10s por lock, no setup de
+tests/integration/test_health.py::test_health_responde_ok.
+Quem segura:
+  pid 1686082  idle in transaction  transacao aberta ha 00:00:18  SELECT count(*) FROM imoveis
+```
+
+Medido em 19/09/2026: essa condição, que antes esperava para sempre, passou a reprovar em **11,4s**. Se você vir essa mensagem, o diagnóstico já está feito — não rode nada de novo, leia a consulta do bloqueador e ache o teste que a emite.
+
+**E há um teto por teste: `timeout = 120` no `pyproject.toml`.** Ele cobre setup, teste e teardown, e vale para o travamento que não é espera de lock. **O comportamento difere entre esta máquina e o CI, e a diferença engana**: no CI (`ubuntu-latest`) o método é `signal`, o teste falha e a execução continua; **no Windows é `thread`, e o plugin despeja a pilha de todas as threads em stderr e mata o processo com `os._exit()`** — sem teardown e sem sumário final. Execução que morre sem sumário aqui é o teto funcionando, e a pilha despejada é o diagnóstico.
+
+Os dois comandos acima continuam valendo para o que nenhum teto cobre: o processo parado sem esperar lock e sem estourar o teto por teste.
+
+**O que a TEC-291 mediu e NÃO encontrou, para não se procurar de novo** — sobre `c9541d8`, 19/09/2026, nesta máquina:
+
+- `tests/integration` inteiro fechou em **943 passed / 229s**, com `pg_blocking_pids` amostrado a cada 10s: **nenhum bloqueio**. O travamento é intermitente, não permanente.
+- **Esgotamento de pool está descartado**: o `pool_timeout` do SQLAlchemy é 30s e **levanta** `TimeoutError`. Pool cheio não produz espera infinita, produz traceback em 30s.
+- **Tarefa abandonada segurando transação não vaza conexão.** Quatro formas exercitadas — `cancel()` sem `await` com a tarefa dormindo, o mesmo com consulta em voo, tarefa nunca cancelada, e cancelamento esperando lock de linha repetido 40 vezes — todas passam. No fim de cada teste o `pytest-asyncio` drena as tarefas pendentes e o SQLAlchemy chama `asyncpg.terminate()`, que fecha o socket: o backend morre e solta os locks.
+- **A causa das duas ocorrências de 17-18/09 continua desconhecida.** Não reproduziu. O que mudou é que a próxima se explica sozinha.
 
 **`pytest-xdist` pode não estar instalado, apesar de declarado no `pyproject.toml`.** Se `-n 8` reprovar com `unrecognized arguments`, é isso — `pip install pytest-xdist` resolve. Não conclua que o comando desta seção está errado.
 
