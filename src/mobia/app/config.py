@@ -188,11 +188,20 @@ class Settings(BaseSettings):
     # `montar_contexto` nem pelas cinco parcelas acima. Ficou de fora de
     # proposito (fix-wave da TEC-265): medir e travar um sexto numero e
     # decisao de design, nao correcao deste comentario. O que importa aqui e
-    # que a reserva de baixo tem so ~280 tokens de folga sobre o teto fixo de
-    # `test_a_margem_do_orcamento_do_prompt_e_deliberada`, e um `tool_result`
-    # de 10 candidatos com titulo e bairro longos passa disso pelo mesmo
-    # proxy `len/4` -- o segundo round-trip de um turno com busca pode
-    # estourar a reserva sem que nenhum teste hoje reclame.
+    # que a reserva de baixo tem 807 tokens de folga sobre o teto fixo de
+    # `test_a_margem_do_orcamento_do_prompt_e_deliberada` -- 1600 - 793
+    # (TEC-225; eram 267 antes desta subida, 1060 - 793). Medido nesta card:
+    # um `tool_result` de 10 candidatos com titulo e bairro TIPICOS (~45 e ~8
+    # caracteres) fica em 675,5 no proxy `len/4` PROPRIO do orcamento -- o
+    # mesmo usado nas cinco parcelas acima, e desde a TEC-225 NAO mais o
+    # mesmo proxy de `montagem.py`, que a TEC-225 trocou por uma formula
+    # ciente de densidade -- e cabe, com folga. Titulo e bairro no MAXIMO da
+    # coluna (`String(160)` e `String(120)` em `catalogo/models.py`) sobem
+    # essa conta para 1245,5, 438,5 acima da folga nova. O segundo
+    # round-trip de um turno com busca ainda pode estourar a reserva sem que
+    # nenhum teste hoje reclame -- so que agora precisa de candidatos perto
+    # do limite da coluna, nao de qualquer titulo/bairro "longo": a subida da
+    # TEC-225 encolheu o risco, nao o eliminou.
     #
     # **O valor de hoje dessa diferenca nao esta escrito aqui, de proposito**
     # (TEC-243). Ele e derivado -- muda quando alguem mexe no prompt, num
