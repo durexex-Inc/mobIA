@@ -13,7 +13,7 @@ Tirar de `TEXTO_DO_LIMITE_DE_PERGUNTAS` a frase *"Pode deixar que ele entra em c
 
 **A TEC-280 está Feita, e a premissa da card envelheceu em parte.** A card afirma que "nada notifica corretor nenhum enquanto a TEC-280 e a TEC-281 estiverem abertas". Hoje o e-mail ao corretor **entrega**, por SMTP. O hedge continua certo, mas pela razão que três comentários do repo já escrevem por extenso — *aceito pelo servidor não é o mesmo que lido por um corretor* — mais o WhatsApp (TEC-281), que segue só registrando por falta de template aprovado pela Meta. A consequência prática é a nota de reversão: ela passa a depender só da TEC-281, não das duas.
 
-**A promessa é citada em dois lugares, não um.** Além do literal, o comentário de `turno.py:2510` cita a frase por extenso para justificar por que a despedida da TEC-138 vence as três substituições acima dela: *"`TEXTO_DO_LIMITE_DE_PERGUNTAS` diz 'ele entra em contato'"*. Mudar só o literal deixaria esse comentário mentindo sobre o texto que ele cita — o defeito que a TEC-146 pagou caro.
+**A promessa é citada em três lugares, não um.** Além do literal, dois comentários de `turno.py` a citam por extenso: o da despedida (~2527), que justifica por que a TEC-138 vence as substituições acima dela, e o da virada do investidor (~2253), que justifica registrar o handoff ali. O segundo só aparece na leitura — a citação está quebrada entre duas linhas de comentário, e nenhum grep pela frase inteira a encontra. Mudar só o literal deixaria os dois mentindo sobre o texto que citam — o defeito que a TEC-146 pagou caro.
 
 **Três textos ao lead nunca estiveram na guarda de acento.** `TEXTO_DO_ENCAMINHAMENTO_DE_VENDA`, `TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE` e `TEXTO_DO_PEDIDO_DE_HUMANO` (o de dentro do horário) são constantes de módulo entregues ao lead e estão fora de `LITERAIS_AO_LEAD` — só a variante `_FORA_DO_HORARIO` do pedido de humano entrou. Não é lacuna desta card, mas ela é a primeira a precisar da mesma lista para outra finalidade, e é onde fechar sai de graça.
 
@@ -37,7 +37,7 @@ A tupla vive hoje dentro de `tests/unit/test_acento_no_texto_ao_lead.py`. Ela pa
 
 A alternativa era parametrizar à mão, na guarda nova, os cinco textos que a card nomeia. Foi recusada porque produz **duas listas de literais ao lead** no mesmo diretório, e um texto fixo novo não entra em nenhuma das duas sozinho. Com uma lista só, entrar na lista passa a significar "coberto pelas duas guardas", que é a propriedade que faz a próxima card não repetir esta.
 
-A lista cresce de 17 para 20 com os três achados acima. `test_a_lista_de_literais_nao_encolheu_sem_querer` acompanha o número e continua morando junto da lista — ele é a guarda da guarda, e separá-lo dela criaria a chance de a lista encolher sem que nada reprove.
+A lista cresce de 17 para 20 com os três achados acima. `test_a_lista_de_literais_nao_encolheu_sem_querer` acompanha o número novo, e vai para `tests/unit/test_literais_ao_lead.py` — arquivo próprio, porque o pytest só coleta `test_*.py` e um teste escrito dentro do módulo da lista nunca rodaria. Ele é a guarda da guarda: sem ele, tirar um literal da lista é mudança que nada denuncia, já que nenhuma das duas guardas reprova por ausência.
 
 **A docstring do arquivo do acento fica onde está.** Ela explica por que a guarda cobre constantes de módulo e não os rótulos da ficha de imóvel — é raciocínio sobre o *escopo da lista*, então a parte que descreve o que a lista é acompanha a lista; a parte que descreve o que a guarda de acento faz com ela fica no arquivo do acento.
 
@@ -49,6 +49,7 @@ Arquivo novo `tests/unit/test_promessa_ao_lead.py`, no molde do vizinho de acent
 PROMESSAS_BANIDAS = (
     "avisei", "avisamos", "avisado",
     "entra em contato", "entrar em contato", "entrará em contato",
+    "entram em contato",
     "vai te procurar", "vai te ligar", "vai te chamar",
 )
 ```
@@ -61,11 +62,12 @@ A busca é por substring em minúsculas, e não por fronteira de palavra como no
 
 ## D4 — A prosa que passa a mentir
 
-Três sítios, todos dentro do diff:
+Quatro sítios, todos dentro do diff. Eram três quando este desenho foi escrito: a citação da virada do investidor está quebrada entre duas linhas de comentário e nenhum grep pela frase inteira a encontra — ela apareceu na leitura do arquivo.
 
 1. O comentário de `TEXTO_DO_LIMITE_DE_PERGUNTAS` — ganha a nota de reversão e para de depender da TEC-280 para justificar o hedge.
-2. O comentário de `turno.py:2510` — cita a frase antiga por extenso; passa a citar a nova, e o argumento dele **continua válido**: "já coloquei sua conversa na fila deles" também promete um depois que a conversa encerrada não tem, então a despedida continua tendo de vencer.
-3. A docstring de `tests/unit/test_textos_do_encaminhamento.py` — diz que o arquivo testa "em especial que nenhum dos dois promete que alguém foi avisado", que é justamente o teste que sai dele.
+2. O comentário da despedida (~2527) — passa a citar a frase nova, e o argumento dele **continua válido**: "já coloquei sua conversa na fila deles" também promete um depois que a conversa encerrada não tem, então a despedida continua tendo de vencer. O que mudou é quem promete: antes, um corretor que ninguém avisou; agora, uma fila que o silêncio de 30 dias fecha.
+3. O comentário da virada do investidor (~2253) — passa a citar a frase nova, e o caso que ele descreve fica **pior**, não melhor: a frase agora afirma uma linha em `handoffs` que, sem aquele registro, não existiria.
+4. A docstring de `tests/unit/test_textos_do_encaminhamento.py` — diz que o arquivo testa "em especial que nenhum dos dois promete que alguém foi avisado", que é justamente o teste que sai dele.
 
 Os dois planos que citam a frase antiga (`2026-09-14-tec-149-...` e `2026-09-14-tec-267-...`) **não são tocados**: plano registra o que se fez num dia, e `scripts/comentarios_tocados.py` os deixa fora por isso.
 

@@ -41,19 +41,7 @@
 
 A docstring do módulo diz o que a lista é e o que ela não é — constantes de módulo entregues ao lead, e não os rótulos da ficha de imóvel, que nascem de f-string e são cobertos por `test_apresentacao.py`. Esse parágrafo **muda de arquivo**: hoje ele está na docstring do teste de acento, e ele descreve a lista, não a guarda.
 
-O teste do tamanho acompanha a lista para cá, e o número vai de 17 para 20:
-
-```python
-def test_a_lista_de_literais_nao_encolheu_sem_querer() -> None:
-    """Guarda da guarda: um literal removido da tupla faria as duas guardas que
-    a leem passarem sem checar nada, e ninguem notaria.
-
-    Foi 17 ate a TEC-286, que acrescentou os dois textos de encaminhamento e o
-    `TEXTO_DO_PEDIDO_DE_HUMANO` de dentro do horario -- tres constantes ao lead
-    que nunca estiveram sob a guarda de acento.
-    """
-    assert len(LITERAIS_AO_LEAD) == 20
-```
+O teste do tamanho **nao** pode morar no modulo, e a execucao e quem achou isso: o pytest so coleta `test_*.py`, entao um teste escrito la dentro nunca rodaria -- a lista ficaria sem guarda nenhuma, que e a falha silenciosa contra a qual ele existe. Ele sai do arquivo do acento e vai para `tests/unit/test_literais_ao_lead.py`, arquivo proprio: agora ele guarda a lista que **duas** guardas leem, e nao pertence a nenhuma das duas. O numero vai de 17 para 20.
 
 - [ ] **Step 2: O arquivo do acento importa em vez de declarar**
 
@@ -92,6 +80,7 @@ PROMESSAS_BANIDAS = (
     "entra em contato",
     "entrar em contato",
     "entrará em contato",
+    "entram em contato",
     "vai te procurar",
     "vai te ligar",
     "vai te chamar",
@@ -118,10 +107,10 @@ Espera-se **exatamente uma** reprovação: `TEXTO_DO_LIMITE_DE_PERGUNTAS`, por "
 
 ---
 
-### Task 3: O literal novo, e os dois comentários que o citam
+### Task 3: O literal novo, e os três comentários que o citam
 
 **Files:**
-- Modify: `src/mobia/domain/agente/turno.py` (literal ~185 e comentário ~2510)
+- Modify: `src/mobia/domain/agente/turno.py` (literal ~185; comentário da virada do investidor ~2253; comentário da despedida ~2527 — **três** citações da frase antiga, não duas: a do meio só aparece na leitura, porque a citação está quebrada em duas linhas e nenhum grep de frase inteira a acha)
 - Modify: `tests/unit/test_textos_do_encaminhamento.py` (sai o teste absorvido; docstring acompanha)
 
 - [ ] **Step 1: A frase nova**
