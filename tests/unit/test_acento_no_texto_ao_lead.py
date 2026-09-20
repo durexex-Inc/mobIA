@@ -9,50 +9,18 @@ acento, e excetua-las viraria uma lista a mao que reprova texto certo. Esta
 aqui tem a assimetria oposta: uma palavra faltando na lista so deixa de pegar
 um caso, nunca reprova um caso correto.
 
-**Esta guarda cobre CONSTANTES DE MODULO, e nao todo texto que o lead le.**
-Os rotulos da ficha de imovel -- "Condomínio", "Destaque:" e o "/mês" do
-bloco do investidor -- sao a mensagem mais visivel do produto e ficam de
-fora de proposito: eles nascem de f-strings montados em tempo de execucao
-dentro de `_linhas_da_rentabilidade` e `legenda_de` (`apresentacao.py`), nao
-de constantes `TEXTO_...` importaveis. "Aluguel estimado: não informado" e
-excecao dentro da excecao -- e a constante de modulo `_ALUGUEL_AUSENTE`
-(mesmo arquivo), e fica de fora por ser **privada** (`_nome`), nao por
-nascer de f-string. Cobrir qualquer um deles aqui exigiria renderizar uma
-ficha dentro deste arquivo -- duplicando o que
-`tests/unit/test_apresentacao.py` ja faz com snapshots exatos, e criando
-duas fontes para a mesma verificacao. Nao e lacuna teorica: uma sabotagem
-que tirou o acento de "/mês" em `apresentacao.py` nao fez esta guarda
-falhar (a string nao esta em `LITERAIS_AO_LEAD`), e fez o
-`test_apresentacao.py` falhar, porque e ele que compara a legenda inteira
-contra o texto esperado por extenso. Quem cobre os rotulos da ficha e
-aquele arquivo, nao este.
+**O que a lista cobre, e o que ela nao cobre, esta com a lista.** Desde a
+TEC-286 ela vive em `tests/unit/literais_ao_lead.py`, porque a guarda de
+promessa (`test_promessa_ao_lead.py`) le a mesma lista -- e o paragrafo que
+explicava por que os rotulos da ficha de imovel ficam de fora descreve a
+LISTA, nao esta guarda, entao foi junto.
 """
 
 import re
 
 import pytest
 
-from mobia.domain.agente.apresentacao import RESSALVA_DE_ESTIMATIVA
-from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO
-from mobia.domain.agente.turno import (
-    SUFIXO_FORA_DA_JANELA,
-    TEXTO_DA_BUSCA_INCONCLUSIVA,
-    TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
-    TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
-    TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
-    TEXTO_DO_FILTRO_AJUSTADO,
-    TEXTO_DO_LIMITE_DE_PERGUNTAS,
-    TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
-)
-from mobia.domain.followup.mensagem import CONVITE_PARA_AGENDAR
-from mobia.domain.humano.deteccao import TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO
-from mobia.domain.moderacao.port import (
-    TEXTO_DA_RECUSA_DE_ENTRADA,
-    TEXTO_NEUTRO_DE_SAIDA,
-)
-from mobia.domain.notificacao.envio import TEXTO_DA_JANELA_HUMANA
-from mobia.domain.optout.deteccao import TEXTO_DA_CONFIRMACAO_DE_OPTOUT
-from mobia.workers.jobs.process_message import TEXTO_DO_AVISO_DE_ERRO
+from tests.unit.literais_ao_lead import LITERAIS_AO_LEAD
 
 # As formas sem acento que o dominio usa de fato. Nao e o portugues inteiro:
 # e a lista das palavras que apareciam nos literais desta card, mais as que
@@ -110,26 +78,6 @@ FORMAS_SEM_ACENTO = (
     "entao",
 )
 
-LITERAIS_AO_LEAD = (
-    TEXTO_DA_IDENTIFICACAO,
-    TEXTO_DA_BUSCA_INCONCLUSIVA,
-    TEXTO_SEM_RESULTADO_APOS_AMPLIAR,
-    TEXTO_DO_LIMITE_DE_PERGUNTAS,
-    TEXTO_DO_CRITERIO_AMPLIADO_PRECO_E_BAIRRO,
-    TEXTO_DO_CRITERIO_AMPLIADO_PRECO,
-    TEXTO_DO_CRITERIO_AMPLIADO_BAIRRO,
-    TEXTO_DO_FILTRO_AJUSTADO,
-    CONVITE_PARA_AGENDAR,
-    TEXTO_DA_RECUSA_DE_ENTRADA,
-    TEXTO_NEUTRO_DE_SAIDA,
-    TEXTO_DA_JANELA_HUMANA,
-    TEXTO_DA_CONFIRMACAO_DE_OPTOUT,
-    TEXTO_DO_AVISO_DE_ERRO,
-    RESSALVA_DE_ESTIMATIVA,
-    TEXTO_DO_PEDIDO_DE_HUMANO_FORA_DO_HORARIO,
-    SUFIXO_FORA_DA_JANELA,
-)
-
 
 @pytest.mark.parametrize("texto", LITERAIS_AO_LEAD)
 def test_nenhum_literal_ao_lead_tem_forma_sem_acento(texto: str) -> None:
@@ -139,9 +87,3 @@ def test_nenhum_literal_ao_lead_tem_forma_sem_acento(texto: str) -> None:
         forma for forma in FORMAS_SEM_ACENTO if re.search(rf"\b{re.escape(forma)}\b", minusculo)
     ]
     assert not achadas, f"{achadas} em {texto!r}"
-
-
-def test_a_lista_de_literais_nao_encolheu_sem_querer() -> None:
-    """Guarda da guarda: um literal removido da tupla acima faria o teste de
-    cima passar sem checar nada, e ninguem notaria."""
-    assert len(LITERAIS_AO_LEAD) == 17
