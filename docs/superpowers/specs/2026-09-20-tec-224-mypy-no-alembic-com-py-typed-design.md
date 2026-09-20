@@ -1,6 +1,6 @@
 # TEC-224 — mypy no `alembic`, com `py.typed` publicado
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** implementado
 **Card:** [TEC-224](https://eduardodurieuxlopes.atlassian.net/browse/TEC-224) — épico TEC-208
 **Branch:** `feat/tec-224-mypy-no-alembic-com-py-typed`
 **Origem:** review final da branch `feat/tec-126-telemetria`.
@@ -34,6 +34,8 @@ Found 1 error in 1 file (checked 37 source files)
 ```
 
 A `0033` não existia quando a card foi escrita. O trabalho de correção que a card previa não é o que há para fazer.
+
+> O `:34` desses dois blocos é a saída do mypy **antes** da branch, transcrita. Depois dela, o `from typing import Any` empurrou o arquivo e `_COLUNAS` passou para a linha 40. A `comentarios_tocados.py` marca a citação como `PROSA` — suspeita, não veredito —, e a conferência foi feita: é medição citada, não afirmação sobre o estado de hoje.
 
 **3. O passo do CI não pega a extensão sozinho, e esta é a armadilha da card.** O critério de pronto diz *"o CI roda a checagem estendida — sem isso a mudança regride na primeira migration nova"*, e a card trata isso como consequência automática de mexer no `pyproject.toml`. Não é. O passo do CI é:
 
