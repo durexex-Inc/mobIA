@@ -74,18 +74,20 @@ O acento do português paga esse mesmo preço de 3, o que superestima um pouco (
 
 ### D3 — O ganho de latência não se perde, e isso é medido
 
-O limiar é 6.564 tokens. Sob a fórmula nova, ele só é alcançado por volta de **15.100 caracteres** — contra 26.256 hoje.
+> **Corrigido depois da subida do `headroom` na D5.** O limiar deriva do teto efetivo, e a subida de 1.060 para 1.700 baixou o limiar de 6.564 para **6.180** — os números abaixo foram recalculados contra o valor final, não contra o desta seção quando foi escrita pela primeira vez.
+
+O limiar é 6.180 tokens. Sob a fórmula nova, ele só é alcançado por volta de **14.214 caracteres** (6.180 × 2,3) — contra 26.256 hoje.
 
 Medido sobre o corpus de eval do repo (154 falas de lead em 56 conversas): fala mediana de 61 caracteres, p90 de 93. Somando a parte fixa da estimativa (`SISTEMA` de 168 caracteres, resumo no teto de 1.500 da RN-15.2, estado de ~400) e supondo resposta do agente três vezes a fala do lead:
 
 | janela | caracteres | estimativa nova | folga até o limiar |
 | --- | --- | --- | --- |
-| 20 falas, mediana | 4.508 | 1.960 | 3,3× |
-| 20 falas, p90 | 5.788 | 2.517 | 2,6× |
-| 40 falas, mediana | 6.948 | 3.021 | 2,2× |
-| **40 falas, p90** | **9.508** | **4.134** | **1,6×** |
+| 20 falas, mediana | 4.508 | 1.960 | 3,15× |
+| 20 falas, p90 | 5.788 | 2.517 | 2,46× |
+| 40 falas, mediana | 6.948 | 3.021 | 2,05× |
+| **40 falas, p90** | **9.508** | **4.134** | **1,49×** |
 
-**O pior caso realista fica 1,6× abaixo do limiar.** O turno normal continua não pagando round trip nenhum, que é o ganho que motivou a estimativa existir.
+**O pior caso realista fica 1,5× abaixo do limiar.** O turno normal continua não pagando round trip nenhum, que é o ganho que motivou a estimativa existir.
 
 ### D4 — Base64 continua escapando, e isso é declarado e não escondido
 
