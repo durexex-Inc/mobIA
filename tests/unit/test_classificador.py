@@ -38,8 +38,11 @@ from mobia.infra.anthropic import (
 # Strings que nao podem, sob nenhuma circunstancia, sobreviver ao log nem a
 # uma excecao. Se um destes valores aparecer em `caplog.text` ou em
 # `str(erro.value)`, o boundary vazou conteudo do lead ou o prompt que o
-# gerou -- exatamente o que o `process_message` da TEC-134 grava em
-# `messages.last_error` e loga sem a mascara de PII.
+# gerou -- exatamente o que o `process_message` da TEC-134 loga sem a
+# mascara de PII (a chave `error` cai no mascaramento de digitos de
+# `app/logging.py`, que so alcanca corrida de 10 a 15 digitos contiguos).
+# Desde a TEC-222, `messages.last_error` guarda so o nome da classe da
+# excecao -- este texto nunca chega la, so ao log.
 TEXTO_DA_RESPOSTA = "SENTINELA-RESPOSTA o apartamento fica na Rua das Palmeiras"
 SISTEMA_DO_PROMPT = "SENTINELA-SISTEMA instrucao confidencial do agente"
 RESUMO_DO_PROMPT = "SENTINELA-RESUMO lead mora na Rua das Palmeiras, quer 2 quartos"
@@ -210,11 +213,15 @@ async def test_classificar_recusa_json_invalido_sem_ecoar_o_texto(
 ) -> None:
     """A resposta destinada ao lead nunca pode aparecer na mensagem da excecao.
 
-    `process_message` grava `f"{type(exc).__name__}: {exc}"` em
-    `messages.last_error` e loga `error=str(exc)` sem a mascara de PII -- o
-    texto que o modelo escreveu para o lead nao pode chegar ali por essa
-    porta, mesmo quando o JSON vem malformado (ex.: o modelo devolveu prosa
-    em vez de JSON, ou um JSON com a resposta cortada no meio).
+    `process_message` loga `error=f"{type(exc).__name__}: {exc}"` (via
+    `_detalhe_para_o_log`) sem a mascara de PII -- ela cai no mascaramento de
+    digitos de `app/logging.py`, que so alcanca corrida de 10 a 15 digitos
+    contiguos e nao pega texto. O texto que o modelo escreveu para o lead nao
+    pode chegar ao log por essa porta, mesmo quando o JSON vem malformado
+    (ex.: o modelo devolveu prosa em vez de JSON, ou um JSON com a resposta
+    cortada no meio). `messages.last_error`, desde a TEC-222, guarda so o
+    nome da classe -- nunca carrega `str(exc)`, entao o risco de vazamento
+    por essa coluna nem existe mais; o que resta a proteger e o log.
     """
     texto_malformado = f'{{"intencao": "COMPRA", "confianca": 0.9, "resposta": "{TEXTO_DA_RESPOSTA}'
     resposta = _resposta_falsa(texto=texto_malformado, stop_reason="end_turn")
@@ -225,10 +232,11 @@ async def test_classificar_recusa_json_invalido_sem_ecoar_o_texto(
 
     # Pino exato, nao so "a sentinela nao esta la": um `str(erro.value) not
     # in TEXTO_DA_RESPOSTA` continua verde se o guard virar
-    # `f"{type(exc).__name__}: {exc}"` (o mesmo padrao que `process_message`
-    # usa) sempre que a excecao daquele tipo por acaso nao ecoar o texto --
-    # e exatamente o caso de `JSONDecodeError`, cuja mensagem cita posicao,
-    # nao conteudo. Fixar a mensagem inteira pega essa mutacao mesmo assim.
+    # `f"{type(exc).__name__}: {exc}"` (o mesmo padrao que
+    # `_detalhe_para_o_log` de `process_message` usa para o LOG) sempre que a
+    # excecao daquele tipo por acaso nao ecoar o texto -- e exatamente o caso
+    # de `JSONDecodeError`, cuja mensagem cita posicao, nao conteudo. Fixar a
+    # mensagem inteira pega essa mutacao mesmo assim.
     assert str(erro.value) == "JSONDecodeError"
     assert TEXTO_DA_RESPOSTA not in caplog.text
     assert "agente.turno_gerado" not in caplog.text

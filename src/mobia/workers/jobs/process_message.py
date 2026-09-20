@@ -42,22 +42,56 @@ TEXTO_DO_AVISO_DE_ERRO = (
 ResultadoDoProcessamento = Literal["skipped"] | ResultadoDoTurno
 
 
-def _detalhe_do_erro(exc: BaseException) -> str:
-    """O que pode ser gravado em `messages.last_error` sem risco de vazamento.
+def _detalhe_para_a_coluna(exc: BaseException) -> str:
+    """O que vai para `messages.last_error`: o nome da classe, e so.
 
-    `last_error` e coluna `Text` durvel e **nao** passa pela mascara de PII do
-    log. Ate a TEC-134 so excecoes da ingestao chegavam aqui. Agora duas
-    chamadas a terceiros ficam a montante -- `contador.contar` e
-    `messages.create`, ambas com a conversa decifrada do lead no corpo da
-    requisicao -- e `str(exc)` de uma excecao de terceiro nao e uma garantia
-    que este projeto possa dar: o SDK em geral nao ecoa o corpo na mensagem,
-    mas "em geral" nao e o padrao que a restricao de nao logar conteudo do
-    lead aceita.
+    A coluna e `Text` em claro, duravel, sem cifra e fora da mascara de PII do
+    log. Ate a TEC-222 aqui valia o criterio da TEC-134 -- excecao definida em
+    `mobia` mantinha a mensagem inteira, porque "ela foi escrita aqui dentro e
+    sabe-se o que ela carrega".
 
-    Dai o criterio pelo dono do tipo: excecao definida em `mobia` teve a
-    mensagem escrita aqui dentro e sabe-se o que ela carrega (ver
-    `RespostaInvalida`, que so guarda o nome da classe original). De qualquer
-    outra, so o nome -- que ja e o que aponta para o modulo culpado.
+    **O criterio caiu porque confunde dono do TIPO com dono da MENSAGEM.**
+    `ModeracaoIndisponivel` e definida em `domain/moderacao/port.py`, mas
+    `infra/moderacao.py` a levanta com `motivo_do_provedor(exc)`: prosa que o
+    servidor da Anthropic escreveu respondendo a uma requisicao cujo corpo e o
+    texto moderado. O docstring de `motivo_do_provedor` aceita esse risco por
+    escrito, e o limita com tres coisas -- o teto de 300 caracteres, o
+    mascaramento de digitos de `app/logging.py` e o formato da chamada. **Uma
+    delas, e so uma, e propriedade do log**: as outras duas ja valem no
+    momento em que o texto e montado, e protegem esta coluna igual. O que a
+    coluna perde e o mascaramento -- e ele alcanca corrida de 10 a 15 digitos
+    contiguos e mais nada, entao para prosa em ingles de um SDK ele e quase um
+    no-op.
+
+    A diferenca entre os dois destinos e, portanto, MENOR do que parece, e nao
+    e dela que sai a decisao. A decisao sai de duas outras coisas: esta coluna
+    e duravel, e o criterio de dono do tipo nao se sustenta.
+
+    Datas, porque elas sao o argumento: o criterio entrou em 26/08/2026
+    (TEC-134, `d069f3e`) e foi violado em 30/08/2026 (TEC-237, `d79e2d7`),
+    quatro dias depois, sem que nenhuma revisao notasse. Nao e o caso
+    hipotetico do autor futuro desatento -- e o caso medido de duas cards da
+    mesma semana, cada uma correta sozinha.
+
+    Dai nao haver ramo nenhum: uma garantia que dependa de toda excecao futura
+    ter sido escrita com cuidado nao e uma garantia. O texto continua no log,
+    via `_detalhe_para_o_log`.
+    """
+    return type(exc).__name__
+
+
+def _detalhe_para_o_log(exc: BaseException) -> str:
+    """O que vai para o log estruturado, que e mais do que vai para a coluna.
+
+    Este e o criterio da TEC-134, intacto, aplicado ao destino para o qual ele
+    faz sentido: aqui a mascara de PII de `app/logging.py` alcanca o valor, e o
+    raciocinio da TEC-237 sobre o corpo de erro do provedor foi escrito
+    pensando neste destino.
+
+    Manter a divisao importa nos dois sentidos. Emudecer o log junto com a
+    coluna seria regressao de diagnostico sem ganho de seguranca -- e
+    `test_texto_de_provedor_em_excecao_do_projeto_nao_chega_a_coluna` reprova
+    se alguem fizer isso.
     """
     modulo = type(exc).__module__
     if modulo == "mobia" or modulo.startswith("mobia."):
@@ -289,11 +323,14 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
             )
             await session.commit()
     except Exception as exc:
-        detalhe = _detalhe_do_erro(exc)
-        tentativas = await _marcar_falha(session_factory, identifier, detalhe)
-        # Mesmo valor da coluna, e pelo mesmo motivo: o log estruturado nao
-        # mascara `error`, e a chave nao esta na lista de campos redigidos.
-        log.warning("message.failed", message_id=message_id, error=detalhe)
+        tentativas = await _marcar_falha(session_factory, identifier, _detalhe_para_a_coluna(exc))
+        # Valor que PODE ser maior que o da coluna, desde a TEC-222: para
+        # excecao de `mobia` o log carrega a mensagem inteira e a coluna so o
+        # nome da classe; para excecao de terceiro (DBAPIError,
+        # CancelledError, o caso mais comum) os dois valores coincidem. A
+        # coluna e duravel e fora da mascara, o log nao. Ver os dois
+        # docstrings acima.
+        log.warning("message.failed", message_id=message_id, error=_detalhe_para_o_log(exc))
         # So encaminha quando as tentativas ESGOTARAM (D9) -- na primeira
         # falha a proxima retentativa ainda pode resolver, e handoff aqui
         # seria alarme falso para o corretor. `linha is not None` cobre o
@@ -307,10 +344,9 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # a pega. Sem esta clausula a linha fica em PROCESSING -- e como
         # PROCESSING e reivindicavel e `attempts` nao subia, o sweeper
         # reenfileirava para sempre, pagando o turno inteiro a cada volta.
-        detalhe = _detalhe_do_erro(exc)
         try:
             async with asyncio.timeout(SEGUNDOS_PARA_REGISTRAR_CANCELAMENTO):
-                await _marcar_falha(session_factory, identifier, detalhe)
+                await _marcar_falha(session_factory, identifier, _detalhe_para_a_coluna(exc))
         except Exception as falha:
             # Esta excecao nao pode escapar: ela **substituiria** o
             # CancelledError, o worker deixaria de ver o cancelamento e o
@@ -330,7 +366,7 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # quase sempre o `job_timeout` estourando. O deploy so alcanca este
         # ponto se o turno atravessar a janela inteira de drenagem -- e ai o
         # orcamento dele realmente acabou. Ver a secao TEC-232 do README.
-        log.warning("message.cancelled", message_id=message_id, error=detalhe)
+        log.warning("message.cancelled", message_id=message_id, error=_detalhe_para_o_log(exc))
         raise
 
     log.info("message.processed", message_id=message_id)
