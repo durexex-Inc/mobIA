@@ -265,7 +265,13 @@ def test_o_balde_do_modulo_nao_colide_com_def_homonimo() -> None:
 
 
 def test_o_achado_do_modulo_nunca_e_cortado() -> None:
-    """E um so por arquivo, entao nunca bate o teto -- consequencia da D3."""
+    """O balde `<modulo>`, com um achado so, passa inteiro pelo teto e nao
+    entra em `omitidos`.
+
+    A invariante "no maximo um achado de modulo por arquivo" e coberta
+    incidentalmente pelos testes que fazem `(achado,) = examinar(...)`, onde
+    um segundo achado faria o desempacotamento reprovar.
+    """
     do_modulo = Achado(1, '"""do modulo', False, 500, BALDE_DO_MODULO)
     ficam, omitidos = limitar([do_modulo], teto=MAXIMO_DE_VIZINHOS_POR_BLOCO)
     assert ficam == [do_modulo]

@@ -45,10 +45,10 @@ ultimas, sobre a prosa versionada que descreve o codigo (TEC-282):
 Planos de implementacao (`docs/superpowers/plans/`) ficam fora da varredura de
 prosa; a razao esta em PREFIXO_DOS_PLANOS.
 
-Uma cegueira conhecida, herdada da TEC-277 e ainda aberta na TEC-284: apagar
-ou renomear um .py nunca entra no conjunto de alterados -- `linhas_alteradas`
-para de acumular em `+++ /dev/null` --, entao toda citacao aquele arquivo
-escapa justo quando ficaria FALSO.
+Uma cegueira conhecida, ainda aberta na TEC-284: apagar ou renomear um .py
+nunca entra no conjunto de alterados -- `linhas_alteradas` para de acumular
+em `+++ /dev/null` --, entao toda citacao aquele arquivo escapa justo quando
+ficaria FALSO.
 
 Uso:
 
@@ -156,7 +156,8 @@ class Achado:
     # mexida. Os dois existem para o teto de `main`: `distancia` ordena quem
     # fica, `bloco` agrupa e nomeia o que foi omitido. Um ALTERADO tem
     # distancia 0 e bloco vazio -- o teto nao o alcanca, entao nao precisa de
-    # nenhum dos dois.
+    # nenhum dos dois. `bloco` tambem pode valer `BALDE_DO_MODULO`, para a
+    # docstring de modulo, que nao pertence a bloco nenhum.
     distancia: int = 0
     bloco: str = ""
 
@@ -429,6 +430,10 @@ def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
     #
     # Os dois ramos sao mutuamente exclusivos: o laco acima ja a emite como
     # ALTERADO quando ela mesma mudou, e este so age quando ela nao mudou.
+    #
+    # `alteradas` e load-bearing: vazio, `distancia` faz min() sobre conjunto
+    # vazio e reprova com ValueError. `linhas_alteradas` nunca entrega arquivo
+    # sem linha alterada, entao a guarda e para quem chamar `examinar` direto.
     doc_do_modulo = _docstring_de(arvore)
     if alteradas and doc_do_modulo is not None:
         inicio, fim, texto = doc_do_modulo
