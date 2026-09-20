@@ -128,8 +128,11 @@ async def test_o_acento_sobrevive_ao_transporte(
     """O resumo vem do modelo e vem acentuado. E' o teste que paga a D7.
 
     Montar cabecalho a mao em vez de usar `EmailMessage` passa neste teste so
-    por acaso; quebra com assunto acentuado e com corpo longo, que o
-    `set_content(corpo, charset="utf-8")` codifica em base64 e parte em linhas.
+    por acaso; quebra com assunto acentuado e com corpo longo. Qual codificacao
+    o `set_content(corpo, charset="utf-8")` escolhe depende do texto -- medido:
+    8bit para uma linha curta como a daqui, quoted-printable para prosa
+    acentuada longa como a de um resumo de verdade --, e e essa escolha que a
+    montagem manual erra.
     """
     controlador, caixa = servidor
     canal = _canal_apontando_para(controlador, monkeypatch)
