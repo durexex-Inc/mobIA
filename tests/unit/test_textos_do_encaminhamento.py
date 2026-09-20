@@ -24,8 +24,10 @@ def test_nenhum_texto_promete_que_alguem_foi_avisado(texto: str) -> None:
 
     `notificacao/envio.py` proibe a promessa por escrito e nomeia o precedente:
     a TEC-174 escreveu "ja avisei um corretor" e teve de reescrever, porque
-    nada notificava. A TEC-143 a reintroduziu e a revisao final a pegou. Criar
-    handoff nao notifica ninguem -- TEC-280 e TEC-281 estao abertas.
+    nada notificava. A TEC-143 a reintroduziu e a revisao final a pegou. Desde
+    a TEC-280 o e-mail entrega, mas o whatsapp ao corretor (TEC-281) continua
+    so registrando -- prometer aviso ao lead continua sendo promessa que o
+    sistema nao cumpre inteira.
     """
     minusculo = texto.lower()
     assert "avisei" not in minusculo
@@ -85,9 +87,10 @@ def test_nenhum_texto_faz_pergunta_de_qualificacao(texto: str) -> None:
 def test_o_sufixo_nao_promete_quando_a_resposta_chega() -> None:
     """R7 da revisao final: o sufixo hedgea, e nao marca hora.
 
-    Nada notifica ninguem enquanto TEC-280 e TEC-281 estiverem abertas -- a
-    resposta depende de uma PESSOA abrir a fila. "a resposta vem no próximo
-    horário" nao e a promessa banida de
+    O whatsapp ao corretor (TEC-281) continua so registrando, e mesmo o
+    e-mail (TEC-280, que ja entrega por SMTP) so garante que o servidor
+    aceitou, nao que uma PESSOA abriu a fila e respondeu. "a resposta vem no
+    próximo horário" nao e a promessa banida de
     `test_nenhum_texto_promete_que_alguem_foi_avisado`, mas e a vizinha dela:
     afirma um prazo que o sistema nao controla.
 

@@ -388,9 +388,10 @@ disso: `docker stop` são 10s, `terminationGracePeriodSeconds` do Kubernetes sã
 30s.
 
 Nenhum teste cobre esta exigência, e não é descuido: não existe configuração de
-deploy neste repositório para um teste ler. O `docker-compose.yml` sobe apenas
-Postgres e Redis para desenvolvimento local, e o worker roda por `python -m
-arq`. Quando o deploy existir, este é o número que tem de subir junto.
+deploy neste repositório para um teste ler. O `docker-compose.yml` sobe
+Postgres, Redis e Mailpit para desenvolvimento local, e o worker roda por
+`python -m arq`. Quando o deploy existir, este é o número que tem de subir
+junto.
 
 ### Lacunas conhecidas
 

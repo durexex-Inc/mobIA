@@ -332,10 +332,11 @@ def dentro_da_janela_de_atendimento(agora: datetime) -> bool:
 # COM acento: e texto que chega ao lead (TEC-267).
 #
 # **Nenhum dos dois afirma que alguem foi avisado, e a proibicao e por escrito.**
-# Criar handoff nao notifica ninguem hoje: os dois adaptadores de
-# `notificacao/canais.py` REGISTRAM e NAO ENTREGAM -- o e-mail nao tem provedor
-# configurado neste projeto e o WhatsApp ao corretor exige template aprovado
-# pela Meta que nao existe. A primeira versao desta card escreveu
+# Criar handoff nao garante que um humano viu o aviso: desde a TEC-280 o
+# e-mail entrega, por SMTP, mas aceito pelo servidor nao e o mesmo que lido
+# pelo corretor; e o WhatsApp ao corretor ainda so registra, porque exige
+# template aprovado pela Meta que nao existe (TEC-281). A primeira versao
+# desta card escreveu
 # "Ja avisei nossa equipe" nas duas constantes, e essa e a TERCEIRA aparicao da
 # mesma frase no repo: a TEC-174 escreveu "ja avisei um corretor" e teve de
 # reescrever o texto inteiro depois; o comentario de `TEXTO_DA_JANELA_HUMANA`

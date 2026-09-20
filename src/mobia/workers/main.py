@@ -9,7 +9,8 @@ from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
 from mobia.domain.handoff.agendador import AgendadorArq
 from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
-from mobia.domain.notificacao.canais import EmailRegistrado, WhatsAppRegistrado
+from mobia.domain.notificacao.canais import WhatsAppRegistrado
+from mobia.domain.outbound.email import EmailSmtp
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
@@ -75,6 +76,23 @@ async def startup(ctx: dict[str, Any]) -> None:
             "de subir o worker."
         )
 
+    # TEC-280. Incondicional, como a de WHATSAPP_ACCESS_TOKEN e nao como a de
+    # OPENAI_API_KEY acima, que so recusa em producao: condicionar ao ambiente
+    # deixaria a maquina de quem desenvolve convivendo com o defeito que esta
+    # card existe para matar. Notificacao descartada em silencio nao e menos
+    # defeito por acontecer em dev -- e so menos visivel, que e pior.
+    #
+    # O remetente entra na mesma guarda porque host sem remetente nao entrega:
+    # o servidor recusa o envelope sem MAIL FROM, e a falha apareceria so na
+    # primeira notificacao, que e tarde.
+    if not settings.smtp_host or not settings.smtp_remetente:
+        raise ConfiguracaoInsegura(
+            "SMTP_HOST ou SMTP_REMETENTE nao configurado. Sem os dois a "
+            "notificacao de handoff nao chega ao corretor, e o lead fica "
+            "esperando sem que ninguem saiba. Suba o Mailpit do "
+            "docker-compose e defina os dois no .env antes de subir o worker."
+        )
+
     session_factory = get_sessionmaker()
     ctx["settings"] = settings
     ctx["session_factory"] = session_factory
@@ -94,11 +112,12 @@ async def startup(ctx: dict[str, Any]) -> None:
     # `startup` no topo do modulo: o ARQ ja o gravou antes deste hook, e um
     # segundo pool seria redundante.
     ctx["reenfileirador"] = ReenfileiradorArq(ctx["redis"])
-    # Os dois adaptadores de `canais.py` REGISTRAM e nao entregam -- ver o
-    # docstring do modulo. E' o `startup` que decide a implementacao, no mesmo
+    # O de e-mail entrega (TEC-280); o de WhatsApp ainda REGISTRA e nao
+    # entrega, porque depende de template aprovado pela Meta -- ver o docstring
+    # de `canais.py`. E' o `startup` que decide a implementacao, no mesmo
     # raciocinio de `outbound`/`redator`/etc acima; o teste troca a chave sem
     # tocar no job.
-    ctx["canais_de_notificacao"] = (EmailRegistrado(), WhatsAppRegistrado())
+    ctx["canais_de_notificacao"] = (EmailSmtp(), WhatsAppRegistrado())
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:

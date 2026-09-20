@@ -58,11 +58,12 @@ async def escalar_vencidos(
     ele: notificar depois de perder a corrida seria o mesmo defeito, so que
     no canal em vez do banco.
 
-    **A notificacao ao gerente reusa os canais da TEC-177, e eles NAO
-    ENTREGAM hoje** -- o e-mail nao tem provedor configurado neste projeto e
-    o whatsapp exige template aprovado pela Meta (ver o docstring de
-    `notificacao/canais.py`). O status ESCALADO gravado no banco e o que
-    existe de fato hoje; o aviso ao gerente e melhor esforco e so vira log.
+    **A notificacao ao gerente reusa os canais da TEC-177, e desde a TEC-280
+    eles ja nao tem o mesmo desfecho** -- o e-mail entrega, por SMTP; o
+    whatsapp ainda so registra, porque exige template aprovado pela Meta que
+    nao existe (TEC-281, ver o docstring de `notificacao/canais.py`). O
+    status ESCALADO gravado no banco e o que existe de fato hoje; o aviso ao
+    gerente e melhor esforco e so vira log.
 
     **Sem gerente cadastrado, o handoff escala do mesmo jeito.** A marcacao e
     o que importa -- e o gatilho para a rota da Task 6 seguinte parar de
@@ -152,6 +153,15 @@ async def escalar_vencidos(
 
         motivos: dict[str, str] = {}
         algum_canal_aceitou = False
+        # Sequencial, e nao paralelo -- e desde a TEC-280 isso nao e mais de
+        # graca. Antes desta card nenhum canal falava rede e o laco era
+        # instantaneo; agora o e-mail manda uma mensagem de verdade por SMTP,
+        # ate `SEGUNDOS_DE_TIMEOUT` (15s) cada, contra um `job_timeout = 240`
+        # do worker (`workers/main.py`) que o job `sweep_sla` (que chama
+        # `escalar_vencidos`) tambem tem que caber. Margem para uns 16
+        # handoffs escalados no mesmo sweep antes de estourar -- numero nao
+        # medido em carga real, so contado; nao e motivo para mudar o laco
+        # agora.
         for canal in canais:
             destino = destino_por_canal[canal.nome]
             try:
@@ -164,15 +174,18 @@ async def escalar_vencidos(
         # Nunca `corpo` nem `assunto` com o resumo -- so o que permite saber
         # SE e PARA QUEM o aviso saiu, mesma disciplina de `notificar`.
         #
-        # `algum_canal_aceitou`, e NAO `gerente_avisado` ou equivalente: os
-        # dois adaptadores de `canais.py` (D4 daquele modulo) REGISTRAM e
-        # NUNCA levantam `FalhaDeCanal` -- entao este campo e sempre `True`
-        # na implementacao de hoje, e um nome que sugerisse entrega
-        # prometeria algo que nenhum dos dois canais cumpre. Mesmo raciocinio
-        # do comentario de `TEXTO_DA_JANELA_HUMANA` em `notificacao/envio.py`:
-        # este repo ja pagou por essa frase exata uma vez (TEC-174), e o
-        # `log` e hoje o UNICO artefato observavel da escalada -- nao
-        # reintroduza a promessa aqui so porque ela sumiu do texto.
+        # `algum_canal_aceitou`, e NAO `gerente_avisado` ou equivalente: desde
+        # a TEC-280 o e-mail entrega por SMTP e PODE levantar `FalhaDeCanal`,
+        # mas o whatsapp (`canais.py`) continua so registrando e NUNCA
+        # levanta -- e como ele esta sempre neste vetor, este campo continua
+        # sempre `True` na implementacao de hoje, mesmo quando o e-mail
+        # falha. Um nome que sugerisse entrega prometeria algo que nem o
+        # e-mail garante: aceito pelo servidor nao e o mesmo que lido pelo
+        # gerente. Mesmo raciocinio do comentario de `TEXTO_DA_JANELA_HUMANA`
+        # em `notificacao/envio.py`: este repo ja pagou por essa frase exata
+        # uma vez (TEC-174), e o `log` e hoje o UNICO artefato observavel da
+        # escalada -- nao reintroduza a promessa aqui so porque ela sumiu do
+        # texto.
         log.info(
             "handoff.escalado",
             handoff_id=str(linha.id),

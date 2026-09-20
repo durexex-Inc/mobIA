@@ -26,3 +26,26 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+
+  mailpit:
+    # So de desenvolvimento: captura o e-mail em vez de entregar, e serve uma
+    # interface em 8025 para ler o que teria saido. A guarda do worker
+    # (TEC-280, D2) le CONFIGURACAO -- SMTP_HOST e SMTP_REMETENTE no `.env` --,
+    # nao sonda o servidor: o worker sobe sem este container de pe. O Mailpit
+    # existe para que a entrega tenha para onde ir, nao para o worker subir.
+    #
+    # Pino em v1.31, e nao `latest`: o Mailpit nao tem v2, entao `v1` flutuaria
+    # por todos os minors e seria a `latest` na pratica -- mesmo raciocinio dos
+    # vizinhos (`pg16`, `7-alpine`), que pinam a serie onde mudanca quebrada
+    # aterrissa. O healthcheck abaixo (`/mailpit readyz`) e uma feature
+    # versionada, ausente nas series antigas: exatamente o modo de falha
+    # silenciosa que o pino evita.
+    image: axllent/mailpit:v1.31
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

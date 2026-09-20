@@ -171,9 +171,10 @@ TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
 # da chamada 1, o outro decide esta substituicao a partir do texto ENTREGUE,
 # que na virada do investidor nao e o mesmo.)
 #
-# **Nao promete que alguem foi avisado, e isso e deliberado.** Criar handoff
-# nao notifica ninguem: as cards de notificacao por e-mail e WhatsApp
-# (TEC-280 e TEC-281) estao abertas. A TEC-174 escreveu "ja avisei um
+# **Nao promete que alguem foi avisado, e isso e deliberado.** Desde a
+# TEC-280 o e-mail entrega, por SMTP, mas o whatsapp ao corretor (TEC-281)
+# continua so registrando -- prometer aviso aqui seria prometer o que o
+# sistema ainda nao cumpre inteiro. A TEC-174 escreveu "ja avisei um
 # corretor" e teve de reescrever o texto depois, porque nada notificava.
 #
 # Sem kind proprio, ao contrario de KIND_DO_CRITERIO_AMPLIADO: aquele e
@@ -201,8 +202,10 @@ TEXTO_DO_LIMITE_DE_PERGUNTAS = (
 #
 # **Nenhum dos dois promete que alguem foi avisado**, pela razao que o
 # comentario de TEXTO_DO_LIMITE_DE_PERGUNTAS acima ja registra e que
-# `notificacao/envio.py` proibe nominalmente: criar handoff nao notifica
-# ninguem enquanto TEC-280 e TEC-281 estiverem abertas. A TEC-174 escreveu
+# `notificacao/envio.py` proibe nominalmente: desde a TEC-280 o e-mail
+# entrega, mas aceito pelo servidor nao e o mesmo que lido por um corretor, e
+# o whatsapp ainda so registra enquanto a TEC-281 estiver aberta -- nenhum
+# dos dois garante que alguem viu ou vai responder. A TEC-174 escreveu
 # "ja avisei um corretor" e teve de reescrever; a TEC-143 reintroduziu a frase
 # e a revisao final a pegou. `test_textos_do_encaminhamento.py` guarda isso.
 #
@@ -232,9 +235,10 @@ TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE = (
 # `domain/humano/deteccao.py`: os dias sao regra em codigo, e mudar a regra e
 # mudar este texto junto.
 #
-# **"pode demorar até", e nao "vem".** Enquanto TEC-280 e TEC-281 estiverem
-# abertas nada notifica ninguem: a resposta depende de uma PESSOA abrir a fila,
-# e marcar hora seria prometer o que o sistema nao controla. Nao e a frase
+# **"pode demorar até", e nao "vem".** O whatsapp ao corretor (TEC-281)
+# continua so registrando, e mesmo o e-mail (TEC-280, que ja entrega por
+# SMTP) so garante que o servidor aceitou, nao que uma PESSOA abriu a fila e
+# respondeu -- marcar hora seria prometer o que o sistema nao controla. Nao e a frase
 # banida de "alguem foi avisado" -- e a vizinha dela, e este repo ja recuou
 # duas vezes da primeira. A redacao espelha de proposito a irma que a TEC-143
 # escreveu ontem para a MESMA situacao, em `domain/humano/deteccao.py`:

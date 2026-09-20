@@ -37,6 +37,14 @@ dependencies = [
     # `== outro`) levanta ou devolve array em vez de bool, que e o caminho que
     # a busca da TEC-158 vai percorrer.
     "pgvector>=0.4",
+    # SMTP assincrono para a notificacao ao corretor (TEC-280). Piso em 1.1.7:
+    # conferido no `api.py`/`connection.py` daquela tag que `start_tls` bool
+    # (True forca upgrade, False nao faz) ja existe la, com o mesmo efeito que
+    # este adaptador usa -- `configuracao.smtp_starttls` e sempre bool, nunca
+    # None. A serie 2.0 so acrescentou `None` autodetectando pelo servidor,
+    # que nao usamos. Nao ha necessidade funcional nossa por 2.0 ou por
+    # qualquer versao mais nova; series anteriores a 1.1.7 nao foram olhadas.
+    "aiosmtplib>=1.1.7",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +57,10 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "types-PyYAML>=6.0",
+    # Servidor SMTP em processo para os testes do adaptador (TEC-280). O repo
+    # finge a BORDA DE REDE e nao a funcao -- mesmo raciocinio do
+    # httpx.MockTransport usado no adaptador de WhatsApp.
+    "aiosmtpd>=1.4",
 ]
 
 [build-system]
