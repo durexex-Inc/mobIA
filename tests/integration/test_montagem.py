@@ -1268,6 +1268,86 @@ async def test_conteudo_curto_em_caracteres_nunca_aciona_a_contagem_real(session
     )
 
 
+async def test_emoji_aciona_a_contagem_real(session) -> None:
+    """Criterio de pronto da card. Medido: emoji roda a 0,35 chars/token.
+
+    Para `len`, um emoji e uma vogal valem igual -- e por isso que a
+    estimativa antiga via 600 caracteres de emoji como 150 tokens quando eles
+    custam 1706.
+    """
+    emoji_denso = "\U0001f3e0" * 800
+    await semear(session, 3, texto=emoji_denso)
+    contador = ContadorFake()
+
+    await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorFake(),
+        contador=contador,
+    )
+
+    assert contador.chamadas >= 1, (
+        "emoji denso tem de acionar a contagem real -- a estimativa antiga, "
+        "cega a densidade, deixava isso escapar"
+    )
+
+
+async def test_uma_duzia_de_urls_aciona_a_contagem_real(session) -> None:
+    """Criterio de pronto da card. Um lead colando anuncios e trafego de terca.
+
+    Medido: URL roda a 1,85 chars/token, e a estimativa nova a poe em 0,80 do
+    real -- acima do corte de 0,60, entao ela deixa de escapar.
+    """
+    urls = " ".join(
+        f"https://portalimoveis.example.com.br/anuncio/apartamento-3-quartos-{i}" for i in range(12)
+    )
+    await semear(session, 20, texto=urls)
+    contador = ContadorFake()
+
+    await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorFake(),
+        contador=contador,
+    )
+
+    assert contador.chamadas >= 1, (
+        "uma duzia de urls por mensagem tem de acionar a contagem real -- "
+        "urls sao densas em tokens e a estimativa antiga as tratava como "
+        "portugues comum"
+    )
+
+
+async def test_portugues_moderado_continua_sem_pagar_a_contagem(session) -> None:
+    """O criterio que protege a latencia, e o motivo de a estimativa existir.
+
+    Medido sobre o corpus de eval: mesmo uma janela de 40 falas no p90 estima
+    4134 tokens contra um limiar de 6564 -- 1,6x de folga.
+    """
+    mensagem = (
+        "Bom dia, estou procurando um apartamento de dois quartos na zona sul, "
+        "com vaga de garagem e area de lazer completa para toda a familia, de "
+        "preferencia perto do metro e com portaria vinte e quatro horas."
+    )
+    await semear(session, 39, texto=mensagem)
+    contador = ContadorFake()
+
+    await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorFake(),
+        contador=contador,
+    )
+
+    assert contador.chamadas == 0, (
+        "portugues moderado, mesmo numa janela grande, nao pode acionar a "
+        "contagem real -- e essa folga que paga a latencia do caminho comum"
+    )
+
+
 class _ResumidorEspiao(ResumidorFake):
     """Registra o `conteudo` que recebeu, e nao so a instrucao.
 

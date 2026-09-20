@@ -265,11 +265,43 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
     return "\n".join(linhas)
 
 
+# Caracteres por token do portugues, MEDIDO -- nao suposto.
+#
+# Medicao de 20/09/2026 com `ContadorAnthropic` contra claude-sonnet-5, pela
+# inclinacao entre um texto e o mesmo texto oito vezes (o que cancela a
+# sobrecarga fixa da chamada): portugues sem acento 2,34, com acento 2,38.
+#
+# O valor anterior era 4, que e o INGLES (3,15 medido). A consequencia estava
+# documentada ao contrario: `Settings.limiar_de_contagem_efetivo` afirmava que
+# o portugues ficava "coberto com folga" pela razao de seguranca de 2,4, e a
+# folga real era de 2,6%. Ver o desenho da TEC-225.
+_CHARS_POR_TOKEN_EM_PORTUGUES = 2.3
+
+# Tokens por caractere NAO-ASCII.
+#
+# Um emoji e UM caractere Python e custa cerca de 2,9 tokens (0,35 chars/token
+# medido). Para `len` ele vale o mesmo que uma vogal, e e exatamente essa
+# cegueira que fazia 600 caracteres de emoji serem estimados em 150 tokens
+# quando custam 1706.
+#
+# O acento do portugues paga este mesmo preco, o que superestima um pouco
+# (1,23 do real, contra 1,02 do texto sem acento). Superestimar e a direcao
+# segura, e a folga de latencia aguenta -- ver a D3 do desenho.
+_TOKENS_POR_CARACTERE_NAO_ASCII = 3
+
+
 def _estimar(resumo: str | None, literais: list[Message], estado: LeadQualification | None) -> int:
-    bruto = (
-        len(SISTEMA) + len(resumo or "") + len(_texto_das(literais)) + len(_texto_do_estado(estado))
-    )
-    return bruto // 4
+    """Estimativa barata de tokens, ciente de densidade (TEC-225).
+
+    Separa ASCII de nao-ASCII porque os dois custam ordens diferentes: o
+    portugues roda a 2,3 caracteres por token e o emoji a 0,35 -- e `len`
+    nao distingue os dois. A formula anterior (`len // 4`) supunha o ingles e
+    subcontava tudo que este produto processa.
+    """
+    texto = SISTEMA + (resumo or "") + _texto_das(literais) + _texto_do_estado(estado)
+    nao_ascii = sum(1 for caractere in texto if ord(caractere) > 127)
+    ascii_ = len(texto) - nao_ascii
+    return int(ascii_ / _CHARS_POR_TOKEN_EM_PORTUGUES + nao_ascii * _TOKENS_POR_CARACTERE_NAO_ASCII)
 
 
 # O piso de caracteres por token que `Settings.limiar_de_contagem_efetivo`
