@@ -95,7 +95,7 @@ Com a fórmula nova, base64 fica em 0,43 — abaixo do corte de 0,60. Ele é ASC
 
 A melhora ainda assim é real: de 0,25 para 0,43.
 
-### D5 — O segundo item da card NÃO está obsoleto, e o `headroom` sobe para 1.600
+### D5 — O segundo item da card NÃO está obsoleto, e o `headroom` sobe para 1.700
 
 > **Esta decisão substitui uma versão anterior deste desenho, que declarava o segundo item da card obsoleto. Aquela versão estava errada, e o parágrafo abaixo registra por quê — não por rigor de processo, mas porque o erro é instrutivo: eu confiei em dois testes sem conferir com que régua eles mediam.**
 
@@ -116,9 +116,11 @@ Medido em 20/09/2026, cada parcela contra o contador real (`ContadorAnthropic`, 
 
 **A reserva de 1.060 é 485 tokens menor que a lacuna real.** Um contexto medido no teto efetivo de 10.940 envia cerca de 12.485 tokens — e o teto de 12.000 da RN-02.5 é critério de aceite.
 
-**Decisão: `contexto_headroom_de_tokens` passa de 1.060 para 1.600**, cobrindo os 1.545 medidos com 55 tokens de folga. É a primeira vez que esse número sai de uma medição com o contador real, e não de aritmética sobre o proxy.
+**Decisão: `contexto_headroom_de_tokens` passa de 1.060 para 1.700.** É a primeira vez que esse número sai de uma medição com o contador real, e não de aritmética sobre o proxy.
 
-**O custo, declarado:** o teto efetivo cai de 10.940 para 10.400 — 540 tokens, cerca de 1.240 caracteres de conversa a menos por chamada. O CLAUDE.md avisa que essa reserva sai do mesmo contexto que guarda a conversa do lead, e aqui ela sai mesmo. A alternativa era continuar estourando o teto em silêncio.
+> **Segunda correção, também escrita durante a implementação.** Este desenho chegou a decidir **1.600**, cobrindo os 1.545 da tabela acima com 55 tokens de folga. A revisão da tarefa apontou que os 1.545 não incluíam o envelope estrutural da requisição real, e a medição que se seguiu corrigiu os dois lados: uma chamada de `count_tokens` cobra **7 tokens fixos**, e as cinco parcelas foram medidas em cinco chamadas — então elas somam **1.524**, não 1.545. E o envelope, medido comparando o mesmo texto achatado numa mensagem contra repartido em turnos, é de **35 tokens em 20 turnos e 75 em 40** — não os "100-200" que a docstring de `teto_de_tokens_efetivo` estimava. Piso real de ponta a ponta: **1.524 + 75 = 1.599**. O 1.600 cobria por **um token**, certo por acidente.
+
+**O custo, declarado:** o teto efetivo cai de 10.940 para 10.300 — 640 tokens, cerca de 1.470 caracteres de conversa a menos por chamada. O CLAUDE.md avisa que essa reserva sai do mesmo contexto que guarda a conversa do lead, e aqui ela sai mesmo. A alternativa era continuar estourando o teto em silêncio.
 
 **O que esta card NÃO faz:** trocar o proxy de `_decomposicao` pela fórmula nova. Os dois testes de orçamento continuam medindo em unidades de `len/4`, e passam a ser o que de fato são — um alarme contra **crescimento do prompt**, não uma validação da reserva. A prosa deles tem de dizer isso, porque hoje ela afirma medir "o mesmo proxy do módulo de montagem", o que deixou de ser verdade.
 
@@ -183,12 +185,12 @@ O conserto: o fator passa a ser derivado do **pior caso plausível medido sob a 
 
 ## O que a mudança do `headroom` não quebra, conferido
 
-O limiar deriva do teto efetivo, então ele cai junto: de 6.564 para 6.240. Os três testes da D1/D2 sobrevivem com a mesma folga qualitativa:
+O limiar deriva do teto efetivo, então ele cai junto: de 6.564 para **6.180**. Os três testes da D1/D2 sobrevivem com a mesma folga qualitativa:
 
 | teste | estimativa | limiar novo | resultado |
 | --- | --- | --- | --- |
-| emoji aciona | 7.283 | 6.240 | aciona ✅ |
-| URLs acionam | 7.350 | 6.240 | aciona ✅ |
-| português moderado não paga | 3.633 | 6.240 | não aciona ✅ |
+| emoji aciona | 7.283 | 6.180 | aciona ✅ |
+| URLs acionam | 7.350 | 6.180 | aciona ✅ |
+| português moderado não paga | 3.633 | 6.180 | não aciona ✅ |
 
-E os três testes de `config.py` continuam passando: `teto_efetivo == teto − headroom` é identidade; `subcontagem(786,8) < 793` não depende do `headroom`; `subcontagem < headroom × 0,75` fica com mais folga (1.200 contra 786,8), não menos.
+E os três testes de `config.py` continuam passando: `teto_efetivo == teto − headroom` é identidade; `subcontagem(786,8) < 793` não depende do `headroom`; `subcontagem < headroom × 0,75` fica com mais folga (1.275 contra 786,8), não menos.
