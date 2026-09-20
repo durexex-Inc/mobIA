@@ -1,6 +1,6 @@
 # TEC-292 — log sem texto de exceção de terceiro
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** implementado
 **Card:** [TEC-292](https://eduardodurieuxlopes.atlassian.net/browse/TEC-292) — épico TEC-123
 **Branch:** `feat/tec-292-log-sem-texto-de-excecao-de-terceiro`
 **Origem:** levantamento feito durante a TEC-222, que fechou `messages.last_error` e deixou o log de fora de propósito.
@@ -82,13 +82,23 @@ O extrator devolve `sqlstate`, `constraint_name` e `table_name`, e **nunca** `de
 
 Onde o `__cause__` não for uma exceção do asyncpg (erro de conexão, timeout), o extrator devolve `None` e o sítio fica só com `reason=type(exc).__name__`, que já está lá.
 
-## D3 — Os três pontos de Redis mantêm o texto, e a razão fica escrita
+## D3 — Dos três pontos de Redis, dois mantêm o texto — e a razão fica escrita
 
 `domain/messages/service.py:128` (`enqueue.failed`), `workers/jobs/sweep_stalled.py:105` (`sweep.enqueue_failed`) e o par de `api/routes/imoveis.py`.
 
 O levantamento os pôs na classe A por serem exceção de terceiro. Mas a classificação desta card é sobre **o que a exceção pode ecoar**, e aqui o único argumento do job é um UUID que este projeto gerou: `enqueue_process_message` manda `str(message_id)`, e `importar_catalogo` manda `str(importacao_id)`. O texto que sobra é de nível de conexão — `Error 111 connecting to localhost:6379` —, que é justamente o que se quer ler às três da manhã.
 
 Ficam como estão, **com comentário registrando por que** — sem ele, a próxima varredura os trata como esquecimento e os apaga.
+
+### O mesmo destino HTTP tem outro escritor, e a revisão final o achou
+
+`api/routes/imoveis.py` não é o único a gravar em `importacao.erros`. `domain/catalogo/importacao.py:109` grava ali `f"falha durante a gravacao: {erro}"`, e aquele `erro` vem de um `except Exception` em volta de `sincronizar(...)` — **exceção de SQLAlchemy, com a linha `DETAIL`**, num caminho cujos dados vêm do arquivo de catálogo importado.
+
+É o mesmo vetor, na mesma coluna, servido pelo mesmo GET — e pior que o de `imoveis.py`, porque lá a exceção é de Redis e aqui é de banco. Entra nesta card, com `motivo_do_erro_de_banco`.
+
+Não fosse isso, o comentário que a card escreve em `imoveis.py` — dizendo que aquela coluna não pode carregar texto de terceiro — seria falso no instante em que foi escrito.
+
+**Fica de fora, de propósito:** `importacao.py:73`, que grava `str(erro)` de um `ArquivoInvalido`. O texto é de exceção do próprio projeto, e o que ele interpola é o nome do arquivo que o próprio cliente enviou, voltando para esse mesmo cliente. Registrado em comentário para a próxima varredura não o tratar como esquecimento.
 
 ### Menos um: `imoveis.py` tem segundo destino, e ele é servido por HTTP
 
@@ -114,6 +124,16 @@ O `detail` sai; `reason=type(exc).__name__` fica. O `log.exception` da mesma cha
 O da OpenAI renderiza `Error code: 400 - {'error': {'message': ..., 'param': ...}}` inteiro, e o `input` daquela chamada é o documento do imóvel montado a partir do arquivo importado. O docstring dele afirma seguir "a mesma exceção deliberada" do outro — e não segue: o outro extrai campos, este passa o texto.
 
 O de `embeddings.py` passa a extrair campos como o da Anthropic. A TEC-237 abriu a exceção para *o corpo de erro que o servidor escreveu*, não para `str(exc)` de um SDK.
+
+## D6 — A classe C não precisa de tratamento próprio, e a razão é a D5
+
+Os quatro pontos da classe C — `turno.py:1307` e `:2176` (`ModeracaoIndisponivel`), `process_message.py:333` (`_detalhe_para_o_log`) e `importacao.py:78` (`ArquivoInvalido`) — não aparecem nas decisões acima, e a revisão final apontou a lacuna. Ela é aparente: **os três primeiros já passam pelo funil que a D5 conserta.**
+
+`ModeracaoIndisponivel` só carrega texto de terceiro quando `infra/moderacao.py:176` a levanta com `motivo_do_provedor(exc)` — o da Anthropic, que já extraía campos. `_detalhe_para_o_log` repassa a mensagem de exceções de `mobia`, e a pior que chega lá é justamente aquela. Ou seja: o texto de terceiro que alcança a classe C vem **inteiro** dos dois `motivo_do_provedor`, e a D5 é o que fecha o que estava frouxo entre eles.
+
+O quarto, `importacao.py:78`, é o `ArquivoInvalido` discutido na D3: exceção do projeto, interpolando o nome do arquivo que o cliente enviou de volta para ele. Fica.
+
+Não há, portanto, ponto da classe C sem decisão — há uma decisão só, e ela é a D5.
 
 ## Fora de escopo, e por quê
 
