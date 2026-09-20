@@ -600,13 +600,17 @@ PISO_ANDAIME_DE_ANCORAGEM_PCT = 50
 class InvencaoObservada:
     """Um turno cuja prosa citou cifra ou codigo sem base, com o endereco.
 
-    Carrega as divergencias e nao so a contagem para uma secao de
-    diagnostico FUTURA poder renderiza-las -- **essa secao nao existe
-    ainda**. Hoje `divergencias` so e lido por dois testes unitarios:
-    `taxa_de_alucinacao` conta so por `conversa_id`/`indice` e nunca passa
-    este campo para `render`. E diferente de `ViolacaoDeFormato`, que carrega
-    o mesmo tipo de detalhe e ELE chega ao relatorio -- aqui, descobrir qual
-    foi a divergencia de um turno especifico ainda exige outra execucao paga.
+    Carrega as divergencias e nao so a contagem porque a secao de diagnostico
+    as renderiza: `resumo_da_invencao` -> `_secao_de_invencao`
+    (`evals/relatorio.py`), desde a TEC-270. Ate ela, este campo existia para
+    uma secao que nao existia -- so dois testes unitarios o liam, e descobrir
+    qual foi a divergencia de um turno especifico custava outra execucao
+    paga. Era a diferenca para `ViolacaoDeFormato`, que carrega o mesmo tipo
+    de detalhe e sempre chegou ao relatorio; agora as duas chegam.
+
+    `taxa_de_alucinacao` continua contando so por `conversa_id`/`indice` --
+    o lead vive o turno, e um turno que inventa dois precos e um turno ruim,
+    nao dois. A secao dedupa igual na contagem e lista as duas divergencias.
     """
 
     conversa_id: str
