@@ -6,6 +6,7 @@ Funcionalidade: Idempotencia na recepcao de mensagens
 import asyncio
 import json
 
+from conftest import eventos_de_log  # type: ignore[import-not-found]
 from sqlalchemy import func, select
 
 from mobia.domain.messages.models import Message
@@ -50,19 +51,6 @@ def assinado(payload: dict, secret: str) -> tuple[bytes, dict[str, str]]:
     }
 
 
-def eventos_de_log(caplog, evento: str) -> list[dict]:
-    """Decodifica os registros JSON do structlog que carregam `evento`."""
-    encontrados = []
-    for registro in caplog.records:
-        try:
-            dados = json.loads(registro.getMessage())
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if dados.get("event") == evento:
-            encontrados.append(dados)
-    return encontrados
-
-
 async def test_mesma_mensagem_entregue_duas_vezes(client, session, redis_pool, settings, caplog):
     """Cenario: Mesma mensagem entregue duas vezes."""
     body, headers = assinado(envelope("wamid.ABC123"), settings.whatsapp_app_secret)
@@ -81,8 +69,8 @@ async def test_mesma_mensagem_entregue_duas_vezes(client, session, redis_pool, s
 
     descartes = eventos_de_log(caplog, "message.duplicate_discarded")
     assert len(descartes) == 1
-    assert descartes[0]["provider_message_id"] == "wamid.ABC123"
-    assert descartes[0]["channel"] == "whatsapp"
+    assert descartes[0].corpo["provider_message_id"] == "wamid.ABC123"
+    assert descartes[0].corpo["channel"] == "whatsapp"
 
 
 async def test_reentrega_concorrente_em_replicas_diferentes(client, session, redis_pool, settings):
@@ -143,7 +131,7 @@ async def test_duplicata_dentro_do_mesmo_envelope(client, session, redis_pool, s
     assert len(await redis_pool.queued_jobs()) == 2
 
     descartes = eventos_de_log(caplog, "message.duplicate_discarded")
-    assert [d["provider_message_id"] for d in descartes] == ["wamid.REPETIDA"]
+    assert [d.corpo["provider_message_id"] for d in descartes] == ["wamid.REPETIDA"]
 
 
 async def test_lote_com_duplicata_nao_derruba_as_mensagens_legitimas(

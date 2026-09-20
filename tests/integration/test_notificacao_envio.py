@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from conftest import eventos_de_log  # type: ignore[import-not-found]
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -331,19 +332,6 @@ async def test_handoff_de_lead_sem_temperatura_grava_as_quatro_horas_padrao(
     assert limite_min <= linha.sla_limite_em <= limite_max
 
 
-def _eventos_de_log(caplog, evento: str) -> list[dict]:
-    """Decodifica os registros JSON do structlog que carregam `evento`."""
-    encontrados = []
-    for registro in caplog.records:
-        try:
-            dados = json.loads(registro.getMessage())
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if dados.get("event") == evento:
-            encontrados.append(dados)
-    return encontrados
-
-
 async def test_resumo_que_nao_decifra_notifica_mesmo_assim(
     session, session_factory, semear_handoff_com_resumo, semear_corretor, caplog
 ) -> None:
@@ -376,13 +364,13 @@ async def test_resumo_que_nao_decifra_notifica_mesmo_assim(
     assert linha.notificado_em is not None
     assert linha.aviso_manual_pendente is False
 
-    avisos = _eventos_de_log(caplog, "notificacao.resumo_ilegivel")
+    avisos = eventos_de_log(caplog, "notificacao.resumo_ilegivel")
     assert len(avisos) == 1
-    assert avisos[0]["handoff_id"] == str(handoff_id)
-    assert avisos[0]["erro"] == "DecryptionError"
+    assert avisos[0].corpo["handoff_id"] == str(handoff_id)
+    assert avisos[0].corpo["erro"] == "DecryptionError"
     # Nunca o blob nem o texto decifrado -- so o tipo do erro e o handoff_id.
-    assert "fulano" not in json.dumps(avisos[0])
-    assert "outro texto" not in json.dumps(avisos[0])
+    assert "fulano" not in json.dumps(avisos[0].corpo)
+    assert "outro texto" not in json.dumps(avisos[0].corpo)
 
 
 async def test_sucesso_apos_falha_anterior_limpa_aviso_manual_pendente(

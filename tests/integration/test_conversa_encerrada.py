@@ -16,10 +16,14 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
 
 import pytest
-from conftest import CANAL_AGENTE, CONVERSA_AGENTE, ClassificadorFake
+from conftest import (
+    CANAL_AGENTE,
+    CONVERSA_AGENTE,
+    ClassificadorFake,
+    eventos_de_log,  # type: ignore[import-not-found]
+)
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -852,24 +856,6 @@ MOTIVO_DE_OUTRA_CARD = "INATIVIDADE"
 PERGUNTA_DA_DESAMBIGUACAO = "Voce procura para comprar ou para alugar?"
 
 
-def _eventos_de_log(caplog: Any, evento: str) -> list[tuple[str, dict[str, Any]]]:
-    """(nivel, corpo) de cada registro JSON do structlog que carrega `evento`.
-
-    Mesmo molde de `_eventos_de_log` em `test_citacao_no_turno.py` e em
-    `test_apresentacao_no_turno.py`, copiado e nao importado -- os arquivos de
-    integracao deste repo sao autocontidos.
-    """
-    encontrados = []
-    for registro in caplog.records:
-        try:
-            dados = json.loads(registro.getMessage())
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if dados.get("event") == evento:
-            encontrados.append((registro.levelname, dados))
-    return encontrados
-
-
 async def test_conversa_encerrada_por_outro_motivo_nao_cala_o_turno(
     session, outbound_fake, resumidor_fake, contador_fake, rodar_turno
 ) -> None:
@@ -1047,7 +1033,7 @@ async def test_o_log_do_encerramento_sai_sem_o_texto_das_mensagens(
             rodar_turno, session, entregador, resumidor_fake(), contador_fake(), vezes=3
         )
 
-    ((nivel, corpo),) = _eventos_de_log(caplog, "conversa.encerrada")
+    ((nivel, corpo),) = eventos_de_log(caplog, "conversa.encerrada")
     assert nivel == "INFO"
     assert corpo["motivo"] == MotivoDoEncerramento.FORA_DE_ESCOPO
     # A contagem de ANTES do zero -- e o numero que decidiu, e depois dele a

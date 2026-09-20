@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -7,7 +8,7 @@ from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -1180,3 +1181,66 @@ def semear_handoff_com_resumo(session: AsyncSession):
         return registro.id
 
     return _semear
+
+
+class EventoDeLog(NamedTuple):
+    """Um registro JSON do structlog, ja decodificado.
+
+    **`NamedTuple` e nao dataclass, e a razao e de migracao.** Ate a TEC-289
+    este helper existia copiado em seis arquivos e em DUAS formas: tres
+    devolviam `(nivel, corpo)` e tres devolviam so o corpo. Sendo tupla, os
+    sitios que desempacotam -- `((nivel, corpo),) = eventos_de_log(...)` --
+    continuam valendo sem edicao, e os outros ganham `.corpo`, que diz em voz
+    alta o que a forma antiga escondia: que o nivel estava sendo descartado.
+    """
+
+    nivel: str
+    corpo: dict[str, Any]
+
+
+def eventos_de_log(caplog: Any, evento: str) -> list[EventoDeLog]:
+    """Os registros JSON do structlog que carregam `evento`.
+
+    Um so, no lugar das seis copias que existiam ate a TEC-289
+    (`test_apresentacao_no_turno.py`, `test_citacao_no_turno.py`,
+    `test_conversa_encerrada.py`, `test_escalada_de_sla.py`,
+    `test_notificacao_envio.py` e `features/test_dedup_por_message_id.py`).
+
+    **O `json.loads` daqui desfaz o escape**, entao asserta feita sobre o
+    `corpo` -- ou sobre um valor dele -- e imune a armadilha da TEC-289. O
+    escape so volta se alguem re-serializar com `json.dumps` no padrao; para
+    esse caso existe `log_legivel`.
+    """
+    encontrados = []
+    for registro in caplog.records:
+        try:
+            dados = json.loads(registro.getMessage())
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if dados.get("event") == evento:
+            encontrados.append(EventoDeLog(registro.levelname, dados))
+    return encontrados
+
+
+def log_legivel(caplog: Any) -> str:
+    r"""Todo o log capturado, com o escape de `\uXXXX` desfeito. TEC-289.
+
+    **Use isto, e nao `caplog.text`, quando a agulha tiver acento.**
+    `configure_logging` usa `structlog.processors.JSONRenderer()`, que
+    serializa no padrao `ensure_ascii=True`: o log diz
+    `"não falo de imóveis"`, e `assert "não falo de imóveis" not in
+    caplog.text` passa com o texto DENTRO do log. A asserta que mais importa
+    nos testes de log -- "o texto que mandamos ao lead nao vazou" -- e
+    justamente a que a convencao da TEC-267 garante ser acentuada.
+
+    Registro que nao for JSON passa intacto: o que interessa e desfazer o
+    escape, nao filtrar.
+    """
+    linhas = []
+    for registro in caplog.records:
+        bruto = registro.getMessage()
+        try:
+            linhas.append(json.dumps(json.loads(bruto), ensure_ascii=False))
+        except (json.JSONDecodeError, TypeError):
+            linhas.append(bruto)
+    return "\n".join(linhas)

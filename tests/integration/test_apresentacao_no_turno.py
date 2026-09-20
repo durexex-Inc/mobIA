@@ -4,12 +4,12 @@ Basename distinto de tudo em `tests/unit/`, e rima com
 `test_busca_no_turno.py`.
 """
 
-import json
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
+from conftest import eventos_de_log  # type: ignore[import-not-found]
 from sqlalchemy import select
 
 from mobia.domain.agente.apresentacao import (
@@ -457,23 +457,6 @@ async def test_janela_fechada_na_primeira_ficha_expira_o_turno(
     assert outbound.entregues == [], "janela fechada interrompe a apresentacao inteira"
 
 
-def _eventos_de_log(caplog: Any, evento: str) -> list[tuple[str, dict[str, Any]]]:
-    """(nivel, corpo) de cada registro JSON do structlog que carrega `evento`.
-
-    Mesmo molde de `eventos_de_log` em `tests/features/test_dedup_por_message_id.py`,
-    com o nivel junto porque aqui a asserta e sobre ele.
-    """
-    encontrados = []
-    for registro in caplog.records:
-        try:
-            dados = json.loads(registro.getMessage())
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if dados.get("event") == evento:
-            encontrados.append((registro.levelname, dados))
-    return encontrados
-
-
 async def test_candidato_que_sumiu_do_catalogo_nao_vira_turno_mudo_sem_log(
     session: Any,
     outbound_fake: Any,
@@ -503,7 +486,7 @@ async def test_candidato_que_sumiu_do_catalogo_nao_vira_turno_mudo_sem_log(
     assert resultado == "sem_resposta"
     assert outbound.entregues == []
     assert await _kinds_reservados() == []
-    ((nivel, evento),) = _eventos_de_log(caplog, "apresentacao.fichas_sumiram_do_catalogo")
+    ((nivel, evento),) = eventos_de_log(caplog, "apresentacao.fichas_sumiram_do_catalogo")
     assert nivel == "ERROR", "zero ficha e turno mudo para o lead: tem de acordar alguem"
     assert (evento["pedidas"], evento["encontradas"]) == (1, 0)
     # Fix wave da TEC-162 (Minor): o id que sumiu tem de aparecer no proprio
