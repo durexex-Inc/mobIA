@@ -20,11 +20,13 @@ ultimas, sobre a prosa versionada que descreve o codigo (TEC-282):
             ainda descreve o que esta ali.
 
   VIZINHO   o comentario NAO mudou, mas o codigo dentro do mesmo def/class
-            mudou. E o caso perigoso: ninguem olha para o que nao aparece no
-            diff, e e exatamente assim que um comentario passa a mentir. A
-            saida padrao mostra so os VIZINHO mais proximos da alteracao em
-            cada bloco e resume o resto numa linha, porque a listagem inteira
-            costuma passar de 100 linhas e deixar de caber numa leitura.
+            mudou -- ou e a docstring de MODULO de um arquivo que mudou por
+            baixo dela (TEC-283). E o caso perigoso: ninguem olha para o que
+            nao aparece no diff, e e exatamente assim que um comentario passa
+            a mentir. A saida padrao mostra so os VIZINHO mais proximos da
+            alteracao em cada bloco e resume o resto numa linha, porque a
+            listagem inteira costuma passar de 100 linhas e deixar de caber
+            numa leitura.
 
   PROSA     um .md versionado cita `arquivo.py:linha` de um arquivo que esta
             branch mexeu. Suspeita, nao veredito: a ferramenta nao decide se a
@@ -43,12 +45,10 @@ ultimas, sobre a prosa versionada que descreve o codigo (TEC-282):
 Planos de implementacao (`docs/superpowers/plans/`) ficam fora da varredura de
 prosa; a razao esta em PREFIXO_DOS_PLANOS.
 
-Duas cegueiras conhecidas, nenhuma nova desta card. Apagar ou renomear um .py
-nunca entra no conjunto de alterados -- `linhas_alteradas` para de acumular em
-`+++ /dev/null` --, entao toda citacao aquele arquivo escapa justo quando
-ficaria FALSO. E docstring de nivel de MODULO nunca vira VIZINHO, porque
-`_blocos` so anda por ClassDef e FunctionDef; um modulo que cresce por baixo de
-uma docstring desatualizada nao aciona marca nenhuma.
+Uma cegueira conhecida, herdada da TEC-277 e ainda aberta na TEC-284: apagar
+ou renomear um .py nunca entra no conjunto de alterados -- `linhas_alteradas`
+para de acumular em `+++ /dev/null` --, entao toda citacao aquele arquivo
+escapa justo quando ficaria FALSO.
 
 Uso:
 

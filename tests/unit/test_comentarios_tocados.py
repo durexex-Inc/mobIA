@@ -1,9 +1,9 @@
 """A ferramenta que lista comentarios, docstrings e prosa a reconferir, testada.
 
-TEC-277 e TEC-282. Pura: as partes que decidem as cinco marcas -- ALTERADO,
-VIZINHO, PROSA, FALSO e NOMEIA -- nao tocam git nem disco, recebem texto de
-diff, fonte, documento e conjuntos de linhas e nomes. Antes da TEC-277 o script
-nao tinha teste nenhum.
+TEC-277, TEC-282 e TEC-283. Pura: as partes que decidem as cinco marcas --
+ALTERADO, VIZINHO, PROSA, FALSO e NOMEIA -- nao tocam git nem disco, recebem
+texto de diff, fonte, documento e conjuntos de linhas e nomes. Antes da
+TEC-277 o script nao tinha teste nenhum.
 """
 
 import ast
