@@ -37,10 +37,12 @@ dependencies = [
     # `== outro`) levanta ou devolve array em vez de bool, que e o caminho que
     # a busca da TEC-158 vai percorrer.
     "pgvector>=0.4",
-    # SMTP assincrono para a notificacao ao corretor (TEC-280). Piso em 3.0
-    # porque e a serie que aceita `start_tls` como argumento de `send`; nas
-    # 2.x a negociacao exigia montar o cliente a mao.
-    "aiosmtplib>=3.0",
+    # SMTP assincrono para a notificacao ao corretor (TEC-280). Piso em 2.0:
+    # o CHANGELOG da lib registra que, a partir desta serie, `start_tls` em
+    # `send()` aceita True/False explicito para ligar ou desligar o upgrade,
+    # com None (nao usado aqui -- `configuracao.smtp_starttls` e sempre bool)
+    # autodetectando pelo servidor. Nao verificamos serie anterior a 2.0.
+    "aiosmtplib>=2.0",
 ]
 
 [project.optional-dependencies]
