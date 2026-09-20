@@ -187,21 +187,24 @@ class Settings(BaseSettings):
     # com ate 10 candidatos -- e nenhum dos dois e contado por
     # `montar_contexto` nem pelas cinco parcelas acima. Ficou de fora de
     # proposito (fix-wave da TEC-265): medir e travar um sexto numero e
-    # decisao de design, nao correcao deste comentario. O que importa aqui e
-    # que a reserva de baixo tem 807 tokens de folga sobre o teto fixo de
-    # `test_a_margem_do_orcamento_do_prompt_e_deliberada` -- 1600 - 793
-    # (TEC-225; eram 267 antes desta subida, 1060 - 793). Medido nesta card:
-    # um `tool_result` de 10 candidatos com titulo e bairro TIPICOS (~45 e ~8
-    # caracteres) fica em 675,5 no proxy `len/4` PROPRIO do orcamento -- o
-    # mesmo usado nas cinco parcelas acima, e desde a TEC-225 NAO mais o
-    # mesmo proxy de `montagem.py`, que a TEC-225 trocou por uma formula
-    # ciente de densidade -- e cabe, com folga. Titulo e bairro no MAXIMO da
-    # coluna (`String(160)` e `String(120)` em `catalogo/models.py`) sobem
-    # essa conta para 1245,5, 438,5 acima da folga nova. O segundo
-    # round-trip de um turno com busca ainda pode estourar a reserva sem que
-    # nenhum teste hoje reclame -- so que agora precisa de candidatos perto
-    # do limite da coluna, nao de qualquer titulo/bairro "longo": a subida da
-    # TEC-225 encolheu o risco, nao o eliminou.
+    # decisao de design, nao correcao deste comentario.
+    #
+    # O que importa aqui e o tamanho, em tokens REAIS -- nao no proxy `len/4`,
+    # que mediria outra coisa e nao pode ser subtraido de um numero em tokens
+    # (foi o erro da primeira redacao deste paragrafo, na TEC-225: fazia
+    # `1600 - 793`, tokens reais menos um teto medido no proxy). A reserva de
+    # 1700 cobre a subcontagem medida de 1599 (ver a entrada TEC-225 abaixo)
+    # com **101 tokens reais de folga**. Medido contra `ContadorAnthropic`
+    # (20/09/2026): um `tool_result` de 10 candidatos com titulo e bairro
+    # TIPICOS (~45 e ~8 caracteres) custa **1.169 tokens reais**; com titulo e
+    # bairro no MAXIMO da coluna (`String(160)`/`String(120)` em
+    # `catalogo/models.py`), **3.709**. Os dois estouram os 101 de folga por
+    # larga margem -- 11,6x e 36,7x, respectivamente. O segundo round-trip de
+    # um turno com busca NAO "pode" estourar a reserva: ele a estoura, toda
+    # vez que a segunda volta do laco acontece. A sexta parcela continua fora
+    # da reserva por decisao de desenho anterior a esta card (fix-wave da
+    # TEC-265) -- o que muda aqui e este comentario parar de mentir sobre o
+    # tamanho do que ficou de fora.
     #
     # **O valor de hoje dessa diferenca nao esta escrito aqui, de proposito**
     # (TEC-243). Ele e derivado -- muda quando alguem mexe no prompt, num
@@ -214,7 +217,7 @@ class Settings(BaseSettings):
     # imprime as cinco parcelas, o liquido, o teto e a folga.
     #
     # O que este comentario registra e o que **nao** envelhece: por que a
-    # reserva existe, por que ela ja subiu duas vezes, e o que cada subida
+    # reserva existe, por que ela ja subiu cinco vezes, e o que cada subida
     # custou por turno.
     #
     # **400 -> 800 na TEC-145**, que acrescentou o objeto `extracao` ao
@@ -278,7 +281,7 @@ class Settings(BaseSettings):
     # -- 1,5% do contexto**. E a segunda maior da historia do projeto, atras
     # dos 3,3% da primeira.
     #
-    # **1060 -> 1600 na TEC-225.** As quatro subidas acima nasceram de
+    # **1060 -> 1700 na TEC-225.** As quatro subidas acima nasceram de
     # aritmetica sobre o proxy `len/4` dos dois lados da conta -- e por isso
     # `test_diferenca_entre_o_contado_e_o_enviado` e
     # `test_a_margem_do_orcamento_do_prompt_e_deliberada` passavam sem provar
@@ -287,28 +290,37 @@ class Settings(BaseSettings):
     # (`ContadorAnthropic`, claude-sonnet-5), parcela a parcela, em
     # 20/09/2026:
     #
-    #     parcela                                    len/4     real
-    #     -montagem.SISTEMA (contado, nao enviado)   -42,0    -77,0
-    #     +SISTEMA_DO_AGENTE (campo system=)         305,5    541,0
-    #     +schema compilado (output_config.format)   372,8    798,0
-    #     +rotulos de montar_prompt                   19,2     41,0
-    #     +ferramenta de busca (tools=)               131,2    242,0
-    #     = subcontagem                              786,8  1.545,0
+    #     parcela                                     len/4     real
+    #     -montagem.SISTEMA (contado, nao enviado)    -42,0    -77,0
+    #     +SISTEMA_DO_AGENTE (campo system=)          305,5    541,0
+    #     +schema compilado (output_config.format)    372,8    798,0
+    #     +rotulos de montar_prompt                    19,2     41,0
+    #     +ferramenta de busca (tools=)                131,2    242,0
+    #     = subcontagem (cinco parcelas, cinco chamadas)  786,8  1.545,0
     #
-    # A reserva de 1060 era 485 tokens menor que a lacuna real: um contexto
-    # medido no teto efetivo de 10940 mandava cerca de 12485 tokens, acima do
-    # teto de 12000 da RN-02.5. 1600 cobre os 1545 medidos com 55 de folga.
-    # A validacao desta subida e `test_o_headroom_cobre_a_subcontagem_medida`
-    # em `tests/unit/test_config.py`, e nao os dois testes acima: aqueles
+    # **A soma acima sobrecontava.** Cada parcela foi medida numa chamada
+    # separada de `count_tokens`, e a sobrecarga fixa de 7 tokens por chamada
+    # nao existe na requisicao real, unica -- descontada ela, as cinco
+    # parcelas somam **1.524** tokens reais, nao 1.545. Falta ainda o
+    # envelope estrutural do array multi-turno que `teto_de_tokens_efetivo`
+    # so estimava ("100-200 tokens"): medido, **75 tokens para 40
+    # mensagens** (35 para 20). Total de ponta a ponta: **1.524 + 75 =
+    # 1.599** tokens reais.
+    #
+    # A reserva de 1060 era 539 tokens menor que essa lacuna (1599 - 1060).
+    # 1700 cobre os 1599 medidos com **101 de folga real** -- ver a entrada
+    # da sexta parcela, acima, para o que essa folga NAO cobre. A validacao
+    # desta subida e `test_o_headroom_cobre_a_subcontagem_medida` em
+    # `tests/unit/test_config.py`, e nao os dois testes acima: aqueles
     # continuam medindo em `len/4` e viraram alarme contra crescimento do
     # prompt, nao prova da reserva.
     #
-    # Preco desta subida: **540 tokens a menos de literais e resumo por
-    # turno, de 12000 -- 4,5% do contexto**, o teto efetivo caindo de 10940
-    # para 10400 -- cerca de 1.240 caracteres de conversa a menos por
+    # Preco desta subida: **640 tokens a menos de literais e resumo por
+    # turno, de 12000 -- 5,3% do contexto**, o teto efetivo caindo de 10940
+    # para 10300 -- cerca de 1.470 caracteres de conversa a menos por
     # chamada. E a maior subida da historia do projeto, e a primeira cujo
     # tamanho vem de medir, nao de arredondar sobre uma estimativa.
-    contexto_headroom_de_tokens: int = 1600
+    contexto_headroom_de_tokens: int = 1700
 
     # Dobrar `gatilho - minimas` mensagens deixa exatamente `minimas` literais.
     # Manter gatilho >= 2 * minimas e o que garante o piso depois da regeneracao.
@@ -589,9 +601,11 @@ class Settings(BaseSettings):
         manda como `messages=[{"role": "user", ...}]`, sem `system=`. A
         requisicao real que a TEC-134 monta e um system prompt mais um array
         multi-turno, e cada turno carrega overhead estrutural que o contador
-        nunca ve -- da ordem de 100-200 tokens numa janela de vinte a quarenta
-        mensagens. Some a isso que `_texto_do_estado` e explicitamente uma
-        representacao para medir, nao o renderizador que a TEC-134 usa.
+        nunca ve -- medido na TEC-225 (`ContadorAnthropic`) em **35 tokens
+        para uma janela de vinte mensagens e 75 para quarenta**, nao mais os
+        "100-200" que esta docstring estimava antes de alguem medir. Some a
+        isso que `_texto_do_estado` e explicitamente uma representacao para
+        medir, nao o renderizador que a TEC-134 usa.
 
         A reserva nasceu porque contar a forma exata exigiria conhecer a forma
         exata, e na epoca o consumidor que a define ainda nao existia:
@@ -599,7 +613,7 @@ class Settings(BaseSettings):
         e a reserva continua -- o que a substituiu nao foi contar a forma
         exata, e sim a medicao registrada abaixo. O valor e
         `contexto_headroom_de_tokens`, e o comentario da propria constante
-        registra por que ele ja subiu duas vezes e o que cada subida custou.
+        registra por que ele ja subiu cinco vezes e o que cada subida custou.
 
         **Medido na TEC-134, com a requisicao real ja montada.** A conta usa
         um proxy `len/4` proprio do orcamento -- **nao** o mesmo da TEC-225

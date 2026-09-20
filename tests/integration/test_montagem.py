@@ -1321,9 +1321,10 @@ async def test_portugues_moderado_continua_sem_pagar_a_contagem(session) -> None
     """O criterio que protege a latencia, e o motivo de a estimativa existir.
 
     Este teste semeia 39 falas moderadas em portugues; a formula nova estima
-    3.633 tokens contra um limiar de 6.564 -- 1,8x de folga. Ver o desenho da
-    TEC-225 para a medicao completa sobre o corpus de eval (janela de 40
-    falas no p90: ~4.134 tokens contra o mesmo limiar).
+    3.633 tokens contra um limiar de 6.180 (0.6 do teto efetivo de 10.300,
+    ja com a reserva da TEC-225 em 1.700 descontada) -- 1,7x de folga. Ver o
+    desenho da TEC-225 para a medicao completa sobre o corpus de eval (janela
+    de 40 falas no p90: ~4.134 tokens contra o mesmo limiar).
     """
     mensagem = (
         "Bom dia, estou procurando um apartamento de dois quartos na zona sul, "

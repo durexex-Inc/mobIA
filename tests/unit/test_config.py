@@ -253,16 +253,23 @@ def test_o_headroom_cobre_a_subcontagem_medida() -> None:
 
     Ate a TEC-225 dois testes validavam o headroom com `len/4` dos dois lados
     da conta, entao passavam sem dizer nada sobre a reserva. Medido com
-    `ContadorAnthropic` em 20/09/2026, parcela a parcela, a subcontagem real e
-    de 1545 tokens -- contra uma reserva de 1060.
+    `ContadorAnthropic` em 20/09/2026, parcela a parcela, as cinco parcelas
+    somam 1545 tokens reais -- mas isso sobrecontava: cada parcela foi medida
+    numa chamada separada de `count_tokens`, e a sobrecarga fixa de 7 tokens
+    por chamada nao existe na requisicao real, unica. Descontada ela, as
+    parcelas somam 1524. Falta ainda o envelope estrutural do array
+    multi-turno (system separado mais varios turnos), medido em 75 tokens
+    para uma janela de 40 mensagens -- nao os "100-200" que
+    `teto_de_tokens_efetivo` chegou a estimar antes de alguem medir. Total de
+    ponta a ponta: 1524 + 75 = 1599 -- contra uma reserva que era 1060.
 
-    O numero abaixo e a medicao, transcrita aqui porque medi-la no teste
+    O numero abaixo e essa medicao, transcrita aqui porque medi-la no teste
     exigiria chamar a API a cada execucao. Se alguem mexer no prompt do
     agente, no schema ou na ferramenta de busca, ele envelhece -- e o teste
     vizinho de margem do orcamento e quem avisa, porque conta crescimento do
     prompt em unidades do proxy.
     """
-    SUBCONTAGEM_REAL_MEDIDA = 1545
+    SUBCONTAGEM_REAL_MEDIDA = 1599
     assert get_settings().contexto_headroom_de_tokens >= SUBCONTAGEM_REAL_MEDIDA
 
 
