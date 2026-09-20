@@ -369,8 +369,17 @@ async def test_resumo_que_nao_decifra_notifica_mesmo_assim(
     assert avisos[0].corpo["handoff_id"] == str(handoff_id)
     assert avisos[0].corpo["erro"] == "DecryptionError"
     # Nunca o blob nem o texto decifrado -- so o tipo do erro e o handoff_id.
-    assert "fulano" not in json.dumps(avisos[0].corpo)
-    assert "outro texto" not in json.dumps(avisos[0].corpo)
+    #
+    # `ensure_ascii=False`, e nao o default, pela mesma razao que o comentario
+    # de `test_conversa_encerrada.py` registra: com o escape ligado, agulha
+    # acentuada NUNCA e achada, e a asserta passa dissesse o log o que
+    # dissesse. As duas agulhas de hoje sao ASCII e passariam de qualquer
+    # jeito -- o flag e o que mantem esta asserta real no dia em que alguem
+    # trocar "fulano" por um nome de verdade, que e o que uma fixture destas
+    # deveria usar. Guardado por `test_assercao_de_ausencia_sobre_log.py`.
+    corpo_serializado = json.dumps(avisos[0].corpo, ensure_ascii=False)
+    assert "fulano" not in corpo_serializado
+    assert "outro texto" not in corpo_serializado
 
 
 async def test_sucesso_apos_falha_anterior_limpa_aviso_manual_pendente(
