@@ -105,6 +105,23 @@ async def test_a_mensagem_chega_com_destino_resumo_e_link(
     assert "https://exemplo/conversas/whatsapp/5511" in texto
 
 
+async def test_a_mensagem_leva_date_e_message_id(
+    servidor, monkeypatch, caches_de_cliente_limpos: None
+) -> None:
+    """RFC 5322 (secao 3.6) exige os dois, e nenhum servidor de teste reclama da
+    ausencia -- por isso o defeito so apareceria em producao, contra um
+    provedor de verdade. Ver o comentario em `outbound/email.py`.
+    """
+    controlador, caixa = servidor
+    canal = _canal_apontando_para(controlador, monkeypatch)
+
+    await canal.enviar(destino="p@x.com", assunto="a", corpo="b")
+
+    (mensagem,) = caixa.recebidas
+    assert mensagem["Date"] is not None
+    assert mensagem["Message-ID"] is not None
+
+
 async def test_o_acento_sobrevive_ao_transporte(
     servidor, monkeypatch, caches_de_cliente_limpos: None
 ) -> None:
@@ -112,7 +129,7 @@ async def test_o_acento_sobrevive_ao_transporte(
 
     Montar cabecalho a mao em vez de usar `EmailMessage` passa neste teste so
     por acaso; quebra com assunto acentuado e com corpo longo, que o
-    quoted-printable parte em linhas.
+    `set_content(corpo, charset="utf-8")` codifica em base64 e parte em linhas.
     """
     controlador, caixa = servidor
     canal = _canal_apontando_para(controlador, monkeypatch)

@@ -10,7 +10,9 @@ mantido como alternativa: deixa-lo disponivel preservaria o caminho de volta
 para o descarte em silencio.
 """
 
+from datetime import UTC, datetime
 from email.message import EmailMessage
+from email.utils import format_datetime, make_msgid
 
 import aiosmtplib
 import structlog
@@ -41,6 +43,14 @@ class EmailSmtp:
         mensagem["To"] = destino
         mensagem["Subject"] = assunto
         mensagem.set_content(corpo, charset="utf-8")
+        # A RFC 5322 (secao 3.6) exige `Date` e `Message-ID`, e o `aiosmtplib` nao
+        # os poe -- so envia o que a `EmailMessage` ja tem. Nenhum servidor de
+        # teste (Mailpit, aiosmtpd) reclama da ausencia, entao sem estas duas
+        # linhas o defeito e invisivel aqui e so aparece em producao, contra
+        # um provedor de verdade (SES, Postmark, Resend) que pontua a
+        # mensagem como spam por `MISSING_DATE` e `MISSING_MID`.
+        mensagem["Date"] = format_datetime(datetime.now(UTC))
+        mensagem["Message-ID"] = make_msgid()
 
         try:
             await aiosmtplib.send(
