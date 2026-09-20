@@ -711,6 +711,40 @@ def resumo_do_formato(respostas: Sequence[RespostaObservada]) -> ResumoDoFormato
     )
 
 
+@dataclass(frozen=True)
+class ResumoDaInvencao:
+    """Diagnostico da ancoragem: quais turnos citaram sem base. TEC-270.
+
+    Nao carrega faixa nem bloqueia -- quem bloqueia e `taxa_de_alucinacao`,
+    com os MESMOS turnos. Esta existe para dizer **quais**, que era a
+    pergunta que ate a TEC-270 custava outra execucao paga: a TEC-269 ja
+    coletava as divergencias em `InvencaoObservada`, e elas paravam em
+    `_metricas_de` sem nunca chegar ao `render`.
+
+    **`respostas` esta aqui para a secao poder dizer "0 de 147".** Um resumo
+    montado so a partir da lista nao distingue "a execucao foi limpa" de "nao
+    houve medicao", e a secao sumiria no primeiro caso -- que e justamente
+    quando o leitor precisa saber que a medicao rodou. Secao que so aparece
+    quando ha problema treina quem le a nao procura-la.
+    """
+
+    respostas: int
+    turnos: list[InvencaoObservada]
+
+
+def resumo_da_invencao(
+    invencoes: Sequence[InvencaoObservada],
+    respostas: Sequence[RespostaObservada],
+) -> ResumoDaInvencao:
+    """Espelha `resumo_do_formato`: a mesma forma para a mesma familia de secao.
+
+    Nao recalcula nada -- `invencao_do_turno` ja decidiu o que e invencao, com
+    a mesma `divergencias_de` que `executar_turno` roda em producao. Aqui so
+    se agrupa para render.
+    """
+    return ResumoDaInvencao(respostas=len(respostas), turnos=list(invencoes))
+
+
 # Marcadores de pergunta por campo. Moram aqui, e nao no runner do eval, porque
 # dois proxies dependem deles e uma segunda copia divergiria: `_reperguntou`
 # (perguntar o que o estado JA SABE) e `insistencias` (perguntar de novo o que
