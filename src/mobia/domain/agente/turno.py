@@ -171,11 +171,28 @@ TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
 # da chamada 1, o outro decide esta substituicao a partir do texto ENTREGUE,
 # que na virada do investidor nao e o mesmo.)
 #
-# **Nao promete que alguem foi avisado, e isso e deliberado.** Desde a
-# TEC-280 o e-mail entrega, por SMTP, mas o whatsapp ao corretor (TEC-281)
-# continua so registrando -- prometer aviso aqui seria prometer o que o
-# sistema ainda nao cumpre inteiro. A TEC-174 escreveu "ja avisei um
+# **Nao promete que alguem foi avisado NEM que alguem vai procurar o lead, e
+# isso e deliberado.** Desde a TEC-280 o e-mail entrega, por SMTP, mas aceito
+# pelo servidor nao e o mesmo que lido por um corretor, e o whatsapp ao
+# corretor (TEC-281) continua so registrando -- o que o sistema garante e a
+# fila, e e so a fila que o texto afirma. A TEC-174 escreveu "ja avisei um
 # corretor" e teve de reescrever o texto depois, porque nada notificava.
+#
+# **Ate a TEC-286 esta constante terminava em "Pode deixar que ele entra em
+# contato", e escapou de tres revisoes** -- a guarda de teste daquela epoca
+# barrava as palavras `avisei`/`avisamos`/`avisado`, e esta frase promete a
+# mesma coisa sem usar nenhuma das tres. Quem guarda isto hoje e
+# `tests/unit/test_promessa_ao_lead.py`, que barra a frase e roda sobre todo
+# literal ao lead.
+#
+# **O hedge tem condicao de saida, e ela e uma so: a TEC-281.** Quando o
+# whatsapp ao corretor entregar, um aviso de fato chega a quem vai atender, e
+# o texto pode voltar a ser firme. Enquanto ela estiver aberta, "entra em
+# contato" aqui e promessa de terceiro que este sistema nao controla.
+#
+# A redacao do fecho e a MESMA de TEXTO_DO_ENCAMINHAMENTO_DE_VENDA, de
+# proposito: duas redacoes para o mesmo fato seriam duas coisas para manter em
+# sincronia, e este arquivo ja usa esse argumento em SUFIXO_FORA_DA_JANELA.
 #
 # Sem kind proprio, ao contrario de KIND_DO_CRITERIO_AMPLIADO: aquele e
 # mensagem ADICIONAL e precisa de kind distinto por causa do
@@ -185,7 +202,7 @@ TEXTO_SEM_RESULTADO_APOS_AMPLIAR = (
 TEXTO_DO_LIMITE_DE_PERGUNTAS = (
     "Já perguntei bastante e não quero virar interrogatório. "
     "Prefiro passar para um corretor, que vai conseguir te ajudar melhor daqui. "
-    "Pode deixar que ele entra em contato."
+    "Já coloquei sua conversa na fila deles."
 )
 
 # RN-03.4 (TEC-137). Substituem a prosa do modelo quando a intencao e
@@ -2233,8 +2250,11 @@ async def executar_turno(
             # nao perguntou nada, entao `teto_do_handoff` foi False e o bloco
             # transacional la em cima nao registrou handoff; o subagente
             # perguntou e passou do teto, entao `teto_da_entrega` e True e o
-            # lead recebe "prefiro passar para um corretor... ele entra em
-            # contato" -- com linha nenhuma em `handoffs` para alguem agir.
+            # lead recebe "prefiro passar para um corretor... já coloquei sua
+            # conversa na fila deles" -- com linha nenhuma em `handoffs` para
+            # alguem agir. Desde a TEC-286 o texto afirma a FILA em vez do
+            # contato, o que torna este caso pior e nao melhor: a frase passou
+            # a descrever uma linha de banco que, sem isto, nao existiria.
             #
             # E a falha da TEC-174 de novo, e pior: la o texto prometia um
             # aviso que nao existia; aqui nao existe nem o registro. O
@@ -2507,13 +2527,20 @@ async def executar_turno(
     # depois que esta conversa nao tem.** Entregue esta mensagem, a conversa
     # sera encerrada (bloco pos-entrega, la embaixo) e a guarda do topo vai
     # calar o agente pelos proximos 30 dias:
-    # `TEXTO_DO_LIMITE_DE_PERGUNTAS` diz "ele entra em
-    # contato", `TEXTO_DA_BUSCA_INCONCLUSIVA` diz "já te retorno com as
+    # `TEXTO_DO_LIMITE_DE_PERGUNTAS` diz "já coloquei sua conversa na fila
+    # deles", `TEXTO_DA_BUSCA_INCONCLUSIVA` diz "já te retorno com as
     # opções" e `TEXTO_SEM_RESULTADO_APOS_AMPLIAR` pergunta "Quer que um
     # corretor olhe isso com você?" -- as duas primeiras viram promessa que
     # ninguem cumpre e a terceira, pergunta cuja resposta o agente vai
     # ignorar. A despedida nao promete nem pergunta nada, e e a unica das
     # quatro que continua verdadeira depois do encerramento.
+    #
+    # **A primeira continua na lista mesmo depois da TEC-286, que tirou dela
+    # a promessa de contato.** Dizer "coloquei na fila" e verdade no turno em
+    # que e dito, mas com a conversa encerrada atras da despedida o lead fica
+    # com uma fila em que nao pode mais falar -- e um depois, como os outros
+    # dois. O que a TEC-286 trocou foi quem promete: antes era um corretor
+    # que ninguem avisou; agora e uma fila que o silencio de 30 dias fecha.
     #
     # O handoff que o teto porventura tenha registrado FICA --
     # `registrar_handoff` ja rodou no bloco transacional, e uma pessoa
