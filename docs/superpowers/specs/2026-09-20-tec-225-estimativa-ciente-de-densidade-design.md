@@ -148,7 +148,9 @@ _FATOR_PESSIMISTA = 4 / _CHARS_POR_TOKEN_NO_PIOR_CASO   # = 1,25
 
 O `4` é o divisor do inglês; o `3,2` é o "pior caso do português" que a medição derrubou. O efeito líquido é `len/3,2`, contra um português real de 2,34.
 
-**Medido: o modo pessimista subconta o português em 27%** (razão 0,73). O caminho que existe para errar para cima erra para baixo, e é justamente aquele onde nada corrige depois.
+**Medido: o modo pessimista subcontava o português em 27%** (razão 0,73). O caminho que existe para errar para cima errava para baixo, e é justamente aquele onde nada corrige depois.
+
+> **Correção, escrita durante a implementação:** aqueles 0,73 são o estado **anterior à D1**. Como `_estimar_pessimista` é `(_estimar + 1) × fator`, consertar `_estimar` conserta o pessimista junto — depois da D1 ele já passa a errar para cima (razão 1,27), sem que esta decisão faça nada. **O que esta decisão entrega não é o número, é a derivação.** Hoje o `1,25` sai de `4 / 3,2`, dois valores que a medição derrubou e que por acaso se cancelam; depois, sai de `1 / 0,80`, o pior caso plausível medido. Os dois produzem o mesmo float, bit a bit — e é exatamente por isso que a constante precisa dizer de onde vem: um `1,25` que continuar apoiado em `4` e `3,2` volta a mentir na primeira vez que alguém mexer num dos dois.
 
 O conserto: o fator passa a ser derivado do **pior caso plausível medido sob a fórmula nova**, que é a URL em 0,80 — base64 fica de fora pela D4. `1 / 0,80 = 1,25`.
 
