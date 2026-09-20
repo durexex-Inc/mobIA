@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from mobia.domain.agente.citacao import Divergencia
 from mobia.domain.agente.schemas import Intencao
 from mobia.evals.metricas import (
     DISPERSAO_MEDIDA,
@@ -10,7 +11,9 @@ from mobia.evals.metricas import (
     DivergenciaDeEstado,
     FalhaDeInfraestrutura,
     Insistencia,
+    InvencaoObservada,
     ResumoDaExtracaoEfetiva,
+    ResumoDaInvencao,
     ResumoDeConfianca,
     ResumoDeInsistencia,
     ResumoDeNegativos,
@@ -657,3 +660,126 @@ def test_a_secao_de_insistencia_distingue_conversas_de_ocorrencias() -> None:
 
 def test_relatorio_sem_insistencia_omite_a_secao() -> None:
     assert "Insistencia" not in render([], {})
+
+
+def _invencao(indice: int, *divergencias: Divergencia) -> InvencaoObservada:
+    return InvencaoObservada(conversa_id="compra-07", indice=indice, divergencias=divergencias)
+
+
+def test_a_secao_de_ancoragem_diz_quais_turnos_inventaram() -> None:
+    """A pergunta que ate a TEC-270 custava outra execucao paga.
+
+    Em 10/09/2026 duas execucoes do gate deram 1/147 e 0/145, e a segunda nao
+    pode confirmar nem refutar a primeira: o turno que citou sem base podia
+    estar na conversa que a infraestrutura derrubou, e nao havia como saber
+    qual era.
+    """
+    texto = render(
+        [],
+        {},
+        invencao=ResumoDaInvencao(
+            respostas=147,
+            turnos=[
+                _invencao(3, Divergencia(tipo="preco", citado="R$ 1.250.000")),
+                _invencao(8, Divergencia(tipo="codigo", citado="AP-9999")),
+            ],
+        ),
+    )
+
+    assert "## Ancoragem: turnos que citaram sem base (diagnostico)" in texto
+    assert "turnos com cifra ou codigo sem base: 2" in texto
+    assert "compra-07 turno 3: preco -- R$ 1.250.000" in texto
+    assert "compra-07 turno 8: codigo -- AP-9999" in texto
+
+
+def test_a_execucao_limpa_tambem_produz_a_secao() -> None:
+    """Secao que some quando esta tudo bem treina o leitor a nao procura-la.
+
+    E o mesmo argumento pelo qual `ResumoDaInvencao` carrega `respostas`: sem
+    o total nao daria para escrever o zero com denominador.
+    """
+    texto = render([], {}, invencao=ResumoDaInvencao(respostas=145, turnos=[]))
+
+    assert "## Ancoragem: turnos que citaram sem base (diagnostico)" in texto
+    assert "turnos com cifra ou codigo sem base: 0" in texto
+    assert "145 turnos medidos" in texto
+
+
+def test_sem_medicao_nenhuma_a_secao_nao_aparece() -> None:
+    """`None` e "nao houve medicao", e nao "deu zero" -- sao estados distintos."""
+    assert "Ancoragem" not in render([], {})
+
+
+def test_a_prosa_do_turno_nao_entra_no_relatorio() -> None:
+    """A regra da TEC-161, aplicada ao artefato em vez de ao log.
+
+    Registrar a prosa barrada recria no relatorio exatamente aquilo que a
+    guarda impediu de sair. Hoje `InvencaoObservada` nem carrega o texto,
+    entao isto e impossivel por construcao -- e este teste existe para que
+    continue sendo: quem acrescentar o campo um dia vai ter de decidir
+    conscientemente renderiza-lo, contra um teste vermelho.
+
+    Difere da secao vizinha de propósito: `_secao_de_formato` IMPRIME o texto
+    da violacao, porque sem ele nao da para separar duas perguntas de verdade
+    de erro do proxy de `?`. La o texto e a unica coisa que diagnostica; aqui
+    o tipo e o valor citado ja diagnosticam sozinhos.
+    """
+    sentinela = "SENTINELA-PROSA o apartamento sai por R$ 1.250.000"
+    texto = render(
+        [],
+        {},
+        invencao=ResumoDaInvencao(
+            respostas=1,
+            turnos=[_invencao(0, Divergencia(tipo="preco", citado="R$ 1.250.000"))],
+        ),
+    )
+
+    assert sentinela not in texto
+    assert "SENTINELA-PROSA" not in texto
+
+
+def test_o_valor_citado_sai_legivel_e_nao_em_centavos() -> None:
+    """D10 da TEC-161, herdada: `citado` ja chega formatado de `citacao.py`.
+
+    `_mascarar_digitos` (app/logging.py) come corridas de 10 a 15 digitos, e
+    R$ 10 milhoes em centavos sao exatamente dez. O relatorio nao reformata
+    nada -- so nao pode desfazer o que a origem ja fez, e esta asserta e o
+    que denuncia quem um dia trocar `citado` pelo inteiro cru.
+    """
+    texto = render(
+        [],
+        {},
+        invencao=ResumoDaInvencao(
+            respostas=1,
+            turnos=[_invencao(0, Divergencia(tipo="preco", citado="R$ 10.000.000"))],
+        ),
+    )
+
+    assert "R$ 10.000.000" in texto
+    assert "1000000000" not in texto
+
+
+def test_um_turno_com_duas_divergencias_rende_duas_linhas() -> None:
+    """Um turno que inventou preco E codigo mostra os dois.
+
+    A metrica conta o turno uma vez -- o lead vive o turno --, mas o
+    diagnostico precisa das duas, senao quem le conserta metade.
+    """
+    texto = render(
+        [],
+        {},
+        invencao=ResumoDaInvencao(
+            respostas=10,
+            turnos=[
+                _invencao(
+                    2,
+                    Divergencia(tipo="preco", citado="R$ 700.000"),
+                    Divergencia(tipo="codigo", citado="AP-0001"),
+                )
+            ],
+        ),
+    )
+
+    assert "compra-07 turno 2: preco -- R$ 700.000" in texto
+    assert "compra-07 turno 2: codigo -- AP-0001" in texto
+    assert "turnos com cifra ou codigo sem base: 1" in texto

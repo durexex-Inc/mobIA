@@ -14,6 +14,7 @@ from mobia.evals.metricas import (
     FalhaDeInfraestrutura,
     ResultadoDaMetrica,
     ResumoDaExtracaoEfetiva,
+    ResumoDaInvencao,
     ResumoDeConfianca,
     ResumoDeInsistencia,
     ResumoDeNegativos,
@@ -238,6 +239,54 @@ def _secao_de_formato(resumo: ResumoDoFormato) -> list[str]:
     return linhas
 
 
+def _secao_de_invencao(resumo: ResumoDaInvencao) -> list[str]:
+    """Quais turnos citaram cifra ou codigo sem base. So diagnostico. TEC-270.
+
+    Quem bloqueia e `taxa de alucinacao`, no topo, com os MESMOS turnos; esta
+    secao diz **quais**. Ate a TEC-270 essa pergunta custava outra execucao
+    paga: a TEC-269 ja guardava as divergencias em `InvencaoObservada`, e elas
+    paravam em `_metricas_de` sem nunca chegar aqui.
+
+    **A prosa do turno nao entra, e a secao vizinha imprime a dela de
+    proposito.** A diferenca nao e descuido de uma das duas:
+
+    * `_secao_de_formato` imprime `violacao.texto` porque sem ele nao da para
+      separar duas perguntas de verdade de erro do proxy de `?` -- la o texto
+      e a unica coisa que diagnostica.
+    * aqui, `tipo` e `citado` ja diagnosticam sozinhos, e imprimir a prosa
+      recriaria no artefato exatamente aquilo que a guarda da TEC-161 impediu
+      de sair. `InvencaoObservada` nem carrega o texto.
+
+    Quem uniformizar as duas por simetria reintroduz o vazamento; e por isso
+    que a razao esta escrita aqui e travada por
+    `test_a_prosa_do_turno_nao_entra_no_relatorio`.
+
+    **Uma linha por DIVERGENCIA, nao por turno.** A metrica conta o turno uma
+    vez -- o lead vive o turno --, mas um turno que inventou preco e codigo
+    precisa mostrar os dois, senao quem le conserta metade.
+
+    `citado` sai como chega. Formatar aqui criaria uma segunda conta de
+    dinheiro no repo; a primeira mora em `domain/agente/citacao.py`, com a
+    razao escrita (a corrida de digitos que `_mascarar_digitos` come).
+    """
+    linhas = [
+        "",
+        "## Ancoragem: turnos que citaram sem base (diagnostico)",
+        "",
+        f"- {resumo.respostas} turnos medidos",
+        f"- turnos com cifra ou codigo sem base: {len(resumo.turnos)}",
+    ]
+    if resumo.turnos:
+        linhas += ["", "Onde:", ""]
+        for turno in resumo.turnos:
+            for divergencia in turno.divergencias:
+                linhas.append(
+                    f"  - {turno.conversa_id} turno {turno.indice}: "
+                    f"{divergencia.tipo} -- {divergencia.citado}"
+                )
+    return linhas
+
+
 def _secao_da_extracao_efetiva(resumo: ResumoDaExtracaoEfetiva) -> list[str]:
     """A extracao medida como producao a experimenta -- estado final da
     conversa, e nao turno a turno.
@@ -399,6 +448,7 @@ def render(
     decomposicao: DecomposicaoDaExtracao | None = None,
     efetiva: ResumoDaExtracaoEfetiva | None = None,
     formato: ResumoDoFormato | None = None,
+    invencao: ResumoDaInvencao | None = None,
     insistencia: ResumoDeInsistencia | None = None,
 ) -> str:
     linhas = ["# Avaliacao da classificacao de intencao", ""]
@@ -420,6 +470,9 @@ def render(
 
     if efetiva is not None:
         linhas += _secao_da_extracao_efetiva(efetiva)
+
+    if invencao is not None:
+        linhas += _secao_de_invencao(invencao)
 
     if formato is not None:
         linhas += _secao_de_formato(formato)
