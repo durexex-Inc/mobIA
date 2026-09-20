@@ -22,6 +22,8 @@ Revision ID: 0033
 Revises: 0032
 """
 
+from typing import Any
+
 import sqlalchemy as sa
 
 from alembic import op
@@ -31,7 +33,12 @@ down_revision = "0032"
 branch_labels = None
 depends_on = None
 
-_COLUNAS = (
+# `Any` por dentro de proposito: a tupla mistura BigInteger, Numeric, String e
+# Boolean, entao nao existe parametro de tipo comum mais estreito. Uma uniao
+# dos quatro nao pagaria o que custa a ler, para uma tupla iterada em dois
+# lugares -- `upgrade()` (op.add_column) e `downgrade()` (so `.name`, via
+# reversed) -- nenhum dos dois se beneficiaria de um tipo mais estreito.
+_COLUNAS: tuple[sa.Column[Any], ...] = (
     sa.Column("ticket_investimento_centavos", sa.BigInteger(), nullable=True),
     sa.Column("retorno_esperado_pct", sa.Numeric(4, 2), nullable=True),
     sa.Column("retorno_esperado_tipo", sa.String(16), nullable=True),

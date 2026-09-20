@@ -9,10 +9,10 @@ O job **Lint e tipos** (`.github/workflows/ci.yml`) roda estes três, nesta orde
 ```bash
 ruff check src tests alembic evals scripts
 ruff format --check src tests alembic evals scripts
-mypy src
+mypy
 ```
 
-**O escopo é `src tests alembic evals scripts`, não `src tests`.** `alembic` entra porque as migrations importam código da aplicação (a `0004` chama `mobia.infra.crypto`); `evals` e `scripts` entram porque de outra forma ficariam fora de todo gate — e `scripts` de fato ficou, até 12/09/2026: quando entrou, o `ruff format --check` reprovou `gerar_base_simulada.py` de primeira. O mypy segue só em `src` — cobrir `alembic` exige antes um `src/mobia/py.typed`.
+**O escopo é `src tests alembic evals scripts`, não `src tests`.** `alembic` entra porque as migrations importam código da aplicação (a `0004` chama `mobia.infra.crypto`); `evals` e `scripts` entram porque de outra forma ficariam fora de todo gate — e `scripts` de fato ficou, até 12/09/2026: quando entrou, o `ruff format --check` reprovou `gerar_base_simulada.py` de primeira. Desde a TEC-224 (20/09/2026) o mypy também cobre `alembic` — não porque o `py.typed` foi publicado, mas porque `[tool.mypy].files`, no `pyproject.toml`, lista `src` junto com `alembic`: com isso `mobia.*` resolve para os próprios arquivos-fonte e o PEP 561 nunca entra na conta. O `py.typed` (`src/mobia/py.typed`) continua valendo por outro motivo — limpa um `mypy alembic` isolado (sem ele, `import-untyped`) e publica a tipagem para quem consumir o wheel —, mas apagá-lo não tira `alembic` deste gate; apagar `src` do `files`, sim. Por isso o comando é `mypy` sem argumento, tanto local quanto no CI — argumento de linha de comando sobrepõe o `files` do `pyproject.toml`.
 
 Local, com a venv do projeto:
 

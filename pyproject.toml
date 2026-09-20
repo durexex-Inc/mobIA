@@ -76,6 +76,17 @@ where = ["src"]
 # que ele precisa, e "import mobia.evals.corpus" levanta ImportError.
 exclude = ["mobia.evals", "mobia.evals.*"]
 
+# PEP 561 (TEC-224). O marcador chega ao wheel mesmo sem esta declaracao --
+# medido em 20/09/2026 com o build isolado que o `[build-system] requires`
+# monta: removido o bloco `[tool.setuptools.package-data]`, `mobia/py.typed`
+# continuou entre os arquivos do wheel reconstruido. A declaracao fica porque
+# torna a inclusao explicita e contratada, em vez de depender de um
+# comportamento padrao do setuptools que nao e garantia documentada deste
+# projeto e pode mudar de versao. Nao ha MANIFEST.in neste projeto; esta e a
+# unica declaracao de package-data.
+[tool.setuptools.package-data]
+mobia = ["py.typed"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -129,7 +140,7 @@ extend-immutable-calls = ["fastapi.Depends"]
 
 [tool.mypy]
 python_version = "3.13"
-files = ["src"]
+files = ["src", "alembic"]
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_unreachable = true

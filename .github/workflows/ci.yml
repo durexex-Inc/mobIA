@@ -30,14 +30,22 @@ jobs:
       - name: Instalar dependencias
         run: pip install -e ".[dev]"
 
-      # `alembic` entra nos dois: as migrations importam codigo da aplicacao
+      # `alembic` entra nos tres: as migrations importam codigo da aplicacao
       # (a 0004 chama mobia.infra.crypto) e ficavam fora de todo gate estatico.
       # `evals` entra pelo mesmo motivo: estao fora de todo gate de linting se
       # ficarmos so com `src tests`. `scripts` entra pelo terceiro caso do mesmo
       # argumento -- estava fora dos tres, e o `ruff format --check` reprovava
-      # `gerar_base_simulada.py` sem que nada o dissesse. O mypy segue so em
-      # `src` -- cobrir alembic exige antes um src/mobia/py.typed, que e outra
-      # mudanca.
+      # `gerar_base_simulada.py` sem que nada o dissesse. Desde a TEC-224 o
+      # mypy tambem cobre `alembic`, porque `[tool.mypy].files`, no
+      # pyproject.toml, lista `src` junto com `alembic` -- e `src` e o que faz
+      # `mobia.*` resolver para os proprios arquivos-fonte, sem nunca
+      # consultar o PEP 561. O py.typed publicado pela mesma branch NAO e a
+      # causa disto: ele so limpa um `mypy alembic` isolado (sem ele, 8 erros
+      # import-untyped) e publica a tipagem para quem consumir o wheel.
+      # Apagar o py.typed nao tira alembic deste gate; apagar `src` do
+      # `files`, sim. O escopo mora no `[tool.mypy].files`, por isso o passo
+      # roda `mypy` sem argumento -- argumento de linha de comando sobrepoe o
+      # `files`, entao acrescentar um diretorio novo e mexer num lugar so.
       - name: ruff check
         run: ruff check src tests alembic evals scripts
 
@@ -45,7 +53,7 @@ jobs:
         run: ruff format --check src tests alembic evals scripts
 
       - name: mypy
-        run: mypy src
+        run: mypy
 
   testes:
     name: Testes

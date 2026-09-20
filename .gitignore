@@ -17,3 +17,10 @@ __pycache__/
 # ferramenta venha a escrever fora de `sdd/` nao depende de ela ter lembrado
 # de plantar outro arquivo.
 .superpowers/
+
+# A TEC-224 tornou o build do wheel um passo de verificacao do gate de tipos
+# e encontrou `build/` como artefato dele (`pip wheel --no-deps --wheel-dir
+# <temp>`). `dist/` entra por precaucao, nao por medicao -- o plano usa
+# `pip wheel`, nao `python -m build`, que e o que escreveria ali.
+build/
+dist/
