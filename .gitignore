@@ -17,3 +17,8 @@ __pycache__/
 # ferramenta venha a escrever fora de `sdd/` nao depende de ela ter lembrado
 # de plantar outro arquivo.
 .superpowers/
+
+# Artefatos de `pip wheel` / `python -m build`. A TEC-224 os encontrou ao
+# tornar o build do wheel um passo de verificacao do gate de tipos.
+build/
+dist/

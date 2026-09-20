@@ -76,10 +76,14 @@ where = ["src"]
 # que ele precisa, e "import mobia.evals.corpus" levanta ImportError.
 exclude = ["mobia.evals", "mobia.evals.*"]
 
-# PEP 561 (TEC-224). Sem esta declaracao o marcador fica no repositorio e nao
-# chega ao wheel, e o `alembic` -- que importa `mobia` de fora de `src/` --
-# volta a ver o pacote como sem tipos. Nao ha MANIFEST.in neste projeto; esta
-# e a unica declaracao de package-data.
+# PEP 561 (TEC-224). O marcador chega ao wheel mesmo sem esta declaracao --
+# medido em 20/09/2026 com o build isolado que o `[build-system] requires`
+# monta: removido o bloco `[tool.setuptools.package-data]`, `mobia/py.typed`
+# continuou entre os arquivos do wheel reconstruido. A declaracao fica porque
+# torna a inclusao explicita e contratada, em vez de depender de um
+# comportamento padrao do setuptools que nao e garantia documentada deste
+# projeto e pode mudar de versao. Nao ha MANIFEST.in neste projeto; esta e a
+# unica declaracao de package-data.
 [tool.setuptools.package-data]
 mobia = ["py.typed"]
 

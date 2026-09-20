@@ -35,7 +35,7 @@ depends_on = None
 
 # `Any` por dentro de proposito: a tupla mistura BigInteger, Numeric, String e
 # Boolean, entao nao existe parametro de tipo comum mais estreito. Uma uniao
-# dos sete nao pagaria o que custa a ler, para uma tupla que so e iterada em
+# dos quatro nao pagaria o que custa a ler, para uma tupla que so e iterada em
 # `op.add_column`.
 _COLUNAS: tuple[sa.Column[Any], ...] = (
     sa.Column("ticket_investimento_centavos", sa.BigInteger(), nullable=True),
