@@ -56,11 +56,13 @@ def contexto_do_historico(
     estado sempre vazio nao mediria nada -- o modelo nunca teria visto o campo.
     """
     literais = [mensagem_transiente(texto, papel=papel) for papel, texto in historico]
-    # Estimativa de tokens: len(sistema) + soma dos textos brutos divido por 4.
-    # Diverge de montagem._estimar: nao inclui prefixo "[ROLE] " nem separadores,
-    # e nao inclui o texto do estado. tokens nao alimenta decisao nenhuma no eval
-    # -- so preenche campo obrigatorio do dataclass. O valor e lido apenas por
-    # __repr__, nunca por logica de negocio.
+    # Estimativa de tokens: len(sistema) + soma dos textos brutos, dividido por 4.
+    # Diverge de montagem._estimar em varios pontos, o maior sendo a formula em
+    # si -- aqui e `bruto // 4` plano, sem separar ASCII de nao-ASCII como a
+    # formula ciente de densidade da TEC-225 faz. Tambem nao inclui prefixo
+    # "[ROLE] " nem separadores, e nao inclui o texto do estado. tokens nao
+    # alimenta decisao nenhuma no eval -- so preenche campo obrigatorio do
+    # dataclass. O valor e lido apenas por __repr__, nunca por logica de negocio.
     estimativa = len(sistema) + sum(len(texto) for _, texto in historico)
     tokens = estimativa // 4
     return ContextoMontado(

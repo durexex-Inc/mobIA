@@ -672,10 +672,11 @@ def contador_fake():
 def sempre_contar(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Forca a contagem real em todo turno.
 
-    Sem isso a estimativa barata (len/4) responde sozinha: mensagens curtas de
-    teste nunca passam do limiar efetivo (`Settings.limiar_de_contagem_efetivo`,
-    derivado do teto -- ver `config.py`), o ContadorFake nao e consultado e o
-    roteiro de estouro nunca acontece. O teste passaria sem exercitar o laco.
+    Sem isso a estimativa barata (`montagem._estimar`, ciente de densidade
+    desde a TEC-225) responde sozinha: mensagens curtas de teste nunca passam
+    do limiar efetivo (`Settings.limiar_de_contagem_efetivo`, derivado do
+    teto -- ver `config.py`), o ContadorFake nao e consultado e o roteiro de
+    estouro nunca acontece. O teste passaria sem exercitar o laco.
     """
     monkeypatch.setenv("CONTEXTO_LIMIAR_DE_CONTAGEM", "0")
     get_settings.cache_clear()

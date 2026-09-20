@@ -1157,7 +1157,8 @@ async def test_estimativa_acima_do_teto_paga_a_contagem_real(
     monkeypatch.setenv("CONTEXTO_LIMIAR_DE_CONTAGEM", "999999")
     get_settings.cache_clear()
     try:
-        # 20 x 2.500 caracteres: `len//4` ja passa do teto efetivo sozinho.
+        # 20 x 2.500 caracteres, tudo ASCII: `_estimar` (ascii/2,3) ja passa
+        # do teto efetivo sozinho.
         await semear(session, 20, texto="a" * 2500)
         contador = ContadorFake()
 
@@ -1204,9 +1205,9 @@ async def test_estado_de_qualificacao_entra_no_contexto(session) -> None:
 async def test_limiar_de_contagem_cede_a_vez_para_a_contagem_real(session) -> None:
     """0.6 do teto, derivado -- nao um numero redondo fixo e desligado dele.
 
-    `len/4` supoe 4 caracteres por token; portugues acentuado roda mais perto
-    de 3.2-3.7. Vinte literais de ~1.900 caracteres cada formam uma conversa
-    grande o bastante para que a estimativa barata (por volta de 9.487) cruze
+    A formula ciente de densidade (TEC-225) roda ASCII a 2,3 caracteres por
+    token. Vinte literais de ~1.900 caracteres cada formam uma conversa
+    grande o bastante para que a estimativa barata (medida: 16.342) cruze
     o limiar efetivo (0.6 * 12.000 = 7.200) e ceda a vez para a contagem real,
     em vez de decidir sozinha que cabe. Nao forca `sempre_contar`: o que este
     teste prova e que o limiar *default* ja cede a vez sozinho para conteudo
@@ -1271,9 +1272,10 @@ async def test_conteudo_curto_em_caracteres_nunca_aciona_a_contagem_real(session
 async def test_emoji_aciona_a_contagem_real(session) -> None:
     """Criterio de pronto da card. Medido: emoji roda a 0,35 chars/token.
 
-    Para `len`, um emoji e uma vogal valem igual -- e por isso que a
-    estimativa antiga via 600 caracteres de emoji como 150 tokens quando eles
-    custam 1706.
+    Para `len`, um emoji e uma vogal valem igual: os 2.400 caracteres de
+    emoji que este teste semeia (800 por mensagem, 3 mensagens) a formula
+    antiga via como 600 tokens (`len // 4`), quando custam perto de 6.857
+    pela medicao real. Ver o desenho da TEC-225 para a medicao completa.
     """
     emoji_denso = "\U0001f3e0" * 800
     await semear(session, 3, texto=emoji_denso)
@@ -1323,8 +1325,10 @@ async def test_uma_duzia_de_urls_aciona_a_contagem_real(session) -> None:
 async def test_portugues_moderado_continua_sem_pagar_a_contagem(session) -> None:
     """O criterio que protege a latencia, e o motivo de a estimativa existir.
 
-    Medido sobre o corpus de eval: mesmo uma janela de 40 falas no p90 estima
-    4134 tokens contra um limiar de 6564 -- 1,6x de folga.
+    Este teste semeia 39 falas moderadas em portugues; a formula nova estima
+    3.633 tokens contra um limiar de 6.564 -- 1,8x de folga. Ver o desenho da
+    TEC-225 para a medicao completa sobre o corpus de eval (janela de 40
+    falas no p90: ~4.134 tokens contra o mesmo limiar).
     """
     mensagem = (
         "Bom dia, estou procurando um apartamento de dois quartos na zona sul, "

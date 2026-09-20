@@ -304,6 +304,13 @@ def _estimar(resumo: str | None, literais: list[Message], estado: LeadQualificat
     return int(ascii_ / _CHARS_POR_TOKEN_EM_PORTUGUES + nao_ascii * _TOKENS_POR_CARACTERE_NAO_ASCII)
 
 
+# NOTA (TEC-225, Tarefa 1): as duas afirmacoes abaixo -- "`_estimar` supoe 4"
+# e "o fator existe porque `_estimar` supoe 4" -- descrevem a formula
+# ANTERIOR de `_estimar` (`bruto // 4`), que nao existe mais -- ver a formula
+# nova, acima. A constante e o fator ficam tal como estao, sem reescrever a
+# conta, ate a Tarefa 2 rederivar `_FATOR_PESSIMISTA` sobre a formula ciente
+# de densidade. Prosa provisoria e honesta, nao a conta corrigida.
+#
 # O piso de caracteres por token que `Settings.limiar_de_contagem_efetivo`
 # documenta: portugues acentuado roda a 3,2-3,7, e `_estimar` supoe 4.
 #
@@ -339,6 +346,11 @@ def _estimar_pessimista(
     `_FATOR_PESSIMISTA` sem repor essa perda deixaria o pior resto (3)
     abaixo do piso de 3,2 chars/token -- exatamente o que esta funcao existe
     para impedir.
+
+    NOTA (TEC-225, Tarefa 1): o paragrafo acima descreve a formula ANTERIOR
+    de `_estimar` (`bruto // 4`), que a Tarefa 1 substituiu -- `bruto // 4`
+    nao existe mais. Fica assim, sem reescrever a conta, ate a Tarefa 2
+    rederivar `_FATOR_PESSIMISTA` sobre a formula ciente de densidade.
     """
     return math.ceil((_estimar(resumo, literais, estado) + 1) * _FATOR_PESSIMISTA)
 
@@ -374,12 +386,13 @@ async def _contar_se_valer(
     settings = get_settings()
     estimativa = _estimar(resumo, literais, estado)
     # Backstop duro, independente do limiar: `estimativa >= teto` e o mesmo que
-    # `len(texto) >= 4 * teto`, ou seja, um texto que ja estoura o teto ate na
-    # hipotese mais generosa de 4 caracteres por token. Devolver a estimativa
-    # ai seria decidir "cabe" a partir do unico numero que diz o contrario. Uma
-    # comparacao, de graca no trafego normal. Com o limiar default (0.6 do
-    # teto) ela nunca e o gatilho -- so passa a valer se alguem subir
-    # CONTEXTO_LIMIAR_DE_CONTAGEM acima do teto.
+    # `len(texto) >= 2,3 * teto` para texto ASCII -- a formula ciente de
+    # densidade da TEC-225 (ver `_estimar`), nao mais uma hipotese de 4
+    # caracteres por token. Devolver a estimativa ai seria decidir "cabe" a
+    # partir do unico numero que diz o contrario. Uma comparacao, de graca no
+    # trafego normal. Com o limiar default (0.6 do teto) ela nunca e o
+    # gatilho -- so passa a valer se alguem subir CONTEXTO_LIMIAR_DE_CONTAGEM
+    # acima do teto.
     if estimativa < settings.limiar_de_contagem_efetivo and estimativa < (
         settings.teto_de_tokens_efetivo
     ):
