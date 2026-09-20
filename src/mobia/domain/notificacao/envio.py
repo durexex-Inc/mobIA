@@ -42,11 +42,12 @@ NOTIFICAR_JOB = "notificar_corretor"
 KIND_DA_JANELA_HUMANA = "janela_humana"
 
 # **Nao afirma que um corretor foi avisado, nem que alguem vai responder.**
-# Nenhuma das duas coisas e garantida hoje: os dois adaptadores de `canais.py`
-# REGISTRAM e NAO ENTREGAM -- o e-mail nao tem provedor configurado neste
-# projeto, o whatsapp ao corretor exige template aprovado pela Meta que nao
-# existe --, entao `notificar` devolver `True` so significa "um canal aceitou
-# a mensagem", nunca "um corretor recebeu" ou "um corretor vai responder".
+# Nenhuma das duas coisas e garantida hoje: desde a TEC-280 o e-mail entrega,
+# por SMTP, mas aceito pelo servidor nao e o mesmo que lido pelo corretor; e
+# o whatsapp ao corretor ainda so registra -- exige template aprovado pela
+# Meta que nao existe (TEC-281). Entao `notificar` devolver `True` so
+# significa "um canal aceitou a mensagem", nunca "um corretor recebeu" ou
+# "um corretor vai responder".
 # Este repo ja pagou por essa frase exata uma vez: o aviso ao lead da
 # TEC-174 tambem dizia "ja avisei um corretor" e teve de ser reescrito
 # porque a notificacao (esta card, TEC-177) ainda nao existia -- ver o

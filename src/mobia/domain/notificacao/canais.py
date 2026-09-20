@@ -1,13 +1,11 @@
-"""Os canais da RN-16.2 -- e a razao de nenhum deles entregar ainda.
+"""Os canais da RN-16.2.
 
 TEC-177, D4.
 
-**Os dois adaptadores registram e nao entregam, e isso nao e provisorio por
-desleixo: e provisorio por dependencia externa.**
-
-O e-mail nao tem infraestrutura neste projeto -- nenhuma dependencia no
-`pyproject.toml`, nenhum SMTP, nenhum provedor -- e escolher um foi
-deliberadamente adiado em 12/09/2026.
+**Os dois adaptadores ja nao tem o mesmo desfecho.** Desde a TEC-280 o
+e-mail entrega, por SMTP -- o adaptador `EmailSmtp` vive em
+`domain/outbound/email.py`. O WhatsApp continua so registrando, e isso nao e
+provisorio por desleixo: e provisorio por dependencia externa.
 
 O WhatsApp esbarra na Meta: a Cloud API recusa mensagem livre passadas 24h da
 ultima fala do destinatario (codigo 131047, que `outbound/whatsapp.py` ja
@@ -15,9 +13,8 @@ trata), e o corretor esta SEMPRE fora dessa janela porque nao conversa com o
 numero da empresa. Entregar exige um template aprovado, que e cadastro
 externo com prazo proprio.
 
-**Uma forma so para os dois** porque a regra os trata igual: "falha em um dos
-canais nao cancela o outro" so e escrevivel uma vez se os dois tiverem a
-mesma assinatura.
+**Uma forma so para os dois** continua valendo: a porta ainda e uma so, e e
+por isso que o orquestrador trata os dois igual.
 """
 
 from typing import Protocol
@@ -45,7 +42,7 @@ class CanalDeNotificacaoPort(Protocol):
 
 
 class _CanalQueRegistra:
-    """Base dos dois adaptadores de hoje. Nunca levanta, nunca entrega."""
+    """Base do adaptador de WhatsApp, unico que ainda so registra. Nunca levanta, nunca entrega."""
 
     nome = ""
     motivo = ""

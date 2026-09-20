@@ -11,10 +11,13 @@ Modulo sem I/O, no molde de `handoff/dossie.py` e de `handoff/vocabulario.py`.
 # a card diz que "o handoff que ninguem ve nao existe", e um corretor com
 # aviso magro ainda atende o lead. Ver a D2.
 #
-# O link que este texto manda abrir nao resolve ainda: `link_da_transcricao`
+# O link que este texto manda abrir nao resolve: `link_da_transcricao`
 # (`handoff/resumo.py`) documenta em negrito que o destino e a E8, que nao
-# existe. Sem dano hoje -- nenhum canal entrega nada a corretor nenhum (D4) --
-# mas o dia em que um adaptador real existir, a E8 tem de existir junto.
+# existe. Desde a TEC-280 o e-mail CHEGA ao corretor, entao o dano deixou de
+# ser hipotetico: ele recebe "Conversa completa: <link>" e o link nao abre
+# nada. A card decidiu entregar assim mesmo -- corretor avisado com link
+# quebrado ainda atende o lead, corretor nao avisado nao --, e registrou a
+# lacuna. Ela fecha quando a E8 existir.
 TEXTO_SEM_RESUMO = (
     "O resumo automatico nao pode ser gerado para este lead. "
     "Abra o link abaixo para ler a conversa inteira."
