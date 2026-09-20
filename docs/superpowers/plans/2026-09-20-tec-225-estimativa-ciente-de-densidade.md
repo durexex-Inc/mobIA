@@ -242,6 +242,106 @@ git commit -m "fix(TEC-225): o modo sem modelo volta a errar para cima"
 
 ---
 
+### Tarefa 2b: O headroom passa a cobrir o que foi medido
+
+> **Esta tarefa não estava no plano original.** Ela entrou depois que a revisão da Tarefa 1 achou que a contabilidade do orçamento afirmava usar "o mesmo proxy `len/4` do módulo de montagem", e a medição que se seguiu mostrou que a reserva está curta. A decisão de fazê-la aqui, em vez de em card própria, é do dono do produto. Ver a **D5** do desenho, que substitui uma versão anterior e explica o erro.
+
+**Arquivos:**
+- Modificar: `src/mobia/app/config.py` (`contexto_headroom_de_tokens` e o comentário dele)
+- Testar: `tests/unit/test_config.py`
+
+**Interfaces:**
+- Consome: nada das tarefas anteriores.
+- Produz: um teto efetivo menor (10.400), que a Tarefa 3 cita na prosa.
+
+- [ ] **Passo 1: entender o que está errado antes de mexer**
+
+`contexto_headroom_de_tokens` é a reserva subtraída do teto de 12.000 antes de toda comparação. Ela existe para cobrir a diferença entre o que o contador mede (uma mensagem de usuário achatada) e o que a requisição real manda (`system=` separado, schema, `tools=`, rótulos).
+
+Dois testes supostamente a validam. **Os dois medem as parcelas com `len/4`** — o mesmo proxy que a Tarefa 1 derrubou. Eles passam porque a régua é a mesma dos dois lados.
+
+Medido em 20/09/2026, parcela a parcela, contra `ContadorAnthropic`:
+
+| parcela | `len/4` | contador real |
+| --- | --- | --- |
+| − `montagem.SISTEMA` | −42,0 | −77,0 |
+| + `SISTEMA_DO_AGENTE` | 305,5 | 541,0 |
+| + schema compilado | 372,8 | 798,0 |
+| + rótulos de `montar_prompt` | 19,2 | 41,0 |
+| + ferramenta de busca | 131,2 | 242,0 |
+| **= subcontagem** | **786,8** | **1.545,0** |
+
+A reserva de 1.060 é **485 tokens menor** que a lacuna real.
+
+- [ ] **Passo 2: escrever o teste que falha**
+
+Em `tests/unit/test_config.py`, um teste novo que trava a razão de ser do número — **não** um que repita `headroom == 1600`, que seria tautologia:
+
+```python
+def test_o_headroom_cobre_a_subcontagem_medida() -> None:
+    """A reserva tem de cobrir a diferenca MEDIDA, nao a do proxy.
+
+    Ate a TEC-225 dois testes validavam o headroom com `len/4` dos dois lados
+    da conta, entao passavam sem dizer nada sobre a reserva. Medido com
+    `ContadorAnthropic` em 20/09/2026, parcela a parcela, a subcontagem real e
+    de 1545 tokens -- contra uma reserva de 1060.
+
+    O numero abaixo e a medicao, transcrita aqui porque medi-la no teste
+    exigiria chamar a API a cada execucao. Se alguem mexer no prompt do
+    agente, no schema ou na ferramenta de busca, ele envelhece -- e o teste
+    vizinho de margem do orcamento e quem avisa, porque conta crescimento do
+    prompt em unidades do proxy.
+    """
+    SUBCONTAGEM_REAL_MEDIDA = 1545
+    assert get_settings().contexto_headroom_de_tokens >= SUBCONTAGEM_REAL_MEDIDA
+```
+
+- [ ] **Passo 3: rodar e ver falhar**
+
+```bash
+./.venv/Scripts/python.exe -m pytest tests/unit/test_config.py -k "headroom_cobre" --tb=short
+```
+
+Esperado: FAIL — 1060 não cobre 1545.
+
+- [ ] **Passo 4: subir o valor**
+
+`contexto_headroom_de_tokens` passa de `1060` para `1600`.
+
+O comentário desse campo tem 96 linhas e registra cada subida anterior (400→800 na TEC-145, →850 na TEC-250, →880 na TEC-257, →1060 na TEC-265). **Acrescente esta subida no mesmo formato das outras**, e diga o que nenhuma das anteriores podia dizer: que este é o primeiro valor derivado de medição com o contador real, e não de aritmética sobre o proxy `len/4`.
+
+O comentário precisa registrar também o custo, porque ele é real: o teto efetivo cai de 10.940 para 10.400, cerca de 1.240 caracteres de conversa a menos por chamada.
+
+- [ ] **Passo 5: as duas afirmações que passam a mentir**
+
+`config.py` diz em dois lugares que a conta do orçamento usa "o mesmo proxy `len/4` do módulo de montagem", e `tests/unit/test_config.py` repete a frase num terceiro. **Deixou de ser o mesmo.**
+
+Corrija as três para dizer o que é verdade: que o orçamento mede em unidades de um proxy `len/4` **próprio**, que não é mais o da montagem, e que por isso os dois testes de orçamento são alarme contra **crescimento do prompt** — não validação da reserva, que agora é o teste do passo 2.
+
+**Não mude o proxy nem os tetos daqueles dois testes.** Trocá-lo é a correção na raiz e está declarada fora de escopo no desenho.
+
+- [ ] **Passo 6: rodar tudo que depende do teto**
+
+```bash
+./.venv/Scripts/python.exe -m pytest tests/unit/test_config.py --tb=short
+./.venv/Scripts/python.exe -m pytest tests/integration/test_montagem.py --tb=short
+./.venv/Scripts/python.exe -m pytest tests/features/test_janela_de_contexto.py --tb=short
+```
+
+O limiar cai junto com o teto (6.564 → 6.240). Conferido antes de escrever este brief: os três testes da Tarefa 1 continuam com o mesmo desfecho (emoji 7.283 e URLs 7.350 acionam; português 3.633 não). Se algum reprovar mesmo assim, **não ajuste o teste** — meça e reporte, porque significa que a conta acima está errada.
+
+- [ ] **Passo 7: os três gates e commit**
+
+```bash
+./.venv/Scripts/python.exe -m ruff check src tests alembic evals scripts
+./.venv/Scripts/python.exe -m ruff format --check src tests alembic evals scripts
+./.venv/Scripts/python.exe -m mypy
+git add src/mobia/app/config.py tests/unit/test_config.py
+git commit -m "fix(TEC-225): o headroom passa a cobrir a subcontagem medida"
+```
+
+---
+
 ### Tarefa 3: O teste da lacuna é invertido, e a prosa para de mentir
 
 **Arquivos:**
@@ -258,6 +358,8 @@ git commit -m "fix(TEC-225): o modo sem modelo volta a errar para cima"
 > NOTA PARA QUEM VIER DEPOIS: este teste ficar vermelho e o desfecho esperado, nao uma regressao. [...] no dia em que existir um estimador que leve densidade de caracteres nao-ASCII em conta (ticket proprio, fora do TEC-127), este conteudo passara a acionar a contagem real e a asserção abaixo tem de ser invertida junto com a mudanca, nao "consertada".
 
 **Esse dia é hoje.** Inverta: renomeie para algo como `test_conteudo_denso_em_emoji_aciona_a_contagem_real`, troque a asserção, e **troque a nota** por uma que registre o que aconteceu — que a lacuna existiu, foi declarada por este teste, e foi fechada pela TEC-225 com medição. A card exige que ele seja substituído e não deletado.
+
+> **Inverter a asserção não basta, e isto é correção de um erro deste plano.** O teste semeia 200 emojis × 3 mensagens = 600 caracteres, que sob a fórmula nova estimam 1.873 — longe do limiar. Ele continuaria verde. **Re-semeie com o cenário que a própria card descreve, ~3.600 caracteres de emoji**, que estimam 10.873 e acionam a contagem. Medido antes de escrever esta correção: 1.800 caracteres ainda não acionam; 3.600 acionam. Os 600 de hoje nunca exercitaram a lacuna — eram um sexto do que seria preciso.
 
 - [ ] **Passo 2: a referência cruzada morta**
 
@@ -285,7 +387,9 @@ Ela repete `len/4 supoe 4 caracteres por token` e o intervalo 3,2–3,7. Atualiz
 
 Leia cada achado. Esta card mexe numa área com comentário denso — `config.py` sozinho tem 96 linhas sobre o `headroom` — e é provável que apareça prosa que este plano não previu. Conserte o que estiver errado e registre no relatório.
 
-**Duas coisas que NÃO são para mexer**, e o relatório deve dizer que foram conferidas e deixadas: o comentário do `headroom` (fora de escopo, D5) e os testes de margem do orçamento (`test_a_margem_do_orcamento_do_prompt_e_deliberada` e `test_diferenca_entre_o_contado_e_o_enviado`), que medem outra coisa.
+**O que NÃO é para mexer**, e o relatório deve dizer que foi conferido e deixado: os testes de margem do orçamento (`test_a_margem_do_orcamento_do_prompt_e_deliberada` e `test_diferenca_entre_o_contado_e_o_enviado`) e o proxy `len/4` de `_decomposicao`, que o desenho declara fora de escopo.
+
+**O comentário do `headroom` já foi tratado pela Tarefa 2b**, que subiu o valor para 1.600 e acrescentou a subida ao histórico. Não o reescreva; confira que ele bate com o código e siga.
 
 - [ ] **Passo 6: os três gates e a suíte unitária**
 
