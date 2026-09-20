@@ -431,9 +431,10 @@ def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
     # Os dois ramos sao mutuamente exclusivos: o laco acima ja a emite como
     # ALTERADO quando ela mesma mudou, e este so age quando ela nao mudou.
     #
-    # `alteradas` e load-bearing: vazio, `distancia` faz min() sobre conjunto
-    # vazio e reprova com ValueError. `linhas_alteradas` nunca entrega arquivo
-    # sem linha alterada, entao a guarda e para quem chamar `examinar` direto.
+    # A guarda de `alteradas` e load-bearing: com o conjunto vazio, `distancia`
+    # faz min() sobre nada e reprova com ValueError. `linhas_alteradas` nunca
+    # entrega arquivo sem linha alterada, entao ela e para quem chamar
+    # `examinar` direto.
     doc_do_modulo = _docstring_de(arvore)
     if alteradas and doc_do_modulo is not None:
         inicio, fim, texto = doc_do_modulo
