@@ -268,7 +268,38 @@ class Settings(BaseSettings):
     # subida: **180 tokens a menos de literais e resumo por turno, de 12000
     # -- 1,5% do contexto**. E a segunda maior da historia do projeto, atras
     # dos 3,3% da primeira.
-    contexto_headroom_de_tokens: int = 1060
+    #
+    # **1060 -> 1600 na TEC-225.** As quatro subidas acima nasceram de
+    # aritmetica sobre o proxy `len/4` dos dois lados da conta -- e por isso
+    # `test_diferenca_entre_o_contado_e_o_enviado` e
+    # `test_a_margem_do_orcamento_do_prompt_e_deliberada` passavam sem provar
+    # nada sobre a reserva: a regua era a mesma dos dois lados. Esta e a
+    # primeira que sai de medicao contra o contador real
+    # (`ContadorAnthropic`, claude-sonnet-5), parcela a parcela, em
+    # 20/09/2026:
+    #
+    #     parcela                                    len/4     real
+    #     -montagem.SISTEMA (contado, nao enviado)   -42,0    -77,0
+    #     +SISTEMA_DO_AGENTE (campo system=)         305,5    541,0
+    #     +schema compilado (output_config.format)   372,8    798,0
+    #     +rotulos de montar_prompt                   19,2     41,0
+    #     +ferramenta de busca (tools=)               131,2    242,0
+    #     = subcontagem                              786,8  1.545,0
+    #
+    # A reserva de 1060 era 485 tokens menor que a lacuna real: um contexto
+    # medido no teto efetivo de 10940 mandava cerca de 12485 tokens, acima do
+    # teto de 12000 da RN-02.5. 1600 cobre os 1545 medidos com 55 de folga.
+    # A validacao desta subida e `test_o_headroom_cobre_a_subcontagem_medida`
+    # em `tests/unit/test_config.py`, e nao os dois testes acima: aqueles
+    # continuam medindo em `len/4` e viraram alarme contra crescimento do
+    # prompt, nao prova da reserva.
+    #
+    # Preco desta subida: **540 tokens a menos de literais e resumo por
+    # turno, de 12000 -- 4,5% do contexto**, o teto efetivo caindo de 10940
+    # para 10400 -- cerca de 1.240 caracteres de conversa a menos por
+    # chamada. E a maior subida da historia do projeto, e a primeira cujo
+    # tamanho vem de medir, nao de arredondar sobre uma estimativa.
+    contexto_headroom_de_tokens: int = 1600
 
     # Dobrar `gatilho - minimas` mensagens deixa exatamente `minimas` literais.
     # Manter gatilho >= 2 * minimas e o que garante o piso depois da regeneracao.
@@ -561,13 +592,19 @@ class Settings(BaseSettings):
         `contexto_headroom_de_tokens`, e o comentario da propria constante
         registra por que ele ja subiu duas vezes e o que cada subida custou.
 
-        **Medido na TEC-134, com a requisicao real ja montada.** A conta usa o
-        mesmo proxy `len/4` do modulo de montagem, e nao uma chamada de
-        `count_tokens` -- medir contra a API de verdade custaria uma chamada
-        paga por execucao e nao pode entrar na suite, que nao toca a rede. E
-        estimativa honesta, nao medida exata, e e por isso que o resultado
-        vira um teste (`test_diferenca_entre_o_contado_e_o_enviado`) em vez de
-        um numero solto num comentario.
+        **Medido na TEC-134, com a requisicao real ja montada.** A conta usa
+        um proxy `len/4` proprio do orcamento -- **nao** o mesmo da TEC-225
+        (`montagem.py` mede densidade de conteudo, isto mede peso de prompt e
+        schema) --, e nao uma chamada de `count_tokens`: medir contra a API
+        de verdade custaria uma chamada paga por execucao e nao pode entrar
+        na suite, que nao toca a rede. E estimativa honesta, nao medida
+        exata, e e por isso que o resultado vira um teste
+        (`test_diferenca_entre_o_contado_e_o_enviado`) em vez de um numero
+        solto num comentario. Desde a TEC-225 esse teste, e o irmao
+        `test_a_margem_do_orcamento_do_prompt_e_deliberada`, nao validam mais
+        a reserva -- quem faz isso e `test_o_headroom_cobre_a_subcontagem_medida`,
+        medido contra o contador real. Os dois continuam de pe como alarme
+        contra crescimento do prompt, em unidades deste proxy proprio.
 
         Sao cinco as parcelas em que a contagem difere do que se envia:
 
