@@ -632,25 +632,20 @@ class ContadorProibido:
         raise AssertionError("o modo sem modelo nao pode falar com o provedor")
 
 
-def test_a_estimativa_sem_modelo_supoe_o_piso_de_caracteres_por_token() -> None:
-    """No modo sem modelo a estimativa e a palavra final, entao ela erra para cima.
+def test_a_estimativa_sem_modelo_erra_para_cima_e_nao_para_baixo() -> None:
+    """O modo sem modelo nao tem limiar atras dele -- a estimativa E a decisao.
 
-    `_estimar` supoe 4 caracteres por token, e o portugues acentuado roda a
-    3,2-3,7 (ver `Settings.limiar_de_contagem_efetivo`): ela SUBCONTA. No
-    caminho normal isso e inofensivo, porque o limiar so a deixa responder
-    onde errar nao muda a decisao. Aqui ela decide sozinha, e subcontar seria
-    dizer "cabe" com um texto que estoura.
-
-    O teste afirma a PROPRIEDADE -- a razao de caracteres por token implicita
-    fica no piso documentado -- e nao a formula, que seria copiar a
-    implementacao para o teste.
+    Ate a TEC-225 este caminho prometia errar para cima e errava para baixo:
+    `_FATOR_PESSIMISTA` saia de `4 / 3.2`, e os dois numeros estavam errados.
+    Medido, ele subcontava o portugues em 27%.
     """
     literais = [_mensagem_literal(corpo="x" * 4000)]
     bruto = len(SISTEMA) + len(_texto_das(literais)) + len(_texto_do_estado(None))
 
     pessimista = _estimar_pessimista(None, literais, None)
+    real_medido = bruto / 2.34  # razao medida de chars/token em portugues (TEC-225)
 
-    assert bruto / pessimista <= 3.2
+    assert pessimista > real_medido
     assert pessimista > _estimar(None, literais, None)
 
 

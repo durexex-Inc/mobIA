@@ -304,31 +304,19 @@ def _estimar(resumo: str | None, literais: list[Message], estado: LeadQualificat
     return int(ascii_ / _CHARS_POR_TOKEN_EM_PORTUGUES + nao_ascii * _TOKENS_POR_CARACTERE_NAO_ASCII)
 
 
-# NOTA (TEC-225, Tarefa 1): as duas afirmacoes abaixo -- "`_estimar` supoe 4"
-# e "o fator existe porque `_estimar` supoe 4" -- descrevem a formula
-# ANTERIOR de `_estimar` (`bruto // 4`), que nao existe mais -- ver a formula
-# nova, acima. A constante e o fator ficam tal como estao, sem reescrever a
-# conta, ate a Tarefa 2 rederivar `_FATOR_PESSIMISTA` sobre a formula ciente
-# de densidade. Prosa provisoria e honesta, nao a conta corrigida.
+# A razao entre a estimativa nova e a contagem real no pior caso PLAUSIVEL
+# medido: a URL, em 0,80 (600 caracteres de URL estimam 688 contra 859 reais).
 #
-# O piso de caracteres por token que `Settings.limiar_de_contagem_efetivo`
-# documenta: portugues acentuado roda a 3,2-3,7, e `_estimar` supoe 4.
-#
-# No caminho normal essa diferenca e coberta pelo limiar, cuja razao de ser e
-# deixar a estimativa responder so onde errar nao muda a decisao. No modo sem
-# modelo ela e a palavra final, e ai a mesma diferenca vira o defeito: dizer
-# "cabe" sobre um texto que estoura.
-#
-# O que este piso NAO cobre continua sendo o que o limiar ja declara -- emoji
-# (~0,3-0,5 chars/token) e blobs base64/URL (~2). Um turno dominado por
-# qualquer um dos dois sai subcontado aqui como sai la. Risco aceito e
-# documentado, nao defeito escondido.
-_CHARS_POR_TOKEN_NO_PIOR_CASO = 3.2
+# Base64 fica de fora de proposito -- 0,43 -- porque cobri-lo exigiria um
+# detector de "sequencia longa sem espaco", que tem falso-positivo proprio
+# (uma URL longa tambem e uma). Ver a D4 do desenho.
+_PIOR_RAZAO_PLAUSIVEL = 0.80
 
-# Derivado dos dois numeros acima, e nao escrito como 1.25: o fator existe
-# porque `_estimar` supoe 4 e o piso e 3,2. Escrever o produto esconderia de
-# onde ele vem, e mudaria de significado em silencio se um dos dois mudasse.
-_FATOR_PESSIMISTA = 4 / _CHARS_POR_TOKEN_NO_PIOR_CASO
+# Derivado, e nao escrito como 1.25: o fator existe para devolver ao pior caso
+# plausivel a folga que a estimativa nao lhe da. O valor calhar de ser o mesmo
+# que o de antes e coincidencia -- aquele saia de `4 / 3.2`, dois numeros que a
+# medicao da TEC-225 derrubou.
+_FATOR_PESSIMISTA = 1 / _PIOR_RAZAO_PLAUSIVEL
 
 
 def _estimar_pessimista(
@@ -340,17 +328,11 @@ def _estimar_pessimista(
     e degradacao declarada e a direcao segura do erro; devolver contexto
     acima do teto nao e.
 
-    O `+ 1` compensa a divisao inteira da propria `_estimar`: `bruto // 4`
-    pode descartar ate quase um token inteiro (o resto de 0 a 3 caracteres
-    perdido no truncamento), e escalar esse valor ja truncado por
-    `_FATOR_PESSIMISTA` sem repor essa perda deixaria o pior resto (3)
-    abaixo do piso de 3,2 chars/token -- exatamente o que esta funcao existe
-    para impedir.
-
-    NOTA (TEC-225, Tarefa 1): o paragrafo acima descreve a formula ANTERIOR
-    de `_estimar` (`bruto // 4`), que a Tarefa 1 substituiu -- `bruto // 4`
-    nao existe mais. Fica assim, sem reescrever a conta, ate a Tarefa 2
-    rederivar `_FATOR_PESSIMISTA` sobre a formula ciente de densidade.
+    O `+ 1` compensa o truncamento do proprio `int()` de `_estimar`: a soma
+    `ascii/2,3 + nao_ascii*3` e um float, e `int()` descarta a parte
+    fracionaria, que pode chegar perto de um token inteiro. Escalar esse
+    valor ja truncado por `_FATOR_PESSIMISTA` sem repor essa perda devolveria
+    menos folga do que o fator promete.
     """
     return math.ceil((_estimar(resumo, literais, estado) + 1) * _FATOR_PESSIMISTA)
 
