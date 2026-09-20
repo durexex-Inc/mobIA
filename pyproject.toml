@@ -37,6 +37,10 @@ dependencies = [
     # `== outro`) levanta ou devolve array em vez de bool, que e o caminho que
     # a busca da TEC-158 vai percorrer.
     "pgvector>=0.4",
+    # SMTP assincrono para a notificacao ao corretor (TEC-280). Piso em 3.0
+    # porque e a serie que aceita `start_tls` como argumento de `send`; nas
+    # 2.x a negociacao exigia montar o cliente a mao.
+    "aiosmtplib>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +53,10 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "types-PyYAML>=6.0",
+    # Servidor SMTP em processo para os testes do adaptador (TEC-280). O repo
+    # finge a BORDA DE REDE e nao a funcao -- mesmo raciocinio do
+    # httpx.MockTransport usado no adaptador de WhatsApp.
+    "aiosmtpd>=1.4",
 ]
 
 [build-system]
