@@ -55,9 +55,17 @@ def _detalhe_para_a_coluna(exc: BaseException) -> str:
     `infra/moderacao.py` a levanta com `motivo_do_provedor(exc)`: prosa que o
     servidor da Anthropic escreveu respondendo a uma requisicao cujo corpo e o
     texto moderado. O docstring de `motivo_do_provedor` aceita esse risco por
-    escrito, e o limita com tres coisas -- o teto de caracteres, o mascaramento
-    de digitos e o formato da chamada. **Duas delas sao propriedades do log.**
-    Nesta coluna so o teto sobrevive.
+    escrito, e o limita com tres coisas -- o teto de 300 caracteres, o
+    mascaramento de digitos de `app/logging.py` e o formato da chamada. **Uma
+    delas, e so uma, e propriedade do log**: as outras duas ja valem no
+    momento em que o texto e montado, e protegem esta coluna igual. O que a
+    coluna perde e o mascaramento -- e ele alcanca corrida de 10 a 15 digitos
+    contiguos e mais nada, entao para prosa em ingles de um SDK ele e quase um
+    no-op.
+
+    A diferenca entre os dois destinos e, portanto, MENOR do que parece, e nao
+    e dela que sai a decisao. A decisao sai de duas outras coisas: esta coluna
+    e duravel, e o criterio de dono do tipo nao se sustenta.
 
     Datas, porque elas sao o argumento: o criterio entrou em 26/08/2026
     (TEC-134, `d069f3e`) e foi violado em 30/08/2026 (TEC-237, `d79e2d7`),
