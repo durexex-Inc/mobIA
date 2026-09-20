@@ -632,25 +632,20 @@ class ContadorProibido:
         raise AssertionError("o modo sem modelo nao pode falar com o provedor")
 
 
-def test_a_estimativa_sem_modelo_supoe_o_piso_de_caracteres_por_token() -> None:
-    """No modo sem modelo a estimativa e a palavra final, entao ela erra para cima.
+def test_a_estimativa_sem_modelo_erra_para_cima_e_nao_para_baixo() -> None:
+    """O modo sem modelo nao tem limiar atras dele -- a estimativa E a decisao.
 
-    `_estimar` supoe 4 caracteres por token, e o portugues acentuado roda a
-    3,2-3,7 (ver `Settings.limiar_de_contagem_efetivo`): ela SUBCONTA. No
-    caminho normal isso e inofensivo, porque o limiar so a deixa responder
-    onde errar nao muda a decisao. Aqui ela decide sozinha, e subcontar seria
-    dizer "cabe" com um texto que estoura.
-
-    O teste afirma a PROPRIEDADE -- a razao de caracteres por token implicita
-    fica no piso documentado -- e nao a formula, que seria copiar a
-    implementacao para o teste.
+    Ate a TEC-225 este caminho prometia errar para cima e errava para baixo:
+    `_FATOR_PESSIMISTA` saia de `4 / 3.2`, e os dois numeros estavam errados.
+    Medido, ele subcontava o portugues em 27%.
     """
     literais = [_mensagem_literal(corpo="x" * 4000)]
     bruto = len(SISTEMA) + len(_texto_das(literais)) + len(_texto_do_estado(None))
 
     pessimista = _estimar_pessimista(None, literais, None)
+    real_medido = bruto / 2.34  # razao medida de chars/token em portugues (TEC-225)
 
-    assert bruto / pessimista <= 3.2
+    assert pessimista > real_medido
     assert pessimista > _estimar(None, literais, None)
 
 
@@ -661,10 +656,17 @@ async def test_o_truncamento_sem_modelo_corta_sem_falar_com_o_provedor() -> None
     round trip acima do limiar. Chamado do estouro do deadline, isso seria
     gastar a chamada que nao ha mais tempo de fazer.
 
-    5000 caracteres por mensagem, e nao os 4000 do outro teste: com 4000 a
-    estimativa pessimista de oito mensagens fica abaixo do
-    `teto_de_tokens_efetivo` (10940 hoje) e o laco de truncamento nunca
-    dispara -- o teste passaria vazio, sem exercitar `sem_modelo` nenhum.
+    5000 caracteres por mensagem, no lugar dos 4000 do outro teste, por uma
+    razao que ja nao vale. Antes da TEC-225 trocar a formula de `_estimar`,
+    4000 caracteres por mensagem (oito literais) mantinham a estimativa
+    pessimista abaixo do `teto_de_tokens_efetivo` e o laco de truncamento
+    nunca disparava -- o teste passaria vazio, sem exercitar `sem_modelo`
+    nenhum, e por isso a escolha caiu em 5000. **Essa razao se perdeu.**
+    Medido com a formula ciente de densidade (TEC-225): 8 x 4000 caracteres
+    ASCII ja estimam 17.518 tokens pessimistas, bem acima do teto efetivo de
+    hoje (10.300) -- tanto 4000 quanto 5000 disparam o truncamento agora.
+    O teste continua com 5000 por continuidade com a versao anterior, nao
+    porque so 5000 exercite o laco.
     """
     literais = [_mensagem_literal(corpo="x" * 5000) for _ in range(8)]
     teto = get_settings().teto_de_tokens_efetivo
@@ -1157,7 +1159,8 @@ async def test_estimativa_acima_do_teto_paga_a_contagem_real(
     monkeypatch.setenv("CONTEXTO_LIMIAR_DE_CONTAGEM", "999999")
     get_settings.cache_clear()
     try:
-        # 20 x 2.500 caracteres: `len//4` ja passa do teto efetivo sozinho.
+        # 20 x 2.500 caracteres, tudo ASCII: `_estimar` (ascii/2,3) ja passa
+        # do teto efetivo sozinho.
         await semear(session, 20, texto="a" * 2500)
         contador = ContadorFake()
 
@@ -1204,17 +1207,20 @@ async def test_estado_de_qualificacao_entra_no_contexto(session) -> None:
 async def test_limiar_de_contagem_cede_a_vez_para_a_contagem_real(session) -> None:
     """0.6 do teto, derivado -- nao um numero redondo fixo e desligado dele.
 
-    `len/4` supoe 4 caracteres por token; portugues acentuado roda mais perto
-    de 3.2-3.7. Vinte literais de ~1.900 caracteres cada formam uma conversa
-    grande o bastante para que a estimativa barata (por volta de 9.487) cruze
-    o limiar efetivo (0.6 * 12.000 = 7.200) e ceda a vez para a contagem real,
-    em vez de decidir sozinha que cabe. Nao forca `sempre_contar`: o que este
-    teste prova e que o limiar *default* ja cede a vez sozinho para conteudo
-    deste tamanho. (Este teste e sobre acentuacao, nao sobre emoji -- ver
-    `test_limiar_nao_protege_conteudo_denso_em_emoji` logo abaixo para o que
-    este limiar deliberadamente nao cobre.)
+    A formula ciente de densidade (TEC-225) roda ASCII a 2,3 caracteres por
+    token e nao-ASCII a 3 tokens por caractere. Vinte literais de portugues
+    acentuado de verdade (nao so o nome do teste -- o texto abaixo carrega os
+    acentos), ~1.900 caracteres cada, formam uma conversa grande o bastante
+    para que a estimativa barata (medida: 24.653) cruze o limiar efetivo
+    (0.6 * 10.300 = 6.180, com o teto efetivo de hoje) e ceda a vez para a
+    contagem real, em vez de decidir sozinha que cabe. Nao forca
+    `sempre_contar`: o que este teste prova e que o limiar *default* ja cede
+    a vez sozinho para conteudo deste tamanho. (Este teste e sobre
+    acentuacao, nao sobre emoji -- ver
+    `test_conteudo_denso_em_emoji_aciona_a_contagem_real` logo abaixo para o
+    que este limiar deliberadamente nao cobre.)
     """
-    texto_grande = "conteudo em portugues acentuado: nao, coracao, qualificacao, imovel. " * 27
+    texto_grande = "conteudo em portugues acentuado: não, coração, qualificação, imóvel. " * 27
     await semear(session, 20, texto=texto_grande)
     contador = ContadorFake()
 
@@ -1232,24 +1238,33 @@ async def test_limiar_de_contagem_cede_a_vez_para_a_contagem_real(session) -> No
     )
 
 
-async def test_conteudo_curto_em_caracteres_nunca_aciona_a_contagem_real(session) -> None:
-    """O mecanismo, nao o emoji: a decisao de medir olha `len()` e mais nada.
+async def test_conteudo_denso_em_emoji_aciona_a_contagem_real(session) -> None:
+    """A lacuna que este teste documentava foi fechada pela TEC-225.
 
-    Este teste nao mede tokens de verdade -- o duble tambem conta por `len/4`
-    e nenhum teste desta suite toca a rede. O que ele prende e o gatilho:
-    conteudo curto em CARACTERES nunca paga a contagem real, seja la o que ele
-    contenha. Emoji e so o exemplo mais afiado (cada um e 1 caractere Python e
-    2-4 tokens); base64 e URL sao a versao comum. A conta completa esta em
+    Ate aqui este teste se chamava
+    `test_conteudo_curto_em_caracteres_nunca_aciona_a_contagem_real` e
+    afirmava `contador.chamadas == 0` para 600 caracteres de emoji (200 por
+    mensagem, 3 mensagens): a estimativa antiga (`len/4`) via nisso 150
+    tokens, quando o real chega perto de 1.706 -- risco aceito e
+    documentado, nao coberto pelo limiar de entao. A propria nota do teste
+    mandava inverter a assercao, nao "consertar", no dia em que existisse um
+    estimador ciente de densidade de caracteres nao-ASCII. Esse dia chegou:
+    `_estimar` (TEC-225) separa ASCII (2,3 chars/token) de nao-ASCII (3
+    tokens/char).
+
+    Sob a formula nova, porem, os mesmos 600 caracteres nao bastam para
+    acionar a contagem: medido, estimam 1.883, abaixo do limiar efetivo
+    (6.180). Por isso o cenario re-semeia com o tamanho que a propria card
+    descreve, ~3.600 caracteres de emoji (1.200 por mensagem, 3 mensagens)
+    -- medido, estimam 10.883 e cruzam o limiar. A conta completa esta em
     `Settings.limiar_de_contagem_efetivo`.
 
-    NOTA PARA QUEM VIER DEPOIS: este teste ficar vermelho e o desfecho
-    esperado, nao uma regressao. Ele descreve um risco aceito, nao uma
-    garantia do produto -- no dia em que existir um estimador que leve
-    densidade de caracteres nao-ASCII em conta (ticket proprio, fora do
-    TEC-127), este conteudo passara a acionar a contagem real e a assercao
-    abaixo tem de ser invertida junto com a mudanca, nao "consertada".
+    Ver tambem `test_emoji_aciona_a_contagem_real`, abaixo: mesmo mecanismo
+    (emoji denso cruzando o limiar), amostra menor (2.400 caracteres) e
+    historico diferente -- este e o teste invertido, aquele e o criterio de
+    pronto da card. Os dois ficam, de proposito.
     """
-    emoji_denso = "\U0001f3e0" * 200  # curto em len(), denso em tokens de verdade
+    emoji_denso = "\U0001f3e0" * 1200  # 3.600 caracteres no total, densos em tokens de verdade
     await semear(session, 3, texto=emoji_denso)
     contador = ContadorFake()
 
@@ -1261,10 +1276,98 @@ async def test_conteudo_curto_em_caracteres_nunca_aciona_a_contagem_real(session
         contador=contador,
     )
 
+    assert contador.chamadas >= 1, (
+        "conteudo denso em emoji tem de acionar a contagem real -- a "
+        "formula ciente de densidade da TEC-225 fechou a lacuna que este "
+        "teste documentava"
+    )
+
+
+async def test_emoji_aciona_a_contagem_real(session) -> None:
+    """Criterio de pronto da card. Medido: emoji roda a 0,35 chars/token.
+
+    Para `len`, um emoji e uma vogal valem igual: os 2.400 caracteres de
+    emoji que este teste semeia (800 por mensagem, 3 mensagens) a formula
+    antiga via como 600 tokens (`len // 4`), quando custam perto de 6.857
+    pela medicao real. Ver o desenho da TEC-225 para a medicao completa.
+
+    Ver tambem `test_conteudo_denso_em_emoji_aciona_a_contagem_real`, acima:
+    mesmo mecanismo, amostra maior (3.600 caracteres) e o teste historico
+    invertido. Os dois ficam, de proposito.
+    """
+    emoji_denso = "\U0001f3e0" * 800
+    await semear(session, 3, texto=emoji_denso)
+    contador = ContadorFake()
+
+    await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorFake(),
+        contador=contador,
+    )
+
+    assert contador.chamadas >= 1, (
+        "emoji denso tem de acionar a contagem real -- a estimativa antiga, "
+        "cega a densidade, deixava isso escapar"
+    )
+
+
+async def test_uma_duzia_de_urls_aciona_a_contagem_real(session) -> None:
+    """Criterio de pronto da card. Um lead colando anuncios e trafego de terca.
+
+    Medido: URL roda a 1,85 chars/token, e a estimativa nova a poe em 0,80 do
+    real -- acima do corte de 0,60, entao ela deixa de escapar.
+    """
+    urls = " ".join(
+        f"https://portalimoveis.example.com.br/anuncio/apartamento-3-quartos-{i}" for i in range(12)
+    )
+    await semear(session, 20, texto=urls)
+    contador = ContadorFake()
+
+    await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorFake(),
+        contador=contador,
+    )
+
+    assert contador.chamadas >= 1, (
+        "uma duzia de urls por mensagem tem de acionar a contagem real -- "
+        "urls sao densas em tokens e a estimativa antiga as tratava como "
+        "portugues comum"
+    )
+
+
+async def test_portugues_moderado_continua_sem_pagar_a_contagem(session) -> None:
+    """O criterio que protege a latencia, e o motivo de a estimativa existir.
+
+    Este teste semeia 39 falas moderadas em portugues; a formula nova estima
+    3.633 tokens contra um limiar de 6.180 (0.6 do teto efetivo de 10.300,
+    ja com a reserva da TEC-225 em 1.700 descontada) -- 1,7x de folga. Ver o
+    desenho da TEC-225 para a medicao completa sobre o corpus de eval (janela
+    de 40 falas no p90: ~4.134 tokens contra o mesmo limiar).
+    """
+    mensagem = (
+        "Bom dia, estou procurando um apartamento de dois quartos na zona sul, "
+        "com vaga de garagem e area de lazer completa para toda a familia, de "
+        "preferencia perto do metro e com portaria vinte e quatro horas."
+    )
+    await semear(session, 39, texto=mensagem)
+    contador = ContadorFake()
+
+    await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=ResumidorFake(),
+        contador=contador,
+    )
+
     assert contador.chamadas == 0, (
-        "conteudo curto em caracteres nunca passa pela contagem real, mesmo "
-        "sendo emoji denso -- risco aceito e documentado, nao coberto por "
-        "este limiar"
+        "portugues moderado, mesmo numa janela grande, nao pode acionar a "
+        "contagem real -- e essa folga que paga a latencia do caminho comum"
     )
 
 

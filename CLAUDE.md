@@ -164,7 +164,7 @@ Quando ele reprova, a pergunta é **"o que sai do prompt para o novo texto entra
 
 **São dois tetos, e eles são acoplados.** Além do fixo, `test_diferenca_entre_o_contado_e_o_enviado` afirma `subcontagem < contexto_headroom_de_tokens * 0,75`. O fixo é o deliberadamente mais apertado dos dois; **passá-lo do derivado o torna decorativo**, porque quem passa a prender é o outro — e aí a folga real não é a que o teste do teto fixo imprime. Antes de subir o fixo, calcule o derivado e confira que ele continua maior.
 
-Subir `contexto_headroom_de_tokens` para abrir espaço **não é de graça**: a reserva sai do mesmo contexto que guarda a conversa do lead, e o comentário daquele campo em `app/config.py` registra que a última subida custou 180 tokens de literais e resumo **por turno**. Na TEC-141 a alternativa mais barata foi encurtar a frase até caber sob o derivado — e a versão curta acabou sendo a certa também pelo argumento semântico, não só pelo preço.
+Subir `contexto_headroom_de_tokens` para abrir espaço **não é de graça**: a reserva sai do mesmo contexto que guarda a conversa do lead, e o comentário daquele campo em `app/config.py` registra que a última subida custou 640 tokens de literais e resumo **por turno** (TEC-225, a primeira derivada de medição contra o contador real, não de aritmética sobre o proxy `len/4`). Na TEC-141 a alternativa mais barata foi encurtar a frase até caber sob o derivado — e a versão curta acabou sendo a certa também pelo argumento semântico, não só pelo preço.
 
 ## Comentário não mente
 

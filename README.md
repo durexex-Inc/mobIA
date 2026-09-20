@@ -136,13 +136,13 @@ Os critérios de aceite da história vivem como testes executáveis:
   **sem round trip ao provedor**, com uma estimativa local deliberadamente
   pessimista, e `contexto.deadline_estourado` registra o evento.
 - O teto comparado é o nominal **menos** `CONTEXTO_HEADROOM_DE_TOKENS`. A
-  contagem mede uma mensagem plana, sem `system` e sem os rótulos e o schema que
-  a requisição real carrega; a reserva cobre essa diferença. São quatro as
-  parcelas em que a contagem difere do que se envia: `SISTEMA` de `montagem.py`
-  é contado e **não** enviado (o classificador chama
+  contagem mede uma mensagem plana, sem `system` e sem os rótulos, o schema e a
+  ferramenta que a requisição real carrega; a reserva cobre essa diferença. São
+  cinco as parcelas em que a contagem difere do que se envia: `SISTEMA` de
+  `montagem.py` é contado e **não** enviado (o classificador chama
   `montar_prompt(omitir_sistema=True)`); `SISTEMA_DO_AGENTE`, o schema de saída
-  compilado e os rótulos de seção que `montar_prompt` intercala são enviados e
-  **nunca** contados.
+  compilado, os rótulos de seção que `montar_prompt` intercala e a definição da
+  ferramenta de busca em `tools=` (TEC-265) são enviados e **nunca** contados.
 
   **Quanto isso dá hoje não está escrito aqui, de propósito** (TEC-243). É
   valor derivado — muda a cada mudança de prompt, de campo do schema ou de
@@ -155,11 +155,15 @@ Os critérios de aceite da história vivem como testes executáveis:
   python -m pytest -q -k margem_do_orcamento -s
   ```
 
-  A conta usa o mesmo proxy `len/4` do módulo, não uma chamada paga de
-  `count_tokens`. A reserva já subiu duas vezes — 400 → 800 na TEC-145,
-  800 → 850 na TEC-250 —, e o porquê de cada subida e o preço por turno estão
-  no comentário de `contexto_headroom_de_tokens` em `src/mobia/app/config.py`,
-  que é o registro dessa decisão. Ver também a seção TEC-145 abaixo.
+  A conta usa um proxy `len/4` próprio do orçamento — não mais o mesmo de
+  `montagem.py`, que a TEC-225 trocou por uma fórmula ciente de densidade —, e
+  não uma chamada paga de `count_tokens`. A reserva já subiu cinco vezes: 400
+  → 800 na TEC-145, 800 → 850 na TEC-250, 850 → 880 na TEC-257, 880 → 1.060 na
+  TEC-265 e 1.060 → 1.700 na TEC-225 — esta última medida contra o contador
+  real (`ContadorAnthropic`), não mais por aritmética sobre o proxy. O porquê
+  de cada subida e o preço por turno estão no comentário de
+  `contexto_headroom_de_tokens` em `src/mobia/app/config.py`, que é o registro
+  dessa decisão. Ver também a seção TEC-145 abaixo.
 - Mensagem sem texto (áudio, imagem, documento) entra marcada pelo tipo, nunca
   como turno em branco — o modelo tem de poder distinguir "mandou um áudio que
   ainda não transcrevemos" de "não disse nada", e é esse texto que a dobra

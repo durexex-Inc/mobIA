@@ -248,6 +248,31 @@ def test_limiar_deriva_do_teto_efetivo(settings) -> None:
     assert settings.limiar_de_contagem_efetivo < settings.teto_de_tokens_efetivo
 
 
+def test_o_headroom_cobre_a_subcontagem_medida() -> None:
+    """A reserva tem de cobrir a diferenca MEDIDA, nao a do proxy.
+
+    Ate a TEC-225 dois testes validavam o headroom com `len/4` dos dois lados
+    da conta, entao passavam sem dizer nada sobre a reserva. Medido com
+    `ContadorAnthropic` em 20/09/2026, parcela a parcela, as cinco parcelas
+    somam 1545 tokens reais -- mas isso sobrecontava: cada parcela foi medida
+    numa chamada separada de `count_tokens`, e a sobrecarga fixa de 7 tokens
+    por chamada nao existe na requisicao real, unica. Descontada ela, as
+    parcelas somam 1524. Falta ainda o envelope estrutural do array
+    multi-turno (system separado mais varios turnos), medido em 75 tokens
+    para uma janela de 40 mensagens -- nao os "100-200" que
+    `teto_de_tokens_efetivo` chegou a estimar antes de alguem medir. Total de
+    ponta a ponta: 1524 + 75 = 1599 -- contra uma reserva que era 1060.
+
+    O numero abaixo e essa medicao, transcrita aqui porque medi-la no teste
+    exigiria chamar a API a cada execucao. Se alguem mexer no prompt do
+    agente, no schema ou na ferramenta de busca, ele envelhece -- e o teste
+    vizinho de margem do orcamento e quem avisa, porque conta crescimento do
+    prompt em unidades do proxy.
+    """
+    SUBCONTAGEM_REAL_MEDIDA = 1599
+    assert get_settings().contexto_headroom_de_tokens >= SUBCONTAGEM_REAL_MEDIDA
+
+
 def test_cliente_recusa_subir_sem_chave(monkeypatch, caches_de_cliente_limpos: None) -> None:
     """Chave ausente falha aqui, com mensagem util, e nao no meio de um turno."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
@@ -315,15 +340,25 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
     """Discharge da re-verificacao que a TEC-127 deixou marcada para a TEC-134.
 
     A contagem de `montar_contexto` mede um proxy do que a requisicao do
-    classificador de fato manda. Este teste refaz a conta com o mesmo `len/4`
-    do modulo de montagem -- e nao com `count_tokens`, que custaria uma
-    chamada paga e rede, que a suite nao toca -- e trava o resultado contra a
-    reserva.
+    classificador de fato manda. Este teste refaz a conta com um `len/4`
+    proprio do orcamento -- ja nao e mais o mesmo da TEC-225, que trocou a
+    formula de `montagem.py` por uma ciente de densidade -- e nao com
+    `count_tokens`, que custaria uma chamada paga e rede, que a suite nao
+    toca.
 
     Fica como teste, e nao como numero num comentario, porque cada parcela
     vive num modulo diferente: crescer `SISTEMA_DO_AGENTE` ou acrescentar um
     campo ao schema muda a conta sem tocar em `config.py`, e sem isto ninguem
     ficaria sabendo ate a primeira chamada estourar o limite de verdade.
+
+    Desde a TEC-225 este teste e o irmao
+    `test_a_margem_do_orcamento_do_prompt_e_deliberada` nao validam mais a
+    reserva -- os dois medem no proxy `len/4`, o mesmo que a TEC-225 derrubou
+    do lado da montagem, entao a regua era igual dos dois lados da conta. O
+    que valida a reserva agora e `test_o_headroom_cobre_a_subcontagem_medida`,
+    medido contra o contador real. Estes dois continuam de pe como alarme
+    contra **crescimento do prompt**, em unidades do proxy proprio do
+    orcamento.
     """
     subcontagem = _subcontagem()
     teto = settings.contexto_headroom_de_tokens * 0.75
@@ -427,9 +462,15 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     dizer a faixa tambem em prosa repetia o que a description ja carregava.
 
     O teto fixo passou de 9,0 abaixo do teto derivado (795,0) para 2,0
-    abaixo dele: qualquer alta acima de +2 no fixo passa a exigir subir
-    `contexto_headroom_de_tokens` junto, o que custa historico de conversa
-    por turno -- essa e a margem apertada que a proxima card herda.
+    abaixo dele: qualquer alta acima de +2 no fixo exigiria subir
+    `contexto_headroom_de_tokens` junto -- margem apertada que ficou para a
+    TEC-225 herdar, e que a TEC-225 de fato gastou ao medir a reserva contra
+    o contador real. Hoje o derivado e `1700 * 0,75 = 1275` (a reserva subiu
+    para 1700 -- ver o comentario de `contexto_headroom_de_tokens`), 482
+    acima do fixo: a margem apertada nao existe mais. O acoplamento que o
+    CLAUDE.md descreve continua de pe -- o fixo segue sendo o mais apertado
+    dos dois --, so que a distancia entre eles parou de ser o risco imediato
+    que era.
 
     O teto fixo NAO foi para 800. As duas redacoes mais longas cabem, em
     tokens brutos, no teto derivado de 795,0: `nem desconto` fica em 790,00

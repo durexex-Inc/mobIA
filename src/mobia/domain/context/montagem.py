@@ -265,31 +265,73 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
     return "\n".join(linhas)
 
 
+# Caracteres por token do portugues, MEDIDO -- nao suposto.
+#
+# Medicao de 20/09/2026 com `ContadorAnthropic` contra claude-sonnet-5, pela
+# inclinacao entre um texto e o mesmo texto oito vezes (o que cancela a
+# sobrecarga fixa da chamada): portugues sem acento 2,34, com acento 2,38.
+#
+# O valor anterior era 4, que e o INGLES (3,15 medido). A consequencia estava
+# documentada ao contrario: `Settings.limiar_de_contagem_efetivo` afirmava que
+# o portugues ficava "coberto com folga" pela razao de seguranca de 2,4, e a
+# folga real era de 2,6%. Ver o desenho da TEC-225.
+#
+# 2,3 e o arredondamento para baixo do medido (2,34/2,38), de proposito: chars/token
+# mais baixo estima MAIS tokens para o mesmo texto, entao o arredondamento erra na
+# direcao segura da D2 -- superestimar, nunca subestimar.
+_CHARS_POR_TOKEN_EM_PORTUGUES = 2.3
+
+# Tokens por caractere NAO-ASCII.
+#
+# Um emoji e UM caractere Python e custa cerca de 2,9 tokens (0,35 chars/token
+# medido). Para `len` ele vale o mesmo que uma vogal, e e exatamente essa
+# cegueira que fazia 600 caracteres de emoji serem estimados em 150 tokens
+# quando custam 1706.
+#
+# O acento do portugues paga este mesmo preco, o que superestima um pouco
+# (1,23 do real, contra 1,02 do texto sem acento). Superestimar e a direcao
+# segura, e a folga de latencia aguenta -- ver a D3 do desenho.
+_TOKENS_POR_CARACTERE_NAO_ASCII = 3
+
+
 def _estimar(resumo: str | None, literais: list[Message], estado: LeadQualification | None) -> int:
-    bruto = (
-        len(SISTEMA) + len(resumo or "") + len(_texto_das(literais)) + len(_texto_do_estado(estado))
-    )
-    return bruto // 4
+    """Estimativa barata de tokens, ciente de densidade (TEC-225).
+
+    Separa ASCII de nao-ASCII porque os dois custam ordens diferentes: o
+    portugues roda a 2,3 caracteres por token (medido em 2,34/2,38;
+    arredondado para baixo, que e a direcao que superestima tokens) e o
+    emoji a 0,35 -- e `len` nao distingue os dois. A formula anterior
+    (`len // 4`) supunha o ingles e subcontava tudo que este produto
+    processa.
+    """
+    texto = SISTEMA + (resumo or "") + _texto_das(literais) + _texto_do_estado(estado)
+    nao_ascii = sum(1 for caractere in texto if ord(caractere) > 127)
+    ascii_ = len(texto) - nao_ascii
+    return int(ascii_ / _CHARS_POR_TOKEN_EM_PORTUGUES + nao_ascii * _TOKENS_POR_CARACTERE_NAO_ASCII)
 
 
-# O piso de caracteres por token que `Settings.limiar_de_contagem_efetivo`
-# documenta: portugues acentuado roda a 3,2-3,7, e `_estimar` supoe 4.
+# A razao entre a estimativa nova e a contagem real no pior caso PLAUSIVEL
+# medido: a URL, em 0,80 (1.584 caracteres de URL estimam 688 contra 859
+# reais -- int(1584 / 2,3) = 688, 688 / 859 = 0,8009).
 #
-# No caminho normal essa diferenca e coberta pelo limiar, cuja razao de ser e
-# deixar a estimativa responder so onde errar nao muda a decisao. No modo sem
-# modelo ela e a palavra final, e ai a mesma diferenca vira o defeito: dizer
-# "cabe" sobre um texto que estoura.
+# A folga sobre a URL medida e de 0,54%, e e fina: a taxa efetiva deste fator
+# e 1/(2,3 x 0,80) = 1/1,84 chars/token contra a URL medida em 1/1,85.
 #
-# O que este piso NAO cobre continua sendo o que o limiar ja declara -- emoji
-# (~0,3-0,5 chars/token) e blobs base64/URL (~2). Um turno dominado por
-# qualquer um dos dois sai subcontado aqui como sai la. Risco aceito e
-# documentado, nao defeito escondido.
-_CHARS_POR_TOKEN_NO_PIOR_CASO = 3.2
+# A razao cresce com a taxa -- ela e `taxa / 2,3` --, entao o perigo e a URL
+# medir MENOS que 1,84 chars/token, nao mais. Uma remedicao que a ponha abaixo
+# disso derruba a razao para baixo de 0,80 e o fator deixa de cobrir o pior
+# caso plausivel.
+#
+# Base64 fica de fora de proposito -- 0,43 -- porque cobri-lo exigiria um
+# detector de "sequencia longa sem espaco", que tem falso-positivo proprio
+# (uma URL longa tambem e uma). Ver a D4 do desenho.
+_PIOR_RAZAO_PLAUSIVEL = 0.80
 
-# Derivado dos dois numeros acima, e nao escrito como 1.25: o fator existe
-# porque `_estimar` supoe 4 e o piso e 3,2. Escrever o produto esconderia de
-# onde ele vem, e mudaria de significado em silencio se um dos dois mudasse.
-_FATOR_PESSIMISTA = 4 / _CHARS_POR_TOKEN_NO_PIOR_CASO
+# Derivado, e nao escrito como 1.25: o fator existe para devolver ao pior caso
+# plausivel a folga que a estimativa nao lhe da. O valor calhar de ser o mesmo
+# que o de antes e coincidencia -- aquele saia de `4 / 3.2`, dois numeros que a
+# medicao da TEC-225 derrubou.
+_FATOR_PESSIMISTA = 1 / _PIOR_RAZAO_PLAUSIVEL
 
 
 def _estimar_pessimista(
@@ -301,12 +343,11 @@ def _estimar_pessimista(
     e degradacao declarada e a direcao segura do erro; devolver contexto
     acima do teto nao e.
 
-    O `+ 1` compensa a divisao inteira da propria `_estimar`: `bruto // 4`
-    pode descartar ate quase um token inteiro (o resto de 0 a 3 caracteres
-    perdido no truncamento), e escalar esse valor ja truncado por
-    `_FATOR_PESSIMISTA` sem repor essa perda deixaria o pior resto (3)
-    abaixo do piso de 3,2 chars/token -- exatamente o que esta funcao existe
-    para impedir.
+    O `+ 1` compensa o truncamento do proprio `int()` de `_estimar`: a soma
+    `ascii/2,3 + nao_ascii*3` e um float, e `int()` descarta a parte
+    fracionaria, que pode chegar perto de um token inteiro. Escalar esse
+    valor ja truncado por `_FATOR_PESSIMISTA` sem repor essa perda devolveria
+    menos folga do que o fator promete.
     """
     return math.ceil((_estimar(resumo, literais, estado) + 1) * _FATOR_PESSIMISTA)
 
@@ -328,9 +369,11 @@ async def _contar_se_valer(
     conferindo o palpite -- o limiar existe para que o palpite so responda
     onde errar nao muda a decisao, nao para tira-lo da decisao.
 
-    `len/4` supoe 4 caracteres por token. Isso cobre o pior caso plausivel de
-    portugues acentuado (3.2-3.7 chars/token) com folga -- ver a derivacao
-    completa e os casos que este limiar **nao** cobre (emoji, base64/URL) em
+    `_estimar` (TEC-225) roda ASCII a 2,3 caracteres por token e nao-ASCII a
+    3 tokens por caractere -- nao mais o `len/4` que supunha o ingles e
+    subestimava o que este produto processa: o portugues real mede 2,34 a
+    2,38 chars/token, contra os 4 que aquela formula supunha. Ver a
+    derivacao completa e o que ainda escapa desta contagem (so base64) em
     `Settings.limiar_de_contagem_efetivo`.
     """
     # O modo sem modelo nao consulta o limiar: ele nao esta escolhendo entre a
@@ -342,12 +385,13 @@ async def _contar_se_valer(
     settings = get_settings()
     estimativa = _estimar(resumo, literais, estado)
     # Backstop duro, independente do limiar: `estimativa >= teto` e o mesmo que
-    # `len(texto) >= 4 * teto`, ou seja, um texto que ja estoura o teto ate na
-    # hipotese mais generosa de 4 caracteres por token. Devolver a estimativa
-    # ai seria decidir "cabe" a partir do unico numero que diz o contrario. Uma
-    # comparacao, de graca no trafego normal. Com o limiar default (0.6 do
-    # teto) ela nunca e o gatilho -- so passa a valer se alguem subir
-    # CONTEXTO_LIMIAR_DE_CONTAGEM acima do teto.
+    # `len(texto) >= 2,3 * teto` para texto ASCII -- a formula ciente de
+    # densidade da TEC-225 (ver `_estimar`), nao mais uma hipotese de 4
+    # caracteres por token. Devolver a estimativa ai seria decidir "cabe" a
+    # partir do unico numero que diz o contrario. Uma comparacao, de graca no
+    # trafego normal. Com o limiar default (0.6 do teto) ela nunca e o
+    # gatilho -- so passa a valer se alguem subir CONTEXTO_LIMIAR_DE_CONTAGEM
+    # acima do teto.
     if estimativa < settings.limiar_de_contagem_efetivo and estimativa < (
         settings.teto_de_tokens_efetivo
     ):

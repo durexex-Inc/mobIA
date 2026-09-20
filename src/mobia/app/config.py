@@ -187,12 +187,27 @@ class Settings(BaseSettings):
     # com ate 10 candidatos -- e nenhum dos dois e contado por
     # `montar_contexto` nem pelas cinco parcelas acima. Ficou de fora de
     # proposito (fix-wave da TEC-265): medir e travar um sexto numero e
-    # decisao de design, nao correcao deste comentario. O que importa aqui e
-    # que a reserva de baixo tem so ~280 tokens de folga sobre o teto fixo de
-    # `test_a_margem_do_orcamento_do_prompt_e_deliberada`, e um `tool_result`
-    # de 10 candidatos com titulo e bairro longos passa disso pelo mesmo
-    # proxy `len/4` -- o segundo round-trip de um turno com busca pode
-    # estourar a reserva sem que nenhum teste hoje reclame.
+    # decisao de design, nao correcao deste comentario.
+    #
+    # O que importa aqui e o tamanho, em tokens REAIS -- nao no proxy `len/4`,
+    # que mediria outra coisa e nao pode ser subtraido de um numero em tokens
+    # (foi o erro da primeira redacao deste paragrafo, na TEC-225: fazia
+    # `1600 - 793`, tokens reais menos um teto medido no proxy). A reserva de
+    # 1700 cobre a subcontagem medida de 1599 (ver a entrada TEC-225 abaixo)
+    # com **101 tokens reais de folga**. Medido contra `ContadorAnthropic`
+    # (20/09/2026): um `tool_result` de 10 candidatos com titulo e bairro
+    # TIPICOS (~45 e ~8 caracteres) custa **1.169 tokens reais**; com titulo e
+    # bairro no MAXIMO da coluna (`String(160)`/`String(120)` em
+    # `catalogo/models.py`), **3.709**. Os dois estouram os 101 de folga por
+    # larga margem -- 11,6x e 36,7x, respectivamente. O segundo round-trip de
+    # um turno com busca de 10 candidatos NAO "pode" estourar a reserva: ele a
+    # estoura, toda vez que a segunda volta do laco acontece com essa
+    # contagem. Busca que volta com um candidato, ou com zero, nao foi
+    # medida -- e plausivel que estoure tambem (a folga e so 101), mas isto
+    # nao afirma por numero que nao mediu. A sexta parcela continua fora
+    # da reserva por decisao de desenho anterior a esta card (fix-wave da
+    # TEC-265) -- o que muda aqui e este comentario parar de mentir sobre o
+    # tamanho do que ficou de fora.
     #
     # **O valor de hoje dessa diferenca nao esta escrito aqui, de proposito**
     # (TEC-243). Ele e derivado -- muda quando alguem mexe no prompt, num
@@ -205,7 +220,7 @@ class Settings(BaseSettings):
     # imprime as cinco parcelas, o liquido, o teto e a folga.
     #
     # O que este comentario registra e o que **nao** envelhece: por que a
-    # reserva existe, por que ela ja subiu duas vezes, e o que cada subida
+    # reserva existe, por que ela ja subiu cinco vezes, e o que cada subida
     # custou por turno.
     #
     # **400 -> 800 na TEC-145**, que acrescentou o objeto `extracao` ao
@@ -268,7 +283,47 @@ class Settings(BaseSettings):
     # subida: **180 tokens a menos de literais e resumo por turno, de 12000
     # -- 1,5% do contexto**. E a segunda maior da historia do projeto, atras
     # dos 3,3% da primeira.
-    contexto_headroom_de_tokens: int = 1060
+    #
+    # **1060 -> 1700 na TEC-225.** As quatro subidas acima nasceram de
+    # aritmetica sobre o proxy `len/4` dos dois lados da conta -- e por isso
+    # `test_diferenca_entre_o_contado_e_o_enviado` e
+    # `test_a_margem_do_orcamento_do_prompt_e_deliberada` passavam sem provar
+    # nada sobre a reserva: a regua era a mesma dos dois lados. Esta e a
+    # primeira que sai de medicao contra o contador real
+    # (`ContadorAnthropic`, claude-sonnet-5), parcela a parcela, em
+    # 20/09/2026:
+    #
+    #     parcela                                     len/4     real
+    #     -montagem.SISTEMA (contado, nao enviado)    -42,0    -77,0
+    #     +SISTEMA_DO_AGENTE (campo system=)          305,5    541,0
+    #     +schema compilado (output_config.format)    372,8    798,0
+    #     +rotulos de montar_prompt                    19,2     41,0
+    #     +ferramenta de busca (tools=)                131,2    242,0
+    #     = subcontagem (cinco parcelas, cinco chamadas)  786,8  1.545,0
+    #
+    # **A soma acima sobrecontava.** Cada parcela foi medida numa chamada
+    # separada de `count_tokens`, e a sobrecarga fixa de 7 tokens por chamada
+    # nao existe na requisicao real, unica -- descontada ela, as cinco
+    # parcelas somam **1.524** tokens reais, nao 1.545. Falta ainda o
+    # envelope estrutural do array multi-turno que `teto_de_tokens_efetivo`
+    # so estimava ("100-200 tokens"): medido, **75 tokens para 40
+    # mensagens** (35 para 20). Total de ponta a ponta: **1.524 + 75 =
+    # 1.599** tokens reais.
+    #
+    # A reserva de 1060 era 539 tokens menor que essa lacuna (1599 - 1060).
+    # 1700 cobre os 1599 medidos com **101 de folga real** -- ver a entrada
+    # da sexta parcela, acima, para o que essa folga NAO cobre. A validacao
+    # desta subida e `test_o_headroom_cobre_a_subcontagem_medida` em
+    # `tests/unit/test_config.py`, e nao os dois testes acima: aqueles
+    # continuam medindo em `len/4` e viraram alarme contra crescimento do
+    # prompt, nao prova da reserva.
+    #
+    # Preco desta subida: **640 tokens a menos de literais e resumo por
+    # turno, de 12000 -- 5,3% do contexto**, o teto efetivo caindo de 10940
+    # para 10300 -- cerca de 1.470 caracteres de conversa a menos por
+    # chamada. E a maior subida da historia do projeto, e a primeira cujo
+    # tamanho vem de medir, nao de arredondar sobre uma estimativa.
+    contexto_headroom_de_tokens: int = 1700
 
     # Dobrar `gatilho - minimas` mensagens deixa exatamente `minimas` literais.
     # Manter gatilho >= 2 * minimas e o que garante o piso depois da regeneracao.
@@ -549,9 +604,11 @@ class Settings(BaseSettings):
         manda como `messages=[{"role": "user", ...}]`, sem `system=`. A
         requisicao real que a TEC-134 monta e um system prompt mais um array
         multi-turno, e cada turno carrega overhead estrutural que o contador
-        nunca ve -- da ordem de 100-200 tokens numa janela de vinte a quarenta
-        mensagens. Some a isso que `_texto_do_estado` e explicitamente uma
-        representacao para medir, nao o renderizador que a TEC-134 usa.
+        nunca ve -- medido na TEC-225 (`ContadorAnthropic`) em **35 tokens
+        para uma janela de vinte mensagens e 75 para quarenta**, nao mais os
+        "100-200" que esta docstring estimava antes de alguem medir. Some a
+        isso que `_texto_do_estado` e explicitamente uma representacao para
+        medir, nao o renderizador que a TEC-134 usa.
 
         A reserva nasceu porque contar a forma exata exigiria conhecer a forma
         exata, e na epoca o consumidor que a define ainda nao existia:
@@ -559,15 +616,21 @@ class Settings(BaseSettings):
         e a reserva continua -- o que a substituiu nao foi contar a forma
         exata, e sim a medicao registrada abaixo. O valor e
         `contexto_headroom_de_tokens`, e o comentario da propria constante
-        registra por que ele ja subiu duas vezes e o que cada subida custou.
+        registra por que ele ja subiu cinco vezes e o que cada subida custou.
 
-        **Medido na TEC-134, com a requisicao real ja montada.** A conta usa o
-        mesmo proxy `len/4` do modulo de montagem, e nao uma chamada de
-        `count_tokens` -- medir contra a API de verdade custaria uma chamada
-        paga por execucao e nao pode entrar na suite, que nao toca a rede. E
-        estimativa honesta, nao medida exata, e e por isso que o resultado
-        vira um teste (`test_diferenca_entre_o_contado_e_o_enviado`) em vez de
-        um numero solto num comentario.
+        **Medido na TEC-134, com a requisicao real ja montada.** A conta usa
+        um proxy `len/4` proprio do orcamento -- **nao** o mesmo da TEC-225
+        (`montagem.py` mede densidade de conteudo, isto mede peso de prompt e
+        schema) --, e nao uma chamada de `count_tokens`: medir contra a API
+        de verdade custaria uma chamada paga por execucao e nao pode entrar
+        na suite, que nao toca a rede. E estimativa honesta, nao medida
+        exata, e e por isso que o resultado vira um teste
+        (`test_diferenca_entre_o_contado_e_o_enviado`) em vez de um numero
+        solto num comentario. Desde a TEC-225 esse teste, e o irmao
+        `test_a_margem_do_orcamento_do_prompt_e_deliberada`, nao validam mais
+        a reserva -- quem faz isso e `test_o_headroom_cobre_a_subcontagem_medida`,
+        medido contra o contador real. Os dois continuam de pe como alarme
+        contra crescimento do prompt, em unidades deste proxy proprio.
 
         Sao cinco as parcelas em que a contagem difere do que se envia:
 
@@ -601,26 +664,38 @@ class Settings(BaseSettings):
     @property
     def limiar_de_contagem_efetivo(self) -> int:
         """Acima disto, `_contar_se_valer` (TEC-127) paga a contagem real;
-        abaixo, confia na estimativa de `len/4`.
+        abaixo, confia na estimativa ciente de densidade de `_estimar`
+        (TEC-225).
 
         0.6 do teto efetivo por padrao (`teto_de_tokens_efetivo`, ja com a
-        reserva descontada), nao um numero redondo: um limiar T implica um
-        texto de aproximadamente `4*T` caracteres (a estimativa e `len//4`).
-        Para a estimativa enganar -- dizer "cabe" quando na verdade estoura --
-        o texto precisaria rodar a menos de `4*T/teto` caracteres por token.
-        Com T = 0.6 * teto essa razao e 2.4, e portugues acentuado (~3.2-3.7
-        chars/token) fica coberto com folga.
+        reserva descontada), nao um numero redondo -- e a mesma fracao de
+        antes da TEC-225, porque o que precisava de conserto era a
+        estimativa que ela compara, nao a fracao.
 
-        O que este limiar **nao** cobre: emoji (~0.3-0.5 chars/token -- cada
-        emoji e 1 caractere Python e 2-4 tokens) e blobs base64/URL (~2). Um
-        turno dominado por qualquer um dos dois pode escapar da contagem real
-        e sair medido para menos tokens do que de fato tem. Nao existe fracao
-        razoavel do teto que cubra emoji sem eliminar o beneficio da
-        estimativa barata para o trafego normal -- cobrir 0.3 exigiria um
-        limiar por volta de 7.5% do teto, baixo demais para qualquer conversa
-        real ficar abaixo dele. Ate existir um estimador que leve densidade de
-        caracteres nao-ASCII em conta, isto e um risco aceito e documentado,
-        nao um bug escondido.
+        A estimativa antiga (`len//4`, um proxy do ingles) so protegia
+        texto que rodasse a `4*0.6 = 2.4` caracteres por token ou mais --
+        abaixo disso ela podia dizer "cabe" com o real ja estourado. O
+        portugues, lingua principal do produto, mede 2,34 sem acento e 2,38
+        acentuado: **a folga real era de 2,6%**, nao a margem confortavel
+        que esta docstring chegou a afirmar citando o intervalo do ingles
+        (~3.2-3.7 chars/token, medido em 3,15) como se fosse o do
+        portugues.
+
+        A TEC-225 trocou a estimativa por uma ciente de densidade: ASCII a
+        2,3 caracteres por token, nao-ASCII a 3 tokens por caractere. Contra
+        essa formula o portugues passa a superestimar -- 1,02 a 1,23 do
+        real, medido -- e o mesmo vale para emoji (1,06 do real, contra
+        0,09 antes) e para uma duzia de URLs (0,80, contra 0,46 antes): os
+        tres deixam de escapar da contagem real.
+
+        O que sobra descoberto: base64, em 0,43 do real. Nao por descuido
+        -- cobri-lo exigiria detectar "sequencia longa sem espaco", e esse
+        detector tem falso-positivo proprio: uma URL longa e exatamente
+        isso tambem (a D4 do desenho da TEC-225). Um turno dominado por
+        base64 pode escapar da contagem real e sair medido para menos
+        tokens do que de fato tem. Ate existir uma forma de distinguir os
+        dois sem penalizar URL, isto e um risco aceito e documentado, nao
+        um bug escondido.
         """
         if self.contexto_limiar_de_contagem is not None:
             return self.contexto_limiar_de_contagem
