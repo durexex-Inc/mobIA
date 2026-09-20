@@ -95,6 +95,6 @@ Mudam na mesma branch, junto com o código que elas descrevem. A do `CLAUDE.md` 
 
 ## O que esta card NÃO faz
 
-**Não estende o mypy para `tests`, `evals` ou `scripts`.** O `py.typed` torna isso possível — hoje qualquer um dos três produziria o mesmo `import-untyped` que o `alembic` produzia —, mas cada um tem um custo próprio de erros a corrigir, não medido aqui. A card é sobre `alembic`, que é o diretório com risco real: as migrations importam código de aplicação e a `0004` faz backfill de cifra em Python.
+**Não estende o mypy para `tests`, `evals` ou `scripts`.** Acrescentar qualquer um deles ao `files` é uma linha — e, pelo mesmo mecanismo do `alembic`, não dependeria do `py.typed`: com `src` na mesma invocação, `mobia.*` já resolve para os arquivos-fonte. O que custa é o que aparece depois: cada um tem um número próprio de erros a corrigir, e nenhum deles foi medido aqui. A card é sobre `alembic`, que é o diretório com risco real: as migrations importam código de aplicação e a `0004` faz backfill de cifra em Python.
 
 **Não aumenta a severidade do mypy.** `disallow_untyped_defs` faria aparecer o erro que a card esperava em `_em_lotes`, e muitos outros. É outra decisão, com outro tamanho.
