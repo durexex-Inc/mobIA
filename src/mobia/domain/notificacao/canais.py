@@ -64,11 +64,6 @@ class _CanalQueRegistra:
         )
 
 
-class EmailRegistrado(_CanalQueRegistra):
-    nome = "email"
-    motivo = "sem provedor de e-mail configurado neste projeto"
-
-
 class WhatsAppRegistrado(_CanalQueRegistra):
     nome = "whatsapp"
     motivo = "sem template aprovado pela Meta para mensagem fora da janela de 24h"

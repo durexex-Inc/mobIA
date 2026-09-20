@@ -9,7 +9,8 @@ from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
 from mobia.domain.handoff.agendador import AgendadorArq
 from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
-from mobia.domain.notificacao.canais import EmailRegistrado, WhatsAppRegistrado
+from mobia.domain.notificacao.canais import WhatsAppRegistrado
+from mobia.domain.outbound.email import EmailSmtp
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
@@ -111,11 +112,12 @@ async def startup(ctx: dict[str, Any]) -> None:
     # `startup` no topo do modulo: o ARQ ja o gravou antes deste hook, e um
     # segundo pool seria redundante.
     ctx["reenfileirador"] = ReenfileiradorArq(ctx["redis"])
-    # Os dois adaptadores de `canais.py` REGISTRAM e nao entregam -- ver o
-    # docstring do modulo. E' o `startup` que decide a implementacao, no mesmo
+    # O de e-mail entrega (TEC-280); o de WhatsApp ainda REGISTRA e nao
+    # entrega, porque depende de template aprovado pela Meta -- ver o docstring
+    # de `canais.py`. E' o `startup` que decide a implementacao, no mesmo
     # raciocinio de `outbound`/`redator`/etc acima; o teste troca a chave sem
     # tocar no job.
-    ctx["canais_de_notificacao"] = (EmailRegistrado(), WhatsAppRegistrado())
+    ctx["canais_de_notificacao"] = (EmailSmtp(), WhatsAppRegistrado())
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
