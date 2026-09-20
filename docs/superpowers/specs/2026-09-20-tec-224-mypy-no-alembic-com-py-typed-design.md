@@ -61,14 +61,18 @@ O custo é que quem lê o `ci.yml` deixa de ver o escopo ali. Aceito: o comentá
 
 ## D2 — `py.typed` declarado no `package-data`, e conferido num wheel
 
-O marcador é `src/mobia/py.typed`, arquivo vazio, PEP 561. Ele precisa ser declarado para chegar ao pacote construído:
+O marcador é `src/mobia/py.typed`, arquivo vazio, PEP 561. A declaração:
 
 ```toml
 [tool.setuptools.package-data]
 mobia = ["py.typed"]
 ```
 
-Não há `MANIFEST.in` no repositório e não há nenhum `package-data` hoje — este é o primeiro.
+Não há `MANIFEST.in` no repositório e não havia nenhum `package-data` — este é o primeiro.
+
+> **Correção pós-medição.** Esta seção dizia que o marcador *"precisa ser declarado para chegar ao pacote construído"*. **É falso, e foi medido.** Com o bloco `[tool.setuptools.package-data]` removido e o wheel reconstruído com `pip wheel --no-deps --no-cache-dir` — sha256 diferente do anterior, então build novo e não cache reusado —, `mobia/py.typed` continuou entre os 138 arquivos de `mobia/` no wheel. O build isolado que o `[build-system] requires = ["setuptools>=75"]` monta o inclui sozinho.
+>
+> A declaração **fica**, e a razão muda: ela torna a inclusão explícita e contratada, em vez de depender de um comportamento padrão que não é garantia documentada deste projeto e pode mudar de versão. Não fica porque seja a única via — não é.
 
 **A conferência é num wheel de verdade, não no editable.** O critério de pronto da card pede que o marcador chegue ao pacote instalado, e o `pip install -e .` **não** exercita isso: no editable o mypy encontra `src/mobia/py.typed` pelo caminho do próprio repositório, então o gate ficaria verde mesmo que o empacotamento estivesse errado. A verificação honesta é construir o wheel e listar o conteúdo dele.
 
@@ -76,7 +80,9 @@ Não há `MANIFEST.in` no repositório e não há nenhum `package-data` hoje —
 
 `_COLUNAS` na `0033` é uma tupla de `sa.Column` sem anotação. O mypy pede a anotação porque `sa.Column` é genérico e ele não consegue inferir o parâmetro de tipo a partir de `sa.Column("nome", sa.String(16), nullable=True)`.
 
-A anotação é `tuple[sa.Column[Any], ...]`. É `Any` por dentro de propósito: a tupla mistura `BigInteger`, `Numeric`, `String` e `Boolean`, então não existe um parâmetro de tipo comum mais estreito, e inventar uma união de sete tipos para uma tupla que só é iterada em `op.add_column` não paga o que custa a ler.
+A anotação é `tuple[sa.Column[Any], ...]`. É `Any` por dentro de propósito: a tupla mistura `BigInteger`, `Numeric`, `String` e `Boolean`, então não existe um parâmetro de tipo comum mais estreito, e inventar uma união dos quatro para uma tupla que só é iterada em `op.add_column` não paga o que custa a ler.
+
+São **sete colunas e quatro tipos distintos** — a primeira versão deste parágrafo dizia "união de sete tipos", confundindo posições com tipos, e a mesma imprecisão foi parar no comentário do código antes de a revisão pegá-la.
 
 ## D4 — Duas afirmações de prosa morrem nesta branch
 
