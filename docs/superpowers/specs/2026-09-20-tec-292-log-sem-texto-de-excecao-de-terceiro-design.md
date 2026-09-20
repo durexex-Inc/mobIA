@@ -9,6 +9,8 @@
 
 Tirar do log o texto de exceção que **este projeto não escreveu**, nos pontos em que ele pode ecoar entrada externa — sem jogar fora o diagnóstico que a TEC-237 comprou com um dia de investigação cega.
 
+> **Sobre os números de linha deste documento.** Eles descrevem a árvore **antes** da branch, que é o estado que o desenho analisa — os comentários que a card acrescentou empurraram várias linhas para baixo. A `comentarios_tocados.py` marca 20 dessas citações como `PROSA` e **nenhuma** como `FALSO`; a conferência foi feita. Onde o alvo tem nome estável, ele é citado pelo nome.
+
 ## O que o levantamento corrigiu no enunciado da card
 
 **São 29 pontos, não 25.** A card contou os 25 em que a *mensagem* de uma exceção entra num kwarg nomeado. Faltavam os **4 que só têm `exc_info=True`/`log.exception`** e nenhum kwarg de texto: `turno.py:566`, `process_message.py:198`, `gerar_resumo.py:48`, `importacao.py:111`. Como `app/logging.py:152` roda `format_exc_info` antes do mascaramento, o traceback vira a chave `exception` e chega ao log terminando em `TipoDoErro: <mensagem>`. São 15 arquivos, e `turno.py` concentra 9 pontos.
