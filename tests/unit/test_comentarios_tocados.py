@@ -220,6 +220,58 @@ def test_docstring_de_modulo_alterada_continua_alterado(tmp_path: Path) -> None:
     assert achados[0].alterado is True
 
 
+def test_comentario_solto_continua_fora_mesmo_com_docstring_de_modulo(
+    tmp_path: Path,
+) -> None:
+    """A D2 do desenho, travada em teste.
+
+    A implementacao errada e acrescentar a faixa do modulo a `_blocos`: ela
+    contem todas as outras, entao todo comentario solto do arquivo viraria
+    VIZINHO. Aqui o arquivo tem docstring de modulo E comentario solto, e so a
+    docstring pode sair.
+    """
+    arquivo = _escrever(
+        tmp_path,
+        '''
+        """Docstring de modulo."""
+
+        # comentario solto, fora de qualquer def
+
+
+        def f():
+            return 1
+    ''',
+    )
+    (achado,) = examinar(arquivo, {8})
+    assert achado.linha == 2
+    assert achado.bloco == BALDE_DO_MODULO
+
+
+def test_o_balde_do_modulo_nao_colide_com_def_homonimo() -> None:
+    """`limitar` chaveia por NOME de bloco: o balde do modulo tem de ser seu.
+
+    Um def nao pode se chamar `<modulo>` -- os delimitadores nao sao validos em
+    identificador --, entao a colisao e impossivel por construcao. Este teste
+    fixa a consequencia: os dois baldes tem teto proprio.
+    """
+    vizinhos_do_def = [
+        Achado(linha, "# vizinho", False, linha, "f")
+        for linha in range(10, 10 + MAXIMO_DE_VIZINHOS_POR_BLOCO + 2)
+    ]
+    do_modulo = Achado(1, '"""do modulo', False, 9, BALDE_DO_MODULO)
+    ficam, omitidos = limitar([do_modulo, *vizinhos_do_def], teto=MAXIMO_DE_VIZINHOS_POR_BLOCO)
+    assert do_modulo in ficam
+    assert omitidos == {"f": 2}
+
+
+def test_o_achado_do_modulo_nunca_e_cortado() -> None:
+    """E um so por arquivo, entao nunca bate o teto -- consequencia da D3."""
+    do_modulo = Achado(1, '"""do modulo', False, 500, BALDE_DO_MODULO)
+    ficam, omitidos = limitar([do_modulo], teto=MAXIMO_DE_VIZINHOS_POR_BLOCO)
+    assert ficam == [do_modulo]
+    assert omitidos == {}
+
+
 def test_arquivo_que_nao_parseia_devolve_lista_vazia(tmp_path: Path) -> None:
     arquivo = tmp_path / "quebrado.py"
     arquivo.write_text("def (", encoding="utf-8")
