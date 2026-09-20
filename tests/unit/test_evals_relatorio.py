@@ -783,3 +783,31 @@ def test_um_turno_com_duas_divergencias_rende_duas_linhas() -> None:
     assert "compra-07 turno 2: preco -- R$ 700.000" in texto
     assert "compra-07 turno 2: codigo -- AP-0001" in texto
     assert "turnos com cifra ou codigo sem base: 1" in texto
+
+
+def test_a_contagem_da_secao_bate_com_a_da_metrica() -> None:
+    """Dois registros para o mesmo turno contam UM, como em `taxa_de_alucinacao`.
+
+    A metrica no topo do relatorio dedupa por (conversa_id, indice) desde a
+    TEC-269 -- o lead vive o turno, e um turno que inventa dois precos e um
+    turno ruim, nao dois. Se esta secao contasse itens da lista, o mesmo
+    relatorio traria dois numeros diferentes para a mesma coisa, e quem le
+    passaria a duvidar dos dois.
+    """
+    texto = render(
+        [],
+        {},
+        invencao=ResumoDaInvencao(
+            respostas=20,
+            turnos=[
+                _invencao(4, Divergencia(tipo="preco", citado="R$ 500.000")),
+                _invencao(4, Divergencia(tipo="codigo", citado="AP-0002")),
+            ],
+        ),
+    )
+
+    assert "turnos com cifra ou codigo sem base: 1" in texto
+    # As duas divergencias continuam listadas: dedupar a contagem nao e
+    # esconder o detalhe.
+    assert "compra-07 turno 4: preco -- R$ 500.000" in texto
+    assert "compra-07 turno 4: codigo -- AP-0002" in texto

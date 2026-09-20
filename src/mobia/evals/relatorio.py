@@ -269,12 +269,20 @@ def _secao_de_invencao(resumo: ResumoDaInvencao) -> list[str]:
     dinheiro no repo; a primeira mora em `domain/agente/citacao.py`, com a
     razao escrita (a corrida de digitos que `_mascarar_digitos` come).
     """
+    # A MESMA conta de `taxa_de_alucinacao`: turnos distintos por
+    # (conversa_id, indice), e nao itens da lista. As duas aparecem no mesmo
+    # relatorio -- a metrica no topo, esta secao abaixo --, e um relatorio que
+    # diz 3 aqui e 2 la manda quem le duvidar dos dois numeros. `len()` cru
+    # so coincide enquanto ninguem emitir dois registros para o mesmo turno;
+    # a metrica ja se protege disso desde a TEC-269, e esta linha e a mesma
+    # protecao, nao paranoia nova.
+    sujos = len({(turno.conversa_id, turno.indice) for turno in resumo.turnos})
     linhas = [
         "",
         "## Ancoragem: turnos que citaram sem base (diagnostico)",
         "",
         f"- {resumo.respostas} turnos medidos",
-        f"- turnos com cifra ou codigo sem base: {len(resumo.turnos)}",
+        f"- turnos com cifra ou codigo sem base: {sujos}",
     ]
     if resumo.turnos:
         linhas += ["", "Onde:", ""]
