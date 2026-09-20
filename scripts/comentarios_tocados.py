@@ -20,11 +20,13 @@ ultimas, sobre a prosa versionada que descreve o codigo (TEC-282):
             ainda descreve o que esta ali.
 
   VIZINHO   o comentario NAO mudou, mas o codigo dentro do mesmo def/class
-            mudou. E o caso perigoso: ninguem olha para o que nao aparece no
-            diff, e e exatamente assim que um comentario passa a mentir. A
-            saida padrao mostra so os VIZINHO mais proximos da alteracao em
-            cada bloco e resume o resto numa linha, porque a listagem inteira
-            costuma passar de 100 linhas e deixar de caber numa leitura.
+            mudou -- ou e a docstring de MODULO de um arquivo que mudou por
+            baixo dela (TEC-283). E o caso perigoso: ninguem olha para o que
+            nao aparece no diff, e e exatamente assim que um comentario passa
+            a mentir. A saida padrao mostra so os VIZINHO mais proximos da
+            alteracao em cada bloco e resume o resto numa linha, porque a
+            listagem inteira costuma passar de 100 linhas e deixar de caber
+            numa leitura.
 
   PROSA     um .md versionado cita `arquivo.py:linha` de um arquivo que esta
             branch mexeu. Suspeita, nao veredito: a ferramenta nao decide se a
@@ -43,12 +45,10 @@ ultimas, sobre a prosa versionada que descreve o codigo (TEC-282):
 Planos de implementacao (`docs/superpowers/plans/`) ficam fora da varredura de
 prosa; a razao esta em PREFIXO_DOS_PLANOS.
 
-Duas cegueiras conhecidas, nenhuma nova desta card. Apagar ou renomear um .py
-nunca entra no conjunto de alterados -- `linhas_alteradas` para de acumular em
-`+++ /dev/null` --, entao toda citacao aquele arquivo escapa justo quando
-ficaria FALSO. E docstring de nivel de MODULO nunca vira VIZINHO, porque
-`_blocos` so anda por ClassDef e FunctionDef; um modulo que cresce por baixo de
-uma docstring desatualizada nao aciona marca nenhuma.
+Uma cegueira conhecida, ainda aberta na TEC-284: apagar ou renomear um .py
+nunca entra no conjunto de alterados -- `linhas_alteradas` para de acumular
+em `+++ /dev/null` --, entao toda citacao aquele arquivo escapa justo quando
+ficaria FALSO.
 
 Uso:
 
@@ -119,6 +119,17 @@ MAXIMO_DE_VIZINHOS_POR_BLOCO = 5
 # partida.
 MAXIMO_DE_CITACOES_POR_DOCUMENTO = 5
 
+# O balde de teto da docstring de modulo, que nao pertence a def nem class.
+#
+# `limitar` agrupa os VIZINHO pelo NOME do bloco, para a linha de resumo poder
+# dizer onde ficou o que foi omitido. Os delimitadores nao sao validos em
+# identificador Python, entao este nome nunca colide com um def ou class
+# homonimo -- que e a ambiguidade que `limitar` ja declara tolerar nos outros
+# baldes. Como e no maximo UM achado por arquivo, este balde nunca bate o teto:
+# o nome existe para o resumo nao sair com balde vazio, nao porque o corte va
+# acontecer.
+BALDE_DO_MODULO = "<modulo>"
+
 # Planos de implementacao ficam fora da varredura de prosa.
 #
 # Um plano registra o que se fez numa branch num dia: ele nao afirma o que o
@@ -145,7 +156,8 @@ class Achado:
     # mexida. Os dois existem para o teto de `main`: `distancia` ordena quem
     # fica, `bloco` agrupa e nomeia o que foi omitido. Um ALTERADO tem
     # distancia 0 e bloco vazio -- o teto nao o alcanca, entao nao precisa de
-    # nenhum dos dois.
+    # nenhum dos dois. `bloco` tambem pode valer `BALDE_DO_MODULO`, para a
+    # docstring de modulo, que nao pertence a bloco nenhum.
     distancia: int = 0
     bloco: str = ""
 
@@ -219,30 +231,39 @@ def _comentarios(fonte: str) -> list[tuple[int, str]]:
     return achados
 
 
+def _docstring_de(no: ast.AST) -> tuple[int, int, str] | None:
+    """A docstring deste no como (primeira linha, ultima linha, primeira frase).
+
+    Extraida do laco de `_docstrings` porque `examinar` precisa da docstring de
+    MODULO sozinha: ela e a unica que nao esta dentro de def nem class, entao e
+    a unica que `dentro_de_bloco_mexido` nunca alcanca.
+    """
+    corpo = getattr(no, "body", None)
+    if not corpo:
+        return None
+    primeiro = corpo[0]
+    if not (
+        isinstance(primeiro, ast.Expr)
+        and isinstance(primeiro.value, ast.Constant)
+        and isinstance(primeiro.value.value, str)
+    ):
+        return None
+    texto = primeiro.value.value.strip().splitlines()
+    return (
+        primeiro.lineno,
+        primeiro.end_lineno or primeiro.lineno,
+        f'"""{texto[0] if texto else ""}',
+    )
+
+
 def _docstrings(arvore: ast.AST) -> list[tuple[int, int, str]]:
     """Cada docstring como (primeira linha, ultima linha, primeira frase)."""
     achados = []
     for no in ast.walk(arvore):
         if not isinstance(no, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             continue
-        corpo = getattr(no, "body", None)
-        if not corpo:
-            continue
-        primeiro = corpo[0]
-        if not (
-            isinstance(primeiro, ast.Expr)
-            and isinstance(primeiro.value, ast.Constant)
-            and isinstance(primeiro.value.value, str)
-        ):
-            continue
-        texto = primeiro.value.value.strip().splitlines()
-        achados.append(
-            (
-                primeiro.lineno,
-                primeiro.end_lineno or primeiro.lineno,
-                f'"""{texto[0] if texto else ""}',
-            )
-        )
+        if (achado := _docstring_de(no)) is not None:
+            achados.append(achado)
     return achados
 
 
@@ -402,6 +423,23 @@ def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
             achados.append(Achado(inicio, texto, alterado=True))
         elif dentro_de_bloco_mexido(inicio, fim):
             achados.append(Achado(inicio, texto, False, distancia(inicio, fim), dono(inicio, fim)))
+    # A docstring de MODULO, o unico achado que nao passa por
+    # `dentro_de_bloco_mexido`: ela nao esta dentro de def nem class, e a faixa
+    # do modulo nao pode entrar em `_blocos` porque conteria todas as outras --
+    # todo comentario solto do arquivo viraria VIZINHO.
+    #
+    # Os dois ramos sao mutuamente exclusivos: o laco acima ja a emite como
+    # ALTERADO quando ela mesma mudou, e este so age quando ela nao mudou.
+    #
+    # A guarda de `alteradas` e load-bearing: com o conjunto vazio, `distancia`
+    # faz min() sobre nada e reprova com ValueError. `linhas_alteradas` nunca
+    # entrega arquivo sem linha alterada, entao ela e para quem chamar
+    # `examinar` direto.
+    doc_do_modulo = _docstring_de(arvore)
+    if alteradas and doc_do_modulo is not None:
+        inicio, fim, texto = doc_do_modulo
+        if not any(n in alteradas for n in range(inicio, fim + 1)):
+            achados.append(Achado(inicio, texto, False, distancia(inicio, fim), BALDE_DO_MODULO))
     return sorted(achados, key=lambda a: a.linha)
 
 

@@ -1,9 +1,9 @@
 """A ferramenta que lista comentarios, docstrings e prosa a reconferir, testada.
 
-TEC-277 e TEC-282. Pura: as partes que decidem as cinco marcas -- ALTERADO,
-VIZINHO, PROSA, FALSO e NOMEIA -- nao tocam git nem disco, recebem texto de
-diff, fonte, documento e conjuntos de linhas e nomes. Antes da TEC-277 o script
-nao tinha teste nenhum.
+TEC-277, TEC-282 e TEC-283. Pura: as partes que decidem as cinco marcas --
+ALTERADO, VIZINHO, PROSA, FALSO e NOMEIA -- nao tocam git nem disco, recebem
+texto de diff, fonte, documento e conjuntos de linhas e nomes. Antes da
+TEC-277 o script nao tinha teste nenhum.
 """
 
 import ast
@@ -14,6 +14,7 @@ from pathlib import Path
 
 import scripts.comentarios_tocados as ferramenta
 from scripts.comentarios_tocados import (
+    BALDE_DO_MODULO,
     MAXIMO_DE_CITACOES_POR_DOCUMENTO,
     MAXIMO_DE_VIZINHOS_POR_BLOCO,
     Achado,
@@ -165,6 +166,116 @@ def test_comentario_fora_de_bloco_nunca_e_vizinho(tmp_path: Path) -> None:
     """,
     )
     assert examinar(arquivo, {5}) == []
+
+
+def test_docstring_de_modulo_intocada_e_vizinho(tmp_path: Path) -> None:
+    """A lacuna que a TEC-283 fecha, e o caso que a TEC-282 viveu.
+
+    Naquela branch a docstring de topo de um arquivo de teste seguiu dizendo
+    "ALTERADO e VIZINHO", duas marcas de cinco, enquanto o arquivo crescia 410
+    linhas por baixo dela. A ferramenta rodou contra a propria branch e nao
+    apontou nada.
+    """
+    arquivo = _escrever(
+        tmp_path,
+        '''
+        """Esta docstring descreve o que a funcao abaixo faz."""
+
+
+        def f():
+            return 1
+    ''',
+    )
+    (achado,) = examinar(arquivo, {6})
+    assert achado.alterado is False
+    assert achado.linha == 2
+    assert achado.bloco == BALDE_DO_MODULO
+
+
+def test_arquivo_sem_docstring_de_modulo_nao_ganha_achado(tmp_path: Path) -> None:
+    arquivo = _escrever(
+        tmp_path,
+        """
+        def f():
+            return 1
+    """,
+    )
+    assert examinar(arquivo, {3}) == []
+
+
+def test_docstring_de_modulo_alterada_continua_alterado(tmp_path: Path) -> None:
+    """Um achado so: os dois ramos sao mutuamente exclusivos, nao somam."""
+    arquivo = _escrever(
+        tmp_path,
+        '''
+        """Esta docstring mudou nesta branch."""
+
+
+        def f():
+            return 1
+    ''',
+    )
+    achados = examinar(arquivo, {2, 6})
+    assert len(achados) == 1
+    assert achados[0].alterado is True
+
+
+def test_comentario_solto_continua_fora_mesmo_com_docstring_de_modulo(
+    tmp_path: Path,
+) -> None:
+    """A D2 do desenho, travada em teste.
+
+    A implementacao errada e acrescentar a faixa do modulo a `_blocos`: ela
+    contem todas as outras, entao todo comentario solto do arquivo viraria
+    VIZINHO. Aqui o arquivo tem docstring de modulo E comentario solto, e so a
+    docstring pode sair.
+    """
+    arquivo = _escrever(
+        tmp_path,
+        '''
+        """Docstring de modulo."""
+
+        # comentario solto, fora de qualquer def
+
+
+        def f():
+            return 1
+    ''',
+    )
+    (achado,) = examinar(arquivo, {8})
+    assert achado.linha == 2
+    assert achado.bloco == BALDE_DO_MODULO
+
+
+def test_o_balde_do_modulo_nao_colide_com_def_homonimo() -> None:
+    """`limitar` chaveia por NOME de bloco: o balde do modulo tem de ser seu.
+
+    Um def nao pode se chamar `<modulo>` -- os delimitadores nao sao validos em
+    identificador --, entao a colisao e impossivel por construcao. Este teste
+    fixa a consequencia: os dois baldes tem teto proprio.
+    """
+    vizinhos_do_def = [
+        Achado(linha, "# vizinho", False, linha, "f")
+        for linha in range(10, 10 + MAXIMO_DE_VIZINHOS_POR_BLOCO + 2)
+    ]
+    do_modulo = Achado(1, '"""do modulo', False, 9, BALDE_DO_MODULO)
+    ficam, omitidos = limitar([do_modulo, *vizinhos_do_def], teto=MAXIMO_DE_VIZINHOS_POR_BLOCO)
+    assert do_modulo in ficam
+    assert omitidos == {"f": 2}
+
+
+def test_o_achado_do_modulo_nunca_e_cortado() -> None:
+    """O balde `<modulo>`, com um achado so, passa inteiro pelo teto e nao
+    entra em `omitidos`.
+
+    A invariante "no maximo um achado de modulo por arquivo" e coberta
+    incidentalmente pelos testes que fazem `(achado,) = examinar(...)`, onde
+    um segundo achado faria o desempacotamento reprovar.
+    """
+    do_modulo = Achado(1, '"""do modulo', False, 500, BALDE_DO_MODULO)
+    ficam, omitidos = limitar([do_modulo], teto=MAXIMO_DE_VIZINHOS_POR_BLOCO)
+    assert ficam == [do_modulo]
+    assert omitidos == {}
 
 
 def test_arquivo_que_nao_parseia_devolve_lista_vazia(tmp_path: Path) -> None:
