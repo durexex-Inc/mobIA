@@ -33,7 +33,9 @@
 
 - [ ] **Step 1: Escrever o teste que falha — o caminho da moderação (T2 do desenho)**
 
-Acrescentar ao fim de `tests/features/test_reprocessamento_apos_falha.py`. Note que `MOTIVO_DO_PROVEDOR` tem menos de 38 caracteres para poder aparecer inteiro tanto na exceção quanto no log.
+Acrescentar ao fim de `tests/features/test_reprocessamento_apos_falha.py`.
+
+> **Correção pós-revisão:** este parágrafo dizia que `MOTIVO_DO_PROVEDOR` tem "menos de 38 caracteres". Ele tem exatamente 38 — e, mais importante, **o limite de 38 não se aplica a ele**: aquele limite é sobre o eco do asyncpg, e este literal nunca passa pelo driver, é comparado em `caplog`. A Global Constraint dos 38 caracteres vale só para o sentinela da Task 2.
 
 ```python
 # Prosa que o SERVIDOR da Anthropic escreve, nao texto que este projeto montou.
@@ -109,7 +111,7 @@ Substituir o bloco `src/mobia/workers/jobs/process_message.py:45-65` inteiro por
 def _detalhe_para_a_coluna(exc: BaseException) -> str:
     """O que vai para `messages.last_error`: o nome da classe, e so.
 
-    A coluna e `Text` em claro, durvel, sem cifra e fora da mascara de PII do
+    A coluna e `Text` em claro, duravel, sem cifra e fora da mascara de PII do
     log. Ate a TEC-222 aqui valia o criterio da TEC-134 -- excecao definida em
     `mobia` mantinha a mensagem inteira, porque "ela foi escrita aqui dentro e
     sabe-se o que ela carrega".
@@ -119,9 +121,17 @@ def _detalhe_para_a_coluna(exc: BaseException) -> str:
     `infra/moderacao.py` a levanta com `motivo_do_provedor(exc)`: prosa que o
     servidor da Anthropic escreveu respondendo a uma requisicao cujo corpo e o
     texto moderado. O docstring de `motivo_do_provedor` aceita esse risco por
-    escrito, e o limita com tres coisas -- o teto de caracteres, o mascaramento
-    de digitos e o formato da chamada. **Duas delas sao propriedades do log.**
-    Nesta coluna so o teto sobrevive.
+    escrito, e o limita com tres coisas -- o teto de 300 caracteres, o
+    mascaramento de digitos de `app/logging.py` e o formato da chamada. **Uma
+    delas, e so uma, e propriedade do log**: as outras duas ja valem no
+    momento em que o texto e montado, e protegem esta coluna igual. O que a
+    coluna perde e o mascaramento -- e ele alcanca corrida de 10 a 15 digitos
+    contiguos e mais nada, entao para prosa em ingles de um SDK ele e quase
+    um no-op.
+
+    A diferenca entre os dois destinos e, portanto, MENOR do que parece, e
+    nao e dela que sai a decisao. A decisao sai de duas outras coisas: esta
+    coluna e duravel, e o criterio de dono do tipo nao se sustenta.
 
     Datas, porque elas sao o argumento: o criterio entrou em 26/08/2026
     (TEC-134, `d069f3e`) e foi violado em 30/08/2026 (TEC-237, `d79e2d7`),
@@ -171,7 +181,7 @@ por
 
 ```python
         tentativas = await _marcar_falha(session_factory, identifier, _detalhe_para_a_coluna(exc))
-        # Valor MAIOR que o da coluna, desde a TEC-222: a coluna e durvel e
+        # Valor MAIOR que o da coluna, desde a TEC-222: a coluna e duravel e
         # fora da mascara, o log nao. Ver os dois docstrings acima.
         log.warning("message.failed", message_id=message_id, error=_detalhe_para_o_log(exc))
 ```
