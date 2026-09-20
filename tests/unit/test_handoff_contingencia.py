@@ -1,10 +1,16 @@
 from datetime import UTC, datetime
 
+from mobia.domain.agente.schemas import (
+    CategoriaDescarte,
+    FormaPagamento,
+    Intencao,
+    TipoImovel,
+    Urgencia,
+)
 from mobia.domain.handoff.contingencia import (
     TETO_CANAL,
     TETO_CODIGO,
     TETO_CONVERSA,
-    TETO_DE_IMOVEIS,
     TETO_ETIQUETA,
     TETO_FORMA_PAGAMENTO,
     TETO_GATILHO,
@@ -19,8 +25,16 @@ from mobia.domain.handoff.contingencia import (
 )
 from mobia.domain.handoff.dossie import Dossie, ImovelApresentado
 from mobia.domain.handoff.resumo import LIMITE_DE_CARACTERES, MARCADORES, validar
+from mobia.domain.handoff.vocabulario import ETIQUETA_DE, Gatilho
 
 QUANDO = datetime(2026, 9, 12, 14, 30, tzinfo=UTC)
+
+
+def _muitos_imoveis(quantos: int) -> tuple[ImovelApresentado, ...]:
+    return tuple(
+        ImovelApresentado(f"AP-{i:04d}", 50_000_000 + i, "venda", "GOSTOU", None)
+        for i in range(quantos)
+    )
 
 
 def _dossie(**trocas: object) -> Dossie:
@@ -238,16 +252,18 @@ def test_dossie_vazio_nao_escreve_None_em_lugar_nenhum() -> None:
     assert "None" not in montar(_vazio())
 
 
-def test_a_lista_de_imoveis_tem_teto_e_diz_o_total() -> None:
-    """D6: o template cabe nos 1.500 por construcao, nao por truncamento."""
-    muitos = tuple(
-        ImovelApresentado(f"AP-{i:03d}", 50_000_000 + i, "venda", None, None)
-        for i in range(TETO_DE_IMOVEIS + 7)
-    )
-    texto = montar(_dossie(imoveis=muitos))
+def test_a_lista_de_imoveis_diz_o_total_mesmo_cortando() -> None:
+    """D6: o template cabe nos 1.500 por construcao, nao por truncamento.
 
-    assert str(TETO_DE_IMOVEIS + 7) in texto
-    assert texto.count("AP-") == TETO_DE_IMOVEIS
+    O corte existe -- 300 imoveis nao cabem em 1.500 caracteres --, mas o
+    corretor sempre ve QUANTOS existem, e nao so os que couberam. Desde a
+    TEC-276 quantos cabem depende do resto do dossie, entao a asserta e
+    sobre a relacao (cortou, e disse o total), nao sobre um numero fixo.
+    """
+    texto = montar(_dossie(imoveis=_muitos_imoveis(300)))
+
+    assert "300 no total" in texto
+    assert 0 < texto.count("AP-") < 300
     assert len(texto) <= LIMITE_DE_CARACTERES
 
 
@@ -261,21 +277,24 @@ def test_a_lista_de_imoveis_mostra_os_mais_recentes_do_mais_novo_ao_mais_antigo(
     recentes) e aparecem do mais novo para o mais antigo -- ver o porque
     dessa ordem no docstring de `dossie.imoveis`.
     """
-    imoveis_em_ordem_de_apresentacao = tuple(
-        ImovelApresentado(f"AP-{i:03d}", 50_000_000 + i, "venda", None, None)
-        for i in range(TETO_DE_IMOVEIS + 3)
-    )
+    imoveis_em_ordem_de_apresentacao = _muitos_imoveis(40)
     texto = montar(_dossie(imoveis=imoveis_em_ordem_de_apresentacao))
 
-    mais_recentes_do_mais_novo_ao_mais_antigo = list(
-        reversed(imoveis_em_ordem_de_apresentacao[-TETO_DE_IMOVEIS:])
-    )
     codigos_no_texto = [
         linha.split(",")[0].removeprefix("- ")
         for linha in texto.splitlines()
         if linha.startswith("- AP-")
     ]
+    # Quantos cabem e do orcamento (TEC-276); QUAIS cabem continua sendo
+    # regra -- os mais recentes, do mais novo para o mais antigo. O teste
+    # deriva a quantidade do proprio texto para nao voltar a prender um
+    # numero que o orcamento decide.
+    quantos_couberam = len(codigos_no_texto)
+    mais_recentes_do_mais_novo_ao_mais_antigo = list(
+        reversed(imoveis_em_ordem_de_apresentacao[-quantos_couberam:])
+    )
 
+    assert quantos_couberam > 2
     assert codigos_no_texto == [i.codigo for i in mais_recentes_do_mais_novo_ao_mais_antigo]
 
 
@@ -312,3 +331,94 @@ def test_os_seis_marcadores_estao_na_ordem() -> None:
 
     assert all(p >= 0 for p in posicoes)
     assert posicoes == sorted(posicoes)
+
+
+def _pior_caso_do_banco(*, imoveis_no_dossie: int = 40, itens_por_lista: int = 50) -> Dossie:
+    """O dossie mais longo que as COLUNAS conseguem produzir. TEC-276.
+
+    Derivado dos `TETO_*` que o proprio modulo calcula, e nao de literais
+    escolhidos a mao -- e essa derivacao que torna a medicao reproduzivel:
+    quem alargar `LeadQualification.regiao` para `String(200)` muda este
+    pior caso junto, sem editar uma linha daqui. Foi a falta disso que
+    produziu as tres medicoes discordantes que a TEC-276 encontrou (a
+    tabela do codigo dizia 1452, a revisao da TEC-176 dizia outra coisa, e a
+    reconstrucao desta card mediu 1425).
+
+    `ARRAY(String(32))` nao tem cardinalidade maxima no banco: 50 itens de
+    32 caracteres e o pior caso plausivel, nao um limite da coluna.
+    """
+    maior = lambda enum: max((m.value for m in enum), key=len)  # noqa: E731
+    return _dossie(
+        canal="w" * TETO_CANAL,
+        conversa="9" * TETO_CONVERSA,
+        intencao=maior(Intencao),
+        regiao="R" * TETO_REGIAO,
+        tipo_imovel=maior(TipoImovel),
+        urgencia=maior(Urgencia),
+        forma_pagamento=maior(FormaPagamento),
+        faixa_min_centavos=99_999_999_999,
+        faixa_max_centavos=99_999_999_999,
+        quartos=99,
+        vagas=99,
+        mensagens_do_lead=999,
+        score_total=100,
+        score_fatores=(("completude", 25), ("urgencia", 20), ("engajamento", 15)),
+        temperatura_forcada_motivos=("PEDIU_VISITA", "FALOU_EM_PROPOSTA"),
+        imoveis=tuple(
+            ImovelApresentado(
+                "C" * TETO_CODIGO, 99_999_999_999, "aluguel", "DESCARTOU", maior(CategoriaDescarte)
+            )
+            for _ in range(imoveis_no_dossie)
+        ),
+        campos_recusados=tuple("r" * 32 for _ in range(itens_por_lista)),
+        perguntados_sem_resposta=tuple("p" * 32 for _ in range(itens_por_lista)),
+        gatilho=maior(Gatilho),
+        etiqueta=max(ETIQUETA_DE.values(), key=len),
+    )
+
+
+def test_o_pior_caso_do_banco_cabe_e_nao_levanta() -> None:
+    """A garantia da RN-15.2 para qualquer entrada que o banco produza.
+
+    Substitui a tabela de folgas que vivia em comentario acima do antigo
+    `TETO_DE_IMOVEIS`: ela nao era reproduzivel -- tres pessoas a
+    re-derivaram e acharam tres numeros -- e nenhum deles sobrevivia a uma
+    palavra acrescentada a um bloco. Aqui a garantia e do algoritmo: o texto
+    e medido antes de sair.
+    """
+    texto = montar(_pior_caso_do_banco())
+
+    assert len(texto) <= LIMITE_DE_CARACTERES
+    assert validar(texto)
+
+
+def test_o_lead_tipico_ve_muito_mais_do_que_dois_imoveis() -> None:
+    """O que a TEC-276 comprou, e por que ela existe.
+
+    Ate aqui o teto era fixo em 2, dimensionado para o pior caso do banco --
+    e um lead real gastava 923 dos 1.500 caracteres, deixando 577 de
+    contexto na mesa no dia ruim, que e justamente quando este modo entra.
+
+    A asserta e contra DOIS, e nao contra o numero que hoje cabe (17):
+    fixar 17 faria este teste reprovar na primeira palavra acrescentada a um
+    bloco, que e exatamente o acoplamento que a card removeu.
+    """
+    texto = montar(_dossie(imoveis=_muitos_imoveis(30)))
+
+    assert texto.count("AP-") > 2
+    assert len(texto) <= LIMITE_DE_CARACTERES
+
+
+def test_o_custo_da_busca_acompanha_o_orcamento_e_nao_o_dossie() -> None:
+    """Duzentos imoveis no dossie nao custam duzentas montagens.
+
+    A busca sobe do zero e para no primeiro que estoura, entao o numero de
+    montagens e limitado pelo ORCAMENTO -- uma linha de imovel nao tem menos
+    de ~30 caracteres, logo nunca ha mais de ~40 candidatas -- e nao pelo
+    tamanho do dossie. Descendo do topo, um dossie de 200 imoveis gastaria
+    ~17 ms em candidatas que estouram (medido: 0,084 ms por montagem).
+    """
+    texto = montar(_dossie(imoveis=_muitos_imoveis(200)))
+
+    assert len(texto) <= LIMITE_DE_CARACTERES
+    assert "200 no total" in texto

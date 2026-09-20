@@ -30,6 +30,7 @@ O que o mesmo experimento mostrou do outro lado:
 | 2 imóveis (hoje) | 923 | **577** |
 | 10 imóveis | 1228 | 272 |
 | 15 imóveis | 1418 | 82 |
+| 17 imóveis (o que a implementação entrega) | 1494 | 6 |
 | 20 imóveis | estoura | — |
 
 **O corretor perde 577 caracteres de contexto no dia ruim para pagar uma margem que só o pior caso do banco usa.**
@@ -40,7 +41,7 @@ O que o mesmo experimento mostrou do outro lado:
 
 Isso troca a garantia de lugar, e é a parte importante: **"cabe por construção" deixa de depender de uma tabela e passa a ser propriedade do algoritmo.** Hoje a garantia é "alguém mediu um pior caso e escolheu 2"; ela morre em silêncio no dia em que alguém acrescentar uma palavra a um marcador. Depois desta card, a garantia é "o texto que sai foi medido antes de sair" — e continua valendo qualquer que seja o texto dos blocos.
 
-O pior caso degrada sozinho para 2 imóveis, sem ninguém dimensionar nada. O lead típico passa a ver 15.
+O pior caso degrada sozinho para 2 imóveis (1446, com 54 de folga), sem ninguém dimensionar nada. O lead típico passa a ver **17** — medido pelo caminho novo depois de implementado, e não estimado antes.
 
 **A busca sobe do zero, e não desce do topo.** Medido: uma montagem custa 0,011 ms (10 imóveis) a 0,084 ms (200). Descendo do topo, o custo acompanha o tamanho do dossiê — 200 imóveis são ~17 ms, quase todos gastos em candidatos que estouram. Subindo, o custo acompanha o **orçamento**: uma linha de imóvel não tem menos de ~30 caracteres, então nunca há mais de ~40 candidatos, independentemente do dossiê. É ~1 ms no pior caso, e a conta não piora quando o catálogo crescer.
 
@@ -50,7 +51,7 @@ A monotonicidade é o que autoriza parar no primeiro que estoura: cada imóvel a
 
 As listas de atenção não entram no orçamento. Não é esquecimento: distribuir a folga entre imóveis e pontos de atenção exige decidir qual dos dois o corretor prefere ver, e isso é decisão de produto que a card não toma. A história da card é sobre imóveis ("quero que o resumo me mostre tantos imóveis quanto couberem"), e é o que esta implementa.
 
-Fica declarado como lacuna: no lead típico sobram 82 caracteres depois dos 15 imóveis, e eles poderiam virar um segundo campo recusado.
+Fica declarado como lacuna: mesmo com o orçamento em uso, o que sobra depois dos imóveis poderia virar um segundo campo recusado em vez de mais um imóvel.
 
 ## D3 — A medição vira teste, e o comentário para de repetir números
 
@@ -73,7 +74,7 @@ O comentário no código passa a citar os testes. Nenhum número de folga fica e
 ## Testes
 
 * O pior caso do banco cabe e não levanta.
-* O lead típico vê mais de dois imóveis — a asserta é contra o número **2**, não contra 15: prender 15 faria o teste reprovar na primeira vez que alguém acrescentar uma palavra a um bloco, que é exatamente o acoplamento que esta card remove.
+* O lead típico vê mais de dois imóveis — a asserta é contra o número **2**, não contra 17: prender 17 faria o teste reprovar na primeira vez que alguém acrescentar uma palavra a um bloco, que é exatamente o acoplamento que esta card remove.
 * Um dossiê com 200 imóveis não estoura nem demora — a busca é limitada pelo orçamento.
 * Um dossiê sem imóvel nenhum continua montando.
 * Dossiê cujo pior caso não cabe nem com zero imóveis continua levantando `ResumoAcimaDoLimite` — a rede de segurança de `gerar_resumo` depende disso.

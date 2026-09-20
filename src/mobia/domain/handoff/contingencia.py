@@ -37,7 +37,7 @@ from mobia.domain.handoff.dossie import (
     pontos_de_atencao,
     truncado,
 )
-from mobia.domain.handoff.resumo import MARCADORES, validar
+from mobia.domain.handoff.resumo import LIMITE_DE_CARACTERES, MARCADORES, validar
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, Gatilho
 
 # A linha que identifica o modo. Fica no TOPO do texto (nao junto do bloco de
@@ -86,63 +86,42 @@ TETO_CANAL = 32  # Handoff.channel, handoff/models.py -- texto livre, sem enum f
 TETO_CONVERSA = 64  # Handoff.conversation_key, handoff/models.py -- texto livre
 TETO_CODIGO = 20  # Imovel.codigo, catalogo/models.py -- texto livre
 
-# Teto da lista de "## Imoveis apresentados" e teto de cada lista do bloco
-# "## Pontos de atencao" (`campos_recusados` e `perguntados_sem_resposta`).
+# Teto de cada lista do bloco "## Pontos de atencao" (`campos_recusados` e
+# `perguntados_sem_resposta`, `ARRAY(String(32))` sem cardinalidade maxima).
 #
-# Os dois foram medidos JUNTOS, e nao um de cada vez: um primeiro corte so
-# stressando `imoveis` (a task original) achou TETO_DE_IMOVEIS = 7 sozinho,
-# e a revisao da Task 1 achou TETO_DE_IMOVEIS = 5 / TETO_POR_LISTA_DE_ATENCAO
-# = 2 depois de considerar `campos_recusados` e `perguntados_sem_resposta`
-# (`ARRAY(String(32))` sem cardinalidade maxima). Nenhuma das duas rodadas
-# testou TODOS os campos de valor unico no maximo que a coluna aceita ao
-# mesmo tempo -- so `regiao` variava --, e e exatamente essa lacuna que o
-# Critical da revisao final encontrou: com regiao=120 (nao 47) o mesmo
-# dossie da Task 1 ja estourava (1521), e um dossie combinando regiao=98 com
-# 20 imoveis descartados estourava mais ainda (1607).
+# **A lista de imoveis NAO tem teto desde a TEC-276** -- ela usa o orcamento
+# que sobra, ver `montar`. Ate ali havia um `TETO_DE_IMOVEIS = 2` fixo,
+# dimensionado para o pior caso do banco, e uma tabela de folgas de 20 linhas
+# neste comentario justificando o numero. A tabela saiu por nao ser
+# reproduzivel: tres pessoas a re-derivaram e acharam tres resultados
+# diferentes (1452, e depois 1425, com um ponto de fronteira discordando de
+# sentido), e nenhum deles sobreviveria a uma palavra acrescentada a um bloco.
+# Quem quiser o numero de hoje roda
+# `tests/unit/test_handoff_contingencia.py` -- a medicao vive la, derivada
+# dos `TETO_*` acima, e nao aqui em prosa.
 #
-# Pior caso medido agora com `contingencia.montar` de verdade, TODOS os
-# campos de valor unico no teto que a tabela acima define, 40 imoveis (cada
-# um com `codigo`, `reacao` e `motivo_descarte` no maior tamanho real que o
-# campo assume), e 50 itens de 32 caracteres em cada lista de atencao -- o
-# maximo que `ARRAY(String(32))` aceita por item:
-#
-#   imoveis=5 lista=2 -> estoura (1751 de 1500)
-#   imoveis=5 lista=1 -> estoura (1683 de 1500)
-#   imoveis=3 lista=2 -> estoura (1597 de 1500)
-#   imoveis=3 lista=1 -> estoura (1529 de 1500)
-#   imoveis=2 lista=2 -> estoura (1520 de 1500)
-#   imoveis=2 lista=1 -> 1452 (48 de folga)
-#   imoveis=1 lista=2 -> 1443 (57 de folga)
-#   imoveis=1 lista=1 -> 1375 (125 de folga)
-#
-# `imoveis=5, lista=2` -- os valores da Task 1 -- estoura por 251
-# caracteres assim que todo campo de valor unico entra na conta, nao so
-# `regiao`. `imoveis=2, lista=1` cabe com 48 caracteres de folga -- a MESMA
-# ordem de grandeza que a Task 1 ja tinha aceitado como suficiente
-# (`imoveis=5 lista=2 -> 1454`, 46 de folga, na medicao antiga, que so
-# variava `regiao`); manter o mesmo patamar aqui, e nao encolher mais so por
-# encolher, e a mesma troca que a Task 1 fez: dois imoveis visiveis (em vez
-# de cinco) e um item por lista de atencao (em vez de dois), por uma folga
-# que sobrevive ao proximo ajuste de texto.
-TETO_DE_IMOVEIS = 2
+# **Estas duas listas continuam com teto fixo, e e lacuna declarada.** Dar a
+# elas o orcamento que sobra exigiria decidir se o corretor prefere ver um
+# imovel a mais ou um campo recusado a mais -- decisao de produto, nao de
+# codigo (D2 do desenho da TEC-276). No lead tipico sobram ~80 caracteres
+# depois dos imoveis.
 TETO_POR_LISTA_DE_ATENCAO = 1
 
 
-def montar(dossie: Dossie) -> str:
-    """Os seis blocos da RN-15.1, montados so de fatos que ja vieram do banco.
+def _texto_com(dossie: Dossie, quantos_imoveis: int) -> str:
+    """Os seis blocos da RN-15.1 com `quantos_imoveis` na lista de imoveis.
 
-    Sem chamada de modelo, sem redacao: quando o resumo redigido falha (D7),
-    isto e o que sobra para o corretor, e por isso nao pode falhar por sua
-    vez. `validar()` e o mesmo dos dois modos -- ver o cabecalho do modulo.
+    Nao valida: quem chama e `montar`, que monta varias vezes ate achar o
+    maior `quantos_imoveis` que cabe, e so entao valida uma vez. Validar
+    aqui faria a busca usar excecao como fluxo de controle.
 
-    **Todo campo de texto livre entra com teto** (revisao final, Critical
-    1a): antes, so as listas cortavam; um valor unico como `regiao` no
-    maximo que a coluna aceita, somado ao resto do dossie tambem no maximo,
-    estourava os 1.500 da RN-15.2 e fazia `validar()` levantar -- e essa
-    excecao saia de `gerar_resumo` sem guarda nenhuma (ver o Critical da
-    revisao e a rede de seguranca em `geracao.gerar_resumo`). Este teto
-    garante que NENHUMA entrada que o banco consiga produzir passa disso;
-    ver a tabela de medicao acima de `TETO_DE_IMOVEIS`.
+    **Todo campo de texto livre entra com teto** (TEC-176, revisao final,
+    Critical 1a): antes, so as listas cortavam; um valor unico como `regiao`
+    no maximo que a coluna aceita, somado ao resto do dossie tambem no
+    maximo, estourava os 1.500 da RN-15.2 e fazia `validar()` levantar -- e
+    essa excecao saia de `gerar_resumo` sem guarda nenhuma. Os tetos de
+    campo continuam necessarios depois da TEC-276: o orcamento decide
+    QUANTOS imoveis entram, nao o tamanho de cada campo.
     """
     texto = "\n".join(
         (
@@ -174,7 +153,7 @@ def montar(dossie: Dossie) -> str:
             MARCADORES[3],
             imoveis(
                 dossie,
-                teto=TETO_DE_IMOVEIS,
+                teto=quantos_imoveis,
                 teto_codigo=TETO_CODIGO,
                 teto_motivo_descarte=TETO_MOTIVO_DESCARTE,
             ),
@@ -194,4 +173,47 @@ def montar(dossie: Dossie) -> str:
             linha_prioridade(dossie),
         )
     )
+    return texto
+
+
+def montar(dossie: Dossie) -> str:
+    """O resumo de contingencia com tantos imoveis quantos couberem. TEC-276.
+
+    Sem chamada de modelo, sem redacao: quando o resumo redigido falha (D7),
+    isto e o que sobra para o corretor, e por isso nao pode falhar por sua
+    vez. `validar()` e o mesmo dos dois modos -- ver o cabecalho do modulo.
+
+    **"Cabe por construcao" passou a ser propriedade do algoritmo, e nao de
+    uma tabela.** Ate a TEC-276 a lista tinha teto fixo de 2, escolhido a
+    partir de um pior caso medido a mao e escrito em comentario: a garantia
+    valia enquanto aquela medicao valesse, e ela morreria em silencio no dia
+    em que alguem acrescentasse uma palavra a um marcador. Agora o texto que
+    sai foi MEDIDO antes de sair, qualquer que seja o texto dos blocos.
+
+    O preco que se pagava era do corretor: no lead tipico o resumo usava 923
+    dos 1.500 caracteres para mostrar 2 imoveis de trinta -- 577 caracteres
+    de contexto deixados na mesa justamente no modo que so entra no dia
+    ruim. Hoje o mesmo lead ve 17 (medido pelo caminho novo, nao estimado),
+    e o pior caso do banco degrada sozinho
+    para 2, sem ninguem dimensionar nada.
+
+    **Sobe do zero em vez de descer do topo, e a razao e medida.** Cada
+    imovel a mais so ACRESCENTA caracteres, entao a busca e monotona e pode
+    parar no primeiro que estoura. Subindo, o numero de montagens e limitado
+    pelo orcamento -- uma linha de imovel nao tem menos de ~30 caracteres,
+    logo nunca ha mais de ~40 candidatas. Descendo, ele seria limitado pelo
+    DOSSIE: um de 200 imoveis gastaria ~17 ms em candidatas que estouram, a
+    0,084 ms por montagem.
+
+    Levanta `ResumoAcimaDoLimite` quando nem sem imovel nenhum cabe -- a
+    rede de seguranca de `geracao.gerar_resumo` conta com isso.
+    """
+    texto = _texto_com(dossie, 0)
+    for quantos in range(1, len(dossie.imoveis) + 1):
+        candidato = _texto_com(dossie, quantos)
+        # `.strip()` porque e o que `validar` mede. Comparar outro
+        # comprimento faria a busca aceitar um texto que `validar` recusa.
+        if len(candidato.strip()) > LIMITE_DE_CARACTERES:
+            break
+        texto = candidato
     return validar(texto)
