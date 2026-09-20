@@ -127,15 +127,17 @@ O da OpenAI renderiza `Error code: 400 - {'error': {'message': ..., 'param': ...
 
 O de `embeddings.py` passa a extrair campos como o da Anthropic. A TEC-237 abriu a exceção para *o corpo de erro que o servidor escreveu*, não para `str(exc)` de um SDK.
 
-## D6 — A classe C não precisa de tratamento próprio, e a razão é a D5
+## D6 — A classe C não muda, e esta card não é o que a protege
 
-Os quatro pontos da classe C — `turno.py:1307` e `:2176` (`ModeracaoIndisponivel`), `process_message.py:333` (`_detalhe_para_o_log`) e `importacao.py:78` (`ArquivoInvalido`) — não aparecem nas decisões acima, e a revisão final apontou a lacuna. Ela é aparente: **os três primeiros já passam pelo funil que a D5 conserta.**
+Os quatro pontos da classe C — `turno.py:1307` e `:2176` (`ModeracaoIndisponivel`), `process_message.py:333` (`_detalhe_para_o_log`) e `importacao.py:78` (`ArquivoInvalido`) — não aparecem nas decisões acima, e a revisão final apontou a lacuna. Aqui está a decisão, e ela tem duas metades.
 
-`ModeracaoIndisponivel` só carrega texto de terceiro quando `infra/moderacao.py:176` a levanta com `motivo_do_provedor(exc)` — o da Anthropic, que já extraía campos. `_detalhe_para_o_log` repassa a mensagem de exceções de `mobia`, e a pior que chega lá é justamente aquela. Ou seja: o texto de terceiro que alcança a classe C vem **inteiro** dos dois `motivo_do_provedor`, e a D5 é o que fecha o que estava frouxo entre eles.
+**Os três primeiros já estavam protegidos antes desta card, e não por ela.** `ModeracaoIndisponivel` só carrega texto variável quando `infra/moderacao.py:176` a levanta com `motivo_do_provedor(exc)` — e o import daquele módulo é o de **`infra/anthropic.py`**, o que já extraía campos. Os outros três `raise` de `moderacao.py` usam literal. `_detalhe_para_o_log` repassa a mensagem de exceções de `mobia`, e a pior que chega lá é justamente essa mesma. A garantia é a da TEC-237, preexistente.
 
-O quarto, `importacao.py:78`, é o `ArquivoInvalido` discutido na D3: exceção do projeto, interpolando o nome do arquivo que o cliente enviou de volta para ele. Fica.
+> **Correção.** A primeira versão desta seção dizia que os três passavam "pelo funil que a D5 conserta", e que havia frouxidão entre os dois `motivo_do_provedor` afetando a classe C. **É falso, e foi conferido nos imports:** o `motivo_do_provedor` de `infra/embeddings.py` — o único que estava frouxo, e o que a D5 conserta — é importado **só** por `workers/jobs/indexar_catalogo.py:59`, que é ponto de classe **A**. Ele nunca alcança a classe C. A D5 é uma decisão de classe A que eu havia atribuído à classe C.
 
-Não há, portanto, ponto da classe C sem decisão — há uma decisão só, e ela é a D5.
+**O quarto** é o `ArquivoInvalido` discutido na D3: exceção do projeto, interpolando o nome do arquivo que o cliente enviou de volta para esse mesmo cliente. Fica.
+
+Conclusão honesta: **esta card não acrescenta proteção nenhuma à classe C.** Ela a examinou, encontrou a garantia já de pé, e registra isso para que a próxima varredura não conclua que os quatro pontos foram esquecidos.
 
 ## Fora de escopo, e por quê
 
