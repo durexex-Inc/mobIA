@@ -119,6 +119,17 @@ MAXIMO_DE_VIZINHOS_POR_BLOCO = 5
 # partida.
 MAXIMO_DE_CITACOES_POR_DOCUMENTO = 5
 
+# O balde de teto da docstring de modulo, que nao pertence a def nem class.
+#
+# `limitar` agrupa os VIZINHO pelo NOME do bloco, para a linha de resumo poder
+# dizer onde ficou o que foi omitido. Os delimitadores nao sao validos em
+# identificador Python, entao este nome nunca colide com um def ou class
+# homonimo -- que e a ambiguidade que `limitar` ja declara tolerar nos outros
+# baldes. Como e no maximo UM achado por arquivo, este balde nunca bate o teto:
+# o nome existe para o resumo nao sair com balde vazio, nao porque o corte va
+# acontecer.
+BALDE_DO_MODULO = "<modulo>"
+
 # Planos de implementacao ficam fora da varredura de prosa.
 #
 # Um plano registra o que se fez numa branch num dia: ele nao afirma o que o
@@ -219,30 +230,39 @@ def _comentarios(fonte: str) -> list[tuple[int, str]]:
     return achados
 
 
+def _docstring_de(no: ast.AST) -> tuple[int, int, str] | None:
+    """A docstring deste no como (primeira linha, ultima linha, primeira frase).
+
+    Extraida do laco de `_docstrings` porque `examinar` precisa da docstring de
+    MODULO sozinha: ela e a unica que nao esta dentro de def nem class, entao e
+    a unica que `dentro_de_bloco_mexido` nunca alcanca.
+    """
+    corpo = getattr(no, "body", None)
+    if not corpo:
+        return None
+    primeiro = corpo[0]
+    if not (
+        isinstance(primeiro, ast.Expr)
+        and isinstance(primeiro.value, ast.Constant)
+        and isinstance(primeiro.value.value, str)
+    ):
+        return None
+    texto = primeiro.value.value.strip().splitlines()
+    return (
+        primeiro.lineno,
+        primeiro.end_lineno or primeiro.lineno,
+        f'"""{texto[0] if texto else ""}',
+    )
+
+
 def _docstrings(arvore: ast.AST) -> list[tuple[int, int, str]]:
     """Cada docstring como (primeira linha, ultima linha, primeira frase)."""
     achados = []
     for no in ast.walk(arvore):
         if not isinstance(no, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             continue
-        corpo = getattr(no, "body", None)
-        if not corpo:
-            continue
-        primeiro = corpo[0]
-        if not (
-            isinstance(primeiro, ast.Expr)
-            and isinstance(primeiro.value, ast.Constant)
-            and isinstance(primeiro.value.value, str)
-        ):
-            continue
-        texto = primeiro.value.value.strip().splitlines()
-        achados.append(
-            (
-                primeiro.lineno,
-                primeiro.end_lineno or primeiro.lineno,
-                f'"""{texto[0] if texto else ""}',
-            )
-        )
+        if (achado := _docstring_de(no)) is not None:
+            achados.append(achado)
     return achados
 
 
@@ -402,6 +422,18 @@ def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
             achados.append(Achado(inicio, texto, alterado=True))
         elif dentro_de_bloco_mexido(inicio, fim):
             achados.append(Achado(inicio, texto, False, distancia(inicio, fim), dono(inicio, fim)))
+    # A docstring de MODULO, o unico achado que nao passa por
+    # `dentro_de_bloco_mexido`: ela nao esta dentro de def nem class, e a faixa
+    # do modulo nao pode entrar em `_blocos` porque conteria todas as outras --
+    # todo comentario solto do arquivo viraria VIZINHO.
+    #
+    # Os dois ramos sao mutuamente exclusivos: o laco acima ja a emite como
+    # ALTERADO quando ela mesma mudou, e este so age quando ela nao mudou.
+    doc_do_modulo = _docstring_de(arvore)
+    if alteradas and doc_do_modulo is not None:
+        inicio, fim, texto = doc_do_modulo
+        if not any(n in alteradas for n in range(inicio, fim + 1)):
+            achados.append(Achado(inicio, texto, False, distancia(inicio, fim), BALDE_DO_MODULO))
     return sorted(achados, key=lambda a: a.linha)
 
 

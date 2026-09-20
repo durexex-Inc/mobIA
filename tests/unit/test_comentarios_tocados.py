@@ -14,6 +14,7 @@ from pathlib import Path
 
 import scripts.comentarios_tocados as ferramenta
 from scripts.comentarios_tocados import (
+    BALDE_DO_MODULO,
     MAXIMO_DE_CITACOES_POR_DOCUMENTO,
     MAXIMO_DE_VIZINHOS_POR_BLOCO,
     Achado,
@@ -165,6 +166,58 @@ def test_comentario_fora_de_bloco_nunca_e_vizinho(tmp_path: Path) -> None:
     """,
     )
     assert examinar(arquivo, {5}) == []
+
+
+def test_docstring_de_modulo_intocada_e_vizinho(tmp_path: Path) -> None:
+    """A lacuna que a TEC-283 fecha, e o caso que a TEC-282 viveu.
+
+    Naquela branch a docstring de topo de um arquivo de teste seguiu dizendo
+    "ALTERADO e VIZINHO", duas marcas de cinco, enquanto o arquivo crescia 410
+    linhas por baixo dela. A ferramenta rodou contra a propria branch e nao
+    apontou nada.
+    """
+    arquivo = _escrever(
+        tmp_path,
+        '''
+        """Esta docstring descreve o que a funcao abaixo faz."""
+
+
+        def f():
+            return 1
+    ''',
+    )
+    (achado,) = examinar(arquivo, {6})
+    assert achado.alterado is False
+    assert achado.linha == 2
+    assert achado.bloco == BALDE_DO_MODULO
+
+
+def test_arquivo_sem_docstring_de_modulo_nao_ganha_achado(tmp_path: Path) -> None:
+    arquivo = _escrever(
+        tmp_path,
+        """
+        def f():
+            return 1
+    """,
+    )
+    assert examinar(arquivo, {3}) == []
+
+
+def test_docstring_de_modulo_alterada_continua_alterado(tmp_path: Path) -> None:
+    """Um achado so: os dois ramos sao mutuamente exclusivos, nao somam."""
+    arquivo = _escrever(
+        tmp_path,
+        '''
+        """Esta docstring mudou nesta branch."""
+
+
+        def f():
+            return 1
+    ''',
+    )
+    achados = examinar(arquivo, {2, 6})
+    assert len(achados) == 1
+    assert achados[0].alterado is True
 
 
 def test_arquivo_que_nao_parseia_devolve_lista_vazia(tmp_path: Path) -> None:
