@@ -1228,8 +1228,8 @@ def log_legivel(caplog: Any) -> str:
     **Use isto, e nao `caplog.text`, quando a agulha tiver acento.**
     `configure_logging` usa `structlog.processors.JSONRenderer()`, que
     serializa no padrao `ensure_ascii=True`: o log diz
-    `"não falo de imóveis"`, e `assert "não falo de imóveis" not in
-    caplog.text` passa com o texto DENTRO do log. A asserta que mais importa
+    `"n\u00e3o falo de im\u00f3veis"`, e `assert "não falo de imóveis" not
+    in caplog.text` passa com o texto DENTRO do log. A asserta que mais importa
     nos testes de log -- "o texto que mandamos ao lead nao vazou" -- e
     justamente a que a convencao da TEC-267 garante ser acentuada.
 

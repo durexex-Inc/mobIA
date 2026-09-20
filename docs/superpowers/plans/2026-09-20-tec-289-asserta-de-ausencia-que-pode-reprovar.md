@@ -60,11 +60,11 @@ Nos três de `(nivel, corpo)`, a chamada muda de nome (`_eventos_de_log` → `ev
 ### Task 2: O sítio latente ganha a guarda que o irmão já tem
 
 **Files:**
-- Modify: `tests/integration/test_notificacao_envio.py` (linhas ~384-385)
+- Modify: `tests/integration/test_notificacao_envio.py` (a asserta do teste do resumo ilegível)
 
 - [ ] **Step 1: `ensure_ascii=False`, com comentário**
 
-O comentário diz o que a linha compra: as agulhas de hoje (`"fulano"`, `"outro texto"`) são ASCII e passariam de qualquer jeito; o flag é o que mantém a asserta real quando alguém trocar por um nome com acento. Mesma razão, e mesma redação, do comentário de `test_conversa_encerrada.py:1056-1061` — cite-o, não invente uma segunda explicação.
+O comentário diz o que a linha compra: as agulhas de hoje (`"fulano"`, `"outro texto"`) são ASCII e passariam de qualquer jeito; o flag é o que mantém a asserta real quando alguém trocar por um nome com acento. Mesma razão do comentário da asserta da despedida em `test_conversa_encerrada.py` — cite-o, não invente uma segunda explicação. **E confira aquele comentário antes de copiá-lo:** ele descrevia o mecanismo ao contrário (dizia que o escape transformaria `nao` em `não`), e a correção faz parte desta branch.
 
 - [ ] **Step 2: Gates e commit**
 

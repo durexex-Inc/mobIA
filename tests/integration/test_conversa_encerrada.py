@@ -1039,12 +1039,18 @@ async def test_o_log_do_encerramento_sai_sem_o_texto_das_mensagens(
     # A contagem de ANTES do zero -- e o numero que decidiu, e depois dele a
     # coluna nao o guarda mais em lugar nenhum.
     assert corpo["seguidas"] == TETO_DE_FORA_DE_ESCOPO
-    # `ensure_ascii=False`, e nao o default: com o escape ligado, `nao` do
-    # literal viraria `não` na serializacao e a asserta da despedida --
-    # que tem `a` com til, travessao e `o` com acento -- nunca poderia
-    # reprovar, dissesse o log o que dissesse. As outras duas sao ASCII puro e
-    # passariam de qualquer jeito; esta linha e o que torna a terceira uma
-    # asserta de verdade.
+    # `ensure_ascii=False`, e nao o default: com o escape ligado quem muda e o
+    # PALHEIRO, nao a agulha -- o `não` do log sai como `não`, e a asserta
+    # da despedida, que tem `a` com til, travessao e `o` com acento, nunca
+    # encontraria o que procura, dissesse o log o que dissesse. As outras duas
+    # sao ASCII puro e passariam de qualquer jeito; esta linha e o que torna a
+    # terceira uma asserta de verdade.
+    #
+    # (A TEC-289 corrigiu esta explicacao: ate ela, o comentario dizia que o
+    # escape transformaria `nao` em `não`, o que inverte a direcao. A conclusao
+    # sempre esteve certa; a causa, nao. Quem quiser a versao executavel do
+    # mecanismo, `tests/unit/test_assercao_de_ausencia_sobre_log.py` o afirma
+    # em dois testes, e uma guarda varre o repo atras de assertas assim.)
     corpo_serializado = json.dumps(corpo, ensure_ascii=False)
     assert FALA_FORA_DE_ESCOPO not in corpo_serializado
     assert PROSA_DO_MODELO not in corpo_serializado

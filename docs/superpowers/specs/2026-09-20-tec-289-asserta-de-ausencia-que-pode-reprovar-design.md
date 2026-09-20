@@ -13,9 +13,9 @@ Fazer com que uma asserção da forma *"este texto não vazou para o log"* possa
 
 **O mecanismo não é o `json.dumps` escrito no teste — é o renderer da aplicação.** `configure_logging` usa `structlog.processors.JSONRenderer()` (`app/logging.py:125`), que serializa no padrão `ensure_ascii=True`. Então **`caplog.text` já chega escapado**, sem que nenhum teste chame `json.dumps`. A classe é muito maior que os dois sítios de `json.dumps` que a card mapeou: são ~70 asserções de ausência sobre log, e toda uma família (`not in caplog.text`, `not in registro.getMessage()`) está exposta pelo mesmo motivo.
 
-Provado nesta máquina, com a configuração real do app: `assert "Acho que não falo de imóveis" not in caplog.text` **passa** enquanto o log contém `{"texto": "Acho que não falo de imóveis"}`.
+Provado nesta máquina, com a configuração real do app: `assert "Acho que não falo de imóveis" not in caplog.text` **passa** enquanto o log traz o mesmo texto na forma escapada — os caracteres acentuados saem como `n\u00e3o` e `im\u00f3veis`, e a agulha acentuada nunca encontra o palheiro escapado.
 
-**E mesmo assim não existe nenhuma asserção vazia hoje.** As 70 foram resolvidas até o literal. Todas as agulhas usadas contra log são ASCII puro; a única não-ASCII é `TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO` (`test_conversa_encerrada.py:1065`), e é exatamente a que a TEC-138 já protegeu com `ensure_ascii=False`. Os sentinelas de teste (`SENTINELA-RESUMO ...`, `"5511987654321"`) são ASCII por construção, e os nomes de evento (`"contexto.truncado"`) nunca terão acento.
+**E mesmo assim não existe nenhuma asserção vazia hoje.** As 70 foram resolvidas até o literal. Todas as agulhas usadas contra log são ASCII puro; a única não-ASCII é `TEXTO_DO_ENCERRAMENTO_FORA_DE_ESCOPO` (a asserta da despedida em `test_conversa_encerrada.py`), e é exatamente a que a TEC-138 já protegeu com `ensure_ascii=False`. Os sentinelas de teste (`SENTINELA-RESUMO ...`, `"5511987654321"`) são ASCII por construção, e os nomes de evento (`"contexto.truncado"`) nunca terão acento.
 
 **Consequência para o que esta card é.** Ela não conserta defeito: ela impede uma classe. O valor está inteiro no futuro — no dia em que alguém acentuar uma fixture de fala do lead, que é o que a convenção da TEC-267 pede, e a asserta de PII ao lado dela silenciar sem ficar vermelha.
 
@@ -85,7 +85,7 @@ Se a agulha resolvida tiver caractere não-ASCII, a guarda reprova, nomeando arq
 
 ## D5 — O sítio latente ganha a guarda que o irmão já tem
 
-`test_notificacao_envio.py:384-385` serializa com `json.dumps(avisos[0])` no padrão. As agulhas são `"fulano"` e `"outro texto"`, ASCII, então a asserta é real hoje. Ela passa a usar `ensure_ascii=False`, com comentário — é o mesmo construto de `test_conversa_encerrada.py:1062` sem a proteção, e basta alguém trocar `"fulano"` por um nome realista para nascer vazia.
+O teste do resumo ilegível em `test_notificacao_envio.py` serializa com `json.dumps(avisos[0])` no padrão. As agulhas são `"fulano"` e `"outro texto"`, ASCII, então a asserta é real hoje. Ela passa a usar `ensure_ascii=False`, com comentário — é o mesmo construto da asserta da despedida em `test_conversa_encerrada.py` sem a proteção, e basta alguém trocar `"fulano"` por um nome realista para nascer vazia.
 
 ## D6 — A armadilha vira teste executável
 
