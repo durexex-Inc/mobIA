@@ -95,7 +95,34 @@ Com a fórmula nova, base64 fica em 0,43 — abaixo do corte de 0,60. Ele é ASC
 
 A melhora ainda assim é real: de 0,25 para 0,43.
 
-### D5 — O segundo item da card está obsoleto, e a entrega é declará-lo
+### D5 — O segundo item da card NÃO está obsoleto, e o `headroom` sobe para 1.600
+
+> **Esta decisão substitui uma versão anterior deste desenho, que declarava o segundo item da card obsoleto. Aquela versão estava errada, e o parágrafo abaixo registra por quê — não por rigor de processo, mas porque o erro é instrutivo: eu confiei em dois testes sem conferir com que régua eles mediam.**
+
+O que a primeira versão argumentou: que o `headroom` não era mais "400 e um chute", porque subira quatro vezes com razão escrita (TEC-145, TEC-250, TEC-257, TEC-265), tinha 96 linhas de comentário decompondo cinco parcelas, e era coberto por dois testes — `test_diferenca_entre_o_contado_e_o_enviado` e `test_a_margem_do_orcamento_do_prompt_e_deliberada`.
+
+**O furo:** aqueles dois testes medem as parcelas com `len/4` — o mesmo proxy que esta card acabou de derrubar. Eles passam porque a régua é a mesma dos dois lados, não porque a reserva cubra o que precisa cobrir.
+
+Medido em 20/09/2026, cada parcela contra o contador real (`ContadorAnthropic`, claude-sonnet-5):
+
+| parcela | `len/4` | contador real |
+| --- | --- | --- |
+| − `montagem.SISTEMA` (contado, não enviado) | −42,0 | −77,0 |
+| + `SISTEMA_DO_AGENTE` (campo `system=`) | 305,5 | 541,0 |
+| + schema compilado | 372,8 | 798,0 |
+| + rótulos de `montar_prompt` | 19,2 | 41,0 |
+| + ferramenta de busca (`tools=`) | 131,2 | 242,0 |
+| **= subcontagem** | **786,8** | **1.545,0** |
+
+**A reserva de 1.060 é 485 tokens menor que a lacuna real.** Um contexto medido no teto efetivo de 10.940 envia cerca de 12.485 tokens — e o teto de 12.000 da RN-02.5 é critério de aceite.
+
+**Decisão: `contexto_headroom_de_tokens` passa de 1.060 para 1.600**, cobrindo os 1.545 medidos com 55 tokens de folga. É a primeira vez que esse número sai de uma medição com o contador real, e não de aritmética sobre o proxy.
+
+**O custo, declarado:** o teto efetivo cai de 10.940 para 10.400 — 540 tokens, cerca de 1.240 caracteres de conversa a menos por chamada. O CLAUDE.md avisa que essa reserva sai do mesmo contexto que guarda a conversa do lead, e aqui ela sai mesmo. A alternativa era continuar estourando o teto em silêncio.
+
+**O que esta card NÃO faz:** trocar o proxy de `_decomposicao` pela fórmula nova. Os dois testes de orçamento continuam medindo em unidades de `len/4`, e passam a ser o que de fato são — um alarme contra **crescimento do prompt**, não uma validação da reserva. A prosa deles tem de dizer isso, porque hoje ela afirma medir "o mesmo proxy do módulo de montagem", o que deixou de ser verdade.
+
+### D5b — O que era a D5 antiga, e continua valendo
 
 A card manda, como segundo item, conferir o `headroom`, dizendo que ele está em **400 tokens** e que é "um chute fundamentado, não uma medição". E declara dependência da TEC-134, que "é quem define a forma real da requisição".
 
@@ -106,7 +133,7 @@ Nada disso vale mais:
 - A TEC-134 **existe**: `ClassificadorAnthropic._chamar` monta `system=` separado com `cache_control`, array de mensagens, schema compilado e `tools=`.
 - A diferença entre o contado e o enviado **já é medida por teste** — `test_diferenca_entre_o_contado_e_o_enviado` e `test_a_margem_do_orcamento_do_prompt_e_deliberada`.
 
-**A entrega deste item é dizer isso**, no comentário da card e na prosa que ainda afirmar o contrário. Executá-lo seria refazer o que quatro cards já fizeram.
+Tudo isso continua verdade, e é por isso que a D5 acima **não** refaz a decomposição nem reabre o histórico: o que faltava não era decompor a reserva, era medi-la com o contador certo. O trabalho das quatro cards anteriores fica de pé; o que muda é o valor, e agora com medição em vez de aritmética sobre proxy.
 
 ### D6 — O caminho sem modelo está pior que o normal, e o desenho só viu isso ao ler o código
 
@@ -148,5 +175,18 @@ O conserto: o fator passa a ser derivado do **pior caso plausível medido sob a 
 ## Fora de escopo
 
 - Cobrir base64 (D4).
-- Mexer no `headroom` ou na fração 0,6 do limiar: com a estimativa consertada, os dois passam a fazer o que prometem, e mudá-los junto misturaria dois assuntos.
+- **Trocar o proxy `len/4` de `_decomposicao`** pela fórmula nova, e recalibrar a partir dali os dois tetos dos testes de orçamento. É a correção na raiz, e é card própria: mexe na maquinaria que o CLAUDE.md cerca de ritual, e o `headroom` medido da D5 já fecha o buraco sem ela.
+- Mexer na fração 0,6 do limiar: com a estimativa consertada, ela passa a fazer o que promete.
 - Trocar o contador real por tokenizador local. O repo proíbe explicitamente, e com razão: o teto é critério de aceite.
+
+## O que a mudança do `headroom` não quebra, conferido
+
+O limiar deriva do teto efetivo, então ele cai junto: de 6.564 para 6.240. Os três testes da D1/D2 sobrevivem com a mesma folga qualitativa:
+
+| teste | estimativa | limiar novo | resultado |
+| --- | --- | --- | --- |
+| emoji aciona | 7.283 | 6.240 | aciona ✅ |
+| URLs acionam | 7.350 | 6.240 | aciona ✅ |
+| português moderado não paga | 3.633 | 6.240 | não aciona ✅ |
+
+E os três testes de `config.py` continuam passando: `teto_efetivo == teto − headroom` é identidade; `subcontagem(786,8) < 793` não depende do `headroom`; `subcontagem < headroom × 0,75` fica com mais folga (1.200 contra 786,8), não menos.
