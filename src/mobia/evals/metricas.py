@@ -600,13 +600,17 @@ PISO_ANDAIME_DE_ANCORAGEM_PCT = 50
 class InvencaoObservada:
     """Um turno cuja prosa citou cifra ou codigo sem base, com o endereco.
 
-    Carrega as divergencias e nao so a contagem para uma secao de
-    diagnostico FUTURA poder renderiza-las -- **essa secao nao existe
-    ainda**. Hoje `divergencias` so e lido por dois testes unitarios:
-    `taxa_de_alucinacao` conta so por `conversa_id`/`indice` e nunca passa
-    este campo para `render`. E diferente de `ViolacaoDeFormato`, que carrega
-    o mesmo tipo de detalhe e ELE chega ao relatorio -- aqui, descobrir qual
-    foi a divergencia de um turno especifico ainda exige outra execucao paga.
+    Carrega as divergencias e nao so a contagem porque a secao de diagnostico
+    as renderiza: `resumo_da_invencao` -> `_secao_de_invencao`
+    (`evals/relatorio.py`), desde a TEC-270. Ate ela, este campo existia para
+    uma secao que nao existia -- so dois testes unitarios o liam, e descobrir
+    qual foi a divergencia de um turno especifico custava outra execucao
+    paga. Era a diferenca para `ViolacaoDeFormato`, que carrega o mesmo tipo
+    de detalhe e sempre chegou ao relatorio; agora as duas chegam.
+
+    `taxa_de_alucinacao` continua contando so por `conversa_id`/`indice` --
+    o lead vive o turno, e um turno que inventa dois precos e um turno ruim,
+    nao dois. A secao dedupa igual na contagem e lista as duas divergencias.
     """
 
     conversa_id: str
@@ -709,6 +713,40 @@ def resumo_do_formato(respostas: Sequence[RespostaObservada]) -> ResumoDoFormato
         com_emoji=com_emoji,
         emojis=sum(len(_EMOJI.findall(r.texto)) for r in respostas),
     )
+
+
+@dataclass(frozen=True)
+class ResumoDaInvencao:
+    """Diagnostico da ancoragem: quais turnos citaram sem base. TEC-270.
+
+    Nao carrega faixa nem bloqueia -- quem bloqueia e `taxa_de_alucinacao`,
+    com os MESMOS turnos. Esta existe para dizer **quais**, que era a
+    pergunta que ate a TEC-270 custava outra execucao paga: a TEC-269 ja
+    coletava as divergencias em `InvencaoObservada`, e elas paravam em
+    `_metricas_de` sem nunca chegar ao `render`.
+
+    **`respostas` esta aqui para a secao poder dizer "0 de 147".** Um resumo
+    montado so a partir da lista nao distingue "a execucao foi limpa" de "nao
+    houve medicao", e a secao sumiria no primeiro caso -- que e justamente
+    quando o leitor precisa saber que a medicao rodou. Secao que so aparece
+    quando ha problema treina quem le a nao procura-la.
+    """
+
+    respostas: int
+    turnos: list[InvencaoObservada]
+
+
+def resumo_da_invencao(
+    invencoes: Sequence[InvencaoObservada],
+    respostas: Sequence[RespostaObservada],
+) -> ResumoDaInvencao:
+    """Espelha `resumo_do_formato`: a mesma forma para a mesma familia de secao.
+
+    Nao recalcula nada -- `invencao_do_turno` ja decidiu o que e invencao, com
+    a mesma `divergencias_de` que `executar_turno` roda em producao. Aqui so
+    se agrupa para render.
+    """
+    return ResumoDaInvencao(respostas=len(respostas), turnos=list(invencoes))
 
 
 # Marcadores de pergunta por campo. Moram aqui, e nao no runner do eval, porque

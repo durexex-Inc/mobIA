@@ -43,6 +43,7 @@ from mobia.evals.metricas import (
     matriz_de_confusao,
     precisao_da_extracao,
     precisao_efetiva_da_extracao,
+    resumo_da_invencao,
     resumo_de_confianca,
     resumo_de_negativos,
     resumo_do_formato,
@@ -1229,3 +1230,29 @@ def test_o_andaime_nao_reprova_execucao_ruim() -> None:
     respostas = [_resposta("qualquer coisa", indice=i) for i in range(10)]
     tres_sujos = [_invencao(i) for i in range(3)]
     assert taxa_de_alucinacao(tres_sujos, respostas).faixa is not Faixa.VERMELHO
+
+
+def test_o_resumo_da_invencao_carrega_os_turnos_e_o_total() -> None:
+    """O que a secao precisa para dizer "N de M", e nao so "N"."""
+    resumo = resumo_da_invencao(
+        [_invencao(indice=1), _invencao(indice=4, citado="R$ 10.000.000")],
+        [_resposta("qualquer", indice=i) for i in range(5)],
+    )
+
+    assert resumo.respostas == 5
+    assert [(t.indice, t.divergencias[0].citado) for t in resumo.turnos] == [
+        (1, "R$ 900.000"),
+        (4, "R$ 10.000.000"),
+    ]
+
+
+def test_a_execucao_limpa_ainda_sabe_quantos_turnos_mediu() -> None:
+    """E por isto que `respostas` existe no resumo.
+
+    Sem o total, uma execucao limpa produziria um resumo indistinguivel de
+    "nao houve medicao", e a secao do relatorio sumiria justamente no caso em
+    que o leitor mais precisa saber que a medicao rodou e deu zero.
+    """
+    resumo = resumo_da_invencao([], [_resposta("qualquer", indice=i) for i in range(147)])
+
+    assert (resumo.respostas, resumo.turnos) == (147, [])
