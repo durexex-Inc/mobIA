@@ -1,6 +1,6 @@
 # TEC-222 — `last_error` só com o nome da exceção
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** implementado
 **Card:** [TEC-222](https://eduardodurieuxlopes.atlassian.net/browse/TEC-222) — épico TEC-123
 **Branch:** `feat/tec-222-last-error-so-com-o-nome-da-excecao`
 **Origem:** review final da branch `feat/tec-126-telemetria`.
