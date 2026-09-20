@@ -201,8 +201,10 @@ TEXTO_DO_LIMITE_DE_PERGUNTAS = (
 #
 # **Nenhum dos dois promete que alguem foi avisado**, pela razao que o
 # comentario de TEXTO_DO_LIMITE_DE_PERGUNTAS acima ja registra e que
-# `notificacao/envio.py` proibe nominalmente: criar handoff nao notifica
-# ninguem enquanto TEC-280 e TEC-281 estiverem abertas. A TEC-174 escreveu
+# `notificacao/envio.py` proibe nominalmente: desde a TEC-280 o e-mail
+# entrega, mas aceito pelo servidor nao e o mesmo que lido por um corretor, e
+# o whatsapp ainda so registra enquanto a TEC-281 estiver aberta -- nenhum
+# dos dois garante que alguem viu ou vai responder. A TEC-174 escreveu
 # "ja avisei um corretor" e teve de reescrever; a TEC-143 reintroduziu a frase
 # e a revisao final a pegou. `test_textos_do_encaminhamento.py` guarda isso.
 #

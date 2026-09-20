@@ -321,11 +321,12 @@ def test_o_momento_ingenuo_continua_levantando() -> None:
 def test_o_texto_ao_lead_nao_promete_que_alguem_foi_avisado(texto: str) -> None:
     """Critical 3 da revisao final, e a mesma guarda que `test_notificacao_envio.py` ja tem.
 
-    Criar handoff nao notifica ninguem: os dois adaptadores de
-    `notificacao/canais.py` REGISTRAM e NAO ENTREGAM. As duas constantes
-    diziam "Ja avisei nossa equipe" -- a TERCEIRA aparicao da frase no repo,
-    depois de a TEC-174 ter reescrito "ja avisei um corretor" e de
-    `notificacao/envio.py` ter escrito "Nao reintroduza a promessa". Esta
+    Criar handoff nao garante que um humano viu o aviso: desde a TEC-280 o
+    e-mail entrega, por SMTP, mas aceito pelo servidor nao e o mesmo que lido
+    pelo corretor; o WhatsApp ao corretor ainda so registra (TEC-281). As
+    duas constantes diziam "Ja avisei nossa equipe" -- a TERCEIRA aparicao da
+    frase no repo, depois de a TEC-174 ter reescrito "ja avisei um corretor" e
+    de `notificacao/envio.py` ter escrito "Nao reintroduza a promessa". Esta
     assercao existe para nao haver uma quarta.
     """
     assert "avisei" not in texto.lower()
