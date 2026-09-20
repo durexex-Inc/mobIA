@@ -48,6 +48,7 @@ from mobia.evals.metricas import (
     matriz_de_confusao,
     precisao_da_extracao,
     precisao_efetiva_da_extracao,
+    resumo_da_invencao,
     resumo_de_confianca,
     resumo_de_negativos,
     resumo_do_formato,
@@ -568,6 +569,16 @@ async def test_acuracia_de_intencao_no_corpus(
         # deixou de reemitir num turno posterior continua gravado -- a TEC-252
         # mediu que seis das oito faltas turno a turno eram exatamente isso.
         efetiva=precisao_efetiva_da_extracao(estados) if estados else None,
+        # Quais turnos citaram sem base, e nao so quantos. Ate a TEC-270 este
+        # dado morria em `_metricas_de`: a TEC-269 ja o coletava em
+        # `InvencaoObservada.divergencias`, e a pergunta "quais?" custava
+        # outra execucao paga -- em 10/09/2026, duas execucoes deram 1/147 e
+        # 0/145 e a segunda nao pode confirmar nem refutar a primeira.
+        #
+        # `if respostas`, como o `formato` logo abaixo: sem resposta medida
+        # nao houve execucao, e "0 de 0" nao e informacao. Com respostas e
+        # zero invencao, a secao aparece dizendo zero de proposito.
+        invencao=resumo_da_invencao(invencoes, respostas) if respostas else None,
         # O formato aberto por regra: tamanho e perguntas decidem consertos
         # diferentes, e a contagem de emoji e diagnostico puro -- a regra de
         # "informacao essencial nao depende de emoji" nao e mecanizavel.
