@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import Settings, get_settings
@@ -770,6 +771,76 @@ async def _comando_de_truncate(sessao: AsyncSession) -> str:
     return _TRUNCATE
 
 
+# Teto de ESPERA por lock do `TRUNCATE` -- nao teto de duracao dele. Os dois se
+# confundem com facilidade e a diferenca e o que torna este numero seguro: o
+# `lock_timeout` do Postgres conta so o tempo parado querendo o lock, e nao o
+# trabalho depois de consegui-lo. O trabalho medido em 19/09/2026, sobre as 943
+# execucoes de `tests/integration`, foi mediana 324ms, p99 552ms, maximo 1415ms
+# -- e nada disso conta aqui.
+#
+# Sem ele a espera e INFINITA: o padrao do Postgres e `lock_timeout = 0`, o
+# `docker-compose.yml` nao sobrescreve, e foi essa ausencia que deixou uma
+# execucao parada ~10 horas (TEC-291). O `TRUNCATE` e onde a falta de teto doi
+# mais, porque ele exige `ACCESS EXCLUSIVE` nas 19 tabelas de `TABELAS` e roda
+# antes de CADA teste que toca banco: basta um backend com um `SELECT` aberto
+# em qualquer uma delas -- um `ACCESS SHARE` -- para pendurar a suite inteira.
+_ESPERA_MAXIMA_PELO_LOCK = "10s"
+
+# `55P03` e `lock_not_available`, medido: o asyncpg levanta `LockNotAvailableError`
+# e o SQLAlchemy o entrega como `DBAPIError` com este `sqlstate` em `.orig`.
+_LOCK_INDISPONIVEL = "55P03"
+
+# Roda DEPOIS do rollback, e por isso pergunta quem SEGURA lock nas tabelas, e
+# nao quem bloqueia este pid: assim que o `lock_timeout` estoura, esta sessao
+# deixa de estar esperando, e `pg_blocking_pids(pg_backend_pid())` volta vazio.
+# O rollback tambem solta os locks que este `TRUNCATE` ja tinha conseguido, que
+# e o que permite excluir so o proprio pid e confiar no resto.
+_QUEM_SEGURA_AS_TABELAS = text(
+    """
+    SELECT DISTINCT
+           atividade.pid,
+           atividade.state,
+           coalesce(to_char(now() - atividade.xact_start, 'HH24:MI:SS'), '-') AS idade,
+           left(regexp_replace(coalesce(atividade.query, ''), '\\s+', ' ', 'g'), 200) AS consulta
+      FROM pg_locks AS lock
+      JOIN pg_stat_activity AS atividade ON atividade.pid = lock.pid
+     WHERE lock.granted
+       AND lock.relation IS NOT NULL
+       AND atividade.pid <> pg_backend_pid()
+       AND atividade.datname = current_database()
+       AND lock.relation IN (
+           SELECT oid FROM pg_class WHERE relname = ANY(:tabelas)
+       )
+     ORDER BY atividade.pid
+    """
+)
+
+
+async def _quem_segura_o_lock(sessao: AsyncSession) -> str:
+    """Descreve os backends que seguram lock nas tabelas de `TABELAS`.
+
+    E a metade do diagnostico que o `lock_timeout` sozinho nao da. "Timeout no
+    setup do teste X" manda quem le rodar tudo de novo para descobrir o que ja
+    era sabido; "bloqueado pelo pid 1669128, `idle in transaction` ha 4 minutos,
+    ultima consulta `SELECT ... FROM imoveis`" nomeia o teste culpado sem
+    nenhuma execucao adicional.
+
+    Precisa ser aqui, dentro do `except`: `pg_stat_activity` descreve o agora, e
+    o backend culpado some junto com o processo. Nao existe comando que alguem
+    rode depois para recuperar isto.
+    """
+    linhas = (await sessao.execute(_QUEM_SEGURA_AS_TABELAS, {"tabelas": list(TABELAS)})).all()
+    if not linhas:
+        # Nao e o mesmo que "nao havia bloqueador": e que ele soltou entre o
+        # estouro e esta consulta. Dizer isso evita que quem leia conclua que o
+        # teto disparou sozinho.
+        return "  (nenhum backend segura lock agora -- soltou entre o estouro e esta consulta)"
+    return "\n".join(
+        f"  pid {pid}  {estado}  transacao aberta ha {idade}  {consulta}"
+        for pid, estado, idade, consulta in linhas
+    )
+
+
 @pytest.fixture(autouse=True)
 async def banco_limpo(request: pytest.FixtureRequest) -> AsyncIterator[None]:
     """Trunca antes do teste e descarta o engine depois.
@@ -777,6 +848,13 @@ async def banco_limpo(request: pytest.FixtureRequest) -> AsyncIterator[None]:
     Truncar na entrada (nao na saida) evita disputar lock com a sessao do teste.
     O dispose no fim e obrigatorio: cada teste roda no seu proprio event loop e
     conexoes asyncpg nao sobrevivem a troca de loop.
+
+    Desde a TEC-291 a espera por lock do `TRUNCATE` tem teto e, ao estourar,
+    NOMEIA quem segura. Ver `_ESPERA_MAXIMA_PELO_LOCK` e `_quem_segura_o_lock`:
+    esta fixture era o ponto da suite onde uma contencao momentanea virava
+    espera infinita, porque ela pede o lock mais largo que existe aqui
+    (`ACCESS EXCLUSIVE` em 19 tabelas) com a frequencia mais alta que existe
+    aqui (antes de cada teste que toca banco).
 
     Sai cedo para `tests/unit/` desde 12/09/2026. O custo era por teste da suite
     INTEIRA -- 13 `SELECT to_regclass` mais ate 13 `TRUNCATE ... CASCADE`, e um
@@ -805,7 +883,26 @@ async def banco_limpo(request: pytest.FixtureRequest) -> AsyncIterator[None]:
         return
     request.getfixturevalue("migrar_banco")
     async with get_sessionmaker()() as sessao:
-        await sessao.execute(text(await _comando_de_truncate(sessao)))
+        # `SET LOCAL`, e nao `SET`: o teto tem de morrer no commit abaixo. A
+        # conexao volta ao pool e o proximo a peg-la e o TESTE, que muitas vezes
+        # quer esperar por lock de proposito -- `test_o_cadeado_serializa_dois_
+        # turnos_da_mesma_conversa` existe para medir exatamente essa espera.
+        # Medido: depois do commit, a conexao reusada volta com `lock_timeout` 0.
+        await sessao.execute(text(f"SET LOCAL lock_timeout = '{_ESPERA_MAXIMA_PELO_LOCK}'"))
+        try:
+            await sessao.execute(text(await _comando_de_truncate(sessao)))
+        except DBAPIError as erro:
+            if getattr(erro.orig, "sqlstate", None) != _LOCK_INDISPONIVEL:
+                raise
+            await sessao.rollback()
+            raise RuntimeError(
+                f"o TRUNCATE de `banco_limpo` esperou mais de {_ESPERA_MAXIMA_PELO_LOCK} "
+                f"por lock, no setup de {request.node.nodeid}.\n"
+                "Isto NAO e lentidao: e alguem segurando lock numa tabela de TABELAS -- "
+                "basta um SELECT com transacao aberta.\n"
+                f"Quem segura:\n{await _quem_segura_o_lock(sessao)}\n"
+                'Ver a secao "Quando o `-n 8` derruba o Postgres" do CLAUDE.md (TEC-291).'
+            ) from erro
         await sessao.commit()
     yield
     await dispose_engine()

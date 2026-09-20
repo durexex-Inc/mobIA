@@ -44,6 +44,7 @@ dev = [
     "pytest>=8.3",
     "pytest-xdist>=3.6",
     "pytest-asyncio>=0.24",
+    "pytest-timeout>=2.3",
     "pyyaml>=6.0",
     "ruff>=0.8",
     "mypy>=1.13",
@@ -76,6 +77,28 @@ testpaths = ["tests"]
 # linha e a diferenca entre "roda aqui e falha em CI" e "roda igual nos dois".
 pythonpath = ["."]
 addopts = "-m 'not perf'"
+# Teto por teste, e o que ele compra e um TRACEBACK no lugar de silencio. A
+# TEC-291 registra as duas ocorrencias que o motivaram: uma execucao parada
+# ~10 horas e outra ~35 minutos, sem nada avisando que haviam parado, porque
+# nem o Postgres nem o pytest tinham teto (o pool do SQLAlchemy tem: 30s).
+#
+# 120s contra 2,4s, que foi a chamada mais lenta medida em 19/09/2026 sobre
+# `tests/integration` inteiro (943 testes, `--durations=0`, `test_migrations`).
+# A folga e de 50x de proposito, e nao de 2x: o CLAUDE.md registra que carga
+# muda duracao em ORDEM DE GRANDEZA, e um teto que reprova teste legitimo em
+# maquina ocupada troca um problema raro por um flake diario. O teto cobre
+# setup, teste e teardown juntos (padrao do plugin, e nao `timeout_func_only`)
+# porque o travamento mais provavel esta no setup -- e o `TRUNCATE` de
+# `banco_limpo`, que espera `ACCESS EXCLUSIVE` em 19 tabelas.
+#
+# **O comportamento difere entre esta maquina e o CI, e a diferenca nao e
+# detalhe.** Em Linux (o CI e `ubuntu-latest`) o metodo e `signal`: o teste
+# falha e a execucao CONTINUA. Em Windows e `thread`: o plugin despeja a pilha
+# de todas as threads em stderr e mata o processo com `os._exit()`, sem
+# teardown e sem resumo final. Quem vir a execucao morrer sem sumario nesta
+# maquina esta vendo o teto funcionar, nao quebrar -- a pilha despejada e o
+# diagnostico, e e exatamente o que faltou nas duas ocorrencias acima.
+timeout = 120
 markers = [
     "perf: teste de latencia, roda so sob demanda com -m perf",
 ]
