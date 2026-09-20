@@ -153,6 +153,15 @@ async def escalar_vencidos(
 
         motivos: dict[str, str] = {}
         algum_canal_aceitou = False
+        # Sequencial, e nao paralelo -- e desde a TEC-280 isso nao e mais de
+        # graca. Antes desta card nenhum canal falava rede e o laco era
+        # instantaneo; agora o e-mail manda uma mensagem de verdade por SMTP,
+        # ate `SEGUNDOS_DE_TIMEOUT` (15s) cada, contra um `job_timeout = 240`
+        # do worker (`workers/main.py`) que o job `sweep_sla` (que chama
+        # `escalar_vencidos`) tambem tem que caber. Margem para uns 16
+        # handoffs escalados no mesmo sweep antes de estourar -- numero nao
+        # medido em carga real, so contado; nao e motivo para mudar o laco
+        # agora.
         for canal in canais:
             destino = destino_por_canal[canal.nome]
             try:
