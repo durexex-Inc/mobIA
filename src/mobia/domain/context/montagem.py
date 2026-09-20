@@ -354,9 +354,11 @@ async def _contar_se_valer(
     conferindo o palpite -- o limiar existe para que o palpite so responda
     onde errar nao muda a decisao, nao para tira-lo da decisao.
 
-    `len/4` supoe 4 caracteres por token. Isso cobre o pior caso plausivel de
-    portugues acentuado (3.2-3.7 chars/token) com folga -- ver a derivacao
-    completa e os casos que este limiar **nao** cobre (emoji, base64/URL) em
+    `_estimar` (TEC-225) roda ASCII a 2,3 caracteres por token e nao-ASCII a
+    3 tokens por caractere -- nao mais o `len/4` que supunha o ingles e
+    subestimava o que este produto processa: o portugues real mede 2,34 a
+    2,38 chars/token, contra os 4 que aquela formula supunha. Ver a
+    derivacao completa e o que ainda escapa desta contagem (so base64) em
     `Settings.limiar_de_contagem_efetivo`.
     """
     # O modo sem modelo nao consulta o limiar: ele nao esta escolhendo entre a

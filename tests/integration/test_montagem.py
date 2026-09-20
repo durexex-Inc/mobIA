@@ -1208,16 +1208,19 @@ async def test_limiar_de_contagem_cede_a_vez_para_a_contagem_real(session) -> No
     """0.6 do teto, derivado -- nao um numero redondo fixo e desligado dele.
 
     A formula ciente de densidade (TEC-225) roda ASCII a 2,3 caracteres por
-    token. Vinte literais de ~1.900 caracteres cada formam uma conversa
-    grande o bastante para que a estimativa barata (medida: 16.342) cruze
-    o limiar efetivo (0.6 * 12.000 = 7.200) e ceda a vez para a contagem real,
-    em vez de decidir sozinha que cabe. Nao forca `sempre_contar`: o que este
-    teste prova e que o limiar *default* ja cede a vez sozinho para conteudo
-    deste tamanho. (Este teste e sobre acentuacao, nao sobre emoji -- ver
-    `test_limiar_nao_protege_conteudo_denso_em_emoji` logo abaixo para o que
-    este limiar deliberadamente nao cobre.)
+    token e nao-ASCII a 3 tokens por caractere. Vinte literais de portugues
+    acentuado de verdade (nao so o nome do teste -- o texto abaixo carrega os
+    acentos), ~1.900 caracteres cada, formam uma conversa grande o bastante
+    para que a estimativa barata (medida: 24.653) cruze o limiar efetivo
+    (0.6 * 10.300 = 6.180, com o teto efetivo de hoje) e ceda a vez para a
+    contagem real, em vez de decidir sozinha que cabe. Nao forca
+    `sempre_contar`: o que este teste prova e que o limiar *default* ja cede
+    a vez sozinho para conteudo deste tamanho. (Este teste e sobre
+    acentuacao, nao sobre emoji -- ver
+    `test_conteudo_denso_em_emoji_aciona_a_contagem_real` logo abaixo para o
+    que este limiar deliberadamente nao cobre.)
     """
-    texto_grande = "conteudo em portugues acentuado: nao, coracao, qualificacao, imovel. " * 27
+    texto_grande = "conteudo em portugues acentuado: não, coração, qualificação, imóvel. " * 27
     await semear(session, 20, texto=texto_grande)
     contador = ContadorFake()
 
@@ -1235,24 +1238,28 @@ async def test_limiar_de_contagem_cede_a_vez_para_a_contagem_real(session) -> No
     )
 
 
-async def test_conteudo_curto_em_caracteres_nunca_aciona_a_contagem_real(session) -> None:
-    """O mecanismo, nao o emoji: a decisao de medir olha `len()` e mais nada.
+async def test_conteudo_denso_em_emoji_aciona_a_contagem_real(session) -> None:
+    """A lacuna que este teste documentava foi fechada pela TEC-225.
 
-    Este teste nao mede tokens de verdade -- o duble tambem conta por `len/4`
-    e nenhum teste desta suite toca a rede. O que ele prende e o gatilho:
-    conteudo curto em CARACTERES nunca paga a contagem real, seja la o que ele
-    contenha. Emoji e so o exemplo mais afiado (cada um e 1 caractere Python e
-    2-4 tokens); base64 e URL sao a versao comum. A conta completa esta em
+    Ate aqui este teste se chamava
+    `test_conteudo_curto_em_caracteres_nunca_aciona_a_contagem_real` e
+    afirmava `contador.chamadas == 0` para 600 caracteres de emoji (200 por
+    mensagem, 3 mensagens): a estimativa antiga (`len/4`) via nisso 150
+    tokens, quando o real chega perto de 1.706 -- risco aceito e
+    documentado, nao coberto pelo limiar de entao. A propria nota do teste
+    mandava inverter a assercao, nao "consertar", no dia em que existisse um
+    estimador ciente de densidade de caracteres nao-ASCII. Esse dia chegou:
+    `_estimar` (TEC-225) separa ASCII (2,3 chars/token) de nao-ASCII (3
+    tokens/char).
+
+    Sob a formula nova, porem, os mesmos 600 caracteres nao bastam para
+    acionar a contagem: medido, estimam 1.883, abaixo do limiar efetivo
+    (6.180). Por isso o cenario re-semeia com o tamanho que a propria card
+    descreve, ~3.600 caracteres de emoji (1.200 por mensagem, 3 mensagens)
+    -- medido, estimam 10.883 e cruzam o limiar. A conta completa esta em
     `Settings.limiar_de_contagem_efetivo`.
-
-    NOTA PARA QUEM VIER DEPOIS: este teste ficar vermelho e o desfecho
-    esperado, nao uma regressao. Ele descreve um risco aceito, nao uma
-    garantia do produto -- no dia em que existir um estimador que leve
-    densidade de caracteres nao-ASCII em conta (ticket proprio, fora do
-    TEC-127), este conteudo passara a acionar a contagem real e a assercao
-    abaixo tem de ser invertida junto com a mudanca, nao "consertada".
     """
-    emoji_denso = "\U0001f3e0" * 200  # curto em len(), denso em tokens de verdade
+    emoji_denso = "\U0001f3e0" * 1200  # 3.600 caracteres no total, densos em tokens de verdade
     await semear(session, 3, texto=emoji_denso)
     contador = ContadorFake()
 
@@ -1264,10 +1271,10 @@ async def test_conteudo_curto_em_caracteres_nunca_aciona_a_contagem_real(session
         contador=contador,
     )
 
-    assert contador.chamadas == 0, (
-        "conteudo curto em caracteres nunca passa pela contagem real, mesmo "
-        "sendo emoji denso -- risco aceito e documentado, nao coberto por "
-        "este limiar"
+    assert contador.chamadas >= 1, (
+        "conteudo denso em emoji tem de acionar a contagem real -- a "
+        "formula ciente de densidade da TEC-225 fechou a lacuna que este "
+        "teste documentava"
     )
 
 

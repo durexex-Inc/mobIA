@@ -661,26 +661,38 @@ class Settings(BaseSettings):
     @property
     def limiar_de_contagem_efetivo(self) -> int:
         """Acima disto, `_contar_se_valer` (TEC-127) paga a contagem real;
-        abaixo, confia na estimativa de `len/4`.
+        abaixo, confia na estimativa ciente de densidade de `_estimar`
+        (TEC-225).
 
         0.6 do teto efetivo por padrao (`teto_de_tokens_efetivo`, ja com a
-        reserva descontada), nao um numero redondo: um limiar T implica um
-        texto de aproximadamente `4*T` caracteres (a estimativa e `len//4`).
-        Para a estimativa enganar -- dizer "cabe" quando na verdade estoura --
-        o texto precisaria rodar a menos de `4*T/teto` caracteres por token.
-        Com T = 0.6 * teto essa razao e 2.4, e portugues acentuado (~3.2-3.7
-        chars/token) fica coberto com folga.
+        reserva descontada), nao um numero redondo -- e a mesma fracao de
+        antes da TEC-225, porque o que precisava de conserto era a
+        estimativa que ela compara, nao a fracao.
 
-        O que este limiar **nao** cobre: emoji (~0.3-0.5 chars/token -- cada
-        emoji e 1 caractere Python e 2-4 tokens) e blobs base64/URL (~2). Um
-        turno dominado por qualquer um dos dois pode escapar da contagem real
-        e sair medido para menos tokens do que de fato tem. Nao existe fracao
-        razoavel do teto que cubra emoji sem eliminar o beneficio da
-        estimativa barata para o trafego normal -- cobrir 0.3 exigiria um
-        limiar por volta de 7.5% do teto, baixo demais para qualquer conversa
-        real ficar abaixo dele. Ate existir um estimador que leve densidade de
-        caracteres nao-ASCII em conta, isto e um risco aceito e documentado,
-        nao um bug escondido.
+        A estimativa antiga (`len//4`, um proxy do ingles) so protegia
+        texto que rodasse a `4*0.6 = 2.4` caracteres por token ou mais --
+        abaixo disso ela podia dizer "cabe" com o real ja estourado. O
+        portugues, lingua principal do produto, mede 2,34 sem acento e 2,38
+        acentuado: **a folga real era de 2,6%**, nao a margem confortavel
+        que esta docstring chegou a afirmar citando o intervalo do ingles
+        (~3.2-3.7 chars/token, medido em 3,15) como se fosse o do
+        portugues.
+
+        A TEC-225 trocou a estimativa por uma ciente de densidade: ASCII a
+        2,3 caracteres por token, nao-ASCII a 3 tokens por caractere. Contra
+        essa formula o portugues passa a superestimar -- 1,02 a 1,23 do
+        real, medido -- e o mesmo vale para emoji (1,06 do real, contra
+        0,09 antes) e para uma duzia de URLs (0,80, contra 0,46 antes): os
+        tres deixam de escapar da contagem real.
+
+        O que sobra descoberto: base64, em 0,43 do real. Nao por descuido
+        -- cobri-lo exigiria detectar "sequencia longa sem espaco", e esse
+        detector tem falso-positivo proprio: uma URL longa e exatamente
+        isso tambem (a D4 do desenho da TEC-225). Um turno dominado por
+        base64 pode escapar da contagem real e sair medido para menos
+        tokens do que de fato tem. Ate existir uma forma de distinguir os
+        dois sem penalizar URL, isto e um risco aceito e documentado, nao
+        um bug escondido.
         """
         if self.contexto_limiar_de_contagem is not None:
             return self.contexto_limiar_de_contagem
