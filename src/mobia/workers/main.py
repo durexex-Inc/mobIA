@@ -75,6 +75,23 @@ async def startup(ctx: dict[str, Any]) -> None:
             "de subir o worker."
         )
 
+    # TEC-280. Incondicional, como a de WHATSAPP_ACCESS_TOKEN e nao como a de
+    # OPENAI_API_KEY acima, que so recusa em producao: condicionar ao ambiente
+    # deixaria a maquina de quem desenvolve convivendo com o defeito que esta
+    # card existe para matar. Notificacao descartada em silencio nao e menos
+    # defeito por acontecer em dev -- e so menos visivel, que e pior.
+    #
+    # O remetente entra na mesma guarda porque host sem remetente nao entrega:
+    # o servidor recusa o envelope sem MAIL FROM, e a falha apareceria so na
+    # primeira notificacao, que e tarde.
+    if not settings.smtp_host or not settings.smtp_remetente:
+        raise ConfiguracaoInsegura(
+            "SMTP_HOST ou SMTP_REMETENTE nao configurado. Sem os dois a "
+            "notificacao de handoff nao chega ao corretor, e o lead fica "
+            "esperando sem que ninguem saiba. Suba o Mailpit do "
+            "docker-compose e defina os dois no .env antes de subir o worker."
+        )
+
     session_factory = get_sessionmaker()
     ctx["settings"] = settings
     ctx["session_factory"] = session_factory

@@ -26,6 +26,10 @@ async def test_startup_sobe_com_token_configurado(
     monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
 ) -> None:
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    # TEC-280: a guarda de SMTP e incondicional, entao todo teste que chega ate
+    # a asercao precisa dos dois preenchidos -- nunca confiando no .env local.
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "mobia@localhost")
 
     # `redis` entra a mao aqui porque este teste chama `startup` direto, sem o
     # ARQ em volta -- em producao e o proprio ARQ que grava `ctx["redis"]`
@@ -43,6 +47,33 @@ async def test_startup_sobe_com_token_configurado(
     assert "contador" in ctx
     assert "agendador" in ctx
     assert "reenfileirador" in ctx
+
+
+async def test_o_worker_nao_sobe_sem_host_de_smtp(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """Sem SMTP, a notificacao volta a ser descartada em silencio.
+
+    Mesma razao da guarda de WHATSAPP_ACCESS_TOKEN logo acima dela: o defeito
+    nao e a entrega falhar, e ninguem ficar sabendo que ela falhou.
+    """
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    monkeypatch.setenv("SMTP_HOST", "")
+
+    with pytest.raises(ConfiguracaoInsegura, match="SMTP_HOST"):
+        await startup({})
+
+
+async def test_o_worker_nao_sobe_sem_remetente(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """Host sem remetente nao entrega: o provedor recusa envelope sem MAIL FROM."""
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "")
+
+    with pytest.raises(ConfiguracaoInsegura, match="SMTP_REMETENTE"):
+        await startup({})
 
 
 def _producao(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -86,6 +117,10 @@ async def test_startup_sobe_em_desenvolvimento_sem_a_chave_de_embedding(
     """
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
     monkeypatch.setenv("OPENAI_API_KEY", "")
+    # TEC-280: mesma razao do teste "sobe" acima -- a guarda de SMTP e
+    # incondicional e este teste precisa chegar ate a asercao.
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "mobia@localhost")
 
     # Mesmo motivo do outro teste "sobe": sem o ARQ em volta, `ctx["redis"]`
     # nao existe sozinho, e um objeto qualquer basta -- ver o comentario la.

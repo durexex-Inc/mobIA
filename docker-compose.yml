@@ -26,3 +26,18 @@ services:
       interval: 2s
       timeout: 3s
       retries: 20
+
+  mailpit:
+    # So de desenvolvimento: captura o e-mail em vez de entregar, e serve uma
+    # interface em 8025 para ler o que teria saido. Existe porque a guarda de
+    # SMTP no worker e incondicional (TEC-280, D2) -- sem um servidor de pe,
+    # o worker nao sobe nem aqui.
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

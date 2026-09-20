@@ -133,6 +133,24 @@ class Settings(BaseSettings):
     whatsapp_access_token: str = ""
     whatsapp_api_base: str = "https://graph.facebook.com/v21.0"
 
+    # SMTP da notificacao ao corretor (TEC-280). Provedor NENHUM esta escolhido:
+    # a decisao de 19/09/2026 foi falar SMTP direto justamente para que SES,
+    # Resend ou Postmark fiquem sendo configuracao e nao codigo -- a escolha de
+    # vendor pode esperar a TEC-219, que decide a nuvem.
+    #
+    # `smtp_host` e `smtp_remetente` nascem vazios de proposito. Um default
+    # como "localhost" faria o worker subir em qualquer lugar e so falhar na
+    # hora de entregar, que e o descarte em silencio que esta card existe para
+    # matar. Quem reprova e a guarda do `startup`.
+    smtp_host: str = ""
+    smtp_porta: int = 587
+    smtp_usuario: str = ""
+    smtp_senha: str = ""
+    smtp_remetente: str = ""
+    # Ligado por padrao: o caso inseguro tem de ser o escolhido a mao. O
+    # Mailpit de desenvolvimento nao fala TLS, e o `.env.example` o desliga.
+    smtp_starttls: bool = True
+
     # RN-04.7 (TEC-274). O valor da regra, e configuravel porque os testes
     # precisam injetar centesimos de segundo: tres cenarios a 4 s reais
     # custariam mais de doze segundos por execucao da suite.
