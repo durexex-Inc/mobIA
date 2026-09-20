@@ -324,8 +324,12 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
             await session.commit()
     except Exception as exc:
         tentativas = await _marcar_falha(session_factory, identifier, _detalhe_para_a_coluna(exc))
-        # Valor MAIOR que o da coluna, desde a TEC-222: a coluna e duravel e
-        # fora da mascara, o log nao. Ver os dois docstrings acima.
+        # Valor que PODE ser maior que o da coluna, desde a TEC-222: para
+        # excecao de `mobia` o log carrega a mensagem inteira e a coluna so o
+        # nome da classe; para excecao de terceiro (DBAPIError,
+        # CancelledError, o caso mais comum) os dois valores coincidem. A
+        # coluna e duravel e fora da mascara, o log nao. Ver os dois
+        # docstrings acima.
         log.warning("message.failed", message_id=message_id, error=_detalhe_para_o_log(exc))
         # So encaminha quando as tentativas ESGOTARAM (D9) -- na primeira
         # falha a proxima retentativa ainda pode resolver, e handoff aqui

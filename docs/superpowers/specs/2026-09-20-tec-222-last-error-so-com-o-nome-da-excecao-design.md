@@ -103,7 +103,7 @@ Ele afirma a divisão do D1 **nos dois sentidos**: o sentinela não está na col
 
 **T3 — a inversão.** `test_erro_do_proprio_projeto_mantem_a_mensagem`, em `tests/features/test_reprocessamento_apos_falha.py`, afirma hoje a premissa que esta card derruba, e o docstring dele a enuncia: *"excecao de `mobia` teve a mensagem escrita aqui dentro -- sabe-se o que ela carrega"*. Ele inverte, e o docstring novo registra por que a premissa caiu — não basta mudar a asserção e deixar a justificativa velha de pé, que é o defeito que a seção "Comentário não mente" do `CLAUDE.md` trata como erro.
 
-`test_erro_de_terceiro_nao_leva_a_mensagem_para_last_error` (`:233`) continua valendo palavra por palavra e não muda.
+`test_erro_de_terceiro_nao_leva_a_mensagem_para_last_error` continua valendo palavra por palavra e não muda.
 
 ## D3 — Os 25 pontos de log ficam fora desta card
 
