@@ -1258,6 +1258,11 @@ async def test_conteudo_denso_em_emoji_aciona_a_contagem_real(session) -> None:
     descreve, ~3.600 caracteres de emoji (1.200 por mensagem, 3 mensagens)
     -- medido, estimam 10.883 e cruzam o limiar. A conta completa esta em
     `Settings.limiar_de_contagem_efetivo`.
+
+    Ver tambem `test_emoji_aciona_a_contagem_real`, abaixo: mesmo mecanismo
+    (emoji denso cruzando o limiar), amostra menor (2.400 caracteres) e
+    historico diferente -- este e o teste invertido, aquele e o criterio de
+    pronto da card. Os dois ficam, de proposito.
     """
     emoji_denso = "\U0001f3e0" * 1200  # 3.600 caracteres no total, densos em tokens de verdade
     await semear(session, 3, texto=emoji_denso)
@@ -1285,6 +1290,10 @@ async def test_emoji_aciona_a_contagem_real(session) -> None:
     emoji que este teste semeia (800 por mensagem, 3 mensagens) a formula
     antiga via como 600 tokens (`len // 4`), quando custam perto de 6.857
     pela medicao real. Ver o desenho da TEC-225 para a medicao completa.
+
+    Ver tambem `test_conteudo_denso_em_emoji_aciona_a_contagem_real`, acima:
+    mesmo mecanismo, amostra maior (3.600 caracteres) e o teste historico
+    invertido. Os dois ficam, de proposito.
     """
     emoji_denso = "\U0001f3e0" * 800
     await semear(session, 3, texto=emoji_denso)

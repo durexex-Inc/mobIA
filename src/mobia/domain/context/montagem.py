@@ -275,6 +275,10 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
 # documentada ao contrario: `Settings.limiar_de_contagem_efetivo` afirmava que
 # o portugues ficava "coberto com folga" pela razao de seguranca de 2,4, e a
 # folga real era de 2,6%. Ver o desenho da TEC-225.
+#
+# 2,3 e o arredondamento para baixo do medido (2,34/2,38), de proposito: chars/token
+# mais baixo estima MAIS tokens para o mesmo texto, entao o arredondamento erra na
+# direcao segura da D2 -- superestimar, nunca subestimar.
 _CHARS_POR_TOKEN_EM_PORTUGUES = 2.3
 
 # Tokens por caractere NAO-ASCII.
@@ -294,9 +298,11 @@ def _estimar(resumo: str | None, literais: list[Message], estado: LeadQualificat
     """Estimativa barata de tokens, ciente de densidade (TEC-225).
 
     Separa ASCII de nao-ASCII porque os dois custam ordens diferentes: o
-    portugues roda a 2,3 caracteres por token e o emoji a 0,35 -- e `len`
-    nao distingue os dois. A formula anterior (`len // 4`) supunha o ingles e
-    subcontava tudo que este produto processa.
+    portugues roda a 2,3 caracteres por token (medido em 2,34/2,38;
+    arredondado para baixo, que e a direcao que superestima tokens) e o
+    emoji a 0,35 -- e `len` nao distingue os dois. A formula anterior
+    (`len // 4`) supunha o ingles e subcontava tudo que este produto
+    processa.
     """
     texto = SISTEMA + (resumo or "") + _texto_das(literais) + _texto_do_estado(estado)
     nao_ascii = sum(1 for caractere in texto if ord(caractere) > 127)
@@ -305,7 +311,12 @@ def _estimar(resumo: str | None, literais: list[Message], estado: LeadQualificat
 
 
 # A razao entre a estimativa nova e a contagem real no pior caso PLAUSIVEL
-# medido: a URL, em 0,80 (600 caracteres de URL estimam 688 contra 859 reais).
+# medido: a URL, em 0,80 (1.584 caracteres de URL estimam 688 contra 859
+# reais -- int(1584 / 2,3) = 688, 688 / 859 = 0,8009).
+#
+# A folga sobre a URL medida e de 0,54%: a taxa efetiva deste fator e
+# 1/(2,3 x 0,80) = 1/1,84 chars/token contra a URL medida em 1/1,85. Uma
+# remedicao que ponha a URL acima de ~1,86 chars/token inverte o sinal.
 #
 # Base64 fica de fora de proposito -- 0,43 -- porque cobri-lo exigiria um
 # detector de "sequencia longa sem espaco", que tem falso-positivo proprio

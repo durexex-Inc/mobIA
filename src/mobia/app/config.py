@@ -200,8 +200,11 @@ class Settings(BaseSettings):
     # bairro no MAXIMO da coluna (`String(160)`/`String(120)` em
     # `catalogo/models.py`), **3.709**. Os dois estouram os 101 de folga por
     # larga margem -- 11,6x e 36,7x, respectivamente. O segundo round-trip de
-    # um turno com busca NAO "pode" estourar a reserva: ele a estoura, toda
-    # vez que a segunda volta do laco acontece. A sexta parcela continua fora
+    # um turno com busca de 10 candidatos NAO "pode" estourar a reserva: ele a
+    # estoura, toda vez que a segunda volta do laco acontece com essa
+    # contagem. Busca que volta com um candidato, ou com zero, nao foi
+    # medida -- e plausivel que estoure tambem (a folga e so 101), mas isto
+    # nao afirma por numero que nao mediu. A sexta parcela continua fora
     # da reserva por decisao de desenho anterior a esta card (fix-wave da
     # TEC-265) -- o que muda aqui e este comentario parar de mentir sobre o
     # tamanho do que ficou de fora.
