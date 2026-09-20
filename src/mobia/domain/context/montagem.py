@@ -314,9 +314,13 @@ def _estimar(resumo: str | None, literais: list[Message], estado: LeadQualificat
 # medido: a URL, em 0,80 (1.584 caracteres de URL estimam 688 contra 859
 # reais -- int(1584 / 2,3) = 688, 688 / 859 = 0,8009).
 #
-# A folga sobre a URL medida e de 0,54%: a taxa efetiva deste fator e
-# 1/(2,3 x 0,80) = 1/1,84 chars/token contra a URL medida em 1/1,85. Uma
-# remedicao que ponha a URL acima de ~1,86 chars/token inverte o sinal.
+# A folga sobre a URL medida e de 0,54%, e e fina: a taxa efetiva deste fator
+# e 1/(2,3 x 0,80) = 1/1,84 chars/token contra a URL medida em 1/1,85.
+#
+# A razao cresce com a taxa -- ela e `taxa / 2,3` --, entao o perigo e a URL
+# medir MENOS que 1,84 chars/token, nao mais. Uma remedicao que a ponha abaixo
+# disso derruba a razao para baixo de 0,80 e o fator deixa de cobrir o pior
+# caso plausivel.
 #
 # Base64 fica de fora de proposito -- 0,43 -- porque cobri-lo exigiria um
 # detector de "sequencia longa sem espaco", que tem falso-positivo proprio
