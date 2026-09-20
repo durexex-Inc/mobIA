@@ -7,7 +7,7 @@
 
 ## Objetivo
 
-Trazer `alembic/` para dentro do gate de tipos, no CI e não só na máquina de quem desenvolve — e publicar `py.typed`, que é o que torna isso possível.
+Trazer `alembic/` para dentro do gate de tipos, no CI e não só na máquina de quem desenvolve — e publicar `py.typed`, que fecha `mypy alembic` isolado sem os erros `import-untyped` e publica a tipagem do pacote para quem consumir o wheel (PEP 561).
 
 ## O que a medição mudou em relação ao texto da card
 
@@ -80,7 +80,7 @@ Não há `MANIFEST.in` no repositório e não havia nenhum `package-data` — es
 
 `_COLUNAS` na `0033` é uma tupla de `sa.Column` sem anotação. O mypy pede a anotação porque `sa.Column` é genérico e ele não consegue inferir o parâmetro de tipo a partir de `sa.Column("nome", sa.String(16), nullable=True)`.
 
-A anotação é `tuple[sa.Column[Any], ...]`. É `Any` por dentro de propósito: a tupla mistura `BigInteger`, `Numeric`, `String` e `Boolean`, então não existe um parâmetro de tipo comum mais estreito, e inventar uma união dos quatro para uma tupla que só é iterada em `op.add_column` não paga o que custa a ler.
+A anotação é `tuple[sa.Column[Any], ...]`. É `Any` por dentro de propósito: a tupla mistura `BigInteger`, `Numeric`, `String` e `Boolean`, então não existe um parâmetro de tipo comum mais estreito, e inventar uma união dos quatro para uma tupla iterada em dois lugares — `upgrade()` (`op.add_column`) e `downgrade()` (só `.name`, via `reversed`) — não paga o que custa a ler; nenhum dos dois se beneficiaria de um tipo mais estreito.
 
 São **sete colunas e quatro tipos distintos** — a primeira versão deste parágrafo dizia "união de sete tipos", confundindo posições com tipos, e a mesma imprecisão foi parar no comentário do código antes de a revisão pegá-la.
 

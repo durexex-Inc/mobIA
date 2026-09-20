@@ -18,7 +18,9 @@ __pycache__/
 # de plantar outro arquivo.
 .superpowers/
 
-# Artefatos de `pip wheel` / `python -m build`. A TEC-224 os encontrou ao
-# tornar o build do wheel um passo de verificacao do gate de tipos.
+# A TEC-224 tornou o build do wheel um passo de verificacao do gate de tipos
+# e encontrou `build/` como artefato dele (`pip wheel --no-deps --wheel-dir
+# <temp>`). `dist/` entra por precaucao, nao por medicao -- o plano usa
+# `pip wheel`, nao `python -m build`, que e o que escreveria ali.
 build/
 dist/
