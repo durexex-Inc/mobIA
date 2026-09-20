@@ -119,7 +119,32 @@ def motivo_do_provedor(exc: BaseException) -> str | None:
     motivo: o corpo de erro de um `APIStatusError` e gerado pelo servidor, e
     nao carrega texto do lead. Para qualquer outra excecao, devolve None --
     `str(exc)` de excecao arbitraria pode carregar o que nao deve ir para log.
+
+    **Ate a TEC-292 esta funcao tinha a mesma primeira linha e a mesma
+    promessa do vizinho, mas nao a mesma garantia**: repassava `str(exc)[:300]` cru em vez
+    de extrair campos do `body`. O SDK da OpenAI renderiza `str()` de
+    `APIStatusError` como `Error code: 400 - <corpo inteiro>`, entao o texto
+    que vazava era o mesmo corpo que esta funcao existe para nao logar -- no
+    caso que motivou o conserto, o documento do imovel montado a partir do
+    arquivo importado. Agora ela extrai `status_code`, `error.type` e
+    `error.message` do `body`, como o `infra/anthropic.py` ja fazia.
     """
     if not isinstance(exc, APIStatusError):
         return None
-    return f"{exc.status_code}: {str(exc)[:MAX_CARACTERES_DO_MOTIVO]}"
+
+    corpo = exc.body if isinstance(exc.body, dict) else {}
+    erro = corpo.get("error")
+    erro = erro if isinstance(erro, dict) else {}
+
+    tipo = erro.get("type")
+    mensagem = erro.get("message")
+
+    partes = [str(exc.status_code)]
+    if isinstance(tipo, str) and tipo:
+        partes.append(tipo)
+    resumo = " ".join(partes)
+    if isinstance(mensagem, str) and mensagem:
+        cortada = mensagem[:MAX_CARACTERES_DO_MOTIVO]
+        sufixo = "..." if len(mensagem) > MAX_CARACTERES_DO_MOTIVO else ""
+        resumo = f"{resumo}: {cortada}{sufixo}"
+    return resumo

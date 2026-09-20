@@ -11,6 +11,7 @@ from mobia.app.config import Settings, get_settings
 from mobia.app.logging import correlation_id
 from mobia.domain.messages.schemas import parse_meta_envelope
 from mobia.domain.messages.service import IngestionService
+from mobia.infra.db import motivo_do_erro_de_banco
 from mobia.infra.signature import SIGNATURE_HEADER, is_valid_signature
 
 log = structlog.get_logger(__name__)
@@ -80,10 +81,15 @@ async def ingest(
         # aqui faria a Meta re-entregar um payload que ninguem consegue ler --
         # puro ruido, porque a re-entrega falharia no mesmo ponto. Payload
         # assinado mas malformado nao tem o que perder: 200 e o certo.
+        # Sem `detail`: o envelope da Meta e entrada externa por definicao, e o
+        # eco do texto de uma excecao sobre ele nao tem garantia de formato --
+        # o parser pode encontrar qualquer coisa dentro de um JSON de terceiro.
+        # `reason` (o nome da classe) basta para saber ONDE olhar. O
+        # `log.exception` continua emitindo o traceback completo, e isso fica
+        # de fora desta card -- e classe D no desenho, nao classe A.
         log.exception(
             "webhook.error",
             reason=type(exc).__name__,
-            detail=str(exc),
             payload_sha256=payload_sha256,
         )
         return Response(status_code=200)
@@ -107,10 +113,16 @@ async def ingest(
     try:
         await service.ingest(parsed)
     except Exception as exc:
+        # `detail` vem curado por `motivo_do_erro_de_banco`, mas o
+        # `log.exception` abaixo continua despejando o traceback completo --
+        # que termina no `IntegrityError: ... DETAIL: ...` do asyncpg do jeito
+        # que `hide_parameters` nao alcanca. A curadoria do `detail` convive
+        # com esse traceback; fecha-lo e classe D no desenho e ficou fora
+        # desta card, mesma ressalva do `webhook.error` acima.
         log.exception(
             "webhook.persist_failed",
             reason=type(exc).__name__,
-            detail=str(exc),
+            detail=motivo_do_erro_de_banco(exc),
             remote_ip=remote_ip,
             payload_sha256=payload_sha256,
         )

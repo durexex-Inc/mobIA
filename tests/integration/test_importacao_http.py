@@ -228,7 +228,16 @@ async def test_sem_enqueue_a_linha_fica_em_falhou_com_motivo(app_sem_pool):
 
 
 async def test_enqueue_que_levanta_tambem_marca_falhou(app_com_token, monkeypatch, redis_pool):
-    """Redis no ar mas `enqueue_job` levantando: mesma consequencia, mesmo desfecho."""
+    """Redis no ar mas `enqueue_job` levantando: mesma consequencia, mesmo desfecho.
+
+    Ate a TEC-292 esta assercao conferia que o texto da excecao ("redis fora
+    do ar") chegava ao `motivo`. Isso e exatamente o vetor que a TEC-292
+    fecha: `importacao.erros` e coluna duravel que o GET devolve por HTTP, e
+    texto de terceiro (aqui, um `ConnectionError` que um teste escreveu, mas
+    em producao seria o driver do Redis) nao pode sair por esse caminho. O
+    teste agora prova o oposto do que provava antes: o tipo da excecao chega,
+    o texto dela nao.
+    """
 
     async def explode(*args, **kwargs):
         raise ConnectionError("redis fora do ar")
@@ -248,4 +257,6 @@ async def test_enqueue_que_levanta_tambem_marca_falhou(app_com_token, monkeypatc
     )
     corpo = consulta.json()
     assert corpo["status"] == "FALHOU"
-    assert "redis fora do ar" in corpo["erros"][0]["motivo"]
+    motivo = corpo["erros"][0]["motivo"]
+    assert "ConnectionError" in motivo
+    assert "redis fora do ar" not in motivo

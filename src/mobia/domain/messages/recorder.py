@@ -9,6 +9,7 @@ from mobia.app.config import PRECOS_POR_MODELO
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.infra.crypto import aad_de, encrypt
+from mobia.infra.db import motivo_do_erro_de_banco
 
 log = structlog.get_logger(__name__)
 
@@ -133,7 +134,7 @@ class MessageRecorder:
                 "message.record_failed",
                 conversation_key=conversation_key,
                 reason=type(exc).__name__,
-                detail=str(exc),
+                detail=motivo_do_erro_de_banco(exc),
             )
             return None
 
@@ -200,7 +201,7 @@ class MessageRecorder:
                 "telemetry.record_failed",
                 message_id=str(message_id),
                 reason=type(exc).__name__,
-                detail=str(exc),
+                detail=motivo_do_erro_de_banco(exc),
             )
             return
 

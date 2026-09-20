@@ -24,6 +24,7 @@ from mobia.domain.catalogo.models import Importacao
 from mobia.domain.catalogo.parser import ArquivoInvalido, parsear
 from mobia.domain.catalogo.repositorio import TAMANHO_DO_LOTE, sincronizar
 from mobia.domain.catalogo.schemas import RegistroImovel, Rejeicao, Relatorio
+from mobia.infra.db import motivo_do_erro_de_banco
 
 log = structlog.get_logger(__name__)
 
@@ -70,6 +71,13 @@ async def executar(
         # Nao e "uma linha": o arquivo inteiro nao pode ser processado. Linha 0
         # porque o relatorio precisa carregar o motivo em algum lugar, e
         # nenhuma linha real tem esse numero.
+        #
+        # `str(erro)` fica -- de proposito, nao por descuido de varredura.
+        # `ArquivoInvalido` e excecao do proprio projeto, e o que ela
+        # interpola e o nome do arquivo que o proprio cliente enviou: o texto
+        # so devolve ao remetente o que ele mesmo mandou. O vetor de texto de
+        # terceiro que este modulo fecha (abaixo, no `except Exception`) e
+        # outro: a excecao do banco na gravacao.
         relatorio.registrar_falha(Rejeicao(linha=0, motivo=str(erro)))
         await _concluir(sessionmaker, importacao_id, relatorio)
         log.warning(
@@ -106,7 +114,21 @@ async def executar(
     except Exception as erro:  # excecao ampla e deliberada -- ver docstring do modulo
         # Os lotes ja comitados ficam. O relatorio guarda os totais parciais
         # reais, que e mais util que "nada aconteceu".
-        relatorio.registrar_falha(Rejeicao(linha=0, motivo=f"falha durante a gravacao: {erro}"))
+        #
+        # Sem `str(erro)` cru: este `except` pega excecao de SQLAlchemy, e
+        # numa violacao de CHECK o Postgres poe a LINHA INTEIRA do arquivo
+        # importado no `DETAIL`. E `relatorio.erros` vira `importacao.erros`
+        # (em `_concluir`, abaixo), a mesma coluna duravel que
+        # `GET /api/v1/imoveis/importacoes/{id}` devolve por HTTP -- ver
+        # `api/routes/imoveis.py`. `motivo_do_erro_de_banco` extrai campos em
+        # vez de repassar texto, e devolve `None` quando `erro` nao e do
+        # driver; o tipo da excecao entra sempre, para o motivo nunca ficar
+        # vazio.
+        motivo_do_banco = motivo_do_erro_de_banco(erro)
+        motivo = f"falha durante a gravacao ({type(erro).__name__})"
+        if motivo_do_banco is not None:
+            motivo = f"{motivo}: {motivo_do_banco}"
+        relatorio.registrar_falha(Rejeicao(linha=0, motivo=motivo))
         await _concluir(sessionmaker, importacao_id, relatorio)
         log.exception(
             "catalogo.importacao_interrompida",
