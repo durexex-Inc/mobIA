@@ -1,8 +1,14 @@
 """Os textos que o lead recebe ao ser encaminhado. TEC-137.
 
-Puro: nao toca banco nem modelo. O que se testa aqui e o CONTEUDO -- em
-especial que nenhum dos dois promete que alguem foi avisado, que e a frase que
-este repo ja reescreveu duas vezes (TEC-174 e TEC-143).
+Puro: nao toca banco nem modelo. O que se testa aqui e o que e PROPRIO destes
+dois textos: serem distintos, nao terminarem em pergunta, e o sufixo de fora
+da janela formatar as horas sem marcar hora de resposta.
+
+**A promessa de contato nao e guardada aqui desde a TEC-286.** Ela era, e por
+tres palavras (`avisei`/`avisamos`/`avisado`) -- alcance curto demais: o texto
+do teto de perguntas prometia contato sem usar nenhuma das tres e passou por
+tres revisoes. Quem guarda isso hoje e `tests/unit/test_promessa_ao_lead.py`,
+que barra frases e roda sobre todo literal ao lead, estes dois inclusive.
 """
 
 import pytest
@@ -13,26 +19,6 @@ from mobia.domain.agente.turno import (
     TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE,
     TEXTO_DO_ENCAMINHAMENTO_DE_VENDA,
 )
-
-
-@pytest.mark.parametrize(
-    "texto",
-    [TEXTO_DO_ENCAMINHAMENTO_DE_VENDA, TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE],
-)
-def test_nenhum_texto_promete_que_alguem_foi_avisado(texto: str) -> None:
-    """A frase que o repo ja reescreveu duas vezes, barrada por teste.
-
-    `notificacao/envio.py` proibe a promessa por escrito e nomeia o precedente:
-    a TEC-174 escreveu "ja avisei um corretor" e teve de reescrever, porque
-    nada notificava. A TEC-143 a reintroduziu e a revisao final a pegou. Desde
-    a TEC-280 o e-mail entrega, mas o whatsapp ao corretor (TEC-281) continua
-    so registrando -- prometer aviso ao lead continua sendo promessa que o
-    sistema nao cumpre inteira.
-    """
-    minusculo = texto.lower()
-    assert "avisei" not in minusculo
-    assert "avisamos" not in minusculo
-    assert "avisado" not in minusculo
 
 
 def test_os_dois_textos_sao_distintos() -> None:
