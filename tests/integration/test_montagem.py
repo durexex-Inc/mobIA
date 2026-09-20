@@ -656,10 +656,17 @@ async def test_o_truncamento_sem_modelo_corta_sem_falar_com_o_provedor() -> None
     round trip acima do limiar. Chamado do estouro do deadline, isso seria
     gastar a chamada que nao ha mais tempo de fazer.
 
-    5000 caracteres por mensagem, e nao os 4000 do outro teste: com 4000 a
-    estimativa pessimista de oito mensagens fica abaixo do
-    `teto_de_tokens_efetivo` (10940 hoje) e o laco de truncamento nunca
-    dispara -- o teste passaria vazio, sem exercitar `sem_modelo` nenhum.
+    5000 caracteres por mensagem, no lugar dos 4000 do outro teste, por uma
+    razao que ja nao vale. Antes da TEC-225 trocar a formula de `_estimar`,
+    4000 caracteres por mensagem (oito literais) mantinham a estimativa
+    pessimista abaixo do `teto_de_tokens_efetivo` e o laco de truncamento
+    nunca disparava -- o teste passaria vazio, sem exercitar `sem_modelo`
+    nenhum, e por isso a escolha caiu em 5000. **Essa razao se perdeu.**
+    Medido com a formula ciente de densidade (TEC-225): 8 x 4000 caracteres
+    ASCII ja estimam 17.518 tokens pessimistas, bem acima do teto efetivo de
+    hoje (10.300) -- tanto 4000 quanto 5000 disparam o truncamento agora.
+    O teste continua com 5000 por continuidade com a versao anterior, nao
+    porque so 5000 exercite o laco.
     """
     literais = [_mensagem_literal(corpo="x" * 5000) for _ in range(8)]
     teto = get_settings().teto_de_tokens_efetivo

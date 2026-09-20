@@ -462,9 +462,15 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     dizer a faixa tambem em prosa repetia o que a description ja carregava.
 
     O teto fixo passou de 9,0 abaixo do teto derivado (795,0) para 2,0
-    abaixo dele: qualquer alta acima de +2 no fixo passa a exigir subir
-    `contexto_headroom_de_tokens` junto, o que custa historico de conversa
-    por turno -- essa e a margem apertada que a proxima card herda.
+    abaixo dele: qualquer alta acima de +2 no fixo exigiria subir
+    `contexto_headroom_de_tokens` junto -- margem apertada que ficou para a
+    TEC-225 herdar, e que a TEC-225 de fato gastou ao medir a reserva contra
+    o contador real. Hoje o derivado e `1700 * 0,75 = 1275` (a reserva subiu
+    para 1700 -- ver o comentario de `contexto_headroom_de_tokens`), 482
+    acima do fixo: a margem apertada nao existe mais. O acoplamento que o
+    CLAUDE.md descreve continua de pe -- o fixo segue sendo o mais apertado
+    dos dois --, so que a distancia entre eles parou de ser o risco imediato
+    que era.
 
     O teto fixo NAO foi para 800. As duas redacoes mais longas cabem, em
     tokens brutos, no teto derivado de 795,0: `nem desconto` fica em 790,00
