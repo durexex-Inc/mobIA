@@ -32,7 +32,7 @@ Local, com a venv do projeto:
 ./.venv/Scripts/python.exe -m pytest                        # serial, quando precisar
 ```
 
-**Para a suíte inteira, use `-n 8 --dist loadfile`.** Medido em 12/09/2026, Python 3.13.15, máquina ociosa, 1614 testes: serial são **170,9s**, com `-n 8` são **~49s** (cinco execuções entre 48,7s e 51,1s). `-n 12` quase não melhora sobre o 8. O número de 07/09/2026 (TEC-156), ~22 minutos, está velho.
+**Para a suíte inteira, use `-n 8 --dist loadfile`.** Medido em 12/09/2026, Python 3.13.15, máquina ociosa, 1614 testes: serial são **170,9s**, com `-n 8` são **~49s** (cinco execuções entre 48,7s e 51,1s). `-n 12` quase não melhora sobre o 8. O número de 07/09/2026 (TEC-156), ~22 minutos, está velho. Remedido em 19/09/2026, mesma máquina e mesmo Python, já com **2513 testes**: **67,0s** com `-n 8 --dist loadfile` — a suíte cresceu 56% e continuou abaixo de 70 segundos.
 
 **Só que há dias em que `-n 8` não é executável aqui — ver "Quando o `-n 8` derruba o Postgres", abaixo.** Se a execução voltar com centenas de `ERROR` de setup, não repita o mesmo comando: o problema não é o código nem a sua branch, e insistir no mesmo `-n` só reproduz a queda.
 
