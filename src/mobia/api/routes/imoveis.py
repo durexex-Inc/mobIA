@@ -84,7 +84,14 @@ async def importar(
         try:
             await pool.enqueue_job("importar_catalogo", str(importacao_id))
         except Exception as erro:  # ampla de proposito -- ver `_marcar_falha`
-            motivo = f"falha ao enfileirar o job: {erro}"
+            # Sem interpolar `erro`: este valor tem DOIS destinos -- o log
+            # abaixo (`catalogo.importacao_nao_enfileirada`) e a coluna
+            # duravel `importacao.erros`, que o GET desta rota devolve ao
+            # cliente por HTTP. Pelo argumento da TEC-222 -- destino duravel e
+            # fora da mascara nao pode carregar texto de terceiro --, e aqui e
+            # pior do que naquele caso porque o valor sai por HTTP. O tipo da
+            # excecao basta para nomear a falha sem repassar o texto dela.
+            motivo = f"falha ao enfileirar o job: {type(erro).__name__}"
 
     if motivo is not None:
         await _marcar_falha(importacao_id, motivo)

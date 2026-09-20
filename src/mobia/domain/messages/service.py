@@ -14,6 +14,7 @@ from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.status import MessageStatus
 from mobia.infra.crypto import aad_de, encrypt, encrypt_json
+from mobia.infra.db import motivo_do_erro_de_banco
 from mobia.infra.queue import enqueue_process_message
 
 log = structlog.get_logger(__name__)
@@ -121,6 +122,11 @@ class IngestionService:
         try:
             await enqueue_process_message(self._queue, message_id)
         except Exception as exc:
+            # `detail=str(exc)` fica: o unico argumento deste job e um UUID que
+            # o proprio projeto gerou (`str(message_id)`), entao nao ha entrada
+            # externa para a excecao ecoar. O que sobra e texto de nivel de
+            # conexao (`Error 111 connecting to ...`), que e o que se quer ler
+            # quando a fila cai -- nao ha aqui o vetor que motivou a TEC-292.
             log.warning(
                 "enqueue.failed",
                 message_id=str(message_id),
@@ -161,7 +167,7 @@ class IngestionService:
                 "queued_flag.failed",
                 message_id=str(message_id),
                 reason=type(exc).__name__,
-                detail=str(exc),
+                detail=motivo_do_erro_de_banco(exc),
             )
             return
 

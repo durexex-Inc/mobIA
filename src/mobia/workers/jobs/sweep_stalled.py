@@ -98,6 +98,11 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
         try:
             novo = await enqueue_process_message(redis, message_id)
         except Exception as exc:
+            # `detail=str(exc)` fica: o unico argumento deste job e um UUID que
+            # o proprio projeto gerou (`str(message_id)`), entao nao ha entrada
+            # externa para a excecao ecoar. O que sobra e texto de nivel de
+            # conexao (`Error 111 connecting to ...`), que e o que se quer ler
+            # quando a fila cai -- nao ha aqui o vetor que motivou a TEC-292.
             log.warning(
                 "sweep.enqueue_failed",
                 message_id=str(message_id),
