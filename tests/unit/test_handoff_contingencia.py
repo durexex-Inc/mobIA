@@ -103,8 +103,10 @@ def test_um_campo_absurdamente_longo_e_truncado_e_nao_faz_montar_levantar() -> N
     esse caso cabia -- so que aquele teste usava `regiao` com 47 de 120,
     nunca o maximo real da coluna. Quem lesse os dois testes juntos nao via
     a lacuna: `regiao=120` SOZINHO ja estourava (1521 de 1500), e foi essa
-    lacuna que o Critical da revisao final encontrou (ver o comentario de
-    `contingencia.TETO_DE_IMOVEIS` para as medicoes).
+    lacuna que o Critical da revisao final encontrou. As medicoes viviam num
+    comentario acima de `TETO_DE_IMOVEIS`, que a TEC-276 removeu junto com o
+    teto fixo: hoje elas sao
+    `test_o_pior_caso_do_banco_cabe_e_nao_levanta`, neste arquivo.
 
     A correcao (Critical 1a) deu teto a TODO campo de texto livre, nao so as
     listas. Consequencia: `montar` agora TRUNCA um valor absurdo em vez de
@@ -127,8 +129,9 @@ def test_todo_campo_de_valor_unico_no_maximo_da_coluna_ainda_cabe() -> None:
     teste poe cada campo de valor unico (e os por-item de `imoveis`) no
     maior tamanho REAL que ele assume -- o da coluna quando o campo e texto
     livre, o do enum quando e um vocabulario fechado -- simultaneamente, e
-    confere que `montar` ainda cabe. Ver a tabela de medicao no comentario
-    de `contingencia.TETO_DE_IMOVEIS` para os valores que NAO cabem.
+    confere que `montar` ainda cabe. Os valores que NAO cabem deixaram de
+    estar escritos em prosa na TEC-276 -- quem quiser o numero de hoje roda
+    `test_o_pior_caso_do_banco_cabe_e_nao_levanta`.
     """
     muitos_imoveis = tuple(
         ImovelApresentado(
@@ -273,9 +276,10 @@ def test_a_lista_de_imoveis_mostra_os_mais_recentes_do_mais_novo_ao_mais_antigo(
     `imoveis()` fazia `dossie.imoveis[:teto]` -- os PRIMEIROS da lista, ou
     seja, os mais VELHOS. A D6 do desenho pede o oposto, com exemplo
     literal: "30 imoveis apresentados, os 5 mais recentes". Este teste prova
-    que os `TETO_DE_IMOVEIS` mostrados sao os ULTIMOS da lista (os mais
-    recentes) e aparecem do mais novo para o mais antigo -- ver o porque
-    dessa ordem no docstring de `dossie.imoveis`.
+    que os mostrados sao os ULTIMOS da lista (os mais recentes) e aparecem
+    do mais novo para o mais antigo -- ver o porque dessa ordem no docstring
+    de `dossie.imoveis`. QUANTOS sao passou a ser do orcamento (TEC-276);
+    quais, continua sendo regra.
     """
     imoveis_em_ordem_de_apresentacao = _muitos_imoveis(40)
     texto = montar(_dossie(imoveis=imoveis_em_ordem_de_apresentacao))
@@ -333,6 +337,11 @@ def test_os_seis_marcadores_estao_na_ordem() -> None:
     assert posicoes == sorted(posicoes)
 
 
+def _maior_membro(enum: type) -> str:
+    """O membro de maior `value` -- o pior caso de um vocabulario fechado."""
+    return max((m.value for m in enum), key=len)
+
+
 def _pior_caso_do_banco(*, imoveis_no_dossie: int = 40, itens_por_lista: int = 50) -> Dossie:
     """O dossie mais longo que as COLUNAS conseguem produzir. TEC-276.
 
@@ -347,15 +356,14 @@ def _pior_caso_do_banco(*, imoveis_no_dossie: int = 40, itens_por_lista: int = 5
     `ARRAY(String(32))` nao tem cardinalidade maxima no banco: 50 itens de
     32 caracteres e o pior caso plausivel, nao um limite da coluna.
     """
-    maior = lambda enum: max((m.value for m in enum), key=len)  # noqa: E731
     return _dossie(
         canal="w" * TETO_CANAL,
         conversa="9" * TETO_CONVERSA,
-        intencao=maior(Intencao),
+        intencao=_maior_membro(Intencao),
         regiao="R" * TETO_REGIAO,
-        tipo_imovel=maior(TipoImovel),
-        urgencia=maior(Urgencia),
-        forma_pagamento=maior(FormaPagamento),
+        tipo_imovel=_maior_membro(TipoImovel),
+        urgencia=_maior_membro(Urgencia),
+        forma_pagamento=_maior_membro(FormaPagamento),
         faixa_min_centavos=99_999_999_999,
         faixa_max_centavos=99_999_999_999,
         quartos=99,
@@ -366,13 +374,17 @@ def _pior_caso_do_banco(*, imoveis_no_dossie: int = 40, itens_por_lista: int = 5
         temperatura_forcada_motivos=("PEDIU_VISITA", "FALOU_EM_PROPOSTA"),
         imoveis=tuple(
             ImovelApresentado(
-                "C" * TETO_CODIGO, 99_999_999_999, "aluguel", "DESCARTOU", maior(CategoriaDescarte)
+                "C" * TETO_CODIGO,
+                99_999_999_999,
+                "aluguel",
+                "DESCARTOU",
+                _maior_membro(CategoriaDescarte),
             )
             for _ in range(imoveis_no_dossie)
         ),
         campos_recusados=tuple("r" * 32 for _ in range(itens_por_lista)),
         perguntados_sem_resposta=tuple("p" * 32 for _ in range(itens_por_lista)),
-        gatilho=maior(Gatilho),
+        gatilho=_maior_membro(Gatilho),
         etiqueta=max(ETIQUETA_DE.values(), key=len),
     )
 
