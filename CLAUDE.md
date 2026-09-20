@@ -68,7 +68,20 @@ Não é. O socket cru já responde `N` ao SSLRequest e o `psql` interno funciona
 
 Duas consequências práticas. Uma falha isolada com esse traceback **não autoriza conclusão nenhuma** — nem a favor nem contra a sua mudança. E um critério de aceite do tipo "passa nas 20 seguidas" pode ser inalcançável nesta máquina sem que nada esteja errado com o código: antes de culpar o que você escreveu, rode a versão ANTIGA o mesmo número de vezes.
 
-**Testes de integração flakeiam sob carga, não isolados.** `test_montagem.py`, `test_sweep_stalled.py`, `test_dedup_por_message_id.py` e `test_optout_repositorio.py` falham com `ConnectionResetError` ou erro de Redis quando a suíte inteira roda junta, e passam 100% em isolamento. Antes de atribuir uma falha dessas a uma mudança sua, rode o arquivo sozinho.
+**Testes de integração flakeiam sob carga, e rodar o arquivo sozinho é o primeiro diagnóstico — mas isso depende da máquina.** `test_montagem.py`, `test_sweep_stalled.py`, `test_dedup_por_message_id.py` e `test_optout_repositorio.py` falham com `ConnectionResetError` ou erro de Redis quando a suíte inteira roda junta. Em isolamento, as duas medições que existem discordam, e as duas estão certas:
+
+| quando | onde | resultado |
+| --- | --- | --- |
+| 09/09/2026 (TEC-268) | máquina anterior | `test_dedup_por_message_id.py` sozinho reprovou **3 de 5**, com `redis.exceptions.ConnectionError` em `localhost:6380` — WinError 64 no **Redis**, não no Postgres |
+| 20/09/2026 (TEC-268) | máquina atual | **75 execuções isoladas** dos quatro arquivos, **0 falhas** (30 do dedup, 15 de cada um dos outros) |
+
+**Então "passa isolado" é evidência forte, não prova** — e "reprova isolado" não é prova de regressão sua. Antes de atribuir a falha à sua mudança, rode o arquivo sozinho; se ele reprovar, rode a versão ANTIGA o mesmo número de vezes antes de concluir qualquer coisa. Foi por isso que a TEC-162 e a TEC-159 usaram comparação contra **baseline numerado** em vez de "suíte verde" como critério de aceite.
+
+Para saber se a propriedade vale na SUA máquina, não confie nesta tabela — refaça a conta em ~13 minutos:
+
+```bash
+./.venv/Scripts/python.exe scripts/taxa_de_flake.py
+```
 
 ## Quando o `-n 8` derruba o Postgres
 
