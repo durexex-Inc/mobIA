@@ -60,3 +60,41 @@ async def dispose_engine() -> None:
         await _engine.dispose()
     _engine = None
     _sessionmaker = None
+
+
+def motivo_do_erro_de_banco(exc: BaseException) -> str | None:
+    """O porque de um erro do Postgres, sem a linha que o causou.
+
+    **O vetor nao e o que parece.** `hide_parameters=True`, logo acima, cala o
+    eco de parametros da SQLAlchemy -- e ele funciona: o texto do erro traz
+    `[SQL parameters hidden due to hide_parameters=True]`. O que vaza e a linha
+    `DETAIL`, que o SERVIDOR escreve e nenhuma configuracao de cliente alcanca:
+
+        UNIQUE -> DETAIL:  Key (channel, provider_message_id)=(whatsapp, wamid...)
+        CHECK  -> DETAIL:  Failing row contains (5511987654321, quero 2 quartos, -1)
+
+    O segundo despeja a LINHA INTEIRA. Medido na TEC-292.
+
+    Dai extrair campos em vez de repassar texto. `sqlstate`, `table_name` e
+    `constraint_name` vivem na excecao do asyncpg, que a SQLAlchemy embrulha --
+    por isso o `orig.__cause__`. `detail` fica de fora de proposito: e ele o
+    vetor.
+
+    **Isto e diagnostico melhor, nao pior.** `23514 constraint_name=ck_...` e
+    estruturado e greppavel; `str(exc)` obrigava a ler prosa para chegar no
+    mesmo, e trazia os dados junto.
+
+    Devolve `None` para o que nao for erro do driver -- sem ramo de melhor
+    esforco, que seria o buraco que esta funcao existe para nao abrir.
+    """
+    origem = getattr(exc, "orig", None)
+    causa = getattr(origem, "__cause__", None)
+    sqlstate = getattr(causa, "sqlstate", None)
+    if not isinstance(sqlstate, str):
+        return None
+    partes = [sqlstate]
+    for campo in ("table_name", "constraint_name"):
+        valor = getattr(causa, campo, None)
+        if isinstance(valor, str) and valor:
+            partes.append(f"{campo}={valor}")
+    return " ".join(partes)
