@@ -45,8 +45,10 @@ class QuedaDePreco:
 # O fallback da card quando nao ha novidade nenhuma. **Nao e saudacao**: a
 # RN-13.2 proibe "oi, tudo bem?" solto, e o que separa um do outro e pedir
 # algo concreto. A regra de negocio oferece "ou tarefa para o corretor" como
-# alternativa, mas quem notifica corretor e a TEC-280/281, ainda abertas --
-# entao este e o unico caminho vivo (L2 do desenho).
+# alternativa, mas essa tarefa nao existe em codigo -- e o aviso que a
+# informaria depende do e-mail (TEC-280, que ja entrega por SMTP) e do
+# whatsapp (TEC-281, que ainda so registra) -- entao este e o unico caminho
+# vivo (L2 do desenho).
 CONVITE_PARA_AGENDAR = "Quer agendar uma visita para conhecer algum dos imóveis que vimos?"
 
 
