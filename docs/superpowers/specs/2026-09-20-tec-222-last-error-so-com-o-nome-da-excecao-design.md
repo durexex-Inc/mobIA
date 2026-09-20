@@ -43,7 +43,9 @@ raise ModeracaoIndisponivel(motivo_do_provedor(exc) or type(exc).__name__) from 
 
 `motivo_do_provedor` (`infra/anthropic.py:173`) devolve até 300 caracteres da `error.message` de um `APIStatusError` — prosa que o servidor da Anthropic escreveu em resposta a uma requisição cujo corpo é o texto moderado.
 
-O caminho até a coluna é direto e está declarado por escrito no código. Na moderação de **saída** não há falha aberta, de propósito (`turno.py:2160-2164`: *"A excecao propaga: a linha vira FAILED com `attempts` e o sweeper retenta"*). Ela sobe de `turno.py:2176` ao `except Exception` de `process_message.py:291`, e de lá para `_marcar_falha`.
+O caminho até a coluna é direto e está declarado por escrito no código. Na moderação de **saída** não há falha aberta, de propósito (`turno.py:2160-2164`: *"A excecao propaga: a linha vira FAILED com `attempts` e o sweeper retenta"*). Ela sobe de `turno.py:2176` ao `except Exception` de `process_message.py`, e de lá para `_marcar_falha`.
+
+> Os números de linha desta seção descrevem a árvore **antes** desta branch, que é o estado que o desenho analisa. Em `process_message.py` eles já não valem: partir a função moveu tudo abaixo dela, e o `except Exception` que era a linha 291 passou a ser a 325. Citar o `except` pelo nome em vez do número é o que impede esta frase de envelhecer de novo.
 
 **De onde vem a aceitação do risco, e o quanto ela cobre este destino.** O docstring de `motivo_do_provedor` (`anthropic.py:200-210`) admite o risco por escrito e o limita com três coisas: o teto de caracteres, o mascaramento de dígitos de `app/logging.py`, e o formato da chamada do classificador.
 
@@ -99,7 +101,7 @@ O sentinela tem no máximo 38 caracteres, pela truncagem medida acima. Escrever 
 
 Ele afirma a divisão do D1 **nos dois sentidos**: o sentinela não está na coluna, **e está** no evento `message.failed` do log. Só a primeira metade deixaria passar uma implementação que emudecesse o log junto — que é regressão de diagnóstico, não segurança. A leitura do log usa `eventos_de_log` (`tests/conftest.py:1201`), o helper único da TEC-289, e não `caplog.text`.
 
-**T3 — a inversão.** `test_erro_do_proprio_projeto_mantem_a_mensagem` (`tests/features/test_reprocessamento_apos_falha.py:255`) afirma hoje a premissa que esta card derruba, e o docstring dele a enuncia: *"excecao de `mobia` teve a mensagem escrita aqui dentro -- sabe-se o que ela carrega"*. Ele inverte, e o docstring novo registra por que a premissa caiu — não basta mudar a asserção e deixar a justificativa velha de pé, que é o defeito que a seção "Comentário não mente" do `CLAUDE.md` trata como erro.
+**T3 — a inversão.** `test_erro_do_proprio_projeto_mantem_a_mensagem`, em `tests/features/test_reprocessamento_apos_falha.py`, afirma hoje a premissa que esta card derruba, e o docstring dele a enuncia: *"excecao de `mobia` teve a mensagem escrita aqui dentro -- sabe-se o que ela carrega"*. Ele inverte, e o docstring novo registra por que a premissa caiu — não basta mudar a asserção e deixar a justificativa velha de pé, que é o defeito que a seção "Comentário não mente" do `CLAUDE.md` trata como erro.
 
 `test_erro_de_terceiro_nao_leva_a_mensagem_para_last_error` (`:233`) continua valendo palavra por palavra e não muda.
 
