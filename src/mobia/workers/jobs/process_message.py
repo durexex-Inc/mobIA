@@ -411,6 +411,8 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # feita. Ha tres excecoes, tratadas logo abaixo: opt-out, pedido de
         # humano e entrega parcial pendente. Nos tres o turno roda mesmo
         # superada.
+        deve_fechar_como_agrupado = False
+        corpo_da_superada: str | None = None
         async with session_factory() as session:
             if await superada_por_mais_nova(session, linha):
                 # A excecao do opt-out existe por um defeito que a TEC-182
@@ -455,21 +457,46 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 elif await _tem_entrega_parcial_pendente(session_factory, identifier):
                     log.info("message.entrega_parcial_fura_a_janela", message_id=message_id)
                 else:
-                    # TEC-295: a superada e moderada aqui, e so aqui. Nos tres
-                    # ramos acima o turno roda e a moderacao acontece pelo
-                    # caminho normal de `turno.py`.
-                    if corpo:
-                        await _moderar_superada(
-                            session_factory, linha, corpo, moderador=ctx["moderador"]
-                        )
-                    await session.execute(
-                        update(Message)
-                        .where(Message.id == identifier)
-                        .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
-                    )
-                    await session.commit()
-                    log.info("message.agrupado", message_id=message_id)
-                    return "agrupado"
+                    # TEC-295: a superada e moderada so neste ramo, o do
+                    # agrupado. Dos outros dois ramos acima -- opt-out e
+                    # pedido de humano --, os dois RETORNAM antes da
+                    # moderacao de entrada de `turno.py` (`turno.py:1177` e
+                    # `turno.py:1307`), entao essa fala segue sem ser
+                    # moderada -- buraco pre-existente, que esta card nao
+                    # fecha. So o ramo da entrega parcial, que nao retorna
+                    # cedo, cai na moderacao normal do turno. A moderacao em
+                    # si roda fora da sessao de leitura, logo abaixo -- ver o
+                    # comentario la.
+                    deve_fechar_como_agrupado = True
+                    corpo_da_superada = corpo
+
+        if deve_fechar_como_agrupado:
+            # A sessao acima (que rodou `superada_por_mais_nova`) ja fechou
+            # antes desta linha. `_moderar_superada` e uma chamada HTTP paga
+            # com timeout de 5s; roda-la dentro da sessao de leitura deixaria
+            # a conexao `idle in transaction`, segurando `ACCESS SHARE` sobre
+            # `messages` pela latencia inteira do provedor -- numa rajada de N
+            # mensagens, N workers presos no pool por isso. E a mesma dor que
+            # o CLAUDE.md registra para o `TRUNCATE` de `banco_limpo`
+            # (TEC-291). A ordem logica nao muda: a moderacao continua
+            # acontecendo antes do UPDATE, e so no ramo do agrupado -- so a
+            # sessao que a envolve mudou, e o UPDATE ganha a sessao propria
+            # de baixo, isolada, do mesmo jeito que o `turno.py` normal ja
+            # usa uma sessao por operacao.
+            bloqueada = False
+            if corpo_da_superada:
+                bloqueada = await _moderar_superada(
+                    session_factory, linha, corpo_da_superada, moderador=ctx["moderador"]
+                )
+            async with session_factory() as session:
+                await session.execute(
+                    update(Message)
+                    .where(Message.id == identifier)
+                    .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
+                )
+                await session.commit()
+            log.info("message.agrupado", message_id=message_id, bloqueada=bloqueada)
+            return "agrupado"
 
         # TEC-274, RN-04.7. O relogio mede o turno INTEIRO -- contexto,
         # resumo, modelo e as duas moderacoes --, e nao so a chamada ao
