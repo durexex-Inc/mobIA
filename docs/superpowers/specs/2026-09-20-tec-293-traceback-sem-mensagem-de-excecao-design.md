@@ -82,7 +82,9 @@ Percorrer só `__cause__` perderia o encadeamento implícito, que é metade dos 
 - `__cause__` → `The above exception was the direct cause of the following exception:`
 - `__context__` → `During handling of the above exception, another exception occurred:`
 
-`__suppress_context__` é respeitado, senão `raise ... from None` — que existe justamente para esconder o contexto — passaria a exibi-lo. E a travessia guarda os nós já vistos: cadeia cíclica é construível em Python e penduraria o logger, que é o pior lugar possível para um laço infinito.
+`__suppress_context__` é respeitado, senão `raise ... from None` — que existe justamente para esconder o contexto — passaria a exibi-lo.
+
+**A travessia não leva guarda de ciclo própria, e a razão é medida.** Cadeia cíclica é construível em Python (`a.__cause__ = b; b.__cause__ = a`) e penduraria o logger, que é o pior lugar possível para um laço infinito — mas quem a corta é o próprio `TracebackException`, que guarda os nós já vistos ao construir: medido, `te.__cause__.__cause__` vem `None`. Uma guarda nossa por cima nunca dispararia, e código morto que se apresenta como proteção é pior que nenhum. Em troca, um teste fixa o comportamento — é garantia de terceiro da qual passamos a depender.
 
 Medido nos três modos: `from exc` (883 → 605 car.), implícito (815 → 604) e `from None` (261 → 195), com a fala do lead ausente nos três e o elo correto em cada um.
 
