@@ -183,11 +183,19 @@ def test_sweep_importacoes_travadas_esta_registrado_no_cron_de_cinco_em_cinco_mi
 
 
 def test_job_timeout_cabe_dentro_da_janela_do_sweeper() -> None:
-    """Os dois numeros sao acoplados e moram em arquivos diferentes.
+    """Tres numeros sao acoplados, e moram em dois arquivos diferentes.
 
-    `job_timeout` >= `sweep_inflight_after_seconds` faria o sweeper
-    reenfileirar um turno ainda em voo: a mesma conversa rodaria duas vezes em
-    paralelo, pagando duas classificacoes.
+    `sweep_inflight_after_seconds` mede `COALESCE(queued_at, created_at)`
+    (`sweep_stalled.py`) -- e `queued_at` e carimbado na INGESTAO, antes da
+    janela de debounce da RN-01.6 (TEC-128). O orcamento real entre o carimbo
+    e o fim do turno nao e so `job_timeout`: e `debounce_de_rajada_segundos +
+    job_timeout`, porque toda mensagem espera a janela antes de o job sequer
+    comecar (D1 do desenho da TEC-128 -- o debounce e incondicional). Sem a
+    janela na conta, `job_timeout` sozinho caber dentro do sweeper nao
+    garante nada: com os defaults de hoje 240 < 300 tambem seria verdade se a
+    janela fosse 59s, e mesmo assim o sweeper reenfileiraria um turno ainda em
+    voo -- a mesma conversa rodaria duas vezes em paralelo, pagando duas
+    classificacoes.
 
     **A outra metade desta invariante -- o turno real caber no `job_timeout` --
     NAO esta aqui**, e ja esteve. Ate a TEC-229 este teste tambem afirmava
@@ -210,7 +218,11 @@ def test_job_timeout_cabe_dentro_da_janela_do_sweeper() -> None:
     from mobia.app.config import get_settings
     from mobia.workers.main import WorkerSettings
 
-    assert WorkerSettings.job_timeout < get_settings().sweep_inflight_after_seconds
+    settings = get_settings()
+    assert (
+        settings.debounce_de_rajada_segundos + WorkerSettings.job_timeout
+        < settings.sweep_inflight_after_seconds
+    )
 
 
 def test_job_completion_wait_passa_do_job_timeout() -> None:
