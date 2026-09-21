@@ -116,19 +116,30 @@ As duas janelas do sweeper continuam corretas sem ajuste: `sweep_received_after_
 
 Os quatro cenários Gherkin da card, mais o que a leitura do código revelou:
 
+**A tabela abaixo foi reescrita na onda final da TEC-128.** A versão anterior
+afirmava "uma resposta", "a resposta contempla..." e "a resposta sai em
+`última + janela`" para testes cuja própria docstring nega isso: a prova, nos
+três casos, é sobre a FILA (o job e o `score` dele) ou sobre o BANCO, nunca
+sobre o texto que o turno entrega — nenhum turno roda nesses testes. A linha
+"janela zero... mantém os testes existentes rápidos" também não descrevia
+nada real: nenhum teste desta suite, além do próprio
+`test_janela_zero_enfileira_para_agora`, fixa a janela em zero, e `_defer_by`
+não faz o teste esperar em tempo real de qualquer forma — ele só desloca o
+`score` do job no Redis, que nenhum destes testes executa.
+
 | teste | o que prova |
 | --- | --- |
-| três mensagens em cinco segundos → uma resposta | o cenário 1 da card |
-| a resposta contempla o conteúdo das três | via contexto; ancora que a D3 não perde conteúdo |
-| mensagem nova durante a espera → a resposta sai em `última + janela` | o cenário 2, medido pelo relógio e não pelo mecanismo |
-| mensagem isolada responde após a janela | o cenário 3 |
-| opt-out no meio da rajada → confirmação imediata e nenhuma outra resposta | o cenário 4 |
-| opt-out **antes** de outra mensagem → opt-out registrado | o defeito da D5; falharia sem os dois furos |
-| duas mensagens do mesmo envelope (`created_at` idêntico) → uma responde | o desempate por `id` da D3; falharia com comparação só por `created_at` |
+| três mensagens em cinco segundos → nenhuma sai pronta na hora (`test_tres_mensagens_em_rajada_nenhuma_sai_na_hora`) | a precondição do cenário 1: as três esperam a janela, o que é o que impede as três respostas imediatas — prova sobre a FILA, não sobre o turno nem sobre a resposta entregue |
+| as três mensagens da rajada ficam gravadas e `QUEUED` (`test_todas_da_rajada_ficam_gravadas`) | que o agrupamento não descarta conteúdo: as três continuam no banco para o contexto do turno da carregadora ler — não prova o que a resposta final diz, porque nenhum job roda neste teste |
+| mensagem nova durante a espera → o atraso de CADA mensagem conta do PRÓPRIO envio, não do envio da primeira (`test_mensagem_nova_empurra_o_fim_da_espera`) | o cenário 2, medido pelo relógio contra o instante de envio de cada mensagem — não há resposta neste teste, só o agendamento do job |
+| mensagem isolada também espera a janela antes de o job começar (`test_mensagem_isolada_tambem_espera_a_janela`) | o cenário 3, com a emenda E-01: a espera é incondicional |
+| opt-out no meio da rajada não espera (`test_optout_na_rajada_nao_espera`) | o cenário 4, no nível do webhook: o job do opt-out nasce perto de agora, e antes do job da mensagem comum do mesmo lote — não prova confirmação entregue nem resposta suprimida, porque nenhum turno roda aqui |
+| opt-out **antes** de outra mensagem → o turno roda mesmo superado (`test_optout_superado_ainda_roda_o_turno`) | o defeito da D5; falharia sem os dois furos. A gravação do opt-out em si (a confirmação, o registro) tem teste próprio em `test_turno_optout.py`, fora desta tabela |
+| duas mensagens do mesmo envelope (`created_at` idêntico) → só a de MAIOR `id` não está superada | o desempate por `id` da D3; falharia com comparação só por `created_at` |
 | a fala do agente não supera a mensagem do lead | o filtro `direction = 'INBOUND'` da D3 |
-| superada fecha em `PROCESSED` com `"agrupado"` | a D4 |
-| janela zero desliga o debounce | a D8, e é o que mantém os testes existentes rápidos |
-| indicador sai imediatamente para mensagem que já esperou a janela | a D6 |
+| superada fecha em `PROCESSED` com `"agrupado"`, sem rodar o turno | a D4 |
+| janela zero enfileira para agora (`test_janela_zero_enfileira_para_agora`) | a D8 — é o ÚNICO teste desta suite que fixa a janela em zero; não existe uma propriedade mais ampla de "manter os testes rápidos" por trás dela |
+| indicador sai imediatamente para mensagem que já esperou a janela (`test_mensagem_antiga_indica_quase_na_hora`, com o controle em `test_mensagem_recente_ainda_espera_quase_a_janela_inteira`) | a D6 |
 
 Os testes de tempo usam janela curta por configuração, não `sleep` de seis segundos.
 
