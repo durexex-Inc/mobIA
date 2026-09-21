@@ -20,6 +20,7 @@ from mobia.domain.humano.deteccao import (
 )
 from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
+from mobia.domain.moderacao.port import Direcao
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
 from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
 from mobia.infra.db import get_sessionmaker
@@ -523,14 +524,20 @@ async def test_pedido_de_humano_passa_antes_da_moderacao_de_entrada(
     """Important 6 da revisao final, ordem 1: a guarda corre ANTES da moderacao.
 
     A D4 do desenho fixou a ordem por razao de LGPD, e ela nao muda aqui -- o
-    que faltava era um teste que a fixasse. A consequencia esta declarada no
-    comentario do bloco em `turno.py` e e esta: uma mensagem que a moderacao
-    REPROVARIA e que contenha um termo da lista cria handoff e recebe o aviso
-    sem ter sido moderada. O moderador nem chega a ser chamado.
+    que faltava era um teste que a fixasse. O handoff nasce e o aviso sai sem
+    esperar chamada paga nenhuma, e e isso que o nome deste teste afirma.
 
     O outro lado da mesma moeda e o motivo de a ordem ser essa: o lead irritado
     que xinga e pede uma pessoa na mesma frase e justamente quem a card existe
     para tirar do robo.
+
+    **A TEC-297 mudou o depois, nao a ordem.** Ate ela, a consequencia declarada
+    aqui e no comentario do bloco em `turno.py` era que essa fala saia do turno
+    sem NUNCA ter sido moderada -- e ela entrava no contexto, no resumo, no lead
+    score e na ancora de follow-up como fala legitima. Agora o `finally` de
+    `executar_turno` a modera depois do handoff e depois do aviso: uma chamada
+    de ENTRADA, nenhuma de SAIDA. A ordem que este teste trava continua intacta;
+    o que deixou de existir e o buraco no fim dela.
     """
     from conftest import CANAL_AGENTE, CONVERSA_AGENTE
 
@@ -548,7 +555,9 @@ async def test_pedido_de_humano_passa_antes_da_moderacao_de_entrada(
     )
 
     assert resultado == "pedido_de_humano"
-    assert moderador.entradas == 0, "a moderacao de entrada nem chega a rodar"
+    # TEC-297: exatamente uma de ENTRADA e nenhuma de SAIDA. A lista, e nao o
+    # contador, porque ela reprova tambem o "moderou na direcao errada".
+    assert moderador.direcoes == [Direcao.ENTRADA]
     assert (
         await _handoff_da_conversa(session, channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE)
         is not None

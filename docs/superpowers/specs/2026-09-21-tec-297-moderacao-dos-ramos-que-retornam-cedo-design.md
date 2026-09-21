@@ -224,7 +224,9 @@ Sobre a garantia 4, uma precisão que a prosa existente induz ao erro: `literais
 | turno que levanta exceção: `last_error` guarda a classe original | a D5 |
 | mensagem sem corpo: zero chamadas ao moderador | que o `if corpo` continua valendo |
 
-`test_pedido_de_humano_passa_antes_da_moderacao_de_entrada` continua passando: a ordem que ele trava é preservada e reforçada.
+**Correção da implementação (TEC-297, Task 3).** Esta linha dizia que `test_pedido_de_humano_passa_antes_da_moderacao_de_entrada` continuaria passando, "a ordem que ele trava é preservada e reforçada". Era falso pela metade: aquele teste trava a ordem **e** a contagem de chamadas (`assert moderador.entradas == 0`), e só a ordem sobrevive — a guarda continua correndo antes da moderação, mas a moderação passa a acontecer no `finally`, em vez de nunca. A asserção teve de mudar para uma de ENTRADA e zero de SAÍDA.
+
+E o censo da D7 estava curto: **cinco** testes codificavam o comportamento antigo, não dois. Os dois que a D7 nomeia (os usos de `ModeradorQueNaoPodeSerChamado` em `tests/integration/test_conversa_encerrada.py`) mais três que a varredura não pegou, porque procuravam o dublê e não a asserção `entradas == 0`: `tests/integration/test_pedido_de_humano.py` (ramo #5) e dois de `tests/integration/test_turno_optout.py` (ramo #4). Os cinco foram revertidos pelo mesmo critério da D7 — a asserção passa a ser "exatamente uma de ENTRADA e zero de SAÍDA" —, e nada mais do que esses testes provam mudou.
 
 **A rede de segurança da D9 é a suíte existente, não um teste novo.** A extração de `_executar_turno` não muda comportamento nenhum, e o que prova isso é que os 2.686 testes que passavam em `c8b286a` continuem passando sem edição. Um teste novo escrito para a extração provaria menos que eles: ele nasceria depois da mudança, medindo o que ela faz em vez do que ela não devia mexer. Qualquer teste de turno que precise ser editado nesta card é sinal de que a extração mudou algo — e aí a pergunta é o que, não como calar o teste.
 

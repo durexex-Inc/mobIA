@@ -21,7 +21,7 @@ from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
-from mobia.domain.moderacao.port import KIND_DA_RECUSA_DE_ENTRADA
+from mobia.domain.moderacao.port import KIND_DA_RECUSA_DE_ENTRADA, Direcao
 from mobia.domain.optout.deteccao import TEXTO_DA_CONFIRMACAO_DE_OPTOUT
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
 from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
@@ -89,12 +89,19 @@ async def _mensagem_sem_texto_gravada(session, *, content_type: MessageContentTy
 async def test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo(
     session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
 ) -> None:
-    """O turno inteiro e economizado: nenhuma chamada ao classificador, e
-    tambem nenhuma chamada de moderacao (fix da revisao -- a checagem de
-    opt-out roda ANTES do bloco de moderacao de entrada, nao depois).
+    """O turno pago e economizado: nenhuma chamada ao classificador, e nenhuma
+    montagem de contexto. "O modelo" do nome deste teste e o classificador, e
+    a economia que ele afirma continua inteira.
 
     E o mesmo motivo que poe a moderacao de entrada antes de montar contexto --
     bloquear cedo economiza o turno pago inteiro.
+
+    **A moderacao saiu dessa conta na TEC-297.** A checagem de opt-out continua
+    rodando ANTES do bloco de moderacao de entrada (fix da revisao), e e por
+    isso que o registro nao depende do veredito; o que mudou e o fim do turno,
+    onde o `finally` de `executar_turno` modera a fala uma vez. Sem isso ela
+    ficava sem `bloqueada_em` e entrava no contexto, no resumo e no lead score
+    como fala legitima. Uma de ENTRADA, nenhuma de SAIDA.
     """
     mensagem = await _mensagem_gravada(session, texto="parar")
     classificador = classificador_fake()
@@ -114,7 +121,9 @@ async def test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo(
 
     assert resultado == "opt_out"
     assert classificador.chamadas == 0
-    assert moderador.entradas == 0, "opt-out e checado antes da moderacao -- ela nem roda"
+    # TEC-297: exatamente uma de ENTRADA e nenhuma de SAIDA. A lista, e nao o
+    # contador, porque ela reprova tambem o "moderou na direcao errada".
+    assert moderador.direcoes == [Direcao.ENTRADA]
     # `OutboundFake._deliver` grava o texto entregue (payload["texto"]), nao o
     # kind -- e o texto que confirma o registro ao lead. So um item porque a
     # confirmacao e a unica entrega deste turno; `in` e nao `==` no texto
@@ -158,6 +167,15 @@ async def test_pedido_de_optout_e_registrado_mesmo_com_entrada_bloqueada_pela_mo
     para quem pediu para sair. E a violacao que a D5 existe para evitar,
     entrando por outra porta. Este teste usa `bloqueia_entrada=True` para
     forcar exatamente esse cenario e provar que o opt-out ainda e registrado.
+
+    **Desde a TEC-297 a moderacao roda neste turno**, e isso nao enfraquece o
+    CRITICAL: ela acontece no `finally` de `executar_turno`, depois do registro
+    e depois da confirmacao entregue, entao nenhuma das duas coisas depende do
+    veredito. O que a fala reprovada ganha e a marca e a auditoria, que antes
+    nao saiam em ramo nenhum que retornasse cedo. Uma de ENTRADA, nenhuma de
+    SAIDA -- a recusa de entrada continua nao sendo entregue a quem acabou de
+    pedir silencio (D2 do desenho), e e a asserta de `outbound.entregues`
+    abaixo que prende isso.
     """
     mensagem = await _mensagem_gravada(session, texto="pare de mandar mensagem, seu golpista")
     classificador = classificador_fake()
@@ -176,7 +194,9 @@ async def test_pedido_de_optout_e_registrado_mesmo_com_entrada_bloqueada_pela_mo
     )
 
     assert resultado == "opt_out"
-    assert moderador.entradas == 0, "o opt-out e checado antes -- a moderacao nunca roda"
+    # TEC-297: exatamente uma de ENTRADA e nenhuma de SAIDA, pelo mesmo motivo
+    # do teste acima.
+    assert moderador.direcoes == [Direcao.ENTRADA]
     # `in` e nao `==`: primeira mensagem da conversa, entao a entrega carrega
     # o prefixo de identificacao da TEC-139 antes da confirmacao.
     assert len(outbound.entregues) == 1
