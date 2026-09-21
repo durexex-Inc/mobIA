@@ -1017,9 +1017,7 @@ async def executar_turno(
         raise
     # Sem excecao em voo a falha da marca PROPAGA, e e o lugar em que ela deve
     # propagar: e a decisao do bloco em que estamos, nao uma consulta a estado
-    # global. Nao e `finally` porque `finally` nao distingue os dois casos, e
-    # nao e `else` porque `else` nao roda quando o `try` sai por `return` --
-    # que e exatamente como este sai.
+    # global. Nao e `finally` porque `finally` nao distingue os dois casos.
     await moderacao.resolver_no_fim()
     return resultado
 

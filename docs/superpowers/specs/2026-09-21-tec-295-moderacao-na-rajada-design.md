@@ -4,7 +4,7 @@
 **Card:** [TEC-295](https://eduardodurieuxlopes.atlassian.net/browse/TEC-295)
 **Branch:** `feat/tec-295-moderacao-na-rajada`
 **Origem:** revisão final da TEC-128 (PR #142), achados I1 e I2.
-**Linhas citadas:** cada `arquivo.py:linha` deste documento vale para o commit em que a frase que o cita foi escrita. A TEC-297 deslocou `turno.py` em ~147 linhas depois disso; nenhuma citação aponta para além do fim do arquivo, então elas continuam parecendo válidas e não são. Confie no nome da função, não no número.
+**Linhas citadas:** a TEC-297 mexeu em dois dos arquivos que este documento cita — `turno.py` e `messages/bloqueio.py` —, e só as citações a esses dois envelheceram. As citações aos arquivos que ela **não** tocou (`context/janela.py:56`, `context/repositorio.py:1146`, `context/score.py:102,112` e `followup/repositorio.py:161-190`) continuam apontando exatamente certo. O deslocamento dos outros dois **não é uniforme**, medido de `c8b286a` — a base do desenho da TEC-297 — até a árvore daquela branch: em `turno.py`, +186 para `:1177`, +188 para `:1307` e `:1309`, +150 para toda a região de `:1361-1391` e +152 para `:2761`; em `messages/bloqueio.py`, +19 para `:34-74`. Nenhuma citação, deslocada ou não, aponta para além do fim do arquivo — é por isso que as deslocadas continuam parecendo válidas sem ser, e por isso nenhuma ferramenta as marca. Confie no nome da função, não no número.
 
 ## Objetivo
 
