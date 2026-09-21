@@ -1,6 +1,7 @@
 import logging
 import re
 import sys
+import traceback
 from contextvars import ContextVar
 from typing import Any
 
@@ -119,6 +120,90 @@ def _mascarar_pii(_logger: WrappedLogger, _method_name: str, event_dict: EventDi
     """
     for chave, valor in list(event_dict.items()):
         event_dict[chave] = _mascarar_valor(chave, valor)
+    return event_dict
+
+
+# As duas frases que o proprio Python usa para ligar as secoes de uma cadeia.
+# Copiadas literalmente porque quem le o log ja as reconhece; inventar frase
+# nova aqui so tornaria o traceback estranho sem ganhar nada.
+_ELO_CAUSA = "The above exception was the direct cause of the following exception:"
+_ELO_CONTEXTO = "During handling of the above exception, another exception occurred:"
+
+
+def _excecao_de(valor: object) -> BaseException | None:
+    """Normaliza as tres formas que `exc_info` assume no structlog.
+
+    `log.exception(...)` e `exc_info=True` chegam como `True`; um `except ... as
+    erro` repassado chega como instancia; e o stdlib usa a tupla de tres.
+    """
+    if isinstance(valor, BaseException):
+        return valor
+    if isinstance(valor, tuple) and len(valor) == 3:
+        segundo = valor[1]
+        return segundo if isinstance(segundo, BaseException) else None
+    if valor is True:
+        return sys.exc_info()[1]
+    return None
+
+
+def _sanear_traceback(
+    _logger: WrappedLogger, _method_name: str, event_dict: EventDict
+) -> EventDict:
+    """Poe a pilha no log e deixa a mensagem da excecao de fora.
+
+    Substitui `structlog.processors.format_exc_info`, que entregava o traceback
+    inteiro -- terminando em `TipoDoErro: <mensagem>` em CADA secao da cadeia.
+    Numa falha de gravacao, essa mensagem e a linha `DETAIL` que o Postgres
+    escreve, e numa violacao de CHECK ela traz a linha inteira: medido na
+    TEC-293, a fala do lead aparecia duas vezes, porque a SQLAlchemy reembala a
+    excecao do asyncpg e as duas secoes repetem o texto.
+
+    Por isso o corte e estrutural e nao textual: a mensagem nao esta so na
+    ultima linha -- a da wrapper ocupa quatro, e a da causa fica no meio.
+
+    **Nao troque isto pelo `ExceptionDictTransformer` do structlog.** Medido na
+    TEC-293: ele nasce com `show_locals=True`, que despeja as variaveis locais
+    de cada frame -- inclusive o objeto que estava sendo gravado --, e mesmo com
+    `show_locals=False` mantem `exc_value`, que e a mensagem inteira. Adota-lo
+    seria regressao, nao simplificacao.
+
+    O que sai daqui: por secao da cadeia, uma linha por frame com arquivo,
+    linha e funcao, e o tipo qualificado no lugar da mensagem. Sem a linha de
+    codigo-fonte, que nao carrega valor de runtime (o argumento vem de
+    variavel) e por isso e escolha de volume, nao de protecao.
+    """
+    excecao = _excecao_de(event_dict.pop("exc_info", None))
+    if excecao is None:
+        return event_dict
+
+    # A travessia nao leva guarda de ciclo: quem corta `a.__cause__ = b;
+    # b.__cause__ = a` e o proprio `TracebackException`, que guarda os nos
+    # vistos ao construir. Guarda nossa por cima nunca dispararia, e
+    # `test_cadeia_ciclica_nao_pendura` fixa a dependencia.
+    cadeia: list[tuple[traceback.TracebackException, str | None]] = []
+    atual: traceback.TracebackException | None = traceback.TracebackException(
+        type(excecao), excecao, excecao.__traceback__
+    )
+    elo: str | None = None
+    while atual is not None:
+        cadeia.append((atual, elo))
+        if atual.__cause__ is not None:
+            atual, elo = atual.__cause__, _ELO_CAUSA
+        elif atual.__context__ is not None and not atual.__suppress_context__:
+            atual, elo = atual.__context__, _ELO_CONTEXTO
+        else:
+            atual, elo = None, None
+
+    linhas: list[str] = []
+    for item, ligacao in reversed(cadeia):
+        linhas.append("Traceback (most recent call last):")
+        for frame in item.stack:
+            linhas.append(f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}')
+        linhas.append(item.exc_type_str)
+        if ligacao is not None:
+            linhas.extend(("", ligacao, ""))
+
+    event_dict["exception"] = "\n".join(linhas)
     return event_dict
 
 
