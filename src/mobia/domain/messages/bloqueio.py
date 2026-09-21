@@ -134,6 +134,11 @@ async def moderar_entrada_e_marcar(
         categoria=veredito.categoria,
     )
     # Se a marca falhar, a excecao sobe -- ver o topo deste modulo.
+    #
+    # `categoria or CATEGORIA_OUTRO`: `ModeradorPort` e um `Protocol`, um
+    # adaptador futuro pode devolver `Veredito(bloqueado=True)` sem categoria,
+    # e a coluna e `not null`. A alternativa seria esta chamada estourar por
+    # causa de um campo de auditoria.
     await marcar_bloqueada(
         session_factory,
         message_id,

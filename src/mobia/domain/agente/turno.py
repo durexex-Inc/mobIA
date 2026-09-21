@@ -83,7 +83,10 @@ from mobia.domain.humano.deteccao import (
     dentro_da_janela_de_atendimento,
     pediu_humano,
 )
-from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
+from mobia.domain.messages.bloqueio import (
+    moderar_entrada_e_marcar,
+    registrar_bloqueio_de_saida,
+)
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import ha_fala_pendente_antes
 from mobia.domain.messages.recorder import MessageRecorder
@@ -1307,130 +1310,100 @@ async def executar_turno(
         return "pedido_de_humano" if desfecho_do_aviso == "respondido" else desfecho_do_aviso
 
     if corpo:
-        try:
-            veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
-        except ModeracaoIndisponivel as exc:
-            # Falha aberta, e assimetrica de proposito: a fala do lead ja esta
-            # cifrada no banco (a ingestao a gravou antes de o worker existir),
-            # e negar atendimento a lead legitimo porque um servico caiu pune o
-            # inocente. Na saida a escolha e a oposta -- ver o bloco de saida.
-            log.error(
-                "moderacao.indisponivel",
-                direcao=Direcao.ENTRADA.value,
-                message_id=str(message.id),
-                reason=str(exc),
+        veredito = await moderar_entrada_e_marcar(
+            session_factory,
+            moderador,
+            message_id=message.id,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+            corpo=corpo,
+        )
+        if veredito is not None and veredito.bloqueado:
+            # A marca vem ANTES da entrega, e a ordem e o ponto (TEC-236).
+            # `_entregar_texto_fixo` tem cinco saidas que nao entregam
+            # nada -- janela fechada, recusa permanente da Meta, reentrega
+            # suprimida, bloqueio por opt-out concorrente (TEC-182),
+            # bloqueio por atendimento humano concorrente (TEC-179) --, e
+            # a maioria delas fecha a linha em PROCESSED, que e terminal.
+            # Marcar depois deixaria a fala bloqueada sem marca exatamente
+            # nos casos em que ninguem mais volta nesta linha, e ela
+            # entraria no contexto do proximo turno -- e e por isso que
+            # `moderar_entrada_e_marcar` marca por dentro, antes de devolver.
+            #
+            # TEC-295, D4, ruling R5. `tem_pendencia` tem de ser calculado
+            # ANTES de `_entregar_texto_fixo` -- nao e so ordem de codigo,
+            # e a pergunta certa. `_entregar_texto_fixo` grava a recusa como
+            # fala OUTBOUND do agente (`recorder.record_agent_message`), e
+            # `ha_fala_pendente_antes` define "pendente" como "INBOUND mais
+            # nova que a ULTIMA fala OUTBOUND do agente". Calculado DEPOIS,
+            # a propria recusa (que nao responde a pergunta pendente
+            # nenhuma) viraria essa ultima fala e apagaria a pendencia da
+            # pergunta legitima -- o booleano sairia sempre falso, e a
+            # continuacao que esta task existe para habilitar nunca
+            # rodaria. Calculado ANTES, a pergunta e a certa: "havia fala
+            # pendente no estado que existia antes desta recusa?" --
+            # resistir a "simplificar" isto de volta para perto do uso e o
+            # ponto deste comentario.
+            async with session_factory() as sessao_da_pendencia:
+                tem_pendencia = await ha_fala_pendente_antes(sessao_da_pendencia, message)
+            # TEC-295, ruling R6. Kind proprio -- nao o default `reply` de
+            # `_entregar_texto_fixo` --, porque a resposta que a continuacao
+            # abaixo pode entregar tambem usa `reply` (a primeira parte de
+            # `KINDS_DA_RESPOSTA`). Com o mesmo kind, a segunda entrega
+            # colidiria com a UNIQUE (message_id, kind) de
+            # `outbound_dispatches` e seria suprimida em silencio como
+            # reentrega -- exatamente o defeito que a D4 existe para evitar,
+            # so que na entrega em vez de na deteccao de pendencia.
+            desfecho_da_recusa = await _entregar_texto_fixo(
+                session_factory,
+                message=message,
+                outbound=outbound,
+                recorder_texto=TEXTO_DA_RECUSA_DE_ENTRADA,
+                kind=KIND_DA_RECUSA_DE_ENTRADA,
             )
-        else:
-            if veredito.bloqueado:
-                # `error` e nao `warning`: e o nivel que o alerta observa, pelo
-                # mesmo criterio de `outbound.recusado`. O texto julgado **nao**
-                # entra no log -- e fala do lead, coberta pela regra de PII.
-                log.error(
-                    "moderacao.entrada_bloqueada",
-                    message_id=str(message.id),
-                    motivo=veredito.motivo,
-                    categoria=veredito.categoria,
-                )
-                # A marca vem ANTES da entrega, e a ordem e o ponto (TEC-236).
-                # `_entregar_texto_fixo` tem cinco saidas que nao entregam
-                # nada -- janela fechada, recusa permanente da Meta, reentrega
-                # suprimida, bloqueio por opt-out concorrente (TEC-182),
-                # bloqueio por atendimento humano concorrente (TEC-179) --, e
-                # a maioria delas fecha a linha em PROCESSED, que e terminal.
-                # Marcar depois deixaria a fala bloqueada sem marca exatamente
-                # nos casos em que ninguem mais volta nesta linha, e ela
-                # entraria no contexto do proximo turno.
-                #
-                # Se a marca falhar, a excecao sobe: a linha vira FAILED e o
-                # sweeper retenta. Custa uma moderacao paga a mais e nao vaza a
-                # fala -- ver `messages/bloqueio.py`.
-                #
-                # `TEC-142`: a marca e a auditoria de ENTRADA saem no mesmo
-                # commit (ver `marcar_bloqueada`). `categoria or CATEGORIA_OUTRO`
-                # porque `ModeradorPort` e um `Protocol` -- um adaptador futuro
-                # pode devolver `Veredito(bloqueado=True)` sem categoria, e a
-                # coluna e `not null`. A alternativa seria o turno estourar por
-                # causa de um campo de auditoria.
-                await marcar_bloqueada(
-                    session_factory,
-                    message.id,
-                    channel=message.channel,
-                    conversation_key=message.conversation_key,
-                    categoria=veredito.categoria or CATEGORIA_OUTRO,
-                )
-                # TEC-295, D4, ruling R5. `tem_pendencia` tem de ser calculado
-                # ANTES de `_entregar_texto_fixo` -- nao e so ordem de codigo,
-                # e a pergunta certa. `_entregar_texto_fixo` grava a recusa como
-                # fala OUTBOUND do agente (`recorder.record_agent_message`), e
-                # `ha_fala_pendente_antes` define "pendente" como "INBOUND mais
-                # nova que a ULTIMA fala OUTBOUND do agente". Calculado DEPOIS,
-                # a propria recusa (que nao responde a pergunta pendente
-                # nenhuma) viraria essa ultima fala e apagaria a pendencia da
-                # pergunta legitima -- o booleano sairia sempre falso, e a
-                # continuacao que esta task existe para habilitar nunca
-                # rodaria. Calculado ANTES, a pergunta e a certa: "havia fala
-                # pendente no estado que existia antes desta recusa?" --
-                # resistir a "simplificar" isto de volta para perto do uso e o
-                # ponto deste comentario.
-                async with session_factory() as sessao_da_pendencia:
-                    tem_pendencia = await ha_fala_pendente_antes(sessao_da_pendencia, message)
-                # TEC-295, ruling R6. Kind proprio -- nao o default `reply` de
-                # `_entregar_texto_fixo` --, porque a resposta que a continuacao
-                # abaixo pode entregar tambem usa `reply` (a primeira parte de
-                # `KINDS_DA_RESPOSTA`). Com o mesmo kind, a segunda entrega
-                # colidiria com a UNIQUE (message_id, kind) de
-                # `outbound_dispatches` e seria suprimida em silencio como
-                # reentrega -- exatamente o defeito que a D4 existe para evitar,
-                # so que na entrega em vez de na deteccao de pendencia.
-                desfecho_da_recusa = await _entregar_texto_fixo(
-                    session_factory,
-                    message=message,
-                    outbound=outbound,
-                    recorder_texto=TEXTO_DA_RECUSA_DE_ENTRADA,
-                    kind=KIND_DA_RECUSA_DE_ENTRADA,
-                )
-                # TEC-295, D4. Ate aqui o turno retornava, e com o debounce isso
-                # passou a matar pergunta legitima: numa rajada, a pergunta que
-                # veio antes do xingamento fecha "agrupado" sem resposta, e
-                # `PROCESSED` e terminal -- nada a reenfileira.
-                #
-                # O guard e sobre ESTA passada nao ter entregue a recusa, e
-                # nao sobre o lead nunca ter recebido nada. `"respondido"` e
-                # o unico desfecho em que a entrega aconteceu agora. Dos
-                # outros quatro -- janela fechada, recusa permanente da Meta,
-                # opt-out concorrente, atendimento humano concorrente --, os
-                # dois ultimos tambem significam que o lead nao pode receber
-                # nada NESTE MOMENTO (esta silenciado ou com humano), entao a
-                # continuacao fica de fora pelo mesmo motivo que a recusa
-                # fica.
-                #
-                # Ja `"reentrega_suprimida"` quer dizer o CONTRARIO de "nao
-                # chegou": a reserva em `outbound_dispatches` ja existe
-                # porque uma tentativa ANTERIOR entregou a recusa. Mesmo
-                # assim a continuacao tambem nao acontece aqui -- e a
-                # consequencia e que a pergunta pendente se perde nesta
-                # retentativa, porque `PROCESSED` e terminal e nada
-                # reenfileira so a resposta que ficou faltando.
-                if desfecho_da_recusa != "respondido":
-                    return desfecho_da_recusa
-                if not tem_pendencia:
-                    # Fala reprovada isolada: continuar faria o agente responder
-                    # ao historico anterior, que e o engajamento que a TEC-233
-                    # recusou de proposito.
-                    return desfecho_da_recusa
-                # Cai para fora do bloco e segue o turno. O contexto que
-                # `montar_contexto` monta a seguir NAO inclui esta fala: a
-                # `marcar_bloqueada` acima ja carimbou a linha, e `literais_apos`
-                # filtra por `bloqueada_em IS NULL`. Ha um uso de `corpo` daqui
-                # para baixo, em `texto_com_oferta(corpo, texto)`, e ele nao
-                # expoe a fala bloqueada: devolve o texto intacto a menos que
-                # `perguntou_se_e_robo(corpo_do_lead)` seja verdadeiro, e nesse
-                # caso o efeito e so a oferta de corretor ser anexada quando a
-                # mensagem bloqueada tambem perguntava se o agente e um robo.
-                log.info(
-                    "moderacao.recusa_com_resposta_pendente",
-                    message_id=str(message.id),
-                )
+            # TEC-295, D4. Ate aqui o turno retornava, e com o debounce isso
+            # passou a matar pergunta legitima: numa rajada, a pergunta que
+            # veio antes do xingamento fecha "agrupado" sem resposta, e
+            # `PROCESSED` e terminal -- nada a reenfileira.
+            #
+            # O guard e sobre ESTA passada nao ter entregue a recusa, e
+            # nao sobre o lead nunca ter recebido nada. `"respondido"` e
+            # o unico desfecho em que a entrega aconteceu agora. Dos
+            # outros quatro -- janela fechada, recusa permanente da Meta,
+            # opt-out concorrente, atendimento humano concorrente --, os
+            # dois ultimos tambem significam que o lead nao pode receber
+            # nada NESTE MOMENTO (esta silenciado ou com humano), entao a
+            # continuacao fica de fora pelo mesmo motivo que a recusa
+            # fica.
+            #
+            # Ja `"reentrega_suprimida"` quer dizer o CONTRARIO de "nao
+            # chegou": a reserva em `outbound_dispatches` ja existe
+            # porque uma tentativa ANTERIOR entregou a recusa. Mesmo
+            # assim a continuacao tambem nao acontece aqui -- e a
+            # consequencia e que a pergunta pendente se perde nesta
+            # retentativa, porque `PROCESSED` e terminal e nada
+            # reenfileira so a resposta que ficou faltando.
+            if desfecho_da_recusa != "respondido":
+                return desfecho_da_recusa
+            if not tem_pendencia:
+                # Fala reprovada isolada: continuar faria o agente responder
+                # ao historico anterior, que e o engajamento que a TEC-233
+                # recusou de proposito.
+                return desfecho_da_recusa
+            # Cai para fora do bloco e segue o turno. O contexto que
+            # `montar_contexto` monta a seguir NAO inclui esta fala: o
+            # `moderar_entrada_e_marcar` acima ja carimbou a linha (por
+            # dentro, via `marcar_bloqueada`), e `literais_apos` filtra por
+            # `bloqueada_em IS NULL`. Ha um uso de `corpo` daqui para baixo,
+            # em `texto_com_oferta(corpo, texto)`, e ele nao expoe a fala
+            # bloqueada: devolve o texto intacto a menos que
+            # `perguntou_se_e_robo(corpo_do_lead)` seja verdadeiro, e nesse
+            # caso o efeito e so a oferta de corretor ser anexada quando a
+            # mensagem bloqueada tambem perguntava se o agente e um robo.
+            log.info(
+                "moderacao.recusa_com_resposta_pendente",
+                message_id=str(message.id),
+            )
 
     # TEC-275, D4. Antes de montar contexto de proposito: a continuacao nao
     # precisa de contexto, nao chama o classificador e nao chama `reagir` --
