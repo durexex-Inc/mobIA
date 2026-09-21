@@ -14,16 +14,11 @@ from mobia.domain.handoff.agendador import AgendadorDeResumoPort
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.humano.deteccao import pediu_humano
-from mobia.domain.messages.bloqueio import marcar_bloqueada
+from mobia.domain.messages.bloqueio import moderar_entrada_e_marcar
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import superada_por_mais_nova
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
-from mobia.domain.moderacao.port import (
-    CATEGORIA_OUTRO,
-    Direcao,
-    ModeracaoIndisponivel,
-    ModeradorPort,
-)
+from mobia.domain.moderacao.port import ModeradorPort
 from mobia.domain.optout.deteccao import pediu_optout
 from mobia.domain.outbound.port import OutboundPort
 from mobia.domain.outbound.presenca import indicador_de_digitacao
@@ -314,10 +309,14 @@ async def _moderar_superada(
 
     A superada nunca chega a `executar_turno`, e a moderacao de entrada mora la
     dentro -- entao sem isto ela nunca seria moderada. `bloqueada_em` ficaria
-    NULL, e a coluna tem QUATRO consumidores: a janela de contexto
-    (`context/janela.py`), o resumo permanente que se forma na dobra, a
-    contagem do lead score (`context/repositorio.py`) e a ancora da cadencia de
-    follow-up (`followup/repositorio.py`).
+    NULL, e a coluna tem QUATRO leitores diretos: a janela de contexto
+    (`literais_apos`, `context/janela.py`), a contagem do lead score
+    (`contar_mensagens_do_lead`, `context/repositorio.py`), a ancora da
+    cadencia de follow-up (a CTE de `followup/repositorio.py`) e a deteccao de
+    fala pendente na rajada (`ha_fala_pendente_antes`, `messages/rajada.py`,
+    TEC-295). O resumo permanente nao le a coluna: ele herda a exclusao por
+    construcao, porque a dobra opera sobre a lista que `literais_apos` devolve
+    e nunca rele `messages`.
 
     **Fail-open em `ModeracaoIndisponivel`**, pela mesma assimetria que o port
     documenta e que o turno ja pratica na entrada. Deixar a excecao subir faria
@@ -327,44 +326,21 @@ async def _moderar_superada(
     significa fala nao moderada entrando no contexto, como ja acontece hoje no
     turno normal.
 
-    `marcar_bloqueada` e a mesma funcao que `turno.py` chama, e nao uma copia:
-    ela grava a marca e o `ModerationEvent` no MESMO commit (TEC-142), e e essa
-    atomicidade que impede o estado "marcada sem auditoria".
+    `moderar_entrada_e_marcar` e a mesma funcao que `turno.py` chama, e nao uma
+    copia -- ver `messages/bloqueio.py` para a marca, a auditoria e o motivo de
+    as duas serem atomicas (TEC-142).
     """
-    try:
-        veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
-    except ModeracaoIndisponivel as exc:
-        log.error(
-            "moderacao.indisponivel",
-            direcao=Direcao.ENTRADA.value,
-            message_id=str(linha.id),
-            reason=str(exc),
-        )
-        return False
-
-    if not veredito.bloqueado:
-        return False
-
-    # `error` e nao `warning`, pelo mesmo criterio de `turno.py`: e o nivel que
-    # o alerta observa. O texto julgado **nao** entra no log -- e fala do lead,
-    # coberta pela regra de PII.
-    log.error(
-        "moderacao.entrada_bloqueada",
-        message_id=str(linha.id),
-        motivo=veredito.motivo,
-        categoria=veredito.categoria,
-    )
-    await marcar_bloqueada(
+    veredito = await moderar_entrada_e_marcar(
         session_factory,
-        linha.id,
+        moderador,
+        message_id=linha.id,
         channel=linha.channel,
         conversation_key=linha.conversation_key,
-        # `categoria or CATEGORIA_OUTRO` pela mesma razao de `turno.py`:
-        # `ModeradorPort` e um `Protocol`, um adaptador futuro pode devolver
-        # `Veredito(bloqueado=True)` sem categoria, e a coluna e `not null`.
-        categoria=veredito.categoria or CATEGORIA_OUTRO,
+        corpo=corpo,
     )
-    return True
+    # `None` e indisponibilidade, `bloqueado=False` e liberado -- os dois
+    # fecham "agrupado" do mesmo jeito, e a diferenca ja foi logada dentro.
+    return veredito is not None and veredito.bloqueado
 
 
 async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoProcessamento:
@@ -457,16 +433,16 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 elif await _tem_entrega_parcial_pendente(session_factory, identifier):
                     log.info("message.entrega_parcial_fura_a_janela", message_id=message_id)
                 else:
-                    # TEC-295: a superada e moderada so neste ramo, o do
-                    # agrupado. Dos outros dois ramos acima -- opt-out e
-                    # pedido de humano --, os dois RETORNAM antes da
-                    # moderacao de entrada de `turno.py` (`turno.py:1177` e
-                    # `turno.py:1307`), entao essa fala segue sem ser
-                    # moderada -- buraco pre-existente, que esta card nao
-                    # fecha. So o ramo da entrega parcial, que nao retorna
-                    # cedo, cai na moderacao normal do turno. A moderacao em
-                    # si roda fora da sessao de leitura, logo abaixo -- ver o
-                    # comentario la.
+                    # TEC-295: a superada e moderada neste ramo, o do
+                    # agrupado. Os outros ramos -- opt-out, pedido de humano
+                    # e a entrega parcial -- caem na moderacao do turno, e
+                    # **desde a TEC-297 isso vale mesmo para os que retornam
+                    # antes da linha da moderacao**: o fecho do involucro de
+                    # `executar_turno` resolve a moderacao por onde quer que
+                    # o turno saia. O buraco que este comentario descrevia
+                    # esta fechado. A moderacao deste ramo em si roda fora
+                    # da sessao de leitura, logo abaixo -- ver o comentario
+                    # la.
                     deve_fechar_como_agrupado = True
                     corpo_da_superada = corpo
 

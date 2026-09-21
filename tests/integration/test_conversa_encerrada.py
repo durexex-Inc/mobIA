@@ -37,7 +37,7 @@ from mobia.domain.conversa.regras import TETO_DE_FORA_DE_ESCOPO
 from mobia.domain.conversa.repositorio import encerrar_conversa, esta_encerrada, reabrir_conversa
 from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
 from mobia.domain.handoff.repositorio import tem_handoff_de_humano_aberto
-from mobia.domain.moderacao.port import TEXTO_NEUTRO_DE_SAIDA
+from mobia.domain.moderacao.port import TEXTO_NEUTRO_DE_SAIDA, Direcao
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
 from mobia.domain.outbound.port import EnvioRetentavel
 from mobia.infra.db import get_sessionmaker
@@ -280,18 +280,35 @@ class ClassificadorQueNaoPodeSerChamado:
         raise AssertionError("o reagente foi chamado numa conversa encerrada")
 
 
-class ModeradorQueNaoPodeSerChamado:
-    """Levanta em qualquer moderacao. Companheiro do dublê acima (fix da
-    revisao final, Minor 5).
+class ModeradorQueRegistra:
+    """Registra as direcoes moderadas em vez de levantar.
 
-    A moderacao de ENTRADA tambem e chamada paga, e a D7 a conta entre as
-    economias da card. Com o `ModeradorFake` default -- que responde sem
-    levantar --, a asserta de economia cobria so o classificador e deixaria
-    passar uma guarda que tivesse descido para depois do `moderador.moderar`.
+    **Era `ModeradorQueNaoPodeSerChamado`, e levantava.** A TEC-138 (D7)
+    contava a moderacao de entrada entre as economias da guarda de fora de
+    escopo, e este duble travava essa contagem. A TEC-297 reverteu a decisao
+    de proposito: a fala que dispara a guarda passa a ser moderada, porque
+    sem marca ela entra no contexto, no resumo, no score e na ancora de
+    follow-up quando a conversa reabre depois dos 30 dias.
+
+    O que a TEC-138 queria provar continua provado, e por este duble: a guarda
+    nao paga o CLASSIFICADOR nem a montagem de contexto, que sao as duas
+    caras. Ela passou a pagar uma moderacao, US$ 0,00057 -- e a asserta agora
+    e "exatamente uma de ENTRADA e zero de SAIDA", que e mais forte que
+    "nenhuma", porque pega tanto a guarda que desceu quanto a que virou um
+    turno inteiro.
+
+    Ver a D8 do desenho da TEC-297: a reversao encolhe a reducao de superficie
+    que a TEC-138 tinha oferecido a TEC-204, e isso esta registrado la.
     """
 
+    def __init__(self) -> None:
+        self.direcoes: list = []
+
     async def moderar(self, texto, *, direcao):
-        raise AssertionError(f"o moderador foi chamado ({direcao}) numa conversa encerrada")
+        from mobia.domain.moderacao.port import Veredito
+
+        self.direcoes.append(direcao)
+        return Veredito(bloqueado=False, motivo="fake", categoria=None)
 
 
 async def _conversa_ja_existe(session: AsyncSession) -> None:
@@ -490,10 +507,13 @@ async def test_a_quarta_mensagem_dentro_da_janela_nao_entrega_nada_nem_paga_o_mo
     """A asserta que prova o ponto inteiro da card.
 
     O silencio sozinho nao bastaria: um turno que pagasse o classificador e
-    descartasse a resposta daria a mesma lista de entregues. Os dois dubles que
-    levantam sao o que separa silencio barato de silencio caro -- e sao DOIS
-    porque a moderacao de entrada tambem e chamada paga, e a D7 a conta entre
-    as economias.
+    descartasse a resposta daria a mesma lista de entregues. O duble que
+    levanta em `classificar` e o que separa silencio barato de silencio caro.
+
+    **A moderacao de entrada saiu dessa conta na TEC-297**, que a fez rodar em
+    todo turno -- inclusive neste. O que este teste afirma sobre ela agora e
+    uma chamada de ENTRADA e nenhuma de SAIDA: a guarda continua devolvendo
+    antes do classificador e da montagem de contexto, so que auditando a fala.
     """
     await _conversa_ja_existe(session)
     entregador = outbound_fake()
@@ -502,6 +522,7 @@ async def test_a_quarta_mensagem_dentro_da_janela_nao_entrega_nada_nem_paga_o_mo
         rodar_turno, session, entregador, resumidor_fake(), contador_fake(), vezes=3
     )
     antes = list(entregador.entregues)
+    moderador = ModeradorQueRegistra()
 
     desfecho = await rodar_turno(
         session,
@@ -509,11 +530,14 @@ async def test_a_quarta_mensagem_dentro_da_janela_nao_entrega_nada_nem_paga_o_mo
         entregador,
         resumidor_fake(),
         contador_fake(),
-        ModeradorQueNaoPodeSerChamado(),
+        moderador,
         texto="e agora, vai chover?",
     )
 
     assert desfecho == "fora_de_escopo"
+    # TEC-297: uma de ENTRADA, zero de SAIDA. A guarda continua nao pagando o
+    # turno; passou a pagar a moderacao.
+    assert moderador.direcoes == [Direcao.ENTRADA]
     assert entregador.entregues == antes, "nada saiu depois da despedida"
     # A guarda devolve ANTES de `gravar_intencao`, entao o contador nao anda
     # durante a janela -- e por isso o lead que volta depois dela comeca do
@@ -750,9 +774,13 @@ async def test_o_pedido_de_humano_dentro_da_janela_e_atendido_e_reabre(
     """A excecao da guarda (fix da revisao, Important 1), e as duas metades.
 
     Atender: o lead que pede uma pessoa recebe o aviso e ganha handoff, ainda
-    que a conversa esteja encerrada -- e sem pagar chamada nenhuma, que e o
-    que o dublê que levanta afirma. Calar aqui inverteria o "decisao de pessoa
-    vence politica automatica" no unico caso em que quem pede e o lead.
+    que a conversa esteja encerrada -- e sem pagar o classificador, que e o
+    que o duble que levanta afirma. **Chamada nenhuma deixou de ser verdade na
+    TEC-297**: a fala deste ramo passa a ser moderada no fecho de
+    `executar_turno`, depois do handoff e depois do aviso. O que a excecao da
+    guarda economiza continua sendo o modelo do agente. Calar aqui inverteria
+    o "decisao de pessoa vence politica automatica" no unico caso em que quem
+    pede e o lead.
 
     Reabrir: sem isso o lead ficaria mudo para o agente pelo resto da janela
     mesmo depois de o corretor resolver o handoff.
@@ -951,19 +979,23 @@ async def test_a_saida_bloqueada_no_turno_do_teto_encerra_do_mesmo_jeito(
     assert linha.encerrada_em is not None
     assert await _seguidas(session) == 0
 
+    moderador_do_turno_seguinte = ModeradorQueRegistra()
     desfecho_seguinte = await rodar_turno(
         session,
         ClassificadorQueNaoPodeSerChamado(),
         entregador,
         resumidor_fake(),
         contador_fake(),
-        ModeradorQueNaoPodeSerChamado(),
+        moderador_do_turno_seguinte,
         texto="e agora, vai chover?",
     )
 
     assert desfecho_seguinte == "fora_de_escopo", (
-        "o sondador cujo texto a moderacao sempre barra tambem para de pagar chamada"
+        "o sondador cujo texto a moderacao sempre barra continua sem pagar o classificador"
     )
+    # TEC-297: uma de ENTRADA, zero de SAIDA. A guarda continua nao pagando o
+    # classificador nem a montagem de contexto; passou a pagar a moderacao.
+    assert moderador_do_turno_seguinte.direcoes == [Direcao.ENTRADA]
 
 
 async def test_fora_de_escopo_de_baixa_confianca_nao_anda_com_o_contador(

@@ -18,17 +18,36 @@ para carimbar). As duas propagam pelo motivo do paragrafo acima: sem a
 transacao unica existiria o estado duravel "mensagem marcada como bloqueada,
 recusa nao auditada" -- o estado em que o controle de risco da RN-B04 falha
 em silencio.
+
+**A TEC-297 trouxe para ca uma terceira funcao publica, e ela e a excecao:**
+`moderar_entrada_e_marcar` engole `ModeracaoIndisponivel` e devolve `None`.
+E fail-open deliberado, e nao contradiz os paragrafos acima porque trata de
+outra falha: provedor fora do ar nao e marca perdida em silencio -- nao ha
+fala julgada para carimbar, e negar atendimento a lead legitimo porque um
+servico caiu pune o inocente (ver a docstring dela e
+`domain/moderacao/port.py`). A falha da MARCA dentro dela continua subindo,
+pelo motivo dos paragrafos acima: ela chama `marcar_bloqueada` e nao captura
+nada dali para baixo.
 """
 
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+import structlog
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.messages.models import Message
 from mobia.domain.moderacao.models import ModerationEvent
-from mobia.domain.moderacao.port import Direcao
+from mobia.domain.moderacao.port import (
+    CATEGORIA_OUTRO,
+    Direcao,
+    ModeracaoIndisponivel,
+    ModeradorPort,
+    Veredito,
+)
+
+log = structlog.get_logger(__name__)
 
 
 async def marcar_bloqueada(
@@ -72,6 +91,72 @@ async def marcar_bloqueada(
             )
         )
         await session.commit()
+
+
+async def moderar_entrada_e_marcar(
+    session_factory: async_sessionmaker[AsyncSession],
+    moderador: ModeradorPort,
+    *,
+    message_id: UUID,
+    channel: str,
+    conversation_key: str,
+    corpo: str,
+) -> Veredito | None:
+    """Modera a fala de entrada e, se reprovada, marca e audita num commit so.
+
+    **Devolve `None` somente quando o provedor esta indisponivel.** Fail-open,
+    a assimetria que `domain/moderacao/port.py` documenta: a fala do lead ja
+    esta cifrada no banco, e negar atendimento a lead legitimo porque um
+    servico caiu pune o inocente. `None` e nao `Veredito(bloqueado=False)`
+    porque "nao deu para moderar" nao e "moderou e liberou", e quem chama
+    precisa poder distinguir.
+
+    **Nao entrega recusa nenhuma.** Quem chama decide se ha texto a mandar: o
+    turno entrega a recusa de entrada, o caminho do agrupado e os cinco ramos
+    que retornam cedo nao entregam nada (TEC-297, D2).
+
+    Existe para ter um sitio so. Antes da TEC-297 esta sequencia estava
+    escrita duas vezes -- no turno e em `_moderar_superada`, que a TEC-295
+    criou --, e os cinco ramos que retornam antes da moderacao precisariam
+    de uma terceira copia.
+    """
+    try:
+        veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
+    except ModeracaoIndisponivel as exc:
+        log.error(
+            "moderacao.indisponivel",
+            direcao=Direcao.ENTRADA.value,
+            message_id=str(message_id),
+            reason=str(exc),
+        )
+        return None
+
+    if not veredito.bloqueado:
+        return veredito
+
+    # `error` e nao `warning`: e o nivel que o alerta observa, pelo mesmo
+    # criterio de `outbound.recusado`. O texto julgado **nao** entra no log --
+    # e fala do lead, coberta pela regra de PII.
+    log.error(
+        "moderacao.entrada_bloqueada",
+        message_id=str(message_id),
+        motivo=veredito.motivo,
+        categoria=veredito.categoria,
+    )
+    # Se a marca falhar, a excecao sobe -- ver o topo deste modulo.
+    #
+    # `categoria or CATEGORIA_OUTRO`: `ModeradorPort` e um `Protocol`, um
+    # adaptador futuro pode devolver `Veredito(bloqueado=True)` sem categoria,
+    # e a coluna e `not null`. A alternativa seria esta chamada estourar por
+    # causa de um campo de auditoria.
+    await marcar_bloqueada(
+        session_factory,
+        message_id,
+        channel=channel,
+        conversation_key=conversation_key,
+        categoria=veredito.categoria or CATEGORIA_OUTRO,
+    )
+    return veredito
 
 
 async def registrar_bloqueio_de_saida(

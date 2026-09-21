@@ -83,7 +83,10 @@ from mobia.domain.humano.deteccao import (
     dentro_da_janela_de_atendimento,
     pediu_humano,
 )
-from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
+from mobia.domain.messages.bloqueio import (
+    moderar_entrada_e_marcar,
+    registrar_bloqueio_de_saida,
+)
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import ha_fala_pendente_antes
 from mobia.domain.messages.recorder import MessageRecorder
@@ -95,6 +98,7 @@ from mobia.domain.moderacao.port import (
     Direcao,
     ModeracaoIndisponivel,
     ModeradorPort,
+    Veredito,
 )
 
 # Consumida no corpo deste modulo (a checagem de opt-out e a entrega da
@@ -818,6 +822,110 @@ async def _continuar_entrega(
     return "respondido" if entrega.entregues else "reentrega_suprimida"
 
 
+class _ModeracaoDoTurno:
+    """Garante que a fala de entrada seja moderada UMA vez, por onde quer que
+    o turno saia.
+
+    Privada de `turno.py` e nao de `domain/messages/`: ela carrega estado de um
+    turno -- o veredito memorizado e o `_resolvida` --, e nao tem sentido fora
+    dele. A operacao compartilhada e `moderar_entrada_e_marcar`; aqui mora so a
+    memoria de ja ter chamado.
+
+    **O problema que ela resolve** (TEC-297): o corpo do turno
+    (`_executar_turno`) tem cinco returns antes da linha que chama a
+    moderacao, e a fala que dispara qualquer um deles nunca era moderada.
+    Chamar a moderacao antes de cada um dos cinco seria cinco sitios a
+    lembrar -- e a D4 do desenho desta card registra as duas vezes em que uma
+    lista escrita a mao ja envelheceu errado neste fluxo. Um sexto ramo futuro
+    nasce coberto pelo invulucro e nasceria furado por uma lista.
+    """
+
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        moderador: ModeradorPort,
+        message: Message,
+        corpo: str | None,
+    ) -> None:
+        self._session_factory = session_factory
+        self._moderador = moderador
+        self._message = message
+        self._corpo = corpo
+        self._resolvida = False
+        self._veredito: Veredito | None = None
+
+    async def resolver(self) -> Veredito | None:
+        """Modera e marca, na primeira chamada. Depois, devolve o memorizado.
+
+        Sem corpo nao ha o que moderar -- audio, imagem e documento passam por
+        aqui e nao pagam nada --, e a fala fica resolvida como se tivesse sido
+        liberada: `None`. A checagem esta aqui, e nao so no `if corpo` que o
+        turno sempre teve, porque quem chega pelo fecho do invulucro nao passa
+        por aquele `if`.
+        """
+        if self._resolvida:
+            return self._veredito
+        self._resolvida = True
+        if not self._corpo:
+            return None
+        self._veredito = await moderar_entrada_e_marcar(
+            self._session_factory,
+            self._moderador,
+            message_id=self._message.id,
+            channel=self._message.channel,
+            conversation_key=self._message.conversation_key,
+            corpo=self._corpo,
+        )
+        return self._veredito
+
+    async def resolver_no_fim(self) -> None:
+        """O caminho SEM excecao em voo: resolve e deixa a falha da marca subir.
+
+        Propagar aqui preserva o contrato de `messages/bloqueio.py` -- o turno
+        vira FAILED, o sweeper retenta e a marca sai depois. Ver a D5 do
+        desenho.
+
+        O invulucro escolhe entre esta e `resolver_engolindo` pelo bloco em que
+        esta, e nao consultando estado global: `sys.exc_info()` enxerga a
+        excecao em tratamento em QUALQUER ponto da pilha da task, entao um
+        chamador futuro que fizesse `except X: await executar_turno(...)` faria
+        esta falha ser engolida sem que ninguem tivesse decidido isso.
+        """
+        await self.resolver()
+
+    async def resolver_engolindo(self) -> None:
+        """O caminho COM excecao do turno em voo: resolve, e loga se falhar.
+
+        **A excecao ao contrato de `messages/bloqueio.py`, e ela mora aqui.**
+        Aquele modulo propaga de proposito: marca que falha em silencio deixa a
+        fala bloqueada elegivel para o contexto e para o resumo, e o desfecho
+        seguro e o turno falhar para o sweeper retentar. Mas com a excecao do
+        turno em voo, propagar daqui a SUBSTITUIRIA -- e `process_message` grava
+        em `messages.last_error` o nome da classe do que subir (via
+        `_detalhe_para_a_coluna`). Quem for diagnosticar leria a falha da marca
+        no lugar da causa real.
+
+        Engolir nao desfaz o contrato: a excecao original segue subindo, a linha
+        vira FAILED do mesmo jeito e o sweeper reenfileira a mensagem inteira
+        enquanto ela tiver tentativa (`sweep_max_attempts`) -- a marca sai na
+        retentativa. O que se perde e o detalhe da falha da marca em
+        `last_error`, e e por isso que se loga.
+        """
+        try:
+            await self.resolver()
+        except Exception as exc:
+            # `Exception` e nao `BaseException`, ao contrario do `except` do
+            # invulucro: aqui o que se engole e a falha DESTA marca, e engolir
+            # um `CancelledError` levantado por ela suprimiria o cancelamento
+            # da task -- o `process_message` tem clausula propria para ele
+            # justamente porque perde-lo quebra o desligamento limpo.
+            log.error(
+                "moderacao.marca_falhou",
+                message_id=str(self._message.id),
+                reason=type(exc).__name__,
+            )
+
+
 async def executar_turno(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -878,11 +986,61 @@ async def executar_turno(
     a chance de perguntar aquele campo para sempre e em silencio, nao so ate o
     proximo episodio.
     """
-    # Antes de montar contexto de proposito: bloquear aqui economiza o turno
-    # inteiro, inclusive as chamadas pagas ao modelo. E o texto do lead ainda
-    # nao passou por lugar nenhum.
+    # Decifra uma vez so, aqui no involucro: e o unico `decrypt` deste modulo,
+    # e o mesmo `corpo` vai para a moderacao de entrada e para
+    # `_executar_turno` logo abaixo -- os dois julgam o mesmo texto.
     corpo = decrypt(message.text_body, aad_de(message.id, "text_body"))
+    # TEC-297: a moderacao de entrada nasce aqui e e garantida pelos dois
+    # fechos abaixo -- um por caminho de saida --, e nao pela linha em que o
+    # corpo do turno a chama. Cinco returns saem antes dessa linha, e a fala
+    # que os dispara nunca era moderada.
+    moderacao = _ModeracaoDoTurno(session_factory, moderador, message, corpo)
+    try:
+        resultado = await _executar_turno(
+            session_factory,
+            message=message,
+            classificador=classificador,
+            resumidor=resumidor,
+            contador=contador,
+            outbound=outbound,
+            moderador=moderador,
+            agendador=agendador,
+            corpo=corpo,
+            moderacao=moderacao,
+        )
+    except BaseException:
+        # `BaseException` e nao `Exception` de proposito: um `CancelledError`
+        # tambem tem de passar por aqui, senao o turno cancelado perde a marca
+        # por um caminho que a D5 nao previu. `raise` logo abaixo o devolve
+        # intacto.
+        await moderacao.resolver_engolindo()
+        raise
+    # Sem excecao em voo a falha da marca PROPAGA, e e o lugar em que ela deve
+    # propagar: e a decisao do bloco em que estamos, nao uma consulta a estado
+    # global. Nao e `finally` porque `finally` nao distingue os dois casos.
+    await moderacao.resolver_no_fim()
+    return resultado
 
+
+async def _executar_turno(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    message: Message,
+    classificador: ClassificadorPort,
+    resumidor: ResumidorPort,
+    contador: ContadorPort,
+    outbound: OutboundPort,
+    moderador: ModeradorPort,
+    agendador: AgendadorDeResumoPort,
+    corpo: str | None,
+    moderacao: _ModeracaoDoTurno,
+) -> ResultadoDoTurno:
+    """O corpo do turno. Contrato e desfechos: ver `executar_turno`.
+
+    Existe separada so para que o `try` do invulucro nao reindente as ~2.700
+    linhas deste corpo (TEC-297, D9). Nao chame direto: sem o fecho do
+    invulucro a fala dos cinco returns antecipados volta a nao ser moderada.
+    """
     # `bool(...)` por fora, e nao `bool(corpo) and ...`: so a forma curta-
     # circuitada estreita `corpo` de `str | None` para `str` dentro da chamada.
     pedido_de_optout = bool(corpo and pediu_optout(corpo))
@@ -895,18 +1053,27 @@ async def executar_turno(
     pedido_de_humano = bool(corpo and pediu_humano(corpo))
 
     # Ao lado do opt-out de proposito: mesmo insumo (o texto decifrado), mesmo
-    # ponto do fluxo, e nenhuma consulta. A fala bloqueada pela moderacao nunca
-    # chega ao gancho -- `executar_turno` retorna por `_entregar_texto_fixo`
-    # antes do bloco transacional --, entao um turno que o resto do produto
-    # trata como nao-dito nao forca QUENTE, e isso sai de graca.
+    # ponto do fluxo, e nenhuma consulta. Na regra, a fala bloqueada pela
+    # moderacao nao chega ao gancho -- `_executar_turno` retorna por
+    # `_entregar_texto_fixo` antes do bloco transacional --, entao um turno que
+    # o resto do produto trata como nao-dito nao forca QUENTE, e isso sai de
+    # graca. **A D4 da TEC-295 tirou o "sempre" dessa frase:** havendo pergunta
+    # pendente, o bloco de bloqueio cai para fora e o turno segue (ver o
+    # `if not tem_pendencia` mais abaixo). Esta linha roda antes de qualquer
+    # moderacao, entao nessa continuacao os gatilhos calculados sobre a fala
+    # bloqueada deixam de estar garantidamente fora do gancho.
     #
     # `if corpo else ()` e nao `bool(corpo) and ...` porque a saida e uma
     # tupla, nao um bool: so a forma condicional estreita `corpo` de
     # `str | None` para `str` E preserva o tipo de retorno.
     gatilhos = gatilhos_de(corpo) if corpo else ()
 
-    # Antes de tudo, inclusive da moderacao: quem ja pediu silencio nao paga
-    # moderacao nem recebe resposta. Fica FORA do `if corpo:` de proposito: o
+    # Antes de tudo: quem ja pediu silencio nao recebe resposta. **Paga a
+    # moderacao, desde a TEC-297** -- este `return` e um dos cinco que saiam
+    # antes dela, e a fala que o dispara entrava no contexto, no resumo, no
+    # score e na ancora de follow-up sem nunca ter sido julgada. A chamada
+    # acontece no fecho do involucro, depois deste return, entao ela nao
+    # atrasa o silencio. Fica FORA do `if corpo:` de proposito: o
     # silencio e sobre o LEAD (o par channel/conversation_key), nao sobre a
     # mensagem ter texto. Uma imagem ou audio de quem ja pediu opt-out
     # tambem nao pode receber resposta, e dentro do `if corpo:` essa
@@ -958,8 +1125,9 @@ async def executar_turno(
     # e o sistema fica sem o registro.
     #
     # Barata de proposito -- antes do classificador, entao um turno silenciado
-    # nao paga chamada ao modelo. A guarda autoritativa e a da porta de saida
-    # (`outbound/port.py`); esta so evita o trabalho.
+    # nao paga chamada ao classificador (desde a TEC-297 a moderacao roda de
+    # qualquer jeito, no fecho do involucro). A guarda autoritativa e a da
+    # porta de saida (`outbound/port.py`); esta so evita o trabalho.
     #
     # `tem_handoff_de_humano_aberto` (TEC-143) e a SEGUNDA fonte de silencio,
     # ao lado de `esta_silenciada`. Sao perguntas diferentes -- "um corretor
@@ -1046,12 +1214,20 @@ async def executar_turno(
     # identico ao das duas.
     #
     # **Ganha de tudo o que vem abaixo pelo motivo oposto**: daqui para baixo
-    # todo caminho leva a chamada paga -- moderacao de entrada, montagem de
-    # contexto, classificador --, e economiza-las e a unica coisa que esta
-    # guarda faz. Descer um degrau que seja a transformaria em silencio CARO,
-    # que e o oposto do que a card pede. A politica sozinha nao precisava
-    # estar aqui em cima: o silencio funcionaria igual la embaixo, so que
-    # pago.
+    # o caminho leva a montagem de contexto e ao classificador -- as duas
+    # caras --, e economiza-las e o que esta guarda faz. Descer um degrau
+    # que seja a transformaria em silencio CARO, que e o oposto do que a
+    # card pede. A politica sozinha nao precisava estar aqui em cima: o
+    # silencio funcionaria igual la embaixo, so que pago.
+    #
+    # **A moderacao de entrada saiu dessa conta na TEC-297, e a saida foi
+    # deliberada.** A guarda passou a pagar uma moderacao (US$ 0,00057
+    # medidos, roda em Haiku) porque, sem a marca, a fala entra no contexto e
+    # no resumo quando a conversa reabre depois dos 30 dias. A chamada
+    # acontece no fecho do involucro de `executar_turno`, depois deste
+    # `return`, entao ela nao atrasa o silencio. A D8 do desenho da TEC-297
+    # registra o que isso encolhe da reducao de superficie que a D7 da
+    # TEC-138 tinha oferecido a TEC-204.
     #
     # **E ela nao morde o turno que encerra.** O encerramento so e gravado
     # DEPOIS da entrega confirmada (ver o bloco pos-entrega la embaixo), entao
@@ -1061,18 +1237,22 @@ async def executar_turno(
     # **O pedido de humano e a excecao, e ele nao cala** (fix da revisao,
     # Important 1). A versao anterior desta guarda calava tambem quem pedisse
     # atendente, e justificava com um custo que NAO existe: o bloco da TEC-143
-    # (`if pedido_de_humano:`) fica logo abaixo e devolve ANTES da moderacao de
-    # entrada, ANTES de `montar_contexto` e ANTES da chamada paga -- e a D5 do
-    # desenho enumera essa ordem. O preco real da excecao e um `INSERT`
-    # idempotente, um resumo agendado e um envio de texto fixo: zero chamadas
-    # ao modelo, que e a unica coisa que esta guarda existe para poupar.
-    # Calar custava o oposto -- o lead que escreve "quero falar com um
-    # atendente" nao seria atendido, nenhum handoff nasceria e ninguem ficaria
-    # sabendo que ele pediu, por ate 30 dias. Isso inverteria o "decisao de
-    # pessoa vence politica automatica" das duas guardas de cima justamente no
-    # caso em que a pessoa que pede e o lead. A forma -- `not pedido_de_humano`
-    # sobre o silencio, e nao sobre o bloco inteiro -- e a mesma que a guarda
-    # imediatamente acima usa para a fonte de handoff dela.
+    # (`if pedido_de_humano:`) fica logo abaixo e devolve antes da linha da
+    # moderacao de entrada, antes de `montar_contexto` e antes da chamada ao
+    # classificador -- e a D5 do desenho enumera essa ordem. **Desde a
+    # TEC-297 a moderacao acontece de qualquer jeito**, no fecho do
+    # involucro de `executar_turno`: devolver antes da linha nao poupa mais
+    # a chamada, so adia ela para depois do return. O preco real da excecao
+    # e um `INSERT` idempotente, um resumo agendado, um envio de texto fixo
+    # e uma moderacao (roda em Haiku): zero chamadas ao classificador, que e
+    # o que esta guarda existe para poupar. Calar custava o oposto -- o lead
+    # que escreve "quero falar com um atendente" nao seria atendido, nenhum
+    # handoff nasceria e ninguem ficaria sabendo que ele pediu, por ate 30
+    # dias. Isso inverteria o "decisao de pessoa vence politica automatica" das
+    # duas guardas de cima justamente no caso em que a pessoa que pede e o
+    # lead. A forma -- `not pedido_de_humano` sobre o silencio, e nao sobre o
+    # bloco inteiro -- e a mesma que a guarda imediatamente acima usa para a
+    # fonte de handoff dela.
     if not pedido_de_optout:
         async with session_factory() as sessao:
             situacao = await situacao_da_conversa(
@@ -1138,10 +1318,14 @@ async def executar_turno(
         # aqui: a moderacao bloquearia e devolveria antes, o opt-out nunca
         # seria registrado, e continuariamos mandando mensagem (a recusa de
         # entrada) para quem pediu para sair -- a violacao que a D5 existe
-        # para evitar, entrando por outra porta. Checar opt-out primeiro
-        # tambem poupa a chamada paga de moderacao no caminho de opt-out, que
-        # e o que o docstring de
-        # `test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo` promete.
+        # para evitar, entrando por outra porta. Checar opt-out primeiro ja
+        # nao poupa a chamada de moderacao -- desde a TEC-297 ela roda de
+        # qualquer jeito, no fecho do involucro, depois do desfecho "opt_out"
+        # que este bloco produz mais abaixo. O que a ordem preserva e o
+        # registro do opt-out nao depender do veredito da moderacao, que e o
+        # que o docstring de
+        # `test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo`
+        # (`tests/integration/test_turno_optout.py`) diz hoje.
         #
         # Gravado ANTES da entrega, pelo precedente de `marcar_bloqueada`. Se
         # a entrega falhar depois, o lead fica em silencio sem confirmacao --
@@ -1195,14 +1379,16 @@ async def executar_turno(
     # proprio, e rodar depois dele faria uma mensagem que e AO MESMO TEMPO
     # pedido de humano e algo que a moderacao reprova nunca chegar aqui -- o
     # lead irritado que xinga e pede uma pessoa na mesma frase ficaria preso no
-    # robo, que e exatamente a dor da card. O preco, dito sem rodeio: uma
-    # mensagem que a moderacao reprovaria e que contenha um termo da lista cria
-    # handoff e RECEBE o aviso sem ter sido moderada, e o
-    # `turno.py` escreve o principio oposto algumas linhas abaixo. O que escapa
-    # e a classificacao do turno como reprovavel -- nada do texto do lead entra
-    # na resposta (o aviso e literal fixo) e nada dele vai para o modelo.
-    # `test_pedido_de_humano_passa_antes_da_moderacao_de_entrada` fixa a ordem,
-    # para que inverte-la seja uma decisao e nao um acidente.
+    # robo, que e exatamente a dor da card. O preco dessa ordem era declarado
+    # aqui e a TEC-297 o tirou: ate ela, uma mensagem que a moderacao
+    # reprovaria e que contivesse um termo da lista criava handoff, RECEBIA o
+    # aviso e saia por este `return` sem nunca ter sido moderada. Agora ela e
+    # moderada de qualquer jeito -- no fecho de `executar_turno`, depois do
+    # handoff e depois do aviso --, entao a fala nao escapa mais da marca nem
+    # da auditoria. A ordem que este bloco descreve nao mudou: o handoff e o
+    # aviso continuam nao esperando por chamada paga nenhuma, e inverte-la
+    # continua sendo decisao e nao acidente -- e o que os testes de
+    # `tests/integration/test_pedido_de_humano.py` travam.
     if pedido_de_humano:
         async with session_factory() as sessao:
             handoff_do_pedido = await registrar_handoff(
@@ -1307,130 +1493,94 @@ async def executar_turno(
         return "pedido_de_humano" if desfecho_do_aviso == "respondido" else desfecho_do_aviso
 
     if corpo:
-        try:
-            veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
-        except ModeracaoIndisponivel as exc:
-            # Falha aberta, e assimetrica de proposito: a fala do lead ja esta
-            # cifrada no banco (a ingestao a gravou antes de o worker existir),
-            # e negar atendimento a lead legitimo porque um servico caiu pune o
-            # inocente. Na saida a escolha e a oposta -- ver o bloco de saida.
-            log.error(
-                "moderacao.indisponivel",
-                direcao=Direcao.ENTRADA.value,
-                message_id=str(message.id),
-                reason=str(exc),
+        veredito = await moderacao.resolver()
+        if veredito is not None and veredito.bloqueado:
+            # A marca vem ANTES da entrega, e a ordem e o ponto (TEC-236).
+            # `_entregar_texto_fixo` tem cinco saidas que nao entregam
+            # nada -- janela fechada, recusa permanente da Meta, reentrega
+            # suprimida, bloqueio por opt-out concorrente (TEC-182),
+            # bloqueio por atendimento humano concorrente (TEC-179) --, e
+            # a maioria delas fecha a linha em PROCESSED, que e terminal.
+            # Marcar depois deixaria a fala bloqueada sem marca exatamente
+            # nos casos em que ninguem mais volta nesta linha, e ela
+            # entraria no contexto do proximo turno -- e e por isso que
+            # `moderar_entrada_e_marcar` marca por dentro, antes de devolver.
+            #
+            # TEC-295, D4, ruling R5. `tem_pendencia` tem de ser calculado
+            # ANTES de `_entregar_texto_fixo` -- nao e so ordem de codigo,
+            # e a pergunta certa. `_entregar_texto_fixo` grava a recusa como
+            # fala OUTBOUND do agente (`recorder.record_agent_message`), e
+            # `ha_fala_pendente_antes` define "pendente" como "INBOUND mais
+            # nova que a ULTIMA fala OUTBOUND do agente". Calculado DEPOIS,
+            # a propria recusa (que nao responde a pergunta pendente
+            # nenhuma) viraria essa ultima fala e apagaria a pendencia da
+            # pergunta legitima -- o booleano sairia sempre falso, e a
+            # continuacao que esta task existe para habilitar nunca
+            # rodaria. Calculado ANTES, a pergunta e a certa: "havia fala
+            # pendente no estado que existia antes desta recusa?" --
+            # resistir a "simplificar" isto de volta para perto do uso e o
+            # ponto deste comentario.
+            async with session_factory() as sessao_da_pendencia:
+                tem_pendencia = await ha_fala_pendente_antes(sessao_da_pendencia, message)
+            # TEC-295, ruling R6. Kind proprio -- nao o default `reply` de
+            # `_entregar_texto_fixo` --, porque a resposta que a continuacao
+            # abaixo pode entregar tambem usa `reply` (a primeira parte de
+            # `KINDS_DA_RESPOSTA`). Com o mesmo kind, a segunda entrega
+            # colidiria com a UNIQUE (message_id, kind) de
+            # `outbound_dispatches` e seria suprimida em silencio como
+            # reentrega -- exatamente o defeito que a D4 existe para evitar,
+            # so que na entrega em vez de na deteccao de pendencia.
+            desfecho_da_recusa = await _entregar_texto_fixo(
+                session_factory,
+                message=message,
+                outbound=outbound,
+                recorder_texto=TEXTO_DA_RECUSA_DE_ENTRADA,
+                kind=KIND_DA_RECUSA_DE_ENTRADA,
             )
-        else:
-            if veredito.bloqueado:
-                # `error` e nao `warning`: e o nivel que o alerta observa, pelo
-                # mesmo criterio de `outbound.recusado`. O texto julgado **nao**
-                # entra no log -- e fala do lead, coberta pela regra de PII.
-                log.error(
-                    "moderacao.entrada_bloqueada",
-                    message_id=str(message.id),
-                    motivo=veredito.motivo,
-                    categoria=veredito.categoria,
-                )
-                # A marca vem ANTES da entrega, e a ordem e o ponto (TEC-236).
-                # `_entregar_texto_fixo` tem cinco saidas que nao entregam
-                # nada -- janela fechada, recusa permanente da Meta, reentrega
-                # suprimida, bloqueio por opt-out concorrente (TEC-182),
-                # bloqueio por atendimento humano concorrente (TEC-179) --, e
-                # a maioria delas fecha a linha em PROCESSED, que e terminal.
-                # Marcar depois deixaria a fala bloqueada sem marca exatamente
-                # nos casos em que ninguem mais volta nesta linha, e ela
-                # entraria no contexto do proximo turno.
-                #
-                # Se a marca falhar, a excecao sobe: a linha vira FAILED e o
-                # sweeper retenta. Custa uma moderacao paga a mais e nao vaza a
-                # fala -- ver `messages/bloqueio.py`.
-                #
-                # `TEC-142`: a marca e a auditoria de ENTRADA saem no mesmo
-                # commit (ver `marcar_bloqueada`). `categoria or CATEGORIA_OUTRO`
-                # porque `ModeradorPort` e um `Protocol` -- um adaptador futuro
-                # pode devolver `Veredito(bloqueado=True)` sem categoria, e a
-                # coluna e `not null`. A alternativa seria o turno estourar por
-                # causa de um campo de auditoria.
-                await marcar_bloqueada(
-                    session_factory,
-                    message.id,
-                    channel=message.channel,
-                    conversation_key=message.conversation_key,
-                    categoria=veredito.categoria or CATEGORIA_OUTRO,
-                )
-                # TEC-295, D4, ruling R5. `tem_pendencia` tem de ser calculado
-                # ANTES de `_entregar_texto_fixo` -- nao e so ordem de codigo,
-                # e a pergunta certa. `_entregar_texto_fixo` grava a recusa como
-                # fala OUTBOUND do agente (`recorder.record_agent_message`), e
-                # `ha_fala_pendente_antes` define "pendente" como "INBOUND mais
-                # nova que a ULTIMA fala OUTBOUND do agente". Calculado DEPOIS,
-                # a propria recusa (que nao responde a pergunta pendente
-                # nenhuma) viraria essa ultima fala e apagaria a pendencia da
-                # pergunta legitima -- o booleano sairia sempre falso, e a
-                # continuacao que esta task existe para habilitar nunca
-                # rodaria. Calculado ANTES, a pergunta e a certa: "havia fala
-                # pendente no estado que existia antes desta recusa?" --
-                # resistir a "simplificar" isto de volta para perto do uso e o
-                # ponto deste comentario.
-                async with session_factory() as sessao_da_pendencia:
-                    tem_pendencia = await ha_fala_pendente_antes(sessao_da_pendencia, message)
-                # TEC-295, ruling R6. Kind proprio -- nao o default `reply` de
-                # `_entregar_texto_fixo` --, porque a resposta que a continuacao
-                # abaixo pode entregar tambem usa `reply` (a primeira parte de
-                # `KINDS_DA_RESPOSTA`). Com o mesmo kind, a segunda entrega
-                # colidiria com a UNIQUE (message_id, kind) de
-                # `outbound_dispatches` e seria suprimida em silencio como
-                # reentrega -- exatamente o defeito que a D4 existe para evitar,
-                # so que na entrega em vez de na deteccao de pendencia.
-                desfecho_da_recusa = await _entregar_texto_fixo(
-                    session_factory,
-                    message=message,
-                    outbound=outbound,
-                    recorder_texto=TEXTO_DA_RECUSA_DE_ENTRADA,
-                    kind=KIND_DA_RECUSA_DE_ENTRADA,
-                )
-                # TEC-295, D4. Ate aqui o turno retornava, e com o debounce isso
-                # passou a matar pergunta legitima: numa rajada, a pergunta que
-                # veio antes do xingamento fecha "agrupado" sem resposta, e
-                # `PROCESSED` e terminal -- nada a reenfileira.
-                #
-                # O guard e sobre ESTA passada nao ter entregue a recusa, e
-                # nao sobre o lead nunca ter recebido nada. `"respondido"` e
-                # o unico desfecho em que a entrega aconteceu agora. Dos
-                # outros quatro -- janela fechada, recusa permanente da Meta,
-                # opt-out concorrente, atendimento humano concorrente --, os
-                # dois ultimos tambem significam que o lead nao pode receber
-                # nada NESTE MOMENTO (esta silenciado ou com humano), entao a
-                # continuacao fica de fora pelo mesmo motivo que a recusa
-                # fica.
-                #
-                # Ja `"reentrega_suprimida"` quer dizer o CONTRARIO de "nao
-                # chegou": a reserva em `outbound_dispatches` ja existe
-                # porque uma tentativa ANTERIOR entregou a recusa. Mesmo
-                # assim a continuacao tambem nao acontece aqui -- e a
-                # consequencia e que a pergunta pendente se perde nesta
-                # retentativa, porque `PROCESSED` e terminal e nada
-                # reenfileira so a resposta que ficou faltando.
-                if desfecho_da_recusa != "respondido":
-                    return desfecho_da_recusa
-                if not tem_pendencia:
-                    # Fala reprovada isolada: continuar faria o agente responder
-                    # ao historico anterior, que e o engajamento que a TEC-233
-                    # recusou de proposito.
-                    return desfecho_da_recusa
-                # Cai para fora do bloco e segue o turno. O contexto que
-                # `montar_contexto` monta a seguir NAO inclui esta fala: a
-                # `marcar_bloqueada` acima ja carimbou a linha, e `literais_apos`
-                # filtra por `bloqueada_em IS NULL`. Ha um uso de `corpo` daqui
-                # para baixo, em `texto_com_oferta(corpo, texto)`, e ele nao
-                # expoe a fala bloqueada: devolve o texto intacto a menos que
-                # `perguntou_se_e_robo(corpo_do_lead)` seja verdadeiro, e nesse
-                # caso o efeito e so a oferta de corretor ser anexada quando a
-                # mensagem bloqueada tambem perguntava se o agente e um robo.
-                log.info(
-                    "moderacao.recusa_com_resposta_pendente",
-                    message_id=str(message.id),
-                )
+            # TEC-295, D4. Ate aqui o turno retornava, e com o debounce isso
+            # passou a matar pergunta legitima: numa rajada, a pergunta que
+            # veio antes do xingamento fecha "agrupado" sem resposta, e
+            # `PROCESSED` e terminal -- nada a reenfileira.
+            #
+            # O guard e sobre ESTA passada nao ter entregue a recusa, e
+            # nao sobre o lead nunca ter recebido nada. `"respondido"` e
+            # o unico desfecho em que a entrega aconteceu agora. Dos
+            # outros quatro -- janela fechada, recusa permanente da Meta,
+            # opt-out concorrente, atendimento humano concorrente --, os
+            # dois ultimos tambem significam que o lead nao pode receber
+            # nada NESTE MOMENTO (esta silenciado ou com humano), entao a
+            # continuacao fica de fora pelo mesmo motivo que a recusa
+            # fica.
+            #
+            # Ja `"reentrega_suprimida"` quer dizer o CONTRARIO de "nao
+            # chegou": a reserva em `outbound_dispatches` ja existe
+            # porque uma tentativa ANTERIOR entregou a recusa. Mesmo
+            # assim a continuacao tambem nao acontece aqui -- e a
+            # consequencia e que a pergunta pendente se perde nesta
+            # retentativa, porque `PROCESSED` e terminal e nada
+            # reenfileira so a resposta que ficou faltando.
+            if desfecho_da_recusa != "respondido":
+                return desfecho_da_recusa
+            if not tem_pendencia:
+                # Fala reprovada isolada: continuar faria o agente responder
+                # ao historico anterior, que e o engajamento que a TEC-233
+                # recusou de proposito.
+                return desfecho_da_recusa
+            # Cai para fora do bloco e segue o turno. O contexto que
+            # `montar_contexto` monta a seguir NAO inclui esta fala: o
+            # `moderacao.resolver()` do topo deste bloco ja carimbou a linha
+            # (ele chama `moderar_entrada_e_marcar`, que chama
+            # `marcar_bloqueada`), e `literais_apos` filtra por
+            # `bloqueada_em IS NULL`. Ha um uso de `corpo` daqui para baixo,
+            # em `texto_com_oferta(corpo, texto)`, e ele nao expoe a fala
+            # bloqueada: devolve o texto intacto a menos que
+            # `perguntou_se_e_robo(corpo_do_lead)` seja verdadeiro, e nesse
+            # caso o efeito e so a oferta de corretor ser anexada quando a
+            # mensagem bloqueada tambem perguntava se o agente e um robo.
+            log.info(
+                "moderacao.recusa_com_resposta_pendente",
+                message_id=str(message.id),
+            )
 
     # TEC-275, D4. Antes de montar contexto de proposito: a continuacao nao
     # precisa de contexto, nao chama o classificador e nao chama `reagir` --

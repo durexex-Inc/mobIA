@@ -4,6 +4,7 @@
 **Card:** [TEC-295](https://eduardodurieuxlopes.atlassian.net/browse/TEC-295)
 **Branch:** `feat/tec-295-moderacao-na-rajada`
 **Origem:** revisão final da TEC-128 (PR #142), achados I1 e I2.
+**Linhas citadas:** a TEC-297 mexeu em dois dos arquivos que este documento cita — `turno.py` e `messages/bloqueio.py` —, e só as citações a esses dois envelheceram. As citações aos arquivos que ela **não** tocou (`context/janela.py`, `context/repositorio.py`, `context/score.py` e `followup/repositorio.py`) continuam apontando exatamente certo. O deslocamento dos outros dois **não é uniforme**: cada região do arquivo andou o seu, então não há um número único que conserte as citações, e por isso não há número nenhum neste aviso — qualquer um deles envelheceria no commit seguinte. Nenhuma citação, deslocada ou não, aponta para além do fim do arquivo: é por isso que as deslocadas continuam parecendo válidas sem ser, e por isso nenhuma ferramenta as marca. Confie no nome da função, não no número.
 
 ## Objetivo
 
@@ -80,7 +81,7 @@ A alternativa recusada era a carregadora conferir, antes de montar contexto, se 
 ### D6 — O que NÃO muda
 
 - `superada_por_mais_nova` continua sem filtrar `bloqueada_em`. O filtro seria quase sempre inerte, e a D1 torna a questão irrelevante: a superada agora é moderada de qualquer jeito.
-- As três exceções da TEC-128 (opt-out, pedido de humano, entrega parcial) continuam como estão. A moderação entra no ramo que hoje fecha `"agrupado"`, não nos três que já furam a janela. Só a entrega parcial cai na moderação normal do turno; opt-out e pedido de humano **retornam antes dela** (`turno.py:1177` e `turno.py:1307`), e essa fala continua sem ser moderada — buraco pré-existente, que esta card não fecha.
+- As três exceções da TEC-128 (opt-out, pedido de humano, entrega parcial) continuam como estão. A moderação entra no ramo que hoje fecha `"agrupado"`, não nos três que já furam a janela. Só a entrega parcial cai na moderação normal do turno; opt-out e pedido de humano **retornam antes dela** (`turno.py:1177` e `turno.py:1307`), e essa fala continua sem ser moderada — buraco pré-existente, que esta card não fecha. (**Fechado pela TEC-297** (21/09/2026): a moderação de entrada passou a rodar no fecho do invólucro de `executar_turno`, por onde quer que o turno saia, e os dois ramos aqui citados passaram a pagar a moderação também — o buraco que esta frase descreve não existe mais. Ver a D7/D8 do desenho da TEC-297.)
 - `montar_contexto`, `contar_mensagens_do_lead` e a CTE de follow-up não mudam: elas já filtram por `bloqueada_em IS NULL`, e passam a receber a marca que faltava.
 
 ## As quatro garantias a não reabrir

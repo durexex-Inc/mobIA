@@ -1,9 +1,13 @@
 """A mensagem agrupada passa pela moderacao de entrada (TEC-295, D1-D3).
 
 A Task 2 prova que a marca `bloqueada_em` e gravada. Os testes abaixo, da
-Task 3, provam que ela SERVE -- que a fala bloqueada some dos quatro
-consumidores (janela de contexto, contagem do lead score e ancora da
-cadencia de follow-up) e que a liberada continua entrando normalmente.
+Task 3, provam que ela SERVE -- que a fala bloqueada some de tres dos quatro
+leitores diretos da coluna (janela de contexto, contagem do lead score e
+ancora da cadencia de follow-up) e que a liberada continua entrando
+normalmente. O quarto leitor e `ha_fala_pendente_antes`
+(`messages/rajada.py`), que este arquivo nao exercita. O resumo permanente
+nao e leitor: ele herda a exclusao da janela por construcao, porque a dobra
+opera sobre a lista que `literais_apos` devolve.
 """
 
 from datetime import UTC, datetime, timedelta
