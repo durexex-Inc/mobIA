@@ -180,6 +180,10 @@ class Message(Base):
         # `process_message`. Mesma forma de `ck_handoffs_status`. Os quatro
         # nomes e textos sao os da migration 0037, e o teste
         # `test_o_check_e_o_enum_dizem_a_mesma_coisa` amarra cada um ao enum.
+        # Mas essa amarra le pg_constraint, ou seja, le a migration -- esta
+        # copia aqui dentro do __table_args__ nao e verificada por teste
+        # nenhum, porque as fixtures sobem o esquema por alembic upgrade e nao
+        # por create_all. Quem editar aqui edita a 0037 junto.
         CheckConstraint(
             "role IN ('LEAD', 'AGENTE', 'CORRETOR', 'SISTEMA')",
             name="ck_messages_role",

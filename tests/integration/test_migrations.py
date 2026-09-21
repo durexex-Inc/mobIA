@@ -345,8 +345,9 @@ _CONSTRAINTS_DA_0037 = (
     "ck_messages_status",
 )
 
-_CONTAR_CONSTRAINTS = text(
-    "SELECT count(*) FROM pg_constraint WHERE conname = ANY(:nomes) AND contype = 'c'"
+_LISTAR_CONSTRAINTS = text(
+    "SELECT coalesce(array_agg(conname), '{}') FROM pg_constraint"
+    " WHERE conname = ANY(:nomes) AND contype = 'c' AND conrelid = 'messages'::regclass"
 )
 
 
@@ -358,20 +359,25 @@ async def test_a_0037_desce_e_sobe_de_novo() -> None:
     derrube. Uma constraint orfa faz o upgrade SEGUINTE reprovar com "already
     exists" -- num banco de desenvolvimento que ja subiu e desceu esta
     revisao, e nao no CI, que sempre parte do zero.
+
+    Compara conjuntos (`array_agg`), nao `count(*)`: se um numero nao fechar,
+    a asercao ja diz qual nome sumiu, em vez de mandar quem le para o banco
+    descobrir.
     """
     await dispose_engine()
     alembic("downgrade", "0036")
     try:
         async with get_sessionmaker()() as sessao:
             assert (
-                await sessao.scalar(_CONTAR_CONSTRAINTS, {"nomes": list(_CONSTRAINTS_DA_0037)})
-            ) == 0
+                set(await sessao.scalar(_LISTAR_CONSTRAINTS, {"nomes": list(_CONSTRAINTS_DA_0037)}))
+                == set()
+            )
     finally:
         await dispose_engine()
         alembic("upgrade", "head")
         await dispose_engine()
 
     async with get_sessionmaker()() as sessao:
-        assert (
-            await sessao.scalar(_CONTAR_CONSTRAINTS, {"nomes": list(_CONSTRAINTS_DA_0037)})
-        ) == 4
+        assert set(
+            await sessao.scalar(_LISTAR_CONSTRAINTS, {"nomes": list(_CONSTRAINTS_DA_0037)})
+        ) == set(_CONSTRAINTS_DA_0037)
