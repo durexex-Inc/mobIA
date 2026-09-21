@@ -308,7 +308,8 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # RN-01.6 (TEC-128, D4): entre o claim e aqui, uma mensagem mais nova
         # do mesmo lead pode ter chegado. Se chegou, o turno dela e que deve
         # responder -- esta fecha PROCESSED sem rodar nada, e nao ha reserva
-        # de outbound para liberar porque nenhuma foi feita.
+        # de outbound para liberar porque nenhuma foi feita. Salvo pedido de
+        # opt-out, tratado logo abaixo: ai o turno roda mesmo superada.
         async with session_factory() as session:
             if await superada_por_mais_nova(session, linha):
                 # A excecao existe por um defeito que a TEC-182 previu por

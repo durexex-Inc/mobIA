@@ -47,10 +47,16 @@ class IngestionService:
 
         gravadas = await self._persist(parsed, channel)
         # A leitura da config mora AQUI, uma vez por lote, e nao dentro de
-        # `_try_enqueue`: quem decide o atraso por mensagem e a ingestao, e a
-        # TEC-128 tem um unico atraso hoje. Ler dentro de `_try_enqueue`
-        # colocaria a leitura de configuracao na camada errada.
+        # `_try_enqueue`: quem decide o atraso por mensagem e a ingestao. O que
+        # e unico e a LEITURA da janela, nao o atraso aplicado -- cada mensagem
+        # do lote recebe zero ou a janela, decidido logo abaixo. Ler dentro de
+        # `_try_enqueue` colocaria a leitura de configuracao na camada errada.
         janela = get_settings().debounce_de_rajada_segundos
+        # Colapsa `provider_message_id` repetido dentro do MESMO envelope para
+        # o texto da ULTIMA ocorrencia. So e inofensivo porque uma reentrega da
+        # Meta traz sempre o mesmo texto (o `wamid` e do provedor, nao nosso) --
+        # nao ha caso em que duas ocorrencias do mesmo id tragam corpos
+        # diferentes para este dicionario escolher entre eles.
         texto_de = {item.provider_message_id: item.text_body for item in parsed}
         for message_id, provider_message_id in gravadas:
             # O opt-out nao espera a janela (RN-01.6 + RN-14). `pediu_optout` e
