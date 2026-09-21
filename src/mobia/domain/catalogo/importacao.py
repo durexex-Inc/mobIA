@@ -124,6 +124,10 @@ async def executar(
         # vez de repassar texto, e devolve `None` quando `erro` nao e do
         # driver; o tipo da excecao entra sempre, para o motivo nunca ficar
         # vazio.
+        #
+        # O `log.exception` mais abaixo tambem nao repassa texto: desde a
+        # TEC-293 o traceback leva pilha, cadeia e tipo, e nao a mensagem que
+        # carregaria a mesma linha do arquivo importado.
         motivo_do_banco = motivo_do_erro_de_banco(erro)
         motivo = f"falha durante a gravacao ({type(erro).__name__})"
         if motivo_do_banco is not None:

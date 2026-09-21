@@ -85,8 +85,9 @@ async def ingest(
         # eco do texto de uma excecao sobre ele nao tem garantia de formato --
         # o parser pode encontrar qualquer coisa dentro de um JSON de terceiro.
         # `reason` (o nome da classe) basta para saber ONDE olhar. O
-        # `log.exception` continua emitindo o traceback completo, e isso fica
-        # de fora desta card -- e classe D no desenho, nao classe A.
+        # `log.exception` emite o traceback, que desde a TEC-293 leva pilha,
+        # cadeia e tipo -- e nunca a mensagem, que era por onde o texto do
+        # parser sobre o envelope de terceiro chegava ao log.
         log.exception(
             "webhook.error",
             reason=type(exc).__name__,
@@ -113,12 +114,13 @@ async def ingest(
     try:
         await service.ingest(parsed)
     except Exception as exc:
-        # `detail` vem curado por `motivo_do_erro_de_banco`, mas o
-        # `log.exception` abaixo continua despejando o traceback completo --
-        # que termina no `IntegrityError: ... DETAIL: ...` do asyncpg do jeito
-        # que `hide_parameters` nao alcanca. A curadoria do `detail` convive
-        # com esse traceback; fecha-lo e classe D no desenho e ficou fora
-        # desta card, mesma ressalva do `webhook.error` acima.
+        # `detail` vem curado por `motivo_do_erro_de_banco`, e desde a TEC-293
+        # o `log.exception` abaixo nao contradiz mais essa curadoria: o
+        # traceback leva pilha, cadeia e tipo, nunca a mensagem. Ate entao ele
+        # despejava o `IntegrityError: ... DETAIL: ...` do asyncpg -- que
+        # `hide_parameters` nao alcanca, porque a linha `DETAIL` e escrita pelo
+        # servidor -- ao lado do `detail` curado, e o vazamento liquido deste
+        # ponto era o mesmo de antes da curadoria.
         log.exception(
             "webhook.persist_failed",
             reason=type(exc).__name__,

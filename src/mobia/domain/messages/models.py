@@ -123,16 +123,19 @@ class Message(Base):
         banco usam `motivo_do_erro_de_banco`, que extrai campos em vez de
         repassar texto.
 
-        **A guarda continua necessaria, por outro caminho.** Dos quatro, um --
-        `webhook.persist_failed`, em `api/routes/whatsapp.py` -- loga com
-        `log.exception`, e o traceback vai inteiro para a chave `exception`
-        independente do que `detail=` carrega. O texto da excecao do asyncpg
-        vive nesse traceback. Os outros tres usam `log.warning` e nao emitem
-        traceback nenhum.
+        **O canal do log fechou; a guarda continua necessaria por outra razao.**
+        Ate a TEC-293, `webhook.persist_failed` logava com `log.exception` e o
+        traceback levava o texto do asyncpg para a chave `exception`
+        independente do que `detail=` carregava. Desde ela o traceback leva
+        pilha, cadeia e tipo, e nenhum dos quatro sitios repassa mensagem.
 
-        Escrever `Message(text_body="oi")` e o engano natural, e e o que abre
-        esse canal. Aqui a falha vira erro de aplicacao com mensagem que nos
-        controlamos, e ela nunca cita o valor.
+        O que sustenta a guarda agora e a premissa da propria tabela, do
+        TEC-126: conteudo pessoal nao fica em claro aqui. Escrever
+        `Message(text_body="oi")` e o engano natural, e nenhuma decisao sobre
+        log protege contra ele.
+
+        Aqui a falha vira erro de aplicacao com mensagem que nos controlamos, e
+        ela nunca cita o valor.
         """
         if valor is None or isinstance(valor, bytes | bytearray | memoryview):
             return valor
