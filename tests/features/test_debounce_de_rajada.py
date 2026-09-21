@@ -22,19 +22,24 @@ JANELA_MS = 300.0
 # `queued_jobs`) TODO job da fila tem score, com ou sem `_defer_by` -- vira
 # `enqueue_time_ms + defer_by_ms` ou so `enqueue_time_ms`. A prova de que um
 # job esperou tem de comparar o score contra o relogio, no padrao de
-# `tests/integration/test_queue.py:87-111`. A folga e proporcional a
-# `JANELA_MS`: o limite de baixo fica bem acima do que o webhook leva sem
-# nenhum atraso (persistir no Postgres + enfileirar, tipicamente poucas
-# dezenas de ms nesta maquina) e o de cima tolera lentidao esporadica do
-# ambiente sem abrir mao de provar que o atraso nao e zero.
-ESPERA_MINIMA_MS = 200.0
-ESPERA_MAXIMA_MS = 3_000.0
+# `tests/integration/test_queue.py:87-111`. Os limites abaixo sao DERIVADOS de
+# `JANELA_MS`, e nao literais soltos, para nao poderem divergir dela se a
+# janela de teste mudar. O limite de baixo fica bem acima do que o webhook
+# leva sem nenhum atraso (persistir no Postgres + enfileirar, tipicamente
+# poucas dezenas de ms nesta maquina) e o de cima tolera lentidao esporadica
+# do ambiente sem abrir mao de provar que o atraso nao e zero.
+ESPERA_MINIMA_MS = JANELA_MS * 2 / 3  # 200.0
+ESPERA_MAXIMA_MS = JANELA_MS * 10  # 3_000.0
 
 # Limite para "o job nasceu pronto" (atraso zero), no mesmo padrao de
 # `test_optout_fura_a_janela.py` e `test_queue.py::test_sem_atraso_o_job_
-# nasce_pronto`: bem abaixo de `ESPERA_MINIMA_MS`, entao os dois limites nunca
-# se confundem.
-PRONTO_MAX_MS = 1_000.0
+# nasce_pronto`. NAO fica abaixo de `ESPERA_MINIMA_MS` -- 1000ms e MAIOR que
+# 200ms, e isso nunca colide na pratica porque nenhum teste compara os dois
+# limites entre si: cada teste mede o proprio atraso contra a JANELA que ELE
+# configura (300ms nos testes de espera acima, 30s no teste de opt-out), e a
+# separacao vem dessa diferenca de escala -- nao da ordem numerica entre
+# `PRONTO_MAX_MS` e `ESPERA_MINIMA_MS`.
+PRONTO_MAX_MS = JANELA_MS * 10 / 3  # 1_000.0
 
 
 def agora_ms() -> float:
@@ -126,15 +131,25 @@ async def test_mensagem_nova_empurra_o_fim_da_espera(
     """Cenario: Mensagem nova durante a espera reinicia o debounce.
 
     Reiniciar nao e um mecanismo aqui: cada mensagem carrega o proprio relogio,
-    entao o instante em que a ULTIMA acorda ja e `ultima + janela`.
+    e o que prova isso e o atraso de CADA UMA contra o PROPRIO instante de
+    envio -- nao `nova > antiga` sozinho, que so prova que a segunda foi
+    enviada depois, o que ja se sabia: com debounce DESLIGADO a primeira
+    ganharia score no instante do envio e a segunda, enviada 0.1s depois,
+    ganharia score 0.1s maior -- `nova > antiga` continuaria verdadeiro.
+    Comparar a DIFERENCA entre os dois scores tambem nao resolve, porque com
+    debounce os dois recebem o mesmo acrescimo de janela e a diferenca
+    continua sendo os mesmos 0.1s do envio. So o atraso de cada uma, isolado
+    contra o proprio envio, distingue "tem janela" de "nao tem".
     """
     monkeypatch.setenv("DEBOUNCE_DE_RAJADA_SEGUNDOS", JANELA)
     get_settings.cache_clear()
     try:
+        antes_primeira = agora_ms()
         await enviar(client, settings, "wamid.E1", "oi")
         primeiro = {job.job_id: job.score for job in await redis_pool.queued_jobs()}
 
         await asyncio.sleep(0.1)
+        antes_segunda = agora_ms()
         await enviar(client, settings, "wamid.E2", "procuro apartamento")
 
         jobs = {job.job_id: job.score for job in await redis_pool.queued_jobs()}
@@ -142,6 +157,12 @@ async def test_mensagem_nova_empurra_o_fim_da_espera(
         antiga = next(iter(primeiro.values()))
         assert nova is not None and antiga is not None
         assert nova > antiga
+
+        # A prova de que ha janela, e nao so ordem de chegada: o atraso de
+        # cada mensagem contra o proprio envio cai na mesma faixa dos outros
+        # testes de espera (`ESPERA_MINIMA_MS`/`ESPERA_MAXIMA_MS`).
+        assert ESPERA_MINIMA_MS < antiga - antes_primeira < ESPERA_MAXIMA_MS
+        assert ESPERA_MINIMA_MS < nova - antes_segunda < ESPERA_MAXIMA_MS
     finally:
         get_settings.cache_clear()
 
