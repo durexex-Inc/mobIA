@@ -336,3 +336,48 @@ async def test_a_0035_desce_e_sobe_de_novo() -> None:
             )
             == 1
         )
+
+
+_CONSTRAINTS_DA_0037 = (
+    "ck_messages_role",
+    "ck_messages_direction",
+    "ck_messages_content_type",
+    "ck_messages_status",
+)
+
+_LISTAR_CONSTRAINTS = text(
+    "SELECT coalesce(array_agg(conname), '{}') FROM pg_constraint"
+    " WHERE conname = ANY(:nomes) AND contype = 'c' AND conrelid = 'messages'::regclass"
+)
+
+
+async def test_a_0037_desce_e_sobe_de_novo() -> None:
+    """As quatro constraints somem no downgrade e voltam no upgrade.
+
+    Mesma razao do teste da 0035 acima: elas nascem de `op.create_check_
+    constraint`, nao do autogenerate, entao nada garante que o downgrade as
+    derrube. Uma constraint orfa faz o upgrade SEGUINTE reprovar com "already
+    exists" -- num banco de desenvolvimento que ja subiu e desceu esta
+    revisao, e nao no CI, que sempre parte do zero.
+
+    Compara conjuntos (`array_agg`), nao `count(*)`: se um numero nao fechar,
+    a assercao ja diz qual nome sumiu, em vez de mandar quem le para o banco
+    descobrir.
+    """
+    await dispose_engine()
+    alembic("downgrade", "0036")
+    try:
+        async with get_sessionmaker()() as sessao:
+            assert (
+                set(await sessao.scalar(_LISTAR_CONSTRAINTS, {"nomes": list(_CONSTRAINTS_DA_0037)}))
+                == set()
+            )
+    finally:
+        await dispose_engine()
+        alembic("upgrade", "head")
+        await dispose_engine()
+
+    async with get_sessionmaker()() as sessao:
+        assert set(
+            await sessao.scalar(_LISTAR_CONSTRAINTS, {"nomes": list(_CONSTRAINTS_DA_0037)})
+        ) == set(_CONSTRAINTS_DA_0037)
