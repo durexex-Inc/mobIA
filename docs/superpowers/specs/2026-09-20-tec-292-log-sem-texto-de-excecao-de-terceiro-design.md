@@ -13,7 +13,7 @@ Tirar do log o texto de exceção que **este projeto não escreveu**, nos pontos
 
 ## O que o levantamento corrigiu no enunciado da card
 
-**São 29 pontos, não 25.** A card contou os 25 em que a *mensagem* de uma exceção entra num kwarg nomeado. Faltavam os **4 que só têm `exc_info=True`/`log.exception`** e nenhum kwarg de texto: `turno.py:566`, `process_message.py:198`, `gerar_resumo.py:48`, `importacao.py:111`. Como `app/logging.py:152` roda `format_exc_info` antes do mascaramento, o traceback vira a chave `exception` e chega ao log terminando em `TipoDoErro: <mensagem>`. São 15 arquivos, e `turno.py` concentra 9 pontos.
+**São 29 pontos, não 25.** A card contou os 25 em que a *mensagem* de uma exceção entra num kwarg nomeado. Faltavam os **4 que só têm `exc_info=True`/`log.exception`** e nenhum kwarg de texto: `turno.py:566`, `process_message.py:214`, `gerar_resumo.py:48`, `importacao.py:111`. Como `app/logging.py:152` roda `format_exc_info` antes do mascaramento, o traceback vira a chave `exception` e chega ao log terminando em `TipoDoErro: <mensagem>`. São 15 arquivos, e `turno.py` concentra 9 pontos.
 
 Classificados por **o que a exceção pode ecoar**, que é o que decide o tratamento:
 
@@ -64,7 +64,7 @@ Aplicada às 11 ocorrências da classe A, ela não produz 11 mudanças iguais �
 
 ## D2 — `motivo_do_erro_de_banco`, um extrator curado
 
-Para os quatro pontos de SQLAlchemy — `api/routes/whatsapp.py:113`, `domain/messages/recorder.py:136` e `:203`, `domain/messages/service.py:164`.
+Para os quatro pontos de SQLAlchemy — `api/routes/whatsapp.py:113`, `domain/messages/recorder.py:136` e `:203`, `domain/messages/service.py:206`.
 
 A exceção que a SQLAlchemy levanta embrulha a do asyncpg, e é na embrulhada que estão os campos úteis. Medido:
 
@@ -86,7 +86,7 @@ Onde o `__cause__` não for uma exceção do asyncpg (erro de conexão, timeout)
 
 ## D3 — Dos três pontos de Redis, dois mantêm o texto — e a razão fica escrita
 
-`domain/messages/service.py:128` (`enqueue.failed`), `workers/jobs/sweep_stalled.py:105` (`sweep.enqueue_failed`) e o par de `api/routes/imoveis.py`.
+`domain/messages/service.py:170` (`enqueue.failed`), `workers/jobs/sweep_stalled.py:105` (`sweep.enqueue_failed`) e o par de `api/routes/imoveis.py`.
 
 O levantamento os pôs na classe A por serem exceção de terceiro. Mas a classificação desta card é sobre **o que a exceção pode ecoar**, e aqui o único argumento do job é um UUID que este projeto gerou: `enqueue_process_message` manda `str(message_id)`, e `importar_catalogo` manda `str(importacao_id)`. O texto que sobra é de nível de conexão — `Error 111 connecting to localhost:6379` —, que é justamente o que se quer ler às três da manhã.
 
@@ -129,7 +129,7 @@ O de `embeddings.py` passa a extrair campos como o da Anthropic. A TEC-237 abriu
 
 ## D6 — A classe C não muda, e esta card não é o que a protege
 
-Os quatro pontos da classe C — `turno.py:1307` e `:2176` (`ModeracaoIndisponivel`), `process_message.py:333` (`_detalhe_para_o_log`) e `importacao.py:78` (`ArquivoInvalido`) — não aparecem nas decisões acima, e a revisão final apontou a lacuna. Aqui está a decisão, e ela tem duas metades.
+Os quatro pontos da classe C — `turno.py:1307` e `:2176` (`ModeracaoIndisponivel`), `process_message.py:443` (`_detalhe_para_o_log`) e `importacao.py:78` (`ArquivoInvalido`) — não aparecem nas decisões acima, e a revisão final apontou a lacuna. Aqui está a decisão, e ela tem duas metades.
 
 **Os três primeiros já estavam protegidos antes desta card, e não por ela.** `ModeracaoIndisponivel` só carrega texto variável quando `infra/moderacao.py:176` a levanta com `motivo_do_provedor(exc)` — e o import daquele módulo é o de **`infra/anthropic.py`**, o que já extraía campos. Os outros três `raise` de `moderacao.py` usam literal. `_detalhe_para_o_log` repassa a mensagem de exceções de `mobia`, e a pior que chega lá é justamente essa mesma. A garantia é a da TEC-237, preexistente.
 

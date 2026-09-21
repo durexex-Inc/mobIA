@@ -99,7 +99,7 @@ Dispara quando `tentativa == len(CADENCIA[candidato.temperatura])`. Diferente do
 
 O cenário 4 da card pede que a resposta do lead devolva o status a `EM_CONVERSA`. **`EM_CONVERSA` não existe em código nenhum**, e esta card não o cria (`L1`).
 
-O que acontece quando o lead responde: `IngestionService._persist` grava a fala INBOUND (`messages/service.py:73`), a CTE `falas_do_lead` passa a escolhê-la como `posicao = 1`, `ancora_em` muda, `MAX`/`COUNT` filtrados por `f.ancora_em = u.ancora` voltam a `0`, `esta_dormente` vira `False` e a cadência recomeça da nova âncora.
+O que acontece quando o lead responde: `IngestionService._persist` grava a fala INBOUND (`messages/service.py:100`), a CTE `falas_do_lead` passa a escolhê-la como `posicao = 1`, `ancora_em` muda, `MAX`/`COUNT` filtrados por `f.ancora_em = u.ancora` voltam a `0`, `esta_dormente` vira `False` e a cadência recomeça da nova âncora.
 
 Isto é, verbatim, a segunda linha do "Então" do cenário 4 — *"uma nova cadência é calculada a partir da nova última mensagem"* — e o efeito observável da primeira. **O nome não é entregue; o comportamento é.** Divergência declarada, e a mesma forma de argumento que a Emenda E-01 da RN-13.4 usou para o cancelamento da cadência.
 
