@@ -202,7 +202,7 @@ async def test_nenhum_dos_cinco_ramos_entrega_recusa(
     texto = await preparar(session, semear_corretor=semear_corretor)
     entregador = outbound_fake()
 
-    await rodar_turno(
+    desfecho = await rodar_turno(
         session,
         classificador_fake(),
         entregador,
@@ -212,6 +212,7 @@ async def test_nenhum_dos_cinco_ramos_entrega_recusa(
         texto=texto,
     )
 
+    assert desfecho == desfecho_esperado
     assert not any(TEXTO_DA_RECUSA_DE_ENTRADA in entregue for entregue in entregador.entregues)
 
     # A asserta sobre `entregues` sozinha e fraca: ela nao pega uma recusa que
