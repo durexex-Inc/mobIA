@@ -105,9 +105,10 @@ async def moderar_entrada_e_marcar(
     turno entrega a recusa de entrada, o caminho do agrupado e os cinco ramos
     que retornam cedo nao entregam nada (TEC-297, D2).
 
-    Os tres chamadores sao `executar_turno`, o `finally` do invulucro dele e
-    `_moderar_superada` no worker. Antes da TEC-297 a sequencia abaixo estava
-    escrita duas vezes, e a segunda copia nasceu na TEC-295.
+    Existe para ter um sitio so. Antes da TEC-297 esta sequencia estava
+    escrita duas vezes -- no turno e em `_moderar_superada`, que a TEC-295
+    criou --, e os cinco ramos que retornam antes da moderacao precisariam
+    de uma terceira copia.
     """
     try:
         veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
@@ -132,9 +133,8 @@ async def moderar_entrada_e_marcar(
         motivo=veredito.motivo,
         categoria=veredito.categoria,
     )
-    # Se a marca falhar, a excecao sobe -- ver o topo deste modulo. A unica
-    # excecao e o `finally` do invulucro do turno, que engole com a excecao do
-    # turno em voo para nao mascarar a causa real (TEC-297, D5).
+    # Se a marca falhar, a excecao sobe -- ver o topo deste modulo. Excecoes
+    # a essa regra estao documentadas em `turno.py` (TEC-297, D5).
     await marcar_bloqueada(
         session_factory,
         message_id,
