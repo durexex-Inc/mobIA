@@ -14,9 +14,16 @@ from mobia.domain.handoff.agendador import AgendadorDeResumoPort
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.humano.deteccao import pediu_humano
+from mobia.domain.messages.bloqueio import marcar_bloqueada
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import superada_por_mais_nova
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
+from mobia.domain.moderacao.port import (
+    CATEGORIA_OUTRO,
+    Direcao,
+    ModeracaoIndisponivel,
+    ModeradorPort,
+)
 from mobia.domain.optout.deteccao import pediu_optout
 from mobia.domain.outbound.port import OutboundPort
 from mobia.domain.outbound.presenca import indicador_de_digitacao
@@ -241,7 +248,10 @@ async def _tem_entrega_parcial_pendente(session_factory: Any, message_id: uuid.U
 
     TEC-128 (Important 2 da onda final). Mesma consulta e mesma condicao que
     `executar_turno` usa para decidir se entra no ramo de continuacao (TEC-275,
-    D4, em torno de `turno.py:1395-1398`): um lote existe e pelo menos um dos
+    D4): `lote = ler_apresentacao_da_mensagem(...)` e a intersecao entre
+    `ja_reservados` e os `kind` do lote, logo antes da chamada a
+    `_continuar_entrega` (`turno.py:1448-1451` hoje -- o numero desliza a cada
+    insercao naquele arquivo, os nomes nao). Um lote existe e pelo menos um dos
     kinds dele ja tem reserva -- ou seja, a apresentacao comecou e nao
     terminou. Sem esta checagem, a guarda de superacao (D3 da TEC-128)
     fecharia essa retentativa como "agrupado" antes de `executar_turno` ter a
@@ -293,6 +303,70 @@ async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
     return resultado.rowcount == 1
 
 
+async def _moderar_superada(
+    session_factory: async_sessionmaker[AsyncSession],
+    linha: Message,
+    corpo: str,
+    *,
+    moderador: ModeradorPort,
+) -> bool:
+    """Modera a fala que vai fechar "agrupado". Devolve se ela foi bloqueada.
+
+    A superada nunca chega a `executar_turno`, e a moderacao de entrada mora la
+    dentro -- entao sem isto ela nunca seria moderada. `bloqueada_em` ficaria
+    NULL, e a coluna tem QUATRO consumidores: a janela de contexto
+    (`context/janela.py`), o resumo permanente que se forma na dobra, a
+    contagem do lead score (`context/repositorio.py`) e a ancora da cadencia de
+    follow-up (`followup/repositorio.py`).
+
+    **Fail-open em `ModeracaoIndisponivel`**, pela mesma assimetria que o port
+    documenta e que o turno ja pratica na entrada. Deixar a excecao subir faria
+    `attempts` crescer e, esgotadas as cinco tentativas, `_encaminhar_por_erro`
+    abriria handoff e avisaria o lead de um erro tecnico -- por uma mensagem que
+    so precisava ser agrupada. A consequencia e honesta: provedor fora do ar
+    significa fala nao moderada entrando no contexto, como ja acontece hoje no
+    turno normal.
+
+    `marcar_bloqueada` e a mesma funcao que `turno.py` chama, e nao uma copia:
+    ela grava a marca e o `ModerationEvent` no MESMO commit (TEC-142), e e essa
+    atomicidade que impede o estado "marcada sem auditoria".
+    """
+    try:
+        veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
+    except ModeracaoIndisponivel as exc:
+        log.error(
+            "moderacao.indisponivel",
+            direcao=Direcao.ENTRADA.value,
+            message_id=str(linha.id),
+            reason=str(exc),
+        )
+        return False
+
+    if not veredito.bloqueado:
+        return False
+
+    # `error` e nao `warning`, pelo mesmo criterio de `turno.py`: e o nivel que
+    # o alerta observa. O texto julgado **nao** entra no log -- e fala do lead,
+    # coberta pela regra de PII.
+    log.error(
+        "moderacao.entrada_bloqueada",
+        message_id=str(linha.id),
+        motivo=veredito.motivo,
+        categoria=veredito.categoria,
+    )
+    await marcar_bloqueada(
+        session_factory,
+        linha.id,
+        channel=linha.channel,
+        conversation_key=linha.conversation_key,
+        # `categoria or CATEGORIA_OUTRO` pela mesma razao de `turno.py`:
+        # `ModeradorPort` e um `Protocol`, um adaptador futuro pode devolver
+        # `Veredito(bloqueado=True)` sem categoria, e a coluna e `not null`.
+        categoria=veredito.categoria or CATEGORIA_OUTRO,
+    )
+    return True
+
+
 async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoProcessamento:
     session_factory = ctx["session_factory"]
     outbound = ctx["outbound"]
@@ -332,10 +406,13 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
 
         # RN-01.6 (TEC-128, D4): entre o claim e aqui, uma mensagem mais nova
         # do mesmo lead pode ter chegado. Se chegou, o turno dela e que deve
-        # responder -- esta fecha PROCESSED sem rodar nada, e nao ha reserva
-        # de outbound para liberar porque nenhuma foi feita. Ha tres excecoes,
-        # tratadas logo abaixo: opt-out, pedido de humano e entrega parcial
-        # pendente. Nos tres o turno roda mesmo superada.
+        # responder -- esta e moderada (TEC-295) e fecha PROCESSED sem rodar o
+        # turno, e nao ha reserva de outbound para liberar porque nenhuma foi
+        # feita. Ha tres excecoes, tratadas logo abaixo: opt-out, pedido de
+        # humano e entrega parcial pendente. Nos tres o turno roda mesmo
+        # superada.
+        deve_fechar_como_agrupado = False
+        corpo_da_superada: str | None = None
         async with session_factory() as session:
             if await superada_por_mais_nova(session, linha):
                 # A excecao do opt-out existe por um defeito que a TEC-182
@@ -380,14 +457,46 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 elif await _tem_entrega_parcial_pendente(session_factory, identifier):
                     log.info("message.entrega_parcial_fura_a_janela", message_id=message_id)
                 else:
-                    await session.execute(
-                        update(Message)
-                        .where(Message.id == identifier)
-                        .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
-                    )
-                    await session.commit()
-                    log.info("message.agrupado", message_id=message_id)
-                    return "agrupado"
+                    # TEC-295: a superada e moderada so neste ramo, o do
+                    # agrupado. Dos outros dois ramos acima -- opt-out e
+                    # pedido de humano --, os dois RETORNAM antes da
+                    # moderacao de entrada de `turno.py` (`turno.py:1177` e
+                    # `turno.py:1307`), entao essa fala segue sem ser
+                    # moderada -- buraco pre-existente, que esta card nao
+                    # fecha. So o ramo da entrega parcial, que nao retorna
+                    # cedo, cai na moderacao normal do turno. A moderacao em
+                    # si roda fora da sessao de leitura, logo abaixo -- ver o
+                    # comentario la.
+                    deve_fechar_como_agrupado = True
+                    corpo_da_superada = corpo
+
+        if deve_fechar_como_agrupado:
+            # A sessao acima (que rodou `superada_por_mais_nova`) ja fechou
+            # antes desta linha. `_moderar_superada` e uma chamada HTTP paga
+            # com timeout de 5s; roda-la dentro da sessao de leitura deixaria
+            # a conexao `idle in transaction`, segurando `ACCESS SHARE` sobre
+            # `messages` pela latencia inteira do provedor -- numa rajada de N
+            # mensagens, N workers presos no pool por isso. E a mesma dor que
+            # o CLAUDE.md registra para o `TRUNCATE` de `banco_limpo`
+            # (TEC-291). A ordem logica nao muda: a moderacao continua
+            # acontecendo antes do UPDATE, e so no ramo do agrupado -- so a
+            # sessao que a envolve mudou, e o UPDATE ganha a sessao propria
+            # de baixo, isolada, do mesmo jeito que o `turno.py` normal ja
+            # usa uma sessao por operacao.
+            bloqueada = False
+            if corpo_da_superada:
+                bloqueada = await _moderar_superada(
+                    session_factory, linha, corpo_da_superada, moderador=ctx["moderador"]
+                )
+            async with session_factory() as session:
+                await session.execute(
+                    update(Message)
+                    .where(Message.id == identifier)
+                    .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
+                )
+                await session.commit()
+            log.info("message.agrupado", message_id=message_id, bloqueada=bloqueada)
+            return "agrupado"
 
         # TEC-274, RN-04.7. O relogio mede o turno INTEIRO -- contexto,
         # resumo, modelo e as duas moderacoes --, e nao so a chamada ao

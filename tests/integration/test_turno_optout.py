@@ -16,11 +16,12 @@ import pytest
 from conftest import ModeradorFake, OutboundFake
 from sqlalchemy import func, select
 
-from mobia.domain.agente.turno import KIND_DA_RESPOSTA, executar_turno
+from mobia.domain.agente.turno import executar_turno
 from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
+from mobia.domain.moderacao.port import KIND_DA_RECUSA_DE_ENTRADA
 from mobia.domain.optout.deteccao import TEXTO_DA_CONFIRMACAO_DE_OPTOUT
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
 from mobia.domain.outbound.port import EnvioRecusado, EnvioRetentavel
@@ -615,11 +616,20 @@ async def test_confirmacao_de_optout_que_nao_entrega_nunca_vira_bloqueado_por_op
     )
 
 
-async def test_kind_da_entrega_de_texto_fixo_continua_reply_por_default(
+async def test_kind_da_recusa_de_entrada_e_proprio_e_nao_o_default(
     session, resumidor_fake, contador_fake
 ) -> None:
-    """O default de `_entregar_texto_fixo` preserva os chamadores existentes:
-    a recusa de entrada usa `KIND_DA_RESPOSTA`, nao um kind novo."""
+    """TEC-295, ruling R6. A recusa de entrada NAO usa mais o default de
+    `_entregar_texto_fixo` (`KIND_DA_RESPOSTA`, "reply") -- usa
+    `KIND_DA_RECUSA_DE_ENTRADA` proprio, passado explicitamente.
+
+    Ate a TEC-295 o default bastava: a recusa e a resposta normal nunca
+    saiam na mesma mensagem, entao as duas usando "reply" nunca colidiam. A
+    D4 da TEC-295 passou a poder entregar as duas juntas (recusa + resposta
+    a uma pergunta pendente), e `outbound_dispatches` e UNIQUE em
+    (message_id, kind) -- com o mesmo kind a segunda seria suprimida como
+    reentrega da primeira, em silencio. Ver `KIND_DA_RECUSA_DE_ENTRADA` em
+    `domain/moderacao/port.py`."""
     mensagem = await _mensagem_gravada(session, texto="qualquer coisa")
 
     class _OutboundQueRegistraKind(OutboundFake):
@@ -645,4 +655,4 @@ async def test_kind_da_entrega_de_texto_fixo_continua_reply_por_default(
     )
 
     assert resultado == "respondido"
-    assert outbound.kinds == [KIND_DA_RESPOSTA]
+    assert outbound.kinds == [KIND_DA_RECUSA_DE_ENTRADA]

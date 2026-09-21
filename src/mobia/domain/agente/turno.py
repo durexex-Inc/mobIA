@@ -85,9 +85,11 @@ from mobia.domain.humano.deteccao import (
 )
 from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
 from mobia.domain.messages.models import Message
+from mobia.domain.messages.rajada import ha_fala_pendente_antes
 from mobia.domain.messages.recorder import MessageRecorder
 from mobia.domain.moderacao.port import (
     CATEGORIA_OUTRO,
+    KIND_DA_RECUSA_DE_ENTRADA,
     TEXTO_DA_RECUSA_DE_ENTRADA,
     TEXTO_NEUTRO_DE_SAIDA,
     Direcao,
@@ -1356,11 +1358,78 @@ async def executar_turno(
                     conversation_key=message.conversation_key,
                     categoria=veredito.categoria or CATEGORIA_OUTRO,
                 )
-                return await _entregar_texto_fixo(
+                # TEC-295, D4, ruling R5. `tem_pendencia` tem de ser calculado
+                # ANTES de `_entregar_texto_fixo` -- nao e so ordem de codigo,
+                # e a pergunta certa. `_entregar_texto_fixo` grava a recusa como
+                # fala OUTBOUND do agente (`recorder.record_agent_message`), e
+                # `ha_fala_pendente_antes` define "pendente" como "INBOUND mais
+                # nova que a ULTIMA fala OUTBOUND do agente". Calculado DEPOIS,
+                # a propria recusa (que nao responde a pergunta pendente
+                # nenhuma) viraria essa ultima fala e apagaria a pendencia da
+                # pergunta legitima -- o booleano sairia sempre falso, e a
+                # continuacao que esta task existe para habilitar nunca
+                # rodaria. Calculado ANTES, a pergunta e a certa: "havia fala
+                # pendente no estado que existia antes desta recusa?" --
+                # resistir a "simplificar" isto de volta para perto do uso e o
+                # ponto deste comentario.
+                async with session_factory() as sessao_da_pendencia:
+                    tem_pendencia = await ha_fala_pendente_antes(sessao_da_pendencia, message)
+                # TEC-295, ruling R6. Kind proprio -- nao o default `reply` de
+                # `_entregar_texto_fixo` --, porque a resposta que a continuacao
+                # abaixo pode entregar tambem usa `reply` (a primeira parte de
+                # `KINDS_DA_RESPOSTA`). Com o mesmo kind, a segunda entrega
+                # colidiria com a UNIQUE (message_id, kind) de
+                # `outbound_dispatches` e seria suprimida em silencio como
+                # reentrega -- exatamente o defeito que a D4 existe para evitar,
+                # so que na entrega em vez de na deteccao de pendencia.
+                desfecho_da_recusa = await _entregar_texto_fixo(
                     session_factory,
                     message=message,
                     outbound=outbound,
                     recorder_texto=TEXTO_DA_RECUSA_DE_ENTRADA,
+                    kind=KIND_DA_RECUSA_DE_ENTRADA,
+                )
+                # TEC-295, D4. Ate aqui o turno retornava, e com o debounce isso
+                # passou a matar pergunta legitima: numa rajada, a pergunta que
+                # veio antes do xingamento fecha "agrupado" sem resposta, e
+                # `PROCESSED` e terminal -- nada a reenfileira.
+                #
+                # O guard e sobre ESTA passada nao ter entregue a recusa, e
+                # nao sobre o lead nunca ter recebido nada. `"respondido"` e
+                # o unico desfecho em que a entrega aconteceu agora. Dos
+                # outros quatro -- janela fechada, recusa permanente da Meta,
+                # opt-out concorrente, atendimento humano concorrente --, os
+                # dois ultimos tambem significam que o lead nao pode receber
+                # nada NESTE MOMENTO (esta silenciado ou com humano), entao a
+                # continuacao fica de fora pelo mesmo motivo que a recusa
+                # fica.
+                #
+                # Ja `"reentrega_suprimida"` quer dizer o CONTRARIO de "nao
+                # chegou": a reserva em `outbound_dispatches` ja existe
+                # porque uma tentativa ANTERIOR entregou a recusa. Mesmo
+                # assim a continuacao tambem nao acontece aqui -- e a
+                # consequencia e que a pergunta pendente se perde nesta
+                # retentativa, porque `PROCESSED` e terminal e nada
+                # reenfileira so a resposta que ficou faltando.
+                if desfecho_da_recusa != "respondido":
+                    return desfecho_da_recusa
+                if not tem_pendencia:
+                    # Fala reprovada isolada: continuar faria o agente responder
+                    # ao historico anterior, que e o engajamento que a TEC-233
+                    # recusou de proposito.
+                    return desfecho_da_recusa
+                # Cai para fora do bloco e segue o turno. O contexto que
+                # `montar_contexto` monta a seguir NAO inclui esta fala: a
+                # `marcar_bloqueada` acima ja carimbou a linha, e `literais_apos`
+                # filtra por `bloqueada_em IS NULL`. Ha um uso de `corpo` daqui
+                # para baixo, em `texto_com_oferta(corpo, texto)`, e ele nao
+                # expoe a fala bloqueada: devolve o texto intacto a menos que
+                # `perguntou_se_e_robo(corpo_do_lead)` seja verdadeiro, e nesse
+                # caso o efeito e so a oferta de corretor ser anexada quando a
+                # mensagem bloqueada tambem perguntava se o agente e um robo.
+                log.info(
+                    "moderacao.recusa_com_resposta_pendente",
+                    message_id=str(message.id),
                 )
 
     # TEC-275, D4. Antes de montar contexto de proposito: a continuacao nao
@@ -3592,15 +3661,20 @@ async def _entregar_texto_fixo(
 
     Bloqueio nunca produz silencio: e a mesma escolha que a TEC-134 e a
     TEC-227 fizeram ao preferir a duplicata a perda, porque a duplicata e
-    visivel e recuperavel e o silencio nao. `kind` tem default para preservar
-    os chamadores existentes -- o texto de recusa de entrada usa o kind da
-    resposta normal. A confirmacao de opt-out (TEC-182) passa o kind proprio,
-    que e o unico que atravessa a guarda de opt-out da porta de saida depois
-    do registro -- ver `GuardedOutbound.send`. `subagent` anda junto de
-    `kind` pelo mesmo motivo: sem o parametro, toda entrega deste caminho --
-    inclusive a confirmacao de opt-out, que nao e moderacao nenhuma -- gravava
-    `message_telemetry.subagent = "moderacao"`, rotulando errado quem olhar a
-    telemetria depois.
+    visivel e recuperavel e o silencio nao. `kind` tem default
+    (`KIND_DA_RESPOSTA`) para preservar o chamador que nao precisa de kind
+    proprio -- hoje so o texto da busca inconclusiva (`LacoDeBuscaExcedido`,
+    mais abaixo) usa o default. Os outros tres chamadores passam kind
+    proprio: a confirmacao de opt-out (TEC-182), o aviso de pedido de humano,
+    e -- desde a TEC-295, ruling R6 -- a recusa de entrada, que usa
+    `KIND_DA_RECUSA_DE_ENTRADA` para nao colidir com o `kind` da resposta que
+    a continuacao da D4 pode entregar depois dela na mesma mensagem. O da
+    opt-out e o unico que atravessa a guarda de opt-out da porta de saida
+    depois do registro -- ver `GuardedOutbound.send`. `subagent` anda junto
+    de `kind` pelo mesmo motivo: sem o parametro, toda entrega deste caminho
+    -- inclusive a confirmacao de opt-out, que nao e moderacao nenhuma --
+    gravava `message_telemetry.subagent = "moderacao"`, rotulando errado
+    quem olhar a telemetria depois.
     """
     # A identificacao entra AQUI e nao em cada chamador: este e o funil das
     # tres trilhas que passam por `_entregar_texto_fixo` -- recusa da
