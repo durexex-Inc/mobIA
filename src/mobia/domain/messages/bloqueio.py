@@ -133,8 +133,7 @@ async def moderar_entrada_e_marcar(
         motivo=veredito.motivo,
         categoria=veredito.categoria,
     )
-    # Se a marca falhar, a excecao sobe -- ver o topo deste modulo. Excecoes
-    # a essa regra estao documentadas em `turno.py` (TEC-297, D5).
+    # Se a marca falhar, a excecao sobe -- ver o topo deste modulo.
     await marcar_bloqueada(
         session_factory,
         message_id,
