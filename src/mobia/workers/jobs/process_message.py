@@ -14,9 +14,16 @@ from mobia.domain.handoff.agendador import AgendadorDeResumoPort
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.humano.deteccao import pediu_humano
+from mobia.domain.messages.bloqueio import marcar_bloqueada
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import superada_por_mais_nova
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
+from mobia.domain.moderacao.port import (
+    CATEGORIA_OUTRO,
+    Direcao,
+    ModeracaoIndisponivel,
+    ModeradorPort,
+)
 from mobia.domain.optout.deteccao import pediu_optout
 from mobia.domain.outbound.port import OutboundPort
 from mobia.domain.outbound.presenca import indicador_de_digitacao
@@ -293,6 +300,70 @@ async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
     return resultado.rowcount == 1
 
 
+async def _moderar_superada(
+    session_factory: async_sessionmaker[AsyncSession],
+    linha: Message,
+    corpo: str,
+    *,
+    moderador: ModeradorPort,
+) -> bool:
+    """Modera a fala que vai fechar "agrupado". Devolve se ela foi bloqueada.
+
+    A superada nunca chega a `executar_turno`, e a moderacao de entrada mora la
+    dentro -- entao sem isto ela nunca seria moderada. `bloqueada_em` ficaria
+    NULL, e a coluna tem QUATRO consumidores: a janela de contexto
+    (`context/janela.py`), o resumo permanente que se forma na dobra, a
+    contagem do lead score (`context/repositorio.py`) e a ancora da cadencia de
+    follow-up (`followup/repositorio.py`).
+
+    **Fail-open em `ModeracaoIndisponivel`**, pela mesma assimetria que o port
+    documenta e que o turno ja pratica na entrada. Deixar a excecao subir faria
+    `attempts` crescer e, esgotadas as cinco tentativas, `_encaminhar_por_erro`
+    abriria handoff e avisaria o lead de um erro tecnico -- por uma mensagem que
+    so precisava ser agrupada. A consequencia e honesta: provedor fora do ar
+    significa fala nao moderada entrando no contexto, como ja acontece hoje no
+    turno normal.
+
+    `marcar_bloqueada` e a mesma funcao que `turno.py` chama, e nao uma copia:
+    ela grava a marca e o `ModerationEvent` no MESMO commit (TEC-142), e e essa
+    atomicidade que impede o estado "marcada sem auditoria".
+    """
+    try:
+        veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
+    except ModeracaoIndisponivel as exc:
+        log.error(
+            "moderacao.indisponivel",
+            direcao=Direcao.ENTRADA.value,
+            message_id=str(linha.id),
+            reason=str(exc),
+        )
+        return False
+
+    if not veredito.bloqueado:
+        return False
+
+    # `error` e nao `warning`, pelo mesmo criterio de `turno.py`: e o nivel que
+    # o alerta observa. O texto julgado **nao** entra no log -- e fala do lead,
+    # coberta pela regra de PII.
+    log.error(
+        "moderacao.entrada_bloqueada",
+        message_id=str(linha.id),
+        motivo=veredito.motivo,
+        categoria=veredito.categoria,
+    )
+    await marcar_bloqueada(
+        session_factory,
+        linha.id,
+        channel=linha.channel,
+        conversation_key=linha.conversation_key,
+        # `categoria or CATEGORIA_OUTRO` pela mesma razao de `turno.py`:
+        # `ModeradorPort` e um `Protocol`, um adaptador futuro pode devolver
+        # `Veredito(bloqueado=True)` sem categoria, e a coluna e `not null`.
+        categoria=veredito.categoria or CATEGORIA_OUTRO,
+    )
+    return True
+
+
 async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoProcessamento:
     session_factory = ctx["session_factory"]
     outbound = ctx["outbound"]
@@ -332,10 +403,11 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
 
         # RN-01.6 (TEC-128, D4): entre o claim e aqui, uma mensagem mais nova
         # do mesmo lead pode ter chegado. Se chegou, o turno dela e que deve
-        # responder -- esta fecha PROCESSED sem rodar nada, e nao ha reserva
-        # de outbound para liberar porque nenhuma foi feita. Ha tres excecoes,
-        # tratadas logo abaixo: opt-out, pedido de humano e entrega parcial
-        # pendente. Nos tres o turno roda mesmo superada.
+        # responder -- esta e moderada (TEC-295) e fecha PROCESSED sem rodar o
+        # turno, e nao ha reserva de outbound para liberar porque nenhuma foi
+        # feita. Ha tres excecoes, tratadas logo abaixo: opt-out, pedido de
+        # humano e entrega parcial pendente. Nos tres o turno roda mesmo
+        # superada.
         async with session_factory() as session:
             if await superada_por_mais_nova(session, linha):
                 # A excecao do opt-out existe por um defeito que a TEC-182
@@ -380,6 +452,13 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 elif await _tem_entrega_parcial_pendente(session_factory, identifier):
                     log.info("message.entrega_parcial_fura_a_janela", message_id=message_id)
                 else:
+                    # TEC-295: a superada e moderada aqui, e so aqui. Nos tres
+                    # ramos acima o turno roda e a moderacao acontece pelo
+                    # caminho normal de `turno.py`.
+                    if corpo:
+                        await _moderar_superada(
+                            session_factory, linha, corpo, moderador=ctx["moderador"]
+                        )
                     await session.execute(
                         update(Message)
                         .where(Message.id == identifier)
