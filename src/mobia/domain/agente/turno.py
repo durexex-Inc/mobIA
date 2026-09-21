@@ -1421,8 +1421,12 @@ async def executar_turno(
                 # Cai para fora do bloco e segue o turno. O contexto que
                 # `montar_contexto` monta a seguir NAO inclui esta fala: a
                 # `marcar_bloqueada` acima ja carimbou a linha, e `literais_apos`
-                # filtra por `bloqueada_em IS NULL`. Nao ha um unico uso de
-                # `corpo` daqui para baixo -- conferido no desenho.
+                # filtra por `bloqueada_em IS NULL`. Ha um uso de `corpo` daqui
+                # para baixo, em `texto_com_oferta(corpo, texto)`, e ele nao
+                # expoe a fala bloqueada: devolve o texto intacto a menos que
+                # `perguntou_se_e_robo(corpo_do_lead)` seja verdadeiro, e nesse
+                # caso o efeito e so a oferta de corretor ser anexada quando a
+                # mensagem bloqueada tambem perguntava se o agente e um robo.
                 log.info(
                     "moderacao.recusa_com_resposta_pendente",
                     message_id=str(message.id),
