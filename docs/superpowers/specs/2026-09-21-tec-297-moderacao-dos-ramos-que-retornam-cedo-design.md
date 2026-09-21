@@ -127,7 +127,42 @@ O `finally` roda no caminho de erro **de propósito**: uma mensagem que esgota a
 
 Três caminhos que hoje custam zero passam a custar uma moderação cada: os ramos #1, #2 e #3. O de maior volume é o #2 — toda mensagem escrita enquanto um handoff está aberto. A US$ 0,57 por mil, é o mesmo preço que a TEC-295 aceitou pagar na rajada, e não houve alternativa mais barata que preservasse a garantia.
 
-### D7 — O que NÃO muda
+### D7 — Dois comentários existentes ficam falsos, e o argumento de um deles é contra esta card
+
+Não é limpeza: um deles argumenta contra a decisão que acabamos de tomar, e deixá-lo de pé seria deixar o repo dizendo duas coisas.
+
+O comentário da guarda de fora de escopo (`turno.py:1048-1054`, TEC-138) afirma: *"daqui para baixo todo caminho leva a chamada paga — moderacao de entrada, montagem de contexto, classificador —, e economiza-las e a **unica** coisa que esta guarda faz. Descer um degrau que seja a transformaria em silencio CARO, que e o oposto do que a card pede."* Esta card faz a guarda pagar uma das três.
+
+A resposta não é que o comentário estava errado — é que "caro" tem escala. A guarda continua economizando as **duas** caras: a montagem de contexto e o classificador, que rodam no modelo do agente sobre um prompt uma a duas ordens de magnitude maior que o da moderação (o bloco de sistema da moderação tem 459 tokens medidos; o contexto do turno vai a 12.000 pela RN-02.5). O que ela passa a pagar é US$ 0,00057. O silêncio não fica caro; fica auditado.
+
+Isso **não** está medido lado a lado, e a spec não finge que está: o número da moderação é medido, o do turno não foi medido nesta card. O que sustenta a decisão é a diferença de tamanho de prompt e de modelo, não uma comparação de faturas.
+
+O comentário da guarda de opt-out (`turno.py:906-912`) diz *"quem ja pediu silencio nao paga moderacao nem recebe resposta"*. A segunda metade continua verdadeira; a primeira passa a ser falsa.
+
+E o comentário de `process_message.py:460-469`, que a TEC-295 escreveu, afirma que a fala destes ramos *"segue sem ser moderada — buraco pre-existente, que esta card nao fecha"*. Esta card o fecha, e o comentário tem de dizer isso em vez de continuar descrevendo o estado anterior no presente — que é exatamente o defeito que a TEC-296 existe para consertar em outros dois documentos.
+
+### D8 — O `try/finally` não pode ser literal: `executar_turno` tem 2.775 linhas
+
+A D4 pede um `try/finally` em volta do corpo do turno. Escrito literalmente, ele reindentaria as linhas 907-3595 — 2.700 linhas de diff sem uma mudança de comportamento dentro, que nenhum revisor consegue ler e que colide com toda branch aberta.
+
+A forma que entrega a mesma garantia sem reindentar: `executar_turno` vira um invólucro fino, e o corpo de hoje passa a ser `_executar_turno`, privado, recebendo `corpo` e `moderacao` como parâmetros.
+
+```python
+async def executar_turno(session_factory, *, message, ..., moderador, ...) -> ResultadoDoTurno:
+    """<a docstring de contrato de hoje vem para ca>"""
+    corpo = decrypt(message.text_body, aad_de(message.id, "text_body"))
+    moderacao = _ModeracaoDoTurno(session_factory, moderador, message, corpo)
+    try:
+        return await _executar_turno(..., corpo=corpo, moderacao=moderacao)
+    finally:
+        await moderacao.resolver_no_fim()
+```
+
+O corpo extraído fica no **mesmo nível de indentação** que tem hoje, porque continua sendo corpo de função de módulo. O diff é a linha do `def`, o preâmbulo que sobe para o invólucro, e o invólucro novo.
+
+O `decrypt` sobe para o invólucro em vez de ser repetido: `_ModeracaoDoTurno` precisa de `corpo`, e decifrar duas vezes para não passar um parâmetro seria trocar clareza por nada.
+
+### D9 — O que NÃO muda
 
 - Os quatro leitores de `bloqueada_em` não mudam: já filtram `bloqueada_em IS NULL` e passam a receber a marca que faltava.
 - A ordem das cinco guardas não muda. Nenhuma delas desce nem sobe.
@@ -170,6 +205,8 @@ Sobre a garantia 4, uma precisão que a prosa existente induz ao erro: `literais
 | mensagem sem corpo: zero chamadas ao moderador | que o `if corpo` continua valendo |
 
 `test_pedido_de_humano_passa_antes_da_moderacao_de_entrada` continua passando: a ordem que ele trava é preservada e reforçada.
+
+**A rede de segurança da D8 é a suíte existente, não um teste novo.** A extração de `_executar_turno` não muda comportamento nenhum, e o que prova isso é que os 2.686 testes que passavam em `c8b286a` continuem passando sem edição. Um teste novo escrito para a extração provaria menos que eles: ele nasceria depois da mudança, medindo o que ela faz em vez do que ela não devia mexer. Qualquer teste de turno que precise ser editado nesta card é sinal de que a extração mudou algo — e aí a pergunta é o que, não como calar o teste.
 
 ## Fora de escopo
 
