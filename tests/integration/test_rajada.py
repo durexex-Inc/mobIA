@@ -217,14 +217,46 @@ async def test_pendente_de_outro_lead_nao_conta(session) -> None:
 
 
 async def test_pendente_de_outro_canal_nao_conta(session) -> None:
-    """O filtro `channel`, nos dois pontos onde `ha_fala_pendente_antes` o usa.
+    """Os dois pontos onde `ha_fala_pendente_antes` usa o filtro `channel`.
 
     Espelha `test_mensagem_de_outro_canal_nao_supera`: sem este teste, uma
-    regressao no filtro `channel` -- seja no INBOUND pendente, seja na
-    subquery da ultima fala do agente -- seria silenciosa.
+    regressao no filtro `channel` -- seja no INBOUND pendente (a consulta
+    principal) seja na subquery da ultima fala do agente -- seria silenciosa.
+
+    Duas mensagens so cobrem o primeiro ponto: sem nenhum OUTBOUND semeado, a
+    subquery da ultima fala do agente da NULL com ou sem o filtro de canal --
+    apagar aquele filtro nao mudaria o resultado deste primeiro bloco. O
+    segundo bloco usa `conversation_key` proprio para nao herdar o historico
+    do primeiro, e semeia um OUTBOUND de outro canal DEPOIS da pendente
+    legitima: sem o filtro de canal na subquery, aquele OUTBOUND viraria a
+    "ultima fala do agente" da conversa errada e apagaria a pendencia real.
     """
     agora = datetime.now(UTC)
     await gravar(session, created_at=agora, channel="whatsapp")
     minha = await gravar(session, created_at=agora + timedelta(seconds=1), channel="web")
 
     assert await ha_fala_pendente_antes(session, minha) is False
+
+    outra_conversa = "5511900001111"
+    await gravar(
+        session,
+        created_at=agora + timedelta(seconds=2),
+        channel="web",
+        conversation_key=outra_conversa,
+    )
+    await gravar(
+        session,
+        created_at=agora + timedelta(seconds=3),
+        channel="whatsapp",
+        conversation_key=outra_conversa,
+        direction=MessageDirection.OUTBOUND,
+        role=MessageRole.AGENTE,
+    )
+    minha_2 = await gravar(
+        session,
+        created_at=agora + timedelta(seconds=4),
+        channel="web",
+        conversation_key=outra_conversa,
+    )
+
+    assert await ha_fala_pendente_antes(session, minha_2) is True

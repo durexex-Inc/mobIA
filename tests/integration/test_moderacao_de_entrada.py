@@ -576,14 +576,30 @@ async def test_recusa_barrada_por_optout_concorrente_nao_responde(
     rodar_turno,
 ) -> None:
     """A primeira ressalva da D4: se a recusa nao chegou ao lead, a resposta
-    tambem nao vai."""
+    tambem nao vai -- mesmo com pergunta pendente.
+
+    A pergunta pendente e semeada de proposito (`gravar`, como em
+    `test_bloqueada_com_pergunta_pendente_recusa_e_responde`). Sem ela,
+    `tem_pendencia` da False e o SEGUNDO guard (`if not tem_pendencia:
+    return`) ja barraria a continuacao sozinho -- este teste passaria mesmo
+    que o guard desta ressalva (`if desfecho_da_recusa != "respondido":
+    return`) fosse apagado, e nao provaria nada sobre ele. Com a pendencia,
+    so o guard desta ressalva impede a continuacao de tentar responder a
+    quem acabou de pedir para sair.
+    """
+    await gravar(
+        session,
+        created_at=datetime.now(UTC) - timedelta(minutes=1),
+        texto="tem apartamento de 2 quartos?",
+    )
+
     outbound = _OutboundQueOptaNoMeio(
         get_sessionmaker(), channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE
     )
 
     resultado = await rodar_turno(
         session,
-        None,  # classificador: o bloco de bloqueio nunca chega a chamar
+        None,  # classificador: o guard barra antes de qualquer chamada
         outbound,
         resumidor_fake(),
         contador_fake(),
