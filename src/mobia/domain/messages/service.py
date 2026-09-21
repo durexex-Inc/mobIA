@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
+from mobia.domain.humano.deteccao import pediu_humano
 from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
@@ -59,10 +60,15 @@ class IngestionService:
         # diferentes para este dicionario escolher entre eles.
         texto_de = {item.provider_message_id: item.text_body for item in parsed}
         for message_id, provider_message_id in gravadas:
-            # O opt-out nao espera a janela (RN-01.6 + RN-14). `pediu_optout` e
-            # puro e deterministico, sem chamada paga, e aqui o texto ainda
+            # O opt-out nao espera a janela (RN-01.6 + RN-14), e desde a
+            # TEC-128 (onda final) o pedido de humano tambem nao (RN-16.1,
+            # emenda E-04: o handoff precisa nascer em ate 5s, e o debounce
+            # incondicional levaria toda mensagem a esperar a janela inteira
+            # antes de qualquer handoff). `pediu_optout` e `pediu_humano` sao
+            # puras e deterministicas, sem chamada paga, e aqui o texto ainda
             # esta em claro -- e o unico ponto do fluxo onde ele esta.
-            pediu = pediu_optout(texto_de.get(provider_message_id) or "")
+            texto = texto_de.get(provider_message_id) or ""
+            pediu = pediu_optout(texto) or pediu_humano(texto)
             await self._try_enqueue(message_id, atraso_segundos=0.0 if pediu else janela)
         return [message_id for message_id, _ in gravadas]
 
