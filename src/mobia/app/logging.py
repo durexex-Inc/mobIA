@@ -233,8 +233,12 @@ def configure_logging(level: str = "INFO") -> None:
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
             # sem isso o traceback so nasce depois do JSONRenderer, fora do
-            # alcance do mascaramento: tem de virar chave do dict antes.
-            structlog.processors.format_exc_info,
+            # alcance do mascaramento: tem de virar chave do dict antes. O
+            # `format_exc_info` do structlog ocupava esta posicao ate a
+            # TEC-293; ele entregava a mensagem da excecao junto, e sobre a
+            # chave `exception` a unica defesa era a corrida de digitos, que
+            # nao alcanca texto livre.
+            _sanear_traceback,
             _mascarar_pii,
             _finalizar,
         ],
