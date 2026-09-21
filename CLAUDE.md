@@ -206,7 +206,7 @@ A seção de prosa que a TEC-282 acrescentou tem o próprio teto, pela mesma raz
 
 `ALTERADO` nunca é cortado, então numa branch que reescreve muito é ele que domina o que resta. E a contagem do rodapé conta o que **existe**, não o que coube na tela: se ela disser 715 e você tiver lido 12, os outros 703 estão atrás do `--tudo`.
 
-O teto existe porque não há regra melhor, e isso também foi medido: **75,9% do ruído vem de `executar_turno`**, que tem 1877 linhas, e dentro dela todo comentário está longe de toda edição. Uma regra de vizinhança por distância deixa 65,9% de pé num raio de 50 linhas. Enquanto aquela função não for partida, esta listagem vive de teto.
+O teto existe porque não há regra melhor, e isso também foi medido: **75,9% do ruído vem de `executar_turno`**, que tem 2706 linhas, e dentro dela todo comentário está longe de toda edição. Uma regra de vizinhança por distância deixa 65,9% de pé num raio de 50 linhas. Enquanto aquela função não for partida, esta listagem vive de teto.
 
 Não é gate e não reprova nada: decidir sozinho se um comentário está certo é justamente o julgamento que ele existe para devolver a uma pessoa. Medido no histórico: **~51 commits** existem só para corrigir afirmação que o próprio repo escreveu errado antes — a regra acima já existia e mesmo assim não pegava, porque nenhum dos três gates olha para comentário.
 

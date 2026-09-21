@@ -1,6 +1,6 @@
 # TEC-128 — A rajada de mensagens vira um turno só
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** implementado
 **Card:** [TEC-128](https://eduardodurieuxlopes.atlassian.net/browse/TEC-128)
 **Branch:** `feat/tec-128-debounce-de-rajada`
 **Origem:** RF-01, RN-01.6 (SRS v1.0). A TEC-182 deixou o bilhete de que quem implementasse a RN-01.6 teria de furar a janela para o opt-out.
@@ -67,9 +67,11 @@ Dois ajustes, e os dois são necessários:
 
 **(a) Opt-out não espera.** Na ingestão, uma mensagem cujo texto satisfaça `pediu_optout` é enfileirada **sem atraso**. `pediu_optout` é puro e determinístico, sem chamada paga (`optout/deteccao.py:81-92`), e na ingestão o texto está em claro no `ParsedMessage`, antes de ser cifrado.
 
-O encanamento é menor do que parece. `ingest()` hoje faz `for message_id in message_ids: await self._try_enqueue(message_id)`, e `message_ids` pode ser um subconjunto de `parsed` — as duplicatas caem no `ON CONFLICT` —, sem garantia de ordem. Mas o `RETURNING` do `_persist` **já traz `provider_message_id` junto de `id`** (`messages/service.py:86-88`), para contar os descartes do TEC-125; o que falta é `_persist` parar de jogar esse par fora na última linha e `ingest` casar cada id com o texto do `ParsedMessage` correspondente.
+O encanamento era menor do que parecia. Antes desta card, `ingest()` fazia `for message_id in message_ids: await self._try_enqueue(message_id)`, e `message_ids` podia ser um subconjunto de `parsed` — as duplicatas caem no `ON CONFLICT` —, sem garantia de ordem. O `RETURNING` do `_persist` **já trazia `provider_message_id` junto de `id`** (`messages/service.py:86-88`), para contar os descartes do TEC-125; faltava só `_persist` parar de jogar esse par fora na última linha e `ingest` casar cada id com o texto do `ParsedMessage` correspondente. É exatamente o que a implementação faz: `_persist` devolve `list[tuple[id, provider_message_id]]` e `ingest` monta `texto_de` a partir de `parsed` para decidir, mensagem a mensagem, `atraso_segundos=0.0 if pediu else janela`.
 
 **(b) A mensagem superada que pediu opt-out não é descartada.** Mesmo com (a), há corrida: a mensagem de opt-out vai para a fila sem atraso, mas se outra mensagem chegar nos milissegundos entre o enqueue e o job acordar, a checagem da D3 a declararia superada. Então a checagem ganha exceção: superada **e** `pediu_optout` falso é que resulta em `"agrupado"`. Aqui o texto vem cifrado e precisa de `decrypt`, como `turno.py:882` já faz.
+
+**Corrigido depois da entrega:** `decrypt` devolve `str | None` — `text_body` é nulo para conteúdo que não é `TEXTO` (imagem, áudio) —, e o parágrafo acima não previa esse caso. A Task 4 fechou a lacuna com `bool(...)` por fora e não `bool(corpo) and ...`: só a forma curta-circuitada estreita `corpo` de `str | None` para `str` dentro da chamada, no mesmo idioma de `turno.py:884-886`. O guarda em `process_message.py` ficou `if not bool(corpo and pediu_optout(corpo))`, então uma mensagem superada sem corpo em claro (mídia sem legenda) cai no mesmo `"agrupado"` de uma mensagem superada comum — nunca no furo do opt-out, que só existe para texto.
 
 Não há decisão duplicada. `pediu_optout` é a mesma função pura sobre o mesmo texto da mesma mensagem — os três sítios não podem divergir sem que a função mude para todos.
 
@@ -86,6 +88,8 @@ Isto não é feature nova — é reparar dano que esta card causa. A própria do
 > O relogio mede o turno INTEIRO […] e o silencio que o lead percebe.
 
 O silêncio que o lead percebe começa quando ele aperta enviar, não quando o worker acorda.
+
+**Decisão de produto (Task 5): com os defaults, o indicador passa a disparar em praticamente todo turno, não só nos lentos — e isso foi avaliado e aceito.** A janela do debounce (6s) é maior que o limiar do indicador (4s, `indicador_de_digitacao_apos_segundos`). Para qualquer mensagem que não seja superada — inclusive a isolada, por causa da D1 —, a idade ao acordar já passa de 4s, então `apos_segundos` já chega zerado e o indicador sai de imediato, sempre. Antes desta card isso era sinal de turno lento; agora é o caso comum. A alternativa seria subir o limiar do indicador para acompanhar a janela, mas a resposta rápida que o limiar de 4s protegia **deixou de existir** do ponto de vista do lead — toda mensagem já espera pelo menos 6s antes de qualquer processamento começar. Disparar o indicador em todo turno deixa de ser ruído e passa a ser o sinal honesto do que o lead de fato experimenta: silêncio até a janela fechar, indicador depois.
 
 ### D7 — O `sweep_stalled` continua sendo a rede, e não fura a janela por acidente
 

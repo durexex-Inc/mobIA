@@ -128,6 +128,7 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 - RN-01.4: Imagens e documentos recebidos são armazenados e o agente responde reconhecendo o envio, sem tentar interpretá-los no MVP.
 - RN-01.5: Mensagens duplicadas (mesmo `message_id` da Meta) são descartadas por idempotência — a Meta reenvia em caso de timeout.
 - RN-01.6: Se o lead enviar 3 mensagens em menos de 8 segundos, o sistema aguarda o fim da rajada (debounce de 6 s) e responde uma única vez considerando todas — comportamento humano, não uma resposta por linha.
+  - **Emenda E-01 (TEC-128, 21/09/2026):** o debounce é **incondicional** — toda mensagem recebida aguarda a janela antes de virar turno, e não apenas a que integra uma rajada de três em oito segundos. A condição original não é implementável: a rajada só é reconhecível depois de terminada, e a essa altura a resposta à primeira mensagem já teria sido entregue e a reserva dela em `outbound_dispatches` já estaria commitada. A janela é configurável (`debounce_de_rajada_segundos`, default 6 s) e mensagem de opt-out não a aguarda.
 
 **Critérios de aceite:**
 - CA-01.1: Dado um webhook da Meta com mensagem de texto, quando recebido, então o `200 OK` retorna em menos de 500 ms e a mensagem aparece na fila.

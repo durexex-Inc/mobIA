@@ -160,6 +160,8 @@ A checagem de opt-out no texto entra **antes do bloco de moderação de entrada*
 
 **O cenário do debounce da card não é testável hoje.** A RN-01.6 (debounce de rajada) não está implementada — procurar por `debounce` devolve zero. O cenário *"opt-out durante rajada não espera o debounce"* é vacuamente verdadeiro. Fica registrado: **quem implementar a RN-01.6 tem que furar a janela para o opt-out**, e o teste correspondente nasce com ela.
 
+> **Atualizado pela TEC-128 (21/09/2026):** a RN-01.6 foi implementada e este parágrafo descreve o repo de antes. O cenário deixou de ser vacuamente verdadeiro, e o furo que ele pedia existe em dois pontos — ver a D5 de `2026-09-21-tec-128-debounce-de-rajada-design.md`.
+
 **A reativação não tem interface.** Só o script. É decisão de D6, não esquecimento, e a TEC-189 herda a função de domínio pronta.
 
 **A detecção é lista fixa, e vai errar por falta.** Um lead que escreve "chega" ou "me deixa em paz" não é detectado por nenhuma faixa. A lista não é estendida por antecipação: cada termo novo é risco de falso positivo, e não há dado sobre como leads deste produto pedem para sair. Quando houver conversa real, os textos dizem quais termos faltam.
