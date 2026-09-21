@@ -1,6 +1,6 @@
 # TEC-293 — o traceback vai para o log sem a mensagem da exceção
 
-**Status:** aprovado, não implementado
+**Status:** implementado
 **Card:** [TEC-293](https://eduardodurieuxlopes.atlassian.net/browse/TEC-293) — épico TEC-123
 **Branch:** `feat/tec-293-traceback-sem-mensagem-de-excecao`
 **Origem:** a classe D da TEC-292, que fechou os kwargs de texto e deixou o traceback de fora de propósito. O Step 6 daquele plano mandou abrir esta card.
@@ -96,7 +96,7 @@ Os três passam a levar `motivo=str(falha)`, sob o argumento que a D3 já mediu 
 
 **Os outros três sítios não recebem nada novo.** `whatsapp.py:90` já tem `reason`; `whatsapp.py:122` já tem `reason` e `detail=motivo_do_erro_de_banco(exc)`; `importacao.py:133` já compõe o motivo curado antes de logar. Nos três, o traceback saneado é ganho líquido: some o texto cru que convivia com a curadoria.
 
-**Isto fecha a ressalva que a TEC-292 deixou escrita.** A D4 daquele desenho diz que `webhook.persist_failed` *"não fica fechado por ela"*, porque o `log.exception` reemitia o que o `detail` curado havia evitado. A partir desta card, fica — e os comentários dos dois sítios de `whatsapp.py`, que hoje apontam a classe D como pendência, precisam deixar de dizer isso.
+**Isto fecha a ressalva que a TEC-292 deixou escrita — no canal do structlog.** A D4 daquele desenho diz que `webhook.persist_failed` *"não fica fechado por ela"*, porque o `log.exception` reemitia o que o `detail` curado havia evitado. A partir desta card, fica pelo structlog — e os comentários dos dois sítios de `whatsapp.py`, que hoje apontam a classe D como pendência, precisam deixar de dizer isso. **A ressalva não fecha fora dele.** `webhook.persist_failed` faz `raise` logo depois de logar (ver o fim daquele `except`), e a exceção que sobe escapa do nosso pipeline e cai no uvicorn, que a loga de novo com `logger.error("Exception in ASGI application\n", exc_info=exc)` — traceback cru, com a mensagem inteira, por fora do structlog e do `_sanear_traceback`.
 
 ### D5 — O teste que existe hoje consagra o vazamento, e é reescrito
 
@@ -133,3 +133,4 @@ Isso é a TEC-237 aplicada, não contrariada. Aquele precedente diz que uma regr
 - **Teto de tamanho no `motivo=` da D4.** A TEC-237 usou 300 caracteres para o corpo de erro de um provedor HTTP. Aqui o texto é de erro de conexão de Redis, curto por natureza, e um teto seria número sem medição por trás. Anotado, não implementado.
 - **`admin/seed_catalogo.py:74-75`**, o `print()` que corre fora do mascarador. Herdado da TEC-292, continua anotado e continua fora: não passa por `exc_info` e não é traceback.
 - **Os quatro pontos de classe C** (`turno.py:1307`, `:2176`, `process_message.py:333`, `importacao.py:78`). A D6 da TEC-292 já estabeleceu que estão protegidos pela garantia preexistente da TEC-237 e que nenhuma destas cards acrescenta proteção a eles.
+- **O traceback cru que uvicorn e arq emitem quando a exceção escapa do nosso `except`.** Dois sítios logam e depois re-levantam: `webhook.persist_failed` (`api/routes/whatsapp.py`) e o `except Exception` de `workers/jobs/process_message.py` que grava `message.failed`. Quando a exceção sobe, quem loga de novo é o framework, por fora do structlog e do `_sanear_traceback` — o uvicorn faz `logger.error("Exception in ASGI application\n", exc_info=exc)` (`uvicorn/protocols/http/h11_impl.py:420`), traceback cru e completo; o arq faz `logger.exception('%6.2fs ! %s failed, %s: %s', t, ref, e.__class__.__name__, e, ...)` (`arq/worker.py:629-630`), que além do traceback põe `str(e)` na própria linha da mensagem. Nenhum dos dois passa pelos processadores de `app/logging.py`: `arq.worker` e `uvicorn.error` são loggers do `logging` da stdlib, e fechar isso exigiria configurá-los à parte. Fica para outra card.

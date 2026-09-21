@@ -121,6 +121,12 @@ async def ingest(
         # `hide_parameters` nao alcanca, porque a linha `DETAIL` e escrita pelo
         # servidor -- ao lado do `detail` curado, e o vazamento liquido deste
         # ponto era o mesmo de antes da curadoria.
+        #
+        # Isso vale so ate aqui. O `raise` logo abaixo poe a excecao para subir,
+        # e quem a pega e o uvicorn -- fora do structlog, fora do
+        # `_sanear_traceback` -- que a loga de novo crua, com a mensagem
+        # inteira. A curadoria protege o evento `webhook.persist_failed`; nao
+        # protege o que o uvicorn escreve depois dele.
         log.exception(
             "webhook.persist_failed",
             reason=type(exc).__name__,
