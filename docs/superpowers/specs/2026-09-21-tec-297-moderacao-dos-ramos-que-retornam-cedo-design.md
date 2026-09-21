@@ -139,9 +139,29 @@ Isso **não** está medido lado a lado, e a spec não finge que está: o número
 
 O comentário da guarda de opt-out (`turno.py:906-912`) diz *"quem ja pediu silencio nao paga moderacao nem recebe resposta"*. A segunda metade continua verdadeira; a primeira passa a ser falsa.
 
+**E há um teste escrito de propósito para afirmar o contrário desta card.** `ModeradorQueNaoPodeSerChamado` (`tests/integration/test_conversa_encerrada.py:283`) levanta `AssertionError` em qualquer moderação, e a docstring diz por que existe: *"a asserta de economia cobria so o classificador e deixaria passar uma guarda que tivesse descido para depois do `moderador.moderar`"*. Alguém previu esta mudança e travou contra ela. São dois usos, linhas 512 e 960, os dois no ramo #3.
+
+Reverter é a decisão desta card, tomada com isso à vista: o dublê passa a registrar em vez de levantar, e os dois testes passam a afirmar **exatamente uma** chamada de ENTRADA e **zero** de SAÍDA — o que continua provando o que a TEC-138 queria provar (a guarda não paga o turno) sem afirmar o que deixou de ser verdade.
+
+### D8 — A oferta da TEC-138 à TEC-204 encolhe, e isso é consequência de segurança, não de custo
+
+A D7 do desenho da TEC-138 não declarou apenas uma economia. Declarou uma **redução de superfície**: *"esta card limita um sondador a três chamadas pagas por conversa a cada 30 dias, contra ilimitado hoje. É redução de superfície que a TEC-204 não precisa mais entregar."*
+
+Depois desta card a frase é verdadeira pela metade. O classificador e a montagem de contexto continuam limitados a três por conversa a cada 30 dias. A **moderação de entrada volta a ser ilimitada**: um sondador que mande dez mil mensagens a uma conversa encerrada gera dez mil chamadas pagas, ~US$ 5,70.
+
+Registrado como consequência aceita, com as três razões e o preço:
+
+- O dinheiro é irrelevante na escala em que este produto opera, e o teto de 5 s sem retentativa limita a latência de cada chamada.
+- A alternativa — não moderar o ramo #3 — devolve a lista de exceções que esta card existe para eliminar, e devolve pelo ramo cujo cenário de abuso é justamente o que mais interessa auditar.
+- **Mas a forma é a de amplificação de custo conduzida pelo atacante**, e é a forma que a TEC-138 tinha fechado. Quem for desenhar a TEC-204 precisa saber que esta oferta encolheu; sem isto escrito, ela seria descoberta relendo um diff de teste.
+
+O que esta card **não** faz: rate limiting. É a TEC-205 (`Aplicar rate limiting por número e por IP`), e um teto por número é o lugar certo para isso — não uma exceção numa guarda do turno.
+
+Esta decisão entra como adendo ao desenho da TEC-138, abaixo da D7, no idioma que aquele arquivo já usa para notas de revisão. O desenho da TEC-138 **não** é reescrito: o que ele afirmou era verdade quando foi escrito.
+
 E o comentário de `process_message.py:460-469`, que a TEC-295 escreveu, afirma que a fala destes ramos *"segue sem ser moderada — buraco pre-existente, que esta card nao fecha"*. Esta card o fecha, e o comentário tem de dizer isso em vez de continuar descrevendo o estado anterior no presente — que é exatamente o defeito que a TEC-296 existe para consertar em outros dois documentos.
 
-### D8 — O `try/finally` não pode ser literal: `executar_turno` tem 2.775 linhas
+### D9 — O `try/finally` não pode ser literal: `executar_turno` tem 2.775 linhas
 
 A D4 pede um `try/finally` em volta do corpo do turno. Escrito literalmente, ele reindentaria as linhas 907-3595 — 2.700 linhas de diff sem uma mudança de comportamento dentro, que nenhum revisor consegue ler e que colide com toda branch aberta.
 
@@ -162,7 +182,7 @@ O corpo extraído fica no **mesmo nível de indentação** que tem hoje, porque 
 
 O `decrypt` sobe para o invólucro em vez de ser repetido: `_ModeracaoDoTurno` precisa de `corpo`, e decifrar duas vezes para não passar um parâmetro seria trocar clareza por nada.
 
-### D9 — O que NÃO muda
+### D10 — O que NÃO muda
 
 - Os quatro leitores de `bloqueada_em` não mudam: já filtram `bloqueada_em IS NULL` e passam a receber a marca que faltava.
 - A ordem das cinco guardas não muda. Nenhuma delas desce nem sobe.
@@ -206,7 +226,7 @@ Sobre a garantia 4, uma precisão que a prosa existente induz ao erro: `literais
 
 `test_pedido_de_humano_passa_antes_da_moderacao_de_entrada` continua passando: a ordem que ele trava é preservada e reforçada.
 
-**A rede de segurança da D8 é a suíte existente, não um teste novo.** A extração de `_executar_turno` não muda comportamento nenhum, e o que prova isso é que os 2.686 testes que passavam em `c8b286a` continuem passando sem edição. Um teste novo escrito para a extração provaria menos que eles: ele nasceria depois da mudança, medindo o que ela faz em vez do que ela não devia mexer. Qualquer teste de turno que precise ser editado nesta card é sinal de que a extração mudou algo — e aí a pergunta é o que, não como calar o teste.
+**A rede de segurança da D9 é a suíte existente, não um teste novo.** A extração de `_executar_turno` não muda comportamento nenhum, e o que prova isso é que os 2.686 testes que passavam em `c8b286a` continuem passando sem edição. Um teste novo escrito para a extração provaria menos que eles: ele nasceria depois da mudança, medindo o que ela faz em vez do que ela não devia mexer. Qualquer teste de turno que precise ser editado nesta card é sinal de que a extração mudou algo — e aí a pergunta é o que, não como calar o teste.
 
 ## Fora de escopo
 
