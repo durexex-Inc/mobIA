@@ -117,12 +117,13 @@ def test_lista_de_identificadores_sobrevive(caplog) -> None:
     assert identificadores[0] in caplog.text
 
 
-def test_telefone_no_traceback_tambem_sai_mascarado(caplog) -> None:
-    """`log.exception` sem `format_exc_info` antes do mascarador vaza PII.
+def test_a_mensagem_da_excecao_nao_chega_ao_log(caplog) -> None:
+    """O traceback leva pilha e tipo; a mensagem fica de fora (TEC-293).
 
-    O traceback so entra no dict como chave `exception` gracas ao
-    `format_exc_info`; sem ele o texto da excecao nasce depois do
-    `JSONRenderer` e o mascarador nunca chega a ve-lo.
+    Ate a TEC-293 este teste afirmava o contrario -- que a mensagem chegava,
+    contanto que mascarada --, e por isso consagrava o vazamento que aquela
+    card fechou. A corrida de digitos era a unica defesa sobre a chave
+    `exception`, e ela nao alcanca texto livre em portugues.
     """
     log = structlog.get_logger("teste")
     with caplog.at_level(logging.ERROR):
@@ -132,5 +133,49 @@ def test_telefone_no_traceback_tambem_sai_mascarado(caplog) -> None:
             log.exception("evento.erro")
 
     assert "5511987654321" not in caplog.text
-    assert "*********4321" in caplog.text
+    assert "*********4321" not in caplog.text
+    assert "contato do lead" not in caplog.text
     assert "ValueError" in caplog.text
+    assert "test_logging_mascara.py" in caplog.text
+
+
+def test_a_cadeia_de_causas_nao_vaza_em_nenhuma_das_secoes(caplog) -> None:
+    """O caso medido: a mensagem aparecia DUAS vezes, nao uma.
+
+    A SQLAlchemy reembala a excecao do asyncpg, entao a linha `DETAIL` do
+    servidor entra na secao da causa e de novo na da wrapper. Cortar a ultima
+    linha nao resolveria nenhuma das duas.
+    """
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.ERROR):
+        try:
+            try:
+                raise ValueError("DETAIL: Failing row contains (5511987654321, oi)")
+            except ValueError as causa:
+                raise RuntimeError("wrapper: DETAIL: Failing row contains (...)") from causa
+        except RuntimeError:
+            log.exception("evento.erro")
+
+    assert "Failing row contains" not in caplog.text
+    assert "5511987654321" not in caplog.text
+    assert "ValueError" in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+def test_o_formatter_do_stdlib_nao_reemite_o_traceback_cru(caplog) -> None:
+    """`_finalizar` desarma o `exc_info` do LogRecord, e isso tem de continuar.
+
+    `logging.Logger.exception` religa `exc_info=True` por conta propria. Sem o
+    desarme, o Formatter padrao imprime o traceback ORIGINAL -- com mensagem e
+    tudo -- logo depois do JSON que ja o contem saneado, e a TEC-293 inteira
+    vira letra morta. Nada provava isso diretamente ate aqui.
+    """
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.ERROR):
+        try:
+            raise ValueError("segredo do lead: 5511987654321")
+        except ValueError:
+            log.exception("evento.erro")
+
+    assert caplog.records[0].exc_info is False
+    assert "segredo do lead" not in caplog.text

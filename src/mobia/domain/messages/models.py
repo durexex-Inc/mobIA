@@ -123,16 +123,27 @@ class Message(Base):
         banco usam `motivo_do_erro_de_banco`, que extrai campos em vez de
         repassar texto.
 
-        **A guarda continua necessaria, por outro caminho.** Dos quatro, um --
-        `webhook.persist_failed`, em `api/routes/whatsapp.py` -- loga com
-        `log.exception`, e o traceback vai inteiro para a chave `exception`
-        independente do que `detail=` carrega. O texto da excecao do asyncpg
-        vive nesse traceback. Os outros tres usam `log.warning` e nao emitem
-        traceback nenhum.
+        **O canal do structlog fechou; a guarda continua necessaria por outra
+        razao.** Ate a TEC-293, `webhook.persist_failed` logava com
+        `log.exception` e o traceback levava o texto do asyncpg para a chave
+        `exception` independente do que `detail=` carregava. Desde ela o
+        traceback leva pilha, cadeia e tipo, e nenhum dos quatro sitios repassa
+        mensagem -- dentro do structlog.
 
-        Escrever `Message(text_body="oi")` e o engano natural, e e o que abre
-        esse canal. Aqui a falha vira erro de aplicacao com mensagem que nos
-        controlamos, e ela nunca cita o valor.
+        **Fora dele o vazamento continua.** `webhook.persist_failed` faz
+        `raise` depois de logar, e a excecao que sobe escapa do nosso `except`
+        e cai no uvicorn, que a loga de novo, crua e com a mensagem inteira,
+        por fora deste pipeline. Isso nao enfraquece a guarda desta coluna --
+        reforca: e mais um lugar por onde `Message(text_body="oi")` vazaria se
+        a validacao nao barrasse o valor antes de ele virar excecao nenhuma.
+
+        O que sustenta a guarda agora e a premissa da propria tabela, do
+        TEC-126: conteudo pessoal nao fica em claro aqui. Escrever
+        `Message(text_body="oi")` e o engano natural, e nenhuma decisao sobre
+        log protege contra ele.
+
+        Aqui a falha vira erro de aplicacao com mensagem que nos controlamos, e
+        ela nunca cita o valor.
         """
         if valor is None or isinstance(valor, bytes | bytearray | memoryview):
             return valor

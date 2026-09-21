@@ -109,6 +109,9 @@ async def test_falha_no_enfileiramento_nao_derruba_o_job_do_resumo(
 
     assert resultado == "gravado"
     assert "notificacao.nao_agendada" in caplog.text
+    # Agulha sem acento de proposito: o JSONRenderer serializa com
+    # ensure_ascii=True, entao acento na asserta seria armadilha (TEC-289).
+    assert "redis indisponivel" in caplog.text
 
 
 class _CanalEspiao:
