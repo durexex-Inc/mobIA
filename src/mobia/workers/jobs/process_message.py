@@ -309,10 +309,14 @@ async def _moderar_superada(
 
     A superada nunca chega a `executar_turno`, e a moderacao de entrada mora la
     dentro -- entao sem isto ela nunca seria moderada. `bloqueada_em` ficaria
-    NULL, e a coluna tem QUATRO consumidores: a janela de contexto
-    (`context/janela.py`), o resumo permanente que se forma na dobra, a
-    contagem do lead score (`context/repositorio.py`) e a ancora da cadencia de
-    follow-up (`followup/repositorio.py`).
+    NULL, e a coluna tem QUATRO leitores diretos: a janela de contexto
+    (`literais_apos`, `context/janela.py`), a contagem do lead score
+    (`contar_mensagens_do_lead`, `context/repositorio.py`), a ancora da
+    cadencia de follow-up (a CTE de `followup/repositorio.py`) e a deteccao de
+    fala pendente na rajada (`ha_fala_pendente_antes`, `messages/rajada.py`,
+    TEC-295). O resumo permanente nao le a coluna: ele herda a exclusao por
+    construcao, porque a dobra opera sobre a lista que `literais_apos` devolve
+    e nunca rele `messages`.
 
     **Fail-open em `ModeracaoIndisponivel`**, pela mesma assimetria que o port
     documenta e que o turno ja pratica na entrada. Deixar a excecao subir faria

@@ -14,6 +14,15 @@ Tambem prova que nenhum dos cinco ramos entrega a recusa de entrada (D2), que
 o handoff existe antes de a moderacao ser chamada (CA-04.3) e que o
 fail-open nao custa a acao do ramo. `test_mensagem_sem_corpo_nao_paga_moderacao`
 prova que audio/imagem/documento nao pagam moderacao nenhuma.
+
+Os tres ultimos testes sao a outra metade da D5 -- o caminho de excecao dos
+dois fechos do invulucro, que nenhum dos parametrizados exercita:
+`test_excecao_do_turno_sobrevive_a_falha_da_marca` (com excecao do turno em
+voo, a falha da marca e engolida para nao substituir a excecao real),
+`test_sem_excecao_em_voo_a_falha_da_marca_propaga` (sem excecao em voo ela
+propaga, que e o contrato de `messages/bloqueio.py`) e
+`test_marca_engolida_registra_o_log` (o engolimento deixa linha de log --
+sem essa asserta, um descarte silencioso da falha da marca nao seria pego).
 """
 
 import logging

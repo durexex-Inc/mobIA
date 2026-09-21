@@ -18,6 +18,16 @@ para carimbar). As duas propagam pelo motivo do paragrafo acima: sem a
 transacao unica existiria o estado duravel "mensagem marcada como bloqueada,
 recusa nao auditada" -- o estado em que o controle de risco da RN-B04 falha
 em silencio.
+
+**A TEC-297 trouxe para ca uma terceira funcao publica, e ela e a excecao:**
+`moderar_entrada_e_marcar` engole `ModeracaoIndisponivel` e devolve `None`.
+E fail-open deliberado, e nao contradiz os paragrafos acima porque trata de
+outra falha: provedor fora do ar nao e marca perdida em silencio -- nao ha
+fala julgada para carimbar, e negar atendimento a lead legitimo porque um
+servico caiu pune o inocente (ver a docstring dela e
+`domain/moderacao/port.py`). A falha da MARCA dentro dela continua subindo,
+pelo motivo dos paragrafos acima: ela chama `marcar_bloqueada` e nao captura
+nada dali para baixo.
 """
 
 from datetime import UTC, datetime

@@ -4,6 +4,7 @@
 **Card:** [TEC-295](https://eduardodurieuxlopes.atlassian.net/browse/TEC-295)
 **Branch:** `feat/tec-295-moderacao-na-rajada`
 **Origem:** revisão final da TEC-128 (PR #142), achados I1 e I2.
+**Linhas citadas:** cada `arquivo.py:linha` deste documento vale para o commit em que a frase que o cita foi escrita. A TEC-297 deslocou `turno.py` em ~147 linhas depois disso; nenhuma citação aponta para além do fim do arquivo, então elas continuam parecendo válidas e não são. Confie no nome da função, não no número.
 
 ## Objetivo
 

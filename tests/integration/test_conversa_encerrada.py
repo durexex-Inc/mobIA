@@ -991,7 +991,7 @@ async def test_a_saida_bloqueada_no_turno_do_teto_encerra_do_mesmo_jeito(
     )
 
     assert desfecho_seguinte == "fora_de_escopo", (
-        "o sondador cujo texto a moderacao sempre barra tambem para de pagar chamada"
+        "o sondador cujo texto a moderacao sempre barra continua sem pagar o classificador"
     )
     # TEC-297: uma de ENTRADA, zero de SAIDA. A guarda continua nao pagando o
     # classificador nem a montagem de contexto; passou a pagar a moderacao.

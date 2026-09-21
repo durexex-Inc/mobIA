@@ -986,9 +986,9 @@ async def executar_turno(
     a chance de perguntar aquele campo para sempre e em silencio, nao so ate o
     proximo episodio.
     """
-    # Antes de montar contexto de proposito: bloquear aqui economiza o turno
-    # inteiro, inclusive as chamadas pagas ao modelo. E o texto do lead ainda
-    # nao passou por lugar nenhum.
+    # Decifra uma vez so, aqui no involucro: e o unico `decrypt` deste modulo,
+    # e o mesmo `corpo` vai para a moderacao de entrada e para
+    # `_executar_turno` logo abaixo -- os dois julgam o mesmo texto.
     corpo = decrypt(message.text_body, aad_de(message.id, "text_body"))
     # TEC-297: a moderacao de entrada nasce aqui e e garantida pelos dois
     # fechos abaixo -- um por caminho de saida --, e nao pela linha em que o
@@ -1055,10 +1055,15 @@ async def _executar_turno(
     pedido_de_humano = bool(corpo and pediu_humano(corpo))
 
     # Ao lado do opt-out de proposito: mesmo insumo (o texto decifrado), mesmo
-    # ponto do fluxo, e nenhuma consulta. A fala bloqueada pela moderacao nunca
-    # chega ao gancho -- `executar_turno` retorna por `_entregar_texto_fixo`
-    # antes do bloco transacional --, entao um turno que o resto do produto
-    # trata como nao-dito nao forca QUENTE, e isso sai de graca.
+    # ponto do fluxo, e nenhuma consulta. Na regra, a fala bloqueada pela
+    # moderacao nao chega ao gancho -- `_executar_turno` retorna por
+    # `_entregar_texto_fixo` antes do bloco transacional --, entao um turno que
+    # o resto do produto trata como nao-dito nao forca QUENTE, e isso sai de
+    # graca. **A D4 da TEC-295 tirou o "sempre" dessa frase:** havendo pergunta
+    # pendente, o bloco de bloqueio cai para fora e o turno segue (ver o
+    # `if not tem_pendencia` mais abaixo). Esta linha roda antes de qualquer
+    # moderacao, entao nessa continuacao os gatilhos calculados sobre a fala
+    # bloqueada deixam de estar garantidamente fora do gancho.
     #
     # `if corpo else ()` e nao `bool(corpo) and ...` porque a saida e uma
     # tupla, nao um bool: so a forma condicional estreita `corpo` de
@@ -1243,13 +1248,13 @@ async def _executar_turno(
     # e um `INSERT` idempotente, um resumo agendado, um envio de texto fixo
     # e uma moderacao (roda em Haiku): zero chamadas ao classificador, que e
     # o que esta guarda existe para poupar. Calar custava o oposto -- o lead
-    # que escreve "quero falar com um
-    # atendente" nao seria atendido, nenhum handoff nasceria e ninguem ficaria
-    # sabendo que ele pediu, por ate 30 dias. Isso inverteria o "decisao de
-    # pessoa vence politica automatica" das duas guardas de cima justamente no
-    # caso em que a pessoa que pede e o lead. A forma -- `not pedido_de_humano`
-    # sobre o silencio, e nao sobre o bloco inteiro -- e a mesma que a guarda
-    # imediatamente acima usa para a fonte de handoff dela.
+    # que escreve "quero falar com um atendente" nao seria atendido, nenhum
+    # handoff nasceria e ninguem ficaria sabendo que ele pediu, por ate 30
+    # dias. Isso inverteria o "decisao de pessoa vence politica automatica" das
+    # duas guardas de cima justamente no caso em que a pessoa que pede e o
+    # lead. A forma -- `not pedido_de_humano` sobre o silencio, e nao sobre o
+    # bloco inteiro -- e a mesma que a guarda imediatamente acima usa para a
+    # fonte de handoff dela.
     if not pedido_de_optout:
         async with session_factory() as sessao:
             situacao = await situacao_da_conversa(
