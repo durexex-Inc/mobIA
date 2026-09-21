@@ -361,7 +361,7 @@ async def test_a_0037_desce_e_sobe_de_novo() -> None:
     revisao, e nao no CI, que sempre parte do zero.
 
     Compara conjuntos (`array_agg`), nao `count(*)`: se um numero nao fechar,
-    a asercao ja diz qual nome sumiu, em vez de mandar quem le para o banco
+    a assercao ja diz qual nome sumiu, em vez de mandar quem le para o banco
     descobrir.
     """
     await dispose_engine()
