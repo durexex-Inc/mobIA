@@ -1065,8 +1065,12 @@ async def _executar_turno(
     # `str | None` para `str` E preserva o tipo de retorno.
     gatilhos = gatilhos_de(corpo) if corpo else ()
 
-    # Antes de tudo, inclusive da moderacao: quem ja pediu silencio nao paga
-    # moderacao nem recebe resposta. Fica FORA do `if corpo:` de proposito: o
+    # Antes de tudo: quem ja pediu silencio nao recebe resposta. **Paga a
+    # moderacao, desde a TEC-297** -- este `return` e um dos cinco que saiam
+    # antes dela, e a fala que o dispara entrava no contexto, no resumo, no
+    # score e na ancora de follow-up sem nunca ter sido julgada. A chamada
+    # acontece no fecho do involucro, depois deste return, entao ela nao
+    # atrasa o silencio. Fica FORA do `if corpo:` de proposito: o
     # silencio e sobre o LEAD (o par channel/conversation_key), nao sobre a
     # mensagem ter texto. Uma imagem ou audio de quem ja pediu opt-out
     # tambem nao pode receber resposta, e dentro do `if corpo:` essa
@@ -1206,12 +1210,20 @@ async def _executar_turno(
     # identico ao das duas.
     #
     # **Ganha de tudo o que vem abaixo pelo motivo oposto**: daqui para baixo
-    # todo caminho leva a chamada paga -- moderacao de entrada, montagem de
-    # contexto, classificador --, e economiza-las e a unica coisa que esta
-    # guarda faz. Descer um degrau que seja a transformaria em silencio CARO,
-    # que e o oposto do que a card pede. A politica sozinha nao precisava
-    # estar aqui em cima: o silencio funcionaria igual la embaixo, so que
-    # pago.
+    # o caminho leva a montagem de contexto e ao classificador -- as duas
+    # caras --, e economiza-las e o que esta guarda faz. Descer um degrau
+    # que seja a transformaria em silencio CARO, que e o oposto do que a
+    # card pede. A politica sozinha nao precisava estar aqui em cima: o
+    # silencio funcionaria igual la embaixo, so que pago.
+    #
+    # **A moderacao de entrada saiu dessa conta na TEC-297, e a saida foi
+    # deliberada.** A guarda passou a pagar uma moderacao (US$ 0,00057
+    # medidos, roda em Haiku) porque, sem a marca, a fala entra no contexto e
+    # no resumo quando a conversa reabre depois dos 30 dias. A chamada
+    # acontece no fecho do involucro de `executar_turno`, depois deste
+    # `return`, entao ela nao atrasa o silencio. A D8 do desenho da TEC-297
+    # registra o que isso encolhe da reducao de superficie que a D7 da
+    # TEC-138 tinha oferecido a TEC-204.
     #
     # **E ela nao morde o turno que encerra.** O encerramento so e gravado
     # DEPOIS da entrega confirmada (ver o bloco pos-entrega la embaixo), entao
@@ -1221,12 +1233,16 @@ async def _executar_turno(
     # **O pedido de humano e a excecao, e ele nao cala** (fix da revisao,
     # Important 1). A versao anterior desta guarda calava tambem quem pedisse
     # atendente, e justificava com um custo que NAO existe: o bloco da TEC-143
-    # (`if pedido_de_humano:`) fica logo abaixo e devolve ANTES da moderacao de
-    # entrada, ANTES de `montar_contexto` e ANTES da chamada paga -- e a D5 do
-    # desenho enumera essa ordem. O preco real da excecao e um `INSERT`
-    # idempotente, um resumo agendado e um envio de texto fixo: zero chamadas
-    # ao modelo, que e a unica coisa que esta guarda existe para poupar.
-    # Calar custava o oposto -- o lead que escreve "quero falar com um
+    # (`if pedido_de_humano:`) fica logo abaixo e devolve antes da linha da
+    # moderacao de entrada, antes de `montar_contexto` e antes da chamada ao
+    # classificador -- e a D5 do desenho enumera essa ordem. **Desde a
+    # TEC-297 a moderacao acontece de qualquer jeito**, no fecho do
+    # involucro de `executar_turno`: devolver antes da linha nao poupa mais
+    # a chamada, so adia ela para depois do return. O preco real da excecao
+    # e um `INSERT` idempotente, um resumo agendado, um envio de texto fixo
+    # e uma moderacao (roda em Haiku): zero chamadas ao classificador, que e
+    # o que esta guarda existe para poupar. Calar custava o oposto -- o lead
+    # que escreve "quero falar com um
     # atendente" nao seria atendido, nenhum handoff nasceria e ninguem ficaria
     # sabendo que ele pediu, por ate 30 dias. Isso inverteria o "decisao de
     # pessoa vence politica automatica" das duas guardas de cima justamente no

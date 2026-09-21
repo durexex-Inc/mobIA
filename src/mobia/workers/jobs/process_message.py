@@ -429,16 +429,16 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 elif await _tem_entrega_parcial_pendente(session_factory, identifier):
                     log.info("message.entrega_parcial_fura_a_janela", message_id=message_id)
                 else:
-                    # TEC-295: a superada e moderada so neste ramo, o do
-                    # agrupado. Dos outros dois ramos acima -- opt-out e
-                    # pedido de humano --, os dois RETORNAM antes da
-                    # moderacao de entrada de `turno.py` (`turno.py:1177` e
-                    # `turno.py:1307`), entao essa fala segue sem ser
-                    # moderada -- buraco pre-existente, que esta card nao
-                    # fecha. So o ramo da entrega parcial, que nao retorna
-                    # cedo, cai na moderacao normal do turno. A moderacao em
-                    # si roda fora da sessao de leitura, logo abaixo -- ver o
-                    # comentario la.
+                    # TEC-295: a superada e moderada neste ramo, o do
+                    # agrupado. Os outros ramos -- opt-out, pedido de humano
+                    # e a entrega parcial -- caem na moderacao do turno, e
+                    # **desde a TEC-297 isso vale mesmo para os que retornam
+                    # antes da linha da moderacao**: o fecho do involucro de
+                    # `executar_turno` resolve a moderacao por onde quer que
+                    # o turno saia. O buraco que este comentario descrevia
+                    # esta fechado. A moderacao deste ramo em si roda fora
+                    # da sessao de leitura, logo abaixo -- ver o comentario
+                    # la.
                     deve_fechar_como_agrupado = True
                     corpo_da_superada = corpo
 

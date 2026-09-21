@@ -1,6 +1,6 @@
 # TEC-297 — A moderação de entrada deixa de depender de por onde o turno sai
 
-**Status:** desenhado, não implementado.
+**Status:** implementado.
 **Card:** TEC-297 (High). **Origem:** revisão final do PR #143 (TEC-295), achado C1.
 **Base do desenho:** `c8b286a`. Toda linha citada aqui foi conferida nesse commit; se você lê isto depois de a implementação mexer no arquivo, confie no nome da função e não no número.
 
