@@ -248,7 +248,10 @@ async def _tem_entrega_parcial_pendente(session_factory: Any, message_id: uuid.U
 
     TEC-128 (Important 2 da onda final). Mesma consulta e mesma condicao que
     `executar_turno` usa para decidir se entra no ramo de continuacao (TEC-275,
-    D4, em torno de `turno.py:1395-1398`): um lote existe e pelo menos um dos
+    D4): `lote = ler_apresentacao_da_mensagem(...)` e a intersecao entre
+    `ja_reservados` e os `kind` do lote, logo antes da chamada a
+    `_continuar_entrega` (`turno.py:1448-1451` hoje -- o numero desliza a cada
+    insercao naquele arquivo, os nomes nao). Um lote existe e pelo menos um dos
     kinds dele ja tem reserva -- ou seja, a apresentacao comecou e nao
     terminou. Sem esta checagem, a guarda de superacao (D3 da TEC-128)
     fecharia essa retentativa como "agrupado" antes de `executar_turno` ter a

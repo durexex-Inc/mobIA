@@ -1,6 +1,6 @@
 # TEC-295 — A moderação de entrada deixa de ser atropelada pelo debounce
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** implementado
 **Card:** [TEC-295](https://eduardodurieuxlopes.atlassian.net/browse/TEC-295)
 **Branch:** `feat/tec-295-moderacao-na-rajada`
 **Origem:** revisão final da TEC-128 (PR #142), achados I1 e I2.
