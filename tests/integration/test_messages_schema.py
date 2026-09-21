@@ -12,13 +12,22 @@ tem validador, entao o ORM aceita a grafia errada de bom grado -- e e
 exatamente por isso que a garantia precisa estar no banco.
 """
 
+import re
 import uuid
+from enum import StrEnum
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.messages.enums import (
+    MessageContentType,
+    MessageDirection,
+    MessageRole,
+)
 from mobia.domain.messages.models import Message
+from mobia.domain.messages.status import MessageStatus
 
 
 def _mensagem(**sobrescritas: object) -> Message:
@@ -100,3 +109,45 @@ async def test_status_nulo_continua_passando(session: AsyncSession) -> None:
     """
     session.add(_mensagem(status=None))
     await session.commit()
+
+
+_VOCABULARIOS = (
+    ("ck_messages_role", MessageRole),
+    ("ck_messages_direction", MessageDirection),
+    ("ck_messages_content_type", MessageContentType),
+    ("ck_messages_status", MessageStatus),
+)
+
+# O Postgres reescreve `IN (...)` como `= ANY (ARRAY[...])` e anota o tipo em
+# cada literal. Medido contra o banco, nao suposto.
+_LITERAL_DO_CHECK = re.compile(r"'([^']+)'::character varying")
+
+
+@pytest.mark.parametrize(("constraint", "enum"), _VOCABULARIOS)
+async def test_o_check_e_o_enum_dizem_a_mesma_coisa(
+    session: AsyncSession, constraint: str, enum: type[StrEnum]
+) -> None:
+    """O vocabulario mora em dois lugares, e eles tem de coincidir.
+
+    Sem esta amarra, acrescentar um membro ao enum e esquecer a migration
+    produz `IntegrityError` em producao e silencio na suite -- nenhum teste em
+    Python veria a lista do CHECK ficar para tras. E o inverso tambem: um valor
+    que saiu do enum e ficou no CHECK deixa o banco aceitando o que o codigo
+    ja nao produz.
+
+    Mesma ideia de `test_check_de_especialidades_cobre_todo_o_enum` em
+    `test_corretores_schema.py`, nos DOIS sentidos em vez de um.
+    """
+    clausula = await session.scalar(
+        text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = :nome"),
+        {"nome": constraint},
+    )
+    assert clausula is not None, f"{constraint} nao existe no banco"
+
+    no_check = set(_LITERAL_DO_CHECK.findall(clausula))
+    no_enum = {membro.value for membro in enum}
+
+    assert no_check == no_enum, (
+        f"{constraint}: no enum e nao no CHECK = {sorted(no_enum - no_check)}; "
+        f"no CHECK e nao no enum = {sorted(no_check - no_enum)}"
+    )
