@@ -3,11 +3,11 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import insert
+from sqlalchemy import insert, update
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
-from mobia.domain.messages.rajada import superada_por_mais_nova
+from mobia.domain.messages.rajada import ha_fala_pendente_antes, superada_por_mais_nova
 from mobia.domain.messages.status import MessageStatus
 from mobia.infra.crypto import aad_de, encrypt
 
@@ -140,3 +140,77 @@ async def test_mensagem_de_outro_canal_nao_supera(session) -> None:
     )
 
     assert await superada_por_mais_nova(session, minha) is False
+
+
+async def test_sem_nada_antes_nao_ha_fala_pendente(session) -> None:
+    """Mensagem isolada: nao ha pergunta orfa para o turno bloqueado responder."""
+    unica = await gravar(session, created_at=datetime.now(UTC))
+
+    assert await ha_fala_pendente_antes(session, unica) is False
+
+
+async def test_irma_mais_antiga_sem_resposta_conta(session) -> None:
+    agora = datetime.now(UTC)
+    await gravar(session, created_at=agora, texto="tem 2 quartos ate 500 mil?")
+    ultima = await gravar(session, created_at=agora + timedelta(seconds=1))
+
+    assert await ha_fala_pendente_antes(session, ultima) is True
+
+
+async def test_irma_mais_antiga_ja_bloqueada_nao_conta(session) -> None:
+    """Fala bloqueada nao e pergunta legitima -- e a mesma definicao que o
+    score e a cadencia de follow-up usam."""
+    agora = datetime.now(UTC)
+    bloqueada = await gravar(session, created_at=agora)
+    await session.execute(
+        update(Message).where(Message.id == bloqueada.id).values(bloqueada_em=agora)
+    )
+    await session.commit()
+    ultima = await gravar(session, created_at=agora + timedelta(seconds=1))
+
+    assert await ha_fala_pendente_antes(session, ultima) is False
+
+
+async def test_fala_do_agente_entre_as_duas_fecha_a_pendencia(session) -> None:
+    """O agente ja respondeu a primeira: nao ha nada pendente antes da segunda."""
+    agora = datetime.now(UTC)
+    await gravar(session, created_at=agora, texto="tem 2 quartos?")
+    await gravar(
+        session,
+        created_at=agora + timedelta(seconds=1),
+        direction=MessageDirection.OUTBOUND,
+        role=MessageRole.AGENTE,
+        texto="Temos sim! Posso te mandar as opcoes?",
+    )
+    ultima = await gravar(session, created_at=agora + timedelta(seconds=2))
+
+    assert await ha_fala_pendente_antes(session, ultima) is False
+
+
+async def test_pendente_atras_de_uma_bloqueada_ainda_conta(session) -> None:
+    """O caso que uma consulta ingenua perde.
+
+    Olhar so a mensagem IMEDIATAMENTE anterior daria False aqui, porque a
+    imediatamente anterior esta bloqueada -- e a pergunta legitima de antes
+    dela ficaria orfa em silencio.
+    """
+    agora = datetime.now(UTC)
+    await gravar(session, created_at=agora, texto="tem 2 quartos ate 500 mil?")
+    bloqueada = await gravar(session, created_at=agora + timedelta(seconds=1))
+    await session.execute(
+        update(Message)
+        .where(Message.id == bloqueada.id)
+        .values(bloqueada_em=agora + timedelta(seconds=1))
+    )
+    await session.commit()
+    ultima = await gravar(session, created_at=agora + timedelta(seconds=2))
+
+    assert await ha_fala_pendente_antes(session, ultima) is True
+
+
+async def test_pendente_de_outro_lead_nao_conta(session) -> None:
+    agora = datetime.now(UTC)
+    await gravar(session, created_at=agora, conversation_key="5511999998888")
+    minha = await gravar(session, created_at=agora + timedelta(seconds=1))
+
+    assert await ha_fala_pendente_antes(session, minha) is False
