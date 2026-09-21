@@ -860,8 +860,9 @@ class _ModeracaoDoTurno:
 
         Sem corpo nao ha o que moderar -- audio, imagem e documento passam por
         aqui e nao pagam nada --, e a fala fica resolvida como se tivesse sido
-        liberada: `None`. O `if corpo` que o turno sempre teve continua
-        valendo, so mudou de lugar.
+        liberada: `None`. A checagem esta aqui, e nao so no `if corpo` que o
+        turno sempre teve, porque quem chega pelo `finally` do invulucro nao
+        passa por aquele `if`.
         """
         if self._resolvida:
             return self._veredito
