@@ -1394,11 +1394,23 @@ async def executar_turno(
                 # veio antes do xingamento fecha "agrupado" sem resposta, e
                 # `PROCESSED` e terminal -- nada a reenfileira.
                 #
-                # So `"respondido"` significa que a recusa chegou ao lead. Nos
-                # outros cinco desfechos de `_entregar_texto_fixo` -- janela
-                # fechada, recusa permanente da Meta, reentrega suprimida,
-                # opt-out concorrente, atendimento humano concorrente -- a
-                # resposta tambem nao pode ir.
+                # O guard e sobre ESTA passada nao ter entregue a recusa, e
+                # nao sobre o lead nunca ter recebido nada. `"respondido"` e
+                # o unico desfecho em que a entrega aconteceu agora. Dos
+                # outros quatro -- janela fechada, recusa permanente da Meta,
+                # opt-out concorrente, atendimento humano concorrente --, os
+                # dois ultimos tambem significam que o lead nao pode receber
+                # nada NESTE MOMENTO (esta silenciado ou com humano), entao a
+                # continuacao fica de fora pelo mesmo motivo que a recusa
+                # fica.
+                #
+                # Ja `"reentrega_suprimida"` quer dizer o CONTRARIO de "nao
+                # chegou": a reserva em `outbound_dispatches` ja existe
+                # porque uma tentativa ANTERIOR entregou a recusa. Mesmo
+                # assim a continuacao tambem nao acontece aqui -- e a
+                # consequencia e que a pergunta pendente se perde nesta
+                # retentativa, porque `PROCESSED` e terminal e nada
+                # reenfileira so a resposta que ficou faltando.
                 if desfecho_da_recusa != "respondido":
                     return desfecho_da_recusa
                 if not tem_pendencia:
@@ -3645,15 +3657,20 @@ async def _entregar_texto_fixo(
 
     Bloqueio nunca produz silencio: e a mesma escolha que a TEC-134 e a
     TEC-227 fizeram ao preferir a duplicata a perda, porque a duplicata e
-    visivel e recuperavel e o silencio nao. `kind` tem default para preservar
-    os chamadores existentes -- o texto de recusa de entrada usa o kind da
-    resposta normal. A confirmacao de opt-out (TEC-182) passa o kind proprio,
-    que e o unico que atravessa a guarda de opt-out da porta de saida depois
-    do registro -- ver `GuardedOutbound.send`. `subagent` anda junto de
-    `kind` pelo mesmo motivo: sem o parametro, toda entrega deste caminho --
-    inclusive a confirmacao de opt-out, que nao e moderacao nenhuma -- gravava
-    `message_telemetry.subagent = "moderacao"`, rotulando errado quem olhar a
-    telemetria depois.
+    visivel e recuperavel e o silencio nao. `kind` tem default
+    (`KIND_DA_RESPOSTA`) para preservar o chamador que nao precisa de kind
+    proprio -- hoje so o texto da busca inconclusiva (`LacoDeBuscaExcedido`,
+    mais abaixo) usa o default. Os outros tres chamadores passam kind
+    proprio: a confirmacao de opt-out (TEC-182), o aviso de pedido de humano,
+    e -- desde a TEC-295, ruling R6 -- a recusa de entrada, que usa
+    `KIND_DA_RECUSA_DE_ENTRADA` para nao colidir com o `kind` da resposta que
+    a continuacao da D4 pode entregar depois dela na mesma mensagem. O da
+    opt-out e o unico que atravessa a guarda de opt-out da porta de saida
+    depois do registro -- ver `GuardedOutbound.send`. `subagent` anda junto
+    de `kind` pelo mesmo motivo: sem o parametro, toda entrega deste caminho
+    -- inclusive a confirmacao de opt-out, que nao e moderacao nenhuma --
+    gravava `message_telemetry.subagent = "moderacao"`, rotulando errado
+    quem olhar a telemetria depois.
     """
     # A identificacao entra AQUI e nao em cada chamador: este e o funil das
     # tres trilhas que passam por `_entregar_texto_fixo` -- recusa da
