@@ -1,15 +1,27 @@
 import logging
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from conftest import CANAL_AGENTE, CONVERSA_AGENTE  # type: ignore[import-not-found]
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from test_rajada import gravar  # type: ignore[import-not-found]
+from test_turno_optout import _OutboundQueOptaNoMeio  # type: ignore[import-not-found]
 
 from mobia.app.config import MODELO_SEM_CHAMADA
 from mobia.domain.agente.turno import SUBAGENTE_MODERACAO
-from mobia.domain.messages.models import MessageTelemetry
+from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.messages.status import MessageStatus
-from mobia.domain.moderacao.port import TEXTO_DA_RECUSA_DE_ENTRADA, Direcao, ModeracaoIndisponivel
+from mobia.domain.moderacao.port import (
+    KIND_DA_RECUSA_DE_ENTRADA,
+    TEXTO_DA_RECUSA_DE_ENTRADA,
+    Direcao,
+    ModeracaoIndisponivel,
+)
+from mobia.domain.outbound.kinds import KIND_DA_RESPOSTA
 from mobia.domain.outbound.port import EnvioForaDaJanela
+from mobia.domain.outbound.repositorio import kinds_reservados
+from mobia.infra.db import get_sessionmaker
 
 
 def _espionar_montagem(monkeypatch: object) -> list:
@@ -447,3 +459,138 @@ async def test_recusa_de_entrada_nao_encerra_o_atendimento(
     assert segundo == "respondido"
     assert classificador.chamadas == 1
     assert outbound.entregues[-1] != TEXTO_DA_RECUSA_DE_ENTRADA
+
+
+async def test_bloqueada_com_pergunta_pendente_recusa_e_responde(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """TEC-295, D4. O xingamento e recusado; a pergunta anterior e respondida.
+
+    Antes da TEC-128 o lead recebia as duas coisas, porque cada mensagem tinha
+    o proprio turno. O debounce juntou os dois casos num turno so, e este teste
+    e o que impede a pergunta legitima de morrer junto com a recusa.
+    """
+    # Irma mais antiga da rajada: nao bloqueada, sem resposta do agente ainda
+    # -- e exatamente o que `ha_fala_pendente_antes` procura.
+    await gravar(
+        session,
+        created_at=datetime.now(UTC) - timedelta(minutes=1),
+        texto="tem apartamento de 2 quartos?",
+    )
+
+    outbound = outbound_fake()
+    classificador = classificador_fake()
+    moderador = moderador_fake(bloqueia_entrada=True)
+
+    resultado = await rodar_turno(
+        session,
+        classificador,
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador,
+        texto="xingamento qualquer",
+    )
+
+    assert resultado == "respondido"
+    # O turno continuou: chamou o classificador e entregou uma SEGUNDA
+    # mensagem, distinta da recusa -- nao so um "respondido" que na verdade
+    # so carrega a recusa.
+    assert classificador.chamadas == 1
+    assert len(outbound.entregues) == 2
+    assert TEXTO_DA_RECUSA_DE_ENTRADA in outbound.entregues[0]
+    assert TEXTO_DA_RECUSA_DE_ENTRADA not in outbound.entregues[1]
+
+    # Ruling R6: as duas entregas tem de reservar sob kinds DIFERENTES em
+    # `outbound_dispatches`. Com o mesmo kind a segunda seria suprimida como
+    # reentrega da primeira -- em silencio, sem essa asserta ninguem veria a
+    # colisao voltar.
+    carregadora = (
+        await session.scalars(
+            select(Message).where(Message.direction == "INBOUND").order_by(Message.created_at)
+        )
+    ).all()[-1]
+    reservados = await kinds_reservados(get_sessionmaker(), message_id=carregadora.id)
+    assert reservados == {KIND_DA_RECUSA_DE_ENTRADA, KIND_DA_RESPOSTA}
+
+
+async def test_bloqueada_sem_nada_pendente_so_recusa(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """A condicao da D4. Sem ela, um turno bloqueado isolado responderia ao
+    historico anterior -- o engajamento que a TEC-233 recusou de proposito."""
+    outbound = outbound_fake()
+
+    # Primeiro turno: pergunta legitima, respondida normalmente -- fica
+    # historico na conversa, mas NADA pendente (a ultima fala do agente e
+    # depois dela).
+    primeiro = await rodar_turno(
+        session,
+        classificador_fake(),
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(),
+        texto="tem apartamento de 2 quartos?",
+    )
+    assert primeiro == "respondido"
+
+    # Segundo turno: bloqueado pela moderacao, sem nenhuma fala pendente.
+    classificador = classificador_fake()
+    resultado = await rodar_turno(
+        session,
+        classificador,
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(bloqueia_entrada=True),
+        texto="xingamento qualquer",
+    )
+
+    assert resultado == "respondido"
+    # O turno NAO continuou: sem pendencia, continuar responderia ao
+    # historico antigo -- o engajamento indevido que a D4 existe para barrar.
+    assert classificador.chamadas == 0
+    assert len(outbound.entregues) == 2
+    assert TEXTO_DA_RECUSA_DE_ENTRADA not in outbound.entregues[0]
+    assert TEXTO_DA_RECUSA_DE_ENTRADA in outbound.entregues[-1]
+
+
+async def test_recusa_barrada_por_optout_concorrente_nao_responde(
+    session: AsyncSession,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    rodar_turno,
+) -> None:
+    """A primeira ressalva da D4: se a recusa nao chegou ao lead, a resposta
+    tambem nao vai."""
+    outbound = _OutboundQueOptaNoMeio(
+        get_sessionmaker(), channel=CANAL_AGENTE, conversation_key=CONVERSA_AGENTE
+    )
+
+    resultado = await rodar_turno(
+        session,
+        None,  # classificador: o bloco de bloqueio nunca chega a chamar
+        outbound,
+        resumidor_fake(),
+        contador_fake(),
+        moderador_fake(bloqueia_entrada=True),
+        texto="xingamento qualquer",
+    )
+
+    assert resultado == "bloqueado_por_optout"
+    assert resultado != "reentrega_suprimida"
+    assert outbound.entregues == [], "a guarda nunca chega a chamar _deliver"

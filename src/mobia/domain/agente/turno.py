@@ -85,9 +85,11 @@ from mobia.domain.humano.deteccao import (
 )
 from mobia.domain.messages.bloqueio import marcar_bloqueada, registrar_bloqueio_de_saida
 from mobia.domain.messages.models import Message
+from mobia.domain.messages.rajada import ha_fala_pendente_antes
 from mobia.domain.messages.recorder import MessageRecorder
 from mobia.domain.moderacao.port import (
     CATEGORIA_OUTRO,
+    KIND_DA_RECUSA_DE_ENTRADA,
     TEXTO_DA_RECUSA_DE_ENTRADA,
     TEXTO_NEUTRO_DE_SAIDA,
     Direcao,
@@ -1356,11 +1358,62 @@ async def executar_turno(
                     conversation_key=message.conversation_key,
                     categoria=veredito.categoria or CATEGORIA_OUTRO,
                 )
-                return await _entregar_texto_fixo(
+                # TEC-295, D4, ruling R5. `tem_pendencia` tem de ser calculado
+                # ANTES de `_entregar_texto_fixo` -- nao e so ordem de codigo,
+                # e a pergunta certa. `_entregar_texto_fixo` grava a recusa como
+                # fala OUTBOUND do agente (`recorder.record_agent_message`), e
+                # `ha_fala_pendente_antes` define "pendente" como "INBOUND mais
+                # nova que a ULTIMA fala OUTBOUND do agente". Calculado DEPOIS,
+                # a propria recusa (que nao responde a pergunta pendente
+                # nenhuma) viraria essa ultima fala e apagaria a pendencia da
+                # pergunta legitima -- o booleano sairia sempre falso, e a
+                # continuacao que esta task existe para habilitar nunca
+                # rodaria. Calculado ANTES, a pergunta e a certa: "havia fala
+                # pendente no estado que existia antes desta recusa?" --
+                # resistir a "simplificar" isto de volta para perto do uso e o
+                # ponto deste comentario.
+                async with session_factory() as sessao_da_pendencia:
+                    tem_pendencia = await ha_fala_pendente_antes(sessao_da_pendencia, message)
+                # TEC-295, ruling R6. Kind proprio -- nao o default `reply` de
+                # `_entregar_texto_fixo` --, porque a resposta que a continuacao
+                # abaixo pode entregar tambem usa `reply` (a primeira parte de
+                # `KINDS_DA_RESPOSTA`). Com o mesmo kind, a segunda entrega
+                # colidiria com a UNIQUE (message_id, kind) de
+                # `outbound_dispatches` e seria suprimida em silencio como
+                # reentrega -- exatamente o defeito que a D4 existe para evitar,
+                # so que na entrega em vez de na deteccao de pendencia.
+                desfecho_da_recusa = await _entregar_texto_fixo(
                     session_factory,
                     message=message,
                     outbound=outbound,
                     recorder_texto=TEXTO_DA_RECUSA_DE_ENTRADA,
+                    kind=KIND_DA_RECUSA_DE_ENTRADA,
+                )
+                # TEC-295, D4. Ate aqui o turno retornava, e com o debounce isso
+                # passou a matar pergunta legitima: numa rajada, a pergunta que
+                # veio antes do xingamento fecha "agrupado" sem resposta, e
+                # `PROCESSED` e terminal -- nada a reenfileira.
+                #
+                # So `"respondido"` significa que a recusa chegou ao lead. Nos
+                # outros cinco desfechos de `_entregar_texto_fixo` -- janela
+                # fechada, recusa permanente da Meta, reentrega suprimida,
+                # opt-out concorrente, atendimento humano concorrente -- a
+                # resposta tambem nao pode ir.
+                if desfecho_da_recusa != "respondido":
+                    return desfecho_da_recusa
+                if not tem_pendencia:
+                    # Fala reprovada isolada: continuar faria o agente responder
+                    # ao historico anterior, que e o engajamento que a TEC-233
+                    # recusou de proposito.
+                    return desfecho_da_recusa
+                # Cai para fora do bloco e segue o turno. O contexto que
+                # `montar_contexto` monta a seguir NAO inclui esta fala: a
+                # `marcar_bloqueada` acima ja carimbou a linha, e `literais_apos`
+                # filtra por `bloqueada_em IS NULL`. Nao ha um unico uso de
+                # `corpo` daqui para baixo -- conferido no desenho.
+                log.info(
+                    "moderacao.recusa_com_resposta_pendente",
+                    message_id=str(message.id),
                 )
 
     # TEC-275, D4. Antes de montar contexto de proposito: a continuacao nao

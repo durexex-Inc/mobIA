@@ -79,6 +79,18 @@ TEXTO_DA_RECUSA_DE_ENTRADA = (
     "assim que eu ajudo."
 )
 
+# TEC-295, D4. Kind proprio, e nao o default `KIND_DA_RESPOSTA` ("reply") de
+# `_entregar_texto_fixo` -- mesmo padrao de `KIND_DA_CONFIRMACAO_DE_OPTOUT`
+# (`domain/optout/deteccao.py`) e `KIND_DA_JANELA_HUMANA`, que o docstring de
+# `domain/outbound/kinds.py` (linhas 3-10) registra: "o kind vive no modulo
+# que possui o comportamento, e quem precisa dele importa de la". A recusa
+# usando o "reply" generico ERA a anomalia, so que benigna ate a TEC-295: as
+# duas nunca saiam na mesma mensagem, entao a UNIQUE (message_id, kind) de
+# `outbound_dispatches` nunca via as duas juntas. Com a continuacao da D4, a
+# recusa e a resposta podem sair na MESMA mensagem, e reusar "reply" faria a
+# segunda ser suprimida como reentrega da primeira -- silenciosamente.
+KIND_DA_RECUSA_DE_ENTRADA = "recusa_de_entrada"
+
 # Nao finge ser resposta. O lead precisa perceber que algo nao saiu, senao
 # espera por uma resposta que nao vem -- e o evento no log leva um humano ate
 # ali.
