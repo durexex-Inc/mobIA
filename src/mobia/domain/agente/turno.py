@@ -1122,8 +1122,9 @@ async def _executar_turno(
     # e o sistema fica sem o registro.
     #
     # Barata de proposito -- antes do classificador, entao um turno silenciado
-    # nao paga chamada ao modelo. A guarda autoritativa e a da porta de saida
-    # (`outbound/port.py`); esta so evita o trabalho.
+    # nao paga chamada ao classificador (desde a TEC-297 a moderacao roda de
+    # qualquer jeito, no fecho do involucro). A guarda autoritativa e a da
+    # porta de saida (`outbound/port.py`); esta so evita o trabalho.
     #
     # `tem_handoff_de_humano_aberto` (TEC-143) e a SEGUNDA fonte de silencio,
     # ao lado de `esta_silenciada`. Sao perguntas diferentes -- "um corretor
@@ -1314,10 +1315,14 @@ async def _executar_turno(
         # aqui: a moderacao bloquearia e devolveria antes, o opt-out nunca
         # seria registrado, e continuariamos mandando mensagem (a recusa de
         # entrada) para quem pediu para sair -- a violacao que a D5 existe
-        # para evitar, entrando por outra porta. Checar opt-out primeiro
-        # tambem poupa a chamada paga de moderacao no caminho de opt-out, que
-        # e o que o docstring de
-        # `test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo` promete.
+        # para evitar, entrando por outra porta. Checar opt-out primeiro ja
+        # nao poupa a chamada de moderacao -- desde a TEC-297 ela roda de
+        # qualquer jeito, no fecho do involucro, depois do desfecho "opt_out"
+        # que este bloco produz mais abaixo. O que a ordem preserva e o
+        # registro do opt-out nao depender do veredito da moderacao, que e o
+        # que o docstring de
+        # `test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo`
+        # (`tests/integration/test_turno_optout.py`) diz hoje.
         #
         # Gravado ANTES da entrega, pelo precedente de `marcar_bloqueada`. Se
         # a entrega falhar depois, o lead fica em silencio sem confirmacao --
