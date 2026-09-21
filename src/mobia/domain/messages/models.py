@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -171,6 +172,34 @@ class Message(Base):
             "channel",
             "provider_message_id",
             name="uq_messages_channel_provider_message_id",
+        ),
+        # O vocabulario fechado, guardado no banco e nao so no enum (TEC-223).
+        # `sweep_stalled.py` e a ancora de `followup/repositorio.py` filtram por
+        # literal em SQL cru, entao uma linha gravada como `'inbound'` burla as
+        # duas em silencio -- e seria varrida, devolvendo a fala do agente ao
+        # `process_message`. Mesma forma de `ck_handoffs_status`. Os quatro
+        # nomes e textos sao os da migration 0037, e o teste
+        # `test_o_check_e_o_enum_dizem_a_mesma_coisa` amarra cada um ao enum.
+        CheckConstraint(
+            "role IN ('LEAD', 'AGENTE', 'CORRETOR', 'SISTEMA')",
+            name="ck_messages_role",
+        ),
+        CheckConstraint(
+            "direction IN ('INBOUND', 'OUTBOUND')",
+            name="ck_messages_direction",
+        ),
+        CheckConstraint(
+            "content_type IN ('TEXTO', 'AUDIO', 'IMAGEM', 'DOCUMENTO', 'DESCONHECIDO')",
+            name="ck_messages_content_type",
+        ),
+        # NULL passa de proposito: e o que a linha de saida grava, e significa
+        # "nao participa do pipeline de ingestao" -- ver o comentario de
+        # `status` acima. O `IS NULL` e redundante (`IN` com NULL da UNKNOWN,
+        # que nao viola CHECK) e esta aqui para dizer que e deliberado.
+        CheckConstraint(
+            "status IS NULL OR status IN "
+            "('RECEIVED', 'QUEUED', 'PROCESSING', 'PROCESSED', 'FAILED')",
+            name="ck_messages_status",
         ),
     )
 
