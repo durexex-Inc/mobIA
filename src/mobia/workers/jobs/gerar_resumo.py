@@ -44,7 +44,17 @@ async def gerar_resumo(ctx: dict[str, Any], handoff_id: str) -> str:
     # desenho, declarada e nao corrigida aqui.
     try:
         await ctx["redis"].enqueue_job(NOTIFICAR_JOB, handoff_id, _job_id=f"notificar:{handoff_id}")
-    except Exception:
-        log.warning("notificacao.nao_agendada", handoff_id=handoff_id, exc_info=True)
+    except Exception as falha:
+        # `motivo` alem do traceback, que desde a TEC-293 nao leva mensagem: o
+        # texto de uma falha de `enqueue_job` e de conexao com o Redis, e e ele
+        # que se le as tres da manha. Seguro aqui porque esta chamada so passa
+        # `handoff_id` e o `_job_id` derivado dele -- UUID gerado por este
+        # projeto. Mesmo argumento da D3 da TEC-292.
+        log.warning(
+            "notificacao.nao_agendada",
+            handoff_id=handoff_id,
+            motivo=str(falha),
+            exc_info=True,
+        )
 
     return "gravado" if gravou else "sem_resumo"

@@ -562,8 +562,20 @@ async def _agendar_resumo(agendador: AgendadorDeResumoPort, registro: HandoffReg
         return
     try:
         await agendador.agendar(registro.id)
-    except Exception:
-        log.warning("resumo_handoff.nao_agendado", handoff_id=str(registro.id), exc_info=True)
+    except Exception as falha:
+        # `motivo` alem do traceback: desde a TEC-293 o traceback leva pilha e
+        # tipo, nunca a mensagem, e aqui a mensagem e o diagnostico -- numa
+        # queda do Redis o que se quer ler e `Error 111 connecting to
+        # localhost:6379`. O texto e seguro neste ponto porque a unica coisa
+        # que esta chamada passa adiante e `registro.id`, um UUID gerado por
+        # este projeto: nao ha entrada externa para a excecao ecoar. Mesmo
+        # argumento da D3 da TEC-292.
+        log.warning(
+            "resumo_handoff.nao_agendado",
+            handoff_id=str(registro.id),
+            motivo=str(falha),
+            exc_info=True,
+        )
 
 
 async def _continuar_entrega(

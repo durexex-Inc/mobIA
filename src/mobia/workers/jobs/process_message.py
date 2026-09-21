@@ -188,14 +188,24 @@ async def _encaminhar_por_erro(
     if registro.criado:
         try:
             await agendador.agendar(registro.id)
-        except Exception:
+        except Exception as falha:
             # `exc_info=True`, e nao so `reason=type(falha).__name__`: este e
             # justamente o caminho de erro, onde o diagnostico mais importa.
             # O traceback aqui e da falha de AGENDAMENTO, no bloco que a
             # envolve -- nao o da excecao original do turno, que ja subiu e
             # foi tratada mais acima -- entao nao ha risco de confundir as
             # duas. Mesma fidelidade de `_agendar_resumo` em `turno.py`.
-            log.warning("resumo_handoff.nao_agendado", handoff_id=str(registro.id), exc_info=True)
+            #
+            # Desde a TEC-293 o traceback leva pilha e tipo, nunca a mensagem,
+            # entao `motivo` carrega o texto -- que aqui e seguro, porque a
+            # unica coisa que esta chamada passa adiante e `registro.id`, um
+            # UUID gerado por este projeto. Mesmo argumento da D3 da TEC-292.
+            log.warning(
+                "resumo_handoff.nao_agendado",
+                handoff_id=str(registro.id),
+                motivo=str(falha),
+                exc_info=True,
+            )
 
     try:
         await outbound.send(
