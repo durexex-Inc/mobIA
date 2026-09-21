@@ -45,13 +45,13 @@ A consequência é honesta e fica registrada: **provedor de moderação fora do 
 
 Ela ganha a marca e o evento de auditoria, mas não vira turno e não gera recusa própria. A recusa é do turno, e o turno é da carregadora.
 
-Isso mantém a regra da TEC-128 — uma resposta por rajada — e evita o absurdo de o lead receber três recusas por três mensagens reprováveis numa rajada. O log distingue o caso: agrupada e liberada contra agrupada e bloqueada.
+Isso mantém a regra da TEC-128 — uma resposta por rajada — e evita o absurdo de o lead receber três recusas por três mensagens reprováveis numa rajada. O log distingue o caso: `message.agrupado` carrega o campo `bloqueada` (booleano), com o retorno de `_moderar_superada` — agrupada e liberada contra agrupada e bloqueada.
 
 ### D4 — A carregadora bloqueada entrega a recusa **e** responde o que ficou pendente
 
-Hoje o bloco de bloqueio termina em `return await _entregar_texto_fixo(...)` (`turno.py:1361-1366`). Ele deixa de retornar quando houver fala do lead pendente de resposta.
+Antes desta decisão, o bloco de bloqueio terminava em `return await _entregar_texto_fixo(...)`. Ele deixa de retornar incondicionalmente quando houver fala do lead pendente de resposta — a chamada equivalente está hoje em `turno.py:1385-1391`. (A citação original desta frase, `turno.py:1361-1366`, envelheceu: essas linhas são hoje o comentário da ruling R5, não o `return` que esta frase descreve. O adendo abaixo, que cita `turno.py:1361-1374` para a R5, está correto e não muda.)
 
-**Isto é mais barato do que parece, e o desenho conferiu antes de decidir.** Depois da linha 1364 há **zero** usos de `corpo` em `executar_turno` — todo o resto do turno trabalha sobre `contexto`, que `montar_contexto` reconstrói do banco. Como `marcar_bloqueada` roda **antes**, `literais_apos` já exclui a própria fala bloqueada da janela. O turno que continua enxerga a pergunta legítima e não enxerga o xingamento, sem nenhuma mudança em `montar_contexto`.
+**Isto é mais barato do que parece, e o desenho conferiu antes de decidir.** Depois do bloco de bloqueio, o resto do turno trabalha sobre `contexto`, que `montar_contexto` reconstrói do banco, e praticamente não usa `corpo` de novo. "Praticamente" e não "zero": ao reconferir a citação desta frase (que apontava para `turno.py:1364`, hoje dentro do comentário da R5), achou-se uma exceção real — `texto_com_oferta(corpo, texto)` (`turno.py:2745`) lê o `corpo` da própria carregadora bloqueada para decidir se anexa a oferta de corretor do CA-04.1. Não expõe a fala reprovada ao modelo nem ao lead — é uma checagem de padrão sobre um texto que a moderação já viu —, mas o "zero" que esta frase afirmava não é literal. Como `marcar_bloqueada` roda **antes**, `literais_apos` já exclui a própria fala bloqueada da janela de contexto. O turno que continua enxerga a pergunta legítima e não enxerga o xingamento, sem nenhuma mudança em `montar_contexto`.
 
 Três cuidados que a continuação exige:
 
@@ -75,10 +75,12 @@ A superada é moderada em t+6; a carregadora monta contexto em t+10. No caminho 
 
 A alternativa recusada era a carregadora conferir, antes de montar contexto, se há INBOUND anterior sem moderação: custa uma consulta em **todo** turno saudável para um caso que já exige falha de job.
 
+**Com a D4, a mesma janela tem uma segunda consequência, não só no contexto.** Numa rajada de duas falas reprováveis, se o job da superada falhar, em t+10 a marca ainda não existe: `ha_fala_pendente_antes` conta a fala reprovável como pendência (ela é INBOUND e `bloqueada_em` ainda é NULL), `tem_pendencia` dá `True`, e a carregadora entrega a recusa **e roda um turno inteiro respondendo àquela fala reprovável** — o engajamento que a TEC-233 recusou. A decisão de aceitar a janela continua valendo; o que faltava registrar era esta consequência nova, que só existe desde a D4.
+
 ### D6 — O que NÃO muda
 
 - `superada_por_mais_nova` continua sem filtrar `bloqueada_em`. O filtro seria quase sempre inerte, e a D1 torna a questão irrelevante: a superada agora é moderada de qualquer jeito.
-- As três exceções da TEC-128 (opt-out, pedido de humano, entrega parcial) continuam como estão. A moderação entra no ramo que hoje fecha `"agrupado"`, não nos três que já furam a janela — nesses o turno roda e modera pelo caminho normal.
+- As três exceções da TEC-128 (opt-out, pedido de humano, entrega parcial) continuam como estão. A moderação entra no ramo que hoje fecha `"agrupado"`, não nos três que já furam a janela. Só a entrega parcial cai na moderação normal do turno; opt-out e pedido de humano **retornam antes dela** (`turno.py:1177` e `turno.py:1307`), e essa fala continua sem ser moderada — buraco pré-existente, que esta card não fecha.
 - `montar_contexto`, `contar_mensagens_do_lead` e a CTE de follow-up não mudam: elas já filtram por `bloqueada_em IS NULL`, e passam a receber a marca que faltava.
 
 ## As quatro garantias a não reabrir
