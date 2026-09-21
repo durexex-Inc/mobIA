@@ -99,7 +99,7 @@ async def test_pedido_de_optout_grava_confirma_e_nao_paga_o_modelo(
     **A moderacao saiu dessa conta na TEC-297.** A checagem de opt-out continua
     rodando ANTES do bloco de moderacao de entrada (fix da revisao), e e por
     isso que o registro nao depende do veredito; o que mudou e o fim do turno,
-    onde o `finally` de `executar_turno` modera a fala uma vez. Sem isso ela
+    onde `executar_turno` modera a fala uma vez, ja fora do corpo do turno. Sem isso ela
     ficava sem `bloqueada_em` e entrava no contexto, no resumo e no lead score
     como fala legitima. Uma de ENTRADA, nenhuma de SAIDA.
     """
@@ -169,7 +169,7 @@ async def test_pedido_de_optout_e_registrado_mesmo_com_entrada_bloqueada_pela_mo
     forcar exatamente esse cenario e provar que o opt-out ainda e registrado.
 
     **Desde a TEC-297 a moderacao roda neste turno**, e isso nao enfraquece o
-    CRITICAL: ela acontece no `finally` de `executar_turno`, depois do registro
+    CRITICAL: ela acontece no fecho de `executar_turno`, depois do registro
     e depois da confirmacao entregue, entao nenhuma das duas coisas depende do
     veredito. O que a fala reprovada ganha e a marca e a auditoria, que antes
     nao saiam em ramo nenhum que retornasse cedo. Uma de ENTRADA, nenhuma de

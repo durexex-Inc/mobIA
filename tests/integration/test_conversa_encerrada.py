@@ -776,7 +776,7 @@ async def test_o_pedido_de_humano_dentro_da_janela_e_atendido_e_reabre(
     Atender: o lead que pede uma pessoa recebe o aviso e ganha handoff, ainda
     que a conversa esteja encerrada -- e sem pagar o classificador, que e o
     que o duble que levanta afirma. **Chamada nenhuma deixou de ser verdade na
-    TEC-297**: a fala deste ramo passa a ser moderada no `finally` de
+    TEC-297**: a fala deste ramo passa a ser moderada no fecho de
     `executar_turno`, depois do handoff e depois do aviso. O que a excecao da
     guarda economiza continua sendo o modelo do agente. Calar aqui inverteria
     o "decisao de pessoa vence politica automatica" no unico caso em que quem

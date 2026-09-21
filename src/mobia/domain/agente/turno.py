@@ -1,4 +1,3 @@
-import sys
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -838,7 +837,7 @@ class _ModeracaoDoTurno:
     Chamar a moderacao antes de cada um dos cinco seria cinco sitios a
     lembrar -- e a D4 do desenho desta card registra as duas vezes em que uma
     lista escrita a mao ja envelheceu errado neste fluxo. Um sexto ramo futuro
-    nasce coberto pelo `finally` do invulucro e nasceria furado por uma lista.
+    nasce coberto pelo invulucro e nasceria furado por uma lista.
     """
 
     def __init__(
@@ -861,8 +860,8 @@ class _ModeracaoDoTurno:
         Sem corpo nao ha o que moderar -- audio, imagem e documento passam por
         aqui e nao pagam nada --, e a fala fica resolvida como se tivesse sido
         liberada: `None`. A checagem esta aqui, e nao so no `if corpo` que o
-        turno sempre teve, porque quem chega pelo `finally` do invulucro nao
-        passa por aquele `if`.
+        turno sempre teve, porque quem chega pelo fecho do invulucro nao passa
+        por aquele `if`.
         """
         if self._resolvida:
             return self._veredito
@@ -880,38 +879,46 @@ class _ModeracaoDoTurno:
         return self._veredito
 
     async def resolver_no_fim(self) -> None:
-        """O que o `finally` do invulucro chama. Ver a D5 do desenho.
+        """O caminho SEM excecao em voo: resolve e deixa a falha da marca subir.
 
-        Com excecao do turno em voo, engole a falha da marca e loga: propagar
-        daqui substituiria a excecao real pela da marca, e `last_error`
-        guardaria a classe errada. Sem excecao em voo, propaga -- preserva o
-        contrato de `messages/bloqueio.py`, o turno vira FAILED e o sweeper
-        retenta.
+        Propagar aqui preserva o contrato de `messages/bloqueio.py` -- o turno
+        vira FAILED, o sweeper retenta e a marca sai depois. Ver a D5 do
+        desenho.
+
+        O invulucro escolhe entre esta e `resolver_engolindo` pelo bloco em que
+        esta, e nao consultando estado global: `sys.exc_info()` enxerga a
+        excecao em tratamento em QUALQUER ponto da pilha da task, entao um
+        chamador futuro que fizesse `except X: await executar_turno(...)` faria
+        esta falha ser engolida sem que ninguem tivesse decidido isso.
         """
-        if self._resolvida:
-            return
-        if sys.exc_info()[0] is None:
-            await self.resolver()
-            return
+        await self.resolver()
+
+    async def resolver_engolindo(self) -> None:
+        """O caminho COM excecao do turno em voo: resolve, e loga se falhar.
+
+        **A excecao ao contrato de `messages/bloqueio.py`, e ela mora aqui.**
+        Aquele modulo propaga de proposito: marca que falha em silencio deixa a
+        fala bloqueada elegivel para o contexto e para o resumo, e o desfecho
+        seguro e o turno falhar para o sweeper retentar. Mas com a excecao do
+        turno em voo, propagar daqui a SUBSTITUIRIA -- e `process_message` grava
+        em `messages.last_error` o nome da classe do que subir (via
+        `_detalhe_para_a_coluna`). Quem for diagnosticar leria a falha da marca
+        no lugar da causa real.
+
+        Engolir nao desfaz o contrato: a excecao original segue subindo, a linha
+        vira FAILED do mesmo jeito e o sweeper reenfileira a mensagem inteira
+        enquanto ela tiver tentativa (`sweep_max_attempts`) -- a marca sai na
+        retentativa. O que se perde e o detalhe da falha da marca em
+        `last_error`, e e por isso que se loga.
+        """
         try:
             await self.resolver()
         except Exception as exc:
-            # **A excecao ao contrato de `messages/bloqueio.py`, e ela mora
-            # aqui.** Aquele modulo propaga de proposito: marca que falha em
-            # silencio deixa a fala bloqueada elegivel para o contexto e para
-            # o resumo, e o desfecho seguro e o turno falhar para o sweeper
-            # retentar. Um `raise` de dentro de um `finally` com excecao em
-            # voo, porem, SUBSTITUI a excecao que derrubou o turno -- e
-            # `process_message` grava em `messages.last_error` o nome da
-            # classe do que subir daqui (`_detalhe_para_a_coluna`). Quem for
-            # diagnosticar a falha leria a da marca no lugar da real.
-            #
-            # Engolir nao desfaz o contrato: a excecao original segue subindo,
-            # a linha vira FAILED do mesmo jeito e o sweeper reenfileira a
-            # mensagem inteira enquanto ela tiver tentativa
-            # (`sweep_max_attempts`) -- e a marca sai na retentativa. O que se
-            # perde e o detalhe da falha da marca em `last_error`, e e por
-            # isso que esta linha loga.
+            # `Exception` e nao `BaseException`, ao contrario do `except` do
+            # invulucro: aqui o que se engole e a falha DESTA marca, e engolir
+            # um `CancelledError` levantado por ela suprimiria o cancelamento
+            # da task -- o `process_message` tem clausula propria para ele
+            # justamente porque perde-lo quebra o desligamento limpo.
             log.error(
                 "moderacao.marca_falhou",
                 message_id=str(self._message.id),
@@ -983,12 +990,13 @@ async def executar_turno(
     # inteiro, inclusive as chamadas pagas ao modelo. E o texto do lead ainda
     # nao passou por lugar nenhum.
     corpo = decrypt(message.text_body, aad_de(message.id, "text_body"))
-    # TEC-297: a moderacao de entrada nasce aqui e e garantida pelo `finally`,
-    # nao pela linha em que o corpo do turno a chama. Cinco returns saem antes
-    # dessa linha, e a fala que os dispara nunca era moderada.
+    # TEC-297: a moderacao de entrada nasce aqui e e garantida pelos dois
+    # fechos abaixo -- um por caminho de saida --, e nao pela linha em que o
+    # corpo do turno a chama. Cinco returns saem antes dessa linha, e a fala
+    # que os dispara nunca era moderada.
     moderacao = _ModeracaoDoTurno(session_factory, moderador, message, corpo)
     try:
-        return await _executar_turno(
+        resultado = await _executar_turno(
             session_factory,
             message=message,
             classificador=classificador,
@@ -1000,8 +1008,20 @@ async def executar_turno(
             corpo=corpo,
             moderacao=moderacao,
         )
-    finally:
-        await moderacao.resolver_no_fim()
+    except BaseException:
+        # `BaseException` e nao `Exception` de proposito: um `CancelledError`
+        # tambem tem de passar por aqui, senao o turno cancelado perde a marca
+        # por um caminho que a D5 nao previu. `raise` logo abaixo o devolve
+        # intacto.
+        await moderacao.resolver_engolindo()
+        raise
+    # Sem excecao em voo a falha da marca PROPAGA, e e o lugar em que ela deve
+    # propagar: e a decisao do bloco em que estamos, nao uma consulta a estado
+    # global. Nao e `finally` porque `finally` nao distingue os dois casos, e
+    # nao e `else` porque `else` nao roda quando o `try` sai por `return` --
+    # que e exatamente como este sai.
+    await moderacao.resolver_no_fim()
+    return resultado
 
 
 async def _executar_turno(
@@ -1019,9 +1039,9 @@ async def _executar_turno(
 ) -> ResultadoDoTurno:
     """O corpo do turno. Contrato e desfechos: ver `executar_turno`.
 
-    Existe separada so para que o `try/finally` do invulucro nao reindente as
-    ~2.700 linhas deste corpo (TEC-297, D9). Nao chame direto: sem o `finally`
-    a fala dos cinco returns antecipados volta a nao ser moderada.
+    Existe separada so para que o `try` do invulucro nao reindente as ~2.700
+    linhas deste corpo (TEC-297, D9). Nao chame direto: sem o fecho do
+    invulucro a fala dos cinco returns antecipados volta a nao ser moderada.
     """
     # `bool(...)` por fora, e nao `bool(corpo) and ...`: so a forma curta-
     # circuitada estreita `corpo` de `str | None` para `str` dentro da chamada.
@@ -1339,7 +1359,7 @@ async def _executar_turno(
     # aqui e a TEC-297 o tirou: ate ela, uma mensagem que a moderacao
     # reprovaria e que contivesse um termo da lista criava handoff, RECEBIA o
     # aviso e saia por este `return` sem nunca ter sido moderada. Agora ela e
-    # moderada de qualquer jeito -- no `finally` de `executar_turno`, depois do
+    # moderada de qualquer jeito -- no fecho de `executar_turno`, depois do
     # handoff e depois do aviso --, entao a fala nao escapa mais da marca nem
     # da auditoria. A ordem que este bloco descreve nao mudou: o handoff e o
     # aviso continuam nao esperando por chamada paga nenhuma, e inverte-la
@@ -1524,8 +1544,9 @@ async def _executar_turno(
                 return desfecho_da_recusa
             # Cai para fora do bloco e segue o turno. O contexto que
             # `montar_contexto` monta a seguir NAO inclui esta fala: o
-            # `moderar_entrada_e_marcar` acima ja carimbou a linha (por
-            # dentro, via `marcar_bloqueada`), e `literais_apos` filtra por
+            # `moderacao.resolver()` do topo deste bloco ja carimbou a linha
+            # (ele chama `moderar_entrada_e_marcar`, que chama
+            # `marcar_bloqueada`), e `literais_apos` filtra por
             # `bloqueada_em IS NULL`. Ha um uso de `corpo` daqui para baixo,
             # em `texto_com_oferta(corpo, texto)`, e ele nao expoe a fala
             # bloqueada: devolve o texto intacto a menos que

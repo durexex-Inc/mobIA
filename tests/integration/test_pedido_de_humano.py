@@ -534,7 +534,7 @@ async def test_pedido_de_humano_passa_antes_da_moderacao_de_entrada(
     **A TEC-297 mudou o depois, nao a ordem.** Ate ela, a consequencia declarada
     aqui e no comentario do bloco em `turno.py` era que essa fala saia do turno
     sem NUNCA ter sido moderada -- e ela entrava no contexto, no resumo, no lead
-    score e na ancora de follow-up como fala legitima. Agora o `finally` de
+    score e na ancora de follow-up como fala legitima. Agora o fecho de
     `executar_turno` a modera depois do handoff e depois do aviso: uma chamada
     de ENTRADA, nenhuma de SAIDA. A ordem que este teste trava continua intacta;
     o que deixou de existir e o buraco no fim dela.
