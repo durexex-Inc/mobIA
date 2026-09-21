@@ -1,6 +1,6 @@
 # TEC-223 — o vocabulário fechado de `messages` passa a ser garantido pelo banco
 
-**Status:** aprovado, não implementado
+**Status:** implementado
 **Card:** [TEC-223](https://eduardodurieuxlopes.atlassian.net/browse/TEC-223) — épico TEC-123
 **Branch:** `feat/tec-223-check-no-vocabulario-de-messages`
 **Origem:** review final da branch `feat/tec-126-telemetria`.
@@ -26,7 +26,7 @@ E o repo já tem o precedente do que acontece sem a constraint: o comentário de
 
 ### Um `CHECK` com `IN` aceita `NULL` sem cláusula extra
 
-`status` é a única das quatro `nullable`, e o `NULL` ali é **semântico e ativamente gravado** — `recorder.py:128` o escreve, e `models.py:57-58` diz que significa "nao participa do pipeline de ingestao". Medido contra o Postgres desta máquina:
+`status` é a única das quatro `nullable`, e o `NULL` ali é **semântico e ativamente gravado** — `recorder.py:128` o escreve, e `models.py:58-59` diz que significa "nao participa do pipeline de ingestao". Medido contra o Postgres desta máquina:
 
 ```sql
 CREATE TEMP TABLE sonda (s varchar(16) NULL CHECK (s IN ('RECEIVED','QUEUED')));
@@ -39,7 +39,7 @@ INSERT INTO sonda VALUES ('received');  -- ERROR: violates check constraint
 
 ### O que uma violação real despejaria, e para onde isso vai
 
-Medido sobre a tabela `messages` de verdade, dentro de uma transação revertida:
+Medido sobre a tabela `messages` de verdade, dentro de uma transação revertida — a linha da `DETAIL` abaixo foi montada à mão para a sonda, e isso importa para o campo `conversation_key`: ela sai aqui como `whatsapp:5511987654321`, mas `_persist` grava `item.sender_external_id` **cru**, sem prefixo de canal (`service.py:72`, cujo comentário diz "Quem fala e o lead, entao a conversa e a dele"). A conclusão abaixo — o telefone aparece dentro do `conversation_key` — continua valendo; a amostra é que engana sobre a forma dele.
 
 ```
 ERROR:  new row for relation "messages" violates check constraint "ck_sonda_direction"
@@ -52,7 +52,9 @@ Duas leituras, e as duas importam:
 
 **O conteúdo da conversa não vaza.** `text_body` sai como `\x0123…` — ciphertext, porque a coluna é `bytea` cifrado desde a TEC-221. A colisão que o desenho da TEC-292 registrou entre esta card e o vetor do `DETAIL` é **menor do que aquele texto supunha**, e esta é a medição que o mostra.
 
-**O telefone vaza três vezes:** `sender_external_id`, `recipient_external_id` e dentro de `conversation_key`. No log isso está fechado — `motivo_do_erro_de_banco` nunca repassa o `detail`, e desde a TEC-293 o traceback não leva a mensagem da exceção. **Mas o INSERT em `messages` acontece em `_persist`, chamado de `whatsapp.py`, que re-levanta** — e aí o uvicorn emite o traceback cru no stdout, fora do mascarador. É o flanco que a TEC-293 deixou declaradamente aberto.
+**O telefone vaza duas vezes, não três:** em `sender_external_id` e dentro de `conversation_key`. O terceiro campo do INSERT, `recipient_external_id`, **não** é o telefone do lead numa mensagem de entrada — é o número do negócio, o `phone_number_id` da Meta; quem fala é o lead, então é ele quem ocupa o papel de remetente, e o destinatário é a própria conta do WhatsApp Business. No log isso está fechado — `motivo_do_erro_de_banco` nunca repassa o `detail`, e desde a TEC-293 o traceback não leva a mensagem da exceção. **Mas o INSERT em `messages` acontece em `_persist`, chamado de `whatsapp.py`, que re-levanta** — e aí o uvicorn emite o traceback cru no stdout, fora do mascarador. É o flanco que a TEC-293 deixou declaradamente aberto.
+
+**O inventário acima também omite `last_error`, que é `Text` em claro** (`models.py:96`). Uma violação de `ck_messages_status` só pode vir de um `UPDATE`, e `process_message.py:125-130` grava `last_error` na mesma linha em que grava `status` — a `DETAIL` de um `UPDATE` que viola CHECK imprime a linha nova inteira, `last_error` incluído. Hoje isso é impossível na prática, porque os três `UPDATE` que tocam `status` gravam sempre um membro do enum; mas o inventário se apresenta como completo, e não é enquanto deixar este campo de fora.
 
 **Esta card não abre esse vazamento; ela cria a condição que o dispara.** Dito sem rodeio: se um escritor futuro gravar grafia divergente, o resultado passa a ser um 500 com o telefone do lead no stdout do uvicorn. O balanço, ainda assim, é a favor da constraint — hoje o mesmo erro passa **silencioso** e faz o sweeper devolver a fala do agente ao pipeline, o que é pior e mais difícil de descobrir. Falhar alto é o comportamento certo; o preço fica registrado aqui e **sobe a prioridade da card do uvicorn/arq**.
 
@@ -97,7 +99,7 @@ O teste segue o molde de `test_a_0013_desce_e_sobe_de_novo` (`:258-289`): desce 
 
 **A prática do repo tem maioria, não unanimidade, e vale dizer qual é.** Dos doze CHECKs que existem hoje, **oito** vivem em dois lugares — no modelo ORM e na migration, mesmo nome e mesmo texto — e **quatro não**: `ck_lead_qualification_forcada_quente`, `ck_lead_qualification_forcada_motivos`, `ck_lead_score_audit_total` e `ck_lead_score_audit_causas` existem só na migration. Conferido por varredura, não por lembrança.
 
-Esta card duplica, com os oito. `CheckConstraint` passa a ser importado em `models.py`, que hoje não o importa, e as quatro entram no `__table_args__` junto do `Index` e do `UniqueConstraint` que já estão lá.
+Esta card duplica, com os oito. `CheckConstraint` passou a ser importado em `models.py`, que não o importava, e as quatro entram no `__table_args__` junto do `Index` e do `UniqueConstraint` que já estão lá.
 
 A razão de duplicar aqui, e não seguir os quatro que não duplicaram: `messages` é a tabela mais lida deste repo, e o modelo é onde alguém vai procurar o que a coluna aceita — uma `String(8)` sem constraint visível é exatamente o que fez esta card existir. O custo da duplicação é ela poder divergir de si mesma; a D3 pega a divergência que importa (constraint contra enum) lendo o banco, e a que sobra — modelo contra migration — é responsabilidade de quem escreve, como nos outros oito.
 
@@ -111,5 +113,5 @@ A `0004`, no downgrade, converte `content_type` para o vocabulário da Meta — 
 
 - **O vazamento por uvicorn e arq.** Medido acima e declarado: quando a violação acontece em `_persist`, o 500 sobe e o uvicorn emite a `DETAIL` com o telefone no stdout. É a lacuna que a TEC-293 registrou em "Fora de escopo" e que continua valendo; fechá-la é configurar os loggers `uvicorn.error` e `arq.worker`. **Card nova**, e esta medição é argumento para priorizá-la.
 - **Remover `CORRETOR` e `SISTEMA` do enum.** Ver D2.
-- **`ADD CONSTRAINT … NOT VALID` seguido de `VALIDATE`.** A forma direta pega `ACCESS EXCLUSIVE` e varre a tabela; a forma em dois passos existe para tabelas grandes em produção sem janela. Não há medição de volume que justifique a complexidade hoje, e a primeira aplicação real será num banco pequeno. Anotado para quem for aplicar isto com `messages` já grande.
+- **`ADD CONSTRAINT … NOT VALID` seguido de `VALIDATE`.** A forma direta pega `ACCESS EXCLUSIVE` e varre a tabela; a forma em dois passos existe para tabelas grandes em produção sem janela. O risco mais agudo, porém, não é a varredura — é a fila de lock: um `ALTER TABLE` esperando `ACCESS EXCLUSIVE` bloqueia todo `SELECT` que chegar atrás dele na fila, e `NOT VALID` não resolve isso, só encurta a janela em que o `ACCESS EXCLUSIVE` fica preso; quem resolve a fila é `SET lock_timeout` com retentativa. Não há medição de volume que justifique a complexidade hoje, e a primeira aplicação real será num banco pequeno. Anotado para quem for aplicar isto com `messages` já grande.
 - **`lead_qualification.temperatura`**, a outra coluna de vocabulário sem CHECK, citada em `followup/repositorio.py:79-89`. Mesma classe de problema, outra tabela, outra card.
