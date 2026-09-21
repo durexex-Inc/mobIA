@@ -229,9 +229,22 @@ class WorkerSettings:
     max_tries = 5
 
     # 240s, e a relacao com `sweep_inflight_after_seconds = 300` e o que fixa
-    # este numero: tem de ser **estritamente menor** que a janela do sweeper,
-    # senao o sweeper reenfileira um turno que ainda esta em voo e a mesma
-    # conversa roda duas vezes em paralelo. Os 60s vieram da TEC-122, quando o
+    # este numero -- mas a relacao tem TRES termos, nao dois, desde a TEC-128.
+    # `sweep_inflight_after_seconds` mede `COALESCE(queued_at, created_at)`
+    # (`sweep_stalled.py`), e `queued_at` e carimbado na INGESTAO -- antes da
+    # janela de debounce da RN-01.6, que e incondicional (D1 do desenho:
+    # TODA mensagem espera `debounce_de_rajada_segundos` antes de o job
+    # comecar, nao so a que integra rajada). A invariante e
+    # `debounce_de_rajada_segundos + job_timeout < sweep_inflight_after_seconds`
+    # (`test_job_timeout_cabe_dentro_da_janela_do_sweeper`,
+    # `test_worker_startup.py`); com os defaults de hoje (6 + 240 < 300) a
+    # folga e de 54s, nao mais os 60 de antes da TEC-128 -- e
+    # `debounce_de_rajada_segundos` e configuracao de produto que o desenho
+    # da TEC-128 ja anuncia que vai ser mexida, entao subi-la demais reabre
+    # esta conta sem que `job_timeout` sozinho avise. Sem a janela na conta,
+    # `job_timeout` **estritamente menor** que a janela do sweeper faria o
+    # sweeper reenfileirar um turno que ainda esta em voo e a mesma
+    # conversa rodaria duas vezes em paralelo. Os 60s vieram da TEC-122, quando o
     # job era claim + ACK. Hoje o turno faz `count_tokens` (as vezes -- so
     # quando a estimativa barata fica perto do teto), `resumir` (as vezes, a
     # cada ~40 mensagens, max_tokens=2000), `reagir` (so depois de um turno que

@@ -22,7 +22,7 @@ TEC-127 e TEC-128 vão estender.
 |---|---|---|
 | Linguagem/framework | Python 3.12 + FastAPI | O backlog é pesado em IA (TEC-157 embeddings, TEC-158 busca híbrida, TEC-210 evals no CI); ecossistema mais maduro. |
 | Banco | PostgreSQL + SQLAlchemy 2.0 + Alembic | pgvector já é requisito do TEC-157. |
-| Fila | Redis + ARQ | Async-nativo (casa com FastAPI), com retry/backoff e cron — que TEC-128 (debounce 6s), TEC-171 (lembretes) e TEC-183 (cadência) vão precisar. Redis também serve rate limiting (TEC-205) e locks (TEC-168). |
+| Fila | Redis + ARQ | Async-nativo (casa com FastAPI), com retry/backoff e cron — que TEC-128 (debounce 6s), TEC-171 (lembretes) e TEC-183 (cadência) vão precisar. Redis também serve rate limiting (TEC-205) e locks (TEC-168). (A TEC-128 acabou usando `_defer_by`, não `cron`; a escolha do ARQ continua certa, a justificativa é que não se confirmou para esta card.) |
 | Logging | structlog, JSON, com `correlation_id` | Base do TEC-211. |
 | Testes | pytest + pytest-asyncio, Postgres e Redis reais via docker-compose | Os critérios são de integração; mock de fila não prova durabilidade. |
 

@@ -8,14 +8,20 @@ from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
+from mobia.domain.agente.repositorio import ler_apresentacao_da_mensagem
 from mobia.domain.agente.turno import ResultadoDoTurno, executar_turno
 from mobia.domain.handoff.agendador import AgendadorDeResumoPort
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
+from mobia.domain.humano.deteccao import pediu_humano
 from mobia.domain.messages.models import Message
+from mobia.domain.messages.rajada import superada_por_mais_nova
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
+from mobia.domain.optout.deteccao import pediu_optout
 from mobia.domain.outbound.port import OutboundPort
 from mobia.domain.outbound.presenca import indicador_de_digitacao
+from mobia.domain.outbound.repositorio import kinds_reservados
+from mobia.infra.crypto import aad_de, decrypt
 
 log = structlog.get_logger(__name__)
 
@@ -36,10 +42,15 @@ TEXTO_DO_AVISO_DE_ERRO = (
     "Passei sua conversa para um corretor assumir."
 )
 
-# "skipped" e deste modulo -- claim recusado ou a mensagem sumiu entre o claim
-# e a busca -- os outros nove vem do turno (Task 6, Literal de proposito: ver
-# `ResultadoDoTurno`).
-ResultadoDoProcessamento = Literal["skipped"] | ResultadoDoTurno
+# "skipped" e "agrupado" sao deste modulo; os outros nove vem do turno (Task 6,
+# Literal de proposito: ver `ResultadoDoTurno`).
+#
+# Os dois sao distintos de proposito. "skipped" e anomalia -- claim recusado ou
+# a mensagem sumiu entre o claim e a busca. "agrupado" e o caminho FELIZ da
+# RN-01.6: a mensagem foi pega, e o certo era nao responder porque outra mais
+# nova do mesmo lead assumiu o turno. Colapsar os dois tornaria ilegivel
+# qualquer contagem de anomalia no log.
+ResultadoDoProcessamento = Literal["skipped", "agrupado"] | ResultadoDoTurno
 
 
 def _detalhe_para_a_coluna(exc: BaseException) -> str:
@@ -225,6 +236,28 @@ async def _encaminhar_por_erro(
         )
 
 
+async def _tem_entrega_parcial_pendente(session_factory: Any, message_id: uuid.UUID) -> bool:
+    """Esta mensagem apresentou um lote de fichas que ainda nao terminou de sair?
+
+    TEC-128 (Important 2 da onda final). Mesma consulta e mesma condicao que
+    `executar_turno` usa para decidir se entra no ramo de continuacao (TEC-275,
+    D4, em torno de `turno.py:1395-1398`): um lote existe e pelo menos um dos
+    kinds dele ja tem reserva -- ou seja, a apresentacao comecou e nao
+    terminou. Sem esta checagem, a guarda de superacao (D3 da TEC-128)
+    fecharia essa retentativa como "agrupado" antes de `executar_turno` ter a
+    chance de continuar a entrega, e as fichas que faltam nunca sairiam.
+
+    Repete a condicao em vez de chamar `executar_turno` porque aqui so o
+    BOOLEANO importa -- diferente de la, que precisa do `lote` e do
+    `ja_reservados` para montar a continuacao.
+    """
+    lote = await ler_apresentacao_da_mensagem(session_factory, message_id=message_id)
+    if not lote:
+        return False
+    ja_reservados = await kinds_reservados(session_factory, message_id=message_id)
+    return bool(ja_reservados & {linha.kind for linha in lote})
+
+
 async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
     """Reivindica a mensagem para processamento.
 
@@ -297,6 +330,65 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
             log.warning("message.sumiu", message_id=message_id)
             return "skipped"
 
+        # RN-01.6 (TEC-128, D4): entre o claim e aqui, uma mensagem mais nova
+        # do mesmo lead pode ter chegado. Se chegou, o turno dela e que deve
+        # responder -- esta fecha PROCESSED sem rodar nada, e nao ha reserva
+        # de outbound para liberar porque nenhuma foi feita. Ha tres excecoes,
+        # tratadas logo abaixo: opt-out, pedido de humano e entrega parcial
+        # pendente. Nos tres o turno roda mesmo superada.
+        async with session_factory() as session:
+            if await superada_por_mais_nova(session, linha):
+                # A excecao do opt-out existe por um defeito que a TEC-182
+                # previu por escrito. Sem ela: o lead pede para parar e, nos
+                # milissegundos seguintes, manda outra coisa; esta mensagem
+                # sai como "agrupado", `pediu_optout` nunca roda sobre ela, e
+                # o opt-out NUNCA e registrado -- em silencio, sem log de erro.
+                #
+                # O enqueue sem atraso de `IngestionService.ingest` nao basta:
+                # ele vence a corrida no caso comum, nao em todos.
+                #
+                # Nao ha decisao duplicada com o turno: e a mesma funcao pura
+                # sobre o mesmo texto da mesma mensagem, entao os dois sitios
+                # nao tem como divergir sem que `pediu_optout` mude para ambos.
+                corpo = decrypt(linha.text_body, aad_de(linha.id, "text_body"))
+                # `bool(...)` por fora, e nao `bool(corpo) and ...`: so a forma
+                # curta-circuitada estreita `corpo` de `str | None` para `str`
+                # dentro da chamada -- mesmo idioma de `turno.py`.
+                pedido_de_optout = bool(corpo and pediu_optout(corpo))
+                # Mesmo furo, mesma razao, aplicada a RN-16.1/emenda E-04 (TEC-128,
+                # onda final, Critical 1): sem ele, um pedido de humano isolado
+                # que perde a corrida contra uma mensagem mais nova fecha como
+                # "agrupado", `pediu_humano` nunca roda sobre ele, e nenhum
+                # handoff nasce -- o lead que pediu uma pessoa fica preso no
+                # robo, em silencio.
+                pedido_de_humano = bool(corpo and pediu_humano(corpo))
+                if pedido_de_optout or pedido_de_humano:
+                    log.info(
+                        "message.optout_fura_a_janela"
+                        if pedido_de_optout
+                        else "message.pedido_de_humano_fura_a_janela",
+                        message_id=message_id,
+                    )
+                # A terceira excecao (TEC-128, onda final, Important 2): uma
+                # retentativa que ja apresentou fichas e nao terminou de
+                # entrega-las nao pode ser descartada so porque uma mensagem
+                # mais nova chegou durante a espera -- as fichas que faltam
+                # nunca sairiam, e a linha de `recomendacoes` delas ficaria
+                # orfa. So checa quando as duas primeiras ja liberaram o
+                # caminho comum: e a mais cara das tres (duas consultas), e as
+                # outras duas ja decidem a maioria dos casos.
+                elif await _tem_entrega_parcial_pendente(session_factory, identifier):
+                    log.info("message.entrega_parcial_fura_a_janela", message_id=message_id)
+                else:
+                    await session.execute(
+                        update(Message)
+                        .where(Message.id == identifier)
+                        .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
+                    )
+                    await session.commit()
+                    log.info("message.agrupado", message_id=message_id)
+                    return "agrupado"
+
         # TEC-274, RN-04.7. O relogio mede o turno INTEIRO -- contexto,
         # resumo, modelo e as duas moderacoes --, e nao so a chamada ao
         # classificador: e o silencio que o lead percebe. Um turno com tres
@@ -308,11 +400,19 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # linhas abaixo: o `async with` la dentro reindentaria cerca de duas
         # mil linhas, e a protecao que a posicao daria e reproduzida -- melhor
         # -- pela conferencia no disparo. Ver as D2 e D3 do desenho.
+        #
+        # TEC-128: o relogio conta do RECEBIMENTO, nao do inicio do job. Com o
+        # debounce da RN-01.6 o job so comeca uma janela depois de o lead
+        # apertar enviar; somar as duas esperas deixaria o lead em silencio
+        # absoluto durante a janela inteira -- o oposto do que a TEC-274 quis
+        # quando escreveu que o relogio mede "o silencio que o lead percebe".
+        idade = (datetime.now(UTC) - linha.created_at).total_seconds()
+        apos_segundos = max(0.0, get_settings().indicador_de_digitacao_apos_segundos - idade)
         async with indicador_de_digitacao(
             session_factory,
             message=linha,
             indicador=ctx["indicador"],
-            apos_segundos=get_settings().indicador_de_digitacao_apos_segundos,
+            apos_segundos=apos_segundos,
         ):
             resultado = await executar_turno(
                 session_factory,

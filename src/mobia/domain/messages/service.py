@@ -9,10 +9,13 @@ from sqlalchemy import CursorResult, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.app.config import get_settings
+from mobia.domain.humano.deteccao import pediu_humano
 from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.status import MessageStatus
+from mobia.domain.optout.deteccao import pediu_optout
 from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 from mobia.infra.db import motivo_do_erro_de_banco
 from mobia.infra.queue import enqueue_process_message
@@ -43,12 +46,35 @@ class IngestionService:
         if not parsed:
             return []
 
-        message_ids = await self._persist(parsed, channel)
-        for message_id in message_ids:
-            await self._try_enqueue(message_id)
-        return message_ids
+        gravadas = await self._persist(parsed, channel)
+        # A leitura da config mora AQUI, uma vez por lote, e nao dentro de
+        # `_try_enqueue`: quem decide o atraso por mensagem e a ingestao. O que
+        # e unico e a LEITURA da janela, nao o atraso aplicado -- cada mensagem
+        # do lote recebe zero ou a janela, decidido logo abaixo. Ler dentro de
+        # `_try_enqueue` colocaria a leitura de configuracao na camada errada.
+        janela = get_settings().debounce_de_rajada_segundos
+        # Colapsa `provider_message_id` repetido dentro do MESMO envelope para
+        # o texto da ULTIMA ocorrencia. So e inofensivo porque uma reentrega da
+        # Meta traz sempre o mesmo texto (o `wamid` e do provedor, nao nosso) --
+        # nao ha caso em que duas ocorrencias do mesmo id tragam corpos
+        # diferentes para este dicionario escolher entre eles.
+        texto_de = {item.provider_message_id: item.text_body for item in parsed}
+        for message_id, provider_message_id in gravadas:
+            # O opt-out nao espera a janela (RN-01.6 + RN-14), e desde a
+            # TEC-128 (onda final) o pedido de humano tambem nao (RN-16.1,
+            # emenda E-04: o handoff precisa nascer em ate 5s, e o debounce
+            # incondicional levaria toda mensagem a esperar a janela inteira
+            # antes de qualquer handoff). `pediu_optout` e `pediu_humano` sao
+            # puras e deterministicas, sem chamada paga, e aqui o texto ainda
+            # esta em claro -- e o unico ponto do fluxo onde ele esta.
+            texto = texto_de.get(provider_message_id) or ""
+            pediu = pediu_optout(texto) or pediu_humano(texto)
+            await self._try_enqueue(message_id, atraso_segundos=0.0 if pediu else janela)
+        return [message_id for message_id, _ in gravadas]
 
-    async def _persist(self, parsed: list[ParsedMessage], channel: str) -> list[uuid.UUID]:
+    async def _persist(
+        self, parsed: list[ParsedMessage], channel: str
+    ) -> list[tuple[uuid.UUID, str]]:
         """Grava as mensagens novas e descarta as que a Meta ja tinha entregue.
 
         O descarte e resolvido pelo `ON CONFLICT` do proprio Postgres, nao por
@@ -113,14 +139,24 @@ class IngestionService:
                 message_ids=[str(i) for i in message_ids],
                 channel=channel,
             )
-        return message_ids
+        # O `RETURNING` ja trazia `provider_message_id` para a contagem de
+        # descartes do TEC-125; agora ele tambem e a unica forma de casar cada
+        # id gravado com o texto em claro do `ParsedMessage` que o originou --
+        # `inseridas` pode ser subconjunto de `parsed`, sem garantia de ordem.
+        return [(linha.id, linha.provider_message_id) for linha in inseridas]
 
-    async def _try_enqueue(self, message_id: uuid.UUID) -> None:
+    async def _try_enqueue(self, message_id: uuid.UUID, *, atraso_segundos: float = 0.0) -> None:
         if self._queue is None:
             log.warning("enqueue.failed", message_id=str(message_id), reason="no_queue")
             return
         try:
-            await enqueue_process_message(self._queue, message_id)
+            # `atraso_segundos` vem de `ingest`, que le a config uma vez por
+            # lote -- a janela da RN-01.6 entra AQUI e nao no default da fila,
+            # porque a ingestao e o unico ponto onde uma rajada pode estar se
+            # formando. O sweeper, que e recuperacao, e o opt-out, que fura a
+            # janela de proposito, chamam sem atraso e continuam enfileirando
+            # para agora.
+            await enqueue_process_message(self._queue, message_id, atraso_segundos=atraso_segundos)
         except Exception as exc:
             # `detail=str(exc)` fica: o unico argumento deste job e um UUID que
             # o proprio projeto gerou (`str(message_id)`), entao nao ha entrada
