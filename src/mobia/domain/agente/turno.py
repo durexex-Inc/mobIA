@@ -1,3 +1,4 @@
+import sys
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -98,6 +99,7 @@ from mobia.domain.moderacao.port import (
     Direcao,
     ModeracaoIndisponivel,
     ModeradorPort,
+    Veredito,
 )
 
 # Consumida no corpo deste modulo (a checagem de opt-out e a entrega da
@@ -821,6 +823,101 @@ async def _continuar_entrega(
     return "respondido" if entrega.entregues else "reentrega_suprimida"
 
 
+class _ModeracaoDoTurno:
+    """Garante que a fala de entrada seja moderada UMA vez, por onde quer que
+    o turno saia.
+
+    Privada de `turno.py` e nao de `domain/messages/`: ela carrega estado de um
+    turno -- o veredito memorizado e o `_resolvida` --, e nao tem sentido fora
+    dele. A operacao compartilhada e `moderar_entrada_e_marcar`; aqui mora so a
+    memoria de ja ter chamado.
+
+    **O problema que ela resolve** (TEC-297): o corpo do turno
+    (`_executar_turno`) tem cinco returns antes da linha que chama a
+    moderacao, e a fala que dispara qualquer um deles nunca era moderada.
+    Chamar a moderacao antes de cada um dos cinco seria cinco sitios a
+    lembrar -- e a D4 do desenho desta card registra as duas vezes em que uma
+    lista escrita a mao ja envelheceu errado neste fluxo. Um sexto ramo futuro
+    nasce coberto pelo `finally` do invulucro e nasceria furado por uma lista.
+    """
+
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        moderador: ModeradorPort,
+        message: Message,
+        corpo: str | None,
+    ) -> None:
+        self._session_factory = session_factory
+        self._moderador = moderador
+        self._message = message
+        self._corpo = corpo
+        self._resolvida = False
+        self._veredito: Veredito | None = None
+
+    async def resolver(self) -> Veredito | None:
+        """Modera e marca, na primeira chamada. Depois, devolve o memorizado.
+
+        Sem corpo nao ha o que moderar -- audio, imagem e documento passam por
+        aqui e nao pagam nada --, e a fala fica resolvida como se tivesse sido
+        liberada: `None`. O `if corpo` que o turno sempre teve continua
+        valendo, so mudou de lugar.
+        """
+        if self._resolvida:
+            return self._veredito
+        self._resolvida = True
+        if not self._corpo:
+            return None
+        self._veredito = await moderar_entrada_e_marcar(
+            self._session_factory,
+            self._moderador,
+            message_id=self._message.id,
+            channel=self._message.channel,
+            conversation_key=self._message.conversation_key,
+            corpo=self._corpo,
+        )
+        return self._veredito
+
+    async def resolver_no_fim(self) -> None:
+        """O que o `finally` do invulucro chama. Ver a D5 do desenho.
+
+        Com excecao do turno em voo, engole a falha da marca e loga: propagar
+        daqui substituiria a excecao real pela da marca, e `last_error`
+        guardaria a classe errada. Sem excecao em voo, propaga -- preserva o
+        contrato de `messages/bloqueio.py`, o turno vira FAILED e o sweeper
+        retenta.
+        """
+        if self._resolvida:
+            return
+        if sys.exc_info()[0] is None:
+            await self.resolver()
+            return
+        try:
+            await self.resolver()
+        except Exception as exc:
+            # **A excecao ao contrato de `messages/bloqueio.py`, e ela mora
+            # aqui.** Aquele modulo propaga de proposito: marca que falha em
+            # silencio deixa a fala bloqueada elegivel para o contexto e para
+            # o resumo, e o desfecho seguro e o turno falhar para o sweeper
+            # retentar. Um `raise` de dentro de um `finally` com excecao em
+            # voo, porem, SUBSTITUI a excecao que derrubou o turno -- e
+            # `process_message` grava em `messages.last_error` o nome da
+            # classe do que subir daqui (`_detalhe_para_a_coluna`). Quem for
+            # diagnosticar a falha leria a da marca no lugar da real.
+            #
+            # Engolir nao desfaz o contrato: a excecao original segue subindo,
+            # a linha vira FAILED do mesmo jeito e o sweeper reenfileira a
+            # mensagem inteira enquanto ela tiver tentativa
+            # (`sweep_max_attempts`) -- e a marca sai na retentativa. O que se
+            # perde e o detalhe da falha da marca em `last_error`, e e por
+            # isso que esta linha loga.
+            log.error(
+                "moderacao.marca_falhou",
+                message_id=str(self._message.id),
+                reason=type(exc).__name__,
+            )
+
+
 async def executar_turno(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -885,7 +982,46 @@ async def executar_turno(
     # inteiro, inclusive as chamadas pagas ao modelo. E o texto do lead ainda
     # nao passou por lugar nenhum.
     corpo = decrypt(message.text_body, aad_de(message.id, "text_body"))
+    # TEC-297: a moderacao de entrada nasce aqui e e garantida pelo `finally`,
+    # nao pela linha em que o corpo do turno a chama. Cinco returns saem antes
+    # dessa linha, e a fala que os dispara nunca era moderada.
+    moderacao = _ModeracaoDoTurno(session_factory, moderador, message, corpo)
+    try:
+        return await _executar_turno(
+            session_factory,
+            message=message,
+            classificador=classificador,
+            resumidor=resumidor,
+            contador=contador,
+            outbound=outbound,
+            moderador=moderador,
+            agendador=agendador,
+            corpo=corpo,
+            moderacao=moderacao,
+        )
+    finally:
+        await moderacao.resolver_no_fim()
 
+
+async def _executar_turno(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    message: Message,
+    classificador: ClassificadorPort,
+    resumidor: ResumidorPort,
+    contador: ContadorPort,
+    outbound: OutboundPort,
+    moderador: ModeradorPort,
+    agendador: AgendadorDeResumoPort,
+    corpo: str | None,
+    moderacao: _ModeracaoDoTurno,
+) -> ResultadoDoTurno:
+    """O corpo do turno. Contrato e desfechos: ver `executar_turno`.
+
+    Existe separada so para que o `try/finally` do invulucro nao reindente as
+    ~2.700 linhas deste corpo (TEC-297, D9). Nao chame direto: sem o `finally`
+    a fala dos cinco returns antecipados volta a nao ser moderada.
+    """
     # `bool(...)` por fora, e nao `bool(corpo) and ...`: so a forma curta-
     # circuitada estreita `corpo` de `str | None` para `str` dentro da chamada.
     pedido_de_optout = bool(corpo and pediu_optout(corpo))
@@ -1198,14 +1334,16 @@ async def executar_turno(
     # proprio, e rodar depois dele faria uma mensagem que e AO MESMO TEMPO
     # pedido de humano e algo que a moderacao reprova nunca chegar aqui -- o
     # lead irritado que xinga e pede uma pessoa na mesma frase ficaria preso no
-    # robo, que e exatamente a dor da card. O preco, dito sem rodeio: uma
-    # mensagem que a moderacao reprovaria e que contenha um termo da lista cria
-    # handoff e RECEBE o aviso sem ter sido moderada, e o
-    # `turno.py` escreve o principio oposto algumas linhas abaixo. O que escapa
-    # e a classificacao do turno como reprovavel -- nada do texto do lead entra
-    # na resposta (o aviso e literal fixo) e nada dele vai para o modelo.
-    # `test_pedido_de_humano_passa_antes_da_moderacao_de_entrada` fixa a ordem,
-    # para que inverte-la seja uma decisao e nao um acidente.
+    # robo, que e exatamente a dor da card. O preco dessa ordem era declarado
+    # aqui e a TEC-297 o tirou: ate ela, uma mensagem que a moderacao
+    # reprovaria e que contivesse um termo da lista criava handoff, RECEBIA o
+    # aviso e saia por este `return` sem nunca ter sido moderada. Agora ela e
+    # moderada de qualquer jeito -- no `finally` de `executar_turno`, depois do
+    # handoff e depois do aviso --, entao a fala nao escapa mais da marca nem
+    # da auditoria. A ordem que este bloco descreve nao mudou: o handoff e o
+    # aviso continuam nao esperando por chamada paga nenhuma, e inverte-la
+    # continua sendo decisao e nao acidente -- e o que os testes de
+    # `tests/integration/test_pedido_de_humano.py` travam.
     if pedido_de_humano:
         async with session_factory() as sessao:
             handoff_do_pedido = await registrar_handoff(
@@ -1310,14 +1448,7 @@ async def executar_turno(
         return "pedido_de_humano" if desfecho_do_aviso == "respondido" else desfecho_do_aviso
 
     if corpo:
-        veredito = await moderar_entrada_e_marcar(
-            session_factory,
-            moderador,
-            message_id=message.id,
-            channel=message.channel,
-            conversation_key=message.conversation_key,
-            corpo=corpo,
-        )
+        veredito = await moderacao.resolver()
         if veredito is not None and veredito.bloqueado:
             # A marca vem ANTES da entrega, e a ordem e o ponto (TEC-236).
             # `_entregar_texto_fixo` tem cinco saidas que nao entregam
