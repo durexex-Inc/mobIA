@@ -22,6 +22,7 @@ async def gravar(
     direction: str = MessageDirection.INBOUND,
     role: str = MessageRole.LEAD,
     conversation_key: str = LEAD,
+    channel: str = CANAL,
     texto: str = "ainda tem o 2 quartos?",
 ) -> Message:
     """Grava uma linha com `created_at` EXPLICITO.
@@ -33,7 +34,7 @@ async def gravar(
     await session.execute(
         insert(Message).values(
             id=identificador,
-            channel=CANAL,
+            channel=channel,
             provider_message_id=f"wamid.{identificador}",
             sender_external_id=conversation_key,
             recipient_external_id="222222222",
@@ -115,6 +116,27 @@ async def test_mensagem_de_outro_lead_nao_supera(session) -> None:
         session,
         created_at=agora + timedelta(seconds=2),
         conversation_key="5511999998888",
+    )
+
+    assert await superada_por_mais_nova(session, minha) is False
+
+
+async def test_mensagem_de_outro_canal_nao_supera(session) -> None:
+    """O filtro `channel` da D3, nao exercitado ate a onda final da TEC-128.
+
+    A D3 do desenho (fora de escopo, TEC-129) declara o cross-canal como
+    intencional enquanto os canais nao estiverem unificados: uma rajada que
+    atravesse WhatsApp e web nao se agrupa. Sem este teste, uma regressao no
+    filtro `channel` de `superada_por_mais_nova` (`messages/rajada.py`) seria
+    silenciosa -- os outros cinco testes deste arquivo fixam `channel=CANAL`
+    nos dois lados e nunca exercitam o predicado.
+    """
+    agora = datetime.now(UTC)
+    minha = await gravar(session, created_at=agora, channel="whatsapp")
+    await gravar(
+        session,
+        created_at=agora + timedelta(seconds=2),
+        channel="web",
     )
 
     assert await superada_por_mais_nova(session, minha) is False
