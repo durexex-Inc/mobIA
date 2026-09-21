@@ -94,6 +94,8 @@ async def moderar_entrada_e_marcar(
 
 Passam a chamá-la: o caminho normal do turno (que segue decidindo a recusa com o `Veredito` devolvido), o `_moderar_superada` do worker (que vira uma linha), e o `finally` da D4.
 
+> **Emenda de implementação (TEC-297, Task 3, commit `59804d0`):** o `try/finally` deste esboço não sobreviveu à implementação, e o `sys.exc_info()` também não. A garantia é a mesma; o mecanismo mudou. Ver a **Nota de implementação** abaixo da D5.
+
 Isto refatora código que a TEC-295 entregou em `c8b286a`. É deliberado: sem a extração, a lógica de fail-open e de log fica em três lugares, e a próxima correção acerta dois.
 
 ### D4 — Uma resolução, não cinco chamadas
@@ -114,6 +116,8 @@ finally:
 
 **Por que `finally` e não uma chamada antes de cada `return`:** cinco sítios que precisam ser lembrados é a forma que já apodreceu duas vezes neste arquivo. A TEC-128 enumerou três exceções e a quarta ficou de fora; a TEC-295 enumerou dois ramos e havia cinco. Um sexto ramo futuro nasce coberto pelo `finally` e nasceria furado por uma lista.
 
+> **Emenda de implementação (TEC-297, Task 3, commit `59804d0`):** o `try/finally` deste esboço não sobreviveu à implementação, e o `sys.exc_info()` também não. A garantia é a mesma; o mecanismo mudou. Ver a **Nota de implementação** abaixo da D5.
+
 ### D5 — O `finally` roda mesmo com o turno falhando, e não mascara a exceção
 
 `marcar_bloqueada` propaga exceção de propósito — a docstring de `bloqueio.py` explica por quê. Mas propagar de dentro de um `finally` substituiria a exceção real do turno, e `last_error` guardaria a classe errada.
@@ -122,6 +126,30 @@ finally:
 - **Com exceção em voo** (`sys.exc_info()[0] is not None`): engole e loga `moderacao.marca_falhou`. A exceção original chega inteira ao `last_error`.
 
 O `finally` roda no caminho de erro **de propósito**: uma mensagem que esgota as cinco tentativas nunca mais é visitada, e sem isso a fala ficaria sem marca para sempre. O preço é US$ 0,00057 num caminho que já falhou.
+
+#### Nota de implementação (TEC-297, Task 3, commit `59804d0`) — vale para a D4, a D5 e a D9
+
+**A garantia desta decisão não mudou.** A fala continua sendo moderada uma vez por onde quer que o turno saia, inclusive quando ele levanta; com exceção do turno em voo a falha da marca continua sendo engolida e logada como `moderacao.marca_falhou`; e `last_error` continua guardando a classe original da exceção do turno. O que ficou falso foi o **mecanismo**, não a promessa — esta nota existe para que ninguém leia o código de hoje procurando um `finally` que não existe, nem conclua que a D5 foi revogada.
+
+O que o invólucro faz de fato (`src/mobia/domain/agente/turno.py`, em `executar_turno`):
+
+```python
+    try:
+        resultado = await _executar_turno(..., corpo=corpo, moderacao=moderacao)
+    except BaseException:
+        await moderacao.resolver_engolindo()   # engole a falha da marca e loga
+        raise                                  # a exceção do turno sobe intacta
+    await moderacao.resolver_no_fim()          # sem exceção em voo, PROPAGA
+    return resultado
+```
+
+**Por que não é `finally`:** um `finally` não distingue os dois casos que a D5 separa — ele roda igual no caminho feliz e no de erro, e a decisão "engolir ou propagar" teria de vir de outro lugar. **Por que não é `else`:** `else` não roda quando o `try` sai por `return`, e é exatamente assim que o invólucro sai; com `else`, a moderação simplesmente não aconteceria no caminho feliz, que é a card inteira.
+
+**Por que o `sys.exc_info()` saiu:** ele devolve a exceção em tratamento em qualquer ponto da pilha da task, e não só a que desenrola este bloco. Não havia defeito no dia em que foi escrito, mas um chamador futuro que fizesse `except X: await executar_turno(...)` faria uma falha real da marca ser engolida sem que ninguém tivesse decidido isso — a D5 invertida em silêncio, e sem teste que pegasse. A decisão passou a vir do **bloco em que o invólucro está**: `resolver_engolindo` dentro do `except`, `resolver_no_fim` depois dele. Os dois continuam no-op quando a moderação já foi resolvida, porque quem guarda isso é `resolver()`.
+
+**`except BaseException`, e não `Exception`:** um `CancelledError` também precisa deixar a marca, senão o turno cancelado a perde por um caminho que a D5 não previu. Dentro de `resolver_engolindo` o `except` é `Exception`, pelo motivo oposto: ali o que se engole é a falha da própria marca, e engolir um `CancelledError` dela suprimiria o cancelamento da task.
+
+**A D9 continua valendo inteira** — o corpo extraído não foi reindentado, e o motivo dela (2.700 linhas de diff sem mudança de comportamento dentro) não depende de a instrução ser `finally` ou `except`.
 
 ### D6 — O custo, dito inteiro
 
@@ -182,6 +210,8 @@ O corpo extraído fica no **mesmo nível de indentação** que tem hoje, porque 
 
 O `decrypt` sobe para o invólucro em vez de ser repetido: `_ModeracaoDoTurno` precisa de `corpo`, e decifrar duas vezes para não passar um parâmetro seria trocar clareza por nada.
 
+> **Emenda de implementação (TEC-297, Task 3, commit `59804d0`):** o `try/finally` deste esboço não sobreviveu à implementação, e o `sys.exc_info()` também não. A garantia é a mesma; o mecanismo mudou. Ver a **Nota de implementação** abaixo da D5.
+
 ### D10 — O que NÃO muda
 
 - Os quatro leitores de `bloqueada_em` não mudam: já filtram `bloqueada_em IS NULL` e passam a receber a marca que faltava.
@@ -224,7 +254,7 @@ Sobre a garantia 4, uma precisão que a prosa existente induz ao erro: `literais
 | turno que levanta exceção: `last_error` guarda a classe original | a D5 |
 | mensagem sem corpo: zero chamadas ao moderador | que o `if corpo` continua valendo |
 
-**Correção da implementação (TEC-297, Task 3).** Esta linha dizia que `test_pedido_de_humano_passa_antes_da_moderacao_de_entrada` continuaria passando, "a ordem que ele trava é preservada e reforçada". Era falso pela metade: aquele teste trava a ordem **e** a contagem de chamadas (`assert moderador.entradas == 0`), e só a ordem sobrevive — a guarda continua correndo antes da moderação, mas a moderação passa a acontecer no `finally`, em vez de nunca. A asserção teve de mudar para uma de ENTRADA e zero de SAÍDA.
+**Correção da implementação (TEC-297, Task 3).** Esta linha dizia que `test_pedido_de_humano_passa_antes_da_moderacao_de_entrada` continuaria passando, "a ordem que ele trava é preservada e reforçada". Era falso pela metade: aquele teste trava a ordem **e** a contagem de chamadas (`assert moderador.entradas == 0`), e só a ordem sobrevive — a guarda continua correndo antes da moderação, mas a moderação passa a acontecer no fecho do invólucro, em vez de nunca. A asserção teve de mudar para uma de ENTRADA e zero de SAÍDA.
 
 E o censo da D7 estava curto: **cinco** testes codificavam o comportamento antigo, não dois. Os dois que a D7 nomeia (os usos de `ModeradorQueNaoPodeSerChamado` em `tests/integration/test_conversa_encerrada.py`) mais três que a varredura não pegou, porque procuravam o dublê e não a asserção `entradas == 0`: `tests/integration/test_pedido_de_humano.py` (ramo #5) e dois de `tests/integration/test_turno_optout.py` (ramo #4). Os cinco foram revertidos pelo mesmo critério da D7 — a asserção passa a ser "exatamente uma de ENTRADA e zero de SAÍDA" —, e nada mais do que esses testes provam mudou.
 
