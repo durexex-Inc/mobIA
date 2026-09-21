@@ -15,8 +15,13 @@ from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.infra.signature import SIGNATURE_HEADER, compute_signature
 
-JANELA = "0.3"
 JANELA_MS = 300.0
+# Derivado de `JANELA_MS`, e nao um segundo literal independente: os dois
+# eram soltos ate a onda final da TEC-128, e se divergissem os limites abaixo
+# continuariam passando -- so parariam de medir a janela que a env var de
+# fato configura, e os tres comentarios de valor logo abaixo (`# 200.0`,
+# `# 3_000.0`, `# 1_000.0`) passariam a mentir junto.
+JANELA = str(JANELA_MS / 1000)
 
 # `job.score is not None` nao prova nada: no ARQ instalado (arq/connections.py,
 # `queued_jobs`) TODO job da fila tem score, com ou sem `_defer_by` -- vira
