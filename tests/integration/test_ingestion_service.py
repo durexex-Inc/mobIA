@@ -91,6 +91,48 @@ async def test_entrada_grava_papel_direcao_e_conversa(session, redis_pool) -> No
     assert linha.conversation_key == linha.sender_external_id
 
 
+async def test_ingestao_atrasa_o_job_pela_janela(session, redis_pool, monkeypatch) -> None:
+    """A ingestao e o unico ponto que atrasa: e onde a rajada pode estar se formando."""
+    from datetime import UTC, datetime
+
+    from mobia.app.config import get_settings
+
+    monkeypatch.setenv("DEBOUNCE_DE_RAJADA_SEGUNDOS", "6")
+    get_settings.cache_clear()
+    try:
+        service = IngestionService(get_sessionmaker(), redis_pool)
+        antes_ms = datetime.now(UTC).timestamp() * 1000
+
+        await service.ingest([parsed()])
+
+        jobs = await redis_pool.queued_jobs()
+        assert len(jobs) == 1
+        assert jobs[0].score is not None
+        assert 5_000 < jobs[0].score - antes_ms < 7_000
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_janela_zero_enfileira_para_agora(session, redis_pool, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    from mobia.app.config import get_settings
+
+    monkeypatch.setenv("DEBOUNCE_DE_RAJADA_SEGUNDOS", "0")
+    get_settings.cache_clear()
+    try:
+        service = IngestionService(get_sessionmaker(), redis_pool)
+        antes_ms = datetime.now(UTC).timestamp() * 1000
+
+        await service.ingest([parsed()])
+
+        jobs = await redis_pool.queued_jobs()
+        assert jobs[0].score is not None
+        assert jobs[0].score - antes_ms < 1_000
+    finally:
+        get_settings.cache_clear()
+
+
 async def test_conteudo_vai_cifrado_para_o_banco(session, redis_pool) -> None:
     """Um SELECT cru nao pode devolver o que a Marina escreveu."""
     service = IngestionService(get_sessionmaker(), redis_pool)

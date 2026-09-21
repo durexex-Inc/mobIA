@@ -13,6 +13,7 @@ from mobia.domain.handoff.agendador import AgendadorDeResumoPort
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.models import Message
+from mobia.domain.messages.rajada import superada_por_mais_nova
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
 from mobia.domain.outbound.port import OutboundPort
 from mobia.domain.outbound.presenca import indicador_de_digitacao
@@ -36,10 +37,15 @@ TEXTO_DO_AVISO_DE_ERRO = (
     "Passei sua conversa para um corretor assumir."
 )
 
-# "skipped" e deste modulo -- claim recusado ou a mensagem sumiu entre o claim
-# e a busca -- os outros nove vem do turno (Task 6, Literal de proposito: ver
-# `ResultadoDoTurno`).
-ResultadoDoProcessamento = Literal["skipped"] | ResultadoDoTurno
+# "skipped" e "agrupado" sao deste modulo; os outros nove vem do turno (Task 6,
+# Literal de proposito: ver `ResultadoDoTurno`).
+#
+# Os dois sao distintos de proposito. "skipped" e anomalia -- claim recusado ou
+# a mensagem sumiu entre o claim e a busca. "agrupado" e o caminho FELIZ da
+# RN-01.6: a mensagem foi pega, e o certo era nao responder porque outra mais
+# nova do mesmo lead assumiu o turno. Colapsar os dois tornaria ilegivel
+# qualquer contagem de anomalia no log.
+ResultadoDoProcessamento = Literal["skipped", "agrupado"] | ResultadoDoTurno
 
 
 def _detalhe_para_a_coluna(exc: BaseException) -> str:
@@ -296,6 +302,21 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         if linha is None:
             log.warning("message.sumiu", message_id=message_id)
             return "skipped"
+
+        # RN-01.6 (TEC-128, D4): entre o claim e aqui, uma mensagem mais nova
+        # do mesmo lead pode ter chegado. Se chegou, o turno dela e que deve
+        # responder -- esta fecha PROCESSED sem rodar nada, e nao ha reserva
+        # de outbound para liberar porque nenhuma foi feita.
+        async with session_factory() as session:
+            if await superada_por_mais_nova(session, linha):
+                await session.execute(
+                    update(Message)
+                    .where(Message.id == identifier)
+                    .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
+                )
+                await session.commit()
+                log.info("message.agrupado", message_id=message_id)
+                return "agrupado"
 
         # TEC-274, RN-04.7. O relogio mede o turno INTEIRO -- contexto,
         # resumo, modelo e as duas moderacoes --, e nao so a chamada ao

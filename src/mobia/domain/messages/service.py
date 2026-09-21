@@ -9,6 +9,7 @@ from sqlalchemy import CursorResult, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.app.config import get_settings
 from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
@@ -44,8 +45,13 @@ class IngestionService:
             return []
 
         message_ids = await self._persist(parsed, channel)
+        # A leitura da config mora AQUI, uma vez por lote, e nao dentro de
+        # `_try_enqueue`: quem decide o atraso por mensagem e a ingestao, e a
+        # TEC-128 tem um unico atraso hoje. Ler dentro de `_try_enqueue`
+        # colocaria a leitura de configuracao na camada errada.
+        janela = get_settings().debounce_de_rajada_segundos
         for message_id in message_ids:
-            await self._try_enqueue(message_id)
+            await self._try_enqueue(message_id, atraso_segundos=janela)
         return message_ids
 
     async def _persist(self, parsed: list[ParsedMessage], channel: str) -> list[uuid.UUID]:
@@ -115,12 +121,18 @@ class IngestionService:
             )
         return message_ids
 
-    async def _try_enqueue(self, message_id: uuid.UUID) -> None:
+    async def _try_enqueue(self, message_id: uuid.UUID, *, atraso_segundos: float = 0.0) -> None:
         if self._queue is None:
             log.warning("enqueue.failed", message_id=str(message_id), reason="no_queue")
             return
         try:
-            await enqueue_process_message(self._queue, message_id)
+            # `atraso_segundos` vem de `ingest`, que le a config uma vez por
+            # lote -- a janela da RN-01.6 entra AQUI e nao no default da fila,
+            # porque a ingestao e o unico ponto onde uma rajada pode estar se
+            # formando. O sweeper, que e recuperacao, e o opt-out, que fura a
+            # janela de proposito, chamam sem atraso e continuam enfileirando
+            # para agora.
+            await enqueue_process_message(self._queue, message_id, atraso_segundos=atraso_segundos)
         except Exception as exc:
             # `detail=str(exc)` fica: o unico argumento deste job e um UUID que
             # o proprio projeto gerou (`str(message_id)`), entao nao ha entrada
