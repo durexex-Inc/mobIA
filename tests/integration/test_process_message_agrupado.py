@@ -30,7 +30,7 @@ class TurnoQueNaoDeviaRodar:
 def _ctx() -> dict[str, Any]:
     # `GuardedOutbound` cru, sem `_deliver` implementado: no caminho
     # `agrupado` o outbound nunca e chamado, entao um duble espiao seria
-    # so ceremonia. Se algum dia `_deliver` for alcancado aqui, o
+    # so cerimonia. Se algum dia `_deliver` for alcancado aqui, o
     # `NotImplementedError` denuncia a regressao alto.
     return {
         "session_factory": get_sessionmaker(),

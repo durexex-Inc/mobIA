@@ -15,8 +15,10 @@ from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import superada_por_mais_nova
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
+from mobia.domain.optout.deteccao import pediu_optout
 from mobia.domain.outbound.port import OutboundPort
 from mobia.domain.outbound.presenca import indicador_de_digitacao
+from mobia.infra.crypto import aad_de, decrypt
 
 log = structlog.get_logger(__name__)
 
@@ -309,14 +311,32 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # de outbound para liberar porque nenhuma foi feita.
         async with session_factory() as session:
             if await superada_por_mais_nova(session, linha):
-                await session.execute(
-                    update(Message)
-                    .where(Message.id == identifier)
-                    .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
-                )
-                await session.commit()
-                log.info("message.agrupado", message_id=message_id)
-                return "agrupado"
+                # A excecao existe por um defeito que a TEC-182 previu por
+                # escrito. Sem ela: o lead pede para parar e, nos milissegundos
+                # seguintes, manda outra coisa; esta mensagem sai como
+                # "agrupado", `pediu_optout` nunca roda sobre ela, e o opt-out
+                # NUNCA e registrado -- em silencio, sem log de erro.
+                #
+                # O enqueue sem atraso de `IngestionService.ingest` nao basta:
+                # ele vence a corrida no caso comum, nao em todos.
+                #
+                # Nao ha decisao duplicada com o turno: e a mesma funcao pura
+                # sobre o mesmo texto da mesma mensagem, entao os dois sitios
+                # nao tem como divergir sem que `pediu_optout` mude para ambos.
+                corpo = decrypt(linha.text_body, aad_de(linha.id, "text_body"))
+                # `bool(...)` por fora, e nao `bool(corpo) and ...`: so a forma
+                # curta-circuitada estreita `corpo` de `str | None` para `str`
+                # dentro da chamada -- mesmo idioma de `turno.py`.
+                if not bool(corpo and pediu_optout(corpo)):
+                    await session.execute(
+                        update(Message)
+                        .where(Message.id == identifier)
+                        .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
+                    )
+                    await session.commit()
+                    log.info("message.agrupado", message_id=message_id)
+                    return "agrupado"
+                log.info("message.optout_fura_a_janela", message_id=message_id)
 
         # TEC-274, RN-04.7. O relogio mede o turno INTEIRO -- contexto,
         # resumo, modelo e as duas moderacoes --, e nao so a chamada ao

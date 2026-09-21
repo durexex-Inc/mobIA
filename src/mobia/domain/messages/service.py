@@ -14,6 +14,7 @@ from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.status import MessageStatus
+from mobia.domain.optout.deteccao import pediu_optout
 from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 from mobia.infra.db import motivo_do_erro_de_banco
 from mobia.infra.queue import enqueue_process_message
@@ -44,17 +45,24 @@ class IngestionService:
         if not parsed:
             return []
 
-        message_ids = await self._persist(parsed, channel)
+        gravadas = await self._persist(parsed, channel)
         # A leitura da config mora AQUI, uma vez por lote, e nao dentro de
         # `_try_enqueue`: quem decide o atraso por mensagem e a ingestao, e a
         # TEC-128 tem um unico atraso hoje. Ler dentro de `_try_enqueue`
         # colocaria a leitura de configuracao na camada errada.
         janela = get_settings().debounce_de_rajada_segundos
-        for message_id in message_ids:
-            await self._try_enqueue(message_id, atraso_segundos=janela)
-        return message_ids
+        texto_de = {item.provider_message_id: item.text_body for item in parsed}
+        for message_id, provider_message_id in gravadas:
+            # O opt-out nao espera a janela (RN-01.6 + RN-14). `pediu_optout` e
+            # puro e deterministico, sem chamada paga, e aqui o texto ainda
+            # esta em claro -- e o unico ponto do fluxo onde ele esta.
+            pediu = pediu_optout(texto_de.get(provider_message_id) or "")
+            await self._try_enqueue(message_id, atraso_segundos=0.0 if pediu else janela)
+        return [message_id for message_id, _ in gravadas]
 
-    async def _persist(self, parsed: list[ParsedMessage], channel: str) -> list[uuid.UUID]:
+    async def _persist(
+        self, parsed: list[ParsedMessage], channel: str
+    ) -> list[tuple[uuid.UUID, str]]:
         """Grava as mensagens novas e descarta as que a Meta ja tinha entregue.
 
         O descarte e resolvido pelo `ON CONFLICT` do proprio Postgres, nao por
@@ -119,7 +127,11 @@ class IngestionService:
                 message_ids=[str(i) for i in message_ids],
                 channel=channel,
             )
-        return message_ids
+        # O `RETURNING` ja trazia `provider_message_id` para a contagem de
+        # descartes do TEC-125; agora ele tambem e a unica forma de casar cada
+        # id gravado com o texto em claro do `ParsedMessage` que o originou --
+        # `inseridas` pode ser subconjunto de `parsed`, sem garantia de ordem.
+        return [(linha.id, linha.provider_message_id) for linha in inseridas]
 
     async def _try_enqueue(self, message_id: uuid.UUID, *, atraso_segundos: float = 0.0) -> None:
         if self._queue is None:
