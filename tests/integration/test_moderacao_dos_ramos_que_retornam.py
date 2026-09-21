@@ -16,6 +16,7 @@ fail-open nao custa a acao do ramo. `test_mensagem_sem_corpo_nao_paga_moderacao`
 prova que audio/imagem/documento nao pagam moderacao nenhuma.
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -388,3 +389,148 @@ async def test_mensagem_sem_corpo_nao_paga_moderacao(
     )
 
     assert moderador.entradas == 0
+
+
+async def test_excecao_do_turno_sobrevive_a_falha_da_marca(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Com excecao do turno em voo, a falha da marca e engolida.
+
+    Propagar do bloco `except BaseException` do invulucro substituiria a
+    excecao real pela da marca, e `last_error` guardaria a classe errada --
+    uma investigacao inteira perseguindo o sintoma. O preco e declarado: nesse
+    caso a fala fica sem marca, com so uma linha de log (ver o proximo teste).
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    from mobia.domain.agente import turno as modulo_do_turno
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    class _FalhaDoTurno(RuntimeError):
+        pass
+
+    async def marca_que_falha(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("a marca falhou")
+
+    async def turno_que_levanta(*args: object, **kwargs: object) -> str:
+        raise _FalhaDoTurno("a causa real")
+
+    monkeypatch.setattr(modulo_do_turno, "moderar_entrada_e_marcar", marca_que_falha)
+    monkeypatch.setattr(modulo_do_turno, "_executar_turno", turno_que_levanta)
+
+    linha = await _entrada_do_lead(session, texto=TEXTO_REPROVAVEL)
+
+    with pytest.raises(_FalhaDoTurno, match="a causa real"):
+        await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound_fake(),
+            moderador=moderador_fake(bloqueia_entrada=True),
+            agendador=AgendadorNoop(),
+        )
+
+
+async def test_sem_excecao_em_voo_a_falha_da_marca_propaga(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O outro lado: sem excecao do turno em voo, a falha da marca propaga.
+
+    E o que preserva o contrato de `messages/bloqueio.py`: o turno vira
+    FAILED e o sweeper retenta -- a marca sai na retentativa. O texto
+    "parar" sai pelo ramo do opt-out, um dos que retornam cedo, entao a marca
+    so acontece no fecho do invulucro, sem excecao em voo.
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    from mobia.domain.agente import turno as modulo_do_turno
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    async def marca_que_falha(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("a marca falhou")
+
+    monkeypatch.setattr(modulo_do_turno, "moderar_entrada_e_marcar", marca_que_falha)
+
+    linha = await _entrada_do_lead(session, texto="parar")
+
+    with pytest.raises(RuntimeError, match="a marca falhou"):
+        await executar_turno(
+            get_sessionmaker(),
+            message=linha,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound_fake(),
+            moderador=moderador_fake(bloqueia_entrada=True),
+            agendador=AgendadorNoop(),
+        )
+
+
+async def test_marca_engolida_registra_o_log(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """O log de "engole e loga" medido pela metade sem isto: falta ele, so a excecao.
+
+    Sem esta asserta, um engolimento silencioso -- que descartasse a falha da
+    marca sem registrar nada -- passaria pelo teste anterior do mesmo jeito,
+    porque aquele so olha a excecao que sobe.
+    """
+    from conftest import _entrada_do_lead  # type: ignore[import-not-found]
+
+    from mobia.domain.agente import turno as modulo_do_turno
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    class _FalhaDoTurno(RuntimeError):
+        pass
+
+    async def marca_que_falha(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("a marca falhou")
+
+    async def turno_que_levanta(*args: object, **kwargs: object) -> str:
+        raise _FalhaDoTurno("a causa real")
+
+    monkeypatch.setattr(modulo_do_turno, "moderar_entrada_e_marcar", marca_que_falha)
+    monkeypatch.setattr(modulo_do_turno, "_executar_turno", turno_que_levanta)
+
+    linha = await _entrada_do_lead(session, texto=TEXTO_REPROVAVEL)
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(_FalhaDoTurno):
+            await executar_turno(
+                get_sessionmaker(),
+                message=linha,
+                classificador=classificador_fake(),
+                resumidor=resumidor_fake(),
+                contador=contador_fake(),
+                outbound=outbound_fake(),
+                moderador=moderador_fake(bloqueia_entrada=True),
+                agendador=AgendadorNoop(),
+            )
+
+    assert "moderacao.marca_falhou" in caplog.text
+    assert str(linha.id) in caplog.text
+    assert "RuntimeError" in caplog.text
