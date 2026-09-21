@@ -163,6 +163,21 @@ class Settings(BaseSettings):
     # feature inteira sem tocar neste numero nem no dominio.
     indicador_de_digitacao_apos_segundos: float = 4.0
 
+    # RN-01.6 (TEC-128), com a emenda E-01: a janela vale para TODA mensagem
+    # recebida, e nao so para a que integra uma rajada de tres em oito
+    # segundos. A condicao original nao e implementavel -- a rajada so e
+    # reconhecivel depois de terminada, e a essa altura a resposta a primeira
+    # mensagem ja teria saido e a reserva dela em `outbound_dispatches` ja
+    # estaria commitada.
+    #
+    # `float` e nao `int`, pela mesma razao do vizinho acima: o teste precisa
+    # de centesimos de segundo, e um `int` os arredondaria para zero.
+    #
+    # Zero desliga o debounce. E o caminho de fuga se os seis segundos de
+    # espera no caso comum -- mensagem isolada, que tambem espera -- pesarem
+    # demais no piloto.
+    debounce_de_rajada_segundos: float = 6.0
+
     # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
     # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link
     # composto sobre uma base vazia continua sendo um caminho valido -- ver a

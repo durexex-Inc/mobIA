@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 from mobia.domain.handoff.agendador import GERAR_RESUMO_JOB
 from mobia.infra.queue import PROCESS_MESSAGE_JOB, enqueue_process_message
@@ -81,3 +82,42 @@ def test_sweep_sla_registrado_com_o_nome_esperado() -> None:
         f for f in WorkerSettings.functions if getattr(f, "name", None) == SWEEP_SLA_JOB
     )
     assert registrada.keep_result_s == 0
+
+
+async def test_atraso_vira_job_diferido(redis_pool) -> None:
+    """O atraso vira score futuro no zset da fila, que e como o ARQ difere."""
+    message_id = uuid.uuid4()
+    antes_ms = datetime.now(UTC).timestamp() * 1000
+
+    assert await enqueue_process_message(redis_pool, message_id, atraso_segundos=6.0) is True
+
+    jobs = await redis_pool.queued_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].score is not None
+    # Folga generosa dos dois lados: o que se prova e que o job nao esta
+    # pronto para rodar agora, nao a precisao do relogio.
+    assert 5_000 < jobs[0].score - antes_ms < 7_000
+
+
+async def test_sem_atraso_o_job_nasce_pronto(redis_pool) -> None:
+    """O default preserva o comportamento de hoje: sweeper e opt-out contam com ele."""
+    message_id = uuid.uuid4()
+    antes_ms = datetime.now(UTC).timestamp() * 1000
+
+    assert await enqueue_process_message(redis_pool, message_id) is True
+
+    jobs = await redis_pool.queued_jobs()
+    assert jobs[0].score is not None
+    assert jobs[0].score - antes_ms < 1_000
+
+
+async def test_atraso_zero_e_o_mesmo_que_nenhum(redis_pool) -> None:
+    """Janela zero desliga o debounce -- o caminho de fuga da D8 do desenho."""
+    message_id = uuid.uuid4()
+    antes_ms = datetime.now(UTC).timestamp() * 1000
+
+    assert await enqueue_process_message(redis_pool, message_id, atraso_segundos=0.0) is True
+
+    jobs = await redis_pool.queued_jobs()
+    assert jobs[0].score is not None
+    assert jobs[0].score - antes_ms < 1_000
