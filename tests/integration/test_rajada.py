@@ -214,3 +214,17 @@ async def test_pendente_de_outro_lead_nao_conta(session) -> None:
     minha = await gravar(session, created_at=agora + timedelta(seconds=1))
 
     assert await ha_fala_pendente_antes(session, minha) is False
+
+
+async def test_pendente_de_outro_canal_nao_conta(session) -> None:
+    """O filtro `channel`, nos dois pontos onde `ha_fala_pendente_antes` o usa.
+
+    Espelha `test_mensagem_de_outro_canal_nao_supera`: sem este teste, uma
+    regressao no filtro `channel` -- seja no INBOUND pendente, seja na
+    subquery da ultima fala do agente -- seria silenciosa.
+    """
+    agora = datetime.now(UTC)
+    await gravar(session, created_at=agora, channel="whatsapp")
+    minha = await gravar(session, created_at=agora + timedelta(seconds=1), channel="web")
+
+    assert await ha_fala_pendente_antes(session, minha) is False

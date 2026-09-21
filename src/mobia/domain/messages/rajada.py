@@ -1,9 +1,15 @@
-"""Quem, na rajada, e o turno.
+"""Quem, na rajada, e o turno -- e se sobrou pergunta sem resposta.
 
-A RN-01.6 com a emenda E-01: a ultima mensagem do lead responde por todas. Este
-modulo responde a unica pergunta que essa regra exige -- "chegou algo mais novo
-deste lead?" -- e nao guarda estado nenhum. "A janela ainda esta aberta" nao e
-gravado em lugar nenhum: e recomputado de `messages`, que e onde ja esta.
+Duas perguntas sobre a vizinhanca de uma mensagem na conversa, cada uma a
+servico de uma regra diferente. `superada_por_mais_nova` responde a RN-01.6
+com a emenda E-01: a ultima mensagem do lead responde por todas -- "chegou
+algo mais novo deste lead?". `ha_fala_pendente_antes` responde a TEC-295: o
+turno bloqueado pela moderacao pode continuar sem cair no engajamento que a
+TEC-233 recusou? So se nao existir, antes dele, uma fala do lead sem resposta.
+
+Nenhuma das duas guarda estado. "A janela ainda esta aberta" e "ficou
+pergunta pendente" nao sao gravados em lugar nenhum: sao recomputados de
+`messages`, que e onde ja esta.
 """
 
 from sqlalchemy import func, literal, or_, select, tuple_
