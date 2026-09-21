@@ -350,11 +350,19 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # linhas abaixo: o `async with` la dentro reindentaria cerca de duas
         # mil linhas, e a protecao que a posicao daria e reproduzida -- melhor
         # -- pela conferencia no disparo. Ver as D2 e D3 do desenho.
+        #
+        # TEC-128: o relogio conta do RECEBIMENTO, nao do inicio do job. Com o
+        # debounce da RN-01.6 o job so comeca uma janela depois de o lead
+        # apertar enviar; somar as duas esperas deixaria o lead em silencio
+        # absoluto durante a janela inteira -- o oposto do que a TEC-274 quis
+        # quando escreveu que o relogio mede "o silencio que o lead percebe".
+        idade = (datetime.now(UTC) - linha.created_at).total_seconds()
+        apos_segundos = max(0.0, get_settings().indicador_de_digitacao_apos_segundos - idade)
         async with indicador_de_digitacao(
             session_factory,
             message=linha,
             indicador=ctx["indicador"],
-            apos_segundos=get_settings().indicador_de_digitacao_apos_segundos,
+            apos_segundos=apos_segundos,
         ):
             resultado = await executar_turno(
                 session_factory,

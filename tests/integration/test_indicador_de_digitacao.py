@@ -2,15 +2,22 @@
 
 import asyncio
 import uuid
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 
 from conftest import CANAL_AGENTE, CONVERSA_AGENTE
+from test_process_message_agrupado import _ctx  # type: ignore[import-not-found]
+from test_rajada import gravar  # type: ignore[import-not-found]
 
+from mobia.app.config import get_settings
 from mobia.domain.atendimento.repositorio import assumir
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.optout.repositorio import registrar_optout
 from mobia.domain.outbound.presenca import indicador_de_digitacao
 from mobia.infra.db import get_sessionmaker
+from mobia.workers.jobs.process_message import process_message
 
 # Centesimos de segundo e nao os 4 s da regra: tres cenarios a 4 s reais
 # custariam mais de doze segundos por execucao da suite. O que se exercita e o
@@ -30,6 +37,25 @@ class IndicadorEspiao:
         self.chamadas.append((provider_message_id, de))
         if self._erro is not None:
             raise self._erro
+
+
+def _espiao_de_apos_segundos(capturado: list[float]) -> Callable[..., AsyncIterator[None]]:
+    """Substitui `indicador_de_digitacao` inteiro, so para capturar `apos_segundos`.
+
+    R6: nao patcheia `asyncio.sleep` -- `presenca.asyncio` E o modulo `asyncio`,
+    entao esse patch seria global e afetaria todo sleep que rodar durante o
+    teste, nao so o do indicador. O que esta tarefa mudou foi o VALOR que o
+    job calcula, e e isso que o espiao mede, sem dormir nada.
+    """
+
+    @asynccontextmanager
+    async def _substituto(
+        *args: object, apos_segundos: float, **kwargs: object
+    ) -> AsyncIterator[None]:
+        capturado.append(apos_segundos)
+        yield
+
+    return _substituto
 
 
 async def _entrada(session, *, wamid: str | None = "wamid.TESTE") -> Message:
@@ -217,3 +243,69 @@ async def test_turno_lento_dispara_o_indicador_de_ponta_a_ponta(
     await process_message(ctx, str(linha.id))
 
     assert len(espiao.chamadas) == 1
+
+
+async def test_mensagem_antiga_indica_quase_na_hora(session, monkeypatch, redis_pool) -> None:
+    """O relogio do indicador conta do recebimento, nao do inicio do job.
+
+    Com o debounce, o job so comeca uma janela depois de o lead apertar enviar.
+    Medir do inicio do job somaria as duas esperas e deixaria o lead em
+    silencio absoluto durante a janela inteira -- o oposto do que a TEC-274
+    quis.
+    """
+    monkeypatch.setenv("INDICADOR_DE_DIGITACAO_APOS_SEGUNDOS", "4")
+    get_settings.cache_clear()
+    try:
+        # Recebida ha oito segundos: mais velha que o limiar de quatro.
+        antiga = await gravar(session, created_at=datetime.now(UTC) - timedelta(seconds=8))
+        capturado: list[float] = []
+        monkeypatch.setattr(
+            "mobia.workers.jobs.process_message.indicador_de_digitacao",
+            _espiao_de_apos_segundos(capturado),
+        )
+
+        async def turno_instantaneo(*args: object, **kwargs: object) -> str:
+            return "respondido"
+
+        monkeypatch.setattr("mobia.workers.jobs.process_message.executar_turno", turno_instantaneo)
+
+        await process_message(_ctx(), str(antiga.id))
+
+        assert capturado == [0.0]
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_mensagem_recente_ainda_espera_quase_a_janela_inteira(
+    session, monkeypatch, redis_pool
+) -> None:
+    """O caso limite oposto: idade ~0 nao pode zerar a espera.
+
+    Um relogio que sempre devolvesse zero passaria no teste da mensagem
+    antiga acima tambem -- e quebraria o caso comum, o indicador saindo cedo
+    demais para toda mensagem nova. Este teste cobre justamente esse caso.
+    """
+    monkeypatch.setenv("INDICADOR_DE_DIGITACAO_APOS_SEGUNDOS", "4")
+    get_settings.cache_clear()
+    try:
+        recente = await gravar(session, created_at=datetime.now(UTC))
+        capturado: list[float] = []
+        monkeypatch.setattr(
+            "mobia.workers.jobs.process_message.indicador_de_digitacao",
+            _espiao_de_apos_segundos(capturado),
+        )
+
+        async def turno_instantaneo(*args: object, **kwargs: object) -> str:
+            return "respondido"
+
+        monkeypatch.setattr("mobia.workers.jobs.process_message.executar_turno", turno_instantaneo)
+
+        await process_message(_ctx(), str(recente.id))
+
+        assert len(capturado) == 1
+        # Praticamente os 4 s inteiros: a folga cobre o tempo real gasto
+        # entre o `gravar` e o `async with`, nao o defeito que este teste
+        # existe para pegar.
+        assert capturado[0] > 3.5
+    finally:
+        get_settings.cache_clear()
