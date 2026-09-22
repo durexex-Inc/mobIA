@@ -1158,7 +1158,15 @@ async def test_o_bloqueio_vira_evento(
 async def test_numeros_diferentes_nao_compartilham_cota(
     session_factory, redis_pool, session, monkeypatch
 ) -> None:
-    monkeypatch.setenv("RATE_LIMIT_MENSAGENS_POR_MINUTO", "2")
+    """O limite e 1, e nao 2, por uma razao que o numero esconde.
+
+    Com limite 2 e uma mensagem por numero, a assercao abaixo passaria mesmo
+    se os dois caissem na mesma chave: o volume combinado seria 2, que ainda
+    cabe. Com limite 1, a segunda mensagem de uma chave compartilhada daria
+    volume 2 e gravaria evento -- e so entao a assercao distingue os dois
+    mundos.
+    """
+    monkeypatch.setenv("RATE_LIMIT_MENSAGENS_POR_MINUTO", "1")
     get_settings.cache_clear()
 
     service = IngestionService(session_factory, redis_pool)
