@@ -924,6 +924,7 @@ ingestao, que e o mesmo contrato de `MessageRecorder` e o oposto do de
 decisao. Aqui nao ha decisao pendurada na linha: ela e evidencia posterior.
 """
 
+import math
 import uuid
 
 import structlog
@@ -950,7 +951,11 @@ async def _ganhou_a_guarda(
             chave_de_guarda(escopo, chave),
             "1",
             nx=True,
-            ex=max(1, int(janela_segundos)),
+            # `ceil` e nao `int`, pela mesma razao de `consumir`: truncar
+            # deixaria a guarda expirar antes do fim da janela, e uma segunda
+            # linha seria gravada dentro da mesma janela -- exatamente o que
+            # esta funcao existe para impedir.
+            ex=math.ceil(janela_segundos),
         )
     except RedisError as exc:
         log.warning("ratelimit.guarda_indisponivel", erro=type(exc).__name__)
@@ -981,19 +986,21 @@ async def registrar_bloqueio(
     if not await _ganhou_a_guarda(pool, escopo, chave, janela_segundos):
         return False
 
+    # A construcao fica FORA do `try`: um kwarg errado aqui e defeito de
+    # codigo, nao indisponibilidade, e engoli-lo transformaria o bug num
+    # no-op permanente que nenhum teste pegaria.
+    evento = RateLimitEvent(
+        id=uuid.uuid4(),
+        escopo=escopo,
+        chave=chave,
+        channel=channel,
+        volume=volume,
+        limite=limite,
+        message_id=message_id,
+    )
     try:
         async with session_factory() as session:
-            session.add(
-                RateLimitEvent(
-                    id=uuid.uuid4(),
-                    escopo=escopo,
-                    chave=chave,
-                    channel=channel,
-                    volume=volume,
-                    limite=limite,
-                    message_id=message_id,
-                )
-            )
+            session.add(evento)
             await session.commit()
     except Exception as exc:
         log.warning("ratelimit.evento_nao_gravado", erro=type(exc).__name__)
