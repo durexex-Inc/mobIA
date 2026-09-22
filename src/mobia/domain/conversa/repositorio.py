@@ -1,19 +1,24 @@
-"""Leitura e escrita do ciclo de vida da conversa. TEC-138.
+"""Leitura e escrita do ciclo de vida da conversa. TEC-138, TEC-130.
 
-Nenhuma escritora commita -- a sessao e emprestada e o dono da transacao e
-quem chama, como em `gravar_estado` e `registrar_recalculo`.
+Nenhuma escritora commita, com uma excecao: a sessao e emprestada e o dono da
+transacao e quem chama, como em `gravar_estado` e `registrar_recalculo`. A
+excecao e `encerrar_inativas`, que abre a propria sessao e commita porque
+quem a chama e um job de cron sem transacao de chamador -- ver a docstring
+dela para a razao por extenso.
 """
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.conversa.models import Conversa
 from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA
 from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
+from mobia.domain.messages.enums import MessageDirection
+from mobia.domain.messages.models import Message
 
 
 async def encerrar_conversa(
@@ -229,3 +234,76 @@ async def reabrir_conversa(session: AsyncSession, *, channel: str, conversation_
         # mesmo formato dos dois lados.
         .values(status=str(Status.ATIVA), motivo_do_encerramento=None, encerrada_em=None)
     )
+
+
+async def encerrar_inativas(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    agora: datetime,
+    limite: int = 500,
+) -> int:
+    """Fecha por INATIVIDADE toda conversa cuja ultima fala do LEAD passou da
+    janela. Devolve quantas fechou.
+
+    **Esta funcao e a escrituracao, e nao a correcao do contexto.** A D3 do
+    desenho separou as duas de proposito: quem decide que o contexto da
+    conversa anterior nao entra no prompt e o turno, pelo relogio, e nao esta
+    varredura. Ela pode ficar um dia para tras sem que nada de errado chegue
+    ao lead -- o turno ja tratou a conversa como nova antes de ela passar.
+
+    **O relogio e o INBOUND.** "Sem interacao" e o lead sem interagir; o agente
+    falando sozinho e a evidencia de que nao ha interacao, nao o contrario.
+    Contar OUTBOUND faria o follow-up da RN-13.1 -- que dispara ate 14 dias
+    depois do sumico -- empurrar o encerramento para o dia 44.
+
+    **Nao sobrescreve motivo.** O `LEFT JOIN` recusa quem ja esta ENCERRADA:
+    `encerrar_conversa` e upsert idempotente, entao sem esse filtro a
+    varredura apagaria `FORA_DE_ESCOPO` e `OPTOUT` 30 dias depois de eles
+    terem sido escritos, e todo encerramento do sistema convergiria para
+    INATIVIDADE.
+
+    Abre a propria sessao e commita -- diferente das outras escritoras deste
+    modulo, que recebem a sessao emprestada. Aqui nao ha transacao de
+    chamador: quem chama e um job de cron, e o dono da transacao e esta
+    funcao.
+    """
+    corte = agora - timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
+
+    async with session_factory() as session:
+        ultima_fala = (
+            select(
+                Message.channel,
+                Message.conversation_key,
+                func.max(Message.created_at).label("ultima"),
+            )
+            .where(Message.direction == MessageDirection.INBOUND)
+            .group_by(Message.channel, Message.conversation_key)
+            .having(func.max(Message.created_at) <= corte)
+            .subquery()
+        )
+
+        candidatas = (
+            await session.execute(
+                select(ultima_fala.c.channel, ultima_fala.c.conversation_key)
+                .outerjoin(
+                    Conversa,
+                    (Conversa.channel == ultima_fala.c.channel)
+                    & (Conversa.conversation_key == ultima_fala.c.conversation_key),
+                )
+                .where(Conversa.status.is_(None) | (Conversa.status != Status.ENCERRADA))
+                .order_by(ultima_fala.c.ultima)
+                .limit(limite)
+            )
+        ).all()
+
+        for candidata in candidatas:
+            await encerrar_conversa(
+                session,
+                channel=candidata.channel,
+                conversation_key=candidata.conversation_key,
+                motivo=str(MotivoDoEncerramento.INATIVIDADE),
+                agora=agora,
+            )
+        await session.commit()
+
+    return len(candidatas)
