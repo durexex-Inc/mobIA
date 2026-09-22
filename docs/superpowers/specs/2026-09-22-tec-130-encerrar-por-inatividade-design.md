@@ -83,7 +83,9 @@ Sem isso, `encerrar_conversa` — que é upsert idempotente de propósito — ap
 
 ### D6 — Opt-out encerra, como escrituração
 
-No bloco `if pedido_de_optout:` (`turno.py:1325`), depois de `registrar_optout`, na mesma transação. Só registro: quem cala é `esta_em_optout`, e o portão dele roda antes da reabertura, então a conversa encerrada por opt-out nunca é reaberta por mensagem de um lead que continua em opt-out.
+No bloco `if pedido_de_optout:` (`turno.py:1325`), depois de `registrar_optout`. Só registro: quem cala é `esta_em_optout`, e o portão dele roda antes da reabertura, então a conversa encerrada por opt-out nunca é reaberta por mensagem de um lead que continua em opt-out.
+
+**São duas transações, não uma**, e a ordem importa. `registrar_optout` recebe a `session_factory` e commita a própria sessão (`optout/repositorio.py:32`), enquanto `encerrar_conversa` recebe uma sessão e deixa o commit para quem chama — não há como juntá-las sem mudar a assinatura de uma das duas. O opt-out é gravado primeiro, pelo mesmo argumento que o bloco já usa para gravá-lo antes da entrega: morrer entre as duas deixa o lead em opt-out com a conversa ainda `ATIVA` — registro de menos, nunca mensagem a mais. A varredura da D3 fecha essa conversa por `INATIVIDADE` 30 dias depois, com o motivo menos preciso; é o custo aceito, e é menor que o de inverter a ordem.
 
 Um lead reativado (`reativar`, `optout/repositorio.py:45`) passa a valer pelo portão e cai na reabertura normal, com dobra — o que é o comportamento certo: ele voltou depois de ter saído, e a conversa é outra.
 
