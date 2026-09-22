@@ -86,6 +86,7 @@ from mobia.domain.humano.deteccao import (
 from mobia.domain.messages.bloqueio import (
     moderar_entrada_e_marcar,
     registrar_bloqueio_de_saida,
+    veredito_ja_registrado,
 )
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import ha_fala_pendente_antes
@@ -868,6 +869,18 @@ class _ModeracaoDoTurno:
         self._resolvida = True
         if not self._corpo:
             return None
+        # TEC-298, D5. Uma passada anterior pode ja ter julgado esta fala: o
+        # carimbo de `bloqueada_em` e o veredito persistido do caso bloqueado.
+        # Sem esta consulta, toda retentativa de turno bloqueado paga a
+        # moderacao de novo e grava uma segunda linha de auditoria para a
+        # MESMA recusa. Custa um SELECT por chave primaria contra uma chamada
+        # de rede paga.
+        ja_registrado = await veredito_ja_registrado(
+            self._session_factory, message_id=self._message.id
+        )
+        if ja_registrado is not None:
+            self._veredito = ja_registrado
+            return self._veredito
         self._veredito = await moderar_entrada_e_marcar(
             self._session_factory,
             self._moderador,

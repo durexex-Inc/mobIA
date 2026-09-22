@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 from conftest import CANAL_AGENTE, CONVERSA_AGENTE, OutboundFake  # type: ignore[import-not-found]
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from test_rajada import gravar  # type: ignore[import-not-found]
 from test_turno_optout import _OutboundQueOptaNoMeio  # type: ignore[import-not-found]
@@ -13,6 +13,7 @@ from mobia.app.config import MODELO_SEM_CHAMADA
 from mobia.domain.agente.turno import SUBAGENTE_MODERACAO
 from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.messages.status import MessageStatus
+from mobia.domain.moderacao.models import ModerationEvent
 from mobia.domain.moderacao.port import (
     KIND_DA_RECUSA_DE_ENTRADA,
     TEXTO_DA_RECUSA_DE_ENTRADA,
@@ -816,3 +817,64 @@ async def test_recusa_ja_reservada_nao_alarma_como_dado_sumido(
         if r.levelno == logging.WARNING and "turno.recusa_ja_reservada" in r.getMessage()
     ]
     assert len(avisos) == 1
+
+
+async def test_retentativa_nao_repaga_a_moderacao_nem_duplica_a_auditoria(
+    session: AsyncSession,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_entrada,
+) -> None:
+    """TEC-298, D5. `bloqueada_em` ja e o veredito persistido do caso bloqueado.
+
+    A retentativa nao pode pagar de novo por uma fala que ja foi julgada, nem
+    gravar uma segunda linha de auditoria para a mesma recusa -- ver a Emenda
+    E-04 da RN-04.5.
+    """
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    await gravar(
+        session,
+        created_at=datetime.now(UTC) - timedelta(minutes=1),
+        texto="tem apartamento de 2 quartos?",
+    )
+    carregadora = await semear_entrada(session, texto="xingamento qualquer")
+
+    moderador = moderador_fake(bloqueia_entrada=True)
+    falha = _OutboundQueFalhaDepoisDaRecusa(get_sessionmaker())
+    with pytest.raises(EnvioRetentavel):
+        await executar_turno(
+            get_sessionmaker(),
+            message=carregadora,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=falha,
+            moderador=moderador,
+            agendador=AgendadorNoop(),
+        )
+    assert moderador.entradas == 1
+
+    segundo_moderador = moderador_fake(bloqueia_entrada=True)
+    await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=OutboundFake(get_sessionmaker()),
+        moderador=segundo_moderador,
+        agendador=AgendadorNoop(),
+    )
+
+    assert segundo_moderador.entradas == 0, "a fala ja estava carimbada; nao se paga de novo"
+    await session.commit()
+    eventos = await session.scalar(
+        select(func.count())
+        .select_from(ModerationEvent)
+        .where(ModerationEvent.message_id == carregadora.id)
+    )
+    assert eventos == 1, "uma fala recusada, uma linha -- Emenda E-04 da RN-04.5"
