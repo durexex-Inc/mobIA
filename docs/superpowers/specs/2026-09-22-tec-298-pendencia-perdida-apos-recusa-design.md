@@ -1,6 +1,6 @@
 # TEC-298 — A rota de recuperação que a TEC-295 abriu deixa de morrer na retentativa
 
-**Status:** desenho
+**Status:** implementado
 **Card:** [TEC-298](https://eduardodurieuxlopes.atlassian.net/browse/TEC-298)
 **Branch:** `feat/tec-298-pendencia-perdida-apos-recusa`
 **Origem:** revisão final da TEC-295 (PR #143), achado I1.
