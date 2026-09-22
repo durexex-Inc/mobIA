@@ -157,3 +157,23 @@ async def test_o_limite_corta_a_passagem(session: AsyncSession) -> None:
     fechadas = await encerrar_inativas(get_sessionmaker(), agora=AGORA, limite=2)
 
     assert fechadas == 2
+
+
+@pytest.mark.usefixtures("banco_limpo")
+async def test_o_job_fecha_e_devolve_a_contagem(session: AsyncSession) -> None:
+    """O job e fino: pega a `session_factory` do `ctx` e devolve o numero.
+
+    Mesmo molde de `sweep_sla` -- e o `startup` do worker que decide a
+    implementacao, e o teste troca a decisao sem tocar no job.
+    """
+    from mobia.workers.jobs.sweep_conversas_inativas import sweep_conversas_inativas
+
+    await _semear(session, chave="lead-job", dias_atras=40)
+
+    fechadas = await sweep_conversas_inativas({"session_factory": get_sessionmaker()})
+
+    assert fechadas == 1
+    assert await _status_de(session, "lead-job") == (
+        Status.ENCERRADA,
+        MotivoDoEncerramento.INATIVIDADE,
+    )
