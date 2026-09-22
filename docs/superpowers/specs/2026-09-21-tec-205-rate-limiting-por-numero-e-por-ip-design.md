@@ -24,13 +24,15 @@ Ponto de partida, **não o estado de hoje**. As citações `arquivo:linha` abaix
 
 ## Decisões
 
-### D1 — O limite por IP nasce como middleware, e o webhook da Meta fica isento
+### D1 — O limite por IP nasce como middleware, com duas rotas isentas
 
 O card pede 100 req/min por IP "no widget web", e o widget é o TEC-124, que não existe. Havia três saídas: entregar só a função e deixar a aplicação para o TEC-124; cortar o IP do escopo desta card; ou aplicar o limite por IP a todas as rotas HTTP desde já.
 
-A escolhida é a terceira, com uma isenção nomeada. `POST /webhooks/whatsapp` fica **fora** do limitador por IP, porque o tráfego dali chega todo do IP da Meta: 100 req/min naquele ponto não conteria abuso, derrubaria operação legítima — e derrubaria da pior forma possível, já que o handler responde 200 em todo caminho de rejeição justamente para a Meta não re-entregar (`api/routes/whatsapp.py:41-49`). Um 429 ali contrariaria a convenção declarada do arquivo e provocaria exatamente o retry que o desenho da TEC-122 evita.
+A escolhida é a terceira, com duas isenções nomeadas. `POST /webhooks/whatsapp` fica **fora** do limitador por IP, porque o tráfego dali chega todo do IP da Meta: 100 req/min naquele ponto não conteria abuso, derrubaria operação legítima — e derrubaria da pior forma possível, já que o handler responde 200 em todo caminho de rejeição justamente para a Meta não re-entregar (`api/routes/whatsapp.py:41-49`). Um 429 ali contrariaria a convenção declarada do arquivo e provocaria exatamente o retry que o desenho da TEC-122 evita.
 
-Com a isenção, o middleware protege as rotas administrativas que já existem — o que torna o critério de aceite do IP exercitável hoje, contra rota real — e o widget nasce protegido no dia em que o TEC-124 registrar o router.
+**O `/health` fica isento pela mesma classe de razão.** Um probe de liveness que bata acima do limite receberia 429, e o orquestrador reiniciaria o processo — o limitador derrubando exatamente o que deveria proteger. As duas isenções, e só elas, vivem numa constante nomeada, com a razão de cada uma escrita ao lado.
+
+Com elas, o middleware protege as rotas administrativas que já existem — o que torna o critério de aceite do IP exercitável hoje, contra rota real — e o widget nasce protegido no dia em que o TEC-124 registrar o router.
 
 **Consequência aceita:** as rotas administrativas passam a ter teto de 100 req/min por IP. Elas já exigem token de administrador (`api/deps.py:15-41`), então o limite não é a defesa principal delas; é efeito colateral de um middleware que se aplica por omissão em vez de por opt-in. A alternativa — lista de rotas incluídas — erra para o lado de esquecer o widget, que é o erro caro.
 
@@ -46,7 +48,11 @@ O atraso é **fixo e configurável**, não "até a janela abrir". Adiar até o e
 max(debounce_de_rajada_segundos, atraso_de_backoff_segundos) + job_timeout < sweep_inflight_after_seconds
 ```
 
-Com os defaults propostos: `max(6, 30) + 240 = 270 < 300`. A folga cai de 54s para 30s. Isso não fica em prosa: entra como `model_validator` em `Settings`, que recusa subir quando a conta não fecha — do mesmo jeito que `_recusar_horario_de_envio_impossivel` já faz para a janela de envio.
+Com os defaults propostos: `max(6, 30) + 240 = 270 < 300`. A folga cai de 54s para 30s.
+
+Isso não fica em prosa — mas também **não** vira `model_validator` em `Settings`, como uma versão anterior deste desenho dizia. `job_timeout` é atributo de `WorkerSettings` (`workers/main.py`), e aquele módulo importa `app/config.py`: um validator em `Settings` que quisesse ler `job_timeout` fecharia um ciclo de import. O mecanismo certo é o que o repo já usa para a conta de hoje — estender `test_job_timeout_cabe_dentro_da_janela_do_sweeper` (`tests/integration/test_worker_startup.py:185`), que importa `Settings` e `WorkerSettings` lado a lado justamente porque os números moram em arquivos diferentes. A asserção passa de dois termos para três, trocando `debounce_de_rajada_segundos` por `max(debounce_de_rajada_segundos, atraso_de_backoff_segundos)`.
+
+O que sobra para `Settings` é o que ele consegue validar sozinho: `atraso_de_backoff_segundos` não pode ser negativo, e os dois limites não podem ser negativos. Isso sim é `model_validator`, no molde de `_recusar_horario_de_envio_impossivel`.
 
 **Por que o adiamento basta como proteção de orçamento.** Adiar não reduz o número de mensagens; reduz o número de *turnos*. O colapso de rajada da TEC-128 (`superada_por_mais_nova`, `domain/messages/rajada.py:22`) já faz a mensagem superada fechar como `"agrupado"` sem chamar o LLM. Empurrar o excedente para 30s adiante engorda o grupo e o LLM é chamado uma vez por grupo, não uma vez por mensagem. O limitador por número é, portanto, uma segunda camada sobre um mecanismo que já corta a maior parte do custo — e é assim que ele deve ser lido quando alguém for medir seu efeito.
 
@@ -135,7 +141,7 @@ O default é o inseguro-contra-proxy e não o inseguro-contra-spoof porque as du
 2. Permitido → `_try_enqueue(..., atraso_segundos=0.0 if pedido else janela)` — o comportamento de hoje, intocado.
 3. Bloqueado → `_try_enqueue(..., atraso_segundos=atraso_de_backoff_segundos)`, log `ratelimit.blocked`, e, se a guarda de janela for ganha, uma linha em `rate_limit_events`.
 
-O opt-out e o pedido de humano continuam furando a janela como hoje (`atraso_segundos=0.0`): eles já eram exceção ao debounce e não faz sentido que um limite de volume atrase justamente o pedido de parar de receber mensagens. **Isto é decisão de produto e está registrada como tal** — um abusador que escreva "pare" cem vezes consome cem turnos sem passar pelo backoff, e a defesa contra isso é a máquina de opt-out, não o limitador.
+O opt-out e o pedido de humano **consomem a cota** como qualquer outra mensagem, e furam apenas o **atraso** (`atraso_segundos=0.0`). A distinção importa nas duas direções: contar só as demais deixaria quem inunda o canal com "pare" fora de todo registro, e é a contagem que alimenta a tabela de eventos; já atrasar o pedido de parar de receber mensagens seria o contrário do que a RN-14 promete. Eles já eram exceção ao debounce e não faz sentido que um limite de volume atrase justamente o pedido de parar de receber mensagens. **Isto é decisão de produto e está registrada como tal** — um abusador que escreva "pare" cem vezes consome cem turnos sem passar pelo backoff, e a defesa contra isso é a máquina de opt-out, não o limitador.
 
 `IngestionService` é o ponto certo porque é por onde toda ingestão passa, de qualquer canal: o widget do TEC-124 já chamaria `service.ingest(parsed, channel="web")` e herdaria o limite por número sem uma linha a mais.
 
