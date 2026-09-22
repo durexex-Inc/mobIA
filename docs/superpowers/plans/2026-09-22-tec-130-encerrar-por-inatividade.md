@@ -1331,8 +1331,11 @@ git commit -m "feat(TEC-130): a conversa nova comeca com o resumo da anterior, n
 
 **Files:**
 - Modify: `docs/srs/srs-agente-sdr-imobiliario-v1.0.md` (RN-02.3, por volta de `:148`)
+- Modify: `src/mobia/domain/conversa/models.py` (docstring de módulo)
 
 **Interfaces:** nenhuma.
+
+> **Por que a docstring de `models.py` está aqui e não na Task 1.** Ela afirma que a card acrescentou dois motivos, dois escritores e a Emenda E-03. As três coisas só passam a ser verdade ao mesmo tempo **neste passo** — a emenda nasce aqui. Escrevê-la na Task 1 punha no repo, por seis commits, uma docstring que nomeava uma função, um bloco de código e uma emenda de SRS inexistentes. Foi o que a revisão da Task 1 pegou.
 
 - [ ] **Step 1: Escrever a emenda**
 
@@ -1342,7 +1345,29 @@ Acrescente como item aninhado **abaixo** da Emenda E-02 da RN-02.3 — **nunca r
   - **Emenda E-03 (TEC-130, 22/09/2026):** esta regra ganhou implementação, e em três pontos ela diverge do que a card pedia. **(1) Concluir o handoff não encerra a conversa**, e o cenário Gherkin da TEC-130 que pedia isso foi descartado — a Emenda E-01 acima já havia decidido a separação, e sob esta card ela passou a ter uma consequência que não tinha em 13/09: o encerramento agora dobra o histórico no resumo, então encerrar ao concluir faria o lead que o corretor acabou de atender voltar a um agente sem a transcrição daquele atendimento. **(2) Os motivos de encerramento passam a ser três:** `FORA_DE_ESCOPO` (RN-03.5), `INATIVIDADE` e `OPTOUT` — nenhum dos dois novos herda a janela de 30 dias de silêncio, que continua sendo política do primeiro. **(3) O encerramento por inatividade conta a partir da última fala do lead** (`INBOUND`), não da última mensagem de qualquer direção: o follow-up automático da RN-13.1 dispara até 14 dias depois do sumiço, e contar OUTBOUND faria o próprio sistema adiar o encerramento de quem já tinha ido embora. A promessa *"com acesso ao histórico anterior via resumo"* passou a ser verdade por construção — a primeira mensagem depois do encerramento dobra o histórico no resumo antes de montar o contexto, então a conversa nova recebe o resumo da anterior e nenhuma linha da transcrição dela. **Lacuna declarada:** não nasceu identidade por conversa; `Lead 1:N Conversa`, no modelo de dados da seção 8, continua sendo o diagrama e não o esquema — não há como listar nem contar as conversas anteriores de um lead. Ver `docs/superpowers/specs/2026-09-22-tec-130-encerrar-por-inatividade-design.md`.
 ```
 
-- [ ] **Step 2: Rodar a listagem de comentários tocados**
+- [ ] **Step 2: Atualizar a docstring de `conversa/models.py`**
+
+Ela ainda diz que o encerramento por inatividade é "uma regra do SRS sem implementacao, reservada para a TEC-130", e que a card "ESTENDE isto, nao cria" no futuro. Com a emenda do Step 1 escrita, as duas frases passaram a ser passado. Substitua os **dois** parágrafos — o que começa em `**Esta tabela e a entidade que este sistema nao tinha.**` mantém-se; os que começam em `**Consequencia para quem pegar a TEC-130:**` e `**E o que se ganha com o motivo novo...**` saem — por:
+
+```python
+**A TEC-130 estendeu isto, e nao criou nada.** Ela acrescentou `INATIVIDADE` e
+`OPTOUT` ao vocabulario de `vocabulario.py`, mais dois escritores -- a varredura
+diaria (`encerrar_inativas`, neste modulo) e o bloco de opt-out do turno.
+Nenhuma tabela nova, nenhuma segunda nocao de encerrado, e nenhuma migration: a
+coluna ja comportava os dois literais. A Emenda E-02 da RN-02.3 previa a
+extensao e nomeava `INATIVIDADE`; `OPTOUT` foi decisao desta card, e a Emenda
+E-03 registra as duas.
+
+**O que ela NAO trouxe e a janela de silencio.** Os 30 dias em que o agente nao
+responde continuam sendo politica da RN-03.5, e
+`SituacaoDaConversa.silencia_o_agente` continua exigindo `FORA_DE_ESCOPO`. Uma
+conversa fechada por inatividade e respondida na mensagem seguinte -- que e o
+que a RN-02.3 pede, e o motivo de o reengajamento existir.
+```
+
+> A frase sobre a E-02 diz **qual** dos dois motivos ela previa. A E-02 nomeia só `INATIVIDADE`; dizer que ela "previa exatamente isso" sobre os dois seria impreciso, e foi um achado Minor da revisão da Task 1.
+
+- [ ] **Step 3: Rodar a listagem de comentários tocados**
 
 ```bash
 ./.venv/Scripts/python.exe scripts/comentarios_tocados.py
@@ -1350,7 +1375,7 @@ Acrescente como item aninhado **abaixo** da Emenda E-02 da RN-02.3 — **nunca r
 
 Releia cada `ALTERADO` e cada `VIZINHO`, e **resolva todo `FALSO`** — `FALSO` é a única marca que afirma em vez de suspeitar. Esta branch mexeu em prosa que cita arquivo e linha (`identificacao.py`, `conversa/models.py`, `vocabulario.py`, o `CLAUDE.md` não), então espere achados.
 
-- [ ] **Step 3: Conferir que o `CLAUDE.md` não ficou falso**
+- [ ] **Step 4: Conferir que o `CLAUDE.md` não ficou falso**
 
 ```bash
 grep -n "TEC-130\|encerr" CLAUDE.md
@@ -1358,10 +1383,10 @@ grep -n "TEC-130\|encerr" CLAUDE.md
 
 Se alguma frase do `CLAUDE.md` afirmar algo que esta card mudou, corrija junto — o arquivo é lido por todo agente que abrir o repo.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add docs/srs/srs-agente-sdr-imobiliario-v1.0.md
+git add docs/srs/srs-agente-sdr-imobiliario-v1.0.md src/mobia/domain/conversa/models.py
 git commit -m "docs(TEC-130): a E-03 da RN-02.3 registra o handoff descartado e os tres motivos"
 ```
 
