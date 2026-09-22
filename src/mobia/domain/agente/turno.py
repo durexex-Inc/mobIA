@@ -119,7 +119,7 @@ from mobia.domain.outbound.port import (
     EnvioRetentavel,
     OutboundPort,
 )
-from mobia.domain.outbound.repositorio import kinds_reservados
+from mobia.domain.outbound.repositorio import kinds_reservados, reservado_em
 from mobia.infra.crypto import aad_de, decrypt
 from mobia.infra.embeddings import embedar_do_turno
 
@@ -1520,8 +1520,24 @@ async def _executar_turno(
             # pendente no estado que existia antes desta recusa?" --
             # resistir a "simplificar" isto de volta para perto do uso e o
             # ponto deste comentario.
+            #
+            # **A ordem esta certa e nao era suficiente (TEC-298).** Ela
+            # protege a PRIMEIRA passada. A seguinte encontra a recusa ja
+            # gravada antes mesmo de o turno comecar, e para essa nenhuma
+            # ordem de codigo ajuda -- quem resolve e o teto logo abaixo.
+            #
+            # TEC-298, D1. O teto vem da reserva da recusa, e so existe numa
+            # RETENTATIVA: se a reserva ja esta la, uma passada anterior ja
+            # entregou a recusa e a linha OUTBOUND dela ja esta em `messages`,
+            # envenenando a fronteira. Na primeira passada isto e `None` e a
+            # conta e exatamente a de antes desta card.
+            teto_da_recusa = await reservado_em(
+                session_factory, message_id=message.id, kind=KIND_DA_RECUSA_DE_ENTRADA
+            )
             async with session_factory() as sessao_da_pendencia:
-                tem_pendencia = await ha_fala_pendente_antes(sessao_da_pendencia, message)
+                tem_pendencia = await ha_fala_pendente_antes(
+                    sessao_da_pendencia, message, teto_do_agente=teto_da_recusa
+                )
             # TEC-295, ruling R6. Kind proprio -- nao o default `reply` de
             # `_entregar_texto_fixo` --, porque a resposta que a continuacao
             # abaixo pode entregar tambem usa `reply` (a primeira parte de
@@ -1553,13 +1569,14 @@ async def _executar_turno(
             # fica.
             #
             # Ja `"reentrega_suprimida"` quer dizer o CONTRARIO de "nao
-            # chegou": a reserva em `outbound_dispatches` ja existe
-            # porque uma tentativa ANTERIOR entregou a recusa. Mesmo
-            # assim a continuacao tambem nao acontece aqui -- e a
-            # consequencia e que a pergunta pendente se perde nesta
-            # retentativa, porque `PROCESSED` e terminal e nada
-            # reenfileira so a resposta que ficou faltando.
-            if desfecho_da_recusa != "respondido":
+            # chegou": a reserva em `outbound_dispatches` ja existe porque
+            # uma tentativa ANTERIOR entregou a recusa. Desde a TEC-298 ele
+            # SEGUE para a continuacao, e e isso que faz a rota de
+            # recuperacao da D4 sobreviver ao reprocessamento -- ate ela, o
+            # turno fechava aqui e a pergunta pendente se perdia, porque
+            # `PROCESSED` e terminal e nada reenfileira so a resposta que
+            # ficou faltando.
+            if desfecho_da_recusa not in ("respondido", "reentrega_suprimida"):
                 return desfecho_da_recusa
             if not tem_pendencia:
                 # Fala reprovada isolada: continuar faria o agente responder

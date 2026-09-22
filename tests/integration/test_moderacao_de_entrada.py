@@ -2,7 +2,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from conftest import CANAL_AGENTE, CONVERSA_AGENTE  # type: ignore[import-not-found]
+import pytest
+from conftest import CANAL_AGENTE, CONVERSA_AGENTE, OutboundFake  # type: ignore[import-not-found]
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from test_rajada import gravar  # type: ignore[import-not-found]
@@ -19,7 +20,7 @@ from mobia.domain.moderacao.port import (
     ModeracaoIndisponivel,
 )
 from mobia.domain.outbound.kinds import KIND_DA_RESPOSTA
-from mobia.domain.outbound.port import EnvioForaDaJanela
+from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRetentavel
 from mobia.domain.outbound.repositorio import kinds_reservados
 from mobia.infra.db import get_sessionmaker
 
@@ -518,6 +519,137 @@ async def test_bloqueada_com_pergunta_pendente_recusa_e_responde(
     ).all()[-1]
     reservados = await kinds_reservados(get_sessionmaker(), message_id=carregadora.id)
     assert reservados == {KIND_DA_RECUSA_DE_ENTRADA, KIND_DA_RESPOSTA}
+
+
+class _OutboundQueFalhaDepoisDaRecusa(OutboundFake):
+    """Entrega a recusa e falha na resposta -- a janela exata da TEC-298.
+
+    `EnvioRetentavel` e nao uma excecao qualquer: e a que `GuardedOutbound.send`
+    intercepta para liberar as reservas do GRUPO. O kind da recusa nao esta em
+    `_GRUPOS`, entao a reserva dela sobrevive -- que e justamente o estado que
+    a retentativa vai encontrar.
+    """
+
+    async def _deliver(self, message_id, kind, payload) -> None:
+        if kind == KIND_DA_RECUSA_DE_ENTRADA:
+            await super()._deliver(message_id, kind, payload)
+            return
+        raise EnvioRetentavel("a resposta nao saiu")
+
+
+async def test_retentativa_apos_recusa_entregue_responde_a_pendente(
+    session: AsyncSession,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_entrada,
+) -> None:
+    """TEC-298, D1 e D3. A rota de recuperacao da TEC-295 sobrevive ao reprocessamento.
+
+    Nao usa `rodar_turno` porque ele semeia uma entrada NOVA a cada chamada, e
+    aqui as duas passadas tem de rodar sobre a MESMA linha -- e o que o sweeper
+    faz.
+    """
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    await gravar(
+        session,
+        created_at=datetime.now(UTC) - timedelta(minutes=1),
+        texto="tem apartamento de 2 quartos?",
+    )
+    carregadora = await semear_entrada(session, texto="xingamento qualquer")
+
+    # Primeira passada: a recusa sai, a resposta falha.
+    falha = _OutboundQueFalhaDepoisDaRecusa(get_sessionmaker())
+    with pytest.raises(EnvioRetentavel):
+        await executar_turno(
+            get_sessionmaker(),
+            message=carregadora,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=falha,
+            moderador=moderador_fake(bloqueia_entrada=True),
+            agendador=AgendadorNoop(),
+        )
+    assert falha.entregues == [TEXTO_DA_RECUSA_DE_ENTRADA]
+
+    # Segunda passada: mesma linha, outbound sao. E o que o sweeper faz.
+    segundo_outbound = OutboundFake(get_sessionmaker())
+    classificador = classificador_fake()
+    resultado = await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador,
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=segundo_outbound,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
+    )
+
+    assert resultado == "respondido"
+    # O turno continuou: chamou o classificador e entregou a resposta.
+    assert classificador.chamadas == 1
+    # A recusa NAO sai de novo -- a reserva dela sobreviveu e a suprime.
+    assert TEXTO_DA_RECUSA_DE_ENTRADA not in segundo_outbound.entregues
+    assert len(segundo_outbound.entregues) == 1
+    # Os dois kinds reservados: a recusa da primeira passada, a resposta desta.
+    reservados = await kinds_reservados(get_sessionmaker(), message_id=carregadora.id)
+    assert reservados == {KIND_DA_RECUSA_DE_ENTRADA, KIND_DA_RESPOSTA}
+
+
+async def test_retentativa_sem_pendencia_continua_so_recusando(
+    session: AsyncSession,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_entrada,
+) -> None:
+    """TEC-298, D7. A garantia da TEC-233 vale na retentativa tambem.
+
+    Sem pergunta pendente, a retentativa nao pode virar desculpa para o agente
+    responder ao historico -- que e o engajamento que a TEC-233 recusou.
+    """
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    carregadora = await semear_entrada(session, texto="xingamento qualquer")
+
+    falha = _OutboundQueFalhaDepoisDaRecusa(get_sessionmaker())
+    # Sem pendencia a primeira passada ja retorna na recusa, sem chegar na
+    # entrega da resposta -- entao nao ha excecao a capturar aqui.
+    primeiro = await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=falha,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
+    )
+    assert primeiro == "respondido"
+
+    segundo_outbound = OutboundFake(get_sessionmaker())
+    classificador = classificador_fake()
+    resultado = await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador,
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=segundo_outbound,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
+    )
+
+    assert resultado == "reentrega_suprimida"
+    assert classificador.chamadas == 0, "sem pendencia, o modelo nao e chamado"
+    assert segundo_outbound.entregues == []
 
 
 async def test_bloqueada_sem_nada_pendente_so_recusa(

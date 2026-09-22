@@ -6,6 +6,7 @@ nao devia precisar conhecer o schema de `outbound_dispatches`.
 """
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -44,3 +45,31 @@ async def kinds_reservados(session_factory: Any, *, message_id: uuid.UUID) -> fr
             select(OutboundDispatch.kind).where(OutboundDispatch.message_id == message_id)
         )
     return frozenset(linhas.scalars().all())
+
+
+async def reservado_em(
+    session_factory: Any, *, message_id: uuid.UUID, kind: str
+) -> datetime | None:
+    """Quando a reserva deste (message_id, kind) foi commitada -- None se nao ha.
+
+    **O instante importa, e nao so a existencia** (TEC-298, D1). A reserva e
+    commitada ANTES do `_deliver` e a fala do agente so e gravada DEPOIS, entao
+    este carimbo e estritamente anterior a linha OUTBOUND que a entrega produz.
+    E o que permite reconstruir a fronteira que existia antes de uma recusa ja
+    entregue -- ver `ha_fala_pendente_antes` em `messages/rajada.py`.
+
+    Os dois carimbos sao `func.now()` do Postgres, entao a desigualdade nao
+    depende de relogio de cliente nem de sincronia entre processos.
+
+    **Presenca continua significando "encerrado", nao "entregue"** -- a mesma
+    ressalva que `kinds_reservados` ja documenta por extenso. Quem usa este
+    instante como teto esta perguntando "o que o agente ja tinha dito ANTES
+    desta tentativa?", e para essa pergunta a distincao nao muda a resposta.
+    """
+    async with session_factory() as session:
+        return await session.scalar(
+            select(OutboundDispatch.created_at).where(
+                OutboundDispatch.message_id == message_id,
+                OutboundDispatch.kind == kind,
+            )
+        )
