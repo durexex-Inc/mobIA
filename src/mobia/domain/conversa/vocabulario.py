@@ -21,21 +21,25 @@ class MotivoDoEncerramento(StrEnum):
     por inatividade", e uma booleana `encerrada` obrigaria quem precisasse de
     um segundo motivo a inventar onde guarda-lo.
 
-    **Um unico membro por enquanto.** A TEC-130 acrescenta INATIVIDADE aqui --
-    e e essa extensao futura, um membro novo em vez de uma segunda tabela ou
-    uma segunda coluna, que justifica isto ser enum e nao uma constante solta.
+    **Tres membros desde a TEC-130**, e foi essa extensao -- membros novos em
+    vez de uma segunda tabela ou uma segunda coluna -- que justificou isto ser
+    enum desde a TEC-138.
 
-    **O membro novo nao herda a janela de silencio dos 30 dias.** Ela e
-    politica da RN-03.5 e `SituacaoDaConversa.silencia_o_agente`
-    (`repositorio.py`) a condiciona a `FORA_DE_ESCOPO`; quem acrescentar um
-    motivo aqui ganha o encerramento registrado e nada mais, ate acrescentar o
-    motivo tambem la -- de proposito.
+    **Nenhum dos dois motivos novos herda a janela de silencio dos 30 dias.**
+    Ela e politica da RN-03.5 e `SituacaoDaConversa.silencia_o_agente`
+    (`repositorio.py`) a condiciona a `FORA_DE_ESCOPO`. Para `INATIVIDADE` e o
+    ponto inteiro da RN-02.3: a conversa fechada por silencio tem de ser
+    respondida na mensagem seguinte, senao o reengajamento morre. Para
+    `OPTOUT` o silencio ja existe e vem de `esta_em_optout`, cujo portao roda
+    antes da reabertura em `turno.py` -- duplica-lo aqui criaria duas fontes
+    para o mesmo fato.
 
     **`FORA_DE_ESCOPO` e igual, byte a byte, a `Intencao.FORA_DE_ESCOPO`
     (`domain/agente/schemas.py`), e isso e coincidencia, nao a mesma coisa.**
     Um e motivo de encerramento de conversa; o outro e classificacao de turno.
-    Vao divergir: a TEC-130 acrescenta INATIVIDADE aqui e nada equivalente
-    entra em `Intencao` por causa disso.
+    Ja divergiram: `INATIVIDADE` e `OPTOUT` nao tem equivalente em `Intencao`.
     """
 
     FORA_DE_ESCOPO = "FORA_DE_ESCOPO"
+    INATIVIDADE = "INATIVIDADE"
+    OPTOUT = "OPTOUT"

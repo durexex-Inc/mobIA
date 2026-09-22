@@ -19,7 +19,6 @@ from mobia.domain.agente.ferramenta_de_busca import (
 )
 from mobia.domain.agente.formato import quebrar_em_mensagens
 from mobia.domain.agente.identificacao import (
-    DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA,
     SEPARADOR_DA_IDENTIFICACAO,
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
@@ -61,7 +60,7 @@ from mobia.domain.context.repositorio import (
 )
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
-from mobia.domain.conversa.regras import deve_encerrar
+from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA, deve_encerrar
 from mobia.domain.conversa.repositorio import (
     encerrar_conversa,
     reabrir_conversa,

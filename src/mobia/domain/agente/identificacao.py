@@ -25,11 +25,19 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA
 from mobia.domain.messages.models import Message
 
-# Mesmo limiar da TEC-130. Quando aquela card chegar, este modulo passa a
-# perguntar a entidade em vez de derivar, e esta constante sai.
-DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA = 30
+# **A TEC-130 chegou e este modulo continua derivando, de proposito.** O
+# comentario que morava aqui prometia que, quando aquela card chegasse, o
+# modulo passaria a "perguntar a entidade em vez de derivar". A D3 do desenho
+# dela declinou: perguntar a entidade poe a varredura diaria no caminho
+# critico de uma correcao de contexto -- com ela parada, ou apenas ainda nao
+# executada no dia, a conversa continuaria ATIVA, `e_conversa_nova` devolveria
+# False, e o turno montaria o prompt com a transcricao velha E sem
+# apresentacao, em silencio. Derivar e o que torna a correcao verdadeira
+# independentemente do cron. O que saiu daqui foi so a constante, para
+# `conversa/regras.py`, que e onde os outros dois leitores dela vivem.
 
 
 async def e_conversa_nova(
