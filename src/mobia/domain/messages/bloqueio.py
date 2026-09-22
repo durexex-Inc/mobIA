@@ -72,14 +72,27 @@ async def marcar_bloqueada(
     que o controle de risco da RN-B04 falha em silencio. Se qualquer uma
     falhar, nenhuma vale e a excecao sobe, pelo motivo no topo deste modulo.
 
-    **A segunda passada do sweeper nao chega mais aqui (TEC-298, D5).** Ate
-    aquela card, uma retentativa remoderava e esta funcao gravava uma segunda
-    linha para a mesma fala -- e o argumento escrito aqui era que "duas
-    tentativas de recusar a mesma fala foram duas recusas". Ele deixou de
-    valer: `_ModeracaoDoTurno.resolver` consulta `veredito_ja_registrado`
-    antes de chamar o moderador, e a linha de `moderation_events` passou a
-    significar uma FALA recusada em vez de uma TENTATIVA de recusa. Quem
-    audita conta falas -- ver a Emenda E-04 da RN-04.5.
+    **A segunda passada NAO chega mais aqui pelo caminho do turno (TEC-298,
+    D5) -- e so por ele.** Ate aquela card, uma retentativa remoderava e esta
+    funcao gravava uma segunda linha para a mesma fala -- e o argumento
+    escrito aqui era que "duas tentativas de recusar a mesma fala foram duas
+    recusas". Ele deixou de valer NESSE caminho: `_ModeracaoDoTurno.resolver`
+    (`domain/agente/turno.py`) consulta `veredito_ja_registrado` antes de
+    chamar o moderador, e a linha de `moderation_events` que ele grava passou
+    a significar uma FALA recusada em vez de uma TENTATIVA de recusa. Quem
+    audita conta falas nesse caminho -- ver a Emenda E-04 da RN-04.5.
+
+    **`moderar_entrada_e_marcar` tem um SEGUNDO chamador, e este continua sem
+    a blindagem.** `_moderar_superada` (`workers/jobs/process_message.py`)
+    chama esta funcao direto, sem consultar `veredito_ja_registrado` nem nada
+    equivalente -- porque a mensagem SUPERADA nunca passa por
+    `_ModeracaoDoTurno` (ela fecha "agrupado" antes de `executar_turno`
+    rodar). Uma mensagem superada bloqueada, num turno que falhe depois e
+    seja reprocessado pelo ramo do agrupado, ainda repaga a moderacao e ainda
+    grava uma segunda linha de auditoria para a mesma fala -- exatamente o
+    comportamento antigo, so que neste ramo. Escopo, nao descuido: a D5 desta
+    card tratava da retentativa do TURNO bloqueado, que e onde a card
+    nasceu -- o ramo do agrupado nao estava no recorte.
 
     O `UPDATE` continua sendo idempotente de proposito: se uma rota futura
     voltar a passar por aqui duas vezes, reescrever o carimbo com a hora nova

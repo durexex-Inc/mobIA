@@ -1600,6 +1600,28 @@ async def _executar_turno(
                 # ao historico anterior, que e o engajamento que a TEC-233
                 # recusou de proposito.
                 return desfecho_da_recusa
+            # TEC-298, revisao final: composicao D1+D3. `teto_da_recusa` e o
+            # `created_at` da RESERVA da recusa, e uma passada de resposta
+            # bem-sucedida acontece DEPOIS dela -- entao numa TERCEIRA passada
+            # (recusa entregue, resposta entregue, e so ENTAO o turno morre) o
+            # teto esconde tambem a resposta que a passada anterior ja deu, e
+            # `tem_pendencia` volta a True sobre uma pergunta que ja foi
+            # respondida. Sem esta guarda aconteceriam duas coisas: (a) a
+            # continuacao pagaria o modelo de novo para responder ao que ja
+            # foi respondido, e o `send` de KIND_DA_RESPOSTA seria suprimido
+            # pela reserva existente -- reabrindo, pelo kind da RESPOSTA, o
+            # mesmo alarme falso que a D4 acabou de fechar pelo kind da
+            # RECUSA (`turno.recusa_ja_reservada` acima); e (b) pior que o
+            # alarme, se a geracao nova quebrar em duas mensagens onde a
+            # anterior coube numa, `reply` e suprimido e `reply_2` sai
+            # sozinho -- a metade orfa de uma resposta nova, a "costura" que
+            # `domain/outbound/kinds.py` documenta como corrupcao silenciosa.
+            # Reserva de KIND_DA_RESPOSTA e o mesmo sinal que fecha os dois:
+            # uma passada anterior ja chegou a responder, entao nao ha
+            # pendencia nenhuma para esta continuar.
+            reservados_da_resposta = await kinds_reservados(session_factory, message_id=message.id)
+            if KIND_DA_RESPOSTA in reservados_da_resposta:
+                return desfecho_da_recusa
             # Cai para fora do bloco e segue o turno. O contexto que
             # `montar_contexto` monta a seguir NAO inclui esta fala: o
             # `moderacao.resolver()` do topo deste bloco ja carimbou a linha

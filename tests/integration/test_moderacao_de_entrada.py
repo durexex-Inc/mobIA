@@ -878,3 +878,85 @@ async def test_retentativa_nao_repaga_a_moderacao_nem_duplica_a_auditoria(
         .where(ModerationEvent.message_id == carregadora.id)
     )
     assert eventos == 1, "uma fala recusada, uma linha -- Emenda E-04 da RN-04.5"
+
+
+async def test_retentativa_apos_resposta_entregue_nao_reabre_pendencia(
+    session: AsyncSession,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_entrada,
+) -> None:
+    """TEC-298, revisao final. A composicao D1+D3 reabre o alarme pelo kind da RESPOSTA.
+
+    Cenario: numa passada anterior a recusa E a resposta a pendencia ja foram
+    entregues (o caminho que `test_bloqueada_com_pergunta_pendente_recusa_e_responde`
+    prova para uma passada isolada), e o turno morre DEPOIS disso -- crash,
+    job_timeout, UPDATE ... PROCESSED caindo. Numa retentativa sobre a MESMA
+    linha, `veredito_ja_registrado` curto-circuita a moderacao (correto), mas
+    `teto_da_recusa` e o `created_at` da RESERVA da recusa -- que e anterior a
+    resposta, gravada DEPOIS dela. Com esse teto, `ha_fala_pendente_antes`
+    enxerga a fronteira de ANTES da recusa e ignora que a resposta ja saiu, e
+    `tem_pendencia` volta a `True` sobre uma pergunta que ja foi respondida.
+
+    Sem a guarda que consulta `kinds_reservados` por `KIND_DA_RESPOSTA`
+    aconteceriam duas coisas: (a) a continuacao pagaria o modelo de novo para
+    responder ao que ja foi respondido, e o `send` seria suprimido pela
+    reserva existente -- reabrindo, pelo kind da RESPOSTA, o mesmo alarme
+    falso que a D4 fechou pelo kind da RECUSA; e (b) pior que o alarme, se a
+    geracao nova quebrasse em duas mensagens onde a anterior coube numa,
+    `reply` seria suprimido e `reply_2` sairia sozinho -- a metade orfa que
+    `domain/outbound/kinds.py` descreve como corrupcao silenciosa. Este teste
+    trava que a guarda nova impede as duas: o classificador nao e chamado e
+    nada novo e entregue.
+    """
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    await gravar(
+        session,
+        created_at=datetime.now(UTC) - timedelta(minutes=1),
+        texto="tem apartamento de 2 quartos?",
+    )
+    carregadora = await semear_entrada(session, texto="xingamento qualquer")
+
+    # Passada 1: a pendencia ja existe quando o turno comeca, entao recusa e
+    # resposta saem na MESMA passada -- o outbound e o `OutboundFake` normal,
+    # sem falha nenhuma.
+    primeiro_outbound = OutboundFake(get_sessionmaker())
+    primeiro = await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=primeiro_outbound,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
+    )
+    assert primeiro == "respondido"
+    assert len(primeiro_outbound.entregues) == 2
+
+    # Passada 2: mesma linha, como se o turno tivesse morrido depois da
+    # entrega acima. A recusa ja esta reservada (reentrega suprimida) e a
+    # resposta tambem -- a guarda nova tem de reconhecer isso e nao tentar
+    # responder de novo.
+    classificador = classificador_fake()
+    segundo_outbound = OutboundFake(get_sessionmaker())
+    segundo = await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador,
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=segundo_outbound,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
+    )
+
+    assert segundo == "reentrega_suprimida"
+    assert classificador.chamadas == 0, (
+        "a resposta ja foi entregue; nao ha pendencia para responder"
+    )
+    assert segundo_outbound.entregues == []
