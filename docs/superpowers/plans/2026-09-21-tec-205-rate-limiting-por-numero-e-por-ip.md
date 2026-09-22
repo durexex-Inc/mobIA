@@ -54,6 +54,8 @@ O relogio entra por parametro (`agora`), entao nenhum teste dorme e nenhum
 depende de onde caiu a borda do minuto.
 """
 
+import math
+
 import pytest
 
 from mobia.infra.rate_limit import (
@@ -140,7 +142,10 @@ async def test_o_ttl_cobre_a_janela_inteira(redis_pool, janela: float) -> None:
     await consumir(
         redis_pool, chave=f"t:7:{janela}", limite=5, janela_segundos=janela, agora=1000.0
     )
-    assert await redis_pool.ttl(f"t:7:{janela}") >= janela
+    # `- 1` porque o TTL e inteiro e ja pode ter descontado o segundo
+    # corrente entre o EXPIRE e a leitura. Sem essa folga a assercao e flaky
+    # por construcao, nao por ambiente.
+    assert await redis_pool.ttl(f"t:7:{janela}") >= math.ceil(janela) - 1
 
 
 def test_a_janela_do_card_e_de_um_minuto() -> None:
@@ -1636,7 +1641,9 @@ Dois avisos sobre estes testes, que valem antes de você os rodar:
 
 O `test_health_nao_e_limitado` afirma a isenção do `/health`. Se você resolver **não** isentá-lo, apague o teste e registre a decisão — não o deixe passar mudando a asserção para `in (200, 429)`, que é uma asserção que não reprova nada.
 
-A fixture `client` monta o app via `ASGITransport`, onde `request.client` pode ser `None`. Se todos os testes de 429 passarem direto com 200, é isso: o `resolver_ip` devolveu `None` e o middleware deixou passar por fail-open. A correção é a fixture passar `client=("testclient", 50000)` ao `ASGITransport`, não afrouxar o middleware.
+A fixture `client` monta o app via `ASGITransport`, e **isso já basta**: o httpx usa `client=("127.0.0.1", 123)` por default, então `request.client.host` vale `"127.0.0.1"` e o limitador conta. **Não mexa na fixture `client`** — ela é compartilhada por todo o repo. Se os testes de 429 passarem com 200, procure o motivo no middleware, não na fixture.
+
+Todos os testes dividem o mesmo IP `127.0.0.1`, e isso é inofensivo porque a fixture `redis_pool` faz `flushdb()` antes e depois de cada teste: cada um começa com a cota zerada.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
