@@ -1,0 +1,116 @@
+# TEC-130 — O encerramento por inatividade, e a fronteira de histórico que a reabertura precisava ter
+
+**Status:** desenhado
+**Card:** [TEC-130](https://eduardodurieuxlopes.atlassian.net/browse/TEC-130)
+**Branch:** `feat/tec-130-encerrar-por-inatividade`
+**Origem:** RF-02, RN-02.3 (SRS v1.0). Card escrita em 22/08/2026, antes das emendas que a contradizem — ver D1.
+**Linhas citadas:** os números de linha deste documento valem para `843481f`. `turno.py` tem 4380 linhas e muda em quase toda card; confie no nome da função, não no número.
+
+## Objetivo
+
+A RN-02.3 diz que a conversa é encerrada após 30 dias sem interação, e que a mensagem seguinte abre uma conversa nova, vinculada ao mesmo lead, **com acesso ao histórico anterior via resumo**. Hoje nada encerra por inatividade, e a reabertura que existe entrega ao agente a transcrição literal da conversa anterior — o oposto do que a regra pede.
+
+Esta card acrescenta o encerramento por inatividade e por opt-out, e desenha a fronteira de histórico que faltava.
+
+## O estado antes desta card, conferido no código durante o desenho
+
+- **A entidade já existe, e foi escrita para esta card estendê-la.** `Conversa` (`conversa/models.py`) tem `status`, `motivo_do_encerramento` e `encerrada_em`, com PK `(channel, conversation_key)`. A docstring do módulo nomeia a TEC-130 e diz por extenso que ela **estende, não cria** — a Emenda E-02 da RN-02.3 registra o mesmo.
+- **Há um único motivo e um único escritor.** `MotivoDoEncerramento` tem só `FORA_DE_ESCOPO`, e o único chamador de `encerrar_conversa` em produção é `turno.py:3745`, no fecho da RN-03.5.
+- **A reabertura já existe**, em `turno.py:1269-1323`, e roda **antes** de `montar_contexto` (`turno.py:1690`). Ela não olha o motivo, de propósito — o comentário de lá diz que quem acrescentar um motivo e quiser outro tratamento muda aquela linha deliberadamente.
+- **O portão de opt-out roda antes dos dois** (`turno.py:1117`). Um lead em opt-out retorna cedo e nunca chega ao bloco da reabertura: reabrir não ressuscita quem pediu para sair.
+- **`silencia_o_agente` exige `FORA_DE_ESCOPO`** (`conversa/repositorio.py`). A propriedade foi escrita assim por causa desta card: uma versão que olhasse só o `status` transformaria todo encerramento por inatividade em 30 dias de silêncio, destruindo o reengajamento que a RN-02.3 existe para ter.
+- **"Conversa nova" é derivada, não perguntada.** `e_conversa_nova` (`agente/identificacao.py:35`) mede silêncio direto em `messages`, e a constante `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA = 30` mora lá — importada por `conversa/repositorio.py` para medir a janela do próprio encerramento.
+- **A única fronteira de histórico que existe é a marca do resumo.** `literais_apos` (`context/janela.py:41`) filtra por `(channel, conversation_key)`, por `bloqueada_em` e pela marca. Não há nenhuma noção de encerramento. `ler_resumo` é uma linha por `(channel, conversation_key)`, rolante.
+- **A dobra já roda dentro do turno**, em `montar_contexto` (`montagem.py:528`), quando os literais passam do gatilho de regeneração.
+- **A cadência de follow-up esgota em no máximo 14 dias** (`followup/cadencia.py:27`, FRIO: 3 + 14). Ela sempre termina dentro da janela de 30.
+
+## O defeito que a card nomeia, e o que ela não nomeia
+
+O que a card pede está escrito: nada encerra por inatividade. Encerrar é acrescentar um motivo e um escritor, e a Emenda E-02 já disse isso.
+
+**O que a card não nomeia é o mais caro.** O critério *"a conversa nova tem acesso ao histórico anterior por meio do resumo, não pela transcrição inteira"* não é satisfeito hoje nem seria pelo encerramento sozinho. A marca do resumo é a única coisa que separa o que o agente vê do que ele não vê, e ela não sabe o que é encerramento. Uma conversa reaberta entrega ao prompt a cauda literal da anterior — até o piso de mensagens que `dividir` preserva — como se fosse a mesma conversa. Encerrar sem mexer nisso escreve a data e o motivo no banco e não muda uma linha do que o modelo lê.
+
+## Decisões
+
+### D1 — Concluir o handoff não encerra a conversa, e o Gherkin da card é descartado
+
+A card lista três situações de encerramento, e uma delas é *"handoff concluído"*. A **Emenda E-01 da RN-02.3 (TEC-278, 13/09/2026)** diz o contrário, por extenso: concluir o handoff significa **retomar** o atendimento automático, e *"a TEC-130 tem de respeitar essa separação quando chegar"*. A card é de 22/08 e a emenda é posterior.
+
+A emenda vence. O cenário *"Encerrar por handoff concluído"* não é implementado, e nada é acrescentado a `devolver` (`api/routes/conversas.py`).
+
+A razão da emenda continua valendo e é o argumento: se concluir encerrasse, o encerramento dobraria o histórico no resumo (D4), e o lead que o corretor acabou de atender voltaria a falar com um agente que só tem o resumo daquele atendimento, não a transcrição. É exatamente o esquecimento que a E-01 quis impedir — e sob esta card ele seria pior que em 13/09, porque agora o encerramento tem consequência sobre o contexto, e não só sobre o `status`.
+
+Fica emenda nova, registrando que o Gherkin foi descartado e por quê.
+
+### D2 — Dois motivos novos, `INATIVIDADE` e `OPTOUT`, e nenhum dos dois cala o agente
+
+`MotivoDoEncerramento` ganha os dois membros. Nenhum entra em `silencia_o_agente`, que continua exigindo `FORA_DE_ESCOPO`.
+
+Para `INATIVIDADE` é o ponto inteiro da regra: a conversa fechada por silêncio tem de ser respondida na mensagem seguinte, senão o reengajamento morre. Para `OPTOUT` o silêncio já existe e vem de outro lugar — `esta_em_optout`, no portão de `turno.py:1117` —, e duplicá-lo aqui criaria duas fontes para o mesmo fato.
+
+Sem tabela nova e sem segunda noção de encerrada, como a Emenda E-02 mandou.
+
+### D3 — Dois mecanismos, um relógio: o sweep escreve o registro, o turno decide o contexto
+
+É a decisão central, e é a que diverge do que o repo previa.
+
+- O **sweep** `sweep_conversas_inativas` fecha a conversa e grava data e motivo. É a escrituração que a card pede e o que alimenta quem lê o estado do funil. **Uma vez por dia**, e não de 30 em 30 segundos como `sweep_stalled`: a janela é de 30 dias, então a diferença entre fechar às 3h e fechar às 3h30 não existe para ninguém, e a consulta varre `messages` inteira em vez de uma fila curta.
+- A **fronteira do contexto não depende dele**. O gatilho da dobra (D4) é o relógio — última fala INBOUND mais velha que a janela —, não o `status` da linha.
+
+O comentário de `identificacao.py:30` promete o contrário: *"Quando aquela card chegar, este modulo passa a perguntar a entidade em vez de derivar, e esta constante sai."* **Declinado de propósito, e o comentário muda junto.**
+
+Perguntar a entidade põe um cron no caminho crítico de uma correção de contexto. Com o sweep parado — ou apenas ainda não executado, porque ele roda uma vez por dia e o lead voltou antes —, a conversa continuaria `ATIVA`, `e_conversa_nova` devolveria `False`, e o turno montaria o prompt com a transcrição velha **e** sem apresentação. Silenciosamente, e num caminho que nenhum teste de integração pegaria, porque nos testes o sweep sempre acabou de rodar.
+
+Derivar é o que torna a correção verdadeira independentemente da varredura. O preço é que a definição de silêncio continua em dois lugares — a constante e a linha do banco —, e ele se paga com a mesma constante servindo aos dois: ela sai de `agente/identificacao.py` e passa a morar em `conversa/regras.py`, ao lado de `TETO_DE_FORA_DE_ESCOPO`, que é o módulo puro do ciclo de vida da conversa. `identificacao.py` e o sweep passam a importá-la de lá.
+
+**Consequência declarada:** o sweep pode ficar para trás do que o turno já considera conversa nova. Uma conversa com 45 dias de silêncio cuja varredura ainda não passou é, para o turno, uma reabertura — dobra o histórico e se apresenta — e, para o banco, uma conversa `ATIVA`. Os dois convergem na varredura seguinte. É o mesmo desencontro que `situacao_da_conversa` já documenta para a janela vencida: *"a linha fica como estava, e esta função já conta a verdade"*.
+
+### D4 — A dobra forçada, e a marca como fronteira
+
+`montar_contexto` ganha um parâmetro que dobra **tudo** o que ficou para trás, ignorando o piso de mensagens literais que `dividir` preserva. O turno o liga quando o relógio diz que esta mensagem abre conversa nova.
+
+A marca do resumo passa a cobrir a conversa anterior inteira, e `literais_apos` devolve só o que é novo. **A fronteira vira a marca** — que já é a fronteira que o sistema tem — em vez de um filtro por `encerrada_em` ou de uma coluna nova. O agente recebe o resumo da conversa anterior e nenhuma linha da transcrição dela, que é o critério da card ao pé da letra.
+
+A fala que está sendo processada não entra na conta: `montar_contexto` já não a inclui (`turno.py:1626`), então "dobrar tudo" dobra só o que é velho.
+
+**Degradação declarada.** `montar_contexto` já degrada para o resumo anterior quando `resumir` levanta `ResumoInvalido`, sem avançar a marca. Com a dobra forçada isso significa a cauda velha vazando para o prompt — a conversa nova enxerga a transcrição da anterior, que é justamente o que esta card impede. Aceito, com log próprio (`contexto.dobra_forcada_falhou`, `warning`): a alternativa seria descartar os literais sem tê-los resumido, e aí o agente perde o resumo **e** a transcrição e responde cego a um lead que ele já atendeu. Ver demais é menos ruim que não ver nada.
+
+### D5 — O sweep não sobrescreve motivo
+
+Ele só fecha conversa `ATIVA` ou sem linha. Conversa já encerrada por `FORA_DE_ESCOPO` ou `OPTOUT` fica como está.
+
+Sem isso, `encerrar_conversa` — que é upsert idempotente de propósito — apagaria o motivo real 30 dias depois de ele ter sido escrito, e toda conversa do sistema convergiria para `INATIVIDADE`. O motivo é vocabulário justamente para não perder essa distinção.
+
+### D6 — Opt-out encerra, como escrituração
+
+No bloco `if pedido_de_optout:` (`turno.py:1325`), depois de `registrar_optout`, na mesma transação. Só registro: quem cala é `esta_em_optout`, e o portão dele roda antes da reabertura, então a conversa encerrada por opt-out nunca é reaberta por mensagem de um lead que continua em opt-out.
+
+Um lead reativado (`reativar`, `optout/repositorio.py:45`) passa a valer pelo portão e cai na reabertura normal, com dobra — o que é o comportamento certo: ele voltou depois de ter saído, e a conversa é outra.
+
+### D7 — O que NÃO muda
+
+- **`silencia_o_agente`** continua exigindo `FORA_DE_ESCOPO`. Ver D2.
+- **A linha da reabertura continua cega ao motivo.** Os dois motivos novos reabrem como qualquer outro, que é o que a RN-02.3 pede.
+- **Nada é apagado nem anonimizado.** A card põe retenção (E9, RNF-21, RNF-22) fora de escopo, e encerrar conversa não apaga nada — as mensagens continuam em `messages`, cifradas, e o resumo continua sendo o mesmo registro rolante.
+- **Não nasce identidade nova de conversa.** A card diz *"uma nova conversa é criada"* e o modelo de dados do SRS diz `Lead 1:N Conversa`, mas a Emenda E-02 já decidiu que esta card estende a entidade existente, sem tabela nova. "Conversa nova" continua sendo a mesma linha reaberta, mais a apresentação, mais a fronteira de histórico que a D4 cria. **A lacuna fica declarada:** não há como listar as conversas anteriores de um lead, nem contar quantas foram, porque não existe uma linha por conversa. Quem precisar da série acrescenta a tabela de eventos — a mesma lacuna que `conversa/models.py` já declara para o histórico de encerramentos.
+
+## Emenda ao SRS
+
+**Emenda E-03 à RN-02.3.** O cenário *"Encerrar por handoff concluído"* da TEC-130 é descartado, em favor da Emenda E-01 desta mesma regra: concluir o handoff continua significando retomar o atendimento automático, e não encerrar. Os motivos de encerramento passam a ser três — `FORA_DE_ESCOPO` (RN-03.5), `INATIVIDADE` e `OPTOUT`. A regra ganha também o que ela sempre disse e nunca teve: *"com acesso ao histórico anterior via resumo"* passa a ser verdade por construção, porque a primeira mensagem depois do encerramento dobra o histórico no resumo antes de montar o contexto. O encerramento por inatividade conta a partir da **última fala do lead**, não da última mensagem de qualquer direção — o follow-up automático não adia o encerramento de quem sumiu.
+
+## Testes
+
+- Os quatro cenários do Gherkin da card, menos o do handoff (D1).
+- A fronteira nos dois lados: 29 dias não encerra, 30 encerra. O empate resolve para o lado fechado, como `situacao_da_conversa` e `e_conversa_nova` já resolvem o deles — e pela mesma razão, que é as três leituras compartilharem a constante.
+- O relógio ignora OUTBOUND: conversa com follow-up no dia 14 e última fala do lead no dia 0 encerra no dia 30, não no 44.
+- A dobra forçada deixa **zero** literal da conversa anterior no contexto, e o resumo cobre o que eles diziam.
+- O sweep não sobrescreve `FORA_DE_ESCOPO` nem `OPTOUT`.
+- A degradação da D4: resumo falho na dobra forçada mantém o resumo anterior, loga o warning, e o turno não morre.
+- Opt-out encerra com o motivo próprio, e o lead em opt-out que volta não reabre.
+
+## Fora de escopo
+
+- **Eliminação e anonimização por retenção** (E9, RNF-21, RNF-22) — a card declara, e encerrar não apaga.
+- **Identidade por conversa** — ver D7.
+- **Encerramento manual pelo dashboard** — a card o cita como o contorno que existe durante o piloto, não como entrega.
+- **Histórico de encerramentos** — lacuna herdada da TEC-138, não aberta por esta card.
