@@ -5,11 +5,18 @@ consulta trabalho vencido e age. A diferenca esta no relogio -- ver o
 comentario do registro em `workers/main.py`.
 
 **A mensagem e montada e entregue aqui** (TEC-184): a varredura escolhe a
-informacao nova, pede a abertura ao modelo, monta o texto e manda pela porta
-de saida, ancorada na ultima fala do lead. Ate a TEC-184 esta card so gravava
-a tentativa e emitia `followup.devido` -- nada saia, porque a RN-13.2 proibe
-follow-up sem informacao nova e um texto provisorio violaria a regra de
-frente.
+informacao nova, monta o texto e manda pela porta de saida, ancorada na ultima
+fala do lead. Ate a TEC-184 esta card so gravava a tentativa e emitia
+`followup.devido` -- nada saia, porque a RN-13.2 proibe follow-up sem
+informacao nova e um texto provisorio violaria a regra de frente.
+
+**O CANAL e decidido pela janela de 24h** (TEC-186, RN-13.6), a partir da
+ancora e antes do envio: dentro da janela sai o texto livre da TEC-184, com a
+abertura do modelo; fora dela sai um template aprovado escolhido pelo contexto
+(`domain/followup/template.py`), e sem template aplicavel o follow-up vira uma
+tarefa para o corretor (`tarefas_de_corretor`) em vez de um envio que a Meta
+recusaria. Hoje so a tentativa de +2h do QUENTE cai dentro da janela; as outras
+oito posicoes caem fora.
 """
 
 import time
@@ -29,11 +36,19 @@ from mobia.domain.followup.cadencia import CADENCIA, esta_dormente, tentativa_de
 from mobia.domain.followup.mensagem import QuedaDePreco, texto_do_followup
 from mobia.domain.followup.prosa import redigir_abertura
 from mobia.domain.followup.repositorio import (
+    MOTIVO_SEM_TEMPLATE,
     Candidato,
     candidatos_a_followup,
     imovel_novo_compativel,
     queda_de_preco,
     registrar_followup,
+    registrar_tarefa_de_corretor,
+)
+from mobia.domain.followup.template import (
+    categoria_da_novidade,
+    dentro_da_janela,
+    escolher_template,
+    parametros_do_template,
 )
 from mobia.domain.messages.models import Message
 from mobia.domain.optout.repositorio import esta_em_optout
@@ -246,18 +261,23 @@ async def sweep_followups(
     entregue. Ate esta card a lista era coerente, porque o mesmo aborto
     desfazia as linhas junto.
 
-    **Depois de gravar, a varredura MONTA e ENTREGA** (TEC-184): escolhe a
-    informacao nova (`_novidade_do_followup`), pede a abertura ao modelo
-    (`redigir_abertura`, cujo `None` e "sem prefixo" e nunca erro), monta o
-    texto e manda pela porta, com `kind=followup_<n>` sobre a mensagem-ancora.
-    A idempotencia por tentativa sai de graca dai: a UNIQUE
-    `(message_id, kind)` de `outbound_dispatches` espelha a UNIQUE
+    **Depois de gravar, a varredura MONTA e ENTREGA** (TEC-184, TEC-186):
+    escolhe a informacao nova (`_novidade_do_followup`) e entao decide o canal
+    pela janela de 24h (`dentro_da_janela`, a partir da ancora). Dentro da
+    janela pede a abertura ao modelo (`redigir_abertura`, cujo `None` e "sem
+    prefixo" e nunca erro), monta o texto e manda o texto livre; fora dela
+    escolhe um template aprovado pelo contexto e o manda, ou -- sem template
+    aplicavel -- grava uma tarefa em `tarefas_de_corretor` sem enviar nada.
+    O envio vai com `kind=followup_<n>` sobre a mensagem-ancora, e a
+    idempotencia por tentativa sai de graca dai: a UNIQUE `(message_id, kind)`
+    de `outbound_dispatches` espelha a UNIQUE
     `(channel, conversation_key, ancora_em, tentativa)` de `followups`.
 
     **Nenhuma falha de envio derruba o lote: as tres viram log e o laco
-    segue.** `EnvioForaDaJanela` em `info` (hoje so a tentativa de 2h do
-    QUENTE cabe na janela de 24h da Meta -- L1 do desenho --, e as outras oito
-    posicoes batem nessa recusa), qualquer outro `EnvioRecusado` em `error`, e
+    segue.** `EnvioForaDaJanela` em `info` (desde a TEC-186 e RESIDUAL -- a
+    janela e decidida antes do envio, entao fora dela nem se tenta texto livre;
+    so a posicao de +2h do QUENTE, dentro da janela, pode bate-la por desacordo
+    de relogio na borda), qualquer outro `EnvioRecusado` em `error`, e
     `EnvioRetentavel` em `warning`. **A linha de `followups` permanece nos
     tres** -- a tabela e append-only e a linha e gravada antes do envio, entao
     a tentativa e CONSUMIDA. Para as recusas isso e a L1, declarada; para o
@@ -265,13 +285,15 @@ async def sweep_followups(
     para que ela nao seja silenciosa (ver o comentario no corpo).
 
     **E nenhuma falha POS-COMMIT derruba o lote tampouco** (fix de revisao,
-    TEC-184): a escolha da novidade, a prosa e a leitura do `de` acontecem
-    DEPOIS do commit que consome a tentativa, e as tres vao ao banco. Um erro
-    ali vira `followup.montagem_falhou` em `error`, com `rollback` antes do
-    `continue` -- sem o rollback a sessao ficaria envenenada e o candidato
-    SEGUINTE morreria no `esta_em_optout`, que roda fora do bloco protegido.
-    A promessa acima so era verdadeira sobre o envio ate esta correcao, e a
-    superficie pos-commit desta card e maior que a do envio.
+    TEC-184; ampliado na TEC-186): a escolha da novidade, a leitura do `de`, a
+    prosa (so dentro da janela), e -- fora dela -- a escolha do template ou a
+    gravacao da tarefa acontecem DEPOIS do commit que consome a tentativa, e
+    todas vao ao banco. Um erro ali vira `followup.montagem_falhou` em `error`,
+    com `rollback` antes do `continue` -- sem o rollback a sessao ficaria
+    envenenada e o candidato SEGUINTE morreria no `esta_em_optout`, que roda
+    fora do bloco protegido. A promessa acima so era verdadeira sobre o envio
+    ate esta correcao, e a superficie pos-commit desta card e maior que a do
+    envio.
 
     `asyncio.CancelledError` continua propagando: nao e `Exception`.
 
@@ -595,25 +617,14 @@ async def sweep_followups(
             # `asyncio.CancelledError` continua propagando em todos os tres:
             # nao e `Exception`.
             try:
-                ficha, queda = await _novidade_do_followup(session, session_factory, candidato)
-                # `None` daqui e "sem prefixo", NUNCA erro: a prosa e ornamento, e
-                # uma falha nela nao pode custar ao lead o follow-up inteiro. Ver
-                # o docstring de `redigir_abertura`, que ja trata as quatro causas
-                # la dentro e nunca levanta.
-                #
-                # A MESMA `ficha` e a MESMA `queda` vao para as duas chamadas:
-                # escolher a novidade duas vezes deixaria a abertura falar de um
-                # imovel e o corpo de outro, e o par invalido (ficha=None com
-                # queda) faria `texto_do_followup` levantar depois de a chamada ao
+                # A novidade e escolhida SEMPRE, e a MESMA `ficha`/`queda` vai
+                # para tudo que segue: dentro da janela ela vira o texto livre,
+                # fora dela a categoria do template ou da tarefa. Escolher duas
+                # vezes deixaria a categoria divergir do texto que o outro
+                # caminho montaria (D2), e o par invalido (ficha=None com queda)
+                # faria `texto_do_followup` levantar depois de a chamada ao
                 # modelo ja ter sido paga.
-                prefixo = await redigir_abertura(
-                    session,
-                    channel=candidato.channel,
-                    conversation_key=candidato.conversation_key,
-                    ficha=ficha,
-                    queda=queda,
-                )
-                texto = texto_do_followup(ficha=ficha, queda=queda, prefixo=prefixo)
+                ficha, queda = await _novidade_do_followup(session, session_factory, candidato)
 
                 # O `de` do payload e o nosso numero, que so existe na linha da
                 # mensagem -- `Candidato` nao o carrega. Mesma leitura que
@@ -651,15 +662,97 @@ async def sweep_followups(
                     )
                     continue
 
-                await outbound.send(
-                    candidato.ancora_message_id,
-                    KIND_DO_FOLLOWUP(tentativa),
-                    {
-                        "para": candidato.conversation_key,
-                        "de": de,
-                        "texto": texto,
-                    },
-                )
+                # TEC-186, D1. A janela e decidida A PARTIR DA ANCORA, antes de
+                # qualquer envio: fora dela nenhuma mensagem livre pode ser
+                # tentada (cenario 1 do Gherkin). `ancora_em` e a ultima fala do
+                # LEAD, entao uma resposta do agente no meio nao move a janela
+                # (cenario 4). Hoje so a tentativa de +2h do QUENTE cai dentro; as
+                # outras oito posicoes caem fora -- consequencia de `CADENCIA` e
+                # da janela de 24h, nao de um caso escrito a mao.
+                if dentro_da_janela(ancora_em=candidato.ancora_em, agora=agora):
+                    # `None` de `redigir_abertura` e "sem prefixo", NUNCA erro: a
+                    # prosa e ornamento, e uma falha nela nao pode custar o
+                    # follow-up inteiro. Ela so roda AQUI, dentro da janela (D5):
+                    # fora, o template e texto fixo aprovado e nao ha abertura
+                    # livre a escrever, e as oito posicoes de fora deixam de
+                    # pagar a chamada ao modelo.
+                    prefixo = await redigir_abertura(
+                        session,
+                        channel=candidato.channel,
+                        conversation_key=candidato.conversation_key,
+                        ficha=ficha,
+                        queda=queda,
+                    )
+                    texto = texto_do_followup(ficha=ficha, queda=queda, prefixo=prefixo)
+                    await outbound.send(
+                        candidato.ancora_message_id,
+                        KIND_DO_FOLLOWUP(tentativa),
+                        {"para": candidato.conversation_key, "de": de, "texto": texto},
+                    )
+                    log.info(
+                        "followup.entregue",
+                        canal="livre",
+                        channel=candidato.channel,
+                        tentativa=tentativa,
+                    )
+                else:
+                    # Fora da janela: so template aprovado, escolhido pela
+                    # categoria da novidade. `templates_aprovados` e configuracao
+                    # externa (RT-03), vazia por padrao.
+                    categoria = categoria_da_novidade(ficha=ficha, queda=queda)
+                    template = escolher_template(
+                        categoria=categoria, aprovados=settings.templates_aprovados
+                    )
+                    if template is None:
+                        # RN-13.6: sem template aplicavel, o follow-up NAO vira
+                        # tentativa de envio livre -- a Meta a recusaria --, vira
+                        # tarefa para o corretor. Commit proprio; a tentativa ja
+                        # foi consumida pelo commit anterior. `warning` e o nivel
+                        # de `followup.dormente`: funcionou como desenhado, e
+                        # alguem precisa saber. Com `aprovados` vazio (o default
+                        # do RT-03) este e o caminho de todo follow-up fora da
+                        # janela.
+                        await registrar_tarefa_de_corretor(
+                            session,
+                            candidato=candidato,
+                            tentativa=tentativa,
+                            categoria=categoria,
+                            motivo=MOTIVO_SEM_TEMPLATE,
+                        )
+                        await session.commit()
+                        log.warning(
+                            "followup.tarefa_de_corretor",
+                            channel=candidato.channel,
+                            conversation_key=candidato.conversation_key,
+                            tentativa=tentativa,
+                            categoria=categoria,
+                        )
+                    else:
+                        # Template aprovado: o unico envio que a Meta aceita fora
+                        # da janela. Sem prosa do modelo (D5); os parametros saem
+                        # de `ficha`/`queda`, numero nenhum passa pelo modelo.
+                        parametros = parametros_do_template(
+                            template=template, ficha=ficha, queda=queda
+                        )
+                        await outbound.send(
+                            candidato.ancora_message_id,
+                            KIND_DO_FOLLOWUP(tentativa),
+                            {
+                                "para": candidato.conversation_key,
+                                "de": de,
+                                "tipo": "template",
+                                "template": template.nome,
+                                "idioma": template.idioma,
+                                "parametros": parametros,
+                            },
+                        )
+                        log.info(
+                            "followup.entregue",
+                            canal="template",
+                            template=template.nome,
+                            channel=candidato.channel,
+                            tentativa=tentativa,
+                        )
             except EnvioRecusado as falha:
                 # **`EnvioRecusado`, a superclasse, e nao so a
                 # `EnvioForaDaJanela`.** As duas sao permanentes -- retentar
@@ -671,21 +764,27 @@ async def sweep_followups(
                 #
                 # **A linha de `followups` permanece nos dois casos, e a
                 # tentativa e CONSUMIDA.** A tabela e append-only e a linha foi
-                # commitada antes do envio, entao ela nao volta a vencer quando
-                # a TEC-186 (template fora da janela) entrar -- o lead perde
-                # aquela posicao da cadencia para sempre. E decisao da L1, com
-                # o custo declarado, e nao efeito colateral: desfaze-la aqui
-                # faria a varredura reprocessar a mesma tentativa a cada cinco
-                # minutos, pagando a prosa toda vez para bater na mesma
-                # recusa.
+                # commitada antes do envio. E decisao da L1 (TEC-184), com o
+                # custo declarado: desfaze-la aqui faria a varredura reprocessar
+                # a mesma tentativa a cada cinco minutos, pagando a prosa toda
+                # vez para bater na mesma recusa.
                 #
-                # Os NIVEIS e que separam as duas, porque quem opera precisa
-                # distinguir: fora da janela e `info`, porque enquanto a
-                # TEC-186 nao entra e o caminho esperado para oito das nove
-                # posicoes da cadencia e alarmar em cada uma afogaria o log;
-                # qualquer outra recusa e `error`, o mesmo nivel de
-                # `outbound.recusado_permanente`, porque ai o payload ou a
-                # credencial estao errados e ninguem vai descobrir isso sozinho.
+                # **Desde a TEC-186 esta recusa e RESIDUAL, e nao o caminho de
+                # oito posicoes.** A janela agora e decidida a partir da ancora
+                # ANTES do envio (D1): fora dela nao se tenta texto livre --
+                # vai template ou tarefa --, entao `EnvioForaDaJanela` so e
+                # alcancavel pela posicao DENTRO da janela (a de +2h do QUENTE)
+                # que a Meta recuse por desacordo de relogio na borda (D7). Ela
+                # NAO vira template nem tarefa: um envio que nos decidimos estar
+                # dentro da janela e a Meta recusou e discordancia de relogio,
+                # nao a regra da RN-13.6, e converte-lo reintroduziria o "tentou
+                # a mensagem livre primeiro" que o cenario 1 do Gherkin proibe.
+                #
+                # Os NIVEIS separam as duas: a recusa residual de janela e
+                # `info`, porque nao e erro nosso; qualquer outra recusa e
+                # `error`, o mesmo nivel de `outbound.recusado_permanente`,
+                # porque ai o payload ou a credencial estao errados e ninguem vai
+                # descobrir isso sozinho.
                 if isinstance(falha, EnvioForaDaJanela):
                     log.info(
                         "followup.fora_da_janela_de_24h",

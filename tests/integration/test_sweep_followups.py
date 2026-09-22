@@ -26,8 +26,9 @@ from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.mensagem import CONVITE_PARA_AGENDAR
-from mobia.domain.followup.models import FollowUp
+from mobia.domain.followup.models import FollowUp, TarefaDeCorretor
 from mobia.domain.followup.repositorio import Candidato, candidatos_a_followup
+from mobia.domain.followup.template import CATEGORIA_CONVITE, TEMPLATES
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -119,7 +120,7 @@ async def _lead(
     return identificador
 
 
-def _ctx(outbound: object | None = None) -> dict:
+def _ctx(outbound: object | None = None, *, templates_aprovados: str = "") -> dict:
     """A janela default da card (9h-20h, fuso `NOME_DO_FUSO`) explicita, e nao
     herdada do ambiente -- as TRES pontas, nao so duas.
 
@@ -148,6 +149,7 @@ def _ctx(outbound: object | None = None) -> dict:
             followup_horario_inicio=9,
             followup_horario_fim=20,
             followup_fuso=NOME_DO_FUSO,
+            whatsapp_templates_aprovados=templates_aprovados,
         ),
     }
 
@@ -1175,3 +1177,103 @@ async def test_a_tentativa_antes_do_teto_nao_emite_followup_dormente(session, ca
 
     assert gravadas == 1
     assert sum(1 for r in caplog.records if "followup.dormente" in r.getMessage()) == 0
+
+
+# TEC-186. O template de convite -- categoria da novidade quando nada foi
+# semeado (nem queda, nem imovel novo). Sai do catalogo em vez de literal para
+# nao descolar do nome real quando ele mudar.
+_TEMPLATE_CONVITE = next(t for t in TEMPLATES if t.categoria == CATEGORIA_CONVITE)
+
+
+async def _linhas_de_tarefa(session) -> int:
+    return len((await session.scalars(select(TarefaDeCorretor))).all())
+
+
+async def _resposta_do_agente(
+    session, *, ha: timedelta, agora: datetime = DENTRO_DA_JANELA, conversa: str = CONVERSA
+) -> None:
+    """Uma fala de SAIDA do agente, mais recente que a ancora do lead.
+
+    E o trap do cenario 4: se a janela contasse a ultima mensagem da conversa,
+    esta fala a reabriria. A ancora e a ultima fala do LEAD, entao nao deve.
+    """
+    ident = uuid.uuid4()
+    session.add(
+        Message(
+            id=ident,
+            channel=CANAL,
+            provider_message_id=f"wamid.{ident.hex[:10]}",
+            sender_external_id="222222222",
+            recipient_external_id=conversa,
+            conversation_key=conversa,
+            role=MessageRole.AGENTE,
+            direction=MessageDirection.OUTBOUND,
+            content_type=MessageContentType.TEXTO,
+            text_body=encrypt("ola", aad_de(ident, "text_body")),
+            raw_payload=None,
+            status=MessageStatus.PROCESSED,
+            created_at=agora - ha,
+        )
+    )
+    await session.commit()
+
+
+async def test_dentro_da_janela_envia_texto_livre(session) -> None:
+    """Cenario 2: lead calado ha 3h -> tentativa +2h do QUENTE, dentro da janela."""
+    outbound = OutboundFake(get_sessionmaker())
+    await _lead(session, temperatura="QUENTE", calado_ha=timedelta(hours=3))
+
+    await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA)
+
+    assert outbound.entregues, "nada saiu -- o teste nao afirmaria nada"
+    # Texto livre: payload sem `tipo`, e com `texto`.
+    assert outbound.payloads[-1].get("tipo") is None
+    assert "texto" in outbound.payloads[-1]
+
+
+async def test_fora_da_janela_com_template_aprovado_usa_template(session) -> None:
+    """Cenario 1: 30h da ultima fala -> template aprovado; nenhuma mensagem livre."""
+    outbound = OutboundFake(get_sessionmaker())
+    await _lead(session, temperatura="QUENTE", calado_ha=timedelta(hours=30))
+
+    await sweep_followups(
+        _ctx(outbound, templates_aprovados=_TEMPLATE_CONVITE.nome), agora=DENTRO_DA_JANELA
+    )
+
+    assert outbound.payloads[-1]["tipo"] == "template"
+    assert outbound.payloads[-1]["template"] == _TEMPLATE_CONVITE.nome
+    # "E nenhuma mensagem livre e tentada": nenhum payload de texto saiu.
+    assert all("texto" not in p for p in outbound.payloads)
+    # Nada virou tarefa: o template aplicavel foi entregue.
+    assert await _linhas_de_tarefa(session) == 0
+
+
+async def test_fora_da_janela_sem_template_vira_tarefa(session) -> None:
+    """Cenario 3: fora da janela e sem template aprovado -> tarefa, nada enviado."""
+    outbound = OutboundFake(get_sessionmaker())
+    await _lead(session, temperatura="QUENTE", calado_ha=timedelta(hours=30))
+
+    # `_ctx` sem `templates_aprovados`: o default vazio do RT-03.
+    await sweep_followups(_ctx(outbound), agora=DENTRO_DA_JANELA)
+
+    assert outbound.entregues == []
+    assert await _linhas_de_tarefa(session) == 1
+
+
+async def test_a_janela_conta_da_fala_do_lead_e_nao_da_conversa(session) -> None:
+    """Cenario 4: lead falou ha 30h e recebeu resposta do agente ha 2h.
+
+    A janela conta a fala do LEAD (30h, fechada), nao a ultima da conversa
+    (2h). Se contasse a da conversa, sairia texto livre; como conta a do lead,
+    sai template.
+    """
+    outbound = OutboundFake(get_sessionmaker())
+    await _lead(session, temperatura="QUENTE", calado_ha=timedelta(hours=30))
+    await _resposta_do_agente(session, ha=timedelta(hours=2))
+
+    await sweep_followups(
+        _ctx(outbound, templates_aprovados=_TEMPLATE_CONVITE.nome), agora=DENTRO_DA_JANELA
+    )
+
+    assert outbound.payloads[-1]["tipo"] == "template"
+    assert all("texto" not in p for p in outbound.payloads)
