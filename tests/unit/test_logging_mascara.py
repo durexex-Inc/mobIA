@@ -179,3 +179,17 @@ def test_o_formatter_do_stdlib_nao_reemite_o_traceback_cru(caplog) -> None:
 
     assert caplog.records[0].exc_info is False
     assert "segredo do lead" not in caplog.text
+
+
+def test_o_ip_sai_mascarado(caplog) -> None:
+    """A corrida de digitos (`\\d{10,15}`) nao pega um IPv4 -- os pontos
+    quebram a corrida --, entao sem a chave em `_CHAVES_MASCARADAS` o IP sairia
+    em claro no log. A tabela de eventos guarda o valor inteiro; o log, que vai
+    para agregador, nao.
+    """
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.INFO):
+        log.info("evento.teste", ip="203.0.113.7")
+
+    assert "203.0.113.7" not in caplog.text
+    assert "*" in caplog.text

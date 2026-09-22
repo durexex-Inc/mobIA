@@ -59,7 +59,15 @@ _CHAVES_LIVRES = frozenset(
 # de digitos pega por acidente; o widget web do TEC-124 vai trazer id de sessao
 # ou e-mail, que nao sao digitos. Mascarar pela chave torna a garantia
 # estrutural em vez de dependente do formato do canal.
-_CHAVES_MASCARADAS = frozenset({"sender_external_id", "recipient_external_id", "conversation_key"})
+#
+# `ip` (TEC-205) entra pelo mesmo argumento, e de forma ainda mais clara: a
+# corrida de digitos NAO pega um IPv4, porque os pontos a quebram. A tabela
+# `rate_limit_events` guarda o endereco inteiro, porque e ela que responde
+# "quem foi" numa investigacao; o log, que vai para agregador e fica muito
+# mais exposto, sai mascarado.
+_CHAVES_MASCARADAS = frozenset(
+    {"sender_external_id", "recipient_external_id", "conversation_key", "ip"}
+)
 
 _CAUDA_VISIVEL = 4
 
