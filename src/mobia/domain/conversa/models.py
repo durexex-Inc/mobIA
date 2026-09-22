@@ -6,18 +6,17 @@ conversa era o par `(channel, conversation_key)` espalhado por oito tabelas --
 do SRS sem implementacao, reservada para a TEC-130. A TEC-138 chegou antes e
 precisou do status, entao a entidade nasce aqui.
 
-**A TEC-130 estendeu isto, e nao criou nada.** Ela acrescentou `INATIVIDADE` e
-`OPTOUT` ao vocabulario de `vocabulario.py`, mais dois escritores -- a
-varredura diaria (`encerrar_inativas`, em `repositorio.py`) e o bloco de
-opt-out do turno. Nenhuma tabela nova, nenhuma segunda nocao de encerrado, e
-nenhuma migration: a coluna ja comportava os literais. A Emenda E-02 da RN-02.3
-previa exatamente isso, e a E-03 registra o que mudou.
+**Consequencia para quem pegar a TEC-130:** ela ESTENDE isto, nao cria.
+Encerrar por inatividade e acrescentar um motivo ao vocabulario de
+`vocabulario.py` e um escritor novo; nao e uma segunda tabela nem uma segunda
+nocao de encerrado. A Emenda da RN-02.3 registra isso no SRS.
 
-**O que ela NAO trouxe e a janela de silencio.** Os 30 dias em que o agente
-nao responde continuam sendo politica da RN-03.5, e
-`SituacaoDaConversa.silencia_o_agente` (`repositorio.py`) continua exigindo
-`FORA_DE_ESCOPO`. Uma conversa fechada por inatividade e respondida na
-mensagem seguinte -- que e o que a RN-02.3 pede.
+**E o que se ganha com o motivo novo e a escrituracao, nao a janela de
+silencio.** Os 30 dias em que o agente nao responde sao politica da RN-03.5, e
+`SituacaoDaConversa.silencia_o_agente` (`repositorio.py`) exige
+`FORA_DE_ESCOPO` para aplica-los -- motivo novo entra no silencio so se quem o
+acrescentar decidir isso. Por omissao, uma conversa fechada por inatividade
+continua sendo respondida na mensagem seguinte, que e o que a RN-02.3 pede.
 
 `motivo_do_encerramento` e vocabulario e nao booleano justamente para essa
 extensao -- ver `MotivoDoEncerramento` em `vocabulario.py` para a razao por
