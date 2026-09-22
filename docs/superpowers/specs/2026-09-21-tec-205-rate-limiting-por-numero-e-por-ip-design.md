@@ -1,6 +1,6 @@
 # TEC-205 — Rate limiting por número e por IP
 
-**Status:** desenhado
+**Status:** implementado
 **Card:** [TEC-205](https://eduardodurieuxlopes.atlassian.net/browse/TEC-205)
 **Branch:** `feat/tec-205-rate-limiting-por-numero-e-por-ip`
 **Origem:** RNF-16 (SRS v1.0); RT-04. Épico TEC-200 (Segurança, privacidade e conformidade).

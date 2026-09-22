@@ -39,7 +39,7 @@ INSERT INTO sonda VALUES ('received');  -- ERROR: violates check constraint
 
 ### O que uma violação real despejaria, e para onde isso vai
 
-Medido sobre a tabela `messages` de verdade, dentro de uma transação revertida — a linha da `DETAIL` abaixo foi montada à mão para a sonda, e isso importa para o campo `conversation_key`: ela sai aqui como `whatsapp:5511987654321`, mas `_persist` grava `item.sender_external_id` **cru**, sem prefixo de canal (`service.py:98`, cujo comentário diz "Quem fala e o lead, entao a conversa e a dele"). A conclusão abaixo — o telefone aparece dentro do `conversation_key` — continua valendo; a amostra é que engana sobre a forma dele.
+Medido sobre a tabela `messages` de verdade, dentro de uma transação revertida — a linha da `DETAIL` abaixo foi montada à mão para a sonda, e isso importa para o campo `conversation_key`: ela sai aqui como `whatsapp:5511987654321`, mas `_persist` grava `item.sender_external_id` **cru**, sem prefixo de canal (`service.py:148`, cujo comentário diz "Quem fala e o lead, entao a conversa e a dele"). A conclusão abaixo — o telefone aparece dentro do `conversation_key` — continua valendo; a amostra é que engana sobre a forma dele.
 
 ```
 ERROR:  new row for relation "messages" violates check constraint "ck_sonda_direction"
