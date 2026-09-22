@@ -178,6 +178,41 @@ class Settings(BaseSettings):
     # demais no piloto.
     debounce_de_rajada_segundos: float = 6.0
 
+    # RNF-16 (TEC-205). Zero desliga, pela mesma convencao do vizinho acima.
+    #
+    # A janela dos dois e de um minuto e NAO e configuravel: ela nao e ajuste,
+    # e a unidade em que o requisito esta escrito. Vive em
+    # `infra/rate_limit.JANELA_DE_UM_MINUTO`.
+    #
+    # "Configuravel sem deploy" da card e atendido ate onde o repo alcanca
+    # hoje: variavel de ambiente, que em container e restart e nao rebuild.
+    # Alterar em runtime exigiria ler a configuracao de fora do processo, que e
+    # subsistema do epico RF-19 -- a mesma lacuna que `followup/cadencia.py` e
+    # `outbound/antispam.py` ja declaram. Nao a resolva aqui de passagem.
+    rate_limit_mensagens_por_minuto: int = 20
+    rate_limit_requisicoes_por_ip_por_minuto: int = 100
+
+    # O atraso aplicado ao excedente por numero, no lugar da janela de
+    # debounce. Fixo e nao "ate a janela abrir": a versao precisa chegaria a
+    # 60s e estouraria a folga da invariante da TEC-128 -- ver
+    # `test_job_timeout_cabe_dentro_da_janela_do_sweeper`, que e quem prende
+    # este numero. Subi-lo sem olhar aquele teste reabre uma conta de tres
+    # termos que mora em dois arquivos.
+    #
+    # `float` e nao `int` pela razao dos vizinhos: o teste precisa de
+    # centesimos de segundo.
+    atraso_de_backoff_segundos: float = 30.0
+
+    # De onde sai o IP que o limitador conta. Desligado, e o socket
+    # (`request.client.host`), que nao e forjavel. Ligado, e o ULTIMO salto de
+    # `X-Forwarded-For` -- o ultimo, e nao o primeiro, porque e o unico que o
+    # proxy imediato escreveu e portanto o unico que o cliente nao controla.
+    #
+    # Ligue quando a API estiver atras de proxy ou ingress. Sem isso, o limite
+    # por IP la vira um limite global por proxy: todos os visitantes do widget
+    # dividem as mesmas 100 requisicoes.
+    confiar_em_forwarded_for: bool = False
+
     # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
     # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link
     # composto sobre uma base vazia continua sendo um caminho valido -- ver a
@@ -597,6 +632,38 @@ class Settings(BaseSettings):
                 f"0 <= inicio < fim <= 23; recebi inicio={self.atendimento_horario_inicio} "
                 f"e fim={self.atendimento_horario_fim}. Horario invertido ou vazio faz todo "
                 "lead que pedir humano receber o texto de fora do horario, sempre."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _recusar_rate_limit_impossivel(self) -> "Settings":
+        """Numero negativo aqui falha em silencio ou inverte o fluxo.
+
+        Limite negativo cai no mesmo ramo que o zero (`limite <= 0` em
+        `consumir`) e desliga o limitador -- so que parecendo configurado, que
+        e a pior das duas coisas. Atraso negativo vira `_defer_by` para o
+        passado e o excedente seria processado ANTES da mensagem que respeitou
+        o limite.
+
+        `ValueError` e nao `ConfiguracaoInsegura` pelo criterio ja aplicado em
+        `_recusar_horario_de_envio_impossivel`: isto nao roda sem a protecao
+        que devia ter, isto deixa de operar.
+        """
+        if self.rate_limit_mensagens_por_minuto < 0:
+            raise ValueError(
+                "rate_limit_mensagens_por_minuto nao pode ser negativo; recebi "
+                f"{self.rate_limit_mensagens_por_minuto}. Use 0 para desligar o limite."
+            )
+        if self.rate_limit_requisicoes_por_ip_por_minuto < 0:
+            raise ValueError(
+                "rate_limit_requisicoes_por_ip_por_minuto nao pode ser negativo; recebi "
+                f"{self.rate_limit_requisicoes_por_ip_por_minuto}. Use 0 para desligar."
+            )
+        if self.atraso_de_backoff_segundos < 0:
+            raise ValueError(
+                "atraso_de_backoff_segundos nao pode ser negativo; recebi "
+                f"{self.atraso_de_backoff_segundos}. Um defer negativo agendaria o "
+                "excedente para antes de quem respeitou o limite."
             )
         return self
 
