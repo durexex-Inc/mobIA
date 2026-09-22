@@ -3956,11 +3956,33 @@ async def _entregar_texto_fixo(
         # tem uma reserva para este (message_id, kind) de uma tentativa
         # anterior. Gravar aqui seria a mesma fala fantasma que aquele bloco
         # existe para evitar -- so que para o texto fixo do bloqueio.
-        log.error(
-            "turno.reentrega_suprimida",
-            channel=message.channel,
-            message_id=str(message.id),
-        )
+        #
+        # **A recusa de entrada e a excecao, e ela e o caminho ESPERADO desde a
+        # TEC-298 (D4).** Quando a reserva dela sobrevive, o turno continua para
+        # responder a pergunta pendente -- a supressao aqui e o mecanismo que
+        # impede a recusa de sair duas vezes, nao um acidente. `error` e o
+        # alarme de dado sumido, e dispara-lo sobre algo que a passada anterior
+        # entregou e alarme falso.
+        #
+        # `warning` e nao `info`: a reserva sobrevivente e evidencia forte de
+        # entrega, NAO e prova. Ela tambem sobrevive se o worker morreu entre o
+        # commit da reserva e o `_deliver`, ou se o proprio `_liberar` falhou
+        # (que tem alarme proprio, `outbound.liberacao_falhou`). Nessas duas
+        # rotas a recusa de fato nao chegou, e `info` as esconderia. E a mesma
+        # ressalva que `kinds_reservados` ja documenta: presenca significa
+        # "encerrado", nao "entregue".
+        if kind == KIND_DA_RECUSA_DE_ENTRADA:
+            log.warning(
+                "turno.recusa_ja_reservada",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
+        else:
+            log.error(
+                "turno.reentrega_suprimida",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
         return "reentrega_suprimida"
 
     recorder = MessageRecorder(session_factory)

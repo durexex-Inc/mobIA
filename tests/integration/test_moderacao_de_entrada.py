@@ -750,3 +750,69 @@ async def test_recusa_barrada_por_optout_concorrente_nao_responde(
     assert resultado == "bloqueado_por_optout"
     assert resultado != "reentrega_suprimida"
     assert outbound.entregues == [], "a guarda nunca chega a chamar _deliver"
+
+
+async def test_recusa_ja_reservada_nao_alarma_como_dado_sumido(
+    session: AsyncSession,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_entrada,
+    caplog,
+) -> None:
+    """TEC-298, D4. A supressao da recusa nao e perda, e o log para de dizer que e.
+
+    `error` e o nivel que o alerta observa -- o "alarme de dado sumido". Dispara-lo
+    sobre uma recusa que a passada anterior entregou acorda alguem a toa, e ainda
+    por cima no meio de um caso em que o que se perdeu foi OUTRA coisa.
+
+    `warning` e nao `info` de proposito: a reserva sobrevivente e evidencia forte
+    de entrega, nao prova. Ela tambem sobrevive se o worker morreu entre o commit
+    da reserva e o `_deliver`, ou se o proprio `_liberar` falhou.
+    """
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    await gravar(
+        session,
+        created_at=datetime.now(UTC) - timedelta(minutes=1),
+        texto="tem apartamento de 2 quartos?",
+    )
+    carregadora = await semear_entrada(session, texto="xingamento qualquer")
+
+    falha = _OutboundQueFalhaDepoisDaRecusa(get_sessionmaker())
+    with pytest.raises(EnvioRetentavel):
+        await executar_turno(
+            get_sessionmaker(),
+            message=carregadora,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=falha,
+            moderador=moderador_fake(bloqueia_entrada=True),
+            agendador=AgendadorNoop(),
+        )
+
+    with caplog.at_level(logging.INFO):
+        await executar_turno(
+            get_sessionmaker(),
+            message=carregadora,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=OutboundFake(get_sessionmaker()),
+            moderador=moderador_fake(bloqueia_entrada=True),
+            agendador=AgendadorNoop(),
+        )
+
+    erros = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not [r for r in erros if "turno.reentrega_suprimida" in r.getMessage()], (
+        "a recusa suprimida nao pode acordar o alarme de dado sumido"
+    )
+    avisos = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "turno.recusa_ja_reservada" in r.getMessage()
+    ]
+    assert len(avisos) == 1
