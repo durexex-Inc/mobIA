@@ -214,13 +214,29 @@ def test_job_timeout_cabe_dentro_da_janela_do_sweeper() -> None:
     estao `xfail` porque a conta nao fecha, mas `test_o_orcamento_estourado_nao_piora`
     e verde e afirma `job_timeout >= 240`, mais forte que qualquer piso que
     este teste poderia declarar aqui.
+
+    A TEC-205 acrescentou o terceiro candidato a espera: `atraso_de_backoff_segundos`
+    (30s por default) substitui a janela de debounce no caminho do excedente do
+    rate limit. Com os defaults de hoje a folga cai de 54s para 30s --
+    max(6, 30) + 240 = 270 < 300. Subir o backoff sem olhar este teste reabre a
+    conta.
     """
     from mobia.app.config import get_settings
     from mobia.workers.main import WorkerSettings
 
     settings = get_settings()
+    # Desde a TEC-205 o atraso que antecede o job nem sempre e a janela de
+    # debounce: o excedente do rate limit por numero e enfileirado com
+    # `atraso_de_backoff_segundos` no lugar dela. Quem precisa caber e o MAIOR
+    # dos dois, porque e ele que define o pior caso entre o carimbo de
+    # `queued_at` (feito na ingestao, antes de qualquer espera) e o fim do
+    # turno.
+    espera_maxima_antes_do_job = max(
+        settings.debounce_de_rajada_segundos,
+        settings.atraso_de_backoff_segundos,
+    )
     assert (
-        settings.debounce_de_rajada_segundos + WorkerSettings.job_timeout
+        espera_maxima_antes_do_job + WorkerSettings.job_timeout
         < settings.sweep_inflight_after_seconds
     )
 

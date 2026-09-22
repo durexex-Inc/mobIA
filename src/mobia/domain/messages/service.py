@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
 from mobia.domain.humano.deteccao import pediu_humano
+from mobia.domain.limites.eventos import registrar_bloqueio
+from mobia.domain.limites.models import ESCOPO_NUMERO
 from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
@@ -19,6 +21,7 @@ from mobia.domain.optout.deteccao import pediu_optout
 from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 from mobia.infra.db import motivo_do_erro_de_banco
 from mobia.infra.queue import enqueue_process_message
+from mobia.infra.rate_limit import JANELA_DE_UM_MINUTO, chave_de_numero, consumir
 
 log = structlog.get_logger(__name__)
 
@@ -49,17 +52,27 @@ class IngestionService:
         gravadas = await self._persist(parsed, channel)
         # A leitura da config mora AQUI, uma vez por lote, e nao dentro de
         # `_try_enqueue`: quem decide o atraso por mensagem e a ingestao. O que
-        # e unico e a LEITURA da janela, nao o atraso aplicado -- cada mensagem
-        # do lote recebe zero ou a janela, decidido logo abaixo. Ler dentro de
-        # `_try_enqueue` colocaria a leitura de configuracao na camada errada.
-        janela = get_settings().debounce_de_rajada_segundos
+        # e unico e a LEITURA da configuracao, nao o atraso aplicado -- cada
+        # mensagem do lote recebe zero, a janela de debounce ou, desde a
+        # TEC-205, o backoff do rate limit por numero, decidido logo abaixo.
+        # Ler dentro de `_try_enqueue` colocaria a leitura de configuracao na
+        # camada errada.
+        settings = get_settings()
+        janela = settings.debounce_de_rajada_segundos
+        limite = settings.rate_limit_mensagens_por_minuto
+        backoff = settings.atraso_de_backoff_segundos
         # Colapsa `provider_message_id` repetido dentro do MESMO envelope para
         # o texto da ULTIMA ocorrencia. So e inofensivo porque uma reentrega da
         # Meta traz sempre o mesmo texto (o `wamid` e do provedor, nao nosso) --
         # nao ha caso em que duas ocorrencias do mesmo id tragam corpos
         # diferentes para este dicionario escolher entre eles.
         texto_de = {item.provider_message_id: item.text_body for item in parsed}
+        # O numero do lead por `provider_message_id`, pelo mesmo motivo e com a
+        # mesma ressalva de `texto_de` acima: `gravadas` traz id interno e id
+        # do provedor, nao o remetente.
+        remetente_de = {item.provider_message_id: item.sender_external_id for item in parsed}
         for message_id, provider_message_id in gravadas:
+            texto = texto_de.get(provider_message_id) or ""
             # O opt-out nao espera a janela (RN-01.6 + RN-14), e desde a
             # TEC-128 (onda final) o pedido de humano tambem nao (RN-16.1,
             # emenda E-04: o handoff precisa nascer em ate 5s, e o debounce
@@ -67,9 +80,46 @@ class IngestionService:
             # antes de qualquer handoff). `pediu_optout` e `pediu_humano` sao
             # puras e deterministicas, sem chamada paga, e aqui o texto ainda
             # esta em claro -- e o unico ponto do fluxo onde ele esta.
-            texto = texto_de.get(provider_message_id) or ""
             pediu = pediu_optout(texto) or pediu_humano(texto)
-            await self._try_enqueue(message_id, atraso_segundos=0.0 if pediu else janela)
+
+            # A cota e consumida por TODA mensagem, inclusive a que pede
+            # opt-out ou humano. Contar so as demais deixaria quem inunda o
+            # canal com "pare" fora de qualquer registro -- e a contagem aqui
+            # e o que a tabela de eventos publica. O que o opt-out fura e o
+            # ATRASO, nao a contagem: um limite de volume atrasar justamente o
+            # pedido de parar de receber mensagens seria o contrario do que a
+            # RN-14 promete.
+            consumo = await consumir(
+                self._queue,
+                chave=chave_de_numero(channel, remetente_de.get(provider_message_id, "")),
+                limite=limite,
+                janela_segundos=JANELA_DE_UM_MINUTO,
+            )
+
+            if consumo.permitido:
+                atraso = 0.0 if pediu else janela
+            else:
+                atraso = 0.0 if pediu else backoff
+                log.warning(
+                    "ratelimit.blocked",
+                    escopo=ESCOPO_NUMERO,
+                    conversation_key=remetente_de.get(provider_message_id, ""),
+                    channel=channel,
+                    volume=consumo.volume,
+                    limite=limite,
+                )
+                await registrar_bloqueio(
+                    self._session_factory,
+                    self._queue,
+                    escopo=ESCOPO_NUMERO,
+                    chave=remetente_de.get(provider_message_id, ""),
+                    channel=channel,
+                    volume=consumo.volume,
+                    limite=limite,
+                    message_id=message_id,
+                )
+
+            await self._try_enqueue(message_id, atraso_segundos=atraso)
         return [message_id for message_id, _ in gravadas]
 
     async def _persist(
