@@ -675,3 +675,17 @@ def test_backoff_igual_a_janela_do_sweeper_e_recusado() -> None:
     """
     with pytest.raises(ValidationError, match="atraso_de_backoff_segundos"):
         Settings(atraso_de_backoff_segundos=90.0, sweep_inflight_after_seconds=90)
+
+
+def test_templates_aprovados_default_e_vazio() -> None:
+    """RN-13.6 (TEC-186): sem operar a config, nada esta aprovado -- e a
+    mitigacao do RT-03, todo follow-up fora da janela vira tarefa."""
+    assert Settings(_env_file=None).templates_aprovados == frozenset()
+
+
+def test_templates_aprovados_parseia_lista_por_virgula_sem_vazios() -> None:
+    s = Settings(
+        _env_file=None,
+        whatsapp_templates_aprovados=" followup_queda_de_preco , followup_convite ,",
+    )
+    assert s.templates_aprovados == frozenset({"followup_queda_de_preco", "followup_convite"})

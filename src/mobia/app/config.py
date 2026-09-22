@@ -133,6 +133,21 @@ class Settings(BaseSettings):
     whatsapp_access_token: str = ""
     whatsapp_api_base: str = "https://graph.facebook.com/v21.0"
 
+    # RN-13.6 (TEC-186): os nomes dos templates da Meta APROVADOS, separados
+    # por virgula. Fica em configuracao, e nao em codigo, de proposito: qual
+    # template esta aprovado e fato externo -- a submissao junto a Meta esta
+    # fora do escopo da card, e o RT-03 avisa que a aprovacao pode nao chegar
+    # no prazo do hackathon.
+    #
+    # **Default VAZIO, e isso e a mitigacao do RT-03 em vigor.** Sem nenhum
+    # template aprovado, todo follow-up fora da janela de 24h vira tarefa para
+    # o corretor (ver `escolher_template` em `domain/followup/template.py`) --
+    # o contorno que a propria RN-13.6 declara. Quando a aprovacao chegar, a
+    # operacao acrescenta os nomes aqui, sem deploy de codigo. O catalogo de
+    # >= 3 templates que a regra pede e codigo (`TEMPLATES`); a aprovacao e
+    # este campo.
+    whatsapp_templates_aprovados: str = ""
+
     # SMTP da notificacao ao corretor (TEC-280). Provedor NENHUM esta escolhido:
     # a decisao de 19/09/2026 foi falar SMTP direto justamente para que SES,
     # Resend ou Postmark fiquem sendo configuracao e nao codigo -- a escolha de
@@ -691,6 +706,19 @@ class Settings(BaseSettings):
                 "que nao depende dele."
             )
         return self
+
+    @property
+    def templates_aprovados(self) -> frozenset[str]:
+        """Os nomes de template aprovados, ja separados e sem vazios. TEC-186.
+
+        Property e nao um `frozenset` no campo: a fonte e uma variavel de
+        ambiente (uma string), e derivar aqui evita um parser de env que
+        falharia alto por causa de um espaco a mais. `frozenset` para bater
+        com a assinatura de `escolher_template` e para ser imutavel.
+        """
+        return frozenset(
+            nome.strip() for nome in self.whatsapp_templates_aprovados.split(",") if nome.strip()
+        )
 
     @property
     def fuso_de_envio(self) -> ZoneInfo:
