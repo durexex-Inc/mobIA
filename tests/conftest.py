@@ -186,6 +186,10 @@ TABELAS = (
     # chega encerrada no proximo, e a guarda do topo de turno (Task 4) cala o
     # turno antes de qualquer asserta.
     "conversas",
+    # TEC-205. Append-only como `moderation_events`: sem o truncate, o
+    # bloqueio registrado por um teste vira evidencia do proximo, e a asserta
+    # de "uma linha so por janela" passaria a contar linha alheia.
+    "rate_limit_events",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
