@@ -648,6 +648,19 @@ class Settings(BaseSettings):
         `ValueError` e nao `ConfiguracaoInsegura` pelo criterio ja aplicado em
         `_recusar_horario_de_envio_impossivel`: isto nao roda sem a protecao
         que devia ter, isto deixa de operar.
+
+        **Nao fecha a conta inteira.** A invariante de quatro termos --
+        `max(debounce_de_rajada_segundos, atraso_de_backoff_segundos) +
+        job_timeout < sweep_inflight_after_seconds` -- continua so no teste
+        (`test_job_timeout_cabe_dentro_da_janela_do_sweeper`), porque
+        `job_timeout` mora em `WorkerSettings` e trazer isso para ca abriria
+        um ciclo de import. O que esta guarda pega, sem precisar de
+        `job_timeout`, e o caso onde `atraso_de_backoff_segundos` sozinho ja
+        estoura `sweep_inflight_after_seconds` -- os dois campos vivem no
+        MESMO `Settings` -- e o operador que sobe
+        `ATRASO_DE_BACKOFF_SEGUNDOS` no `.env` sem saber da invariante faz o
+        sweeper reenfileirar um turno ainda em voo antes mesmo de o backoff
+        acabar.
         """
         if self.rate_limit_mensagens_por_minuto < 0:
             raise ValueError(
@@ -664,6 +677,18 @@ class Settings(BaseSettings):
                 "atraso_de_backoff_segundos nao pode ser negativo; recebi "
                 f"{self.atraso_de_backoff_segundos}. Um defer negativo agendaria o "
                 "excedente para antes de quem respeitou o limite."
+            )
+        if self.atraso_de_backoff_segundos >= self.sweep_inflight_after_seconds:
+            raise ValueError(
+                "atraso_de_backoff_segundos "
+                f"({self.atraso_de_backoff_segundos}) precisa ser menor que "
+                f"sweep_inflight_after_seconds ({self.sweep_inflight_after_seconds}); "
+                "do contrario o excedente do rate limit por numero fica em voo por mais "
+                "tempo do que o sweeper espera antes de reenfileirar, e a mesma conversa "
+                "roda duas vezes em paralelo. Isto nao fecha a conta inteira -- "
+                "`job_timeout` tambem entra, ver "
+                "`test_job_timeout_cabe_dentro_da_janela_do_sweeper` -- mas pega o caso "
+                "que nao depende dele."
             )
         return self
 

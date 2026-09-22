@@ -657,3 +657,21 @@ def test_backoff_negativo_e_recusado() -> None:
     """
     with pytest.raises(ValidationError):
         Settings(atraso_de_backoff_segundos=-1.0)
+
+
+def test_backoff_maior_que_a_janela_do_sweeper_e_recusado() -> None:
+    """O caso absurdo que nao precisa de `job_timeout` para ser pego: os dois
+    campos vivem no mesmo `Settings`, entao a guarda nao fecha ciclo de
+    import nenhum -- so nao fecha a conta inteira (essa continua so no
+    teste do worker).
+    """
+    with pytest.raises(ValidationError, match="atraso_de_backoff_segundos"):
+        Settings(atraso_de_backoff_segundos=300.0, sweep_inflight_after_seconds=300)
+
+
+def test_backoff_igual_a_janela_do_sweeper_e_recusado() -> None:
+    """`>=`, nao `>`: igualdade ainda deixa o sweeper reenfileirar no mesmo
+    instante em que o backoff terminaria, sem folga nenhuma.
+    """
+    with pytest.raises(ValidationError, match="atraso_de_backoff_segundos"):
+        Settings(atraso_de_backoff_segundos=90.0, sweep_inflight_after_seconds=90)

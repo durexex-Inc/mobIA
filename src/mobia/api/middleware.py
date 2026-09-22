@@ -1,8 +1,11 @@
 """O limite de requisicoes por IP (TEC-205, RNF-16).
 
 Primeiro middleware do projeto. Ate a TEC-205 `create_app` so fazia
-`include_router`, e ate o `correlation_id` era setado dentro do handler.
+`include_router` e `/health`, e ate o `correlation_id` era setado dentro do
+handler.
 """
+
+import math
 
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -62,6 +65,12 @@ def resolver_ip(
 # `/health`: um probe de liveness que batesse acima do limite receberia 429 e
 # o orquestrador reiniciaria o processo. O limitador derrubando exatamente o
 # que ele deveria proteger.
+#
+# A comparacao e por igualdade exata sobre `request.url.path`. Montar o app
+# sob um prefixo -- um ingress com rewrite, por exemplo -- faria as duas
+# isencoes pararem de casar em silencio: nenhum erro, so `/health` deixando
+# de ser isento, que e justamente o modo de falha caro que a isencao acima
+# existe para evitar.
 ROTAS_ISENTAS = frozenset({"/webhooks/whatsapp", "/health"})
 
 
@@ -112,4 +121,6 @@ class RateLimitPorIP(BaseHTTPMiddleware):
             volume=consumo.volume,
             limite=limite,
         )
-        return Response(status_code=429, headers={"Retry-After": "60"})
+        return Response(
+            status_code=429, headers={"Retry-After": str(math.ceil(JANELA_DE_UM_MINUTO))}
+        )
