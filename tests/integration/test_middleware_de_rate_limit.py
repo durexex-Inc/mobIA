@@ -6,7 +6,7 @@ from mobia.app.config import get_settings
 from mobia.domain.limites.models import ESCOPO_IP, RateLimitEvent
 
 
-async def test_dentro_do_limite_passa(client, monkeypatch) -> None:
+async def test_dentro_do_limite_passa(client, monkeypatch, caches_de_cliente_limpos) -> None:
     monkeypatch.setenv("RATE_LIMIT_REQUISICOES_POR_IP_POR_MINUTO", "5")
     get_settings.cache_clear()
 
@@ -14,7 +14,9 @@ async def test_dentro_do_limite_passa(client, monkeypatch) -> None:
         assert (await client.get("/health")).status_code == 200
 
 
-async def test_o_excedente_recebe_429_com_retry_after(client, monkeypatch) -> None:
+async def test_o_excedente_recebe_429_com_retry_after(
+    client, monkeypatch, caches_de_cliente_limpos
+) -> None:
     """429 aqui e seguro justamente porque o webhook da Meta esta isento."""
     monkeypatch.setenv("RATE_LIMIT_REQUISICOES_POR_IP_POR_MINUTO", "3")
     get_settings.cache_clear()
@@ -27,7 +29,9 @@ async def test_o_excedente_recebe_429_com_retry_after(client, monkeypatch) -> No
     assert resposta.headers["Retry-After"] == "60"
 
 
-async def test_o_webhook_da_meta_nao_e_limitado(client, monkeypatch) -> None:
+async def test_o_webhook_da_meta_nao_e_limitado(
+    client, monkeypatch, caches_de_cliente_limpos
+) -> None:
     """O trafego dali chega todo do IP da Meta: 100/min nao conteria abuso,
     derrubaria operacao -- e derrubaria com 429, que e nao-2xx e faria a Meta
     re-entregar, exatamente o retry que o desenho da TEC-122 evita.
@@ -40,7 +44,7 @@ async def test_o_webhook_da_meta_nao_e_limitado(client, monkeypatch) -> None:
         assert resposta.status_code != 429
 
 
-async def test_health_nao_e_limitado(client, monkeypatch) -> None:
+async def test_health_nao_e_limitado(client, monkeypatch, caches_de_cliente_limpos) -> None:
     """Probe de liveness batendo acima do limite receberia 429 e o orquestrador
     reiniciaria o processo -- o limitador derrubando o que devia proteger.
     """
@@ -51,7 +55,9 @@ async def test_health_nao_e_limitado(client, monkeypatch) -> None:
         assert (await client.get("/health")).status_code == 200
 
 
-async def test_o_bloqueio_por_ip_vira_evento(client, session, monkeypatch) -> None:
+async def test_o_bloqueio_por_ip_vira_evento(
+    client, session, monkeypatch, caches_de_cliente_limpos
+) -> None:
     monkeypatch.setenv("RATE_LIMIT_REQUISICOES_POR_IP_POR_MINUTO", "2")
     get_settings.cache_clear()
 
@@ -65,7 +71,9 @@ async def test_o_bloqueio_por_ip_vira_evento(client, session, monkeypatch) -> No
     assert linha.message_id is None
 
 
-async def test_limite_zero_desliga_o_middleware(client, session, monkeypatch) -> None:
+async def test_limite_zero_desliga_o_middleware(
+    client, session, monkeypatch, caches_de_cliente_limpos
+) -> None:
     monkeypatch.setenv("RATE_LIMIT_REQUISICOES_POR_IP_POR_MINUTO", "0")
     get_settings.cache_clear()
 

@@ -84,7 +84,9 @@ async def test_numero_que_excede_o_limite_entra_em_backoff(
     assert max(defers) > 20_000
 
 
-async def test_ip_que_excede_o_limite_no_widget(client, monkeypatch) -> None:
+async def test_ip_que_excede_o_limite_no_widget(
+    client, monkeypatch, caches_de_cliente_limpos
+) -> None:
     """Cenario: IP que excede o limite no widget.
 
     O widget web e o TEC-124 e ainda nao existe; o limite por IP vale para
