@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import structlog
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.messages.models import Message
@@ -72,9 +72,31 @@ async def marcar_bloqueada(
     que o controle de risco da RN-B04 falha em silencio. Se qualquer uma
     falhar, nenhuma vale e a excecao sobe, pelo motivo no topo deste modulo.
 
-    O evento da segunda passada do sweeper e uma linha a mais numa tabela
-    append-only, e nao um problema: `moderation_events` registra recusas, e
-    duas tentativas de recusar a mesma fala foram duas recusas.
+    **A segunda passada NAO chega mais aqui pelo caminho do turno (TEC-298,
+    D5) -- e so por ele.** Ate aquela card, uma retentativa remoderava e esta
+    funcao gravava uma segunda linha para a mesma fala -- e o argumento
+    escrito aqui era que "duas tentativas de recusar a mesma fala foram duas
+    recusas". Ele deixou de valer NESSE caminho: `_ModeracaoDoTurno.resolver`
+    (`domain/agente/turno.py`) consulta `veredito_ja_registrado` antes de
+    chamar o moderador, e a linha de `moderation_events` que ele grava passou
+    a significar uma FALA recusada em vez de uma TENTATIVA de recusa. Quem
+    audita conta falas nesse caminho -- ver a Emenda E-04 da RN-04.5.
+
+    **`moderar_entrada_e_marcar` tem um SEGUNDO chamador, e este continua sem
+    a blindagem.** `_moderar_superada` (`workers/jobs/process_message.py`)
+    chama esta funcao direto, sem consultar `veredito_ja_registrado` nem nada
+    equivalente -- porque a mensagem SUPERADA nunca passa por
+    `_ModeracaoDoTurno` (ela fecha "agrupado" antes de `executar_turno`
+    rodar). Uma mensagem superada bloqueada, num turno que falhe depois e
+    seja reprocessado pelo ramo do agrupado, ainda repaga a moderacao e ainda
+    grava uma segunda linha de auditoria para a mesma fala -- exatamente o
+    comportamento antigo, so que neste ramo. Escopo, nao descuido: a D5 desta
+    card tratava da retentativa do TURNO bloqueado, que e onde a card
+    nasceu -- o ramo do agrupado nao estava no recorte.
+
+    O `UPDATE` continua sendo idempotente de proposito: se uma rota futura
+    voltar a passar por aqui duas vezes, reescrever o carimbo com a hora nova
+    e inofensivo -- o que importa e a coluna deixar de ser NULL.
     """
     async with session_factory() as session:
         await session.execute(
@@ -157,6 +179,50 @@ async def moderar_entrada_e_marcar(
         categoria=veredito.categoria or CATEGORIA_OUTRO,
     )
     return veredito
+
+
+async def veredito_ja_registrado(
+    session_factory: async_sessionmaker[AsyncSession], *, message_id: UUID
+) -> Veredito | None:
+    """O veredito que uma passada anterior ja gravou, ou None (TEC-298, D5).
+
+    `bloqueada_em` nao-nulo e o veredito persistido do caso BLOQUEADO: so
+    `marcar_bloqueada` escreve essa coluna, e ela escreve junto com o
+    `ModerationEvent`, no mesmo commit. Uma retentativa que encontra o carimbo
+    nao precisa pagar a moderacao de novo nem gravar uma segunda linha de
+    auditoria para a mesma fala -- ver a Emenda E-04 da RN-04.5.
+
+    **Devolve None para o caso LIBERADO, e isso nao e lacuna de implementacao.**
+    "Moderou e liberou" nao e persistido em lugar nenhum: `bloqueada_em` nulo
+    nao distingue "julgado e liberado" de "nunca julgado". A assimetria vem do
+    desenho da TEC-236 e nao desta card. A consequencia e real e aceita: um
+    turno que morre DEPOIS de uma moderacao limpa paga duas vezes.
+
+    **O `motivo` volta vazio.** Ele nao e persistido -- so alimenta o log
+    `moderacao.entrada_bloqueada`, que a passada anterior ja emitiu. Inventar
+    um motivo aqui seria pior que a lacuna: quem lesse o log acreditaria nele.
+    """
+    async with session_factory() as session:
+        bloqueada_em = await session.scalar(
+            select(Message.bloqueada_em).where(Message.id == message_id)
+        )
+        if bloqueada_em is None:
+            return None
+        categoria = await session.scalar(
+            select(ModerationEvent.categoria)
+            .where(
+                ModerationEvent.message_id == message_id,
+                ModerationEvent.direcao == Direcao.ENTRADA.value,
+            )
+            .order_by(ModerationEvent.created_at.desc())
+            .limit(1)
+        )
+        # `or CATEGORIA_OUTRO` pelo mesmo motivo de `moderar_entrada_e_marcar`:
+        # a linha de auditoria pode nao existir se a retencao a levou (ela nao
+        # tem FK para `messages`, de proposito -- ver o comentario de
+        # `ModerationEvent.message_id`), e o veredito nao pode sair sem
+        # categoria por causa de um registro que expirou.
+        return Veredito(bloqueado=True, motivo="", categoria=categoria or CATEGORIA_OUTRO)
 
 
 async def registrar_bloqueio_de_saida(

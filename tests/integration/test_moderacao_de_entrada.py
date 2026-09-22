@@ -2,8 +2,9 @@ import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from conftest import CANAL_AGENTE, CONVERSA_AGENTE  # type: ignore[import-not-found]
-from sqlalchemy import select
+import pytest
+from conftest import CANAL_AGENTE, CONVERSA_AGENTE, OutboundFake  # type: ignore[import-not-found]
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from test_rajada import gravar  # type: ignore[import-not-found]
 from test_turno_optout import _OutboundQueOptaNoMeio  # type: ignore[import-not-found]
@@ -12,6 +13,7 @@ from mobia.app.config import MODELO_SEM_CHAMADA
 from mobia.domain.agente.turno import SUBAGENTE_MODERACAO
 from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.messages.status import MessageStatus
+from mobia.domain.moderacao.models import ModerationEvent
 from mobia.domain.moderacao.port import (
     KIND_DA_RECUSA_DE_ENTRADA,
     TEXTO_DA_RECUSA_DE_ENTRADA,
@@ -19,7 +21,7 @@ from mobia.domain.moderacao.port import (
     ModeracaoIndisponivel,
 )
 from mobia.domain.outbound.kinds import KIND_DA_RESPOSTA
-from mobia.domain.outbound.port import EnvioForaDaJanela
+from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRetentavel
 from mobia.domain.outbound.repositorio import kinds_reservados
 from mobia.infra.db import get_sessionmaker
 
@@ -520,6 +522,145 @@ async def test_bloqueada_com_pergunta_pendente_recusa_e_responde(
     assert reservados == {KIND_DA_RECUSA_DE_ENTRADA, KIND_DA_RESPOSTA}
 
 
+class _OutboundQueFalhaDepoisDaRecusa(OutboundFake):
+    """Entrega a recusa e falha na resposta -- a janela exata da TEC-298.
+
+    `EnvioRetentavel` e nao uma excecao qualquer: e a que `GuardedOutbound.send`
+    intercepta para liberar as reservas do GRUPO. O kind da recusa nao esta em
+    `_GRUPOS`, entao a reserva dela sobrevive -- que e justamente o estado que
+    a retentativa vai encontrar.
+    """
+
+    async def _deliver(self, message_id, kind, payload) -> None:
+        if kind == KIND_DA_RECUSA_DE_ENTRADA:
+            await super()._deliver(message_id, kind, payload)
+            return
+        raise EnvioRetentavel("a resposta nao saiu")
+
+
+async def test_retentativa_apos_recusa_entregue_responde_a_pendente(
+    session: AsyncSession,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_entrada,
+) -> None:
+    """TEC-298, D1 e D3. A rota de recuperacao da TEC-295 sobrevive ao reprocessamento.
+
+    Nao usa `rodar_turno` porque ele semeia uma entrada NOVA a cada chamada, e
+    aqui as duas passadas tem de rodar sobre a MESMA linha -- e o que o sweeper
+    faz.
+    """
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    await gravar(
+        session,
+        created_at=datetime.now(UTC) - timedelta(minutes=1),
+        texto="tem apartamento de 2 quartos?",
+    )
+    carregadora = await semear_entrada(session, texto="xingamento qualquer")
+
+    # Primeira passada: a recusa sai, a resposta falha.
+    falha = _OutboundQueFalhaDepoisDaRecusa(get_sessionmaker())
+    with pytest.raises(EnvioRetentavel):
+        await executar_turno(
+            get_sessionmaker(),
+            message=carregadora,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=falha,
+            moderador=moderador_fake(bloqueia_entrada=True),
+            agendador=AgendadorNoop(),
+        )
+    assert falha.entregues == [TEXTO_DA_RECUSA_DE_ENTRADA]
+
+    # Segunda passada: mesma linha, outbound sao. E o que o sweeper faz.
+    segundo_outbound = OutboundFake(get_sessionmaker())
+    classificador = classificador_fake()
+    resultado = await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador,
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=segundo_outbound,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
+    )
+
+    assert resultado == "respondido"
+    # O turno continuou: chamou o classificador e entregou a resposta.
+    assert classificador.chamadas == 1
+    # A recusa NAO sai de novo -- a reserva dela sobreviveu e a suprime.
+    assert TEXTO_DA_RECUSA_DE_ENTRADA not in segundo_outbound.entregues
+    assert len(segundo_outbound.entregues) == 1
+    # Os dois kinds reservados: a recusa da primeira passada, a resposta desta.
+    reservados = await kinds_reservados(get_sessionmaker(), message_id=carregadora.id)
+    assert reservados == {KIND_DA_RECUSA_DE_ENTRADA, KIND_DA_RESPOSTA}
+
+
+async def test_retentativa_sem_pendencia_continua_so_recusando(
+    session: AsyncSession,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_entrada,
+) -> None:
+    """TEC-298, D1+D7. Sem pendencia, o teto novo nao inventa pendencia onde nao ha.
+
+    Este teste NAO prova a D3 (a continuacao apos `"reentrega_suprimida"`):
+    no cenario sem pendencia, `if desfecho_da_recusa not in (...)` cai direto
+    em `if not tem_pendencia`, que devolve o mesmo `"reentrega_suprimida"` que
+    o guard antigo (`!= "respondido"`) devolveria sozinho -- por construcao,
+    nenhum teste distingue os dois guards aqui. Quem trava a D3 e
+    `test_retentativa_apos_recusa_entregue_responde_a_pendente`. O que este
+    teste trava e outra coisa: que `ha_fala_pendente_antes` com o
+    `teto_do_agente` novo continua dizendo False quando nao ha pergunta
+    pendente, e que a garantia da TEC-233 (nao responder ao historico sem
+    pendencia) vale tambem numa retentativa.
+    """
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    carregadora = await semear_entrada(session, texto="xingamento qualquer")
+
+    falha = _OutboundQueFalhaDepoisDaRecusa(get_sessionmaker())
+    # Sem pendencia a primeira passada ja retorna na recusa, sem chegar na
+    # entrega da resposta -- entao nao ha excecao a capturar aqui.
+    primeiro = await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=falha,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
+    )
+    assert primeiro == "respondido"
+
+    segundo_outbound = OutboundFake(get_sessionmaker())
+    classificador = classificador_fake()
+    resultado = await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador,
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=segundo_outbound,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
+    )
+
+    assert resultado == "reentrega_suprimida"
+    assert classificador.chamadas == 0, "sem pendencia, o modelo nao e chamado"
+    assert segundo_outbound.entregues == []
+
+
 async def test_bloqueada_sem_nada_pendente_so_recusa(
     session: AsyncSession,
     classificador_fake,
@@ -610,3 +751,212 @@ async def test_recusa_barrada_por_optout_concorrente_nao_responde(
     assert resultado == "bloqueado_por_optout"
     assert resultado != "reentrega_suprimida"
     assert outbound.entregues == [], "a guarda nunca chega a chamar _deliver"
+
+
+async def test_recusa_ja_reservada_nao_alarma_como_dado_sumido(
+    session: AsyncSession,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_entrada,
+    caplog,
+) -> None:
+    """TEC-298, D4. A supressao da recusa nao e perda, e o log para de dizer que e.
+
+    `error` e o nivel que o alerta observa -- o "alarme de dado sumido". Dispara-lo
+    sobre uma recusa que a passada anterior entregou acorda alguem a toa, e ainda
+    por cima no meio de um caso em que o que se perdeu foi OUTRA coisa.
+
+    `warning` e nao `info` de proposito: a reserva sobrevivente e evidencia forte
+    de entrega, nao prova. Ela tambem sobrevive se o worker morreu entre o commit
+    da reserva e o `_deliver`, ou se o proprio `_liberar` falhou.
+    """
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    await gravar(
+        session,
+        created_at=datetime.now(UTC) - timedelta(minutes=1),
+        texto="tem apartamento de 2 quartos?",
+    )
+    carregadora = await semear_entrada(session, texto="xingamento qualquer")
+
+    falha = _OutboundQueFalhaDepoisDaRecusa(get_sessionmaker())
+    with pytest.raises(EnvioRetentavel):
+        await executar_turno(
+            get_sessionmaker(),
+            message=carregadora,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=falha,
+            moderador=moderador_fake(bloqueia_entrada=True),
+            agendador=AgendadorNoop(),
+        )
+
+    with caplog.at_level(logging.INFO):
+        await executar_turno(
+            get_sessionmaker(),
+            message=carregadora,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=OutboundFake(get_sessionmaker()),
+            moderador=moderador_fake(bloqueia_entrada=True),
+            agendador=AgendadorNoop(),
+        )
+
+    erros = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not [r for r in erros if "turno.reentrega_suprimida" in r.getMessage()], (
+        "a recusa suprimida nao pode acordar o alarme de dado sumido"
+    )
+    avisos = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "turno.recusa_ja_reservada" in r.getMessage()
+    ]
+    assert len(avisos) == 1
+
+
+async def test_retentativa_nao_repaga_a_moderacao_nem_duplica_a_auditoria(
+    session: AsyncSession,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_entrada,
+) -> None:
+    """TEC-298, D5. `bloqueada_em` ja e o veredito persistido do caso bloqueado.
+
+    A retentativa nao pode pagar de novo por uma fala que ja foi julgada, nem
+    gravar uma segunda linha de auditoria para a mesma recusa -- ver a Emenda
+    E-04 da RN-04.5.
+    """
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    await gravar(
+        session,
+        created_at=datetime.now(UTC) - timedelta(minutes=1),
+        texto="tem apartamento de 2 quartos?",
+    )
+    carregadora = await semear_entrada(session, texto="xingamento qualquer")
+
+    moderador = moderador_fake(bloqueia_entrada=True)
+    falha = _OutboundQueFalhaDepoisDaRecusa(get_sessionmaker())
+    with pytest.raises(EnvioRetentavel):
+        await executar_turno(
+            get_sessionmaker(),
+            message=carregadora,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=falha,
+            moderador=moderador,
+            agendador=AgendadorNoop(),
+        )
+    assert moderador.entradas == 1
+
+    segundo_moderador = moderador_fake(bloqueia_entrada=True)
+    await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=OutboundFake(get_sessionmaker()),
+        moderador=segundo_moderador,
+        agendador=AgendadorNoop(),
+    )
+
+    assert segundo_moderador.entradas == 0, "a fala ja estava carimbada; nao se paga de novo"
+    await session.commit()
+    eventos = await session.scalar(
+        select(func.count())
+        .select_from(ModerationEvent)
+        .where(ModerationEvent.message_id == carregadora.id)
+    )
+    assert eventos == 1, "uma fala recusada, uma linha -- Emenda E-04 da RN-04.5"
+
+
+async def test_retentativa_apos_resposta_entregue_nao_reabre_pendencia(
+    session: AsyncSession,
+    classificador_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_entrada,
+) -> None:
+    """TEC-298, revisao final. A composicao D1+D3 reabre o alarme pelo kind da RESPOSTA.
+
+    Cenario: numa passada anterior a recusa E a resposta a pendencia ja foram
+    entregues (o caminho que `test_bloqueada_com_pergunta_pendente_recusa_e_responde`
+    prova para uma passada isolada), e o turno morre DEPOIS disso -- crash,
+    job_timeout, UPDATE ... PROCESSED caindo. Numa retentativa sobre a MESMA
+    linha, `veredito_ja_registrado` curto-circuita a moderacao (correto), mas
+    `teto_da_recusa` e o `created_at` da RESERVA da recusa -- que e anterior a
+    resposta, gravada DEPOIS dela. Com esse teto, `ha_fala_pendente_antes`
+    enxerga a fronteira de ANTES da recusa e ignora que a resposta ja saiu, e
+    `tem_pendencia` volta a `True` sobre uma pergunta que ja foi respondida.
+
+    Sem a guarda que consulta `kinds_reservados` por `KIND_DA_RESPOSTA`
+    aconteceriam duas coisas: (a) a continuacao pagaria o modelo de novo para
+    responder ao que ja foi respondido, e o `send` seria suprimido pela
+    reserva existente -- reabrindo, pelo kind da RESPOSTA, o mesmo alarme
+    falso que a D4 fechou pelo kind da RECUSA; e (b) pior que o alarme, se a
+    geracao nova quebrasse em duas mensagens onde a anterior coube numa,
+    `reply` seria suprimido e `reply_2` sairia sozinho -- a metade orfa que
+    `domain/outbound/kinds.py` descreve como corrupcao silenciosa. Este teste
+    trava que a guarda nova impede as duas: o classificador nao e chamado e
+    nada novo e entregue.
+    """
+    from mobia.domain.agente.turno import executar_turno
+    from mobia.domain.handoff.agendador import AgendadorNoop
+
+    await gravar(
+        session,
+        created_at=datetime.now(UTC) - timedelta(minutes=1),
+        texto="tem apartamento de 2 quartos?",
+    )
+    carregadora = await semear_entrada(session, texto="xingamento qualquer")
+
+    # Passada 1: a pendencia ja existe quando o turno comeca, entao recusa e
+    # resposta saem na MESMA passada -- o outbound e o `OutboundFake` normal,
+    # sem falha nenhuma.
+    primeiro_outbound = OutboundFake(get_sessionmaker())
+    primeiro = await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=primeiro_outbound,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
+    )
+    assert primeiro == "respondido"
+    assert len(primeiro_outbound.entregues) == 2
+
+    # Passada 2: mesma linha, como se o turno tivesse morrido depois da
+    # entrega acima. A recusa ja esta reservada (reentrega suprimida) e a
+    # resposta tambem -- a guarda nova tem de reconhecer isso e nao tentar
+    # responder de novo.
+    classificador = classificador_fake()
+    segundo_outbound = OutboundFake(get_sessionmaker())
+    segundo = await executar_turno(
+        get_sessionmaker(),
+        message=carregadora,
+        classificador=classificador,
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=segundo_outbound,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        agendador=AgendadorNoop(),
+    )
+
+    assert segundo == "reentrega_suprimida"
+    assert classificador.chamadas == 0, (
+        "a resposta ja foi entregue; nao ha pendencia para responder"
+    )
+    assert segundo_outbound.entregues == []

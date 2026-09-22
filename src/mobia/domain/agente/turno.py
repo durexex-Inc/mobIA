@@ -86,6 +86,7 @@ from mobia.domain.humano.deteccao import (
 from mobia.domain.messages.bloqueio import (
     moderar_entrada_e_marcar,
     registrar_bloqueio_de_saida,
+    veredito_ja_registrado,
 )
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import ha_fala_pendente_antes
@@ -119,7 +120,7 @@ from mobia.domain.outbound.port import (
     EnvioRetentavel,
     OutboundPort,
 )
-from mobia.domain.outbound.repositorio import kinds_reservados
+from mobia.domain.outbound.repositorio import kinds_reservados, reservado_em
 from mobia.infra.crypto import aad_de, decrypt
 from mobia.infra.embeddings import embedar_do_turno
 
@@ -868,6 +869,18 @@ class _ModeracaoDoTurno:
         self._resolvida = True
         if not self._corpo:
             return None
+        # TEC-298, D5. Uma passada anterior pode ja ter julgado esta fala: o
+        # carimbo de `bloqueada_em` e o veredito persistido do caso bloqueado.
+        # Sem esta consulta, toda retentativa de turno bloqueado paga a
+        # moderacao de novo e grava uma segunda linha de auditoria para a
+        # MESMA recusa. Custa um SELECT por chave primaria contra uma chamada
+        # de rede paga.
+        ja_registrado = await veredito_ja_registrado(
+            self._session_factory, message_id=self._message.id
+        )
+        if ja_registrado is not None:
+            self._veredito = ja_registrado
+            return self._veredito
         self._veredito = await moderar_entrada_e_marcar(
             self._session_factory,
             self._moderador,
@@ -1501,6 +1514,10 @@ async def _executar_turno(
             # suprimida, bloqueio por opt-out concorrente (TEC-182),
             # bloqueio por atendimento humano concorrente (TEC-179) --, e
             # a maioria delas fecha a linha em PROCESSED, que e terminal.
+            # Desde a TEC-298, "reentrega suprimida" so fecha a linha
+            # quando `not tem_pendencia`: com pendencia, o guard abaixo
+            # deixa o turno continuar em vez de retornar aqui -- ela saiu
+            # do grupo que sempre fechava e entrou no que fecha condicional.
             # Marcar depois deixaria a fala bloqueada sem marca exatamente
             # nos casos em que ninguem mais volta nesta linha, e ela
             # entraria no contexto do proximo turno -- e e por isso que
@@ -1520,8 +1537,24 @@ async def _executar_turno(
             # pendente no estado que existia antes desta recusa?" --
             # resistir a "simplificar" isto de volta para perto do uso e o
             # ponto deste comentario.
+            #
+            # **A ordem esta certa e nao era suficiente (TEC-298).** Ela
+            # protege a PRIMEIRA passada. A seguinte encontra a recusa ja
+            # gravada antes mesmo de o turno comecar, e para essa nenhuma
+            # ordem de codigo ajuda -- quem resolve e o teto logo abaixo.
+            #
+            # TEC-298, D1. O teto vem da reserva da recusa, e so existe numa
+            # RETENTATIVA: se a reserva ja esta la, uma passada anterior ja
+            # entregou a recusa e a linha OUTBOUND dela ja esta em `messages`,
+            # envenenando a fronteira. Na primeira passada isto e `None` e a
+            # conta e exatamente a de antes desta card.
+            teto_da_recusa = await reservado_em(
+                session_factory, message_id=message.id, kind=KIND_DA_RECUSA_DE_ENTRADA
+            )
             async with session_factory() as sessao_da_pendencia:
-                tem_pendencia = await ha_fala_pendente_antes(sessao_da_pendencia, message)
+                tem_pendencia = await ha_fala_pendente_antes(
+                    sessao_da_pendencia, message, teto_do_agente=teto_da_recusa
+                )
             # TEC-295, ruling R6. Kind proprio -- nao o default `reply` de
             # `_entregar_texto_fixo` --, porque a resposta que a continuacao
             # abaixo pode entregar tambem usa `reply` (a primeira parte de
@@ -1553,18 +1586,41 @@ async def _executar_turno(
             # fica.
             #
             # Ja `"reentrega_suprimida"` quer dizer o CONTRARIO de "nao
-            # chegou": a reserva em `outbound_dispatches` ja existe
-            # porque uma tentativa ANTERIOR entregou a recusa. Mesmo
-            # assim a continuacao tambem nao acontece aqui -- e a
-            # consequencia e que a pergunta pendente se perde nesta
-            # retentativa, porque `PROCESSED` e terminal e nada
-            # reenfileira so a resposta que ficou faltando.
-            if desfecho_da_recusa != "respondido":
+            # chegou": a reserva em `outbound_dispatches` ja existe porque
+            # uma tentativa ANTERIOR entregou a recusa. Desde a TEC-298 ele
+            # SEGUE para a continuacao, e e isso que faz a rota de
+            # recuperacao da D4 sobreviver ao reprocessamento -- ate ela, o
+            # turno fechava aqui e a pergunta pendente se perdia, porque
+            # `PROCESSED` e terminal e nada reenfileira so a resposta que
+            # ficou faltando.
+            if desfecho_da_recusa not in ("respondido", "reentrega_suprimida"):
                 return desfecho_da_recusa
             if not tem_pendencia:
                 # Fala reprovada isolada: continuar faria o agente responder
                 # ao historico anterior, que e o engajamento que a TEC-233
                 # recusou de proposito.
+                return desfecho_da_recusa
+            # TEC-298, revisao final: composicao D1+D3. `teto_da_recusa` e o
+            # `created_at` da RESERVA da recusa, e uma passada de resposta
+            # bem-sucedida acontece DEPOIS dela -- entao numa TERCEIRA passada
+            # (recusa entregue, resposta entregue, e so ENTAO o turno morre) o
+            # teto esconde tambem a resposta que a passada anterior ja deu, e
+            # `tem_pendencia` volta a True sobre uma pergunta que ja foi
+            # respondida. Sem esta guarda aconteceriam duas coisas: (a) a
+            # continuacao pagaria o modelo de novo para responder ao que ja
+            # foi respondido, e o `send` de KIND_DA_RESPOSTA seria suprimido
+            # pela reserva existente -- reabrindo, pelo kind da RESPOSTA, o
+            # mesmo alarme falso que a D4 acabou de fechar pelo kind da
+            # RECUSA (`turno.recusa_ja_reservada` acima); e (b) pior que o
+            # alarme, se a geracao nova quebrar em duas mensagens onde a
+            # anterior coube numa, `reply` e suprimido e `reply_2` sai
+            # sozinho -- a metade orfa de uma resposta nova, a "costura" que
+            # `domain/outbound/kinds.py` documenta como corrupcao silenciosa.
+            # Reserva de KIND_DA_RESPOSTA e o mesmo sinal que fecha os dois:
+            # uma passada anterior ja chegou a responder, entao nao ha
+            # pendencia nenhuma para esta continuar.
+            reservados_da_resposta = await kinds_reservados(session_factory, message_id=message.id)
+            if KIND_DA_RESPOSTA in reservados_da_resposta:
                 return desfecho_da_recusa
             # Cai para fora do bloco e segue o turno. O contexto que
             # `montar_contexto` monta a seguir NAO inclui esta fala: o
@@ -3935,11 +3991,33 @@ async def _entregar_texto_fixo(
         # tem uma reserva para este (message_id, kind) de uma tentativa
         # anterior. Gravar aqui seria a mesma fala fantasma que aquele bloco
         # existe para evitar -- so que para o texto fixo do bloqueio.
-        log.error(
-            "turno.reentrega_suprimida",
-            channel=message.channel,
-            message_id=str(message.id),
-        )
+        #
+        # **A recusa de entrada e a excecao, e ela e o caminho ESPERADO desde a
+        # TEC-298 (D4).** Quando a reserva dela sobrevive, o turno continua para
+        # responder a pergunta pendente -- a supressao aqui e o mecanismo que
+        # impede a recusa de sair duas vezes, nao um acidente. `error` e o
+        # alarme de dado sumido, e dispara-lo sobre algo que a passada anterior
+        # entregou e alarme falso.
+        #
+        # `warning` e nao `info`: a reserva sobrevivente e evidencia forte de
+        # entrega, NAO e prova. Ela tambem sobrevive se o worker morreu entre o
+        # commit da reserva e o `_deliver`, ou se o proprio `_liberar` falhou
+        # (que tem alarme proprio, `outbound.liberacao_falhou`). Nessas duas
+        # rotas a recusa de fato nao chegou, e `info` as esconderia. E a mesma
+        # ressalva que `kinds_reservados` ja documenta: presenca significa
+        # "encerrado", nao "entregue".
+        if kind == KIND_DA_RECUSA_DE_ENTRADA:
+            log.warning(
+                "turno.recusa_ja_reservada",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
+        else:
+            log.error(
+                "turno.reentrega_suprimida",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
         return "reentrega_suprimida"
 
     recorder = MessageRecorder(session_factory)
