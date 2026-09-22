@@ -60,18 +60,21 @@ O que sobra para `Settings` é o que ele consegue validar sozinho: `atraso_de_ba
 
 O critério de aceite fala em "20 mensagens no último minuto". Janela fixa por `INCR`/`EXPIRE` é mais barata, mas mede "neste minuto de relógio", não "nos últimos 60 segundos": deixa passar até o dobro do limite quando a rajada cruza a borda, e faz o teste do vigésimo primeiro envio depender de onde a borda caiu. Num repo com o histórico de flake deste, comprar flake para economizar dois comandos de Redis é mau negócio.
 
-A escolha é janela deslizante em ZSET, um round-trip com pipeline de quatro comandos:
+A escolha é janela deslizante em ZSET, um round-trip com pipeline de cinco comandos:
 
 ```
 ZREMRANGEBYSCORE chave -inf (agora - janela)
 ZADD             chave agora <membro único>
+ZREMRANGEBYRANK  chave 0 -(limite + 2)
 ZCARD            chave
 EXPIRE           chave ceil(janela)
 ```
 
 O `ZADD` vem antes do `ZCARD` de propósito: a requisição em avaliação conta. Com limite 20, a vigésima primeira produz `ZCARD = 21 > 20` e é bloqueada — que é a leitura literal do Gherkin.
 
-Memória: o zset guarda no máximo `limite` membros por chave (20 ou 100) e expira sozinho após a janela. O `EXPIRE` é incondicional a cada consumo, então chave de quem parou de bater some sem varredura.
+**Nota (revisão da branch inteira, 21/09/2026): a frase de memória abaixo, na versão original desta decisão, prometia um teto que o `ZADD` incondicional não entregava — o `ZREMRANGEBYRANK` acima é a correção, não o texto original.** O `ZADD` é incondicional: toda requisição soma um membro, inclusive a bloqueada. Sem o corte por rank, o teto real de membros era o número de requisições chegadas na chave dentro da janela, não `limite` — um IP a 50.000 req/min deixaria 50.000 membros vivos por até `janela_segundos`, na mesma chave, no mesmo Redis que hospeda `arq:queue` e `arq:job:*`. É a versão em Redis do argumento que a D5 já faz para o Postgres: o registro de abuso vira o vetor de abuso.
+
+Memória: o `ZREMRANGEBYRANK` mantém no máximo `limite + 1` membros por chave (21 ou 101) — o `+1` porque é a (limite+1)-ésima requisição mais recente que decide o veredito ("houve mais de `limite` requisições na janela?"), e guardar mais do que isso não acrescenta informação nenhuma, só memória. O corte é por rank e não por score, para preservar exatamente os mais recentes independente de quantos chegaram. A chave continua expirando sozinha: o `EXPIRE` é incondicional a cada consumo, então chave de quem parou de bater some sem varredura.
 
 `agora` entra como parâmetro opcional. Sem isso, o teste do limite precisaria dormir ou mexer no relógio do processo; com isso, os cenários de borda são unitários e determinísticos, no molde de `tests/unit/test_antispam.py`.
 
@@ -102,7 +105,7 @@ O critério de aceite — "Quando o evento é consultado / Então constam o núm
 
 **Uma linha por chave por janela, guardada por `SET NX EX`.** Escrever uma linha por requisição bloqueada transformaria o registro de abuso no próprio vetor de abuso: no widget, um atacante escreveria uma linha por requisição, e a defesa custaria mais que o ataque. A guarda é uma chave `ratelimit:evento:<escopo>:<chave>` com `SET NX EX ceil(janela)`; só quem a cria grava a linha. O `volume` gravado é, por consequência, o do primeiro disparo da janela — `limite + 1` no caso comum, que é literalmente "o volume que disparou o limite".
 
-O volume total continua visível: cada bloqueio emite `ratelimit.blocked` no log estruturado, com a chave e a contagem. A divisão é a que o repo já pratica — a tabela é evidência, o log é operação.
+**Emenda (revisão da branch inteira, 21/09/2026): com o corte por rank da D3, o campo `volume` do log satura em `limite + 1`.** Cada bloqueio continua emitindo `ratelimit.blocked` no log estruturado, com a chave e a contagem, mas essa contagem para de crescer com o tamanho real da rajada assim que o `ZREMRANGEBYRANK` começa a podar o zset. O que mede a intensidade do ataque deixa de ser o valor do campo `volume` e passa a ser o NÚMERO de linhas `ratelimit.blocked` na janela — cada requisição bloqueada ainda emite a sua. A divisão entre tabela e log é a que o repo já pratica — a tabela é evidência, o log é operação.
 
 ### D6 — Configuração por variável de ambiente; "sem deploy" no sentido forte fica com o RF-19
 

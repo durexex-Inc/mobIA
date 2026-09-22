@@ -33,6 +33,9 @@ class _PipelineQuebrado:
     def zadd(self, *args, **kwargs):
         return self
 
+    def zremrangebyrank(self, *args, **kwargs):
+        return self
+
     def zcard(self, *args, **kwargs):
         return self
 

@@ -96,6 +96,18 @@ async def consumir(
         # duas requisicoes do mesmo instante numa so -- e e exatamente na
         # rajada que isso aconteceria.
         pipe.zadd(chave, {str(uuid.uuid4()): instante})
+        # O `ZADD` acima e incondicional -- toda requisicao entra, inclusive
+        # a bloqueada -- entao sem este corte uma rajada de 50.000 req/min
+        # deixaria 50.000 membros vivos por ate `janela_segundos` na MESMA
+        # chave, no mesmo Redis que hospeda `arq:queue` e `arq:job:*`: o
+        # limitador sob ataque derrubaria a fila que ele existe para
+        # proteger. A pergunta que este modulo responde e "houve mais de
+        # `limite` requisicoes na janela?", e essa pergunta se decide
+        # olhando so a (limite+1)-esima mais recente -- guardar mais membros
+        # do que `limite + 1` nao acrescenta informacao nenhuma ao veredito.
+        # Por rank e nao por score: mantem exatamente os `limite + 1` mais
+        # recentes, que e o que o `ZCARD` abaixo precisa ver.
+        pipe.zremrangebyrank(chave, 0, -(limite + 2))
         pipe.zcard(chave)
         # `ceil` e nao `int`: truncar 0.5 para 0 faria o EXPIRE apagar a chave
         # imediatamente e o limite nunca prenderia.
@@ -105,5 +117,5 @@ async def consumir(
         log.warning("ratelimit.indisponivel", erro=type(exc).__name__)
         return Consumo(permitido=True, volume=0)
 
-    volume = int(resultado[2])
+    volume = int(resultado[3])
     return Consumo(permitido=volume <= limite, volume=volume)
