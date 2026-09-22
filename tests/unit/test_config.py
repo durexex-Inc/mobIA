@@ -620,3 +620,58 @@ def test_o_fuso_de_envio_default_resolve(monkeypatch: pytest.MonkeyPatch) -> Non
     assert settings.fuso_de_envio.key == "America/Sao_Paulo"
     assert settings.followup_horario_inicio == 9
     assert settings.followup_horario_fim == 20
+
+
+def test_os_limites_da_rnf_16_sao_os_defaults() -> None:
+    settings = Settings()
+    assert settings.rate_limit_mensagens_por_minuto == 20
+    assert settings.rate_limit_requisicoes_por_ip_por_minuto == 100
+
+
+def test_o_backoff_tem_default_e_e_float() -> None:
+    settings = Settings()
+    assert settings.atraso_de_backoff_segundos == 30.0
+
+
+def test_confiar_em_forwarded_for_vem_desligado() -> None:
+    """O default e o inseguro-contra-proxy, nao o inseguro-contra-spoof.
+
+    Atras de proxy sem a chave ligada o limite fica mais apertado do que se
+    quer e alguem reclama; com a confianca ligada por omissao e sem proxy o
+    limite simplesmente nao existe e ninguem reclama. Falha que se anuncia e
+    melhor que falha silenciosa. Ver D7 do desenho.
+    """
+    assert Settings().confiar_em_forwarded_for is False
+
+
+def test_limite_negativo_e_recusado() -> None:
+    with pytest.raises(ValidationError):
+        Settings(rate_limit_mensagens_por_minuto=-1)
+    with pytest.raises(ValidationError):
+        Settings(rate_limit_requisicoes_por_ip_por_minuto=-1)
+
+
+def test_backoff_negativo_e_recusado() -> None:
+    """`_defer_by` negativo agendaria para o passado, e o excedente seria
+    processado ANTES da mensagem que respeitou o limite.
+    """
+    with pytest.raises(ValidationError):
+        Settings(atraso_de_backoff_segundos=-1.0)
+
+
+def test_backoff_maior_que_a_janela_do_sweeper_e_recusado() -> None:
+    """O caso absurdo que nao precisa de `job_timeout` para ser pego: os dois
+    campos vivem no mesmo `Settings`, entao a guarda nao fecha ciclo de
+    import nenhum -- so nao fecha a conta inteira (essa continua so no
+    teste do worker).
+    """
+    with pytest.raises(ValidationError, match="atraso_de_backoff_segundos"):
+        Settings(atraso_de_backoff_segundos=300.0, sweep_inflight_after_seconds=300)
+
+
+def test_backoff_igual_a_janela_do_sweeper_e_recusado() -> None:
+    """`>=`, nao `>`: igualdade ainda deixa o sweeper reenfileirar no mesmo
+    instante em que o backoff terminaria, sem folga nenhuma.
+    """
+    with pytest.raises(ValidationError, match="atraso_de_backoff_segundos"):
+        Settings(atraso_de_backoff_segundos=90.0, sweep_inflight_after_seconds=90)

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
+from mobia.api.middleware import RateLimitPorIP
 from mobia.api.routes.whatsapp import router as whatsapp_router
 from mobia.app.config import get_settings
 from mobia.app.logging import configure_logging
@@ -29,6 +30,13 @@ def create_app() -> FastAPI:
     configure_logging(settings.log_level)
 
     app = FastAPI(title="mobIA", version="0.1.0", lifespan=lifespan)
+
+    # Primeiro middleware do projeto (TEC-205). Aplica-se por omissao e nao por
+    # opt-in: uma lista de rotas incluidas erraria para o lado de esquecer o
+    # widget do TEC-124, que e o erro caro. Quem precisa ficar de fora esta em
+    # `ROTAS_ISENTAS`, com a razao de cada uma escrita la.
+    app.add_middleware(RateLimitPorIP)
+
     app.include_router(whatsapp_router)
 
     # Sem token configurado os routers NAO entram no app. Nao e 401: rota que

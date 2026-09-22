@@ -1,3 +1,4 @@
+from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy import select
 from sqlalchemy import text as sql
 
@@ -21,9 +22,46 @@ def parsed(provider_message_id: str = "wamid.SERVICO") -> ParsedMessage:
     )
 
 
+class _PipelineQuebrado:
+    """Enfileira comandos sem tocar rede, como o pipeline de verdade -- so
+    falha no `execute`, que e onde o redis-py de fato conversa com o servidor.
+    """
+
+    def zremrangebyscore(self, *args, **kwargs):
+        return self
+
+    def zadd(self, *args, **kwargs):
+        return self
+
+    def zremrangebyrank(self, *args, **kwargs):
+        return self
+
+    def zcard(self, *args, **kwargs):
+        return self
+
+    def expire(self, *args, **kwargs):
+        return self
+
+    async def execute(self):
+        raise RedisConnectionError("redis fora do ar")
+
+
 class FilaQuebrada:
+    """Simula o Redis inteiro fora do ar, nao so o enqueue.
+
+    Desde a TEC-205 `self._queue` tambem e o pool que `consumir` usa para o
+    rate limit, entao um duble que so derrubasse `enqueue_job` deixaria
+    `consumir` chamar `pipeline()` num objeto sem o metodo -- `AttributeError`,
+    nao a falha de conexao que este teste quer exercitar. `pipeline()` aqui
+    devolve algo que so falha no `execute`, igual ao redis-py real, para que o
+    fail-open de `consumir` (que so pega `RedisError`) valha tambem aqui.
+    """
+
     async def enqueue_job(self, *args, **kwargs):
         raise ConnectionError("redis fora do ar")
+
+    def pipeline(self, *args, **kwargs):
+        return _PipelineQuebrado()
 
 
 async def test_persiste_e_enfileira(session, redis_pool) -> None:

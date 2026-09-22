@@ -547,9 +547,11 @@ Todo RNF traz métrica e forma de verificação. Os alvos consideram o volume da
 | RNF-13 | Criptografia | TLS 1.3 em trânsito; AES-256 em repouso no banco e nos backups | Scan de configuração + verificação do provedor |
 | RNF-14 | Segredos | Nenhum segredo em repositório; uso de secret manager do provedor; rotação a cada 90 dias | `gitleaks` no pipeline, bloqueante |
 | RNF-15 | Validação de webhook | Assinatura `X-Hub-Signature-256` da Meta verificada em toda requisição; payload não assinado é descartado com log | Teste automatizado com payload forjado |
-| RNF-16 | Rate limiting e abuso | 20 mensagens/min por número; 100 req/min por IP no widget; excedente entra em backoff | Teste de carga com rajada |
+| RNF-16 | Rate limiting e abuso | 20 mensagens/min por número; 100 req/min por IP no widget; excedente entra em backoff — ver Emenda E-01 | Teste de carga com rajada |
 | RNF-17 | Prompt injection | Conteúdo do lead sempre delimitado e tratado como dado, nunca como instrução; instruções do sistema não são sobrescrevíveis; suíte de 20 ataques conhecidos no CI | Teste de regressão de segurança |
 | RNF-18 | Auditoria | Log imutável de acesso a dado pessoal, alteração de qualificação, handoff, opt-out e mudança de prompt; retenção de 12 meses | Revisão da tabela de auditoria |
+
+- **Emenda E-01 (TEC-205, 21/09/2026)** — o backoff é do excedente **por número**, que é adiado por `atraso_de_backoff_segundos` e processado depois. O excedente **por IP** recebe `429` com `Retry-After`, não backoff: ali a requisição é síncrona e não há o que adiar sem deixar o cliente pendurado. O webhook do WhatsApp fica **isento** do limite por IP — o IP da Meta é compartilhado por todo o tráfego de entrada, e limitá-lo não distingue abuso de operação; o `/health` fica isento pela mesma classe de razão, já que um 429 num probe de liveness derrubaria o processo. O limite por IP se aplica a toda rota HTTP restante, inclusive antes de o widget do TEC-124 existir.
 
 **LGPD** (Lei 13.709/2018) — tratado explicitamente por haver dado pessoal desde a POC (PR-09):
 
