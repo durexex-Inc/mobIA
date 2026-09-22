@@ -12,6 +12,8 @@ pergunta pendente" nao sao gravados em lugar nenhum: sao recomputados de
 `messages`, que e onde ja esta.
 """
 
+from datetime import datetime
+
 from sqlalchemy import func, literal, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,7 +54,12 @@ async def superada_por_mais_nova(session: AsyncSession, message: Message) -> boo
     return mais_nova is not None
 
 
-async def ha_fala_pendente_antes(session: AsyncSession, message: Message) -> bool:
+async def ha_fala_pendente_antes(
+    session: AsyncSession,
+    message: Message,
+    *,
+    teto_do_agente: datetime | None = None,
+) -> bool:
     """Ficou fala do lead sem resposta antes desta mensagem?
 
     Existe INBOUND deste lead, nao bloqueada, mais antiga que `message` e mais
@@ -74,16 +81,33 @@ async def ha_fala_pendente_antes(session: AsyncSession, message: Message) -> boo
     `contar_mensagens_do_lead` (`context/repositorio.py`) e a ancora da
     cadencia de follow-up (`followup/repositorio.py`) usam. `context/score.py`
     registra que as tres leituras tem de concordar; esta e a quarta.
+
+    **`teto_do_agente` existe porque a propria recusa apaga a pendencia
+    (TEC-298, D1).** Numa retentativa, a recusa que a passada anterior
+    entregou ja esta em `messages` como OUTBOUND e vira a ultima fala do
+    agente -- mesmo nao tendo respondido nada. Com o teto no instante da
+    RESERVA da recusa (`outbound_dispatches.created_at`, que e commitado
+    antes do envio e portanto anterior a linha dela), a fronteira volta a ser
+    a que existia antes da recusa.
+
+    **Quem chama tem de saber que precisa passar isto, e hoje ha um chamador
+    so.** A funcao nao descobre o teto sozinha de proposito: descobri-lo
+    exigiria conhecer `outbound_dispatches` e o kind da recusa, e este modulo
+    nao pode depender de `domain/outbound` -- a dependencia so corre no outro
+    sentido. A D2 do desenho registra o risco: um chamador futuro que
+    esquecer o teto cai no defeito de hoje, em silencio.
+
+    O default `None` mantem todo chamador antigo correto: sem teto, a
+    fronteira e exatamente a de antes desta card.
     """
-    ultima_do_agente = (
-        select(func.max(Message.created_at))
-        .where(
-            Message.channel == message.channel,
-            Message.conversation_key == message.conversation_key,
-            Message.direction == MessageDirection.OUTBOUND,
-        )
-        .scalar_subquery()
-    )
+    fronteira = [
+        Message.channel == message.channel,
+        Message.conversation_key == message.conversation_key,
+        Message.direction == MessageDirection.OUTBOUND,
+    ]
+    if teto_do_agente is not None:
+        fronteira.append(Message.created_at < teto_do_agente)
+    ultima_do_agente = select(func.max(Message.created_at)).where(*fronteira).scalar_subquery()
     pendente = await session.scalar(
         select(Message.id)
         .where(

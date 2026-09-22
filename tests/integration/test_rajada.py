@@ -260,3 +260,46 @@ async def test_pendente_de_outro_canal_nao_conta(session) -> None:
     )
 
     assert await ha_fala_pendente_antes(session, minha_2) is True
+
+
+async def test_teto_do_agente_ignora_a_fala_posterior_a_ele(session) -> None:
+    """TEC-298, D1. Com teto, a fala do agente posterior a ele nao fecha a pendencia.
+
+    E o estado da retentativa: a recusa da passada anterior ja e a ultima fala
+    OUTBOUND, e sem o teto ela apaga a pendencia da pergunta legitima. O teto
+    reconstroi a fronteira que existia antes dela.
+    """
+    agora = datetime.now(UTC)
+    await gravar(session, created_at=agora, texto="tem 2 quartos ate 500 mil?")
+    recusa = await gravar(
+        session,
+        created_at=agora + timedelta(seconds=1),
+        direction=MessageDirection.OUTBOUND,
+        role=MessageRole.AGENTE,
+        texto="nao consigo seguir com essa mensagem",
+    )
+    carregadora = await gravar(session, created_at=agora + timedelta(seconds=2))
+
+    # Sem teto: a recusa e a ultima fala do agente e apaga a pendencia.
+    assert await ha_fala_pendente_antes(session, carregadora) is False
+    # Com teto no instante da recusa: ela sai da conta e a pergunta reaparece.
+    assert (
+        await ha_fala_pendente_antes(session, carregadora, teto_do_agente=recusa.created_at) is True
+    )
+
+
+async def test_teto_no_futuro_nao_muda_nada(session) -> None:
+    """O teto so pode ESCONDER fala do agente, nunca revelar fala que nao existe."""
+    agora = datetime.now(UTC)
+    await gravar(session, created_at=agora, texto="tem 2 quartos?")
+    await gravar(
+        session,
+        created_at=agora + timedelta(seconds=1),
+        direction=MessageDirection.OUTBOUND,
+        role=MessageRole.AGENTE,
+        texto="tenho estas opcoes",
+    )
+    carregadora = await gravar(session, created_at=agora + timedelta(seconds=2))
+
+    teto = agora + timedelta(hours=1)
+    assert await ha_fala_pendente_antes(session, carregadora, teto_do_agente=teto) is False
