@@ -1349,6 +1349,29 @@ async def _executar_turno(
             conversation_key=message.conversation_key,
             message_id=message.id,
         )
+        # **Escrituracao, nao silencio** (TEC-130, D6). Quem cala e
+        # `esta_em_optout`, no portao la em cima; `MotivoDoEncerramento.OPTOUT`
+        # nao entra em `silencia_o_agente`, de proposito. Isto aqui existe
+        # para a conversa ter data e motivo, que e o que a RN-02.3 pede.
+        #
+        # **Sao duas transacoes, e a ordem importa.** `registrar_optout` abre
+        # e commita a propria sessao; `encerrar_conversa` recebe a sessao e
+        # deixa o commit para quem chama -- nao ha como junta-las sem mudar a
+        # assinatura de uma das duas. O opt-out vai primeiro pelo mesmo
+        # argumento que o comentario acima usa para grava-lo antes da
+        # entrega: morrer entre as duas deixa o lead em opt-out com a conversa
+        # ainda ATIVA -- registro de menos, nunca mensagem a mais. A varredura
+        # diaria fecha essa conversa por INATIVIDADE 30 dias depois, com o
+        # motivo menos preciso; e o custo aceito.
+        async with session_factory() as sessao_do_encerramento:
+            await encerrar_conversa(
+                sessao_do_encerramento,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                motivo=str(MotivoDoEncerramento.OPTOUT),
+                agora=datetime.now(UTC),
+            )
+            await sessao_do_encerramento.commit()
         # Nome distinto de `entregue` (o bool que `outbound.send` devolve mais
         # abaixo, no caminho principal): mypy infere um tipo unico por nome de
         # variavel na funcao inteira, e este aqui e o `ResultadoDoTurno` que
