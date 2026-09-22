@@ -101,7 +101,17 @@ async def test_o_bloqueio_vira_evento(
 async def test_numeros_diferentes_nao_compartilham_cota(
     session_factory, redis_pool, session, monkeypatch, caches_de_cliente_limpos
 ) -> None:
-    monkeypatch.setenv("RATE_LIMIT_MENSAGENS_POR_MINUTO", "2")
+    """O limite e 1, nao 2, de proposito.
+
+    Com limite 2 esta assercao passaria mesmo se os dois numeros
+    compartilhassem a mesma chave: o volume combinado seria 2, que ainda cabe
+    no limite, e nenhuma linha de RateLimitEvent apareceria de qualquer jeito
+    -- o teste nao distinguiria o mundo com bug do mundo sem. Com limite 1,
+    cada numero manda uma mensagem e fica em volume 1 (cabe) SE as chaves
+    forem separadas; se colapsassem numa so, a segunda mensagem veria volume
+    2 > 1, seria bloqueada, e geraria a linha que a assercao abaixo proibe.
+    """
+    monkeypatch.setenv("RATE_LIMIT_MENSAGENS_POR_MINUTO", "1")
     get_settings.cache_clear()
 
     service = IngestionService(session_factory, redis_pool)
