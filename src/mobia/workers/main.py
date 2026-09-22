@@ -229,19 +229,26 @@ class WorkerSettings:
     max_tries = 5
 
     # 240s, e a relacao com `sweep_inflight_after_seconds = 300` e o que fixa
-    # este numero -- mas a relacao tem TRES termos, nao dois, desde a TEC-128.
-    # `sweep_inflight_after_seconds` mede `COALESCE(queued_at, created_at)`
-    # (`sweep_stalled.py`), e `queued_at` e carimbado na INGESTAO -- antes da
-    # janela de debounce da RN-01.6, que e incondicional (D1 do desenho:
-    # TODA mensagem espera `debounce_de_rajada_segundos` antes de o job
-    # comecar, nao so a que integra rajada). A invariante e
-    # `debounce_de_rajada_segundos + job_timeout < sweep_inflight_after_seconds`
+    # este numero -- mas a relacao tem QUATRO termos, nao dois, desde a
+    # TEC-128 (que acrescentou o terceiro) e a TEC-205 (que acrescentou o
+    # quarto). `sweep_inflight_after_seconds` mede `COALESCE(queued_at,
+    # created_at)` (`sweep_stalled.py`), e `queued_at` e carimbado na
+    # INGESTAO -- antes da janela de debounce da RN-01.6, que e incondicional
+    # (D1 do desenho: TODA mensagem espera `debounce_de_rajada_segundos`
+    # antes de o job comecar, nao so a que integra rajada). Desde a TEC-205 a
+    # mensagem tambem pode esperar `atraso_de_backoff_segundos` no lugar do
+    # debounce, quando ela e o excedente do rate limit por numero -- e e o
+    # MAIOR dos dois atrasos que define o pior caso, nao a soma dos dois,
+    # porque uma mensagem so passa por um ou por outro. A invariante e
+    # `max(debounce_de_rajada_segundos, atraso_de_backoff_segundos) +
+    # job_timeout < sweep_inflight_after_seconds`
     # (`test_job_timeout_cabe_dentro_da_janela_do_sweeper`,
-    # `test_worker_startup.py`); com os defaults de hoje (6 + 240 < 300) a
-    # folga e de 54s, nao mais os 60 de antes da TEC-128 -- e
-    # `debounce_de_rajada_segundos` e configuracao de produto que o desenho
-    # da TEC-128 ja anuncia que vai ser mexida, entao subi-la demais reabre
-    # esta conta sem que `job_timeout` sozinho avise. Sem a janela na conta,
+    # `test_worker_startup.py`); com os defaults de hoje
+    # (max(6, 30) + 240 = 270 < 300) a folga e de 30s, nao mais os 54s de
+    # antes da TEC-205 -- e tanto `debounce_de_rajada_segundos` quanto
+    # `atraso_de_backoff_segundos` sao configuracao de produto que pode ser
+    # mexida, entao subir qualquer um dos dois demais reabre esta conta sem
+    # que `job_timeout` sozinho avise. Sem a janela na conta,
     # `job_timeout` **estritamente menor** que a janela do sweeper faria o
     # sweeper reenfileirar um turno que ainda esta em voo e a mesma
     # conversa rodaria duas vezes em paralelo. Os 60s vieram da TEC-122, quando o

@@ -30,9 +30,23 @@ class IngestionService:
     """Persiste a mensagem recebida e so entao a enfileira.
 
     A ordem importa: a linha commitada no Postgres e a garantia de nao-perda.
-    Depois do `_persist` nada propaga: tanto o enqueue quanto a virada de status
-    sao otimistas e engolem as proprias falhas -- a mensagem fica em RECEIVED e o
-    sweeper (workers/jobs/sweep_stalled.py) a recupera.
+    Depois do `_persist`, o enqueue e a virada de status continuam otimistas
+    -- a mensagem fica em RECEIVED e o sweeper (workers/jobs/sweep_stalled.py)
+    a recupera -- mas nenhum dos dois engole toda excecao.
+
+    `consumir` (chamado daqui para o rate limit por numero) so absorve
+    `RedisError`: indisponibilidade de Redis fica silenciosa e fail-open, por
+    decisao de `infra/rate_limit.py`. Qualquer outra classe de falha --
+    `AttributeError` num pool mal construido, `RuntimeError: Event loop is
+    closed` num shutdown mal ordenado -- sobe. `registrar_bloqueio` absorve
+    falha de escrita no banco, mas constroi o `RateLimitEvent` FORA do seu
+    try: erro de construcao e defeito de codigo, nao indisponibilidade, e
+    tambem sobe.
+
+    Consequencia para quem le isto de fora: uma excecao que escape por
+    qualquer um desses caminhos sobe ate o handler do webhook, vira 500, e a
+    Meta re-entrega -- sem duplicar, porque o UNIQUE de `(channel,
+    provider_message_id)` segura, mas custando uma retentativa a toa.
     """
 
     def __init__(
