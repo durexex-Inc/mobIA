@@ -609,10 +609,18 @@ async def test_retentativa_sem_pendencia_continua_so_recusando(
     moderador_fake,
     semear_entrada,
 ) -> None:
-    """TEC-298, D7. A garantia da TEC-233 vale na retentativa tambem.
+    """TEC-298, D1+D7. Sem pendencia, o teto novo nao inventa pendencia onde nao ha.
 
-    Sem pergunta pendente, a retentativa nao pode virar desculpa para o agente
-    responder ao historico -- que e o engajamento que a TEC-233 recusou.
+    Este teste NAO prova a D3 (a continuacao apos `"reentrega_suprimida"`):
+    no cenario sem pendencia, `if desfecho_da_recusa not in (...)` cai direto
+    em `if not tem_pendencia`, que devolve o mesmo `"reentrega_suprimida"` que
+    o guard antigo (`!= "respondido"`) devolveria sozinho -- por construcao,
+    nenhum teste distingue os dois guards aqui. Quem trava a D3 e
+    `test_retentativa_apos_recusa_entregue_responde_a_pendente`. O que este
+    teste trava e outra coisa: que `ha_fala_pendente_antes` com o
+    `teto_do_agente` novo continua dizendo False quando nao ha pergunta
+    pendente, e que a garantia da TEC-233 (nao responder ao historico sem
+    pendencia) vale tambem numa retentativa.
     """
     from mobia.domain.agente.turno import executar_turno
     from mobia.domain.handoff.agendador import AgendadorNoop

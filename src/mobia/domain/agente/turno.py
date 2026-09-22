@@ -1501,6 +1501,10 @@ async def _executar_turno(
             # suprimida, bloqueio por opt-out concorrente (TEC-182),
             # bloqueio por atendimento humano concorrente (TEC-179) --, e
             # a maioria delas fecha a linha em PROCESSED, que e terminal.
+            # Desde a TEC-298, "reentrega suprimida" so fecha a linha
+            # quando `not tem_pendencia`: com pendencia, o guard abaixo
+            # deixa o turno continuar em vez de retornar aqui -- ela saiu
+            # do grupo que sempre fechava e entrou no que fecha condicional.
             # Marcar depois deixaria a fala bloqueada sem marca exatamente
             # nos casos em que ninguem mais volta nesta linha, e ela
             # entraria no contexto do proximo turno -- e e por isso que
