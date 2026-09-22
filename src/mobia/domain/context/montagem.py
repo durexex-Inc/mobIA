@@ -472,6 +472,7 @@ async def montar_contexto(
     conversation_key: str,
     resumidor: ResumidorPort,
     contador: ContadorPort,
+    forcar_dobra: bool = False,
 ) -> ContextoMontado:
     settings = get_settings()
 
@@ -523,9 +524,15 @@ async def montar_contexto(
     # este caso, porque a fase faz N chamadas.
     try:
         async with asyncio.timeout(settings.contexto_deadline_de_montagem_segundos):
-            # Gatilho por acumulo: quarenta literais dobram as vinte mais antigas e
-            # deixam vinte. Por proximidade, a marca colaria no presente.
-            if deve_regenerar(len(literais), settings.contexto_gatilho_de_regeneracao):
+            # `forcar_dobra` passa por cima do gatilho de acumulo: a conversa
+            # que reabre pode ter cinco mensagens, muito abaixo das 40, e e
+            # justamente essas cinco que nao podem chegar ao prompt da
+            # conversa nova (TEC-130, D4). Sem a flag, o gatilho continua o
+            # mesmo de sempre: quarenta literais dobram as vinte mais antigas
+            # e deixam vinte -- por proximidade, a marca colaria no presente.
+            if forcar_dobra or deve_regenerar(
+                len(literais), settings.contexto_gatilho_de_regeneracao
+            ):
                 texto_do_resumo, literais, cobertas, marca_atual, falhou = await _dobrar(
                     session_factory,
                     channel,
@@ -536,8 +543,21 @@ async def montar_contexto(
                     cobertas,
                     marca_atual,
                     INSTRUCAO_DOBRAR,
+                    dobrar_tudo=forcar_dobra,
                 )
                 degradado = degradado or falhou
+                if forcar_dobra and falhou:
+                    # Alarme proprio, e nao so o `contexto.degradado` que
+                    # `_dobrar` ja emite: aqui a degradacao tem consequencia
+                    # que ela nao tem no caso normal -- a transcricao da
+                    # conversa ANTERIOR volta ao prompt, que e exatamente o
+                    # que esta card impede. Quem investiga precisa separar os
+                    # dois casos pelo nome, nao pela correlacao de horario.
+                    log.warning(
+                        "contexto.dobra_forcada_falhou",
+                        channel=channel,
+                        literais=len(literais),
+                    )
 
             tokens = await _contar_se_valer(contador, texto_do_resumo, literais, estado)
 
@@ -705,6 +725,7 @@ async def _dobrar(
     instrucao: str,
     *,
     piso_pode_ceder: bool = False,
+    dobrar_tudo: bool = False,
 ) -> tuple[str | None, list[Message], int, Marca | None, bool]:
     """Uma passada: gera o resumo novo, grava a marca e devolve o que sobrou.
 
@@ -720,9 +741,18 @@ async def _dobrar(
         a_manter = literais
         conteudo = texto_do_resumo or ""
     else:
-        a_dobrar, a_manter = dividir(
-            literais, settings.contexto_literais_minimas, piso_pode_ceder=piso_pode_ceder
-        )
+        # `minimas=0` faz `dividir` devolver tudo para dobrar e nada para
+        # manter -- e o que apaga a transcricao da conversa anterior sem
+        # perde-la, porque ela vai inteira para o resumo. Ver a D4 da TEC-130.
+        #
+        # **`dobrar_tudo` nao e `piso_pode_ceder`.** Aquele cede o piso para
+        # UMA mensagem, por causa do estouro de teto, e a mais recente tem de
+        # sobrar porque e a fala a que o modelo responde. Aqui nenhuma tem de
+        # sobrar: a fala deste turno nao esta nesta lista (o turno a grava e
+        # `montar_contexto` nao a inclui), entao dobrar tudo nao deixa o turno
+        # sem pergunta.
+        minimas = 0 if dobrar_tudo else settings.contexto_literais_minimas
+        a_dobrar, a_manter = dividir(literais, minimas, piso_pode_ceder=piso_pode_ceder)
         if not a_dobrar:
             return texto_do_resumo, literais, cobertas, marca, False
         conteudo = (
