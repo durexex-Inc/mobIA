@@ -5,6 +5,7 @@ esta devido agora?" e refeita a cada varredura. Ver a D1 do desenho.
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -20,7 +21,7 @@ from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.cadencia import CADENCIA, INTERVALO_MINIMO
 from mobia.domain.followup.mensagem import QuedaDePreco
-from mobia.domain.followup.models import FollowUp
+from mobia.domain.followup.models import FollowUp, TarefaDeCorretor
 from mobia.domain.optout.repositorio import esta_em_optout
 from mobia.domain.texto import dobrar
 
@@ -494,6 +495,71 @@ async def registrar_followup(
         .returning(FollowUp)
     )
     return (await session.scalars(statement)).first()
+
+
+# O unico motivo de hoje para um follow-up virar tarefa (RN-13.6). Constante e
+# nao literal solto: a coluna `motivo` existe para um segundo motivo futuro, e
+# um teste que compara contra a string crua e a varredura que a grava precisam
+# da mesma fonte.
+MOTIVO_SEM_TEMPLATE = "sem_template_aprovado"
+
+
+async def registrar_tarefa_de_corretor(
+    session: AsyncSession,
+    *,
+    candidato: Candidato,
+    tentativa: int,
+    categoria: str,
+    motivo: str,
+) -> TarefaDeCorretor | None:
+    """Grava a tarefa do corretor. Devolve `None` quando outra varredura chegou primeiro.
+
+    `ON CONFLICT DO NOTHING` sobre a MESMA UNIQUE de `followups` -- `(channel,
+    conversation_key, ancora_em, tentativa)`: idempotencia por tentativa, de
+    graca e pelo mesmo mecanismo que `registrar_followup`. Duas varreduras
+    concorrentes que escolhessem a mesma tentativa fora da janela nao criariam
+    duas tarefas.
+
+    Nao commita: a sessao e emprestada, e quem chama e dono da fronteira da
+    transacao -- como em `registrar_followup` e `registrar_recalculo`.
+    """
+    statement = (
+        pg_insert(TarefaDeCorretor)
+        .values(
+            id=uuid.uuid4(),
+            channel=candidato.channel,
+            conversation_key=candidato.conversation_key,
+            ancora_em=candidato.ancora_em,
+            tentativa_numero=tentativa,
+            categoria=categoria,
+            motivo=motivo,
+        )
+        .on_conflict_do_nothing(constraint="uq_tarefas_de_corretor_por_ancora")
+        .returning(TarefaDeCorretor)
+    )
+    return (await session.scalars(statement)).first()
+
+
+async def listar_tarefas_de_corretor(
+    session: AsyncSession, *, channel: str, conversation_key: str
+) -> Sequence[TarefaDeCorretor]:
+    """As tarefas de um lead, mais recentes primeiro.
+
+    **Sem rota HTTP** -- a E8 (dashboard) a consome quando existir (L4 do
+    desenho), pelo mesmo motivo de `listar_dormentes` (TEC-187) e da
+    elegibilidade a campanha manual: a funcao de repositorio existe, o
+    caminho de saida ainda nao.
+    """
+    return (
+        await session.scalars(
+            select(TarefaDeCorretor)
+            .where(
+                TarefaDeCorretor.channel == channel,
+                TarefaDeCorretor.conversation_key == conversation_key,
+            )
+            .order_by(TarefaDeCorretor.created_at.desc())
+        )
+    ).all()
 
 
 async def queda_de_preco(

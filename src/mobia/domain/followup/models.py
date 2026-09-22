@@ -1,8 +1,10 @@
-"""A trilha dos follow-ups que a cadencia disparou.
+"""As duas trilhas append-only do follow-up: as tentativas e as tarefas.
 
-TEC-183. Append-only: uma linha por tentativa vencida e registrada. Nao ha
-estado PENDENTE nem CANCELADO -- a cadencia e derivada, e o que nao aconteceu
-nao tem linha. Ver a emenda a RN-13.4 no SRS.
+TEC-183 (`FollowUp`) e TEC-186 (`TarefaDeCorretor`). As duas sao append-only e
+compartilham a mesma UNIQUE `(channel, conversation_key, ancora_em,
+tentativa_numero)`: uma linha por tentativa, e o que nao aconteceu nao tem
+linha. Nao ha estado PENDENTE nem CANCELADO -- a cadencia e derivada. Ver a
+emenda a RN-13.4 (status) e a E-01 da RN-13.6 (a tarefa) no SRS.
 """
 
 import uuid
@@ -69,4 +71,56 @@ class FollowUp(Base):
             name="uq_followups_tentativa_por_ancora",
         ),
         Index("ix_followups_lead", "channel", "conversation_key", "ancora_em"),
+    )
+
+
+class TarefaDeCorretor(Base):
+    """Um follow-up que nao pode sair sozinho e virou trabalho para o corretor.
+
+    TEC-186, RN-13.6. Fora da janela de 24h e sem template aprovado aplicavel
+    ao contexto, o follow-up nao vira envio -- a Meta recusaria mensagem livre,
+    e template aplicavel nao ha. Vira esta linha, no molde de `followups`:
+    append-only, uma linha por tentativa, a mesma UNIQUE por ancora. Quem a
+    consome e o dashboard (E8), que nao existe; ate la, `listar_tarefas_de_corretor`
+    a le sem rota HTTP, pelo mesmo motivo de `listar_dormentes`. Ver a emenda
+    E-01 da RN-13.6 no SRS.
+    """
+
+    __tablename__ = "tarefas_de_corretor"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # A ancora e o numero da tentativa espelham `followups` -- e o que da a
+    # UNIQUE identica e a idempotencia por tentativa: uma varredura que ja
+    # gravou o follow-up nao pode gravar a tarefa dele duas vezes.
+    ancora_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    tentativa_numero: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    # O contexto da novidade (queda_de_preco / imovel_novo / convite), para o
+    # corretor saber com que gancho retomar o contato -- o mesmo que teria ido
+    # no template se ele estivesse aprovado.
+    categoria: Mapped[str] = mapped_column(String(24), nullable=False)
+
+    # Por que virou tarefa. Hoje so `sem_template_aprovado`; a coluna existe
+    # para o dia em que houver um segundo motivo, e nao para ser lida por um
+    # `if` agora.
+    motivo: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
+    )
+
+    __table_args__ = (
+        CheckConstraint("tentativa_numero > 0", name="ck_tarefas_de_corretor_tentativa"),
+        UniqueConstraint(
+            "channel",
+            "conversation_key",
+            "ancora_em",
+            "tentativa_numero",
+            name="uq_tarefas_de_corretor_por_ancora",
+        ),
+        Index("ix_tarefas_de_corretor_lead", "channel", "conversation_key", "ancora_em"),
     )
