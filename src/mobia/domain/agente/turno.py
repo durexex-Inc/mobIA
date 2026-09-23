@@ -1375,6 +1375,23 @@ async def _executar_turno(
                 agora=datetime.now(UTC),
             )
             await sessao_do_encerramento.commit()
+        # **`conversa.encerrada` passa a significar TODO encerramento**, e nao
+        # so o da RN-03.5 (fix da revisao final). O evento ja existia com campo
+        # `motivo`, e emiti-lo em dois dos tres caminhos fazia o `motivo`
+        # prometer uma distincao que o conjunto de linhas nao entregava: quem
+        # paginasse por ele veria o funil sem os encerramentos por opt-out e
+        # sem os da varredura (`encerrar_inativas` emite o terceiro).
+        #
+        # Depois do commit e sem texto do lead, pelas mesmas duas razoes do
+        # bloco da RN-03.5 mais abaixo. Sem `seguidas`: aqui nao ha contagem
+        # que tenha decidido nada -- o que decidiu foi o pedido do lead, e o
+        # `message_id` e a alca que leva ate ele.
+        log.info(
+            "conversa.encerrada",
+            channel=message.channel,
+            message_id=str(message.id),
+            motivo=str(MotivoDoEncerramento.OPTOUT),
+        )
         # Nome distinto de `entregue` (o bool que `outbound.send` devolve mais
         # abaixo, no caminho principal): mypy infere um tipo unico por nome de
         # variavel na funcao inteira, e este aqui e o `ResultadoDoTurno` que

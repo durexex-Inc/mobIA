@@ -11,6 +11,13 @@ SWEEP_CONVERSAS_INATIVAS_JOB = "sweep_conversas_inativas"
 async def sweep_conversas_inativas(ctx: dict[str, Any], limite: int = 500) -> int:
     """Fecha as vencidas e devolve quantas. Fino de proposito, como `sweep_sla`.
 
+    **E fino pela mesma razao que `sweep_sla` e**: `encerrar_inativas` emite
+    `conversa.encerrada` uma vez por conversa que fecha, entao o rastro desta
+    passagem esta nas linhas do log e nao neste numero -- exatamente como
+    `escalar_vencidos` loga um `handoff.escalado` por handoff. Um job fino sem
+    essa linha por baixo seria uma varredura rodando as 3h sem deixar rastro
+    nenhum, que e o que esta card corrigiu na rodada final de revisao.
+
     **Este job nao e o que faz a conversa nova comecar limpa.** Quem decide
     que a transcricao anterior nao entra no prompt e o turno, pelo relogio
     (D3 do desenho) -- aqui e so a escrituracao que a RN-02.3 pede: data e

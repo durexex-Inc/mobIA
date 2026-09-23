@@ -17,7 +17,11 @@ import uuid
 from typing import Any
 
 import pytest
-from conftest import ModeradorFake, OutboundFake
+from conftest import (  # type: ignore[import-not-found]
+    ModeradorFake,
+    OutboundFake,
+    eventos_de_log,
+)
 from sqlalchemy import func, select
 
 from mobia.domain.agente.turno import executar_turno
@@ -685,7 +689,13 @@ async def test_kind_da_recusa_de_entrada_e_proprio_e_nao_o_default(
 
 
 async def test_pedido_de_optout_encerra_a_conversa_com_motivo_proprio(
-    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+    session,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    caplog,
 ) -> None:
     """TEC-130: o opt-out passa a fechar a conversa, com data e motivo.
 
@@ -693,21 +703,30 @@ async def test_pedido_de_optout_encerra_a_conversa_com_motivo_proprio(
     roda antes do bloco da reabertura -- `MotivoDoEncerramento.OPTOUT` nao
     entra em `silencia_o_agente`, de proposito. Isto existe para a conversa
     ter registro, que e o que a RN-02.3 pede.
+
+    **E deixa linha de log, como os outros dois motivos** (fix da revisao
+    final). O evento `conversa.encerrada` ja tinha campo `motivo` e era
+    emitido so pela RN-03.5: quem paginasse por ele via um terco do funil e
+    nao tinha como saber disso. Agora os tres caminhos o emitem.
     """
     mensagem = await _mensagem_gravada(session, texto="parar")
 
-    resultado = await executar_turno(
-        get_sessionmaker(),
-        message=mensagem,
-        classificador=classificador_fake(),
-        resumidor=resumidor_fake(),
-        contador=contador_fake(),
-        outbound=outbound_fake(),
-        moderador=moderador_fake(),
-        agendador=AgendadorNoop(),
-    )
+    with caplog.at_level("INFO"):
+        resultado = await executar_turno(
+            get_sessionmaker(),
+            message=mensagem,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound_fake(),
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
 
     assert resultado == "opt_out"
+    ((nivel, corpo),) = eventos_de_log(caplog, "conversa.encerrada")
+    assert nivel == "INFO"
+    assert corpo["motivo"] == MotivoDoEncerramento.OPTOUT
     linha = (
         await session.execute(
             select(Conversa.status, Conversa.motivo_do_encerramento, Conversa.encerrada_em).where(

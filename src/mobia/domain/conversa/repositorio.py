@@ -10,6 +10,7 @@ dela para a razao por extenso.
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+import structlog
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -19,6 +20,8 @@ from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA
 from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
 from mobia.domain.messages.enums import MessageDirection
 from mobia.domain.messages.models import Message
+
+log = structlog.get_logger(__name__)
 
 
 async def encerrar_conversa(
@@ -276,6 +279,10 @@ async def encerrar_inativas(
     modulo, que recebem a sessao emprestada. Aqui nao ha transacao de
     chamador: quem chama e um job de cron, e o dono da transacao e esta
     funcao.
+
+    **Emite `conversa.encerrada` uma vez por conversa fechada**, no molde das
+    funcoes de dominio de `sweep_sla`. Ver o comentario no corpo para por que
+    aqui e nao no job.
     """
     corte = agora - timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
 
@@ -315,5 +322,34 @@ async def encerrar_inativas(
                 agora=agora,
             )
         await session.commit()
+
+    # **Uma linha por conversa, e ela nasce aqui e nao no job** (fix da revisao
+    # final). O job diz ser "fino de proposito, como `sweep_sla`", e o que
+    # torna `sweep_sla` fino e justamente as funcoes de dominio dele logarem
+    # uma linha por handoff -- a contagem que ele devolve e resumo de linhas
+    # que existem, nao o unico registro. Sem isto a varredura rodava as 3h,
+    # fechava N conversas e nao deixava rastro nenhum: `encerrar_inativas`
+    # devolve um `int` e ninguem o escrevia.
+    #
+    # Nascer no dominio tambem da o rastro de graca a qualquer outro chamador
+    # -- um comando de manutencao, um teste de carga -- em vez de prende-lo ao
+    # unico job que existe hoje.
+    #
+    # Depois do commit, pelo mesmo motivo do `conversa.encerrada` de
+    # `agente/turno.py`: logar um encerramento que o rollback desfez e mentir
+    # para quem le o log.
+    #
+    # **Nada de texto do lead.** `conversation_key` e o identificador do
+    # interlocutor e sai mascarado por chave (`_CHAVES_MASCARADAS`, em
+    # `app/logging.py`), entao a correlacao sobrevive sem o numero inteiro
+    # aparecer. Nao ha aqui nem `message_id` nem contagem: o que a linha
+    # afirma e "esta conversa fechou por INATIVIDADE nesta passagem".
+    for candidata in candidatas:
+        log.info(
+            "conversa.encerrada",
+            channel=candidata.channel,
+            conversation_key=candidata.conversation_key,
+            motivo=str(MotivoDoEncerramento.INATIVIDADE),
+        )
 
     return len(candidatas)

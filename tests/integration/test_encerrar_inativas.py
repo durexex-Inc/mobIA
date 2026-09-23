@@ -17,6 +17,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import eventos_de_log  # type: ignore[import-not-found]
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -201,6 +202,33 @@ async def test_conversa_sem_nenhuma_fala_do_lead_nao_encerra(session: AsyncSessi
 
     assert fechadas == 0
     assert await _status_de(session, "lead-mudo") is None
+
+
+@pytest.mark.usefixtures("banco_limpo")
+async def test_cada_conversa_fechada_deixa_uma_linha_de_log(
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """**A varredura roda as 3h e tem de deixar rastro.**
+
+    Ate a revisao final ela nao deixava: `encerrar_inativas` devolvia um `int`
+    e ninguem o escrevia, entao N conversas fechavam de madrugada sem uma
+    linha sequer. A contagem sozinha nao responde QUAIS fecharam, que e o que
+    alguem pergunta quando o funil muda de forma de um dia para o outro.
+
+    `conversation_key` sai mascarado pelo processador de PII do structlog --
+    o que se afirma aqui e a existencia e o motivo da linha, nao o numero.
+    """
+    await _semear(session, chave="lead-log-a", dias_atras=40)
+    await _semear(session, chave="lead-log-b", dias_atras=50)
+
+    with caplog.at_level("INFO"):
+        fechadas = await encerrar_inativas(get_sessionmaker(), agora=AGORA)
+
+    assert fechadas == 2
+    linhas = eventos_de_log(caplog, "conversa.encerrada")
+    assert len(linhas) == 2
+    assert {nivel for nivel, _ in linhas} == {"INFO"}
+    assert {corpo["motivo"] for _, corpo in linhas} == {MotivoDoEncerramento.INATIVIDADE}
 
 
 @pytest.mark.usefixtures("banco_limpo")
