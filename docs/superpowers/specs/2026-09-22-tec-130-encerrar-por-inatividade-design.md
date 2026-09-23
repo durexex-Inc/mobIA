@@ -71,7 +71,13 @@ Derivar é o que torna a correção verdadeira independentemente da varredura. O
 
 A marca do resumo passa a cobrir a conversa anterior inteira, e `literais_apos` devolve só o que é novo. **A fronteira vira a marca** — que já é a fronteira que o sistema tem — em vez de um filtro por `encerrada_em` ou de uma coluna nova. O agente recebe o resumo da conversa anterior e nenhuma linha da transcrição dela, que é o critério da card ao pé da letra.
 
-A fala que está sendo processada não entra na conta: `montar_contexto` já não a inclui (`turno.py:1626`), então "dobrar tudo" dobra só o que é velho.
+**O piso não vai a zero, vai a um**, e a primeira versão desta decisão errava nisso. Ela dizia que a fala em processamento não entra na conta, citando um comentário de `turno.py` — mas aquele comentário fala do **ramo da mensagem bloqueada pela moderação**, onde `marcar_bloqueada` já carimbou a linha e `literais_apos` filtra `bloqueada_em IS NULL`. No caminho normal a fala do lead **está** na lista: a ingestão a commita antes de enfileirar o job, e tem de estar lá, porque o job recebe o `message_id`.
+
+Com piso zero, a dobra engoliria a fala do próprio turno — o modelo receberia `Mensagens recentes:` vazio e responderia a uma paráfrase da própria pergunta. E não só na reabertura: `e_conversa_nova` também devolve verdadeiro quando não existe mensagem anterior nenhuma, então o primeiro turno de **todo lead novo** pagaria um resumo do "oi", gravaria esse resumo permanente e mandaria contexto literal vazio — o caminho mais comum do produto.
+
+Com piso um, a aritmética fecha nos dois casos: na reabertura, as mensagens antigas dobram e a nova fica literal; no lead novo, o único literal cabe sob o piso e `_dobrar` retorna antes de chamar o resumidor, então nem a chamada paga acontece. É a mesma invariante que `janela.py` já afirma para o `piso_pode_ceder` — a mais recente tem de sobrar, porque é a fala a que o modelo responde.
+
+**Custo aceito e declarado:** numa rajada logo depois da reabertura, as mensagens novas além da mais recente entram no resumo em vez de ficarem literais. É perda de fidelidade, não de dado.
 
 **Degradação declarada.** `montar_contexto` já degrada para o resumo anterior quando `resumir` levanta `ResumoInvalido`, sem avançar a marca. Com a dobra forçada isso significa a cauda velha vazando para o prompt — a conversa nova enxerga a transcrição da anterior, que é justamente o que esta card impede. Aceito, com log próprio (`contexto.dobra_forcada_falhou`, `warning`): a alternativa seria descartar os literais sem tê-los resumido, e aí o agente perde o resumo **e** a transcrição e responde cego a um lead que ele já atendeu. Ver demais é menos ruim que não ver nada.
 
