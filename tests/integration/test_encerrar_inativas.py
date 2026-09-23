@@ -21,7 +21,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.conversa.models import Conversa
-from mobia.domain.conversa.repositorio import encerrar_conversa, encerrar_inativas
+from mobia.domain.conversa.repositorio import (
+    encerrar_conversa,
+    encerrar_inativas,
+    reabrir_conversa,
+)
 from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
 from mobia.domain.messages.enums import (
     MessageContentType,
@@ -146,6 +150,41 @@ async def test_nao_sobrescreve_motivo_de_encerramento_anterior(session: AsyncSes
     assert await _status_de(session, "lead-fe") == (
         Status.ENCERRADA,
         MotivoDoEncerramento.FORA_DE_ESCOPO,
+    )
+
+
+@pytest.mark.usefixtures("banco_limpo")
+async def test_conversa_reaberta_volta_a_ser_candidata(session: AsyncSession) -> None:
+    """**O ramo `ATIVA` do filtro, que nenhum outro teste executava.**
+
+    Os demais cobrem os dois extremos -- conversa sem linha em `conversas`, e
+    conversa com linha ENCERRADA -- e deixavam de fora justamente o
+    `Conversa.status != Status.ENCERRADA`, que e a unica das tres condicoes
+    que compara um `StrEnum` contra a coluna `String`.
+
+    E o caso realista, nao um construto: a conversa fechou por fora de escopo,
+    a janela venceu, o turno a reabriu, e agora o lead sumiu por 30 dias. Sem
+    esta afirmacao, um filtro que so aceitasse linha ausente passaria em todos
+    os outros testes e nunca fecharia uma conversa que ja teve encerramento.
+    """
+    await _semear(session, chave="lead-reaberta", dias_atras=40)
+    await encerrar_conversa(
+        session,
+        channel="whatsapp",
+        conversation_key="lead-reaberta",
+        motivo=str(MotivoDoEncerramento.FORA_DE_ESCOPO),
+        agora=AGORA - timedelta(days=90),
+    )
+    await reabrir_conversa(session, channel="whatsapp", conversation_key="lead-reaberta")
+    await session.commit()
+    assert await _status_de(session, "lead-reaberta") == (Status.ATIVA, None)
+
+    fechadas = await encerrar_inativas(get_sessionmaker(), agora=AGORA)
+
+    assert fechadas == 1
+    assert await _status_de(session, "lead-reaberta") == (
+        Status.ENCERRADA,
+        MotivoDoEncerramento.INATIVIDADE,
     )
 
 
