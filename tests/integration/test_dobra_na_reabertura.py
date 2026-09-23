@@ -81,7 +81,7 @@ async def _semear_conversa(session: AsyncSession, chave: str, quantas: int) -> l
 
 
 @pytest.mark.usefixtures("banco_limpo")
-async def test_a_dobra_forcada_nao_deixa_literal_nenhum(
+async def test_a_dobra_forcada_deixa_so_a_fala_do_turno(
     session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
     """**O criterio da card ao pe da letra**: por meio do resumo, nao pela

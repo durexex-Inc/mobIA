@@ -785,6 +785,18 @@ async def _dobrar(
         # literal; as demais da rajada entram no resumo junto com a conversa
         # antiga. E perda de fidelidade, nao de dado: continuam cobertas pelo
         # resumo, so deixam de estar literais.
+        #
+        # **E um segundo custo, mais estreito, no ramo da moderacao.** Se a
+        # fala DESTE turno foi carimbada com `bloqueada_em`, `literais_apos`
+        # ja a filtrou antes de chegar aqui -- ela nunca entra em `literais`.
+        # Se esse mesmo turno tambem for uma reabertura, o piso de `minimas=1`
+        # entao nao sobra a fala deste turno (que nao esta na lista), e sim a
+        # mensagem mais recente que sobrou: a ultima da conversa ANTERIOR --
+        # uma linha da transcricao velha vazando para o prompt da conversa
+        # nova, exatamente o que esta card promete que nao acontece. O
+        # alcance e estreitissimo (30 dias de silencio, MAIS fala bloqueada
+        # pela moderacao, MAIS pendencia da conversa anterior) e o dano e uma
+        # linha, mas nao esta coberto pelo piso.
         minimas = 1 if dobrar_tudo else settings.contexto_literais_minimas
         a_dobrar, a_manter = dividir(literais, minimas, piso_pode_ceder=piso_pode_ceder)
         if not a_dobrar:
