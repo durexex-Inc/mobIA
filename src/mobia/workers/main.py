@@ -9,9 +9,9 @@ from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
 from mobia.domain.handoff.agendador import AgendadorArq
 from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
-from mobia.domain.notificacao.canais import WhatsAppRegistrado
 from mobia.domain.outbound.email import EmailSmtp
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
+from mobia.domain.outbound.whatsapp_notificacao import WhatsAppTemplate
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
@@ -118,7 +118,7 @@ async def startup(ctx: dict[str, Any]) -> None:
     # de `canais.py`. E' o `startup` que decide a implementacao, no mesmo
     # raciocinio de `outbound`/`redator`/etc acima; o teste troca a chave sem
     # tocar no job.
-    ctx["canais_de_notificacao"] = (EmailSmtp(), WhatsAppRegistrado())
+    ctx["canais_de_notificacao"] = (EmailSmtp(), WhatsAppTemplate())
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:

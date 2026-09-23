@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mobia.domain.handoff.escalada import escalar_vencidos
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status
+from mobia.domain.notificacao.mensagem import Aviso
 
 
 class _CanalEspiao:
@@ -17,8 +18,8 @@ class _CanalEspiao:
         self.nome = nome
         self.recebidas: list[tuple[str, str, str]] = []
 
-    async def enviar(self, *, destino: str, assunto: str, corpo: str) -> None:
-        self.recebidas.append((destino, assunto, corpo))
+    async def enviar(self, *, destino: str, aviso: Aviso) -> None:
+        self.recebidas.append((destino, aviso.assunto, aviso.corpo))
 
 
 async def _marcar_sla(
