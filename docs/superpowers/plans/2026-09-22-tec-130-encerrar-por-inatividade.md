@@ -1274,12 +1274,15 @@ Imediatamente antes da chamada de `montar_contexto` (`turno.py:1690`), calcule:
     # conversa anterior no prompt, em silencio.
     #
     # **Custo declarado: uma consulta a mais por turno.** `e_conversa_nova` ja
-    # e chamada mais abaixo, para decidir a apresentacao, e o resultado nao e
-    # reaproveitado entre os dois pontos porque eles vivem em funcoes
-    # diferentes de um arquivo de 4380 linhas. Passar o valor adiante exigiria
-    # atravessar a assinatura de tudo que esta no meio; a consulta usa
-    # `ix_messages_timeline` e o preco e menor que o do refactor. Quando
-    # `executar_turno` for partida, os dois pontos viram um.
+    # e chamada mais abaixo, para decidir a apresentacao, e o resultado NAO e
+    # reaproveitado. Os dois pontos estao na mesma funcao -- entao a barreira
+    # nao e assinatura --, mas esta chamada mora dentro de um bloco aninhado
+    # que nao domina aquelas: hoistar um unico valor exigiria provar que este
+    # bloco roda em TODO caminho que chega la, sob pena de `UnboundLocalError`
+    # num ramo raro. Essa prova, dentro de uma funcao de 2800 linhas, e um
+    # refactor que esta card nao faz. A consulta usa `ix_messages_timeline`, e
+    # o preco de uma leitura indexada e menor que o de errar essa analise.
+    # Quando `_executar_turno` for partida, os pontos viram um.
     conversa_nova = await e_conversa_nova(session_factory, message, agora=datetime.now(UTC))
 ```
 
