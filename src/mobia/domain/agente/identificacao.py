@@ -32,12 +32,21 @@ from mobia.domain.messages.models import Message
 # comentario que morava aqui prometia que, quando aquela card chegasse, o
 # modulo passaria a "perguntar a entidade em vez de derivar". A D3 do desenho
 # dela declinou: perguntar a entidade poe a varredura diaria no caminho
-# critico de uma correcao de contexto -- com ela parada, ou apenas ainda nao
-# executada no dia, a conversa continuaria ATIVA, `e_conversa_nova` devolveria
-# False, e o turno montaria o prompt com a transcricao velha E sem
-# apresentacao, em silencio. Derivar e o que torna a correcao verdadeira
-# independentemente do cron. O que saiu daqui foi so a constante, para
-# `conversa/regras.py`, que e onde os outros dois leitores dela vivem.
+# critico da apresentacao -- com ela parada, ou apenas ainda nao executada no
+# dia, a conversa continuaria ATIVA, esta funcao devolveria False e o lead que
+# sumiu por meses voltaria sem ninguem se apresentar, em silencio. Derivar e o
+# que torna a resposta verdadeira independentemente do cron. O que saiu daqui
+# foi so a constante, para `conversa/regras.py`, que e onde os outros dois
+# leitores dela vivem.
+#
+# **O CONTEXTO nao passa mais por aqui.** A dobra que separa a conversa nova
+# da anterior chegou a ser ligada por esta funcao e deixou de ser, na rodada
+# final de revisao da TEC-130: numa rajada de volta, quem carrega o turno e a
+# mensagem mais nova do lote e ela encontra a irma de segundos atras, entao o
+# predicado devolvia False justamente na reabertura. Quem decide a dobra e
+# `_reabriu_depois_do_silencio` (`context/montagem.py`), olhando para os
+# literais. **A rajada continua cegando o que sobrou aqui** -- identificacao e
+# apresentacao --, e isso e a lacuna pre-existente da TEC-139, nao da TEC-130.
 
 
 async def e_conversa_nova(

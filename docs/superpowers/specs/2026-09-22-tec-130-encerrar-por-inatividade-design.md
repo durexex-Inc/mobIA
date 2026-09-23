@@ -55,11 +55,11 @@ Sem tabela nova e sem segunda noção de encerrada, como a Emenda E-02 mandou.
 É a decisão central, e é a que diverge do que o repo previa.
 
 - O **sweep** `sweep_conversas_inativas` fecha a conversa e grava data e motivo. É a escrituração que a card pede e o que alimenta quem lê o estado do funil. **Uma vez por dia**, e não de 30 em 30 segundos como `sweep_stalled`: a janela é de 30 dias, então a diferença entre fechar às 3h e fechar às 3h30 não existe para ninguém, e a consulta varre `messages` inteira em vez de uma fila curta.
-- A **fronteira do contexto não depende dele**. O gatilho da dobra (D4) é o relógio — última fala INBOUND mais velha que a janela —, não o `status` da linha.
+- A **fronteira do contexto não depende dele**. O gatilho da dobra (D4) é o relógio — a janela de silêncio caindo no meio do que ainda não foi resumido —, não o `status` da linha. Ver a Emenda D4-a para a forma exata, que mudou na revisão final.
 
 O comentário de `identificacao.py:30` promete o contrário: *"Quando aquela card chegar, este modulo passa a perguntar a entidade em vez de derivar, e esta constante sai."* **Declinado de propósito, e o comentário muda junto.**
 
-Perguntar a entidade põe um cron no caminho crítico de uma correção de contexto. Com o sweep parado — ou apenas ainda não executado, porque ele roda uma vez por dia e o lead voltou antes —, a conversa continuaria `ATIVA`, `e_conversa_nova` devolveria `False`, e o turno montaria o prompt com a transcrição velha **e** sem apresentação. Silenciosamente, e num caminho que nenhum teste de integração pegaria, porque nos testes o sweep sempre acabou de rodar.
+Perguntar a entidade põe um cron no caminho crítico de uma correção de contexto. Com o sweep parado — ou apenas ainda não executado, porque ele roda uma vez por dia e o lead voltou antes —, a conversa continuaria `ATIVA`, a leitura do `status` diria "mesma conversa", e o turno montaria o prompt com a transcrição velha **e** sem apresentação. Silenciosamente, e num caminho que nenhum teste de integração pegaria, porque nos testes o sweep sempre acabou de rodar. O argumento vale para os dois leitores do relógio, e continua valendo depois da Emenda D4-a: um deles trocou de forma, nenhum passou a perguntar a entidade.
 
 Derivar é o que torna a correção verdadeira independentemente da varredura. O preço é que a definição de silêncio continua em dois lugares — a constante e a linha do banco —, e ele se paga com a mesma constante servindo aos dois: ela sai de `agente/identificacao.py` e passa a morar em `conversa/regras.py`, ao lado de `TETO_DE_FORA_DE_ESCOPO`, que é o módulo puro do ciclo de vida da conversa. `identificacao.py` e o sweep passam a importá-la de lá.
 
@@ -67,7 +67,11 @@ Derivar é o que torna a correção verdadeira independentemente da varredura. O
 
 ### D4 — A dobra forçada, e a marca como fronteira
 
-`montar_contexto` ganha um parâmetro que dobra **tudo** o que ficou para trás, ignorando o piso de mensagens literais que `dividir` preserva. O turno o liga quando o relógio diz que esta mensagem abre conversa nova.
+`montar_contexto` dobra **tudo** o que ficou para trás, ignorando o piso de mensagens literais que `dividir` preserva, quando o relógio diz que esta conversa reabriu.
+
+> **Emenda D4-a (revisão final, 23/09/2026) — o gatilho mudou de lugar.** A primeira versão desta decisão dava a `montar_contexto` um parâmetro `forcar_dobra` que o turno ligava com `e_conversa_nova(message)`. **Isso nunca disparava numa rajada de volta**, que é o caso comum: o lead que sumiu manda "oi" e a pergunta no mesmo envelope, a ingestão commita as duas linhas antes de qualquer turno rodar, a primeira fecha como `agrupado` sem rodar turno e quem carrega o turno é a **mais nova** — que encontra a irmã de segundos atrás e devolve `False`. Nenhuma dobra, a transcrição velha inteira no prompt, e sem conserto nos turnos seguintes, porque o predicado continua `False` até o gatilho de acúmulo dos 40 literais.
+>
+> O parâmetro saiu da assinatura. `montar_contexto` decide sozinha, pelos **próprios literais**: dobra à força quando existe literal mais velho que `agora - DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA` **e** existe literal a partir desse corte (`_reabriu_depois_do_silencio`). Continua sendo o relógio e não o `status`, então a D3 fica de pé. Três consequências novas: o lead novo fica coberto por construção (sem literal velho não há dobra, e o "oi" já não depende do piso de 1 para não virar resumo); a conversa cuja transcrição anterior já foi inteiramente dobrada também não dobra, e está certo, porque não há transcrição velha a tirar; e a consulta extra por turno que a versão anterior declarava desapareceu junto com a chamada. `e_conversa_nova` continua decidindo identificação e apresentação, e a cegueira dela à rajada — lacuna pré-existente da TEC-139 — permanece lá.
 
 A marca do resumo passa a cobrir a conversa anterior inteira, e `literais_apos` devolve só o que é novo. **A fronteira vira a marca** — que já é a fronteira que o sistema tem — em vez de um filtro por `encerrada_em` ou de uma coluna nova. O agente recebe o resumo da conversa anterior e nenhuma linha da transcrição dela, que é o critério da card ao pé da letra.
 

@@ -1711,25 +1711,14 @@ async def _executar_turno(
         )
         await apagar_apresentacao_da_mensagem(session_factory, message_id=message.id)
 
-    # **O relogio, e nao o `status`** (TEC-130, D3). Esta e a conversa nova da
-    # RN-02.3, e ela tem de ser reconhecida mesmo que a varredura diaria ainda
-    # nao tenha passado -- senao um cron atrasado poe a transcricao da
-    # conversa anterior no prompt, em silencio.
-    #
-    # **Custo declarado: uma consulta a mais por turno.** `e_conversa_nova` ja
-    # e chamada duas vezes mais abaixo NESTA funcao, para decidir a
-    # identificacao e a apresentacao, e este valor NAO e reaproveitado la.
-    # Nao ha barreira tecnica: as tres chamadas estao na mesma funcao e esta
-    # domina as outras duas. O que ha e escopo -- aqueles dois call sites sao
-    # pre-existentes e pertencem ao caminho da identificacao/apresentacao,
-    # que esta card nao tem motivo para tocar. (Ha ainda uma QUARTA chamada,
-    # em `_entregar_texto_fixo` -- este turno a alcanca por um `return await
-    # _entregar_texto_fixo(` mais abaixo -- entao quem for unificar nao
-    # unifica tres call sites, unifica quatro.) Unificar e limpeza legitima
-    # para quem vier depois; o preco de nao fazer agora e uma leitura de
-    # `ix_messages_timeline` por turno.
-    conversa_nova = await e_conversa_nova(session_factory, message, agora=datetime.now(UTC))
-
+    # A fronteira de historico da TEC-130 (D4) nao entra por aqui: quem decide
+    # dobrar a conversa anterior inteira e `montar_contexto`, olhando para os
+    # proprios literais -- ver `_reabriu_depois_do_silencio`, em
+    # `context/montagem.py`. Passar um predicado sobre `message` daqui e o que
+    # a rodada final de revisao derrubou: numa rajada a mensagem que carrega o
+    # turno e a MAIS NOVA do lote, e ela enxerga a irma de segundos atras, de
+    # modo que `e_conversa_nova` devolvia False exatamente na reabertura em
+    # que a dobra tinha de acontecer.
     try:
         contexto = await montar_contexto(
             session_factory,
@@ -1737,7 +1726,6 @@ async def _executar_turno(
             conversation_key=message.conversation_key,
             resumidor=resumidor,
             contador=contador,
-            forcar_dobra=conversa_nova,
         )
     except ContextoIrreducivel as exc:
         # Uma unica mensagem que nao cabe no teto. Retentar nao encolhe nada.

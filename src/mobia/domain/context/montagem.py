@@ -1,6 +1,7 @@
 import asyncio
 import math
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import structlog
@@ -28,6 +29,7 @@ from mobia.domain.context.resumo import (
     ContadorPort,
     ResumidorPort,
 )
+from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA
 from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.models import Message
 from mobia.infra.anthropic import TETO_DO_RESUMO, motivo_do_provedor
@@ -465,6 +467,54 @@ async def _truncar_ate_caber(
     return texto_do_resumo, literais, tokens
 
 
+def _reabriu_depois_do_silencio(literais: list[Message], agora: datetime) -> bool:
+    """A conversa nova da RN-02.3 comeca DENTRO desta lista? (TEC-130, D4.)
+
+    Verdadeiro quando o que ainda nao foi dobrado atravessa a janela de
+    silencio: ha literal mais velho que o corte -- a conversa anterior -- e
+    ha literal a partir do corte -- a conversa nova. E esse par que a dobra
+    forcada existe para separar.
+
+    **Pelos literais, e nao por um predicado sobre a mensagem do turno, e a
+    diferenca e a rajada.** A versao anterior perguntava
+    `e_conversa_nova(message)`, que responde "nao existe mensagem anterior a
+    esta dentro dos 30 dias". Numa rajada -- o lead volta depois de dois meses
+    e manda "oi" e "ainda tem aquele apto?" no mesmo envelope -- a ingestao
+    commita as duas linhas antes de qualquer turno rodar, a primeira fecha
+    como `agrupado` sem rodar turno (`deve_fechar_como_agrupado`, em
+    `workers/jobs/process_message.py`) e quem carrega o turno e a mais nova,
+    que encontra a irma de segundos atras e devolve False. Resultado: nenhuma
+    dobra, a transcricao velha inteira no prompt, e sem conserto nos turnos
+    seguintes -- o predicado continua False ate o gatilho de acumulo dos 40
+    literais. Olhar para a propria lista que vai ao prompt e imune a isso,
+    porque as duas mensagens da rajada estao nela.
+
+    **Continua sendo o relogio, e nao o `status`** (D3): a varredura diaria
+    escreve o encerramento e esta funcao decide o contexto, independentes uma
+    da outra.
+
+    **Lead novo nao paga nada.** Sem literal mais velho que o corte nao ha
+    dobra, entao o primeiro turno de quem nunca falou nao gera resumo do "oi".
+    E, se a conversa anterior ja foi inteiramente dobrada num turno passado,
+    tambem nao ha literal velho -- e esta certo, porque nao sobrou transcricao
+    velha para tirar.
+
+    A comparacao e estrita de um lado e nao do outro (`< corte <=`) para casar
+    com `e_conversa_nova`, que conta `created_at >= corte` como interacao
+    recente: exatamente 30 dias ainda nao abre conversa nova. As duas leituras
+    compartilham `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA` e tem de resolver o
+    empate para o mesmo lado, senao o turno se apresenta sem dobrar ou dobra
+    sem se apresentar.
+
+    `literais` chega em ordem cronologica de `literais_apos`, entao as pontas
+    respondem sozinhas -- nao ha varredura da lista.
+    """
+    if not literais:
+        return False
+    corte = agora - timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
+    return literais[0].created_at < corte <= literais[-1].created_at
+
+
 async def montar_contexto(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -472,7 +522,6 @@ async def montar_contexto(
     conversation_key: str,
     resumidor: ResumidorPort,
     contador: ContadorPort,
-    forcar_dobra: bool = False,
 ) -> ContextoMontado:
     settings = get_settings()
 
@@ -504,6 +553,12 @@ async def montar_contexto(
     texto_do_resumo = resumo_atual.texto if resumo_atual else None
     cobertas = resumo_atual.mensagens_cobertas if resumo_atual else 0
     marca_atual = marca_de(resumo_atual)
+
+    # A dobra forcada da TEC-130 (D4) decide-se AQUI, e nao no turno: o
+    # gatilho e a propria lista que vai ao prompt. Ver
+    # `_reabriu_depois_do_silencio` para por que os literais e nao
+    # `e_conversa_nova` -- a resposta curta e rajada.
+    forcar_dobra = _reabriu_depois_do_silencio(literais, datetime.now(UTC))
 
     # Teto ja com a reserva descontada: o contador mede um proxy menor que a
     # requisicao real da TEC-134 -- ver `Settings.teto_de_tokens_efetivo`.
@@ -554,13 +609,17 @@ async def montar_contexto(
                     # que esta card impede. Quem investiga precisa separar os
                     # dois casos pelo nome, nao pela correlacao de horario.
                     #
-                    # E nao e so este turno: como `_dobrar` nao avancou a
-                    # marca, o proximo turno recalcula `e_conversa_nova`
-                    # (Task 6) e ela da False -- o lead acabou de falar, entao
-                    # ja nao houve 30 dias de silencio -- e a flag nao liga de
-                    # novo. A transcricao velha fica no prompt ate o gatilho
-                    # de acumulo normal (40 literais) dobra-la, nao por um
-                    # unico turno.
+                    # **A dobra e retentada no turno seguinte, e e o gatilho
+                    # por literais que compra isso.** `_dobrar` nao avancou a
+                    # marca, entao os literais velhos continuam na lista; como
+                    # a lista agora tambem tem a fala nova, `corte` continua
+                    # caindo no meio dela e `_reabriu_depois_do_silencio`
+                    # devolve True de novo. A transcricao velha vaza enquanto
+                    # o resumidor estiver fora, nao ate o gatilho de acumulo
+                    # dos 40 literais -- que era o que acontecia quando a
+                    # decisao vinha de `e_conversa_nova(message)`, porque
+                    # aquele predicado passava a devolver False assim que o
+                    # lead falava.
                     log.warning(
                         "contexto.dobra_forcada_falhou",
                         channel=channel,
@@ -759,11 +818,17 @@ async def _dobrar(
         # rodada de revisao): a fala DESTE turno esta em `literais` -- a
         # ingestao commita a linha antes de enfileirar o job (o job recebe o
         # `message_id`), entao ela sempre chega aqui -- e com `minimas=0` ela
-        # ia para o resumo junto com o resto. O modelo respondia a uma
-        # parafrase da propria pergunta; no primeiro turno de um lead novo
-        # (sem mensagem anterior, `e_conversa_nova` tambem devolve True) o
-        # "oi" inicial pagava um resumo e o prompt chegava com
-        # `Mensagens recentes:` vazio.
+        # ia para o resumo junto com o resto, e o modelo respondia a uma
+        # parafrase da propria pergunta.
+        #
+        # O primeiro turno de um lead novo tambem pagava um resumo do "oi"
+        # naquela versao, porque o gatilho de entao (`e_conversa_nova`)
+        # devolvia True quando nao havia mensagem anterior nenhuma. O gatilho
+        # de hoje (`_reabriu_depois_do_silencio`) ja nao alcanca esse caso --
+        # sem literal mais velho que o corte nao ha dobra --, entao o
+        # `minimas=1` deixou de ser o que protege o lead novo. Ele continua
+        # sendo o que protege a fala DESTE turno na reabertura, que e o unico
+        # caso em que `dobrar_tudo` liga.
         #
         # **`dobrar_tudo` nao e `piso_pode_ceder`.** Aquele cede o piso para
         # UMA mensagem, por causa do estouro de teto, e a mais recente tem de
