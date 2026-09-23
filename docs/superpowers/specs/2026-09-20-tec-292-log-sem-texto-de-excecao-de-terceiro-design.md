@@ -9,11 +9,11 @@
 
 Tirar do log o texto de exceção que **este projeto não escreveu**, nos pontos em que ele pode ecoar entrada externa — sem jogar fora o diagnóstico que a TEC-237 comprou com um dia de investigação cega.
 
-> **Sobre os números de linha deste documento.** Eles descrevem a árvore **antes** da branch, que é o estado que o desenho analisa — os comentários que a card acrescentou empurraram várias linhas para baixo. A `comentarios_tocados.py` marca 20 dessas citações como `PROSA` e **nenhuma** como `FALSO`; a conferência foi feita. Onde o alvo tem nome estável, ele é citado pelo nome.
+> **Sobre os números de linha deste documento.** Eles foram escritos contra a árvore **antes** desta branch, que é o estado que o desenho analisa — os comentários que a card acrescentou empurraram várias linhas para baixo. **Não são todos da mesma época:** o `fba9f37` (TEC-128, 21/09) reconferiu quatro deles contra a árvore daquele dia, e desde então os merges seguintes os deslocaram de novo. Não os "conserte" para o número de hoje — eles descrevem o passado, e a próxima branch que crescer o arquivo os invalidaria outra vez. A conferência da `comentarios_tocados.py` que este parágrafo registrava — 20 citações como `PROSA`, nenhuma como `FALSO` — é de **20/09**. Onde o alvo tem nome estável, ele é citado pelo nome, e é o nome que se deve seguir.
 
 ## O que o levantamento corrigiu no enunciado da card
 
-**São 29 pontos, não 25.** A card contou os 25 em que a *mensagem* de uma exceção entra num kwarg nomeado. Faltavam os **4 que só têm `exc_info=True`/`log.exception`** e nenhum kwarg de texto: `turno.py:566`, `process_message.py:214`, `gerar_resumo.py:48`, `importacao.py:111`. Como `app/logging.py:152` roda `format_exc_info` antes do mascaramento, o traceback vira a chave `exception` e chega ao log terminando em `TipoDoErro: <mensagem>`. São 15 arquivos, e `turno.py` concentra 9 pontos.
+**São 29 pontos, não 25.** A card contou os 25 em que a *mensagem* de uma exceção entra num kwarg nomeado. Faltavam os **4 que então só tinham `exc_info=True`/`log.exception`** e nenhum kwarg de texto: `turno.py:566` e `process_message.py:214` (`resumo_handoff.nao_agendado`), `gerar_resumo.py:48` (`notificacao.nao_agendada`), `importacao.py:111` (`catalogo.importacao_interrompida`). **Dos quatro, só o último ainda é assim** — a D4 da TEC-293 deu `motivo=str(falha)` aos três de Redis e deixou o de importação de fora, de propósito. Como `app/logging.py:152` roda `format_exc_info` antes do mascaramento, o traceback vira a chave `exception` e chega ao log terminando em `TipoDoErro: <mensagem>`. São 15 arquivos, e `turno.py` concentra 9 pontos.
 
 Classificados por **o que a exceção pode ecoar**, que é o que decide o tratamento:
 
