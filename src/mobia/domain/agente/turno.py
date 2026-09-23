@@ -1717,15 +1717,13 @@ async def _executar_turno(
     # conversa anterior no prompt, em silencio.
     #
     # **Custo declarado: uma consulta a mais por turno.** `e_conversa_nova` ja
-    # e chamada mais abaixo, para decidir a apresentacao, e o resultado NAO e
-    # reaproveitado. Os dois pontos estao na mesma funcao -- entao a barreira
-    # nao e assinatura --, mas esta chamada mora dentro de um bloco aninhado
-    # que nao domina aquelas: hoistar um unico valor exigiria provar que este
-    # bloco roda em TODO caminho que chega la, sob pena de `UnboundLocalError`
-    # num ramo raro. Essa prova, dentro de uma funcao de 2800 linhas, e um
-    # refactor que esta card nao faz. A consulta usa `ix_messages_timeline`, e
-    # o preco de uma leitura indexada e menor que o de errar essa analise.
-    # Quando `_executar_turno` for partida, os pontos viram um.
+    # e chamada duas vezes mais abaixo, para decidir a apresentacao, e este
+    # valor NAO e reaproveitado la. Nao ha barreira tecnica: as tres chamadas
+    # estao na mesma funcao e esta domina as outras duas. O que ha e escopo --
+    # aqueles dois call sites sao pre-existentes e pertencem ao caminho da
+    # apresentacao, que esta card nao tem motivo para tocar. Unificar as tres
+    # e limpeza legitima para quem vier depois; o preco de nao fazer agora e
+    # uma leitura de `ix_messages_timeline` por turno.
     conversa_nova = await e_conversa_nova(session_factory, message, agora=datetime.now(UTC))
 
     try:
