@@ -1,4 +1,5 @@
 import re
+import typing
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
@@ -7,7 +8,7 @@ from enum import StrEnum
 from typing import Any
 
 import structlog
-from sqlalchemy import String, cast, func, literal_column, select, update
+from sqlalchemy import CursorResult, String, cast, delete, func, literal_column, select, update
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -203,6 +204,27 @@ async def ler_resumo(
     )
 
 
+async def apagar_resumo(session: AsyncSession, channel: str, conversation_key: str) -> None:
+    """Remove a linha de resumo da conversa. Idempotente.
+
+    Existe para um caso so: o resumo ilegivel da TEC-127. Quando `decrypt`
+    falha, `montar_contexto` segue degradado e a marca guardada junto com o
+    texto corrompido e descartada -- e ai a proxima dobra calcula uma marca a
+    partir do inicio da conversa, que pode ser MAIS ANTIGA que a que ficou na
+    linha. A guarda de monotonia de `gravar_resumo` entao rejeita a escrita, e
+    a linha corrompida sobrevive a propria cura. Sem linha nao ha marca velha,
+    e a dobra seguinte grava normalmente.
+
+    Nao commita, pela mesma razao que `gravar_resumo`: a sessao e emprestada.
+    """
+    await session.execute(
+        delete(ConversationSummary).where(
+            ConversationSummary.channel == channel,
+            ConversationSummary.conversation_key == conversation_key,
+        )
+    )
+
+
 async def gravar_resumo(
     session: AsyncSession,
     *,
@@ -213,8 +235,16 @@ async def gravar_resumo(
     watermark_message_id: uuid.UUID,
     mensagens_cobertas: int,
     modelo: str,
-) -> None:
+) -> bool:
     """Upsert: uma conversa tem um resumo, nao um historico deles.
+
+    Devolve `True` quando a linha foi escrita e `False` quando a guarda de
+    monotonia abaixo recusou. **O retorno nao e decorativo:** um upsert que
+    vira no-op em silencio foi exatamente o que escondeu o defeito da TEC-226
+    por tempo indeterminado -- tres turnos seguidos pagaram uma chamada ao
+    resumidor cada, e nada no codigo nem no log dizia que a escrita nao
+    acontecera. Quem chama decide o que fazer; o minimo e nao achar que
+    gravou.
 
     Nao commita -- a sessao e emprestada, como em `ler_resumo` e `ler_estado`,
     e quem chama e dono da fronteira da transacao. Isso importa a partir da
@@ -233,31 +263,46 @@ async def gravar_resumo(
         "updated_at": datetime.now(UTC),
     }
     statement = pg_insert(ConversationSummary).values(valores)
-    await session.execute(
-        statement.on_conflict_do_update(
-            index_elements=["channel", "conversation_key"],
-            set_={
-                chave: statement.excluded[chave]
-                for chave in (
-                    "resumo",
-                    "watermark_created_at",
-                    "watermark_message_id",
-                    "mensagens_cobertas",
-                    "modelo",
-                    "updated_at",
-                )
-            },
-            # Guarda de monotonia: a marca so anda para frente. Dois turnos
-            # concorrentes da mesma conversa leem o mesmo estado, dobram e
-            # gravam; sem esta condicao o mais lento sobrescreve o mais rapido,
-            # a marca recua e as mensagens entre as duas marcas sao dobradas
-            # duas vezes -- conteudo duplicado no resumo, para sempre. `<=` e
-            # nao `<` porque a compressao regrava a mesma marca de proposito:
-            # ela so encurta o texto, nao cobre mensagem nova.
-            where=ConversationSummary.watermark_created_at
-            <= statement.excluded.watermark_created_at,
-        )
+    # O `execute` de um INSERT devolve um CursorResult em runtime, mas a
+    # tipagem do SQLAlchemy declara o Result generico, sem `rowcount` -- mesmo
+    # `cast` de `service.py` e `process_message.py`.
+    #
+    # `typing.cast` qualificado, e nao `cast`: neste modulo o nome `cast` e o
+    # do SQLAlchemy (cast SQL, usado em `_acrescentar_perguntados`). Trocar
+    # para o `cast` curto aqui compila e faz coisa completamente diferente.
+    resultado = typing.cast(
+        "CursorResult[Any]",
+        await session.execute(
+            statement.on_conflict_do_update(
+                index_elements=["channel", "conversation_key"],
+                set_={
+                    chave: statement.excluded[chave]
+                    for chave in (
+                        "resumo",
+                        "watermark_created_at",
+                        "watermark_message_id",
+                        "mensagens_cobertas",
+                        "modelo",
+                        "updated_at",
+                    )
+                },
+                # Guarda de monotonia: a marca so anda para frente. Dois turnos
+                # concorrentes da mesma conversa leem o mesmo estado, dobram e
+                # gravam; sem esta condicao o mais lento sobrescreve o mais rapido,
+                # a marca recua e as mensagens entre as duas marcas sao dobradas
+                # duas vezes -- conteudo duplicado no resumo, para sempre. `<=` e
+                # nao `<` porque a compressao regrava a mesma marca de proposito:
+                # ela so encurta o texto, nao cobre mensagem nova.
+                where=ConversationSummary.watermark_created_at
+                <= statement.excluded.watermark_created_at,
+            )
+        ),
     )
+    # `rowcount` do `ON CONFLICT DO UPDATE ... WHERE` e 0 exatamente quando a
+    # guarda recusou -- insercao e update aceito contam 1. E o unico sinal que
+    # o Postgres da aqui, e ele so chega ate o chamador porque esta funcao
+    # passou a devolve-lo.
+    return resultado.rowcount > 0
 
 
 async def ler_estado(

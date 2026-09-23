@@ -1,16 +1,22 @@
+import base64
+import hashlib
+from unittest.mock import patch
+
 import pytest
 
+from mobia.app.config import get_settings
 from mobia.infra.crypto import (
+    CHAVE_BYTES,
     NONCE_BYTES,
     TAG_BYTES,
     VERSAO_ATUAL,
     DecryptionError,
-    _marca_do_aad,
     aad_de,
     decrypt,
     decrypt_json,
     encrypt,
     encrypt_json,
+    marca_do_aad,
 )
 
 AAD = aad_de("11111111-1111-1111-1111-111111111111", "text_body")
@@ -125,8 +131,38 @@ def test_erro_de_autenticacao_nao_carrega_o_aad() -> None:
 
 def test_marca_do_aad_e_estavel_e_distingue_aads() -> None:
     """O diagnostico continua servindo: duas falhas do mesmo AAD correlacionam."""
-    assert _marca_do_aad("a:b") == _marca_do_aad("a:b")
-    assert _marca_do_aad("a:b") != _marca_do_aad("a:c")
+    assert marca_do_aad("a:b") == marca_do_aad("a:b")
+    assert marca_do_aad("a:b") != marca_do_aad("a:c")
+
+
+def test_marca_do_aad_nao_e_forcavel_por_quem_so_tem_o_log() -> None:
+    """TEC-226: a marca e HMAC com chave, nao hash simples.
+
+    Ate a TEC-226 isto era `sha256(aad)` sem sal. Um telefone brasileiro tem
+    formato conhecido e espaco de busca pequeno, entao quem tivesse o log
+    reconstruiria o numero tentando os candidatos -- que e exatamente o que
+    esta funcao existe para impedir. O teste faz a forca bruta do atacante com
+    UM candidato: se a marca fosse hash sem chave, ele acertaria.
+    """
+    aad = "4:whatsapp:13:5511911112222:resumo"
+    assert marca_do_aad(aad) != hashlib.sha256(aad.encode()).hexdigest()[:12]
+
+
+def test_marca_do_aad_muda_com_a_chave() -> None:
+    """O que prova que a marca e chaveada: trocada a chave, ela muda.
+
+    E a consequencia aceita que o docstring de `_chave_da_marca` registra --
+    marcas nao correlacionam atraves de uma rotacao de chave. O teste existe
+    para que isso seja uma decisao visivel, e nao uma surpresa em incidente.
+    """
+    aad = "4:whatsapp:13:5511911112222:resumo"
+    antes = marca_do_aad(aad)
+
+    outra_chave = base64.b64encode(b"\x01" * CHAVE_BYTES).decode()
+    with patch.object(get_settings(), "content_encryption_key", outra_chave):
+        depois = marca_do_aad(aad)
+
+    assert antes != depois
 
 
 def test_erro_de_versao_desconhecida_nao_carrega_o_aad() -> None:
