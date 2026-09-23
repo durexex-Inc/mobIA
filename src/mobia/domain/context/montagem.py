@@ -553,6 +553,14 @@ async def montar_contexto(
                     # conversa ANTERIOR volta ao prompt, que e exatamente o
                     # que esta card impede. Quem investiga precisa separar os
                     # dois casos pelo nome, nao pela correlacao de horario.
+                    #
+                    # E nao e so este turno: como `_dobrar` nao avancou a
+                    # marca, o proximo turno recalcula `e_conversa_nova`
+                    # (Task 6) e ela da False -- o lead acabou de falar, entao
+                    # ja nao houve 30 dias de silencio -- e a flag nao liga de
+                    # novo. A transcricao velha fica no prompt ate o gatilho
+                    # de acumulo normal (40 literais) dobra-la, nao por um
+                    # unico turno.
                     log.warning(
                         "contexto.dobra_forcada_falhou",
                         channel=channel,
@@ -742,8 +750,14 @@ async def _dobrar(
         conteudo = texto_do_resumo or ""
     else:
         # `minimas=0` faz `dividir` devolver tudo para dobrar e nada para
-        # manter -- e o que apaga a transcricao da conversa anterior sem
-        # perde-la, porque ela vai inteira para o resumo. Ver a D4 da TEC-130.
+        # manter, com `piso_pode_ceder=False` -- que e o caso de quem liga
+        # isto. `janela.dividir` calcula `piso = 1 if piso_pode_ceder else
+        # minimas`, entao um `piso_pode_ceder=True` vindo junto venceria
+        # `minimas=0` em silencio e deixaria uma literal de pe; hoje os dois
+        # call sites de `_dobrar` sao disjuntos e isso e inalcancavel, mas a
+        # combinacao nao esta bloqueada em lugar nenhum. E o que apaga a
+        # transcricao da conversa anterior sem perde-la, porque ela vai
+        # inteira para o resumo. Ver a D4 da TEC-130.
         #
         # **`dobrar_tudo` nao e `piso_pode_ceder`.** Aquele cede o piso para
         # UMA mensagem, por causa do estouro de teto, e a mais recente tem de

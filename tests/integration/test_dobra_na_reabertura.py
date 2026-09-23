@@ -5,6 +5,7 @@
 conversa anterior inteira e `literais_apos` devolve so o que e novo.
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -75,7 +76,9 @@ async def _semear_conversa(session: AsyncSession, chave: str, quantas: int) -> N
 
 
 @pytest.mark.usefixtures("banco_limpo")
-async def test_a_dobra_forcada_nao_deixa_literal_nenhum(session: AsyncSession) -> None:
+async def test_a_dobra_forcada_nao_deixa_literal_nenhum(
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
     """**O criterio da card ao pe da letra**: por meio do resumo, nao pela
     transcricao inteira.
 
@@ -86,18 +89,23 @@ async def test_a_dobra_forcada_nao_deixa_literal_nenhum(session: AsyncSession) -
     await _semear_conversa(session, "lead-reabre", quantas=5)
     resumidor = _ResumidorFalso()
 
-    montado = await montar_contexto(
-        get_sessionmaker(),
-        channel="whatsapp",
-        conversation_key="lead-reabre",
-        resumidor=resumidor,
-        contador=_ContadorFalso(),
-        forcar_dobra=True,
-    )
+    with caplog.at_level(logging.WARNING):
+        montado = await montar_contexto(
+            get_sessionmaker(),
+            channel="whatsapp",
+            conversation_key="lead-reabre",
+            resumidor=resumidor,
+            contador=_ContadorFalso(),
+            forcar_dobra=True,
+        )
 
     assert montado.literais == []
     assert montado.resumo is not None
     assert len(resumidor.conteudos) == 1
+    # Negativa que da sentido a afirmacao positiva no teste da degradacao: o
+    # alarme so aparece quando a dobra forcada de fato falha, nunca no
+    # caminho feliz.
+    assert "contexto.dobra_forcada_falhou" not in caplog.text
 
 
 @pytest.mark.usefixtures("banco_limpo")
@@ -119,22 +127,35 @@ async def test_sem_a_flag_o_piso_preserva_os_literais(session: AsyncSession) -> 
 
 
 @pytest.mark.usefixtures("banco_limpo")
-async def test_resumo_falho_degrada_e_nao_mata_o_turno(session: AsyncSession) -> None:
+async def test_resumo_falho_degrada_e_nao_mata_o_turno(
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
     """**A degradacao declarada da D4.**
 
     Perder resumo E literais deixaria o agente cego diante de um lead que ele
     ja atendeu. Ver demais e menos ruim que nao ver nada -- entao os literais
     voltam, e o warning denuncia.
+
+    `len(montado.literais) == 5` sozinho nao prova degradacao nenhuma: uma
+    implementacao que aceita `forcar_dobra` e nunca repassa `dobrar_tudo` para
+    `_dobrar` produz o MESMO numero, porque `dividir(5, 20)` ja devolve tudo
+    como "a manter" e o early return de `_dobrar` nem chega a chamar
+    `resumidor.resumir` -- o `_ResumidorQuebrado` nunca levanta. As duas
+    checagens de log abaixo sao o que de fato fixa que a degradacao
+    aconteceu.
     """
     await _semear_conversa(session, "lead-quebrado", quantas=5)
 
-    montado = await montar_contexto(
-        get_sessionmaker(),
-        channel="whatsapp",
-        conversation_key="lead-quebrado",
-        resumidor=_ResumidorQuebrado(),
-        contador=_ContadorFalso(),
-        forcar_dobra=True,
-    )
+    with caplog.at_level(logging.WARNING):
+        montado = await montar_contexto(
+            get_sessionmaker(),
+            channel="whatsapp",
+            conversation_key="lead-quebrado",
+            resumidor=_ResumidorQuebrado(),
+            contador=_ContadorFalso(),
+            forcar_dobra=True,
+        )
 
     assert len(montado.literais) == 5
+    assert montado.degradado is True
+    assert "contexto.dobra_forcada_falhou" in caplog.text
