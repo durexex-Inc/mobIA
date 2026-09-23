@@ -209,3 +209,47 @@ async def test_indicador_recusado_nao_levanta(session) -> None:
         cliente=cliente_que_responde(httpx.Response(400, json={"error": {"code": 100}}))
     )
     await indicador.indicar_digitacao(provider_message_id="wamid.ABC", de="222222222")
+
+
+async def test_envio_por_template_monta_o_corpo_da_cloud_api(session) -> None:
+    """TEC-186: fora da janela, o corpo e type=template com name/language/body."""
+    corpo: dict[str, object] = {}
+    outbound = WhatsAppOutbound(get_sessionmaker(), cliente=cliente_que_captura(corpo))
+    await outbound._deliver(
+        uuid.uuid4(),
+        "followup_2",
+        {
+            "para": "5511911112222",
+            "de": "222222222",
+            "tipo": "template",
+            "template": "followup_queda_de_preco",
+            "idioma": "pt_BR",
+            "parametros": ["Apartamento", "R$ 620.000", "R$ 590.000"],
+        },
+    )
+    assert corpo["type"] == "template"
+    template = corpo["template"]
+    assert template["name"] == "followup_queda_de_preco"
+    assert template["language"] == {"code": "pt_BR"}
+    body = template["components"][0]
+    assert body["type"] == "body"
+    assert [p["text"] for p in body["parameters"]] == ["Apartamento", "R$ 620.000", "R$ 590.000"]
+
+
+async def test_template_sem_parametros_nao_manda_components(session) -> None:
+    """O convite nao tem placeholder: um `components` de corpo vazio seria recusado."""
+    corpo: dict[str, object] = {}
+    outbound = WhatsAppOutbound(get_sessionmaker(), cliente=cliente_que_captura(corpo))
+    await outbound._deliver(
+        uuid.uuid4(),
+        "followup_1",
+        {
+            "para": "5511911112222",
+            "de": "222222222",
+            "tipo": "template",
+            "template": "followup_convite",
+            "idioma": "pt_BR",
+            "parametros": [],
+        },
+    )
+    assert "components" not in corpo["template"]

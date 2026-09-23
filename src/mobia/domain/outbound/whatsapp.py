@@ -61,6 +61,31 @@ class WhatsAppOutbound(GuardedOutbound):
         if payload.get("tipo") == "imagem":
             corpo["type"] = "image"
             corpo["image"] = {"link": payload["link"], "caption": payload["legenda"]}
+        elif payload.get("tipo") == "template":
+            # TEC-186, RN-13.6. Fora da janela de 24h a Meta so aceita template
+            # aprovado -- este e o unico caminho de saida que ela nao recusa
+            # com o codigo 131047. Diferente do texto e da imagem, um template
+            # nunca levanta `EnvioForaDaJanela`: e ele que existe para nao
+            # cair nela.
+            #
+            # `components` so entra QUANDO ha parametros: o template de convite
+            # nao tem placeholder, e a Cloud API recusa um `components` de
+            # corpo com lista de parametros vazia. `parametros_do_template`
+            # devolve `[]` justamente nesse caso.
+            template: dict[str, Any] = {
+                "name": payload["template"],
+                "language": {"code": payload["idioma"]},
+            }
+            parametros = payload.get("parametros") or []
+            if parametros:
+                template["components"] = [
+                    {
+                        "type": "body",
+                        "parameters": [{"type": "text", "text": p} for p in parametros],
+                    }
+                ]
+            corpo["type"] = "template"
+            corpo["template"] = template
         else:
             corpo["type"] = "text"
             corpo["text"] = {"body": payload["texto"]}

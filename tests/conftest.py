@@ -154,6 +154,10 @@ TABELAS = (
     # o UNIQUE por (channel, conversation_key, ancora_em, tentativa_numero) faz
     # o registro de um teste colidir com o do proximo sem o truncate.
     "followups",
+    # TEC-186. Append-only e mesma UNIQUE por ancora que `followups`: sem o
+    # truncate, a tarefa de corretor de um teste colide com a do proximo (ou
+    # vira historico dele), pelo mesmo argumento que `followups` acima.
+    "tarefas_de_corretor",
     # Append-only como `lead_score_audit` e `optout_events`: sem o truncate, as
     # recusas de um teste viram auditoria do proximo. O custo e conhecido e
     # aceito -- a alternativa e teste de auditoria que passa sozinho e falha em
@@ -484,7 +488,7 @@ class OutboundFake(GuardedOutbound):
         # `list[str]` para nao quebrar as assertas dos testes de antes desta
         # card, que comparam contra o texto entregue.
         #
-        # O discriminador e `payload.get("tipo") == "imagem"`, e nao o antigo
+        # O discriminador e `payload.get("tipo")`, e nao o antigo
         # `payload.get("legenda") or payload["texto"]` -- fix wave (Important).
         # O `or` tinha dois problemas: uma legenda vazia caia para
         # `payload["texto"]`, que payload de imagem nao tem, e levantava
@@ -492,8 +496,17 @@ class OutboundFake(GuardedOutbound):
         # nada aqui obrigava o payload de imagem a de fato ter `link`
         # preenchido, entao `_apresentar` podia mandar `link: None` e o duble
         # aceitava do mesmo jeito. Checar o `tipo` fecha os dois.
-        eh_imagem = payload.get("tipo") == "imagem"
-        self.entregues.append(payload["legenda"] if eh_imagem else payload["texto"])
+        #
+        # TEC-186: o payload de template nao tem `texto` -- `entregues` guarda
+        # o NOME do template, e `payloads` (acima) carrega o dicionario cru
+        # onde os testes conferem `tipo`, `template` e `parametros`.
+        tipo = payload.get("tipo")
+        if tipo == "imagem":
+            self.entregues.append(payload["legenda"])
+        elif tipo == "template":
+            self.entregues.append(payload["template"])
+        else:
+            self.entregues.append(payload["texto"])
 
 
 @pytest.fixture
