@@ -90,7 +90,7 @@ Medido nos três modos: `from exc` (883 → 605 car.), implícito (815 → 604) 
 
 ### D4 — Os três sítios de arq/Redis recebem o texto de volta, por kwarg
 
-`turno.py:566`, `process_message.py:214` e `gerar_resumo.py:48` hoje têm **só** `exc_info=True`, sem nenhum kwarg de texto. Saneado o traceback, eles ficariam reduzidos a `RedisError` — e é exatamente onde a **D3 da TEC-292** afirmou que o texto é o que importa: o que sobra numa falha dessas é `Error 111 connecting to localhost:6379`, *"que é justamente o que se quer ler às três da manhã"*.
+`turno.py:566` e `process_message.py:214` (ambos `resumo_handoff.nao_agendado`) e `gerar_resumo.py:48` (`notificacao.nao_agendada`) **tinham, antes desta card, só** `exc_info=True`, sem nenhum kwarg de texto. Saneado o traceback, eles ficariam reduzidos a `RedisError` — e é exatamente onde a **D3 da TEC-292** afirmou que o texto é o que importa: o que sobra numa falha dessas é `Error 111 connecting to localhost:6379`, *"que é justamente o que se quer ler às três da manhã"*.
 
 Os três passam a levar `motivo=str(falha)`, sob o argumento que a D3 já mediu e que aqui vale igual: **a única coisa que essas chamadas passam adiante é um UUID gerado por este projeto** — `registro.id` nos dois primeiros, `handoff_id` mais o `_job_id` derivado dele no terceiro. Não há entrada externa para a exceção ecoar. O comentário de cada sítio passa a dizer isso, em vez de justificar apenas o `exc_info`.
 
