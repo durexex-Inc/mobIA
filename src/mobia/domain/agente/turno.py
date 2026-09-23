@@ -1284,11 +1284,14 @@ async def _executar_turno(
                 )
                 return "fora_de_escopo"
 
-            # A REABERTURA mora aqui, e o gatilho dela e a mensagem do lead:
-            # nao ha job varrendo conversas vencidas, e por isso a linha fica
-            # dizendo ENCERRADA ate alguem escrever -- `situacao_da_conversa`
-            # ja conta a verdade nesse meio tempo, e o docstring dela explica
-            # por que. Chegando aqui o turno SEGUE, e nao devolve.
+            # A REABERTURA mora aqui, e o gatilho dela e a mensagem do lead.
+            # **Desde a TEC-130 existe uma varredura diaria**
+            # (`sweep_conversas_inativas`) que fecha por INATIVIDADE, mas ela
+            # so ESCREVE o encerramento -- nao reabre nada e nao decide
+            # contexto. Entre a passagem dela e a mensagem do lead a linha
+            # fica dizendo ENCERRADA, e `situacao_da_conversa` ja conta a
+            # verdade nesse meio tempo. Chegando aqui o turno SEGUE, e nao
+            # devolve.
             #
             # Condicionada a `marcada_como_encerrada` (fix da revisao, Minor
             # 7). A versao anterior chamava `reabrir_conversa`
@@ -1708,6 +1711,23 @@ async def _executar_turno(
         )
         await apagar_apresentacao_da_mensagem(session_factory, message_id=message.id)
 
+    # **O relogio, e nao o `status`** (TEC-130, D3). Esta e a conversa nova da
+    # RN-02.3, e ela tem de ser reconhecida mesmo que a varredura diaria ainda
+    # nao tenha passado -- senao um cron atrasado poe a transcricao da
+    # conversa anterior no prompt, em silencio.
+    #
+    # **Custo declarado: uma consulta a mais por turno.** `e_conversa_nova` ja
+    # e chamada mais abaixo, para decidir a apresentacao, e o resultado NAO e
+    # reaproveitado. Os dois pontos estao na mesma funcao -- entao a barreira
+    # nao e assinatura --, mas esta chamada mora dentro de um bloco aninhado
+    # que nao domina aquelas: hoistar um unico valor exigiria provar que este
+    # bloco roda em TODO caminho que chega la, sob pena de `UnboundLocalError`
+    # num ramo raro. Essa prova, dentro de uma funcao de 2800 linhas, e um
+    # refactor que esta card nao faz. A consulta usa `ix_messages_timeline`, e
+    # o preco de uma leitura indexada e menor que o de errar essa analise.
+    # Quando `_executar_turno` for partida, os pontos viram um.
+    conversa_nova = await e_conversa_nova(session_factory, message, agora=datetime.now(UTC))
+
     try:
         contexto = await montar_contexto(
             session_factory,
@@ -1715,6 +1735,7 @@ async def _executar_turno(
             conversation_key=message.conversation_key,
             resumidor=resumidor,
             contador=contador,
+            forcar_dobra=conversa_nova,
         )
     except ContextoIrreducivel as exc:
         # Uma unica mensagem que nao cabe no teto. Retentar nao encolhe nada.

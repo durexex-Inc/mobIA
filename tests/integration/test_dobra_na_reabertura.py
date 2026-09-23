@@ -159,3 +159,49 @@ async def test_resumo_falho_degrada_e_nao_mata_o_turno(
     assert len(montado.literais) == 5
     assert montado.degradado is True
     assert "contexto.dobra_forcada_falhou" in caplog.text
+
+
+async def test_o_turno_de_uma_conversa_velha_nao_leva_a_transcricao_dela(
+    session: AsyncSession,
+    classificador_fake,
+    outbound_fake,
+    contador_fake,
+    rodar_turno,
+) -> None:
+    """**O cenario Gherkin da card, ponta a ponta.**
+
+    "Dada uma conversa encerrada por inatividade de um lead que buscava
+    apartamento na zona sul, quando esse lead envia uma nova mensagem, entao
+    uma nova conversa e criada para o mesmo lead e o resumo da conversa
+    anterior esta disponivel para o agente."
+
+    Cinco mensagens de 60 dias atras ficam MUITO abaixo do gatilho de
+    regeneracao (40) e do piso de literais (20): sem a dobra forcada elas
+    iriam inteiras para o prompt deste turno.
+    """
+    from conftest import CANAL_AGENTE, CONVERSA_AGENTE  # type: ignore[import-not-found]
+
+    from mobia.domain.context.janela import literais_apos, marca_de
+    from mobia.domain.context.repositorio import ler_resumo
+
+    await _semear_conversa(session, CONVERSA_AGENTE, quantas=5)
+    resumidor = _ResumidorFalso()
+
+    resultado = await rodar_turno(
+        session, classificador_fake(), outbound_fake(), resumidor, contador_fake()
+    )
+
+    assert resultado == "respondido"
+    # A dobra rodou, e uma vez so.
+    assert len(resumidor.conteudos) == 1
+
+    async with get_sessionmaker()() as leitura:
+        resumo = await ler_resumo(leitura, CANAL_AGENTE, CONVERSA_AGENTE)
+        assert resumo is not None
+        sobraram = await literais_apos(leitura, CANAL_AGENTE, CONVERSA_AGENTE, marca_de(resumo))
+
+    # **O criterio da card**: nenhuma das cinco falas velhas esta atras da
+    # marca. O que sobrou e deste turno -- a fala do lead e a resposta do
+    # agente --, nunca da conversa anterior.
+    velhas = {m.id for m in sobraram if m.created_at < resumo.watermark_created_at}
+    assert velhas == set()
