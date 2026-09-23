@@ -25,11 +25,29 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA
 from mobia.domain.messages.models import Message
 
-# Mesmo limiar da TEC-130. Quando aquela card chegar, este modulo passa a
-# perguntar a entidade em vez de derivar, e esta constante sai.
-DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA = 30
+# **A TEC-130 chegou e este modulo continua derivando, de proposito.** O
+# comentario que morava aqui prometia que, quando aquela card chegasse, o
+# modulo passaria a "perguntar a entidade em vez de derivar". A D3 do desenho
+# dela declinou: perguntar a entidade poe a varredura diaria no caminho
+# critico da apresentacao -- com ela parada, ou apenas ainda nao executada no
+# dia, a conversa continuaria ATIVA, esta funcao devolveria False e o lead que
+# sumiu por meses voltaria sem ninguem se apresentar, em silencio. Derivar e o
+# que torna a resposta verdadeira independentemente do cron. O que saiu daqui
+# foi so a constante, para `conversa/regras.py`, que e onde os outros dois
+# leitores dela vivem.
+#
+# **O CONTEXTO nao passa mais por aqui.** A dobra que separa a conversa nova
+# da anterior chegou a ser ligada por esta funcao e deixou de ser, na rodada
+# final de revisao da TEC-130: numa rajada de volta, quem carrega o turno e a
+# mensagem mais nova do lote e ela encontra a irma de segundos atras, entao o
+# predicado devolvia False justamente na reabertura. Quem decide a dobra e
+# `_fronteira_do_silencio` (`context/montagem.py`), que procura um intervalo de
+# 30 dias entre dois literais vizinhos. **A rajada continua cegando o que
+# sobrou aqui** -- identificacao e apresentacao --, e isso e a lacuna
+# pre-existente da TEC-139, nao da TEC-130.
 
 
 async def e_conversa_nova(

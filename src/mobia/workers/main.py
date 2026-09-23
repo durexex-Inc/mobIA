@@ -20,6 +20,7 @@ from mobia.workers.jobs.importar_catalogo import importar_catalogo
 from mobia.workers.jobs.indexar_catalogo import indexar_catalogo
 from mobia.workers.jobs.notificar import notificar_corretor
 from mobia.workers.jobs.process_message import process_message
+from mobia.workers.jobs.sweep_conversas_inativas import sweep_conversas_inativas
 from mobia.workers.jobs.sweep_followups import sweep_followups
 from mobia.workers.jobs.sweep_importacoes_travadas import sweep_importacoes_travadas
 from mobia.workers.jobs.sweep_sla import sweep_sla
@@ -180,6 +181,11 @@ class WorkerSettings:
         # enqueue manual.
         func(sweep_sla, keep_result=0),
         sweep_importacoes_travadas,
+        # `keep_result=0` pela mesma razao do `sweep_sla`: o resultado (um
+        # `int`) nao serve para nada depois que o log saiu. Entra em
+        # `cron_jobs` tambem -- e o relogio que dispara este job, nunca um
+        # enqueue manual.
+        func(sweep_conversas_inativas, keep_result=0),
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
@@ -222,6 +228,23 @@ class WorkerSettings:
             minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
             run_at_startup=False,
         ),
+        # **Uma vez por dia**, e nao de cinco em cinco minutos como os
+        # irmaos acima. A janela desta regra e de TRINTA DIAS: a diferenca
+        # entre fechar as 3h e fechar as 3h30 nao existe para ninguem, e a
+        # consulta agrega `messages` INTEIRA -- nao uma fila curta como a da
+        # `sweep_stalled` --, entao cada passagem e cara. Rodar de hora em
+        # hora multiplicaria esse custo por 24 para antecipar um registro que
+        # ninguem le em tempo real.
+        #
+        # **E o atraso e inofensivo por construcao** (D3 do desenho): quem
+        # impede a transcricao velha de entrar no prompt e o turno, pelo
+        # relogio, nao este cron. Uma passagem perdida atrasa a escrituracao,
+        # nunca o comportamento.
+        #
+        # As 3h da manha, horario do runner: e quando a fila de
+        # `process_message` esta mais vazia, e esta varredura toma locks em
+        # `conversas`.
+        cron(sweep_conversas_inativas, hour={3}, minute={0}, run_at_startup=False),
     ]
     on_startup = startup
     on_shutdown = shutdown

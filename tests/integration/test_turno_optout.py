@@ -1,5 +1,9 @@
 """O turno detecta o pedido de opt-out, grava e confirma (TEC-182 Task 5).
 
+Desde a TEC-130 (Task 4) o mesmo turno tambem encerra a conversa com
+`MotivoDoEncerramento.OPTOUT` -- so escrituracao, o silencio continua vindo
+de `esta_em_optout`, que roda antes deste bloco.
+
 Reusa a mesma montagem de `executar_turno` que `tests/integration/test_turno.py`
 ja faz -- os dubles (classificador, resumidor, contador, outbound, moderador)
 vem das mesmas fixtures de `tests/conftest.py`. So a mensagem semeada muda:
@@ -13,10 +17,16 @@ import uuid
 from typing import Any
 
 import pytest
-from conftest import ModeradorFake, OutboundFake
+from conftest import (  # type: ignore[import-not-found]
+    ModeradorFake,
+    OutboundFake,
+    eventos_de_log,
+)
 from sqlalchemy import func, select
 
 from mobia.domain.agente.turno import executar_turno
+from mobia.domain.conversa.models import Conversa
+from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
 from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
@@ -676,3 +686,101 @@ async def test_kind_da_recusa_de_entrada_e_proprio_e_nao_o_default(
 
     assert resultado == "respondido"
     assert outbound.kinds == [KIND_DA_RECUSA_DE_ENTRADA]
+
+
+async def test_pedido_de_optout_encerra_a_conversa_com_motivo_proprio(
+    session,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    caplog,
+) -> None:
+    """TEC-130: o opt-out passa a fechar a conversa, com data e motivo.
+
+    **So escrituracao.** Quem cala o agente e `esta_em_optout`, cujo portao
+    roda antes do bloco da reabertura -- `MotivoDoEncerramento.OPTOUT` nao
+    entra em `silencia_o_agente`, de proposito. Isto existe para a conversa
+    ter registro, que e o que a RN-02.3 pede.
+
+    **E deixa linha de log, como os outros dois motivos** (fix da revisao
+    final). O evento `conversa.encerrada` ja tinha campo `motivo` e era
+    emitido so pela RN-03.5: quem paginasse por ele via um terco do funil e
+    nao tinha como saber disso. Agora os tres caminhos o emitem.
+    """
+    mensagem = await _mensagem_gravada(session, texto="parar")
+
+    with caplog.at_level("INFO"):
+        resultado = await executar_turno(
+            get_sessionmaker(),
+            message=mensagem,
+            classificador=classificador_fake(),
+            resumidor=resumidor_fake(),
+            contador=contador_fake(),
+            outbound=outbound_fake(),
+            moderador=moderador_fake(),
+            agendador=AgendadorNoop(),
+        )
+
+    assert resultado == "opt_out"
+    ((nivel, corpo),) = eventos_de_log(caplog, "conversa.encerrada")
+    assert nivel == "INFO"
+    assert corpo["motivo"] == MotivoDoEncerramento.OPTOUT
+    linha = (
+        await session.execute(
+            select(Conversa.status, Conversa.motivo_do_encerramento, Conversa.encerrada_em).where(
+                Conversa.channel == CANAL,
+                Conversa.conversation_key == CONVERSA,
+            )
+        )
+    ).one()
+    assert linha.status == Status.ENCERRADA
+    assert linha.motivo_do_encerramento == MotivoDoEncerramento.OPTOUT
+    assert linha.encerrada_em is not None
+
+
+async def test_lead_em_optout_que_volta_nao_reabre_a_conversa(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """**A ordem dos portoes em `turno.py`, afirmada.**
+
+    `esta_em_optout` devolve cedo, la em cima, ANTES do bloco que reabre. Se
+    algum dia a reabertura subir para antes dele, este teste reprova -- e o
+    defeito seria grave: a conversa de quem pediu para sair voltaria a ATIVA
+    e sumiria de qualquer relatorio de opt-out.
+    """
+    primeira = await _mensagem_gravada(session, texto="parar")
+    await executar_turno(
+        get_sessionmaker(),
+        message=primeira,
+        classificador=classificador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=outbound_fake(),
+        moderador=moderador_fake(),
+        agendador=AgendadorNoop(),
+    )
+
+    segunda = await _mensagem_gravada(session, texto="mudei de ideia, quero ver apartamento")
+    await executar_turno(
+        get_sessionmaker(),
+        message=segunda,
+        classificador=classificador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+        outbound=outbound_fake(),
+        moderador=moderador_fake(),
+        agendador=AgendadorNoop(),
+    )
+
+    linha = (
+        await session.execute(
+            select(Conversa.status, Conversa.motivo_do_encerramento).where(
+                Conversa.channel == CANAL,
+                Conversa.conversation_key == CONVERSA,
+            )
+        )
+    ).one()
+    assert linha.status == Status.ENCERRADA
+    assert linha.motivo_do_encerramento == MotivoDoEncerramento.OPTOUT

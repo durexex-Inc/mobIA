@@ -19,7 +19,6 @@ from mobia.domain.agente.ferramenta_de_busca import (
 )
 from mobia.domain.agente.formato import quebrar_em_mensagens
 from mobia.domain.agente.identificacao import (
-    DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA,
     SEPARADOR_DA_IDENTIFICACAO,
     TEXTO_DA_IDENTIFICACAO,
     e_conversa_nova,
@@ -61,7 +60,7 @@ from mobia.domain.context.repositorio import (
 )
 from mobia.domain.context.resumo import ContadorPort, ResumidorPort
 from mobia.domain.context.temperatura import Temperatura
-from mobia.domain.conversa.regras import deve_encerrar
+from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA, deve_encerrar
 from mobia.domain.conversa.repositorio import (
     encerrar_conversa,
     reabrir_conversa,
@@ -1285,11 +1284,14 @@ async def _executar_turno(
                 )
                 return "fora_de_escopo"
 
-            # A REABERTURA mora aqui, e o gatilho dela e a mensagem do lead:
-            # nao ha job varrendo conversas vencidas, e por isso a linha fica
-            # dizendo ENCERRADA ate alguem escrever -- `situacao_da_conversa`
-            # ja conta a verdade nesse meio tempo, e o docstring dela explica
-            # por que. Chegando aqui o turno SEGUE, e nao devolve.
+            # A REABERTURA mora aqui, e o gatilho dela e a mensagem do lead.
+            # **Desde a TEC-130 existe uma varredura diaria**
+            # (`sweep_conversas_inativas`) que fecha por INATIVIDADE, mas ela
+            # so ESCREVE o encerramento -- nao reabre nada e nao decide
+            # contexto. Entre a passagem dela e a mensagem do lead a linha
+            # fica dizendo ENCERRADA, e `situacao_da_conversa` ja conta a
+            # verdade nesse meio tempo. Chegando aqui o turno SEGUE, e nao
+            # devolve.
             #
             # Condicionada a `marcada_como_encerrada` (fix da revisao, Minor
             # 7). A versao anterior chamava `reabrir_conversa`
@@ -1349,6 +1351,46 @@ async def _executar_turno(
             channel=message.channel,
             conversation_key=message.conversation_key,
             message_id=message.id,
+        )
+        # **Escrituracao, nao silencio** (TEC-130, D6). Quem cala e
+        # `esta_em_optout`, no portao la em cima; `MotivoDoEncerramento.OPTOUT`
+        # nao entra em `silencia_o_agente`, de proposito. Isto aqui existe
+        # para a conversa ter data e motivo, que e o que a RN-02.3 pede.
+        #
+        # **Sao duas transacoes, e a ordem importa.** `registrar_optout` abre
+        # e commita a propria sessao; `encerrar_conversa` recebe a sessao e
+        # deixa o commit para quem chama -- nao ha como junta-las sem mudar a
+        # assinatura de uma das duas. O opt-out vai primeiro pelo mesmo
+        # argumento que o comentario acima usa para grava-lo antes da
+        # entrega: morrer entre as duas deixa o lead em opt-out com a conversa
+        # ainda ATIVA -- registro de menos, nunca mensagem a mais. A varredura
+        # diaria fecha essa conversa por INATIVIDADE 30 dias depois, com o
+        # motivo menos preciso; e o custo aceito.
+        async with session_factory() as sessao_do_encerramento:
+            await encerrar_conversa(
+                sessao_do_encerramento,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                motivo=str(MotivoDoEncerramento.OPTOUT),
+                agora=datetime.now(UTC),
+            )
+            await sessao_do_encerramento.commit()
+        # **`conversa.encerrada` passa a significar TODO encerramento**, e nao
+        # so o da RN-03.5 (fix da revisao final). O evento ja existia com campo
+        # `motivo`, e emiti-lo em dois dos tres caminhos fazia o `motivo`
+        # prometer uma distincao que o conjunto de linhas nao entregava: quem
+        # paginasse por ele veria o funil sem os encerramentos por opt-out e
+        # sem os da varredura (`encerrar_inativas` emite o terceiro).
+        #
+        # Depois do commit e sem texto do lead, pelas mesmas duas razoes do
+        # bloco da RN-03.5 mais abaixo. Sem `seguidas`: aqui nao ha contagem
+        # que tenha decidido nada -- o que decidiu foi o pedido do lead, e o
+        # `message_id` e a alca que leva ate ele.
+        log.info(
+            "conversa.encerrada",
+            channel=message.channel,
+            message_id=str(message.id),
+            motivo=str(MotivoDoEncerramento.OPTOUT),
         )
         # Nome distinto de `entregue` (o bool que `outbound.send` devolve mais
         # abaixo, no caminho principal): mypy infere um tipo unico por nome de
@@ -1686,6 +1728,14 @@ async def _executar_turno(
         )
         await apagar_apresentacao_da_mensagem(session_factory, message_id=message.id)
 
+    # A fronteira de historico da TEC-130 (D4) nao entra por aqui: quem decide
+    # dobrar a conversa anterior inteira e `montar_contexto`, olhando para os
+    # proprios literais -- ver `_fronteira_do_silencio`, em
+    # `context/montagem.py`. Passar um predicado sobre `message` daqui e o que
+    # a rodada final de revisao derrubou: numa rajada a mensagem que carrega o
+    # turno e a MAIS NOVA do lote, e ela enxerga a irma de segundos atras, de
+    # modo que `e_conversa_nova` devolvia False exatamente na reabertura em
+    # que a dobra tinha de acontecer.
     try:
         contexto = await montar_contexto(
             session_factory,
