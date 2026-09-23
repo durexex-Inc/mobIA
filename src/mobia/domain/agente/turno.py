@@ -1717,13 +1717,17 @@ async def _executar_turno(
     # conversa anterior no prompt, em silencio.
     #
     # **Custo declarado: uma consulta a mais por turno.** `e_conversa_nova` ja
-    # e chamada duas vezes mais abaixo, para decidir a apresentacao, e este
-    # valor NAO e reaproveitado la. Nao ha barreira tecnica: as tres chamadas
-    # estao na mesma funcao e esta domina as outras duas. O que ha e escopo --
-    # aqueles dois call sites sao pre-existentes e pertencem ao caminho da
-    # apresentacao, que esta card nao tem motivo para tocar. Unificar as tres
-    # e limpeza legitima para quem vier depois; o preco de nao fazer agora e
-    # uma leitura de `ix_messages_timeline` por turno.
+    # e chamada duas vezes mais abaixo NESTA funcao, para decidir a
+    # identificacao e a apresentacao, e este valor NAO e reaproveitado la.
+    # Nao ha barreira tecnica: as tres chamadas estao na mesma funcao e esta
+    # domina as outras duas. O que ha e escopo -- aqueles dois call sites sao
+    # pre-existentes e pertencem ao caminho da identificacao/apresentacao,
+    # que esta card nao tem motivo para tocar. (Ha ainda uma QUARTA chamada,
+    # em `_entregar_texto_fixo` -- este turno a alcanca por um `return await
+    # _entregar_texto_fixo(` mais abaixo -- entao quem for unificar nao
+    # unifica tres call sites, unifica quatro.) Unificar e limpeza legitima
+    # para quem vier depois; o preco de nao fazer agora e uma leitura de
+    # `ix_messages_timeline` por turno.
     conversa_nova = await e_conversa_nova(session_factory, message, agora=datetime.now(UTC))
 
     try:

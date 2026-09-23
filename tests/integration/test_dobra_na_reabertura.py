@@ -10,6 +10,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.context.montagem import montar_contexto
@@ -50,8 +51,8 @@ class _ContadorFalso:
         return 10
 
 
-async def _semear_conversa(session: AsyncSession, chave: str, quantas: int) -> None:
-    """Uma conversa velha, alternando lead e agente.
+async def _semear_conversa(session: AsyncSession, chave: str, quantas: int) -> list[uuid.UUID]:
+    """Uma conversa velha, alternando lead e agente. Devolve os ids semeados.
 
     `channel`, `conversation_key`, `role`, `direction` e `content_type` sao
     NOT NULL. `text_body` fica nulo: `_texto_das` (em `montagem.py`) lida com
@@ -59,11 +60,14 @@ async def _semear_conversa(session: AsyncSession, chave: str, quantas: int) -> N
     sobre o que elas diziam.
     """
     base = datetime.now(UTC) - timedelta(days=60)
+    ids: list[uuid.UUID] = []
     for n in range(quantas):
         do_lead = n % 2 == 0
+        identificador = uuid.uuid4()
+        ids.append(identificador)
         session.add(
             Message(
-                id=uuid.uuid4(),
+                id=identificador,
                 channel="whatsapp",
                 conversation_key=chave,
                 role=MessageRole.LEAD if do_lead else MessageRole.AGENTE,
@@ -73,6 +77,7 @@ async def _semear_conversa(session: AsyncSession, chave: str, quantas: int) -> N
             )
         )
     await session.commit()
+    return ids
 
 
 @pytest.mark.usefixtures("banco_limpo")
@@ -80,13 +85,18 @@ async def test_a_dobra_forcada_nao_deixa_literal_nenhum(
     session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
     """**O criterio da card ao pe da letra**: por meio do resumo, nao pela
-    transcricao inteira.
+    transcricao inteira -- com uma excecao deliberada, a mais recente.
 
     Cinco mensagens ficam MUITO abaixo do gatilho de regeneracao (40) e do
     piso de literais (20) -- sem a dobra forcada, as cinco iriam inteiras
-    para o prompt da conversa nova.
+    para o prompt da conversa nova. Com a dobra forcada, quatro viram resumo
+    e a quinta -- a mais recente -- fica literal: e o piso de `minimas=1`
+    que `_dobrar` aplica quando `dobrar_tudo=True` (fix da TEC-130, rodada de
+    revisao -- a versao anterior deste teste afirmava `literais == []`, que
+    so era verdade por causa de um bug que apagava a fala do proprio turno
+    junto com a conversa velha).
     """
-    await _semear_conversa(session, "lead-reabre", quantas=5)
+    ids = await _semear_conversa(session, "lead-reabre", quantas=5)
     resumidor = _ResumidorFalso()
 
     with caplog.at_level(logging.WARNING):
@@ -99,7 +109,7 @@ async def test_a_dobra_forcada_nao_deixa_literal_nenhum(
             forcar_dobra=True,
         )
 
-    assert montado.literais == []
+    assert [m.id for m in montado.literais] == [ids[-1]]
     assert montado.resumo is not None
     assert len(resumidor.conteudos) == 1
     # Negativa que da sentido a afirmacao positiva no teste da degradacao: o
@@ -184,7 +194,7 @@ async def test_o_turno_de_uma_conversa_velha_nao_leva_a_transcricao_dela(
     from mobia.domain.context.janela import literais_apos, marca_de
     from mobia.domain.context.repositorio import ler_resumo
 
-    await _semear_conversa(session, CONVERSA_AGENTE, quantas=5)
+    ids_semeados = await _semear_conversa(session, CONVERSA_AGENTE, quantas=5)
     resumidor = _ResumidorFalso()
 
     resultado = await rodar_turno(
@@ -199,9 +209,31 @@ async def test_o_turno_de_uma_conversa_velha_nao_leva_a_transcricao_dela(
         resumo = await ler_resumo(leitura, CANAL_AGENTE, CONVERSA_AGENTE)
         assert resumo is not None
         sobraram = await literais_apos(leitura, CANAL_AGENTE, CONVERSA_AGENTE, marca_de(resumo))
+        # `rodar_turno` nao devolve a linha que semeou -- so o resultado do
+        # turno --, entao a entrada e identificada pela mais recente das
+        # INBOUND do par: as cinco semeadas ficam 60 dias no passado, e so
+        # esta e de agora.
+        entrada = (
+            await leitura.execute(
+                select(Message)
+                .where(
+                    Message.channel == CANAL_AGENTE,
+                    Message.conversation_key == CONVERSA_AGENTE,
+                    Message.direction == MessageDirection.INBOUND,
+                )
+                .order_by(Message.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one()
 
-    # **O criterio da card**: nenhuma das cinco falas velhas esta atras da
-    # marca. O que sobrou e deste turno -- a fala do lead e a resposta do
-    # agente --, nunca da conversa anterior.
-    velhas = {m.id for m in sobraram if m.created_at < resumo.watermark_created_at}
-    assert velhas == set()
+    # **O criterio da card**, ao pe da letra: nenhuma das cinco falas velhas
+    # esta atras da marca -- `literais_apos` so devolve o que esta DEPOIS
+    # dela, entao `isdisjoint` contra os ids semeados e o que de fato prova
+    # isso (um `sobraram` vazio tambem passaria numa checagem so de
+    # continencia, sem provar nada sobre o resumo ter rodado direito).
+    ids_sobrantes = {m.id for m in sobraram}
+    assert ids_sobrantes.isdisjoint(ids_semeados)
+    # E a fala DESTE turno sobrevive como literal -- e a fala a que o
+    # modelo respondeu; se ela tivesse ido para o resumo junto com a
+    # conversa velha, o prompt chegaria sem a pergunta do lead.
+    assert entrada.id in ids_sobrantes

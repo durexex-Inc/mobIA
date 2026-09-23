@@ -749,23 +749,43 @@ async def _dobrar(
         a_manter = literais
         conteudo = texto_do_resumo or ""
     else:
-        # `minimas=0` faz `dividir` devolver tudo para dobrar e nada para
-        # manter, com `piso_pode_ceder=False` -- que e o caso de quem liga
-        # isto. `janela.dividir` calcula `piso = 1 if piso_pode_ceder else
-        # minimas`, entao um `piso_pode_ceder=True` vindo junto venceria
-        # `minimas=0` em silencio e deixaria uma literal de pe; hoje os dois
-        # call sites de `_dobrar` sao disjuntos e isso e inalcancavel, mas a
-        # combinacao nao esta bloqueada em lugar nenhum. E o que apaga a
-        # transcricao da conversa anterior sem perde-la, porque ela vai
-        # inteira para o resumo. Ver a D4 da TEC-130.
+        # `minimas=1` faz `dividir` devolver tudo MENOS a mensagem mais
+        # recente para dobrar, com `piso_pode_ceder=False` -- que e o caso de
+        # quem liga isto. E o que apaga a transcricao da conversa anterior
+        # sem perde-la, porque ela vai inteira para o resumo. Ver a D4 da
+        # TEC-130.
+        #
+        # Antes disto usava `minimas=0`, e isso era um bug (fix da TEC-130,
+        # rodada de revisao): a fala DESTE turno esta em `literais` -- a
+        # ingestao commita a linha antes de enfileirar o job (o job recebe o
+        # `message_id`), entao ela sempre chega aqui -- e com `minimas=0` ela
+        # ia para o resumo junto com o resto. O modelo respondia a uma
+        # parafrase da propria pergunta; no primeiro turno de um lead novo
+        # (sem mensagem anterior, `e_conversa_nova` tambem devolve True) o
+        # "oi" inicial pagava um resumo e o prompt chegava com
+        # `Mensagens recentes:` vazio.
         #
         # **`dobrar_tudo` nao e `piso_pode_ceder`.** Aquele cede o piso para
         # UMA mensagem, por causa do estouro de teto, e a mais recente tem de
-        # sobrar porque e a fala a que o modelo responde. Aqui nenhuma tem de
-        # sobrar: a fala deste turno nao esta nesta lista (o turno a grava e
-        # `montar_contexto` nao a inclui), entao dobrar tudo nao deixa o turno
-        # sem pergunta.
-        minimas = 0 if dobrar_tudo else settings.contexto_literais_minimas
+        # sobrar porque e a fala a que o modelo responde. Aqui, pela MESMA
+        # razao, uma tambem tem de sobrar -- `janela.dividir` ja declara essa
+        # invariante no comentario de `piso_pode_ceder`, e e por isso que
+        # `minimas=1` aqui, nao `minimas=0`.
+        #
+        # Isso tambem fecha, de graca, o risco que esta nota descrevia antes
+        # sobre combinar `dobrar_tudo=True` com `piso_pode_ceder=True`
+        # (`janela.dividir` calcula `piso = 1 if piso_pode_ceder else
+        # minimas`): com `minimas=1` os dois ramos convergem para `piso=1`,
+        # entao a combinacao -- ainda inalcancavel hoje, os dois call sites de
+        # `_dobrar` continuam disjuntos -- deixou de produzir um resultado
+        # diferente do esperado.
+        #
+        # **Custo aceito:** numa rajada logo apos a reabertura -- o lead manda
+        # mais de uma mensagem antes do turno rodar --, so a mais recente fica
+        # literal; as demais da rajada entram no resumo junto com a conversa
+        # antiga. E perda de fidelidade, nao de dado: continuam cobertas pelo
+        # resumo, so deixam de estar literais.
+        minimas = 1 if dobrar_tudo else settings.contexto_literais_minimas
         a_dobrar, a_manter = dividir(literais, minimas, piso_pode_ceder=piso_pode_ceder)
         if not a_dobrar:
             return texto_do_resumo, literais, cobertas, marca, False
