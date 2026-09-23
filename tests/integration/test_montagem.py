@@ -38,7 +38,7 @@ from mobia.domain.messages.models import Message
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.domain.messages.status import MessageStatus
 from mobia.infra.anthropic import TETO_DO_RESUMO
-from mobia.infra.crypto import aad_de, encrypt
+from mobia.infra.crypto import DecryptionError, aad_de, encrypt, marca_do_aad
 from mobia.infra.db import get_sessionmaker
 
 
@@ -1088,6 +1088,22 @@ async def test_resumo_ilegivel_degrada_em_vez_de_travar_a_conversa(session, capl
     assert contexto.degradado is True
     assert "contexto.resumo_ilegivel" in caplog.text
 
+    # TEC-226: o aviso precisa discriminar. Sem o tipo do erro e a marca do
+    # AAD, um erro global de chave fica indistinguivel de uma escrita parcial
+    # isolada -- a diferenca entre um incidente e uma linha ruim. O telefone
+    # nao aparece: a marca e HMAC, nao o `conversation_key`.
+    assert "DecryptionError" in caplog.text
+    assert marca_do_aad(aad_do_resumo(CANAL, CONVERSA)) in caplog.text
+
+    # Agulha como literal, e nao `CONVERSA`, por causa da guarda da TEC-289:
+    # ela so consegue reduzir literal, constante do proprio arquivo ou import
+    # de `mobia.*`, e uma agulha que ela nao reduz e uma asserta que pode
+    # estar vazia sem ninguem saber. A igualdade logo abaixo e o que impede o
+    # literal de envelhecer em silencio se o `CONVERSA` do conftest mudar.
+    telefone_do_lead = "5511911112222"
+    assert telefone_do_lead == CONVERSA, "o literal desta guarda saiu de sincronia com o conftest"
+    assert telefone_do_lead not in caplog.text
+
 
 async def test_resumo_ilegivel_e_sobrescrito_pela_proxima_dobra(session) -> None:
     """O degradado tem de se curar sozinho, senao a conversa fica degradada."""
@@ -1115,6 +1131,57 @@ async def test_resumo_ilegivel_e_sobrescrito_pela_proxima_dobra(session) -> None
 
     async with get_sessionmaker()() as outra:
         gravado = await ler_resumo(outra, CANAL, CONVERSA)
+    assert gravado is not None, "a linha ilegivel tem de ter sido reescrita"
+    assert gravado.texto == "resumo do que veio antes"
+
+
+async def test_resumo_ilegivel_com_marca_adiantada_tambem_se_cura(session) -> None:
+    """A cura nao pode depender de onde a marca da linha corrompida parou.
+
+    O teste vizinho poe a marca na mensagem MAIS ANTIGA, entao qualquer dobra
+    a ultrapassa e a guarda de monotonia de `gravar_resumo` deixa passar. Com
+    a marca ADIANTADA a historia era outra: o caminho degradado descarta a
+    marca guardada, a proxima dobra calcula uma marca a partir do inicio da
+    conversa -- mais ANTIGA que a da linha corrompida --, e o
+    `where watermark_created_at <= excluded.watermark_created_at` transformava
+    a escrita num no-op silencioso. Resultado: todo turno pagava uma chamada
+    ao resumidor, devolvia `degradado=True`, e a linha continuava ilegivel ate
+    a conversa crescer o bastante para a dobra passar da marca velha.
+
+    Marca na mensagem mais RECENTE e o pior caso determinístico: nenhuma dobra
+    que comece do inicio pode alcanca-la.
+    """
+    criadas = await semear(session, 40)
+    session.add(
+        ConversationSummary(
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            resumo=encrypt("ilegivel", aad_do_resumo(CANAL, "5511999998888")),
+            watermark_created_at=criadas[-1].created_at,
+            watermark_message_id=criadas[-1].id,
+            mensagens_cobertas=len(criadas),
+            modelo="claude-opus-5",
+        )
+    )
+    await session.commit()
+
+    resumidor = ResumidorFake()
+    await montar_contexto(
+        get_sessionmaker(),
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        resumidor=resumidor,
+        contador=ContadorFake(),
+    )
+
+    async with get_sessionmaker()() as outra:
+        try:
+            gravado = await ler_resumo(outra, CANAL, CONVERSA)
+        except DecryptionError:
+            pytest.fail(
+                "a linha ilegivel continuou ilegivel: a dobra virou no-op na "
+                "guarda de monotonia, e o proximo turno paga tudo de novo"
+            )
     assert gravado is not None, "a linha ilegivel tem de ter sido reescrita"
     assert gravado.texto == "resumo do que veio antes"
 

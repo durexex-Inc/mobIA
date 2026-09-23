@@ -16,9 +16,10 @@ from mobia.domain.context.janela import (
     literais_apos,
     marca_de,
 )
-from mobia.domain.context.models import LeadQualification
+from mobia.domain.context.models import LeadQualification, aad_do_resumo
 from mobia.domain.context.repositorio import (
     ResumoDaConversa,
+    apagar_resumo,
     gravar_resumo,
     ler_estado,
     ler_resumo,
@@ -33,7 +34,7 @@ from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA
 from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.models import Message
 from mobia.infra.anthropic import TETO_DO_RESUMO, motivo_do_provedor
-from mobia.infra.crypto import DecryptionError, aad_de, decrypt
+from mobia.infra.crypto import DecryptionError, aad_de, decrypt, marca_do_aad
 
 log = structlog.get_logger(__name__)
 
@@ -564,7 +565,7 @@ async def montar_contexto(
         resumo_atual: ResumoDaConversa | None = None
         try:
             resumo_atual = await ler_resumo(session, channel, conversation_key)
-        except DecryptionError:
+        except DecryptionError as exc:
             # Resumo ilegivel -- rotacao de chave, escrita parcial, restore de
             # um ambiente com outra chave -- nao pode travar a conversa. Sem
             # esta guarda uma unica linha corrompida faz todo turno seguinte
@@ -573,13 +574,33 @@ async def montar_contexto(
             # queda do provedor, que tem.
             #
             # Degradar e seguro: sem marca, tudo depois do inicio da conversa
-            # volta literal -- nada some, so cresce -- e a proxima dobra
-            # sobrescreve a linha ilegivel com um resumo novo. So o tipo do
-            # erro vai para o log: o texto dele nunca carrega conteudo do lead
-            # (ver `_marca_do_aad` em `infra/crypto.py`), mas registrar o
-            # minimo aqui e mais barato que confiar nisso a cada refactor.
+            # volta literal -- nada some, so cresce.
+            #
+            # **A linha corrompida e APAGADA aqui, e nao apenas ignorada.**
+            # Ate a TEC-226 a promessa era que "a proxima dobra sobrescreve", e
+            # numa janela especifica ela era falsa: descartada a marca junto do
+            # texto ilegivel, a dobra seguinte calcula uma marca a partir do
+            # inicio da conversa, que pode ser mais ANTIGA que a que ficou na
+            # linha -- e a guarda de monotonia de `gravar_resumo` rejeita a
+            # escrita em silencio. A conversa ficava degradada, pagando uma
+            # chamada ao resumidor por turno, ate crescer o bastante para a
+            # dobra passar da marca velha. Sem linha nao ha marca velha.
+            #
+            # O `reason` vai junto porque sem ele um erro global de chave fica
+            # indistinguivel de uma escrita parcial isolada -- a diferenca
+            # entre um incidente e uma linha ruim. O texto da excecao nao
+            # carrega conteudo do lead (ver `marca_do_aad` em
+            # `infra/crypto.py`), mas so o TIPO vai, que e o mesmo criterio do
+            # `_dobrar`.
             degradado = True
-            log.warning("contexto.resumo_ilegivel", channel=channel)
+            log.warning(
+                "contexto.resumo_ilegivel",
+                channel=channel,
+                reason=type(exc).__name__,
+                marca_do_aad=marca_do_aad(aad_do_resumo(channel, conversation_key)),
+            )
+            await apagar_resumo(session, channel, conversation_key)
+            await session.commit()
         literais = await literais_apos(session, channel, conversation_key, marca_de(resumo_atual))
         estado = await ler_estado(session, channel, conversation_key)
 
@@ -951,7 +972,7 @@ async def _dobrar(
         raise AssertionError("_dobrar: chamado sem marca previa e sem nada para dobrar")
 
     async with session_factory() as session:
-        await gravar_resumo(
+        gravou = await gravar_resumo(
             session,
             channel=channel,
             conversation_key=conversation_key,
@@ -961,6 +982,21 @@ async def _dobrar(
             mensagens_cobertas=cobertas,
             modelo=gerado.modelo,
         )
+        if not gravou:
+            # A guarda de monotonia recusou: a marca que este turno calculou e
+            # mais antiga que a gravada. No caso para o qual a guarda existe --
+            # dois turnos concorrentes -- isto e o resultado correto e o outro
+            # turno ja gravou algo melhor. Mas o silencio custou caro: foi
+            # assim que a TEC-226 passou despercebida, com a chamada ao
+            # resumidor sendo paga todo turno sem que nada dissesse que a
+            # escrita nao acontecera. Uma linha no log nao muda o
+            # comportamento, so tira a invisibilidade.
+            log.info(
+                "contexto.resumo_nao_gravado",
+                channel=channel,
+                motivo="marca_calculada_mais_antiga_que_a_gravada",
+                marca_calculada=nova_marca.created_at.isoformat(),
+            )
         # gravar_resumo empresta a sessao (Task 2): quem chama e dono da
         # fronteira. Sem este commit a marca nunca sai da memoria e todo
         # turno seguinte paga de novo o mesmo dobramento ou a mesma

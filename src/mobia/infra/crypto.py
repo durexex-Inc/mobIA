@@ -1,12 +1,15 @@
 import base64
 import hashlib
+import hmac
 import json
 import os
 import uuid
 from typing import Any
 
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from mobia.app.config import get_settings
 
@@ -40,7 +43,28 @@ def _cifra() -> AESGCM:
     return AESGCM(chave)
 
 
-def _marca_do_aad(aad: str) -> str:
+def _chave_da_marca() -> bytes:
+    """Subchave HMAC para `marca_do_aad`, derivada da chave de conteudo.
+
+    HKDF com `info` proprio da dois efeitos: a subchave nao e a chave de
+    cifragem (dominio separado, entao vazar uma marca nao diz nada sobre a
+    outra) e nao entra segredo novo no `config.py` -- nada a provisionar,
+    nada a rotacionar por fora.
+
+    **Consequencia aceita:** trocada a `content_encryption_key`, as marcas
+    mudam. Elas existem para correlacionar linhas de log dentro de uma janela
+    de incidente, nao para identificar uma conversa ao longo de meses, entao
+    perder a correlacao atraves de uma rotacao nao custa nada de diagnostico.
+    """
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=CHAVE_BYTES,
+        salt=None,
+        info=b"mobia/marca-do-aad/v1",
+    ).derive(base64.b64decode(get_settings().content_encryption_key))
+
+
+def marca_do_aad(aad: str) -> str:
     """Identifica o AAD no erro sem carregar o AAD.
 
     O texto da excecao vaza para o log via `str(exc)` de quem captura, e a
@@ -48,10 +72,17 @@ def _marca_do_aad(aad: str) -> str:
     dentro de uma string de excecao. E a mesma razao do `hide_parameters=True`
     em `db.py`. Desde o TEC-127 nem todo AAD e um UUID: `aad_do_resumo` monta a
     identidade a partir de `(channel, conversation_key)`, e `conversation_key` e
-    o telefone do lead. O hash curto mantem o valor de diagnostico -- duas
+    o telefone do lead. A marca curta mantem o valor de diagnostico -- duas
     falhas do mesmo AAD correlacionam -- sem carregar o identificador.
+
+    **E HMAC, e nao hash simples, porque hash simples aqui nao pseudonimiza.**
+    Ate a TEC-226 isto era `sha256(aad)` sem sal. Um telefone brasileiro tem
+    formato conhecido e espaco de busca pequeno: quem pusesse as maos no log
+    reconstruiria o numero por forca bruta em tempo trivial, que e o oposto do
+    que esta funcao existe para fazer. Com chave, sem a chave nao ha o que
+    forcar.
     """
-    return hashlib.sha256(aad.encode()).hexdigest()[:12]
+    return hmac.new(_chave_da_marca(), aad.encode(), hashlib.sha256).hexdigest()[:12]
 
 
 def aad_de(message_id: uuid.UUID | str, coluna: str) -> str:
@@ -81,18 +112,18 @@ def decrypt(blob: bytes | None, aad: str) -> str | None:
     # nao pega. A mensagem nunca carrega o blob.
     if len(blob) < _TAMANHO_MINIMO:
         raise DecryptionError(
-            f"blob de {len(blob)} bytes, minimo {_TAMANHO_MINIMO}: aad={_marca_do_aad(aad)}"
+            f"blob de {len(blob)} bytes, minimo {_TAMANHO_MINIMO}: aad={marca_do_aad(aad)}"
         )
     versao = blob[0]
     if versao != VERSAO_ATUAL:
         # Versao desconhecida nao e tentada: parsear com o layout errado
         # produziria InvalidTag e esconderia a causa real.
-        raise DecryptionError(f"versao de cifra desconhecida {versao}: aad={_marca_do_aad(aad)}")
+        raise DecryptionError(f"versao de cifra desconhecida {versao}: aad={marca_do_aad(aad)}")
     nonce, corpo = blob[1 : 1 + NONCE_BYTES], blob[1 + NONCE_BYTES :]
     try:
         return _cifra().decrypt(nonce, corpo, aad.encode()).decode()
     except InvalidTag as exc:
-        raise DecryptionError(f"conteudo nao autentica: aad={_marca_do_aad(aad)}") from exc
+        raise DecryptionError(f"conteudo nao autentica: aad={marca_do_aad(aad)}") from exc
 
 
 def encrypt_json(valor: dict[str, Any] | None, aad: str) -> bytes | None:
