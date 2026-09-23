@@ -194,6 +194,19 @@ async def test_telemetria_e_um_para_um_com_a_mensagem(session) -> None:
     assert linha is not None
     assert linha.cost_usd == Decimal("0.006300")
 
+    # `expunge` antes de inserir a colidente, e a razao nao e cosmetica.
+    # O identity map da sessao guarda referencia FRACA: enquanto alguma
+    # variavel local segurar a primeira instancia -- aqui, `linha` --, o
+    # SQLAlchemy emite SAWarning ao ver a segunda nascer com a mesma chave.
+    # O aviso e sobre o mapa em memoria, nao sobre o banco, e some sozinho
+    # se ninguem segurar a primeira (medido na TEC-260: sem referencia viva,
+    # ela e coletada e o aviso nao sai). Tirando-a da sessao, o INSERT segue
+    # para o Postgres igual e sobra so o que este teste promete provar.
+    # O vizinho `test_provider_message_id_e_unico_por_canal` nao precisa
+    # disto: suas duas mensagens tem `id` diferente, entao a colisao la e na
+    # UNIQUE (channel, provider_message_id) e nunca no identity map.
+    session.expunge(linha)
+
     session.add(
         MessageTelemetry(
             message_id=message.id,
@@ -205,9 +218,17 @@ async def test_telemetria_e_um_para_um_com_a_mensagem(session) -> None:
             latency_ms=1,
         )
     )
-    with pytest.raises(IntegrityError):
+    with pytest.raises(IntegrityError) as capturado:
         await session.commit()
     await session.rollback()
+
+    # Quem recusou foi o Postgres, nao o ORM -- medido na TEC-260, e afirmado
+    # aqui em vez de suposto: era exatamente essa a duvida que originou a card.
+    # Se um dia a recusa passar a vir do identity map, este teste reprova em
+    # vez de continuar verde provando outra coisa.
+    causa = capturado.value.orig.__cause__
+    assert causa.sqlstate == "23505"
+    assert causa.constraint_name == "message_telemetry_pkey"
 
 
 async def test_provider_message_id_e_unico_por_canal(session) -> None:
