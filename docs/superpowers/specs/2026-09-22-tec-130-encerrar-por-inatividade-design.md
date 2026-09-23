@@ -73,7 +73,7 @@ Derivar é o que torna a correção verdadeira independentemente da varredura. O
 >
 > O parâmetro saiu da assinatura. `montar_contexto` decide sozinha, pelos **próprios literais**: dobra à força quando existe literal mais velho que `agora - DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA` **e** existe literal a partir desse corte (`_reabriu_depois_do_silencio`). Continua sendo o relógio e não o `status`, então a D3 fica de pé. Três consequências novas: o lead novo fica coberto por construção (sem literal velho não há dobra, e o "oi" já não depende do piso de 1 para não virar resumo); a conversa cuja transcrição anterior já foi inteiramente dobrada também não dobra, e está certo, porque não há transcrição velha a tirar; e a consulta extra por turno que a versão anterior declarava desapareceu junto com a chamada. `e_conversa_nova` continua decidindo identificação e apresentação, e a cegueira dela à rajada — lacuna pré-existente da TEC-139 — permanece lá.
 
-A marca do resumo passa a cobrir a conversa anterior inteira, e `literais_apos` devolve só o que é novo. **A fronteira vira a marca** — que já é a fronteira que o sistema tem — em vez de um filtro por `encerrada_em` ou de uma coluna nova. O agente recebe o resumo da conversa anterior e nenhuma linha da transcrição dela, que é o critério da card ao pé da letra.
+A marca do resumo passa a cobrir a conversa anterior inteira, e `literais_apos` devolve só o que é novo. **A fronteira vira a marca** — que já é a fronteira que o sistema tem — em vez de um filtro por `encerrada_em` ou de uma coluna nova. O agente recebe o resumo da conversa anterior e nenhuma linha da transcrição dela, que é o critério da card ao pé da letra
 
 **O piso não vai a zero, vai a um**, e a primeira versão desta decisão errava nisso. Ela dizia que a fala em processamento não entra na conta, citando um comentário de `turno.py` — mas aquele comentário fala do **ramo da mensagem bloqueada pela moderação**, onde `marcar_bloqueada` já carimbou a linha e `literais_apos` filtra `bloqueada_em IS NULL`. No caminho normal a fala do lead **está** na lista: a ingestão a commita antes de enfileirar o job, e tem de estar lá, porque o job recebe o `message_id`.
 
@@ -82,6 +82,7 @@ Com piso zero, a dobra engoliria a fala do próprio turno — o modelo receberia
 Com piso um, a aritmética fecha nos dois casos: na reabertura, as mensagens antigas dobram e a nova fica literal; no lead novo, o único literal cabe sob o piso e `_dobrar` retorna antes de chamar o resumidor, então nem a chamada paga acontece. É a mesma invariante que `janela.py` já afirma para o `piso_pode_ceder` — a mais recente tem de sobrar, porque é a fala a que o modelo responde.
 
 **Custo aceito e declarado:** numa rajada logo depois da reabertura, as mensagens novas além da mais recente entram no resumo em vez de ficarem literais. É perda de fidelidade, não de dado.
+
 
 **Degradação declarada.** `montar_contexto` já degrada para o resumo anterior quando `resumir` levanta `ResumoInvalido`, sem avançar a marca. Com a dobra forçada isso significa a cauda velha vazando para o prompt — a conversa nova enxerga a transcrição da anterior, que é justamente o que esta card impede. Aceito, com log próprio (`contexto.dobra_forcada_falhou`, `warning`): a alternativa seria descartar os literais sem tê-los resumido, e aí o agente perde o resumo **e** a transcrição e responde cego a um lead que ele já atendeu. Ver demais é menos ruim que não ver nada.
 
@@ -114,11 +115,13 @@ Um lead reativado (`reativar`, `optout/repositorio.py:45`) passa a valer pelo po
 
 - Os quatro cenários do Gherkin da card, menos o do handoff (D1).
 - A fronteira nos dois lados: 29 dias não encerra, 30 encerra. O empate resolve para o lado fechado, como `situacao_da_conversa` e `e_conversa_nova` já resolvem o deles — e pela mesma razão, que é as três leituras compartilharem a constante.
-- O relógio ignora OUTBOUND: conversa com follow-up no dia 14 e última fala do lead no dia 0 encerra no dia 30, não no 44.
+- O relógio ignora OUTBOUND: conversa com uma linha OUTBOUND no dia 14 e última fala do lead no dia 0 encerra no dia 30, não no 44. **A propriedade é preventiva** — ver a Emenda T-01 abaixo: hoje nenhum mecanismo grava essa linha fora do turno, então o cenário do teste é sintético e o filtro protege contra a mudança, não contra um adiamento que exista.
 - A dobra forçada deixa **zero** literal da conversa anterior no contexto, e o resumo cobre o que eles diziam.
 - O sweep não sobrescreve `FORA_DE_ESCOPO` nem `OPTOUT`.
 - A degradação da D4: resumo falho na dobra forçada mantém o resumo anterior, loga o warning, e o turno não morre.
 - Opt-out encerra com o motivo próprio, e o lead em opt-out que volta não reabre.
+
+> **Emenda T-01 (revisão final, 23/09/2026) — a justificativa do filtro `INBOUND` era contrafactual.** Este documento e a docstring de `encerrar_inativas` diziam que contar OUTBOUND faria o follow-up da RN-13.1 empurrar o encerramento para o dia 44. **É falso.** `sweep_followups` entrega por `outbound.send` e não grava linha em `messages` — a contabilidade dele é a tabela `followups` —, e o único criador de linha OUTBOUND ali é `MessageRecorder.record_agent_message`, chamado só de `turno.py`, sempre segundos depois da INBOUND que disparou o turno. O filtro continua certo pela razão que já estava escrita ao lado dele — *"sem interação" é o lead sem interagir; o agente falando sozinho é a evidência de que não há interação* — e o argumento do follow-up passa a ser **preventivo**: para que o dia em que a entrega do follow-up virar linha em `messages` não mude o encerramento de quem sumiu.
 
 ## Fora de escopo
 

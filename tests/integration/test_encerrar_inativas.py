@@ -1,9 +1,16 @@
 """A varredura que fecha conversa parada. TEC-130, RN-02.3.
 
 **O relogio conta da ultima fala do LEAD**, nao da ultima mensagem de
-qualquer direcao: o follow-up automatico da RN-13.1 dispara ate 14 dias
-depois do lead sumir, e contar OUTBOUND deixaria o proprio sistema adiando o
-encerramento de quem ja tinha ido embora.
+qualquer direcao: "sem interacao" e o lead sem interagir, e o agente falando
+sozinho e a evidencia de que nao ha interacao.
+
+**A propriedade e preventiva.** Nao existe hoje, em producao, uma linha
+OUTBOUND que adie o encerramento: `sweep_followups` entrega por
+`outbound.send` e nao grava em `messages`, e o unico criador de linha OUTBOUND
+la e `MessageRecorder.record_agent_message`, que so roda dentro do turno,
+segundos depois da INBOUND que o disparou. O que estes testes prendem e a
+consulta, para que o dia em que alguem gravar uma fala nossa fora do turno nao
+mude o encerramento de quem sumiu.
 """
 
 import uuid
@@ -93,8 +100,16 @@ async def test_vinte_e_nove_dias_nao_encerra(session: AsyncSession) -> None:
 
 
 @pytest.mark.usefixtures("banco_limpo")
-async def test_o_followup_nao_adia_o_encerramento(session: AsyncSession) -> None:
-    """Lead sumiu no dia 30; o follow-up saiu no dia 14. Encerra assim mesmo."""
+async def test_linha_outbound_recente_nao_adia_o_encerramento(session: AsyncSession) -> None:
+    """Lead sumiu no dia 30; ha uma fala nossa no dia 14. Encerra assim mesmo.
+
+    **O nome mudou porque o cenario nao ocorre em producao.** Ele era
+    `test_o_followup_nao_adia_o_encerramento`, e narrava o follow-up da
+    RN-13.1 gravando essa linha -- o que nao acontece: `sweep_followups`
+    entrega por `outbound.send` e nao escreve em `messages`. A propriedade da
+    consulta continua valendo e continua valendo a pena prender; o que saiu foi
+    a atribuicao a um mecanismo que nao a produz. Ver a docstring do modulo.
+    """
     await _semear(session, chave="lead-fup", dias_atras=30)
     await _semear(session, chave="lead-fup", dias_atras=14, direction=MessageDirection.OUTBOUND)
 

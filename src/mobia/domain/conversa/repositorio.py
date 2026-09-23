@@ -253,8 +253,18 @@ async def encerrar_inativas(
 
     **O relogio e o INBOUND.** "Sem interacao" e o lead sem interagir; o agente
     falando sozinho e a evidencia de que nao ha interacao, nao o contrario.
-    Contar OUTBOUND faria o follow-up da RN-13.1 -- que dispara ate 14 dias
-    depois do sumico -- empurrar o encerramento para o dia 44.
+
+    **O filtro e preventivo, e nao o conserto de um adiamento que exista
+    hoje.** Uma versao anterior desta docstring afirmava que contar OUTBOUND
+    faria o follow-up da RN-13.1 -- que dispara ate 14 dias depois do sumico --
+    empurrar o encerramento para o dia 44. **E falso.** `sweep_followups`
+    entrega por `outbound.send` e nao grava linha nenhuma em `messages` -- a
+    contabilidade dele e a tabela `followups` --, e o unico criador de linha
+    OUTBOUND ali e `MessageRecorder.record_agent_message`, chamado so de
+    `turno.py`, sempre segundos depois da INBOUND que disparou o turno. Contar
+    OUTBOUND, hoje, nao adiaria encerramento nenhum. O filtro existe para que o
+    dia em que o follow-up entregue passar a virar linha em `messages` nao mude
+    o encerramento de quem sumiu.
 
     **Nao sobrescreve motivo.** O `LEFT JOIN` recusa quem ja esta ENCERRADA:
     `encerrar_conversa` e upsert idempotente, entao sem esse filtro a
