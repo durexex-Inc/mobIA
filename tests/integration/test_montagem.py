@@ -1094,7 +1094,15 @@ async def test_resumo_ilegivel_degrada_em_vez_de_travar_a_conversa(session, capl
     # nao aparece: a marca e HMAC, nao o `conversation_key`.
     assert "DecryptionError" in caplog.text
     assert marca_do_aad(aad_do_resumo(CANAL, CONVERSA)) in caplog.text
-    assert CONVERSA not in caplog.text
+
+    # Agulha como literal, e nao `CONVERSA`, por causa da guarda da TEC-289:
+    # ela so consegue reduzir literal, constante do proprio arquivo ou import
+    # de `mobia.*`, e uma agulha que ela nao reduz e uma asserta que pode
+    # estar vazia sem ninguem saber. A igualdade logo abaixo e o que impede o
+    # literal de envelhecer em silencio se o `CONVERSA` do conftest mudar.
+    telefone_do_lead = "5511911112222"
+    assert telefone_do_lead == CONVERSA, "o literal desta guarda saiu de sincronia com o conftest"
+    assert telefone_do_lead not in caplog.text
 
 
 async def test_resumo_ilegivel_e_sobrescrito_pela_proxima_dobra(session) -> None:
