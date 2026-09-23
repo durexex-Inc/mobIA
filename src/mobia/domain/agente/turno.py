@@ -1730,7 +1730,7 @@ async def _executar_turno(
 
     # A fronteira de historico da TEC-130 (D4) nao entra por aqui: quem decide
     # dobrar a conversa anterior inteira e `montar_contexto`, olhando para os
-    # proprios literais -- ver `_reabriu_depois_do_silencio`, em
+    # proprios literais -- ver `_fronteira_do_silencio`, em
     # `context/montagem.py`. Passar um predicado sobre `message` daqui e o que
     # a rodada final de revisao derrubou: numa rajada a mensagem que carrega o
     # turno e a MAIS NOVA do lote, e ela enxerga a irma de segundos atras, de

@@ -44,9 +44,10 @@ from mobia.domain.messages.models import Message
 # final de revisao da TEC-130: numa rajada de volta, quem carrega o turno e a
 # mensagem mais nova do lote e ela encontra a irma de segundos atras, entao o
 # predicado devolvia False justamente na reabertura. Quem decide a dobra e
-# `_reabriu_depois_do_silencio` (`context/montagem.py`), olhando para os
-# literais. **A rajada continua cegando o que sobrou aqui** -- identificacao e
-# apresentacao --, e isso e a lacuna pre-existente da TEC-139, nao da TEC-130.
+# `_fronteira_do_silencio` (`context/montagem.py`), que procura um intervalo de
+# 30 dias entre dois literais vizinhos. **A rajada continua cegando o que
+# sobrou aqui** -- identificacao e apresentacao --, e isso e a lacuna
+# pre-existente da TEC-139, nao da TEC-130.
 
 
 async def e_conversa_nova(

@@ -4,10 +4,13 @@
 `encerrada_em`: dobrando tudo o que ficou para tras, a marca passa a cobrir a
 conversa anterior inteira e `literais_apos` devolve so o que e novo.
 
-**O gatilho sao os proprios literais**, e nao um predicado sobre a mensagem
-que carrega o turno (`_reabriu_depois_do_silencio`, em `context/montagem.py`).
-Por isso nenhum teste deste arquivo liga uma flag: eles semeiam o tempo, que
-e a unica entrada da decisao.
+**O gatilho e um INTERVALO entre dois literais vizinhos**, e nao um predicado
+sobre a mensagem que carrega o turno nem a janela de silencio contada do
+relogio para tras (`_fronteira_do_silencio`, em `context/montagem.py`). Por
+isso nenhum teste deste arquivo liga uma flag: eles semeiam o tempo, que e a
+unica entrada da decisao. E, sabendo ONDE o intervalo caiu, a dobra corta
+exatamente o lado velho -- e por isso que a rajada de volta fica com TODAS as
+falas novas literais, e nao so com a ultima.
 """
 
 import logging
@@ -70,10 +73,12 @@ async def _semear(
     isso, e o que estes testes afirmam e sobre QUANTAS mensagens sobram, nao
     sobre o que elas diziam.
 
-    **`base` e a entrada que importa**: o gatilho da dobra forcada e o corte
-    de `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA` caindo no meio dos literais, e e
-    so posicionando as mensagens dos dois lados desse corte que se liga ou
-    desliga o mecanismo.
+    **`base` e a entrada que importa**: o gatilho da dobra forcada e um
+    intervalo de `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA` entre dois literais
+    vizinhos, e e so posicionando as mensagens dos dois lados desse vao que se
+    liga ou desliga o mecanismo. Uma chamada so desta funcao nunca produz o
+    intervalo -- ela espaca as mensagens de um minuto --, entao quem quer o
+    gatilho ligado semeia dois blocos com `base` distante.
     """
     ids: list[uuid.UUID] = []
     for n in range(quantas):
@@ -116,11 +121,12 @@ async def test_a_dobra_forcada_deixa_so_a_fala_do_turno(
     Cinco mensagens velhas ficam MUITO abaixo do gatilho de regeneracao (40)
     e do piso de literais (20) -- sem a dobra forcada, as cinco iriam
     inteiras para o prompt da conversa nova. Com a dobra forcada, as cinco
-    viram resumo e so a fala deste turno fica literal: e o piso de
-    `minimas=1` que `_dobrar` aplica quando `dobrar_tudo=True` (fix da
-    TEC-130, rodada de revisao -- a versao anterior deste teste afirmava
-    `literais == []`, que so era verdade por causa de um bug que apagava a
-    fala do proprio turno junto com a conversa velha).
+    viram resumo e so a fala deste turno fica literal -- nao por um piso, e
+    sim porque ela e a unica mensagem depois do intervalo: `_dobrar` recebe
+    `manter_literais=1` porque a fronteira esta no ultimo indice da lista. (A
+    versao original deste teste afirmava `literais == []`, que so era verdade
+    por causa de um bug que apagava a fala do proprio turno junto com a
+    conversa velha.)
     """
     await _semear(session, "lead-reabre", 5, base=_ha_muito_tempo())
     (da_volta,) = await _semear(session, "lead-reabre", 1, base=_agora_mesmo())
@@ -157,9 +163,12 @@ async def test_a_rajada_de_volta_tambem_dobra(session: AsyncSession) -> None:
     nova. O gatilho por literais enxerga as duas pontas da mesma lista e nao
     tem como ser enganado assim.
 
-    As duas falas novas nao ficam as duas literais, e isso e o custo declarado
-    da D4: com `minimas=1` so a mais recente sobra, a outra entra no resumo
-    junto com a conversa velha. Perda de fidelidade, nao de dado.
+    **As DUAS falas novas ficam literais, e essa e a propriedade que este
+    teste prende.** Ela nao e de graca: enquanto o gatilho so dizia SE a
+    conversa reabriu, o corte tinha de ser "tudo menos a mais recente", e o
+    "oi" ia para o resumo junto com a conversa de dois meses atras -- custo
+    declarado da D4 que deixou de existir quando o gatilho passou a dizer ONDE
+    o silencio caiu. Uma implementacao que volte a `minimas=1` reprova aqui.
     """
     velhas = await _semear(session, "lead-rajada", 5, base=_ha_muito_tempo())
     rajada = await _semear(session, "lead-rajada", 2, base=_agora_mesmo())
@@ -174,7 +183,7 @@ async def test_a_rajada_de_volta_tambem_dobra(session: AsyncSession) -> None:
     )
 
     assert len(resumidor.conteudos) == 1
-    assert [m.id for m in montado.literais] == [rajada[-1]]
+    assert [m.id for m in montado.literais] == rajada
     assert montado.resumo is not None
     # Nenhuma das cinco velhas sobrou literal -- e a promessa da card, e o
     # que o gatilho antigo nao entregava neste cenario.
@@ -220,14 +229,62 @@ async def test_a_conversa_que_nao_reabriu_respeita_o_piso_normal(session: AsyncS
 
 
 @pytest.mark.usefixtures("banco_limpo")
-async def test_a_conversa_so_velha_nao_dobra(session: AsyncSession) -> None:
-    """Sem literal do lado de ca do corte nao ha conversa nova a separar.
+async def test_a_conversa_esparsa_nao_dobra(session: AsyncSession) -> None:
+    """**A regressao que o gatilho por pontas produzia em quem nao e desta card.**
 
-    E o mesmo ramo que poupa o lead novo: la nao ha literal VELHO, aqui nao ha
-    literal NOVO, e nos dois casos a dobra forcada nao tem o que fazer. Sem
-    esta afirmacao, uma implementacao que dobrasse a partir de um unico
-    literal velho passaria -- e faria todo turno de uma conversa dormente
-    pagar um resumo antes mesmo de o lead voltar.
+    Um lead que fala de vez em quando -- ha 45 dias, ha 20, ha 5 e hoje --
+    nunca ficou um mes calado: o maior silencio dele e de 25 dias. Somados,
+    esses vaos passam de 30, e era essa soma que o gatilho anterior confundia
+    com a coisa certa: ele perguntava se havia literal mais velho que
+    `agora - 30 dias` E literal a partir desse corte, o que esta conversa
+    satisfaz sem nunca ter reaberto. O resultado era uma dobra forcada numa
+    conversa que continua a mesma -- tres dos quatro literais viravam resumo e
+    o sistema pagava uma chamada ao resumidor que ninguem pediu, sem nem se
+    apresentar, porque `e_conversa_nova` (que decide a apresentacao) responde
+    False aqui.
+    """
+    ids: list[uuid.UUID] = []
+    for dias_atras in (45, 20, 5, 0):
+        # `minutes=1` para que a mais recente nao caia no futuro por um
+        # desencontro de relogio com o banco.
+        (identificador,) = await _semear(
+            session,
+            "lead-esparso",
+            1,
+            base=datetime.now(UTC) - timedelta(days=dias_atras, minutes=1),
+        )
+        ids.append(identificador)
+    resumidor = _ResumidorFalso()
+
+    montado = await montar_contexto(
+        get_sessionmaker(),
+        channel="whatsapp",
+        conversation_key="lead-esparso",
+        resumidor=resumidor,
+        contador=_ContadorFalso(),
+    )
+
+    assert [m.id for m in montado.literais] == ids
+    assert resumidor.conteudos == []
+    assert montado.resumo is None
+
+
+@pytest.mark.usefixtures("banco_limpo")
+async def test_a_conversa_so_velha_nao_dobra(session: AsyncSession) -> None:
+    """Sem intervalo DENTRO da lista nao ha conversa nova a separar.
+
+    Cinco mensagens de dois meses atras, uma por minuto: a conversa ficou
+    parada, mas o silencio esta depois do ultimo literal e nao entre dois
+    deles. Dobrar aqui pagaria um resumo sem tirar transcricao velha de prompt
+    nenhum -- o que o prompt tem e a conversa anterior, que ainda e a unica
+    que existe. Quem acha o intervalo e o turno em que aparecer uma fala
+    visivel do outro lado do silencio.
+
+    E o mesmo ramo que poupa o lead novo: la nao ha literal ANTES do
+    intervalo, aqui nao ha literal DEPOIS dele. Sem esta afirmacao, uma
+    implementacao que dobrasse a partir de um unico literal velho passaria --
+    e faria todo turno de uma conversa dormente pagar um resumo antes mesmo de
+    o lead voltar.
     """
     ids = await _semear(session, "lead-dormente", 5, base=_ha_muito_tempo())
     resumidor = _ResumidorFalso()
@@ -249,11 +306,11 @@ async def test_a_conversa_so_velha_nao_dobra(session: AsyncSession) -> None:
 async def test_o_lead_novo_nao_paga_resumo_do_primeiro_oi(session: AsyncSession) -> None:
     """Quem nunca falou nao tem conversa anterior para dobrar.
 
-    O gatilho anterior (`e_conversa_nova`) devolvia True tambem quando nao
-    havia mensagem nenhuma antes, e so o piso de `minimas=1` impedia o "oi"
-    de virar resumo. O gatilho por literais nao alcanca este caso de saida:
-    sem literal mais velho que o corte, nao ha dobra -- e nem a chamada paga
-    ao resumidor acontece.
+    O gatilho de duas versoes atras (`e_conversa_nova`) devolvia True tambem
+    quando nao havia mensagem nenhuma antes, e so o piso de `minimas=1`
+    impedia o "oi" de virar resumo. O gatilho por intervalo nao alcanca este
+    caso de saida: com um literal so nao existe par vizinho a comparar, entao
+    nao ha dobra -- e nem a chamada paga ao resumidor acontece.
     """
     ids = await _semear(session, "lead-novinho", 1, base=_agora_mesmo())
     resumidor = _ResumidorFalso()
@@ -282,7 +339,7 @@ async def test_resumo_falho_degrada_e_nao_mata_o_turno(
     voltam, e o warning denuncia.
 
     `len(montado.literais) == 6` sozinho nao prova degradacao nenhuma: uma
-    implementacao que decide dobrar e nunca repassa `dobrar_tudo` para
+    implementacao que decide dobrar e nunca repassa `manter_literais` para
     `_dobrar` produz o MESMO numero, porque `dividir(6, 20)` ja devolve tudo
     como "a manter" e o early return de `_dobrar` nem chega a chamar
     `resumidor.resumir` -- o `_ResumidorQuebrado` nunca levanta. As duas
@@ -418,7 +475,9 @@ async def test_a_rajada_de_volta_dobra_no_turno_de_verdade(
 
     ids_sobrantes = {m.id for m in sobraram}
     assert ids_sobrantes.isdisjoint(ids_semeados)
-    # A irma da rajada entra no resumo junto com a conversa velha, e nao fica
-    # literal: e o custo declarado da D4, com o piso de 1 preservando so a
-    # fala que carregou o turno.
-    assert irma_da_rajada.id not in ids_sobrantes
+    # A irma da rajada continua literal: o corte cai no intervalo de silencio,
+    # entao tudo o que veio depois dele -- a rajada inteira, e nao so a fala
+    # que carregou o turno -- fica de fora do resumo. Ate a rodada final da
+    # TEC-130 esta linha afirmava o contrario, e o contrario era custo
+    # declarado da D4.
+    assert irma_da_rajada.id in ids_sobrantes

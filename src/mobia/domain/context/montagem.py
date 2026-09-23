@@ -1,7 +1,7 @@
 import asyncio
 import math
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 import structlog
@@ -467,16 +467,30 @@ async def _truncar_ate_caber(
     return texto_do_resumo, literais, tokens
 
 
-def _reabriu_depois_do_silencio(literais: list[Message], agora: datetime) -> bool:
-    """A conversa nova da RN-02.3 comeca DENTRO desta lista? (TEC-130, D4.)
+def _fronteira_do_silencio(literais: list[Message]) -> int | None:
+    """Onde comeca, DENTRO desta lista, a conversa nova da RN-02.3? (TEC-130, D4.)
 
-    Verdadeiro quando o que ainda nao foi dobrado atravessa a janela de
-    silencio: ha literal mais velho que o corte -- a conversa anterior -- e
-    ha literal a partir do corte -- a conversa nova. E esse par que a dobra
-    forcada existe para separar.
+    Devolve o indice do primeiro literal depois do ULTIMO intervalo de
+    `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA` entre dois literais consecutivos, e
+    `None` quando nao ha intervalo nenhum. Esse indice e a fronteira: o que
+    vem antes dele e a conversa anterior, que a dobra forcada manda inteira
+    para o resumo; o que vem a partir dele e a conversa nova, que fica
+    literal.
+
+    **Um INTERVALO entre dois literais, e nao a janela de silencio contada do
+    relogio para tras.** "A conversa ficou 30 dias parada" e, ao pe da letra,
+    dois literais consecutivos com mais de 30 dias entre eles. A versao
+    anterior desta funcao perguntava outra coisa -- existe literal mais velho
+    que `agora - 30d` E existe literal a partir desse corte --, e isso e
+    verdade tambem para quem nunca parou: o lead que falou nos dias -45, -20,
+    -5 e hoje satisfaz as duas pontas sem jamais ter ficado um mes em
+    silencio, e levava uma dobra forcada que ninguem pediu -- a conversa
+    inteira virava resumo menos uma mensagem, e o sistema pagava um resumo
+    numa conversa que continuava a mesma. Pelo intervalo, o maior silencio
+    dele e de 25 dias e nada dispara.
 
     **Pelos literais, e nao por um predicado sobre a mensagem do turno, e a
-    diferenca e a rajada.** A versao anterior perguntava
+    diferenca e a rajada.** Uma versao ainda anterior perguntava
     `e_conversa_nova(message)`, que responde "nao existe mensagem anterior a
     esta dentro dos 30 dias". Numa rajada -- o lead volta depois de dois meses
     e manda "oi" e "ainda tem aquele apto?" no mesmo envelope -- a ingestao
@@ -487,32 +501,51 @@ def _reabriu_depois_do_silencio(literais: list[Message], agora: datetime) -> boo
     dobra, a transcricao velha inteira no prompt, e sem conserto nos turnos
     seguintes -- o predicado continua False ate o gatilho de acumulo dos 40
     literais. Olhar para a propria lista que vai ao prompt e imune a isso,
-    porque as duas mensagens da rajada estao nela.
+    porque as duas mensagens da rajada estao nela e o intervalo que interessa
+    e o que separa a cauda velha do primeiro "oi".
 
     **Continua sendo o relogio, e nao o `status`** (D3): a varredura diaria
     escreve o encerramento e esta funcao decide o contexto, independentes uma
-    da outra.
+    da outra. O que mudou e de onde o relogio e lido -- dos proprios
+    `created_at`, e nao de `datetime.now()`.
 
-    **Lead novo nao paga nada.** Sem literal mais velho que o corte nao ha
-    dobra, entao o primeiro turno de quem nunca falou nao gera resumo do "oi".
-    E, se a conversa anterior ja foi inteiramente dobrada num turno passado,
-    tambem nao ha literal velho -- e esta certo, porque nao sobrou transcricao
-    velha para tirar.
+    **O ULTIMO intervalo, quando ha mais de um**, porque e a reabertura mais
+    recente e e essa a fronteira que importa: uma conversa que reabriu duas
+    vezes tem as duas primeiras encerradas, e as duas vao para o resumo.
+    Escolher o ultimo tambem e o que garante que nao sobra intervalo nenhum
+    depois da fronteira -- e por isso que a dobra nao rearma no turno
+    seguinte: ela avanca a marca ate `literais[fronteira - 1]`, `literais_apos`
+    passa a devolver so o que ja esta depois da fronteira, e nessa sobra nao
+    ha intervalo a achar.
 
-    A comparacao e estrita de um lado e nao do outro (`< corte <=`) para casar
-    com `e_conversa_nova`, que conta `created_at >= corte` como interacao
-    recente: exatamente 30 dias ainda nao abre conversa nova. As duas leituras
-    compartilham `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA` e tem de resolver o
-    empate para o mesmo lado, senao o turno se apresenta sem dobrar ou dobra
-    sem se apresentar.
+    **Lead novo nao paga nada, e conversa dormente tambem nao.** Com menos de
+    dois literais nao existe intervalo, entao o primeiro turno de quem nunca
+    falou nao gera resumo do "oi". E uma conversa que so tem transcricao velha
+    -- porque nada novo chegou, ou porque o que chegou a moderacao bloqueou --
+    tambem nao tem intervalo: nao ha conversa nova dentro desta lista para
+    separar da anterior.
 
-    `literais` chega em ordem cronologica de `literais_apos`, entao as pontas
-    respondem sozinhas -- nao ha varredura da lista.
+    A comparacao e estrita (`>`, nao `>=`) para casar com `e_conversa_nova`,
+    que conta `created_at >= agora - 30d` como interacao recente: exatamente
+    30 dias ainda nao abre conversa nova. As duas leituras compartilham
+    `DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA` e resolvem o empate para o mesmo
+    lado, senao o turno se apresenta sem dobrar ou dobra sem se apresentar.
+    **O empate resolve igual; a medida nao e a mesma**: la o silencio e
+    contado do `agora` do turno ate a fala anterior, aqui entre dois
+    `created_at`. Os segundos que separam a ingestao da mensagem do relogio do
+    turno cabem entre as duas medidas, entao no instante exato do empate elas
+    podem discordar. E o unico desacordo possivel, e ele exige que o lead
+    volte no segundo exato em que a janela fecha.
+
+    `literais` chega em ordem cronologica de `literais_apos`, entao basta uma
+    passada comparando cada par vizinho.
     """
-    if not literais:
-        return False
-    corte = agora - timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
-    return literais[0].created_at < corte <= literais[-1].created_at
+    intervalo = timedelta(days=DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA)
+    fronteira: int | None = None
+    for indice in range(1, len(literais)):
+        if literais[indice].created_at - literais[indice - 1].created_at > intervalo:
+            fronteira = indice
+    return fronteira
 
 
 async def montar_contexto(
@@ -556,9 +589,21 @@ async def montar_contexto(
 
     # A dobra forcada da TEC-130 (D4) decide-se AQUI, e nao no turno: o
     # gatilho e a propria lista que vai ao prompt. Ver
-    # `_reabriu_depois_do_silencio` para por que os literais e nao
-    # `e_conversa_nova` -- a resposta curta e rajada.
-    forcar_dobra = _reabriu_depois_do_silencio(literais, datetime.now(UTC))
+    # `_fronteira_do_silencio` para por que um intervalo entre dois literais, e
+    # nao `e_conversa_nova` (a resposta curta e rajada) nem a janela contada do
+    # relogio (a resposta curta e conversa esparsa).
+    fronteira = _fronteira_do_silencio(literais)
+
+    # Quantas mensagens ficam literais quando a dobra forcada roda: as que
+    # estao a partir da fronteira, isto e, a conversa nova inteira. Saber ONDE
+    # o silencio caiu e o que permite cortar exatamente o lado velho -- ver o
+    # bloco correspondente em `_dobrar`.
+    #
+    # `fronteira >= 1` sempre que nao e `None` (o laco comeca no indice 1),
+    # entao isto nunca chega a `_dobrar` valendo o tamanho da lista: sobra
+    # sempre pelo menos uma mensagem para dobrar, e a chamada nunca e paga a
+    # toa.
+    manter = None if fronteira is None else len(literais) - fronteira
 
     # Teto ja com a reserva descontada: o contador mede um proxy menor que a
     # requisicao real da TEC-134 -- ver `Settings.teto_de_tokens_efetivo`.
@@ -579,13 +624,13 @@ async def montar_contexto(
     # este caso, porque a fase faz N chamadas.
     try:
         async with asyncio.timeout(settings.contexto_deadline_de_montagem_segundos):
-            # `forcar_dobra` passa por cima do gatilho de acumulo: a conversa
-            # que reabre pode ter cinco mensagens, muito abaixo das 40, e e
+            # A fronteira passa por cima do gatilho de acumulo: a conversa que
+            # reabre pode ter cinco mensagens, muito abaixo das 40, e e
             # justamente essas cinco que nao podem chegar ao prompt da
-            # conversa nova (TEC-130, D4). Sem a flag, o gatilho continua o
-            # mesmo de sempre: quarenta literais dobram as vinte mais antigas
-            # e deixam vinte -- por proximidade, a marca colaria no presente.
-            if forcar_dobra or deve_regenerar(
+            # conversa nova (TEC-130, D4). Sem ela, o gatilho continua o mesmo
+            # de sempre: quarenta literais dobram as vinte mais antigas e
+            # deixam vinte -- por proximidade, a marca colaria no presente.
+            if fronteira is not None or deve_regenerar(
                 len(literais), settings.contexto_gatilho_de_regeneracao
             ):
                 texto_do_resumo, literais, cobertas, marca_atual, falhou = await _dobrar(
@@ -598,10 +643,10 @@ async def montar_contexto(
                     cobertas,
                     marca_atual,
                     INSTRUCAO_DOBRAR,
-                    dobrar_tudo=forcar_dobra,
+                    manter_literais=manter,
                 )
                 degradado = degradado or falhou
-                if forcar_dobra and falhou:
+                if fronteira is not None and falhou:
                     # Alarme proprio, e nao so o `contexto.degradado` que
                     # `_dobrar` ja emite: aqui a degradacao tem consequencia
                     # que ela nao tem no caso normal -- a transcricao da
@@ -611,15 +656,14 @@ async def montar_contexto(
                     #
                     # **A dobra e retentada no turno seguinte, e e o gatilho
                     # por literais que compra isso.** `_dobrar` nao avancou a
-                    # marca, entao os literais velhos continuam na lista; como
-                    # a lista agora tambem tem a fala nova, `corte` continua
-                    # caindo no meio dela e `_reabriu_depois_do_silencio`
-                    # devolve True de novo. A transcricao velha vaza enquanto
-                    # o resumidor estiver fora, nao ate o gatilho de acumulo
-                    # dos 40 literais -- que era o que acontecia quando a
-                    # decisao vinha de `e_conversa_nova(message)`, porque
-                    # aquele predicado passava a devolver False assim que o
-                    # lead falava.
+                    # marca, entao os dois literais que cercam o intervalo
+                    # continuam vizinhos na lista do turno seguinte e
+                    # `_fronteira_do_silencio` acha o mesmo indice de novo. A
+                    # transcricao velha vaza enquanto o resumidor estiver
+                    # fora, nao ate o gatilho de acumulo dos 40 literais --
+                    # que era o que acontecia quando a decisao vinha de
+                    # `e_conversa_nova(message)`, porque aquele predicado
+                    # passava a devolver False assim que o lead falava.
                     log.warning(
                         "contexto.dobra_forcada_falhou",
                         channel=channel,
@@ -792,7 +836,7 @@ async def _dobrar(
     instrucao: str,
     *,
     piso_pode_ceder: bool = False,
-    dobrar_tudo: bool = False,
+    manter_literais: int | None = None,
 ) -> tuple[str | None, list[Message], int, Marca | None, bool]:
     """Uma passada: gera o resumo novo, grava a marca e devolve o que sobrou.
 
@@ -808,61 +852,41 @@ async def _dobrar(
         a_manter = literais
         conteudo = texto_do_resumo or ""
     else:
-        # `minimas=1` faz `dividir` devolver tudo MENOS a mensagem mais
-        # recente para dobrar, com `piso_pode_ceder=False` -- que e o caso de
-        # quem liga isto. E o que apaga a transcricao da conversa anterior
-        # sem perde-la, porque ela vai inteira para o resumo. Ver a D4 da
-        # TEC-130.
+        # No caminho normal o piso e o da configuracao. Na dobra forcada da
+        # reabertura quem manda e a fronteira do silencio: `manter_literais`
+        # chega valendo quantas mensagens estao DEPOIS do intervalo de 30 dias
+        # que `_fronteira_do_silencio` achou, entao `dividir` manda ao resumo
+        # exatamente a conversa anterior e deixa literal exatamente a conversa
+        # nova. E o que apaga a transcricao da conversa anterior sem perde-la.
+        # Ver a D4 da TEC-130.
         #
-        # Antes disto usava `minimas=0`, e isso era um bug (fix da TEC-130,
-        # rodada de revisao): a fala DESTE turno esta em `literais` -- a
-        # ingestao commita a linha antes de enfileirar o job (o job recebe o
-        # `message_id`), entao ela sempre chega aqui -- e com `minimas=0` ela
-        # ia para o resumo junto com o resto, e o modelo respondia a uma
-        # parafrase da propria pergunta.
+        # **Nao e "tudo menos a mais recente", e a diferenca aparece na
+        # rajada.** Enquanto o gatilho so dizia SE a conversa reabriu, o unico
+        # corte defensavel era `minimas=1`: sem saber onde estava a fronteira,
+        # manter mais de uma arriscava manter linha da conversa velha. Com a
+        # fronteira, o lead que volta e manda "oi" e a pergunta no mesmo
+        # envelope fica com as DUAS literais -- antes o "oi" ia para o resumo
+        # junto com a conversa de dois meses atras, e isso era custo declarado
+        # da D4 que deixou de existir.
         #
-        # O primeiro turno de um lead novo tambem pagava um resumo do "oi"
-        # naquela versao, porque o gatilho de entao (`e_conversa_nova`)
-        # devolvia True quando nao havia mensagem anterior nenhuma. O gatilho
-        # de hoje (`_reabriu_depois_do_silencio`) ja nao alcanca esse caso --
-        # sem literal mais velho que o corte nao ha dobra --, entao o
-        # `minimas=1` deixou de ser o que protege o lead novo. Ele continua
-        # sendo o que protege a fala DESTE turno na reabertura, que e o unico
-        # caso em que `dobrar_tudo` liga.
+        # **A fala DESTE turno nao corre risco de virar resumo.** Ela esta
+        # sempre em `literais` -- a ingestao commita a linha antes de
+        # enfileirar o job, que recebe o `message_id` -- e e, por construcao, a
+        # mais nova de todas: esta depois da fronteira. Um `minimas=0` a
+        # mandaria para o resumo e o modelo responderia a uma parafrase da
+        # propria pergunta; isso foi um bug real (fix da TEC-130, rodada de
+        # revisao). Hoje `minimas` nao pode ser zero: a fronteira e no minimo
+        # o indice 1, entao `len(literais) - fronteira` e no minimo 1.
         #
-        # **`dobrar_tudo` nao e `piso_pode_ceder`.** Aquele cede o piso para
-        # UMA mensagem, por causa do estouro de teto, e a mais recente tem de
-        # sobrar porque e a fala a que o modelo responde. Aqui, pela MESMA
-        # razao, uma tambem tem de sobrar -- `janela.dividir` ja declara essa
-        # invariante no comentario de `piso_pode_ceder`, e e por isso que
-        # `minimas=1` aqui, nao `minimas=0`.
-        #
-        # Isso tambem fecha, de graca, o risco que esta nota descrevia antes
-        # sobre combinar `dobrar_tudo=True` com `piso_pode_ceder=True`
-        # (`janela.dividir` calcula `piso = 1 if piso_pode_ceder else
-        # minimas`): com `minimas=1` os dois ramos convergem para `piso=1`,
-        # entao a combinacao -- ainda inalcancavel hoje, os dois call sites de
-        # `_dobrar` continuam disjuntos -- deixou de produzir um resultado
-        # diferente do esperado.
-        #
-        # **Custo aceito:** numa rajada logo apos a reabertura -- o lead manda
-        # mais de uma mensagem antes do turno rodar --, so a mais recente fica
-        # literal; as demais da rajada entram no resumo junto com a conversa
-        # antiga. E perda de fidelidade, nao de dado: continuam cobertas pelo
-        # resumo, so deixam de estar literais.
-        #
-        # **E um segundo custo, mais estreito, no ramo da moderacao.** Se a
-        # fala DESTE turno foi carimbada com `bloqueada_em`, `literais_apos`
-        # ja a filtrou antes de chegar aqui -- ela nunca entra em `literais`.
-        # Se esse mesmo turno tambem for uma reabertura, o piso de `minimas=1`
-        # entao nao sobra a fala deste turno (que nao esta na lista), e sim a
-        # mensagem mais recente que sobrou: a ultima da conversa ANTERIOR --
-        # uma linha da transcricao velha vazando para o prompt da conversa
-        # nova, exatamente o que esta card promete que nao acontece. O
-        # alcance e estreitissimo (30 dias de silencio, MAIS fala bloqueada
-        # pela moderacao, MAIS pendencia da conversa anterior) e o dano e uma
-        # linha, mas nao esta coberto pelo piso.
-        minimas = 1 if dobrar_tudo else settings.contexto_literais_minimas
+        # **`manter_literais` nao e `piso_pode_ceder`.** Aquele cede o piso
+        # para UMA mensagem, por causa do estouro de teto; este diz onde a
+        # conversa anterior acabou. Os dois convergem em manter a mais recente,
+        # que e a invariante que `janela.dividir` ja declara no comentario de
+        # `piso_pode_ceder` -- a fala a que o modelo responde tem de sobrar --,
+        # e por isso combina-los (ainda inalcancavel: os dois call sites de
+        # `_dobrar` sao disjuntos) nao produz surpresa: `dividir` calcula
+        # `piso = 1 if piso_pode_ceder else minimas`, e os dois lados sao >= 1.
+        minimas = settings.contexto_literais_minimas if manter_literais is None else manter_literais
         a_dobrar, a_manter = dividir(literais, minimas, piso_pode_ceder=piso_pode_ceder)
         if not a_dobrar:
             return texto_do_resumo, literais, cobertas, marca, False
