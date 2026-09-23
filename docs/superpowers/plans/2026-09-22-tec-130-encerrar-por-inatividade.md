@@ -904,6 +904,12 @@ git commit -m "feat(TEC-130): o pedido de opt-out passa a encerrar a conversa co
 
 ### Task 5: A dobra forçada em `montar_contexto`
 
+> **Emenda P-01 (revisão final, 23/09/2026) — dois trechos desta task não valem mais, e um terceiro mudou de lugar.** Este plano é versionado e o cabeçalho instrui um worker agêntico a implementá-lo passo a passo; o que segue abaixo continua registrando o que se fez no dia 22, mas não pode ser seguido ao pé da letra.
+>
+> 1. **O piso da dobra forçada é 1, não 0.** O Step 3 manda escrever `minimas = 0 if dobrar_tudo else ...`, com um comentário afirmando que "a fala deste turno não está nesta lista". **É falso**: a ingestão commita a linha em `messages` antes de enfileirar o job — o job recebe o `message_id` —, então a fala do turno está sempre em `literais`. Com `minimas=0` ela ia para o resumo junto com a conversa velha e o modelo respondia a uma paráfrase da própria pergunta. Escreva `minimas = 1 if dobrar_tudo else settings.contexto_literais_minimas`. A razão por extenso está na **D4 do desenho**, que foi emendada para refutar a premissa que autorizou o piso zero.
+> 2. **`assert montado.literais == []`, no Step 1, não vale.** Decorre do mesmo erro: com o piso correto sobra exatamente a fala do turno. O teste afirma `[m.id for m in montado.literais] == [id_da_fala_do_turno]`.
+> 3. **O gatilho mudou de lugar, e o parâmetro `forcar_dobra` não existe mais.** O Step 4 e toda a Task 6 punham a decisão no turno, ligada por `e_conversa_nova(message)` — que numa rajada de volta devolve `False` justamente na reabertura, porque quem carrega o turno é a mensagem mais nova do lote e ela enxerga a irmã de segundos atrás. `montar_contexto` decide sozinha, pelos próprios literais (`_reabriu_depois_do_silencio`). Ver a **Emenda D4-a do desenho**.
+
 **Files:**
 - Modify: `src/mobia/domain/context/montagem.py` (`montar_contexto` em `:468`, `_dobrar` em `:694`)
 - Test: `tests/integration/test_dobra_na_reabertura.py`
