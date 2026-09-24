@@ -1,5 +1,6 @@
 from decimal import Decimal
 from functools import lru_cache
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import model_validator
@@ -132,6 +133,24 @@ class Settings(BaseSettings):
     # mensagem ser consumida, em vez de deixar o 401 acontecer em producao.
     whatsapp_access_token: str = ""
     whatsapp_api_base: str = "https://graph.facebook.com/v21.0"
+
+    # TEC-132. Onde a midia recebida do lead e guardada, ja cifrada
+    # (`encrypt_bytes`) -- a porta `ArmazemDeMidia` nao sabe cifrar.
+    # `local` e o default de desenvolvimento e dos testes; `s3` e producao, e
+    # exige `midia_s3_bucket` (guarda abaixo). O bucket e as credenciais reais
+    # sao da TEC-219 -- aqui so a escolha do adaptador.
+    midia_armazem: Literal["local", "s3"] = "local"
+    # Relativo ao cwd do processo, como o `.midias/` do `.gitignore`.
+    midia_diretorio: str = ".midias"
+    midia_s3_bucket: str = ""
+    midia_s3_regiao: str = ""
+    # RN de midia (TEC-132, D1): teto configuravel, com padrao de 25 MB
+    # (26_214_400 bytes) -- bem abaixo dos 100 MB que a Meta aceita para
+    # documento, que e o proprio motivo de o conteudo nao morar no Postgres
+    # (ver o desenho). O job de download confere isto tanto antes de baixar
+    # (contra o `file_size` que a Meta informa) quanto durante, em streaming,
+    # abortando se o corpo passar do teto mesmo que o `file_size` tenha mentido.
+    midia_teto_bytes: int = 26_214_400
 
     # RN-13.6 (TEC-186): os nomes dos templates da Meta APROVADOS, separados
     # por virgula. Fica em configuracao, e nao em codigo, de proposito: qual
@@ -735,6 +754,26 @@ class Settings(BaseSettings):
                 "`job_timeout` tambem entra, ver "
                 "`test_job_timeout_cabe_dentro_da_janela_do_sweeper` -- mas pega o caso "
                 "que nao depende dele."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _recusar_s3_sem_bucket(self) -> "Settings":
+        """`midia_armazem="s3"` sem bucket sobe limpo e so falha dentro do job.
+
+        `armazem_da_config` (`domain/midia/armazem.py`) constroi `ArmazemS3`
+        com o que estiver aqui, sem olhar se e vazio -- o primeiro sintoma
+        seria um erro do boto3 no meio do job `baixar_midia` (Task 5), longe
+        de onde a configuracao foi escrita. `ValueError`, e nao
+        `ConfiguracaoInsegura`: o caso desta ultima e configuracao que roda
+        sem a protecao que devia ter (a chave de cifra, o token de catalogo);
+        aqui nao ha protecao perdida, ha escolha incompleta que deixa de
+        operar.
+        """
+        if self.midia_armazem == "s3" and not self.midia_s3_bucket:
+            raise ValueError(
+                "midia_armazem='s3' exige midia_s3_bucket preenchido; recebi "
+                f"midia_s3_bucket={self.midia_s3_bucket!r}."
             )
         return self
 
