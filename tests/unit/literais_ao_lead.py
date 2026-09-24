@@ -30,6 +30,16 @@ compara a legenda inteira contra o texto esperado por extenso. Quem cobre os
 rotulos da ficha e aquele arquivo, nao estas guardas.
 """
 
+from mobia.domain.agendamento.data_falada import (
+    TEXTO_DA_DATA_INEXISTENTE,
+    TEXTO_DA_HORA_AMBIGUA,
+    TEXTO_DA_NOITE,
+    TEXTO_DE_DOIS_DIAS,
+    TEXTO_DE_HOJE_OU_DA_PROXIMA,
+    TEXTO_DO_DOMINGO,
+    TEXTO_DO_FIM_DE_SEMANA,
+    TEXTO_DO_PASSADO,
+)
 from mobia.domain.agente.apresentacao import RESSALVA_DE_ESTIMATIVA
 from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO
 from mobia.domain.agente.turno import (
@@ -78,4 +88,12 @@ LITERAIS_AO_LEAD = (
     SUFIXO_FORA_DA_JANELA,
     TEXTO_DO_ENCAMINHAMENTO_DE_VENDA,
     TEXTO_DO_ENCAMINHAMENTO_DE_SUPORTE,
+    TEXTO_DO_FIM_DE_SEMANA,
+    TEXTO_DO_DOMINGO,
+    TEXTO_DE_HOJE_OU_DA_PROXIMA,
+    TEXTO_DA_HORA_AMBIGUA,
+    TEXTO_DO_PASSADO,
+    TEXTO_DE_DOIS_DIAS,
+    TEXTO_DA_NOITE,
+    TEXTO_DA_DATA_INEXISTENTE,
 )
