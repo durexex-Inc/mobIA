@@ -6,6 +6,7 @@ from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFa
 from sqlalchemy import func, select
 
 from mobia.domain.handoff.agendador import AgendadorNoop
+from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -29,7 +30,7 @@ def _ctx_do_turno(session_factory, outbound) -> dict:
         "contador": ContadorFake(),
         "moderador": ModeradorFake(),
         "agendador": AgendadorNoop(),
-        "indicador": IndicadorNoop(),
+        "indicadores": {CANAL_WHATSAPP: IndicadorNoop(), CANAL_WEB: IndicadorNoop()},
     }
 
 

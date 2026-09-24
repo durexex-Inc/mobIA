@@ -193,9 +193,10 @@ class Settings(BaseSettings):
     # `float` e nao `int` como os `sweep_*_after_seconds` vizinhos, pela mesma
     # razao -- o teste precisa de 0.05, e um `int` o arredondaria para 0.
     #
-    # Nao ha flag para desligar: a porta e o desligamento. Trocar
-    # `ctx["indicador"]` por `IndicadorNoop` em `workers/main.py` desliga a
-    # feature inteira sem tocar neste numero nem no dominio.
+    # Nao ha flag para desligar: a porta e o desligamento. Trocar a entrada de
+    # um canal em `ctx["indicadores"]` por `IndicadorNoop`, em
+    # `workers/main.py`, desliga a feature naquele canal sem tocar neste numero
+    # nem no dominio -- e e assim que o web ja nasce desde a TEC-124.
     indicador_de_digitacao_apos_segundos: float = 4.0
 
     # RN-01.6 (TEC-128), com a emenda E-01: a janela vale para TODA mensagem

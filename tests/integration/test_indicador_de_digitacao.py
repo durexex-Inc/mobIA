@@ -12,10 +12,11 @@ from test_rajada import gravar  # type: ignore[import-not-found]
 
 from mobia.app.config import get_settings
 from mobia.domain.atendimento.repositorio import assumir
+from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.optout.repositorio import registrar_optout
-from mobia.domain.outbound.presenca import indicador_de_digitacao
+from mobia.domain.outbound.presenca import IndicadorNoop, indicador_de_digitacao
 from mobia.infra.db import get_sessionmaker
 from mobia.workers.jobs.process_message import process_message
 
@@ -237,7 +238,7 @@ async def test_turno_lento_dispara_o_indicador_de_ponta_a_ponta(
         "contador": contador_fake(),
         "moderador": moderador_fake(),
         "agendador": AgendadorNoop(),
-        "indicador": espiao,
+        "indicadores": {CANAL_WHATSAPP: espiao, CANAL_WEB: IndicadorNoop()},
     }
 
     await process_message(ctx, str(linha.id))

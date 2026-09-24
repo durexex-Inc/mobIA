@@ -4,8 +4,38 @@ import signal
 import pytest
 
 from mobia.app.config import ConfiguracaoInsegura
-from mobia.domain.outbound.whatsapp import WhatsAppOutbound
+from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
+from mobia.domain.outbound.presenca import IndicadorNoop
+from mobia.domain.outbound.roteador import RoteadorPorCanal
+from mobia.domain.outbound.web import WebOutbound
+from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
 from mobia.workers.main import startup
+
+
+async def test_startup_monta_saida_e_indicador_por_canal(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """TEC-124, D5. Cada canal com o seu adaptador, e o web sem indicador.
+
+    Le `_portas` direto porque o que se testa aqui e a MONTAGEM: sem banco e
+    sem rede, nao ha comportamento observavel do roteador que diga qual
+    adaptador ele recebeu. O que o roteador faz com o dicionario esta em
+    `test_roteador_de_canal.py`.
+    """
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "mobia@localhost")
+    ctx: dict = {"redis": object()}
+
+    await startup(ctx)
+
+    portas = ctx["outbound"]._portas
+    assert set(portas) == {CANAL_WHATSAPP, CANAL_WEB}
+    assert isinstance(portas[CANAL_WHATSAPP], WhatsAppOutbound)
+    assert isinstance(portas[CANAL_WEB], WebOutbound)
+    assert isinstance(ctx["indicadores"][CANAL_WHATSAPP], WhatsAppIndicador)
+    assert isinstance(ctx["indicadores"][CANAL_WEB], IndicadorNoop)
+    assert "indicador" not in ctx
 
 
 async def test_startup_recusa_subir_sem_token_da_meta(
@@ -41,7 +71,7 @@ async def test_startup_sobe_com_token_configurado(
     ctx: dict = {"redis": object()}
     await startup(ctx)
 
-    assert isinstance(ctx["outbound"], WhatsAppOutbound)
+    assert isinstance(ctx["outbound"], RoteadorPorCanal)
     assert "classificador" in ctx
     assert "resumidor" in ctx
     assert "contador" in ctx
