@@ -25,14 +25,16 @@ __pycache__/
 build/
 dist/
 
-# Frontend do painel. `frontend/node_modules` ja estava coberto pelo
-# `frontend/.gitignore` (`/node_modules`); a linha aqui e redundante de
-# proposito, para que a cobertura nao dependa daquele arquivo continuar
-# existindo.
+# Frontend do painel: dependencia e build do Next, que sao artefato de
+# maquina, nao codigo. O `frontend/.gitignore` ja cobre os dois (`/node_modules`
+# e `/.next/`), e por isso estas duas linhas nao mudam nada hoje -- zero arquivo
+# entra ou sai do versionamento por causa delas.
 #
-# ATENCAO: `frontend/` inteiro entrou por pedido explicito, mas os 34
-# arquivos que vieram no merge da TEC-190 CONTINUAM rastreados -- gitignore
-# nao desrastreia. O efeito real desta linha e que arquivo NOVO em
-# `frontend/` some do `git status` sem avisar.
-frontend/
+# O que elas acrescentam e nao depender daquele arquivo: se alguem reescrever o
+# `frontend/.gitignore` ao trocar de ferramenta de build, `node_modules` nao
+# volta a aparecer no `git status` por descuido.
+#
+# O resto de `frontend/` continua rastreado de proposito -- o painel da TEC-190
+# e codigo do projeto.
 frontend/node_modules/
+frontend/.next/
