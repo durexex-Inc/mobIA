@@ -322,3 +322,41 @@ async def test_o_turno_web_nao_chama_a_absorcao(
 
     await _falar_no_whatsapp(redis_pool, "oi", ClassificadorQueGuarda())
     assert chamadas == [CANAL_WHATSAPP]
+
+
+async def test_fala_web_posterior_a_do_whatsapp_nao_entra_no_turno(
+    ws_cliente, session, redis_pool
+) -> None:
+    """Revisao final da TEC-129 (I2): o turno do WhatsApp so enxerga o que o site
+    disse ate a fala que ele responde -- o instante vem da propria mensagem, e
+    nao do relogio de quando o turno roda."""
+    fabrica = get_sessionmaker()
+    [message_id] = await IngestionService(fabrica, redis_pool).ingest(
+        [
+            ParsedMessage(
+                provider_message_id=f"wamid.{uuid.uuid4()}",
+                sender_external_id=WA_ID,
+                recipient_external_id="phone-number-id",
+                content_type=MessageContentType.TEXTO,
+                text_body="oi",
+                raw_payload={},
+            )
+        ],
+        channel=CANAL_WHATSAPP,
+    )
+    # O site fala DEPOIS de a mensagem do WhatsApp chegar, e antes de o turno
+    # dela rodar.
+    await _falar_no_site(
+        ws_cliente,
+        redis_pool,
+        [f"meu whats e {TELEFONE_DIGITADO}"],
+        ClassificadorQueGuarda(extracao=Extracao(quartos=2)),
+    )
+
+    no_whatsapp = ClassificadorQueGuarda()
+    await process_message(_ctx(redis_pool, no_whatsapp, WhatsAppQueRegistra()), str(message_id))
+
+    [contexto] = no_whatsapp.contextos
+    assert {m.channel for m in contexto.literais} == {CANAL_WHATSAPP}
+    # O criterio chega pela qualificacao, que nao e texto e nao tem instante.
+    assert contexto.estado.quartos == 2

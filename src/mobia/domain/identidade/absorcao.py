@@ -56,7 +56,7 @@ from mobia.domain.agente.dinheiro import mudou_de_banda
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.repositorio import MARCA_DO_ORCAMENTO
-from mobia.domain.identidade.repositorio import sessoes_vinculadas
+from mobia.domain.identidade.repositorio import MAXIMO_DE_SESSOES_VINCULADAS, sessoes_vinculadas
 from mobia.domain.identidade.telefone import normalizar
 from mobia.domain.messages.canais import CANAL_WHATSAPP
 
@@ -118,7 +118,10 @@ async def absorver_sessoes_vinculadas(
 ) -> tuple[tuple[str, str], ...]:
     """Preenche o estado do WhatsApp com o das sessoes vinculadas; devolve os pares delas.
 
-    Os pares vao para `montar_contexto`, que os poe na janela de literais. Sem
+    So as `MAXIMO_DE_SESSOES_VINCULADAS` vinculadas por ultimo contam, aqui e
+    na janela -- os pares devolvidos sao exatamente elas, e o comentario da
+    constante diz por que o teto existe. Os pares vao para `montar_contexto`,
+    que os poe na janela de literais. Sem
     vinculo -- ou com um `wa_id` que nao e brasileiro -- devolve `()` e nao
     escreve nada: o turno segue exatamente como antes desta card.
 
@@ -137,7 +140,7 @@ async def absorver_sessoes_vinculadas(
         return ()
 
     async with session_factory() as session:
-        pares = await sessoes_vinculadas(session, telefone)
+        pares = await sessoes_vinculadas(session, telefone, limite=MAXIMO_DE_SESSOES_VINCULADAS)
         if not pares:
             return ()
 

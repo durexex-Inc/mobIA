@@ -43,11 +43,35 @@ async def vincular_sessao(
     return resultado.rowcount == 1
 
 
-async def sessoes_vinculadas(session: AsyncSession, telefone: str) -> list[tuple[str, str]]:
-    """Os pares das sessoes que apontam para este telefone, do mais antigo ao mais novo."""
-    linhas = await session.execute(
-        select(VinculoDeSessao.channel, VinculoDeSessao.conversation_key)
+# Teto de sessoes vinculadas que um turno do WhatsApp usa -- na absorcao e na
+# janela de literais (revisao final da TEC-129, D4). O vinculo nao e
+# verificado (D1): qualquer um que saiba o numero de outra pessoa abre sessoes
+# no site, digita o numero e vincula quantas quiser. Sem teto, cada uma
+# plantaria criterios e texto no contexto do WhatsApp dela, e o custo do turno
+# (uma consulta, uma janela maior) cresceria com o abuso. Tres cobre o uso
+# legitimo -- celular, notebook, o computador do trabalho -- e sao as MAIS
+# RECENTES porque a sessao que continua viva e a que importa.
+MAXIMO_DE_SESSOES_VINCULADAS = 3
+
+
+async def sessoes_vinculadas(
+    session: AsyncSession, telefone: str, *, limite: int | None = None
+) -> list[tuple[str, str]]:
+    """Os pares das sessoes que apontam para este telefone, do mais antigo ao mais novo.
+
+    Com `limite`, so as `limite` vinculadas por ultimo (`criado_em`) -- e a
+    ordem devolvida continua cronologica.
+    """
+    recentes = (
+        select(VinculoDeSessao.channel, VinculoDeSessao.conversation_key, VinculoDeSessao.criado_em)
         .where(VinculoDeSessao.telefone == telefone)
-        .order_by(VinculoDeSessao.criado_em, VinculoDeSessao.conversation_key)
+        .order_by(VinculoDeSessao.criado_em.desc(), VinculoDeSessao.conversation_key.desc())
+        .limit(limite)
+        .subquery()
+    )
+    linhas = await session.execute(
+        select(recentes.c.channel, recentes.c.conversation_key).order_by(
+            recentes.c.criado_em, recentes.c.conversation_key
+        )
     )
     return [(channel, chave) for channel, chave in linhas.all()]

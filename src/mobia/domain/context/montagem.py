@@ -2,7 +2,7 @@ import asyncio
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import structlog
@@ -573,6 +573,10 @@ async def montar_contexto(
     # `_fronteira_do_silencio`, e uma dobra as leva para o resumo do par do
     # turno, nunca para o do par web.
     pares_vinculados: Sequence[tuple[str, str]] = (),
+    # O `created_at` da mensagem do turno: das sessoes vinculadas so entra o
+    # que foi dito antes dele. Ver `literais_apos`, que explica por que o
+    # instante vem de quem chama e nao de `now()`.
+    ate_das_vinculadas: datetime | None = None,
 ) -> ContextoMontado:
     settings = get_settings()
 
@@ -624,6 +628,7 @@ async def montar_contexto(
             conversation_key,
             marca_de(resumo_atual),
             pares_vinculados=pares_vinculados,
+            ate_das_vinculadas=ate_das_vinculadas,
         )
         estado = await ler_estado(session, channel, conversation_key)
 
@@ -915,34 +920,21 @@ async def _dobrar(
         #
         # **A fala DESTE turno nao corre risco de virar resumo.** Ela esta
         # sempre em `literais` -- a ingestao commita a linha antes de
-        # enfileirar o job, que recebe o `message_id`. Este paragrafo e sobre
-        # ESTE call site, o da dobra forcada (`manter_literais`,
-        # `piso_pode_ceder=False` aqui) -- o outro call site, que cede o
-        # piso, tem a ressalva sobre sessao vinculada no paragrafo de
-        # `piso_pode_ceder` logo abaixo, e as duas nao se contradizem.
-        #
-        # Nao precisa ser, por construcao, a mais nova de TODAS -- desde a
-        # TEC-129 uma sessao web vinculada pode ter literal mais novo que
-        # esta mensagem (D4), porque `literais` intercala falas dos dois
-        # pares. Precisa so estar depois da fronteira, e isso continua
-        # garantido: nenhum intervalo de 30 dias pode se abrir DEPOIS desta
-        # mensagem, porque tudo o que a sucede na lista foi commitado ate o
-        # instante em que esta consulta rodou -- perto de "agora", nunca 30
-        # dias a frente dela. `_fronteira_do_silencio` nao acha gap nesse
-        # trecho, entao a fronteira cai sempre na posicao desta mensagem ou
-        # antes. Um `minimas=0` a mandaria para o resumo e o modelo
-        # responderia a uma parafrase da propria pergunta; isso foi um bug
-        # real (fix da TEC-130, rodada de revisao). Hoje `minimas` nao pode
-        # ser zero: a fronteira e no minimo o indice 1, entao
-        # `len(literais) - fronteira` e no minimo 1.
+        # enfileirar o job, que recebe o `message_id` -- e e, por construcao, a
+        # mais nova de todas: esta depois da fronteira. Desde a TEC-129
+        # `literais` intercala falas de sessoes web vinculadas (D4), e a
+        # construcao continua valendo porque so entram as ditas ANTES desta
+        # mensagem (`ate_das_vinculadas`, em `literais_apos`). Um `minimas=0` a
+        # mandaria para o resumo e o modelo responderia a uma parafrase da
+        # propria pergunta; isso foi um bug real (fix da TEC-130, rodada de
+        # revisao). Hoje `minimas` nao pode ser zero: a fronteira e no minimo
+        # o indice 1, entao `len(literais) - fronteira` e no minimo 1.
         #
         # **`manter_literais` nao e `piso_pode_ceder`.** Aquele cede o piso
         # para UMA mensagem, por causa do estouro de teto; este diz onde a
         # conversa anterior acabou. Os dois convergem em manter a mais recente,
-        # que e a invariante que `janela.dividir` declara no comentario de
-        # `piso_pode_ceder` -- a fala a que o modelo responde tem de sobrar,
-        # exceto no caso raro (TEC-129, D4) que aquele comentario tambem
-        # registra: sessao web vinculada com fala mais nova que a do turno --,
+        # que e a invariante que `janela.dividir` ja declara no comentario de
+        # `piso_pode_ceder` -- a fala a que o modelo responde tem de sobrar --,
         # e por isso combina-los (ainda inalcancavel: os dois call sites de
         # `_dobrar` sao disjuntos) nao produz surpresa: `dividir` calcula
         # `piso = 1 if piso_pode_ceder else minimas`, e os dois lados sao >= 1.

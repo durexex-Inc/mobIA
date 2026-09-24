@@ -1,6 +1,7 @@
 """O vinculo sessao web -> telefone. TEC-129, D3."""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -86,3 +87,27 @@ async def test_duas_sessoes_para_o_mesmo_telefone(session) -> None:
 
 async def test_telefone_sem_vinculo_devolve_vazio(session) -> None:
     assert await sessoes_vinculadas(session, TELEFONE) == []
+
+
+async def test_com_limite_ficam_as_mais_recentes_em_ordem_cronologica(session) -> None:
+    fabrica = get_sessionmaker()
+    sessoes = [str(uuid.uuid4()) for _ in range(4)]
+    for indice, sessao in enumerate(sessoes):
+        await vincular_sessao(
+            fabrica,
+            channel=CANAL_WEB,
+            conversation_key=sessao,
+            telefone=TELEFONE,
+            message_id=await _mensagem_web(session, sessao),
+        )
+        # `criado_em` e `now()` do servidor; force a ordem da lista.
+        await session.execute(
+            VinculoDeSessao.__table__.update()
+            .where(VinculoDeSessao.conversation_key == sessao)
+            .values(criado_em=datetime.now(UTC) - timedelta(hours=10 - indice))
+        )
+        await session.commit()
+
+    assert await sessoes_vinculadas(session, TELEFONE, limite=3) == [
+        (CANAL_WEB, s) for s in sessoes[1:]
+    ]

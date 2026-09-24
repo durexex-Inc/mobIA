@@ -76,3 +76,49 @@ async def test_a_marca_vale_para_os_pares(session) -> None:
     )
 
     assert [m.id for m in literais] == [nova.id]
+
+
+async def test_fala_vinculada_depois_do_instante_do_turno_fica_de_fora(session) -> None:
+    """Revisao final da TEC-129 (I2): das sessoes vinculadas so entra o que foi
+    dito ate a fala do turno. O proprio par nao tem esse limite."""
+    agora = datetime.now(UTC)
+    sessao = str(uuid.uuid4())
+    web_antes = _fala(CANAL_WEB, sessao, agora - timedelta(minutes=10))
+    do_turno = _fala(CANAL_WHATSAPP, WA_ID, agora - timedelta(minutes=5))
+    web_depois = _fala(CANAL_WEB, sessao, agora - timedelta(minutes=1))
+    whatsapp_depois = _fala(CANAL_WHATSAPP, WA_ID, agora)
+    session.add_all([web_antes, do_turno, web_depois, whatsapp_depois])
+    await session.commit()
+
+    literais = await literais_apos(
+        session,
+        CANAL_WHATSAPP,
+        WA_ID,
+        None,
+        pares_vinculados=[(CANAL_WEB, sessao)],
+        ate_das_vinculadas=do_turno.created_at,
+    )
+
+    assert [m.id for m in literais] == [web_antes.id, do_turno.id, whatsapp_depois.id]
+
+
+async def test_fala_vinculada_no_mesmo_instante_do_turno_fica_de_fora(session) -> None:
+    """O limite e estrito: no empate de `created_at` a ordem sai do `id`, e a
+    fala web poderia ficar depois da do turno na lista."""
+    agora = datetime.now(UTC)
+    sessao = str(uuid.uuid4())
+    do_turno = _fala(CANAL_WHATSAPP, WA_ID, agora)
+    empatada = _fala(CANAL_WEB, sessao, agora)
+    session.add_all([do_turno, empatada])
+    await session.commit()
+
+    literais = await literais_apos(
+        session,
+        CANAL_WHATSAPP,
+        WA_ID,
+        None,
+        pares_vinculados=[(CANAL_WEB, sessao)],
+        ate_das_vinculadas=do_turno.created_at,
+    )
+
+    assert [m.id for m in literais] == [do_turno.id]

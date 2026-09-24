@@ -1792,6 +1792,9 @@ async def _executar_turno(
             resumidor=resumidor,
             contador=contador,
             pares_vinculados=pares_vinculados,
+            # O instante da fala a que o turno responde, e nao o relogio: o
+            # que o site disse depois dela nao entra (ver `literais_apos`).
+            ate_das_vinculadas=message.created_at,
         )
     except ContextoIrreducivel as exc:
         # Uma unica mensagem que nao cabe no teto. Retentar nao encolhe nada.

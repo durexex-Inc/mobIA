@@ -10,6 +10,7 @@ from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.repositorio import MARCA_DO_ORCAMENTO, aplicar_mudanca_de_intencao
 from mobia.domain.identidade.absorcao import absorver_sessoes_vinculadas
+from mobia.domain.identidade.models import VinculoDeSessao
 from mobia.domain.identidade.repositorio import vincular_sessao
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -378,3 +379,26 @@ async def test_campos_de_investidor_nao_completam_o_que_o_whatsapp_comecou(sessi
         None,
         None,
     )
+
+
+async def test_so_as_tres_sessoes_vinculadas_mais_recentes_contam(session) -> None:
+    """Revisao final da TEC-129 (I2): qualquer um que saiba o numero vincula
+    sessoes a ele, entao o fan-in tem teto."""
+    mais_antiga = await _sessao_vinculada(session, regiao="Campeche")
+    recentes = [await _sessao_vinculada(session, quartos=2) for _ in range(3)]
+    # `criado_em` tem `server_default=now()`; force a ordem em vez de depender
+    # do relogio entre transacoes.
+    await session.execute(
+        VinculoDeSessao.__table__.update()
+        .where(VinculoDeSessao.conversation_key == mais_antiga)
+        .values(criado_em=VinculoDeSessao.criado_em - timedelta(days=1))
+    )
+    await session.commit()
+
+    pares = await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
+
+    assert {chave for _, chave in pares} == set(recentes)
+    estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
+    assert (estado.quartos, estado.regiao) == (2, None)
