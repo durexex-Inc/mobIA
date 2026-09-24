@@ -24,3 +24,15 @@ __pycache__/
 # `pip wheel`, nao `python -m build`, que e o que escreveria ali.
 build/
 dist/
+
+# Frontend do painel. `frontend/node_modules` ja estava coberto pelo
+# `frontend/.gitignore` (`/node_modules`); a linha aqui e redundante de
+# proposito, para que a cobertura nao dependa daquele arquivo continuar
+# existindo.
+#
+# ATENCAO: `frontend/` inteiro entrou por pedido explicito, mas os 34
+# arquivos que vieram no merge da TEC-190 CONTINUAM rastreados -- gitignore
+# nao desrastreia. O efeito real desta linha e que arquivo NOVO em
+# `frontend/` some do `git status` sem avisar.
+frontend/
+frontend/node_modules/
