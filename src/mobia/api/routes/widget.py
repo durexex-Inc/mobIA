@@ -74,6 +74,13 @@ async def chat(
     websocket: WebSocket,
     service: IngestionService = Depends(get_ingestion_service),
 ) -> None:
+    # **Este `set()` FICA, e o irmao dele em `whatsapp.py` saiu na TEC-368 --
+    # a assimetria e obrigatoria, nao descuido.** O `CorrelacaoDeRequisicao`
+    # preenche o `correlation_id` de toda rota HTTP, e por isso o webhook nao
+    # precisa mais do seu. Aqui o escopo e `websocket`, e `BaseHTTPMiddleware`
+    # devolve cedo para todo escopo que nao seja `http`: este handshake nunca
+    # passa por middleware nenhum. Apagar por simetria com o webhook tira a
+    # correlacao do widget inteiro, sem nada reprovar.
     correlation_id.set(str(uuid.uuid4()))
 
     pool = getattr(websocket.app.state, "redis_pool", None)
