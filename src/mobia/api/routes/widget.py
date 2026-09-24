@@ -19,6 +19,7 @@ le aquela conversa --, e numa query string entraria em log de acesso, em
 ida e na retomada.
 """
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -34,6 +35,7 @@ from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.historico import historico_da_sessao
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.service import IngestionService
+from mobia.domain.outbound.web import canal_da_sessao
 from mobia.infra.db import get_sessionmaker, motivo_do_erro_de_banco
 
 log = structlog.get_logger(__name__)
@@ -51,6 +53,11 @@ CODIGO_PROTOCOLO = 1002
 # fora, que nao e culpa de quem esta do outro lado.
 CODIGO_INDISPONIVEL = 1011
 
+# Quanto esperar o Redis confirmar o `SUBSCRIBE`. Sem confirmacao a volta nao e
+# garantida, e anunciar a sessao seria prometer uma conversa que talvez so
+# funcione num sentido.
+SEGUNDOS_PARA_CONFIRMAR_ASSINATURA = 5.0
+
 
 @router.websocket("/widget/chat")
 async def chat(
@@ -60,19 +67,64 @@ async def chat(
     correlation_id.set(str(uuid.uuid4()))
     await websocket.accept()
 
-    sessao = await _apresentar(websocket)
-    if sessao is None:
+    identidade = await _identificar(websocket)
+    if identidade is None:
+        return
+    sessao, retomada = identidade
+
+    pool = getattr(websocket.app.state, "redis_pool", None)
+    if pool is None:
+        # Sem Redis nao ha volta possivel. A entrada ainda funcionaria, mas a
+        # visitante falaria sozinha -- melhor recusar do que simular
+        # atendimento.
+        log.error("widget.sem_redis", sessao=sessao)
+        await websocket.close(code=CODIGO_INDISPONIVEL)
         return
 
-    log.info("widget.conectado", sessao=sessao)
+    # Uma conexao do pool por aba aberta, enquanto ela viver: e o preco do
+    # pub/sub, e o que dimensiona o pool do Redis quando o widget escalar.
+    assinatura = pool.pubsub()
     try:
-        await _ler_do_lead(websocket, service, sessao)
-    except WebSocketDisconnect:
+        # **Assina ANTES de anunciar a sessao, e espera o Redis confirmar.**
+        # Com a ordem inversa, uma resposta publicada logo depois do anuncio
+        # podia chegar ao Redis antes do `SUBSCRIBE` -- e pub/sub nao guarda
+        # nada para quem ainda nao ouve. Assim, quem recebeu o frame `sessao`
+        # ja tem para onde a publicacao ir.
+        await assinatura.subscribe(canal_da_sessao(sessao))
+        if await assinatura.get_message(timeout=SEGUNDOS_PARA_CONFIRMAR_ASSINATURA) is None:
+            log.error("widget.assinatura_sem_confirmacao", sessao=sessao)
+            await websocket.close(code=CODIGO_INDISPONIVEL)
+            return
+
+        await _anunciar(websocket, sessao, retomada)
+        log.info("widget.conectado", sessao=sessao, retomada=retomada)
+
+        entrada = asyncio.create_task(_ler_do_lead(websocket, service, sessao))
+        saida = asyncio.create_task(_escrever_do_agente(websocket, assinatura))
+        try:
+            # A primeira que terminar decide: a visitante fechou a aba, ou o
+            # socket morreu escrevendo. A outra nao tem mais para quem falar.
+            await asyncio.wait({entrada, saida}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for tarefa in (entrada, saida):
+                tarefa.cancel()
+            # `return_exceptions` para o cancelamento de uma nao esconder a
+            # excecao da outra, nem vazar "Task exception was never
+            # retrieved" no log.
+            await asyncio.gather(entrada, saida, return_exceptions=True)
+    finally:
+        # Solta a conexao do pool. Sem isto, cada aba fechada vazaria uma
+        # conexao do Redis para sempre.
+        await assinatura.aclose()
         log.info("widget.desconectado", sessao=sessao)
 
 
-async def _apresentar(websocket: WebSocket) -> str | None:
-    """O primeiro frame decide a identidade, e nada mais passa antes dele."""
+async def _identificar(websocket: WebSocket) -> tuple[str, bool] | None:
+    """O primeiro frame decide a identidade, e nada mais passa antes dele.
+
+    Devolve a sessao e se ela e retomada, sem responder nada: o anuncio fica
+    para depois da assinatura -- ver `chat`.
+    """
     try:
         primeiro = await _receber_json(websocket)
     except WebSocketDisconnect:
@@ -102,6 +154,10 @@ async def _apresentar(websocket: WebSocket) -> str | None:
             return None
         retomada = True
 
+    return sessao, retomada
+
+
+async def _anunciar(websocket: WebSocket, sessao: str, retomada: bool) -> None:
     await websocket.send_json({"tipo": "sessao", "sessao": sessao})
 
     if retomada:
@@ -121,7 +177,14 @@ async def _apresentar(websocket: WebSocket) -> str | None:
             }
         )
 
-    return sessao
+
+async def _escrever_do_agente(websocket: WebSocket, assinatura: Any) -> None:
+    """Repassa ao navegador o que o worker publicou para esta sessao."""
+    async for evento in assinatura.listen():
+        if evento.get("type") != "message":
+            continue
+        dado = evento["data"]
+        await websocket.send_text(dado.decode() if isinstance(dado, bytes) else dado)
 
 
 async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: str) -> None:
@@ -130,6 +193,8 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
     while True:
         try:
             frame = await _receber_json(websocket)
+        except WebSocketDisconnect:
+            return
         except json.JSONDecodeError:
             await websocket.close(code=CODIGO_PROTOCOLO)
             return
