@@ -33,6 +33,23 @@ describe('buscarFunil', () => {
     expect(init.next).toEqual({ revalidate: 60 })
   })
 
+  it('NAO leva `X-Request-Id`, porque header entra na chave do Data Cache', async () => {
+    // Acrescentado pela TEC-302. Um id por requisicao aqui daria uma entrada de
+    // cache por acesso: taxa de acerto zero, e cada navegador com o painel
+    // aberto voltando a ser uma chamada ao FastAPI por carregamento -- que e a
+    // propriedade que a D9 da TEC-190 usou para justificar que o limite de 100
+    // requisicoes por minuto por IP nao derruba o painel. Nada ficaria
+    // vermelho sem esta asserção.
+    const fetchFalso = respostaOk()
+    vi.stubGlobal('fetch', fetchFalso)
+
+    await buscarFunil({ de: '2026-08-01', ate: '2026-08-22' })
+
+    const [, init] = fetchFalso.mock.calls[0]
+    expect(init.headers['X-Request-Id']).toBeUndefined()
+    expect(init.next).toEqual({ revalidate: 60 })
+  })
+
   it('omite da query o filtro que nao foi informado', async () => {
     const fetchFalso = respostaOk()
     vi.stubGlobal('fetch', fetchFalso)

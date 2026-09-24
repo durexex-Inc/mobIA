@@ -1,3 +1,5 @@
+import { chamarApi } from '@/lib/servidor/api'
+
 export type Etapa = {
   nome: string
   quantidade: number | null
@@ -71,28 +73,35 @@ async function detalheDe(resposta: Response): Promise<string> {
 }
 
 /**
- * Busca o funil no FastAPI. **Roda so no servidor**: le `MOBIA_ADMIN_TOKEN`,
- * que nao e `NEXT_PUBLIC_*` de proposito -- o token e de admin total, e um
- * `NEXT_PUBLIC_` o entregaria a qualquer navegador que abrisse o painel.
+ * Busca o funil no FastAPI.
  *
- * `revalidate: 60` e o teto de defasagem da RN-17.3, e nao um numero
- * escolhido a esmo. Ele tambem e o que faz N navegadores com o painel aberto
- * virarem UMA chamada por minuto ao FastAPI -- que ve o IP deste servidor, e
- * nao o de cada navegador, e aplica 100 requisicoes por minuto por IP.
+ * **Roda so no servidor**, e desde a TEC-302 isso e garantido em vez de
+ * combinado: a chamada sai por `servidor/api.ts`, que importa `server-only` e
+ * portanto faz o build reprovar se este modulo for parar num componente de
+ * cliente. Ate a TEC-302 a leitura de `MOBIA_ADMIN_TOKEN` era aqui, e nada
+ * impedia que um `'use client'` a levasse para o bundle do navegador.
+ *
+ * `revalidate: 60` e o teto de defasagem da RN-17.3, e nao um numero escolhido
+ * a esmo. Ele tambem e o que faz N navegadores com o painel aberto virarem UMA
+ * chamada por minuto ao FastAPI -- que ve o IP deste servidor, e nao o de cada
+ * navegador, e aplica 100 requisicoes por minuto por IP.
+ *
+ * **E por ser cacheada que esta chamada NAO leva `X-Request-Id`.** Header entra
+ * na chave do Data Cache, entao um id por requisicao zeraria a taxa de acerto e
+ * desfaria o paragrafo acima sem nada ficar vermelho. O tipo de
+ * `chamarApi` recusa os dois juntos; a razao inteira esta la.
  */
 export async function buscarFunil(filtros: Filtros): Promise<Funil> {
-  const base = process.env.MOBIA_API_BASE ?? 'http://localhost:8000'
-  const url = new URL('/api/v1/metricas/funil', base)
-
+  const busca = new URLSearchParams()
   for (const [chave, valor] of Object.entries(filtros)) {
     if (valor) {
-      url.searchParams.set(chave, valor)
+      busca.set(chave, valor)
     }
   }
 
-  const resposta = await fetch(url, {
-    headers: { 'X-Admin-Token': process.env.MOBIA_ADMIN_TOKEN ?? '' },
-    next: { revalidate: 60 },
+  const resposta = await chamarApi('/api/v1/metricas/funil', {
+    busca,
+    revalidarEmSegundos: 60,
   })
 
   if (!resposta.ok) {

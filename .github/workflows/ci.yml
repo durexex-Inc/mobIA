@@ -121,6 +121,18 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+
+    # A sentinela da TEC-302, definida UMA vez e herdada pelo build e pela
+    # varredura. Nao e segredo: ela existe justamente para ser encontrada se
+    # vazar, e precisa de 16 caracteres no minimo -- curta demais, casaria
+    # dentro de identificador minificado (ver `frontend/scripts/verificar-bundle.mjs`).
+    #
+    # **Definida uma vez porque duas copias falhariam em SILENCIO.** Se o build
+    # construisse com um valor e a varredura procurasse outro, ela nao acharia
+    # nada e passaria vazia -- verde, sem ter verificado coisa alguma.
+    env:
+      MOBIA_ADMIN_TOKEN: "tec302-sentinela-do-token-nao-vaza"
+
     defaults:
       run:
         working-directory: frontend
@@ -149,5 +161,22 @@ jobs:
       - name: Testes
         run: npm test
 
+      # O build e o gate do `server-only` (TEC-302): ele reprova aqui se o
+      # modulo que le o token for arrastado para um componente de cliente.
+      #
+      # `MOBIA_ADMIN_TOKEN` vale uma sentinela para o passo seguinte ter o que
+      # procurar. Nao e segredo e nao precisa ser: ela existe para APARECER
+      # caso vaze.
       - name: Build
         run: npm run build
+
+      # O cenario 1 do Gherkin da TEC-302, mecanizado: procura a sentinela em
+      # tudo que esta sob `.next/static`, que e o que o navegador baixa.
+      #
+      # E um passo separado do build de proposito, pela mesma razao que o
+      # `ruff format` e separado do `ruff check`: o build passar nao diz nada
+      # sobre o token ter ficado fora do bundle. Os dois pegam enganos
+      # diferentes -- `server-only` pega a importacao do modulo no cliente, a
+      # varredura pega o `NEXT_PUBLIC_` que embute o valor literal.
+      - name: Varredura do bundle
+        run: npm run verificar:bundle
