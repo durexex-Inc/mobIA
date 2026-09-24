@@ -6,6 +6,7 @@ from arq.connections import ArqRedis, RedisSettings
 from mobia.app.config import get_settings
 
 PROCESS_MESSAGE_JOB = "process_message"
+BAIXAR_MIDIA_JOB = "baixar_midia"
 
 
 def redis_settings() -> RedisSettings:
@@ -45,4 +46,16 @@ async def enqueue_process_message(
         # que "sem atraso" e ausencia de defer, nao defer de duracao nula.
         _defer_by=atraso_segundos or None,
     )
+    return job is not None
+
+
+async def enqueue_baixar_midia(pool: ArqRedis, message_id: uuid.UUID) -> bool:
+    """Enfileira o download da midia de uma mensagem. TEC-132, D3.
+
+    Mesmo `_job_id` estavel do `process_message`, pela mesma razao: a varredura
+    de pendentes re-enfileira sem multiplicar trabalho enquanto o job estiver
+    na fila. E `baixar_midia` e registrado com `keep_result=0` em
+    `workers/main.py` pelo mesmo motivo do irmao.
+    """
+    job = await pool.enqueue_job(BAIXAR_MIDIA_JOB, str(message_id), _job_id=f"midia:{message_id}")
     return job is not None

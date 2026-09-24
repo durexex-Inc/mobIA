@@ -18,10 +18,12 @@ from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.status import MessageStatus
+from mobia.domain.midia.models import MidiaRecebida
+from mobia.domain.midia.repositorio import linha_pendente
 from mobia.domain.optout.deteccao import pediu_optout
 from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 from mobia.infra.db import motivo_do_erro_de_banco
-from mobia.infra.queue import enqueue_process_message
+from mobia.infra.queue import enqueue_baixar_midia, enqueue_process_message
 from mobia.infra.rate_limit import JANELA_DE_UM_MINUTO, chave_de_numero, consumir
 
 log = structlog.get_logger(__name__)
@@ -89,7 +91,7 @@ class IngestionService:
         # mesma ressalva de `texto_de` acima: `gravadas` traz id interno e id
         # do provedor, nao o remetente.
         remetente_de = {item.provider_message_id: item.sender_external_id for item in parsed}
-        for message_id, provider_message_id in gravadas:
+        for message_id, provider_message_id, tem_midia in gravadas:
             texto = texto_de.get(provider_message_id) or ""
             # O opt-out nao espera a janela (RN-01.6 + RN-14), e desde a
             # TEC-128 (onda final) o pedido de humano tambem nao (RN-16.1,
@@ -138,11 +140,13 @@ class IngestionService:
                 )
 
             await self._try_enqueue(message_id, atraso_segundos=atraso)
-        return [message_id for message_id, _ in gravadas]
+            if tem_midia:
+                await self._try_enqueue_midia(message_id)
+        return [message_id for message_id, _, _ in gravadas]
 
     async def _persist(
         self, parsed: list[ParsedMessage], channel: str
-    ) -> list[tuple[uuid.UUID, str]]:
+    ) -> list[tuple[uuid.UUID, str, bool]]:
         """Grava as mensagens novas e descarta as que ja tinham chegado.
 
         "Ja tinham chegado" e a reentrega da Meta, e desde a TEC-124 tambem o
@@ -154,6 +158,13 @@ class IngestionService:
         ao mesmo tempo so podem ser separadas pela constraint (TEC-125). O
         `DO NOTHING` tambem impede que uma duplicata no meio do lote derrube as
         mensagens legitimas que vieram junto.
+
+        Desde a TEC-132, a mensagem de imagem/documento tambem grava a linha
+        PENDENTE em `midias_recebidas`, NA MESMA transacao e antes do commit:
+        uma mensagem de midia sem a linha correspondente seria uma midia que
+        nenhuma varredura (`pendentes_para_reenfileirar`) encontra. O
+        `on_conflict_do_nothing` aqui e pela mesma razao do de `messages` --
+        reentrega nao pode tentar gravar a mesma PK duas vezes.
         """
         valores = []
         for item in parsed:
@@ -188,7 +199,31 @@ class IngestionService:
         async with self._session_factory() as session:
             resultado = await session.execute(statement)
             inseridas = resultado.all()
+
+            # Mesma convencao de `texto_de`/`remetente_de` em `ingest`: o
+            # `provider_message_id` repetido dentro do MESMO envelope resolve
+            # para a ULTIMA ocorrencia, inofensivo pelo mesmo motivo (reentrega
+            # da Meta nunca traz corpos diferentes para o mesmo wamid).
+            item_de = {item.provider_message_id: item for item in parsed}
+            midia_valores = []
+            for linha in inseridas:
+                correspondente = item_de.get(linha.provider_message_id)
+                if correspondente is None:
+                    continue
+                midia = linha_pendente(
+                    linha.id, correspondente.raw_payload, correspondente.content_type
+                )
+                if midia is not None:
+                    midia_valores.append(midia)
+
+            if midia_valores:
+                await session.execute(
+                    pg_insert(MidiaRecebida).values(midia_valores).on_conflict_do_nothing()
+                )
+
             await session.commit()
+
+        ids_com_midia = {midia["message_id"] for midia in midia_valores}
 
         # Contagem, nao conjunto: o mesmo wamid pode vir repetido dentro de um
         # unico envelope, e ai uma das ocorrencias e gravada e a outra descartada.
@@ -215,7 +250,11 @@ class IngestionService:
         # descartes do TEC-125; agora ele tambem e a unica forma de casar cada
         # id gravado com o texto em claro do `ParsedMessage` que o originou --
         # `inseridas` pode ser subconjunto de `parsed`, sem garantia de ordem.
-        return [(linha.id, linha.provider_message_id) for linha in inseridas]
+        # O terceiro elemento (TEC-132) e quem decide, ja em `ingest`, se aquele
+        # id precisa tambem do `_try_enqueue_midia`.
+        return [
+            (linha.id, linha.provider_message_id, linha.id in ids_com_midia) for linha in inseridas
+        ]
 
     async def _try_enqueue(self, message_id: uuid.UUID, *, atraso_segundos: float = 0.0) -> None:
         if self._queue is None:
@@ -286,4 +325,25 @@ class IngestionService:
                 "message.queued_skipped",
                 message_id=str(message_id),
                 reason="status_ja_avancou",
+            )
+
+    async def _try_enqueue_midia(self, message_id: uuid.UUID) -> None:
+        """Enfileira `baixar_midia` para uma mensagem que ja tem linha PENDENTE.
+
+        Engole toda falha, no mesmo espirito de `_try_enqueue`: a linha em
+        `midias_recebidas` ja foi commitada por `_persist`, e a varredura de
+        pendentes (Task 5) reenfileira o que se perder aqui. Falha no enqueue
+        da midia nunca pode impedir o `process_message` -- por isso este
+        metodo e chamado DEPOIS dele, nao antes nem no lugar.
+        """
+        if self._queue is None:
+            log.warning("midia.enqueue_failed", message_id=str(message_id), reason="no_queue")
+            return
+        try:
+            await enqueue_baixar_midia(self._queue, message_id)
+        except Exception as exc:
+            log.warning(
+                "midia.enqueue_failed",
+                message_id=str(message_id),
+                reason=type(exc).__name__,
             )
