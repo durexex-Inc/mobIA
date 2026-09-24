@@ -12,7 +12,14 @@ from mobia.domain.identidade.telefone import extrair_telefone, normalizar
         ("+55 48 99999-0000", "5548999990000"),
         ("+5548999990000", "5548999990000"),
         ("48999990000", "5548999990000"),
-        ("48 9 9999 0000", None),  # nove solto nao e mascara que a regex aceita
+        # o 9 separado do resto do celular, como muita gente escreve
+        ("48 9 9999 0000", "5548999990000"),
+        ("(48) 9 9999-0000", "5548999990000"),
+        ("+55 48 9 9999-0000", "5548999990000"),
+        # o zero de tronco antes do DDD, de quem aprendeu a discar interurbano
+        ("(048) 99999-0000", "5548999990000"),
+        ("048 99999-0000", "5548999990000"),
+        ("fixo (011) 3222-1234", "551132221234"),
         ("liga no 48.99999.0000", "5548999990000"),
         # celular sem o 9: ganha o 9
         ("(48) 9999-0000", "5548999990000"),
@@ -34,6 +41,12 @@ def test_extrai_as_mascaras_comuns(texto: str, esperado: str | None) -> None:
         "visita dia 24/09/2026",
         "DDD invalido (20) 99999-0000",
         "tres quartos e duas vagas",
+        # CPF cru comecando por zero: o zero so e de tronco quando a mascara o
+        # separa do resto (parenteses ou separador depois do DDD)
+        "meu CPF e 01234567890",
+        "meu CPF e 012.345.678-90",
+        # o separador depois do 9 so vale depois de um 9
+        "(48) 8 9999-0000",
     ],
 )
 def test_nao_casa_o_que_nao_e_telefone(texto: str) -> None:
@@ -69,4 +82,22 @@ def test_o_mesmo_telefone_duas_vezes_devolve_ele() -> None:
     ],
 )
 def test_normaliza_o_wa_id(bruto: str, esperado: str | None) -> None:
+    assert normalizar(bruto) == esperado
+
+
+@pytest.mark.parametrize(
+    ("bruto", "esperado"),
+    [
+        ("(048) 99999-0000", "5548999990000"),
+        ("048 99999-0000", "5548999990000"),
+        ("048.3222.1234", "554832221234"),
+        # sem mascara nenhuma o zero nao e tronco: onze digitos comecando por
+        # zero sao CPF cru tanto quanto telefone, e o DDD "01" nao existe
+        ("04899990000", None),
+        ("01234567890", None),
+    ],
+)
+def test_normaliza_descarta_o_zero_de_tronco_so_com_mascara(
+    bruto: str, esperado: str | None
+) -> None:
     assert normalizar(bruto) == esperado

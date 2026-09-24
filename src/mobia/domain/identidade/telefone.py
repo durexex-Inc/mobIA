@@ -38,12 +38,29 @@ _DDDS = frozenset(
 # -- sem eles, os onze primeiros digitos de um numero de protocolo virariam
 # telefone. O separador entre os blocos e UM de espaco, ponto ou hifen, ou
 # nenhum; virgula nao entra, porque e o separador decimal do preco.
-_CANDIDATO = re.compile(r"(?<!\d)(?:\+?55[\s.-]?)?\(?\d{2}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}(?!\d)")
+#
+# Duas formas comuns que a primeira versao recusava (revisao final da TEC-129):
+# o 9 separado do resto do celular -- `(48) 9 9999-0000` -- e o zero de tronco
+# antes do DDD -- `(048) 99999-0000`. O separador depois do primeiro digito so
+# e admitido quando esse digito e 9, que e o unico caso em que ele e o 9 do
+# celular; o zero entra opcional aqui, e quem decide se ele e tronco e
+# `normalizar` (ver `_TRONCO`).
+_CANDIDATO = re.compile(
+    r"(?<!\d)(?:\+?55[\s.-]?)?\(?0?\d{2}\)?[\s.-]?(?:9[\s.-]?\d{4}|\d{4,5})[\s.-]?\d{4}(?!\d)"
+)
+
+# O zero de tronco so e reconhecido quando a mascara o poe junto do DDD --
+# entre parenteses, ou seguido de separador. Sem mascara, onze digitos
+# comecando por zero sao CPF cru tanto quanto telefone, e descartar o zero ali
+# abriria um falso positivo novo: `01234567890` viraria o fixo `(12) 3456-7890`.
+_TRONCO = re.compile(r"^\s*(?:\(0\d{2}\)|0\d{2}[\s.-])")
 
 
 def normalizar(bruto: str) -> str | None:
     """A forma canonica do telefone, ou `None` se nao for telefone brasileiro."""
     digitos = re.sub(r"\D", "", bruto)
+    if _TRONCO.match(bruto):
+        digitos = digitos[1:]
     if len(digitos) in (12, 13) and digitos.startswith("55"):
         nacional = digitos[2:]
     elif len(digitos) in (10, 11):

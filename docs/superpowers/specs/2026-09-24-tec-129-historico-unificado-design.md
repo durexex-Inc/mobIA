@@ -47,6 +47,7 @@ Nem campo novo no classificador, nem frame novo do widget:
 Módulo puro novo, `domain/identidade/telefone.py`:
 
 - `extrair_telefone(texto) -> str | None` reconhece telefone brasileiro, celular e fixo: `+55` opcional, DDD com ou sem parênteses, 8 ou 9 dígitos, separados por espaço, hífen, ponto ou nada.
+  - **Emenda (revisão final, 24/09/2026):** duas formas comuns passam a casar. O **9 separado** do resto do celular — `(48) 9 9999-0000`, `+55 48 9 9999-0000` —, com o separador admitido só depois de um 9 inicial. E o **zero de tronco** antes do DDD — `(048) 99999-0000`, `048 99999-0000` —, que `normalizar` descarta. O zero só é tronco quando a máscara o põe junto do DDD (entre parênteses, ou seguido de separador): onze dígitos crus começando por zero continuam não casando, porque são CPF cru tanto quanto telefone e descartar o zero ali abriria um falso positivo novo.
 - **Dois telefones diferentes na mesma mensagem devolvem `None`.** Não há como saber qual é o da pessoa.
 - Número estrangeiro não é reconhecido. Limite declarado.
 - A sequência precisa ser um telefone plausível — DDD válido, e, com 9 dígitos, começar por 9. Isso afasta CEP (8 dígitos sem DDD), preço e CPF pontuado (`000.000.000-00`, que a máscara não aceita).
