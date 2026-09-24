@@ -106,6 +106,15 @@ O roteador **não herda de `GuardedOutbound`**: as guardas e a reserva em `outbo
 
 **Lacuna declarada:** o web fica sem indicador de digitação. Publicá-lo exigiria pôr a sessão na assinatura do `IndicadorDePresencaPort` — mexida de contrato que esta card não faz. Vai no comentário.
 
+> **Emenda E-01 (TEC-362, 24/09/2026): a lacuna fechou, e o contrato mudou como esta seção previa.**
+> `IndicadorDePresencaPort.indicar_digitacao` ganhou `para`, alimentado por `message.sender_external_id` — que no canal web **é a sessão**, enquanto o `recipient_external_id` usado por `de` é a constante `widget`. Era exatamente essa distribuição de campos que impedia a publicação.
+> O `IndicadorNoop` do web saiu; quem entrou foi o `WebIndicador`, em `domain/outbound/web.py`, que publica em `canal_da_sessao(para)` o mesmo Redis do `WebOutbound`.
+> **O formato do frame**, que a card manda registrar aqui:
+> ```json
+> { "tipo": "digitando", "ate": "<ISO-8601 com fuso>" }
+> ```
+> `ate` é quando o cliente deve parar de mostrar o indicador, e vale `agora + 25 s` — o mesmo prazo em que o indicador da Meta expira (Emenda E-01 da RN-04.7), por paridade entre os canais. **Continua não havendo quem o desenhe no navegador:** isso é a TEC-351.
+
 ## D6 — Histórico: as últimas 50, decifradas, sem a fala bloqueada
 
 Na retomada, o servidor lê as últimas 50 linhas (configurável) de `(web, sessão)` com `role IN (LEAD, AGENTE)`, decifra `text_body` e manda um frame `historico` em ordem cronológica, antes de qualquer fala nova.
@@ -157,7 +166,7 @@ Quatro arquivos novos: `api/routes/widget.py`, `domain/messages/canais.py`, `dom
 ## O que este desenho não entrega
 
 - **O widget.** Não há HTML nem JS nesta árvore, e não passa a haver. Esta card entrega o canal do lado servidor; a página que conecta nele não existe, e a stack do front será decidida nas cards de dashboard. **Consequência prática, dita sem rodeio: ninguém consegue conversar pelo site quando este PR entrar** — existe o canal, não existe o chat.
-- **O indicador de digitação no web** (D5).
+- **O indicador de digitação no web** (D5). *Entregue depois, pela TEC-362 — ver a Emenda E-01 da D5.*
 - **Histórico unificado entre canais** — é a TEC-129, e a própria card exclui.
 - **Reengajamento no web** (D8) — é decisão de produto, não lacuna de código.
 - **Autenticação.** A sessão é portador anônimo: quem tiver o UUID lê aquela conversa. É a mesma exposição de um link mágico, mitigada por ser UUIDv4 e por não viajar em URL (D2). Autenticar visitante de site é outro problema, e não é o desta card.

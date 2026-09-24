@@ -21,10 +21,12 @@ SESSAO = "8c0f0a3e-0000-4000-8000-0000000000cc"
 
 class IndicadorEspiao:
     def __init__(self) -> None:
-        self.chamadas: list[tuple[str, str]] = []
+        self.chamadas: list[tuple[str, str, str | None]] = []
 
-    async def indicar_digitacao(self, *, provider_message_id: str, de: str) -> None:
-        self.chamadas.append((provider_message_id, de))
+    async def indicar_digitacao(
+        self, *, provider_message_id: str, de: str, para: str | None
+    ) -> None:
+        self.chamadas.append((provider_message_id, de, para))
 
 
 async def _entrada_web(session) -> Message:
@@ -53,6 +55,10 @@ async def _entrada_web(session) -> Message:
 def _ctx_com(espiao: IndicadorEspiao, outbound: Any) -> dict[str, Any]:
     ctx: dict[str, Any] = _ctx()
     ctx["outbound"] = outbound
+    # `IndicadorNoop` aqui e DUBLE, e nao o que producao liga: desde a TEC-362
+    # o web recebe `WebIndicador`. O que estes dois testes exercitam e o
+    # roteamento -- cada canal recebendo o seu --, e para isso o duble basta e
+    # evita precisar de um Redis.
     ctx["indicadores"] = {CANAL_WHATSAPP: espiao, CANAL_WEB: IndicadorNoop()}
     return ctx
 

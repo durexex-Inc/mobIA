@@ -42,15 +42,29 @@ class IndicadorDePresencaPort(Protocol):
     `provider_message_id` e o id da mensagem de ENTRADA no provedor (o
     `wamid`, no WhatsApp), e nao um id nosso: o indicador da Meta e uma
     anotacao sobre uma mensagem recebida, nao um envio para um numero.
+
+    **`para` e quem VE o indicador** (TEC-362): o telefone do lead no
+    WhatsApp, a SESSAO no canal web. Sai de `sender_external_id`, e nao de
+    `recipient_external_id` como o `de` -- no web aquele campo e a constante
+    `widget`, e foi exatamente isso que fez a TEC-124 declarar a lacuna de
+    nao conseguir publicar "digitando" sem mexer neste contrato.
+
+    A palavra nao e nova: `WebOutbound._deliver` ja publica em
+    `canal_da_sessao(str(payload["para"]))`. Um nome diferente aqui criaria um
+    segundo vocabulario para o mesmo conceito, a uma funcao de distancia.
     """
 
-    async def indicar_digitacao(self, *, provider_message_id: str, de: str) -> None: ...
+    async def indicar_digitacao(
+        self, *, provider_message_id: str, de: str, para: str | None
+    ) -> None: ...
 
 
 class IndicadorNoop:
     """Nao indica nada -- o ambiente sem canal, e o duble natural nos testes."""
 
-    async def indicar_digitacao(self, *, provider_message_id: str, de: str) -> None:
+    async def indicar_digitacao(
+        self, *, provider_message_id: str, de: str, para: str | None
+    ) -> None:
         log.info("presenca.noop")
 
 
@@ -60,6 +74,7 @@ async def _esperar_e_indicar(
     message_id: uuid.UUID,
     provider_message_id: str,
     de: str,
+    para: str | None,
     indicador: IndicadorDePresencaPort,
     apos_segundos: float,
 ) -> None:
@@ -85,7 +100,7 @@ async def _esperar_e_indicar(
             if await esta_silenciada_por_mensagem(session, message_id):
                 log.info("presenca.indicador_barrado", motivo="atendimento_humano")
                 return
-        await indicador.indicar_digitacao(provider_message_id=provider_message_id, de=de)
+        await indicador.indicar_digitacao(provider_message_id=provider_message_id, de=de, para=para)
         log.info("presenca.indicador_enviado")
     except Exception as exc:
         # `warning` e nao `error`: o indicador falhar degrada a experiencia e
@@ -121,6 +136,12 @@ async def indicador_de_digitacao(
     """
     provider_message_id = message.provider_message_id
     de = message.recipient_external_id
+    # **`para` NAO entra na guarda logo abaixo**, de proposito. Quem precisa
+    # dele e so o canal web; acrescenta-lo aqui faria um turno do WhatsApp que
+    # hoje indica deixar de indicar sempre que `sender_external_id` fosse nulo
+    # -- a coluna e anulavel nas tres. A ausencia vira log no adaptador do web,
+    # que e quem sabe que ela impede alguma coisa.
+    para = message.sender_external_id
     if provider_message_id is None or de is None:
         # Sem o wamid da entrada ou sem o numero do canal nao ha requisicao a
         # montar. Sair aqui, e nao descobrir isso depois do sono, evita uma
@@ -135,6 +156,7 @@ async def indicador_de_digitacao(
             message_id=message.id,
             provider_message_id=provider_message_id,
             de=de,
+            para=para,
             indicador=indicador,
             apos_segundos=apos_segundos,
         )
