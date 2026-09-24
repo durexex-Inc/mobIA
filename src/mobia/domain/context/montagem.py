@@ -915,12 +915,26 @@ async def _dobrar(
         #
         # **A fala DESTE turno nao corre risco de virar resumo.** Ela esta
         # sempre em `literais` -- a ingestao commita a linha antes de
-        # enfileirar o job, que recebe o `message_id` -- e e, por construcao, a
-        # mais nova de todas: esta depois da fronteira. Um `minimas=0` a
-        # mandaria para o resumo e o modelo responderia a uma parafrase da
-        # propria pergunta; isso foi um bug real (fix da TEC-130, rodada de
-        # revisao). Hoje `minimas` nao pode ser zero: a fronteira e no minimo
-        # o indice 1, entao `len(literais) - fronteira` e no minimo 1.
+        # enfileirar o job, que recebe o `message_id`. Este paragrafo e sobre
+        # ESTE call site, o da dobra forcada (`manter_literais`,
+        # `piso_pode_ceder=False` aqui) -- o outro call site, que cede o
+        # piso, tem a ressalva sobre sessao vinculada no paragrafo de
+        # `piso_pode_ceder` logo abaixo, e as duas nao se contradizem.
+        #
+        # Nao precisa ser, por construcao, a mais nova de TODAS -- desde a
+        # TEC-129 uma sessao web vinculada pode ter literal mais novo que
+        # esta mensagem (D4), porque `literais` intercala falas dos dois
+        # pares. Precisa so estar depois da fronteira, e isso continua
+        # garantido: nenhum intervalo de 30 dias pode se abrir DEPOIS desta
+        # mensagem, porque tudo o que a sucede na lista foi commitado ate o
+        # instante em que esta consulta rodou -- perto de "agora", nunca 30
+        # dias a frente dela. `_fronteira_do_silencio` nao acha gap nesse
+        # trecho, entao a fronteira cai sempre na posicao desta mensagem ou
+        # antes. Um `minimas=0` a mandaria para o resumo e o modelo
+        # responderia a uma parafrase da propria pergunta; isso foi um bug
+        # real (fix da TEC-130, rodada de revisao). Hoje `minimas` nao pode
+        # ser zero: a fronteira e no minimo o indice 1, entao
+        # `len(literais) - fronteira` e no minimo 1.
         #
         # **`manter_literais` nao e `piso_pode_ceder`.** Aquele cede o piso
         # para UMA mensagem, por causa do estouro de teto; este diz onde a
