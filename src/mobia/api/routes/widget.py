@@ -184,13 +184,13 @@ async def _identificar(websocket: WebSocket) -> tuple[str, bool] | None:
     """O primeiro frame decide a identidade, e nada mais passa antes dele.
 
     Devolve a sessao e se ela e retomada, sem responder nada: o anuncio fica
-    para depois da assinatura -- ver `chat`.
+    para depois do registro na central -- ver `chat`.
     """
     try:
         primeiro = await _receber_json(websocket)
     except WebSocketDisconnect:
         return None
-    except json.JSONDecodeError:
+    except FrameInvalido:
         await websocket.close(code=CODIGO_PROTOCOLO)
         return None
 
@@ -253,7 +253,7 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
             frame = await _receber_json(websocket)
         except WebSocketDisconnect:
             return
-        except json.JSONDecodeError:
+        except FrameInvalido:
             await websocket.close(code=CODIGO_PROTOCOLO)
             return
 
@@ -314,11 +314,30 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
         await websocket.send_json({"tipo": "recebido", "id": identificador})
 
 
-async def _receber_json(websocket: WebSocket) -> Any:
-    """Le um frame de texto e o interpreta.
+class FrameInvalido(Exception):
+    """O frame nao e texto JSON legivel. Quem pega fecha com 1002."""
 
-    `receive_text` e nao `receive_json`: o do Starlette levanta
-    `json.JSONDecodeError` do mesmo jeito, mas passar por aqui deixa o
-    tratamento num lugar so.
+
+async def _receber_json(websocket: WebSocket) -> Any:
+    """Le um frame de texto e o interpreta, ou levanta `FrameInvalido`.
+
+    **`receive` e nao `receive_text`.** O do Starlette faz `message["text"]`, e
+    um frame BINARIO so traz `bytes`: o `KeyError` escapava das duas leituras
+    -- antes do cumprimento como traceback cru do uvicorn, depois dele matando
+    a tarefa de entrada sem fechar o socket. Aqui o frame sem texto vira o
+    mesmo erro de protocolo que o JSON quebrado.
+
+    `RecursionError` entra junto com `ValueError` (de que `JSONDecodeError` e
+    subclasse): e o que `json.loads` levanta para aninhamento profundo, e ele
+    escapava pelo mesmo caminho.
     """
-    return json.loads(await websocket.receive_text())
+    mensagem = await websocket.receive()
+    if mensagem["type"] == "websocket.disconnect":
+        raise WebSocketDisconnect(mensagem.get("code", 1000))
+    texto = mensagem.get("text")
+    if texto is None:
+        raise FrameInvalido("frame binario")
+    try:
+        return json.loads(texto)
+    except (ValueError, RecursionError) as exc:
+        raise FrameInvalido(type(exc).__name__) from exc

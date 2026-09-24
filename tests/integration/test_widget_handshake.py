@@ -171,3 +171,28 @@ async def test_falha_ao_gravar_fecha_com_1011_e_nao_sobe_crua(ws_cliente, app_do
         await _cumprimentar(ws)
         await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "oi"})
         assert await ws.fechamento() == 1011
+
+
+async def test_frame_binario_como_primeiro_frame_fecha_com_1002(ws_cliente) -> None:
+    # Review Focus 1, pela porta que o `receive_text` do Starlette nao trata:
+    # ele faz `message["text"]` e um frame binario so tem `bytes`.
+    async with ws_cliente() as ws:
+        await ws.aceitar()
+        await ws.enviar_bytes(b'{"tipo": "ola", "sessao": null}')
+        assert await ws.fechamento() == 1002
+
+
+async def test_frame_binario_depois_do_cumprimento_fecha_com_1002(ws_cliente) -> None:
+    async with ws_cliente() as ws:
+        await _cumprimentar(ws)
+        await ws.enviar_bytes(b"\x00\x01")
+        assert await ws.fechamento() == 1002
+
+
+async def test_json_aninhado_demais_fecha_com_1002(ws_cliente) -> None:
+    # `json.loads` levanta `RecursionError`, e nao `JSONDecodeError`, para
+    # aninhamento profundo -- e ele escapava pelas duas leituras.
+    async with ws_cliente() as ws:
+        await ws.aceitar()
+        await ws.enviar_cru("[" * 100_000 + "]" * 100_000)
+        assert await ws.fechamento() == 1002

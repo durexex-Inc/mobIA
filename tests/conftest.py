@@ -1330,6 +1330,11 @@ class ClienteWebSocket:
     async def enviar_cru(self, texto: str) -> None:
         await self._para_o_app.put({"type": "websocket.receive", "text": texto})
 
+    async def enviar_bytes(self, dado: bytes) -> None:
+        # Frame binario: o ASGI entrega `bytes` e nao `text`, e e esse o caminho
+        # que `receive_text` do Starlette nao trata.
+        await self._para_o_app.put({"type": "websocket.receive", "bytes": dado})
+
     async def receber(self) -> dict[str, Any]:
         evento = await self.evento()
         assert evento["type"] == "websocket.send", evento
