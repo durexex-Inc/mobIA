@@ -83,11 +83,13 @@ from mobia.domain.humano.deteccao import (
     dentro_da_janela_de_atendimento,
     pediu_humano,
 )
+from mobia.domain.identidade.absorcao import absorver_sessoes_vinculadas
 from mobia.domain.messages.bloqueio import (
     moderar_entrada_e_marcar,
     registrar_bloqueio_de_saida,
     veredito_ja_registrado,
 )
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import ha_fala_pendente_antes
 from mobia.domain.messages.recorder import MessageRecorder
@@ -1737,6 +1739,37 @@ async def _executar_turno(
     # turno e a MAIS NOVA do lote, e ela enxerga a irma de segundos atras, de
     # modo que `e_conversa_nova` devolvia False exatamente na reabertura em
     # que a dobra tinha de acontecer.
+    #
+    # TEC-129, D4. So no WhatsApp, que e o lado autenticado: a Meta garante o
+    # numero, o site nao garante nada (D1). O turno web NUNCA passa por aqui --
+    # se passasse, quem digitasse o telefone de outra pessoa conversaria com um
+    # agente que conhece a qualificacao dela. Roda antes de `montar_contexto`
+    # porque e la que o estado e lido: preenchido aqui, ele ja chega completo.
+    #
+    # `except Exception` amplo, no molde da captura de reacao logo abaixo: a
+    # absorcao e enriquecimento, e o lead que falha nela perde o historico do
+    # site NESTE turno, nao o atendimento. O turno seguinte tenta de novo --
+    # a absorcao e idempotente.
+    pares_vinculados: tuple[tuple[str, str], ...] = ()
+    if message.channel == CANAL_WHATSAPP:
+        try:
+            pares_vinculados = await absorver_sessoes_vinculadas(
+                session_factory, conversation_key=message.conversation_key
+            )
+        except Exception:
+            log.exception(
+                "turno.absorcao_falhou",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
+            pares_vinculados = ()
+        if pares_vinculados:
+            log.info(
+                "turno.sessoes_absorvidas",
+                channel=message.channel,
+                message_id=str(message.id),
+                sessoes=len(pares_vinculados),
+            )
     try:
         contexto = await montar_contexto(
             session_factory,
@@ -1744,6 +1777,7 @@ async def _executar_turno(
             conversation_key=message.conversation_key,
             resumidor=resumidor,
             contador=contador,
+            pares_vinculados=pares_vinculados,
         )
     except ContextoIrreducivel as exc:
         # Uma unica mensagem que nao cabe no teto. Retentar nao encolhe nada.

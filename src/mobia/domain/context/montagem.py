@@ -1,5 +1,6 @@
 import asyncio
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -556,6 +557,13 @@ async def montar_contexto(
     conversation_key: str,
     resumidor: ResumidorPort,
     contador: ContadorPort,
+    # TEC-129, D4: as sessoes web que o turno do WhatsApp herdou. Entram so na
+    # janela de literais; o resumo e o estado continuam sendo os do par do
+    # turno -- o estado ja chega preenchido pela absorcao. Na janela elas sao
+    # literais como quaisquer outros: contam para o gatilho de acumulo e para
+    # `_fronteira_do_silencio`, e uma dobra as leva para o resumo do par do
+    # turno, nunca para o do par web.
+    pares_vinculados: Sequence[tuple[str, str]] = (),
 ) -> ContextoMontado:
     settings = get_settings()
 
@@ -601,7 +609,13 @@ async def montar_contexto(
             )
             await apagar_resumo(session, channel, conversation_key)
             await session.commit()
-        literais = await literais_apos(session, channel, conversation_key, marca_de(resumo_atual))
+        literais = await literais_apos(
+            session,
+            channel,
+            conversation_key,
+            marca_de(resumo_atual),
+            pares_vinculados=pares_vinculados,
+        )
         estado = await ler_estado(session, channel, conversation_key)
 
     texto_do_resumo = resumo_atual.texto if resumo_atual else None

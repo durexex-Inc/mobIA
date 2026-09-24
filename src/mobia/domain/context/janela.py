@@ -1,8 +1,9 @@
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import literal, select, tuple_
+from sqlalchemy import ColumnElement, and_, literal, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.context.repositorio import ResumoDaConversa
@@ -35,16 +36,33 @@ async def literais_apos(
     channel: str,
     conversation_key: str,
     marca: Marca | None,
+    *,
+    pares_vinculados: Sequence[tuple[str, str]] = (),
 ) -> list[Message]:
     """Tudo o que ainda nao foi dobrado no resumo, em ordem cronologica.
 
     A comparacao e de tupla e nao de timestamp sozinho: duas mensagens no mesmo
     `created_at` fariam a janela pular uma ou repetir a outra. O par casa com
     `ix_messages_timeline (channel, conversation_key, created_at DESC)`.
+
+    `pares_vinculados` (TEC-129, D4) sao as sessoes web que o turno do WhatsApp
+    herdou: as falas delas entram na mesma janela, sob a mesma marca. A marca e
+    uma tupla global `(created_at, id)`, e nao por par, entao uma fala web mais
+    antiga que o resumo do WhatsApp fica de fora -- o que ela trouxe de
+    criterio chega pela qualificacao, que a absorcao ja preencheu. Sem pares, o
+    filtro e a igualdade de sempre.
     """
-    condicoes = [
-        Message.channel == channel,
-        Message.conversation_key == conversation_key,
+    filtro_do_par: ColumnElement[bool]
+    if pares_vinculados:
+        filtro_do_par = tuple_(Message.channel, Message.conversation_key).in_(
+            [(channel, conversation_key), *pares_vinculados]
+        )
+    else:
+        filtro_do_par = and_(
+            Message.channel == channel, Message.conversation_key == conversation_key
+        )
+    condicoes: list[ColumnElement[bool]] = [
+        filtro_do_par,
         # A fala que a moderacao de entrada bloqueou nao entra no contexto
         # (TEC-236). Filtrar **aqui** e nao no chamador e o que faz o resumo
         # herdar a correcao de graca: `dividir` recebe o que esta funcao
