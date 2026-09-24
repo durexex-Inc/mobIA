@@ -81,6 +81,12 @@ def _set(dia: int, hora: int = 0, minuto: int = 0) -> datetime:
         ("1º/9", Dia(date(2026, 9, 1))),
         ("03/09/2027", Dia(date(2027, 9, 3))),
         ("3/9/27", Dia(date(2027, 9, 3))),
+        # residual: "N de <mes>" tambem honra o ano falado, igual a dd/mm/aaaa
+        # (2027-10-03 seria domingo -- usa-se o dia 4 nos dois testes que
+        # falam outubro de 2027, ver o relato)
+        ("4 de outubro de 2027", Dia(date(2027, 10, 4))),
+        ("2 de agosto de 2027", Dia(date(2027, 8, 2))),
+        ("4 de outubro de 27", Dia(date(2027, 10, 4))),
         # I3: hora nua de 7 nao e mais ambigua, vira Instante direto
         ("amanhã às 7", Instante(_ago(26, 7))),
         # I4: hora qualificada ou duas horas na frase nunca viram Instante
@@ -171,6 +177,13 @@ def test_passado_com_ano_falado_pergunta() -> None:
     """C1. Ano falado nao poupa de "ja passou": "3/8/2026" e antes de hoje
     (25/08/2026), mesmo com o ano dito por extenso."""
     assert _pergunta("3/8/2026") == TEXTO_DO_PASSADO
+
+
+def test_passado_com_mes_e_ano_por_extenso_pergunta() -> None:
+    """Residual da revisao final: `_DIA_DE_MES_EXTENSO` ignorava o ano
+    falado -- "2 de agosto de 2025" virava 02/08/2026 (ano corrente), no
+    futuro, em vez do 02/08/2025 que o lead disse, que ja passou."""
+    assert _pergunta("2 de agosto de 2025") == TEXTO_DO_PASSADO
 
 
 def test_dois_dias_pergunta_qual() -> None:

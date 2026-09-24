@@ -158,13 +158,15 @@ _DIA_DA_SEMANA = re.compile(r"\b(segunda|terca|quarta|quinta|sexta|sabado|doming
 # `º`/`o` opcional depois do numero: "1º/9", "dia 1º" -- o proprio modulo
 # escreve "1º" em `data_absoluta`, e o lead pode ecoar do jeito que le.
 _DIA_E_MES = re.compile(r"\b(\d{1,2})(?:º|o)?/(\d{1,2})(?:/(\d{4}|\d{2}))?\b")
-# "dia" opcional, "de <mes por extenso>" obrigatorio -- e o que distingue
-# esta forma de `_DIA_DO_MES` (que nunca leva mes) e de `_DIA_E_MES` (que
-# nunca leva mes por extenso). Precisa rodar ANTES de `_DIA_DO_MES`: "dia 3
-# de outubro" contem "dia 3", que `_DIA_DO_MES` casaria sozinho e deixaria
-# "de outubro" sobrando sem dono.
+# "dia" opcional, "de <mes por extenso>" obrigatorio, "de <ano>" opcional --
+# e o que distingue esta forma de `_DIA_DO_MES` (que nunca leva mes) e de
+# `_DIA_E_MES` (que nunca leva mes por extenso). Precisa rodar ANTES de
+# `_DIA_DO_MES`: "dia 3 de outubro" contem "dia 3", que `_DIA_DO_MES` casaria
+# sozinho e deixaria "de outubro" sobrando sem dono. O ano, quando vem, entra
+# no MESMO match -- `_apagar` some com ele junto, e ele nunca sobra para ser
+# lido como hora depois.
 _DIA_DE_MES_EXTENSO = re.compile(
-    r"\b(?:dia )?(\d{1,2})(?:º|o)? de (" + "|".join(_MES_NOMES) + r")\b"
+    r"\b(?:dia )?(\d{1,2})(?:º|o)? de (" + "|".join(_MES_NOMES) + r")(?: de (\d{4}|\d{2}))?\b"
 )
 _DIA_DO_MES = re.compile(r"\bdia (\d{1,2})(?:º|o)?\b")
 _NOITE = re.compile(r"\bnoite\b")
@@ -310,14 +312,20 @@ def resolver(texto: str, *, agora: datetime) -> Resolucao:
             return Ambigua(TEXTO_DO_PASSADO)
         dias.append((casa.start(), dia))
 
-    # "dia 3 de outubro", "3 de setembro": mes por extenso, sem ano -- o
-    # mesmo `_ano_por_mes` do ramo acima. Roda ANTES de `_DIA_DO_MES`: ver o
-    # comentario do proprio regex, acima.
+    # "dia 3 de outubro", "3 de setembro", "3 de outubro de 2027": mes por
+    # extenso, ano opcional -- o mesmo tratamento de ano do laco de
+    # `_DIA_E_MES` acima (falado manda; sem ele, `_ano_por_mes`). Roda ANTES
+    # de `_DIA_DO_MES`: ver o comentario do proprio regex, acima.
     for casa in _DIA_DE_MES_EXTENSO.finditer(falado):
         falado = _apagar(falado, casa)
         dia_num = int(casa.group(1))
         mes_num = _MES_NOMES.index(casa.group(2)) + 1
-        ano = _ano_por_mes(hoje, mes_num)
+        ano_falado = casa.group(3)
+        ano = (
+            (int(ano_falado) if len(ano_falado) == 4 else 2000 + int(ano_falado))
+            if ano_falado is not None
+            else _ano_por_mes(hoje, mes_num)
+        )
         dia = _data(ano, mes_num, dia_num)
         if dia is None:
             return Ambigua(TEXTO_DA_DATA_INEXISTENTE)
