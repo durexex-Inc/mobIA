@@ -81,7 +81,7 @@ O turno é enfileirado como sempre, em paralelo, **sem esperar o download**.
 - Esgotadas as tentativas, FALHOU com `tentativas_esgotadas`.
 - **Nada disso toca a conversa.**
 
-**Enfileiramento perdido.** A `sweep_stalled` ganha um passo: re-enfileira as linhas PENDENTE com mais de 10 minutos e menos de 7 dias. As com mais de 7 dias viram FALHOU com `expirada`, porque a mídia da Meta provavelmente já não existe.
+**Enfileiramento perdido.** Um cron próprio, `sweep_midias_pendentes`, roda de 5 em 5 minutos: re-enfileira as linhas PENDENTE com mais de 10 minutos e menos de 7 dias. As com mais de 7 dias viram FALHOU com `expirada`, porque a mídia da Meta provavelmente já não existe. *Ajuste feito ao escrever o plano:* a versão aprovada punha isso como um passo da `sweep_stalled`, mas ela varre `messages` a cada 30 segundos com um contrato documentado sobre `attempts` e status da mensagem. Misturar outra tabela nela obrigaria a reescrever esse contrato. A intenção é a mesma.
 
 **Logs** levam `message_id`, `status` e `motivo`. **Nunca** a URL da Meta, que carrega credencial temporária, nem o nome do arquivo.
 
