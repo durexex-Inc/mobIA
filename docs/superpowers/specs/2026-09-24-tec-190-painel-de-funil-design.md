@@ -124,6 +124,24 @@ O SSR do Next atende o LCP da RNF-04, que é como o SRS justificou a escolha por
 
 **O CI ganha um job novo** para o lado JS. Os três gates estáticos de Python não olham para `frontend/`, e `ruff`/`mypy` não devem passar a olhar: o escopo deles é `src tests alembic evals scripts` e nenhum desses diretórios ganha arquivo nesta card.
 
+## D10 — O funil é COORTE (emenda: decidida ao escrever o plano)
+
+Não estava neste desenho e devia estar. Duas semânticas eram possíveis.
+
+**Por atividade** — contar eventos de cada tipo ocorridos no período — a conversão entre etapas pode passar de 100%: um lead recomendado em agosto pode ter nascido em julho, e `Recomendado / Em conversa` daria mais que 1. A RN-17.2 pede "taxa de conversão", e uma taxa acima de 100% não é conversão, é erro de leitura.
+
+**Por coorte** — os leads cujo primeiro contato caiu no período, contando quantos *desses* alcançaram cada etapa, inclusive depois do fim do período — a conversão é monotônica e ≤ 100% por construção. É o que a gerente quer dizer com "onde estamos perdendo lead".
+
+**Escolhida: coorte, e todos os indicadores herdam o mesmo recorte.** `conversasAtivas` é quantas da coorte seguem `ATIVA`, `taxaQualificacao` é a fração dela que qualificou, e as duas médias de tempo são sobre ela. Um recorte só em todo o payload; misturar coorte e atividade no mesmo cartão é o defeito que esta decisão evita.
+
+## Emenda à D9 — Server Component no lugar do Route Handler
+
+A D9 acima especifica um Route Handler como proxy. O plano do frontend usa, em vez dele, um **Server Component que busca o FastAPI direto no servidor**. A propriedade aprovada é idêntica — o token vive em env do servidor e nunca chega ao navegador — e o argumento do rate limit também continua valendo, porque `fetch(..., { next: { revalidate: 60 } })` põe a resposta no Data Cache do Next e N navegadores viram uma chamada por minuto ao FastAPI. O que some é um hop e um arquivo.
+
+## Emenda à D5 — o cache foi recusado, e a recusa é medida
+
+A D5 condicionou o cache à medição. Ela foi feita em 24/09/2026 (`tests/perf/test_funil_latency.py`): **p95 de 0,068 s sem filtro e 0,065 s por corretor, com 1.000 leads, contra o teto de 2 s da RNF-04** — cerca de 29× de margem. Não há cache nesta card. A docstring do teste registra quando reabrir a conta: base dez vezes maior, ou p95 passando de ~1 s.
+
 ## Contrato
 
 `GET /api/v1/metricas/funil`, query `de`, `ate`, `canal`, `intencao`, `temperatura`, `corretorId`.
