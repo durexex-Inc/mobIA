@@ -840,12 +840,14 @@ class _ModeracaoDoTurno:
     memoria de ja ter chamado.
 
     **O problema que ela resolve** (TEC-297): o corpo do turno
-    (`_executar_turno`) tem cinco returns antes da linha que chama a
+    (`_executar_turno`) tinha cinco returns antes da linha que chama a
     moderacao, e a fala que dispara qualquer um deles nunca era moderada.
-    Chamar a moderacao antes de cada um dos cinco seria cinco sitios a
-    lembrar -- e a D4 do desenho desta card registra as duas vezes em que uma
-    lista escrita a mao ja envelheceu errado neste fluxo. Um sexto ramo futuro
-    nasce coberto pelo invulucro e nasceria furado por uma lista.
+    Chamar a moderacao antes de cada um seria um sitio a lembrar por return
+    -- e a D4 do desenho desta card registra as duas vezes em que uma lista
+    escrita a mao ja envelheceu errado neste fluxo. Um ramo novo nasce coberto
+    pelo invulucro e nasceria furado por uma lista. Foi o que aconteceu com o
+    sexto, a confirmacao de midia da TEC-132 -- que, sem corpo, nem tem fala a
+    moderar.
     """
 
     def __init__(
@@ -1012,8 +1014,9 @@ async def executar_turno(
     corpo = decrypt(message.text_body, aad_de(message.id, "text_body"))
     # TEC-297: a moderacao de entrada nasce aqui e e garantida pelos dois
     # fechos abaixo -- um por caminho de saida --, e nao pela linha em que o
-    # corpo do turno a chama. Cinco returns saem antes dessa linha, e a fala
-    # que os dispara nunca era moderada.
+    # corpo do turno a chama. Seis returns saem antes dessa linha (cinco na
+    # TEC-297, mais a confirmacao de midia da TEC-132), e a fala que os
+    # dispara nunca era moderada.
     moderacao = _ModeracaoDoTurno(session_factory, moderador, message, corpo)
     try:
         resultado = await _executar_turno(
@@ -1059,7 +1062,7 @@ async def _executar_turno(
 
     Existe separada so para que o `try` do invulucro nao reindente as ~2.700
     linhas deste corpo (TEC-297, D9). Nao chame direto: sem o fecho do
-    invulucro a fala dos cinco returns antecipados volta a nao ser moderada.
+    invulucro a fala dos returns antecipados volta a nao ser moderada.
     """
     # `bool(...)` por fora, e nao `bool(corpo) and ...`: so a forma curta-
     # circuitada estreita `corpo` de `str | None` para `str` dentro da chamada.
@@ -1570,13 +1573,32 @@ async def _executar_turno(
     # E um return a mais antes da linha da moderacao, e nao fura a TEC-297:
     # so dispara com `corpo is None`, e sem corpo nao ha fala a moderar
     # (`_ModeracaoDoTurno.resolver` devolve `None` sem chamar nada).
+    #
+    # **A checagem de kinds reservados e o que torna isto seguro numa
+    # retentativa** -- mesma classe da TEC-298, D1. Com "quero esse" + foto, a
+    # passada 1 ve o texto pendente, roda o turno normal, entrega a resposta
+    # e grava a fala OUTBOUND; se o worker morre antes de PROCESSED, a passada
+    # 2 encontra essa fala como a ultima do agente, o "quero esse" deixa de
+    # estar pendente, e sem esta checagem o turno mandaria "Recebi sua
+    # imagem!" depois de o agente ja ter respondido. Qualquer kind reservado
+    # que NAO seja o da confirmacao prova que uma passada anterior tomou o
+    # caminho normal, e entao o turno segue normal de novo (e termina em
+    # `reentrega_suprimida`, como terminava antes desta card). So a propria
+    # confirmacao reservada mantem o caminho fixo: a reserva dela suprime a
+    # duplicata. Aqui nao serve o `teto_do_agente` da recusa: a fala que
+    # envenena a fronteira nao e desta trilha, e o teto dependeria de saber
+    # qual kind do turno normal saiu primeiro.
     confirmacao = CONFIRMACOES_DE_MIDIA.get(message.content_type)
     if confirmacao is not None and corpo is None:
-        async with session_factory() as sessao_da_rajada:
-            ha_texto_pendente = await ha_fala_pendente_antes(
-                sessao_da_rajada, message, com_texto=True
-            )
-        if not ha_texto_pendente:
+        reservados_antes = await kinds_reservados(session_factory, message_id=message.id)
+        ja_seguiu_o_turno_normal = bool(reservados_antes - {KIND_DA_CONFIRMACAO_DE_MIDIA})
+        ha_texto_pendente = False
+        if not ja_seguiu_o_turno_normal:
+            async with session_factory() as sessao_da_rajada:
+                ha_texto_pendente = await ha_fala_pendente_antes(
+                    sessao_da_rajada, message, com_texto=True
+                )
+        if not ja_seguiu_o_turno_normal and not ha_texto_pendente:
             return await _entregar_texto_fixo(
                 session_factory,
                 message=message,

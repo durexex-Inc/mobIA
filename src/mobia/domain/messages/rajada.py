@@ -91,12 +91,18 @@ async def ha_fala_pendente_antes(
     antes do envio e portanto anterior a linha dela), a fronteira volta a ser
     a que existia antes da recusa.
 
-    **Quem chama tem de saber que precisa passar isto, e hoje ha um chamador
-    so.** A funcao nao descobre o teto sozinha de proposito: descobri-lo
-    exigiria conhecer `outbound_dispatches` e o kind da recusa, e este modulo
-    nao pode depender de `domain/outbound` -- a dependencia so corre no outro
-    sentido. A D2 do desenho registra o risco: um chamador futuro que
-    esquecer o teto cai no defeito de hoje, em silencio.
+    **Quem chama tem de saber que precisa proteger a fronteira, e hoje ha
+    dois chamadores, em `domain/agente/turno.py`.** A recusa de entrada
+    (TEC-295/TEC-298) passa `teto_do_agente` com o instante da reserva da
+    propria recusa. A confirmacao de midia (TEC-132, D4, com `com_texto`) nao
+    passa teto: antes de chamar, ela le os kinds ja reservados da mensagem e,
+    havendo qualquer um alem do dela, sabe que uma passada anterior ja seguiu
+    o turno normal e nem pergunta. A funcao nao descobre isso sozinha de
+    proposito: descobrir exigiria conhecer `outbound_dispatches` e os kinds,
+    e este modulo nao pode depender de `domain/outbound` -- a dependencia so
+    corre no outro sentido. A D2 do desenho da TEC-298 registra o risco: um
+    chamador futuro que esquecer de proteger a fronteira cai nesse defeito,
+    em silencio.
 
     O default `None` mantem todo chamador antigo correto: sem teto, a
     fronteira e exatamente a de antes desta card.

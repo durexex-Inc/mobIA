@@ -32,6 +32,7 @@ from mobia.domain.midia.confirmacao import (
     TEXTO_DA_CONFIRMACAO_DE_IMAGEM,
 )
 from mobia.domain.optout.repositorio import registrar_optout
+from mobia.domain.outbound.kinds import KIND_DA_RESPOSTA
 from mobia.domain.outbound.models import OutboundDispatch
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
@@ -208,3 +209,46 @@ async def test_imagem_com_legenda_roda_o_turno_normal(
     assert classificador.chamadas == 1
     assert not any(TEXTO_DA_CONFIRMACAO_DE_IMAGEM in texto for texto in outbound.entregues)
     assert KIND_DA_CONFIRMACAO_DE_MIDIA not in await _kinds(session, imagem.id)
+
+
+async def test_retentativa_depois_do_turno_normal_nao_manda_a_confirmacao(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """Fix round 1. "quero esse" + foto, e a passada 1 ja respondeu pelo turno
+    normal -- reserva de `reply` na foto e fala OUTBOUND gravada -- mas o
+    worker morreu antes de PROCESSED. Na retentativa, a fala do agente vira a
+    fronteira de `ha_fala_pendente_antes` e o "quero esse" deixa de estar
+    pendente; sem a checagem de kinds reservados, o turno tomaria o caminho
+    fixo e mandaria "Recebi sua imagem!" depois de o agente ja ter respondido.
+    Mesma classe da TEC-298, D1.
+    """
+    await _gravar(session, texto="quero esse")
+    imagem = await _gravar(session, content_type=MessageContentType.IMAGEM, texto=None)
+    session.add(OutboundDispatch(id=uuid.uuid4(), message_id=imagem.id, kind=KIND_DA_RESPOSTA))
+    await session.commit()
+    identificador = uuid.uuid4()
+    session.add(
+        Message(
+            id=identificador,
+            channel=CANAL,
+            provider_message_id=f"wamid.{identificador.hex[:10]}",
+            sender_external_id="222222222",
+            recipient_external_id=CONVERSA,
+            conversation_key=CONVERSA,
+            role=MessageRole.AGENTE,
+            direction=MessageDirection.OUTBOUND,
+            content_type=MessageContentType.TEXTO,
+            text_body=encrypt("Temos sim! Te mando as opcoes?", aad_de(identificador, "text_body")),
+            raw_payload=None,
+            status=None,  # como o recorder grava a fala do agente
+        )
+    )
+    await session.commit()
+    classificador = classificador_fake()
+    outbound = outbound_fake()
+
+    await _rodar(imagem, classificador, outbound, resumidor_fake, contador_fake, moderador_fake)
+
+    assert not any(TEXTO_DA_CONFIRMACAO_DE_IMAGEM in texto for texto in outbound.entregues)
+    assert KIND_DA_CONFIRMACAO_DE_MIDIA not in await _kinds(session, imagem.id)
+    assert classificador.chamadas == 1
