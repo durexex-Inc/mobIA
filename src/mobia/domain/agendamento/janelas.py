@@ -131,8 +131,9 @@ def propor_janelas(
     jornada_fim: int,
     ocupados: Sequence[Intervalo],
     tipo: TipoDeCompromisso,
+    de: datetime | None = None,
 ) -> list[Intervalo]:
-    """Ate `MAXIMO_DE_JANELAS` janelas livres entre `agora + 3h` e `ate`.
+    """Ate `MAXIMO_DE_JANELAS` janelas livres entre `max(agora + 3h, de)` e `ate` (TEC-167).
 
     `jornada_inicio`/`jornada_fim` sao as horas inteiras de
     `Corretor.horario_inicio`/`horario_fim`. `ate` vem de quem chama: a TEC-169
@@ -141,12 +142,21 @@ def propor_janelas(
     """
     _exigir_fuso("agora", agora)
     _exigir_fuso("ate", ate)
+    if de is not None:
+        _exigir_fuso("de", de)
     fuso = get_settings().fuso_de_envio
     duracao = DURACAO[tipo]
 
+    # `de` so adia o inicio da busca: nunca o antecipa para antes das 3 horas
+    # de antecedencia. E o que deixa a TEC-167 buscar "a manha de quinta" sem
+    # que "hoje de manha", dito as 14h, ofereca horario em cima da hora.
+    comeco = agora + ANTECEDENCIA_MINIMA
+    if de is not None and de > comeco:
+        comeco = de
+
     validas: list[Intervalo] = []
     dias: set[date] = set()
-    inicio = _primeiro_ponto_da_grade(agora + ANTECEDENCIA_MINIMA, fuso)
+    inicio = _primeiro_ponto_da_grade(comeco, fuso)
     while inicio + duracao <= ate:
         janela = Intervalo(inicio, inicio + duracao)
         if _cabe(janela, jornada_inicio, jornada_fim, ocupados, fuso):
