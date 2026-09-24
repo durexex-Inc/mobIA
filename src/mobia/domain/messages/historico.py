@@ -2,9 +2,11 @@
 
 **Le de `messages`, e nao de uma copia em Redis.** A durabilidade desta
 conversa ja e do Postgres nos dois sentidos: a fala da visitante porque o
-`IngestionService` commita antes de enfileirar, e a do agente porque o
-`MessageRecorder` grava antes de o `WebOutbound` publicar. Uma segunda
-representacao do mesmo fato seria mais uma coisa que pode divergir.
+`IngestionService` commita antes de enfileirar, e a do agente porque o turno a
+grava assim que o `WebOutbound` devolve -- e ele nunca levanta, entao a
+gravacao nao depende de haver alguem ouvindo. A excecao e o worker cancelado
+entre publicar e gravar; ver o docstring de `domain/outbound/web.py`. Uma
+segunda representacao do mesmo fato seria mais uma coisa que pode divergir.
 
 **A fala bloqueada pela moderacao fica de fora**, pelo mesmo criterio da
 TEC-236 e da Emenda E-01 da RN-02.2: ela nao entra em contexto nem em resumo,

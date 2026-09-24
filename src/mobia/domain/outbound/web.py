@@ -3,14 +3,24 @@
 **Este adaptador nao levanta excecao nenhuma, e isso diverge de proposito do
 contrato que `OutboundPort` escreve.** La, falha de rede e `EnvioRetentavel`
 porque no WhatsApp a rede e o UNICO caminho ate o lead: sem ela, ele nunca
-recebe. Aqui nao e. A fala do agente ja foi gravada em `messages` por
-`MessageRecorder` antes de qualquer publicacao, e a reconexao a mostra (ver
-`domain/messages/historico.py`) -- a publicacao e o atalho que a faz chegar
-AGORA, nao o caminho que a faz chegar. Retentar custaria uma chamada nova e
-paga ao modelo para reentregar o que ja esta no banco, por causa de uma aba
-que a visitante fechou.
+recebe. Aqui nao e. Assim que `send` devolve, o turno grava a fala do agente
+em `messages` pelo `MessageRecorder` -- a ordem em `turno.py` e entregar e so
+entao gravar --, e a reconexao a mostra (ver `domain/messages/historico.py`).
+Como este adaptador nunca levanta, a gravacao nao depende de haver alguem
+ouvindo: a publicacao e o atalho que faz a fala chegar AGORA, nao o caminho
+que a faz chegar. Retentar custaria uma chamada nova e paga ao modelo para
+reentregar o que a gravacao seguinte ja vai guardar, por causa de uma aba que
+a visitante fechou.
 
 Por isso publicacao sem ouvinte sai em `info` e e o caso NORMAL, nao falha.
+
+**A janela que sobra e o worker cancelado ENTRE publicar e gravar** -- o
+`job_timeout` do ARQ, um shutdown. A reserva em `outbound_dispatches` ja esta
+commitada, entao a retentativa do sweeper cai na supressao de reentrega e a
+fala nunca chega a `messages`; se ninguem ouvia naquele instante, a visitante
+nao a ve nem na reconexao. O WhatsApp tem a mesma janela -- la o lead recebeu,
+aqui talvez nao --, e fecha-la exigiria inverter a ordem do turno para os dois
+canais, que nao e escopo da TEC-124.
 
 **`EnvioForaDaJanela` tambem nunca sai daqui**: o canal web nao tem janela, e
 o docstring de `OutboundPort` ja registrava isso antes desta card existir.

@@ -84,7 +84,9 @@ O endpoint monta um `ParsedMessage` e chama `IngestionService.ingest([…], chan
 
 `_deliver` publica em `mobia:web:{payload["para"]}` o texto que sairia pelo WhatsApp. Cada conexão aberta assina esse canal do Redis enquanto vive.
 
-**Este adaptador não levanta `EnvioRetentavel`, e isso é divergência deliberada do contrato de `OutboundPort`.** Lá, falha de rede é retentável porque no WhatsApp a rede é o único caminho até o lead: sem ela, ele nunca recebe. Aqui não é. A fala do agente já foi gravada em `messages` por `MessageRecorder` antes de qualquer publicação, e a reconexão a mostra (D6) — a publicação é o atalho que a faz chegar **agora**, não o caminho que a faz chegar. Retentar custaria uma chamada nova e paga ao modelo para reentregar o que já está no banco, por causa de uma aba que a visitante fechou.
+**Este adaptador não levanta `EnvioRetentavel`, e isso é divergência deliberada do contrato de `OutboundPort`.** Lá, falha de rede é retentável porque no WhatsApp a rede é o único caminho até o lead: sem ela, ele nunca recebe. Aqui não é. Assim que `send` devolve, o turno grava a fala do agente em `messages` pelo `MessageRecorder`, e a reconexão a mostra (D6). Como este adaptador nunca levanta, a gravação não depende de haver alguém ouvindo — a publicação é o atalho que a faz chegar **agora**, não o caminho que a faz chegar. Retentar custaria uma chamada nova e paga ao modelo para reentregar o que a gravação seguinte já vai guardar, por causa de uma aba que a visitante fechou.
+
+> **Correção (24/09/2026, durante a implementação):** a primeira versão deste parágrafo dizia que a fala era gravada *antes* de qualquer publicação. É o contrário: em `turno.py` o `outbound.send` vem antes do `record_agent_message`. A garantia continua valendo pelo motivo escrito acima, mas sobra uma janela que a versão anterior escondia — o worker cancelado **entre** publicar e gravar. A reserva em `outbound_dispatches` já está commitada, a retentativa cai na supressão de reentrega, e a fala nunca chega a `messages`; se ninguém ouvia, a visitante não a vê nem na reconexão. O WhatsApp tem a mesma janela, e fechá-la exigiria inverter a ordem do turno para os dois canais.
 
 Então: publicação sem ouvinte é o caso **normal** e sai em `info`; falha do Redis sai em `warning` e o turno segue como entregue. `EnvioForaDaJanela` nunca sai daqui — o web não tem janela.
 
@@ -108,7 +110,7 @@ Na retomada, o servidor lê as últimas 50 linhas (configurável) de `(web, sess
 
 Fica de fora a linha com `bloqueada_em` preenchido, pelo mesmo critério da TEC-236 e da Emenda E-01 da RN-02.2: a fala que a moderação bloqueou não entra em contexto nem em resumo, e devolvê-la à tela seria o único lugar do sistema em que ela reaparece.
 
-**É daqui que vem a garantia da card de não perder o que já foi dito**, e ela vale dos dois lados: a mensagem da visitante porque o `IngestionService` a commitou antes de enfileirar, e a resposta do agente porque `MessageRecorder` a gravou antes de o `WebOutbound` publicar. A queda do socket não participa de nenhum dos dois.
+**É daqui que vem a garantia da card de não perder o que já foi dito**, e ela vale dos dois lados: a mensagem da visitante porque o `IngestionService` a commitou antes de enfileirar, e a resposta do agente porque o turno a grava assim que o `WebOutbound` devolve — e ele nunca levanta. A queda do socket não participa de nenhum dos dois. A exceção é a janela da D4: o worker cancelado entre publicar e gravar.
 
 ## D7 — O limite por IP não alcança WebSocket hoje, e o comentário diz que alcança
 
