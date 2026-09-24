@@ -210,9 +210,12 @@ class Citacao:
 def _rodar(*argumentos: str) -> str:
     # `core.quotepath=off` impede o git de imprimir caminho nao-ASCII entre
     # aspas (`"b/x.md"` em vez de `b/x.md`) no cabecalho `+++`. Sem isto, essa
-    # forma foge do padrao que `_linhas_do_diff` reconhece: os hunks caem no
-    # arquivo anterior do diff -- LINHA falso numa linha que a branch nao
-    # tocou, e o arquivo entre aspas fica sem checagem.
+    # forma foge do padrao que `_linhas_do_diff` reconhece: o arquivo entre
+    # aspas fica sem checagem nenhuma -- gate falha aberto, e nao so as linhas
+    # acrescentadas escapam, o `ls-files` que alimenta ANCORA tambem nao acha
+    # o mesmo caminho. O `elif` de `_linhas_do_diff` e a segunda linha de
+    # defesa: ele zera `atual` nesse cabecalho nao reconhecido, para o hunk
+    # nao ser creditado ao arquivo anterior do diff.
     resultado = subprocess.run(
         ["git", "-c", "core.quotepath=off", *argumentos],
         capture_output=True,
