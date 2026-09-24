@@ -316,6 +316,11 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
             )
             await websocket.close(code=CODIGO_INDISPONIVEL)
             return
+        # `recebido` confirma o ID, e nao o conteudo: um reenvio com o mesmo id
+        # e descartado pela UNIQUE e ainda assim confirmado, que e o que torna
+        # o reenvio idempotente. O custo e que um cliente que reuse um id para
+        # texto DIFERENTE ve a confirmacao e perde o texto novo -- defeito do
+        # cliente, mas silencioso deste lado.
         await websocket.send_json({"tipo": "recebido", "id": identificador})
 
 
