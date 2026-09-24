@@ -265,6 +265,38 @@ class Settings(BaseSettings):
     # L4 do desenho.
     dashboard_base_url: str = ""
 
+    # Exportacao para CRM (TEC-180, RN-16.5).
+    #
+    # `crm_webhook_url` vazia DESLIGA a exportacao, e o worker sobe assim --
+    # divergencia deliberada da guarda de `SMTP_HOST` em `workers/main.py`, que
+    # RECUSA subir. A notificacao ao corretor e `Must` e sem ela o lead espera
+    # sem que ninguem saiba; a exportacao e `Should`, e a propria card declara
+    # o contorno da POC ("trabalhar direto no dashboard"). Uma guarda aqui
+    # tornaria uma integracao opcional pre-requisito para rodar o sistema. O
+    # que substitui a guarda e um `warning` unico na subida do worker -- ver a
+    # emenda E-02 a RN-16.5 e a D2 do desenho.
+    crm_webhook_url: str = ""
+    # Sem segredo, o POST vai sem assinatura. Assinar e do interesse de quem
+    # RECEBE, que precisa ter o segredo para verificar; exigi-lo tornaria o
+    # webhook mais dificil de plugar sem tornar nada mais seguro deste lado.
+    crm_webhook_secret: str = ""
+    # Mesmo numero e mesma razao do `TIMEOUT_SEGUNDOS` de
+    # `domain/outbound/whatsapp.py`: e o teto por tentativa, e tres delas
+    # precisam caber com folga no `job_timeout` do worker.
+    crm_timeout_segundos: float = 10.0
+    # A base do backoff exponencial: as esperas sao 30 s e 60 s (base x 2^n).
+    #
+    # Configuravel so porque o teste precisa injetar centesimos de segundo --
+    # mesmo argumento de `indicador_de_digitacao_apos_segundos` logo acima. O
+    # FATOR e a CONTAGEM nao sao configuraveis: sao a regra, e vivem em
+    # `domain/crm/port.py` e no job.
+    crm_backoff_base_segundos: float = 30.0
+    # Ha quanto tempo um handoff sem nenhuma tentativa conta como "o enqueue se
+    # perdeu" para a varredura. Maior que o backoff inteiro (30 + 60 = 90 s),
+    # ou a varredura recolheria um handoff cuja primeira rodada ainda esta em
+    # voo e dispararia uma segunda em paralelo.
+    sweep_crm_sem_tentativa_after_seconds: int = 600
+
     # RN-02.5: teto por chamada. RN-02.2: piso de mensagens literais.
     contexto_teto_de_tokens: int = 12000
     contexto_literais_minimas: int = 20
