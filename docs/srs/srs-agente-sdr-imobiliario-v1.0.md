@@ -1089,6 +1089,8 @@ Erros: 401 (assinatura inválida), 422 (payload malformado). Nunca 5xx para a Me
 #### WS /api/v1/chat/ws?sessao={uuid}
 Autenticação: token de sessão anônima emitido pelo widget | Canal web.
 Eventos do cliente: `{ "tipo": "mensagem", "conteudo": "string" }`.
+
+  - **Emenda E-01 (TEC-363, 24/09/2026):** o cliente ganha `{ "tipo": "consentimento", "marketing": bool, "textoExibido": "string", "exibidoEm": "<ISO-8601>" }`, e o servidor responde `{ "tipo": "consentimento_registrado" }`. O ack não está no escopo literal da card e existe porque sem ele o cliente ou assume que deu certo — perdendo registros em silêncio — ou reenvia sempre. **`marketing: false` também é registrado**, com a linha dizendo que a resposta foi não: sem ela, "não perguntamos" e "perguntamos e ela recusou" ficam indistinguíveis numa auditoria. **`exibidoEm` é relógio do cliente e serve de diagnóstico; a data que responde "quando ela consentiu" é a do Postgres.**
 Eventos do servidor: `{ "tipo": "digitando" }`, `{ "tipo": "mensagem", "conteudo": "string", "imoveis": [] }`, `{ "tipo": "erro", "codigo": "string" }`.
 
   - **Emenda E-01 (TEC-362, 24/09/2026):** o evento de digitação ganha carga: `{ "tipo": "digitando", "ate": "<ISO-8601 com fuso>" }`. `ate` é o instante em que o cliente deve parar de mostrar o indicador, e vale `agora + 25 s` — o mesmo prazo em que o indicador da Meta expira (ver a Emenda E-01 da RN-04.7). Sem ele o cliente teria de adivinhar a duração ou esperar a fala chegar, e um turno que falhasse depois do indicador deixaria "digitando..." aceso para sempre. **O que o servidor emite hoje é só isso**: nenhuma tela do navegador consome este evento ainda (TEC-351).
