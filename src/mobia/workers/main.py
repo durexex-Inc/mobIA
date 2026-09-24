@@ -11,9 +11,8 @@ from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.outbound.email import EmailSmtp
-from mobia.domain.outbound.presenca import IndicadorNoop
 from mobia.domain.outbound.roteador import RoteadorPorCanal
-from mobia.domain.outbound.web import WebOutbound
+from mobia.domain.outbound.web import WebIndicador, WebOutbound
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
 from mobia.domain.outbound.whatsapp_notificacao import WhatsAppTemplate
 from mobia.infra.db import dispose_engine, get_sessionmaker
@@ -121,10 +120,10 @@ async def startup(ctx: dict[str, Any]) -> None:
     # token, ele tambem levaria 401.
     ctx["indicadores"] = {
         CANAL_WHATSAPP: WhatsAppIndicador(),
-        # Lacuna declarada da TEC-124: publicar "digitando" exigiria a sessao
-        # na assinatura do `IndicadorDePresencaPort`, e esta card nao mexe
-        # nesse contrato.
-        CANAL_WEB: IndicadorNoop(),
+        # A lacuna da TEC-124 fechou na TEC-362: `IndicadorDePresencaPort`
+        # ganhou `para`, que no web e a sessao, e com ela da para publicar.
+        # Mesmo `ctx["redis"]` do `WebOutbound` logo acima, pela mesma razao.
+        CANAL_WEB: WebIndicador(ctx["redis"]),
     }
     ctx["classificador"] = ClassificadorAnthropic()
     ctx["resumidor"] = ResumidorAnthropic()

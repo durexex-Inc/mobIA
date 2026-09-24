@@ -163,7 +163,14 @@ class WhatsAppIndicador:
     def __init__(self, cliente: httpx.AsyncClient | None = None) -> None:
         self._cliente = cliente
 
-    async def indicar_digitacao(self, *, provider_message_id: str, de: str) -> None:
+    async def indicar_digitacao(
+        self, *, provider_message_id: str, de: str, para: str | None
+    ) -> None:
+        # `para` e IGNORADO aqui, e a assinatura o recebe so porque o port e
+        # um so para os dois canais (TEC-362). O indicador da Meta nao e um
+        # envio para alguem: e uma anotacao sobre a mensagem RECEBIDA, entao
+        # quem o identifica e o `wamid` dela mais o numero da imobiliaria. No
+        # canal web `para` e a sessao, e la ele e tudo -- ver `WebIndicador`.
         settings = get_settings()
         url = f"{settings.whatsapp_api_base}/{de}/messages"
         corpo: dict[str, Any] = {

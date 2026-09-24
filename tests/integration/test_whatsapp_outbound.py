@@ -166,7 +166,9 @@ async def test_indicador_monta_o_corpo_que_a_meta_exige(session) -> None:
 
     corpo: dict[str, object] = {}
     indicador = WhatsAppIndicador(cliente=cliente_que_captura(corpo))
-    await indicador.indicar_digitacao(provider_message_id="wamid.ABC", de="222222222")
+    await indicador.indicar_digitacao(
+        provider_message_id="wamid.ABC", de="222222222", para="5511999999999"
+    )
 
     assert corpo["messaging_product"] == "whatsapp"
     assert corpo["status"] == "read"
@@ -191,7 +193,9 @@ async def test_indicador_usa_o_numero_do_canal_na_url(session) -> None:
     indicador = WhatsAppIndicador(
         cliente=httpx.AsyncClient(transport=httpx.MockTransport(_responde))
     )
-    await indicador.indicar_digitacao(provider_message_id="wamid.ABC", de="222222222")
+    await indicador.indicar_digitacao(
+        provider_message_id="wamid.ABC", de="222222222", para="5511999999999"
+    )
 
     assert urls[0].endswith("/222222222/messages")
 
@@ -208,7 +212,9 @@ async def test_indicador_recusado_nao_levanta(session) -> None:
     indicador = WhatsAppIndicador(
         cliente=cliente_que_responde(httpx.Response(400, json={"error": {"code": 100}}))
     )
-    await indicador.indicar_digitacao(provider_message_id="wamid.ABC", de="222222222")
+    await indicador.indicar_digitacao(
+        provider_message_id="wamid.ABC", de="222222222", para="5511999999999"
+    )
 
 
 async def test_envio_por_template_monta_o_corpo_da_cloud_api(session) -> None:

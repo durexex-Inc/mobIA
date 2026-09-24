@@ -5,9 +5,8 @@ import pytest
 
 from mobia.app.config import ConfiguracaoInsegura
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
-from mobia.domain.outbound.presenca import IndicadorNoop
 from mobia.domain.outbound.roteador import RoteadorPorCanal
-from mobia.domain.outbound.web import WebOutbound
+from mobia.domain.outbound.web import WebIndicador, WebOutbound
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
 from mobia.workers.main import startup
 
@@ -34,7 +33,9 @@ async def test_startup_monta_saida_e_indicador_por_canal(
     assert isinstance(portas[CANAL_WHATSAPP], WhatsAppOutbound)
     assert isinstance(portas[CANAL_WEB], WebOutbound)
     assert isinstance(ctx["indicadores"][CANAL_WHATSAPP], WhatsAppIndicador)
-    assert isinstance(ctx["indicadores"][CANAL_WEB], IndicadorNoop)
+    # Deixou de ser `IndicadorNoop` na TEC-362: a lacuna da TEC-124 fechou
+    # quando o port ganhou `para`, que no web e a sessao.
+    assert isinstance(ctx["indicadores"][CANAL_WEB], WebIndicador)
     assert "indicador" not in ctx
 
 

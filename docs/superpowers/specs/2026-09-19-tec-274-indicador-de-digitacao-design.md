@@ -149,6 +149,8 @@ Os quatro construtores de `ctx` dos testes que chamam `process_message` ganham a
 
 ## Lacunas conhecidas
 
+> **Emenda (TEC-362, 24/09/2026): os 25 s deixaram de ser só um fato da Meta e passaram a ser escolha nossa no canal web.** O `WebIndicador` manda `ate = agora + 25 s` no frame, igualando os dois canais de propósito — um valor diferente faria o mesmo turno parecer diferente em cada um. A L1 abaixo passa a valer nos dois, e a card que renovar terá de renovar nos dois.
+
 **L1 — O indicador expira em 25 s e esta card não o renova.** Um turno de 40 s deixa o lead vendo "digitando..." dos 4 s aos 29 s, e silêncio nos 11 s finais. A Gherkin da card pede explicitamente **uma** vez e não a cada segundo, e é o que este desenho entrega. Renovar exigiria um laço com seu próprio critério de parada e uma segunda decisão sobre o que fazer quando a renovação falha — outra card, se a medição mostrar que o pior caso do turno passa de 25 s com frequência que importe.
 
 **L2 — Um turno pode disparar o indicador e não responder.** As guardas da D3 cobrem opt-out e atendimento humano. Não cobrem `reentrega_suprimida`: se o turno terminar suprimido depois dos 4 s, o indicador já saiu e nenhuma resposta vem atrás dele. A documentação da Meta desaconselha exatamente isso. Nada neste desenho previne — prever exigiria saber, aos 4 s, o que o turno vai decidir aos 8 s.
