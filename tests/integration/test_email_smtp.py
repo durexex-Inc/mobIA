@@ -17,6 +17,7 @@ from aiosmtpd.controller import Controller
 
 from mobia.app.config import get_settings
 from mobia.domain.notificacao.canais import FalhaDeCanal
+from mobia.domain.notificacao.mensagem import Aviso
 from mobia.domain.outbound.email import EmailSmtp
 
 RESUMO = (
@@ -83,6 +84,22 @@ def _canal_apontando_para(controlador: Controller, monkeypatch: pytest.MonkeyPat
     return _canal_em(controlador.hostname, controlador.port, monkeypatch)
 
 
+def um_aviso(assunto: str, corpo: str) -> Aviso:
+    """O `Aviso` com o que o e-mail le. TEC-281.
+
+    `etiqueta`, `prioridade` e `link` existem para o canal de WhatsApp montar
+    os parametros do template; o e-mail nao os toca, entao aqui eles so
+    precisam ser preenchidos.
+    """
+    return Aviso(
+        assunto=assunto,
+        corpo=corpo,
+        etiqueta="quente",
+        prioridade="alta",
+        link="https://exemplo/conversas/whatsapp/5511",
+    )
+
+
 async def test_a_mensagem_chega_com_destino_resumo_e_link(
     servidor, monkeypatch, caches_de_cliente_limpos: None
 ) -> None:
@@ -91,8 +108,10 @@ async def test_a_mensagem_chega_com_destino_resumo_e_link(
 
     await canal.enviar(
         destino="paulo@imobiliaria.com.br",
-        assunto="Lead pronto [quente] prioridade alta",
-        corpo=f"{RESUMO}\n\nConversa completa: https://exemplo/conversas/whatsapp/5511",
+        aviso=um_aviso(
+            "Lead pronto [quente] prioridade alta",
+            f"{RESUMO}\n\nConversa completa: https://exemplo/conversas/whatsapp/5511",
+        ),
     )
 
     assert caixa.destinatarios == ["paulo@imobiliaria.com.br"]
@@ -115,7 +134,7 @@ async def test_a_mensagem_leva_date_e_message_id(
     controlador, caixa = servidor
     canal = _canal_apontando_para(controlador, monkeypatch)
 
-    await canal.enviar(destino="p@x.com", assunto="a", corpo="b")
+    await canal.enviar(destino="p@x.com", aviso=um_aviso("a", "b"))
 
     (mensagem,) = caixa.recebidas
     assert mensagem["Date"] is not None
@@ -139,7 +158,7 @@ async def test_o_acento_sobrevive_ao_transporte(
     corpo = "O lead procura no Condomínio Acácia, três dormitórios, até R$ 450 mil."
 
     await canal.enviar(
-        destino="p@x.com", assunto="Lead pronto [morno] prioridade média", corpo=corpo
+        destino="p@x.com", aviso=um_aviso("Lead pronto [morno] prioridade média", corpo)
     )
 
     (mensagem,) = caixa.recebidas
@@ -154,7 +173,7 @@ async def test_servidor_indisponivel_vira_falha_de_canal(
     canal = _canal_em("127.0.0.1", 1, monkeypatch)  # porta 1: recusa conexao
 
     with pytest.raises(FalhaDeCanal):
-        await canal.enviar(destino="p@x.com", assunto="a", corpo="b")
+        await canal.enviar(destino="p@x.com", aviso=um_aviso("a", "b"))
 
 
 @pytest.mark.parametrize("excecao", [TypeError, AttributeError])
@@ -179,7 +198,7 @@ async def test_defeito_de_programacao_sobe(
     monkeypatch.setattr("mobia.domain.outbound.email.aiosmtplib.send", explode)
 
     with pytest.raises(excecao):
-        await canal.enviar(destino="p@x.com", assunto="a", corpo="b")
+        await canal.enviar(destino="p@x.com", aviso=um_aviso("a", "b"))
 
 
 async def test_o_log_nunca_carrega_o_corpo(
@@ -201,7 +220,7 @@ async def test_o_log_nunca_carrega_o_corpo(
     logging.getLogger("mail.log").setLevel(logging.WARNING)
     try:
         with caplog.at_level(logging.DEBUG):
-            await canal.enviar(destino="p@x.com", assunto="a", corpo=sentinela)
+            await canal.enviar(destino="p@x.com", aviso=um_aviso("a", sentinela))
     finally:
         logging.getLogger("mail.log").setLevel(logging.NOTSET)
 
@@ -228,6 +247,6 @@ async def test_timeout_vira_falha_de_canal(monkeypatch, caches_de_cliente_limpos
     try:
         canal = _canal_em("127.0.0.1", porta, monkeypatch)
         with pytest.raises(FalhaDeCanal):
-            await canal.enviar(destino="p@x.com", assunto="a", corpo="b")
+            await canal.enviar(destino="p@x.com", aviso=um_aviso("a", "b"))
     finally:
         servidor_mudo.close()

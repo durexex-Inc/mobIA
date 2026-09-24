@@ -18,6 +18,7 @@ from mobia.domain.handoff.resumo import link_da_transcricao
 from mobia.domain.handoff.vocabulario import Status
 from mobia.domain.notificacao.canais import CanalDeNotificacaoPort, FalhaDeCanal
 from mobia.domain.notificacao.destinatario import gerente_ativo
+from mobia.domain.notificacao.mensagem import Aviso
 
 log = structlog.get_logger(__name__)
 
@@ -58,12 +59,14 @@ async def escalar_vencidos(
     ele: notificar depois de perder a corrida seria o mesmo defeito, so que
     no canal em vez do banco.
 
-    **A notificacao ao gerente reusa os canais da TEC-177, e desde a TEC-280
-    eles ja nao tem o mesmo desfecho** -- o e-mail entrega, por SMTP; o
-    whatsapp ainda so registra, porque exige template aprovado pela Meta que
-    nao existe (TEC-281, ver o docstring de `notificacao/canais.py`). O
-    status ESCALADO gravado no banco e o que existe de fato hoje; o aviso ao
-    gerente e melhor esforco e so vira log.
+    **A notificacao ao gerente reusa os canais da TEC-177, e eles nao tem o
+    mesmo desfecho aqui** -- o e-mail entrega por SMTP (TEC-280); o whatsapp
+    falha, porque desde a TEC-281 ele exige template aprovado pela Meta e
+    ESTA mensagem nao tem um. O template que aquela card configurou e o do
+    aviso de lead pronto ao corretor, e manda-lo ao gerente diria a coisa
+    errada -- ver o `Aviso` montado no laco abaixo. O status ESCALADO gravado
+    no banco e o que existe de fato hoje; o aviso ao gerente e melhor esforco
+    e so vira log.
 
     **Sem gerente cadastrado, o handoff escala do mesmo jeito.** A marcacao e
     o que importa -- e o gatilho para a rota da Task 6 seguinte parar de
@@ -150,6 +153,20 @@ async def escalar_vencidos(
             "Um handoff passou do prazo de aceite e ainda nao foi assumido.\n\n"
             f"Conversa completa: {link}"
         )
+        # `template=None` (default): esta mensagem NAO tem template aprovado
+        # pela Meta. O da TEC-281 e o do aviso de lead pronto ao corretor, e
+        # mandar aquele texto ao gerente diria a coisa errada. Enquanto nao
+        # houver um proprio, o canal de WhatsApp falha alto aqui -- que e o
+        # mesmo desfecho pratico de antes (o gerente nunca recebeu WhatsApp),
+        # so que agora dito em voz alta em vez de registrado como se fosse
+        # entrega.
+        aviso = Aviso(
+            assunto=assunto,
+            corpo=corpo,
+            etiqueta=linha.etiqueta,
+            prioridade=linha.prioridade,
+            link=link,
+        )
 
         motivos: dict[str, str] = {}
         algum_canal_aceitou = False
@@ -165,7 +182,7 @@ async def escalar_vencidos(
         for canal in canais:
             destino = destino_por_canal[canal.nome]
             try:
-                await canal.enviar(destino=destino, assunto=assunto, corpo=corpo)
+                await canal.enviar(destino=destino, aviso=aviso)
             except FalhaDeCanal as falha:
                 motivos[canal.nome] = str(falha)
             else:
@@ -174,12 +191,15 @@ async def escalar_vencidos(
         # Nunca `corpo` nem `assunto` com o resumo -- so o que permite saber
         # SE e PARA QUEM o aviso saiu, mesma disciplina de `notificar`.
         #
-        # `algum_canal_aceitou`, e NAO `gerente_avisado` ou equivalente: desde
-        # a TEC-280 o e-mail entrega por SMTP e PODE levantar `FalhaDeCanal`,
-        # mas o whatsapp (`canais.py`) continua so registrando e NUNCA
-        # levanta -- e como ele esta sempre neste vetor, este campo continua
-        # sempre `True` na implementacao de hoje, mesmo quando o e-mail
-        # falha. Um nome que sugerisse entrega prometeria algo que nem o
+        # `algum_canal_aceitou`, e NAO `gerente_avisado` ou equivalente: o
+        # e-mail entrega por SMTP desde a TEC-280 e PODE levantar
+        # `FalhaDeCanal`. **Ate a TEC-281 o whatsapp so registrava e NUNCA
+        # levantava, entao este campo era sempre `True` mesmo com o e-mail
+        # falhando** -- ja nao e: o canal de WhatsApp agora exige template
+        # aprovado, esta mensagem nao tem um (ver o `Aviso` acima), e ele
+        # falha alto. Na pratica o campo passou a refletir so o e-mail, que e
+        # o unico canal que de fato entrega a escalada hoje. Um nome que
+        # sugerisse entrega prometeria algo que nem o
         # e-mail garante: aceito pelo servidor nao e o mesmo que lido pelo
         # gerente. Mesmo raciocinio do comentario de `TEXTO_DA_JANELA_HUMANA`
         # em `notificacao/envio.py`: este repo ja pagou por essa frase exata

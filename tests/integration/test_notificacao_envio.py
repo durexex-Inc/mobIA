@@ -19,6 +19,7 @@ from mobia.domain.messages.enums import MessageContentType, MessageDirection, Me
 from mobia.domain.messages.models import Message
 from mobia.domain.notificacao.canais import FalhaDeCanal
 from mobia.domain.notificacao.envio import KIND_DA_JANELA_HUMANA, notificar
+from mobia.domain.notificacao.mensagem import Aviso
 from mobia.infra.crypto import encrypt
 
 
@@ -27,15 +28,15 @@ class _CanalEspiao:
         self.nome = nome
         self.recebidas: list[tuple[str, str, str]] = []
 
-    async def enviar(self, *, destino: str, assunto: str, corpo: str) -> None:
-        self.recebidas.append((destino, assunto, corpo))
+    async def enviar(self, *, destino: str, aviso: Aviso) -> None:
+        self.recebidas.append((destino, aviso.assunto, aviso.corpo))
 
 
 class _CanalQueFalha:
     def __init__(self, nome: str) -> None:
         self.nome = nome
 
-    async def enviar(self, *, destino: str, assunto: str, corpo: str) -> None:
+    async def enviar(self, *, destino: str, aviso: Aviso) -> None:
         raise FalhaDeCanal(f"{self.nome} recusou")
 
 

@@ -191,11 +191,14 @@ async def notificar(
                 erro=type(falha).__name__,
             )
         link = link_da_transcricao(handoff.channel, handoff.conversation_key)
-        assunto, corpo = montar(
+        aviso = montar(
             resumo=resumo_texto,
             link=link,
             etiqueta=handoff.etiqueta,
             prioridade=handoff.prioridade,
+            # O template vem daqui e nao de dentro de `montar`, que e modulo
+            # sem I/O de proposito -- ler `get_settings()` la quebraria isso.
+            template=get_settings().whatsapp_template_notificacao_corretor or None,
         )
         # `canal.nome` -> destino. So os dois canais que `canais.py` define
         # hoje; um `canal.nome` fora deste mapa e configuracao errada, e o
@@ -214,7 +217,7 @@ async def notificar(
     for canal in canais:
         destino = destino_por_canal[canal.nome]
         try:
-            await canal.enviar(destino=destino, assunto=assunto, corpo=corpo)
+            await canal.enviar(destino=destino, aviso=aviso)
         except FalhaDeCanal as falha:
             motivos[canal.nome] = str(falha)
         else:

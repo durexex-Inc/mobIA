@@ -19,6 +19,7 @@ import structlog
 
 from mobia.app.config import get_settings
 from mobia.domain.notificacao.canais import FalhaDeCanal
+from mobia.domain.notificacao.mensagem import Aviso
 
 log = structlog.get_logger(__name__)
 
@@ -32,7 +33,7 @@ class EmailSmtp:
 
     nome = "email"
 
-    async def enviar(self, *, destino: str, assunto: str, corpo: str) -> None:
+    async def enviar(self, *, destino: str, aviso: Aviso) -> None:
         configuracao = get_settings()
 
         # `EmailMessage` e nao concatenacao de cabecalho: o corpo vem do
@@ -41,8 +42,8 @@ class EmailSmtp:
         mensagem = EmailMessage()
         mensagem["From"] = configuracao.smtp_remetente
         mensagem["To"] = destino
-        mensagem["Subject"] = assunto
-        mensagem.set_content(corpo, charset="utf-8")
+        mensagem["Subject"] = aviso.assunto
+        mensagem.set_content(aviso.corpo, charset="utf-8")
         # A RFC 5322 (secao 3.6) exige `Date` e `Message-ID`, e o `aiosmtplib` nao
         # os poe -- so envia o que a `EmailMessage` ja tem. Nenhum servidor de
         # teste (Mailpit, aiosmtpd) reclama da ausencia, entao sem estas duas
@@ -68,9 +69,10 @@ class EmailSmtp:
         # ninguem veria. Aqui a lista e explicita -- recusa do servidor, erro
         # de rede e estouro de tempo --, e o resto sobe.
         except (aiosmtplib.SMTPException, OSError, TimeoutError) as erro:
-            # **Nunca loga `corpo`**: ele carrega o resumo, pela mesma razao
-            # que `handoffs.resumo` e cifrado em repouso.
-            log.warning("notificacao.email_recusado", destino=destino, assunto=assunto)
+            # **Nunca loga `aviso.corpo`**: ele carrega o resumo, pela mesma
+            # razao que `handoffs.resumo` e cifrado em repouso. Os outros
+            # campos do `Aviso` nao carregam fala do lead e podem sair.
+            log.warning("notificacao.email_recusado", destino=destino, assunto=aviso.assunto)
             raise FalhaDeCanal(f"SMTP recusou a mensagem: {type(erro).__name__}") from erro
 
-        log.info("notificacao.email_entregue", destino=destino, assunto=assunto)
+        log.info("notificacao.email_entregue", destino=destino, assunto=aviso.assunto)

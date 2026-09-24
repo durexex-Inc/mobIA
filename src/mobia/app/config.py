@@ -148,6 +148,26 @@ class Settings(BaseSettings):
     # este campo.
     whatsapp_templates_aprovados: str = ""
 
+    # TEC-281. O template do aviso ao corretor, e o numero de onde ele sai.
+    #
+    # **Sao dois campos porque a notificacao ao corretor nao pertence a
+    # conversa nenhuma.** Todo outro envio deste projeto deriva o remetente do
+    # `recipient_external_id` da mensagem do lead (que, por
+    # `messages/schemas.py`, e o `phone_number_id` da Meta). O corretor nao
+    # tem mensagem de entrada de onde derivar isso, e escolher a de um lead
+    # qualquer acoplaria o aviso a uma conversa arbitraria.
+    #
+    # **Os dois com default VAZIO, e o efeito e o mesmo do campo acima:** sem
+    # template configurado e aprovado, `WhatsAppTemplate` falha alto e o
+    # e-mail entrega sozinho. Nao ha fallback para texto livre, e nao por
+    # conservadorismo -- o corretor esta sempre fora da janela de 24h, entao
+    # texto livre e recusa garantida com o codigo 131047.
+    #
+    # O nome aqui so vale se tambem estiver em `whatsapp_templates_aprovados`:
+    # este campo diz QUAL template usar, aquele diz quais a Meta aprovou.
+    whatsapp_template_notificacao_corretor: str = ""
+    whatsapp_phone_number_id: str = ""
+
     # SMTP da notificacao ao corretor (TEC-280). Provedor NENHUM esta escolhido:
     # a decisao de 19/09/2026 foi falar SMTP direto justamente para que SES,
     # Resend ou Postmark fiquem sendo configuracao e nao codigo -- a escolha de
