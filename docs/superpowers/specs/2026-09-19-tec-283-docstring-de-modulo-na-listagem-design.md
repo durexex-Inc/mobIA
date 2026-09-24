@@ -108,5 +108,6 @@ Unitários puros, no estilo que o arquivo de teste já mantém: recebem fonte e 
 ## Fora de escopo
 
 - Virar gate de CI. A ferramenta continua não reprovando nada, e a razão está escrita no `return 0` de `main`.
+  - **Emenda E-01 (TEC-299, 24/09/2026):** a listagem continua sem reprovar, mas a ferramenta ganhou um modo que reprova. `--checar` sai com 1 por `ANCORA` (âncora `arquivo.py::Nome` cujo nome não existe) ou `LINHA` (citação por número de linha em linha de `.md` acrescentada), e roda como passo do CI em PR. As duas marcas não pedem julgamento, então a razão acima continua valendo para todas as outras. Ver `docs/superpowers/specs/2026-09-24-tec-299-ancora-de-citacao-design.md`.
 - Decidir automaticamente se uma docstring está correta — é o julgamento que a ferramenta existe para devolver a uma pessoa.
 - A TEC-284 (apagar ou renomear um arquivo aponta a prosa que o cita). Continua aberta e continua descrita na docstring do script.
