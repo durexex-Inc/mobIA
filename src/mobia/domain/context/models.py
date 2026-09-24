@@ -241,6 +241,28 @@ class LeadQualification(Base):
         ARRAY(String(16)), nullable=True
     )
 
+    # TEC-190, RN-17.1. Quando o lead cruzou a borda de `esta_qualificado`
+    # pela PRIMEIRA vez -- `carimbar_qualificacao` guarda por
+    # `qualificado_em IS NULL`, entao a ida-e-volta que a TEC-148 tornou
+    # possivel (qualifica, recusa um campo, requalifica) conta uma vez so.
+    #
+    # E esse "uma vez so" que fecha a lacuna que `turno.py` declarou ao lado
+    # do `log.info("lead.qualificado", ...)`: la estava escrito que tornar a
+    # emissao idempotente exigia "estado persistido de ja emiti uma vez", e
+    # que a decisao era de quem fosse dono da metrica RN-17.1. Esta coluna e
+    # esse estado.
+    #
+    # **`NULL` nao distingue "nunca qualificou" de "qualificou antes da
+    # migration 0040"**, e nao ha como distinguir: o instante nao era
+    # gravado. A etapa Qualificado do painel conta so a partir da migration,
+    # e o numero e baixo nas primeiras semanas sem que nada esteja errado.
+    # Lacuna L1.
+    #
+    # Diferente de `updated_at`, que e o ULTIMO toque: um lead qualificado em
+    # julho que responde hoje tem `updated_at` de hoje, e filtrar a etapa por
+    # ele poria esse lead no funil de agosto.
+    qualificado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
