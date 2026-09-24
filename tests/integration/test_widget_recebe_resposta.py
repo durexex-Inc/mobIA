@@ -76,17 +76,3 @@ async def test_publicacao_de_outra_sessao_nao_vaza(ws_cliente, redis_pool) -> No
         assert (await ws.receber())["texto"] == "minha"
     finally:
         await ws.__aexit__()
-
-
-async def test_a_desconexao_solta_a_assinatura(ws_cliente, redis_pool) -> None:
-    # Uma conexao do pool por aba aberta: se a assinatura sobrevivesse ao
-    # socket, cada aba fechada vazaria uma conexao do Redis para sempre.
-    ws, sessao = await _abrir(ws_cliente)
-    assert await redis_pool.pubsub_numsub(canal_da_sessao(sessao)) == [
-        (canal_da_sessao(sessao).encode(), 1)
-    ]
-    await ws.__aexit__()
-
-    assert await redis_pool.pubsub_numsub(canal_da_sessao(sessao)) == [
-        (canal_da_sessao(sessao).encode(), 0)
-    ]

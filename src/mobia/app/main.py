@@ -21,6 +21,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.redis_pool = await create_redis_pool()
         app.state.owns_redis_pool = True
     yield
+    # Antes do pool: a escuta da central usa uma conexao dele (TEC-124).
+    central = getattr(app.state, "central_do_widget", None)
+    if central is not None:
+        await central.encerrar()
     if getattr(app.state, "owns_redis_pool", False):
         await app.state.redis_pool.aclose()
     await dispose_engine()

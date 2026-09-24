@@ -1342,10 +1342,16 @@ class ClienteWebSocket:
 
 
 @pytest.fixture
-def app_do_widget(banco_limpo: None, redis_pool: "ArqRedis") -> Any:
+async def app_do_widget(banco_limpo: None, redis_pool: "ArqRedis") -> AsyncIterator[Any]:
     app = create_app()
     app.state.redis_pool = redis_pool
-    return app
+    yield app
+    # O `lifespan` nao roda aqui -- o `ClienteWebSocket` nao manda os eventos
+    # dele --, entao quem encerra a escuta da central e esta fixture. Sem isso
+    # a tarefa sobreviveria ao loop do teste.
+    central = getattr(app.state, "central_do_widget", None)
+    if central is not None:
+        await central.encerrar()
 
 
 @pytest.fixture

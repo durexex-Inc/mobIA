@@ -27,6 +27,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
+from mobia.api.central_do_widget import CentralIndisponivel, central_de
 from mobia.api.deps import get_ingestion_service
 from mobia.api.middleware import resolver_ip
 from mobia.app.config import get_settings
@@ -38,7 +39,6 @@ from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.historico import historico_da_sessao
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.service import IngestionService
-from mobia.domain.outbound.web import canal_da_sessao
 from mobia.infra.db import get_sessionmaker, motivo_do_erro_de_banco
 from mobia.infra.rate_limit import JANELA_DE_UM_MINUTO, chave_de_ip, consumir
 
@@ -60,11 +60,6 @@ CODIGO_INDISPONIVEL = 1011
 # 1013 e "try again later" do RFC 6455 -- o analogo do 429 que o middleware
 # devolve na rota HTTP.
 CODIGO_EXCESSO = 1013
-
-# Quanto esperar o Redis confirmar o `SUBSCRIBE`. Sem confirmacao a volta nao e
-# garantida, e anunciar a sessao seria prometer uma conversa que talvez so
-# funcione num sentido.
-SEGUNDOS_PARA_CONFIRMAR_ASSINATURA = 5.0
 
 
 @router.websocket("/widget/chat")
@@ -88,7 +83,8 @@ async def chat(
         return
     sessao, retomada = identidade
 
-    if pool is None:
+    central = central_de(websocket.app)
+    if central is None:
         # Sem Redis nao ha volta possivel. A entrada ainda funcionaria, mas a
         # visitante falaria sozinha -- melhor recusar do que simular
         # atendimento.
@@ -96,26 +92,24 @@ async def chat(
         await websocket.close(code=CODIGO_INDISPONIVEL)
         return
 
-    # Uma conexao do pool por aba aberta, enquanto ela viver: e o preco do
-    # pub/sub, e o que dimensiona o pool do Redis quando o widget escalar.
-    assinatura = pool.pubsub()
     try:
-        # **Assina ANTES de anunciar a sessao, e espera o Redis confirmar.**
-        # Com a ordem inversa, uma resposta publicada logo depois do anuncio
-        # podia chegar ao Redis antes do `SUBSCRIBE` -- e pub/sub nao guarda
-        # nada para quem ainda nao ouve. Assim, quem recebeu o frame `sessao`
-        # ja tem para onde a publicacao ir.
-        await assinatura.subscribe(canal_da_sessao(sessao))
-        if await assinatura.get_message(timeout=SEGUNDOS_PARA_CONFIRMAR_ASSINATURA) is None:
-            log.error("widget.assinatura_sem_confirmacao", sessao=sessao)
-            await websocket.close(code=CODIGO_INDISPONIVEL)
-            return
+        # **Registra na central ANTES de anunciar a sessao.** `abrir` so
+        # devolve a fila depois de a central estar ouvindo o Redis, entao quem
+        # recebeu o frame `sessao` ja tem para onde a publicacao ir. Com a
+        # ordem inversa, uma resposta publicada logo depois do anuncio podia
+        # chegar antes de haver quem ouvisse -- e pub/sub nao guarda nada.
+        fila = await central.abrir(sessao)
+    except CentralIndisponivel:
+        log.error("widget.central_indisponivel", sessao=sessao)
+        await websocket.close(code=CODIGO_INDISPONIVEL)
+        return
 
+    try:
         await _anunciar(websocket, sessao, retomada)
         log.info("widget.conectado", sessao=sessao, retomada=retomada)
 
         entrada = asyncio.create_task(_ler_do_lead(websocket, service, sessao))
-        saida = asyncio.create_task(_escrever_do_agente(websocket, assinatura))
+        saida = asyncio.create_task(_escrever_do_agente(websocket, fila))
         try:
             # A primeira que terminar decide: a visitante fechou a aba, ou o
             # socket morreu escrevendo. A outra nao tem mais para quem falar.
@@ -128,9 +122,8 @@ async def chat(
             # retrieved" no log.
             await asyncio.gather(entrada, saida, return_exceptions=True)
     finally:
-        # Solta a conexao do pool. Sem isto, cada aba fechada vazaria uma
-        # conexao do Redis para sempre.
-        await assinatura.aclose()
+        # Sem isto a central guardaria a fila de toda aba que ja fechou.
+        central.fechar(sessao, fila)
         log.info("widget.desconectado", sessao=sessao)
 
 
@@ -246,13 +239,10 @@ async def _anunciar(websocket: WebSocket, sessao: str, retomada: bool) -> None:
         )
 
 
-async def _escrever_do_agente(websocket: WebSocket, assinatura: Any) -> None:
+async def _escrever_do_agente(websocket: WebSocket, fila: asyncio.Queue[str]) -> None:
     """Repassa ao navegador o que o worker publicou para esta sessao."""
-    async for evento in assinatura.listen():
-        if evento.get("type") != "message":
-            continue
-        dado = evento["data"]
-        await websocket.send_text(dado.decode() if isinstance(dado, bytes) else dado)
+    while True:
+        await websocket.send_text(await fila.get())
 
 
 async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: str) -> None:
