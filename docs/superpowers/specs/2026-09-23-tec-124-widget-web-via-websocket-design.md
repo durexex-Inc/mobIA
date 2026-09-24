@@ -72,6 +72,8 @@ O endpoint monta um `ParsedMessage` e chama `IngestionService.ingest([…], chan
 
 **O `id` vem do cliente e vira `provider_message_id`.** É o que faz o reenvio depois de uma queda cair na UNIQUE `(channel, provider_message_id)` que já existe — dedup sem código novo, pelo mesmo mecanismo que absorve a reentrega da Meta. Sem `id` no frame, o servidor gera um: um cliente ingênuo funciona, só não ganha a dedup.
 
+> **Correção (24/09/2026, revisão final):** gravado cru, o `id` era chave **global** do canal — a UNIQUE é `(channel, provider_message_id)`, e no web quem cunha o id é a página, não a Meta. Dois visitantes que mandassem `"m-1"` colidiam: o segundo recebia `recebido` e perdia a mensagem. O `provider_message_id` gravado passou a ser `{sessão}:{id}`, e o `id` precisa ser texto de 1 a 128 caracteres — fora disso a conexão fecha com 1002. Antes do teto, um id acima dos 255 da coluna estourava no banco e fechava com 1011, um código de erro de servidor sobre o qual o cliente reenviaria para sempre.
+
 `raw_payload` recebe o frame cru, cifrado como todo o resto. `content_type` é sempre `TEXTO` — áudio e mídia no web são a TEC-131 e a TEC-132.
 
 **Teto de tamanho por frame.** Texto acima do limite é recusado com um frame de erro e a conexão **continua aberta**: derrubar o socket transformaria um engano de colar texto grande em perda da conversa inteira.

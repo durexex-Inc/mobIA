@@ -9,9 +9,11 @@ opt-out e pedido de humano, e a contagem de duplicata descartada.
 **Nenhuma chamada a modelo acontece dentro do ciclo da conexao**, pelo mesmo
 motivo que a RN-01.2 escreve para o webhook.
 
-O `id` do frame vira `provider_message_id`: e ele que faz o reenvio depois de
-uma queda cair na UNIQUE `(channel, provider_message_id)` que ja existe --
-dedup sem codigo novo, pelo mesmo mecanismo que absorve a reentrega da Meta.
+O `id` do frame, prefixado pela sessao, vira `provider_message_id`: e ele que
+faz o reenvio depois de uma queda cair na UNIQUE `(channel,
+provider_message_id)` que ja existe -- dedup sem codigo novo, pelo mesmo
+mecanismo que absorve a reentrega da Meta. O prefixo e o que impede o id de
+um visitante de colidir com o de outro; ver `_chave_do_id`.
 
 **O id da sessao nunca viaja em URL.** Ele e portador anonimo -- quem o tiver
 le aquela conversa --, e numa query string entraria em log de acesso, em
@@ -61,6 +63,11 @@ CODIGO_INDISPONIVEL = 1011
 # 1013 e "try again later" do RFC 6455 -- o analogo do 429 que o middleware
 # devolve na rota HTTP.
 CODIGO_EXCESSO = 1013
+
+# Teto do `id` que o cliente escolhe. A coluna e `String(255)` e a chave gravada
+# leva a sessao na frente (36 caracteres e o separador), entao 128 deixa folga
+# sem apertar nenhum formato razoavel -- um UUID tem 36.
+TAMANHO_MAXIMO_DO_ID = 128
 
 
 @router.websocket("/widget/chat")
@@ -308,13 +315,24 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
             await websocket.send_json({"tipo": "erro", "motivo": "texto_longo_demais"})
             continue
 
-        # Sem `id` o cliente funciona, so nao ganha a dedup da UNIQUE.
-        identificador = str(frame.get("id") or uuid.uuid4())
+        bruto_id = frame.get("id")
+        if bruto_id is None:
+            # Sem `id` o cliente funciona, so nao ganha a dedup da UNIQUE.
+            identificador = str(uuid.uuid4())
+        elif isinstance(bruto_id, str) and 0 < len(bruto_id) <= TAMANHO_MAXIMO_DO_ID:
+            identificador = bruto_id
+        else:
+            # Coagir com `str()` aceitaria `5` e `true` como ids; e um id acima
+            # do teto estourava `DataError` na coluna e virava 1011 -- um
+            # codigo de erro de SERVIDOR sobre o qual o cliente reenviaria o
+            # mesmo id para sempre.
+            await websocket.close(code=CODIGO_PROTOCOLO)
+            return
         try:
             await service.ingest(
                 [
                     ParsedMessage(
-                        provider_message_id=identificador,
+                        provider_message_id=_chave_do_id(sessao, identificador),
                         sender_external_id=sessao,
                         recipient_external_id=REMETENTE_DO_WIDGET,
                         content_type=MessageContentType.TEXTO,
@@ -347,6 +365,18 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
         # texto DIFERENTE ve a confirmacao e perde o texto novo -- defeito do
         # cliente, mas silencioso deste lado.
         await websocket.send_json({"tipo": "recebido", "id": identificador})
+
+
+def _chave_do_id(sessao: str, identificador: str) -> str:
+    """O `provider_message_id` de uma mensagem do widget: o id DENTRO da sessao.
+
+    O id vem do cliente, e a UNIQUE `(channel, provider_message_id)` e global
+    ao canal. Gravado cru, o `"m-1"` de um visitante colidia com o `"m-1"` de
+    outro, e o segundo perdia a mensagem recebendo `recebido`. Prefixado pela
+    sessao, a dedup continua fazendo o que existe para fazer -- absorver o
+    reenvio da MESMA pagina depois de uma queda -- e so isso.
+    """
+    return f"{sessao}:{identificador}"
 
 
 class FrameInvalido(Exception):

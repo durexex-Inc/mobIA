@@ -36,7 +36,7 @@ async def test_a_mensagem_vira_linha_no_canal_web(ws_cliente, session) -> None:
         await session.execute(select(Message).where(Message.conversation_key == sessao))
     ).scalar_one()
     assert linha.channel == CANAL_WEB
-    assert linha.provider_message_id == "m-1"
+    assert linha.provider_message_id == f"{sessao}:m-1"
     assert linha.recipient_external_id == REMETENTE_DO_WIDGET
     assert linha.sender_external_id == sessao
 
@@ -85,7 +85,7 @@ async def test_sessao_em_maiuscula_e_normalizada(ws_cliente) -> None:
 async def test_texto_vazio_nao_vira_linha_e_a_conexao_segue(ws_cliente, session) -> None:
     # Review Focus 3: viraria turno, com chamada paga ao modelo, para nada.
     async with ws_cliente() as ws:
-        await _cumprimentar(ws)
+        sessao = await _cumprimentar(ws)
         await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "   "})
         assert await ws.receber() == {"tipo": "erro", "motivo": "texto_vazio"}
 
@@ -93,7 +93,7 @@ async def test_texto_vazio_nao_vira_linha_e_a_conexao_segue(ws_cliente, session)
         assert (await ws.receber())["tipo"] == "recebido"
 
     linhas = (await session.execute(select(Message))).scalars().all()
-    assert [linha.provider_message_id for linha in linhas] == ["m-2"]
+    assert [linha.provider_message_id for linha in linhas] == [f"{sessao}:m-2"]
 
 
 async def test_texto_acima_do_teto_e_recusado_sem_derrubar(
@@ -233,3 +233,41 @@ async def test_excecao_numa_tarefa_fecha_com_1011_e_deixa_rastro(
         assert await ws.fechamento() == 1011
 
     assert "widget.falhou" in caplog.text
+
+
+async def test_o_mesmo_id_em_duas_sessoes_grava_as_duas(ws_cliente, session) -> None:
+    """O `id` e do cliente, e dois clientes podem escolher o mesmo.
+
+    Na UNIQUE `(channel, provider_message_id)` ele era chave GLOBAL do canal: o
+    segundo visitante que mandasse `"m-1"` -- um contador, um `Date.now()` --
+    caia no `ON CONFLICT DO NOTHING`, recebia `recebido` e perdia a mensagem.
+    No WhatsApp o id e unico porque a Meta o cunha; aqui quem cunha e a pagina.
+    """
+    sessoes = []
+    for texto in ("da primeira", "da segunda"):
+        async with ws_cliente() as ws:
+            sessoes.append(await _cumprimentar(ws))
+            await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": texto})
+            assert (await ws.receber())["tipo"] == "recebido"
+
+    linhas = (await session.execute(select(Message))).scalars().all()
+    assert sorted(linha.conversation_key for linha in linhas) == sorted(sessoes)
+
+
+async def test_id_longo_demais_fecha_com_1002(ws_cliente, session) -> None:
+    # Sem o teto, um id acima dos 255 da coluna estourava `DataError`, caia no
+    # ramo de indisponibilidade e fechava com 1011 -- e o cliente, reenviando
+    # o mesmo id, entraria num laco sobre um codigo de erro de servidor.
+    async with ws_cliente() as ws:
+        await _cumprimentar(ws)
+        await ws.enviar({"tipo": "mensagem", "id": "x" * 200, "texto": "oi"})
+        assert await ws.fechamento() == 1002
+
+    assert (await session.execute(select(Message))).scalars().all() == []
+
+
+async def test_id_que_nao_e_texto_fecha_com_1002(ws_cliente) -> None:
+    async with ws_cliente() as ws:
+        await _cumprimentar(ws)
+        await ws.enviar({"tipo": "mensagem", "id": 5, "texto": "oi"})
+        assert await ws.fechamento() == 1002
