@@ -99,10 +99,34 @@ def test_filtro_ausente_fica_nulo() -> None:
     assert recorte.corretor_id is None
 
 
-def test_corretor_id_atravessa() -> None:
-    identificador = uuid.uuid4()
-    recorte = montar_recorte(
-        de=date(2026, 8, 1), ate=date(2026, 8, 22), fuso=SAO_PAULO, corretor_id=identificador
-    )
+def test_sem_corretor_o_recorte_nasce_com_o_campo_nulo() -> None:
+    """O campo continua existindo no `Recorte` -- a consulta que o consome ja
+    esta escrita e correta, esperando a TEC-166. O que a borda recusa e o
+    PEDIDO, nao a forma do recorte.
+    """
+    recorte = montar_recorte(de=date(2026, 8, 1), ate=date(2026, 8, 22), fuso=SAO_PAULO)
 
-    assert recorte.corretor_id == identificador
+    assert recorte.corretor_id is None
+
+
+def test_filtro_por_corretor_e_recusado_enquanto_ninguem_aloca() -> None:
+    """`handoffs.corretor_id` NUNCA e escrito em producao.
+
+    A Emenda E-01 da RN-16.2 diz isso por extenso -- alocar corretor e a
+    TEC-166, que nao existe --, entao a coluna e nula em toda linha. Filtrar
+    por ela devolvia 200 com o funil inteiro zerado, e a gerente leria
+    "este corretor nao recebeu lead nenhum" sobre QUALQUER corretor.
+
+    Zero universal com cara de medicao e pior que recusa: e a mesma classe de
+    defeito que a D1 recusou para `Agendado`.
+    """
+    with pytest.raises(FiltroInvalido) as erro:
+        montar_recorte(
+            de=date(2026, 8, 1),
+            ate=date(2026, 8, 22),
+            fuso=SAO_PAULO,
+            corretor_id=uuid.uuid4(),
+        )
+
+    assert erro.value.campo == "corretorId"
+    assert "TEC-166" in str(erro.value)

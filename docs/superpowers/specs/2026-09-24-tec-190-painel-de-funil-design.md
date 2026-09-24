@@ -22,7 +22,7 @@ O levantamento das 21 tabelas contra a RN-17.1 e a RN-17.2:
 | a card pede | fonte |
 | --- | --- |
 | etapa Novo | primeira `messages.created_at` por `(channel, conversation_key)` |
-| etapa Em conversa | `conversas.status` |
+| etapa Em conversa | `messages`: mais de uma fala de ENTRADA do lead (uma só é o primeiro contato, que já é `Novo`) |
 | etapa Recomendado | `recomendacoes.apresentado_em` |
 | etapa Handoff aceito, taxa no SLA | `handoffs.aceito_em`, `sla_limite_em` |
 | leads novos, conversas ativas | `messages`, `conversas` |
@@ -93,7 +93,11 @@ Duas exigências são confundidas com facilidade, e só uma pede cache.
 
 SSE (`GET /api/v1/eventos/stream`, §6.6 do SRS) fica **fora**: o Gherkin da card diz "o dashboard é recarregado", que é leitura, não empurrão. É card própria.
 
-## D6 — o filtro por corretor é o funil *dos leads daquele corretor*
+## D6 — o filtro por corretor é o funil *dos leads daquele corretor* (RECUSADO na borda desde a revisão)
+
+> **Emenda (revisão, 24/09/2026): a borda recusa este filtro com 422, e a D6 abaixo descreve o que acontecerá quando a TEC-166 existir.**
+> `handoffs.corretor_id` **nunca é escrito em produção** — a Emenda E-01 da RN-16.2 diz isso por extenso, e alocar corretor é a TEC-166. A coluna é nula em toda linha, então o filtro devolvia **200 com o funil inteiro zerado, para qualquer corretor**, e a gerente leria "este corretor não recebeu lead nenhum" sobre quem aceitou dezenas de handoffs. Zero universal com cara de medição é a mesma classe de defeito que a D1 recusou para `Agendado`, e a L2 abaixo — escrita antes da revisão — descrevia algo muito mais fraco que a verdade. A consulta continua escrita, testada e correta, esperando a TEC-166; o que se recusa é o **pedido**, não a forma do recorte.
+
 
 `corretor_id` só existe em `handoffs`. **Não há corretor antes do repasse** — nas etapas Novo, Em conversa, Qualificado e Recomendado o lead não tem dono.
 
@@ -130,7 +134,9 @@ Não estava neste desenho e devia estar. Duas semânticas eram possíveis.
 
 **Por atividade** — contar eventos de cada tipo ocorridos no período — a conversão entre etapas pode passar de 100%: um lead recomendado em agosto pode ter nascido em julho, e `Recomendado / Em conversa` daria mais que 1. A RN-17.2 pede "taxa de conversão", e uma taxa acima de 100% não é conversão, é erro de leitura.
 
-**Por coorte** — os leads cujo primeiro contato caiu no período, contando quantos *desses* alcançaram cada etapa, inclusive depois do fim do período — a conversão é monotônica e ≤ 100% por construção. É o que a gerente quer dizer com "onde estamos perdendo lead".
+**Por coorte** — os leads cujo primeiro contato caiu no período, contando quantos *desses* alcançaram cada etapa, inclusive depois do fim do período — essa fonte de conversão acima de 100% desaparece. É o que a gerente quer dizer com "onde estamos perdendo lead".
+
+**Emenda (revisão, 24/09/2026): a coorte NÃO garante monotonia.** Esta seção afirmava "monotônica e ≤ 100% por construção", e era falso — a coorte dá o recorte comum, não a inclusão entre etapas, e as cinco contagens são consultas independentes. Dois caminhos conhecidos para passar de 100%: enquanto a **L1** durar, `Qualificado` conta só a partir da `0040` enquanto `Recomendado` conta tudo (40 recomendados e 1 qualificado dão 4000%); e o lead que qualifica no primeiro turno fica fora de `Em conversa`, que exige mais de uma fala. Nenhum dos dois é erro de consulta — são fatos sobre os dados, e estão na docstring de `metricas/repositorio.py` e na Emenda E-01 da RN-17.2.
 
 **Escolhida: coorte, e todos os indicadores herdam o mesmo recorte.** `conversasAtivas` é quantas da coorte seguem `ATIVA`, `taxaQualificacao` é a fração dela que qualificou, e as duas médias de tempo são sobre ela. Um recorte só em todo o payload; misturar coorte e atividade no mesmo cartão é o defeito que esta decisão evita.
 
@@ -197,5 +203,5 @@ O filtro por canal tem um limite de teste que vai no comentário da card: **só 
 ## Lacunas declaradas
 
 - **L1 — não há backfill de `qualificado_em`.** O instante nunca foi gravado. A etapa Qualificado conta só a partir da migration `0040`, e o número é baixo nas primeiras semanas.
-- **L2 — o filtro por corretor não alcança lead sem handoff** (D6).
+- **L2 — o filtro por corretor não funciona de todo, e é recusado com 422.** Não é só que lead sem handoff some: `handoffs.corretor_id` nunca é escrito, então *nenhum* lead aparece. Ver a emenda na D6. Volta com a TEC-166.
 - **L3 — a taxa de no-show não volta com a RF-12 sozinha:** exige que alguém marque a visita como realizada ou não, que é regra de produto ainda não escrita em lugar nenhum.

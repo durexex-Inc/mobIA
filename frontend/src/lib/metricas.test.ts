@@ -69,6 +69,31 @@ describe('buscarFunil', () => {
     })
   })
 
+  it('no 422 de validacao do FastAPI, `detail` e LISTA e ainda assim nomeia o campo', async () => {
+    // O 422 que `montar_recorte` levanta tem `detail` string; o que o proprio
+    // FastAPI levanta (UUID malformado no `corretorId`, data invalida no `de`)
+    // tem `detail` como lista de objetos com `loc`. Sem tratar os dois, a tela
+    // anuncia que ha um filtro errado e se recusa a dizer qual.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: [
+              { type: 'uuid_parsing', loc: ['query', 'corretorId'], msg: 'invalid UUID' },
+            ],
+          }),
+          { status: 422 },
+        ),
+      ),
+    )
+
+    await expect(buscarFunil({ de: '2026-08-01', ate: '2026-08-22' })).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining('corretorId'),
+    })
+  })
+
   it('no 422 carrega o detalhe do backend, que nomeia o filtro recusado', async () => {
     vi.stubGlobal(
       'fetch',

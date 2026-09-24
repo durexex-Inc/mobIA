@@ -1434,11 +1434,19 @@ async def _handoff_aceito(
     corretor_id: uuid.UUID | None = None,
     sla_limite_em: datetime | None = None,
     ja_aceito: bool = True,
+    status: str | None = None,
 ) -> None:
     """Um handoff, aceito por omissao.
 
     `sla_limite_em=None` e o handoff escalado sem destinatario da Emenda E-02
     da RN-16.3 -- e o caso que a taxa de SLA tem de excluir do denominador.
+
+    `ja_aceito=False` e o handoff que venceu o prazo e ninguem pegou: e a
+    FALHA de SLA, e ela tem de entrar no denominador.
+
+    `status` sobrepoe o derivado de `ja_aceito`. Serve para `CONCLUIDO`, o
+    unico jeito de a mesma conversa ter dois handoffs -- o UNIQUE parcial
+    `uq_handoffs_conversa_pendente` cobre todo status MENOS esse.
     """
     session.add(
         Handoff(
@@ -1448,7 +1456,7 @@ async def _handoff_aceito(
             gatilho="QUENTE",
             etiqueta="LEAD_QUENTE",
             prioridade="ALTA",
-            status="ACEITO" if ja_aceito else "PENDENTE",
+            status=status if status is not None else ("ACEITO" if ja_aceito else "PENDENTE"),
             corretor_id=corretor_id,
             aceito_em=em if ja_aceito else None,
             sla_limite_em=sla_limite_em,

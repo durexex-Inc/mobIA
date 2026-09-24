@@ -165,3 +165,54 @@ async def test_sem_handoff_com_prazo_a_taxa_e_nula(session) -> None:
     indicadores = await _indicadores(session)
 
     assert indicadores.sla_handoff_cumprido_pct is None
+
+
+async def test_prazo_vencido_e_nunca_aceito_CONTA_como_falha_de_sla(session) -> None:
+    """O caso que a primeira versao desta consulta apagava do denominador.
+
+    `escalada.py` grava `status=ESCALADO` e NAO toca `aceito_em`: o handoff
+    que venceu e ninguem pegou fica com `sla_limite_em` preenchido e
+    `aceito_em` nulo. Excluir esses do denominador removia precisamente as
+    FALHAS de SLA -- nove estouros e um acerto davam 100%.
+    """
+    for indice in range(1, 11):
+        await _lead(session, conversa=f"551190000000{indice}")
+    # Um aceito dentro do prazo.
+    await _handoff_aceito(
+        session,
+        conversa="5511900000001",
+        em=DENTRO,
+        sla_limite_em=DENTRO + timedelta(hours=1),
+    )
+    # Nove vencidos e nunca aceitos.
+    for indice in range(2, 11):
+        await _handoff_aceito(
+            session,
+            conversa=f"551190000000{indice}",
+            em=DENTRO,
+            sla_limite_em=DENTRO + timedelta(hours=1),
+            ja_aceito=False,
+        )
+
+    indicadores = await _indicadores(session)
+
+    assert indicadores.sla_handoff_cumprido_pct == 0.1
+
+
+async def test_prazo_ainda_correndo_nao_conta_como_falha(session) -> None:
+    """Um handoff criado agora, com prazo que so vence daqui a uma hora, nao
+    decidiu nada ainda -- conta-lo como falha puniria a pontualidade.
+    """
+    agora = datetime.now(UTC)
+    await _lead(session, conversa="5511900000001", nasceu_em=DENTRO)
+    await _handoff_aceito(
+        session,
+        conversa="5511900000001",
+        em=DENTRO,
+        sla_limite_em=agora + timedelta(hours=1),
+        ja_aceito=False,
+    )
+
+    indicadores = await _indicadores(session)
+
+    assert indicadores.sla_handoff_cumprido_pct is None

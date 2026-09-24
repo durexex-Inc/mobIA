@@ -6,14 +6,31 @@ D10 do plano: por atividade, um lead recomendado em agosto que nasceu em
 julho faria `Recomendado / Em conversa` passar de 100%, e a RN-17.2 pede uma
 taxa de conversao, nao um numero acima de um.
 
+**A coorte da o RECORTE comum, e nao a inclusao entre etapas** -- e esta
+distincao custou uma correcao na revisao, porque a versao anterior desta
+docstring prometia monotonia "por construcao". As cinco contagens sao
+consultas independentes, e nada impoe `Qualificado` contido em
+`Em conversa`. Duas maneiras conhecidas de a conversao passar de 100%:
+
+- **enquanto a lacuna L1 durar**, `Qualificado` conta so quem ganhou
+  `qualificado_em` depois da migration `0040`, e `Recomendado` conta tudo.
+  Um periodo antigo com 40 recomendados e 1 qualificado da 4000%.
+- **o lead que qualifica no primeiro turno** -- despeja intencao, orcamento,
+  regiao e urgencia numa mensagem so -- fica FORA de `Em conversa`, que
+  exige mais de uma fala, e DENTRO de `Qualificado`.
+
+Nenhuma das duas e erro de consulta: sao fatos sobre os dados. Quem ler o
+painel precisa saber que o funil pode nao decrescer.
+
 Funcoes livres com `session` posicional e o resto keyword-only, sem commit --
 a convencao dos dez repositorios deste repo.
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agente.models import Recomendacao
@@ -75,16 +92,31 @@ def _coorte(recorte: Recorte) -> Select[Any]:
             consulta = consulta.where(LeadQualification.temperatura == recorte.temperatura)
 
     if recorte.corretor_id is not None:
-        # D6 e lacuna L2: `corretor_id` so existe em `handoffs`, entao o lead
-        # que ainda nao foi repassado nao aparece em filtro de corretor
-        # nenhum. O funil filtrado e o dos leads que ACABARAM com ele.
+        # **Este ramo nao e alcancado por producao hoje**, e isso e
+        # deliberado: `montar_recorte` RECUSA o filtro por corretor com 422
+        # porque `handoffs.corretor_id` nunca e escrito -- alocar corretor e
+        # a TEC-166 (Emenda E-01 da RN-16.2). Sem a recusa, o funil saia
+        # zerado para qualquer corretor e a gerente leria isso como fato.
+        #
+        # A consulta fica escrita e testada (os testes montam o `Recorte` a
+        # mao, pulando a borda) porque ela esta CORRETA e e o que a TEC-166
+        # vai ligar: o funil dos leads que ACABARAM com aquele corretor,
+        # contando a mesma conversa nos estagios anteriores ao repasse.
         consulta = consulta.join(
             Handoff,
             (Handoff.channel == nascimento.c.channel)
             & (Handoff.conversation_key == nascimento.c.conversation_key),
         ).where(Handoff.corretor_id == recorte.corretor_id)
 
-    return consulta
+    # **`DISTINCT` aqui e nao so em `_quantos`.** `calcular_indicadores`
+    # consome esta subconsulta DIRETO, sem passar por `_quantos`, e o JOIN
+    # com `handoffs` acima duplica a conversa que tem mais de um handoff do
+    # mesmo corretor -- possivel desde que a Emenda E-04 da RN-16.4 deu a
+    # `devolver` o poder de CONCLUIR um handoff, liberando o UNIQUE parcial
+    # para um segundo. Sem isto, `conversasAtivas` contaria 2 para um lead so
+    # e `taxaQualificacao` poderia dar 2.0 -- os 200% que a D10 existe para
+    # tornar impossiveis.
+    return consulta.distinct()
 
 
 async def _quantos(session: AsyncSession, consulta: Select[Any]) -> int:
@@ -296,11 +328,27 @@ async def calcular_indicadores(
     # quem fosse calcular esta metrica. O handoff escalado sem destinatario
     # tem `sla_limite_em` nulo para sempre, e `dentroDoSla` sai true por
     # VACUIDADE, nunca por pontualidade -- inclui-lo infla a taxa.
+    #
+    # **O denominador NAO exclui `aceito_em IS NULL`, e essa e a diferenca
+    # entre medir e mentir.** `escalada.py` grava `status=ESCALADO` sem tocar
+    # `aceito_em`, entao o handoff que venceu o prazo e ninguem pegou tem
+    # prazo preenchido e aceite nulo -- e ele e A FALHA de SLA. Excluir esses
+    # removeria do denominador exatamente o que a metrica existe para contar:
+    # nove estouros e um acerto dariam 100%.
+    #
+    # Entra no denominador o handoff cujo desfecho ja esta DECIDIDO: ou foi
+    # aceito (a qualquer hora), ou o prazo ja passou. Um `PENDENTE` cujo
+    # prazo ainda corre nao decidiu nada, e conta-lo como falha puniria a
+    # pontualidade de quem ainda esta dentro da janela.
+    agora = datetime.now(UTC)
     com_prazo = (
         await session.execute(
             select(
                 func.count(),
-                func.count().filter(Handoff.aceito_em <= Handoff.sla_limite_em),
+                func.count().filter(
+                    Handoff.aceito_em.is_not(None),
+                    Handoff.aceito_em <= Handoff.sla_limite_em,
+                ),
             )
             .select_from(coorte)
             .join(
@@ -308,7 +356,10 @@ async def calcular_indicadores(
                 (Handoff.channel == coorte.c.channel)
                 & (Handoff.conversation_key == coorte.c.conversation_key),
             )
-            .where(Handoff.aceito_em.is_not(None), Handoff.sla_limite_em.is_not(None))
+            .where(
+                Handoff.sla_limite_em.is_not(None),
+                or_(Handoff.aceito_em.is_not(None), Handoff.sla_limite_em < agora),
+            )
         )
     ).one()
     total_com_prazo, no_prazo = int(com_prazo[0]), int(com_prazo[1])
