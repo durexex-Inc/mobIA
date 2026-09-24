@@ -56,7 +56,9 @@ async def _estado(session, channel: str, chave: str) -> LeadQualification | None
 
 
 async def test_sem_vinculo_nao_faz_nada(session) -> None:
-    pares = await absorver_sessoes_vinculadas(get_sessionmaker(), conversation_key=WA_ID)
+    pares = await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
 
     assert pares == ()
     assert await _estado(session, CANAL_WHATSAPP, WA_ID) is None
@@ -66,14 +68,19 @@ async def test_wa_id_estrangeiro_nao_absorve(session) -> None:
     await _sessao_vinculada(session, quartos=2)
 
     assert (
-        await absorver_sessoes_vinculadas(get_sessionmaker(), conversation_key="14155550123") == ()
+        await absorver_sessoes_vinculadas(
+            get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key="14155550123"
+        )
+        == ()
     )
 
 
 async def test_preenche_o_whatsapp_vazio_e_devolve_os_pares(session) -> None:
     sessao = await _sessao_vinculada(session, quartos=2, regiao="Campeche")
 
-    pares = await absorver_sessoes_vinculadas(get_sessionmaker(), conversation_key=WA_ID)
+    pares = await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
 
     assert pares == ((CANAL_WEB, sessao),)
     estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
@@ -86,7 +93,9 @@ async def test_o_que_o_whatsapp_ja_sabe_prevalece(session) -> None:
     session.add(LeadQualification(channel=CANAL_WHATSAPP, conversation_key=WA_ID, quartos=3))
     await session.commit()
 
-    await absorver_sessoes_vinculadas(get_sessionmaker(), conversation_key=WA_ID)
+    await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
 
     estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
     assert (estado.quartos, estado.regiao) == (3, "Campeche")
@@ -101,7 +110,9 @@ async def test_recusas_se_somam(session) -> None:
     )
     await session.commit()
 
-    await absorver_sessoes_vinculadas(get_sessionmaker(), conversation_key=WA_ID)
+    await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
 
     estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
     assert sorted(estado.campos_recusados) == ["faixa_preco", "urgencia"]
@@ -112,7 +123,9 @@ async def test_recusa_web_nao_volta_sobre_campo_preenchido(session) -> None:
     session.add(LeadQualification(channel=CANAL_WHATSAPP, conversation_key=WA_ID, quartos=3))
     await session.commit()
 
-    await absorver_sessoes_vinculadas(get_sessionmaker(), conversation_key=WA_ID)
+    await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
 
     estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
     assert "quartos" not in (estado.campos_recusados or [])
@@ -133,7 +146,9 @@ async def test_recusa_do_orcamento_nao_volta_com_so_um_extremo_preenchido(sessio
     )
     await session.commit()
 
-    await absorver_sessoes_vinculadas(get_sessionmaker(), conversation_key=WA_ID)
+    await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
 
     estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
     assert "faixa_preco_max" not in (estado.campos_recusados or [])
@@ -144,7 +159,9 @@ async def test_nao_grava_no_par_web(session) -> None:
     session.add(LeadQualification(channel=CANAL_WHATSAPP, conversation_key=WA_ID, regiao="Centro"))
     await session.commit()
 
-    await absorver_sessoes_vinculadas(get_sessionmaker(), conversation_key=WA_ID)
+    await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
 
     web = await _estado(session, CANAL_WEB, sessao)
     assert (web.quartos, web.regiao) == (2, None)
@@ -154,8 +171,8 @@ async def test_e_idempotente(session) -> None:
     await _sessao_vinculada(session, quartos=2, campos_recusados=["urgencia"])
     fabrica = get_sessionmaker()
 
-    await absorver_sessoes_vinculadas(fabrica, conversation_key=WA_ID)
-    await absorver_sessoes_vinculadas(fabrica, conversation_key=WA_ID)
+    await absorver_sessoes_vinculadas(fabrica, channel=CANAL_WHATSAPP, conversation_key=WA_ID)
+    await absorver_sessoes_vinculadas(fabrica, channel=CANAL_WHATSAPP, conversation_key=WA_ID)
 
     estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
     assert (estado.quartos, estado.campos_recusados) == (2, ["urgencia"])
@@ -173,6 +190,22 @@ async def test_com_duas_sessoes_vale_a_mais_recente(session) -> None:
     )
     await session.commit()
 
-    await absorver_sessoes_vinculadas(get_sessionmaker(), conversation_key=WA_ID)
+    await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
 
     assert (await _estado(session, CANAL_WHATSAPP, WA_ID)).quartos == 4
+
+
+async def test_canal_que_nao_e_whatsapp_nao_absorve_nem_escreve(session) -> None:
+    """Defesa em profundidade do gate do turno (D1): chamada com canal web, a
+    absorcao devolve `()` sem tocar no banco -- mesmo com uma chave cujos
+    digitos formam o telefone vinculado."""
+    await _sessao_vinculada(session, quartos=2)
+
+    pares = await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WEB, conversation_key=WA_ID
+    )
+
+    assert pares == ()
+    assert await _estado(session, CANAL_WHATSAPP, WA_ID) is None

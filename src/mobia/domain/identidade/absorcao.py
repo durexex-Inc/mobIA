@@ -80,14 +80,24 @@ def _ja_preenchido(destino: LeadQualification, campo: str) -> bool:
 
 
 async def absorver_sessoes_vinculadas(
-    session_factory: async_sessionmaker[AsyncSession], *, conversation_key: str
+    session_factory: async_sessionmaker[AsyncSession], *, channel: str, conversation_key: str
 ) -> tuple[tuple[str, str], ...]:
     """Preenche o estado do WhatsApp com o das sessoes vinculadas; devolve os pares delas.
 
     Os pares vao para `montar_contexto`, que os poe na janela de literais. Sem
     vinculo -- ou com um `wa_id` que nao e brasileiro -- devolve `()` e nao
     escreve nada: o turno segue exatamente como antes desta card.
+
+    **Canal que nao e o WhatsApp devolve `()` sem tocar no banco.** O gate de
+    verdade e o do turno (`executar_turno` so chama isto no WhatsApp); este e
+    a defesa em profundidade dele. Sem ela, uma chamada com o par web -- cujo
+    `conversation_key` e um UUID, e os digitos de um UUID de vez em quando
+    formam um telefone plausivel -- criaria uma linha `whatsapp` fantasma com a
+    chave da sessao e devolveria, para a janela do turno web, as falas de
+    outras sessoes vinculadas a esse numero.
     """
+    if channel != CANAL_WHATSAPP:
+        return ()
     telefone = normalizar(conversation_key)
     if telefone is None:
         return ()

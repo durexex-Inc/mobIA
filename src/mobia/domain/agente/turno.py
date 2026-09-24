@@ -1747,10 +1747,16 @@ async def _executar_turno(
     # do par do WhatsApp (nunca no par web).
     #
     # TEC-129, D4. So no WhatsApp, que e o lado autenticado: a Meta garante o
-    # numero, o site nao garante nada (D1). O turno web NUNCA passa por aqui --
-    # se passasse, quem digitasse o telefone de outra pessoa conversaria com um
-    # agente que conhece a qualificacao dela. Roda antes de `montar_contexto`
-    # porque e la que o estado e lido: preenchido aqui, ele ja chega completo.
+    # numero, o site nao garante nada (D1). O turno web NUNCA passa por aqui.
+    # Se passasse, o que aconteceria nao e o agente web conhecer o WhatsApp --
+    # o estado que ele le continua sendo o do par web -- e sim a absorcao
+    # tratar o UUID da sessao como telefone: quando os digitos dele formam um
+    # numero plausivel, ela criaria uma linha `whatsapp` fantasma com essa
+    # chave e poria na janela do turno web as falas de OUTRAS sessoes
+    # vinculadas a esse numero, de outra pessoa. A funcao recusa o canal por
+    # conta propria tambem (`channel=`); o gate aqui e o que evita ate a
+    # chamada. Roda antes de `montar_contexto` porque e la que o estado e lido:
+    # preenchido aqui, ele ja chega completo.
     #
     # `except Exception` amplo, no molde da captura de reacao logo abaixo: a
     # absorcao e enriquecimento, e o lead que falha nela perde o historico do
@@ -1760,7 +1766,9 @@ async def _executar_turno(
     if message.channel == CANAL_WHATSAPP:
         try:
             pares_vinculados = await absorver_sessoes_vinculadas(
-                session_factory, conversation_key=message.conversation_key
+                session_factory,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
             )
         except Exception:
             log.exception(

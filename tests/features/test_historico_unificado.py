@@ -291,3 +291,34 @@ async def test_absorcao_quebrada_nao_derruba_o_turno(session, redis_pool, monkey
     whatsapp = await _falar_no_whatsapp(redis_pool, "oi", ClassificadorQueGuarda())
 
     assert whatsapp.envios  # o lead recebeu resposta
+
+
+async def test_o_turno_web_nao_chama_a_absorcao(
+    ws_cliente, session, redis_pool, monkeypatch
+) -> None:
+    """O gate de `executar_turno` (D1): so o turno do WhatsApp absorve.
+
+    O duble registra e delega: o turno do WhatsApp, logo abaixo, prova que ele
+    esta no caminho -- sem isso um `[]` passaria tambem com o duble no lugar
+    errado.
+    """
+    import mobia.domain.agente.turno as turno
+
+    chamadas: list[str] = []
+    original = turno.absorver_sessoes_vinculadas
+
+    async def registrando(*args: Any, **kwargs: Any) -> tuple[tuple[str, str], ...]:
+        chamadas.append(kwargs["channel"])
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(turno, "absorver_sessoes_vinculadas", registrando)
+    await _falar_no_site(
+        ws_cliente,
+        redis_pool,
+        [f"meu whats e {TELEFONE_DIGITADO}", "quero 2 quartos"],
+        ClassificadorQueGuarda(),
+    )
+    assert chamadas == []
+
+    await _falar_no_whatsapp(redis_pool, "oi", ClassificadorQueGuarda())
+    assert chamadas == [CANAL_WHATSAPP]
