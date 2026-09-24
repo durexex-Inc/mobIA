@@ -24,12 +24,14 @@ from scripts.comentarios_tocados import (
     _docstrings,
     ancora_quebrada,
     ancoras_do_texto,
+    checar_documento,
     citacoes_do_texto,
     classificar,
     examinar,
     examinar_prosa,
     limitar,
     limitar_citacoes,
+    linhas_cercadas,
     nomes_definidos,
     resolver,
     scripts_nomeados,
@@ -1023,3 +1025,68 @@ def test_ancora_em_arquivo_que_nao_parseia_nao_e_quebrada() -> None:
     `tamanho_de` devolver `maxsize`."""
     nomes = _nomes({"a/x.py": None, "b/x.py": {"Y"}})
     assert not ancora_quebrada(["a/x.py", "b/x.py"], "Z", nomes)
+
+
+def test_linhas_cercadas_com_crases_e_tis() -> None:
+    texto = "a\n```bash\nb\n```\nc\n~~~\nd\n~~~\ne\n"
+    assert linhas_cercadas(texto) == {2, 3, 4, 6, 7, 8}
+
+
+def test_cerca_so_fecha_com_o_mesmo_caractere() -> None:
+    texto = "```\na\n~~~\nb\n```\nc\n"
+    assert linhas_cercadas(texto) == {1, 2, 3, 4, 5}
+
+
+def test_cerca_nao_fechada_vai_ate_o_fim() -> None:
+    """Como no CommonMark: o resto do documento e codigo."""
+    assert linhas_cercadas("a\n```\nb\nc\n") == {2, 3, 4}
+
+
+def test_cerca_com_info_string_nao_fecha() -> None:
+    assert linhas_cercadas("```\na\n```python\nb\n```\n") == {1, 2, 3, 4, 5}
+
+
+def test_linhas_adicionadas_em_documentos(monkeypatch) -> None:
+    saida = "+++ b/CLAUDE.md\n@@ -1 +3,2 @@\n+++ b/docs/x.md\n@@ -4 +9 @@\n"
+    monkeypatch.setattr(ferramenta, "_rodar", lambda *_: saida)
+    assert ferramenta.linhas_adicionadas_em_documentos("qualquer") == {
+        "CLAUDE.md": {3, 4},
+        "docs/x.md": {9},
+    }
+
+
+def _nomes_fixos(caminho: str) -> set[str] | None:
+    return {"a/turno.py": {"existe"}}.get(caminho)
+
+
+def test_checar_documento_marca_ancora_quebrada() -> None:
+    texto = "ok `turno.py::existe`\nruim `turno.py::sumiu`\n"
+    achados = checar_documento("d.md", texto, set(), {"a/turno.py"}, _nomes_fixos)
+    assert [(c.linha, c.texto, c.marca) for c in achados] == [(2, "turno.py::sumiu", "ANCORA")]
+
+
+def test_checar_documento_verifica_ancora_dentro_de_cerca() -> None:
+    """A isencao de bloco cercado e so de LINHA: ancora quebrada e falsa em
+    qualquer contexto."""
+    texto = "```\nturno.py::sumiu\n```\n"
+    achados = checar_documento("d.md", texto, set(), {"a/turno.py"}, _nomes_fixos)
+    assert [c.marca for c in achados] == ["ANCORA"]
+
+
+def test_checar_documento_marca_linha_so_em_linha_acrescentada() -> None:
+    texto = "antiga turno.py:10\nnova turno.py:20-30\n"
+    achados = checar_documento("d.md", texto, {2}, {"a/turno.py"}, _nomes_fixos)
+    assert [(c.linha, c.texto, c.marca) for c in achados] == [(2, "turno.py:20-30", "LINHA")]
+
+
+def test_checar_documento_isenta_linha_acrescentada_dentro_de_cerca() -> None:
+    """Traceback e saida de pytest vivem em bloco cercado: sao citacao de
+    saida, nao afirmacao sobre o codigo."""
+    texto = "```\ntests/x.py:123: AssertionError\n```\n"
+    assert checar_documento("d.md", texto, {1, 2, 3}, set(), _nomes_fixos) == []
+
+
+def test_checar_documento_marca_linha_mesmo_sem_resolver() -> None:
+    """LINHA e sobre a forma da citacao, nao sobre o alvo."""
+    achados = checar_documento("d.md", "fora.py:3\n", {1}, set(), _nomes_fixos)
+    assert [c.marca for c in achados] == ["LINHA"]

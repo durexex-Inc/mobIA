@@ -137,6 +137,10 @@ MAXIMO_DE_CITACOES_POR_DOCUMENTO = 5
 # acontecer.
 BALDE_DO_MODULO = "<modulo>"
 
+# Abertura ou fechamento de bloco cercado: ate tres espacos, e tres ou mais
+# crases ou tis.
+_CERCA = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
 # Planos de implementacao ficam fora da varredura de prosa.
 #
 # Um plano registra o que se fez numa branch num dia: ele nao afirma o que o
@@ -195,20 +199,17 @@ def _rodar(*argumentos: str) -> str:
     return resultado.stdout
 
 
-def linhas_alteradas(base: str) -> dict[Path, set[int]]:
-    """Por arquivo .py, as linhas que esta branch acrescentou ou mexeu.
+def _linhas_do_diff(saida: str) -> dict[str, set[int]]:
+    """Por arquivo, as linhas que um `git diff --unified=0` acrescentou.
 
-    `--unified=0` porque aqui nao se quer contexto: uma linha so entra se o diff
-    de fato a tocou. Com o contexto padrao de 3 linhas, todo comentario vizinho
-    de qualquer mudanca entraria como ALTERADO e a distincao que este script
-    existe para fazer desapareceria.
+    Compartilhada entre o diff de `.py` e o de `.md`: as duas leituras tem de
+    concordar sobre o que e linha acrescentada, e dois parsers divergiriam.
     """
-    saida = _rodar("diff", "--unified=0", f"{base}...HEAD", "--", "*.py")
-    por_arquivo: dict[Path, set[int]] = {}
+    por_arquivo: dict[str, set[int]] = {}
     atual: set[int] | None = None
     for linha in saida.splitlines():
         if linha.startswith("+++ b/"):
-            atual = por_arquivo.setdefault(Path(linha[6:]), set())
+            atual = por_arquivo.setdefault(linha[6:], set())
         elif linha.startswith("+++ /dev/null"):
             atual = None
         elif atual is not None and (casa := _CABECALHO.match(linha)):
@@ -218,6 +219,27 @@ def linhas_alteradas(base: str) -> dict[Path, set[int]]:
             quantas = int(casa.group(2)) if casa.group(2) is not None else 1
             atual.update(range(inicio, inicio + quantas))
     return {arquivo: linhas for arquivo, linhas in por_arquivo.items() if linhas}
+
+
+def linhas_alteradas(base: str) -> dict[Path, set[int]]:
+    """Por arquivo .py, as linhas que esta branch acrescentou ou mexeu.
+
+    `--unified=0` porque aqui nao se quer contexto: uma linha so entra se o diff
+    de fato a tocou. Com o contexto padrao de 3 linhas, todo comentario vizinho
+    de qualquer mudanca entraria como ALTERADO e a distincao que este script
+    existe para fazer desapareceria.
+    """
+    saida = _rodar("diff", "--unified=0", f"{base}...HEAD", "--", "*.py")
+    return {Path(arquivo): linhas for arquivo, linhas in _linhas_do_diff(saida).items()}
+
+
+def linhas_adicionadas_em_documentos(base: str) -> dict[str, set[int]]:
+    """Por .md, as linhas que esta branch acrescentou -- o alcance de LINHA.
+
+    Chave em texto com barra normal, como o git devolve e como
+    `_documentos_no_escopo` lista: as duas se cruzam por igualdade.
+    """
+    return _linhas_do_diff(_rodar("diff", "--unified=0", f"{base}...HEAD", "--", "*.md"))
 
 
 def _comentarios(fonte: str) -> list[tuple[int, str]]:
@@ -435,6 +457,63 @@ def ancora_quebrada(
     if not candidatos:
         return False
     return all((nomes := nomes_de(c)) is not None and nome not in nomes for c in candidatos)
+
+
+def linhas_cercadas(texto: str) -> set[int]:
+    """As linhas do documento que estao dentro de bloco cercado, cercas inclusas.
+
+    Regra do CommonMark, no que importa aqui: fecha com o mesmo caractere, com
+    pelo menos o mesmo comprimento e sem nada depois; bloco nao fechado vai ate
+    o fim do documento.
+    """
+    dentro: set[int] = set()
+    aberta = ""
+    for numero, linha in enumerate(texto.splitlines(), 1):
+        casa = _CERCA.match(linha)
+        if not aberta:
+            if casa:
+                aberta = casa.group(1)
+                dentro.add(numero)
+            continue
+        dentro.add(numero)
+        if (
+            casa
+            and casa.group(1)[0] == aberta[0]
+            and len(casa.group(1)) >= len(aberta)
+            and not casa.group(2).strip()
+        ):
+            aberta = ""
+    return dentro
+
+
+def checar_documento(
+    documento: str,
+    texto: str,
+    adicionadas: set[int],
+    arquivos_py: set[str],
+    nomes_de: Callable[[str], set[str] | None],
+) -> list[Citacao]:
+    """As duas marcas que reprovam: ANCORA e LINHA.
+
+    ANCORA vale para o documento inteiro, e nao so para arquivos que a branch
+    mexeu -- o invariante e "toda ancora resolve", e ele so se sustenta se for
+    verificado sempre. LINHA vale so para linha que a branch acrescentou, fora
+    de bloco cercado: e assim que a citacao antiga fica onde esta ate alguem
+    editar a linha dela, e ai a conversao e obrigatoria.
+
+    Puro de proposito, como `examinar_prosa`.
+    """
+    achados = []
+    for linha, alvo, nome in ancoras_do_texto(texto):
+        if ancora_quebrada(resolver(alvo, arquivos_py), nome, nomes_de):
+            achados.append(Citacao(documento, linha, f"{alvo}::{nome}", "ANCORA"))
+    if adicionadas:
+        cercadas = linhas_cercadas(texto)
+        for linha, alvo, inicio, fim in citacoes_do_texto(texto):
+            if linha in adicionadas and linha not in cercadas:
+                citada = f"{inicio}-{fim}" if inicio != fim else f"{inicio}"
+                achados.append(Citacao(documento, linha, f"{alvo}:{citada}", "LINHA"))
+    return sorted(achados, key=lambda c: c.linha)
 
 
 def classificar(
