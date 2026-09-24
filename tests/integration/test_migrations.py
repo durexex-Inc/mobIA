@@ -381,3 +381,30 @@ async def test_a_0037_desce_e_sobe_de_novo() -> None:
         assert set(
             await sessao.scalar(_LISTAR_CONSTRAINTS, {"nomes": list(_CONSTRAINTS_DA_0037)})
         ) == set(_CONSTRAINTS_DA_0037)
+
+
+async def test_a_0044_desce_e_sobe_de_novo() -> None:
+    """A tabela some no downgrade, mas a `btree_gist` fica -- de proposito.
+
+    Mesma razao das duas acima: `agendamentos` e a exclusao nascem de
+    `op.execute`/`op.create_table`, nao do autogenerate, entao nada garante o
+    downgrade sozinho. A extensao e o caso diferente: como o `vector` da 0017,
+    o downgrade nao a remove porque outra coisa pode ja depender dela, entao
+    a asserta e que ela CONTINUA la, nao que sumiu.
+    """
+    await dispose_engine()
+    alembic("downgrade", "0043")
+    try:
+        async with get_sessionmaker()() as sessao:
+            assert await sessao.scalar(text("SELECT to_regclass('public.agendamentos')")) is None
+            assert (
+                await sessao.scalar(text("SELECT 1 FROM pg_extension WHERE extname = 'btree_gist'"))
+                == 1
+            )
+    finally:
+        await dispose_engine()
+        alembic("upgrade", "head")
+        await dispose_engine()
+
+    async with get_sessionmaker()() as sessao:
+        assert await sessao.scalar(text("SELECT to_regclass('public.agendamentos')")) is not None
