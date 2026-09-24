@@ -144,6 +144,10 @@ Não estava neste desenho e devia estar. Duas semânticas eram possíveis.
 
 A D9 acima especifica um Route Handler como proxy. O plano do frontend usa, em vez dele, um **Server Component que busca o FastAPI direto no servidor**. A propriedade aprovada é idêntica — o token vive em env do servidor e nunca chega ao navegador — e o argumento do rate limit também continua valendo, porque `fetch(..., { next: { revalidate: 60 } })` põe a resposta no Data Cache do Next e N navegadores viram uma chamada por minuto ao FastAPI. O que some é um hop e um arquivo.
 
+> **Emenda (TEC-302, 24/09/2026): o Route Handler voltou a existir, e o painel continua sem passar por ele.**
+> `/bff/[...rota]` existe desde a TEC-302, com allowlist, recusa por `Origin` e propagação de `X-Request-Id`. O painel **não** o usa: a busca do funil continua saindo do Server Component, pelas três razões que aquele desenho registra — o salto custaria o `revalidate: 60` de que este parágrafo depende, um round-trip do processo para ele mesmo, e auto-fetch durante SSR.
+> O que a TEC-302 mudou no caminho do painel foi outra coisa: a leitura de `MOBIA_ADMIN_TOKEN` saiu de `metricas.ts` para `lib/servidor/api.ts`, que importa `server-only` e é a única porta do projeto para o FastAPI. Quem ler esta D9 procurando o proxy do painel não vai achar, e é isso mesmo.
+
 ## Emenda à D5 — o cache foi recusado, e a recusa é medida
 
 A D5 condicionou o cache à medição. Ela foi feita em 24/09/2026 (`tests/perf/test_funil_latency.py`): **p95 de 0,068 s sem filtro e 0,065 s por corretor, com 1.000 leads, contra o teto de 2 s da RNF-04** — cerca de 29× de margem. Não há cache nesta card. A docstring do teste registra quando reabrir a conta: base dez vezes maior, ou p95 passando de ~1 s.
