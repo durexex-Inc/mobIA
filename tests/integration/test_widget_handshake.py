@@ -271,3 +271,24 @@ async def test_id_que_nao_e_texto_fecha_com_1002(ws_cliente) -> None:
         await _cumprimentar(ws)
         await ws.enviar({"tipo": "mensagem", "id": 5, "texto": "oi"})
         assert await ws.fechamento() == 1002
+
+
+async def test_o_raw_payload_guarda_so_as_chaves_do_protocolo(ws_cliente, session) -> None:
+    """O `texto` tem teto, e a chave extra nao tinha nenhum -- so os 16 MB do uvicorn.
+
+    Sessao e de graca, entao gravar o frame inteiro deixava qualquer um encher
+    `messages.raw_payload` de lixo cifrado a ~16 MB por mensagem.
+    """
+    from mobia.infra.crypto import aad_de, decrypt_json
+
+    async with ws_cliente() as ws:
+        await _cumprimentar(ws)
+        await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "oi", "lixo": "x" * 10_000})
+        await ws.receber()
+
+    linha = (await session.execute(select(Message))).scalar_one()
+    assert decrypt_json(linha.raw_payload, aad_de(linha.id, "raw_payload")) == {
+        "tipo": "mensagem",
+        "id": "m-1",
+        "texto": "oi",
+    }

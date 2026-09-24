@@ -337,7 +337,11 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
                         recipient_external_id=REMETENTE_DO_WIDGET,
                         content_type=MessageContentType.TEXTO,
                         text_body=texto,
-                        raw_payload=frame,
+                        # So as chaves do protocolo, e nao o frame inteiro:
+                        # o `texto` tem teto, uma chave extra nao tinha
+                        # nenhum alem dos 16 MB do uvicorn, e sessao e de
+                        # graca -- gravar tudo deixava encher a coluna de lixo.
+                        raw_payload={"tipo": TIPO_MENSAGEM, "id": bruto_id, "texto": texto},
                     )
                 ],
                 channel=CANAL_WEB,
