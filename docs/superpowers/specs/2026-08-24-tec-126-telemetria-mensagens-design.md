@@ -210,10 +210,10 @@ ajuste.
 
 | Cenário Gherkin | Teste |
 |---|---|
-| Registrar mensagem de entrada do lead | `test_telemetria_de_mensagens.py::test_entrada_persiste_com_papel_e_tipo` |
-| Registrar resposta do agente com custo | `test_telemetria_de_mensagens.py::test_resposta_do_agente_traz_custo` |
-| Conteúdo pessoal não vaza para o log | `test_telemetria_de_mensagens.py::test_telefone_sai_mascarado` |
-| Falha de telemetria não derruba o atendimento | `test_telemetria_de_mensagens.py::test_falha_de_telemetria_preserva_a_mensagem` |
+| Registrar mensagem de entrada do lead | `tests/features/test_telemetria_de_mensagens.py::test_registrar_mensagem_de_entrada_do_lead` |
+| Registrar resposta do agente com custo | `tests/features/test_telemetria_de_mensagens.py::test_registrar_resposta_do_agente_com_custo` |
+| Conteúdo pessoal não vaza para o log | `tests/features/test_telemetria_de_mensagens.py::test_conteudo_pessoal_nao_vaza_para_o_log` |
+| Falha de telemetria não derruba o atendimento | `tests/features/test_telemetria_de_mensagens.py::test_falha_de_telemetria_nao_derruba_o_atendimento` |
 
 Integração adicional, cobrindo o que os critérios implicam mas não enunciam:
 

@@ -43,7 +43,7 @@ raise ModeracaoIndisponivel(motivo_do_provedor(exc) or type(exc).__name__) from 
 
 `motivo_do_provedor` (`infra/anthropic.py:173`) devolve até 300 caracteres da `error.message` de um `APIStatusError` — prosa que o servidor da Anthropic escreveu em resposta a uma requisição cujo corpo é o texto moderado.
 
-O caminho até a coluna é direto e está declarado por escrito no código. Na moderação de **saída** não há falha aberta, de propósito (`turno.py:2160-2164`: *"A excecao propaga: a linha vira FAILED com `attempts` e o sweeper retenta"*). Ela sobe de `turno.py:2176` ao `except Exception` de `process_message.py`, e de lá para `_marcar_falha`.
+O caminho até a coluna é direto e está declarado por escrito no código. Na moderação de **saída** não há falha aberta, de propósito (`turno.py::_executar_turno`, no comentário que abre a moderação de saída: *"A excecao propaga: a linha vira FAILED com `attempts` e o sweeper retenta"*). Ela sobe de `turno.py::_executar_turno` ao `except Exception` de `process_message.py::process_message`, e de lá para `_marcar_falha`.
 
 > Os números de linha desta seção descrevem a árvore **antes** desta branch, que é o estado que o desenho analisa. Em `process_message.py` eles já não valem: partir a função moveu tudo abaixo dela, e o `except Exception` que era a linha 291 passou a ser a 325. Citar o `except` pelo nome em vez do número é o que impede esta frase de envelhecer de novo.
 
