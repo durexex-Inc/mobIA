@@ -196,3 +196,40 @@ async def test_json_aninhado_demais_fecha_com_1002(ws_cliente) -> None:
         await ws.aceitar()
         await ws.enviar_cru("[" * 100_000 + "]" * 100_000)
         assert await ws.fechamento() == 1002
+
+
+async def test_falha_ao_ler_o_historico_fecha_com_1011(ws_cliente, monkeypatch) -> None:
+    """A falha no anuncio nao pode sair crua pelo uvicorn nem deixar o socket aberto."""
+
+    async def _historico_que_cai(*args, **kwargs):
+        raise RuntimeError("banco fora")
+
+    monkeypatch.setattr("mobia.api.routes.widget.historico_da_sessao", _historico_que_cai)
+
+    async with ws_cliente() as ws:
+        await ws.aceitar()
+        await ws.enviar({"tipo": "ola", "sessao": "8c0f0a3e-0000-4000-8000-0000000000ef"})
+        assert (await ws.receber())["tipo"] == "sessao"
+        assert await ws.fechamento() == 1011
+
+
+async def test_excecao_numa_tarefa_fecha_com_1011_e_deixa_rastro(
+    ws_cliente, monkeypatch, caplog
+) -> None:
+    """A tarefa que morre de excecao nao pode sumir no `gather`.
+
+    O caso real e a escrita no socket falhando por um motivo que nao e a
+    desconexao; o duble aqui faz a tarefa de entrada levantar logo de cara,
+    que e o jeito mais direto de exercitar o mesmo ramo.
+    """
+
+    async def _entrada_que_cai(*args, **kwargs):
+        raise RuntimeError("defeito")
+
+    monkeypatch.setattr("mobia.api.routes.widget._ler_do_lead", _entrada_que_cai)
+
+    async with ws_cliente() as ws:
+        await _cumprimentar(ws)
+        assert await ws.fechamento() == 1011
+
+    assert "widget.falhou" in caplog.text

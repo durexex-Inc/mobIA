@@ -22,6 +22,7 @@ ida e na retomada.
 import asyncio
 import json
 import uuid
+from contextlib import suppress
 from typing import Any
 
 import structlog
@@ -113,18 +114,52 @@ async def chat(
         try:
             # A primeira que terminar decide: a visitante fechou a aba, ou o
             # socket morreu escrevendo. A outra nao tem mais para quem falar.
-            await asyncio.wait({entrada, saida}, return_when=asyncio.FIRST_COMPLETED)
+            feitas, _ = await asyncio.wait({entrada, saida}, return_when=asyncio.FIRST_COMPLETED)
         finally:
             for tarefa in (entrada, saida):
                 tarefa.cancel()
-            # `return_exceptions` para o cancelamento de uma nao esconder a
-            # excecao da outra, nem vazar "Task exception was never
-            # retrieved" no log.
+            # O `gather` so recolhe: sem ele a tarefa cancelada vazaria "Task
+            # exception was never retrieved" no log. Ele NAO e quem expoe a
+            # falha -- `return_exceptions` a devolveria numa lista que
+            # ninguem le. Quem expoe e a checagem logo abaixo, sobre a tarefa
+            # que terminou primeiro.
             await asyncio.gather(entrada, saida, return_exceptions=True)
+        falha = _falha_de(feitas)
+        if falha is not None:
+            raise falha
+    except Exception as exc:
+        # O anuncio (a leitura do historico) e as duas tarefas caem aqui. Sem
+        # este ramo a excecao escapava do endpoint e o uvicorn a logava crua
+        # -- ou, vinda de uma tarefa, sumia no `gather` e o socket fechava sem
+        # codigo, com o cliente vendo 1006 e o servidor sem rastro nenhum.
+        log.exception(
+            "widget.falhou",
+            sessao=sessao,
+            reason=type(exc).__name__,
+            detail=motivo_do_erro_de_banco(exc),
+        )
+        with suppress(RuntimeError, WebSocketDisconnect):
+            # O socket pode ja ter ido embora; ai nao ha a quem avisar.
+            await websocket.close(code=CODIGO_INDISPONIVEL)
     finally:
         # Sem isto a central guardaria a fila de toda aba que ja fechou.
         central.fechar(sessao, fila)
         log.info("widget.desconectado", sessao=sessao)
+
+
+def _falha_de(feitas: set[asyncio.Task[None]]) -> BaseException | None:
+    """A excecao de verdade de quem terminou primeiro, se houve uma.
+
+    `WebSocketDisconnect` nao conta: e a visitante indo embora, o fim normal
+    de toda conversa, e logar isso como falha sujaria o log a cada aba fechada.
+    """
+    for tarefa in feitas:
+        if tarefa.cancelled():
+            continue
+        excecao = tarefa.exception()
+        if excecao is not None and not isinstance(excecao, WebSocketDisconnect):
+            return excecao
+    return None
 
 
 async def _cabe_no_limite_por_ip(websocket: WebSocket, pool: Any) -> bool:
