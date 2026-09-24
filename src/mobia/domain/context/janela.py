@@ -103,10 +103,16 @@ def dividir(
     de 12.000 tokens existem -- vinte audios transcritos longos chegam la -- e
     quando o piso e o teto se contradizem o teto vence: ele e o limite fisico
     da chamada, o piso e preferencia de qualidade. Com a flag ligada o piso
-    efetivo passa a ser uma mensagem, a mais recente: e a fala a que o modelo
-    tem de responder, e sem ela nao ha turno. O opt-in e explicito porque
-    violar o piso e decisao de dominio, nao detalhe de implementacao -- quem
-    chama tem de dizer, na chamada, que aceita a violacao.
+    efetivo passa a ser uma mensagem, a mais recente da lista. Sem sessao
+    vinculada essa e sempre a fala a que o modelo tem de responder, e sem ela
+    nao ha turno. Com sessao vinculada (TEC-129, D4) `literais` intercala
+    falas web, e a mais recente da lista pode ser uma fala web mais nova que a
+    mensagem deste turno -- caso raro, exige atividade concorrente nos dois
+    canais mais estouro de teto no mesmo turno: a mensagem respondida entao
+    NAO e a que sobrevive, e pode ser dobrada para o resumo. O opt-in e
+    explicito porque violar o piso e decisao de dominio, nao detalhe de
+    implementacao -- quem chama tem de dizer, na chamada, que aceita a
+    violacao.
     """
     piso = 1 if piso_pode_ceder else minimas
     if len(literais) <= piso:

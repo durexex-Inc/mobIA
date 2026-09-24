@@ -527,6 +527,15 @@ def _fronteira_do_silencio(literais: list[Message]) -> int | None:
     tambem nao tem intervalo: nao ha conversa nova dentro desta lista para
     separar da anterior.
 
+    **Desde a TEC-129, `literais` pode intercalar falas web de sessoes
+    vinculadas (D4) com as do proprio par.** O predicado nao distingue par: se
+    o ultimo literal web for mais de 30 dias anterior ao primeiro literal do
+    WhatsApp, esse intervalo E o ultimo, e a dobra forcada roda no primeiro
+    turno do WhatsApp -- pagando a chamada do resumidor uma vez para dobrar a
+    sessao web junto com o que vier antes dela. `_dobrar` so escreve no par do
+    turno (o WhatsApp), entao a dobra nunca grava no par web. Ver
+    `montar_contexto`, o parametro `pares_vinculados`.
+
     A comparacao e estrita (`>`, nao `>=`) para casar com `e_conversa_nova`,
     que conta `created_at >= agora - 30d` como interacao recente: exatamente
     30 dias ainda nao abre conversa nova. As duas leituras compartilham
@@ -916,8 +925,10 @@ async def _dobrar(
         # **`manter_literais` nao e `piso_pode_ceder`.** Aquele cede o piso
         # para UMA mensagem, por causa do estouro de teto; este diz onde a
         # conversa anterior acabou. Os dois convergem em manter a mais recente,
-        # que e a invariante que `janela.dividir` ja declara no comentario de
-        # `piso_pode_ceder` -- a fala a que o modelo responde tem de sobrar --,
+        # que e a invariante que `janela.dividir` declara no comentario de
+        # `piso_pode_ceder` -- a fala a que o modelo responde tem de sobrar,
+        # exceto no caso raro (TEC-129, D4) que aquele comentario tambem
+        # registra: sessao web vinculada com fala mais nova que a do turno --,
         # e por isso combina-los (ainda inalcancavel: os dois call sites de
         # `_dobrar` sao disjuntos) nao produz surpresa: `dividir` calcula
         # `piso = 1 if piso_pode_ceder else minimas`, e os dois lados sao >= 1.

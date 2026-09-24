@@ -1740,6 +1740,12 @@ async def _executar_turno(
     # modo que `e_conversa_nova` devolvia False exatamente na reabertura em
     # que a dobra tinha de acontecer.
     #
+    # TEC-129, D4: os `pares_vinculados` absorvidos abaixo entram nos literais
+    # que `_fronteira_do_silencio` olha -- o silencio entre a ultima fala web e
+    # a primeira do WhatsApp pode ser o ultimo intervalo e disparar a dobra ja
+    # no primeiro turno do WhatsApp. A dobra continua escrevendo so no resumo
+    # do par do WhatsApp (nunca no par web).
+    #
     # TEC-129, D4. So no WhatsApp, que e o lado autenticado: a Meta garante o
     # numero, o site nao garante nada (D1). O turno web NUNCA passa por aqui --
     # se passasse, quem digitasse o telefone de outra pessoa conversaria com um

@@ -93,6 +93,8 @@ A absorção é **idempotente** e roda em todo turno: isso cobre a sessão web q
 
 A intenção entra pela coluna `lead_qualification.intencao`, que é um dos critérios da primeira linha.
 
+**Consequência declarada: a dobra por silêncio também enxerga o web.** As falas web entram na mesma janela de literais que alimenta `_fronteira_do_silencio` (TEC-130, D4) — se o último literal web for mais de 30 dias anterior ao primeiro literal do WhatsApp, a dobra forçada dispara já no primeiro turno do WhatsApp, e o resumidor paga uma chamada para dobrar a sessão web inteira junto com o que veio antes dela no par do WhatsApp. A dobra escreve só no resumo do par do WhatsApp — nunca no par web (D1), consistente com o resto desta seção.
+
 **O que não é absorvido, e por quê:**
 
 - **`recomendacoes`** — *retirado depois da aprovação das seções, ao ler o código para o plano.* A linha sem reação (`reacao_lead IS NULL`) é o gatilho da chamada de reação, e a ordem das linhas é o ordinal de "o segundo" (`ler_pendentes`, `domain/agente/repositorio.py`). Copiada para o par do WhatsApp, uma apresentação feita no site dispararia no WhatsApp a pergunta sobre um imóvel que a conversa dali nunca mostrou, e deslocaria o ordinal das apresentações do próprio WhatsApp. **Consequência:** o agente pode reapresentar no WhatsApp um imóvel que a pessoa já viu no site.
@@ -138,3 +140,4 @@ As duas últimas são lacunas declaradas — decisão de produto, que vai no com
 - A transcrição do dossiê com as falas web, e o funil contando o lead vinculado uma vez só.
 - Imóveis apresentados no site contando como já vistos no WhatsApp (ver D4).
 - Uma entidade `leads` com `lead_id` — o modelo do SRS, que custaria migrar as ~15 tabelas. Se um dia for necessária, é card própria.
+- `e_conversa_nova` (`domain/agente/identificacao.py`) só consulta o par do próprio turno — o lado WhatsApp. O agente se apresenta de novo no WhatsApp mesmo quando o contexto já carrega a conversa herdada do web; a absorção da D4 não alimenta esse predicado.

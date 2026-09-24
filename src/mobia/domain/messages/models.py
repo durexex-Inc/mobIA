@@ -40,8 +40,10 @@ class Message(Base):
     # par como chave -- ela guarda SE a conversa esta encerrada, nao onde uma
     # sessao termina e a proxima comeca. As duas cards que ainda faltam sao
     # concerns diferentes: a TEC-130 encerra por inatividade (e estende aquela
-    # entidade, ver a Emenda E-02 da RN-02.3) e a TEC-129 e o historico
-    # multicanal, que e quem daria a esta coluna um id proprio de conversa.
+    # entidade, ver a Emenda E-02 da RN-02.3) e a TEC-129 ligou o historico
+    # multicanal SEM mexer nesta coluna -- a sessao web e o numero do WhatsApp
+    # continuam pares distintos, e `vinculos_de_sessao`
+    # (`domain/identidade/models.py`) e quem diz que um aponta para o outro.
     conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     direction: Mapped[str] = mapped_column(String(8), nullable=False)
