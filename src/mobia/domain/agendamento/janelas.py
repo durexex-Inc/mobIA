@@ -1,10 +1,11 @@
 """Ate 3 janelas de horario em que uma visita ou reuniao caberia. TEC-165, RN-11.1.
 
 Puro: nao toca banco, rede nem relogio -- `agora` entra como parametro, como
-em todo o dominio. **Nenhum codigo de producao chama este modulo ainda.** A
-conversa so passa a oferecer horario quando houver como grava-lo (TEC-168) e
-a quem atribui-lo (TEC-166); oferecer antes seria prometer o que o sistema
-nao faz. Ver docs/superpowers/specs/2026-09-24-tec-165-propor-janelas-design.md.
+em todo o dominio. **Nenhum caminho de producao chega aqui ainda:** o unico
+chamador e `janelas_para`, em `data_falada.py` (TEC-167), que tambem nao tem
+chamador. A conversa so passa a oferecer horario quando houver como grava-lo
+(TEC-168) e a quem atribui-lo (TEC-166); oferecer antes seria prometer o que
+o sistema nao faz. Ver docs/superpowers/specs/2026-09-24-tec-165-propor-janelas-design.md.
 """
 
 import uuid
