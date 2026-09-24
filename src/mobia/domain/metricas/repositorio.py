@@ -10,6 +10,7 @@ Funcoes livres com `session` posicional e o resto keyword-only, sem commit --
 a convencao dos dez repositorios deste repo.
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import Select, func, select
@@ -17,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.conversa.models import Conversa
+from mobia.domain.conversa.vocabulario import Status
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.messages.enums import MessageDirection
 from mobia.domain.messages.models import Message
@@ -153,3 +156,172 @@ async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etap
         Etapa.RECOMENDADO: recomendados,
         Etapa.HANDOFF_ACEITO: aceitos,
     }
+
+
+@dataclass(frozen=True)
+class Indicadores:
+    """Os indicadores da RN-17.1 que tem fonte.
+
+    Os quatro de agendamento NAO estao aqui: nao ha tabela, e quem os poe
+    nulos na resposta e a rota, a partir de `INDICADORES_SEM_FONTE`.
+
+    **Nulo e "nao ha o que medir", e nunca zero.** Uma coorte vazia da
+    `taxa_qualificacao` nula porque 0/0 nao e 0% -- dizer 0% afirmaria que
+    ninguem qualificou, quando nao houve ninguem.
+    """
+
+    conversas_ativas: int
+    taxa_qualificacao: float | None
+    distribuicao_por_temperatura: dict[str, int]
+    tempo_medio_primeira_resposta_seg: float | None
+    tempo_medio_qualificacao_seg: float | None
+    sla_handoff_cumprido_pct: float | None
+
+
+async def calcular_indicadores(
+    session: AsyncSession, *, recorte: Recorte, novos: int
+) -> Indicadores:
+    """Os indicadores da RN-17.1, todos sobre a mesma coorte da D10.
+
+    `novos` vem de fora, ja contado por `contar_etapas`: e o denominador da
+    taxa de qualificacao, e recontar aqui seria uma segunda consulta com a
+    mesma resposta.
+    """
+    coorte = _coorte(recorte).subquery()
+
+    ativas = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(coorte)
+                .join(
+                    Conversa,
+                    (Conversa.channel == coorte.c.channel)
+                    & (Conversa.conversation_key == coorte.c.conversation_key),
+                )
+                .where(Conversa.status == Status.ATIVA)
+            )
+        ).scalar_one()
+    )
+
+    qualificados = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(coorte)
+                .join(
+                    LeadQualification,
+                    (LeadQualification.channel == coorte.c.channel)
+                    & (LeadQualification.conversation_key == coorte.c.conversation_key),
+                )
+                .where(LeadQualification.qualificado_em.is_not(None))
+            )
+        ).scalar_one()
+    )
+
+    temperaturas = {
+        str(faixa): int(quantos)
+        for faixa, quantos in (
+            await session.execute(
+                select(LeadQualification.temperatura, func.count())
+                .select_from(coorte)
+                .join(
+                    LeadQualification,
+                    (LeadQualification.channel == coorte.c.channel)
+                    & (LeadQualification.conversation_key == coorte.c.conversation_key),
+                )
+                .where(LeadQualification.temperatura.is_not(None))
+                .group_by(LeadQualification.temperatura)
+            )
+        ).all()
+    }
+
+    # Por lead: o instante da primeira fala dele e o da primeira saida nossa.
+    # `MIN` dos dois na mesma agregacao, e a media das diferencas so de quem
+    # tem os dois -- o lead nunca respondido fica FORA da media, porque
+    # conta-lo como zero baixaria o indicador justamente quando o atendimento
+    # esta pior.
+    por_lead = (
+        select(
+            Message.channel.label("channel"),
+            Message.conversation_key.label("conversation_key"),
+            func.min(Message.created_at)
+            .filter(Message.direction == MessageDirection.INBOUND)
+            .label("falou_em"),
+            func.min(Message.created_at)
+            .filter(Message.direction == MessageDirection.OUTBOUND)
+            .label("respondeu_em"),
+        )
+        .group_by(Message.channel, Message.conversation_key)
+        .subquery()
+    )
+    primeira_resposta = (
+        await session.execute(
+            select(func.avg(func.extract("epoch", por_lead.c.respondeu_em - por_lead.c.falou_em)))
+            .select_from(coorte)
+            .join(
+                por_lead,
+                (por_lead.c.channel == coorte.c.channel)
+                & (por_lead.c.conversation_key == coorte.c.conversation_key),
+            )
+            .where(por_lead.c.respondeu_em.is_not(None), por_lead.c.falou_em.is_not(None))
+        )
+    ).scalar_one_or_none()
+
+    nascimento = _nascimento()
+    ate_qualificar = (
+        await session.execute(
+            select(
+                func.avg(
+                    func.extract("epoch", LeadQualification.qualificado_em - nascimento.c.nasceu_em)
+                )
+            )
+            .select_from(coorte)
+            .join(
+                nascimento,
+                (nascimento.c.channel == coorte.c.channel)
+                & (nascimento.c.conversation_key == coorte.c.conversation_key),
+            )
+            .join(
+                LeadQualification,
+                (LeadQualification.channel == coorte.c.channel)
+                & (LeadQualification.conversation_key == coorte.c.conversation_key),
+            )
+            .where(LeadQualification.qualificado_em.is_not(None))
+        )
+    ).scalar_one_or_none()
+
+    # **O denominador exclui `sla_limite_em IS NULL`**, e isto nao e escolha
+    # desta card: a Emenda E-01 da RN-16.3 (TEC-178) decidiu e escreveu para
+    # quem fosse calcular esta metrica. O handoff escalado sem destinatario
+    # tem `sla_limite_em` nulo para sempre, e `dentroDoSla` sai true por
+    # VACUIDADE, nunca por pontualidade -- inclui-lo infla a taxa.
+    com_prazo = (
+        await session.execute(
+            select(
+                func.count(),
+                func.count().filter(Handoff.aceito_em <= Handoff.sla_limite_em),
+            )
+            .select_from(coorte)
+            .join(
+                Handoff,
+                (Handoff.channel == coorte.c.channel)
+                & (Handoff.conversation_key == coorte.c.conversation_key),
+            )
+            .where(Handoff.aceito_em.is_not(None), Handoff.sla_limite_em.is_not(None))
+        )
+    ).one()
+    total_com_prazo, no_prazo = int(com_prazo[0]), int(com_prazo[1])
+
+    return Indicadores(
+        conversas_ativas=ativas,
+        taxa_qualificacao=(qualificados / novos) if novos else None,
+        distribuicao_por_temperatura=temperaturas,
+        tempo_medio_primeira_resposta_seg=(
+            float(primeira_resposta) if primeira_resposta is not None else None
+        ),
+        tempo_medio_qualificacao_seg=(
+            float(ate_qualificar) if ate_qualificar is not None else None
+        ),
+        sla_handoff_cumprido_pct=(no_prazo / total_com_prazo) if total_com_prazo else None,
+    )
