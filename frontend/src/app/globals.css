@@ -47,3 +47,91 @@ a {
     color-scheme: dark;
   }
 }
+
+/* --- Painel de funil (TEC-190) ------------------------------------------ */
+
+.painel {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.filtros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-bottom: 2rem;
+}
+
+.filtros label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+}
+
+.filtros-erro {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 0.75rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}
+
+.funil {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 2.5rem;
+}
+
+.funil-etapa {
+  display: grid;
+  grid-template-columns: 10rem 8rem 5rem;
+  grid-template-areas: 'nome quantidade conversao' 'barra barra barra';
+  gap: 0.25rem 1rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+
+.funil-nome { grid-area: nome; font-weight: 600; }
+.funil-quantidade { grid-area: quantidade; font-variant-numeric: tabular-nums; }
+.funil-conversao { grid-area: conversao; text-align: right; opacity: 0.7; }
+
+.funil-barra {
+  grid-area: barra;
+  height: 0.5rem;
+  border-radius: 0.25rem;
+  background: currentColor;
+  opacity: 0.55;
+  min-width: 2px;
+}
+
+/* A etapa sem fonte nao ganha barra: uma barra de largura zero ainda e uma
+   barra, e leria como "quase nada" em vez de "nao sabemos". */
+.funil-barra-sem-fonte {
+  background: none;
+  min-width: 0;
+}
+
+.indicadores-lista {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 1rem;
+  margin: 0;
+}
+
+.indicador {
+  padding: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+  border-radius: 0.375rem;
+}
+
+.indicador dt { font-size: 0.8rem; opacity: 0.75; }
+.indicador dd { margin: 0.25rem 0 0; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+
+.indicadores-nota {
+  margin-top: 1.5rem;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
