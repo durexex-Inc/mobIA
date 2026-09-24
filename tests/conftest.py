@@ -204,6 +204,12 @@ TABELAS = (
     # por um teste faz o `vincular_sessao` do proximo devolver False sobre a
     # mesma sessao -- e a absorcao de um teste encontraria as sessoes do outro.
     "vinculos_de_sessao",
+    # TEC-363. Append-only como `optout_events`: o estado e o ULTIMO evento
+    # por (channel, conversation_key), entao sem o truncate o consentimento
+    # gravado por um teste passa a ser o "ultimo" de qualquer outro que use a
+    # mesma sessao -- e `tem_consentimento_de_marketing` responderia sobre
+    # linha alheia.
+    "consentimentos",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
