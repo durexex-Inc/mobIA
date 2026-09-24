@@ -98,7 +98,7 @@ async def test_marcar_armazenada_grava_chave_e_tamanho(session) -> None:
     message_id = await _mensagem_de_midia(session)
     await _gravar_pendente(session, message_id)
 
-    await marcar(
+    mudou = await marcar(
         get_sessionmaker(),
         message_id,
         status=StatusDaMidia.ARMAZENADA,
@@ -106,12 +106,35 @@ async def test_marcar_armazenada_grava_chave_e_tamanho(session) -> None:
         tamanho=1234,
     )
 
+    assert mudou is True
     linha = await ler_midia(session, message_id)
     assert linha is not None
     assert linha.status == StatusDaMidia.ARMAZENADA
     assert linha.chave_no_armazem == f"midias/{message_id}"
     assert linha.bytes == 1234
     assert linha.motivo is None
+
+
+async def test_marcar_apos_expirar_nao_reabre_estado_terminal(session) -> None:
+    """Job de download termina DEPOIS de `expirar_pendentes` ja ter fechado a
+    linha. `marcar` tem de perder essa corrida -- devolver False -- e nao pode
+    reabrir FALHOU/EXPIRADA.
+    """
+    fabrica = get_sessionmaker()
+    message_id = await _mensagem_de_midia(session)
+    await _gravar_pendente(session, message_id, criado_em=datetime.now(UTC) - timedelta(days=8))
+
+    fechadas = await expirar_pendentes(fabrica, mais_velhas_que=timedelta(days=7))
+    assert fechadas == 1
+
+    mudou = await marcar(
+        fabrica, message_id, status=StatusDaMidia.ARMAZENADA, chave="midias/x", tamanho=1
+    )
+
+    assert mudou is False
+    linha = await ler_midia(session, message_id)
+    assert linha is not None
+    assert (linha.status, linha.motivo) == (StatusDaMidia.FALHOU, MotivoDaMidia.EXPIRADA)
 
 
 async def test_pendente_antiga_e_reenfileiravel_e_nova_nao(session) -> None:

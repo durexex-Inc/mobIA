@@ -54,27 +54,45 @@ async def marcar(
     motivo: MotivoDaMidia | None = None,
     chave: str | None = None,
     tamanho: int | None = None,
-) -> None:
+) -> bool:
     """Muda o status (e o que mais o job souber) e carimba `atualizado_em`.
 
-    `motivo`, `chave` e `tamanho` sempre sobrescrevem, mesmo com None: cada
-    transicao desta tabela e terminal ou para PENDENTE nunca mais (D2), entao
-    nao ha caso em que um campo gravado antes precise sobreviver a um `marcar`
-    seguinte.
+    Devolve se a linha de fato mudou. `motivo`, `chave` e `tamanho` sempre
+    sobrescrevem, mesmo com None: toda transicao desta tabela sai de PENDENTE
+    para um estado terminal (D2), entao nao ha caso em que um campo gravado
+    antes precise sobreviver a um `marcar` que de fato aconteceu.
+
+    **O UPDATE repete `status = PENDENTE` no proprio WHERE, e nao confia em
+    quem chama ja ter checado isso antes.** E a mesma razao de
+    `escalar_vencidos` (`domain/handoff/escalada.py`) repetir a condicao do
+    SELECT no UPDATE: sem ela, um job de download que so termina (sucesso ou
+    falha) depois que `expirar_pendentes` ja fechou a linha como
+    FALHOU/EXPIRADA reabriria um estado terminal em silencio -- a mesma
+    corrida, so que contra o sweep em vez de contra outra rota. Quem arbitra
+    e o banco: o `rowcount` do UPDATE e que diz se esta chamada venceu a
+    corrida, e o `False` devolvido e o sinal para quem chama logar a corrida
+    perdida em vez de seguir como se tivesse gravado.
     """
     async with session_factory() as session:
-        await session.execute(
-            update(MidiaRecebida)
-            .where(MidiaRecebida.message_id == message_id)
-            .values(
-                status=status,
-                motivo=motivo,
-                chave_no_armazem=chave,
-                bytes=tamanho,
-                atualizado_em=datetime.now(UTC),
-            )
+        resultado = cast(
+            CursorResult[Any],
+            await session.execute(
+                update(MidiaRecebida)
+                .where(
+                    MidiaRecebida.message_id == message_id,
+                    MidiaRecebida.status == StatusDaMidia.PENDENTE,
+                )
+                .values(
+                    status=status,
+                    motivo=motivo,
+                    chave_no_armazem=chave,
+                    bytes=tamanho,
+                    atualizado_em=datetime.now(UTC),
+                )
+            ),
         )
         await session.commit()
+        return resultado.rowcount > 0
 
 
 async def pendentes_para_reenfileirar(
@@ -97,7 +115,11 @@ async def pendentes_para_reenfileirar(
             .where(MidiaRecebida.status == StatusDaMidia.PENDENTE)
             .where(MidiaRecebida.criado_em <= agora - mais_velhas_que)
             .where(MidiaRecebida.criado_em >= agora - mais_novas_que)
-            .order_by(MidiaRecebida.criado_em)
+            # `message_id` como desempate: linhas gravadas na mesma transacao
+            # (mesmo lote de ingestao) podem cair no mesmo `criado_em`, e sem
+            # um segundo criterio a ordem entre elas fica ao sabor do plano de
+            # execucao -- o `limite` cortaria um subconjunto nao determinista.
+            .order_by(MidiaRecebida.criado_em, MidiaRecebida.message_id)
             .limit(limite)
         )
         return list(linhas.scalars().all())

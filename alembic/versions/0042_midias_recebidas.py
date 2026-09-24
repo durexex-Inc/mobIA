@@ -10,6 +10,11 @@ vocabulario de `messages` por um risco especifico (comparacao de literal cru
 em SQL) que nao existe aqui, e nenhuma tabela nova depois dela repetiu o
 CHECK so por ter vocabulario.
 
+`motivo` e String(32), e nao o String(64) da D2 (desvio deliberado, ver o
+relatorio da Task 3): o maior literal de `MotivoDaMidia` tem 20 caracteres, e
+`tarefas_de_corretor.motivo` (0039) ja usa String(32) para o mesmo tipo de
+vocabulario curto.
+
 O indice parcial e o unico caminho de leitura por status: a varredura
 periodica (`pendentes_para_reenfileirar`, `expirar_pendentes`) le so
 PENDENTE, e as tres outras linhas terminais nunca entram nesse WHERE.

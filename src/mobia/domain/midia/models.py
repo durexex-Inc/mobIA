@@ -64,6 +64,10 @@ class MidiaRecebida(Base):
     bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     chave_no_armazem: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    # String(32), e nao o String(64) da D2 (desvio deliberado, ver o
+    # relatorio da Task 3): o maior literal de `MotivoDaMidia`
+    # (`tentativas_esgotadas`) tem 20 caracteres, e `tarefas_de_corretor.motivo`
+    # (0039) ja usa String(32) para o mesmo tipo de vocabulario curto.
     motivo: Mapped[str | None] = mapped_column(String(32), nullable=True)
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
