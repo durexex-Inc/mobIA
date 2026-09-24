@@ -24,6 +24,7 @@ from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.repositorio import candidatos_a_followup
 from mobia.domain.handoff.agendador import AgendadorNoop
+from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.moderacao.models import ModerationEvent
@@ -69,7 +70,7 @@ def _ctx(moderador) -> dict:
         "contador": ContadorFake(),
         "moderador": moderador,
         "agendador": AgendadorNoop(),
-        "indicador": IndicadorNoop(),
+        "indicadores": {CANAL_WHATSAPP: IndicadorNoop(), CANAL_WEB: IndicadorNoop()},
     }
 
 

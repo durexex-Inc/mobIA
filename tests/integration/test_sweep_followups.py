@@ -125,7 +125,7 @@ def _ctx(outbound: object | None = None, *, templates_aprovados: str = "") -> di
     herdada do ambiente -- as TRES pontas, nao so duas.
 
     **A chave `outbound` e a MESMA que producao usa** (TEC-184): `startup`
-    grava `ctx["outbound"] = WhatsAppOutbound(...)` em `workers/main.py`, e o
+    grava ali o `RoteadorPorCanal` em `workers/main.py` (desde a TEC-124), e o
     job le dali -- nenhum default de producao mudou para este teste existir.
     Sem argumento vale um `OutboundFake` novo por chamada, porque quase todo
     teste deste arquivo so precisa que a porta EXISTA; quem inspeciona o que

@@ -81,6 +81,15 @@ class OutboundPort(Protocol):
       entao nao ha duas geracoes para misturar, e a reserva de cada ficha e o
       sinal que `_continuar_entrega` le para saber o que ja saiu -- poe-las num
       grupo apagaria esse sinal. Ver `GuardedOutbound._liberar`.
+
+      **Emenda (TEC-124, 24/09/2026): o adaptador do canal web nao levanta
+      nenhum dos tres tipos desta lista.** Ela pressupoe que a rede seja o
+      caminho ate o lead, e no WhatsApp ela e. No web nao: assim que `send`
+      devolve, o turno grava a fala em `messages`, e a reconexao a mostra.
+      Falha de Redis, ausencia de ouvinte e kind sem forma viram log e o
+      envio conta como entregue -- retentar cobraria uma chamada nova e paga
+      ao modelo para reentregar o que a gravacao seguinte ja guarda. Ver
+      `domain/outbound/web.py`, inclusive a janela que isso deixa aberta.
     - `EnvioForaDaJanela` -- o canal nao aceita mais mensagem livre nesta
       conversa. Turno `expirado`, PROCESSED, aviso no log. Expirar nao e
       falhar, e retentar nunca entregaria.

@@ -191,7 +191,7 @@ A D5 condicionou o cache à medição. Ela foi feita em 24/09/2026 (`tests/perf/
 - **`tests/perf/`** — `test_funil_latency.py`, marcado `perf`, com 1.000 leads e a evidência medida na docstring. Fora do run padrão pela mesma razão da TEC-159: medir p95 em runner compartilhado seria flake.
 - **Front** — o job novo de CI roda os testes do `frontend/`.
 
-O filtro por canal tem um limite de teste que vai no comentário da card: **só `whatsapp` é produzido pelo ingresso real hoje** (o canal web é a TEC-124, que não existe), e `channel` é `String(32)` livre. O cenário "leads de WhatsApp e de web" se exercita com dado semeado, não com tráfego de dois canais.
+O filtro por canal exercita **os dois canais que existem**. Até 24/09/2026 esta seção dizia que só `whatsapp` era produzido pelo ingresso real e que o canal web "não existe" — a **TEC-124 mergeou na `main` naquele mesmo dia** e trouxe o widget, que grava `channel=CANAL_WEB` pelo mesmo `IngestionService` do webhook. É a classe de defeito que a TEC-296 nomeou: prosa escrita no presente que o merge de outra card tornou falsa. Os literais de canal passam a sair de `messages/canais.py`.
 
 ## Emendas ao SRS
 

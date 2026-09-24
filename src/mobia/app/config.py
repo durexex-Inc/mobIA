@@ -193,9 +193,10 @@ class Settings(BaseSettings):
     # `float` e nao `int` como os `sweep_*_after_seconds` vizinhos, pela mesma
     # razao -- o teste precisa de 0.05, e um `int` o arredondaria para 0.
     #
-    # Nao ha flag para desligar: a porta e o desligamento. Trocar
-    # `ctx["indicador"]` por `IndicadorNoop` em `workers/main.py` desliga a
-    # feature inteira sem tocar neste numero nem no dominio.
+    # Nao ha flag para desligar: a porta e o desligamento. Trocar a entrada de
+    # um canal em `ctx["indicadores"]` por `IndicadorNoop`, em
+    # `workers/main.py`, desliga a feature naquele canal sem tocar neste numero
+    # nem no dominio -- e e assim que o web ja nasce desde a TEC-124.
     indicador_de_digitacao_apos_segundos: float = 4.0
 
     # RN-01.6 (TEC-128), com a emenda E-01: a janela vale para TODA mensagem
@@ -247,6 +248,16 @@ class Settings(BaseSettings):
     # por IP la vira um limite global por proxy: todos os visitantes do widget
     # dividem as mesmas 100 requisicoes.
     confiar_em_forwarded_for: bool = False
+
+    # Quantas falas a reconexao do widget devolve (TEC-124, D6). Cinquenta
+    # cobre a conversa inteira no caso comum e evita decifrar um historico
+    # longo a cada reconexao -- e esta tela nao e o lugar de auditar
+    # transcricao, que e o painel.
+    historico_do_widget_mensagens: int = 50
+
+    # Teto de caracteres por frame de texto do widget (TEC-124, D3). Acima
+    # disso o frame e recusado e a conexao CONTINUA aberta.
+    tamanho_maximo_do_texto_do_widget: int = 4096
 
     # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
     # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link

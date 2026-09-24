@@ -26,6 +26,7 @@ from httpx import ASGITransport, AsyncClient
 
 from mobia.app.config import get_settings
 from mobia.app.main import create_app
+from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.metricas.filtros import montar_recorte
 
 TOKEN = "token-do-criterio-de-aceite"
@@ -73,19 +74,21 @@ async def test_funil_mostra_as_seis_etapas_com_conversao(app_com_token, session)
 async def test_filtro_por_canal_recalcula_os_indicadores(app_com_token, session) -> None:
     """Cenario: Filtro por canal recalcula os indicadores.
 
-    O Gherkin fala de "leads de WhatsApp e de web", e os dois existem aqui
-    como dado semeado: so `whatsapp` e produzido pelo ingresso real hoje -- o
-    canal web e a TEC-124, que nao existe. `messages.channel` e `String(32)`
-    livre, entao a semeadura e fiel ao que a coluna aceita.
+    **Os dois canais do Gherkin existem de verdade desde a TEC-124**, que
+    mergeou na `main` em 24/09 e trouxe o widget web: `widget.py` grava
+    `channel=CANAL_WEB` pelo mesmo `IngestionService` do webhook. Ate aquela
+    card este teste semeava `"web"` como valor plausivel de uma coluna livre;
+    agora ele semeia o valor que producao de fato escreve, e os literais
+    saem de `messages/canais.py` para nao existir uma segunda grafia.
     """
-    await _lead(session, conversa="5511900000001", nasceu_em=DENTRO, canal="whatsapp")
-    await _lead(session, conversa="5511900000002", nasceu_em=DENTRO, canal="whatsapp")
-    await _lead(session, conversa="5511900000003", nasceu_em=DENTRO, canal="web")
+    await _lead(session, conversa="5511900000001", nasceu_em=DENTRO, canal=CANAL_WHATSAPP)
+    await _lead(session, conversa="5511900000002", nasceu_em=DENTRO, canal=CANAL_WHATSAPP)
+    await _lead(session, conversa="5511900000003", nasceu_em=DENTRO, canal=CANAL_WEB)
 
     todos = (await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})).json()
     so_whatsapp = (
         await app_com_token.get(
-            ROTA, params={**PERIODO, "canal": "whatsapp"}, headers={"X-Admin-Token": TOKEN}
+            ROTA, params={**PERIODO, "canal": CANAL_WHATSAPP}, headers={"X-Admin-Token": TOKEN}
         )
     ).json()
 

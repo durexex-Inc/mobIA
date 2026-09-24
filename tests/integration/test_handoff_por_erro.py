@@ -9,6 +9,7 @@ from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.handoff.agendador import AgendadorNoop
+from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.models import Message
 from mobia.domain.outbound.port import EnvioRecusado
 from mobia.domain.outbound.presenca import IndicadorNoop
@@ -29,7 +30,7 @@ def _ctx(outbound, classificador) -> dict[str, Any]:
         "contador": ContadorFake(),
         "moderador": ModeradorFake(),
         "agendador": AgendadorNoop(),
-        "indicador": IndicadorNoop(),
+        "indicadores": {CANAL_WHATSAPP: IndicadorNoop(), CANAL_WEB: IndicadorNoop()},
     }
 
 

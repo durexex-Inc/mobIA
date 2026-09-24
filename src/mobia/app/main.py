@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from mobia.api.middleware import RateLimitPorIP
 from mobia.api.routes.whatsapp import router as whatsapp_router
+from mobia.api.routes.widget import router as widget_router
 from mobia.app.config import get_settings
 from mobia.app.logging import configure_logging
 from mobia.infra.db import dispose_engine
@@ -20,6 +21,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.redis_pool = await create_redis_pool()
         app.state.owns_redis_pool = True
     yield
+    # Antes do pool: a escuta da central usa uma conexao dele (TEC-124).
+    central = getattr(app.state, "central_do_widget", None)
+    if central is not None:
+        await central.encerrar()
     if getattr(app.state, "owns_redis_pool", False):
         await app.state.redis_pool.aclose()
     await dispose_engine()
@@ -32,12 +37,21 @@ def create_app() -> FastAPI:
     app = FastAPI(title="mobIA", version="0.1.0", lifespan=lifespan)
 
     # Primeiro middleware do projeto (TEC-205). Aplica-se por omissao e nao por
-    # opt-in: uma lista de rotas incluidas erraria para o lado de esquecer o
-    # widget do TEC-124, que e o erro caro. Quem precisa ficar de fora esta em
+    # opt-in: uma lista de rotas incluidas erraria para o lado de esquecer uma
+    # rota nova, que e o erro caro. Quem precisa ficar de fora esta em
     # `ROTAS_ISENTAS`, com a razao de cada uma escrita la.
+    #
+    # **Ele nao cobre o widget, e ate a TEC-124 este comentario dizia que
+    # sim.** `BaseHTTPMiddleware` devolve cedo para todo escopo que nao seja
+    # `http`, entao o handshake de `/widget/chat` nunca passa por aqui. O
+    # limite por IP daquela rota e aplicado dentro dela -- ver
+    # `_cabe_no_limite_por_ip` em `api/routes/widget.py`.
     app.add_middleware(RateLimitPorIP)
 
     app.include_router(whatsapp_router)
+    # Publico por natureza, e por isso fora do gate de token logo abaixo: e o
+    # chat do site, e quem o abre e visitante anonima.
+    app.include_router(widget_router)
 
     # Sem token configurado os routers NAO entram no app. Nao e 401: rota que
     # nao existe nao pode ser exposta por engano de configuracao, e este

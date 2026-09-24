@@ -15,7 +15,11 @@ const INTENCOES = [
   'INDEFINIDA',
   'FORA_DE_ESCOPO',
 ]
-// So `whatsapp` e produzido pelo ingresso real hoje; o canal web e a TEC-124.
+// Os dois canais existem de verdade: `whatsapp` desde a TEC-122 e `web`
+// desde a TEC-124, que trouxe o widget. Os valores espelham
+// `messages/canais.py`, onde estao em MINUSCULO de proposito -- a
+// coluna ja estava povoada com `whatsapp`, e um `WEB` maiusculo ao
+// lado faria todo filtro por canal depender de caixa.
 const CANAIS = ['whatsapp', 'web']
 
 function Selecao({

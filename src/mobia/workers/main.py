@@ -9,7 +9,11 @@ from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
 from mobia.domain.handoff.agendador import AgendadorArq
 from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
+from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.outbound.email import EmailSmtp
+from mobia.domain.outbound.presenca import IndicadorNoop
+from mobia.domain.outbound.roteador import RoteadorPorCanal
+from mobia.domain.outbound.web import WebOutbound
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
 from mobia.domain.outbound.whatsapp_notificacao import WhatsAppTemplate
 from mobia.infra.db import dispose_engine, get_sessionmaker
@@ -97,12 +101,31 @@ async def startup(ctx: dict[str, Any]) -> None:
     session_factory = get_sessionmaker()
     ctx["settings"] = settings
     ctx["session_factory"] = session_factory
-    ctx["outbound"] = WhatsAppOutbound(session_factory)
-    # TEC-274. Sem `session_factory`: as guardas do indicador moram no
-    # agendador (`domain/outbound/presenca.py`), nao no adaptador. A guarda de
-    # `WHATSAPP_ACCESS_TOKEN` logo acima ja cobre os dois -- sem token, este
-    # tambem levaria 401.
-    ctx["indicador"] = WhatsAppIndicador()
+    # TEC-124. Roteador e nao instancia unica: o adaptador sai do canal da
+    # linha, e nenhum dos sitios de chamada precisa saber que ha dois.
+    ctx["outbound"] = RoteadorPorCanal(
+        session_factory,
+        {
+            CANAL_WHATSAPP: WhatsAppOutbound(session_factory),
+            # Mesmo `ctx["redis"]` do agendador logo abaixo -- o ARQ ja o
+            # gravou antes deste hook, e um segundo pool seria redundante.
+            CANAL_WEB: WebOutbound(session_factory, ctx["redis"]),
+        },
+    )
+    # TEC-274 e TEC-124. Dicionario e nao instancia unica: no web os dois
+    # campos que fariam `indicador_de_digitacao` desistir estao preenchidos, e
+    # o `WhatsAppIndicador` dispararia um POST para a Meta com um UUID de
+    # sessao no lugar do wamid. Sem `session_factory`: as guardas do indicador
+    # moram no agendador (`domain/outbound/presenca.py`), nao no adaptador. A
+    # guarda de `WHATSAPP_ACCESS_TOKEN` logo acima cobre o do WhatsApp -- sem
+    # token, ele tambem levaria 401.
+    ctx["indicadores"] = {
+        CANAL_WHATSAPP: WhatsAppIndicador(),
+        # Lacuna declarada da TEC-124: publicar "digitando" exigiria a sessao
+        # na assinatura do `IndicadorDePresencaPort`, e esta card nao mexe
+        # nesse contrato.
+        CANAL_WEB: IndicadorNoop(),
+    }
     ctx["classificador"] = ClassificadorAnthropic()
     ctx["resumidor"] = ResumidorAnthropic()
     ctx["contador"] = ContadorAnthropic()

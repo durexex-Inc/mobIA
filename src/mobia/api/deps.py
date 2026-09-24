@@ -1,15 +1,23 @@
 import secrets
 from typing import Annotated
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, status
+from starlette.requests import HTTPConnection
 
 from mobia.app.config import get_settings
 from mobia.domain.messages.service import IngestionService
 from mobia.infra.db import get_sessionmaker
 
 
-def get_ingestion_service(request: Request) -> IngestionService:
-    return IngestionService(get_sessionmaker(), getattr(request.app.state, "redis_pool", None))
+def get_ingestion_service(conexao: HTTPConnection) -> IngestionService:
+    """O mesmo servico para o webhook e para o widget.
+
+    `HTTPConnection` e nao `Request` desde a TEC-124: e a base comum de
+    `Request` e `WebSocket`, e o FastAPI so injeta `Request` em escopo `http`.
+    Com `Request` aqui, a rota do widget falhava na resolucao da dependencia,
+    antes de aceitar a conexao.
+    """
+    return IngestionService(get_sessionmaker(), getattr(conexao.app.state, "redis_pool", None))
 
 
 def exigir_admin(x_admin_token: Annotated[str, Header()] = "") -> None:
