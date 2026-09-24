@@ -203,11 +203,11 @@ Não é retórica. Na TEC-146, um comentário em `_faixa_de` justificava a ordem
 ./.venv/Scripts/python.exe scripts/comentarios_tocados.py --tudo   # sem o teto
 ```
 
-Ela lista os comentários e docstrings que a branch precisa reconferir, em cinco marcas. As duas primeiras são sobre comentário dentro do código: `ALTERADO` é o que mudou no diff. **`VIZINHO` é o que não mudou, mas está dentro de um `def`/`class` cujo código mudou — ou é a docstring de módulo de um arquivo que mudou por baixo dela (TEC-283)** — e é essa a categoria que pega o defeito da TEC-146, porque um comentário que ninguém editou não aparece no diff e por isso ninguém o relê.
+Ela lista os comentários e docstrings que a branch precisa reconferir, em sete marcas. As duas primeiras são sobre comentário dentro do código: `ALTERADO` é o que mudou no diff. **`VIZINHO` é o que não mudou, mas está dentro de um `def`/`class` cujo código mudou — ou é a docstring de módulo de um arquivo que mudou por baixo dela (TEC-283)** — e é essa a categoria que pega o defeito da TEC-146, porque um comentário que ninguém editou não aparece no diff e por isso ninguém o relê.
 
 **Desde a TEC-283 a docstring de módulo entra no mesmo alcance.** Ela é a prosa que mais sobrevive a refatoração, porque não está dentro de nenhum `def` e nenhuma edição a arrasta junto — foi assim que a docstring de `tests/unit/test_comentarios_tocados.py` seguiu creditando só a TEC-277 enquanto aquela branch crescia o arquivo em 410 linhas. Medido sobre os 20 merges mais recentes: o acréscimo é de **32 achados em 131 arquivos tocados**, mediana de 0 por branch e máximo de 11 — 44% dos arquivos tocados não têm docstring de módulo, e entre os que têm, 56% já a editam na mesma branch.
 
-**Desde a TEC-282 a listagem também aponta a prosa.** `PROSA` é um `.md` versionado que cita `arquivo.py:linha` de um arquivo que a branch mexeu — suspeita, não veredito. `FALSO` é, entre essas citações que já apontam arquivo que a branch mexeu, a que aponta além do fim dele — a única marca que afirma em vez de suspeitar. `NOMEIA` é o documento que nomeia um script que a branch alterou, e existe por um caso concreto: o merge da TEC-277 (`a66de07`, 14/09 21:29:10) tornou este arquivo falso, e nada apontou — o conserto (`a3db8c2`) veio três minutos e quinze segundos depois, e só porque alguém ainda estava relendo a seção.
+**Desde a TEC-282 a listagem também aponta a prosa.** `PROSA` é um `.md` versionado que cita `arquivo.py:linha` de um arquivo que a branch mexeu — suspeita, não veredito. `FALSO` é, entre essas citações que já apontam arquivo que a branch mexeu, a que aponta além do fim dele — a única das marcas por número de linha que afirma que uma citação por linha está errada sobre o código. `NOMEIA` é o documento que nomeia um script que a branch alterou, e existe por um caso concreto: o merge da TEC-277 (`a66de07`, 14/09 21:29:10) tornou este arquivo falso, e nada apontou — o conserto (`a3db8c2`) veio três minutos e quinze segundos depois, e só porque alguém ainda estava relendo a seção.
 
 **Planos de implementação ficam de fora, de propósito.** Um plano registra o que se fez num dia; envelhecer é o esperado dele. Medido na TEC-282, incluí-los levaria a mediana por branch de 9 para 39 citações — sem apontar nada que ainda afirme algo sobre o código de hoje.
 
@@ -217,9 +217,19 @@ A seção de prosa que a TEC-282 acrescentou tem o próprio teto, pela mesma raz
 
 `ALTERADO` nunca é cortado, então numa branch que reescreve muito é ele que domina o que resta. E a contagem do rodapé conta o que **existe**, não o que coube na tela: se ela disser 715 e você tiver lido 12, os outros 703 estão atrás do `--tudo`.
 
-O teto existe porque não há regra melhor, e isso também foi medido: **75,9% do ruído vem de `executar_turno`**, que tem 2706 linhas, e dentro dela todo comentário está longe de toda edição. Uma regra de vizinhança por distância deixa 65,9% de pé num raio de 50 linhas. Enquanto aquela função não for partida, esta listagem vive de teto.
+O teto existe porque não há regra melhor, e isso também foi medido: **75,9% do ruído vem de `executar_turno`**, que tem 2837 linhas (medido por `ast` em 24/09/2026), e dentro dela todo comentário está longe de toda edição. Uma regra de vizinhança por distância deixa 65,9% de pé num raio de 50 linhas. Enquanto aquela função não for partida, esta listagem vive de teto.
 
-Não é gate e não reprova nada: decidir sozinho se um comentário está certo é justamente o julgamento que ele existe para devolver a uma pessoa. Medido no histórico: **~51 commits** existem só para corrigir afirmação que o próprio repo escreveu errado antes — a regra acima já existia e mesmo assim não pegava, porque nenhum dos três gates olha para comentário.
+A listagem não é gate e não reprova nada: decidir sozinho se um comentário está certo é justamente o julgamento que ele existe para devolver a uma pessoa. Medido no histórico: **~51 commits** existem só para corrigir afirmação que o próprio repo escreveu errado antes — a regra acima já existia e mesmo assim não pegava, porque nenhum dos três gates olha para comentário.
+
+**Desde a TEC-299, código se cita por âncora, não por número de linha.** A forma é `arquivo.py::Nome` — ou `arquivo.py::Classe.metodo` —, a mesma do node id do pytest. Número de linha envelhece em silêncio: medido na TEC-299, das 213 citações por linha que resolviam para um arquivo só, **nenhuma** apontava além do fim dele, então `FALSO` nunca disparava — e as que estavam erradas apontavam para *outra* linha, que nenhuma checagem enxerga. Âncora se verifica: o nome existe no `ast` do arquivo ou não existe.
+
+Duas marcas cuidam disso, e são as únicas que **reprovam**, no passo `citacoes em prosa` do job Lint e tipos. `ANCORA` é âncora cujo nome não existe no arquivo, em qualquer `.md` fora de `plans/` — não só nos que a branch mexeu. `LINHA` é citação por número de linha numa linha de `.md` que a branch **acrescentou**, fora de bloco cercado (onde vive traceback). As citações antigas ficam onde estão até alguém editar a linha delas; aí a conversão é obrigatória. Antes do PR:
+
+```bash
+./.venv/Scripts/python.exe scripts/comentarios_tocados.py --checar
+```
+
+**Dentro de `_executar_turno` a âncora verifica, mas não localiza** — a função tem 2837 linhas. Ali, acompanhe a âncora de uma frase citada do comentário-alvo, que se acha por busca de texto. Só partir a função resolve isso.
 
 Mesma regra para a spec: emendas ao SRS (`docs/srs/`) entram como item aninhado **`Emenda E-nn (TEC-nnn, data)`** abaixo da regra que alteram, **nunca** reescrevendo o texto de 22/08/2026.
 
