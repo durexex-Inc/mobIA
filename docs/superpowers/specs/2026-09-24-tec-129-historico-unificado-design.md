@@ -24,7 +24,7 @@ A sessão web é um portador anônimo (RN-01.1 E-01): o visitante digita um tele
 
 Por isso:
 
-- **O turno WhatsApp enxerga as sessões web vinculadas ao seu número** — critérios, recusas, intenção, imóveis já apresentados e as falas literais.
+- **O turno WhatsApp enxerga as sessões web vinculadas ao seu número** — critérios (a intenção entre eles), recusas e as falas literais. Ver a D4 para o que fica de fora.
 - **O turno web continua enxergando só a própria sessão.** E a aba continua mostrando só as falas da própria sessão (`historico_da_sessao`, inalterado).
 
 A alternativa simétrica — o turno web também lendo o estado do WhatsApp — **vaza pela boca do agente**: quem digita o telefone de outra pessoa passa a conversar com um agente que conhece a qualificação dela, e ele diz "você procurava 3 quartos no Campeche, até 900 mil". Esconder o histórico da tela não adianta se o agente o recita.
@@ -88,12 +88,15 @@ A absorção é **idempotente** e roda em todo turno: isso cobre a sessão web q
 | estado | regra |
 | --- | --- |
 | `lead_qualification`, critérios (intenção, faixa de preço, região, tipo, quartos, vagas, urgência, forma de pagamento, imóvel para vender, campos de investidor) | preenche **só o campo vazio** no WhatsApp; o que o WhatsApp já sabe prevalece. Com várias sessões, vale a de `updated_at` mais recente |
-| `campos_recusados` | união: o que a pessoa se recusou a dizer no site não é perguntado de novo |
-| `conversation_intent` | só se o WhatsApp não tiver intenção |
-| `recomendacoes` | os imóveis já apresentados ou descartados no web contam como vistos, para o agente não reapresentá-los |
+| `campos_recusados` | união, menos o que o WhatsApp já tem preenchido: o que a pessoa se recusou a dizer no site não é perguntado de novo |
 | falas literais | a janela lê os pares `[whatsapp, web…]` num `tuple_(...).in_(...)`, que usa o mesmo `ix_messages_timeline`; o corte que já existe para caber no orçamento se aplica ao conjunto |
 
+A intenção entra pela coluna `lead_qualification.intencao`, que é um dos critérios da primeira linha.
+
 **O que não é absorvido, e por quê:**
+
+- **`recomendacoes`** — *retirado depois da aprovação das seções, ao ler o código para o plano.* A linha sem reação (`reacao_lead IS NULL`) é o gatilho da chamada de reação, e a ordem das linhas é o ordinal de "o segundo" (`ler_pendentes`, `domain/agente/repositorio.py`). Copiada para o par do WhatsApp, uma apresentação feita no site dispararia no WhatsApp a pergunta sobre um imóvel que a conversa dali nunca mostrou, e deslocaria o ordinal das apresentações do próprio WhatsApp. **Consequência:** o agente pode reapresentar no WhatsApp um imóvel que a pessoa já viu no site.
+- **`conversation_intent`** — *retirado pelo mesmo motivo.* A linha carrega a confiança, o marcador de desambiguação e o contador de fora de escopo seguidos (RN-03.5), que são do episódio de conversa, não da pessoa. Herdar o contador do site aproximaria o WhatsApp do silêncio por fora de escopo sem que ele tivesse feito nada.
 
 - **O resumo web.** Seria um bloco novo no prompt a cada turno, contra um orçamento apertado — e o que o cenário 1 exige, os critérios, já chega pela qualificação.
 - **Score e temperatura.** São recalculados no próprio turno.
@@ -133,4 +136,5 @@ As duas últimas são lacunas declaradas — decisão de produto, que vai no com
 - Desfazer ou corrigir um vínculo.
 - O agente pedir o telefone.
 - A transcrição do dossiê com as falas web, e o funil contando o lead vinculado uma vez só.
+- Imóveis apresentados no site contando como já vistos no WhatsApp (ver D4).
 - Uma entidade `leads` com `lead_id` — o modelo do SRS, que custaria migrar as ~15 tabelas. Se um dia for necessária, é card própria.
