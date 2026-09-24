@@ -82,3 +82,22 @@ async def test_falha_no_vinculo_nao_derruba_a_conversa(ws_cliente, session, monk
         assert (await ws.receber())["tipo"] == "recebido"
     finally:
         await ws.__aexit__()
+
+
+async def test_fala_com_dois_telefones_diferentes_nao_vincula(ws_cliente, session) -> None:
+    """D2: nao ha como saber qual dos dois e o da pessoa, e vincular o errado
+    poe o que ela disse no contexto do WhatsApp de outra."""
+    ws, _ = await _abrir(ws_cliente)
+    try:
+        await ws.enviar(
+            {
+                "tipo": "mensagem",
+                "id": "m-1",
+                "texto": "o meu e (48) 99999-0000, o da minha esposa e (48) 98888-1111",
+            }
+        )
+        assert (await ws.receber())["tipo"] == "recebido"
+    finally:
+        await ws.__aexit__()
+
+    assert await _vinculos(session) == []

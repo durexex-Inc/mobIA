@@ -2,21 +2,31 @@
 
 import uuid
 from datetime import timedelta
+from typing import Any
 
+from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFake
 from sqlalchemy import select
 
 from mobia.domain.agente.investidor import Horizonte, PerfilInvestidor, RetornoEsperadoTipo
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.repositorio import MARCA_DO_ORCAMENTO, aplicar_mudanca_de_intencao
+from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.identidade.absorcao import absorver_sessoes_vinculadas
 from mobia.domain.identidade.models import VinculoDeSessao
 from mobia.domain.identidade.repositorio import vincular_sessao
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
+from mobia.domain.messages.schemas import ParsedMessage
+from mobia.domain.messages.service import IngestionService
 from mobia.domain.messages.status import MessageStatus
+from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
+from mobia.domain.outbound.presenca import IndicadorNoop
+from mobia.domain.outbound.roteador import RoteadorPorCanal
+from mobia.domain.outbound.web import WebOutbound
 from mobia.infra.db import get_sessionmaker
+from mobia.workers.jobs.process_message import process_message
 
 WA_ID = "554899990000"  # a Meta entregando sem o 9
 TELEFONE = "5548999990000"
@@ -402,3 +412,59 @@ async def test_so_as_tres_sessoes_vinculadas_mais_recentes_contam(session) -> No
     assert {chave for _, chave in pares} == set(recentes)
     estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
     assert (estado.quartos, estado.regiao) == (2, None)
+
+
+class _WhatsAppQueRegistra:
+    """A porta da Meta que registra o envio em vez de falhar."""
+
+    def __init__(self) -> None:
+        self.envios: list[dict[str, Any]] = []
+
+    async def send(self, message_id: Any, kind: str, payload: dict[str, Any]) -> bool:
+        self.envios.append(payload)
+        return True
+
+
+async def test_optout_no_par_web_nao_silencia_o_turno_do_whatsapp(session, redis_pool) -> None:
+    """D4: uma sessao nao verificada nao silencia o numero de outra pessoa. O
+    opt-out fica no par web, e o turno do WhatsApp responde normalmente."""
+    sessao = await _sessao_vinculada(session, quartos=2)
+    evidencia = await session.scalar(select(Message.id).where(Message.conversation_key == sessao))
+    fabrica = get_sessionmaker()
+    await registrar_optout(
+        fabrica, channel=CANAL_WEB, conversation_key=sessao, message_id=evidencia
+    )
+
+    [message_id] = await IngestionService(fabrica, redis_pool).ingest(
+        [
+            ParsedMessage(
+                provider_message_id=f"wamid.{uuid.uuid4()}",
+                sender_external_id=WA_ID,
+                recipient_external_id="phone-number-id",
+                content_type=MessageContentType.TEXTO,
+                text_body="oi, vim do site",
+                raw_payload={},
+            )
+        ],
+        channel=CANAL_WHATSAPP,
+    )
+    whatsapp = _WhatsAppQueRegistra()
+    ctx = {
+        "session_factory": fabrica,
+        "outbound": RoteadorPorCanal(
+            fabrica, {CANAL_WHATSAPP: whatsapp, CANAL_WEB: WebOutbound(fabrica, redis_pool)}
+        ),
+        "classificador": ClassificadorFake(),
+        "resumidor": ResumidorFake(),
+        "contador": ContadorFake(),
+        "moderador": ModeradorFake(),
+        "agendador": AgendadorNoop(),
+        "indicadores": {CANAL_WHATSAPP: IndicadorNoop(), CANAL_WEB: IndicadorNoop()},
+    }
+
+    assert await process_message(ctx, str(message_id)) == "respondido"
+    assert whatsapp.envios
+    # A absorcao rodou nesse turno -- o opt-out nao passou por ela.
+    assert (await _estado(session, CANAL_WHATSAPP, WA_ID)).quartos == 2
+    async with fabrica() as sessao_db:
+        assert not await esta_em_optout(sessao_db, channel=CANAL_WHATSAPP, conversation_key=WA_ID)
