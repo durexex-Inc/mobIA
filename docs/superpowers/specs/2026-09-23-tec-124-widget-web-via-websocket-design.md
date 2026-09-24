@@ -120,6 +120,8 @@ Fica de fora a linha com `bloqueada_em` preenchido, pelo mesmo critério da TEC-
 
 Então o endpoint consome `chave_de_ip` com o mesmo limite e a mesma janela do middleware **antes de aceitar a conexão**, e fecha com 1013 quando estoura. O comentário de `create_app` é corrigido na mesma branch — comentário desatualizado é defeito, e este já nasceu prometendo o que não cumpre.
 
+> **Correção (24/09/2026, revisão final):** o 1013 nunca chegava ao navegador. O uvicorn transforma o fechamento antes do `accept` em HTTP `403` nas três implementações de WebSocket, e o cliente via `onclose` 1006 — "proibido" no lugar de "tente de novo". O teste passava porque olhava o evento ASGI, não o fio. O handshake excedente passou a ser recusado com `send_denial_response`: HTTP `429` com `Retry-After`, a mesma resposta do middleware.
+
 O limite por número continua valendo por dentro, via `IngestionService`: uma conexão aceita não é licença para inundar.
 
 ## D8 — Reengajamento não alcança o web

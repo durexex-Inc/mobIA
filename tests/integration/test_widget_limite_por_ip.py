@@ -11,9 +11,16 @@ from mobia.app.config import get_settings
 from mobia.domain.limites.models import ESCOPO_IP, RateLimitEvent
 
 
-async def test_handshake_acima_do_limite_fecha_com_1013(
+async def test_handshake_acima_do_limite_recebe_429_com_retry_after(
     ws_cliente, session, monkeypatch, caches_de_cliente_limpos
 ) -> None:
+    """O que chega no FIO, e nao so a mensagem ASGI.
+
+    A primeira versao fechava antes do `accept` com o codigo 1013, e o teste
+    passava olhando o evento ASGI. So que o uvicorn transforma o fechamento
+    antes do `accept` em HTTP 403 -- e o navegador ve `onclose` 1006, lendo
+    "proibido" onde devia ler "espere e tente de novo".
+    """
     monkeypatch.setenv("RATE_LIMIT_REQUISICOES_POR_IP_POR_MINUTO", "2")
     get_settings.cache_clear()
 
@@ -22,7 +29,9 @@ async def test_handshake_acima_do_limite_fecha_com_1013(
             await ws.aceitar()
 
     async with ws_cliente(ip="198.51.100.9") as ws:
-        assert await ws.fechamento() == 1013
+        status, cabecalhos = await ws.recusa()
+    assert status == 429
+    assert cabecalhos[b"retry-after"] == b"60"
 
     evento = (
         await session.execute(select(RateLimitEvent).where(RateLimitEvent.chave == "198.51.100.9"))

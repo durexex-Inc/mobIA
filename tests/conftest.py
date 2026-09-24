@@ -1298,6 +1298,10 @@ class ClienteWebSocket:
             "server": ("testserver", 80),
             "subprotocols": [],
             "state": {},
+            # O uvicorn anuncia esta extensao nas tres implementacoes de
+            # WebSocket, e sem ela o Starlette nao consegue recusar o
+            # handshake com uma resposta HTTP propria (TEC-124, limite por IP).
+            "extensions": {"websocket.http.response": {}},
         }
         await self._para_o_app.put({"type": "websocket.connect"})
         self._tarefa = asyncio.create_task(
@@ -1339,6 +1343,12 @@ class ClienteWebSocket:
         evento = await self.evento()
         assert evento["type"] == "websocket.send", evento
         return json.loads(evento["text"])
+
+    async def recusa(self) -> tuple[int, dict[bytes, bytes]]:
+        """O handshake recusado com resposta HTTP: status e cabecalhos."""
+        evento = await self.evento()
+        assert evento["type"] == "websocket.http.response.start", evento
+        return int(evento["status"]), dict(evento.get("headers", []))
 
     async def fechamento(self) -> int:
         evento = await self.evento()

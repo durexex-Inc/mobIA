@@ -23,12 +23,14 @@ ida e na retomada.
 
 import asyncio
 import json
+import math
 import uuid
 from contextlib import suppress
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from starlette.responses import Response
 
 from mobia.api.central_do_widget import CentralIndisponivel, central_de
 from mobia.api.deps import get_ingestion_service
@@ -60,9 +62,6 @@ CODIGO_PROTOCOLO = 1002
 # fora, que nao e culpa de quem esta do outro lado.
 CODIGO_INDISPONIVEL = 1011
 
-# 1013 e "try again later" do RFC 6455 -- o analogo do 429 que o middleware
-# devolve na rota HTTP.
-CODIGO_EXCESSO = 1013
 
 # Teto do `id` que o cliente escolhe. A coluna e `String(255)` e a chave gravada
 # leva a sessao na frente (36 caracteres e o separador), entao 128 deixa folga
@@ -79,9 +78,7 @@ async def chat(
 
     pool = getattr(websocket.app.state, "redis_pool", None)
     if not await _cabe_no_limite_por_ip(websocket, pool):
-        # Antes do `accept`: o Starlette recusa o handshake, e a conexao
-        # recusada nao chega a custar a assinatura nem uma leitura de frame.
-        await websocket.close(code=CODIGO_EXCESSO)
+        await _recusar_por_excesso(websocket)
         return
 
     await websocket.accept()
@@ -152,6 +149,31 @@ async def chat(
         # Sem isto a central guardaria a fila de toda aba que ja fechou.
         central.fechar(sessao, fila)
         log.info("widget.desconectado", sessao=sessao)
+
+
+async def _recusar_por_excesso(websocket: WebSocket) -> None:
+    """Recusa o handshake com 429 e `Retry-After`, a mesma resposta do middleware.
+
+    **Nao `close()` antes do `accept`.** Foi a primeira versao, com o codigo
+    1013 ("tente mais tarde"), e o teste passava olhando o evento ASGI. So que
+    o uvicorn transforma o fechamento antes do `accept` em HTTP **403** nas
+    tres implementacoes de WebSocket, e o navegador ve `onclose` 1006: o
+    cliente lia "proibido, nao tente de novo" onde devia ler "espere".
+
+    `send_denial_response` precisa da extensao `websocket.http.response`, que o
+    uvicorn anuncia. Um servidor que nao a anuncie cai no `close()`, e ai o 403
+    e o melhor que se consegue -- continua recusando, so que com a palavra
+    errada.
+    """
+    if "websocket.http.response" in websocket.scope.get("extensions", {}):
+        await websocket.send_denial_response(
+            Response(
+                status_code=429,
+                headers={"Retry-After": str(math.ceil(JANELA_DE_UM_MINUTO))},
+            )
+        )
+        return
+    await websocket.close()
 
 
 def _falha_de(feitas: set[asyncio.Task[None]]) -> BaseException | None:
