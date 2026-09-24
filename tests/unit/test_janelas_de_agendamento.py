@@ -236,3 +236,45 @@ async def test_a_funcao_da_porta_usa_a_jornada_e_os_ocupados_do_corretor() -> No
     )
     assert agenda.chamadas == [(corretor.id, _ago(25, 20), _ago(29, 19))]
     assert janelas == [_janela(_ago(26, 12)), _janela(_ago(27, 10)), _janela(_ago(28, 10))]
+
+
+# --- o `de` da TEC-167 ---
+
+
+def test_de_posterior_a_antecedencia_comeca_a_busca_nele() -> None:
+    janelas = propor_janelas(
+        agora=_ago(25, 14),
+        de=_ago(27, 9),
+        ate=_ago(27, 12),
+        jornada_inicio=9,
+        jornada_fim=19,
+        ocupados=[],
+        tipo=TipoDeCompromisso.VISITA_PRESENCIAL,
+    )
+    assert janelas == [_janela(_ago(27, 9)), _janela(_ago(27, 9, 30)), _janela(_ago(27, 10))]
+
+
+def test_de_anterior_a_antecedencia_nao_fura_as_3_horas() -> None:
+    janelas = propor_janelas(
+        agora=_ago(25, 14),
+        de=_ago(25, 9),
+        ate=_ago(25, 19),
+        jornada_inicio=9,
+        jornada_fim=19,
+        ocupados=[],
+        tipo=TipoDeCompromisso.VISITA_PRESENCIAL,
+    )
+    assert janelas[0] == _janela(_ago(25, 17))
+
+
+def test_de_sem_fuso_reprova() -> None:
+    with pytest.raises(ValueError):
+        propor_janelas(
+            agora=_ago(25, 14),
+            de=datetime(2026, 8, 27, 9),
+            ate=_ago(27, 12),
+            jornada_inicio=9,
+            jornada_fim=19,
+            ocupados=[],
+            tipo=TipoDeCompromisso.VISITA_PRESENCIAL,
+        )
