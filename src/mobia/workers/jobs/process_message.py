@@ -358,10 +358,11 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
     # mensagem -- o mesmo raciocinio que a guarda de `WHATSAPP_ACCESS_TOKEN`
     # em `workers/main.py` ja aplica a outras portas.
     agendador = ctx["agendador"]
-    # `ctx[...]` direto pela mesma razao que `agendador` logo acima: um
-    # `ctx.get("indicador") or IndicadorNoop()` trocaria a porta real por um
-    # duble dentro de producao, e o sintoma de um `startup` que deixasse de
-    # popular a chave seria nenhum indicador, nunca, sem log e sem erro.
+    # `ctx["indicadores"][canal]` direto, la embaixo, pela mesma razao que
+    # `agendador` logo acima: um `.get(...) or IndicadorNoop()` trocaria a
+    # porta real por um duble dentro de producao, e o sintoma de um `startup`
+    # que deixasse de popular a chave -- ou de um canal novo sem indicador --
+    # seria nenhum indicador, nunca, sem log e sem erro.
     identifier = uuid.UUID(message_id)
 
     async with session_factory() as session:
@@ -498,7 +499,11 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         async with indicador_de_digitacao(
             session_factory,
             message=linha,
-            indicador=ctx["indicador"],
+            # Por canal desde a TEC-124: no web os dois campos que fariam
+            # `indicador_de_digitacao` desistir estao preenchidos, e o
+            # indicador do WhatsApp dispararia para a Meta com um UUID de
+            # sessao no lugar do wamid.
+            indicador=ctx["indicadores"][linha.channel],
             apos_segundos=apos_segundos,
         ):
             resultado = await executar_turno(

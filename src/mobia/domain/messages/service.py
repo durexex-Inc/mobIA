@@ -13,6 +13,7 @@ from mobia.app.config import get_settings
 from mobia.domain.humano.deteccao import pediu_humano
 from mobia.domain.limites.eventos import registrar_bloqueio
 from mobia.domain.limites.models import ESCOPO_NUMERO
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
@@ -44,9 +45,12 @@ class IngestionService:
     tambem sobe.
 
     Consequencia para quem le isto de fora: uma excecao que escape por
-    qualquer um desses caminhos sobe ate o handler do webhook, vira 500, e a
+    qualquer um desses caminhos sobe ate quem chamou, e desde a TEC-124 sao
+    dois, com desfechos diferentes de proposito. No webhook ela vira 500 e a
     Meta re-entrega -- sem duplicar, porque o UNIQUE de `(channel,
-    provider_message_id)` segura, mas custando uma retentativa a toa.
+    provider_message_id)` segura, mas custando uma retentativa a toa. No
+    widget (`api/routes/widget.py`) ela e capturada e a conexao fecha com
+    1011: la o equivalente da reentrega e o cliente reenviar com o mesmo id.
     """
 
     def __init__(
@@ -58,7 +62,7 @@ class IngestionService:
         self._queue = queue
 
     async def ingest(
-        self, parsed: list[ParsedMessage], channel: str = "whatsapp"
+        self, parsed: list[ParsedMessage], channel: str = CANAL_WHATSAPP
     ) -> list[uuid.UUID]:
         if not parsed:
             return []
@@ -139,7 +143,11 @@ class IngestionService:
     async def _persist(
         self, parsed: list[ParsedMessage], channel: str
     ) -> list[tuple[uuid.UUID, str]]:
-        """Grava as mensagens novas e descarta as que a Meta ja tinha entregue.
+        """Grava as mensagens novas e descarta as que ja tinham chegado.
+
+        "Ja tinham chegado" e a reentrega da Meta, e desde a TEC-124 tambem o
+        reenvio do widget depois de uma queda -- os dois com o mesmo
+        `provider_message_id`, que no web e o id que a pagina gerou.
 
         O descarte e resolvido pelo `ON CONFLICT` do proprio Postgres, nao por
         uma checagem em memoria: duas replicas da API recebendo a mesma reentrega

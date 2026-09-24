@@ -22,6 +22,7 @@ from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.cadencia import CADENCIA, INTERVALO_MINIMO
 from mobia.domain.followup.mensagem import QuedaDePreco
 from mobia.domain.followup.models import FollowUp, TarefaDeCorretor
+from mobia.domain.messages.canais import CANAIS_COM_REENGAJAMENTO
 from mobia.domain.optout.repositorio import esta_em_optout
 from mobia.domain.texto import dobrar
 
@@ -181,6 +182,12 @@ _CTES_DA_ANCORA = """
           FROM messages
          WHERE direction = 'INBOUND'
            AND bloqueada_em IS NULL
+           -- TEC-124, D8. Allowlist e nao `channel <> 'web'`: canal novo
+           -- nasce de fora do reengajamento e entra quando alguem decidir
+           -- que ele tem para onde empurrar mensagem. Aqui, na CTE que as
+           -- duas consultas compartilham, e nao em cada uma: e o que garante
+           -- que o lead do web tambem nao apareca entre os dormentes.
+           AND channel IN :canais_com_reengajamento
     ),
     ultima_fala AS (
         SELECT channel, conversation_key, created_at AS ancora, id AS mensagem_id
@@ -224,7 +231,10 @@ _SELECIONAR_CANDIDATOS = text(
      ORDER BY ancora, channel, conversation_key
      LIMIT :limite
     """
-).bindparams(bindparam("temperaturas_validas", expanding=True))
+).bindparams(
+    bindparam("temperaturas_validas", expanding=True),
+    bindparam("canais_com_reengajamento", expanding=True),
+)
 
 
 async def candidatos_a_followup(
@@ -272,6 +282,7 @@ async def candidatos_a_followup(
                 "corte": agora - INTERVALO_MINIMO,
                 "limite": limite,
                 "temperaturas_validas": _VALORES_TEMPERATURA_VALIDOS,
+                "canais_com_reengajamento": CANAIS_COM_REENGAJAMENTO,
                 **_TETOS_POR_TEMPERATURA,
             },
         )
@@ -330,7 +341,10 @@ _SELECIONAR_DORMENTES = text(
      ORDER BY adormeceu_em DESC, channel, conversation_key
      LIMIT :limite
     """
-).bindparams(bindparam("temperaturas_validas", expanding=True))
+).bindparams(
+    bindparam("temperaturas_validas", expanding=True),
+    bindparam("canais_com_reengajamento", expanding=True),
+)
 
 
 @dataclass(frozen=True)
@@ -414,6 +428,7 @@ async def listar_dormentes(
                 "corte": agora,
                 "limite": limite,
                 "temperaturas_validas": _VALORES_TEMPERATURA_VALIDOS,
+                "canais_com_reengajamento": CANAIS_COM_REENGAJAMENTO,
                 **_TETOS_POR_TEMPERATURA,
             },
         )

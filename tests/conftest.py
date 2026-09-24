@@ -1,10 +1,12 @@
+import asyncio
 import json
 import os
 import subprocess
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -1261,3 +1263,115 @@ def log_legivel(caplog: Any) -> str:
         except (json.JSONDecodeError, TypeError):
             linhas.append(bruto)
     return "\n".join(linhas)
+
+
+class ClienteWebSocket:
+    """Fala ASGI direto com o app, sem sair do event loop do teste. TEC-124.
+
+    **Nao e o `TestClient` do Starlette, de proposito.** Ele roda o app numa
+    thread com event loop proprio, e as conexoes asyncpg das fixtures nao
+    sobrevivem a troca de loop -- a mesma razao que o docstring de
+    `banco_limpo` ja registra. Aqui `receive` e `send` sao duas filas no loop
+    do teste, e o app roda como uma tarefa dele.
+    """
+
+    def __init__(self, app: Any, *, caminho: str = "/widget/chat", ip: str = "203.0.113.7") -> None:
+        self._app = app
+        self._caminho = caminho
+        self._ip = ip
+        self._para_o_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._do_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._tarefa: asyncio.Task[None] | None = None
+
+    async def __aenter__(self) -> "ClienteWebSocket":
+        escopo = {
+            "type": "websocket",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "scheme": "ws",
+            "path": self._caminho,
+            "raw_path": self._caminho.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [(b"host", b"testserver")],
+            "client": (self._ip, 55000),
+            "server": ("testserver", 80),
+            "subprotocols": [],
+            "state": {},
+            # O uvicorn anuncia esta extensao nas tres implementacoes de
+            # WebSocket, e sem ela o Starlette nao consegue recusar o
+            # handshake com uma resposta HTTP propria (TEC-124, limite por IP).
+            "extensions": {"websocket.http.response": {}},
+        }
+        await self._para_o_app.put({"type": "websocket.connect"})
+        self._tarefa = asyncio.create_task(
+            self._app(escopo, self._para_o_app.get, self._do_app.put)
+        )
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self._para_o_app.put({"type": "websocket.disconnect", "code": 1000})
+        if self._tarefa is not None:
+            with suppress(asyncio.CancelledError, TimeoutError):
+                await asyncio.wait_for(self._tarefa, timeout=5)
+
+    async def evento(self) -> dict[str, Any]:
+        """O proximo evento ASGI que o app emitiu -- accept, send ou close.
+
+        Com teto: sem ele, um endpoint que nunca responde penduraria o teste
+        ate o `pytest-timeout` matar o processo, que no Windows sai sem
+        sumario.
+        """
+        return await asyncio.wait_for(self._do_app.get(), timeout=5)
+
+    async def aceitar(self) -> None:
+        evento = await self.evento()
+        assert evento["type"] == "websocket.accept", evento
+
+    async def enviar(self, frame: dict[str, Any]) -> None:
+        await self._para_o_app.put({"type": "websocket.receive", "text": json.dumps(frame)})
+
+    async def enviar_cru(self, texto: str) -> None:
+        await self._para_o_app.put({"type": "websocket.receive", "text": texto})
+
+    async def enviar_bytes(self, dado: bytes) -> None:
+        # Frame binario: o ASGI entrega `bytes` e nao `text`, e e esse o caminho
+        # que `receive_text` do Starlette nao trata.
+        await self._para_o_app.put({"type": "websocket.receive", "bytes": dado})
+
+    async def receber(self) -> dict[str, Any]:
+        evento = await self.evento()
+        assert evento["type"] == "websocket.send", evento
+        return json.loads(evento["text"])
+
+    async def recusa(self) -> tuple[int, dict[bytes, bytes]]:
+        """O handshake recusado com resposta HTTP: status e cabecalhos."""
+        evento = await self.evento()
+        assert evento["type"] == "websocket.http.response.start", evento
+        return int(evento["status"]), dict(evento.get("headers", []))
+
+    async def fechamento(self) -> int:
+        evento = await self.evento()
+        assert evento["type"] == "websocket.close", evento
+        return int(evento.get("code", 1000))
+
+
+@pytest.fixture
+async def app_do_widget(banco_limpo: None, redis_pool: "ArqRedis") -> AsyncIterator[Any]:
+    app = create_app()
+    app.state.redis_pool = redis_pool
+    yield app
+    # O `lifespan` nao roda aqui -- o `ClienteWebSocket` nao manda os eventos
+    # dele --, entao quem encerra a escuta da central e esta fixture. Sem isso
+    # a tarefa sobreviveria ao loop do teste.
+    central = getattr(app.state, "central_do_widget", None)
+    if central is not None:
+        await central.encerrar()
+
+
+@pytest.fixture
+def ws_cliente(app_do_widget: Any) -> Callable[..., ClienteWebSocket]:
+    def _criar(**kwargs: Any) -> ClienteWebSocket:
+        return ClienteWebSocket(app_do_widget, **kwargs)
+
+    return _criar

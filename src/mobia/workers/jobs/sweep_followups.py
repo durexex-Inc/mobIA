@@ -361,8 +361,10 @@ async def sweep_followups(
     """
     session_factory = ctx["session_factory"]
     # A mesma chave que `process_message` e `notificar_corretor` leem, e nao
-    # uma nova: `startup` ja grava `ctx["outbound"] = WhatsAppOutbound(...)`,
-    # entao producao entra aqui sem uma linha de mudanca em `workers/main.py`.
+    # uma nova: `startup` grava ali o `RoteadorPorCanal` (TEC-124), que escolhe
+    # o adaptador pelo canal da linha, entao producao entra aqui sem uma linha
+    # de mudanca em `workers/main.py`. So o WhatsApp chega: a selecao de
+    # candidatos filtra por `CANAIS_COM_REENGAJAMENTO`.
     outbound = ctx["outbound"]
     settings: Settings = ctx.get("settings") or get_settings()
     if agora is None:
