@@ -28,9 +28,11 @@ class PeriodoDoDia(StrEnum):
     TARDE = "TARDE"
 
 
-# A tarde termina onde o atendimento termina (`atendimento_horario_fim`), e
-# nao as 18h: um periodo que prometesse ate as 18h esconderia a ultima hora
-# em que ainda ha corretor.
+# 19 e literal, nao lido de `Settings`: a D3 do desenho fixa o periodo da
+# tarde em 12h-19h, gramatica fixa igual ao resto deste modulo (D1). Hoje
+# esse numero coincide com o padrao de `atendimento_horario_fim`, mas e
+# coincidencia de valor, nao acoplamento de codigo -- mudar aquele setting
+# NAO move este limite nem o "19h" escrito em `TEXTO_DA_NOITE`.
 LIMITES_DO_PERIODO: dict[PeriodoDoDia, tuple[int, int]] = {
     PeriodoDoDia.MANHA: (9, 12),
     PeriodoDoDia.TARDE: (12, 19),
@@ -213,34 +215,59 @@ def resolver(texto: str, *, agora: datetime) -> Resolucao:
             falado = _apagar(falado, casa)
             dias.append((casa.start(), hoje + timedelta(days=deslocamento)))
 
+    # Nenhum return aqui dentro (fora dos dois ja existentes acima, para data
+    # explicita impossivel ou passada): um segundo dia na mesma frase --
+    # "segunda ou terca", "sabado ou domingo" -- nao pode ser descartado por
+    # um return precoce achando o primeiro. Toda decisao (dois dias? domingo?
+    # hoje ou proxima?) fica para depois de juntar TODAS as mencoes.
+    veio_de_semana_atual = False
     for casa in _DIA_DA_SEMANA.finditer(falado):
         falado = _apagar(falado, casa)
         alvo = _NOMES.index(casa.group(1))
-        if alvo == _DOMINGO:
-            return Ambigua(TEXTO_DO_DOMINGO)
         if semana_que_vem:
             dias.append((casa.start(), proxima_segunda + timedelta(days=alvo)))
             continue
         delta = (alvo - hoje.weekday()) % 7
-        if delta == 0:
-            return Ambigua(
-                TEXTO_DE_HOJE_OU_DA_PROXIMA.format(
-                    hoje=data_absoluta(hoje),
-                    proxima=data_absoluta(hoje + timedelta(days=7)),
-                )
-            )
+        if delta == 0 and alvo != _DOMINGO:
+            # O nome do dia da semana bate com o de hoje ("terca" numa
+            # terca): esta mencao vale como "hoje" na lista de dias abaixo.
+            # Se ela sobreviver como a UNICA mencao depois do descarte de
+            # domingo, e so ai que vira a pergunta "hoje ou a proxima" --
+            # nao aqui, porque um segundo dia na mesma frase tem prioridade
+            # (RN-11.3: a falta vira pergunta, mas uma pergunta so).
+            veio_de_semana_atual = True
         dias.append((casa.start(), hoje + timedelta(days=delta)))
 
     distintos = sorted({dia for _, dia in dias}, key=lambda d: min(p for p, x in dias if x == d))
-    if len(distintos) > 1:
+    # Domingo nunca sobra como "o dia falado" -- nem quando o lead disse a
+    # palavra, nem quando um dia relativo caiu nele por coincidencia
+    # ("amanha" dito num sabado, "dia 20" que cai num domingo em 2026). As
+    # duas fontes convergem aqui: qualquer data da lista que caia num domingo
+    # sai do conjunto de dias validos e vira a marca `domingo_mencionado`.
+    domingo_mencionado = any(dia.weekday() == _DOMINGO for dia in distintos)
+    sem_domingo = [dia for dia in distintos if dia.weekday() != _DOMINGO]
+
+    if len(sem_domingo) > 1:
         return Ambigua(
             TEXTO_DE_DOIS_DIAS.format(
-                primeiro=data_absoluta(distintos[0]), segundo=data_absoluta(distintos[1])
+                primeiro=data_absoluta(sem_domingo[0]), segundo=data_absoluta(sem_domingo[1])
             )
         )
-    dia_falado = distintos[0] if distintos else None
-    if dia_falado is not None and dia_falado.weekday() == _DOMINGO:
+    if domingo_mencionado and len(sem_domingo) == 1:
+        # Domingo E outro dia na mesma frase ("sabado ou domingo"): o outro
+        # dia e a oferta natural, e o texto do fim de semana ja serve para
+        # qualquer dia, nao so sabado.
+        return Ambigua(TEXTO_DO_FIM_DE_SEMANA.format(dia=data_absoluta(sem_domingo[0])))
+    if domingo_mencionado:
         return Ambigua(TEXTO_DO_DOMINGO)
+    dia_falado = sem_domingo[0] if sem_domingo else None
+    if dia_falado is not None and dia_falado == hoje and veio_de_semana_atual:
+        return Ambigua(
+            TEXTO_DE_HOJE_OU_DA_PROXIMA.format(
+                hoje=data_absoluta(hoje),
+                proxima=data_absoluta(hoje + timedelta(days=7)),
+            )
+        )
 
     # Hora. As formas mais especificas primeiro, e cada uma apaga o que casou.
     hora: int | None = None
@@ -275,6 +302,11 @@ def resolver(texto: str, *, agora: datetime) -> Resolucao:
     elif _TARDE.search(falado):
         periodo = PeriodoDoDia.TARDE
 
+    # Hora explicita vence periodo contraditorio, de proposito: "quinta 15h
+    # de manha" fica 15h, nao vira pergunta nem 3h. Os dois ramos abaixo so
+    # ajustam a hora nos casos em que ela PRECISA de complemento (TARDE com
+    # hora <12, ou hora nua de 1 a 7) -- fora deles, o numero que o lead
+    # disse e o que vale.
     if hora is not None and periodo_da_hora is None:
         if periodo is PeriodoDoDia.TARDE and hora < 12:
             hora += 12

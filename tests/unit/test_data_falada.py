@@ -129,6 +129,32 @@ def test_dois_dias_pergunta_qual() -> None:
     assert "28 de agosto" in pergunta
 
 
+def test_dois_dias_nao_descarta_o_dia_de_hoje_falado_por_nome() -> None:
+    """Regressao: um return precoce no "hoje ou a proxima" descartava o
+    segundo dia da frase. "terca" e o dia de hoje (AGORA e terca-feira), e
+    "segunda" nao pode sumir da pergunta."""
+    pergunta = _pergunta("pode ser segunda ou terça de tarde")
+    assert "31 de agosto" in pergunta
+    assert "25 de agosto" in pergunta
+
+
+def test_dois_dias_nao_descarta_amanha() -> None:
+    """Regressao: o mesmo return precoce descartava "amanha" quando o outro
+    dia da frase caia no dia de hoje falado por nome."""
+    pergunta = _pergunta("amanhã ou terça")
+    assert "26 de agosto" in pergunta
+    assert "25 de agosto" in pergunta
+
+
+def test_dois_dias_nao_descarta_sabado_quando_o_outro_e_domingo() -> None:
+    """Regressao: o return precoce de "domingo" descartava o sabado dito na
+    mesma frase. Domingo com outro dia vira a pergunta do fim de semana, que
+    serve para qualquer dia -- nao a generica de TEXTO_DO_DOMINGO."""
+    pergunta = _pergunta("sábado ou domingo")
+    assert "sábado, 29 de agosto" in pergunta
+    assert "domingos" in pergunta
+
+
 def test_noite_pergunta_pelo_fim_da_tarde() -> None:
     assert _pergunta("quinta à noite") == TEXTO_DA_NOITE
 
