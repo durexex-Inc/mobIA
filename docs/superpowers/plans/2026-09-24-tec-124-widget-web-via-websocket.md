@@ -1773,11 +1773,19 @@ E atualizar o comentário de `ctx[...]` do topo da função, que hoje cita `ctx[
 
 - [ ] **Step 5: Corrigir os testes que montam `ctx["indicador"]`**
 
-```bash
-grep -rn '"indicador"' tests/
-```
+São sete, medidos nesta árvore em 24/09/2026:
 
-Cada ocorrência vira `"indicadores": {CANAL_WHATSAPP: ..., CANAL_WEB: IndicadorNoop()}`.
+| arquivo | linha | o que está lá |
+| --- | --- | --- |
+| `tests/integration/test_process_message_agrupado.py` | 43 | `IndicadorNoop()` — é o `_ctx()` que os outros importam |
+| `tests/integration/test_indicador_de_digitacao.py` | 240 | `espiao` |
+| `tests/integration/test_cancelamento_do_worker.py` | 65 | `IndicadorNoop()` |
+| `tests/integration/test_handoff_por_erro.py` | 32 | `IndicadorNoop()` |
+| `tests/integration/test_moderacao_na_rajada.py` | 72 | `IndicadorNoop()` |
+| `tests/integration/test_sweep_stalled.py` | 32 | `IndicadorNoop()` |
+| `tests/features/test_reprocessamento_apos_falha.py` | 49 | `IndicadorNoop()` |
+
+Cada um vira `"indicadores": {CANAL_WHATSAPP: <o que estava lá>, CANAL_WEB: IndicadorNoop()}`. Confirme com `grep -rn '"indicador"' tests/` que não sobrou nenhum — a tabela é de uma data, e a branch pode ter mexido em algum depois.
 
 - [ ] **Step 6: Rodar o bloco e ver passar**
 
