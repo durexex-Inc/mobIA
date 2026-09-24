@@ -19,7 +19,12 @@ jobs:
     name: Lint e tipos
     runs-on: ubuntu-latest
     steps:
+      # Historico inteiro: o passo `citacoes em prosa` compara contra a base
+      # do PR por merge-base (`base...HEAD`), e o clone raso padrao nao tem os
+      # commits para calcula-lo.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -54,6 +59,15 @@ jobs:
 
       - name: mypy
         run: mypy
+
+      # TEC-299. So as duas marcas de `comentarios_tocados.py` que nao pedem
+      # julgamento: ancora `arquivo.py::Nome` cujo nome nao existe, e citacao
+      # por numero de linha em linha de .md que o PR acrescentou. So em PR,
+      # porque LINHA precisa de uma base, e num push para a main nao ha uma
+      # que faca sentido.
+      - name: citacoes em prosa
+        if: github.event_name == 'pull_request'
+        run: python scripts/comentarios_tocados.py "origin/${{ github.base_ref }}" --checar
 
   testes:
     name: Testes

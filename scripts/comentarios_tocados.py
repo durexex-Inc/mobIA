@@ -8,13 +8,15 @@ escreveu errado antes -- e a TEC-146 registra o caso caro: um comentario em
 escondeu um bug de orcamento 40% abaixo do informado, e sobreviveu a duas
 rodadas de revisao porque quem lia acreditava nele.
 
-Nenhum dos tres gates estaticos olha para comentario. Este script nao vira gate
-tambem: ele nao valida nada e nao reprova nada. Ele so poe na frente de quem
-revisa a lista exata do que precisa ser reconferido, para que a verificacao pare
-de depender de alguem lembrar.
+Nenhum dos tres gates estaticos olha para comentario. A listagem continua sem
+reprovar nada: decidir se um comentario esta certo e julgamento de pessoa, e
+ela so poe na frente de quem revisa a lista exata do que precisa ser
+reconferido, para a verificacao parar de depender de alguem lembrar. `--checar`
+reprova, e so por ANCORA e LINHA, que nao pedem julgamento -- um nome existe ou
+nao no `ast`, uma linha acrescentada tem o padrao ou nao.
 
-Cinco marcas. As duas primeiras sao sobre comentario dentro do codigo; as tres
-ultimas, sobre a prosa versionada que descreve o codigo (TEC-282):
+Sete marcas. As duas primeiras sao sobre comentario dentro do codigo; as
+demais, sobre a prosa versionada que descreve o codigo (TEC-282 e TEC-299):
 
   ALTERADO  o comentario mudou nesta branch. Releia o codigo e confirme que ele
             ainda descreve o que esta ali.
@@ -33,14 +35,23 @@ ultimas, sobre a prosa versionada que descreve o codigo (TEC-282):
             citacao ficou errada, so diz que precisa ser reconferida.
 
   FALSO     entre as citacoes que ja apontam arquivo que esta branch mexeu, a
-            que vai alem do fim dele. E a unica marca que afirma em vez de
-            suspeitar, e por isso exige que o alvo resolva para um arquivo so.
+            que vai alem do fim dele. E a unica marca que afirma que uma
+            citacao por linha esta errada sobre o codigo, e por isso exige
+            que o alvo resolva para um arquivo so.
 
   NOMEIA    a branch mexeu num arquivo sob `scripts/` e um documento nomeia
             aquele script -- o unico casamento por nome desta ferramenta. Nao
             distingue prosa que descreve o script de prosa que so o menciona
             -- tolerado de proposito, porque a marca e suspeita e o revisor
             descarta em segundos (ver `scripts_nomeados`).
+
+  ANCORA    um .md cita `arquivo.py::Nome` e o nome nao existe no arquivo
+            (TEC-299). Vale para o repo inteiro, nao so para arquivos que a
+            branch mexeu, e reprova em --checar.
+
+  LINHA     uma linha que a branch acrescentou a um .md cita `arquivo.py`
+            seguido de numero de linha, fora de bloco cercado (TEC-299).
+            Reprova em --checar: citacao nova se faz por ancora.
 
 Planos de implementacao (`docs/superpowers/plans/`) ficam fora da varredura de
 prosa; a razao esta em PREFIXO_DOS_PLANOS.
@@ -55,6 +66,7 @@ Uso:
     ./.venv/Scripts/python.exe scripts/comentarios_tocados.py
     ./.venv/Scripts/python.exe scripts/comentarios_tocados.py main
     ./.venv/Scripts/python.exe scripts/comentarios_tocados.py main --tudo
+    ./.venv/Scripts/python.exe scripts/comentarios_tocados.py --checar
 """
 
 import argparse
@@ -84,6 +96,18 @@ _CABECALHO = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 # deste repo traz o texto visivel `turno.py:508` junto, e casar os dois faria
 # um ponto so virar dois achados.
 _CITACAO = re.compile(r"(?<![\w/.-])((?:[\w./-]+/)?[\w-]+\.py):(\d+)(?:-(\d+))?")
+
+# `arquivo.py::Nome`, `arquivo.py::Classe.metodo` e `arquivo.py::Classe::metodo`
+# -- a ancora nominal da TEC-299, na forma do node id do pytest, que o repo ja
+# usava antes dela. O node id do pytest de fato separa classe e metodo por
+# `::`, nao por `.`; aceitar os dois evita que a ancora pare no segundo `::` e
+# verifique so a classe, deixando o metodo inexistente passar.
+#
+# Mesmo lookbehind de `_CITACAO`, pelo mesmo motivo: sem ele,
+# `mobia.infra.crypto.py::x` casaria pela cauda `crypto.py`.
+_ANCORA = re.compile(
+    r"(?<![\w/.-])((?:[\w./-]+/)?[\w-]+\.py)::([A-Za-z_]\w*(?:(?:\.|::)[A-Za-z_]\w*)*)"
+)
 
 # O teto de VIZINHOS impressos por bloco na saida padrao.
 #
@@ -130,6 +154,10 @@ MAXIMO_DE_CITACOES_POR_DOCUMENTO = 5
 # acontecer.
 BALDE_DO_MODULO = "<modulo>"
 
+# Abertura ou fechamento de bloco cercado: ate tres espacos, e tres ou mais
+# crases ou tis.
+_CERCA = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
 # Planos de implementacao ficam fora da varredura de prosa.
 #
 # Um plano registra o que se fez numa branch num dia: ele nao afirma o que o
@@ -169,8 +197,8 @@ class Citacao:
     # algo que o alvo cru nao dizia -- para `turno.py:50` ele mostra onde o
     # arquivo mora; para um alvo que ja veio com caminho completo, fica vazio.
     # `linhas_do_arquivo` so e preenchido para FALSO: e a evidencia da unica
-    # marca que afirma em vez de suspeitar, e substitui `destino` na saida --
-    # ver `main`.
+    # marca que afirma que uma citacao por linha esta errada sobre o codigo, e
+    # substitui `destino` na saida -- ver `main`.
     documento: str
     linha: int
     texto: str
@@ -180,12 +208,53 @@ class Citacao:
 
 
 def _rodar(*argumentos: str) -> str:
+    # `core.quotepath=off` impede o git de imprimir caminho nao-ASCII entre
+    # aspas (`"b/x.md"` em vez de `b/x.md`) no cabecalho `+++`. Sem isto, essa
+    # forma foge do padrao que `_linhas_do_diff` reconhece: o arquivo entre
+    # aspas fica sem checagem nenhuma -- gate falha aberto, e nao so as linhas
+    # acrescentadas escapam, o `ls-files` que alimenta ANCORA tambem nao acha
+    # o mesmo caminho. O `elif` de `_linhas_do_diff` e a segunda linha de
+    # defesa: ele zera `atual` nesse cabecalho nao reconhecido, para o hunk
+    # nao ser creditado ao arquivo anterior do diff.
     resultado = subprocess.run(
-        ["git", *argumentos], capture_output=True, text=True, encoding="utf-8"
+        ["git", "-c", "core.quotepath=off", *argumentos],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
     if resultado.returncode != 0:
         raise SystemExit(f"git {' '.join(argumentos)} falhou:\n{resultado.stderr}")
     return resultado.stdout
+
+
+def _linhas_do_diff(saida: str) -> dict[str, set[int]]:
+    """Por arquivo, as linhas que um `git diff --unified=0` acrescentou.
+
+    Compartilhada entre o diff de `.py` e o de `.md`: as duas leituras tem de
+    concordar sobre o que e linha acrescentada, e dois parsers divergiriam.
+    """
+    por_arquivo: dict[str, set[int]] = {}
+    atual: set[int] | None = None
+    for linha in saida.splitlines():
+        if linha.startswith("+++ b/"):
+            # Caminho com espaco ganha um TAB final do git; sem tira-lo, a
+            # chave carregaria o TAB e nunca bateria com o caminho sem TAB que
+            # `_documentos_no_escopo` devolve.
+            atual = por_arquivo.setdefault(linha[6:].rstrip("\t"), set())
+        elif linha.startswith("+++ "):
+            # Qualquer outro `+++ ` -- `/dev/null`, ou caminho entre aspas de
+            # um `core.quotepath` que nao foi desligado -- zera `atual`. Sem
+            # este `elif`, os hunks cairiam no arquivo anterior do diff --
+            # LINHA falso numa linha que a branch nao tocou, e o arquivo entre
+            # aspas ficaria sem checagem.
+            atual = None
+        elif atual is not None and (casa := _CABECALHO.match(linha)):
+            inicio = int(casa.group(1))
+            # Grupo 2 ausente significa uma linha so; `,0` significa remocao
+            # pura, que nao deixa linha nova para reconferir.
+            quantas = int(casa.group(2)) if casa.group(2) is not None else 1
+            atual.update(range(inicio, inicio + quantas))
+    return {arquivo: linhas for arquivo, linhas in por_arquivo.items() if linhas}
 
 
 def linhas_alteradas(base: str) -> dict[Path, set[int]]:
@@ -197,20 +266,16 @@ def linhas_alteradas(base: str) -> dict[Path, set[int]]:
     existe para fazer desapareceria.
     """
     saida = _rodar("diff", "--unified=0", f"{base}...HEAD", "--", "*.py")
-    por_arquivo: dict[Path, set[int]] = {}
-    atual: set[int] | None = None
-    for linha in saida.splitlines():
-        if linha.startswith("+++ b/"):
-            atual = por_arquivo.setdefault(Path(linha[6:]), set())
-        elif linha.startswith("+++ /dev/null"):
-            atual = None
-        elif atual is not None and (casa := _CABECALHO.match(linha)):
-            inicio = int(casa.group(1))
-            # Grupo 2 ausente significa uma linha so; `,0` significa remocao
-            # pura, que nao deixa linha nova para reconferir.
-            quantas = int(casa.group(2)) if casa.group(2) is not None else 1
-            atual.update(range(inicio, inicio + quantas))
-    return {arquivo: linhas for arquivo, linhas in por_arquivo.items() if linhas}
+    return {Path(arquivo): linhas for arquivo, linhas in _linhas_do_diff(saida).items()}
+
+
+def linhas_adicionadas_em_documentos(base: str) -> dict[str, set[int]]:
+    """Por .md, as linhas que esta branch acrescentou -- o alcance de LINHA.
+
+    Chave em texto com barra normal, como o git devolve e como
+    `_documentos_no_escopo` lista: as duas se cruzam por igualdade.
+    """
+    return _linhas_do_diff(_rodar("diff", "--unified=0", f"{base}...HEAD", "--", "*.md"))
 
 
 def _comentarios(fonte: str) -> list[tuple[int, str]]:
@@ -323,6 +388,175 @@ def resolver(alvo: str, arquivos_py: set[str]) -> list[str]:
     return sorted(p for p in arquivos_py if p.rsplit("/", 1)[-1] == alvo)
 
 
+def ancoras_do_texto(texto: str) -> list[tuple[int, str, str]]:
+    """Cada ancora como (linha do documento, alvo cru, nome pontuado)."""
+    achados = []
+    for numero, linha in enumerate(texto.splitlines(), 1):
+        for casa in _ANCORA.finditer(linha):
+            achados.append((numero, casa.group(1), casa.group(2)))
+    return achados
+
+
+def _nomes_do_alvo(alvo: ast.expr, prefixo: str, classe: str, nomes: set[str]) -> None:
+    if isinstance(alvo, ast.Name):
+        nomes.add(prefixo + alvo.id)
+    elif isinstance(alvo, ast.Tuple | ast.List):
+        for elemento in alvo.elts:
+            _nomes_do_alvo(elemento, prefixo, classe, nomes)
+    elif isinstance(alvo, ast.Starred):
+        _nomes_do_alvo(alvo.value, prefixo, classe, nomes)
+    elif (
+        classe
+        and isinstance(alvo, ast.Attribute)
+        and isinstance(alvo.value, ast.Name)
+        and alvo.value.id == "self"
+    ):
+        nomes.add(f"{classe}.{alvo.attr}")
+
+
+def nomes_definidos(fonte: str) -> set[str] | None:
+    """Todo nome que uma ancora pode designar neste arquivo, pontuado.
+
+    Definicao, e nao mencao: `def`, `class`, alvo de atribuicao, e o
+    `self.x` atribuido num metodo, que define `Classe.x` para quem le.
+    Import nao entra -- citar `mod.py::y` para um `y` so importado aponta o
+    lugar errado. Blocos que nao abrem escopo (`if`, `try`, `with`, laco,
+    `match`) sao atravessados com o mesmo prefixo, porque um `def` dentro de
+    `if TYPE_CHECKING:` continua sendo `modulo::nome`.
+
+    `None` quando a fonte nao parseia: quem chama trata como "nao
+    verificavel", nunca como "nome ausente".
+    """
+    try:
+        arvore = ast.parse(fonte)
+    except (SyntaxError, ValueError):
+        return None
+    nomes: set[str] = set()
+
+    def visitar(corpo: list[ast.stmt], prefixo: str, classe: str) -> None:
+        for no in corpo:
+            if isinstance(no, ast.ClassDef):
+                nome = prefixo + no.name
+                nomes.add(nome)
+                visitar(no.body, nome + ".", nome)
+            elif isinstance(no, ast.FunctionDef | ast.AsyncFunctionDef):
+                nome = prefixo + no.name
+                nomes.add(nome)
+                # A classe dona passa adiante para `self.x` virar `Classe.x`;
+                # uma funcao solta nao tem `self` que valha.
+                visitar(no.body, nome + ".", classe if prefixo == classe + "." else "")
+            elif isinstance(no, ast.Assign):
+                for alvo in no.targets:
+                    _nomes_do_alvo(alvo, prefixo, classe, nomes)
+            elif isinstance(no, ast.AnnAssign):
+                _nomes_do_alvo(no.target, prefixo, classe, nomes)
+            elif isinstance(no, ast.TypeAlias):
+                nomes.add(prefixo + no.name.id)
+            elif isinstance(no, ast.Match):
+                for caso in no.cases:
+                    visitar(caso.body, prefixo, classe)
+            elif isinstance(
+                no,
+                ast.If
+                | ast.Try
+                | ast.TryStar
+                | ast.With
+                | ast.AsyncWith
+                | ast.For
+                | ast.AsyncFor
+                | ast.While,
+            ):
+                for campo in ("body", "orelse", "finalbody"):
+                    visitar(getattr(no, campo, []), prefixo, classe)
+                for tratador in getattr(no, "handlers", []):
+                    visitar(tratador.body, prefixo, classe)
+
+    visitar(arvore.body, "", "")
+    return nomes
+
+
+def ancora_quebrada(
+    candidatos: list[str],
+    nome: str,
+    nomes_de: Callable[[str], set[str] | None],
+) -> bool:
+    """Se esta ancora e comprovadamente falsa.
+
+    Ao contrario da citacao por linha, a ambiguidade de arquivo NAO impede a
+    certeza: se o nome nao existe em nenhum candidato, a ancora e falsa em
+    qualquer leitura dela. Basta um candidato que nao parseia para a resposta
+    ser "nao sei" -- e "nao sei" aqui e False, porque esta marca reprova.
+
+    Alvo sem candidato nenhum e False tambem: e o caminho de fora do repo, ou
+    o arquivo apagado da cegueira da TEC-284, que continua aberta.
+    """
+    if not candidatos:
+        return False
+    return all((nomes := nomes_de(c)) is not None and nome not in nomes for c in candidatos)
+
+
+def linhas_cercadas(texto: str) -> set[int]:
+    """As linhas do documento que estao dentro de bloco cercado, cercas inclusas.
+
+    Regra do CommonMark, no que importa aqui: fecha com o mesmo caractere, com
+    pelo menos o mesmo comprimento e sem nada depois; bloco nao fechado vai ate
+    o fim do documento.
+    """
+    dentro: set[int] = set()
+    aberta = ""
+    for numero, linha in enumerate(texto.splitlines(), 1):
+        casa = _CERCA.match(linha)
+        if not aberta:
+            if casa:
+                aberta = casa.group(1)
+                dentro.add(numero)
+            continue
+        dentro.add(numero)
+        if (
+            casa
+            and casa.group(1)[0] == aberta[0]
+            and len(casa.group(1)) >= len(aberta)
+            and not casa.group(2).strip()
+        ):
+            aberta = ""
+    return dentro
+
+
+def checar_documento(
+    documento: str,
+    texto: str,
+    adicionadas: set[int],
+    arquivos_py: set[str],
+    nomes_de: Callable[[str], set[str] | None],
+) -> list[Citacao]:
+    """As duas marcas que reprovam: ANCORA e LINHA.
+
+    ANCORA vale para o documento inteiro, e nao so para arquivos que a branch
+    mexeu -- o invariante e "toda ancora resolve", e ele so se sustenta se for
+    verificado sempre. LINHA vale so para linha que a branch acrescentou, fora
+    de bloco cercado: e assim que a citacao antiga fica onde esta ate alguem
+    editar a linha dela, e ai a conversao e obrigatoria.
+
+    Puro de proposito, como `examinar_prosa`.
+    """
+    achados = []
+    for linha, alvo, nome in ancoras_do_texto(texto):
+        # `nomes_definidos` pontua classe e metodo com `.` (`Classe.metodo`);
+        # o `::` so existe na forma como o documento escreve o node id do
+        # pytest. Normaliza so aqui, para a busca bater -- `Citacao.texto`
+        # abaixo continua usando `nome` cru, como o documento escreveu.
+        nome_pontuado = nome.replace("::", ".")
+        if ancora_quebrada(resolver(alvo, arquivos_py), nome_pontuado, nomes_de):
+            achados.append(Citacao(documento, linha, f"{alvo}::{nome}", "ANCORA"))
+    if adicionadas:
+        cercadas = linhas_cercadas(texto)
+        for linha, alvo, inicio, fim in citacoes_do_texto(texto):
+            if linha in adicionadas and linha not in cercadas:
+                citada = f"{inicio}-{fim}" if inicio != fim else f"{inicio}"
+                achados.append(Citacao(documento, linha, f"{alvo}:{citada}", "LINHA"))
+    return sorted(achados, key=lambda c: c.linha)
+
+
 def classificar(
     candidatos: list[str],
     fim: int,
@@ -331,11 +565,12 @@ def classificar(
 ) -> str | None:
     """A marca desta citacao, ou None quando ela nao diz respeito a esta branch.
 
-    `FALSO` exige resolucao inequivoca porque e a unica marca que AFIRMA algo
-    em vez de suspeitar: ela dispensa o revisor de conferir. Declarar falsa uma
-    citacao que talvez aponte o outro candidato seria errar justamente na
-    direcao em que esta ferramenta nao pode errar. Citacao ambigua alem do fim
-    de um dos candidatos sai como `PROSA` e o revisor decide.
+    `FALSO` exige resolucao inequivoca porque e a unica marca que AFIRMA que
+    uma citacao por linha esta errada sobre o codigo: ela dispensa o revisor de
+    conferir. Declarar falsa uma citacao que talvez aponte o outro candidato
+    seria errar justamente na direcao em que esta ferramenta nao pode errar.
+    Citacao ambigua alem do fim de um dos candidatos sai como `PROSA` e o
+    revisor decide.
 
     A comparacao e `>` e nao `>=`: citar a ultima linha do arquivo e citacao
     valida, nao afirmacao falsa.
@@ -443,17 +678,22 @@ def examinar(arquivo: Path, alteradas: set[int]) -> list[Achado]:
     return sorted(achados, key=lambda a: a.linha)
 
 
-def _pendentes_fora_do_commit() -> list[str]:
-    """Arquivos .py modificados ou nao rastreados que o diff nao enxerga.
+def _pendentes_fora_do_commit(extensao: str) -> list[str]:
+    """Arquivos `extensao` modificados ou nao rastreados que o diff nao enxerga.
 
     `git diff base...HEAD` compara commits, entao trabalho ainda nao commitado
     fica invisivel para ele. Sem este aviso, rodar o script com a arvore suja
     responde "nenhum arquivo mudou" -- uma falsa tranquilidade pior que nao ter
     rodado, porque quem le acredita.
+
+    Parametrizada por extensao: o `main` normal usa ".py", e `--checar` usa
+    ".md" pelo mesmo motivo -- os numeros de `--checar` vem do diff commitado,
+    mas o texto que ele examina vem do disco, e um `.md` fora de commit faz os
+    dois discordarem.
     """
     saida = _rodar("status", "--porcelain", "--untracked-files=all")
     return sorted(
-        linha[3:] for linha in saida.splitlines() if linha[3:].endswith(".py") and linha[3:]
+        linha[3:] for linha in saida.splitlines() if linha[3:].endswith(extensao) and linha[3:]
     )
 
 
@@ -492,8 +732,8 @@ def examinar_prosa(
         # ler dois centimetros antes e ruido.
         destino = candidatos[0] if len(candidatos) == 1 and candidatos[0] != alvo else ""
         # So FALSO ganha a contagem: e a evidencia da unica marca que afirma
-        # em vez de suspeitar, e classificar() so devolve FALSO com um
-        # candidato so, entao o indice 0 e seguro aqui.
+        # que uma citacao por linha esta errada sobre o codigo, e classificar()
+        # so devolve FALSO com um candidato so, entao o indice 0 e seguro aqui.
         linhas_do_arquivo = tamanho_de(candidatos[0]) if marca == "FALSO" else 0
         # Reproduz a faixa como o documento a escreveu. Mostrar so o fim daria
         # uma string que nao existe no .md, e quem fosse procura-la nao acharia
@@ -556,10 +796,11 @@ def limitar(achados: list[Achado], *, teto: int) -> tuple[list[Achado], dict[str
 def limitar_citacoes(citacoes: list[Citacao], *, teto: int) -> tuple[list[Citacao], int]:
     """As citacoes que ficam neste documento, e quantas ficaram de fora.
 
-    So `PROSA` e cortada. `FALSO` e `NOMEIA` escapam pela mesma razao que
-    `ALTERADO` escapa em `limitar`: o teto existe contra ruido de vizinhanca e
-    nenhuma das duas e vizinhanca. Um `FALSO` cortado seria a ferramenta
-    escondendo a unica coisa que ela sabe com certeza estar errada.
+    So `PROSA` e cortada. `FALSO`, `NOMEIA`, `ANCORA` e `LINHA` escapam pela
+    mesma razao que `ALTERADO` escapa em `limitar`: o teto existe contra ruido
+    de vizinhanca e nenhuma delas e vizinhanca. Um `FALSO` cortado seria a
+    ferramenta escondendo uma das coisas que ela sabe com certeza estar
+    erradas -- ANCORA e LINHA tambem sao certeza.
 
     `teto` de 0 desliga o corte -- e assim que `--tudo` e implementado, pelo
     mesmo caminho que `limitar` usa, sem um ramo separado que possa divergir.
@@ -574,6 +815,73 @@ def limitar_citacoes(citacoes: list[Citacao], *, teto: int) -> tuple[list[Citaca
     prosa = [c for c in ordenadas if c.marca == "PROSA"]
     ficam.extend(prosa[:teto])
     return sorted(ficam, key=lambda c: c.linha), max(len(prosa) - teto, 0)
+
+
+def _nomes_por_arquivo() -> Callable[[str], set[str] | None]:
+    """`nomes_definidos` de cada arquivo, lido uma vez so.
+
+    Arquivo ilegivel vira None, "nao verificavel" -- nunca conjunto vazio,
+    que faria toda ancora para ele sair como ANCORA.
+    """
+    memoria: dict[str, set[str] | None] = {}
+
+    def nomes_de(caminho: str) -> set[str] | None:
+        if caminho not in memoria:
+            try:
+                memoria[caminho] = nomes_definidos(Path(caminho).read_text(encoding="utf-8"))
+            except OSError:
+                memoria[caminho] = None
+        return memoria[caminho]
+
+    return nomes_de
+
+
+def _checar(
+    arquivos_py: set[str],
+    adicionadas: dict[str, set[int]],
+    nomes_de: Callable[[str], set[str] | None],
+) -> int:
+    """O modo do CI: so as duas marcas mecanicas, e o codigo de saida."""
+    # Os numeros de LINHA vem do diff commitado (`adicionadas`), mas o texto
+    # examinado vem do disco (`Path(documento).read_text` abaixo). Um `.md`
+    # fora de commit faz os dois discordarem -- mesmo aviso do `.py` no `main`
+    # normal, sem mudar o codigo de saida: e so um alerta.
+    if pendentes := _pendentes_fora_do_commit(".md"):
+        print(f"AVISO: {len(pendentes)} arquivo(s) .md fora de commit, invisiveis para o diff:")
+        for caminho in pendentes:
+            print(f"  {caminho}")
+        print("Commite antes de confiar nesta listagem.\n")
+    ocorrencias = 0
+    marcas_vistas: set[str] = set()
+    for documento in _documentos_no_escopo():
+        try:
+            texto = Path(documento).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        achados = checar_documento(
+            documento, texto, adicionadas.get(documento, set()), arquivos_py, nomes_de
+        )
+        for citacao in achados:
+            print(f"{citacao.marca:<6} {documento}:{citacao.linha}  {citacao.texto}")
+            marcas_vistas.add(citacao.marca)
+        ocorrencias += len(achados)
+    if not ocorrencias:
+        print("Nenhuma ancora quebrada e nenhuma citacao nova por numero de linha.")
+        return 0
+    # So explica a marca que de fato ocorreu -- uma execucao com ANCORA sozinha
+    # nao precisa do paragrafo sobre LINHA, e vice-versa.
+    explicacoes = []
+    if "ANCORA" in marcas_vistas:
+        explicacoes.append(
+            "ANCORA: o nome citado nao existe mais no arquivo -- ache o novo nome e troque."
+        )
+    if "LINHA" in marcas_vistas:
+        explicacoes.append(
+            "LINHA: citacao por numero de linha em linha que esta branch acrescentou -- "
+            "cite `arquivo.py::Nome` (ver 'Comentario nao mente' no CLAUDE.md)."
+        )
+    print(f"\n{ocorrencias} citacao(oes) a corrigir.\n" + "\n".join(explicacoes))
+    return 1
 
 
 def main() -> int:
@@ -591,13 +899,23 @@ def main() -> int:
         action="store_true",
         help="imprime todos os vizinhos e todas as citacoes, sem teto",
     )
+    analisador.add_argument(
+        "--checar",
+        action="store_true",
+        help="so ANCORA e LINHA, e sai com 1 se houver alguma -- o passo do CI",
+    )
     argumentos = analisador.parse_args()
     base = argumentos.base
+    arquivos_py = _arquivos_versionados()
+    nomes_de = _nomes_por_arquivo()
+    adicionadas = linhas_adicionadas_em_documentos(base)
+    if argumentos.checar:
+        return _checar(arquivos_py, adicionadas, nomes_de)
     teto = 0 if argumentos.tudo else MAXIMO_DE_VIZINHOS_POR_BLOCO
     teto_da_prosa = 0 if argumentos.tudo else MAXIMO_DE_CITACOES_POR_DOCUMENTO
     por_arquivo = linhas_alteradas(base)
 
-    if pendentes := _pendentes_fora_do_commit():
+    if pendentes := _pendentes_fora_do_commit(".py"):
         print(f"AVISO: {len(pendentes)} arquivo(s) .py fora de commit, invisiveis para o diff:")
         for caminho in pendentes:
             print(f"  {caminho}")
@@ -605,7 +923,6 @@ def main() -> int:
 
     if not por_arquivo:
         print(f"Nenhum arquivo .py commitado mudou em relacao a {base}.")
-        return 0
 
     alterados = vizinhos = 0
     for arquivo in sorted(por_arquivo):
@@ -634,14 +951,13 @@ def main() -> int:
                 f"  ... +{quantos} vizinho(s) em {bloco}, os mais distantes omitidos -- use --tudo"
             )
 
-    em_prosa = falsas = 0
+    em_prosa = falsas = a_corrigir = 0
     alterados_como_texto = {str(caminho).replace("\\", "/") for caminho in por_arquivo}
     scripts_alterados = {
         caminho.rsplit("/", 1)[-1]
         for caminho in alterados_como_texto
         if caminho.startswith("scripts/")
     }
-    arquivos_py = _arquivos_versionados()
     tamanhos: dict[str, int] = {}
 
     def tamanho_de(caminho: str) -> int:
@@ -649,9 +965,9 @@ def main() -> int:
         # e cada citacao perguntaria o tamanho de novo.
         #
         # Arquivo ilegivel devolve `maxsize`, nao 0. Zero faria QUALQUER citacao
-        # parecer alem do fim e sair como FALSO -- a unica marca que afirma em vez
-        # de suspeitar. Falha de leitura nao autoriza afirmar nada: a citacao cai
-        # em PROSA e quem revisa confere.
+        # parecer alem do fim e sair como FALSO -- a unica marca que afirma que
+        # uma citacao por linha esta errada sobre o codigo. Falha de leitura nao
+        # autoriza afirmar nada: a citacao cai em PROSA e quem revisa confere.
         if caminho not in tamanhos:
             try:
                 tamanhos[caminho] = len(Path(caminho).read_text(encoding="utf-8").splitlines())
@@ -672,14 +988,22 @@ def main() -> int:
             scripts_alterados,
             tamanho_de,
         )
+        certas = checar_documento(
+            documento, texto, adicionadas.get(documento, set()), arquivos_py, nomes_de
+        )
+        # A mesma citacao numa linha nova a arquivo mexido seria PROSA e LINHA;
+        # fica a que reprova, para o revisor nao ler o mesmo ponto duas vezes.
+        repetidas = {(c.linha, c.texto) for c in certas if c.marca == "LINHA"}
+        citacoes = [c for c in citacoes if (c.linha, c.texto) not in repetidas] + certas
         if not citacoes:
             continue
         ficam_citacoes, omitidas = limitar_citacoes(citacoes, teto=teto_da_prosa)
         print(f"\n{documento}")
         for citacao in ficam_citacoes:
             if citacao.marca == "FALSO":
-                # A evidencia da unica marca que afirma em vez de suspeitar,
-                # no lugar do destino: ver D5 do desenho da TEC-282.
+                # A evidencia da unica marca que afirma que uma citacao por
+                # linha esta errada sobre o codigo, no lugar do destino: ver D5
+                # do desenho da TEC-282.
                 extra = f"  (o arquivo tem {citacao.linhas_do_arquivo} linhas)"
             elif citacao.destino:
                 extra = f"  -> {citacao.destino}"
@@ -688,6 +1012,8 @@ def main() -> int:
             print(f"  {citacao.marca:<6} :{citacao.linha}  {citacao.texto}{extra}")
             if citacao.marca == "FALSO":
                 falsas += 1
+            elif citacao.marca in ("ANCORA", "LINHA"):
+                a_corrigir += 1
             else:
                 em_prosa += 1
         if omitidas:
@@ -696,23 +1022,26 @@ def main() -> int:
             em_prosa += omitidas
             print(f"  ... +{omitidas} citacao(oes) omitida(s) -- use --tudo")
 
-    if not alterados and not vizinhos and not em_prosa and not falsas:
+    if not alterados and not vizinhos and not em_prosa and not falsas and not a_corrigir:
         print(f"Nenhum comentario, docstring ou prosa a reconferir em relacao a {base}.")
         return 0
 
     resumo = f"\n{alterados} alterado(s) nesta branch, {vizinhos} vizinho(s) de codigo que mudou"
     if em_prosa or falsas:
         resumo += f", {em_prosa + falsas} em prosa ({falsas} comprovadamente falsa(s))"
+    if a_corrigir:
+        resumo += f", {a_corrigir} a corrigir (ANCORA/LINHA, reprovam no CI)"
     print(
         f"{resumo}.\n"
         "VIZINHO e o que nao aparece no diff: confira se ainda descreve o codigo.\n"
-        "PROSA e suspeita e FALSO e certeza: entre as citacoes de arquivo que a "
+        "PROSA e suspeita e FALSO e certeza: entre as citacoes por linha a arquivo que a "
         "branch mexeu, FALSO e a que aponta alem do fim dele.\n"
-        "NOMEIA e o documento que nomeia um script que a branch alterou."
+        "NOMEIA e o documento que nomeia um script que a branch alterou.\n"
+        "ANCORA e LINHA reprovam no CI (--checar): ancora cujo nome nao existe, e "
+        "citacao por numero de linha em linha que a branch acrescentou."
     )
-    # Sempre 0: este script informa, nao reprova. Virar gate exigiria decidir
-    # automaticamente se um comentario esta certo, que e o julgamento que ele
-    # existe justamente para devolver a uma pessoa.
+    # Sempre 0 na listagem: ela informa. Quem reprova e `--checar`, e so pelas
+    # duas marcas que nao pedem julgamento -- ver a docstring do modulo.
     return 0
 
 

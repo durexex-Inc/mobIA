@@ -1,9 +1,9 @@
 """A ferramenta que lista comentarios, docstrings e prosa a reconferir, testada.
 
-TEC-277, TEC-282 e TEC-283. Pura: as partes que decidem as cinco marcas --
-ALTERADO, VIZINHO, PROSA, FALSO e NOMEIA -- nao tocam git nem disco, recebem
-texto de diff, fonte, documento e conjuntos de linhas e nomes. Antes da
-TEC-277 o script nao tinha teste nenhum.
+TEC-277, TEC-282, TEC-283 e TEC-299. Pura: as partes que decidem as sete
+marcas -- ALTERADO, VIZINHO, PROSA, FALSO, NOMEIA, ANCORA e LINHA -- nao tocam
+git nem disco, recebem texto de diff, fonte, documento e conjuntos de linhas e
+nomes. Antes da TEC-277 o script nao tinha teste nenhum.
 """
 
 import ast
@@ -22,12 +22,18 @@ from scripts.comentarios_tocados import (
     _blocos,
     _comentarios,
     _docstrings,
+    _linhas_do_diff,
+    ancora_quebrada,
+    ancoras_do_texto,
+    checar_documento,
     citacoes_do_texto,
     classificar,
     examinar,
     examinar_prosa,
     limitar,
     limitar_citacoes,
+    linhas_cercadas,
+    nomes_definidos,
     resolver,
     scripts_nomeados,
 )
@@ -395,6 +401,44 @@ def test_arquivo_deletado_e_ignorado(monkeypatch) -> None:
     assert resultado == {}
 
 
+def test_caminho_entre_aspas_zera_o_arquivo_atual() -> None:
+    """Com `core.quotepath` padrao (que `_rodar` desliga, mas o parser tem de
+    aguentar mesmo assim), git imprime `+++ "b/x.md"` para caminho nao-ASCII em
+    vez de `+++ b/x.md`. Essa forma nao e reconhecida e tem de zerar `atual` --
+    sem isso os hunks cairiam no arquivo anterior do diff, LINHA falso numa
+    linha que a branch nao tocou, e o arquivo entre aspas ficaria sem
+    checagem."""
+    saida = '+++ b/a.md\n@@ -1 +2 @@\n+++ "b/x.md"\n@@ -1 +9 @@\n'
+    assert _linhas_do_diff(saida) == {"a.md": {2}}
+
+
+def test_caminho_com_espaco_perde_o_tab_final() -> None:
+    """Git acrescenta um TAB apos o caminho quando ele tem espaco. Sem tira-lo,
+    a chave carregaria o TAB e nunca bateria com o caminho sem TAB que
+    `_documentos_no_escopo` devolve."""
+    saida = "+++ b/a b.md\t\n@@ -1 +5 @@\n"
+    assert _linhas_do_diff(saida) == {"a b.md": {5}}
+
+
+def test_rodar_desliga_core_quotepath(monkeypatch) -> None:
+    """Sem isto, caminho nao-ASCII sai entre aspas e o parser cai no caso
+    acima -- melhor nunca precisar dele."""
+    capturado = {}
+
+    class _Resultado:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _run(comando, **_kwargs):
+        capturado["comando"] = comando
+        return _Resultado()
+
+    monkeypatch.setattr(ferramenta.subprocess, "run", _run)
+    ferramenta._rodar("status", "--porcelain")
+    assert capturado["comando"] == ["git", "-c", "core.quotepath=off", "status", "--porcelain"]
+
+
 def _vizinho(linha: int, distancia: int, bloco: str = "f") -> Achado:
     return Achado(linha, f"# {linha}", False, distancia, bloco)
 
@@ -576,7 +620,7 @@ def test_citacao_que_nao_resolve_nao_vira_achado() -> None:
 
 
 def test_faixa_alem_do_fim_do_arquivo_e_falso() -> None:
-    """A unica marca que afirma, em vez de suspeitar."""
+    """A unica marca que afirma que uma citacao por linha esta errada sobre o codigo."""
     marca = classificar(["a/turno.py"], 900, {"a/turno.py"}, _tamanhos({"a/turno.py": 300}))
     assert marca == "FALSO"
 
@@ -702,8 +746,8 @@ def test_o_teto_corta_prosa_e_conta_o_que_omitiu() -> None:
 def test_falso_e_nomeia_escapam_do_teto() -> None:
     """Pela mesma razao que ALTERADO escapa: o teto existe contra vizinhanca.
 
-    Um FALSO cortado seria a ferramenta escondendo a unica coisa que ela sabe
-    com certeza estar errada.
+    Um FALSO cortado seria a ferramenta escondendo uma das coisas que ela sabe
+    com certeza estar erradas -- ANCORA e LINHA tambem sao certeza.
     """
     citacoes = [_prosa(n) for n in range(1, 10)]
     citacoes.append(_prosa(20, marca="FALSO"))
@@ -766,7 +810,8 @@ def test_examinar_prosa_preenche_o_destino_so_quando_ele_acrescenta() -> None:
 
 
 def test_examinar_prosa_preenche_linhas_do_arquivo_so_para_falso() -> None:
-    """A evidencia da unica marca que afirma em vez de suspeitar.
+    """A evidencia da unica marca que afirma que uma citacao por linha esta
+    errada sobre o codigo.
 
     `classificar` so devolve FALSO com resolucao inequivoca, entao o indice 0
     de `candidatos` e seguro. PROSA nao ganha a contagem -- ela nao afirma
@@ -877,3 +922,427 @@ def test_main_continua_devolvendo_zero_com_prosa_falsa(monkeypatch, capsys, tmp_
     assert "FALSO" in saida
     assert "comprovadamente falsa" in saida
     assert "(o arquivo tem 10 linhas)" in saida
+
+
+def test_ancora_reconhece_nome_simples_e_pontuado() -> None:
+    texto = "ver `turno.py::executar` e `workers/main.py::WorkerSettings.job_timeout`\n"
+    assert ancoras_do_texto(texto) == [
+        (1, "turno.py", "executar"),
+        (1, "workers/main.py", "WorkerSettings.job_timeout"),
+    ]
+
+
+def test_ancora_ignora_a_cauda_de_um_nome_pontuado() -> None:
+    """Mesmo lookbehind de `_CITACAO`: `crypto.py` nao e caminho nenhum."""
+    assert ancoras_do_texto("mobia.infra.crypto.py::cifrar") == []
+
+
+def test_ancora_reconhece_node_id_de_classe_do_pytest() -> None:
+    """`x.py::TestClasse::test_metodo` -- o proprio node id do pytest, que
+    antes parava no segundo `::` e so verificava `TestClasse`."""
+    assert ancoras_do_texto("veja x.py::C::m aqui") == [(1, "x.py", "C::m")]
+
+
+def test_ancora_com_node_id_de_classe_quebrada_quando_so_a_classe_existe() -> None:
+    """C existe, m nao: a ancora tem de reprovar pelo metodo, nao passar so
+    porque a classe bate."""
+    texto = "ver x.py::C::m\n"
+    achados = checar_documento("d.md", texto, set(), {"a/x.py"}, _nomes({"a/x.py": {"C"}}))
+    assert [(c.texto, c.marca) for c in achados] == [("x.py::C::m", "ANCORA")]
+
+
+def test_ancora_com_node_id_de_classe_passa_quando_classe_e_metodo_existem() -> None:
+    texto = "ver x.py::C::m\n"
+    achados = checar_documento("d.md", texto, set(), {"a/x.py"}, _nomes({"a/x.py": {"C", "C.m"}}))
+    assert achados == []
+
+
+def test_ancora_nao_e_citacao_por_linha() -> None:
+    """As duas formas nao se confundem: `::nome` nao casa `_CITACAO`."""
+    assert citacoes_do_texto("turno.py::executar") == []
+    assert ancoras_do_texto("turno.py:12") == []
+
+
+def test_ancora_informa_a_linha_do_documento() -> None:
+    assert ancoras_do_texto("a\nb\nc turno.py::f\n") == [(3, "turno.py", "f")]
+
+
+def test_nomes_definidos_cobre_def_class_e_aninhados() -> None:
+    fonte = textwrap.dedent("""
+        def f():
+            def interna():
+                pass
+        async def g():
+            pass
+        class C:
+            def m(self):
+                pass
+    """)
+    assert nomes_definidos(fonte) == {"f", "f.interna", "g", "C", "C.m"}
+
+
+def test_nomes_definidos_cobre_atribuicoes() -> None:
+    fonte = textwrap.dedent("""
+        TETO = 5
+        LIMITE: int = 3
+        a, (b, *c) = 1, (2, 3)
+        class Settings:
+            campo: str = "x"
+            OUTRO = 1
+    """)
+    assert nomes_definidos(fonte) == {
+        "TETO",
+        "LIMITE",
+        "a",
+        "b",
+        "c",
+        "Settings",
+        "Settings.campo",
+        "Settings.OUTRO",
+    }
+
+
+def test_nomes_definidos_cobre_atributo_de_instancia() -> None:
+    """`self.x = ...` num metodo define `Classe.x` -- e o que um leitor cita."""
+    fonte = textwrap.dedent("""
+        class C:
+            def __init__(self):
+                self.x = 1
+                self.y: int = 2
+                outro.z = 3
+    """)
+    assert nomes_definidos(fonte) == {"C", "C.__init__", "C.x", "C.y"}
+
+
+def test_nomes_definidos_atravessa_bloco_sem_escopo() -> None:
+    fonte = textwrap.dedent("""
+        if TYPE_CHECKING:
+            def so_tipo():
+                pass
+        try:
+            A = 1
+        except ImportError:
+            B = 2
+        else:
+            C = 3
+        finally:
+            D = 4
+        with abrir() as arq:
+            E = 5
+        for i in range(3):
+            F = 6
+        while False:
+            G = 7
+        match x:
+            case 1:
+                H = 8
+    """)
+    nomes = nomes_definidos(fonte)
+    assert nomes is not None
+    assert {"so_tipo", "A", "B", "C", "D", "E", "F", "G", "H"} <= nomes
+
+
+def test_import_nao_define_nome() -> None:
+    fonte = "from os import path\nimport sys\n"
+    assert nomes_definidos(fonte) == set()
+
+
+def test_fonte_que_nao_parseia_nao_tem_nomes() -> None:
+    assert nomes_definidos("def (:\n") is None
+
+
+def _nomes(tabela: dict[str, set[str] | None]) -> Callable[[str], set[str] | None]:
+    return lambda caminho: tabela[caminho]
+
+
+def test_ancora_com_nome_existente_nao_e_quebrada() -> None:
+    assert not ancora_quebrada(["a/turno.py"], "f", _nomes({"a/turno.py": {"f"}}))
+
+
+def test_ancora_com_nome_ausente_e_quebrada() -> None:
+    assert ancora_quebrada(["a/turno.py"], "sumiu", _nomes({"a/turno.py": {"f"}}))
+
+
+def test_ancora_ambigua_vale_se_algum_candidato_tem_o_nome() -> None:
+    nomes = _nomes({"a/models.py": {"X"}, "b/models.py": {"Y"}})
+    assert not ancora_quebrada(["a/models.py", "b/models.py"], "Y", nomes)
+
+
+def test_ancora_ambigua_e_quebrada_se_nenhum_candidato_tem_o_nome() -> None:
+    """A diferenca para a citacao por linha: aqui a ambiguidade nao impede a
+    certeza, porque a conclusao vale para qualquer leitura da citacao."""
+    nomes = _nomes({"a/models.py": {"X"}, "b/models.py": {"Y"}})
+    assert ancora_quebrada(["a/models.py", "b/models.py"], "Z", nomes)
+
+
+def test_ancora_sem_arquivo_nao_e_quebrada() -> None:
+    """Alvo que nao resolve e ignorado, como a citacao por linha ja e."""
+    assert not ancora_quebrada([], "f", _nomes({}))
+
+
+def test_ancora_em_arquivo_que_nao_parseia_nao_e_quebrada() -> None:
+    """Falha de leitura nao autoriza afirmar nada -- mesmo raciocinio de
+    `tamanho_de` devolver `maxsize`."""
+    nomes = _nomes({"a/x.py": None, "b/x.py": {"Y"}})
+    assert not ancora_quebrada(["a/x.py", "b/x.py"], "Z", nomes)
+
+
+def test_linhas_cercadas_com_crases_e_tis() -> None:
+    texto = "a\n```bash\nb\n```\nc\n~~~\nd\n~~~\ne\n"
+    assert linhas_cercadas(texto) == {2, 3, 4, 6, 7, 8}
+
+
+def test_cerca_so_fecha_com_o_mesmo_caractere() -> None:
+    texto = "```\na\n~~~\nb\n```\nc\n"
+    assert linhas_cercadas(texto) == {1, 2, 3, 4, 5}
+
+
+def test_cerca_nao_fechada_vai_ate_o_fim() -> None:
+    """Como no CommonMark: o resto do documento e codigo."""
+    assert linhas_cercadas("a\n```\nb\nc\n") == {2, 3, 4}
+
+
+def test_cerca_com_info_string_nao_fecha() -> None:
+    assert linhas_cercadas("```\na\n```python\nb\n```\n") == {1, 2, 3, 4, 5}
+
+
+def test_linhas_adicionadas_em_documentos(monkeypatch) -> None:
+    saida = "+++ b/CLAUDE.md\n@@ -1 +3,2 @@\n+++ b/docs/x.md\n@@ -4 +9 @@\n"
+    monkeypatch.setattr(ferramenta, "_rodar", lambda *_: saida)
+    assert ferramenta.linhas_adicionadas_em_documentos("qualquer") == {
+        "CLAUDE.md": {3, 4},
+        "docs/x.md": {9},
+    }
+
+
+def _nomes_fixos(caminho: str) -> set[str] | None:
+    return {"a/turno.py": {"existe"}}.get(caminho)
+
+
+def test_checar_documento_marca_ancora_quebrada() -> None:
+    texto = "ok `turno.py::existe`\nruim `turno.py::sumiu`\n"
+    achados = checar_documento("d.md", texto, set(), {"a/turno.py"}, _nomes_fixos)
+    assert [(c.linha, c.texto, c.marca) for c in achados] == [(2, "turno.py::sumiu", "ANCORA")]
+
+
+def test_checar_documento_verifica_ancora_dentro_de_cerca() -> None:
+    """A isencao de bloco cercado e so de LINHA: ancora quebrada e falsa em
+    qualquer contexto."""
+    texto = "```\nturno.py::sumiu\n```\n"
+    achados = checar_documento("d.md", texto, set(), {"a/turno.py"}, _nomes_fixos)
+    assert [c.marca for c in achados] == ["ANCORA"]
+
+
+def test_checar_documento_marca_linha_so_em_linha_acrescentada() -> None:
+    texto = "antiga turno.py:10\nnova turno.py:20-30\n"
+    achados = checar_documento("d.md", texto, {2}, {"a/turno.py"}, _nomes_fixos)
+    assert [(c.linha, c.texto, c.marca) for c in achados] == [(2, "turno.py:20-30", "LINHA")]
+
+
+def test_checar_documento_isenta_linha_acrescentada_dentro_de_cerca() -> None:
+    """Traceback e saida de pytest vivem em bloco cercado: sao citacao de
+    saida, nao afirmacao sobre o codigo."""
+    texto = "```\ntests/x.py:123: AssertionError\n```\n"
+    assert checar_documento("d.md", texto, {1, 2, 3}, set(), _nomes_fixos) == []
+
+
+def test_checar_documento_marca_linha_mesmo_sem_resolver() -> None:
+    """LINHA e sobre a forma da citacao, nao sobre o alvo."""
+    achados = checar_documento("d.md", "fora.py:3\n", {1}, set(), _nomes_fixos)
+    assert [c.marca for c in achados] == ["LINHA"]
+
+
+def _git_falso(md_diff: str) -> Callable[..., str]:
+    def _git(*argumentos: str) -> str:
+        if argumentos[0] == "diff":
+            return md_diff if argumentos[-1] == "*.md" else ""
+        if argumentos[:2] == ("ls-files", "*.md"):
+            return "CLAUDE.md\n"
+        if argumentos[:2] == ("ls-files", "*.py"):
+            return "turno.py\n"
+        return ""
+
+    return _git
+
+
+def test_checar_reprova_ancora_quebrada_e_linha_nova(monkeypatch, capsys, tmp_path) -> None:
+    (tmp_path / "turno.py").write_text("def existe():\n    pass\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(
+        "ver turno.py::sumiu\nveja turno.py:1\nantiga turno.py:2\nok turno.py::existe\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ferramenta, "_rodar", _git_falso("+++ b/CLAUDE.md\n@@ -1 +2 @@\n"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["comentarios_tocados.py", "--checar"])
+
+    assert ferramenta.main() == 1
+    saida = capsys.readouterr().out
+    # O formato exato da linha do achado: o rodape tambem nomeia as marcas, e
+    # `"ANCORA" in saida` passaria sem achado nenhum.
+    assert "ANCORA CLAUDE.md:1  turno.py::sumiu" in saida
+    assert "LINHA  CLAUDE.md:2  turno.py:1" in saida
+    assert "CLAUDE.md:3" not in saida
+    assert "turno.py::existe" not in saida
+
+
+def test_rodape_do_checar_so_explica_ancora_quando_so_ela_ocorreu(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """Sem LINHA nenhuma, o rodape nao precisa explicar LINHA."""
+    (tmp_path / "turno.py").write_text("def existe():\n    pass\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("ver turno.py::sumiu\n", encoding="utf-8")
+    monkeypatch.setattr(ferramenta, "_rodar", _git_falso(""))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["comentarios_tocados.py", "--checar"])
+
+    assert ferramenta.main() == 1
+    saida = capsys.readouterr().out
+    assert "ANCORA:" in saida
+    assert "LINHA:" not in saida
+
+
+def test_rodape_do_checar_so_explica_linha_quando_so_ela_ocorreu(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """Sem ANCORA nenhuma, o rodape nao precisa explicar ANCORA."""
+    (tmp_path / "turno.py").write_text("x = 1\n" * 5, encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("nova turno.py:1\n", encoding="utf-8")
+    monkeypatch.setattr(ferramenta, "_rodar", _git_falso("+++ b/CLAUDE.md\n@@ -0,0 +1 @@\n"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["comentarios_tocados.py", "--checar"])
+
+    assert ferramenta.main() == 1
+    saida = capsys.readouterr().out
+    assert "LINHA:" in saida
+    assert "ANCORA:" not in saida
+
+
+def test_pendentes_fora_do_commit_filtra_por_extensao(monkeypatch) -> None:
+    """Generalizada por extensao: `--checar` precisa do mesmo aviso para .md
+    que o `main` normal ja tem para .py."""
+    monkeypatch.setattr(ferramenta, "_rodar", lambda *_: " M a.py\n?? b.md\n M c.py\n")
+    assert ferramenta._pendentes_fora_do_commit(".py") == ["a.py", "c.py"]
+    assert ferramenta._pendentes_fora_do_commit(".md") == ["b.md"]
+
+
+def test_checar_avisa_md_fora_do_commit_sem_mudar_o_codigo_de_saida(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """Os numeros de `--checar` vem do diff commitado; o texto vem do disco.
+    Um `.md` fora de commit faz os dois discordarem, e o aviso e o mesmo
+    formato do aviso de `.py` que o `main` normal ja tem."""
+    (tmp_path / "turno.py").write_text("def existe():\n    pass\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("ok turno.py::existe\n", encoding="utf-8")
+
+    def _git(*argumentos: str) -> str:
+        if argumentos[0] == "status":
+            return " M CLAUDE.md\n?? novo.md\n"
+        if argumentos[0] == "diff":
+            return ""
+        if argumentos[:2] == ("ls-files", "*.md"):
+            return "CLAUDE.md\n"
+        if argumentos[:2] == ("ls-files", "*.py"):
+            return "turno.py\n"
+        return ""
+
+    monkeypatch.setattr(ferramenta, "_rodar", _git)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["comentarios_tocados.py", "--checar"])
+
+    assert ferramenta.main() == 0
+    saida = capsys.readouterr().out
+    assert "AVISO: 2 arquivo(s) .md fora de commit, invisiveis para o diff:" in saida
+    assert "  CLAUDE.md" in saida
+    assert "  novo.md" in saida
+    assert "Commite antes de confiar nesta listagem." in saida
+
+
+def test_checar_pede_o_diff_de_md_com_a_base_explicita(monkeypatch, tmp_path) -> None:
+    """E exatamente o que o CI passa: uma ref explicita, nao o default.
+
+    `linhas_adicionadas_em_documentos` roda antes do `if argumentos.checar`
+    em `main`, entao `--checar` tem de herdar a MESMA base que a listagem
+    normal usaria -- nunca `origin/main` fixo nem outra ref."""
+    (tmp_path / "turno.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("nada aqui\n", encoding="utf-8")
+    capturados = []
+
+    def _git(*argumentos: str) -> str:
+        capturados.append(argumentos)
+        if argumentos[0] == "status":
+            return ""
+        if argumentos[:2] == ("ls-files", "*.md"):
+            return "CLAUDE.md\n"
+        if argumentos[:2] == ("ls-files", "*.py"):
+            return "turno.py\n"
+        return ""
+
+    monkeypatch.setattr(ferramenta, "_rodar", _git)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["comentarios_tocados.py", "algum/ref", "--checar"])
+
+    assert ferramenta.main() == 0
+    assert ("diff", "--unified=0", "algum/ref...HEAD", "--", "*.md") in capturados
+
+
+def test_checar_passa_sem_ocorrencia(monkeypatch, capsys, tmp_path) -> None:
+    (tmp_path / "turno.py").write_text("def existe():\n    pass\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(
+        "antiga turno.py:2\nok turno.py::existe\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(ferramenta, "_rodar", _git_falso(""))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["comentarios_tocados.py", "--checar"])
+
+    assert ferramenta.main() == 0
+
+
+def test_listagem_mostra_linha_mesmo_sem_py_alterado(monkeypatch, capsys, tmp_path) -> None:
+    """PR so de documentacao: sem isto, `main` retornava antes da prosa."""
+    (tmp_path / "turno.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("nova turno.py:1\n", encoding="utf-8")
+    monkeypatch.setattr(ferramenta, "_rodar", _git_falso("+++ b/CLAUDE.md\n@@ -0,0 +1 @@\n"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["comentarios_tocados.py"])
+
+    assert ferramenta.main() == 0
+    saida = capsys.readouterr().out
+    assert "  LINHA  :1  turno.py:1" in saida
+
+
+def test_linha_nova_a_arquivo_mexido_sai_uma_vez_como_linha(monkeypatch, capsys, tmp_path) -> None:
+    """A mesma citacao seria PROSA (arquivo mexido) e LINHA (linha nova); a
+    marca que reprova e a que fica."""
+    (tmp_path / "turno.py").write_text("x = 1\n" * 50, encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("nova turno.py:10\n", encoding="utf-8")
+
+    def _git(*argumentos: str) -> str:
+        if argumentos[0] == "diff":
+            if argumentos[-1] == "*.md":
+                return "+++ b/CLAUDE.md\n@@ -0,0 +1 @@\n"
+            return "+++ b/turno.py\n@@ -1 +5 @@\n"
+        if argumentos[:2] == ("ls-files", "*.md"):
+            return "CLAUDE.md\n"
+        if argumentos[:2] == ("ls-files", "*.py"):
+            return "turno.py\n"
+        return ""
+
+    monkeypatch.setattr(ferramenta, "_rodar", _git)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["comentarios_tocados.py"])
+
+    assert ferramenta.main() == 0
+    saida = capsys.readouterr().out
+    assert saida.count("turno.py:10") == 1
+    assert "  LINHA  :1" in saida and "  PROSA  :1" not in saida
+
+
+def test_ancora_e_linha_escapam_do_teto() -> None:
+    citacoes = [Citacao("d.md", n, f"t.py:{n}", "PROSA") for n in range(1, 10)]
+    citacoes += [
+        Citacao("d.md", 20, "t.py::x", "ANCORA"),
+        Citacao("d.md", 21, "t.py:3", "LINHA"),
+    ]
+    ficam, omitidas = limitar_citacoes(citacoes, teto=2)
+    assert {c.marca for c in ficam} == {"PROSA", "ANCORA", "LINHA"}
+    assert omitidas == 7
