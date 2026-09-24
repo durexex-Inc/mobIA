@@ -48,11 +48,13 @@ def create_app() -> FastAPI:
         from mobia.api.routes.corretores import router as corretores_router
         from mobia.api.routes.handoffs import router as handoffs_router
         from mobia.api.routes.imoveis import router as imoveis_router
+        from mobia.api.routes.metricas import router as metricas_router
 
         app.include_router(imoveis_router)
         app.include_router(corretores_router)
         app.include_router(handoffs_router)
         app.include_router(conversas_router)
+        app.include_router(metricas_router)
     else:
         log.warning("catalogo.rota_de_importacao_desligada", motivo="sem CATALOGO_ADMIN_TOKEN")
 
