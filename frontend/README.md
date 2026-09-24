@@ -40,6 +40,14 @@ RN-17.3 e é o que faz N navegadores com o painel aberto virarem **uma**
 chamada por minuto ao FastAPI — que vê o IP deste servidor, não o de cada
 navegador, e aplica 100 requisições por minuto por IP.
 
+**Consequência observada na verificação de ponta a ponta:** com o backend
+fora do ar, um recorte que o cache já viu continua sendo servido, com dado
+de até 60 segundos atrás, em vez de mostrar o aviso de falha. É o
+`stale-while-revalidate` fazendo o que promete, e é o comportamento
+desejado — mas quem for diagnosticar uma queda precisa saber que a tela
+pode estar mentindo por um minuto. Um recorte novo, que o cache não tem,
+mostra o aviso na hora.
+
 ## O que o painel ainda não sabe
 
 A etapa **Agendado** e os quatro indicadores de visita (criados, confirmados,

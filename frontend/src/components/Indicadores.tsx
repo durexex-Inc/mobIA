@@ -51,9 +51,14 @@ function valorLegivel(
     return 'sem dados no período'
   }
   if (typeof valor === 'object') {
-    return Object.entries(valor)
-      .map(([faixa, quantos]) => `${faixa}: ${quantos}`)
-      .join('   ')
+    const faixas = Object.entries(valor)
+    // Um objeto VAZIO e a coorte vazia, e nao uma distribuicao de zero
+    // faixas: sem isto o cartao sai em branco, e branco na tela parece
+    // painel quebrado -- nao ausencia de lead.
+    if (faixas.length === 0) {
+      return 'sem dados no período'
+    }
+    return faixas.map(([faixa, quantos]) => `${faixa}: ${quantos}`).join('   ')
   }
   if (COMO_PERCENTUAL.has(chave)) {
     return percentual(valor)

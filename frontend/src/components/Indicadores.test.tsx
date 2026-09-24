@@ -56,6 +56,17 @@ describe('Indicadores', () => {
     expect(screen.queryByRole('note')).not.toBeInTheDocument()
   })
 
+  it('distribuicao vazia diz que nao houve dados, e nao fica em branco', () => {
+    // Achado na verificacao de ponta a ponta: com a coorte vazia o backend
+    // devolve `{}`, e o cartao renderizava string vazia -- que na tela parece
+    // painel quebrado, nao ausencia de lead.
+    render(<Indicadores indicadores={{ distribuicaoPorTemperatura: {} }} indisponiveis={[]} />)
+
+    expect(screen.getByTestId('indicador-distribuicaoPorTemperatura')).toHaveTextContent(
+      'sem dados no período',
+    )
+  })
+
   it('nulo por coorte vazia NAO se confunde com nulo por falta de fonte', () => {
     // Sao duas ausencias diferentes e o texto tem de distingui-las: a taxa de
     // no-show e nula porque ninguem registra visita -- defeito do sistema --,
