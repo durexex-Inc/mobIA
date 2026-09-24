@@ -83,18 +83,21 @@ def _cabe(
     fuso: ZoneInfo,
 ) -> bool:
     # A janela da imobiliaria vem inteira de `dentro_da_janela_de_atendimento`
-    # -- dias, horas e borda inclusiva no minuto (19:00 cabe, 19:01 nao). Checar
-    # as duas pontas e o bastante: a janela nunca atravessa a noite, porque o
-    # fim as 19h ja recusa o que passaria dele.
+    # -- dias, horas e borda inclusiva no minuto. Checar as duas pontas
+    # garante que ambas caem dentro da grade de atendimento.
     if not (
         dentro_da_janela_de_atendimento(janela.inicio)
         and dentro_da_janela_de_atendimento(janela.fim)
     ):
         return False
+    inicio, fim = janela.inicio.astimezone(fuso), janela.fim.astimezone(fuso)
+    # A janela nunca deve atravessar a meia-noite -- se comeca num dia,
+    # termina nele mesmo.
+    if inicio.date() != fim.date():
+        return False
     # A jornada do corretor e interseccionada com a da imobiliaria, e nao a
     # substitui: ela nao tem dia da semana (Emenda E-02 do modelo Corretor), e
     # os dias vem so da checagem acima.
-    inicio, fim = janela.inicio.astimezone(fuso), janela.fim.astimezone(fuso)
     if inicio.hour * 60 + inicio.minute < jornada_inicio * 60:
         return False
     if fim.hour * 60 + fim.minute > jornada_fim * 60:
@@ -159,10 +162,12 @@ def propor_janelas(
 
 
 class AgendaDoCorretor(Protocol):
-    """Os compromissos que ja ocupam o corretor entre `de` e `ate`.
+    """Os compromissos que ja ocupam o corretor, sobrepostos a [de, ate].
 
-    A implementacao real nasce com a tabela de agendamentos da TEC-168. Ate
-    la o unico implementador e o fake dos testes.
+    Devolve cada intervalo que se sobrepoe com [de, ate], nao apenas os
+    contidos nela -- um compromisso que comecou antes de `de` e termina
+    depois ainda bloqueia. A implementacao real nasce com a tabela de
+    agendamentos da TEC-168. Ate la o unico implementador e o fake dos testes.
     """
 
     async def ocupados(

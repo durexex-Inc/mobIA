@@ -103,11 +103,15 @@ def test_jornada_do_corretor_intersecta_a_da_imobiliaria_pela_manha() -> None:
 
 
 def test_jornada_do_corretor_intersecta_a_da_imobiliaria_a_noite() -> None:
-    """Corretor das 10h as 20h: a imobiliaria fecha as 19h."""
-    janelas = _propor(_ago(26, 14), _ago(26, 23))
-    so_quarta_tarde = _propor(_ago(26, 14), _ago(26, 23), jornada=(10, 20))
-    assert so_quarta_tarde == janelas
-    assert all(j.fim.astimezone(SP).hour <= 19 for j in so_quarta_tarde)
+    """A imobiliaria fecha as 19h, rejeitando slots que o broker permitiria.
+
+    Broker 10h-20h, horizonte quarta, nenhum ocupado: as primeiras opcoes
+    seriam 17h (agora+3h arredondado), 17h30, 18h, 18h30 -- todas antes das
+    19h. A regra de fechar as 19h garante que mesmo sem ocupado, 19h-20h nao
+    sai, porque fim=20h fica fora das 9h-19h.
+    """
+    janelas = _propor(_ago(26, 14), _ago(26, 23), jornada=(10, 20))
+    assert all(j.fim.astimezone(SP) <= _sp(8, 26, 19) for j in janelas)
 
 
 def test_compromisso_que_encosta_nao_bloqueia() -> None:
@@ -184,6 +188,24 @@ def test_intervalo_sem_fuso_ou_invertido_reprova() -> None:
         Intervalo(datetime(2026, 8, 25, 9), _ago(25, 10))
     with pytest.raises(ValueError):
         Intervalo(_ago(25, 10), _ago(25, 9))
+
+
+def test_janela_que_atravessa_meia_noite_e_recusada(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nenhuma janela deve sair do dia em que comecou, mesmo com Settings abertos.
+
+    Simula uma imobiliaria aberta 0h-23h e um corretor 22h-23h: sem a verificacao
+    de data, uma janela 23h-00h passaria todas as checagens. Deve ser recusada.
+    """
+    from mobia.app import config as config_mod
+
+    monkeypatch.setattr(config_mod.get_settings(), "atendimento_horario_inicio", 0)
+    monkeypatch.setattr(config_mod.get_settings(), "atendimento_horario_fim", 23)
+    janelas = _propor(_ago(25, 20), _ago(26, 19), jornada=(22, 23))
+    for j in janelas:
+        local_inicio, local_fim = j.inicio.astimezone(SP), j.fim.astimezone(SP)
+        assert local_inicio.date() == local_fim.date()
 
 
 # --- a porta ---
