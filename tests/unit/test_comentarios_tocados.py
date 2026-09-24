@@ -405,8 +405,9 @@ def test_caminho_entre_aspas_zera_o_arquivo_atual() -> None:
     """Com `core.quotepath` padrao (que `_rodar` desliga, mas o parser tem de
     aguentar mesmo assim), git imprime `+++ "b/x.md"` para caminho nao-ASCII em
     vez de `+++ b/x.md`. Essa forma nao e reconhecida e tem de zerar `atual` --
-    sem isso o hunk seguinte cairia no arquivo anterior, e um documento que a
-    branch nao tocou ganharia LINHA falso."""
+    sem isso os hunks cairiam no arquivo anterior do diff, LINHA falso numa
+    linha que a branch nao tocou, e o arquivo entre aspas ficaria sem
+    checagem."""
     saida = '+++ b/a.md\n@@ -1 +2 @@\n+++ "b/x.md"\n@@ -1 +9 @@\n'
     assert _linhas_do_diff(saida) == {"a.md": {2}}
 

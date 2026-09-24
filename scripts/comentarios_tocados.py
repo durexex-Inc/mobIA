@@ -209,9 +209,10 @@ class Citacao:
 
 def _rodar(*argumentos: str) -> str:
     # `core.quotepath=off` impede o git de imprimir caminho nao-ASCII entre
-    # aspas (`"b/x.md"` em vez de `b/x.md`) no cabecalho `+++`. Sem isto,
-    # `_linhas_do_diff` nao reconhece a linha, zera `atual` e os hunks daquele
-    # arquivo caem no arquivo anterior -- LINHA falso num documento intocado.
+    # aspas (`"b/x.md"` em vez de `b/x.md`) no cabecalho `+++`. Sem isto, essa
+    # forma foge do padrao que `_linhas_do_diff` reconhece: os hunks caem no
+    # arquivo anterior do diff -- LINHA falso numa linha que a branch nao
+    # tocou, e o arquivo entre aspas fica sem checagem.
     resultado = subprocess.run(
         ["git", "-c", "core.quotepath=off", *argumentos],
         capture_output=True,
@@ -240,8 +241,9 @@ def _linhas_do_diff(saida: str) -> dict[str, set[int]]:
         elif linha.startswith("+++ "):
             # Qualquer outro `+++ ` -- `/dev/null`, ou caminho entre aspas de
             # um `core.quotepath` que nao foi desligado -- zera `atual`. Sem
-            # isto os hunks cairiam no arquivo anterior, e um documento que a
-            # branch nao tocou ganharia LINHA falso.
+            # este `elif`, os hunks cairiam no arquivo anterior do diff --
+            # LINHA falso numa linha que a branch nao tocou, e o arquivo entre
+            # aspas ficaria sem checagem.
             atual = None
         elif atual is not None and (casa := _CABECALHO.match(linha)):
             inicio = int(casa.group(1))
