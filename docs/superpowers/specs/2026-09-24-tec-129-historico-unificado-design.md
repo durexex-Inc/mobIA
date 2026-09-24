@@ -94,6 +94,8 @@ A absorção é **idempotente** e roda em todo turno: isso cobre a sessão web q
 
 A intenção entra pela coluna `lead_qualification.intencao`, que é um dos critérios da primeira linha.
 
+- **Emenda (revisão final, 24/09/2026) — o orçamento e o investidor não atravessam banda de intenção.** A faixa de preço, a recusa do orçamento em `campos_recusados` e os campos de investidor só são absorvidos de uma sessão cuja intenção está na mesma banda que a do WhatsApp, pelo mesmo predicado que a TEC-136 usa para descartar a faixa na troca de intenção (`mudou_de_banda`). Sem isso, o turno seguinte a uma troca de compra para aluguel achava a faixa vazia e a repreenchia com o orçamento de compra do site, para sempre. Sessão sem intenção, com o WhatsApp numa banda, não passa; WhatsApp sem intenção herda primeiro a intenção e é ela que define a banda. Os campos de investidor vêm em bloco, de uma sessão só, e só quando o WhatsApp ainda não tem nenhum — `perfil_investidor` é derivado dos outros, e misturá-los campo a campo produzia um perfil que nenhum estado sustenta.
+
 **Consequência declarada: a dobra por silêncio também enxerga o web.** As falas web entram na mesma janela de literais que alimenta `_fronteira_do_silencio` (TEC-130, D4) — se o último literal web for mais de 30 dias anterior ao primeiro literal do WhatsApp, a dobra forçada dispara já no primeiro turno do WhatsApp, e o resumidor paga uma chamada para dobrar a sessão web inteira junto com o que veio antes dela no par do WhatsApp. A dobra escreve só no resumo do par do WhatsApp — nunca no par web (D1), consistente com o resto desta seção.
 
 **O que não é absorvido, e por quê:**

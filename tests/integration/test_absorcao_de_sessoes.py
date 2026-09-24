@@ -5,7 +5,10 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
+from mobia.domain.agente.investidor import Horizonte, PerfilInvestidor, RetornoEsperadoTipo
+from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.context.repositorio import MARCA_DO_ORCAMENTO, aplicar_mudanca_de_intencao
 from mobia.domain.identidade.absorcao import absorver_sessoes_vinculadas
 from mobia.domain.identidade.repositorio import vincular_sessao
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
@@ -209,3 +212,169 @@ async def test_canal_que_nao_e_whatsapp_nao_absorve_nem_escreve(session) -> None
 
     assert pares == ()
     assert await _estado(session, CANAL_WHATSAPP, WA_ID) is None
+
+
+# --- banda de intencao (revisao final da TEC-129, I1) -----------------------
+#
+# Orcamento dito sob uma banda nao significa nada na outra (TEC-136,
+# `mudou_de_banda`). A absorcao nao pode trazer para um WhatsApp de aluguel o
+# orcamento que a mesma pessoa deu no site procurando compra.
+
+NOVECENTOS_MIL = 900_000_00
+
+
+async def test_orcamento_de_compra_nao_atravessa_para_whatsapp_de_aluguel(session) -> None:
+    await _sessao_vinculada(
+        session,
+        intencao=Intencao.COMPRA.value,
+        faixa_preco_max_centavos=NOVECENTOS_MIL,
+        campos_recusados=[MARCA_DO_ORCAMENTO, "urgencia"],
+        quartos=2,
+    )
+    session.add(
+        LeadQualification(
+            channel=CANAL_WHATSAPP, conversation_key=WA_ID, intencao=Intencao.ALUGUEL.value
+        )
+    )
+    await session.commit()
+
+    await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
+
+    estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
+    assert (estado.faixa_preco_min_centavos, estado.faixa_preco_max_centavos) == (None, None)
+    # A recusa do orcamento tambem e da banda; a de urgencia nao, e atravessa.
+    assert estado.campos_recusados == ["urgencia"]
+    # O criterio que nao depende de banda continua chegando.
+    assert estado.quartos == 2
+
+
+async def test_orcamento_descartado_pela_troca_de_intencao_nao_volta_da_sessao_web(
+    session,
+) -> None:
+    await _sessao_vinculada(
+        session, intencao=Intencao.COMPRA.value, faixa_preco_max_centavos=NOVECENTOS_MIL
+    )
+    fabrica = get_sessionmaker()
+
+    # Turno 1: o WhatsApp herda a compra e o orcamento dela.
+    await absorver_sessoes_vinculadas(fabrica, channel=CANAL_WHATSAPP, conversation_key=WA_ID)
+    estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
+    assert (estado.intencao, estado.faixa_preco_max_centavos) == (
+        Intencao.COMPRA.value,
+        NOVECENTOS_MIL,
+    )
+
+    # O lead passa a falar de aluguel: o caminho real do turno descarta a faixa
+    # e `gravar_estado` grava a intencao nova, na mesma transacao.
+    async with fabrica() as sessao_do_turno:
+        mudanca = await aplicar_mudanca_de_intencao(
+            sessao_do_turno,
+            channel=CANAL_WHATSAPP,
+            conversation_key=WA_ID,
+            intencao=Intencao.ALUGUEL,
+        )
+        assert mudanca is not None and mudanca.faixa_descartada
+        await sessao_do_turno.execute(
+            LeadQualification.__table__.update()
+            .where(
+                LeadQualification.channel == CANAL_WHATSAPP,
+                LeadQualification.conversation_key == WA_ID,
+            )
+            .values(intencao=Intencao.ALUGUEL.value)
+        )
+        await sessao_do_turno.commit()
+
+    # Turno 2: a absorcao roda de novo e ve a faixa vazia -- e nao a repreenche.
+    await absorver_sessoes_vinculadas(fabrica, channel=CANAL_WHATSAPP, conversation_key=WA_ID)
+
+    estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
+    assert (estado.intencao, estado.faixa_preco_max_centavos) == (Intencao.ALUGUEL.value, None)
+
+
+async def test_sem_intencao_no_whatsapp_a_intencao_herdada_define_a_banda(session) -> None:
+    # A mais recente diz aluguel e nao deu orcamento; a mais antiga, de compra,
+    # deu. A intencao herdada e a de aluguel, e o orcamento de compra fica.
+    await _sessao_vinculada(
+        session, intencao=Intencao.COMPRA.value, faixa_preco_max_centavos=NOVECENTOS_MIL
+    )
+    await _sessao_vinculada(session, intencao=Intencao.ALUGUEL.value)
+    await session.execute(
+        LeadQualification.__table__.update()
+        .where(LeadQualification.intencao == Intencao.COMPRA.value)
+        .values(updated_at=LeadQualification.updated_at - timedelta(hours=1))
+    )
+    await session.commit()
+
+    await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
+
+    estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
+    assert (estado.intencao, estado.faixa_preco_max_centavos) == (Intencao.ALUGUEL.value, None)
+
+
+async def test_campos_de_investidor_vem_de_uma_sessao_so(session) -> None:
+    # Duas sessoes parciais: a mais recente disse so o horizonte; a mais
+    # antiga, o tipo de retorno -- e o perfil derivado DO horizonte dela.
+    # Misturar campo a campo juntaria o horizonte de uma ao perfil da outra.
+    await _sessao_vinculada(
+        session,
+        intencao=Intencao.INVESTIMENTO.value,
+        horizonte=Horizonte.CURTO.value,
+        retorno_esperado_tipo=RetornoEsperadoTipo.ALUGUEL.value,
+        perfil_investidor=PerfilInvestidor.RENDA.value,
+    )
+    await _sessao_vinculada(
+        session, intencao=Intencao.INVESTIMENTO.value, horizonte=Horizonte.LONGO.value
+    )
+    await session.execute(
+        LeadQualification.__table__.update()
+        .where(LeadQualification.horizonte == Horizonte.CURTO.value)
+        .values(updated_at=LeadQualification.updated_at - timedelta(hours=1))
+    )
+    await session.commit()
+
+    await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
+
+    estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
+    assert (estado.horizonte, estado.retorno_esperado_tipo, estado.perfil_investidor) == (
+        Horizonte.LONGO.value,
+        None,
+        None,
+    )
+
+
+async def test_campos_de_investidor_nao_completam_o_que_o_whatsapp_comecou(session) -> None:
+    # O WhatsApp ja disse o horizonte; a sessao web traz tipo de retorno e um
+    # perfil derivado de OUTRO horizonte. Completar faria o perfil mentir.
+    await _sessao_vinculada(
+        session,
+        intencao=Intencao.INVESTIMENTO.value,
+        horizonte=Horizonte.CURTO.value,
+        retorno_esperado_tipo=RetornoEsperadoTipo.ALUGUEL.value,
+        perfil_investidor=PerfilInvestidor.RENDA.value,
+    )
+    session.add(
+        LeadQualification(
+            channel=CANAL_WHATSAPP,
+            conversation_key=WA_ID,
+            intencao=Intencao.INVESTIMENTO.value,
+            horizonte=Horizonte.LONGO.value,
+        )
+    )
+    await session.commit()
+
+    await absorver_sessoes_vinculadas(
+        get_sessionmaker(), channel=CANAL_WHATSAPP, conversation_key=WA_ID
+    )
+
+    estado = await _estado(session, CANAL_WHATSAPP, WA_ID)
+    assert (estado.horizonte, estado.retorno_esperado_tipo, estado.perfil_investidor) == (
+        Horizonte.LONGO.value,
+        None,
+        None,
+    )
