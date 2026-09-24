@@ -49,8 +49,10 @@ Uma linha por mensagem IMAGEM ou DOCUMENTO recebida:
 | `bytes` | `BigInteger`, nulável | o tamanho real, gravado ao armazenar |
 | `chave_no_armazem` | `String(255)`, nulável | nula até ARMAZENADA |
 | `status` | `String(16)` | PENDENTE, ARMAZENADA, RECUSADA ou FALHOU |
-| `motivo` | `String(64)`, nulável | vocabulário curto (`tipo_nao_permitido`, `acima_do_teto`, `sha256_divergente`, `recusada_pela_meta`, `tentativas_esgotadas`, `expirada`) |
+| `motivo` | `String(32)`, nulável | vocabulário curto (`tipo_nao_permitido`, `acima_do_teto`, `sha256_divergente`, `recusada_pela_meta`, `tentativas_esgotadas`, `expirada`) |
 | `criado_em`, `atualizado_em` | `timestamptz` | |
+
+**`motivo` saiu como `String(32)`, e não `String(64)` como esta tabela dizia antes** (desvio deliberado, feito na Task 3): o maior literal do vocabulário acima (`tentativas_esgotadas`) tem 20 caracteres, e `tarefas_de_corretor.motivo` (migration 0039) já usa `String(32)` para o mesmo tipo de vocabulário curto — repetir `String(64)` aqui teria sido a exceção, não o padrão.
 
 **Tabela à parte, e não colunas em `messages`**, porque só mídia tem estes campos, e porque o estado do download muda depois de a mensagem ter sido gravada. O "ponteiro junto à mensagem" da card é esta FK.
 
@@ -146,3 +148,6 @@ Os marcadores são texto para o modelo, e não para o lead, por isso vão sem ac
 - **Dado sensível em documento** (RG, holerite). A RNF-20 pede redação antes de persistir, e isso exige ler o documento, o que está fora do MVP (RN-01.4). O documento fica guardado cifrado.
 - **S3 real.** O `ArmazemS3` é testado contra cliente falso. Bucket, credenciais e política de acesso de produção são da TEC-219.
 - Vídeo, figurinha e localização. Mídia pelo widget web.
+- **Falha que não é `Retry` some sem contador.** O `job_timeout` global do worker (240s, `workers/main.py`) cobre `baixar_midia` como cobre todo job, e um arquivo enorme ou uma rede lenta o suficiente para estourá-lo — assim como um erro de banco no próprio `marcar()` que grava o desfecho — não passa pelo `except graph.MidiaIndisponivel` que decide `Retry`: a linha fica PENDENTE, sem nada gravado. `midias_recebidas` não tem `attempts` (D2), então nada aqui conta essas tentativas; o único efeito é a `sweep_midias_pendentes` reenfileirando a mesma linha a cada 5 minutos, até os 7 dias em que `expirar_pendentes` a fecha como FALHOU/EXPIRADA. Declarado, não corrigido nesta card.
+- **O log do `httpx` baixou para WARNING, para toda chamada HTTP do processo.** `app/logging.py` (`configure_logging`) chama `logging.getLogger("httpx").setLevel(logging.WARNING)` porque a linha `HTTP Request: GET <url>` que o `httpx` loga em INFO vazaria a URL de download da Meta — credencial temporária — a cada mídia baixada (D3: "nunca a URL"). O corte é por logger, não por chamada: qualquer outro cliente `httpx` do processo (WhatsApp, moderação, embeddings) perde a mesma linha de INFO, e é um efeito colateral aceito, não uma escolha sobre aquelas integrações.
+- **Áudio no meio de uma rajada de mídia sem texto não recebe turno próprio.** Foto e áudio no mesmo debounce, sem nenhum texto do lead: o turno roda sobre a ÚLTIMA mensagem da rajada (D4), e se ela for a foto, a resposta fixa que sai é a de imagem — o áudio fecha "agrupado" junto, sem qualquer resposta sua e sem o turno normal que o trataria. É consequência do mecanismo de rajada existente (RN-01.6) combinado com a resposta fixa desta card, não uma regra nova que a TEC-132 decidiu — e não há teste de aceite que a exercite.

@@ -104,8 +104,12 @@ async def test_documento_gera_midia_pendente(session, redis_pool) -> None:
     assert linha is not None
     assert linha.status == StatusDaMidia.PENDENTE
     assert linha.media_id_da_meta == "media-2"
-    # O nome do arquivo nao vira coluna (D2 da Task 3).
     assert linha.mime_type == "application/pdf"
+    # O nome do arquivo nao vira coluna (D2 da Task 3): a tabela nao tem
+    # `filename` nenhum para gravar, cifrado ou nao -- so `raw_payload`
+    # (em `messages`) carrega o que o envelope mandou.
+    assert not hasattr(MidiaRecebida, "filename")
+    assert "filename" not in MidiaRecebida.__table__.columns
 
 
 async def test_falha_no_enqueue_da_midia_nao_derruba_a_ingestao(

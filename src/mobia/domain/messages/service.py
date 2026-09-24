@@ -33,9 +33,16 @@ class IngestionService:
     """Persiste a mensagem recebida e so entao a enfileira.
 
     A ordem importa: a linha commitada no Postgres e a garantia de nao-perda.
-    Depois do `_persist`, o enqueue e a virada de status continuam otimistas
-    -- a mensagem fica em RECEIVED e o sweeper (workers/jobs/sweep_stalled.py)
-    a recupera -- mas nenhum dos dois engole toda excecao.
+    Depois do `_persist`, o enqueue do turno e a virada de status continuam
+    otimistas -- a mensagem fica em RECEIVED e o sweeper
+    (workers/jobs/sweep_stalled.py) a recupera -- mas nenhum dos dois engole
+    toda excecao. Desde a TEC-132 ha um TERCEIRO passo do mesmo tipo:
+    `_try_enqueue_midia`, chamado depois do enqueue do turno para toda
+    mensagem de imagem ou documento com linha PENDENTE em `midias_recebidas`.
+    Mesma forma -- falha no enqueue vira `log.warning` e nao impede nada -- e
+    mesma rede de seguranca, so que outra: aqui quem recupera o que se perder
+    e `sweep_midias_pendentes` (workers/jobs/sweep_midias_pendentes.py), nao o
+    sweeper de mensagens.
 
     `consumir` (chamado daqui para o rate limit por numero) so absorve
     `RedisError`: indisponibilidade de Redis fica silenciosa e fail-open, por

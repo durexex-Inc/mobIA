@@ -13,8 +13,14 @@ card.
 
 **Sem CHECK no banco, ao contrario de `role` e `direction` (TEC-223).** La o
 vocabulario esta fechado e um literal errado burla filtro em SQL cru. Aqui ele
-ainda cresce -- TEC-131 e TEC-132 podem trazer mais -- e o custo de errar e
+ainda pode crescer -- canal novo, quando aparecer -- e o custo de errar e
 outro: canal sem adaptador nao passa despercebido, o roteador levanta.
+
+**TEC-132 (midia recebida) nao e esse caso.** A versao anterior deste
+comentario citava TEC-131 e TEC-132 juntas como possiveis fontes de canal
+novo; a TEC-132 mediu diferente -- imagem e documento sao tipo de conteudo
+dentro do WhatsApp que ja existia (`MessageContentType`), nao um canal, e a
+coluna nao ganhou linha nenhuma por causa dela.
 """
 
 CANAL_WHATSAPP = "whatsapp"
