@@ -38,6 +38,15 @@ def parse_meta_envelope(payload: dict[str, Any]) -> list[ParsedMessage]:
                 text_body = None
                 if content_type is MessageContentType.TEXTO:
                     text_body = (message.get("text") or {}).get("body")
+                elif content_type in (MessageContentType.IMAGEM, MessageContentType.DOCUMENTO):
+                    # TEC-132, D3. A legenda e o que o lead DISSE junto da
+                    # midia -- "esse aqui ta disponivel?" -- e vira texto para
+                    # passar por tudo o que texto passa: moderacao, opt-out,
+                    # pedido de humano e turno. Legenda so de espacos e o mesmo
+                    # que legenda nenhuma.
+                    chave = "image" if content_type is MessageContentType.IMAGEM else "document"
+                    legenda = ((message.get(chave) or {}).get("caption") or "").strip()
+                    text_body = legenda or None
 
                 parsed.append(
                     ParsedMessage(

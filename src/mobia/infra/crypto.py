@@ -95,18 +95,16 @@ def aad_de(message_id: uuid.UUID | str, coluna: str) -> str:
     return f"{message_id}:{coluna}"
 
 
-def encrypt(texto: str | None, aad: str) -> bytes | None:
-    if texto is None:
-        return None
-    # Nonce novo a cada chamada: o mesmo texto cifra diferente toda vez, entao
+def encrypt_bytes(dados: bytes, aad: str) -> bytes:
+    """A mesma cifra de `encrypt`, sobre bytes. TEC-132: o arquivo de midia."""
+    # Nonce novo a cada chamada: o mesmo conteudo cifra diferente toda vez, entao
     # busca por igualdade sobre conteudo deixa de existir. E intencional.
     nonce = os.urandom(NONCE_BYTES)
-    return bytes([VERSAO_ATUAL]) + nonce + _cifra().encrypt(nonce, texto.encode(), aad.encode())
+    return bytes([VERSAO_ATUAL]) + nonce + _cifra().encrypt(nonce, dados, aad.encode())
 
 
-def decrypt(blob: bytes | None, aad: str) -> str | None:
-    if blob is None:
-        return None
+def decrypt_bytes(blob: bytes, aad: str) -> bytes:
+    """Inverso de `encrypt_bytes`, com as mesmas guardas de `decrypt`."""
     # Sem esta guarda um blob curto sai como ValueError cru do `cryptography`
     # ("Nonce must be between 8 and 128 bytes") e quem captura DecryptionError
     # nao pega. A mensagem nunca carrega o blob.
@@ -121,9 +119,21 @@ def decrypt(blob: bytes | None, aad: str) -> str | None:
         raise DecryptionError(f"versao de cifra desconhecida {versao}: aad={marca_do_aad(aad)}")
     nonce, corpo = blob[1 : 1 + NONCE_BYTES], blob[1 + NONCE_BYTES :]
     try:
-        return _cifra().decrypt(nonce, corpo, aad.encode()).decode()
+        return _cifra().decrypt(nonce, corpo, aad.encode())
     except InvalidTag as exc:
         raise DecryptionError(f"conteudo nao autentica: aad={marca_do_aad(aad)}") from exc
+
+
+def encrypt(texto: str | None, aad: str) -> bytes | None:
+    if texto is None:
+        return None
+    return encrypt_bytes(texto.encode(), aad)
+
+
+def decrypt(blob: bytes | None, aad: str) -> str | None:
+    if blob is None:
+        return None
+    return decrypt_bytes(blob, aad).decode()
 
 
 def encrypt_json(valor: dict[str, Any] | None, aad: str) -> bytes | None:
