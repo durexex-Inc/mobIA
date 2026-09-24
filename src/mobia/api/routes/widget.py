@@ -28,8 +28,11 @@ import structlog
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from mobia.api.deps import get_ingestion_service
+from mobia.api.middleware import resolver_ip
 from mobia.app.config import get_settings
 from mobia.app.logging import correlation_id
+from mobia.domain.limites.eventos import registrar_bloqueio
+from mobia.domain.limites.models import CHANNEL_HTTP, ESCOPO_IP
 from mobia.domain.messages.canais import CANAL_WEB, REMETENTE_DO_WIDGET
 from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.historico import historico_da_sessao
@@ -37,6 +40,7 @@ from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.service import IngestionService
 from mobia.domain.outbound.web import canal_da_sessao
 from mobia.infra.db import get_sessionmaker, motivo_do_erro_de_banco
+from mobia.infra.rate_limit import JANELA_DE_UM_MINUTO, chave_de_ip, consumir
 
 log = structlog.get_logger(__name__)
 router = APIRouter(tags=["widget"])
@@ -53,6 +57,10 @@ CODIGO_PROTOCOLO = 1002
 # fora, que nao e culpa de quem esta do outro lado.
 CODIGO_INDISPONIVEL = 1011
 
+# 1013 e "try again later" do RFC 6455 -- o analogo do 429 que o middleware
+# devolve na rota HTTP.
+CODIGO_EXCESSO = 1013
+
 # Quanto esperar o Redis confirmar o `SUBSCRIBE`. Sem confirmacao a volta nao e
 # garantida, e anunciar a sessao seria prometer uma conversa que talvez so
 # funcione num sentido.
@@ -65,6 +73,14 @@ async def chat(
     service: IngestionService = Depends(get_ingestion_service),
 ) -> None:
     correlation_id.set(str(uuid.uuid4()))
+
+    pool = getattr(websocket.app.state, "redis_pool", None)
+    if not await _cabe_no_limite_por_ip(websocket, pool):
+        # Antes do `accept`: o Starlette recusa o handshake, e a conexao
+        # recusada nao chega a custar a assinatura nem uma leitura de frame.
+        await websocket.close(code=CODIGO_EXCESSO)
+        return
+
     await websocket.accept()
 
     identidade = await _identificar(websocket)
@@ -72,7 +88,6 @@ async def chat(
         return
     sessao, retomada = identidade
 
-    pool = getattr(websocket.app.state, "redis_pool", None)
     if pool is None:
         # Sem Redis nao ha volta possivel. A entrada ainda funcionaria, mas a
         # visitante falaria sozinha -- melhor recusar do que simular
@@ -117,6 +132,59 @@ async def chat(
         # conexao do Redis para sempre.
         await assinatura.aclose()
         log.info("widget.desconectado", sessao=sessao)
+
+
+async def _cabe_no_limite_por_ip(websocket: WebSocket, pool: Any) -> bool:
+    """O limite da RNF-16 aplicado ao aperto de mao.
+
+    **Mora aqui, e nao no middleware, porque o middleware nao alcanca.**
+    `RateLimitPorIP` e `BaseHTTPMiddleware`, e essa classe devolve cedo para
+    todo escopo que nao seja `http`: o handshake de um `ws://` nunca passa por
+    ela. Ate a TEC-124 o comentario de `create_app` dizia o contrario -- que
+    aplicar o middleware por omissao evitava esquecer o widget --, e era
+    exatamente esse o erro que ele deixava acontecer. A Emenda E-01 da RNF-16
+    esta certa ao escrever "toda rota HTTP restante": o widget nao e uma.
+
+    Mesmo limite e mesma janela do middleware, de proposito: dois tetos para o
+    mesmo IP seriam duas coisas para manter em sincronia.
+    """
+    settings = get_settings()
+    limite = settings.rate_limit_requisicoes_por_ip_por_minuto
+    if limite <= 0:
+        return True
+
+    ip = resolver_ip(
+        socket_host=websocket.client.host if websocket.client else None,
+        forwarded_for=websocket.headers.get("x-forwarded-for"),
+        confiar_em_forwarded_for=settings.confiar_em_forwarded_for,
+    )
+    if ip is None:
+        return True
+
+    consumo = await consumir(
+        pool, chave=chave_de_ip(ip), limite=limite, janela_segundos=JANELA_DE_UM_MINUTO
+    )
+    if consumo.permitido:
+        return True
+
+    log.warning(
+        "ratelimit.blocked",
+        escopo=ESCOPO_IP,
+        ip=ip,
+        rota="/widget/chat",
+        volume=consumo.volume,
+        limite=limite,
+    )
+    await registrar_bloqueio(
+        get_sessionmaker(),
+        pool,
+        escopo=ESCOPO_IP,
+        chave=ip,
+        channel=CHANNEL_HTTP,
+        volume=consumo.volume,
+        limite=limite,
+    )
+    return False
 
 
 async def _identificar(websocket: WebSocket) -> tuple[str, bool] | None:

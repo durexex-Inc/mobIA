@@ -33,9 +33,15 @@ def create_app() -> FastAPI:
     app = FastAPI(title="mobIA", version="0.1.0", lifespan=lifespan)
 
     # Primeiro middleware do projeto (TEC-205). Aplica-se por omissao e nao por
-    # opt-in: uma lista de rotas incluidas erraria para o lado de esquecer o
-    # widget do TEC-124, que e o erro caro. Quem precisa ficar de fora esta em
+    # opt-in: uma lista de rotas incluidas erraria para o lado de esquecer uma
+    # rota nova, que e o erro caro. Quem precisa ficar de fora esta em
     # `ROTAS_ISENTAS`, com a razao de cada uma escrita la.
+    #
+    # **Ele nao cobre o widget, e ate a TEC-124 este comentario dizia que
+    # sim.** `BaseHTTPMiddleware` devolve cedo para todo escopo que nao seja
+    # `http`, entao o handshake de `/widget/chat` nunca passa por aqui. O
+    # limite por IP daquela rota e aplicado dentro dela -- ver
+    # `_cabe_no_limite_por_ip` em `api/routes/widget.py`.
     app.add_middleware(RateLimitPorIP)
 
     app.include_router(whatsapp_router)
