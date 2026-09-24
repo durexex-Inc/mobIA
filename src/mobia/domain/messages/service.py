@@ -13,6 +13,7 @@ from mobia.app.config import get_settings
 from mobia.domain.humano.deteccao import pediu_humano
 from mobia.domain.limites.eventos import registrar_bloqueio
 from mobia.domain.limites.models import ESCOPO_NUMERO
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
@@ -58,7 +59,7 @@ class IngestionService:
         self._queue = queue
 
     async def ingest(
-        self, parsed: list[ParsedMessage], channel: str = "whatsapp"
+        self, parsed: list[ParsedMessage], channel: str = CANAL_WHATSAPP
     ) -> list[uuid.UUID]:
         if not parsed:
             return []
