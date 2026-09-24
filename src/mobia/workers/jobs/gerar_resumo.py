@@ -1,4 +1,10 @@
-"""O job que redige o resumo do handoff e enfileira a notificacao do corretor. TEC-175, TEC-177."""
+"""O job que redige o resumo do handoff e encadeia o que vem depois dele.
+
+TEC-175, TEC-177, TEC-180. Sao DOIS enfileiramentos desde a TEC-180, e nao so
+o da notificacao: o aviso ao corretor (RN-16.2) e a exportacao para o CRM
+(RN-16.5). Os dois saem daqui pela mesma razao -- e neste ponto que o resumo
+existe -- e os dois tem a mesma guarda contra falha de Redis.
+"""
 
 import uuid
 from typing import Any
@@ -14,19 +20,20 @@ log = structlog.get_logger(__name__)
 
 
 async def gerar_resumo(ctx: dict[str, Any], handoff_id: str) -> str:
-    """Gera o resumo de um handoff e enfileira a notificacao do corretor.
+    """Gera o resumo, enfileira a notificacao do corretor e a exportacao para o CRM.
 
     O redator vem do `ctx` e nao e construido aqui, pelo mesmo motivo que o
     `classificador` e o `resumidor` do `process_message` vem de la: e o
     `startup` do worker que decide qual implementacao roda, e o teste troca a
     decisao sem tocar no job.
 
-    **A notificacao e enfileirada INDEPENDENTE de `gravou`.** A D2 do desenho
+    **Os DOIS enfileiramentos sao INDEPENDENTES de `gravou`.** A D2 do desenho
     de TEC-177 manda avisar o corretor mesmo quando o resumo nao pode ser
     gerado -- e o handoff sem resumo e justamente o que mais precisa do
-    aviso, nao um caso a pular. `notificar_corretor` (Task 4) monta um corpo
-    proprio para o caso sem resumo; este job so decide SE enfileira, nunca
-    o texto.
+    aviso, nao um caso a pular. A D10 da TEC-180 estende o mesmo argumento a
+    exportacao. `notificar_corretor` (Task 4) monta um corpo proprio para o
+    caso sem resumo e o payload do CRM leva `resumo: null`; este job so decide
+    SE enfileira, nunca o conteudo.
     """
     gravou = await _gerar(
         get_sessionmaker(), redator=ctx["redator"], handoff_id=uuid.UUID(handoff_id)
