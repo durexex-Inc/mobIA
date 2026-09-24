@@ -103,15 +103,16 @@ def test_jornada_do_corretor_intersecta_a_da_imobiliaria_pela_manha() -> None:
 
 
 def test_jornada_do_corretor_intersecta_a_da_imobiliaria_a_noite() -> None:
-    """A imobiliaria fecha as 19h, rejeitando slots que o broker permitiria.
+    """A imobiliaria fecha as 19h: sem ela, 18h30-19h30 sairia tambem.
 
-    Broker 10h-20h, horizonte quarta, nenhum ocupado: as primeiras opcoes
-    seriam 17h (agora+3h arredondado), 17h30, 18h, 18h30 -- todas antes das
-    19h. A regra de fechar as 19h garante que mesmo sem ocupado, 19h-20h nao
-    sai, porque fim=20h fica fora das 9h-19h.
+    Ocupacao 17h-17h30, broker 10h-20h, horizonte quarta. Candidatos validos
+    sem fechar as 19h seriam 17h30-18h30, 18h-19h, 18h30-19h30, 19h-20h -- o
+    preenchimento pega os tres primeiros. Com a regra de fechar as 19h,
+    18h30-19h30 cai porque fim=19h30 fica fora das 9h-19h.
     """
-    janelas = _propor(_ago(26, 14), _ago(26, 23), jornada=(10, 20))
-    assert all(j.fim.astimezone(SP) <= _sp(8, 26, 19) for j in janelas)
+    ocupado = Intervalo(_ago(26, 17), _ago(26, 17, 30))
+    janelas = _propor(_ago(26, 14), _ago(26, 23), jornada=(10, 20), ocupados=(ocupado,))
+    assert janelas == [_janela(_ago(26, 17, 30)), _janela(_ago(26, 18))]
 
 
 def test_compromisso_que_encosta_nao_bloqueia() -> None:
