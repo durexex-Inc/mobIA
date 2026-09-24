@@ -7,6 +7,7 @@ import structlog
 
 from mobia.domain.handoff.geracao import gerar_resumo as _gerar
 from mobia.infra.db import get_sessionmaker
+from mobia.workers.jobs.exportar_crm import EXPORTAR_CRM_JOB
 from mobia.workers.jobs.notificar import NOTIFICAR_JOB
 
 log = structlog.get_logger(__name__)
@@ -52,6 +53,26 @@ async def gerar_resumo(ctx: dict[str, Any], handoff_id: str) -> str:
         # projeto. Mesmo argumento da D3 da TEC-292.
         log.warning(
             "notificacao.nao_agendada",
+            handoff_id=handoff_id,
+            motivo=str(falha),
+            exc_info=True,
+        )
+
+    # TEC-180, D10. Mesmo molde e mesmo `try/except` da notificacao acima, pela
+    # mesma razao: o resumo ja esta gravado neste ponto, e uma falha do Redis
+    # nao pode desfazer isso. A diferenca e que aqui a perda TEM rede --
+    # `sweep_crm_pendentes` recolhe o handoff que ficou com `crm_tentativas =
+    # 0` depois da janela.
+    #
+    # **Independe de `gravou`**, pelo mesmo argumento que a D2 da TEC-177 usa
+    # para a notificacao: o handoff sem resumo e o que mais precisa chegar a
+    # uma pessoa, nao um caso a pular. O payload leva `resumo: null` e o CRM
+    # decide o que fazer com isso.
+    try:
+        await ctx["redis"].enqueue_job(EXPORTAR_CRM_JOB, handoff_id, _job_id=f"crm:{handoff_id}")
+    except Exception as falha:
+        log.warning(
+            "crm.exportacao_nao_agendada",
             handoff_id=handoff_id,
             motivo=str(falha),
             exc_info=True,

@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     LargeBinary,
     String,
     text,
@@ -157,6 +158,35 @@ class Handoff(Base):
     # na maior parte da vida de um handoff: nao so todo PENDENTE, como ESCALADO
     # e ate CONCLUIDO sem aceite formal tambem ficam sem este carimbo.
     aceito_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Quando o CRM confirmou o recebimento deste lead (TEC-180, RN-16.5). Nulo
+    # e "ainda nao entregue" -- nunca "entregue sem hora" --, e e essa a
+    # condicao que define a fila de reprocessamento: nao ha tabela de payloads,
+    # a fila e esta coluna. Ver a emenda E-01 a RN-16.5 e a D5 do desenho.
+    #
+    # Fica nulo PARA SEMPRE em toda maquina onde `CRM_WEBHOOK_URL` nao estiver
+    # configurada, porque ali a exportacao nem e tentada (emenda E-02).
+    crm_sincronizado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Quantas vezes a exportacao ja falhou nesta rodada. Zero e "nunca tentei",
+    # e a varredura o zera de novo a cada rodada que abre -- entao este numero
+    # NAO e o total historico de tentativas, e ninguem deve le-lo como tal.
+    #
+    # A contagem mora aqui, e nao no `max_tries` do ARQ, porque o ARQ nao chama
+    # a nossa corrotina quando o teto dele estoura: ele loga um `warning`
+    # proprio e encerra o job. Contar por la faria a terceira falha passar sem
+    # alerta e sem marca -- a perda silenciosa que a RN-16.5 proibe. Ver a D3
+    # do desenho e o docstring de `workers/jobs/exportar_crm.py`.
+    crm_tentativas: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    # O nome da classe da ultima excecao, e so -- a regra que a TEC-222 fixou
+    # para `messages.last_error` e que `workers/jobs/process_message.py`
+    # documenta em `_detalhe_para_a_coluna`: coluna duravel, em claro, fora da
+    # mascara de PII do log. A mensagem de uma excecao de `httpx` carrega a
+    # URL, e a URL do webhook e segredo de configuracao.
+    crm_ultimo_erro: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

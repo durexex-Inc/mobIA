@@ -11,6 +11,7 @@ import pytest
 
 from mobia.domain.handoff.resumo import MARCADORES, ResumoDeHandoffGerado
 from mobia.domain.notificacao.mensagem import Aviso
+from mobia.workers.jobs.exportar_crm import EXPORTAR_CRM_JOB
 from mobia.workers.jobs.gerar_resumo import gerar_resumo
 from mobia.workers.jobs.notificar import NOTIFICAR_JOB, notificar_corretor
 
@@ -56,11 +57,19 @@ async def test_resumo_gerado_enfileira_a_notificacao(semear_lead_completo) -> No
     resultado = await gerar_resumo(ctx, str(handoff_id))
 
     assert resultado == "gravado"
-    assert len(redis.chamadas) == 1
+    # DOIS enqueues desde a TEC-180: a notificacao ao corretor e a exportacao
+    # para o CRM. A contagem esta na asserta de proposito -- um terceiro
+    # consumidor futuro tem de passar por aqui e decidir conscientemente que
+    # pertence a esta esteira.
+    assert len(redis.chamadas) == 2
     funcao, args, job_id = redis.chamadas[0]
     assert funcao == NOTIFICAR_JOB
     assert args == (str(handoff_id),)
     assert job_id == f"notificar:{handoff_id}"
+    funcao, args, job_id = redis.chamadas[1]
+    assert funcao == EXPORTAR_CRM_JOB
+    assert args == (str(handoff_id),)
+    assert job_id == f"crm:{handoff_id}"
 
 
 async def test_resumo_sem_dossie_enfileira_a_notificacao_do_mesmo_jeito() -> None:
@@ -85,11 +94,14 @@ async def test_resumo_sem_dossie_enfileira_a_notificacao_do_mesmo_jeito() -> Non
     resultado = await gerar_resumo(ctx, str(handoff_id))
 
     assert resultado == "sem_resumo"
-    assert len(redis.chamadas) == 1
-    funcao, args, job_id = redis.chamadas[0]
-    assert funcao == NOTIFICAR_JOB
-    assert args == (str(handoff_id),)
-    assert job_id == f"notificar:{handoff_id}"
+    # A exportacao para CRM segue a MESMA decisao da notificacao, e pela mesma
+    # razao (TEC-180, D10): o handoff sem resumo e exportado do mesmo jeito, com
+    # `resumo: null` no payload. Uma forma ingenua (`if gravou: enfileira`)
+    # inverteria as duas de uma vez.
+    assert len(redis.chamadas) == 2
+    assert [chamada[0] for chamada in redis.chamadas] == [NOTIFICAR_JOB, EXPORTAR_CRM_JOB]
+    for _, args, _job_id in redis.chamadas:
+        assert args == (str(handoff_id),)
 
 
 async def test_falha_no_enfileiramento_nao_derruba_o_job_do_resumo(
@@ -110,6 +122,10 @@ async def test_falha_no_enfileiramento_nao_derruba_o_job_do_resumo(
 
     assert resultado == "gravado"
     assert "notificacao.nao_agendada" in caplog.text
+    # O mesmo vale para a exportacao (TEC-180, D10): o enqueue dela tem guarda
+    # propria, e sem esta asserta um `except Exception: pass` no lugar do
+    # `log.warning` passaria despercebido -- mesmo argumento da linha acima.
+    assert "crm.exportacao_nao_agendada" in caplog.text
     # Agulha sem acento de proposito: o JSONRenderer serializa com
     # ensure_ascii=True, entao acento na asserta seria armadilha (TEC-289).
     assert "redis indisponivel" in caplog.text
