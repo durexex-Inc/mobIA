@@ -1,6 +1,5 @@
 import hashlib
 import json
-import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
@@ -8,7 +7,6 @@ from fastapi.responses import PlainTextResponse
 
 from mobia.api.deps import get_ingestion_service
 from mobia.app.config import Settings, get_settings
-from mobia.app.logging import correlation_id
 from mobia.domain.messages.schemas import parse_meta_envelope
 from mobia.domain.messages.service import IngestionService
 from mobia.infra.db import motivo_do_erro_de_banco
@@ -47,8 +45,6 @@ async def ingest(
     para que a Meta re-entregue -- ver o comentario no fim desta funcao.
     Nenhuma chamada a provedor de LLM ocorre aqui.
     """
-    correlation_id.set(str(uuid.uuid4()))
-
     body = await request.body()
     signature = request.headers.get(SIGNATURE_HEADER)
     remote_ip = request.client.host if request.client else None

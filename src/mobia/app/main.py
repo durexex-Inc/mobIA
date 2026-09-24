@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
-from mobia.api.middleware import RateLimitPorIP
+from mobia.api.middleware import CorrelacaoDeRequisicao, RateLimitPorIP
 from mobia.api.routes.whatsapp import router as whatsapp_router
 from mobia.api.routes.widget import router as widget_router
 from mobia.app.config import get_settings
@@ -47,6 +47,25 @@ def create_app() -> FastAPI:
     # limite por IP daquela rota e aplicado dentro dela -- ver
     # `_cabe_no_limite_por_ip` em `api/routes/widget.py`.
     app.add_middleware(RateLimitPorIP)
+
+    # **A ORDEM DESTAS DUAS LINHAS E DELIBERADA, e o efeito e o inverso do que
+    # a leitura de cima para baixo sugere** (TEC-368).
+    #
+    # `add_middleware` insere no INDICE 0 (`starlette/applications.py:107`) e a
+    # pilha e construida em `reversed` (`:81`), entao o ULTIMO adicionado fica
+    # por FORA e roda PRIMEIRO. A correlacao vem depois no codigo justamente
+    # para ficar por fora do limitador.
+    #
+    # Por que ela precisa ficar por fora: o `RateLimitPorIP` emite
+    # `ratelimit.blocked` e devolve 429 SEM chamar `call_next`. Com a
+    # correlacao por dentro, ela nao rodaria nesse caminho -- e o evento de
+    # bloqueio, que e exatamente o que alguem vai depurar, sairia sem
+    # `correlation_id`, com a resposta 429 sem o cabecalho. A requisicao que
+    # mais interessa correlacionar seria a unica sem correlacao.
+    #
+    # Trocar as duas de lugar nao reprova em nenhum dos tres gates estaticos.
+    # Quem reprova e `test_correlacao_envolve_o_limitador`.
+    app.add_middleware(CorrelacaoDeRequisicao)
 
     app.include_router(whatsapp_router)
     # Publico por natureza, e por isso fora do gate de token logo abaixo: e o
