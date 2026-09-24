@@ -742,6 +742,45 @@ async def gravar_estado(
     return resultado.scalar_one()
 
 
+async def carimbar_qualificacao(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    quando: datetime,
+) -> bool:
+    """Grava a hora da PRIMEIRA travessia da borda de qualificacao. TEC-190.
+
+    Devolve `True` quando carimbou e `False` quando nao havia o que carimbar
+    -- ou porque a linha ja tem carimbo, ou porque a linha nao existe.
+
+    **A guarda `qualificado_em IS NULL` esta no SQL e nao em Python de
+    proposito.** Ela e o que torna a escrita idempotente por lead mesmo com
+    dois turnos concorrentes da mesma conversa: um `if linha.qualificado_em
+    is None` lido antes do UPDATE seria verdadeiro nos dois, e o segundo
+    moveria o carimbo. No WHERE, o segundo UPDATE simplesmente nao casa.
+
+    **Nao e upsert.** Um lead sem linha em `lead_qualification` nao
+    qualificou -- `esta_qualificado(None)` e False --, entao criar linha aqui
+    inventaria estado. Ver o caminho "Deliberadamente NAO cria linha" de
+    `gravar_estado`.
+
+    Nao commita, como as vizinhas deste modulo.
+    """
+    resultado = await session.execute(
+        update(LeadQualification)
+        .where(
+            LeadQualification.channel == channel,
+            LeadQualification.conversation_key == conversation_key,
+            LeadQualification.qualificado_em.is_(None),
+        )
+        .values(qualificado_em=quando)
+        .returning(LeadQualification.qualificado_em)
+        .execution_options(populate_existing=True)
+    )
+    return resultado.scalar_one_or_none() is not None
+
+
 @dataclass(frozen=True)
 class MudancaDeIntencao:
     """O que a troca de intencao deste turno mudou. TEC-136."""

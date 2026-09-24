@@ -22,10 +22,14 @@ from mobia.app.config import Settings, get_settings
 from mobia.app.logging import configure_logging
 from mobia.app.main import create_app
 from mobia.domain.agente.models import Recomendacao
+from mobia.domain.agente.schemas import Urgencia
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.context.resumo import ResumoGerado
+from mobia.domain.conversa.models import Conversa
+from mobia.domain.conversa.vocabulario import Status
 from mobia.domain.corretores.models import Corretor
+from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import gravar_resumo, registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -1375,3 +1379,203 @@ def ws_cliente(app_do_widget: Any) -> Callable[..., ClienteWebSocket]:
         return ClienteWebSocket(app_do_widget, **kwargs)
 
     return _criar
+
+
+# --- Semeadura do painel de funil (TEC-190) ---------------------------------
+#
+# Helpers e nao fixtures, e aqui e nao num modulo proprio: `tests/` nao e
+# pacote, entao `from tests.integration.x import y` nao resolve. O caminho
+# comprovado e `from conftest import ...`, que so funciona porque no import
+# mode `prepend` existe UM modulo de topo chamado `conftest`. E a mesma razao
+# pela qual nao pode haver um segundo conftest.py em subdiretorio.
+
+_CANAL_DO_FUNIL = "whatsapp"
+
+# O instante padrao de nascimento. Os testes que medem a FRONTEIRA do periodo
+# passam `nasceu_em` explicito; os que nao a medem herdam este, que cai no
+# meio de agosto de 2026 -- dentro do recorte que todos eles usam.
+_NASCEU_PADRAO = datetime(2026, 8, 10, 15, 0, tzinfo=UTC)
+
+
+async def _falar(
+    session: AsyncSession,
+    *,
+    conversa: str,
+    em: datetime,
+    canal: str = _CANAL_DO_FUNIL,
+    direcao: str = MessageDirection.INBOUND,
+) -> uuid.UUID:
+    """Uma fala, na direcao pedida, no instante pedido."""
+    identificador = uuid.uuid4()
+    entrada = direcao == MessageDirection.INBOUND
+    session.add(
+        Message(
+            id=identificador,
+            channel=canal,
+            provider_message_id=f"wamid.{identificador.hex[:12]}",
+            sender_external_id=conversa if entrada else "222222222",
+            recipient_external_id="222222222" if entrada else conversa,
+            conversation_key=conversa,
+            role=MessageRole.LEAD if entrada else MessageRole.AGENTE,
+            direction=direcao,
+            content_type=MessageContentType.TEXTO,
+            text_body=encrypt("oi", aad_de(identificador, "text_body")),
+            raw_payload=None,
+            status=MessageStatus.PROCESSED,
+            created_at=em,
+        )
+    )
+    return identificador
+
+
+async def _lead(
+    session: AsyncSession,
+    *,
+    conversa: str,
+    nasceu_em: datetime = _NASCEU_PADRAO,
+    canal: str = _CANAL_DO_FUNIL,
+    falas: int = 1,
+    qualificado_em: datetime | None = None,
+    temperatura: str | None = None,
+    intencao: str | None = None,
+) -> None:
+    """Um lead com `falas` mensagens de entrada, a primeira em `nasceu_em`.
+
+    A linha de `lead_qualification` so nasce quando algum dos tres campos dela
+    foi pedido -- e o que `gravar_estado` faz em producao, onde um turno sem
+    campo nenhum "deliberadamente NAO cria linha".
+    """
+    for numero in range(falas):
+        await _falar(
+            session, conversa=conversa, em=nasceu_em + timedelta(minutes=numero), canal=canal
+        )
+    session.add(Conversa(channel=canal, conversation_key=conversa, status=Status.ATIVA))
+    if qualificado_em is not None or temperatura is not None or intencao is not None:
+        session.add(
+            LeadQualification(
+                channel=canal,
+                conversation_key=conversa,
+                intencao=intencao,
+                regiao="vila mariana",
+                urgencia=Urgencia.IMEDIATA.value,
+                temperatura=temperatura,
+                qualificado_em=qualificado_em,
+            )
+        )
+    await session.commit()
+
+
+async def _corretor(session: AsyncSession, *, gerente: bool = False) -> uuid.UUID:
+    """Um corretor valido, so para o handoff ter destinatario.
+
+    `handoffs.corretor_id` tem FK `fk_handoffs_corretor`: um UUID solto nao
+    passa. Devolve o id.
+    """
+    agora = datetime.now(UTC)
+    identificador = uuid.uuid4()
+    session.add(
+        Corretor(
+            id=identificador,
+            nome="Corretor do Funil",
+            email=f"funil-{identificador.hex[:8]}@imobiliaria.com.br",
+            telefone="11999999999",
+            creci=None,
+            especialidades=["COMPRA"],
+            regioes_atuacao=["vila mariana"],
+            horario_inicio=9,
+            horario_fim=18,
+            capacidade_diaria=5,
+            plantao=False,
+            gerente=gerente,
+            ativo=True,
+            criado_em=agora,
+            atualizado_em=agora,
+        )
+    )
+    await session.commit()
+    return identificador
+
+
+async def _recomendar(session: AsyncSession, *, conversa: str, em: datetime) -> None:
+    """Uma ficha apresentada ao lead.
+
+    O imovel e novo a cada chamada porque `imoveis.codigo` e UNIQUE, e vai
+    com o conjunto completo de campos porque `imoveis` tem quinze colunas
+    NOT NULL -- molde do `_imovel` de `test_recomendacao_e_reacao.py`.
+    """
+    imovel = Imovel(
+        id=uuid.uuid4(),
+        codigo=f"AP{uuid.uuid4().hex[:8]}",
+        titulo="Apartamento na Vila Mariana",
+        descricao="Sala ampla com varanda.",
+        tipo="APARTAMENTO",
+        operacao="VENDA",
+        preco_venda=35000000,
+        bairro="Vila Mariana",
+        bairro_busca="vila mariana",
+        cidade="Sao Paulo",
+        uf="SP",
+        area_util_m2=78,
+        quartos=3,
+        suites=1,
+        banheiros=2,
+        vagas=2,
+        caracteristicas=["varanda"],
+        fotos=[],
+        status="DISPONIVEL",
+    )
+    session.add(imovel)
+    await session.flush()
+    session.add(
+        Recomendacao(
+            id=uuid.uuid4(),
+            channel=_CANAL_DO_FUNIL,
+            conversation_key=conversa,
+            imovel_id=imovel.id,
+            score_match=Decimal("0.900"),
+            motivo_match="bate",
+            apresentado_em=em,
+        )
+    )
+    await session.commit()
+
+
+async def _handoff_aceito(
+    session: AsyncSession,
+    *,
+    conversa: str,
+    em: datetime,
+    corretor_id: uuid.UUID | None = None,
+    sla_limite_em: datetime | None = None,
+    ja_aceito: bool = True,
+    status: str | None = None,
+) -> None:
+    """Um handoff, aceito por omissao.
+
+    `sla_limite_em=None` e o handoff escalado sem destinatario da Emenda E-02
+    da RN-16.3 -- e o caso que a taxa de SLA tem de excluir do denominador.
+
+    `ja_aceito=False` e o handoff que venceu o prazo e ninguem pegou: e a
+    FALHA de SLA, e ela tem de entrar no denominador.
+
+    `status` sobrepoe o derivado de `ja_aceito`. Serve para `CONCLUIDO`, o
+    unico jeito de a mesma conversa ter dois handoffs -- o UNIQUE parcial
+    `uq_handoffs_conversa_pendente` cobre todo status MENOS esse.
+    """
+    session.add(
+        Handoff(
+            id=uuid.uuid4(),
+            channel=_CANAL_DO_FUNIL,
+            conversation_key=conversa,
+            gatilho="QUENTE",
+            etiqueta="LEAD_QUENTE",
+            prioridade="ALTA",
+            status=status if status is not None else ("ACEITO" if ja_aceito else "PENDENTE"),
+            corretor_id=corretor_id,
+            aceito_em=em if ja_aceito else None,
+            sla_limite_em=sla_limite_em,
+            criado_em=em - timedelta(minutes=10),
+            atualizado_em=em,
+        )
+    )
+    await session.commit()

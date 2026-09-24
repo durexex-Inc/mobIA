@@ -486,12 +486,19 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 
 **Regras de negócio:**
 - RN-17.1: Indicadores do período selecionado: leads novos, conversas ativas, taxa de qualificação, distribuição por temperatura, agendamentos criados/confirmados/realizados, taxa de no-show, tempo médio de primeira resposta, tempo médio de qualificação, taxa de handoff aceito no SLA.
+  - **Emenda E-01 (TEC-190, 24/09/2026):** os quatro indicadores de agendamento — criados, confirmados, realizados e taxa de no-show — saem **`null`, com `disponivel: false`**, e nunca zero. Não existe tabela de agendamento: marcar visita é RF-11 e RF-12, e nenhum dos dois foi construído. Zero seria uma afirmação falsa sobre o negócio — diria que nenhuma visita foi marcada, quando a verdade é que nenhuma é registrada. Voltam com a RF-12, e só a consulta muda: nem o contrato nem o consumidor.
+  - **Emenda E-02 (TEC-190, 24/09/2026):** "do período selecionado" passa a significar **coorte**, e não atividade: os leads cujo **primeiro contato** caiu no período, medidos onde quer que tenham chegado depois. Todos os indicadores herdam esse recorte — `conversasAtivas` é quantas da coorte seguem `ATIVA`, `taxaQualificacao` é a fração dela que qualificou, e as duas médias de tempo são sobre ela. A razão está na Emenda E-01 da RN-17.2. A taxa de handoff no SLA exclui `sla_limite_em IS NULL` do denominador, como a Emenda E-01 da RN-16.3 já determinara. O "tempo médio de qualificação" passa a ter instante final: a coluna `lead_qualification.qualificado_em` (migration `0040`), carimbada só na **primeira** travessia da borda de `esta_qualificado`. Sem backfill — o instante nunca foi gravado —, então a etapa conta a partir da migration.
 - RN-17.2: Funil visual em 6 etapas: Novo → Em conversa → Qualificado → Recomendado → Agendado → Handoff aceito, com valor absoluto e taxa de conversão entre etapas.
+  - **Emenda E-01 (TEC-190, 24/09/2026):** a conversão é **de coorte**. Contar eventos ocorridos no período permitiria conversão acima de 100% — um lead recomendado em agosto pode ter nascido em julho, e `Recomendado / Em conversa` passaria de 1 —, e uma taxa de conversão acima de um não é conversão, é erro de leitura. Contando quantos da coorte alcançaram cada etapa, essa fonte de conversão acima de 100% desaparece. **Mas a coorte dá o recorte comum, e não a inclusão entre etapas**, e a versão original desta emenda afirmava monotonia "por construção" — o que é falso e foi corrigido na revisão da TEC-190. As contagens são independentes, e a conversão ainda pode passar de 100% por dois caminhos conhecidos: enquanto a lacuna L1 durar (`Qualificado` conta só a partir da migration `0040`, `Recomendado` conta tudo), e para o lead que qualifica no primeiro turno (fica fora de `Em conversa`, que exige mais de uma fala, e dentro de `Qualificado`). Nenhum dos dois é erro de consulta: são fatos sobre os dados, e quem lê o painel precisa saber que o funil pode não decrescer.
+  - **Emenda E-02 (TEC-190, 24/09/2026):** a etapa `Agendado` sai `null`/`disponivel: false` pela Emenda E-01 da RN-17.1, e **por consequência a conversão de `Handoff aceito` também é nula**: pular a etapa cega e dividir por `Recomendado` daria um número plausível e errado. São três as origens de conversão nula, e nenhuma é zero por cento — primeira etapa, etapa anterior sem fonte, e etapa anterior em zero.
 - RN-17.3: Filtros por período, canal, intenção, temperatura e corretor. Dados atualizados com atraso máximo de 60 s.
+  - **Emenda E-01 (TEC-190, 24/09/2026):** a fronteira do dia é a do **fuso da operação** (`settings.fuso_de_envio`, o fuso único da POC), e não a de UTC: as colunas são `timestamptz`, e interpretar `de=2026-08-01` como `00:00Z` poria as três primeiras horas do dia 1 local no dia 31. O intervalo é semiaberto — `fim` é a meia-noite do dia seguinte a `ate` —, então o dia final entra inteiro sem a aproximação de `23:59:59`.
+  - **Emenda E-02 (TEC-190, 24/09/2026):** o filtro por corretor é o funil **dos leads que acabaram com aquele corretor**, e não "os leads dele no período": `corretor_id` só existe em `handoffs`, e antes do repasse o lead não tem dono. **Consequência declarada:** um lead que ainda não foi repassado não aparece em filtro de corretor nenhum. Valor fora do vocabulário em `intencao` ou `temperatura` é recusado com 422 nomeando o valor, e nunca com resultado vazio — vazio se leria como fato sobre o negócio.
 - RN-17.4: Painel de custo de IA: custo total do período, custo médio por conversa e por lead qualificado, tokens consumidos por modelo.
 
 **Critérios de aceite:**
 - CA-17.1: Dado um agendamento criado, quando o dashboard é recarregado após 60 s, então o contador de agendamentos reflete a mudança.
+  - **Emenda E-01 (TEC-190, 24/09/2026):** **não exercitável**, e a TEC-190 o deixou sem teste de propósito. O "Dado" pede um agendamento criado, e não há como criá-lo — não existe tabela de agendamento (Emenda E-01 da RN-17.1). Escrever o cenário contra uma tabela inventada só para ele passar seria um teste que inventa a entidade que falta para se auto-satisfazer. No lugar dele, `tests/features/test_painel_de_funil.py` afirma o contrário de um contador: que o painel **declara não ter fonte**, em vez de dizer zero. O critério volta com a RF-12.
 
 #### RF-18 — Lista de leads e visão de conversa
 
@@ -658,6 +665,8 @@ O **estado** do grafo é persistido no Postgres a cada transição (checkpointin
 | Cache e fila | **Redis 7** | Cache de sessão, debounce da RN-01.6, rate limit da RNF-16 e broker da fila em um componente | RabbitMQ / SQS | Mais garantias de entrega; mais um componente para operar |
 | Workers | **Celery** (ou Dramatiq) com beat | Processamento assíncrono e agendamento da cadência de follow-up (RF-13) no mesmo runtime | Cron externo + Lambda | Escala melhor e custa menos parado; perde a coesão de deploy |
 | Frontend | **Next.js 15 + React 19 + TypeScript** | SSR ajuda o LCP da RNF-04; um só projeto para dashboard e widget | Vite SPA | Build mais simples; perde SSR e roteamento pronto |
+
+- **Emenda E-01 (TEC-190, 24/09/2026):** o projeto criado em `frontend/` e **Next.js 16.3.6 com React 19.2.8**, e nao a 15. `create-next-app@latest` instalou a major atual; a decisao registrada aqui era "Next.js com App Router e SSR" — que e o que sustenta o argumento do LCP da RNF-04 —, e nao o numero da major, e rebaixar uma major sem motivo seria pior que seguir a estavel. As duas diferencas que tocam este codigo foram conferidas nos guias que o proprio pacote publica em `node_modules/next/dist/docs/`: `searchParams` passou a ser assincrono (a pagina o aguarda) e `fetch(..., { next: { revalidate } })` continua valido, que e o que sustenta o teto de defasagem da RN-17.3.
 | UI | **Tailwind + shadcn/ui** | Componentes acessíveis por padrão, ajuda a RNF-39 | Material UI | Mais completo; mais pesado e com cara genérica |
 | Tempo real | **WebSocket** (FastAPI) + SSE no dashboard | Chat web e atualização do painel (RN-17.3) | Polling a cada 30 s | Trivial de implementar; pior experiência e mais carga |
 | WhatsApp | **Meta WhatsApp Cloud API** | Oficial, sem risco de bloqueio; templates para a RN-13.6 | Evolution API (não oficial) | Sobe em minutos e sem aprovação; risco real de banimento do número — inaceitável em algo que "poderia existir no mercado" |
@@ -1186,6 +1195,29 @@ Query: `?de=2026-08-01&ate=2026-08-22&canal=&intencao=&corretorId=`
 { "etapas": [{ "nome": "Novo", "quantidade": 320 }, { "nome": "Em conversa", "quantidade": 268 }, { "nome": "Qualificado", "quantidade": 141 }, { "nome": "Recomendado", "quantidade": 118 }, { "nome": "Agendado", "quantidade": 47 }, { "nome": "Handoff aceito", "quantidade": 39 }],
   "tempoMedioPrimeiraRespostaSeg": 4.2, "taxaQualificacao": 0.44, "taxaNoShow": 0.11, "slaHandoffCumpridoPct": 0.87 }
 ```
+
+**Emenda E-01 (TEC-190, 24/09/2026):** o corpo acima era **mais pobre que a própria RN-17.1 e a RN-17.2** — não trazia a conversão entre etapas que a RN-17.2 exige, nem `temperatura` na query que a RN-17.3 exige, nem seis dos dez indicadores da RN-17.1. O implementado é:
+
+Query: `?de=2026-08-01&ate=2026-08-22&canal=&intencao=&temperatura=&corretorId=`. `de` e `ate` são obrigatórios; os outros quatro, opcionais.
+
+```json
+{ "etapas": [{ "nome": "Novo", "quantidade": 320, "disponivel": true, "conversaoDaAnterior": null },
+             { "nome": "Em conversa", "quantidade": 268, "disponivel": true, "conversaoDaAnterior": 0.8375 },
+             { "nome": "Agendado", "quantidade": null, "disponivel": false, "conversaoDaAnterior": null },
+             { "nome": "Handoff aceito", "quantidade": 39, "disponivel": true, "conversaoDaAnterior": null }],
+  "indicadores": { "leadsNovos": 320, "conversasAtivas": 87, "taxaQualificacao": 0.44,
+                   "distribuicaoPorTemperatura": { "QUENTE": 41, "MORNO": 63, "FRIO": 37 },
+                   "tempoMedioPrimeiraRespostaSeg": 4.2, "tempoMedioQualificacaoSeg": 512.0,
+                   "slaHandoffCumpridoPct": 0.87, "agendamentosCriados": null,
+                   "agendamentosConfirmados": null, "agendamentosRealizados": null, "taxaNoShow": null },
+  "indisponiveis": ["agendamentosCriados", "agendamentosConfirmados", "agendamentosRealizados", "taxaNoShow"] }
+```
+
+(as seis etapas saem sempre; o exemplo mostra quatro para caber). Período sem lead nenhum é **200** com tudo zerado e as taxas nulas, nunca 404 — ausência de lead é fato sobre o negócio, não sobre a rota.
+
+**Autenticação: `X-Admin-Token` via `exigir_admin`, e não Bearer JWT**, até a TEC-201. `corretores.gerente` é booleana de roteamento de escalada de SLA, não autorização HTTP, e não existe papel `GERENTE` utilizável. Mesma exposição que a Emenda E-01 da RN-19.5 declarou para o módulo administrativo, aqui estendida a esta rota — atenuada por não haver dado pessoal de lead na resposta, só contagens e médias. A rota só é registrada quando `CATALOGO_ADMIN_TOKEN` está configurado, como as outras quatro administrativas.
+
+**Sem cache, e a decisão é medida.** O teto de defasagem de 60 s da RN-17.3 é satisfeito de graça por consulta ao vivo, que tem defasagem zero; quem poderia exigir cache era a RNF-04, e não exige: p95 de 0,068 s com 1.000 leads contra o teto de 2 s, cerca de 29× de margem (`tests/perf/test_funil_latency.py`, 24/09/2026). SSE (`GET /api/v1/eventos/stream`) fica fora desta card — o critério de aceite fala em recarregar, não em empurrar.
 
 #### GET /api/v1/metricas/custo-ia
 `200 OK`: `{ "custoTotalUsd": 38.42, "custoPorConversaUsd": 0.09, "custoPorLeadQualificadoUsd": 0.27, "tokensPorModelo": { "claude-sonnet": 4820000, "claude-haiku": 9310000 } }` (RN-17.4, RNF-06)

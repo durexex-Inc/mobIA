@@ -50,6 +50,7 @@ from mobia.domain.context.montagem import ContextoIrreducivel, montar_contexto
 from mobia.domain.context.qualificacao import esta_qualificado, excedeu_o_teto
 from mobia.domain.context.repositorio import (
     aplicar_mudanca_de_intencao,
+    carimbar_qualificacao,
     contar_perguntas,
     gravar_estado,
     gravar_investidor,
@@ -2118,6 +2119,27 @@ async def _executar_turno(
             extracao=gerada.extracao,
             recusou=gerada.recusou,
         )
+        # TEC-190, D3. O carimbo entra AQUI, dentro da transacao, e nao junto
+        # do `log.info("lead.qualificado", ...)` la embaixo. Os dois marcam a
+        # mesma travessia e a posicao de cada um segue do que ele e: o log
+        # existe para quem le o log, e sai depois do commit porque "logar uma
+        # transicao que o rollback desfez e mentir para quem le o log"; a
+        # coluna e DADO, e se a transacao volta atras a qualificacao nao
+        # aconteceu e o carimbo tem de voltar junto.
+        #
+        # Nao introduz ordem de lock nova: `gravar_estado`, uma linha acima,
+        # ja deixou esta transacao com a linha de `lead_qualification` na
+        # mao. Ver os comentarios acima de `aplicar_mudanca_de_intencao`
+        # sobre a ordem de aquisicao ser carga e nao acaso.
+        if depois_do_estado is not None and esta_qualificado(
+            depois_do_estado, _recusados_de(depois_do_estado)
+        ):
+            await carimbar_qualificacao(
+                session,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                quando=datetime.now(UTC),
+            )
         # A trilha entra no mesmo commit que o estado, pela mesma razao que a
         # intencao e a extracao entram: ou os dois fatos existem, ou nenhum.
         #
@@ -2244,11 +2266,14 @@ async def _executar_turno(
     # valor chega) -- turno A completa os quatro obrigatorios e emite; turno B
     # recusa um deles; turno C comeca com `antes` False (o estado que
     # `contexto.estado` leu ja carrega a recusa do turno B), o lead responde e
-    # a borda e cruzada de novo, para o MESMO lead. O evento reemite. Isto NAO
-    # esta corrigido aqui: tornar a emissao idempotente por lead exige estado
-    # persistido de "ja emiti uma vez", que e decisao de quem e dono da
-    # metrica RN-17.1, nao desta card -- so fica declarado, para quem ler essa
-    # metrica saber que uma travessia de ida-e-volta agora conta duas vezes.
+    # a borda e cruzada de novo, para o MESMO lead. O evento reemite.
+    #
+    # **O LOG continua reemitindo, e a METRICA nao (TEC-190).** A card dona da
+    # RN-17.1 criou o estado persistido que este comentario declarou faltar:
+    # `qualificado_em`, carimbado mais acima dentro da transacao, com guarda
+    # `IS NULL` no proprio UPDATE. A ida-e-volta descrita acima faz este `if`
+    # disparar duas vezes e o carimbo NAO se mover. Quem conta lead
+    # qualificado le a coluna, nao este log.
     if not antes and esta_qualificado(depois_do_estado, _recusados_de(depois_do_estado)):
         log.info(
             "lead.qualificado",
