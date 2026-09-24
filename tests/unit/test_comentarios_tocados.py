@@ -22,12 +22,15 @@ from scripts.comentarios_tocados import (
     _blocos,
     _comentarios,
     _docstrings,
+    ancora_quebrada,
+    ancoras_do_texto,
     citacoes_do_texto,
     classificar,
     examinar,
     examinar_prosa,
     limitar,
     limitar_citacoes,
+    nomes_definidos,
     resolver,
     scripts_nomeados,
 )
@@ -877,3 +880,146 @@ def test_main_continua_devolvendo_zero_com_prosa_falsa(monkeypatch, capsys, tmp_
     assert "FALSO" in saida
     assert "comprovadamente falsa" in saida
     assert "(o arquivo tem 10 linhas)" in saida
+
+
+def test_ancora_reconhece_nome_simples_e_pontuado() -> None:
+    texto = "ver `turno.py::executar` e `workers/main.py::WorkerSettings.job_timeout`\n"
+    assert ancoras_do_texto(texto) == [
+        (1, "turno.py", "executar"),
+        (1, "workers/main.py", "WorkerSettings.job_timeout"),
+    ]
+
+
+def test_ancora_ignora_a_cauda_de_um_nome_pontuado() -> None:
+    """Mesmo lookbehind de `_CITACAO`: `crypto.py` nao e caminho nenhum."""
+    assert ancoras_do_texto("mobia.infra.crypto.py::cifrar") == []
+
+
+def test_ancora_nao_e_citacao_por_linha() -> None:
+    """As duas formas nao se confundem: `::nome` nao casa `_CITACAO`."""
+    assert citacoes_do_texto("turno.py::executar") == []
+    assert ancoras_do_texto("turno.py:12") == []
+
+
+def test_ancora_informa_a_linha_do_documento() -> None:
+    assert ancoras_do_texto("a\nb\nc turno.py::f\n") == [(3, "turno.py", "f")]
+
+
+def test_nomes_definidos_cobre_def_class_e_aninhados() -> None:
+    fonte = textwrap.dedent("""
+        def f():
+            def interna():
+                pass
+        async def g():
+            pass
+        class C:
+            def m(self):
+                pass
+    """)
+    assert nomes_definidos(fonte) == {"f", "f.interna", "g", "C", "C.m"}
+
+
+def test_nomes_definidos_cobre_atribuicoes() -> None:
+    fonte = textwrap.dedent("""
+        TETO = 5
+        LIMITE: int = 3
+        a, (b, *c) = 1, (2, 3)
+        class Settings:
+            campo: str = "x"
+            OUTRO = 1
+    """)
+    assert nomes_definidos(fonte) == {
+        "TETO",
+        "LIMITE",
+        "a",
+        "b",
+        "c",
+        "Settings",
+        "Settings.campo",
+        "Settings.OUTRO",
+    }
+
+
+def test_nomes_definidos_cobre_atributo_de_instancia() -> None:
+    """`self.x = ...` num metodo define `Classe.x` -- e o que um leitor cita."""
+    fonte = textwrap.dedent("""
+        class C:
+            def __init__(self):
+                self.x = 1
+                self.y: int = 2
+                outro.z = 3
+    """)
+    assert nomes_definidos(fonte) == {"C", "C.__init__", "C.x", "C.y"}
+
+
+def test_nomes_definidos_atravessa_bloco_sem_escopo() -> None:
+    fonte = textwrap.dedent("""
+        if TYPE_CHECKING:
+            def so_tipo():
+                pass
+        try:
+            A = 1
+        except ImportError:
+            B = 2
+        else:
+            C = 3
+        finally:
+            D = 4
+        with abrir() as arq:
+            E = 5
+        for i in range(3):
+            F = 6
+        while False:
+            G = 7
+        match x:
+            case 1:
+                H = 8
+    """)
+    nomes = nomes_definidos(fonte)
+    assert nomes is not None
+    assert {"so_tipo", "A", "B", "C", "D", "E", "F", "G", "H"} <= nomes
+
+
+def test_import_nao_define_nome() -> None:
+    fonte = "from os import path\nimport sys\n"
+    assert nomes_definidos(fonte) == set()
+
+
+def test_fonte_que_nao_parseia_nao_tem_nomes() -> None:
+    assert nomes_definidos("def (:\n") is None
+
+
+def _nomes(tabela: dict[str, set[str] | None]) -> Callable[[str], set[str] | None]:
+    return lambda caminho: tabela[caminho]
+
+
+def test_ancora_com_nome_existente_nao_e_quebrada() -> None:
+    assert not ancora_quebrada(["a/turno.py"], "f", _nomes({"a/turno.py": {"f"}}))
+
+
+def test_ancora_com_nome_ausente_e_quebrada() -> None:
+    assert ancora_quebrada(["a/turno.py"], "sumiu", _nomes({"a/turno.py": {"f"}}))
+
+
+def test_ancora_ambigua_vale_se_algum_candidato_tem_o_nome() -> None:
+    nomes = _nomes({"a/models.py": {"X"}, "b/models.py": {"Y"}})
+    assert not ancora_quebrada(["a/models.py", "b/models.py"], "Y", nomes)
+
+
+def test_ancora_ambigua_e_quebrada_se_nenhum_candidato_tem_o_nome() -> None:
+    """A diferenca para a citacao por linha: aqui a ambiguidade nao impede a
+    certeza, porque a conclusao vale para qualquer leitura da citacao."""
+    nomes = _nomes({"a/models.py": {"X"}, "b/models.py": {"Y"}})
+    assert ancora_quebrada(["a/models.py", "b/models.py"], "Z", nomes)
+
+
+def test_ancora_sem_arquivo_nao_e_quebrada() -> None:
+    """Alvo que nao resolve e ignorado, como a citacao por linha ja e."""
+    assert not ancora_quebrada([], "f", _nomes({}))
+
+
+def test_ancora_em_arquivo_que_nao_parseia_nao_e_quebrada() -> None:
+    """Falha de leitura nao autoriza afirmar nada -- mesmo raciocinio de
+    `tamanho_de` devolver `maxsize`."""
+    nomes = _nomes({"a/x.py": None, "b/x.py": {"Y"}})
+    assert not ancora_quebrada(["a/x.py", "b/x.py"], "Z", nomes)

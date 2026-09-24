@@ -85,6 +85,13 @@ _CABECALHO = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 # um ponto so virar dois achados.
 _CITACAO = re.compile(r"(?<![\w/.-])((?:[\w./-]+/)?[\w-]+\.py):(\d+)(?:-(\d+))?")
 
+# `arquivo.py::Nome` e `arquivo.py::Classe.metodo` -- a ancora nominal da
+# TEC-299, na forma do node id do pytest, que o repo ja usava antes dela.
+#
+# Mesmo lookbehind de `_CITACAO`, pelo mesmo motivo: sem ele,
+# `mobia.infra.crypto.py::x` casaria pela cauda `crypto.py`.
+_ANCORA = re.compile(r"(?<![\w/.-])((?:[\w./-]+/)?[\w-]+\.py)::([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
+
 # O teto de VIZINHOS impressos por bloco na saida padrao.
 #
 # Medido na TEC-277 sobre 19 branches ja mergeadas (PRs #87 a #108): a saida
@@ -321,6 +328,113 @@ def resolver(alvo: str, arquivos_py: set[str]) -> list[str]:
     if "/" in alvo:
         return sorted(p for p in arquivos_py if p.endswith("/" + alvo))
     return sorted(p for p in arquivos_py if p.rsplit("/", 1)[-1] == alvo)
+
+
+def ancoras_do_texto(texto: str) -> list[tuple[int, str, str]]:
+    """Cada ancora como (linha do documento, alvo cru, nome pontuado)."""
+    achados = []
+    for numero, linha in enumerate(texto.splitlines(), 1):
+        for casa in _ANCORA.finditer(linha):
+            achados.append((numero, casa.group(1), casa.group(2)))
+    return achados
+
+
+def _nomes_do_alvo(alvo: ast.expr, prefixo: str, classe: str, nomes: set[str]) -> None:
+    if isinstance(alvo, ast.Name):
+        nomes.add(prefixo + alvo.id)
+    elif isinstance(alvo, ast.Tuple | ast.List):
+        for elemento in alvo.elts:
+            _nomes_do_alvo(elemento, prefixo, classe, nomes)
+    elif isinstance(alvo, ast.Starred):
+        _nomes_do_alvo(alvo.value, prefixo, classe, nomes)
+    elif (
+        classe
+        and isinstance(alvo, ast.Attribute)
+        and isinstance(alvo.value, ast.Name)
+        and alvo.value.id == "self"
+    ):
+        nomes.add(f"{classe}.{alvo.attr}")
+
+
+def nomes_definidos(fonte: str) -> set[str] | None:
+    """Todo nome que uma ancora pode designar neste arquivo, pontuado.
+
+    Definicao, e nao mencao: `def`, `class`, alvo de atribuicao, e o
+    `self.x` atribuido num metodo, que define `Classe.x` para quem le.
+    Import nao entra -- citar `mod.py::y` para um `y` so importado aponta o
+    lugar errado. Blocos que nao abrem escopo (`if`, `try`, `with`, laco,
+    `match`) sao atravessados com o mesmo prefixo, porque um `def` dentro de
+    `if TYPE_CHECKING:` continua sendo `modulo::nome`.
+
+    `None` quando a fonte nao parseia: quem chama trata como "nao
+    verificavel", nunca como "nome ausente".
+    """
+    try:
+        arvore = ast.parse(fonte)
+    except (SyntaxError, ValueError):
+        return None
+    nomes: set[str] = set()
+
+    def visitar(corpo: list[ast.stmt], prefixo: str, classe: str) -> None:
+        for no in corpo:
+            if isinstance(no, ast.ClassDef):
+                nome = prefixo + no.name
+                nomes.add(nome)
+                visitar(no.body, nome + ".", nome)
+            elif isinstance(no, ast.FunctionDef | ast.AsyncFunctionDef):
+                nome = prefixo + no.name
+                nomes.add(nome)
+                # A classe dona passa adiante para `self.x` virar `Classe.x`;
+                # uma funcao solta nao tem `self` que valha.
+                visitar(no.body, nome + ".", classe if prefixo == classe + "." else "")
+            elif isinstance(no, ast.Assign):
+                for alvo in no.targets:
+                    _nomes_do_alvo(alvo, prefixo, classe, nomes)
+            elif isinstance(no, ast.AnnAssign):
+                _nomes_do_alvo(no.target, prefixo, classe, nomes)
+            elif isinstance(no, ast.TypeAlias):
+                nomes.add(prefixo + no.name.id)
+            elif isinstance(no, ast.Match):
+                for caso in no.cases:
+                    visitar(caso.body, prefixo, classe)
+            elif isinstance(
+                no,
+                ast.If
+                | ast.Try
+                | ast.TryStar
+                | ast.With
+                | ast.AsyncWith
+                | ast.For
+                | ast.AsyncFor
+                | ast.While,
+            ):
+                for campo in ("body", "orelse", "finalbody"):
+                    visitar(getattr(no, campo, []), prefixo, classe)
+                for tratador in getattr(no, "handlers", []):
+                    visitar(tratador.body, prefixo, classe)
+
+    visitar(arvore.body, "", "")
+    return nomes
+
+
+def ancora_quebrada(
+    candidatos: list[str],
+    nome: str,
+    nomes_de: Callable[[str], set[str] | None],
+) -> bool:
+    """Se esta ancora e comprovadamente falsa.
+
+    Ao contrario da citacao por linha, a ambiguidade de arquivo NAO impede a
+    certeza: se o nome nao existe em nenhum candidato, a ancora e falsa em
+    qualquer leitura dela. Basta um candidato que nao parseia para a resposta
+    ser "nao sei" -- e "nao sei" aqui e False, porque esta marca reprova.
+
+    Alvo sem candidato nenhum e False tambem: e o caminho de fora do repo, ou
+    o arquivo apagado da cegueira da TEC-284, que continua aberta.
+    """
+    if not candidatos:
+        return False
+    return all((nomes := nomes_de(c)) is not None and nome not in nomes for c in candidatos)
 
 
 def classificar(
