@@ -120,7 +120,7 @@ async def test_recusa_web_nao_volta_sobre_campo_preenchido(session) -> None:
 
 async def test_recusa_do_orcamento_nao_volta_com_so_um_extremo_preenchido(session) -> None:
     """`faixa_preco_max` e a marca real gravada por `campos_a_recusar` -- ver
-    `_MARCA_DO_ORCAMENTO` em `domain/context/repositorio.py`. Ela cobre DUAS
+    `MARCA_DO_ORCAMENTO` em `domain/context/repositorio.py`. Ela cobre DUAS
     colunas (`_min_centavos` e `_max_centavos`), e o WhatsApp so respondeu uma
     delas: a recusa tem de cair do mesmo jeito, porque o vocabulario da marca
     nao distingue qual extremo foi respondido.

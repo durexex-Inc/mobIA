@@ -28,6 +28,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.context.repositorio import MARCA_DO_ORCAMENTO
 from mobia.domain.identidade.repositorio import sessoes_vinculadas
 from mobia.domain.identidade.telefone import normalizar
 from mobia.domain.messages.canais import CANAL_WHATSAPP
@@ -59,16 +60,17 @@ CAMPOS_ABSORVIDOS: tuple[str, ...] = (
 # `campos_recusados` guarda o vocabulario da MARCA (`_marca_de` em
 # `domain/context/repositorio.py`), nao nome de coluna -- e o unico nome desse
 # vocabulario que cobre mais de uma coluna e o orcamento: `campos_a_recusar`
-# grava toda recusa de faixa de preco sob `_MARCA_DO_ORCAMENTO`, a constante
-# "faixa_preco_max", ainda que o lead tenha se recusado a dar so um dos dois
-# extremos (`faixa_preco_min_centavos` / `faixa_preco_max_centavos` -- ver
+# grava toda recusa de faixa de preco sob `MARCA_DO_ORCAMENTO` -- importada, e
+# nao escrita a mao aqui, pela razao que o comentario do descarte em
+# `registrar_mudanca_de_intencao` da --, ainda que o lead tenha se recusado a
+# dar so um dos dois extremos (`faixa_preco_min_centavos` / `faixa_preco_max_centavos` -- ver
 # `_preenchido` em `domain/context/qualificacao.py`, que trata as duas do
 # mesmo jeito: "qualquer uma basta"). Por isso uma recusa de orcamento tem de
 # cair quando QUALQUER um dos dois extremos ja esta preenchido no WhatsApp, e
 # nao so quando os dois estao. Nomes fora deste mapa continuam resolvidos por
 # `getattr` direto (o comportamento e o mesmo, com uma coluna so na tupla).
 _COLUNAS_DO_CAMPO_RECUSADO: dict[str, tuple[str, ...]] = {
-    "faixa_preco_max": ("faixa_preco_min_centavos", "faixa_preco_max_centavos"),
+    MARCA_DO_ORCAMENTO: ("faixa_preco_min_centavos", "faixa_preco_max_centavos"),
 }
 
 

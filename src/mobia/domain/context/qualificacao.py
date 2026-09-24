@@ -74,7 +74,7 @@ def _canonico(nome: str) -> str:
     Existe por causa do orcamento, que e o unico campo com mais de um nome, e
     que ja custou uma card inteira a este projeto: a TEC-146 gastou a dela
     num bug silencioso causado por dois lugares guardando o mesmo fato sob
-    nomes diferentes (ver `_MARCA_DO_ORCAMENTO`, em `repositorio.py`).
+    nomes diferentes (ver `MARCA_DO_ORCAMENTO`, em `repositorio.py`).
 
     Sao cinco nomes hoje -- `faixa_preco_expressao` (o que o modelo diz),
     `faixa_preco_min_centavos`/`faixa_preco_max_centavos` (as colunas),
