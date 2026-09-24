@@ -10,6 +10,7 @@ from mobia.domain.handoff.agendador import AgendadorArq
 from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
+from mobia.domain.midia.armazem import armazem_da_config
 from mobia.domain.outbound.email import EmailSmtp
 from mobia.domain.outbound.presenca import IndicadorNoop
 from mobia.domain.outbound.roteador import RoteadorPorCanal
@@ -19,6 +20,7 @@ from mobia.domain.outbound.whatsapp_notificacao import WhatsAppTemplate
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
+from mobia.workers.jobs.baixar_midia import MAXIMO_DE_TENTATIVAS, baixar_midia
 from mobia.workers.jobs.gerar_resumo import gerar_resumo
 from mobia.workers.jobs.importar_catalogo import importar_catalogo
 from mobia.workers.jobs.indexar_catalogo import indexar_catalogo
@@ -27,6 +29,7 @@ from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_conversas_inativas import sweep_conversas_inativas
 from mobia.workers.jobs.sweep_followups import sweep_followups
 from mobia.workers.jobs.sweep_importacoes_travadas import sweep_importacoes_travadas
+from mobia.workers.jobs.sweep_midias_pendentes import sweep_midias_pendentes
 from mobia.workers.jobs.sweep_sla import sweep_sla
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
 
@@ -142,6 +145,9 @@ async def startup(ctx: dict[str, Any]) -> None:
     # raciocinio de `outbound`/`redator`/etc acima; o teste troca a chave sem
     # tocar no job.
     ctx["canais_de_notificacao"] = (EmailSmtp(), WhatsAppTemplate())
+    # TEC-132, D1. Disco ou S3 conforme `midia_armazem`; a validacao de que
+    # "s3" veio com bucket ja rodou quando `get_settings()` montou a config.
+    ctx["armazem"] = armazem_da_config(settings)
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -209,6 +215,19 @@ class WorkerSettings:
         # `cron_jobs` tambem -- e o relogio que dispara este job, nunca um
         # enqueue manual.
         func(sweep_conversas_inativas, keep_result=0),
+        # TEC-132. `keep_result=0` pela mesma razao do `process_message`: o
+        # `_job_id` e fixo (`midia:<id>`, ver `enqueue_baixar_midia`), e uma
+        # chave de resultado sobrevivente faria o re-enqueue da
+        # `sweep_midias_pendentes` virar no-op silencioso. `max_tries` e o
+        # mesmo numero que o job consulta para decidir, na ultima tentativa,
+        # gravar FALHOU em vez de pedir outro `Retry` -- se os dois divergirem,
+        # o ARQ desiste antes do job gravar e a linha fica PENDENTE ate a
+        # varredura.
+        func(baixar_midia, keep_result=0, max_tries=MAXIMO_DE_TENTATIVAS),
+        # `keep_result=0` pela mesma razao do `sweep_sla`: o resultado (um
+        # `int`) nao serve para nada depois que o log saiu. Entra em
+        # `cron_jobs` tambem -- e o relogio que dispara este job.
+        func(sweep_midias_pendentes, keep_result=0),
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
@@ -268,6 +287,16 @@ class WorkerSettings:
         # `process_message` esta mais vazia, e esta varredura toma locks em
         # `conversas`.
         cron(sweep_conversas_inativas, hour={3}, minute={0}, run_at_startup=False),
+        # TEC-132, D3. De 5 em 5 minutos, como os irmaos de cima: o prazo para
+        # supor o enfileiramento perdido e de DEZ MINUTOS (`REENFILEIRAR_APOS`
+        # em `sweep_midias_pendentes.py`), entao precisao de segundos nao
+        # compra nada. O pior caso fica em quinze minutos entre a ingestao e o
+        # re-enqueue -- e ninguem espera pela midia, o turno nao depende dela.
+        cron(
+            sweep_midias_pendentes,
+            minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
+            run_at_startup=False,
+        ),
     ]
     on_startup = startup
     on_shutdown = shutdown

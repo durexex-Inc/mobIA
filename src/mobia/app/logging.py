@@ -234,6 +234,14 @@ def _finalizar(
 
 def configure_logging(level: str = "INFO") -> None:
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=level.upper())
+    # TEC-132. O httpx loga em INFO a linha `HTTP Request: GET <url completa>`
+    # de toda requisicao, fora do structlog e portanto fora do mascaramento
+    # abaixo. Para o download de midia essa URL e credencial temporaria da
+    # Meta (D3: "nunca a URL"), e com o nivel padrao ela ia para stdout a cada
+    # arquivo baixado. WARNING corta so essas linhas de requisicao: o httpx
+    # nao loga nada acima de INFO por conta propria, e erro de rede chega a
+    # quem chama como excecao, nao como log dele.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
