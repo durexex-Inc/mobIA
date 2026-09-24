@@ -1,4 +1,4 @@
-"""A data que o lead fala, resolvida para o calendario. TEC-167, RN-11.3.
+"""A data que o lead fala, resolvida para janelas do motor. TEC-167, RN-11.3.
 
 Puro de proposito, no molde de `domain/agente/dinheiro.py`: sem I/O, sem
 banco, sem chamada ao modelo, e `agora` entra como parametro. A gramatica e
@@ -10,16 +10,25 @@ caracteres e entrada valida, e uma excecao aqui derrubaria o turno inteiro --
 o argumento e o mesmo da docstring de `dinheiro.py`. So `agora` sem fuso
 levanta: e erro de programacao, nao de fala.
 
-Nenhum codigo de producao chama este modulo ainda: ver o desenho,
+Este modulo e a ponte entre a data falada e o motor (`propor_janelas`): a
+unica peca que conhece ambos. Nenhum codigo de producao chama este modulo
+ainda: ver o desenho,
 docs/superpowers/specs/2026-09-24-tec-167-data-em-linguagem-natural-design.md.
 """
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 
 from mobia.app.config import get_settings
+from mobia.domain.agendamento.janelas import (
+    DURACAO,
+    Intervalo,
+    TipoDeCompromisso,
+    propor_janelas,
+)
 from mobia.domain.texto import dobrar
 
 
@@ -332,3 +341,55 @@ def resolver(texto: str, *, agora: datetime) -> Resolucao:
             return Ambigua(TEXTO_DO_PASSADO)
         return Periodo(dia, periodo)
     return Dia(dia)
+
+
+def janelas_para(
+    resolucao: Resolucao,
+    *,
+    agora: datetime,
+    jornada_inicio: int,
+    jornada_fim: int,
+    ocupados: Sequence[Intervalo],
+    tipo: TipoDeCompromisso,
+) -> list[Intervalo] | Ambigua | NaoReconhecida:
+    """As janelas que a data falada pede, ou a resolucao que pede pergunta.
+
+    `Ambigua` e `NaoReconhecida` voltam como vieram, sem chamar o motor:
+    quem chama faz a pergunta. As outras viram um `[de, ate]` para
+    `propor_janelas`. Um `Instante` que nao cabe -- ocupado, fora da grade,
+    fora do atendimento -- cai nas janelas do mesmo dia, para o lead receber
+    alternativa em vez de silencio.
+    """
+    fuso = get_settings().fuso_de_envio
+
+    def buscar(de: datetime, ate: datetime) -> list[Intervalo]:
+        return propor_janelas(
+            agora=agora,
+            de=de,
+            ate=ate,
+            jornada_inicio=jornada_inicio,
+            jornada_fim=jornada_fim,
+            ocupados=ocupados,
+            tipo=tipo,
+        )
+
+    def meia_noite(dia: date) -> datetime:
+        return datetime(dia.year, dia.month, dia.day, tzinfo=fuso)
+
+    match resolucao:
+        case Instante(momento=momento):
+            exata = buscar(momento, momento + DURACAO[tipo])
+            if exata and exata[0].inicio == momento:
+                return exata[:1]
+            dia = momento.astimezone(fuso).date()
+            return buscar(meia_noite(dia), meia_noite(dia + timedelta(days=1)))
+        case Periodo(dia=dia, periodo=periodo):
+            inicio, fim = LIMITES_DO_PERIODO[periodo]
+            base = meia_noite(dia)
+            return buscar(base + timedelta(hours=inicio), base + timedelta(hours=fim))
+        case Dia(dia=dia):
+            return buscar(meia_noite(dia), meia_noite(dia + timedelta(days=1)))
+        case Semana(segunda=segunda):
+            return buscar(meia_noite(segunda), meia_noite(segunda + timedelta(days=7)))
+        case Ambigua() | NaoReconhecida():
+            return resolucao

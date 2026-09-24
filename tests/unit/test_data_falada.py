@@ -4,7 +4,7 @@ Puro: `agora` e sempre um literal com fuso. O `agora` padrao e o da card:
 terca-feira, 25/08/2026, 14h.
 """
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -23,8 +23,10 @@ from mobia.domain.agendamento.data_falada import (
     Semana,
     data_absoluta,
     data_e_hora_absolutas,
+    janelas_para,
     resolver,
 )
+from mobia.domain.agendamento.janelas import Intervalo, TipoDeCompromisso
 
 SP = ZoneInfo("America/Sao_Paulo")
 AGORA = datetime(2026, 8, 25, 14, 0, tzinfo=SP)
@@ -217,3 +219,72 @@ def test_data_e_hora_absolutas_converte_para_sao_paulo() -> None:
 def test_data_absoluta_usa_ordinal_no_dia_primeiro() -> None:
     assert data_absoluta(date(2026, 9, 1)) == "terça-feira, 1º de setembro"
     assert data_absoluta(date(2026, 8, 29)) == "sábado, 29 de agosto"
+
+
+# --- a ponte com o motor ---
+
+
+def _janela(inicio: datetime, minutos: int = 60) -> Intervalo:
+    return Intervalo(inicio, inicio + timedelta(minutes=minutos))
+
+
+def _janelas(texto: str, ocupados: tuple[Intervalo, ...] = ()) -> object:
+    return janelas_para(
+        resolver(texto, agora=AGORA),
+        agora=AGORA,
+        jornada_inicio=9,
+        jornada_fim=19,
+        ocupados=list(ocupados),
+        tipo=TipoDeCompromisso.VISITA_PRESENCIAL,
+    )
+
+
+def test_quinta_de_manha_propoe_so_a_manha_de_quinta() -> None:
+    """O primeiro cenario da card."""
+    assert _janelas("pode ser quinta de manhã") == [
+        _janela(_ago(27, 9)),
+        _janela(_ago(27, 9, 30)),
+        _janela(_ago(27, 10)),
+    ]
+
+
+def test_instante_livre_devolve_so_ele() -> None:
+    assert _janelas("quinta às 15h") == [_janela(_ago(27, 15))]
+
+
+def test_instante_ocupado_devolve_as_janelas_do_dia() -> None:
+    ocupado = Intervalo(_ago(27, 15), _ago(27, 16))
+    assert _janelas("quinta às 15h", (ocupado,)) == [
+        _janela(_ago(27, 9)),
+        _janela(_ago(27, 9, 30)),
+        _janela(_ago(27, 10)),
+    ]
+
+
+def test_instante_fora_da_grade_devolve_as_janelas_do_dia() -> None:
+    assert _janelas("quinta às 15h10") == [
+        _janela(_ago(27, 9)),
+        _janela(_ago(27, 9, 30)),
+        _janela(_ago(27, 10)),
+    ]
+
+
+def test_dia_propoe_janelas_do_dia() -> None:
+    assert _janelas("sexta") == [
+        _janela(_ago(28, 9)),
+        _janela(_ago(28, 9, 30)),
+        _janela(_ago(28, 10)),
+    ]
+
+
+def test_semana_propoe_uma_por_dia_da_semana_que_vem() -> None:
+    assert _janelas("semana que vem") == [
+        _janela(_ago(31, 9)),
+        _janela(_set(1, 9)),
+        _janela(_set(2, 9)),
+    ]
+
+
+def test_ambigua_e_nao_reconhecida_passam_sem_chamar_o_motor() -> None:
+    assert isinstance(_janelas("no fim de semana"), Ambigua)
+    assert _janelas("tanto faz") == NaoReconhecida()
