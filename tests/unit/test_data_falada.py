@@ -74,6 +74,23 @@ def _set(dia: int, hora: int = 0, minuto: int = 0) -> datetime:
         ("sexta 10 da manhã", Instante(_ago(28, 10))),
         ("às 16h", Instante(_ago(25, 16))),
         ("AMANHÃ DE TARDE", Periodo(date(2026, 8, 26), PeriodoDoDia.TARDE)),
+        # C1: mes e ano falados
+        ("dia 3 de outubro", Dia(date(2026, 10, 3))),
+        ("3 de setembro", Dia(date(2026, 9, 3))),
+        ("dia 1º", Dia(date(2026, 9, 1))),
+        ("1º/9", Dia(date(2026, 9, 1))),
+        ("03/09/2027", Dia(date(2027, 9, 3))),
+        ("3/9/27", Dia(date(2027, 9, 3))),
+        # I3: hora nua de 7 nao e mais ambigua, vira Instante direto
+        ("amanhã às 7", Instante(_ago(26, 7))),
+        # I4: hora qualificada ou duas horas na frase nunca viram Instante
+        ("quinta entre 14 e 16h", Dia(date(2026, 8, 27))),
+        ("trabalho até as 18, pode ser quinta", Dia(date(2026, 8, 27))),
+        ("quinta às 10 ou às 11", Dia(date(2026, 8, 27))),
+        ("quinta a partir das 16h", Dia(date(2026, 8, 27))),
+        # M10: "meio-dia" e "N hora(s) da tarde/manha"
+        ("quinta meio-dia", Instante(_ago(27, 12))),
+        ("amanhã 1 hora da tarde", Instante(_ago(26, 13))),
     ],
 )
 def test_resolve_expressoes_comuns(texto: str, esperado: object) -> None:
@@ -83,6 +100,25 @@ def test_resolve_expressoes_comuns(texto: str, esperado: object) -> None:
 def test_amanha_numa_sexta_e_o_sabado() -> None:
     sexta = _ago(28, 14)
     assert resolver("amanhã", agora=sexta) == Dia(date(2026, 8, 29))
+
+
+def test_ano_falado_antes_do_mes_corrente_vira_ano_que_vem() -> None:
+    """C1. Com agora = 20/12/2026, "5/1" e "5 de janeiro" ainda nao passaram
+    -- sao o janeiro que vem, nao um 5/1 que ja foi."""
+    agora = datetime(2026, 12, 20, 14, 0, tzinfo=SP)
+    assert resolver("5/1", agora=agora) == Dia(date(2027, 1, 5))
+    assert resolver("5 de janeiro", agora=agora) == Dia(date(2027, 1, 5))
+
+
+def test_semana_que_vem_com_periodo() -> None:
+    """I5. Periodo dito junto de "semana que vem" vira o periodo da Semana;
+    hora sem periodo vira MANHA/TARDE pela mesma regra, e a hora exata cai."""
+    assert resolver("semana que vem à tarde", agora=AGORA) == Semana(
+        date(2026, 8, 31), PeriodoDoDia.TARDE
+    )
+    assert resolver("semana que vem as 16h", agora=AGORA) == Semana(
+        date(2026, 8, 31), PeriodoDoDia.TARDE
+    )
 
 
 # --- o que pergunta ---
@@ -118,11 +154,23 @@ def test_hora_de_1_a_7_sem_periodo_pergunta() -> None:
     assert "15h" in _pergunta("quinta às 3")
 
 
+def test_hora_6_ainda_pergunta_mas_7_nao_mais() -> None:
+    """I3. So 1 a 6 ficam ambiguos (13h..18h cabem no atendimento); 7 vira
+    Instante direto (ver "amanhã às 7" no parametrize acima)."""
+    assert "18h" in _pergunta("quinta às 6")
+
+
 def test_passado_pergunta() -> None:
     assert _pergunta("hoje às 10h") == TEXTO_DO_PASSADO
     assert _pergunta("3/8") == TEXTO_DO_PASSADO
     assert _pergunta("hoje de manhã") == TEXTO_DO_PASSADO
     assert _pergunta("hoje de tarde", agora=_ago(25, 19, 30)) == TEXTO_DO_PASSADO
+
+
+def test_passado_com_ano_falado_pergunta() -> None:
+    """C1. Ano falado nao poupa de "ja passou": "3/8/2026" e antes de hoje
+    (25/08/2026), mesmo com o ano dito por extenso."""
+    assert _pergunta("3/8/2026") == TEXTO_DO_PASSADO
 
 
 def test_dois_dias_pergunta_qual() -> None:
@@ -157,6 +205,20 @@ def test_dois_dias_nao_descarta_sabado_quando_o_outro_e_domingo() -> None:
     assert "domingos" in pergunta
 
 
+def test_dois_dias_concordancia_no_texto() -> None:
+    """I2. "Pode ser {dia}?" sem artigo: "no segunda-feira" soava errado."""
+    pergunta = _pergunta("domingo ou segunda")
+    assert pergunta.endswith("Pode ser segunda-feira, 31 de agosto?")
+
+
+def test_hoje_ou_proxima_concordancia_no_texto() -> None:
+    """I2. Sem "a proxima," fixo: "a proxima, sabado" tambem soava errado."""
+    agora_sabado = datetime(2026, 8, 29, 10, 0, tzinfo=SP)
+    assert _pergunta("sábado", agora=agora_sabado) == (
+        "Você quer dizer hoje, sábado, 29 de agosto, ou sábado, 5 de setembro?"
+    )
+
+
 def test_noite_pergunta_pelo_fim_da_tarde() -> None:
     assert _pergunta("quinta à noite") == TEXTO_DA_NOITE
 
@@ -166,9 +228,21 @@ def test_data_inexistente_pergunta() -> None:
     assert _pergunta("dia 31", agora=_set(5, 14)) == TEXTO_DA_DATA_INEXISTENTE
 
 
+def test_mes_por_extenso_inexistente_pergunta() -> None:
+    """C1. Setembro nao tem dia 31, esteja o mes por extenso ou nao."""
+    assert _pergunta("31 de setembro") == TEXTO_DA_DATA_INEXISTENTE
+
+
 def test_dia_do_mes_que_cai_no_domingo_pergunta() -> None:
     """20/09/2026 e domingo: a data existe, mas nao ha atendimento."""
     assert _pergunta("dia 20") == TEXTO_DO_DOMINGO
+
+
+def test_fim_de_semana_apos_as_18h_num_sabado_oferece_o_seguinte() -> None:
+    """M11. As 18h de sabado so resta 1h de atendimento -- perto demais para
+    valer como oferta de "hoje"."""
+    agora = datetime(2026, 8, 29, 18, 0, tzinfo=SP)
+    assert "5 de setembro" in _pergunta("fim de semana", agora=agora)
 
 
 # --- o que nao reconhece, e o que nao pode derrubar ---
@@ -177,6 +251,11 @@ def test_dia_do_mes_que_cai_no_domingo_pergunta() -> None:
 def test_texto_sem_data_nao_e_reconhecido() -> None:
     assert resolver("tanto faz", agora=AGORA) == NaoReconhecida()
     assert resolver("", agora=AGORA) == NaoReconhecida()
+
+
+def test_hora_qualificada_sem_dia_nem_periodo_nao_e_reconhecida() -> None:
+    """I4. Sem dia nem periodo sobrando, a hora descartada nao deixa nada."""
+    assert resolver("antes das 10", agora=AGORA) == NaoReconhecida()
 
 
 @pytest.mark.parametrize(
@@ -282,6 +361,16 @@ def test_semana_propoe_uma_por_dia_da_semana_que_vem() -> None:
         _janela(_ago(31, 9)),
         _janela(_set(1, 9)),
         _janela(_set(2, 9)),
+    ]
+
+
+def test_semana_com_periodo_propoe_a_primeira_janela_de_cada_dia() -> None:
+    """I5. Com periodo, um dia de cada vez -- segunda, terca, quarta -- e so
+    a primeira janela de cada, ate 3."""
+    assert _janelas("semana que vem à tarde") == [
+        _janela(_ago(31, 12)),
+        _janela(_set(1, 12)),
+        _janela(_set(2, 12)),
     ]
 
 

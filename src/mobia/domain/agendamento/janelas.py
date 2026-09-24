@@ -149,7 +149,8 @@ def propor_janelas(
 
     # `de` so adia o inicio da busca: nunca o antecipa para antes das 3 horas
     # de antecedencia. E o que deixa a TEC-167 buscar "a manha de quinta" sem
-    # que "hoje de manha", dito as 14h, ofereca horario em cima da hora.
+    # que "hoje de tarde", dito as 14h, ofereca horario em cima da hora -- o
+    # motor e quem impede oferecer 14h30.
     comeco = agora + ANTECEDENCIA_MINIMA
     if de is not None and de > comeco:
         comeco = de

@@ -67,6 +67,10 @@ class Dia:
 @dataclass(frozen=True)
 class Semana:
     segunda: date
+    # None -- como ate a I5 -- busca a semana inteira. Com periodo ("semana
+    # que vem a tarde"), `janelas_para` busca dia a dia, de segunda a
+    # sabado, so naquele periodo.
+    periodo: PeriodoDoDia | None = None
 
 
 @dataclass(frozen=True)
@@ -85,9 +89,9 @@ Resolucao = Instante | Periodo | Dia | Semana | Ambigua | NaoReconhecida
 
 # O texto que o lead le: portugues com acento (TEC-267). Registrados em
 # `tests/unit/literais_ao_lead.py`, para as guardas de acento e de promessa.
-TEXTO_DO_FIM_DE_SEMANA = "Aos domingos não há atendimento. Pode ser no {dia}?"
+TEXTO_DO_FIM_DE_SEMANA = "Aos domingos não há atendimento. Pode ser {dia}?"
 TEXTO_DO_DOMINGO = "Aos domingos não há atendimento. Que outro dia fica bom para você?"
-TEXTO_DE_HOJE_OU_DA_PROXIMA = "Você quer dizer hoje, {hoje}, ou a próxima, {proxima}?"
+TEXTO_DE_HOJE_OU_DA_PROXIMA = "Você quer dizer hoje, {hoje}, ou {proxima}?"
 TEXTO_DA_HORA_AMBIGUA = "Você quer dizer às {hora}h?"
 TEXTO_DO_PASSADO = "Esse horário já passou. Que outro dia e horário ficam bons para você?"
 TEXTO_DE_DOIS_DIAS = "Qual dos dois fica melhor para você: {primeiro} ou {segundo}?"
@@ -121,6 +125,24 @@ MESES = (
 )
 _DOMINGO = 6
 
+# Formas sem acento de MESES, na mesma ordem -- o mesmo papel que _NOMES tem
+# para DIAS_DA_SEMANA. "marco" e o que `dobrar("março")` devolve (cedilha
+# tambem sai na normalizacao NFD).
+_MES_NOMES = (
+    "janeiro",
+    "fevereiro",
+    "marco",
+    "abril",
+    "maio",
+    "junho",
+    "julho",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "dezembro",
+)
+
 # Teto do texto examinado. A fala do lead e curta; o teto existe para que uma
 # colagem de 10 mil caracteres custe o mesmo que uma frase.
 _TAMANHO_MAXIMO = 300
@@ -133,17 +155,47 @@ _DEPOIS_DE_AMANHA = re.compile(r"\bdepois de amanha\b")
 _AMANHA = re.compile(r"\bamanha\b")
 _HOJE = re.compile(r"\bhoje\b")
 _DIA_DA_SEMANA = re.compile(r"\b(segunda|terca|quarta|quinta|sexta|sabado|domingo)(?:[- ]feira)?\b")
-_DIA_E_MES = re.compile(r"\b(\d{1,2})/(\d{1,2})\b")
-_DIA_DO_MES = re.compile(r"\bdia (\d{1,2})\b")
+# `º`/`o` opcional depois do numero: "1º/9", "dia 1º" -- o proprio modulo
+# escreve "1º" em `data_absoluta`, e o lead pode ecoar do jeito que le.
+_DIA_E_MES = re.compile(r"\b(\d{1,2})(?:º|o)?/(\d{1,2})(?:/(\d{4}|\d{2}))?\b")
+# "dia" opcional, "de <mes por extenso>" obrigatorio -- e o que distingue
+# esta forma de `_DIA_DO_MES` (que nunca leva mes) e de `_DIA_E_MES` (que
+# nunca leva mes por extenso). Precisa rodar ANTES de `_DIA_DO_MES`: "dia 3
+# de outubro" contem "dia 3", que `_DIA_DO_MES` casaria sozinho e deixaria
+# "de outubro" sobrando sem dono.
+_DIA_DE_MES_EXTENSO = re.compile(
+    r"\b(?:dia )?(\d{1,2})(?:º|o)? de (" + "|".join(_MES_NOMES) + r")\b"
+)
+_DIA_DO_MES = re.compile(r"\bdia (\d{1,2})(?:º|o)?\b")
 _NOITE = re.compile(r"\bnoite\b")
 _MANHA = re.compile(r"\bmanha\b")
 _TARDE = re.compile(r"\btarde\b")
+_MEIO_DIA = re.compile(r"\bmeio[- ]dia\b")
 _HORA_E_MINUTO = re.compile(r"\b(\d{1,2})[h:](\d{2})\b")
-_HORA_COM_PERIODO = re.compile(r"\b(\d{1,2}) da (manha|tarde)\b")
+# "horas?" opcional entre o numero e "da manha/tarde": "1 hora da tarde", "2
+# horas da tarde" -- sem quebrar a forma mais curta, "10 da manha".
+_HORA_COM_PERIODO = re.compile(r"\b(\d{1,2}) (?:horas?\s+)?da (manha|tarde)\b")
 _HORA_COM_H = re.compile(r"\b(\d{1,2}) ?h\b")
 _HORA_APOS_AS = re.compile(r"\bas (\d{1,2})\b")
+# Uma hora logo depois de um qualificador de faixa ou limite nao e uma hora
+# que o lead afirmou sozinha -- "entre 14 e 16h", "ate as 18", "a partir das
+# 16h", "antes das 10". Sem `\b` no fim: nao importa o que vem depois do
+# numero (h, minuto, nada), so que ele exista logo ali.
+_HORA_QUALIFICADA = re.compile(
+    r"\b(?:entre|ate|antes d[ae]s?|depois d[ae]s?|a partir d[ae]s?)\s+(?:as\s+)?\d{1,2}"
+)
 
 _NOMES = ("segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo")
+# Todo padrao que reconhece uma mencao de hora, para contar QUANTAS a frase
+# tem -- I4: duas horas na mesma frase tambem descartam a hora, junto com o
+# qualificador acima.
+_PADROES_DE_HORA: tuple[re.Pattern[str], ...] = (
+    _MEIO_DIA,
+    _HORA_E_MINUTO,
+    _HORA_COM_PERIODO,
+    _HORA_COM_H,
+    _HORA_APOS_AS,
+)
 
 
 def data_absoluta(dia: date) -> str:
@@ -177,6 +229,45 @@ def _data(ano: int, mes: int, dia: int) -> date | None:
         return None
 
 
+def _ano_por_mes(hoje: date, mes: int) -> int:
+    """O ano quando so o mes foi dito, sem ano falado. C1.
+
+    Mes ANTERIOR ao corrente e o mesmo mes do ano que vem -- "5/1" dito em
+    dezembro e janeiro que vem, nao um 5/1 que ja passou. Mes corrente ou
+    posterior fica no ano corrente. Isto so decide o ANO: se o dia dentro do
+    mes corrente ja tiver passado, quem chama compara a data resolvida com
+    `hoje` e devolve TEXTO_DO_PASSADO -- esta funcao nao sabe o dia.
+    """
+    return hoje.year + 1 if mes < hoje.month else hoje.year
+
+
+def _contar_mencoes_de_hora(texto: str) -> int:
+    """Quantas mencoes de hora existem na frase, sem contar a mesma mencao
+    duas vezes so porque duas formas diferentes casam pedacos sobrepostos
+    dela. I4.
+
+    "amanha as 15:30" tem UMA hora, mas `_HORA_APOS_AS` sozinho casaria "as
+    15" (o prefixo) e `_HORA_E_MINUTO` casaria "15:30" (o todo) -- duas
+    posicoes de match para a mesma mencao, se contadas independentes. Este
+    laco consome na MESMA ordem de prioridade da extracao real (a mais
+    especifica primeiro) e apaga o que casou antes de tentar a proxima
+    forma na MESMA passada, para que a forma menos especifica nunca ache de
+    novo o que a mais especifica ja resolveu.
+    """
+    restante = texto
+    contagem = 0
+    mudou = True
+    while mudou:
+        mudou = False
+        for padrao in _PADROES_DE_HORA:
+            casamento = padrao.search(restante)
+            if casamento:
+                restante = _apagar(restante, casamento)
+                contagem += 1
+                mudou = True
+    return contagem
+
+
 def resolver(texto: str, *, agora: datetime) -> Resolucao:
     if agora.tzinfo is None or agora.utcoffset() is None:
         raise ValueError(f"`agora` sem fuso: {agora!r}")
@@ -187,6 +278,12 @@ def resolver(texto: str, *, agora: datetime) -> Resolucao:
 
     if _FIM_DE_SEMANA.search(falado):
         sabado = hoje + timedelta(days=(5 - hoje.weekday()) % 7)
+        if sabado == hoje and local.hour >= 18:
+            # As 18h de sabado so restam 60 minutos de atendimento (fecha as
+            # 19h) -- perto demais para valer como oferta de "hoje", ainda
+            # mais com as 3h de antecedencia que o motor exige por baixo.
+            # Oferece o sabado seguinte, nao o de hoje. M11.
+            sabado += timedelta(days=7)
         return Ambigua(TEXTO_DO_FIM_DE_SEMANA.format(dia=data_absoluta(sabado)))
 
     # Dias achados, com a posicao na frase: a posicao ordena a pergunta de
@@ -195,7 +292,33 @@ def resolver(texto: str, *, agora: datetime) -> Resolucao:
 
     for casa in _DIA_E_MES.finditer(falado):
         falado = _apagar(falado, casa)
-        dia = _data(hoje.year, int(casa.group(2)), int(casa.group(1)))
+        dia_num, mes_num = int(casa.group(1)), int(casa.group(2))
+        ano_falado = casa.group(3)
+        # C1: ano falado ("03/09/2027", "3/9/27") manda; sem ele, o mes
+        # decide o ano (`_ano_por_mes`) -- e a comparacao com `hoje` abaixo,
+        # a mesma dos dois ramos, pega tanto o dia que ja passou no mes
+        # corrente quanto o ano falado que ja passou.
+        ano = (
+            (int(ano_falado) if len(ano_falado) == 4 else 2000 + int(ano_falado))
+            if ano_falado is not None
+            else _ano_por_mes(hoje, mes_num)
+        )
+        dia = _data(ano, mes_num, dia_num)
+        if dia is None:
+            return Ambigua(TEXTO_DA_DATA_INEXISTENTE)
+        if dia < hoje:
+            return Ambigua(TEXTO_DO_PASSADO)
+        dias.append((casa.start(), dia))
+
+    # "dia 3 de outubro", "3 de setembro": mes por extenso, sem ano -- o
+    # mesmo `_ano_por_mes` do ramo acima. Roda ANTES de `_DIA_DO_MES`: ver o
+    # comentario do proprio regex, acima.
+    for casa in _DIA_DE_MES_EXTENSO.finditer(falado):
+        falado = _apagar(falado, casa)
+        dia_num = int(casa.group(1))
+        mes_num = _MES_NOMES.index(casa.group(2)) + 1
+        ano = _ano_por_mes(hoje, mes_num)
+        dia = _data(ano, mes_num, dia_num)
         if dia is None:
             return Ambigua(TEXTO_DA_DATA_INEXISTENTE)
         if dia < hoje:
@@ -224,11 +347,15 @@ def resolver(texto: str, *, agora: datetime) -> Resolucao:
             falado = _apagar(falado, casa)
             dias.append((casa.start(), hoje + timedelta(days=deslocamento)))
 
-    # Nenhum return aqui dentro (fora dos dois ja existentes acima, para data
-    # explicita impossivel ou passada): um segundo dia na mesma frase --
+    # Este laco nao tem return dentro dele: um segundo dia na mesma frase --
     # "segunda ou terca", "sabado ou domingo" -- nao pode ser descartado por
-    # um return precoce achando o primeiro. Toda decisao (dois dias? domingo?
-    # hoje ou proxima?) fica para depois de juntar TODAS as mencoes.
+    # um return precoce achando o primeiro. Existem returns ANTES deste
+    # ponto -- seis ao todo: o de "fim de semana", mais cinco dentro dos tres
+    # lacos de data explicita acima (dois no de dia/mes, dois no de mes por
+    # extenso, um no de dia do mes, para data impossivel ou passada) -- mas
+    # nenhum deles esta NESTE laco. Toda decisao sobre o dia da semana (dois
+    # dias? domingo? hoje ou proxima?) fica para depois de juntar TODAS as
+    # mencoes.
     veio_de_semana_atual = False
     for casa in _DIA_DA_SEMANA.finditer(falado):
         falado = _apagar(falado, casa)
@@ -279,29 +406,53 @@ def resolver(texto: str, *, agora: datetime) -> Resolucao:
         )
 
     # Hora. As formas mais especificas primeiro, e cada uma apaga o que casou.
+    # Snapshot ANTES de qualquer apagar: I4 precisa ver todas as mencoes de
+    # hora e o qualificador na frase inteira, nao no que sobrar depois que a
+    # primeira ja foi consumida.
+    falado_antes_da_hora = falado
     hora: int | None = None
     minuto = 0
     periodo_da_hora: str | None = None
-    casa_hora: re.Match[str] | None = _HORA_E_MINUTO.search(falado)
-    if casa_hora:
-        falado = _apagar(falado, casa_hora)
-        h, m = int(casa_hora.group(1)), int(casa_hora.group(2))
-        if h <= 23 and m <= 59:
-            hora, minuto = h, m
+    casa_hora: re.Match[str] | None = None
+    if casa_meio_dia := _MEIO_DIA.search(falado):
+        # M10: "meio-dia"/"meio dia" e 12h, sem digito nenhum para casar.
+        falado = _apagar(falado, casa_meio_dia)
+        hora = 12
     else:
-        casa_hora = _HORA_COM_PERIODO.search(falado)
+        casa_hora = _HORA_E_MINUTO.search(falado)
         if casa_hora:
             falado = _apagar(falado, casa_hora)
-            h, periodo_da_hora = int(casa_hora.group(1)), casa_hora.group(2)
-            if h <= 23:
-                hora = h + 12 if periodo_da_hora == "tarde" and h < 12 else h
+            h, m = int(casa_hora.group(1)), int(casa_hora.group(2))
+            if h <= 23 and m <= 59:
+                hora, minuto = h, m
         else:
-            casa_hora = _HORA_COM_H.search(falado) or _HORA_APOS_AS.search(falado)
+            casa_hora = _HORA_COM_PERIODO.search(falado)
             if casa_hora:
                 falado = _apagar(falado, casa_hora)
-                h = int(casa_hora.group(1))
+                h, periodo_da_hora = int(casa_hora.group(1)), casa_hora.group(2)
                 if h <= 23:
-                    hora = h
+                    hora = h + 12 if periodo_da_hora == "tarde" and h < 12 else h
+            else:
+                casa_hora = _HORA_COM_H.search(falado) or _HORA_APOS_AS.search(falado)
+                if casa_hora:
+                    falado = _apagar(falado, casa_hora)
+                    h = int(casa_hora.group(1))
+                    if h <= 23:
+                        hora = h
+
+    # I4: uma hora logo depois de "entre"/"ate"/"antes das"/"depois das"/"a
+    # partir das", ou duas horas na mesma frase, nunca viram Instante --
+    # comprometer uma hora que o lead nao afirmou sozinho e o mesmo chute que
+    # a RN-11.3 proibe para dia. A frase resolve sem hora (dia, periodo, ou
+    # NaoReconhecida); a janela proposta depois e a confirmacao absoluta
+    # fecham o resto.
+    if (
+        _HORA_QUALIFICADA.search(falado_antes_da_hora)
+        or _contar_mencoes_de_hora(falado_antes_da_hora) > 1
+    ):
+        hora = None
+        minuto = 0
+        periodo_da_hora = None
 
     if _NOITE.search(falado):
         return Ambigua(TEXTO_DA_NOITE)
@@ -314,18 +465,27 @@ def resolver(texto: str, *, agora: datetime) -> Resolucao:
     # Hora explicita vence periodo contraditorio, de proposito: "quinta 15h
     # de manha" fica 15h, nao vira pergunta nem 3h. Os dois ramos abaixo so
     # ajustam a hora nos casos em que ela PRECISA de complemento (TARDE com
-    # hora <12, ou hora nua de 1 a 7) -- fora deles, o numero que o lead
+    # hora <12, ou hora nua de 1 a 6) -- fora deles, o numero que o lead
     # disse e o que vale.
     if hora is not None and periodo_da_hora is None:
         if periodo is PeriodoDoDia.TARDE and hora < 12:
             hora += 12
-        elif periodo is None and 1 <= hora <= 7:
+        elif periodo is None and 1 <= hora <= 6:
             # 3h ou 15h? Ninguem visita imovel as 3h, mas a regra e perguntar,
-            # nao supor: supor aqui e o chute que a RN-11.3 proibe.
+            # nao supor: supor aqui e o chute que a RN-11.3 proibe. So ate 6:
+            # de 7 em diante (19h) ja e a borda do atendimento (I3), e o
+            # texto so oferece a hora da tarde -- 7 vira Instante direto, sem
+            # pergunta nem soma.
             return Ambigua(TEXTO_DA_HORA_AMBIGUA.format(hora=hora + 12))
 
     if semana_que_vem and dia_falado is None:
-        return Semana(proxima_segunda)
+        # I5: periodo ou hora ditos junto de "semana que vem" viram o
+        # periodo da Semana -- a hora exata cai, pelo mesmo argumento do I4
+        # (nao comprometer o que o lead nao afirmou tao precisamente).
+        periodo_da_semana = periodo
+        if periodo_da_semana is None and hora is not None:
+            periodo_da_semana = PeriodoDoDia.MANHA if hora < 12 else PeriodoDoDia.TARDE
+        return Semana(proxima_segunda, periodo_da_semana)
     if dia_falado is None and hora is None and periodo is None:
         return NaoReconhecida()
     dia = dia_falado if dia_falado is not None else hoje
@@ -357,8 +517,12 @@ def janelas_para(
     `Ambigua` e `NaoReconhecida` voltam como vieram, sem chamar o motor:
     quem chama faz a pergunta. As outras viram um `[de, ate]` para
     `propor_janelas`. Um `Instante` que nao cabe -- ocupado, fora da grade,
-    fora do atendimento -- cai nas janelas do mesmo dia, para o lead receber
-    alternativa em vez de silencio.
+    fora do atendimento -- cai nas janelas do mesmo dia.
+
+    `[]` e um resultado real deste retorno, nao falta de alternativa: "hoje
+    as 18h" dito as 16h, por exemplo, nao tem janela nenhuma com as 3h de
+    antecedencia dentro do mesmo dia. Quem chama (TEC-168) e quem transforma
+    lista vazia em pergunta -- este modulo so devolve o que ha.
     """
     fuso = get_settings().fuso_de_envio
 
@@ -389,7 +553,22 @@ def janelas_para(
             return buscar(base + timedelta(hours=inicio), base + timedelta(hours=fim))
         case Dia(dia=dia):
             return buscar(meia_noite(dia), meia_noite(dia + timedelta(days=1)))
-        case Semana(segunda=segunda):
-            return buscar(meia_noite(segunda), meia_noite(segunda + timedelta(days=7)))
+        case Semana(segunda=segunda, periodo=periodo):
+            if periodo is None:
+                return buscar(meia_noite(segunda), meia_noite(segunda + timedelta(days=7)))
+            # I5: com periodo, um dia de cada vez -- segunda a sabado, nunca
+            # domingo -- e so a PRIMEIRA janela daquele periodo naquele dia.
+            # Ate 3, como o resto do modulo; para de olhar dias assim que
+            # achar as 3, igual ao motor.
+            inicio, fim = LIMITES_DO_PERIODO[periodo]
+            janelas: list[Intervalo] = []
+            for deslocamento in range(6):
+                base = meia_noite(segunda + timedelta(days=deslocamento))
+                do_dia = buscar(base + timedelta(hours=inicio), base + timedelta(hours=fim))
+                if do_dia:
+                    janelas.append(do_dia[0])
+                if len(janelas) >= 3:
+                    break
+            return janelas
         case Ambigua() | NaoReconhecida():
             return resolucao
