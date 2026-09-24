@@ -204,6 +204,13 @@ TABELAS = (
     # por um teste faz o `vincular_sessao` do proximo devolver False sobre a
     # mesma sessao -- e a absorcao de um teste encontraria as sessoes do outro.
     "vinculos_de_sessao",
+    # TEC-132. Mutavel: `pendentes_para_reenfileirar` e `expirar_pendentes`
+    # leem a tabela inteira por status e por janela de `criado_em`, sem
+    # filtrar por mensagem -- sem o truncate, uma linha PENDENTE com
+    # `criado_em` manipulado por um teste (para simular "20 minutos atras" ou
+    # "8 dias atras") continuaria ali para o proximo teste, que a contaria
+    # como se fosse sua.
+    "midias_recebidas",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
