@@ -76,7 +76,7 @@ Alvos conferidos contra a `main` em `dcb5db5`:
 
 ## D5 — Onde a regra fica escrita
 
-- **`CLAUDE.md`, seção "Comentário não mente"**: a convenção (`arquivo.py::Nome`, por quê, e a frase citada para dentro de `_executar_turno`), as duas marcas novas, e que elas reprovam no CI. Na mesma passada, o tamanho de `executar_turno` nesse arquivo é corrigido de 2706 para 2837 linhas.
+- **`CLAUDE.md`, seção "Comentário não mente"**: a convenção (`arquivo.py::Nome`, por quê, e a frase citada para dentro de `_executar_turno`), as duas marcas novas, e que elas reprovam no CI. Na mesma passada, o número que aquele arquivo cita passa a ser o de `_executar_turno` (2837 linhas), não mais o de `executar_turno` — a separação da TEC-297 moveu o corpo para lá.
 - **Desenho da TEC-282**, que criou `PROSA`: nota aninhada apontando para este desenho.
 - **Docstring do script**: sete marcas em vez de cinco, e a reformulação da doutrina do D2.
 

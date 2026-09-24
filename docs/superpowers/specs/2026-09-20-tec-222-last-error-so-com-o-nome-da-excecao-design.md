@@ -46,6 +46,8 @@ raise ModeracaoIndisponivel(motivo_do_provedor(exc) or type(exc).__name__) from 
 O caminho até a coluna é direto e está declarado por escrito no código. Na moderação de **saída** não há falha aberta, de propósito (`turno.py::_executar_turno`, no comentário que abre a moderação de saída: *"A excecao propaga: a linha vira FAILED com `attempts` e o sweeper retenta"*). Ela sobe de `turno.py::_executar_turno` ao `except Exception` de `process_message.py::process_message`, e de lá para `_marcar_falha`.
 
 > Os números de linha desta seção descrevem a árvore **antes** desta branch, que é o estado que o desenho analisa. Em `process_message.py` eles já não valem: partir a função moveu tudo abaixo dela, e o `except Exception` que era a linha 291 passou a ser a 325. Citar o `except` pelo nome em vez do número é o que impede esta frase de envelhecer de novo.
+>
+> - **Emenda E-01 (TEC-299, 24/09/2026):** as citações de `turno.py` e `process_message.py` do parágrafo acima viraram âncora (`turno.py::_executar_turno`, `process_message.py::process_message`), e a nota acima continua valendo só para as demais citações por linha desta seção.
 
 **De onde vem a aceitação do risco, e o quanto ela cobre este destino.** O docstring de `motivo_do_provedor` (`anthropic.py:200-210`) admite o risco por escrito e o limita com três coisas: o teto de caracteres, o mascaramento de dígitos de `app/logging.py`, e o formato da chamada do classificador.
 

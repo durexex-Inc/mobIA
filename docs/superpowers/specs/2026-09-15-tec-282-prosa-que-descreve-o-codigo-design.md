@@ -92,6 +92,8 @@ O conteúdo dos documentos é lido **do disco**, não do git, pelo mesmo motivo 
 
 `FALSO` e `NOMEIA` escapam do teto pela mesma razão que `ALTERADO` escapa na TEC-277: o teto existe contra ruído de vizinhança, e nenhuma das duas é vizinhança.
 
+  - **Emenda E-02 (TEC-299, 24/09/2026):** `ANCORA` e `LINHA` também escapam do teto, pela mesma razão — nenhuma das duas é ruído de vizinhança.
+
 ### D4 — `FALSO` é condicionado à branch, divergindo da leitura literal da card
 
 O cenário Gherkin da citação além do fim do arquivo não menciona branch alguma. Implementado assim, ele reportaria as citações falsas do repo inteiro em **toda** execução — hoje 3 no escopo adotado, sempre as mesmas, independentemente do que a branch fez. Ruído fixo é exatamente o que a TEC-277 mediu e cortou, e treinar quem lê a ignorar a seção nova mataria a card no primeiro mês.
