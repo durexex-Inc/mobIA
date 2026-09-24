@@ -37,6 +37,8 @@ from mobia.api.deps import get_ingestion_service
 from mobia.api.middleware import resolver_ip
 from mobia.app.config import get_settings
 from mobia.app.logging import correlation_id
+from mobia.domain.identidade.repositorio import vincular_sessao
+from mobia.domain.identidade.telefone import extrair_telefone
 from mobia.domain.limites.eventos import registrar_bloqueio
 from mobia.domain.limites.models import CHANNEL_HTTP, ESCOPO_IP
 from mobia.domain.messages.canais import CANAL_WEB, REMETENTE_DO_WIDGET
@@ -358,7 +360,7 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
             await websocket.close(code=CODIGO_PROTOCOLO)
             return
         try:
-            await service.ingest(
+            gravadas = await service.ingest(
                 [
                     ParsedMessage(
                         provider_message_id=_chave_do_id(sessao, identificador),
@@ -392,6 +394,39 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
             )
             await websocket.close(code=CODIGO_INDISPONIVEL)
             return
+
+        # TEC-129, D3. So quando a linha e NOVA: um reenvio que a UNIQUE
+        # descartou volta vazio de `ingest`, e o vinculo da primeira vez ja
+        # foi tentado. E so depois do `ingest`, porque o vinculo tem FK para a
+        # mensagem que o sustenta.
+        telefone = extrair_telefone(texto) if gravadas else None
+        if telefone is not None:
+            try:
+                criou = await vincular_sessao(
+                    get_sessionmaker(),
+                    channel=CANAL_WEB,
+                    conversation_key=sessao,
+                    telefone=telefone,
+                    message_id=gravadas[0],
+                )
+            except Exception as exc:
+                # A mensagem JA esta persistida, e e ela a promessa desta rota.
+                # Fechar o socket aqui faria o cliente reconectar e reenviar um
+                # id que a UNIQUE descarta -- e o vinculo nunca mais seria
+                # tentado. Perder o vinculo e o custo menor: o WhatsApp dessa
+                # pessoa so nao herda o que ela disse no site.
+                log.exception(
+                    "widget.vinculo_falhou",
+                    sessao=sessao,
+                    reason=type(exc).__name__,
+                    detail=motivo_do_erro_de_banco(exc),
+                )
+            else:
+                if not criou:
+                    # Sessao ja vinculada: o primeiro telefone vale. O numero
+                    # nao vai no log -- a mascara de PII cobre corridas de
+                    # digitos, mas nao ha por que confiar nela para isto.
+                    log.info("widget.vinculo_mantido", sessao=sessao)
         # `recebido` confirma o ID, e nao o conteudo: um reenvio com o mesmo id
         # e descartado pela UNIQUE e ainda assim confirmado, que e o que torna
         # o reenvio idempotente. O custo e que um cliente que reuse um id para

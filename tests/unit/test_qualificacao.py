@@ -17,7 +17,7 @@ from mobia.domain.context.qualificacao import (
     campos_obrigatorios_preenchidos,
     esta_qualificado,
 )
-from mobia.domain.context.repositorio import _MARCA_DO_ORCAMENTO, _NOME_DA_MARCA, campos_a_gravar
+from mobia.domain.context.repositorio import _NOME_DA_MARCA, MARCA_DO_ORCAMENTO, campos_a_gravar
 
 
 def _estado(**campos) -> LeadQualification:
@@ -153,7 +153,7 @@ def test_recusa_do_orcamento_vale_sob_qualquer_nome_que_o_repo_use():
     } - colunas
     assert so_do_prompt, "nenhuma chave so-do-prompt: a derivacao deixou de valer"
 
-    nomes = {_MARCA_DO_ORCAMENTO, *_NOME_DA_MARCA, *_NOME_DA_MARCA.values(), *so_do_prompt}
+    nomes = {MARCA_DO_ORCAMENTO, *_NOME_DA_MARCA, *_NOME_DA_MARCA.values(), *so_do_prompt}
     assert "faixa_preco_max" in nomes, "o vocabulario da marca sumiu da derivacao"
 
     for nome in nomes:
@@ -168,7 +168,7 @@ def test_o_nome_logico_do_orcamento_nao_e_coluna_nem_campo_de_extracao():
     colunas = set(LeadQualification.__table__.columns.keys())
     assert "faixa_preco" in CAMPOS_OBRIGATORIOS
     assert "faixa_preco" not in colunas
-    assert "faixa_preco" != _MARCA_DO_ORCAMENTO
+    assert "faixa_preco" != MARCA_DO_ORCAMENTO
 
 
 def test_indefinida_nao_sobrescreve_a_intencao_gravada():

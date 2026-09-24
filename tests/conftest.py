@@ -200,6 +200,10 @@ TABELAS = (
     # bloqueio registrado por um teste vira evidencia do proximo, e a asserta
     # de "uma linha so por janela" passaria a contar linha alheia.
     "rate_limit_events",
+    # TEC-129. Mutavel, e com PK na sessao: sem o truncate, o vinculo gravado
+    # por um teste faz o `vincular_sessao` do proximo devolver False sobre a
+    # mesma sessao -- e a absorcao de um teste encontraria as sessoes do outro.
+    "vinculos_de_sessao",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto

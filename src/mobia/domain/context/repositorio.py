@@ -77,13 +77,17 @@ _CAMPOS_DA_EXTRACAO = frozenset(campo.name for campo in fields(Extracao))
 # sem ela o nome cai no `in _CAMPOS_DA_EXTRACAO` de `_marca_de`, e nem
 # `faixa_preco_max` nem `faixa_preco_min` sao campos de `Extracao` -- os dois
 # voltariam a ser descartados. Nao apague.
-_MARCA_DO_ORCAMENTO = "faixa_preco_max"
+#
+# Publica desde a TEC-129: a absorcao das sessoes vinculadas
+# (`domain/identidade/absorcao.py`) tambem precisa reconhecer a marca, e
+# importa-la daqui e o que a impede de ser a quarta grafia.
+MARCA_DO_ORCAMENTO = "faixa_preco_max"
 _NOME_DA_MARCA = {
-    "faixa_preco_expressao": _MARCA_DO_ORCAMENTO,
-    "faixa_preco_min_centavos": _MARCA_DO_ORCAMENTO,
-    "faixa_preco_max_centavos": _MARCA_DO_ORCAMENTO,
-    "faixa_preco_min": _MARCA_DO_ORCAMENTO,
-    "faixa_preco_max": _MARCA_DO_ORCAMENTO,
+    "faixa_preco_expressao": MARCA_DO_ORCAMENTO,
+    "faixa_preco_min_centavos": MARCA_DO_ORCAMENTO,
+    "faixa_preco_max_centavos": MARCA_DO_ORCAMENTO,
+    "faixa_preco_min": MARCA_DO_ORCAMENTO,
+    "faixa_preco_max": MARCA_DO_ORCAMENTO,
 }
 
 
@@ -910,14 +914,14 @@ async def aplicar_mudanca_de_intencao(
                 #
                 # `array_remove` e o mesmo built-in que `_sem_os_respondidos`
                 # usa, e pela mesma razao: Postgres nao tem subtracao de array.
-                # O nome vem de `_MARCA_DO_ORCAMENTO` porque a marca tem tres
+                # O nome vem de `MARCA_DO_ORCAMENTO` porque a marca tem tres
                 # grafias no repo e escrever qualquer uma a mao reintroduziria
                 # a divergencia que aquela constante fechou.
                 perguntados_sem_resposta=func.array_remove(
-                    LeadQualification.perguntados_sem_resposta, _MARCA_DO_ORCAMENTO
+                    LeadQualification.perguntados_sem_resposta, MARCA_DO_ORCAMENTO
                 ),
                 campos_recusados=func.array_remove(
-                    LeadQualification.campos_recusados, _MARCA_DO_ORCAMENTO
+                    LeadQualification.campos_recusados, MARCA_DO_ORCAMENTO
                 ),
             )
         )

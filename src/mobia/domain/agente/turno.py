@@ -83,11 +83,13 @@ from mobia.domain.humano.deteccao import (
     dentro_da_janela_de_atendimento,
     pediu_humano,
 )
+from mobia.domain.identidade.absorcao import absorver_sessoes_vinculadas
 from mobia.domain.messages.bloqueio import (
     moderar_entrada_e_marcar,
     registrar_bloqueio_de_saida,
     veredito_ja_registrado,
 )
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import ha_fala_pendente_antes
 from mobia.domain.messages.recorder import MessageRecorder
@@ -1737,6 +1739,51 @@ async def _executar_turno(
     # turno e a MAIS NOVA do lote, e ela enxerga a irma de segundos atras, de
     # modo que `e_conversa_nova` devolvia False exatamente na reabertura em
     # que a dobra tinha de acontecer.
+    #
+    # TEC-129, D4: os `pares_vinculados` absorvidos abaixo entram nos literais
+    # que `_fronteira_do_silencio` olha -- o silencio entre a ultima fala web e
+    # a primeira do WhatsApp pode ser o ultimo intervalo e disparar a dobra ja
+    # no primeiro turno do WhatsApp. A dobra continua escrevendo so no resumo
+    # do par do WhatsApp (nunca no par web).
+    #
+    # TEC-129, D4. So no WhatsApp, que e o lado autenticado: a Meta garante o
+    # numero, o site nao garante nada (D1). O turno web NUNCA passa por aqui.
+    # Se passasse, o que aconteceria nao e o agente web conhecer o WhatsApp --
+    # o estado que ele le continua sendo o do par web -- e sim a absorcao
+    # tratar o UUID da sessao como telefone: quando os digitos dele formam um
+    # numero plausivel, ela criaria uma linha `whatsapp` fantasma com essa
+    # chave e poria na janela do turno web as falas de OUTRAS sessoes
+    # vinculadas a esse numero, de outra pessoa. A funcao recusa o canal por
+    # conta propria tambem (`channel=`); o gate aqui e o que evita ate a
+    # chamada. Roda antes de `montar_contexto` porque e la que o estado e lido:
+    # preenchido aqui, ele ja chega completo.
+    #
+    # `except Exception` amplo, no molde da captura de reacao logo abaixo: a
+    # absorcao e enriquecimento, e o lead que falha nela perde o historico do
+    # site NESTE turno, nao o atendimento. O turno seguinte tenta de novo --
+    # a absorcao e idempotente.
+    pares_vinculados: tuple[tuple[str, str], ...] = ()
+    if message.channel == CANAL_WHATSAPP:
+        try:
+            pares_vinculados = await absorver_sessoes_vinculadas(
+                session_factory,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+            )
+        except Exception:
+            log.exception(
+                "turno.absorcao_falhou",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
+            pares_vinculados = ()
+        if pares_vinculados:
+            log.info(
+                "turno.sessoes_absorvidas",
+                channel=message.channel,
+                message_id=str(message.id),
+                sessoes=len(pares_vinculados),
+            )
     try:
         contexto = await montar_contexto(
             session_factory,
@@ -1744,6 +1791,10 @@ async def _executar_turno(
             conversation_key=message.conversation_key,
             resumidor=resumidor,
             contador=contador,
+            pares_vinculados=pares_vinculados,
+            # O instante da fala a que o turno responde, e nao o relogio: o
+            # que o site disse depois dela nao entra (ver `literais_apos`).
+            ate_das_vinculadas=message.created_at,
         )
     except ContextoIrreducivel as exc:
         # Uma unica mensagem que nao cabe no teto. Retentar nao encolhe nada.

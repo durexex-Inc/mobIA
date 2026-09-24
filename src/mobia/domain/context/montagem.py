@@ -1,7 +1,8 @@
 import asyncio
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import structlog
@@ -526,6 +527,15 @@ def _fronteira_do_silencio(literais: list[Message]) -> int | None:
     tambem nao tem intervalo: nao ha conversa nova dentro desta lista para
     separar da anterior.
 
+    **Desde a TEC-129, `literais` pode intercalar falas web de sessoes
+    vinculadas (D4) com as do proprio par.** O predicado nao distingue par: se
+    o ultimo literal web for mais de 30 dias anterior ao primeiro literal do
+    WhatsApp, esse intervalo E o ultimo, e a dobra forcada roda no primeiro
+    turno do WhatsApp -- pagando a chamada do resumidor uma vez para dobrar a
+    sessao web junto com o que vier antes dela. `_dobrar` so escreve no par do
+    turno (o WhatsApp), entao a dobra nunca grava no par web. Ver
+    `montar_contexto`, o parametro `pares_vinculados`.
+
     A comparacao e estrita (`>`, nao `>=`) para casar com `e_conversa_nova`,
     que conta `created_at >= agora - 30d` como interacao recente: exatamente
     30 dias ainda nao abre conversa nova. As duas leituras compartilham
@@ -556,6 +566,17 @@ async def montar_contexto(
     conversation_key: str,
     resumidor: ResumidorPort,
     contador: ContadorPort,
+    # TEC-129, D4: as sessoes web que o turno do WhatsApp herdou. Entram so na
+    # janela de literais; o resumo e o estado continuam sendo os do par do
+    # turno -- o estado ja chega preenchido pela absorcao. Na janela elas sao
+    # literais como quaisquer outros: contam para o gatilho de acumulo e para
+    # `_fronteira_do_silencio`, e uma dobra as leva para o resumo do par do
+    # turno, nunca para o do par web.
+    pares_vinculados: Sequence[tuple[str, str]] = (),
+    # O `created_at` da mensagem do turno: das sessoes vinculadas so entra o
+    # que foi dito antes dele. Ver `literais_apos`, que explica por que o
+    # instante vem de quem chama e nao de `now()`.
+    ate_das_vinculadas: datetime | None = None,
 ) -> ContextoMontado:
     settings = get_settings()
 
@@ -601,7 +622,14 @@ async def montar_contexto(
             )
             await apagar_resumo(session, channel, conversation_key)
             await session.commit()
-        literais = await literais_apos(session, channel, conversation_key, marca_de(resumo_atual))
+        literais = await literais_apos(
+            session,
+            channel,
+            conversation_key,
+            marca_de(resumo_atual),
+            pares_vinculados=pares_vinculados,
+            ate_das_vinculadas=ate_das_vinculadas,
+        )
         estado = await ler_estado(session, channel, conversation_key)
 
     texto_do_resumo = resumo_atual.texto if resumo_atual else None
@@ -893,7 +921,10 @@ async def _dobrar(
         # **A fala DESTE turno nao corre risco de virar resumo.** Ela esta
         # sempre em `literais` -- a ingestao commita a linha antes de
         # enfileirar o job, que recebe o `message_id` -- e e, por construcao, a
-        # mais nova de todas: esta depois da fronteira. Um `minimas=0` a
+        # mais nova de todas: esta depois da fronteira. Desde a TEC-129
+        # `literais` intercala falas de sessoes web vinculadas (D4), e a
+        # construcao continua valendo porque so entram as ditas ANTES desta
+        # mensagem (`ate_das_vinculadas`, em `literais_apos`). Um `minimas=0` a
         # mandaria para o resumo e o modelo responderia a uma parafrase da
         # propria pergunta; isso foi um bug real (fix da TEC-130, rodada de
         # revisao). Hoje `minimas` nao pode ser zero: a fronteira e no minimo
