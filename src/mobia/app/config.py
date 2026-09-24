@@ -248,6 +248,16 @@ class Settings(BaseSettings):
     # dividem as mesmas 100 requisicoes.
     confiar_em_forwarded_for: bool = False
 
+    # Quantas falas a reconexao do widget devolve (TEC-124, D6). Cinquenta
+    # cobre a conversa inteira no caso comum e evita decifrar um historico
+    # longo a cada reconexao -- e esta tela nao e o lugar de auditar
+    # transcricao, que e o painel.
+    historico_do_widget_mensagens: int = 50
+
+    # Teto de caracteres por frame de texto do widget (TEC-124, D3). Acima
+    # disso o frame e recusado e a conexao CONTINUA aberta.
+    tamanho_maximo_do_texto_do_widget: int = 4096
+
     # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
     # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link
     # composto sobre uma base vazia continua sendo um caminho valido -- ver a

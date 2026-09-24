@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from mobia.api.middleware import RateLimitPorIP
 from mobia.api.routes.whatsapp import router as whatsapp_router
+from mobia.api.routes.widget import router as widget_router
 from mobia.app.config import get_settings
 from mobia.app.logging import configure_logging
 from mobia.infra.db import dispose_engine
@@ -38,6 +39,9 @@ def create_app() -> FastAPI:
     app.add_middleware(RateLimitPorIP)
 
     app.include_router(whatsapp_router)
+    # Publico por natureza, e por isso fora do gate de token logo abaixo: e o
+    # chat do site, e quem o abre e visitante anonima.
+    app.include_router(widget_router)
 
     # Sem token configurado os routers NAO entram no app. Nao e 401: rota que
     # nao existe nao pode ser exposta por engano de configuracao, e este
