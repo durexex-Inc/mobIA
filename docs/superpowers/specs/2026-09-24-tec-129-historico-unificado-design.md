@@ -1,0 +1,136 @@
+# TEC-129 — Unificar histórico do lead entre WhatsApp e web
+
+**Status:** desenho aprovado, implementação pendente
+**Card:** [TEC-129](https://eduardodurieuxlopes.atlassian.net/browse/TEC-129) — épico TEC-123
+**Branch:** `feat/tec-129-historico-unificado`
+**Origem:** RF-01, RN-01.1 (SRS v1.0), e a RN-01.1 E-01 da TEC-124.
+
+## Objetivo
+
+Quem começou a conversa no chat do site e depois escreveu pelo WhatsApp não recomeça do zero: o agente, no WhatsApp, já sabe o que a pessoa disse no site.
+
+## O que o repo tem, e por que isso decide o desenho
+
+Quatro fatos, medidos sobre `b71e588`:
+
+1. **Não existe entidade lead.** Não há tabela `leads`, nem `lead_id`, nem `tenant_id`. O lead é o par `(channel, conversation_key)`, repetido em cerca de 15 tabelas — `messages`, `lead_qualification`, `conversation_summaries`, `conversation_intent`, `recomendacoes`, `handoffs`, `followups`, `optout_events`, `atendimento_humano`, entre outras —, várias com UNIQUE sobre ele e nenhuma com FK a repontar. O resumo da conversa é cifrado com AAD derivado do par (`aad_do_resumo`, `domain/context/models.py`).
+2. **A resposta é roteada por `messages.channel`** (`RoteadorPorCanal`, TEC-124). Regravar as falas web como `whatsapp` tira a resposta da aba aberta.
+3. **Turnos da mesma conversa não são serializados.** O `claim_message` trava por mensagem, a deduplicação do ARQ é por mensagem, e o comentário em `domain/context/repositorio.py` diz isso com todas as letras. A única serialização é o `FOR UPDATE` na linha de `lead_qualification`.
+4. **Nada captura telefone.** O classificador não tem campo de telefone, e não há normalização E.164 em lugar nenhum de `src/`. O `conversation_key` do WhatsApp é o `from` cru da Meta, sem `+`.
+
+## D1 — A unificação é assimétrica: só o lado WhatsApp herda
+
+A sessão web é um portador anônimo (RN-01.1 E-01): o visitante digita um telefone e nada verifica que o número é dele. O WhatsApp é o lado autenticado — a Meta garante que quem escreve de um número é o dono dele.
+
+Por isso:
+
+- **O turno WhatsApp enxerga as sessões web vinculadas ao seu número** — critérios, recusas, intenção, imóveis já apresentados e as falas literais.
+- **O turno web continua enxergando só a própria sessão.** E a aba continua mostrando só as falas da própria sessão (`historico_da_sessao`, inalterado).
+
+A alternativa simétrica — o turno web também lendo o estado do WhatsApp — **vaza pela boca do agente**: quem digita o telefone de outra pessoa passa a conversar com um agente que conhece a qualificação dela, e ele diz "você procurava 3 quartos no Campeche, até 900 mil". Esconder o histórico da tela não adianta se o agente o recita.
+
+A unificação total, com a tela web mostrando o WhatsApp, exigiria verificar o telefone — um código por WhatsApp, por exemplo. É escopo novo, e não é esta card.
+
+**Consequência declarada:** quem fala pelo WhatsApp e depois volta ao site encontra um agente que não sabe o que foi dito no WhatsApp.
+
+A assimetria também elimina a corrida do fato 3: cada turno grava só no próprio par, e o único ponto de encontro — o upsert da qualificação do WhatsApp — já é serializado.
+
+## D2 — O telefone vem de uma regex determinística sobre a fala da visitante
+
+Nem campo novo no classificador, nem frame novo do widget:
+
+- **Campo no classificador** custaria prompt e schema, que o teste da margem do orçamento vigia, e tornaria a extração não determinística.
+- **Frame `{"tipo": "telefone"}`** dependeria de um formulário que não existe — o widget não existe (TEC-124, "o que não entrega"). Ninguém o exercitaria.
+
+**O agente não passa a pedir telefone.** A card não pede isso, e mudar o comportamento da conversa é outra decisão.
+
+Módulo puro novo, `domain/identidade/telefone.py`:
+
+- `extrair_telefone(texto) -> str | None` reconhece telefone brasileiro, celular e fixo: `+55` opcional, DDD com ou sem parênteses, 8 ou 9 dígitos, separados por espaço, hífen, ponto ou nada.
+- **Dois telefones diferentes na mesma mensagem devolvem `None`.** Não há como saber qual é o da pessoa.
+- Número estrangeiro não é reconhecido. Limite declarado.
+- A sequência precisa ser um telefone plausível — DDD válido, e, com 9 dígitos, começar por 9. Isso afasta CEP (8 dígitos sem DDD), preço e CPF pontuado (`000.000.000-00`, que a máscara não aceita).
+- **CPF sem pontuação cujo terceiro dígito é 9 casa, e isso é um falso positivo aceito.** Onze dígitos soltos com DDD válido e 9 na terceira posição são indistinguíveis de um celular. O custo é um vínculo errado: o que a sessão disse vai para o contexto do WhatsApp de um número que talvez nem exista. Não vaza nada do WhatsApp para o web (D1).
+
+`normalizar(digitos) -> str` leva qualquer forma à canônica: só dígitos, com o `55`. **Celular de 8 dígitos ganha o 9** — é a mesma regra que resolve o `wa_id` que a Meta entrega sem o 9 para parte dos celulares brasileiros. A forma canônica do celular tem 13 dígitos, a do fixo, 12.
+
+## D3 — O vínculo nasce na ingestão do canal web
+
+Depois de a mensagem web ser persistida pelo `IngestionService`, no caminho do `WS /widget/chat`, e **não dentro do turno**. É determinístico, não depende de o turno rodar nem falhar, e fica fora de `executar_turno`.
+
+Tabela nova, `vinculos_de_sessao`:
+
+| coluna | tipo | |
+| --- | --- | --- |
+| `channel` | `String(32)` | PK, junto com `conversation_key` — a sessão web |
+| `conversation_key` | `String(64)` | PK |
+| `telefone` | `String(16)` | forma canônica da D2, indexada |
+| `message_id` | FK para `messages.id` | a mensagem que trouxe o telefone — evidência |
+| `criado_em` | `timestamptz` | |
+
+Regras:
+
+- **Uma sessão se vincula uma vez.** O primeiro telefone vale. Um telefone diferente depois é ignorado, com log — `INSERT … ON CONFLICT DO NOTHING`.
+- **Várias sessões podem apontar para o mesmo telefone** — a mesma pessoa em dois navegadores.
+- O vínculo não se desfaz nesta card.
+- Os dígitos ficam em claro, como já ficam no `conversation_key` do WhatsApp. Não é dado novo exposto.
+
+A tabela entra em `TABELAS` de `tests/conftest.py`.
+
+## D4 — O turno WhatsApp absorve as sessões vinculadas
+
+**Quando:** no começo de todo turno cujo `message.channel` é `whatsapp`, antes de `montar_contexto`. O `conversation_key` é normalizado pela D2, e a busca em `vinculos_de_sessao` devolve as sessões web. Sem vínculo, o turno fica exatamente como hoje.
+
+A absorção é **idempotente** e roda em todo turno: isso cobre a sessão web que continua viva depois de o WhatsApp começar.
+
+**Só grava no par do WhatsApp** — o próprio par do turno. Nada escreve no par web.
+
+| estado | regra |
+| --- | --- |
+| `lead_qualification`, critérios (intenção, faixa de preço, região, tipo, quartos, vagas, urgência, forma de pagamento, imóvel para vender, campos de investidor) | preenche **só o campo vazio** no WhatsApp; o que o WhatsApp já sabe prevalece. Com várias sessões, vale a de `updated_at` mais recente |
+| `campos_recusados` | união: o que a pessoa se recusou a dizer no site não é perguntado de novo |
+| `conversation_intent` | só se o WhatsApp não tiver intenção |
+| `recomendacoes` | os imóveis já apresentados ou descartados no web contam como vistos, para o agente não reapresentá-los |
+| falas literais | a janela lê os pares `[whatsapp, web…]` num `tuple_(...).in_(...)`, que usa o mesmo `ix_messages_timeline`; o corte que já existe para caber no orçamento se aplica ao conjunto |
+
+**O que não é absorvido, e por quê:**
+
+- **O resumo web.** Seria um bloco novo no prompt a cada turno, contra um orçamento apertado — e o que o cenário 1 exige, os critérios, já chega pela qualificação.
+- **Score e temperatura.** São recalculados no próprio turno.
+- **Opt-out, handoff e atendimento humano do web.** Não propagam para o WhatsApp: uma sessão não verificada não pode silenciar nem escalar o número de outra pessoa. O inverso também não, porque o turno web não enxerga o WhatsApp (D1).
+
+## D5 — Fora do turno, nada muda
+
+- **Reengajamento:** igual. Continua exigindo fala recebida pelo WhatsApp (`CANAIS_COM_REENGAJAMENTO`), e o web continua fora (TEC-124, D8).
+- **Handoff e dossiê do corretor:** o dossiê de um lead WhatsApp já sai com os critérios absorvidos, porque estão na qualificação. **A transcrição do dossiê mostra só as falas do WhatsApp.**
+- **Métricas e funil:** **um lead vinculado conta como dois**, porque o nascimento é contado por par (`domain/metricas/repositorio.py`). O painel da TEC-190 superestima leads na proporção dos vínculos.
+
+As duas últimas são lacunas declaradas — decisão de produto, que vai no comentário da card. Consertar o funil toca todas as consultas de `metricas/repositorio.py`, e é outra card.
+
+## Emenda ao SRS
+
+**RN-01.1 E-02**, aninhada abaixo da E-01, sem reescrever nenhuma das duas:
+
+- a unificação é assimétrica — só o lado WhatsApp herda o que foi dito no web;
+- o telefone vem de regex sobre a fala da visitante, e só número brasileiro;
+- o motivo é que a sessão web é anônima e não verifica o telefone.
+
+## Testes
+
+- **Unitários da D2:** as máscaras comuns; com e sem `+55`; com e sem o 9; fixo; CEP, preço e CPF pontuado não casam; CPF cru com 9 na terceira posição casa, e o teste fixa isso como falso positivo conhecido; dois telefones na mesma mensagem devolvem `None`; o `wa_id` de 12 dígitos normaliza igual ao celular de 13.
+- **Integração do vínculo (D3):** cria; o primeiro telefone vence; duas sessões para um telefone; mensagem com dois números não vincula.
+- **Integração da absorção (D4):** preenche só o campo vazio; `campos_recusados` faz união; não grava no par web; é idempotente; opt-out web não silencia o WhatsApp.
+- **Features — os três cenários da card:**
+  - *Mesma pessoa migra do site para o WhatsApp:* turno WhatsApp com o modelo falso; os critérios web estão no estado e o agente não os pergunta.
+  - *Sessão anônima é vinculada ao informar o telefone:* 6 mensagens web, o telefone aparece, as 6 pertencem ao lead pelo vínculo.
+  - *Telefones diferentes não são unificados:* dois telefones, nada cruza.
+- **O teste do vazamento:** a sessão web vinculada ao telefone de outra pessoa não recebe no contexto nenhum dado que veio do WhatsApp. É ele que guarda a D1.
+
+## O que esta card não entrega
+
+- Unificação na direção WhatsApp → web, e a tela web mostrando o WhatsApp — exigiriam verificar o telefone.
+- Telefone estrangeiro.
+- Desfazer ou corrigir um vínculo.
+- O agente pedir o telefone.
+- A transcrição do dossiê com as falas web, e o funil contando o lead vinculado uma vez só.
+- Uma entidade `leads` com `lead_id` — o modelo do SRS, que custaria migrar as ~15 tabelas. Se um dia for necessária, é card própria.
