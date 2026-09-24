@@ -117,3 +117,37 @@ jobs:
         # suite inteira. Medido, `tests/unit` sozinho piora de 4,4s para 8,6s,
         # porque a partida dos workers custa mais que os testes.
         run: python -m pytest -v -n auto --dist loadfile
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Os tres gates estaticos de Python (`ruff check`, `ruff format`, `mypy`)
+      # NAO olham para `frontend/`: o escopo deles e `src tests alembic evals
+      # scripts`, e acrescentar um diretorio de TypeScript ali nao faria
+      # sentido -- nenhuma das tres ferramentas le TS. O lado JS tem os gates
+      # dele aqui, e sao tres pelo mesmo motivo que os de Python sao tres:
+      # passar no lint nao diz nada sobre o build.
+      - name: Lint
+        run: npm run lint
+
+      - name: Testes
+        run: npm test
+
+      - name: Build
+        run: npm run build
