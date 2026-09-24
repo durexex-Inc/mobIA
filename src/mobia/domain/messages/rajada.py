@@ -59,6 +59,7 @@ async def ha_fala_pendente_antes(
     message: Message,
     *,
     teto_do_agente: datetime | None = None,
+    com_texto: bool = False,
 ) -> bool:
     """Ficou fala do lead sem resposta antes desta mensagem?
 
@@ -99,6 +100,16 @@ async def ha_fala_pendente_antes(
 
     O default `None` mantem todo chamador antigo correto: sem teto, a
     fronteira e exatamente a de antes desta card.
+
+    **`com_texto` estreita "fala" para "fala com texto" (TEC-132, D4).** O
+    turno de uma imagem ou documento sem legenda responde com um texto fixo,
+    sem modelo -- mas so se nao houver texto do lead pendente na rajada. Com
+    "quero esse" e depois a foto, o debounce roda o turno na foto; responder
+    fixo ali deixaria o "quero esse" sem resposta. A pergunta desse chamador
+    e "sobrou TEXTO sem resposta?", e nao "sobrou fala?": uma foto anterior
+    sem legenda nao tem o que o modelo responder, e conta-la faria a segunda
+    de duas fotos rodar o turno pago sem texto nenhum. O default `False`
+    mantem a definicao de fala dos outros chamadores.
     """
     fronteira = [
         Message.channel == message.channel,
@@ -108,19 +119,18 @@ async def ha_fala_pendente_antes(
     if teto_do_agente is not None:
         fronteira.append(Message.created_at < teto_do_agente)
     ultima_do_agente = select(func.max(Message.created_at)).where(*fronteira).scalar_subquery()
-    pendente = await session.scalar(
-        select(Message.id)
-        .where(
-            Message.channel == message.channel,
-            Message.conversation_key == message.conversation_key,
-            Message.direction == MessageDirection.INBOUND,
-            Message.bloqueada_em.is_(None),
-            tuple_(Message.created_at, Message.id)
-            < tuple_(literal(message.created_at), literal(message.id)),
-            # Conversa sem nenhuma fala do agente ainda: `MAX` devolve NULL e
-            # toda INBOUND anterior conta.
-            or_(ultima_do_agente.is_(None), Message.created_at > ultima_do_agente),
-        )
-        .limit(1)
-    )
+    condicoes = [
+        Message.channel == message.channel,
+        Message.conversation_key == message.conversation_key,
+        Message.direction == MessageDirection.INBOUND,
+        Message.bloqueada_em.is_(None),
+        tuple_(Message.created_at, Message.id)
+        < tuple_(literal(message.created_at), literal(message.id)),
+        # Conversa sem nenhuma fala do agente ainda: `MAX` devolve NULL e
+        # toda INBOUND anterior conta.
+        or_(ultima_do_agente.is_(None), Message.created_at > ultima_do_agente),
+    ]
+    if com_texto:
+        condicoes.append(Message.text_body.is_not(None))
+    pendente = await session.scalar(select(Message.id).where(*condicoes).limit(1))
     return pendente is not None

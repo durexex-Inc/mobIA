@@ -23,12 +23,16 @@ async def gravar(
     role: str = MessageRole.LEAD,
     conversation_key: str = LEAD,
     channel: str = CANAL,
-    texto: str = "ainda tem o 2 quartos?",
+    texto: str | None = "ainda tem o 2 quartos?",
+    content_type: str = MessageContentType.TEXTO,
 ) -> Message:
     """Grava uma linha com `created_at` EXPLICITO.
 
     Explicito e nao `server_default`: estes testes precisam controlar a ordem e
     o empate, que e justamente o que o default esconde.
+
+    `texto=None` grava a linha sem corpo, como chega uma imagem ou um
+    documento sem legenda (TEC-132).
     """
     identificador = uuid.uuid4()
     await session.execute(
@@ -41,8 +45,8 @@ async def gravar(
             conversation_key=conversation_key,
             role=role,
             direction=direction,
-            content_type=MessageContentType.TEXTO,
-            text_body=encrypt(texto, aad_de(identificador, "text_body")),
+            content_type=content_type,
+            text_body=None if texto is None else encrypt(texto, aad_de(identificador, "text_body")),
             status=MessageStatus.RECEIVED,
             created_at=created_at,
         )
@@ -303,3 +307,38 @@ async def test_teto_no_futuro_nao_muda_nada(session) -> None:
 
     teto = agora + timedelta(hours=1)
     assert await ha_fala_pendente_antes(session, carregadora, teto_do_agente=teto) is False
+
+
+async def test_com_texto_ignora_midia_sem_legenda_pendente(session) -> None:
+    """TEC-132, D4. Imagem sem legenda pendente nao e texto do lead.
+
+    Sem `com_texto` ela conta como fala pendente, como sempre contou; com
+    `com_texto=True` nao, e e isso que deixa a segunda imagem de uma rajada
+    so de fotos receber a confirmacao fixa.
+    """
+    agora = datetime.now(UTC)
+    await gravar(session, created_at=agora, texto=None, content_type=MessageContentType.IMAGEM)
+    ultima = await gravar(
+        session,
+        created_at=agora + timedelta(seconds=1),
+        texto=None,
+        content_type=MessageContentType.IMAGEM,
+    )
+
+    assert await ha_fala_pendente_antes(session, ultima) is True
+    assert await ha_fala_pendente_antes(session, ultima, com_texto=True) is False
+
+
+async def test_com_texto_ainda_ve_o_texto_pendente(session) -> None:
+    """O "quero esse" antes da foto: com ou sem `com_texto`, ele esta pendente."""
+    agora = datetime.now(UTC)
+    await gravar(session, created_at=agora, texto="quero esse")
+    ultima = await gravar(
+        session,
+        created_at=agora + timedelta(seconds=1),
+        texto=None,
+        content_type=MessageContentType.IMAGEM,
+    )
+
+    assert await ha_fala_pendente_antes(session, ultima) is True
+    assert await ha_fala_pendente_antes(session, ultima, com_texto=True) is True
