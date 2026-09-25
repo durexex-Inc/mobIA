@@ -7,13 +7,17 @@ expiracao preguicosa que o banco nao consegue fazer sozinho (D3 do desenho).
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import Date, and_, cast, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
+from mobia.app.config import get_settings
 from mobia.domain.agendamento.janelas import (
     AgendaDoCorretor,
     Intervalo,
@@ -25,6 +29,7 @@ from mobia.domain.agendamento.models import (
     Agendamento,
     StatusDoAgendamento,
 )
+from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
 from mobia.domain.corretores.models import Corretor
 
 # RN-11.4. Regra do SRS, nao configuracao -- o argumento da D4 da TEC-285.
@@ -52,6 +57,23 @@ class Confirmado:
 @dataclass(frozen=True)
 class Expirado:
     pass
+
+
+def _ocupa_em(momento: datetime) -> ColumnElement[Any]:
+    """O compromisso que ocupa o corretor em `momento`. D3 da TEC-168.
+
+    Confirmado ocupa sempre; reservado, so enquanto a reserva vale. Uma
+    funcao so para `ocupados` e `visitas_por_dia` (TEC-166, D6): a
+    disponibilidade e a capacidade nunca podem discordar sobre uma reserva
+    vencida.
+    """
+    return or_(
+        Agendamento.status == StatusDoAgendamento.CONFIRMADO,
+        and_(
+            Agendamento.status == StatusDoAgendamento.RESERVADO,
+            Agendamento.reservado_ate > momento,
+        ),
+    )
 
 
 def _e_sobreposicao(exc: IntegrityError) -> bool:
@@ -89,12 +111,16 @@ async def reservar(
     tipo: TipoDeCompromisso,
     imovel_id: uuid.UUID | None,
     agora: datetime,
+    motivo: MotivoDaAlocacao,
 ) -> Reserva | Conflito:
     """Reserva `janela` por `DURACAO_DA_RESERVA`, ou devolve `Conflito`.
 
     Antes de inserir, marca EXPIRADO as reservas vencidas **deste corretor**
     que sobrepoem a janela: a constraint nao olha o relogio, e sem isso uma
     reserva morta barraria o lugar para sempre.
+
+    `motivo` e o que `alocar` deu a este corretor (TEC-166); a reserva o
+    grava para a gerente ler depois.
 
     **Em `Conflito`, so o SAVEPOINT desta chamada volta.** Um `session.rollback()`
     de sessao inteira expira TODO objeto carregado na sessao -- inclusive o
@@ -131,6 +157,7 @@ async def reservar(
                 reservado_ate=agora + DURACAO_DA_RESERVA,
                 criado_em=agora,
                 confirmado_em=None,
+                motivo_da_alocacao=str(motivo),
             )
             session.add(agendamento)
             await session.flush()
@@ -168,7 +195,7 @@ async def confirmar(
 
 
 class AgendaPostgres:
-    """A implementacao real de `AgendaDoCorretor` (TEC-165).
+    """A implementacao real de `AgendaDoCorretor` e `ContadorDeVisitas` (TEC-165, TEC-166).
 
     Abre a propria sessao: e porta de leitura, chamada pelo motor de janelas,
     e le so o que ja foi commitado -- que e o que importa para propor horario.
@@ -190,17 +217,43 @@ class AgendaPostgres:
                     Agendamento.corretor_id == corretor_id,
                     Agendamento.inicio < ate,
                     Agendamento.fim > de,
-                    or_(
-                        Agendamento.status == StatusDoAgendamento.CONFIRMADO,
-                        and_(
-                            Agendamento.status == StatusDoAgendamento.RESERVADO,
-                            Agendamento.reservado_ate > de,
-                        ),
-                    ),
+                    _ocupa_em(de),
                 )
                 .order_by(Agendamento.inicio)
             )
             return [Intervalo(inicio, fim) for inicio, fim in linhas.all()]
+
+    async def visitas_por_dia(
+        self, corretor_ids: Sequence[uuid.UUID], *, de: date, ate: date, agora: datetime
+    ) -> dict[tuple[uuid.UUID, date], int]:
+        # A data e a de `inicio` no fuso da imobiliaria, calculada no SQL: uma
+        # visita as 23h30 de quinta em Sao Paulo ja e sexta em UTC, e conta
+        # para quinta.
+        if not corretor_ids:
+            return {}
+        data_local = cast(func.timezone(get_settings().followup_fuso, Agendamento.inicio), Date)
+        # Subconsulta, e nao GROUP BY sobre `data_local` direto: cada uso da
+        # expressao vira um bind parameter proprio (`$1`, `$2`), e o Postgres
+        # nao reconhece `timezone($2, inicio)` no GROUP BY como a mesma
+        # expressao de `timezone($1, inicio)` no SELECT.
+        visitas = (
+            select(Agendamento.corretor_id.label("corretor_id"), data_local.label("dia"))
+            .where(
+                Agendamento.corretor_id.in_(corretor_ids),
+                Agendamento.tipo == TipoDeCompromisso.VISITA_PRESENCIAL,
+                data_local >= de,
+                data_local <= ate,
+                _ocupa_em(agora),
+            )
+            .subquery()
+        )
+        async with self._session_factory() as session:
+            linhas = await session.execute(
+                select(visitas.c.corretor_id, visitas.c.dia, func.count()).group_by(
+                    visitas.c.corretor_id, visitas.c.dia
+                )
+            )
+            return {(corretor_id, dia): total for corretor_id, dia, total in linhas.all()}
 
 
 async def reservar_ou_alternativas(
@@ -215,6 +268,7 @@ async def reservar_ou_alternativas(
     imovel_id: uuid.UUID | None,
     agora: datetime,
     ate: datetime,
+    motivo: MotivoDaAlocacao,
 ) -> Reserva | list[Intervalo]:
     """A reserva, ou as janelas que sobraram -- nunca um erro tecnico.
 
@@ -227,6 +281,10 @@ async def reservar_ou_alternativas(
     nao a enxerga, e as alternativas podem incluir o horario que acabou de
     perder. `ate` e o horizonte das alternativas e vem de quem chama, como no
     motor.
+
+    As alternativas continuam no mesmo corretor (D7 da TEC-166): o conflito e
+    sobre um slot dele, e realocar no meio da disputa trocaria o corretor sem
+    que nada na alocacao tivesse mudado.
     """
     resultado = await reservar(
         session,
@@ -237,6 +295,7 @@ async def reservar_ou_alternativas(
         tipo=tipo,
         imovel_id=imovel_id,
         agora=agora,
+        motivo=motivo,
     )
     if isinstance(resultado, Reserva):
         return resultado

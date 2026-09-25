@@ -28,6 +28,7 @@ from mobia.domain.agendamento.repositorio import (
     reservar,
     reservar_ou_alternativas,
 )
+from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
 
 SP = ZoneInfo("America/Sao_Paulo")
 AGORA = datetime(2026, 8, 25, 14, 0, tzinfo=SP)
@@ -49,6 +50,7 @@ async def _reservar(session, corretor_id, janela, *, agora=AGORA, chave="5511911
         tipo=VISITA,
         imovel_id=None,
         agora=agora,
+        motivo=MotivoDaAlocacao.MATCH_EXATO,
     )
 
 
@@ -239,6 +241,7 @@ async def test_dois_leads_disputam_o_mesmo_horario(
                 imovel_id=None,
                 agora=AGORA,
                 ate=ate,
+                motivo=MotivoDaAlocacao.MATCH_EXATO,
             )
             await propria.commit()
             return resultado
@@ -268,5 +271,6 @@ async def test_sem_disputa_devolve_a_reserva(session, session_factory, semear_co
         imovel_id=None,
         agora=AGORA,
         ate=datetime(2026, 8, 29, 19, 0, tzinfo=SP),
+        motivo=MotivoDaAlocacao.MATCH_EXATO,
     )
     assert isinstance(resultado, Reserva)
