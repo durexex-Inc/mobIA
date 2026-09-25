@@ -180,8 +180,9 @@ async def _gravar(
         session_factory, identificador, status=status, motivo=motivo, chave=chave, tamanho=tamanho
     )
     if not mudou:
-        # A varredura fechou a linha (EXPIRADA) enquanto este job rodava. Nao
-        # e erro: o estado terminal dela vale, e este desfecho e descartado.
+        # A varredura fechou a linha (EXPIRADA, ou TENTATIVAS_ESGOTADAS pelo
+        # teto de re-enfileiramentos) enquanto este job rodava. Nao e erro:
+        # o estado terminal dela vale, e este desfecho e descartado.
         # Se foi um sucesso, o blob ja gravado fica orfao no armazem: cifrado,
         # na chave da propria mensagem, e sem linha que aponte para ele.
         log.info(
