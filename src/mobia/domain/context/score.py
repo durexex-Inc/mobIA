@@ -75,10 +75,27 @@ class Score:
     catalogo: int
     engajamento: int
     capacidade: int
+    # TEC-172, RN-12.4. O sexto fator, e o unico que SUBTRAI. Nao tem default,
+    # de proposito: com um, `_score_do_registro` (`context/repositorio.py`)
+    # reconstruiria da trilha um score sem penalidade e `causas_do_recalculo`
+    # nunca veria a coluna se mover -- a linha que explica o desconto deixaria
+    # de nascer, em silencio, e o defeito so apareceria na trilha de um lead
+    # que faltou.
+    penalidade: int
 
     @property
     def total(self) -> int:
-        return self.completude + self.urgencia + self.catalogo + self.engajamento + self.capacidade
+        """Os cinco fatores menos a penalidade, com piso em zero.
+
+        **O piso mora aqui, e nao em `penalidade`** (TEC-172): a coluna
+        acumula de verdade, e cortar na acumulacao faria o segundo nao
+        comparecimento de um lead ja zerado nao ser registrado. O piso nao
+        esconde distincao nenhuma -- `temperatura_de` ja trata tudo abaixo de
+        40 como FRIO --, e um total negativo nao significa nada na escala da
+        RN-06.1.
+        """
+        bruto = self.completude + self.urgencia + self.catalogo + self.engajamento + self.capacidade
+        return max(0, bruto - self.penalidade)
 
 
 def calcular_score(
@@ -169,7 +186,9 @@ def calcular_score(
     Keyword-only como os dois vizinhos, por consistencia da assinatura.
     """
     if estado is None:
-        return Score(completude=0, urgencia=0, catalogo=0, engajamento=0, capacidade=0)
+        return Score(
+            completude=0, urgencia=0, catalogo=0, engajamento=0, capacidade=0, penalidade=0
+        )
 
     return Score(
         completude=campos_obrigatorios_preenchidos(estado, recusados)
@@ -180,6 +199,19 @@ def calcular_score(
         capacidade=_PONTOS_POR_CAPACIDADE.get(
             estado.forma_pagamento or "", _PONTOS_SEM_FORMA_DE_PAGAMENTO
         ),
+        # TEC-172. Sai da coluna e nao de parametro, ao contrario dos dois
+        # fatores que dependem de dados de fora de `LeadQualification`: a
+        # penalidade MORA nesta linha, entao le-la aqui nao acrescenta
+        # consulta nenhuma nem torna a funcao menos testavel.
+        #
+        # **`or 0` porque a coluna e NOT NULL no banco e mesmo assim pode vir
+        # `None` aqui.** O `server_default` so age no INSERT: um
+        # `LeadQualification(...)` montado em memoria -- o que todo teste
+        # unitario faz, e o que `gravar_estado` tem em maos antes do flush --
+        # nao passou por ele e devolve `None`. Sem a normalizacao, a subtracao
+        # abaixo levanta `TypeError` num caminho que o mypy nao ve, porque o
+        # tipo declarado e `int`. Nenhuma linha VINDA do banco e nula.
+        penalidade=estado.penalidade_pontos or 0,
     )
 
 

@@ -27,7 +27,9 @@ def _estado(**campos) -> LeadQualification:
 
 def test_estado_inexistente_zera_tudo():
     obtido = calcular_score(None)
-    assert obtido == Score(completude=0, urgencia=0, catalogo=0, engajamento=0, capacidade=0)
+    assert obtido == Score(
+        completude=0, urgencia=0, catalogo=0, engajamento=0, capacidade=0, penalidade=0
+    )
     assert obtido.total == 0
 
 
@@ -171,15 +173,21 @@ def test_o_mapa_de_capacidade_cobre_o_enum():
     assert set(_PONTOS_POR_CAPACIDADE) == {membro.value for membro in FormaPagamento}
 
 
-def test_o_total_e_a_soma_dos_cinco():
+def test_o_total_e_a_soma_dos_cinco_menos_a_penalidade():
     """Quebraria se um fator fosse esquecido na soma -- que e o defeito mais
-    facil de introduzir num dataclass que cresce."""
+    facil de introduzir num dataclass que cresce.
+
+    Foi "a soma dos cinco" ate a TEC-172, que acrescentou o sexto -- e o unico
+    que subtrai. Este lead nao tem penalidade, entao a subtracao e de zero; o
+    caso com penalidade esta em `test_a_penalidade_sai_do_total`.
+    """
     s = calcular_score(
         _estado(forma_pagamento=FormaPagamento.A_VISTA.value),
         mensagens_do_lead=6,
         imoveis_compativeis=6,
     )
-    assert s.total == s.completude + s.urgencia + s.catalogo + s.engajamento + s.capacidade
+    soma = s.completude + s.urgencia + s.catalogo + s.engajamento + s.capacidade
+    assert s.total == soma - s.penalidade
 
 
 def test_o_teto_com_catalogo_e_95():
@@ -228,3 +236,45 @@ def test_nenhum_fator_e_negativo():
     """
     s = calcular_score(_estado(), mensagens_do_lead=0, imoveis_compativeis=0)
     assert min(s.completude, s.urgencia, s.catalogo, s.engajamento, s.capacidade) >= 0
+
+
+# ------------------------------------------- TEC-172: a penalidade do no-show
+
+
+def test_a_penalidade_sai_do_total() -> None:
+    """RN-12.4: o nao comparecimento custa 15 pontos ao lead.
+
+    Ela e o SEXTO fator e nao um desconto aplicado por quem le, porque o score
+    e derivado: `calcular_score` recalcula os cinco fatores a cada passagem, e
+    um desconto que nao morasse aqui evaporaria no recalculo seguinte.
+    """
+    sem = calcular_score(_estado(), mensagens_do_lead=4)
+    com = calcular_score(_estado(penalidade_pontos=15), mensagens_do_lead=4)
+    assert com.penalidade == 15
+    assert com.total == sem.total - 15
+
+
+def test_a_penalidade_acumula() -> None:
+    """Dois nao comparecimentos custam 30, e nao 15 de novo."""
+    assert calcular_score(_estado(penalidade_pontos=30), mensagens_do_lead=4).penalidade == 30
+
+
+def test_o_total_tem_piso_zero_e_a_penalidade_nao() -> None:
+    """Um total negativo nao significa nada na escala da RN-06.1.
+
+    **O piso mora no total, e nao na penalidade.** Cortar na acumulacao faria
+    o segundo no-show de um lead ja zerado nao ser registrado -- e a trilha
+    precisa dele para explicar por que o lead nao sobe mais.
+    """
+    magro = calcular_score(
+        LeadQualification(
+            channel="whatsapp", conversation_key="5511999999999", penalidade_pontos=99
+        )
+    )
+    assert magro.total == 0
+    assert magro.penalidade == 99
+
+
+def test_estado_inexistente_nao_tem_penalidade() -> None:
+    """Sem linha nao ha sujeito -- o zero e a ausencia, nao uma nota."""
+    assert calcular_score(None).penalidade == 0

@@ -18,18 +18,20 @@ manha tem de ser respondido as 3h da manha. A card fala de envio AUTOMATICO,
 nao de todo envio; a janela na porta compartilhada silenciaria o produto
 treze horas por dia. A guarda pertence aos sitios que ORIGINAM automacao.
 
-**Dois sitios de automacao aplicam esta guarda: `sweep_followups` (TEC-183) e
-`sweep_lembretes` (TEC-171) -- e NAO `sweep_stalled`, que tambem e um cron
-capaz de causar envio.** A exclusao e deliberada: `sweep_stalled` so
-reenfileira `process_message` para uma mensagem INBOUND que o lead ja esta
-esperando resposta, nunca origina um contato novo. Gate-lo atrasaria a
+**Tres sitios de automacao aplicam esta guarda: `sweep_followups` (TEC-183),
+`sweep_lembretes` (TEC-171) e `sweep_remarcacoes` (TEC-172) -- e NAO
+`sweep_stalled`, que tambem e um cron capaz de causar envio.** A exclusao e
+deliberada: `sweep_stalled` so reenfileira `process_message` para uma
+mensagem INBOUND que o lead ja esta esperando resposta, nunca origina um
+contato novo. Gate-lo atrasaria a
 resposta a um lead que escreveu as 3h ate as 9h -- exatamente a propriedade
 que esta card protege ao NAO tocar `GuardedOutbound.send`. Se um dia
 `sweep_stalled` passar a originar envio (e nao so retomar um turno pendente),
 a guarda entra la tambem.
 
 **A TEC-171 pagou a consequencia que esta janela cobra, e ela esta declarada
-na emenda E-02 da RN-13.3:** com `inicio = 9`, uma visita que comeca as 9h ou
+na emenda E-02 da RN-13.3** (o convite da TEC-172 nao paga: a faixa dele e de
+sete dias, entao a guarda so o adia): com `inicio = 9`, uma visita que comeca as 9h ou
 as 10h tem a faixa inteira do lembrete de 2 horas fora desta janela, e esse
 lembrete nao sai. Aquela card recusou abrir excecao aqui -- a regra tem dono, e
 uma excecao por sitio seria uma segunda opiniao sobre ela.

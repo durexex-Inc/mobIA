@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.agendamento.calendario import CalendarioPort, FalhaDeCalendario
@@ -29,8 +29,7 @@ from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.corretores.models import Corretor
 from mobia.domain.handoff.resumo import link_da_transcricao
-from mobia.domain.messages.enums import MessageRole
-from mobia.domain.messages.models import Message
+from mobia.domain.messages.ancora import ancora_em_sessao_propria
 from mobia.domain.notificacao.canais import CanalDeNotificacaoPort, FalhaDeCanal
 from mobia.domain.outbound.port import OutboundPort
 
@@ -159,23 +158,13 @@ async def _avisar_lead(
     outbound: OutboundPort,
     agora: datetime,
 ) -> None:
-    # Ancorado na ultima mensagem DO LEAD, pelo motivo que a docstring de
-    # `_avisar_lead_da_janela_humana` (`notificacao/envio.py`) explica: e ela
-    # que carrega, em `recipient_external_id`, o numero do canal que fala com
-    # ele.
-    async with session_factory() as session:
-        ultima_do_lead = (
-            await session.execute(
-                select(Message)
-                .where(
-                    Message.channel == retrato.channel,
-                    Message.conversation_key == retrato.conversation_key,
-                    Message.role == MessageRole.LEAD,
-                )
-                .order_by(Message.created_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+    # Ancorado na ultima mensagem DO LEAD. O porque mora em
+    # `domain/messages/ancora.py`, que e a fonte unica desta consulta desde a
+    # TEC-172 -- ela estava escrita aqui, na varredura dos lembretes e na dos
+    # convites de remarcacao, e uma quarta copia era so questao de tempo.
+    ultima_do_lead = await ancora_em_sessao_propria(
+        session_factory, channel=retrato.channel, conversation_key=retrato.conversation_key
+    )
     if ultima_do_lead is None:
         log.info("agendamento.aviso_ao_lead_sem_mensagem", agendamento_id=str(retrato.id))
         return
@@ -187,11 +176,11 @@ async def _avisar_lead(
     )
     try:
         aceito = await outbound.send(
-            ultima_do_lead.id,
+            ultima_do_lead.message_id,
             kind_da_confirmacao(retrato.id),
             {
                 "para": retrato.conversation_key,
-                "de": ultima_do_lead.recipient_external_id,
+                "de": ultima_do_lead.de,
                 "texto": texto,
             },
         )

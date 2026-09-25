@@ -1240,9 +1240,12 @@ async def contar_mensagens_do_lead(
 def _score_do_registro(registro: LeadScoreAudit | None) -> Score | None:
     """Reconstroi o `Score` de um registro da trilha.
 
-    Existe porque a comparacao da RN-06.4 emendada e sobre os cinco fatores, e
-    nao sobre o total: um registro guarda os cinco em colunas, e compara-los
-    exige remonta-los no tipo que `causas_do_recalculo` recebe.
+    Existe porque a comparacao da RN-06.4 emendada e sobre os FATORES, e nao
+    sobre o total: um registro guarda cada um em sua coluna, e compara-los
+    exige remonta-los no tipo que `causas_do_recalculo` recebe. Foram cinco
+    ate a TEC-172, que acrescentou `penalidade` -- e e por isso que `Score`
+    nao tem default nenhum: com um, este construtor esqueceria a coluna nova
+    em silencio e a penalidade nunca produziria causa.
     """
     if registro is None:
         return None
@@ -1252,6 +1255,7 @@ def _score_do_registro(registro: LeadScoreAudit | None) -> Score | None:
         catalogo=registro.catalogo,
         engajamento=registro.engajamento,
         capacidade=registro.capacidade,
+        penalidade=registro.penalidade,
     )
 
 
@@ -1539,6 +1543,7 @@ async def registrar_recalculo(
         catalogo=novo.catalogo,
         engajamento=novo.engajamento,
         capacidade=novo.capacidade,
+        penalidade=novo.penalidade,
         causas=list(causas),
     )
     session.add(linha)

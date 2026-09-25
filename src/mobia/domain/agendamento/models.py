@@ -32,12 +32,35 @@ from mobia.domain.messages.models import Base
 
 
 class StatusDoAgendamento(StrEnum):
+    """O vocabulario da RN-12.5, com dois desvios declarados (TEC-172, D1).
+
+    **`PROPOSTO` nao existe aqui, e e `RESERVADO`.** A RN-12.5 nomeia de
+    `PROPOSTO` o mesmo fato que a TEC-168 chamou de `RESERVADO` -- a reserva
+    com lock otimista de 5 minutos da RN-11.4. Acrescentar o segundo nome
+    criaria um valor que nenhum caminho escreve e que toda consulta teria de
+    lembrar de incluir: entrada morta de vocabulario, e uma segunda grafia do
+    mesmo estado que o CHECK passaria a aceitar em silencio.
+
+    **`EXPIRADO` existe e nao esta na RN-12.5.** E a reserva atropelada por
+    outra, um fato que aquela lista nao modela.
+    """
+
     RESERVADO = "RESERVADO"
     CONFIRMADO = "CONFIRMADO"
     # A reserva que venceu e foi atropelada por outra (D3 do desenho). Uma
     # vencida que ninguem disputou continua RESERVADO: quem le filtra por
     # `reservado_ate`, e nao por este status.
     EXPIRADO = "EXPIRADO"
+
+    # TEC-172. Os quatro desfechos do ciclo. **Nenhum deles entra na
+    # constraint de exclusao** (migration 0044), e e isso que libera o slot:
+    # o WHERE de la e allowlist de RESERVADO e CONFIRMADO, entao um UPDATE
+    # para qualquer um destes quatro tira a linha do indice no mesmo
+    # statement. Ver a docstring da migration 0050.
+    CANCELADO = "CANCELADO"
+    REAGENDADO = "REAGENDADO"
+    REALIZADO = "REALIZADO"
+    NO_SHOW = "NO_SHOW"
 
 
 EXCLUSAO_DE_SOBREPOSICAO = "ex_agendamentos_sem_sobreposicao"
@@ -90,12 +113,47 @@ class Agendamento(Base):
     lembrete_24h_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lembrete_2h_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # TEC-172, RN-12.3. O vinculo da remarcacao: o novo agendamento aponta
+    # para o que ele substitui, e o original fica REAGENDADO. E o que torna a
+    # metrica de remarcacao possivel -- a razao que a card da. Sem teto de
+    # cadeia: A -> B -> C encadeia por aqui.
+    origem_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("agendamentos.id", name="fk_agendamentos_origem"),
+        nullable=True,
+    )
+
+    # TEC-172. Um carimbo por desfecho: `status` diz o que e, e estes dizem
+    # QUANDO passou a ser. `cancelado_em` nao e conveniencia -- e dele que a
+    # varredura do convite de remarcacao mede as 24 horas da RN-12.3.
+    cancelado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    realizado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    nao_compareceu_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # TEC-172. Marcas de resolvido, mesma semantica das duas da TEC-171: nula
+    # e "ainda nao resolvido", nao "nao entregue". Ver a migration 0049.
+    #
+    # `corretor_avisado_do_cancelamento_em` e coluna PROPRIA e nao reuso de
+    # `corretor_avisado_em` (TEC-170) de proposito: com uma coluna so, o aviso
+    # do cancelamento seria suprimido porque o da confirmacao ja tinha
+    # acontecido -- e sao dois fatos diferentes sobre o mesmo agendamento.
+    remarcacao_convidada_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    corretor_avisado_do_cancelamento_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     __table_args__ = (
         CheckConstraint(
             "tipo IN ('VISITA_PRESENCIAL','REUNIAO_REMOTA')", name="ck_agendamentos_tipo"
         ),
         CheckConstraint(
-            "status IN ('RESERVADO','CONFIRMADO','EXPIRADO')", name="ck_agendamentos_status"
+            "status IN ('RESERVADO','CONFIRMADO','EXPIRADO','CANCELADO',"
+            "'REAGENDADO','REALIZADO','NO_SHOW')",
+            name="ck_agendamentos_status",
         ),
         CheckConstraint("inicio < fim", name="ck_agendamentos_intervalo"),
         CheckConstraint(

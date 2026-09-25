@@ -81,6 +81,28 @@ async def test_reservado_entra_na_exclusao(session, semear_corretor) -> None:
         await _inserir(session, corretor_id=corretor.id, inicio=_qui(10), fim=_qui(11))
 
 
+@pytest.mark.parametrize("status", ["CANCELADO", "REAGENDADO", "REALIZADO", "NO_SHOW"])
+async def test_os_status_do_ciclo_nao_entram_na_exclusao(
+    session, semear_corretor, status: str
+) -> None:
+    """TEC-172, D2: e isto que "libera o slot" quer dizer.
+
+    A CA-12.2 pede que o horario volte ao pool em menos de 10 segundos depois
+    do cancelamento, e o que existe e o tempo de um UPDATE: o WHERE da
+    `ex_agendamentos_sem_sobreposicao` e allowlist de RESERVADO e CONFIRMADO,
+    entao qualquer um dos quatro status do ciclo tira a linha do indice no
+    mesmo statement.
+
+    **Este teste prova isso contra o BANCO, com insert cru**, e nao contra o
+    modelo -- a constraint nao e declarada no `Agendamento` (ver a docstring
+    dele). Se alguem "consertar" aquele WHERE para incluir os status novos,
+    e aqui que aparece.
+    """
+    corretor = await semear_corretor(email="paulo@teste.com")
+    await _inserir(session, corretor_id=corretor.id, inicio=_qui(10), fim=_qui(11), status=status)
+    await _inserir(session, corretor_id=corretor.id, inicio=_qui(10), fim=_qui(11))
+
+
 async def test_status_fora_do_vocabulario_e_recusado(session, semear_corretor) -> None:
     corretor = await semear_corretor(email="paulo@teste.com")
     with pytest.raises(IntegrityError):
