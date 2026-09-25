@@ -255,21 +255,19 @@ async def carregar_dossie(session: AsyncSession, *, handoff_id: uuid.UUID) -> Do
     # tupla (`dossie.imoveis[-teto:]`) -- inverter esta ordem para descendente
     # inverteria qual ponta vira "os mais recentes" sem nenhum sinal aqui.
     # `renderizar` recebe a lista inteira e nao depende da ordem.
+    # Sem `.tuples()`, que a SQLAlchemy 2.1 deprecou: a `Row` ja desempacota
+    # como tupla no `for recomendacao, imovel` la embaixo.
     recomendacoes = (
-        (
-            await session.execute(
-                select(Recomendacao, Imovel)
-                .join(Imovel, Imovel.id == Recomendacao.imovel_id)
-                .where(
-                    Recomendacao.channel == handoff.channel,
-                    Recomendacao.conversation_key == handoff.conversation_key,
-                )
-                .order_by(Recomendacao.apresentado_em)
+        await session.execute(
+            select(Recomendacao, Imovel)
+            .join(Imovel, Imovel.id == Recomendacao.imovel_id)
+            .where(
+                Recomendacao.channel == handoff.channel,
+                Recomendacao.conversation_key == handoff.conversation_key,
             )
+            .order_by(Recomendacao.apresentado_em)
         )
-        .tuples()
-        .all()
-    )
+    ).all()
 
     origem = (
         await session.execute(
