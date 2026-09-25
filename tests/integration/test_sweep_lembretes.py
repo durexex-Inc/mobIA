@@ -607,3 +607,25 @@ async def test_uma_falha_nao_derruba_os_outros_do_lote(
 
     assert enviados == 1
     assert len(outbound.entregues) == 1
+
+
+def test_sweep_lembretes_esta_no_cron_de_cinco_em_cinco_minutos() -> None:
+    """Sem este teste, apagar a entrada `cron(...)` nao quebra nada: os testes
+    acima chamam a funcao direto, sem passar pelo `WorkerSettings`.
+
+    O sintoma silencioso seria lembrete nenhum saindo em producao, com a suite
+    inteira desta card verde. Ver o irmao de `sweep_followups` em
+    `test_worker_startup.py`, que explica por que `functions` e `cron_jobs`
+    sao duas afirmacoes diferentes.
+    """
+    from mobia.workers.main import WorkerSettings
+
+    registrada = next(
+        f for f in WorkerSettings.functions if getattr(f, "name", None) == "sweep_lembretes"
+    )
+    assert registrada.keep_result_s == 0
+
+    candidatos = [job for job in WorkerSettings.cron_jobs if job.coroutine is sweep_lembretes]
+    assert len(candidatos) == 1
+    assert candidatos[0].minute == {0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}
+    assert candidatos[0].run_at_startup is False
