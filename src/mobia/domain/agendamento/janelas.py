@@ -1,11 +1,13 @@
 """Ate 3 janelas de horario em que uma visita ou reuniao caberia. TEC-165, RN-11.1.
 
 Puro: nao toca banco, rede nem relogio -- `agora` entra como parametro, como
-em todo o dominio. **Nenhum caminho de producao chega aqui ainda:** o unico
-chamador e `janelas_para`, em `data_falada.py` (TEC-167), que tambem nao tem
-chamador. A conversa so passa a oferecer horario quando houver como grava-lo
-(TEC-168) e a quem atribui-lo (TEC-166); oferecer antes seria prometer o que
-o sistema nao faz. Ver docs/superpowers/specs/2026-09-24-tec-165-propor-janelas-design.md.
+em todo o dominio. **Nenhum caminho de producao chega aqui ainda:** os
+chamadores sao `janelas_para`, em `data_falada.py` (TEC-167), e
+`reservar_ou_alternativas`, em `repositorio.py` (TEC-168) -- nenhum dos dois
+tem chamador de producao. A gravacao ja existe (TEC-168); falta a quem
+atribuir o agendamento (TEC-166) e a ligacao com o turno para a conversa
+passar a oferecer horario de verdade; oferecer antes disso seria prometer o
+que o sistema nao faz. Ver docs/superpowers/specs/2026-09-24-tec-165-propor-janelas-design.md.
 """
 
 import uuid
@@ -178,8 +180,8 @@ class AgendaDoCorretor(Protocol):
 
     Devolve cada intervalo que se sobrepoe com [de, ate], nao apenas os
     contidos nela -- um compromisso que comecou antes de `de` e termina
-    depois ainda bloqueia. A implementacao real nasce com a tabela de
-    agendamentos da TEC-168. Ate la o unico implementador e o fake dos testes.
+    depois ainda bloqueia. A implementacao real e `AgendaPostgres`
+    (`repositorio.py`, TEC-168); os testes tambem tem o proprio fake.
     """
 
     async def ocupados(
@@ -195,7 +197,7 @@ async def propor_janelas_do_corretor(
     ate: datetime,
     tipo: TipoDeCompromisso,
 ) -> list[Intervalo]:
-    """A costura entre a agenda e o motor, no lugar em que a TEC-168 a usara."""
+    """A costura entre a agenda e o motor, no lugar em que a TEC-168 a usa."""
     ocupados = await agenda.ocupados(corretor.id, agora, ate)
     return propor_janelas(
         agora=agora,

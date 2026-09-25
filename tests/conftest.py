@@ -210,6 +210,10 @@ TABELAS = (
     # mesma sessao -- e `tem_consentimento_de_marketing` responderia sobre
     # linha alheia.
     "consentimentos",
+    # TEC-168. Mutavel, e com a exclusao por intervalo em `corretor_id`: sem
+    # o truncate, o agendamento gravado por um teste ocupa o horario que o
+    # proximo tenta reservar, e a garantia do RT-07 barraria linha alheia.
+    "agendamentos",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
