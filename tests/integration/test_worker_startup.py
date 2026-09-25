@@ -1,13 +1,17 @@
 import base64
+import logging
 import signal
+import uuid
 
 import pytest
 
 from mobia.app.config import ConfiguracaoInsegura
+from mobia.domain.agendamento.calendario import CalendarioNoop, GoogleCalendar
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.outbound.roteador import RoteadorPorCanal
 from mobia.domain.outbound.web import WebIndicador, WebOutbound
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
+from mobia.workers.jobs import avisar_confirmacao as job_da_confirmacao
 from mobia.workers.main import startup
 
 
@@ -54,7 +58,9 @@ async def test_startup_recusa_subir_sem_token_da_meta(
 
 
 async def test_startup_sobe_com_token_configurado(
-    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+    monkeypatch: pytest.MonkeyPatch,
+    caches_de_cliente_limpos: None,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
     # TEC-280: a guarda de SMTP e incondicional, entao todo teste que chega ate
@@ -70,7 +76,8 @@ async def test_startup_sobe_com_token_configurado(
     # -- antes do `monkeypatch.setenv` acima -- e deixaria o cache de
     # `Settings` sem o token, furando este proprio teste.
     ctx: dict = {"redis": object()}
-    await startup(ctx)
+    with caplog.at_level(logging.WARNING):
+        await startup(ctx)
 
     assert isinstance(ctx["outbound"], RoteadorPorCanal)
     assert "classificador" in ctx
@@ -78,6 +85,92 @@ async def test_startup_sobe_com_token_configurado(
     assert "contador" in ctx
     assert "agendador" in ctx
     assert "reenfileirador" in ctx
+    # TEC-170, D5: sem GOOGLE_CALENDAR_REFRESH_TOKEN (default vazio) o worker
+    # sobe com o Noop e avisa uma vez, na mesma convencao do CRM acima.
+    assert isinstance(ctx["calendario"], CalendarioNoop)
+    assert "agendamento.calendario_desligado" in caplog.text
+    # Mesma instancia de EmailSmtp que `canais_de_notificacao` usa -- o job de
+    # confirmacao precisa da MESMA porta, ja validada pela guarda de SMTP
+    # acima, e nao de uma segunda instancia equivalente.
+    assert ctx["email_ao_corretor"] is ctx["canais_de_notificacao"][0]
+
+
+async def test_startup_liga_o_calendario_google_com_credenciais_completas(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "mobia@localhost")
+    monkeypatch.setenv("GOOGLE_CALENDAR_REFRESH_TOKEN", "refresh-de-teste")
+    monkeypatch.setenv("GOOGLE_CALENDAR_CLIENT_ID", "id-de-teste")
+    monkeypatch.setenv("GOOGLE_CALENDAR_CLIENT_SECRET", "segredo-de-teste")
+
+    ctx: dict = {"redis": object()}
+    await startup(ctx)
+
+    assert isinstance(ctx["calendario"], GoogleCalendar)
+
+
+async def test_o_job_da_confirmacao_le_do_ctx_as_chaves_que_o_startup_grava(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """TEC-170. O job le quatro chaves do `ctx`, e uma grafada diferente do
+    `startup` so levantaria `KeyError` no primeiro agendamento confirmado.
+    Aqui o `ctx` e o que o `startup` de verdade montou, e a funcao de dominio
+    e trocada por um espiao so para ver o que chegou nela."""
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "mobia@localhost")
+    ctx: dict = {"redis": object()}
+    await startup(ctx)
+
+    recebido: dict = {}
+
+    async def _espiao(session_factory, **portas) -> None:
+        recebido.update(portas, session_factory=session_factory)
+
+    monkeypatch.setattr(job_da_confirmacao, "_avisar_confirmacao", _espiao)
+    agendamento_id = uuid.uuid4()
+
+    assert await job_da_confirmacao.avisar_confirmacao(ctx, str(agendamento_id)) == "avisado"
+
+    assert recebido["agendamento_id"] == agendamento_id
+    assert recebido["session_factory"] is ctx["session_factory"]
+    assert recebido["outbound"] is ctx["outbound"]
+    assert recebido["email"] is ctx["email_ao_corretor"]
+    assert recebido["calendario"] is ctx["calendario"]
+
+
+async def test_startup_recusa_subir_com_refresh_token_sem_client_secret(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """Com o refresh token preenchido, id e segredo do cliente passam a ser
+    obrigatorios -- sem isso o Google recusaria o token na primeira tentativa
+    de criar um evento, silenciosamente para quem nao esta olhando o log do
+    job."""
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "mobia@localhost")
+    monkeypatch.setenv("GOOGLE_CALENDAR_REFRESH_TOKEN", "refresh-de-teste")
+    monkeypatch.setenv("GOOGLE_CALENDAR_CLIENT_ID", "id-de-teste")
+    monkeypatch.setenv("GOOGLE_CALENDAR_CLIENT_SECRET", "")
+
+    with pytest.raises(ConfiguracaoInsegura, match="GOOGLE_CALENDAR_CLIENT_SECRET"):
+        await startup({})
+
+
+async def test_startup_recusa_subir_com_refresh_token_sem_client_id(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "mobia@localhost")
+    monkeypatch.setenv("GOOGLE_CALENDAR_REFRESH_TOKEN", "refresh-de-teste")
+    monkeypatch.setenv("GOOGLE_CALENDAR_CLIENT_ID", "")
+    monkeypatch.setenv("GOOGLE_CALENDAR_CLIENT_SECRET", "segredo-de-teste")
+
+    with pytest.raises(ConfiguracaoInsegura, match="GOOGLE_CALENDAR_CLIENT_ID"):
+        await startup({})
 
 
 async def test_o_worker_nao_sobe_sem_host_de_smtp(

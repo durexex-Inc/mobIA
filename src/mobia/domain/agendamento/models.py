@@ -73,6 +73,14 @@ class Agendamento(Base):
     # docstring da migration 0045.
     motivo_da_alocacao: Mapped[str] = mapped_column(String(24), nullable=False)
 
+    # TEC-170. Uma marca por passo da confirmacao (D2): nula e "nao aconteceu",
+    # preenchida e o que impede a reexecucao de repetir. Ver a migration 0047.
+    calendar_event_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    corretor_avisado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lead_avisado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         CheckConstraint(
             "tipo IN ('VISITA_PRESENCIAL','REUNIAO_REMOTA')", name="ck_agendamentos_tipo"

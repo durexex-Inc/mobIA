@@ -9,9 +9,12 @@ from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
 def test_todo_gatilho_tem_etiqueta_e_prioridade() -> None:
     """Os dois mapas cobrem o enum inteiro.
 
-    Um gatilho sem etiqueta so falharia em producao, no instante do handoff --
-    e os tres gatilhos ainda sem fiacao (TEC-143, TEC-149, TEC-170) nao tem
-    outro teste que os exercite.
+    Um gatilho sem etiqueta so falharia em producao, no instante do handoff.
+    AGENDAMENTO_CONFIRMADO e o unico gatilho ainda sem chamador de
+    `registrar_handoff` (a TEC-170 decidiu nao abrir handoff para ele -- ver o
+    docstring de `Gatilho`); a etiqueta e a prioridade dele sao usadas no
+    e-mail ao corretor e conferidas tambem em
+    `tests/unit/test_mensagens_de_confirmacao.py`.
     """
     for gatilho in Gatilho:
         assert gatilho in ETIQUETA_DE

@@ -12,8 +12,11 @@ class Gatilho(StrEnum):
 
     **Nasce completo, com fiacao para tres.** Acrescentar valor a este enum
     depois custa migration (o `IN` do CHECK em `handoffs.status` e irmao deste
-    problema); acrescentar um CHAMADOR nao custa nada. TEC-143, TEC-149 e
-    TEC-170 chegam e so chamam `registrar_handoff` com o gatilho que ja existe.
+    problema); acrescentar um CHAMADOR nao custa nada. TEC-143 e TEC-149
+    chegaram e so chamaram `registrar_handoff` com o gatilho que ja existia.
+    TEC-170 chegou e NAO chamou: o aviso do agendamento confirmado sai por
+    e-mail direto ao corretor, sem abrir handoff (RN-16.1, decidido em
+    conversa) -- AGENDAMENTO_CONFIRMADO segue sem chamador.
 
     A RN-16.1 junta VENDER_IMOVEL e SUPORTE_CONTRATO num item so, e aqui eles
     sao dois: o Gherkin da card so nomeia a etiqueta `venda-imovel`, e as duas

@@ -5,6 +5,7 @@ from arq import cron, func
 
 from mobia.app.config import ConfiguracaoInsegura, get_settings
 from mobia.app.logging import configure_logging
+from mobia.domain.agendamento.calendario import CalendarioNoop, GoogleCalendar
 from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
 from mobia.domain.crm.webhook import CrmWebhook
@@ -20,6 +21,7 @@ from mobia.domain.outbound.whatsapp_notificacao import WhatsAppTemplate
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
+from mobia.workers.jobs.avisar_confirmacao import avisar_confirmacao
 from mobia.workers.jobs.exportar_crm import exportar_crm
 from mobia.workers.jobs.gerar_resumo import gerar_resumo
 from mobia.workers.jobs.importar_catalogo import importar_catalogo
@@ -103,6 +105,26 @@ async def startup(ctx: dict[str, Any]) -> None:
             "docker-compose e defina os dois no .env antes de subir o worker."
         )
 
+    # TEC-170, D5. Com o refresh token preenchido, id e segredo do cliente
+    # passam a ser obrigatorios: sem eles o Google recusa a troca de token na
+    # primeira tentativa de criar um evento, dentro do `except FalhaDeCalendario`
+    # de `_criar_evento`, que loga e segue -- o sintoma seria um aviso por
+    # agendamento confirmado, nao uma recusa na subida. Um laco e nao duas
+    # guardas identicas: a mensagem muda so no nome da variavel que falta.
+    if settings.google_calendar_refresh_token:
+        for nome, valor in (
+            ("GOOGLE_CALENDAR_CLIENT_ID", settings.google_calendar_client_id),
+            ("GOOGLE_CALENDAR_CLIENT_SECRET", settings.google_calendar_client_secret),
+        ):
+            if not valor:
+                raise ConfiguracaoInsegura(
+                    f"{nome} nao configurado com GOOGLE_CALENDAR_REFRESH_TOKEN "
+                    "preenchido. Sem ele o Google recusa a troca do refresh "
+                    "token, e o evento nunca e criado -- so um aviso por "
+                    "agendamento confirmado. Defina os dois no .env ou no "
+                    "ambiente antes de subir o worker."
+                )
+
     session_factory = get_sessionmaker()
     ctx["settings"] = settings
     ctx["session_factory"] = session_factory
@@ -146,7 +168,14 @@ async def startup(ctx: dict[str, Any]) -> None:
     # de `canais.py`. E' o `startup` que decide a implementacao, no mesmo
     # raciocinio de `outbound`/`redator`/etc acima; o teste troca a chave sem
     # tocar no job.
-    ctx["canais_de_notificacao"] = (EmailSmtp(), WhatsAppTemplate())
+    #
+    # TEC-170. Uma instancia so, guardada tambem em `ctx["email_ao_corretor"]`:
+    # e a mesma porta que `avisar_confirmacao` usa para o aviso ao corretor, e
+    # a guarda de SMTP acima ja validou host e remetente para ela -- uma
+    # segunda instancia seria equivalente, nao mais segura.
+    email = EmailSmtp()
+    ctx["canais_de_notificacao"] = (email, WhatsAppTemplate())
+    ctx["email_ao_corretor"] = email
 
     # TEC-180. `None` e nao um adaptador que registra e nao entrega: o repo
     # apagou os dois dubles que ja teve (`EmailRegistrado` na TEC-280, o
@@ -166,6 +195,18 @@ async def startup(ctx: dict[str, Any]) -> None:
         log.warning(
             "crm.exportacao_desligada",
             motivo="CRM_WEBHOOK_URL nao configurada; nenhum lead sera exportado",
+        )
+
+    # TEC-170, D5. A flag e a credencial vazia, na convencao do CRM logo
+    # acima: sem refresh token o worker sobe com o Noop e avisa uma vez por
+    # subida. Com o token, id e segredo sao obrigatorios -- ver a guarda.
+    if settings.google_calendar_refresh_token:
+        ctx["calendario"] = GoogleCalendar()
+    else:
+        ctx["calendario"] = CalendarioNoop()
+        log.warning(
+            "agendamento.calendario_desligado",
+            motivo="GOOGLE_CALENDAR_REFRESH_TOKEN nao configurado; nenhum evento sera criado",
         )
 
 
@@ -221,6 +262,14 @@ class WorkerSettings:
         # dispara este job e `gerar_resumo` ao terminar, ou `recuperar_sem_prazo`
         # pela varredura -- nunca um `cron` deste job.
         func(notificar_corretor, keep_result=0),
+        # `keep_result=0` pela mesma razao do `notificar_corretor` acima: o
+        # `_job_id` e fixo por agendamento (`confirmacao:<id>`, ver
+        # `AgendadorDeConfirmacaoArq`), e uma chave de resultado sobrevivente
+        # bloquearia em silencio um reenqueue legitimo. Nao entra em
+        # `cron_jobs`: nenhum caminho de producao ainda enfileira este job
+        # (ver o docstring de `domain/agendamento/confirmacao.py`), e nao ha
+        # relogio que deva disparar um aviso de confirmacao.
+        func(avisar_confirmacao, keep_result=0),
         # `keep_result=0` pela mesma razao do `WorkerSettings.keep_result` da
         # classe (ver o docstring dela): o resultado deste job (um `int`) nao
         # serve para nada depois que o log saiu, e nao ha motivo para pagar a
