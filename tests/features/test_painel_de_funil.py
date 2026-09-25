@@ -1,16 +1,20 @@
 """Criterios de aceite do TEC-190 como testes executaveis. RF-17.
 
-Tres dos quatro cenarios do Gherkin da card. **O quarto -- "Agendamento novo
-reflete no painel" (CA-17.1) -- NAO esta aqui e nao pode estar**: nao existe
-tabela de agendamento neste repo, e marcar visita e RF-11 e RF-12, epicos nao
-construidos. Nao ha como criar o "agendamento criado agora" que o Dado do
-cenario exige.
+Os quatro cenarios do Gherkin da card, desde a TEC-376. **O quarto --
+"Agendamento novo reflete no painel" (CA-17.1) -- passou tres emendas sem
+teste**, e as duas razoes foram diferentes:
 
-Escrever o cenario com uma tabela inventada so para ele passar e o modo de
-falha que o CLAUDE.md nomeia -- teste que inventa a entidade que falta para se
-auto-satisfazer. O que se testa no lugar e que o campo sai declaradamente sem
-fonte, no `test_o_painel_declara_que_nao_sabe_de_visitas` abaixo. A CA-17.1
-volta quando a RF-12 existir. Ver a D1 do desenho.
+- ate a TEC-190, IMPOSSIBILIDADE: nao existia tabela de agendamento, e nao
+  havia como criar o "agendamento criado agora" que o Dado exige. Escreve-lo
+  contra uma tabela inventada seria o modo de falha que o CLAUDE.md nomeia --
+  teste que inventa a entidade que falta para se auto-satisfazer. No lugar
+  dele ficou a afirmacao CONTRARIA, de que o painel declarava nao ter fonte;
+- depois da TEC-371, ESCOPO: a tabela tinha linha criada por lead de verdade
+  e o painel continuava devolvendo nulo. A Emenda E-02 da CA-17.1 registrou
+  isso com todas as letras -- "hoje o painel tem fonte e nao a usa".
+
+A TEC-376 acabou com as duas, e o criterio virou o teste que ele sempre
+descreveu.
 
 O cenario "Carregamento dentro do SLA" vive em
 `tests/perf/test_funil_latency.py`, fora do run padrao.
@@ -21,7 +25,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import _lead, _recomendar
+from conftest import _agendar, _corretor, _lead, _recomendar
 from httpx import ASGITransport, AsyncClient
 
 from mobia.app.config import get_settings
@@ -97,21 +101,31 @@ async def test_filtro_por_canal_recalcula_os_indicadores(app_com_token, session)
     assert so_whatsapp["etapas"][0]["quantidade"] == 2
 
 
-async def test_o_painel_declara_que_nao_sabe_de_visitas(app_com_token, session) -> None:
-    """No lugar da CA-17.1, que nao e exercitavel. Ver a docstring do modulo.
+async def test_o_agendamento_criado_aparece_no_contador_do_painel(app_com_token, session) -> None:
+    """CA-17.1, exercitada pela primeira vez. Ver a docstring do modulo.
 
-    O que se afirma aqui e o CONTRARIO de um contador de agendamento: que o
-    painel diz nao ter fonte, em vez de dizer zero.
+    "Dado um agendamento criado, quando o dashboard e recarregado, entao o
+    contador de agendamentos reflete a mudanca." Os 60 segundos do criterio
+    sao sobre cache do frontend -- a consulta nao tem nenhum, e o painel
+    recarregado le o banco.
     """
+    corretor = await _corretor(session)
     await _lead(session, conversa="5511900000001", nasceu_em=DENTRO)
 
-    corpo = (await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})).json()
+    antes = (await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})).json()
+    await _agendar(session, conversa="5511900000001", corretor_id=corretor)
+    depois = (
+        await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})
+    ).json()
 
-    agendado = next(e for e in corpo["etapas"] if e["nome"] == "Agendado")
-    assert agendado["quantidade"] is None
-    assert agendado["disponivel"] is False
-    assert corpo["indicadores"]["taxaNoShow"] is None
-    assert "taxaNoShow" in corpo["indisponiveis"]
+    assert antes["indicadores"]["agendamentosCriados"] == 0
+    assert depois["indicadores"]["agendamentosCriados"] == 1
+    assert depois["indicadores"]["agendamentosConfirmados"] == 1
+
+    agendado = next(e for e in depois["etapas"] if e["nome"] == "Agendado")
+    assert agendado["quantidade"] == 1
+    assert agendado["disponivel"] is True
+    assert depois["indisponiveis"] == []
 
 
 async def test_o_recorte_do_periodo_usa_o_fuso_da_operacao() -> None:

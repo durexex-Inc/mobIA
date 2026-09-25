@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from mobia.domain.metricas.vocabulario import ETAPAS, SEM_FONTE, Etapa
+from mobia.domain.metricas.vocabulario import ETAPAS, Etapa
 
 
 @dataclass(frozen=True)
@@ -19,14 +19,19 @@ class EtapaDoFunil:
 def _conversao(anterior: int | None, atual: int | None) -> float | None:
     """A fracao da etapa anterior que chegou nesta, ou `None`.
 
-    **Sao TRES as origens de `None`, e nenhuma delas e zero por cento:**
+    **Sao DUAS as origens de `None`, e nenhuma delas e zero por cento:**
 
     1. nao ha etapa anterior (a primeira do funil);
-    2. a anterior nao tem numero (`SEM_FONTE`) -- pular a etapa cega e
-       dividir pela penultima daria um numero plausivel e errado;
-    3. a anterior e zero -- 0 lead nao converteu em nada e tambem nao deixou
+    2. a anterior e zero -- 0 lead nao converteu em nada e tambem nao deixou
        de converter; a fracao nao existe. Devolver 0.0 aqui diria "ninguem
        passou", que e afirmacao diferente de "nao ha o que medir".
+
+    **Eram TRES ate a TEC-376**, e a que saiu era "a anterior nao tem numero":
+    `AGENDADO` ficava sem fonte e pular a etapa cega para dividir `Handoff
+    aceito` por `Recomendado` daria um numero plausivel e errado. Agora as
+    seis etapas tem consulta, e nenhuma vem nula do repositorio -- a guarda
+    de `None` nos parametros fica por contrato de tipo, e nao por caso
+    alcancavel.
     """
     if anterior is None or atual is None or anterior == 0:
         return None
@@ -34,21 +39,18 @@ def _conversao(anterior: int | None, atual: int | None) -> float | None:
 
 
 def montar_funil(quantidades: Mapping[Etapa, int]) -> list[EtapaDoFunil]:
-    """As seis etapas, sempre as seis, com a conversao entre consecutivas.
-
-    Uma etapa em `SEM_FONTE` sai com `quantidade` nula ainda que
-    `quantidades` traga numero para ela -- a ausencia de fonte e propriedade
-    do vocabulario, e nao de quem consultou o banco.
-    """
-    valores: list[int | None] = [
-        None if etapa in SEM_FONTE else quantidades.get(etapa, 0) for etapa in ETAPAS
-    ]
+    """As seis etapas, sempre as seis, com a conversao entre consecutivas."""
+    valores: list[int | None] = [quantidades.get(etapa, 0) for etapa in ETAPAS]
 
     return [
         EtapaDoFunil(
             nome=etapa.value,
             quantidade=valores[indice],
-            disponivel=etapa not in SEM_FONTE,
+            # Constante desde a TEC-376, e o campo FICA (D8): tira-lo e
+            # mudanca de contrato de verdade, e ele volta a valer no dia em
+            # que uma etapa nova nascer sem fonte. Remover agora e recriar
+            # depois troca uma constante por duas migracoes de contrato.
+            disponivel=True,
             conversao_da_anterior=(
                 None if indice == 0 else _conversao(valores[indice - 1], valores[indice])
             ),

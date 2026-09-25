@@ -53,25 +53,33 @@ async def test_periodo_sem_lead_devolve_200_com_as_seis_etapas(app_com_token) ->
     assert corpo["indicadores"]["taxaQualificacao"] is None
 
 
-async def test_a_etapa_agendado_sai_indisponivel(app_com_token) -> None:
+async def test_a_etapa_agendado_sai_disponivel_como_as_outras_cinco(app_com_token) -> None:
+    """Coorte vazia, entao zero -- e zero MEDIDO, nao ausencia de fonte.
+
+    Ate a TEC-376 esta etapa saia `quantidade: None` e `disponivel: False`.
+    """
     resposta = await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})
 
     agendado = next(e for e in resposta.json()["etapas"] if e["nome"] == "Agendado")
-    assert agendado["quantidade"] is None
-    assert agendado["disponivel"] is False
+    assert agendado["quantidade"] == 0
+    assert agendado["disponivel"] is True
 
 
-async def test_os_quatro_indicadores_de_visita_saem_nulos_e_listados(app_com_token) -> None:
+async def test_os_quatro_indicadores_de_visita_saem_no_corpo_e_a_lista_fica_vazia(
+    app_com_token,
+) -> None:
+    """A chave `indisponiveis` FICA, e vazia -- omiti-la e mudanca de contrato.
+
+    `taxaNoShow` continua nula aqui por nao haver desfecho DECIDIDO no
+    periodo, e nao por falta de fonte: 0/0 nao e 0%.
+    """
     corpo = (await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})).json()
 
-    assert corpo["indisponiveis"] == [
-        "agendamentosCriados",
-        "agendamentosConfirmados",
-        "agendamentosRealizados",
-        "taxaNoShow",
-    ]
-    for chave in corpo["indisponiveis"]:
-        assert corpo["indicadores"][chave] is None
+    assert corpo["indisponiveis"] == []
+    assert corpo["indicadores"]["agendamentosCriados"] == 0
+    assert corpo["indicadores"]["agendamentosConfirmados"] == 0
+    assert corpo["indicadores"]["agendamentosRealizados"] == 0
+    assert corpo["indicadores"]["taxaNoShow"] is None
 
 
 async def test_de_depois_de_ate_e_422_nomeando_o_campo(app_com_token) -> None:
