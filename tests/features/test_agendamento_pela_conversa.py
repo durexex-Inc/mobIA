@@ -14,18 +14,20 @@ dormir, como `test_sweep_lembretes.py` ja faz.
 """
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
 from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
-from mobia.domain.agendamento.data_falada import DIAS_DA_SEMANA
+from mobia.domain.agendamento.data_falada import DIAS_DA_SEMANA, data_e_hora_absolutas
+from mobia.domain.agendamento.janelas import TipoDeCompromisso
 from mobia.domain.agendamento.models import (
     Agendamento,
     JanelaProposta,
     StatusDoAgendamento,
 )
+from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
 from mobia.domain.agente.turno import executar_turno
 from mobia.domain.corretores.models import Corretor
 from mobia.domain.handoff.agendador import AgendadorNoop
@@ -283,10 +285,27 @@ async def test_dois_leads_no_mesmo_slot(
         StatusDoAgendamento.CONFIRMADO
     ]
     assert await _agendamentos(session, OUTRO_LEAD) == []
-    # E o horario perdido nao aparece nas alternativas.
-    tomado = (await _agendamentos(session, LEAD))[0].inicio.astimezone(SP)
-    hora = f"{tomado.hour}h" if tomado.minute == 0 else f"{tomado.hour}h{tomado.minute:02d}"
-    assert f"às {hora}" not in outbound.entregues[0]
+    # E o horario perdido nao e reoferecido.
+    #
+    # **Compara o INSTANTE, e nao a hora do dia** (TEC-378). Ate ela, a
+    # asserta era `f"as {hora}" not in texto`, e isso dizia outra coisa:
+    # `janelas_alocadas` da UMA janela por dia, sempre a primeira que cabe --
+    # o comeco da jornada --, entao as alternativas de outros dias tambem
+    # comecam as 9h. O teste passava ou reprovava conforme a hora em que a
+    # suite rodava, porque so depois que a ultima janela de HOJE deixa de
+    # caber e que o slot tomado passa a ser 9h de amanha.
+    #
+    # `data_e_hora_absolutas` traz dia da semana, dia do mes e hora -- e e a
+    # mesma funcao que `linhas_das_janelas` usa para montar cada linha, entao
+    # o que se compara e exatamente o que o lead leu.
+    tomado = (await _agendamentos(session, LEAD))[0].inicio
+    assert data_e_hora_absolutas(tomado) not in outbound.entregues[0]
+
+    # A mesma garantia pela outra ponta, e esta nao depende de formatacao
+    # nenhuma: o texto das janelas ja mudou duas vezes neste repo, e no dia em
+    # que mudar de novo e esta asserta que continua guardando a regra.
+    reoferecidos = [p.inicio for p in await _consultar_propostas(session, OUTRO_LEAD)]
+    assert tomado not in reoferecidos
 
 
 async def _semear_corretor(session) -> Corretor:
@@ -316,3 +335,84 @@ async def _semear_corretor(session) -> Corretor:
     session.add(corretor)
     await session.commit()
     return corretor
+
+
+async def _ocupar_hoje(session, corretor: Corretor) -> None:
+    """Toma a jornada inteira de hoje, para que o primeiro slot livre seja amanha.
+
+    E o que torna deterministica a borda em que a TEC-378 quebrava: sem isto,
+    haver ou nao janela hoje depende da hora em que a suite roda -- com
+    jornada de 9h as 18h, antecedencia de 3 horas e visita de 60 minutos, a
+    ultima janela de hoje comeca as 17h.
+    """
+    agora = datetime.now(UTC)
+    inicio = datetime.combine(datetime.now(SP).date(), time(0), tzinfo=SP).replace(hour=9)
+    session.add(
+        Agendamento(
+            id=uuid.uuid4(),
+            corretor_id=corretor.id,
+            channel=CANAL,
+            conversation_key="5511900000000",
+            imovel_id=None,
+            tipo=TipoDeCompromisso.VISITA_PRESENCIAL.value,
+            inicio=inicio,
+            fim=inicio + timedelta(hours=9),
+            status=StatusDoAgendamento.CONFIRMADO.value,
+            reservado_ate=agora + timedelta(days=30),
+            criado_em=agora,
+            confirmado_em=agora,
+            motivo_da_alocacao=MotivoDaAlocacao.SEM_MATCH.value,
+        )
+    )
+    await session.commit()
+
+
+async def test_o_horario_tomado_nao_volta_quando_todas_as_janelas_sao_da_mesma_hora(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """A borda em que a TEC-378 quebrava, agora forcada em vez de sorteada.
+
+    Com hoje ocupado, a grade comeca em 9h de amanha e TODAS as alternativas
+    caem as 9h, cada uma num dia. Era exatamente aqui que
+    `f"as {hora}" not in texto` acusava um reoferecimento que nao existia --
+    e e aqui que a asserta por instante tem de continuar passando.
+    """
+    corretor = await _semear_corretor(session)
+    await _ocupar_hoje(session, corretor)
+    dubles = {
+        "classificador_fake": classificador_fake,
+        "outbound_fake": outbound_fake,
+        "resumidor_fake": resumidor_fake,
+        "contador_fake": contador_fake,
+        "moderador_fake": moderador_fake,
+    }
+    for lead in (LEAD, OUTRO_LEAD):
+        await _turno(session, "quero agendar uma visita", lead=lead, **dubles)
+    await _turno(session, "a primeira", lead=LEAD, **dubles)
+    await _turno(session, "isso, pode marcar", lead=LEAD, **dubles)
+
+    resultado, outbound = await _turno(session, "a primeira", lead=OUTRO_LEAD, **dubles)
+
+    assert resultado == "agendamento_oferecido"
+    tomado = (await _agendamentos(session, LEAD))[0].inicio
+
+    # A premissa do cenario, e sem ela o teste passaria por acaso: ALGUMA
+    # alternativa cai na MESMA hora do slot tomado, em outro dia. E
+    # exatamente a colisao que fazia `f"as {hora}" not in texto` acusar um
+    # reoferecimento inexistente.
+    #
+    # Nao se exige que TODAS caiam nela: o dia do slot tomado ja sai as 10h,
+    # porque as 9h daquele dia estao ocupadas -- o motor desloca sozinho, que
+    # e o comportamento certo e nao o que esta em questao aqui.
+    reoferecidos = [p.inicio for p in await _consultar_propostas(session, OUTRO_LEAD)]
+    assert reoferecidos, "o segundo lead tinha de receber alternativas"
+    hora_tomada = tomado.astimezone(SP).hour
+    colidem = [i for i in reoferecidos if i.astimezone(SP).hour == hora_tomada]
+    assert colidem, (
+        "o cenario perdeu a premissa: nenhuma alternativa na mesma hora do tomado "
+        f"({hora_tomada}h), entre {[i.astimezone(SP).isoformat() for i in reoferecidos]}"
+    )
+
+    # E mesmo assim o horario tomado nao volta.
+    assert tomado not in reoferecidos
+    assert data_e_hora_absolutas(tomado) not in outbound.entregues[0]
