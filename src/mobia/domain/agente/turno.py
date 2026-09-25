@@ -13,10 +13,14 @@ from mobia.domain.agendamento.conversa import (
     KIND_DO_AGENDAMENTO,
     SUBAGENTE_AGENDAMENTO,
 )
+from mobia.domain.agendamento.conversa import Cancelou as AgendamentoCancelado
 from mobia.domain.agendamento.conversa import Confirmou as AgendamentoConfirmado
 from mobia.domain.agendamento.conversa import NadaAFazer as NadaAFazerNoAgendamento
 from mobia.domain.agendamento.conversa import Ofereceu as AgendamentoOferecido
 from mobia.domain.agendamento.conversa import Perguntou as AgendamentoPerguntou
+from mobia.domain.agendamento.conversa import (
+    PresencaConfirmada as AgendamentoPresencaConfirmada,
+)
 from mobia.domain.agendamento.conversa import Reservou as AgendamentoReservado
 from mobia.domain.agendamento.conversa import atender as atender_agendamento
 from mobia.domain.agendamento.repositorio import AgendaPostgres
@@ -564,6 +568,18 @@ ResultadoDoTurno = Literal[
     # sair, e este contador que denuncia o silencio.
     "agendamento_oferecido",
     "agendamento_confirmado",
+    # A TEC-372 acrescentou os dois abaixo, pelo mesmo criterio.
+    #
+    # "presenca_confirmada" e o turno em que o lead respondeu ao lembrete
+    # dizendo que vai. Nao reuse "agendamento_confirmado": aquele e a
+    # visita nascendo, e este e o lead prometendo aparecer numa que ja
+    # existia -- duas historias, e so a segunda diz algo sobre no-show.
+    #
+    # "agendamento_cancelado" e a visita caindo por pedido do lead. Nao
+    # reuse "opt_out" nem "silenciado": ninguem pediu silencio, e o
+    # agente respondeu normalmente.
+    "presenca_confirmada",
+    "agendamento_cancelado",
 ]
 
 
@@ -1903,9 +1919,25 @@ async def _executar_turno(
                 agendamento_id=str(desfecho_do_agendamento.agendamento_id),
             )
             return "agendamento_confirmado"
+        if isinstance(desfecho_do_agendamento, AgendamentoCancelado):
+            # TEC-372. O aviso ao corretor e job pela mesma razao que o da
+            # confirmacao: manter uma chamada SMTP dentro do turno poria a
+            # latencia do lead na mao do servidor de e-mail. Depois do
+            # commit, como o outro.
+            await agendador_de_avisos.cancelamento(desfecho_do_agendamento.agendamento_id)
+            log.info(
+                "turno.agendamento_cancelado",
+                channel=message.channel,
+                message_id=str(message.id),
+                agendamento_id=str(desfecho_do_agendamento.agendamento_id),
+            )
         if isinstance(
             desfecho_do_agendamento,
-            AgendamentoOferecido | AgendamentoReservado | AgendamentoPerguntou,
+            AgendamentoOferecido
+            | AgendamentoReservado
+            | AgendamentoPerguntou
+            | AgendamentoPresencaConfirmada
+            | AgendamentoCancelado,
         ):
             entrega_do_agendamento = await _entregar_texto_fixo(
                 session_factory,
@@ -1920,6 +1952,15 @@ async def _executar_turno(
             # sao fatos sobre a porta de saida, nao sobre o agendamento, e
             # renomea-los aqui os tiraria das contagens que ja existem.
             if entrega_do_agendamento == "respondido":
+                # Tres desfechos felizes e tres valores, pelo criterio que
+                # todo o `Literal` segue: presenca confirmada e cancelamento
+                # sao fatos diferentes de uma oferta de horario, e soma-los
+                # tornaria impossivel medir quantas visitas a conversa
+                # derruba.
+                if isinstance(desfecho_do_agendamento, AgendamentoCancelado):
+                    return "agendamento_cancelado"
+                if isinstance(desfecho_do_agendamento, AgendamentoPresencaConfirmada):
+                    return "presenca_confirmada"
                 return "agendamento_oferecido"
             return entrega_do_agendamento
 

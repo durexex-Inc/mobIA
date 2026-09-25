@@ -336,3 +336,95 @@ async def test_a_reserva_expira_e_o_lead_recebe_horarios_de_novo(
         )
     ).all()
     assert list(status) == [StatusDoAgendamento.EXPIRADO]
+
+
+# --- TEC-372: a resposta ao lembrete, pelo turno inteiro ---------------------
+
+
+async def _agendamento_com_lembrete(session, semear_corretor) -> Agendamento:
+    corretor = await semear_corretor(email="lembrete@x.com", plantao=True)
+    inicio = datetime.now(UTC) + timedelta(hours=20)
+    agendamento = Agendamento(
+        id=uuid.uuid4(),
+        corretor_id=corretor.id,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        imovel_id=None,
+        tipo="VISITA_PRESENCIAL",
+        inicio=inicio,
+        fim=inicio + timedelta(hours=1),
+        status=StatusDoAgendamento.CONFIRMADO,
+        reservado_ate=datetime.now(UTC),
+        criado_em=datetime.now(UTC),
+        confirmado_em=datetime.now(UTC),
+        motivo_da_alocacao="MATCH_EXATO",
+        lembrete_24h_em=datetime.now(UTC) - timedelta(minutes=5),
+    )
+    session.add(agendamento)
+    await session.commit()
+    return agendamento
+
+
+async def test_o_cancelamento_avisa_o_corretor_depois_do_commit(
+    session,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_corretor,
+) -> None:
+    agendamento = await _agendamento_com_lembrete(session, semear_corretor)
+    espiao = _AgendadorEspiao()
+    entrada = await _gravar(session, "preciso cancelar")
+    outbound = outbound_fake()
+
+    resultado = await _rodar(
+        entrada,
+        classificador_fake(),
+        outbound,
+        resumidor_fake,
+        contador_fake,
+        moderador_fake,
+        agendador_de_avisos=espiao,
+    )
+
+    assert resultado == "agendamento_cancelado"
+    assert espiao.cancelados == [agendamento.id]
+    assert espiao.agendados == []
+    # A linha ja estava CANCELADA quando o job foi enfileirado.
+    assert espiao.status_no_momento == [StatusDoAgendamento.CANCELADO]
+    # E o lead soube na hora: quem fala aqui e o turno, nao o job.
+    assert len(outbound.entregues) == 1
+    assert "cancelei" in outbound.entregues[0]
+
+
+async def test_a_presenca_confirmada_nao_enfileira_nada(
+    session,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+    semear_corretor,
+) -> None:
+    agendamento = await _agendamento_com_lembrete(session, semear_corretor)
+    espiao = _AgendadorEspiao()
+    entrada = await _gravar(session, "sim, estarei la")
+    outbound = outbound_fake()
+
+    resultado = await _rodar(
+        entrada,
+        classificador_fake(),
+        outbound,
+        resumidor_fake,
+        contador_fake,
+        moderador_fake,
+        agendador_de_avisos=espiao,
+    )
+
+    assert resultado == "presenca_confirmada"
+    assert espiao.agendados == [] and espiao.cancelados == []
+    assert len(outbound.entregues) == 1
+    await session.refresh(agendamento)
+    assert agendamento.presenca_confirmada_em is not None
