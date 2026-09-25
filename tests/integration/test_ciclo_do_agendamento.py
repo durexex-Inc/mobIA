@@ -8,14 +8,17 @@ seguinte.
 Arquivo autocontido, no molde de `test_confirmacao_do_agendamento.py`.
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
+from conftest import eventos_de_log  # type: ignore[import-not-found]
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agendamento.cancelamento import avisar_cancelamento
 from mobia.domain.agendamento.ciclo import (
     MOTIVO_INEXISTENTE,
     MOTIVO_ORIGEM_ILEGAL,
@@ -30,6 +33,7 @@ from mobia.domain.agendamento.ciclo import (
     remarcar,
 )
 from mobia.domain.agendamento.janelas import Intervalo, TipoDeCompromisso
+from mobia.domain.agendamento.mensagens import ETIQUETA_DO_CANCELAMENTO
 from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.agendamento.repositorio import Reserva, reservar
 from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
@@ -37,6 +41,9 @@ from mobia.domain.agente.schemas import FormaPagamento, Intencao, Urgencia
 from mobia.domain.context.auditoria import CAUSA_NAO_COMPARECIMENTO, CAUSA_PENALIDADE
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.context.repositorio import registrar_recalculo
+from mobia.domain.notificacao.canais import FalhaDeCanal
+from mobia.domain.notificacao.mensagem import Aviso
+from mobia.infra.db import get_sessionmaker
 
 SP = ZoneInfo("America/Sao_Paulo")
 INICIO = datetime(2026, 9, 26, 15, tzinfo=SP)
@@ -441,3 +448,102 @@ async def test_so_confirmado_pode_ser_realizado_ou_faltado(
         await marcar_nao_comparecimento(session, agendamento_id=agendamento.id, agora=AGORA),
         Recusado,
     )
+
+
+# ---------------------------------------- o aviso de cancelamento ao corretor
+
+
+class _CanalEspiao:
+    """Duble de `CanalDeNotificacaoPort`. Copiado de test_notificacao_envio.py."""
+
+    def __init__(self) -> None:
+        self.recebidas: list[tuple[str, Aviso]] = []
+
+    async def enviar(self, *, destino: str, aviso: Aviso) -> None:
+        self.recebidas.append((destino, aviso))
+
+
+class _CanalQueFalha:
+    async def enviar(self, *, destino: str, aviso: Aviso) -> None:
+        raise FalhaDeCanal("smtp recusou")
+
+
+async def test_o_corretor_e_avisado_do_cancelamento_uma_vez_so(
+    session: AsyncSession, semear_corretor
+) -> None:
+    """RN-12.3: "notifica o corretor"."""
+    corretor = await semear_corretor(email="ana@imob.com.br")
+    agendamento = await _agendamento(session, corretor_id=corretor.id)
+    await cancelar(session, agendamento_id=agendamento.id, agora=AGORA)
+    await session.commit()
+
+    canal = _CanalEspiao()
+    await avisar_cancelamento(
+        get_sessionmaker(), agendamento_id=agendamento.id, email=canal, agora=AGORA
+    )
+    await avisar_cancelamento(
+        get_sessionmaker(), agendamento_id=agendamento.id, email=canal, agora=AGORA
+    )
+
+    assert len(canal.recebidas) == 1
+    destino, aviso = canal.recebidas[0]
+    assert destino == "ana@imob.com.br"
+    assert "cancelada" in aviso.assunto
+    assert aviso.etiqueta == ETIQUETA_DO_CANCELAMENTO
+    assert CONVERSA in aviso.corpo
+
+    linha = await _recarregar(session, agendamento.id)
+    assert linha.corretor_avisado_do_cancelamento_em is not None
+
+
+async def test_a_coluna_do_cancelamento_e_propria_e_nao_a_da_confirmacao(
+    session: AsyncSession, semear_corretor
+) -> None:
+    """Com uma coluna so, o aviso do cancelamento seria suprimido porque o da
+    confirmacao ja tinha acontecido -- e sao dois fatos diferentes."""
+    corretor = await semear_corretor(email="ana@imob.com.br")
+    agendamento = await _agendamento(session, corretor_id=corretor.id)
+    agendamento.corretor_avisado_em = AGORA
+    await session.commit()
+    await cancelar(session, agendamento_id=agendamento.id, agora=AGORA)
+    await session.commit()
+
+    canal = _CanalEspiao()
+    await avisar_cancelamento(
+        get_sessionmaker(), agendamento_id=agendamento.id, email=canal, agora=AGORA
+    )
+
+    assert len(canal.recebidas) == 1
+
+
+async def test_agendamento_que_nao_esta_cancelado_nao_gera_aviso(
+    session: AsyncSession, semear_corretor
+) -> None:
+    corretor = await semear_corretor(email="ana@imob.com.br")
+    agendamento = await _agendamento(session, corretor_id=corretor.id)
+
+    canal = _CanalEspiao()
+    await avisar_cancelamento(
+        get_sessionmaker(), agendamento_id=agendamento.id, email=canal, agora=AGORA
+    )
+
+    assert canal.recebidas == []
+
+
+async def test_falha_de_canal_deixa_a_coluna_nula(
+    session: AsyncSession, semear_corretor, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A coluna nula e o registro de que o aviso nao saiu."""
+    corretor = await semear_corretor(email="ana@imob.com.br")
+    agendamento = await _agendamento(session, corretor_id=corretor.id)
+    await cancelar(session, agendamento_id=agendamento.id, agora=AGORA)
+    await session.commit()
+
+    with caplog.at_level(logging.ERROR):
+        await avisar_cancelamento(
+            get_sessionmaker(), agendamento_id=agendamento.id, email=_CanalQueFalha(), agora=AGORA
+        )
+
+    assert eventos_de_log(caplog, "agendamento.aviso_de_cancelamento_falhou")
+    linha = await _recarregar(session, agendamento.id)
+    assert linha.corretor_avisado_do_cancelamento_em is None
