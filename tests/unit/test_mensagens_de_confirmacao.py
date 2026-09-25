@@ -106,3 +106,19 @@ def test_aviso_de_reuniao_remota_nao_tem_linha_de_imovel() -> None:
     )
     assert "Reunião remota" in aviso.assunto
     assert "Imóvel" not in aviso.corpo
+
+
+def test_aviso_de_visita_sem_imovel_nao_tem_linha_de_imovel_nem_none() -> None:
+    aviso = aviso_ao_corretor(
+        tipo="VISITA_PRESENCIAL",
+        inicio=QUINTA_15H,
+        corretor="Paula",
+        imovel=None,
+        channel="whatsapp",
+        conversation_key="5511911111111",
+        link="https://painel/x",
+    )
+    assert "Visita" in aviso.assunto
+    assert "Imóvel" not in aviso.corpo
+    assert "None" not in aviso.corpo
+    assert "quinta-feira, 27 de agosto, às 15h" in aviso.corpo

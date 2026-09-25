@@ -1,6 +1,7 @@
 import base64
 import logging
 import signal
+import uuid
 
 import pytest
 
@@ -10,6 +11,7 @@ from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.outbound.roteador import RoteadorPorCanal
 from mobia.domain.outbound.web import WebIndicador, WebOutbound
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
+from mobia.workers.jobs import avisar_confirmacao as job_da_confirmacao
 from mobia.workers.main import startup
 
 
@@ -107,6 +109,36 @@ async def test_startup_liga_o_calendario_google_com_credenciais_completas(
     await startup(ctx)
 
     assert isinstance(ctx["calendario"], GoogleCalendar)
+
+
+async def test_o_job_da_confirmacao_le_do_ctx_as_chaves_que_o_startup_grava(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """TEC-170. O job le quatro chaves do `ctx`, e uma grafada diferente do
+    `startup` so levantaria `KeyError` no primeiro agendamento confirmado.
+    Aqui o `ctx` e o que o `startup` de verdade montou, e a funcao de dominio
+    e trocada por um espiao so para ver o que chegou nela."""
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "mobia@localhost")
+    ctx: dict = {"redis": object()}
+    await startup(ctx)
+
+    recebido: dict = {}
+
+    async def _espiao(session_factory, **portas) -> None:
+        recebido.update(portas, session_factory=session_factory)
+
+    monkeypatch.setattr(job_da_confirmacao, "_avisar_confirmacao", _espiao)
+    agendamento_id = uuid.uuid4()
+
+    assert await job_da_confirmacao.avisar_confirmacao(ctx, str(agendamento_id)) == "avisado"
+
+    assert recebido["agendamento_id"] == agendamento_id
+    assert recebido["session_factory"] is ctx["session_factory"]
+    assert recebido["outbound"] is ctx["outbound"]
+    assert recebido["email"] is ctx["email_ao_corretor"]
+    assert recebido["calendario"] is ctx["calendario"]
 
 
 async def test_startup_recusa_subir_com_refresh_token_sem_client_secret(
