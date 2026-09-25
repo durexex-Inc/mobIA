@@ -699,13 +699,13 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   ambiguidade persistente ela pergunta menos vezes que essa contagem sugere. O
   rebaixamento em si não depende do marcador, então a acurácia efetiva
   continua sendo exatamente o que produção rotearia.
-- **O filtro interno de `evals.yml` tem um buraco.** `montagem.py` mora em
-  `src/mobia/domain/context/`, que não casa com o regex
+- **O filtro interno de `evals.yml` tinha um buraco, fechado na TEC-204.**
+  `montagem.py` mora em `src/mobia/domain/context/`, que não casava com o regex
   `^(src/mobia/domain/agente/|src/mobia/evals/|evals/)` do passo "Decidir se
-  o prompt mudou". Uma mudança ali altera o que o modelo vê — o contexto que
-  ele recebe — sem tocar em nenhum prompt de agente, e passa livre sem rodar
-  o eval. Cobrir isso exigiria rodar o gate em todo PR, com o custo e o
-  flake que a decisão do limiar amarelo rejeitou.
+  o prompt mudou": uma mudança ali alterava o que o modelo vê sem rodar o
+  eval. Desde a TEC-204 o filtro casa também `src/mobia/domain/context/` e
+  `src/mobia/infra/moderacao.py`, porque é ali que mora a delimitação do texto
+  do lead que a suíte de injeção (`evals/test_injecao.py`) mede.
 - **`src/mobia/app/config.py` também está fora do filtro, e esse buraco é
   maior.** É lá que mora `modelo_agente` (`"claude-opus-5"`), e trocar o modelo
   muda mais do que um ajuste de prompt muda: um PR de uma linha pode substituir
@@ -715,8 +715,7 @@ esses dois casos separados (`acertos_rebaixados`, `acertos_recuperados`).
   alheios ao agente, então incluí-lo faria o gate pago rodar à toa em PRs que
   não têm nada a ver com o modelo. A cobertura de verdade seria mover
   `modelo_agente` para um arquivo que só o agente use — não existe ainda. Se um
-  dia o gate não rodar quando deveria, este e o `montagem.py` são os dois
-  lugares a olhar primeiro.
+  dia o gate não rodar quando deveria, este é o lugar a olhar primeiro.
 - **Corpus sintético não é tráfego real.** Cento e quarenta e seis turnos
   escritos por quem conhece o sistema carregam o viés de quem os escreveu, e
   nenhuma anotação cuidadosa remove isso. O número que sair daqui é um piso
