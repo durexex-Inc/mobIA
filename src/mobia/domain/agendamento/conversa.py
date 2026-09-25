@@ -77,6 +77,18 @@ HORIZONTE = timedelta(hours=72)
 # nenhuma fala justifica.
 TIPO = TipoDeCompromisso.VISITA_PRESENCIAL
 
+# O kind mora no modulo que possui o comportamento, como manda a docstring de
+# `outbound/kinds.py`. Um so para as quatro variantes de texto: a
+# `UNIQUE (message_id, kind)` de `outbound_dispatches` e por mensagem, e o
+# agendamento manda no maximo um texto por turno -- kinds separados por
+# variante nao protegeriam nada e multiplicariam o vocabulario.
+KIND_DO_AGENDAMENTO = "agendamento"
+
+# Sem ele a telemetria deste caminho ficaria rotulada "moderacao", que e o
+# default de `_entregar_texto_fixo` e o defeito que a docstring daquela
+# funcao ja registra.
+SUBAGENTE_AGENDAMENTO = "agendamento"
+
 
 @dataclass(frozen=True)
 class Ofereceu:

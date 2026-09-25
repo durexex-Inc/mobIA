@@ -14,6 +14,7 @@ from typing import Any
 from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFake
 from sqlalchemy import select
 
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.agente.schemas import Extracao
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.repositorio import gravar_resumo
@@ -69,6 +70,7 @@ def _ctx(redis_pool: Any, classificador: Any, whatsapp: Any) -> dict[str, Any]:
         "contador": ContadorFake(),
         "moderador": ModeradorFake(),
         "agendador": AgendadorNoop(),
+        "agendador_de_confirmacao": AgendadorDeConfirmacaoNoop(),
         "indicadores": {CANAL_WHATSAPP: IndicadorNoop(), CANAL_WEB: IndicadorNoop()},
     }
 

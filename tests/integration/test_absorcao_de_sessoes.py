@@ -7,6 +7,7 @@ from typing import Any
 from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFake
 from sqlalchemy import select
 
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.agente.investidor import Horizonte, PerfilInvestidor, RetornoEsperadoTipo
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.models import LeadQualification
@@ -459,6 +460,7 @@ async def test_optout_no_par_web_nao_silencia_o_turno_do_whatsapp(session, redis
         "contador": ContadorFake(),
         "moderador": ModeradorFake(),
         "agendador": AgendadorNoop(),
+        "agendador_de_confirmacao": AgendadorDeConfirmacaoNoop(),
         "indicadores": {CANAL_WHATSAPP: IndicadorNoop(), CANAL_WEB: IndicadorNoop()},
     }
 

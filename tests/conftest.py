@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mobia.app.config import Settings, get_settings
 from mobia.app.logging import configure_logging
 from mobia.app.main import create_app
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import Urgencia
 from mobia.domain.catalogo.models import Imovel
@@ -640,6 +641,7 @@ def rodar_turno():
             outbound=outbound,
             moderador=moderador if moderador is not None else ModeradorFake(),
             agendador=agendador if agendador is not None else AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     return _rodar

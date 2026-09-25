@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.agente.ferramenta_de_busca import porta_de_busca
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.recomendacao import DescartePorBairro
@@ -1302,6 +1303,7 @@ async def test_retentativa_de_apresentacao_parcial_mantem_a_lista_do_lead(
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     primeira = _RetentavelNaSegunda(get_sessionmaker())
@@ -1413,6 +1415,7 @@ async def test_retentativa_com_reagir_falhando_mantem_as_linhas_pelo_outro_camin
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     primeira = _RetentavelNaSegunda(get_sessionmaker())
@@ -1492,6 +1495,7 @@ async def test_ficha_recusada_some_mesmo_quando_o_turno_morre_depois(
             outbound=_RecusaAPrimeiraEFalhaNaTerceira(get_sessionmaker()),
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     assert classificador.resultado is not None
@@ -1789,6 +1793,7 @@ async def test_continuacao_entrega_o_que_restou_quando_uma_linha_do_lote_sumiu(
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
@@ -1876,6 +1881,7 @@ async def test_quando_nada_saiu_a_retentativa_roda_o_turno_inteiro(
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     primeiro = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
@@ -1952,6 +1958,7 @@ async def test_continuacao_usa_o_kind_persistido_e_nao_a_posicao(
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
@@ -2041,6 +2048,7 @@ async def test_continuacao_grava_so_as_legendas_que_ela_entregou(
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
@@ -2148,6 +2156,7 @@ async def test_janela_fechada_na_continuacao_devolve_expirado(
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
@@ -2229,6 +2238,7 @@ async def test_continuacao_le_o_lote_inteiro_mesmo_com_linha_ja_reagida(
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     classificador = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
@@ -2350,6 +2360,7 @@ async def test_continuacao_concilia_com_o_carimbo_mais_recente_do_message_id(
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     primeiro = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})
@@ -2459,6 +2470,7 @@ async def test_a_continuacao_sobrevive_a_liberacao_em_grupo_da_tec_273(
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     classificador_1 = _ClassificadorQueBuscaESemReacao({"operacao": "VENDA", "quartos_min": 3})

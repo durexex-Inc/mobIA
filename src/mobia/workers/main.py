@@ -5,6 +5,7 @@ from arq import cron, func
 
 from mobia.app.config import ConfiguracaoInsegura, get_settings
 from mobia.app.logging import configure_logging
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoArq
 from mobia.domain.agendamento.calendario import CalendarioNoop, GoogleCalendar
 from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
@@ -164,6 +165,9 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["moderador"] = ModeradorAnthropic()
     ctx["redator"] = RedatorAnthropic()
     ctx["agendador"] = AgendadorArq(ctx["redis"])
+    # TEC-371. O turno confirma agendamento e enfileira os tres avisos da
+    # RN-12.1 depois do commit. Mesmo `ctx["redis"]` dos outros dois.
+    ctx["agendador_de_confirmacao"] = AgendadorDeConfirmacaoArq(ctx["redis"])
     # Mesmo `ctx["redis"]` do `agendador` acima -- ver o docstring do
     # `startup` no topo do modulo: o ARQ ja o gravou antes deste hook, e um
     # segundo pool seria redundante.
