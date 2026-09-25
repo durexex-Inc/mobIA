@@ -8,19 +8,25 @@ pergunta, nesta ordem:
 
   1. ha lembrete de 24h pendente? -> resposta ao lembrete (TEC-372)
   2. ha linha `RESERVADO` desta conversa? -> turno da confirmacao
-  3. ha janelas propostas vivas? -> turno da escolha
-  4. o lead pediu horario? -> turno da oferta
+  3. ha oferta de lista de espera de pe? -> aceite ou recusa (TEC-169)
+  4. ha janelas propostas vivas? -> turno da escolha
+  5. o lead pediu horario? -> turno da oferta
 
 **O lembrete vem primeiro porque e o contexto mais especifico**: um lead com
 visita marcada para amanha que escreve "cancelar" esta falando dela, e nao
-pedindo horario novo. As etapas 2 e 3 so existem quando ha uma conversa de
+pedindo horario novo. As etapas de 2 a 4 so existem quando ha uma conversa de
 agendamento em curso, que por sua vez so existe se o lead acabou de pedir.
 
-Entre as tres de baixo, a reserva vem na frente de proposito: depois de
-reservar, as propostas sao apagadas (`propostas.py::apagar`), entao os dois
-estados nunca coexistem -- mas a reserva VENCIDA precisa ser vista antes,
-porque e ela que transforma um "sim" tardio em oferta nova em vez de em
-silencio.
+Entre as de baixo, a reserva vem na frente de proposito: depois de reservar,
+as propostas sao apagadas (`propostas.py::apagar`), entao os dois estados
+nunca coexistem -- mas a reserva VENCIDA precisa ser vista antes, porque e ela
+que transforma um "sim" tardio em oferta nova em vez de em silencio.
+
+**A espera fica entre a reserva e as propostas** (D8 da TEC-169), e nao
+depois: ela e as propostas sao mutuamente exclusivas por construcao -- so se
+oferece fila quando NAO houve janela, e sem janela nao ha proposta gravada.
+Poe-la depois ordenaria duas coisas que nunca coexistem, e sugeriria ao
+proximo leitor que coexistem.
 
 **Nos dois ultimos, texto que nao case nada cai fora** (`NadaAFazer`) e o
 turno segue normal. E isso que limita o custo de um falso positivo do
@@ -64,6 +70,15 @@ from mobia.domain.agendamento.deteccao import (
     respondeu_ao_lembrete,
 )
 from mobia.domain.agendamento.escolha import Escolhida, escolher
+from mobia.domain.agendamento.espera import (
+    HORIZONTE_ESTENDIDO,
+    TEXTO_DA_ESPERA_ACEITA,
+    TEXTO_DA_LISTA_DE_ESPERA,
+)
+from mobia.domain.agendamento.fila import aceitar as aceitar_espera
+from mobia.domain.agendamento.fila import ler_viva as ler_espera_viva
+from mobia.domain.agendamento.fila import oferecer as oferecer_espera
+from mobia.domain.agendamento.fila import recusar as recusar_espera
 from mobia.domain.agendamento.janelas import (
     AgendaDoCorretor,
     ContadorDeVisitas,
@@ -91,13 +106,21 @@ from mobia.domain.agendamento.repositorio import Confirmado, Reserva, reservar_o
 from mobia.domain.agendamento.repositorio import confirmar as confirmar_reserva
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import ReacaoLead
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.corretores.models import Corretor
 from mobia.domain.corretores.repositorio import listar_corretores
+from mobia.domain.handoff.repositorio import registrar_handoff
+from mobia.domain.handoff.vocabulario import Gatilho
 
 # RN-11.5. O horizonte da busca de janela, e o mesmo numero que define o que
-# conta como "sem disponibilidade": nao achar nada aqui e onde a TEC-169
-# comeca. Esta card so cai fora (D8).
+# conta como "sem disponibilidade": nao achar nada aqui e onde a lista de
+# espera comeca. Desde a TEC-169 esse caminho tem desfecho -- `_oferecer`
+# oferece a fila em vez de cair fora.
+#
+# **Nao confundir com `espera.py::HORIZONTE_ESTENDIDO`**: aquele so existe
+# depois de o lead recusar a fila e pedir datas mais para frente, e nao muda o
+# que a RN-11.5 considera indisponibilidade.
 HORIZONTE = timedelta(hours=72)
 
 # O unico tipo que a conversa marca. Reuniao remota nao tem vocabulario
@@ -191,11 +214,52 @@ class Cancelou:
 
 
 @dataclass(frozen=True)
+class OfereceuEspera:
+    """Nao ha janela nas proximas 72 horas, e a lista de espera foi oferecida.
+
+    TEC-169, RN-11.5. Ate esta card o caminho devolvia `NadaAFazer` e o turno
+    normal respondia com prosa generica -- a Emenda E-01 da RN-11.5 chama isso
+    pelo nome: "nada registra que ele pediu".
+
+    Carrega o id da linha porque o proximo turno precisa dela para aceitar ou
+    recusar, e o texto porque a oferta nomeia as DUAS saidas na mesma frase
+    (D5): entrar na fila, ou ver datas mais para frente.
+    """
+
+    texto: str
+    espera_id: uuid.UUID
+
+
+@dataclass(frozen=True)
+class AceitouEspera:
+    """O lead entrou na fila, e o handoff dele existe na mesma transacao.
+
+    `handoff_id` nao e enfeite: quem chama commita, e e o commit que torna o
+    par fila-mais-handoff atomico. Sem ele nao ha como um chamador conferir
+    que as duas coisas sairam juntas.
+    """
+
+    texto: str
+    espera_id: uuid.UUID
+    handoff_id: uuid.UUID
+
+
+@dataclass(frozen=True)
 class NadaAFazer:
     pass
 
 
-Resultado = Ofereceu | Reservou | Confirmou | PresencaConfirmada | Cancelou | Perguntou | NadaAFazer
+Resultado = (
+    Ofereceu
+    | Reservou
+    | Confirmou
+    | PresencaConfirmada
+    | Cancelou
+    | Perguntou
+    | OfereceuEspera
+    | AceitouEspera
+    | NadaAFazer
+)
 
 
 async def _reserva_pendente(
@@ -351,14 +415,36 @@ async def _oferecer(
     texto: str,
     molde: str,
     remarcando_id: uuid.UUID | None = None,
+    horizonte: timedelta = HORIZONTE,
+    oferecer_fila: bool = True,
 ) -> Resultado:
     """Uma rodada nova de janelas, gravada e dita ao lead.
 
-    Lista vazia devolve `NadaAFazer`, e o turno segue normal. E a D8: nao ha
-    texto verdadeiro para "sem horario nas proximas 72 horas" que esta card
-    possa dizer -- prometer que um corretor vai propor horario, ou que a
-    gente avisa quando abrir, sao as duas frases que a TEC-174 e a TEC-286
-    proibiram. Quem fecha a lacuna e a lista de espera da TEC-169.
+    **Lista vazia oferece a lista de espera** (TEC-169, RN-11.5), e este e o
+    unico sitio onde a condicao da regra e avaliada -- e o que faz os seis
+    chamadores herdarem o comportamento sem cada um lembrar dele. `HORIZONTE`
+    ja e as 72 horas da regra, e `janelas.py::propor_janelas` declara que
+    "`ate` vem de quem chama".
+
+    Ate a TEC-169 aqui se devolvia `NadaAFazer` e o turno normal respondia com
+    prosa generica, porque nao havia texto verdadeiro a dizer: prometer que um
+    corretor vai propor horario, ou que a gente avisa quando abrir, sao as
+    duas frases que a TEC-174 e a TEC-286 proibiram. O que mudou nao foi a
+    proibicao -- foi passar a existir a fila que torna a primeira metade
+    verdadeira, e `TEXTO_DA_LISTA_DE_ESPERA` afirma so ela.
+
+    **Quem esta remarcando nao entra na fila** (D2): com `remarcando_id`, a
+    lista vazia continua devolvendo `NadaAFazer`. O agendamento original so
+    vira `REAGENDADO` na escolha (D4 da TEC-372), entao sem janela ele
+    continua `CONFIRMADO` -- e dizer a esse lead que ele esta sem horario
+    seria falso.
+
+    `horizonte` e `oferecer_fila` andam juntos e tem um chamador so: a recusa
+    da fila (D6), que busca em `HORIZONTE_ESTENDIDO` e passa
+    `oferecer_fila=False`. **O segundo nao e redundante com o primeiro.** Sem
+    ele, um lead que recusou a fila e tampouco tem janela em catorze dias
+    receberia a oferta de novo, no turno seguinte ao de tera recusado -- um
+    laco que insiste no que ele acabou de dispensar.
     """
     corretores = await listar_corretores(session, apenas_ativos=True)
     if not corretores:
@@ -384,16 +470,25 @@ async def _oferecer(
         agenda=agenda,
         visitas=visitas,
         agora=agora,
-        ate=agora + HORIZONTE,
+        ate=agora + horizonte,
         tipo=TIPO,
+    )
+    imovel_id = await _imovel_de_interesse(
+        session, channel=channel, conversation_key=conversation_key
     )
     if not janelas:
         # A rodada velha nao pode sobreviver a uma oferta que nao houve.
         await apagar_propostas(session, channel=channel, conversation_key=conversation_key)
-        return NadaAFazer()
-    imovel_id = await _imovel_de_interesse(
-        session, channel=channel, conversation_key=conversation_key
-    )
+        if remarcando_id is not None or not oferecer_fila:
+            return NadaAFazer()
+        espera = await oferecer_espera(
+            session,
+            channel=channel,
+            conversation_key=conversation_key,
+            imovel_id=imovel_id,
+            agora=agora,
+        )
+        return OfereceuEspera(texto=TEXTO_DA_LISTA_DE_ESPERA, espera_id=espera.id)
     propostas = await gravar_propostas(
         session,
         channel=channel,
@@ -714,6 +809,58 @@ async def atender(
                 molde=TEXTO_DE_OUTRO_HORARIO,
             )
         return NadaAFazer()
+
+    # Etapa 3: a oferta de lista de espera de pe (TEC-169, RN-11.5). Entre a
+    # reserva e as propostas pela razao que a docstring do modulo guarda -- as
+    # duas nunca coexistem, e ordena-las sugeriria que sim.
+    #
+    # `confirmou`/`recusou` sao reusados, e AQUI isso e seguro, ao contrario
+    # do que a D2 da TEC-372 decidiu para o lembrete. La o "nao" ambiguo
+    # escolhia entre derrubar uma visita marcada e remarca-la, sem tela para
+    # desfazer; aqui os dois desfechos sao baratos e reversiveis -- entrar
+    # numa fila, ou ver mais horarios --, e quem caiu no lado errado corrige
+    # na fala seguinte.
+    espera = await ler_espera_viva(session, channel=channel, conversation_key=conversation_key)
+    if espera is not None and espera.aceita_em is None:
+        if confirmou(texto):
+            handoff = await registrar_handoff(
+                session,
+                channel=channel,
+                conversation_key=conversation_key,
+                gatilho=Gatilho.SEM_DISPONIBILIDADE,
+                ator=ATOR_AGENTE,
+            )
+            await aceitar_espera(session, espera_id=espera.id, handoff_id=handoff.id, agora=agora)
+            return AceitouEspera(
+                texto=TEXTO_DA_ESPERA_ACEITA, espera_id=espera.id, handoff_id=handoff.id
+            )
+        if recusou(texto):
+            await recusar_espera(session, espera_id=espera.id, agora=agora)
+            # Sem `oferecer_fila`, a ausencia de janela em catorze dias
+            # devolveria a oferta que ele acabou de recusar.
+            return await _oferecer(
+                session,
+                channel=channel,
+                conversation_key=conversation_key,
+                estado=estado,
+                agora=agora,
+                agenda=agenda,
+                visitas=visitas,
+                texto=texto,
+                molde=TEXTO_DE_OUTRO_HORARIO,
+                horizonte=HORIZONTE_ESTENDIDO,
+                oferecer_fila=False,
+            )
+        # Nem sim nem nao: NAO intercepta, e segue a cascata. E o que faz o
+        # lead que INSISTE ("quero marcar visita", com a oferta de pe)
+        # receber a oferta de novo em vez de prosa generica -- a etapa 5
+        # chama `_oferecer`, que nao acha janela e cai em `oferecer_espera`,
+        # que por sua vez devolve a linha viva sem criar outra.
+        #
+        # Interceptar com `NadaAFazer` aqui seria devolver ao lead exatamente
+        # o silencio que esta card existe para tirar. Quem fala de outra coisa
+        # ("quanto e o condominio?") cai fora na etapa 5, onde `quer_agendar`
+        # e falso, e a oferta continua de pe para o turno seguinte.
 
     propostas = await ler_propostas(
         session, channel=channel, conversation_key=conversation_key, agora=agora
