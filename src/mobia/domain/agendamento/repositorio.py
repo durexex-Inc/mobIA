@@ -135,7 +135,7 @@ async def reservar(
     **Nao reconta capacidade.** A exclusao do banco so recusa sobreposicao de
     horario; duas chamadas concorrentes reservando slots DIFERENTES do mesmo
     corretor no mesmo dia podem ambas suceder e passar de `capacidade_diaria`
-    -- nada aqui relê `visitas_por_dia` nem trava a linha do corretor antes de
+    -- nada aqui rele `visitas_por_dia` nem trava a linha do corretor antes de
     inserir. Capacidade e conferida so na hora de propor janela (`alocar`,
     `reservar_ou_alternativas`); na hora de gravar, ela e so aspiracional
     (Important 2 da revisao final da TEC-166).
@@ -296,12 +296,11 @@ async def reservar_ou_alternativas(
     sobre um slot dele, e realocar no meio da disputa trocaria o corretor sem
     que nada na alocacao tivesse mudado. **Mas respeitam a capacidade dele**
     (Important 1 da revisao final): para `VISITA_PRESENCIAL`, todo dia local
-    entre `agora` e `ate` em que `visitas` ja contar `capacidade_diaria` ou
-    mais fica de fora das alternativas, mesmo sem nenhum compromisso que
-    ocupe aquele horario especifico -- senao um terceiro lead furaria a
-    capacidade-2 pegando o unico slot que a exclusao do banco nao cobria.
-    Para `REUNIAO_REMOTA` o contador nem e chamado, o mesmo que D5 decide
-    para `janelas_alocadas`.
+    em que `visitas` ja contar `capacidade_diaria` ou mais fica de fora das
+    alternativas, mesmo sem nenhum compromisso que ocupe aquele horario
+    especifico -- a exclusao do banco so impede sobreposicao de horario, ela
+    nao impede excesso de reservas. Para `REUNIAO_REMOTA` o contador nem e
+    chamado, o mesmo que D5 decide para `janelas_alocadas`.
     """
     resultado = await reservar(
         session,

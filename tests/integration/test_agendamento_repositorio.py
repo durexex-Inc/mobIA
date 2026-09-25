@@ -279,10 +279,10 @@ async def test_alternativas_excluem_dia_com_capacidade_esgotada(
     """Important 1 da revisao final: as alternativas tambem respeitam a capacidade.
 
     Capacidade 1, e a quinta ja tem uma visita CONFIRMADA as 9h. Um segundo
-    lead disputa as 11h da mesma quinta e perde. Sem a correcao, as
-    alternativas ainda ofereceriam a janela livre das 10h aquela quinta --
-    furando a capacidade-1 do dia, que e exatamente o que a card promete
-    respeitar.
+    lead reserva as 11h da mesma quinta, e um terceiro disputa esse mesmo
+    horario e perde. Sem a correcao, as alternativas do terceiro ainda
+    ofereceriam a janela livre das 10h aquela quinta -- furando a
+    capacidade-1 do dia, que e exatamente o que a card promete respeitar.
     """
     corretor = await semear_corretor(email="paulo@teste.com", capacidade_diaria=1)
     confirmada = await _reservar(session, corretor.id, _qui(9))
