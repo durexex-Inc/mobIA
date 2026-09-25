@@ -342,10 +342,12 @@ async def sweep_followups(
     o QUENTE para em quatro, entao o maximo coincide com o esgotamento. A
     TEC-184 herdou esta guarda de fato -- editou este mesmo laco e manteve a
     chamada --, mas nao por um mecanismo de linguagem como o de
-    `GuardedOutbound`, so por tocar o mesmo codigo. A TEC-171 nao herda nada:
-    sera outro job sobre outra tabela e tera de lembrar de chamar o predicado;
-    o que ganha e so a facilidade de acha-lo em `outbound/` (D8). Nenhuma das
-    duas torna a guarda alcancavel -- isso exige um segundo produtor que
+    `GuardedOutbound`, so por tocar o mesmo codigo. A TEC-171 nao herdou
+    nada: ela e outro job sobre outra tabela (`sweep_lembretes`) e teve de
+    lembrar de chamar o predicado por conta propria -- o que ganhou foi so a
+    facilidade de acha-lo em `outbound/` (D8), e ela chama
+    `horario_permite_envio`, nao este maximo. Nenhuma das duas torna a guarda
+    alcancavel -- isso exige um segundo produtor que
     componha a propria contagem em `ja_enviadas` (lacuna 4 do desenho).
 
     O retorno continua sendo o numero de linhas GRAVADAS, e nao o de mensagens

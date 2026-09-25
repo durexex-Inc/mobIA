@@ -46,7 +46,9 @@ Cada lembrete tem uma antecedência e um marco seguinte:
 
 **E há uma terceira condição, que é o caso do agendamento confirmado em cima da hora:** `confirmado_em < inicio - antecedencia`. Um agendamento confirmado três horas antes da visita tem `now() >= inicio - 24h` verdadeiro no instante em que nasce — sem esta condição, o lead receberia a confirmação da TEC-170 e, minutos depois, um "lembrete de 24 horas". **Um lembrete cujo momento já tinha passado quando o agendamento foi confirmado nunca existiu**: a mensagem de confirmação já levou data, hora, endereço e corretor, que é o conteúdo que o lembrete repetiria.
 
-A consulta, então, seleciona `status = 'CONFIRMADO'` (é ele que exclui o cancelado da TEC-172 e o `EXPIRADO` de hoje), a coluna do lembrete ainda nula, e as três condições de tempo. `ORDER BY inicio`, `LIMIT`, e `FOR UPDATE SKIP LOCKED` pela razão de sempre: duas varreduras concorrentes não pegam a mesma linha.
+**A consulta é PRÉ-FILTRO, e a regra acima é a única fonte.** O SQL seleciona `status = 'CONFIRMADO'` (é ele que exclui o cancelado da TEC-172 e o `EXPIRADO` de hoje), `confirmado_em IS NOT NULL`, pelo menos uma das duas colunas nula, e a janela grosseira `agora < inicio <= agora + 24h` — derivada da maior antecedência, não escrita à mão. Quem decide se um lembrete é devido é `lembrete_devido`, em Python. Escrever as três condições de tempo uma segunda vez em SQL seria o defeito de duas fontes da TEC-146.
+
+**E sem `FOR UPDATE SKIP LOCKED`, ao contrário de `sweep_crm_pendentes`** (decidido na implementação, contra a primeira versão desta D2). Lá o claim é uma escrita na mesma linha que o `SELECT` trava, e o lock morre no commit antes do enqueue; aqui o que vem depois da leitura é um POST para a Meta, e segurar lock de linha durante chamada de rede é a contenção que este repo já pagou caro. Quem impede duas varreduras concorrentes de mandarem o mesmo lembrete é a `UNIQUE (message_id, kind)` de `outbound_dispatches`: a segunda recebe `False` de `send` — o mesmo desfecho de uma guarda que recusou — e grava a coluna sem mandar nada.
 
 ## D3 — Idempotência em duas camadas
 
@@ -84,6 +86,8 @@ Fora da janela de serviço da Meta só sai template aprovado — é a mesma regr
 `followup/template.py` e `sweep_followups.py` passam a importar do lar novo. A função não muda — nem assinatura, nem corpo, nem docstring.
 
 **O catálogo de templates do lembrete é próprio**, em `domain/agendamento/lembretes.py`, e não uma categoria nova no `TEMPLATES` do follow-up: as três categorias de lá (`queda_de_preco`, `imovel_novo`, `convite`) são contextos de reengajamento, e `categoria_da_novidade` escolhe entre elas a partir do par `(ficha, queda)` que um lembrete não tem. Dois templates, `lembrete_visita_24h` e `lembrete_visita_2h`, e a aprovação continua vindo de `Settings.templates_aprovados` — o mesmo fato externo (RT-03), lido do mesmo lugar.
+
+**E a janela só vale no WhatsApp.** Quem o diz é `domain/outbound/web.py`: o canal web não tem janela, e nele não existe template a mandar. Aplicar a regra de um canal ao outro faria o lembrete de um lead do site virar um template que aquele adaptador não sabe renderizar. Decidido na implementação; o lembrete não filtra por canal como `sweep_followups` filtra, pela mesma razão que a TEC-170 não filtra — o agendamento é um compromisso que o lead marcou, não reengajamento de quem esfriou.
 
 Os três desfechos, na ordem:
 
@@ -127,8 +131,8 @@ Nenhum dos seis diz que o corretor foi avisado ou está a caminho — a mesma re
 O molde é `sweep_followups`, com as guardas na mesma ordem e pelo mesmo motivo (puro antes de I/O):
 
 1. Guarda de horário — uma vez, no topo, antes da consulta (D5).
-2. A consulta da D2, com `FOR UPDATE SKIP LOCKED`.
-3. Por linha: lê a âncora (última mensagem do lead), decide o canal pela janela de 24h (D4), monta o texto ou o template (D6), envia por `outbound.send` com o `kind` da D3, grava a coluna conforme a tabela da D3.
+2. O pré-filtro da D2, em sessão própria e curta, que fecha antes de qualquer chamada de rede.
+3. Por linha: `lembrete_devido` decide qual dos dois lembretes é devido (no máximo um — as duas faixas são disjuntas por construção), lê a âncora (última mensagem do lead), decide o canal pela janela de 24h (D4), monta o texto ou o template (D6), envia por `outbound.send` com o `kind` da D3, grava a coluna conforme a tabela da D3.
 
 `GuardedOutbound` já carrega as guardas de opt-out (TEC-182) e de atendimento humano (TEC-179) — o lembrete passa por elas porque o `outbound` do `ctx` é o `RoteadorPorCanal`, o mesmo que `sweep_followups` usa. Não há checagem duplicada aqui.
 
