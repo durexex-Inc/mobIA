@@ -4,11 +4,12 @@
 sao aritmetica sobre ele, sem dormir.
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from mobia.domain.agendamento.janelas import (
     Intervalo,
@@ -25,6 +26,7 @@ from mobia.domain.agendamento.repositorio import (
     Reserva,
     confirmar,
     reservar,
+    reservar_ou_alternativas,
 )
 
 SP = ZoneInfo("America/Sao_Paulo")
@@ -209,3 +211,62 @@ async def test_ocupados_devolve_o_que_sobrepoe_e_nao_so_o_contido(
     agenda = AgendaPostgres(session_factory)
     meio = datetime(2026, 8, 27, 10, 30, tzinfo=SP)
     assert await agenda.ocupados(corretor.id, meio, meio + timedelta(hours=2)) == [_qui(10)]
+
+
+async def test_dois_leads_disputam_o_mesmo_horario(
+    session, session_factory, semear_corretor
+) -> None:
+    """O primeiro cenario da card: um reserva, o outro recebe alternativas.
+
+    Duas sessoes reais, cada uma commitando a sua -- a segunda gravacao espera
+    a primeira na exclusao do banco e e recusada quando ela commita. Nenhuma
+    das duas ve erro tecnico.
+    """
+    corretor = await semear_corretor(email="paulo@teste.com")
+    agenda = AgendaPostgres(session_factory)
+    ate = datetime(2026, 8, 29, 19, 0, tzinfo=SP)
+
+    async def disputar(chave: str) -> Reserva | list[Intervalo]:
+        async with session_factory() as propria:
+            resultado = await reservar_ou_alternativas(
+                propria,
+                corretor=corretor,
+                agenda=agenda,
+                channel="whatsapp",
+                conversation_key=chave,
+                janela=_qui(10),
+                tipo=VISITA,
+                imovel_id=None,
+                agora=AGORA,
+                ate=ate,
+            )
+            await propria.commit()
+            return resultado
+
+    resultados = await asyncio.gather(disputar("5511911111111"), disputar("5511922222222"))
+
+    reservas = [r for r in resultados if isinstance(r, Reserva)]
+    alternativas = [r for r in resultados if isinstance(r, list)]
+    assert len(reservas) == 1
+    assert len(alternativas) == 1
+    assert alternativas[0]
+    assert not any(janela.sobrepoe(_qui(10)) for janela in alternativas[0])
+    total = await session.scalar(text("SELECT count(*) FROM agendamentos"))
+    assert total == 1
+
+
+async def test_sem_disputa_devolve_a_reserva(session, session_factory, semear_corretor) -> None:
+    corretor = await semear_corretor(email="paulo@teste.com")
+    resultado = await reservar_ou_alternativas(
+        session,
+        corretor=corretor,
+        agenda=AgendaPostgres(session_factory),
+        channel="whatsapp",
+        conversation_key="5511911111111",
+        janela=_qui(10),
+        tipo=VISITA,
+        imovel_id=None,
+        agora=AGORA,
+        ate=datetime(2026, 8, 29, 19, 0, tzinfo=SP),
+    )
+    assert isinstance(resultado, Reserva)

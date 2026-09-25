@@ -178,8 +178,8 @@ class AgendaDoCorretor(Protocol):
 
     Devolve cada intervalo que se sobrepoe com [de, ate], nao apenas os
     contidos nela -- um compromisso que comecou antes de `de` e termina
-    depois ainda bloqueia. A implementacao real nasce com a tabela de
-    agendamentos da TEC-168. Ate la o unico implementador e o fake dos testes.
+    depois ainda bloqueia. A implementacao real e `AgendaPostgres`
+    (`repositorio.py`, TEC-168); os testes tambem tem o proprio fake.
     """
 
     async def ocupados(
@@ -195,7 +195,7 @@ async def propor_janelas_do_corretor(
     ate: datetime,
     tipo: TipoDeCompromisso,
 ) -> list[Intervalo]:
-    """A costura entre a agenda e o motor, no lugar em que a TEC-168 a usara."""
+    """A costura entre a agenda e o motor, no lugar em que a TEC-168 a usa."""
     ocupados = await agenda.ocupados(corretor.id, agora, ate)
     return propor_janelas(
         agora=agora,

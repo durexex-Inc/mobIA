@@ -14,12 +14,18 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from mobia.domain.agendamento.janelas import Intervalo, TipoDeCompromisso
+from mobia.domain.agendamento.janelas import (
+    AgendaDoCorretor,
+    Intervalo,
+    TipoDeCompromisso,
+    propor_janelas_do_corretor,
+)
 from mobia.domain.agendamento.models import (
     EXCLUSAO_DE_SOBREPOSICAO,
     Agendamento,
     StatusDoAgendamento,
 )
+from mobia.domain.corretores.models import Corretor
 
 # RN-11.4. Regra do SRS, nao configuracao -- o argumento da D4 da TEC-285.
 DURACAO_DA_RESERVA = timedelta(minutes=5)
@@ -185,3 +191,40 @@ class AgendaPostgres:
                 .order_by(Agendamento.inicio)
             )
             return [Intervalo(inicio, fim) for inicio, fim in linhas.all()]
+
+
+async def reservar_ou_alternativas(
+    session: AsyncSession,
+    *,
+    corretor: Corretor,
+    agenda: AgendaDoCorretor,
+    channel: str,
+    conversation_key: str,
+    janela: Intervalo,
+    tipo: TipoDeCompromisso,
+    imovel_id: uuid.UUID | None,
+    agora: datetime,
+    ate: datetime,
+) -> Reserva | list[Intervalo]:
+    """A reserva, ou as janelas que sobraram -- nunca um erro tecnico.
+
+    Em `Conflito`, quem venceu ja commitou (foi o commit dele que fez esta
+    gravacao ser recusada), entao a agenda que o motor le ja o enxerga e as
+    alternativas nao incluem o horario perdido. `ate` e o horizonte das
+    alternativas e vem de quem chama, como no motor.
+    """
+    resultado = await reservar(
+        session,
+        corretor_id=corretor.id,
+        channel=channel,
+        conversation_key=conversation_key,
+        janela=janela,
+        tipo=tipo,
+        imovel_id=imovel_id,
+        agora=agora,
+    )
+    if isinstance(resultado, Reserva):
+        return resultado
+    return await propor_janelas_do_corretor(
+        corretor=corretor, agenda=agenda, agora=agora, ate=ate, tipo=tipo
+    )
