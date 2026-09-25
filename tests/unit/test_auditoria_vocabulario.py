@@ -6,6 +6,9 @@ contem o telefone. A garantia no banco esta em
 `tests/integration/test_trilha_de_auditoria.py`.
 """
 
+import ast
+import pathlib
+
 import pytest
 
 from mobia.domain.auditoria.referencia import lead_ref
@@ -16,8 +19,10 @@ from mobia.domain.auditoria.vocabulario import (
     METODO_DESCONHECIDO,
     MOTIVOS_DE_NEGATIVA,
     PAPEL_DESCONHECIDO,
+    Acao,
     Ator,
     AtorTipo,
+    Entidade,
     detalhes_da_negativa,
     detalhes_do_handoff,
     validar_detalhes,
@@ -120,3 +125,38 @@ class TestDetalhes:
     def test_valor_que_nao_e_texto_e_recusado(self) -> None:
         with pytest.raises(ValueError):
             validar_detalhes({"gatilho": 3})
+
+
+MIGRACAO = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "alembic"
+    / "versions"
+    / "0048_eventos_auditoria.py"
+)
+
+
+def _tupla_da_migracao(nome: str) -> tuple[str, ...]:
+    """O valor literal de `nome = ("...", ...)` no topo da 0048.
+
+    Le o ARQUIVO com `ast`, como `test_uma_cabeca_de_migration.py`: nao
+    precisa de banco, e nao importa a migration -- importa-la rodaria o
+    `from alembic import op` fora de um contexto de migracao.
+    """
+    arvore = ast.parse(MIGRACAO.read_text(encoding="utf-8"))
+    for no in arvore.body:
+        if isinstance(no, ast.Assign) and any(
+            isinstance(alvo, ast.Name) and alvo.id == nome for alvo in no.targets
+        ):
+            valor = ast.literal_eval(no.value)
+            assert isinstance(valor, tuple)
+            return valor
+    raise AssertionError(f"{nome} nao encontrado na 0048")
+
+
+@pytest.mark.parametrize(
+    ("constante", "enum"),
+    [("_ATORES", AtorTipo), ("_ACOES", Acao), ("_ENTIDADES", Entidade)],
+)
+def test_o_vocabulario_bate_com_o_check_da_migration(constante: str, enum: type) -> None:
+    """Valor novo no enum sem migration seria recusado pelo banco no primeiro INSERT."""
+    assert set(_tupla_da_migracao(constante)) == {membro.value for membro in enum}

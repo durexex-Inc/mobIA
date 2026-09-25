@@ -229,6 +229,11 @@ TABELAS = (
     # "8 dias atras") continuaria ali para o proximo teste, que a contaria
     # como se fosse sua.
     "midias_recebidas",
+    # TEC-206. Append-only como `lead_score_audit`, e nada a apaga em producao
+    # antes de 12 meses: sem o truncate, o registro de um teste vira trilha do
+    # proximo. TRUNCATE nao dispara os triggers de linha da 0048 -- e por isso
+    # a D3 do desenho nao o bloqueia.
+    "eventos_auditoria",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
@@ -908,7 +913,7 @@ async def banco_limpo(request: pytest.FixtureRequest) -> AsyncIterator[None]:
     NOMEIA quem segura. Ver `_ESPERA_MAXIMA_PELO_LOCK` e `_quem_segura_o_lock`:
     esta fixture era o ponto da suite onde uma contencao momentanea virava
     espera infinita, porque ela pede o lock mais largo que existe aqui
-    (`ACCESS EXCLUSIVE` em 19 tabelas) com a frequencia mais alta que existe
+    (`ACCESS EXCLUSIVE` em toda tabela de `TABELAS`) com a frequencia mais alta que existe
     aqui (antes de cada teste que toca banco).
 
     Sai cedo para `tests/unit/` desde 12/09/2026. O custo era por teste da suite

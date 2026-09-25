@@ -420,3 +420,43 @@ async def test_a_0044_desce_e_sobe_de_novo() -> None:
             )
             == 1
         )
+
+
+async def test_a_0048_desce_e_sobe_de_novo() -> None:
+    """A tabela e as duas funcoes somem no downgrade e voltam no upgrade.
+
+    Mesma razao da 0012: triggers e funcoes nascem de `op.execute`, entao nada
+    garante que o downgrade as derrube -- uma funcao orfa faria o upgrade
+    seguinte reprovar com "function already exists".
+    """
+    await dispose_engine()
+    alembic("downgrade", "0047")
+    try:
+        async with get_sessionmaker()() as sessao:
+            assert (
+                await sessao.scalar(text("SELECT to_regclass('public.eventos_auditoria')")) is None
+            )
+            assert (
+                await sessao.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_proc WHERE proname IN "
+                        "('eventos_auditoria_carimba', 'eventos_auditoria_protege')"
+                    )
+                )
+                == 0
+            )
+    finally:
+        await dispose_engine()
+        alembic("upgrade", "head")
+        await dispose_engine()
+
+    async with get_sessionmaker()() as sessao:
+        assert (
+            await sessao.scalar(
+                text(
+                    "SELECT count(*) FROM pg_trigger WHERE tgname IN "
+                    "('eventos_auditoria_carimbo', 'eventos_auditoria_imutavel')"
+                )
+            )
+            == 2
+        )
