@@ -48,7 +48,8 @@ class Corretor(Base):
 
     # Dobradas na escrita com `dobrar()`, a mesma funcao que produz
     # `bairro_busca` no catalogo -- sem isso "Zona Sul" e "zona sul" viram
-    # duas regioes e a alocacao da TEC-166 falha por acidente de digitacao.
+    # duas regioes gravadas. A alocacao nao depende desta dobra: `regiao_casa`
+    # (TEC-166) passa as duas pontas por `normalizar_regiao`, que dobra de novo.
     regioes_atuacao: Mapped[list[str]] = mapped_column(ARRAY(String(120)), nullable=False)
 
     # Uma janela, e nao `jsonb` por dia da semana. Ver a emenda E-02 do modelo
@@ -59,10 +60,11 @@ class Corretor(Base):
 
     capacidade_diaria: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
-    # O generalista que recebe o que nao tem match. **Pode haver mais de um**,
-    # e escolher entre eles e a TEC-166 -- ver a D7. Um indice parcial
-    # forcando um so inventaria regra que a card nao escreveu e quebraria
-    # plantao por turno.
+    # O generalista que recebe o que nao tem match. **Pode haver mais de um**
+    # -- ver a D7. No agendamento, `alocar` (TEC-166) os ordena pelo
+    # `criado_em` mais antigo; no handoff, `destinatario_do_handoff` escolhe o
+    # mais antigo por regra propria. Um indice parcial forcando um so
+    # inventaria regra que a card nao escreveu e quebraria plantao por turno.
     plantao: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
     # A marcacao de quem recebe a escalada de SLA vencido (TEC-178, RN-16.3).

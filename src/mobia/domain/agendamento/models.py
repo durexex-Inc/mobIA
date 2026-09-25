@@ -68,6 +68,18 @@ class Agendamento(Base):
     reservado_ate: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     confirmado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # TEC-166. Categoria de `MotivoDaAlocacao` (`agendamento/vocabulario.py`):
+    # por que este corretor, e nao outro. NOT NULL sem padrao -- ver a
+    # docstring da migration 0045.
+    motivo_da_alocacao: Mapped[str] = mapped_column(String(24), nullable=False)
+
+    # TEC-170. Uma marca por passo da confirmacao (D2): nula e "nao aconteceu",
+    # preenchida e o que impede a reexecucao de repetir. Ver a migration 0047.
+    calendar_event_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    corretor_avisado_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lead_avisado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint(
@@ -77,5 +89,9 @@ class Agendamento(Base):
             "status IN ('RESERVADO','CONFIRMADO','EXPIRADO')", name="ck_agendamentos_status"
         ),
         CheckConstraint("inicio < fim", name="ck_agendamentos_intervalo"),
+        CheckConstraint(
+            "motivo_da_alocacao IN ('MATCH_EXATO','SEM_MATCH','MATCH_SEM_CAPACIDADE')",
+            name="ck_agendamentos_motivo_da_alocacao",
+        ),
         Index("ix_agendamentos_conversa", "channel", "conversation_key"),
     )

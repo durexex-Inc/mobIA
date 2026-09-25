@@ -34,8 +34,8 @@ KIND_DO_AVISO_DE_ERRO = "aviso_de_erro"
 
 # Nao promete prazo nem explica a falha: o lead nao tem o que fazer com
 # "timeout do provedor", e prometer horario e promessa que esta card nao tem
-# como cumprir -- a alocacao de corretor e a TEC-166. E nao promete um AVISO
-# que este sistema nao pratica -- notificar o corretor e a TEC-177, fora do
+# como cumprir -- o turno nao oferece nem reserva horario. E nao promete um
+# AVISO que este sistema nao pratica -- notificar o corretor e a TEC-177, fora do
 # escopo desta card. "Passei sua conversa para" descreve o que de fato ocorre
 # (a linha PENDENTE em `handoffs`, que e por onde o time humano pega o caso)
 # sem afirmar que alguem do outro lado ja foi avisado.

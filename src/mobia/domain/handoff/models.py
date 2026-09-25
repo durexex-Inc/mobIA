@@ -73,8 +73,8 @@ class Handoff(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
 
     # FK para `corretores.id` desde a TEC-196. Continua NULAVEL, mas agora
-    # por outra razao -- nao falta mais tabela alvo, falta quem aloque, e
-    # alocar e a TEC-166.
+    # por outra razao -- nao falta mais tabela alvo, falta quem a escreva. A
+    # alocacao da TEC-166 escolhe corretor para o agendamento, nao grava aqui.
     #
     # `ForeignKey(Corretor.id)` em vez da string "corretores.id": o alvo
     # precisa estar no mesmo `MetaData` para o SQLAlchemy resolver a FK, e a

@@ -26,9 +26,10 @@ async def _inserir(session, *, corretor_id, inicio, fim, status="CONFIRMADO") ->
     await session.execute(
         text(
             "INSERT INTO agendamentos (id, corretor_id, channel, conversation_key, imovel_id,"
-            " tipo, inicio, fim, status, reservado_ate, criado_em, confirmado_em)"
+            " tipo, inicio, fim, status, reservado_ate, criado_em, confirmado_em,"
+            " motivo_da_alocacao)"
             " VALUES (:id, :corretor_id, 'whatsapp', :chave, NULL, 'VISITA_PRESENCIAL',"
-            " :inicio, :fim, :status, :inicio, :inicio, NULL)"
+            " :inicio, :fim, :status, :inicio, :inicio, NULL, 'MATCH_EXATO')"
         ),
         {
             "id": uuid.uuid4(),

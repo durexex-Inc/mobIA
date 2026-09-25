@@ -132,10 +132,10 @@ def _recorte_por_corretor(corretor_id: uuid.UUID) -> Recorte:
     """Um recorte com corretor, montado A MAO e nao por `montar_recorte`.
 
     A borda RECUSA este filtro com 422 enquanto ninguem alocar corretor ao
-    handoff (TEC-166) -- `handoffs.corretor_id` e nulo em toda linha de
-    producao, e o funil sairia zerado para qualquer corretor. Mas a consulta
-    que o consome esta escrita e tem de continuar CORRETA, esperando aquela
-    card: estes testes a exercitam por dentro, pulando a recusa da borda.
+    handoff -- `handoffs.corretor_id` e nulo em toda linha de producao, e o
+    funil sairia zerado para qualquer corretor. Mas a consulta que o consome
+    esta escrita e tem de continuar CORRETA, esperando quem escreva a coluna:
+    estes testes a exercitam por dentro, pulando a recusa da borda.
     """
     base = _recorte()
     return Recorte(

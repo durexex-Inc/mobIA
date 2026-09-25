@@ -40,6 +40,11 @@ from mobia.domain.agendamento.data_falada import (
     TEXTO_DO_FIM_DE_SEMANA,
     TEXTO_DO_PASSADO,
 )
+from mobia.domain.agendamento.mensagens import (
+    TEXTO_DA_CONFIRMACAO_DE_REUNIAO,
+    TEXTO_DA_CONFIRMACAO_DE_VISITA,
+    TEXTO_DA_CONFIRMACAO_DE_VISITA_SEM_IMOVEL,
+)
 from mobia.domain.agente.apresentacao import RESSALVA_DE_ESTIMATIVA
 from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO
 from mobia.domain.agente.turno import (
@@ -96,4 +101,7 @@ LITERAIS_AO_LEAD = (
     TEXTO_DE_DOIS_DIAS,
     TEXTO_DA_NOITE,
     TEXTO_DA_DATA_INEXISTENTE,
+    TEXTO_DA_CONFIRMACAO_DE_VISITA,
+    TEXTO_DA_CONFIRMACAO_DE_VISITA_SEM_IMOVEL,
+    TEXTO_DA_CONFIRMACAO_DE_REUNIAO,
 )

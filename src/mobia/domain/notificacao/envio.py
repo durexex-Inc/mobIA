@@ -1,4 +1,10 @@
-"""A notificacao do handoff, de ponta a ponta. TEC-177, RN-16.2."""
+"""A notificacao do handoff, de ponta a ponta. TEC-177, RN-16.2.
+
+**E o unico escritor de `handoffs.corretor_id` desde a TEC-192** (emenda E-06
+desta regra). Nao e funcao nova: o destinatario ja era escolhido aqui e usado
+para enviar; o que mudou e que ele passa a ficar gravado, porque a lista de
+leads precisa responder "de quem e este lead".
+"""
 
 import uuid
 from collections.abc import Sequence
@@ -58,16 +64,18 @@ KIND_DA_JANELA_HUMANA = "janela_humana"
 # horas (`horario_inicio`/`horario_fim`), e a checagem de `horario_permite_envio`
 # compara so a hora. O texto bate com o PR-06 do SRS hoje, mas o sistema trata
 # domingo como dia util NA JORNADA DO CORRETOR enquanto esta frase promete que
-# nao -- ela vai divergir em silencio quando a agenda por dia (TEC-170)
-# chegar, e tera de mudar junto.
+# nao -- ela vai divergir em silencio quando a agenda por dia chegar, e tera
+# de mudar junto.
 #
 # **A divergencia encolheu pela metade na TEC-285, e a metade que sobrou e
 # esta.** Aquela card fez a janela da IMOBILIARIA ser segunda-a-sabado, entao
 # do lado dela a frase deixou de ser promessa vazia. Mas este texto e guardado
 # pelas horas do CORRETOR, cuja jornada continua sem dia da semana: um corretor
 # com jornada 9-19 e alcancavel por esta checagem no domingo, e a frase continua
-# prometendo que nao. Consertar exige dia na jornada do corretor, que e a
-# TEC-170 -- a TEC-285 declarou isso como lacuna em vez de esticar o escopo.
+# prometendo que nao. Consertar exige dia na jornada do corretor -- a TEC-170
+# chegou e nao trouxe isso (ela confirma agendamento ja marcado, nao mexe na
+# jornada do corretor); a TEC-285 declarou a lacuna em vez de esticar o
+# escopo, e ela segue sem card.
 TEXTO_DA_JANELA_HUMANA = (
     "O atendimento humano funciona de segunda a sábado, das {inicio}h às {fim}h. "
     "Fora desse horário a resposta pode demorar mais."
@@ -132,6 +140,25 @@ async def notificar(
                 motivo="nenhum corretor alocado nem de plantao, escalado na hora",
             )
             return False
+
+        # **Quem foi avisado passa a ficar gravado** (TEC-192, D6, emenda E-06
+        # da RN-16.2). Ate aqui esta escolha era usada e jogada fora: a
+        # notificacao enviava e gravava `notificado_em` sem dizer para quem, e
+        # `handoffs.corretor_id` -- com FK desde a TEC-196 -- nunca tinha
+        # escritor. A lista de leads precisa dela para responder "de quem e
+        # este lead", que e o terceiro criterio de aceite da TEC-192.
+        #
+        # **So quando nula, pela mesma disciplina do `sla_limite_em` abaixo.**
+        # Uma retentativa do ARQ recalcula a cascata, e se alguem passar a
+        # alocar corretor de verdade, sobrescrever com o plantonista de agora
+        # trocaria o dono do lead por causa de um reenvio.
+        #
+        # **O valor e o DESTINATARIO, que pode ser o plantonista** -- a cascata
+        # da emenda E-01 desta regra --, e nao uma alocacao por especialidade.
+        # Quem ler esta coluna le "para quem este handoff foi", nao "de quem
+        # este lead sempre foi".
+        if handoff.corretor_id is None:
+            handoff.corretor_id = corretor.id
 
         # A temperatura vem de `lead_qualification`, NUNCA do `gatilho` do
         # handoff (D2, emenda E-01 da RN-16.3): `LEAD_QUENTE` significa

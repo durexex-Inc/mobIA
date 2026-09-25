@@ -1,8 +1,9 @@
 """Quem recebe a notificacao do handoff. TEC-177, D3.
 
-A RN-16.2 diz "o corretor designado". Designar e a TEC-166, e
-`handoffs.corretor_id` nunca e escrito hoje -- a chave estrangeira existe
-desde a TEC-196, o escritor nao. Dai a cascata.
+A RN-16.2 diz "o corretor designado". A alocacao da TEC-166 escolhe
+corretor para o agendamento, nao para o handoff, e `handoffs.corretor_id`
+nunca e escrito hoje -- a chave estrangeira existe desde a TEC-196, o
+escritor nao. Dai a cascata.
 """
 
 import uuid

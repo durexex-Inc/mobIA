@@ -20,6 +20,7 @@ def test_a_lista_de_literais_nao_encolheu_sem_querer() -> None:
     dentro do horario; so a variante fora do horario estava) e os dois textos
     de encaminhamento -- tres constantes ao lead que nunca estiveram sob a
     guarda de acento. Foi 20 ate a TEC-167, que acrescentou as oito perguntas
-    da data falada (`data_falada.py`).
+    da data falada (`data_falada.py`). Foi 28 ate a TEC-170, que acrescentou
+    os tres textos da confirmacao do agendamento.
     """
-    assert len(LITERAIS_AO_LEAD) == 28
+    assert len(LITERAIS_AO_LEAD) == 31

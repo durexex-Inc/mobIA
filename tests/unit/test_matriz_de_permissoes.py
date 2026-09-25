@@ -50,6 +50,17 @@ def test_corretor_nao_ve_o_funil_e_o_leitura_ve() -> None:
     assert Permissao.VER_FUNIL in permissoes_de("LEITURA")
 
 
+def test_ver_leads_e_dos_quatro_papeis() -> None:
+    """A lista e de todo mundo; o que muda e O QUE ELA DEVOLVE (TEC-192, D7).
+
+    Uma permissao separada para "ver os leads dos outros" foi recusada: ela
+    viraria uma segunda forma de dizer o que o PAPEL ja diz, livre para
+    divergir dele. Quem recorta o CORRETOR e o repositorio, pela claim do
+    token.
+    """
+    assert papeis_com(Permissao.VER_LEADS) == frozenset(PAPEIS)
+
+
 def test_dados_completos_nao_vao_para_corretor_nem_para_leitura() -> None:
     """A permissao que ainda nao mascara nada (D7, L3).
 
