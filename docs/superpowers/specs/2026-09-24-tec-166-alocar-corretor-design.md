@@ -101,6 +101,7 @@ async def janelas_alocadas(
     criterio: CriterioDoLead,
     corretores: Sequence[Corretor],
     agenda: AgendaDoCorretor,
+    visitas: ContadorDeVisitas,
     agora: datetime,
     ate: datetime,
     tipo: TipoDeCompromisso,
@@ -127,16 +128,20 @@ Uma janela por dia preserva o espalhamento que a TEC-165 já fazia. Nenhuma data
 
 ## D6 — Contar as visitas
 
-Método novo no port:
+Um port **próprio**, ao lado de `AgendaDoCorretor`, e não um método a mais nele:
 
 ```python
-class AgendaDoCorretor(Protocol):
+class ContadorDeVisitas(Protocol):
     async def visitas_por_dia(
-        self, corretor_ids: Sequence[uuid.UUID], de: datetime, ate: datetime
+        self, corretor_ids: Sequence[uuid.UUID], *, de: date, ate: date, agora: datetime
     ) -> dict[tuple[uuid.UUID, date], int]: ...
 ```
 
-`AgendaPostgres` conta linhas `tipo = VISITA_PRESENCIAL` com `status = CONFIRMADO`, ou `RESERVADO` com `reservado_ate > de` — **o mesmo predicado de vida de `ocupados`**, para a capacidade e a disponibilidade nunca discordarem sobre uma reserva vencida. A data é a de `inicio` convertido para `fuso_de_envio` no SQL (`inicio AT TIME ZONE :fuso`), não a data UTC: uma visita às 22h30 de quinta em São Paulo é de quinta.
+Separado porque `AgendaDoCorretor` já tem fakes nos testes da TEC-165 e da TEC-167 que só implementam `ocupados`; um método a mais no mesmo Protocol reprovaria o mypy em todos eles sem que nada neles tivesse mudado. `AgendaPostgres` implementa os dois.
+
+As datas são **datas locais inteiras**, não o intervalo `[agora, ate]`: a visita das 9h de hoje gasta capacidade de hoje mesmo quando a busca começa às 14h. E a vida da reserva é avaliada em `agora`, não no começo do dia.
+
+`AgendaPostgres` conta linhas `tipo = VISITA_PRESENCIAL` com `status = CONFIRMADO`, ou `RESERVADO` com `reservado_ate > agora` — **o mesmo predicado de vida de `ocupados`**, extraído para uma função só, para a capacidade e a disponibilidade nunca discordarem sobre uma reserva vencida. A data é a de `inicio` convertido para `fuso_de_envio` no SQL (`timezone(:fuso, inicio)`), não a data UTC: uma visita às 22h30 de quinta em São Paulo é de quinta.
 
 Uma consulta para todos os corretores e o horizonte inteiro, não uma por corretor por dia.
 
