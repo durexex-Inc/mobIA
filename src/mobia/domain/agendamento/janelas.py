@@ -13,12 +13,14 @@ que o sistema nao faz. Ver docs/superpowers/specs/2026-09-24-tec-165-propor-jane
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from enum import StrEnum
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from mobia.app.config import get_settings
+from mobia.domain.agendamento.alocacao import CriterioDoLead, alocar
+from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
 from mobia.domain.corretores.models import Corretor
 from mobia.domain.humano.deteccao import dentro_da_janela_de_atendimento
 
@@ -207,3 +209,94 @@ async def propor_janelas_do_corretor(
         ocupados=ocupados,
         tipo=tipo,
     )
+
+
+class ContadorDeVisitas(Protocol):
+    """Quantas visitas cada corretor tem em cada data local. TEC-166, D6.
+
+    Port proprio, e nao um metodo a mais em `AgendaDoCorretor`: os fakes da
+    TEC-165 e da TEC-167 so implementam `ocupados`, e um Protocol maior os
+    reprovaria no mypy sem que nada neles tivesse mudado. `AgendaPostgres`
+    implementa os dois.
+
+    `de` e `ate` sao DATAS locais inteiras: a visita das 9h de hoje gasta a
+    capacidade de hoje mesmo quando a busca comeca as 14h. A vida da reserva
+    e avaliada em `agora`.
+    """
+
+    async def visitas_por_dia(
+        self, corretor_ids: Sequence[uuid.UUID], *, de: date, ate: date, agora: datetime
+    ) -> dict[tuple[uuid.UUID, date], int]: ...
+
+
+@dataclass(frozen=True)
+class JanelaAlocada:
+    janela: Intervalo
+    corretor_id: uuid.UUID
+    motivo: MotivoDaAlocacao
+
+
+async def janelas_alocadas(
+    *,
+    criterio: CriterioDoLead,
+    corretores: Sequence[Corretor],
+    agenda: AgendaDoCorretor,
+    visitas: ContadorDeVisitas,
+    agora: datetime,
+    ate: datetime,
+    tipo: TipoDeCompromisso,
+) -> list[JanelaAlocada]:
+    """Ate `MAXIMO_DE_JANELAS` janelas, uma por data local, cada uma com corretor. D5.
+
+    Para cada data, pede os candidatos a `alocar` e desce por eles ate um ter
+    janela livre naquele dia. Uma janela por dia mantem o espalhamento da
+    TEC-165. Lista vazia -- ninguem pode em data nenhuma -- e onde a TEC-169
+    comeca.
+
+    Capacidade so barra visita: para reuniao remota o contador nem e
+    consultado, e todo corretor entra com zero visitas.
+    """
+    _exigir_fuso("agora", agora)
+    _exigir_fuso("ate", ate)
+    fuso = get_settings().fuso_de_envio
+    primeiro_dia = (agora + ANTECEDENCIA_MINIMA).astimezone(fuso).date()
+    ultimo_dia = ate.astimezone(fuso).date()
+
+    contagem: dict[tuple[uuid.UUID, date], int] = {}
+    if tipo is TipoDeCompromisso.VISITA_PRESENCIAL:
+        contagem = await visitas.visitas_por_dia(
+            [corretor.id for corretor in corretores],
+            de=agora.astimezone(fuso).date(),
+            ate=ultimo_dia,
+            agora=agora,
+        )
+
+    # A agenda de cada corretor e lida uma vez para o horizonte inteiro, e so
+    # de quem chegou a ser candidato.
+    ocupados_de: dict[uuid.UUID, list[Intervalo]] = {}
+    escolhidas: list[JanelaAlocada] = []
+    dia = primeiro_dia
+    while dia <= ultimo_dia and len(escolhidas) < MAXIMO_DE_JANELAS:
+        visitas_na_data = {cid: n for (cid, data), n in contagem.items() if data == dia}
+        inicio_do_dia = datetime.combine(dia, time(0), tzinfo=fuso)
+        fim_do_dia = min(ate, inicio_do_dia + timedelta(days=1))
+        for alocacao in alocar(
+            criterio=criterio, corretores=corretores, visitas_na_data=visitas_na_data
+        ):
+            corretor = alocacao.corretor
+            if corretor.id not in ocupados_de:
+                ocupados_de[corretor.id] = await agenda.ocupados(corretor.id, agora, ate)
+            janelas = propor_janelas(
+                agora=agora,
+                ate=fim_do_dia,
+                jornada_inicio=corretor.horario_inicio,
+                jornada_fim=corretor.horario_fim,
+                ocupados=ocupados_de[corretor.id],
+                tipo=tipo,
+                de=inicio_do_dia,
+            )
+            if janelas:
+                escolhidas.append(JanelaAlocada(janelas[0], corretor.id, alocacao.motivo))
+                break
+        dia += timedelta(days=1)
+    return escolhidas
