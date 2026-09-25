@@ -1012,6 +1012,26 @@ async def client(banco_limpo: None, redis_pool) -> AsyncIterator[AsyncClient]:
 
 
 @pytest.fixture
+async def client_sem_token_compartilhado(
+    banco_limpo: None, redis_pool, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[AsyncClient]:
+    """O app construido SEM `CATALOGO_ADMIN_TOKEN`. TEC-201.
+
+    Existe para provar que as rotas administrativas continuam existindo nessa
+    configuracao -- ate a TEC-201 elas sumiam do app, e a resposta era 404.
+    """
+    from mobia.app.config import get_settings
+
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "")
+    get_settings.cache_clear()
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as http_client:
+        yield http_client
+    get_settings.cache_clear()
+
+
+@pytest.fixture
 def semear_lead_completo(session: AsyncSession):
     """Um lead com qualificacao, score, recomendacoes e handoff aberto.
 

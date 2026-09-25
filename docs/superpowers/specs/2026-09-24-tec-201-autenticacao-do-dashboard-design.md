@@ -39,6 +39,20 @@ Então: **`exigir_admin` aceita JWT válido OU o token compartilhado**, com o se
 
 **O risco declarado:** enquanto os dois convivem, a segurança do conjunto é a do elo mais fraco — quem tiver o token compartilhado continua entrando sem usuário, sem papel e sem MFA. Esta card **não fecha** o acesso; ela constrói o caminho que permite fechá-lo. Quem apaga o token é a TEC-309.
 
+## D2b — A condicional de registro da TEC-156 cai, porque a premissa dela caiu
+
+Achado durante a implementação, pela listagem de `comentarios_tocados.py` — o comentário vizinho em `app/main.py` dizia:
+
+> rota que nao existe nao pode ser exposta por engano de configuracao, e **este projeto ainda nao tem camada de autenticacao**
+
+A segunda metade deixou de ser verdade nesta card. E manter a condicional teria efeito **pior que o problema original**: sem `CATALOGO_ADMIN_TOKEN`, os routers administrativos não entravam no app, então quem configurasse apenas o JWT não teria rota nenhuma — e precisaria manter justamente o token que esta card veio substituir.
+
+Os routers passam a ser registrados **sempre**, e quem protege é `exigir_admin`. É o que uma camada de autenticação faz: responde 403, em vez de a rota não existir.
+
+**Dois testes existentes afirmavam o contrário** (`test_sem_token_configurado_a_rota_nao_existe`, em `test_importacao_http.py` e `test_rota_de_conversas.py`) e foram reescritos para afirmar 403 em vez de 404. Eles continuam garantindo o essencial — sem credencial, não passa.
+
+O aviso de startup permanece, com outro sentido: não diz mais que as rotas sumiram, diz que o caminho de compatibilidade está desligado e que até a TEC-309 o painel depende dele.
+
 ## D3 — Os três segredos, e por que cada um é guardado de um jeito
 
 | segredo | como | por quê |

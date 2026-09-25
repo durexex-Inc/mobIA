@@ -78,24 +78,44 @@ def create_app() -> FastAPI:
     # chat do site, e quem o abre e visitante anonima.
     app.include_router(widget_router)
 
-    # Sem token configurado os routers NAO entram no app. Nao e 401: rota que
-    # nao existe nao pode ser exposta por engano de configuracao, e este
-    # projeto ainda nao tem camada de autenticacao. Ver D1 do desenho da
-    # TEC-156.
-    if settings.catalogo_admin_token:
-        from mobia.api.routes.conversas import router as conversas_router
-        from mobia.api.routes.corretores import router as corretores_router
-        from mobia.api.routes.handoffs import router as handoffs_router
-        from mobia.api.routes.imoveis import router as imoveis_router
-        from mobia.api.routes.metricas import router as metricas_router
+    # **A condicional da TEC-156 caiu na TEC-201, porque a premissa dela caiu.**
+    #
+    # O comentario que estava aqui dizia: "rota que nao existe nao pode ser
+    # exposta por engano de configuracao, e este projeto ainda nao tem camada
+    # de autenticacao". A segunda metade deixou de ser verdade -- `exigir_admin`
+    # agora exige JWT de ADMIN ou o token compartilhado, e recusar com 403 e o
+    # que uma camada de autenticacao faz.
+    #
+    # **Manter a condicional teria efeito pior que o problema original:** com
+    # JWT configurado e sem `CATALOGO_ADMIN_TOKEN`, as rotas administrativas
+    # nao existiriam, e a autenticacao que esta card acabou de construir seria
+    # inutil sozinha. Quem quisesse usa-la precisaria manter configurado
+    # justamente o token que ela veio substituir.
+    #
+    # O que protege agora e a guarda, nao a ausencia da rota. Ver a D2 do
+    # desenho da TEC-201 e a D1 da TEC-156, cujo argumento fica registrado como
+    # historico de uma fase em que nao havia alternativa.
+    from mobia.api.routes.conversas import router as conversas_router
+    from mobia.api.routes.corretores import router as corretores_router
+    from mobia.api.routes.handoffs import router as handoffs_router
+    from mobia.api.routes.imoveis import router as imoveis_router
+    from mobia.api.routes.metricas import router as metricas_router
 
-        app.include_router(imoveis_router)
-        app.include_router(corretores_router)
-        app.include_router(handoffs_router)
-        app.include_router(conversas_router)
-        app.include_router(metricas_router)
-    else:
-        log.warning("catalogo.rota_de_importacao_desligada", motivo="sem CATALOGO_ADMIN_TOKEN")
+    app.include_router(imoveis_router)
+    app.include_router(corretores_router)
+    app.include_router(handoffs_router)
+    app.include_router(conversas_router)
+    app.include_router(metricas_router)
+
+    if not settings.catalogo_admin_token:
+        # O aviso FICA, com outro sentido: nao diz mais que as rotas sumiram --
+        # elas existem --, diz que o caminho de compatibilidade esta desligado.
+        # Ate a TEC-309 o painel depende dele, entao subir sem o token e uma
+        # configuracao possivel e provavelmente indesejada.
+        log.warning(
+            "auth.token_compartilhado_ausente",
+            motivo="sem CATALOGO_ADMIN_TOKEN; as rotas administrativas so aceitam JWT",
+        )
 
     @app.get("/health")
     async def health() -> dict[str, str]:

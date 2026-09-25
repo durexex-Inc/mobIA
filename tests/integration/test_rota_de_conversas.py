@@ -94,14 +94,18 @@ async def test_assumir_sem_token_e_403(cliente_http) -> None:
     assert resposta.status_code == 403
 
 
-async def test_sem_token_configurado_a_rota_nao_existe(
+async def test_sem_token_configurado_a_rota_existe_e_recusa(
     monkeypatch, caches_de_cliente_limpos, banco_limpo, redis_pool
 ) -> None:
-    """404 e nao 403: rota que nao existe nao pode ser exposta por engano.
+    """403 e nao 404 -- **este teste afirmava o contrario ate a TEC-201.**
 
-    Gemeo de `test_importacao_http.py::test_sem_token_configurado_a_rota_nao_existe`.
-    Esta rota governa quem fala com qual lead, entao o argumento da TEC-156
-    (D1) vale aqui com mais forca, nao menos.
+    Gemeo de `test_importacao_http.py::test_sem_token_configurado_a_rota_existe_e_recusa`,
+    e o porque da mudanca esta escrito la. Em resumo: a condicional da TEC-156
+    existia porque nao havia camada de autenticacao, e agora ha -- manter o 404
+    faria quem configurasse so o JWT ficar sem rota nenhuma.
+
+    Esta rota governa quem fala com qual lead, entao o que importa e que ela
+    **continue recusando sem credencial** -- e isso o teste segue afirmando.
     """
     monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "")
     get_settings.cache_clear()
@@ -114,7 +118,7 @@ async def test_sem_token_configurado_a_rota_nao_existe(
             json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(uuid.uuid4())},
             headers={"X-Admin-Token": TOKEN},
         )
-    assert resposta.status_code == 404
+    assert resposta.status_code == 403
     get_settings.cache_clear()
 
 

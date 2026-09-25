@@ -305,3 +305,20 @@ async def test_jwt_de_papel_nao_admin_nao_abre_rota_administrativa(
     resposta = await client.get("/api/v1/corretores", headers={"Authorization": f"Bearer {token}"})
 
     assert resposta.status_code == 403
+
+
+async def test_rota_administrativa_existe_mesmo_sem_o_token_compartilhado(
+    session: AsyncSession, client_sem_token_compartilhado: AsyncClient, banco_limpo: None
+) -> None:
+    """A condicional da TEC-156 caiu, e este teste e o que a impede de voltar.
+
+    Ate esta card, sem `CATALOGO_ADMIN_TOKEN` os routers administrativos NAO
+    entravam no app -- e a resposta era 404. Com autenticacao de verdade isso
+    passou a ter efeito perverso: quem configurasse so o JWT nao teria rota
+    nenhuma, e precisaria manter justamente o token que a card veio substituir.
+
+    O que se afirma aqui e a diferenca entre 403 e 404: a rota EXISTE e recusa.
+    """
+    resposta = await client_sem_token_compartilhado.get("/api/v1/corretores")
+
+    assert resposta.status_code == 403
