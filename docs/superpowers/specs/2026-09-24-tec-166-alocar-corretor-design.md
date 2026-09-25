@@ -171,4 +171,9 @@ Consequência aceita: uma alocação que só propôs janelas e nunca reservou n�
 
 ## Emendas ao SRS
 
-Nenhuma. As decisões D2 (bairro não vira zona), D3 (desempate e fallback do alto ticket) e D5 (capacidade só de visita) interpretam a RN-11.2 e a RN-07.4 sem contrariá-las; ficam registradas aqui e no comentário da card.
+Duas, ambas registrando o que esta card **não** entregou do que o SRS atribuía à TEC-166, sem reescrever o texto antigo:
+
+- **RN-16.1, Emenda E-05 (TEC-166, 24/09/2026):** a alocação é do agendamento; `handoffs.corretor_id` continua sem escritor, contra a frase da E-03 que atribuía essa escrita à TEC-166.
+- **RN-16.2, Emenda E-05 (TEC-166, 24/09/2026):** a escolha entre plantões foi decidida para o agendamento; `destinatario_do_handoff` segue com a cascata própria, e o "esta escolha sai daqui" da E-01 não aconteceu.
+
+Fora isso, as decisões D2 (bairro não vira zona), D3 (desempate e fallback do alto ticket) e D5 (capacidade só de visita) interpretam a RN-11.2 e a RN-07.4 sem contrariá-las; ficam registradas aqui e no comentário da card.
