@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.app.config import get_settings
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.agente import turno as turno_mod
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff, tem_handoff_de_humano_aberto
@@ -456,7 +456,7 @@ async def test_falha_retentavel_no_aviso_e_reentregue_no_turno_seguinte(
             outbound=outbound,
             moderador=ModeradorFake(),
             agendador=AgendadorNoop(),
-            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
+            agendador_de_avisos=AgendadorDeAvisosNoop(),
         )
 
     with pytest.raises(EnvioRetentavel):

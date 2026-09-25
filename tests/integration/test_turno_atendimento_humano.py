@@ -22,7 +22,7 @@ import pytest
 from conftest import CANAL_AGENTE, CONVERSA_AGENTE, ModeradorFake, OutboundFake
 from sqlalchemy import func, select
 
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.agente.turno import executar_turno
 from mobia.domain.atendimento.repositorio import assumir, devolver
 from mobia.domain.handoff.agendador import AgendadorNoop
@@ -218,7 +218,7 @@ async def test_bloqueio_da_guarda_concorrente_nao_vira_reentrega_suprimida(
             outbound=outbound,
             moderador=ModeradorFake(),
             agendador=AgendadorNoop(),
-            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
+            agendador_de_avisos=AgendadorDeAvisosNoop(),
         )
 
     assert resultado == "bloqueado_por_atendimento_humano"
@@ -266,7 +266,7 @@ async def test_bloqueio_da_guarda_na_entrada_bloqueada_tambem_nao_vira_reentrega
             outbound=outbound,
             moderador=ModeradorFake(bloqueia_entrada=True),
             agendador=AgendadorNoop(),
-            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
+            agendador_de_avisos=AgendadorDeAvisosNoop(),
         )
 
     assert resultado == "bloqueado_por_atendimento_humano"
@@ -392,7 +392,7 @@ async def test_confirmacao_de_optout_com_reserva_duplicada_numa_conversa_assumid
             outbound=outbound,
             moderador=ModeradorFake(),
             agendador=AgendadorNoop(),
-            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
+            agendador_de_avisos=AgendadorDeAvisosNoop(),
         )
 
     assert resultado == "reentrega_suprimida", (

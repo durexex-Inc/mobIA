@@ -8,7 +8,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import MODELO_SEM_CHAMADA, get_settings
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoPort
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosPort
 from mobia.domain.agendamento.conversa import (
     KIND_DO_AGENDAMENTO,
     SUBAGENTE_AGENDAMENTO,
@@ -994,7 +994,7 @@ async def executar_turno(
     outbound: OutboundPort,
     moderador: ModeradorPort,
     agendador: AgendadorDeResumoPort,
-    agendador_de_confirmacao: AgendadorDeConfirmacaoPort,
+    agendador_de_avisos: AgendadorDeAvisosPort,
 ) -> ResultadoDoTurno:
     """Um turno inteiro: contexto, classificacao, entrega, registro.
 
@@ -1065,7 +1065,7 @@ async def executar_turno(
             outbound=outbound,
             moderador=moderador,
             agendador=agendador,
-            agendador_de_confirmacao=agendador_de_confirmacao,
+            agendador_de_avisos=agendador_de_avisos,
             corpo=corpo,
             moderacao=moderacao,
         )
@@ -1093,7 +1093,7 @@ async def _executar_turno(
     outbound: OutboundPort,
     moderador: ModeradorPort,
     agendador: AgendadorDeResumoPort,
-    agendador_de_confirmacao: AgendadorDeConfirmacaoPort,
+    agendador_de_avisos: AgendadorDeAvisosPort,
     corpo: str | None,
     moderacao: _ModeracaoDoTurno,
 ) -> ResultadoDoTurno:
@@ -1891,7 +1891,7 @@ async def _executar_turno(
                 # job consumido antes do commit nao encontra a linha.
                 await sessao_do_agendamento.commit()
         if isinstance(desfecho_do_agendamento, AgendamentoConfirmado):
-            await agendador_de_confirmacao.agendar(desfecho_do_agendamento.agendamento_id)
+            await agendador_de_avisos.confirmacao(desfecho_do_agendamento.agendamento_id)
             # Sem texto de proposito (D6): quem manda a confirmacao ao lead e
             # o job da RN-12.1, ja com data, hora, endereco e nome do
             # corretor. Uma mensagem nossa aqui seria a segunda dizendo a

@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.agendamento.conversa import KIND_DO_AGENDAMENTO, SUBAGENTE_AGENDAMENTO
 from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.agente.turno import executar_turno
@@ -44,10 +44,17 @@ class _AgendadorEspiao:
 
     def __init__(self) -> None:
         self.agendados: list[uuid.UUID] = []
+        self.cancelados: list[uuid.UUID] = []
         self.status_no_momento: list[str | None] = []
 
-    async def agendar(self, agendamento_id: uuid.UUID) -> None:
-        self.agendados.append(agendamento_id)
+    async def confirmacao(self, agendamento_id: uuid.UUID) -> None:
+        await self._registrar(agendamento_id, self.agendados)
+
+    async def cancelamento(self, agendamento_id: uuid.UUID) -> None:
+        await self._registrar(agendamento_id, self.cancelados)
+
+    async def _registrar(self, agendamento_id: uuid.UUID, onde: list[uuid.UUID]) -> None:
+        onde.append(agendamento_id)
         async with get_sessionmaker()() as sessao:
             self.status_no_momento.append(
                 await sessao.scalar(
@@ -86,7 +93,7 @@ async def _rodar(
     moderador_fake,
     *,
     moderador=None,
-    agendador_de_confirmacao=None,
+    agendador_de_avisos=None,
 ):
     return await executar_turno(
         get_sessionmaker(),
@@ -97,10 +104,8 @@ async def _rodar(
         outbound=outbound,
         moderador=moderador if moderador is not None else moderador_fake(),
         agendador=AgendadorNoop(),
-        agendador_de_confirmacao=(
-            agendador_de_confirmacao
-            if agendador_de_confirmacao is not None
-            else AgendadorDeConfirmacaoNoop()
+        agendador_de_avisos=(
+            agendador_de_avisos if agendador_de_avisos is not None else AgendadorDeAvisosNoop()
         ),
     )
 
@@ -274,7 +279,7 @@ async def test_a_confirmacao_enfileira_depois_do_commit(
         resumidor_fake,
         contador_fake,
         moderador_fake,
-        agendador_de_confirmacao=espiao,
+        agendador_de_avisos=espiao,
     )
 
     assert resultado == "agendamento_confirmado"

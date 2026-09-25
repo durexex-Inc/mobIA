@@ -16,7 +16,7 @@ from datetime import timedelta
 
 from sqlalchemy import select, update
 
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.agente.identificacao import (
     SEPARADOR_DA_IDENTIFICACAO,
     TEXTO_DA_IDENTIFICACAO,
@@ -81,7 +81,7 @@ async def _rodar(message, classificador, outbound, resumidor_fake, contador_fake
         outbound=outbound,
         moderador=moderador_fake(),
         agendador=AgendadorNoop(),
-        agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
+        agendador_de_avisos=AgendadorDeAvisosNoop(),
     )
 
 

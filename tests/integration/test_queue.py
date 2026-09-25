@@ -73,7 +73,7 @@ def test_notificar_corretor_registrado_com_o_nome_esperado() -> None:
 
 
 def test_avisar_confirmacao_registrado_com_o_nome_esperado() -> None:
-    """Amarra AVISAR_CONFIRMACAO_JOB (usado por AgendadorDeConfirmacaoArq para
+    """Amarra AVISAR_CONFIRMACAO_JOB (usado por AgendadorDeAvisosArq para
     montar o `_job_id`) ao nome que WorkerSettings de fato registra. Mesmo
     molde de test_gerar_resumo_registrado_com_o_nome_esperado."""
     registrada = next(

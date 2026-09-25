@@ -33,6 +33,13 @@ from mobia.domain.notificacao.canais import CanalDeNotificacaoPort, FalhaDeCanal
 
 log = structlog.get_logger()
 
+# TEC-372. O nome do job que chama esta funcao, pelo mesmo motivo que
+# `AVISAR_CONFIRMACAO_JOB` mora em `confirmacao.py`: o dono da constante e
+# o modulo que guarda a funcao de dominio, e o job fino a importa de la.
+# Duas copias do literal e a deriva que quebra o enfileiramento em
+# silencio.
+AVISAR_CANCELAMENTO_JOB = "avisar_cancelamento"
+
 
 async def avisar_cancelamento(
     session_factory: async_sessionmaker[AsyncSession],
