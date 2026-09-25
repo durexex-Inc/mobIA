@@ -821,15 +821,26 @@ infrator).
 
 `ModeradorAnthropic` (`src/mobia/infra/moderacao.py`) é o único adaptador. Ele
 manda uma mensagem para o modelo com um dos dois system prompts fixos
-(`SISTEMA_DA_ENTRADA`, `SISTEMA_DA_SAIDA`) e exige de volta exatamente uma
-palavra — `BLOQUEAR` ou `LIBERAR` — sem pontuação nem explicação, com
-`MAX_TOKENS_DO_VEREDITO = 8`: curto o bastante para que um truncamento vire
-um erro tipado em vez de um veredito pela metade — "BLOQ" não é resposta.
-Qualquer coisa fora do protocolo (resposta truncada, palavra diferente,
-exceção do SDK, `stop_reason` que não é `end_turn`) vira
+(`SISTEMA_DA_ENTRADA`, `SISTEMA_DA_SAIDA`) e exige de volta `LIBERAR` sozinho,
+ou `BLOQUEAR` seguido de uma ou duas categorias — sem pontuação nem
+explicação —, com `MAX_TOKENS_DO_VEREDITO = 24`: curto o bastante para que um
+truncamento vire um erro tipado em vez de um veredito pela metade — "BLOQ"
+não é resposta. Qualquer coisa fora do protocolo (resposta truncada, palavra
+diferente, exceção do SDK, `stop_reason` que não é `end_turn`) vira
 `ModeracaoIndisponivel`; o adaptador nunca interpreta o desconhecido como
 liberado, porque isso transformaria um moderador confuso em um moderador
 desligado, e desligado em silêncio.
+
+A **TEC-204** acrescentou `INJECAO` ao vocabulário da entrada — tentativa de
+mudar as instruções do agente, de fazer revelar as regras dele, ou de se
+passar pelo sistema. Ela é a exceção do protocolo: não está em
+`CATEGORIAS_QUE_BLOQUEIAM`, e por isso sozinha não bloqueia nada — o turno
+segue normal e só o achado vira evento de auditoria (`INJECAO_DETECTADA`,
+ver TEC-206). É a terceira palavra do protocolo que existe: junto de uma
+categoria que bloqueia, o veredito escreve as duas (`BLOQUEAR ASSEDIO
+INJECAO`). A defesa contra a injeção em si — delimitar o texto do lead e
+declará-lo dado, nunca instrução — não é deste sistema; é
+`domain/agente/delimitacao.py`.
 
 `executar_turno` (`src/mobia/domain/agente/turno.py`) chama esse protocolo
 duas vezes: uma vez para a fala do lead, antes de montar o contexto; uma vez
@@ -911,15 +922,18 @@ texto é esse.
   outros usam a confiança padrão do dublê (0,91), e era esse ponto cego que
   mantinha o defeito vivo por seis revisões.
 - **O veredito é lido tolerante na forma e rígido no conteúdo.** O protocolo
-  pede uma palavra sem pontuação, mas `BLOQUEAR.` ou `**LIBERAR**` não podem
+  pede palavras sem pontuação, mas `BLOQUEAR.` ou `**LIBERAR**` não podem
   custar um turno: comparados por igualdade eles virariam
   `ModeracaoIndisponivel`, e na saída isso propaga até a linha ficar em
-  `FAILED` para sempre, sem o lead receber nada. `_UMA_PALAVRA`
-  (`infra/moderacao.py`) exige que a resposta inteira seja **uma** corrida de
-  letras cercada só de não-letras; ela não procura a palavra dentro de uma
-  frase, então `BLOQUEAR LIBERAR`, `não vou BLOQUEAR` e `talvez` continuam
-  sendo indisponibilidade. A garantia que sustenta o subsistema — o
-  desconhecido nunca vira liberado — fica intacta, e há teste para cada
+  `FAILED` para sempre, sem o lead receber nada. `_ATE_TRES_PALAVRAS`
+  (`infra/moderacao.py`) exige até três corridas de letras cercadas só de
+  não-letras — a terceira existe só para `INJECAO` acompanhar outra
+  categoria (TEC-204) —; ela não procura a palavra dentro de uma frase,
+  então `BLOQUEAR LIBERAR`, `não vou BLOQUEAR` e `talvez` continuam sendo
+  indisponibilidade, e duas categorias que bloqueiam juntas (`BLOQUEAR
+  ASSEDIO AMEACA`) também, porque no máximo uma categoria que bloqueia pode
+  sobrar depois de separar `INJECAO`. A garantia que sustenta o subsistema —
+  o desconhecido nunca vira liberado — fica intacta, e há teste para cada
   metade.
 - **A entrega de texto fixo não mente na telemetria nem no desfecho.**
   `_entregar_texto_fixo` não chama modelo nenhum, e grava
@@ -950,10 +964,13 @@ texto é esse.
   exige que o corpus de controle contenha, nomeadamente, lead irritado e
   palavrão usado como ênfase — o falso positivo mais caro deste sistema,
   porque bloquear reclamação legítima perde o cliente que estava
-  reclamando. Esse arquivo de teste tem 11 testes ao todo (dois
-  parametrizados sobre os 4 arquivos do corpus, mais três testes únicos:
-  os dois lados existem nas duas direções, o controle de entrada cobre o
-  falso positivo caro, e os ids são únicos entre todos os arquivos).
+  reclamando. Esse arquivo de teste parametriza dois testes sobre os 7
+  arquivos do corpus (os 4 de sempre mais os três da TEC-204 —
+  `entrada_injecao`, `entrada_injecao_benigna`, `entrada_injecao_bloqueia`) e
+  soma cinco testes únicos: os dois lados existem nas duas direções, o
+  controle de entrada cobre o falso positivo caro, os ids são únicos entre
+  todos os arquivos, a injeção tem o gêmeo benigno, e o ataque que dita o
+  rótulo `BLOQUEAR INJECAO` por extenso está coberto.
 - **Nenhum piso foi cravado** para as taxas de acerto do moderador.
   `evals/test_moderacao.py` mede e imprime as quatro taxas por categoria mas
   faz uma única asserção — que o moderador respondeu em todos os casos
