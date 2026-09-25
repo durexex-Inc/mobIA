@@ -50,7 +50,7 @@ Uma linha por mensagem IMAGEM ou DOCUMENTO recebida:
 | `chave_no_armazem` | `String(255)`, nulável | nula até ARMAZENADA |
 | `status` | `String(16)` | PENDENTE, ARMAZENADA, RECUSADA ou FALHOU |
 | `motivo` | `String(32)`, nulável | vocabulário curto (`tipo_nao_permitido`, `acima_do_teto`, `sha256_divergente`, `recusada_pela_meta`, `tentativas_esgotadas`, `expirada`) |
-| `tentativas` | `integer`, `default 0` | re-enfileiramentos feitos pela varredura (D3); acrescentada na revisão final, dentro da própria migration (nascida `0042`, renumerada `0046` no merge da `main`, que tinha ocupado 0042–0045 enquanto esta branch corria) |
+| `tentativas` | `integer`, `default 0` | re-enfileiramentos feitos pela varredura (D3); acrescentada na revisão final, dentro da própria migration (nascida `0042`, renumerada `0046` no merge da `main`, que tinha ocupado 0042–0045 enquanto esta branch corria — e renumerada de novo para `0048` pela TEC-171, porque `0046` já estava ocupada por `0046_motivo_da_alocacao` e o merge do PR #176 deixou a `main` com duas revisões iguais) |
 | `criado_em`, `atualizado_em` | `timestamptz` | |
 
 **`motivo` saiu como `String(32)`, e não `String(64)` como esta tabela dizia antes** (desvio deliberado, feito na Task 3): o maior literal do vocabulário acima (`tentativas_esgotadas`) tem 20 caracteres, e `tarefas_de_corretor.motivo` (migration 0039) já usa `String(32)` para o mesmo tipo de vocabulário curto — repetir `String(64)` aqui teria sido a exceção, não o padrão.
