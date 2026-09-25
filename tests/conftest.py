@@ -214,6 +214,13 @@ TABELAS = (
     # o truncate, o agendamento gravado por um teste ocupa o horario que o
     # proximo tenta reservar, e a garantia do RT-07 barraria linha alheia.
     "agendamentos",
+    # TEC-371. Mutavel, e com UNIQUE por (channel, conversation_key, ordinal):
+    # sem o truncate, as janelas que um teste ofereceu continuam sendo a
+    # "ultima oferta" do proximo, e `escolha.py::escolher` casaria o ordinal
+    # contra uma frase que aquele teste nunca disse. O CASCADE de `corretores`
+    # ja alcancaria esta tabela pela FK, mas so nos testes que semeiam
+    # corretor -- listar aqui e o que a limpa nos outros.
+    "janelas_propostas",
     # TEC-132. Mutavel: `pendentes_para_reenfileirar`, `expirar_pendentes` e
     # `esgotar_pendentes` leem a tabela inteira por status e por janela de `criado_em`, sem
     # filtrar por mensagem -- sem o truncate, uma linha PENDENTE com
