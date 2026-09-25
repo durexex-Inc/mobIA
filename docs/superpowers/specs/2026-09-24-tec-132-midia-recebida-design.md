@@ -106,7 +106,7 @@ O turno é enfileirado como sempre, em paralelo, **sem esperar o download**.
 [LEAD] (documento recebido; o conteudo nao esta visivel para voce)
 ```
 
-Os marcadores são texto para o modelo, e não para o lead, por isso vão sem acento. Ficam em `_SEM_TEXTO`, em `montagem.py`, e passam a valer também quando há legenda. Custam alguns tokens de contexto por mídia e **nada** no prompt de sistema.
+Os marcadores são texto para o modelo, e não para o lead, por isso vão sem acento. Ficam em `_MARCADOR_DE_MIDIA`, em `montagem.py`, e valem também quando há legenda. Custam alguns tokens de contexto por mídia e **nada** no prompt de sistema.
 
 **O turno não espera o download e não lê a mídia.** O status em `midias_recebidas` não muda a resposta: "recebi" é verdade mesmo se o download falhar depois.
 

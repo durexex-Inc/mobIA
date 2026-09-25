@@ -86,8 +86,8 @@ def _envelope_de_imagem(
 def _envelope_de_documento(
     provider_message_id: str, media_id: str, *, mime: str = "application/pdf"
 ) -> dict[str, Any]:
-    # O `filename` chega no envelope e fica cifrado em `raw_payload` -- D2 da
-    # Task 3 decidiu que ele nao vira coluna propria.
+    # O `filename` chega no envelope e fica cifrado em `raw_payload` -- a D2
+    # da spec decidiu que ele nao vira coluna propria.
     return _envelope(
         tipo="document",
         midia={"id": media_id, "mime_type": mime, "filename": "contrato.pdf"},
