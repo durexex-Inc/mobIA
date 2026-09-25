@@ -24,6 +24,7 @@ from mobia.app.main import create_app
 from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import Urgencia
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.context.resumo import ResumoGerado
@@ -1176,6 +1177,7 @@ def semear_lead_completo(session: AsyncSession):
             channel=CANAL_AGENTE,
             conversation_key=CONVERSA_AGENTE,
             gatilho=Gatilho.LEAD_QUENTE,
+            ator=ATOR_AGENTE,
         )
         await session.commit()
         return registro.id
@@ -1246,7 +1248,11 @@ def semear_handoff_com_resumo(session: AsyncSession):
         conversa: str = "5511900000000",
     ) -> uuid.UUID:
         registro = await registrar_handoff(
-            session, channel=canal, conversation_key=conversa, gatilho=Gatilho.LEAD_QUENTE
+            session,
+            channel=canal,
+            conversation_key=conversa,
+            gatilho=Gatilho.LEAD_QUENTE,
+            ator=ATOR_AGENTE,
         )
         if resumo is not None:
             await gravar_resumo(

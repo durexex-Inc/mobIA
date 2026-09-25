@@ -10,6 +10,13 @@ As duas escritas recebem `session_factory` e commitam sozinhas, como
 `marcar_bloqueada`: sao atos completos em si, e quem chama nao tem transacao
 para compartilhar. As duas leituras recebem `session` porque rodam dentro da
 sessao de quem pergunta -- a guarda na porta de saida ja tem uma aberta.
+
+Desde a TEC-206 cada escrita grava tambem o seu registro na trilha de
+auditoria, na MESMA sessao da linha de `optout_events` e antes do commit: ou
+os dois existem, ou nenhum. O ator e SISTEMA nas duas -- no opt-out o lead
+pediu e o sistema registrou; na reativacao o operador da CLI e um `autor` em
+texto livre, nao um `usuario_id`. O `motivo` nao vai para a trilha (D5): ele
+fica aqui, e o registro aponta para esta linha pelo id.
 """
 
 import uuid
@@ -17,6 +24,8 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.auditoria.registro import registrar_evento
+from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA, Acao, Entidade
 from mobia.domain.messages.models import Message
 from mobia.domain.optout.models import EVENTO_OPT_OUT, EVENTO_REATIVACAO, OptoutEvent
 
@@ -29,15 +38,24 @@ async def registrar_optout(
     message_id: uuid.UUID,
 ) -> None:
     """Acrescenta o evento de opt-out. Nunca atualiza nada."""
+    evento_id = uuid.uuid4()
     async with session_factory() as session:
         session.add(
             OptoutEvent(
-                id=uuid.uuid4(),
+                id=evento_id,
                 channel=channel,
                 conversation_key=conversation_key,
                 evento=EVENTO_OPT_OUT,
                 message_id=message_id,
             )
+        )
+        await registrar_evento(
+            session,
+            ator=ATOR_SISTEMA,
+            acao=Acao.OPTOUT_REGISTRADO,
+            entidade=Entidade.OPTOUT_EVENT,
+            entidade_id=str(evento_id),
+            lead=(channel, conversation_key),
         )
         await session.commit()
 
@@ -55,16 +73,25 @@ async def reativar(
     `autor` e `motivo` nao tem default: a RN-14.3 exige justificativa, e um
     default vazio a tornaria decorativa.
     """
+    evento_id = uuid.uuid4()
     async with session_factory() as session:
         session.add(
             OptoutEvent(
-                id=uuid.uuid4(),
+                id=evento_id,
                 channel=channel,
                 conversation_key=conversation_key,
                 evento=EVENTO_REATIVACAO,
                 autor=autor,
                 motivo=motivo,
             )
+        )
+        await registrar_evento(
+            session,
+            ator=ATOR_SISTEMA,
+            acao=Acao.OPTOUT_REATIVADO,
+            entidade=Entidade.OPTOUT_EVENT,
+            entidade_id=str(evento_id),
+            lead=(channel, conversation_key),
         )
         await session.commit()
 

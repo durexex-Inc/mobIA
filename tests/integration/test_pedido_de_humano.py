@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mobia.app.config import get_settings
 from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.agente import turno as turno_mod
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff, tem_handoff_de_humano_aberto
 from mobia.domain.handoff.vocabulario import Gatilho, Prioridade
@@ -89,6 +90,7 @@ async def test_handoff_de_pedido_de_humano_deixa_a_conversa_esperando(
         channel="whatsapp",
         conversation_key="5511911110002",
         gatilho=Gatilho.PEDIDO_DE_HUMANO,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 
@@ -112,6 +114,7 @@ async def test_handoff_de_outro_gatilho_nao_cala_o_agente(session: AsyncSession)
         channel="whatsapp",
         conversation_key="5511911110003",
         gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 
@@ -138,6 +141,7 @@ async def test_pedido_que_chega_depois_do_quente_tambem_cala(session: AsyncSessi
             channel="whatsapp",
             conversation_key="5511911110005",
             gatilho=gatilho,
+            ator=ATOR_AGENTE,
         )
     await session.commit()
 
@@ -155,6 +159,7 @@ async def test_a_consulta_e_por_conversa_e_por_canal(session: AsyncSession) -> N
         channel="whatsapp",
         conversation_key="5511911110004",
         gatilho=Gatilho.PEDIDO_DE_HUMANO,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 

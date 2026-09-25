@@ -55,6 +55,7 @@ from mobia.domain.agente.repositorio import (
 )
 from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.atendimento.repositorio import esta_silenciada
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.context.auditoria import CAUSA_MUDANCA_DE_INTENCAO
 from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
@@ -1501,6 +1502,7 @@ async def _executar_turno(
                 channel=message.channel,
                 conversation_key=message.conversation_key,
                 gatilho=Gatilho.PEDIDO_DE_HUMANO,
+                ator=ATOR_AGENTE,
             )
             # `registrar_handoff` NAO commita -- a docstring dela diz que o
             # commit e de quem chama, para o handoff poder entrar na mesma
@@ -2423,6 +2425,7 @@ async def _executar_turno(
                 channel=message.channel,
                 conversation_key=message.conversation_key,
                 gatilho=Gatilho.LEAD_QUENTE,
+                ator=ATOR_AGENTE,
             )
 
         if (gatilho_da_intencao := _GATILHO_DA_INTENCAO.get(gerada.intencao)) is not None:
@@ -2431,6 +2434,7 @@ async def _executar_turno(
                 channel=message.channel,
                 conversation_key=message.conversation_key,
                 gatilho=gatilho_da_intencao,
+                ator=ATOR_AGENTE,
             )
 
         if teto_do_handoff:
@@ -2456,6 +2460,7 @@ async def _executar_turno(
                 channel=message.channel,
                 conversation_key=message.conversation_key,
                 gatilho=Gatilho.LIMITE_DE_PERGUNTAS,
+                ator=ATOR_AGENTE,
             )
         await session.commit()
 
@@ -2895,6 +2900,7 @@ async def _executar_turno(
                     channel=message.channel,
                     conversation_key=message.conversation_key,
                     gatilho=Gatilho.LIMITE_DE_PERGUNTAS,
+                    ator=ATOR_AGENTE,
                 )
                 await session.commit()
             log.info(

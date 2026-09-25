@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.handoff.models import Handoff, aad_do_resumo_de_handoff
 from mobia.domain.handoff.repositorio import (
     carregar_dossie,
@@ -47,7 +48,11 @@ async def test_dossie_traz_os_numeros_das_quatro_tabelas(
 
 async def test_gravar_resumo_cifra_em_repouso(session: AsyncSession) -> None:
     registro = await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 
@@ -71,7 +76,11 @@ async def test_gravar_resumo_cifra_em_repouso(session: AsyncSession) -> None:
 async def test_o_aad_amarra_o_resumo_ao_proprio_handoff(session: AsyncSession) -> None:
     """Mover o ciphertext para outra linha tem de falhar a decifra."""
     registro = await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     await gravar_resumo(
@@ -101,7 +110,11 @@ async def test_gravar_resumo_marca_e_desmarca_a_contingencia(
     notificacao, prevista desta vez.
     """
     registro = await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 

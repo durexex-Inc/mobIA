@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
@@ -16,7 +17,11 @@ CONVERSA = "5511911112222"
 
 async def _handoff(session: AsyncSession) -> Handoff:
     registro = await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     return (await session.execute(select(Handoff).where(Handoff.id == registro.id))).scalar_one()

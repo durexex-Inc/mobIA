@@ -11,6 +11,7 @@ from mobia.app.config import get_settings
 from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoPort
 from mobia.domain.agente.repositorio import ler_apresentacao_da_mensagem
 from mobia.domain.agente.turno import ResultadoDoTurno, executar_turno
+from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA
 from mobia.domain.handoff.agendador import AgendadorDeResumoPort
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import ETIQUETA_DE, PRIORIDADE_DE, Gatilho
@@ -177,6 +178,7 @@ async def _encaminhar_por_erro(
                 channel=message.channel,
                 conversation_key=message.conversation_key,
                 gatilho=Gatilho.ERRO_DO_AGENTE,
+                ator=ATOR_SISTEMA,
             )
             await session.commit()
     except Exception as falha:

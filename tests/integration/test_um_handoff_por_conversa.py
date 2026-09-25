@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mobia.app.config import get_settings
 from mobia.app.main import create_app
 from mobia.domain.agente.schemas import Intencao
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.handoff.escalada import escalar_vencidos
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff
@@ -228,6 +229,7 @@ async def test_o_gatilho_novo_acumula_em_gatilhos_adicionais(
         channel=CANAL_AGENTE,
         conversation_key=CONVERSA_AGENTE,
         gatilho=Gatilho.PEDIDO_DE_HUMANO,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     # De novo, com o MESMO gatilho -- prova que nao duplica.
@@ -236,6 +238,7 @@ async def test_o_gatilho_novo_acumula_em_gatilhos_adicionais(
         channel=CANAL_AGENTE,
         conversation_key=CONVERSA_AGENTE,
         gatilho=Gatilho.PEDIDO_DE_HUMANO,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 

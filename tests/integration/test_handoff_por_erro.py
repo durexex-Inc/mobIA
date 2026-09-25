@@ -89,6 +89,13 @@ async def test_falha_que_atinge_o_teto_cria_handoff(
     assert linhas[0]["gatilho"] == "ERRO_DO_AGENTE"
     assert linhas[0]["etiqueta"] == "erro-do-agente"
 
+    # TEC-206, D7: o handoff por erro nasce fora do turno, em `process_message`,
+    # e o ator declarado ali e SISTEMA.
+    ator = await session.scalar(
+        text("SELECT ator_tipo FROM eventos_auditoria WHERE acao = 'HANDOFF_CRIADO'")
+    )
+    assert ator == "SISTEMA"
+
 
 async def test_aviso_ao_lead_tem_as_tres_chaves_do_outbound(
     session, semear_entrada, settings
