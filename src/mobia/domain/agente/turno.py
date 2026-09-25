@@ -16,6 +16,7 @@ from mobia.domain.agendamento.conversa import (
 from mobia.domain.agendamento.conversa import Confirmou as AgendamentoConfirmado
 from mobia.domain.agendamento.conversa import NadaAFazer as NadaAFazerNoAgendamento
 from mobia.domain.agendamento.conversa import Ofereceu as AgendamentoOferecido
+from mobia.domain.agendamento.conversa import Perguntou as AgendamentoPerguntou
 from mobia.domain.agendamento.conversa import Reservou as AgendamentoReservado
 from mobia.domain.agendamento.conversa import atender as atender_agendamento
 from mobia.domain.agendamento.repositorio import AgendaPostgres
@@ -1902,7 +1903,10 @@ async def _executar_turno(
                 agendamento_id=str(desfecho_do_agendamento.agendamento_id),
             )
             return "agendamento_confirmado"
-        if isinstance(desfecho_do_agendamento, AgendamentoOferecido | AgendamentoReservado):
+        if isinstance(
+            desfecho_do_agendamento,
+            AgendamentoOferecido | AgendamentoReservado | AgendamentoPerguntou,
+        ):
             entrega_do_agendamento = await _entregar_texto_fixo(
                 session_factory,
                 message=message,

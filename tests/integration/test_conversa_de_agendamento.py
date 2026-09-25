@@ -15,6 +15,7 @@ from mobia.domain.agendamento.conversa import (
     Confirmou,
     NadaAFazer,
     Ofereceu,
+    Perguntou,
     Reservou,
     atender,
 )
@@ -283,3 +284,44 @@ async def test_o_imovel_de_interesse_viaja_ate_a_reserva(
     await session.commit()
 
     assert (await _linhas(session))[0].imovel_id == imovel_id
+
+
+async def test_a_data_ambigua_vira_pergunta_e_nao_chute(
+    session, session_factory, semear_corretor
+) -> None:
+    """RN-11.3 e RT-10: chutar a data e visita no dia errado.
+
+    A pergunta ja vem pronta da TEC-167 -- `resolver` devolve `Ambigua` com o
+    texto exato --, e nada e gravado.
+    """
+    await _corretor(semear_corretor)
+    await session.commit()
+
+    resultado = await _atender(session, session_factory, "pode ser domingo?")
+
+    assert isinstance(resultado, Perguntou)
+    assert "domingos" in resultado.texto
+    await session.commit()
+    assert await ler_propostas(session, channel=CANAL, conversation_key=LEAD, agora=AGORA) == []
+
+
+async def test_a_data_falada_recorta_a_oferta_naquele_dia(
+    session, session_factory, semear_corretor
+) -> None:
+    """CA-11.1: "quinta de manha" responde com horarios daquela quinta.
+
+    Sem o recorte, `janelas_alocadas` daria uma janela por dia a partir de
+    hoje -- resposta correta para quem nao nomeou dia, e errada para quem
+    nomeou.
+    """
+    await _corretor(semear_corretor)
+    await session.commit()
+
+    resultado = await _atender(session, session_factory, "pode ser quinta de manha?")
+
+    assert isinstance(resultado, Ofereceu)
+    # 1 de outubro de 2026 e a quinta seguinte a `AGORA`.
+    quinta = datetime(2026, 10, 1, tzinfo=SP).date()
+    locais = [p.janela.inicio.astimezone(SP) for p in resultado.propostas]
+    assert locais and all(inicio.date() == quinta for inicio in locais)
+    assert all(9 <= inicio.hour < 12 for inicio in locais)

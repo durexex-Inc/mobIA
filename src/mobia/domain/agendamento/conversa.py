@@ -28,14 +28,24 @@ RN-12.1 -- ver a D6 do desenho.
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.domain.agendamento.alocacao import CriterioDoLead, criterio_de
-from mobia.domain.agendamento.data_falada import data_e_hora_absolutas
+from mobia.app.config import get_settings
+from mobia.domain.agendamento.alocacao import CriterioDoLead, alocar, criterio_de
+from mobia.domain.agendamento.data_falada import (
+    Ambigua,
+    Dia,
+    Instante,
+    Periodo,
+    data_e_hora_absolutas,
+    janelas_para,
+    resolver,
+)
 from mobia.domain.agendamento.deteccao import confirmou, quer_agendar, recusou
 from mobia.domain.agendamento.escolha import Escolhida, escolher
 from mobia.domain.agendamento.janelas import (
@@ -123,11 +133,24 @@ class Confirmou:
 
 
 @dataclass(frozen=True)
+class Perguntou:
+    """A data falada nao decide, e a pergunta ja vem pronta da TEC-167.
+
+    `data_falada::resolver` devolve `Ambigua` com o texto exato a fazer --
+    "Aos domingos nao ha atendimento. Pode ser {dia}?", "Esse horario ja
+    passou...". Chutar uma data no lugar de perguntar e o RT-10: visita
+    marcada no dia errado.
+    """
+
+    texto: str
+
+
+@dataclass(frozen=True)
 class NadaAFazer:
     pass
 
 
-Resultado = Ofereceu | Reservou | Confirmou | NadaAFazer
+Resultado = Ofereceu | Reservou | Confirmou | Perguntou | NadaAFazer
 
 
 async def _reserva_pendente(
@@ -202,6 +225,75 @@ async def _imovel_de_interesse(
     ).scalar_one_or_none()
 
 
+async def _janelas_da_data_falada(
+    *,
+    texto: str,
+    criterio: CriterioDoLead,
+    corretores: Sequence[Corretor],
+    agenda: AgendaDoCorretor,
+    visitas: ContadorDeVisitas,
+    agora: datetime,
+) -> list[JanelaAlocada] | Ambigua | None:
+    """As janelas DAQUELE dia, quando o lead nomeou um.
+
+    **E a CA-11.1 inteira**: "pode ser quinta de manha?" tem de responder com
+    horarios daquela quinta, e nao com a grade dos proximos tres dias. Quem
+    faz a ponte entre a data falada e o motor e `data_falada::janelas_para`,
+    que a TEC-167 construiu exatamente para isto e ficou sem chamador.
+
+    A diferenca em relacao a `janelas_alocadas` nao e so o recorte: aquela da
+    UMA janela por dia, para espalhar a escolha entre datas; esta da ate tres
+    no mesmo dia, porque o lead ja escolheu o dia e o que falta e a hora.
+
+    `None` significa "a fala nao nomeia data, ou nao ha janela naquele dia" --
+    quem chama cai para a grade dos proximos tres dias em vez de deixar o lead
+    sem nada.
+    """
+    resolucao = resolver(texto, agora=agora)
+    if isinstance(resolucao, Ambigua):
+        return resolucao
+    if not isinstance(resolucao, Dia | Periodo | Instante):
+        # `Semana` e `NaoReconhecida`. A semana inteira nao e um recorte de
+        # dia, e a grade de tres dias ja e a resposta certa para ela.
+        return None
+
+    fuso = get_settings().fuso_de_envio
+    if isinstance(resolucao, Instante):
+        dia = resolucao.momento.astimezone(fuso).date()
+    else:
+        dia = resolucao.dia
+
+    contagem = await visitas.visitas_por_dia(
+        [corretor.id for corretor in corretores], de=dia, ate=dia, agora=agora
+    )
+    visitas_na_data = {corretor_id: n for (corretor_id, data), n in contagem.items() if data == dia}
+    fim_do_dia = datetime.combine(dia, time(0), tzinfo=fuso) + timedelta(days=1)
+
+    # Desce pelos candidatos ate um ter horario livre naquele dia, o mesmo que
+    # `janelas_alocadas` faz -- capacidade cheia ou agenda cheia nao pode
+    # encerrar a busca no primeiro nome.
+    for alocacao in alocar(
+        criterio=criterio, corretores=corretores, visitas_na_data=visitas_na_data
+    ):
+        ocupados = await agenda.ocupados(alocacao.corretor.id, agora, fim_do_dia)
+        encontradas = janelas_para(
+            resolucao,
+            agora=agora,
+            jornada_inicio=alocacao.corretor.horario_inicio,
+            jornada_fim=alocacao.corretor.horario_fim,
+            ocupados=ocupados,
+            tipo=TIPO,
+        )
+        if isinstance(encontradas, list) and encontradas:
+            return [
+                JanelaAlocada(
+                    janela=janela, corretor_id=alocacao.corretor.id, motivo=alocacao.motivo
+                )
+                for janela in encontradas
+            ]
+    return None
+
+
 async def _oferecer(
     session: AsyncSession,
     *,
@@ -211,6 +303,7 @@ async def _oferecer(
     agora: datetime,
     agenda: AgendaDoCorretor,
     visitas: ContadorDeVisitas,
+    texto: str,
     molde: str,
 ) -> Resultado:
     """Uma rodada nova de janelas, gravada e dita ao lead.
@@ -228,7 +321,18 @@ async def _oferecer(
     # tem match exato: `alocar` cai no plantao generalista, que e o que a
     # RN-11.2 manda fazer. Nao e motivo para recusar o agendamento.
     criterio = criterio_de(estado) if estado is not None else CriterioDoLead(None, None)
-    janelas = await janelas_alocadas(
+    # A data que o lead falou manda, quando ele falou uma (CA-11.1).
+    da_data = await _janelas_da_data_falada(
+        texto=texto,
+        criterio=criterio,
+        corretores=corretores,
+        agenda=agenda,
+        visitas=visitas,
+        agora=agora,
+    )
+    if isinstance(da_data, Ambigua):
+        return Perguntou(texto=da_data.pergunta)
+    janelas = da_data or await janelas_alocadas(
         criterio=criterio,
         corretores=corretores,
         agenda=agenda,
@@ -253,8 +357,8 @@ async def _oferecer(
         imovel_id=imovel_id,
         agora=agora,
     )
-    texto = molde.format(janelas=linhas_das_janelas([p.janela.inicio for p in propostas]))
-    return Ofereceu(texto=texto, propostas=propostas)
+    resposta = molde.format(janelas=linhas_das_janelas([p.janela.inicio for p in propostas]))
+    return Ofereceu(texto=resposta, propostas=propostas)
 
 
 async def _reservar(
@@ -267,6 +371,7 @@ async def _reservar(
     agora: datetime,
     agenda: AgendaDoCorretor,
     visitas: ContadorDeVisitas,
+    texto: str,
 ) -> Resultado:
     """A escolha do lead vira reserva de 5 minutos, ou alternativas.
 
@@ -287,6 +392,7 @@ async def _reservar(
             agora=agora,
             agenda=agenda,
             visitas=visitas,
+            texto=texto,
             molde=TEXTO_DO_CONFLITO,
         )
     resultado = await reservar_ou_alternativas(
@@ -308,10 +414,12 @@ async def _reservar(
         # reserva, e deixa-las de pe faria o "sim" tardio ser lido como
         # escolha de janela em vez de virar oferta nova.
         await apagar_propostas(session, channel=channel, conversation_key=conversation_key)
-        texto = TEXTO_DA_ESCOLHA.format(
-            quando=data_e_hora_absolutas(resultado.janela.inicio), corretor=corretor.nome
+        return Reservou(
+            texto=TEXTO_DA_ESCOLHA.format(
+                quando=data_e_hora_absolutas(resultado.janela.inicio), corretor=corretor.nome
+            ),
+            reserva_id=resultado.id,
         )
-        return Reservou(texto=texto, reserva_id=resultado.id)
     alternativas = [
         JanelaAlocada(janela=janela, corretor_id=corretor.id, motivo=proposta.motivo)
         for janela in resultado
@@ -329,8 +437,12 @@ async def _reservar(
         imovel_id=imovel_id,
         agora=agora,
     )
-    texto = TEXTO_DO_CONFLITO.format(janelas=linhas_das_janelas([p.janela.inicio for p in novas]))
-    return Ofereceu(texto=texto, propostas=novas)
+    return Ofereceu(
+        texto=TEXTO_DO_CONFLITO.format(
+            janelas=linhas_das_janelas([p.janela.inicio for p in novas])
+        ),
+        propostas=novas,
+    )
 
 
 async def atender(
@@ -367,6 +479,7 @@ async def atender(
                 agora=agora,
                 agenda=agenda,
                 visitas=visitas,
+                texto=texto,
                 molde=TEXTO_DA_RESERVA_VENCIDA,
             )
         if recusou(texto):
@@ -379,6 +492,7 @@ async def atender(
                 agora=agora,
                 agenda=agenda,
                 visitas=visitas,
+                texto=texto,
                 molde=TEXTO_DE_OUTRO_HORARIO,
             )
         return NadaAFazer()
@@ -398,6 +512,7 @@ async def atender(
                 agora=agora,
                 agenda=agenda,
                 visitas=visitas,
+                texto=texto,
             )
         # Nao escolheu. Pode ser que esteja pedindo horario de novo -- e ai
         # vale uma rodada nova --, e pode ser que esteja falando de outra
@@ -413,5 +528,6 @@ async def atender(
         agora=agora,
         agenda=agenda,
         visitas=visitas,
+        texto=texto,
         molde=TEXTO_DAS_JANELAS,
     )
