@@ -68,6 +68,17 @@ CHAVES_DE_DETALHES = frozenset({"gatilho", "permissao", "motivo", "papel", "meto
 PAPEL_DESCONHECIDO = "DESCONHECIDO"
 METODO_DESCONHECIDO = "OUTRO"
 
+# O que cada chave de `detalhes` pode valer: exatamente o que
+# `detalhes_da_negativa` e `detalhes_do_handoff` produzem. So `permissao` e
+# nula -- a negativa por falta de sessao nao tem permissao em jogo.
+_VALORES_DE_DETALHES: Mapping[str, frozenset[str | None]] = {
+    "gatilho": frozenset(g.value for g in Gatilho),
+    "motivo": frozenset(MOTIVOS_DE_NEGATIVA),
+    "permissao": frozenset({None, *(p.value for p in Permissao)}),
+    "papel": frozenset({*PAPEIS, PAPEL_DESCONHECIDO}),
+    "metodo": frozenset({*_METODOS_HTTP, METODO_DESCONHECIDO}),
+}
+
 
 @dataclass(frozen=True)
 class Ator:
@@ -91,18 +102,22 @@ ATOR_SISTEMA = Ator(AtorTipo.SISTEMA)
 
 
 def validar_detalhes(detalhes: Mapping[str, str | None]) -> dict[str, str | None]:
-    """Recusa chave fora de `CHAVES_DE_DETALHES` e valor que nao seja texto ou nulo.
+    """Recusa chave fora de `CHAVES_DE_DETALHES` e valor fora do vocabulario dela.
 
     E a ultima barreira antes do INSERT: quem monta `detalhes` sao as funcoes
-    abaixo, e esta funcao garante que um sitio de chamada novo nao contorne as
-    duas com um dict escrito a mao.
+    abaixo, e esta funcao confere, chave a chave, que o valor e um dos que elas
+    produzem -- `gatilho` um `Gatilho`, `motivo` um de `MOTIVOS_DE_NEGATIVA`,
+    `permissao` uma `Permissao` ou nulo, `papel` um de `PAPEIS` ou
+    `PAPEL_DESCONHECIDO`, `metodo` um de `_METODOS_HTTP` ou
+    `METODO_DESCONHECIDO`. Um dict escrito a mao passa so se tiver exatamente
+    esses valores: texto livre, em qualquer chave, e `ValueError`.
     """
     fora = sorted(set(detalhes) - CHAVES_DE_DETALHES)
     if fora:
         raise ValueError(f"detalhes com chave fora do vocabulario: {', '.join(fora)}")
     for chave, valor in detalhes.items():
-        if valor is not None and not isinstance(valor, str):
-            raise ValueError(f"detalhes.{chave} tem de ser texto ou nulo")
+        if valor not in _VALORES_DE_DETALHES[chave]:
+            raise ValueError(f"detalhes.{chave} fora do vocabulario: {valor!r}")
     return dict(detalhes)
 
 

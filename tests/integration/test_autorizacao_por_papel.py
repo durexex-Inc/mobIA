@@ -571,8 +571,9 @@ async def test_a_negativa_com_identidade_vai_para_a_trilha(
 async def test_a_negativa_por_papel_tambem_vai_para_a_trilha(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
-    await client.get(ROTA_ADMINISTRATIVA, headers=_bearer("LEITURA"))
+    resposta = await client.get(ROTA_ADMINISTRATIVA, headers=_bearer("LEITURA"))
 
+    assert resposta.status_code == 403
     (evento,) = await _negativas(session)
     assert evento.entidade_id == ROTA_ADMINISTRATIVA
     assert evento.detalhes is not None

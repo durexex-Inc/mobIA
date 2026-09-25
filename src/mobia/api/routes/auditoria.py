@@ -53,7 +53,7 @@ async def listar(
     channel: Annotated[str | None, Query(max_length=32)] = None,
     conversation_key: Annotated[str | None, Query(alias="conversationKey", max_length=64)] = None,
     limite: Annotated[int, Query()] = LIMITE_PADRAO,
-    cursor: Annotated[str | None, Query()] = None,
+    cursor: Annotated[str | None, Query(max_length=512)] = None,
     _: IdentidadeDaRequisicao = Depends(Exige(Permissao.VER_AUDITORIA)),
 ) -> dict[str, object]:
     """A trilha do mais recente ao mais antigo, filtrada e paginada por cursor.

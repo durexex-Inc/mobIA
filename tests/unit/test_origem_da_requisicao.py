@@ -18,3 +18,9 @@ def test_ip_valido_passa(texto: str) -> None:
 @pytest.mark.parametrize("texto", [None, "", "testclient", "1.2.3.4:5678", "abc", "999.1.1.1"])
 def test_o_que_nao_e_ip_vira_nulo(texto: str | None) -> None:
     assert ip_valido_ou_nulo(texto) is None
+
+
+@pytest.mark.parametrize("texto", ["fe80::1%eth0", "fe80::1%1"])
+def test_ipv6_com_zona_vira_nulo(texto: str) -> None:
+    """O `inet` do Postgres recusa o `%zona`; aceitar aqui faria um 403 virar 500."""
+    assert ip_valido_ou_nulo(texto) is None

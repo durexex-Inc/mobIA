@@ -133,13 +133,19 @@ def ip_valido_ou_nulo(texto: str | None) -> str | None:
     faz: e so uma chave. Para a trilha nao: a coluna e `inet`, e um valor que
     nao e endereco viraria `DataError` no INSERT, transformando um 403 em 500.
     Melhor um `ip` nulo e verdadeiro que um registro que nao existe.
+
+    O IPv6 com zona (`fe80::1%eth0`) e endereco para o `ipaddress`, mas o
+    `inet` recusa o `%zona` -- e vira nulo pela mesma razao.
     """
     if not texto:
         return None
     try:
-        return str(ipaddress.ip_address(texto))
+        endereco = ipaddress.ip_address(texto)
     except ValueError:
         return None
+    if isinstance(endereco, ipaddress.IPv6Address) and endereco.scope_id is not None:
+        return None
+    return str(endereco)
 
 
 def origem_da_requisicao(request: Request) -> Origem:

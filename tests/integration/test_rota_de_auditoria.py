@@ -194,6 +194,18 @@ async def test_pedido_invalido_e_422_e_nao_trilha_inteira(
     assert resposta.status_code == 422
 
 
+async def test_cursor_longo_e_recusado_antes_de_decodificar(
+    client: AsyncClient, banco_limpo: None
+) -> None:
+    """O `max_length` do `cursor`: um texto enorme nao chega ao decodificador."""
+    resposta = await client.get(ROTA, params={"cursor": "a" * 513}, headers=_bearer("ADMIN"))
+
+    assert resposta.status_code == 422
+    (erro,) = resposta.json()["detail"]
+    assert erro["loc"] == ["query", "cursor"]
+    assert erro["type"] == "string_too_long"
+
+
 async def test_o_cursor_percorre_sem_repetir_nem_pular(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:

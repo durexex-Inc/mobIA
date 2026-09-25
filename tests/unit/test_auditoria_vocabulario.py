@@ -127,6 +127,54 @@ class TestDetalhes:
             validar_detalhes({"gatilho": 3})
 
 
+class TestValidarDetalhesPorValor:
+    """`validar_detalhes` confere o VALOR de cada chave, e nao so o nome.
+
+    Um dict escrito a mao com a chave certa e texto livre no valor e o caminho
+    por onde dado pessoal entraria na trilha sem passar pelas duas funcoes.
+    """
+
+    @pytest.mark.parametrize("chave", sorted(CHAVES_DE_DETALHES))
+    def test_texto_livre_em_cada_chave_e_recusado(self, chave: str) -> None:
+        with pytest.raises(ValueError, match=f"detalhes.{chave}"):
+            validar_detalhes({chave: "lead pediu pelo 5511911112222"})
+
+    @pytest.mark.parametrize("gatilho", list(Gatilho))
+    def test_todo_detalhe_de_handoff_passa(self, gatilho: Gatilho) -> None:
+        detalhes = detalhes_do_handoff(gatilho)
+        assert validar_detalhes(detalhes) == detalhes
+
+    @pytest.mark.parametrize("permissao", [None, *(p.value for p in Permissao)])
+    @pytest.mark.parametrize("motivo", sorted(MOTIVOS_DE_NEGATIVA))
+    @pytest.mark.parametrize("papel", [*PAPEIS, "SUPERVISOR do Paulo"])
+    @pytest.mark.parametrize("metodo", ["GET", "POST", "PUT", "PATCH", "DELETE", "PROPFIND"])
+    def test_todo_detalhe_de_negativa_passa(
+        self, permissao: str | None, motivo: str, papel: str, metodo: str
+    ) -> None:
+        detalhes = detalhes_da_negativa(
+            permissao=permissao, motivo=motivo, papel=papel, metodo=metodo
+        )
+        assert validar_detalhes(detalhes) == detalhes
+
+    def test_os_sentinelas_passam(self) -> None:
+        detalhes = {"papel": PAPEL_DESCONHECIDO, "metodo": METODO_DESCONHECIDO}
+        assert validar_detalhes(detalhes) == detalhes
+
+    @pytest.mark.parametrize("chave", ["gatilho", "motivo", "papel", "metodo"])
+    def test_nulo_so_vale_para_permissao(self, chave: str) -> None:
+        with pytest.raises(ValueError, match=f"detalhes.{chave}"):
+            validar_detalhes({chave: None})
+
+    def test_permissao_nula_passa(self) -> None:
+        assert validar_detalhes({"permissao": None}) == {"permissao": None}
+
+    def test_toda_chave_tem_vocabulario_de_valor(self) -> None:
+        """Chave nova em `CHAVES_DE_DETALHES` sem vocabulario viraria `KeyError`."""
+        from mobia.domain.auditoria.vocabulario import _VALORES_DE_DETALHES
+
+        assert set(_VALORES_DE_DETALHES) == CHAVES_DE_DETALHES
+
+
 MIGRACAO = (
     pathlib.Path(__file__).resolve().parents[2]
     / "alembic"
