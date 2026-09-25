@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
+from mobia.domain.agendamento.agendador import AVISAR_CONFIRMACAO_JOB
 from mobia.domain.handoff.agendador import GERAR_RESUMO_JOB
 from mobia.infra.queue import PROCESS_MESSAGE_JOB, enqueue_process_message
 from mobia.workers.jobs.notificar import NOTIFICAR_JOB
@@ -67,6 +68,16 @@ def test_notificar_corretor_registrado_com_o_nome_esperado() -> None:
     mesmo molde de test_gerar_resumo_registrado_com_o_nome_esperado."""
     registrada = next(
         f for f in WorkerSettings.functions if getattr(f, "name", None) == NOTIFICAR_JOB
+    )
+    assert registrada.keep_result_s == 0
+
+
+def test_avisar_confirmacao_registrado_com_o_nome_esperado() -> None:
+    """Amarra AVISAR_CONFIRMACAO_JOB (usado por AgendadorDeConfirmacaoArq para
+    montar o `_job_id`) ao nome que WorkerSettings de fato registra. Mesmo
+    molde de test_gerar_resumo_registrado_com_o_nome_esperado."""
+    registrada = next(
+        f for f in WorkerSettings.functions if getattr(f, "name", None) == AVISAR_CONFIRMACAO_JOB
     )
     assert registrada.keep_result_s == 0
 
