@@ -557,18 +557,17 @@ async def test_tres_palavras_fora_da_forma_sao_indisponibilidade(
 
 def test_o_protocolo_da_entrada_ensina_as_duas_formas_da_injecao() -> None:
     """O que se pede e o que se le: a forma liberada comeca por LIBERAR, e
-    `INJECAO` nao aparece na linha de categorias -- la ela ensinaria
-    `BLOQUEAR INJECAO` como forma de liberar."""
+    `INJECAO` nao aparece na frase do veredito -- la ela seria categoria de
+    bloqueio, e `BLOQUEAR INJECAO` voltaria a ser resposta ensinada."""
     from mobia.infra.moderacao import _protocolo_de
 
     entrada = _protocolo_de(Direcao.ENTRADA)
     assert "LIBERAR INJECAO" in entrada
     assert "BLOQUEAR ASSEDIO INJECAO" in entrada
     assert "BLOQUEAR INJECAO" not in entrada
-    linha_de_categorias = next(
-        linha for linha in entrada.splitlines() if linha.startswith("Categorias:")
-    )
-    assert "INJECAO" not in linha_de_categorias
+    decisao = next(linha for linha in entrada.splitlines() if linha.startswith("Primeiro"))
+    assert "INJECAO" not in decisao
+    assert "nao e categoria de bloqueio" in entrada
     assert "INJECAO" not in _protocolo_de(Direcao.SAIDA)
 
 
@@ -644,7 +643,7 @@ def test_o_protocolo_diz_quantas_categorias_cabem_em_cada_direcao() -> None:
     bloqueio, e sim o achado acrescentado no fim."""
     from mobia.infra.moderacao import _protocolo_de
 
-    assert "BLOQUEAR seguido de uma categoria." in _protocolo_de(Direcao.ENTRADA)
+    assert "com a categoria depois." in _protocolo_de(Direcao.ENTRADA)
     assert "BLOQUEAR seguido de uma categoria." in _protocolo_de(Direcao.SAIDA)
 
 

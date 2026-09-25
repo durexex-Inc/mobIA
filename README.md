@@ -840,10 +840,10 @@ ver TEC-206). Sozinha, ela se escreve depois de `LIBERAR` (`LIBERAR
 INJECAO`); junto de uma categoria que bloqueia, depois das duas palavras de
 sempre (`BLOQUEAR ASSEDIO INJECAO`) — é a terceira palavra do protocolo que
 existe. **Só `LIBERAR` e `LIBERAR INJECAO` liberam.** Na primeira versão,
-`BLOQUEAR INJECAO` liberava, e o eval pago mostrou o preço: o lead que
-ditava esse rótulo ao moderador passou conteúdo hostil em 2 de 10 casos de
-`entrada_injecao_bloqueia.yaml`, que o moderador de antes da card barrava
-10 de 10. Hoje toda resposta que começa por `BLOQUEAR` bloqueia —
+`BLOQUEAR INJECAO` liberava, e o eval pago mostrou o preço: em
+`entrada_injecao_bloqueia.yaml` o moderador bloqueou só 8 de 10 — num dos
+casos respondeu o `BLOQUEAR INJECAO` que o lead tinha ditado —, contra 10 de
+10 do moderador de antes da card. Hoje toda resposta que começa por `BLOQUEAR` bloqueia —
 `BLOQUEAR INJECAO` sozinho vira `OUTRO`, com o achado —, e
 `LIBERAR INJECAO` na saída, que não oferece a palavra, é fora do protocolo. A defesa contra a injeção em si — delimitar o texto do lead e
 declará-lo dado, nunca instrução — não é deste sistema; é
