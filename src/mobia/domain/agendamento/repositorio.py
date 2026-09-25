@@ -61,9 +61,19 @@ def _e_sobreposicao(exc: IntegrityError) -> bool:
     NOME da constraint, com o texto como fallback para driver que nao expoe
     `constraint_name`. Tratar todo IntegrityError como conflito esconderia
     um CHECK violado atras de "horario ocupado".
+
+    **Com asyncpg, o nome estruturado mora um nivel abaixo de `exc.orig`.**
+    `exc.orig` e o `IntegrityError` que o SQLAlchemy adapta, e ele nao tem
+    `constraint_name`; quem tem e o erro do proprio asyncpg, que o dialeto
+    deixa em `exc.orig.__cause__`. Por isso o `__cause__` e checado primeiro;
+    `exc.orig` direto continua checado depois, para o driver que exponha o
+    campo sem esse nivel a mais; e o texto e o ultimo fallback, para quem nao
+    expoe nada estruturado.
     """
     original = exc.orig
-    nome = getattr(original, "constraint_name", None)
+    nome = getattr(getattr(original, "__cause__", None), "constraint_name", None)
+    if nome is None:
+        nome = getattr(original, "constraint_name", None)
     if nome is not None:
         return bool(nome == EXCLUSAO_DE_SOBREPOSICAO)
     return EXCLUSAO_DE_SOBREPOSICAO in str(original)
@@ -208,10 +218,15 @@ async def reservar_ou_alternativas(
 ) -> Reserva | list[Intervalo]:
     """A reserva, ou as janelas que sobraram -- nunca um erro tecnico.
 
-    Em `Conflito`, quem venceu ja commitou (foi o commit dele que fez esta
-    gravacao ser recusada), entao a agenda que o motor le ja o enxerga e as
-    alternativas nao incluem o horario perdido. `ate` e o horizonte das
-    alternativas e vem de quem chama, como no motor.
+    Em `Conflito` com escritor concorrente de OUTRA sessao, quem venceu ja
+    commitou (foi o commit dele que fez esta gravacao ser recusada), entao a
+    agenda que o motor le ja o enxerga e as alternativas nao incluem o
+    horario perdido. Mas `AgendaPostgres` le so o que ja foi commitado: se o
+    conflito for com uma reserva pendente da PROPRIA sessao de quem chama
+    (reservar duas vezes na mesma transacao, antes do commit), a agenda ainda
+    nao a enxerga, e as alternativas podem incluir o horario que acabou de
+    perder. `ate` e o horizonte das alternativas e vem de quem chama, como no
+    motor.
     """
     resultado = await reservar(
         session,

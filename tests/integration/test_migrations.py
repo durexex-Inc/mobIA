@@ -408,3 +408,15 @@ async def test_a_0044_desce_e_sobe_de_novo() -> None:
 
     async with get_sessionmaker()() as sessao:
         assert await sessao.scalar(text("SELECT to_regclass('public.agendamentos')")) is not None
+        # No molde de `_LISTAR_CONSTRAINTS` acima, mas para uma exclusion
+        # constraint (`contype = 'x'`): confirma que o upgrade recria
+        # `ex_agendamentos_sem_sobreposicao`, e nao so a tabela.
+        assert (
+            await sessao.scalar(
+                text(
+                    "SELECT 1 FROM pg_constraint WHERE conname = 'ex_agendamentos_sem_sobreposicao'"
+                    " AND contype = 'x' AND conrelid = 'agendamentos'::regclass"
+                )
+            )
+            == 1
+        )
