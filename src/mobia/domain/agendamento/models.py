@@ -81,6 +81,15 @@ class Agendamento(Base):
     )
     lead_avisado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # TEC-171, RN-12.2. Uma coluna por lembrete, e o que ela guarda e
+    # "resolvido", nao "entregue" -- quem registra entrega e a linha em
+    # `outbound_dispatches`. Nula na falha de canal, que e o caso em que a
+    # passagem seguinte tenta de novo; preenchida tambem quando a guarda
+    # recusou, e essa e a diferenca deliberada em relacao as tres colunas da
+    # TEC-170 logo acima. Ver a migration 0049, que guarda o porque.
+    lembrete_24h_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lembrete_2h_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         CheckConstraint(
             "tipo IN ('VISITA_PRESENCIAL','REUNIAO_REMOTA')", name="ck_agendamentos_tipo"
