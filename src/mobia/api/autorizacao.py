@@ -27,9 +27,19 @@ from dataclasses import dataclass
 import structlog
 from fastapi import Header, HTTPException, Request, status
 
+from mobia.api.middleware import origem_da_requisicao
 from mobia.app.config import get_settings
+from mobia.domain.auditoria.registro import registrar_evento
+from mobia.domain.auditoria.vocabulario import (
+    Acao,
+    Ator,
+    AtorTipo,
+    Entidade,
+    detalhes_da_negativa,
+)
 from mobia.domain.usuarios.permissoes import Permissao, permissoes_de
 from mobia.domain.usuarios.tokens import TokenInvalido, validar
+from mobia.infra.db import get_sessionmaker
 
 log = structlog.get_logger(__name__)
 
@@ -99,6 +109,14 @@ class IdentidadeDaRequisicao:
     def para_log(self) -> str:
         """O identificador que vai para o log. Nunca o token."""
         return str(self.usuario_id) if self.usuario_id is not None else SEM_USUARIO
+
+    def como_ator(self) -> Ator:
+        """Quem chamou, como ator da trilha de auditoria (TEC-206).
+
+        Sempre USUARIO, com o mesmo identificador do log: o `usuario_id`, ou
+        `token-compartilhado` para quem entrou pelo `X-Admin-Token`.
+        """
+        return Ator(AtorTipo.USUARIO, self.para_log())
 
 
 def _negar() -> HTTPException:
@@ -210,12 +228,13 @@ class Exige:
         if identidade is None:
             # Sem identidade nenhuma nao ha papel a registrar, e o evento sai
             # com `papel=None` em vez de com um papel inventado: "ninguem
-            # provou quem e" e um fato diferente de "provou e nao pode".
-            registrar_negativa(request, self.permissao, identidade=None)
+            # provou quem e" e um fato diferente de "provou e nao pode". E nao
+            # vai para a trilha (TEC-206, D7): ver `registrar_negativa`.
+            await registrar_negativa(request, self.permissao, identidade=None)
             raise _negar()
 
         if not identidade.pode(self.permissao):
-            registrar_negativa(request, self.permissao, identidade=identidade)
+            await registrar_negativa(request, self.permissao, identidade=identidade)
             raise _negar()
 
         return identidade
@@ -243,7 +262,7 @@ class ExigeSessao:
     ) -> IdentidadeDaRequisicao:
         identidade = identidade_da_requisicao(x_admin_token, authorization)
         if identidade is None or identidade.usuario_id is None:
-            registrar_negativa(request, None, identidade=identidade, motivo="sem_sessao")
+            await registrar_negativa(request, None, identidade=identidade, motivo="sem_sessao")
             raise _negar()
         return identidade
 
@@ -255,27 +274,44 @@ class ExigeSessao:
 EXIGE_SESSAO = ExigeSessao()
 
 
-def registrar_negativa(
+def _template_da_rota(request: Request) -> str:
+    """A rota como foi declarada (`/api/v1/handoffs/{handoff_id}/aceitar`).
+
+    O FastAPI poe a rota resolvida em `request.scope["route"]` antes de rodar
+    as dependencias. Sem ela -- nao acontece nas rotas guardadas, mas o custo
+    de nao quebrar e uma linha --, cai para o caminho cru, no teto da coluna.
+    """
+    caminho = getattr(request.scope.get("route"), "path", None)
+    if isinstance(caminho, str):
+        return caminho
+    return request.url.path[:200]
+
+
+async def registrar_negativa(
     request: Request,
     permissao: Permissao | None,
     *,
     identidade: IdentidadeDaRequisicao | None,
     motivo: str = "sem_permissao",
 ) -> None:
-    """A tentativa negada, registrada. TEC-202, D6.
+    """A tentativa negada, registrada. TEC-202, D6; TEC-206, D7.
 
-    **Vai para o log e nao para uma tabela**, contra o precedente de
-    `rate_limit_events` e `moderation_events` -- e pelo argumento que o proprio
+    **Sempre no log; na trilha, so quando ha identidade.** O log
+    `autorizacao.negada` sai em toda negativa, com o formato da TEC-202. A
+    linha em `eventos_auditoria` sai so quando `identidade` foi resolvida.
+    A negativa sem credencial continua so em log, e o argumento e o que o
     docstring de `RateLimitEvent` escreve: "escrever uma linha por requisicao
-    transformaria o registro de abuso no proprio vetor de abuso". Vale aqui com
-    menos defesa que la: negacao de autorizacao e o que um varredor de
-    endpoints produz EM RAJADA, sem precisar de credencial nenhuma, e cada 403
-    viraria uma escrita no Postgres do defensor.
+    transformaria o registro de abuso no proprio vetor de abuso". Negacao sem
+    credencial e o que um varredor de endpoints produz EM RAJADA, e cada 403
+    viraria uma escrita no Postgres do defensor. Com identidade, quem produz a
+    negativa e alguem identificavel -- e e esse o registro que a TEC-343 pede.
 
-    A trilha imutavel da RNF-18 e a TEC-206, que nao depende desta. Quando ela
-    chegar, este evento ganha destino persistente sem mudar de forma.
+    **A escrita commita antes de o 403 sair**, numa sessao curta propria: nao
+    ha transacao de negocio a que ela se juntar. Se o banco falhar, a resposta
+    e erro, e nao um 403 sem registro.
 
-    **Nunca o token e nunca o corpo** -- so quem, o que foi exigido e onde.
+    **Nunca o token e nunca o corpo** -- so quem, o que foi exigido e onde. Na
+    trilha, "onde" e o template da rota, e nao o caminho com o id.
 
     `permissao` e nula quando o que faltou nao foi permissao, e sim sessao de
     usuario -- e o caso do `ExigeSessao`.
@@ -289,9 +325,27 @@ def registrar_negativa(
         metodo=request.method,
         rota=request.url.path,
     )
+    if identidade is None:
+        return
+    async with get_sessionmaker()() as session:
+        await registrar_evento(
+            session,
+            ator=identidade.como_ator(),
+            acao=Acao.ACESSO_NEGADO,
+            entidade=Entidade.ROTA,
+            entidade_id=_template_da_rota(request),
+            detalhes=detalhes_da_negativa(
+                permissao=permissao.value if permissao is not None else None,
+                motivo=motivo,
+                papel=identidade.papel,
+                metodo=request.method,
+            ),
+            origem=origem_da_requisicao(request),
+        )
+        await session.commit()
 
 
-def exigir_dono(
+async def exigir_dono(
     request: Request,
     identidade: IdentidadeDaRequisicao,
     *,
@@ -321,5 +375,7 @@ def exigir_dono(
         return
     if corretor_id is not None and corretor_id == identidade.corretor_id:
         return
-    registrar_negativa(request, permissao, identidade=identidade, motivo="corretor_nao_e_o_dono")
+    await registrar_negativa(
+        request, permissao, identidade=identidade, motivo="corretor_nao_e_o_dono"
+    )
     raise _negar()

@@ -20,9 +20,11 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.app.config import get_settings
+from mobia.domain.auditoria.models import EventoAuditoria
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status
 from mobia.domain.usuarios import tokens
@@ -403,8 +405,9 @@ async def test_a_negativa_por_papel_registra_quem_tentou(
     """A outra metade do registro: autenticado, e sem a permissao.
 
     E o evento que responde "quem andou tentando abrir o que nao e dele" numa
-    investigacao -- e o unico registro que existe, porque a trilha imutavel da
-    RNF-18 e a TEC-206 (L5).
+    investigacao. O log e metade do registro; a outra, desde a TEC-206, e a
+    linha em `eventos_auditoria` -- ver
+    `test_a_negativa_por_papel_tambem_vai_para_a_trilha`.
     """
     with caplog.at_level("WARNING"):
         await client.get(ROTA_ADMINISTRATIVA, headers=_bearer("LEITURA"))
@@ -517,3 +520,89 @@ async def test_usuario_do_banco_recebe_no_me_o_papel_que_tem_gravado(
 
     assert eu.json()["papel"] == "CORRETOR"
     assert eu.json()["corretorId"] == str(corretor_id)
+
+
+async def _negativas(session: AsyncSession) -> list[EventoAuditoria]:
+    return list(
+        (
+            await session.execute(
+                select(EventoAuditoria).where(EventoAuditoria.acao == "ACESSO_NEGADO")
+            )
+        ).scalars()
+    )
+
+
+async def test_a_negativa_com_identidade_vai_para_a_trilha(
+    session: AsyncSession,
+    client: AsyncClient,
+    banco_limpo: None,
+    semear_corretor: Any,
+) -> None:
+    """TEC-206, D7: com identidade resolvida, a negativa tem destino persistente.
+
+    O `entidade_id` e o TEMPLATE da rota, e nao o caminho com o id: o que se
+    audita e qual rota foi negada.
+    """
+    dono = await _corretor(semear_corretor, "paulo")
+    intruso = await _corretor(semear_corretor, "marcia")
+    handoff_id = await _handoff_de(session, dono)
+
+    resposta = await client.post(
+        f"/api/v1/handoffs/{handoff_id}/aceitar",
+        headers=_bearer("CORRETOR", corretor_id=intruso),
+    )
+
+    assert resposta.status_code == 403
+    (evento,) = await _negativas(session)
+    assert evento.ator_tipo == "USUARIO"
+    assert evento.ator_id is not None
+    assert evento.entidade == "rota"
+    assert evento.entidade_id == "/api/v1/handoffs/{handoff_id}/aceitar"
+    assert evento.detalhes == {
+        "permissao": "ATENDER_LEAD",
+        "motivo": "corretor_nao_e_o_dono",
+        "papel": "CORRETOR",
+        "metodo": "POST",
+    }
+    assert str(evento.ip) == "127.0.0.1"
+    assert evento.correlation_id == resposta.headers["X-Request-Id"]
+
+
+async def test_a_negativa_por_papel_tambem_vai_para_a_trilha(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    await client.get(ROTA_ADMINISTRATIVA, headers=_bearer("LEITURA"))
+
+    (evento,) = await _negativas(session)
+    assert evento.entidade_id == ROTA_ADMINISTRATIVA
+    assert evento.detalhes is not None
+    assert evento.detalhes["motivo"] == "sem_permissao"
+    assert evento.detalhes["permissao"] == Permissao.GERIR_CORRETORES.value
+
+
+async def test_a_negativa_sem_credencial_fica_so_no_log(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None, caplog: Any
+) -> None:
+    """O argumento da TEC-202 vale inteiro: sem credencial, e o varredor em rajada."""
+    with caplog.at_level("WARNING"):
+        resposta = await client.get(ROTA_ADMINISTRATIVA)
+
+    assert resposta.status_code == 403
+    assert len(eventos_de_log(caplog, "autorizacao.negada")) == 1
+    assert await _negativas(session) == []
+
+
+async def test_o_token_compartilhado_sem_sessao_vai_para_a_trilha(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """Identidade resolvida, mas sem usuario: `ator_id` e o `para_log` dela."""
+    resposta = await client.get(
+        "/api/v1/auth/me", headers={"X-Admin-Token": get_settings().catalogo_admin_token}
+    )
+
+    assert resposta.status_code == 403
+    (evento,) = await _negativas(session)
+    assert evento.ator_id == "token-compartilhado"
+    assert evento.detalhes is not None
+    assert evento.detalhes["motivo"] == "sem_sessao"
+    assert evento.detalhes["permissao"] is None

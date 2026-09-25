@@ -25,6 +25,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select, update
 
 from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao, exigir_dono
+from mobia.api.middleware import origem_da_requisicao
+from mobia.domain.auditoria.registro import registrar_evento
+from mobia.domain.auditoria.vocabulario import CAMPO_RESUMO, Acao, Entidade
 from mobia.domain.handoff.geracao import gerar_resumo
 from mobia.domain.handoff.models import Handoff, aad_do_resumo_de_handoff
 from mobia.domain.handoff.resumo import RedatorAnthropic, link_da_transcricao
@@ -68,7 +71,7 @@ async def _exigir_dono_do(
         ).first()
     if linha is None:
         return
-    exigir_dono(
+    await exigir_dono(
         request, identidade, permissao=Permissao.ATENDER_LEAD, corretor_id=linha.corretor_id
     )
 
@@ -98,6 +101,22 @@ async def regenerar(
         linha = (
             await session.execute(select(Handoff).where(Handoff.id == handoff_id))
         ).scalar_one()
+        # TEC-206, D1 e D7. O resumo carrega dado pessoal do lead, e esta rota
+        # e hoje o unico caminho que o revela. O registro commita AQUI, antes
+        # do `return`: se a escrita falhar, a resposta e erro, e o resumo nao
+        # sai sem o registro. O texto do resumo nao vai para a trilha -- ela
+        # diz qual campo foi lido, nao o que ele dizia.
+        await registrar_evento(
+            session,
+            ator=identidade.como_ator(),
+            acao=Acao.DADO_PESSOAL_ACESSADO,
+            entidade=Entidade.HANDOFF,
+            entidade_id=str(handoff_id),
+            campo=CAMPO_RESUMO,
+            lead=(linha.channel, linha.conversation_key),
+            origem=origem_da_requisicao(request),
+        )
+        await session.commit()
 
     return {
         "resumo": decrypt(linha.resumo, aad_do_resumo_de_handoff(handoff_id)),
