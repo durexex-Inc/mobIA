@@ -66,7 +66,8 @@ async def test_troca_o_token_e_cria_o_evento_com_convite() -> None:
         "grant_type": "refresh_token",
     }
 
-    assert str(evento.url.path) == "/calendar/v3/calendars/agenda@imobiliaria.com/events"
+    expected_path = b"/calendar/v3/calendars/agenda%40imobiliaria.com/events"
+    assert evento.url.raw_path.split(b"?")[0] == expected_path
     assert evento.url.params["sendUpdates"] == "all"
     assert evento.headers["Authorization"] == "Bearer tok"
     corpo = json.loads(evento.content)
