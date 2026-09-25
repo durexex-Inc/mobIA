@@ -19,6 +19,12 @@ TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO = "dev-catalogo-token"
 # validator. Quem o tiver emite token de ADMIN para si mesmo.
 SEGREDO_DE_JWT_DE_DESENVOLVIMENTO = "dev-jwt-secret-nao-use-em-producao"
 
+# A chave do `lead_ref` da trilha de auditoria em desenvolvimento (TEC-206,
+# D4). Mesmo molde da CHAVE_DE_DESENVOLVIMENTO: commitada de proposito, e
+# recusada em producao pelo validator. Quem a tiver calcula o `lead_ref` de
+# qualquer telefone e descobre se ele aparece na trilha.
+CHAVE_DO_LEAD_DE_DESENVOLVIMENTO = "dev-auditoria-chave-do-lead-nao-use-em-producao"
+
 # O piso da RFC 7518, secao 3.2: a chave de HMAC deve ter ao menos o tamanho da
 # saida da funcao -- 32 bytes para SHA-256. Abaixo disso, a assinatura e mais
 # facil de quebrar por forca bruta do que o algoritmo promete, e o `pyjwt` avisa
@@ -82,6 +88,12 @@ class Settings(BaseSettings):
     # requisicao. Chave de cifra errada nao falha: o dado e gravado com uma
     # chave publicamente conhecida e nada reclama. Dai a guarda abaixo.
     content_encryption_key: str = CHAVE_DE_DESENVOLVIMENTO
+
+    # A chave do HMAC que produz `eventos_auditoria.lead_ref` (TEC-206, D4).
+    # Mesma guarda de producao da chave de cifra, e pela mesma razao: chave
+    # conhecida nao produz erro nenhum, ela so deixa de proteger. E nao pode
+    # rodar sem tornar a trilha impesquisavel -- ver `auditoria/referencia.py`.
+    auditoria_chave_do_lead: str = CHAVE_DO_LEAD_DE_DESENVOLVIMENTO
 
     # Sem default utilizavel: chave ausente falha alto na construcao do cliente.
     # Nao precisa da guarda de producao que a chave de cifra tem -- uma chave de
@@ -732,6 +744,24 @@ class Settings(BaseSettings):
                 "CATALOGO_ADMIN_TOKEN esta com o default de desenvolvimento e "
                 f"ENVIRONMENT={self.environment}. Gere um token: "
                 'python -c "import secrets;print(secrets.token_urlsafe(32))"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _recusar_chave_do_lead_de_desenvolvimento_em_producao(self) -> "Settings":
+        """TEC-206, D4. Mesmo molde da chave de cifra e do segredo de JWT.
+
+        Uma chave de HMAC publicamente conhecida nao falha: a trilha grava
+        normalmente, e quem souber a chave recalcula o `lead_ref` de qualquer
+        telefone. No validator, e nao no `create_app`, para valer em API,
+        worker, alembic e qualquer script que construa `Settings`.
+        """
+        if self.em_producao and self.auditoria_chave_do_lead == CHAVE_DO_LEAD_DE_DESENVOLVIMENTO:
+            raise ConfiguracaoInsegura(
+                "AUDITORIA_CHAVE_DO_LEAD esta com o default de desenvolvimento e "
+                f"ENVIRONMENT={self.environment}. Quem a conhece descobre se um "
+                "telefone aparece na trilha de auditoria. Gere uma: "
+                'python -c "import secrets;print(secrets.token_urlsafe(48))"'
             )
         return self
 

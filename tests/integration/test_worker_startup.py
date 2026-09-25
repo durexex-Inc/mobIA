@@ -215,6 +215,8 @@ def _producao(monkeypatch: pytest.MonkeyPatch) -> None:
     # o teste passaria pelo motivo errado -- exatamente o que o docstring acima
     # ja dizia das outras duas.
     monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
+    # TEC-206: a quarta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
+    monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
 
 
