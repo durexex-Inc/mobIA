@@ -23,6 +23,7 @@ from mobia.domain.agendamento.lembretes import (
     escolher_template_do_lembrete,
     kind_do_lembrete,
     lembrete_devido,
+    parametros_do_template_do_lembrete,
     texto_do_lembrete,
 )
 from mobia.domain.catalogo.models import Imovel
@@ -312,3 +313,40 @@ def test_o_template_de_um_lembrete_nao_serve_ao_outro() -> None:
     aprovados = frozenset({LEMBRETE_DE_24H.template})
     assert escolher_template_do_lembrete(LEMBRETE_DE_24H, aprovados=aprovados) is not None
     assert escolher_template_do_lembrete(LEMBRETE_DE_2H, aprovados=aprovados) is None
+
+
+def test_os_parametros_do_template_sao_os_mesmos_dados_do_texto_livre() -> None:
+    """Quando, onde e quem -- os tres que o texto livre leva.
+
+    O template e a mesma mensagem dita sob a restricao da Meta, e nao outra:
+    dado que o texto livre nao leva faria o lead receber duas mensagens
+    diferentes conforme a janela.
+    """
+    parametros = parametros_do_template_do_lembrete(
+        tipo=TipoDeCompromisso.VISITA_PRESENCIAL,
+        inicio=INICIO,
+        corretor="Ana",
+        imovel=_imovel(),
+    )
+    quando, endereco, corretor = parametros
+    assert "sábado, 26 de setembro" in quando
+    assert "A-120" in endereco
+    assert corretor == "Ana"
+
+
+def test_sem_endereco_a_posicao_dele_vai_vazia_e_nao_some() -> None:
+    """A Meta casa parametro por POSICAO.
+
+    Encurtar a lista deslocaria o nome do corretor para o buraco do endereco,
+    e o lead leria "Ana" onde deveria ler o endereco.
+    """
+    for tipo, imovel in (
+        (TipoDeCompromisso.REUNIAO_REMOTA, _imovel()),
+        (TipoDeCompromisso.VISITA_PRESENCIAL, None),
+    ):
+        parametros = parametros_do_template_do_lembrete(
+            tipo=tipo, inicio=INICIO, corretor="Ana", imovel=imovel
+        )
+        assert len(parametros) == 3
+        assert parametros[1] == ""
+        assert parametros[2] == "Ana"

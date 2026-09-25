@@ -78,6 +78,11 @@ class Lembrete:
     proximo_marco: timedelta
     prefixo_do_kind: str
     template: str
+    # O idioma do template aprovado, que a Meta exige no envio e que tem de
+    # bater com o do template. Mora aqui pela mesma razao que mora em
+    # `TemplateAprovado` (`followup/template.py`): e propriedade do template,
+    # nao do canal.
+    idioma: str
     texto_de_visita: str
     texto_de_visita_sem_imovel: str
     texto_de_reuniao: str
@@ -91,6 +96,7 @@ LEMBRETE_DE_24H = Lembrete(
     proximo_marco=timedelta(hours=2),
     prefixo_do_kind="lembrete_24_",
     template="lembrete_visita_24h",
+    idioma="pt_BR",
     texto_de_visita=TEXTO_DO_LEMBRETE_DE_24H_DE_VISITA,
     texto_de_visita_sem_imovel=TEXTO_DO_LEMBRETE_DE_24H_DE_VISITA_SEM_IMOVEL,
     texto_de_reuniao=TEXTO_DO_LEMBRETE_DE_24H_DE_REUNIAO,
@@ -106,6 +112,7 @@ LEMBRETE_DE_2H = Lembrete(
     # conta dos 32 caracteres seja uma so.
     prefixo_do_kind="lembrete_02_",
     template="lembrete_visita_2h",
+    idioma="pt_BR",
     texto_de_visita=TEXTO_DO_LEMBRETE_DE_2H_DE_VISITA,
     texto_de_visita_sem_imovel=TEXTO_DO_LEMBRETE_DE_2H_DE_VISITA_SEM_IMOVEL,
     texto_de_reuniao=TEXTO_DO_LEMBRETE_DE_2H_DE_REUNIAO,
@@ -237,3 +244,27 @@ def escolher_template_do_lembrete(lembrete: Lembrete, *, aprovados: frozenset[st
     e exatamente a antecedencia do primeiro lembrete.
     """
     return lembrete.template if lembrete.template in aprovados else None
+
+
+def parametros_do_template_do_lembrete(
+    *, tipo: str, inicio: datetime, corretor: str, imovel: Imovel | None
+) -> list[str]:
+    """Os tres parametros posicionais do template, na ordem em que ele os espera.
+
+    **Sao os MESMOS tres dados do texto livre** -- quando, onde e quem --,
+    porque o template e a mesma mensagem dita sob a restricao da Meta, e nao
+    outra. Um template preenchido com dado que o texto livre nao leva faria o
+    lead receber duas mensagens diferentes conforme a janela.
+
+    Reuniao remota e visita sem imovel nao tem endereco, e o lugar dele vai
+    **vazio** em vez de sumir: a Meta casa parametros por POSICAO, entao
+    encurtar a lista deslocaria o nome do corretor para o buraco do endereco.
+    Ver `parametros_do_template` (`followup/template.py`), que resolve o mesmo
+    problema pela mesma razao.
+
+    Valor nenhum passa pelo modelo -- `data_e_hora_absolutas` e `endereco_de`
+    sao as mesmas funcoes que montam o texto livre.
+    """
+    remota = tipo == TipoDeCompromisso.REUNIAO_REMOTA
+    endereco = "" if remota or imovel is None else endereco_de(imovel)
+    return [data_e_hora_absolutas(inicio), endereco, corretor]
