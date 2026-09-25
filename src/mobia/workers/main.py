@@ -38,6 +38,7 @@ from mobia.workers.jobs.sweep_importacoes_travadas import sweep_importacoes_trav
 from mobia.workers.jobs.sweep_lembretes import sweep_lembretes
 from mobia.workers.jobs.sweep_midias_pendentes import sweep_midias_pendentes
 from mobia.workers.jobs.sweep_remarcacoes import sweep_remarcacoes
+from mobia.workers.jobs.sweep_retencao_auditoria import sweep_retencao_auditoria
 from mobia.workers.jobs.sweep_sla import sweep_sla
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
 
@@ -304,6 +305,10 @@ class WorkerSettings:
         # `cron_jobs` tambem -- e o relogio que dispara este job, nunca um
         # enqueue manual.
         func(sweep_conversas_inativas, keep_result=0),
+        # TEC-206. `keep_result=0` pela mesma razao do `sweep_sla`: o resultado
+        # (um `int`) nao serve para nada depois que o log saiu. Entra em
+        # `cron_jobs` tambem -- e o relogio que dispara este job.
+        func(sweep_retencao_auditoria, keep_result=0),
         # TEC-180. `keep_result=0` pela razao do `gerar_resumo`: o `_job_id` e
         # fixo por handoff (`crm:<id>`), e uma chave de resultado sobrevivente
         # bloquearia em silencio o reenqueue que a varredura faz a cada rodada
@@ -407,6 +412,12 @@ class WorkerSettings:
         # `process_message` esta mais vazia, e esta varredura toma locks em
         # `conversas`.
         cron(sweep_conversas_inativas, hour={3}, minute={0}, run_at_startup=False),
+        # TEC-206, D6. **Uma vez por dia, as 4h** -- uma hora depois do
+        # `sweep_conversas_inativas`, para as duas varreduras diarias nao
+        # disputarem a mesma janela ociosa. A regra e de DOZE MESES: uma
+        # passagem perdida deixa uma linha viva um dia a mais, e quem impede
+        # apagar historico recente e o trigger da 0048, nao este horario.
+        cron(sweep_retencao_auditoria, hour={4}, minute={0}, run_at_startup=False),
         # TEC-180. **De 15 em 15 minutos**, e nao de 5 em 5 como os irmaos: a
         # cadencia aqui e a de uma rodada de retentativa contra um sistema que
         # ja falhou tres vezes, nao a de um prazo a cumprir. Mais frequente so
