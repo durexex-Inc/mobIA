@@ -131,12 +131,12 @@ MIGRACAO = (
     pathlib.Path(__file__).resolve().parents[2]
     / "alembic"
     / "versions"
-    / "0048_eventos_auditoria.py"
+    / "0052_eventos_auditoria.py"
 )
 
 
 def _tupla_da_migracao(nome: str) -> tuple[str, ...]:
-    """O valor literal de `nome = ("...", ...)` no topo da 0048.
+    """O valor literal de `nome = ("...", ...)` no topo da 0052.
 
     Le o ARQUIVO com `ast`, como `test_uma_cabeca_de_migration.py`: nao
     precisa de banco, e nao importa a migration -- importa-la rodaria o
@@ -150,7 +150,7 @@ def _tupla_da_migracao(nome: str) -> tuple[str, ...]:
             valor = ast.literal_eval(no.value)
             assert isinstance(valor, tuple)
             return valor
-    raise AssertionError(f"{nome} nao encontrado na 0048")
+    raise AssertionError(f"{nome} nao encontrado na 0052")
 
 
 @pytest.mark.parametrize(

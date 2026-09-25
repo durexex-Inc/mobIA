@@ -2,7 +2,7 @@
 
 **So `GET`, e so do ADMIN** (`VER_AUDITORIA`). A rota nao tem outro metodo,
 entao "nao ha opcao de editar nem de excluir" vale tambem na API -- e, por
-baixo dela, o trigger da 0048 recusa as duas coisas de qualquer caminho.
+baixo dela, o trigger da 0052 recusa as duas coisas de qualquer caminho.
 
 **A leitura da trilha nao e auditada** nesta card: seria um registro por
 registro lido. Se precisar ser, e decisao da TEC-343.

@@ -1,7 +1,7 @@
 """O vocabulario fechado da trilha de auditoria. TEC-206, D2 e D5 do desenho.
 
 Modulo sem I/O, no molde de `handoff/vocabulario.py`. Os tres enums tem copia
-literal nos CHECKs da migration 0048 -- a migration nao importa daqui, porque
+literal nos CHECKs da migration 0052 -- a migration nao importa daqui, porque
 migration aplicada nao muda quando o codigo muda --, e quem prende as duas
 copias juntas e `tests/unit/test_auditoria_vocabulario.py`.
 
@@ -45,7 +45,7 @@ class Entidade(StrEnum):
     # A negativa: `entidade_id` e o template da rota, e nao o caminho com o id.
     ROTA = "rota"
     # As entidades das duas acoes sem chamador. Entram agora porque o CHECK da
-    # 0048 e o que custaria migration depois, e o chamador nao custa nada.
+    # 0052 e o que custaria migration depois, e o chamador nao custa nada.
     LEAD_QUALIFICATION = "lead_qualification"
     CONFIGURACAO_AGENTE = "configuracao_agente"
 
@@ -73,7 +73,7 @@ METODO_DESCONHECIDO = "OUTRO"
 class Ator:
     """Quem fez. Pessoa tem id; agente e sistema nao tem.
 
-    O par e conferido aqui e pelo `ck_eventos_auditoria_ator_id` da 0048: um
+    O par e conferido aqui e pelo `ck_eventos_auditoria_ator_id` da 0052: um
     registro de pessoa sem identidade, ou de agente com identidade, e a
     mentira que a trilha nao pode conter.
     """

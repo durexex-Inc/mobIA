@@ -416,7 +416,7 @@ class WorkerSettings:
         # `sweep_conversas_inativas`, para as duas varreduras diarias nao
         # disputarem a mesma janela ociosa. A regra e de DOZE MESES: uma
         # passagem perdida deixa uma linha viva um dia a mais, e quem impede
-        # apagar historico recente e o trigger da 0048, nao este horario.
+        # apagar historico recente e o trigger da 0052, nao este horario.
         cron(sweep_retencao_auditoria, hour={4}, minute={0}, run_at_startup=False),
         # TEC-180. **De 15 em 15 minutos**, e nao de 5 em 5 como os irmaos: a
         # cadencia aqui e a de uma rodada de retentativa contra um sistema que

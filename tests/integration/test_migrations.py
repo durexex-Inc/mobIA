@@ -422,7 +422,7 @@ async def test_a_0044_desce_e_sobe_de_novo() -> None:
         )
 
 
-async def test_a_0048_desce_e_sobe_de_novo() -> None:
+async def test_a_0052_desce_e_sobe_de_novo() -> None:
     """A tabela e as duas funcoes somem no downgrade e voltam no upgrade.
 
     Mesma razao da 0012: triggers e funcoes nascem de `op.execute`, entao nada
@@ -430,7 +430,7 @@ async def test_a_0048_desce_e_sobe_de_novo() -> None:
     seguinte reprovar com "function already exists".
     """
     await dispose_engine()
-    alembic("downgrade", "0047")
+    alembic("downgrade", "0051")
     try:
         async with get_sessionmaker()() as sessao:
             assert (

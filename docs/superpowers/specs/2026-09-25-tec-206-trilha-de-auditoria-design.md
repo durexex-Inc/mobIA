@@ -155,7 +155,7 @@ Só leitura: a rota não tem outro método, então "não há opção de editar n
 | registro não guarda dado pessoal em claro | exercitado no resumo e no `lead_ref`; o telefone não tem rota que o revele até a TEC-195 |
 | retenção de 12 meses | 11 meses fica (e 13 meses sai) |
 
-## Migration 0048
+## Migration 0052
 
 `eventos_auditoria`, os dois triggers e os quatro índices, à mão. `downgrade` remove tudo.
 
