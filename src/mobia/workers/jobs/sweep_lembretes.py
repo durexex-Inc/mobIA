@@ -12,8 +12,9 @@ adiar (`_defer_until`), mas um job na fila nao se desmarca: a card manda que
 agendamento cancelado ou remarcado nao receba os lembretes antigos, e quem
 enfileirasse teria de lembrar de cancelar em cada caminho que mexe no
 agendamento. A varredura le o estado de AGORA -- o que deixou de ser
-CONFIRMADO simplesmente nao aparece na consulta, e a TEC-172 ganha a regra
-sem tocar neste arquivo.
+CONFIRMADO simplesmente nao aparece na consulta, e foi assim que a TEC-172
+ganhou a regra: ela acrescentou CANCELADO e REAGENDADO ao vocabulario sem
+tocar uma linha deste arquivo.
 
 **Nenhum lead recebe lembrete hoje**, pela mesma razao que a TEC-170 declarou:
 nenhum caminho de producao chama `confirmar()`, entao a tabela nao tem linha

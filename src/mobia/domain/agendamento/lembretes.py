@@ -14,7 +14,9 @@ sair com o kind do outro.
 **Nada le a resposta do lead a estes textos.** O de 24 horas oferece
 confirmar, remarcar e cancelar, porque e o que a RN-12.2 manda, e nenhuma das
 tres e lida: `domain/agente/turno.py` nao importa nada de
-`domain/agendamento/`, e as duas ultimas sao a TEC-172. Por isso os textos
+`domain/agendamento/`. A TEC-172 construiu o que as duas ultimas ACIONARIAM
+(`agendamento/ciclo.py::cancelar` e `::remarcar`), e nao o leitor delas -- a
+lacuna encolheu pela metade e nao fechou. Por isso os textos
 CONVIDAM ("e so responder aqui") e nao prometem ("eu remarco para voce") --
 a licao que a TEC-174 pagou.
 """

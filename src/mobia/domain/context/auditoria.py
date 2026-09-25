@@ -10,9 +10,10 @@ no chamador: e a ausencia de causa. Assim a regra de QUANDO gravar a partir de
 um diff mora no mesmo lugar que a de O QUE o diff produz, e as duas nao tem
 como divergir.
 
-**A TEC-136 abriu a segunda metade da regra, de proposito.** `causas_do_recalculo`
-so enxerga os cinco fatores, e ha fato que merece trilha sem mover nenhum
-deles -- a troca de intencao do lead e o primeiro. Por isso `registrar_recalculo`
+**A TEC-136 abriu a segunda metade da regra, de proposito.**
+`causas_do_recalculo` so enxerga os FATORES (cinco ate a TEC-172, seis desde
+ela), e ha fato que merece trilha sem mover nenhum deles -- a troca de
+intencao do lead e o primeiro. Por isso `registrar_recalculo`
 recebe `causas_externas` e as une ANTES da guarda: causa informada pelo
 chamador e razao suficiente para gravar. O que continua valendo e a forma
 negativa da frase acima -- nenhum `if` decide gravar; quem decide e a tupla,
