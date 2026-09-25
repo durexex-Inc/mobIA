@@ -95,10 +95,17 @@ def create_app() -> FastAPI:
     # O que protege agora e a guarda, nao a ausencia da rota. Ver a D2 do
     # desenho da TEC-201 e a D1 da TEC-156, cujo argumento fica registrado como
     # historico de uma fase em que nao havia alternativa.
+    # **`leads` entra neste bloco sem ser administrativa**, e a distincao
+    # vale a linha: as cinco de cima nasceram condicionadas ao token
+    # compartilhado e o bloco descreve a queda daquela condicional (TEC-201). A
+    # de leads (TEC-192) nunca esteve condicionada -- ela esta aqui por ser
+    # import tardio como as outras, e quem a protege e `VER_LEADS`, que os
+    # quatro papeis tem.
     from mobia.api.routes.conversas import router as conversas_router
     from mobia.api.routes.corretores import router as corretores_router
     from mobia.api.routes.handoffs import router as handoffs_router
     from mobia.api.routes.imoveis import router as imoveis_router
+    from mobia.api.routes.leads import router as leads_router
     from mobia.api.routes.metricas import router as metricas_router
 
     app.include_router(imoveis_router)
@@ -106,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(handoffs_router)
     app.include_router(conversas_router)
     app.include_router(metricas_router)
+    app.include_router(leads_router)
 
     if not settings.catalogo_admin_token:
         # O aviso FICA, com outro sentido: nao diz mais que as rotas sumiram --

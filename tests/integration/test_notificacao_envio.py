@@ -606,3 +606,81 @@ async def test_fora_da_jornada_e_nenhum_canal_aceitou_ainda_assim_avisa_o_lead(
     assert kind == KIND_DA_JANELA_HUMANA
     assert f"{inicio}h" in payload["texto"]
     assert f"{fim}h" in payload["texto"]
+
+
+async def test_grava_o_destinatario_no_handoff(
+    session, session_factory, semear_handoff_com_resumo, semear_corretor
+) -> None:
+    """TEC-192, D6 e emenda E-06 da RN-16.2.
+
+    Ate aqui a escolha do destinatario era usada e jogada fora: a notificacao
+    enviava e gravava `notificado_em` sem dizer para quem. `handoffs.corretor_id`
+    tem FK desde a TEC-196 e nunca teve escritor -- a emenda E-05 da RN-16.1
+    registrou isso em 24/09/2026 e declarou o criterio "handoff aponta o
+    corretor" INEXERCITAVEL. E ele que a lista de leads consulta para responder
+    "de quem e este lead".
+    """
+    plantao = await semear_corretor(email="plantao@x.com", plantao=True)
+    handoff_id = await semear_handoff_com_resumo(resumo="texto")
+
+    assert await notificar(
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        outbound=_OutboundFalso(),
+        handoff_id=handoff_id,
+    )
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.corretor_id == plantao.id
+
+
+async def test_grava_o_destinatario_mesmo_quando_o_canal_falha(
+    session, session_factory, semear_handoff_com_resumo, semear_corretor
+) -> None:
+    """O destinatario foi ESCOLHIDO; a falha e do canal.
+
+    Sem esta asserta, um handoff que falhou na entrega ficaria sem dono na
+    lista de leads -- e e justamente o que precisa de aviso manual, o que o
+    corretor mais precisa enxergar.
+    """
+    plantao = await semear_corretor(email="plantao@x.com", plantao=True)
+    handoff_id = await semear_handoff_com_resumo(resumo="texto")
+
+    assert not await notificar(
+        session_factory,
+        canais=(_CanalQueFalha("email"),),
+        outbound=_OutboundFalso(),
+        handoff_id=handoff_id,
+    )
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.corretor_id == plantao.id
+    assert linha.aviso_manual_pendente is True
+
+
+async def test_nao_troca_o_dono_numa_retentativa(
+    session, session_factory, semear_handoff_com_resumo, semear_corretor
+) -> None:
+    """So grava quando nula, pela disciplina do `sla_limite_em`.
+
+    Uma retentativa do ARQ recalcula a cascata, e o plantao de agora pode nao
+    ser o de entao. Sobrescrever trocaria o dono do lead por causa de um
+    reenvio -- o mesmo defeito que a D8 da TEC-178 evita para `aceito_em`.
+    """
+    await semear_corretor(email="plantao@x.com", plantao=True)
+    handoff_id = await semear_handoff_com_resumo(resumo="texto")
+    dono_original = (await semear_corretor(email="dono@x.com")).id
+    await session.execute(
+        update(Handoff).where(Handoff.id == handoff_id).values(corretor_id=dono_original)
+    )
+    await session.commit()
+
+    await notificar(
+        session_factory,
+        canais=(_CanalEspiao("email"),),
+        outbound=_OutboundFalso(),
+        handoff_id=handoff_id,
+    )
+
+    linha = (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
+    assert linha.corretor_id == dono_original

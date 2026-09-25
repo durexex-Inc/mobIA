@@ -26,6 +26,12 @@ class Permissao(StrEnum):
     GERIR_CATALOGO = "GERIR_CATALOGO"
     GERIR_CORRETORES = "GERIR_CORRETORES"
     BUSCAR_IMOVEIS = "BUSCAR_IMOVEIS"
+    # **Os quatro papeis a tem, e o que muda entre eles e O QUE A LISTA
+    # DEVOLVE** (TEC-192, D7): o CORRETOR recebe a consulta ja recortada pelo
+    # proprio vinculo, e os outros veem a base inteira. Uma permissao separada
+    # para "ver os leads dos outros" foi recusada -- ela viraria uma segunda
+    # forma de dizer o que o PAPEL ja diz, livre para divergir dela.
+    VER_LEADS = "VER_LEADS"
     VER_FUNIL = "VER_FUNIL"
     ATENDER_LEAD = "ATENDER_LEAD"
     VER_DADOS_COMPLETOS = "VER_DADOS_COMPLETOS"
@@ -65,6 +71,7 @@ _CONCEDIDAS: dict[str, frozenset[Permissao]] = {
     "GERENTE": frozenset(
         {
             Permissao.BUSCAR_IMOVEIS,
+            Permissao.VER_LEADS,
             Permissao.VER_FUNIL,
             Permissao.ATENDER_LEAD,
             Permissao.VER_DADOS_COMPLETOS,
@@ -73,12 +80,14 @@ _CONCEDIDAS: dict[str, frozenset[Permissao]] = {
     "CORRETOR": frozenset(
         {
             Permissao.BUSCAR_IMOVEIS,
+            Permissao.VER_LEADS,
             Permissao.ATENDER_LEAD,
         }
     ),
     "LEITURA": frozenset(
         {
             Permissao.BUSCAR_IMOVEIS,
+            Permissao.VER_LEADS,
             Permissao.VER_FUNIL,
         }
     ),

@@ -143,6 +143,7 @@ PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/conversas/assumir"): "ATENDER_LEAD",
     ("POST", "/api/v1/conversas/devolver"): "ATENDER_LEAD",
     ("GET", "/api/v1/metricas/funil"): "VER_FUNIL",
+    ("GET", "/api/v1/leads"): "VER_LEADS",
 }
 
 
