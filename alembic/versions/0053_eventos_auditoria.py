@@ -27,8 +27,16 @@ Os vocabularios abaixo sao COPIA literal dos enums de
 quando o codigo muda. `tests/unit/test_auditoria_vocabulario.py` prende as
 duas copias.
 
-Revision ID: 0052
-Revises: 0051
+Revision ID: 0053
+Revises: 0052
+
+**Nasceu 0052 e foi renumerada para 0053 (TEC-377).** A 0052 da TEC-372 e
+esta mergearam com 17 segundos de diferenca, as duas a partir da 0051, e
+`alembic upgrade head` passou a reprovar com dois heads. Renumerou-se ESTA, e
+nao a irma, porque nenhuma base a tinha aplicado: as nove locais estavam
+carimbadas 0052 com `agendamentos.presenca_confirmada_em` e sem
+`eventos_auditoria`. Assim o carimbo existente continua verdadeiro e a unica
+coisa que falta rodar e esta migration.
 """
 
 import sqlalchemy as sa
@@ -36,8 +44,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "0052"
-down_revision = "0051"
+revision = "0053"
+down_revision = "0052"
 branch_labels = None
 depends_on = None
 

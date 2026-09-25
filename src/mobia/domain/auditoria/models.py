@@ -5,7 +5,7 @@ O `EventoAuditoria` da secao 5.1 do SRS com quatro diferencas: entram `campo`,
 -- para qualificacao e dado pessoal, o antes e o depois SAO o dado pessoal que
 a card proibe guardar em claro. Ver a Emenda E-01 ao `EventoAuditoria`.
 
-CHECKs, indices e os dois triggers moram na migration 0052, escrita a mao, e
+CHECKs, indices e os dois triggers moram na migration 0053, escrita a mao, e
 nao aqui: o modelo so serve ao ORM.
 """
 
