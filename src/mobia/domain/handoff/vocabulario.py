@@ -10,10 +10,19 @@ from enum import StrEnum
 class Gatilho(StrEnum):
     """Os gatilhos da RN-16.1.
 
-    **Nasce completo, com fiacao para tres.** Acrescentar valor a este enum
-    depois custa migration (o `IN` do CHECK em `handoffs.status` e irmao deste
-    problema); acrescentar um CHAMADOR nao custa nada. TEC-143 e TEC-149
-    chegaram e so chamaram `registrar_handoff` com o gatilho que ja existia.
+    **Nasceu completo, com fiacao para tres, e a TEC-169 acrescentou o
+    setimo.** Ate ela este docstring dizia que acrescentar valor a este enum
+    "custa migration", e isso era falso: `handoffs.gatilho` e `String(32)`
+    CRU -- a `0023_handoffs.py` poe `CheckConstraint` em `prioridade` e em
+    `status`, e em nenhum dos dois casos no gatilho. O parentesco que a frase
+    antiga nomeava (o `IN` do CHECK em `handoffs.status`) e real, so que e
+    sobre o `status`: e ELE que custa migration, nao este enum. O preco de um
+    gatilho novo sao as duas entradas em `ETIQUETA_DE` e `PRIORIDADE_DE`
+    abaixo, que `tests/unit/test_handoff_vocabulario.py` exige.
+
+    Acrescentar um CHAMADOR tambem nao custa nada, e esse era o outro ponto
+    da frase antiga. TEC-143 e TEC-149 chegaram e so chamaram
+    `registrar_handoff` com o gatilho que ja existia.
     TEC-170 chegou e NAO chamou: o aviso do agendamento confirmado sai por
     e-mail direto ao corretor, sem abrir handoff (RN-16.1, decidido em
     conversa) -- AGENDAMENTO_CONFIRMADO segue sem chamador. **A TEC-371
@@ -35,6 +44,13 @@ class Gatilho(StrEnum):
     SUPORTE_CONTRATO = "SUPORTE_CONTRATO"
     LIMITE_DE_PERGUNTAS = "LIMITE_DE_PERGUNTAS"
     ERRO_DO_AGENTE = "ERRO_DO_AGENTE"
+    # TEC-169, RN-11.5. O lead pediu visita, nao havia janela nas proximas 72
+    # horas e ele aceitou a lista de espera. Gatilho proprio e nao
+    # PEDIDO_DE_HUMANO: aquele e o unico ALTA da RN-16.1 e significa que o
+    # lead pediu uma pessoa, e aqui ele pediu um HORARIO. A etiqueta e o
+    # filtro do corretor no dashboard (TEC-192) e nao muda depois de criada,
+    # entao reusar a de outra fila a tornaria mentirosa para sempre.
+    SEM_DISPONIBILIDADE = "SEM_DISPONIBILIDADE"
 
 
 class Prioridade(StrEnum):
@@ -61,6 +77,7 @@ ETIQUETA_DE: dict[Gatilho, str] = {
     Gatilho.SUPORTE_CONTRATO: "suporte-contrato",
     Gatilho.LIMITE_DE_PERGUNTAS: "qualificacao-parcial",
     Gatilho.ERRO_DO_AGENTE: "erro-do-agente",
+    Gatilho.SEM_DISPONIBILIDADE: "sem-disponibilidade",
 }
 
 PRIORIDADE_DE: dict[Gatilho, Prioridade] = {
@@ -72,6 +89,7 @@ PRIORIDADE_DE: dict[Gatilho, Prioridade] = {
     Gatilho.SUPORTE_CONTRATO: Prioridade.NORMAL,
     Gatilho.LIMITE_DE_PERGUNTAS: Prioridade.NORMAL,
     Gatilho.ERRO_DO_AGENTE: Prioridade.NORMAL,
+    Gatilho.SEM_DISPONIBILIDADE: Prioridade.NORMAL,
 }
 
 

@@ -148,8 +148,16 @@ async def test_conversa_concluida_aceita_um_handoff_novo(
     Um lead atendido meses atras que volta merece handoff novo. Conclua o
     handoff (assumir e depois devolver, pela rota de verdade) e rode um
     turno com gatilho: nasce linha nova, e sao 2 no total.
+
+    **O corretor e semeado DEPOIS do primeiro turno, e a ordem importa desde
+    a TEC-169.** A rota de devolver exige um `corretor_id`, mas semear antes
+    mudaria o que o turno faz: com corretor cadastrado e sem janela nas
+    proximas 72 horas, "quero agendar visita" passa a ser interceptado pela
+    conversa de agendamento, que oferece a lista de espera e encerra o turno
+    -- e o LEAD_QUENTE de que este cenario depende nao chegaria a nascer. Os
+    dois cenarios de cima nao precisam do cuidado porque nao semeiam corretor,
+    e `_oferecer` cai fora na primeira linha quando nao ha nenhum.
     """
-    corretor = await semear_corretor(email=f"corretor-{uuid.uuid4().hex[:8]}@ex.com")
     await rodar_turno(
         session,
         classificador_fake(Intencao.COMPRA),
@@ -158,6 +166,7 @@ async def test_conversa_concluida_aceita_um_handoff_novo(
         contador_fake(),
         texto="quero agendar visita",
     )
+    corretor = await semear_corretor(email=f"corretor-{uuid.uuid4().hex[:8]}@ex.com")
 
     corpo = {
         "channel": CANAL_AGENTE,

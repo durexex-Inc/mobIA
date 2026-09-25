@@ -13,10 +13,12 @@ from mobia.domain.agendamento.conversa import (
     KIND_DO_AGENDAMENTO,
     SUBAGENTE_AGENDAMENTO,
 )
+from mobia.domain.agendamento.conversa import AceitouEspera as EsperaAceita
 from mobia.domain.agendamento.conversa import Cancelou as AgendamentoCancelado
 from mobia.domain.agendamento.conversa import Confirmou as AgendamentoConfirmado
 from mobia.domain.agendamento.conversa import NadaAFazer as NadaAFazerNoAgendamento
 from mobia.domain.agendamento.conversa import Ofereceu as AgendamentoOferecido
+from mobia.domain.agendamento.conversa import OfereceuEspera as EsperaOferecida
 from mobia.domain.agendamento.conversa import Perguntou as AgendamentoPerguntou
 from mobia.domain.agendamento.conversa import (
     PresencaConfirmada as AgendamentoPresencaConfirmada,
@@ -581,6 +583,19 @@ ResultadoDoTurno = Literal[
     # agente respondeu normalmente.
     "presenca_confirmada",
     "agendamento_cancelado",
+    # A TEC-169 acrescentou os dois abaixo, pelo mesmo criterio.
+    #
+    # "espera_oferecida" e o turno que bateu numa semana sem horario livre e
+    # ofereceu a fila. Nao reuse "agendamento_oferecido": aquele significa que
+    # houve horario a oferecer, e este e o oposto -- somar os dois apagaria
+    # exatamente o numero que justifica a RN-11.5 existir, que e quantos leads
+    # pedem visita e nao encontram vaga.
+    #
+    # "espera_aceita" e o lead entrando na fila, com o handoff aberto na mesma
+    # transacao. Nao reuse "espera_oferecida": a distancia entre os dois e a
+    # taxa de aceite da oferta, e ela e o que diz se o texto da D5 funciona.
+    "espera_oferecida",
+    "espera_aceita",
 ]
 
 
@@ -1939,7 +1954,9 @@ async def _executar_turno(
             | AgendamentoReservado
             | AgendamentoPerguntou
             | AgendamentoPresencaConfirmada
-            | AgendamentoCancelado,
+            | AgendamentoCancelado
+            | EsperaOferecida
+            | EsperaAceita,
         ):
             entrega_do_agendamento = await _entregar_texto_fixo(
                 session_factory,
@@ -1963,6 +1980,14 @@ async def _executar_turno(
                     return "agendamento_cancelado"
                 if isinstance(desfecho_do_agendamento, AgendamentoPresencaConfirmada):
                     return "presenca_confirmada"
+                # TEC-169. Os dois da lista de espera, separados um do outro e
+                # de "agendamento_oferecido" pelo criterio que o `Literal`
+                # declara: a oferta e o aceite medem coisas diferentes, e
+                # nenhuma delas e uma oferta de horario.
+                if isinstance(desfecho_do_agendamento, EsperaAceita):
+                    return "espera_aceita"
+                if isinstance(desfecho_do_agendamento, EsperaOferecida):
+                    return "espera_oferecida"
                 return "agendamento_oferecido"
             return entrega_do_agendamento
 
