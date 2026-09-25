@@ -3,9 +3,15 @@
 **A rota exige PERMISSAO, e nao papel** (D1 do desenho). Uma rota que
 declarasse `papeis={"ADMIN", "GERENTE"}` obrigaria quem muda a regra a varrer
 onze arquivos de rota atras de conjuntos de strings que precisam concordar
-entre si -- e nao teria onde guardar `VER_DADOS_COMPLETOS`, que a card concede
-por papel e que rota nenhuma exige: ela e capacidade consultada DENTRO de um
-handler, pela TEC-195.
+entre si -- e nao teria onde guardar `VER_DADOS_COMPLETOS`, que a TEC-202
+concedeu por papel antes de existir rota que a exigisse.
+
+**Aquela previsao nao se cumpriu, e o texto daqui dizia o contrario ate a
+TEC-195.** Ele afirmava que `VER_DADOS_COMPLETOS` seria "capacidade consultada
+DENTRO de um handler" e que "rota nenhuma exige". A TEC-195 decidiu o oposto
+(D4): a lista mascara para TODO chamador, entao handler nenhum a consulta, e
+quem a exige e `POST /api/v1/leads/{lead_id}/revelar`. E permissao de rota como
+as outras.
 
 A matriz abaixo e a unica fonte da resposta "quem pode o que" neste sistema.
 """
@@ -46,9 +52,9 @@ class Permissao(StrEnum):
 # matriz, em vez de uma vez por rota de escrita -- e continue valendo para as
 # rotas de escrita que ainda nao existem.
 #
-# `VER_DADOS_COMPLETOS` fica de fora apesar de a TEC-195 exigir auditoria ao
-# usa-la: revelar um telefone nao altera o telefone. O registro e efeito de
-# conformidade, nao escrita de dominio.
+# `VER_DADOS_COMPLETOS` fica de fora apesar de a rota que a exige gravar uma
+# linha de auditoria: revelar um telefone nao altera o telefone. O registro e
+# efeito de conformidade, nao escrita de dominio.
 DE_ESCRITA = frozenset(
     {
         Permissao.GERIR_CATALOGO,

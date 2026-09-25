@@ -175,30 +175,36 @@ class TestValidarDetalhesPorValor:
         assert set(_VALORES_DE_DETALHES) == CHAVES_DE_DETALHES
 
 
-MIGRACAO = (
-    pathlib.Path(__file__).resolve().parents[2]
-    / "alembic"
-    / "versions"
-    / "0053_eventos_auditoria.py"
-)
+VERSIONS = pathlib.Path(__file__).resolve().parents[2] / "alembic" / "versions"
 
 
 def _tupla_da_migracao(nome: str) -> tuple[str, ...]:
-    """O valor literal de `nome = ("...", ...)` no topo da 0053.
+    """O valor literal de `nome = ("...", ...)` na ULTIMA migration que o define.
 
     Le o ARQUIVO com `ast`, como `test_uma_cabeca_de_migration.py`: nao
     precisa de banco, e nao importa a migration -- importa-la rodaria o
     `from alembic import op` fora de um contexto de migracao.
+
+    **Era a `0053` fixa ate a TEC-195**, que acrescentou `lead` a `Entidade` e
+    recriou o CHECK na `0056` -- o Postgres nao estende CHECK, entao o
+    vocabulario em vigor passou a ser o da migration mais recente que o
+    escreve. Ordenar por nome de arquivo basta porque as revisoes sao `NNNN_`,
+    e o que interessa e a ultima a tocar no assunto.
+
+    **A varredura NAO afrouxa a asserta.** Ela continua comparando o enum com
+    uma copia literal escrita a mao num arquivo de migration; o que mudou e
+    qual arquivo responde.
     """
-    arvore = ast.parse(MIGRACAO.read_text(encoding="utf-8"))
-    for no in arvore.body:
-        if isinstance(no, ast.Assign) and any(
-            isinstance(alvo, ast.Name) and alvo.id == nome for alvo in no.targets
-        ):
-            valor = ast.literal_eval(no.value)
-            assert isinstance(valor, tuple)
-            return valor
-    raise AssertionError(f"{nome} nao encontrado na 0053")
+    for arquivo in sorted(VERSIONS.glob("[0-9]*.py"), reverse=True):
+        arvore = ast.parse(arquivo.read_text(encoding="utf-8"))
+        for no in arvore.body:
+            if isinstance(no, ast.Assign) and any(
+                isinstance(alvo, ast.Name) and alvo.id == nome for alvo in no.targets
+            ):
+                valor = ast.literal_eval(no.value)
+                assert isinstance(valor, tuple)
+                return valor
+    raise AssertionError(f"{nome} nao encontrado em migration nenhuma")
 
 
 @pytest.mark.parametrize(

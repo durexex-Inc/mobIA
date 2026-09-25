@@ -243,6 +243,13 @@ TABELAS = (
     # alcancaria esta tabela pela FK, mas so nos testes que chegam a aceitar a
     # oferta: listar aqui e o que a limpa nos que so a oferecem.
     "lista_de_espera",
+    # TEC-195. Mutavel, e com UNIQUE por (channel, conversation_key): sem o
+    # truncate, o apelido criado por um teste continua valendo no proximo, e
+    # dois problemas nascem juntos -- o `leadId` da resposta deixa de bater com
+    # o que o teste acabou de semear, e um teste que resolve o apelido para o
+    # par encontra o par de outro teste. Mesmo sintoma que `handoffs` e
+    # `imoveis` ja registram: passa sozinho, falha em conjunto.
+    "referencias_de_lead",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto

@@ -6,7 +6,6 @@ pe. Quem toca o banco e `repositorio.py`, ao lado.
 """
 
 import base64
-import binascii
 import json
 import uuid
 from dataclasses import dataclass
@@ -31,18 +30,24 @@ class FiltroInvalido(ValueError):
 class Cursor:
     """Onde a pagina seguinte comeca: o ULTIMO item da pagina atual.
 
-    **Os tres campos juntos, e nao so o score** (D5 do desenho). Score e
+    **Os dois campos juntos, e nao so o score** (D5 do desenho). Score e
     inteiro de 0 a 100 numa base de milhares: empate e o caso comum, nao a
-    borda. Sem o par da conversa no desempate, duas paginas trazem a mesma
-    linha -- que e exatamente o que o quarto cenario do Gherkin verifica.
+    borda. Sem um desempate estavel, duas paginas trazem a mesma linha -- que e
+    exatamente o que o quarto cenario do Gherkin verifica.
+
+    **O desempate viajava como o par `(channel, conversation_key)` ate a
+    TEC-195**, e o par e o telefone do lead no WhatsApp. `codificar` e base64,
+    que qualquer um decodifica, entao `proximoCursor` entregava o telefone a
+    quem nao pode le-lo -- o mesmo vazamento do `conversationKey` no item, por
+    um campo em que ninguem olhava. Agora viaja o apelido opaco de
+    `referencias_de_lead`, e quem volta ao par e o servidor.
 
     `score` nulavel porque lead sem pontuacao entra na lista (D4), e a pagina
     pode terminar num deles.
     """
 
     score: int | None
-    channel: str
-    conversation_key: str
+    lead_id: uuid.UUID
 
     def codificar(self) -> str:
         """base64 de um JSON. **Opaco de proposito.**
@@ -51,9 +56,13 @@ class Cursor:
         contrato: um cursor legivel vira um cursor que alguem monta a mao, e a
         partir dai a forma interna dele nao pode mais mudar sem quebrar
         cliente. O SRS ja o descreve assim ("proximoCursor": "opaco").
+
+        **Desde a TEC-195 isso BASTA**, e antes nao bastava: o que trafega aqui
+        ja nao e dado pessoal, entao a fragilidade do base64 deixou de ter
+        consequencia. Um `lead_id` decodificado nao diz nada sobre o lead.
         """
         corpo = json.dumps(
-            {"s": self.score, "c": self.channel, "k": self.conversation_key},
+            {"s": self.score, "l": str(self.lead_id)},
             separators=(",", ":"),
         )
         return base64.urlsafe_b64encode(corpo.encode("utf-8")).decode("ascii")
@@ -67,14 +76,19 @@ def decodificar_cursor(texto: str) -> Cursor:
     faria a tela mostrar o comeco da lista como se fosse a continuacao dela, e
     o defeito so apareceria como "a rolagem pulou para o topo sozinha".
 
-    As quatro excecoes cobrem o que base64 e JSON levantam para entrada
-    inventada; `KeyError` cobre o JSON bem formado com as chaves erradas, que e
-    o caso de um cursor de uma VERSAO anterior deste formato.
+    **`ValueError` no lugar dos tres nomes que estavam aqui.** `binascii.Error`,
+    `UnicodeDecodeError` e `json.JSONDecodeError` sao todos subclasses dele, e
+    a TEC-195 acrescentou um quarto caso com a mesma base -- `uuid.UUID` de um
+    texto que nao e UUID. Listar os quatro daria a impressao de que a lista e
+    exaustiva quando ela nunca foi. `KeyError` cobre o JSON bem formado com as
+    chaves erradas, que e o caso de um cursor de uma VERSAO anterior deste
+    formato -- inclusive o `{"s","c","k"}` de antes da TEC-195, que passa a ser
+    recusado com 422.
     """
     try:
         corpo = json.loads(base64.urlsafe_b64decode(texto.encode("ascii")))
-        return Cursor(score=corpo["s"], channel=corpo["c"], conversation_key=corpo["k"])
-    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as erro:
+        return Cursor(score=corpo["s"], lead_id=uuid.UUID(corpo["l"]))
+    except (ValueError, KeyError, TypeError) as erro:
         raise FiltroInvalido("cursor invalido") from erro
 
 

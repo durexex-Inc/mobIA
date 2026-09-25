@@ -5,6 +5,8 @@ as duas coisas que decidem antes de qualquer SQL rodar. Os cenarios contra
 banco estao em `tests/integration/test_lista_de_leads.py`.
 """
 
+import base64
+import json
 import uuid
 
 import pytest
@@ -20,17 +22,46 @@ from mobia.domain.leads.consulta import (
 
 
 class TestCursor:
-    def test_ida_e_volta_preserva_os_tres_campos(self) -> None:
-        cursor = Cursor(score=42, channel="whatsapp", conversation_key="5548999")
+    def test_ida_e_volta_preserva_os_dois_campos(self) -> None:
+        cursor = Cursor(score=42, lead_id=uuid.uuid4())
 
         assert decodificar_cursor(cursor.codificar()) == cursor
 
     def test_score_nulo_sobrevive(self) -> None:
         """Lead sem pontuacao entra na lista (D4), entao a pagina pode terminar
         num deles -- e `None` tem de voltar `None`, e nunca zero."""
-        cursor = Cursor(score=None, channel="web", conversation_key="sessao-1")
+        cursor = Cursor(score=None, lead_id=uuid.uuid4())
 
         assert decodificar_cursor(cursor.codificar()).score is None
+
+    def test_o_cursor_nao_carrega_o_par_do_lead(self) -> None:
+        """TEC-195, D3: o que trafega aqui deixou de ser dado pessoal.
+
+        `codificar` e base64, que qualquer um decodifica. Enquanto o par
+        viajava aqui, `proximoCursor` entregava o telefone do lead a quem nao
+        pode le-lo -- por um campo em que ninguem olhava.
+        """
+        telefone = "5548999990021"
+        cursor = Cursor(score=42, lead_id=uuid.uuid4())
+
+        cru = base64.urlsafe_b64decode(cursor.codificar().encode("ascii")).decode("utf-8")
+
+        assert telefone not in cru
+        assert "whatsapp" not in cru
+        assert str(cursor.lead_id) in cru
+
+    def test_cursor_do_formato_anterior_e_recusado(self) -> None:
+        """O `{"s","c","k"}` de antes da TEC-195 nao volta como primeira pagina.
+
+        `KeyError` na chave que sumiu -- e o caso que `decodificar_cursor` ja
+        nomeava como "cursor de uma VERSAO anterior deste formato".
+        """
+        antigo = base64.urlsafe_b64encode(
+            json.dumps({"s": 42, "c": "whatsapp", "k": "5548999990021"}).encode("utf-8")
+        ).decode("ascii")
+
+        with pytest.raises(FiltroInvalido):
+            decodificar_cursor(antigo)
 
     @pytest.mark.parametrize(
         "texto",

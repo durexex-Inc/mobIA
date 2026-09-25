@@ -48,11 +48,29 @@ class Entidade(StrEnum):
     # 0053 e o que custaria migration depois, e o chamador nao custa nada.
     LEAD_QUALIFICATION = "lead_qualification"
     CONFIGURACAO_AGENTE = "configuracao_agente"
+    # TEC-195. O `entidade_id` e o apelido opaco de `referencias_de_lead`, e
+    # NAO o par `(channel, conversation_key)` -- gravar o par seria gravar o
+    # telefone, que e o que a D4 da TEC-206 proibiu. Quem pesquisa a trilha por
+    # lead continua usando `lead_ref`. Custou a migration 0056, que recriou o
+    # CHECK da 0053.
+    LEAD = "lead"
 
 
-# O unico `campo` com chamador hoje: o resumo do handoff, em
-# `POST /api/v1/handoffs/{handoff_id}/resumo`.
+# Os `campo` que a trilha nomeia. O que vai para a linha e QUAL campo foi
+# lido, nunca o que ele dizia.
+#
+# `CAMPO_RESUMO` era o unico com chamador ate a TEC-195; os outros dois sao da
+# revelacao de dado pessoal em `POST /api/v1/leads/{lead_id}/revelar`.
 CAMPO_RESUMO = "resumo"
+CAMPO_TELEFONE = "telefone"
+# Sem fonte: nenhuma tabela deste sistema guarda e-mail de lead (TEC-195, D7).
+# A rota o aceita e devolve nulo, para que a tela nao precise mudar quando a
+# coluna nascer.
+CAMPO_EMAIL = "email"
+
+# Os campos que `POST /leads/{lead_id}/revelar` aceita. Fora daqui e 422, e
+# nao 500: o campo vem de quem chamou.
+CAMPOS_REVELAVEIS = frozenset({CAMPO_TELEFONE, CAMPO_EMAIL})
 
 # Os tres motivos que `api/autorizacao.py` produz. Um quarto, sem entrar aqui,
 # e erro de programacao -- e nao texto que passe para a trilha.
