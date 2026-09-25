@@ -140,6 +140,22 @@ class LeadQualification(Base):
     # que o lead escreveu.
     campos_recusados: Mapped[list[str] | None] = mapped_column(ARRAY(String(32)), nullable=True)
 
+    # TEC-172, RN-12.4. Os pontos que o lead PERDE, acumulados -- dois nao
+    # comparecimentos custam 30. E o sexto fator de `Score`, e existe porque o
+    # score e DERIVADO: `calcular_score` recalcula os cinco fatores a cada
+    # passagem, entao um desconto gravado so na trilha evaporaria no recalculo
+    # seguinte -- a trilha diria 53 e o lead valeria 68.
+    #
+    # `NOT NULL DEFAULT 0` porque a linha antiga quer dizer "nunca foi
+    # penalizado", que e exatamente zero: aqui o default e fato, e nao
+    # ausencia de fato. E a distincao oposta a das colunas nulaveis de
+    # `agendamentos`, onde nulo e o registro de que o passo nao aconteceu.
+    #
+    # **O piso mora em `Score.total`, e nao aqui.** Esta coluna acumula de
+    # verdade; cortar na acumulacao faria o segundo no-show de um lead ja
+    # zerado nao ser registrado.
+    penalidade_pontos: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
     # TEC-149, RN-05.5. Quantas perguntas de qualificacao ja foram FEITAS E
     # ENTREGUES a este lead. Cresce so no commit pos-entrega do turno -- ver
     # `contar_perguntas` no repositorio, e o porque no comentario que chama
@@ -313,6 +329,13 @@ class LeadScoreAudit(Base):
     catalogo: Mapped[int] = mapped_column(Integer, nullable=False)
     engajamento: Mapped[int] = mapped_column(Integer, nullable=False)
     capacidade: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # TEC-172. O sexto fator, ao lado dos cinco. Entra aqui e nao so em
+    # `lead_qualification` para a premissa desta tabela continuar verdadeira:
+    # toda linha carrega os fatores COMPLETOS do instante dela. Sem a coluna,
+    # duas linhas com os cinco fatores iguais e totais diferentes nao teriam
+    # como ser explicadas por quem le a trilha.
+    penalidade: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     # Nunca NULL e nunca vazio: tupla vazia e o sinal de nao gravar, entao uma
     # linha sem causa nao deveria ter chegado ao INSERT. O vocabulario mora em
