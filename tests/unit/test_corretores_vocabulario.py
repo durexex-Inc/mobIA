@@ -18,7 +18,7 @@ def test_sao_as_quatro_especialidades_da_card() -> None:
 
 
 def test_a_grafia_das_tres_compartilhadas_bate_com_intencao() -> None:
-    """D3: e por igualdade de string que a TEC-166 vai mapear.
+    """D3: e por igualdade de string que `criterio_de` (TEC-166) mapeia.
 
     Se alguem renomear um membro de qualquer um dos dois enums, este teste
     reprova -- que e exatamente o ponto. Sem ele, a divergencia so apareceria

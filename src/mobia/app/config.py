@@ -610,9 +610,10 @@ class Settings(BaseSettings):
     # nunca fica em espera silenciosa.
     #
     # Janela da imobiliaria, e nao a jornada do corretor designado: no instante
-    # do pedido ninguem foi designado ainda, e a alocacao por especialidade e
-    # regiao e outra card (TEC-166). Uma janela unica responde "quando alguem
-    # te atende" sem precisar saber quem.
+    # do pedido ninguem foi designado ainda -- a alocacao por especialidade e
+    # regiao (TEC-166) escolhe corretor para o agendamento, nao para o
+    # handoff. Uma janela unica responde "quando alguem te atende" sem
+    # precisar saber quem.
     #
     # Mesma convencao de borda que `followup_horario_fim` documenta acima --
     # `fim` e o ultimo MINUTO em que a janela ainda vale, nao a ultima hora

@@ -4,21 +4,24 @@ Puro: nao toca banco, rede nem relogio -- `agora` entra como parametro, como
 em todo o dominio. **Nenhum caminho de producao chega aqui ainda:** os
 chamadores sao `janelas_para`, em `data_falada.py` (TEC-167), e
 `reservar_ou_alternativas`, em `repositorio.py` (TEC-168) -- nenhum dos dois
-tem chamador de producao. A gravacao ja existe (TEC-168); falta a quem
-atribuir o agendamento (TEC-166) e a ligacao com o turno para a conversa
-passar a oferecer horario de verdade; oferecer antes disso seria prometer o
-que o sistema nao faz. Ver docs/superpowers/specs/2026-09-24-tec-165-propor-janelas-design.md.
+tem chamador de producao, e `janelas_alocadas`, deste modulo, tambem nao.
+A gravacao (TEC-168) e a escolha do corretor (TEC-166) ja existem; falta a
+ligacao com o turno para a conversa passar a oferecer horario de verdade;
+oferecer antes disso seria prometer o que o sistema nao faz. Ver
+docs/superpowers/specs/2026-09-24-tec-165-propor-janelas-design.md.
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from enum import StrEnum
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from mobia.app.config import get_settings
+from mobia.domain.agendamento.alocacao import CriterioDoLead, alocar
+from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
 from mobia.domain.corretores.models import Corretor
 from mobia.domain.humano.deteccao import dentro_da_janela_de_atendimento
 
@@ -189,6 +192,13 @@ class AgendaDoCorretor(Protocol):
     ) -> list[Intervalo]: ...
 
 
+def _dia_inteiro(dia: date, fuso: ZoneInfo) -> Intervalo:
+    # A meia-noite local, e nao a de `agora`: um dia lotado bloqueia o dia
+    # inteiro, mesmo quando a busca comeca no meio dele.
+    inicio = datetime.combine(dia, time(0), tzinfo=fuso)
+    return Intervalo(inicio, inicio + timedelta(days=1))
+
+
 async def propor_janelas_do_corretor(
     *,
     corretor: Corretor,
@@ -196,9 +206,20 @@ async def propor_janelas_do_corretor(
     agora: datetime,
     ate: datetime,
     tipo: TipoDeCompromisso,
+    dias_lotados: Collection[date] = (),
 ) -> list[Intervalo]:
-    """A costura entre a agenda e o motor, no lugar em que a TEC-168 a usa."""
-    ocupados = await agenda.ocupados(corretor.id, agora, ate)
+    """A costura entre a agenda e o motor, no lugar em que a TEC-168 a usa.
+
+    `dias_lotados` bloqueia o dia local inteiro, alem do que `agenda` ja
+    ocupa -- e como `reservar_ou_alternativas` (TEC-166, Important 1) exclui
+    da alternativa a data em que o corretor bateu a capacidade diaria, sem
+    duplicar a grade de `propor_janelas`. Vazio por padrao: nao muda em nada
+    quem ja chama esta funcao sem o parametro.
+    """
+    ocupados = list(await agenda.ocupados(corretor.id, agora, ate))
+    if dias_lotados:
+        fuso = get_settings().fuso_de_envio
+        ocupados += [_dia_inteiro(dia, fuso) for dia in dias_lotados]
     return propor_janelas(
         agora=agora,
         ate=ate,
@@ -207,3 +228,94 @@ async def propor_janelas_do_corretor(
         ocupados=ocupados,
         tipo=tipo,
     )
+
+
+class ContadorDeVisitas(Protocol):
+    """Quantas visitas cada corretor tem em cada data local. TEC-166, D6.
+
+    Port proprio, e nao um metodo a mais em `AgendaDoCorretor`: os fakes da
+    TEC-165 e da TEC-167 so implementam `ocupados`, e um Protocol maior os
+    reprovaria no mypy sem que nada neles tivesse mudado. `AgendaPostgres`
+    implementa os dois.
+
+    `de` e `ate` sao DATAS locais inteiras: a visita das 9h de hoje gasta a
+    capacidade de hoje mesmo quando a busca comeca as 14h. A vida da reserva
+    e avaliada em `agora`.
+    """
+
+    async def visitas_por_dia(
+        self, corretor_ids: Sequence[uuid.UUID], *, de: date, ate: date, agora: datetime
+    ) -> dict[tuple[uuid.UUID, date], int]: ...
+
+
+@dataclass(frozen=True)
+class JanelaAlocada:
+    janela: Intervalo
+    corretor_id: uuid.UUID
+    motivo: MotivoDaAlocacao
+
+
+async def janelas_alocadas(
+    *,
+    criterio: CriterioDoLead,
+    corretores: Sequence[Corretor],
+    agenda: AgendaDoCorretor,
+    visitas: ContadorDeVisitas,
+    agora: datetime,
+    ate: datetime,
+    tipo: TipoDeCompromisso,
+) -> list[JanelaAlocada]:
+    """Ate `MAXIMO_DE_JANELAS` janelas, uma por data local, cada uma com corretor. D5.
+
+    Para cada data, pede os candidatos a `alocar` e desce por eles ate um ter
+    janela livre naquele dia. Uma janela por dia mantem o espalhamento da
+    TEC-165. Lista vazia -- ninguem pode em data nenhuma -- e onde a TEC-169
+    comeca.
+
+    Capacidade so barra visita: para reuniao remota o contador nem e
+    consultado, e todo corretor entra com zero visitas.
+    """
+    _exigir_fuso("agora", agora)
+    _exigir_fuso("ate", ate)
+    fuso = get_settings().fuso_de_envio
+    primeiro_dia = (agora + ANTECEDENCIA_MINIMA).astimezone(fuso).date()
+    ultimo_dia = ate.astimezone(fuso).date()
+
+    contagem: dict[tuple[uuid.UUID, date], int] = {}
+    if tipo is TipoDeCompromisso.VISITA_PRESENCIAL:
+        contagem = await visitas.visitas_por_dia(
+            [corretor.id for corretor in corretores],
+            de=agora.astimezone(fuso).date(),
+            ate=ultimo_dia,
+            agora=agora,
+        )
+
+    # A agenda de cada corretor e lida uma vez para o horizonte inteiro, e so
+    # de quem chegou a ser candidato.
+    ocupados_de: dict[uuid.UUID, list[Intervalo]] = {}
+    escolhidas: list[JanelaAlocada] = []
+    dia = primeiro_dia
+    while dia <= ultimo_dia and len(escolhidas) < MAXIMO_DE_JANELAS:
+        visitas_na_data = {cid: n for (cid, data), n in contagem.items() if data == dia}
+        inicio_do_dia = datetime.combine(dia, time(0), tzinfo=fuso)
+        fim_do_dia = min(ate, inicio_do_dia + timedelta(days=1))
+        for alocacao in alocar(
+            criterio=criterio, corretores=corretores, visitas_na_data=visitas_na_data
+        ):
+            corretor = alocacao.corretor
+            if corretor.id not in ocupados_de:
+                ocupados_de[corretor.id] = await agenda.ocupados(corretor.id, agora, ate)
+            janelas = propor_janelas(
+                agora=agora,
+                ate=fim_do_dia,
+                jornada_inicio=corretor.horario_inicio,
+                jornada_fim=corretor.horario_fim,
+                ocupados=ocupados_de[corretor.id],
+                tipo=tipo,
+                de=inicio_do_dia,
+            )
+            if janelas:
+                escolhidas.append(JanelaAlocada(janelas[0], corretor.id, alocacao.motivo))
+                break
+        dia += timedelta(days=1)
+    return escolhidas

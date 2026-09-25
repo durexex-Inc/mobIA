@@ -94,14 +94,16 @@ def _coorte(recorte: Recorte) -> Select[Any]:
     if recorte.corretor_id is not None:
         # **Este ramo nao e alcancado por producao hoje**, e isso e
         # deliberado: `montar_recorte` RECUSA o filtro por corretor com 422
-        # porque `handoffs.corretor_id` nunca e escrito -- alocar corretor e
-        # a TEC-166 (Emenda E-01 da RN-16.2). Sem a recusa, o funil saia
-        # zerado para qualquer corretor e a gerente leria isso como fato.
+        # porque `handoffs.corretor_id` nunca e escrito (Emenda E-01 da
+        # RN-16.2) -- a alocacao da TEC-166 e do agendamento, nao do handoff.
+        # Sem a recusa, o funil saia zerado para qualquer corretor e a gerente
+        # leria isso como fato.
         #
         # A consulta fica escrita e testada (os testes montam o `Recorte` a
-        # mao, pulando a borda) porque ela esta CORRETA e e o que a TEC-166
-        # vai ligar: o funil dos leads que ACABARAM com aquele corretor,
-        # contando a mesma conversa nos estagios anteriores ao repasse.
+        # mao, pulando a borda) porque ela esta CORRETA e e o que passa a valer
+        # quando alguem escrever `handoffs.corretor_id`: o funil dos leads que
+        # ACABARAM com aquele corretor, contando a mesma conversa nos estagios
+        # anteriores ao repasse.
         consulta = consulta.join(
             Handoff,
             (Handoff.channel == nascimento.c.channel)
