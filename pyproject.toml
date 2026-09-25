@@ -152,7 +152,13 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.flake8-bugbear]
 # `Depends()` no default do parametro e o idioma do FastAPI, nao o bug de
 # default mutavel que a B008 existe para pegar.
-extend-immutable-calls = ["fastapi.Depends"]
+#
+# `Exige()` entra pela mesma razao (TEC-202): ela guarda uma `Permissao` e nada
+# mais, entao a instancia criada uma vez no import e exatamente o que se quer
+# -- e a alternativa seria uma constante de modulo por permissao, que poe a
+# resposta "quem pode chamar esta rota" um salto de distancia da assinatura
+# dela, que e onde ela precisa estar para ser lida em revisao.
+extend-immutable-calls = ["fastapi.Depends", "mobia.api.autorizacao.Exige"]
 
 [tool.mypy]
 python_version = "3.13"

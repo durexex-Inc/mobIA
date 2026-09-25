@@ -277,7 +277,7 @@ async def test_rota_administrativa_aceita_jwt_e_o_token_compartilhado(
     usuario = (
         await session.execute(Usuario.__table__.select().where(Usuario.email == "admin-rota@x.com"))
     ).one()
-    jwt_de_admin = tokens.emitir(usuario.id, "ADMIN", mfa=True, settings=settings)
+    jwt_de_admin = tokens.emitir(usuario.id, "ADMIN", mfa=True, corretor_id=None, settings=settings)
 
     com_jwt = await client.get(rota, headers={"Authorization": f"Bearer {jwt_de_admin}"})
     com_token = await client.get(rota, headers={"X-Admin-Token": settings.catalogo_admin_token})
@@ -294,13 +294,19 @@ async def test_jwt_de_papel_nao_admin_nao_abre_rota_administrativa(
     """O papel entra na guarda, e nao so a validade do token.
 
     Sem isto, qualquer usuario autenticado -- inclusive `LEITURA` -- abriria o
-    cadastro de corretores. A checagem por papel em TODA rota e a TEC-202; esta
-    e a unica que existe hoje.
+    cadastro de corretores. **A checagem por papel em TODA rota chegou na
+    TEC-202**, e esta deixou de ser a unica: o cadastro de corretores hoje
+    exige `GERIR_CORRETORES`, e a tabela dos quatro papeis esta em
+    `tests/integration/test_autorizacao_por_papel.py`. Este teste fica porque e
+    o que prende a propriedade ao caminho da TEC-201 -- token valido e papel
+    insuficiente -- sem depender da matriz da outra card.
     """
     from mobia.app.config import get_settings
     from mobia.domain.usuarios import tokens
 
-    token = tokens.emitir(uuid.uuid4(), "LEITURA", mfa=False, settings=get_settings())
+    token = tokens.emitir(
+        uuid.uuid4(), "LEITURA", mfa=False, corretor_id=None, settings=get_settings()
+    )
 
     resposta = await client.get("/api/v1/corretores", headers={"Authorization": f"Bearer {token}"})
 

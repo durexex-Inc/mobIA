@@ -1,4 +1,4 @@
-"""Senha, TOTP e JWT: o que se verifica sem banco. TEC-201.
+"""Senha, TOTP e JWT: o que se verifica sem banco. TEC-201 e TEC-202.
 
 Estes testes existem por uma razao diferente da dos vizinhos: nao protegem uma
 regra de negocio, protegem as PROPRIEDADES que o resto do sistema assume. Um
@@ -62,12 +62,49 @@ class TestTotp:
 class TestJwt:
     def test_ida_e_volta_preserva_papel_e_mfa(self) -> None:
         s = _settings()
-        token = tokens.emitir(USUARIO, "ADMIN", mfa=True, settings=s)
+        token = tokens.emitir(USUARIO, "ADMIN", mfa=True, corretor_id=None, settings=s)
         identidade = tokens.validar(token, s)
 
         assert identidade.usuario_id == USUARIO
         assert identidade.papel == "ADMIN"
         assert identidade.mfa is True
+        assert identidade.corretor_id is None
+
+    def test_ida_e_volta_preserva_o_vinculo_de_corretor(self) -> None:
+        """A claim da TEC-202 (D4), que e o que a regra de dono consulta.
+
+        Sem ela o papel CORRETOR nao teria como provar de quem e o lead -- e a
+        alternativa, consultar `usuarios` a cada requisicao, e a que a lacuna
+        L5 da TEC-201 ja recusou.
+        """
+        s = _settings()
+        vinculo = uuid.uuid4()
+        token = tokens.emitir(USUARIO, "CORRETOR", mfa=False, corretor_id=vinculo, settings=s)
+
+        assert tokens.validar(token, s).corretor_id == vinculo
+
+    def test_corpo_sem_a_claim_de_vinculo_e_recusado(self) -> None:
+        """Um token anterior a TEC-202 nao vira identidade sem vinculo.
+
+        E o caso que `corpo.get("corretor_id")` teria deixado passar: a
+        identidade nasceria com `corretor_id=None`, que num CORRETOR nega tudo
+        o que e por dono -- e a pessoa seria recusada sem que nada dissesse por
+        que. Recusar o TOKEN diz.
+        """
+        s = _settings()
+        antigo = jwt.encode(
+            {
+                "sub": str(USUARIO),
+                "papel": "CORRETOR",
+                "mfa": False,
+                "exp": datetime.now(UTC) + timedelta(hours=1),
+            },
+            s.jwt_segredo,
+            algorithm=tokens.ALGORITMO,
+        )
+
+        with pytest.raises(tokens.TokenInvalido):
+            tokens.validar(antigo, s)
 
     def test_token_expirado_e_recusado(self) -> None:
         """Segundo cenario do Gherkin, em unidade.
@@ -76,13 +113,13 @@ class TestJwt:
         evita esperar 61 minutos para exercitar a regra.
         """
         s = _settings(jwt_minutos=-1)
-        token = tokens.emitir(USUARIO, "GERENTE", mfa=False, settings=s)
+        token = tokens.emitir(USUARIO, "GERENTE", mfa=False, corretor_id=None, settings=s)
 
         with pytest.raises(tokens.TokenInvalido):
             tokens.validar(token, _settings())
 
     def test_assinatura_de_outro_segredo_e_recusada(self) -> None:
-        token = tokens.emitir(USUARIO, "ADMIN", mfa=True, settings=_settings())
+        token = tokens.emitir(USUARIO, "ADMIN", mfa=True, corretor_id=None, settings=_settings())
 
         with pytest.raises(tokens.TokenInvalido):
             tokens.validar(token, _settings(jwt_segredo=OUTRO_SEGREDO))
@@ -137,6 +174,6 @@ class TestJwt:
         renovaria para sempre sem senha.
         """
         s = _settings()
-        desafio = tokens.emitir_desafio(USUARIO, "ADMIN", minutos=5, settings=s)
+        desafio = tokens.emitir_desafio(USUARIO, "ADMIN", minutos=5, corretor_id=None, settings=s)
 
         assert tokens.validar(desafio, s).mfa is False

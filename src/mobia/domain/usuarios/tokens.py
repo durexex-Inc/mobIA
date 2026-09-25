@@ -35,10 +35,26 @@ class Identidade:
     usuario_id: uuid.UUID
     papel: str
     # Se esta sessao passou pelo segundo fator. Nenhuma rota exige isto hoje --
-    # a checagem vale no login (D5) --, mas a claim fica porque a TEC-202 vai
-    # querer exigir MFA para acoes especificas, e acrescenta-la depois obrigaria
-    # todo mundo a relogar.
+    # a checagem vale no login (D5 da TEC-201).
+    #
+    # **A TEC-202 chegou e NAO passou a exigir MFA por acao**, ao contrario do
+    # que este comentario previa: a matriz dela autoriza por papel, e nenhuma
+    # permissao pede segundo fator alem do que o login ja exigiu do ADMIN. A
+    # claim fica pela outra metade do argumento original, que continua de pe --
+    # acrescenta-la depois obrigaria todo mundo a relogar.
     mfa: bool
+    # Qual corretor e este usuario, quando for um. TEC-202, D4.
+    #
+    # **Vem do token e nao de uma consulta por requisicao**, o que herda a
+    # lacuna L5 da TEC-201: mudar o vinculo so passa a valer no proximo
+    # `refresh`, em ate 60 minutos -- a mesma janela que ja vale para o papel.
+    #
+    # `None` e valor legitimo e quer dizer "nao e corretor": o ADMIN e a
+    # GERENTE nao sao. **Num usuario de papel CORRETOR, `None` NEGA tudo o que
+    # e por dono**, em vez de liberar -- cadastro incompleto nao e passe livre,
+    # e a diferenca entre "nao tem dono" e "e dono de tudo" e exatamente o erro
+    # que esta card existe para nao cometer.
+    corretor_id: uuid.UUID | None
 
 
 class TokenInvalido(Exception):
@@ -50,13 +66,26 @@ class TokenInvalido(Exception):
     """
 
 
-def emitir(usuario_id: uuid.UUID, papel: str, *, mfa: bool, settings: Settings) -> str:
-    """O JWT de acesso, valido por `jwt_minutos`."""
+def emitir(
+    usuario_id: uuid.UUID,
+    papel: str,
+    *,
+    mfa: bool,
+    corretor_id: uuid.UUID | None,
+    settings: Settings,
+) -> str:
+    """O JWT de acesso, valido por `jwt_minutos`.
+
+    `corretor_id` e obrigatorio na assinatura e nulavel no valor (TEC-202, D4):
+    quem emite tem de ter OLHADO o vinculo do usuario, e `None` precisa ser uma
+    afirmacao ("nao e corretor") e nao um esquecimento.
+    """
     agora = datetime.now(UTC)
     corpo = {
         "sub": str(usuario_id),
         "papel": papel,
         "mfa": mfa,
+        "corretor_id": str(corretor_id) if corretor_id else None,
         "iat": agora,
         "exp": agora + timedelta(minutes=settings.jwt_minutos),
     }
@@ -79,10 +108,17 @@ def validar(token: str, settings: Settings) -> Identidade:
         raise TokenInvalido(type(falha).__name__) from falha
 
     try:
+        vinculo = corpo["corretor_id"]
         return Identidade(
             usuario_id=uuid.UUID(corpo["sub"]),
             papel=corpo["papel"],
             mfa=bool(corpo["mfa"]),
+            # `corpo["corretor_id"]` e nao `.get`: a claim e OBRIGATORIA, e o
+            # que e opcional e o VALOR dela. Com `.get`, um token emitido antes
+            # da TEC-202 viraria uma identidade sem vinculo em silencio -- que
+            # e justamente a forma que nega tudo o que e por dono, e seria
+            # negada sem ninguem entender por que.
+            corretor_id=uuid.UUID(vinculo) if vinculo is not None else None,
         )
     except (KeyError, ValueError) as falha:
         # Assinatura valida e corpo com forma errada significa que alguem com o
@@ -91,7 +127,14 @@ def validar(token: str, settings: Settings) -> Identidade:
         raise TokenInvalido(type(falha).__name__) from falha
 
 
-def emitir_desafio(usuario_id: uuid.UUID, papel: str, *, minutos: int, settings: Settings) -> str:
+def emitir_desafio(
+    usuario_id: uuid.UUID,
+    papel: str,
+    *,
+    minutos: int,
+    corretor_id: uuid.UUID | None,
+    settings: Settings,
+) -> str:
     """O token de meio caminho do ADMIN com MFA pendente. TEC-201, D5.
 
     **E um JWT como os outros, e nao um formato novo.** O que o distingue e o
@@ -103,12 +146,19 @@ def emitir_desafio(usuario_id: uuid.UUID, papel: str, *, minutos: int, settings:
 
     Mora aqui, e nao na rota, porque emitir JWT e decisao deste modulo: o
     algoritmo e o segredo tem UM lugar.
+
+    **Carrega `corretor_id` como o token de acesso, embora nada o leia daqui**
+    (TEC-202, D4): ha UMA forma de corpo de JWT neste sistema, e `validar` a
+    exige inteira. Um segundo formato obrigaria `validar` a tolerar a ausencia
+    da claim -- e tolerar ausencia e o caminho pelo qual um token de acesso sem
+    vinculo passaria despercebido.
     """
     agora = datetime.now(UTC)
     corpo = {
         "sub": str(usuario_id),
         "papel": papel,
         "mfa": False,
+        "corretor_id": str(corretor_id) if corretor_id else None,
         "iat": agora,
         "exp": agora + timedelta(minutes=minutos),
     }
