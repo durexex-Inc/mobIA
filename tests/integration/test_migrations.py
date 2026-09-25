@@ -13,6 +13,7 @@ inseridas em texto claro no esquema da 0002 e tem de voltar cifradas no head.
 import subprocess
 import sys
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
@@ -465,3 +466,116 @@ async def test_a_0053_desce_e_sobe_de_novo() -> None:
             )
             == 2
         )
+
+
+@pytest.fixture
+async def esquema_na_0054():
+    """Desfaz o carimbo da 0055 para que o upgrade a exercite de novo.
+
+    A `0055` nao muda schema -- so dados --, entao "descer" aqui e voltar o
+    CARIMBO, e nao derrubar coluna nenhuma. O `downgrade` dela nao apaga os
+    carimbos de proposito (ver a docstring de la), e e por isso que cada
+    teste semeia conversas proprias em vez de contar com a base limpa.
+    """
+    await dispose_engine()
+    alembic("downgrade", "0054")
+    try:
+        yield
+    finally:
+        await dispose_engine()
+        alembic("upgrade", "head")
+        await dispose_engine()
+
+
+async def _semear_para_o_backfill(
+    conversa: str, *, completude: int, qualificado_em: object
+) -> None:
+    """Uma linha de qualificacao e uma de trilha, por SQL cru.
+
+    Cru e nao pelo ORM porque o que se exercita e a migration, e o ORM
+    descreve o schema de HOJE -- a distancia entre os dois e justamente o que
+    um teste de migration existe para nao esconder.
+    """
+    async with get_sessionmaker()() as sessao:
+        await sessao.execute(
+            text(
+                "INSERT INTO lead_qualification (channel, conversation_key, qualificado_em)"
+                " VALUES ('whatsapp', :conversa, :qualificado_em)"
+            ),
+            {"conversa": conversa, "qualificado_em": qualificado_em},
+        )
+        if completude is not None:
+            await sessao.execute(
+                text(
+                    "INSERT INTO lead_score_audit"
+                    " (id, channel, conversation_key, total_novo, completude, urgencia,"
+                    "  catalogo, engajamento, capacidade, penalidade, causas, created_at)"
+                    # `total_novo` = a soma dos cinco fatores, que o
+                    # `ck_lead_score_audit_total` exige. Com os outros quatro
+                    # zerados, ele e a propria completude.
+                    " VALUES (gen_random_uuid(), 'whatsapp', :conversa, :completude, :completude,"
+                    "  0, 0, 0, 0, 0, ARRAY['PRIMEIRO_CALCULO']::varchar[], :quando)"
+                ),
+                {
+                    "conversa": conversa,
+                    "completude": completude,
+                    "quando": datetime(2026, 7, 15, 12, 0, tzinfo=UTC),
+                },
+            )
+        await sessao.commit()
+
+
+async def _carimbo(conversa: str) -> datetime | None:
+    async with get_sessionmaker()() as sessao:
+        return (
+            await sessao.execute(
+                text(
+                    "SELECT qualificado_em FROM lead_qualification"
+                    " WHERE channel = 'whatsapp' AND conversation_key = :conversa"
+                ),
+                {"conversa": conversa},
+            )
+        ).scalar_one()
+
+
+async def test_a_0055_data_o_lead_antigo_pela_trilha_de_score(esquema_na_0054) -> None:
+    """TEC-367: o instante sai de `lead_score_audit`, que a 0040 dizia nao existir.
+
+    `completude = 20` e `campos_obrigatorios_preenchidos * 5` com os quatro
+    campos, que e exatamente `esta_qualificado`. A guarda do numero esta em
+    `tests/unit/test_backfill_de_qualificacao.py`.
+    """
+    await _semear_para_o_backfill("5511977770001", completude=20, qualificado_em=None)
+
+    await dispose_engine()
+    alembic("upgrade", "head")
+    await dispose_engine()
+
+    assert await _carimbo("5511977770001") == datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
+
+
+async def test_a_0055_nao_data_quem_nunca_completou_os_quatro_campos(esquema_na_0054) -> None:
+    """Completude parcial nao e qualificacao, e datar seria inventar o fato."""
+    await _semear_para_o_backfill("5511977770002", completude=15, qualificado_em=None)
+
+    await dispose_engine()
+    alembic("upgrade", "head")
+    await dispose_engine()
+
+    assert await _carimbo("5511977770002") is None
+
+
+async def test_a_0055_nao_sobrescreve_o_carimbo_da_aplicacao(esquema_na_0054) -> None:
+    """`WHERE qualificado_em IS NULL`: o backfill preenche, nao corrige.
+
+    E o que o torna idempotente, e o que impede uma segunda passagem de
+    mover a data de um lead que `carimbar_qualificacao` ja datou.
+    """
+    ja_datado = datetime(2026, 8, 20, 9, 30, tzinfo=UTC)
+    await _semear_para_o_backfill("5511977770003", completude=20, qualificado_em=ja_datado)
+
+    await dispose_engine()
+    alembic("upgrade", "head")
+    await dispose_engine()
+
+    assert await _carimbo("5511977770003") == ja_datado

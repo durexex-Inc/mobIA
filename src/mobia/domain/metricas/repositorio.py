@@ -6,26 +6,37 @@ D10 do plano: por atividade, um lead recomendado em agosto que nasceu em
 julho faria `Recomendado / Em conversa` passar de 100%, e a RN-17.2 pede uma
 taxa de conversao, nao um numero acima de um.
 
-**A coorte da o RECORTE comum, e nao a inclusao entre etapas** -- e esta
-distincao custou uma correcao na revisao, porque a versao anterior desta
-docstring prometia monotonia "por construcao". As cinco contagens sao
-consultas independentes, e nada impoe `Qualificado` contido em
-`Em conversa`. Duas maneiras conhecidas de a conversao passar de 100%:
+**A coorte da o RECORTE comum, e a ACUMULACAO da a inclusao entre etapas**
+(TEC-367). Cada etapa conta quem a alcancou ou alcancou uma posterior, entao
+`Qualificado` esta contido em `Em conversa` por construcao e a conversao nao
+tem como passar de 100%. Ver a D4 do desenho da TEC-367.
 
-- **enquanto a lacuna L1 durar**, `Qualificado` conta so quem ganhou
-  `qualificado_em` depois da migration `0040`, e `Recomendado` conta tudo.
-  Um periodo antigo com 40 recomendados e 1 qualificado da 4000%.
+**Isto reverte uma decisao da TEC-190, e vale saber qual.** Ate ela, as cinco
+contagens eram consultas independentes e a docstring daqui declarava duas
+maneiras conhecidas de a conversao estourar:
+
+- **a lacuna L1** -- `Qualificado` contava so quem ganhou `qualificado_em`
+  depois da migration `0040`, e `Recomendado` contava tudo. Um periodo antigo
+  com 40 recomendados e 1 qualificado dava 4000%. A `0055` fez o backfill
+  pela trilha de score, e a lacuna encolheu ao residuo descrito la.
 - **o lead que qualifica no primeiro turno** -- despeja intencao, orcamento,
-  regiao e urgencia numa mensagem so -- fica FORA de `Em conversa`, que
-  exige mais de uma fala, e DENTRO de `Qualificado`.
+  regiao e urgencia numa mensagem so -- ficava FORA de `Em conversa`, que
+  exige mais de uma fala, e DENTRO de `Qualificado`. A acumulacao o poe nas
+  duas.
 
-Nenhuma das duas e erro de consulta: sao fatos sobre os dados. Quem ler o
-painel precisa saber que o funil pode nao decrescer.
+Nenhuma das duas era erro de consulta, e a TEC-190 as tratou como fatos sobre
+os dados, pedindo a quem le o painel que soubesse que o funil podia nao
+decrescer. **O que mudou o julgamento foi a RN-17.2**: ela pede uma TAXA de
+conversao, e taxa acima de 100% nao e taxa -- e sinal de que as etapas nao
+estao aninhadas. O piso de "mais de uma fala" em `Em conversa` continua
+valendo para quem NAO avancou, que e o caso que ele existe para separar de
+`Novo`.
 
 Funcoes livres com `session` posicional e o resto keyword-only, sem commit --
 a convencao dos dez repositorios deste repo.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -93,11 +104,16 @@ def _coorte(recorte: Recorte) -> Select[Any]:
 
     if recorte.corretor_id is not None:
         # **Este ramo nao e alcancado por producao hoje**, e isso e
-        # deliberado: `montar_recorte` RECUSA o filtro por corretor com 422
-        # porque `handoffs.corretor_id` nunca e escrito (Emenda E-01 da
-        # RN-16.2) -- a alocacao da TEC-166 e do agendamento, nao do handoff.
-        # Sem a recusa, o funil saia zerado para qualquer corretor e a gerente
-        # leria isso como fato.
+        # deliberado: `montar_recorte` RECUSA o filtro por corretor com 422.
+        #
+        # **A razao da recusa MUDOU, e o texto antigo daqui ficou falso**
+        # (corrigido na TEC-367). Ele dizia que `handoffs.corretor_id` "nunca
+        # e escrito"; desde a TEC-192 ele e -- `notificacao/envio.py` e o
+        # escritor, e a Emenda E-06 da RN-16.2 registra a mudanca. O que
+        # sustenta a recusa hoje nao e mais a coluna vazia, e sim que virar a
+        # borda e decisao da TEC-316: a coluna so passou a ser preenchida a
+        # partir da TEC-192, entao o funil por corretor de qualquer periodo
+        # anterior sairia zerado, e a gerente leria isso como fato.
         #
         # A consulta fica escrita e testada (os testes montam o `Recorte` a
         # mao, pulando a borda) porque ela esta CORRETA e e o que passa a valer
@@ -126,6 +142,20 @@ async def _quantos(session: AsyncSession, consulta: Select[Any]) -> int:
     return int((await session.execute(select(func.count()).select_from(alvo))).scalar_one())
 
 
+async def _quantos_na_uniao(session: AsyncSession, consultas: Sequence[Select[Any]]) -> int:
+    """Quantos pares distintos aparecem em ALGUMA das consultas.
+
+    Irma de `_quantos`, e separada dela porque `union` devolve
+    `CompoundSelect` e nao `Select` -- o `.distinct()` daquela nao se aplica
+    aqui, e nem precisa: `UNION` (sem `ALL`) ja deduplica, que e exatamente a
+    propriedade de que a acumulacao do funil depende.
+    """
+    if len(consultas) == 1:
+        return await _quantos(session, consultas[0])
+    alvo = consultas[0].union(*consultas[1:]).subquery()
+    return int((await session.execute(select(func.count()).select_from(alvo))).scalar_one())
+
+
 async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etapa, int]:
     """Quantos da coorte alcancaram cada etapa. `AGENDADO` nao esta aqui.
 
@@ -133,16 +163,22 @@ async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etap
     esquecimento: nao existe tabela de agendamento, e quem poe o `None` na
     resposta e `montar_funil`, a partir de `SEM_FONTE`. Uma chave com zero
     aqui viraria zero la, que e exatamente o que a D1 recusa.
+
+    **Cada etapa conta quem a alcancou OU alcancou uma POSTERIOR** (TEC-367,
+    D4), e e isso que torna o funil monotono. Ver a docstring do modulo: as
+    contagens cruas sao conjuntos independentes, e dividir um pelo outro
+    produzia taxa acima de 100%.
     """
     coorte = _coorte(recorte).subquery()
 
-    novos = await _quantos(session, _coorte(recorte))
+    # As cinco condicoes, cada uma o conjunto CRU da sua etapa -- sem
+    # acumulacao ainda. Em ordem do funil, que e o que o `UNION` abaixo usa.
+    novos = select(coorte.c.channel, coorte.c.conversation_key)
 
     # "Em conversa" e o lead que falou mais de uma vez: uma fala so e o
     # primeiro contato, que ja e a etapa Novo. Sem este piso, as duas etapas
     # dariam sempre o mesmo numero e a conversao entre elas seria 100% fixo.
-    em_conversa = await _quantos(
-        session,
+    em_conversa = (
         select(coorte.c.channel, coorte.c.conversation_key)
         .join(
             Message,
@@ -151,45 +187,47 @@ async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etap
         )
         .where(Message.direction == MessageDirection.INBOUND)
         .group_by(coorte.c.channel, coorte.c.conversation_key)
-        .having(func.count(Message.id) > 1),
+        .having(func.count(Message.id) > 1)
     )
 
-    qualificados = await _quantos(
-        session,
-        select(coorte.c.channel, coorte.c.conversation_key).join(
-            LeadQualification,
-            (LeadQualification.channel == coorte.c.channel)
-            & (LeadQualification.conversation_key == coorte.c.conversation_key)
-            & LeadQualification.qualificado_em.is_not(None),
-        ),
+    qualificados = select(coorte.c.channel, coorte.c.conversation_key).join(
+        LeadQualification,
+        (LeadQualification.channel == coorte.c.channel)
+        & (LeadQualification.conversation_key == coorte.c.conversation_key)
+        & LeadQualification.qualificado_em.is_not(None),
     )
 
-    recomendados = await _quantos(
-        session,
-        select(coorte.c.channel, coorte.c.conversation_key).join(
-            Recomendacao,
-            (Recomendacao.channel == coorte.c.channel)
-            & (Recomendacao.conversation_key == coorte.c.conversation_key),
-        ),
+    recomendados = select(coorte.c.channel, coorte.c.conversation_key).join(
+        Recomendacao,
+        (Recomendacao.channel == coorte.c.channel)
+        & (Recomendacao.conversation_key == coorte.c.conversation_key),
     )
 
-    aceitos = await _quantos(
-        session,
-        select(coorte.c.channel, coorte.c.conversation_key).join(
-            Handoff,
-            (Handoff.channel == coorte.c.channel)
-            & (Handoff.conversation_key == coorte.c.conversation_key)
-            & (Handoff.status == _ACEITO),
-        ),
+    aceitos = select(coorte.c.channel, coorte.c.conversation_key).join(
+        Handoff,
+        (Handoff.channel == coorte.c.channel)
+        & (Handoff.conversation_key == coorte.c.conversation_key)
+        & (Handoff.status == _ACEITO),
     )
 
-    return {
-        Etapa.NOVO: novos,
-        Etapa.EM_CONVERSA: em_conversa,
-        Etapa.QUALIFICADO: qualificados,
-        Etapa.RECOMENDADO: recomendados,
-        Etapa.HANDOFF_ACEITO: aceitos,
-    }
+    # A acumulacao. `AGENDADO` nao entra na lista de proposito: ele nao tem
+    # fonte (`SEM_FONTE`), entao uni-lo seria unir conjunto vazio -- e
+    # escreveria aqui uma dependencia que some no dia em que a TEC-376 der
+    # numero aquela etapa.
+    cruas: list[tuple[Etapa, Select[Any]]] = [
+        (Etapa.NOVO, novos),
+        (Etapa.EM_CONVERSA, em_conversa),
+        (Etapa.QUALIFICADO, qualificados),
+        (Etapa.RECOMENDADO, recomendados),
+        (Etapa.HANDOFF_ACEITO, aceitos),
+    ]
+
+    contagens: dict[Etapa, int] = {}
+    for indice, (etapa, _) in enumerate(cruas):
+        desta_para_frente = [consulta for _, consulta in cruas[indice:]]
+        contagens[etapa] = await _quantos_na_uniao(session, desta_para_frente)
+
+    return contagens
 
 
 @dataclass(frozen=True)
