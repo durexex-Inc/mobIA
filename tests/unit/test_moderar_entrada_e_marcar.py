@@ -37,17 +37,31 @@ def espiao_de_marca(monkeypatch):
     """Substitui `marcar_bloqueada` no modulo por um espiao que registra."""
     chamadas: list = []
 
-    async def espiao(session_factory, message_id, *, channel, conversation_key, categoria):
+    async def espiao(
+        session_factory, message_id, *, channel, conversation_key, categoria, injecao=False
+    ):
         chamadas.append(
             {
                 "message_id": message_id,
                 "channel": channel,
                 "conversation_key": conversation_key,
                 "categoria": categoria,
+                "injecao": injecao,
             }
         )
 
     monkeypatch.setattr(bloqueio, "marcar_bloqueada", espiao)
+    return chamadas
+
+
+@pytest.fixture
+def espiao_de_injecao(monkeypatch):
+    chamadas: list = []
+
+    async def espiao(session_factory, *, message_id, channel, conversation_key):
+        chamadas.append(message_id)
+
+    monkeypatch.setattr(bloqueio, "registrar_injecao_detectada", espiao)
     return chamadas
 
 
@@ -123,3 +137,32 @@ async def test_modera_com_direcao_de_entrada_e_so_o_corpo() -> None:
     await _chamar(moderador, corpo="o texto exato")
 
     assert moderador.chamadas == [("o texto exato", Direcao.ENTRADA)]
+
+
+async def test_injecao_sozinha_registra_e_nao_marca(espiao_de_marca, espiao_de_injecao) -> None:
+    """TEC-204, D3: sem marca, sem `ModerationEvent`, com evento de auditoria."""
+    moderador = _ModeradorFalso(Veredito(bloqueado=False, motivo="x", injecao=True))
+
+    veredito = await _chamar(moderador)
+
+    assert veredito is not None and veredito.bloqueado is False
+    assert espiao_de_marca == []
+    assert len(espiao_de_injecao) == 1
+
+
+async def test_injecao_com_bloqueio_vai_na_marca(espiao_de_marca, espiao_de_injecao) -> None:
+    """Junto de uma categoria que bloqueia, o evento sai no commit da marca."""
+    moderador = _ModeradorFalso(
+        Veredito(bloqueado=True, motivo="x", categoria="ASSEDIO", injecao=True)
+    )
+
+    await _chamar(moderador)
+
+    assert espiao_de_marca[0]["injecao"] is True
+    assert espiao_de_injecao == []
+
+
+async def test_liberado_sem_injecao_nao_registra(espiao_de_marca, espiao_de_injecao) -> None:
+    await _chamar(_ModeradorFalso(Veredito(bloqueado=False, motivo="ok")))
+
+    assert espiao_de_injecao == []

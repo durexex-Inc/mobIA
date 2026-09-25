@@ -42,6 +42,9 @@ class Acao(StrEnum):
     # Sem chamador: `ConfiguracaoAgente` nao existe (TEC-198/199).
     PROMPT_PUBLICADO = "PROMPT_PUBLICADO"
     ACESSO_NEGADO = "ACESSO_NEGADO"
+    # TEC-204, D6. A moderacao de entrada achou tentativa de mudar as
+    # instrucoes do agente. Ator SISTEMA; entidade, a mensagem.
+    INJECAO_DETECTADA = "INJECAO_DETECTADA"
 
 
 class Entidade(StrEnum):
@@ -59,6 +62,9 @@ class Entidade(StrEnum):
     # lead continua usando `lead_ref`. Custou a migration 0056, que recriou o
     # CHECK da 0053.
     LEAD = "lead"
+    # TEC-204. O objeto da tentativa de injecao: `entidade_id` e o id da
+    # mensagem, cuja linha continua existindo -- cifrada -- para quem investigar.
+    MENSAGEM = "mensagem"
 
 
 # Os `campo` que a trilha nomeia. O que vai para a linha e QUAL campo foi

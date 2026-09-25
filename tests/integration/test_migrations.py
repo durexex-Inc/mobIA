@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import text
 
+from mobia.domain.auditoria.registro import registrar_evento
+from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA, Acao, Entidade
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -579,3 +581,50 @@ async def test_a_0055_nao_sobrescreve_o_carimbo_da_aplicacao(esquema_na_0054) ->
     await dispose_engine()
 
     assert await _carimbo("5511977770003") == ja_datado
+
+
+_DEFINICAO_DO_CHECK = text(
+    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+    "WHERE conname = :nome AND conrelid = 'eventos_auditoria'::regclass"
+)
+
+
+async def test_a_0056_desce_e_sobe_de_novo() -> None:
+    """O vocabulario novo sai no downgrade e volta no upgrade -- com linha nova gravada.
+
+    A trilha recusa DELETE antes de 12 meses (0053), entao o downgrade nao pode
+    exigir que o `INJECAO_DETECTADA` gravado suma: o CHECK antigo volta como
+    `NOT VALID`, que vale para linha nova e nao reprova a que ja existe.
+    """
+    async with get_sessionmaker()() as sessao:
+        await registrar_evento(
+            sessao,
+            ator=ATOR_SISTEMA,
+            acao=Acao.INJECAO_DETECTADA,
+            entidade=Entidade.MENSAGEM,
+            entidade_id=str(uuid.uuid4()),
+        )
+        await sessao.commit()
+
+    await dispose_engine()
+    alembic("downgrade", "0055")
+    try:
+        async with get_sessionmaker()() as sessao:
+            acao = await sessao.scalar(_DEFINICAO_DO_CHECK, {"nome": "ck_eventos_auditoria_acao"})
+            entidade = await sessao.scalar(
+                _DEFINICAO_DO_CHECK, {"nome": "ck_eventos_auditoria_entidade"}
+            )
+            assert "INJECAO_DETECTADA" not in acao and "NOT VALID" in acao
+            assert "'mensagem'" not in entidade and "NOT VALID" in entidade
+    finally:
+        await dispose_engine()
+        alembic("upgrade", "head")
+        await dispose_engine()
+
+    async with get_sessionmaker()() as sessao:
+        acao = await sessao.scalar(_DEFINICAO_DO_CHECK, {"nome": "ck_eventos_auditoria_acao"})
+        entidade = await sessao.scalar(
+            _DEFINICAO_DO_CHECK, {"nome": "ck_eventos_auditoria_entidade"}
+        )
+        assert "INJECAO_DETECTADA" in acao and "NOT VALID" not in acao
+        assert "'mensagem'" in entidade and "NOT VALID" not in entidade
