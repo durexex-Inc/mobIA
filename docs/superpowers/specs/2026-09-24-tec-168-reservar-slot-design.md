@@ -1,6 +1,6 @@
 # TEC-168 — Reservar o slot, com a garantia de não sobreposição no banco
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** implementado
 **Card:** [TEC-168](https://eduardodurieuxlopes.atlassian.net/browse/TEC-168) — épico TEC-164
 **Branch:** `feat/tec-168-reservar-slot`
 **Origem:** RF-11, RN-11.4 (SRS v1.0); RT-07.
@@ -66,6 +66,7 @@ Um job varredor seria redundante: limparia linhas que nenhuma leitura conta e qu
 `src/mobia/domain/agendamento/repositorio.py`. Recebe a sessão e **não commita** — a disciplina de `registrar_handoff` e `criar_corretor`.
 
 - `reservar(session, *, corretor_id, channel, conversation_key, janela, tipo, imovel_id, agora) -> Reserva | Conflito`. Expira as vencidas sobrepostas (D3), insere com `reservado_ate = agora + 5 min`, e dá `flush`. Uma violação de `ex_agendamentos_sem_sobreposicao` vira `Conflito`, reconhecida pelo **nome** da constraint (`constraint_name` do asyncpg, com o fallback por substring de `corretores/repositorio.py`); qualquer outro `IntegrityError` sobe. O `flush` que falha deixa a sessão inutilizável até um `rollback`, e quem chama precisa saber disso — a função faz o `rollback` dela antes de devolver `Conflito`, e isso está na docstring.
+  - **Emenda E-01 (TEC-168, 24/09/2026):** o conflito é tratado com um SAVEPOINT (`session.begin_nested()`), não com o `rollback` de sessão inteira que o parágrafo acima descreve. Só a tentativa desta chamada volta; escrita pendente anterior de quem chama sobrevive. O motivo: um `rollback` de sessão inteira expira todo objeto já carregado nela — inclusive o que quem chama tinha em mãos —, e o acesso síncrono a um atributo expirado fora de contexto async explode com `MissingGreenlet`.
 - `confirmar(session, *, reserva_id, agora) -> Confirmado | Expirado`. `RESERVADO` com `reservado_ate > agora` vira `CONFIRMADO` com `confirmado_em = agora`. Vencida, já expirada ou inexistente → `Expirado`, sem gravar nada: quem chama oferece de novo.
 - `AgendaPostgres(session_factory)` — a implementação real da porta `AgendaDoCorretor` da TEC-165. `ocupados(corretor_id, de, ate)` devolve todo intervalo que **sobrepõe** `[de, ate]` (o contrato que a revisão da TEC-165 escreveu na docstring da porta), contando só `CONFIRMADO` e reservas válidas em `de`.
 
@@ -74,6 +75,7 @@ Um job varredor seria redundante: limparia linhas que nenhuma leitura conta e qu
 ## D5 — Quem perde a disputa recebe alternativas
 
 `reservar_ou_alternativas(session, *, corretor, agenda, channel, conversation_key, janela, tipo, imovel_id, agora) -> Reserva | list[Intervalo]`: tenta `reservar`; em `Conflito`, devolve `propor_janelas_do_corretor(...)` com a agenda real — que já enxerga a reserva vencedora, porque o vencedor commitou. É o cenário "dois leads disputam o mesmo horário": um fica com a reserva, o outro com janelas, e nenhum com erro técnico.
+  - **Emenda E-02 (TEC-168, 24/09/2026):** a assinatura ganhou o parâmetro `ate` — o horizonte das alternativas, que vem de quem chama, mesma regra da TEC-165. E "o vencedor commitou", acima, vale para o escritor concorrente de **outra** sessão: `AgendaPostgres` lê só o que já foi commitado, então um conflito com uma reserva pendente da própria sessão de quem chama (reservar duas vezes na mesma transação, antes do commit) não tem essa garantia — a agenda ainda não enxerga a tentativa anterior, e as alternativas podem incluir o horário que ela acabou de perder.
 
 ## Testes
 

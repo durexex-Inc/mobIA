@@ -24,6 +24,11 @@ docker compose up -d
 python -m alembic upgrade head
 ```
 
+**A migration 0044 cria a extensão `btree_gist`** (confiável desde o PG13; o
+dono do banco a cria). Um Postgres gerenciado com lista de extensões
+permitidas precisa liberá-la antes do `alembic upgrade head`, senão a
+migration falha.
+
 ## Comandos
 
 | O quê | Comando |
