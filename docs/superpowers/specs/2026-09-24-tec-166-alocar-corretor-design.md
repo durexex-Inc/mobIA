@@ -23,6 +23,8 @@ Os comentários e mensagens que hoje dizem "espera a TEC-166" nesses lugares sã
 
 **Fora por decisão da card:** balanceamento de carga por desempenho ou ranking.
 
+**Capacidade não é reforçada na gravação, só declarada.** `reservar` (`agendamento/repositorio.py`) não reconta `visitas_por_dia` nem trava a linha do corretor antes de inserir — a exclusão do Postgres só recusa sobreposição de horário. Duas reservas concorrentes de slots diferentes do mesmo corretor no mesmo dia podem ambas suceder e passar de `capacidade_diaria`. `alocar` e `reservar_ou_alternativas` conferem capacidade só na hora de propor janela; na hora de gravar, ela é aspiracional. Corrigir isso direito pede uma recontagem sob lock da linha de `corretores` dentro do mesmo savepoint de `reservar` — não existe card para isso ainda (achado na revisão final da TEC-166, 24/09/2026).
+
 ## D1 — O critério do lead
 
 ```python
