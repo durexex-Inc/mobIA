@@ -133,6 +133,25 @@ async def notificar(
             )
             return False
 
+        # **Quem foi avisado passa a ficar gravado** (TEC-192, D6, emenda E-06
+        # da RN-16.2). Ate aqui esta escolha era usada e jogada fora: a
+        # notificacao enviava e gravava `notificado_em` sem dizer para quem, e
+        # `handoffs.corretor_id` -- com FK desde a TEC-196 -- nunca tinha
+        # escritor. A lista de leads precisa dela para responder "de quem e
+        # este lead", que e o terceiro criterio de aceite da TEC-192.
+        #
+        # **So quando nula, pela mesma disciplina do `sla_limite_em` abaixo.**
+        # Uma retentativa do ARQ recalcula a cascata, e se alguem passar a
+        # alocar corretor de verdade, sobrescrever com o plantonista de agora
+        # trocaria o dono do lead por causa de um reenvio.
+        #
+        # **O valor e o DESTINATARIO, que pode ser o plantonista** -- a cascata
+        # da emenda E-01 desta regra --, e nao uma alocacao por especialidade.
+        # Quem ler esta coluna le "para quem este handoff foi", nao "de quem
+        # este lead sempre foi".
+        if handoff.corretor_id is None:
+            handoff.corretor_id = corretor.id
+
         # A temperatura vem de `lead_qualification`, NUNCA do `gatilho` do
         # handoff (D2, emenda E-01 da RN-16.3): `LEAD_QUENTE` significa
         # "acabou de atravessar a borda", e um handoff aberto por
