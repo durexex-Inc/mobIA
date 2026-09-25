@@ -422,15 +422,20 @@ async def test_a_0044_desce_e_sobe_de_novo() -> None:
         )
 
 
-async def test_a_0052_desce_e_sobe_de_novo() -> None:
+async def test_a_0053_desce_e_sobe_de_novo() -> None:
     """A tabela e as duas funcoes somem no downgrade e voltam no upgrade.
 
     Mesma razao da 0012: triggers e funcoes nascem de `op.execute`, entao nada
     garante que o downgrade as derrube -- uma funcao orfa faria o upgrade
     seguinte reprovar com "function already exists".
+
+    O alvo do downgrade e `0052`, a revisao IMEDIATAMENTE anterior, e nao
+    `0051` como quando esta migration era a 0052 (TEC-377). Descer ate 0051
+    derrubaria de quebra a `0052_resposta_ao_lembrete`, que nao tem nada a ver
+    com o que se afirma aqui.
     """
     await dispose_engine()
-    alembic("downgrade", "0051")
+    alembic("downgrade", "0052")
     try:
         async with get_sessionmaker()() as sessao:
             assert (

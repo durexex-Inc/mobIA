@@ -232,7 +232,7 @@ TABELAS = (
     "midias_recebidas",
     # TEC-206. Append-only como `lead_score_audit`, e nada a apaga em producao
     # antes de 12 meses: sem o truncate, o registro de um teste vira trilha do
-    # proximo. TRUNCATE nao dispara os triggers de linha da 0052 -- e por isso
+    # proximo. TRUNCATE nao dispara os triggers de linha da 0053 -- e por isso
     # a D3 do desenho nao o bloqueia.
     "eventos_auditoria",
 )
