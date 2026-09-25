@@ -39,7 +39,7 @@ Cada passo abre a própria sessão curta, sem transação aberta durante chamada
 
 | passo | como sabe que já foi feito |
 | --- | --- |
-| lead | a reserva de `outbound_dispatches` por `(message_id, kind)` do `GuardedOutbound` |
+| lead | coluna nova `agendamentos.lead_avisado_em` — a reserva de `outbound_dispatches` por `(message_id, kind)` não basta, porque a chave é a última mensagem do lead, e uma reexecução depois de o lead escrever de novo teria outra chave |
 | corretor | coluna nova `agendamentos.corretor_avisado_em` |
 | calendário | coluna nova `agendamentos.calendar_event_id` |
 
@@ -70,10 +70,10 @@ Visita com `imovel_id` nulo — o schema permite — sai sem a linha do imóvel,
 
 ## D5 — O calendário: um organizador que convida
 
-`CalendarioPort` com `criar_evento(*, inicio, fim, titulo, descricao, convidado) -> str` (o id do evento), e dois adaptadores:
+`CalendarioPort` com `criar_evento(*, inicio, fim, titulo, descricao, convidado) -> str | None` (o id do evento, ou `None` quando a integração está desligada), e dois adaptadores:
 
 - **`GoogleCalendar`**, sobre `httpx` puro com cliente injetável (o molde de `WhatsAppTemplate`), sem biblioteca Google nova. Uma conta Google da imobiliária é a **organizadora**: com o refresh token OAuth dela, troca por access token (`POST https://oauth2.googleapis.com/token`) e cria o evento na agenda dela (`POST .../calendars/{calendar_id}/events?sendUpdates=all`) com o e-mail do corretor em `attendees`. O Google envia o convite e o evento aparece na agenda do corretor — com qualquer conta de e-mail, sem Workspace nem delegação. Decidido em conversa em 24/09/2026.
-- **`CalendarioNoop`** — não faz chamada nenhuma.
+- **`CalendarioNoop`** — não faz chamada nenhuma e devolve `None`, que é o "nenhum evento criado" da porta (`criar_evento` devolve `str | None`).
 
 **A flag é a credencial vazia**, a convenção do repo (`crm_webhook_url`): `Settings.google_calendar_refresh_token` vazio faz o `startup` do worker pôr `CalendarioNoop` em `ctx` e emitir um único aviso (`agendamento.calendario_desligado`). Os outros campos: `google_calendar_client_id`, `google_calendar_client_secret`, `google_calendar_id` (padrão `primary`).
 
@@ -91,7 +91,7 @@ Cada um com `agendamento_id` e o tipo da exceção, nunca o corpo da resposta do
 
 ## D7 — Migration 0046
 
-`agendamentos.calendar_event_id String(120) NULL` e `agendamentos.corretor_avisado_em timestamptz NULL`. Nulos porque o passo pode falhar, e nulo é o registro de que falhou.
+`agendamentos.calendar_event_id String(120) NULL`, `agendamentos.corretor_avisado_em timestamptz NULL` e `agendamentos.lead_avisado_em timestamptz NULL`. Nulos porque o passo pode falhar, e nulo é o registro de que falhou. `lead_avisado_em` só é gravado quando o `outbound.send` aceita; recusa da guarda (opt-out, atendimento humano) fica nula e em log.
 
 ## Testes
 
