@@ -7,27 +7,29 @@ from mobia.app.config import ConfiguracaoInsegura, get_settings
 from mobia.app.logging import configure_logging
 from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
+from mobia.domain.crm.webhook import CrmWebhook
 from mobia.domain.handoff.agendador import AgendadorArq
 from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.midia.armazem import armazem_da_config
 from mobia.domain.outbound.email import EmailSmtp
-from mobia.domain.outbound.presenca import IndicadorNoop
 from mobia.domain.outbound.roteador import RoteadorPorCanal
-from mobia.domain.outbound.web import WebOutbound
+from mobia.domain.outbound.web import WebIndicador, WebOutbound
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
 from mobia.domain.outbound.whatsapp_notificacao import WhatsAppTemplate
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
 from mobia.workers.jobs.baixar_midia import MAXIMO_DE_TENTATIVAS, baixar_midia
+from mobia.workers.jobs.exportar_crm import exportar_crm
 from mobia.workers.jobs.gerar_resumo import gerar_resumo
 from mobia.workers.jobs.importar_catalogo import importar_catalogo
 from mobia.workers.jobs.indexar_catalogo import indexar_catalogo
 from mobia.workers.jobs.notificar import notificar_corretor
 from mobia.workers.jobs.process_message import process_message
 from mobia.workers.jobs.sweep_conversas_inativas import sweep_conversas_inativas
+from mobia.workers.jobs.sweep_crm_pendentes import sweep_crm_pendentes
 from mobia.workers.jobs.sweep_followups import sweep_followups
 from mobia.workers.jobs.sweep_importacoes_travadas import sweep_importacoes_travadas
 from mobia.workers.jobs.sweep_midias_pendentes import sweep_midias_pendentes
@@ -127,10 +129,10 @@ async def startup(ctx: dict[str, Any]) -> None:
     # token, ele tambem levaria 401.
     ctx["indicadores"] = {
         CANAL_WHATSAPP: WhatsAppIndicador(),
-        # Lacuna declarada da TEC-124: publicar "digitando" exigiria a sessao
-        # na assinatura do `IndicadorDePresencaPort`, e esta card nao mexe
-        # nesse contrato.
-        CANAL_WEB: IndicadorNoop(),
+        # A lacuna da TEC-124 fechou na TEC-362: `IndicadorDePresencaPort`
+        # ganhou `para`, que no web e a sessao, e com ela da para publicar.
+        # Mesmo `ctx["redis"]` do `WebOutbound` logo acima, pela mesma razao.
+        CANAL_WEB: WebIndicador(ctx["redis"]),
     }
     ctx["classificador"] = ClassificadorAnthropic()
     ctx["resumidor"] = ResumidorAnthropic()
@@ -159,6 +161,26 @@ async def startup(ctx: dict[str, Any]) -> None:
     if settings.em_producao and settings.midia_armazem == "local":
         log.warning("midia.armazem_local_em_producao", diretorio=settings.midia_diretorio)
     ctx["armazem"] = armazem_da_config(settings)
+
+    # TEC-180. `None` e nao um adaptador que registra e nao entrega: o repo
+    # apagou os dois dubles que ja teve (`EmailRegistrado` na TEC-280, o
+    # registrador de WhatsApp na TEC-281), com a razao escrita em
+    # `domain/notificacao/canais.py`. Ver a D1 do desenho.
+    #
+    # **Nao ha guarda que recuse subir**, ao contrario do SMTP logo acima: a
+    # exportacao e `Should` no MoSCoW e a card declara o contorno da POC
+    # ("trabalhar direto no dashboard"), entao uma guarda tornaria uma
+    # integracao opcional pre-requisito para rodar o sistema. O que substitui a
+    # guarda e este aviso -- uma linha por subida do worker, nao uma por
+    # handoff. Ver a emenda E-02 a RN-16.5 e a D2 do desenho.
+    if settings.crm_webhook_url:
+        ctx["crm"] = CrmWebhook()
+    else:
+        ctx["crm"] = None
+        log.warning(
+            "crm.exportacao_desligada",
+            motivo="CRM_WEBHOOK_URL nao configurada; nenhum lead sera exportado",
+        )
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -226,6 +248,23 @@ class WorkerSettings:
         # `cron_jobs` tambem -- e o relogio que dispara este job, nunca um
         # enqueue manual.
         func(sweep_conversas_inativas, keep_result=0),
+        # TEC-180. `keep_result=0` pela razao do `gerar_resumo`: o `_job_id` e
+        # fixo por handoff (`crm:<id>`), e uma chave de resultado sobrevivente
+        # bloquearia em silencio o reenqueue que a varredura faz a cada rodada
+        # nova -- justamente o mecanismo do terceiro cenario do Gherkin.
+        #
+        # **Sem `max_tries` proprio, de proposito.** As tres tentativas da
+        # RN-16.5 se contam em `handoffs.crm_tentativas`, nao aqui: com
+        # `max_tries=3`, a terceira falha estouraria o teto do ARQ e ele
+        # encerraria o job SEM chamar a corrotina -- nada marcaria a linha e
+        # nada emitiria o alerta. Ver o cabecalho de
+        # `workers/jobs/exportar_crm.py`, que cita a fonte do arq, e a D3 do
+        # desenho. O global de 5 fica valendo como rede para o worker morrer no
+        # meio de uma tentativa.
+        func(exportar_crm, keep_result=0),
+        # `keep_result=0` pela mesma razao do `sweep_sla`: o resultado (um
+        # `int`) nao serve para nada depois que o log saiu.
+        func(sweep_crm_pendentes, keep_result=0),
         # TEC-132. `keep_result=0` pela mesma razao do `process_message`: o
         # `_job_id` e fixo (`midia:<id>`, ver `enqueue_baixar_midia`), e uma
         # chave de resultado sobrevivente faria o re-enqueue da
@@ -298,7 +337,19 @@ class WorkerSettings:
         # `process_message` esta mais vazia, e esta varredura toma locks em
         # `conversas`.
         cron(sweep_conversas_inativas, hour={3}, minute={0}, run_at_startup=False),
-        # TEC-132, D3. De 5 em 5 minutos, como os irmaos de cima: o prazo para
+        # TEC-180. **De 15 em 15 minutos**, e nao de 5 em 5 como os irmaos: a
+        # cadencia aqui e a de uma rodada de retentativa contra um sistema que
+        # ja falhou tres vezes, nao a de um prazo a cumprir. Mais frequente so
+        # multiplicaria POSTs contra um CRM que esta fora, e o custo de esperar
+        # um quarto de hora a mais por um lead num CRM e nulo -- o corretor ja
+        # foi avisado pela RN-16.2, que tem prazo de 60 segundos e caminho
+        # proprio.
+        #
+        # `run_at_startup=False` como todos os outros: uma reinicializacao de
+        # worker nao e evento que justifique varrer.
+        cron(sweep_crm_pendentes, minute={0, 15, 30, 45}, run_at_startup=False),
+        # TEC-132, D3. De 5 em 5 minutos, como `sweep_followups`, `sweep_sla` e
+        # `sweep_importacoes_travadas` acima: o prazo para
         # supor o enfileiramento perdido e de DEZ MINUTOS (`REENFILEIRAR_APOS`
         # em `sweep_midias_pendentes.py`), entao precisao de segundos nao
         # compra nada. O pior caso fica em quinze minutos entre a ingestao e o

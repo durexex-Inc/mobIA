@@ -26,6 +26,7 @@ import json
 import math
 import uuid
 from contextlib import suppress
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -37,6 +38,7 @@ from mobia.api.deps import get_ingestion_service
 from mobia.api.middleware import resolver_ip
 from mobia.app.config import get_settings
 from mobia.app.logging import correlation_id
+from mobia.domain.consentimento.repositorio import registrar as registrar_consentimento
 from mobia.domain.identidade.repositorio import vincular_sessao
 from mobia.domain.identidade.telefone import extrair_telefone
 from mobia.domain.limites.eventos import registrar_bloqueio
@@ -54,6 +56,7 @@ router = APIRouter(tags=["widget"])
 
 TIPO_OLA = "ola"
 TIPO_MENSAGEM = "mensagem"
+TIPO_CONSENTIMENTO = "consentimento"
 
 # 1002 e o codigo de violacao de protocolo do RFC 6455. Frame fora de ordem,
 # JSON invalido e sessao que nao e UUID caem todos aqui: sao cliente quebrado,
@@ -69,6 +72,12 @@ CODIGO_INDISPONIVEL = 1011
 # leva a sessao na frente (36 caracteres e o separador), entao 128 deixa folga
 # sem apertar nenhum formato razoavel -- um UUID tem 36.
 TAMANHO_MAXIMO_DO_ID = 128
+
+# Teto do aviso de privacidade que o cliente diz ter exibido. A coluna e
+# `Text` e nao estoura, mas o frame e entrada externa: sem teto, um cliente
+# quebrado grava megabytes numa tabela que existe para ser lida em auditoria.
+# 4000 cabe qualquer aviso de privacidade real com folga larga.
+TAMANHO_MAXIMO_DO_AVISO = 4000
 
 
 @router.websocket("/widget/chat")
@@ -312,6 +321,81 @@ async def _anunciar(websocket: WebSocket, sessao: str, retomada: bool) -> None:
         )
 
 
+async def _registrar_consentimento(
+    websocket: WebSocket, frame: dict[str, Any], sessao: str
+) -> None:
+    """Grava o consentimento de marketing e confirma. TEC-363, RN-FE-20.2.
+
+    **Nenhuma recusa aqui fecha o socket**, ao contrario do frame
+    desconhecido. Derrubar transformaria um aviso mal formado -- ou um banco
+    indisponivel -- em perda da conversa inteira, que e o oposto do que esta
+    rota existe para proteger. E o mesmo criterio do `texto_longo_demais`.
+
+    **A recusa da visitante (`marketing: false`) NAO e uma dessas recusas**:
+    ela e gravada, porque e evidencia de que o aviso foi exibido e de que a
+    resposta foi nao. Ver a D3 do desenho.
+    """
+    marketing = frame.get("marketing")
+    if not isinstance(marketing, bool):
+        # `str()` ou truthiness aceitariam `"nao"` e `0` como resposta, e uma
+        # string nao vazia viraria consentimento. Num registro que serve de
+        # prova, coagir e pior que recusar.
+        await websocket.send_json({"tipo": "erro", "motivo": "consentimento_invalido"})
+        return
+
+    texto = str(frame.get("textoExibido") or "")
+    if not texto.strip():
+        # Sem o texto nao ha evidencia: o registro diria "aceitou" sem dizer
+        # aceitou o que. Gravar assim seria fingir que ha prova.
+        await websocket.send_json({"tipo": "erro", "motivo": "aviso_ausente"})
+        return
+    if len(texto) > TAMANHO_MAXIMO_DO_AVISO:
+        await websocket.send_json({"tipo": "erro", "motivo": "aviso_longo_demais"})
+        return
+
+    try:
+        await registrar_consentimento(
+            get_sessionmaker(),
+            channel=CANAL_WEB,
+            conversation_key=sessao,
+            marketing=marketing,
+            texto_exibido=texto,
+            exibido_em=_instante_do_cliente(frame.get("exibidoEm")),
+        )
+    except Exception as exc:
+        log.exception(
+            "widget.consentimento_falhou",
+            sessao=sessao,
+            reason=type(exc).__name__,
+            detail=motivo_do_erro_de_banco(exc),
+        )
+        await websocket.send_json({"tipo": "erro", "motivo": "consentimento_nao_registrado"})
+        return
+
+    # O ack nao esta no texto da card, e existe porque sem ele o cliente ou
+    # assume que deu certo -- e perde registros em silencio -- ou reenvia
+    # sempre. Frame proprio e nao `recebido`, que carrega um `id` de mensagem
+    # que consentimento nao tem.
+    log.info("widget.consentimento_registrado", sessao=sessao, marketing=marketing)
+    await websocket.send_json({"tipo": "consentimento_registrado"})
+
+
+def _instante_do_cliente(bruto: Any) -> datetime | None:
+    """O `exibidoEm` do frame, quando ele for ISO-8601 legivel.
+
+    Ilegivel vira `None` em vez de recusar o consentimento: o carimbo e
+    diagnostico, e a coluna que serve de evidencia e o `created_at` do
+    Postgres. Perder o registro por causa de um campo auxiliar seria trocar o
+    que importa pelo que nao importa.
+    """
+    if not isinstance(bruto, str):
+        return None
+    try:
+        return datetime.fromisoformat(bruto)
+    except ValueError:
+        return None
+
+
 async def _escrever_do_agente(websocket: WebSocket, fila: asyncio.Queue[str]) -> None:
     """Repassa ao navegador o que o worker publicou para esta sessao."""
     while True:
@@ -330,7 +414,18 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
             await websocket.close(code=CODIGO_PROTOCOLO)
             return
 
-        if not isinstance(frame, dict) or frame.get("tipo") != TIPO_MENSAGEM:
+        if not isinstance(frame, dict):
+            await websocket.close(code=CODIGO_PROTOCOLO)
+            return
+
+        if frame.get("tipo") == TIPO_CONSENTIMENTO:
+            await _registrar_consentimento(websocket, frame, sessao)
+            continue
+
+        # Todo frame que nao e `mensagem` nem `consentimento` continua
+        # derrubando com 1002: e cliente quebrado, e nao ha frame de erro que
+        # ajude quem o manda.
+        if frame.get("tipo") != TIPO_MENSAGEM:
             await websocket.close(code=CODIGO_PROTOCOLO)
             return
 

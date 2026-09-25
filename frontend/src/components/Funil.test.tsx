@@ -37,7 +37,7 @@ describe('Funil', () => {
   it('a etapa sem fonte nao mostra zero', () => {
     render(<Funil etapas={ETAPAS} />)
     const agendado = screen.getByTestId('etapa-Agendado')
-    expect(agendado).toHaveTextContent('sem fonte de dados')
+    expect(agendado).toHaveTextContent('Ainda não medido')
     expect(agendado).not.toHaveTextContent(/\b0\b/)
   })
 
@@ -45,7 +45,7 @@ describe('Funil', () => {
     render(<Funil etapas={ETAPAS} />)
     const qualificado = screen.getByTestId('etapa-Qualificado')
     expect(qualificado).toHaveTextContent('0')
-    expect(qualificado).not.toHaveTextContent('sem fonte de dados')
+    expect(qualificado).not.toHaveTextContent('Ainda não medido')
   })
 
   it('renderiza travessao nas quatro etapas sem conversao calculavel', () => {

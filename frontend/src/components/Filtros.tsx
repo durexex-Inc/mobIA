@@ -58,21 +58,86 @@ function Selecao({
  * funciona com o JavaScript desligado. O estado do painel fica na URL, entao
  * a gerente pode mandar o link do recorte que encontrou.
  */
-export function Filtros({ atuais, erro }: { atuais: FiltrosTipo; erro?: string }) {
+/**
+ * Os campos que sabem exibir a mensagem ao lado (TEC-313, D5).
+ *
+ * **Os tres `<select>` ficam de fora de proposito, e nao por esquecimento.**
+ * Eles nao aceitam valor digitado: as opcoes sao fixas, entao um 422 sobre
+ * `canal` ou `temperatura` nao e um engano que a gerente cometeu no campo --
+ * e URL montada a mao ou divergencia entre o vocabulario da tela e o do
+ * backend. Mensagem ao lado de um `<select>` correto nao a ajudaria a
+ * consertar nada; o aviso acima do formulario, sim, porque diz que o recorte
+ * pedido nao existe.
+ *
+ * Testar contra esta lista, e nao contra as chaves presentes em `atuais`:
+ * filtro opcional nao preenchido nao existe como chave, e a mensagem sumiria
+ * exatamente no caso em que o valor veio errado.
+ */
+const CAMPOS_COM_MENSAGEM: ReadonlySet<string> = new Set(['de', 'ate', 'corretorId'])
+
+/**
+ * A mensagem do backend ao lado do campo que ela recusa (RN-FE-04.4).
+ *
+ * `role="alert"` em cada um, e nao um so no formulario: o leitor de tela
+ * precisa anunciar a mensagem no contexto do campo, e nao uma frase solta que
+ * obrigue a procurar qual campo ela descreve.
+ */
+function ErroDoCampo({
+  nome,
+  campos,
+  mensagem,
+}: {
+  nome: string
+  campos: Set<string>
+  mensagem?: string
+}) {
+  if (!campos.has(nome) || !mensagem) {
+    return null
+  }
+  return (
+    <span role="alert" className="filtros-erro-campo">
+      {mensagem}
+    </span>
+  )
+}
+
+export function Filtros({
+  atuais,
+  erro,
+  campos = [],
+}: {
+  atuais: FiltrosTipo
+  erro?: string
+  campos?: string[]
+}) {
+  /**
+   * Um 422 que aponta campo vira mensagem AO LADO do campo; um que nao aponta
+   * fica acima do formulario (TEC-313, D5).
+   *
+   * **O erro nao aparece nos dois lugares.** Repetir o mesmo texto acima e ao
+   * lado faria a gerente procurar dois problemas onde ha um. E o aviso acima
+   * continua sendo o certo para o que nao e de campo nenhum -- 403, 5xx, e os
+   * 422 cujo `detail` e prosa.
+   */
+  const comCampo = new Set(campos.filter((campo) => CAMPOS_COM_MENSAGEM.has(campo)))
+  const erroSolto = erro && comCampo.size === 0 ? erro : undefined
+
   return (
     <form method="get" aria-label="Filtros do painel" className="filtros">
-      {erro && (
+      {erroSolto && (
         <p role="alert" className="filtros-erro">
-          {erro}
+          {erroSolto}
         </p>
       )}
       <label>
         De
         <input type="date" name="de" defaultValue={atuais.de} required />
+        <ErroDoCampo nome="de" campos={comCampo} mensagem={erro} />
       </label>
       <label>
         Até
         <input type="date" name="ate" defaultValue={atuais.ate} required />
+        <ErroDoCampo nome="ate" campos={comCampo} mensagem={erro} />
       </label>
       <Selecao nome="canal" rotulo="Canal" opcoes={CANAIS} valor={atuais.canal} vazio="Todos" />
       <Selecao
@@ -92,6 +157,7 @@ export function Filtros({ atuais, erro }: { atuais: FiltrosTipo; erro?: string }
       <label>
         Corretor
         <input type="text" name="corretorId" defaultValue={atuais.corretorId ?? ''} />
+        <ErroDoCampo nome="corretorId" campos={comCampo} mensagem={erro} />
       </label>
       <button type="submit">Aplicar</button>
     </form>

@@ -42,7 +42,7 @@ describe('Indicadores', () => {
   it('o indicador sem fonte diz por que, e nao mostra zero', () => {
     render(<Indicadores indicadores={DADOS} indisponiveis={INDISPONIVEIS} />)
     const noShow = screen.getByTestId('indicador-taxaNoShow')
-    expect(noShow).toHaveTextContent('sem fonte de dados')
+    expect(noShow).toHaveTextContent('Ainda não medido')
     expect(noShow).not.toHaveTextContent(/\b0\b/)
   })
 
@@ -77,6 +77,6 @@ describe('Indicadores', () => {
 
     const taxa = screen.getByTestId('indicador-taxaQualificacao')
     expect(taxa).toHaveTextContent('sem dados no período')
-    expect(taxa).not.toHaveTextContent('sem fonte de dados')
+    expect(taxa).not.toHaveTextContent('Ainda não medido')
   })
 })

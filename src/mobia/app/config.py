@@ -14,6 +14,19 @@ CHAVE_DE_DESENVOLVIMENTO = "ZGV2LWtleS0zMi1ieXRlcy1mb3ItbW9iaWEtb2shISE="
 # Mesmo molde da CHAVE_DE_DESENVOLVIMENTO.
 TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO = "dev-catalogo-token"
 
+# O segredo do JWT em desenvolvimento. Mesmo molde e mesmo motivo da
+# CHAVE_DE_DESENVOLVIMENTO: commitado de proposito, e recusado em producao pelo
+# validator. Quem o tiver emite token de ADMIN para si mesmo.
+SEGREDO_DE_JWT_DE_DESENVOLVIMENTO = "dev-jwt-secret-nao-use-em-producao"
+
+# O piso da RFC 7518, secao 3.2: a chave de HMAC deve ter ao menos o tamanho da
+# saida da funcao -- 32 bytes para SHA-256. Abaixo disso, a assinatura e mais
+# facil de quebrar por forca bruta do que o algoritmo promete, e o `pyjwt` avisa
+# (`InsecureKeyLengthWarning`) -- um aviso que se perde no meio do log.
+#
+# O default acima ja passa, com 34 bytes. Isto guarda quem CONFIGURA.
+BYTES_MINIMOS_DO_JWT = 32
+
 _AMBIENTES_DE_PRODUCAO = frozenset({"production", "producao", "prod"})
 
 # Fracao do teto usada por `Settings.limiar_de_contagem_efetivo` quando
@@ -49,6 +62,19 @@ class Settings(BaseSettings):
     # configuracao, e este projeto ainda nao tem camada de autenticacao (JWT,
     # OIDC e papeis sao a TEC-201). Ver D1 do desenho da TEC-156.
     catalogo_admin_token: str = ""
+
+    # Autenticacao do dashboard (TEC-201, RNF-11).
+    #
+    # **Quem tem este segredo emite token de ADMIN para si mesmo**, sem senha e
+    # sem MFA -- e por isso ele tem a mesma guarda de producao da chave de
+    # cifra, e nao a ausencia de guarda da chave da Anthropic. A diferenca e a
+    # de sempre neste arquivo: chave de API errada falha na primeira chamada,
+    # segredo de assinatura errado NAO falha -- ele so deixa de proteger.
+    jwt_segredo: str = SEGREDO_DE_JWT_DE_DESENVOLVIMENTO
+    # Os dois numeros da RNF-11. Configuraveis porque o teste precisa de token
+    # ja expirado sem esperar uma hora; a REGRA continua sendo 60 e 7.
+    jwt_minutos: int = 60
+    refresh_dias: int = 7
 
     # 32 bytes em base64. O default so serve para desenvolvimento e teste --
     # em producao vem do ambiente. A analogia com o whatsapp_app_secret que o
@@ -283,6 +309,38 @@ class Settings(BaseSettings):
     # composto sobre uma base vazia continua sendo um caminho valido -- ver a
     # L4 do desenho.
     dashboard_base_url: str = ""
+
+    # Exportacao para CRM (TEC-180, RN-16.5).
+    #
+    # `crm_webhook_url` vazia DESLIGA a exportacao, e o worker sobe assim --
+    # divergencia deliberada da guarda de `SMTP_HOST` em `workers/main.py`, que
+    # RECUSA subir. A notificacao ao corretor e `Must` e sem ela o lead espera
+    # sem que ninguem saiba; a exportacao e `Should`, e a propria card declara
+    # o contorno da POC ("trabalhar direto no dashboard"). Uma guarda aqui
+    # tornaria uma integracao opcional pre-requisito para rodar o sistema. O
+    # que substitui a guarda e um `warning` unico na subida do worker -- ver a
+    # emenda E-02 a RN-16.5 e a D2 do desenho.
+    crm_webhook_url: str = ""
+    # Sem segredo, o POST vai sem assinatura. Assinar e do interesse de quem
+    # RECEBE, que precisa ter o segredo para verificar; exigi-lo tornaria o
+    # webhook mais dificil de plugar sem tornar nada mais seguro deste lado.
+    crm_webhook_secret: str = ""
+    # Mesmo numero e mesma razao do `TIMEOUT_SEGUNDOS` de
+    # `domain/outbound/whatsapp.py`: e o teto por tentativa, e tres delas
+    # precisam caber com folga no `job_timeout` do worker.
+    crm_timeout_segundos: float = 10.0
+    # A base do backoff exponencial: as esperas sao 30 s e 60 s (base x 2^n).
+    #
+    # Configuravel so porque o teste precisa injetar centesimos de segundo --
+    # mesmo argumento de `indicador_de_digitacao_apos_segundos` logo acima. O
+    # FATOR e a CONTAGEM nao sao configuraveis: sao a regra, e vivem em
+    # `domain/crm/port.py` e no job.
+    crm_backoff_base_segundos: float = 30.0
+    # Ha quanto tempo um handoff sem nenhuma tentativa conta como "o enqueue se
+    # perdeu" para a varredura. Maior que o backoff inteiro (30 + 60 = 90 s),
+    # ou a varredura recolheria um handoff cuja primeira rodada ainda esta em
+    # voo e dispararia uma segunda em paralelo.
+    sweep_crm_sem_tentativa_after_seconds: int = 600
 
     # RN-02.5: teto por chamada. RN-02.2: piso de mensagens literais.
     contexto_teto_de_tokens: int = 12000
@@ -616,6 +674,33 @@ class Settings(BaseSettings):
                 f"ENVIRONMENT={self.environment}. Gere uma chave de 32 bytes: "
                 'python -c "import base64,os;'
                 'print(base64.b64encode(os.urandom(32)).decode())"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _recusar_segredo_de_jwt_de_desenvolvimento_em_producao(self) -> "Settings":
+        """TEC-201. Mesmo molde da chave de cifra, e pela mesma razao.
+
+        Um segredo de assinatura publicamente conhecido nao produz erro
+        nenhum: o sistema autentica normalmente, e quem souber o segredo entra
+        como ADMIN sem senha e sem segundo fator. E o modo de falha silencioso
+        que esta guarda existe para matar.
+        """
+        if self.em_producao and len(self.jwt_segredo.encode("utf-8")) < BYTES_MINIMOS_DO_JWT:
+            raise ConfiguracaoInsegura(
+                f"JWT_SEGREDO tem menos de {BYTES_MINIMOS_DO_JWT} bytes e "
+                f"ENVIRONMENT={self.environment}. A RFC 7518 pede pelo menos o "
+                "tamanho da saida do HMAC (32 bytes para SHA-256); abaixo disso "
+                "a assinatura fica mais facil de quebrar por forca bruta do que "
+                "o algoritmo promete. Gere um: "
+                'python -c "import secrets;print(secrets.token_urlsafe(48))"'
+            )
+        if self.em_producao and self.jwt_segredo == SEGREDO_DE_JWT_DE_DESENVOLVIMENTO:
+            raise ConfiguracaoInsegura(
+                "JWT_SEGREDO esta com o default de desenvolvimento e "
+                f"ENVIRONMENT={self.environment}. Quem o conhece emite token de "
+                "ADMIN para si mesmo, sem senha e sem MFA. Gere um: "
+                'python -c "import secrets;print(secrets.token_urlsafe(48))"'
             )
         return self
 

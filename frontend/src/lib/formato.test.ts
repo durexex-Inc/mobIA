@@ -25,7 +25,7 @@ describe('quantidadeLegivel', () => {
         disponivel: false,
         conversaoDaAnterior: null,
       }),
-    ).toBe('sem fonte de dados')
+    ).toBe('Ainda não medido')
   })
 
   it('mostra zero como zero quando a etapa e disponivel', () => {

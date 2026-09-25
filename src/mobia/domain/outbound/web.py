@@ -34,6 +34,7 @@ sobra.
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -51,6 +52,68 @@ PREFIXO_DA_SESSAO = "mobia:web"
 
 def canal_da_sessao(sessao: str) -> str:
     return f"{PREFIXO_DA_SESSAO}:{sessao}"
+
+
+# Quanto tempo o cliente deve manter o indicador aceso. **O 25 vem do
+# WhatsApp**: a Emenda E-01 da RN-04.7 registra que o indicador da Meta some
+# sozinho apos 25 s, e a L1 da TEC-274 registra que aquela card nao o renova.
+# Igualar e o ponto -- um valor diferente aqui faria o MESMO turno parecer
+# diferente em cada canal, sem nada no produto que justificasse.
+#
+# Constante e nao `Settings`: no WhatsApp esta duracao nao e nossa, e um botao
+# que configurasse so o lado web seria um botao para desalinhar os canais.
+DURACAO_DO_INDICADOR = timedelta(seconds=25)
+
+
+class WebIndicador:
+    """Publica o evento `digitando` na sessao aberta. TEC-362, RN-04.7.
+
+    **Fecha a lacuna que a D5 da TEC-124 declarou** -- la o web ficou com
+    `IndicadorNoop` porque publicar exigiria a sessao na assinatura do
+    `IndicadorDePresencaPort`, e aquela card nao mexeu no contrato. Esta mexeu:
+    `para` e a sessao.
+
+    **Nao herda de `GuardedOutbound`**, pela mesma razao que o
+    `WhatsAppIndicador` escreve: nao ha o que reservar, o indicador nao e
+    mensagem e nao tem `kind`, e herdar obrigaria a inventar um kind sintetico
+    numa tabela cuja UNIQUE existe para dedup de MENSAGEM. As guardas de
+    opt-out e de atendimento humano moram no agendador
+    (`domain/outbound/presenca.py`) e rodam no instante do disparo.
+
+    **Excecao propaga crua**, ao contrario de `WebOutbound._deliver` logo
+    acima. Nao e descuido: `OutboundPort.send` tem semantica de excecao -- o
+    tipo decide o desfecho do turno --, e `IndicadorDePresencaPort` declara o
+    oposto, que o agendador engole tudo e loga. Capturar aqui daria duas linhas
+    de log para o mesmo evento.
+    """
+
+    def __init__(self, redis: Any) -> None:
+        self._redis = redis
+
+    async def indicar_digitacao(
+        self, *, provider_message_id: str, de: str, para: str | None
+    ) -> None:
+        # `provider_message_id` e `de` sao ignorados aqui: no web o frame nao
+        # e anotacao sobre a mensagem recebida, e sim evento proprio. Quem
+        # identifica o destino e `para`, que e a sessao.
+        if para is None:
+            log.info("web.indicador_sem_sessao")
+            return
+        if self._redis is None:
+            log.warning("web.indicador_sem_redis")
+            return
+
+        ate = datetime.now(UTC) + DURACAO_DO_INDICADOR
+        # `ate` e o que permite ao cliente parar SOZINHO. No WhatsApp quem
+        # expira e a Meta, sem nos dizer quando; aqui o instante viaja no
+        # frame, e isso e de graca.
+        corpo = {"tipo": "digitando", "ate": ate.isoformat()}
+        ouvintes = await self._redis.publish(canal_da_sessao(para), json.dumps(corpo))
+
+        # Zero ouvintes e o caso NORMAL da aba fechada -- e aqui menos grave
+        # que na entrega: um indicador nao vale nada fora do instante, entao
+        # nao ha o que recuperar depois nem se quer.
+        log.info("web.indicador_publicado", ouvintes=int(ouvintes))
 
 
 class WebOutbound(GuardedOutbound):

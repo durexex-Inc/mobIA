@@ -5,9 +5,8 @@ import pytest
 
 from mobia.app.config import ConfiguracaoInsegura
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
-from mobia.domain.outbound.presenca import IndicadorNoop
 from mobia.domain.outbound.roteador import RoteadorPorCanal
-from mobia.domain.outbound.web import WebOutbound
+from mobia.domain.outbound.web import WebIndicador, WebOutbound
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
 from mobia.workers import main as worker_main
 from mobia.workers.main import startup
@@ -35,7 +34,9 @@ async def test_startup_monta_saida_e_indicador_por_canal(
     assert isinstance(portas[CANAL_WHATSAPP], WhatsAppOutbound)
     assert isinstance(portas[CANAL_WEB], WebOutbound)
     assert isinstance(ctx["indicadores"][CANAL_WHATSAPP], WhatsAppIndicador)
-    assert isinstance(ctx["indicadores"][CANAL_WEB], IndicadorNoop)
+    # Deixou de ser `IndicadorNoop` na TEC-362: a lacuna da TEC-124 fechou
+    # quando o port ganhou `para`, que no web e a sessao.
+    assert isinstance(ctx["indicadores"][CANAL_WEB], WebIndicador)
     assert "indicador" not in ctx
 
 
@@ -117,6 +118,10 @@ def _producao(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
     monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
+    # TEC-201: a terceira guarda do mesmo tipo. Sem isto ela dispara primeiro e
+    # o teste passaria pelo motivo errado -- exatamente o que o docstring acima
+    # ja dizia das outras duas.
+    monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
 
 
@@ -333,6 +338,10 @@ class _LogQueGrava:
         self.avisos.append((evento, campos))
 
 
+def _avisos_de_midia(gravador: _LogQueGrava) -> list[str]:
+    return [evento for evento, _ in gravador.avisos if evento.startswith("midia.")]
+
+
 def _sobe_em_producao(monkeypatch: pytest.MonkeyPatch) -> None:
     _producao(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "chave-de-teste")
@@ -355,7 +364,10 @@ async def test_producao_com_armazem_local_avisa_e_sobe(
     await startup(ctx)
 
     assert "armazem" in ctx
-    assert [evento for evento, _ in gravador.avisos] == ["midia.armazem_local_em_producao"]
+    # So os avisos de midia: o `startup` tem outros avisos que nao recusam
+    # subir (o `crm.exportacao_desligada` da TEC-180, com CRM_WEBHOOK_URL
+    # vazia), e eles nao sao assunto deste teste.
+    assert _avisos_de_midia(gravador) == ["midia.armazem_local_em_producao"]
 
 
 async def test_desenvolvimento_com_armazem_local_nao_avisa(
@@ -370,4 +382,4 @@ async def test_desenvolvimento_com_armazem_local_nao_avisa(
 
     await startup({"redis": object()})
 
-    assert gravador.avisos == []
+    assert _avisos_de_midia(gravador) == []

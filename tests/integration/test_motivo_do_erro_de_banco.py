@@ -14,6 +14,28 @@ from mobia.infra.db import get_engine, motivo_do_erro_de_banco
 SENTINELA = "quero 2 quartos na zona sul"
 
 
+def _detalhe(exc: Exception) -> str:
+    """O `DETAIL` que o SERVIDOR escreveu, que e o vetor de vazamento.
+
+    **Era `str(exc)` ate 24/09/2026, e a troca nao afrouxa a guarda -- aperta.**
+    A SQLAlchemy deixou de embutir o `detail` do asyncpg no texto da excecao
+    que embrulha (2.1), e as duas assertas de guarda passaram a reprovar com a
+    mensagem que elas mesmas previam: "o Postgres deixou de ecoar a linha; o
+    teste perdeu o alvo". Nada vazou -- o que mudou foi a FORMATACAO do
+    embrulho do cliente.
+
+    Apontar para `orig.__cause__.detail` prende a guarda no lugar de onde o
+    vazamento de fato viria, que e o que o docstring de `motivo_do_erro_de_banco`
+    descreve, e nao numa string montada por uma biblioteca que pode remonta-la
+    de novo na versao seguinte.
+
+    A falha foi achada na TEC-202, e reproduzida em `f1281b6` (a `main` de
+    entao) para separa-la das mudancas daquela card.
+    """
+    causa = getattr(getattr(exc, "orig", None), "__cause__", None)
+    return str(getattr(causa, "detail", ""))
+
+
 async def _falhar(ddl_extra: str, params: dict) -> Exception:
     """Cria tabela temporaria, forca o INSERT a falhar e devolve a excecao."""
     conexao = await get_engine().connect()
@@ -34,13 +56,14 @@ async def test_violacao_de_check_nao_leva_a_linha_para_o_motivo() -> None:
 
     `Failing row contains (5511987654321, quero 2 quartos na zona sul, -1)` --
     e isso vem do servidor, entao o `hide_parameters=True` do cliente nao
-    alcanca. As duas assertas importam: a primeira prova que o texto de fato
+    alcanca. As duas assertas importam: a primeira prova que o DETAIL de fato
     carrega o sentinela, e sem ela a segunda seria asserta de ausencia sempre
-    satisfeita (TEC-289).
+    satisfeita (TEC-289). Ver `_detalhe` para o porque de ela nao olhar mais o
+    `str(exc)`.
     """
     exc = await _falhar(", CONSTRAINT ck_s CHECK (s >= 0)", {"t": "a", "c": SENTINELA, "s": -1})
 
-    assert SENTINELA in str(exc), "o Postgres deixou de ecoar a linha; o teste perdeu o alvo"
+    assert SENTINELA in _detalhe(exc), "o Postgres deixou de ecoar a linha; o teste perdeu o alvo"
 
     motivo = motivo_do_erro_de_banco(exc)
     assert motivo == "23514 table_name=s constraint_name=ck_s"
@@ -50,7 +73,7 @@ async def test_violacao_de_check_nao_leva_a_linha_para_o_motivo() -> None:
 async def test_violacao_de_unique_nomeia_a_constraint_sem_o_valor() -> None:
     exc = await _falhar(", CONSTRAINT uq_s UNIQUE (c)", {"t": "a", "c": "ja existe", "s": 1})
 
-    assert "ja existe" in str(exc), "o Postgres deixou de ecoar o valor; o teste perdeu o alvo"
+    assert "ja existe" in _detalhe(exc), "o Postgres deixou de ecoar o valor; o teste perdeu o alvo"
     assert motivo_do_erro_de_banco(exc) == "23505 table_name=s constraint_name=uq_s"
 
 

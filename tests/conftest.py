@@ -204,6 +204,16 @@ TABELAS = (
     # por um teste faz o `vincular_sessao` do proximo devolver False sobre a
     # mesma sessao -- e a absorcao de um teste encontraria as sessoes do outro.
     "vinculos_de_sessao",
+    # TEC-363. Append-only como `optout_events`: o estado e o ULTIMO evento
+    # por (channel, conversation_key), entao sem o truncate o consentimento
+    # gravado por um teste passa a ser o "ultimo" de qualquer outro que use a
+    # mesma sessao -- e `tem_consentimento_de_marketing` responderia sobre
+    # linha alheia.
+    "consentimentos",
+    # TEC-168. Mutavel, e com a exclusao por intervalo em `corretor_id`: sem
+    # o truncate, o agendamento gravado por um teste ocupa o horario que o
+    # proximo tenta reservar, e a garantia do RT-07 barraria linha alheia.
+    "agendamentos",
     # TEC-132. Mutavel: `pendentes_para_reenfileirar`, `expirar_pendentes` e
     # `esgotar_pendentes` leem a tabela inteira por status e por janela de `criado_em`, sem
     # filtrar por mensagem -- sem o truncate, uma linha PENDENTE com
@@ -1010,6 +1020,26 @@ async def client(banco_limpo: None, redis_pool) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client
+
+
+@pytest.fixture
+async def client_sem_token_compartilhado(
+    banco_limpo: None, redis_pool, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[AsyncClient]:
+    """O app construido SEM `CATALOGO_ADMIN_TOKEN`. TEC-201.
+
+    Existe para provar que as rotas administrativas continuam existindo nessa
+    configuracao -- ate a TEC-201 elas sumiam do app, e a resposta era 404.
+    """
+    from mobia.app.config import get_settings
+
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "")
+    get_settings.cache_clear()
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as http_client:
+        yield http_client
+    get_settings.cache_clear()
 
 
 @pytest.fixture

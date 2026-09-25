@@ -1,14 +1,18 @@
 """O CRUD de corretores. TEC-196, RF-19 e RN-19.2.
 
-**Guardado pelo `exigir_admin`, o mesmo token do catalogo -- e isso estende a
-um DADO PESSOAL uma guarda que foi aceita por nao haver dado pessoal.** A
+**Guardado por `GERIR_CORRETORES`, que so o ADMIN tem** (TEC-202, RN-19.2).
+Ate aqui a guarda era o `exigir_admin`, o mesmo token do catalogo -- e isso
+estendia a um DADO PESSOAL uma guarda aceita por nao haver dado pessoal. A
 emenda E-01 da TEC-156 escreveu, sobre o catalogo: "aceito porque o objeto e
 o catalogo de imoveis e nao dado pessoal, ao contrario da reativacao de
 opt-out da TEC-182, que por isso ficou sem rota HTTP". Aqui o objeto E dado
 pessoal: nome, e-mail e telefone de pessoas reais. Decisao consciente de
 12/09/2026, declarada na emenda E-01 da RN-19.5 e no comentario da card.
-**Consequencia: quem tem o token le o contato de todos os corretores.** Ver a
-D8 do desenho.
+
+**A exposicao diminuiu e nao acabou.** Quem entra por JWT agora precisa ser
+ADMIN; quem tem o `X-Admin-Token` compartilhado continua lendo o contato de
+todos os corretores, porque ele resolve para um ADMIN sintetico (D2 da
+TEC-202). Quem o apaga e a TEC-309. Ver tambem a D8 do desenho da TEC-196.
 
 Nao ha rota DELETE de proposito: desativar e `ativo = false` (D6).
 """
@@ -19,7 +23,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from mobia.api.deps import exigir_admin
+from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao
 from mobia.domain.corretores.models import Corretor
 from mobia.domain.corretores.repositorio import (
     DadosDoCorretor,
@@ -36,6 +40,7 @@ from mobia.domain.corretores.vocabulario import (
     Especialidade,
     jornada_valida,
 )
+from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
 
 router = APIRouter(prefix="/api/v1/corretores", tags=["corretores"])
@@ -234,7 +239,10 @@ def _resposta(corretor: Corretor) -> dict[str, object]:
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def cadastrar(pedido: CorretorNovo, _: None = Depends(exigir_admin)) -> dict[str, object]:
+async def cadastrar(
+    pedido: CorretorNovo,
+    _: IdentidadeDaRequisicao = Depends(Exige(Permissao.GERIR_CORRETORES)),
+) -> dict[str, object]:
     async with get_sessionmaker()() as session:
         try:
             corretor = await criar_corretor(
@@ -263,14 +271,18 @@ async def cadastrar(pedido: CorretorNovo, _: None = Depends(exigir_admin)) -> di
 
 @router.get("")
 async def listar(
-    ativos: Annotated[bool, Query()] = False, _: None = Depends(exigir_admin)
+    ativos: Annotated[bool, Query()] = False,
+    _: IdentidadeDaRequisicao = Depends(Exige(Permissao.GERIR_CORRETORES)),
 ) -> list[dict[str, object]]:
     async with get_sessionmaker()() as session:
         return [_resposta(c) for c in await listar_corretores(session, apenas_ativos=ativos)]
 
 
 @router.get("/{corretor_id}")
-async def obter(corretor_id: uuid.UUID, _: None = Depends(exigir_admin)) -> dict[str, object]:
+async def obter(
+    corretor_id: uuid.UUID,
+    _: IdentidadeDaRequisicao = Depends(Exige(Permissao.GERIR_CORRETORES)),
+) -> dict[str, object]:
     async with get_sessionmaker()() as session:
         corretor = await obter_corretor(session, corretor_id=corretor_id)
     if corretor is None:
@@ -280,7 +292,9 @@ async def obter(corretor_id: uuid.UUID, _: None = Depends(exigir_admin)) -> dict
 
 @router.patch("/{corretor_id}")
 async def editar(
-    corretor_id: uuid.UUID, pedido: CorretorEditado, _: None = Depends(exigir_admin)
+    corretor_id: uuid.UUID,
+    pedido: CorretorEditado,
+    _: IdentidadeDaRequisicao = Depends(Exige(Permissao.GERIR_CORRETORES)),
 ) -> dict[str, object]:
     # `exclude_unset`, nao `exclude_none`: ver a docstring de `CorretorEditado`.
     mudancas = pedido.model_dump(exclude_unset=True)

@@ -1,3 +1,4 @@
+import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
 import { Filtros } from '@/components/Filtros'
 import { Funil } from '@/components/Funil'
 import { Indicadores } from '@/components/Indicadores'
@@ -44,11 +45,30 @@ function avisoDe(erro: ErroDeMetricas): string {
   return 'Não foi possível carregar os dados do painel. Os números não seriam confiáveis, então não são mostrados.'
 }
 
+/**
+ * A URL do recorte atual, para o "tentar de novo" do `ErroDeCarga`.
+ *
+ * Remontada dos filtros e nao lida de `headers()`: os filtros JA sao o estado
+ * da tela (a D do painel poe tudo na URL), e ler o header obrigaria a pagina a
+ * ser dinamica por mais um motivo. Recarregar esta URL refaz exatamente a
+ * busca que falhou -- que e o que "tentar de novo" significa aqui. Ver a D6.
+ */
+function urlDoRecorte(filtros: FiltrosTipo): string {
+  const busca = new URLSearchParams()
+  for (const [chave, valor] of Object.entries(filtros)) {
+    if (valor) {
+      busca.set(chave, valor)
+    }
+  }
+  return `/?${busca.toString()}`
+}
+
 export default async function Pagina({ searchParams }: { searchParams: Promise<Busca> }) {
   const busca = await searchParams
   const filtros = filtrosDaUrl(busca)
 
   let funil: FunilTipo | null = null
+  let erroDeCarga: ErroDeMetricas | null = null
   let aviso: string | null = null
 
   try {
@@ -58,16 +78,39 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
     // indistinguivel de um periodo sem lead, e a gerente leria a queda como
     // fato do negocio -- que e a decisao mais cara que este painel existe
     // para apoiar.
-    aviso =
-      erro instanceof ErroDeMetricas
-        ? avisoDe(erro)
-        : 'Não foi possível carregar os dados do painel.'
+    erroDeCarga = erro instanceof ErroDeMetricas ? erro : null
+    aviso = erroDeCarga
+      ? avisoDe(erroDeCarga)
+      : 'Não foi possível carregar os dados do painel.'
   }
+
+  // **O 422 vai para o formulario; o resto vai para o `ErroDeCarga`.** Um
+  // filtro invalido e algo que a gerente corrige sozinha, ao lado do campo
+  // (TEC-313, D5); um 5xx nao e problema dela, e o que ela precisa e do codigo
+  // para o suporte e de um jeito de tentar de novo. Mandar os dois para o
+  // mesmo lugar apagaria essa diferenca.
+  //
+  // A variavel guarda o ERRO e nao um booleano para que o TypeScript estreite
+  // o tipo: com `ehDeFiltro: boolean`, `erroDeCarga.campos` abaixo seria
+  // "possibly null" e pediria um `!` -- que e justamente o operador que
+  // desliga a checagem no unico ponto onde ela protege alguma coisa.
+  const erroDeFiltro = erroDeCarga?.status === 422 ? erroDeCarga : null
 
   return (
     <main className="painel">
       <h1>Funil de leads</h1>
-      <Filtros atuais={filtros} erro={aviso ?? undefined} />
+      <Filtros
+        atuais={filtros}
+        erro={erroDeFiltro ? (aviso ?? undefined) : undefined}
+        campos={erroDeFiltro ? erroDeFiltro.campos : []}
+      />
+      {aviso && !erroDeFiltro && (
+        <ErroDeCarga
+          mensagem={aviso}
+          requestId={erroDeCarga?.requestId}
+          urlParaTentarDeNovo={urlDoRecorte(filtros)}
+        />
+      )}
       {funil ? (
         <>
           <Funil etapas={funil.etapas} />

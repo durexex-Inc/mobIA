@@ -7,30 +7,80 @@ O Gherkin diz "pelo dashboard", e o dashboard (E8) esta fora do escopo das
 duas cards. Estas rotas sao o mecanismo que ele vai chamar; ate la, e por
 elas que os criterios de aceite correspondentes sao exercitados.
 
-Guardadas por `exigir_admin` como as rotas de catalogo: o resumo carrega
-dado pessoal do lead e o aceite move o estado do handoff, e rota aberta nao
-e opcao em nenhum dos dois casos.
+Guardadas por `ATENDER_LEAD` (TEC-202), que ADMIN, GERENTE e CORRETOR tem e
+LEITURA nao: o resumo carrega dado pessoal do lead e o aceite move o estado do
+handoff, e rota aberta nao e opcao em nenhum dos dois casos.
+
+**E o papel CORRETOR so alcanca os PROPRIOS handoffs** -- `_exigir_dono_do`
+abaixo, segundo cenario do Gherkin da TEC-202. E aqui que a regra "o corretor
+ve apenas os proprios leads" (RNF-12) morde de verdade hoje: o handoff e a
+unica entidade deste sistema que tem dono E e enderecavel por identificador.
+`GET /api/v1/leads/{leadId}`, que o SRS descreve para isso, nao existe (D5).
 """
 
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select, update
 
-from mobia.api.deps import exigir_admin
+from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao, exigir_dono
 from mobia.domain.handoff.geracao import gerar_resumo
 from mobia.domain.handoff.models import Handoff, aad_do_resumo_de_handoff
 from mobia.domain.handoff.resumo import RedatorAnthropic, link_da_transcricao
 from mobia.domain.handoff.vocabulario import Status
+from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.crypto import decrypt
 from mobia.infra.db import get_sessionmaker
 
 router = APIRouter(prefix="/api/v1/handoffs", tags=["handoffs"])
 
 
+async def _exigir_dono_do(
+    handoff_id: uuid.UUID, request: Request, identidade: IdentidadeDaRequisicao
+) -> None:
+    """Recusa o CORRETOR que mexe no handoff de outro. TEC-202, D5.
+
+    **Roda ANTES do trabalho das duas rotas**, e no caso da regeneracao isso e
+    o ponto: `gerar_resumo` chama o modelo, e deixar a checagem para depois
+    faria uma tentativa negada custar uma chamada paga ao Anthropic.
+
+    **Handoff inexistente passa por aqui sem erro**, de proposito: quem
+    responde 404 e o corpo da rota, que ja sabe distinguir "nao existe" de "nao
+    pode". Levantar 403 aqui para um id que nao existe transformaria esta
+    guarda num oraculo ao contrario -- diria "este id nao e seu" sobre um id
+    que nao e de ninguem.
+
+    **E "nao existe" NAO e a mesma coisa que "sem destinatario"**, por isso a
+    linha inteira e nao so a coluna: um `scalar_one_or_none` sobre
+    `Handoff.corretor_id` devolve `None` nos dois casos, e confundi-los faria o
+    handoff sem destinatario (Emenda E-02 da RN-16.3, que existe de verdade
+    neste sistema) passar a ser de quem pedisse. Foi assim que este codigo
+    nasceu, e foi `test_handoff_sem_destinatario_nao_e_de_ninguem` que pegou.
+    """
+    if not identidade.e_corretor:
+        return
+    async with get_sessionmaker()() as session:
+        linha = (
+            await session.execute(
+                select(Handoff.id, Handoff.corretor_id).where(Handoff.id == handoff_id)
+            )
+        ).first()
+    if linha is None:
+        return
+    exigir_dono(
+        request, identidade, permissao=Permissao.ATENDER_LEAD, corretor_id=linha.corretor_id
+    )
+
+
 @router.post("/{handoff_id}/resumo")
-async def regenerar(handoff_id: uuid.UUID, _: None = Depends(exigir_admin)) -> dict[str, object]:
+async def regenerar(
+    handoff_id: uuid.UUID,
+    request: Request,
+    identidade: IdentidadeDaRequisicao = Depends(Exige(Permissao.ATENDER_LEAD)),
+) -> dict[str, object]:
+    await _exigir_dono_do(handoff_id, request, identidade)
+
     session_factory = get_sessionmaker()
 
     gravou = await gerar_resumo(session_factory, redator=RedatorAnthropic(), handoff_id=handoff_id)
@@ -78,7 +128,11 @@ _ACEITAVEIS = (Status.PENDENTE.value, Status.ESCALADO.value)
 
 
 @router.post("/{handoff_id}/aceitar")
-async def aceitar(handoff_id: uuid.UUID, _: None = Depends(exigir_admin)) -> dict[str, object]:
+async def aceitar(
+    handoff_id: uuid.UUID,
+    request: Request,
+    identidade: IdentidadeDaRequisicao = Depends(Exige(Permissao.ATENDER_LEAD)),
+) -> dict[str, object]:
     """O corretor aceita o handoff -- TEC-178, secao 6.5 do SRS.
 
     **A corrida com `escalar_vencidos` (`domain/handoff/escalada.py`) e o
@@ -99,6 +153,13 @@ async def aceitar(handoff_id: uuid.UUID, _: None = Depends(exigir_admin)) -> dic
     alimenta a taxa de aceite no prazo da RN-17.1, e um carimbo que anda
     para frente faria um aceite atrasado parecer pontual.
     """
+    # A leitura de `_exigir_dono_do` NAO decide nada sobre o aceite -- quem
+    # decide continua sendo o RETURNING do UPDATE abaixo, pela corrida descrita
+    # no docstring. Ela responde outra pergunta ("este handoff e seu?"), cuja
+    # resposta nao muda com a escalada concorrente: `corretor_id` e gravado no
+    # nascimento do handoff e `escalar_vencidos` nao o toca.
+    await _exigir_dono_do(handoff_id, request, identidade)
+
     session_factory = get_sessionmaker()
     agora = datetime.now(UTC)
 

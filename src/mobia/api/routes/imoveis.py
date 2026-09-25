@@ -24,7 +24,7 @@ import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from mobia.api.deps import exigir_admin
+from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao
 from mobia.domain.catalogo.busca import MAX_CANDIDATOS
 from mobia.domain.catalogo.enums import (
     EstadoDoRelaxamento,
@@ -37,6 +37,7 @@ from mobia.domain.catalogo.importacao import registrar
 from mobia.domain.catalogo.models import Importacao
 from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
 from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, FiltroDeBusca
+from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
 
 log = structlog.get_logger(__name__)
@@ -51,7 +52,7 @@ TETO_DE_UPLOAD_EM_BYTES = 10 * 1024 * 1024
 async def importar(
     request: Request,
     arquivo: Annotated[UploadFile, File()],
-    _: None = Depends(exigir_admin),
+    _: IdentidadeDaRequisicao = Depends(Exige(Permissao.GERIR_CATALOGO)),
 ) -> dict[str, str]:
     conteudo = await arquivo.read()
     if len(conteudo) > TETO_DE_UPLOAD_EM_BYTES:
@@ -147,7 +148,10 @@ async def _marcar_falha(importacao_id: uuid.UUID, motivo: str) -> None:
 
 
 @router.get("/importacoes/{importacao_id}")
-async def consultar(importacao_id: uuid.UUID, _: None = Depends(exigir_admin)) -> dict[str, object]:
+async def consultar(
+    importacao_id: uuid.UUID,
+    _: IdentidadeDaRequisicao = Depends(Exige(Permissao.GERIR_CATALOGO)),
+) -> dict[str, object]:
     async with get_sessionmaker()() as session:
         importacao = await session.get(Importacao, importacao_id)
 
@@ -238,13 +242,21 @@ class PedidoDeBusca(BaseModel):
 
 
 @router.post("/busca")
-async def busca(pedido: PedidoDeBusca, _: None = Depends(exigir_admin)) -> dict[str, object]:
+async def busca(
+    pedido: PedidoDeBusca,
+    _: IdentidadeDaRequisicao = Depends(Exige(Permissao.BUSCAR_IMOVEIS)),
+) -> dict[str, object]:
     """A busca hibrida da RF-09, no contrato da secao 6.3.
 
-    **A guarda nao e a do SRS, e isso e declarado.** A secao 6.3 pede "Bearer
-    JWT ou token interno do agente"; o que existe e o `X-Admin-Token` que a D1
-    da TEC-156 registra como provisorio. Este endpoint NAO e administrativo, e
-    quando o JWT chegar (TEC-201) ele precisa de papel proprio.
+    **A guarda ganhou papel proprio na TEC-202, que e o que faltava.** A secao
+    6.3 pede "Bearer JWT ou token interno do agente", e ate aqui o que existia
+    era o `X-Admin-Token` que a D1 da TEC-156 registra como provisorio -- que
+    fazia deste endpoint, que NAO e administrativo, um endpoint administrativo
+    na pratica. `BUSCAR_IMOVEIS` e a unica permissao que os quatro papeis tem:
+    buscar imovel no catalogo e o que qualquer pessoa do time faz.
+
+    O "token interno do agente" da secao 6.3 continua sem existir -- o agente
+    nao chama esta rota por HTTP, chama `busca_hibrida` direto.
 
     **O embedador nao e injetado aqui, e a consequencia esta no corpo da
     resposta.** A TEC-265 ligou a busca ao agente, e quem passa o embedador de

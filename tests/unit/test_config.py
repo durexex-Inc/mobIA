@@ -5,7 +5,9 @@ import pytest
 from pydantic import ValidationError
 
 from mobia.app.config import (
+    BYTES_MINIMOS_DO_JWT,
     CHAVE_DE_DESENVOLVIMENTO,
+    SEGREDO_DE_JWT_DE_DESENVOLVIMENTO,
     TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO,
     ConfiguracaoInsegura,
     Settings,
@@ -141,6 +143,9 @@ def test_producao_com_chave_propria_sobe(monkeypatch: pytest.MonkeyPatch) -> Non
     chave = base64.b64encode(b"x" * 32).decode()
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", chave)
+    # TEC-201: a guarda do JWT dispararia depois desta e o teste morreria por
+    # ela, nao pela chave que ele afirma.
+    monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
     settings = Settings(_env_file=None)
     assert settings.content_encryption_key == chave
 
@@ -162,10 +167,13 @@ def test_producao_com_o_token_de_catalogo_de_desenvolvimento_nao_sobe(
     no `.env.example`, versionado, e por isso conhecido de qualquer um que
     clonou o repo.
     """
-    # CONTENT_ENCRYPTION_KEY precisa de um valor proprio aqui -- sem isso a
-    # guarda da chave de cifra (que roda antes desta) dispara primeiro, e o
-    # teste acabaria verificando a mensagem errada.
+    # CONTENT_ENCRYPTION_KEY e JWT_SEGREDO precisam de valor proprio aqui --
+    # sem isso as guardas delas (que rodam antes desta) disparam primeiro, e o
+    # teste acabaria verificando a mensagem errada. A do JWT entrou na TEC-201,
+    # e a lista tende a crescer: toda guarda nova de segredo em producao cai
+    # nesta mesma armadilha.
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
+    monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO)
     with pytest.raises(ConfiguracaoInsegura) as erro:
@@ -178,6 +186,7 @@ def test_producao_com_o_token_de_catalogo_de_desenvolvimento_nao_sobe(
 def test_producao_com_token_de_catalogo_proprio_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
     token = "token-de-producao-gerado-com-secrets"
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
+    monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", token)
     settings = Settings(_env_file=None)
@@ -713,3 +722,55 @@ def test_templates_aprovados_parseia_lista_por_virgula_sem_vazios() -> None:
         whatsapp_templates_aprovados=" followup_queda_de_preco , followup_convite ,",
     )
     assert s.templates_aprovados == frozenset({"followup_queda_de_preco", "followup_convite"})
+
+
+def test_producao_com_o_segredo_de_jwt_de_desenvolvimento_nao_sobe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEC-201. Quem conhece o segredo emite token de ADMIN para si mesmo.
+
+    E o modo de falha mais silencioso das tres guardas deste arquivo: com a
+    chave de cifra errada o dado e gravado com valor conhecido, com o token de
+    catalogo errado o catalogo fica gravavel -- e com o segredo de JWT errado
+    NADA parece errado. O sistema autentica normalmente; so que qualquer um e
+    ADMIN.
+    """
+    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("JWT_SEGREDO", raising=False)
+
+    with pytest.raises(ConfiguracaoInsegura) as erro:
+        Settings(_env_file=None)
+
+    assert "JWT_SEGREDO" in str(erro.value)
+    # O valor NAO aparece na mensagem: ela vai para o log, e um segredo em log
+    # e o proprio defeito que a guarda existe para evitar. Mesma disciplina das
+    # outras duas guardas.
+    assert SEGREDO_DE_JWT_DE_DESENVOLVIMENTO not in str(erro.value)
+
+
+def test_producao_com_segredo_de_jwt_curto_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RFC 7518, secao 3.2: a chave de HMAC precisa do tamanho da saida.
+
+    Um segredo proprio mas curto passa pela guarda do default e continua sendo
+    fraco -- o `pyjwt` avisa (`InsecureKeyLengthWarning`), e aviso se perde no
+    log. Esta guarda transforma o aviso em recusa.
+    """
+    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SEGREDO", "x" * (BYTES_MINIMOS_DO_JWT - 1))
+
+    with pytest.raises(ConfiguracaoInsegura, match="JWT_SEGREDO"):
+        Settings(_env_file=None)
+
+
+def test_desenvolvimento_segue_com_o_segredo_de_jwt_de_desenvolvimento(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guarda nao pode travar a maquina de ninguem nem o CI."""
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.delenv("JWT_SEGREDO", raising=False)
+
+    assert Settings(_env_file=None).jwt_segredo == SEGREDO_DE_JWT_DE_DESENVOLVIMENTO

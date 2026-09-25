@@ -10,26 +10,30 @@ conversa e o par `(channel, conversation_key)`, o mesmo que `handoffs` e
 `optout_events` ja usam. As duas rotas abaixo recebem o par no CORPO, e nao
 na URL. Vira emenda na Task 7.
 
-Guardadas por `exigir_admin`, a mesma guarda de `handoffs.py` e
-`corretores.py`: esta rota governa quem fala com qual lead, entao o
-argumento da TEC-156 (rota sem token nao pode existir, e nao responder 401)
-vale aqui com mais forca, nao menos.
+Guardadas por `ATENDER_LEAD` (TEC-202), a mesma permissao de `handoffs.py`:
+estas rotas governam quem fala com qual lead, entao o argumento da TEC-156
+(rota sem token nao pode existir, e nao responder 401) vale aqui com mais
+forca, nao menos.
+
+**E o `corretor_id` do corpo deixou de ser so afirmacao para o papel
+CORRETOR** -- ver `_exigir_que_seja_ele_mesmo` e a Emenda E-05 a RN-16.4.
 """
 
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.api.deps import exigir_admin
+from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao, exigir_dono
 from mobia.api.routes.handoffs import _ACEITAVEIS
 from mobia.domain.atendimento import repositorio as atendimento_repo
 from mobia.domain.corretores.models import Corretor
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status
+from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
 
 router = APIRouter(prefix="/api/v1/conversas", tags=["conversas"])
@@ -38,12 +42,16 @@ router = APIRouter(prefix="/api/v1/conversas", tags=["conversas"])
 class PedidoDeAtendimento(BaseModel):
     """O par que identifica a conversa, mais quem pede.
 
-    **`corretor_id` vem no corpo, e nao de alguma identidade autenticada
-    (D2 do desenho).** Este endpoint so tem o token administrativo de
-    `exigir_admin`, e aquele token nao carrega QUEM o esta usando --
-    `corretor_id` e afirmacao de quem chama, nao identidade provada. O custo,
-    aceito na D2, e que quem tem o token pode assumir ou devolver em nome de
-    qualquer corretor cadastrado.
+    **`corretor_id` continua vindo no corpo, e desde a TEC-202 ele e
+    CONFERIDO quando quem chama e um CORRETOR** (Emenda E-05 a RN-16.4).
+
+    A D2 desta card registrou que o campo era "afirmacao de quem chama, nao
+    identidade provada", porque o `X-Admin-Token` nao carrega QUEM o esta
+    usando. O JWT carrega: para papel CORRETOR, mandar o id de outro e 403 com
+    registro. Para ADMIN e GERENTE -- e para o token compartilhado, que resolve
+    para ADMIN --, o campo SEGUE sendo afirmacao, porque agir em nome de
+    terceiro e a funcao desses papeis, e o custo que a D2 aceitou permanece
+    inteiro para quem usa o token.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -69,6 +77,19 @@ class PedidoDeAtendimento(BaseModel):
         return valor
 
 
+def _exigir_que_seja_ele_mesmo(
+    request: Request, identidade: IdentidadeDaRequisicao, corretor_id: uuid.UUID
+) -> None:
+    """O CORRETOR so assume e devolve em nome de si mesmo. TEC-202, D5.
+
+    **Antes de `_corretor_apto`, de proposito.** Aquela checagem responde 404
+    para corretor inexistente ou inativo, e deixa-la primeiro daria a um
+    corretor um oraculo sobre o cadastro dos colegas: 404 para id que nao
+    existe, 403 para id que existe. Autorizacao antes de existencia.
+    """
+    exigir_dono(request, identidade, permissao=Permissao.ATENDER_LEAD, corretor_id=corretor_id)
+
+
 async def _corretor_apto(session: AsyncSession, corretor_id: uuid.UUID) -> bool:
     """Existe e esta ativo. Um FALSE so cobre os dois casos -- ambos viram 404."""
     ativo = await session.scalar(select(Corretor.ativo).where(Corretor.id == corretor_id))
@@ -77,12 +98,15 @@ async def _corretor_apto(session: AsyncSession, corretor_id: uuid.UUID) -> bool:
 
 @router.post("/assumir")
 async def assumir(
-    pedido: PedidoDeAtendimento, _: None = Depends(exigir_admin)
+    pedido: PedidoDeAtendimento,
+    request: Request,
+    identidade: IdentidadeDaRequisicao = Depends(Exige(Permissao.ATENDER_LEAD)),
 ) -> dict[str, object]:
     """O corretor assume a conversa: o agente cala, e o handoff pendente sai da fila.
 
-    `corretor_id` vem no corpo e nao no token -- ver o docstring de
-    `PedidoDeAtendimento` (D2).
+    `corretor_id` vem no corpo, e para o papel CORRETOR ele e conferido
+    contra a claim do token desde a TEC-202 -- ver o docstring de
+    `PedidoDeAtendimento`.
 
     **Aceita junto o handoff PENDENTE ou ESCALADO da mesma conversa (D6),
     na mesma transacao.** Nao e um segundo commit: se o processo caisse
@@ -95,6 +119,8 @@ async def assumir(
     ver o comentario ao lado da constante, em `handoffs.py`, que agora
     tambem cita este segundo escritor.
     """
+    _exigir_que_seja_ele_mesmo(request, identidade, pedido.corretor_id)
+
     session_factory = get_sessionmaker()
     async with session_factory() as session:
         if not await _corretor_apto(session, pedido.corretor_id):
@@ -136,7 +162,9 @@ async def assumir(
 
 @router.post("/devolver")
 async def devolver(
-    pedido: PedidoDeAtendimento, _: None = Depends(exigir_admin)
+    pedido: PedidoDeAtendimento,
+    request: Request,
+    identidade: IdentidadeDaRequisicao = Depends(Exige(Permissao.ATENDER_LEAD)),
 ) -> dict[str, object]:
     """O corretor devolve a conversa: o agente volta a falar.
 
@@ -144,9 +172,11 @@ async def devolver(
     transacao** -- ver o comentario do UPDATE abaixo.
 
     Qualquer corretor pode devolver, nao so quem assumiu -- ver o docstring
-    de `devolver` em `domain/atendimento/repositorio.py` (mesma D2: nao ha
-    identidade provada, exigir o mesmo corretor travaria o caso real de
-    quem assumiu e saiu de ferias). Isso e sobre QUEM devolve nao precisar
+    de `devolver` em `domain/atendimento/repositorio.py`. **A TEC-202 nao
+    mudou isso**, e a distincao importa: ela passou a exigir que o CORRETOR
+    devolva em nome de si mesmo, nao que ele seja quem assumiu. Exigir o
+    segundo travaria o caso real de quem assumiu e saiu de ferias, que e a
+    razao escrita na D2. Isso e sobre QUEM devolve nao precisar
     ser quem assumiu -- nao sobre dispensar a validacao do corretor: o
     `corretor_id` grava em `devolvido_por`, que tem a mesma FK para
     `corretores.id` que `assumido_por` tem, entao esta rota valida o
@@ -164,6 +194,8 @@ async def devolver(
     microssegundos, do carimbo que o UPDATE de fato gravou -- melhor devolver
     so o que se sabe ser exato.
     """
+    _exigir_que_seja_ele_mesmo(request, identidade, pedido.corretor_id)
+
     session_factory = get_sessionmaker()
     async with session_factory() as session:
         if not await _corretor_apto(session, pedido.corretor_id):
