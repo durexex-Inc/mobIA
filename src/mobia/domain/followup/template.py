@@ -1,15 +1,15 @@
-"""A janela de 24h, o catalogo de templates e a escolha por contexto.
+"""O catalogo de templates do follow-up e a escolha por contexto.
 
 TEC-186, RN-13.6. Puro de proposito -- sem I/O, sem banco, sem chamada ao
 modelo --, como `cadencia.py`, `mensagem.py` e `prosa.py`. Quem consulta o
 banco, decide o canal e entrega e a varredura (`sweep_followups`).
 
-**A janela e decidida A PARTIR DA ANCORA** (a ultima fala do lead), e nao do
-relogio no adaptador do WhatsApp: fora dela nenhuma mensagem livre pode ser
-tentada (CA-13.3), entao a decisao e tomada antes do envio. Ver a D1 do
-desenho. Isto NAO contradiz a TEC-134, que decidiu nao pre-checar o relogio no
-`_deliver`: aquilo e sobre o caminho de resposta normal, e aqui a ancora ja e
-o fato que governa a cadencia inteira -- e a fonte, nao uma segunda copia dela.
+**A JANELA de 24h mudou de lar na TEC-171**: `dentro_da_janela` e
+`JANELA_DE_SERVICO` moram em `domain/outbound/janela.py`, e a docstring de la
+guarda o porque -- ela e regra do CANAL, nao do follow-up, e o lembrete de
+agendamento precisa da mesma. O que continua aqui e o catalogo, que e do
+produto. A decisao de canal segue sendo tomada A PARTIR DA ANCORA (a ultima
+fala do lead) e antes do envio, como a CA-13.3 exige.
 
 **Qual template esta aprovado pela Meta e fato EXTERNO** (RT-03) e entra por
 configuracao (`Settings.templates_aprovados`), nunca hard-coded: a card poe a
@@ -19,39 +19,15 @@ que a RN-13.6 pede; a aprovacao e injetada.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 
 from mobia.domain.agente.apresentacao import Ficha, reais_de
 from mobia.domain.followup.mensagem import QuedaDePreco
-
-# A Meta so aceita mensagem livre dentro de 24h da ultima fala do lead; fora
-# disso, so template aprovado. E a mesma janela que `outbound/whatsapp.py`
-# nomeia pelo codigo 131047 -- la ela e o gatilho da recusa, aqui e a duracao.
-JANELA_DE_SERVICO = timedelta(hours=24)
 
 # Os tres contextos do follow-up (RN-13.2/13.6). Sao os mesmos tres que a
 # TEC-184 ja escolhe como novidade -- queda de preco, imovel novo, convite.
 CATEGORIA_QUEDA = "queda_de_preco"
 CATEGORIA_IMOVEL_NOVO = "imovel_novo"
 CATEGORIA_CONVITE = "convite"
-
-
-def dentro_da_janela(*, ancora_em: datetime, agora: datetime) -> bool:
-    """True quando ainda cabe mensagem livre. TEC-186, RN-13.6.
-
-    **A borda e estrita (`<`).** Aos 24h exatos a janela ja fechou -- e a regra
-    da Meta, e o cenario 4 do Gherkin cai exatamente nesse limite. Um `<=` aqui
-    deixaria passar um envio livre que a Meta recusaria.
-
-    **`ancora_em`, e nao a ultima mensagem da conversa.** A ancora e a ultima
-    fala do LEAD (`candidatos_a_followup`), entao uma resposta do agente no
-    meio nao move a janela -- e o cenario 4 do Gherkin exige exatamente isso.
-
-    Tudo keyword-only: `ancora_em` e `agora` sao dois `datetime` adjacentes, e
-    trocar a ordem devolveria o resultado errado em silencio, sem erro de tipo
-    -- mesma razao de `tentativa_devida` (`cadencia.py`).
-    """
-    return agora - ancora_em < JANELA_DE_SERVICO
 
 
 @dataclass(frozen=True, slots=True)

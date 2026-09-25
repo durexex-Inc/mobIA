@@ -1,6 +1,10 @@
 """A janela de 24h, o catalogo de templates e a escolha por contexto.
 
 TEC-186, RN-13.6. Puro: nenhum destes toca banco.
+
+A janela mora em `domain/outbound/janela.py` desde a TEC-171, e nao mais em
+`followup/template.py`; continua exercitada daqui porque a decisao de canal do
+follow-up e feita com ela e o catalogo juntos.
 """
 
 import uuid
@@ -12,13 +16,12 @@ from mobia.domain.followup.template import (
     CATEGORIA_CONVITE,
     CATEGORIA_IMOVEL_NOVO,
     CATEGORIA_QUEDA,
-    JANELA_DE_SERVICO,
     TEMPLATES,
     categoria_da_novidade,
-    dentro_da_janela,
     escolher_template,
     parametros_do_template,
 )
+from mobia.domain.outbound.janela import JANELA_DE_SERVICO, dentro_da_janela
 
 ANCORA = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
 

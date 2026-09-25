@@ -46,7 +46,6 @@ from mobia.domain.followup.repositorio import (
 )
 from mobia.domain.followup.template import (
     categoria_da_novidade,
-    dentro_da_janela,
     escolher_template,
     parametros_do_template,
 )
@@ -54,6 +53,7 @@ from mobia.domain.messages.models import Message
 from mobia.domain.optout.repositorio import esta_em_optout
 from mobia.domain.outbound.antispam import MAXIMO_SEM_RESPOSTA, antispam_permite_envio
 from mobia.domain.outbound.horario import horario_permite_envio
+from mobia.domain.outbound.janela import dentro_da_janela
 from mobia.domain.outbound.kinds import KIND_DO_FOLLOWUP
 from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, EnvioRetentavel
 
