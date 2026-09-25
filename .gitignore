@@ -38,3 +38,7 @@ dist/
 # e codigo do projeto.
 frontend/node_modules/
 frontend/.next/
+
+# Midia recebida do lead (TEC-132), quando `midia_armazem=local` (o default de
+# desenvolvimento). Conteudo cifrado de usuario, nao artefato de codigo.
+.midias/

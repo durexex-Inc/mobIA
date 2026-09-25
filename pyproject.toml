@@ -61,6 +61,9 @@ dependencies = [
     # que nao usamos. Nao ha necessidade funcional nossa por 2.0 ou por
     # qualquer versao mais nova; series anteriores a 1.1.7 nao foram olhadas.
     "aiosmtplib>=1.1.7",
+    # Cliente async do S3 para o adaptador de midia (TEC-132). O bucket e as
+    # credenciais de producao sao da TEC-219 -- aqui so o cliente.
+    "aioboto3>=13.0",
 ]
 
 [project.optional-dependencies]
@@ -166,3 +169,9 @@ files = ["src", "alembic"]
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_unreachable = true
+
+# aioboto3 (TEC-132) nao publica stubs nem py.typed. So o import em si fica
+# sem checagem -- o resto de `armazem.py` continua coberto normalmente.
+[[tool.mypy.overrides]]
+module = "aioboto3"
+ignore_missing_imports = true

@@ -214,6 +214,13 @@ TABELAS = (
     # o truncate, o agendamento gravado por um teste ocupa o horario que o
     # proximo tenta reservar, e a garantia do RT-07 barraria linha alheia.
     "agendamentos",
+    # TEC-132. Mutavel: `pendentes_para_reenfileirar`, `expirar_pendentes` e
+    # `esgotar_pendentes` leem a tabela inteira por status e por janela de `criado_em`, sem
+    # filtrar por mensagem -- sem o truncate, uma linha PENDENTE com
+    # `criado_em` manipulado por um teste (para simular "20 minutos atras" ou
+    # "8 dias atras") continuaria ali para o proximo teste, que a contaria
+    # como se fosse sua.
+    "midias_recebidas",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto

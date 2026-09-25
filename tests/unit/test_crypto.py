@@ -13,13 +13,28 @@ from mobia.infra.crypto import (
     DecryptionError,
     aad_de,
     decrypt,
+    decrypt_bytes,
     decrypt_json,
     encrypt,
+    encrypt_bytes,
     encrypt_json,
     marca_do_aad,
 )
 
 AAD = aad_de("11111111-1111-1111-1111-111111111111", "text_body")
+
+
+def test_bytes_cifrados_voltam_iguais() -> None:
+    dados = bytes(range(256)) * 10
+    blob = encrypt_bytes(dados, "m-1:midia")
+    assert blob != dados
+    assert decrypt_bytes(blob, "m-1:midia") == dados
+
+
+def test_bytes_com_aad_errado_nao_decifram() -> None:
+    blob = encrypt_bytes(b"conteudo", "m-1:midia")
+    with pytest.raises(DecryptionError):
+        decrypt_bytes(blob, "m-2:midia")
 
 
 def test_roundtrip_de_texto() -> None:

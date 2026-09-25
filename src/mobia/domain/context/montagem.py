@@ -93,9 +93,11 @@ class ContextoMontado:
         )
 
 
-# Marcador por tipo para a mensagem que chega sem texto. AUDIO, IMAGEM e
-# DOCUMENTO gravam `text_body` NULL hoje -- transcricao e OCR sao historias
-# proprias -- e DESCONHECIDO e por definicao o que ninguem mapeou.
+# Marcador por tipo para a mensagem que chega sem texto. AUDIO grava
+# `text_body` NULL hoje -- transcricao e historia propria -- e DESCONHECIDO e
+# por definicao o que ninguem mapeou. IMAGEM e DOCUMENTO saem daqui desde a
+# TEC-132: a legenda vira `text_body`, entao as duas passam a ter marcador
+# proprio em `_MARCADOR_DE_MIDIA`, presente com ou sem corpo.
 #
 # Sem marcador, tres audios do lead entram no prompt como tres turnos vazios,
 # indistinguiveis de tres mensagens em branco. O estrago nao para no turno: e
@@ -105,10 +107,16 @@ class ContextoMontado:
 # que de fato se sabe -- veio um audio, e ele ainda nao foi transcrito.
 _SEM_TEXTO: dict[str, str] = {
     MessageContentType.AUDIO: "(audio, sem transcricao)",
-    MessageContentType.IMAGEM: "(imagem, sem descricao)",
-    MessageContentType.DOCUMENTO: "(documento, sem texto extraido)",
 }
 _SEM_TEXTO_PADRAO = "(mensagem sem texto)"
+
+# TEC-132, D4. Para IMAGEM e DOCUMENTO o marcador aparece mesmo com legenda: a
+# legenda sozinha ("esse aqui ta disponivel?") esconderia do modelo que existe
+# uma midia que ele nao ve, e e exatamente ai que ele inventaria o conteudo.
+_MARCADOR_DE_MIDIA: dict[str, str] = {
+    MessageContentType.IMAGEM: "(imagem recebida; o conteudo nao esta visivel para voce)",
+    MessageContentType.DOCUMENTO: "(documento recebido; o conteudo nao esta visivel para voce)",
+}
 
 
 def _texto_da(linha: Message) -> str:
@@ -119,7 +127,10 @@ def _texto_da(linha: Message) -> str:
     fato ser enviado. Este texto nunca entra num `log.*`.
     """
     corpo = decrypt(linha.text_body, aad_de(linha.id, "text_body"))
-    if corpo is None:
+    marcador = _MARCADOR_DE_MIDIA.get(linha.content_type)
+    if marcador is not None:
+        corpo = marcador if corpo is None else f"{marcador} {corpo}"
+    elif corpo is None:
         corpo = _SEM_TEXTO.get(linha.content_type, _SEM_TEXTO_PADRAO)
     return f"[{linha.role}] {corpo}"
 

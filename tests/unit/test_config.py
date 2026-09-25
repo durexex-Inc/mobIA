@@ -204,6 +204,30 @@ def test_desenvolvimento_segue_com_o_token_de_catalogo_de_desenvolvimento(
     assert settings.catalogo_admin_token == TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO
 
 
+def test_s3_sem_bucket_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`midia_armazem='s3'` sem bucket falharia dentro do job de download, longe
+    de onde a configuracao foi escrita -- ver `_recusar_s3_sem_bucket`.
+    """
+    monkeypatch.setenv("MIDIA_ARMAZEM", "s3")
+    with pytest.raises(ValidationError, match="midia_s3_bucket"):
+        Settings(_env_file=None)
+
+
+def test_s3_com_bucket_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MIDIA_ARMAZEM", "s3")
+    monkeypatch.setenv("MIDIA_S3_BUCKET", "meu-bucket")
+    settings = Settings(_env_file=None)
+    assert settings.midia_armazem == "s3"
+    assert settings.midia_s3_bucket == "meu-bucket"
+
+
+def test_local_e_o_default_e_nao_exige_bucket() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.midia_armazem == "local"
+    assert settings.midia_diretorio == ".midias"
+    assert settings.midia_teto_bytes == 26_214_400
+
+
 def test_defaults_da_janela_de_contexto(settings) -> None:
     """Os numeros da RN-02.2 e RN-02.5 vivem em configuracao, nao espalhados no codigo.
 

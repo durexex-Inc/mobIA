@@ -171,11 +171,14 @@ def test_texto_da_renderiza_o_role_como_texto_nao_como_repr_do_enum() -> None:
 def test_mensagem_sem_texto_entra_marcada_pelo_tipo() -> None:
     """Audio, imagem e documento nao podem entrar como turno vazio.
 
-    Essas linhas gravam `text_body` NULL hoje -- transcricao e OCR sao
-    historias proprias. Rendendo string vazia, tres audios do lead viram tres
-    turnos em branco no prompt, indistinguiveis de tres mensagens vazias, e a
-    dobra manda esse nada para o resumo: a memoria permanente da conversa passa
-    a dizer que o lead nao falou nada onde ele mandou tres audios.
+    Audio grava `text_body` NULL hoje -- transcricao e historia propria.
+    Rendendo string vazia, tres audios do lead viram tres turnos em branco no
+    prompt, indistinguiveis de tres mensagens vazias, e a dobra manda esse nada
+    para o resumo: a memoria permanente da conversa passa a dizer que o lead
+    nao falou nada onde ele mandou tres audios. Imagem e documento sem legenda
+    (TEC-132, D3) tambem gravam `text_body` NULL, mas o caso aqui e coberto
+    pelo mesmo motivo: sem marcador o modelo nao saberia distinguir "recebi uma
+    midia que nao vejo" de "nada foi recebido".
     """
     audio = _mensagem_literal(content_type=MessageContentType.AUDIO, corpo=None)
     imagem = _mensagem_literal(content_type=MessageContentType.IMAGEM, corpo=None)
@@ -183,8 +186,10 @@ def test_mensagem_sem_texto_entra_marcada_pelo_tipo() -> None:
     desconhecido = _mensagem_literal(content_type=MessageContentType.DESCONHECIDO, corpo=None)
 
     assert _texto_da(audio) == "[LEAD] (audio, sem transcricao)"
-    assert _texto_da(imagem) == "[LEAD] (imagem, sem descricao)"
-    assert _texto_da(documento) == "[LEAD] (documento, sem texto extraido)"
+    assert _texto_da(imagem) == "[LEAD] (imagem recebida; o conteudo nao esta visivel para voce)"
+    assert _texto_da(documento) == (
+        "[LEAD] (documento recebido; o conteudo nao esta visivel para voce)"
+    )
     assert _texto_da(desconhecido) == "[LEAD] (mensagem sem texto)", (
         "tipo nao mapeado ainda tem de dizer que veio alguma coisa"
     )

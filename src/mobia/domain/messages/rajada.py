@@ -59,6 +59,7 @@ async def ha_fala_pendente_antes(
     message: Message,
     *,
     teto_do_agente: datetime | None = None,
+    com_texto: bool = False,
 ) -> bool:
     """Ficou fala do lead sem resposta antes desta mensagem?
 
@@ -90,15 +91,31 @@ async def ha_fala_pendente_antes(
     antes do envio e portanto anterior a linha dela), a fronteira volta a ser
     a que existia antes da recusa.
 
-    **Quem chama tem de saber que precisa passar isto, e hoje ha um chamador
-    so.** A funcao nao descobre o teto sozinha de proposito: descobri-lo
-    exigiria conhecer `outbound_dispatches` e o kind da recusa, e este modulo
-    nao pode depender de `domain/outbound` -- a dependencia so corre no outro
-    sentido. A D2 do desenho registra o risco: um chamador futuro que
-    esquecer o teto cai no defeito de hoje, em silencio.
+    **Quem chama tem de saber que precisa proteger a fronteira, e hoje ha
+    dois chamadores, em `domain/agente/turno.py`.** A recusa de entrada
+    (TEC-295/TEC-298) passa `teto_do_agente` com o instante da reserva da
+    propria recusa. A confirmacao de midia (TEC-132, D4, com `com_texto`) nao
+    passa teto: antes de chamar, ela le os kinds ja reservados da mensagem e,
+    havendo qualquer um alem do dela, sabe que uma passada anterior ja seguiu
+    o turno normal e nem pergunta. A funcao nao descobre isso sozinha de
+    proposito: descobrir exigiria conhecer `outbound_dispatches` e os kinds,
+    e este modulo nao pode depender de `domain/outbound` -- a dependencia so
+    corre no outro sentido. A D2 do desenho da TEC-298 registra o risco: um
+    chamador futuro que esquecer de proteger a fronteira cai nesse defeito,
+    em silencio.
 
     O default `None` mantem todo chamador antigo correto: sem teto, a
     fronteira e exatamente a de antes desta card.
+
+    **`com_texto` estreita "fala" para "fala com texto" (TEC-132, D4).** O
+    turno de uma imagem ou documento sem legenda responde com um texto fixo,
+    sem modelo -- mas so se nao houver texto do lead pendente na rajada. Com
+    "quero esse" e depois a foto, o debounce roda o turno na foto; responder
+    fixo ali deixaria o "quero esse" sem resposta. A pergunta desse chamador
+    e "sobrou TEXTO sem resposta?", e nao "sobrou fala?": uma foto anterior
+    sem legenda nao tem o que o modelo responder, e conta-la faria a segunda
+    de duas fotos rodar o turno pago sem texto nenhum. O default `False`
+    mantem a definicao de fala dos outros chamadores.
     """
     fronteira = [
         Message.channel == message.channel,
@@ -108,19 +125,18 @@ async def ha_fala_pendente_antes(
     if teto_do_agente is not None:
         fronteira.append(Message.created_at < teto_do_agente)
     ultima_do_agente = select(func.max(Message.created_at)).where(*fronteira).scalar_subquery()
-    pendente = await session.scalar(
-        select(Message.id)
-        .where(
-            Message.channel == message.channel,
-            Message.conversation_key == message.conversation_key,
-            Message.direction == MessageDirection.INBOUND,
-            Message.bloqueada_em.is_(None),
-            tuple_(Message.created_at, Message.id)
-            < tuple_(literal(message.created_at), literal(message.id)),
-            # Conversa sem nenhuma fala do agente ainda: `MAX` devolve NULL e
-            # toda INBOUND anterior conta.
-            or_(ultima_do_agente.is_(None), Message.created_at > ultima_do_agente),
-        )
-        .limit(1)
-    )
+    condicoes = [
+        Message.channel == message.channel,
+        Message.conversation_key == message.conversation_key,
+        Message.direction == MessageDirection.INBOUND,
+        Message.bloqueada_em.is_(None),
+        tuple_(Message.created_at, Message.id)
+        < tuple_(literal(message.created_at), literal(message.id)),
+        # Conversa sem nenhuma fala do agente ainda: `MAX` devolve NULL e
+        # toda INBOUND anterior conta.
+        or_(ultima_do_agente.is_(None), Message.created_at > ultima_do_agente),
+    ]
+    if com_texto:
+        condicoes.append(Message.text_body.is_not(None))
+    pendente = await session.scalar(select(Message.id).where(*condicoes).limit(1))
     return pendente is not None

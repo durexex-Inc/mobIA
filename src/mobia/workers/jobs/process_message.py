@@ -44,8 +44,11 @@ TEXTO_DO_AVISO_DE_ERRO = (
     "Passei sua conversa para um corretor assumir."
 )
 
-# "skipped" e "agrupado" sao deste modulo; os outros nove vem do turno (Task 6,
-# Literal de proposito: ver `ResultadoDoTurno`).
+# "skipped" e "agrupado" sao deste modulo; os outros vem do turno (Task 6,
+# Literal de proposito: ver `ResultadoDoTurno`). Todo desfecho do turno fecha
+# a linha em PROCESSED do mesmo jeito -- inclusive "midia_ja_confirmada"
+# (TEC-132), que nao enviou nada de proposito --, entao um valor novo la nao
+# pede ramo aqui, so aparece no retorno do job.
 #
 # Os dois sao distintos de proposito. "skipped" e anomalia -- claim recusado ou
 # a mensagem sumiu entre o claim e a busca. "agrupado" e o caminho FELIZ da

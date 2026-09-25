@@ -93,6 +93,12 @@ from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import ha_fala_pendente_antes
 from mobia.domain.messages.recorder import MessageRecorder
+from mobia.domain.midia.confirmacao import (
+    CONFIRMACOES_DE_MIDIA,
+    KIND_DA_CONFIRMACAO_DE_MIDIA,
+    SUBAGENTE_MIDIA,
+    ja_confirmou_ha_pouco,
+)
 from mobia.domain.moderacao.port import (
     CATEGORIA_OUTRO,
     KIND_DA_RECUSA_DE_ENTRADA,
@@ -523,6 +529,13 @@ ResultadoDoTurno = Literal[
     # guarda na porta de saida. O encerramento e a substituicao acontecem no
     # MESMO turno, entao nao existe a corrida que os outros dois nomeiam.
     "fora_de_escopo",
+    # A TEC-132 (revisao final, I2) acrescentou este: a midia sem texto cujo
+    # turno nao mandou nada porque a ultima fala do agente ja foi a
+    # confirmacao de midia, ha menos de `JANELA_DA_CONFIRMACAO_DE_MIDIA`.
+    # Nao reuse "silenciado" nem "reentrega_suprimida": nao houve pedido de
+    # silencio, e nada foi perdido -- o lead ja recebeu a confirmacao que
+    # cobre esta midia.
+    "midia_ja_confirmada",
 ]
 
 
@@ -835,12 +848,14 @@ class _ModeracaoDoTurno:
     memoria de ja ter chamado.
 
     **O problema que ela resolve** (TEC-297): o corpo do turno
-    (`_executar_turno`) tem cinco returns antes da linha que chama a
+    (`_executar_turno`) tinha cinco returns antes da linha que chama a
     moderacao, e a fala que dispara qualquer um deles nunca era moderada.
-    Chamar a moderacao antes de cada um dos cinco seria cinco sitios a
-    lembrar -- e a D4 do desenho desta card registra as duas vezes em que uma
-    lista escrita a mao ja envelheceu errado neste fluxo. Um sexto ramo futuro
-    nasce coberto pelo invulucro e nasceria furado por uma lista.
+    Chamar a moderacao antes de cada um seria um sitio a lembrar por return
+    -- e a D4 do desenho desta card registra as duas vezes em que uma lista
+    escrita a mao ja envelheceu errado neste fluxo. Um ramo novo nasce coberto
+    pelo invulucro e nasceria furado por uma lista. Foi o que aconteceu com o
+    sexto, a confirmacao de midia da TEC-132 -- que, sem corpo, nem tem fala a
+    moderar.
     """
 
     def __init__(
@@ -1007,8 +1022,9 @@ async def executar_turno(
     corpo = decrypt(message.text_body, aad_de(message.id, "text_body"))
     # TEC-297: a moderacao de entrada nasce aqui e e garantida pelos dois
     # fechos abaixo -- um por caminho de saida --, e nao pela linha em que o
-    # corpo do turno a chama. Cinco returns saem antes dessa linha, e a fala
-    # que os dispara nunca era moderada.
+    # corpo do turno a chama. Seis returns saem antes dessa linha (cinco na
+    # TEC-297, mais a confirmacao de midia da TEC-132), e a fala que os
+    # dispara nunca era moderada.
     moderacao = _ModeracaoDoTurno(session_factory, moderador, message, corpo)
     try:
         resultado = await _executar_turno(
@@ -1054,7 +1070,7 @@ async def _executar_turno(
 
     Existe separada so para que o `try` do invulucro nao reindente as ~2.700
     linhas deste corpo (TEC-297, D9). Nao chame direto: sem o fecho do
-    invulucro a fala dos cinco returns antecipados volta a nao ser moderada.
+    invulucro a fala dos returns antecipados volta a nao ser moderada.
     """
     # `bool(...)` por fora, e nao `bool(corpo) and ...`: so a forma curta-
     # circuitada estreita `corpo` de `str | None` para `str` dentro da chamada.
@@ -1549,6 +1565,74 @@ async def _executar_turno(
         # `not pedido_de_humano` da guarda de silencio la em cima e o que faz o
         # aviso ser reentregue no turno seguinte em vez de se perder.
         return "pedido_de_humano" if desfecho_do_aviso == "respondido" else desfecho_do_aviso
+
+    # TEC-132, D4. Midia sem nenhum texto do lead na rajada: resposta fixa,
+    # sem modelo. Aqui, e nao antes, porque as guardas de opt-out, atendimento
+    # humano e conversa encerrada ja rodaram -- quem pediu silencio nao recebe
+    # "recebi sua imagem". E antes da moderacao e do classificador porque nao
+    # ha texto a moderar nem o que perguntar ao modelo: um texto fixo e a unica
+    # forma de GARANTIR que nada se afirma sobre o conteudo.
+    #
+    # "Na rajada" e nao "nesta mensagem": com "quero esse" + foto o debounce
+    # roda o turno na foto, e responder fixo ali deixaria o "quero esse" sem
+    # resposta. Havendo texto pendente, o turno segue normal e o modelo ve a
+    # midia marcada (`_MARCADOR_DE_MIDIA`, em `context/montagem.py`).
+    #
+    # E um return a mais antes da linha da moderacao, e nao fura a TEC-297:
+    # so dispara com `corpo is None`, e sem corpo nao ha fala a moderar
+    # (`_ModeracaoDoTurno.resolver` devolve `None` sem chamar nada).
+    #
+    # **A checagem de kinds reservados e o que torna isto seguro numa
+    # retentativa** -- mesma classe da TEC-298, D1. Com "quero esse" + foto, a
+    # passada 1 ve o texto pendente, roda o turno normal, entrega a resposta
+    # e grava a fala OUTBOUND; se o worker morre antes de PROCESSED, a passada
+    # 2 encontra essa fala como a ultima do agente, o "quero esse" deixa de
+    # estar pendente, e sem esta checagem o turno mandaria "Recebi sua
+    # imagem!" depois de o agente ja ter respondido. Qualquer kind reservado
+    # que NAO seja o da confirmacao prova que uma passada anterior tomou o
+    # caminho normal, e entao o turno segue normal de novo (e termina em
+    # `reentrega_suprimida`, como terminava antes desta card). So a propria
+    # confirmacao reservada mantem o caminho fixo: a reserva dela suprime a
+    # duplicata. Aqui nao serve o `teto_do_agente` da recusa: a fala que
+    # envenena a fronteira nao e desta trilha, e o teto dependeria de saber
+    # qual kind do turno normal saiu primeiro.
+    #
+    # **E a confirmacao nao se repete em sequencia** (I2 da revisao final):
+    # fotos que atravessam mais de uma janela de debounce rodam um turno cada,
+    # e sem isto o lead recebia o mesmo texto fixo duas ou tres vezes
+    # seguidas. Se a ultima fala do agente foi a propria confirmacao, ha menos
+    # de `JANELA_DA_CONFIRMACAO_DE_MIDIA`, o turno fecha em silencio -- e
+    # "nao ha texto pendente desde entao" ja e o `not ha_texto_pendente`, cuja
+    # fronteira e essa mesma ultima fala. Vem DEPOIS da regra de kinds
+    # reservados, que continua decidindo a retentativa; e so quando esta
+    # mensagem ainda nao tem a confirmacao reservada: tendo, a ultima fala
+    # pode ser a dela mesma, e quem responde e a supressao de
+    # `_entregar_texto_fixo`, com o desfecho de sempre.
+    confirmacao = CONFIRMACOES_DE_MIDIA.get(message.content_type)
+    if confirmacao is not None and corpo is None:
+        reservados_antes = await kinds_reservados(session_factory, message_id=message.id)
+        ja_seguiu_o_turno_normal = bool(reservados_antes - {KIND_DA_CONFIRMACAO_DE_MIDIA})
+        ha_texto_pendente = False
+        if not ja_seguiu_o_turno_normal:
+            async with session_factory() as sessao_da_rajada:
+                ha_texto_pendente = await ha_fala_pendente_antes(
+                    sessao_da_rajada, message, com_texto=True
+                )
+        if not ja_seguiu_o_turno_normal and not ha_texto_pendente:
+            if KIND_DA_CONFIRMACAO_DE_MIDIA not in reservados_antes:
+                async with session_factory() as sessao_da_confirmacao:
+                    ja_confirmada = await ja_confirmou_ha_pouco(sessao_da_confirmacao, message)
+                if ja_confirmada:
+                    log.info("turno.midia_ja_confirmada", message_id=str(message.id))
+                    return "midia_ja_confirmada"
+            return await _entregar_texto_fixo(
+                session_factory,
+                message=message,
+                outbound=outbound,
+                recorder_texto=confirmacao,
+                kind=KIND_DA_CONFIRMACAO_DE_MIDIA,
+                subagent=SUBAGENTE_MIDIA,
+            )
 
     if corpo:
         veredito = await moderacao.resolver()
@@ -3996,9 +4080,11 @@ async def _entregar_texto_fixo(
     visivel e recuperavel e o silencio nao. `kind` tem default
     (`KIND_DA_RESPOSTA`) para preservar o chamador que nao precisa de kind
     proprio -- hoje so o texto da busca inconclusiva (`LacoDeBuscaExcedido`,
-    mais abaixo) usa o default. Os outros tres chamadores passam kind
+    mais abaixo) usa o default. Os outros quatro chamadores passam kind
     proprio: a confirmacao de opt-out (TEC-182), o aviso de pedido de humano,
-    e -- desde a TEC-295, ruling R6 -- a recusa de entrada, que usa
+    a confirmacao de midia sem texto (TEC-132, D4:
+    `KIND_DA_CONFIRMACAO_DE_MIDIA`, com `SUBAGENTE_MIDIA`), e -- desde a
+    TEC-295, ruling R6 -- a recusa de entrada, que usa
     `KIND_DA_RECUSA_DE_ENTRADA` para nao colidir com o `kind` da resposta que
     a continuacao da D4 pode entregar depois dela na mesma mensagem. O da
     opt-out e o unico que atravessa a guarda de opt-out da porta de saida
@@ -4009,8 +4095,9 @@ async def _entregar_texto_fixo(
     quem olhar a telemetria depois.
     """
     # A identificacao entra AQUI e nao em cada chamador: este e o funil das
-    # tres trilhas que passam por `_entregar_texto_fixo` -- recusa da
-    # moderacao de entrada, confirmacao de opt-out e laco de busca excedido.
+    # trilhas que passam por `_entregar_texto_fixo` -- recusa da moderacao de
+    # entrada, confirmacao de opt-out, aviso de pedido de humano, confirmacao
+    # de midia sem texto (TEC-132) e laco de busca excedido.
     # (O texto neutro da moderacao de saida e a busca inconclusiva da citacao
     # bloqueada nao chamam esta funcao -- reatribuem `texto` e caem no bloco
     # de entrega compartilhado de `executar_turno`, que tem o ponto de
