@@ -1,9 +1,8 @@
 """A leitura da trilha: `GET /api/v1/auditoria`. TEC-206, D8 do desenho.
 
 Os eventos sao semeados por `registrar_evento`, e os instantes que os testes
-de `de`/`ate` usam sao LIDOS do banco: medido em 25/09/2026, o relogio do
-Postgres local estava um ano atras do host, e o trigger da 0052 carimba pelo
-relogio do banco.
+de `de`/`ate` usam sao LIDOS do banco, porque o trigger da 0053 carimba pelo
+relogio do banco e nao pelo do processo de teste.
 """
 
 import uuid

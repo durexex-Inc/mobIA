@@ -5,7 +5,7 @@ piso. Uma trilha que sobrevive a transcricao que ela referencia guarda
 referencia a um dado que ja nao existe.
 
 **Esta funcao nao decide o que pode ser apagado.** Ela pede as linhas com mais
-de 12 meses, e o trigger `eventos_auditoria_imutavel` (migration 0052) confere
+de 12 meses, e o trigger `eventos_auditoria_imutavel` (migration 0053) confere
 linha por linha: um erro no corte daqui esbarra nele e reprova, em vez de
 apagar historico recente. "12 meses" e `interval '12 months'` sobre o relogio
 do banco -- a mesma definicao do trigger, e nao o `datetime.now()` do worker.
