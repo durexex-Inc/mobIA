@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from conftest import _corretor, _handoff_aceito, _lead, _recomendar
+from conftest import _agendar, _corretor, _handoff_aceito, _lead, _recomendar
 
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.metricas.filtros import Recorte, montar_recorte
@@ -92,13 +92,36 @@ async def test_handoff_aceito_conta_so_o_aceito(session) -> None:
     assert etapas[Etapa.HANDOFF_ACEITO] == 1
 
 
-async def test_agendado_nao_aparece_nas_contagens(session) -> None:
-    """Nao ha consulta para ele -- o `montar_funil` e quem poe o nulo."""
+async def test_agendado_conta_os_leads_com_visita_marcada(session) -> None:
+    """A etapa ganhou consulta na TEC-376, depois de quatro emendas sem.
+
+    Ate ela, `AGENDADO` nao aparecia no dicionario e quem punha o nulo na
+    resposta era `montar_funil`, a partir de `SEM_FONTE`.
+    """
+    corretor = await _corretor(session)
     await _lead(session, conversa="5511900000001")
+    await _lead(session, conversa="5511900000002")
+    await _agendar(session, conversa="5511900000001", corretor_id=corretor)
 
     etapas = await contar_etapas(session, recorte=_recorte())
 
-    assert Etapa.AGENDADO not in etapas
+    assert etapas[Etapa.AGENDADO] == 1
+
+
+async def test_agendado_entra_na_acumulacao_e_faz_recomendado_crescer(session) -> None:
+    """D9: quem marcou visita sem ficha recomendada entra em `Recomendado`.
+
+    E o que mantem `Agendado` contido em `Recomendado` por construcao, em vez
+    de depender de os dados colaborarem.
+    """
+    corretor = await _corretor(session)
+    await _lead(session, conversa="5511900000001")
+    await _agendar(session, conversa="5511900000001", corretor_id=corretor)
+
+    etapas = await contar_etapas(session, recorte=_recorte())
+
+    assert etapas[Etapa.AGENDADO] == 1
+    assert etapas[Etapa.RECOMENDADO] == 1
 
 
 async def test_filtro_por_canal_recorta_a_coorte(session) -> None:

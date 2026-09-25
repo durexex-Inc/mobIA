@@ -8,6 +8,7 @@ CHEIO = {
     Etapa.EM_CONVERSA: 268,
     Etapa.QUALIFICADO: 141,
     Etapa.RECOMENDADO: 118,
+    Etapa.AGENDADO: 62,
     Etapa.HANDOFF_ACEITO: 39,
 }
 
@@ -38,30 +39,35 @@ def test_a_primeira_etapa_nao_tem_conversao() -> None:
     assert montar_funil(CHEIO)[0].conversao_da_anterior is None
 
 
-def test_a_etapa_sem_fonte_sai_nula_e_nunca_zero() -> None:
-    """D1: zero afirmaria que nenhuma visita foi marcada."""
+def test_a_etapa_agendado_tem_numero_como_as_outras_cinco() -> None:
+    """O contrario do que este arquivo afirmava ate a TEC-376.
+
+    Ate ela, `Agendado` saia `quantidade: None` e `disponivel: False` porque
+    nenhum caminho de producao criava agendamento. A TEC-371 passou a criar.
+    """
     agendado = montar_funil(CHEIO)[4]
 
     assert agendado.nome == "Agendado"
-    assert agendado.quantidade is None
-    assert agendado.disponivel is False
-    assert agendado.conversao_da_anterior is None
+    assert agendado.quantidade == 62
+    assert agendado.disponivel is True
+    assert agendado.conversao_da_anterior == 62 / 118
 
 
-def test_a_etapa_depois_da_indisponivel_nao_tem_conversao() -> None:
-    """Segunda origem de nulo: a anterior nao tem numero.
+def test_a_conversao_de_handoff_aceito_deixou_de_ser_nula() -> None:
+    """A segunda origem de nulo caiu junto com a etapa cega (TEC-376).
 
-    Pular `Agendado` e dividir `Handoff aceito` por `Recomendado` daria um
-    numero plausivel e errado.
+    Ela existia porque pular `Agendado` e dividir `Handoff aceito` por
+    `Recomendado` daria um numero plausivel e errado. Sem etapa cega, a
+    divisao e sobre a anterior de verdade.
     """
     handoff = montar_funil(CHEIO)[5]
 
     assert handoff.quantidade == 39
-    assert handoff.conversao_da_anterior is None
+    assert handoff.conversao_da_anterior == 39 / 62
 
 
 def test_anterior_em_zero_da_conversao_nula_e_nao_divisao_por_zero() -> None:
-    """Terceira origem de nulo -- a que nem a spec nomeava."""
+    """A unica origem de nulo que sobrou, alem da primeira etapa."""
     funil = montar_funil({**CHEIO, Etapa.EM_CONVERSA: 0, Etapa.QUALIFICADO: 0})
 
     assert funil[1].quantidade == 0
@@ -70,14 +76,19 @@ def test_anterior_em_zero_da_conversao_nula_e_nao_divisao_por_zero() -> None:
 
 
 def test_periodo_sem_lead_nenhum_zera_tudo_sem_estourar() -> None:
-    funil = montar_funil({etapa: 0 for etapa in ETAPAS if etapa is not Etapa.AGENDADO})
+    funil = montar_funil({etapa: 0 for etapa in ETAPAS})
 
-    assert [e.quantidade for e in funil] == [0, 0, 0, 0, None, 0]
+    assert [e.quantidade for e in funil] == [0, 0, 0, 0, 0, 0]
     assert all(e.conversao_da_anterior is None for e in funil)
 
 
-def test_etapa_disponivel_com_zero_continua_disponivel() -> None:
-    """Zero medido NAO e ausencia de fonte -- e a distincao inteira da D1."""
+def test_etapa_ausente_do_mapa_conta_zero_e_continua_disponivel() -> None:
+    """Zero medido NAO e ausencia de fonte -- e a distincao que a D1 da
+    TEC-190 abriu e que a TEC-376 manteve ao apagar `SEM_FONTE`.
+
+    Chave que nao veio do repositorio vale zero, e nao nulo: o repositorio
+    devolve as seis, e uma faltando seria defeito dele, nao ausencia de fonte.
+    """
     funil = montar_funil({**CHEIO, Etapa.QUALIFICADO: 0})
 
     assert funil[2].quantidade == 0

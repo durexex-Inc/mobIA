@@ -6,6 +6,13 @@ D10 do plano: por atividade, um lead recomendado em agosto que nasceu em
 julho faria `Recomendado / Em conversa` passar de 100%, e a RN-17.2 pede uma
 taxa de conversao, nao um numero acima de um.
 
+**Os quatro de agendamento herdam o mesmo recorte** (TEC-376, D2): sao os
+agendamentos dos leads DA COORTE, onde quer que tenham sido marcados depois, e
+nao os agendamentos criados no periodo. O Gherkin da card diz "tres
+agendamentos criados no periodo", que lido ao pe da letra seria atividade --
+um painel em que `leadsNovos` e coorte e `agendamentosCriados` e atividade
+poria lado a lado dois denominadores diferentes com a mesma aparencia.
+
 **A coorte da o RECORTE comum, e a ACUMULACAO da a inclusao entre etapas**
 (TEC-367). Cada etapa conta quem a alcancou ou alcancou uma posterior, entao
 `Qualificado` esta contido em `Em conversa` por construcao e a conversao nao
@@ -44,6 +51,7 @@ from typing import Any
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.conversa.models import Conversa
@@ -157,17 +165,21 @@ async def _quantos_na_uniao(session: AsyncSession, consultas: Sequence[Select[An
 
 
 async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etapa, int]:
-    """Quantos da coorte alcancaram cada etapa. `AGENDADO` nao esta aqui.
-
-    A ausencia de `AGENDADO` no dicionario e deliberada e nao um
-    esquecimento: nao existe tabela de agendamento, e quem poe o `None` na
-    resposta e `montar_funil`, a partir de `SEM_FONTE`. Uma chave com zero
-    aqui viraria zero la, que e exatamente o que a D1 recusa.
+    """Quantos da coorte alcancaram cada etapa. As SEIS, desde a TEC-376.
 
     **Cada etapa conta quem a alcancou OU alcancou uma POSTERIOR** (TEC-367,
     D4), e e isso que torna o funil monotono. Ver a docstring do modulo: as
     contagens cruas sao conjuntos independentes, e dividir um pelo outro
     produzia taxa acima de 100%.
+
+    **`AGENDADO` ficou de fora ate a TEC-376**, quando a etapa saia
+    `null`/`disponivel: false` por nao haver caminho de producao que criasse
+    agendamento (Emenda E-01 da RN-17.1). A TEC-371 passou a criar, e a etapa
+    entrou na acumulacao entre `RECOMENDADO` e `HANDOFF_ACEITO` -- posicao
+    que faz `Recomendado` CRESCER, porque passa a incluir quem marcou visita
+    sem ter recomendacao registrada, e que e o que mantem
+    `Agendado` contido em `Recomendado` por construcao, sem depender de os
+    dados colaborarem.
     """
     coorte = _coorte(recorte).subquery()
 
@@ -203,6 +215,20 @@ async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etap
         & (Recomendacao.conversation_key == coorte.c.conversation_key),
     )
 
+    # **`EXPIRADO` fica de fora, e e o unico status que fica** (TEC-376, D5).
+    # `ciclo.py` o descreve como a reserva que "nunca virou compromisso" --
+    # atropelada por outra, ou recusada pelo lead em
+    # `agendamento/conversa.py`. Conta-la diria que o agente marcou visita
+    # quando o lead disse nao. `CANCELADO` e `REAGENDADO` CONTAM: a etapa e
+    # sobre ter ALCANCADO o estagio, e os dois foram marcados antes de serem
+    # desfeitos.
+    agendados = select(coorte.c.channel, coorte.c.conversation_key).join(
+        Agendamento,
+        (Agendamento.channel == coorte.c.channel)
+        & (Agendamento.conversation_key == coorte.c.conversation_key)
+        & (Agendamento.status != StatusDoAgendamento.EXPIRADO),
+    )
+
     aceitos = select(coorte.c.channel, coorte.c.conversation_key).join(
         Handoff,
         (Handoff.channel == coorte.c.channel)
@@ -210,15 +236,13 @@ async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etap
         & (Handoff.status == _ACEITO),
     )
 
-    # A acumulacao. `AGENDADO` nao entra na lista de proposito: ele nao tem
-    # fonte (`SEM_FONTE`), entao uni-lo seria unir conjunto vazio -- e
-    # escreveria aqui uma dependencia que some no dia em que a TEC-376 der
-    # numero aquela etapa.
+    # A acumulacao, na ordem do funil.
     cruas: list[tuple[Etapa, Select[Any]]] = [
         (Etapa.NOVO, novos),
         (Etapa.EM_CONVERSA, em_conversa),
         (Etapa.QUALIFICADO, qualificados),
         (Etapa.RECOMENDADO, recomendados),
+        (Etapa.AGENDADO, agendados),
         (Etapa.HANDOFF_ACEITO, aceitos),
     ]
 
@@ -232,14 +256,24 @@ async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etap
 
 @dataclass(frozen=True)
 class Indicadores:
-    """Os indicadores da RN-17.1 que tem fonte.
-
-    Os quatro de agendamento NAO estao aqui: nao ha tabela, e quem os poe
-    nulos na resposta e a rota, a partir de `INDICADORES_SEM_FONTE`.
+    """Os indicadores da RN-17.1, os dez.
 
     **Nulo e "nao ha o que medir", e nunca zero.** Uma coorte vazia da
     `taxa_qualificacao` nula porque 0/0 nao e 0% -- dizer 0% afirmaria que
     ninguem qualificou, quando nao houve ninguem.
+
+    **Os quatro de agendamento contam COMPROMISSOS, e nao leads** -- a outra
+    unidade da mesma resposta, ver a docstring de `metricas/vocabulario.py`.
+    Entraram na TEC-376, depois de quatro emendas da RN-17.1 os terem
+    declarado sem fonte.
+
+    **`agendamentos_realizados` sai zero em producao, e vai sair ate a
+    TEC-374** (TEC-376, D7): `ciclo.py::marcar_realizado` e
+    `marcar_nao_comparecimento` existem e nao tem chamador -- sao acao do
+    corretor, e a tela dele nao existe. `taxa_no_show` degrada para nulo
+    sozinha, porque o denominador fica em zero. Quem le "Criados: 12,
+    Confirmados: 9, Realizados: 0" conclui que ninguem aparece; a causa e a
+    card que falta, nao o numero.
     """
 
     conversas_ativas: int
@@ -248,6 +282,10 @@ class Indicadores:
     tempo_medio_primeira_resposta_seg: float | None
     tempo_medio_qualificacao_seg: float | None
     sla_handoff_cumprido_pct: float | None
+    agendamentos_criados: int
+    agendamentos_confirmados: int
+    agendamentos_realizados: int
+    taxa_no_show: float | None
 
 
 async def calcular_indicadores(
@@ -404,6 +442,59 @@ async def calcular_indicadores(
     ).one()
     total_com_prazo, no_prazo = int(com_prazo[0]), int(com_prazo[1])
 
+    # **Os quatro numa consulta so**, no molde das duas agregacoes filtradas
+    # logo acima: quatro `SELECT` sobre a mesma juncao seriam quatro idas ao
+    # banco para o mesmo conjunto de linhas.
+    #
+    # **Nenhum deles precisa de CTE recursivo, e o direito de nao precisar
+    # vem de `agendamento/ciclo.py::_ORIGENS_DE`** (TEC-376, D4). A remarcacao
+    # encadeia por `origem_id` sem teto (A -> B -> C), e a tentacao e subir
+    # cada cadeia ate a raiz. Tres propriedades daquela tabela dispensam isso:
+    #
+    # 1. toda cadeia tem UMA raiz, entao `origem_id IS NULL` conta
+    #    compromissos, e a remarcacao nao conta duas vezes;
+    # 2. so um `CONFIRMADO` pode virar `REAGENDADO`, e `repositorio.py::
+    #    confirmar` carimba `confirmado_em` no mesmo UPDATE -- logo "a cadeia
+    #    foi confirmada alguma vez" equivale a "a raiz tem `confirmado_em`", e
+    #    basta olhar a raiz;
+    # 3. quem virou `REAGENDADO` nao vira mais `REALIZADO` nem `NO_SHOW`, que
+    #    so partem de `CONFIRMADO` -- entao cada cadeia tem no MAXIMO um
+    #    desfecho, e contar LINHAS ja conta cada cadeia uma vez.
+    #
+    # **Se `_ORIGENS_DE` admitir `REAGENDADO` como origem, as tres caem
+    # juntas** e estas contagens passam a contar duplicado em silencio.
+    do_agendamento = (
+        await session.execute(
+            select(
+                func.count().filter(
+                    Agendamento.origem_id.is_(None),
+                    Agendamento.status != StatusDoAgendamento.EXPIRADO,
+                ),
+                func.count().filter(
+                    Agendamento.origem_id.is_(None),
+                    Agendamento.confirmado_em.is_not(None),
+                ),
+                func.count().filter(Agendamento.realizado_em.is_not(None)),
+                func.count().filter(Agendamento.nao_compareceu_em.is_not(None)),
+            )
+            .select_from(coorte)
+            .join(
+                Agendamento,
+                (Agendamento.channel == coorte.c.channel)
+                & (Agendamento.conversation_key == coorte.c.conversation_key),
+            )
+        )
+    ).one()
+    criados, confirmados = int(do_agendamento[0]), int(do_agendamento[1])
+    realizados, nao_compareceram = int(do_agendamento[2]), int(do_agendamento[3])
+
+    # **O denominador e o desfecho DECIDIDO**, e nao "horario ja passou" --
+    # mesmo criterio que `sla_handoff_cumprido_pct` adotou logo acima. Um
+    # `CONFIRMADO` vencido que ninguem marcou nao decidiu nada, e conta-lo
+    # como "nao faltou" diluiria a taxa com compromissos sobre os quais nao se
+    # sabe nada.
+    decididos = realizados + nao_compareceram
+
     return Indicadores(
         conversas_ativas=ativas,
         taxa_qualificacao=(qualificados / novos) if novos else None,
@@ -415,4 +506,8 @@ async def calcular_indicadores(
             float(ate_qualificar) if ate_qualificar is not None else None
         ),
         sla_handoff_cumprido_pct=(no_prazo / total_com_prazo) if total_com_prazo else None,
+        agendamentos_criados=criados,
+        agendamentos_confirmados=confirmados,
+        agendamentos_realizados=realizados,
+        taxa_no_show=(nao_compareceram / decididos) if decididos else None,
     )

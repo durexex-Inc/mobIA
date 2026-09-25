@@ -1,8 +1,21 @@
-"""As seis etapas do funil e o que ainda nao tem fonte. TEC-190, RN-17.2.
+"""As seis etapas do funil e os indicadores de agendamento. TEC-190, RN-17.2.
 
 Modulo sem I/O, no molde de `conversa/vocabulario.py` e
 `handoff/vocabulario.py`: e o que deixa a regra ser testada em `tests/unit/`
 sem Postgres de pe.
+
+**Duas unidades de contagem convivem na mesma resposta** (TEC-376, D3), e
+confundi-las faz uma das duas consultas parecer errada:
+
+- as seis ETAPAS contam LEADS -- pares `(channel, conversation_key)`
+  distintos --, porque conversao entre etapas so e fracao se as duas contarem
+  a mesma coisa;
+- os quatro INDICADORES de agendamento contam COMPROMISSOS. A gerente
+  pergunta quantas visitas foram marcadas, nao quantas pessoas marcaram
+  alguma.
+
+Um lead com duas visitas soma 2 em `agendamentosCriados` e 1 na etapa
+`Agendado`.
 """
 
 from enum import StrEnum
@@ -28,18 +41,17 @@ class Etapa(StrEnum):
 # nesta tupla.
 ETAPAS: tuple[Etapa, ...] = tuple(Etapa)
 
-# Nao existe tabela de agendamento neste repo -- marcar visita e RF-11 e
-# RF-12, epicos nao construidos. Enquanto for assim, a etapa sai com
-# `quantidade: null` e `disponivel: false`, e NUNCA com zero: zero afirmaria
-# que nenhuma visita foi marcada no periodo, quando a verdade e que nenhuma e
-# registrada em lugar nenhum. Ver a D1 do desenho.
+# As quatro chaves de agendamento da RN-17.1, na ordem em que o contrato do
+# SRS (secao 6.6) as lista.
 #
-# Quando a RF-12 existir, tire `AGENDADO` daqui e escreva a consulta. Nem o
-# contrato nem o frontend mudam.
-SEM_FONTE: frozenset[Etapa] = frozenset({Etapa.AGENDADO})
-
-# Os indicadores da RN-17.1 que dependem da mesma tabela ausente.
-INDICADORES_SEM_FONTE: tuple[str, ...] = (
+# **Ate a TEC-376 isto se chamava `INDICADORES_SEM_FONTE`** e nomeava o que
+# FALTAVA: a tabela de agendamento existia desde a TEC-168, mas nenhum
+# caminho de producao criava linha, entao conta-los sairia zero e zero diria
+# "nenhuma visita foi marcada" quando o fato era "nenhuma e registrada". A
+# TEC-371 acabou com isso -- `agendamento/conversa.py` cria agendamento a
+# partir da fala do lead --, e a mesma lista passou a nomear o que a rota
+# PUBLICA. Ver as Emendas E-01 a E-05 da RN-17.1.
+INDICADORES_DE_AGENDAMENTO: tuple[str, ...] = (
     "agendamentosCriados",
     "agendamentosConfirmados",
     "agendamentosRealizados",

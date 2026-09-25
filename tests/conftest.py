@@ -22,6 +22,7 @@ from mobia.app.config import Settings, get_settings
 from mobia.app.logging import configure_logging
 from mobia.app.main import create_app
 from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
+from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import Urgencia
 from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
@@ -1648,3 +1649,66 @@ async def _handoff_aceito(
         )
     )
     await session.commit()
+
+
+_INICIO_PADRAO = datetime(2026, 8, 20, 15, 0, tzinfo=UTC)
+
+
+async def _agendar(
+    session: AsyncSession,
+    *,
+    conversa: str,
+    corretor_id: uuid.UUID,
+    status: str = StatusDoAgendamento.CONFIRMADO,
+    inicio: datetime = _INICIO_PADRAO,
+    criado_em: datetime | None = None,
+    confirmado_em: datetime | None = None,
+    origem_id: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """Um agendamento do lead do funil. Devolve o id.
+
+    **`inicio` precisa ser distinto entre agendamentos do MESMO corretor**: a
+    constraint de exclusao por intervalo (migration 0044) recusa sobreposicao
+    entre linhas `RESERVADO` ou `CONFIRMADO`, e um segundo agendamento na
+    mesma hora sobe como `IntegrityError` em vez de como falha de asserta.
+
+    `confirmado_em` segue o status por omissao -- `CONFIRMADO` e os tres
+    desfechos que so partem dele (`REAGENDADO`, `REALIZADO`, `NO_SHOW`)
+    passaram por la, e `repositorio.py::confirmar` carimba a coluna no mesmo
+    UPDATE. E dessa equivalencia que `agendamentosConfirmados` depende para
+    olhar so a raiz da cadeia (TEC-376, D4).
+    """
+    identificador = uuid.uuid4()
+    passou_por_confirmado = status in {
+        StatusDoAgendamento.CONFIRMADO,
+        StatusDoAgendamento.REAGENDADO,
+        StatusDoAgendamento.REALIZADO,
+        StatusDoAgendamento.NO_SHOW,
+    }
+    session.add(
+        Agendamento(
+            id=identificador,
+            corretor_id=corretor_id,
+            channel=_CANAL_DO_FUNIL,
+            conversation_key=conversa,
+            imovel_id=None,
+            tipo="VISITA_PRESENCIAL",
+            inicio=inicio,
+            fim=inicio + timedelta(hours=1),
+            status=status,
+            reservado_ate=inicio,
+            criado_em=criado_em if criado_em is not None else _INICIO_PADRAO,
+            confirmado_em=(
+                confirmado_em
+                if confirmado_em is not None
+                else (_INICIO_PADRAO if passou_por_confirmado else None)
+            ),
+            motivo_da_alocacao="MATCH_EXATO",
+            realizado_em=(inicio if status == StatusDoAgendamento.REALIZADO else None),
+            nao_compareceu_em=(inicio if status == StatusDoAgendamento.NO_SHOW else None),
+            cancelado_em=(inicio if status == StatusDoAgendamento.CANCELADO else None),
+            origem_id=origem_id,
+        )
+    )
+    await session.commit()
+    return identificador

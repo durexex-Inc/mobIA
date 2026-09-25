@@ -9,7 +9,13 @@ defeito que ele impede de voltar.
 from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
-from conftest import _handoff_aceito, _lead, _recomendar  # type: ignore[import-not-found]
+from conftest import (  # type: ignore[import-not-found]
+    _agendar,
+    _corretor,
+    _handoff_aceito,
+    _lead,
+    _recomendar,
+)
 
 from mobia.domain.metricas.calculo import montar_funil
 from mobia.domain.metricas.filtros import montar_recorte
@@ -64,17 +70,20 @@ async def test_o_recomendado_sem_carimbo_de_qualificacao_conta_como_qualificado(
 async def test_nenhuma_conversao_entre_consecutivas_passa_de_cem_por_cento(session) -> None:
     """O criterio de aceite da card, sobre a base que produzia o defeito.
 
-    Quatro leads, cada um exercitando um dos caminhos que quebravam a
+    Cinco leads, cada um exercitando um dos caminhos que quebravam a
     monotonia: o que so falou, o que qualificou numa mensagem so, o
-    recomendado sem carimbo, e o que chegou ao handoff aceito sem nada no
-    meio.
+    recomendado sem carimbo, o que marcou visita sem ficha recomendada
+    (TEC-376), e o que chegou ao handoff aceito sem nada no meio.
     """
+    corretor = await _corretor(session)
     await _lead(session, conversa="5511900000001", falas=1)
     await _lead(session, conversa="5511900000002", falas=1, qualificado_em=DENTRO)
     await _lead(session, conversa="5511900000003", falas=1)
     await _recomendar(session, conversa="5511900000003", em=DENTRO)
     await _lead(session, conversa="5511900000004", falas=1)
-    await _handoff_aceito(session, conversa="5511900000004", em=DENTRO)
+    await _agendar(session, conversa="5511900000004", corretor_id=corretor)
+    await _lead(session, conversa="5511900000005", falas=1)
+    await _handoff_aceito(session, conversa="5511900000005", em=DENTRO)
 
     etapas = await contar_etapas(session, recorte=_recorte())
     funil = montar_funil(etapas)
@@ -88,16 +97,22 @@ async def test_as_contagens_nao_crescem_ao_descer_o_funil(session) -> None:
     """A propriedade inteira, dita como propriedade e nao como exemplo.
 
     Mais forte que o criterio de aceite: ele fala de etapas CONSECUTIVAS, e
-    esta asserta vale para o funil todo. `AGENDADO` e pulado -- ele nao tem
-    fonte, e `montar_funil` o devolve nulo.
+    esta asserta vale para o funil todo. **As SEIS etapas entram desde a
+    TEC-376** -- `AGENDADO` era pulado enquanto nao tinha fonte.
     """
+    corretor = await _corretor(session)
     await _lead(session, conversa="5511900000001", falas=1, qualificado_em=DENTRO)
     await _lead(session, conversa="5511900000002", falas=5)
     await _recomendar(session, conversa="5511900000002", em=DENTRO)
     await _lead(session, conversa="5511900000003", falas=2)
-    await _handoff_aceito(session, conversa="5511900000003", em=DENTRO)
+    await _agendar(session, conversa="5511900000003", corretor_id=corretor)
+    await _lead(session, conversa="5511900000004", falas=2)
+    await _handoff_aceito(session, conversa="5511900000004", em=DENTRO)
 
     etapas = await contar_etapas(session, recorte=_recorte())
 
-    contagens = [etapas[etapa] for etapa in ETAPAS if etapa in etapas]
+    # Sem o `if etapa in etapas` que guardava a ausencia de `AGENDADO` ate a
+    # TEC-376: com as seis tendo consulta, aquele filtro so serviria para
+    # pular em silencio uma etapa que o repositorio deixasse de devolver.
+    contagens = [etapas[etapa] for etapa in ETAPAS]
     assert contagens == sorted(contagens, reverse=True), contagens

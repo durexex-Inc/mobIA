@@ -27,7 +27,7 @@ from mobia.app.config import get_settings
 from mobia.domain.metricas.calculo import montar_funil
 from mobia.domain.metricas.filtros import FiltroInvalido, montar_recorte
 from mobia.domain.metricas.repositorio import calcular_indicadores, contar_etapas
-from mobia.domain.metricas.vocabulario import INDICADORES_SEM_FONTE, Etapa
+from mobia.domain.metricas.vocabulario import Etapa
 from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
 
@@ -82,11 +82,11 @@ async def funil(
         "tempoMedioPrimeiraRespostaSeg": indicadores.tempo_medio_primeira_resposta_seg,
         "tempoMedioQualificacaoSeg": indicadores.tempo_medio_qualificacao_seg,
         "slaHandoffCumpridoPct": indicadores.sla_handoff_cumprido_pct,
+        "agendamentosCriados": indicadores.agendamentos_criados,
+        "agendamentosConfirmados": indicadores.agendamentos_confirmados,
+        "agendamentosRealizados": indicadores.agendamentos_realizados,
+        "taxaNoShow": indicadores.taxa_no_show,
     }
-    # Os quatro de visita saem SEMPRE, e sempre nulos: omiti-los faria o
-    # consumidor tratar a ausencia como erro dele, e zera-los mentiria. Ver a
-    # D1 do desenho.
-    corpo_dos_indicadores.update(dict.fromkeys(INDICADORES_SEM_FONTE))
 
     return {
         "etapas": [
@@ -99,5 +99,10 @@ async def funil(
             for etapa in montar_funil(etapas)
         ],
         "indicadores": corpo_dos_indicadores,
-        "indisponiveis": list(INDICADORES_SEM_FONTE),
+        # Vazia desde a TEC-376, e a chave FICA -- mesmo argumento de
+        # `etapas[].disponivel` em `calculo.py`. Ela nomeava os quatro de
+        # agendamento enquanto nenhum caminho de producao criasse linha; a
+        # TEC-371 acabou com isso. Omiti-la agora faria o consumidor tratar a
+        # ausencia como erro dele.
+        "indisponiveis": [],
     }
