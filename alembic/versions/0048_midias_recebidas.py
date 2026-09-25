@@ -28,17 +28,26 @@ periodica (`pendentes_para_reenfileirar`, `expirar_pendentes`,
 `esgotar_pendentes`) le so
 PENDENTE, e as tres outras linhas terminais nunca entram nesse WHERE.
 
-**Esta migration nasceu 0042 e virou 0046 no merge da `main`, ainda na
-TEC-132.** A branch saiu de `0041`; enquanto ela corria, a `main` numerou
-`0042` a `0045` (TEC-363 `0042_consentimentos`, TEC-180
-`0043_exportacao_para_crm`, TEC-168 `0044_agendamentos`, TEC-201/202
-`0045_usuarios_e_sessoes`). Duas revisoes "0042" deixariam o alembic com duas
-cabecas -- o mesmo "Multiple head revisions are present" que a 0045 registra --,
-entao esta, a ultima a entrar, passou para o fim da cadeia. Nada nela depende
-das quatro: a tabela so referencia `messages`.
+**Esta migration foi renumerada duas vezes, e a segunda vez foi para
+consertar a primeira.** A branch da TEC-132 saiu de `0041` e a migration
+nasceu `0042`; enquanto ela corria, a `main` numerou `0042` a `0045`
+(TEC-363 `0042_consentimentos`, TEC-180 `0043_exportacao_para_crm`, TEC-168
+`0044_agendamentos`, TEC-201/202 `0045_usuarios_e_sessoes`), e ela passou
+para `0046`, o fim da cadeia naquele instante.
 
-Revision ID: 0046
-Revises: 0045
+**So que `0046` ja estava ocupada** por `0046_motivo_da_alocacao` (TEC-166),
+mergeada antes. O merge desta (PR #176) deixou a `main` com duas revisoes
+"0046" e reprovando em `test_nenhuma_revisao_aparece_duas_vezes` -- o gate que
+a TEC-370 criou exatamente para este defeito, que nao aparece em PR nenhum
+porque nasce no SEGUNDO merge, numa arvore que ninguem rodou. A TEC-171
+renumerou esta para `0048` pelo criterio que a mensagem daquele gate
+prescreve: quem mergeou por ultimo se renumera para o proximo inteiro e
+aponta o `down_revision` para a cabeca. **O DDL nao mudou uma linha.**
+
+Nada aqui depende das revisoes acima: a tabela so referencia `messages`.
+
+Revision ID: 0048
+Revises: 0047
 """
 
 import sqlalchemy as sa
@@ -46,8 +55,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "0046"
-down_revision = "0045"
+revision = "0048"
+down_revision = "0047"
 branch_labels = None
 depends_on = None
 

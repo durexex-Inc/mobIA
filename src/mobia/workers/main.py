@@ -22,8 +22,8 @@ from mobia.domain.outbound.whatsapp_notificacao import WhatsAppTemplate
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
-from mobia.workers.jobs.baixar_midia import MAXIMO_DE_TENTATIVAS, baixar_midia
 from mobia.workers.jobs.avisar_confirmacao import avisar_confirmacao
+from mobia.workers.jobs.baixar_midia import MAXIMO_DE_TENTATIVAS, baixar_midia
 from mobia.workers.jobs.exportar_crm import exportar_crm
 from mobia.workers.jobs.gerar_resumo import gerar_resumo
 from mobia.workers.jobs.importar_catalogo import importar_catalogo
@@ -34,6 +34,7 @@ from mobia.workers.jobs.sweep_conversas_inativas import sweep_conversas_inativas
 from mobia.workers.jobs.sweep_crm_pendentes import sweep_crm_pendentes
 from mobia.workers.jobs.sweep_followups import sweep_followups
 from mobia.workers.jobs.sweep_importacoes_travadas import sweep_importacoes_travadas
+from mobia.workers.jobs.sweep_lembretes import sweep_lembretes
 from mobia.workers.jobs.sweep_midias_pendentes import sweep_midias_pendentes
 from mobia.workers.jobs.sweep_sla import sweep_sla
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
@@ -328,6 +329,15 @@ class WorkerSettings:
         # `int`) nao serve para nada depois que o log saiu. Entra em
         # `cron_jobs` tambem -- e o relogio que dispara este job.
         func(sweep_midias_pendentes, keep_result=0),
+        # TEC-171. `keep_result=0` pela mesma razao do `sweep_sla`: o resultado
+        # (um `int`) nao serve para nada depois que o log saiu. Entra em
+        # `cron_jobs` tambem -- e o relogio que dispara este job, nunca um
+        # enqueue manual. **Sem `_job_id` e sem `max_tries` proprio**: nao ha
+        # enfileiramento por id nenhum aqui, e o teto de retentativa de um
+        # lembrete e a FAIXA em que ele e devido (`lembrete_devido`), nao uma
+        # contagem -- quando a faixa fecha, a linha deixa de aparecer na
+        # consulta.
+        func(sweep_lembretes, keep_result=0),
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
@@ -406,6 +416,23 @@ class WorkerSettings:
         # re-enqueue -- e ninguem espera pela midia, o turno nao depende dela.
         cron(
             sweep_midias_pendentes,
+            minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
+            run_at_startup=False,
+        ),
+        # TEC-171, RN-12.2. De 5 em 5 minutos, como os quatro acima e nao de 30
+        # em 30 segundos como a `sweep_stalled`: a MENOR faixa desta regra e de
+        # DUAS HORAS (a do lembrete de 2h, `lembrete_devido`), entao precisao de
+        # segundos nao compra nada e custaria uma varredura por passagem. O erro
+        # maximo de disparo fica em cinco minutos sobre uma janela de duas
+        # horas.
+        #
+        # **E a passagem ociosa e barata por treze das vinte e quatro horas**: a
+        # guarda de horario (RN-13.3) roda ANTES da consulta e devolve sem tocar
+        # o banco.
+        #
+        # `run_at_startup=False` como todos os outros.
+        cron(
+            sweep_lembretes,
             minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
             run_at_startup=False,
         ),
