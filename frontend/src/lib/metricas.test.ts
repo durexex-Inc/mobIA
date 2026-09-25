@@ -127,3 +127,80 @@ describe('buscarFunil', () => {
     })
   })
 })
+
+describe('o erro carrega o que a tela precisa (TEC-313)', () => {
+  beforeEach(() => {
+    process.env.MOBIA_API_BASE = 'http://backend:8000'
+    process.env.MOBIA_ADMIN_TOKEN = 'segredo'
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('guarda o X-Request-Id que veio na RESPOSTA', async () => {
+    // O id nao e mandado por nos -- o caminho do funil e cacheado e um id por
+    // requisicao zeraria a taxa de acerto. Este e o que o FastAPI GERA e
+    // devolve (TEC-368), e e ele que identifica a linha do log. Ver a D3.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('{"detail":"quebrou"}', {
+          status: 500,
+          headers: { 'X-Request-Id': '7f3c-91ab' },
+        }),
+      ),
+    )
+
+    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' })).rejects.toMatchObject({
+      status: 500,
+      requestId: '7f3c-91ab',
+    })
+  })
+
+  it('resposta sem o header deixa o id NULO, e nao inventa um', async () => {
+    // Um 502 de proxy nunca chegou ao FastAPI. A tela omite o campo; um id
+    // falso mandaria alguem procurar no log uma linha que nao existe.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('nao e json', { status: 502 })),
+    )
+
+    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' })).rejects.toMatchObject({
+      requestId: null,
+    })
+  })
+
+  it('extrai os campos do 422 de validacao do FastAPI', async () => {
+    // A forma em LISTA, que o proprio FastAPI produz para UUID malformado ou
+    // data invalida. E o `campos` que permite por a mensagem ao lado do campo.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ detail: [{ loc: ['query', 'corretorId'], msg: 'uuid inválido' }] }),
+          { status: 422 },
+        ),
+      ),
+    )
+
+    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' })).rejects.toMatchObject({
+      status: 422,
+      campos: ['corretorId'],
+    })
+  })
+
+  it('422 com detail em prosa nao inventa campo', async () => {
+    // Os 422 que `montar_recorte` levanta trazem `detail` como string ja
+    // escrita para quem le -- nao ha campo a apontar, e o aviso fica acima do
+    // formulario.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('{"detail":"o periodo nao pode passar de 90 dias"}', { status: 422 }),
+      ),
+    )
+
+    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' })).rejects.toMatchObject({
+      campos: [],
+      message: 'o periodo nao pode passar de 90 dias',
+    })
+  })
+})

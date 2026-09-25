@@ -1,3 +1,6 @@
+import { AindaNaoMedido } from '@/components/estado/AindaNaoMedido'
+import { Vazio } from '@/components/estado/Vazio'
+import { estadoDe } from '@/lib/estados'
 import { percentual } from '@/lib/formato'
 import type { Indicadores as IndicadoresTipo } from '@/lib/metricas'
 
@@ -15,6 +18,16 @@ const ROTULOS: Record<string, string> = {
   taxaNoShow: 'Taxa de no-show',
 }
 
+/**
+ * O motivo que acompanha "Ainda nao medido" nos indicadores de visita.
+ *
+ * Curto de proposito: ele vai no `title` e no texto que o leitor de tela le
+ * junto do rotulo, e a versao longa ja existe na nota de rodape da secao. A
+ * nota FICA -- ela e o canal que funciona em toque, onde tooltip nao existe.
+ * Ver a D4 do desenho.
+ */
+const MOTIVO_SEM_FONTE = 'nenhuma visita é registrada no sistema hoje'
+
 const COMO_PERCENTUAL = new Set(['taxaQualificacao', 'slaHandoffCumpridoPct', 'taxaNoShow'])
 const COMO_DURACAO = new Set(['tempoMedioPrimeiraRespostaSeg', 'tempoMedioQualificacaoSeg'])
 
@@ -30,35 +43,21 @@ function duracao(segundos: number): string {
 }
 
 /**
- * O texto de um indicador.
+ * O texto de um indicador que TEM dado.
  *
- * **Sao DUAS ausencias diferentes, e o texto as distingue.** `indisponivel`
- * e "nao existe fonte" -- ninguem registra visita, e e defeito do sistema
- * que a RF-12 conserta. Nulo sem ser indisponivel e "nao houve o que medir"
- * -- a coorte do periodo estava vazia, e isso e fato do negocio. Um texto so
- * para as duas mandaria a gerente procurar um problema que nao existe, ou
- * ignorar um que existe.
+ * **As duas ausencias sairam daqui na TEC-313.** Quem decide entre "Ainda nao
+ * medido" (nao existe fonte -- defeito do sistema, RF-12 conserta) e "sem
+ * dados no periodo" (a coorte estava vazia -- fato do negocio) e agora
+ * `estadoDe`, em `lib/estados.ts`, e quem desenha sao as pecas de
+ * `components/estado/`. A distincao continua valendo e continua sendo a razao
+ * da card; o que mudou e que ela vale para TODA tela, e nao so para este
+ * cartao.
  */
-function valorLegivel(
-  chave: string,
-  valor: number | Record<string, number> | null,
-  indisponivel: boolean,
-): string {
-  if (indisponivel) {
-    return 'sem fonte de dados'
-  }
-  if (valor === null) {
-    return 'sem dados no período'
-  }
+function valorLegivel(chave: string, valor: number | Record<string, number>): string {
   if (typeof valor === 'object') {
-    const faixas = Object.entries(valor)
-    // Um objeto VAZIO e a coorte vazia, e nao uma distribuicao de zero
-    // faixas: sem isto o cartao sai em branco, e branco na tela parece
-    // painel quebrado -- nao ausencia de lead.
-    if (faixas.length === 0) {
-      return 'sem dados no período'
-    }
-    return faixas.map(([faixa, quantos]) => `${faixa}: ${quantos}`).join('   ')
+    return Object.entries(valor)
+      .map(([faixa, quantos]) => `${faixa}: ${quantos}`)
+      .join('   ')
   }
   if (COMO_PERCENTUAL.has(chave)) {
     return percentual(valor)
@@ -67,6 +66,30 @@ function valorLegivel(
     return duracao(valor)
   }
   return INTEIRO.format(valor)
+}
+
+/**
+ * A peca certa para o estado do indicador (TEC-313).
+ *
+ * Nao formata ausencia: delega. E o que garante que "Ainda nao medido" tenha
+ * UMA grafia no projeto inteiro, e que o motivo chegue por tooltip e por
+ * leitor de tela sem este arquivo saber como.
+ */
+function conteudoDe(
+  chave: string,
+  valor: number | Record<string, number> | null,
+  indisponivel: boolean,
+) {
+  const estado = estadoDe({ valor, disponivel: !indisponivel })
+
+  if (estado === 'sem_fonte') {
+    return <AindaNaoMedido motivo={MOTIVO_SEM_FONTE} />
+  }
+  if (estado === 'vazio') {
+    return <Vazio />
+  }
+  // `valor` nao e nulo aqui: `estadoDe` ja devolveu `vazio` para nulo.
+  return valorLegivel(chave, valor!)
 }
 
 /**
@@ -91,7 +114,7 @@ export function Indicadores({
         {Object.entries(indicadores).map(([chave, valor]) => (
           <div key={chave} data-testid={`indicador-${chave}`} className="indicador">
             <dt>{ROTULOS[chave] ?? chave}</dt>
-            <dd>{valorLegivel(chave, valor, semFonte.has(chave))}</dd>
+            <dd>{conteudoDe(chave, valor, semFonte.has(chave))}</dd>
           </div>
         ))}
       </dl>

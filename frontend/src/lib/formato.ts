@@ -1,3 +1,4 @@
+import { TEXTO_SEM_FONTE } from './estados'
 import type { Etapa } from './metricas'
 
 const PERCENTUAL = new Intl.NumberFormat('pt-BR', {
@@ -28,7 +29,13 @@ export function percentual(valor: number | null): string {
  */
 export function quantidadeLegivel(etapa: Etapa): string {
   if (!etapa.disponivel || etapa.quantidade === null) {
-    return 'sem fonte de dados'
+    // TEC-313: o texto mudou de "sem fonte de dados" para o vocabulario unico
+    // da RN-FE-04.2. A etapa do funil entra junto com os indicadores de
+    // proposito -- deixar so os indicadores mudarem poria dois idiomas para a
+    // mesma ausencia na MESMA tela, que e pior que tocar tres linhas de uma
+    // card vizinha. O COMPORTAMENTO da etapa (nao calcular conversao para quem
+    // nao tem fonte) continua sendo da TEC-315. Ver a D1 do desenho.
+    return TEXTO_SEM_FONTE
   }
   return INTEIRO.format(etapa.quantidade)
 }
