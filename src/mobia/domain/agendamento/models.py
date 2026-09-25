@@ -5,7 +5,11 @@
 declarada no modelo: o `ExcludeConstraint` do SQLAlchemy nao expressa bem o
 `tstzrange(inicio, fim, '[)')`, e o que importa para o RT-07 e o banco
 recusar -- ver `tests/integration/test_agendamento_schema.py`, que prova com
-insert cru, sem passar por este modelo.
+insert cru, sem passar por este modelo. Consequencia pratica: um `alembic
+revision --autogenerate` pode propor derrubar o indice gist e a constraint
+por tras de `ex_agendamentos_sem_sobreposicao`, por nao os encontrar aqui --
+essa proposta tem de ser descartada, as migrations deste repo sao escritas
+a mao.
 
 O lead e o par `(channel, conversation_key)`, como em `handoffs` e
 `optout_events`: nao existe tabela de lead.
@@ -15,7 +19,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -73,4 +77,5 @@ class Agendamento(Base):
             "status IN ('RESERVADO','CONFIRMADO','EXPIRADO')", name="ck_agendamentos_status"
         ),
         CheckConstraint("inicio < fim", name="ck_agendamentos_intervalo"),
+        Index("ix_agendamentos_conversa", "channel", "conversation_key"),
     )
