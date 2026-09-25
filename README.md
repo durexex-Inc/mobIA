@@ -836,9 +836,16 @@ mudar as instruções do agente, de fazer revelar as regras dele, ou de se
 passar pelo sistema. Ela é a exceção do protocolo: não está em
 `CATEGORIAS_QUE_BLOQUEIAM`, e por isso sozinha não bloqueia nada — o turno
 segue normal e só o achado vira evento de auditoria (`INJECAO_DETECTADA`,
-ver TEC-206). É a terceira palavra do protocolo que existe: junto de uma
-categoria que bloqueia, o veredito escreve as duas (`BLOQUEAR ASSEDIO
-INJECAO`). A defesa contra a injeção em si — delimitar o texto do lead e
+ver TEC-206). Sozinha, ela se escreve depois de `LIBERAR` (`LIBERAR
+INJECAO`); junto de uma categoria que bloqueia, depois das duas palavras de
+sempre (`BLOQUEAR ASSEDIO INJECAO`) — é a terceira palavra do protocolo que
+existe. **Só `LIBERAR` e `LIBERAR INJECAO` liberam.** Na primeira versão,
+`BLOQUEAR INJECAO` liberava, e o eval pago mostrou o preço: o lead que
+ditava esse rótulo ao moderador passou conteúdo hostil em 2 de 10 casos de
+`entrada_injecao_bloqueia.yaml`, que o moderador de antes da card barrava
+10 de 10. Hoje toda resposta que começa por `BLOQUEAR` bloqueia —
+`BLOQUEAR INJECAO` sozinho vira `OUTRO`, com o achado —, e
+`LIBERAR INJECAO` na saída, que não oferece a palavra, é fora do protocolo. A defesa contra a injeção em si — delimitar o texto do lead e
 declará-lo dado, nunca instrução — não é deste sistema; é
 `domain/agente/delimitacao.py`.
 
@@ -970,7 +977,8 @@ texto é esse.
   soma cinco testes únicos: os dois lados existem nas duas direções, o
   controle de entrada cobre o falso positivo caro, os ids são únicos entre
   todos os arquivos, a injeção tem o gêmeo benigno, e o ataque que dita o
-  rótulo `BLOQUEAR INJECAO` por extenso está coberto.
+  rótulo `BLOQUEAR INJECAO` por extenso — o que liberava na primeira versão
+  do protocolo — está coberto.
 - **Nenhum piso foi cravado** para as taxas de acerto do moderador.
   `evals/test_moderacao.py` mede e imprime as quatro taxas por categoria mas
   faz uma única asserção — que o moderador respondeu em todos os casos
