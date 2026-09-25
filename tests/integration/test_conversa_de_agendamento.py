@@ -9,19 +9,24 @@ import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 from sqlalchemy import select
 
 from mobia.domain.agendamento.conversa import (
+    Cancelou,
     Confirmou,
     NadaAFazer,
     Ofereceu,
     Perguntou,
+    PresencaConfirmada,
     Reservou,
     atender,
 )
+from mobia.domain.agendamento.janelas import TipoDeCompromisso
 from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.agendamento.propostas import ler as ler_propostas
 from mobia.domain.agendamento.repositorio import AgendaPostgres
+from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import ReacaoLead
 from mobia.domain.catalogo.models import Imovel
@@ -325,3 +330,155 @@ async def test_a_data_falada_recorta_a_oferta_naquele_dia(
     locais = [p.janela.inicio.astimezone(SP) for p in resultado.propostas]
     assert locais and all(inicio.date() == quinta for inicio in locais)
     assert all(9 <= inicio.hour < 12 for inicio in locais)
+
+
+# --- TEC-372: a resposta ao lembrete de 24 horas -----------------------------
+
+
+async def _com_lembrete(
+    session, semear_corretor, *, lembrete_enviado: bool = True, daqui_a_horas: int = 20
+) -> Agendamento:
+    """Um agendamento CONFIRMADO, com ou sem o lembrete de 24 h ja carimbado."""
+    # De plantao: sem qualificacao gravada o criterio nasce vazio, e
+    # criterio vazio so casa plantao (RN-11.2). Sem isso nao ha candidato
+    # e a oferta de remarcacao sai vazia.
+    corretor = await semear_corretor(
+        email=f"lembrete{daqui_a_horas}{lembrete_enviado}@x.com", plantao=True
+    )
+    inicio = AGORA + timedelta(hours=daqui_a_horas)
+    agendamento = Agendamento(
+        id=uuid.uuid4(),
+        corretor_id=corretor.id,
+        channel=CANAL,
+        conversation_key=LEAD,
+        imovel_id=None,
+        tipo=str(TipoDeCompromisso.VISITA_PRESENCIAL),
+        inicio=inicio,
+        fim=inicio + timedelta(hours=1),
+        status=StatusDoAgendamento.CONFIRMADO,
+        reservado_ate=AGORA,
+        criado_em=AGORA,
+        confirmado_em=AGORA,
+        motivo_da_alocacao=str(MotivoDaAlocacao.MATCH_EXATO),
+        lembrete_24h_em=AGORA - timedelta(minutes=5) if lembrete_enviado else None,
+    )
+    session.add(agendamento)
+    await session.commit()
+    return agendamento
+
+
+async def test_a_presenca_confirmada_carimba_a_coluna_e_nao_o_status(
+    session, session_factory, semear_corretor
+) -> None:
+    agendamento = await _com_lembrete(session, semear_corretor)
+
+    resultado = await _atender(session, session_factory, "sim, estarei la")
+
+    assert isinstance(resultado, PresencaConfirmada)
+    await session.commit()
+    await session.refresh(agendamento)
+    assert agendamento.presenca_confirmada_em == AGORA
+    assert agendamento.status == StatusDoAgendamento.CONFIRMADO
+
+
+async def test_o_cancelamento_pela_conversa_derruba_e_libera(
+    session, session_factory, semear_corretor
+) -> None:
+    agendamento = await _com_lembrete(session, semear_corretor)
+
+    resultado = await _atender(session, session_factory, "preciso cancelar")
+
+    assert isinstance(resultado, Cancelou)
+    assert resultado.agendamento_id == agendamento.id
+    await session.commit()
+    await session.refresh(agendamento)
+    assert agendamento.status == StatusDoAgendamento.CANCELADO
+    assert agendamento.cancelado_em == AGORA
+
+
+async def test_remarcar_oferece_janelas_e_nao_derruba_o_original(
+    session, session_factory, semear_corretor
+) -> None:
+    """O terceiro cenario do Gherkin, na metade que afirma o que NAO mudou."""
+    agendamento = await _com_lembrete(session, semear_corretor)
+
+    resultado = await _atender(session, session_factory, "podemos remarcar?")
+
+    assert isinstance(resultado, Ofereceu)
+    assert all(p.remarcando_id == agendamento.id for p in resultado.propostas)
+    await session.commit()
+    await session.refresh(agendamento)
+    assert agendamento.status == StatusDoAgendamento.CONFIRMADO
+
+
+async def test_a_escolha_na_remarcacao_move_o_agendamento(
+    session, session_factory, semear_corretor
+) -> None:
+    agendamento = await _com_lembrete(session, semear_corretor)
+    await _atender(session, session_factory, "podemos remarcar?")
+    await session.commit()
+
+    resultado = await _atender(session, session_factory, "a primeira")
+
+    assert isinstance(resultado, Confirmou)
+    await session.commit()
+    await session.refresh(agendamento)
+    assert agendamento.status == StatusDoAgendamento.REAGENDADO
+    novo = await session.get(Agendamento, resultado.agendamento_id)
+    assert novo is not None
+    assert novo.status == StatusDoAgendamento.CONFIRMADO
+    assert novo.origem_id == agendamento.id
+
+
+@pytest.mark.parametrize(
+    ("fala", "razao"),
+    [
+        ("cancela aquele outro assunto", "sem agendamento nenhum"),
+        ("quero cancelar", "sem agendamento nenhum"),
+    ],
+)
+async def test_sem_agendamento_a_palavra_nao_derruba_nada(
+    session, session_factory, semear_corretor, fala: str, razao: str
+) -> None:
+    await _corretor(semear_corretor)
+    await session.commit()
+
+    assert isinstance(await _atender(session, session_factory, fala), NadaAFazer), razao
+    await session.commit()
+    assert await _linhas(session) == []
+
+
+async def test_sem_lembrete_enviado_a_palavra_nao_derruba_nada(
+    session, session_factory, semear_corretor
+) -> None:
+    """O lembrete e o que abre a janela: antes dele, "cancelar" nao e resposta a nada."""
+    agendamento = await _com_lembrete(session, semear_corretor, lembrete_enviado=False)
+
+    assert isinstance(await _atender(session, session_factory, "quero cancelar"), NadaAFazer)
+    await session.commit()
+    await session.refresh(agendamento)
+    assert agendamento.status == StatusDoAgendamento.CONFIRMADO
+
+
+async def test_depois_do_inicio_da_visita_a_janela_fechou(
+    session, session_factory, semear_corretor
+) -> None:
+    agendamento = await _com_lembrete(session, semear_corretor)
+    depois = agendamento.inicio + timedelta(minutes=1)
+
+    assert isinstance(
+        await _atender(session, session_factory, "quero cancelar", agora=depois), NadaAFazer
+    )
+    await session.commit()
+    await session.refresh(agendamento)
+    assert agendamento.status == StatusDoAgendamento.CONFIRMADO
+
+
+async def test_o_nao_sozinho_nao_cancela(session, session_factory, semear_corretor) -> None:
+    """A assimetria da D2: cancelar por engano custa uma visita e nao tem desfazer."""
+    agendamento = await _com_lembrete(session, semear_corretor)
+
+    assert isinstance(await _atender(session, session_factory, "nao"), NadaAFazer)
+    await session.commit()
+    await session.refresh(agendamento)
+    assert agendamento.status == StatusDoAgendamento.CONFIRMADO
