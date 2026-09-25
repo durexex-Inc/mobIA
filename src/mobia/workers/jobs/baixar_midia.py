@@ -192,7 +192,12 @@ async def _gravar(
         )
         return "nada_a_fazer"
     rotulo = status.value.lower()
-    log.info(
+    # FALHOU em WARNING, qualquer que seja o motivo: e midia que o sistema
+    # desistiu de guardar, e e o nivel que pode alimentar alerta. RECUSADA
+    # (tipo ou tamanho fora da politica) e ARMAZENADA sao o caminho previsto, e
+    # ficam em INFO.
+    emitir = log.warning if status == StatusDaMidia.FALHOU else log.info
+    emitir(
         f"midia.{rotulo}",
         message_id=str(identificador),
         status=status.value,

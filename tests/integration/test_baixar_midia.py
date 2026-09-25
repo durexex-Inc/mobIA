@@ -407,3 +407,45 @@ async def test_url_malformada_da_meta_e_recusa_e_nao_retentativa(
     linha = await _linha(session, message_id)
     assert (linha.status, linha.motivo) == (StatusDaMidia.FALHOU, MotivoDaMidia.RECUSADA_PELA_META)
 
+
+async def test_falhou_loga_em_warning_e_os_outros_desfechos_em_info(
+    session, configuracao, tmp_path: Path, caplog: Any
+) -> None:
+    """M4 da revisao final: FALHOU e midia que o sistema desistiu de guardar,
+    e precisa poder alimentar alerta. RECUSADA e ARMAZENADA sao o caminho
+    previsto, e ficam em INFO."""
+    cenarios: list[Callable[[], httpx.AsyncClient]] = [
+        _meta,
+        lambda: _meta(mime="application/zip"),
+        lambda: _meta(status_download=403),
+    ]
+    with caplog.at_level("INFO"):
+        for fabrica in cenarios:
+            message_id = await _gravar_midia(session)
+            await baixar_midia(
+                _ctx(fabrica(), ArmazemLocal(tmp_path), configuracao), str(message_id)
+            )
+        esgotada = await _gravar_midia(session)
+        await baixar_midia(
+            _ctx(
+                _meta(status_download=503),
+                ArmazemLocal(tmp_path),
+                configuracao,
+                job_try=MAXIMO_DE_TENTATIVAS,
+            ),
+            str(esgotada),
+        )
+        divergente = await _gravar_midia(session, sha256="00" * 32)
+        await baixar_midia(_ctx(_meta(), ArmazemLocal(tmp_path), configuracao), str(divergente))
+
+    assert [e.nivel for e in eventos_de_log(caplog, "midia.armazenada")] == ["INFO"]
+    assert [e.nivel for e in eventos_de_log(caplog, "midia.recusada")] == ["INFO"]
+    falhas = eventos_de_log(caplog, "midia.falhou")
+    assert sorted(e.corpo["motivo"] for e in falhas) == sorted(
+        [
+            MotivoDaMidia.RECUSADA_PELA_META,
+            MotivoDaMidia.TENTATIVAS_ESGOTADAS,
+            MotivoDaMidia.SHA256_DIVERGENTE,
+        ]
+    )
+    assert {e.nivel for e in falhas} == {"WARNING"}
