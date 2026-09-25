@@ -1,6 +1,6 @@
 # TEC-132 — Registrar mídia recebida sem interpretar o conteúdo
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** desenho aprovado, implementado
 **Card:** [TEC-132](https://eduardodurieuxlopes.atlassian.net/browse/TEC-132) — épico TEC-123
 **Branch:** `feat/tec-132-midia-recebida`
 **Origem:** RF-01, RN-01.4 (SRS v1.0).
@@ -50,6 +50,7 @@ Uma linha por mensagem IMAGEM ou DOCUMENTO recebida:
 | `chave_no_armazem` | `String(255)`, nulável | nula até ARMAZENADA |
 | `status` | `String(16)` | PENDENTE, ARMAZENADA, RECUSADA ou FALHOU |
 | `motivo` | `String(32)`, nulável | vocabulário curto (`tipo_nao_permitido`, `acima_do_teto`, `sha256_divergente`, `recusada_pela_meta`, `tentativas_esgotadas`, `expirada`) |
+| `tentativas` | `integer`, `default 0` | re-enfileiramentos feitos pela varredura (D3); acrescentada na revisão final, dentro da própria 0042 |
 | `criado_em`, `atualizado_em` | `timestamptz` | |
 
 **`motivo` saiu como `String(32)`, e não `String(64)` como esta tabela dizia antes** (desvio deliberado, feito na Task 3): o maior literal do vocabulário acima (`tentativas_esgotadas`) tem 20 caracteres, e `tarefas_de_corretor.motivo` (migration 0039) já usa `String(32)` para o mesmo tipo de vocabulário curto — repetir `String(64)` aqui teria sido a exceção, não o padrão.
@@ -83,7 +84,7 @@ O turno é enfileirado como sempre, em paralelo, **sem esperar o download**.
 - Esgotadas as tentativas, FALHOU com `tentativas_esgotadas`.
 - **Nada disso toca a conversa.**
 
-**Enfileiramento perdido.** Um cron próprio, `sweep_midias_pendentes`, roda de 5 em 5 minutos: re-enfileira as linhas PENDENTE com mais de 10 minutos e menos de 7 dias. As com mais de 7 dias viram FALHOU com `expirada`, porque a mídia da Meta provavelmente já não existe. *Ajuste feito ao escrever o plano:* a versão aprovada punha isso como um passo da `sweep_stalled`, mas ela varre `messages` a cada 30 segundos com um contrato documentado sobre `attempts` e status da mensagem. Misturar outra tabela nela obrigaria a reescrever esse contrato. A intenção é a mesma.
+**Enfileiramento perdido.** Um cron próprio, `sweep_midias_pendentes`, roda de 5 em 5 minutos: re-enfileira as linhas PENDENTE com mais de 10 minutos e menos de 7 dias. As com mais de 7 dias viram FALHOU com `expirada`, porque a mídia da Meta provavelmente já não existe. Cada re-enfileiramento conta em `tentativas`, e a linha que chega a seis vira FALHOU com `tentativas_esgotadas` na passagem seguinte (ver "O que esta card não entrega"). *Ajuste feito ao escrever o plano:* a versão aprovada punha isso como um passo da `sweep_stalled`, mas ela varre `messages` a cada 30 segundos com um contrato documentado sobre `attempts` e status da mensagem. Misturar outra tabela nela obrigaria a reescrever esse contrato. A intenção é a mesma.
 
 **Logs** levam `message_id`, `status` e `motivo`. **Nunca** a URL da Meta, que carrega credencial temporária, nem o nome do arquivo.
 
@@ -148,6 +149,6 @@ Os marcadores são texto para o modelo, e não para o lead, por isso vão sem ac
 - **Dado sensível em documento** (RG, holerite). A RNF-20 pede redação antes de persistir, e isso exige ler o documento, o que está fora do MVP (RN-01.4). O documento fica guardado cifrado.
 - **S3 real.** O `ArmazemS3` é testado contra cliente falso. Bucket, credenciais e política de acesso de produção são da TEC-219.
 - Vídeo, figurinha e localização. Mídia pelo widget web.
-- **Falha que não é `Retry` some sem contador.** O `job_timeout` global do worker (240s, `workers/main.py`) cobre `baixar_midia` como cobre todo job, e um arquivo enorme ou uma rede lenta o suficiente para estourá-lo — assim como um erro de banco no próprio `marcar()` que grava o desfecho — não passa pelo `except graph.MidiaIndisponivel` que decide `Retry`: a linha fica PENDENTE, sem nada gravado. `midias_recebidas` não tem `attempts` (D2), então nada aqui conta essas tentativas; o único efeito é a `sweep_midias_pendentes` reenfileirando a mesma linha a cada 5 minutos, até os 7 dias em que `expirar_pendentes` a fecha como FALHOU/EXPIRADA. Declarado, não corrigido nesta card.
+- **Falha que não é `Retry` tem teto de reenvio, não de tentativa.** O `job_timeout` global do worker (240s, `workers/main.py`) cobre `baixar_midia` como cobre todo job, e um arquivo enorme ou uma rede lenta o suficiente para estourá-lo — assim como um erro de banco no próprio `marcar()` que grava o desfecho, ou uma exceção inesperada — não passa pelo `except graph.MidiaIndisponivel` que decide `Retry`: a linha fica PENDENTE, sem nada gravado pelo job. Quem conta é a varredura: `midias_recebidas.tentativas` sobe a cada re-enfileiramento dela (o enfileiramento da ingestão não conta), e com `TETO_DE_REENFILEIRAMENTOS = 6` (`workers/jobs/sweep_midias_pendentes.py`) a linha re-enfileirada seis vezes fecha como FALHOU com `tentativas_esgotadas` na sétima passagem, em vez de voltar à fila a cada 5 minutos por 7 dias (~2000 jobs por arquivo, no mesmo token das mensagens de saída). O contador mede passagens que tentaram, e não jobs que rodaram: uma passagem em que o job ainda estava na fila também conta. `httpx.InvalidURL` deixou de estar entre essas falhas: `graph.py` a trata como `MidiaRecusada`, porque URL malformada não melhora com retentativa.
 - **O log do `httpx` baixou para WARNING, para toda chamada HTTP do processo.** `app/logging.py` (`configure_logging`) chama `logging.getLogger("httpx").setLevel(logging.WARNING)` porque a linha `HTTP Request: GET <url>` que o `httpx` loga em INFO vazaria a URL de download da Meta — credencial temporária — a cada mídia baixada (D3: "nunca a URL"). O corte é por logger, não por chamada: qualquer outro cliente `httpx` do processo (WhatsApp, moderação, embeddings) perde a mesma linha de INFO, e é um efeito colateral aceito, não uma escolha sobre aquelas integrações.
 - **Áudio no meio de uma rajada de mídia sem texto não recebe turno próprio.** Foto e áudio no mesmo debounce, sem nenhum texto do lead: o turno roda sobre a ÚLTIMA mensagem da rajada (D4), e se ela for a foto, a resposta fixa que sai é a de imagem — o áudio fecha "agrupado" junto, sem qualquer resposta sua e sem o turno normal que o trataria. É consequência do mecanismo de rajada existente (RN-01.6) combinado com a resposta fixa desta card, não uma regra nova que a TEC-132 decidiu — e não há teste de aceite que a exercite.

@@ -5,6 +5,12 @@ resolve numa URL temporaria, e a URL exige o MESMO bearer para baixar. **A URL
 nunca vai para log**: ela e credencial de curta duracao. Por isso nenhuma
 excecao daqui carrega a URL nem `str()` de uma excecao do httpx -- so o nome do
 tipo ou o status HTTP.
+
+**`httpx.InvalidURL` e recusa, e nao indisponibilidade.** Ela nao e
+`RequestError` -- e levantada ao montar o pedido, antes de qualquer rede --, e
+sem tratamento proprio escapava do job, deixava a linha PENDENTE e voltava pela
+varredura. URL malformada vinda da Meta (ou um `media_id` que a torna
+malformada) e a mesma na proxima tentativa: retentar so gastaria chamadas.
 """
 
 from typing import Any, NamedTuple
@@ -37,7 +43,8 @@ class MidiaIndisponivel(Exception):
 
 
 class MidiaRecusada(Exception):
-    """Permanente: a Meta recusou (midia expirada, token invalido)."""
+    """Permanente: a Meta recusou (midia expirada, token invalido) ou deu uma
+    URL malformada -- nos dois casos, a proxima tentativa daria o mesmo."""
 
 
 class MidiaAcimaDoTeto(Exception):
@@ -70,6 +77,8 @@ async def resolver(media_id: str, *, cliente: httpx.AsyncClient) -> MidiaDaMeta:
     url = f"{get_settings().whatsapp_api_base}/{media_id}"
     try:
         resposta = await cliente.get(url, headers=_cabecalhos())
+    except httpx.InvalidURL as exc:
+        raise MidiaRecusada(type(exc).__name__) from exc
     except httpx.RequestError as exc:
         raise MidiaIndisponivel(type(exc).__name__) from exc
     _conferir_status(resposta.status_code)
@@ -101,6 +110,8 @@ async def baixar(url: str, *, teto: int, cliente: httpx.AsyncClient) -> bytes:
                     # ler o resto do corpo.
                     raise MidiaAcimaDoTeto(f"mais de {teto} bytes")
                 pedacos.append(pedaco)
+    except httpx.InvalidURL as exc:
+        raise MidiaRecusada(type(exc).__name__) from exc
     except httpx.RequestError as exc:
         raise MidiaIndisponivel(type(exc).__name__) from exc
     return b"".join(pedacos)

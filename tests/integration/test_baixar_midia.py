@@ -382,3 +382,28 @@ def test_baixar_midia_registrado_sem_reter_resultado() -> None:
     )
     assert registrada.keep_result_s == 0
     assert registrada.max_tries == MAXIMO_DE_TENTATIVAS
+
+
+async def test_url_malformada_da_meta_e_recusa_e_nao_retentativa(
+    session, configuracao, tmp_path: Path
+) -> None:
+    """`httpx.InvalidURL` nao e `RequestError`: sem tratamento proprio, ela
+    escapava dos dois `except` do job, a linha ficava PENDENTE e voltava pela
+    varredura. URL malformada nao melhora com retentativa -- e recusa."""
+    message_id = await _gravar_midia(session)
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"url": "http://a:porta-invalida/", "mime_type": "image/png"}
+        )
+
+    cliente = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+
+    resultado = await baixar_midia(
+        _ctx(cliente, ArmazemLocal(tmp_path), configuracao), str(message_id)
+    )
+
+    assert resultado == "falhou"
+    linha = await _linha(session, message_id)
+    assert (linha.status, linha.motivo) == (StatusDaMidia.FALHOU, MotivoDaMidia.RECUSADA_PELA_META)
+

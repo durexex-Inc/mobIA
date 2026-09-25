@@ -6,7 +6,7 @@ esperar este job, e "recebi" continua verdade se o download falhar.
 O unico estado e a linha de `midias_recebidas`. Toda saida grava um estado
 terminal por `marcar`, que so muda linha ainda PENDENTE -- entao o job e
 idempotente para o re-enqueue da varredura, e perde de forma limpa a corrida
-contra `expirar_pendentes`.
+contra `expirar_pendentes` e `esgotar_pendentes`.
 """
 
 import base64

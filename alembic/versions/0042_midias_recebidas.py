@@ -10,13 +10,22 @@ vocabulario de `messages` por um risco especifico (comparacao de literal cru
 em SQL) que nao existe aqui, e nenhuma tabela nova depois dela repetiu o
 CHECK so por ter vocabulario.
 
-`motivo` e String(32), e nao o String(64) da D2 (desvio deliberado, ver o
-relatorio da Task 3): o maior literal de `MotivoDaMidia` tem 20 caracteres, e
+`motivo` e String(32), e nao o String(64) que a D2 da spec dizia antes
+(desvio deliberado, registrado na propria D2 de
+`docs/superpowers/specs/2026-09-24-tec-132-midia-recebida-design.md`): o
+maior literal de `MotivoDaMidia` tem 20 caracteres, e
 `tarefas_de_corretor.motivo` (0039) ja usa String(32) para o mesmo tipo de
 vocabulario curto.
 
+`tentativas` conta os re-enfileiramentos da varredura, e nao os `Retry` do
+ARQ dentro de um job: e o que poe teto no reenvio de uma linha cuja falha
+nao passa pelo `Retry` (ver `TETO_DE_REENFILEIRAMENTOS`, em
+`workers/jobs/sweep_midias_pendentes.py`). Esta coluna entrou na propria 0042,
+e nao numa 0043, porque a 0042 ainda nao tinha sido mergeada.
+
 O indice parcial e o unico caminho de leitura por status: a varredura
-periodica (`pendentes_para_reenfileirar`, `expirar_pendentes`) le so
+periodica (`pendentes_para_reenfileirar`, `expirar_pendentes`,
+`esgotar_pendentes`) le so
 PENDENTE, e as tres outras linhas terminais nunca entram nesse WHERE.
 
 Revision ID: 0042
@@ -50,6 +59,7 @@ def upgrade() -> None:
         sa.Column("chave_no_armazem", sa.String(255), nullable=True),
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("motivo", sa.String(32), nullable=True),
+        sa.Column("tentativas", sa.Integer(), nullable=False, server_default="0"),
         sa.Column(
             "criado_em",
             sa.DateTime(timezone=True),

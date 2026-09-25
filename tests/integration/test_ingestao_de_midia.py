@@ -59,6 +59,9 @@ async def test_imagem_gera_midia_pendente_e_job(session, redis_pool) -> None:
     assert linha is not None
     assert linha.status == StatusDaMidia.PENDENTE
     assert linha.media_id_da_meta == "media-1"
+    # O enfileiramento da ingestao e o primeiro, nao um re-enfileiramento: so
+    # a varredura conta contra o teto (`TETO_DE_REENFILEIRAMENTOS`).
+    assert linha.tentativas == 0
     assert await redis_pool.zscore("arq:queue", f"midia:{message_id}") is not None
 
 
@@ -105,7 +108,7 @@ async def test_documento_gera_midia_pendente(session, redis_pool) -> None:
     assert linha.status == StatusDaMidia.PENDENTE
     assert linha.media_id_da_meta == "media-2"
     assert linha.mime_type == "application/pdf"
-    # O nome do arquivo nao vira coluna (D2 da Task 3): a tabela nao tem
+    # O nome do arquivo nao vira coluna (D2 da spec): a tabela nao tem
     # `filename` nenhum para gravar, cifrado ou nao -- so `raw_payload`
     # (em `messages`) carrega o que o envelope mandou.
     assert not hasattr(MidiaRecebida, "filename")

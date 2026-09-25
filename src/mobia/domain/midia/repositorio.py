@@ -100,29 +100,86 @@ async def pendentes_para_reenfileirar(
     *,
     mais_velhas_que: timedelta,
     mais_novas_que: timedelta,
+    teto: int,
     limite: int,
 ) -> list[uuid.UUID]:
-    """As PENDENTE na janela de reenfileiramento (D3): velhas o bastante para
-    supor que o enfileiramento original se perdeu, novas o bastante para a
-    midia da Meta ainda existir. Fora da janela pelos dois lados fica de fora
-    -- as mais novas porque o job pode so estar em voo, as mais velhas porque
-    `expirar_pendentes` e quem trata essas.
+    """Reivindica as PENDENTE na janela de reenfileiramento (D3), contando a
+    tentativa de cada uma, e devolve quais.
+
+    A janela: velhas o bastante para supor que o enfileiramento original se
+    perdeu, novas o bastante para a midia da Meta ainda existir. Fora da
+    janela pelos dois lados fica de fora -- as mais novas porque o job pode so
+    estar em voo, as mais velhas porque `expirar_pendentes` e quem trata
+    essas. E so as abaixo do `teto` de `tentativas`: as que chegaram nele sao
+    de `esgotar_pendentes`.
+
+    **Conta ao reivindicar, num UPDATE so, e nao depois do enqueue.** O
+    `tentativas + 1` e expressao SQL com `RETURNING`, entao duas passadas
+    concorrentes nunca leem o mesmo valor e somam um so. O preco e contar
+    tambem a passada em que o enqueue nao criou job novo (o `_job_id` ainda
+    estava na fila, ou o Redis falhou) -- o contador mede passadas que
+    tentaram, e nao jobs que rodaram. E o lado certo do erro para um teto que
+    existe para limitar chamadas a Graph API: ele nunca deixa passar mais do
+    que promete.
     """
     agora = datetime.now(UTC)
+    reivindicaveis = (
+        select(MidiaRecebida.message_id)
+        .where(MidiaRecebida.status == StatusDaMidia.PENDENTE)
+        .where(MidiaRecebida.tentativas < teto)
+        .where(MidiaRecebida.criado_em <= agora - mais_velhas_que)
+        .where(MidiaRecebida.criado_em >= agora - mais_novas_que)
+        # `message_id` como desempate: linhas gravadas na mesma transacao
+        # (mesmo lote de ingestao) podem cair no mesmo `criado_em`, e sem
+        # um segundo criterio a ordem entre elas fica ao sabor do plano de
+        # execucao -- o `limite` cortaria um subconjunto nao determinista.
+        .order_by(MidiaRecebida.criado_em, MidiaRecebida.message_id)
+        .limit(limite)
+    )
     async with session_factory() as session:
         linhas = await session.execute(
-            select(MidiaRecebida.message_id)
+            update(MidiaRecebida)
+            .where(MidiaRecebida.message_id.in_(reivindicaveis.scalar_subquery()))
+            # Repetido do subselect pela mesma razao de `marcar`: quem arbitra
+            # e o WHERE do proprio UPDATE, e nao a leitura que o precedeu.
             .where(MidiaRecebida.status == StatusDaMidia.PENDENTE)
-            .where(MidiaRecebida.criado_em <= agora - mais_velhas_que)
-            .where(MidiaRecebida.criado_em >= agora - mais_novas_que)
-            # `message_id` como desempate: linhas gravadas na mesma transacao
-            # (mesmo lote de ingestao) podem cair no mesmo `criado_em`, e sem
-            # um segundo criterio a ordem entre elas fica ao sabor do plano de
-            # execucao -- o `limite` cortaria um subconjunto nao determinista.
-            .order_by(MidiaRecebida.criado_em, MidiaRecebida.message_id)
-            .limit(limite)
+            .where(MidiaRecebida.tentativas < teto)
+            .values(tentativas=MidiaRecebida.tentativas + 1)
+            .returning(MidiaRecebida.criado_em, MidiaRecebida.message_id)
         )
-        return list(linhas.scalars().all())
+        reivindicadas = linhas.all()
+        await session.commit()
+    # `RETURNING` nao preserva a ordem do subselect; a ordem de enfileirar e
+    # a mesma do corte do `limite`, as mais velhas primeiro.
+    return [message_id for _, message_id in sorted(reivindicadas)]
+
+
+async def esgotar_pendentes(session_factory: async_sessionmaker[AsyncSession], *, teto: int) -> int:
+    """Fecha como FALHOU/TENTATIVAS_ESGOTADAS as PENDENTE que ja foram
+    re-enfileiradas `teto` vezes. Devolve quantas fechou.
+
+    Mesmo motivo que o job usa para o `Retry` esgotado, de proposito: para
+    quem le a linha, "tentou e nao conseguiu" e a mesma historia, venha o
+    limite do ARQ ou da varredura. Um job da ultima reivindicacao que so
+    termine depois disto perde a corrida em `marcar`, como perde contra
+    `expirar_pendentes`.
+    """
+    async with session_factory() as session:
+        resultado = cast(
+            CursorResult[Any],
+            await session.execute(
+                update(MidiaRecebida)
+                .where(MidiaRecebida.status == StatusDaMidia.PENDENTE)
+                .where(MidiaRecebida.tentativas >= teto)
+                .values(
+                    status=StatusDaMidia.FALHOU,
+                    motivo=MotivoDaMidia.TENTATIVAS_ESGOTADAS,
+                    atualizado_em=datetime.now(UTC),
+                )
+            ),
+        )
+        await session.commit()
+        return resultado.rowcount
 
 
 async def expirar_pendentes(

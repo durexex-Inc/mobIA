@@ -149,6 +149,7 @@ async def test_pendente_antiga_e_reenfileiravel_e_nova_nao(session) -> None:
         fabrica,
         mais_velhas_que=timedelta(minutes=10),
         mais_novas_que=timedelta(days=7),
+        teto=6,
         limite=10,
     )
 
@@ -171,6 +172,7 @@ async def test_pendente_de_oito_dias_expira(session) -> None:
         fabrica,
         mais_velhas_que=timedelta(minutes=10),
         mais_novas_que=timedelta(days=30),
+        teto=6,
         limite=10,
     )
     assert message_id not in pendentes
@@ -186,6 +188,7 @@ async def test_armazenada_nunca_e_reenfileirada(session) -> None:
         fabrica,
         mais_velhas_que=timedelta(minutes=10),
         mais_novas_que=timedelta(days=7),
+        teto=6,
         limite=10,
     )
 
