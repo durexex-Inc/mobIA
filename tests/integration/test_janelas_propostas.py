@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from mobia.domain.agendamento.janelas import Intervalo, JanelaAlocada, TipoDeCompromisso
-from mobia.domain.agendamento.models import JanelaProposta
+from mobia.domain.agendamento.models import Agendamento, JanelaProposta, StatusDoAgendamento
 from mobia.domain.agendamento.propostas import apagar, gravar, ler
 from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
 
@@ -203,3 +203,67 @@ async def test_o_unique_recusa_dois_ordinais_iguais(session, semear_corretor) ->
         )
     with pytest.raises(IntegrityError):
         await session.flush()
+
+
+async def test_a_remarcacao_em_curso_sobrevive_a_ida_e_volta(session, semear_corretor) -> None:
+    """TEC-372, D4: e `remarcando_id` que da destino a rodada.
+
+    Sem ele, a escolha do lead reservaria um agendamento novo em vez de
+    remarcar o que ele ja tem -- e o original ficaria de pe, com dois
+    compromissos no lugar de um.
+    """
+    corretor = await semear_corretor(email="h@x.com")
+    agora = datetime.now(UTC)
+    inicio = agora + timedelta(hours=4)
+    original = Agendamento(
+        id=uuid.uuid4(),
+        corretor_id=corretor.id,
+        channel=CANAL,
+        conversation_key=LEAD,
+        imovel_id=None,
+        tipo=str(TipoDeCompromisso.VISITA_PRESENCIAL),
+        inicio=inicio,
+        fim=inicio + timedelta(hours=1),
+        status=StatusDoAgendamento.CONFIRMADO,
+        reservado_ate=agora,
+        criado_em=agora,
+        confirmado_em=agora,
+        motivo_da_alocacao=str(MotivoDaAlocacao.MATCH_EXATO),
+    )
+    session.add(original)
+    await session.commit()
+
+    await gravar(
+        session,
+        channel=CANAL,
+        conversation_key=LEAD,
+        janelas=[_janela(corretor.id, daqui_a_horas=28)],
+        tipo=TipoDeCompromisso.VISITA_PRESENCIAL,
+        imovel_id=None,
+        agora=agora,
+        remarcando_id=original.id,
+    )
+    await session.commit()
+
+    (lida,) = await ler(session, channel=CANAL, conversation_key=LEAD, agora=agora)
+    assert lida.remarcando_id == original.id
+    # E o original nao foi tocado: so vira REAGENDADO quando o lead escolher.
+    assert original.status == StatusDoAgendamento.CONFIRMADO
+    assert original.presenca_confirmada_em is None
+
+
+async def test_sem_remarcacao_o_campo_e_nulo(session, semear_corretor) -> None:
+    corretor = await semear_corretor(email="i@x.com")
+    agora = datetime.now(UTC)
+    await gravar(
+        session,
+        channel=CANAL,
+        conversation_key=LEAD,
+        janelas=[_janela(corretor.id, daqui_a_horas=4)],
+        tipo=TipoDeCompromisso.VISITA_PRESENCIAL,
+        imovel_id=None,
+        agora=agora,
+    )
+    await session.commit()
+    (lida,) = await ler(session, channel=CANAL, conversation_key=LEAD, agora=agora)
+    assert lida.remarcando_id is None
