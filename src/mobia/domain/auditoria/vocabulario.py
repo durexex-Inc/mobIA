@@ -1,9 +1,14 @@
 """O vocabulario fechado da trilha de auditoria. TEC-206, D2 e D5 do desenho.
 
 Modulo sem I/O, no molde de `handoff/vocabulario.py`. Os tres enums tem copia
-literal nos CHECKs da migration 0053 -- a migration nao importa daqui, porque
+literal nos CHECKs de uma migration -- a migration nao importa daqui, porque
 migration aplicada nao muda quando o codigo muda --, e quem prende as duas
 copias juntas e `tests/unit/test_auditoria_vocabulario.py`.
+
+**Nem sempre a MESMA migration, desde a TEC-195.** A 0053 escreveu os tres; a
+0056 acrescentou `lead` a `Entidade` e teve de RECRIAR o CHECK, porque o
+Postgres nao estende CHECK. Entao o vocabulario em vigor e o da migration mais
+recente que escreve cada um, e e assim que aquele teste procura.
 
 **`detalhes` so e montado pelas funcoes deste modulo** (D5): cada valor sai de
 um vocabulario fechado, e texto digitado por uma pessoa nunca entra. Texto

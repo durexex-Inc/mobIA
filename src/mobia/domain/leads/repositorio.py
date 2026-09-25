@@ -1,4 +1,5 @@
-"""A consulta da lista de leads. TEC-192, RF-18 e RN-18.1.
+"""A lista de leads, o apelido opaco de cada um e o dado que so a revelacao
+mostra. TEC-192 e TEC-195, RF-18, RN-18.1 e RN-18.5.
 
 **A espinha dorsal e `messages`, e nao `conversas`** (D1 do desenho). Parece
 contraintuitivo e nao e: o unico INSERT de `conversas` esta em
