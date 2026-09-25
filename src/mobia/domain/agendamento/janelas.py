@@ -4,10 +4,11 @@ Puro: nao toca banco, rede nem relogio -- `agora` entra como parametro, como
 em todo o dominio. **Nenhum caminho de producao chega aqui ainda:** os
 chamadores sao `janelas_para`, em `data_falada.py` (TEC-167), e
 `reservar_ou_alternativas`, em `repositorio.py` (TEC-168) -- nenhum dos dois
-tem chamador de producao. A gravacao ja existe (TEC-168); falta a quem
-atribuir o agendamento (TEC-166) e a ligacao com o turno para a conversa
-passar a oferecer horario de verdade; oferecer antes disso seria prometer o
-que o sistema nao faz. Ver docs/superpowers/specs/2026-09-24-tec-165-propor-janelas-design.md.
+tem chamador de producao, e `janelas_alocadas`, deste modulo, tambem nao.
+A gravacao (TEC-168) e a escolha do corretor (TEC-166) ja existem; falta a
+ligacao com o turno para a conversa passar a oferecer horario de verdade;
+oferecer antes disso seria prometer o que o sistema nao faz. Ver
+docs/superpowers/specs/2026-09-24-tec-165-propor-janelas-design.md.
 """
 
 import uuid

@@ -101,8 +101,8 @@ def test_filtro_ausente_fica_nulo() -> None:
 
 def test_sem_corretor_o_recorte_nasce_com_o_campo_nulo() -> None:
     """O campo continua existindo no `Recorte` -- a consulta que o consome ja
-    esta escrita e correta, esperando a TEC-166. O que a borda recusa e o
-    PEDIDO, nao a forma do recorte.
+    esta escrita e correta, esperando quem escreva `handoffs.corretor_id`. O
+    que a borda recusa e o PEDIDO, nao a forma do recorte.
     """
     recorte = montar_recorte(de=date(2026, 8, 1), ate=date(2026, 8, 22), fuso=SAO_PAULO)
 
@@ -112,8 +112,9 @@ def test_sem_corretor_o_recorte_nasce_com_o_campo_nulo() -> None:
 def test_filtro_por_corretor_e_recusado_enquanto_ninguem_aloca() -> None:
     """`handoffs.corretor_id` NUNCA e escrito em producao.
 
-    A Emenda E-01 da RN-16.2 diz isso por extenso -- alocar corretor e a
-    TEC-166, que nao existe --, entao a coluna e nula em toda linha. Filtrar
+    A Emenda E-01 da RN-16.2 diz isso por extenso, e a TEC-166 nao mudou
+    isso -- ela aloca corretor ao agendamento, nao ao handoff --, entao a
+    coluna e nula em toda linha. Filtrar
     por ela devolvia 200 com o funil inteiro zerado, e a gerente leria
     "este corretor nao recebeu lead nenhum" sobre QUALQUER corretor.
 
@@ -129,4 +130,4 @@ def test_filtro_por_corretor_e_recusado_enquanto_ninguem_aloca() -> None:
         )
 
     assert erro.value.campo == "corretorId"
-    assert "TEC-166" in str(erro.value)
+    assert "o funil ainda nao sabe qual corretor atende cada handoff" in str(erro.value)

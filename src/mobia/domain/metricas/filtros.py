@@ -77,21 +77,23 @@ def montar_recorte(
 
     # **`handoffs.corretor_id` NUNCA e escrito em producao.** A Emenda E-01
     # da RN-16.2 diz isso por extenso: a coluna tem FK desde a TEC-196 e
-    # alocar corretor e a TEC-166, que nao existe. A coluna e nula em toda
-    # linha, entao o filtro devolvia 200 com o funil inteiro zerado -- e a
-    # gerente leria "este corretor nao recebeu lead nenhum" sobre QUALQUER
-    # corretor, inclusive o que aceitou dezenas de handoffs no mes.
+    # nunca e escrita. A TEC-166 nao mudou isso -- ela aloca corretor ao
+    # agendamento, nao ao handoff. A coluna e nula em toda linha, entao o
+    # filtro devolvia 200 com o funil inteiro zerado -- e a gerente leria
+    # "este corretor nao recebeu lead nenhum" sobre QUALQUER corretor,
+    # inclusive o que aceitou dezenas de handoffs no mes.
     #
     # Recusar e melhor que o zero universal pela mesma razao da D1: zero com
     # cara de medicao e pior que ausencia declarada. A consulta que consome
-    # `Recorte.corretor_id` continua escrita e testada, esperando a TEC-166 --
-    # o que se recusa aqui e o PEDIDO, nao a forma do recorte.
+    # `Recorte.corretor_id` continua escrita e testada, esperando quem escreva
+    # `handoffs.corretor_id` -- o que se recusa aqui e o PEDIDO, nao a forma
+    # do recorte.
     if corretor_id is not None:
         raise FiltroInvalido(
             "corretorId",
-            "o filtro por corretor ainda nao funciona: ninguem aloca corretor ao handoff "
-            "ate a TEC-166, entao a coluna e nula em toda linha e o funil sairia zerado "
-            "para qualquer corretor",
+            "o filtro por corretor ainda nao funciona: o funil ainda nao sabe qual "
+            "corretor atende cada handoff, entao a coluna e nula em toda linha e o funil "
+            "sairia zerado para qualquer corretor",
         )
 
     return Recorte(

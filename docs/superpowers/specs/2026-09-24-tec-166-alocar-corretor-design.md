@@ -1,6 +1,6 @@
 # TEC-166 — Alocar o corretor por especialidade e região
 
-**Status:** desenho aprovado em conversa, aguardando revisão do texto
+**Status:** implementado
 **Card:** [TEC-166](https://eduardodurieuxlopes.atlassian.net/browse/TEC-166) — épico TEC-164
 **Branch:** `feat/tec-166-alocar-corretor`
 **Origem:** RF-11, RN-11.2; RN-07.4 (SRS v1.0).

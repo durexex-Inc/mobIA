@@ -1,7 +1,9 @@
 """A contagem de visitas por data local, no banco. TEC-166, D6 do desenho.
 
-27/08/2026 e uma quinta. As linhas entram direto pelo modelo: o que se testa
-aqui e a leitura, nao a reserva.
+27/08/2026 e uma quinta. Nos testes da contagem as linhas entram direto pelo
+modelo: o que se testa neles e a leitura, nao a reserva. Os dois ultimos
+testam a escrita do motivo: `reservar` o grava, e o CHECK da 0045 recusa o
+que esta fora do vocabulario.
 """
 
 import uuid

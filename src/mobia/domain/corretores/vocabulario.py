@@ -26,9 +26,9 @@ class Especialidade(StrEnum):
 
     **As tres primeiras sao grafadas identicas aos membros de `Intencao`**
     (`domain/agente/schemas.py`), e isso e deliberado: e por igualdade de
-    string que a TEC-166 vai mapear intencao do lead para especialidade do
-    corretor, sem tabela de traducao. Tabela de traducao seria um segundo
-    lugar para a mesma verdade divergir.
+    string que `criterio_de` (`agendamento/alocacao.py`, TEC-166) mapeia
+    intencao do lead para especialidade do corretor, sem tabela de traducao.
+    Tabela de traducao seria um segundo lugar para a mesma verdade divergir.
 
     **Nao reusa o enum `Intencao`** porque os conjuntos nao coincidem:
     `Intencao` tem VENDER_IMOVEL, SUPORTE_CONTRATO, INDEFINIDA e
@@ -61,11 +61,10 @@ def especialidade_de(ticket_centavos: int) -> Especialidade:
     `>=` e nao `>`: a regra diz "a partir de R$ 1.000.000", entao o limiar
     pertence ao alto ticket.
 
-    **Nasce sem chamador, e isso e declarado.** Alocar corretor e a TEC-166, e
-    a TEC-153 poe a alocacao fora de escopo -- o Gherkin dela diz "quando o
-    corretor e alocado", um passo que ainda nao existe. E a mesma situacao em
-    que `Gatilho.LIMITE_DE_PERGUNTAS` ficou desde a TEC-174 ate a TEC-149
-    chegar: a regra existe, testada, esperando quem a chame.
+    **Nasceu sem chamador**, porque a TEC-153 pos a alocacao fora de escopo.
+    O chamador veio com a TEC-166: `criterio_de` (`agendamento/alocacao.py`),
+    so quando o lead e de investimento e o ticket e conhecido. Nenhum caminho
+    de producao chama `criterio_de` ainda.
     """
     if ticket_centavos >= TICKET_DE_ALTO_TICKET_CENTAVOS:
         return Especialidade.INVESTIMENTO_ALTO_TICKET

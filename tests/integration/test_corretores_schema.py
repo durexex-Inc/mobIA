@@ -160,7 +160,7 @@ async def test_handoff_com_corretor_inexistente_e_recusado(session: AsyncSession
 
 
 async def test_corretor_continua_opcional_no_handoff(session: AsyncSession) -> None:
-    """A nulabilidade permanece: alocar e a TEC-166, nao esta card."""
+    """A nulabilidade permanece: nada escreve `handoffs.corretor_id` ainda."""
     session.add(
         Handoff(
             id=uuid.uuid4(),
