@@ -6,6 +6,7 @@ from typing import cast
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
@@ -26,7 +27,11 @@ async def _linhas(session: AsyncSession) -> list[dict]:
 
 async def test_o_gatilho_quente_cria_com_etiqueta_e_prioridade(session: AsyncSession) -> None:
     registro = await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     assert registro.criado is True
@@ -40,11 +45,19 @@ async def test_o_gatilho_quente_cria_com_etiqueta_e_prioridade(session: AsyncSes
 async def test_gatilho_repetido_nao_duplica_e_acumula(session: AsyncSession) -> None:
     """Cenario 2 do Gherkin."""
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     registro = await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.VENDA_IMOVEL
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.VENDA_IMOVEL,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     assert registro.criado is False
@@ -58,11 +71,19 @@ async def test_gatilho_repetido_nao_duplica_e_acumula(session: AsyncSession) -> 
 async def test_pedido_de_humano_escala_a_prioridade_de_um_aberto(session: AsyncSession) -> None:
     """Emenda E-01 da RN-16.1, e o caso que a RN-04.6 exige."""
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.PEDIDO_DE_HUMANO
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.PEDIDO_DE_HUMANO,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     linhas = await _linhas(session)
@@ -71,11 +92,19 @@ async def test_pedido_de_humano_escala_a_prioridade_de_um_aberto(session: AsyncS
 
 async def test_a_prioridade_nunca_desce(session: AsyncSession) -> None:
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.PEDIDO_DE_HUMANO
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.PEDIDO_DE_HUMANO,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     linhas = await _linhas(session)
@@ -85,15 +114,27 @@ async def test_a_prioridade_nunca_desce(session: AsyncSession) -> None:
 async def test_gatilhos_distintos_acumulam_na_ordem(session: AsyncSession) -> None:
     """Fix wave, Important 3. Tres gatilhos diferentes entram um a um, na ordem."""
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.VENDA_IMOVEL
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.VENDA_IMOVEL,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.SUPORTE_CONTRATO
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.SUPORTE_CONTRATO,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     linhas = await _linhas(session)
@@ -111,17 +152,29 @@ async def test_gatilho_repetido_nao_acumula_alem_de_um(session: AsyncSession) ->
     `gatilho`.
     """
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     for _ in range(3):
         await registrar_handoff(
-            session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.VENDA_IMOVEL
+            session,
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            gatilho=Gatilho.VENDA_IMOVEL,
+            ator=ATOR_AGENTE,
         )
         await session.commit()
     # O gatilho que criou o handoff, repetido, nao entra nos adicionais.
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     linhas = await _linhas(session)
@@ -131,10 +184,18 @@ async def test_gatilho_repetido_nao_acumula_alem_de_um(session: AsyncSession) ->
 
 async def test_conversas_diferentes_tem_handoffs_diferentes(session: AsyncSession) -> None:
     await registrar_handoff(
-        session, channel=CANAL, conversation_key=CONVERSA, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await registrar_handoff(
-        session, channel=CANAL, conversation_key="5511900000000", gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel=CANAL,
+        conversation_key="5511900000000",
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     assert len(await _linhas(session)) == 2
@@ -162,7 +223,7 @@ async def test_duas_escritas_concorrentes_produzem_uma_linha(
     async def escrever(gatilho: Gatilho) -> bool:
         async with session_factory() as propria:
             registro = await registrar_handoff(
-                propria, channel=CANAL, conversation_key=CONVERSA, gatilho=gatilho
+                propria, channel=CANAL, conversation_key=CONVERSA, gatilho=gatilho, ator=ATOR_AGENTE
             )
             await propria.commit()
             return registro.criado
@@ -185,7 +246,11 @@ async def test_duas_escritas_concorrentes_produzem_uma_linha(
 
 async def test_registrar_devolve_o_id_da_linha_criada(session: AsyncSession) -> None:
     registro = await registrar_handoff(
-        session, channel="whatsapp", conversation_key="5511911112222", gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel="whatsapp",
+        conversation_key="5511911112222",
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 
@@ -205,7 +270,11 @@ async def test_o_gatilho_adicional_devolve_o_id_do_handoff_ABERTO(
     fantasma.
     """
     primeiro = await registrar_handoff(
-        session, channel="whatsapp", conversation_key="5511911112222", gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel="whatsapp",
+        conversation_key="5511911112222",
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 
@@ -214,6 +283,7 @@ async def test_o_gatilho_adicional_devolve_o_id_do_handoff_ABERTO(
         channel="whatsapp",
         conversation_key="5511911112222",
         gatilho=Gatilho.PEDIDO_DE_HUMANO,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 

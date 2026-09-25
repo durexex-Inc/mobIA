@@ -8,6 +8,7 @@ setado dentro de dois handlers, e so deles; agora quem o preenche e o
 **A ordem em que os dois entram em `create_app` importa, e esta explicada la.**
 """
 
+import ipaddress
 import math
 import re
 import uuid
@@ -19,6 +20,7 @@ from starlette.responses import Response
 
 from mobia.app.config import get_settings
 from mobia.app.logging import correlation_id
+from mobia.domain.auditoria.registro import Origem
 from mobia.domain.limites.eventos import registrar_bloqueio
 from mobia.domain.limites.models import CHANNEL_HTTP, ESCOPO_IP
 from mobia.infra.db import get_sessionmaker
@@ -121,6 +123,44 @@ def resolver_ip(
     if socket_host:
         return socket_host[:_TAMANHO_MAXIMO_DA_CHAVE]
     return None
+
+
+def ip_valido_ou_nulo(texto: str | None) -> str | None:
+    """O endereco, se for um IP; nulo, se nao for. TEC-206.
+
+    `resolver_ip` devolve o que o socket ou o `X-Forwarded-For` disserem -- um
+    `1.2.3.4:5678`, o `testclient` do Starlette, lixo. Para o limitador tanto
+    faz: e so uma chave. Para a trilha nao: a coluna e `inet`, e um valor que
+    nao e endereco viraria `DataError` no INSERT, transformando um 403 em 500.
+    Melhor um `ip` nulo e verdadeiro que um registro que nao existe.
+
+    O IPv6 com zona (`fe80::1%eth0`) e endereco para o `ipaddress`, mas o
+    `inet` recusa o `%zona` -- e vira nulo pela mesma razao.
+    """
+    if not texto:
+        return None
+    try:
+        endereco = ipaddress.ip_address(texto)
+    except ValueError:
+        return None
+    if isinstance(endereco, ipaddress.IPv6Address) and endereco.scope_id is not None:
+        return None
+    return str(endereco)
+
+
+def origem_da_requisicao(request: Request) -> Origem:
+    """De onde veio a requisicao, para a trilha de auditoria. TEC-206, D7.
+
+    O IP pela MESMA regra do limitador (`resolver_ip`), e o `correlation_id`
+    pelo contextvar que `CorrelacaoDeRequisicao` preencheu -- o vazio do
+    default vira nulo, e nao uma string vazia gravada.
+    """
+    ip = resolver_ip(
+        socket_host=request.client.host if request.client else None,
+        forwarded_for=request.headers.get("x-forwarded-for"),
+        confiar_em_forwarded_for=get_settings().confiar_em_forwarded_for,
+    )
+    return Origem(ip=ip_valido_ou_nulo(ip), correlation_id=correlation_id.get() or None)
 
 
 # Isentas, e cada uma por uma razao propria.

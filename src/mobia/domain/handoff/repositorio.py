@@ -9,6 +9,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agente.models import Recomendacao
+from mobia.domain.auditoria.registro import registrar_evento
+from mobia.domain.auditoria.vocabulario import Acao, Ator, Entidade, detalhes_do_handoff
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.handoff.dossie import Dossie, ImovelApresentado
@@ -42,6 +44,7 @@ async def registrar_handoff(
     channel: str,
     conversation_key: str,
     gatilho: Gatilho,
+    ator: Ator,
 ) -> HandoffRegistrado:
     """Cria o handoff da conversa, ou acumula o gatilho no que ja esta aberto.
 
@@ -52,6 +55,14 @@ async def registrar_handoff(
     recalculo no gatilho QUENTE: ou o lead vira QUENTE e tem handoff, ou nem
     uma coisa nem outra. O estado intermediario -- lead quente, ninguem
     avisado -- e exatamente o que a card existe para impedir.
+
+    **E grava `HANDOFF_CRIADO` na trilha de auditoria, na mesma sessao, so
+    quando `criado`** (TEC-206, D7). Acumular gatilho num handoff aberto nao
+    e criacao. Como a funcao nao commita, o registro e o handoff entram ou
+    saem juntos -- nao ha handoff sem registro, nem registro de handoff
+    desfeito. `ator` e obrigatorio e sem default: cada sitio de chamada
+    declara o seu (AGENTE no turno, SISTEMA em `process_message`), e um
+    default faria o sitio novo herdar um ator que nao e o dele.
 
     **Um statement, e nao um SELECT seguido de INSERT.** A corrida e prevista:
     `turno.py` declara que `lead.esquentou` reemite para o MESMO lead desde a
@@ -147,6 +158,16 @@ async def registrar_handoff(
     # RETURNING devolve a linha que de fato existe no banco -- a recem-criada
     # ou a que ja estava aberta, conforme `inseriu`.
     linha = resultado.one()
+    if linha.inseriu:
+        await registrar_evento(
+            session,
+            ator=ator,
+            acao=Acao.HANDOFF_CRIADO,
+            entidade=Entidade.HANDOFF,
+            entidade_id=str(linha.id),
+            lead=(channel, conversation_key),
+            detalhes=detalhes_do_handoff(gatilho),
+        )
     return HandoffRegistrado(id=linha.id, criado=linha.inseriu)
 
 
@@ -234,21 +255,19 @@ async def carregar_dossie(session: AsyncSession, *, handoff_id: uuid.UUID) -> Do
     # tupla (`dossie.imoveis[-teto:]`) -- inverter esta ordem para descendente
     # inverteria qual ponta vira "os mais recentes" sem nenhum sinal aqui.
     # `renderizar` recebe a lista inteira e nao depende da ordem.
+    # Sem `.tuples()`, que a SQLAlchemy 2.1 deprecou: a `Row` ja desempacota
+    # como tupla no `for recomendacao, imovel` la embaixo.
     recomendacoes = (
-        (
-            await session.execute(
-                select(Recomendacao, Imovel)
-                .join(Imovel, Imovel.id == Recomendacao.imovel_id)
-                .where(
-                    Recomendacao.channel == handoff.channel,
-                    Recomendacao.conversation_key == handoff.conversation_key,
-                )
-                .order_by(Recomendacao.apresentado_em)
+        await session.execute(
+            select(Recomendacao, Imovel)
+            .join(Imovel, Imovel.id == Recomendacao.imovel_id)
+            .where(
+                Recomendacao.channel == handoff.channel,
+                Recomendacao.conversation_key == handoff.conversation_key,
             )
+            .order_by(Recomendacao.apresentado_em)
         )
-        .tuples()
-        .all()
-    )
+    ).all()
 
     origem = (
         await session.execute(

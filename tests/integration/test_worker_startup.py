@@ -215,6 +215,8 @@ def _producao(monkeypatch: pytest.MonkeyPatch) -> None:
     # o teste passaria pelo motivo errado -- exatamente o que o docstring acima
     # ja dizia das outras duas.
     monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
+    # TEC-206: a quarta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
+    monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
 
 
@@ -476,3 +478,29 @@ async def test_desenvolvimento_com_armazem_local_nao_avisa(
     await startup({"redis": object()})
 
     assert _avisos_de_midia(gravador) == []
+
+
+def test_sweep_retencao_auditoria_esta_registrado_no_cron_das_quatro() -> None:
+    """TEC-206, D6. Sem este teste, apagar a entrada `cron(...)` nao quebra nada:
+    os testes de `test_retencao_da_auditoria.py` chamam a funcao direto, e a
+    trilha passaria a crescer para sempre -- que e o contrario do maximo de 12
+    meses. Uma hora depois do `sweep_conversas_inativas`."""
+    from mobia.workers.jobs.sweep_retencao_auditoria import (
+        SWEEP_RETENCAO_AUDITORIA_JOB,
+        sweep_retencao_auditoria,
+    )
+    from mobia.workers.main import WorkerSettings
+
+    registrada = next(
+        f
+        for f in WorkerSettings.functions
+        if getattr(f, "name", None) == SWEEP_RETENCAO_AUDITORIA_JOB
+    )
+    assert registrada.keep_result_s == 0
+
+    candidatos = [
+        job for job in WorkerSettings.cron_jobs if job.coroutine is sweep_retencao_auditoria
+    ]
+    assert len(candidatos) == 1
+    assert candidatos[0].hour == {4}
+    assert candidatos[0].minute == {0}

@@ -24,6 +24,7 @@ from mobia.app.main import create_app
 from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import Urgencia
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.context.resumo import ResumoGerado
@@ -229,6 +230,11 @@ TABELAS = (
     # "8 dias atras") continuaria ali para o proximo teste, que a contaria
     # como se fosse sua.
     "midias_recebidas",
+    # TEC-206. Append-only como `lead_score_audit`, e nada a apaga em producao
+    # antes de 12 meses: sem o truncate, o registro de um teste vira trilha do
+    # proximo. TRUNCATE nao dispara os triggers de linha da 0052 -- e por isso
+    # a D3 do desenho nao o bloqueia.
+    "eventos_auditoria",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
@@ -836,7 +842,7 @@ async def _comando_de_truncate(sessao: AsyncSession) -> str:
 # Sem ele a espera e INFINITA: o padrao do Postgres e `lock_timeout = 0`, o
 # `docker-compose.yml` nao sobrescreve, e foi essa ausencia que deixou uma
 # execucao parada ~10 horas (TEC-291). O `TRUNCATE` e onde a falta de teto doi
-# mais, porque ele exige `ACCESS EXCLUSIVE` nas 19 tabelas de `TABELAS` e roda
+# mais, porque ele exige `ACCESS EXCLUSIVE` em toda tabela de `TABELAS` e roda
 # antes de CADA teste que toca banco: basta um backend com um `SELECT` aberto
 # em qualquer uma delas -- um `ACCESS SHARE` -- para pendurar a suite inteira.
 _ESPERA_MAXIMA_PELO_LOCK = "10s"
@@ -908,7 +914,7 @@ async def banco_limpo(request: pytest.FixtureRequest) -> AsyncIterator[None]:
     NOMEIA quem segura. Ver `_ESPERA_MAXIMA_PELO_LOCK` e `_quem_segura_o_lock`:
     esta fixture era o ponto da suite onde uma contencao momentanea virava
     espera infinita, porque ela pede o lock mais largo que existe aqui
-    (`ACCESS EXCLUSIVE` em 19 tabelas) com a frequencia mais alta que existe
+    (`ACCESS EXCLUSIVE` em toda tabela de `TABELAS`) com a frequencia mais alta que existe
     aqui (antes de cada teste que toca banco).
 
     Sai cedo para `tests/unit/` desde 12/09/2026. O custo era por teste da suite
@@ -1171,6 +1177,7 @@ def semear_lead_completo(session: AsyncSession):
             channel=CANAL_AGENTE,
             conversation_key=CONVERSA_AGENTE,
             gatilho=Gatilho.LEAD_QUENTE,
+            ator=ATOR_AGENTE,
         )
         await session.commit()
         return registro.id
@@ -1241,7 +1248,11 @@ def semear_handoff_com_resumo(session: AsyncSession):
         conversa: str = "5511900000000",
     ) -> uuid.UUID:
         registro = await registrar_handoff(
-            session, channel=canal, conversation_key=conversa, gatilho=Gatilho.LEAD_QUENTE
+            session,
+            channel=canal,
+            conversation_key=conversa,
+            gatilho=Gatilho.LEAD_QUENTE,
+            ator=ATOR_AGENTE,
         )
         if resumo is not None:
             await gravar_resumo(

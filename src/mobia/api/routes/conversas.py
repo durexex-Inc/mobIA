@@ -77,7 +77,7 @@ class PedidoDeAtendimento(BaseModel):
         return valor
 
 
-def _exigir_que_seja_ele_mesmo(
+async def _exigir_que_seja_ele_mesmo(
     request: Request, identidade: IdentidadeDaRequisicao, corretor_id: uuid.UUID
 ) -> None:
     """O CORRETOR so assume e devolve em nome de si mesmo. TEC-202, D5.
@@ -87,7 +87,9 @@ def _exigir_que_seja_ele_mesmo(
     corretor um oraculo sobre o cadastro dos colegas: 404 para id que nao
     existe, 403 para id que existe. Autorizacao antes de existencia.
     """
-    exigir_dono(request, identidade, permissao=Permissao.ATENDER_LEAD, corretor_id=corretor_id)
+    await exigir_dono(
+        request, identidade, permissao=Permissao.ATENDER_LEAD, corretor_id=corretor_id
+    )
 
 
 async def _corretor_apto(session: AsyncSession, corretor_id: uuid.UUID) -> bool:
@@ -119,7 +121,7 @@ async def assumir(
     ver o comentario ao lado da constante, em `handoffs.py`, que agora
     tambem cita este segundo escritor.
     """
-    _exigir_que_seja_ele_mesmo(request, identidade, pedido.corretor_id)
+    await _exigir_que_seja_ele_mesmo(request, identidade, pedido.corretor_id)
 
     session_factory = get_sessionmaker()
     async with session_factory() as session:
@@ -194,7 +196,7 @@ async def devolver(
     microssegundos, do carimbo que o UPDATE de fato gravou -- melhor devolver
     so o que se sabe ser exato.
     """
-    _exigir_que_seja_ele_mesmo(request, identidade, pedido.corretor_id)
+    await _exigir_que_seja_ele_mesmo(request, identidade, pedido.corretor_id)
 
     session_factory = get_sessionmaker()
     async with session_factory() as session:

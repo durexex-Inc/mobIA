@@ -8,6 +8,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
@@ -164,6 +165,7 @@ async def test_as_colunas_da_notificacao_nascem_com_o_default_certo(
         channel="whatsapp",
         conversation_key="5511911112222",
         gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 
@@ -185,6 +187,7 @@ async def test_sla_limite_em_e_aceito_em_nascem_nulas(session: AsyncSession) -> 
         channel="whatsapp",
         conversation_key="5511911112222",
         gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 
@@ -204,6 +207,7 @@ async def test_resumo_fallback_nasce_falso(session: AsyncSession) -> None:
         channel="whatsapp",
         conversation_key="5511911112222",
         gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
 

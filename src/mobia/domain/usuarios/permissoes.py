@@ -35,6 +35,10 @@ class Permissao(StrEnum):
     VER_FUNIL = "VER_FUNIL"
     ATENDER_LEAD = "ATENDER_LEAD"
     VER_DADOS_COMPLETOS = "VER_DADOS_COMPLETOS"
+    # TEC-206, D8, para a tela da TEC-343: "Somente leitura; somente ADMIN".
+    # Nao aparece em `_CONCEDIDAS` -- o ADMIN a recebe por construcao, e
+    # nenhum outro papel a tem. Leitura, e por isso fora de `DE_ESCRITA`.
+    VER_AUDITORIA = "VER_AUDITORIA"
 
 
 # As permissoes que MUDAM estado. Existe para que o terceiro cenario do
@@ -54,7 +58,7 @@ DE_ESCRITA = frozenset(
 )
 
 # **`ADMIN` nao aparece aqui, de proposito** -- ele recebe o conjunto inteiro
-# em `permissoes_de`, por construcao. Repetir as seis linhas dele seria criar
+# em `permissoes_de`, por construcao. Repetir as linhas dele seria criar
 # a chance de alguem acrescentar uma permissao nova e esquecer uma das duas
 # copias; a que esqueceria e sempre a do papel que ja podia tudo.
 #

@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from mobia.app.config import (
     BYTES_MINIMOS_DO_JWT,
     CHAVE_DE_DESENVOLVIMENTO,
+    CHAVE_DO_LEAD_DE_DESENVOLVIMENTO,
     SEGREDO_DE_JWT_DE_DESENVOLVIMENTO,
     TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO,
     ConfiguracaoInsegura,
@@ -146,6 +147,9 @@ def test_producao_com_chave_propria_sobe(monkeypatch: pytest.MonkeyPatch) -> Non
     # TEC-201: a guarda do JWT dispararia depois desta e o teste morreria por
     # ela, nao pela chave que ele afirma.
     monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
+    # TEC-206: a quarta guarda do mesmo tipo. Sem isto ela dispara e o teste
+    # morre por ela, nao pelo que afirma.
+    monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
     settings = Settings(_env_file=None)
     assert settings.content_encryption_key == chave
 
@@ -187,6 +191,8 @@ def test_producao_com_token_de_catalogo_proprio_sobe(monkeypatch: pytest.MonkeyP
     token = "token-de-producao-gerado-com-secrets"
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
     monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
+    # TEC-206: a quarta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
+    monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", token)
     settings = Settings(_env_file=None)
@@ -774,3 +780,46 @@ def test_desenvolvimento_segue_com_o_segredo_de_jwt_de_desenvolvimento(
     monkeypatch.delenv("JWT_SEGREDO", raising=False)
 
     assert Settings(_env_file=None).jwt_segredo == SEGREDO_DE_JWT_DE_DESENVOLVIMENTO
+
+
+def test_producao_com_a_chave_do_lead_de_desenvolvimento_nao_sobe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEC-206, D4. Quem conhece a chave calcula o `lead_ref` de qualquer telefone.
+
+    E o mesmo modo de falha silencioso das outras guardas deste arquivo: a
+    trilha grava normalmente, so que qualquer um descobre se um numero aparece
+    nela. As tres guardas anteriores recebem valor proprio para nao dispararem
+    primeiro.
+    """
+    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
+    monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("AUDITORIA_CHAVE_DO_LEAD", raising=False)
+
+    with pytest.raises(ConfiguracaoInsegura) as erro:
+        Settings(_env_file=None)
+
+    assert "AUDITORIA_CHAVE_DO_LEAD" in str(erro.value)
+    assert CHAVE_DO_LEAD_DE_DESENVOLVIMENTO not in str(erro.value)
+
+
+def test_producao_com_chave_do_lead_propria_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
+    monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
+
+    assert Settings(_env_file=None).auditoria_chave_do_lead == "chave-do-lead-propria"
+
+
+def test_desenvolvimento_segue_com_a_chave_do_lead_de_desenvolvimento(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guarda nao pode travar a maquina de ninguem nem o CI."""
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.delenv("AUDITORIA_CHAVE_DO_LEAD", raising=False)
+
+    assert Settings(_env_file=None).auditoria_chave_do_lead == CHAVE_DO_LEAD_DE_DESENVOLVIMENTO

@@ -129,7 +129,7 @@ def test_as_rotas_de_auth_sao_as_unicas_publicas_da_api_v1() -> None:
 # `test_toda_rota_declara_autorizacao` passaria a acusar tudo, e seria dificil
 # confundir isso com aprovacao. O modo de falha silencioso e o inverso: uma
 # varredura que nao encontra rota nenhuma passa por vacuidade. Este mapa nao
-# passa: ele exige que cada uma das dez esteja la, com a permissao certa.
+# passa: ele exige que cada uma delas esteja la, com a permissao certa.
 PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/imoveis/importar"): "GERIR_CATALOGO",
     ("GET", "/api/v1/imoveis/importacoes/{importacao_id}"): "GERIR_CATALOGO",
@@ -144,6 +144,7 @@ PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/conversas/devolver"): "ATENDER_LEAD",
     ("GET", "/api/v1/metricas/funil"): "VER_FUNIL",
     ("GET", "/api/v1/leads"): "VER_LEADS",
+    ("GET", "/api/v1/auditoria"): "VER_AUDITORIA",
 }
 
 

@@ -93,6 +93,17 @@ def test_todo_papel_pode_alguma_coisa(papel: str) -> None:
     assert permissoes_de(papel)
 
 
+def test_ver_auditoria_e_so_do_admin() -> None:
+    """TEC-206, D8, e a TEC-343: "Somente leitura; somente ADMIN".
+
+    So o ADMIN, por construcao: a permissao nao aparece em `_CONCEDIDAS`. E
+    leitura -- fora de `DE_ESCRITA`, e por isso o terceiro cenario da TEC-202
+    nao a toca.
+    """
+    assert papeis_com(Permissao.VER_AUDITORIA) == frozenset({"ADMIN"})
+    assert Permissao.VER_AUDITORIA not in DE_ESCRITA
+
+
 def test_papel_desconhecido_nao_pode_nada() -> None:
     """Fail-closed, e sem levantar.
 

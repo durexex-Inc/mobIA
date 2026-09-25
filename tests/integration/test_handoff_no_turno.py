@@ -97,3 +97,26 @@ async def test_suporte_contrato_tem_etiqueta_propria(
     )
     linhas = await _handoffs(session)
     assert linhas[0]["etiqueta"] == "suporte-contrato"
+
+
+async def test_o_handoff_do_turno_e_registrado_como_do_agente(
+    session, rodar_turno, classificador_fake, outbound_fake, resumidor_fake, contador_fake
+) -> None:
+    """TEC-206, D7: cada sitio de `registrar_handoff` declara o seu ator; no turno, AGENTE."""
+    await rodar_turno(
+        session,
+        classificador_fake(Intencao.VENDER_IMOVEL),
+        outbound_fake(),
+        resumidor_fake(),
+        contador_fake(),
+    )
+
+    resultado = await session.execute(
+        text(
+            "SELECT ator_tipo, ator_id, detalhes FROM eventos_auditoria "
+            "WHERE acao = 'HANDOFF_CRIADO'"
+        )
+    )
+    assert [dict(linha) for linha in resultado.mappings()] == [
+        {"ator_tipo": "AGENTE", "ator_id": None, "detalhes": {"gatilho": "VENDA_IMOVEL"}}
+    ]

@@ -6,11 +6,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
+from mobia.api.routes import handoffs as rota_de_handoffs
 from mobia.app.config import get_settings
 from mobia.app.main import create_app
+from mobia.domain.auditoria.models import EventoAuditoria
 from mobia.domain.handoff import resumo as resumo_mod
 from mobia.domain.handoff.resumo import MARCADORES, link_da_transcricao
+from mobia.infra.db import get_sessionmaker
 
 TOKEN = "token-de-teste"
 
@@ -155,3 +159,61 @@ def test_o_link_nao_e_composto_pelo_modelo() -> None:
     assert link_da_transcricao("whatsapp", "5511911112222").endswith(
         "/conversas/whatsapp/5511911112222"
     )
+
+
+async def _acessos() -> list[EventoAuditoria]:
+    async with get_sessionmaker()() as sessao:
+        return list(
+            (
+                await sessao.execute(
+                    select(EventoAuditoria).where(EventoAuditoria.acao == "DADO_PESSOAL_ACESSADO")
+                )
+            ).scalars()
+        )
+
+
+async def test_o_acesso_ao_resumo_vai_para_a_trilha_sem_o_resumo(
+    cliente_http, semear_lead_completo
+) -> None:
+    """TEC-206, D7: `campo = resumo`, e o texto nao aparece em coluna nenhuma."""
+    handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
+
+    resposta = await cliente_http.post(
+        f"/api/v1/handoffs/{handoff_id}/resumo", headers={"X-Admin-Token": TOKEN}
+    )
+
+    assert resposta.status_code == 200
+    (evento,) = await _acessos()
+    assert evento.campo == "resumo"
+    assert evento.entidade == "handoff"
+    assert evento.entidade_id == str(handoff_id)
+    assert evento.ator_tipo == "USUARIO"
+    assert evento.ator_id == "token-compartilhado"
+    assert evento.correlation_id == resposta.headers["X-Request-Id"]
+    colunas = [
+        evento.entidade_id,
+        evento.campo,
+        evento.lead_ref,
+        str(evento.detalhes),
+        evento.correlation_id,
+        str(evento.ip),
+    ]
+    assert all(resposta.json()["resumo"] not in (valor or "") for valor in colunas)
+    assert all("5511911112222" not in (valor or "") for valor in colunas)
+
+
+async def test_sem_registro_o_resumo_nao_sai(
+    cliente_http, semear_lead_completo, monkeypatch
+) -> None:
+    """Review Focus 4: se a escrita da trilha falha, a resposta e erro."""
+    handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
+
+    async def _falha(*_: object, **__: object) -> None:
+        raise RuntimeError("trilha fora do ar")
+
+    monkeypatch.setattr(rota_de_handoffs, "registrar_evento", _falha)
+
+    with pytest.raises(RuntimeError, match="trilha fora do ar"):
+        await cliente_http.post(
+            f"/api/v1/handoffs/{handoff_id}/resumo", headers={"X-Admin-Token": TOKEN}
+        )

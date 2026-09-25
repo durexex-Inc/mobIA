@@ -5,7 +5,8 @@ TEC-179, RN-16.4. Uma linha por conversa, e NAO um log append-only como
 por outro", e com append-only responder isso exige ler antes de inserir. Duas
 abas do painel clicando ao mesmo tempo gravariam dois eventos, ambos se
 achando vencedores. O historico de todos os ciclos, que o append-only daria
-de graca, e a trilha de auditoria da TEC-206.
+de graca, nao fica em lugar nenhum: a trilha de auditoria da TEC-206 nao
+registra assumir nem devolver.
 """
 
 import uuid

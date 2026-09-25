@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.recuperacao import recuperar_sem_prazo
 from mobia.domain.handoff.repositorio import registrar_handoff
@@ -37,7 +38,11 @@ async def _semear_handoff(session: AsyncSession, *, conversa: str) -> uuid.UUID:
     de construcao (D2). Cada teste ajusta as colunas que precisa por cima.
     """
     registro = await registrar_handoff(
-        session, channel="whatsapp", conversation_key=conversa, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel="whatsapp",
+        conversation_key=conversa,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     return registro.id

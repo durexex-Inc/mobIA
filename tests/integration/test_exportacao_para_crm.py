@@ -13,6 +13,7 @@ from arq.worker import Retry
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.crm.port import FalhaDeExportacao
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff
@@ -57,7 +58,11 @@ def _ctx(session_factory: Any, crm: Any, **extras: Any) -> dict[str, Any]:
 
 async def _semear(session: AsyncSession, *, conversa: str) -> uuid.UUID:
     registro = await registrar_handoff(
-        session, channel="whatsapp", conversation_key=conversa, gatilho=Gatilho.LEAD_QUENTE
+        session,
+        channel="whatsapp",
+        conversation_key=conversa,
+        gatilho=Gatilho.LEAD_QUENTE,
+        ator=ATOR_AGENTE,
     )
     await session.commit()
     return registro.id
