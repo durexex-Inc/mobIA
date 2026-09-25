@@ -93,9 +93,11 @@ def alocar(
     se o plantao acabou escolhido havendo match, o match nao pode naquele
     dia -- por capacidade aqui, ou por falta de horario em `janelas_alocadas`.
 
-    Desempate por `criado_em` mais antigo, e `id` para a ordem ser total --
-    o mesmo criterio de `destinatario_do_handoff`. Balancear carga esta fora
-    da card.
+    Desempate por `criado_em` mais antigo -- o mesmo `criado_em` que
+    `destinatario_do_handoff` ja usa para o plantao. O `id` e desempate so
+    daqui, para a ordem ficar total quando dois corretores tem o mesmo
+    `criado_em`; `destinatario_do_handoff` nao precisa disso porque so pede
+    um (`.limit(1)`), nao a lista inteira. Balancear carga esta fora da card.
     """
     ativos = sorted(
         (corretor for corretor in corretores if corretor.ativo),
