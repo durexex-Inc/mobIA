@@ -113,6 +113,15 @@ class Agendamento(Base):
     lembrete_24h_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lembrete_2h_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # TEC-372, RN-12.2. A resposta do lead ao lembrete de 24 horas, que
+    # oferece confirmar, remarcar ou cancelar. **Nao e status**: `CONFIRMADO`
+    # ja e o estado do compromisso, e presenca confirmada e fato sobre o
+    # LEAD. Nulo e "nao respondeu", e nao "nao vai" -- a mesma distincao das
+    # tres colunas de aviso da TEC-170. Ver a migration 0052.
+    presenca_confirmada_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # TEC-172, RN-12.3. O vinculo da remarcacao: o novo agendamento aponta
     # para o que ele substitui, e o original fica REAGENDADO. E o que torna a
     # metrica de remarcacao possivel -- a razao que a card da. Sem teto de
@@ -205,6 +214,16 @@ class JanelaProposta(Base):
     # trocaria o corretor entre o que o lead leu e o que ele recebe.
     motivo_da_alocacao: Mapped[str] = mapped_column(String(24), nullable=False)
     proposto_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # TEC-372, D4. O destino desta rodada. Nula, a escolha do lead vira
+    # reserva (TEC-371); preenchida, vira `ciclo.py::remarcar` sobre aquele
+    # agendamento. E o que permite a remarcacao reusar a oferta de janelas
+    # inteira em vez de duplica-la.
+    remarcando_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("agendamentos.id", name="fk_janelas_propostas_remarcando"),
+        nullable=True,
+    )
 
     __table_args__ = (
         CheckConstraint(

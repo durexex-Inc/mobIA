@@ -180,3 +180,15 @@ def linhas_das_janelas(janelas: Sequence[datetime]) -> str:
     return "\n".join(
         f"{ordinal}. {data_e_hora_absolutas(inicio)}" for ordinal, inicio in enumerate(janelas, 1)
     )
+
+
+# TEC-372, RN-12.2 e RN-12.3. O que o lead le quando responde ao lembrete de
+# 24 horas. Com acento (TEC-267) e registrados em `literais_ao_lead.py`.
+#
+# **Nenhum diz que o corretor "foi avisado"**, pela razao que os textos da
+# TEC-170 logo acima ja registram: o e-mail aceito pelo servidor nao e o
+# e-mail lido. O de cancelamento diz o que NOS fizemos -- a visita caiu --, e
+# nada sobre quem soube disso.
+TEXTO_DA_PRESENCA_CONFIRMADA = "Presença confirmada para {quando}. Até lá!"
+TEXTO_DO_CANCELAMENTO_FEITO = "Pronto, cancelei a sua visita de {quando}."
+TEXTO_DA_REMARCACAO = "Claro, vamos remarcar. Tenho estes horários:\n{janelas}\nQual prefere?"

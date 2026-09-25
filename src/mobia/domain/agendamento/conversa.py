@@ -3,18 +3,24 @@
 Esta e a peca que faltava ao epico: sete cards construiram o motor de
 agendamento e nenhuma o ligou a conversa. Aqui ele ganha chamador.
 
-**O estado dos tres turnos e lido do banco, e nao guardado em memoria.** Cada
-um deles e uma pergunta:
+**O estado e lido do banco, e nao guardado em memoria.** Cada etapa e uma
+pergunta, nesta ordem:
 
-  - ha linha `RESERVADO` desta conversa? -> turno da confirmacao
-  - ha janelas propostas vivas? -> turno da escolha
-  - o lead pediu horario? -> turno da oferta
+  1. ha lembrete de 24h pendente? -> resposta ao lembrete (TEC-372)
+  2. ha linha `RESERVADO` desta conversa? -> turno da confirmacao
+  3. ha janelas propostas vivas? -> turno da escolha
+  4. o lead pediu horario? -> turno da oferta
 
-A ordem e essa, e a reserva vem na frente de proposito: depois de reservar,
-as propostas sao apagadas (`propostas.py::apagar`), entao os dois estados
-nunca coexistem -- mas a reserva VENCIDA precisa ser vista antes de qualquer
-outra coisa, porque e ela que transforma um "sim" tardio em oferta nova em
-vez de em silencio.
+**O lembrete vem primeiro porque e o contexto mais especifico**: um lead com
+visita marcada para amanha que escreve "cancelar" esta falando dela, e nao
+pedindo horario novo. As etapas 2 e 3 so existem quando ha uma conversa de
+agendamento em curso, que por sua vez so existe se o lead acabou de pedir.
+
+Entre as tres de baixo, a reserva vem na frente de proposito: depois de
+reservar, as propostas sao apagadas (`propostas.py::apagar`), entao os dois
+estados nunca coexistem -- mas a reserva VENCIDA precisa ser vista antes,
+porque e ela que transforma um "sim" tardio em oferta nova em vez de em
+silencio.
 
 **Nos dois ultimos, texto que nao case nada cai fora** (`NadaAFazer`) e o
 turno segue normal. E isso que limita o custo de um falso positivo do
@@ -33,10 +39,14 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.app.config import get_settings
 from mobia.domain.agendamento.alocacao import CriterioDoLead, alocar, criterio_de
+from mobia.domain.agendamento.ciclo import Remarcado, Transicionado
+from mobia.domain.agendamento.ciclo import cancelar as cancelar_agendamento
+from mobia.domain.agendamento.ciclo import remarcar as remarcar_agendamento
 from mobia.domain.agendamento.data_falada import (
     Ambigua,
     Dia,
@@ -46,7 +56,13 @@ from mobia.domain.agendamento.data_falada import (
     janelas_para,
     resolver,
 )
-from mobia.domain.agendamento.deteccao import confirmou, quer_agendar, recusou
+from mobia.domain.agendamento.deteccao import (
+    RespostaAoLembrete,
+    confirmou,
+    quer_agendar,
+    recusou,
+    respondeu_ao_lembrete,
+)
 from mobia.domain.agendamento.escolha import Escolhida, escolher
 from mobia.domain.agendamento.janelas import (
     AgendaDoCorretor,
@@ -57,9 +73,12 @@ from mobia.domain.agendamento.janelas import (
 )
 from mobia.domain.agendamento.mensagens import (
     TEXTO_DA_ESCOLHA,
+    TEXTO_DA_PRESENCA_CONFIRMADA,
+    TEXTO_DA_REMARCACAO,
     TEXTO_DA_RESERVA_VENCIDA,
     TEXTO_DAS_JANELAS,
     TEXTO_DE_OUTRO_HORARIO,
+    TEXTO_DO_CANCELAMENTO_FEITO,
     TEXTO_DO_CONFLITO,
     linhas_das_janelas,
 )
@@ -146,11 +165,37 @@ class Perguntou:
 
 
 @dataclass(frozen=True)
+class PresencaConfirmada:
+    """O lead disse que vai. TEC-372, RN-12.2.
+
+    Carimba `presenca_confirmada_em` e **nao** mexe em `status`: o
+    compromisso ja era `CONFIRMADO`, e presenca e fato sobre o lead. Ver a D3
+    do desenho.
+    """
+
+    texto: str
+
+
+@dataclass(frozen=True)
+class Cancelou:
+    """O agendamento caiu. Quem chama commita e SO ENTAO enfileira o e-mail.
+
+    Carrega o texto porque o lead precisa saber agora, e o id porque o aviso
+    ao corretor e job -- a mesma separacao de `Confirmou`, com a diferenca de
+    que aqui o turno FALA: nenhum job manda mensagem ao lead sobre
+    cancelamento.
+    """
+
+    texto: str
+    agendamento_id: uuid.UUID
+
+
+@dataclass(frozen=True)
 class NadaAFazer:
     pass
 
 
-Resultado = Ofereceu | Reservou | Confirmou | Perguntou | NadaAFazer
+Resultado = Ofereceu | Reservou | Confirmou | PresencaConfirmada | Cancelou | Perguntou | NadaAFazer
 
 
 async def _reserva_pendente(
@@ -305,6 +350,7 @@ async def _oferecer(
     visitas: ContadorDeVisitas,
     texto: str,
     molde: str,
+    remarcando_id: uuid.UUID | None = None,
 ) -> Resultado:
     """Uma rodada nova de janelas, gravada e dita ao lead.
 
@@ -356,6 +402,7 @@ async def _oferecer(
         tipo=TIPO,
         imovel_id=imovel_id,
         agora=agora,
+        remarcando_id=remarcando_id,
     )
     resposta = molde.format(janelas=linhas_das_janelas([p.janela.inicio for p in propostas]))
     return Ofereceu(texto=resposta, propostas=propostas)
@@ -445,6 +492,128 @@ async def _reservar(
     )
 
 
+async def _lembrete_pendente(
+    session: AsyncSession, *, channel: str, conversation_key: str, agora: datetime
+) -> Agendamento | None:
+    """O agendamento cujo lembrete de 24 horas ja saiu e cuja visita nao comecou.
+
+    **E este predicado que autoriza ler "cancelar" como cancelamento** (D1).
+    Fora dele a palavra e comum -- "cancela aquele outro assunto" -- e nao
+    pode derrubar visita nenhuma; o quarto cenario do Gherkin e exatamente
+    isso.
+
+    As tres condicoes: `CONFIRMADO` (existe compromisso vivo),
+    `lembrete_24h_em` preenchido (a pergunta com as tres opcoes ja foi feita
+    -- quem carimba e `sweep_lembretes`), e `inicio > agora` (a visita ainda
+    nao comecou).
+
+    **A janela fecha no INICIO da visita, e nao no lembrete de 2 horas.**
+    Cancelar noventa minutos antes e legitimo, e e quando mais importa que
+    alguem ouca; fechar no marco de 2 h devolveria silencio na hora de maior
+    custo. O lembrete de 2 h nao oferece opcao nenhuma, entao ele nao abre
+    uma segunda janela -- acontece dentro desta.
+    """
+    return (
+        await session.execute(
+            select(Agendamento)
+            .where(
+                Agendamento.channel == channel,
+                Agendamento.conversation_key == conversation_key,
+                Agendamento.status == StatusDoAgendamento.CONFIRMADO,
+                Agendamento.lembrete_24h_em.is_not(None),
+                Agendamento.inicio > agora,
+            )
+            .order_by(Agendamento.inicio)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def _confirmar_presenca(
+    session: AsyncSession, agendamento: Agendamento, *, agora: datetime
+) -> Resultado:
+    """Carimba a coluna e responde. Nao toca em `status` -- ver a D3.
+
+    O `WHERE` repete o status e a ausencia do carimbo: entre ler e gravar,
+    outro turno da mesma conversa pode ter cancelado, e confirmar presenca em
+    visita cancelada seria gravar um fato sobre algo que nao existe mais.
+    """
+    await session.execute(
+        update(Agendamento)
+        .where(
+            Agendamento.id == agendamento.id,
+            Agendamento.status == StatusDoAgendamento.CONFIRMADO,
+        )
+        .values(presenca_confirmada_em=agora)
+    )
+    return PresencaConfirmada(
+        texto=TEXTO_DA_PRESENCA_CONFIRMADA.format(quando=data_e_hora_absolutas(agendamento.inicio))
+    )
+
+
+async def _remarcar(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    proposta: Proposta,
+    estado: LeadQualification | None,
+    agora: datetime,
+    agenda: AgendaDoCorretor,
+    visitas: ContadorDeVisitas,
+    texto: str,
+) -> Resultado:
+    """A escolha do lead move o agendamento que ele ja tinha. D4 e D5.
+
+    **`remarcar` levanta `IntegrityError` na sobreposicao, e isso e
+    deliberado do outro lado**: a docstring dela diz que engolir a recusa do
+    banco como `Conflito` faria a remarcacao falhar em silencio com o
+    original ja `REAGENDADO`. Esta e a card que chega como chamadora, entao a
+    decisao e daqui -- capturar, desfazer so o SAVEPOINT e oferecer de novo.
+
+    O `begin_nested` e o mesmo mecanismo de `repositorio.py::reservar`, e pelo
+    mesmo motivo que aquela docstring registra: um `rollback` de sessao
+    inteira expira todo objeto carregado e explode com `MissingGreenlet` no
+    acesso seguinte.
+
+    O lead perdeu a corrida pelo horario novo e **continua com o antigo**,
+    que e o desfecho certo: melhor manter a visita que perder as duas.
+    """
+    assert proposta.remarcando_id is not None  # so chega aqui com destino
+    try:
+        async with session.begin_nested():
+            desfecho = await remarcar_agendamento(
+                session,
+                agendamento_id=proposta.remarcando_id,
+                janela=proposta.janela,
+                agora=agora,
+                corretor_id=proposta.corretor_id,
+            )
+            await session.flush()
+    except IntegrityError:
+        return await _oferecer(
+            session,
+            channel=channel,
+            conversation_key=conversation_key,
+            estado=estado,
+            agora=agora,
+            agenda=agenda,
+            visitas=visitas,
+            texto=texto,
+            molde=TEXTO_DO_CONFLITO,
+            remarcando_id=proposta.remarcando_id,
+        )
+    if not isinstance(desfecho, Remarcado):
+        # O original saiu de `CONFIRMADO` entre a oferta e a escolha (outro
+        # turno cancelou, ou a visita comecou). Oferecer de novo criaria
+        # agendamento novo sem ninguem pedir; cair fora deixa o turno normal
+        # responder.
+        await apagar_propostas(session, channel=channel, conversation_key=conversation_key)
+        return NadaAFazer()
+    await apagar_propostas(session, channel=channel, conversation_key=conversation_key)
+    return Confirmou(agendamento_id=desfecho.novo_id)
+
+
 async def atender(
     session: AsyncSession,
     *,
@@ -461,6 +630,55 @@ async def atender(
     Devolve `NadaAFazer` sempre que a fala nao e sobre agendamento, e e esse
     o desfecho mais comum: quem chama segue o turno normal.
     """
+    # Etapa 1: a resposta ao lembrete vem ANTES de tudo, e a ordem e decisao
+    # (D7). Um lead com visita marcada para amanha que escreve "cancelar"
+    # esta falando dela, e nao pedindo horario novo. As etapas abaixo so
+    # existem quando ha uma conversa de agendamento em curso, que por sua vez
+    # so existe se o lead acabou de pedir.
+    lembrete = await _lembrete_pendente(
+        session, channel=channel, conversation_key=conversation_key, agora=agora
+    )
+    if lembrete is not None:
+        match respondeu_ao_lembrete(texto):
+            case RespostaAoLembrete.CONFIRMA:
+                return await _confirmar_presenca(session, lembrete, agora=agora)
+            case RespostaAoLembrete.CANCELAR:
+                desfecho_do_ciclo = await cancelar_agendamento(
+                    session, agendamento_id=lembrete.id, agora=agora
+                )
+                if isinstance(desfecho_do_ciclo, Transicionado):
+                    # As propostas de qualquer rodada aberta caem junto: o
+                    # compromisso a que elas se referiam nao existe mais.
+                    await apagar_propostas(
+                        session, channel=channel, conversation_key=conversation_key
+                    )
+                    return Cancelou(
+                        texto=TEXTO_DO_CANCELAMENTO_FEITO.format(
+                            quando=data_e_hora_absolutas(lembrete.inicio)
+                        ),
+                        agendamento_id=lembrete.id,
+                    )
+                # Origem ilegal: outro turno mexeu no status entre a leitura e
+                # o UPDATE. Cair fora e mais honesto que dizer "cancelei".
+                return NadaAFazer()
+            case RespostaAoLembrete.REMARCAR:
+                return await _oferecer(
+                    session,
+                    channel=channel,
+                    conversation_key=conversation_key,
+                    estado=estado,
+                    agora=agora,
+                    agenda=agenda,
+                    visitas=visitas,
+                    texto=texto,
+                    molde=TEXTO_DA_REMARCACAO,
+                    remarcando_id=lembrete.id,
+                )
+            case None:
+                # Nao respondeu ao lembrete -- pode estar falando de outra
+                # coisa. Segue para as etapas de agendamento novo.
+                pass
+
     reserva = await _reserva_pendente(session, channel=channel, conversation_key=conversation_key)
     if reserva is not None:
         # `confirmou` antes de `recusou`, e a ordem e decisao: "nao, pode ser"
@@ -503,6 +721,21 @@ async def atender(
     if propostas:
         escolha = escolher(texto, propostas, agora=agora)
         if isinstance(escolha, Escolhida):
+            # Dois destinos para a mesma escolha (D4): com `remarcando_id`,
+            # ela move o agendamento que o lead ja tem; sem, ela reserva um
+            # novo.
+            if escolha.proposta.remarcando_id is not None:
+                return await _remarcar(
+                    session,
+                    channel=channel,
+                    conversation_key=conversation_key,
+                    proposta=escolha.proposta,
+                    estado=estado,
+                    agora=agora,
+                    agenda=agenda,
+                    visitas=visitas,
+                    texto=texto,
+                )
             return await _reservar(
                 session,
                 channel=channel,

@@ -12,8 +12,11 @@ naquele momento se chama isto em processo ou enfileira. Criar o job e a porta
 agora seria superficie morta com duas copias do mesmo literal para manter em
 sincronia.
 
-**Nenhum caminho de producao chama isto**, e a TEC-371 nao mudou isso: ela
-criou o caminho de marcar visita, e nao o de cancelar (que e a TEC-372). Ver
+**Desde a TEC-372 isto sai por conversa de lead**: o turno le a resposta ao
+lembrete de 24 horas, chama `ciclo.py::cancelar`, commita e enfileira o job
+(`workers/jobs/avisar_cancelamento.py`), nessa ordem. E job e nao chamada
+direta porque uma ida ao servidor de e-mail dentro do turno poria a latencia
+do lead na mao do SMTP. Ver
 docs/superpowers/specs/2026-09-25-tec-172-cancelar-remarcar-e-nao-comparecimento-design.md.
 """
 
@@ -32,6 +35,13 @@ from mobia.domain.handoff.resumo import link_da_transcricao
 from mobia.domain.notificacao.canais import CanalDeNotificacaoPort, FalhaDeCanal
 
 log = structlog.get_logger()
+
+# TEC-372. O nome do job que chama esta funcao, pelo mesmo motivo que
+# `AVISAR_CONFIRMACAO_JOB` mora em `confirmacao.py`: o dono da constante e
+# o modulo que guarda a funcao de dominio, e o job fino a importa de la.
+# Duas copias do literal e a deriva que quebra o enfileiramento em
+# silencio.
+AVISAR_CANCELAMENTO_JOB = "avisar_cancelamento"
 
 
 async def avisar_cancelamento(

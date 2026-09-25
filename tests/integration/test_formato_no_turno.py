@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from sqlalchemy import select
 
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.messages.enums import MessageRole
 from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.outbound.models import OutboundDispatch
@@ -359,7 +359,7 @@ async def test_reserva_duplicada_na_segunda_parte_apos_entrega_vira_reentrega_su
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
-            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
+            agendador_de_avisos=AgendadorDeAvisosNoop(),
         )
 
     assert resultado == "reentrega_suprimida", (
@@ -561,7 +561,7 @@ async def test_retentativa_da_parte_2_nao_mistura_geracoes(
             outbound=outbound,
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
-            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
+            agendador_de_avisos=AgendadorDeAvisosNoop(),
         )
 
     primeira = _RetentavelNaParte2(get_sessionmaker())
@@ -661,7 +661,7 @@ async def test_parte_suprimida_antes_de_uma_entregue_nao_e_gravada_como_entregue
             outbound=OutboundFake(get_sessionmaker()),
             moderador=moderador_fake(),
             agendador=AgendadorNoop(),
-            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
+            agendador_de_avisos=AgendadorDeAvisosNoop(),
         )
 
     gravado = "".join(texto for texto, _, _ in await _falas_do_agente(session))

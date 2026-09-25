@@ -18,7 +18,7 @@ import httpx
 from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFake
 from sqlalchemy import select
 
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.agente.identificacao import SEPARADOR_DA_IDENTIFICACAO, TEXTO_DA_IDENTIFICACAO
 from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.canais import CANAL_WHATSAPP
@@ -137,7 +137,7 @@ def _ctx_do_turno(whatsapp: Any, classificador: Any) -> dict[str, Any]:
         "contador": ContadorFake(),
         "moderador": ModeradorFake(),
         "agendador": AgendadorNoop(),
-        "agendador_de_confirmacao": AgendadorDeConfirmacaoNoop(),
+        "agendador_de_avisos": AgendadorDeAvisosNoop(),
         "indicadores": {CANAL_WHATSAPP: IndicadorNoop()},
     }
 

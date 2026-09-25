@@ -5,7 +5,7 @@ from arq import cron, func
 
 from mobia.app.config import ConfiguracaoInsegura, get_settings
 from mobia.app.logging import configure_logging
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoArq
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosArq
 from mobia.domain.agendamento.calendario import CalendarioNoop, GoogleCalendar
 from mobia.domain.agente.classificador import ClassificadorAnthropic
 from mobia.domain.context.resumo import ContadorAnthropic, ResumidorAnthropic
@@ -23,6 +23,7 @@ from mobia.domain.outbound.whatsapp_notificacao import WhatsAppTemplate
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
+from mobia.workers.jobs.avisar_cancelamento import avisar_cancelamento
 from mobia.workers.jobs.avisar_confirmacao import avisar_confirmacao
 from mobia.workers.jobs.baixar_midia import MAXIMO_DE_TENTATIVAS, baixar_midia
 from mobia.workers.jobs.exportar_crm import exportar_crm
@@ -165,9 +166,9 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["moderador"] = ModeradorAnthropic()
     ctx["redator"] = RedatorAnthropic()
     ctx["agendador"] = AgendadorArq(ctx["redis"])
-    # TEC-371. O turno confirma agendamento e enfileira os tres avisos da
-    # RN-12.1 depois do commit. Mesmo `ctx["redis"]` dos outros dois.
-    ctx["agendador_de_confirmacao"] = AgendadorDeConfirmacaoArq(ctx["redis"])
+    # TEC-371 e TEC-372. O turno confirma ou cancela agendamento e
+    # enfileira o aviso depois do commit. Mesmo `ctx["redis"]` dos outros.
+    ctx["agendador_de_avisos"] = AgendadorDeAvisosArq(ctx["redis"])
     # Mesmo `ctx["redis"]` do `agendador` acima -- ver o docstring do
     # `startup` no topo do modulo: o ARQ ja o gravou antes deste hook, e um
     # segundo pool seria redundante.
@@ -285,12 +286,18 @@ class WorkerSettings:
         func(notificar_corretor, keep_result=0),
         # `keep_result=0` pela mesma razao do `notificar_corretor` acima: o
         # `_job_id` e fixo por agendamento (`confirmacao:<id>`, ver
-        # `AgendadorDeConfirmacaoArq`), e uma chave de resultado sobrevivente
+        # `AgendadorDeAvisosArq`), e uma chave de resultado sobrevivente
         # bloquearia em silencio um reenqueue legitimo. Nao entra em
         # `cron_jobs`: nenhum caminho de producao ainda enfileira este job
         # (ver o docstring de `domain/agendamento/confirmacao.py`), e nao ha
         # relogio que deva disparar um aviso de confirmacao.
         func(avisar_confirmacao, keep_result=0),
+        # TEC-372, mesmo raciocinio do `avisar_confirmacao` logo acima: o
+        # `_job_id` e fixo por agendamento (`cancelamento:<id>`), e uma
+        # chave de resultado sobrevivente bloquearia um reenqueue
+        # legitimo. Fora de `cron_jobs`: quem o dispara e o turno, ao ler
+        # a resposta do lead ao lembrete -- nao ha relogio envolvido.
+        func(avisar_cancelamento, keep_result=0),
         # `keep_result=0` pela mesma razao do `WorkerSettings.keep_result` da
         # classe (ver o docstring dela): o resultado deste job (um `int`) nao
         # serve para nada depois que o log saiu, e nao ha motivo para pagar a

@@ -17,10 +17,11 @@ separada da `sweep_lembretes`:
   com um parametro de "tipo de mensagem" trocaria duas funcoes legiveis por
   uma com dois modos.
 
-**Nenhum lead recebe convite hoje**: nenhum caminho de producao cancela
-agendamento. A TEC-371 passou a CRIAR agendamento por conversa, e nao a
-cancelar -- o detector dela veta `cancelar` e `desmarcar`, que sao a TEC-372.
-Ver
+**Desde a TEC-372 ha convite a sair**: a conversa cancela agendamento quando o
+lead responde ao lembrete de 24 horas, e este job varre exatamente os
+`CANCELADO`. Continua valendo que **nada le a resposta a ESTE convite** -- ver
+a docstring de `domain/agendamento/remarcacao.py`, que explica por que a
+janela do lembrete nunca casa sobre um cancelamento. Ver
 docs/superpowers/specs/2026-09-25-tec-172-cancelar-remarcar-e-nao-comparecimento-design.md.
 """
 

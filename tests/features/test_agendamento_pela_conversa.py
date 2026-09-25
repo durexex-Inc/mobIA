@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.agendamento.data_falada import DIAS_DA_SEMANA
 from mobia.domain.agendamento.models import (
     Agendamento,
@@ -44,9 +44,13 @@ OUTRO_LEAD = "5511911116666"
 class _AgendadorEspiao:
     def __init__(self) -> None:
         self.agendados: list[uuid.UUID] = []
+        self.cancelados: list[uuid.UUID] = []
 
-    async def agendar(self, agendamento_id: uuid.UUID) -> None:
+    async def confirmacao(self, agendamento_id: uuid.UUID) -> None:
         self.agendados.append(agendamento_id)
+
+    async def cancelamento(self, agendamento_id: uuid.UUID) -> None:
+        self.cancelados.append(agendamento_id)
 
 
 async def _falar(session, texto: str, *, lead: str = LEAD) -> Message:
@@ -80,7 +84,7 @@ async def _turno(
     resumidor_fake,
     contador_fake,
     moderador_fake,
-    agendador_de_confirmacao=None,
+    agendador_de_avisos=None,
 ):
     entrada = await _falar(session, texto, lead=lead)
     outbound = outbound_fake()
@@ -93,10 +97,8 @@ async def _turno(
         outbound=outbound,
         moderador=moderador_fake(),
         agendador=AgendadorNoop(),
-        agendador_de_confirmacao=(
-            agendador_de_confirmacao
-            if agendador_de_confirmacao is not None
-            else AgendadorDeConfirmacaoNoop()
+        agendador_de_avisos=(
+            agendador_de_avisos if agendador_de_avisos is not None else AgendadorDeAvisosNoop()
         ),
     )
     return resultado, outbound
@@ -211,7 +213,7 @@ async def test_a_escolha_do_lead_vira_agendamento_confirmado(
 
     espiao = _AgendadorEspiao()
     resultado, outbound = await _turno(
-        session, "isso, pode marcar", agendador_de_confirmacao=espiao, **dubles
+        session, "isso, pode marcar", agendador_de_avisos=espiao, **dubles
     )
 
     assert resultado == "agendamento_confirmado"

@@ -17,9 +17,10 @@ ganhou a regra: ela acrescentou CANCELADO e REAGENDADO ao vocabulario sem
 tocar uma linha deste arquivo.
 
 **Desde a TEC-371 ha lead recebendo lembrete**: a conversa cria agendamento
-CONFIRMADO, e a regua desta card passou a ter linha para varrer. O que continua
-valendo e a outra metade da lacuna -- nada le a resposta do lead ao lembrete de
-24 h, que e a TEC-372. Ver
+CONFIRMADO, e a regua desta card passou a ter linha para varrer. E desde a
+TEC-372 a resposta a ele e lida -- e `lembrete_24h_em`, carimbada aqui, que
+abre a janela em que "cancelar" conta como cancelamento. Uma consequencia
+pratica: esta coluna deixou de ser so uma marca de idempotencia. Ver
 docs/superpowers/specs/2026-09-25-tec-171-lembretes-de-agendamento-design.md.
 """
 

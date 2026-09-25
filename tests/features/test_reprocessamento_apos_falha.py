@@ -14,7 +14,7 @@ from conftest import (
 )
 from sqlalchemy import func, select
 
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -48,7 +48,7 @@ def _ctx(session_factory, outbound) -> dict[str, Any]:
         "contador": ContadorFake(),
         "moderador": ModeradorFake(),
         "agendador": AgendadorNoop(),
-        "agendador_de_confirmacao": AgendadorDeConfirmacaoNoop(),
+        "agendador_de_avisos": AgendadorDeAvisosNoop(),
         "indicadores": {CANAL_WHATSAPP: IndicadorNoop(), CANAL_WEB: IndicadorNoop()},
     }
 

@@ -16,13 +16,19 @@ CANCELADO tira a linha do indice no mesmo statement e o horario fica livre no
 commit -- muito abaixo dos 10 segundos da CA-12.2. Ver a docstring da
 migration 0050, e `test_agendamento_schema.py`, que prova isso com insert cru.
 
-**Nenhum caminho de producao chama nada disto**, e a TEC-371 nao mudou isso:
-ela criou o caminho de MARCAR visita, nao o de desfazer. Nao ha conversa que
-cancele -- `agendamento/deteccao.py` veta `cancelar`, `desmarcar`, `remarcar`
-e `reagendar`, que sao a TEC-372 -- e nao ha rota pela qual o corretor marque
-NO_SHOW, que e a E8. A reserva que o lead recusa ou deixa vencer vira
-EXPIRADO por `agendamento/conversa.py`, e nao CANCELADO, justamente para nao
-acordar a varredura de remarcacao. Ver
+**Duas destas quatro ja tem chamador de producao, e duas nao.** Desde a
+TEC-372, `cancelar` e `remarcar` saem da conversa, quando o lead responde ao
+lembrete de 24 horas -- e so dentro daquela janela (ver
+`conversa.py::_lembrete_pendente`). `marcar_realizado` e
+`marcar_nao_comparecimento` continuam sem chamador: sao acao do corretor, e a
+interface dele e a E8, que nao existe.
+
+O veto de `agendamento/deteccao.py::quer_agendar` a `cancelar` e `remarcar`
+continua de pe e nao contradiz o acima: ele protege o caminho de MARCAR
+visita nova; quem le essas palavras e `respondeu_ao_lembrete`, no mesmo
+modulo, e so com lembrete pendente. A reserva que o lead recusa ou deixa
+vencer vira EXPIRADO por `agendamento/conversa.py`, e nao CANCELADO,
+justamente para nao acordar a varredura de remarcacao. Ver
 docs/superpowers/specs/2026-09-25-tec-172-cancelar-remarcar-e-nao-comparecimento-design.md.
 """
 

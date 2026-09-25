@@ -11,7 +11,7 @@ from test_process_message_agrupado import _ctx  # type: ignore[import-not-found]
 from test_rajada import gravar  # type: ignore[import-not-found]
 
 from mobia.app.config import get_settings
-from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
+from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.atendimento.repositorio import assumir
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP, REMETENTE_DO_WIDGET
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
@@ -359,7 +359,7 @@ async def test_turno_lento_dispara_o_indicador_de_ponta_a_ponta(
         "contador": contador_fake(),
         "moderador": moderador_fake(),
         "agendador": AgendadorNoop(),
-        "agendador_de_confirmacao": AgendadorDeConfirmacaoNoop(),
+        "agendador_de_avisos": AgendadorDeAvisosNoop(),
         "indicadores": {CANAL_WHATSAPP: espiao, CANAL_WEB: IndicadorNoop()},
     }
 

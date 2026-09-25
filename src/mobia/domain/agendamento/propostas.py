@@ -38,6 +38,9 @@ class Proposta:
     imovel_id: uuid.UUID | None
     tipo: TipoDeCompromisso
     motivo: MotivoDaAlocacao
+    # TEC-372, D4. Preenchido, a escolha desta janela remarca aquele
+    # agendamento em vez de reservar um novo. `None` e o caso da TEC-371.
+    remarcando_id: uuid.UUID | None = None
 
 
 async def gravar(
@@ -49,6 +52,7 @@ async def gravar(
     tipo: TipoDeCompromisso,
     imovel_id: uuid.UUID | None,
     agora: datetime,
+    remarcando_id: uuid.UUID | None = None,
 ) -> list[Proposta]:
     """Substitui a rodada anterior desta conversa pela nova, e devolve o que gravou.
 
@@ -83,6 +87,7 @@ async def gravar(
                 fim=alocada.janela.fim,
                 motivo_da_alocacao=str(alocada.motivo),
                 proposto_em=agora,
+                remarcando_id=remarcando_id,
             )
         )
         propostas.append(
@@ -93,6 +98,7 @@ async def gravar(
                 imovel_id=imovel_id,
                 tipo=tipo,
                 motivo=alocada.motivo,
+                remarcando_id=remarcando_id,
             )
         )
     await session.flush()
@@ -138,6 +144,7 @@ async def ler(
             imovel_id=linha.imovel_id,
             tipo=TipoDeCompromisso(linha.tipo),
             motivo=MotivoDaAlocacao(linha.motivo_da_alocacao),
+            remarcando_id=linha.remarcando_id,
         )
         for linha in linhas
     ]
