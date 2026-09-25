@@ -36,6 +36,7 @@ from mobia.workers.jobs.sweep_followups import sweep_followups
 from mobia.workers.jobs.sweep_importacoes_travadas import sweep_importacoes_travadas
 from mobia.workers.jobs.sweep_lembretes import sweep_lembretes
 from mobia.workers.jobs.sweep_midias_pendentes import sweep_midias_pendentes
+from mobia.workers.jobs.sweep_remarcacoes import sweep_remarcacoes
 from mobia.workers.jobs.sweep_sla import sweep_sla
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
 
@@ -338,6 +339,11 @@ class WorkerSettings:
         # contagem -- quando a faixa fecha, a linha deixa de aparecer na
         # consulta.
         func(sweep_lembretes, keep_result=0),
+        # TEC-172. `keep_result=0` e as mesmas razoes do `sweep_lembretes`
+        # logo acima, inclusive a ausencia de `max_tries`: o teto de
+        # retentativa de um convite e a FAIXA em que ele e devido
+        # (`convite_devido`), nao uma contagem.
+        func(sweep_remarcacoes, keep_result=0),
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
@@ -433,6 +439,16 @@ class WorkerSettings:
         # `run_at_startup=False` como todos os outros.
         cron(
             sweep_lembretes,
+            minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
+            run_at_startup=False,
+        ),
+        # TEC-172, RN-12.3. De 5 em 5 minutos como a irma, e com folga ainda
+        # maior: a faixa deste convite e de SETE DIAS, entao o erro maximo de
+        # disparo e desprezivel sobre ela. Roda nesta cadencia e nao numa mais
+        # esparsa porque a passagem ociosa e barata -- a guarda de horario
+        # devolve antes da consulta por treze das vinte e quatro horas.
+        cron(
+            sweep_remarcacoes,
             minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
             run_at_startup=False,
         ),

@@ -53,6 +53,7 @@ from mobia.domain.agendamento.mensagens import (
     TEXTO_DA_CONFIRMACAO_DE_VISITA,
     TEXTO_DA_CONFIRMACAO_DE_VISITA_SEM_IMOVEL,
 )
+from mobia.domain.agendamento.remarcacao import TEXTO_DO_CONVITE_DE_REMARCACAO
 from mobia.domain.agente.apresentacao import RESSALVA_DE_ESTIMATIVA
 from mobia.domain.agente.identificacao import TEXTO_DA_IDENTIFICACAO
 from mobia.domain.agente.turno import (
@@ -118,4 +119,5 @@ LITERAIS_AO_LEAD = (
     TEXTO_DO_LEMBRETE_DE_2H_DE_VISITA,
     TEXTO_DO_LEMBRETE_DE_2H_DE_VISITA_SEM_IMOVEL,
     TEXTO_DO_LEMBRETE_DE_2H_DE_REUNIAO,
+    TEXTO_DO_CONVITE_DE_REMARCACAO,
 )

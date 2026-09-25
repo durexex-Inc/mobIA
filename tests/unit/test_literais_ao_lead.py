@@ -23,6 +23,7 @@ def test_a_lista_de_literais_nao_encolheu_sem_querer() -> None:
     da data falada (`data_falada.py`). Foi 28 ate a TEC-170, que acrescentou
     os tres textos da confirmacao do agendamento. Foi 31 ate a TEC-171, que
     acrescentou os seis do lembrete -- dois lembretes por tres formas do
-    compromisso.
+    compromisso. Foi 37 ate a TEC-172, que acrescentou o convite de
+    remarcacao: um so, porque ele nao descreve compromisso nenhum.
     """
-    assert len(LITERAIS_AO_LEAD) == 37
+    assert len(LITERAIS_AO_LEAD) == 38

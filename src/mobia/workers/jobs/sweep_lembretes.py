@@ -45,9 +45,8 @@ from mobia.domain.agendamento.lembretes import (
 from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.corretores.models import Corretor
+from mobia.domain.messages.ancora import Ancora, ancora_em_sessao_propria
 from mobia.domain.messages.canais import CANAL_WHATSAPP
-from mobia.domain.messages.enums import MessageRole
-from mobia.domain.messages.models import Message
 from mobia.domain.outbound.horario import horario_permite_envio
 from mobia.domain.outbound.janela import dentro_da_janela
 
@@ -113,20 +112,6 @@ class _Candidato:
     corretor_nome: str
     imovel: Imovel | None
     resolvidos: frozenset[str]
-
-
-@dataclass(frozen=True, slots=True)
-class _Ancora:
-    """A ultima fala do lead: o id que ancora a reserva e o "de" do canal.
-
-    `criada_em` e o que decide a janela de 24h da Meta, e ela e a ultima fala
-    DO LEAD e nao a ultima da conversa -- uma resposta do agente no meio nao
-    move a janela. Ver `dentro_da_janela`.
-    """
-
-    message_id: uuid.UUID
-    criada_em: datetime
-    de: str | None
 
 
 async def _candidatos(
@@ -205,33 +190,6 @@ _COLUNA_DE: dict[str, str] = {
 }
 
 
-async def _ancora(
-    session_factory: async_sessionmaker[AsyncSession], candidato: _Candidato
-) -> _Ancora | None:
-    """A ultima mensagem DO LEAD desta conversa.
-
-    Mesma ancora e mesmo motivo de `_avisar_lead` (`confirmacao.py`): e ela
-    que carrega, em `recipient_external_id`, o numero do canal que fala com o
-    lead, e e a ela que a reserva de `outbound_dispatches` se prende.
-    """
-    async with session_factory() as session:
-        linha = (
-            await session.execute(
-                select(Message.id, Message.created_at, Message.recipient_external_id)
-                .where(
-                    Message.channel == candidato.channel,
-                    Message.conversation_key == candidato.conversation_key,
-                    Message.role == MessageRole.LEAD,
-                )
-                .order_by(Message.created_at.desc())
-                .limit(1)
-            )
-        ).first()
-    if linha is None:
-        return None
-    return _Ancora(message_id=linha[0], criada_em=linha[1], de=linha[2])
-
-
 async def _marcar(
     session_factory: async_sessionmaker[AsyncSession],
     agendamento_id: uuid.UUID,
@@ -257,7 +215,7 @@ async def _marcar(
 def _payload_do_lembrete(
     lembrete: Lembrete,
     candidato: _Candidato,
-    ancora: _Ancora,
+    ancora: Ancora,
     *,
     aprovados: frozenset[str],
     agora: datetime,
@@ -452,7 +410,9 @@ async def _mandar(
       lembrete que nunca vai sair. A guarda ja respondeu.
     - excecao: propaga para o `except` do laco, e a coluna fica NULA.
     """
-    ancora = await _ancora(session_factory, candidato)
+    ancora = await ancora_em_sessao_propria(
+        session_factory, channel=candidato.channel, conversation_key=candidato.conversation_key
+    )
     if ancora is None or ancora.de is None:
         # Sem fala do lead nao ha `recipient_external_id`, que e o "de" do
         # canal -- mesmo desfecho e mesmo motivo que `_avisar_lead` da TEC-170
