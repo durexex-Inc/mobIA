@@ -222,7 +222,7 @@ def test_o_vocabulario_bate_com_o_check_da_migration(constante: str, enum: type)
 
 
 def test_a_tupla_vem_da_migration_mais_recente() -> None:
-    """A 0055 redefine as acoes; a 0053 continua sendo a unica dos atores."""
+    """A 0056 redefine as acoes; a 0053 continua sendo a unica dos atores."""
     assert "INJECAO_DETECTADA" in _tupla_da_migracao("_ACOES")
     assert "mensagem" in _tupla_da_migracao("_ENTIDADES")
     assert _tupla_da_migracao("_ATORES") == ("USUARIO", "AGENTE", "SISTEMA")

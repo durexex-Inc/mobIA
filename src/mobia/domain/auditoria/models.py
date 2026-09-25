@@ -6,7 +6,7 @@ O `EventoAuditoria` da secao 5.1 do SRS com quatro diferencas: entram `campo`,
 a card proibe guardar em claro. Ver a Emenda E-01 ao `EventoAuditoria`.
 
 CHECKs, indices e os dois triggers moram na migration 0053, escrita a mao --
-o vocabulario de acao e entidade foi redefinido na 0055 (TEC-204) --, e nao
+o vocabulario de acao e entidade foi redefinido na 0056 (TEC-204) --, e nao
 aqui: o modelo so serve ao ORM.
 """
 
