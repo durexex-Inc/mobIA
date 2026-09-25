@@ -2,7 +2,9 @@
 
 Arquivo autocontido, como os demais de integracao deste repo: `_imovel` e
 copiado de `test_busca_no_turno.py`, e os dubles de `_CanalEspiao` /
-`_CanalQueFalha` de `test_notificacao_envio.py`.
+`_CanalQueFalha` de `test_notificacao_envio.py`. Onde a reserva de
+`outbound_dispatches` e o que se testa, entra o `OutboundFake` do conftest,
+que herda de `GuardedOutbound` e reserva de verdade.
 """
 
 import uuid
@@ -11,12 +13,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import eventos_de_log  # type: ignore[import-not-found]
-from sqlalchemy import select
+from conftest import OutboundFake, eventos_de_log  # type: ignore[import-not-found]
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agendamento.calendario import CalendarioNoop, FalhaDeCalendario
-from mobia.domain.agendamento.confirmacao import KIND_DA_CONFIRMACAO, avisar_confirmacao
+from mobia.domain.agendamento.confirmacao import avisar_confirmacao, kind_da_confirmacao
 from mobia.domain.agendamento.janelas import TipoDeCompromisso
 from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
@@ -25,6 +27,7 @@ from mobia.domain.messages.enums import MessageContentType, MessageDirection, Me
 from mobia.domain.messages.models import Message
 from mobia.domain.notificacao.canais import FalhaDeCanal
 from mobia.domain.notificacao.mensagem import Aviso
+from mobia.domain.outbound.models import OutboundDispatch
 
 SP = ZoneInfo("America/Sao_Paulo")
 INICIO = datetime(2026, 8, 27, 15, tzinfo=SP)
@@ -71,6 +74,8 @@ async def _agendamento(
     corretor_id: uuid.UUID,
     imovel_id: uuid.UUID,
     status: str = StatusDoAgendamento.CONFIRMADO,
+    inicio: datetime = INICIO,
+    fim: datetime = FIM,
 ) -> Agendamento:
     agendamento = Agendamento(
         id=uuid.uuid4(),
@@ -79,8 +84,8 @@ async def _agendamento(
         conversation_key=CONVERSA,
         imovel_id=imovel_id,
         tipo=str(TipoDeCompromisso.VISITA_PRESENCIAL),
-        inicio=INICIO,
-        fim=FIM,
+        inicio=inicio,
+        fim=fim,
         status=status,
         reservado_ate=INICIO,
         criado_em=INICIO,
@@ -156,15 +161,30 @@ class _CanalQueFalha:
         raise FalhaDeCanal(f"{self.nome} recusou")
 
 
+class _OutboundQueLevanta:
+    """`send` que levanta um tipo fora da lista curta, como um adaptador faria."""
+
+    async def send(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> bool:
+        raise RuntimeError("adaptador caiu")
+
+
 class _CalendarioEspiao:
     def __init__(self) -> None:
         self.chamadas: list[dict[str, Any]] = []
 
     async def criar_evento(
-        self, *, inicio: datetime, fim: datetime, titulo: str, descricao: str, convidado: str
+        self,
+        *,
+        evento_id: str,
+        inicio: datetime,
+        fim: datetime,
+        titulo: str,
+        descricao: str,
+        convidado: str,
     ) -> str | None:
         self.chamadas.append(
             {
+                "evento_id": evento_id,
                 "inicio": inicio,
                 "fim": fim,
                 "titulo": titulo,
@@ -177,7 +197,14 @@ class _CalendarioEspiao:
 
 class _CalendarioQueFalha:
     async def criar_evento(
-        self, *, inicio: datetime, fim: datetime, titulo: str, descricao: str, convidado: str
+        self,
+        *,
+        evento_id: str,
+        inicio: datetime,
+        fim: datetime,
+        titulo: str,
+        descricao: str,
+        convidado: str,
     ) -> str | None:
         raise FalhaDeCalendario("Google inacessivel: ConnectError")
 
@@ -202,7 +229,7 @@ async def test_confirmado_avisa_lead_corretor_e_cria_evento(
 
     assert len(outbound.chamadas) == 1
     _, kind, payload = outbound.chamadas[0]
-    assert kind == KIND_DA_CONFIRMACAO
+    assert kind == kind_da_confirmacao(agendamento.id)
     assert payload["para"] == CONVERSA
     assert payload["de"] == "222222222"
     assert "Moema" in payload["texto"]
@@ -218,6 +245,7 @@ async def test_confirmado_avisa_lead_corretor_e_cria_evento(
     assert chamada["convidado"] == corretor.email
     assert chamada["inicio"] == INICIO
     assert chamada["fim"] == FIM
+    assert chamada["evento_id"] == agendamento.id.hex
 
     linha = await _recarregar(session, agendamento)
     assert linha.lead_avisado_em == AGORA
@@ -436,3 +464,112 @@ async def test_agendamento_inexistente_e_no_op(session_factory) -> None:
     assert outbound.chamadas == []
     assert email.recebidas == []
     assert calendario.chamadas == []
+
+
+def test_kind_da_confirmacao_cabe_na_coluna_e_e_um_por_agendamento() -> None:
+    um, outro = uuid.uuid4(), uuid.uuid4()
+    limite = OutboundDispatch.__table__.c.kind.type.length
+    assert len(kind_da_confirmacao(um)) <= limite
+    assert kind_da_confirmacao(um) == kind_da_confirmacao(um)
+    assert kind_da_confirmacao(um) != kind_da_confirmacao(outro)
+
+
+async def test_dois_agendamentos_da_mesma_mensagem_do_lead_saem_os_dois(
+    session: AsyncSession, session_factory, semear_corretor
+) -> None:
+    """A reserva e UNIQUE (message_id, kind) e a ancora e a ultima mensagem do
+    lead: com um kind fixo, o segundo agendamento confirmado sobre a mesma
+    mensagem teria o `send` suprimido para sempre."""
+    corretor = await semear_corretor(email="corretor@x.com")
+    imovel_id = await _imovel(session)
+    primeiro = await _agendamento(session, corretor_id=corretor.id, imovel_id=imovel_id)
+    segundo = await _agendamento(
+        session,
+        corretor_id=corretor.id,
+        imovel_id=imovel_id,
+        inicio=datetime(2026, 8, 28, 15, tzinfo=SP),
+        fim=datetime(2026, 8, 28, 16, tzinfo=SP),
+    )
+    await _mensagem_do_lead(session)
+    outbound = OutboundFake(session_factory)
+
+    for agendamento in (primeiro, segundo):
+        await avisar_confirmacao(
+            session_factory,
+            agendamento_id=agendamento.id,
+            outbound=outbound,
+            email=_CanalEspiao(),
+            calendario=_CalendarioEspiao(),
+            agora=AGORA,
+        )
+
+    assert len(outbound.payloads) == 2
+    assert "quinta-feira" in outbound.payloads[0]["texto"]
+    assert "sexta-feira" in outbound.payloads[1]["texto"]
+    assert (await _recarregar(session, primeiro)).lead_avisado_em == AGORA
+    assert (await _recarregar(session, segundo)).lead_avisado_em == AGORA
+
+
+async def test_outbound_que_levanta_vira_alerta_e_o_resto_segue(
+    session: AsyncSession, session_factory, semear_corretor, caplog: pytest.LogCaptureFixture
+) -> None:
+    corretor = await semear_corretor(email="corretor@x.com")
+    imovel_id = await _imovel(session)
+    agendamento = await _agendamento(session, corretor_id=corretor.id, imovel_id=imovel_id)
+    await _mensagem_do_lead(session)
+    email, calendario = _CanalEspiao(), _CalendarioEspiao()
+
+    with caplog.at_level("ERROR"):
+        await avisar_confirmacao(
+            session_factory,
+            agendamento_id=agendamento.id,
+            outbound=_OutboundQueLevanta(),
+            email=email,
+            calendario=calendario,
+            agora=AGORA,
+        )
+
+    assert len(email.recebidas) == 1
+    assert len(calendario.chamadas) == 1
+    linha = await _recarregar(session, agendamento)
+    assert linha.lead_avisado_em is None
+    assert linha.corretor_avisado_em == AGORA
+    assert linha.calendar_event_id == "evento-1"
+
+    avisos = eventos_de_log(caplog, "agendamento.aviso_ao_lead_falhou")
+    assert len(avisos) == 1
+    assert avisos[0].nivel == "ERROR"
+
+
+async def test_marca_de_feito_nao_sobrescreve_a_de_uma_execucao_concorrente(
+    session: AsyncSession, session_factory, semear_corretor
+) -> None:
+    """Uma segunda execucao marca a coluna ENQUANTO esta espera o Google: a
+    marca que chegou primeiro fica."""
+    corretor = await semear_corretor(email="corretor@x.com")
+    imovel_id = await _imovel(session)
+    agendamento = await _agendamento(session, corretor_id=corretor.id, imovel_id=imovel_id)
+    identificador = agendamento.id
+
+    class _CalendarioComConcorrente(_CalendarioEspiao):
+        async def criar_evento(self, **campos: Any) -> str | None:  # type: ignore[override]
+            async with session_factory() as outra:
+                await outra.execute(
+                    update(Agendamento)
+                    .where(Agendamento.id == identificador)
+                    .values(calendar_event_id="da-outra-execucao")
+                )
+                await outra.commit()
+            return await super().criar_evento(**campos)
+
+    await avisar_confirmacao(
+        session_factory,
+        agendamento_id=identificador,
+        outbound=_OutboundEspiao(),
+        email=_CanalEspiao(),
+        calendario=_CalendarioComConcorrente(),
+        agora=AGORA,
+    )
+
+    linha = await _recarregar(session, agendamento)
+    assert linha.calendar_event_id == "da-outra-execucao"

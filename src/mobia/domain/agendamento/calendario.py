@@ -30,8 +30,23 @@ class FalhaDeCalendario(RuntimeError):
 
 
 class CalendarioPort(Protocol):
+    """Cria o evento com o `evento_id` escolhido por quem chama.
+
+    O id vem de fora para a criacao ser idempotente: uma execucao que criou o
+    evento e caiu antes de gravar `calendar_event_id` repete o MESMO id, e o
+    Google o recusa em vez de criar um segundo evento. O Google so aceita os
+    caracteres do base32hex (a-v, 0-9), de 5 a 1024 -- `uuid.hex` cabe.
+    """
+
     async def criar_evento(
-        self, *, inicio: datetime, fim: datetime, titulo: str, descricao: str, convidado: str
+        self,
+        *,
+        evento_id: str,
+        inicio: datetime,
+        fim: datetime,
+        titulo: str,
+        descricao: str,
+        convidado: str,
     ) -> str | None: ...
 
 
@@ -39,7 +54,14 @@ class CalendarioNoop:
     """A integracao desligada: nenhuma chamada, nenhum evento (`None`)."""
 
     async def criar_evento(
-        self, *, inicio: datetime, fim: datetime, titulo: str, descricao: str, convidado: str
+        self,
+        *,
+        evento_id: str,
+        inicio: datetime,
+        fim: datetime,
+        titulo: str,
+        descricao: str,
+        convidado: str,
     ) -> str | None:
         return None
 
@@ -51,7 +73,14 @@ class GoogleCalendar:
         self._cliente = cliente
 
     async def criar_evento(
-        self, *, inicio: datetime, fim: datetime, titulo: str, descricao: str, convidado: str
+        self,
+        *,
+        evento_id: str,
+        inicio: datetime,
+        fim: datetime,
+        titulo: str,
+        descricao: str,
+        convidado: str,
     ) -> str | None:
         configuracao = get_settings()
         cliente = self._cliente or httpx.AsyncClient(timeout=SEGUNDOS_DE_TIMEOUT)
@@ -59,6 +88,7 @@ class GoogleCalendar:
             token = await self._access_token(cliente)
             agenda_encoded = quote(configuracao.google_calendar_id, safe="")
             corpo: dict[str, Any] = {
+                "id": evento_id,
                 "summary": titulo,
                 "description": descricao,
                 "start": {"dateTime": inicio.isoformat(), "timeZone": configuracao.followup_fuso},
@@ -71,6 +101,13 @@ class GoogleCalendar:
                 json=corpo,
                 headers={"Authorization": f"Bearer {token}"},
             )
+            if resposta.status_code == httpx.codes.CONFLICT:
+                # 409 `duplicate`: ja existe evento com este id nesta agenda
+                # -- o que uma execucao anterior criou antes de cair. E o
+                # evento que se queria, entao o id volta como sucesso. A
+                # documentacao do Google avisa que nem toda colisao e
+                # detectada na criacao; a garantia e de melhor esforco.
+                return evento_id
             if resposta.status_code >= 400:
                 raise FalhaDeCalendario(f"Google recusou o evento: HTTP {resposta.status_code}")
             identificador = _campo(resposta, "id")

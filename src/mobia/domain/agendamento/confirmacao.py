@@ -3,9 +3,11 @@
 Tres passos independentes -- avisar o lead, avisar o corretor, criar o evento
 na agenda dele --, cada um com a propria sessao curta e sem transacao aberta
 durante chamada de rede (o molde de `notificar`, em `notificacao/envio.py`).
-A falha de um vira alerta e nao impede o seguinte; nenhum escreve em
-`status`. Cada passo tem a sua coluna como marca de feito, e e ela que deixa
-o job ser reexecutado sem repetir nada (D2 do desenho).
+A falha de CANAL de um passo -- o outbound, o e-mail, o Google -- vira alerta
+e nao impede o seguinte; um erro de banco na leitura ou na marca de feito
+nao e capturado e derruba o job. Nenhum passo escreve em `status`. Cada passo
+tem a sua coluna como marca de feito, e e ela que deixa o job ser
+reexecutado sem repetir nada (D2 do desenho).
 
 **Nenhum caminho de producao chama isto ainda**: quem ligar o agendamento a
 conversa enfileira o job depois do commit de `confirmar()`. Ver
@@ -35,7 +37,24 @@ from mobia.domain.outbound.port import OutboundPort
 log = structlog.get_logger()
 
 AVISAR_CONFIRMACAO_JOB = "avisar_confirmacao"
-KIND_DA_CONFIRMACAO = "confirmacao_de_agendamento"
+PREFIXO_DO_KIND_DA_CONFIRMACAO = "confirmacao_"
+
+
+def kind_da_confirmacao(agendamento_id: uuid.UUID) -> str:
+    """O `kind` do aviso ao lead: um por agendamento, e nao um fixo.
+
+    A reserva de `outbound_dispatches` e UNIQUE (message_id, kind), e a
+    ancora e a ultima mensagem DO LEAD. Dois agendamentos confirmados sem o
+    lead escrever entre eles caem na mesma mensagem, e com um kind fixo o
+    segundo `send` seria suprimido como reentrega -- para sempre, porque a
+    marca de feito nunca chegaria. O pedaco do id faz o kind do segundo ser
+    outro; o mesmo agendamento continua repetindo o mesmo kind, que e o que
+    torna a reexecucao segura.
+
+    `kind` e `String(32)`: o prefixo tem 12 caracteres, e os 20 primeiros do
+    hex do id completam os 32.
+    """
+    return f"{PREFIXO_DO_KIND_DA_CONFIRMACAO}{agendamento_id.hex[:20]}"
 
 
 @dataclass(frozen=True)
@@ -120,9 +139,15 @@ async def _retratar(
 async def _marcar(
     session_factory: async_sessionmaker[AsyncSession], agendamento_id: uuid.UUID, **valores: object
 ) -> None:
+    # So grava onde a coluna ainda e nula: uma execucao concorrente que
+    # marcou primeiro -- durante a chamada de rede desta -- fica com a marca
+    # dela, em vez de ser sobrescrita.
+    ainda_nulas = [getattr(Agendamento, coluna).is_(None) for coluna in valores]
     async with session_factory() as session:
         await session.execute(
-            update(Agendamento).where(Agendamento.id == agendamento_id).values(**valores)
+            update(Agendamento)
+            .where(Agendamento.id == agendamento_id, *ainda_nulas)
+            .values(**valores)
         )
         await session.commit()
 
@@ -163,7 +188,7 @@ async def _avisar_lead(
     try:
         aceito = await outbound.send(
             ultima_do_lead.id,
-            KIND_DA_CONFIRMACAO,
+            kind_da_confirmacao(retrato.id),
             {
                 "para": retrato.conversation_key,
                 "de": ultima_do_lead.recipient_external_id,
@@ -183,8 +208,9 @@ async def _avisar_lead(
         )
         return
     if not aceito:
-        # A guarda recusou (opt-out, atendimento humano) ou a mesma chave ja
-        # tinha saido: nao e falha, e a coluna fica nula.
+        # A guarda recusou (opt-out, atendimento humano) ou a mesma chave --
+        # esta mensagem com o kind DESTE agendamento -- ja tinha saido: nao e
+        # falha, e a coluna fica nula.
         log.info("agendamento.aviso_ao_lead_recusado", agendamento_id=str(retrato.id))
         return
     await _marcar(session_factory, retrato.id, lead_avisado_em=agora)
@@ -232,6 +258,9 @@ async def _criar_evento(
         titulo = f"{titulo}: {retrato.imovel.titulo} ({retrato.imovel.codigo})"
     try:
         identificador = await calendario.criar_evento(
+            # Derivado do agendamento para a reexecucao repetir o mesmo id --
+            # ver `CalendarioPort`.
+            evento_id=retrato.id.hex,
             inicio=retrato.inicio,
             fim=retrato.fim,
             titulo=titulo,

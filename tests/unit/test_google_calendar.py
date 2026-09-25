@@ -19,6 +19,7 @@ from mobia.domain.agendamento.calendario import (
 SP = ZoneInfo("America/Sao_Paulo")
 INICIO = datetime(2026, 8, 27, 15, 0, tzinfo=SP)
 FIM = datetime(2026, 8, 27, 16, 0, tzinfo=SP)
+EVENTO_ID = "0123456789abcdef0123456789abcdef"
 
 
 @pytest.fixture(autouse=True)
@@ -43,18 +44,23 @@ def _cliente(responder) -> tuple[httpx.AsyncClient, list[httpx.Request]]:
 def _ok(pedido: httpx.Request) -> httpx.Response:
     if pedido.url.host == "oauth2.googleapis.com":
         return httpx.Response(200, json={"access_token": "tok"})
-    return httpx.Response(200, json={"id": "evento-1"})
+    return httpx.Response(200, json={"id": EVENTO_ID})
 
 
 async def _criar(calendario) -> str | None:
     return await calendario.criar_evento(
-        inicio=INICIO, fim=FIM, titulo="Visita", descricao="Lead x", convidado="paula@x.com"
+        evento_id=EVENTO_ID,
+        inicio=INICIO,
+        fim=FIM,
+        titulo="Visita",
+        descricao="Lead x",
+        convidado="paula@x.com",
     )
 
 
 async def test_troca_o_token_e_cria_o_evento_com_convite() -> None:
     cliente, pedidos = _cliente(_ok)
-    assert await _criar(GoogleCalendar(cliente)) == "evento-1"
+    assert await _criar(GoogleCalendar(cliente)) == EVENTO_ID
 
     token, evento = pedidos
     assert token.url == httpx.URL("https://oauth2.googleapis.com/token")
@@ -71,11 +77,26 @@ async def test_troca_o_token_e_cria_o_evento_com_convite() -> None:
     assert evento.url.params["sendUpdates"] == "all"
     assert evento.headers["Authorization"] == "Bearer tok"
     corpo = json.loads(evento.content)
+    assert corpo["id"] == EVENTO_ID
     assert corpo["summary"] == "Visita"
     assert corpo["description"] == "Lead x"
     assert corpo["attendees"] == [{"email": "paula@x.com"}]
     assert corpo["start"] == {"dateTime": INICIO.isoformat(), "timeZone": "America/Sao_Paulo"}
     assert corpo["end"] == {"dateTime": FIM.isoformat(), "timeZone": "America/Sao_Paulo"}
+
+
+async def test_409_e_o_evento_que_ja_existe_e_devolve_o_mesmo_id() -> None:
+    """Uma execucao anterior criou o evento e caiu antes de marcar a coluna: o
+    Google responde 409 ao mesmo `id`, e isso e sucesso, nao falha."""
+
+    def _responder(pedido: httpx.Request) -> httpx.Response:
+        if pedido.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "tok"})
+        return httpx.Response(409, json={"error": {"errors": [{"reason": "duplicate"}]}})
+
+    cliente, pedidos = _cliente(_responder)
+    assert await _criar(GoogleCalendar(cliente)) == EVENTO_ID
+    assert len(pedidos) == 2
 
 
 async def test_5xx_vira_falha_de_calendario() -> None:
