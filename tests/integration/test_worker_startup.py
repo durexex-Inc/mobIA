@@ -9,6 +9,7 @@ from mobia.domain.outbound.presenca import IndicadorNoop
 from mobia.domain.outbound.roteador import RoteadorPorCanal
 from mobia.domain.outbound.web import WebOutbound
 from mobia.domain.outbound.whatsapp import WhatsAppIndicador, WhatsAppOutbound
+from mobia.workers import main as worker_main
 from mobia.workers.main import startup
 
 
@@ -318,3 +319,55 @@ async def test_arq_instala_o_handler_que_drena_no_sigterm(
 
     assert registrados[signal.SIGTERM] == "handle_sig_wait_for_completion"
     assert registrados[signal.SIGINT] == "handle_sig_wait_for_completion"
+
+
+class _LogQueGrava:
+    """Grava os `warning` do `startup`. Substitui o logger do modulo, e nao
+    usa caplog, porque o proprio `startup` chama `configure_logging` e
+    reconfiguraria a captura no meio do teste."""
+
+    def __init__(self) -> None:
+        self.avisos: list[tuple[str, dict]] = []
+
+    def warning(self, evento: str, **campos: object) -> None:
+        self.avisos.append((evento, campos))
+
+
+def _sobe_em_producao(monkeypatch: pytest.MonkeyPatch) -> None:
+    _producao(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "chave-de-teste")
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "mobia@localhost")
+
+
+async def test_producao_com_armazem_local_avisa_e_sobe(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    """M3 da revisao final (TEC-132). Nao recusa: o S3 de producao e da
+    TEC-219. Mas a midia no disco do container some com ele, e isso nao pode
+    acontecer sem aviso."""
+    _sobe_em_producao(monkeypatch)
+    monkeypatch.setenv("MIDIA_ARMAZEM", "local")
+    gravador = _LogQueGrava()
+    monkeypatch.setattr(worker_main, "log", gravador)
+
+    ctx: dict = {"redis": object()}
+    await startup(ctx)
+
+    assert "armazem" in ctx
+    assert [evento for evento, _ in gravador.avisos] == ["midia.armazem_local_em_producao"]
+
+
+async def test_desenvolvimento_com_armazem_local_nao_avisa(
+    monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
+) -> None:
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
+    monkeypatch.setenv("SMTP_HOST", "localhost")
+    monkeypatch.setenv("SMTP_REMETENTE", "mobia@localhost")
+    monkeypatch.setenv("MIDIA_ARMAZEM", "local")
+    gravador = _LogQueGrava()
+    monkeypatch.setattr(worker_main, "log", gravador)
+
+    await startup({"redis": object()})
+
+    assert gravador.avisos == []

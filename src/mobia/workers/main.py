@@ -1,5 +1,6 @@
 from typing import Any
 
+import structlog
 from arq import cron, func
 
 from mobia.app.config import ConfiguracaoInsegura, get_settings
@@ -32,6 +33,8 @@ from mobia.workers.jobs.sweep_importacoes_travadas import sweep_importacoes_trav
 from mobia.workers.jobs.sweep_midias_pendentes import sweep_midias_pendentes
 from mobia.workers.jobs.sweep_sla import sweep_sla
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
+
+log = structlog.get_logger(__name__)
 
 
 async def startup(ctx: dict[str, Any]) -> None:
@@ -147,6 +150,14 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["canais_de_notificacao"] = (EmailSmtp(), WhatsAppTemplate())
     # TEC-132, D1. Disco ou S3 conforme `midia_armazem`; a validacao de que
     # "s3" veio com bucket ja rodou quando `get_settings()` montou a config.
+    #
+    # Em producao com o armazem local, avisa e SOBE, ao contrario das guardas
+    # acima: o S3 de producao (bucket, credenciais, politica) e da TEC-219, e
+    # recusar aqui travaria todo deploy ate la. O custo aceito e a midia ficar
+    # no disco do container, que some com ele -- o aviso existe para isso nao
+    # acontecer sem ninguem saber.
+    if settings.em_producao and settings.midia_armazem == "local":
+        log.warning("midia.armazem_local_em_producao", diretorio=settings.midia_diretorio)
     ctx["armazem"] = armazem_da_config(settings)
 
 
