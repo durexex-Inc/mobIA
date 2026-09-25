@@ -4188,13 +4188,15 @@ async def _entregar_texto_fixo(
     visivel e recuperavel e o silencio nao. `kind` tem default
     (`KIND_DA_RESPOSTA`) para preservar o chamador que nao precisa de kind
     proprio -- hoje so o texto da busca inconclusiva (`LacoDeBuscaExcedido`,
-    mais abaixo) usa o default. Os outros quatro chamadores passam kind
+    mais abaixo) usa o default. Os outros cinco chamadores passam kind
     proprio: a confirmacao de opt-out (TEC-182), o aviso de pedido de humano,
     a confirmacao de midia sem texto (TEC-132, D4:
-    `KIND_DA_CONFIRMACAO_DE_MIDIA`, com `SUBAGENTE_MIDIA`), e -- desde a
-    TEC-295, ruling R6 -- a recusa de entrada, que usa
+    `KIND_DA_CONFIRMACAO_DE_MIDIA`, com `SUBAGENTE_MIDIA`), a recusa de
+    entrada -- desde a TEC-295, ruling R6 --, que usa
     `KIND_DA_RECUSA_DE_ENTRADA` para nao colidir com o `kind` da resposta que
-    a continuacao da D4 pode entregar depois dela na mesma mensagem. O da
+    a continuacao da D4 pode entregar depois dela na mesma mensagem, e o
+    agendamento pela conversa (TEC-371: `KIND_DO_AGENDAMENTO`, com
+    `SUBAGENTE_AGENDAMENTO`). O da
     opt-out e o unico que atravessa a guarda de opt-out da porta de saida
     depois do registro -- ver `GuardedOutbound.send`. `subagent` anda junto
     de `kind` pelo mesmo motivo: sem o parametro, toda entrega deste caminho
@@ -4205,7 +4207,8 @@ async def _entregar_texto_fixo(
     # A identificacao entra AQUI e nao em cada chamador: este e o funil das
     # trilhas que passam por `_entregar_texto_fixo` -- recusa da moderacao de
     # entrada, confirmacao de opt-out, aviso de pedido de humano, confirmacao
-    # de midia sem texto (TEC-132) e laco de busca excedido.
+    # de midia sem texto (TEC-132), agendamento pela conversa (TEC-371) e laco
+    # de busca excedido.
     # (O texto neutro da moderacao de saida e a busca inconclusiva da citacao
     # bloqueada nao chamam esta funcao -- reatribuem `texto` e caem no bloco
     # de entrega compartilhado de `executar_turno`, que tem o ponto de

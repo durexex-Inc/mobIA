@@ -11,9 +11,14 @@ o argumento e o mesmo da docstring de `dinheiro.py`. So `agora` sem fuso
 levanta: e erro de programacao, nao de fala.
 
 Este modulo e a ponte entre a data falada e o motor (`propor_janelas`): a
-unica peca que conhece ambos. Nenhum codigo de producao chama este modulo
-ainda: ver o desenho,
-docs/superpowers/specs/2026-09-24-tec-167-data-em-linguagem-natural-design.md.
+unica peca que conhece ambos. Desde a TEC-371 quem o chama e
+`agendamento/conversa.py`, em tres lugares: para saber se a fala traz data (a
+segunda via do detector), para recortar a oferta naquele dia (CA-11.1), e para
+casar a escolha do lead contra as janelas oferecidas. `Ambigua` volta como
+pergunta ao lead, que e o que a docstring de `janelas_para` sempre pediu a
+quem chamasse. Ver
+docs/superpowers/specs/2026-09-24-tec-167-data-em-linguagem-natural-design.md e
+docs/superpowers/specs/2026-09-25-tec-371-agendar-pela-conversa-design.md.
 """
 
 import re

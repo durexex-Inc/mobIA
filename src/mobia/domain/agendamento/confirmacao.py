@@ -9,9 +9,12 @@ nao e capturado e derruba o job. Nenhum passo escreve em `status`. Cada passo
 tem a sua coluna como marca de feito, e e ela que deixa o job ser
 reexecutado sem repetir nada (D2 do desenho).
 
-**Nenhum caminho de producao chama isto ainda**: quem ligar o agendamento a
-conversa enfileira o job depois do commit de `confirmar()`. Ver
-docs/superpowers/specs/2026-09-24-tec-170-confirmar-agendamento-design.md.
+**Desde a TEC-371 isto sai por conversa de lead**: o turno confirma, commita e
+enfileira o job, nessa ordem. E este job que manda a mensagem de confirmacao ao
+lead -- o turno nao manda texto nenhum nesse caso, para nao dizer duas vezes a
+mesma coisa com menos dados. Ver
+docs/superpowers/specs/2026-09-24-tec-170-confirmar-agendamento-design.md e
+docs/superpowers/specs/2026-09-25-tec-371-agendar-pela-conversa-design.md.
 """
 
 import uuid

@@ -16,7 +16,11 @@ class Gatilho(StrEnum):
     chegaram e so chamaram `registrar_handoff` com o gatilho que ja existia.
     TEC-170 chegou e NAO chamou: o aviso do agendamento confirmado sai por
     e-mail direto ao corretor, sem abrir handoff (RN-16.1, decidido em
-    conversa) -- AGENDAMENTO_CONFIRMADO segue sem chamador.
+    conversa) -- AGENDAMENTO_CONFIRMADO segue sem chamador. **A TEC-371
+    tampouco o chamou**, e e a card em que ele mais pareceria servir: ela e a
+    primeira a confirmar agendamento por conversa de lead. A decisao da
+    TEC-170 nao foi reaberta -- o e-mail continua sendo o caminho, e abrir
+    handoff aqui poria na fila do corretor uma visita que ja esta marcada.
 
     A RN-16.1 junta VENDER_IMOVEL e SUPORTE_CONTRATO num item so, e aqui eles
     sao dois: o Gherkin da card so nomeia a etiqueta `venda-imovel`, e as duas
