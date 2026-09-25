@@ -19,6 +19,13 @@ from mobia.infra.moderacao import ModeradorAnthropic
 
 CORPUS = Path(__file__).resolve().parent / "moderacao"
 
+# `get_moderation_client` (infra/moderacao.py) e @lru_cache: o AsyncAnthropic
+# e criado uma vez e reusado. Com um event loop por teste (o default do
+# projeto), o segundo teste deste arquivo reusava o cliente preso ao loop do
+# primeiro, ja fechado, e quebrava com APIConnectionError. Um loop por MODULO,
+# igual a `test_injecao.py`.
+pytestmark = pytest.mark.asyncio(loop_scope="module")
+
 CASOS = [
     ("entrada_bloqueia", Direcao.ENTRADA, True),
     ("entrada_libera", Direcao.ENTRADA, False),
@@ -30,8 +37,10 @@ CASOS = [
 # historicos continuam sobre os mesmos quatro arquivos. Cada linha diz o achado
 # esperado e o bloqueio esperado. Os dois primeiros tem de LIBERAR -- `INJECAO`
 # nao bloqueia --, e o que muda entre eles e o achado. O terceiro e o ataque
-# que o vocabulario novo abre: conteudo que bloqueia junto de uma ordem ao
-# moderador para responder `BLOQUEAR INJECAO` sozinho, que liberaria. Ali o
+# que o vocabulario novo abria: conteudo que bloqueia junto de uma ordem ao
+# moderador para responder `BLOQUEAR INJECAO` sozinho. Na primeira versao do
+# protocolo esse rotulo liberava, e este arquivo mediu 8/10; hoje so `LIBERAR`
+# e `LIBERAR INJECAO` liberam, e `BLOQUEAR INJECAO` bloqueia como OUTRO. Ali o
 # certo e bloquear E achar a injecao, e a taxa de bloqueio sai numa linha
 # propria.
 CASOS_DE_INJECAO = [

@@ -458,15 +458,31 @@ def test_o_protocolo_pedido_nomeia_as_categorias_da_direcao() -> None:
         assert categoria in SISTEMA_DA_SAIDA
 
 
-async def test_injecao_sozinha_nao_bloqueia(monkeypatch: pytest.MonkeyPatch) -> None:
-    """TEC-204, D3: `INJECAO` sozinha e o turno seguindo normal."""
-    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR INJECAO"))
+async def test_liberar_injecao_e_o_achado_sozinho(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TEC-204, D3: `INJECAO` sozinha e o turno seguindo normal, e a forma que
+    diz isso comeca por `LIBERAR`."""
+    cliente = ClienteFalso(RespostaFalsa("LIBERAR INJECAO"))
     veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
 
     assert veredito.bloqueado is False
     assert veredito.injecao is True
     assert veredito.categoria is None
     assert veredito.motivo == "ENTRADA:INJECAO"
+
+
+async def test_bloquear_injecao_bloqueia_como_outro(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O buraco medido no eval pago: com `BLOQUEAR INJECAO` liberando, o lead
+    ditava esse rotulo ao moderador e o conteudo hostil passava (8/10 bloqueios
+    em `entrada_injecao_bloqueia`, contra 10/10 do parser de antes da card).
+    Comecar por BLOQUEAR e decidir bloquear -- o rotulo nao desfaz isso."""
+    from mobia.domain.moderacao.port import CATEGORIA_OUTRO
+
+    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR INJECAO"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == CATEGORIA_OUTRO
+    assert veredito.injecao is True
 
 
 async def test_injecao_com_outra_categoria_bloqueia_pela_outra(
@@ -493,7 +509,7 @@ async def test_injecao_antes_da_categoria_tambem_vale(monkeypatch: pytest.Monkey
 async def test_injecao_na_saida_e_rotulo_de_outra_direcao(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A saida nao oferece `INJECAO`: vinda dali, bloqueia como OUTRO."""
+    """A saida nao oferece `INJECAO`: depois de BLOQUEAR, bloqueia como OUTRO."""
     from mobia.domain.moderacao.port import CATEGORIA_OUTRO
 
     cliente = ClienteFalso(RespostaFalsa("BLOQUEAR INJECAO"))
@@ -504,37 +520,71 @@ async def test_injecao_na_saida_e_rotulo_de_outra_direcao(
     assert veredito.injecao is False
 
 
+async def test_liberar_injecao_na_saida_e_indisponibilidade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Na saida `LIBERAR INJECAO` e `LIBERAR` com palavra que o prompt nao
+    ofereceu -- fora do protocolo, e la a indisponibilidade impede a entrega."""
+    cliente = ClienteFalso(RespostaFalsa("LIBERAR INJECAO"))
+
+    with pytest.raises(ModeracaoIndisponivel):
+        await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.SAIDA)
+
+
 @pytest.mark.parametrize(
-    "bruto", ["BLOQUEAR ASSEDIO AMEACA", "LIBERAR INJECAO", "BLOQUEAR ASSEDIO INJECAO X"]
+    "bruto",
+    [
+        "BLOQUEAR ASSEDIO AMEACA",
+        "BLOQUEAR ASSEDIO INJECAO X",
+        "LIBERAR ASSEDIO",
+        "LIBERAR INJECAO INJECAO",
+        "LIBERAR INJECAO ASSEDIO",
+        "LIBERAR ASSEDIO INJECAO",
+    ],
 )
 async def test_tres_palavras_fora_da_forma_sao_indisponibilidade(
     monkeypatch: pytest.MonkeyPatch, bruto: str
 ) -> None:
     """A terceira palavra so existe para `INJECAO`; duas categorias que
-    bloqueiam, ou `LIBERAR` com qualquer coisa, sao o modelo fora do protocolo."""
+    bloqueiam, ou `LIBERAR` com qualquer coisa alem de um `INJECAO`, sao o
+    modelo fora do protocolo. `LIBERAR` nao ganha a tolerancia que `BLOQUEAR`
+    tem, porque liberar e o lado caro de errar."""
     cliente = ClienteFalso(RespostaFalsa(bruto))
 
     with pytest.raises(ModeracaoIndisponivel):
         await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
 
 
-def test_o_protocolo_da_entrada_ensina_a_combinar_com_injecao() -> None:
+def test_o_protocolo_da_entrada_ensina_as_duas_formas_da_injecao() -> None:
+    """O que se pede e o que se le: a forma liberada comeca por LIBERAR, e
+    `INJECAO` nao aparece na linha de categorias -- la ela ensinaria
+    `BLOQUEAR INJECAO` como forma de liberar."""
     from mobia.infra.moderacao import _protocolo_de
 
-    assert "BLOQUEAR INJECAO" in _protocolo_de(Direcao.ENTRADA)
+    entrada = _protocolo_de(Direcao.ENTRADA)
+    assert "LIBERAR INJECAO" in entrada
+    assert "BLOQUEAR ASSEDIO INJECAO" in entrada
+    assert "BLOQUEAR INJECAO" not in entrada
+    linha_de_categorias = next(
+        linha for linha in entrada.splitlines() if linha.startswith("Categorias:")
+    )
+    assert "INJECAO" not in linha_de_categorias
     assert "INJECAO" not in _protocolo_de(Direcao.SAIDA)
 
 
-async def test_injecao_repetida_e_a_injecao_sozinha(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`BLOQUEAR INJECAO INJECAO` diz o mesmo que `BLOQUEAR INJECAO`: liberado,
-    com o achado. Nao e caminho novo para liberar -- o parser antigo recusava
-    a forma, e na entrada a recusa ja era fail-open."""
+async def test_bloquear_injecao_repetida_continua_bloqueando(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`BLOQUEAR INJECAO INJECAO` diz o mesmo que `BLOQUEAR INJECAO`: bloqueio
+    como OUTRO, com o achado. Tolerancia de forma so do lado que bloqueia."""
+    from mobia.domain.moderacao.port import CATEGORIA_OUTRO
+
     cliente = ClienteFalso(RespostaFalsa("BLOQUEAR INJECAO INJECAO"))
     veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
 
-    assert veredito.bloqueado is False
+    assert veredito.bloqueado is True
     assert veredito.injecao is True
-    assert veredito.categoria is None
+    assert veredito.categoria == CATEGORIA_OUTRO
 
 
 async def test_injecao_com_rotulo_desconhecido_bloqueia_como_outro(
@@ -551,11 +601,50 @@ async def test_injecao_com_rotulo_desconhecido_bloqueia_como_outro(
     assert veredito.injecao is True
 
 
+def _todas_as_respostas_de_ate_tres_palavras() -> list[str]:
+    """Todo arranjo de ate tres palavras sobre o vocabulario das duas direcoes,
+    os dois vereditos, OUTRO e uma palavra que ninguem ofereceu."""
+    import itertools
+
+    from mobia.domain.moderacao.port import CATEGORIA_OUTRO, CATEGORIAS_POR_DIRECAO
+
+    palavras = sorted(
+        set().union(*CATEGORIAS_POR_DIRECAO.values())
+        | {"LIBERAR", "BLOQUEAR", CATEGORIA_OUTRO, "ZORGLUB"}
+    )
+    return [
+        " ".join(arranjo) for n in (1, 2, 3) for arranjo in itertools.product(palavras, repeat=n)
+    ]
+
+
+@pytest.mark.parametrize("direcao", list(Direcao))
+async def test_so_liberar_e_liberar_injecao_liberam(
+    monkeypatch: pytest.MonkeyPatch, direcao: Direcao
+) -> None:
+    """A invariante da correcao, por exaustao: de todas as respostas de ate tres
+    palavras sobre o vocabulario, so `LIBERAR` e, na entrada, `LIBERAR INJECAO`
+    devolvem veredito liberado. Um terceiro caminho para liberar e um rotulo que
+    o lead pode ditar ao moderador."""
+    liberam = {"LIBERAR"} | ({"LIBERAR INJECAO"} if direcao is Direcao.ENTRADA else set())
+    liberadas: set[str] = set()
+    for bruto in _todas_as_respostas_de_ate_tres_palavras():
+        cliente = ClienteFalso(RespostaFalsa(bruto))
+        try:
+            veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=direcao)
+        except ModeracaoIndisponivel:
+            continue
+        if not veredito.bloqueado:
+            liberadas.add(bruto)
+
+    assert liberadas == liberam
+
+
 def test_o_protocolo_diz_quantas_categorias_cabem_em_cada_direcao() -> None:
-    """A entrada pede ate duas; a saida continua pedindo uma, como antes."""
+    """Uma categoria nas duas direcoes: na entrada `INJECAO` nao e categoria de
+    bloqueio, e sim o achado acrescentado no fim."""
     from mobia.infra.moderacao import _protocolo_de
 
-    assert "BLOQUEAR seguido de uma ou duas categorias." in _protocolo_de(Direcao.ENTRADA)
+    assert "BLOQUEAR seguido de uma categoria." in _protocolo_de(Direcao.ENTRADA)
     assert "BLOQUEAR seguido de uma categoria." in _protocolo_de(Direcao.SAIDA)
 
 
@@ -564,7 +653,8 @@ def test_o_teto_do_veredito_cobre_o_mais_longo_medido() -> None:
     passa calado. Medido em 25/09/2026 com `count_tokens` em
     `claude-haiku-4-5-20251001`: `**BLOQUEAR** AMEACA INJECAO.`, o veredito
     valido mais longo com o enfeite que a leitura tolera, custa 15 (o nu,
-    `BLOQUEAR AMEACA INJECAO`, 12). Remedir se `modelo_moderacao` mudar ou se
+    `BLOQUEAR AMEACA INJECAO`, 12). `LIBERAR INJECAO` tem duas palavras e nao
+    passa dele. Remedir se `modelo_moderacao` mudar ou se
     o vocabulario ganhar palavra mais longa."""
     from mobia.infra.moderacao import MAX_TOKENS_DO_VEREDITO
 

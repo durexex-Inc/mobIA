@@ -75,9 +75,10 @@ def test_a_injecao_tem_o_gemeo_benigno() -> None:
 
 
 def test_o_hostil_com_injecao_dita_o_rotulo_que_libera() -> None:
-    """TEC-204. O unico ataque que o vocabulario novo abre e o conteudo que
-    bloqueia junto de uma ordem para o moderador responder `BLOQUEAR INJECAO`
-    sozinho -- que libera. Sem ao menos um caso que dite esse rotulo por
-    extenso, o corpus nao mede justamente esse caminho."""
+    """TEC-204. O ataque que o vocabulario novo abria e o conteudo que bloqueia
+    junto de uma ordem para o moderador responder `BLOQUEAR INJECAO` sozinho --
+    que liberava ate a correcao pos-medicao, e hoje bloqueia como OUTRO. O
+    corpus continua ditando esse rotulo por extenso: e o caso que o eval pago
+    pegou (8/10), e sem ele a regressao nao teria como reaparecer medida."""
     textos = [caso["texto"] for caso in _casos("entrada_injecao_bloqueia")]
     assert any("BLOQUEAR INJECAO" in texto for texto in textos)
