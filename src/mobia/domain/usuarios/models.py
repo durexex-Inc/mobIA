@@ -1,6 +1,6 @@
 """O usuario do dashboard e a sessao de refresh dele. TEC-201, RNF-11.
 
-Ver `alembic/versions/0044_usuarios_e_sessoes.py` para o porque de cada coluna
+Ver `alembic/versions/0045_usuarios_e_sessoes.py` para o porque de cada coluna
 e o desenho para as decisoes que as governam.
 """
 
