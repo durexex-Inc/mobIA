@@ -1,7 +1,12 @@
-"""O JWT de acesso. TEC-201, RNF-11.
+"""O JWT de acesso. TEC-201 e TEC-202, RNF-11 e RNF-12.
 
 Sessenta minutos, HS256, e a validacao com o algoritmo FIXADO -- ver
 `validar`, que e onde mora a unica decisao de seguranca deste modulo.
+
+O corpo carrega papel, MFA e vinculo de corretor. **As tres claims sao
+obrigatorias em `validar`**, inclusive no desafio de MFA: uma forma so de
+corpo e o que impede um token com claim faltando de virar identidade com
+default inventado.
 """
 
 import uuid

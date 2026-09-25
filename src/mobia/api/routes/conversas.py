@@ -104,8 +104,9 @@ async def assumir(
 ) -> dict[str, object]:
     """O corretor assume a conversa: o agente cala, e o handoff pendente sai da fila.
 
-    `corretor_id` vem no corpo e nao no token -- ver o docstring de
-    `PedidoDeAtendimento` (D2).
+    `corretor_id` vem no corpo, e para o papel CORRETOR ele e conferido
+    contra a claim do token desde a TEC-202 -- ver o docstring de
+    `PedidoDeAtendimento`.
 
     **Aceita junto o handoff PENDENTE ou ESCALADO da mesma conversa (D6),
     na mesma transacao.** Nao e um segundo commit: se o processo caisse

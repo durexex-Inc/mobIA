@@ -34,7 +34,7 @@ A escolhida é a terceira, com duas isenções nomeadas. `POST /webhooks/whatsap
 
 Com elas, o middleware protege as rotas administrativas que já existem — o que torna o critério de aceite do IP exercitável hoje, contra rota real — e o widget nasce protegido no dia em que o TEC-124 registrar o router.
 
-**Consequência aceita:** as rotas administrativas passam a ter teto de 100 req/min por IP. Elas já exigem token de administrador (`api/deps.py:15-41`), então o limite não é a defesa principal delas; é efeito colateral de um middleware que se aplica por omissão em vez de por opt-in. A alternativa — lista de rotas incluídas — erra para o lado de esquecer o widget, que é o erro caro.
+**Consequência aceita:** as rotas administrativas passam a ter teto de 100 req/min por IP. Elas já exigem credencial de administrador — o `exigir_admin` de `api/deps.py` quando isto foi escrito, e `api/autorizacao.py::Exige` desde a TEC-202, que o substituiu por permissão por rota —, então o limite não é a defesa principal delas; é efeito colateral de um middleware que se aplica por omissão em vez de por opt-in. A alternativa — lista de rotas incluídas — erra para o lado de esquecer o widget, que é o erro caro.
 
 ### D2 — O excedente por número é adiado, não recusado, e o atraso é fixo
 
