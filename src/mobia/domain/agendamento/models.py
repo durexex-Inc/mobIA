@@ -19,7 +19,15 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +36,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 # `imoveis`.
 from mobia.domain.catalogo.models import Imovel  # noqa: F401
 from mobia.domain.corretores.models import Corretor  # noqa: F401
+from mobia.domain.handoff.models import Handoff  # noqa: F401
 from mobia.domain.messages.models import Base
 
 
@@ -233,5 +242,98 @@ class JanelaProposta(Base):
         CheckConstraint("inicio < fim", name="ck_janelas_propostas_intervalo"),
         UniqueConstraint(
             "channel", "conversation_key", "ordinal", name="uq_janelas_propostas_conversa_ordinal"
+        ),
+    )
+
+
+class ListaDeEspera(Base):
+    """Quem pediu visita numa semana sem horario livre. TEC-169, RN-11.5.
+
+    Quatro marcas nulas e nenhuma coluna de status, pelo molde que a TEC-170,
+    a TEC-171 e a TEC-372 firmaram: nula e "nao aconteceu", nunca um fato
+    negativo. Ver a docstring da migration 0054, que guarda o resto do porque.
+
+    O lead e o par `(channel, conversation_key)`, como em `handoffs` e
+    `agendamentos`: nao existe tabela de lead.
+    """
+
+    __tablename__ = "lista_de_espera"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Nulo: o lead pode pedir visita sem ter imovel em vista, e a fila
+    # continua valendo -- o corretor e quem propoe o que mostrar.
+    imovel_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("imoveis.id", name="fk_lista_de_espera_imovel"),
+        nullable=True,
+    )
+    oferecida_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # **Esta e a coluna que ORDENA a fila**, e nao `oferecida_em`. A card diz
+    # que o lead "entra na lista com o momento de entrada registrado", e
+    # entrar e aceitar: quem recebeu a oferta e nao respondeu nao esta na
+    # fila. Ordenar pela oferta poria na frente quem nunca disse sim.
+    aceita_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # O lead preferiu datas mais distantes (D6). Nao e "saiu da fila por
+    # desistencia": e o quarto cenario do Gherkin, em que ele nunca entrou.
+    recusada_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # O aviso de slot liberado saiu. Tira da fila TENHA O LEAD RESPONDIDO OU
+    # NAO, e e isso que impede o primeiro de trava-la -- o slot seguinte vai
+    # para o proximo. Carimbada tambem quando o envio nao saiu por falta de
+    # template aprovado (TEC-373): senao a fila fica presa atras de um lead
+    # que nao pode ser avisado.
+    avisada_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # QUAL slot liberado gerou o aviso, e e o que pareia cancelamento e lead
+    # um-para-um: a varredura so gasta um cancelamento que ainda nao aparece
+    # nesta coluna. E por isso que um slot avisa UM lead e nao a fila inteira
+    # (D7) -- avisar cinco pessoas sobre uma vaga produz uma corrida e quatro
+    # decepcoes, e o lock otimista da RN-11.4 so protege depois da escolha.
+    #
+    # Mora aqui, e nao em `agendamentos`: e um fato sobre a fila, nao sobre o
+    # compromisso que caiu.
+    avisada_por_agendamento_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("agendamentos.id", name="fk_lista_de_espera_avisada_por"),
+        nullable=True,
+    )
+
+    # Preenchida no aceite, e so entao: a oferta sozinha nao abre handoff,
+    # porque um lead que nao respondeu nao pediu nada ao corretor.
+    handoff_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("handoffs.id", name="fk_lista_de_espera_handoff"),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "NOT (aceita_em IS NOT NULL AND recusada_em IS NOT NULL)",
+            name="ck_lista_de_espera_desfecho_unico",
+        ),
+        CheckConstraint(
+            "avisada_em IS NULL OR aceita_em IS NOT NULL",
+            name="ck_lista_de_espera_aviso_pressupoe_aceite",
+        ),
+        UniqueConstraint("avisada_por_agendamento_id", name="uq_lista_de_espera_um_aviso_por_slot"),
+        # O `postgresql_where` tem de casar EXATAMENTE com o da migration
+        # 0054: e ele que diz ao Postgres qual indice parcial usar. A licao
+        # esta escrita por extenso no `ON CONFLICT` de
+        # `domain/handoff/repositorio.py`.
+        Index(
+            "uq_lista_de_espera_conversa_viva",
+            "channel",
+            "conversation_key",
+            unique=True,
+            postgresql_where=text("recusada_em IS NULL AND avisada_em IS NULL"),
+        ),
+        Index(
+            "ix_lista_de_espera_fila",
+            "aceita_em",
+            postgresql_where=text("aceita_em IS NOT NULL AND avisada_em IS NULL"),
         ),
     )

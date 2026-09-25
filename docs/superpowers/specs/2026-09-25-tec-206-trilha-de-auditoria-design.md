@@ -159,6 +159,8 @@ Só leitura: a rota não tem outro método, então "não há opção de editar n
 
 `eventos_auditoria`, os dois triggers e os quatro índices, à mão. `downgrade` remove tudo.
 
+**Nasceu `0052` e foi renumerada para `0053` na TEC-377.** Ela e a `0052` da TEC-372 mergearam com 17 segundos de diferença, as duas saindo da `0051`, e a árvore ficou com duas cabeças. Renumerou-se esta por ser a que mergeou por último — a regra que `tests/unit/test_uma_cabeca_de_migration.py::test_a_arvore_de_migrations_tem_uma_cabeca_so` escreve na própria mensagem de falha.
+
 ## Emendas ao SRS
 
 - **RNF-18** — os eventos auditados de fato e os que ficam sem chamador; os 12 meses são máximo; o limite da garantia (o papel dono).

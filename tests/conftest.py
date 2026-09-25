@@ -235,6 +235,13 @@ TABELAS = (
     # proximo. TRUNCATE nao dispara os triggers de linha da 0053 -- e por isso
     # a D3 do desenho nao o bloqueia.
     "eventos_auditoria",
+    # TEC-169. Mutavel, e com UNIQUE parcial sobre a linha VIVA da conversa:
+    # sem o truncate, a oferta de espera de um teste bloqueia a do proximo, e
+    # a falha apareceria so a partir do segundo teste do arquivo -- o mesmo
+    # sintoma que `handoffs` e `imoveis` ja registram. O CASCADE de `handoffs`
+    # alcancaria esta tabela pela FK, mas so nos testes que chegam a aceitar a
+    # oferta: listar aqui e o que a limpa nos que so a oferecem.
+    "lista_de_espera",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto

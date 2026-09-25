@@ -40,6 +40,11 @@ from mobia.domain.agendamento.data_falada import (
     TEXTO_DO_FIM_DE_SEMANA,
     TEXTO_DO_PASSADO,
 )
+from mobia.domain.agendamento.espera import (
+    TEXTO_DA_ESPERA_ACEITA,
+    TEXTO_DA_LISTA_DE_ESPERA,
+    TEXTO_DO_SLOT_LIBERADO,
+)
 from mobia.domain.agendamento.lembretes import (
     TEXTO_DO_LEMBRETE_DE_2H_DE_REUNIAO,
     TEXTO_DO_LEMBRETE_DE_2H_DE_VISITA,
@@ -138,4 +143,8 @@ LITERAIS_AO_LEAD = (
     TEXTO_DA_PRESENCA_CONFIRMADA,
     TEXTO_DO_CANCELAMENTO_FEITO,
     TEXTO_DA_REMARCACAO,
+    # TEC-169. Os tres da lista de espera.
+    TEXTO_DA_LISTA_DE_ESPERA,
+    TEXTO_DA_ESPERA_ACEITA,
+    TEXTO_DO_SLOT_LIBERADO,
 )

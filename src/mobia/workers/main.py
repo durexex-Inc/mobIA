@@ -37,6 +37,7 @@ from mobia.workers.jobs.sweep_crm_pendentes import sweep_crm_pendentes
 from mobia.workers.jobs.sweep_followups import sweep_followups
 from mobia.workers.jobs.sweep_importacoes_travadas import sweep_importacoes_travadas
 from mobia.workers.jobs.sweep_lembretes import sweep_lembretes
+from mobia.workers.jobs.sweep_lista_de_espera import sweep_lista_de_espera
 from mobia.workers.jobs.sweep_midias_pendentes import sweep_midias_pendentes
 from mobia.workers.jobs.sweep_remarcacoes import sweep_remarcacoes
 from mobia.workers.jobs.sweep_retencao_auditoria import sweep_retencao_auditoria
@@ -360,6 +361,12 @@ class WorkerSettings:
         # retentativa de um convite e a FAIXA em que ele e devido
         # (`convite_devido`), nao uma contagem.
         func(sweep_remarcacoes, keep_result=0),
+        # TEC-169. `keep_result=0` pelas mesmas razoes das duas acima. Sem
+        # `max_tries` tambem, e aqui a razao e outra: o teto nao e uma faixa
+        # de tempo, e o SLOT -- um cancelamento so avisa um lead, e quando
+        # `avisada_por_agendamento_id` o registra ele deixa de aparecer na
+        # consulta. Retentar nao tem como duplicar aviso.
+        func(sweep_lista_de_espera, keep_result=0),
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
@@ -471,6 +478,17 @@ class WorkerSettings:
         # devolve antes da consulta por treze das vinte e quatro horas.
         cron(
             sweep_remarcacoes,
+            minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
+            run_at_startup=False,
+        ),
+        # TEC-169, RN-11.5. De 5 em 5 minutos como as duas irmas, e a folga e
+        # a maior das tres: nao ha faixa nenhuma a respeitar -- o aviso e
+        # devido enquanto o horario estiver livre dentro das 72 horas, e o
+        # erro de disparo so adia a chegada dele. A cadencia curta e por
+        # utilidade e nao por precisao: quanto antes o primeiro da fila souber
+        # que abriu vaga, maior a chance de ele ainda querer.
+        cron(
+            sweep_lista_de_espera,
             minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
             run_at_startup=False,
         ),
