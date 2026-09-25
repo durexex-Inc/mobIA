@@ -6,7 +6,7 @@ sao aritmetica sobre ele, sem dormir.
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, text
@@ -33,6 +33,20 @@ from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
 SP = ZoneInfo("America/Sao_Paulo")
 AGORA = datetime(2026, 8, 25, 14, 0, tzinfo=SP)
 VISITA = TipoDeCompromisso.VISITA_PRESENCIAL
+REUNIAO = TipoDeCompromisso.REUNIAO_REMOTA
+
+
+class _ContadorEspiao:
+    """`ContadorDeVisitas` que reprova se alguem chegar a chama-lo.
+
+    Prova, para `REUNIAO_REMOTA`, que `reservar_ou_alternativas` nunca
+    consulta o contador -- capacidade so barra visita (D5 do desenho).
+    """
+
+    async def visitas_por_dia(
+        self, corretor_ids: list[uuid.UUID], *, de: date, ate: date, agora: datetime
+    ) -> dict[tuple[uuid.UUID, date], int]:
+        raise AssertionError("reuniao remota nao deveria consultar o contador de visitas")
 
 
 def _qui(hora: int, minuto: int = 0) -> Intervalo:
@@ -234,6 +248,7 @@ async def test_dois_leads_disputam_o_mesmo_horario(
                 propria,
                 corretor=corretor,
                 agenda=agenda,
+                visitas=agenda,
                 channel="whatsapp",
                 conversation_key=chave,
                 janela=_qui(10),
@@ -258,12 +273,94 @@ async def test_dois_leads_disputam_o_mesmo_horario(
     assert total == 1
 
 
-async def test_sem_disputa_devolve_a_reserva(session, session_factory, semear_corretor) -> None:
-    corretor = await semear_corretor(email="paulo@teste.com")
+async def test_alternativas_excluem_dia_com_capacidade_esgotada(
+    session, session_factory, semear_corretor
+) -> None:
+    """Important 1 da revisao final: as alternativas tambem respeitam a capacidade.
+
+    Capacidade 1, e a quinta ja tem uma visita CONFIRMADA as 9h. Um segundo
+    lead disputa as 11h da mesma quinta e perde. Sem a correcao, as
+    alternativas ainda ofereceriam a janela livre das 10h aquela quinta --
+    furando a capacidade-1 do dia, que e exatamente o que a card promete
+    respeitar.
+    """
+    corretor = await semear_corretor(email="paulo@teste.com", capacidade_diaria=1)
+    confirmada = await _reservar(session, corretor.id, _qui(9))
+    await session.commit()
+    assert isinstance(confirmada, Reserva)
+    await confirmar(session, reserva_id=confirmada.id, agora=AGORA)
+    await session.commit()
+
+    await _reservar(session, corretor.id, _qui(11), chave="5511922222222")
+    await session.commit()
+
+    agenda = AgendaPostgres(session_factory)
     resultado = await reservar_ou_alternativas(
         session,
         corretor=corretor,
-        agenda=AgendaPostgres(session_factory),
+        agenda=agenda,
+        visitas=agenda,
+        channel="whatsapp",
+        conversation_key="5511933333333",
+        janela=_qui(11),
+        tipo=VISITA,
+        imovel_id=None,
+        agora=AGORA,
+        ate=datetime(2026, 8, 29, 19, 0, tzinfo=SP),
+        motivo=MotivoDaAlocacao.MATCH_EXATO,
+    )
+    assert isinstance(resultado, list)
+    assert resultado
+    quinta = _qui(11).inicio.date()
+    assert not any(janela.inicio.date() == quinta for janela in resultado)
+
+
+async def test_reuniao_remota_nao_consulta_o_contador(
+    session, session_factory, semear_corretor
+) -> None:
+    """Important 1: a capacidade so vale para visita, nunca para reuniao remota."""
+    corretor = await semear_corretor(email="paulo@teste.com", capacidade_diaria=1)
+    primeira = await reservar(
+        session,
+        corretor_id=corretor.id,
+        channel="whatsapp",
+        conversation_key="5511911111111",
+        janela=_qui(10),
+        tipo=REUNIAO,
+        imovel_id=None,
+        agora=AGORA,
+        motivo=MotivoDaAlocacao.MATCH_EXATO,
+    )
+    await session.commit()
+    assert isinstance(primeira, Reserva)
+
+    agenda = AgendaPostgres(session_factory)
+    resultado = await reservar_ou_alternativas(
+        session,
+        corretor=corretor,
+        agenda=agenda,
+        visitas=_ContadorEspiao(),
+        channel="whatsapp",
+        conversation_key="5511922222222",
+        janela=_qui(10),
+        tipo=REUNIAO,
+        imovel_id=None,
+        agora=AGORA,
+        ate=datetime(2026, 8, 29, 19, 0, tzinfo=SP),
+        motivo=MotivoDaAlocacao.MATCH_EXATO,
+    )
+    assert isinstance(resultado, list)
+    assert resultado
+
+
+async def test_sem_disputa_devolve_a_reserva(session, session_factory, semear_corretor) -> None:
+    corretor = await semear_corretor(email="paulo@teste.com")
+    agenda = AgendaPostgres(session_factory)
+    resultado = await reservar_ou_alternativas(
+        session,
+        corretor=corretor,
+        agenda=agenda,
+        visitas=agenda,
         channel="whatsapp",
         conversation_key="5511911111111",
         janela=_qui(10),

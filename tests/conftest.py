@@ -1162,6 +1162,7 @@ def semear_corretor(session: AsyncSession):
         criado_em: datetime | None = None,
         horario_inicio: int = 9,
         horario_fim: int = 18,
+        capacidade_diaria: int = 5,
     ) -> Corretor:
         agora = criado_em if criado_em is not None else datetime.now(UTC)
         corretor = Corretor(
@@ -1174,7 +1175,7 @@ def semear_corretor(session: AsyncSession):
             regioes_atuacao=["pinheiros"],
             horario_inicio=horario_inicio,
             horario_fim=horario_fim,
-            capacidade_diaria=5,
+            capacidade_diaria=capacidade_diaria,
             plantao=plantao,
             gerente=gerente,
             ativo=ativo,

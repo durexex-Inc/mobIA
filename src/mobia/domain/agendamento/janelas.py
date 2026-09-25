@@ -12,7 +12,7 @@ docs/superpowers/specs/2026-09-24-tec-165-propor-janelas-design.md.
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from enum import StrEnum
@@ -192,6 +192,13 @@ class AgendaDoCorretor(Protocol):
     ) -> list[Intervalo]: ...
 
 
+def _dia_inteiro(dia: date, fuso: ZoneInfo) -> Intervalo:
+    # A meia-noite local, e nao a de `agora`: um dia lotado bloqueia o dia
+    # inteiro, mesmo quando a busca comeca no meio dele.
+    inicio = datetime.combine(dia, time(0), tzinfo=fuso)
+    return Intervalo(inicio, inicio + timedelta(days=1))
+
+
 async def propor_janelas_do_corretor(
     *,
     corretor: Corretor,
@@ -199,9 +206,20 @@ async def propor_janelas_do_corretor(
     agora: datetime,
     ate: datetime,
     tipo: TipoDeCompromisso,
+    dias_lotados: Collection[date] = (),
 ) -> list[Intervalo]:
-    """A costura entre a agenda e o motor, no lugar em que a TEC-168 a usa."""
-    ocupados = await agenda.ocupados(corretor.id, agora, ate)
+    """A costura entre a agenda e o motor, no lugar em que a TEC-168 a usa.
+
+    `dias_lotados` bloqueia o dia local inteiro, alem do que `agenda` ja
+    ocupa -- e como `reservar_ou_alternativas` (TEC-166, Important 1) exclui
+    da alternativa a data em que o corretor bateu a capacidade diaria, sem
+    duplicar a grade de `propor_janelas`. Vazio por padrao: nao muda em nada
+    quem ja chama esta funcao sem o parametro.
+    """
+    ocupados = list(await agenda.ocupados(corretor.id, agora, ate))
+    if dias_lotados:
+        fuso = get_settings().fuso_de_envio
+        ocupados += [_dia_inteiro(dia, fuso) for dia in dias_lotados]
     return propor_janelas(
         agora=agora,
         ate=ate,

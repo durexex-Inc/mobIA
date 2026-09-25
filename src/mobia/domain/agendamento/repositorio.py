@@ -20,6 +20,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from mobia.app.config import get_settings
 from mobia.domain.agendamento.janelas import (
     AgendaDoCorretor,
+    ContadorDeVisitas,
     Intervalo,
     TipoDeCompromisso,
     propor_janelas_do_corretor,
@@ -130,6 +131,14 @@ async def reservar(
     o UPDATE de expiracao e o INSERT entram num `session.begin_nested()`: em
     conflito, so o que esta chamada tentou e desfeito -- o resto da sessao,
     inclusive escrita pendente anterior de quem chama, continua de pe.
+
+    **Nao reconta capacidade.** A exclusao do banco so recusa sobreposicao de
+    horario; duas chamadas concorrentes reservando slots DIFERENTES do mesmo
+    corretor no mesmo dia podem ambas suceder e passar de `capacidade_diaria`
+    -- nada aqui relê `visitas_por_dia` nem trava a linha do corretor antes de
+    inserir. Capacidade e conferida so na hora de propor janela (`alocar`,
+    `reservar_ou_alternativas`); na hora de gravar, ela e so aspiracional
+    (Important 2 da revisao final da TEC-166).
     """
     try:
         async with session.begin_nested():
@@ -261,6 +270,7 @@ async def reservar_ou_alternativas(
     *,
     corretor: Corretor,
     agenda: AgendaDoCorretor,
+    visitas: ContadorDeVisitas,
     channel: str,
     conversation_key: str,
     janela: Intervalo,
@@ -284,7 +294,14 @@ async def reservar_ou_alternativas(
 
     As alternativas continuam no mesmo corretor (D7 da TEC-166): o conflito e
     sobre um slot dele, e realocar no meio da disputa trocaria o corretor sem
-    que nada na alocacao tivesse mudado.
+    que nada na alocacao tivesse mudado. **Mas respeitam a capacidade dele**
+    (Important 1 da revisao final): para `VISITA_PRESENCIAL`, todo dia local
+    entre `agora` e `ate` em que `visitas` ja contar `capacidade_diaria` ou
+    mais fica de fora das alternativas, mesmo sem nenhum compromisso que
+    ocupe aquele horario especifico -- senao um terceiro lead furaria a
+    capacidade-2 pegando o unico slot que a exclusao do banco nao cobria.
+    Para `REUNIAO_REMOTA` o contador nem e chamado, o mesmo que D5 decide
+    para `janelas_alocadas`.
     """
     resultado = await reservar(
         session,
@@ -299,6 +316,24 @@ async def reservar_ou_alternativas(
     )
     if isinstance(resultado, Reserva):
         return resultado
+
+    dias_lotados: set[date] = set()
+    if tipo is TipoDeCompromisso.VISITA_PRESENCIAL:
+        fuso = get_settings().fuso_de_envio
+        contagem = await visitas.visitas_por_dia(
+            [corretor.id],
+            de=agora.astimezone(fuso).date(),
+            ate=ate.astimezone(fuso).date(),
+            agora=agora,
+        )
+        dias_lotados = {
+            dia for (_, dia), total in contagem.items() if total >= corretor.capacidade_diaria
+        }
     return await propor_janelas_do_corretor(
-        corretor=corretor, agenda=agenda, agora=agora, ate=ate, tipo=tipo
+        corretor=corretor,
+        agenda=agenda,
+        agora=agora,
+        ate=ate,
+        tipo=tipo,
+        dias_lotados=dias_lotados,
     )
