@@ -183,7 +183,7 @@ async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etap
     """
     coorte = _coorte(recorte).subquery()
 
-    # As cinco condicoes, cada uma o conjunto CRU da sua etapa -- sem
+    # As seis condicoes, cada uma o conjunto CRU da sua etapa -- sem
     # acumulacao ainda. Em ordem do funil, que e o que o `UNION` abaixo usa.
     novos = select(coorte.c.channel, coorte.c.conversation_key)
 
