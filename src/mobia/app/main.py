@@ -5,6 +5,7 @@ import structlog
 from fastapi import FastAPI
 
 from mobia.api.middleware import CorrelacaoDeRequisicao, RateLimitPorIP
+from mobia.api.routes.auth import router as auth_router
 from mobia.api.routes.whatsapp import router as whatsapp_router
 from mobia.api.routes.widget import router as widget_router
 from mobia.app.config import get_settings
@@ -67,6 +68,11 @@ def create_app() -> FastAPI:
     # Quem reprova e `test_correlacao_envolve_o_limitador`.
     app.add_middleware(CorrelacaoDeRequisicao)
 
+    # TEC-201. Incondicional, ao contrario dos administrativos abaixo: o
+    # `catalogo_admin_token` que os condiciona e justamente o que estas rotas
+    # existem para substituir -- amarrar uma a outra faria a autenticacao nova
+    # depender da provisoria para ser registrada.
+    app.include_router(auth_router)
     app.include_router(whatsapp_router)
     # Publico por natureza, e por isso fora do gate de token logo abaixo: e o
     # chat do site, e quem o abre e visitante anonima.
