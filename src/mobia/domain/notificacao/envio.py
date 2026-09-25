@@ -1,4 +1,10 @@
-"""A notificacao do handoff, de ponta a ponta. TEC-177, RN-16.2."""
+"""A notificacao do handoff, de ponta a ponta. TEC-177, RN-16.2.
+
+**E o unico escritor de `handoffs.corretor_id` desde a TEC-192** (emenda E-06
+desta regra). Nao e funcao nova: o destinatario ja era escolhido aqui e usado
+para enviar; o que mudou e que ele passa a ficar gravado, porque a lista de
+leads precisa responder "de quem e este lead".
+"""
 
 import uuid
 from collections.abc import Sequence

@@ -95,6 +95,12 @@ def create_app() -> FastAPI:
     # O que protege agora e a guarda, nao a ausencia da rota. Ver a D2 do
     # desenho da TEC-201 e a D1 da TEC-156, cujo argumento fica registrado como
     # historico de uma fase em que nao havia alternativa.
+    # **`leads` entra neste bloco sem ser administrativa**, e a distincao
+    # vale a linha: as cinco de cima nasceram condicionadas ao token
+    # compartilhado e o bloco descreve a queda daquela condicional (TEC-201). A
+    # de leads (TEC-192) nunca esteve condicionada -- ela esta aqui por ser
+    # import tardio como as outras, e quem a protege e `VER_LEADS`, que os
+    # quatro papeis tem.
     from mobia.api.routes.conversas import router as conversas_router
     from mobia.api.routes.corretores import router as corretores_router
     from mobia.api.routes.handoffs import router as handoffs_router
