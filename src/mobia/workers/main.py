@@ -109,23 +109,21 @@ async def startup(ctx: dict[str, Any]) -> None:
     # passam a ser obrigatorios: sem eles o Google recusa a troca de token na
     # primeira tentativa de criar um evento, dentro do `except FalhaDeCalendario`
     # de `_criar_evento`, que loga e segue -- o sintoma seria um aviso por
-    # agendamento confirmado, nao uma recusa na subida.
-    if settings.google_calendar_refresh_token and not settings.google_calendar_client_id:
-        raise ConfiguracaoInsegura(
-            "GOOGLE_CALENDAR_CLIENT_ID nao configurado com "
-            "GOOGLE_CALENDAR_REFRESH_TOKEN preenchido. Sem ele o Google "
-            "recusa a troca do refresh token, e o evento nunca e criado -- so "
-            "um aviso por agendamento confirmado. Defina os dois no .env ou "
-            "no ambiente antes de subir o worker."
-        )
-    if settings.google_calendar_refresh_token and not settings.google_calendar_client_secret:
-        raise ConfiguracaoInsegura(
-            "GOOGLE_CALENDAR_CLIENT_SECRET nao configurado com "
-            "GOOGLE_CALENDAR_REFRESH_TOKEN preenchido. Sem ele o Google "
-            "recusa a troca do refresh token, e o evento nunca e criado -- so "
-            "um aviso por agendamento confirmado. Defina os dois no .env ou "
-            "no ambiente antes de subir o worker."
-        )
+    # agendamento confirmado, nao uma recusa na subida. Um laco e nao duas
+    # guardas identicas: a mensagem muda so no nome da variavel que falta.
+    if settings.google_calendar_refresh_token:
+        for nome, valor in (
+            ("GOOGLE_CALENDAR_CLIENT_ID", settings.google_calendar_client_id),
+            ("GOOGLE_CALENDAR_CLIENT_SECRET", settings.google_calendar_client_secret),
+        ):
+            if not valor:
+                raise ConfiguracaoInsegura(
+                    f"{nome} nao configurado com GOOGLE_CALENDAR_REFRESH_TOKEN "
+                    "preenchido. Sem ele o Google recusa a troca do refresh "
+                    "token, e o evento nunca e criado -- so um aviso por "
+                    "agendamento confirmado. Defina os dois no .env ou no "
+                    "ambiente antes de subir o worker."
+                )
 
     session_factory = get_sessionmaker()
     ctx["settings"] = settings

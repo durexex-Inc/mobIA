@@ -12,7 +12,11 @@ from typing import Protocol
 
 from arq.connections import ArqRedis
 
-AVISAR_CONFIRMACAO_JOB = "avisar_confirmacao"
+# Importada, nao redefinida: `confirmacao.py` (Task 3) e o dono da constante,
+# porque e la que o job de verdade mora (`avisar_confirmacao`) -- duas copias
+# do mesmo literal e exatamente a deriva que o docstring do job em
+# `workers/jobs/avisar_confirmacao.py` avisa que quebra o enfileiramento.
+from mobia.domain.agendamento.confirmacao import AVISAR_CONFIRMACAO_JOB as AVISAR_CONFIRMACAO_JOB
 
 
 class AgendadorDeConfirmacaoPort(Protocol):

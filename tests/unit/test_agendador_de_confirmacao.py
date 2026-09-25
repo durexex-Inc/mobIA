@@ -2,10 +2,15 @@ import uuid
 from typing import Any
 
 from mobia.domain.agendamento.agendador import (
-    AVISAR_CONFIRMACAO_JOB,
     AgendadorDeConfirmacaoArq,
     AgendadorDeConfirmacaoNoop,
 )
+
+# A constante e a de confirmacao.py, o dono unico dela (ver o comentario em
+# agendador.py) -- afirmar contra ela, e nao contra a copia importada, e o
+# que faz este teste pegar uma redefinicao divergente se alguem reintroduzir
+# uma.
+from mobia.domain.agendamento.confirmacao import AVISAR_CONFIRMACAO_JOB
 from mobia.workers.jobs.avisar_confirmacao import avisar_confirmacao
 
 

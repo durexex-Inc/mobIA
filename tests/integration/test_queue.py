@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from mobia.domain.agendamento.agendador import AVISAR_CONFIRMACAO_JOB
+from mobia.domain.agendamento.confirmacao import AVISAR_CONFIRMACAO_JOB
 from mobia.domain.handoff.agendador import GERAR_RESUMO_JOB
 from mobia.infra.queue import PROCESS_MESSAGE_JOB, enqueue_process_message
 from mobia.workers.jobs.notificar import NOTIFICAR_JOB
