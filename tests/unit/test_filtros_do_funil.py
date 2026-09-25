@@ -114,9 +114,9 @@ def test_filtro_por_corretor_e_recusado_enquanto_ninguem_aloca() -> None:
 
     A Emenda E-01 da RN-16.2 diz isso por extenso, e a TEC-166 nao mudou
     isso -- ela aloca corretor ao agendamento, nao ao handoff --, entao a
-    coluna e nula em toda linha. Filtrar
-    por ela devolvia 200 com o funil inteiro zerado, e a gerente leria
-    "este corretor nao recebeu lead nenhum" sobre QUALQUER corretor.
+    coluna e nula em toda linha. Filtrar por ela devolvia 200 com o funil
+    inteiro zerado, e a gerente leria "este corretor nao recebeu lead
+    nenhum" sobre QUALQUER corretor.
 
     Zero universal com cara de medicao e pior que recusa: e a mesma classe de
     defeito que a D1 recusou para `Agendado`.

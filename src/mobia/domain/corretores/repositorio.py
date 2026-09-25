@@ -75,12 +75,12 @@ def _regioes_dobradas(regioes: list[str]) -> list[str]:
     """A mesma dobra que produz `bairro_busca` no catalogo, sem repetir regiao.
 
     Sem a dobra, "Zona Sul" e "zona sul" viram duas regioes gravadas para uma
-    so -- a alocacao nao se engana com isso, porque `regiao_casa` dobra de novo
-    na comparacao, mas o cadastro sim. Sem
-    a deduplicacao que vem a seguir, as duas continuam sendo duas linhas --
-    so que agora identicas ("zona sul", "zona sul") -- e a dobra deixa de
-    cumprir o que promete. Preserva a ordem da primeira ocorrencia: nao ha
-    razao para reordenar o que o administrador digitou.
+    so -- a alocacao nao se engana com isso, porque `regiao_casa` dobra de
+    novo na comparacao, mas o cadastro sim. Sem a deduplicacao que vem a
+    seguir, as duas continuam sendo duas linhas -- so que agora identicas
+    ("zona sul", "zona sul") -- e a dobra deixa de cumprir o que promete.
+    Preserva a ordem da primeira ocorrencia: nao ha razao para reordenar o
+    que o administrador digitou.
     """
     vistas: set[str] = set()
     resultado: list[str] = []
