@@ -55,6 +55,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from mobia.app.config import get_settings
 from mobia.domain.agente.apresentacao import Ficha
 from mobia.domain.agente.citacao import divergencias_de
+from mobia.domain.agente.delimitacao import CLAUSULA_DO_FOLLOWUP, TAG_RESUMO, delimitar
 from mobia.domain.context.repositorio import ler_resumo
 from mobia.domain.followup.mensagem import QuedaDePreco
 from mobia.domain.messages.recorder import custo_em_dolar
@@ -71,7 +72,7 @@ SISTEMA_DO_FOLLOWUP = (
     "conteudo: 'oi, tudo bem?' e variacoes estao proibidas.\n\n"
     "Nao escreva preco, porcentagem nem qualquer numero: eles saem prontos "
     "abaixo da sua frase. Nao cite imovel que nao esteja no contexto. Nao "
-    "prometa nada e nao negocie valor."
+    "prometa nada e nao negocie valor. " + CLAUSULA_DO_FOLLOWUP
 )
 
 # Uma frase. O teto existe para que uma resposta longa nao pague tokens que a
@@ -161,7 +162,8 @@ def _novidade_em_palavras(ficha: Ficha | None, queda: QuedaDePreco | None) -> st
 def _turno(resumo: str | None, ficha: Ficha | None, queda: QuedaDePreco | None) -> str:
     partes = []
     if resumo:
-        partes.append(f"Resumo da conversa ate agora:\n{resumo}")
+        # TEC-204. O resumo e texto derivado do lead: vai em `<resumo>`.
+        partes.append(f"Resumo da conversa ate agora:\n{delimitar(resumo, tag=TAG_RESUMO)}")
     partes.append(
         f"Novidade que sai logo abaixo da sua frase:\n{_novidade_em_palavras(ficha, queda)}"
     )

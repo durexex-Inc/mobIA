@@ -20,6 +20,8 @@ o lead argumentou.
 from dataclasses import dataclass
 from datetime import datetime
 
+from mobia.domain.agente.delimitacao import delimitar
+
 # O que se escreve onde o banco nao tem valor. Uma string so, e nao "" ou
 # "None" espalhados: e ela que impede o modelo de ler a ausencia como zero --
 # um lead sem score nunca teve score 0, do mesmo jeito que `lead_score_audit`
@@ -346,22 +348,32 @@ def linha_primeira_mensagem(dossie: Dossie) -> str:
     return f"primeira mensagem: {ou_ausente(isoformat_ou_none(dossie.primeira_mensagem_em))}"
 
 
-def linhas_de_criterios(dossie: Dossie, tetos: dict[str, int] | None = None) -> tuple[str, ...]:
+def linhas_de_criterios(
+    dossie: Dossie, tetos: dict[str, int] | None = None, *, regiao_delimitada: bool = False
+) -> tuple[str, ...]:
     """As nove linhas do bloco "o que procura" -- (b) na `Dossie`.
 
     `tetos` mapeia o NOME do campo (`"regiao"`, `"tipo_imovel"`,
     `"urgencia"`, `"forma_pagamento"`, `"intencao"`) ao teto de caracteres
     daquele campo. So `contingencia.montar` passa algo aqui.
+
+    `regiao_delimitada` e so de `renderizar` (TEC-204): `regiao` e o unico
+    texto livre do dossie que veio da fala do lead, e o modelo o recebe entre
+    `<lead>` e `</lead>`. A contingencia e lida pelo corretor, e fica sem tag.
     """
     tetos = tetos or {}
 
     def campo(rotulo: str, chave: str, valor: str) -> str:
         return f"{rotulo}: {truncado(valor, tetos.get(chave))}"
 
+    regiao = ou_ausente(dossie.regiao)
+    if regiao_delimitada and dossie.regiao is not None:
+        regiao = delimitar(dossie.regiao)
+
     return (
         campo("intencao", "intencao", ou_ausente(dossie.intencao)),
         f"faixa de preco: {faixa(dossie)}",
-        campo("regiao", "regiao", ou_ausente(dossie.regiao)),
+        campo("regiao", "regiao", regiao),
         campo("tipo de imovel", "tipo_imovel", ou_ausente(dossie.tipo_imovel)),
         f"quartos: {ou_ausente(dossie.quartos)}",
         f"vagas: {ou_ausente(dossie.vagas)}",
@@ -403,6 +415,8 @@ def renderizar(dossie: Dossie) -> str:
     `canal`, `chave da conversa`, `total` e os rotulos de secao
     ("ORIGEM"/"CRITERIOS"/...) sao proprios desta funcao e nao entram nos
     helpers -- ver o comentario deles para o porque.
+
+    A `regiao` vai delimitada (TEC-204): e texto que o lead disse.
     """
     return "\n".join(
         (
@@ -413,7 +427,7 @@ def renderizar(dossie: Dossie) -> str:
             linha_mensagens_do_lead(dossie),
             "",
             "CRITERIOS",
-            *linhas_de_criterios(dossie),
+            *linhas_de_criterios(dossie, regiao_delimitada=True),
             "",
             "SCORE",
             f"total: {ou_ausente(dossie.score_total)}",

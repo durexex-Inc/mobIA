@@ -5,6 +5,7 @@ from typing import Protocol
 import structlog
 
 from mobia.app.config import get_settings
+from mobia.domain.agente.delimitacao import CLAUSULA_DO_RESUMO
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.infra.anthropic import TETO_DO_COUNT_TOKENS, TETO_DO_RESUMO, get_client
 
@@ -17,13 +18,15 @@ INSTRUCAO_DOBRAR = (
     "Incorpore as mensagens abaixo ao resumo existente, preservando fatos concretos: "
     "orcamento, regiao, tipo de imovel, quartos, vagas, prazo, forma de pagamento, "
     "objecoes e compromissos assumidos. Descarte cortesia e repeticao. "
-    "Escreva em terceira pessoa, em portugues, sem inventar nada que nao esteja no texto."
+    "Escreva em terceira pessoa, em portugues, sem inventar nada que nao esteja no texto. "
+    + CLAUSULA_DO_RESUMO
 )
 
 INSTRUCAO_COMPRIMIR = (
     "Comprima o resumo abaixo pela metade, preservando todo fato concreto sobre o lead "
     "-- orcamento, regiao, tipo de imovel, quartos, vagas, prazo, forma de pagamento, "
-    "objecoes e compromissos. Descarte narrativa e transicao. Nao invente nada."
+    "objecoes e compromissos. Descarte narrativa e transicao. Nao invente nada. "
+    + CLAUSULA_DO_RESUMO
 )
 
 
