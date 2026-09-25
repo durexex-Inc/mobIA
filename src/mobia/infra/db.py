@@ -84,6 +84,19 @@ def motivo_do_erro_de_banco(exc: BaseException) -> str | None:
     estruturado e greppavel; `str(exc)` obrigava a ler prosa para chegar no
     mesmo, e trazia os dados junto.
 
+    **A ultima meia frase deixou de valer na SQLAlchemy 2.1 (TEC-369).** Ela
+    parou de compor o `DETAIL` dentro do `str()` da excecao que embrulha, entao
+    hoje aquele texto NAO traz a linha do lead -- so o `[SQL parameters hidden
+    due to hide_parameters=True]`. Isso nao muda nada do que esta escrito
+    acima, e e importante nao confundir as duas coisas: **o servidor continua
+    mandando o `DETAIL` e ele continua a carregar a linha inteira**, agora
+    alcancavel so por `orig.__cause__.detail`. O que mudou foi o ENDERECO do
+    vetor, nao a existencia dele -- quem logar aquele campo vaza igual, e por
+    isso esta funcao segue deixando `detail` de fora.
+
+    A guarda que prova isso vive em `tests/integration/test_motivo_do_erro_de_banco.py`
+    (ver `_detalhe`), e foi ela que denunciou a mudanca ao reprovar.
+
     Devolve `None` para o que nao for erro do driver -- sem ramo de melhor
     esforco, que seria o buraco que esta funcao existe para nao abrir.
     """
