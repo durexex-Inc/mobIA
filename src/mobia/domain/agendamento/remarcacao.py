@@ -9,11 +9,12 @@ reuniao remota se descrevem diferente. O convite nao descreve compromisso
 nenhum: ele convida a marcar outro. Repetir a data do que foi cancelado seria
 lembrar o lead do que ele proprio desmarcou.
 
-**Nada le a resposta**, como na TEC-171: o texto convida e nao promete que
-alguem remarca. Desde a TEC-371 o turno importa `domain/agendamento/`, mas o
-que ele le e o pedido de MARCAR visita -- `agendamento/deteccao.py` veta
-`remarcar` e `cancelar` justamente para nao oferecer horario novo a quem quer
-mexer no que ja existe.
+**Nada le a resposta a ESTE convite**, e a distincao ficou fina desde a
+TEC-372. O que ela passou a ler e a resposta ao LEMBRETE de 24 horas, cuja
+janela exige agendamento `CONFIRMADO` -- e o convite daqui sai justamente
+depois de um `CANCELADO`, entao `conversa.py::_lembrete_pendente` nunca casa
+sobre ele. O lead que responder a este texto cai no turno normal. Por isso ele
+continua CONVIDANDO e nao prometendo que alguem remarca.
 """
 
 import uuid

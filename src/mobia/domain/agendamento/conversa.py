@@ -3,18 +3,24 @@
 Esta e a peca que faltava ao epico: sete cards construiram o motor de
 agendamento e nenhuma o ligou a conversa. Aqui ele ganha chamador.
 
-**O estado dos tres turnos e lido do banco, e nao guardado em memoria.** Cada
-um deles e uma pergunta:
+**O estado e lido do banco, e nao guardado em memoria.** Cada etapa e uma
+pergunta, nesta ordem:
 
-  - ha linha `RESERVADO` desta conversa? -> turno da confirmacao
-  - ha janelas propostas vivas? -> turno da escolha
-  - o lead pediu horario? -> turno da oferta
+  1. ha lembrete de 24h pendente? -> resposta ao lembrete (TEC-372)
+  2. ha linha `RESERVADO` desta conversa? -> turno da confirmacao
+  3. ha janelas propostas vivas? -> turno da escolha
+  4. o lead pediu horario? -> turno da oferta
 
-A ordem e essa, e a reserva vem na frente de proposito: depois de reservar,
-as propostas sao apagadas (`propostas.py::apagar`), entao os dois estados
-nunca coexistem -- mas a reserva VENCIDA precisa ser vista antes de qualquer
-outra coisa, porque e ela que transforma um "sim" tardio em oferta nova em
-vez de em silencio.
+**O lembrete vem primeiro porque e o contexto mais especifico**: um lead com
+visita marcada para amanha que escreve "cancelar" esta falando dela, e nao
+pedindo horario novo. As etapas 2 e 3 so existem quando ha uma conversa de
+agendamento em curso, que por sua vez so existe se o lead acabou de pedir.
+
+Entre as tres de baixo, a reserva vem na frente de proposito: depois de
+reservar, as propostas sao apagadas (`propostas.py::apagar`), entao os dois
+estados nunca coexistem -- mas a reserva VENCIDA precisa ser vista antes,
+porque e ela que transforma um "sim" tardio em oferta nova em vez de em
+silencio.
 
 **Nos dois ultimos, texto que nao case nada cai fora** (`NadaAFazer`) e o
 turno segue normal. E isso que limita o custo de um falso positivo do

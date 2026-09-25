@@ -33,12 +33,18 @@ aqui os papeis se trocam. **Por isso sao dois detectores, e nenhum importa o
 outro.** Quem quiser deduplica-los depois tem de reabrir as duas assimetrias,
 nao so as duas listas.
 
-**Desmarcar, remarcar, reagendar e cancelar tem VETO, e nao so ausencia.**
-Sao a TEC-372 e a TEC-172, e reconhece-los aqui faria o agente oferecer
-horario novo a quem quis desmarcar -- o oposto do que a fala diz. Deixa-los
-so de fora das listas nao bastava: a segunda via (enquadramento mais data)
-dispara em "quero remarcar, pode ser quinta de manha?" sem precisar de termo
-nenhum. Ver `_TERMOS_DE_OUTRA_CARD`.
+**Desmarcar, remarcar, reagendar e cancelar tem VETO em `quer_agendar`, e
+nao so ausencia.** Reconhece-los la faria o agente oferecer horario novo a
+quem quis desmarcar -- o oposto do que a fala diz. Deixa-los so de fora das
+listas nao bastava: a segunda via (enquadramento mais data) dispara em "quero
+remarcar, pode ser quinta de manha?" sem precisar de termo nenhum. Ver
+`_TERMOS_DE_OUTRA_CARD`.
+
+**Quem le essas palavras e `respondeu_ao_lembrete`, no fim deste modulo
+(TEC-372), e so dentro da janela do lembrete de 24 horas.** O veto e a
+leitura nao se contradizem: sao perguntas diferentes, feitas em contextos
+diferentes, e e o chamador (`agendamento/conversa.py`) quem decide qual
+cabe. Fora daquela janela, "cancela" continua sendo palavra comum.
 """
 
 import re

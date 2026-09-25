@@ -11,14 +11,20 @@ Quatro listas paralelas indexadas por "24h" ou "2h" divergiriam na primeira
 card que acrescentasse um terceiro lembrete, e o sintoma seria o texto de um
 sair com o kind do outro.
 
-**Nada le a resposta do lead a estes textos, e isso nao mudou com a TEC-371.**
-O de 24 horas oferece confirmar, remarcar e cancelar, porque e o que a RN-12.2
-manda, e nenhuma das tres e lida. O turno passou a importar
-`domain/agendamento/`, mas o que ele le e o pedido de MARCAR visita
-(`agendamento/deteccao.py::quer_agendar`, que veta justamente `remarcar` e
-`cancelar`); ler a resposta ao lembrete e a TEC-372. A TEC-172 construiu o que
-as duas ultimas ACIONARIAM (`agendamento/ciclo.py::cancelar` e `::remarcar`),
-e nao o leitor delas -- a lacuna encolheu e nao fechou. Por isso os textos
+**Desde a TEC-372 a resposta a estes textos e lida.** O de 24 horas oferece
+confirmar, remarcar e cancelar, porque e o que a RN-12.2 manda, e agora as
+tres tem efeito: `agendamento/deteccao.py::respondeu_ao_lembrete` classifica a
+fala e `agendamento/conversa.py` carimba a presenca, chama
+`ciclo.py::cancelar` ou abre uma rodada de janelas para remarcar.
+
+**A leitura vale so enquanto o lembrete esta de pe** -- agendamento
+CONFIRMADO, `lembrete_24h_em` preenchido e visita ainda no futuro. Fora dessa
+janela "cancelar" e palavra comum e nao derruba nada, e e por isso que o texto
+daqui continua CONVIDANDO a responder em vez de prometer: e a resposta DENTRO
+da janela que age.
+
+O de 2 horas nao oferece opcao nenhuma, e por isso nao abre uma segunda
+janela -- ele acontece dentro da mesma. Por isso os textos
 CONVIDAM ("e so responder aqui") e nao prometem ("eu remarco para voce") --
 a licao que a TEC-174 pagou.
 """
