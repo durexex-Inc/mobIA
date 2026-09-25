@@ -523,3 +523,50 @@ def test_o_protocolo_da_entrada_ensina_a_combinar_com_injecao() -> None:
 
     assert "BLOQUEAR INJECAO" in _protocolo_de(Direcao.ENTRADA)
     assert "INJECAO" not in _protocolo_de(Direcao.SAIDA)
+
+
+async def test_injecao_repetida_e_a_injecao_sozinha(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`BLOQUEAR INJECAO INJECAO` diz o mesmo que `BLOQUEAR INJECAO`: liberado,
+    com o achado. Nao e caminho novo para liberar -- o parser antigo recusava
+    a forma, e na entrada a recusa ja era fail-open."""
+    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR INJECAO INJECAO"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is False
+    assert veredito.injecao is True
+    assert veredito.categoria is None
+
+
+async def test_injecao_com_rotulo_desconhecido_bloqueia_como_outro(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Toda folga cai do lado que bloqueia, tambem com o achado junto."""
+    from mobia.domain.moderacao.port import CATEGORIA_OUTRO
+
+    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR ZORGLUB INJECAO"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == CATEGORIA_OUTRO
+    assert veredito.injecao is True
+
+
+def test_o_protocolo_diz_quantas_categorias_cabem_em_cada_direcao() -> None:
+    """A entrada pede ate duas; a saida continua pedindo uma, como antes."""
+    from mobia.infra.moderacao import _protocolo_de
+
+    assert "BLOQUEAR seguido de uma ou duas categorias." in _protocolo_de(Direcao.ENTRADA)
+    assert "BLOQUEAR seguido de uma categoria." in _protocolo_de(Direcao.SAIDA)
+
+
+def test_o_teto_do_veredito_cobre_o_mais_longo_medido() -> None:
+    """Truncar o veredito na entrada e fail-open: o conteudo que devia bloquear
+    passa calado. Medido em 25/09/2026 com `count_tokens` em
+    `claude-haiku-4-5-20251001`: `**BLOQUEAR** AMEACA INJECAO.`, o veredito
+    valido mais longo com o enfeite que a leitura tolera, custa 15 (o nu,
+    `BLOQUEAR AMEACA INJECAO`, 12). Remedir se `modelo_moderacao` mudar ou se
+    o vocabulario ganhar palavra mais longa."""
+    from mobia.infra.moderacao import MAX_TOKENS_DO_VEREDITO
+
+    mais_longo_medido = 15
+    assert MAX_TOKENS_DO_VEREDITO > mais_longo_medido

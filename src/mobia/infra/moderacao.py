@@ -45,11 +45,21 @@ log = structlog.get_logger(__name__)
 TIMEOUT_DA_MODERACAO_SEGUNDOS = 5.0
 MAX_TENTATIVAS_DA_MODERACAO = 0
 
-# Ate tres palavras (TEC-204) cabem aqui com folga; o teto continua existindo
-# para fazer do truncamento um erro tipado em vez de um veredito pela metade --
-# "BLOQUEAR DISCRIMIN" nao e resposta. Sao tokens de SAIDA, duas vezes por
-# turno, no modelo mais barato da configuracao.
-MAX_TOKENS_DO_VEREDITO = 16
+# O teto existe para fazer do truncamento um erro tipado em vez de um veredito
+# pela metade -- "BLOQUEAR DISCRIMIN" nao e resposta. Sao tokens de SAIDA, duas
+# vezes por turno, no modelo mais barato da configuracao, e so se paga o que o
+# modelo escreve: subir o teto nao encarece o veredito curto.
+#
+# Medido em 25/09/2026 com `count_tokens` em `claude-haiku-4-5-20251001`
+# (diferenca entre a requisicao com e sem o veredito como turno do
+# assistente, entao inclui o enquadramento do turno e e um limite por cima):
+# o veredito valido mais longo da TEC-204, `BLOQUEAR AMEACA INJECAO`, custa
+# 12; com o enfeite que a leitura tolera (`**BLOQUEAR** AMEACA INJECAO.`),
+# 15. O teto antigo de 16 ficava a um token disso, e na entrada o truncamento
+# e fail-open -- o conteudo discriminatorio passaria calado. 24 deixa 9 de
+# folga sobre o pior enfeite medido. `test_o_teto_do_veredito_cobre_o_mais_
+# longo_medido` prende o teto a medida.
+MAX_TOKENS_DO_VEREDITO = 24
 
 _BLOQUEAR = "BLOQUEAR"
 _LIBERAR = "LIBERAR"
@@ -85,9 +95,16 @@ def _protocolo_de(direcao: Direcao) -> str:
     `moderar` le: sozinha, e junto de outra categoria.
     """
     categorias = " | ".join(sorted(CATEGORIAS_POR_DIRECAO[direcao]))
+    # Na saida o texto continua o de antes da TEC-204, byte a byte: so a
+    # entrada oferece a segunda categoria.
+    quantas = (
+        "uma ou duas categorias"
+        if CATEGORIA_INJECAO in CATEGORIAS_POR_DIRECAO[direcao]
+        else "uma categoria"
+    )
     protocolo = (
-        f"Responda com {_LIBERAR} sozinho, ou com {_BLOQUEAR} seguido de uma "
-        f"categoria. Sem pontuacao e sem explicacao.\n"
+        f"Responda com {_LIBERAR} sozinho, ou com {_BLOQUEAR} seguido de "
+        f"{quantas}. Sem pontuacao e sem explicacao.\n"
         f"Categorias: {categorias}"
     )
     if CATEGORIA_INJECAO in CATEGORIAS_POR_DIRECAO[direcao]:
@@ -186,7 +203,11 @@ def get_moderation_client() -> AsyncAnthropic:
 
 class ModeradorAnthropic:
     async def moderar(self, texto: str, *, direcao: Direcao) -> Veredito:
-        """Classificacao binaria. Qualquer duvida vira `ModeracaoIndisponivel`.
+        """Classificacao binaria, mais o achado de `INJECAO` na entrada (TEC-204).
+
+        `bloqueado` continua sendo a decisao, e `injecao` e so registro: o
+        achado sozinho devolve veredito liberado. Qualquer duvida vira
+        `ModeracaoIndisponivel`.
 
         Nunca interpreta o desconhecido como liberado: isso transformaria um
         moderador confuso em um moderador desligado, e desligado em silencio.
