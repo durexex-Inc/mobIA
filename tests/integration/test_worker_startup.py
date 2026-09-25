@@ -117,6 +117,10 @@ def _producao(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
     monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
+    # TEC-201: a terceira guarda do mesmo tipo. Sem isto ela dispara primeiro e
+    # o teste passaria pelo motivo errado -- exatamente o que o docstring acima
+    # ja dizia das outras duas.
+    monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
 
 

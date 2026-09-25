@@ -37,6 +37,22 @@ dependencies = [
     # `== outro`) levanta ou devolve array em vez de bool, que e o caminho que
     # a busca da TEC-158 vai percorrer.
     "pgvector>=0.4",
+    # As tres da TEC-201, e nenhuma delas foi escrita a mao de proposito: as
+    # tres cobrem terreno em que codigo proprio erra em SILENCIO.
+    #
+    # `argon2-cffi`: hash de senha (Argon2id, primeira escolha do OWASP).
+    # `cryptography`, que ja esta acima, oferece `Scrypt` e foi considerado --
+    # recusado porque obrigaria a inventar o formato de armazenamento (sal,
+    # parametros, versao) no ponto de maior consequencia da card.
+    "argon2-cffi>=23.1",
+    # `pyjwt`: assinar e VALIDAR o JWT. Assinar com `hmac` na mao e a economia
+    # classica que custa caro -- a familia de ataques de confusao de algoritmo
+    # (`alg: none`) existe por causa disso, e ha teste nesta card para ela.
+    "pyjwt>=2.10",
+    # `pyotp`: TOTP. A janela de tempo e a tolerancia de relogio sao o tipo de
+    # detalhe que passa despercebido numa implementacao propria e so aparece
+    # quando alguem nao consegue entrar.
+    "pyotp>=2.9",
     # SMTP assincrono para a notificacao ao corretor (TEC-280). Piso em 1.1.7:
     # conferido no `api.py`/`connection.py` daquela tag que `start_tls` bool
     # (True forca upgrade, False nao faz) ja existe la, com o mesmo efeito que

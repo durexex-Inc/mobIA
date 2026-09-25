@@ -116,13 +116,22 @@ async def test_get_de_id_inexistente_e_404(app_com_token):
     assert resposta.status_code == 404
 
 
-async def test_sem_token_configurado_a_rota_nao_existe(
+async def test_sem_token_configurado_a_rota_existe_e_recusa(
     monkeypatch, caches_de_cliente_limpos, banco_limpo, redis_pool
 ):
-    """404 e nao 403: rota que nao existe nao pode ser exposta por engano.
+    """403 e nao 404 -- **este teste afirmava o contrario ate a TEC-201.**
 
-    Uma rota que responde 401/403 esta registrada e depende de o codigo de
-    verificacao estar certo. Esta nao esta la. Ver D1 do desenho.
+    A D1 da TEC-156 registrava a rota so quando havia token, com o argumento de
+    que "rota que nao existe nao pode ser exposta por engano de configuracao, e
+    este projeto ainda nao tem camada de autenticacao". A segunda metade caiu:
+    `exigir_admin` agora exige JWT de ADMIN ou o token compartilhado.
+
+    Manter o 404 teria efeito perverso depois da TEC-201: quem configurasse so
+    o JWT nao teria rota nenhuma, e precisaria manter justamente o token que a
+    card veio substituir. O que protege agora e a guarda, nao a ausencia.
+
+    O que este teste continua garantindo e o essencial: **sem credencial, nao
+    passa**.
     """
     monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "")
     get_settings.cache_clear()
@@ -135,7 +144,7 @@ async def test_sem_token_configurado_a_rota_nao_existe(
             files={"arquivo": ("base.csv", ARQUIVO, "text/csv")},
             headers={"X-Admin-Token": TOKEN},
         )
-    assert resposta.status_code == 404
+    assert resposta.status_code == 403
     get_settings.cache_clear()
 
 
