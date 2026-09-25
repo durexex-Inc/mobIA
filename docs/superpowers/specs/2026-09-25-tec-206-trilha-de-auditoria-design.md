@@ -1,6 +1,6 @@
 # TEC-206 — Registrar trilha de auditoria imutável
 
-**Status:** desenho aprovado em conversa, aguardando revisão do texto
+**Status:** implementado
 **Card:** [TEC-206](https://eduardodurieuxlopes.atlassian.net/browse/TEC-206) — épico TEC-200
 **Branch:** `feat/tec-206-trilha-de-auditoria`
 **Origem:** RNF-18, RN-B07 (SRS v1.0); `EventoAuditoria` na §5.1; Emenda E-01 à RNF-12 (TEC-202).
@@ -55,7 +55,7 @@ O `EventoAuditoria` do SRS, com três diferenças deliberadas (marcadas com **no
 
 **Sem chave estrangeira** para as entidades: um registro sobrevive à exclusão do que ele descreve, que é o motivo de ele existir — e FK com cascata faria a exclusão de um lead apagar a própria trilha.
 
-**Índices:** `(criado_em desc, id)` para a paginação e a retenção; `(ator_id, criado_em)`, `(acao, criado_em)` e `(lead_ref, criado_em)` para os filtros da TEC-343.
+**Índices:** `(criado_em desc, id desc)` para a paginação e a retenção — o `id` também descendente para que `ORDER BY criado_em DESC, id DESC` e o cursor usem uma varredura só; `(ator_id, criado_em desc)`, `(acao, criado_em desc)` e `(lead_ref, criado_em desc)` para os filtros da TEC-343.
 
 **Agente e sistema não têm `ip` nem `correlation_id`**: vêm de job do ARQ, não de requisição HTTP. O opt-out chega pelo webhook, e o IP ali é o da Meta, não o do lead — gravá-lo seria afirmar uma origem falsa.
 
@@ -106,13 +106,13 @@ Job ARQ `sweep_retencao_auditoria`, cron diário às 04:00 (uma hora depois de `
 
 **`ip`** vem de `api/middleware.py::resolver_ip`, a mesma regra do rate limit (IP do socket, ou o último salto do `X-Forwarded-For` quando confiável). **`correlation_id`** vem do contextvar da TEC-368.
 
-**Mudanças de assinatura:** `registrar_negativa` e `exigir_dono` passam a `async` (a escrita pede `await`) — quatro sítios em `autorizacao.py` mais toda rota que chama `exigir_dono`; `registrar_handoff` ganha `ator`.
+**Mudanças de assinatura:** `registrar_negativa` e `exigir_dono` passam a `async` (a escrita pede `await`) — quatro sítios em `autorizacao.py` mais todo chamador de `exigir_dono`. Isso inclui um intermediário síncrono: `api/routes/conversas.py::_exigir_que_seja_ele_mesmo` também vira `async`, e os seus dois chamadores (`assumir`, `devolver`) passam a `await` nela; `api/routes/handoffs.py::_exigir_dono_do` já era `async`. `registrar_handoff` ganha `ator`.
 
 ## D8 — A API: `GET /api/v1/auditoria`
 
 Só leitura: a rota não tem outro método, então "não há opção de editar nem de excluir" vale também na API.
 
-- **Permissão:** `Permissao.VER_AUDITORIA`, nova, só do `ADMIN` (TEC-343: "Somente leitura; somente `ADMIN`"). Entra na matriz de `domain/usuarios/permissoes.py`, e o teste de autorização por rota a cobre sozinho.
+- **Permissão:** `Permissao.VER_AUDITORIA`, nova, só do `ADMIN` (TEC-343: "Somente leitura; somente `ADMIN`"). Entra na matriz de `domain/usuarios/permissoes.py`. `tests/unit/test_autorizacao_em_toda_rota.py::test_toda_rota_declara_autorizacao` cobre a rota nova sozinho; `::test_a_permissao_de_cada_rota` só a cobre porque ganhou a linha `("GET", "/api/v1/auditoria"): "VER_AUDITORIA"` no mapa `PERMISSAO_ESPERADA`, escrito à mão.
 - **Filtros**, todos opcionais e combináveis: `ator` (um `usuario_id`), `acao` (um ou mais do vocabulário), `de`/`ate` (ISO-8601, intervalo semiaberto `[de, ate)`), e `channel` + `conversationKey` juntos — o servidor transforma o par em `lead_ref` e não guarda o telefone que recebeu. Filtro inválido é 422, na convenção `montar_filtro`/`FiltroInvalido` da TEC-192.
 - **Paginação:** o cursor opaco da TEC-192 sobre `(criado_em desc, id)`; página padrão 25, máximo 100, sem `total`.
 - **Cada item:** `id`, `criadoEm`, `atorTipo`, `atorId`, `acao`, `entidade`, `entidadeId`, `campo`, `detalhes`, `ip`, `correlationId`. **`leadRef` não sai**: é chave de busca, não informação para exibir.
