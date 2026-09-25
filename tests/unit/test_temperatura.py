@@ -21,7 +21,9 @@ def score(total: int) -> Score:
     `.total` --, e concentrar num fator deixa o teste legivel. Os pesos reais
     de cada fator sao assunto de `test_score.py`.
     """
-    return Score(completude=0, urgencia=0, catalogo=0, engajamento=total, capacidade=0)
+    return Score(
+        completude=0, urgencia=0, catalogo=0, engajamento=total, capacidade=0, penalidade=0
+    )
 
 
 @pytest.mark.parametrize(

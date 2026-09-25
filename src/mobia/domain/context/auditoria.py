@@ -27,13 +27,20 @@ CAUSA_URGENCIA = "URGENCIA"
 CAUSA_CATALOGO = "CATALOGO"
 CAUSA_ENGAJAMENTO = "ENGAJAMENTO"
 CAUSA_FORMA_DE_PAGAMENTO = "FORMA_DE_PAGAMENTO"
+# TEC-172. Derivada do diff como os outros cinco, e nao informada pelo
+# chamador: ela diz O QUE se moveu. Quem diz POR QUE e
+# `CAUSA_NAO_COMPARECIMENTO`, logo abaixo, que entra como causa externa na
+# mesma linha. As duas juntas sao a resposta inteira; uma so e metade dela.
+CAUSA_PENALIDADE = "PENALIDADE"
 
-# Sem produtor hoje, e de proposito. Nao sao derivaveis de diff nenhum: sao
-# fatos sobre a ORIGEM do gatilho, e nao sobre o que se moveu. O chamador
-# futuro os informa -- o dashboard da TEC-192 para a edicao manual, a TEC-172
-# para o nao comparecimento. Entram agora porque acrescenta-los depois nao
-# custaria migration (a coluna e um ARRAY de texto), mas custaria uma segunda
-# lista de vocabulario em outro arquivo.
+# Fatos sobre a ORIGEM do gatilho, e nao sobre o que se moveu -- por isso
+# informados pelo chamador, e nao derivaveis de diff nenhum.
+#
+# `CAUSA_EDICAO_MANUAL` continua sem produtor, esperando o dashboard da
+# TEC-192. `CAUSA_NAO_COMPARECIMENTO` ganhou o seu na TEC-172
+# (`agendamento/ciclo.py::marcar_nao_comparecimento`), e chega acompanhada:
+# a penalidade que ela explica MOVE um fator, entao a linha carrega tambem a
+# `CAUSA_PENALIDADE` derivada.
 CAUSA_EDICAO_MANUAL = "EDICAO_MANUAL"
 CAUSA_NAO_COMPARECIMENTO = "NAO_COMPARECIMENTO"
 
@@ -60,6 +67,7 @@ _CAUSA_POR_FATOR: tuple[tuple[str, str], ...] = (
     ("catalogo", CAUSA_CATALOGO),
     ("engajamento", CAUSA_ENGAJAMENTO),
     ("capacidade", CAUSA_FORMA_DE_PAGAMENTO),
+    ("penalidade", CAUSA_PENALIDADE),
 )
 
 

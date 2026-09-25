@@ -154,7 +154,15 @@ class LeadQualification(Base):
     # **O piso mora em `Score.total`, e nao aqui.** Esta coluna acumula de
     # verdade; cortar na acumulacao faria o segundo no-show de um lead ja
     # zerado nao ser registrado.
-    penalidade_pontos: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    #
+    # `default=0` ALEM do `server_default`, e nao um dos dois: o
+    # `server_default` so age no INSERT do banco, entao um
+    # `LeadQualification(...)` construido em memoria e lido antes do flush
+    # devolve `None` nesta coluna. `calcular_score` normaliza na leitura
+    # pela mesma razao, e o comentario de la explica por que os dois.
+    penalidade_pontos: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0
+    )
 
     # TEC-149, RN-05.5. Quantas perguntas de qualificacao ja foram FEITAS E
     # ENTREGUES a este lead. Cresce so no commit pos-entrega do turno -- ver

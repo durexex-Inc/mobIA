@@ -13,6 +13,7 @@ from mobia.domain.context.auditoria import (
     CAUSA_CATALOGO,
     CAUSA_ENGAJAMENTO,
     CAUSA_FORMA_DE_PAGAMENTO,
+    CAUSA_PENALIDADE,
     CAUSA_PRIMEIRO_CALCULO,
     CAUSA_URGENCIA,
     causas_do_recalculo,
@@ -21,13 +22,14 @@ from mobia.domain.context.score import Score
 
 
 def score(**ajustes: int) -> Score:
-    """Um Score com os cinco fatores zerados, menos os que o teste ajusta."""
+    """Um Score com os fatores zerados, menos os que o teste ajusta."""
     base = {
         "completude": 0,
         "urgencia": 0,
         "catalogo": 0,
         "engajamento": 0,
         "capacidade": 0,
+        "penalidade": 0,
     }
     return Score(**{**base, **ajustes})
 
@@ -93,9 +95,27 @@ def test_sem_anterior_e_primeiro_calculo_e_so_ele() -> None:
     assert causas_do_recalculo(None, novo) == (CAUSA_PRIMEIRO_CALCULO,)
 
 
-def test_o_mapa_cobre_exatamente_os_cinco_fatores_do_Score() -> None:
-    """Um sexto fator no Score sem causa correspondente tem de deixar isto
-    vermelho, e nao passar em silencio -- e a mesma defesa que a TEC-150 deu aos
-    dois mapas de pontos, amarrando-os aos seus enums.
+def test_o_mapa_cobre_exatamente_os_fatores_do_Score() -> None:
+    """Um fator no Score sem causa correspondente tem de deixar isto vermelho,
+    e nao passar em silencio -- e a mesma defesa que a TEC-150 deu aos dois
+    mapas de pontos, amarrando-os aos seus enums.
+
+    Foi "os cinco fatores" ate a TEC-172, que acrescentou `penalidade`. Este
+    teste e o que fez aquela card lembrar de mapear a causa junto: sem o par
+    novo, uma penalidade que se move nao produziria causa nenhuma e a linha da
+    trilha nao existiria.
     """
     assert {fator for fator, _ in _CAUSA_POR_FATOR} == {campo.name for campo in fields(Score)}
+
+
+def test_a_penalidade_que_se_move_produz_a_propria_causa() -> None:
+    """TEC-172. Derivada do diff, como os outros fatores.
+
+    `CAUSA_NAO_COMPARECIMENTO` e outra coisa: ela e informada pelo chamador
+    como causa EXTERNA, e diz por que a penalidade se moveu. As duas juntas
+    sao o que a trilha precisa -- o que mudou e por que mudou --, e usar so
+    uma apagaria metade da resposta.
+    """
+    antes = score()
+    depois = score(penalidade=15)
+    assert causas_do_recalculo(antes, depois) == (CAUSA_PENALIDADE,)
