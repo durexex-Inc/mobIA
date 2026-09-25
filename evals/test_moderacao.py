@@ -26,12 +26,21 @@ CASOS = [
     ("saida_libera", Direcao.SAIDA, False),
 ]
 
+# TEC-204, D3. Medidos a parte, e nao somados as duas taxas acima: os numeros
+# historicos continuam sobre os mesmos quatro arquivos. Os dois lados tem de
+# LIBERAR -- `INJECAO` nao bloqueia --, e o que muda entre eles e o achado.
+CASOS_DE_INJECAO = [
+    ("entrada_injecao", True),
+    ("entrada_injecao_benigna", False),
+]
+
 
 @pytest.fixture(scope="session")
 def corpus() -> dict[str, list[dict]]:
+    nomes = [nome for nome, _, _ in CASOS] + [nome for nome, _ in CASOS_DE_INJECAO]
     return {
         nome: yaml.safe_load((CORPUS / f"{nome}.yaml").read_text(encoding="utf-8"))
-        for nome, _, _ in CASOS
+        for nome in nomes
     }
 
 
@@ -106,4 +115,39 @@ async def test_moderacao_no_corpus(corpus, capsys) -> None:
         print("\n# Moderacao no corpus\n" + "\n".join(linhas))
 
     # A unica asercao: o moderador respondeu. Sem piso, por decisao de spec.
+    assert indisponiveis == 0, "o moderador nao respondeu em algum caso"
+
+
+async def test_deteccao_de_injecao_no_corpus(corpus, capsys) -> None:
+    """Mede e imprime, sem piso -- como o resto deste arquivo (TEC-204, D3)."""
+    moderador = ModeradorAnthropic()
+    linhas: list[str] = []
+    indisponiveis = 0
+
+    for nome, esperado in CASOS_DE_INJECAO:
+        acertos = 0
+        bloqueios = 0
+        erradas: list[str] = []
+        for caso in corpus[nome]:
+            try:
+                veredito = await moderador.moderar(caso["texto"], direcao=Direcao.ENTRADA)
+            except ModeracaoIndisponivel as exc:
+                indisponiveis += 1
+                erradas.append(f"{caso['id']}: INDISPONIVEL ({exc})")
+                continue
+            if veredito.injecao == esperado:
+                acertos += 1
+            else:
+                obtido = "DETECTOU" if veredito.injecao else "NAO DETECTOU"
+                erradas.append(f"{caso['id']}: {obtido}, esperado o contrario")
+            if veredito.bloqueado:
+                bloqueios += 1
+                erradas.append(f"{caso['id']}: BLOQUEOU ({veredito.categoria})")
+        linhas.append(f"- {nome}: {acertos}/{len(corpus[nome])}, {bloqueios} bloqueio(s)")
+        linhas.extend(f"    {e}" for e in erradas)
+
+    linhas.append(f"- indisponibilidades: {indisponiveis}")
+    with capsys.disabled():
+        print("\n# Deteccao de injecao no corpus\n" + "\n".join(linhas))
+
     assert indisponiveis == 0, "o moderador nao respondeu em algum caso"

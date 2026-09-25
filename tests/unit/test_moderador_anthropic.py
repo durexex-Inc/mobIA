@@ -456,3 +456,70 @@ def test_o_protocolo_pedido_nomeia_as_categorias_da_direcao() -> None:
         assert categoria in SISTEMA_DA_ENTRADA
     for categoria in CATEGORIAS_POR_DIRECAO[Direcao.SAIDA]:
         assert categoria in SISTEMA_DA_SAIDA
+
+
+async def test_injecao_sozinha_nao_bloqueia(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TEC-204, D3: `INJECAO` sozinha e o turno seguindo normal."""
+    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR INJECAO"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is False
+    assert veredito.injecao is True
+    assert veredito.categoria is None
+    assert veredito.motivo == "ENTRADA:INJECAO"
+
+
+async def test_injecao_com_outra_categoria_bloqueia_pela_outra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR ASSEDIO INJECAO"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == "ASSEDIO"
+    assert veredito.injecao is True
+
+
+async def test_injecao_antes_da_categoria_tambem_vale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tolerante na forma: a ordem das duas categorias nao muda o veredito."""
+    cliente = ClienteFalso(RespostaFalsa("bloquear injecao, assedio."))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == "ASSEDIO"
+    assert veredito.injecao is True
+
+
+async def test_injecao_na_saida_e_rotulo_de_outra_direcao(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A saida nao oferece `INJECAO`: vinda dali, bloqueia como OUTRO."""
+    from mobia.domain.moderacao.port import CATEGORIA_OUTRO
+
+    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR INJECAO"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.SAIDA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == CATEGORIA_OUTRO
+    assert veredito.injecao is False
+
+
+@pytest.mark.parametrize(
+    "bruto", ["BLOQUEAR ASSEDIO AMEACA", "LIBERAR INJECAO", "BLOQUEAR ASSEDIO INJECAO X"]
+)
+async def test_tres_palavras_fora_da_forma_sao_indisponibilidade(
+    monkeypatch: pytest.MonkeyPatch, bruto: str
+) -> None:
+    """A terceira palavra so existe para `INJECAO`; duas categorias que
+    bloqueiam, ou `LIBERAR` com qualquer coisa, sao o modelo fora do protocolo."""
+    cliente = ClienteFalso(RespostaFalsa(bruto))
+
+    with pytest.raises(ModeracaoIndisponivel):
+        await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+
+def test_o_protocolo_da_entrada_ensina_a_combinar_com_injecao() -> None:
+    from mobia.infra.moderacao import _protocolo_de
+
+    assert "BLOQUEAR INJECAO" in _protocolo_de(Direcao.ENTRADA)
+    assert "INJECAO" not in _protocolo_de(Direcao.SAIDA)
