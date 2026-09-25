@@ -10,7 +10,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from mobia.domain.agendamento.deteccao import confirmou, quer_agendar, recusou
+from mobia.domain.agendamento.deteccao import (
+    RespostaAoLembrete,
+    confirmou,
+    quer_agendar,
+    recusou,
+    respondeu_ao_lembrete,
+)
 from mobia.domain.context.gatilhos import gatilhos_de
 
 SP = ZoneInfo("America/Sao_Paulo")
@@ -126,3 +132,63 @@ def test_texto_sem_letra_nao_levanta(fala: str) -> None:
     assert quer_agendar(fala, agora=AGORA) is False
     assert confirmou(fala) is False
     assert recusou(fala) is False
+
+
+# --- TEC-372: a resposta ao lembrete de 24 horas -----------------------------
+
+
+@pytest.mark.parametrize(
+    "fala", ["sim", "confirmo", "estarei la", "pode contar comigo", "tudo certo"]
+)
+def test_a_presenca_confirmada_dispara(fala: str) -> None:
+    assert respondeu_ao_lembrete(fala) is RespostaAoLembrete.CONFIRMA
+
+
+@pytest.mark.parametrize(
+    "fala",
+    ["remarcar", "podemos mudar o horario?", "da pra adiar?", "prefiro outro dia", "reagenda"],
+)
+def test_a_remarcacao_dispara(fala: str) -> None:
+    assert respondeu_ao_lembrete(fala) is RespostaAoLembrete.REMARCAR
+
+
+@pytest.mark.parametrize(
+    "fala",
+    ["cancelar", "desmarcar", "nao vou poder ir", "nao vou conseguir ir", "desisti"],
+)
+def test_o_cancelamento_dispara(fala: str) -> None:
+    assert respondeu_ao_lembrete(fala) is RespostaAoLembrete.CANCELAR
+
+
+@pytest.mark.parametrize(
+    "fala",
+    [
+        # **O caso central da assimetria.** "nao" sozinho e ambiguo entre "nao
+        # vou" e "nao nesse horario", e as duas leituras tem desfechos
+        # opostos. Afrouxar isto reabre a assimetria sem ninguem decidir --
+        # ver a docstring do detector.
+        "nao",
+        "nao sei",
+        "talvez",
+        "quanto custa o condominio?",
+        "obrigado",
+        "",
+        "!!!",
+    ],
+)
+def test_o_que_nao_e_resposta_fica_em_silencio(fala: str) -> None:
+    assert respondeu_ao_lembrete(fala) is None
+
+
+def test_remarcar_vence_cancelar_quando_os_dois_casam() -> None:
+    """O caminho reversivel ganha: remarcar oferece janelas e o original fica de pe."""
+    assert respondeu_ao_lembrete("nao vou poder ir, remarca?") is RespostaAoLembrete.REMARCAR
+
+
+def test_a_negacao_do_cancelamento_nao_cancela() -> None:
+    """ "nao quero cancelar" e o oposto de cancelar, e a guarda de pausa le isso."""
+    assert respondeu_ao_lembrete("nao quero cancelar") is None
+
+
+def test_a_pausa_depois_do_nao_deixa_o_cancelamento_valer() -> None:
+    assert respondeu_ao_lembrete("nao, cancela por favor") is RespostaAoLembrete.CANCELAR

@@ -44,6 +44,7 @@ nenhum. Ver `_TERMOS_DE_OUTRA_CARD`.
 import re
 import unicodedata
 from datetime import datetime
+from enum import StrEnum
 
 from mobia.domain.agendamento.data_falada import NaoReconhecida, resolver
 
@@ -297,3 +298,117 @@ def recusou(texto: str) -> bool:
     """
     normalizado = _normalizar(texto)
     return bool(normalizado) and _PADRAO_DA_RECUSA.search(normalizado) is not None
+
+
+# TEC-372, D2. A resposta ao lembrete de 24 horas, que oferece confirmar,
+# remarcar e cancelar (RN-12.2).
+#
+# **A assimetria aqui e a mais dura das tres deste repo, e e o inverso da que
+# governa `quer_agendar` logo acima.**
+#
+#   - Falso positivo de CANCELAR: derruba visita marcada, libera o slot e
+#     manda e-mail ao corretor. O lead aparece no dia e nao ha ninguem, e
+#     **nao ha tela para desfazer** -- a E8 nao existe.
+#   - Falso negativo: o lead nao e ouvido, que e exatamente o estado de
+#     antes desta card. Ruim, e recuperavel -- ele repete.
+#
+# Por isso a faixa e ESTRITA e o silencio e o default. `"nao"` sozinho **nao**
+# cancela: ele e ambiguo entre "nao vou" e "nao nesse horario", e as duas
+# leituras tem desfechos opostos. Em `quer_agendar` a escolha foi a inversa
+# porque la o custo do erro era oferecer horario a quem nao pediu.
+#
+# **Nada aqui reusa `confirmou`/`recusou`**, que sao da TEC-371 e respondem
+# outra pergunta: la `recusou` significa "este horario nao serve, me de
+# outro", dentro de uma escolha ja aberta.
+class RespostaAoLembrete(StrEnum):
+    CONFIRMA = "CONFIRMA"
+    REMARCAR = "REMARCAR"
+    CANCELAR = "CANCELAR"
+
+
+_TERMOS_DA_PRESENCA: tuple[str, ...] = (
+    "sim",
+    "confirmo",
+    "confirmado",
+    "confirmada",
+    "estarei la",
+    "estarei ai",
+    "vou estar la",
+    "vou sim",
+    "pode contar comigo",
+    "tudo certo",
+    "combinado",
+    "esta de pe",
+    "ta de pe",
+)
+
+# Mudar o horario, e nao desfazer. `adiar` e `antecipar` entram porque sao a
+# mesma intencao dita de outro jeito.
+_TERMOS_DA_REMARCACAO: tuple[str, ...] = (
+    "remarcar",
+    "remarca",
+    "reagendar",
+    "reagenda",
+    "mudar o horario",
+    "mudar de horario",
+    "mudar a data",
+    "trocar o horario",
+    "trocar de horario",
+    "outro horario",
+    "outro dia",
+    "outra data",
+    "adiar",
+    "antecipar",
+    "passar para outro dia",
+)
+
+# **Forma inequivoca, e so ela.** Cada termo carrega o verbo ou a negacao
+# COMPLETA que o torna um cancelamento; nenhum e palavra que apareca sozinha
+# numa frase sobre outra coisa. Acrescentar termo aqui custa uma visita
+# perdida quando erra, entao quem acrescentar roda antes:
+#
+#     respondeu_ao_lembrete("<termo> aquele outro assunto")
+#
+# e confere que o resultado continua fazendo sentido no contexto de uma
+# visita marcada para amanha.
+_TERMOS_DO_CANCELAMENTO: tuple[str, ...] = (
+    "cancelar",
+    "cancela",
+    "desmarcar",
+    "desmarca",
+    "nao vou poder ir",
+    "nao vou conseguir ir",
+    "nao vou poder",
+    "nao vou conseguir",
+    "nao vou mais",
+    "nao posso mais",
+    "desisti",
+    "desistir",
+)
+
+_PADRAO_DA_PRESENCA = _padrao(_TERMOS_DA_PRESENCA)
+_PADRAO_DA_REMARCACAO = _padrao(_TERMOS_DA_REMARCACAO)
+_PADRAO_DO_CANCELAMENTO = _padrao(_TERMOS_DO_CANCELAMENTO)
+
+
+def respondeu_ao_lembrete(texto: str) -> RespostaAoLembrete | None:
+    """O que o lead respondeu ao lembrete, ou `None` quando nao deu para saber.
+
+    `None` e o desfecho mais comum e o mais seguro: quem chama segue o turno
+    normal, e o agendamento nao muda. **Quem decide se esta pergunta cabe e o
+    chamador**, pelo predicado da D1 (agendamento CONFIRMADO, lembrete de 24 h
+    ja enviado, visita ainda no futuro) -- fora dele, "cancela" e palavra
+    comum e nao pode derrubar nada.
+
+    **Remarcar vence cancelar quando os dois casam.** "nao vou poder ir,
+    remarca?" tem termo das duas listas, e a leitura certa e a reversivel:
+    remarcar oferece janelas e o lead ainda pode nao escolher nenhuma, e o
+    agendamento original so cai na escolha. Cancelar nao volta.
+    """
+    if _dispara(texto, _PADRAO_DA_REMARCACAO):
+        return RespostaAoLembrete.REMARCAR
+    if _dispara(texto, _PADRAO_DO_CANCELAMENTO):
+        return RespostaAoLembrete.CANCELAR
+    if _dispara(texto, _PADRAO_DA_PRESENCA):
+        return RespostaAoLembrete.CONFIRMA
+    return None
