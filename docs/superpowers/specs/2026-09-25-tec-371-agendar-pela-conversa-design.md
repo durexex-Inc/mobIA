@@ -1,13 +1,13 @@
 # TEC-371 — Agendar a visita pela conversa, do pedido de horário à confirmação
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** implementado
 **Card:** [TEC-371](https://eduardodurieuxlopes.atlassian.net/browse/TEC-371) — épico TEC-164
 **Branch:** `feat/tec-371-agendar-pela-conversa`
 **Origem:** RF-11, RF-12, RN-11.1 a RN-11.4, RN-12.1, CA-11.1, CA-11.2, RT-07, RT-10 (SRS v1.0). Depende de TEC-165, TEC-166, TEC-167, TEC-168 e TEC-170 — todas mergeadas.
 
 ## Objetivo
 
-O lead marca a visita conversando. Esta é a card que liga sete cards de agendamento à conversa: hoje `domain/agente/turno.py` não importa uma linha de `domain/agendamento/`, e o épico inteiro é motor sem ignição.
+O lead marca a visita conversando. Esta é a card que liga sete cards de agendamento à conversa: até ela, `domain/agente/turno.py` não importava uma linha de `domain/agendamento/`, e o épico inteiro era motor sem ignição.
 
 ## O que esta card não entrega, dito antes
 
@@ -36,7 +36,13 @@ Aqui a conta é a inversa:
 
 Reversível e visível perde para invisível e irreversível na `gatilhos.py`; aqui os papéis se trocam. Então: **dois detectores, com vocabulários diferentes, e nenhum importa o outro.** Quem quiser deduplicá-los depois tem de reabrir as duas assimetrias, não só as duas listas.
 
-`domain/agendamento/deteccao.py::quer_agendar` normaliza como os irmãos (minúsculas, sem acento, sem pontuação) e casa verbo de ação junto do objeto, com `\b` no início de cada alternativa — o mesmo limite de palavra que impede `desmarcar visita` de casar `marcar visita`. Entram, além do que a `gatilhos.py` já tem: `ver o imovel`, `conhecer o imovel`, `visitar`, `posso ver`, `quando posso ver`, `tem horario`, `que horario`, `da pra ver`. **`desmarcar`, `remarcar`, `reagendar` e `cancelar` ficam de fora** — são a TEC-372 e a TEC-172, e reconhecê-los aqui faria o agente oferecer horário novo a quem quis desmarcar.
+`domain/agendamento/deteccao.py::quer_agendar` normaliza como os irmãos (minúsculas, sem acento, sem pontuação) e tem **duas vias**.
+
+A primeira é a lista de termos: verbo de ação junto do objeto, com limite de palavra nos **dois** lados de cada alternativa. Os dois lados, e não só o início como na `gatilhos.py`, porque aqui há termos curtos (`sim`, `ok`, `nao`) que são substring de palavra comum — sem o limite no fim, `sim` casaria dentro de `simples`. **O substantivo sozinho não entra**: com `visita` na lista, "quero desmarcar a visita" disparava, que é o erro exato contra o qual a `gatilhos.py` avisa quando diz que o critério é o verbo de ação junto do objeto.
+
+A segunda via existe porque **o primeiro cenário do Gherkin não tem termo nenhum**: "pode ser quinta de manhã?" não traz verbo de agendamento nem a palavra visita. O que ela traz é um **enquadramento de proposta** (`pode ser`, `que tal`, `posso ir`, …) mais uma data que `data_falada::resolver` reconhece, e são as duas juntas que fazem um pedido de horário. Exigir as duas é o que separa essa fala de "meu contrato vence dia 15" (data sem enquadramento) e de "pode ser mais barato?" (enquadramento sem data).
+
+**`desmarcar`, `remarcar`, `reagendar` e `cancelar` têm VETO, e não só ausência.** São a TEC-372 e a TEC-172. Deixá-los fora das listas não bastava: a segunda via dispara em "quero remarcar, pode ser quinta de manhã?" sem precisar de termo nenhum, e o agente ofereceria horário novo a quem quer mexer no que já existe, sem nunca cancelar o antigo.
 
 O tipo é sempre `VISITA_PRESENCIAL`: todo termo da lista fala de ver imóvel. Reunião remota não tem vocabulário próprio nesta card e por isso não tem caminho.
 
@@ -44,7 +50,7 @@ O tipo é sempre `VISITA_PRESENCIAL`: todo termo da lista fala de ver imóvel. R
 
 | turno | o lead diz | o sistema faz | o lead lê |
 | --- | --- | --- | --- |
-| A | "pode ser quinta de manhã?" | `janelas_alocadas` → grava as propostas | até 3 janelas, cada uma com data e hora absolutas |
+| A | "pode ser quinta de manhã?" | recorta pela data falada, ou `janelas_alocadas` → grava as propostas | até 3 janelas, cada uma com data e hora absolutas |
 | B | "a segunda" / "às 11h" | casa a escolha → `reservar_ou_alternativas` | a janela escolhida, absoluta, e o pedido de confirmação |
 | C | "isso, pode marcar" | `confirmar` → commit → enfileira | a confirmação da RN-12.1, enviada pelo job |
 
@@ -72,10 +78,13 @@ A tabela entra em `TABELAS` (`tests/conftest.py`), no `TRUNCATE` único.
 
 ## D5 — Como o lead escolhe: uma função pura
 
-`domain/agendamento/escolha.py::escolher(texto, propostas, *, agora) -> Escolhida | NaoEscolheu`, sem I/O, no molde de `data_falada.py`. Duas vias, nesta ordem:
+`domain/agendamento/escolha.py::escolher(texto, propostas, *, agora) -> Escolhida | NaoEscolheu`, sem I/O, no molde de `data_falada.py`. Três vias, nesta ordem:
 
 1. **Ordinal** — "a primeira", "a segunda", "a terceira", "a última", "1", "2", "3". Casa contra a posição na lista gravada.
-2. **Hora** — `data_falada.resolver(texto, agora=agora)`; o `Instante` resultante casa a proposta cujo `inicio` bate. Quando a resolução é `Dia` ou `Periodo` e **exatamente uma** proposta cai dentro, ela é a escolhida; mais de uma é `NaoEscolheu`, e a resposta é reperguntar sem propor de novo.
+2. **Data** — `data_falada.resolver(texto, agora=agora)`; o `Instante` resultante casa a proposta cujo `inicio` bate exatamente. Quando a resolução é `Dia`, `Periodo` ou `Semana` e **exatamente uma** proposta cai dentro, ela é a escolhida; mais de uma é `NaoEscolheu`.
+3. **Hora solta** — a hora sem dia ("11h", "às 11"), casada contra a hora local das propostas; exatamente uma é a escolhida. **Esta via não sai de `resolver`, e a razão é que a pergunta é outra**: aquele módulo responde "que data o lead está propondo" e por isso devolve `Ambigua` para hora que já passou hoje — "às 9h" ditas às 10h não são proposta de nada. Aqui a pergunta é "a qual das janelas já oferecidas o lead se refere", e todas são futuras por construção. Sem esta via, o lead que lê "quinta às 9h" e responde "9h" de manhã não escolheria nada.
+
+Mais de uma candidata é sempre `NaoEscolheu`, nunca a primeira: chutar gravaria uma reserva que o lead não pediu, e o horário errado sai da agenda do corretor.
 
 `NaoEscolheu` **não** produz texto: o turno cai fora e segue normal. Uma pergunta nossa aqui ("não entendi, qual dos três?") competiria com a resposta que o modelo daria a uma fala que pode não ter nada a ver com agendamento — o lead que responde "quanto é o condomínio?" no meio da escolha tem de receber o valor do condomínio.
 
@@ -111,7 +120,19 @@ Fica a 3. Não é boa — é a menos falsa. Nenhum texto que caiba nesta card di
 
 O horizonte é 72 horas a partir de `agora`, o número da RN-11.5 — é ele que define o que conta como "sem disponibilidade".
 
-Caem fora pelo mesmo caminho, e pelo mesmo motivo, o caso de não haver corretor ativo e o de o lead não ter qualificação gravada que permita montar o `CriterioDoLead`.
+Cai fora pelo mesmo caminho o caso de não haver corretor ativo.
+
+**Lead sem qualificação gravada NÃO cai fora**, e essa parte mudou na implementação: o critério nasce vazio, critério vazio nunca tem match exato, e `alocar` cai no corretor generalista de plantão — que é o que a RN-11.2 manda fazer. Recusar o agendamento a quem ainda não foi qualificado seria inventar uma etapa que a RF-11 não tem.
+
+## D8-bis — A data que o lead falou recorta a oferta, e a ambígua vira pergunta
+
+A CA-11.1 pede horários **daquela quinta**, e não a grade dos próximos três dias. Quem faz a ponte entre a data falada e o motor é `data_falada::janelas_para`, que a TEC-167 construiu exatamente para isto e ficou sem chamador.
+
+A diferença não é só o recorte. `janelas_alocadas` dá **uma janela por dia**, para espalhar a escolha entre datas — resposta certa para quem não nomeou dia. Com o dia nomeado, o que falta é a hora, e `janelas_para` dá até três no mesmo dia.
+
+O caminho, em `conversa.py::_janelas_da_data_falada`: resolve a fala; para `Dia`, `Periodo` e `Instante`, aloca os candidatos daquela data (`alocar`, com a contagem de visitas do dia) e desce por eles até um ter janela livre. Não achando nada — ou sendo `Semana` ou `NaoReconhecida` —, cai para a grade de 72 horas em vez de deixar o lead sem resposta.
+
+**`Ambigua` vira pergunta, e não chute.** `resolver` já devolve o texto exato a fazer ("Aos domingos não há atendimento. Pode ser sábado, 3 de outubro?"), e o resultado `Perguntou` o entrega sem gravar nada. É o RT-10 inteiro: chutar a data é visita marcada no dia errado.
 
 ## D9 — Onde o bloco entra em `_executar_turno`, e por que a função não é partida aqui
 
@@ -143,7 +164,11 @@ Constantes de módulo em `domain/agendamento/mensagens.py`, ao lado das da TEC-1
 
 Cada janela é dita por `data_e_hora_absolutas` (dia da semana, dia do mês e hora), que é o formato que a RN-11.3 exige e que a TEC-167 já escreveu. Nenhum texto desta card diz "amanhã" ou "quinta que vem".
 
-São cinco: a oferta de janelas, o pedido de confirmação de uma janela escolhida, o aviso de que o horário foi tomado com as alternativas, o aviso de que a reserva venceu com a oferta nova, e a repergunta de escolha ambígua. Nenhum promete contato de ninguém.
+São cinco: a oferta de janelas, o pedido de confirmação de uma janela escolhida, o aviso de que o horário foi tomado com as alternativas, o aviso de que a reserva venceu com a oferta nova, e a oferta que segue uma recusa. Nenhum promete contato de ninguém.
+
+A lista numera as janelas (`1.`, `2.`, `3.`), e isso não é estética: "a segunda" e "2" são as respostas mais curtas que o lead pode dar, e `escolha.py::escolher` as lê. Uma lista sem número deixaria o ordinal sem âncora visível.
+
+**Não há texto de "não entendi qual".** Escolha que não resolve é `NaoEscolheu`, e `NaoEscolheu` cai fora — ver a D5.
 
 ## Testes
 

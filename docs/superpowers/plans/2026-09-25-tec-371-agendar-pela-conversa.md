@@ -145,10 +145,11 @@
 
 - [ ] **Step 1: Escrever os testes que falham**
 
-  `atender(session, *, channel, conversation_key, texto, estado, agora, agenda, visitas)` devolve um resultado tipado — nunca texto pronto, nunca `None` ambíguo. Os desfechos:
+  `atender(session, *, channel, conversation_key, texto, estado, agora, agenda, visitas)` devolve um resultado tipado, nunca `None` ambíguo. Os desfechos:
 
-  - `Ofereceu(janelas)` — turno A, ou rodada nova depois de conflito, recusa ou reserva vencida.
-  - `Reservou(reserva, janela)` — turno B.
+  - `Ofereceu(texto, propostas)` — turno A, ou rodada nova depois de conflito, recusa ou reserva vencida. **O texto vem pronto**: as quatro variantes só se distinguem dentro de `atender`, e devolver só o tipo obrigaria o turno a refazer a mesma árvore de decisão — o oposto da D9, que quer o turno fino.
+  - `Reservou(texto, reserva_id)` — turno B.
+  - `Perguntou(texto)` — a data falada é ambígua, e `resolver` já traz a pergunta pronta (RT-10).
   - `Confirmou(agendamento_id)` — turno C, para quem chama enfileirar **depois do commit**.
   - `NadaAFazer()` — o turno segue normal. É o desfecho de: não pediu, não escolheu, não confirmou nem recusou, sem janela em 72h, sem corretor ativo, sem qualificação.
 
