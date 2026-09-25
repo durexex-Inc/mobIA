@@ -1,9 +1,18 @@
-"""O que o lead e o corretor leem quando o agendamento e confirmado. TEC-170.
+"""O que o lead e o corretor leem sobre o agendamento. TEC-170 e TEC-371.
 
-Puro: nao toca banco nem rede. `confirmacao.py` carrega o agendamento e chama
-estas funcoes. Ver docs/superpowers/specs/2026-09-24-tec-170-confirmar-agendamento-design.md.
+Dois momentos, no mesmo lugar porque o vocabulario e um so. **Depois** que o
+agendamento existe: a confirmacao ao lead, o aviso ao corretor e o do
+cancelamento (TEC-170 e TEC-172), carregados por `confirmacao.py` e por
+`ciclo.py`. **Durante** a conversa que o cria: a oferta de janelas, a
+pergunta de confirmacao e as duas reofertas (TEC-371), montadas por
+`conversa.py`.
+
+Puro: nao toca banco nem rede. Ver
+docs/superpowers/specs/2026-09-24-tec-170-confirmar-agendamento-design.md e
+docs/superpowers/specs/2026-09-25-tec-371-agendar-pela-conversa-design.md.
 """
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from mobia.domain.agendamento.data_falada import data_e_hora_absolutas
@@ -132,4 +141,42 @@ def aviso_ao_corretor(
         etiqueta=ETIQUETA_DE[gatilho],
         prioridade=str(PRIORIDADE_DE[gatilho]),
         link=link,
+    )
+
+
+# TEC-371, D11. O que o lead le nos tres turnos da conversa de agendamento.
+# Com acento (TEC-267), e registrados em `tests/unit/literais_ao_lead.py` --
+# sem o registro as guardas de acento e de promessa nao olham para eles.
+#
+# **Nenhum promete contato de ninguem** (TEC-286): o agente oferece, repete o
+# que o lead escolheu e pergunta. Quem avisa o corretor e o job da RN-12.1,
+# depois que existe agendamento.
+TEXTO_DAS_JANELAS = "Tenho estes horários para a visita:\n{janelas}\nQual deles fica melhor?"
+# O horario perdido para outro lead. **Nao diz "outro cliente"**: quem
+# reservou pode ser o proprio corretor pela agenda dele, e afirmar o que nao
+# se sabe e a mesma classe de erro que um endereco inventado.
+TEXTO_DO_CONFLITO = (
+    "Esse horário acabou de ser preenchido. Tenho estes:\n{janelas}\nAlgum deles serve?"
+)
+TEXTO_DA_RESERVA_VENCIDA = (
+    "O horário ficou reservado por alguns minutos e a reserva expirou. "
+    "Estes estão livres agora:\n{janelas}\nQual prefere?"
+)
+TEXTO_DE_OUTRO_HORARIO = "Sem problema. Tenho também:\n{janelas}\nAlgum destes fica bom?"
+# A pergunta da RN-11.3: data e hora absolutas antes de gravar. **E aqui que a
+# protecao do RT-10 acontece** -- se a escolha foi lida errado, e esta frase
+# que o lead corrige, e por isso ela repete o horario por extenso em vez de
+# dizer "esse horario".
+TEXTO_DA_ESCOLHA = "Perfeito: {quando}, com {corretor}. Confirmo a visita?"
+
+
+def linhas_das_janelas(janelas: Sequence[datetime]) -> str:
+    """As janelas numeradas, uma por linha, cada uma com data e hora absolutas.
+
+    **Numeradas porque o lead responde por posicao.** "a segunda" e "2" sao as
+    respostas mais curtas possiveis, e `escolha.py::escolher` as le -- uma
+    lista sem numero deixaria o ordinal sem ancora visivel.
+    """
+    return "\n".join(
+        f"{ordinal}. {data_e_hora_absolutas(inicio)}" for ordinal, inicio in enumerate(janelas, 1)
     )
