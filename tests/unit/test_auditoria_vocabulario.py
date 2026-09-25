@@ -79,7 +79,7 @@ class TestAtor:
 class TestDetalhes:
     def test_negativa_so_leva_valores_de_vocabulario_fechado(self) -> None:
         detalhes = detalhes_da_negativa(
-            permissao=Permissao.VER_DADOS_COMPLETOS.value,
+            permissao=Permissao.VER_AUDITORIA.value,
             motivo="sem_permissao",
             papel="GERENTE",
             metodo="GET",

@@ -101,6 +101,9 @@ def create_app() -> FastAPI:
     # de leads (TEC-192) nunca esteve condicionada -- ela esta aqui por ser
     # import tardio como as outras, e quem a protege e `VER_LEADS`, que os
     # quatro papeis tem.
+    # `auditoria` (TEC-206) entra pelo mesmo motivo de import tardio, e esta e
+    # administrativa de fato: quem a protege e `VER_AUDITORIA`, so do ADMIN.
+    from mobia.api.routes.auditoria import router as auditoria_router
     from mobia.api.routes.conversas import router as conversas_router
     from mobia.api.routes.corretores import router as corretores_router
     from mobia.api.routes.handoffs import router as handoffs_router
@@ -114,6 +117,7 @@ def create_app() -> FastAPI:
     app.include_router(conversas_router)
     app.include_router(metricas_router)
     app.include_router(leads_router)
+    app.include_router(auditoria_router)
 
     if not settings.catalogo_admin_token:
         # O aviso FICA, com outro sentido: nao diz mais que as rotas sumiram --
