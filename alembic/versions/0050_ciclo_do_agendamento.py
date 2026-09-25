@@ -67,9 +67,29 @@ def upgrade() -> None:
         "lead_score_audit",
         sa.Column("penalidade", sa.Integer(), nullable=False, server_default="0"),
     )
+    # O CHECK da 0012 afirmava que o total e a soma dos cinco fatores, e
+    # deixou de ser verdade: o sexto SUBTRAI, e `Score.total` corta em zero.
+    # **Recriar em vez de apagar** -- a garantia que ele da e que o total
+    # gravado e DERIVAVEL dos fatores gravados, e e justamente ela que a
+    # penalidade poderia quebrar em silencio se a coluna fosse esquecida em
+    # algum caminho de escrita. O `GREATEST` espelha o piso de `Score.total`.
+    op.drop_constraint("ck_lead_score_audit_total", "lead_score_audit", type_="check")
+    op.create_check_constraint(
+        "ck_lead_score_audit_total",
+        "lead_score_audit",
+        "total_novo = GREATEST(0, completude + urgencia + catalogo"
+        " + engajamento + capacidade - penalidade)",
+    )
 
 
 def downgrade() -> None:
+    op.drop_constraint("ck_lead_score_audit_total", "lead_score_audit", type_="check")
+    op.execute("DELETE FROM lead_score_audit WHERE penalidade <> 0")
+    op.create_check_constraint(
+        "ck_lead_score_audit_total",
+        "lead_score_audit",
+        "total_novo = completude + urgencia + catalogo + engajamento + capacidade",
+    )
     op.drop_column("lead_score_audit", "penalidade")
     op.drop_column("lead_qualification", "penalidade_pontos")
 
