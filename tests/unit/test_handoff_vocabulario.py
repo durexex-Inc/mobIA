@@ -10,8 +10,9 @@ def test_todo_gatilho_tem_etiqueta_e_prioridade() -> None:
     """Os dois mapas cobrem o enum inteiro.
 
     Um gatilho sem etiqueta so falharia em producao, no instante do handoff --
-    e os tres gatilhos ainda sem fiacao (TEC-143, TEC-149, TEC-170) nao tem
-    outro teste que os exercite.
+    e AGENDAMENTO_CONFIRMADO, o unico gatilho ainda sem chamador (a TEC-170
+    decidiu nao abrir handoff para ele -- ver o docstring de `Gatilho`), nao
+    tem outro teste que o exercite.
     """
     for gatilho in Gatilho:
         assert gatilho in ETIQUETA_DE

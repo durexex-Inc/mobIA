@@ -76,6 +76,7 @@ def jornada_valida(inicio: int, fim: int) -> bool:
 
     Fim igual ao inicio e recusado junto com fim antes do inicio: uma janela
     de duracao zero nao e jornada, e aceita-la poria no banco um corretor a
-    quem a TEC-170 nunca conseguiria propor horario nenhum.
+    quem o motor de janelas (`agendamento/janelas.py`) nunca conseguiria
+    oferecer horario nenhum.
     """
     return HORA_MINIMA <= inicio < fim <= HORA_MAXIMA

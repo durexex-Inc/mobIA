@@ -1,6 +1,6 @@
 # TEC-170 — Confirmar o agendamento e avisar lead e corretor
 
-**Status:** desenho aprovado em conversa, aguardando revisão do texto
+**Status:** implementado
 **Card:** [TEC-170](https://eduardodurieuxlopes.atlassian.net/browse/TEC-170) — épico TEC-164
 **Branch:** `feat/tec-170-confirmar-agendamento`
 **Origem:** RF-12, RN-12.1 (SRS v1.0); §4.4 (Google Calendar opcional por flag).
@@ -27,7 +27,7 @@ O que ela acrescenta:
 
 - `avisar_confirmacao(session_factory, *, agendamento_id, outbound, email, calendario, agora)` — função de domínio em `domain/agendamento/confirmacao.py`, que faz os três passos da D2.
 - Job ARQ `avisar_confirmacao` em `workers/jobs/`, fino, que só a chama com as portas de `ctx`.
-- `AgendadorDeConfirmacaoPort` com `AgendadorArq`/`AgendadorNoop`, no molde de `domain/handoff/agendador.py`: `enqueue_job(AVISAR_CONFIRMACAO_JOB, str(id), _job_id=f"confirmacao:{id}")`. O `_job_id` fixo impede dois jobs vivos para o mesmo agendamento.
+- `AgendadorDeConfirmacaoPort` com `AgendadorDeConfirmacaoArq`/`AgendadorDeConfirmacaoNoop`, no molde de `domain/handoff/agendador.py`: `enqueue_job(AVISAR_CONFIRMACAO_JOB, str(id), _job_id=f"confirmacao:{id}")`. O `_job_id` fixo impede dois jobs vivos para o mesmo agendamento.
 
 **Só age sobre `CONFIRMADO`.** Agendamento inexistente, `RESERVADO` ou `EXPIRADO` é um no-op com uma linha de log (`agendamento.confirmacao_ignorada`): o job pode ter sido enfileirado por um caminho que depois não commitou.
 
@@ -47,9 +47,10 @@ Cada passo abre a própria sessão curta, sem transação aberta durante chamada
 
 ## D3 — As mensagens
 
-**Ao lead** — `TEXTO_DA_CONFIRMACAO` (e `TEXTO_DA_CONFIRMACAO_REMOTA`), português **com acento** (TEC-267), registrados em `tests/unit/literais_ao_lead.py`:
+**Ao lead** — `TEXTO_DA_CONFIRMACAO_DE_VISITA`, `TEXTO_DA_CONFIRMACAO_DE_VISITA_SEM_IMOVEL` e `TEXTO_DA_CONFIRMACAO_DE_REUNIAO`, português **com acento** (TEC-267), registrados em `tests/unit/literais_ao_lead.py`:
 
-- Visita: data e hora por `data_e_hora_absolutas` (TEC-167), o endereço (D4) e o nome do corretor.
+- Visita com imóvel: data e hora por `data_e_hora_absolutas` (TEC-167), o endereço (D4) e o nome do corretor.
+- Visita com `imovel_id` nulo: data e hora e o nome do corretor; sem endereço, porque o schema permite a visita sem imóvel e um endereço inventado seria pior que nenhum.
 - Reunião remota: data e hora, "reunião remota" e o nome do corretor; sem endereço.
 
 Envio por `outbound.send` com `kind` próprio (`KIND_DA_CONFIRMACAO = "confirmacao_de_agendamento"`), ancorado na **última mensagem do lead** — o molde de `_avisar_lead_da_janela_humana`, pelo mesmo motivo que a docstring dela explica (o `"de"` sai do número certo). Sem mensagem do lead na conversa, o passo é pulado com log. A mensagem **não promete** o que não está garantido: não diz que o corretor "já recebeu", porque um canal aceitar não é entrega (lição registrada em `envio.py`).
@@ -89,7 +90,7 @@ Não existe sistema de alerta no repo; alerta é `log.error` com nome estável, 
 
 Cada um com `agendamento_id` e o tipo da exceção, nunca o corpo da resposta do Google (pode ecoar credencial). Em todos os casos o agendamento continua `CONFIRMADO`: nenhum passo escreve em `status`.
 
-## D7 — Migration 0046
+## D7 — Migration 0047
 
 `agendamentos.calendar_event_id String(120) NULL`, `agendamentos.corretor_avisado_em timestamptz NULL` e `agendamentos.lead_avisado_em timestamptz NULL`. Nulos porque o passo pode falhar, e nulo é o registro de que falhou. `lead_avisado_em` só é gravado quando o `outbound.send` aceita; recusa da guarda (opt-out, atendimento humano) fica nula e em log.
 
