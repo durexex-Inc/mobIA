@@ -8,6 +8,18 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import MODELO_SEM_CHAMADA, get_settings
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoPort
+from mobia.domain.agendamento.conversa import (
+    KIND_DO_AGENDAMENTO,
+    SUBAGENTE_AGENDAMENTO,
+)
+from mobia.domain.agendamento.conversa import Confirmou as AgendamentoConfirmado
+from mobia.domain.agendamento.conversa import NadaAFazer as NadaAFazerNoAgendamento
+from mobia.domain.agendamento.conversa import Ofereceu as AgendamentoOferecido
+from mobia.domain.agendamento.conversa import Perguntou as AgendamentoPerguntou
+from mobia.domain.agendamento.conversa import Reservou as AgendamentoReservado
+from mobia.domain.agendamento.conversa import atender as atender_agendamento
+from mobia.domain.agendamento.repositorio import AgendaPostgres
 from mobia.domain.agente.apresentacao import Ficha, legenda_de
 from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
@@ -536,6 +548,22 @@ ResultadoDoTurno = Literal[
     # silencio, e nada foi perdido -- o lead ja recebeu a confirmacao que
     # cobre esta midia.
     "midia_ja_confirmada",
+    # A TEC-371 acrescentou os dois abaixo, separados pelo mesmo criterio que
+    # os comentarios acima aplicam entre si.
+    #
+    # "agendamento_oferecido" e o turno que respondeu sobre horario -- ofertou
+    # janelas, reservou a escolhida, avisou que o horario caiu ou que a
+    # reserva venceu. Nao reuse "respondido": aquele significa que o MODELO
+    # respondeu, e este turno nao chegou a chama-lo; somar os dois tornaria
+    # impossivel medir quanto da conversa o agendamento atende sozinho.
+    #
+    # "agendamento_confirmado" e o turno que gravou o agendamento e nao mandou
+    # texto nenhum, porque quem manda a confirmacao e o job da RN-12.1 (D6).
+    # Nao reuse "sem_resposta": aquele e ausencia de coisa a dizer, e aqui a
+    # coisa a dizer existe e sai por outro caminho -- se um dia o job parar de
+    # sair, e este contador que denuncia o silencio.
+    "agendamento_oferecido",
+    "agendamento_confirmado",
 ]
 
 
@@ -966,6 +994,7 @@ async def executar_turno(
     outbound: OutboundPort,
     moderador: ModeradorPort,
     agendador: AgendadorDeResumoPort,
+    agendador_de_confirmacao: AgendadorDeConfirmacaoPort,
 ) -> ResultadoDoTurno:
     """Um turno inteiro: contexto, classificacao, entrega, registro.
 
@@ -1036,6 +1065,7 @@ async def executar_turno(
             outbound=outbound,
             moderador=moderador,
             agendador=agendador,
+            agendador_de_confirmacao=agendador_de_confirmacao,
             corpo=corpo,
             moderacao=moderacao,
         )
@@ -1063,6 +1093,7 @@ async def _executar_turno(
     outbound: OutboundPort,
     moderador: ModeradorPort,
     agendador: AgendadorDeResumoPort,
+    agendador_de_confirmacao: AgendadorDeConfirmacaoPort,
     corpo: str | None,
     moderacao: _ModeracaoDoTurno,
 ) -> ResultadoDoTurno:
@@ -1814,6 +1845,83 @@ async def _executar_turno(
             linhas=len(lote),
         )
         await apagar_apresentacao_da_mensagem(session_factory, message_id=message.id)
+
+    # TEC-371, D9. O agendamento pela conversa entra AQUI, e a posicao e
+    # decisao, nao acaso. Tres coisas ficam garantidas pela ordem:
+    #
+    #   - ABAIXO das guardas de opt-out, de atendimento humano e de
+    #     encerramento por escopo: todas vencem o agendamento, e um lead
+    #     silenciado que escreve "quero marcar visita" continua silenciado.
+    #   - ABAIXO da moderacao de entrada: fala recusada nao marca visita.
+    #   - ACIMA de `montar_contexto` e da chamada ao modelo: o caminho de
+    #     agendamento nao paga token nenhum, e continua funcionando com o
+    #     provedor fora do ar. E a razao que `agendamento/deteccao.py` declara
+    #     para ser deterministico.
+    #
+    # Le o estado com `ler_estado` direto, e nao pelo contexto: `criterio_de`
+    # precisa so da qualificacao, e montar contexto inteiro -- resumo,
+    # historico, ancora -- para um caminho que nao chama o modelo seria pagar
+    # o caro para nao usar.
+    #
+    # **A funcao nao foi partida nesta card, e isto e um bloco e nao uma
+    # trilha.** `_executar_turno` tem ~2837 linhas e 75,9% do ruido da
+    # listagem de comentarios; partir a funcao e trabalho de outra natureza --
+    # a ordem dos efeitos colaterais dela e o contrato, e um diff que mistura
+    # a refatoracao com a primeira ligacao do agendamento a conversa nao e
+    # revisavel nem em metade. O que esta card faz pelo problema e nao
+    # agrava-lo: o que entra aqui e uma chamada e um retorno.
+    if corpo:
+        agenda_do_agendamento = AgendaPostgres(session_factory)
+        async with session_factory() as sessao_do_agendamento:
+            desfecho_do_agendamento = await atender_agendamento(
+                sessao_do_agendamento,
+                channel=message.channel,
+                conversation_key=message.conversation_key,
+                texto=corpo,
+                estado=await ler_estado(
+                    sessao_do_agendamento, message.channel, message.conversation_key
+                ),
+                agora=datetime.now(UTC),
+                agenda=agenda_do_agendamento,
+                visitas=agenda_do_agendamento,
+            )
+            if not isinstance(desfecho_do_agendamento, NadaAFazerNoAgendamento):
+                # O commit acontece DENTRO do `async with`, e o enfileiramento
+                # depois dele: a card exige essa ordem, e o motivo e que um
+                # job consumido antes do commit nao encontra a linha.
+                await sessao_do_agendamento.commit()
+        if isinstance(desfecho_do_agendamento, AgendamentoConfirmado):
+            await agendador_de_confirmacao.agendar(desfecho_do_agendamento.agendamento_id)
+            # Sem texto de proposito (D6): quem manda a confirmacao ao lead e
+            # o job da RN-12.1, ja com data, hora, endereco e nome do
+            # corretor. Uma mensagem nossa aqui seria a segunda dizendo a
+            # mesma coisa, com menos dados.
+            log.info(
+                "turno.agendamento_confirmado",
+                channel=message.channel,
+                message_id=str(message.id),
+                agendamento_id=str(desfecho_do_agendamento.agendamento_id),
+            )
+            return "agendamento_confirmado"
+        if isinstance(
+            desfecho_do_agendamento,
+            AgendamentoOferecido | AgendamentoReservado | AgendamentoPerguntou,
+        ):
+            entrega_do_agendamento = await _entregar_texto_fixo(
+                session_factory,
+                message=message,
+                outbound=outbound,
+                recorder_texto=desfecho_do_agendamento.texto,
+                kind=KIND_DO_AGENDAMENTO,
+                subagent=SUBAGENTE_AGENDAMENTO,
+            )
+            # So o desfecho FELIZ vira o valor proprio. "reentrega_suprimida",
+            # "expirado" e "sem_resposta" continuam com o nome que ja tinham:
+            # sao fatos sobre a porta de saida, nao sobre o agendamento, e
+            # renomea-los aqui os tiraria das contagens que ja existem.
+            if entrega_do_agendamento == "respondido":
+                return "agendamento_oferecido"
+            return entrega_do_agendamento
 
     # A fronteira de historico da TEC-130 (D4) nao entra por aqui: quem decide
     # dobrar a conversa anterior inteira e `montar_contexto`, olhando para os
@@ -4080,13 +4188,15 @@ async def _entregar_texto_fixo(
     visivel e recuperavel e o silencio nao. `kind` tem default
     (`KIND_DA_RESPOSTA`) para preservar o chamador que nao precisa de kind
     proprio -- hoje so o texto da busca inconclusiva (`LacoDeBuscaExcedido`,
-    mais abaixo) usa o default. Os outros quatro chamadores passam kind
+    mais abaixo) usa o default. Os outros cinco chamadores passam kind
     proprio: a confirmacao de opt-out (TEC-182), o aviso de pedido de humano,
     a confirmacao de midia sem texto (TEC-132, D4:
-    `KIND_DA_CONFIRMACAO_DE_MIDIA`, com `SUBAGENTE_MIDIA`), e -- desde a
-    TEC-295, ruling R6 -- a recusa de entrada, que usa
+    `KIND_DA_CONFIRMACAO_DE_MIDIA`, com `SUBAGENTE_MIDIA`), a recusa de
+    entrada -- desde a TEC-295, ruling R6 --, que usa
     `KIND_DA_RECUSA_DE_ENTRADA` para nao colidir com o `kind` da resposta que
-    a continuacao da D4 pode entregar depois dela na mesma mensagem. O da
+    a continuacao da D4 pode entregar depois dela na mesma mensagem, e o
+    agendamento pela conversa (TEC-371: `KIND_DO_AGENDAMENTO`, com
+    `SUBAGENTE_AGENDAMENTO`). O da
     opt-out e o unico que atravessa a guarda de opt-out da porta de saida
     depois do registro -- ver `GuardedOutbound.send`. `subagent` anda junto
     de `kind` pelo mesmo motivo: sem o parametro, toda entrega deste caminho
@@ -4097,7 +4207,8 @@ async def _entregar_texto_fixo(
     # A identificacao entra AQUI e nao em cada chamador: este e o funil das
     # trilhas que passam por `_entregar_texto_fixo` -- recusa da moderacao de
     # entrada, confirmacao de opt-out, aviso de pedido de humano, confirmacao
-    # de midia sem texto (TEC-132) e laco de busca excedido.
+    # de midia sem texto (TEC-132), agendamento pela conversa (TEC-371) e laco
+    # de busca excedido.
     # (O texto neutro da moderacao de saida e a busca inconclusiva da citacao
     # bloqueada nao chamam esta funcao -- reatribuem `texto` e caem no bloco
     # de entrega compartilhado de `executar_turno`, que tem o ponto de

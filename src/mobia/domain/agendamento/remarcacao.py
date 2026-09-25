@@ -10,8 +10,10 @@ nenhum: ele convida a marcar outro. Repetir a data do que foi cancelado seria
 lembrar o lead do que ele proprio desmarcou.
 
 **Nada le a resposta**, como na TEC-171: o texto convida e nao promete que
-alguem remarca. `domain/agente/turno.py` nao importa nada de
-`domain/agendamento/`.
+alguem remarca. Desde a TEC-371 o turno importa `domain/agendamento/`, mas o
+que ele le e o pedido de MARCAR visita -- `agendamento/deteccao.py` veta
+`remarcar` e `cancelar` justamente para nao oferecer horario novo a quem quer
+mexer no que ja existe.
 """
 
 import uuid

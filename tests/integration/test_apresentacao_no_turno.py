@@ -12,6 +12,7 @@ from typing import Any
 from conftest import eventos_de_log  # type: ignore[import-not-found]
 from sqlalchemy import select
 
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.agente.apresentacao import (
     MAX_CARACTERES_DA_LEGENDA,
     SEPARADOR_DA_PROSA,
@@ -374,6 +375,7 @@ async def test_a_retentativa_nao_reentrega_nenhuma_ficha(
             outbound=outbound,
             moderador=ModeradorFake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     assert await _turno() == "respondido"

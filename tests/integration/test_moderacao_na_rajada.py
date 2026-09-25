@@ -20,6 +20,7 @@ from conftest import (  # type: ignore[import-not-found]
 from sqlalchemy import func, insert, select, update
 from test_rajada import gravar  # type: ignore[import-not-found]
 
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.followup.repositorio import candidatos_a_followup
@@ -70,6 +71,7 @@ def _ctx(moderador) -> dict:
         "contador": ContadorFake(),
         "moderador": moderador,
         "agendador": AgendadorNoop(),
+        "agendador_de_confirmacao": AgendadorDeConfirmacaoNoop(),
         "indicadores": {CANAL_WHATSAPP: IndicadorNoop(), CANAL_WEB: IndicadorNoop()},
     }
 

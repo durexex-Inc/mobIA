@@ -18,7 +18,9 @@ separada da `sweep_lembretes`:
   uma com dois modos.
 
 **Nenhum lead recebe convite hoje**: nenhum caminho de producao cancela
-agendamento, porque nenhum o cria. Ver
+agendamento. A TEC-371 passou a CRIAR agendamento por conversa, e nao a
+cancelar -- o detector dela veta `cancelar` e `desmarcar`, que sao a TEC-372.
+Ver
 docs/superpowers/specs/2026-09-25-tec-172-cancelar-remarcar-e-nao-comparecimento-design.md.
 """
 

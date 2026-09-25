@@ -34,6 +34,7 @@ from conftest import CANAL_AGENTE, CONVERSA_AGENTE  # type: ignore[import-not-fo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -395,6 +396,7 @@ async def test_mensagem_sem_corpo_nao_paga_moderacao(
         outbound=outbound_fake(),
         moderador=moderador,
         agendador=AgendadorNoop(),
+        agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
     )
 
     assert moderador.entradas == 0
@@ -446,6 +448,7 @@ async def test_excecao_do_turno_sobrevive_a_falha_da_marca(
             outbound=outbound_fake(),
             moderador=moderador_fake(bloqueia_entrada=True),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
 
@@ -488,6 +491,7 @@ async def test_sem_excecao_em_voo_a_falha_da_marca_propaga(
             outbound=outbound_fake(),
             moderador=moderador_fake(bloqueia_entrada=True),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
 
@@ -538,6 +542,7 @@ async def test_marca_engolida_registra_o_log(
                 outbound=outbound_fake(),
                 moderador=moderador_fake(bloqueia_entrada=True),
                 agendador=AgendadorNoop(),
+                agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
             )
 
     assert "moderacao.marca_falhou" in caplog.text

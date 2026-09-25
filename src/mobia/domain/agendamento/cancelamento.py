@@ -12,8 +12,8 @@ naquele momento se chama isto em processo ou enfileira. Criar o job e a porta
 agora seria superficie morta com duas copias do mesmo literal para manter em
 sincronia.
 
-**Nenhum caminho de producao chama isto**, como tudo nesta card e nas duas
-anteriores do epico. Ver
+**Nenhum caminho de producao chama isto**, e a TEC-371 nao mudou isso: ela
+criou o caminho de marcar visita, e nao o de cancelar (que e a TEC-372). Ver
 docs/superpowers/specs/2026-09-25-tec-172-cancelar-remarcar-e-nao-comparecimento-design.md.
 """
 

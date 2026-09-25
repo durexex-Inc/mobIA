@@ -1,13 +1,12 @@
 """Ate 3 janelas de horario em que uma visita ou reuniao caberia. TEC-165, RN-11.1.
 
 Puro: nao toca banco, rede nem relogio -- `agora` entra como parametro, como
-em todo o dominio. **Nenhum caminho de producao chega aqui ainda:** os
-chamadores sao `janelas_para`, em `data_falada.py` (TEC-167), e
-`reservar_ou_alternativas`, em `repositorio.py` (TEC-168) -- nenhum dos dois
-tem chamador de producao, e `janelas_alocadas`, deste modulo, tambem nao.
-A gravacao (TEC-168) e a escolha do corretor (TEC-166) ja existem; falta a
-ligacao com o turno para a conversa passar a oferecer horario de verdade;
-oferecer antes disso seria prometer o que o sistema nao faz. Ver
+em todo o dominio. **Desde a TEC-371 o turno chega aqui**, por dois caminhos
+que a conversa escolhe conforme a fala: `janelas_alocadas`, deste modulo,
+quando o lead nao nomeou dia -- uma janela por dia, para dar escolha de data
+--, e `janelas_para` (`data_falada.py`, TEC-167) quando nomeou, que recorta
+naquele dia e da ate tres ali. `reservar_ou_alternativas` (`repositorio.py`,
+TEC-168) e o terceiro chamador, na hora de reservar. Ver
 docs/superpowers/specs/2026-09-24-tec-165-propor-janelas-design.md.
 """
 

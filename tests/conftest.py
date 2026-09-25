@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mobia.app.config import Settings, get_settings
 from mobia.app.logging import configure_logging
 from mobia.app.main import create_app
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.agente.models import Recomendacao
 from mobia.domain.agente.schemas import Urgencia
 from mobia.domain.catalogo.models import Imovel
@@ -214,6 +215,13 @@ TABELAS = (
     # o truncate, o agendamento gravado por um teste ocupa o horario que o
     # proximo tenta reservar, e a garantia do RT-07 barraria linha alheia.
     "agendamentos",
+    # TEC-371. Mutavel, e com UNIQUE por (channel, conversation_key, ordinal):
+    # sem o truncate, as janelas que um teste ofereceu continuam sendo a
+    # "ultima oferta" do proximo, e `escolha.py::escolher` casaria o ordinal
+    # contra uma frase que aquele teste nunca disse. O CASCADE de `corretores`
+    # ja alcancaria esta tabela pela FK, mas so nos testes que semeiam
+    # corretor -- listar aqui e o que a limpa nos outros.
+    "janelas_propostas",
     # TEC-132. Mutavel: `pendentes_para_reenfileirar`, `expirar_pendentes` e
     # `esgotar_pendentes` leem a tabela inteira por status e por janela de `criado_em`, sem
     # filtrar por mensagem -- sem o truncate, uma linha PENDENTE com
@@ -633,6 +641,7 @@ def rodar_turno():
             outbound=outbound,
             moderador=moderador if moderador is not None else ModeradorFake(),
             agendador=agendador if agendador is not None else AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     return _rodar

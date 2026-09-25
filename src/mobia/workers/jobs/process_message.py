@@ -8,6 +8,7 @@ from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoPort
 from mobia.domain.agente.repositorio import ler_apresentacao_da_mensagem
 from mobia.domain.agente.turno import ResultadoDoTurno, executar_turno
 from mobia.domain.handoff.agendador import AgendadorDeResumoPort
@@ -361,6 +362,11 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
     # mensagem -- o mesmo raciocinio que a guarda de `WHATSAPP_ACCESS_TOKEN`
     # em `workers/main.py` ja aplica a outras portas.
     agendador = ctx["agendador"]
+    # Mesma regra do `agendador` acima: ausente no ctx tem de estourar
+    # `KeyError` alto e cedo. Um `.get(...) or Noop()` trocaria uma falha
+    # de montagem por uma confirmacao que nunca sai -- e o lead recebe o
+    # agendamento CONFIRMADO no banco sem nunca ser avisado dele.
+    agendador_de_confirmacao: AgendadorDeConfirmacaoPort = ctx["agendador_de_confirmacao"]
     # `ctx["indicadores"][canal]` direto, la embaixo, pela mesma razao que
     # `agendador` logo acima: um `.get(...) or IndicadorNoop()` trocaria a
     # porta real por um duble dentro de producao, e o sintoma de um `startup`
@@ -518,6 +524,7 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 outbound=outbound,
                 moderador=ctx["moderador"],
                 agendador=agendador,
+                agendador_de_confirmacao=agendador_de_confirmacao,
             )
 
         async with session_factory() as session:

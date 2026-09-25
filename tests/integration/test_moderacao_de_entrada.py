@@ -10,6 +10,7 @@ from test_rajada import gravar  # type: ignore[import-not-found]
 from test_turno_optout import _OutboundQueOptaNoMeio  # type: ignore[import-not-found]
 
 from mobia.app.config import MODELO_SEM_CHAMADA
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.agente.turno import SUBAGENTE_MODERACAO
 from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.messages.status import MessageStatus
@@ -574,6 +575,7 @@ async def test_retentativa_apos_recusa_entregue_responde_a_pendente(
             outbound=falha,
             moderador=moderador_fake(bloqueia_entrada=True),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
     assert falha.entregues == [TEXTO_DA_RECUSA_DE_ENTRADA]
 
@@ -589,6 +591,7 @@ async def test_retentativa_apos_recusa_entregue_responde_a_pendente(
         outbound=segundo_outbound,
         moderador=moderador_fake(bloqueia_entrada=True),
         agendador=AgendadorNoop(),
+        agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
     )
 
     assert resultado == "respondido"
@@ -640,6 +643,7 @@ async def test_retentativa_sem_pendencia_continua_so_recusando(
         outbound=falha,
         moderador=moderador_fake(bloqueia_entrada=True),
         agendador=AgendadorNoop(),
+        agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
     )
     assert primeiro == "respondido"
 
@@ -654,6 +658,7 @@ async def test_retentativa_sem_pendencia_continua_so_recusando(
         outbound=segundo_outbound,
         moderador=moderador_fake(bloqueia_entrada=True),
         agendador=AgendadorNoop(),
+        agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
     )
 
     assert resultado == "reentrega_suprimida"
@@ -793,6 +798,7 @@ async def test_recusa_ja_reservada_nao_alarma_como_dado_sumido(
             outbound=falha,
             moderador=moderador_fake(bloqueia_entrada=True),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     with caplog.at_level(logging.INFO):
@@ -805,6 +811,7 @@ async def test_recusa_ja_reservada_nao_alarma_como_dado_sumido(
             outbound=OutboundFake(get_sessionmaker()),
             moderador=moderador_fake(bloqueia_entrada=True),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     erros = [r for r in caplog.records if r.levelno >= logging.ERROR]
@@ -855,6 +862,7 @@ async def test_retentativa_nao_repaga_a_moderacao_nem_duplica_a_auditoria(
             outbound=falha,
             moderador=moderador,
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
     assert moderador.entradas == 1
 
@@ -868,6 +876,7 @@ async def test_retentativa_nao_repaga_a_moderacao_nem_duplica_a_auditoria(
         outbound=OutboundFake(get_sessionmaker()),
         moderador=segundo_moderador,
         agendador=AgendadorNoop(),
+        agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
     )
 
     assert segundo_moderador.entradas == 0, "a fala ja estava carimbada; nao se paga de novo"
@@ -934,6 +943,7 @@ async def test_retentativa_apos_resposta_entregue_nao_reabre_pendencia(
         outbound=primeiro_outbound,
         moderador=moderador_fake(bloqueia_entrada=True),
         agendador=AgendadorNoop(),
+        agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
     )
     assert primeiro == "respondido"
     assert len(primeiro_outbound.entregues) == 2
@@ -953,6 +963,7 @@ async def test_retentativa_apos_resposta_entregue_nao_reabre_pendencia(
         outbound=segundo_outbound,
         moderador=moderador_fake(bloqueia_entrada=True),
         agendador=AgendadorNoop(),
+        agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
     )
 
     assert segundo == "reentrega_suprimida"

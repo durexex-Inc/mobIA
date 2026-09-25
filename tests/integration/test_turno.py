@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from sqlalchemy import text as sql
 
+from mobia.domain.agendamento.agendador import AgendadorDeConfirmacaoNoop
 from mobia.domain.agente.classificador import LacoDeBuscaExcedido, RespostaInvalida
 from mobia.domain.agente.repositorio import ler_intencao
 from mobia.domain.agente.schemas import Extracao, Intencao, Urgencia
@@ -290,6 +291,7 @@ async def test_reentrega_suprimida_nao_grava_fala_fantasma(
             outbound=outbound,
             moderador=ModeradorFake(),
             agendador=AgendadorNoop(),
+            agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
         )
 
     assert resultado == "reentrega_suprimida"
@@ -528,6 +530,7 @@ async def test_reentrega_suprimida_nao_marca_o_episodio(
         outbound=outbound_fake(),
         moderador=ModeradorFake(),
         agendador=AgendadorNoop(),
+        agendador_de_confirmacao=AgendadorDeConfirmacaoNoop(),
     )
 
     assert resultado == "reentrega_suprimida"

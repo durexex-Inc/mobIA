@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -161,4 +161,58 @@ class Agendamento(Base):
             name="ck_agendamentos_motivo_da_alocacao",
         ),
         Index("ix_agendamentos_conversa", "channel", "conversation_key"),
+    )
+
+
+class JanelaProposta(Base):
+    """Uma janela que o agente ofereceu ao lead, na posicao em que ele a leu.
+
+    TEC-371, D4. O turno da escolha le daqui em vez de recalcular: as janelas
+    sao funcao de `agora`, e tres minutos de digitacao depois a mesma conta
+    devolve outra grade. Ver a docstring da migration 0051.
+
+    Nao e um agendamento: nada aqui reserva horario, e tres leads podem
+    receber a mesma janela. Quem chegar primeiro no `reservar` fica com ela --
+    e a CA-11.2, nao um furo.
+    """
+
+    __tablename__ = "janelas_propostas"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 1..3, a posicao na frase que o lead leu. O teto e `MAXIMO_DE_JANELAS`
+    # (`janelas.py`), repetido no CHECK porque o banco nao importa Python.
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    corretor_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("corretores.id", name="fk_janelas_propostas_corretor"),
+        nullable=False,
+    )
+    # Nulo pelo mesmo motivo de `Agendamento.imovel_id`: o lead pode pedir
+    # visita sem que nenhum imovel tenha sido marcado com interesse, e
+    # `TEXTO_DA_CONFIRMACAO_DE_VISITA_SEM_IMOVEL` existe para esse caso.
+    imovel_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("imoveis.id", name="fk_janelas_propostas_imovel"),
+        nullable=True,
+    )
+    tipo: Mapped[str] = mapped_column(String(24), nullable=False)
+    inicio: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fim: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # O que `alocacao.py::alocar` deu a este corretor. Viaja com a proposta
+    # para que a reserva o grave sem realocar: realocar na hora de reservar
+    # trocaria o corretor entre o que o lead leu e o que ele recebe.
+    motivo_da_alocacao: Mapped[str] = mapped_column(String(24), nullable=False)
+    proposto_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "tipo IN ('VISITA_PRESENCIAL','REUNIAO_REMOTA')", name="ck_janelas_propostas_tipo"
+        ),
+        CheckConstraint("ordinal BETWEEN 1 AND 3", name="ck_janelas_propostas_ordinal"),
+        CheckConstraint("inicio < fim", name="ck_janelas_propostas_intervalo"),
+        UniqueConstraint(
+            "channel", "conversation_key", "ordinal", name="uq_janelas_propostas_conversa_ordinal"
+        ),
     )

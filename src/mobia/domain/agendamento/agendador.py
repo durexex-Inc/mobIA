@@ -3,8 +3,9 @@
 TEC-170. Mesmo molde de `domain/handoff/agendador.py`: o dominio conhece so o
 `Protocol`, e quem decide a implementacao e o `startup` do worker.
 
-Nenhum caminho de producao chama `agendar` ainda -- quem ligar o agendamento a
-conversa enfileira o job depois do commit de `confirmar()`.
+Desde a TEC-371 quem chama e o turno: `domain/agente/turno.py` enfileira o job
+depois do commit de `confirmar()`, nessa ordem -- um job consumido antes do
+commit nao encontraria a linha.
 """
 
 import uuid
