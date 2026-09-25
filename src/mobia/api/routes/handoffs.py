@@ -101,11 +101,17 @@ async def regenerar(
         linha = (
             await session.execute(select(Handoff).where(Handoff.id == handoff_id))
         ).scalar_one()
-        # TEC-206, D1 e D7. O resumo carrega dado pessoal do lead, e esta rota
-        # e hoje o unico caminho que o revela. O registro commita AQUI, antes
+        # TEC-206, D1 e D7. O resumo carrega dado pessoal do lead. Esta rota
+        # NAO e o unico caminho que revela dado pessoal: o `link` abaixo leva a
+        # `conversation_key`, que no WhatsApp e o telefone, e
+        # `GET /api/v1/leads` devolve a mesma chave sem registro nenhum. O
+        # registro daqui nomeia so o campo `resumo`. Ele commita AQUI, antes
         # do `return`: se a escrita falhar, a resposta e erro, e o resumo nao
         # sai sem o registro. O texto do resumo nao vai para a trilha -- ela
         # diz qual campo foi lido, nao o que ele dizia.
+        # Registra a TENTATIVA, de proposito: se o `decrypt` abaixo falhar, a
+        # trilha diz "acessado" e a resposta e 500 -- trilha de auditoria erra
+        # para o lado de registrar.
         await registrar_evento(
             session,
             ator=identidade.como_ator(),

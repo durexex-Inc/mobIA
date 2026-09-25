@@ -15,7 +15,7 @@ Uma tabela única, só de acréscimo, que responde a uma fiscalização "quem ac
 - **Três dos cinco eventos da card ficam só no vocabulário, sem chamador**, porque o caminho que os produziria ainda não existe:
   - **alteração de qualificação por pessoa:** a edição pelo dashboard é a TEC-194. Decidido em conversa em 25/09/2026 que só a alteração feita por pessoa é auditada — a do agente é reconstruível pela transcrição e multiplicaria o volume sem ganho de conformidade.
   - **publicação de prompt:** `ConfiguracaoAgente` não existe; é a TEC-198/199.
-  - **acesso a telefone e e-mail do lead:** nenhuma rota os revela; é a TEC-195.
+  - **acesso a telefone e e-mail do lead:** a revelação mascarada da RN-18.5 é a TEC-195. **Mas o telefone já sai da API hoje, sem registro nenhum na trilha:** no WhatsApp a `conversationKey` é o telefone (D4), e ela vem em cada item de `GET /api/v1/leads` (TEC-192, permissão `VER_LEADS`, que os quatro papéis têm, inclusive `LEITURA`) e dentro do `link` da resposta de `POST /api/v1/handoffs/{id}/resumo` (`/conversas/{canal}/{conversa}`). O registro que esta card grava naquela rota nomeia o campo `resumo`, não o telefone; a listagem de leads não grava nada.
 
   A card entrega a ação no vocabulário e a função que a grava; quem construir o caminho chama.
 - **A tela** é a TEC-343. Esta card entrega a API que ela consome.
@@ -152,7 +152,7 @@ Só leitura: a rota não tem outro método, então "não há opção de editar n
 | --- | --- |
 | eventos que geram registro | handoff, opt-out, acesso a dado pessoal (o resumo) e acesso negado com teste; alteração de qualificação e publicação de prompt sem caminho — declarado |
 | registro não pode ser alterado | `UPDATE` e `DELETE` recusados no banco |
-| registro não guarda dado pessoal em claro | exercitado no resumo e no `lead_ref`; o telefone não tem rota que o revele até a TEC-195 |
+| registro não guarda dado pessoal em claro | exercitado no resumo e no `lead_ref`. O critério é sobre o que o registro guarda, não sobre o que a API revela: o telefone sai sem registro em `GET /api/v1/leads` e no `link` da resposta do resumo — ver "O que esta card não entrega" |
 | retenção de 12 meses | 11 meses fica (e 13 meses sai) |
 
 ## Migration 0052
