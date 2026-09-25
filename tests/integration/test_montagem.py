@@ -11,6 +11,7 @@ from conftest import CANAL, CONVERSA, ContadorFake, ResumidorFake, semear
 
 from mobia.app.config import get_settings
 from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE
+from mobia.domain.agente.delimitacao import CLAUSULA_DO_AGENTE
 from mobia.domain.context.janela import Marca, literais_apos
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.domain.context.montagem import (
@@ -163,8 +164,8 @@ def test_texto_da_renderiza_o_role_como_texto_nao_como_repr_do_enum() -> None:
     com_string_pura = _mensagem_literal(role=MessageRole.LEAD)
     com_string_pura.role = "LEAD"  # simula a linha como ela volta do banco
 
-    assert _texto_da(com_enum) == "[LEAD] x"
-    assert _texto_da(com_string_pura) == "[LEAD] x"
+    assert _texto_da(com_enum) == "[LEAD] <lead>\nx\n</lead>"
+    assert _texto_da(com_string_pura) == "[LEAD] <lead>\nx\n</lead>"
     assert "MessageRole" not in _texto_da(com_enum)
 
 
@@ -384,13 +385,17 @@ def test_o_prompt_manda_confirmar_orcamento_vago() -> None:
     no mesmo turno). A camada que garante nao pode depender da que lembra.
 
     Assercao de posicao, nao so de substring: a frase precisa estar colada ao
-    fim do texto, precedida pelo ponto e espaco herdados da frase anterior.
-    Um erro de concatenacao comum e realista neste modulo -- string literal
-    adjacente sem separador, ou a frase esquecida dentro do comentario que
-    documenta o orcamento e nunca chegando a fazer parte do valor de
-    `SISTEMA_DO_AGENTE` -- passaria num `in` solto e falha aqui.
+    ponto e espaco herdados da frase anterior. Um erro de concatenacao comum e
+    realista neste modulo -- string literal adjacente sem separador, ou a
+    frase esquecida dentro do comentario que documenta o orcamento e nunca
+    chegando a fazer parte do valor de `SISTEMA_DO_AGENTE` -- passaria num
+    `in` solto e falha aqui.
+
+    Desde a TEC-204 a frase nao e mais o fim do texto: `CLAUSULA_DO_AGENTE`
+    vem colada depois dela, e e essa clausula (nao a do orcamento vago) que
+    fecha `SISTEMA_DO_AGENTE` agora.
     """
-    assert SISTEMA_DO_AGENTE.endswith(" Orcamento vago: peca confirmacao.")
+    assert SISTEMA_DO_AGENTE.endswith(f" Orcamento vago: peca confirmacao. {CLAUSULA_DO_AGENTE}")
     assert "  " not in SISTEMA_DO_AGENTE
 
 

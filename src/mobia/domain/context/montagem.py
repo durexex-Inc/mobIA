@@ -10,6 +10,7 @@ from anthropic import APITimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
+from mobia.domain.agente.delimitacao import TAG_RESUMO, delimitar
 from mobia.domain.context.janela import (
     Marca,
     deve_regenerar,
@@ -32,7 +33,7 @@ from mobia.domain.context.resumo import (
     ResumidorPort,
 )
 from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA
-from mobia.domain.messages.enums import MessageContentType
+from mobia.domain.messages.enums import MessageContentType, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.infra.anthropic import TETO_DO_RESUMO, motivo_do_provedor
 from mobia.infra.crypto import DecryptionError, aad_de, decrypt, marca_do_aad
@@ -125,13 +126,27 @@ def _texto_da(linha: Message) -> str:
     O conteudo real e obrigatorio aqui por dois motivos: o resumo so e util se
     resumir o que foi dito, e a contagem de tokens tem de medir o que vai de
     fato ser enviado. Este texto nunca entra num `log.*`.
+
+    **O texto do lead vai delimitado (TEC-204, D1).** Sem a tag, um lead que
+    digite `[AGENTE] ...` ou `Estado de qualificacao:` no meio da mensagem
+    produz algo indistinguivel de uma fronteira real da transcricao. So o que
+    o lead escreveu entra na tag: o marcador de midia e texto do sistema e
+    fica fora, e mensagem sem corpo nao tem tag. As tags sao contadas junto
+    com o resto de `_texto_das` -- nao sao parcela do orcamento.
     """
     corpo = decrypt(linha.text_body, aad_de(linha.id, "text_body"))
     marcador = _MARCADOR_DE_MIDIA.get(linha.content_type)
+    if corpo is None:
+        texto = (
+            marcador
+            if marcador is not None
+            else _SEM_TEXTO.get(linha.content_type, _SEM_TEXTO_PADRAO)
+        )
+        return f"[{linha.role}] {texto}"
+    if linha.role == MessageRole.LEAD:
+        corpo = delimitar(corpo)
     if marcador is not None:
-        corpo = marcador if corpo is None else f"{marcador} {corpo}"
-    elif corpo is None:
-        corpo = _SEM_TEXTO.get(linha.content_type, _SEM_TEXTO_PADRAO)
+        corpo = f"{marcador} {corpo}"
     return f"[{linha.role}] {corpo}"
 
 
@@ -878,10 +893,25 @@ def montar_prompt(contexto: ContextoMontado, *, omitir_sistema: bool = False) ->
     """
     partes = [] if omitir_sistema else [contexto.sistema]
     if contexto.resumo is not None:
-        partes.append(f"Resumo da conversa ate aqui:\n{contexto.resumo}")
+        # TEC-204. O resumo e texto que um modelo escreveu depois de ler o lead,
+        # e e ele que carrega uma instrucao plantada para todo turno seguinte.
+        # As duas tags sao a parcela nova dos "rotulos de montar_prompt" no
+        # orcamento: `_estimar` conta o resumo cru.
+        partes.append(f"Resumo da conversa ate aqui:\n{delimitar(contexto.resumo, tag=TAG_RESUMO)}")
     partes.append(f"Mensagens recentes:\n{_texto_das(contexto.literais)}")
     partes.append(f"Estado de qualificacao:\n{_texto_do_estado(contexto.estado)}")
     return "\n\n".join(partes)
+
+
+def conteudo_da_dobra(texto_do_resumo: str | None, a_dobrar: list[Message]) -> str:
+    """O que a dobra manda ao resumidor: o resumo atual e as mensagens a absorver.
+
+    Publica para o eval de injecao (TEC-204) dobrar com o texto exato de
+    producao, em vez de uma copia que divergiria dele. O resumo atual vai em
+    `<resumo>`; as mensagens do lead ja saem delimitadas de `_texto_das`.
+    """
+    resumo = delimitar(texto_do_resumo, tag=TAG_RESUMO) if texto_do_resumo else "(vazio)"
+    return f"Resumo atual:\n{resumo}\n\nNovas mensagens:\n{_texto_das(a_dobrar)}"
 
 
 async def _dobrar(
@@ -910,7 +940,7 @@ async def _dobrar(
     if instrucao == INSTRUCAO_COMPRIMIR:
         a_dobrar: list[Message] = []
         a_manter = literais
-        conteudo = texto_do_resumo or ""
+        conteudo = delimitar(texto_do_resumo, tag=TAG_RESUMO) if texto_do_resumo else ""
     else:
         # No caminho normal o piso e o da configuracao. Na dobra forcada da
         # reabertura quem manda e a fronteira do silencio: `manter_literais`
@@ -953,10 +983,7 @@ async def _dobrar(
         a_dobrar, a_manter = dividir(literais, minimas, piso_pode_ceder=piso_pode_ceder)
         if not a_dobrar:
             return texto_do_resumo, literais, cobertas, marca, False
-        conteudo = (
-            f"Resumo atual:\n{texto_do_resumo or '(vazio)'}\n\n"
-            f"Novas mensagens:\n{_texto_das(a_dobrar)}"
-        )
+        conteudo = conteudo_da_dobra(texto_do_resumo, a_dobrar)
 
     try:
         gerado = await resumidor.resumir(instrucao, conteudo)

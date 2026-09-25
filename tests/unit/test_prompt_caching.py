@@ -65,7 +65,12 @@ from mobia.app.config import get_settings
 # Esta card tambem trocou uma frase do `SISTEMA_DO_AGENTE` (ganhou "Nao
 # negocie valor: e com o corretor.", perdeu ", de 0 a 1"), entao o numero
 # muda de novo por causa do prompt, alem da correcao de escopo acima.
-PREFIXO_CACHEAVEL_EM_TOKENS = 2351
+#
+# 25/09/2026 (TEC-204): **2.392**. Remedido na mesma forma da TEC-141, com
+# `claude-sonnet-5`: o prefixo de hoje devolveu `input_tokens=2358` (os
+# mesmos 2.351 + 7), e com `CLAUSULA_DO_AGENTE` no fim de `SISTEMA_DO_AGENTE`
+# devolveu 2399. 2399 - 7 = 2392.
+PREFIXO_CACHEAVEL_EM_TOKENS = 2392
 
 # Minimos publicados por modelo. NAO sao monotonicos entre geracoes -- o
 # sonnet-5 exige o dobro do opus-5, e o haiku-4-5 exige oito vezes.
@@ -88,7 +93,7 @@ def _minimo_de(modelo: str) -> int | None:
 def test_o_prefixo_cacheavel_passa_o_minimo_do_modelo() -> None:
     """A guarda principal: o cache so existe se o prefixo passar o minimo.
 
-    Com `claude-sonnet-5` a folga e de 1.327 tokens (2.351 contra 1.024). Se
+    Com `claude-sonnet-5` a folga e de 1.368 tokens (2.392 contra 1.024). Se
     alguem trocar para um modelo de minimo maior -- `claude-haiku-4-5` exige
     4.096 --, o cache morre em silencio e a conta sobe sem nenhum sinal. Este
     assert e o sinal.
