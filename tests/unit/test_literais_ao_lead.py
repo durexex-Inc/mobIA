@@ -21,6 +21,8 @@ def test_a_lista_de_literais_nao_encolheu_sem_querer() -> None:
     de encaminhamento -- tres constantes ao lead que nunca estiveram sob a
     guarda de acento. Foi 20 ate a TEC-167, que acrescentou as oito perguntas
     da data falada (`data_falada.py`). Foi 28 ate a TEC-170, que acrescentou
-    os tres textos da confirmacao do agendamento.
+    os tres textos da confirmacao do agendamento. Foi 31 ate a TEC-171, que
+    acrescentou os seis do lembrete -- dois lembretes por tres formas do
+    compromisso.
     """
-    assert len(LITERAIS_AO_LEAD) == 31
+    assert len(LITERAIS_AO_LEAD) == 37
