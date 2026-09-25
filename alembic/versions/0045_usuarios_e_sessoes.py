@@ -14,8 +14,16 @@ os dois como DP. E o precedente da TEC-196 para `corretores`: este repo cifra
 conteudo e nao identificador, e aqui vale com mais forca -- o e-mail e a chave
 de login, e indice unico sobre valor cifrado com nonce aleatorio nao existe.
 
-Revision ID: 0044
-Revises: 0043
+**Esta migration nasceu 0044 e virou 0045 na TEC-202, e a razao fica aqui.**
+A TEC-168 (`0044_agendamentos.py`) e a TEC-201 (esta) sairam de `0043` em
+branches paralelas e as duas se numeraram `0044`. Cada PR passou sozinho -- o
+conflito so existe na arvore em que os dois estao --, e depois do segundo merge
+`alembic upgrade head` parou de funcionar para todo mundo, com "Multiple head
+revisions are present". A TEC-202 achou isso na primeira execucao de
+integracao dela e renumerou esta, que foi a segunda a ser mergeada.
+
+Revision ID: 0045
+Revises: 0044
 """
 
 import sqlalchemy as sa
@@ -23,8 +31,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "0044"
-down_revision = "0043"
+revision = "0045"
+down_revision = "0044"
 branch_labels = None
 depends_on = None
 

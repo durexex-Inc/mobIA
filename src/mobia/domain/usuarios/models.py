@@ -1,6 +1,6 @@
 """O usuario do dashboard e a sessao de refresh dele. TEC-201, RNF-11.
 
-Ver `alembic/versions/0044_usuarios_e_sessoes.py` para o porque de cada coluna
+Ver `alembic/versions/0045_usuarios_e_sessoes.py` para o porque de cada coluna
 e o desenho para as decisoes que as governam.
 """
 
@@ -29,8 +29,10 @@ from mobia.infra.crypto import aad_de
 # enum de `handoffs.status` da TEC-174: mudar valor de enum depois custa
 # migration, e o `IN` do CHECK e o unico lugar a mexer.
 #
-# **Nenhum deles governa rota nesta card, exceto ADMIN.** A checagem por papel
-# e a TEC-202 -- ver a lacuna L1 do desenho.
+# **Os quatro governam rota desde a TEC-202**, que era a lacuna L1 desta card:
+# cada rota declara a permissao que exerce e a matriz de
+# `domain/usuarios/permissoes.py` diz que papeis a tem. Ate la, so o ADMIN
+# significava alguma coisa.
 PAPEIS = ("ADMIN", "GERENTE", "CORRETOR", "LEITURA")
 
 
@@ -59,8 +61,13 @@ class Usuario(Base):
     papel: Mapped[str] = mapped_column(String(16), nullable=False)
 
     # Quem e este usuario na tabela de corretores, quando for um. Nulavel: o
-    # ADMIN e a GERENTE nao sao corretores. A TEC-202 vai usar isto para a
-    # regra "corretor so ve os proprios leads" da RNF-12; aqui e so o vinculo.
+    # ADMIN e a GERENTE nao sao corretores.
+    #
+    # **Desde a TEC-202 e daqui que sai a regra "corretor so ve os proprios
+    # leads" da RNF-12**, por uma claim do JWT (D4 de la) e nao por consulta a
+    # esta linha em cada requisicao -- entao mudar o vinculo so passa a valer
+    # no proximo `refresh`, em ate 60 minutos. E num usuario de papel CORRETOR,
+    # nulo NEGA tudo o que e por dono, em vez de liberar.
     corretor_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey(Corretor.id), nullable=True
     )

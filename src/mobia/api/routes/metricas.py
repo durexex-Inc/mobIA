@@ -1,14 +1,19 @@
 """O painel de funil. TEC-190, RF-17 e RN-17.1 a RN-17.3.
 
-**Guardado pelo `exigir_admin`, e nao por papel GERENTE.** O SRS (secao 6.6)
-preve Bearer JWT com papel, e ele nao existe: `corretores.gerente` e booleana
-de roteamento de escalada de SLA, nao autorizacao HTTP, e JWT com papeis e a
-TEC-201. Mesma divergencia que a Emenda E-01 da RN-19.5 ja declarou para o
-modulo administrativo, aqui estendida a esta rota.
+**Guardado por `VER_FUNIL`, que ADMIN, GERENTE e LEITURA tem e CORRETOR nao**
+(TEC-202). Ate aqui era o `exigir_admin`: o SRS (secao 6.6) previa Bearer JWT
+com papel, e papel nao existia -- `corretores.gerente` e booleana de roteamento
+de escalada de SLA, nao autorizacao HTTP. A divergencia que a Emenda E-01 da
+RN-19.5 declarou, e que esta rota herdou, fecha aqui para quem entra por JWT.
 
-**Consequencia: quem tem o token le o funil inteiro da operacao.** Nao ha
-dado pessoal de lead na resposta -- so contagens e medias --, o que torna
-esta exposicao menos grave que a de `corretores.py`, mas ela existe.
+**O CORRETOR fica de fora de proposito**, e nao por esquecimento: e a matriz de
+navegacao da RN-FE-03.1 (TEC-312). O funil e da operacao inteira, e o corretor
+trabalha a propria carteira.
+
+**Consequencia que permanece: quem tem o `X-Admin-Token` le o funil inteiro**,
+porque ele resolve para um ADMIN sintetico (D2 da TEC-202). Nao ha dado pessoal
+de lead na resposta -- so contagens e medias --, o que torna esta exposicao
+menos grave que a de `corretores.py`, mas ela existe.
 """
 
 import uuid
@@ -17,12 +22,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from mobia.api.deps import exigir_admin
+from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao
 from mobia.app.config import get_settings
 from mobia.domain.metricas.calculo import montar_funil
 from mobia.domain.metricas.filtros import FiltroInvalido, montar_recorte
 from mobia.domain.metricas.repositorio import calcular_indicadores, contar_etapas
 from mobia.domain.metricas.vocabulario import INDICADORES_SEM_FONTE, Etapa
+from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
 
 router = APIRouter(prefix="/api/v1/metricas", tags=["metricas"])
@@ -36,7 +42,7 @@ async def funil(
     intencao: Annotated[str | None, Query()] = None,
     temperatura: Annotated[str | None, Query()] = None,
     corretor_id: Annotated[uuid.UUID | None, Query(alias="corretorId")] = None,
-    _: None = Depends(exigir_admin),
+    _: IdentidadeDaRequisicao = Depends(Exige(Permissao.VER_FUNIL)),
 ) -> dict[str, object]:
     """O funil da coorte e os indicadores do periodo.
 
