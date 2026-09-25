@@ -34,7 +34,7 @@ Uma tabela única, só de acréscimo, que responde a uma fiscalização "quem ac
 
 ## D2 — A tabela `eventos_auditoria`
 
-O `EventoAuditoria` do SRS, com três diferenças deliberadas (marcadas com **novo**):
+O `EventoAuditoria` do SRS, com quatro diferenças deliberadas (marcadas com **novo**):
 
 | coluna | tipo | conteúdo |
 | --- | --- | --- |
@@ -47,7 +47,7 @@ O `EventoAuditoria` do SRS, com três diferenças deliberadas (marcadas com **no
 | `entidade_id` | varchar | o uuid da entidade, ou o template da rota |
 | `campo` | varchar, nulo | **novo** — o campo acessado ou alterado (`resumo`, `telefone`, …): o "referencia o lead e o campo" da card |
 | `lead_ref` | char(64), nulo | **novo** — HMAC-SHA256 de `(channel, conversation_key)` com chave própria (D4) |
-| `detalhes` | jsonb, nulo | metadado que não é dado pessoal (D5) |
+| `detalhes` | jsonb, nulo | **novo** — metadado que não é dado pessoal (D5); o SRS original não tinha esta coluna |
 | `ip` | inet, nulo | origem da requisição |
 | `correlation_id` | varchar, nulo | **novo** — o id da requisição (TEC-368), que liga o registro ao log de aplicação |
 
@@ -162,5 +162,5 @@ Só leitura: a rota não tem outro método, então "não há opção de editar n
 ## Emendas ao SRS
 
 - **RNF-18** — os eventos auditados de fato e os que ficam sem chamador; os 12 meses são máximo; o limite da garantia (o papel dono).
-- **§5.1 `EventoAuditoria`** — `campo`, `lead_ref` e `correlation_id` entram; `dados_antes` e `dados_depois` saem, com o porquê.
+- **§5.1 `EventoAuditoria`** — `campo`, `lead_ref`, `correlation_id` e `detalhes` entram; `dados_antes` e `dados_depois` saem, com o porquê.
 - **RNF-12, abaixo da Emenda E-01** — a negativa com identidade resolvida passa a ter destino persistente; a sem credencial continua em log.

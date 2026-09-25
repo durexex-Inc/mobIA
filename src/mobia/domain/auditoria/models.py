@@ -1,9 +1,9 @@
 """A linha da trilha de auditoria. TEC-206, D2 do desenho.
 
-O `EventoAuditoria` da secao 5.1 do SRS com tres diferencas: entram `campo`,
-`lead_ref` e `correlation_id`; saem `dados_antes` e `dados_depois` -- para
-qualificacao e dado pessoal, o antes e o depois SAO o dado pessoal que a card
-proibe guardar em claro. Ver a Emenda E-01 ao `EventoAuditoria`.
+O `EventoAuditoria` da secao 5.1 do SRS com quatro diferencas: entram `campo`,
+`lead_ref`, `correlation_id` e `detalhes`; saem `dados_antes` e `dados_depois`
+-- para qualificacao e dado pessoal, o antes e o depois SAO o dado pessoal que
+a card proibe guardar em claro. Ver a Emenda E-01 ao `EventoAuditoria`.
 
 CHECKs, indices e os dois triggers moram na migration 0048, escrita a mao, e
 nao aqui: o modelo so serve ao ORM.
