@@ -12,8 +12,9 @@ rajada -- o turno normal roda.
 """
 
 import uuid
+from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from mobia.domain.agente.identificacao import (
     SEPARADOR_DA_IDENTIFICACAO,
@@ -252,3 +253,111 @@ async def test_retentativa_depois_do_turno_normal_nao_manda_a_confirmacao(
     assert not any(TEXTO_DA_CONFIRMACAO_DE_IMAGEM in texto for texto in outbound.entregues)
     assert KIND_DA_CONFIRMACAO_DE_MIDIA not in await _kinds(session, imagem.id)
     assert classificador.chamadas == 1
+
+
+async def _recuar_a_conversa(session, minutos: int) -> None:
+    """Empurra tudo o que a conversa ja tem `minutos` para o passado -- a foto
+    anterior e a fala do agente que a confirmou --, para a proxima mensagem
+    gravada chegar `minutos` depois delas."""
+    await session.execute(
+        update(Message)
+        .where(Message.conversation_key == CONVERSA)
+        .values(created_at=Message.created_at - timedelta(minutes=minutos))
+    )
+    await session.commit()
+
+
+async def test_segunda_foto_logo_depois_da_confirmacao_fecha_em_silencio(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """I2 da revisao final. Duas fotos sem texto com mais de uma janela de
+    debounce entre elas rodam dois turnos, e sem esta regra o lead recebia o
+    mesmo texto fixo duas vezes seguidas."""
+    primeira = await _gravar(session, content_type=MessageContentType.IMAGEM, texto=None)
+    assert (
+        await _rodar(
+            primeira,
+            classificador_fake(),
+            outbound_fake(),
+            resumidor_fake,
+            contador_fake,
+            moderador_fake,
+        )
+        == "respondido"
+    )
+    await _recuar_a_conversa(session, 2)
+    segunda = await _gravar(session, content_type=MessageContentType.IMAGEM, texto=None)
+    classificador = classificador_fake()
+    outbound = outbound_fake()
+
+    resultado = await _rodar(
+        segunda, classificador, outbound, resumidor_fake, contador_fake, moderador_fake
+    )
+
+    assert resultado == "midia_ja_confirmada"
+    assert outbound.entregues == []
+    assert classificador.chamadas == 0
+    assert await _kinds(session, segunda.id) == []
+
+
+async def test_segunda_foto_depois_da_janela_confirma_de_novo(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    primeira = await _gravar(session, content_type=MessageContentType.IMAGEM, texto=None)
+    await _rodar(
+        primeira,
+        classificador_fake(),
+        outbound_fake(),
+        resumidor_fake,
+        contador_fake,
+        moderador_fake,
+    )
+    await _recuar_a_conversa(session, 11)
+    segunda = await _gravar(session, content_type=MessageContentType.IMAGEM, texto=None)
+    outbound = outbound_fake()
+
+    resultado = await _rodar(
+        segunda, classificador_fake(), outbound, resumidor_fake, contador_fake, moderador_fake
+    )
+
+    assert resultado == "respondido"
+    assert len(outbound.entregues) == 1
+    assert outbound.entregues[0].endswith(TEXTO_DA_CONFIRMACAO_DE_IMAGEM)
+    assert await _kinds(session, segunda.id) == [KIND_DA_CONFIRMACAO_DE_MIDIA]
+
+
+async def test_foto_depois_de_uma_resposta_do_agente_confirma_de_novo(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """Foto, confirmacao, texto do lead respondido pelo agente, foto: a ultima
+    fala do agente ja nao e a confirmacao, e a segunda foto confirma."""
+    primeira = await _gravar(session, content_type=MessageContentType.IMAGEM, texto=None)
+    await _rodar(
+        primeira,
+        classificador_fake(),
+        outbound_fake(),
+        resumidor_fake,
+        contador_fake,
+        moderador_fake,
+    )
+    texto = await _gravar(session, texto="quero um apartamento de dois quartos")
+    outbound_do_texto = outbound_fake()
+    await _rodar(
+        texto,
+        classificador_fake(),
+        outbound_do_texto,
+        resumidor_fake,
+        contador_fake,
+        moderador_fake,
+    )
+    assert outbound_do_texto.entregues, "o turno normal tinha de responder o texto"
+    segunda = await _gravar(session, content_type=MessageContentType.IMAGEM, texto=None)
+    outbound = outbound_fake()
+
+    resultado = await _rodar(
+        segunda, classificador_fake(), outbound, resumidor_fake, contador_fake, moderador_fake
+    )
+
+    assert resultado == "respondido"
+    assert len(outbound.entregues) == 1
+    assert outbound.entregues[0].endswith(TEXTO_DA_CONFIRMACAO_DE_IMAGEM)

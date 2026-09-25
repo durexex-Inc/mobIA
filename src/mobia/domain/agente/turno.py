@@ -97,6 +97,7 @@ from mobia.domain.midia.confirmacao import (
     CONFIRMACOES_DE_MIDIA,
     KIND_DA_CONFIRMACAO_DE_MIDIA,
     SUBAGENTE_MIDIA,
+    ja_confirmou_ha_pouco,
 )
 from mobia.domain.moderacao.port import (
     CATEGORIA_OUTRO,
@@ -528,6 +529,13 @@ ResultadoDoTurno = Literal[
     # guarda na porta de saida. O encerramento e a substituicao acontecem no
     # MESMO turno, entao nao existe a corrida que os outros dois nomeiam.
     "fora_de_escopo",
+    # A TEC-132 (revisao final, I2) acrescentou este: a midia sem texto cujo
+    # turno nao mandou nada porque a ultima fala do agente ja foi a
+    # confirmacao de midia, ha menos de `JANELA_DA_CONFIRMACAO_DE_MIDIA`.
+    # Nao reuse "silenciado" nem "reentrega_suprimida": nao houve pedido de
+    # silencio, e nada foi perdido -- o lead ja recebeu a confirmacao que
+    # cobre esta midia.
+    "midia_ja_confirmada",
 ]
 
 
@@ -1588,6 +1596,18 @@ async def _executar_turno(
     # duplicata. Aqui nao serve o `teto_do_agente` da recusa: a fala que
     # envenena a fronteira nao e desta trilha, e o teto dependeria de saber
     # qual kind do turno normal saiu primeiro.
+    #
+    # **E a confirmacao nao se repete em sequencia** (I2 da revisao final):
+    # fotos que atravessam mais de uma janela de debounce rodam um turno cada,
+    # e sem isto o lead recebia o mesmo texto fixo duas ou tres vezes
+    # seguidas. Se a ultima fala do agente foi a propria confirmacao, ha menos
+    # de `JANELA_DA_CONFIRMACAO_DE_MIDIA`, o turno fecha em silencio -- e
+    # "nao ha texto pendente desde entao" ja e o `not ha_texto_pendente`, cuja
+    # fronteira e essa mesma ultima fala. Vem DEPOIS da regra de kinds
+    # reservados, que continua decidindo a retentativa; e so quando esta
+    # mensagem ainda nao tem a confirmacao reservada: tendo, a ultima fala
+    # pode ser a dela mesma, e quem responde e a supressao de
+    # `_entregar_texto_fixo`, com o desfecho de sempre.
     confirmacao = CONFIRMACOES_DE_MIDIA.get(message.content_type)
     if confirmacao is not None and corpo is None:
         reservados_antes = await kinds_reservados(session_factory, message_id=message.id)
@@ -1599,6 +1619,12 @@ async def _executar_turno(
                     sessao_da_rajada, message, com_texto=True
                 )
         if not ja_seguiu_o_turno_normal and not ha_texto_pendente:
+            if KIND_DA_CONFIRMACAO_DE_MIDIA not in reservados_antes:
+                async with session_factory() as sessao_da_confirmacao:
+                    ja_confirmada = await ja_confirmou_ha_pouco(sessao_da_confirmacao, message)
+                if ja_confirmada:
+                    log.info("turno.midia_ja_confirmada", message_id=str(message.id))
+                    return "midia_ja_confirmada"
             return await _entregar_texto_fixo(
                 session_factory,
                 message=message,
