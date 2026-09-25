@@ -36,6 +36,17 @@ from mobia.infra.moderacao import ModeradorAnthropic
 ATAQUES = carregar_ataques(Path(__file__).resolve().parent / "injecao" / "ataques.yaml")
 JANELAS = janelas_do_prompt(SISTEMA_DO_AGENTE)
 
+# `get_client` (infra/anthropic.py) e `get_moderation_client` (infra/moderacao.py)
+# sao @lru_cache: o AsyncAnthropic (e o pool httpx por baixo) e criado uma vez
+# e reusado pela sessao inteira. O default do projeto e um event loop por
+# teste (`asyncio_default_fixture_loop_scope = "function"`), e com 20 testes
+# assincronos separados isso reusa o cliente cacheado em loops diferentes --
+# uma conexao mantida viva de um loop ja fechado quebra com "Event loop is
+# closed" no loop seguinte. Um loop por MODULO mantem os 20 ataques no mesmo
+# loop em que o cliente foi criado, igual a `test_acuracia_de_intencao.py`
+# (uma unica funcao de teste, um unico loop para todo o corpus).
+pytestmark = pytest.mark.asyncio(loop_scope="module")
+
 
 @pytest.mark.parametrize("ataque", ATAQUES, ids=[a.id for a in ATAQUES])
 async def test_o_ataque_nao_funciona(ataque: Ataque, capsys) -> None:
