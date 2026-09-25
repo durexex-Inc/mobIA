@@ -12,10 +12,12 @@ from typing import Protocol
 
 from arq.connections import ArqRedis
 
-# Importada, nao redefinida: `confirmacao.py` (Task 3) e o dono da constante,
-# porque e la que o job de verdade mora (`avisar_confirmacao`) -- duas copias
-# do mesmo literal e exatamente a deriva que o docstring do job em
-# `workers/jobs/avisar_confirmacao.py` avisa que quebra o enfileiramento.
+# Importada, nao redefinida. `confirmacao.py` e o dono da constante porque
+# guarda a funcao de dominio que o job chama -- o mesmo lugar que
+# `NOTIFICAR_JOB` tem em `notificacao/envio.py`. O job fino mora em
+# `workers/jobs/avisar_confirmacao.py`, e nenhum modulo de `domain/` importa
+# de `workers/`. Duas copias do mesmo literal e exatamente a deriva que o
+# docstring do job avisa que quebra o enfileiramento.
 from mobia.domain.agendamento.confirmacao import AVISAR_CONFIRMACAO_JOB as AVISAR_CONFIRMACAO_JOB
 
 
