@@ -105,7 +105,7 @@ async def regenerar(
         # NAO era o unico caminho que revelava dado pessoal: o `link` abaixo
         # leva a `conversation_key`, que no WhatsApp ERA o telefone ate a
         # TEC-203 -- hoje e o HMAC dele (`identidade/indice.py::chave_de`), e o
-        # link deixou de carregar dado pessoal sem mudar de forma --, e
+        # link deixou de carregar o telefone sem mudar de forma --, e
         # `GET /api/v1/leads` devolvia a mesma chave sem registro nenhum (a
         # TEC-195 a trocou por `leadId`). O registro daqui nomeia so o campo
         # `resumo`. Ele commita AQUI, antes do `return`: se a escrita falhar, a

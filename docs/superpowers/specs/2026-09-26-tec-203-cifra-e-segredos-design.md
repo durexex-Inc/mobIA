@@ -50,7 +50,7 @@ Continua própria. A reindexação recalcula `eventos_auditoria.lead_ref` sempre
 
 ### Demais segredos
 
-- `JWT_SEGREDO`: rotação é troca de valor; derruba as sessões ativas, e isso se aceita. Keyring de JWT seria YAGNI.
+- `JWT_SEGREDO`: rotação é troca de valor. Keyring de JWT seria YAGNI. (Corrigido na implementação: este item dizia que a troca "derruba as sessões ativas". Não derruba: ela invalida só os JWT emitidos — o token de acesso e o de MFA pendente —, e o refresh token, que é opaco e não é JWT, sobrevive; quem o tiver obtém acesso novo por `POST /api/v1/auth/refresh` sem entrar de novo. Derrubar as sessões exige revogar `sessoes_de_refresh` — ver `docs/seguranca/segredos.md`.)
 - Tokens de WhatsApp, Anthropic, Google, CRM, SMTP: rotacionam no provedor deles; entram no runbook.
 
 ### Os 90 dias
@@ -110,7 +110,7 @@ Regra: **o telefone em claro só existe em memória, no instante em que sai do p
 | Envio ao WhatsApp (os ~13 sítios que montam `"para"`) | O payload continua carregando a chave; `outbound/whatsapp.py` revela ao montar o `to`. Os sítios não mudam |
 | Canal web (`outbound/web.py::canal_da_sessao`) e presença | **Sem mudança**: o widget assina pelo HMAC (D2) |
 | CRM (`crm/payload.py`) | **Recebe o telefone revelado** — o CRM existe para o corretor ligar |
-| Dossiê para o LLM (`handoff/dossie.py`, `handoff/contingencia.py`) | **Sem mudança**: `conversa` passa a ser o HMAC, que não é dado pessoal. Tirar a linha do prompt era a primeira versão deste desenho; com a chave pseudônima ela deixou de vazar, e mexer no prompt custaria orçamento sem ganho |
+| Dossiê para o LLM (`handoff/dossie.py`, `handoff/contingencia.py`) | **Sem mudança**: `conversa` passa a ser o HMAC, que não é o telefone (corrigido na implementação: a versão anterior dizia "que não é dado pessoal", mas pseudônimo estável com chave continua sendo dado pessoal para a LGPD). Tirar a linha do prompt era a primeira versão deste desenho; com a chave pseudônima ela deixou de vazar, e mexer no prompt custaria orçamento sem ganho |
 | Link da transcrição (`handoff/resumo.py`) | **Sem mudança**: a URL passa a carregar o HMAC, e o telefone some dela, do e-mail e do access log sem tocar em código |
 | E-mails de agendamento (`agendamento/mensagens.py`) | **Telefone revelado** — o corretor precisa dele para a visita |
 | Dashboard, listagem | Revela por linha da página e mascara |

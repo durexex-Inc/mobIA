@@ -79,8 +79,9 @@ async def revelar(session: AsyncSession, channel: str, chave: str) -> str:
         )
     )
     if blob is None:
-        # Sem o valor na mensagem: a chave nao e dado pessoal, mas o canal
-        # basta para diagnosticar e o log agregado nao precisa de mais.
+        # Sem o valor na mensagem: a chave nao e o telefone, mas e pseudonimo
+        # estavel do lead, e o canal basta para diagnosticar -- o log agregado
+        # nao precisa de mais.
         raise IdentidadeAusente(f"sem identidade para uma chave do canal {channel}")
     valor = decrypt(bytes(blob), aad_da_identidade(channel, chave))
     assert valor is not None

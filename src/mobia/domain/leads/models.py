@@ -2,8 +2,9 @@
 
 **O identificador do lead e o dado pessoal dele**, e essa e a razao desta
 tabela: no WhatsApp a `conversation_key` ERA o telefone. Desde a TEC-203 ela e
-o HMAC do telefone (`identidade/indice.py::chave_de`), que nao e dado pessoal
-mas continua sendo pseudonimo estavel do lead. Esta linha da a API do
+o HMAC do telefone (`identidade/indice.py::chave_de`), que nao e o telefone
+mas continua sendo pseudonimo estavel do lead -- e pseudonimo estavel ainda e
+dado pessoal para a LGPD. Esta linha da a API do
 dashboard outra coisa para devolver no lugar do par -- um UUID estavel, sem
 atributo proprio, que nao diz nada sobre quem o lead e.
 

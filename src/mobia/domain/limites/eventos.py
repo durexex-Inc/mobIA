@@ -54,15 +54,14 @@ async def _ganhou_a_guarda(
     return bool(criou)
 
 
-# A guarda dedup e por (escopo, chave) -- SEM canal, por decisao deliberada:
-# `chave_de_numero` inclui o canal na chave do ZSET
-# (`ratelimit:numero:{channel}:{key}`), mas quem chama `registrar_bloqueio`
-# no escopo `numero` passa so o numero, entao a guarda vira
-# `ratelimit:evento:numero:{key}`, sem canal. Um mesmo numero bloqueado em
-# dois canais na mesma janela gera UMA linha, com o canal do primeiro
-# bloqueio -- hoje isto e inofensivo porque so existe `whatsapp`. Quando o
-# TEC-124 trouxer o segundo canal (o widget web), esta dedup precisa ser
-# revisitada: nao mude sem revisitar.
+# A guarda dedup e por (escopo, chave), sem o canal como campo separado:
+# `ratelimit:evento:{escopo}:{chave}`. No escopo `numero` isso ja separa os
+# canais, porque desde a TEC-203 a `chave` que quem chama passa e a chave do
+# lead, `identidade/indice.py::chave_de(channel, valor)` -- e o canal entra no
+# HMAC. O mesmo valor em `whatsapp` e em `web` da duas chaves, e portanto duas
+# guardas: a colisao entre canais que esta guarda tinha antes (uma linha so,
+# com o canal do primeiro bloqueio) nao acontece mais. No escopo `ip` a chave
+# e o endereco e o canal e sempre `CHANNEL_HTTP`.
 async def registrar_bloqueio(
     session_factory: async_sessionmaker[AsyncSession],
     pool: Redis | None,

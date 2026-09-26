@@ -96,13 +96,13 @@ Trocada sozinha, ela tornaria a trilha de auditoria impesquisável: todo `lead_r
 1. Pare a API e o worker.
 2. Ponha a chave nova em `AUDITORIA_CHAVE_DO_LEAD` e a velha em `AUDITORIA_CHAVE_DO_LEAD_ANTERIOR` — esta como **variável de ambiente** do processo do script.
 3. `python scripts/reindexar_leads.py`. Para cada lead conhecido (inclusive os que só restam em `identidades_de_lead`), ele troca `lead_ref(chave velha)` por `lead_ref(chave nova)` em `eventos_auditoria`.
-4. Tire `AUDITORIA_CHAVE_DO_LEAD_ANTERIOR` do ambiente e suba API e worker. Rodar o script de novo com ela ainda definida não estraga nada — nenhum `lead_ref` antigo resta para casar —, mas o relatório conta todos os leads como reindexados, o que engana.
+4. **Tire `AUDITORIA_CHAVE_DO_LEAD_ANTERIOR` do ambiente logo em seguida** e suba API e worker. Esquecida ali, ela quebra a trilha na próxima rotação da chave de índice: o script procuraria cada `lead_ref` calculado com a chave anterior, que já não existe em linha nenhuma, não casaria nada, e deixaria todo `lead_ref` calculado sobre o pseudônimo que o lead tinha antes da reindexação — a trilha fica impesquisável, sem erro nenhum. (Rodar de novo logo depois da rotação, com ela ainda definida, não muda linha nenhuma, mas o relatório conta todos os leads como reindexados.)
 
 A chave de índice e a do `lead_ref` podem rodar na mesma execução: troque as duas e defina a anterior.
 
 ### `JWT_SEGREDO`
 
-Troca simples de valor e reinício. Todo JWT emitido com o segredo velho deixa de validar: o token de acesso (vida de `JWT_MINUTOS`, 60 por padrão) e o token de MFA pendente. **O refresh não é JWT** — é um token opaco guardado como digest em `sessoes_de_refresh` —, então o painel renova o acesso sozinho no próximo refresh e ninguém precisa entrar de novo. Se o motivo da troca for vazamento e for preciso derrubar as sessões também, revogue os refresh abertos:
+Troca simples de valor e reinício. Todo JWT emitido com o segredo velho deixa de validar: o token de acesso (vida de `JWT_MINUTOS`, 60 por padrão) e o token de MFA pendente. **O refresh token não é JWT** — é um token opaco guardado como digest em `sessoes_de_refresh` — e sobrevive à troca: qualquer cliente que tenha um obtém token de acesso novo por `POST /api/v1/auth/refresh`, sem entrar de novo. Hoje o `frontend/` não guarda nem renova refresh token; o login do painel é a TEC-309. Se o motivo da troca for vazamento e for preciso derrubar as sessões também, revogue os refresh abertos:
 
 ```sql
 UPDATE sessoes_de_refresh SET revogado_em = now() WHERE revogado_em IS NULL;
