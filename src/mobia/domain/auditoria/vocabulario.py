@@ -41,12 +41,19 @@ class Acao(StrEnum):
     HANDOFF_CRIADO = "HANDOFF_CRIADO"
     OPTOUT_REGISTRADO = "OPTOUT_REGISTRADO"
     OPTOUT_REATIVADO = "OPTOUT_REATIVADO"
-    # Sem chamador: `ConfiguracaoAgente` nao existe (TEC-198/199).
+    # Sem chamador: o versionamento de prompt e a TEC-199. A configuracao do
+    # agente da TEC-198 nao publica prompt -- ela grava `CONFIGURACAO_ALTERADA`,
+    # abaixo, mesmo quando muda o nome ou o tom que entram no prompt.
     PROMPT_PUBLICADO = "PROMPT_PUBLICADO"
     ACESSO_NEGADO = "ACESSO_NEGADO"
     # TEC-204, D6. A moderacao de entrada achou tentativa de mudar as
     # instrucoes do agente. Ator SISTEMA; entidade, a mensagem.
     INJECAO_DETECTADA = "INJECAO_DETECTADA"
+    # TEC-198, D1. Um evento por campo da configuracao do agente que mudou,
+    # com `entidade=configuracao_agente` -- que a 0053 ja previa sem chamador.
+    # O valor fica na tabela de versoes, e nao aqui: a trilha diz quem mudou o
+    # que, e a regra dela e nao guardar o antes e o depois.
+    CONFIGURACAO_ALTERADA = "CONFIGURACAO_ALTERADA"
 
 
 class Entidade(StrEnum):

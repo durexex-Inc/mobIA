@@ -101,6 +101,8 @@ def create_app() -> FastAPI:
     # de leads (TEC-192) nunca esteve condicionada -- ela esta aqui por ser
     # import tardio como as outras, e quem a protege e `VER_LEADS`, que os
     # quatro papeis tem, e `VER_DETALHE_DO_LEAD` no detalhe (TEC-193).
+    # `configuracao` (TEC-198) e administrativa de fato: `CONFIGURAR_AGENTE`,
+    # so do ADMIN, como `auditoria`.
     # `intervencao` (TEC-194) e o mesmo prefixo de `leads`, em arquivo proprio
     # porque muda estado; quem a protege e `ATENDER_LEAD` mais a checagem de
     # dono dentro do handler.
@@ -111,6 +113,7 @@ def create_app() -> FastAPI:
     # dentro do handler, como em `handoffs`.
     from mobia.api.routes.agendamentos import router as agendamentos_router
     from mobia.api.routes.auditoria import router as auditoria_router
+    from mobia.api.routes.configuracao import router as configuracao_router
     from mobia.api.routes.conversas import router as conversas_router
     from mobia.api.routes.corretores import router as corretores_router
     from mobia.api.routes.handoffs import router as handoffs_router
@@ -128,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(intervencao_router)
     app.include_router(auditoria_router)
     app.include_router(agendamentos_router)
+    app.include_router(configuracao_router)
 
     if not settings.catalogo_admin_token:
         # O aviso FICA, com outro sentido: nao diz mais que as rotas sumiram --

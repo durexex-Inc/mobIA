@@ -121,3 +121,9 @@ def test_papel_desconhecido_nao_pode_nada() -> None:
     """
     assert permissoes_de("SUPERVISOR") == frozenset()
     assert permissoes_de("") == frozenset()
+
+
+def test_configurar_o_agente_e_so_do_admin() -> None:
+    """TEC-198, RN-19.5. Escrita: muda o prompt e o score de todo lead."""
+    assert papeis_com(Permissao.CONFIGURAR_AGENTE) == frozenset({"ADMIN"})
+    assert Permissao.CONFIGURAR_AGENTE in DE_ESCRITA

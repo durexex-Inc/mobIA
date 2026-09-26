@@ -52,6 +52,11 @@ class Permissao(StrEnum):
     # Nao aparece em `_CONCEDIDAS` -- o ADMIN a recebe por construcao, e
     # nenhum outro papel a tem. Leitura, e por isso fora de `DE_ESCRITA`.
     VER_AUDITORIA = "VER_AUDITORIA"
+    # TEC-198, RN-19.5: "acesso a este modulo restrito ao papel ADMIN". Como
+    # `VER_AUDITORIA`, nao aparece em `_CONCEDIDAS` -- o ADMIN a recebe por
+    # construcao, e nenhum outro papel a tem. Escrita: muda o que o agente diz
+    # e como pontua todo lead, e por isso esta em `DE_ESCRITA`.
+    CONFIGURAR_AGENTE = "CONFIGURAR_AGENTE"
 
 
 # As permissoes que MUDAM estado. Existe para que o terceiro cenario do
@@ -67,6 +72,7 @@ DE_ESCRITA = frozenset(
         Permissao.GERIR_CATALOGO,
         Permissao.GERIR_CORRETORES,
         Permissao.ATENDER_LEAD,
+        Permissao.CONFIGURAR_AGENTE,
     }
 )
 

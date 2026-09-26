@@ -18,6 +18,7 @@ cache) e pertence ao epico de configuracao (RF-19), exatamente como a TEC-150
 decidiu para os pesos do score. Lacuna declarada no desenho.
 """
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 
 from mobia.domain.context.temperatura import Temperatura
@@ -51,6 +52,36 @@ CADENCIA: dict[Temperatura, tuple[timedelta, ...]] = {
 # devidos mais cedo.
 INTERVALO_MINIMO: timedelta = min(intervalos[0] for intervalos in CADENCIA.values())
 
+# O tipo da tabela, com ou sem configuracao. `CADENCIA` acima e o PADRAO desde a
+# TEC-198: o administrador troca os INTERVALOS em `configuracoes_do_agente`, e a
+# varredura passa a vigente as tres funcoes abaixo. A QUANTIDADE de tentativas
+# por temperatura continua sendo a desta tabela (D5 daquele desenho): ela esta
+# no `CASE` SQL que `repositorio.py` gera na importacao do modulo.
+Cadencia = Mapping[Temperatura, tuple[timedelta, ...]]
+
+
+def cadencia_de(
+    por_nome: Mapping[str, tuple[timedelta, ...]],
+) -> dict[Temperatura, tuple[timedelta, ...]]:
+    """A cadencia da configuracao, chaveada pelo enum. TEC-198.
+
+    A configuracao a guarda pelo NOME da temperatura porque
+    `configuracao/vigente.py` nao pode importar `Temperatura` sem fechar um
+    ciclo -- ver a docstring de la. E aqui que o nome volta a ser enum.
+    """
+    return {Temperatura(nome): intervalos for nome, intervalos in por_nome.items()}
+
+
+def intervalo_minimo(cadencia: Cadencia) -> timedelta:
+    """O corte barato da varredura para ESTA cadencia. TEC-198, D5.
+
+    Calculado a cada varredura, e nao a constante acima: com o primeiro
+    intervalo encurtado pelo administrador, o corte antigo esconderia leads
+    que ja estao devidos -- o mesmo defeito que o comentario de
+    `INTERVALO_MINIMO` descreve para quem escrevesse o corte a mao.
+    """
+    return min(intervalos[0] for intervalos in cadencia.values())
+
 
 def tentativa_devida(
     *,
@@ -58,6 +89,7 @@ def tentativa_devida(
     ultima_fala: datetime,
     ja_disparada: int,
     agora: datetime,
+    cadencia: Cadencia = CADENCIA,
 ) -> int | None:
     """A MAIOR tentativa vencida que ainda nao disparou. `None` se nao ha.
 
@@ -94,8 +126,8 @@ def tentativa_devida(
     a errada.
     """
     decorrido = agora - ultima_fala
-    for numero in range(len(CADENCIA[temperatura]), ja_disparada, -1):
-        if decorrido >= CADENCIA[temperatura][numero - 1]:
+    for numero in range(len(cadencia[temperatura]), ja_disparada, -1):
+        if decorrido >= cadencia[temperatura][numero - 1]:
             return numero
     return None
 
