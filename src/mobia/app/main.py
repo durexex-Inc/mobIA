@@ -112,6 +112,7 @@ def create_app() -> FastAPI:
     from mobia.api.routes.corretores import router as corretores_router
     from mobia.api.routes.handoffs import router as handoffs_router
     from mobia.api.routes.imoveis import router as imoveis_router
+    from mobia.api.routes.intervencao import router as intervencao_router
     from mobia.api.routes.leads import router as leads_router
     from mobia.api.routes.metricas import router as metricas_router
 
@@ -121,6 +122,7 @@ def create_app() -> FastAPI:
     app.include_router(conversas_router)
     app.include_router(metricas_router)
     app.include_router(leads_router)
+    app.include_router(intervencao_router)
     app.include_router(auditoria_router)
     app.include_router(agendamentos_router)
 

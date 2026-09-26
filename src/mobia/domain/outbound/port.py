@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mobia.domain.atendimento.repositorio import esta_silenciada_por_mensagem
 from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
 from mobia.domain.optout.repositorio import esta_em_optout_por_mensagem
-from mobia.domain.outbound.kinds import grupo_de
+from mobia.domain.outbound.kinds import e_fala_do_corretor, grupo_de
 from mobia.domain.outbound.models import OutboundDispatch
 
 log = structlog.get_logger(__name__)
@@ -139,7 +139,8 @@ class OutboundPort(Protocol):
       `GuardedOutbound.send` e `esta_silenciada_por_mensagem`. Mesma excecao
       por `kind` que a guarda de opt-out (emenda TEC-179, Task 7 -- a D5
       original barrava todo kind sem escotilha; ver `GuardedOutbound` para o
-      raciocinio).
+      raciocinio), mais a fala do proprio corretor (TEC-194), que so esta
+      guarda deixa passar.
 
     `OutboundPort` e um Protocol estrutural: qualquer classe com um metodo
     `send` de assinatura compativel satisfaz o tipo, herdando de
@@ -197,13 +198,16 @@ class GuardedOutbound:
     antes da reserva, e sao a razao de o docstring de `OutboundPort` apontar
     esta classe como a rota segura: herdar daqui e o que garante que um
     caminho de envio novo nao fale com quem pediu silencio nem por cima de
-    quem assumiu a conversa. As duas tem a MESMA excecao unica --
-    `KIND_DA_CONFIRMACAO_DE_OPTOUT` atravessa as duas, ver `send`.
+    quem assumiu a conversa. `KIND_DA_CONFIRMACAO_DE_OPTOUT` atravessa as
+    duas, ver `send`; desde a TEC-194 a fala do corretor atravessa so a de
+    atendimento humano.
 
     A guarda de atendimento humano nao nasceu com essa excecao: a D5 original
     do desenho decidia "barra TODO kind, sem escotilha", e o argumento era
     sobre o caminho HUMANO de envio (a rota `POST /conversas/{id}/mensagens`
-    do SRS, que nao existe ainda). Emenda TEC-179 (Task 7): esse argumento
+    do SRS, que nao existia; ela nasceu na TEC-194 como
+    `POST /leads/{leadId}/mensagens`, e e a segunda excecao desta guarda).
+    Emenda TEC-179 (Task 7): esse argumento
     nunca cobriu a confirmacao de opt-out, que nao e mensagem de conversa --
     e reconhecimento legal de um pedido que o LEAD fez, e o unico envio que
     a D1 da TEC-182 autoriza depois do registro. Sem esta excecao, a
@@ -273,14 +277,20 @@ class GuardedOutbound:
         # incompleta: o registro passava a acontecer, mas a confirmacao dele
         # -- gravada com o kind proprio -- seria barrada por ESTA MESMA
         # guarda, e o lead que pediu para sair nao receberia reconhecimento
-        # nenhum. A L3 do desenho continua valendo: quando a rota de envio
-        # manual do corretor chegar, ela ainda encontra o proprio envio
-        # barrado aqui -- esta excecao e so para o reconhecimento do
-        # opt-out, nao abre um segundo caminho para envio humano.
+        # nenhum.
+        #
+        # **A segunda excecao chegou com a TEC-194, e e a que a L3 do
+        # desenho da TEC-179 previa.** Este comentario dizia que "quando a
+        # rota de envio manual do corretor chegar, ela ainda encontra o
+        # proprio envio barrado aqui". Chegou, e a fala dele passa: a guarda
+        # existe para o AGENTE nao falar por cima do corretor, e barrar o
+        # proprio corretor tornaria a rota inutil. A guarda de opt-out acima
+        # NAO tem esta excecao, de proposito (D3 da TEC-194): o lead que
+        # pediu para parar nao recebe mensagem de ninguem.
         #
         # Antes da reserva pelo mesmo motivo do bloco acima: barrar depois
         # deixaria linha orfa em `outbound_dispatches`.
-        if kind != KIND_DA_CONFIRMACAO_DE_OPTOUT:
+        if kind != KIND_DA_CONFIRMACAO_DE_OPTOUT and not e_fala_do_corretor(kind):
             async with self._session_factory() as session:
                 if await esta_silenciada_por_mensagem(session, message_id):
                     # `warning` e nao `info`, pelo mesmo criterio do opt-out:

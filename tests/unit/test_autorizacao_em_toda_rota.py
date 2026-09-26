@@ -154,6 +154,13 @@ PERMISSAO_ESPERADA = {
     # pessoal do lead, e uma rota dela fora deste mapa seria o furo.
     ("GET", "/api/v1/leads/{lead_id}"): "VER_DETALHE_DO_LEAD",
     ("GET", "/api/v1/leads/{lead_id}/mensagens"): "VER_DETALHE_DO_LEAD",
+    # TEC-194. As cinco mudam estado do lead, e a checagem de dono do CORRETOR
+    # mora dentro do handler (`intervencao._abrir`), como nas de agendamento.
+    ("POST", "/api/v1/leads/{lead_id}/assumir"): "ATENDER_LEAD",
+    ("POST", "/api/v1/leads/{lead_id}/devolver"): "ATENDER_LEAD",
+    ("POST", "/api/v1/leads/{lead_id}/mensagens"): "ATENDER_LEAD",
+    ("PATCH", "/api/v1/leads/{lead_id}/qualificacao"): "ATENDER_LEAD",
+    ("POST", "/api/v1/leads/{lead_id}/score/recalcular"): "ATENDER_LEAD",
     ("GET", "/api/v1/auditoria"): "VER_AUDITORIA",
     # TEC-374. `ATENDER_LEAD` mais a checagem de dono dentro do handler --
     # "so o corretor dono do agendamento, ou um gerente". A permissao sozinha
