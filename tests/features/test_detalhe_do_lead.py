@@ -36,6 +36,7 @@ from mobia.domain.followup.models import FollowUp
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import gravar_resumo
 from mobia.domain.handoff.vocabulario import Status as StatusDoHandoff
+from mobia.domain.identidade.indice import chave_de, registrar
 from mobia.domain.leads.repositorio import referencias_para
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
@@ -45,6 +46,10 @@ from mobia.infra.crypto import aad_de, encrypt
 ROTA = "/api/v1/leads"
 CANAL = "whatsapp"
 TELEFONE = "5548990000021"
+# Desde a TEC-203 o par guarda o HMAC do telefone, e o numero mora cifrado em
+# `identidades_de_lead` -- `_lead_completo` o registra, e e de la que o detalhe
+# tira o telefone que mascara.
+CHAVE = chave_de(CANAL, TELEFONE)
 INICIO = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 
 
@@ -57,7 +62,7 @@ def _bearer(papel: str, *, corretor_id: uuid.UUID | None = None) -> dict[str, st
 
 def _fala(
     *,
-    chave: str = TELEFONE,
+    chave: str = CHAVE,
     autor: MessageRole = MessageRole.LEAD,
     texto: str | None = "oi",
     em: datetime = INICIO,
@@ -81,7 +86,7 @@ def _fala(
     )
 
 
-async def _apelido(session: AsyncSession, chave: str = TELEFONE) -> uuid.UUID:
+async def _apelido(session: AsyncSession, chave: str = CHAVE) -> uuid.UUID:
     apelidos = await referencias_para(session, [(CANAL, chave)])
     await session.commit()
     return apelidos[(CANAL, chave)]
@@ -90,7 +95,7 @@ async def _apelido(session: AsyncSession, chave: str = TELEFONE) -> uuid.UUID:
 async def _handoff(
     session: AsyncSession,
     *,
-    chave: str = TELEFONE,
+    chave: str = CHAVE,
     dono: uuid.UUID | None = None,
     resumo: str | None = None,
     fallback: bool = False,
@@ -131,7 +136,7 @@ def _recalculo(*, novo: int, anterior: int | None, em: datetime, causa: str) -> 
     return LeadScoreAudit(
         id=uuid.uuid4(),
         channel=CANAL,
-        conversation_key=TELEFONE,
+        conversation_key=CHAVE,
         total_anterior=anterior,
         total_novo=novo,
         completude=novo,
@@ -146,6 +151,7 @@ def _recalculo(*, novo: int, anterior: int | None, em: datetime, causa: str) -> 
 
 async def _lead_completo(session: AsyncSession, *, dono: uuid.UUID) -> uuid.UUID:
     """Um lead com os sete blocos preenchidos. E o `Dado` do primeiro cenario."""
+    await registrar(session, CANAL, TELEFONE)
     session.add_all(
         [
             _fala(autor=MessageRole.LEAD, texto="quero um ape no Campeche", em=INICIO),
@@ -156,7 +162,7 @@ async def _lead_completo(session: AsyncSession, *, dono: uuid.UUID) -> uuid.UUID
     session.add(
         LeadQualification(
             channel=CANAL,
-            conversation_key=TELEFONE,
+            conversation_key=CHAVE,
             intencao="COMPRA",
             regiao="Campeche",
             quartos=2,
@@ -197,7 +203,7 @@ async def _lead_completo(session: AsyncSession, *, dono: uuid.UUID) -> uuid.UUID
         Recomendacao(
             id=uuid.uuid4(),
             channel=CANAL,
-            conversation_key=TELEFONE,
+            conversation_key=CHAVE,
             imovel_id=imovel.id,
             score_match=Decimal("0.870"),
             motivo_match="dois quartos no bairro pedido",
@@ -211,7 +217,7 @@ async def _lead_completo(session: AsyncSession, *, dono: uuid.UUID) -> uuid.UUID
             id=uuid.uuid4(),
             corretor_id=dono,
             channel=CANAL,
-            conversation_key=TELEFONE,
+            conversation_key=CHAVE,
             imovel_id=imovel.id,
             tipo=str(TipoDeCompromisso.VISITA_PRESENCIAL),
             inicio=INICIO + timedelta(days=2),
@@ -227,7 +233,7 @@ async def _lead_completo(session: AsyncSession, *, dono: uuid.UUID) -> uuid.UUID
         FollowUp(
             id=uuid.uuid4(),
             channel=CANAL,
-            conversation_key=TELEFONE,
+            conversation_key=CHAVE,
             tentativa_numero=1,
             temperatura="MORNO",
             ancora_em=INICIO,
@@ -574,7 +580,7 @@ async def test_as_duas_leituras_ficam_na_trilha_sem_o_par(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
     """Uma linha para o detalhe e uma por PAGINA da transcricao. O par nunca
-    entra: no WhatsApp ele e o telefone, e a trilha guarda `lead_ref`."""
+    entra: ele e o pseudonimo do lead (TEC-203), e a trilha guarda `lead_ref`."""
     session.add_all([_fala(em=INICIO + timedelta(seconds=n)) for n in range(3)])
     await session.commit()
     lead_id = await _apelido(session)
@@ -586,7 +592,7 @@ async def test_as_duas_leituras_ficam_na_trilha_sem_o_par(
     assert [a.campo for a in acessos] == ["detalhe", "transcricao", "transcricao", "transcricao"]
     assert {a.entidade_id for a in acessos} == {str(lead_id)}
     assert {a.lead_ref for a in acessos} == {
-        lead_ref(CANAL, TELEFONE, chave=get_settings().auditoria_chave_do_lead)
+        lead_ref(CANAL, CHAVE, chave=get_settings().auditoria_chave_do_lead)
     }
     for acesso in acessos:
         assert TELEFONE not in json.dumps(
