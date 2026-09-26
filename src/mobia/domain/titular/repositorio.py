@@ -1,0 +1,214 @@
+"""O acesso a solicitacao de titular: registrar, recusar, atender e listar.
+
+TEC-207, D2 e D3 do desenho. Funcoes livres com `session` posicional e o
+resto keyword-only, sem commit -- convencao dos repositorios deste repo (ver
+`handoff/repositorio.py`).
+"""
+
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from mobia.app.config import get_settings
+from mobia.domain.auditoria.referencia import lead_ref as calcular_lead_ref
+from mobia.domain.auditoria.registro import registrar_evento
+from mobia.domain.auditoria.vocabulario import Acao, Ator, Entidade
+from mobia.domain.titular.models import SolicitacaoDeTitular
+from mobia.domain.titular.vocabulario import (
+    PRAZO_DO_TITULAR,
+    OrigemDaSolicitacao,
+    StatusDaSolicitacao,
+    TipoDeSolicitacao,
+)
+
+
+class SolicitacaoNaoAberta(ValueError):
+    """Recusar uma solicitacao que nao esta ABERTA. Vira 409 na rota."""
+
+
+async def registrar_solicitacao(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    tipo: TipoDeSolicitacao,
+    origem: OrigemDaSolicitacao,
+    ator: Ator,
+) -> uuid.UUID:
+    """Cria a solicitacao ABERTA, ou devolve o id da que ja existe.
+
+    **Idempotente por `(lead_ref, tipo)`** (D2 e D3): um segundo pedido do
+    mesmo tipo, do mesmo lead, nao cria uma segunda linha enquanto a primeira
+    espera. Um INSERT com `ON CONFLICT DO NOTHING` sobre `uq_solicitacao_aberta`
+    decide isso no banco, e nao com um SELECT antes -- a corrida e a mesma que
+    `registrar_handoff` previne, so que aqui basta saber se a linha nasceu ou
+    nao, sem acumular nada na que ja existia.
+
+    `prazo_em` e `recebida_em + PRAZO_DO_TITULAR` (15 dias, RNF-21), calculado
+    aqui e nao pelo banco -- o mesmo `agora` vale para os dois, sem uma
+    segunda ida ao servidor para ler o `server_default` de volta.
+
+    **So grava `TITULAR_SOLICITOU` quando cria** a linha: um pedido repetido
+    nao e um novo fato para a trilha. **Nao commita.**
+    """
+    ref = calcular_lead_ref(channel, conversation_key, chave=get_settings().auditoria_chave_do_lead)
+    agora = datetime.now(UTC)
+
+    statement = pg_insert(SolicitacaoDeTitular).values(
+        id=uuid.uuid4(),
+        lead_ref=ref,
+        channel=channel,
+        conversation_key=conversation_key,
+        tipo=tipo.value,
+        origem=origem.value,
+        status=StatusDaSolicitacao.ABERTA.value,
+        prazo_em=agora + PRAZO_DO_TITULAR,
+    )
+    inserida = (
+        await session.execute(
+            statement.on_conflict_do_nothing(
+                index_elements=["lead_ref", "tipo"],
+                index_where=text("status = 'ABERTA'"),
+            ).returning(SolicitacaoDeTitular.id)
+        )
+    ).scalar_one_or_none()
+
+    if inserida is not None:
+        await registrar_evento(
+            session,
+            ator=ator,
+            acao=Acao.TITULAR_SOLICITOU,
+            entidade=Entidade.SOLICITACAO_DE_TITULAR,
+            entidade_id=str(inserida),
+            lead=(channel, conversation_key),
+        )
+        return inserida
+
+    # ON CONFLICT DO NOTHING nao devolveu linha: a ABERTA deste (lead_ref,
+    # tipo) ja existia. `uq_solicitacao_aberta` garante que ha exatamente uma.
+    existente = await solicitacao_aberta(
+        session, channel=channel, conversation_key=conversation_key, tipo=tipo
+    )
+    assert existente is not None, "uq_solicitacao_aberta garante que ha uma ABERTA aqui"
+    return existente.id
+
+
+async def solicitacao_aberta(
+    session: AsyncSession, *, channel: str, conversation_key: str, tipo: TipoDeSolicitacao
+) -> SolicitacaoDeTitular | None:
+    """A ABERTA deste lead e deste tipo, se houver."""
+    ref = calcular_lead_ref(channel, conversation_key, chave=get_settings().auditoria_chave_do_lead)
+    return (
+        await session.execute(
+            select(SolicitacaoDeTitular).where(
+                SolicitacaoDeTitular.lead_ref == ref,
+                SolicitacaoDeTitular.tipo == tipo.value,
+                SolicitacaoDeTitular.status == StatusDaSolicitacao.ABERTA.value,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def marcar_atendida(
+    session: AsyncSession, solicitacao_id: uuid.UUID, *, agora: datetime
+) -> None:
+    """Fecha a solicitacao como ATENDIDA e zera o par, num UPDATE so.
+
+    Um UPDATE so -- e nao ler o status antes -- e o que garante que o CHECK
+    `ck_solicitacoes_de_titular_par_com_status` nunca ve um estado
+    intermediario: status e par mudam juntos, na mesma linha de comando.
+    **Nao commita.**
+    """
+    await session.execute(
+        update(SolicitacaoDeTitular)
+        .where(SolicitacaoDeTitular.id == solicitacao_id)
+        .values(
+            status=StatusDaSolicitacao.ATENDIDA.value,
+            atendida_em=agora,
+            channel=None,
+            conversation_key=None,
+        )
+    )
+
+
+async def recusar(
+    session: AsyncSession, solicitacao_id: uuid.UUID, *, motivo: str, ator: Ator
+) -> None:
+    """Recusa uma solicitacao ABERTA, com motivo obrigatorio, e zera o par.
+
+    `motivo` nao tem default: a recusa sem justificativa (ex.: retencao
+    legal) e o que a RN de titular exige registrado, e um default vazio
+    tornaria a exigencia decorativa.
+
+    Levanta `SolicitacaoNaoAberta` se a linha nao existe ou ja nao esta
+    ABERTA -- recusar uma ja ATENDIDA ou ja RECUSADA nao e uma segunda
+    recusa, e um estado que a chamada nao pode produzir.
+    """
+    if not motivo.strip():
+        raise ValueError("motivo da recusa e obrigatorio")
+
+    solicitacao = (
+        await session.execute(
+            select(SolicitacaoDeTitular).where(SolicitacaoDeTitular.id == solicitacao_id)
+        )
+    ).scalar_one_or_none()
+    if solicitacao is None or solicitacao.status != StatusDaSolicitacao.ABERTA.value:
+        raise SolicitacaoNaoAberta(f"solicitacao {solicitacao_id} nao esta aberta")
+
+    # Capturados antes do UPDATE que os zera: e o par que localiza a conversa
+    # para o evento da trilha, e o CHECK do par-com-status exige que ele
+    # suma junto com o status ABERTA.
+    channel = solicitacao.channel
+    conversation_key = solicitacao.conversation_key
+    assert channel is not None and conversation_key is not None, (
+        "ck_solicitacoes_de_titular_par_com_status garante o par enquanto ABERTA"
+    )
+
+    await session.execute(
+        update(SolicitacaoDeTitular)
+        .where(SolicitacaoDeTitular.id == solicitacao_id)
+        .values(
+            status=StatusDaSolicitacao.RECUSADA.value,
+            motivo_da_recusa=motivo,
+            channel=None,
+            conversation_key=None,
+        )
+    )
+    await registrar_evento(
+        session,
+        ator=ator,
+        acao=Acao.TITULAR_RECUSADO,
+        entidade=Entidade.SOLICITACAO_DE_TITULAR,
+        entidade_id=str(solicitacao_id),
+        lead=(channel, conversation_key),
+    )
+
+
+async def listar(
+    session: AsyncSession, *, status: StatusDaSolicitacao | None
+) -> list[SolicitacaoDeTitular]:
+    """A fila, por prazo -- o que vence primeiro aparece primeiro (D4)."""
+    consulta = select(SolicitacaoDeTitular)
+    if status is not None:
+        consulta = consulta.where(SolicitacaoDeTitular.status == status.value)
+    consulta = consulta.order_by(SolicitacaoDeTitular.prazo_em, SolicitacaoDeTitular.recebida_em)
+    return list((await session.execute(consulta)).scalars())
+
+
+async def vencidas(
+    session: AsyncSession, *, agora: datetime, tipo: TipoDeSolicitacao
+) -> list[SolicitacaoDeTitular]:
+    """As ABERTAS deste tipo cujo prazo ja passou -- o sweep de retencao (D5)."""
+    consulta = (
+        select(SolicitacaoDeTitular)
+        .where(
+            SolicitacaoDeTitular.status == StatusDaSolicitacao.ABERTA.value,
+            SolicitacaoDeTitular.tipo == tipo.value,
+            SolicitacaoDeTitular.prazo_em <= agora,
+        )
+        .order_by(SolicitacaoDeTitular.prazo_em)
+    )
+    return list((await session.execute(consulta)).scalars())

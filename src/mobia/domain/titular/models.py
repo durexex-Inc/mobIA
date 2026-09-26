@@ -3,6 +3,11 @@
 Ver `alembic/versions/0063_solicitacoes_de_titular.py` para os CHECKs e o
 indice unico parcial -- os dois tem copia literal na migration, e nao import,
 pela mesma razao de `auditoria/vocabulario.py`.
+
+`ck_solicitacoes_de_titular_par_completo` e `ck_solicitacoes_de_titular_par_com_status`
+juntos amarram o par: o segundo liga a PRESENCA do par ao status, o primeiro
+liga os dois lados do par entre si -- sem ele, `channel` preenchido com
+`conversation_key` nulo (ou o inverso) passaria pelo primeiro CHECK sozinho.
 """
 
 import uuid
@@ -59,6 +64,13 @@ class SolicitacaoDeTitular(Base):
         CheckConstraint(
             "(status = 'ABERTA') = (channel IS NOT NULL)",
             name="ck_solicitacoes_de_titular_par_com_status",
+        ),
+        # Os dois lados do par aparecem juntos ou nenhum aparece -- channel
+        # sem conversation_key (ou o inverso) e estado que nao corresponde a
+        # nenhuma conversa real.
+        CheckConstraint(
+            "(channel IS NOT NULL) = (conversation_key IS NOT NULL)",
+            name="ck_solicitacoes_de_titular_par_completo",
         ),
         # Uma aberta por tipo e por lead: pedir eliminacao duas vezes nao cria
         # duas linhas (D3 do desenho, "idempotente").

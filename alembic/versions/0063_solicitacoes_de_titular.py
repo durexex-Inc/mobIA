@@ -14,6 +14,10 @@ TEC-207, D2 e D6 do desenho. Duas coisas:
   `uq_solicitacao_aberta` (parcial, sobre `status = 'ABERTA'`) e o que torna o
   registro idempotente: um segundo pedido do mesmo tipo, do mesmo lead, nao
   cria uma segunda linha enquanto a primeira espera.
+  `ck_solicitacoes_de_titular_par_completo` amarra os dois lados do par entre
+  si -- `ck_solicitacoes_de_titular_par_com_status` sozinho so liga a
+  presenca do par ao status, e deixaria passar `channel` preenchido com
+  `conversation_key` nulo.
 
 - **A trilha aprende quatro acoes novas** (`TITULAR_SOLICITOU`,
   `DADOS_EXPORTADOS`, `LEAD_ANONIMIZADO`, `TITULAR_RECUSADO`) e uma entidade
@@ -121,6 +125,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "(status = 'ABERTA') = (channel IS NOT NULL)",
             name="ck_solicitacoes_de_titular_par_com_status",
+        ),
+        sa.CheckConstraint(
+            "(channel IS NOT NULL) = (conversation_key IS NOT NULL)",
+            name="ck_solicitacoes_de_titular_par_completo",
         ),
     )
     op.create_index(
