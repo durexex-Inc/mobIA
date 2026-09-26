@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -39,11 +40,16 @@ from mobia.domain.context.montagem import ContextoMontado, montar_prompt
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.domain.prompts.modelo import AgenteDoPrompt
 from mobia.infra.anthropic import (
+    ERROS_RETENTAVEIS,
+    ESPERAS_ENTRE_TENTATIVAS,
+    TENTATIVAS_NO_PRIMARIO,
+    TENTATIVAS_NO_SECUNDARIO,
     TETO_DA_CLASSIFICACAO,
     TETO_DA_DESAMBIGUACAO,
     TETO_DA_REACAO,
     TETO_DO_INVESTIDOR,
     get_client,
+    motivo_do_provedor,
 )
 
 log = structlog.get_logger(__name__)
@@ -840,6 +846,22 @@ class LacoDeBuscaExcedido(RuntimeError):
     """
 
 
+class ProvedorIndisponivel(RuntimeError):
+    """A cadeia da chamada principal esgotou sem resposta. TEC-209, D3.
+
+    O primario, com as retentativas, e o secundario falharam por motivo de
+    disponibilidade, ou o prazo agregado do turno acabou. Tipo proprio pelo
+    argumento de `LacoDeBuscaExcedido`: o turno a trata pela espera honesta
+    com handoff, NA MESMA PASSADA, e nao pelo caminho de excecao que marca
+    FAILED e deixa o lead em silencio ate a quinta falha.
+    """
+
+
+async def _esperar(segundos: float) -> None:
+    """A espera entre tentativas. Funcao de modulo para o teste troca-la."""
+    await asyncio.sleep(segundos)
+
+
 class ClassificadorPort(Protocol):
     async def classificar(
         self, contexto: ContextoMontado, *, porta: PortaDeBusca | None = None
@@ -946,6 +968,70 @@ def _relaxamento_de(blocos: list[dict[str, Any]]) -> tuple[bool, bool, bool, boo
 
 
 class ClassificadorAnthropic:
+    async def _chamar_principal(
+        self, contexto: ContextoMontado, *, teto: float, **kwargs: Any
+    ) -> tuple[
+        str, tuple[str, Message, int, list[dict[str, Any]], bool, bool, bool, bool, list[str]]
+    ]:
+        """`_chamar` com retentativa e modelo secundario, sob o prazo do turno.
+
+        TEC-209, D2. So `classificar` e `qualificar_investidor` passam por
+        aqui -- as duas chamadas que produzem a resposta. As auxiliares chamam
+        `_chamar` direto, sem retentativa, pelo argumento de
+        `infra/anthropic.py::MAX_TENTATIVAS`.
+
+        A cadeia e o primario `TENTATIVAS_NO_PRIMARIO` vezes, com as esperas
+        de `ESPERAS_ENTRE_TENTATIVAS` entre elas, e o secundario depois, sem
+        espera -- trocar de modelo ja e a mudanca que a espera daria.
+
+        **O prazo e do turno, e nao desta chamada.** `contexto.prazo_da_resposta`
+        e o mesmo objeto na chamada 1 e na virada do investidor, entao a
+        segunda fatia so tem o que a primeira deixou. Cada tentativa roda
+        dentro de um `asyncio.timeout` com o que resta: o `teto` vale POR
+        REQUISICAO, e uma fatia com busca faz duas.
+
+        So retenta `ERROS_RETENTAVEIS`. Um 400, uma resposta fora do schema e
+        o `LacoDeBuscaExcedido` sobem na primeira vez, como sempre subiram.
+
+        Devolve o modelo que RESPONDEU junto com o resultado de `_chamar`:
+        com o secundario, registrar o primario poria na telemetria o preco do
+        modelo errado.
+        """
+        settings = get_settings()
+        cadeia: list[tuple[str, float]] = [(settings.modelo_agente, 0.0)]
+        cadeia += [
+            (settings.modelo_agente, espera)
+            for espera in ESPERAS_ENTRE_TENTATIVAS[: TENTATIVAS_NO_PRIMARIO - 1]
+        ]
+        cadeia += [(settings.modelo_agente_secundario, 0.0)] * TENTATIVAS_NO_SECUNDARIO
+
+        prazo = contexto.prazo_da_resposta
+        ultimo: BaseException | None = None
+        for tentativa, (modelo, espera) in enumerate(cadeia, start=1):
+            if espera and prazo.restante() > 0:
+                await _esperar(min(espera, prazo.restante()))
+            restante = prazo.restante()
+            if restante <= 0:
+                break
+            try:
+                async with asyncio.timeout(restante):
+                    return modelo, await self._chamar(
+                        contexto, modelo=modelo, timeout=min(teto, restante), **kwargs
+                    )
+            except ERROS_RETENTAVEIS as erro:
+                ultimo = erro
+                log.warning(
+                    "classificador.tentativa_falhou",
+                    modelo=modelo,
+                    tentativa=tentativa,
+                    reason=type(erro).__name__,
+                    motivo=motivo_do_provedor(erro),
+                    restante_s=round(prazo.restante(), 1),
+                )
+        raise ProvedorIndisponivel(
+            f"a chamada principal esgotou {len(cadeia)} tentativas ou o prazo do turno"
+        ) from ultimo
+
     async def _chamar(
         self,
         contexto: ContextoMontado,
@@ -1126,24 +1212,26 @@ class ClassificadorAnthropic:
     async def classificar(
         self, contexto: ContextoMontado, *, porta: PortaDeBusca | None = None
     ) -> RespostaDoAgente:
-        settings = get_settings()
         # refusal e max_tokens sao os dois outros jeitos documentados de sair
         # de um json_schema estrito, alem de end_turn -- e nenhum dos dois
         # produz um JSON que valha a pena tentar decodificar. A recusa de
         # `_chamar` para qualquer stop_reason != end_turn cobre os dois.
         (
-            texto,
-            resposta,
-            latency_ms,
-            candidatos,
-            relaxou_e_achou,
-            relaxou_sem_resultado,
-            relaxou_preco,
-            relaxou_bairro,
-            criterios,
-        ) = await self._chamar(
+            modelo_que_respondeu,
+            (
+                texto,
+                resposta,
+                latency_ms,
+                candidatos,
+                relaxou_e_achou,
+                relaxou_sem_resultado,
+                relaxou_preco,
+                relaxou_bairro,
+                criterios,
+            ),
+        ) = await self._chamar_principal(
             contexto,
-            modelo=settings.modelo_agente,
+            teto=TETO_DA_CLASSIFICACAO,
             max_tokens=MAX_TOKENS_DA_RESPOSTA,
             # TEC-198, D6: o nome e o tom do retrato que `montar_contexto` leu
             # para este turno. TEC-199: sobre o modelo VIGENTE do mesmo
@@ -1155,7 +1243,6 @@ class ClassificadorAnthropic:
                 tom=contexto.configuracao.tom,
             ),
             mensagem_se_vazia="resposta veio vazia",
-            timeout=TETO_DA_CLASSIFICACAO,
             output_config={"format": {"type": "json_schema", "schema": _SCHEMA_COMPILADO}},
             # `tools` so entra quando ha porta injetada: sem ela, `_chamar` nao
             # tem como executar o `tool_use` e o teto da D4 derrubaria o turno
@@ -1176,7 +1263,7 @@ class ClassificadorAnthropic:
                 # envelope. As razoes finas das duas guardas estao la.
                 confianca=_confianca_de(dados["confianca"]),
                 resposta=dados["resposta"].strip(),
-                modelo=settings.modelo_agente,
+                modelo=modelo_que_respondeu,
                 tokens_in=resposta.usage.input_tokens,
                 tokens_out=resposta.usage.output_tokens,
                 latency_ms=latency_ms,
@@ -1274,20 +1361,22 @@ class ClassificadorAnthropic:
         chama so esta. E por isso que a E-01 da RN-09.4 -- o pior caso ja
         estoura o `job_timeout` de 240 s -- nao vira problema novo aqui.
         """
-        settings = get_settings()
         (
-            texto,
-            resposta,
-            latency_ms,
-            candidatos,
-            relaxou_e_achou,
-            relaxou_sem_resultado,
-            relaxou_preco,
-            relaxou_bairro,
-            criterios,
-        ) = await self._chamar(
+            modelo_que_respondeu,
+            (
+                texto,
+                resposta,
+                latency_ms,
+                candidatos,
+                relaxou_e_achou,
+                relaxou_sem_resultado,
+                relaxou_preco,
+                relaxou_bairro,
+                criterios,
+            ),
+        ) = await self._chamar_principal(
             contexto,
-            modelo=settings.modelo_agente,
+            teto=TETO_DO_INVESTIDOR,
             max_tokens=MAX_TOKENS_DO_INVESTIDOR,
             # TEC-199: o modelo vigente do investidor, com o nome e o tom da
             # configuracao -- os marcadores sao obrigatorios nos dois agentes.
@@ -1297,7 +1386,6 @@ class ClassificadorAnthropic:
                 tom=contexto.configuracao.tom,
             ),
             mensagem_se_vazia="resposta do investidor veio vazia",
-            timeout=TETO_DO_INVESTIDOR,
             output_config={
                 "format": {"type": "json_schema", "schema": _SCHEMA_DO_INVESTIDOR_COMPILADO}
             },
@@ -1315,7 +1403,7 @@ class ClassificadorAnthropic:
                 intencao=intencao,
                 confianca=_confianca_de(dados["confianca"]),
                 resposta=dados["resposta"].strip(),
-                modelo=settings.modelo_agente,
+                modelo=modelo_que_respondeu,
                 tokens_in=resposta.usage.input_tokens,
                 tokens_out=resposta.usage.output_tokens,
                 latency_ms=latency_ms,

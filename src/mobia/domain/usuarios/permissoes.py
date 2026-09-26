@@ -57,6 +57,11 @@ class Permissao(StrEnum):
     # construcao, e nenhum outro papel a tem. Escrita: muda o que o agente diz
     # e como pontua todo lead, e por isso esta em `DE_ESCRITA`.
     CONFIGURAR_AGENTE = "CONFIGURAR_AGENTE"
+    # TEC-209, D5. Ver a dead-letter queue de mensagens e devolver uma delas
+    # ao pipeline. Operacao de plataforma, e nao de atendimento: por isso so
+    # do ADMIN, por construcao, como as duas de cima. Escrita -- reprocessar
+    # roda o turno de novo, com chamadas pagas e resposta ao lead.
+    OPERAR_FILA = "OPERAR_FILA"
 
 
 # As permissoes que MUDAM estado. Existe para que o terceiro cenario do
@@ -73,6 +78,7 @@ DE_ESCRITA = frozenset(
         Permissao.GERIR_CORRETORES,
         Permissao.ATENDER_LEAD,
         Permissao.CONFIGURAR_AGENTE,
+        Permissao.OPERAR_FILA,
     }
 )
 

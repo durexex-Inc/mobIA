@@ -5,11 +5,11 @@ resposta de texto (`reply`, `reply_2`), mais os dois que nao tem outro lar
 que `port.py` possa importar: o do follow-up (TEC-184) e o da fala do corretor
 (TEC-194), que a guarda de atendimento humano precisa reconhecer. `KINDS_DAS_FICHAS`,
 `KIND_DO_CRITERIO_AMPLIADO` e `KIND_DO_FILTRO_AJUSTADO` moram em
-`domain/agente/turno.py`; `KIND_DA_CONFIRMACAO_DE_OPTOUT`,
-`KIND_DA_JANELA_HUMANA` e `KIND_DO_AVISO_DE_ERRO` moram cada um no modulo do
-proprio comportamento. Este modulo existe pelo mesmo padrao que aqueles tres
-ja seguem: o kind vive no modulo que possui o comportamento, e quem precisa
-dele importa de la.
+`domain/agente/turno.py`, e `KIND_DO_AVISO_DE_ERRO` tambem desde a TEC-209,
+que o turno passou a usa-lo; `KIND_DA_CONFIRMACAO_DE_OPTOUT` e
+`KIND_DA_JANELA_HUMANA` moram cada um no modulo do proprio comportamento.
+Este modulo existe pelo mesmo padrao que aqueles ja seguem: o kind vive no
+modulo que possui o comportamento, e quem precisa dele importa de la.
 
 `reply`/`reply_2` nao tem um modulo de comportamento proprio para morar --
 sao produzidos dentro de `executar_turno`, em `domain/agente/turno.py` -- e

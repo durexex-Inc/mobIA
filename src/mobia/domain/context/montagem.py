@@ -1,5 +1,6 @@
 import asyncio
 import math
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -39,7 +40,7 @@ from mobia.domain.messages.enums import MessageContentType, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.prompts.modelo import AgenteDoPrompt
 from mobia.domain.prompts.repositorio import modelos_vigentes, padroes
-from mobia.infra.anthropic import TETO_DO_RESUMO, motivo_do_provedor
+from mobia.infra.anthropic import PRAZO_DA_RESPOSTA_SEGUNDOS, TETO_DO_RESUMO, motivo_do_provedor
 from mobia.infra.crypto import DecryptionError, aad_de, decrypt, marca_do_aad
 
 log = structlog.get_logger(__name__)
@@ -61,6 +62,30 @@ class ContextoIrreducivel(RuntimeError):
     fisico -- entao levantar aqui e estritamente melhor que devolver algo que
     este modulo promete, pelo proprio teto, que nao pode existir.
     """
+
+
+@dataclass
+class PrazoDaResposta:
+    """O prazo unico das chamadas principais de UM turno. TEC-209, D2.
+
+    Mora no `ContextoMontado` porque ele e um por turno e e o MESMO objeto nas
+    duas fatias principais -- a chamada 1 e a virada do investidor --, que e
+    exatamente o alcance que o prazo precisa ter. Mutavel dentro de um
+    contexto congelado de proposito: o relogio e o unico estado do turno que
+    anda sozinho.
+
+    Comeca a contar na primeira consulta, e nao na montagem: o prazo e das
+    chamadas principais, e a montagem tem o dela
+    (`contexto_deadline_de_montagem_segundos`).
+    """
+
+    segundos: float = PRAZO_DA_RESPOSTA_SEGUNDOS
+    _fim: float | None = None
+
+    def restante(self) -> float:
+        if self._fim is None:
+            self._fim = time.monotonic() + self.segundos
+        return max(0.0, self._fim - time.monotonic())
 
 
 @dataclass(frozen=True, repr=False)
@@ -90,6 +115,8 @@ class ContextoMontado:
     # prompt de uma versao e meio de outra. O classificador o renderiza com o
     # nome e o tom de `configuracao`. Default nos padroes do codigo.
     prompts: dict[AgenteDoPrompt, str] = field(default_factory=padroes)
+    # TEC-209, D2. Um prazo novo por contexto, e portanto por turno.
+    prazo_da_resposta: PrazoDaResposta = field(default_factory=PrazoDaResposta)
 
     def __repr__(self) -> str:
         """Elide o conteudo do lead -- `repr=False` no dataclass e de proposito.

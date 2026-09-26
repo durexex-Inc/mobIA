@@ -147,6 +147,14 @@ class Settings(BaseSettings):
     # manual, por `workflow_dispatch` ou `pytest evals`.
     modelo_agente: str = "claude-sonnet-5"
 
+    # TEC-209, D1. O modelo que assume a chamada principal quando o primario
+    # esgota as tentativas. Outro modelo Claude, e nao outro provedor: aceita o
+    # MESMO schema estrito, as mesmas ferramentas e o mesmo prompt, e por isso
+    # nao pede adaptador. Cobre throttling e sobrecarga de um modelo; a
+    # Anthropic inteira fora derruba os dois juntos. O mesmo da moderacao, que
+    # ja e o modelo rapido que esta conta tem preco cadastrado.
+    modelo_agente_secundario: str = "claude-haiku-4-5-20251001"
+
     # Separado do `modelo_agente` de proposito, e por dois motivos. Moderar e
     # classificacao binaria sobre texto curto: nao precisa do modelo que
     # escreve a resposta, e o teto de 5s do cliente da moderacao (ver

@@ -240,7 +240,9 @@ async def test_teto_e_consumido_por_falha_de_processamento_e_continua_limitando(
 
     await session.refresh(linha)
     assert linha.attempts == teto
-    assert linha.status == MessageStatus.FAILED
+    # ESGOTADA desde a TEC-209 (D5): a falha que esgota move a linha para a
+    # dead-letter queue, e nao a deixa FAILED.
+    assert linha.status == MessageStatus.ESGOTADA
 
     # Sem o flush, o 0 abaixo poderia vir do dedup do job ainda em voo
     # (_job_id `msg:<id>`) em vez do teto -- e o teto e o que se quer provar.

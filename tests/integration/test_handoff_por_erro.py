@@ -1,4 +1,9 @@
-"""O handoff por erro irrecuperavel, e o aviso que vai com ele."""
+"""O handoff por erro irrecuperavel, e o aviso que vai com ele.
+
+As entradas sao semeadas QUEUED, e nao no PROCESSING de `semear_entrada`:
+estes testes chamam `process_message`, e desde a TEC-209 (D4) reivindicar
+uma linha em PROCESSING conta a tentativa de um worker morto.
+"""
 
 import asyncio
 from typing import Any
@@ -12,6 +17,7 @@ from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.models import Message
+from mobia.domain.messages.status import MessageStatus
 from mobia.domain.outbound.port import EnvioRecusado
 from mobia.domain.outbound.presenca import IndicadorNoop
 from mobia.infra.db import get_sessionmaker
@@ -65,7 +71,7 @@ async def test_falha_antes_do_teto_nao_cria_handoff(
     session, semear_entrada, processar_com_turno_que_falha
 ) -> None:
     """Retentar ainda pode resolver: encaminhar aqui seria alarme falso."""
-    linha = await semear_entrada(session)
+    linha = await semear_entrada(session, status=MessageStatus.QUEUED)
     with pytest.raises(RuntimeError):
         await processar_com_turno_que_falha(linha)
     assert await _total(session) == 0
@@ -74,7 +80,7 @@ async def test_falha_antes_do_teto_nao_cria_handoff(
 async def test_falha_que_atinge_o_teto_cria_handoff(
     session, semear_entrada, processar_com_turno_que_falha, settings
 ) -> None:
-    linha = await semear_entrada(session)
+    linha = await semear_entrada(session, status=MessageStatus.QUEUED)
     await session.execute(
         update(Message)
         .where(Message.id == linha.id)
@@ -107,7 +113,7 @@ async def test_aviso_ao_lead_tem_as_tres_chaves_do_outbound(
     quando o teste compara so o texto entregue (`entregues`, `list[str]`);
     e por isso a asserta aqui e contra `.payloads`, que guarda o dict cru.
     """
-    linha = await semear_entrada(session)
+    linha = await semear_entrada(session, status=MessageStatus.QUEUED)
     await session.execute(
         update(Message)
         .where(Message.id == linha.id)
@@ -129,7 +135,7 @@ async def test_aviso_quebrado_nao_desfaz_o_handoff(
     session, semear_entrada, processar_com_turno_que_falha, settings
 ) -> None:
     """O corretor ser avisado nao pode depender de o lead ter sido avisado."""
-    linha = await semear_entrada(session)
+    linha = await semear_entrada(session, status=MessageStatus.QUEUED)
     await session.execute(
         update(Message)
         .where(Message.id == linha.id)
@@ -159,7 +165,7 @@ async def test_cancelamento_nao_cria_handoff(
     entao aqui a linha fica FAILED permanente, sem handoff e sem ser
     revarrida. Lacuna conhecida, nao corrigida aqui.
     """
-    linha = await semear_entrada(session)
+    linha = await semear_entrada(session, status=MessageStatus.QUEUED)
     await session.execute(
         update(Message)
         .where(Message.id == linha.id)

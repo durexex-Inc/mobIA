@@ -76,7 +76,9 @@ async def test_cancelamento_deixa_a_mensagem_em_failed(session) -> None:
     nada marca a linha e `attempts` nunca sobe -- o turno some do estado da
     mensagem sem deixar rastro.
     """
-    linha = await _entrada_do_lead(session)
+    # QUEUED: desde a TEC-209 (D4), reivindicar em PROCESSING ja conta uma
+    # tentativa -- a do worker morto --, e o 1 abaixo passaria a ser 2.
+    linha = await _entrada_do_lead(session, status=MessageStatus.QUEUED)
     travado = ClassificadorQueTrava()
 
     tarefa = asyncio.create_task(

@@ -204,7 +204,7 @@ class Message(Base):
         # que nao viola CHECK) e esta aqui para dizer que e deliberado.
         CheckConstraint(
             "status IS NULL OR status IN "
-            "('RECEIVED', 'QUEUED', 'PROCESSING', 'PROCESSED', 'FAILED')",
+            "('RECEIVED', 'QUEUED', 'PROCESSING', 'PROCESSED', 'FAILED', 'ESGOTADA')",
             name="ck_messages_status",
         ),
     )
