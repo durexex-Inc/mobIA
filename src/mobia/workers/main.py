@@ -321,10 +321,35 @@ class WorkerSettings:
         # (um `int`) nao serve para nada depois que o log saiu. Entra em
         # `cron_jobs` tambem -- e o relogio que dispara este job.
         func(sweep_retencao_auditoria, keep_result=0),
-        # TEC-207. `keep_result=0` pela mesma razao do `sweep_sla`: o resultado
-        # (um `int`) nao serve para nada depois que o log saiu. Entra em
-        # `cron_jobs` tambem -- e o relogio que dispara este job.
-        func(sweep_retencao_de_leads, keep_result=0),
+        # TEC-207, D5. `keep_result=0` pela mesma razao do `sweep_sla`: o
+        # resultado (um `int`) nao serve para nada depois que o log saiu.
+        # Entra em `cron_jobs` tambem -- e o relogio que dispara este job.
+        #
+        # **`timeout=900` (15 min), MAIOR que o `job_timeout=240` global** (ver
+        # abaixo, no fim da classe) -- e o unico job deste worker com teto
+        # proprio. As tres funcoes que ele chama sao limitadas por passagem
+        # (`max_lotes` em duas, `lote` na terceira -- ver o docstring do job),
+        # e a conta do pior caso com os defaults de hoje e:
+        #
+        #   ~20s  cumprir_eliminacoes_vencidas: ate 100 solicitacoes, cada
+        #          uma um `eliminacao.anonimizar` inteiro
+        #   ~40s  anonimizar_leads_vencidos: ate 200 leads (2 lotes de 100),
+        #          mesmo custo por unidade que acima
+        #   ~40s  esvaziar_transcricoes_vencidas: ate 10 mil mensagens (20
+        #          lotes de 500), mas em UPDATE/DELETE em massa, bem mais
+        #          barato por linha
+        #   ----
+        #   ~100s contra 900 -- quase 10x de folga
+        #
+        # A folga grande e deliberada, e nao arredondamento: os numeros acima
+        # supoem banco e armazem saudaveis, e o proprio CLAUDE.md deste repo
+        # documenta que o Postgres local degrada sob carga (secao "Quando o
+        # `-n 8` derruba o Postgres") e que blob em S3 paga latencia de rede
+        # que um disco local nao paga. 900s deixa margem para os dois sem
+        # perder a funcao do teto: um job genuinamente travado (conexao presa,
+        # deadlock) ainda estoura e vira `CancelledError` em vez de segurar o
+        # worker para sempre.
+        func(sweep_retencao_de_leads, keep_result=0, timeout=900),
         # TEC-180. `keep_result=0` pela razao do `gerar_resumo`: o `_job_id` e
         # fixo por handoff (`crm:<id>`), e uma chave de resultado sobrevivente
         # bloquearia em silencio o reenqueue que a varredura faz a cada rodada

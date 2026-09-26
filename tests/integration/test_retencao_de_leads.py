@@ -11,7 +11,8 @@ provaria nada sobre o corte real.
 from datetime import UTC, datetime
 from typing import Any
 
-from conftest import _handoff_aceito, _lead
+import pytest
+from conftest import _falar, _handoff_aceito, _lead
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -20,6 +21,8 @@ from mobia.domain.context.models import aad_do_resumo
 from mobia.domain.identidade import indice
 from mobia.domain.midia.armazem import ArmazemLocal
 from mobia.domain.midia.politica import chave_do_objeto
+from mobia.domain.titular import eliminacao
+from mobia.domain.titular import retencao as retencao_mod
 from mobia.domain.titular.repositorio import registrar_solicitacao
 from mobia.domain.titular.retencao import (
     anonimizar_leads_vencidos,
@@ -276,5 +279,198 @@ async def test_sweep_rodado_duas_vezes_a_segunda_nao_muda_nada(
     primeira = await sweep_retencao_de_leads(ctx)
     assert primeira > 0
 
+    async with session_factory() as sessao:
+        solicitacoes_antes = sorted(
+            (
+                await sessao.execute(
+                    text("SELECT id, tipo, status, origem FROM solicitacoes_de_titular")
+                )
+            ).all()
+        )
+
     segunda = await sweep_retencao_de_leads(ctx)
     assert segunda == 0, "nada sobrou para a segunda passagem cumprir"
+
+    async with session_factory() as sessao:
+        solicitacoes_depois = sorted(
+            (
+                await sessao.execute(
+                    text("SELECT id, tipo, status, origem FROM solicitacoes_de_titular")
+                )
+            ).all()
+        )
+    assert solicitacoes_depois == solicitacoes_antes, "nenhuma linha nova, nenhum status mudou"
+
+
+async def test_lead_que_falha_nao_impede_os_outros_e_conteudo_esvazia_mesmo_assim(
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """IMPORTANT 1 da revisao: um lead que falha nao pode travar os outros
+    nem impedir que a etapa seguinte (esvaziar transcricao) rode."""
+    chave_ruim = await _com_identidade(session, telefone="5548999990020")
+    chave_boa = await _com_identidade(session, telefone="5548999990021")
+    await _envelhecer(session, conversa=chave_ruim, meses=25)
+    await _envelhecer(session, conversa=chave_boa, meses=25)
+
+    original = eliminacao.anonimizar
+
+    async def _falha_para_a_ruim(
+        session_factory: async_sessionmaker[AsyncSession],
+        armazem: ArmazemLocal,
+        *,
+        solicitacao_id: Any,
+    ) -> None:
+        async with session_factory() as sessao:
+            conversa = await sessao.scalar(
+                text("SELECT conversation_key FROM solicitacoes_de_titular WHERE id = :id"),
+                {"id": solicitacao_id},
+            )
+        if conversa == chave_ruim:
+            raise RuntimeError("falha simulada")
+        await original(session_factory, armazem, solicitacao_id=solicitacao_id)
+
+    monkeypatch.setattr(eliminacao, "anonimizar", _falha_para_a_ruim)
+
+    contagem = await anonimizar_leads_vencidos(session_factory, ArmazemLocal(tmp_path))
+
+    assert contagem == 1, "a ruim falhou, so a boa conta"
+    async with session_factory() as sessao:
+        assert (
+            await sessao.scalar(
+                text("SELECT count(*) FROM identidades_de_lead WHERE conversation_key = :k"),
+                {"k": chave_boa},
+            )
+        ) == 0
+        assert (
+            await sessao.scalar(
+                text("SELECT count(*) FROM identidades_de_lead WHERE conversation_key = :k"),
+                {"k": chave_ruim},
+            )
+        ) == 1, "a que falhou continua intacta, nao meio-anonimizada"
+
+    # A etapa seguinte do sweep nao depende da anonimizacao ter dado certo: o
+    # conteudo esvazia de qualquer jeito, porque 25 meses ja passou dos 12.
+    await esvaziar_transcricoes_vencidas(session_factory, ArmazemLocal(tmp_path))
+    async with session_factory() as sessao:
+        linhas = (
+            await sessao.execute(
+                text("SELECT text_body FROM messages WHERE conversation_key = :k"),
+                {"k": chave_ruim},
+            )
+        ).all()
+    assert all(linha[0] is None for linha in linhas)
+
+
+async def test_handoff_concluido_tambem_protege_da_anonimizacao(
+    session: AsyncSession, session_factory: async_sessionmaker[AsyncSession], tmp_path: Any
+) -> None:
+    chave = await _com_identidade(session, telefone="5548999990022")
+    await _handoff_aceito(session, conversa=chave, em=datetime.now(UTC), status="CONCLUIDO")
+    await _envelhecer(session, conversa=chave, meses=25)
+
+    contagem = await anonimizar_leads_vencidos(session_factory, ArmazemLocal(tmp_path))
+
+    assert contagem == 0
+    async with session_factory() as sessao:
+        assert (
+            await sessao.scalar(
+                text("SELECT count(*) FROM identidades_de_lead WHERE conversation_key = :k"),
+                {"k": chave},
+            )
+        ) == 1
+
+
+@pytest.mark.parametrize("status", ["PENDENTE", "ESCALADO"])
+async def test_handoff_pendente_ou_escalado_nao_protege_e_lead_e_anonimizado(
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Any,
+    status: str,
+) -> None:
+    """So ACEITO e CONCLUIDO protegem (D5) -- os dois estados de handoff que
+    ainda esperam alguem (PENDENTE, ESCALADO) nao impedem a anonimizacao."""
+    chave = await _com_identidade(session, telefone="5548999990030")
+    await _handoff_aceito(
+        session, conversa=chave, em=datetime.now(UTC), status=status, ja_aceito=False
+    )
+    await _envelhecer(session, conversa=chave, meses=25)
+
+    contagem = await anonimizar_leads_vencidos(session_factory, ArmazemLocal(tmp_path))
+
+    assert contagem == 1
+    async with session_factory() as sessao:
+        assert (
+            await sessao.scalar(
+                text("SELECT count(*) FROM identidades_de_lead WHERE conversation_key = :k"),
+                {"k": chave},
+            )
+        ) == 0
+
+
+async def test_lead_ainda_vencido_fica_falso_apos_handoff_aceito(session: AsyncSession) -> None:
+    chave = await _com_identidade(session, telefone="5548999990031")
+    await _envelhecer(session, conversa=chave, meses=25)
+    assert (
+        await retencao_mod._lead_ainda_vencido(session, channel=CANAL, conversation_key=chave)
+        is True
+    )
+
+    await _handoff_aceito(session, conversa=chave, em=datetime.now(UTC))
+
+    assert (
+        await retencao_mod._lead_ainda_vencido(session, channel=CANAL, conversation_key=chave)
+        is False
+    )
+
+
+async def test_lead_ainda_vencido_fica_falso_apos_nova_mensagem(session: AsyncSession) -> None:
+    chave = await _com_identidade(session, telefone="5548999990032")
+    await _envelhecer(session, conversa=chave, meses=25)
+    assert (
+        await retencao_mod._lead_ainda_vencido(session, channel=CANAL, conversation_key=chave)
+        is True
+    )
+
+    await _falar(session, conversa=chave, em=datetime.now(UTC))
+    await session.commit()
+
+    assert (
+        await retencao_mod._lead_ainda_vencido(session, channel=CANAL, conversation_key=chave)
+        is False
+    )
+
+
+async def test_lead_que_deixou_de_estar_vencido_e_pulado(
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MINOR 3 da revisao: o lote e um snapshot, e o par pode ter deixado de
+    valer a condicao entre a selecao e o processamento -- simulado aqui
+    forcando `_lead_ainda_vencido` a negar, como uma mudanca concorrente
+    faria."""
+    chave = await _com_identidade(session, telefone="5548999990033")
+    await _envelhecer(session, conversa=chave, meses=25)
+
+    async def _nunca_mais_vencido(
+        session: AsyncSession, *, channel: str, conversation_key: str
+    ) -> bool:
+        return False
+
+    monkeypatch.setattr(retencao_mod, "_lead_ainda_vencido", _nunca_mais_vencido)
+
+    contagem = await anonimizar_leads_vencidos(session_factory, ArmazemLocal(tmp_path))
+
+    assert contagem == 0
+    async with session_factory() as sessao:
+        assert (
+            await sessao.scalar(
+                text("SELECT count(*) FROM identidades_de_lead WHERE conversation_key = :k"),
+                {"k": chave},
+            )
+        ) == 1
+        assert await sessao.scalar(text("SELECT count(*) FROM solicitacoes_de_titular")) == 0
