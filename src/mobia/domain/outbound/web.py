@@ -25,7 +25,7 @@ canais, que nao e escopo da TEC-124.
 **`EnvioForaDaJanela` tambem nunca sai daqui**: o canal web nao tem janela, e
 o docstring de `OutboundPort` ja registrava isso antes desta card existir.
 
-**Kind que nao seja texto nem imagem nao e publicado.** Nenhum caminho manda
+**Kind que nao seja texto, imagem ou ficha de imovel nao e publicado.** Nenhum caminho manda
 template para o web -- as varreduras que os enviam filtram por
 `CANAIS_COM_REENGAJAMENTO` --, entao chegar um aqui e defeito de roteamento
 nosso. Fechar o turno em falha puniria o lead por isso; o `warning` e o que
