@@ -11,7 +11,7 @@ from conftest import CANAL, CONVERSA, ContadorFake, ResumidorFake, semear
 
 from mobia.app.config import get_settings
 from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE
-from mobia.domain.agente.delimitacao import CLAUSULA_DO_AGENTE
+from mobia.domain.agente.delimitacao import CLAUSULA_DO_AGENTE, delimitar
 from mobia.domain.context.janela import Marca, literais_apos
 from mobia.domain.context.models import ConversationSummary, LeadQualification, aad_do_resumo
 from mobia.domain.context.montagem import (
@@ -253,7 +253,7 @@ def test_valor_vence_marca() -> None:
     )
     texto = _texto_do_estado(estado)
 
-    assert "regiao: pinheiros" in texto
+    assert f"regiao: {delimitar('pinheiros')}" in texto
     assert "perguntado" not in texto
 
 
@@ -351,7 +351,7 @@ def test_valor_vence_a_marca_da_recusa_tambem() -> None:
     )
     texto = _texto_do_estado(estado)
 
-    assert "regiao: pinheiros" in texto
+    assert f"regiao: {delimitar('pinheiros')}" in texto
     assert "perguntado" not in texto
 
 

@@ -11,7 +11,9 @@ abre outra, e o que ele escreveu continua legivel para o modelo. `&lt;` foi
 descartado no desenho: custa mais tokens e o modelo o le mais literalmente.
 
 **So o texto escrito pelo lead vai em `<lead>`.** Mensagem do agente e do
-corretor, estado de qualificacao e catalogo sao dado do sistema e ficam fora.
+corretor, estado de qualificacao e catalogo sao dado do sistema e ficam fora
+-- menos a regiao do estado, que e texto livre tirado da fala do lead e volta
+em todo turno: ela vai em `<lead>` como a mensagem de onde saiu.
 O resumo da conversa -- que um modelo escreveu depois de ler o lead -- vai em
 `<resumo>`; a resposta do agente, quando e ela o objeto julgado pela
 moderacao de saida, em `<resposta>`, porque pode citar o lead.

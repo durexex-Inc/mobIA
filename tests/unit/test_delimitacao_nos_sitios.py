@@ -55,6 +55,7 @@ from mobia.domain.agente.delimitacao import (
     delimitar,
 )
 from mobia.domain.context import montagem
+from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.resumo import INSTRUCAO_COMPRIMIR, INSTRUCAO_DOBRAR
 from mobia.domain.handoff import resumo as resumo_do_handoff
 from mobia.domain.handoff.contingencia import montar as montar_contingencia
@@ -116,6 +117,36 @@ async def test_o_turno_principal_delimita_o_lead(monkeypatch: pytest.MonkeyPatch
     # O rotulo verdadeiro aparece uma vez; o forjado ficou dentro da tag.
     assert fora_das_tags(conteudo).count("Estado de qualificacao:") == 1
     assert CLAUSULA_DO_AGENTE in kwargs["system"][0]["text"]
+
+
+async def test_o_turno_principal_delimita_a_regiao_do_estado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A regiao do estado e texto livre que veio da fala do lead, e volta em todo turno.
+
+    Os outros campos do estado sao enum, numero ou booleano -- a extracao os
+    passa por `_membro` antes de gravar --, entao sao dado do sistema e ficam
+    fora da tag.
+    """
+    cliente = _instalar_e_capturar(monkeypatch, _resposta_json())
+    estado = LeadQualification(
+        channel="whatsapp",
+        conversation_key="5511900000000",
+        regiao=REGIAO_HOSTIL,
+        tipo_imovel="apartamento",
+        quartos=2,
+    )
+    contexto = contexto_do_historico(
+        [(MessageRole.LEAD, "Moema")], sistema="sistema de teste", estado=estado
+    )
+
+    await ClassificadorAnthropic().classificar(contexto)
+
+    conteudo = cliente.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert f"regiao: {delimitar(REGIAO_HOSTIL)}" in conteudo
+    assert "tipo_imovel: apartamento" in fora_das_tags(conteudo)
+    assert "quartos: 2" in fora_das_tags(conteudo)
+    _conferir(conteudo)
 
 
 @pytest.mark.parametrize(

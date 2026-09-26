@@ -12,11 +12,13 @@ usa.
 """
 
 import logging
+import re
 from decimal import Decimal
 
 from sqlalchemy.dialects import postgresql
 
 from mobia.domain.agente.classificador import SCHEMA_DA_EXTRACAO, SCHEMA_DO_PERFIL_INVESTIDOR
+from mobia.domain.agente.delimitacao import delimitar
 from mobia.domain.agente.schemas import Extracao, Intencao
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.montagem import _texto_do_estado
@@ -26,6 +28,18 @@ from mobia.domain.context.repositorio import (
     marcar_perguntados,
     perguntas_contaveis,
 )
+
+_LINHA_DE_CAMPO = re.compile(r"^([a-z_]+): ", re.MULTILINE)
+
+
+def chaves_do_estado(texto: str) -> set[str]:
+    """As chaves que `_texto_do_estado` renderiza.
+
+    Por linha que ABRE campo, e nao por linha: desde a TEC-204 a regiao sai
+    entre `<lead>` e `</lead>`, em tres linhas, e so a primeira comeca com a
+    chave. Partir cada linha no `:` contaria a tag e o valor como chaves.
+    """
+    return set(_LINHA_DE_CAMPO.findall(texto))
 
 
 def test_marca_o_que_foi_perguntado_e_nao_esta_preenchido():
@@ -215,9 +229,10 @@ def test_quem_nunca_falou_de_investimento_nao_paga_nada():
     """As seis linhas novas custam zero a quem nao e investidor.
 
     `_texto_do_estado` so emite valor nao-`None`, e as colunas do investidor
-    sao nulas para todo lead que nunca falou de investimento -- o texto sai
-    byte-identico ao de antes da TEC-153. E o que sustenta a D2: o custo da
-    trilha nova fica com quem a usa.
+    sao nulas para todo lead que nunca falou de investimento -- nenhuma linha
+    do investidor sai. E o que sustenta a D2: o custo da trilha nova fica com
+    quem a usa. A regiao sai entre `<lead>` e `</lead>` desde a TEC-204, que
+    e mudanca dela, nao da trilha do investidor.
     """
     estado = LeadQualification(
         channel="whatsapp",
@@ -227,7 +242,9 @@ def test_quem_nunca_falou_de_investimento_nao_paga_nada():
         quartos=2,
     )
 
-    assert _texto_do_estado(estado) == "intencao: COMPRA\nregiao: pinheiros\nquartos: 2"
+    assert _texto_do_estado(estado) == (
+        f"intencao: COMPRA\nregiao: {delimitar('pinheiros')}\nquartos: 2"
+    )
 
 
 def test_toda_chave_do_estado_tem_marca_alcancavel():
@@ -280,7 +297,7 @@ def test_toda_chave_do_estado_tem_marca_alcancavel():
         tolerancia_reforma="LEVE",
         ja_investe_em_imoveis=True,
     )
-    chaves = {linha.split(":", 1)[0] for linha in _texto_do_estado(cheio).splitlines()}
+    chaves = chaves_do_estado(_texto_do_estado(cheio))
     alcancaveis = {
         marca
         for nome in SCHEMA_DA_EXTRACAO["properties"]

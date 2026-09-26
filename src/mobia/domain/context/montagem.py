@@ -10,7 +10,7 @@ from anthropic import APITimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
-from mobia.domain.agente.delimitacao import TAG_RESUMO, delimitar
+from mobia.domain.agente.delimitacao import TAG_LEAD, TAG_RESUMO, delimitar
 from mobia.domain.context.janela import (
     Marca,
     deve_regenerar,
@@ -236,6 +236,11 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
     de proposito (ver `_nome_contavel`, em `repositorio.py`) --, entao o que
     esta funcao leva ao prompt deles e o VALOR, que e o que impede a
     repergunta. Ver o comentario no corpo.
+
+    TEC-204: o estado e dado do sistema, **menos a regiao**, que e texto
+    livre tirado da fala do lead e sai entre `<lead>` e `</lead>` como
+    qualquer mensagem dele. As tags entram na contagem de `_estimar` junto
+    com o resto deste texto -- nao sao parcela do orcamento.
     """
     if estado is None:
         return ""
@@ -244,7 +249,12 @@ def _texto_do_estado(estado: LeadQualification | None) -> str:
         "intencao": estado.intencao,
         "faixa_preco_min": _em_reais(estado.faixa_preco_min_centavos),
         "faixa_preco_max": _em_reais(estado.faixa_preco_max_centavos),
-        "regiao": estado.regiao,
+        # TEC-204: a regiao e o unico campo do estado que e texto livre -- a
+        # extracao guarda o que o lead disse (`_regiao`, em `classificador.py`)
+        # -- e volta em todo turno seguinte. Sem a tag, um `</lead>` ou um
+        # rotulo forjado dentro dela chegaria ao modelo como texto do sistema.
+        # Os outros campos sao enum, numero ou booleano.
+        "regiao": None if estado.regiao is None else delimitar(estado.regiao, tag=TAG_LEAD),
         "tipo_imovel": estado.tipo_imovel,
         "quartos": estado.quartos,
         "vagas": estado.vagas,

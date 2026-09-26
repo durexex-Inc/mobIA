@@ -8,6 +8,7 @@ intencao boa.
 """
 
 import pytest
+from test_estado_marcado import chaves_do_estado  # type: ignore[import-not-found]
 
 from mobia.domain.agente.schemas import Extracao, Intencao, Urgencia
 from mobia.domain.context.models import LeadQualification
@@ -145,12 +146,10 @@ def test_recusa_do_orcamento_vale_sob_qualquer_nome_que_o_repo_use():
     """
     colunas = set(LeadQualification.__table__.columns.keys())
     # As chaves que so existem no prompt sao exatamente `faixa_preco_min` e
-    # `faixa_preco_max`: todas as outras linhas de `_texto_do_estado` saem de
+    # `faixa_preco_max`: todas as outras chaves de `_texto_do_estado` saem de
     # uma coluna com o mesmo nome. Derivar por subtracao e o que impede este
     # teste de virar uma copia da lista que ele deveria estar conferindo.
-    so_do_prompt = {
-        linha.split(":", 1)[0] for linha in _texto_do_estado(_estado()).splitlines()
-    } - colunas
+    so_do_prompt = chaves_do_estado(_texto_do_estado(_estado())) - colunas
     assert so_do_prompt, "nenhuma chave so-do-prompt: a derivacao deixou de valer"
 
     nomes = {MARCA_DO_ORCAMENTO, *_NOME_DA_MARCA, *_NOME_DA_MARCA.values(), *so_do_prompt}
