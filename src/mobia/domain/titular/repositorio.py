@@ -92,7 +92,10 @@ async def registrar_solicitacao(
     existente = await solicitacao_aberta(
         session, channel=channel, conversation_key=conversation_key, tipo=tipo
     )
-    assert existente is not None, "uq_solicitacao_aberta garante que ha uma ABERTA aqui"
+    if existente is None:
+        raise RuntimeError(
+            f"uq_solicitacao_aberta garantia uma ABERTA para {tipo.value}, e nao achei"
+        )
     return existente.id
 
 
@@ -117,21 +120,31 @@ async def marcar_atendida(
 ) -> None:
     """Fecha a solicitacao como ATENDIDA e zera o par, num UPDATE so.
 
-    Um UPDATE so -- e nao ler o status antes -- e o que garante que o CHECK
-    `ck_solicitacoes_de_titular_par_com_status` nunca ve um estado
-    intermediario: status e par mudam juntos, na mesma linha de comando.
-    **Nao commita.**
+    **O `WHERE` leva `status = 'ABERTA'`, e nao so o id** -- sem isso a
+    chamada era um UPDATE cego que revivia uma RECUSADA (ou uma ja ATENDIDA)
+    como ATENDIDA em silencio, e um id inexistente virava no-op sem avisar
+    ninguem. Com o predicado, `RETURNING` devolve zero linhas nesses casos e
+    a funcao levanta `SolicitacaoNaoAberta` -- e o UPDATE em si continua
+    atomico: status e par mudam juntos, na mesma linha de comando, entao o
+    CHECK `ck_solicitacoes_de_titular_par_com_status` nunca ve um estado
+    intermediario. **Nao commita.**
     """
-    await session.execute(
+    resultado = await session.execute(
         update(SolicitacaoDeTitular)
-        .where(SolicitacaoDeTitular.id == solicitacao_id)
+        .where(
+            SolicitacaoDeTitular.id == solicitacao_id,
+            SolicitacaoDeTitular.status == StatusDaSolicitacao.ABERTA.value,
+        )
         .values(
             status=StatusDaSolicitacao.ATENDIDA.value,
             atendida_em=agora,
             channel=None,
             conversation_key=None,
         )
+        .returning(SolicitacaoDeTitular.id)
     )
+    if resultado.scalar_one_or_none() is None:
+        raise SolicitacaoNaoAberta(f"solicitacao {solicitacao_id} nao esta aberta")
 
 
 async def recusar(
@@ -143,16 +156,30 @@ async def recusar(
     legal) e o que a RN de titular exige registrado, e um default vazio
     tornaria a exigencia decorativa.
 
+    **`SELECT ... FOR UPDATE` antes do UPDATE, e nao um SELECT solto** -- o
+    `FOR UPDATE` trava a linha ate o fim desta transacao, entao nenhuma outra
+    chamada (por exemplo `marcar_atendida` no MESMO id) pode mudar o status
+    entre a leitura e a escrita. Sem o lock, as duas intercalavam: esta
+    funcao lia ABERTA, `marcar_atendida` committava ATENDIDA, e esta funcao
+    sobrescrevia para RECUSADA por cima -- apagando a transicao para ATENDIDA
+    e logando `TITULAR_RECUSADO` sobre um pedido que ja tinha sido atendido.
+    O UPDATE repete o mesmo predicado `status = 'ABERTA'` e confere
+    `RETURNING`: com o lock ja tomado pelo SELECT, isso nunca falha de fato
+    aqui, mas deixa a garantia explicita em vez de implicita no lock sozinho.
+
     Levanta `SolicitacaoNaoAberta` se a linha nao existe ou ja nao esta
     ABERTA -- recusar uma ja ATENDIDA ou ja RECUSADA nao e uma segunda
-    recusa, e um estado que a chamada nao pode produzir.
+    recusa, e um estado que a chamada nao pode produzir. So registra
+    `TITULAR_RECUSADO` **depois** do UPDATE ter sucesso.
     """
     if not motivo.strip():
         raise ValueError("motivo da recusa e obrigatorio")
 
     solicitacao = (
         await session.execute(
-            select(SolicitacaoDeTitular).where(SolicitacaoDeTitular.id == solicitacao_id)
+            select(SolicitacaoDeTitular)
+            .where(SolicitacaoDeTitular.id == solicitacao_id)
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if solicitacao is None or solicitacao.status != StatusDaSolicitacao.ABERTA.value:
@@ -163,20 +190,29 @@ async def recusar(
     # suma junto com o status ABERTA.
     channel = solicitacao.channel
     conversation_key = solicitacao.conversation_key
-    assert channel is not None and conversation_key is not None, (
-        "ck_solicitacoes_de_titular_par_com_status garante o par enquanto ABERTA"
-    )
+    if channel is None or conversation_key is None:
+        raise RuntimeError(
+            f"solicitacao {solicitacao_id} estava ABERTA sem o par -- "
+            "ck_solicitacoes_de_titular_par_com_status deveria ter impedido isso"
+        )
 
-    await session.execute(
+    resultado = await session.execute(
         update(SolicitacaoDeTitular)
-        .where(SolicitacaoDeTitular.id == solicitacao_id)
+        .where(
+            SolicitacaoDeTitular.id == solicitacao_id,
+            SolicitacaoDeTitular.status == StatusDaSolicitacao.ABERTA.value,
+        )
         .values(
             status=StatusDaSolicitacao.RECUSADA.value,
             motivo_da_recusa=motivo,
             channel=None,
             conversation_key=None,
         )
+        .returning(SolicitacaoDeTitular.id)
     )
+    if resultado.scalar_one_or_none() is None:
+        raise SolicitacaoNaoAberta(f"solicitacao {solicitacao_id} nao esta aberta")
+
     await registrar_evento(
         session,
         ator=ator,

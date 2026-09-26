@@ -231,6 +231,45 @@ async def test_recusar_uma_atendida_levanta_solicitacao_nao_aberta(session: Asyn
         await recusar(session, solicitacao_id, motivo="tarde demais", ator=ATOR_SISTEMA)
 
 
+async def test_marcar_atendida_de_uma_recusada_levanta_e_nao_muda_nada(
+    session: AsyncSession,
+) -> None:
+    """A corrida que a revisao achou: sem o WHERE status='ABERTA', esta
+
+    chamada reviveria uma RECUSADA como ATENDIDA em silencio -- duas
+    chamadas concorrentes (`recusar` e `marcar_atendida`) sobre o MESMO id
+    podiam terminar com a RECUSADA sobrescrita, sem que nenhuma das duas
+    soubesse da outra.
+    """
+    solicitacao_id = await registrar_solicitacao(
+        session,
+        channel=CANAL,
+        conversation_key=CONVERSA,
+        tipo=TipoDeSolicitacao.ACESSO,
+        origem=OrigemDaSolicitacao.WHATSAPP,
+        ator=ATOR_SISTEMA,
+    )
+    await session.commit()
+    await recusar(session, solicitacao_id, motivo="retencao legal", ator=ATOR_SISTEMA)
+    await session.commit()
+
+    with pytest.raises(SolicitacaoNaoAberta):
+        await marcar_atendida(session, solicitacao_id, agora=datetime.now(UTC))
+
+    linha = (
+        await session.execute(
+            select(SolicitacaoDeTitular).where(SolicitacaoDeTitular.id == solicitacao_id)
+        )
+    ).scalar_one()
+    assert linha.status == StatusDaSolicitacao.RECUSADA.value
+    assert linha.atendida_em is None
+
+
+async def test_marcar_atendida_de_um_id_inexistente_levanta(session: AsyncSession) -> None:
+    with pytest.raises(SolicitacaoNaoAberta):
+        await marcar_atendida(session, uuid.uuid4(), agora=datetime.now(UTC))
+
+
 async def test_vencidas_so_devolve_as_abertas_com_prazo_passado(session: AsyncSession) -> None:
     conversa_vencida = chave_de("whatsapp", "5548999990001")
     conversa_no_prazo = chave_de("whatsapp", "5548999990002")
