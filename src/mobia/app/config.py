@@ -118,8 +118,10 @@ class Settings(BaseSettings):
 
     # A chave do HMAC que produz `eventos_auditoria.lead_ref` (TEC-206, D4).
     # Mesma guarda de producao da chave de cifra, e pela mesma razao: chave
-    # conhecida nao produz erro nenhum, ela so deixa de proteger. E nao pode
-    # rodar sem tornar a trilha impesquisavel -- ver `auditoria/referencia.py`.
+    # conhecida nao produz erro nenhum, ela so deixa de proteger. Trocada
+    # sozinha, torna a trilha impesquisavel; roda so por
+    # `scripts/reindexar_leads.py` com `AUDITORIA_CHAVE_DO_LEAD_ANTERIOR` --
+    # ver `auditoria/referencia.py`.
     auditoria_chave_do_lead: str = CHAVE_DO_LEAD_DE_DESENVOLVIMENTO
 
     # TEC-203, D2. A chave do HMAC que o `conversation_key` guarda no lugar do
@@ -715,11 +717,17 @@ class Settings(BaseSettings):
     def em_producao(self) -> bool:
         """O unico lugar que decide o que "producao" quer dizer.
 
-        Os dois validators abaixo e a guarda de `OPENAI_API_KEY` no
-        `workers/main.py` (TEC-157) fazem a mesma pergunta. Tres copias de
-        `environment.strip().lower() in _AMBIENTES_DE_PRODUCAO` divergiriam no
-        dia em que alguem aceitasse mais um nome de ambiente em uma delas so --
-        e a divergencia apareceria como guarda que nao guarda.
+        Os validators de producao abaixo e a guarda de `OPENAI_API_KEY` no
+        `workers/main.py` (TEC-157) fazem a mesma pergunta. Uma copia de
+        `environment.strip().lower() in _AMBIENTES_DE_PRODUCAO` em cada um
+        divergiria no dia em que alguem aceitasse mais um nome de ambiente em
+        uma delas so -- e a divergencia apareceria como guarda que nao guarda.
+
+        Duas excecoes repetem a conta sobre `os.environ`, e nao sobre o campo:
+        `get_settings`, que decide antes de existir um `Settings`, e
+        `_recusar_producao_declarada_em_arquivo`, cuja pergunta e justamente se
+        o ambiente veio de `os.environ`. As duas usam o mesmo
+        `_AMBIENTES_DE_PRODUCAO`, que e o que as mantem iguais a esta.
         """
         return self.environment.strip().lower() in _AMBIENTES_DE_PRODUCAO
 
@@ -729,11 +737,17 @@ class Settings(BaseSettings):
 
         Sem isto, `ENVIRONMENT=production` escrito so no `.env` ligaria todas
         as guardas de producao -- e o `.env` teria sido lido, que e o que
-        `get_settings` existe para impedir. Fica primeiro entre os `_recusar_*`
-        de producao de proposito: e o unico que decide se o resto desta lista
-        chegou a rodar sobre segredo de arquivo, e por isso tem de reprovar
-        antes que qualquer guarda de segredo de desenvolvimento dispare por
-        outro motivo.
+        `get_settings` existe para impedir.
+
+        Fica antes das guardas de segredo de desenvolvimento de proposito, para
+        o erro nomear a causa e nao o sintoma. Com producao declarada so no
+        `.env`, os segredos quase sempre sao os de desenvolvimento -- do mesmo
+        arquivo ou dos defaults --, e uma guarda deles que disparasse primeiro
+        reprovaria por "chave default" -- e quem lesse iria trocar a chave, sem
+        saber que o arquivo inteiro nao devia ter sido lido. Os validators
+        `after` rodam na ordem em que estao definidos, e `ConfiguracaoInsegura`
+        interrompe no primeiro. `test_ambiente_de_producao_vindo_do_arquivo_reprova`
+        prende a ordem pela frase deste erro.
         """
         declarado = os.environ.get("ENVIRONMENT", "").strip().lower()
         if self.em_producao and declarado not in _AMBIENTES_DE_PRODUCAO:

@@ -32,8 +32,13 @@ def test_em_producao_o_env_nao_e_lido(em_diretorio_com_env, monkeypatch, segredo
 
 
 def test_ambiente_de_producao_vindo_do_arquivo_reprova(em_diretorio_com_env):
+    """O `match` e a frase desta guarda, e nao so `ENVIRONMENT`: toda guarda de
+    segredo de desenvolvimento tambem cita `ENVIRONMENT=production`, e com o
+    `match` largo o teste passaria qualquer que fosse a guarda a disparar
+    primeiro -- justamente a ordem que `_recusar_producao_declarada_em_arquivo`
+    afirma ter."""
     (em_diretorio_com_env / ".env").write_text("ENVIRONMENT=production\n")
-    with pytest.raises(ConfiguracaoInsegura, match="ENVIRONMENT"):
+    with pytest.raises(ConfiguracaoInsegura, match="veio de arquivo"):
         get_settings()
 
 

@@ -1,21 +1,23 @@
 # TEC-203, RNF-14. Estende as regras padrao; a allowlist e por VALOR exato,
 # nunca por arquivo: um segredo real colado no config.py continua sendo pego.
-# Cada valor abaixo e default de desenvolvimento commitado de proposito e
-# recusado em producao por um validator de `Settings`, ou e um placeholder de
-# exemplo em documentacao que nunca foi um segredo real.
+# Nenhum valor abaixo e segredo real. Sao de tres tipos: default de
+# desenvolvimento commitado de proposito e recusado em producao por um
+# validator de `Settings`; sentinela de teste do CI; e placeholder de exemplo
+# em documentacao.
 title = "mobIA"
 
 [extend]
 useDefault = true
 
 [allowlist]
-description = "defaults de desenvolvimento, recusados em producao"
+description = "defaults de desenvolvimento recusados em producao, sentinela do CI e placeholder de documentacao"
 regexTarget = "match"
 regexes = [
   # CONTENT_ENCRYPTION_KEY em .env.example (TEC-126) e citado em
   # docs/superpowers/plans/2026-08-24-tec-126-telemetria-mensagens.md.
   '''ZGV2LWtleS0zMi1ieXRlcy1mb3ItbW9iaWEtb2shISE=''',
-  # SECRET_KEY do JWT em .env.example.
+  # JWT_SEGREDO de desenvolvimento, `SEGREDO_DE_JWT_DE_DESENVOLVIMENTO` em
+  # src/mobia/app/config.py (nao esta no .env.example).
   '''dev-jwt-secret-nao-use-em-producao''',
   # Chave do HMAC da auditoria (TEC-206) em .env.example.
   '''dev-auditoria-chave-do-lead-nao-use-em-producao''',

@@ -15,8 +15,11 @@ def redis_settings() -> RedisSettings:
     redis = RedisSettings.from_dsn(settings.redis_url)
     if settings.em_producao:
         exigir_redis_com_tls(settings.redis_url)
-        # `from_dsn` liga `ssl` para rediss://; o que falta e exigir que o
-        # certificado valha para o host. O default do ARQ nao verifica.
+        # `from_dsn` liga `ssl` para rediss://, e o default do ARQ 0.28 ja exige
+        # certificado valido (`ssl_cert_reqs="required"`). O que ele nao faz e
+        # conferir que o certificado e do HOST: `ssl_check_hostname` vem False,
+        # e sem ele qualquer certificado valido de outro dominio passaria. O
+        # `ssl_cert_reqs` fica escrito para nao depender do default mudar.
         redis.ssl_cert_reqs = "required"
         redis.ssl_check_hostname = True
     return redis
