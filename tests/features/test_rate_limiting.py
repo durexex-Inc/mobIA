@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 
 from mobia.app.config import get_settings
+from mobia.domain.identidade.indice import chave_de, revelar
 from mobia.domain.limites.models import RateLimitEvent
 from mobia.infra.signature import SIGNATURE_HEADER, compute_signature
 
@@ -149,8 +150,11 @@ async def test_bloqueio_vira_evento(
     # Quando o evento e consultado
     linha = (await session.execute(select(RateLimitEvent))).scalar_one()
 
-    # Entao constam o numero, o momento e o volume que disparou o limite
-    assert linha.chave == NUMERO
+    # Entao constam o numero, o momento e o volume que disparou o limite. O
+    # numero consta pela chave do lead (TEC-203): o cru mora cifrado na
+    # identidade, e e de la que uma investigacao o revela.
+    assert linha.chave == chave_de("whatsapp", NUMERO)
+    assert await revelar(session, "whatsapp", linha.chave) == NUMERO
     assert linha.created_at is not None
     assert linha.volume == 21
     assert linha.limite == 20
