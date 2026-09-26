@@ -34,6 +34,7 @@ from mobia.domain.agente.schemas import (
     Urgencia,
     normalizar_regiao,
 )
+from mobia.domain.configuracao.vigente import Tom
 from mobia.domain.context.montagem import ContextoMontado, montar_prompt
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.infra.anthropic import (
@@ -48,10 +49,12 @@ log = structlog.get_logger(__name__)
 
 MAX_TOKENS_DA_RESPOSTA = 1500
 
-# Orcamento: SISTEMA_DO_AGENTE e uma das quatro parcelas da subcontagem que
-# test_diferenca_entre_o_contado_e_o_enviado mede, em test_config.py (as
-# outras tres: -SISTEMA de montagem.py, +schema compilado, +rotulos de
-# montar_prompt). Alongar este texto gasta reserva de contexto: cada caractere
+# Orcamento: SISTEMA_DO_AGENTE e uma das parcelas da subcontagem que
+# test_diferenca_entre_o_contado_e_o_enviado mede, em test_config.py -- as
+# outras sao -SISTEMA de montagem.py, +schema compilado, +rotulos de
+# montar_prompt, +ferramenta de busca e, desde a TEC-198, o que o nome e o tom
+# configuraveis acrescentam no pior caso (`_decomposicao` lista todas).
+# Alongar este texto gasta reserva de contexto: cada caractere
 # aqui e enviado em toda chamada e nunca contado por montar_contexto.
 #
 # **Quanto ainda cabe nao esta escrito neste comentario, de proposito**
@@ -117,29 +120,56 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # segura", ~16) foi recusado: todo corte neste prompt mexe no eval de
 # intencao, e a regra nova nao substitui nenhuma antiga. A mesma clausula vai
 # nos tres outros `system` de `_chamar`, que recebem o mesmo turno montado.
-SISTEMA_DO_AGENTE = (
-    "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
-    "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
-    "lead, extrai o que ele procura, e responde a ele.\n\n"
-    "Intencoes possiveis: COMPRA (quer comprar para morar), ALUGUEL (quer alugar), "
-    "INVESTIMENTO (compra para renda ou revenda, nao para morar), VENDER_IMOVEL "
-    "(quer vender o que tem), SUPORTE_CONTRATO (duvida sobre contrato vigente), "
-    "INDEFINIDA (ainda nao da para saber), FORA_DE_ESCOPO (nao e assunto "
-    "imobiliario).\n\n"
-    "A confianca e o quanto voce considera a classificacao segura.\n\n"
-    "Responda em portugues do Brasil, em tom de conversa. Use o resumo e o "
-    "estado de qualificacao como memoria: nao repergunte o preenchido nem o "
-    "ignorado. Nao invente informacao sobre imoveis que nao esteja no "
-    "contexto. Nao negocie valor: e com o corretor."
-    "\n\nNa extracao, preencha so o que a fala DESTE turno afirma, mesmo que "
-    "ja esteja no estado; o resto e null. "
-    'null e "nao falou disso agora", nunca "nao sei". Nao infira: '
-    "extrair o que a fala nao afirma conta erro igual a nao extrair o que ela "
-    "afirma. O imovel que o lead ja tem nao e o que ele procura. "
-    "Urgencia so com marco temporal explicito; pressa nao basta."
-    " Orcamento vago: peca confirmacao."
-    f" {CLAUSULA_DO_AGENTE}"
-)
+# TEC-198, D6. As tres frases do tom configuravel, e nada alem delas: o tom e
+# vocabulario fechado (decisao do Eduardo, 26/09/2026) para o custo em tokens
+# deste prompt nao depender do que o administrador escrever. `CORDIAL` e a
+# frase que o prompt ja tinha, e por isso o padrao nao muda texto nenhum.
+FRASE_DO_TOM: dict[Tom, str] = {
+    Tom.CORDIAL: "em tom de conversa",
+    Tom.FORMAL: "em tom formal e respeitoso",
+    Tom.DESCONTRAIDO: "em tom descontraido e proximo",
+}
+
+
+def sistema_do_agente(*, nome: str | None, tom: Tom) -> str:
+    """O prompt de sistema do agente com o nome e o tom configurados. TEC-198.
+
+    **Duas trocas, e nenhum acrescimo fora delas** (D6): o nome entra na
+    primeira frase, so quando existe, e o tom substitui "em tom de conversa".
+    Com `nome=None` e `CORDIAL` o texto e byte a byte o de antes da TEC-198 --
+    `SISTEMA_DO_AGENTE` abaixo e exatamente isso, e o teste de margem do
+    orcamento mede o pior caso das duas trocas.
+
+    O bloco `system` continua cacheavel: e identico entre chamadas enquanto a
+    configuracao nao muda, e mudar a configuracao invalida o prefixo uma vez.
+    """
+    quem = f"{nome}, o assistente virtual" if nome else "o assistente virtual"
+    return (
+        f"Voce e {quem} de uma imobiliaria brasileira, atendendo um lead "
+        "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
+        "lead, extrai o que ele procura, e responde a ele.\n\n"
+        "Intencoes possiveis: COMPRA (quer comprar para morar), ALUGUEL (quer alugar), "
+        "INVESTIMENTO (compra para renda ou revenda, nao para morar), VENDER_IMOVEL "
+        "(quer vender o que tem), SUPORTE_CONTRATO (duvida sobre contrato vigente), "
+        "INDEFINIDA (ainda nao da para saber), FORA_DE_ESCOPO (nao e assunto "
+        "imobiliario).\n\n"
+        "A confianca e o quanto voce considera a classificacao segura.\n\n"
+        f"Responda em portugues do Brasil, {FRASE_DO_TOM[tom]}. Use o resumo e o "
+        "estado de qualificacao como memoria: nao repergunte o preenchido nem o "
+        "ignorado. Nao invente informacao sobre imoveis que nao esteja no "
+        "contexto. Nao negocie valor: e com o corretor."
+        "\n\nNa extracao, preencha so o que a fala DESTE turno afirma, mesmo que "
+        "ja esteja no estado; o resto e null. "
+        'null e "nao falou disso agora", nunca "nao sei". Nao infira: '
+        "extrair o que a fala nao afirma conta erro igual a nao extrair o que ela "
+        "afirma. O imovel que o lead ja tem nao e o que ele procura. "
+        "Urgencia so com marco temporal explicito; pressa nao basta."
+        " Orcamento vago: peca confirmacao."
+        f" {CLAUSULA_DO_AGENTE}"
+    )
+
+
+SISTEMA_DO_AGENTE = sistema_do_agente(nome=None, tom=Tom.CORDIAL)
 
 MAX_TOKENS_DA_PERGUNTA = 300
 
@@ -1075,7 +1105,12 @@ class ClassificadorAnthropic:
             contexto,
             modelo=settings.modelo_agente,
             max_tokens=MAX_TOKENS_DA_RESPOSTA,
-            system=SISTEMA_DO_AGENTE,
+            # TEC-198, D6: o nome e o tom do retrato que `montar_contexto` leu
+            # para este turno. Os outros tres `system` nao falam de nome nem de
+            # tom, e nao mudam.
+            system=sistema_do_agente(
+                nome=contexto.configuracao.nome_do_assistente, tom=contexto.configuracao.tom
+            ),
             mensagem_se_vazia="resposta veio vazia",
             timeout=TETO_DA_CLASSIFICACAO,
             output_config={"format": {"type": "json_schema", "schema": _SCHEMA_COMPILADO}},

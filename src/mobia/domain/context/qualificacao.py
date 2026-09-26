@@ -23,7 +23,9 @@ CAMPO_DO_ORCAMENTO = "faixa_preco"
 # duas colunas (`_min_centavos` e `_max_centavos`) e qualquer uma delas basta.
 CAMPOS_OBRIGATORIOS: tuple[str, ...] = ("intencao", CAMPO_DO_ORCAMENTO, "regiao", "urgencia")
 
-# RN-05.5. O unico lugar em que este numero esta escrito.
+# RN-05.5. O unico lugar em que este numero esta escrito -- e, desde a TEC-198,
+# o PADRAO: o administrador o troca em `configuracoes_do_agente`, e o turno
+# passa o vigente a `excedeu_o_teto`. Sem configuracao gravada, vale este.
 TETO_DE_PERGUNTAS = 8
 
 # RN-03.4: VENDER_IMOVEL e SUPORTE_CONTRATO vao direto para handoff, e o SDR
@@ -137,7 +139,9 @@ def _preenchido(estado: LeadQualification, campo: str) -> bool:
     return getattr(estado, campo) is not None
 
 
-def excedeu_o_teto(perguntas_feitas: int, perguntas_deste_turno: int) -> bool:
+def excedeu_o_teto(
+    perguntas_feitas: int, perguntas_deste_turno: int, *, teto: int = TETO_DE_PERGUNTAS
+) -> bool:
     """O turno passaria do teto da RN-05.5 se entregasse suas perguntas.
 
     Recebe DOIS inteiros, e nao o estado nem a tupla `perguntou`: a regra e
@@ -153,10 +157,14 @@ def excedeu_o_teto(perguntas_feitas: int, perguntas_deste_turno: int) -> bool:
     Zero perguntas neste turno nunca excede, por maior que seja o contador:
     depois do teto o agente continua respondendo duvida e mostrando imovel,
     so nunca mais qualifica.
+
+    **`teto` e o vigente desde a TEC-198**, e o default e o padrao: o "8"
+    acima e o de quem nunca configurou nada. O turno passa o da configuracao
+    que `montar_contexto` leu, para o turno inteiro usar o mesmo.
     """
     if perguntas_deste_turno == 0:
         return False
-    return perguntas_feitas + perguntas_deste_turno > TETO_DE_PERGUNTAS
+    return perguntas_feitas + perguntas_deste_turno > teto
 
 
 # A tabela da D4 (RN-07.2). Nove celulas, uma por combinacao de horizonte e

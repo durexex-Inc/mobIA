@@ -170,6 +170,11 @@ PERMISSAO_ESPERADA = {
     ("PATCH", "/api/v1/leads/{lead_id}/qualificacao"): "ATENDER_LEAD",
     ("POST", "/api/v1/leads/{lead_id}/score/recalcular"): "ATENDER_LEAD",
     ("GET", "/api/v1/auditoria"): "VER_AUDITORIA",
+    # TEC-198, RN-19.5. As tres, e nao so a escrita: o historico diz quem mexeu
+    # no agente, e a vigente e o que o agente esta fazendo agora.
+    ("GET", "/api/v1/configuracao/agente"): "CONFIGURAR_AGENTE",
+    ("PATCH", "/api/v1/configuracao/agente"): "CONFIGURAR_AGENTE",
+    ("GET", "/api/v1/configuracao/agente/historico"): "CONFIGURAR_AGENTE",
     # TEC-374. `ATENDER_LEAD` mais a checagem de dono dentro do handler --
     # "so o corretor dono do agendamento, ou um gerente". A permissao sozinha
     # nao expressa a segunda metade, e e por isso que ela nao pode ser a unica

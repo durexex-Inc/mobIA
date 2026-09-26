@@ -21,6 +21,7 @@ from mobia.domain.agente.investidor import (
     RetornoEsperadoTipo,
 )
 from mobia.domain.agente.schemas import Extracao, Intencao
+from mobia.domain.configuracao.repositorio import configuracao_vigente
 from mobia.domain.context.auditoria import causas_do_recalculo
 from mobia.domain.context.models import (
     ConversationIntentAudit,
@@ -1420,6 +1421,12 @@ async def registrar_recalculo(
         # TEC-148: a recusa sai da mesma linha que o lock acabou de reler,
         # entao nao ha consulta extra e nao ha risco de ler estado velho.
         recusados=recusados,
+        # TEC-198, D3. Lidos AGORA, e nao no inicio do turno: e o que faz o
+        # primeiro cenario daquela card ("os proximos recalculos usam o novo
+        # peso") valer tambem para o recalculo manual e o do nao
+        # comparecimento, que nao tem turno. Uma consulta a mais por
+        # recalculo, numa tabela de poucas linhas.
+        pesos=(await configuracao_vigente(session)).pesos,
     )
 
     # A temperatura sai da MESMA linha travada que o score, e o `qualificado`
