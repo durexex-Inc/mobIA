@@ -54,7 +54,7 @@ async def test_fala_no_widget_com_telefone_vincula_pelo_indice(ws_cliente, sessi
     await ws.receber()
     try:
         await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "meu numero e 48 99999-0000"})
-        assert (await ws.receber())["tipo"] == "recebido"
+        assert await ws.receber() == {"tipo": "ack", "messageId": "m-1"}
     finally:
         await ws.__aexit__()
 
