@@ -11,6 +11,7 @@ versoes guarda.
 """
 
 from datetime import timedelta
+from decimal import Decimal
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -47,6 +48,7 @@ _CAMPOS = {
     "pesoEngajamento": "peso_engajamento",
     "pesoCapacidade": "peso_capacidade",
     "cadencia": "cadencia",
+    "orcamentoMensalUsd": "orcamento_mensal_usd",
 }
 _DA_TABELA = {coluna: nome for nome, coluna in _CAMPOS.items()}
 
@@ -71,6 +73,12 @@ _LIMITES: dict[str, object] = {
         "tentativasPorTemperatura": {t: len(i) for t, i in vigente.padrao().cadencia.items()},
         "horaMinima": int(vigente.INTERVALO_MINIMO_DA_CADENCIA / timedelta(hours=1)),
         "horaMaxima": int(vigente.INTERVALO_MAXIMO_DA_CADENCIA / timedelta(hours=1)),
+    },
+    # TEC-191, D3. Mensal; o painel de custo o faz proporcional ao periodo.
+    "orcamentoMensalUsd": {
+        "minimo": vigente.ORCAMENTO_MINIMO,
+        "maximo": vigente.ORCAMENTO_MAXIMO,
+        "nulavel": True,
     },
 }
 
@@ -101,6 +109,9 @@ class PedidoDeAlteracao(BaseModel):
     pesoEngajamento: int | None = None  # noqa: N815
     pesoCapacidade: int | None = None  # noqa: N815
     cadencia: dict[str, list[Annotated[int, Field(strict=True)]]] | None = None
+    # `null` LIMPA o orcamento, como o nome do assistente: os dois sao os
+    # campos da configuracao que tem "nenhum" como valor legitimo.
+    orcamentoMensalUsd: Decimal | None = None  # noqa: N815
 
 
 def _mudancas(pedido: PedidoDeAlteracao) -> dict[str, Any]:

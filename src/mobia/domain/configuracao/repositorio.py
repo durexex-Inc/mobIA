@@ -40,6 +40,7 @@ def _da_linha(linha: VersaoDaConfiguracao) -> ConfiguracaoDoAgente:
             temperatura: tuple(timedelta(hours=h) for h in horas)
             for temperatura, horas in linha.cadencia.items()
         },
+        orcamento_mensal_usd=linha.orcamento_mensal_usd,
     )
 
 
@@ -58,6 +59,7 @@ def como_plano(config: ConfiguracaoDoAgente) -> dict[str, object]:
             temperatura: [int(i / _UMA_HORA) for i in intervalos]
             for temperatura, intervalos in config.cadencia.items()
         },
+        "orcamento_mensal_usd": config.orcamento_mensal_usd,
     }
 
 

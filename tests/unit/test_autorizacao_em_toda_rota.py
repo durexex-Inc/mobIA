@@ -151,6 +151,8 @@ PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/conversas/assumir"): "ATENDER_LEAD",
     ("POST", "/api/v1/conversas/devolver"): "ATENDER_LEAD",
     ("GET", "/api/v1/metricas/funil"): "VER_FUNIL",
+    # TEC-191. So somas, e a mesma gerente do funil.
+    ("GET", "/api/v1/metricas/custo-ia"): "VER_FUNIL",
     ("GET", "/api/v1/leads"): "VER_LEADS",
     # TEC-195. **A primeira rota a exigir `VER_DADOS_COMPLETOS`**, e a unica
     # que devolve dado pessoal de lead em claro. Ate ela, a permissao era

@@ -7,6 +7,7 @@ ser verdade com a PADRAO: que ela nao muda nada do que o sistema fazia antes.
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -152,6 +153,10 @@ def test_a_cadencia_encurtada_vence_antes() -> None:
             {"peso_completude": 50, "peso_urgencia": 50, "peso_catalogo": 50},
             "a soma dos pesos",
         ),
+        # TEC-191, D3.
+        ({"orcamento_mensal_usd": Decimal("0")}, "orcamento mensal 0 fora da faixa"),
+        ({"orcamento_mensal_usd": Decimal("-5")}, "orcamento mensal -5 fora da faixa"),
+        ({"orcamento_mensal_usd": Decimal("100000.01")}, "fora da faixa 0.01..100000"),
     ],
 )
 def test_fora_da_faixa_e_recusado(mudancas: dict[str, object], trecho: str) -> None:
@@ -195,3 +200,11 @@ def test_nome_e_tom_entram_no_prompt_so_nos_dois_lugares() -> None:
         )
         == SISTEMA_DO_AGENTE
     )
+
+
+def test_orcamento_nulo_e_o_padrao_e_e_aceito() -> None:
+    """TEC-191, D3: sem orcamento nao ha alerta, e nulo e valor legitimo."""
+    assert padrao().orcamento_mensal_usd is None
+    config = validar(aplicar(padrao(), {"orcamento_mensal_usd": Decimal("100")}))
+    assert config.orcamento_mensal_usd == Decimal("100")
+    assert validar(aplicar(config, {"orcamento_mensal_usd": None})).orcamento_mensal_usd is None
