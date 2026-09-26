@@ -1,8 +1,10 @@
 """A 0058 e a rotacao: o telefone sai de toda coluna e passa a morar cifrado. TEC-203, D3.
 
-Molde de `test_migrations.py`: cada teste desce o esquema para a 0057, semeia
-em SQL cru -- o esquema e o da 0057 e os modelos ja sao os novos --, sobe para
-o head e garante o retorno ao head no fim. Cada chamada ao Alembic e um
+Molde de `test_migrations.py`: o teste que parte do telefone em claro desce o
+esquema para a 0057, semeia em SQL cru -- o esquema e o da 0057 e os modelos
+ja sao os novos --, sobe para o head e garante o retorno ao head no fim. Os
+que so exercitam a rotacao ou a descida sobre um banco ja reindexado semeiam
+direto no head, sem descer. Cada chamada ao Alembic e um
 processo novo (~2s aqui); os casos ficam separados mesmo assim porque cada um
 afirma uma propriedade diferente da reindexacao, e um teste unico esconderia
 qual delas quebrou.

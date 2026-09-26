@@ -95,7 +95,7 @@ class WebIndicador:
     ) -> None:
         # `provider_message_id` e `de` sao ignorados aqui: no web o frame nao
         # e anotacao sobre a mensagem recebida, e sim evento proprio. Quem
-        # identifica o destino e `para`, que e a sessao.
+        # identifica o destino e `para`, que e a chave da sessao (TEC-203).
         if para is None:
             log.info("web.indicador_sem_sessao")
             return
