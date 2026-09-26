@@ -22,6 +22,7 @@ from mobia.domain.messages.status import MessageStatus
 from mobia.domain.midia.models import MidiaRecebida
 from mobia.domain.midia.repositorio import linha_pendente
 from mobia.domain.optout.deteccao import pediu_optout
+from mobia.domain.titular.deteccao import pedido_de_titular
 from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 from mobia.infra.db import motivo_do_erro_de_banco
 from mobia.infra.queue import enqueue_baixar_midia, enqueue_process_message
@@ -107,15 +108,21 @@ class IngestionService:
             # TEC-128 (onda final) o pedido de humano tambem nao (RN-16.1,
             # emenda E-04: o handoff precisa nascer em ate 5s, e o debounce
             # incondicional levaria toda mensagem a esperar a janela inteira
-            # antes de qualquer handoff). `pediu_optout` e `pediu_humano` sao
-            # puras e deterministicas, sem chamada paga, e aqui o texto ainda
-            # esta em claro -- e o unico ponto do fluxo onde ele esta.
-            pediu = pediu_optout(texto) or pediu_humano(texto)
+            # antes de qualquer handoff). Desde a TEC-207 (D3) o pedido de
+            # titular tambem nao: e o terceiro pedido do lead que a rajada nao
+            # pode segurar -- o prazo legal de 15 dias corre da mensagem, e
+            # a janela so o atrasaria. As tres funcoes sao puras e
+            # deterministicas, sem chamada paga, e aqui o texto ainda esta em
+            # claro -- e o unico ponto do fluxo onde ele esta.
+            pediu = (
+                pediu_optout(texto) or pediu_humano(texto) or pedido_de_titular(texto) is not None
+            )
 
             # A cota e consumida por TODA mensagem, inclusive a que pede
-            # opt-out ou humano. Contar so as demais deixaria quem inunda o
-            # canal com "pare" fora de qualquer registro -- e a contagem aqui
-            # e o que a tabela de eventos publica. O que o opt-out fura e o
+            # opt-out, humano ou titular. Contar so as demais deixaria quem
+            # inunda o canal com "pare" fora de qualquer registro -- e a
+            # contagem aqui e o que a tabela de eventos publica. O que o
+            # opt-out fura e o
             # ATRASO, nao a contagem: um limite de volume atrasar justamente o
             # pedido de parar de receber mensagens seria o contrario do que a
             # RN-14 promete.

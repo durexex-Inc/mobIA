@@ -30,6 +30,7 @@ from mobia.domain.optout.deteccao import pediu_optout
 from mobia.domain.outbound.port import OutboundPort
 from mobia.domain.outbound.presenca import indicador_de_digitacao
 from mobia.domain.outbound.repositorio import kinds_reservados
+from mobia.domain.titular.deteccao import pedido_de_titular
 from mobia.infra.crypto import aad_de, decrypt
 
 log = structlog.get_logger(__name__)
@@ -462,9 +463,9 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # do mesmo lead pode ter chegado. Se chegou, o turno dela e que deve
         # responder -- esta e moderada (TEC-295) e fecha PROCESSED sem rodar o
         # turno, e nao ha reserva de outbound para liberar porque nenhuma foi
-        # feita. Ha tres excecoes, tratadas logo abaixo: opt-out, pedido de
-        # humano e entrega parcial pendente. Nos tres o turno roda mesmo
-        # superada.
+        # feita. Ha quatro excecoes, tratadas logo abaixo: opt-out, pedido de
+        # humano, pedido de titular (TEC-207) e entrega parcial pendente. Nas
+        # quatro o turno roda mesmo superada.
         deve_fechar_como_agrupado = False
         corpo_da_superada: str | None = None
         async with session_factory() as session:
@@ -493,27 +494,37 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 # handoff nasce -- o lead que pediu uma pessoa fica preso no
                 # robo, em silencio.
                 pedido_de_humano = bool(corpo and pediu_humano(corpo))
-                if pedido_de_optout or pedido_de_humano:
+                # Mesmo furo, mesma razao, aplicada ao pedido de titular
+                # (TEC-207, D3): sem ele, "quero apagar meus dados" seguido
+                # de "ok, obrigado" dentro da janela fecha como "agrupado",
+                # `pedido_de_titular` nunca roda sobre ele, e a solicitacao
+                # nunca nasce -- sem prazo de 15 dias correndo e sem log de
+                # erro, o pedido legal perdido em silencio.
+                pedido_do_titular = bool(corpo and pedido_de_titular(corpo) is not None)
+                if pedido_de_optout or pedido_de_humano or pedido_do_titular:
                     log.info(
                         "message.optout_fura_a_janela"
                         if pedido_de_optout
-                        else "message.pedido_de_humano_fura_a_janela",
+                        else "message.pedido_de_humano_fura_a_janela"
+                        if pedido_de_humano
+                        else "message.pedido_de_titular_fura_a_janela",
                         message_id=message_id,
                     )
-                # A terceira excecao (TEC-128, onda final, Important 2): uma
+                # A ultima excecao (TEC-128, onda final, Important 2): uma
                 # retentativa que ja apresentou fichas e nao terminou de
                 # entrega-las nao pode ser descartada so porque uma mensagem
                 # mais nova chegou durante a espera -- as fichas que faltam
                 # nunca sairiam, e a linha de `recomendacoes` delas ficaria
-                # orfa. So checa quando as duas primeiras ja liberaram o
-                # caminho comum: e a mais cara das tres (duas consultas), e as
-                # outras duas ja decidem a maioria dos casos.
+                # orfa. So checa quando as tres primeiras ja liberaram o
+                # caminho comum: e a mais cara das quatro (duas consultas), e
+                # as outras tres ja decidem a maioria dos casos.
                 elif await _tem_entrega_parcial_pendente(session_factory, identifier):
                     log.info("message.entrega_parcial_fura_a_janela", message_id=message_id)
                 else:
                     # TEC-295: a superada e moderada neste ramo, o do
-                    # agrupado. Os outros ramos -- opt-out, pedido de humano
-                    # e a entrega parcial -- caem na moderacao do turno, e
+                    # agrupado. Os outros ramos -- opt-out, pedido de humano,
+                    # pedido de titular e a entrega parcial -- caem na
+                    # moderacao do turno, e
                     # **desde a TEC-297 isso vale mesmo para os que retornam
                     # antes da linha da moderacao**: o fecho do involucro de
                     # `executar_turno` resolve a moderacao por onde quer que
