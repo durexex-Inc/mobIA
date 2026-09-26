@@ -209,7 +209,9 @@ class IngestionService:
         async with self._session_factory() as session:
             # A identidade entra na mesma transacao das mensagens: chave gravada
             # sem identidade seria um lead a quem nao se consegue responder.
-            for remetente in {item.sender_external_id for item in parsed}:
+            # Ordem fixa: duas replicas travando as mesmas identidades em
+            # ordens diferentes (a de um `set`) podem entrar em deadlock.
+            for remetente in sorted({item.sender_external_id for item in parsed}):
                 await registrar(session, channel, remetente)
 
             resultado = await session.execute(statement)
