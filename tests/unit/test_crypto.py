@@ -9,6 +9,7 @@ from mobia.infra.crypto import (
     CHAVE_BYTES,
     NONCE_BYTES,
     TAG_BYTES,
+    VERSAO_COM_ID,
     VERSAO_LEGADA,
     DecryptionError,
     aad_de,
@@ -103,9 +104,13 @@ def test_blob_carrega_o_byte_de_versao() -> None:
 
 
 def test_versao_desconhecida_e_rejeitada() -> None:
-    """Tentar parsear com o layout errado daria InvalidTag e esconderia a causa."""
+    """Tentar parsear com o layout errado daria InvalidTag e esconderia a causa.
+
+    0xFF e um byte de versao fora de uso: nem `VERSAO_LEGADA` (1) nem
+    `VERSAO_COM_ID` (2) -- ver TEC-203, D1, para o segundo.
+    """
     cifrado = bytearray(encrypt("oi", AAD) or b"")
-    cifrado[0] = 0x02
+    cifrado[0] = 0xFF
     with pytest.raises(DecryptionError):
         decrypt(bytes(cifrado), AAD)
 
@@ -116,6 +121,20 @@ def test_blob_curto_levanta_o_erro_documentado(blob: bytes) -> None:
     DecryptionError nao pegava."""
     with pytest.raises(DecryptionError):
         decrypt(blob, AAD)
+
+
+def test_blob_v2_curto_levanta_o_erro_sem_ecoar_o_aad() -> None:
+    """TEC-203, D1: v2 tem cabecalho maior (versao + id de 4 bytes), e a guarda
+    de tamanho de v2 (`_TAMANHO_MINIMO_V2`) e quem pega o blob truncado logo
+    depois do byte de versao -- nao a guarda de v1, que e menor.
+    """
+    aad_com_telefone = "4:whatsapp:13:5511911112222:resumo"
+    blob_curto_v2 = bytes([VERSAO_COM_ID]) + b"\x00" * 10
+
+    with pytest.raises(DecryptionError) as erro:
+        decrypt_bytes(blob_curto_v2, aad_com_telefone)
+
+    assert "5511911112222" not in str(erro.value)
 
 
 def test_erro_de_blob_curto_nao_carrega_o_conteudo() -> None:
@@ -181,7 +200,7 @@ def test_marca_do_aad_muda_com_a_chave() -> None:
 
 def test_erro_de_versao_desconhecida_nao_carrega_o_aad() -> None:
     cifrado = bytearray(encrypt("oi", AAD) or b"")
-    cifrado[0] = 0x02
+    cifrado[0] = 0xFF
     aad_com_telefone = "4:whatsapp:13:5511911112222:resumo"
 
     with pytest.raises(DecryptionError) as erro:
