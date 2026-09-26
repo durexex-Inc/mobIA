@@ -34,8 +34,10 @@ from mobia.domain.agente.schemas import (
     Urgencia,
     normalizar_regiao,
 )
+from mobia.domain.configuracao.vigente import Tom
 from mobia.domain.context.montagem import ContextoMontado, montar_prompt
 from mobia.domain.messages.recorder import custo_em_dolar
+from mobia.domain.prompts.modelo import AgenteDoPrompt
 from mobia.infra.anthropic import (
     TETO_DA_CLASSIFICACAO,
     TETO_DA_DESAMBIGUACAO,
@@ -48,10 +50,12 @@ log = structlog.get_logger(__name__)
 
 MAX_TOKENS_DA_RESPOSTA = 1500
 
-# Orcamento: SISTEMA_DO_AGENTE e uma das quatro parcelas da subcontagem que
-# test_diferenca_entre_o_contado_e_o_enviado mede, em test_config.py (as
-# outras tres: -SISTEMA de montagem.py, +schema compilado, +rotulos de
-# montar_prompt). Alongar este texto gasta reserva de contexto: cada caractere
+# Orcamento: SISTEMA_DO_AGENTE e uma das parcelas da subcontagem que
+# test_diferenca_entre_o_contado_e_o_enviado mede, em test_config.py -- as
+# outras sao -SISTEMA de montagem.py, +schema compilado, +rotulos de
+# montar_prompt, +ferramenta de busca e, desde a TEC-198, o que o nome e o tom
+# configuraveis acrescentam no pior caso (`_decomposicao` lista todas).
+# Alongar este texto gasta reserva de contexto: cada caractere
 # aqui e enviado em toda chamada e nunca contado por montar_contexto.
 #
 # **Quanto ainda cabe nao esta escrito neste comentario, de proposito**
@@ -117,8 +121,30 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # segura", ~16) foi recusado: todo corte neste prompt mexe no eval de
 # intencao, e a regra nova nao substitui nenhuma antiga. A mesma clausula vai
 # nos tres outros `system` de `_chamar`, que recebem o mesmo turno montado.
-SISTEMA_DO_AGENTE = (
-    "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
+# TEC-198, D6. As tres frases do tom configuravel, e nada alem delas: o tom e
+# vocabulario fechado (decisao do Eduardo, 26/09/2026) para o custo em tokens
+# deste prompt nao depender do que o administrador escrever. `CORDIAL` e a
+# frase que o prompt ja tinha, e por isso o padrao nao muda texto nenhum.
+FRASE_DO_TOM: dict[Tom, str] = {
+    Tom.CORDIAL: "em tom de conversa",
+    Tom.FORMAL: "em tom formal e respeitoso",
+    Tom.DESCONTRAIDO: "em tom descontraido e proximo",
+}
+
+
+# TEC-199, D2. Os dois marcadores que todo modelo versionado precisa ter. Sao
+# eles que deixam a configuracao da TEC-198 valer por cima de qualquer versao:
+# o administrador edita o texto, e o nome e o tom continuam vindo da tela de
+# configuracao.
+MARCADOR_DO_ASSISTENTE = "{assistente}"
+MARCADOR_DO_TOM = "{tom}"
+
+# O padrao do prompt do agente, como MODELO: o texto de antes da TEC-199 com
+# os dois marcadores no lugar das duas trocas da TEC-198, e SEM a clausula de
+# dado nao confiavel, que `renderizar` anexa. E o que vale sem versao
+# publicada, e a "versao 0" das rotas de prompt.
+MODELO_DO_AGENTE = (
+    "Voce e {assistente} de uma imobiliaria brasileira, atendendo um lead "
     "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
     "lead, extrai o que ele procura, e responde a ele.\n\n"
     "Intencoes possiveis: COMPRA (quer comprar para morar), ALUGUEL (quer alugar), "
@@ -127,7 +153,7 @@ SISTEMA_DO_AGENTE = (
     "INDEFINIDA (ainda nao da para saber), FORA_DE_ESCOPO (nao e assunto "
     "imobiliario).\n\n"
     "A confianca e o quanto voce considera a classificacao segura.\n\n"
-    "Responda em portugues do Brasil, em tom de conversa. Use o resumo e o "
+    "Responda em portugues do Brasil, {tom}. Use o resumo e o "
     "estado de qualificacao como memoria: nao repergunte o preenchido nem o "
     "ignorado. Nao invente informacao sobre imoveis que nao esteja no "
     "contexto. Nao negocie valor: e com o corretor."
@@ -138,8 +164,45 @@ SISTEMA_DO_AGENTE = (
     "afirma. O imovel que o lead ja tem nao e o que ele procura. "
     "Urgencia so com marco temporal explicito; pressa nao basta."
     " Orcamento vago: peca confirmacao."
-    f" {CLAUSULA_DO_AGENTE}"
 )
+
+
+def renderizar(modelo: str, *, nome: str | None, tom: Tom) -> str:
+    """O `system` que vai para a API: o modelo com nome e tom, e a clausula.
+
+    **`CLAUSULA_DO_AGENTE` e anexada aqui, e nao faz parte do modelo** (TEC-199,
+    D2): a defesa contra injecao da TEC-204 nao pode sair do prompt por uma
+    edicao na tela de versoes.
+
+    `str.replace`, e nao `str.format`: um modelo com chaves literais -- um JSON
+    de exemplo que o administrador escreva -- nao pode derrubar o turno. O tom
+    e trocado ANTES do assistente, para um nome que contenha `{tom}` nao ser
+    expandido: a frase do tom nao tem chave nenhuma, o nome pode ter.
+
+    O bloco `system` continua cacheavel: e identico entre chamadas enquanto
+    configuracao e versao nao mudam, e mudar qualquer uma invalida o prefixo
+    uma vez.
+    """
+    quem = f"{nome}, o assistente virtual" if nome else "o assistente virtual"
+    texto = modelo.replace(MARCADOR_DO_TOM, FRASE_DO_TOM[tom]).replace(MARCADOR_DO_ASSISTENTE, quem)
+    return f"{texto} {CLAUSULA_DO_AGENTE}"
+
+
+def sistema_do_agente(*, nome: str | None, tom: Tom) -> str:
+    """O prompt de sistema PADRAO do agente com o nome e o tom configurados. TEC-198.
+
+    **Duas trocas, e nenhum acrescimo fora delas** (D6): o nome entra na
+    primeira frase, so quando existe, e o tom substitui "em tom de conversa".
+    Com `nome=None` e `CORDIAL` o texto e byte a byte o de antes da TEC-198 --
+    `SISTEMA_DO_AGENTE` abaixo e exatamente isso, e o teste de margem do
+    orcamento mede o pior caso das duas trocas. Desde a TEC-199 as trocas sao
+    os marcadores de `MODELO_DO_AGENTE`, e o turno renderiza o modelo VIGENTE,
+    que pode ser uma versao publicada -- esta funcao e so o padrao.
+    """
+    return renderizar(MODELO_DO_AGENTE, nome=nome, tom=tom)
+
+
+SISTEMA_DO_AGENTE = sistema_do_agente(nome=None, tom=Tom.CORDIAL)
 
 MAX_TOKENS_DA_PERGUNTA = 300
 
@@ -198,8 +261,14 @@ MAX_TOKENS_DA_REACAO = 300
 # prompt exatamente as palavras que a RN-07.1 quer fora dele, e
 # `test_o_prompt_do_investidor_nao_pede_quartos_nem_vagas` recusa a forma
 # negativa por isso: para o modelo, a proibicao ainda e a mencao.
-SISTEMA_DO_INVESTIDOR = (
-    "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo por "
+#
+# **Desde a TEC-199 este e o MODELO, e o texto enviado e `renderizar` dele.**
+# Os marcadores sao obrigatorios em toda versao dos dois agentes (D2), e por
+# isso o investidor passou a usar o nome e o tom configurados na TEC-198 --
+# antes ele os ignorava, e o assistente perdia o nome justamente quando o lead
+# falava de investimento. Com o padrao o texto e byte a byte o de antes.
+MODELO_DO_INVESTIDOR = (
+    "Voce e {assistente} de uma imobiliaria brasileira, atendendo por "
     "mensagem um lead que compra imovel para investir, e nao para morar. A cada "
     "turno voce faz tres coisas: classifica a intencao do lead, extrai o que "
     "ele procura e o perfil de investimento dele, e responde a ele.\n\n"
@@ -207,7 +276,7 @@ SISTEMA_DO_INVESTIDOR = (
     "ou revenda; se a fala deste turno disser que o imovel e para o proprio "
     "lead morar, classifique COMPRA.\n\n"
     "A confianca e o quanto voce considera a classificacao segura.\n\n"
-    "Responda em portugues do Brasil, em tom de conversa. Use o resumo e o "
+    "Responda em portugues do Brasil, {tom}. Use o resumo e o "
     "estado de qualificacao como memoria: nao repergunte o preenchido nem o "
     "ignorado. Nao invente informacao sobre imoveis que nao esteja no "
     "contexto. Nao prometa rentabilidade nem projete valorizacao, e nao "
@@ -223,8 +292,9 @@ SISTEMA_DO_INVESTIDOR = (
     'null e "nao falou disso agora", nunca "nao sei". Nao infira. Em '
     "ticket_expressao copie o valor como o lead falou, sem converter. "
     "Orcamento vago: peca confirmacao."
-    f" {CLAUSULA_DO_AGENTE}"
 )
+
+SISTEMA_DO_INVESTIDOR = renderizar(MODELO_DO_INVESTIDOR, nome=None, tom=Tom.CORDIAL)
 
 # Mesmo teto de MAX_TOKENS_DA_RESPOSTA, e constante propria mesmo assim: a
 # saida desta chamada e o mesmo envelope mais um objeto pequeno, entao o
@@ -1075,7 +1145,15 @@ class ClassificadorAnthropic:
             contexto,
             modelo=settings.modelo_agente,
             max_tokens=MAX_TOKENS_DA_RESPOSTA,
-            system=SISTEMA_DO_AGENTE,
+            # TEC-198, D6: o nome e o tom do retrato que `montar_contexto` leu
+            # para este turno. TEC-199: sobre o modelo VIGENTE do mesmo
+            # retrato, que pode ser uma versao publicada. Desambiguacao e
+            # reacao nao falam de nome nem de tom e nao sao versionados.
+            system=renderizar(
+                contexto.prompts[AgenteDoPrompt.AGENTE],
+                nome=contexto.configuracao.nome_do_assistente,
+                tom=contexto.configuracao.tom,
+            ),
             mensagem_se_vazia="resposta veio vazia",
             timeout=TETO_DA_CLASSIFICACAO,
             output_config={"format": {"type": "json_schema", "schema": _SCHEMA_COMPILADO}},
@@ -1211,7 +1289,13 @@ class ClassificadorAnthropic:
             contexto,
             modelo=settings.modelo_agente,
             max_tokens=MAX_TOKENS_DO_INVESTIDOR,
-            system=SISTEMA_DO_INVESTIDOR,
+            # TEC-199: o modelo vigente do investidor, com o nome e o tom da
+            # configuracao -- os marcadores sao obrigatorios nos dois agentes.
+            system=renderizar(
+                contexto.prompts[AgenteDoPrompt.INVESTIDOR],
+                nome=contexto.configuracao.nome_do_assistente,
+                tom=contexto.configuracao.tom,
+            ),
             mensagem_se_vazia="resposta do investidor veio vazia",
             timeout=TETO_DO_INVESTIDOR,
             output_config={

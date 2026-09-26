@@ -21,6 +21,7 @@ from mobia.domain.agente.investidor import (
     RetornoEsperadoTipo,
 )
 from mobia.domain.agente.schemas import Extracao, Intencao
+from mobia.domain.configuracao.repositorio import configuracao_vigente
 from mobia.domain.context.auditoria import causas_do_recalculo
 from mobia.domain.context.models import (
     ConversationIntentAudit,
@@ -1301,6 +1302,7 @@ async def registrar_recalculo(
     conversation_key: str,
     gatilhos: tuple[str, ...] = (),
     causas_externas: tuple[str, ...] = (),
+    autor: str | None = None,
 ) -> Recalculo | None:
     """Recalcula o score do lead e grava a trilha se ele mudou.
 
@@ -1372,6 +1374,12 @@ async def registrar_recalculo(
     temperatura da RN-06.3 e nao decide nada sobre a trilha; este decide a
     trilha e nao toca na temperatura. Sao dois assuntos e por isso dois
     parametros.
+
+    **`autor` e de quem PEDIU o recalculo, e so existe quando e uma pessoa**
+    (TEC-194, RN-18.4). O dashboard passa o identificador que a trilha de
+    auditoria grava em `ator_id`; o turno e o nao-comparecimento nao passam
+    nada, e a coluna fica nula para eles -- o que e verdade, porque o ato nao
+    e de ninguem nosso.
     """
     estado = (
         await session.execute(
@@ -1413,6 +1421,12 @@ async def registrar_recalculo(
         # TEC-148: a recusa sai da mesma linha que o lock acabou de reler,
         # entao nao ha consulta extra e nao ha risco de ler estado velho.
         recusados=recusados,
+        # TEC-198, D3. Lidos AGORA, e nao no inicio do turno: e o que faz o
+        # primeiro cenario daquela card ("os proximos recalculos usam o novo
+        # peso") valer tambem para o recalculo manual e o do nao
+        # comparecimento, que nao tem turno. Uma consulta a mais por
+        # recalculo, numa tabela de poucas linhas.
+        pesos=(await configuracao_vigente(session)).pesos,
     )
 
     # A temperatura sai da MESMA linha travada que o score, e o `qualificado`
@@ -1545,6 +1559,7 @@ async def registrar_recalculo(
         capacidade=novo.capacidade,
         penalidade=novo.penalidade,
         causas=list(causas),
+        autor=autor,
     )
     session.add(linha)
     # Flush e nao commit: a sessao e emprestada e o commit e de quem chamou,

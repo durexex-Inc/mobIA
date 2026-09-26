@@ -1,7 +1,9 @@
 """Os kinds da resposta de texto, e quais deles formam uma resposta so.
 
-TEC-273. NAO e o vocabulario inteiro de kinds de saida do sistema -- so o da
-resposta de texto (`reply`, `reply_2`). `KINDS_DAS_FICHAS`,
+TEC-273. NAO e o vocabulario inteiro de kinds de saida do sistema -- e o da
+resposta de texto (`reply`, `reply_2`), mais os dois que nao tem outro lar
+que `port.py` possa importar: o do follow-up (TEC-184) e o da fala do corretor
+(TEC-194), que a guarda de atendimento humano precisa reconhecer. `KINDS_DAS_FICHAS`,
 `KIND_DO_CRITERIO_AMPLIADO` e `KIND_DO_FILTRO_AJUSTADO` moram em
 `domain/agente/turno.py`; `KIND_DA_CONFIRMACAO_DE_OPTOUT`,
 `KIND_DA_JANELA_HUMANA` e `KIND_DO_AVISO_DE_ERRO` moram cada um no modulo do
@@ -16,6 +18,8 @@ agrupamento (D1, `grupo_de`) para liberar as reservas do grupo inteiro numa
 falha retentavel, e `domain/outbound` nao pode importar de `domain/agente`,
 que ja importa dele -- a dependencia so corre num sentido.
 """
+
+import uuid
 
 KIND_DA_RESPOSTA = "reply"
 
@@ -99,3 +103,35 @@ def grupo_de(kind: str) -> tuple[str, ...]:
 def KIND_DO_FOLLOWUP(tentativa: int) -> str:
     """O kind da n-esima tentativa de follow-up: `followup_1`..`followup_4`."""
     return f"followup_{tentativa}"
+
+
+# TEC-194, D3. A fala que o corretor digita no dashboard. O unico kind que
+# atravessa a guarda de atendimento humano de `GuardedOutbound.send` -- a
+# guarda existe para o agente nao falar por cima do corretor, e quem fala aqui
+# E o corretor. A de opt-out continua valendo para ele: o lead que pediu para
+# parar nao recebe mensagem de ninguem.
+#
+# Um kind por FALA, e nao um so: a UNIQUE (message_id, kind) de
+# `outbound_dispatches` suprimiria como reentrega a segunda fala ancorada na
+# mesma mensagem do lead -- e o corretor que manda duas mensagens seguidas, sem
+# o lead responder no meio, e o caso comum. Com o id da fala no kind, `False`
+# da guarda so pode significar opt-out.
+#
+# Prefixo em vez de valor fixo, pela mesma razao de `KIND_DO_FOLLOWUP`, e fora
+# de `_GRUPOS` pela mesma razao tambem: cada fala e uma mensagem propria.
+PREFIXO_DA_FALA_DO_CORRETOR = "corretor:"
+
+
+def kind_da_fala_do_corretor(fala_id: uuid.UUID) -> str:
+    """O kind de uma fala do corretor: `corretor:` e 22 digitos do id.
+
+    **22, e nao o UUID inteiro**, porque `outbound_dispatches.kind` e
+    `String(32)` e o prefixo ja ocupa 9. A unicidade que importa e a da UNIQUE
+    `(message_id, kind)`, isto e, entre as falas ancoradas na MESMA mensagem
+    do lead -- e 88 bits de um UUIDv4 nao colidem entre meia duzia delas.
+    """
+    return f"{PREFIXO_DA_FALA_DO_CORRETOR}{fala_id.hex[:22]}"
+
+
+def e_fala_do_corretor(kind: str) -> bool:
+    return kind.startswith(PREFIXO_DA_FALA_DO_CORRETOR)

@@ -7,7 +7,7 @@ esta devido agora?" e refeita a cada varredura. Ver a D1 do desenho.
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import structlog
 from sqlalchemy import bindparam, select, text
@@ -238,7 +238,11 @@ _SELECIONAR_CANDIDATOS = text(
 
 
 async def candidatos_a_followup(
-    session: AsyncSession, *, agora: datetime, limite: int = 500
+    session: AsyncSession,
+    *,
+    agora: datetime,
+    limite: int = 500,
+    corte_minimo: timedelta = INTERVALO_MINIMO,
 ) -> list[Candidato]:
     """Os leads que calaram tempo bastante para a regua valer a pena.
 
@@ -279,7 +283,7 @@ async def candidatos_a_followup(
         await session.execute(
             _SELECIONAR_CANDIDATOS,
             {
-                "corte": agora - INTERVALO_MINIMO,
+                "corte": agora - corte_minimo,
                 "limite": limite,
                 "temperaturas_validas": _VALORES_TEMPERATURA_VALIDOS,
                 "canais_com_reengajamento": CANAIS_COM_REENGAJAMENTO,

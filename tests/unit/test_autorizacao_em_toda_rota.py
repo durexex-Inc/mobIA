@@ -134,6 +134,14 @@ PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/imoveis/importar"): "GERIR_CATALOGO",
     ("GET", "/api/v1/imoveis/importacoes/{importacao_id}"): "GERIR_CATALOGO",
     ("POST", "/api/v1/imoveis/busca"): "BUSCAR_IMOVEIS",
+    # TEC-197. O CRUD da tela de administracao, e a lista tambem: com inativos
+    # e todos os campos, ela nao e a vitrine da secao 6.3 (D1 do desenho).
+    ("GET", "/api/v1/imoveis"): "GERIR_CATALOGO",
+    ("GET", "/api/v1/imoveis/importacoes"): "GERIR_CATALOGO",
+    ("GET", "/api/v1/imoveis/{imovel_id}"): "GERIR_CATALOGO",
+    ("POST", "/api/v1/imoveis"): "GERIR_CATALOGO",
+    ("PATCH", "/api/v1/imoveis/{imovel_id}"): "GERIR_CATALOGO",
+    ("DELETE", "/api/v1/imoveis/{imovel_id}"): "GERIR_CATALOGO",
     ("POST", "/api/v1/corretores"): "GERIR_CORRETORES",
     ("GET", "/api/v1/corretores"): "GERIR_CORRETORES",
     ("GET", "/api/v1/corretores/{corretor_id}"): "GERIR_CORRETORES",
@@ -143,13 +151,41 @@ PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/conversas/assumir"): "ATENDER_LEAD",
     ("POST", "/api/v1/conversas/devolver"): "ATENDER_LEAD",
     ("GET", "/api/v1/metricas/funil"): "VER_FUNIL",
+    # TEC-191. So somas, e a mesma gerente do funil.
+    ("GET", "/api/v1/metricas/custo-ia"): "VER_FUNIL",
     ("GET", "/api/v1/leads"): "VER_LEADS",
     # TEC-195. **A primeira rota a exigir `VER_DADOS_COMPLETOS`**, e a unica
     # que devolve dado pessoal de lead em claro. Ate ela, a permissao era
     # concedida por papel e exigida por rota nenhuma -- `permissoes.py`
     # chegava a dizer que seria "capacidade consultada DENTRO de um handler".
     ("POST", "/api/v1/leads/{lead_id}/revelar"): "VER_DADOS_COMPLETOS",
+    # TEC-193. Leitura que registra na trilha (D3), e por isso as duas estao
+    # aqui e nao so a do detalhe: a transcricao e a maior parte do dado
+    # pessoal do lead, e uma rota dela fora deste mapa seria o furo.
+    ("GET", "/api/v1/leads/{lead_id}"): "VER_DETALHE_DO_LEAD",
+    ("GET", "/api/v1/leads/{lead_id}/mensagens"): "VER_DETALHE_DO_LEAD",
+    # TEC-194. As cinco mudam estado do lead, e a checagem de dono do CORRETOR
+    # mora dentro do handler (`intervencao._abrir`), como nas de agendamento.
+    ("POST", "/api/v1/leads/{lead_id}/assumir"): "ATENDER_LEAD",
+    ("POST", "/api/v1/leads/{lead_id}/devolver"): "ATENDER_LEAD",
+    ("POST", "/api/v1/leads/{lead_id}/mensagens"): "ATENDER_LEAD",
+    ("PATCH", "/api/v1/leads/{lead_id}/qualificacao"): "ATENDER_LEAD",
+    ("POST", "/api/v1/leads/{lead_id}/score/recalcular"): "ATENDER_LEAD",
     ("GET", "/api/v1/auditoria"): "VER_AUDITORIA",
+    # TEC-198, RN-19.5. As tres, e nao so a escrita: o historico diz quem mexeu
+    # no agente, e a vigente e o que o agente esta fazendo agora.
+    ("GET", "/api/v1/configuracao/agente"): "CONFIGURAR_AGENTE",
+    ("PATCH", "/api/v1/configuracao/agente"): "CONFIGURAR_AGENTE",
+    ("GET", "/api/v1/configuracao/agente/historico"): "CONFIGURAR_AGENTE",
+    # TEC-199. A mesma permissao, e as leituras tambem: o texto ativo e o que
+    # o agente diz a todo lead agora.
+    ("GET", "/api/v1/prompts"): "CONFIGURAR_AGENTE",
+    ("GET", "/api/v1/prompts/{agente}"): "CONFIGURAR_AGENTE",
+    ("GET", "/api/v1/prompts/{agente}/versoes"): "CONFIGURAR_AGENTE",
+    ("GET", "/api/v1/prompts/{agente}/versoes/{numero}"): "CONFIGURAR_AGENTE",
+    ("POST", "/api/v1/prompts/{agente}/versoes"): "CONFIGURAR_AGENTE",
+    ("POST", "/api/v1/prompts/{agente}/rollback"): "CONFIGURAR_AGENTE",
+    ("GET", "/api/v1/prompts/{agente}/historico"): "CONFIGURAR_AGENTE",
     # TEC-374. `ATENDER_LEAD` mais a checagem de dono dentro do handler --
     # "so o corretor dono do agendamento, ou um gerente". A permissao sozinha
     # nao expressa a segunda metade, e e por isso que ela nao pode ser a unica

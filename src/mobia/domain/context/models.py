@@ -350,9 +350,10 @@ class LeadScoreAudit(Base):
     # `context/auditoria.py`.
     causas: Mapped[list[str]] = mapped_column(ARRAY(String(32)), nullable=False)
 
-    # So na edicao manual pelo dashboard (TEC-192), que ainda nao existe --
-    # hoje e sempre nulo. Mesma forma de `optout_events.autor`, nulo no
-    # opt-out pela mesma razao: o ato e do lead, nao de um humano nosso.
+    # So no que uma pessoa pede pelo dashboard -- a edicao e o recalculo
+    # manual da TEC-194 --, e nulo no resto. Mesma forma de
+    # `optout_events.autor`, nulo no opt-out pela mesma razao: o ato e do
+    # lead, nao de um humano nosso.
     autor: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     # `server_default` e nao valor vindo do cliente, pela razao do

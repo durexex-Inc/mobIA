@@ -8,7 +8,8 @@ copias juntas e `tests/unit/test_auditoria_vocabulario.py`.
 **Nem sempre a MESMA migration, desde a TEC-195.** A 0053 escreveu os tres; a
 0056 acrescentou `lead` a `Entidade` e teve de RECRIAR o CHECK, porque o
 Postgres nao estende CHECK; a 0057 (TEC-204) recriou os de `Acao` e
-`Entidade` para `INJECAO_DETECTADA` e `mensagem`. Entao o vocabulario em vigor
+`Entidade` para `INJECAO_DETECTADA` e `mensagem`; a 0058 (TEC-198) e a 0059
+(TEC-199) recriaram so o de `Acao`. Entao o vocabulario em vigor
 e o da migration mais recente que escreve cada um, e e assim que aquele teste
 procura.
 
@@ -34,19 +35,32 @@ class AtorTipo(StrEnum):
 
 class Acao(StrEnum):
     DADO_PESSOAL_ACESSADO = "DADO_PESSOAL_ACESSADO"
-    # Sem chamador: a edicao de qualificacao pelo dashboard e a TEC-194, e so a
-    # feita por pessoa sera auditada -- a do agente se reconstroi pela
-    # transcricao.
+    # So a edicao feita por pessoa e auditada -- a do agente se reconstroi pela
+    # transcricao. O chamador e o `PATCH /leads/{leadId}/qualificacao` da
+    # TEC-194, um evento por campo alterado.
     QUALIFICACAO_ALTERADA = "QUALIFICACAO_ALTERADA"
     HANDOFF_CRIADO = "HANDOFF_CRIADO"
     OPTOUT_REGISTRADO = "OPTOUT_REGISTRADO"
     OPTOUT_REATIVADO = "OPTOUT_REATIVADO"
-    # Sem chamador: `ConfiguracaoAgente` nao existe (TEC-198/199).
+    # TEC-199, D7. Uma versao de prompt publicada pela tela, com
+    # `entidade=configuracao_agente`, o id da ATIVACAO em `entidade_id` e o
+    # agente em `campo`. O texto nao vem: fica em `versoes_de_prompt`. A
+    # configuracao da TEC-198 nao publica prompt -- ela grava
+    # `CONFIGURACAO_ALTERADA`, abaixo, mesmo quando muda o nome ou o tom.
     PROMPT_PUBLICADO = "PROMPT_PUBLICADO"
     ACESSO_NEGADO = "ACESSO_NEGADO"
     # TEC-204, D6. A moderacao de entrada achou tentativa de mudar as
     # instrucoes do agente. Ator SISTEMA; entidade, a mensagem.
     INJECAO_DETECTADA = "INJECAO_DETECTADA"
+    # TEC-198, D1. Um evento por campo da configuracao do agente que mudou,
+    # com `entidade=configuracao_agente` -- que a 0053 ja previa sem chamador.
+    # O valor fica na tabela de versoes, e nao aqui: a trilha diz quem mudou o
+    # que, e a regra dela e nao guardar o antes e o depois.
+    CONFIGURACAO_ALTERADA = "CONFIGURACAO_ALTERADA"
+    # TEC-199, D7. O rollback de prompt, com a mesma forma de
+    # `PROMPT_PUBLICADO`. O id da ativacao, e nao o da versao, porque o
+    # rollback para o padrao (versao 0) nao tem versao. Custou a 0059.
+    PROMPT_REVERTIDO = "PROMPT_REVERTIDO"
 
 
 class Entidade(StrEnum):
@@ -54,8 +68,9 @@ class Entidade(StrEnum):
     OPTOUT_EVENT = "optout_event"
     # A negativa: `entidade_id` e o template da rota, e nao o caminho com o id.
     ROTA = "rota"
-    # As entidades das duas acoes sem chamador. Entram agora porque o CHECK da
-    # 0053 e o que custaria migration depois, e o chamador nao custa nada.
+    # Nasceram na 0053 sem chamador, porque o CHECK e o que custaria migration
+    # depois. Hoje os dois tem: a qualificacao pela TEC-194, e a configuracao
+    # pela TEC-198 e pelas versoes de prompt da TEC-199.
     LEAD_QUALIFICATION = "lead_qualification"
     CONFIGURACAO_AGENTE = "configuracao_agente"
     # TEC-195. O `entidade_id` e o apelido opaco de `referencias_de_lead`, e
@@ -72,14 +87,21 @@ class Entidade(StrEnum):
 # Os `campo` que a trilha nomeia. O que vai para a linha e QUAL campo foi
 # lido, nunca o que ele dizia.
 #
-# `CAMPO_RESUMO` era o unico com chamador ate a TEC-195; os outros dois sao da
-# revelacao de dado pessoal em `POST /api/v1/leads/{lead_id}/revelar`.
+# `CAMPO_RESUMO` era o unico com chamador ate a TEC-195; `telefone` e `email`
+# sao da revelacao de dado pessoal em `POST /api/v1/leads/{lead_id}/revelar`,
+# e `detalhe` e `transcricao` sao das leituras da TEC-193.
 CAMPO_RESUMO = "resumo"
 CAMPO_TELEFONE = "telefone"
 # Sem fonte: nenhuma tabela deste sistema guarda e-mail de lead (TEC-195, D7).
 # A rota o aceita e devolve nulo, para que a tela nao precise mudar quando a
 # coluna nascer.
 CAMPO_EMAIL = "email"
+# TEC-193, D3. Nao se REVELAM -- se leem, e o GET que os le e o que registra.
+# `detalhe` cobre a tela inteira (resumo e qualificacao inclusos), e
+# `transcricao` entra uma vez por pagina: carregar as falas anteriores e outro
+# acesso, a um trecho que a primeira pagina nao mostrou.
+CAMPO_DETALHE = "detalhe"
+CAMPO_TRANSCRICAO = "transcricao"
 
 # Os campos que `POST /leads/{lead_id}/revelar` aceita. Fora daqui e 422, e
 # nao 500: o campo vem de quem chamou.

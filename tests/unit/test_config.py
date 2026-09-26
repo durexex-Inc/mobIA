@@ -14,8 +14,13 @@ from mobia.app.config import (
     Settings,
     get_settings,
 )
-from mobia.domain.agente.classificador import _SCHEMA_COMPILADO, SISTEMA_DO_AGENTE
+from mobia.domain.agente.classificador import (
+    _SCHEMA_COMPILADO,
+    SISTEMA_DO_AGENTE,
+    sistema_do_agente,
+)
 from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA
+from mobia.domain.configuracao.vigente import TETO_DO_NOME, Tom
 from mobia.domain.context.montagem import SISTEMA
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.infra.anthropic import get_client
@@ -52,6 +57,17 @@ def _linha(rotulo: str, valor: float) -> None:
     print(f"  {rotulo:<{largura}}  {valor:>8.1f}")
 
 
+# O prompt do agente no pior caso da configuracao: o nome no teto e o tom de
+# frase mais longa. Calculado, e nao transcrito, pelo argumento da TEC-243.
+# Desde a TEC-199 o turno pode mandar uma versao publicada em vez do padrao, e
+# esta parcela continua sendo o pior caso: `validar_modelo`, em
+# `prompts/modelo.py`, recusa a versao que, renderizada neste mesmo pior caso,
+# passe do padrao.
+_PIOR_IDENTIDADE = max(
+    (sistema_do_agente(nome="x" * TETO_DO_NOME, tom=tom) for tom in Tom), key=len
+)
+
+
 def _decomposicao() -> dict[str, float]:
     """As cinco parcelas da subcontagem, em tokens do proxy `len/4`.
 
@@ -71,6 +87,12 @@ def _decomposicao() -> dict[str, float]:
         # Enviados e nunca contados: campo `system=`, o schema de saida e os
         # rotulos que `montar_prompt` intercala.
         "+classificador.SISTEMA_DO_AGENTE (campo system=)": em_tokens(SISTEMA_DO_AGENTE),
+        # TEC-198, D6. O que o nome e o tom configuraveis acrescentam no PIOR
+        # caso -- nome no teto de caracteres, tom de frase mais longa. Medido
+        # contra o padrao, e nao somado inteiro: o prompt padrao ja esta na
+        # parcela de cima, e o que a configuracao pode fazer e so troca-lo.
+        "+identidade configuravel, pior caso (TEC-198)": em_tokens(_PIOR_IDENTIDADE)
+        - em_tokens(SISTEMA_DO_AGENTE),
         "+schema compilado (output_config.format)": em_tokens(json.dumps(_SCHEMA_COMPILADO)),
         "+rotulos de montar_prompt": em_tokens(_ROTULOS_DE_MONTAR_PROMPT),
         # TEC-265: enviada em toda chamada do classificador e nunca contada por
@@ -455,14 +477,14 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
 def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     """A margem existe para ser vista antes de ser gasta, nao depois.
 
-    O teto de 820,25 e mais apertado que o `headroom * 0,75` usado pelo teste
+    O teto de 831 e mais apertado que o `headroom * 0,75` usado pelo teste
     irmao, e e o proposito deste teste: se voce esta lendo isto porque ele
     reprovou, a pergunta e "o que sai do prompt para o novo texto entrar?",
     nao "quanto subo o numero?". Subir e resposta legitima -- mas so depois da
     primeira pergunta, e com o preco por turno escrito no comentario de
     `contexto_headroom_de_tokens`.
 
-    O 820,25 e o unico numero desta conta escrito a mao em qualquer lugar, e e
+    O 831 e o unico numero desta conta escrito a mao em qualquer lugar, e e
     escrito aqui de proposito: um limite so trava se estiver fixo. Todo o
     resto -- subcontagem, folga, margem -- e derivado e sai impresso por
     `_subcontagem`, para ninguem precisar transcrever (TEC-243):
@@ -571,13 +593,22 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     entram nesta conta -- estao dentro de `_texto_das`, que `montar_contexto`
     conta. O derivado (1275) segue acima do fixo, entao o fixo continua sendo
     o que prende e a reserva nao mudou.
+
+    A TEC-198 subiu o teto de 820,25 para 831, exatamente o custo medido do
+    pior caso: 10,75 da identidade configuravel -- o nome do assistente no
+    teto de 30 caracteres e a frase de tom mais longa. A pergunta "o que sai
+    do prompt?" foi respondida antes do numero: o tom SUBSTITUI "em tom de
+    conversa", que ja estava la, e o nome e o unico acrescimo. Com a
+    configuracao padrao o prompt e byte a byte o de antes, e a subcontagem
+    real de um turno sem nome e a de antes. O derivado (1275) continua acima
+    do fixo.
     """
     subcontagem = _subcontagem()
-    _linha("teto desta assercao (fixo)", 820.25)
-    _linha("margem", 820.25 - subcontagem)
+    _linha("teto desta assercao (fixo)", 831.0)
+    _linha("margem", 831.0 - subcontagem)
 
-    assert subcontagem < 820.25, (
-        f"subcontagem {subcontagem}: a margem sobre o teto de 820,25 foi "
+    assert subcontagem < 831.0, (
+        f"subcontagem {subcontagem}: a margem sobre o teto de 831 foi "
         f"consumida. Encolha o texto enviado, ou suba a reserva registrando "
         f"o preco por turno."
     )

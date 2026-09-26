@@ -17,22 +17,25 @@ forca, nao menos.
 
 **E o `corretor_id` do corpo deixou de ser so afirmacao para o papel
 CORRETOR** -- ver `_exigir_que_seja_ele_mesmo` e a Emenda E-05 a RN-16.4.
+
+**O dashboard nao usa estas rotas desde a TEC-194.** Ele conhece o lead pelo
+`leadId` (TEC-195) e nao tem o par, que no WhatsApp e o telefone; as rotas dele
+sao `POST /leads/{leadId}/assumir` e `/devolver`, em `leads.py`, e tiram o
+corretor da claim em vez do corpo. Estas ficam para quem tem o par -- o
+`X-Admin-Token` e os testes que ja existem --, e as duas portas passam pela
+mesma logica, `atendimento/tomada.py`.
 """
 
 import uuid
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao, exigir_dono
-from mobia.api.routes.handoffs import _ACEITAVEIS
-from mobia.domain.atendimento import repositorio as atendimento_repo
+from mobia.domain.atendimento import tomada
 from mobia.domain.corretores.models import Corretor
-from mobia.domain.handoff.models import Handoff
-from mobia.domain.handoff.vocabulario import Status
 from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
 
@@ -111,15 +114,9 @@ async def assumir(
     `PedidoDeAtendimento`.
 
     **Aceita junto o handoff PENDENTE ou ESCALADO da mesma conversa (D6),
-    na mesma transacao.** Nao e um segundo commit: se o processo caisse
-    entre os dois, um corretor apareceria com a conversa silenciada mas a
-    gerente continuaria sendo cobrada pelo SLA do handoff que ele acabou de
-    pegar -- exatamente o cenario que a D6 existe para fechar. A lista de
-    estados aceitaveis (`_ACEITAVEIS`) e importada de `handoffs.py`: as duas
-    rotas decidem a mesma pergunta ("isto ainda pode virar ACEITO?"), e uma
-    segunda copia da lista aqui poderia divergir da original em silencio --
-    ver o comentario ao lado da constante, em `handoffs.py`, que agora
-    tambem cita este segundo escritor.
+    na mesma transacao** -- o como e o porque moram em
+    `atendimento/tomada.py::assumir_conversa` desde a TEC-194, que precisou
+    da mesma logica nas rotas por `leadId`.
     """
     await _exigir_que_seja_ele_mesmo(request, identidade, pedido.corretor_id)
 
@@ -131,10 +128,9 @@ async def assumir(
                 detail="corretor nao existe ou esta inativo",
             )
 
-        atendimento = await atendimento_repo.assumir(
+        atendimento = await tomada.assumir_conversa(
             session,
-            channel=pedido.channel,
-            conversation_key=pedido.conversation_key,
+            par=(pedido.channel, pedido.conversation_key),
             corretor_id=pedido.corretor_id,
         )
         if atendimento is None:
@@ -142,17 +138,6 @@ async def assumir(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="conversa ja assumida por outro",
             )
-
-        agora = datetime.now(UTC)
-        await session.execute(
-            update(Handoff)
-            .where(
-                Handoff.channel == pedido.channel,
-                Handoff.conversation_key == pedido.conversation_key,
-                Handoff.status.in_(_ACEITAVEIS),
-            )
-            .values(status=Status.ACEITO.value, aceito_em=agora, atualizado_em=agora)
-        )
         await session.commit()
 
     return {
@@ -171,7 +156,7 @@ async def devolver(
     """O corretor devolve a conversa: o agente volta a falar.
 
     **Conclui junto o handoff aberto da mesma conversa (D2), na mesma
-    transacao** -- ver o comentario do UPDATE abaixo.
+    transacao** -- ver `atendimento/tomada.py::devolver_conversa`.
 
     Qualquer corretor pode devolver, nao so quem assumiu -- ver o docstring
     de `devolver` em `domain/atendimento/repositorio.py`. **A TEC-202 nao
@@ -206,10 +191,9 @@ async def devolver(
                 detail="corretor nao existe ou esta inativo",
             )
 
-        atendimento = await atendimento_repo.devolver(
+        atendimento = await tomada.devolver_conversa(
             session,
-            channel=pedido.channel,
-            conversation_key=pedido.conversation_key,
+            par=(pedido.channel, pedido.conversation_key),
             corretor_id=pedido.corretor_id,
         )
         if atendimento is None:
@@ -217,36 +201,6 @@ async def devolver(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="conversa nao esta assumida",
             )
-
-        agora = datetime.now(UTC)
-        # D2 do desenho: o espelho da Emenda E-02 da RN-16.4, que fez
-        # `assumir` aceitar o handoff. Aqui ele e CONCLUIDO -- o handoff
-        # existe para entregar o lead a um humano, e quando o humano devolve
-        # a conversa ao agente essa entrega acabou.
-        #
-        # **`!= CONCLUIDO` e nao uma lista de estados**, ao contrario do
-        # `_ACEITAVEIS` que `assumir` usa tres funcoes acima. Duas razoes: o
-        # criterio aqui e literalmente "ainda esta aberto", e uma lista
-        # precisaria de manutencao toda vez que o enum crescesse; e este e
-        # exatamente o predicado do indice parcial
-        # `uq_handoffs_conversa_pendente` (ver `handoff/models.py`), que os
-        # dois precisam espelhar para nao divergirem em silencio.
-        #
-        # Casar zero linhas nao e erro: nem toda conversa assumida gerou
-        # handoff, mesmo argumento que `assumir` ja aplica.
-        #
-        # **Concluir o handoff NAO encerra a conversa** -- a RN-02.3 junta os
-        # dois e a emenda da TEC-278 os separa. Devolver a conversa ao agente
-        # e retomar o atendimento automatico, nao encerra-lo.
-        await session.execute(
-            update(Handoff)
-            .where(
-                Handoff.channel == pedido.channel,
-                Handoff.conversation_key == pedido.conversation_key,
-                Handoff.status != Status.CONCLUIDO.value,
-            )
-            .values(status=Status.CONCLUIDO.value, atualizado_em=agora)
-        )
         await session.commit()
 
     return {

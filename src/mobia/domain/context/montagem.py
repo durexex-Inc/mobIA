@@ -1,7 +1,7 @@
 import asyncio
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
 from mobia.domain.agente.delimitacao import TAG_LEAD, TAG_RESUMO, delimitar
+from mobia.domain.configuracao.repositorio import configuracao_vigente
+from mobia.domain.configuracao.vigente import ConfiguracaoDoAgente, padrao
 from mobia.domain.context.janela import (
     Marca,
     deve_regenerar,
@@ -35,6 +37,8 @@ from mobia.domain.context.resumo import (
 from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA
 from mobia.domain.messages.enums import MessageContentType, MessageRole
 from mobia.domain.messages.models import Message
+from mobia.domain.prompts.modelo import AgenteDoPrompt
+from mobia.domain.prompts.repositorio import modelos_vigentes, padroes
 from mobia.infra.anthropic import TETO_DO_RESUMO, motivo_do_provedor
 from mobia.infra.crypto import DecryptionError, aad_de, decrypt, marca_do_aad
 
@@ -75,6 +79,17 @@ class ContextoMontado:
     estado: LeadQualification | None
     tokens: int
     degradado: bool
+    # TEC-198, D1. O retrato da configuracao do agente que ESTE turno usa do
+    # comeco ao fim: o nome e o tom do prompt, o teto de perguntas. Lido uma
+    # vez aqui, e nao por uso, para um turno nao contar perguntas com um
+    # limite e montar o prompt com outro se o administrador salvar no meio.
+    # Default no padrao para quem monta o contexto a mao (os testes).
+    configuracao: ConfiguracaoDoAgente = field(default_factory=padrao)
+    # TEC-199, D5. O modelo vigente de cada prompt versionado, lido no mesmo
+    # momento e pela mesma razao que `configuracao`: um turno nao manda meio
+    # prompt de uma versao e meio de outra. O classificador o renderiza com o
+    # nome e o tom de `configuracao`. Default nos padroes do codigo.
+    prompts: dict[AgenteDoPrompt, str] = field(default_factory=padroes)
 
     def __repr__(self) -> str:
         """Elide o conteudo do lead -- `repr=False` no dataclass e de proposito.
@@ -885,7 +900,49 @@ async def montar_contexto(
         estado=estado,
         tokens=tokens,
         degradado=degradado,
+        configuracao=await _configuracao_do_turno(session_factory, channel=channel),
+        prompts=await _prompts_do_turno(session_factory, channel=channel),
     )
+
+
+async def _configuracao_do_turno(
+    session_factory: async_sessionmaker[AsyncSession], *, channel: str
+) -> ConfiguracaoDoAgente:
+    """A vigente, ou o padrao se a leitura falhar. TEC-198.
+
+    **Falhar para o padrao, e nao derrubar o turno.** O padrao e o
+    comportamento que o agente teve ate a TEC-198 e continua valido; um lead
+    sem resposta porque a tabela de configuracao nao respondeu seria trocar
+    um ajuste fino por uma falha de atendimento. O aviso sai no log com o
+    nome da causa, para a degradacao nao passar em silencio.
+    """
+    try:
+        async with session_factory() as session:
+            return await configuracao_vigente(session)
+    except Exception as erro:  # ampla de proposito -- ver a docstring
+        log.warning(
+            "contexto.configuracao_indisponivel", channel=channel, reason=type(erro).__name__
+        )
+        return padrao()
+
+
+async def _prompts_do_turno(
+    session_factory: async_sessionmaker[AsyncSession], *, channel: str
+) -> dict[AgenteDoPrompt, str]:
+    """Os modelos vigentes, ou os padroes se a leitura falhar. TEC-199, D5.
+
+    Mesma queda de `_configuracao_do_turno`, e pelo mesmo argumento: o padrao
+    e o prompt que o agente sempre teve, e um lead sem resposta porque a
+    tabela de versoes nao respondeu seria trocar um ajuste por uma falha.
+    Sessao propria, e nao a da configuracao: uma leitura que falhe nao leva a
+    outra junto.
+    """
+    try:
+        async with session_factory() as session:
+            return await modelos_vigentes(session)
+    except Exception as erro:  # ampla de proposito -- ver a docstring
+        log.warning("contexto.prompts_indisponiveis", channel=channel, reason=type(erro).__name__)
+        return padroes()
 
 
 def montar_prompt(contexto: ContextoMontado, *, omitir_sistema: bool = False) -> str:

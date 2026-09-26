@@ -102,7 +102,13 @@ def create_app() -> FastAPI:
     # compartilhado e o bloco descreve a queda daquela condicional (TEC-201). A
     # de leads (TEC-192) nunca esteve condicionada -- ela esta aqui por ser
     # import tardio como as outras, e quem a protege e `VER_LEADS`, que os
-    # quatro papeis tem.
+    # quatro papeis tem, e `VER_DETALHE_DO_LEAD` no detalhe (TEC-193).
+    # `configuracao` (TEC-198) e administrativa de fato: `CONFIGURAR_AGENTE`,
+    # so do ADMIN, como `auditoria`. `prompts` (TEC-199) tambem, com a mesma
+    # permissao.
+    # `intervencao` (TEC-194) e o mesmo prefixo de `leads`, em arquivo proprio
+    # porque muda estado; quem a protege e `ATENDER_LEAD` mais a checagem de
+    # dono dentro do handler.
     # `auditoria` (TEC-206) entra pelo mesmo motivo de import tardio, e esta e
     # administrativa de fato: quem a protege e `VER_AUDITORIA`, so do ADMIN.
     # `agendamentos` (TEC-374) tambem e so import tardio, e tambem nao e
@@ -110,12 +116,15 @@ def create_app() -> FastAPI:
     # dentro do handler, como em `handoffs`.
     from mobia.api.routes.agendamentos import router as agendamentos_router
     from mobia.api.routes.auditoria import router as auditoria_router
+    from mobia.api.routes.configuracao import router as configuracao_router
     from mobia.api.routes.conversas import router as conversas_router
     from mobia.api.routes.corretores import router as corretores_router
     from mobia.api.routes.handoffs import router as handoffs_router
     from mobia.api.routes.imoveis import router as imoveis_router
+    from mobia.api.routes.intervencao import router as intervencao_router
     from mobia.api.routes.leads import router as leads_router
     from mobia.api.routes.metricas import router as metricas_router
+    from mobia.api.routes.prompts import router as prompts_router
 
     app.include_router(imoveis_router)
     app.include_router(corretores_router)
@@ -123,8 +132,11 @@ def create_app() -> FastAPI:
     app.include_router(conversas_router)
     app.include_router(metricas_router)
     app.include_router(leads_router)
+    app.include_router(intervencao_router)
     app.include_router(auditoria_router)
     app.include_router(agendamentos_router)
+    app.include_router(configuracao_router)
+    app.include_router(prompts_router)
 
     if not settings.catalogo_admin_token:
         # O aviso FICA, com outro sentido: nao diz mais que as rotas sumiram --

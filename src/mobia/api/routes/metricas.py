@@ -1,6 +1,7 @@
-"""O painel de funil. TEC-190, RF-17 e RN-17.1 a RN-17.3.
+"""Os paineis gerenciais: o funil (TEC-190, RN-17.1 a RN-17.3) e o custo de IA
+(TEC-191, RN-17.4).
 
-**Guardado por `VER_FUNIL`, que ADMIN, GERENTE e LEITURA tem e CORRETOR nao**
+**Os dois guardados por `VER_FUNIL`, que ADMIN, GERENTE e LEITURA tem e CORRETOR nao**
 (TEC-202). Ate aqui era o `exigir_admin`: o SRS (secao 6.6) previa Bearer JWT
 com papel, e papel nao existia -- `corretores.gerente` e booleana de roteamento
 de escalada de SLA, nao autorizacao HTTP. A divergencia que a Emenda E-01 da
@@ -10,7 +11,7 @@ RN-19.5 declarou, e que esta rota herdou, fecha aqui para quem entra por JWT.
 navegacao da RN-FE-03.1 (TEC-312). O funil e da operacao inteira, e o corretor
 trabalha a propria carteira.
 
-**Consequencia que permanece: quem tem o `X-Admin-Token` le o funil inteiro**,
+**Consequencia que permanece: quem tem o `X-Admin-Token` le os dois paineis**,
 porque ele resolve para um ADMIN sintetico (D2 da TEC-202). Nao ha dado pessoal
 de lead na resposta -- so contagens e medias --, o que torna esta exposicao
 menos grave que a de `corretores.py`, mas ela existe.
@@ -18,12 +19,15 @@ menos grave que a de `corretores.py`, mas ela existe.
 
 import uuid
 from datetime import date
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao
 from mobia.app.config import get_settings
+from mobia.domain.configuracao.repositorio import configuracao_vigente
+from mobia.domain.metricas import custo
 from mobia.domain.metricas.calculo import montar_funil
 from mobia.domain.metricas.filtros import FiltroInvalido, montar_recorte
 from mobia.domain.metricas.repositorio import calcular_indicadores, contar_etapas
@@ -105,4 +109,95 @@ async def funil(
         # TEC-371 acabou com isso. Omiti-la agora faria o consumidor tratar a
         # ausencia como erro dele.
         "indisponiveis": [],
+    }
+
+
+def _dolares(valor: Decimal | None) -> float | None:
+    return float(valor) if valor is not None else None
+
+
+@router.get("/custo-ia")
+async def custo_de_ia(
+    de: Annotated[date, Query()],
+    ate: Annotated[date, Query()],
+    canal: Annotated[str | None, Query()] = None,
+    intencao: Annotated[str | None, Query()] = None,
+    temperatura: Annotated[str | None, Query()] = None,
+    corretor_id: Annotated[uuid.UUID | None, Query(alias="corretorId")] = None,
+    _: IdentidadeDaRequisicao = Depends(Exige(Permissao.VER_FUNIL)),
+) -> dict[str, object]:
+    """O painel de custo de IA. TEC-191, RN-17.4.
+
+    **Os filtros sao os do funil, pelo mesmo `montar_recorte`** -- inclusive a
+    recusa de `corretorId`. Mas o periodo conta quando o gasto aconteceu, e
+    nao a coorte (D1 do desenho): ver `domain/metricas/custo.py`.
+
+    **A mesma permissao do funil.** A historia e da gerente comercial, e aqui
+    nao ha dado pessoal -- so somas.
+
+    Periodo sem gasto devolve 200 com o total zerado e as medias nulas: media
+    zero afirmaria que a conversa custou zero, e nao houve conversa.
+    """
+    try:
+        recorte = montar_recorte(
+            de=de,
+            ate=ate,
+            fuso=get_settings().fuso_de_envio,
+            canal=canal,
+            intencao=intencao,
+            temperatura=temperatura,
+            corretor_id=corretor_id,
+        )
+    except FiltroInvalido as erro:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(erro)
+        ) from erro
+
+    async with get_sessionmaker()() as session:
+        periodo = await custo.custo_do_periodo(session, recorte=recorte)
+        mensal = (await configuracao_vigente(session)).orcamento_mensal_usd
+        orcamento = (
+            custo.avaliar_orcamento(
+                mensal,
+                dias=(ate - de).days + 1,
+                # D3: o orcamento e da operacao, e o consumo dele ignora os
+                # filtros -- filtrar para investigar nao pode apagar o alerta.
+                consumido=await custo.total_sem_filtros(session, recorte=recorte),
+            )
+            if mensal is not None
+            else None
+        )
+
+    por_lead = custo.media(periodo.total_usd, periodo.leads_qualificados)
+    return {
+        "custoTotalUsd": _dolares(periodo.total_usd),
+        "custoPorConversaUsd": _dolares(custo.media(periodo.total_usd, periodo.conversas)),
+        "custoPorLeadQualificadoUsd": _dolares(por_lead),
+        "tokensPorModelo": {
+            modelo: {
+                "entrada": t.entrada,
+                "saida": t.saida,
+                "cacheLeitura": t.cache_leitura,
+                "cacheEscrita": t.cache_escrita,
+            }
+            for modelo, t in periodo.tokens_por_modelo.items()
+        },
+        "conversas": periodo.conversas,
+        "leadsQualificados": periodo.leads_qualificados,
+        "mensagensSemPreco": periodo.mensagens_sem_preco,
+        "alvoPorLeadQualificadoUsd": _dolares(custo.ALVO_POR_LEAD_QUALIFICADO_USD),
+        "acimaDoAlvo": (
+            por_lead > custo.ALVO_POR_LEAD_QUALIFICADO_USD if por_lead is not None else None
+        ),
+        "orcamento": (
+            {
+                "mensalUsd": _dolares(orcamento.mensal_usd),
+                "doPeriodoUsd": _dolares(orcamento.do_periodo_usd),
+                "consumidoUsd": _dolares(orcamento.consumido_usd),
+                "consumidoPct": _dolares(orcamento.consumido_pct),
+                "alerta": orcamento.alerta,
+            }
+            if orcamento is not None
+            else None
+        ),
     }

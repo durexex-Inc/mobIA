@@ -1,4 +1,11 @@
-"""Importacao do catalogo por HTTP (TEC-156, RN-08.1, secao 6.3 do SRS).
+"""O catalogo por HTTP: importacao em lote, busca e o CRUD da administracao.
+
+Importacao: TEC-156, RN-08.1, secao 6.3 do SRS. Busca: TEC-158. O CRUD um a um
+da tela de administracao (TEC-197, RN-19.1) mora no fim do arquivo, e passa
+pela mesma validacao e pelo mesmo upsert da importacao -- ver
+`domain/catalogo/cadastro.py`.
+
+**Sobre a importacao:**
 
 Assincrono como o SRS descreve: o POST devolve 202 com o id e enfileira, e o
 GET devolve o relatorio. Nao e fidelidade cega -- a TEC-157 acrescenta a
@@ -18,13 +25,15 @@ sobre trabalho que nao comecou.
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao
+from mobia.domain.catalogo import cadastro
 from mobia.domain.catalogo.busca import MAX_CANDIDATOS
 from mobia.domain.catalogo.enums import (
     EstadoDoRelaxamento,
@@ -34,7 +43,7 @@ from mobia.domain.catalogo.enums import (
     TipoImovel,
 )
 from mobia.domain.catalogo.importacao import registrar
-from mobia.domain.catalogo.models import Importacao
+from mobia.domain.catalogo.models import Imovel, Importacao
 from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
 from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, FiltroDeBusca
 from mobia.domain.usuarios.permissoes import Permissao
@@ -160,6 +169,13 @@ async def consultar(
 
     # Enquanto o job nao termina, isto devolve PROCESSANDO com os totais em
     # zero. E o status que o consumidor le, nao o codigo HTTP.
+    return _relatorio(importacao)
+
+
+def _relatorio(importacao: Importacao) -> dict[str, object]:
+    """O relatorio de uma importacao. O mesmo formato no `GET` por id e na
+    lista das recentes (TEC-197, D6): a tela abre com a ultima e mostra o
+    mesmo objeto que o acompanhamento por id mostraria."""
     return {
         "importacaoId": str(importacao.id),
         "status": importacao.status,
@@ -318,3 +334,159 @@ async def busca(
         # relaxado para ver. Quem precisa dos tres estados e o turno (D6).
         "relaxamentoAplicado": resultado.relaxamento is EstadoDoRelaxamento.APLICADO,
     }
+
+
+# --- TEC-197: o imovel um a um, pela tela de administracao --------------------
+#
+# Todas com `GERIR_CATALOGO`, que e so do ADMIN (RN-19.5). A lista tambem, e
+# nao so as escritas: e a da administracao, com inativos e todos os campos, e
+# nao a vitrine que a secao 6.3 descreve para `GET /imoveis`. Ver a D1 do
+# desenho.
+#
+# **A ordem de registro importa aqui.** `GET /importacoes` vem antes de
+# `GET /{imovel_id}`: o FastAPI casa rota por ordem, e a palavra
+# "importacoes" caberia no parametro -- a validacao de UUID responderia 422 em
+# vez de a rota certa responder.
+
+_ADMIN = Depends(Exige(Permissao.GERIR_CATALOGO))
+
+_STATUS_DO_CADASTRO = {
+    cadastro.DUPLICADO: status.HTTP_409_CONFLICT,
+    cadastro.INVALIDO: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    cadastro.NAO_EXISTE: status.HTTP_404_NOT_FOUND,
+    cadastro.CODIGO_IMUTAVEL: status.HTTP_422_UNPROCESSABLE_CONTENT,
+}
+
+
+def _recusa(erro: cadastro.CadastroRecusado) -> HTTPException:
+    return HTTPException(status_code=_STATUS_DO_CADASTRO[erro.motivo], detail=erro.detalhe)
+
+
+class CorpoDoImovel(BaseModel):
+    """Os campos de `cadastro.CAMPOS`, todos opcionais NA BORDA.
+
+    **A borda so confere a forma** (numero e numero, lista e lista); o que e
+    obrigatorio, o teto de cada texto, o vocabulario de cada enumerado e a
+    plausibilidade do preco sao conferidos por `parser.validar_um`, a mesma
+    funcao das linhas do arquivo (D2). Repetir essas regras aqui seria o
+    segundo validador que o desenho recusa. No `POST`, campo ausente chega la
+    como ausente e volta como "titulo ausente", com o texto do relatorio de
+    importacao.
+
+    Precos em CENTAVOS, como `precoMax` da busca.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    codigo: str | None = None
+    titulo: str | None = None
+    descricao: str | None = None
+    tipo: str | None = None
+    operacao: str | None = None
+    status: str | None = None
+    precoVenda: int | None = None  # noqa: N815
+    precoAluguel: int | None = None  # noqa: N815
+    condominio: int | None = None
+    iptuMensal: int | None = None  # noqa: N815
+    bairro: str | None = None
+    cidade: str | None = None
+    uf: str | None = None
+    zona: str | None = None
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
+    areaUtilM2: int | None = None  # noqa: N815
+    quartos: int | None = None
+    suites: int | None = None
+    banheiros: int | None = None
+    vagas: int | None = None
+    caracteristicas: list[str] | None = None
+    fotos: list[str] | None = None
+
+    def enviados(self) -> dict[str, object]:
+        """So o que veio no corpo: ausente nao muda, `null` explicito limpa."""
+        return {nome: getattr(self, nome) for nome in self.model_fields_set}
+
+
+@router.get("")
+async def listar(
+    status_do_imovel: Annotated[str | None, Query(alias="status")] = None,
+    tipo: Annotated[str | None, Query()] = None,
+    busca: Annotated[str | None, Query()] = None,
+    bairro: Annotated[str | None, Query()] = None,
+    limite: Annotated[int, Query(ge=1, le=cadastro.LIMITE_MAXIMO)] = cadastro.LIMITE_PADRAO,
+    cursor: Annotated[str | None, Query()] = None,
+    _: IdentidadeDaRequisicao = _ADMIN,
+) -> dict[str, object]:
+    """Os imoveis por `codigo`, paginados por keyset. D5. Sem `total`."""
+    async with get_sessionmaker()() as session:
+        itens, proximo = await cadastro.listar(
+            session,
+            status=status_do_imovel,
+            tipo=tipo,
+            busca=busca.strip() if busca else None,
+            bairro=bairro.strip() if bairro else None,
+            limite=limite,
+            depois_de=cursor,
+        )
+    return {"itens": [cadastro.como_api(i) for i in itens], "proximoCursor": proximo}
+
+
+@router.get("/importacoes")
+async def recentes(
+    limite: Annotated[int, Query(ge=1, le=50)] = 5,
+    _: IdentidadeDaRequisicao = _ADMIN,
+) -> dict[str, object]:
+    """As importacoes mais recentes, com as linhas rejeitadas de cada uma. D6."""
+    async with get_sessionmaker()() as session:
+        importacoes = await cadastro.importacoes_recentes(session, limite=limite)
+    return {"itens": [_relatorio(i) for i in importacoes]}
+
+
+@router.get("/{imovel_id}")
+async def ler(imovel_id: uuid.UUID, _: IdentidadeDaRequisicao = _ADMIN) -> dict[str, object]:
+    async with get_sessionmaker()() as session:
+        imovel = await session.get(Imovel, imovel_id)
+    if imovel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="imovel nao existe")
+    return cadastro.como_api(imovel)
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def criar(corpo: CorpoDoImovel, _: IdentidadeDaRequisicao = _ADMIN) -> dict[str, object]:
+    """Um imovel novo. A reindexacao e da varredura, como na importacao."""
+    async with get_sessionmaker()() as session:
+        try:
+            imovel = await cadastro.criar(session, campos=corpo.enviados())
+        except cadastro.CadastroRecusado as erro:
+            raise _recusa(erro) from erro
+        await session.commit()
+        return cadastro.como_api(imovel)
+
+
+@router.patch("/{imovel_id}")
+async def editar(
+    imovel_id: uuid.UUID, corpo: CorpoDoImovel, _: IdentidadeDaRequisicao = _ADMIN
+) -> dict[str, object]:
+    """Edicao parcial, validada sobre o registro inteiro. D2 e D3.
+
+    `reindexa` antecipa a tela o que a varredura vai fazer: verdadeiro quando
+    um campo do documento mudou, falso para preco e status. Nao dispara nada.
+    """
+    async with get_sessionmaker()() as session:
+        try:
+            edicao = await cadastro.editar(session, imovel_id=imovel_id, campos=corpo.enviados())
+        except cadastro.CadastroRecusado as erro:
+            raise _recusa(erro) from erro
+        await session.commit()
+        return {**cadastro.como_api(edicao.imovel), "reindexa": edicao.reindexa}
+
+
+@router.delete("/{imovel_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def excluir(imovel_id: uuid.UUID, _: IdentidadeDaRequisicao = _ADMIN) -> None:
+    """Exclusao logica: `status=INATIVO` (secao 6.3). D4."""
+    async with get_sessionmaker()() as session:
+        try:
+            await cadastro.excluir(session, imovel_id=imovel_id)
+        except cadastro.CadastroRecusado as erro:
+            raise _recusa(erro) from erro
+        await session.commit()

@@ -2316,6 +2316,8 @@ async def _executar_turno(
     teto_do_handoff = excedeu_o_teto(
         contexto.estado.perguntas_feitas if contexto.estado is not None else 0,
         len(perguntas_contaveis(gerada.perguntou)),
+        # TEC-198, D4: o teto vigente, do mesmo retrato que o turno inteiro usa.
+        teto=contexto.configuracao.teto_de_perguntas,
     )
     # TEC-174, fix wave (Important 2). Os tres ficam None quando a condicao que
     # os preenche nao roda -- e viram o `HandoffRegistrado` de `registrar_handoff`
@@ -2888,6 +2890,8 @@ async def _executar_turno(
     teto_da_entrega = excedeu_o_teto(
         contexto.estado.perguntas_feitas if contexto.estado is not None else 0,
         len(perguntas_contaveis(resposta_do_turno.perguntou)),
+        # TEC-198, D4: o teto vigente, do mesmo retrato que o turno inteiro usa.
+        teto=contexto.configuracao.teto_de_perguntas,
     )
     if teto_da_entrega and not desambiguando and not saida_bloqueada:
         # A prosa do modelo nao sai: ela contem a pergunta que o teto proibe,

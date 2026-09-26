@@ -388,3 +388,19 @@ def _converter(
         fotos=lista("fotos"),
         status=status,
     )
+
+
+def validar_um(bruto: dict[str, str]) -> RegistroImovel | Rejeicao:
+    """Um imovel so, pela MESMA conversao das linhas do arquivo. TEC-197, D2.
+
+    Existe para que a tela de administracao e a importacao recusem o mesmo
+    imovel pelo mesmo motivo: um segundo validador divergiria na primeira
+    regra nova -- o teto de um texto, a plausibilidade de um preco -- e o
+    imovel recusado no CSV passaria pela tela, ou o contrario.
+
+    `bruto` tem o formato de uma linha do arquivo: nomes de coluna, texto cru,
+    precos em reais e listas separadas por `|`. Quem converte o JSON da API
+    para isso e `catalogo/cadastro.py`. A linha e sempre 1, e o registro de
+    codigos vistos comeca vazio: um imovel so nao repete codigo consigo mesmo.
+    """
+    return _converter(bruto, 1, {})

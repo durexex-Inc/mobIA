@@ -15,15 +15,18 @@ afirmacoes nao fecham, e vale a regra operavel.
 from dataclasses import dataclass
 
 from mobia.domain.agente.schemas import FormaPagamento, Urgencia
+from mobia.domain.configuracao.vigente import PESOS_DE_REFERENCIA, Pesos
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.qualificacao import campos_obrigatorios_preenchidos
 
 PONTOS_POR_CAMPO_OBRIGATORIO = 5
 
-# Constantes de modulo, e nao configuracao. A card pede pesos alteraveis sem
-# deploy e a CA-19.1 pede sem reiniciar a aplicacao -- isso e um subsistema
-# (persistir, autorizar, invalidar cache) e pertence ao epico de configuracao,
-# nao ao de scoring. Lacuna declarada no desenho.
+# Os pontos de REFERENCIA, escritos contra os tetos de `PESOS_DE_REFERENCIA`.
+# Ate a TEC-198 este comentario dizia "constantes de modulo, e nao
+# configuracao", e que torna-las alteraveis era do epico de configuracao. A
+# TEC-198 as tornou -- sem mexer nelas: o administrador configura o TETO de
+# cada fator (`configuracao/vigente.py::Pesos`), e `_escalar` leva estes pontos
+# para a escala dele. Com os pesos padrao, o score e o de antes.
 _PONTOS_POR_URGENCIA = {
     Urgencia.IMEDIATA.value: 25,
     Urgencia.ATE_3_MESES.value: 15,
@@ -58,6 +61,24 @@ _PONTOS_POR_CAPACIDADE = {
 # diferente de proposito: sem linha nao ha lead a ordenar na fila, e o zero e
 # a ausencia de sujeito, nao uma nota sobre ele.
 _PONTOS_SEM_FORMA_DE_PAGAMENTO = 6
+
+
+def _escalar(pontos: int, peso: int, referencia: int) -> int:
+    """Os pontos de referencia na escala do peso configurado. TEC-198, D3.
+
+    Arredonda fator a fator, para o inteiro mais proximo: com urgencia 30,
+    IMEDIATA 25 -> 30, ATE_3_MESES 15 -> 18, ATE_6_MESES 8 -> 9,6 -> 10. O
+    `round` do Python arredonda metade para o par, e aqui isso nao importa --
+    as metades exatas so aparecem em pesos impares, e o erro e de meio ponto
+    num fator.
+
+    **Com `peso == referencia` devolve `pontos` exato**, sem passar por
+    divisao: e a garantia de que a configuracao padrao nao move score nenhum,
+    nem por arredondamento.
+    """
+    if peso == referencia:
+        return pontos
+    return round(pontos * peso / referencia)
 
 
 @dataclass(frozen=True)
@@ -104,6 +125,7 @@ def calcular_score(
     mensagens_do_lead: int = 0,
     imoveis_compativeis: int = 0,
     recusados: frozenset[str] = frozenset(),
+    pesos: Pesos = PESOS_DE_REFERENCIA,
 ) -> Score:
     """O score da RN-06.1. Nunca levanta.
 
@@ -191,13 +213,30 @@ def calcular_score(
         )
 
     return Score(
-        completude=campos_obrigatorios_preenchidos(estado, recusados)
-        * PONTOS_POR_CAMPO_OBRIGATORIO,
-        urgencia=_PONTOS_POR_URGENCIA.get(estado.urgencia or "", 0),
-        catalogo=_pontos_do_catalogo(imoveis_compativeis),
-        engajamento=_pontos_do_engajamento(mensagens_do_lead),
-        capacidade=_PONTOS_POR_CAPACIDADE.get(
-            estado.forma_pagamento or "", _PONTOS_SEM_FORMA_DE_PAGAMENTO
+        completude=_escalar(
+            campos_obrigatorios_preenchidos(estado, recusados) * PONTOS_POR_CAMPO_OBRIGATORIO,
+            pesos.completude,
+            PESOS_DE_REFERENCIA.completude,
+        ),
+        urgencia=_escalar(
+            _PONTOS_POR_URGENCIA.get(estado.urgencia or "", 0),
+            pesos.urgencia,
+            PESOS_DE_REFERENCIA.urgencia,
+        ),
+        catalogo=_escalar(
+            _pontos_do_catalogo(imoveis_compativeis), pesos.catalogo, PESOS_DE_REFERENCIA.catalogo
+        ),
+        engajamento=_escalar(
+            _pontos_do_engajamento(mensagens_do_lead),
+            pesos.engajamento,
+            PESOS_DE_REFERENCIA.engajamento,
+        ),
+        capacidade=_escalar(
+            _PONTOS_POR_CAPACIDADE.get(
+                estado.forma_pagamento or "", _PONTOS_SEM_FORMA_DE_PAGAMENTO
+            ),
+            pesos.capacidade,
+            PESOS_DE_REFERENCIA.capacidade,
         ),
         # TEC-172. Sai da coluna e nao de parametro, ao contrario dos dois
         # fatores que dependem de dados de fora de `LeadQualification`: a

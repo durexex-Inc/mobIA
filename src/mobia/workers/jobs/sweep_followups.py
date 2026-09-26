@@ -32,7 +32,13 @@ from mobia.domain.agente.apresentacao import Ficha
 from mobia.domain.agente.ferramenta_de_busca import fichas_do_catalogo
 from mobia.domain.atendimento.repositorio import esta_silenciada
 from mobia.domain.catalogo.models import Imovel
-from mobia.domain.followup.cadencia import CADENCIA, esta_dormente, tentativa_devida
+from mobia.domain.configuracao.repositorio import configuracao_vigente
+from mobia.domain.followup.cadencia import (
+    cadencia_de,
+    esta_dormente,
+    intervalo_minimo,
+    tentativa_devida,
+)
 from mobia.domain.followup.mensagem import QuedaDePreco, texto_do_followup
 from mobia.domain.followup.prosa import redigir_abertura
 from mobia.domain.followup.repositorio import (
@@ -403,7 +409,14 @@ async def sweep_followups(
         return 0
 
     async with session_factory() as session:
-        candidatos = await candidatos_a_followup(session, agora=agora, limite=limite)
+        # TEC-198, D5. A cadencia vigente, lida uma vez por varredura: todo
+        # candidato desta passagem e julgado pela mesma tabela, e o corte
+        # barato sai dela -- com o primeiro intervalo encurtado, o corte da
+        # constante esconderia quem ja esta devido.
+        cadencia = cadencia_de((await configuracao_vigente(session)).cadencia)
+        candidatos = await candidatos_a_followup(
+            session, agora=agora, limite=limite, corte_minimo=intervalo_minimo(cadencia)
+        )
 
         for candidato in candidatos:
             # Os dois tetos ficam no TOPO do laco, e cortam com `break` e nao
@@ -422,6 +435,7 @@ async def sweep_followups(
                 ultima_fala=candidato.ancora_em,
                 ja_disparada=candidato.ja_disparada,
                 agora=agora,
+                cadencia=cadencia,
             )
             if tentativa is None:
                 continue
@@ -467,7 +481,7 @@ async def sweep_followups(
             ):
                 continue
 
-            devido_em = candidato.ancora_em + CADENCIA[candidato.temperatura][tentativa - 1]
+            devido_em = candidato.ancora_em + cadencia[candidato.temperatura][tentativa - 1]
             linha = await registrar_followup(
                 session, candidato=candidato, tentativa=tentativa, devido_em=devido_em
             )

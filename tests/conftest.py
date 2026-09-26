@@ -146,6 +146,14 @@ _isolar_por_worker()
 # nem paga. Custa uma tabela a mais no mesmo statement e um lock tomado junto
 # com os outros. Ver `_comando_de_truncate` e `banco_limpo`.
 TABELAS = (
+    # TEC-198. A versao mais recente e a VIGENTE de todo o sistema: sem o
+    # truncate, o peso que um teste configurou pontua os leads do proximo, e o
+    # limite de perguntas de um vale para o turno de outro.
+    "configuracoes_do_agente",
+    # TEC-199. Mesmo argumento: a ativacao mais recente decide o prompt de todo
+    # turno, e a versao publicada por um teste falaria com o lead do proximo.
+    "versoes_de_prompt",
+    "ativacoes_de_prompt",
     "conversation_intent",
     "conversation_summaries",
     "lead_qualification",

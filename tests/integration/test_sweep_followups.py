@@ -414,7 +414,7 @@ async def test_a_varredura_absorve_a_corrida_entre_duas_passagens(
         ja_enviadas=0,
     )
 
-    async def _candidatos_a_followup_stub(session, *, agora, limite=500):
+    async def _candidatos_a_followup_stub(session, *, agora, limite=500, corte_minimo=None):
         return [candidato]
 
     monkeypatch.setattr(
@@ -655,7 +655,7 @@ async def test_a_guarda_do_maximo_barra_o_candidato(
         ja_enviadas=4,
     )
 
-    async def _candidatos_a_followup_stub(session, *, agora, limite=500):
+    async def _candidatos_a_followup_stub(session, *, agora, limite=500, corte_minimo=None):
         return [candidato]
 
     monkeypatch.setattr(
