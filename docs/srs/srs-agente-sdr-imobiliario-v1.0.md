@@ -65,6 +65,7 @@
 > | E-01 | RN-18.3 | [TEC-194](https://eduardodurieuxlopes.atlassian.net/browse/TEC-194) | 26/09/2026 |
 > | E-01 | RN-18.4 | [TEC-194](https://eduardodurieuxlopes.atlassian.net/browse/TEC-194) | 26/09/2026 |
 > | E-06 | RN-16.4 | [TEC-194](https://eduardodurieuxlopes.atlassian.net/browse/TEC-194) | 26/09/2026 |
+> | E-01 | RN-19.1 | [TEC-197](https://eduardodurieuxlopes.atlassian.net/browse/TEC-197) | 26/09/2026 |
 >
 > **Este índice está incompleto e a linha acima não o conserta.** Emendas do corpo de várias cards (TEC-139, TEC-142, TEC-161, TEC-162, TEC-174 a TEC-179, TEC-196, TEC-278) nunca foram indexadas — a TEC-275 acrescentou só a sua. Quem procura a lista completa lê o corpo do documento, não esta tabela.
 
@@ -669,6 +670,7 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
 
 **Regras de negócio:**
 - RN-19.1: CRUD de imóveis com upload em lote e alteração de status.
+  - **Emenda E-01 (TEC-197, 26/09/2026):** **o imóvel criado ou editado pela tela passa pela mesma validação e pelo mesmo upsert da importação em lote** (RN-08.1, RN-08.5), e não por regras próprias: o imóvel recusado no arquivo é recusado na tela, com o mesmo motivo. O `PATCH` é parcial — ausente não muda, `null` limpa — e **valida o registro resultante inteiro**, então limpar o único preço é recusado como seria no arquivo. **O código não se edita**: é a chave do upsert, e trocá-lo faria o próximo arquivo criar um segundo imóvel. **A reindexação da RN-08.3 não é disparada pela edição**: ela é derivada do estado da linha pela varredura da TEC-157, que só gera embedding quando o documento textual muda; o `PATCH` responde `reindexa: true|false` só para a tela avisar o que a varredura vai fazer. **Excluir é `status=INATIVO`** (seção 6.3), a mesma coisa que inativar, e **reimportar o código num arquivo com status `DISPONIVEL` o reativa** — é o comportamento do upsert por código, e separar excluído de inativo é decisão de produto que esta regra não toma. A última importação é lida por `GET /api/v1/imoveis/importacoes`, com o mesmo relatório do `GET` por id.
 - RN-19.2: CRUD de corretores com especialidade, regiões, horário de trabalho e capacidade diária de visitas.
 - RN-19.3: Configuração do agente sem deploy: tom de voz, nome do assistente, limite de perguntas, pesos do lead scoring, intervalos de cadência de follow-up.
 - RN-19.4: Prompts versionados. Toda alteração cria nova versão com autor e diff, e permite rollback para versão anterior.
@@ -1300,6 +1302,7 @@ Entrada: `{ "conteudo": "string" }` → `201 Created`. Erros: 409 (fora da janel
 #### GET /api/v1/imoveis
 Autenticação: Bearer JWT | Query: `?tipo=APARTAMENTO&precoMax=60000000&quartosMin=2&bairro=Centro&status=DISPONIVEL&cursor=`
 `200 OK`: lista paginada com os campos de vitrine.
+  - **Emenda E-01 (TEC-197, 26/09/2026):** a lista que existe é **a da administração**, e não a vitrine: exige `GERIR_CATALOGO` (só `ADMIN`, RN-19.5), traz todos os campos e inclui imóveis inativos. Filtros: `status`, `tipo`, `busca` (código ou título, sem caixa) e `bairro` (sem acento, pela coluna dobrada); ordem por `codigo`, paginada por keyset com `proximoCursor` sendo o último código, sem `total`. Preço e quartos filtram na busca do agente (`POST /imoveis/busca`), e não aqui. Uma vitrine para outros papéis seria outra rota, e nenhuma card a pede.
 
 #### POST /api/v1/imoveis/busca
 Autenticação: Bearer JWT ou token interno do agente | Busca híbrida (RF-09).
@@ -1321,6 +1324,7 @@ Autenticação: Bearer JWT | Papel: `ADMIN` | `multipart/form-data` com CSV ou J
 
 #### POST /api/v1/imoveis · PATCH /api/v1/imoveis/{id} · DELETE /api/v1/imoveis/{id}
 Autenticação: Bearer JWT | Papel: `ADMIN`. DELETE é lógico (`status=INATIVO`), nunca físico. Erros: 400, 403, 404, 409 (código duplicado).
+  - **Emenda E-01 (TEC-197, 26/09/2026):** o corpo é o do imóvel em camelCase, com preços em centavos, e a recusa de validação é **422** com os motivos do relatório de importação, e não 400. O `PATCH` responde o imóvel com `reindexa`; trocar o `codigo` é 422. `GET /api/v1/imoveis/{id}` também existe, com a mesma permissão. Ver a Emenda E-01 da RN-19.1.
 
 ### 6.4 Agendamentos
 

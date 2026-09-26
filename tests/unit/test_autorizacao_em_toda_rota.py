@@ -134,6 +134,14 @@ PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/imoveis/importar"): "GERIR_CATALOGO",
     ("GET", "/api/v1/imoveis/importacoes/{importacao_id}"): "GERIR_CATALOGO",
     ("POST", "/api/v1/imoveis/busca"): "BUSCAR_IMOVEIS",
+    # TEC-197. O CRUD da tela de administracao, e a lista tambem: com inativos
+    # e todos os campos, ela nao e a vitrine da secao 6.3 (D1 do desenho).
+    ("GET", "/api/v1/imoveis"): "GERIR_CATALOGO",
+    ("GET", "/api/v1/imoveis/importacoes"): "GERIR_CATALOGO",
+    ("GET", "/api/v1/imoveis/{imovel_id}"): "GERIR_CATALOGO",
+    ("POST", "/api/v1/imoveis"): "GERIR_CATALOGO",
+    ("PATCH", "/api/v1/imoveis/{imovel_id}"): "GERIR_CATALOGO",
+    ("DELETE", "/api/v1/imoveis/{imovel_id}"): "GERIR_CATALOGO",
     ("POST", "/api/v1/corretores"): "GERIR_CORRETORES",
     ("GET", "/api/v1/corretores"): "GERIR_CORRETORES",
     ("GET", "/api/v1/corretores/{corretor_id}"): "GERIR_CORRETORES",
