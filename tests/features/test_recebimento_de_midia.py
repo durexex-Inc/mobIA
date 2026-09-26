@@ -213,7 +213,7 @@ async def test_reconhecer_imagem_recebida_sem_interpretar(
 
     assert resultado == "respondido"
     assert classificador.chamadas == 0, "midia sem texto nao pode chamar o modelo"
-    # TEC-203: `para` e a chave do lead, nao o `wa_id` cru -- e' o `wa_id` que
+    # TEC-203: `para` e a chave do lead, nao o `wa_id` cru -- e o `wa_id` que
     # `WhatsAppOutbound._deliver` revela na hora do POST de verdade.
     assert whatsapp.envios == [
         {

@@ -18,8 +18,14 @@ from mobia.domain.crm.port import FalhaDeExportacao
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
+from mobia.domain.identidade.indice import registrar
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.workers.jobs.exportar_crm import exportar_crm
 from mobia.workers.jobs.sweep_crm_pendentes import sweep_crm_pendentes
+
+# TEC-203. O telefone por tras da identidade que os testes de exportacao
+# registram -- ver `test_a_exportacao_entrega_o_payload_versionado_e_carimba`.
+TELEFONE = "5511900000101"
 
 
 class _CrmEspiao:
@@ -81,18 +87,41 @@ async def _marcar(session: AsyncSession, *, handoff_id: uuid.UUID, **campos: obj
 async def test_a_exportacao_entrega_o_payload_versionado_e_carimba(
     session, session_factory, banco_limpo
 ) -> None:
-    """Primeiro cenario do Gherkin."""
-    handoff_id = await _semear(session, conversa="5511900000101")
+    """Primeiro cenario do Gherkin.
+
+    TEC-203: a chave do handoff e uma identidade de verdade (`registrar`), e
+    nao mais o telefone cru -- e o unico jeito de provar que `exportar_crm`
+    passa o PAR certo para `telefones_de` (canal, conversa) e nao, por
+    exemplo, os dois trocados ou uma sessao errada.
+    """
+    chave = await registrar(session, CANAL_WHATSAPP, TELEFONE)
+    handoff_id = await _semear(session, conversa=chave)
     crm = _CrmEspiao()
 
     resultado = await exportar_crm(_ctx(session_factory, crm), str(handoff_id))
 
     assert resultado == "exportado"
     assert crm.recebidos[0][0] == handoff_id
+    payload = crm.recebidos[0][1]
     # v2 desde a TEC-203 -- `lead.conversa` deixou de ser o telefone.
-    assert crm.recebidos[0][1]["versao"] == 2
+    assert payload["versao"] == 2
+    assert payload["lead"]["telefone"] == f"+{TELEFONE}"
     linha = await _linha(session, handoff_id)
     assert linha.crm_sincronizado_em is not None
+
+
+async def test_a_exportacao_sem_identidade_manda_telefone_nulo(
+    session, session_factory, banco_limpo
+) -> None:
+    """Chave sem identidade e bug de dado, nao motivo para derrubar a
+    exportacao -- `telefones_de` devolve `None`, e o payload leva `null`."""
+    handoff_id = await _semear(session, conversa="f" * 64)
+    crm = _CrmEspiao()
+
+    resultado = await exportar_crm(_ctx(session_factory, crm), str(handoff_id))
+
+    assert resultado == "exportado"
+    assert crm.recebidos[0][1]["lead"]["telefone"] is None
 
 
 async def test_tres_falhas_alertam_e_nao_deixam_o_arq_decidir(
