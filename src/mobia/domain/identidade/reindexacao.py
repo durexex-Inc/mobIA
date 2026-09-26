@@ -34,7 +34,7 @@ o script abre a mesma coisa com `engine.begin()` + `run_sync`.
 """
 
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -132,8 +132,28 @@ def _identidade(conn: Connection, channel: str, chave: str) -> str | None:
     return None if blob is None else decrypt(bytes(blob), aad_da_identidade(channel, chave))
 
 
-def _triggers(conn: Connection, acao: Literal["DISABLE", "ENABLE"]) -> None:
-    for tabela, trigger in TRIGGERS_DE_IMUTABILIDADE.items():
+def desligar_triggers(conn: Connection, tabelas: Iterable[str]) -> None:
+    """Desliga a trigger de imutabilidade de cada uma das `tabelas`.
+
+    Recebe a lista, e nao desliga as tres sempre: a reindexacao reescreve
+    `eventos_auditoria` (o `lead_ref`), a anonimizacao da TEC-207 nao -- a
+    trilha dela fica intocada, e desligar uma trigger sem precisar seria
+    abrir a tabela a toa. Quem chama religa com `religar_triggers` so no
+    caminho de sucesso; ver o comentario no fim de `reindexar`.
+    """
+    _alternar_triggers(conn, tabelas, "DISABLE")
+
+
+def religar_triggers(conn: Connection, tabelas: Iterable[str]) -> None:
+    """O inverso de `desligar_triggers`, sobre as mesmas `tabelas`."""
+    _alternar_triggers(conn, tabelas, "ENABLE")
+
+
+def _alternar_triggers(
+    conn: Connection, tabelas: Iterable[str], acao: Literal["DISABLE", "ENABLE"]
+) -> None:
+    for tabela in tabelas:
+        trigger = TRIGGERS_DE_IMUTABILIDADE[tabela]
         conn.execute(text(f"ALTER TABLE {tabela} {acao} TRIGGER {trigger}"))
 
 
@@ -159,7 +179,7 @@ def reindexar(
     # Uma vez so, e nao por par: na subida da 0062 a coluna ainda nao existe
     # (nasce depois do loop), e na descida ja foi removida antes dele.
     vinculo_cifrado = _tem_coluna(conn, "vinculos_de_sessao", "telefone_cifrado")
-    _triggers(conn, "DISABLE")
+    desligar_triggers(conn, TRIGGERS_DE_IMUTABILIDADE)
     for channel, atual in _pares(conn, tabelas, modo):
         valor = _identidade(conn, channel, atual)
         if valor is None:
@@ -179,7 +199,7 @@ def reindexar(
     # falhou, a transacao esta abortada, o ENABLE reprovaria com
     # `InFailedSqlTransaction` e esconderia a causa. O rollback de quem chama
     # ja desfaz o DISABLE -- ALTER TABLE e transacional no Postgres.
-    _triggers(conn, "ENABLE")
+    religar_triggers(conn, TRIGGERS_DE_IMUTABILIDADE)
     for channel, quantos in sorted(sem_identidade.items()):
         log.warning("reindexacao.par_sem_identidade", channel=channel, pares=quantos, modo=modo)
     return Reindexacao(
@@ -231,6 +251,53 @@ def _mover(
             ),
             parametros,
         )
+    mover_referencias_fora_da_chave(conn, channel=channel, atual=atual, novo=novo)
+    if resumo is not None:
+        texto = decrypt(bytes(resumo), aad_do_resumo(channel, atual))
+        conn.execute(
+            text(
+                "UPDATE conversation_summaries SET resumo = :r"
+                " WHERE channel = :c AND conversation_key = :novo"
+            ),
+            {**parametros, "r": encrypt(texto, aad_do_resumo(channel, novo))},
+        )
+    if telefone_do_vinculo is not None:
+        telefone = decrypt(bytes(telefone_do_vinculo), aad_do_vinculo(channel, atual))
+        conn.execute(
+            text(
+                "UPDATE vinculos_de_sessao SET telefone_cifrado = :t"
+                " WHERE channel = :c AND conversation_key = :novo"
+            ),
+            {**parametros, "t": encrypt(telefone, aad_do_vinculo(channel, novo))},
+        )
+
+    conn.execute(
+        text("DELETE FROM identidades_de_lead WHERE channel = :c AND conversation_key = :atual"),
+        parametros,
+    )
+    if modo != "reversao":
+        conn.execute(
+            text(
+                "INSERT INTO identidades_de_lead (channel, conversation_key, valor_cifrado) "
+                "VALUES (:c, :novo, :v) ON CONFLICT DO NOTHING"
+            ),
+            {**parametros, "v": encrypt(valor, aad_da_identidade(channel, novo))},
+        )
+
+
+def mover_referencias_fora_da_chave(
+    conn: Connection, *, channel: str, atual: str, novo: str
+) -> None:
+    """Leva a `novo` o que guarda `atual` fora da coluna `conversation_key`.
+
+    Remetente e destinatario das mensagens, prefixo do `provider_message_id`
+    do widget e `rate_limit_events.chave`. **Supoe `messages` ja movida para
+    `novo`**: os UPDATEs de mensagem filtram por `conversation_key = :novo`,
+    o que limita a reescrita as linhas deste par. Serve a reindexacao
+    (`_mover`) e a anonimizacao da TEC-207 (`titular/anonimizacao.py`), que
+    trocam a chave por motivos diferentes e precisam arrastar o mesmo resto.
+    """
+    parametros = {"c": channel, "atual": atual, "novo": novo}
     # Remetente na entrada, destinatario na saida: e o lead nas duas pontas. A
     # outra ponta e o `phone_number_id` do canal, que nunca e igual a `atual`.
     for coluna in ("sender_external_id", "recipient_external_id"):
@@ -264,37 +331,6 @@ def _mover(
         ),
         parametros,
     )
-    if resumo is not None:
-        texto = decrypt(bytes(resumo), aad_do_resumo(channel, atual))
-        conn.execute(
-            text(
-                "UPDATE conversation_summaries SET resumo = :r"
-                " WHERE channel = :c AND conversation_key = :novo"
-            ),
-            {**parametros, "r": encrypt(texto, aad_do_resumo(channel, novo))},
-        )
-    if telefone_do_vinculo is not None:
-        telefone = decrypt(bytes(telefone_do_vinculo), aad_do_vinculo(channel, atual))
-        conn.execute(
-            text(
-                "UPDATE vinculos_de_sessao SET telefone_cifrado = :t"
-                " WHERE channel = :c AND conversation_key = :novo"
-            ),
-            {**parametros, "t": encrypt(telefone, aad_do_vinculo(channel, novo))},
-        )
-
-    conn.execute(
-        text("DELETE FROM identidades_de_lead WHERE channel = :c AND conversation_key = :atual"),
-        parametros,
-    )
-    if modo != "reversao":
-        conn.execute(
-            text(
-                "INSERT INTO identidades_de_lead (channel, conversation_key, valor_cifrado) "
-                "VALUES (:c, :novo, :v) ON CONFLICT DO NOTHING"
-            ),
-            {**parametros, "v": encrypt(valor, aad_da_identidade(channel, novo))},
-        )
 
 
 def _recalcular_lead_ref(
