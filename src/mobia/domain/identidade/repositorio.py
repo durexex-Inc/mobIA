@@ -1,4 +1,4 @@
-"""Gravar e ler o vinculo sessao web -> telefone. TEC-129, D3."""
+"""Gravar e ler o vinculo sessao web -> telefone. TEC-129, D3, e TEC-203."""
 
 import uuid
 from typing import Any, cast
@@ -7,7 +7,9 @@ from sqlalchemy import CursorResult, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from mobia.domain.identidade.models import VinculoDeSessao
+from mobia.domain.identidade.indice import indice_de_telefone
+from mobia.domain.identidade.models import VinculoDeSessao, aad_do_vinculo
+from mobia.infra.crypto import encrypt
 
 
 async def vincular_sessao(
@@ -24,6 +26,9 @@ async def vincular_sessao(
     numero de uma sessao ja vinculada moveria o que ela disse de um lead para
     outro no meio da conversa, e o segundo numero tem menos chance de ser o da
     pessoa que o primeiro -- "o meu e X; anota tambem o do meu marido, Y".
+
+    `telefone` e a forma canonica de `telefone.normalizar`; o que vai para a
+    linha e ele cifrado e o indice dele (TEC-203), nunca ele em claro.
     """
     async with session_factory() as session:
         resultado = cast(
@@ -33,7 +38,8 @@ async def vincular_sessao(
                 .values(
                     channel=channel,
                     conversation_key=conversation_key,
-                    telefone=telefone,
+                    telefone_cifrado=encrypt(telefone, aad_do_vinculo(channel, conversation_key)),
+                    telefone_indice=indice_de_telefone(telefone),
                     message_id=message_id,
                 )
                 .on_conflict_do_nothing(index_elements=["channel", "conversation_key"])
@@ -55,16 +61,18 @@ MAXIMO_DE_SESSOES_VINCULADAS = 3
 
 
 async def sessoes_vinculadas(
-    session: AsyncSession, telefone: str, *, limite: int | None = None
+    session: AsyncSession, telefone_indice: str, *, limite: int | None = None
 ) -> list[tuple[str, str]]:
-    """Os pares das sessoes que apontam para este telefone, do mais antigo ao mais novo.
+    """Os pares das sessoes cujo telefone tem este indice, do mais antigo ao mais novo.
+
+    `telefone_indice` e `indice.indice_de_telefone` sobre a forma canonica.
 
     Com `limite`, so as `limite` vinculadas por ultimo (`criado_em`) -- e a
     ordem devolvida continua cronologica.
     """
     recentes = (
         select(VinculoDeSessao.channel, VinculoDeSessao.conversation_key, VinculoDeSessao.criado_em)
-        .where(VinculoDeSessao.telefone == telefone)
+        .where(VinculoDeSessao.telefone_indice == telefone_indice)
         .order_by(VinculoDeSessao.criado_em.desc(), VinculoDeSessao.conversation_key.desc())
         .limit(limite)
         .subquery()

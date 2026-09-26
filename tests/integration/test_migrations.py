@@ -20,6 +20,7 @@ from sqlalchemy import text
 
 from mobia.domain.auditoria.registro import registrar_evento
 from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA, Acao, Entidade
+from mobia.domain.identidade.indice import chave_de, registrar
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -146,6 +147,9 @@ async def test_downgrade_decifra_text_body_e_raw_payload(session) -> None:
     """
     com_payload, sem_payload, de_saida = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     payload = {"id": "wamid.NESTED", "envelope": {"tipo": "text"}}
+    # No head a chave e o HMAC do telefone, e a identidade existe: e dela que a
+    # descida da 0058 tira o valor cru que devolve as colunas (TEC-203).
+    chave = await registrar(session, "whatsapp", "5511911112222")
 
     session.add_all(
         [
@@ -153,9 +157,9 @@ async def test_downgrade_decifra_text_body_e_raw_payload(session) -> None:
                 id=com_payload,
                 channel="whatsapp",
                 provider_message_id="wamid.DOWNGRADE_COM_PAYLOAD",
-                sender_external_id="5511911112222",
+                sender_external_id=chave,
                 recipient_external_id="222222222",
-                conversation_key="5511911112222",
+                conversation_key=chave,
                 role=MessageRole.LEAD,
                 direction=MessageDirection.INBOUND,
                 content_type=MessageContentType.TEXTO,
@@ -167,9 +171,9 @@ async def test_downgrade_decifra_text_body_e_raw_payload(session) -> None:
                 id=sem_payload,
                 channel="whatsapp",
                 provider_message_id="wamid.DOWNGRADE_SEM_PAYLOAD",
-                sender_external_id="5511911112222",
+                sender_external_id=chave,
                 recipient_external_id="222222222",
-                conversation_key="5511911112222",
+                conversation_key=chave,
                 role=MessageRole.LEAD,
                 direction=MessageDirection.INBOUND,
                 content_type=MessageContentType.TEXTO,
@@ -181,7 +185,7 @@ async def test_downgrade_decifra_text_body_e_raw_payload(session) -> None:
                 id=de_saida,
                 channel="whatsapp",
                 provider_message_id=None,
-                conversation_key="5511911112222",
+                conversation_key=chave,
                 role=MessageRole.AGENTE,
                 direction=MessageDirection.OUTBOUND,
                 content_type=MessageContentType.TEXTO,
@@ -528,6 +532,8 @@ async def _semear_para_o_backfill(
 
 
 async def _carimbo(conversa: str) -> datetime | None:
+    """O `qualificado_em` da conversa, ja no head -- onde a 0058 (TEC-203)
+    trocou o `conversation_key` semeado pelo HMAC dele."""
     async with get_sessionmaker()() as sessao:
         return (
             await sessao.execute(
@@ -535,7 +541,7 @@ async def _carimbo(conversa: str) -> datetime | None:
                     "SELECT qualificado_em FROM lead_qualification"
                     " WHERE channel = 'whatsapp' AND conversation_key = :conversa"
                 ),
-                {"conversa": conversa},
+                {"conversa": chave_de("whatsapp", conversa)},
             )
         ).scalar_one()
 

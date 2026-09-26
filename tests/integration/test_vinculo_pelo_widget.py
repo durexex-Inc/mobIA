@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from mobia.domain.identidade.indice import indice_de_telefone
 from mobia.domain.identidade.models import VinculoDeSessao
 
 
@@ -28,7 +29,8 @@ async def test_fala_com_telefone_vincula_a_sessao(ws_cliente, session) -> None:
         await ws.__aexit__()
 
     [vinculo] = await _vinculos(session)
-    assert (vinculo.conversation_key, vinculo.telefone) == (sessao, "5548999990000")
+    assert vinculo.conversation_key == sessao
+    assert vinculo.telefone_indice == indice_de_telefone("5548999990000")
 
 
 async def test_fala_sem_telefone_nao_vincula(ws_cliente, session) -> None:

@@ -1,16 +1,18 @@
-"""O vinculo sessao web -> telefone. TEC-129, D3."""
+"""O vinculo sessao web -> telefone. TEC-129, D3, e TEC-203 (telefone cifrado)."""
 
 import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from mobia.domain.identidade.models import VinculoDeSessao
+from mobia.domain.identidade.indice import indice_de_telefone
+from mobia.domain.identidade.models import VinculoDeSessao, aad_do_vinculo
 from mobia.domain.identidade.repositorio import sessoes_vinculadas, vincular_sessao
 from mobia.domain.messages.canais import CANAL_WEB
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
+from mobia.infra.crypto import decrypt
 from mobia.infra.db import get_sessionmaker
 
 TELEFONE = "5548999990000"
@@ -45,7 +47,10 @@ async def test_cria_o_vinculo(session) -> None:
 
     assert criou is True
     linha = (await session.execute(select(VinculoDeSessao))).scalar_one()
-    assert (linha.channel, linha.conversation_key, linha.telefone) == (CANAL_WEB, sessao, TELEFONE)
+    assert (linha.channel, linha.conversation_key) == (CANAL_WEB, sessao)
+    # TEC-203: cifrado com o AAD do par, e o indice do telefone ao lado.
+    assert decrypt(linha.telefone_cifrado, aad_do_vinculo(CANAL_WEB, sessao)) == TELEFONE
+    assert linha.telefone_indice == indice_de_telefone(TELEFONE)
     assert linha.message_id == evidencia
 
 
@@ -67,7 +72,8 @@ async def test_o_primeiro_telefone_vence(session) -> None:
     )
 
     assert criou is False
-    assert (await session.execute(select(VinculoDeSessao.telefone))).scalar_one() == TELEFONE
+    indice = (await session.execute(select(VinculoDeSessao.telefone_indice))).scalar_one()
+    assert indice == indice_de_telefone(TELEFONE)
 
 
 async def test_duas_sessoes_para_o_mesmo_telefone(session) -> None:
@@ -82,11 +88,13 @@ async def test_duas_sessoes_para_o_mesmo_telefone(session) -> None:
             message_id=await _mensagem_web(session, sessao),
         )
 
-    assert await sessoes_vinculadas(session, TELEFONE) == [(CANAL_WEB, s) for s in sessoes]
+    assert await sessoes_vinculadas(session, indice_de_telefone(TELEFONE)) == [
+        (CANAL_WEB, s) for s in sessoes
+    ]
 
 
 async def test_telefone_sem_vinculo_devolve_vazio(session) -> None:
-    assert await sessoes_vinculadas(session, TELEFONE) == []
+    assert await sessoes_vinculadas(session, indice_de_telefone(TELEFONE)) == []
 
 
 async def test_com_limite_ficam_as_mais_recentes_em_ordem_cronologica(session) -> None:
@@ -108,6 +116,6 @@ async def test_com_limite_ficam_as_mais_recentes_em_ordem_cronologica(session) -
         )
         await session.commit()
 
-    assert await sessoes_vinculadas(session, TELEFONE, limite=3) == [
+    assert await sessoes_vinculadas(session, indice_de_telefone(TELEFONE), limite=3) == [
         (CANAL_WEB, s) for s in sessoes[1:]
     ]

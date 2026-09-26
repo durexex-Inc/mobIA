@@ -28,11 +28,13 @@ from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.conversa.models import Conversa
 from mobia.domain.conversa.vocabulario import Status
 from mobia.domain.handoff.models import Handoff
+from mobia.domain.identidade.indice import chave_de, indice_de_telefone, telefones_de
 from mobia.domain.identidade.models import VinculoDeSessao
-from mobia.domain.identidade.telefone import normalizar
+from mobia.domain.identidade.telefone import grafias_do_wa_id, normalizar
 from mobia.domain.leads.consulta import SEM_RECORTE, Cursor, Filtro, FiltroInvalido, RecorteDoPapel
 from mobia.domain.leads.mascara import mascarar_telefone
 from mobia.domain.leads.models import ReferenciaDeLead
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.messages.models import Message
 
 _SO_DIGITOS = re.compile(r"\D+")
@@ -46,8 +48,9 @@ class LeadDaLista:
     E-02 da RN-15.1).
 
     **Sem `conversation_key`, desde a TEC-195**, e a ausencia e a card inteira:
-    no WhatsApp aquele campo E o telefone do lead, e ele saia em claro para
-    todo papel com `VER_LEADS`. Quem aponta para um lead agora e `lead_id`, o
+    no WhatsApp aquele campo era o telefone do lead, e ele saia em claro para
+    todo papel com `VER_LEADS`. Desde a TEC-203 o campo e um HMAC, e continua
+    fora mesmo assim: quem aponta para um lead agora e `lead_id`, o
     apelido opaco de `referencias_de_lead`; quem mostra o telefone e
     `telefone`, ja mascarado. Nao ha caminho por esta dataclass que reconstrua
     o par -- que e o ponto de ela nao o carregar.
@@ -127,14 +130,20 @@ def _onde_a_busca_bate(base: Any, termo: str) -> Any:
     **Nao ha busca por nome**, porque nao ha nome (L1). A card pede as tres, e
     esta e a unica das tres que nao tem de onde sair.
 
-    O telefone mora em dois lugares e os dois entram: no WhatsApp, o proprio
-    `conversation_key` E o numero; no web, a sessao e anonima e o numero so
-    existe se o lead o digitou, em `vinculos_de_sessao` (TEC-129).
+    O telefone mora em dois lugares e os dois entram: no WhatsApp, o
+    `conversation_key` e o HMAC do `wa_id` (TEC-203); no web, a sessao e
+    anonima e o numero so existe se o lead o digitou, em `vinculos_de_sessao`
+    (TEC-129), cifrado e com `telefone_indice` ao lado.
 
-    **O termo e comparado em duas formas.** `%termo%` cru para a regiao, e
-    `%so-os-digitos%` para telefone: quem digita "+55 (48) 99999" esta
-    procurando `5548999...`, e um ILIKE do texto cru com pontuacao nao acharia
-    nada -- o que se leria como "este lead nao existe".
+    **O termo e comparado em duas formas.** `%termo%` cru para a regiao; para
+    telefone, so os digitos, levados a forma canonica: quem digita
+    "+55 (48) 99999-0000" procura `5548999990000`.
+
+    **Telefone so bate com o numero completo** (TEC-203, decisao 3 do
+    desenho). HMAC nao admite substring, e guardar indice dos ultimos digitos
+    vazaria agrupamento e seria mais uma coluna a rotacionar. O numero entra
+    nas duas grafias do `wa_id` -- `grafias_do_wa_id` --, porque a Meta pode
+    ter entregado o celular sem o 9 e o par guarda o HMAC do `wa_id` cru.
 
     **A busca por telefone SOBREVIVEU ao mascaramento da TEC-195, e isso e um
     oraculo declarado** (D8). Quem nao pode ler o numero ainda pode CONFIRMAR
@@ -147,14 +156,19 @@ def _onde_a_busca_bate(base: Any, termo: str) -> Any:
     alvos: list[Any] = [LeadQualification.regiao.ilike(f"%{termo}%")]
 
     digitos = _SO_DIGITOS.sub("", termo)
-    if digitos:
-        alvos.append(base.c.conversation_key.ilike(f"%{digitos}%"))
+    canonico = normalizar(digitos) if digitos else None
+    if canonico is not None:
         alvos.append(
-            select(VinculoDeSessao.telefone)
+            base.c.conversation_key.in_(
+                [chave_de(CANAL_WHATSAPP, grafia) for grafia in grafias_do_wa_id(canonico)]
+            )
+        )
+        alvos.append(
+            select(VinculoDeSessao.channel)
             .where(
                 VinculoDeSessao.channel == base.c.channel,
                 VinculoDeSessao.conversation_key == base.c.conversation_key,
-                VinculoDeSessao.telefone.ilike(f"%{digitos}%"),
+                VinculoDeSessao.telefone_indice == indice_de_telefone(canonico),
             )
             .exists()
         )
@@ -208,25 +222,6 @@ def _depois_do_cursor(base: Any, score: Any, posicao: _Posicao) -> Any:
     )
 
 
-def _telefone_da_sessao(base: Any) -> Any:
-    """O numero que o lead web digitou, ou nulo. TEC-129.
-
-    Escalar correlacionada e nao JOIN: `vinculos_de_sessao` tem uma linha por
-    SESSAO, e a mesma pessoa em dois navegadores sao duas linhas -- um JOIN
-    duplicaria o lead na lista. `limit(1)` porque qualquer uma delas serve: a
-    tabela so aceita um telefone por sessao, e as duas apontam para o mesmo.
-    """
-    return (
-        select(VinculoDeSessao.telefone)
-        .where(
-            VinculoDeSessao.channel == base.c.channel,
-            VinculoDeSessao.conversation_key == base.c.conversation_key,
-        )
-        .limit(1)
-        .scalar_subquery()
-    )
-
-
 def _consulta(
     filtro: Filtro, *, recorte: RecorteDoPapel, posicao: _Posicao | None = None
 ) -> Select[Any]:
@@ -237,7 +232,6 @@ def _consulta(
         select(
             base.c.channel,
             base.c.conversation_key,
-            _telefone_da_sessao(base).label("telefone_da_sessao"),
             base.c.ultima_interacao_em,
             score.c.score,
             LeadQualification.temperatura,
@@ -419,27 +413,21 @@ async def listar_leads(
 
     tem_mais = len(linhas) > filtro.limite
     visiveis = linhas[: filtro.limite]
-    apelidos = await referencias_para(
-        session, [(linha.channel, linha.conversation_key) for linha in visiveis]
-    )
+    pares = [(linha.channel, linha.conversation_key) for linha in visiveis]
+    apelidos = await referencias_para(session, pares)
+    # **O telefone sai de duas origens, e `telefones_de` junta as duas**: a
+    # identidade do WhatsApp e o vinculo cifrado do web (TEC-203). Uma consulta
+    # por origem para a pagina inteira, e nao uma por linha.
+    telefones = await telefones_de(session, pares)
 
     pagina = [
         LeadDaLista(
             lead_id=apelidos[(linha.channel, linha.conversation_key)],
             channel=linha.channel,
-            # **O telefone sai de duas origens, e a ordem importa.** No
-            # WhatsApp a propria `conversation_key` e o numero; no web ela e um
-            # UUID de sessao, `mascarar_telefone` devolve nulo, e o numero so
-            # existe se o lead o digitou (TEC-129). Mascarar as duas e deixar a
-            # primeira que der certo vencer evita um `if` por canal, que
-            # precisaria ser mantido a cada canal novo.
             telefone=(
-                mascarar_telefone(linha.conversation_key)
-                or (
-                    mascarar_telefone(linha.telefone_da_sessao)
-                    if linha.telefone_da_sessao
-                    else None
-                )
+                mascarar_telefone(telefone)
+                if (telefone := telefones[(linha.channel, linha.conversation_key)])
+                else None
             ),
             score=linha.score,
             temperatura=linha.temperatura,
@@ -490,10 +478,10 @@ async def e_lead_do_corretor(
 async def valor_revelado(session: AsyncSession, *, par: tuple[str, str], campo: str) -> str | None:
     """O dado pessoal em claro. So `revelar` chama, e so depois de registrar.
 
-    **`telefone` sai na forma canonica com `+`**, e nao nos digitos crus da
-    `conversation_key`: quem revela vai discar ou copiar, e `5548999990021`
-    obriga a tela a formatar de novo -- uma segunda regra de formatacao, livre
-    para divergir da que a mascara usa.
+    **`telefone` sai na forma canonica com `+`**, e nao nos digitos crus do
+    `wa_id`: quem revela vai discar ou copiar, e `5548999990021` obriga a tela
+    a formatar de novo -- uma segunda regra de formatacao, livre para divergir
+    da que a mascara usa. Vem de `telefones_de`, pelas duas origens (TEC-203).
 
     **`email` devolve `None`, e isso nao e falha** (TEC-195, D7): nenhuma
     tabela deste sistema guarda e-mail de lead. O campo e aceito pelo
@@ -502,19 +490,5 @@ async def valor_revelado(session: AsyncSession, *, par: tuple[str, str], campo: 
     """
     if campo != CAMPO_TELEFONE:
         return None
-
-    channel, conversation_key = par
-    canonico = normalizar(conversation_key)
-    if canonico is None:
-        canonico = (
-            await session.execute(
-                select(VinculoDeSessao.telefone)
-                .where(
-                    VinculoDeSessao.channel == channel,
-                    VinculoDeSessao.conversation_key == conversation_key,
-                )
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-
-    return f"+{canonico}" if canonico else None
+    telefone = (await telefones_de(session, [par]))[par]
+    return f"+{telefone}" if telefone else None

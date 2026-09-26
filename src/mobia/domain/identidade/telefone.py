@@ -85,6 +85,17 @@ def normalizar(bruto: str) -> str | None:
     return "55" + ddd + assinante
 
 
+def grafias_do_wa_id(canonico: str) -> tuple[str, ...]:
+    """As formas em que a Meta pode entregar este numero. TEC-203.
+
+    A Meta entrega parte dos celulares brasileiros sem o 9 (ver a docstring do
+    modulo); a busca por telefone precisa das duas para achar o `wa_id`.
+    """
+    if len(canonico) == 13 and canonico[4] == "9":
+        return (canonico, canonico[:4] + canonico[5:])
+    return (canonico,)
+
+
 def extrair_telefone(texto: str) -> str | None:
     """O telefone da fala, se houver exatamente um.
 

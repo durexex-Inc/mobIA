@@ -252,6 +252,9 @@ TABELAS = (
     # par encontra o par de outro teste. Mesmo sintoma que `handoffs` e
     # `imoveis` ja registram: passa sozinho, falha em conjunto.
     "referencias_de_lead",
+    # TEC-203. PK no par, como `vinculos_de_sessao`: sem o truncate, a
+    # identidade gravada por um teste revela o lead do proximo.
+    "identidades_de_lead",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto
