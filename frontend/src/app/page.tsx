@@ -8,7 +8,11 @@ import {
   type Filtros as FiltrosTipo,
   type Funil as FunilTipo,
 } from '@/lib/metricas'
+import { redirect } from 'next/navigation'
+
+import { urlDoLogin } from '@/lib/destino'
 import { periodoPadrao } from '@/lib/periodo'
+import { exigirSessao } from '@/lib/servidor/sessao'
 
 type Busca = Record<string, string | string[] | undefined>
 
@@ -30,14 +34,19 @@ function filtrosDaUrl(busca: Busca): FiltrosTipo {
 
 /**
  * O aviso depende do status, porque as causas sao diferentes e o conserto
- * tambem: 403 e configuracao do operador (token errado no env do servidor),
- * 422 e filtro invalido que a gerente pode corrigir sozinha, e o resto e o
- * backend. Um aviso unico mandaria a gerente procurar o erro dela num
- * problema que nao e dela.
+ * tambem: 403 e o papel sem `VER_FUNIL`, 422 e filtro invalido que a gerente
+ * pode corrigir sozinha, e o resto e o backend. Um aviso unico mandaria a
+ * gerente procurar o erro dela num problema que nao e dela.
+ *
+ * **O 403 mudou de significado na TEC-309.** Antes era o `X-Admin-Token` do
+ * ambiente recusado -- configuracao do operador. Agora a chamada leva o JWT de
+ * quem esta logado, e o 403 e a matriz da TEC-202 dizendo que aquele papel nao
+ * ve o funil (hoje, o CORRETOR). A tela "Sem permissao" propriamente dita e a
+ * TEC-312; ate la, e este aviso.
  */
 function avisoDe(erro: ErroDeMetricas): string {
   if (erro.status === 403) {
-    return 'Não foi possível carregar: o servidor recusou o token de acesso. É configuração do ambiente, não um problema do seu filtro.'
+    return 'Seu perfil de acesso não inclui este painel. Se você precisa dele, fale com quem administra o sistema.'
   }
   if (erro.status === 422) {
     return `Não foi possível carregar: um filtro tem valor inválido — ${erro.message}`
@@ -66,13 +75,16 @@ function urlDoRecorte(filtros: FiltrosTipo): string {
 export default async function Pagina({ searchParams }: { searchParams: Promise<Busca> }) {
   const busca = await searchParams
   const filtros = filtrosDaUrl(busca)
+  const recorte = urlDoRecorte(filtros)
+  // Antes de qualquer busca: sem sessao, nada de lead e pedido ao FastAPI.
+  const sessao = await exigirSessao(recorte)
 
   let funil: FunilTipo | null = null
   let erroDeCarga: ErroDeMetricas | null = null
   let aviso: string | null = null
 
   try {
-    funil = await buscarFunil(filtros)
+    funil = await buscarFunil(filtros, sessao.acesso)
   } catch (erro) {
     // O funil NAO e renderizado quando a busca falha. Um funil de zeros e
     // indistinguivel de um periodo sem lead, e a gerente leria a queda como
@@ -82,6 +94,14 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
     aviso = erroDeCarga
       ? avisoDe(erroDeCarga)
       : 'Não foi possível carregar os dados do painel.'
+  }
+
+  // **401 e o access que expirou**, 60 minutos depois do login: sem a TEC-310
+  // ninguem o renova. Volta ao login com o recorte preservado. O `redirect`
+  // fica FORA do `try` acima de proposito -- ele lanca para interromper o
+  // render, e o `catch` o engoliria.
+  if (erroDeCarga?.status === 401) {
+    redirect(urlDoLogin({ returnTo: recorte, erro: 'sessao_expirada' }))
   }
 
   // **O 422 vai para o formulario; o resto vai para o `ErroDeCarga`.** Um
@@ -108,7 +128,7 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
         <ErroDeCarga
           mensagem={aviso}
           requestId={erroDeCarga?.requestId}
-          urlParaTentarDeNovo={urlDoRecorte(filtros)}
+          urlParaTentarDeNovo={recorte}
         />
       )}
       {funil ? (

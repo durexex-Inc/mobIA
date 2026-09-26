@@ -121,16 +121,23 @@ async function detalheDe(resposta: Response): Promise<{ mensagem: string; campos
  * impedia que um `'use client'` a levasse para o bundle do navegador.
  *
  * `revalidate: 60` e o teto de defasagem da RN-17.3, e nao um numero escolhido
- * a esmo. Ele tambem e o que faz N navegadores com o painel aberto virarem UMA
- * chamada por minuto ao FastAPI -- que ve o IP deste servidor, e nao o de cada
- * navegador, e aplica 100 requisicoes por minuto por IP.
+ * a esmo. Ele tambem e o que faz as abas de uma pessoa com o painel aberto
+ * virarem UMA chamada por minuto ao FastAPI -- que ve o IP deste servidor, e
+ * nao o de cada navegador, e aplica 100 requisicoes por minuto por IP.
+ *
+ * **Uma por minuto POR PESSOA, desde a TEC-309, e nao uma no total.** O
+ * `acesso` vai no `Authorization`, cabecalho entra na chave do Data Cache, e
+ * entao cada token tem a sua entrada -- que e o que impede o funil de um
+ * usuario ser servido a outro. Com K pessoas olhando, sao K chamadas por
+ * minuto: a folga ate 100 continua larga para uma imobiliaria, e deixa de ser
+ * infinita. Ver a D7 do desenho.
  *
  * **E por ser cacheada que esta chamada NAO leva `X-Request-Id`.** Header entra
  * na chave do Data Cache, entao um id por requisicao zeraria a taxa de acerto e
  * desfaria o paragrafo acima sem nada ficar vermelho. O tipo de
  * `chamarApi` recusa os dois juntos; a razao inteira esta la.
  */
-export async function buscarFunil(filtros: Filtros): Promise<Funil> {
+export async function buscarFunil(filtros: Filtros, acesso: string): Promise<Funil> {
   const busca = new URLSearchParams()
   for (const [chave, valor] of Object.entries(filtros)) {
     if (valor) {
@@ -139,6 +146,7 @@ export async function buscarFunil(filtros: Filtros): Promise<Funil> {
   }
 
   const resposta = await chamarApi('/api/v1/metricas/funil', {
+    acesso,
     busca,
     revalidarEmSegundos: 60,
   })

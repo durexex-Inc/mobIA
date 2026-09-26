@@ -41,6 +41,16 @@ type ChamadaSemCache = {
 }
 
 export type OpcoesDaChamada = {
+  /**
+   * O access token de quem esta logado, que vira `Authorization: Bearer`
+   * (TEC-309, D7). Ausente so nas rotas de `/auth/*` que produzem o token.
+   *
+   * **Nao ha fallback para token compartilhado**, e isso e o ponto: antes da
+   * TEC-309 toda chamada saia com o `X-Admin-Token` do ambiente, um ADMIN sem
+   * usuario. Chamada sem `acesso` agora chega ao FastAPI sem credencial nenhuma
+   * e leva 403 -- que e o desfecho certo para quem esqueceu de passar a sessao.
+   */
+  acesso?: string
   metodo?: string
   busca?: URLSearchParams
   corpo?: BodyInit | null
@@ -53,12 +63,7 @@ function baseDaApi(): string {
 }
 
 /**
- * Chama o FastAPI com o token de admin.
- *
- * O token vazio nao levanta aqui de proposito: ele vira um `X-Admin-Token`
- * vazio, o backend responde 403, e a tela diz que e configuracao do ambiente e
- * nao filtro da gerente -- o ramo `403` de `avisoDe`, em `app/page.tsx`.
- * Levantar aqui trocaria essa mensagem util por um erro generico.
+ * Chama o FastAPI, com o access token de quem esta logado quando houver um.
  *
  * Devolve a `Response` crua: quem chama e que sabe ler o corpo. O painel tem a
  * leitura de `detail` do FastAPI em `metricas.ts`; o proxy `/bff/*` repassa o
@@ -73,8 +78,9 @@ export async function chamarApi(caminho: string, opcoes: OpcoesDaChamada): Promi
   // Registro simples, e nao `Headers`: todas as chaves sao nossas e fixas, e
   // `Headers` nao acrescenta nada aqui alem de esconder o valor de quem inspeciona
   // a chamada em teste.
-  const cabecalhos: Record<string, string> = {
-    'X-Admin-Token': process.env.MOBIA_ADMIN_TOKEN ?? '',
+  const cabecalhos: Record<string, string> = {}
+  if (opcoes.acesso) {
+    cabecalhos.Authorization = `Bearer ${opcoes.acesso}`
   }
   if (opcoes.idDeRequisicao) {
     cabecalhos['X-Request-Id'] = opcoes.idDeRequisicao
@@ -85,9 +91,14 @@ export async function chamarApi(caminho: string, opcoes: OpcoesDaChamada): Promi
 
   // Sem `revalidarEmSegundos` a chamada e explicitamente `no-store`. Route
   // Handler ja nao e cacheado por padrao; a declaracao existe porque a razao
-  // nao e performance -- no dia em que houver sessao por usuario (TEC-309), um
-  // cache compartilhado indexado so pela URL serviria a resposta de um usuario
-  // para outro.
+  // nao e performance: desde a TEC-309 as respostas sao por usuario, e um
+  // cache que servisse a de um para outro seria vazamento.
+  //
+  // **A chamada COM cache nao vaza, e por um motivo que nao esta nesta linha.**
+  // O Data Cache casa por URL, metodo, cabecalhos e corpo (referencia de
+  // `fetch`, Next 16), entao o `Authorization` acima separa as entradas: cada
+  // token tem a sua. Quem trocar o Bearer por algo fora dos cabecalhos -- um
+  // parametro de busca que o cache ignore, por exemplo -- desfaz isso.
   const cache =
     opcoes.revalidarEmSegundos === undefined
       ? ({ cache: 'no-store' } as const)

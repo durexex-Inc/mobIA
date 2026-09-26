@@ -30,7 +30,7 @@ Sobra usar o Auth.js como casca e reescrever por baixo a sessão, o armazenament
 - **O registro** guarda `access` e `refresh` — os dois tokens que o FastAPI emitiu — e o instante da criação. Mais nada: papel e permissões saem de `GET /auth/me` quando alguém precisar, como a RN-FE-03.2 manda (TEC-312).
 - **A validade é de 7 dias**, no Redis e no `Max-Age` do cookie, que é a vida do refresh (RNF-11). O access dura 60 minutos, e renová-lo com o refresh é a TEC-310. Ver a L3.
 
-O cliente Redis é o pacote `redis` (node-redis), atrás de uma interface de quatro operações (`get`, `set` com expiração, `del`, `getDel`). Os testes trocam essa interface por um mapa em memória, e nenhum deles precisa de Redis de pé.
+O cliente Redis é o pacote `redis` (node-redis), atrás de uma interface de três operações (`obter`, `gravar` com expiração, `apagar`). Os testes trocam essa interface por um mapa em memória, e nenhum deles precisa de Redis de pé.
 
 ## D3 — O desafio de MFA também não vai ao navegador
 
@@ -56,6 +56,8 @@ Server Actions fariam o mesmo com menos arquivos, mas trazem o protocolo delas j
 2. **A verificação real** fica em `exigirSessao()`, chamada pela página e pelo `/bff/*`. Ela lê o cookie, busca o registro no Redis e devolve o access token. Sem registro, a página redireciona ao login e o BFF responde `401`.
 
 A primeira guarda sozinha seria furável — qualquer valor no cookie passa. A segunda sozinha funcionaria, e a primeira existe só por custo.
+
+**Com cookie forjado ou expirado no Redis, a resposta é `200`, e isso não é a guarda falhando.** Observado na verificação de ponta a ponta: como existe `app/loading.tsx`, o Next começa o streaming — status `200`, `<title>` e o esqueleto de carregamento — antes de a página rodar. O `redirect()` de `exigirSessao` chega depois, como `NEXT_REDIRECT` no payload do React e um `<meta http-equiv="refresh">` para `/login`. Nenhum dado do funil sai: a página redireciona antes de chamar o FastAPI, e o HTML entregue não tem etapa nem token. Quem medir a guarda pelo status HTTP vai concluir errado; o que se mede é o corpo. O mesmo vale para o `401` do access expirado (D7). Mover a consulta ao Redis para o `proxy.ts` daria um `307` de verdade nesses casos, ao custo de uma ida ao Redis em toda navegação — não compensa enquanto o resultado para quem usa é o mesmo.
 
 **Rotas públicas:** `/login` e o que vem abaixo dele, e `/embed/*`, que ainda não existe (TEC-344) mas a card já exclui. O `/bff/*` segue fora do `matcher`, como na TEC-356, e responde `401` em JSON: um redirecionamento seria a resposta errada para um `fetch`.
 

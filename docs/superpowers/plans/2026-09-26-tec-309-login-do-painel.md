@@ -12,7 +12,7 @@ O Node precisa ser o 24: `export PATH="$APPDATA/fnm/node-versions/v24.21.0/insta
 ## Frontend
 
 3. `lib/destino.ts` — `destinoSeguro` (D6), função pura, com um teste por forma de ataque.
-4. `lib/servidor/armazem.ts` — a interface de quatro operações e o cliente `redis` atrás dela (D2). O `npm install redis`.
+4. `lib/servidor/armazem.ts` — a interface de três operações e o cliente `redis` atrás dela (D2). O `npm install redis`.
 5. `lib/servidor/sessao.ts` — criar, ler e apagar a sessão; guardar, ler e apagar o desafio; nomes e opções dos cookies. Testes com o armazém em memória.
 6. `lib/servidor/api.ts` — sai o `X-Admin-Token`, entra `acesso` → `Authorization: Bearer` (D7). Os testes existentes são ajustados.
 7. `app/login/page.tsx` — as duas etapas e as mensagens de erro.
