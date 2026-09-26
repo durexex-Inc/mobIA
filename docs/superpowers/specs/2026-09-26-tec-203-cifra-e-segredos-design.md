@@ -46,7 +46,7 @@ A TEC-219 declara que destrava a TEC-203 "apenas na parte de ambiente; os dois g
 
 ### Chave do `lead_ref`
 
-Continua própria. A reindexação recalcula `eventos_auditoria.lead_ref` (a identidade guarda o valor original), então a afirmação da docstring de `referencia.py` de que a chave "não pode rodar" deixa de ser verdade e sai de lá.
+Continua própria. A reindexação recalcula `eventos_auditoria.lead_ref` sempre que o par muda. **Rotacionar a própria chave do `lead_ref` exige a anterior**: o script de reindexação aceita `AUDITORIA_CHAVE_DO_LEAD_ANTERIOR` e, com ela, recalcula cada `lead_ref` dos pares conhecidos da chave velha para a nova. A docstring de `referencia.py` ("não pode rodar sem tornar a trilha impesquisável") passa a dizer que pode, desde que pelo script e com a chave anterior em mãos.
 
 ### Demais segredos
 
@@ -74,7 +74,8 @@ Vale igual para o canal web: a sessão (UUID) também vira HMAC. **O widget assi
 
 Módulo novo `src/mobia/domain/identidade/indice.py`, único lugar que conhece a chave de índice:
 
-- `chave_de(channel, valor)` — o HMAC. No WhatsApp normaliza antes com `identidade/telefone.py::normalizar`.
+- `chave_de(channel, valor)` — o HMAC do valor **cru**, sem normalizar. Espelha exatamente a chave de hoje: dois `wa_id` diferentes (com e sem o 9) continuam sendo duas conversas, e o `to` do envio continua sendo o `wa_id` que a Meta mandou.
+- `indice_de_telefone(canonico)` — HMAC de `telefone:{canonico}`, sobre a forma de `identidade/telefone.py::normalizar`. É o índice do telefone digitado no widget e o que a busca e a absorção consultam.
 - `registrar(sessao, channel, valor)` — upsert da identidade; devolve a chave.
 - `revelar(sessao, channel, chave)` — decifra. É a única porta para o valor em claro. Identidade ausente levanta erro explícito; nunca devolve a própria chave como se fosse telefone.
 - `telefones_de(sessao, pares)` — o telefone canônico de cada lead, pelas duas origens: a identidade no WhatsApp, o vínculo cifrado no web. É o que listagem, revelação, CRM e e-mails de agendamento usam.
@@ -88,7 +89,7 @@ O AAD do resumo (`context/models.py::aad_do_resumo`) já é montado sobre `(chan
 3. Colunas fora do padrão:
    - `messages.sender_external_id`, só nas mensagens de entrada (na saída é o `phone_number_id` do canal, não dado do lead);
    - `rate_limit_events.chave`;
-   - `vinculos_de_sessao.telefone` sai; entram `telefone_cifrado` e `telefone_indice`, este com a mesma chave e a mesma normalização do WhatsApp, para a absorção casar;
+   - `vinculos_de_sessao.telefone` sai; entram `telefone_cifrado` e `telefone_indice` (`indice_de_telefone` do número canônico);
    - `eventos_auditoria.lead_ref`, recalculado;
    - `conversation_summaries`, recifrado com o AAD novo.
 4. **Tabelas imutáveis.** `lead_score_audit` (0012), `conversation_intent_audit` (0035) e `eventos_auditoria` (0053) têm trigger que recusa UPDATE — e as duas primeiras guardam o telefone em claro. A reindexação faz `ALTER TABLE ... DISABLE TRIGGER` e `ENABLE` **na mesma transação**, só nessas três. É exceção declarada: trocar o pseudônimo do lead não altera o fato registrado, e manter o telefone em claro numa tabela imutável seria a violação que esta card existe para eliminar. As docstrings das três migrations ganham a ressalva.
@@ -114,8 +115,8 @@ Regra: **o telefone em claro só existe em memória, no instante em que sai do p
 | E-mails de agendamento (`agendamento/mensagens.py`) | **Telefone revelado** — o corretor precisa dele para a visita |
 | Dashboard, listagem | Revela por linha da página e mascara |
 | Dashboard, revelar (`leads/repositorio.py::valor_revelado`) | Passa por `revelar`; a auditoria de acesso continua |
-| Dashboard, busca | Normaliza e compara pelo HMAC, em `conversation_key` e em `vinculos_de_sessao.telefone_indice`. Só número completo |
-| Absorção web→WhatsApp (`identidade/absorcao.py`) | Casa `telefone_indice` com a chave do WhatsApp; não revela nada |
+| Dashboard, busca | Normaliza o termo; compara `vinculos_de_sessao.telefone_indice` com `indice_de_telefone` e o `conversation_key` com `chave_de` das duas grafias do `wa_id` (com e sem o 9). Só número completo |
+| Absorção web→WhatsApp (`identidade/absorcao.py`) | Revela o `wa_id`, normaliza como hoje e consulta os vínculos por `indice_de_telefone` |
 | Rotas com o par (`/assumir`, `/devolver`, auditoria `?conversationKey=`) | **Sem mudança**: o par que elas recebem passa a ser pseudônimo, e o telefone sai da query string por consequência |
 | `admin/reativar.py --key` | Aceita o telefone e calcula a chave — ferramenta de operador |
 | Entrada | `registrar` antes de persistir em `messages/service.py::IngestionService._persist` e em `api/routes/widget.py`; o rate limit de `messages/service.py::IngestionService.ingest` passa a usar a chave |
