@@ -28,4 +28,4 @@ def test_a_lista_de_literais_nao_encolheu_sem_querer() -> None:
     ate a TEC-169, que acrescentou os tres da lista de espera -- a oferta, o
     aceite e o aviso de slot liberado.
     """
-    assert len(LITERAIS_AO_LEAD) == 49
+    assert len(LITERAIS_AO_LEAD) == 54

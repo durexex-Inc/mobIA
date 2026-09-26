@@ -12,6 +12,7 @@ from mobia.domain.agente.apresentacao import (
     MAX_CARACTERES_DA_LEGENDA,
     Ficha,
     Rentabilidade,
+    card_de,
     custos_recorrentes,
     diferencial_de,
     legenda_de,
@@ -290,3 +291,25 @@ def test_um_custo_ausente_nao_zera_o_outro() -> None:
 
 def test_sem_condominio_e_sem_iptu_nao_ha_linha_de_custos() -> None:
     assert custos_recorrentes(None, None) is None
+
+
+def test_o_card_do_chat_web_traz_os_campos_soltos() -> None:
+    """TEC-364, D2: o que a TEC-349 desenha, em centavos e sem formatacao."""
+    assert card_de(COMPLETA) == {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "titulo": "Apartamento em Lagoa da Conceicao",
+        "bairro": "Lagoa da Conceicao",
+        "precoCentavos": 51646430,
+        "condominioCentavos": 55000,
+        "quartos": 4,
+        "vagas": 2,
+        "areaUtilM2": 54,
+        "diferencial": "churrasqueira e mobiliado",
+        "foto": "https://exemplo.com/ap-1004-1.jpg",
+        "url": None,
+    }
+
+
+def test_o_card_nao_leva_o_bloco_do_investidor() -> None:
+    """A TEC-349 nao pede a rentabilidade; ela segue pela legenda."""
+    assert card_de(COM_YIELD) == card_de(COMPLETA)

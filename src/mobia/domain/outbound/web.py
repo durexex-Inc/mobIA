@@ -25,7 +25,7 @@ canais, que nao e escopo da TEC-124.
 **`EnvioForaDaJanela` tambem nunca sai daqui**: o canal web nao tem janela, e
 o docstring de `OutboundPort` ja registrava isso antes desta card existir.
 
-**Kind que nao seja texto nem imagem nao e publicado.** Nenhum caminho manda
+**Kind que nao seja texto, imagem ou ficha de imovel nao e publicado.** Nenhum caminho manda
 template para o web -- as varreduras que os enviam filtram por
 `CANAIS_COM_REENGAJAMENTO` --, entao chegar um aqui e defeito de roteamento
 nosso. Fechar o turno em falha puniria o lead por isso; o `warning` e o que
@@ -175,7 +175,21 @@ def _frame_de(kind: str, payload: dict[str, Any]) -> dict[str, Any] | None:
 
     `tipo` ausente e texto, pelo mesmo default que `WhatsAppOutbound` aplica:
     os chamadores anteriores a TEC-162 nao mandam a chave.
+
+    **A ficha de imovel vira `imovel`, com ou sem foto** (TEC-364, D2). Ela e
+    reconhecida pela chave `imovel` que o turno poe no payload, e nao pelo
+    `tipo`: sem foto o payload da ficha e de texto, e o canal web ainda assim
+    precisa do card estruturado para desenhar o placeholder com o bairro que a
+    TEC-349 pede. `texto` e so a prosa do agente, que vem no primeiro e e nula
+    nos outros -- a legenda repetiria em texto o que o card ja mostra.
     """
+    if "imovel" in payload:
+        return {
+            "tipo": "imovel",
+            "imovel": payload["imovel"],
+            "texto": payload.get("prosa"),
+            "kind": kind,
+        }
     tipo = payload.get("tipo")
     if tipo is None:
         return {"tipo": "mensagem", "texto": payload["texto"], "kind": kind}
