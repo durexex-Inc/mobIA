@@ -49,10 +49,12 @@ log = structlog.get_logger(__name__)
 
 MAX_TOKENS_DA_RESPOSTA = 1500
 
-# Orcamento: SISTEMA_DO_AGENTE e uma das quatro parcelas da subcontagem que
-# test_diferenca_entre_o_contado_e_o_enviado mede, em test_config.py (as
-# outras tres: -SISTEMA de montagem.py, +schema compilado, +rotulos de
-# montar_prompt). Alongar este texto gasta reserva de contexto: cada caractere
+# Orcamento: SISTEMA_DO_AGENTE e uma das parcelas da subcontagem que
+# test_diferenca_entre_o_contado_e_o_enviado mede, em test_config.py -- as
+# outras sao -SISTEMA de montagem.py, +schema compilado, +rotulos de
+# montar_prompt, +ferramenta de busca e, desde a TEC-198, o que o nome e o tom
+# configuraveis acrescentam no pior caso (`_decomposicao` lista todas).
+# Alongar este texto gasta reserva de contexto: cada caractere
 # aqui e enviado em toda chamada e nunca contado por montar_contexto.
 #
 # **Quanto ainda cabe nao esta escrito neste comentario, de proposito**

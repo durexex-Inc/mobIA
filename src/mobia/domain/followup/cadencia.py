@@ -12,10 +12,13 @@ anterior". A diferenca e observavel: encadeando, um atraso na varredura
 empurraria toda a cauda; ancorando, um disparo atrasado nao desloca os
 seguintes.
 
-**Constantes de modulo, e nao configuracao.** A card pede intervalos
-ajustaveis sem deploy; isso e um subsistema (persistir, autorizar, invalidar
-cache) e pertence ao epico de configuracao (RF-19), exatamente como a TEC-150
-decidiu para os pesos do score. Lacuna declarada no desenho.
+**`CADENCIA` e o padrao, e a vigente vem da configuracao** (TEC-198). Ate
+aquela card isto dizia "constantes de modulo, e nao configuracao", e que
+torna-las ajustaveis era do epico de configuracao (RF-19). A TEC-198 as
+tornou: o administrador troca os INTERVALOS em `configuracoes_do_agente`, e a
+varredura passa a vigente as funcoes abaixo. A QUANTIDADE de tentativas por
+temperatura continua sendo a desta tabela -- ela esta no `CASE` SQL de
+`repositorio.py`, gerado na importacao do modulo.
 """
 
 from collections.abc import Mapping

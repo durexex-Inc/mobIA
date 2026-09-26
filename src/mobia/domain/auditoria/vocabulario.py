@@ -34,9 +34,9 @@ class AtorTipo(StrEnum):
 
 class Acao(StrEnum):
     DADO_PESSOAL_ACESSADO = "DADO_PESSOAL_ACESSADO"
-    # Sem chamador: a edicao de qualificacao pelo dashboard e a TEC-194, e so a
-    # feita por pessoa sera auditada -- a do agente se reconstroi pela
-    # transcricao.
+    # So a edicao feita por pessoa e auditada -- a do agente se reconstroi pela
+    # transcricao. O chamador e o `PATCH /leads/{leadId}/qualificacao` da
+    # TEC-194, um evento por campo alterado.
     QUALIFICACAO_ALTERADA = "QUALIFICACAO_ALTERADA"
     HANDOFF_CRIADO = "HANDOFF_CRIADO"
     OPTOUT_REGISTRADO = "OPTOUT_REGISTRADO"
