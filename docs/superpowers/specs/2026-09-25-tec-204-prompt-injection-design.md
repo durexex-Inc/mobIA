@@ -103,6 +103,8 @@ Roda pelo **turno de verdade** (`ClassificadorAnthropic` + `montar_prompt`), nã
 
 **Uma falha bloqueia, sem retentativa.** Retentar esconderia o ataque que funciona uma vez em três — exatamente o perigoso em produção. O custo é o dito acima: uma falha rara por não determinismo bloqueia um PR e alguém tem de olhar. A chamada não fixa `temperature` hoje, e esta card não muda isso em produção só para estabilizar o eval.
 
+- **Emenda E-01 (TEC-204, 26/09/2026):** a regra acima é sobre o **veredito** do ataque, não sobre a rede. Decisão de Eduardo (opção A): `evals/test_injecao.py` passou a retentar **só** falha de transporte do SDK da Anthropic — conexão ou timeout, chegue ela direto de uma chamada do classificador/resumidor ou embrulhada como `__cause__` de `ModeracaoIndisponivel` vinda do moderador —, até duas vezes por chamada (três tentativas), antes de propagar como antes. Nunca retenta veredito de ataque, `RespostaInvalida`, nem `ModeracaoIndisponivel` fora do protocolo. A razão: um `[WinError 64]` de ambiente (documentado em `CLAUDE.md`) não diz nada sobre o ataque, e reprovar o eval pago por causa dele só custa dinheiro sem sinal — a regra de não retentar existe para não esconder o ataque que funciona uma vez em três, e falha de rede não é isso. Implementado em `mobia.evals.injecao.com_retentativa_de_transporte` e `e_falha_de_transporte`, testados sem modelo em `tests/unit/test_evals_injecao.py`.
+
 **Onde roda:**
 
 - `evals/test_injecao.py`, no job "Avaliações de IA" que já existe (pago, `ANTHROPIC_API_KEY`), separado da métrica agregada. Custo: ~25 chamadas ao classificador (20 ataques mais os turnos dos dois multi-turno), uma ao resumidor e ~24 à moderação de saída, no modelo mais barato, só nos PRs que tocam os caminhos abaixo.

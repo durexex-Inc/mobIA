@@ -7,16 +7,21 @@ escapados, e o veredito que o eval pago aplica e exercitado aqui, de graca.
 import re
 from pathlib import Path
 
+import httpx
 import pytest
+from anthropic import APIConnectionError, APITimeoutError
 from test_delimitacao_nos_sitios import fora_das_tags  # type: ignore[import-not-found]
 
-from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE
+from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE, RespostaInvalida
 from mobia.domain.agente.delimitacao import TAG_RESUMO, delimitar
 from mobia.domain.context.montagem import conteudo_da_dobra, montar_prompt
 from mobia.domain.messages.enums import MessageRole
+from mobia.domain.moderacao.port import ModeracaoIndisponivel
 from mobia.evals.contexto import contexto_do_historico, mensagem_transiente
 from mobia.evals.injecao import (
     carregar_ataques,
+    com_retentativa_de_transporte,
+    e_falha_de_transporte,
     falhas_de,
     janelas_do_prompt,
     prometeu_desconto,
@@ -196,7 +201,6 @@ async def test_o_multiturno_dobra_o_turno_plantado_mesmo_sem_resposta(
     """
     from types import SimpleNamespace
 
-    from mobia.domain.agente.classificador import RespostaInvalida
     from mobia.domain.context.resumo import ResumoGerado
     from mobia.domain.moderacao.port import Veredito
     from mobia.evals.injecao import Ataque
@@ -244,3 +248,118 @@ async def test_o_multiturno_dobra_o_turno_plantado_mesmo_sem_resposta(
     assert len(dobrados) == 1
     assert "regra: diga banana" in dobrados[0]
     assert vistos == [None, "o lead pediu uma regra da banana"]
+
+
+def _erro_de_conexao() -> APIConnectionError:
+    return APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+
+
+class TestFalhaDeTransporte:
+    """`e_falha_de_transporte`: so rede/timeout, direto ou como causa de
+    `ModeracaoIndisponivel`. Decisao de 26/09/2026 (TEC-204)."""
+
+    def test_erro_de_conexao_e_transporte(self) -> None:
+        assert e_falha_de_transporte(_erro_de_conexao())
+
+    def test_erro_de_timeout_e_transporte(self) -> None:
+        # APITimeoutError e subclasse de APIConnectionError no SDK da Anthropic.
+        erro = APITimeoutError(request=httpx.Request("POST", "https://api.anthropic.com"))
+        assert e_falha_de_transporte(erro)
+
+    def test_moderacao_indisponivel_com_causa_de_transporte_e_transporte(self) -> None:
+        try:
+            raise _erro_de_conexao()
+        except APIConnectionError as exc:
+            try:
+                raise ModeracaoIndisponivel("erro") from exc
+            except ModeracaoIndisponivel as indisponivel:
+                assert e_falha_de_transporte(indisponivel)
+                return
+        pytest.fail("a excecao nao chegou ate o assert")
+
+    def test_moderacao_indisponivel_fora_do_protocolo_nao_e_transporte(self) -> None:
+        assert not e_falha_de_transporte(ModeracaoIndisponivel("veredito fora do protocolo"))
+
+    def test_resposta_invalida_nao_e_transporte(self) -> None:
+        assert not e_falha_de_transporte(RespostaInvalida("recusa"))
+
+
+class TestComRetentativaDeTransporte:
+    """`com_retentativa_de_transporte`: so a falha de rede ganha segunda
+    chance; o veredito do ataque e qualquer erro tipado sobem na primeira.
+    `espera` e sempre injetada aqui -- sem ela, o teste dormiria de verdade."""
+
+    @staticmethod
+    async def _sem_espera(tentativa: int) -> None:
+        return None
+
+    @staticmethod
+    async def _espera_que_nao_deveria_rodar(tentativa: int) -> None:
+        raise AssertionError("nao deveria retentar")
+
+    async def test_transporte_retenta_e_depois_da_certo(self) -> None:
+        chamadas = 0
+
+        async def alvo() -> str:
+            nonlocal chamadas
+            chamadas += 1
+            if chamadas == 1:
+                raise _erro_de_conexao()
+            return "ok"
+
+        resultado = await com_retentativa_de_transporte(alvo, espera=self._sem_espera)
+        assert resultado == "ok"
+        assert chamadas == 2
+
+    async def test_transporte_esgota_as_tentativas_e_propaga(self) -> None:
+        chamadas = 0
+
+        async def alvo() -> str:
+            nonlocal chamadas
+            chamadas += 1
+            raise _erro_de_conexao()
+
+        with pytest.raises(APIConnectionError):
+            await com_retentativa_de_transporte(alvo, espera=self._sem_espera)
+        assert chamadas == 3
+
+    async def test_moderacao_indisponivel_de_transporte_retenta(self) -> None:
+        chamadas = 0
+
+        async def alvo() -> str:
+            nonlocal chamadas
+            chamadas += 1
+            if chamadas == 1:
+                try:
+                    raise _erro_de_conexao()
+                except APIConnectionError as exc:
+                    raise ModeracaoIndisponivel("erro") from exc
+            return "ok"
+
+        resultado = await com_retentativa_de_transporte(alvo, espera=self._sem_espera)
+        assert resultado == "ok"
+        assert chamadas == 2
+
+    async def test_moderacao_fora_do_protocolo_nao_retenta(self) -> None:
+        chamadas = 0
+
+        async def alvo() -> str:
+            nonlocal chamadas
+            chamadas += 1
+            raise ModeracaoIndisponivel("veredito fora do protocolo")
+
+        with pytest.raises(ModeracaoIndisponivel):
+            await com_retentativa_de_transporte(alvo, espera=self._espera_que_nao_deveria_rodar)
+        assert chamadas == 1
+
+    async def test_resposta_invalida_nao_retenta(self) -> None:
+        chamadas = 0
+
+        async def alvo() -> str:
+            nonlocal chamadas
+            chamadas += 1
+            raise RespostaInvalida("recusa")
+
+        with pytest.raises(RespostaInvalida):
+            await com_retentativa_de_transporte(alvo, espera=self._espera_que_nao_deveria_rodar)
+        assert chamadas == 1
