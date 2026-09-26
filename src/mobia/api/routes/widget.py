@@ -39,7 +39,7 @@ from mobia.api.middleware import resolver_ip
 from mobia.app.config import get_settings
 from mobia.app.logging import correlation_id
 from mobia.domain.consentimento.repositorio import registrar as registrar_consentimento
-from mobia.domain.identidade.indice import chave_de
+from mobia.domain.identidade.indice import chave_de, registrar
 from mobia.domain.identidade.repositorio import vincular_sessao
 from mobia.domain.identidade.telefone import extrair_telefone
 from mobia.domain.limites.eventos import registrar_bloqueio
@@ -134,6 +134,12 @@ async def chat(
         return
 
     try:
+        # TEC-203, D4. A identidade vem antes de qualquer escrita sob a chave
+        # desta sessao -- consentimento, vinculo, mensagem. A visitante que so
+        # responde o aviso e vai embora deixaria em `consentimentos` uma chave
+        # sem identidade, que nenhuma rotacao consegue levar para a chave de
+        # indice nova. Uma vez por conexao, em transacao propria e curta.
+        await _registrar_identidade(sessao)
         await _anunciar(websocket, sessao, chave, retomada)
         log.info("widget.conectado", sessao=sessao, retomada=retomada)
 
@@ -156,7 +162,7 @@ async def chat(
         if falha is not None:
             raise falha
     except Exception as exc:
-        # O anuncio (a leitura do historico) e as duas tarefas caem aqui. Sem
+        # A identidade, o anuncio (a leitura do historico) e as duas tarefas caem aqui. Sem
         # este ramo a excecao escapava do endpoint e o uvicorn a logava crua
         # -- ou, vinda de uma tarefa, sumia no `gather` e o socket fechava sem
         # codigo, com o cliente vendo 1006 e o servidor sem rastro nenhum.
@@ -304,6 +310,12 @@ async def _identificar(websocket: WebSocket) -> tuple[str, bool] | None:
         retomada = True
 
     return sessao, retomada
+
+
+async def _registrar_identidade(sessao: str) -> None:
+    async with get_sessionmaker()() as session:
+        await registrar(session, CANAL_WEB, sessao)
+        await session.commit()
 
 
 async def _anunciar(websocket: WebSocket, sessao: str, chave: str, retomada: bool) -> None:

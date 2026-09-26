@@ -101,6 +101,8 @@ O AAD do resumo (`context/models.py::aad_do_resumo`) já é montado sobre `(chan
 
 **Downgrade:** revela todas as identidades e devolve o valor em claro às colunas, reabrindo as mesmas exceções de trigger. Coberto por teste, como todo downgrade do repo.
 
+**Par sem identidade** (corrigido na implementação): na rotação e na descida, um par sem identidade não tem de onde tirar o valor cru. A primeira versão reprovava a execução inteira; ela passou a pular o par, que fica na chave em que estava, e a contá-lo — `reindexar` devolve `sem_identidade`, `scripts/reindexar_leads.py` imprime um aviso e o log `reindexacao.par_sem_identidade` diz quantos por canal. Um par órfão, de bug antigo ou erro de operador, não trava a rotação de todo mundo. Na subida (`migracao`) nada muda: o valor vem da coluna.
+
 ## D4 — As bordas
 
 Regra: **o telefone em claro só existe em memória, no instante em que sai do processo por necessidade real.**

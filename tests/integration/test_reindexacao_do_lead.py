@@ -381,7 +381,7 @@ async def test_rodar_a_reindexacao_de_novo_nao_muda_nada(
     chave_do_lead = get_settings().auditoria_chave_do_lead
 
     async with get_engine().begin() as conexao:
-        mudados = await conexao.run_sync(
+        resultado = await conexao.run_sync(
             lambda conn: reindexar(
                 conn,
                 tabelas=TABELAS_COM_CHAVE_DE_LEAD,
@@ -392,7 +392,7 @@ async def test_rodar_a_reindexacao_de_novo_nao_muda_nada(
             )
         )
 
-    assert mudados == 0
+    assert resultado.mudados == 0
     assert await _retrato() == antes
 
 
@@ -455,7 +455,7 @@ async def test_rotacao_da_chave_de_indice_leva_tudo_para_a_chave_nova(
     chave_do_lead = get_settings().auditoria_chave_do_lead
 
     async with get_engine().begin() as conexao:
-        mudados = await conexao.run_sync(
+        resultado = await conexao.run_sync(
             lambda conn: reindexar(
                 conn,
                 tabelas=TABELAS_COM_CHAVE_DE_LEAD,
@@ -469,7 +469,7 @@ async def test_rotacao_da_chave_de_indice_leva_tudo_para_a_chave_nova(
             lambda conn: reindexar_telefones_dos_vinculos(conn, indice_de_telefone)
         )
 
-    assert mudados == 3, "o lead, o lead sem o 9 e a sessao web"
+    assert resultado.mudados == 3, "o lead, o lead sem o 9 e a sessao web"
     async with get_sessionmaker()() as sessao:
         chaves = (
             await sessao.scalars(
@@ -518,7 +518,7 @@ async def test_rotacao_da_chave_do_lead_ref_mantem_a_trilha_achavel(
     assert chave_b != chave_a
 
     async with get_engine().begin() as conexao:
-        await conexao.run_sync(
+        resultado = await conexao.run_sync(
             lambda conn: reindexar(
                 conn,
                 tabelas=TABELAS_COM_CHAVE_DE_LEAD,
@@ -529,6 +529,9 @@ async def test_rotacao_da_chave_do_lead_ref_mantem_a_trilha_achavel(
             )
         )
 
+    # O unico evento semeado; e a contagem que o script usa para avisar que a
+    # chave anterior informada nao era a que gravou a trilha.
+    assert resultado.lead_refs_recalculados == 1
     chave = chave_de("whatsapp", TELEFONE)
     async with get_sessionmaker()() as sessao:
         pela_b, _ = await listar_eventos(
@@ -602,7 +605,7 @@ async def test_rotacao_leva_a_identidade_orfa_para_a_chave_nova(
     assert chave_b != chave_a
 
     async with get_engine().begin() as conexao:
-        mudados = await conexao.run_sync(
+        resultado = await conexao.run_sync(
             lambda conn: reindexar(
                 conn,
                 tabelas=TABELAS_COM_CHAVE_DE_LEAD,
@@ -613,7 +616,7 @@ async def test_rotacao_leva_a_identidade_orfa_para_a_chave_nova(
             )
         )
 
-    assert mudados == 1
+    assert resultado.mudados == 1
     async with get_sessionmaker()() as sessao:
         assert await revelar(sessao, "whatsapp", chave_b) == ORFAO
         with pytest.raises(indice.IdentidadeAusente):
@@ -652,3 +655,76 @@ async def test_falha_no_meio_propaga_o_erro_original_e_nao_o_da_trigger() -> Non
                 )
             )
     assert "InFailedSqlTransaction" not in str(erro.value)
+
+
+SEM_IDENTIDADE = "5548977776666"
+
+
+@pytest.mark.parametrize("modo", ["rotacao", "reversao"])
+async def test_par_sem_identidade_e_pulado_e_contado_e_os_outros_seguem(
+    modo: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Par orfao -- chave gravada sem identidade, por bug antigo ou por erro de
+    operador -- nao derruba a rotacao nem a descida de todo mundo. Fica onde
+    esta, e o resultado diz quantos ficaram."""
+    chave_do_lead = get_settings().auditoria_chave_do_lead
+    orfa = chave_de("whatsapp", SEM_IDENTIDADE)
+    async with get_sessionmaker()() as sessao:
+        chave_a = await indice.registrar(sessao, "whatsapp", ORFAO)
+        for chave in (chave_a, orfa):
+            await sessao.execute(
+                text(
+                    "INSERT INTO lead_qualification (channel, conversation_key, regiao)"
+                    " VALUES ('whatsapp', :k, 'Campeche')"
+                ),
+                {"k": chave},
+            )
+        await sessao.commit()
+
+    configuracao_b = get_settings().model_copy(
+        update={"lead_indice_chave": "chave-de-indice-B-" + "x" * 40}
+    )
+    monkeypatch.setattr(indice, "get_settings", lambda: configuracao_b)
+    esperada = chave_de("whatsapp", ORFAO) if modo == "rotacao" else ORFAO
+
+    async with get_engine().begin() as conexao:
+        resultado = await conexao.run_sync(
+            lambda conn: reindexar(
+                conn,
+                tabelas=TABELAS_COM_CHAVE_DE_LEAD,
+                nova_chave=chave_de if modo == "rotacao" else (lambda _c, valor: valor),
+                modo=modo,  # type: ignore[arg-type]
+                chave_do_lead_antiga=chave_do_lead,
+                chave_do_lead_nova=chave_do_lead,
+            )
+        )
+
+    assert resultado.mudados == 1
+    assert resultado.sem_identidade == 1
+    async with get_sessionmaker()() as sessao:
+        chaves = (
+            await sessao.scalars(text("SELECT conversation_key FROM lead_qualification"))
+        ).all()
+    assert set(chaves) == {esperada, orfa}
+
+
+async def test_chave_anterior_errada_nao_recalcula_lead_ref_nenhum(
+    semeado_na_0057_e_subido: dict[str, uuid.UUID],
+) -> None:
+    """Com a chave ANTERIOR errada nenhum `lead_ref` casa, e o resultado diz
+    zero -- e o sinal que `scripts/reindexar_leads.py` transforma em aviso."""
+    chave_b = "chave-do-lead-B-" + "y" * 40
+
+    async with get_engine().begin() as conexao:
+        resultado = await conexao.run_sync(
+            lambda conn: reindexar(
+                conn,
+                tabelas=TABELAS_COM_CHAVE_DE_LEAD,
+                nova_chave=chave_de,
+                modo="rotacao",
+                chave_do_lead_antiga="chave-que-nunca-gravou-nada-" + "z" * 30,
+                chave_do_lead_nova=chave_b,
+            )
+        )
+
+    assert resultado.lead_refs_recalculados == 0

@@ -16,17 +16,40 @@ from mobia.app.config import get_settings
 from mobia.domain.identidade.indice import chave_de, indice_de_telefone
 from mobia.domain.identidade.reindexacao import (
     TABELAS_COM_CHAVE_DE_LEAD,
+    Reindexacao,
     reindexar,
     reindexar_telefones_dos_vinculos,
 )
 from mobia.infra.db import dispose_engine, get_engine
 
 
+def avisos(*, anterior: str, atual: str, resultado: Reindexacao) -> list[str]:
+    """O que o operador precisa ler alem da contagem.
+
+    Nenhum dos dois reprova: a transacao ja commitou quando isto roda, e o
+    par pulado continua onde estava. Mas os dois pedem olho humano.
+    """
+    saida = []
+    if resultado.sem_identidade:
+        saida.append(
+            f"AVISO: {resultado.sem_identidade} par(es) sem identidade ficaram na chave"
+            " antiga -- ver `reindexacao.par_sem_identidade` no log"
+        )
+    # Chave do `lead_ref` trocada e nenhuma linha recalculada: ou a trilha esta
+    # vazia, ou AUDITORIA_CHAVE_DO_LEAD_ANTERIOR nao e a chave que a gravou.
+    if anterior != atual and resultado.lead_refs_recalculados == 0:
+        saida.append(
+            "AVISO: nenhum lead_ref foi recalculado -- confira se"
+            " AUDITORIA_CHAVE_DO_LEAD_ANTERIOR e a chave que gravou a trilha"
+        )
+    return saida
+
+
 async def _rodar() -> int:
     atual = get_settings().auditoria_chave_do_lead
     anterior = os.environ.get("AUDITORIA_CHAVE_DO_LEAD_ANTERIOR") or atual
     async with get_engine().begin() as conexao:
-        mudados = await conexao.run_sync(
+        resultado = await conexao.run_sync(
             lambda conn: reindexar(
                 conn,
                 tabelas=TABELAS_COM_CHAVE_DE_LEAD,
@@ -40,7 +63,9 @@ async def _rodar() -> int:
             lambda conn: reindexar_telefones_dos_vinculos(conn, indice_de_telefone)
         )
     await dispose_engine()
-    print(f"{mudados} lead(s) reindexado(s)")
+    print(f"{resultado.mudados} lead(s) reindexado(s)")
+    for aviso in avisos(anterior=anterior, atual=atual, resultado=resultado):
+        print(aviso)
     return 0
 
 

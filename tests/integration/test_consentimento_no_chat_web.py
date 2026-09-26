@@ -6,12 +6,17 @@ fazendo depois de ganhar um ramo novo.
 
 from datetime import UTC, datetime
 
+import pytest
 from sqlalchemy import select
 
+from mobia.app.config import get_settings
 from mobia.domain.consentimento.models import Consentimento
 from mobia.domain.consentimento.repositorio import tem_consentimento_de_marketing
-from mobia.domain.identidade.indice import chave_de
+from mobia.domain.identidade import indice
+from mobia.domain.identidade.indice import chave_de, revelar
+from mobia.domain.identidade.reindexacao import TABELAS_COM_CHAVE_DE_LEAD, reindexar
 from mobia.domain.messages.canais import CANAL_WEB
+from mobia.infra.db import get_engine
 
 AVISO = "Ao continuar, voce aceita receber ofertas de imoveis por WhatsApp."
 
@@ -202,3 +207,50 @@ async def test_frame_desconhecido_CONTINUA_fechando_com_1002(ws_cliente) -> None
         await _cumprimentar(ws)
         await ws.enviar({"tipo": "inventado", "seja_la_o_que": 1})
         assert await ws.fechamento() == 1002
+
+
+async def test_sessao_que_so_consentiu_ja_tem_identidade(ws_cliente, session) -> None:
+    """TEC-203, D4. A visitante que responde o aviso e vai embora sem escrever
+    deixa uma linha em `consentimentos` sob a chave da sessao. Sem identidade
+    por tras dessa chave, a rotacao da chave de indice nao teria de onde tirar
+    o valor cru -- a chave ficaria para tras, sob a chave de indice velha.
+    """
+    async with ws_cliente() as ws:
+        sessao = await _cumprimentar(ws)
+        await ws.enviar({"tipo": "consentimento", "marketing": True, "textoExibido": AVISO})
+        assert await ws.receber() == {"tipo": "consentimento_registrado"}
+
+    assert await revelar(session, CANAL_WEB, chave_de(CANAL_WEB, sessao)) == sessao
+
+
+async def test_rotacao_leva_a_sessao_que_so_consentiu_para_a_chave_nova(
+    ws_cliente, session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O desfecho que a identidade existe para garantir: o consentimento da
+    sessao que nunca escreveu acompanha a rotacao, e nao fica orfao."""
+    async with ws_cliente() as ws:
+        sessao = await _cumprimentar(ws)
+        await ws.enviar({"tipo": "consentimento", "marketing": True, "textoExibido": AVISO})
+        assert await ws.receber() == {"tipo": "consentimento_registrado"}
+
+    chave_do_lead = get_settings().auditoria_chave_do_lead
+    configuracao_b = get_settings().model_copy(
+        update={"lead_indice_chave": "chave-de-indice-B-" + "x" * 40}
+    )
+    monkeypatch.setattr(indice, "get_settings", lambda: configuracao_b)
+    async with get_engine().begin() as conexao:
+        resultado = await conexao.run_sync(
+            lambda conn: reindexar(
+                conn,
+                tabelas=TABELAS_COM_CHAVE_DE_LEAD,
+                nova_chave=chave_de,
+                modo="rotacao",
+                chave_do_lead_antiga=chave_do_lead,
+                chave_do_lead_nova=chave_do_lead,
+            )
+        )
+
+    assert resultado.sem_identidade == 0
+    assert await tem_consentimento_de_marketing(
+        session, channel=CANAL_WEB, conversation_key=chave_de(CANAL_WEB, sessao)
+    )

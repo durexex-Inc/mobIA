@@ -11,11 +11,16 @@ Tres modos, e a diferenca entre eles e so DE ONDE vem o valor cru:
 - `migracao` (0058, subida): o par que nao tem identidade ainda guarda o valor
   cru na coluna. O que ja tem identidade ja foi reindexado -- e a idempotencia
   que deixa retomar uma subida interrompida.
-- `rotacao` (script, chave de indice nova): todo par tem identidade; o valor
-  vem dela. Par sem identidade aqui e bug, e reprova.
+- `rotacao` (script, chave de indice nova): o valor vem da identidade.
 - `reversao` (0058, descida): o valor vem da identidade e VIRA a chave; nada e
-  gravado em `identidades_de_lead`, que a descida apaga em seguida. Par sem
-  identidade tambem reprova: nao ha de onde tirar o valor cru.
+  gravado em `identidades_de_lead`, que a descida apaga em seguida.
+
+**Par sem identidade na rotacao e na reversao e pulado, nao reprova.** Nao ha
+de onde tirar o valor cru, entao a chave dele fica como esta -- sob a chave de
+indice velha, na rotacao; em HMAC depois da descida, na reversao. Reprovar
+deixaria um par orfao (bug antigo, erro de operador) travar a rotacao de todo
+mundo. O resultado conta os pulados, e o log `reindexacao.par_sem_identidade`
+diz quantos por canal -- so o canal, nunca a chave.
 
 **Tabelas imutaveis.** `lead_score_audit`, `conversation_intent_audit` e
 `eventos_auditoria` recusam UPDATE por trigger. A reindexacao desliga a
@@ -28,9 +33,12 @@ Sync, sobre `Connection`: a migration roda dentro do `run_sync` do Alembic, e
 o script abre a mesma coisa com `engine.begin()` + `run_sync`.
 """
 
+from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Literal
 
+import structlog
 from sqlalchemy import Connection, text
 
 from mobia.domain.auditoria.referencia import lead_ref
@@ -71,7 +79,24 @@ TRIGGERS_DE_IMUTABILIDADE = {
     "eventos_auditoria": "eventos_auditoria_imutavel",
 }
 
+log = structlog.get_logger(__name__)
+
 Modo = Literal["migracao", "rotacao", "reversao"]
+
+
+@dataclass(frozen=True)
+class Reindexacao:
+    """O que `reindexar` fez.
+
+    `mudados` conta os pares movidos ou com `lead_ref` recalculado;
+    `sem_identidade`, os pulados por nao ter identidade (so rotacao e
+    reversao); `lead_refs_recalculados`, as linhas de `eventos_auditoria`
+    cujo `lead_ref` trocou.
+    """
+
+    mudados: int
+    sem_identidade: int
+    lead_refs_recalculados: int
 
 
 def _pares(conn: Connection, tabelas: Sequence[str], modo: Modo) -> list[tuple[str, str]]:
@@ -117,8 +142,8 @@ def reindexar(
     modo: Modo,
     chave_do_lead_antiga: str,
     chave_do_lead_nova: str,
-) -> int:
-    """Leva cada par a `nova_chave(channel, valor)`; devolve quantos pares mudaram.
+) -> Reindexacao:
+    """Leva cada par a `nova_chave(channel, valor)`; devolve o que fez.
 
     "Mudou" conta tambem o par cuja chave ficou, mas cujo `lead_ref` foi
     recalculado porque a chave do `lead_ref` trocou. Nao commita: quem chama e
@@ -126,6 +151,8 @@ def reindexar(
     para qualquer outra conexao.
     """
     mudados = 0
+    lead_refs = 0
+    sem_identidade: Counter[str] = Counter()
     # Uma vez so, e nao por par: na subida da 0058 a coluna ainda nao existe
     # (nasce depois do loop), e na descida ja foi removida antes dele.
     vinculo_cifrado = _tem_coluna(conn, "vinculos_de_sessao", "telefone_cifrado")
@@ -134,20 +161,29 @@ def reindexar(
         valor = _identidade(conn, channel, atual)
         if valor is None:
             if modo != "migracao":
-                raise RuntimeError(f"par do canal {channel} sem identidade no modo {modo}")
+                sem_identidade[channel] += 1
+                continue
             valor = atual
         novo = nova_chave(channel, valor)
         if novo == atual and chave_do_lead_antiga == chave_do_lead_nova:
             continue
         _mover(conn, tabelas, channel, atual, novo, valor, modo, vinculo_cifrado)
-        _recalcular_lead_ref(conn, channel, atual, novo, chave_do_lead_antiga, chave_do_lead_nova)
+        lead_refs += _recalcular_lead_ref(
+            conn, channel, atual, novo, chave_do_lead_antiga, chave_do_lead_nova
+        )
         mudados += 1
     # Religa so no caminho de sucesso, e nao num `finally`: se um statement
     # falhou, a transacao esta abortada, o ENABLE reprovaria com
     # `InFailedSqlTransaction` e esconderia a causa. O rollback de quem chama
     # ja desfaz o DISABLE -- ALTER TABLE e transacional no Postgres.
     _triggers(conn, "ENABLE")
-    return mudados
+    for channel, quantos in sorted(sem_identidade.items()):
+        log.warning("reindexacao.par_sem_identidade", channel=channel, pares=quantos, modo=modo)
+    return Reindexacao(
+        mudados=mudados,
+        sem_identidade=sum(sem_identidade.values()),
+        lead_refs_recalculados=lead_refs,
+    )
 
 
 def _mover(
@@ -260,14 +296,16 @@ def _mover(
 
 def _recalcular_lead_ref(
     conn: Connection, channel: str, atual: str, novo: str, antiga: str, nova: str
-) -> None:
-    conn.execute(
+) -> int:
+    """Devolve quantas linhas trocaram de `lead_ref`."""
+    resultado = conn.execute(
         text("UPDATE eventos_auditoria SET lead_ref = :novo WHERE lead_ref = :antigo"),
         {
             "antigo": lead_ref(channel, atual, chave=antiga),
             "novo": lead_ref(channel, novo, chave=nova),
         },
     )
+    return int(resultado.rowcount)
 
 
 def _tem_coluna(conn: Connection, tabela: str, coluna: str) -> bool:
