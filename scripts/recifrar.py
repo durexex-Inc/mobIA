@@ -4,6 +4,13 @@ E o penultimo passo para TIRAR uma chave do keyring (o ultimo e conferir que a
 saida deu zero e so entao apagar a chave de `content_encryption_keys`). Roda
 com o servico de pe -- ver `mobia.admin.recifrar` e `docs/seguranca/segredos.md`.
 
+**O zero de "blobs fora da chave ativa" vem de uma LEITURA separada, depois
+da escrita, nunca do relatorio da propria escrita.** O relatorio de quem
+escreveu bucketiza tudo sob a ativa por construcao -- o que ja estava e o que
+acabou de ser reescrito caem no mesmo balde --, entao ele da zero mesmo se a
+escrita tiver parado de escanear cedo (por exemplo um bug de paginacao). So a
+leitura de verificacao, que conta nao mexe em nada, enxerga isso.
+
 Uso:
     ./.venv/Scripts/python.exe scripts/recifrar.py               # recifra de fato
     ./.venv/Scripts/python.exe scripts/recifrar.py --so-contar   # so relata, nao escreve
@@ -18,6 +25,12 @@ from mobia.infra.crypto import id_da_chave_ativa
 from mobia.infra.db import dispose_engine, get_sessionmaker
 
 
+def _fora_da_ativa(relatorio: dict[str, dict[int | None, int]], ativa: int | None) -> int:
+    return sum(
+        v for por_chave in relatorio.values() for chave, v in por_chave.items() if chave != ativa
+    )
+
+
 async def _executar(*, so_contar: bool) -> int:
     """A logica async, separada de `main` para o teste chamar direto.
 
@@ -25,18 +38,22 @@ async def _executar(*, so_contar: bool) -> int:
     `asyncio.run`, e um teste async ja roda dentro de um loop.
     """
     ativa = id_da_chave_ativa()
-    relatorio = await recifrar(get_sessionmaker(), so_contar=so_contar)
-    fora_da_ativa = 0
+    sessionmaker = get_sessionmaker()
+    relatorio = await recifrar(sessionmaker, so_contar=so_contar)
     for coluna, por_chave in relatorio.items():
         print(f"{coluna}: {por_chave}")
-        # Com `so_contar`, `por_chave` e a foto de antes de reescrever, e
-        # tudo que nao esteja na chave ativa ainda precisa da recifra. Sem
-        # `so_contar`, o que a funcao ja reescreveu entra contado como
-        # ativa -- entao o que sobrar fora dela e o que a recifra nao
-        # alcancou (nao devia sobrar nada).
-        fora_da_ativa += sum(v for chave, v in por_chave.items() if chave != ativa)
+
+    # Em `--so-contar` o relatorio acima JA E a leitura de verificacao (nada
+    # foi escrito). Escrevendo de fato, ele nao prova nada -- ver a docstring
+    # do modulo --, entao uma segunda passada, so leitura, roda depois.
+    relatorio_de_verificacao = (
+        relatorio if so_contar else await recifrar(sessionmaker, so_contar=True)
+    )
     await dispose_engine()
-    print(f"blobs fora da chave ativa: {fora_da_ativa}")
+    print(
+        "blobs fora da chave ativa (leitura de verificacao): "
+        f"{_fora_da_ativa(relatorio_de_verificacao, ativa)}"
+    )
     return 0
 
 

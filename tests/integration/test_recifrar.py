@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from mobia.admin.recifrar import recifrar
 from mobia.app.config import get_settings
+from mobia.domain.identidade.indice import registrar
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -83,3 +84,40 @@ async def test_recifrar_reescreve_com_a_chave_ativa(keyring, banco_limpo: None) 
     # 4. Com A fora do keyring, so B, o blob recifrado continua decifravel.
     keyring({CHAVE_B: valor_b}, CHAVE_B)
     assert decrypt_bytes(blob, aad_de(message_id, "text_body")).decode() == texto
+
+
+async def test_so_contar_numa_tabela_de_pk_composta_antes_e_depois(
+    keyring, banco_limpo: None
+) -> None:
+    """`identidades_de_lead` tem PK `(channel, conversation_key)`, e nao um
+    id so -- prova que a paginacao por tupla de chave primaria funciona e que
+    `so_contar` conta pelo id REAL de cada blob, nao pela ativa do momento.
+
+    E a mesma leitura que `scripts/recifrar.py` roda depois de escrever, para
+    provar que nao sobrou nada fora da chave ativa -- em vez de confiar no
+    relatorio da propria escrita, que da zero por construcao (ver a
+    docstring do script).
+    """
+    valor_a, valor_b = keyring.valor_a, keyring.valor_b  # type: ignore[attr-defined]
+
+    # 1. Grava uma identidade sob a chave A, unica no keyring e ativa.
+    keyring({CHAVE_A: valor_a}, CHAVE_A)
+    async with get_sessionmaker()() as sessao:
+        await registrar(sessao, "whatsapp", "5511900000000")
+        await sessao.commit()
+
+    # 2. B entra no keyring e vira a ativa -- ainda SEM recifrar nada.
+    keyring({CHAVE_A: valor_a, CHAVE_B: valor_b}, CHAVE_B)
+
+    antes = await recifrar(get_sessionmaker(), so_contar=True)
+    por_chave_antes = antes["identidades_de_lead.valor_cifrado"]
+    assert por_chave_antes.get(int(CHAVE_A)) == 1
+    assert por_chave_antes.get(int(CHAVE_B), 0) == 0
+
+    # 3. Recifra de fato, e so ENTAO confere de novo, com uma leitura nova --
+    # nao com o retorno da escrita, que sempre mostraria tudo sob a ativa.
+    await recifrar(get_sessionmaker())
+    depois = await recifrar(get_sessionmaker(), so_contar=True)
+    por_chave_depois = depois["identidades_de_lead.valor_cifrado"]
+    assert por_chave_depois.get(int(CHAVE_A), 0) == 0
+    assert por_chave_depois.get(int(CHAVE_B)) == 1
