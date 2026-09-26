@@ -57,9 +57,7 @@ async def test_gerente_nasce_sem_mfa_e_entra_so_com_a_senha(
     await session.commit()
 
     assert criado.uri_do_totp is None
-    login = await client.post(
-        "/api/v1/auth/login", json={"email": "gerente@x.com", "senha": SENHA}
-    )
+    login = await client.post("/api/v1/auth/login", json={"email": "gerente@x.com", "senha": SENHA})
     assert login.status_code == 200
     assert login.json()["access"]
 
