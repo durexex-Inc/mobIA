@@ -104,7 +104,13 @@ async def test_remarcacao_nao_conta_duas_vezes(session) -> None:
         janela=Intervalo(VISITA + timedelta(days=1), VISITA + timedelta(days=1, hours=1)),
         agora=VISITA,
     )
-    await marcar_realizado(session, agendamento_id=remarcado.novo_id, agora=VISITA)
+    # **Depois do inicio do SUCESSOR**, que e um dia adiante do original. A
+    # guarda da TEC-374 recusa marcar desfecho de visita que ainda nao
+    # comecou, e esta asserta marcava o sucessor com o relogio do original --
+    # o mesmo defeito latente que aquela card achou nos testes da TEC-172.
+    await marcar_realizado(
+        session, agendamento_id=remarcado.novo_id, agora=VISITA + timedelta(days=1, hours=2)
+    )
     await session.commit()
 
     indicadores = await _indicadores(session)
