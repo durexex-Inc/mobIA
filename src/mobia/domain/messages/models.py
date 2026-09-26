@@ -185,7 +185,9 @@ class Message(Base):
         # Mas essa amarra le pg_constraint, ou seja, le a migration -- esta
         # copia aqui dentro do __table_args__ nao e verificada por teste
         # nenhum, porque as fixtures sobem o esquema por alembic upgrade e nao
-        # por create_all. Quem editar aqui edita a 0037 junto.
+        # por create_all. Quem editar aqui edita junto a migration mais recente
+        # que escreve o CHECK -- a 0037 para os tres primeiros, a 0061
+        # (TEC-209) para `status`.
         CheckConstraint(
             "role IN ('LEAD', 'AGENTE', 'CORRETOR', 'SISTEMA')",
             name="ck_messages_role",
@@ -204,7 +206,7 @@ class Message(Base):
         # que nao viola CHECK) e esta aqui para dizer que e deliberado.
         CheckConstraint(
             "status IS NULL OR status IN "
-            "('RECEIVED', 'QUEUED', 'PROCESSING', 'PROCESSED', 'FAILED')",
+            "('RECEIVED', 'QUEUED', 'PROCESSING', 'PROCESSED', 'FAILED', 'ESGOTADA')",
             name="ck_messages_status",
         ),
     )

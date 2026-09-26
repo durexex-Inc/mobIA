@@ -127,3 +127,9 @@ def test_configurar_o_agente_e_so_do_admin() -> None:
     """TEC-198, RN-19.5. Escrita: muda o prompt e o score de todo lead."""
     assert papeis_com(Permissao.CONFIGURAR_AGENTE) == frozenset({"ADMIN"})
     assert Permissao.CONFIGURAR_AGENTE in DE_ESCRITA
+
+
+def test_operar_a_fila_e_so_do_admin() -> None:
+    """TEC-209, D5. Escrita: reprocessar roda o turno de novo."""
+    assert papeis_com(Permissao.OPERAR_FILA) == frozenset({"ADMIN"})
+    assert Permissao.OPERAR_FILA in DE_ESCRITA

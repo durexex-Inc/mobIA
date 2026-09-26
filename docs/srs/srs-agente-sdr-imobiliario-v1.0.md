@@ -73,6 +73,9 @@
 > | E-05 | RNF-18 | [TEC-199](https://eduardodurieuxlopes.atlassian.net/browse/TEC-199) | 26/09/2026 |
 > | E-01 | RN-17.4 | [TEC-191](https://eduardodurieuxlopes.atlassian.net/browse/TEC-191) | 26/09/2026 |
 > | E-03 | RN-19.3 | [TEC-191](https://eduardodurieuxlopes.atlassian.net/browse/TEC-191) | 26/09/2026 |
+> | E-01 | RNF-27 | [TEC-209](https://eduardodurieuxlopes.atlassian.net/browse/TEC-209) | 26/09/2026 |
+> | E-01 | RNF-32 | [TEC-209](https://eduardodurieuxlopes.atlassian.net/browse/TEC-209) | 26/09/2026 |
+> | E-01 | RNF-33 | [TEC-209](https://eduardodurieuxlopes.atlassian.net/browse/TEC-209) | 26/09/2026 |
 >
 > **Este índice está incompleto e a linha acima não o conserta.** Emendas do corpo de várias cards (TEC-139, TEC-142, TEC-161, TEC-162, TEC-174 a TEC-179, TEC-196, TEC-278) nunca foram indexadas — a TEC-275 acrescentou só a sua. Quem procura a lista completa lê o corpo do documento, não esta tabela.
 
@@ -776,6 +779,8 @@ Todo RNF traz métrica e forma de verificação. Os alvos consideram o volume da
 | RNF-27 | Indisponibilidade do modelo: timeout de 15 s, 2 retries com backoff, fallback para provedor secundário e, esgotado, mensagem de espera ao lead + handoff automático | Teste de caos com provedor simulado offline |
 | RNF-28 | Moderação de entrada e saída ativa em 100% dos turnos | Teste com corpus de conteúdo impróprio |
 
+- **Emenda E-01 à RNF-27 (TEC-209, 26/09/2026)** — **o "provedor secundário" é outro modelo Claude** (`Settings.modelo_agente_secundario`, padrão `claude-haiku-4-5-20251001`), chamado com o mesmo schema, as mesmas ferramentas e o mesmo prompt; cobre throttling, sobrecarga e a queda de um modelo, e **não cobre a Anthropic inteira fora do ar** — o OpenAI da PR-07 e do RT-02 não existe. **A retentativa vale só nas duas chamadas que produzem a resposta** (`classificar` e `qualificar_investidor`): o primário até 3 vezes com esperas de 1 s e 2 s, depois o secundário uma vez, cada requisição com teto de 15 s. As chamadas auxiliares continuam sem retentativa (TEC-228). **Todas as chamadas principais de um turno dividem um prazo único de 110 s**, esperas incluídas — sem ele a cadeia estouraria o `job_timeout` de 240 s. Retenta só o que retentar pode resolver (timeout, conexão, 429, 5xx, 529); um 400 ou uma resposta fora do schema seguem o caminho anterior, com handoff na quinta falha. **Esgotada a cadeia, a espera honesta e o handoff `ERRO_DO_AGENTE` saem na mesma passada**, e a mensagem fecha PROCESSED — antes, só depois de cinco falhas. Decisões do Eduardo, 26/09/2026. Ver o desenho da TEC-209.
+
 ### 3.4 Disponibilidade e continuidade
 
 | ID | Requisito | Métrica | Verificação |
@@ -785,6 +790,9 @@ Todo RNF traz métrica e forma de verificação. Os alvos consideram o volume da
 | RNF-31 | Backup | Snapshot diário do Postgres com retenção de 7 dias + WAL contínuo; restauração testada ao menos uma vez antes da entrega | Registro do teste de restore |
 | RNF-32 | Degradação graciosa | Sem LLM: mensagem honesta + handoff. Sem busca vetorial: fallback para busca SQL por filtros. Sem WhatsApp: widget web segue operando | Teste de caos por componente |
 | RNF-33 | Entrega de mensagem | Nenhuma mensagem recebida é perdida: fila persistente, dead-letter queue e reprocessamento manual | Teste de kill do worker durante processamento |
+
+- **Emenda E-01 à RNF-32 (TEC-209, 26/09/2026)** — *"teste de caos por componente"* é, nesta suíte, o componente derrubado por dublê no ponto de integração, com banco, turno e worker de verdade; derrubar containers dentro da suíte a tornaria frágil. Os casos estão em `tests/features/test_degradacao_graciosa.py`, e os que já eram cobertos (busca sem vetor, WhatsApp fora) são citados de lá.
+- **Emenda E-01 à RNF-33 (TEC-209, 26/09/2026)** — **a dead-letter queue é o status `ESGOTADA`** em `messages` (migration `0061`), terminal: a mensagem vai para ele no mesmo ponto em que o handoff por erro nasce. `GET /api/v1/mensagens/esgotadas` lista sem conteúdo nem telefone, e `POST /api/v1/mensagens/{id}/reprocessar` a devolve ao pipeline com as tentativas zeradas — as duas com a permissão nova `OPERAR_FILA`, só do `ADMIN`. As FAILED que já tinham esgotado antes da `0061` entram na lista pelo mesmo critério. **O worker morto passou a contar tentativa**: reivindicar uma linha que estava em PROCESSING é retomar um worker que não terminou, e a tentativa dele é contada ali — antes, um SIGKILL deixava a linha voltar para sempre. A resposta já entregue continua não saindo de novo, pela reserva em `outbound_dispatches`. **Limite declarado:** o reprocessamento não é auditado.
 
 ### 3.5 Observabilidade
 

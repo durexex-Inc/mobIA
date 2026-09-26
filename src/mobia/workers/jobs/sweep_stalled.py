@@ -45,7 +45,11 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
     nao de falhar -- entao uma mensagem que falha sempre volta a cada varredura,
     sem backoff. Com `attempts` contando so falha real de processamento, o
     orcamento sao 5 falhas de verdade e o laco fica limitado de forma sana.
-    Backoff proprio (coluna `failed_at`) e TEC-209.
+    Backoff proprio (coluna `failed_at`) era citado como da TEC-209, que nao o
+    fez: ela tirou deste caminho a falha de disponibilidade do provedor, que
+    passou a retentar dentro do turno (`classificador.py::_chamar_principal`),
+    e deixou aqui so o erro que se repetiria igual -- para ele, espera nao
+    resolve. E a lacuna L2 do desenho da TEC-209.
 
     O sweeper **nao** mexe em `attempts`. A coluna significa o que o nome diz --
     tentativa de processamento -- e quem a incrementa e o worker, no `except` do
@@ -61,6 +65,12 @@ async def sweep_stalled(ctx: dict[str, Any], limite: int = 100) -> int:
     O que se perde e o sinal "o sweeper enfileirou algo que nunca chegou a um
     worker" -- que era exatamente o caso que o bug criava. Se ele voltar a fazer
     falta, o jeito honesto e uma coluna `sweep_enqueues` propria.
+
+    **O worker morto passou a contar, e nao aqui** (TEC-209, D4). Um SIGKILL
+    nao executa o `except` que incrementa `attempts`, e a linha em PROCESSING
+    voltava para sempre. Quem conta agora e o proprio `process_message`, ao
+    reivindicar uma linha que ESTAVA em PROCESSING -- ver
+    `_contar_interrupcao`. O sweeper continua sem mexer na coluna.
 
     O filtro `direction = 'INBOUND'` existe porque desde o TEC-126 a tabela
     guarda tambem a fala do agente. Varrer uma linha OUTBOUND a mandaria para

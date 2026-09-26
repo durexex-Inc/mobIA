@@ -28,7 +28,11 @@ from mobia.domain.agendamento.conversa import atender as atender_agendamento
 from mobia.domain.agendamento.repositorio import AgendaPostgres
 from mobia.domain.agente.apresentacao import Ficha, legenda_de
 from mobia.domain.agente.citacao import divergencias_de
-from mobia.domain.agente.classificador import ClassificadorPort, LacoDeBuscaExcedido
+from mobia.domain.agente.classificador import (
+    ClassificadorPort,
+    LacoDeBuscaExcedido,
+    ProvedorIndisponivel,
+)
 from mobia.domain.agente.desambiguacao import deve_desambiguar, intencao_efetiva
 from mobia.domain.agente.ferramenta_de_busca import (
     _PortaComScore,
@@ -61,7 +65,7 @@ from mobia.domain.agente.repositorio import (
 )
 from mobia.domain.agente.schemas import Intencao, PerguntaDeDesambiguacao, RespostaDoAgente
 from mobia.domain.atendimento.repositorio import esta_silenciada
-from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
+from mobia.domain.auditoria.vocabulario import ATOR_AGENTE, ATOR_SISTEMA
 from mobia.domain.context.auditoria import CAUSA_MUDANCA_DE_INTENCAO
 from mobia.domain.context.gatilhos import gatilhos_de
 from mobia.domain.context.models import LeadQualification
@@ -170,6 +174,31 @@ KINDS_DAS_FICHAS = ("ficha_1", "ficha_2", "ficha_3")
 MAX_IMOVEIS_POR_TURNO = len(KINDS_DAS_FICHAS)
 
 # TEC-265, D4. O lead nunca fica em silencio porque o teto do laco funcionou.
+# O aviso do erro irrecuperavel e o kind dele. Nasceram em
+# `workers/jobs/process_message.py` (TEC-174), que os usa na quinta falha, e
+# vieram para ca na TEC-209 porque o turno passou a usa-los tambem -- quando a
+# cadeia do provedor esgota (`_degradar_por_provedor`) -- e `process_message`
+# importa este modulo, e nao o contrario. O MESMO kind nos dois caminhos e de
+# proposito: se os dois dispararem para a mesma mensagem, a reserva em
+# `outbound_dispatches` deixa o lead receber o aviso uma vez so.
+#
+# String fixa, sem id dentro, pelo mesmo argumento de idempotencia que os KINDs
+# deste modulo registram: kind que muda entre retentativas perde a dedup da
+# reserva justamente quando ela importa. A coluna e String(32); isto tem 13.
+KIND_DO_AVISO_DE_ERRO = "aviso_de_erro"
+
+# Nao promete prazo nem explica a falha: o lead nao tem o que fazer com
+# "timeout do provedor", e prometer horario e promessa que o sistema nao tem
+# como cumprir -- o turno nao oferece nem reserva horario. E nao promete um
+# AVISO que o sistema nao pratica. "Passei sua conversa para" descreve o que
+# de fato ocorre (a linha PENDENTE em `handoffs`, que e por onde o time
+# humano pega o caso) sem afirmar que alguem do outro lado ja foi avisado.
+# E a "mensagem honesta de espera" da RNF-27 (TEC-209, D3).
+TEXTO_DO_AVISO_DE_ERRO = (
+    "Tive um problema técnico aqui e não consegui seguir. "
+    "Passei sua conversa para um corretor assumir."
+)
+
 TEXTO_DA_BUSCA_INCONCLUSIVA = (
     "Deixa eu confirmar algumas coisas com um corretor para não te passar "
     "informação errada. Já te retorno com as opções."
@@ -596,6 +625,12 @@ ResultadoDoTurno = Literal[
     # taxa de aceite da oferta, e ela e o que diz se o texto da D5 funciona.
     "espera_oferecida",
     "espera_aceita",
+    # A TEC-209 acrescentou este: a cadeia da chamada principal esgotou -- o
+    # primario com as retentativas e o secundario --, e o turno entregou a
+    # espera honesta com handoff na mesma passada. Nao reuse "sem_resposta":
+    # aquele e o envio que falhou; este e o modelo que nao respondeu, e e o
+    # numero que diz quanto tempo o provedor esteve fora.
+    "provedor_indisponivel",
 ]
 
 
@@ -2265,6 +2300,20 @@ async def _executar_turno(
             # no balde do classificador. Mesma regra do `else` do ramo, abaixo.
             subagent=SUBAGENTE_INVESTIDOR if ja_e_investidor else SUBAGENTE_CLASSIFICADOR,
         )
+    except ProvedorIndisponivel:
+        # TEC-209, D3. A cadeia ja retentou o primario e tentou o secundario:
+        # nao propaga, pelo argumento do `LacoDeBuscaExcedido` acima -- o
+        # sweeper refaria a cadeia inteira para chegar ao mesmo lugar, e o
+        # lead ficaria em silencio ate a quinta falha. Espera honesta com
+        # handoff, agora.
+        log.warning("turno.provedor_indisponivel", channel=message.channel)
+        return await _degradar_por_provedor(
+            session_factory,
+            message=message,
+            outbound=outbound,
+            agendador=agendador,
+            subagent=SUBAGENTE_INVESTIDOR if ja_e_investidor else SUBAGENTE_CLASSIFICADOR,
+        )
 
     # Gravada antes da entrega de proposito: a classificacao e sobre a mensagem
     # do lead, que existe, e nao sobre a resposta que pode nao sair.
@@ -2754,7 +2803,21 @@ async def _executar_turno(
         # para evitar. Descartada -- paga e nao entregue --, como no ramo da
         # desambiguacao e pelo mesmo motivo estrutural: o prompt precisa de um
         # fato que so a primeira chamada produz.
-        do_investidor = await classificador.qualificar_investidor(contexto, porta=porta)
+        try:
+            do_investidor = await classificador.qualificar_investidor(contexto, porta=porta)
+        except ProvedorIndisponivel:
+            # TEC-209, D3. A virada divide o prazo com a chamada 1, entao
+            # pode esgotar mesmo com a chamada 1 tendo respondido. Mesma
+            # espera com handoff do ramo de cima -- a resposta da chamada 1
+            # nao serve, pela razao escrita logo acima.
+            log.warning("turno.provedor_indisponivel", channel=message.channel)
+            return await _degradar_por_provedor(
+                session_factory,
+                message=message,
+                outbound=outbound,
+                agendador=agendador,
+                subagent=SUBAGENTE_INVESTIDOR,
+            )
         texto, telemetria, subagente = (
             do_investidor.resposta,
             do_investidor,
@@ -4245,6 +4308,61 @@ async def _bloqueado_por_atendimento_humano_concorrente(
         return await esta_silenciada(
             sessao, channel=message.channel, conversation_key=message.conversation_key
         )
+
+
+async def _degradar_por_provedor(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    message: Message,
+    outbound: OutboundPort,
+    agendador: AgendadorDeResumoPort,
+    subagent: str,
+) -> ResultadoDoTurno:
+    """A espera honesta com handoff, quando o provedor nao respondeu. TEC-209, D3.
+
+    **Na mesma passada, e nao na quinta falha.** Antes, a excecao subia para
+    `process_message`, que marcava FAILED; o aviso e o handoff so saiam
+    quando `attempts` chegava a `sweep_max_attempts`, com uma passada do
+    sweeper a cada 30 s entre as falhas -- minutos de silencio para o lead.
+    A cadeia do classificador ja retentou e ja tentou o secundario:
+    reprocessar repagaria tudo para chegar ao mesmo lugar.
+
+    **Handoff primeiro, aviso depois**, pela razao de
+    `process_message._encaminhar_por_erro`: o corretor ser avisado nao pode
+    depender de o lead ter sido. O gatilho e o `ERRO_DO_AGENTE` de la -- para
+    quem atende, provedor fora e agente quebrado sao o mesmo caso -- e o
+    ator e o SISTEMA, como la.
+    """
+    async with session_factory() as sessao:
+        registro = await registrar_handoff(
+            sessao,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+            gatilho=Gatilho.ERRO_DO_AGENTE,
+            ator=ATOR_SISTEMA,
+        )
+        await sessao.commit()
+    log.info(
+        "handoff.criado" if registro.criado else "handoff.gatilho_adicional",
+        channel=message.channel,
+        gatilho=Gatilho.ERRO_DO_AGENTE.value,
+        etiqueta=ETIQUETA_DE[Gatilho.ERRO_DO_AGENTE],
+        prioridade=PRIORIDADE_DE[Gatilho.ERRO_DO_AGENTE].value,
+    )
+    await _agendar_resumo(agendador, registro)
+
+    entrega = await _entregar_texto_fixo(
+        session_factory,
+        message=message,
+        outbound=outbound,
+        recorder_texto=TEXTO_DO_AVISO_DE_ERRO,
+        kind=KIND_DO_AVISO_DE_ERRO,
+        subagent=subagent,
+    )
+    # O desfecho do envio so substitui o do turno quando o envio nao saiu:
+    # "expirado" e "sem_resposta" dizem mais que "provedor_indisponivel" sobre
+    # o que o lead de fato recebeu.
+    return "provedor_indisponivel" if entrega == "respondido" else entrega
 
 
 async def _entregar_texto_fixo(

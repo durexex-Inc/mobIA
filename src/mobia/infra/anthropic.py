@@ -1,6 +1,13 @@
 from functools import lru_cache
 
-from anthropic import APIStatusError, AsyncAnthropic
+from anthropic import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncAnthropic,
+    InternalServerError,
+    RateLimitError,
+)
 
 from mobia.app.config import ConfiguracaoInsegura, get_settings
 
@@ -39,6 +46,12 @@ TIMEOUT_SEGUNDOS = 60.0
 # dentro da requisicao e passa a ser reparado pelo sweeper, que refaz o turno
 # INTEIRO e repaga as chamadas que ja tinham dado certo. A troca e deliberada:
 # um orcamento que fecha vale mais que uma retentativa barata num caminho raro.
+#
+# **Desde a TEC-209 a retentativa volta, mas nao aqui.** Este zero continua
+# valendo para o SDK -- e o que as chamadas auxiliares herdam. As duas
+# chamadas PRINCIPAIS do turno retentam por conta propria, na cadeia de
+# `classificador.py::ClassificadorAnthropic._chamar_principal`, sob o prazo
+# agregado abaixo -- que e o que faz a conta fechar sem este numero subir.
 MAX_TENTATIVAS = 0
 
 # Os tetos por tipo de chamada, derivados da medicao de 16/09/2026 com folga de
@@ -50,8 +63,14 @@ MAX_TENTATIVAS = 0
 #   count_tokens    5s        0,28s        18x
 #   desambiguar    12s        1,69s         7x
 #   resumir        25s        3,72s       6,7x
-#   classificar    25s        7,49s       3,3x
-#   investidor     35s        9,26s       3,8x
+#   classificar    15s        7,49s       2,0x
+#   investidor     15s        9,26s       1,6x
+#
+# **Classificar e investidor estavam em 25s e 35s, e desde a TEC-209 estao
+# nos 15s da RNF-27.** A folga caiu de 3x para ~2x, e isso e aceitavel so
+# porque a chamada principal passou a retentar: um estouro contra 15s deixou
+# de perder o turno e passou a custar uma tentativa. Com 25s e tres
+# tentativas, a cadeia sozinha levaria 75s por fatia.
 #
 # **Por que teto por tipo e nao um numero so.** As chamadas vao de 0,25s a
 # 9,3s. Um teto unico ou e frouxo para a mais rapida ou e apertado para a mais
@@ -70,8 +89,41 @@ TETO_DO_COUNT_TOKENS = 5.0
 TETO_DA_DESAMBIGUACAO = 12.0
 TETO_DA_REACAO = 12.0
 TETO_DO_RESUMO = 25.0
-TETO_DA_CLASSIFICACAO = 25.0
-TETO_DO_INVESTIDOR = 35.0
+TETO_DA_CLASSIFICACAO = 15.0
+TETO_DO_INVESTIDOR = 15.0
+
+# TEC-209, D2. A cadeia de uma chamada principal: o primario ate
+# `TENTATIVAS_NO_PRIMARIO` vezes -- a original e duas retentativas, a RNF-27 --,
+# com as esperas de `ESPERAS_ENTRE_TENTATIVAS` entre elas, e depois o modelo
+# secundario, `TENTATIVAS_NO_SECUNDARIO` vez.
+TENTATIVAS_NO_PRIMARIO = 3
+TENTATIVAS_NO_SECUNDARIO = 1
+ESPERAS_ENTRE_TENTATIVAS = (1.0, 2.0)
+
+# TEC-209, D2. O prazo UNICO que todas as chamadas principais de um turno
+# dividem, esperas incluidas. Sem ele a cadeia nao cabe: quatro tentativas de
+# uma fatia com busca (duas requisicoes) sao 120s, e o turno tem ate duas
+# fatias principais (a virada do investidor). Com ele, a parcela das duas
+# fatias no pior turno e este numero e nada alem -- ver `_pior_turno()`.
+#
+# 110, e nao mais: a soma de `tests/unit/test_orcamento_do_turno.py` fecha
+# com 43s para o banco contra os 30s que ela exige. Subir este numero e
+# gastar essa folga.
+PRAZO_DA_RESPOSTA_SEGUNDOS = 110.0
+
+# TEC-209, D2. O que retentar e trocar de modelo pode resolver: o modelo nao
+# respondeu a tempo, a conexao caiu, a conta esta sendo limitada (429) ou o
+# provedor falhou do lado dele (5xx, inclusive o 529 de sobrecarga, que o SDK
+# entrega como `InternalServerError`). `TimeoutError` e o `asyncio.timeout`
+# do prazo. Fica de fora o que a mesma requisicao repetiria igual: um 400 --
+# saldo esgotado ou contrato quebrado -- e a resposta fora do schema.
+ERROS_RETENTAVEIS: tuple[type[BaseException], ...] = (
+    APITimeoutError,
+    APIConnectionError,
+    RateLimitError,
+    InternalServerError,
+    TimeoutError,
+)
 
 
 # O pior turno, fatia a fatia, com quantas REQUISICOES cada uma pode fazer.
@@ -85,6 +137,13 @@ TETO_DO_INVESTIDOR = 35.0
 # passou a custar o relogio dela em vez de uma contagem de chamadas. Citadas
 # pelo nome e nao pela linha: este bloco ja nasceu de um comentario que
 # envelheceu, e numero de linha e a parte que envelhece primeiro.
+#
+# **Desde a TEC-209, das tres fatias so a reacao continua contada aqui.** A
+# chamada 1 e a chamada 2 da virada sao as chamadas principais, e dividem o
+# prazo agregado `PRAZO_DA_RESPOSTA_SEGUNDOS`. O que os dois paragrafos abaixo
+# dizem sobre elas continua verdadeiro sobre o GRAFO de chamadas -- e e por
+# isso que o prazo existe, porque com retentativa aquela conta por requisicao
+# passaria de 240s --, mas nao e mais como o orcamento as soma.
 #
 # **Duas fatias custam DUAS requisicoes.** O laco `for tentativa in (1, 2)` de
 # `_chamar` bate no provedor de novo quando o modelo pede a ferramenta de
@@ -114,12 +173,14 @@ def _pior_turno() -> tuple[tuple[float, int], ...]:
     Constante de novo desde a TEC-290, e desta vez sem esconder nada: a fatia
     que dependia de `Settings` saiu daqui para virar o deadline agregado da
     montagem. O que sobrou nao depende de configuracao nenhuma.
+
+    **Desde a TEC-209 sobrou so a reacao.** As duas fatias principais --
+    classificar e investidor, que custavam `25 x 2 + 35 x 2 = 120s` -- sairam
+    daqui pelo mesmo caminho que a montagem saiu na TEC-290: viraram um prazo
+    agregado, `PRAZO_DA_RESPOSTA_SEGUNDOS`, que entra em
+    `segundos_do_modelo_no_pior_turno` fora do multiplicador.
     """
-    return (
-        (TETO_DA_REACAO, 1),
-        (TETO_DA_CLASSIFICACAO, 2),
-        (TETO_DO_INVESTIDOR, 2),
-    )
+    return ((TETO_DA_REACAO, 1),)
 
 
 def segundos_do_modelo_no_pior_turno() -> float:
@@ -128,11 +189,13 @@ def segundos_do_modelo_no_pior_turno() -> float:
     Existe para entrar na soma de `tests/unit/test_orcamento_do_turno.py`, que
     a compara com o `job_timeout` do worker.
 
-    **Sao duas parcelas com naturezas diferentes, e por isso a conta nao e uma
+    **Sao parcelas com naturezas diferentes, e por isso a conta nao e uma
     soma so.** As requisicoes de `_pior_turno()` tem teto POR REQUISICAO, e
     uma retentativa as repete -- por isso o multiplicador. A montagem tem um
     relogio de FASE, e uma retentativa dentro dela ja esta limitada por esse
-    relogio: multiplica-lo contaria duas vezes o que ele conta uma.
+    relogio: multiplica-lo contaria duas vezes o que ele conta uma. Desde a
+    TEC-209 as chamadas principais tem o segundo relogio de fase,
+    `PRAZO_DA_RESPOSTA_SEGUNDOS`, que entra do mesmo jeito que a montagem.
 
     **E so a parcela da Anthropic, e o nome diz isso de proposito.** O turno
     paga outros tres clientes externos -- o embed da busca (`infra/embeddings.py`),
@@ -142,8 +205,12 @@ def segundos_do_modelo_no_pior_turno() -> float:
     mora no teste.
     """
     por_requisicao = sum(teto * requisicoes for teto, requisicoes in _pior_turno())
-    return por_requisicao * (MAX_TENTATIVAS + 1) + (
-        get_settings().contexto_deadline_de_montagem_segundos
+    return (
+        por_requisicao * (MAX_TENTATIVAS + 1)
+        + get_settings().contexto_deadline_de_montagem_segundos
+        # TEC-209: as chamadas principais, com retentativas, esperas e o
+        # secundario, cabem neste prazo por construcao.
+        + PRAZO_DA_RESPOSTA_SEGUNDOS
     )
 
 

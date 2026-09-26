@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mobia.app.config import get_settings
 from mobia.domain.agendamento.agendador import AgendadorDeAvisosPort
 from mobia.domain.agente.repositorio import ler_apresentacao_da_mensagem
-from mobia.domain.agente.turno import ResultadoDoTurno, executar_turno
+from mobia.domain.agente.turno import (
+    KIND_DO_AVISO_DE_ERRO,
+    TEXTO_DO_AVISO_DE_ERRO,
+    ResultadoDoTurno,
+    executar_turno,
+)
 from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA
 from mobia.domain.handoff.agendador import AgendadorDeResumoPort
 from mobia.domain.handoff.repositorio import registrar_handoff
@@ -29,24 +34,7 @@ from mobia.infra.crypto import aad_de, decrypt
 
 log = structlog.get_logger(__name__)
 
-# String fixa, sem id dentro, pelo mesmo argumento de idempotencia que os KINDs
-# de `turno.py` registram: kind que muda entre retentativas perde a dedup da
-# reserva justamente quando ela importa. A coluna e String(32); isto tem 13.
-KIND_DO_AVISO_DE_ERRO = "aviso_de_erro"
-
-# Nao promete prazo nem explica a falha: o lead nao tem o que fazer com
-# "timeout do provedor", e prometer horario e promessa que esta card nao tem
-# como cumprir -- o turno nao oferece nem reserva horario. E nao promete um
-# AVISO que este sistema nao pratica -- notificar o corretor e a TEC-177, fora do
-# escopo desta card. "Passei sua conversa para" descreve o que de fato ocorre
-# (a linha PENDENTE em `handoffs`, que e por onde o time humano pega o caso)
-# sem afirmar que alguem do outro lado ja foi avisado.
-TEXTO_DO_AVISO_DE_ERRO = (
-    "Tive um problema técnico aqui e não consegui seguir. "
-    "Passei sua conversa para um corretor assumir."
-)
-
-# "skipped" e "agrupado" sao deste modulo; os outros vem do turno (Task 6,
+# "skipped", "agrupado" e "esgotada" sao deste modulo; os outros vem do turno (Task 6,
 # Literal de proposito: ver `ResultadoDoTurno`). Todo desfecho do turno fecha
 # a linha em PROCESSED do mesmo jeito -- inclusive "midia_ja_confirmada"
 # (TEC-132), que nao enviou nada de proposito --, entao um valor novo la nao
@@ -56,8 +44,10 @@ TEXTO_DO_AVISO_DE_ERRO = (
 # a mensagem sumiu entre o claim e a busca. "agrupado" e o caminho FELIZ da
 # RN-01.6: a mensagem foi pega, e o certo era nao responder porque outra mais
 # nova do mesmo lead assumiu o turno. Colapsar os dois tornaria ilegivel
-# qualquer contagem de anomalia no log.
-ResultadoDoProcessamento = Literal["skipped", "agrupado"] | ResultadoDoTurno
+# qualquer contagem de anomalia no log. "esgotada" (TEC-209) e o claim que
+# achou a linha interrompida pela ultima vez e a mandou para a DLQ sem rodar o
+# turno -- a unica saida deste modulo que NAO fecha a linha em PROCESSED.
+ResultadoDoProcessamento = Literal["skipped", "agrupado", "esgotada"] | ResultadoDoTurno
 
 
 def _detalhe_para_a_coluna(exc: BaseException) -> str:
@@ -151,6 +141,53 @@ async def _marcar_falha(
         )
         await session.commit()
         return resultado.scalar_one()
+
+
+# TEC-209, D4. O `last_error` da tentativa que um worker morto nao chegou a
+# registrar. Nome de classe, como todo `last_error` desde a TEC-222, mesmo nao
+# havendo classe: quem le a coluna procura um nome, e nao uma frase.
+ERRO_DA_INTERRUPCAO = "TrabalhoInterrompido"
+
+
+async def _contar_interrupcao(
+    session_factory: async_sessionmaker[AsyncSession], identifier: uuid.UUID
+) -> int:
+    """Conta a tentativa de um worker que morreu sem conta-la. TEC-209, D4.
+
+    Chamada quando o claim pega a linha em PROCESSING. Um job vivo nunca fica
+    em PROCESSING alem da janela do sweeper -- `job_timeout` mais a espera
+    cabem nela, e `test_job_timeout_cabe_dentro_da_janela_do_sweeper` guarda
+    isso --, entao PROCESSING no claim e o trabalho de um worker que nao
+    terminou: SIGKILL, OOM, queda do host. Nenhum deles executa o `except`
+    que conta a tentativa, e sem esta contagem a linha voltava para sempre.
+
+    Nao muda o status: o claim ja o pos em PROCESSING, e e este worker que
+    segue com ela.
+    """
+    async with session_factory() as session:
+        resultado = await session.execute(
+            update(Message)
+            .where(Message.id == identifier)
+            .values(attempts=Message.attempts + 1, last_error=ERRO_DA_INTERRUPCAO)
+            .returning(Message.attempts)
+        )
+        await session.commit()
+        return resultado.scalar_one()
+
+
+async def _esgotar(
+    session_factory: async_sessionmaker[AsyncSession], identifier: uuid.UUID
+) -> None:
+    """Move a linha para a dead-letter queue. TEC-209, D5.
+
+    No mesmo ponto em que o handoff por erro nasce, pelos dois caminhos: a
+    falha que esgota as tentativas e o claim que esgota por interrupcao.
+    """
+    async with session_factory() as session:
+        await session.execute(
+            update(Message).where(Message.id == identifier).values(status=MessageStatus.ESGOTADA)
+        )
+        await session.commit()
 
 
 async def _encaminhar_por_erro(
@@ -270,7 +307,16 @@ async def _tem_entrega_parcial_pendente(session_factory: Any, message_id: uuid.U
 
 
 async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
-    """Reivindica a mensagem para processamento.
+    """Reivindica a mensagem para processamento. `reivindicar` sem o status anterior."""
+    return await reivindicar(session, message_id) is not None
+
+
+async def reivindicar(session: AsyncSession, message_id: uuid.UUID) -> MessageStatus | None:
+    """Reivindica a mensagem e devolve o status em que ela ESTAVA, ou None.
+
+    O status anterior existe desde a TEC-209 (D4): reivindicar a partir de
+    PROCESSING e retomar o trabalho de um worker que morreu, e e ai que a
+    tentativa dele e contada. O resto da docstring e o de sempre.
 
     PROCESSING esta entre os estados reivindicaveis de proposito: e o estado que
     um worker morto no meio do job deixa para tras, e e o que permite a retomada.
@@ -284,12 +330,13 @@ async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
     `claimed_at`, que fica para uma historia posterior.
     """
     reservada = await session.execute(
-        select(Message.id)
+        select(Message.status)
         .where(Message.id == message_id, Message.status.in_(CLAIMABLE_STATUSES))
         .with_for_update(skip_locked=True)
     )
-    if reservada.scalar_one_or_none() is None:
-        return False
+    anterior = reservada.scalar_one_or_none()
+    if anterior is None:
+        return None
 
     # O `execute` de um UPDATE devolve um CursorResult em runtime, mas a tipagem
     # do SQLAlchemy declara o Result generico, que nao expoe `rowcount`.
@@ -301,7 +348,7 @@ async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
             .values(status=MessageStatus.PROCESSING)
         ),
     )
-    return resultado.rowcount == 1
+    return MessageStatus(anterior) if resultado.rowcount == 1 else None
 
 
 async def _moderar_superada(
@@ -377,11 +424,28 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
     identifier = uuid.UUID(message_id)
 
     async with session_factory() as session:
-        if not await claim_message(session, identifier):
+        anterior = await reivindicar(session, identifier)
+        if anterior is None:
             await session.rollback()
             log.info("message.skipped", message_id=message_id, reason="not_claimable")
             return "skipped"
         await session.commit()
+
+    # TEC-209, D4. PROCESSING no claim e trabalho que um worker morto deixou
+    # sem contar. Conta aqui; se isso esgota as tentativas, a linha vai para a
+    # DLQ com o handoff por erro, sem rodar o turno -- rodar seria a sexta
+    # tentativa de uma mensagem que ja matou cinco workers.
+    if anterior == MessageStatus.PROCESSING:
+        tentativas = await _contar_interrupcao(session_factory, identifier)
+        log.warning("message.interrompida", message_id=message_id, attempts=tentativas)
+        if tentativas >= get_settings().sweep_max_attempts:
+            async with session_factory() as session:
+                interrompida = await session.get(Message, identifier)
+            await _esgotar(session_factory, identifier)
+            if interrompida is not None:
+                await _encaminhar_por_erro(session_factory, outbound, interrompida, agendador)
+            log.warning("message.esgotada", message_id=message_id, reason=ERRO_DA_INTERRUPCAO)
+            return "esgotada"
 
     # Fora do try: se o proprio `get` falhar, o except abaixo nao teria
     # como montar o handoff (precisa de `channel`/`conversation_key`) e
@@ -550,8 +614,13 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # seria alarme falso para o corretor. `linha is not None` cobre o
         # caso raro de o `session.get` acima ser o que falhou: sem a linha
         # nao ha `channel`/`conversation_key` para o handoff.
-        if linha is not None and tentativas >= get_settings().sweep_max_attempts:
-            await _encaminhar_por_erro(session_factory, outbound, linha, agendador)
+        if tentativas >= get_settings().sweep_max_attempts:
+            # TEC-209, D5. A DLQ, antes do handoff: se o handoff falhar, a
+            # linha ja esta onde o operador a procura.
+            await _esgotar(session_factory, identifier)
+            log.warning("message.esgotada", message_id=message_id)
+            if linha is not None:
+                await _encaminhar_por_erro(session_factory, outbound, linha, agendador)
         raise
     except asyncio.CancelledError as exc:
         # `CancelledError` e BaseException, nao Exception: o `except` acima nao

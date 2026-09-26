@@ -313,7 +313,12 @@ CONVERSA_AGENTE = "5511911112222"
 TEXTO_PADRAO_DO_LEAD = "quero saber mais sobre apartamentos"
 
 
-async def _entrada_do_lead(session: AsyncSession, *, texto: str = TEXTO_PADRAO_DO_LEAD) -> Message:
+async def _entrada_do_lead(
+    session: AsyncSession,
+    *,
+    texto: str = TEXTO_PADRAO_DO_LEAD,
+    status: MessageStatus = MessageStatus.PROCESSING,
+) -> Message:
     """Semeia a mensagem INBOUND que dispara um turno, ja reivindicada.
 
     `status=PROCESSING` porque e o estado que `process_message` deixa depois
@@ -324,6 +329,11 @@ async def _entrada_do_lead(session: AsyncSession, *, texto: str = TEXTO_PADRAO_D
     detectados na fala do lead -- um turno que precisa que o lead peca visita
     nao tem outro jeito de dizer isso. O default e o texto de sempre, entao
     nenhum teste anterior muda.
+
+    `status` e parametro desde a TEC-209. Quem chama `process_message`, e nao
+    `executar_turno`, quer QUEUED -- o estado de um job recem-enfileirado --,
+    porque desde a D4 daquela card reivindicar uma linha em PROCESSING e
+    retomar um worker morto, e conta tentativa.
     """
     identificador = uuid.uuid4()
     linha = Message(
@@ -338,7 +348,7 @@ async def _entrada_do_lead(session: AsyncSession, *, texto: str = TEXTO_PADRAO_D
         content_type=MessageContentType.TEXTO,
         text_body=encrypt(texto, aad_de(identificador, "text_body")),
         raw_payload=None,
-        status=MessageStatus.PROCESSING,
+        status=status,
     )
     session.add(linha)
     await session.commit()
@@ -688,8 +698,10 @@ def semear_entrada():
     diretamente, e um turno no meio tornaria ambiguo quem gravou o evento.
     """
 
-    async def _semear(session, *, texto: str = TEXTO_PADRAO_DO_LEAD):
-        return await _entrada_do_lead(session, texto=texto)
+    async def _semear(
+        session, *, texto: str = TEXTO_PADRAO_DO_LEAD, status=MessageStatus.PROCESSING
+    ):
+        return await _entrada_do_lead(session, texto=texto, status=status)
 
     return _semear
 

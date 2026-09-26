@@ -28,7 +28,9 @@ from mobia.app.config import get_settings
 from mobia.domain.moderacao.port import Direcao
 from mobia.domain.outbound.whatsapp import TIMEOUT_SEGUNDOS as TETO_DO_POST_A_META
 from mobia.infra.anthropic import (
+    PRAZO_DA_RESPOSTA_SEGUNDOS,
     TETO_DA_CLASSIFICACAO,
+    TETO_DA_REACAO,
     TETO_DO_INVESTIDOR,
     segundos_do_modelo_no_pior_turno,
 )
@@ -102,16 +104,26 @@ def test_a_folga_paga_o_banco() -> None:
     assert WorkerSettings.job_timeout - soma >= 30
 
 
-def test_o_investidor_e_o_teto_mais_alto_do_turno() -> None:
-    """A chamada mais cara e a que gera mais, e e ela que manda na folga.
+def test_as_chamadas_principais_custam_o_prazo_e_nada_alem() -> None:
+    """TEC-209, D2. As duas fatias principais sairam de `_pior_turno()`.
 
-    Nao e afirmacao sobre gosto: se um dia `classificar` passar o investidor,
-    a ordem que `_pior_turno()` usa para escolher o pior par deixa de valer --
-    o pior par e `classificar` com busca SEGUIDO do investidor com busca, e
-    isso so e o pior porque as duas chamadas de investidor sao exclusivas
-    entre si.
+    Este teste substitui o que afirmava que o investidor era o teto mais alto
+    do turno: aquela ordem escolhia o pior PAR de fatias somadas por
+    requisicao, e desde a TEC-209 as duas fatias nao sao mais somadas assim --
+    elas dividem `PRAZO_DA_RESPOSTA_SEGUNDOS`, com retentativas, esperas e o
+    secundario dentro. O que importa agora e que a cadeia inteira nao
+    escape do prazo pela conta: a parcela da Anthropic e a reacao, a montagem
+    e o prazo, e nenhuma fatia principal somada por fora.
     """
-    assert TETO_DO_INVESTIDOR > TETO_DA_CLASSIFICACAO
+    deadline = get_settings().contexto_deadline_de_montagem_segundos
+    assert segundos_do_modelo_no_pior_turno() == (
+        TETO_DA_REACAO * (anthropic.MAX_TENTATIVAS + 1) + deadline + PRAZO_DA_RESPOSTA_SEGUNDOS
+    )
+
+
+def test_os_tetos_da_chamada_principal_sao_os_15s_da_rnf_27() -> None:
+    """Cada REQUISICAO principal tem o teto da RNF-27, e nao os 25s e 35s de antes."""
+    assert TETO_DA_CLASSIFICACAO == TETO_DO_INVESTIDOR == 15.0
 
 
 def test_o_pior_turno_nao_cresce_mais_com_contexto_max_iteracoes(
@@ -156,7 +168,7 @@ def test_o_pior_turno_nao_cresce_mais_com_o_gatilho_de_regeneracao(
     assert segundos_do_modelo_no_pior_turno() == antes
 
 
-def test_o_deadline_da_montagem_entra_uma_vez_e_nao_por_tentativa(
+def test_os_relogios_de_fase_entram_uma_vez_e_nao_por_tentativa(
     monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None
 ) -> None:
     """O deadline e relogio de fase; as outras fatias sao teto por requisicao.
@@ -167,13 +179,16 @@ def test_o_deadline_da_montagem_entra_uma_vez_e_nao_por_tentativa(
 
     Com `MAX_TENTATIVAS = 0` a diferenca e invisivel, e e por isso que este
     teste mexe na constante: sem isso ele passaria com a implementacao errada.
+
+    Desde a TEC-209 sao DOIS relogios de fase, e o mesmo vale para o segundo:
+    o prazo das chamadas principais ja contem as retentativas delas.
     """
-    deadline = get_settings().contexto_deadline_de_montagem_segundos
+    fases = get_settings().contexto_deadline_de_montagem_segundos + PRAZO_DA_RESPOSTA_SEGUNDOS
     sem_retentativa = segundos_do_modelo_no_pior_turno()
 
     monkeypatch.setattr(anthropic, "MAX_TENTATIVAS", 1)
 
-    assert segundos_do_modelo_no_pior_turno() == (sem_retentativa - deadline) * 2 + deadline
+    assert segundos_do_modelo_no_pior_turno() == (sem_retentativa - fases) * 2 + fases
 
 
 def test_o_pior_turno_segue_o_deadline_da_montagem(

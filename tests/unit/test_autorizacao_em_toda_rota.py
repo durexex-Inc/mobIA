@@ -186,6 +186,9 @@ PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/prompts/{agente}/versoes"): "CONFIGURAR_AGENTE",
     ("POST", "/api/v1/prompts/{agente}/rollback"): "CONFIGURAR_AGENTE",
     ("GET", "/api/v1/prompts/{agente}/historico"): "CONFIGURAR_AGENTE",
+    # TEC-209. A DLQ: a lista nao tem dado pessoal, e reprocessar roda o turno.
+    ("GET", "/api/v1/mensagens/esgotadas"): "OPERAR_FILA",
+    ("POST", "/api/v1/mensagens/{message_id}/reprocessar"): "OPERAR_FILA",
     # TEC-374. `ATENDER_LEAD` mais a checagem de dono dentro do handler --
     # "so o corretor dono do agendamento, ou um gerente". A permissao sozinha
     # nao expressa a segunda metade, e e por isso que ela nao pode ser a unica
