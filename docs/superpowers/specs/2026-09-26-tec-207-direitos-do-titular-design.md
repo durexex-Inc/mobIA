@@ -56,7 +56,7 @@ Função única, `anonimizar_lead(conn, *, channel, conversation_key)`, sync sob
 
 ## D2 — Solicitação de titular
 
-Tabela `solicitacoes_de_titular`:
+Tabela `solicitacoes_de_titular`. Como guarda `conversation_key` enquanto aberta, entra em `reindexacao.TABELAS_COM_CHAVE_DE_LEAD` — a rotação da chave de índice da TEC-203 a arrasta junto:
 
 | coluna | |
 |---|---|
@@ -64,7 +64,7 @@ Tabela `solicitacoes_de_titular`:
 | `lead_ref` | HMAC do par (`auditoria/referencia.py::lead_ref`) — sobrevive à anonimização |
 | `channel`, `conversation_key` | o par, **enquanto aberta**; vira nulo ao ser atendida ou recusada |
 | `tipo` | `ELIMINACAO` ou `ACESSO` |
-| `origem` | `WHATSAPP` ou `ADMIN` |
+| `origem` | `WHATSAPP`, `ADMIN` ou `RETENCAO` — a retenção também registra uma solicitação, já atendida, para que toda anonimização tenha registro e entidade na trilha |
 | `status` | `ABERTA`, `ATENDIDA`, `RECUSADA` |
 | `motivo_da_recusa` | texto, só na recusa |
 | `recebida_em`, `prazo_em` | prazo = recebida + 15 dias |
@@ -79,7 +79,9 @@ Tabela `solicitacoes_de_titular`:
 - **Colisão com o opt-out.** "Remover meu contato" é termo de opt-out. A regra é que texto que fala de **dados** é pedido de titular, e texto que fala de **contato ou mensagens** é opt-out. A precedência fica escrita no código e testada nos dois sentidos.
 - **No turno:** entra antes da moderação e sem LLM, como o opt-out.
   - Registra a solicitação (idempotente: uma aberta do mesmo tipo por lead).
-  - Responde com texto fixo, **com acento**: "Registrei seu pedido. Ele será atendido em até 15 dias."
+  - Responde com texto fixo, **com acento**, um por tipo: "Registrei seu pedido de acesso aos seus dados. Ele será atendido em até 15 dias." e "Registrei seu pedido para apagar seus dados. Ele será atendido em até 15 dias, e até lá não vou mais te enviar mensagens."
+  - **Entra antes do portão de silêncio por opt-out**: quem já pediu para sair continua podendo exercer o direito.
+  - O texto sai com um kind próprio, que fura as guardas de opt-out e de atendimento humano de `GuardedOutbound.send`, exatamente como `KIND_DA_CONFIRMACAO_DE_OPTOUT` fura: é reconhecimento legal de um pedido do próprio lead, e sem isso o opt-out que o pedido de eliminação registra bloquearia a confirmação dele.
 - **O pedido de eliminação também registra opt-out.** Quem pede para apagar os dados não quer receber follow-up enquanto o pedido espera.
 
 ## D4 — Endpoints
@@ -109,7 +111,7 @@ Sweep diário, `sweep_retencao_de_leads`, depois do da auditoria:
 Ações novas no vocabulário da trilha, com migration que recria o CHECK (molde das 0056/0057):
 - `TITULAR_SOLICITOU`: quando o pedido chega, pelo WhatsApp ou pelo ADMIN.
 - `DADOS_EXPORTADOS`.
-- `LEAD_ANONIMIZADO`: registrada pelo job e pelo sweep, com `detalhes.motivo` igual a `solicitacao` ou `retencao`.
+- `LEAD_ANONIMIZADO`: registrada pelo job e pelo sweep, sobre a solicitação (a origem dela diz se foi pedido ou retenção).
 - `TITULAR_RECUSADO`.
 
 `Entidade` ganha `solicitacao_de_titular`. `tests/unit/test_auditoria_vocabulario.py` prende as cópias.
