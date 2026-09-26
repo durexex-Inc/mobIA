@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from mobia.domain.consentimento.models import Consentimento
 from mobia.domain.consentimento.repositorio import tem_consentimento_de_marketing
+from mobia.domain.identidade.indice import chave_de
 from mobia.domain.messages.canais import CANAL_WEB
 
 AVISO = "Ao continuar, voce aceita receber ofertas de imoveis por WhatsApp."
@@ -40,7 +41,11 @@ async def test_aceite_guarda_texto_data_hora_e_canal(ws_cliente, session) -> Non
         assert await ws.receber() == {"tipo": "consentimento_registrado"}
 
     linha = (
-        await session.execute(select(Consentimento).where(Consentimento.conversation_key == sessao))
+        await session.execute(
+            select(Consentimento).where(
+                Consentimento.conversation_key == chave_de(CANAL_WEB, sessao)
+            )
+        )
     ).scalar_one()
     assert linha.channel == CANAL_WEB
     assert linha.marketing is True
@@ -67,11 +72,15 @@ async def test_quem_nao_aceitou_NAO_fica_com_consentimento_de_marketing(
         assert await ws.receber() == {"tipo": "consentimento_registrado"}
 
     assert not await tem_consentimento_de_marketing(
-        session, channel=CANAL_WEB, conversation_key=sessao
+        session, channel=CANAL_WEB, conversation_key=chave_de(CANAL_WEB, sessao)
     )
 
     linha = (
-        await session.execute(select(Consentimento).where(Consentimento.conversation_key == sessao))
+        await session.execute(
+            select(Consentimento).where(
+                Consentimento.conversation_key == chave_de(CANAL_WEB, sessao)
+            )
+        )
     ).scalar_one()
     assert linha.marketing is False
     assert linha.texto_exibido == AVISO
@@ -88,12 +97,14 @@ async def test_o_ultimo_evento_vence_quando_a_pessoa_muda_de_ideia(ws_cliente, s
             assert await ws.receber() == {"tipo": "consentimento_registrado"}
 
     assert not await tem_consentimento_de_marketing(
-        session, channel=CANAL_WEB, conversation_key=sessao
+        session, channel=CANAL_WEB, conversation_key=chave_de(CANAL_WEB, sessao)
     )
     linhas = (
         (
             await session.execute(
-                select(Consentimento).where(Consentimento.conversation_key == sessao)
+                select(Consentimento).where(
+                    Consentimento.conversation_key == chave_de(CANAL_WEB, sessao)
+                )
             )
         )
         .scalars()
@@ -127,7 +138,11 @@ async def test_marketing_que_nao_e_booleano_e_recusado_SEM_fechar(ws_cliente, se
         assert await ws.receber() == {"tipo": "recebido", "id": "m-1"}
 
     assert (
-        await session.execute(select(Consentimento).where(Consentimento.conversation_key == sessao))
+        await session.execute(
+            select(Consentimento).where(
+                Consentimento.conversation_key == chave_de(CANAL_WEB, sessao)
+            )
+        )
     ).first() is None
 
 
@@ -167,7 +182,11 @@ async def test_exibido_em_ilegivel_nao_custa_o_registro(ws_cliente, session) -> 
         assert await ws.receber() == {"tipo": "consentimento_registrado"}
 
     linha = (
-        await session.execute(select(Consentimento).where(Consentimento.conversation_key == sessao))
+        await session.execute(
+            select(Consentimento).where(
+                Consentimento.conversation_key == chave_de(CANAL_WEB, sessao)
+            )
+        )
     ).scalar_one()
     assert linha.exibido_em is None
     assert linha.marketing is True

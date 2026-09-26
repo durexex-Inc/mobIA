@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 
 from mobia.app.config import get_settings
+from mobia.domain.identidade.indice import chave_de
 from mobia.domain.limites.models import RateLimitEvent
 from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.models import Message
@@ -92,7 +93,8 @@ async def test_o_bloqueio_vira_evento(
     await service.ingest([_parsed(i) for i in range(6)])
 
     linha = (await session.execute(select(RateLimitEvent))).scalar_one()
-    assert linha.chave == "5511999999999"
+    # TEC-203: o evento guarda a chave do lead, nao o remetente cru.
+    assert linha.chave == chave_de("whatsapp", "5511999999999")
     assert linha.channel == "whatsapp"
     assert linha.limite == 3
     assert linha.volume == 4

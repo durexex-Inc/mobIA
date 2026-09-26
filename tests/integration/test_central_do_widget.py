@@ -10,6 +10,8 @@ import asyncio
 import json
 from typing import Any
 
+from mobia.domain.identidade.indice import chave_de
+from mobia.domain.messages.canais import CANAL_WEB
 from mobia.domain.outbound.web import PREFIXO_DA_SESSAO, canal_da_sessao
 
 
@@ -48,10 +50,12 @@ async def test_a_desconexao_tira_a_aba_da_central(ws_cliente, app_do_widget) -> 
     # Le o estado da central porque nao ha comportamento observavel de fora:
     # uma fila esquecida so apareceria como memoria crescendo devagar.
     ws, sessao = await _abrir(ws_cliente)
-    assert sessao in app_do_widget.state.central_do_widget._filas
+    # TEC-203: a central guarda a fila pela chave da sessao, nao ela crua.
+    chave = chave_de(CANAL_WEB, sessao)
+    assert chave in app_do_widget.state.central_do_widget._filas
     await ws.__aexit__()
 
-    assert sessao not in app_do_widget.state.central_do_widget._filas
+    assert chave not in app_do_widget.state.central_do_widget._filas
 
 
 async def test_a_central_se_reconecta_depois_de_perder_o_redis(ws_cliente, redis_pool) -> None:
@@ -70,8 +74,9 @@ async def test_a_central_se_reconecta_depois_de_perder_o_redis(ws_cliente, redis
         # Primeiro cai para zero, depois volta: sem esperar a volta, o publish
         # abaixo poderia cair no intervalo em que ninguem ouve.
         await _ate(_reassinou)
+        # TEC-203: a central assina o canal pela chave da sessao, nao ela crua.
         await redis_pool.publish(
-            canal_da_sessao(sessao),
+            canal_da_sessao(chave_de(CANAL_WEB, sessao)),
             json.dumps({"tipo": "mensagem", "texto": "voltei", "kind": "resposta"}),
         )
         assert (await ws.receber())["texto"] == "voltei"

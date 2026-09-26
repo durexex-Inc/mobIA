@@ -19,6 +19,7 @@ from mobia.domain.agente.schemas import Extracao
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.repositorio import gravar_resumo
 from mobia.domain.handoff.agendador import AgendadorNoop
+from mobia.domain.identidade.indice import chave_de
 from mobia.domain.identidade.models import VinculoDeSessao
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageContentType, MessageRole
@@ -107,7 +108,8 @@ async def _falar_no_site(
                     await sessao_db.execute(
                         select(Message)
                         .where(
-                            Message.conversation_key == sessao,
+                            # TEC-203: a coluna guarda o HMAC da sessao, nao ela crua.
+                            Message.conversation_key == chave_de(CANAL_WEB, sessao),
                             Message.role == MessageRole.LEAD,
                         )
                         .order_by(Message.created_at.desc())
@@ -188,7 +190,8 @@ async def test_sessao_anonima_e_vinculada_ao_informar_o_telefone(
     await _falar_no_whatsapp(redis_pool, "oi", no_whatsapp)
     [contexto] = no_whatsapp.contextos
     da_sessao = [m for m in contexto.literais if m.channel == CANAL_WEB]
-    assert {m.conversation_key for m in da_sessao} == {sessao}
+    # TEC-203: a coluna guarda o HMAC da sessao, nao ela crua.
+    assert {m.conversation_key for m in da_sessao} == {chave_de(CANAL_WEB, sessao)}
     # O criterio da card e que as falas da sessao pertencem ao lead -- TODAS
     # elas --, e por isso a igualdade e contra o que o banco tem da sessao, e
     # nao so uma contagem sobre a janela.
@@ -197,7 +200,7 @@ async def test_sessao_anonima_e_vinculada_ao_informar_o_telefone(
             await sessao_db.scalars(
                 select(Message.id).where(
                     Message.channel == CANAL_WEB,
-                    Message.conversation_key == sessao,
+                    Message.conversation_key == chave_de(CANAL_WEB, sessao),
                     Message.bloqueada_em.is_(None),
                 )
             )
@@ -233,7 +236,12 @@ async def test_a_sessao_web_nao_ve_o_whatsapp_de_quem_ela_digitou(
 ) -> None:
     """D1: quem digita o telefone de outra pessoa nao recebe nada do WhatsApp dela."""
     session.add(
-        LeadQualification(channel=CANAL_WHATSAPP, conversation_key=WA_ID, quartos=3, regiao="Lagoa")
+        LeadQualification(
+            channel=CANAL_WHATSAPP,
+            conversation_key=chave_de(CANAL_WHATSAPP, WA_ID),
+            quartos=3,
+            regiao="Lagoa",
+        )
     )
     await session.commit()
     await _falar_no_whatsapp(redis_pool, "procuro 3 quartos na Lagoa", ClassificadorQueGuarda())
@@ -267,7 +275,9 @@ async def test_criterios_chegam_mesmo_com_falas_web_antes_da_marca(
         assert await gravar_resumo(
             sessao_db,
             channel=CANAL_WHATSAPP,
-            conversation_key=WA_ID,
+            # TEC-203: a mensagem do WhatsApp vai gravar sob o HMAC, e o
+            # resumo so casa com ela pela mesma chave.
+            conversation_key=chave_de(CANAL_WHATSAPP, WA_ID),
             texto="O lead ja conversou antes.",
             watermark_created_at=ultimo.created_at,
             watermark_message_id=ultimo.id,

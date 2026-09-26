@@ -39,6 +39,7 @@ from mobia.api.middleware import resolver_ip
 from mobia.app.config import get_settings
 from mobia.app.logging import correlation_id
 from mobia.domain.consentimento.repositorio import registrar as registrar_consentimento
+from mobia.domain.identidade.indice import chave_de
 from mobia.domain.identidade.repositorio import vincular_sessao
 from mobia.domain.identidade.telefone import extrair_telefone
 from mobia.domain.limites.eventos import registrar_bloqueio
@@ -105,6 +106,11 @@ async def chat(
     if identidade is None:
         return
     sessao, retomada = identidade
+    # TEC-203. O servidor trata a sessao pela chave dela, como toda conversa;
+    # o navegador segue recebendo a sessao crua, que e a credencial dele. A
+    # central assina pelo mesmo `canal_da_sessao(chave)` em que `WebOutbound`
+    # publica -- o `para` do payload e o `conversation_key`, que e a chave.
+    chave = chave_de(CANAL_WEB, sessao)
 
     central = central_de(websocket.app)
     if central is None:
@@ -121,14 +127,14 @@ async def chat(
         # recebeu o frame `sessao` ja tem para onde a publicacao ir. Com a
         # ordem inversa, uma resposta publicada logo depois do anuncio podia
         # chegar antes de haver quem ouvisse -- e pub/sub nao guarda nada.
-        fila = await central.abrir(sessao)
+        fila = await central.abrir(chave)
     except CentralIndisponivel:
         log.error("widget.central_indisponivel", sessao=sessao)
         await websocket.close(code=CODIGO_INDISPONIVEL)
         return
 
     try:
-        await _anunciar(websocket, sessao, retomada)
+        await _anunciar(websocket, sessao, chave, retomada)
         log.info("widget.conectado", sessao=sessao, retomada=retomada)
 
         entrada = asyncio.create_task(_ler_do_lead(websocket, service, sessao))
@@ -165,7 +171,7 @@ async def chat(
             await websocket.close(code=CODIGO_INDISPONIVEL)
     finally:
         # Sem isto a central guardaria a fila de toda aba que ja fechou.
-        central.fechar(sessao, fila)
+        central.fechar(chave, fila)
         log.info("widget.desconectado", sessao=sessao)
 
 
@@ -300,14 +306,14 @@ async def _identificar(websocket: WebSocket) -> tuple[str, bool] | None:
     return sessao, retomada
 
 
-async def _anunciar(websocket: WebSocket, sessao: str, retomada: bool) -> None:
+async def _anunciar(websocket: WebSocket, sessao: str, chave: str, retomada: bool) -> None:
     await websocket.send_json({"tipo": "sessao", "sessao": sessao})
 
     if retomada:
         falas = await historico_da_sessao(
             get_sessionmaker(),
             canal=CANAL_WEB,
-            sessao=sessao,
+            sessao=chave,
             limite=get_settings().historico_do_widget_mensagens,
         )
         await websocket.send_json(
@@ -335,6 +341,7 @@ async def _registrar_consentimento(
     ela e gravada, porque e evidencia de que o aviso foi exibido e de que a
     resposta foi nao. Ver a D3 do desenho.
     """
+    chave = chave_de(CANAL_WEB, sessao)
     marketing = frame.get("marketing")
     if not isinstance(marketing, bool):
         # `str()` ou truthiness aceitariam `"nao"` e `0` como resposta, e uma
@@ -357,7 +364,7 @@ async def _registrar_consentimento(
         await registrar_consentimento(
             get_sessionmaker(),
             channel=CANAL_WEB,
-            conversation_key=sessao,
+            conversation_key=chave,
             marketing=marketing,
             texto_exibido=texto,
             exibido_em=_instante_do_cliente(frame.get("exibidoEm")),
@@ -404,6 +411,7 @@ async def _escrever_do_agente(websocket: WebSocket, fila: asyncio.Queue[str]) ->
 
 async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: str) -> None:
     teto = get_settings().tamanho_maximo_do_texto_do_widget
+    chave = chave_de(CANAL_WEB, sessao)
 
     while True:
         try:
@@ -500,7 +508,7 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
                 criou = await vincular_sessao(
                     get_sessionmaker(),
                     channel=CANAL_WEB,
-                    conversation_key=sessao,
+                    conversation_key=chave,
                     telefone=telefone,
                     message_id=gravadas[0],
                 )
