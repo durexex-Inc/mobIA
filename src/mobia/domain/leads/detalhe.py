@@ -34,7 +34,7 @@ from mobia.domain.conversa.models import Conversa
 from mobia.domain.conversa.vocabulario import Status
 from mobia.domain.followup.models import FollowUp
 from mobia.domain.handoff.models import Handoff, aad_do_resumo_de_handoff
-from mobia.domain.identidade.models import VinculoDeSessao
+from mobia.domain.identidade.indice import telefones_de
 from mobia.domain.leads.mascara import mascarar_telefone
 from mobia.domain.messages.models import Message
 from mobia.infra.crypto import decrypt
@@ -214,22 +214,15 @@ async def ler_detalhe(
 
 
 async def _telefone_mascarado(session: AsyncSession, par: tuple[str, str]) -> str | None:
-    """As duas origens do telefone, na ordem de `listar_leads`.
+    """As duas origens do telefone, pela mesma `telefones_de` de `listar_leads`.
 
-    No WhatsApp a propria `conversation_key` e o numero; no web ela e um UUID de
-    sessao, e o numero so existe se o lead o digitou (TEC-129).
+    Desde a TEC-203 a `conversation_key` e o HMAC do valor, e nao o numero:
+    no WhatsApp o telefone vem da identidade cifrada, no web do vinculo
+    cifrado, se o lead o digitou (TEC-129). Decifrado so em memoria, para a
+    mascara -- sem registro na trilha, como na lista.
     """
-    direto = mascarar_telefone(par[1])
-    if direto is not None:
-        return direto
-    da_sessao = (
-        await session.execute(
-            select(VinculoDeSessao.telefone)
-            .where(*_do_lead(VinculoDeSessao.channel, VinculoDeSessao.conversation_key, par))
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    return mascarar_telefone(da_sessao) if da_sessao else None
+    telefone = (await telefones_de(session, [par]))[par]
+    return mascarar_telefone(telefone) if telefone else None
 
 
 async def _score_corrente(session: AsyncSession, par: tuple[str, str]) -> int | None:

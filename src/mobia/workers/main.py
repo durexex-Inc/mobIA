@@ -23,6 +23,7 @@ from mobia.domain.outbound.whatsapp_notificacao import WhatsAppTemplate
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
+from mobia.infra.rotacao import avisar_rotacao_vencida
 from mobia.workers.jobs.avisar_cancelamento import avisar_cancelamento
 from mobia.workers.jobs.avisar_confirmacao import avisar_confirmacao
 from mobia.workers.jobs.baixar_midia import MAXIMO_DE_TENTATIVAS, baixar_midia
@@ -56,6 +57,7 @@ async def startup(ctx: dict[str, Any]) -> None:
     """
     settings = get_settings()
     configure_logging(settings.log_level)
+    avisar_rotacao_vencida(settings)
 
     # Sem token, `WhatsAppOutbound` funcionaria -- ate a primeira entrega, que
     # a Meta recusa com 401. Isso vira `EnvioRecusado` (permanente), o turno

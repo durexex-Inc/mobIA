@@ -39,6 +39,7 @@ from mobia.domain.auditoria.referencia import lead_ref
 from mobia.domain.auditoria.vocabulario import Acao
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status as StatusDoHandoff
+from mobia.domain.identidade.indice import registrar
 from mobia.domain.leads.repositorio import referencias_para
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
@@ -56,8 +57,13 @@ def _bearer(papel: str, *, corretor_id: uuid.UUID | None = None) -> dict[str, st
     return {"Authorization": f"Bearer {token}"}
 
 
-async def _lead(session: AsyncSession, *, chave: str, canal: str = "whatsapp") -> None:
-    """O minimo para o lead aparecer na lista: uma mensagem."""
+async def _lead(session: AsyncSession, *, valor: str, canal: str = "whatsapp") -> str:
+    """O minimo para o lead aparecer na lista: uma mensagem. Devolve a chave.
+
+    Desde a TEC-203 o par guarda `chave_de(canal, valor)`, e o valor cru mora
+    cifrado na identidade -- de onde a lista e a revelacao o tiram.
+    """
+    chave = await registrar(session, canal, valor)
     session.add(
         Message(
             id=uuid.uuid4(),
@@ -71,6 +77,7 @@ async def _lead(session: AsyncSession, *, chave: str, canal: str = "whatsapp") -
         )
     )
     await session.commit()
+    return chave
 
 
 async def _apelido(session: AsyncSession, *, chave: str, canal: str = "whatsapp") -> uuid.UUID:
@@ -96,7 +103,7 @@ async def test_quem_nao_pode_ver_nao_recebe_o_telefone_em_lugar_nenhum(
     continuaria verde com a mascara inteira removida. `LEITURA` tem
     `VER_LEADS`, nao tem `VER_DADOS_COMPLETOS` e ve a base inteira.
     """
-    await _lead(session, chave=TELEFONE)
+    await _lead(session, valor=TELEFONE)
 
     corpo = (await client.get(ROTA, headers=_bearer("LEITURA"))).json()
 
@@ -108,7 +115,7 @@ async def test_o_telefone_sai_mascarado_na_lista(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
     """A outra metade do cenario 1: mascarado nao e ausente."""
-    await _lead(session, chave=TELEFONE)
+    await _lead(session, valor=TELEFONE)
 
     itens = (await client.get(ROTA, headers=_bearer("LEITURA"))).json()["itens"]
 
@@ -124,7 +131,7 @@ async def test_gerente_com_permissao_tambem_ve_mascarado_na_lista(
     a quem pode ve-lo -- o que devolveria o dado pessoal a resposta e faria a
     trilha deixar de registrar o acesso.
     """
-    await _lead(session, chave=TELEFONE)
+    await _lead(session, valor=TELEFONE)
 
     itens = (await client.get(ROTA, headers=_bearer("GERENTE"))).json()["itens"]
 
@@ -141,7 +148,7 @@ async def test_o_cursor_nao_carrega_o_telefone(
     telefone do lead.
     """
     for final in ("21", "22", "23"):
-        await _lead(session, chave=f"554899000000{final}")
+        await _lead(session, valor=f"554899000000{final}")
 
     corpo = (await client.get(ROTA, params={"limite": 1}, headers=_bearer("LEITURA"))).json()
 
@@ -158,8 +165,8 @@ async def test_revelar_devolve_o_numero_e_grava_a_trilha(
     **O `lead` da trilha e o `lead_ref`, e nao o par** -- a D4 da TEC-206
     proibiu guardar o telefone ali, e esta card nao abre excecao.
     """
-    await _lead(session, chave=TELEFONE)
-    lead_id = await _apelido(session, chave=TELEFONE)
+    chave = await _lead(session, valor=TELEFONE)
+    lead_id = await _apelido(session, chave=chave)
 
     antes = datetime.now(UTC)
     resposta = await client.post(
@@ -181,7 +188,7 @@ async def test_revelar_devolve_o_numero_e_grava_a_trilha(
     assert evento.campo == "telefone"
     assert evento.criado_em >= antes
     assert evento.lead_ref == lead_ref(
-        "whatsapp", TELEFONE, chave=get_settings().auditoria_chave_do_lead
+        "whatsapp", chave, chave=get_settings().auditoria_chave_do_lead
     )
     # O que foi lido, nunca o que ele dizia.
     assert TELEFONE not in json.dumps(evento.detalhes)
@@ -195,8 +202,8 @@ async def test_quem_nao_tem_a_permissao_nao_revela_e_nao_gera_acesso(
     A negativa ja e registrada como `ACESSO_NEGADO` pelo middleware da
     TEC-206. Um `DADO_PESSOAL_ACESSADO` aqui mentiria: ninguem acessou nada.
     """
-    await _lead(session, chave=TELEFONE)
-    lead_id = await _apelido(session, chave=TELEFONE)
+    chave = await _lead(session, valor=TELEFONE)
+    lead_id = await _apelido(session, chave=chave)
 
     resposta = await client.post(
         f"{ROTA}/{lead_id}/revelar", json={"campo": "telefone"}, headers=_bearer("CORRETOR")
@@ -223,8 +230,8 @@ async def test_campo_fora_do_vocabulario_e_422(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
     """422 e nao 500: o campo vem de quem chamou."""
-    await _lead(session, chave=TELEFONE)
-    lead_id = await _apelido(session, chave=TELEFONE)
+    chave = await _lead(session, valor=TELEFONE)
+    lead_id = await _apelido(session, chave=chave)
 
     resposta = await client.post(
         f"{ROTA}/{lead_id}/revelar", json={"campo": "cpf"}, headers=_bearer("GERENTE")
@@ -241,8 +248,8 @@ async def test_revelar_email_devolve_nulo_porque_nao_ha_fonte(
     O campo e aceito pelo vocabulario para que a tela nao precise mudar no dia
     em que a coluna nascer; ate la, nulo diz "nao ha", que e a verdade.
     """
-    await _lead(session, chave=TELEFONE)
-    lead_id = await _apelido(session, chave=TELEFONE)
+    chave = await _lead(session, valor=TELEFONE)
+    lead_id = await _apelido(session, chave=chave)
 
     resposta = await client.post(
         f"{ROTA}/{lead_id}/revelar", json={"campo": "email"}, headers=_bearer("GERENTE")
@@ -257,8 +264,8 @@ async def test_so_gerente_e_admin_revelam(
     session: AsyncSession, client: AsyncClient, banco_limpo: None, papel: str
 ) -> None:
     """A matriz de `permissoes_de`, vista pela rota que a exige."""
-    await _lead(session, chave=TELEFONE)
-    lead_id = await _apelido(session, chave=TELEFONE)
+    chave = await _lead(session, valor=TELEFONE)
+    lead_id = await _apelido(session, chave=chave)
 
     resposta = await client.post(
         f"{ROTA}/{lead_id}/revelar", json={"campo": "telefone"}, headers=_bearer(papel)
@@ -272,10 +279,10 @@ async def test_lead_web_sem_telefone_digitado_sai_nulo(
 ) -> None:
     """Nulo e "nao ha numero", e nao "nao pode ver".
 
-    A `conversation_key` do canal web e UUID de sessao, e o numero so existe
-    se o lead o digitou (TEC-129).
+    A identidade do canal web e a sessao, e nao um telefone: o numero so
+    existe se o lead o digitou (TEC-129).
     """
-    await _lead(session, chave="sessao-web-sem-numero", canal="web")
+    await _lead(session, valor="sessao-web-sem-numero", canal="web")
 
     itens = (await client.get(ROTA, headers=_bearer("LEITURA"))).json()["itens"]
 
@@ -294,13 +301,13 @@ async def test_corretor_dono_do_lead_nao_e_barrado_pelo_recorte(
     e o que impede a revelacao de virar a porta dos fundos da lista.
     """
     corretor = await _corretor(session)
-    await _lead(session, chave=TELEFONE)
-    lead_id = await _apelido(session, chave=TELEFONE)
+    chave = await _lead(session, valor=TELEFONE)
+    lead_id = await _apelido(session, chave=chave)
     session.add(
         Handoff(
             id=uuid.uuid4(),
             channel="whatsapp",
-            conversation_key=TELEFONE,
+            conversation_key=chave,
             gatilho="QUENTE",
             etiqueta="LEAD_QUENTE",
             prioridade="ALTA",

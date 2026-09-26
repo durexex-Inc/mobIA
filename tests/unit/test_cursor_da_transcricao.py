@@ -30,8 +30,11 @@ def test_o_cursor_volta_igual() -> None:
         "nao-e-base64!",
         base64.urlsafe_b64encode(b"nao e json").decode(),
         base64.urlsafe_b64encode(json.dumps({"t": "2026-09-26T10:00:00+00:00"}).encode()).decode(),
+        # UUID fixo, e nao `uuid4()`: o valor entra no id do parametro, e com
+        # `-n` cada worker do xdist coletaria um id diferente e recusaria a
+        # execucao inteira ("Different tests were collected").
         base64.urlsafe_b64encode(
-            json.dumps({"t": "ontem", "m": str(uuid.uuid4())}).encode()
+            json.dumps({"t": "ontem", "m": "888e6a31-7176-4b93-8f11-400f8cd00e11"}).encode()
         ).decode(),
         base64.urlsafe_b64encode(
             json.dumps({"t": "2026-09-26T10:00:00+00:00", "m": "nao-e-uuid"}).encode()

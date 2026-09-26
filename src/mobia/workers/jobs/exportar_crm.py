@@ -44,6 +44,7 @@ from mobia.domain.crm.repositorio import (
     registrar_falha,
 )
 from mobia.domain.handoff.repositorio import carregar_dossie
+from mobia.domain.identidade.indice import telefones_de
 
 log = structlog.get_logger(__name__)
 
@@ -107,9 +108,14 @@ async def exportar_crm(ctx: dict[str, Any], handoff_id: str) -> ResultadoDaExpor
             log.warning("crm.dossie_ausente", handoff_id=handoff_id)
             return "sem_dossie"
 
+        telefone = (await telefones_de(session, [(dossie.canal, dossie.conversa)]))[
+            (dossie.canal, dossie.conversa)
+        ]
+
     payload = montar(
         handoff_id=identificador,
         dossie=dossie,
+        telefone=telefone,
         resumo=estado.resumo,
         resumo_fallback=estado.resumo_fallback,
     )

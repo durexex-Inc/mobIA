@@ -12,12 +12,14 @@ from mobia.app.config import get_settings
 from mobia.app.logging import configure_logging
 from mobia.infra.db import dispose_engine
 from mobia.infra.queue import create_redis_pool
+from mobia.infra.rotacao import avisar_rotacao_vencida
 
 log = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    avisar_rotacao_vencida(get_settings())
     if not hasattr(app.state, "redis_pool"):
         app.state.redis_pool = await create_redis_pool()
         app.state.owns_redis_pool = True

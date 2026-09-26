@@ -33,8 +33,12 @@ class Message(Base):
     sender_external_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     recipient_external_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    # Id externo do lead, invariante a direcao: e por ele que a conversa e
+    # A chave do lead, invariante a direcao: e por ela que a conversa e
     # agrupada, porque sender e recipient se invertem entre entrada e saida.
+    # Desde a TEC-203 e o HMAC do id externo (`identidade/indice.py::chave_de`),
+    # e nao o id em si -- o `wa_id` ou a sessao crua mora cifrado em
+    # `identidades_de_lead`. Pelo mesmo motivo, a ponta do lead em
+    # `sender_external_id`/`recipient_external_id` tambem guarda a chave.
     #
     # A TEC-138 criou `Conversa` (`domain/conversa/models.py`), mas com o MESMO
     # par como chave -- ela guarda SE a conversa esta encerrada, nao onde uma

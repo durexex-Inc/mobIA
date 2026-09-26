@@ -42,6 +42,7 @@ from mobia.domain.agente.schemas import FormaPagamento, Intencao, Urgencia
 from mobia.domain.context.auditoria import CAUSA_NAO_COMPARECIMENTO, CAUSA_PENALIDADE
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.context.repositorio import registrar_recalculo
+from mobia.domain.identidade.indice import registrar as registrar_identidade
 from mobia.domain.notificacao.canais import FalhaDeCanal
 from mobia.domain.notificacao.mensagem import Aviso
 from mobia.infra.db import get_sessionmaker
@@ -70,12 +71,13 @@ async def _agendamento(
     status: str = StatusDoAgendamento.CONFIRMADO,
     inicio: datetime = INICIO,
     fim: datetime = FIM,
+    conversation_key: str = CONVERSA,
 ) -> Agendamento:
     agendamento = Agendamento(
         id=uuid.uuid4(),
         corretor_id=corretor_id,
         channel=CANAL,
-        conversation_key=CONVERSA,
+        conversation_key=conversation_key,
         imovel_id=None,
         tipo=str(TipoDeCompromisso.VISITA_PRESENCIAL),
         inicio=inicio,
@@ -494,7 +496,11 @@ async def test_o_corretor_e_avisado_do_cancelamento_uma_vez_so(
 ) -> None:
     """RN-12.3: "notifica o corretor"."""
     corretor = await semear_corretor(email="ana@imob.com.br")
-    agendamento = await _agendamento(session, corretor_id=corretor.id)
+    # A identidade e registrada aqui, e nao pelo helper `_agendamento`: aquele
+    # e usado por testes que nao olham o corpo do e-mail, e uma identidade a
+    # mais por chamada custaria uma escrita que ninguem confere.
+    chave = await registrar_identidade(session, CANAL, CONVERSA)
+    agendamento = await _agendamento(session, corretor_id=corretor.id, conversation_key=chave)
     await cancelar(session, agendamento_id=agendamento.id, agora=AGORA)
     await session.commit()
 
@@ -511,7 +517,8 @@ async def test_o_corretor_e_avisado_do_cancelamento_uma_vez_so(
     assert destino == "ana@imob.com.br"
     assert "cancelada" in aviso.assunto
     assert aviso.etiqueta == ETIQUETA_DO_CANCELAMENTO
-    assert CONVERSA in aviso.corpo
+    # TEC-203: `Lead:` leva o telefone revelado, e nao mais o `conversation_key` cru.
+    assert f"+{CONVERSA}" in aviso.corpo
 
     linha = await _recarregar(session, agendamento.id)
     assert linha.corretor_avisado_do_cancelamento_em is not None

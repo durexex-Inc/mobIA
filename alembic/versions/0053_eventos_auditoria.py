@@ -27,6 +27,14 @@ Os vocabularios abaixo sao COPIA literal dos enums de
 quando o codigo muda. `tests/unit/test_auditoria_vocabulario.py` prende as
 duas copias.
 
+**Excecao (TEC-203):** a reindexacao do lead desliga o trigger de
+imutabilidade (`eventos_auditoria_imutavel`, o de UPDATE/DELETE; o de carimbo
+fica ligado) na propria transacao, para recalcular o `lead_ref` quando o
+pseudonimo do lead ou a chave do `lead_ref` troca -- ver
+`domain/identidade/reindexacao.py`. Trocar o pseudonimo nao altera o fato
+registrado. O dono da tabela, acima, e tambem quem pode fazer isso: o
+`ALTER TABLE ... DISABLE TRIGGER` exige ser dono.
+
 Revision ID: 0053
 Revises: 0052
 

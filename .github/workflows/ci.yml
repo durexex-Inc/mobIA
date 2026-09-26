@@ -69,6 +69,50 @@ jobs:
         if: github.event_name == 'pull_request'
         run: python scripts/comentarios_tocados.py "origin/${{ github.base_ref }}" --checar
 
+  segredos:
+    name: Segredos
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSAO: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    steps:
+      # Historico inteiro: em PR o intervalo vai do merge-base ao HEAD; na
+      # main, tudo. Um clone raso esconderia o commit que trouxe o segredo.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Binario fixado por versao e checksum, e nao a gitleaks-action: a v2
+      # dela exige licenca paga em repositorio de organizacao.
+      - name: Instalar gitleaks
+        run: |
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSAO}/gitleaks_${GITLEAKS_VERSAO}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+
+      # Autoteste, no molde da sentinela do bundle (TEC-302): uma allowlist
+      # larga demais deixaria o gate verde para sempre sem ninguem notar. O
+      # token e gerado aqui para nao existir em arquivo versionado.
+      - name: Autoteste do gitleaks
+        run: |
+          t=$(mktemp -d)
+          echo "token = \"ghp_$(head -c 400 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 36)\"" > "$t/plantado.py"
+          if gitleaks dir --config .gitleaks.toml --no-banner "$t"; then
+            echo "::error::gitleaks nao acusou o token plantado -- a allowlist engoliu a regra"
+            exit 1
+          fi
+
+      - name: Varrer os commits
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gitleaks git --config .gitleaks.toml --redact --no-banner \
+              --log-opts="origin/${{ github.base_ref }}..HEAD" .
+          else
+            gitleaks git --config .gitleaks.toml --redact --no-banner .
+          fi
+
   testes:
     name: Testes
     runs-on: ubuntu-latest

@@ -12,6 +12,8 @@ from sqlalchemy.pool import NullPool
 
 from mobia.admin.reativar import _executar, main
 from mobia.app.config import get_settings
+from mobia.domain.identidade.indice import chave_de, registrar
+from mobia.domain.identidade.models import IdentidadeDeLead
 from mobia.domain.optout.models import EVENTO_REATIVACAO, OptoutEvent
 from mobia.domain.optout.repositorio import esta_em_optout, reativar, registrar_optout
 
@@ -61,18 +63,90 @@ async def test_reativacao_devolve_o_lead_ao_estado_respondivel(
     """Chama `_executar` direto, nao `main`.
 
     `main` chama `asyncio.run`, e este teste ja roda dentro de um loop -- ver
-    a nota em `mobia.admin.reativar._executar`.
+    a nota em `mobia.admin.reativar._executar`. `--key` e o telefone cru
+    (TEC-203); `_executar` e que deriva o `conversation_key`.
     """
-    await registrar_optout(
-        session_factory, channel="wa", conversation_key="5548999998888", message_id=uuid.uuid4()
-    )
+    chave = await _lead_em_optout(session, session_factory, "5548999998888")
 
     codigo = await _executar(
-        channel="wa", key="5548999998888", autor="Paulo M.", motivo="lead pediu por telefone"
+        channel="whatsapp", key="5548999998888", autor="Paulo M.", motivo="lead pediu por telefone"
     )
 
     assert codigo == 0
-    assert await esta_em_optout(session, channel="wa", conversation_key="5548999998888") is False
+    assert await esta_em_optout(session, channel="whatsapp", conversation_key=chave) is False
+
+
+async def _lead_em_optout(
+    session: AsyncSession, session_factory: async_sessionmaker[AsyncSession], wa_id: str
+) -> str:
+    """Um lead do WhatsApp como a TEC-203 o grava: identidade e opt-out sob a chave."""
+    chave = await registrar(session, "whatsapp", wa_id)
+    await session.commit()
+    await registrar_optout(
+        session_factory, channel="whatsapp", conversation_key=chave, message_id=uuid.uuid4()
+    )
+    return chave
+
+
+async def test_numero_digitado_com_mascara_acha_o_wa_id_sem_o_nove(
+    session: AsyncSession, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """O operador digita o numero como o lead o dita -- com `+`, parenteses e
+    o 9 --, e a Meta entregou o `wa_id` sem o 9. A chave calculada sobre o
+    que foi digitado nao existe; a certa e a da grafia que tem identidade."""
+    chave = await _lead_em_optout(session, session_factory, "554899998888")
+
+    codigo = await _executar(
+        channel="whatsapp", key="+55 (48) 99999-8888", autor=AUTOR, motivo=MOTIVO
+    )
+
+    assert codigo == 0
+    assert await esta_em_optout(session, channel="whatsapp", conversation_key=chave) is False
+
+
+async def test_numero_com_o_nove_quando_o_wa_id_tem_o_nove(
+    session: AsyncSession, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """E o inverso: digitado sem o 9, o `wa_id` que a Meta mandou tem."""
+    chave = await _lead_em_optout(session, session_factory, "5548999998888")
+
+    codigo = await _executar(channel="whatsapp", key="4899998888", autor=AUTOR, motivo=MOTIVO)
+
+    assert codigo == 0
+    assert await esta_em_optout(session, channel="whatsapp", conversation_key=chave) is False
+
+
+@pytest.mark.parametrize(
+    ("channel", "key"),
+    [
+        ("whatsapp", "5548911112222"),
+        # O exemplo que a docstring deste script trazia: `wa` nao e canal.
+        ("wa", "5548999998888"),
+        ("web", "0b6f5d8e-3c1a-4e2b-9f7d-1a2b3c4d5e6f"),
+    ],
+)
+async def test_lead_desconhecido_e_recusado_e_nada_e_gravado(
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    channel: str,
+    key: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Gravar mesmo assim poria na trilha de LGPD uma reativacao de um lead
+    que nao existe -- e o lead de verdade continuaria em opt-out, sem que
+    ninguem soubesse."""
+    await _lead_em_optout(session, session_factory, "5548999998888")
+
+    codigo = await _executar(channel=channel, key=key, autor=AUTOR, motivo=MOTIVO)
+
+    assert codigo != 0
+    assert "nenhum lead" in capsys.readouterr().err
+    reativacoes = (
+        await session.scalars(select(OptoutEvent.id).where(OptoutEvent.evento == EVENTO_REATIVACAO))
+    ).all()
+    assert reativacoes == []
+    identidades = (await session.scalars(select(IdentidadeDeLead.conversation_key))).all()
+    assert identidades == [chave_de("whatsapp", "5548999998888")]
 
 
 def test_sem_motivo_o_comando_falha() -> None:
@@ -138,9 +212,36 @@ def test_main_fia_cada_argumento_no_kwarg_certo(monkeypatch: pytest.MonkeyPatch)
     # ver `_fabrica_isolada`. O que este teste prova continua intacto: a
     # fiacao `args.* -> kwarg`, que nao passa pelo sessionmaker.
     monkeypatch.setattr("mobia.admin.reativar.get_sessionmaker", _fabrica_isolada)
-    chave = f"5548{uuid.uuid4().hex[:9]}"
+    # Numero unico por execucao, sempre celular valido: 9 e oito digitos.
+    telefone_cru = f"55489{uuid.uuid4().int % 10**8:08d}"
+    asyncio.run(_registrar_identidade(telefone_cru))
 
-    codigo = main(["--channel", "wa", "--key", chave, "--autor", AUTOR, "--motivo", MOTIVO])
+    codigo = main(
+        ["--channel", "whatsapp", "--key", telefone_cru, "--autor", AUTOR, "--motivo", MOTIVO]
+    )
 
     assert codigo == 0
-    assert asyncio.run(_reativacao_gravada(channel="wa", key=chave)) == (AUTOR, MOTIVO)
+    assert asyncio.run(
+        _reativacao_gravada(channel="whatsapp", key=chave_de("whatsapp", telefone_cru))
+    ) == (AUTOR, MOTIVO)
+
+
+async def _registrar_identidade(wa_id: str) -> None:
+    async with _fabrica_isolada()() as sessao:
+        await registrar(sessao, "whatsapp", wa_id)
+        await sessao.commit()
+
+
+async def test_duas_conversas_do_mesmo_numero_exigem_o_wa_id_exato(
+    session: AsyncSession, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Com e sem o 9 sao duas conversas, e o numero sem o DDI nao diz qual.
+    O `wa_id` exato diz -- e so a conversa dele e reativada."""
+    com_o_nove = await _lead_em_optout(session, session_factory, "5548999998888")
+    sem_o_nove = await _lead_em_optout(session, session_factory, "554899998888")
+
+    assert await _executar(channel="whatsapp", key="48999998888", autor=AUTOR, motivo=MOTIVO) == 1
+    assert await _executar(channel="whatsapp", key="554899998888", autor=AUTOR, motivo=MOTIVO) == 0
+
+    assert await esta_em_optout(session, channel="whatsapp", conversation_key=sem_o_nove) is False
+    assert await esta_em_optout(session, channel="whatsapp", conversation_key=com_o_nove) is True

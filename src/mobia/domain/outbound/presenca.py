@@ -43,8 +43,10 @@ class IndicadorDePresencaPort(Protocol):
     `wamid`, no WhatsApp), e nao um id nosso: o indicador da Meta e uma
     anotacao sobre uma mensagem recebida, nao um envio para um numero.
 
-    **`para` e quem VE o indicador** (TEC-362): o telefone do lead no
-    WhatsApp, a SESSAO no canal web. Sai de `sender_external_id`, e nao de
+    **`para` e quem VE o indicador** (TEC-362): a chave do lead, que desde a
+    TEC-203 e o HMAC (`identidade/indice.py::chave_de`) do telefone no
+    WhatsApp e da sessao no web -- e o web publica em `canal_da_sessao` dela,
+    enquanto o WhatsApp a ignora. Sai de `sender_external_id`, e nao de
     `recipient_external_id` como o `de` -- no web aquele campo e a constante
     `widget`, e foi exatamente isso que fez a TEC-124 declarar a lacuna de
     nao conseguir publicar "digitando" sem mexer neste contrato.

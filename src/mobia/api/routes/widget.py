@@ -9,11 +9,11 @@ opt-out e pedido de humano, e a contagem de duplicata descartada.
 **Nenhuma chamada a modelo acontece dentro do ciclo da conexao**, pelo mesmo
 motivo que a RN-01.2 escreve para o webhook.
 
-O `id` do frame, prefixado pela sessao, vira `provider_message_id`: e ele que
-faz o reenvio depois de uma queda cair na UNIQUE `(channel,
-provider_message_id)` que ja existe -- dedup sem codigo novo, pelo mesmo
-mecanismo que absorve a reentrega da Meta. O prefixo e o que impede o id de
-um visitante de colidir com o de outro; ver `_chave_do_id`.
+O `id` do frame, prefixado pelo HMAC da sessao (TEC-203), vira
+`provider_message_id`: e ele que faz o reenvio depois de uma queda cair na
+UNIQUE `(channel, provider_message_id)` que ja existe -- dedup sem codigo
+novo, pelo mesmo mecanismo que absorve a reentrega da Meta. O prefixo e o que
+impede o id de um visitante de colidir com o de outro; ver `_chave_do_id`.
 
 **O id da sessao nunca viaja em URL.** Ele e portador anonimo -- quem o tiver
 le aquela conversa --, e numa query string entraria em log de acesso, em
@@ -39,6 +39,7 @@ from mobia.api.middleware import resolver_ip
 from mobia.app.config import get_settings
 from mobia.app.logging import correlation_id
 from mobia.domain.consentimento.repositorio import registrar as registrar_consentimento
+from mobia.domain.identidade.indice import chave_de, registrar
 from mobia.domain.identidade.repositorio import vincular_sessao
 from mobia.domain.identidade.telefone import extrair_telefone
 from mobia.domain.limites.eventos import registrar_bloqueio
@@ -69,8 +70,8 @@ CODIGO_INDISPONIVEL = 1011
 
 
 # Teto do `id` que o cliente escolhe. A coluna e `String(255)` e a chave gravada
-# leva a sessao na frente (36 caracteres e o separador), entao 128 deixa folga
-# sem apertar nenhum formato razoavel -- um UUID tem 36.
+# leva o HMAC da sessao na frente (64 caracteres em hex e o separador), entao
+# 128 deixa folga sem apertar nenhum formato razoavel -- um UUID tem 36.
 TAMANHO_MAXIMO_DO_ID = 128
 
 # Teto do aviso de privacidade que o cliente diz ter exibido. A coluna e
@@ -105,6 +106,11 @@ async def chat(
     if identidade is None:
         return
     sessao, retomada = identidade
+    # TEC-203. O servidor trata a sessao pela chave dela, como toda conversa;
+    # o navegador segue recebendo a sessao crua, que e a credencial dele. A
+    # central assina pelo mesmo `canal_da_sessao(chave)` em que `WebOutbound`
+    # publica -- o `para` do payload e o `conversation_key`, que e a chave.
+    chave = chave_de(CANAL_WEB, sessao)
 
     central = central_de(websocket.app)
     if central is None:
@@ -121,14 +127,20 @@ async def chat(
         # recebeu o frame `sessao` ja tem para onde a publicacao ir. Com a
         # ordem inversa, uma resposta publicada logo depois do anuncio podia
         # chegar antes de haver quem ouvisse -- e pub/sub nao guarda nada.
-        fila = await central.abrir(sessao)
+        fila = await central.abrir(chave)
     except CentralIndisponivel:
         log.error("widget.central_indisponivel", sessao=sessao)
         await websocket.close(code=CODIGO_INDISPONIVEL)
         return
 
     try:
-        await _anunciar(websocket, sessao, retomada)
+        # TEC-203, D4. A identidade vem antes de qualquer escrita sob a chave
+        # desta sessao -- consentimento, vinculo, mensagem. A visitante que so
+        # responde o aviso e vai embora deixaria em `consentimentos` uma chave
+        # sem identidade, que nenhuma rotacao consegue levar para a chave de
+        # indice nova. Uma vez por conexao, em transacao propria e curta.
+        await _registrar_identidade(sessao)
+        await _anunciar(websocket, sessao, chave, retomada)
         log.info("widget.conectado", sessao=sessao, retomada=retomada)
 
         entrada = asyncio.create_task(_ler_do_lead(websocket, service, sessao))
@@ -150,7 +162,7 @@ async def chat(
         if falha is not None:
             raise falha
     except Exception as exc:
-        # O anuncio (a leitura do historico) e as duas tarefas caem aqui. Sem
+        # A identidade, o anuncio (a leitura do historico) e as duas tarefas caem aqui. Sem
         # este ramo a excecao escapava do endpoint e o uvicorn a logava crua
         # -- ou, vinda de uma tarefa, sumia no `gather` e o socket fechava sem
         # codigo, com o cliente vendo 1006 e o servidor sem rastro nenhum.
@@ -165,7 +177,7 @@ async def chat(
             await websocket.close(code=CODIGO_INDISPONIVEL)
     finally:
         # Sem isto a central guardaria a fila de toda aba que ja fechou.
-        central.fechar(sessao, fila)
+        central.fechar(chave, fila)
         log.info("widget.desconectado", sessao=sessao)
 
 
@@ -300,14 +312,20 @@ async def _identificar(websocket: WebSocket) -> tuple[str, bool] | None:
     return sessao, retomada
 
 
-async def _anunciar(websocket: WebSocket, sessao: str, retomada: bool) -> None:
+async def _registrar_identidade(sessao: str) -> None:
+    async with get_sessionmaker()() as session:
+        await registrar(session, CANAL_WEB, sessao)
+        await session.commit()
+
+
+async def _anunciar(websocket: WebSocket, sessao: str, chave: str, retomada: bool) -> None:
     await websocket.send_json({"tipo": "sessao", "sessao": sessao})
 
     if retomada:
         falas = await historico_da_sessao(
             get_sessionmaker(),
             canal=CANAL_WEB,
-            sessao=sessao,
+            sessao=chave,
             limite=get_settings().historico_do_widget_mensagens,
         )
         await websocket.send_json(
@@ -335,6 +353,7 @@ async def _registrar_consentimento(
     ela e gravada, porque e evidencia de que o aviso foi exibido e de que a
     resposta foi nao. Ver a D3 do desenho.
     """
+    chave = chave_de(CANAL_WEB, sessao)
     marketing = frame.get("marketing")
     if not isinstance(marketing, bool):
         # `str()` ou truthiness aceitariam `"nao"` e `0` como resposta, e uma
@@ -357,7 +376,7 @@ async def _registrar_consentimento(
         await registrar_consentimento(
             get_sessionmaker(),
             channel=CANAL_WEB,
-            conversation_key=sessao,
+            conversation_key=chave,
             marketing=marketing,
             texto_exibido=texto,
             exibido_em=_instante_do_cliente(frame.get("exibidoEm")),
@@ -404,6 +423,7 @@ async def _escrever_do_agente(websocket: WebSocket, fila: asyncio.Queue[str]) ->
 
 async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: str) -> None:
     teto = get_settings().tamanho_maximo_do_texto_do_widget
+    chave = chave_de(CANAL_WEB, sessao)
 
     while True:
         try:
@@ -500,7 +520,7 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
                 criou = await vincular_sessao(
                     get_sessionmaker(),
                     channel=CANAL_WEB,
-                    conversation_key=sessao,
+                    conversation_key=chave,
                     telefone=telefone,
                     message_id=gravadas[0],
                 )
@@ -538,8 +558,14 @@ def _chave_do_id(sessao: str, identificador: str) -> str:
     outro, e o segundo perdia a mensagem recebendo `recebido`. Prefixado pela
     sessao, a dedup continua fazendo o que existe para fazer -- absorver o
     reenvio da MESMA pagina depois de uma queda -- e so isso.
+
+    TEC-203. O prefixo e o HMAC da sessao (`chave_de`), nao a sessao crua: o
+    servidor so ve a sessao pela chave dela, e gravar a sessao crua aqui
+    devolveria o dado que a cifra do resto da tabela existe para tirar. A
+    dedup continua estavel entre reconexoes porque a mesma sessao sempre
+    gera o mesmo HMAC.
     """
-    return f"{sessao}:{identificador}"
+    return f"{chave_de(CANAL_WEB, sessao)}:{identificador}"
 
 
 class FrameInvalido(Exception):

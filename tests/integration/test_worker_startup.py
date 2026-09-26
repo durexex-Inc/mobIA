@@ -217,6 +217,8 @@ def _producao(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
     # TEC-206: a quarta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
     monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
+    # TEC-203: a quinta guarda do mesmo tipo, pelo mesmo motivo das quatro acima.
+    monkeypatch.setenv("LEAD_INDICE_CHAVE", "chave-de-indice-propria")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
 
 

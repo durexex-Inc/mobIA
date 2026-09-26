@@ -1,0 +1,33 @@
+# TEC-203, RNF-14. Estende as regras padrao; a allowlist e por VALOR exato,
+# nunca por arquivo: um segredo real colado no config.py continua sendo pego.
+# Nenhum valor abaixo e segredo real. Sao de tres tipos: default de
+# desenvolvimento commitado de proposito e recusado em producao por um
+# validator de `Settings`; sentinela de teste do CI; e placeholder de exemplo
+# em documentacao.
+title = "mobIA"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "defaults de desenvolvimento recusados em producao, sentinela do CI e placeholder de documentacao"
+regexTarget = "match"
+regexes = [
+  # CONTENT_ENCRYPTION_KEY em .env.example (TEC-126) e citado em
+  # docs/superpowers/plans/2026-08-24-tec-126-telemetria-mensagens.md.
+  '''ZGV2LWtleS0zMi1ieXRlcy1mb3ItbW9iaWEtb2shISE=''',
+  # JWT_SEGREDO de desenvolvimento, `SEGREDO_DE_JWT_DE_DESENVOLVIMENTO` em
+  # src/mobia/app/config.py (nao esta no .env.example).
+  '''dev-jwt-secret-nao-use-em-producao''',
+  # Chave do HMAC da auditoria (TEC-206) em .env.example.
+  '''dev-auditoria-chave-do-lead-nao-use-em-producao''',
+  # Chave do HMAC do indice do lead (TEC-203/Task 5) em .env.example.
+  '''dev-indice-do-lead-nao-use-em-producao''',
+  # Token do catalogo em .env.example.
+  '''dev-catalogo-token''',
+  # Sentinela do bundle do frontend (TEC-302), definida no job `Frontend` do CI.
+  '''tec302-sentinela-do-token-nao-vaza''',
+  # Placeholder de exemplo em frontend/README.md, no comando de
+  # `MOBIA_ADMIN_TOKEN=... npm run build` -- nunca foi um segredo real.
+  '''sentinela-com-16-ou-mais''',
+]

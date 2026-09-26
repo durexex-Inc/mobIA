@@ -2045,10 +2045,11 @@ async def _executar_turno(
     # numero, o site nao garante nada (D1). O turno web NUNCA passa por aqui.
     # Se passasse, o que aconteceria nao e o agente web conhecer o WhatsApp --
     # o estado que ele le continua sendo o do par web -- e sim a absorcao
-    # tratar o UUID da sessao como telefone: quando os digitos dele formam um
-    # numero plausivel, ela criaria uma linha `whatsapp` fantasma com essa
-    # chave e poria na janela do turno web as falas de OUTRAS sessoes
-    # vinculadas a esse numero, de outra pessoa. A funcao recusa o canal por
+    # procurar um telefone para a chave da sessao: se achasse um, criaria uma
+    # linha `whatsapp` fantasma com essa chave e poria na janela do turno web
+    # as falas de OUTRAS sessoes vinculadas a esse numero, de outra pessoa.
+    # Desde a TEC-203 a chave e um HMAC sem identidade no canal WhatsApp e a
+    # revelacao falharia, mas o gate nao depende disso. A funcao recusa o canal por
     # conta propria tambem (`channel=`); o gate aqui e o que evita ate a
     # chamada. Roda antes de `montar_contexto` porque e la que o estado e lido:
     # preenchido aqui, ele ja chega completo.

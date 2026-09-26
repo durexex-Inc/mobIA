@@ -15,6 +15,7 @@ from mobia.admin.reativar import _executar
 from mobia.domain.auditoria.vocabulario import ATOR_AGENTE, ATOR_SISTEMA
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
+from mobia.domain.identidade.indice import registrar
 from mobia.domain.optout.models import EVENTO_REATIVACAO, OptoutEvent
 from mobia.domain.optout.repositorio import reativar, registrar_optout
 
@@ -143,6 +144,9 @@ async def test_reativacao_grava_o_seu_e_nao_copia_o_motivo(
 
 
 async def test_a_reativacao_pela_cli_tambem_grava(session: AsyncSession) -> None:
+    # Desde a TEC-203 a CLI so grava para lead que tem identidade.
+    await registrar(session, CANAL, TELEFONE)
+    await session.commit()
     await _executar(channel=CANAL, key=TELEFONE, autor="Paulo M.", motivo=MOTIVO)
 
     assert len(await _eventos(session, "OPTOUT_REATIVADO")) == 1

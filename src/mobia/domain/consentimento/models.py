@@ -33,7 +33,8 @@ class Consentimento(Base):
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
 
     # O mesmo par que identifica o lead em `optout_events` e
-    # `lead_qualification`. No canal web, `conversation_key` e a sessao.
+    # `lead_qualification`. No canal web, `conversation_key` e o HMAC da sessao
+    # (TEC-203, `identidade/indice.py::chave_de`), e nao a sessao crua.
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
     conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
 

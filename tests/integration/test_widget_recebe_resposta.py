@@ -9,11 +9,18 @@ inversa, um `publish` logo depois do anuncio podia chegar ao Redis antes do
 
 import json
 
+from mobia.domain.identidade.indice import chave_de
+from mobia.domain.messages.canais import CANAL_WEB
 from mobia.domain.outbound.web import canal_da_sessao
 
 
 def _fala(texto: str) -> str:
     return json.dumps({"tipo": "mensagem", "texto": texto, "kind": "resposta"})
+
+
+def _canal(sessao: str) -> str:
+    # TEC-203: a central assina o canal pela chave da sessao, nao ela crua.
+    return canal_da_sessao(chave_de(CANAL_WEB, sessao))
 
 
 async def _abrir(ws_cliente, sessao: str | None = None):
@@ -30,7 +37,7 @@ async def _abrir(ws_cliente, sessao: str | None = None):
 async def test_a_publicacao_logo_depois_do_anuncio_chega(ws_cliente, redis_pool) -> None:
     ws, sessao = await _abrir(ws_cliente)
     try:
-        await redis_pool.publish(canal_da_sessao(sessao), _fala("olá!"))
+        await redis_pool.publish(_canal(sessao), _fala("olá!"))
         assert await ws.receber() == {"tipo": "mensagem", "texto": "olá!", "kind": "resposta"}
     finally:
         await ws.__aexit__()
@@ -41,7 +48,7 @@ async def test_duas_abas_na_mesma_sessao_recebem_as_duas(ws_cliente, redis_pool)
     primeira, sessao = await _abrir(ws_cliente)
     segunda, _ = await _abrir(ws_cliente, sessao=sessao)
     try:
-        await redis_pool.publish(canal_da_sessao(sessao), _fala("olá!"))
+        await redis_pool.publish(_canal(sessao), _fala("olá!"))
         assert (await primeira.receber())["texto"] == "olá!"
         assert (await segunda.receber())["texto"] == "olá!"
     finally:
@@ -54,7 +61,7 @@ async def test_fechar_uma_aba_nao_cala_a_outra(ws_cliente, redis_pool) -> None:
     segunda, _ = await _abrir(ws_cliente, sessao=sessao)
     try:
         await primeira.__aexit__()
-        await redis_pool.publish(canal_da_sessao(sessao), _fala("ainda aqui"))
+        await redis_pool.publish(_canal(sessao), _fala("ainda aqui"))
         assert (await segunda.receber())["texto"] == "ainda aqui"
     finally:
         await segunda.__aexit__()
@@ -70,9 +77,9 @@ async def test_publicacao_de_outra_sessao_nao_vaza(ws_cliente, redis_pool) -> No
     ws, sessao = await _abrir(ws_cliente)
     try:
         await redis_pool.publish(
-            canal_da_sessao("8c0f0a3e-0000-4000-8000-0000000000bb"), _fala("de outra pessoa")
+            _canal("8c0f0a3e-0000-4000-8000-0000000000bb"), _fala("de outra pessoa")
         )
-        await redis_pool.publish(canal_da_sessao(sessao), _fala("minha"))
+        await redis_pool.publish(_canal(sessao), _fala("minha"))
         assert (await ws.receber())["texto"] == "minha"
     finally:
         await ws.__aexit__()

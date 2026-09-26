@@ -10,11 +10,12 @@
 lead (Emenda E-02 da RN-15.1). E lacuna declarada, nao esquecimento.
 
 **O `conversationKey` SAIU da resposta na TEC-195, e no lugar dele ha
-`leadId`.** No WhatsApp aquele campo E o telefone do lead, e ele saia em claro
+`leadId`.** No WhatsApp aquele campo ERA o telefone do lead, e ele saia em claro
 -- no item e, por base64, no `proximoCursor` -- para todo papel com
 `VER_LEADS`, inclusive CORRETOR e LEITURA, que nao tem `VER_DADOS_COMPLETOS`.
-O comentario da TEC-206 em `handoffs.py` ja nomeava esse furo: "`GET
-/api/v1/leads` devolve a mesma chave sem registro nenhum".
+O comentario da TEC-206 em `handoffs.py` ja nomeava esse furo. Desde a
+TEC-203 o `conversation_key` e o HMAC do telefone (`identidade/indice.py`), e
+nao o telefone; o `leadId` continua sendo o que a resposta devolve.
 
 **Isto revisita a D2 acima**, e nao a contradiz. Continua nao existindo
 ENTIDADE lead; `referencias_de_lead` e um apelido do par, sem atributo

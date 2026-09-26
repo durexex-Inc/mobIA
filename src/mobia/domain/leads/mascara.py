@@ -29,10 +29,11 @@ def mascarar_telefone(bruto: str) -> str | None:
     utilidade. Do numero do assinante sobram o primeiro digito -- que e sempre
     9 em celular, e portanto nao diz nada -- e os dois ultimos.
 
-    **`None` e "isto nao e telefone", e nao "este lead nao tem telefone".** A
-    `conversation_key` do canal web e um UUID de sessao; formata-la como se
-    fosse numero mentiria sobre o que ela e. Quem chama distingue os dois casos
-    pela origem, nao por este retorno.
+    **`None` e "isto nao e telefone", e nao "este lead nao tem telefone".**
+    Quem chama passa o telefone ja revelado por `identidade/indice.py::telefones_de`
+    -- nunca a `conversation_key`, que desde a TEC-203 e um HMAC. Lead sem
+    telefone conhecido (sessao web sem vinculo) nem chega aqui: `telefones_de`
+    devolve `None` para ele e quem chama nao mascara nada.
     """
     canonico = normalizar(bruto)
     if canonico is None:

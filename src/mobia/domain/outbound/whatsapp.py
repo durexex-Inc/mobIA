@@ -6,6 +6,8 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
+from mobia.domain.identidade.indice import IdentidadeAusente, revelar
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.outbound.port import (
     EnvioForaDaJanela,
     EnvioRecusado,
@@ -46,13 +48,22 @@ class WhatsAppOutbound(GuardedOutbound):
 
     async def _deliver(self, message_id: uuid.UUID, kind: str, payload: dict[str, Any]) -> None:
         settings = get_settings()
+        # TEC-203. O `para` e a chave do lead; o `wa_id` cru sai da identidade
+        # aqui, no ultimo instante, e so existe na memoria deste envio.
+        try:
+            async with self._session_factory() as session:
+                destino = await revelar(session, CANAL_WHATSAPP, payload["para"])
+        except IdentidadeAusente as exc:
+            log.warning("outbound.identidade_ausente", message_id=str(message_id), kind=kind)
+            # Permanente: tentar de novo nao cria a identidade que falta.
+            raise EnvioRecusado("identidade ausente") from exc
         # Monta url/corpo antes de abrir o cliente: se o payload vier sem uma
         # chave esperada, o KeyError estoura sem deixar um AsyncClient aberto
         # para tras.
         url = f"{settings.whatsapp_api_base}/{payload['de']}/messages"
         corpo: dict[str, Any] = {
             "messaging_product": "whatsapp",
-            "to": payload["para"],
+            "to": destino,
         }
         # TEC-162. `tipo` ausente e texto, e o default nao e comodidade: os
         # chamadores de antes desta card (`turno.py`, `_entregar_texto_fixo`,

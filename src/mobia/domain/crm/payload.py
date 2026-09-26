@@ -26,13 +26,17 @@ from mobia.domain.handoff.dossie import Dossie, isoformat_ou_none
 # versao anterior deixaria de entender esta -- campo removido ou com
 # significado novo. Acrescentar campo opcional nao sobe: o consumidor que nao o
 # conhece o ignora, que e a razao de a RN-16.5 pedir versao em primeiro lugar.
-VERSAO_DO_PAYLOAD = 1
+# v2 (TEC-203): `lead.conversa` deixou de ser o telefone e virou o pseudonimo
+# do lead -- quem lia aquele campo como telefone lia errado desde entao. Quem
+# precisa do telefone le o campo novo, `lead.telefone`.
+VERSAO_DO_PAYLOAD = 2
 
 
 def montar(
     *,
     handoff_id: uuid.UUID,
     dossie: Dossie,
+    telefone: str | None,
     resumo: str | None,
     resumo_fallback: bool,
 ) -> dict[str, Any]:
@@ -51,13 +55,22 @@ def montar(
 
     **Sem nome do lead**: nenhuma tabela deste sistema guarda um -- ver a
     emenda E-02 da RN-15.1 e o comentario do campo (a) em `Dossie`.
+
+    **`telefone` e o valor ja revelado, nunca a chave** (TEC-203): quem chama
+    `montar` busca com `telefones_de` antes, porque este modulo continua sem
+    I/O -- ele so formata o que ja chegou em maos. `None` quando nao ha
+    telefone (web sem vinculo, ou chave sem identidade) vira `null`, e nao a
+    chave no lugar.
     """
     return {
         "versao": VERSAO_DO_PAYLOAD,
         "handoff_id": str(handoff_id),
         "lead": {
             "canal": dossie.canal,
+            # Desde a v2 (TEC-203), `conversa` e o pseudonimo do lead, e nao
+            # mais o telefone; quem precisa ligar le `telefone`.
             "conversa": dossie.conversa,
+            "telefone": f"+{telefone}" if telefone else None,
             "primeira_mensagem_em": isoformat_ou_none(dossie.primeira_mensagem_em),
             "mensagens_do_lead": dossie.mensagens_do_lead,
         },

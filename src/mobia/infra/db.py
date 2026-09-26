@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from mobia.app.config import get_settings
+from mobia.infra.tls import argumentos_de_conexao_do_banco
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
@@ -22,8 +23,12 @@ def get_engine() -> AsyncEngine:
         # texto claro, cifrados so a partir do escritor do TEC-126 -- vazariam
         # pelo log de erro mesmo com a mascara de PII, que so olha para
         # campos estruturados, nunca para dentro da string de excecao.
+        settings = get_settings()
         _engine = create_async_engine(
-            get_settings().database_url, pool_pre_ping=True, hide_parameters=True
+            settings.database_url,
+            pool_pre_ping=True,
+            hide_parameters=True,
+            connect_args=argumentos_de_conexao_do_banco(settings),
         )
     return _engine
 

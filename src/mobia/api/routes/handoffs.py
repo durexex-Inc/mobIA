@@ -133,12 +133,15 @@ async def regenerar(
         # TEC-206, D1 e D7. O resumo carrega dado pessoal do lead. Esta rota
         # NAO e o unico caminho que o le: `GET /api/v1/leads/{leadId}` devolve
         # o mesmo texto desde a TEC-193, e registra la com `campo=detalhe`. E o
-        # `link` abaixo leva a `conversation_key`, que no WhatsApp e o telefone
-        # -- a lista deixou de devolve-la na TEC-195, este `link` nao. O
-        # registro daqui nomeia so o campo `resumo`. Ele commita AQUI, antes
-        # do `return`: se a escrita falhar, a resposta e erro, e o resumo nao
-        # sai sem o registro. O texto do resumo nao vai para a trilha -- ela
-        # diz qual campo foi lido, nao o que ele dizia.
+        # `link` abaixo leva a `conversation_key`, que no WhatsApp ERA o
+        # telefone ate a TEC-203 -- hoje e o HMAC dele
+        # (`identidade/indice.py::chave_de`), e o link deixou de carregar o
+        # telefone sem mudar de forma. A lista deixou de devolver a chave na
+        # TEC-195, este `link` nao. O registro daqui nomeia so o campo
+        # `resumo`. Ele commita AQUI, antes do `return`: se a escrita falhar, a
+        # resposta e erro, e o resumo nao sai sem o registro. O texto do resumo
+        # nao vai para a trilha -- ela diz qual campo foi lido, nao o que ele
+        # dizia.
         # Registra a TENTATIVA, de proposito: se o `decrypt` abaixo falhar, a
         # trilha diz "acessado" e a resposta e 500 -- trilha de auditoria erra
         # para o lado de registrar.

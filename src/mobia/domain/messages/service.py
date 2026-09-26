@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
 from mobia.domain.humano.deteccao import pediu_humano
+from mobia.domain.identidade.indice import chave_de, registrar
 from mobia.domain.limites.eventos import registrar_bloqueio
 from mobia.domain.limites.models import ESCOPO_NUMERO
 from mobia.domain.messages.canais import CANAL_WHATSAPP
@@ -76,7 +77,13 @@ class IngestionService:
         if not parsed:
             return []
 
-        gravadas = await self._persist(parsed, channel)
+        # TEC-203. A chave do lead no lugar do remetente, em toda parte:
+        # coluna, rate limit, log e evento. O remetente cru so existe aqui, na
+        # memoria, e na identidade cifrada que `_persist` grava.
+        chave_de_remetente = {
+            item.provider_message_id: chave_de(channel, item.sender_external_id) for item in parsed
+        }
+        gravadas = await self._persist(parsed, channel, chave_de_remetente)
         # A leitura da config mora AQUI, uma vez por lote, e nao dentro de
         # `_try_enqueue`: quem decide o atraso por mensagem e a ingestao. O que
         # e unico e a LEITURA da configuracao, nao o atraso aplicado -- cada
@@ -94,10 +101,6 @@ class IngestionService:
         # nao ha caso em que duas ocorrencias do mesmo id tragam corpos
         # diferentes para este dicionario escolher entre eles.
         texto_de = {item.provider_message_id: item.text_body for item in parsed}
-        # O numero do lead por `provider_message_id`, pelo mesmo motivo e com a
-        # mesma ressalva de `texto_de` acima: `gravadas` traz id interno e id
-        # do provedor, nao o remetente.
-        remetente_de = {item.provider_message_id: item.sender_external_id for item in parsed}
         for message_id, provider_message_id, tem_midia in gravadas:
             texto = texto_de.get(provider_message_id) or ""
             # O opt-out nao espera a janela (RN-01.6 + RN-14), e desde a
@@ -118,7 +121,7 @@ class IngestionService:
             # RN-14 promete.
             consumo = await consumir(
                 self._queue,
-                chave=chave_de_numero(channel, remetente_de.get(provider_message_id, "")),
+                chave=chave_de_numero(channel, chave_de_remetente.get(provider_message_id, "")),
                 limite=limite,
                 janela_segundos=JANELA_DE_UM_MINUTO,
             )
@@ -130,7 +133,7 @@ class IngestionService:
                 log.warning(
                     "ratelimit.blocked",
                     escopo=ESCOPO_NUMERO,
-                    conversation_key=remetente_de.get(provider_message_id, ""),
+                    conversation_key=chave_de_remetente.get(provider_message_id, ""),
                     channel=channel,
                     volume=consumo.volume,
                     limite=limite,
@@ -139,7 +142,7 @@ class IngestionService:
                     self._session_factory,
                     self._queue,
                     escopo=ESCOPO_NUMERO,
-                    chave=remetente_de.get(provider_message_id, ""),
+                    chave=chave_de_remetente.get(provider_message_id, ""),
                     channel=channel,
                     volume=consumo.volume,
                     limite=limite,
@@ -152,7 +155,7 @@ class IngestionService:
         return [message_id for message_id, _, _ in gravadas]
 
     async def _persist(
-        self, parsed: list[ParsedMessage], channel: str
+        self, parsed: list[ParsedMessage], channel: str, chave_de_remetente: dict[str, str]
     ) -> list[tuple[uuid.UUID, str, bool]]:
         """Grava as mensagens novas e descarta as que ja tinham chegado.
 
@@ -181,11 +184,11 @@ class IngestionService:
                     "id": identificador,
                     "channel": channel,
                     "provider_message_id": item.provider_message_id,
-                    "sender_external_id": item.sender_external_id,
+                    "sender_external_id": chave_de_remetente[item.provider_message_id],
                     "recipient_external_id": item.recipient_external_id,
                     # Quem fala e o lead, entao a conversa e a dele. Na saida
                     # sender e recipient se invertem e esta coluna nao.
-                    "conversation_key": item.sender_external_id,
+                    "conversation_key": chave_de_remetente[item.provider_message_id],
                     "role": MessageRole.LEAD,
                     "direction": MessageDirection.INBOUND,
                     "content_type": item.content_type,
@@ -204,10 +207,17 @@ class IngestionService:
         )
 
         async with self._session_factory() as session:
+            # A identidade entra na mesma transacao das mensagens: chave gravada
+            # sem identidade seria um lead a quem nao se consegue responder.
+            # Ordem fixa: duas replicas travando as mesmas identidades em
+            # ordens diferentes (a de um `set`) podem entrar em deadlock.
+            for remetente in sorted({item.sender_external_id for item in parsed}):
+                await registrar(session, channel, remetente)
+
             resultado = await session.execute(statement)
             inseridas = resultado.all()
 
-            # Mesma convencao de `texto_de`/`remetente_de` em `ingest`: o
+            # Mesma convencao de `texto_de`/`chave_de_remetente` em `ingest`: o
             # `provider_message_id` repetido dentro do MESMO envelope resolve
             # para a ULTIMA ocorrencia, inofensivo pelo mesmo motivo (reentrega
             # da Meta nunca traz corpos diferentes para o mesmo wamid).

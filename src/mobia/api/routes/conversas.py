@@ -19,7 +19,8 @@ forca, nao menos.
 CORRETOR** -- ver `_exigir_que_seja_ele_mesmo` e a Emenda E-05 a RN-16.4.
 
 **O dashboard nao usa estas rotas desde a TEC-194.** Ele conhece o lead pelo
-`leadId` (TEC-195) e nao tem o par, que no WhatsApp e o telefone; as rotas dele
+`leadId` (TEC-195) e nao tem o par -- no WhatsApp ele era o telefone, e desde
+a TEC-203 e o HMAC dele, pseudonimo estavel do lead; as rotas dele
 sao `POST /leads/{leadId}/assumir` e `/devolver`, em `leads.py`, e tiram o
 corretor da claim em vez do corpo. Estas ficam para quem tem o par -- o
 `X-Admin-Token` e os testes que ja existem --, e as duas portas passam pela

@@ -6,7 +6,8 @@ score. Mesmo prefixo de `leads.py`, e arquivo proprio porque aquele e de
 LEITURA -- as rotas de la gravam acesso na trilha; estas mudam estado.
 
 **Por `leadId`, e nao pelo par** (D1). Desde a TEC-195 o dashboard nao tem o
-par, que no WhatsApp e o telefone. As rotas antigas de `conversas.py` recebem o
+par -- no WhatsApp ele era o telefone, e desde a TEC-203 e o HMAC dele,
+pseudonimo estavel do lead. As rotas antigas de `conversas.py` recebem o
 par no corpo e continuam existindo; as duas portas passam pela mesma logica,
 `atendimento/tomada.py`.
 

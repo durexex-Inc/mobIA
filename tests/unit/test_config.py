@@ -180,8 +180,30 @@ def test_producao_com_chave_propria_sobe(monkeypatch: pytest.MonkeyPatch) -> Non
     # TEC-206: a quarta guarda do mesmo tipo. Sem isto ela dispara e o teste
     # morre por ela, nao pelo que afirma.
     monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
+    # TEC-203: a quinta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
+    monkeypatch.setenv("LEAD_INDICE_CHAVE", "chave-de-indice-propria")
     settings = Settings(_env_file=None)
     assert settings.content_encryption_key == chave
+
+
+def test_producao_com_a_chave_de_desenvolvimento_no_keyring_nao_sobe(
+    monkeypatch: pytest.MonkeyPatch, segredos_de_producao: None
+) -> None:
+    """TEC-203, D1: a mesma guarda da chave legada vale para toda chave do keyring.
+
+    `_validar_keyring` confere cada chave do dict, e nao so a
+    `content_encryption_key` legada -- sem isto o keyring reabriria a mesma
+    exposicao que a guarda acima fecha.
+    """
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "CONTENT_ENCRYPTION_KEYS", json.dumps({"20260926": CHAVE_DE_DESENVOLVIMENTO})
+    )
+    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY_ATIVA", "20260926")
+    with pytest.raises(ConfiguracaoInsegura) as erro:
+        Settings(_env_file=None)
+
+    assert CHAVE_DE_DESENVOLVIMENTO not in str(erro.value)
 
 
 def test_desenvolvimento_segue_com_o_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -223,6 +245,8 @@ def test_producao_com_token_de_catalogo_proprio_sobe(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
     # TEC-206: a quarta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
     monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
+    # TEC-203: a quinta guarda do mesmo tipo, pelo mesmo motivo das quatro acima.
+    monkeypatch.setenv("LEAD_INDICE_CHAVE", "chave-de-indice-propria")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", token)
     settings = Settings(_env_file=None)
@@ -868,6 +892,8 @@ def test_producao_com_chave_do_lead_propria_sobe(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
+    # TEC-203: a quinta guarda do mesmo tipo, pelo mesmo motivo das quatro acima.
+    monkeypatch.setenv("LEAD_INDICE_CHAVE", "chave-de-indice-propria")
 
     assert Settings(_env_file=None).auditoria_chave_do_lead == "chave-do-lead-propria"
 

@@ -27,11 +27,12 @@ import structlog
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from mobia.domain.agendamento.mensagens import aviso_de_cancelamento
+from mobia.domain.agendamento.mensagens import aviso_de_cancelamento, descrever_lead
 from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.corretores.models import Corretor
 from mobia.domain.handoff.resumo import link_da_transcricao
+from mobia.domain.identidade.indice import telefones_de
 from mobia.domain.notificacao.canais import CanalDeNotificacaoPort, FalhaDeCanal
 
 log = structlog.get_logger()
@@ -93,13 +94,15 @@ async def avisar_cancelamento(
 
     tipo, inicio, corretor_nome, corretor_email, channel, conversation_key = dados
     link = link_da_transcricao(channel, conversation_key)
+    async with session_factory() as session:
+        par = (channel, conversation_key)
+        telefone = (await telefones_de(session, [par]))[par]
     aviso = aviso_de_cancelamento(
         tipo=tipo,
         inicio=inicio,
         corretor=corretor_nome,
         imovel=imovel,
-        channel=channel,
-        conversation_key=conversation_key,
+        lead=descrever_lead(channel, telefone),
         link=link,
     )
     try:

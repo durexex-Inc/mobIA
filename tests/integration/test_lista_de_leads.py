@@ -20,11 +20,13 @@ from mobia.domain.conversa.models import Conversa
 from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status as StatusDoHandoff
-from mobia.domain.identidade.models import VinculoDeSessao
+from mobia.domain.identidade.indice import indice_de_telefone, registrar
+from mobia.domain.identidade.models import VinculoDeSessao, aad_do_vinculo
 from mobia.domain.leads.repositorio import par_de
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.usuarios import tokens
+from mobia.infra.crypto import encrypt
 
 ROTA = "/api/v1/leads"
 
@@ -128,6 +130,13 @@ async def _lead(
 
     await session.commit()
     return chave
+
+
+async def _lead_do_whatsapp(session: AsyncSession, *, telefone: str, **kwargs: Any) -> str:
+    """Um lead do WhatsApp no formato da TEC-203: o par guarda o HMAC do
+    telefone, e a identidade guarda o telefone cifrado. Devolve a chave."""
+    chave = await registrar(session, "whatsapp", telefone)
+    return await _lead(session, chave=chave, **kwargs)
 
 
 async def _chaves(session: AsyncSession, resposta: Any) -> list[str]:
@@ -317,13 +326,13 @@ async def test_lead_sem_score_aparece_por_ultimo(
 async def test_busca_por_telefone_do_whatsapp(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
-    """No WhatsApp o proprio `conversation_key` e o numero."""
-    await _lead(session, chave="5548988887777", score=10)
-    await _lead(session, chave="5511999996666", score=20)
+    """No WhatsApp o `conversation_key` e o HMAC do numero (TEC-203)."""
+    chave = await _lead_do_whatsapp(session, telefone="5548988887777", score=10)
+    await _lead_do_whatsapp(session, telefone="5511999996666", score=20)
 
     resposta = await client.get(ROTA, params={"busca": "48988887777"}, headers=_bearer("GERENTE"))
 
-    assert await _chaves(session, resposta) == ["5548988887777"]
+    assert await _chaves(session, resposta) == [chave]
 
 
 async def test_busca_por_telefone_aceita_pontuacao(
@@ -331,16 +340,16 @@ async def test_busca_por_telefone_aceita_pontuacao(
 ) -> None:
     """Quem digita "+55 (48) 98888-7777" procura `5548988887777`.
 
-    Sem a normalizacao para digitos, o ILIKE do texto cru nao acha nada -- e
-    quem buscou leria isso como "este lead nao existe".
+    Sem a normalizacao para digitos, a busca nao acha nada -- e quem buscou
+    leria isso como "este lead nao existe".
     """
-    await _lead(session, chave="5548988887777", score=10)
+    chave = await _lead_do_whatsapp(session, telefone="5548988887777", score=10)
 
     resposta = await client.get(
         ROTA, params={"busca": "+55 (48) 98888-7777"}, headers=_bearer("GERENTE")
     )
 
-    assert await _chaves(session, resposta) == ["5548988887777"]
+    assert await _chaves(session, resposta) == [chave]
 
 
 async def test_busca_por_telefone_do_chat_web(
@@ -371,13 +380,15 @@ async def test_busca_por_telefone_do_chat_web(
         VinculoDeSessao(
             channel="web",
             conversation_key=sessao,
-            telefone="5548977776666",
+            telefone_cifrado=encrypt("5548977776666", aad_do_vinculo("web", sessao)),
+            telefone_indice=indice_de_telefone("5548977776666"),
             message_id=mensagem,
         )
     )
     await session.commit()
 
-    resposta = await client.get(ROTA, params={"busca": "977776666"}, headers=_bearer("GERENTE"))
+    # O numero completo: desde a TEC-203 a busca por telefone nao aceita trecho.
+    resposta = await client.get(ROTA, params={"busca": "48977776666"}, headers=_bearer("GERENTE"))
 
     assert await _chaves(session, resposta) == [sessao]
 
@@ -470,7 +481,7 @@ async def test_a_lista_nao_devolve_nome_e_o_telefone_sai_mascarado(
     `conversation_key`, que entregaria em claro justamente o dado que esta
     mascara existe para proteger.
     """
-    await _lead(session, chave="5548990000001", score=10)
+    await _lead_do_whatsapp(session, telefone="5548990000001", score=10)
 
     corpo = (await client.get(ROTA, headers=_bearer("GERENTE"))).json()
     item = corpo["itens"][0]

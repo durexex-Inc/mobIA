@@ -2,7 +2,7 @@
 
 import pytest
 
-from mobia.domain.identidade.telefone import extrair_telefone, normalizar
+from mobia.domain.identidade.telefone import extrair_telefone, grafias_do_wa_id, normalizar
 
 
 @pytest.mark.parametrize(
@@ -101,3 +101,17 @@ def test_normaliza_descarta_o_zero_de_tronco_so_com_mascara(
     bruto: str, esperado: str | None
 ) -> None:
     assert normalizar(bruto) == esperado
+
+
+@pytest.mark.parametrize(
+    ("canonico", "esperado"),
+    [
+        # celular: com e sem o 9, porque a Meta entrega os dois
+        ("5548999990000", ("5548999990000", "554899990000")),
+        # fixo nao tem o 9 para tirar
+        ("554832221234", ("554832221234",)),
+    ],
+)
+def test_grafias_do_wa_id(canonico: str, esperado: tuple[str, ...]) -> None:
+    """TEC-203: a busca procura o HMAC de cada grafia em que o `wa_id` pode ter chegado."""
+    assert grafias_do_wa_id(canonico) == esperado

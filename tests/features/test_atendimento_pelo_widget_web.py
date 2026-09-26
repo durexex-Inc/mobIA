@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.handoff.agendador import AgendadorNoop
+from mobia.domain.identidade.indice import chave_de
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageRole
 from mobia.domain.messages.models import Message
@@ -73,10 +74,12 @@ async def _abrir(ws_cliente, sessao: str | None = None) -> tuple[Any, str]:
 
 
 async def _linha_da_sessao(session, sessao: str) -> Message:
+    # TEC-203: a coluna guarda o HMAC da sessao, nao ela crua.
     return (
         await session.execute(
             select(Message).where(
-                Message.conversation_key == sessao, Message.role == MessageRole.LEAD
+                Message.conversation_key == chave_de(CANAL_WEB, sessao),
+                Message.role == MessageRole.LEAD,
             )
         )
     ).scalar_one()

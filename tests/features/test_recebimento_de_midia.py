@@ -21,6 +21,7 @@ from sqlalchemy import select
 from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.agente.identificacao import SEPARADOR_DA_IDENTIFICACAO, TEXTO_DA_IDENTIFICACAO
 from mobia.domain.handoff.agendador import AgendadorNoop
+from mobia.domain.identidade.indice import chave_de
 from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.models import Message
@@ -212,9 +213,11 @@ async def test_reconhecer_imagem_recebida_sem_interpretar(
 
     assert resultado == "respondido"
     assert classificador.chamadas == 0, "midia sem texto nao pode chamar o modelo"
+    # TEC-203: `para` e a chave do lead, nao o `wa_id` cru -- e o `wa_id` que
+    # `WhatsAppOutbound._deliver` revela na hora do POST de verdade.
     assert whatsapp.envios == [
         {
-            "para": TELEFONE,
+            "para": chave_de(CANAL_WHATSAPP, TELEFONE),
             "de": "222222222",
             "texto": _com_identificacao(TEXTO_DA_CONFIRMACAO_DE_IMAGEM),
         }

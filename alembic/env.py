@@ -11,6 +11,7 @@ from mobia.domain.agente.models import ConversationIntent  # noqa: F401
 from mobia.domain.context.models import ConversationSummary, LeadQualification  # noqa: F401
 from mobia.domain.messages.models import Base
 from mobia.domain.outbound.models import OutboundDispatch  # noqa: F401
+from mobia.infra.tls import argumentos_de_conexao_do_banco
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
@@ -67,6 +68,7 @@ async def run_async_migrations() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=argumentos_de_conexao_do_banco(get_settings()),
     )
 
     async with connectable.connect() as connection:

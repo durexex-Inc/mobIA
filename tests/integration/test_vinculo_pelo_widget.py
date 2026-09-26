@@ -4,7 +4,9 @@ from typing import Any
 
 from sqlalchemy import select
 
+from mobia.domain.identidade.indice import chave_de, indice_de_telefone
 from mobia.domain.identidade.models import VinculoDeSessao
+from mobia.domain.messages.canais import CANAL_WEB
 
 
 async def _abrir(ws_cliente, sessao: str | None = None) -> tuple[Any, str]:
@@ -28,7 +30,9 @@ async def test_fala_com_telefone_vincula_a_sessao(ws_cliente, session) -> None:
         await ws.__aexit__()
 
     [vinculo] = await _vinculos(session)
-    assert (vinculo.conversation_key, vinculo.telefone) == (sessao, "5548999990000")
+    # TEC-203: o par gravado e o HMAC da sessao, nao ela crua.
+    assert vinculo.conversation_key == chave_de(CANAL_WEB, sessao)
+    assert vinculo.telefone_indice == indice_de_telefone("5548999990000")
 
 
 async def test_fala_sem_telefone_nao_vincula(ws_cliente, session) -> None:

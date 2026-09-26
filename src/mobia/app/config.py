@@ -1,3 +1,6 @@
+import base64
+import os
+from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
@@ -25,6 +28,11 @@ SEGREDO_DE_JWT_DE_DESENVOLVIMENTO = "dev-jwt-secret-nao-use-em-producao"
 # qualquer telefone e descobre se ele aparece na trilha.
 CHAVE_DO_LEAD_DE_DESENVOLVIMENTO = "dev-auditoria-chave-do-lead-nao-use-em-producao"
 
+# A chave do blind index do lead em desenvolvimento (TEC-203, D2). Mesmo molde
+# da CHAVE_DE_DESENVOLVIMENTO: commitada de proposito, e recusada em producao.
+# Quem a tiver recalcula a chave de qualquer telefone e acha a conversa dele.
+CHAVE_DO_INDICE_DE_DESENVOLVIMENTO = "dev-indice-do-lead-nao-use-em-producao"
+
 # O piso da RFC 7518, secao 3.2: a chave de HMAC deve ter ao menos o tamanho da
 # saida da funcao -- 32 bytes para SHA-256. Abaixo disso, a assinatura e mais
 # facil de quebrar por forca bruta do que o algoritmo promete, e o `pyjwt` avisa
@@ -43,6 +51,16 @@ _FRACAO_SEGURA_DO_LIMIAR_DE_CONTAGEM = 0.6
 
 class ConfiguracaoInsegura(RuntimeError):
     """Configuracao que rodaria, mas sem a protecao que devia ter."""
+
+
+def data_do_id(identificador: str) -> date:
+    """O id de chave e a data em que ela nasceu. TEC-203, D1."""
+    try:
+        if len(identificador) != 8 or not identificador.isdigit():
+            raise ValueError
+        return date(int(identificador[:4]), int(identificador[4:6]), int(identificador[6:]))
+    except ValueError:
+        raise ValueError(f"id de chave {identificador!r} nao e uma data AAAAMMDD") from None
 
 
 class Settings(BaseSettings):
@@ -89,11 +107,30 @@ class Settings(BaseSettings):
     # chave publicamente conhecida e nada reclama. Dai a guarda abaixo.
     content_encryption_key: str = CHAVE_DE_DESENVOLVIMENTO
 
+    # TEC-203, D1. O keyring: id (a data de criacao, AAAAMMDD) -> chave base64.
+    # Vazio, tudo continua como antes -- grava v1 com `content_encryption_key`,
+    # que passa a ser a chave LEGADA e segue decifrando todo blob v1. Com
+    # chaves, a gravacao sai em v2 com a ativa e as demais so decifram. O id e
+    # data para que a idade da chave se leia dele sem campo a mais (ver o aviso
+    # dos 90 dias em `infra/rotacao.py`).
+    content_encryption_keys: dict[str, str] = {}
+    content_encryption_key_ativa: str = ""
+
     # A chave do HMAC que produz `eventos_auditoria.lead_ref` (TEC-206, D4).
     # Mesma guarda de producao da chave de cifra, e pela mesma razao: chave
-    # conhecida nao produz erro nenhum, ela so deixa de proteger. E nao pode
-    # rodar sem tornar a trilha impesquisavel -- ver `auditoria/referencia.py`.
+    # conhecida nao produz erro nenhum, ela so deixa de proteger. Trocada
+    # sozinha, torna a trilha impesquisavel; roda so por
+    # `scripts/reindexar_leads.py` com `AUDITORIA_CHAVE_DO_LEAD_ANTERIOR` --
+    # ver `auditoria/referencia.py`.
     auditoria_chave_do_lead: str = CHAVE_DO_LEAD_DE_DESENVOLVIMENTO
+
+    # TEC-203, D2. A chave do HMAC que o `conversation_key` guarda no lugar do
+    # telefone. Propria, e nao a de cifra nem a do `lead_ref`: chaves com
+    # funcoes diferentes nao se reaproveitam. O id e a data de criacao, para o
+    # aviso dos 90 dias; trocar esta chave exige `scripts/reindexar_leads.py`
+    # com o servico parado (ver `docs/seguranca/segredos.md`).
+    lead_indice_chave: str = CHAVE_DO_INDICE_DE_DESENVOLVIMENTO
+    lead_indice_chave_id: str = "20260926"
 
     # Sem default utilizavel: chave ausente falha alto na construcao do cliente.
     # Nao precisa da guarda de producao que a chave de cifra tem -- uma chave de
@@ -688,13 +725,45 @@ class Settings(BaseSettings):
     def em_producao(self) -> bool:
         """O unico lugar que decide o que "producao" quer dizer.
 
-        Os dois validators abaixo e a guarda de `OPENAI_API_KEY` no
-        `workers/main.py` (TEC-157) fazem a mesma pergunta. Tres copias de
-        `environment.strip().lower() in _AMBIENTES_DE_PRODUCAO` divergiriam no
-        dia em que alguem aceitasse mais um nome de ambiente em uma delas so --
-        e a divergencia apareceria como guarda que nao guarda.
+        Os validators de producao abaixo e a guarda de `OPENAI_API_KEY` no
+        `workers/main.py` (TEC-157) fazem a mesma pergunta. Uma copia de
+        `environment.strip().lower() in _AMBIENTES_DE_PRODUCAO` em cada um
+        divergiria no dia em que alguem aceitasse mais um nome de ambiente em
+        uma delas so -- e a divergencia apareceria como guarda que nao guarda.
+
+        Duas excecoes repetem a conta sobre `os.environ`, e nao sobre o campo:
+        `get_settings`, que decide antes de existir um `Settings`, e
+        `_recusar_producao_declarada_em_arquivo`, cuja pergunta e justamente se
+        o ambiente veio de `os.environ`. As duas usam o mesmo
+        `_AMBIENTES_DE_PRODUCAO`, que e o que as mantem iguais a esta.
         """
         return self.environment.strip().lower() in _AMBIENTES_DE_PRODUCAO
+
+    @model_validator(mode="after")
+    def _recusar_producao_declarada_em_arquivo(self) -> "Settings":
+        """`ENVIRONMENT` de producao tem de vir do ambiente, nao do `.env`.
+
+        Sem isto, `ENVIRONMENT=production` escrito so no `.env` ligaria todas
+        as guardas de producao -- e o `.env` teria sido lido, que e o que
+        `get_settings` existe para impedir.
+
+        Fica antes das guardas de segredo de desenvolvimento de proposito, para
+        o erro nomear a causa e nao o sintoma. Com producao declarada so no
+        `.env`, os segredos quase sempre sao os de desenvolvimento -- do mesmo
+        arquivo ou dos defaults --, e uma guarda deles que disparasse primeiro
+        reprovaria por "chave default" -- e quem lesse iria trocar a chave, sem
+        saber que o arquivo inteiro nao devia ter sido lido. Os validators
+        `after` rodam na ordem em que estao definidos, e `ConfiguracaoInsegura`
+        interrompe no primeiro. `test_ambiente_de_producao_vindo_do_arquivo_reprova`
+        prende a ordem pela frase deste erro.
+        """
+        declarado = os.environ.get("ENVIRONMENT", "").strip().lower()
+        if self.em_producao and declarado not in _AMBIENTES_DE_PRODUCAO:
+            raise ConfiguracaoInsegura(
+                f"ENVIRONMENT={self.environment} veio de arquivo, nao do ambiente. "
+                "Em producao o ambiente e declarado pela plataforma, e o .env nao e lido."
+            )
+        return self
 
     @model_validator(mode="after")
     def _recusar_chave_de_desenvolvimento_em_producao(self) -> "Settings":
@@ -712,6 +781,30 @@ class Settings(BaseSettings):
                 f"ENVIRONMENT={self.environment}. Gere uma chave de 32 bytes: "
                 'python -c "import base64,os;'
                 'print(base64.b64encode(os.urandom(32)).decode())"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validar_keyring(self) -> "Settings":
+        """Keyring errado falharia so na primeira cifra -- aqui falha na subida."""
+        if not self.content_encryption_keys:
+            if self.content_encryption_key_ativa:
+                raise ValueError("CONTENT_ENCRYPTION_KEY_ATIVA sem CONTENT_ENCRYPTION_KEYS")
+            return self
+        for identificador, chave in self.content_encryption_keys.items():
+            data_do_id(identificador)
+            if len(base64.b64decode(chave)) != 32:
+                raise ValueError(
+                    f"a chave {identificador} do keyring nao tem 32 bytes apos o base64"
+                )
+            if self.em_producao and chave == CHAVE_DE_DESENVOLVIMENTO:
+                raise ConfiguracaoInsegura(
+                    f"a chave {identificador} do keyring e a de desenvolvimento e "
+                    f"ENVIRONMENT={self.environment}."
+                )
+        if self.content_encryption_key_ativa not in self.content_encryption_keys:
+            raise ValueError(
+                f"a chave ativa {self.content_encryption_key_ativa!r} nao esta no keyring"
             )
         return self
 
@@ -773,6 +866,19 @@ class Settings(BaseSettings):
                 "AUDITORIA_CHAVE_DO_LEAD esta com o default de desenvolvimento e "
                 f"ENVIRONMENT={self.environment}. Quem a conhece descobre se um "
                 "telefone aparece na trilha de auditoria. Gere uma: "
+                'python -c "import secrets;print(secrets.token_urlsafe(48))"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _recusar_chave_de_indice_de_desenvolvimento_em_producao(self) -> "Settings":
+        """TEC-203. Chave de HMAC publicamente conhecida nao falha: ela so deixa
+        qualquer um recalcular a chave de um telefone e achar a conversa dele."""
+        data_do_id(self.lead_indice_chave_id)
+        if self.em_producao and self.lead_indice_chave == CHAVE_DO_INDICE_DE_DESENVOLVIMENTO:
+            raise ConfiguracaoInsegura(
+                "LEAD_INDICE_CHAVE esta com o default de desenvolvimento e "
+                f"ENVIRONMENT={self.environment}. Gere uma: "
                 'python -c "import secrets;print(secrets.token_urlsafe(48))"'
             )
         return self
@@ -1050,7 +1156,29 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    """Monta `Settings` com as fontes que o ambiente permite. TEC-203, D5.
+
+    **Em producao o `.env` nao e lido.** Segredo em producao vem do secret
+    manager da plataforma, que o entrega como variavel de ambiente ou arquivo
+    montado; um `.env` no servidor e justamente o segredo em arquivo que a
+    RNF-14 proibe. A decisao olha `os.environ` e nao `Settings`, porque e ela
+    que decide se o arquivo entra -- ler o arquivo para descobrir se pode le-lo
+    seria circular. Quem pusesse `ENVIRONMENT=production` so no `.env` escapa
+    daqui; o validator `_recusar_producao_declarada_em_arquivo` o pega.
+
+    `MOBIA_SECRETS_DIR` aponta o diretorio de arquivos montados (um arquivo por
+    segredo, nome do campo em minusculas), no formato de Docker, K8s e ECS.
+    """
+    em_producao = os.environ.get("ENVIRONMENT", "").strip().lower() in _AMBIENTES_DE_PRODUCAO
+    # `# type: ignore[call-arg]`: `BaseModel` e `@dataclass_transform`, e o
+    # mypy sintetiza o construtor so a partir dos campos anotados -- ele nunca
+    # olha o `__init__` de verdade que `pydantic_settings.BaseSettings`
+    # escreve a mao (`main.py`), que e onde `_env_file` e `_secrets_dir`
+    # existem. Em runtime os dois chegam la; so o checador nao os enxerga.
+    return Settings(  # type: ignore[call-arg]
+        _env_file=None if em_producao else ".env",
+        _secrets_dir=os.environ.get("MOBIA_SECRETS_DIR") or None,
+    )
 
 
 # Preco em dolar por 1 milhao de tokens, (entrada, saida). O custo e calculado e

@@ -56,6 +56,7 @@ from mobia.domain.agente.dinheiro import mudou_de_banda
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.context.models import LeadQualification
 from mobia.domain.context.repositorio import MARCA_DO_ORCAMENTO
+from mobia.domain.identidade.indice import IdentidadeAusente, indice_de_telefone, revelar
 from mobia.domain.identidade.repositorio import MAXIMO_DE_SESSOES_VINCULADAS, sessoes_vinculadas
 from mobia.domain.identidade.telefone import normalizar
 from mobia.domain.messages.canais import CANAL_WHATSAPP
@@ -125,22 +126,35 @@ async def absorver_sessoes_vinculadas(
     vinculo -- ou com um `wa_id` que nao e brasileiro -- devolve `()` e nao
     escreve nada: o turno segue exatamente como antes desta card.
 
+    **O telefone sai da identidade** (TEC-203): o `conversation_key` e o HMAC
+    do `wa_id`, entao o `wa_id` e revelado aqui, levado a forma canonica e
+    consultado nos vinculos por `indice_de_telefone`. Chave sem identidade e
+    bug de dado, e aqui vira "sem vinculo": a absorcao e enriquecimento, e nao
+    derruba o turno por isso.
+
     **Canal que nao e o WhatsApp devolve `()` sem tocar no banco.** O gate de
     verdade e o do turno (`executar_turno` so chama isto no WhatsApp); este e
-    a defesa em profundidade dele. Sem ela, uma chamada com o par web -- cujo
-    `conversation_key` e um UUID, e os digitos de um UUID de vez em quando
-    formam um telefone plausivel -- criaria uma linha `whatsapp` fantasma com a
-    chave da sessao e devolveria, para a janela do turno web, as falas de
-    outras sessoes vinculadas a esse numero.
+    a defesa em profundidade dele. Sem ela, uma chamada com o par web criaria,
+    no dia em que a revelacao achasse um telefone para ele, uma linha
+    `whatsapp` fantasma com a chave da sessao e devolveria, para a janela do
+    turno web, as falas de outras sessoes vinculadas a esse numero. Hoje a
+    chave web nao tem identidade no canal WhatsApp e a revelacao falharia;
+    o gate nao depende disso.
     """
     if channel != CANAL_WHATSAPP:
         return ()
-    telefone = normalizar(conversation_key)
-    if telefone is None:
-        return ()
 
     async with session_factory() as session:
-        pares = await sessoes_vinculadas(session, telefone, limite=MAXIMO_DE_SESSOES_VINCULADAS)
+        try:
+            wa_id = await revelar(session, CANAL_WHATSAPP, conversation_key)
+        except IdentidadeAusente:
+            return ()
+        telefone = normalizar(wa_id)
+        if telefone is None:
+            return ()
+        pares = await sessoes_vinculadas(
+            session, indice_de_telefone(telefone), limite=MAXIMO_DE_SESSOES_VINCULADAS
+        )
         if not pares:
             return ()
 
