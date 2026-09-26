@@ -23,6 +23,7 @@ from mobia.domain.agendamento.janelas import TipoDeCompromisso
 from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
 from mobia.domain.catalogo.models import Imovel
+from mobia.domain.handoff.resumo import link_da_transcricao
 from mobia.domain.identidade.models import IdentidadeDeLead, aad_da_identidade
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
@@ -264,6 +265,11 @@ async def test_confirmado_avisa_lead_corretor_e_cria_evento(
     assert chamada["inicio"] == INICIO
     assert chamada["fim"] == FIM
     assert chamada["evento_id"] == agendamento.id.hex
+    # TEC-203: a descricao do evento leva o telefone revelado, como o e-mail,
+    # e nao o `conversation_key` -- que e o HMAC e nao serve ao corretor.
+    assert chamada["descricao"] == (
+        f"Lead: {CANAL} +{CONVERSA}\n{link_da_transcricao(CANAL, CONVERSA)}"
+    )
 
     linha = await _recarregar(session, agendamento)
     assert linha.lead_avisado_em == AGORA

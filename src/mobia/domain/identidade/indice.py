@@ -91,9 +91,12 @@ async def revelar(session: AsyncSession, channel: str, chave: str) -> str:
 async def telefones_de(
     session: AsyncSession, pares: Sequence[tuple[str, str]]
 ) -> dict[tuple[str, str], str | None]:
-    """O telefone canonico de cada lead, pelas duas origens. TEC-129 e TEC-203.
+    """O telefone de cada lead, em digitos, pelas duas origens. TEC-129 e TEC-203.
 
-    No WhatsApp e o `wa_id` normalizado; no web, o que o lead digitou no
+    No WhatsApp e o `wa_id` na forma canonica de `normalizar` -- ou, quando o
+    numero nao e brasileiro e `normalizar` devolve `None`, o proprio `wa_id`,
+    que a Meta ja entrega em E.164 sem o `+`: lead estrangeiro continua tendo
+    telefone para CRM, e-mail e agenda. No web, o que o lead digitou no
     widget, se digitou. `None` e "nao ha telefone", nunca a chave no lugar --
     inclusive para a chave do WhatsApp sem identidade, que e bug de dado mas
     nao motivo para derrubar uma listagem inteira.
@@ -115,7 +118,7 @@ async def telefones_de(
         )
         for channel, chave, blob in linhas:
             valor = decrypt(bytes(blob), aad_da_identidade(channel, chave))
-            resultado[(channel, chave)] = normalizar(valor) if valor else None
+            resultado[(channel, chave)] = (normalizar(valor) or valor) if valor else None
     dos_outros = [par for par in pares if par[0] != CANAL_WHATSAPP]
     if dos_outros:
         vinculos = await session.execute(

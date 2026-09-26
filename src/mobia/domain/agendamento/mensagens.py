@@ -37,8 +37,9 @@ TEXTO_DA_CONFIRMACAO_DE_REUNIAO = (
 
 
 def descrever_lead(channel: str, telefone: str | None) -> str:
-    """A linha "Lead:" do e-mail ao corretor. TEC-203: o telefone revelado,
-    porque o corretor precisa dele para a visita; o par ja nao o carrega."""
+    """A linha "Lead:" do e-mail ao corretor e do evento na agenda. TEC-203:
+    o telefone revelado, porque o corretor precisa dele para a visita; o par
+    ja nao o carrega."""
     return f"{channel} +{telefone}" if telefone else f"{channel} (sem telefone informado)"
 
 

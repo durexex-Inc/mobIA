@@ -217,15 +217,12 @@ async def _avisar_corretor(
     link: str,
     agora: datetime,
 ) -> None:
-    async with session_factory() as session:
-        par = (retrato.channel, retrato.conversation_key)
-        telefone = (await telefones_de(session, [par]))[par]
     aviso = aviso_ao_corretor(
         tipo=retrato.tipo,
         inicio=retrato.inicio,
         corretor=retrato.corretor_nome,
         imovel=retrato.imovel,
-        lead=descrever_lead(retrato.channel, telefone),
+        lead=await _lead_do_retrato(session_factory, retrato),
         link=link,
     )
     try:
@@ -240,6 +237,18 @@ async def _avisar_corretor(
     await _marcar(session_factory, retrato.id, corretor_avisado_em=agora)
 
 
+async def _lead_do_retrato(
+    session_factory: async_sessionmaker[AsyncSession], retrato: _Retrato
+) -> str:
+    """A linha "Lead:" do e-mail ao corretor e do evento na agenda. TEC-203:
+    o telefone revelado, porque o `conversation_key` e o HMAC -- nao serve
+    ao corretor para ligar, e nao tem por que ir parar no Google."""
+    async with session_factory() as session:
+        par = (retrato.channel, retrato.conversation_key)
+        telefone = (await telefones_de(session, [par]))[par]
+    return descrever_lead(retrato.channel, telefone)
+
+
 async def _criar_evento(
     session_factory: async_sessionmaker[AsyncSession],
     retrato: _Retrato,
@@ -251,6 +260,9 @@ async def _criar_evento(
     titulo = "Reunião remota" if remota else "Visita"
     if not remota and retrato.imovel is not None:
         titulo = f"{titulo}: {retrato.imovel.titulo} ({retrato.imovel.codigo})"
+    # Fora do `try`: erro de banco na leitura derruba o job (ver a docstring
+    # do modulo); so a falha do Google vira alerta.
+    lead = await _lead_do_retrato(session_factory, retrato)
     try:
         identificador = await calendario.criar_evento(
             # Derivado do agendamento para a reexecucao repetir o mesmo id --
@@ -259,7 +271,7 @@ async def _criar_evento(
             inicio=retrato.inicio,
             fim=retrato.fim,
             titulo=titulo,
-            descricao=f"Lead: {retrato.channel} {retrato.conversation_key}\n{link}",
+            descricao=f"Lead: {lead}\n{link}",
             convidado=retrato.corretor_email,
         )
     except FalhaDeCalendario as falha:

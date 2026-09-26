@@ -80,7 +80,7 @@ Módulo novo `src/mobia/domain/identidade/indice.py`, único lugar que conhece a
 - `indice_de_telefone(canonico)` — HMAC de `telefone:{canonico}`, sobre a forma de `identidade/telefone.py::normalizar`. É o índice do telefone digitado no widget e o que a busca e a absorção consultam.
 - `registrar(sessao, channel, valor)` — upsert da identidade; devolve a chave.
 - `revelar(sessao, channel, chave)` — decifra. É a única porta para o valor em claro. Identidade ausente levanta erro explícito; nunca devolve a própria chave como se fosse telefone.
-- `telefones_de(sessao, pares)` — o telefone canônico de cada lead, pelas duas origens: a identidade no WhatsApp, o vínculo cifrado no web. É o que listagem, revelação, CRM e e-mails de agendamento usam.
+- `telefones_de(sessao, pares)` — o telefone canônico de cada lead, pelas duas origens: a identidade no WhatsApp, o vínculo cifrado no web. É o que listagem, revelação, CRM, e-mails de agendamento e o evento na agenda do corretor usam. No WhatsApp, quando o número não é brasileiro e a normalização não o reconhece, sai o próprio `wa_id` (corrigido na implementação: a primeira versão devolvia nada, e o lead estrangeiro chegava ao CRM sem telefone).
 
 O AAD do resumo (`context/models.py::aad_do_resumo`) já é montado sobre `(channel, conversation_key)`; passa a sê-lo sobre o HMAC, e a reindexação recifra `conversation_summaries`.
 
@@ -116,7 +116,7 @@ Regra: **o telefone em claro só existe em memória, no instante em que sai do p
 | CRM (`crm/payload.py`) | **Recebe o telefone revelado** — o CRM existe para o corretor ligar |
 | Dossiê para o LLM (`handoff/dossie.py`, `handoff/contingencia.py`) | **Sem mudança**: `conversa` passa a ser o HMAC, que não é o telefone (corrigido na implementação: a versão anterior dizia "que não é dado pessoal", mas pseudônimo estável com chave continua sendo dado pessoal para a LGPD). Tirar a linha do prompt era a primeira versão deste desenho; com a chave pseudônima ela deixou de vazar, e mexer no prompt custaria orçamento sem ganho |
 | Link da transcrição (`handoff/resumo.py`) | **Sem mudança**: a URL passa a carregar o HMAC, e o telefone some dela, do e-mail e do access log sem tocar em código |
-| E-mails de agendamento (`agendamento/mensagens.py`) | **Telefone revelado** — o corretor precisa dele para a visita |
+| E-mails de agendamento (`agendamento/mensagens.py`) e evento na agenda (`agendamento/confirmacao.py`) | **Telefone revelado** — o corretor precisa dele para a visita (o evento entrou na implementação: a primeira versão mandava o HMAC para a descrição no Google) |
 | Dashboard, listagem | Revela por linha da página e mascara |
 | Dashboard, revelar (`leads/repositorio.py::valor_revelado`) | Passa por `revelar`; a auditoria de acesso continua |
 | Dashboard, busca | Normaliza o termo; compara `vinculos_de_sessao.telefone_indice` com `indice_de_telefone` e o `conversation_key` com `chave_de` das duas grafias do `wa_id` (com e sem o 9). Só número completo |

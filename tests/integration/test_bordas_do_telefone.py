@@ -19,7 +19,7 @@ from mobia.domain.context.models import LeadQualification
 from mobia.domain.crm.payload import VERSAO_DO_PAYLOAD, montar
 from mobia.domain.handoff.dossie import Dossie
 from mobia.domain.identidade.absorcao import absorver_sessoes_vinculadas
-from mobia.domain.identidade.indice import chave_de, registrar
+from mobia.domain.identidade.indice import chave_de, registrar, telefones_de
 from mobia.domain.identidade.repositorio import vincular_sessao
 from mobia.domain.leads.consulta import montar_filtro
 from mobia.domain.leads.repositorio import listar_leads, valor_revelado
@@ -131,6 +131,20 @@ async def test_revelar_devolve_o_telefone_das_duas_origens(session: AsyncSession
     assert await revelado((CANAL_WHATSAPP, do_whatsapp)) == f"+{TELEFONE}"
     assert await revelado((CANAL_WEB, com_vinculo)) == "+5511988887721"
     assert await revelado((CANAL_WEB, sem_vinculo)) is None
+
+
+WA_ID_ESTRANGEIRO = "14155550100"
+
+
+async def test_wa_id_estrangeiro_sai_cru_e_nao_nulo(session: AsyncSession) -> None:
+    """`normalizar` so conhece telefone brasileiro, e o lead dos EUA no
+    WhatsApp nao deixa de ter telefone por isso: o `wa_id` ja e E.164 sem o
+    `+`, e e ele que CRM, e-mail e agenda recebem."""
+    chave, _ = await _lead(session, CANAL_WHATSAPP, WA_ID_ESTRANGEIRO)
+    par = (CANAL_WHATSAPP, chave)
+
+    assert (await telefones_de(session, [par]))[par] == WA_ID_ESTRANGEIRO
+    assert await valor_revelado(session, par=par, campo=CAMPO_TELEFONE) == f"+{WA_ID_ESTRANGEIRO}"
 
 
 async def test_revelar_chave_do_whatsapp_sem_identidade_e_nulo(session: AsyncSession) -> None:
