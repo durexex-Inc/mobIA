@@ -503,3 +503,152 @@ async def test_rotacao_da_chave_de_indice_leva_tudo_para_a_chave_nova(
     assert referencia == lead_ref("whatsapp", chave_b, chave=chave_do_lead)
     # A rotacao troca a chave de indice, e o prefixo do id do widget acompanha.
     assert provider_do_widget == f"{vinculo.conversation_key}:{ID_DO_WIDGET}"
+
+
+async def test_rotacao_da_chave_do_lead_ref_mantem_a_trilha_achavel(
+    semeado_na_0057_e_subido: dict[str, uuid.UUID],
+) -> None:
+    """A chave de indice fica; so a do `lead_ref` troca. O par nao se move,
+    mas o evento gravado sob a chave A tem de ser achado pela B."""
+    chave_a = get_settings().auditoria_chave_do_lead
+    configuracao_b = get_settings().model_copy(
+        update={"auditoria_chave_do_lead": "chave-do-lead-B-" + "y" * 40}
+    )
+    chave_b = configuracao_b.auditoria_chave_do_lead
+    assert chave_b != chave_a
+
+    async with get_engine().begin() as conexao:
+        await conexao.run_sync(
+            lambda conn: reindexar(
+                conn,
+                tabelas=TABELAS_COM_CHAVE_DE_LEAD,
+                nova_chave=chave_de,
+                modo="rotacao",
+                chave_do_lead_antiga=chave_a,
+                chave_do_lead_nova=chave_b,
+            )
+        )
+
+    chave = chave_de("whatsapp", TELEFONE)
+    async with get_sessionmaker()() as sessao:
+        pela_b, _ = await listar_eventos(
+            sessao,
+            filtro=montar_filtro(channel="whatsapp", conversation_key=chave, chave_do_lead=chave_b),
+        )
+        pela_a, _ = await listar_eventos(
+            sessao,
+            filtro=montar_filtro(channel="whatsapp", conversation_key=chave, chave_do_lead=chave_a),
+        )
+    assert [evento.acao for evento in pela_b] == [Acao.OPTOUT_REGISTRADO.value]
+    assert pela_a == []
+
+
+ORFAO = "5548988887777"
+
+
+async def test_evento_de_rate_limit_orfao_tambem_perde_o_telefone() -> None:
+    """Um numero que so aparece em `rate_limit_events` -- a mensagem ja saiu
+    pela retencao, o evento fica -- nao pode sobrar em claro depois da 0058."""
+    await _descer_para_a_0057()
+    try:
+        async with get_sessionmaker()() as sessao:
+            await sessao.execute(
+                text(
+                    "INSERT INTO rate_limit_events (id, escopo, chave, channel, volume, limite)"
+                    " VALUES (:id, 'numero', :k, 'whatsapp', 21, 20)"
+                ),
+                {"id": uuid.uuid4(), "k": ORFAO},
+            )
+            await sessao.commit()
+        await _subir()
+
+        chave = chave_de("whatsapp", ORFAO)
+        async with get_sessionmaker()() as sessao:
+            assert await sessao.scalar(text("SELECT chave FROM rate_limit_events")) == chave
+            assert await revelar(sessao, "whatsapp", chave) == ORFAO
+
+        # E a descida tem de onde tirar o valor cru: a subida gravou a identidade.
+        await _descer_para_a_0057()
+        async with get_sessionmaker()() as sessao:
+            assert await sessao.scalar(text("SELECT chave FROM rate_limit_events")) == ORFAO
+        await dispose_engine()
+    finally:
+        await _subir()
+
+
+async def test_rotacao_leva_a_identidade_orfa_para_a_chave_nova(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identidade sem linha em tabela nenhuma (o lead so deixou a trilha) ainda
+    tem de trocar de chave, e o `lead_ref` dela junto."""
+    chave_do_lead = get_settings().auditoria_chave_do_lead
+    async with get_sessionmaker()() as sessao:
+        chave_a = await indice.registrar(sessao, "whatsapp", ORFAO)
+        await registrar_evento(
+            sessao,
+            ator=ATOR_SISTEMA,
+            acao=Acao.OPTOUT_REGISTRADO,
+            entidade=Entidade.OPTOUT_EVENT,
+            entidade_id=str(uuid.uuid4()),
+            lead=("whatsapp", chave_a),
+        )
+        await sessao.commit()
+
+    configuracao_b = get_settings().model_copy(
+        update={"lead_indice_chave": "chave-de-indice-B-" + "x" * 40}
+    )
+    monkeypatch.setattr(indice, "get_settings", lambda: configuracao_b)
+    chave_b = chave_de("whatsapp", ORFAO)
+    assert chave_b != chave_a
+
+    async with get_engine().begin() as conexao:
+        mudados = await conexao.run_sync(
+            lambda conn: reindexar(
+                conn,
+                tabelas=TABELAS_COM_CHAVE_DE_LEAD,
+                nova_chave=chave_de,
+                modo="rotacao",
+                chave_do_lead_antiga=chave_do_lead,
+                chave_do_lead_nova=chave_do_lead,
+            )
+        )
+
+    assert mudados == 1
+    async with get_sessionmaker()() as sessao:
+        assert await revelar(sessao, "whatsapp", chave_b) == ORFAO
+        with pytest.raises(indice.IdentidadeAusente):
+            await revelar(sessao, "whatsapp", chave_a)
+        referencia = await sessao.scalar(text("SELECT lead_ref FROM eventos_auditoria"))
+    assert referencia == lead_ref("whatsapp", chave_b, chave=chave_do_lead)
+
+
+async def test_falha_no_meio_propaga_o_erro_original_e_nao_o_da_trigger() -> None:
+    """Com a transacao abortada, religar a trigger reprovaria com
+    `InFailedSqlTransaction` e esconderia a causa. A causa tem de subir."""
+    async with get_sessionmaker()() as sessao:
+        await indice.registrar(sessao, "whatsapp", ORFAO)
+        await sessao.execute(
+            text(
+                "INSERT INTO lead_qualification (channel, conversation_key, regiao)"
+                " VALUES ('whatsapp', :k, 'Campeche')"
+            ),
+            {"k": chave_de("whatsapp", ORFAO)},
+        )
+        await sessao.commit()
+    chave_do_lead = get_settings().auditoria_chave_do_lead
+
+    # 65 caracteres nao cabem no String(64) de `conversation_key`: o UPDATE do
+    # primeiro par reprova dentro do loop.
+    with pytest.raises(DBAPIError, match="value too long") as erro:
+        async with get_engine().begin() as conexao:
+            await conexao.run_sync(
+                lambda conn: reindexar(
+                    conn,
+                    tabelas=TABELAS_COM_CHAVE_DE_LEAD,
+                    nova_chave=lambda _channel, _valor: "x" * 65,
+                    modo="rotacao",
+                    chave_do_lead_antiga=chave_do_lead,
+                    chave_do_lead_nova=chave_do_lead,
+                )
+            )
+    assert "InFailedSqlTransaction" not in str(erro.value)

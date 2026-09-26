@@ -74,12 +74,23 @@ TRIGGERS_DE_IMUTABILIDADE = {
 Modo = Literal["migracao", "rotacao", "reversao"]
 
 
-def _pares(conn: Connection, tabelas: Sequence[str]) -> list[tuple[str, str]]:
-    uniao = " UNION ".join(
+def _pares(conn: Connection, tabelas: Sequence[str], modo: Modo) -> list[tuple[str, str]]:
+    """Todo par que guarda o lead, tambem os que nao aparecem nas `tabelas`.
+
+    O evento de rate limit por numero sobrevive a mensagem que o gerou (a
+    retencao de `messages` e mais curta), entao pode ser o unico lugar com
+    aquele telefone -- e fora daqui ele ficaria em claro depois da 0058. Na
+    rotacao entram tambem as identidades: a do lead que so deixou a trilha
+    nao tem linha em tabela nenhuma, e seu `lead_ref` ficaria na chave velha.
+    """
+    selecoes = [
         f"SELECT channel, conversation_key FROM {tabela} WHERE conversation_key IS NOT NULL"
         for tabela in tabelas
-    )
-    return [(channel, chave) for channel, chave in conn.execute(text(uniao))]
+    ]
+    selecoes.append("SELECT channel, chave FROM rate_limit_events WHERE escopo = 'numero'")
+    if modo == "rotacao":
+        selecoes.append("SELECT channel, conversation_key FROM identidades_de_lead")
+    return [(channel, chave) for channel, chave in conn.execute(text(" UNION ".join(selecoes)))]
 
 
 def _identidade(conn: Connection, channel: str, chave: str) -> str | None:
@@ -119,23 +130,23 @@ def reindexar(
     # (nasce depois do loop), e na descida ja foi removida antes dele.
     vinculo_cifrado = _tem_coluna(conn, "vinculos_de_sessao", "telefone_cifrado")
     _triggers(conn, "DISABLE")
-    try:
-        for channel, atual in _pares(conn, tabelas):
-            valor = _identidade(conn, channel, atual)
-            if valor is None:
-                if modo != "migracao":
-                    raise RuntimeError(f"par do canal {channel} sem identidade no modo {modo}")
-                valor = atual
-            novo = nova_chave(channel, valor)
-            if novo == atual and chave_do_lead_antiga == chave_do_lead_nova:
-                continue
-            _mover(conn, tabelas, channel, atual, novo, valor, modo, vinculo_cifrado)
-            _recalcular_lead_ref(
-                conn, channel, atual, novo, chave_do_lead_antiga, chave_do_lead_nova
-            )
-            mudados += 1
-    finally:
-        _triggers(conn, "ENABLE")
+    for channel, atual in _pares(conn, tabelas, modo):
+        valor = _identidade(conn, channel, atual)
+        if valor is None:
+            if modo != "migracao":
+                raise RuntimeError(f"par do canal {channel} sem identidade no modo {modo}")
+            valor = atual
+        novo = nova_chave(channel, valor)
+        if novo == atual and chave_do_lead_antiga == chave_do_lead_nova:
+            continue
+        _mover(conn, tabelas, channel, atual, novo, valor, modo, vinculo_cifrado)
+        _recalcular_lead_ref(conn, channel, atual, novo, chave_do_lead_antiga, chave_do_lead_nova)
+        mudados += 1
+    # Religa so no caminho de sucesso, e nao num `finally`: se um statement
+    # falhou, a transacao esta abortada, o ENABLE reprovaria com
+    # `InFailedSqlTransaction` e esconderia a causa. O rollback de quem chama
+    # ja desfaz o DISABLE -- ALTER TABLE e transacional no Postgres.
+    _triggers(conn, "ENABLE")
     return mudados
 
 
