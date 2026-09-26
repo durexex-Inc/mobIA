@@ -37,6 +37,8 @@ A TEC-219 declara que destrava a TEC-203 "apenas na parte de ambiente; os dois g
 
 **Procedimento:** acrescentar a chave e torná-la ativa → `scripts/recifrar.py` reescreve, em lotes e com o serviço de pé, todo blob de outra chave → a chave velha sai quando o script relatar zero blobs com ela.
 
+Com o serviço de pé, a reescrita é compare-and-swap (corrigido na implementação): o `UPDATE` só vale se a coluna ainda guarda o blob lido. Sem isso, um valor gravado pela aplicação entre a leitura e a escrita — o resumo é regravado a cada turno — seria sobrescrito pelo velho recifrado.
+
 **O `recifrar` cobre as colunas cifradas do banco, não os arquivos de mídia** (`.midias/` ou S3, TEC-132). Enquanto houver mídia gravada sob uma chave, ela fica no keyring. Reescrever arquivos em armazenamento externo é outro problema (download, recifra, upload, sem janela de inconsistência), e a retenção de mídia já os expira. Fica registrado como limite.
 
 ### Chave de índice

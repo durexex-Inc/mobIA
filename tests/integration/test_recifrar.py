@@ -3,9 +3,11 @@
 import base64
 import os
 import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from mobia.admin.recifrar import recifrar
 from mobia.app.config import get_settings
@@ -121,3 +123,79 @@ async def test_so_contar_numa_tabela_de_pk_composta_antes_e_depois(
     por_chave_depois = depois["identidades_de_lead.valor_cifrado"]
     assert por_chave_depois.get(int(CHAVE_A), 0) == 0
     assert por_chave_depois.get(int(CHAVE_B)) == 1
+
+
+class _SessaoComEscritaConcorrente:
+    """Uma sessao de verdade que, antes do primeiro UPDATE da recifra, deixa
+    outra conexao gravar a mesma linha -- o turno que faz upsert do resumo, o
+    corretor que reescreve o TOTP, no intervalo entre a leitura e a escrita."""
+
+    def __init__(self, real: Any, intruso: Callable[[], Awaitable[None]], estado: dict) -> None:
+        self._real = real
+        self._intruso = intruso
+        self._estado = estado
+
+    async def __aenter__(self) -> "_SessaoComEscritaConcorrente":
+        await self._real.__aenter__()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self._real.__aexit__(*exc)
+
+    async def execute(self, statement: Any, parametros: Any = None) -> Any:
+        if str(statement).lstrip().startswith("UPDATE") and not self._estado["feito"]:
+            self._estado["feito"] = True
+            await self._intruso()
+        return await self._real.execute(statement, parametros)
+
+    async def commit(self) -> None:
+        await self._real.commit()
+
+
+async def test_valor_gravado_entre_a_leitura_e_a_escrita_sobrevive(
+    keyring, banco_limpo: None
+) -> None:
+    """Sem compare-and-swap, a recifra reescreveria a linha com o blob que
+    LEU -- decifrado e recifrado --, apagando o valor mais novo que a
+    aplicacao gravou nesse meio tempo, com o servico de pe."""
+    valor_a, valor_b = keyring.valor_a, keyring.valor_b  # type: ignore[attr-defined]
+    keyring({CHAVE_A: valor_a}, CHAVE_A)
+    message_id = uuid.uuid4()
+    aad = aad_de(message_id, "text_body")
+    async with get_sessionmaker()() as sessao:
+        sessao.add(
+            Message(
+                id=message_id,
+                channel="whatsapp",
+                conversation_key="5511911112222",
+                sender_external_id="5511911112222",
+                role=MessageRole.LEAD,
+                direction=MessageDirection.INBOUND,
+                content_type=MessageContentType.TEXTO,
+                status=MessageStatus.PROCESSED,
+                text_body=encrypt_bytes(b"o valor velho", aad),
+            )
+        )
+        await sessao.commit()
+    keyring({CHAVE_A: valor_a, CHAVE_B: valor_b}, CHAVE_B)
+
+    async def intruso() -> None:
+        async with get_sessionmaker()() as outra:
+            await outra.execute(
+                text("UPDATE messages SET text_body = :b WHERE id = :id"),
+                {"b": encrypt_bytes(b"o valor novo", aad), "id": message_id},
+            )
+            await outra.commit()
+
+    estado = {"feito": False}
+    fabrica = get_sessionmaker()
+    relatorio = await recifrar(
+        lambda: _SessaoComEscritaConcorrente(fabrica(), intruso, estado),  # type: ignore[arg-type,return-value]
+    )
+
+    assert estado["feito"], "o intruso tem de ter rodado, ou o teste nao prova nada"
+    async with get_sessionmaker()() as sessao:
+        blob = await sessao.scalar(select(Message.text_body).where(Message.id == message_id))
+    assert decrypt_bytes(bytes(blob), aad) == b"o valor novo"
+    # A linha que a recifra nao reescreveu nao entra como reescrita.
+    assert relatorio["messages.text_body"] == {}

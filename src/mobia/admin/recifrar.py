@@ -76,8 +76,10 @@ async def recifrar(
     Devolve, por coluna, quantos blobs ha por id de chave (`None` e a v1
     legada) -- contagem de ANTES da recifra quando `so_contar`, e do que
     SOBROU sob outra chave quando nao (o que passou pela recifra entra na
-    contagem da ativa). Sem chave ativa a recifra reprova de saida: nao ha
-    para onde reescrever -- exceto so contando, que so le.
+    contagem da ativa; a linha que mudou entre a leitura e a escrita nao
+    entra em balde nenhum, porque a recifra nao a reescreveu). Sem chave
+    ativa a recifra reprova de saida: nao ha para onde reescrever -- exceto
+    so contando, que so le.
     """
     ativa = id_da_chave_ativa()
     if ativa is None and not so_contar:
@@ -114,11 +116,26 @@ async def recifrar(
                     aad = alvo.aad(*chaves_da_linha)
                     novo = encrypt_bytes(decrypt_bytes(bytes(blob), aad), aad)
                     onde = " AND ".join(f"{c} = :pk{n}" for n, c in enumerate(alvo.chave_primaria))
-                    await session.execute(
-                        text(f"UPDATE {alvo.tabela} SET {alvo.coluna} = :novo WHERE {onde}"),
-                        {"novo": novo, **{f"pk{n}": v for n, v in enumerate(chaves_da_linha)}},
+                    # Compare-and-swap: so reescreve se a coluna ainda guarda o
+                    # blob LIDO. Com o servico de pe, o turno pode ter feito
+                    # upsert do resumo (ou alguem trocado o TOTP) entre a
+                    # leitura e esta escrita; sem a condicao, o valor novo seria
+                    # sobrescrito pelo velho recifrado. Quem gravou no meio
+                    # gravou com a chave ativa, e a leitura de verificacao de
+                    # `scripts/recifrar.py` conta o que de fato ficou.
+                    resultado = await session.execute(
+                        text(
+                            f"UPDATE {alvo.tabela} SET {alvo.coluna} = :novo "
+                            f"WHERE {onde} AND {alvo.coluna} = :lido"
+                        ),
+                        {
+                            "novo": novo,
+                            "lido": bytes(blob),
+                            **{f"pk{n}": v for n, v in enumerate(chaves_da_linha)},
+                        },
                     )
-                    contagem[ativa] += 1
+                    if resultado.rowcount:  # type: ignore[attr-defined]
+                        contagem[ativa] += 1
                 await session.commit()
         relatorio[f"{alvo.tabela}.{alvo.coluna}"] = dict(contagem)
     return relatorio
