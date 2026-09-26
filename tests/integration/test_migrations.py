@@ -589,12 +589,15 @@ _DEFINICAO_DO_CHECK = text(
 )
 
 
-async def test_a_0056_desce_e_sobe_de_novo() -> None:
+async def test_a_0057_desce_e_sobe_de_novo() -> None:
     """O vocabulario novo sai no downgrade e volta no upgrade -- com linha nova gravada.
 
     A trilha recusa DELETE antes de 12 meses (0053), entao o downgrade nao pode
     exigir que o `INJECAO_DETECTADA` gravado suma: o CHECK antigo volta como
     `NOT VALID`, que vale para linha nova e nao reprova a que ja existe.
+
+    O CHECK que volta e o da 0056, e nao o da 0053: `lead`, que a TEC-195
+    acrescentou, tem de sobreviver ao downgrade da injecao.
     """
     async with get_sessionmaker()() as sessao:
         await registrar_evento(
@@ -607,7 +610,7 @@ async def test_a_0056_desce_e_sobe_de_novo() -> None:
         await sessao.commit()
 
     await dispose_engine()
-    alembic("downgrade", "0055")
+    alembic("downgrade", "0056")
     try:
         async with get_sessionmaker()() as sessao:
             acao = await sessao.scalar(_DEFINICAO_DO_CHECK, {"nome": "ck_eventos_auditoria_acao"})
@@ -616,6 +619,7 @@ async def test_a_0056_desce_e_sobe_de_novo() -> None:
             )
             assert "INJECAO_DETECTADA" not in acao and "NOT VALID" in acao
             assert "'mensagem'" not in entidade and "NOT VALID" in entidade
+            assert "'lead'" in entidade
     finally:
         await dispose_engine()
         alembic("upgrade", "head")

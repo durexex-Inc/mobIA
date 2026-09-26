@@ -189,8 +189,8 @@ def _tupla_da_migracao(nome: str) -> tuple[str, ...]:
     recriou o CHECK na `0056` -- o Postgres nao estende CHECK, entao o
     vocabulario em vigor passou a ser o da migration mais recente que o
     escreve. Ordenar por nome de arquivo basta porque as revisoes sao `NNNN_`,
-    e o que interessa e a ultima a tocar no assunto. A TEC-204 redefine
-    `_ACOES` e `_ENTIDADES` de novo, na migration da injecao. So conta
+    e o que interessa e a ultima a tocar no assunto. A `0057` (TEC-204)
+    redefine `_ACOES` e `_ENTIDADES` de novo, para a injecao. So conta
     migration que fala de `eventos_auditoria`, porque o nome da tupla poderia
     ser reusado para outra tabela.
 
@@ -222,7 +222,7 @@ def test_o_vocabulario_bate_com_o_check_da_migration(constante: str, enum: type)
 
 
 def test_a_tupla_vem_da_migration_mais_recente() -> None:
-    """A 0056 redefine as acoes; a 0053 continua sendo a unica dos atores."""
+    """A 0057 redefine acoes e entidades; a 0053 continua sendo a unica dos atores."""
     assert "INJECAO_DETECTADA" in _tupla_da_migracao("_ACOES")
     assert "mensagem" in _tupla_da_migracao("_ENTIDADES")
     assert _tupla_da_migracao("_ATORES") == ("USUARIO", "AGENTE", "SISTEMA")

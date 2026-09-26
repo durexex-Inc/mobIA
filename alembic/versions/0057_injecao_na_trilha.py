@@ -1,10 +1,13 @@
 """a trilha de auditoria aprende a tentativa de injecao
 
 TEC-204, D6 e RNF-18. `INJECAO_DETECTADA` entra no CHECK de `acao` e
-`mensagem` no de `entidade` de `eventos_auditoria`. E a primeira mudanca de
-vocabulario da trilha desde que ela nasceu na 0053.
+`mensagem` no de `entidade` de `eventos_auditoria`. E a segunda mudanca de
+vocabulario da trilha desde que ela nasceu na 0053: a 0056 (TEC-195) recriou o
+CHECK de `entidade` com `lead`. Por isso `_ENTIDADES` parte da tupla da 0056, e
+nao da 0053 -- partir da 0053 apagaria `lead` do CHECK --, e `_ACOES` parte da
+0053, que a 0056 nao tocou.
 
-As tuplas abaixo sao, como as da 0053, COPIA literal dos enums de
+As tuplas abaixo sao, como as da 0053 e da 0056, COPIA literal dos enums de
 `domain/auditoria/vocabulario.py`, e nao import: migration aplicada nao muda
 quando o codigo muda. `tests/unit/test_auditoria_vocabulario.py` compara o
 codigo com a migration mais recente que as redefine -- esta.
@@ -13,16 +16,17 @@ codigo com a migration mais recente que as redefine -- esta.
 DELETE de linha com menos de 12 meses (trigger da 0053), entao um
 `INJECAO_DETECTADA` ja gravado nao sai; um CHECK validado reprovaria o
 downgrade por causa dele. `NOT VALID` vale para toda linha nova e deixa a
-antiga onde esta.
+antiga onde esta. O que o downgrade devolve e o vocabulario da 0056, com
+`lead`.
 
-Revision ID: 0056
-Revises: 0055
+Revision ID: 0057
+Revises: 0056
 """
 
 from alembic import op
 
-revision = "0056"
-down_revision = "0055"
+revision = "0057"
+down_revision = "0056"
 branch_labels = None
 depends_on = None
 
@@ -42,6 +46,7 @@ _ENTIDADES = (
     "rota",
     "lead_qualification",
     "configuracao_agente",
+    "lead",
     "mensagem",
 )
 

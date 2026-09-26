@@ -7,8 +7,10 @@ copias juntas e `tests/unit/test_auditoria_vocabulario.py`.
 
 **Nem sempre a MESMA migration, desde a TEC-195.** A 0053 escreveu os tres; a
 0056 acrescentou `lead` a `Entidade` e teve de RECRIAR o CHECK, porque o
-Postgres nao estende CHECK. Entao o vocabulario em vigor e o da migration mais
-recente que escreve cada um, e e assim que aquele teste procura.
+Postgres nao estende CHECK; a 0057 (TEC-204) recriou os de `Acao` e
+`Entidade` para `INJECAO_DETECTADA` e `mensagem`. Entao o vocabulario em vigor
+e o da migration mais recente que escreve cada um, e e assim que aquele teste
+procura.
 
 **`detalhes` so e montado pelas funcoes deste modulo** (D5): cada valor sai de
 um vocabulario fechado, e texto digitado por uma pessoa nunca entra. Texto
