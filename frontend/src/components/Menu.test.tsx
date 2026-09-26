@@ -24,6 +24,14 @@ describe('Menu', () => {
     expect(screen.queryByRole('link', { name: 'Administração' })).not.toBeInTheDocument()
   })
 
+  it('tem o botao "Sair", que e um POST para `/sair` (TEC-310)', () => {
+    render(<Menu quem={quem('GERENTE', ['VER_FUNIL'])} />)
+
+    const formulario = screen.getByRole('button', { name: 'Sair' }).closest('form')
+    expect(formulario).toHaveAttribute('method', 'post')
+    expect(formulario).toHaveAttribute('action', '/sair')
+  })
+
   it('CORRETOR nao ve nenhum dos dois', () => {
     render(<Menu quem={quem('CORRETOR', ['VER_LEADS', 'ATENDER_LEAD'])} />)
 

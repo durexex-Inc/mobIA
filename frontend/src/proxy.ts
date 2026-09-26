@@ -58,8 +58,11 @@ export function politicaDeSeguranca(nonce: string, isDev: boolean): string {
 }
 
 /**
- * As rotas que abrem sem sessao (TEC-309, D5): o login, e o chat embutido no
- * site da imobiliaria, que e do visitante e nao do painel (TEC-344).
+ * As rotas que abrem sem sessao (TEC-309, D5): o login, o chat embutido no
+ * site da imobiliaria, que e do visitante e nao do painel (TEC-344), e o
+ * `/sair` (TEC-310, D6). Este ultimo porque quem chega la sem cookie tem de
+ * receber o `303` do proprio handler: redirecionado daqui, levaria `307`, que
+ * repete o POST no destino.
  *
  * Casamento por segmento, e nao por prefixo de texto: `/loginx` nao e o login,
  * e liberar por `startsWith('/login')` abriria qualquer rota que um dia
@@ -70,7 +73,8 @@ function rotaPublica(caminho: string): boolean {
     caminho === '/login' ||
     caminho.startsWith('/login/') ||
     caminho === '/embed' ||
-    caminho.startsWith('/embed/')
+    caminho.startsWith('/embed/') ||
+    caminho === '/sair'
   )
 }
 

@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 
 import { chamarApi } from '@/lib/servidor/api'
 import { caminhoPermitido, idDeRequisicao, origemAceita } from '@/lib/servidor/bff'
-import { COOKIE_DA_SESSAO, lerSessao } from '@/lib/servidor/sessao'
+import { COOKIE_DA_SESSAO, obterSessaoValida } from '@/lib/servidor/sessao'
 
 /**
  * O proxy `/bff/*` (TEC-302).
@@ -63,9 +63,13 @@ async function repassar(
   // logado nao aprende pela diferenca entre 401 e 404 quais rotas existem.
   // `401`, e nao um redirecionamento ao login: quem chama o `/bff/*` e codigo
   // (`fetch`), e redirecionamento e resposta de navegacao.
-  let sessao: Awaited<ReturnType<typeof lerSessao>>
+  //
+  // A sessao ja vem renovada se faltarem 5 minutos para o access vencer
+  // (TEC-310). `503` quando o Redis ou a renovacao nao respondem: nao e falta
+  // de sessao, e quem chama deve tentar de novo, e nao mandar ao login.
+  let sessao: Awaited<ReturnType<typeof obterSessaoValida>>
   try {
-    sessao = await lerSessao(requisicao.cookies.get(COOKIE_DA_SESSAO)?.value)
+    sessao = await obterSessaoValida(requisicao.cookies.get(COOKIE_DA_SESSAO)?.value)
   } catch {
     return recusar(503, 'sessao_indisponivel', id)
   }

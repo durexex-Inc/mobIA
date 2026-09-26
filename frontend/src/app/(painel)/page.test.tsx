@@ -2,7 +2,8 @@ import { render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { limparArmazem } from '../../../test/armazem-em-memoria'
-import { criarSessao } from '@/lib/servidor/sessao'
+import { ACESSO_VALIDO } from '../../../test/token'
+import { criarSessao, lerSessao } from '@/lib/servidor/sessao'
 import Pagina from './page'
 
 vi.mock('@/lib/servidor/armazem', async () =>
@@ -95,7 +96,7 @@ describe('Pagina', () => {
     cookiesDaRequisicao.clear()
     cookiesDaRequisicao.set(
       'mobia_sessao',
-      await criarSessao({ acesso: 'jwt-da-anelise', refresh: 'refresh' }),
+      await criarSessao({ acesso: ACESSO_VALIDO, refresh: 'refresh' }),
     )
   })
   afterEach(() => vi.unstubAllGlobals())
@@ -168,7 +169,7 @@ describe('Pagina', () => {
     render(await Pagina({ searchParams: Promise.resolve({}) }))
 
     const cabecalhos = chamadas.mock.calls[0][1]?.headers as Record<string, string>
-    expect(cabecalhos.Authorization).toBe('Bearer jwt-da-anelise')
+    expect(cabecalhos.Authorization).toBe(`Bearer ${ACESSO_VALIDO}`)
   })
 
   it('sem sessao valida vai ao login com o recorte, e NAO chama o FastAPI', async () => {
@@ -177,16 +178,22 @@ describe('Pagina', () => {
 
     await expect(
       Pagina({ searchParams: Promise.resolve({ de: '2026-09-01', ate: '2026-09-26' }) }),
-    ).rejects.toThrow('REDIRECT:/login?returnTo=%2F%3Fde%3D2026-09-01%26ate%3D2026-09-26')
+    ).rejects.toThrow(
+      'REDIRECT:/login?returnTo=%2F%3Fde%3D2026-09-01%26ate%3D2026-09-26&erro=sessao_expirada',
+    )
     expect(chamadas).not.toHaveBeenCalled()
   })
 
-  it('401 e o access que expirou: volta ao login dizendo isso', async () => {
+  it('401 do FastAPI apaga a sessao e volta ao login dizendo isso (TEC-310, D5)', async () => {
+    // Sem apagar, o login veria a sessao viva e mandaria de volta para ca, que
+    // tomaria 401 de novo: o laco que a TEC-309 deixou.
     responde({ detail: 'nao autenticado' }, 401)
+    const id = cookiesDaRequisicao.get('mobia_sessao')
 
     await expect(
       Pagina({ searchParams: Promise.resolve({ de: '2026-09-01', ate: '2026-09-26' }) }),
     ).rejects.toThrow(/REDIRECT:\/login\?returnTo=.*&erro=sessao_expirada/)
+    expect(await lerSessao(id)).toBeNull()
   })
 
   it('422 nomeia o filtro recusado no proprio formulario', async () => {

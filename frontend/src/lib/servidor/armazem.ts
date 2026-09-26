@@ -3,7 +3,7 @@ import 'server-only'
 import { createClient } from 'redis'
 
 /**
- * Onde a sessao do painel mora (TEC-309, D2): o Redis, atras de tres operacoes.
+ * Onde a sessao do painel mora (TEC-309, D2): o Redis, atras de quatro operacoes.
  *
  * **A interface existe para os testes, e so para eles.** Com ela, `sessao.ts`
  * e as rotas de login se testam trocando este modulo por um mapa em memoria
@@ -13,6 +13,12 @@ import { createClient } from 'redis'
 export type Armazem = {
   obter(chave: string): Promise<string | null>
   gravar(chave: string, valor: string, segundos: number): Promise<void>
+  /**
+   * Grava so se a chave nao existir, e diz se gravou (`SET NX EX`). E o lock
+   * da renovacao da TEC-310 (D2): duas requisicoes renovando juntas mandariam
+   * o mesmo refresh duas vezes, e o FastAPI leria a segunda como roubo.
+   */
+  gravarSeAusente(chave: string, valor: string, segundos: number): Promise<boolean>
   apagar(chave: string): Promise<void>
 }
 
@@ -46,6 +52,11 @@ async function conectar(): Promise<Armazem> {
     gravar: async (chave, valor, segundos) => {
       await cliente.set(chave, valor, { expiration: { type: 'EX', value: segundos } })
     },
+    gravarSeAusente: async (chave, valor, segundos) =>
+      (await cliente.set(chave, valor, {
+        condition: 'NX',
+        expiration: { type: 'EX', value: segundos },
+      })) === 'OK',
     apagar: async (chave) => {
       await cliente.del(chave)
     },

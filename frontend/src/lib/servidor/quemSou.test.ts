@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { limparArmazem } from '../../../test/armazem-em-memoria'
+import { ACESSO_VALIDO } from '../../../test/token'
 import { quemSou, quemSouDaRequisicao, SessaoRecusada } from './quemSou'
 import { criarSessao } from './sessao'
 
@@ -68,14 +69,14 @@ describe('quemSouDaRequisicao (o que o layout usa)', () => {
   })
 
   it('com o FastAPI fora do ar, `null`, e nao excecao: o layout nao e a guarda', async () => {
-    cookiesDaRequisicao.set('mobia_sessao', await criarSessao({ acesso: 'jwt', refresh: 'r' }))
+    cookiesDaRequisicao.set('mobia_sessao', await criarSessao({ acesso: ACESSO_VALIDO, refresh: 'r' }))
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')))
 
     expect(await quemSouDaRequisicao()).toBeNull()
   })
 
   it('com sessao, a identidade', async () => {
-    cookiesDaRequisicao.set('mobia_sessao', await criarSessao({ acesso: 'jwt', refresh: 'r' }))
+    cookiesDaRequisicao.set('mobia_sessao', await criarSessao({ acesso: ACESSO_VALIDO, refresh: 'r' }))
     apiRespondendo(ME)
 
     expect((await quemSouDaRequisicao())?.papel).toBe('GERENTE')

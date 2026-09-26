@@ -105,7 +105,7 @@ describe('proxy sem sessao (TEC-309, D5)', () => {
     expect(destinoDe('/?de=2026-09-01')).toBe(`${PAINEL}/login?returnTo=%2F%3Fde%3D2026-09-01`)
   })
 
-  it.each(['/login', '/login/entrar', '/login/mfa', '/embed/chat'])(
+  it.each(['/login', '/login/entrar', '/login/mfa', '/embed/chat', '/sair'])(
     '%s abre sem sessao, e continua recebendo a CSP',
     (caminho) => {
       const resposta = proxy(requisicao(caminho, { comSessao: false }))

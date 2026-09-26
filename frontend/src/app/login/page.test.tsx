@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { limparArmazem } from '../../../test/armazem-em-memoria'
+import { ACESSO_VALIDO } from '../../../test/token'
 import { criarSessao } from '@/lib/servidor/sessao'
 import PaginaDeLogin from './page'
 
@@ -95,7 +96,7 @@ describe('PaginaDeLogin', () => {
   })
 
   it('quem ja tem sessao valida vai direto ao destino', async () => {
-    cookiesDaRequisicao.set('mobia_sessao', await criarSessao({ acesso: 'a', refresh: 'r' }))
+    cookiesDaRequisicao.set('mobia_sessao', await criarSessao({ acesso: ACESSO_VALIDO, refresh: 'r' }))
 
     await expect(renderizar({ returnTo: '/leads' })).rejects.toThrow('REDIRECT:/leads')
   })
