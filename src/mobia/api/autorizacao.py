@@ -82,8 +82,9 @@ class IdentidadeDaRequisicao:
     **O token compartilhado resolve para um ADMIN sem usuario** (D2 do
     desenho). Nao e concessao preguicosa: e o que a Emenda E-01 da RN-19.5 ja
     escreveu em 12/09/2026 -- "enquanto a TEC-201 nao existir, o papel ADMIN e
-    o header X-Admin-Token". A TEC-201 chegou e nao o apagou, por sequenciamento;
-    quem o apaga e a TEC-309, que faz o BFF mandar sessao de verdade.
+    o header X-Admin-Token". A TEC-201 chegou e nao o apagou, por sequenciamento.
+    A TEC-309 fez o BFF mandar o JWT de quem esta logado e tirou o token do
+    frontend, mas nao daqui: quem o apaga do FastAPI e a TEC-382.
 
     **A consequencia, dita:** quem tem o token compartilhado passa em TODA
     permissao da matriz, inclusive nas que so o ADMIN tem. A autorizacao por
