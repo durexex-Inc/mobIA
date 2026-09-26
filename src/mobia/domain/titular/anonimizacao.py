@@ -28,6 +28,14 @@ esta fora do banco: a funcao devolve as chaves, e quem chama apaga depois do
 commit -- apagar antes deixaria um rollback com linha apontando para blob
 que nao existe.
 
+**O `provider_message_id` vira `anon:{id}`, em todo canal.** O wamid da Meta
+e base64 de um protobuf que carrega o `wa_id` em claro (`HBgNNTU0ODk5...`
+decodifica para `...5548999...`); o do widget carrega a chave da sessao na
+frente. Nenhum dos dois pode ficar, e o id da propria linha mantem o UNIQUE
+`(channel, provider_message_id)` sem guardar nada do lead. O preco: um
+status de entrega que a Meta mande depois para o wamid antigo nao acha mais
+a linha -- o que, para um lead eliminado, e o comportamento certo.
+
 **Toda solicitacao ABERTA do par e fechada como ATENDIDA**, nao so a que
 disparou a anonimizacao: depois dela nao ha dado a entregar num pedido de
 acesso, e `solicitacoes_de_titular` esta em `TABELAS_COM_CHAVE_DE_LEAD` --
@@ -39,6 +47,7 @@ pedido (`titular/eliminacao.py`) e o sweep de retencao, e nao commita.
 """
 
 import secrets
+import uuid
 
 from sqlalchemy import Connection, text
 
@@ -48,6 +57,7 @@ from mobia.domain.identidade.reindexacao import (
     mover_referencias_fora_da_chave,
     religar_triggers,
 )
+from mobia.domain.midia.politica import chave_do_objeto
 
 # As tabelas imutaveis que a troca de chave reescreve. `eventos_auditoria`
 # fica de fora: a trilha nao e tocada (ver a docstring do modulo).
@@ -65,24 +75,40 @@ TABELAS_APAGADAS = (
 def anonimizar_lead(conn: Connection, *, channel: str, conversation_key: str) -> list[str]:
     """Troca o par por um pseudonimo aleatorio; devolve as chaves de midia.
 
-    As chaves (`midias_recebidas.chave_no_armazem`) sao do armazem, fora do
-    banco: quem chama as apaga depois do commit. **Nao commita** -- o
-    desligar das triggers so e invisivel para as outras conexoes porque
-    acontece dentro da transacao de quem chama.
+    As chaves sao do armazem, fora do banco: quem chama as apaga depois do
+    commit. **Toda linha de `midias_recebidas` do par entra, em qualquer
+    status**: a sem `chave_no_armazem` entra pela chave deterministica que
+    `workers/jobs/baixar_midia.py` usa (`chave_do_objeto`), porque um download
+    em voo pode ter gravado o blob antes de gravar a linha. Apagar uma chave
+    que nao existe nao reprova (`ArmazemDeMidia.apagar` e idempotente).
+
+    **Nao commita** -- o desligar das triggers so e invisivel para as outras
+    conexoes porque acontece dentro da transacao de quem chama.
     """
     novo = secrets.token_hex(32)
     par = {"c": channel, "k": conversation_key, "novo": novo}
 
-    chaves_de_midia: list[str] = list(
-        conn.execute(
+    # Antes de qualquer DML, na mesma ordem de `reindexar`: o ALTER TABLE pede
+    # ACCESS EXCLUSIVE, e pedi-lo depois de ja segurar lock de linha em outra
+    # tabela abre um deadlock com um turno concorrente que grava score.
+    desligar_triggers(conn, TABELAS_IMUTAVEIS_REESCRITAS)
+
+    midias: list[tuple[uuid.UUID, str | None]] = [
+        (message_id, chave)
+        for message_id, chave in conn.execute(
             text(
-                "SELECT mr.chave_no_armazem FROM midias_recebidas mr"
+                "SELECT mr.message_id, mr.chave_no_armazem FROM midias_recebidas mr"
                 " JOIN messages m ON m.id = mr.message_id"
                 " WHERE m.channel = :c AND m.conversation_key = :k"
-                " AND mr.chave_no_armazem IS NOT NULL"
             ),
             par,
-        ).scalars()
+        )
+    ]
+    chaves_de_midia = sorted(
+        {
+            chave if chave is not None else chave_do_objeto(message_id)
+            for message_id, chave in midias
+        }
     )
     conn.execute(
         text(
@@ -98,7 +124,9 @@ def anonimizar_lead(conn: Connection, *, channel: str, conversation_key: str) ->
 
     conn.execute(
         text(
-            "UPDATE messages SET text_body = NULL, raw_payload = NULL, envelope_context = NULL"
+            "UPDATE messages SET text_body = NULL, raw_payload = NULL, envelope_context = NULL,"
+            " provider_message_id = CASE WHEN provider_message_id IS NULL THEN NULL"
+            " ELSE 'anon:' || id::text END"
             " WHERE channel = :c AND conversation_key = :k"
         ),
         par,
@@ -120,7 +148,6 @@ def anonimizar_lead(conn: Connection, *, channel: str, conversation_key: str) ->
         par,
     )
 
-    desligar_triggers(conn, TABELAS_IMUTAVEIS_REESCRITAS)
     # As tabelas apagadas acima continuam na volta, sem linha do par: o
     # UPDATE nelas nao casa nada, e manter a lista inteira poupa uma segunda
     # lista que teria de acompanhar `TABELAS_COM_CHAVE_DE_LEAD`.
@@ -132,6 +159,9 @@ def anonimizar_lead(conn: Connection, *, channel: str, conversation_key: str) ->
             ),
             par,
         )
+    # Remetente, destinatario e rate limit. O prefixo web do
+    # `provider_message_id` que ela tambem reescreve ja nao casa nada: o id
+    # virou `anon:{id}` acima.
     mover_referencias_fora_da_chave(conn, channel=channel, atual=conversation_key, novo=novo)
     # So no caminho de sucesso, pela razao escrita no fim de
     # `reindexacao.py::reindexar`: numa transacao abortada o ENABLE reprovaria

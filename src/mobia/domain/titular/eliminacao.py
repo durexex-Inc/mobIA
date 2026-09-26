@@ -20,7 +20,7 @@ from mobia.domain.midia.armazem import ArmazemDeMidia
 from mobia.domain.titular.anonimizacao import anonimizar_lead
 from mobia.domain.titular.models import SolicitacaoDeTitular
 from mobia.domain.titular.repositorio import marcar_atendida
-from mobia.domain.titular.vocabulario import StatusDaSolicitacao
+from mobia.domain.titular.vocabulario import StatusDaSolicitacao, TipoDeSolicitacao
 
 log = structlog.get_logger(__name__)
 
@@ -36,7 +36,9 @@ async def anonimizar(
     **Solicitacao que nao esta ABERTA nao faz nada** e loga
     `titular.anonimizacao_ignorada` -- o job pode rodar de novo (retry do
     ARQ, clique duplo no painel), e a segunda execucao ja nao tem par a
-    anonimizar: a primeira o zerou.
+    anonimizar: a primeira o zerou. **Nem a que nao e de ELIMINACAO**, com o
+    mesmo log: um id de pedido de ACESSO passado por engano apagaria o lead
+    que so pediu para ver os proprios dados.
 
     `SELECT ... FOR UPDATE` pela mesma razao de `repositorio.py::recusar`:
     sem o lock, uma recusa concorrente podia fechar a linha entre esta
@@ -61,11 +63,16 @@ async def anonimizar(
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        if solicitacao is None or solicitacao.status != StatusDaSolicitacao.ABERTA.value:
+        if (
+            solicitacao is None
+            or solicitacao.status != StatusDaSolicitacao.ABERTA.value
+            or solicitacao.tipo != TipoDeSolicitacao.ELIMINACAO.value
+        ):
             log.info(
                 "titular.anonimizacao_ignorada",
                 solicitacao_id=str(solicitacao_id),
                 status=None if solicitacao is None else solicitacao.status,
+                tipo=None if solicitacao is None else solicitacao.tipo,
             )
             return
 

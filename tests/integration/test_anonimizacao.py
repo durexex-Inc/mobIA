@@ -10,6 +10,7 @@ auditoria e duas solicitacoes abertas -- e confere o que sobra depois de
 (desde a TEC-203 a coluna guarda o HMAC, e e ele que deixa de poder aparecer).
 """
 
+import base64
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -57,6 +58,16 @@ PHONE_NUMBER_ID = "222222222"
 NASCEU = datetime(2026, 8, 10, 15, 0, tzinfo=UTC)
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
 
+# O wamid real da Meta e base64 de um protobuf que carrega o `wa_id` em claro
+# (`HBgNNTU0ODk5...` decodifica para `...5548999...`). Os tres bytes da frente
+# alinham o telefone numa fronteira de base64, e entao os primeiros 12 digitos
+# viram exatamente `TELEFONE_EM_BASE64` dentro do id -- e o que a varredura
+# procura, alem do telefone cru.
+WAMID_REAL = (
+    "wamid." + base64.b64encode(b"\x1c\x18\x0d" + TELEFONE.encode() + b"\x15\x02\x00").decode()
+)
+TELEFONE_EM_BASE64 = base64.b64encode(TELEFONE.encode()[:12]).decode()
+
 # As tabelas cujo texto a varredura inspeciona: as da lista, mais a que guarda
 # o lead fora de `conversation_key`. `eventos_auditoria` fica de fora de
 # proposito -- a trilha nao e tocada (D1, item 5), e o que ela guarda e o
@@ -70,6 +81,7 @@ class Semeado:
     eliminacao: uuid.UUID
     acesso: uuid.UUID
     blob: Path
+    blob_pendente: Path
 
 
 async def _semear_lead_completo(session: AsyncSession, armazem_dir: Path) -> Semeado:
@@ -109,11 +121,12 @@ async def _semear_lead_completo(session: AsyncSession, armazem_dir: Path) -> Sem
     await session.flush()
     await session.execute(
         text(
-            "UPDATE messages SET raw_payload = :p, envelope_context = :e, content_type = 'IMAGEM'"
-            " WHERE id = :id"
+            "UPDATE messages SET raw_payload = :p, envelope_context = :e, content_type = 'IMAGEM',"
+            " provider_message_id = :w WHERE id = :id"
         ),
         {
             "id": com_midia,
+            "w": WAMID_REAL,
             "p": encrypt('{"from": "5548999990000"}', aad_de(com_midia, "raw_payload")),
             "e": encrypt("{}", aad_de(com_midia, "envelope_context")),
         },
@@ -126,6 +139,19 @@ async def _semear_lead_completo(session: AsyncSession, armazem_dir: Path) -> Sem
             " chave_no_armazem, status) VALUES (:m, 'media-1', 'image/jpeg', :k, 'ARMAZENADA')"
         ),
         {"m": com_midia, "k": chave_do_blob},
+    )
+    # O download em voo: a linha ainda PENDENTE, sem `chave_no_armazem`, mas o
+    # job ja gravou o blob na chave deterministica. A anonimizacao tem de
+    # apaga-lo mesmo assim -- a linha some, e o job nao tem mais onde gravar.
+    em_voo = await _falar(session, conversa=chave, em=NASCEU + timedelta(minutes=11))
+    await session.flush()
+    await ArmazemLocal(armazem_dir).guardar(chave_do_objeto(em_voo), b"blob-em-voo")
+    await session.execute(
+        text(
+            "INSERT INTO midias_recebidas (message_id, media_id_da_meta, mime_type, status)"
+            " VALUES (:m, 'media-2', 'image/jpeg', 'PENDENTE')"
+        ),
+        {"m": em_voo},
     )
 
     par = {"c": CANAL, "k": chave}
@@ -231,6 +257,7 @@ async def _semear_lead_completo(session: AsyncSession, armazem_dir: Path) -> Sem
         eliminacao=eliminacao_id,
         acesso=acesso_id,
         blob=armazem_dir / chave_do_blob,
+        blob_pendente=armazem_dir / chave_do_objeto(em_voo),
     )
 
 
@@ -279,11 +306,15 @@ async def test_nenhuma_coluna_guarda_a_chave_antiga_nem_o_telefone(
     # A varredura acha o que semeamos antes -- sem isso, lista vazia depois
     # nao provaria nada.
     assert await _varrer(session, (semeado.chave,)) != []
+    assert TELEFONE_EM_BASE64 in WAMID_REAL
+    assert await _varrer(session, (TELEFONE_EM_BASE64,)) == [
+        f"messages.provider_message_id guarda {TELEFONE_EM_BASE64}"
+    ]
 
     await _anonimizar(session_factory, tmp_path, semeado.eliminacao)
 
     async with session_factory() as sessao:
-        assert await _varrer(sessao, (semeado.chave, TELEFONE)) == []
+        assert await _varrer(sessao, (semeado.chave, TELEFONE, TELEFONE_EM_BASE64)) == []
 
 
 async def test_identidade_vinculo_resumo_e_apelido_somem(
@@ -310,6 +341,7 @@ async def test_conteudo_some_e_as_linhas_ficam(
     tmp_path: Path,
 ) -> None:
     assert semeado.blob.exists()
+    assert semeado.blob_pendente.exists()
 
     await _anonimizar(session_factory, tmp_path, semeado.eliminacao)
 
@@ -319,11 +351,12 @@ async def test_conteudo_some_e_as_linhas_ficam(
                 text("SELECT text_body, raw_payload, envelope_context, created_at FROM messages")
             )
         ).all()
-        assert len(mensagens) == 4, "as linhas ficam: sao elas que a coorte conta"
+        assert len(mensagens) == 5, "as linhas ficam: sao elas que a coorte conta"
         assert all(m[:3] == (None, None, None) for m in mensagens)
         assert await sessao.scalar(text("SELECT count(*) FROM message_telemetry")) == 1
         assert await sessao.scalar(text("SELECT resumo FROM handoffs")) is None
     assert not semeado.blob.exists()
+    assert not semeado.blob_pendente.exists(), "o download em voo nao deixa orfao"
 
 
 async def _metricas(sessao: AsyncSession) -> tuple[Any, ...]:
@@ -475,8 +508,10 @@ async def test_blob_que_nao_apaga_loga_e_a_anonimizacao_fica(
             session_factory, _ArmazemQueFalha(tmp_path), solicitacao_id=semeado.eliminacao
         )
 
-    ((_, evento),) = eventos_de_log(caplog, "titular.midia_nao_apagada")
-    assert evento["chave"] == semeado.blob.relative_to(tmp_path).as_posix()
+    chaves = sorted(e["chave"] for _, e in eventos_de_log(caplog, "titular.midia_nao_apagada"))
+    assert chaves == sorted(
+        b.relative_to(tmp_path).as_posix() for b in (semeado.blob, semeado.blob_pendente)
+    )
     async with session_factory() as sessao:
         assert await sessao.scalar(text("SELECT count(*) FROM identidades_de_lead")) == 0
         assert (await _solicitacoes(sessao))["ELIMINACAO"][0] == "ATENDIDA"
@@ -524,6 +559,26 @@ async def test_web_a_chave_da_sessao_some_tambem_do_provider_message_id(
         assert await conexao.run_sync(_anonimizar_web) == []
 
     assert await _varrer(session, (chave, SESSAO, TELEFONE)) == []
-    ids = (await session.scalars(text("SELECT provider_message_id FROM messages"))).all()
-    assert sorted(i.split(":", 1)[1] for i in ids) == ["m-0", "m-1"], "o id do cliente fica"
+    linhas = (await session.execute(text("SELECT id, provider_message_id FROM messages"))).all()
+    assert all(provider == f"anon:{id_}" for id_, provider in linhas)
     assert await session.scalar(text("SELECT count(*) FROM vinculos_de_sessao")) == 0
+
+
+async def test_so_executa_solicitacao_de_eliminacao(
+    semeado: Semeado,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    caplog: Any,
+) -> None:
+    """Um pedido de ACESSO nao autoriza apagar nada, mesmo ABERTO."""
+    with caplog.at_level("INFO"):
+        await _anonimizar(session_factory, tmp_path, semeado.acesso)
+
+    async with session_factory() as sessao:
+        assert await sessao.scalar(text("SELECT count(*) FROM identidades_de_lead")) == 1
+        solicitacoes = await _solicitacoes(sessao)
+    assert solicitacoes["ACESSO"][:3] == ("ABERTA", CANAL, semeado.chave)
+    assert solicitacoes["ELIMINACAO"][0] == "ABERTA"
+    assert semeado.blob.exists()
+    ((_, evento),) = eventos_de_log(caplog, "titular.anonimizacao_ignorada")
+    assert (evento["status"], evento["tipo"]) == ("ABERTA", "ACESSO")
