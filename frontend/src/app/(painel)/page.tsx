@@ -1,4 +1,5 @@
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
+import { SemPermissao } from '@/components/SemPermissao'
 import { Filtros } from '@/components/Filtros'
 import { Funil } from '@/components/Funil'
 import { Indicadores } from '@/components/Indicadores'
@@ -12,7 +13,7 @@ import { redirect } from 'next/navigation'
 
 import { urlDoLogin } from '@/lib/destino'
 import { periodoPadrao } from '@/lib/periodo'
-import { exigirSessao } from '@/lib/servidor/sessao'
+import { exigirPermissao } from '@/lib/servidor/quemSou'
 
 type Busca = Record<string, string | string[] | undefined>
 
@@ -34,20 +35,14 @@ function filtrosDaUrl(busca: Busca): FiltrosTipo {
 
 /**
  * O aviso depende do status, porque as causas sao diferentes e o conserto
- * tambem: 403 e o papel sem `VER_FUNIL`, 422 e filtro invalido que a gerente
- * pode corrigir sozinha, e o resto e o backend. Um aviso unico mandaria a
- * gerente procurar o erro dela num problema que nao e dela.
+ * tambem: 422 e filtro invalido que a gerente pode corrigir sozinha, e o resto
+ * e o backend. Um aviso unico mandaria a gerente procurar o erro dela num
+ * problema que nao e dela.
  *
- * **O 403 mudou de significado na TEC-309.** Antes era o `X-Admin-Token` do
- * ambiente recusado -- configuracao do operador. Agora a chamada leva o JWT de
- * quem esta logado, e o 403 e a matriz da TEC-202 dizendo que aquele papel nao
- * ve o funil (hoje, o CORRETOR). A tela "Sem permissao" propriamente dita e a
- * TEC-312; ate la, e este aviso.
+ * O 403 nao passa por aqui: desde a TEC-312 ele vira a tela "Sem permissao",
+ * e nao um aviso acima de um funil vazio (ver o corpo da pagina).
  */
 function avisoDe(erro: ErroDeMetricas): string {
-  if (erro.status === 403) {
-    return 'Seu perfil de acesso não inclui este painel. Se você precisa dele, fale com quem administra o sistema.'
-  }
   if (erro.status === 422) {
     return `Não foi possível carregar: um filtro tem valor inválido — ${erro.message}`
   }
@@ -72,12 +67,31 @@ function urlDoRecorte(filtros: FiltrosTipo): string {
   return `/?${busca.toString()}`
 }
 
+/**
+ * O que a tela "Sem permissao" acrescenta quando e a PAGINA INICIAL do papel
+ * que cai nela (D6 do desenho).
+ *
+ * Hoje so o CORRETOR: `/` e a pagina inicial de todo papel, e ele nao ve o
+ * funil. A tela dele e a lista de leads (TEC-321), que ainda nao existe -- e a
+ * frase diz isso, em vez de deixa-lo achar que entrou com a conta errada.
+ */
+function detalheDoInicio(papel: string): string | undefined {
+  return papel === 'CORRETOR'
+    ? 'A tela do corretor, com a lista dos seus leads, ainda não está disponível.'
+    : undefined
+}
+
 export default async function Pagina({ searchParams }: { searchParams: Promise<Busca> }) {
   const busca = await searchParams
   const filtros = filtrosDaUrl(busca)
   const recorte = urlDoRecorte(filtros)
-  // Antes de qualquer busca: sem sessao, nada de lead e pedido ao FastAPI.
-  const sessao = await exigirSessao(recorte)
+  // Antes de qualquer busca: sem sessao, ou sem `VER_FUNIL`, nada e pedido ao
+  // FastAPI alem de `/auth/me`. E a guarda de pagina da TEC-312 (D3) -- o
+  // menu ja esconde o funil de quem nao o ve, mas esconder e conveniencia.
+  const { sessao, quem, permitido } = await exigirPermissao(recorte, (p) => p.has('VER_FUNIL'))
+  if (!permitido) {
+    return <SemPermissao papel={quem.papel} detalhe={detalheDoInicio(quem.papel)} />
+  }
 
   let funil: FunilTipo | null = null
   let erroDeCarga: ErroDeMetricas | null = null
@@ -102,6 +116,14 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
   // render, e o `catch` o engoliria.
   if (erroDeCarga?.status === 401) {
     redirect(urlDoLogin({ returnTo: recorte, erro: 'sessao_expirada' }))
+  }
+
+  // **O 403 do backend vence o menu** (TEC-312, cenario 3 do Gherkin). O menu
+  // mostrou o funil porque `/auth/me` disse `VER_FUNIL`; se o FastAPI recusar
+  // assim mesmo -- um papel que mudou no meio, uma regra nova na rota --, a
+  // resposta dele e a verdade, e a tela diz isso em vez de um funil vazio.
+  if (erroDeCarga?.status === 403) {
+    return <SemPermissao papel={quem.papel} paginaInicial={null} />
   }
 
   // **O 422 vai para o formulario; o resto vai para o `ErroDeCarga`.** Um

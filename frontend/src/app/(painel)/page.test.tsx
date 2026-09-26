@@ -1,12 +1,12 @@
 import { render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { limparArmazem } from '../../test/armazem-em-memoria'
+import { limparArmazem } from '../../../test/armazem-em-memoria'
 import { criarSessao } from '@/lib/servidor/sessao'
 import Pagina from './page'
 
 vi.mock('@/lib/servidor/armazem', async () =>
-  (await import('../../test/armazem-em-memoria')).moduloDeArmazem,
+  (await import('../../../test/armazem-em-memoria')).moduloDeArmazem,
 )
 
 const cookiesDaRequisicao = new Map<string, string>()
@@ -49,10 +49,43 @@ const VAZIO = {
   indisponiveis: [],
 }
 
-function responde(corpo: unknown, status = 200) {
-  const chamadas = vi.fn().mockResolvedValue(new Response(JSON.stringify(corpo), { status }))
-  vi.stubGlobal('fetch', chamadas)
-  return chamadas
+/** O que `/auth/me` devolve para cada papel, pela matriz da TEC-202. */
+const PERMISSOES: Record<string, string[]> = {
+  GERENTE: ['ATENDER_LEAD', 'BUSCAR_IMOVEIS', 'VER_DADOS_COMPLETOS', 'VER_DETALHE_DO_LEAD', 'VER_FUNIL', 'VER_LEADS'],
+  CORRETOR: ['ATENDER_LEAD', 'BUSCAR_IMOVEIS', 'VER_DETALHE_DO_LEAD', 'VER_LEADS'],
+  LEITURA: ['BUSCAR_IMOVEIS', 'VER_FUNIL', 'VER_LEADS'],
+}
+
+/**
+ * O `fetch` dublado, com as duas rotas que a pagina chama: `/auth/me` (a
+ * guarda da TEC-312) e o funil. Devolve SO as chamadas ao funil, que e o que
+ * os testes inspecionam -- e o que o teste do CORRETOR afirma que nao acontece.
+ *
+ * Uma `Response` nova por chamada, e nao `mockResolvedValue`: o corpo de uma
+ * `Response` so se le uma vez.
+ */
+function responde(
+  corpo: unknown,
+  status = 200,
+  { papel = 'GERENTE', statusDoMe = 200 }: { papel?: string; statusDoMe?: number } = {},
+) {
+  const funil = vi.fn<(url: URL | string, init?: RequestInit) => Promise<Response>>(
+    async () => new Response(JSON.stringify(corpo), { status }),
+  )
+  const me = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({ usuarioId: 'u-1', papel, corretorId: null, permissoes: PERMISSOES[papel] }),
+        { status: statusDoMe },
+      ),
+  )
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url: URL | string, init?: RequestInit) =>
+      String(url).includes('/api/v1/auth/me') ? me() : funil(url, init),
+    ),
+  )
+  return funil
 }
 
 describe('Pagina', () => {
@@ -85,14 +118,48 @@ describe('Pagina', () => {
     expect(screen.queryByLabelText('Funil de leads')).not.toBeInTheDocument()
   })
 
-  it('403 diz que o perfil nao inclui o painel, e nao ausencia de dados', async () => {
-    // Desde a TEC-309 o 403 e o papel sem `VER_FUNIL`, e nao o token do
-    // ambiente -- que o frontend nem manda mais.
+  it('cenario: o 403 do backend vence o menu, e vira "Sem permissao"', async () => {
+    // O menu mostrou o funil (a GERENTE tem `VER_FUNIL`), e o FastAPI recusou
+    // assim mesmo. A tela diz "Sem permissao" -- nao um funil vazio, nao um
+    // aviso de erro generico.
     responde({ detail: 'forbidden' }, 403)
 
     render(await Pagina({ searchParams: Promise.resolve({}) }))
 
-    expect(screen.getByRole('alert')).toHaveTextContent(/perfil de acesso não inclui este painel/)
+    expect(screen.getByRole('heading', { name: 'Sem permissão' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Você entrou como Gerente')
+    expect(screen.queryByLabelText('Funil de leads')).not.toBeInTheDocument()
+  })
+
+  it('CORRETOR ve "Sem permissao" no inicio, e o funil NAO e buscado', async () => {
+    // D6: a tela do corretor e a TEC-321. Ate ela existir, o `/` diz isso.
+    const funil = responde(FUNIL, 200, { papel: 'CORRETOR' })
+
+    render(await Pagina({ searchParams: Promise.resolve({}) }))
+
+    expect(screen.getByRole('heading', { name: 'Sem permissão' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Você entrou como Corretor')
+    expect(screen.getByRole('alert')).toHaveTextContent('lista dos seus leads, ainda não está disponível')
+    // Ja esta na pagina inicial: o link para ela so recarregaria esta tela.
+    expect(screen.queryByRole('link', { name: 'Ir para a página inicial' })).not.toBeInTheDocument()
+    expect(funil).not.toHaveBeenCalled()
+  })
+
+  it('LEITURA ve o funil', async () => {
+    responde(FUNIL, 200, { papel: 'LEITURA' })
+
+    render(await Pagina({ searchParams: Promise.resolve({}) }))
+
+    expect(screen.getByLabelText('Funil de leads')).toBeInTheDocument()
+  })
+
+  it('`/auth/me` recusando o token volta ao login, antes de buscar o funil', async () => {
+    const funil = responde(FUNIL, 200, { statusDoMe: 401 })
+
+    await expect(Pagina({ searchParams: Promise.resolve({}) })).rejects.toThrow(
+      /REDIRECT:\/login\?.*erro=sessao_expirada/,
+    )
+    expect(funil).not.toHaveBeenCalled()
   })
 
   it('pede o funil com o JWT de quem esta logado (TEC-309)', async () => {
@@ -100,7 +167,8 @@ describe('Pagina', () => {
 
     render(await Pagina({ searchParams: Promise.resolve({}) }))
 
-    expect(chamadas.mock.calls[0][1].headers.Authorization).toBe('Bearer jwt-da-anelise')
+    const cabecalhos = chamadas.mock.calls[0][1]?.headers as Record<string, string>
+    expect(cabecalhos.Authorization).toBe('Bearer jwt-da-anelise')
   })
 
   it('sem sessao valida vai ao login com o recorte, e NAO chama o FastAPI', async () => {

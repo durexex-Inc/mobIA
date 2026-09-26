@@ -1,8 +1,9 @@
 """O desfecho da visita, marcado pelo corretor. TEC-374, RF-12, RN-12.4 e RN-12.5.
 
 **O Gherkin diz "pelo dashboard", e o dashboard nao existe.** Esta card mora no
-epico `[FE]` e depende da TEC-323 para saber onde os botoes ficam; a casca do
-painel tambem nao existe (TEC-309, TEC-312, TEC-321). Entao o que esta aqui e
+epico `[FE]` e depende da TEC-323 para saber onde os botoes ficam. A casca do
+painel -- login e menu por papel -- passou a existir (TEC-309, TEC-312), mas a
+lista e o detalhe do lead nao (TEC-321, TEC-323). Entao o que esta aqui e
 o mecanismo que a tela vai chamar, e ate ela chegar e por estas rotas que os
 criterios de aceite correspondentes sao exercitados -- o mesmo arranjo que
 `handoffs.py` ja assumiu por escrito.
