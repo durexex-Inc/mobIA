@@ -159,10 +159,10 @@ async def regenerar(
         "link": link_da_transcricao(linha.channel, linha.conversation_key),
         "geradoEm": linha.resumo_gerado_em.isoformat() if linha.resumo_gerado_em else None,
         "modelo": linha.resumo_modelo,
-        # L1 do desenho: a rota e hoje o unico lugar de onde alguem pode ler
-        # que o resumo e o template (o painel e a E8 e nao existe). Segundo
-        # cenario do Gherkin: "fica indicado que se trata de resumo
-        # automatico simplificado".
+        # Segundo cenario do Gherkin da TEC-176: "fica indicado que se trata
+        # de resumo automatico simplificado". Ate a TEC-193 esta rota era o
+        # unico lugar de onde alguem lia isso; desde ela, o detalhe do lead
+        # devolve o mesmo sinal em `resumo.fallback`.
         "resumoFallback": linha.resumo_fallback,
     }
 
