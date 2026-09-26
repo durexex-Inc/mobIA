@@ -43,6 +43,9 @@ SEM_O_NOVE = "554899990000"
 SESSAO = "0b6f5d8e-3c1a-4e2b-9f7d-1a2b3c4d5e6f"
 TEXTO_DO_RESUMO = "o lead quer dois quartos no Campeche"
 PHONE_NUMBER_ID = "phone-number-id"
+# O formato real que `api/routes/widget.py::_chave_do_id` grava: a sessao (ou,
+# desde a TEC-203, o HMAC dela) prefixando o id que o cliente escolheu.
+ID_DO_WIDGET = "m-1"
 
 # As tabelas cujo texto a varredura inspeciona: as da lista, mais as duas que
 # guardam o lead fora de `conversation_key`.
@@ -94,12 +97,21 @@ async def _semear_na_0057() -> dict[str, uuid.UUID]:
              "INBOUND", "PROCESSED"),
             ("web", "web", SESSAO, "web", SESSAO, "LEAD", "INBOUND", "PROCESSED"),
         ):  # fmt: skip
+            if direction == "OUTBOUND":
+                provider = None
+            elif nome == "web":
+                # O formato real do widget: a sessao crua prefixando o id, e
+                # nao o `wamid.{id}` generico das outras linhas -- e o que
+                # expoe a sessao em claro se `_mover` nao a reescrever.
+                provider = f"{SESSAO}:{ID_DO_WIDGET}"
+            else:
+                provider = f"wamid.{ids[nome]}"
             await sessao.execute(
                 _MENSAGEM,
                 {
                     "id": ids[nome],
                     "channel": channel,
-                    "provider": None if direction == "OUTBOUND" else f"wamid.{ids[nome]}",
+                    "provider": provider,
                     "sender": sender,
                     "recipient": recipient,
                     "chave": chave,
@@ -288,6 +300,14 @@ async def test_o_par_vira_chave_de_e_a_identidade_revela_o_cru(
             == TELEFONE
         )
 
+        # O id do widget troca o prefixo (a sessao crua) pela chave, e nao so
+        # some -- ver `_mover`. O `test_nenhuma_coluna_guarda_o_telefone_...`
+        # ja prova que a sessao crua sumiu; isto prova para onde ela foi.
+        provider_do_widget = await sessao.scalar(
+            text("SELECT provider_message_id FROM messages WHERE id = :id"), {"id": ids["web"]}
+        )
+        assert provider_do_widget == f"{chave_da_sessao}:{ID_DO_WIDGET}"
+
 
 async def test_resumo_de_antes_continua_legivel(
     semeado_na_0057_e_subido: dict[str, uuid.UUID],
@@ -400,6 +420,9 @@ async def test_descida_devolve_os_valores_originais(
         referencia = await sessao.scalar(text("SELECT lead_ref FROM eventos_auditoria"))
         resumo = await sessao.scalar(text("SELECT resumo FROM conversation_summaries"))
         identidades = await sessao.scalar(text("SELECT to_regclass('identidades_de_lead')"))
+        provider_do_widget = await sessao.scalar(
+            text("SELECT provider_message_id FROM messages WHERE id = :id"), {"id": ids["web"]}
+        )
     await dispose_engine()
 
     assert tuple(entrada) == (TELEFONE, TELEFONE)
@@ -407,6 +430,9 @@ async def test_descida_devolve_os_valores_originais(
     assert auditoria == TELEFONE
     assert tuple(vinculo) == (SESSAO, TELEFONE)
     assert rate_limit == TELEFONE
+    # A descida devolve a sessao crua na frente do id do widget -- o mesmo
+    # formato que `_chave_do_id` gravava antes da TEC-203.
+    assert provider_do_widget == f"{SESSAO}:{ID_DO_WIDGET}"
     assert referencia == lead_ref(
         "whatsapp", TELEFONE, chave=get_settings().auditoria_chave_do_lead
     )
@@ -418,6 +444,7 @@ async def test_rotacao_da_chave_de_indice_leva_tudo_para_a_chave_nova(
     semeado_na_0057_e_subido: dict[str, uuid.UUID], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """O que `scripts/reindexar_leads.py` roda, com a chave de indice trocada."""
+    ids = semeado_na_0057_e_subido
     chave_a = chave_de("whatsapp", TELEFONE)
     configuracao_b = get_settings().model_copy(
         update={"lead_indice_chave": "chave-de-indice-B-" + "x" * 40}
@@ -470,4 +497,9 @@ async def test_rotacao_da_chave_de_indice_leva_tudo_para_a_chave_nova(
             == TELEFONE
         )
         referencia = await sessao.scalar(text("SELECT lead_ref FROM eventos_auditoria"))
+        provider_do_widget = await sessao.scalar(
+            text("SELECT provider_message_id FROM messages WHERE id = :id"), {"id": ids["web"]}
+        )
     assert referencia == lead_ref("whatsapp", chave_b, chave=chave_do_lead)
+    # A rotacao troca a chave de indice, e o prefixo do id do widget acompanha.
+    assert provider_do_widget == f"{vinculo.conversation_key}:{ID_DO_WIDGET}"

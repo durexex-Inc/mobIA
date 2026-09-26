@@ -9,11 +9,11 @@ opt-out e pedido de humano, e a contagem de duplicata descartada.
 **Nenhuma chamada a modelo acontece dentro do ciclo da conexao**, pelo mesmo
 motivo que a RN-01.2 escreve para o webhook.
 
-O `id` do frame, prefixado pela sessao, vira `provider_message_id`: e ele que
-faz o reenvio depois de uma queda cair na UNIQUE `(channel,
-provider_message_id)` que ja existe -- dedup sem codigo novo, pelo mesmo
-mecanismo que absorve a reentrega da Meta. O prefixo e o que impede o id de
-um visitante de colidir com o de outro; ver `_chave_do_id`.
+O `id` do frame, prefixado pelo HMAC da sessao (TEC-203), vira
+`provider_message_id`: e ele que faz o reenvio depois de uma queda cair na
+UNIQUE `(channel, provider_message_id)` que ja existe -- dedup sem codigo
+novo, pelo mesmo mecanismo que absorve a reentrega da Meta. O prefixo e o que
+impede o id de um visitante de colidir com o de outro; ver `_chave_do_id`.
 
 **O id da sessao nunca viaja em URL.** Ele e portador anonimo -- quem o tiver
 le aquela conversa --, e numa query string entraria em log de acesso, em
@@ -70,8 +70,8 @@ CODIGO_INDISPONIVEL = 1011
 
 
 # Teto do `id` que o cliente escolhe. A coluna e `String(255)` e a chave gravada
-# leva a sessao na frente (36 caracteres e o separador), entao 128 deixa folga
-# sem apertar nenhum formato razoavel -- um UUID tem 36.
+# leva o HMAC da sessao na frente (64 caracteres em hex e o separador), entao
+# 128 deixa folga sem apertar nenhum formato razoavel -- um UUID tem 36.
 TAMANHO_MAXIMO_DO_ID = 128
 
 # Teto do aviso de privacidade que o cliente diz ter exibido. A coluna e
@@ -546,8 +546,14 @@ def _chave_do_id(sessao: str, identificador: str) -> str:
     outro, e o segundo perdia a mensagem recebendo `recebido`. Prefixado pela
     sessao, a dedup continua fazendo o que existe para fazer -- absorver o
     reenvio da MESMA pagina depois de uma queda -- e so isso.
+
+    TEC-203. O prefixo e o HMAC da sessao (`chave_de`), nao a sessao crua: o
+    servidor so ve a sessao pela chave dela, e gravar a sessao crua aqui
+    devolveria o dado que a cifra do resto da tabela existe para tirar. A
+    dedup continua estavel entre reconexoes porque a mesma sessao sempre
+    gera o mesmo HMAC.
     """
-    return f"{sessao}:{identificador}"
+    return f"{chave_de(CANAL_WEB, sessao)}:{identificador}"
 
 
 class FrameInvalido(Exception):

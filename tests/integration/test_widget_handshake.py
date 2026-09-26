@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import select
 
 from mobia.app.config import get_settings
+from mobia.domain.identidade.indice import chave_de
 from mobia.domain.messages.canais import CANAL_WEB, REMETENTE_DO_WIDGET
 from mobia.domain.messages.models import Message
 
@@ -32,13 +33,16 @@ async def test_a_mensagem_vira_linha_no_canal_web(ws_cliente, session) -> None:
         )
         assert await ws.receber() == {"tipo": "recebido", "id": "m-1"}
 
+    # TEC-203: a coluna guarda o HMAC da sessao, e o id do widget leva o
+    # mesmo HMAC na frente (ver `_chave_do_id`).
+    chave = chave_de(CANAL_WEB, sessao)
     linha = (
-        await session.execute(select(Message).where(Message.conversation_key == sessao))
+        await session.execute(select(Message).where(Message.conversation_key == chave))
     ).scalar_one()
     assert linha.channel == CANAL_WEB
-    assert linha.provider_message_id == f"{sessao}:m-1"
+    assert linha.provider_message_id == f"{chave}:m-1"
     assert linha.recipient_external_id == REMETENTE_DO_WIDGET
-    assert linha.sender_external_id == sessao
+    assert linha.sender_external_id == chave
 
 
 async def test_primeiro_frame_que_nao_e_ola_fecha_com_1002(ws_cliente) -> None:
@@ -93,7 +97,7 @@ async def test_texto_vazio_nao_vira_linha_e_a_conexao_segue(ws_cliente, session)
         assert (await ws.receber())["tipo"] == "recebido"
 
     linhas = (await session.execute(select(Message))).scalars().all()
-    assert [linha.provider_message_id for linha in linhas] == [f"{sessao}:m-2"]
+    assert [linha.provider_message_id for linha in linhas] == [f"{chave_de(CANAL_WEB, sessao)}:m-2"]
 
 
 async def test_texto_acima_do_teto_e_recusado_sem_derrubar(
@@ -251,7 +255,9 @@ async def test_o_mesmo_id_em_duas_sessoes_grava_as_duas(ws_cliente, session) -> 
             assert (await ws.receber())["tipo"] == "recebido"
 
     linhas = (await session.execute(select(Message))).scalars().all()
-    assert sorted(linha.conversation_key for linha in linhas) == sorted(sessoes)
+    assert sorted(linha.conversation_key for linha in linhas) == sorted(
+        chave_de(CANAL_WEB, sessao) for sessao in sessoes
+    )
 
 
 async def test_id_longo_demais_fecha_com_1002(ws_cliente, session) -> None:

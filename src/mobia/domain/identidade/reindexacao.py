@@ -2,7 +2,9 @@
 
 Troca o `conversation_key` de cada par, em todas as tabelas, e arrasta junto o
 que depende dele: identidade, remetente/destinatario das mensagens, evento de
-rate limit, `lead_ref` da trilha, AAD do resumo e do vinculo.
+rate limit, `lead_ref` da trilha, AAD do resumo e do vinculo, e o prefixo do
+`provider_message_id` do widget (`api/routes/widget.py::_chave_do_id`), que
+carrega a mesma chave da sessao.
 
 Tres modos, e a diferenca entre eles e so DE ONDE vem o valor cru:
 
@@ -189,6 +191,22 @@ def _mover(
             ),
             parametros,
         )
+    # O `provider_message_id` do widget carrega `atual` na frente
+    # (`_chave_do_id`), e so ele -- o `LIKE` com `atual` escapado casa
+    # exatamente esse prefixo e nada do WhatsApp, cujo wamid nunca tem essa
+    # forma. `substr` a partir de `length(:atual) + 1` preserva o separador
+    # ':' e o id que vem depois, entao o resultado e `novo:id`, o mesmo
+    # formato que `_chave_do_id` grava hoje.
+    escapado = atual.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    conn.execute(
+        text(
+            "UPDATE messages SET provider_message_id ="
+            " :novo || substr(provider_message_id, length(:atual) + 1)"
+            " WHERE channel = :c AND conversation_key = :novo"
+            " AND provider_message_id LIKE :atual_prefixo ESCAPE '\\'"
+        ),
+        {**parametros, "atual_prefixo": f"{escapado}:%"},
+    )
     conn.execute(
         text(
             "UPDATE rate_limit_events SET chave = :novo"
