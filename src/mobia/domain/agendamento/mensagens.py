@@ -36,6 +36,12 @@ TEXTO_DA_CONFIRMACAO_DE_REUNIAO = (
 )
 
 
+def descrever_lead(channel: str, telefone: str | None) -> str:
+    """A linha "Lead:" do e-mail ao corretor. TEC-203: o telefone revelado,
+    porque o corretor precisa dele para a visita; o par ja nao o carrega."""
+    return f"{channel} +{telefone}" if telefone else f"{channel} (sem telefone informado)"
+
+
 def endereco_de(imovel: Imovel) -> str:
     """O endereco que o catalogo permite dar. D4 do desenho.
 
@@ -75,8 +81,7 @@ def aviso_de_cancelamento(
     inicio: datetime,
     corretor: str,
     imovel: Imovel | None,
-    channel: str,
-    conversation_key: str,
+    lead: str,
     link: str,
 ) -> Aviso:
     """O e-mail que diz ao corretor que o horario dele voltou a ficar livre.
@@ -95,7 +100,7 @@ def aviso_de_cancelamento(
     ]
     if not remota and imovel is not None:
         linhas.append(f"Imóvel: {endereco_de(imovel)}")
-    linhas.append(f"Lead: {channel} {conversation_key}")
+    linhas.append(f"Lead: {lead}")
     linhas.append("O horário já voltou a ficar disponível na sua agenda.")
     linhas.append(f"Conversa completa: {link}")
     return Aviso(
@@ -113,8 +118,7 @@ def aviso_ao_corretor(
     inicio: datetime,
     corretor: str,
     imovel: Imovel | None,
-    channel: str,
-    conversation_key: str,
+    lead: str,
     link: str,
 ) -> Aviso:
     """O e-mail ao corretor: os dados do lead mais a identificacao dele. D3.
@@ -132,7 +136,7 @@ def aviso_ao_corretor(
     ]
     if not remota and imovel is not None:
         linhas.append(f"Imóvel: {endereco_de(imovel)}")
-    linhas.append(f"Lead: {channel} {conversation_key}")
+    linhas.append(f"Lead: {lead}")
     linhas.append(f"Conversa completa: {link}")
     gatilho = Gatilho.AGENDAMENTO_CONFIRMADO
     return Aviso(

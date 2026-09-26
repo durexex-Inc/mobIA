@@ -55,6 +55,7 @@ def _payload(**trocas: object) -> dict[str, object]:
     argumentos: dict[str, object] = {
         "handoff_id": HANDOFF,
         "dossie": _dossie(),
+        "telefone": "5511911112222",
         "resumo": "Lead quente procurando apartamento em Pinheiros.",
         "resumo_fallback": False,
     }
@@ -73,6 +74,7 @@ def test_o_payload_leva_os_dados_do_lead_a_qualificacao_e_o_resumo() -> None:
     assert payload["lead"] == {
         "canal": "whatsapp",
         "conversa": "5511911112222",
+        "telefone": "+5511911112222",
         "primeira_mensagem_em": QUANDO.isoformat(),
         "mensagens_do_lead": 12,
     }
@@ -145,6 +147,28 @@ def test_a_reacao_e_o_motivo_de_descarte_acompanham_cada_imovel() -> None:
     assert imoveis[0]["motivo_descarte"] is None
     assert imoveis[1]["reacao"] == "DESCARTOU"
     assert imoveis[1]["motivo_descarte"] == "PRECO"
+
+
+def test_telefone_ausente_vai_como_nulo() -> None:
+    """TEC-203: `telefone` e `None` quando `telefones_de` nao achou um --
+    web sem vinculo, ou chave do WhatsApp sem identidade."""
+    payload = _payload(telefone=None)
+
+    lead = payload["lead"]
+    assert isinstance(lead, dict)
+    assert lead["telefone"] is None
+
+
+def test_conversa_deixou_de_ser_o_telefone_na_v2() -> None:
+    """TEC-203: `conversa` e o pseudonimo do lead desde a v2 -- quem quer o
+    telefone le `telefone`, o campo novo desta versao."""
+    payload = _payload(dossie=_dossie(conversa="algum-hmac-opaco"), telefone="5511911112222")
+
+    lead = payload["lead"]
+    assert isinstance(lead, dict)
+    assert lead["conversa"] == "algum-hmac-opaco"
+    assert lead["telefone"] == "+5511911112222"
+    assert payload["versao"] == 2
 
 
 def test_handoff_sem_primeira_mensagem_nao_estoura() -> None:

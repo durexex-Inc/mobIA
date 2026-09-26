@@ -4,11 +4,26 @@ import uuid
 import httpx
 import pytest
 
+from mobia.domain.identidade.indice import chave_de, registrar
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRecusado, EnvioRetentavel
 from mobia.domain.outbound.whatsapp import WhatsAppOutbound
 from mobia.infra.db import get_sessionmaker
 
-PAYLOAD = {"para": "5511911112222", "de": "222222222", "texto": "Ola! Em qual regiao voce procura?"}
+# TEC-203: `_deliver` revela o `wa_id` a partir da chave -- `para` e a chave,
+# nao mais o telefone cru. `_identidade_do_lead` grava a identidade por tras
+# dela antes de cada teste, no molde de `test_absorcao_de_sessoes.py`.
+TELEFONE = "5511911112222"
+CHAVE_DO_LEAD = chave_de(CANAL_WHATSAPP, TELEFONE)
+
+PAYLOAD = {"para": CHAVE_DO_LEAD, "de": "222222222", "texto": "Ola! Em qual regiao voce procura?"}
+
+
+@pytest.fixture(autouse=True)
+async def _identidade_do_lead(banco_limpo: None) -> None:
+    async with get_sessionmaker()() as sessao:
+        await registrar(sessao, CANAL_WHATSAPP, TELEFONE)
+        await sessao.commit()
 
 
 def cliente_que_responde(resposta: httpx.Response) -> httpx.AsyncClient:
@@ -108,7 +123,7 @@ async def test_erro_da_meta_nao_carrega_o_texto_no_log(session, caplog) -> None:
 
 PAYLOAD_DE_IMAGEM = {
     "tipo": "imagem",
-    "para": "5511911112222",
+    "para": CHAVE_DO_LEAD,
     "de": "222222222",
     "link": "https://exemplo.com/ap-1004-1.jpg",
     "legenda": "Apartamento em Lagoa da Conceicao\nLagoa da Conceicao - R$ 516.464",
@@ -138,6 +153,8 @@ async def test_payload_sem_tipo_continua_saindo_como_texto(session) -> None:
 
     assert corpo["type"] == "text"
     assert corpo["text"] == {"body": PAYLOAD["texto"]}
+    # TEC-203: o `to` da Cloud API e o `wa_id` cru, revelado da chave em `para`.
+    assert corpo["to"] == TELEFONE
 
 
 async def test_payload_de_imagem_sai_como_image_com_link_e_caption(session) -> None:
@@ -225,7 +242,7 @@ async def test_envio_por_template_monta_o_corpo_da_cloud_api(session) -> None:
         uuid.uuid4(),
         "followup_2",
         {
-            "para": "5511911112222",
+            "para": CHAVE_DO_LEAD,
             "de": "222222222",
             "tipo": "template",
             "template": "followup_queda_de_preco",
@@ -250,7 +267,7 @@ async def test_template_sem_parametros_nao_manda_components(session) -> None:
         uuid.uuid4(),
         "followup_1",
         {
-            "para": "5511911112222",
+            "para": CHAVE_DO_LEAD,
             "de": "222222222",
             "tipo": "template",
             "template": "followup_convite",

@@ -89,7 +89,8 @@ async def test_a_exportacao_entrega_o_payload_versionado_e_carimba(
 
     assert resultado == "exportado"
     assert crm.recebidos[0][0] == handoff_id
-    assert crm.recebidos[0][1]["versao"] == 1
+    # v2 desde a TEC-203 -- `lead.conversa` deixou de ser o telefone.
+    assert crm.recebidos[0][1]["versao"] == 2
     linha = await _linha(session, handoff_id)
     assert linha.crm_sincronizado_em is not None
 

@@ -9,6 +9,11 @@ Quem consegue rodar isto ja tem acesso ao servidor e ao banco, e isso E a
 autenticacao. A logica mora em `optout.repositorio.reativar`; quando o
 dashboard existir (TEC-189) ele chama a mesma funcao.
 
+**`--key` e o valor cru desde a TEC-203** (telefone no WhatsApp, sessao no
+web), e nao mais o `conversation_key`: quem opera nao tem como digitar um HMAC
+que nunca viu. `_executar` deriva a chave com `chave_de` antes de chamar
+`reativar`.
+
 Uso:
     python -m mobia.admin.reativar --channel wa --key 5548999998888 \\
         --autor "Paulo M." --motivo "lead pediu por telefone"
@@ -18,6 +23,7 @@ import argparse
 import asyncio
 import sys
 
+from mobia.domain.identidade.indice import chave_de
 from mobia.domain.optout.repositorio import reativar
 from mobia.infra.db import get_sessionmaker
 
@@ -34,7 +40,7 @@ async def _executar(*, channel: str, key: str, autor: str, motivo: str) -> int:
     await reativar(
         get_sessionmaker(),
         channel=channel,
-        conversation_key=key,
+        conversation_key=chave_de(channel, key),
         autor=autor,
         motivo=motivo,
     )
@@ -44,7 +50,7 @@ async def _executar(*, channel: str, key: str, autor: str, motivo: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Reativa um lead que pediu opt-out.")
     parser.add_argument("--channel", required=True, help="canal do lead, por exemplo wa")
-    parser.add_argument("--key", required=True, help="conversation_key do lead")
+    parser.add_argument("--key", required=True, help="telefone do lead (WhatsApp) ou sessao (web)")
     parser.add_argument("--autor", required=True, help="quem esta reativando")
     # Obrigatorio, e sem default: a RN-14.3 exige justificativa, e um default
     # vazio a tornaria decorativa.

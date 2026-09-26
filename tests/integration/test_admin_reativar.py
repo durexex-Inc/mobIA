@@ -12,6 +12,7 @@ from sqlalchemy.pool import NullPool
 
 from mobia.admin.reativar import _executar, main
 from mobia.app.config import get_settings
+from mobia.domain.identidade.indice import chave_de
 from mobia.domain.optout.models import EVENTO_REATIVACAO, OptoutEvent
 from mobia.domain.optout.repositorio import esta_em_optout, reativar, registrar_optout
 
@@ -61,10 +62,12 @@ async def test_reativacao_devolve_o_lead_ao_estado_respondivel(
     """Chama `_executar` direto, nao `main`.
 
     `main` chama `asyncio.run`, e este teste ja roda dentro de um loop -- ver
-    a nota em `mobia.admin.reativar._executar`.
+    a nota em `mobia.admin.reativar._executar`. `--key` e o telefone cru
+    (TEC-203); `_executar` e que deriva o `conversation_key`.
     """
+    chave = chave_de("wa", "5548999998888")
     await registrar_optout(
-        session_factory, channel="wa", conversation_key="5548999998888", message_id=uuid.uuid4()
+        session_factory, channel="wa", conversation_key=chave, message_id=uuid.uuid4()
     )
 
     codigo = await _executar(
@@ -72,7 +75,7 @@ async def test_reativacao_devolve_o_lead_ao_estado_respondivel(
     )
 
     assert codigo == 0
-    assert await esta_em_optout(session, channel="wa", conversation_key="5548999998888") is False
+    assert await esta_em_optout(session, channel="wa", conversation_key=chave) is False
 
 
 def test_sem_motivo_o_comando_falha() -> None:
@@ -138,9 +141,12 @@ def test_main_fia_cada_argumento_no_kwarg_certo(monkeypatch: pytest.MonkeyPatch)
     # ver `_fabrica_isolada`. O que este teste prova continua intacto: a
     # fiacao `args.* -> kwarg`, que nao passa pelo sessionmaker.
     monkeypatch.setattr("mobia.admin.reativar.get_sessionmaker", _fabrica_isolada)
-    chave = f"5548{uuid.uuid4().hex[:9]}"
+    telefone_cru = f"5548{uuid.uuid4().hex[:9]}"
 
-    codigo = main(["--channel", "wa", "--key", chave, "--autor", AUTOR, "--motivo", MOTIVO])
+    codigo = main(["--channel", "wa", "--key", telefone_cru, "--autor", AUTOR, "--motivo", MOTIVO])
 
     assert codigo == 0
-    assert asyncio.run(_reativacao_gravada(channel="wa", key=chave)) == (AUTOR, MOTIVO)
+    assert asyncio.run(_reativacao_gravada(channel="wa", key=chave_de("wa", telefone_cru))) == (
+        AUTOR,
+        MOTIVO,
+    )

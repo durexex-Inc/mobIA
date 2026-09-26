@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from mobia.domain.agendamento.mensagens import (
     aviso_ao_corretor,
+    descrever_lead,
     endereco_de,
     texto_ao_lead,
 )
@@ -16,6 +17,16 @@ from mobia.domain.catalogo.models import Imovel
 
 SP = ZoneInfo("America/Sao_Paulo")
 QUINTA_15H = datetime(2026, 8, 27, 15, 0, tzinfo=SP)
+
+
+def test_descrever_lead_com_telefone() -> None:
+    assert descrever_lead("whatsapp", "5511911111111") == "whatsapp +5511911111111"
+
+
+def test_descrever_lead_sem_telefone() -> None:
+    """Web sem vinculo, ou chave sem identidade -- as duas viram `None` em
+    `telefones_de`, e o corretor nao pode ler a chave no lugar do numero."""
+    assert descrever_lead("web", None) == "web (sem telefone informado)"
 
 
 def _imovel() -> Imovel:
@@ -75,8 +86,7 @@ def test_aviso_ao_corretor_leva_os_dados_mais_o_lead_e_o_link() -> None:
         inicio=QUINTA_15H,
         corretor="Paula",
         imovel=_imovel(),
-        channel="whatsapp",
-        conversation_key="5511911111111",
+        lead="whatsapp +5511911111111",
         link="https://painel/conversas/whatsapp/5511911111111",
     )
     assert "quinta-feira, 27 de agosto, às 15h" in aviso.assunto
@@ -84,8 +94,7 @@ def test_aviso_ao_corretor_leva_os_dados_mais_o_lead_e_o_link() -> None:
         "quinta-feira, 27 de agosto, às 15h",
         "Moema, São Paulo/SP",
         "Paula",
-        "whatsapp",
-        "5511911111111",
+        "whatsapp +5511911111111",
         "https://painel/conversas/whatsapp/5511911111111",
     ):
         assert trecho in aviso.corpo
@@ -100,8 +109,7 @@ def test_aviso_de_reuniao_remota_nao_tem_linha_de_imovel() -> None:
         inicio=QUINTA_15H,
         corretor="Paula",
         imovel=None,
-        channel="web",
-        conversation_key="sessao-1",
+        lead="web (sem telefone informado)",
         link="https://painel/x",
     )
     assert "Reunião remota" in aviso.assunto
@@ -114,8 +122,7 @@ def test_aviso_de_visita_sem_imovel_nao_tem_linha_de_imovel_nem_none() -> None:
         inicio=QUINTA_15H,
         corretor="Paula",
         imovel=None,
-        channel="whatsapp",
-        conversation_key="5511911111111",
+        lead="whatsapp +5511911111111",
         link="https://painel/x",
     )
     assert "Visita" in aviso.assunto

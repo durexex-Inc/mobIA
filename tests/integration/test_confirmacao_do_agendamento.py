@@ -23,11 +23,13 @@ from mobia.domain.agendamento.janelas import TipoDeCompromisso
 from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.agendamento.vocabulario import MotivoDaAlocacao
 from mobia.domain.catalogo.models import Imovel
+from mobia.domain.identidade.models import IdentidadeDeLead, aad_da_identidade
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.notificacao.canais import FalhaDeCanal
 from mobia.domain.notificacao.mensagem import Aviso
 from mobia.domain.outbound.models import OutboundDispatch
+from mobia.infra.crypto import encrypt
 
 SP = ZoneInfo("America/Sao_Paulo")
 INICIO = datetime(2026, 8, 27, 15, tzinfo=SP)
@@ -95,6 +97,20 @@ async def _agendamento(
     session.add(agendamento)
     await session.commit()
     return agendamento
+
+
+async def _identidade(session: AsyncSession) -> None:
+    """A identidade por tras de CONVERSA -- TEC-203: `descrever_lead` revela o
+    telefone, e sem esta linha `telefones_de` devolve `None`. `valor` e o
+    proprio CONVERSA porque ele ja e um telefone canonico valido."""
+    session.add(
+        IdentidadeDeLead(
+            channel=CANAL,
+            conversation_key=CONVERSA,
+            valor_cifrado=encrypt(CONVERSA, aad_da_identidade(CANAL, CONVERSA)),
+        )
+    )
+    await session.commit()
 
 
 async def _mensagem_do_lead(session: AsyncSession) -> Message:
@@ -216,6 +232,7 @@ async def test_confirmado_avisa_lead_corretor_e_cria_evento(
     imovel_id = await _imovel(session)
     agendamento = await _agendamento(session, corretor_id=corretor.id, imovel_id=imovel_id)
     await _mensagem_do_lead(session)
+    await _identidade(session)
     outbound, email, calendario = _OutboundEspiao(), _CanalEspiao(), _CalendarioEspiao()
 
     await avisar_confirmacao(
@@ -238,7 +255,8 @@ async def test_confirmado_avisa_lead_corretor_e_cria_evento(
     assert len(email.recebidas) == 1
     destino, aviso = email.recebidas[0]
     assert destino == corretor.email
-    assert CONVERSA in aviso.corpo
+    # TEC-203: `Lead:` leva o telefone revelado, e nao mais o `conversation_key` cru.
+    assert f"+{CONVERSA}" in aviso.corpo
 
     assert len(calendario.chamadas) == 1
     chamada = calendario.chamadas[0]

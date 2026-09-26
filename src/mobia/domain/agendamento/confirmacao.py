@@ -27,11 +27,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.agendamento.calendario import CalendarioPort, FalhaDeCalendario
 from mobia.domain.agendamento.janelas import TipoDeCompromisso
-from mobia.domain.agendamento.mensagens import aviso_ao_corretor, texto_ao_lead
+from mobia.domain.agendamento.mensagens import aviso_ao_corretor, descrever_lead, texto_ao_lead
 from mobia.domain.agendamento.models import Agendamento, StatusDoAgendamento
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.corretores.models import Corretor
 from mobia.domain.handoff.resumo import link_da_transcricao
+from mobia.domain.identidade.indice import telefones_de
 from mobia.domain.messages.ancora import ancora_em_sessao_propria
 from mobia.domain.notificacao.canais import CanalDeNotificacaoPort, FalhaDeCanal
 from mobia.domain.outbound.port import OutboundPort
@@ -216,13 +217,15 @@ async def _avisar_corretor(
     link: str,
     agora: datetime,
 ) -> None:
+    async with session_factory() as session:
+        par = (retrato.channel, retrato.conversation_key)
+        telefone = (await telefones_de(session, [par]))[par]
     aviso = aviso_ao_corretor(
         tipo=retrato.tipo,
         inicio=retrato.inicio,
         corretor=retrato.corretor_nome,
         imovel=retrato.imovel,
-        channel=retrato.channel,
-        conversation_key=retrato.conversation_key,
+        lead=descrever_lead(retrato.channel, telefone),
         link=link,
     )
     try:

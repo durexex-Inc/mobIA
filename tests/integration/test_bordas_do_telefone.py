@@ -6,14 +6,20 @@ ate a entrada gravar a chave (Task 7 do plano), e esse o unico jeito de ter um
 lead no formato novo.
 """
 
+import json
 import uuid
+from datetime import UTC, datetime
 
+import httpx
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.auditoria.vocabulario import CAMPO_TELEFONE
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.crm.payload import VERSAO_DO_PAYLOAD, montar
+from mobia.domain.handoff.dossie import Dossie
 from mobia.domain.identidade.absorcao import absorver_sessoes_vinculadas
-from mobia.domain.identidade.indice import registrar
+from mobia.domain.identidade.indice import chave_de, registrar
 from mobia.domain.identidade.repositorio import vincular_sessao
 from mobia.domain.leads.consulta import montar_filtro
 from mobia.domain.leads.repositorio import listar_leads, valor_revelado
@@ -21,6 +27,8 @@ from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
+from mobia.domain.outbound.port import EnvioRecusado
+from mobia.domain.outbound.whatsapp import WhatsAppOutbound
 from mobia.infra.db import get_sessionmaker
 
 TELEFONE = "5548999990000"
@@ -154,3 +162,83 @@ async def test_absorcao_sem_identidade_nao_absorve(session: AsyncSession) -> Non
     )
 
     assert pares == ()
+
+
+def _cliente_que_captura(capturado: dict[str, object]) -> httpx.AsyncClient:
+    def _responde(requisicao: httpx.Request) -> httpx.Response:
+        capturado.update(json.loads(requisicao.content))
+        return httpx.Response(200, json={"messages": [{"id": "wamid.X"}]})
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(_responde))
+
+
+async def test_envio_ao_whatsapp_vai_para_o_wa_id_cru(session: AsyncSession) -> None:
+    """A Cloud API recebe o `wa_id` cru, e nao a chave -- ele so existe na
+    memoria deste envio, revelado no ultimo instante por `_deliver`."""
+    chave, _ = await _lead(session, CANAL_WHATSAPP, WA_ID_SEM_O_NOVE)
+    corpo: dict[str, object] = {}
+    outbound = WhatsAppOutbound(get_sessionmaker(), cliente=_cliente_que_captura(corpo))
+
+    await outbound._deliver(uuid.uuid4(), "reply", {"para": chave, "de": "123", "texto": "oi"})
+
+    assert corpo["to"] == WA_ID_SEM_O_NOVE
+
+
+async def test_envio_sem_identidade_nao_chama_a_meta(session: AsyncSession) -> None:
+    """Chave sem identidade e recusa permanente -- nunca chega a POST nenhum."""
+
+    def _nunca_deveria_chamar(requisicao: httpx.Request) -> httpx.Response:
+        raise AssertionError("nao deveria mandar POST algum sem identidade")
+
+    cliente = httpx.AsyncClient(transport=httpx.MockTransport(_nunca_deveria_chamar))
+    outbound = WhatsAppOutbound(get_sessionmaker(), cliente=cliente)
+
+    with pytest.raises(EnvioRecusado):
+        await outbound._deliver(
+            uuid.uuid4(), "reply", {"para": "f" * 64, "de": "123", "texto": "oi"}
+        )
+
+
+def _dossie(conversa: str) -> Dossie:
+    """O minimo que `Dossie` exige, so para exercitar o campo `telefone` do payload."""
+    return Dossie(
+        canal=CANAL_WHATSAPP,
+        conversa=conversa,
+        primeira_mensagem_em=None,
+        mensagens_do_lead=1,
+        intencao=None,
+        faixa_min_centavos=None,
+        faixa_max_centavos=None,
+        regiao=None,
+        tipo_imovel=None,
+        quartos=None,
+        vagas=None,
+        urgencia=None,
+        forma_pagamento=None,
+        tem_imovel_para_vender=None,
+        score_total=None,
+        score_fatores=(),
+        score_causas=(),
+        temperatura=None,
+        temperatura_forcada_motivos=(),
+        imoveis=(),
+        campos_recusados=(),
+        perguntados_sem_resposta=(),
+        gatilho="LEAD_QUENTE",
+        etiqueta="lead-quente",
+        prioridade="NORMAL",
+        criado_em=datetime(2026, 9, 26, tzinfo=UTC),
+    )
+
+
+async def test_payload_do_crm_leva_o_telefone() -> None:
+    payload = montar(
+        handoff_id=uuid.uuid4(),
+        dossie=_dossie(chave_de(CANAL_WHATSAPP, TELEFONE)),
+        telefone=TELEFONE,
+        resumo=None,
+        resumo_fallback=False,
+    )
+
+    assert payload["lead"]["telefone"] == f"+{TELEFONE}"
+    assert payload["versao"] == VERSAO_DO_PAYLOAD == 2
