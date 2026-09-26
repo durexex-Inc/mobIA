@@ -1043,7 +1043,7 @@ def segredos_de_producao(monkeypatch: pytest.MonkeyPatch) -> None:
 
     TEC-203, D5. Cada `_recusar_*_de_desenvolvimento_em_producao` de
     `config.py` recusa o default de desenvolvimento quando `ENVIRONMENT` e de
-    producao -- sem um valor proprio para os quatro campos abaixo,
+    producao -- sem um valor proprio para os cinco campos abaixo,
     `Settings()` levantaria `ConfiguracaoInsegura` antes de o teste chegar ao
     que de fato quer exercitar.
 
@@ -1062,6 +1062,7 @@ def segredos_de_producao(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JWT_SEGREDO", secrets.token_urlsafe(48))
     monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", secrets.token_urlsafe(48))
     monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", secrets.token_urlsafe(48))
+    monkeypatch.setenv("LEAD_INDICE_CHAVE", secrets.token_urlsafe(48))
 
 
 @pytest.fixture

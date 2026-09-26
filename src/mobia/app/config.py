@@ -28,6 +28,11 @@ SEGREDO_DE_JWT_DE_DESENVOLVIMENTO = "dev-jwt-secret-nao-use-em-producao"
 # qualquer telefone e descobre se ele aparece na trilha.
 CHAVE_DO_LEAD_DE_DESENVOLVIMENTO = "dev-auditoria-chave-do-lead-nao-use-em-producao"
 
+# A chave do blind index do lead em desenvolvimento (TEC-203, D2). Mesmo molde
+# da CHAVE_DE_DESENVOLVIMENTO: commitada de proposito, e recusada em producao.
+# Quem a tiver recalcula a chave de qualquer telefone e acha a conversa dele.
+CHAVE_DO_INDICE_DE_DESENVOLVIMENTO = "dev-indice-do-lead-nao-use-em-producao"
+
 # O piso da RFC 7518, secao 3.2: a chave de HMAC deve ter ao menos o tamanho da
 # saida da funcao -- 32 bytes para SHA-256. Abaixo disso, a assinatura e mais
 # facil de quebrar por forca bruta do que o algoritmo promete, e o `pyjwt` avisa
@@ -116,6 +121,14 @@ class Settings(BaseSettings):
     # conhecida nao produz erro nenhum, ela so deixa de proteger. E nao pode
     # rodar sem tornar a trilha impesquisavel -- ver `auditoria/referencia.py`.
     auditoria_chave_do_lead: str = CHAVE_DO_LEAD_DE_DESENVOLVIMENTO
+
+    # TEC-203, D2. A chave do HMAC que o `conversation_key` guarda no lugar do
+    # telefone. Propria, e nao a de cifra nem a do `lead_ref`: chaves com
+    # funcoes diferentes nao se reaproveitam. O id e a data de criacao, para o
+    # aviso dos 90 dias; trocar esta chave exige `scripts/reindexar_leads.py`
+    # com o servico parado (ver `docs/seguranca/segredos.md`).
+    lead_indice_chave: str = CHAVE_DO_INDICE_DE_DESENVOLVIMENTO
+    lead_indice_chave_id: str = "20260926"
 
     # Sem default utilizavel: chave ausente falha alto na construcao do cliente.
     # Nao precisa da guarda de producao que a chave de cifra tem -- uma chave de
@@ -831,6 +844,19 @@ class Settings(BaseSettings):
                 "AUDITORIA_CHAVE_DO_LEAD esta com o default de desenvolvimento e "
                 f"ENVIRONMENT={self.environment}. Quem a conhece descobre se um "
                 "telefone aparece na trilha de auditoria. Gere uma: "
+                'python -c "import secrets;print(secrets.token_urlsafe(48))"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _recusar_chave_de_indice_de_desenvolvimento_em_producao(self) -> "Settings":
+        """TEC-203. Chave de HMAC publicamente conhecida nao falha: ela so deixa
+        qualquer um recalcular a chave de um telefone e achar a conversa dele."""
+        data_do_id(self.lead_indice_chave_id)
+        if self.em_producao and self.lead_indice_chave == CHAVE_DO_INDICE_DE_DESENVOLVIMENTO:
+            raise ConfiguracaoInsegura(
+                "LEAD_INDICE_CHAVE esta com o default de desenvolvimento e "
+                f"ENVIRONMENT={self.environment}. Gere uma: "
                 'python -c "import secrets;print(secrets.token_urlsafe(48))"'
             )
         return self
