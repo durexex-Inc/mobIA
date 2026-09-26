@@ -643,9 +643,9 @@ ResultadoDoTurno = Literal[
     "provedor_indisponivel",
     # A TEC-207 acrescentou este: o turno que registrou um pedido de titular
     # (acesso ou eliminacao, D3) e confirmou. Nao reuse "opt_out", mesmo
-    # quando o pedido de eliminacao grava opt-out junto: o numero que a LGPD
-    # pede para acompanhar e quantos pedidos de titular chegam, e soma-los ao
-    # opt-out o apagaria.
+    # quando o pedido de eliminacao grava opt-out junto: quantos pedidos de
+    # titular chegam pelo WhatsApp e um numero que o produto quer ler no log
+    # separado de quantos leads so pediram para sair, e soma-los o apagaria.
     "pedido_de_titular",
 ]
 
