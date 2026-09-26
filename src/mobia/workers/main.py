@@ -27,6 +27,7 @@ from mobia.infra.rotacao import avisar_rotacao_vencida
 from mobia.workers.jobs.avisar_cancelamento import avisar_cancelamento
 from mobia.workers.jobs.avisar_confirmacao import avisar_confirmacao
 from mobia.workers.jobs.baixar_midia import MAXIMO_DE_TENTATIVAS, baixar_midia
+from mobia.workers.jobs.eliminar_lead import eliminar_lead
 from mobia.workers.jobs.exportar_crm import exportar_crm
 from mobia.workers.jobs.gerar_resumo import gerar_resumo
 from mobia.workers.jobs.importar_catalogo import importar_catalogo
@@ -369,6 +370,14 @@ class WorkerSettings:
         # `avisada_por_agendamento_id` o registra ele deixa de aparecer na
         # consulta. Retentar nao tem como duplicar aviso.
         func(sweep_lista_de_espera, keep_result=0),
+        # TEC-207. `keep_result=0` pela mesma razao do `process_message`: o
+        # `_job_id` e fixo por solicitacao (`titular:<id>`, ver
+        # `api/routes/titular.py::eliminar`), e uma chave de resultado
+        # sobrevivente bloquearia em silencio um reenqueue legitimo -- por
+        # exemplo, um segundo `DELETE` sobre a mesma solicitacao ainda ABERTA
+        # depois de o job anterior ter terminado. Nao entra em `cron_jobs`:
+        # quem dispara este job e a rota, nunca o relogio.
+        func(eliminar_lead, keep_result=0),
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
