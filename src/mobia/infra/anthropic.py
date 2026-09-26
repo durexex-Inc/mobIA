@@ -189,11 +189,13 @@ def segundos_do_modelo_no_pior_turno() -> float:
     Existe para entrar na soma de `tests/unit/test_orcamento_do_turno.py`, que
     a compara com o `job_timeout` do worker.
 
-    **Sao duas parcelas com naturezas diferentes, e por isso a conta nao e uma
+    **Sao parcelas com naturezas diferentes, e por isso a conta nao e uma
     soma so.** As requisicoes de `_pior_turno()` tem teto POR REQUISICAO, e
     uma retentativa as repete -- por isso o multiplicador. A montagem tem um
     relogio de FASE, e uma retentativa dentro dela ja esta limitada por esse
-    relogio: multiplica-lo contaria duas vezes o que ele conta uma.
+    relogio: multiplica-lo contaria duas vezes o que ele conta uma. Desde a
+    TEC-209 as chamadas principais tem o segundo relogio de fase,
+    `PRAZO_DA_RESPOSTA_SEGUNDOS`, que entra do mesmo jeito que a montagem.
 
     **E so a parcela da Anthropic, e o nome diz isso de proposito.** O turno
     paga outros tres clientes externos -- o embed da busca (`infra/embeddings.py`),

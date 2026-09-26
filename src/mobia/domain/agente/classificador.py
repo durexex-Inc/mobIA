@@ -1071,7 +1071,10 @@ class ClassificadorAnthropic:
         percebesse, e o piso e 60s -- mais que o dobro do maior teto do turno.
         Sem default, esquecer e erro de tipo, que o mypy pega antes do merge.
         Ele vale POR REQUISICAO, e o laco abaixo pode fazer duas: uma fatia com
-        busca custa ate `2 * timeout`, e e assim que `_pior_turno()` a conta.
+        busca custa ate `2 * timeout`. `_pior_turno()` contava assim as fatias
+        principais ate a TEC-209; desde ela, elas passam por
+        `_chamar_principal`, que as limita pelo prazo agregado do turno, e so
+        a reacao continua contada por requisicao.
         """
         comeco = time.monotonic()
         conteudo_do_turno = montar_prompt(contexto, omitir_sistema=True)
