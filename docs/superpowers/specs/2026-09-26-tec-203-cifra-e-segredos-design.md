@@ -122,7 +122,7 @@ Regra: **o telefone em claro só existe em memória, no instante em que sai do p
 | Dashboard, busca | Normaliza o termo; compara `vinculos_de_sessao.telefone_indice` com `indice_de_telefone` e o `conversation_key` com `chave_de` das duas grafias do `wa_id` (com e sem o 9). Só número completo |
 | Absorção web→WhatsApp (`identidade/absorcao.py`) | Revela o `wa_id`, normaliza como hoje e consulta os vínculos por `indice_de_telefone` |
 | Rotas com o par (`/assumir`, `/devolver`, auditoria `?conversationKey=`) | **Sem mudança**: o par que elas recebem passa a ser pseudônimo, e o telefone sai da query string por consequência |
-| `admin/reativar.py --key` | Aceita o telefone e calcula a chave — ferramenta de operador |
+| `admin/reativar.py --key` | Aceita o telefone e calcula a chave — ferramenta de operador. **Só grava para chave que tem identidade** (corrigido na implementação): no WhatsApp tenta os dígitos como vieram e as duas grafias do número normalizado, com e sem o 9; sem identidade em nenhuma, ou com as duas grafias como conversas distintas e nenhuma exata, recusa com código de saída 1 e não grava nada |
 | Entrada | `registrar` antes de persistir em `messages/service.py::IngestionService._persist` e em `api/routes/widget.py`; o rate limit de `messages/service.py::IngestionService.ingest` passa a usar a chave |
 | Redis de rate limit | Chaves passam a usar o HMAC; as antigas expiram sozinhas |
 | Logs | Máscara inalterada; mascarar pseudônimo é inofensivo |
