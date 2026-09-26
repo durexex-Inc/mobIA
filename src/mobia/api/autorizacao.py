@@ -198,9 +198,9 @@ def identidade_da_requisicao(
     """Quem chamou, pelos dois caminhos aceitos hoje, nesta ordem.
 
     O JWT vem primeiro para que uma requisicao que traga os dois seja atribuida
-    a PESSOA, e nao ao token anonimo -- caso real enquanto o painel migra
-    (TEC-309) e o unico em que a ordem muda alguma coisa: o que ela decide e o
-    que sai no log.
+    a PESSOA, e nao ao token anonimo -- o unico caso em que a ordem muda alguma
+    coisa: o que ela decide e o que sai no log. O painel deixou de mandar o
+    token na TEC-309; o ramo dele fica ate a TEC-382 o apagar.
     """
     return _do_jwt(authorization) or _do_token_compartilhado(x_admin_token)
 

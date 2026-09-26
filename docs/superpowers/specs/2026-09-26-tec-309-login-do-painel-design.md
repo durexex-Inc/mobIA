@@ -7,7 +7,7 @@
 
 ## O que a card pede e o que existe para atendê-la
 
-A card foi escrita para OIDC com Authorization Code + PKCE, executado pelo Auth.js no BFF. **Esse provedor não existe.** Na TEC-201, o Eduardo escolheu senha local + TOTP em 24/09/2026 — é a Emenda E-01 à RNF-11 —, e o que o backend oferece são cinco rotas: `login`, `mfa`, `refresh`, `logout` e `me`, em `src/mobia/api/routes/auth.py`. Elas devolvem os tokens **no corpo da resposta**.
+A card foi escrita para OIDC com Authorization Code + PKCE, executado pelo Auth.js no BFF. **Esse provedor não existe.** Na TEC-201, o Eduardo escolheu senha local + TOTP em 24/09/2026 — é a Emenda E-01 à RNF-11, que esta card levou ao SRS —, e o que o backend oferece são cinco rotas: `login`, `mfa`, `refresh`, `logout` e `me`, em `src/mobia/api/routes/auth.py`. Elas devolvem os tokens **no corpo da resposta**.
 
 Então esta card é o outro lado dessas rotas: um formulário de login no Next, uma etapa de código TOTP para quem é ADMIN, e uma sessão guardada no servidor. As regras de negócio da card que não dependem de OIDC continuam valendo sem mudança:
 
@@ -115,4 +115,4 @@ O access token e o refresh token não entram nessa varredura porque não existem
 | recusar destino externo após o login | `destinoSeguro` (D6), com um teste por forma de ataque |
 | bloquear administrador sem segundo fator | o `403` de `/auth/login` vira a mensagem da tela; teste do `/login/entrar` |
 
-**Sem emenda ao SRS do agente.** O contrato desta card é o SRS do frontend, que não está versionado no repo (a TEC-302 já registrou isso). A divergência OIDC → senha + TOTP já está na Emenda E-01 à RNF-11 e não precisa de outra.
+**Emenda E-03 à RNF-11, e duas que faltavam.** O contrato desta card é o SRS do frontend, que não está versionado no repo (a TEC-302 já registrou isso). Do SRS do agente, ela toca a RNF-11: a Emenda E-02 da TEC-201 dizia que esta card fecharia a convivência com o `X-Admin-Token`, e ela fecha só a metade do navegador (L1) — é a E-03. **As Emendas E-01 e E-02 à RNF-11, da TEC-201, não estavam no SRS.** Foram decididas e escritas no desenho da TEC-201, e o comentário de merge daquela card as dá por feitas, mas o documento nunca as recebeu — achado ao procurar onde pôr a E-03. Entram agora, com o texto e a data de lá, e a E-03 registra isso.
