@@ -13,9 +13,10 @@ TEC-206.
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import DateTime, Index, SmallInteger, String, text
+from sqlalchemy import DateTime, Index, Numeric, SmallInteger, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -39,6 +40,10 @@ class VersaoDaConfiguracao(Base):
     # inteiras e nao segundos: e a granularidade que a RN-13.1 escreve, e o
     # que a tela mostra.
     cadencia: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # TEC-191, D3. O orcamento MENSAL de IA, em dolares; nulo e "sem orcamento",
+    # e sem orcamento o painel de custo nao acende alerta nenhum. Nulo nas
+    # linhas anteriores a `0060`, que e o que elas de fato diziam.
+    orcamento_mensal_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     autor: Mapped[str] = mapped_column(String(120), nullable=False)
     # `clock_timestamp()` e nao `now()`: duas edicoes na mesma transacao de
     # teste sairiam com o mesmo instante, e "a mais recente" deixaria de ser

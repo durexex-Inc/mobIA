@@ -19,6 +19,7 @@ sao os valores do enum, e `followup/cadencia.py` faz a ponte.
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
@@ -83,6 +84,9 @@ class ConfiguracaoDoAgente:
     teto_de_perguntas: int
     pesos: Pesos
     cadencia: Mapping[str, tuple[timedelta, ...]] = field(default_factory=dict)
+    # TEC-191, D3. Mensal, em dolares; o painel de custo o faz proporcional ao
+    # periodo consultado. Nulo no padrao: nao ha orcamento que valha inventar.
+    orcamento_mensal_usd: Decimal | None = None
 
 
 def padrao() -> ConfiguracaoDoAgente:
@@ -110,6 +114,11 @@ PESO_MAXIMO = 50  # a card recusa negativo; 50 impede um fator so de decidir
 SOMA_MAXIMA_DOS_PESOS = 100  # os cortes 70/40 de temperatura supoem 0..~100
 INTERVALO_MINIMO_DA_CADENCIA = timedelta(hours=1)
 INTERVALO_MAXIMO_DA_CADENCIA = timedelta(days=90)
+# TEC-191, D3. O piso e o centavo; o teto e so contra o digito a mais -- um
+# orcamento de um milhao por mes numa POC e erro de digitacao, e com ele o
+# alerta nunca acenderia.
+ORCAMENTO_MINIMO = Decimal("0.01")
+ORCAMENTO_MAXIMO = Decimal("100000")
 
 
 def validar(config: ConfiguracaoDoAgente) -> ConfiguracaoDoAgente:
@@ -171,6 +180,13 @@ def validar(config: ConfiguracaoDoAgente) -> ConfiguracaoDoAgente:
             erros.append(f"cadencia {temperatura}: os intervalos tem de ser crescentes")
     if set(config.cadencia) - set(referencia):
         erros.append("cadencia com temperatura desconhecida")
+
+    orcamento = config.orcamento_mensal_usd
+    if orcamento is not None and not ORCAMENTO_MINIMO <= orcamento <= ORCAMENTO_MAXIMO:
+        erros.append(
+            f"orcamento mensal {orcamento} fora da faixa {ORCAMENTO_MINIMO}..{ORCAMENTO_MAXIMO}; "
+            "use null para nao ter orcamento"
+        )
 
     if erros:
         raise ConfiguracaoInvalida("; ".join(erros))
