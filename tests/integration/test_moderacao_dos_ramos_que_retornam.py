@@ -5,12 +5,13 @@ retornam antes dele. A fala que disparava qualquer uma delas nunca era
 moderada: `bloqueada_em` ficava nulo e os leitores dessa coluna a tratavam
 como fala legitima.
 
-O que este arquivo prova, parametrizado nos cinco ramos (silenciado,
-atendimento humano, fora de escopo, opt-out e pedido de humano): a marca, a
+O que este arquivo prova, parametrizado nos ramos que retornam (os cinco da
+TEC-297 -- silenciado, atendimento humano, fora de escopo, opt-out e pedido de
+humano -- e o pedido de titular, que a TEC-207 acrescentou): a marca, a
 auditoria no mesmo commit (TEC-142), e a AUSENCIA em `literais_apos` -- a
 funcao de producao por onde todo contexto e todo resumo passam, e por isso a
 prova de que a fala nao chega ao prompt nem ao resumo permanente (TEC-236).
-Tambem prova que nenhum dos cinco ramos entrega a recusa de entrada (D2), que
+Tambem prova que nenhum desses ramos entrega a recusa de entrada (D2), que
 o handoff existe antes de a moderacao ser chamada (CA-04.3) e que o
 fail-open nao custa a acao do ramo. `test_mensagem_sem_corpo_nao_paga_moderacao`
 prova que audio/imagem/documento nao pagam moderacao nenhuma.
@@ -62,7 +63,7 @@ async def _preparar_silenciado(session, **_):
 
 
 async def _preparar_atendimento_humano(session, *, semear_corretor, **_):
-    """Ramo #2: handoff ja assumido. O de maior volume dos cinco."""
+    """Ramo #2: handoff ja assumido. O de maior volume dos ramos."""
     from mobia.domain.atendimento.repositorio import assumir
 
     corretor = await semear_corretor(email=f"corretor-{uuid.uuid4().hex[:8]}@ex.com")
@@ -102,17 +103,23 @@ async def _preparar_pedido_de_humano(session, **_):
     return TEXTO_REPROVAVEL
 
 
-OS_CINCO_RAMOS = [
+async def _preparar_pedido_de_titular(session, **_):
+    """Ramo #6 (TEC-207): a propria fala pede para apagar os dados."""
+    return "quero apagar meus dados"
+
+
+OS_RAMOS_QUE_RETORNAM = [
     ("silenciado", _preparar_silenciado),
     ("atendimento_humano", _preparar_atendimento_humano),
     ("fora_de_escopo", _preparar_fora_de_escopo),
     ("opt_out", _preparar_opt_out),
     ("pedido_de_humano", _preparar_pedido_de_humano),
+    ("pedido_de_titular", _preparar_pedido_de_titular),
 ]
 
 
-@pytest.mark.parametrize("desfecho_esperado,preparar", OS_CINCO_RAMOS)
-async def test_fala_reprovavel_e_marcada_e_sai_da_janela_nos_cinco_ramos(
+@pytest.mark.parametrize("desfecho_esperado,preparar", OS_RAMOS_QUE_RETORNAM)
+async def test_fala_reprovavel_e_marcada_e_sai_da_janela_nos_ramos_que_retornam(
     session: AsyncSession,
     classificador_fake,
     outbound_fake,
@@ -185,8 +192,8 @@ async def test_fala_reprovavel_e_marcada_e_sai_da_janela_nos_cinco_ramos(
     )
 
 
-@pytest.mark.parametrize("desfecho_esperado,preparar", OS_CINCO_RAMOS)
-async def test_nenhum_dos_cinco_ramos_entrega_recusa(
+@pytest.mark.parametrize("desfecho_esperado,preparar", OS_RAMOS_QUE_RETORNAM)
+async def test_nenhum_dos_ramos_que_retornam_entrega_recusa(
     session: AsyncSession,
     classificador_fake,
     outbound_fake,
@@ -304,7 +311,7 @@ async def test_o_handoff_existe_antes_de_a_moderacao_ser_chamada(
     )
 
 
-@pytest.mark.parametrize("desfecho_esperado,preparar", OS_CINCO_RAMOS)
+@pytest.mark.parametrize("desfecho_esperado,preparar", OS_RAMOS_QUE_RETORNAM)
 async def test_moderacao_indisponivel_nao_impede_a_acao_do_ramo(
     session: AsyncSession,
     classificador_fake,
@@ -317,7 +324,8 @@ async def test_moderacao_indisponivel_nao_impede_a_acao_do_ramo(
     desfecho_esperado: str,
     preparar,
 ) -> None:
-    """Fail-open: provedor caido nao pode custar o opt-out nem o handoff.
+    """Fail-open: provedor caido nao pode custar o opt-out, o handoff nem o
+    pedido de titular.
 
     A consequencia e honesta e esta declarada: provedor fora do ar significa
     fala nao moderada entrando no contexto, como ja acontece no turno normal.
