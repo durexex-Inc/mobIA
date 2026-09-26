@@ -14,9 +14,9 @@ A card junta sete frentes de natureza diferente. Esta entrega o **núcleo de dir
 - retenção (24 e 12 meses);
 - auditoria das ações.
 
-**Viram cards próprias, no backlog:**
-- a redação de dado sensível antes da persistência;
-- a pseudonimização antes do LLM.
+**Viram cards próprias, no backlog** (TEC-380 e TEC-381):
+- a redação de dado sensível antes da persistência (TEC-380);
+- a pseudonimização antes do LLM (TEC-381).
 
 As duas dependem de detectar conteúdo no texto livre do lead, e isso é outro problema, com outro custo e outro teste. Há uma constatação que muda o tamanho da segunda: **o sistema não guarda o nome do lead**. Não há tabela de lead, e `messages.envelope_context` não tem escritor. O único nome que chega ao modelo é o que o lead digita.
 
@@ -115,7 +115,7 @@ Ações novas no vocabulário da trilha, com migration que recria o CHECK (molde
 
 ## O que a card não entrega
 
-- **Redação de dado sensível e pseudonimização antes do LLM:** cards filhas.
+- **Redação de dado sensível e pseudonimização antes do LLM:** TEC-380 e TEC-381.
 - **O CRM externo:** o que já foi exportado para ele (`workers/jobs/exportar_crm.py`) não é apagado por nós. A eliminação no CRM é do operador do CRM.
 - **Consentimento no WhatsApp:** não existe, e a RNF-19 o exige para follow-up após o encerramento. Fica como lacuna registrada; o follow-up de hoje (`sweep_followups`) não o consulta.
 - **Papel de DPO:** não existe; `ATENDER_TITULAR` fica com o ADMIN.
@@ -139,8 +139,8 @@ Ações novas no vocabulário da trilha, com migration que recria o CHECK (molde
 | Exportar os dados em formato portável | Exercitado |
 | Eliminação remove o dado pessoal e preserva a métrica | Exercitado, com o funil e o custo comparados antes e depois |
 | Pedido pelo próprio WhatsApp é reconhecido | Exercitado |
-| Dado sensível é redigido | **Card filha** |
-| Pseudonimização antes do envio ao modelo | **Card filha** |
+| Dado sensível é redigido | **TEC-380** |
+| Pseudonimização antes do envio ao modelo | **TEC-381** |
 | Consentimento de marketing com evidência | Já atendido pela TEC-363 (web); nada muda |
 
 ## Emendas ao SRS
