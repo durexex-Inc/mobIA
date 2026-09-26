@@ -36,7 +36,8 @@ class Cursor:
     exatamente o que o quarto cenario do Gherkin verifica.
 
     **O desempate viajava como o par `(channel, conversation_key)` ate a
-    TEC-195**, e o par e o telefone do lead no WhatsApp. `codificar` e base64,
+    TEC-195**, e o par era o telefone do lead no WhatsApp (ate a TEC-203, que
+    o trocou pelo HMAC do telefone). `codificar` e base64,
     que qualquer um decodifica, entao `proximoCursor` entregava o telefone a
     quem nao pode le-lo -- o mesmo vazamento do `conversationKey` no item, por
     um campo em que ninguem olhava. Agora viaja o apelido opaco de

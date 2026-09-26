@@ -39,11 +39,15 @@ class RateLimitEvent(Base):
 
     escopo: Mapped[str] = mapped_column(String(8), nullable=False)
 
-    # O numero do lead no escopo `numero`, o IP no escopo `ip`. Inteiro, e nao
-    # mascarado: esta tabela e a evidencia que responde "quem foi" numa
-    # investigacao. Quem sai mascarado e o LOG, que vai para agregador e fica
-    # muito mais exposto -- `ip` esta em `_CHAVES_MASCARADAS`
-    # (`app/logging.py`) pelo mesmo motivo que `conversation_key` ja estava.
+    # A chave do lead no escopo `numero`, o IP no escopo `ip`. Desde a TEC-203
+    # a chave do escopo `numero` e o `conversation_key` (o HMAC de
+    # `identidade/indice.py::chave_de`), e nao o numero: o numero se recupera
+    # pela identidade do lead (`indice.revelar`), e a reindexacao troca esta
+    # coluna junto com as demais. Inteiro, e nao mascarado: esta tabela e a
+    # evidencia que responde "quem foi" numa investigacao. Quem sai mascarado
+    # e o LOG, que vai para agregador e fica muito mais exposto -- `ip` esta em
+    # `_CHAVES_MASCARADAS` (`app/logging.py`) pelo mesmo motivo que
+    # `conversation_key` ja estava.
     chave: Mapped[str] = mapped_column(String(64), nullable=False)
 
     channel: Mapped[str] = mapped_column(String(32), nullable=False)

@@ -96,9 +96,10 @@ def marca_do_aad(aad: str) -> str:
     mascara de PII do projeto so caminha por campos estruturados -- nunca por
     dentro de uma string de excecao. E a mesma razao do `hide_parameters=True`
     em `db.py`. Desde o TEC-127 nem todo AAD e um UUID: `aad_do_resumo` monta a
-    identidade a partir de `(channel, conversation_key)`, e `conversation_key` e
-    o telefone do lead. A marca curta mantem o valor de diagnostico -- duas
-    falhas do mesmo AAD correlacionam -- sem carregar o identificador.
+    identidade a partir de `(channel, conversation_key)`, e `conversation_key`
+    era o telefone do lead (desde a TEC-203 e o HMAC dele, que continua sendo
+    pseudonimo estavel do lead). A marca curta mantem o valor de diagnostico --
+    duas falhas do mesmo AAD correlacionam -- sem carregar o identificador.
 
     **E HMAC, e nao hash simples, porque hash simples aqui nao pseudonimiza.**
     Ate a TEC-226 isto era `sha256(aad)` sem sal. Um telefone brasileiro tem

@@ -28,6 +28,13 @@ alteracao -- e a RNF-18, que pede 12 meses, pede que apagar seja possivel.
 Bloquear os dois obrigaria a retencao a passar por um caminho privilegiado que
 nao existe neste repo.
 
+**Excecao (TEC-203):** a reindexacao do lead desliga esta trigger na propria
+transacao para trocar o pseudonimo do lead -- ver `domain/identidade/reindexacao.py`.
+Trocar o pseudonimo nao altera o fato registrado.
+
+E aqui a troca e tambem a que tira o telefone em claro da trilha: antes
+da 0058, `conversation_key` guardava o `wa_id`.
+
 Revision ID: 0012
 Revises: 0011
 """

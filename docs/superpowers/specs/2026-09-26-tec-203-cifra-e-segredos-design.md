@@ -1,6 +1,6 @@
 # TEC-203 — Cifrar o dado pessoal do lead e proteger os segredos
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** implementado, PR aberto
 **Card:** [TEC-203](https://eduardodurieuxlopes.atlassian.net/browse/TEC-203) — épico TEC-200
 **Branch:** `feat/tec-203-cifra-e-segredos`
 **Origem:** RNF-13, RNF-14 e RT-08 do SRS v1.0 (`docs/srs/srs-agente-sdr-imobiliario-v1.0.md`).

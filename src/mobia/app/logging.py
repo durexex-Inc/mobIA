@@ -55,10 +55,12 @@ _CHAVES_LIVRES = frozenset(
     }
 )
 
-# Identificador do interlocutor. Hoje e sempre telefone brasileiro e a corrida
-# de digitos pega por acidente; o widget web do TEC-124 vai trazer id de sessao
-# ou e-mail, que nao sao digitos. Mascarar pela chave torna a garantia
-# estrutural em vez de dependente do formato do canal.
+# Identificador do interlocutor. Desde a TEC-203 o `conversation_key` (e a
+# ponta do lead em sender/recipient) e o HMAC do telefone ou da sessao
+# (`identidade/indice.py::chave_de`), e nao o valor cru -- mascarar um
+# pseudonimo e inofensivo. A mascara continua pela chave, e nao pelo formato,
+# porque a garantia tem de ser estrutural: a corrida de digitos so pegava o
+# telefone por acidente, e nao pega sessao nem e-mail.
 #
 # `ip` (TEC-205) entra pelo mesmo argumento, e de forma ainda mais clara: a
 # corrida de digitos NAO pega um IPv4, porque os pontos a quebram. A tabela
