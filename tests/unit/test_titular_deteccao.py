@@ -14,6 +14,11 @@ from mobia.domain.titular.vocabulario import TipoDeSolicitacao
         "deletem os meus dados",
         "podem esquecer meus dados?",
         "quero que apaguem todos os meus dados pessoais",
+        # Achado da segunda revisao: o veto de qualificador de imovel e SO por
+        # colagem ao objeto, entao um imovel/apartamento mencionado em outra
+        # parte da mesma mensagem nao apaga um pedido explicito de eliminacao.
+        "apaguem meus dados e parem de mandar imóveis",
+        "quero apagar meus dados, não quero mais apartamento",
     ],
 )
 def test_pedido_de_eliminacao(texto: str) -> None:
@@ -27,6 +32,9 @@ def test_pedido_de_eliminacao(texto: str) -> None:
         "quais dados vocês têm de mim?",
         "quero ver os meus dados",
         "me mandem uma cópia dos meus dados",
+        # Mesmo achado do teste de eliminacao acima, do lado do acesso: o
+        # apartamento nao esta colado ao objeto de dados, entao nao veta.
+        "quero meus dados, e também ver o apartamento",
     ],
 )
 def test_pedido_de_acesso(texto: str) -> None:

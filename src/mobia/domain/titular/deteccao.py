@@ -13,19 +13,32 @@ e podem concordar ou nao -- o teste de precedencia (`test_titular_deteccao.py`)
 verifica so que `pedido_de_titular` ignora o que `pediu_optout` decide, e
 vice-versa; nenhum dos dois consulta o outro.
 
-**Colisao com pergunta sobre o IMOVEL, e o mesmo principio.** "Dados" perto de
-um substantivo de imovel/anuncio ("do imovel", "do condominio", "da casa", "do
-apartamento", "do anuncio") e assunto do imovel, nao do titular, mesmo quando a
-frase tambem contem "meus" ou "que voces tem" -- achado de revisao (TEC-207):
-"quais dados que voces tem do condominio?" e "quais dados que voces tem a
-respeito do imovel anunciado?" casavam `_OBJETO_DE_DADOS_DO_LEAD` sem essa
-guarda, porque "dados que voces tem" e substring livre, sem nada que exija que
-os dados sejam os do PROPRIO lead. A guarda e uma lista pequena de
-qualificadores de imovel (`_QUALIFICADORES_DE_IMOVEL`), nao excecoes uma a uma:
-qualquer um deles perto de "dados" derruba o casamento inteiro, incluindo
-"meus dados do imovel" -- o qualificador de imovel pesa mais que "meus" porque
-o assunto da frase e o IMOVEL, e o "meus" ali e so posse gramatical ("os dados
-[que eu tenho] do imovel"), nao o titular pedindo os proprios dados pessoais.
+**Colisao com pergunta sobre o IMOVEL, e o veto e SO POR COLAGEM, nunca pela
+mensagem inteira.** "Dados" seguido de perto por um substantivo de
+imovel/anuncio ("do imovel", "do condominio", "da casa", "do apartamento", "do
+anuncio") e assunto do imovel, nao do titular -- mesmo quando a mesma frase
+tambem contem "meus" ou "que voces tem": "quais dados que voces tem do
+condominio?" e "quais dados que voces tem a respeito do imovel anunciado?"
+sao `None`, porque o substantivo de imovel esta COLADO ao objeto de dados
+(achado da primeira revisao, TEC-207).
+
+**Mas a mesma mensagem pode falar de dados E de imovel em partes
+independentes, e ai o veto NAO pode alcancar** -- achado da segunda revisao:
+`"apaguem meus dados e parem de mandar imoveis"` e `"quero apagar meus dados,
+nao quero mais apartamento"` sao pedidos explicitos de ELIMINACAO cujo
+"imoveis"/"apartamento" fala de OUTRO assunto (o que o lead nao quer mais
+receber), nao do "dados". Um veto que olhasse a mensagem inteira, como a
+primeira versao deste modulo fazia, apagava os dois -- e um pedido legal
+perdido e pior que uma pergunta sobre o imovel deixada passar. Por isso o veto
+mede DISTANCIA a partir do fim do objeto casado (`_OBJETO_DE_DADOS_DO_LEAD`):
+so vale quando o substantivo de imovel aparece a no maximo 4 palavras dali E
+colado a uma preposicao (`do`/`da`/`dos`/`das`/`sobre`/`de`) IMEDIATAMENTE
+antes dele, sem recheio entre a preposicao e o substantivo. O recheio entre o
+objeto e a preposicao existe para alcancar "dados QUE VOCES TEM do
+condominio" e "dados QUE VOCES TEM A RESPEITO DO imovel"; a falta de recheio
+entre a preposicao e o substantivo existe para NAO alcancar "parem DE MANDAR
+imoveis" -- ali "de" e preposicao do verbo "mandar", nao do substantivo de
+imovel, e um recheio ali reabriria o mesmo defeito que esta revisao fechou.
 """
 
 import re
@@ -48,10 +61,10 @@ _OBJETO_DE_DADOS_DO_LEAD = re.compile(
     r"|dados que voces tem"
 )
 
-# Substantivos que, do lado de "dados", trocam o assunto de titular para
-# imovel/anuncio. Lista pequena e generica de proposito -- ver o paragrafo
-# acima no docstring do modulo -- em vez de excecao caso a caso para cada
-# frase que a revisao achasse.
+# Substantivos que, colados ao objeto de dados por uma preposicao, trocam o
+# assunto de titular para imovel/anuncio. Lista pequena e generica de
+# proposito -- ver o docstring do modulo -- em vez de excecao caso a caso para
+# cada frase que a revisao achasse.
 _QUALIFICADORES_DE_IMOVEL: tuple[str, ...] = (
     "imovel",
     "imoveis",
@@ -64,21 +77,43 @@ _QUALIFICADORES_DE_IMOVEL: tuple[str, ...] = (
     "anuncio",
     "anuncios",
 )
-_QUALIFICADOR_DE_IMOVEL = re.compile(r"\b(?:" + "|".join(_QUALIFICADORES_DE_IMOVEL) + r")\b")
+
+# Preposicoes que colam um substantivo de imovel ao objeto ("dados DO
+# condominio", "dados DE imoveis", "dados SOBRE o imovel"). So estas -- um
+# substantivo de imovel introduzido por outra coisa ("mandar imoveis", "mais
+# apartamento") nao caracteriza colagem ao objeto de dados.
+_PREPOSICOES_DE_QUALIFICADOR: tuple[str, ...] = ("do", "da", "dos", "das", "sobre", "de")
+
+# Colado ao FIM do objeto casado (nao a mensagem inteira): ate 4 palavras de
+# recheio entre o objeto e a preposicao -- o bastante para "dados QUE VOCES
+# TEM do condominio" e "dados QUE VOCES TEM A RESPEITO DO imovel" --, e ZERO
+# recheio entre a preposicao e o substantivo -- para NAO alcancar "parem DE
+# MANDAR imoveis", onde "de" e preposicao do verbo "mandar" e nao do
+# substantivo de imovel. Ver o docstring do modulo para os dois achados de
+# revisao que fixaram esta forma.
+_QUALIFICADOR_COLADO_AO_OBJETO = re.compile(
+    r"(?:\s+\w+){0,4}?"
+    r"\s+(?:" + "|".join(_PREPOSICOES_DE_QUALIFICADOR) + r")"
+    r"\s+(?:" + "|".join(_QUALIFICADORES_DE_IMOVEL) + r")\b"
+)
 
 
 def _fala_de_dados_do_lead(normalizado: str) -> bool:
     """Se a mensagem fala dos dados do PROPRIO lead, e nao do imovel/anuncio.
 
     Casar `_OBJETO_DE_DADOS_DO_LEAD` e necessario mas nao suficiente: um
-    qualificador de imovel na mesma mensagem ("do condominio", "do imovel
-    anunciado") deixa claro que "dados" e do IMOVEL, mesmo quando a mesma
-    frase tambem contem "meus" ou "que voces tem" -- ver o docstring do
-    modulo para os dois casos que a revisao achou.
+    qualificador de imovel COLADO ao fim do objeto ("do condominio", "do
+    imovel anunciado") deixa claro que "dados" e do IMOVEL, mesmo quando a
+    mesma frase tambem contem "meus" ou "que voces tem". A colagem se mede a
+    partir do FIM do objeto casado, nao da mensagem inteira -- um qualificador
+    de imovel em outra parte da mensagem (outro assunto, nao os "dados") nao
+    veta. Ver o docstring do modulo para os casos que fixaram esta forma.
     """
-    if not _OBJETO_DE_DADOS_DO_LEAD.search(normalizado):
+    objeto = _OBJETO_DE_DADOS_DO_LEAD.search(normalizado)
+    if not objeto:
         return False
-    return _QUALIFICADOR_DE_IMOVEL.search(normalizado) is None
+    resto = normalizado[objeto.end() :]
+    return _QUALIFICADOR_COLADO_AO_OBJETO.match(resto) is None
 
 
 # Stems, de proposito: cada um casa varias conjugacoes ("apagar", "apague",
