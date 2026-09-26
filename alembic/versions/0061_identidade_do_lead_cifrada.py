@@ -10,13 +10,17 @@ tem a chave.
 
 **Lista de tabelas copiada, e nao importada** de `reindexacao.TABELAS_COM_CHAVE_DE_LEAD`:
 migration aplicada nao muda quando o codigo muda, e uma tabela criada depois
-da 0058 nao existe ainda quando ela roda num banco novo.
+da 0061 nao existe ainda quando ela roda num banco novo.
 
 **Desliga e religa as triggers de imutabilidade** das tres trilhas -- ver a
 docstring de `domain/identidade/reindexacao.py`.
 
-Revision ID: 0058
-Revises: 0057
+Nasceu 0058 e virou 0061 no merge com a `main`, que ganhou a 0058, a 0059 e a
+0060 (TEC-198, TEC-199, TEC-191) antes. Nenhuma das tres cria tabela com
+`conversation_key`, entao a lista abaixo nao mudou.
+
+Revision ID: 0061
+Revises: 0060
 """
 
 import sqlalchemy as sa
@@ -29,8 +33,8 @@ from mobia.domain.identidade.models import aad_do_vinculo
 from mobia.domain.identidade.reindexacao import reindexar
 from mobia.infra.crypto import decrypt, encrypt
 
-revision = "0058"
-down_revision = "0057"
+revision = "0061"
+down_revision = "0060"
 branch_labels = None
 depends_on = None
 

@@ -4,7 +4,7 @@
 
 **Goal:** cifrar o telefone do lead com blind index, abrir rotação de chave, exigir TLS em produção, ler segredos só de ambiente/arquivo montado e bloquear segredo commitado com gitleaks.
 
-**Architecture:** o `conversation_key` de 20 tabelas passa a guardar `HMAC(LEAD_INDICE_CHAVE, "channel:valor_cru")`; o valor cru vive cifrado em `identidades_de_lead` e só é revelado nas bordas que precisam dele (envio WhatsApp, CRM, e-mail de agendamento, dashboard). A chave de conteúdo vira keyring com blob v2 (`versão ‖ id ‖ nonce ‖ ct ‖ tag`). A migration `0058` e o script de rotação usam o mesmo núcleo de reindexação.
+**Architecture:** o `conversation_key` de 20 tabelas passa a guardar `HMAC(LEAD_INDICE_CHAVE, "channel:valor_cru")`; o valor cru vive cifrado em `identidades_de_lead` e só é revelado nas bordas que precisam dele (envio WhatsApp, CRM, e-mail de agendamento, dashboard). A chave de conteúdo vira keyring com blob v2 (`versão ‖ id ‖ nonce ‖ ct ‖ tag`). A migration `0061` e o script de rotação usam o mesmo núcleo de reindexação.
 
 **Tech Stack:** Python 3.13, FastAPI, SQLAlchemy 2.1 async, Alembic, ARQ 0.28, pydantic-settings 2.15, `cryptography` (AESGCM), GitHub Actions, gitleaks.
 
@@ -17,7 +17,7 @@
 - Comentário explica o porquê; comentário que o código desmente é defeito.
 - Citação de código em `.md` por âncora `arquivo.py::Nome`, **nunca** por número de linha em linha nova; `./.venv/Scripts/python.exe scripts/comentarios_tocados.py --checar` antes do PR.
 - Commits: `tipo(TEC-203): o que passou a ser verdade`, sem acento no assunto, terminando com `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
-- Migration nova: `0058`, `down_revision = "0057"`. Listas copiadas na migration são **literais** (migration aplicada não muda quando o código muda).
+- Migration nova: `0061`, `down_revision = "0060"`. Listas copiadas na migration são **literais** (migration aplicada não muda quando o código muda).
 - Nada muda fora de produção em TLS: compose local sem TLS.
 - Unitários sem Docker: `./.venv/Scripts/python.exe -m pytest tests/unit`. Integração exige `docker compose up -d`.
 - Suíte inteira UMA vez no fim (Task 11), por blocos se o `-n 8` derrubar o Postgres (ver `CLAUDE.md`).
@@ -46,7 +46,7 @@
 | `src/mobia/infra/rotacao.py` (novo) | aviso dos 90 dias | 5 |
 | `src/mobia/domain/identidade/models.py` | `IdentidadeDeLead`; `VinculoDeSessao` cifrado | 6 |
 | `src/mobia/domain/identidade/reindexacao.py` (novo) | núcleo da reindexação (sync, sobre `Connection`) | 6 |
-| `alembic/versions/0058_identidade_do_lead_cifrada.py` (novo) | tabela, backfill, vínculos | 6 |
+| `alembic/versions/0061_identidade_do_lead_cifrada.py` (novo) | tabela, backfill, vínculos | 6 |
 | `scripts/reindexar_leads.py` (novo) | rotação da chave de índice / do `lead_ref` | 6 |
 | `src/mobia/domain/messages/service.py`, `api/routes/widget.py`, `identidade/repositorio.py` | entrada | 7 |
 | `outbound/whatsapp.py`, `crm/payload.py`, `workers/jobs/exportar_crm.py`, `agendamento/mensagens.py`, `confirmacao.py`, `cancelamento.py`, `leads/repositorio.py`, `identidade/absorcao.py`, `admin/reativar.py` | bordas | 8 |
@@ -941,11 +941,11 @@ git commit -m "feat(TEC-203): a chave do lead e o HMAC do valor cru e chave venc
 
 ---
 
-### Task 6: identidade do lead, migration `0058` e reindexação
+### Task 6: identidade do lead, migration `0061` e reindexação
 
 **Files:**
 - Modify: `src/mobia/domain/identidade/models.py` (acrescentar `IdentidadeDeLead`; `VinculoDeSessao` cifrado), `src/mobia/domain/identidade/indice.py` (funções de banco)
-- Create: `src/mobia/domain/identidade/reindexacao.py`, `alembic/versions/0058_identidade_do_lead_cifrada.py`, `scripts/reindexar_leads.py`
+- Create: `src/mobia/domain/identidade/reindexacao.py`, `alembic/versions/0061_identidade_do_lead_cifrada.py`, `scripts/reindexar_leads.py`
 - Modify: `tests/conftest.py` (`TABELAS` ganha `identidades_de_lead`)
 - Test: `tests/integration/test_reindexacao_do_lead.py`, `tests/unit/test_tabelas_com_chave_de_lead.py` (novos)
 
@@ -1085,12 +1085,12 @@ rate limit, `lead_ref` da trilha, AAD do resumo e do vinculo.
 
 Tres modos, e a diferenca entre eles e so DE ONDE vem o valor cru:
 
-- `migracao` (0058, subida): o par que nao tem identidade ainda guarda o valor
+- `migracao` (0061, subida): o par que nao tem identidade ainda guarda o valor
   cru na coluna. O que ja tem identidade ja foi reindexado -- e a idempotencia
   que deixa retomar uma subida interrompida.
 - `rotacao` (script, chave de indice nova): todo par tem identidade; o valor
   vem dela. Par sem identidade aqui e bug, e reprova.
-- `reversao` (0058, descida): o valor vem da identidade e VIRA a chave; nada e
+- `reversao` (0061, descida): o valor vem da identidade e VIRA a chave; nada e
   gravado em `identidades_de_lead`, que a descida apaga em seguida.
 
 **Tabelas imutaveis.** `lead_score_audit`, `conversation_intent_audit` e
@@ -1116,7 +1116,7 @@ from mobia.infra.crypto import decrypt, encrypt
 
 # Toda tabela com `conversation_key`. `tests/unit/test_tabelas_com_chave_de_lead.py`
 # reprova se aparecer uma fora daqui -- a proxima tabela nao escapa da rotacao
-# em silencio. A 0058 NAO usa esta lista: tem copia literal, porque migration
+# em silencio. A 0061 NAO usa esta lista: tem copia literal, porque migration
 # aplicada nao muda quando o codigo muda.
 TABELAS_COM_CHAVE_DE_LEAD = (
     "agendamentos",
@@ -1287,7 +1287,7 @@ def reindexar_telefones_dos_vinculos(conn: Connection, indice: Callable[[str], s
         )
 ```
 
-- [ ] **Step 4: Migration `alembic/versions/0058_identidade_do_lead_cifrada.py`**
+- [ ] **Step 4: Migration `alembic/versions/0061_identidade_do_lead_cifrada.py`**
 
 ```python
 """o telefone do lead sai do conversation_key e passa a morar cifrado
@@ -1302,13 +1302,13 @@ tem a chave.
 
 **Lista de tabelas copiada, e nao importada** de `reindexacao.TABELAS_COM_CHAVE_DE_LEAD`:
 migration aplicada nao muda quando o codigo muda, e uma tabela criada depois
-da 0058 nao existe ainda quando ela roda num banco novo.
+da 0061 nao existe ainda quando ela roda num banco novo.
 
 **Desliga e religa as triggers de imutabilidade** das tres trilhas -- ver a
 docstring de `domain/identidade/reindexacao.py`.
 
-Revision ID: 0058
-Revises: 0057
+Revision ID: 0061
+Revises: 0060
 """
 
 import sqlalchemy as sa
@@ -1321,8 +1321,8 @@ from mobia.domain.identidade.models import aad_do_vinculo
 from mobia.domain.identidade.reindexacao import reindexar
 from mobia.infra.crypto import decrypt, encrypt
 
-revision = "0058"
-down_revision = "0057"
+revision = "0061"
+down_revision = "0060"
 branch_labels = None
 depends_on = None
 
@@ -1416,14 +1416,14 @@ def test_toda_tabela_com_conversation_key_esta_na_lista():
 ```
 Nota: o import da primeira linha precisa ser o módulo que registra **todos** os modelos no `Base.metadata` (procure o que `alembic/env.py` importa para `target_metadata` e use o mesmo). Exclua `identidades_de_lead` do conjunto esperado se ela aparecer (ela tem `conversation_key` mas é a própria identidade — acrescente-a num `- {"identidades_de_lead"}` com comentário).
 
-- [ ] **Step 6: Teste de integração da migration** — `tests/integration/test_reindexacao_do_lead.py`. Siga o molde de `tests/integration/test_migrations.py` (fixture que faz `alembic downgrade 0057`, semeia em SQL cru, `alembic upgrade head` e garante o retorno ao head no teardown). Casos:
+- [ ] **Step 6: Teste de integração da migration** — `tests/integration/test_reindexacao_do_lead.py`. Siga o molde de `tests/integration/test_migrations.py` (fixture que faz `alembic downgrade 0060`, semeia em SQL cru, `alembic upgrade head` e garante o retorno ao head no teardown). Casos:
 
 ```python
 TELEFONE = "5548999990000"
 SEM_O_NOVE = "554899990000"
 
 
-async def test_nenhuma_coluna_guarda_o_telefone_depois_da_subida(esquema_na_0057_semeado):
+async def test_nenhuma_coluna_guarda_o_telefone_depois_da_subida(esquema_na_0060_semeado):
     """Semeia TELEFONE em messages (entrada e saida), lead_qualification,
     lead_score_audit, conversation_intent_audit, handoffs, optout_events,
     rate_limit_events (escopo numero) e um vinculo web com telefone TELEFONE;
@@ -1454,9 +1454,9 @@ async def test_rodar_a_reindexacao_de_novo_nao_muda_nada(...):
 
 
 async def test_descida_devolve_os_valores_originais(...):
-    # sobe, desce para 0057, e o conversation_key e o vinculo voltam a TELEFONE.
+    # sobe, desce para 0060, e o conversation_key e o vinculo voltam a TELEFONE.
 ```
-Escreva o corpo de cada um (SQL cru para semear, porque o esquema é o da 0057 e os modelos já são os novos). Acrescente `identidades_de_lead` a `TABELAS` em `tests/conftest.py` com um comentário de uma linha.
+Escreva o corpo de cada um (SQL cru para semear, porque o esquema é o da 0060 e os modelos já são os novos). Acrescente `identidades_de_lead` a `TABELAS` em `tests/conftest.py` com um comentário de uma linha.
 
 - [ ] **Step 7: Script de rotação** — `scripts/reindexar_leads.py`:
 
