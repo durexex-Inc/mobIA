@@ -189,7 +189,9 @@ jobs:
     # construisse com um valor e a varredura procurasse outro, ela nao acharia
     # nada e passaria vazia -- verde, sem ter verificado coisa alguma.
     env:
-      MOBIA_ADMIN_TOKEN: "tec302-sentinela-do-token-nao-vaza"
+      # Desde a TEC-309 e a URL do Redis, e nao mais o `MOBIA_ADMIN_TOKEN`, que
+      # saiu do frontend. A senha dentro dela e a sentinela.
+      MOBIA_REDIS_URL: "redis://:tec309-sentinela-da-url-nao-vaza@localhost:6379"
 
     defaults:
       run:
@@ -219,10 +221,10 @@ jobs:
       - name: Testes
         run: npm test
 
-      # O build e o gate do `server-only` (TEC-302): ele reprova aqui se o
-      # modulo que le o token for arrastado para um componente de cliente.
+      # O build e o gate do `server-only` (TEC-302): ele reprova aqui se um
+      # modulo de `lib/servidor/` for arrastado para um componente de cliente.
       #
-      # `MOBIA_ADMIN_TOKEN` vale uma sentinela para o passo seguinte ter o que
+      # `MOBIA_REDIS_URL` leva uma sentinela para o passo seguinte ter o que
       # procurar. Nao e segredo e nao precisa ser: ela existe para APARECER
       # caso vaze.
       - name: Build
@@ -233,7 +235,7 @@ jobs:
       #
       # E um passo separado do build de proposito, pela mesma razao que o
       # `ruff format` e separado do `ruff check`: o build passar nao diz nada
-      # sobre o token ter ficado fora do bundle. Os dois pegam enganos
+      # sobre o segredo ter ficado fora do bundle. Os dois pegam enganos
       # diferentes -- `server-only` pega a importacao do modulo no cliente, a
       # varredura pega o `NEXT_PUBLIC_` que embute o valor literal.
       - name: Varredura do bundle

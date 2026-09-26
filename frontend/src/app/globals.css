@@ -204,3 +204,43 @@ a {
   font-style: italic;
   opacity: 0.8;
 }
+
+/* --- Login (TEC-309) ----------------------------------------------------- */
+
+.login {
+  max-width: 24rem;
+  margin: 0 auto;
+  padding: 4rem 1rem;
+}
+
+.login-formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.login-formulario label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.login-formulario input {
+  padding: 0.5rem;
+  font: inherit;
+}
+
+.login-formulario button {
+  padding: 0.6rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Mesma cor de recusa dos filtros do painel, para o erro ter uma cara so. */
+.login-erro {
+  padding: 0.75rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}

@@ -429,11 +429,11 @@ async def test_o_token_compartilhado_continua_passando_em_tudo(
 ) -> None:
     """A coexistencia da D2 -- o teste que garante que esta card nao parou o painel.
 
-    O BFF ainda manda `X-Admin-Token`, e quem o faz mandar sessao de verdade e
-    a TEC-309. Ate la ele resolve para um ADMIN sintetico e passa em toda
-    permissao da matriz, inclusive nas que so o ADMIN tem. **Isto e exposicao
-    declarada (L4), nao propriedade desejada**: quando a TEC-309 apagar o
-    token, e este teste que sai junto.
+    O BFF deixou de mandar `X-Admin-Token` na TEC-309, mas o FastAPI ainda o
+    aceita: ele resolve para um ADMIN sintetico e passa em toda permissao da
+    matriz, inclusive nas que so o ADMIN tem. **Isto e exposicao declarada
+    (L4), nao propriedade desejada**: quando a TEC-382 apagar o token, e este
+    teste que sai junto.
     """
     resposta = await client.get(
         rota, headers={"X-Admin-Token": get_settings().catalogo_admin_token}

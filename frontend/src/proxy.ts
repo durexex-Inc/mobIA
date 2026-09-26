@@ -57,7 +57,60 @@ export function politicaDeSeguranca(nonce: string, isDev: boolean): string {
   ].join('; ')
 }
 
+/**
+ * As rotas que abrem sem sessao (TEC-309, D5): o login, e o chat embutido no
+ * site da imobiliaria, que e do visitante e nao do painel (TEC-344).
+ *
+ * Casamento por segmento, e nao por prefixo de texto: `/loginx` nao e o login,
+ * e liberar por `startsWith('/login')` abriria qualquer rota que um dia
+ * comecasse com essas letras.
+ */
+function rotaPublica(caminho: string): boolean {
+  return (
+    caminho === '/login' ||
+    caminho.startsWith('/login/') ||
+    caminho === '/embed' ||
+    caminho.startsWith('/embed/')
+  )
+}
+
+/**
+ * O cookie da sessao. Repetido aqui, e nao importado de `lib/servidor/sessao`,
+ * porque aquele modulo arrasta o cliente do Redis e o `server-only` para o
+ * proxy -- que nao precisa de nenhum dos dois, e so confere que o cookie
+ * existe. O teste do proxy prende o nome ao da sessao.
+ */
+export const COOKIE_DA_SESSAO = 'mobia_sessao'
+
+/**
+ * Manda ao login quem chega sem o cookie da sessao (TEC-309, D5).
+ *
+ * **E uma checagem otimista, e nao a guarda.** Qualquer valor no cookie passa
+ * por aqui; quem procura o valor no Redis e `exigirSessao`, na pagina. Esta
+ * existe por custo: sem ela, a pagina renderizaria so para descobrir que nao
+ * ha ninguem. E o desenho que o guia de autenticacao do Next 16 descreve.
+ *
+ * O destino carrega a busca junto: quem abriu o painel com um filtro volta
+ * para o mesmo filtro.
+ */
+function semSessao(request: NextRequest): NextResponse | null {
+  const { pathname, search } = request.nextUrl
+  if (rotaPublica(pathname) || request.cookies.has(COOKIE_DA_SESSAO)) {
+    return null
+  }
+  const login = new URL('/login', request.nextUrl)
+  if (pathname !== '/' || search) {
+    login.searchParams.set('returnTo', `${pathname}${search}`)
+  }
+  return NextResponse.redirect(login)
+}
+
 export function proxy(request: NextRequest): NextResponse {
+  const redirecionamento = semSessao(request)
+  if (redirecionamento) {
+    return redirecionamento
+  }
+
   // `crypto.randomUUID()` e nao um contador ou o horario: nonce que se adivinha
   // nao e nonce. Precisa ser novo a cada requisicao, e ha teste afirmando que
   // duas requisicoes nao recebem o mesmo.

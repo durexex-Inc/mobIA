@@ -9,17 +9,30 @@ function respostaOk() {
 describe('chamarApi', () => {
   beforeEach(() => {
     process.env.MOBIA_API_BASE = 'http://backend:8000'
-    process.env.MOBIA_ADMIN_TOKEN = 'segredo'
   })
   afterEach(() => vi.unstubAllGlobals())
 
-  it('manda o token de admin, que e a unica razao de este modulo existir', async () => {
+  it('manda o access token de quem esta logado como Bearer (TEC-309, D7)', async () => {
     const api = respostaOk()
     vi.stubGlobal('fetch', api)
 
-    await chamarApi('/api/v1/metricas/funil', {})
+    await chamarApi('/api/v1/metricas/funil', { acesso: 'jwt-da-anelise' })
 
-    expect(api.mock.calls[0][1].headers['X-Admin-Token']).toBe('segredo')
+    expect(api.mock.calls[0][1].headers.Authorization).toBe('Bearer jwt-da-anelise')
+  })
+
+  it('nunca manda o `X-Admin-Token`, nem com a variavel antiga no ambiente', async () => {
+    // A TEC-309 tirou o token compartilhado do frontend. Um ambiente que ainda
+    // tenha a variavel nao pode fazer o painel voltar a entrar como um ADMIN
+    // sem usuario.
+    process.env.MOBIA_ADMIN_TOKEN = 'segredo-antigo'
+    const api = respostaOk()
+    vi.stubGlobal('fetch', api)
+
+    await chamarApi('/api/v1/metricas/funil', { acesso: 'jwt' })
+
+    expect(JSON.stringify(api.mock.calls[0][1].headers)).not.toContain('segredo-antigo')
+    delete process.env.MOBIA_ADMIN_TOKEN
   })
 
   it('monta a URL sobre `MOBIA_API_BASE`', async () => {
@@ -45,16 +58,15 @@ describe('chamarApi', () => {
     expect(String(api.mock.calls[0][0])).toBe('http://localhost:8000/health')
   })
 
-  it('manda header vazio quando nao ha token, para o backend responder 403', async () => {
-    // Levantar aqui trocaria a mensagem util da tela -- "e configuracao do
-    // ambiente, nao um problema do seu filtro" -- por um erro generico.
-    delete process.env.MOBIA_ADMIN_TOKEN
+  it('sem `acesso`, nao manda credencial nenhuma', async () => {
+    // E o caso das rotas de `/auth/*`, que produzem o token. Numa rota
+    // protegida, o FastAPI recusa -- que e o certo para quem esqueceu a sessao.
     const api = respostaOk()
     vi.stubGlobal('fetch', api)
 
-    await chamarApi('/api/v1/metricas/funil', {})
+    await chamarApi('/api/v1/auth/login', { metodo: 'POST' })
 
-    expect(api.mock.calls[0][1].headers['X-Admin-Token']).toBe('')
+    expect(api.mock.calls[0][1].headers).toEqual({})
   })
 
   describe('cache e correlacao sao mutuamente exclusivos (D6)', () => {

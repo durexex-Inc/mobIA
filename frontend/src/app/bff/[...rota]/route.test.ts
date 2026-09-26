@@ -1,7 +1,18 @@
 import { NextRequest } from 'next/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { limparArmazem } from '../../../../test/armazem-em-memoria'
+import { criarSessao } from '@/lib/servidor/sessao'
 import { DELETE, GET, POST } from './route'
+
+vi.mock('@/lib/servidor/armazem', async () =>
+  (await import('../../../../test/armazem-em-memoria')).moduloDeArmazem,
+)
+
+// O id da sessao que toda requisicao leva por padrao (TEC-309). Os testes de
+// Origin e de allowlist sao sobre quem JA esta logado -- sem sessao, a recusa
+// seria o 401, e o teste deixaria de provar o que diz.
+let idDaSessao = ''
 
 const PAINEL = 'https://painel.exemplo.com'
 const FUNIL = ['api', 'v1', 'metricas', 'funil']
@@ -12,9 +23,17 @@ function contexto(rota: string[]) {
 
 function requisicao(
   caminho: string,
-  { metodo = 'GET', origem, id }: { metodo?: string; origem?: string; id?: string } = {},
+  {
+    metodo = 'GET',
+    origem,
+    id,
+    sessao = idDaSessao,
+  }: { metodo?: string; origem?: string; id?: string; sessao?: string | null } = {},
 ) {
   const cabecalhos = new Headers()
+  if (sessao) {
+    cabecalhos.set('cookie', `mobia_sessao=${sessao}`)
+  }
   if (origem) {
     cabecalhos.set('origin', origem)
   }
@@ -39,10 +58,11 @@ function apiRespondendo(corpo: unknown, status = 200) {
 }
 
 describe('proxy /bff/*', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.MOBIA_API_BASE = 'http://backend:8000'
-    process.env.MOBIA_ADMIN_TOKEN = 'segredo'
     process.env.MOBIA_ORIGEM_DO_PAINEL = PAINEL
+    limparArmazem()
+    idDaSessao = await criarSessao({ acesso: 'jwt-da-anelise', refresh: 'refresh' })
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -96,6 +116,36 @@ describe('proxy /bff/*', () => {
     })
   })
 
+  describe('sem sessao (TEC-309)', () => {
+    it.each([
+      ['sem cookie', null],
+      ['com cookie que o Redis nao conhece', 'e'.repeat(43)],
+    ])('responde 401 %s, E NAO REPASSA NADA a API', async (_nome, sessao) => {
+      const api = apiRespondendo({})
+      vi.stubGlobal('fetch', api)
+
+      const resposta = await GET(
+        requisicao('/bff/api/v1/metricas/funil', { sessao }),
+        contexto(FUNIL),
+      )
+
+      expect(resposta.status).toBe(401)
+      expect(api).not.toHaveBeenCalled()
+      await expect(resposta.json()).resolves.toEqual({ erro: 'sem_sessao' })
+    })
+
+    it('sem sessao, rota fora da allowlist tambem e 401, e nao 404', async () => {
+      // Quem nao esta logado nao aprende pela diferenca de status quais rotas
+      // existem.
+      const resposta = await GET(
+        requisicao('/bff/api/v1/corretores', { sessao: null }),
+        contexto(['api', 'v1', 'corretores']),
+      )
+
+      expect(resposta.status).toBe(401)
+    })
+  })
+
   describe('cenario: recusar rota fora da allowlist', () => {
     it('responde 404 E NAO REPASSA NADA a API', async () => {
       const api = apiRespondendo({})
@@ -139,7 +189,7 @@ describe('proxy /bff/*', () => {
   })
 
   describe('caminho feliz', () => {
-    it('repassa com o token, a query e o `X-Request-Id`, e devolve o corpo', async () => {
+    it('repassa com o JWT da sessao, a query e o `X-Request-Id`, e devolve o corpo', async () => {
       const api = apiRespondendo({ etapas: [] })
       vi.stubGlobal('fetch', api)
 
@@ -153,7 +203,8 @@ describe('proxy /bff/*', () => {
 
       const [url, init] = api.mock.calls[0]
       expect(String(url)).toBe('http://backend:8000/api/v1/metricas/funil?de=2026-08-01&ate=2026-08-22')
-      expect(init.headers['X-Admin-Token']).toBe('segredo')
+      expect(init.headers.Authorization).toBe('Bearer jwt-da-anelise')
+      expect(init.headers['X-Admin-Token']).toBeUndefined()
       expect(init.headers['X-Request-Id']).toBeTruthy()
     })
 
@@ -187,9 +238,8 @@ describe('proxy /bff/*', () => {
     })
 
     it('NAO cacheia: o proxy e `no-store`, ao contrario da busca do painel', async () => {
-      // No dia em que houver sessao por usuario (TEC-309), um cache
-      // compartilhado indexado so pela URL serviria a resposta de um usuario
-      // para outro.
+      // Desde a TEC-309 a resposta e por usuario: um cache compartilhado
+      // indexado so pela URL serviria a de um para outro.
       const api = apiRespondendo({})
       vi.stubGlobal('fetch', api)
 

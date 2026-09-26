@@ -144,8 +144,9 @@ def create_app() -> FastAPI:
     if not settings.catalogo_admin_token:
         # O aviso FICA, com outro sentido: nao diz mais que as rotas sumiram --
         # elas existem --, diz que o caminho de compatibilidade esta desligado.
-        # Ate a TEC-309 o painel depende dele, entao subir sem o token e uma
-        # configuracao possivel e provavelmente indesejada.
+        # Desde a TEC-309 o painel nao depende mais dele -- manda o JWT de quem
+        # esta logado --, entao subir sem o token e a configuracao que a
+        # TEC-382 vai tornar a unica. O aviso sai junto com o token.
         log.warning(
             "auth.token_compartilhado_ausente",
             motivo="sem CATALOGO_ADMIN_TOKEN; as rotas administrativas so aceitam JWT",
