@@ -1,4 +1,6 @@
+import base64
 import os
+from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
@@ -46,6 +48,16 @@ class ConfiguracaoInsegura(RuntimeError):
     """Configuracao que rodaria, mas sem a protecao que devia ter."""
 
 
+def data_do_id(identificador: str) -> date:
+    """O id de chave e a data em que ela nasceu. TEC-203, D1."""
+    try:
+        if len(identificador) != 8 or not identificador.isdigit():
+            raise ValueError
+        return date(int(identificador[:4]), int(identificador[4:6]), int(identificador[6:]))
+    except ValueError:
+        raise ValueError(f"id de chave {identificador!r} nao e uma data AAAAMMDD") from None
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -89,6 +101,15 @@ class Settings(BaseSettings):
     # requisicao. Chave de cifra errada nao falha: o dado e gravado com uma
     # chave publicamente conhecida e nada reclama. Dai a guarda abaixo.
     content_encryption_key: str = CHAVE_DE_DESENVOLVIMENTO
+
+    # TEC-203, D1. O keyring: id (a data de criacao, AAAAMMDD) -> chave base64.
+    # Vazio, tudo continua como antes -- grava v1 com `content_encryption_key`,
+    # que passa a ser a chave LEGADA e segue decifrando todo blob v1. Com
+    # chaves, a gravacao sai em v2 com a ativa e as demais so decifram. O id e
+    # data para que a idade da chave se leia dele sem campo a mais (ver o aviso
+    # dos 90 dias em `infra/rotacao.py`).
+    content_encryption_keys: dict[str, str] = {}
+    content_encryption_key_ativa: str = ""
 
     # A chave do HMAC que produz `eventos_auditoria.lead_ref` (TEC-206, D4).
     # Mesma guarda de producao da chave de cifra, e pela mesma razao: chave
@@ -725,6 +746,30 @@ class Settings(BaseSettings):
                 f"ENVIRONMENT={self.environment}. Gere uma chave de 32 bytes: "
                 'python -c "import base64,os;'
                 'print(base64.b64encode(os.urandom(32)).decode())"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validar_keyring(self) -> "Settings":
+        """Keyring errado falharia so na primeira cifra -- aqui falha na subida."""
+        if not self.content_encryption_keys:
+            if self.content_encryption_key_ativa:
+                raise ValueError("CONTENT_ENCRYPTION_KEY_ATIVA sem CONTENT_ENCRYPTION_KEYS")
+            return self
+        for identificador, chave in self.content_encryption_keys.items():
+            data_do_id(identificador)
+            if len(base64.b64decode(chave)) != 32:
+                raise ValueError(
+                    f"a chave {identificador} do keyring nao tem 32 bytes apos o base64"
+                )
+            if self.em_producao and chave == CHAVE_DE_DESENVOLVIMENTO:
+                raise ConfiguracaoInsegura(
+                    f"a chave {identificador} do keyring e a de desenvolvimento e "
+                    f"ENVIRONMENT={self.environment}."
+                )
+        if self.content_encryption_key_ativa not in self.content_encryption_keys:
+            raise ValueError(
+                f"a chave ativa {self.content_encryption_key_ativa!r} nao esta no keyring"
             )
         return self
 

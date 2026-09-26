@@ -162,6 +162,26 @@ def test_producao_com_chave_propria_sobe(monkeypatch: pytest.MonkeyPatch) -> Non
     assert settings.content_encryption_key == chave
 
 
+def test_producao_com_a_chave_de_desenvolvimento_no_keyring_nao_sobe(
+    monkeypatch: pytest.MonkeyPatch, segredos_de_producao: None
+) -> None:
+    """TEC-203, D1: a mesma guarda da chave legada vale para toda chave do keyring.
+
+    `_validar_keyring` confere cada chave do dict, e nao so a
+    `content_encryption_key` legada -- sem isto o keyring reabriria a mesma
+    exposicao que a guarda acima fecha.
+    """
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "CONTENT_ENCRYPTION_KEYS", json.dumps({"20260926": CHAVE_DE_DESENVOLVIMENTO})
+    )
+    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY_ATIVA", "20260926")
+    with pytest.raises(ConfiguracaoInsegura) as erro:
+        Settings(_env_file=None)
+
+    assert CHAVE_DE_DESENVOLVIMENTO not in str(erro.value)
+
+
 def test_desenvolvimento_segue_com_o_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """A guarda nao pode travar a maquina de ninguem nem o CI."""
     monkeypatch.delenv("ENVIRONMENT", raising=False)

@@ -9,7 +9,7 @@ from mobia.infra.crypto import (
     CHAVE_BYTES,
     NONCE_BYTES,
     TAG_BYTES,
-    VERSAO_ATUAL,
+    VERSAO_LEGADA,
     DecryptionError,
     aad_de,
     decrypt,
@@ -92,13 +92,12 @@ def test_roundtrip_de_json() -> None:
 def test_blob_carrega_o_byte_de_versao() -> None:
     """O formato e version(1) || nonce(12) || ciphertext || tag(16).
 
-    O byte de versao nao serve a nada hoje -- rotacao de chave esta fora de
-    escopo. Ele existe porque o formato e a parte cara de mudar depois que ha
-    linhas gravadas, e ainda nao ha nenhuma.
+    Sem keyring configurado (o default deste teste), a gravacao continua em
+    v1, com a chave legada -- ver TEC-203, D1, para o v2 com id de chave.
     """
     cifrado = encrypt("oi", AAD)
     assert cifrado is not None
-    assert cifrado[0] == VERSAO_ATUAL
+    assert cifrado[0] == VERSAO_LEGADA
     assert len(cifrado) == 1 + NONCE_BYTES + len(b"oi") + TAG_BYTES
     assert decrypt(cifrado, AAD) == "oi"
 
