@@ -37,7 +37,7 @@ from mobia.domain.auditoria.vocabulario import CAMPO_RESUMO, Acao, Entidade
 from mobia.domain.handoff.geracao import gerar_resumo
 from mobia.domain.handoff.models import Handoff, aad_do_resumo_de_handoff
 from mobia.domain.handoff.resumo import RedatorAnthropic, link_da_transcricao
-from mobia.domain.handoff.vocabulario import Status
+from mobia.domain.handoff.vocabulario import ACEITAVEIS, Status
 from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.crypto import decrypt
 from mobia.infra.db import get_sessionmaker
@@ -167,19 +167,11 @@ async def regenerar(
     }
 
 
-# Estados que uma chamada a /aceitar pode transformar em ACEITO. ESCALADO
-# entra por decisao da Task 6 (TEC-178): aceitar depois da escalada e o caso
-# real -- o gerente cobrou e alguem pegou -- e recusar penalizaria
-# justamente o comportamento que a card quer provocar. Ver a Emenda E-01 da
-# secao 6.5 do SRS: o 410 "escalado por SLA" que o texto original previa
-# nunca e levantado por este codigo.
-#
-# **Segundo escritor desde a TEC-179:** `api/routes/conversas.py` importa
-# esta mesma constante para o UPDATE que `assumir` roda (D6) -- as duas
-# rotas decidem a mesma pergunta ("isto ainda pode virar ACEITO?"), e as
-# duas listas TEM DE andar juntas. Mudar aqui sem olhar la reabre a chance
-# de as duas divergirem em silencio.
-_ACEITAVEIS = (Status.PENDENTE.value, Status.ESCALADO.value)
+# Os estados que `aceitar` transforma em ACEITO. Moram em
+# `handoff/vocabulario.py` desde a TEC-194, com o porque de cada um -- a
+# tomada da conversa pelo corretor (`atendimento/tomada.py`) decide a mesma
+# pergunta, e o dominio nao importa de rota.
+_ACEITAVEIS = ACEITAVEIS
 
 
 @router.post("/{handoff_id}/aceitar")

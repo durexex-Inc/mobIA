@@ -1301,6 +1301,7 @@ async def registrar_recalculo(
     conversation_key: str,
     gatilhos: tuple[str, ...] = (),
     causas_externas: tuple[str, ...] = (),
+    autor: str | None = None,
 ) -> Recalculo | None:
     """Recalcula o score do lead e grava a trilha se ele mudou.
 
@@ -1372,6 +1373,12 @@ async def registrar_recalculo(
     temperatura da RN-06.3 e nao decide nada sobre a trilha; este decide a
     trilha e nao toca na temperatura. Sao dois assuntos e por isso dois
     parametros.
+
+    **`autor` e de quem PEDIU o recalculo, e so existe quando e uma pessoa**
+    (TEC-194, RN-18.4). O dashboard passa o identificador que a trilha de
+    auditoria grava em `ator_id`; o turno e o nao-comparecimento nao passam
+    nada, e a coluna fica nula para eles -- o que e verdade, porque o ato nao
+    e de ninguem nosso.
     """
     estado = (
         await session.execute(
@@ -1545,6 +1552,7 @@ async def registrar_recalculo(
         capacidade=novo.capacidade,
         penalidade=novo.penalidade,
         causas=list(causas),
+        autor=autor,
     )
     session.add(linha)
     # Flush e nao commit: a sessao e emprestada e o commit e de quem chamou,

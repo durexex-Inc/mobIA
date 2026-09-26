@@ -1,4 +1,4 @@
-"""Gatilho, etiqueta e prioridade do handoff.
+"""Gatilho, etiqueta, prioridade e status do handoff, e quais status aceitam.
 
 Modulo sem I/O de proposito: e o que deixa a regra ser testada em
 `tests/unit/`, sem Postgres de pe.
@@ -65,6 +65,20 @@ class Status(StrEnum):
     ACEITO = "ACEITO"
     ESCALADO = "ESCALADO"
     CONCLUIDO = "CONCLUIDO"
+
+
+# Estados que o aceite pode transformar em ACEITO. ESCALADO entra por decisao
+# da Task 6 (TEC-178): aceitar depois da escalada e o caso real -- o gerente
+# cobrou e alguem pegou -- e recusar penalizaria justamente o comportamento
+# que a card quer provocar. Ver a Emenda E-01 da secao 6.5 do SRS: o 410
+# "escalado por SLA" que o texto original previa nunca e levantado.
+#
+# **Dois leitores, e eles TEM DE andar juntos:** a rota de aceite
+# (`api/routes/handoffs.py`) e a tomada da conversa pelo corretor
+# (`atendimento/tomada.py`, D6 da TEC-179), que aceita junto o handoff aberto.
+# As duas decidem a mesma pergunta -- "isto ainda pode virar ACEITO?". Morava
+# na rota ate a TEC-194, que precisou dela no dominio.
+ACEITAVEIS = (Status.PENDENTE.value, Status.ESCALADO.value)
 
 
 # A etiqueta e o filtro do corretor no dashboard (TEC-192), e por isso ela e do

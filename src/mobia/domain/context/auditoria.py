@@ -37,12 +37,16 @@ CAUSA_PENALIDADE = "PENALIDADE"
 # Fatos sobre a ORIGEM do gatilho, e nao sobre o que se moveu -- por isso
 # informados pelo chamador, e nao derivaveis de diff nenhum.
 #
-# `CAUSA_EDICAO_MANUAL` continua sem produtor, esperando o dashboard da
-# TEC-192. `CAUSA_NAO_COMPARECIMENTO` ganhou o seu na TEC-172
+# `CAUSA_EDICAO_MANUAL` ganhou o produtor na TEC-194 (o `PATCH` da
+# qualificacao pelo dashboard), e `CAUSA_RECALCULO_MANUAL` nasceu com ele: o
+# terceiro cenario daquela card pede "motivo de recalculo manual", e quem le a
+# trilha precisa distinguir "alguem mudou um campo" de "alguem pediu para
+# recontar". `CAUSA_NAO_COMPARECIMENTO` ganhou o seu na TEC-172
 # (`agendamento/ciclo.py::marcar_nao_comparecimento`), e chega acompanhada:
 # a penalidade que ela explica MOVE um fator, entao a linha carrega tambem a
 # `CAUSA_PENALIDADE` derivada.
 CAUSA_EDICAO_MANUAL = "EDICAO_MANUAL"
+CAUSA_RECALCULO_MANUAL = "RECALCULO_MANUAL"
 CAUSA_NAO_COMPARECIMENTO = "NAO_COMPARECIMENTO"
 
 # Da mesma natureza das duas acima -- fato sobre a ORIGEM do gatilho, e nao
