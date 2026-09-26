@@ -191,7 +191,8 @@ def _tupla_da_migracao(nome: str) -> tuple[str, ...]:
     escreve. Ordenar por nome de arquivo basta porque as revisoes sao `NNNN_`,
     e o que interessa e a ultima a tocar no assunto. A `0057` (TEC-204)
     redefine `_ACOES` e `_ENTIDADES` de novo, para a injecao, e a `0058`
-    (TEC-198) so `_ACOES`, para a configuracao -- e e por isso que a busca e
+    (TEC-198) e a `0059` (TEC-199) so `_ACOES`, para a configuracao e o
+    rollback de prompt -- e e por isso que a busca e
     por NOME de tupla, e nao pelo arquivo mais recente. So conta
     migration que fala de `eventos_auditoria`, porque o nome da tupla poderia
     ser reusado para outra tabela.
@@ -224,11 +225,12 @@ def test_o_vocabulario_bate_com_o_check_da_migration(constante: str, enum: type)
 
 
 def test_a_tupla_vem_da_migration_mais_recente() -> None:
-    """A 0058 redefine as acoes, a 0057 as entidades, e a 0053 os atores.
+    """A 0059 redefine as acoes, a 0057 as entidades, e a 0053 os atores.
 
     Tres migrations diferentes respondem, uma por tupla -- e o caso que a
     busca por nome existe para cobrir.
     """
+    assert "PROMPT_REVERTIDO" in _tupla_da_migracao("_ACOES")
     assert "CONFIGURACAO_ALTERADA" in _tupla_da_migracao("_ACOES")
     assert "INJECAO_DETECTADA" in _tupla_da_migracao("_ACOES")
     assert "mensagem" in _tupla_da_migracao("_ENTIDADES")

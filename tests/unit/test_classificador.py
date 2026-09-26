@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -23,11 +24,14 @@ from mobia.domain.agente.classificador import (
     ClassificadorAnthropic,
     RespostaInvalida,
     _lista_de_nomes,
+    renderizar,
 )
 from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA
 from mobia.domain.agente.investidor import Horizonte
 from mobia.domain.agente.schemas import CategoriaDescarte, Intencao, ReacaoDoImovel, ReacaoLead
+from mobia.domain.configuracao.vigente import Tom
 from mobia.domain.context.montagem import ContextoMontado
+from mobia.domain.prompts.modelo import AgenteDoPrompt
 from mobia.infra.anthropic import (
     TETO_DA_CLASSIFICACAO,
     TETO_DA_DESAMBIGUACAO,
@@ -1647,3 +1651,42 @@ async def test_cada_metodo_manda_o_proprio_teto_de_tempo(
     # dia em que todas as constantes valessem 60.0 passaria verde -- e seria
     # exatamente o estado anterior a esta card.
     assert len(set(vistos)) > 1
+
+
+# --- TEC-199: o modelo vigente vem do contexto ---------------------------------
+
+
+async def test_classificar_renderiza_o_modelo_vigente_do_contexto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D5: o `system` e o modelo que `montar_contexto` leu para ESTE turno, com
+    o nome e o tom da configuracao -- e nao a constante do padrao."""
+    cliente = _instalar_e_capturar(monkeypatch, _resposta_json())
+    contexto = _contexto()
+    contexto = replace(
+        contexto, prompts={**contexto.prompts, AgenteDoPrompt.AGENTE: "V4 {assistente} {tom}"}
+    )
+
+    await ClassificadorAnthropic().classificar(contexto)
+
+    enviado = cliente.messages.create.call_args.kwargs["system"][0]["text"]
+    assert enviado == renderizar("V4 {assistente} {tom}", nome=None, tom=Tom.CORDIAL)
+
+
+async def test_o_investidor_renderiza_o_proprio_modelo_vigente(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E o do investidor, nao o do agente: cada um tem a versao dele."""
+    cliente = _instalar_e_capturar(monkeypatch, _resposta_do_investidor())
+    contexto = replace(
+        _contexto(),
+        prompts={
+            AgenteDoPrompt.AGENTE: "AGENTE {assistente} {tom}",
+            AgenteDoPrompt.INVESTIDOR: "INVESTIDOR {assistente} {tom}",
+        },
+    )
+
+    await ClassificadorAnthropic().qualificar_investidor(contexto)
+
+    enviado = cliente.messages.create.call_args.kwargs["system"][0]["text"]
+    assert enviado.startswith("INVESTIDOR o assistente virtual em tom de conversa")
