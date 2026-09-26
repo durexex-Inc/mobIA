@@ -1,4 +1,4 @@
-"""Gatilho, etiqueta e prioridade do handoff.
+"""Gatilho, etiqueta, prioridade e status do handoff, e quais status aceitam.
 
 Modulo sem I/O de proposito: e o que deixa a regra ser testada em
 `tests/unit/`, sem Postgres de pe.

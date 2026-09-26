@@ -261,13 +261,15 @@ class GuardedOutbound:
         # `OutboundPort` ja escreve: quem herda ganha a guarda de graca. No
         # turno ela protegeria so o caminho de hoje.
         #
-        # **`kind != KIND_DA_CONFIRMACAO_DE_OPTOUT` -- a MESMA excecao unica
-        # que a guarda de opt-out tem, e nao a copia distraida do padrao dela
-        # que parece a primeira vista.** A D5 original do desenho decidia
-        # "barra TODO kind, sem escotilha", e o argumento era sobre o caminho
-        # HUMANO de envio -- a rota `POST /conversas/{id}/mensagens` do SRS,
-        # que nao existe ainda; nao existe caminho humano para deixar passar,
-        # entao uma lista de excecoes seria para um chamador hipotetico.
+        # **`kind != KIND_DA_CONFIRMACAO_DE_OPTOUT` -- a mesma excecao que a
+        # guarda de opt-out tem, e nao a copia distraida do padrao dela que
+        # parece a primeira vista.** (Ate a TEC-194 era a UNICA desta guarda;
+        # a segunda, a fala do corretor, esta no fim deste comentario.) A D5
+        # original do desenho decidia "barra TODO kind, sem escotilha", e o
+        # argumento era sobre o caminho HUMANO de envio -- a rota
+        # `POST /conversas/{id}/mensagens` do SRS, que entao nao existia; nao
+        # havia caminho humano para deixar passar, entao uma lista de excecoes
+        # seria para um chamador hipotetico.
         # Emenda TEC-179 (Task 7): esse argumento nunca cobriu a confirmacao
         # de opt-out. Ela nao e mensagem de conversa, e reconhecimento legal
         # de um pedido que o proprio lead fez -- o unico envio que a D1 da

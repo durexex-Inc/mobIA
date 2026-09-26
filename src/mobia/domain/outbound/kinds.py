@@ -1,7 +1,9 @@
 """Os kinds da resposta de texto, e quais deles formam uma resposta so.
 
-TEC-273. NAO e o vocabulario inteiro de kinds de saida do sistema -- so o da
-resposta de texto (`reply`, `reply_2`). `KINDS_DAS_FICHAS`,
+TEC-273. NAO e o vocabulario inteiro de kinds de saida do sistema -- e o da
+resposta de texto (`reply`, `reply_2`), mais os dois que nao tem outro lar
+que `port.py` possa importar: o do follow-up (TEC-184) e o da fala do corretor
+(TEC-194), que a guarda de atendimento humano precisa reconhecer. `KINDS_DAS_FICHAS`,
 `KIND_DO_CRITERIO_AMPLIADO` e `KIND_DO_FILTRO_AJUSTADO` moram em
 `domain/agente/turno.py`; `KIND_DA_CONFIRMACAO_DE_OPTOUT`,
 `KIND_DA_JANELA_HUMANA` e `KIND_DO_AVISO_DE_ERRO` moram cada um no modulo do

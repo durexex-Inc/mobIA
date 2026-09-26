@@ -100,7 +100,10 @@ def create_app() -> FastAPI:
     # compartilhado e o bloco descreve a queda daquela condicional (TEC-201). A
     # de leads (TEC-192) nunca esteve condicionada -- ela esta aqui por ser
     # import tardio como as outras, e quem a protege e `VER_LEADS`, que os
-    # quatro papeis tem.
+    # quatro papeis tem, e `VER_DETALHE_DO_LEAD` no detalhe (TEC-193).
+    # `intervencao` (TEC-194) e o mesmo prefixo de `leads`, em arquivo proprio
+    # porque muda estado; quem a protege e `ATENDER_LEAD` mais a checagem de
+    # dono dentro do handler.
     # `auditoria` (TEC-206) entra pelo mesmo motivo de import tardio, e esta e
     # administrativa de fato: quem a protege e `VER_AUDITORIA`, so do ADMIN.
     # `agendamentos` (TEC-374) tambem e so import tardio, e tambem nao e
