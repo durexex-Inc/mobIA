@@ -43,6 +43,7 @@ from mobia.workers.jobs.sweep_lista_de_espera import sweep_lista_de_espera
 from mobia.workers.jobs.sweep_midias_pendentes import sweep_midias_pendentes
 from mobia.workers.jobs.sweep_remarcacoes import sweep_remarcacoes
 from mobia.workers.jobs.sweep_retencao_auditoria import sweep_retencao_auditoria
+from mobia.workers.jobs.sweep_retencao_de_leads import sweep_retencao_de_leads
 from mobia.workers.jobs.sweep_sla import sweep_sla
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
 
@@ -320,6 +321,10 @@ class WorkerSettings:
         # (um `int`) nao serve para nada depois que o log saiu. Entra em
         # `cron_jobs` tambem -- e o relogio que dispara este job.
         func(sweep_retencao_auditoria, keep_result=0),
+        # TEC-207. `keep_result=0` pela mesma razao do `sweep_sla`: o resultado
+        # (um `int`) nao serve para nada depois que o log saiu. Entra em
+        # `cron_jobs` tambem -- e o relogio que dispara este job.
+        func(sweep_retencao_de_leads, keep_result=0),
         # TEC-180. `keep_result=0` pela razao do `gerar_resumo`: o `_job_id` e
         # fixo por handoff (`crm:<id>`), e uma chave de resultado sobrevivente
         # bloquearia em silencio o reenqueue que a varredura faz a cada rodada
@@ -443,6 +448,13 @@ class WorkerSettings:
         # passagem perdida deixa uma linha viva um dia a mais, e quem impede
         # apagar historico recente e o trigger da 0053, nao este horario.
         cron(sweep_retencao_auditoria, hour={4}, minute={0}, run_at_startup=False),
+        # TEC-207, D5. **Uma vez por dia, as 5h** -- uma hora depois do
+        # `sweep_retencao_auditoria`, para as duas varreduras diarias nao
+        # disputarem a mesma janela ociosa. A regra mais apertada e de DOZE
+        # MESES (transcricao): uma passagem perdida deixa uma linha de
+        # conteudo viva um dia a mais, e nada aqui decide sozinho o que pode
+        # ser apagado -- ver a docstring de `domain/titular/retencao.py`.
+        cron(sweep_retencao_de_leads, hour={5}, minute={0}, run_at_startup=False),
         # TEC-180. **De 15 em 15 minutos**, e nao de 5 em 5 como os irmaos: a
         # cadencia aqui e a de uma rodada de retentativa contra um sistema que
         # ja falhou tres vezes, nao a de um prazo a cumprir. Mais frequente so
