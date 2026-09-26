@@ -175,6 +175,15 @@ PERMISSAO_ESPERADA = {
     ("GET", "/api/v1/configuracao/agente"): "CONFIGURAR_AGENTE",
     ("PATCH", "/api/v1/configuracao/agente"): "CONFIGURAR_AGENTE",
     ("GET", "/api/v1/configuracao/agente/historico"): "CONFIGURAR_AGENTE",
+    # TEC-199. A mesma permissao, e as leituras tambem: o texto ativo e o que
+    # o agente diz a todo lead agora.
+    ("GET", "/api/v1/prompts"): "CONFIGURAR_AGENTE",
+    ("GET", "/api/v1/prompts/{agente}"): "CONFIGURAR_AGENTE",
+    ("GET", "/api/v1/prompts/{agente}/versoes"): "CONFIGURAR_AGENTE",
+    ("GET", "/api/v1/prompts/{agente}/versoes/{numero}"): "CONFIGURAR_AGENTE",
+    ("POST", "/api/v1/prompts/{agente}/versoes"): "CONFIGURAR_AGENTE",
+    ("POST", "/api/v1/prompts/{agente}/rollback"): "CONFIGURAR_AGENTE",
+    ("GET", "/api/v1/prompts/{agente}/historico"): "CONFIGURAR_AGENTE",
     # TEC-374. `ATENDER_LEAD` mais a checagem de dono dentro do handler --
     # "so o corretor dono do agendamento, ou um gerente". A permissao sozinha
     # nao expressa a segunda metade, e e por isso que ela nao pode ser a unica

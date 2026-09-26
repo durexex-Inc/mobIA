@@ -59,6 +59,10 @@ def _linha(rotulo: str, valor: float) -> None:
 
 # O prompt do agente no pior caso da configuracao: o nome no teto e o tom de
 # frase mais longa. Calculado, e nao transcrito, pelo argumento da TEC-243.
+# Desde a TEC-199 o turno pode mandar uma versao publicada em vez do padrao, e
+# esta parcela continua sendo o pior caso: `validar_modelo`, em
+# `prompts/modelo.py`, recusa a versao que, renderizada neste mesmo pior caso,
+# passe do padrao.
 _PIOR_IDENTIDADE = max(
     (sistema_do_agente(nome="x" * TETO_DO_NOME, tom=tom) for tom in Tom), key=len
 )
