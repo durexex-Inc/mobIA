@@ -26,6 +26,8 @@ def test_a_lista_de_literais_nao_encolheu_sem_querer() -> None:
     compromisso. Foi 37 ate a TEC-172, que acrescentou o convite de
     remarcacao: um so, porque ele nao descreve compromisso nenhum. Foi 46
     ate a TEC-169, que acrescentou os tres da lista de espera -- a oferta, o
-    aceite e o aviso de slot liberado.
+    aceite e o aviso de slot liberado. Foi 51 ate a TEC-207, que acrescentou
+    os dois textos de confirmacao do pedido de titular -- eliminacao e
+    acesso.
     """
-    assert len(LITERAIS_AO_LEAD) == 49
+    assert len(LITERAIS_AO_LEAD) == 51

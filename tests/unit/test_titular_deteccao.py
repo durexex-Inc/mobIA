@@ -52,6 +52,23 @@ def test_nao_e_pedido_de_titular(texto: str) -> None:
 @pytest.mark.parametrize(
     "texto",
     [
+        # Achado de revisao: "dados que voces tem" e substring livre e casava
+        # sem exigir que os dados fossem do PROPRIO lead.
+        "quais dados que vocês têm do condomínio?",
+        "quais dados que vocês têm a respeito do imóvel anunciado?",
+        # "meus" nao resgata: o qualificador de imovel/anuncio pesa mais, e o
+        # "meus" ali e posse gramatical ("os dados que EU tenho do imovel"),
+        # nao o titular pedindo os proprios dados pessoais.
+        "quero meus dados do imóvel",
+    ],
+)
+def test_qualificador_de_imovel_derruba_o_casamento(texto: str) -> None:
+    assert pedido_de_titular(texto) is None
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
         "quero apagar meus dados",
         "Apague meus dados, por favor",
         "excluir meus dados",

@@ -12,6 +12,20 @@ de DADOS e e pedido de titular. Os dois detectores rodam sobre o mesmo texto
 e podem concordar ou nao -- o teste de precedencia (`test_titular_deteccao.py`)
 verifica so que `pedido_de_titular` ignora o que `pediu_optout` decide, e
 vice-versa; nenhum dos dois consulta o outro.
+
+**Colisao com pergunta sobre o IMOVEL, e o mesmo principio.** "Dados" perto de
+um substantivo de imovel/anuncio ("do imovel", "do condominio", "da casa", "do
+apartamento", "do anuncio") e assunto do imovel, nao do titular, mesmo quando a
+frase tambem contem "meus" ou "que voces tem" -- achado de revisao (TEC-207):
+"quais dados que voces tem do condominio?" e "quais dados que voces tem a
+respeito do imovel anunciado?" casavam `_OBJETO_DE_DADOS_DO_LEAD` sem essa
+guarda, porque "dados que voces tem" e substring livre, sem nada que exija que
+os dados sejam os do PROPRIO lead. A guarda e uma lista pequena de
+qualificadores de imovel (`_QUALIFICADORES_DE_IMOVEL`), nao excecoes uma a uma:
+qualquer um deles perto de "dados" derruba o casamento inteiro, incluindo
+"meus dados do imovel" -- o qualificador de imovel pesa mais que "meus" porque
+o assunto da frase e o IMOVEL, e o "meus" ali e so posse gramatical ("os dados
+[que eu tenho] do imovel"), nao o titular pedindo os proprios dados pessoais.
 """
 
 import re
@@ -33,6 +47,39 @@ _OBJETO_DE_DADOS_DO_LEAD = re.compile(
     r"|dados(?:\s+\w+){0,3}\s+de mim\b"
     r"|dados que voces tem"
 )
+
+# Substantivos que, do lado de "dados", trocam o assunto de titular para
+# imovel/anuncio. Lista pequena e generica de proposito -- ver o paragrafo
+# acima no docstring do modulo -- em vez de excecao caso a caso para cada
+# frase que a revisao achasse.
+_QUALIFICADORES_DE_IMOVEL: tuple[str, ...] = (
+    "imovel",
+    "imoveis",
+    "apartamento",
+    "apartamentos",
+    "condominio",
+    "condominios",
+    "casa",
+    "casas",
+    "anuncio",
+    "anuncios",
+)
+_QUALIFICADOR_DE_IMOVEL = re.compile(r"\b(?:" + "|".join(_QUALIFICADORES_DE_IMOVEL) + r")\b")
+
+
+def _fala_de_dados_do_lead(normalizado: str) -> bool:
+    """Se a mensagem fala dos dados do PROPRIO lead, e nao do imovel/anuncio.
+
+    Casar `_OBJETO_DE_DADOS_DO_LEAD` e necessario mas nao suficiente: um
+    qualificador de imovel na mesma mensagem ("do condominio", "do imovel
+    anunciado") deixa claro que "dados" e do IMOVEL, mesmo quando a mesma
+    frase tambem contem "meus" ou "que voces tem" -- ver o docstring do
+    modulo para os dois casos que a revisao achou.
+    """
+    if not _OBJETO_DE_DADOS_DO_LEAD.search(normalizado):
+        return False
+    return _QUALIFICADOR_DE_IMOVEL.search(normalizado) is None
+
 
 # Stems, de proposito: cada um casa varias conjugacoes ("apagar", "apague",
 # "apaguem") sem listar uma por uma, no mesmo molde de `optout/deteccao.py`.
@@ -67,7 +114,7 @@ def pedido_de_titular(texto: str) -> TipoDeSolicitacao | None:
     normalizado = normalizar(texto)
     if not normalizado:
         return None
-    if not _OBJETO_DE_DADOS_DO_LEAD.search(normalizado):
+    if not _fala_de_dados_do_lead(normalizado):
         return None
 
     verbo_de_eliminar = _VERBO_DE_ELIMINAR.search(normalizado)
