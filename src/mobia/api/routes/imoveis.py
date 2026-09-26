@@ -1,4 +1,11 @@
-"""Importacao do catalogo por HTTP (TEC-156, RN-08.1, secao 6.3 do SRS).
+"""O catalogo por HTTP: importacao em lote, busca e o CRUD da administracao.
+
+Importacao: TEC-156, RN-08.1, secao 6.3 do SRS. Busca: TEC-158. O CRUD um a um
+da tela de administracao (TEC-197, RN-19.1) mora no fim do arquivo, e passa
+pela mesma validacao e pelo mesmo upsert da importacao -- ver
+`domain/catalogo/cadastro.py`.
+
+**Sobre a importacao:**
 
 Assincrono como o SRS descreve: o POST devolve 202 com o id e enfileira, e o
 GET devolve o relatorio. Nao e fidelidade cega -- a TEC-157 acrescenta a
