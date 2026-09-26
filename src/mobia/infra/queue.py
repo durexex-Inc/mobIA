@@ -4,13 +4,22 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
 from mobia.app.config import get_settings
+from mobia.infra.tls import exigir_redis_com_tls
 
 PROCESS_MESSAGE_JOB = "process_message"
 BAIXAR_MIDIA_JOB = "baixar_midia"
 
 
 def redis_settings() -> RedisSettings:
-    return RedisSettings.from_dsn(get_settings().redis_url)
+    settings = get_settings()
+    redis = RedisSettings.from_dsn(settings.redis_url)
+    if settings.em_producao:
+        exigir_redis_com_tls(settings.redis_url)
+        # `from_dsn` liga `ssl` para rediss://; o que falta e exigir que o
+        # certificado valha para o host. O default do ARQ nao verifica.
+        redis.ssl_cert_reqs = "required"
+        redis.ssl_check_hostname = True
+    return redis
 
 
 async def create_redis_pool() -> ArqRedis:
