@@ -638,6 +638,80 @@ async def test_so_liberar_e_liberar_injecao_liberam(
     assert liberadas == liberam
 
 
+async def test_categoria_com_acento_e_reconhecida(monkeypatch: pytest.MonkeyPatch) -> None:
+    """O modelo escreve em portugues, e `upper()` guarda o `Ç` e o `Ã`: sem
+    tirar o acento, `INJEÇÃO` vira tres corridas de letras e o veredito cai
+    fora do protocolo -- fail-open na entrada."""
+    cliente = ClienteFalso(RespostaFalsa("BLOQUEAR AMEAÇA INJEÇÃO"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == "AMEACA"
+    assert veredito.injecao is True
+
+
+async def test_liberar_injecao_com_acento_e_reconhecido(monkeypatch: pytest.MonkeyPatch) -> None:
+    cliente = ClienteFalso(RespostaFalsa("LIBERAR INJEÇÃO"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is False
+    assert veredito.injecao is True
+
+
+async def test_assedio_minusculo_com_acento_e_reconhecido(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cliente = ClienteFalso(RespostaFalsa("bloquear assédio."))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == "ASSEDIO"
+
+
+async def test_letra_acentuada_solta_continua_separador(monkeypatch: pytest.MonkeyPatch) -> None:
+    """So se tira o acento de dentro de uma palavra que ja tem letra sem
+    acento. Solta, a letra acentuada continua fora das corridas, como era
+    antes: `É BLOQUEAR AMEACA` bloqueava, e tirar o acento de tudo faria dela
+    a palavra `E`, fora do protocolo -- um bloqueio que viraria fail-open."""
+    cliente = ClienteFalso(RespostaFalsa("É BLOQUEAR AMEACA"))
+    veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=Direcao.ENTRADA)
+
+    assert veredito.bloqueado is True
+    assert veredito.categoria == "AMEACA"
+
+
+_COM_ACENTO = {
+    "AMEACA": "AMEAÇA",
+    "ASSEDIO": "ASSÉDIO",
+    "DISCRIMINACAO": "DISCRIMINAÇÃO",
+    "INJECAO": "INJEÇÃO",
+    "NEGOCIACAO": "NEGOCIAÇÃO",
+    "VIOLENCIA": "VIOLÊNCIA",
+}
+
+
+@pytest.mark.parametrize("direcao", list(Direcao))
+async def test_o_acento_nao_muda_veredito_nenhum(
+    monkeypatch: pytest.MonkeyPatch, direcao: Direcao
+) -> None:
+    """Por exaustao: toda resposta de ate tres palavras, escrita com acento,
+    devolve o mesmo desfecho que sem ele. O acento so tira resposta de
+    "fora do protocolo"; nunca faz uma liberar onde a forma sem acento
+    bloqueia."""
+
+    async def desfecho(bruto: str) -> tuple[bool, str | None, bool] | None:
+        cliente = ClienteFalso(RespostaFalsa(bruto))
+        try:
+            veredito = await _moderador(monkeypatch, cliente).moderar("x", direcao=direcao)
+        except ModeracaoIndisponivel:
+            return None
+        return (veredito.bloqueado, veredito.categoria, veredito.injecao)
+
+    for bruto in _todas_as_respostas_de_ate_tres_palavras():
+        acentuada = " ".join(_COM_ACENTO.get(p, p) for p in bruto.split())
+        assert await desfecho(acentuada) == await desfecho(bruto), acentuada
+
+
 def test_o_protocolo_diz_quantas_categorias_cabem_em_cada_direcao() -> None:
     """Uma categoria nas duas direcoes: na entrada `INJECAO` nao e categoria de
     bloqueio, e sim o achado acrescentado no fim."""
@@ -650,12 +724,13 @@ def test_o_protocolo_diz_quantas_categorias_cabem_em_cada_direcao() -> None:
 def test_o_teto_do_veredito_cobre_o_mais_longo_medido() -> None:
     """Truncar o veredito na entrada e fail-open: o conteudo que devia bloquear
     passa calado. Medido em 25/09/2026 com `count_tokens` em
-    `claude-haiku-4-5-20251001`: `**BLOQUEAR** AMEACA INJECAO.`, o veredito
-    valido mais longo com o enfeite que a leitura tolera, custa 15 (o nu,
-    `BLOQUEAR AMEACA INJECAO`, 12). `LIBERAR INJECAO` tem duas palavras e nao
-    passa dele. Remedir se `modelo_moderacao` mudar ou se
+    `claude-haiku-4-5-20251001`, para toda categoria que bloqueia, nua e com o
+    enfeite que a leitura tolera, sem e com acento: o mais longo e
+    `**BLOQUEAR** AMEAÇA INJEÇÃO.`, com 16 (sem acento, 15). `DISCRIMINACAO`
+    tem mais letras e custa menos: 14 com o enfeite. `LIBERAR INJECAO` tem
+    duas palavras e nao passa dele. Remedir se `modelo_moderacao` mudar ou se
     o vocabulario ganhar palavra mais longa."""
     from mobia.infra.moderacao import MAX_TOKENS_DO_VEREDITO
 
-    mais_longo_medido = 15
+    mais_longo_medido = 16
     assert MAX_TOKENS_DO_VEREDITO > mais_longo_medido

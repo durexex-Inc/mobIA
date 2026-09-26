@@ -1,5 +1,6 @@
 import re
 import time
+import unicodedata
 from functools import lru_cache
 from typing import Any, cast
 
@@ -52,15 +53,17 @@ MAX_TENTATIVAS_DA_MODERACAO = 0
 #
 # Medido em 25/09/2026 com `count_tokens` em `claude-haiku-4-5-20251001`
 # (diferenca entre a requisicao com e sem o veredito como turno do
-# assistente, entao inclui o enquadramento do turno e e um limite por cima):
-# o veredito valido mais longo da TEC-204, `BLOQUEAR AMEACA INJECAO`, custa
-# 12; com o enfeite que a leitura tolera (`**BLOQUEAR** AMEACA INJECAO.`),
-# 15. O teto antigo de 16 ficava a um token disso, e na entrada o truncamento
-# e fail-open -- o conteudo discriminatorio passaria calado. 24 deixa 9 de
-# folga sobre o pior enfeite medido. `LIBERAR INJECAO`, a forma que a correcao
-# pos-medicao acrescentou, tem duas palavras e nao passa da mais longa: a
-# conta continua valendo. `test_o_teto_do_veredito_cobre_o_mais_
-# longo_medido` prende o teto a medida.
+# assistente, entao inclui o enquadramento do turno e e um limite por cima),
+# para toda categoria que bloqueia nas duas direcoes, nua e com o enfeite que
+# a leitura tolera (`**BLOQUEAR** AMEACA INJECAO.`), sem e com acento. O mais
+# longo medido e `**BLOQUEAR** AMEAÇA INJEÇÃO.`, com 16; sem acento, o mesmo
+# enfeite custa 15. `DISCRIMINACAO` e a categoria mais longa em letras e nao
+# em tokens: 14 com o enfeite, com ou sem acento. `**LIBERAR** INJECAO.`
+# custa 10, e na saida o mais longo e `**BLOQUEAR** ACONSELHAMENTO.`, com 12.
+# O teto antigo de 16 empatava com o pior medido, e na entrada o truncamento
+# e fail-open -- o conteudo discriminatorio passaria calado. 24 deixa 8 de
+# folga. `test_o_teto_do_veredito_cobre_o_mais_longo_medido` prende o teto a
+# medida.
 MAX_TOKENS_DO_VEREDITO = 24
 
 _BLOQUEAR = "BLOQUEAR"
@@ -82,6 +85,32 @@ _LIBERAR = "LIBERAR"
 # continuam fora do protocolo, e o desconhecido continua nunca virando
 # liberado. Uma quarta corrida nao encontra onde entrar e o fullmatch falha.
 _ATE_TRES_PALAVRAS = re.compile(r"[^A-Z]*([A-Z]+)(?:[^A-Z]+([A-Z]+))?(?:[^A-Z]+([A-Z]+))?[^A-Z]*")
+
+# Uma corrida de letras de qualquer alfabeto, com as marcas combinantes junto
+# -- sem elas, um `C` seguido de cedilha combinante partiria a palavra.
+_PALAVRA = re.compile(r"(?:[^\W\d_]|[\u0300-\u036f])+")
+
+
+def _sem_acento_nas_palavras(bruto: str) -> str:
+    """Tira o acento de dentro das palavras que ja tem letra sem acento.
+
+    O modelo escreve em portugues, e `upper()` guarda o `Ç` e o `Ã`:
+    `INJEÇÃO` chegava a `_ATE_TRES_PALAVRAS` como tres corridas, e o veredito
+    caia fora do protocolo -- fail-open na entrada. So a palavra que ja tem
+    letra de A a Z perde o acento: a letra acentuada SOLTA continua
+    separador, como era antes, porque tira-la dali mudaria veredito em vez de
+    so reconhece-lo -- `É BLOQUEAR AMEACA` bloqueava, e viraria a palavra `E`,
+    fora do protocolo.
+    """
+
+    def dobrar(achado: re.Match[str]) -> str:
+        palavra = achado.group(0)
+        if not re.search(r"[A-Z]", palavra):
+            return palavra
+        decomposta = unicodedata.normalize("NFD", palavra)
+        return "".join(c for c in decomposta if not unicodedata.combining(c))
+
+    return _PALAVRA.sub(dobrar, bruto)
 
 
 def _protocolo_de(direcao: Direcao) -> str:
@@ -276,7 +305,7 @@ class ModeradorAnthropic:
             raise ModeracaoIndisponivel(f"stop_reason={resposta.stop_reason!r}")
 
         bruto = "".join(b.text for b in resposta.content if b.type == "text").strip().upper()
-        achado = _ATE_TRES_PALAVRAS.fullmatch(bruto)
+        achado = _ATE_TRES_PALAVRAS.fullmatch(_sem_acento_nas_palavras(bruto))
         if achado is None:
             # Sem o valor recebido na mensagem: ele pode carregar o texto julgado.
             raise ModeracaoIndisponivel("veredito fora do protocolo")
