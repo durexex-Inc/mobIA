@@ -103,6 +103,9 @@ def create_app() -> FastAPI:
     # quatro papeis tem.
     # `auditoria` (TEC-206) entra pelo mesmo motivo de import tardio, e esta e
     # administrativa de fato: quem a protege e `VER_AUDITORIA`, so do ADMIN.
+    # `agendamentos` (TEC-374) tambem e so import tardio, e tambem nao e
+    # administrativa: quem a protege e `ATENDER_LEAD` mais a checagem de dono
+    # dentro do handler, como em `handoffs`.
     from mobia.api.routes.agendamentos import router as agendamentos_router
     from mobia.api.routes.auditoria import router as auditoria_router
     from mobia.api.routes.conversas import router as conversas_router

@@ -161,11 +161,19 @@ async def _transicionar(
 ) -> Transicionado | Recusado:
     """O UPDATE unico que serve as quatro transicoes.
 
-    O `WHERE` carrega a origem legal, entao nao ha leitura antes da escrita e
-    nao ha janela em que outro caminho mude o status no meio. Quando ele nao
-    casa, a segunda consulta -- so entao -- separa "origem ilegal" de
-    "inexistente"; ela custa uma ida a mais **so no caminho de recusa**, que e
-    o raro.
+    O `WHERE` carrega a origem legal, entao AQUI nao ha leitura antes da
+    escrita e nao ha janela em que outro caminho mude o status no meio. Quando
+    ele nao casa, a segunda consulta -- so entao -- separa "origem ilegal" de
+    "inexistente" e devolve o status atual para a borda montar a frase; ela
+    custa uma ida a mais **so no caminho de recusa**, que e o raro.
+
+    **Dois dos quatro chamadores LEEM antes de chegar aqui**, desde a TEC-374:
+    `marcar_realizado` e `marcar_nao_comparecimento` precisam do `inicio` para
+    a guarda do horario, e nenhum `WHERE` o expressa sem repetir o relogio no
+    SQL. A janela que isso abre e inofensiva: o `WHERE` daqui continua sendo a
+    condicao de ESTADO, entao uma transicao concorrente no meio faz o UPDATE
+    nao casar e a recusa sair certa -- o que a leitura de fora pode errar e
+    so o `inicio`, que nao muda depois de o compromisso existir.
     """
     valores: dict[str, object] = {"status": para}
     carimbo = _CARIMBO_DE.get(para)
