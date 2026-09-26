@@ -13,13 +13,19 @@ handoff, e rota aberta nao e opcao em nenhum dos dois casos.
 
 **E o papel CORRETOR so alcanca os PROPRIOS handoffs** -- `_exigir_dono_do`
 abaixo, segundo cenario do Gherkin da TEC-202. E aqui que a regra "o corretor
-ve apenas os proprios leads" (RNF-12) morde de verdade hoje: o handoff e a
-unica entidade deste sistema que tem dono E e enderecavel por identificador.
-`GET /api/v1/leads/{leadId}`, que o SRS descreve para isso, nao existe (D5).
+ve apenas os proprios leads" (RNF-12) nasceu aqui: o handoff era a unica
+entidade deste sistema que tinha dono E era enderecavel por identificador.
+Desde a TEC-193 `GET /api/v1/leads/{leadId}` existe, e o dono do lead e
+justamente "existe handoff para ele" -- o recorte de la le esta tabela.
+
+**A regeneracao tem trava de 60 s desde a TEC-193** (D6, para a TEC-326), e e
+por esta rota que o botao do detalhe regenera: o `POST /leads/{leadId}/resumo`
+que o SRS escreve nao foi criado, porque o resumo e do handoff.
 """
 
+import math
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select, update
@@ -37,6 +43,10 @@ from mobia.infra.crypto import decrypt
 from mobia.infra.db import get_sessionmaker
 
 router = APIRouter(prefix="/api/v1/handoffs", tags=["handoffs"])
+
+# O intervalo minimo entre dois resumos do mesmo handoff. TEC-326: "Regenerar
+# fica desabilitado por 60 s apos o pedido".
+_TRAVA_DA_REGENERACAO = timedelta(seconds=60)
 
 
 async def _exigir_dono_do(
@@ -86,6 +96,25 @@ async def regenerar(
 
     session_factory = get_sessionmaker()
 
+    # TEC-193, D6, para a TEC-326: menos de 60 s desde o ultimo resumo e 429.
+    # ANTES de `gerar_resumo`, porque a trava existe para poupar a chamada paga
+    # ao modelo -- checada depois, nao pouparia nada. Pelo carimbo que ja
+    # existe, e nao por contador novo: a geracao automatica do handoff tambem
+    # conta como "a ultima", e e o certo, porque o resumo tem segundos de idade
+    # de qualquer jeito. Nenhum resumo sai, entao nada vai para a trilha.
+    async with session_factory() as session:
+        gerado_em = (
+            await session.execute(select(Handoff.resumo_gerado_em).where(Handoff.id == handoff_id))
+        ).scalar_one_or_none()
+    if gerado_em is not None:
+        faltam = _TRAVA_DA_REGENERACAO - (datetime.now(UTC) - gerado_em)
+        if faltam > timedelta(0):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="resumo regenerado ha menos de 60 segundos",
+                headers={"Retry-After": str(math.ceil(faltam.total_seconds()))},
+            )
+
     gravou = await gerar_resumo(session_factory, redator=RedatorAnthropic(), handoff_id=handoff_id)
     if not gravou:
         # Desde a TEC-176, `gerar_resumo` so devolve False quando o dossie
@@ -102,9 +131,10 @@ async def regenerar(
             await session.execute(select(Handoff).where(Handoff.id == handoff_id))
         ).scalar_one()
         # TEC-206, D1 e D7. O resumo carrega dado pessoal do lead. Esta rota
-        # NAO e o unico caminho que revela dado pessoal: o `link` abaixo leva a
-        # `conversation_key`, que no WhatsApp e o telefone, e
-        # `GET /api/v1/leads` devolve a mesma chave sem registro nenhum. O
+        # NAO e o unico caminho que o le: `GET /api/v1/leads/{leadId}` devolve
+        # o mesmo texto desde a TEC-193, e registra la com `campo=detalhe`. E o
+        # `link` abaixo leva a `conversation_key`, que no WhatsApp e o telefone
+        # -- a lista deixou de devolve-la na TEC-195, este `link` nao. O
         # registro daqui nomeia so o campo `resumo`. Ele commita AQUI, antes
         # do `return`: se a escrita falhar, a resposta e erro, e o resumo nao
         # sai sem o registro. O texto do resumo nao vai para a trilha -- ela

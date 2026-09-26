@@ -64,14 +64,21 @@ class Entidade(StrEnum):
 # Os `campo` que a trilha nomeia. O que vai para a linha e QUAL campo foi
 # lido, nunca o que ele dizia.
 #
-# `CAMPO_RESUMO` era o unico com chamador ate a TEC-195; os outros dois sao da
-# revelacao de dado pessoal em `POST /api/v1/leads/{lead_id}/revelar`.
+# `CAMPO_RESUMO` era o unico com chamador ate a TEC-195; `telefone` e `email`
+# sao da revelacao de dado pessoal em `POST /api/v1/leads/{lead_id}/revelar`,
+# e `detalhe` e `transcricao` sao das leituras da TEC-193.
 CAMPO_RESUMO = "resumo"
 CAMPO_TELEFONE = "telefone"
 # Sem fonte: nenhuma tabela deste sistema guarda e-mail de lead (TEC-195, D7).
 # A rota o aceita e devolve nulo, para que a tela nao precise mudar quando a
 # coluna nascer.
 CAMPO_EMAIL = "email"
+# TEC-193, D3. Nao se REVELAM -- se leem, e o GET que os le e o que registra.
+# `detalhe` cobre a tela inteira (resumo e qualificacao inclusos), e
+# `transcricao` entra uma vez por pagina: carregar as falas anteriores e outro
+# acesso, a um trecho que a primeira pagina nao mostrou.
+CAMPO_DETALHE = "detalhe"
+CAMPO_TRANSCRICAO = "transcricao"
 
 # Os campos que `POST /leads/{lead_id}/revelar` aceita. Fora daqui e 422, e
 # nao 500: o campo vem de quem chamou.

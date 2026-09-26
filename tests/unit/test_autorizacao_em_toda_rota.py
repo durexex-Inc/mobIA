@@ -149,6 +149,11 @@ PERMISSAO_ESPERADA = {
     # concedida por papel e exigida por rota nenhuma -- `permissoes.py`
     # chegava a dizer que seria "capacidade consultada DENTRO de um handler".
     ("POST", "/api/v1/leads/{lead_id}/revelar"): "VER_DADOS_COMPLETOS",
+    # TEC-193. Leitura que registra na trilha (D3), e por isso as duas estao
+    # aqui e nao so a do detalhe: a transcricao e a maior parte do dado
+    # pessoal do lead, e uma rota dela fora deste mapa seria o furo.
+    ("GET", "/api/v1/leads/{lead_id}"): "VER_DETALHE_DO_LEAD",
+    ("GET", "/api/v1/leads/{lead_id}/mensagens"): "VER_DETALHE_DO_LEAD",
     ("GET", "/api/v1/auditoria"): "VER_AUDITORIA",
     # TEC-374. `ATENDER_LEAD` mais a checagem de dono dentro do handler --
     # "so o corretor dono do agendamento, ou um gerente". A permissao sozinha

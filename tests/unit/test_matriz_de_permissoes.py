@@ -62,12 +62,19 @@ def test_ver_leads_e_dos_quatro_papeis() -> None:
 
 
 def test_dados_completos_nao_vao_para_corretor_nem_para_leitura() -> None:
-    """A permissao que ainda nao mascara nada (D7, L3).
-
-    Ela e concedida por papel, como a card manda, e o unico consumidor hoje e
-    `GET /auth/me`. Quem a for consumir de verdade e a TEC-195.
-    """
+    """A permissao da revelacao (TEC-195): quem a exige e `POST /revelar`."""
     assert papeis_com(Permissao.VER_DADOS_COMPLETOS) == frozenset({"ADMIN", "GERENTE"})
+
+
+def test_detalhe_do_lead_nao_vai_para_leitura() -> None:
+    """TEC-193, D2: LEITURA ve a lista e nao a conversa.
+
+    Os papeis sao os da secao 6.2 do SRS para `GET /leads/{leadId}` --
+    "`CORRETOR` (proprio), `GERENTE`, `ADMIN`". E leitura, fora de
+    `DE_ESCRITA`, e essa e a razao de nao ser `ATENDER_LEAD`.
+    """
+    assert papeis_com(Permissao.VER_DETALHE_DO_LEAD) == frozenset({"ADMIN", "GERENTE", "CORRETOR"})
+    assert Permissao.VER_DETALHE_DO_LEAD not in DE_ESCRITA
 
 
 @pytest.mark.parametrize("permissao", list(Permissao))

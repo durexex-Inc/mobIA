@@ -39,6 +39,13 @@ class Permissao(StrEnum):
     # forma de dizer o que o PAPEL ja diz, livre para divergir dela.
     VER_LEADS = "VER_LEADS"
     VER_FUNIL = "VER_FUNIL"
+    # **A lista e um indice sem dado pessoal; o detalhe traz a conversa em
+    # claro** (TEC-193, D2). Por isso LEITURA tem `VER_LEADS` e nao tem esta,
+    # como a secao 6.2 do SRS escreve para `GET /leads/{leadId}`. Os papeis
+    # sao os mesmos de `ATENDER_LEAD`, e reaproveitar aquela foi recusado: ela
+    # esta em `DE_ESCRITA`, e o dia em que um papel novo a recebesse para agir
+    # decidiria, sem querer, que ele tambem le conversas.
+    VER_DETALHE_DO_LEAD = "VER_DETALHE_DO_LEAD"
     ATENDER_LEAD = "ATENDER_LEAD"
     VER_DADOS_COMPLETOS = "VER_DADOS_COMPLETOS"
     # TEC-206, D8, para a tela da TEC-343: "Somente leitura; somente ADMIN".
@@ -83,6 +90,7 @@ _CONCEDIDAS: dict[str, frozenset[Permissao]] = {
             Permissao.BUSCAR_IMOVEIS,
             Permissao.VER_LEADS,
             Permissao.VER_FUNIL,
+            Permissao.VER_DETALHE_DO_LEAD,
             Permissao.ATENDER_LEAD,
             Permissao.VER_DADOS_COMPLETOS,
         }
@@ -91,6 +99,7 @@ _CONCEDIDAS: dict[str, frozenset[Permissao]] = {
         {
             Permissao.BUSCAR_IMOVEIS,
             Permissao.VER_LEADS,
+            Permissao.VER_DETALHE_DO_LEAD,
             Permissao.ATENDER_LEAD,
         }
     ),
