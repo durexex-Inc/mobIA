@@ -15,8 +15,9 @@ import { COOKIE_DA_SESSAO, lerSessao } from '@/lib/servidor/sessao'
  * **Ele ainda nao tem consumidor de cliente, e isso e esperado.** O painel e
  * `<form method="get">` mais Server Component, e o login da TEC-309 tambem nao
  * passa por aqui -- os formularios dele vao a `/login/entrar` e `/login/mfa`.
- * O primeiro consumidor previsto e a navegacao por papel (TEC-312), que le
- * `/auth/me`. Ate la ele e exercitado por teste. Inventar um componente de
+ * A navegacao por papel (TEC-312) tambem nao: o menu e Server Component e le
+ * `/auth/me` pelo servidor (D2 do desenho dela). Ate o primeiro componente de
+ * cliente precisar dele, ele e exercitado por teste. Inventar um componente de
  * cliente so para lhe dar consumidor seria inventar entidade para um criterio
  * se auto-satisfazer.
  *

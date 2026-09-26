@@ -80,6 +80,8 @@ A primeira guarda sozinha seria furável — qualquer valor no cookie passa. A s
 
 **O `403` do painel muda de significado.** Antes, `403` queria dizer "o token do ambiente está errado". Agora quer dizer que o papel não tem `VER_FUNIL` — o `CORRETOR`, pela matriz da TEC-202. O aviso é reescrito para dizer isso. A tela "Sem permissão" é a TEC-312.
 
+- **Nota (TEC-312, 26/09/2026):** o `403` do funil deixou de ser aviso e virou a tela "Sem permissão", e quem não tem `VER_FUNIL` nem chega a buscar o funil. Ver `docs/superpowers/specs/2026-09-26-tec-312-menu-por-papel-design.md`.
+
 **`401` da API quer dizer que o access expirou**, 60 minutos depois do login, porque sem a TEC-310 ninguém o renova. A página manda ao login com o `returnTo` preservado.
 
 ## D8 — O primeiro usuário nasce por um script

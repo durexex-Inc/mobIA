@@ -5,7 +5,11 @@
  * e as duas rotas de POST a usam do mesmo jeito.
  */
 
-/** A pagina inicial de todos os papeis, por enquanto -- a de cada um e a TEC-312. */
+/**
+ * Para onde o login manda quando nao ha destino. E `/` para todos os papeis --
+ * a TEC-312 decidiu assim enquanto so o funil existe, e a regra por papel mora
+ * em `paginaInicialDe` (`lib/navegacao.ts`). As duas tem de mudar juntas.
+ */
 export const PAGINA_INICIAL = '/'
 
 /**
