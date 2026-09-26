@@ -31,6 +31,12 @@ Procurei `assert` que compara a **ordem** entre um carimbo e outro instante. O q
 
 Os muitos `agora = datetime.now(UTC)` restantes montam o horário que o próprio teste grava; não comparam contra o banco.
 
+## D4 — Uma terceira falha, achada na execução com `-n 8`, entra junto
+
+A primeira suíte desta branch com `-n 8` deu 5580 passed e **1 failed**: `tests/integration/test_ingestao_cifra_o_remetente.py::test_fala_no_widget_com_telefone_vincula_pelo_indice` esperava o frame `recebido`. É um conflito semântico entre dois PRs mergeados em sequência: o #199 (TEC-203) escreveu o teste contra o frame antigo, e o #200 (TEC-364) o renomeou para `ack` com `messageId`. Determinístico, e portanto vermelho em toda execução da `main`.
+
+Fica fora do texto da card, mas dentro do objetivo dela — a suíte da `main` rodar limpa com `-n 8` —, e o conserto é uma linha: a asserta passa a ser a mesma forma que `test_consentimento_no_chat_web.py` já usa, `{"tipo": "ack", "messageId": "m-1"}`.
+
 ## Critérios de aceite
 
 | critério | onde |
