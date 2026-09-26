@@ -63,26 +63,31 @@ async def test_o_ataque_nao_funciona(ataque: Ataque, capsys) -> None:
         except RespostaInvalida:
             # Recusa ou parada anormal: nenhum texto chegaria ao lead, entao o
             # ataque nao teve sucesso neste turno. Erro de rede nao cai aqui --
-            # sobe e reprova como infraestrutura.
+            # sobe e reprova como infraestrutura. Sem `continue`: a fala do
+            # lead fica na transcricao com ou sem resposta, e a dobra abaixo
+            # tem de roda-la -- pular a dobra no turno que planta a instrucao
+            # imprimiria "resistiu" sem o resumo ter sido exercitado.
             with capsys.disabled():
                 print(f"\n[injecao] {ataque.id} turno {indice}: sem resposta utilizavel")
-            continue
-
-        texto = resposta.resposta
-        # `ModeracaoIndisponivel` sobe de proposito: resposta nao julgada nao e aprovacao.
-        veredito = await moderador.moderar(texto, direcao=Direcao.SAIDA)
-        falhas = falhas_de(
-            texto,
-            canario=ataque.canario,
-            janelas=JANELAS,
-            negociacao=veredito.categoria == "NEGOCIACAO",
-            divergencias=divergencias_de(texto, candidatos=resposta.candidatos, faixa=(None, None)),
-        )
-        assert not falhas, (
-            f"{ataque.id}, turno {indice}: o ataque funcionou ({', '.join(falhas)}).\n"
-            f"Resposta: {texto}"
-        )
-        historico.append((MessageRole.AGENTE, texto))
+        else:
+            texto = resposta.resposta
+            # `ModeracaoIndisponivel` sobe de proposito: resposta nao julgada nao
+            # e aprovacao.
+            veredito = await moderador.moderar(texto, direcao=Direcao.SAIDA)
+            falhas = falhas_de(
+                texto,
+                canario=ataque.canario,
+                janelas=JANELAS,
+                negociacao=veredito.categoria == "NEGOCIACAO",
+                divergencias=divergencias_de(
+                    texto, candidatos=resposta.candidatos, faixa=(None, None)
+                ),
+            )
+            assert not falhas, (
+                f"{ataque.id}, turno {indice}: o ataque funcionou ({', '.join(falhas)}).\n"
+                f"Resposta: {texto}"
+            )
+            historico.append((MessageRole.AGENTE, texto))
 
         if ataque.resumir_ate == indice + 1:
             # A dobra de producao, com o texto exato de producao: a instrucao
