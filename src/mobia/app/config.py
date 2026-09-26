@@ -1,3 +1,4 @@
+import os
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
@@ -689,6 +690,26 @@ class Settings(BaseSettings):
         return self.environment.strip().lower() in _AMBIENTES_DE_PRODUCAO
 
     @model_validator(mode="after")
+    def _recusar_producao_declarada_em_arquivo(self) -> "Settings":
+        """`ENVIRONMENT` de producao tem de vir do ambiente, nao do `.env`.
+
+        Sem isto, `ENVIRONMENT=production` escrito so no `.env` ligaria todas
+        as guardas de producao -- e o `.env` teria sido lido, que e o que
+        `get_settings` existe para impedir. Fica primeiro entre os `_recusar_*`
+        de producao de proposito: e o unico que decide se o resto desta lista
+        chegou a rodar sobre segredo de arquivo, e por isso tem de reprovar
+        antes que qualquer guarda de segredo de desenvolvimento dispare por
+        outro motivo.
+        """
+        declarado = os.environ.get("ENVIRONMENT", "").strip().lower()
+        if self.em_producao and declarado not in _AMBIENTES_DE_PRODUCAO:
+            raise ConfiguracaoInsegura(
+                f"ENVIRONMENT={self.environment} veio de arquivo, nao do ambiente. "
+                "Em producao o ambiente e declarado pela plataforma, e o .env nao e lido."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _recusar_chave_de_desenvolvimento_em_producao(self) -> "Settings":
         """Fica no validator, e nao no `create_app`, para valer em todo processo.
 
@@ -1042,7 +1063,29 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    """Monta `Settings` com as fontes que o ambiente permite. TEC-203, D5.
+
+    **Em producao o `.env` nao e lido.** Segredo em producao vem do secret
+    manager da plataforma, que o entrega como variavel de ambiente ou arquivo
+    montado; um `.env` no servidor e justamente o segredo em arquivo que a
+    RNF-14 proibe. A decisao olha `os.environ` e nao `Settings`, porque e ela
+    que decide se o arquivo entra -- ler o arquivo para descobrir se pode le-lo
+    seria circular. Quem pusesse `ENVIRONMENT=production` so no `.env` escapa
+    daqui; o validator `_recusar_producao_declarada_em_arquivo` o pega.
+
+    `MOBIA_SECRETS_DIR` aponta o diretorio de arquivos montados (um arquivo por
+    segredo, nome do campo em minusculas), no formato de Docker, K8s e ECS.
+    """
+    em_producao = os.environ.get("ENVIRONMENT", "").strip().lower() in _AMBIENTES_DE_PRODUCAO
+    # `# type: ignore[call-arg]`: `BaseModel` e `@dataclass_transform`, e o
+    # mypy sintetiza o construtor so a partir dos campos anotados -- ele nunca
+    # olha o `__init__` de verdade que `pydantic_settings.BaseSettings`
+    # escreve a mao (`main.py`), que e onde `_env_file` e `_secrets_dir`
+    # existem. Em runtime os dois chegam la; so o checador nao os enxerga.
+    return Settings(  # type: ignore[call-arg]
+        _env_file=None if em_producao else ".env",
+        _secrets_dir=os.environ.get("MOBIA_SECRETS_DIR") or None,
+    )
 
 
 # Preco em dolar por 1 milhao de tokens, (entrada, saida). O custo e calculado e

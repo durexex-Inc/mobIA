@@ -1,6 +1,8 @@
 import asyncio
+import base64
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -1033,6 +1035,33 @@ def caches_de_cliente_limpos() -> Iterator[None]:
 @pytest.fixture
 def settings(caches_de_cliente_limpos: None) -> Settings:
     return get_settings()
+
+
+@pytest.fixture
+def segredos_de_producao(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Poe um valor proprio, valido, em todo segredo que tem guarda de producao.
+
+    TEC-203, D5. Cada `_recusar_*_de_desenvolvimento_em_producao` de
+    `config.py` recusa o default de desenvolvimento quando `ENVIRONMENT` e de
+    producao -- sem um valor proprio para os quatro campos abaixo,
+    `Settings()` levantaria `ConfiguracaoInsegura` antes de o teste chegar ao
+    que de fato quer exercitar.
+
+    De proposito NAO seta `ENVIRONMENT`: quem usa esta fixture decide isso,
+    porque alguns testes comparam producao com nao-producao no mesmo caso.
+
+    Vive aqui, e nao num `tests/unit/conftest.py` proprio -- ver o comentario
+    de `_precisa_de_banco`/`DIRETORIO_SEM_BANCO` acima sobre por que um
+    segundo `conftest.py` sombreia este em `sys.modules` sob o import mode
+    `prepend` e derruba todo `from conftest import ...`. Compartilhada entre
+    as guardas de producao da TEC-203: as tasks seguintes (indice cifrado do
+    lead, e o resto) acrescentam os proprios segredos aqui em vez de abrir uma
+    segunda fixture concorrente.
+    """
+    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setenv("JWT_SEGREDO", secrets.token_urlsafe(48))
+    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", secrets.token_urlsafe(48))
+    monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", secrets.token_urlsafe(48))
 
 
 @pytest.fixture
