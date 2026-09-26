@@ -144,6 +144,11 @@ PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/conversas/devolver"): "ATENDER_LEAD",
     ("GET", "/api/v1/metricas/funil"): "VER_FUNIL",
     ("GET", "/api/v1/leads"): "VER_LEADS",
+    # TEC-195. **A primeira rota a exigir `VER_DADOS_COMPLETOS`**, e a unica
+    # que devolve dado pessoal de lead em claro. Ate ela, a permissao era
+    # concedida por papel e exigida por rota nenhuma -- `permissoes.py`
+    # chegava a dizer que seria "capacidade consultada DENTRO de um handler".
+    ("POST", "/api/v1/leads/{lead_id}/revelar"): "VER_DADOS_COMPLETOS",
     ("GET", "/api/v1/auditoria"): "VER_AUDITORIA",
 }
 

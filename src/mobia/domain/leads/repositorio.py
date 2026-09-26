@@ -1,4 +1,5 @@
-"""A consulta da lista de leads. TEC-192, RF-18 e RN-18.1.
+"""A lista de leads, o apelido opaco de cada um e o dado que so a revelacao
+mostra. TEC-192 e TEC-195, RF-18, RN-18.1 e RN-18.5.
 
 **A espinha dorsal e `messages`, e nao `conversas`** (D1 do desenho). Parece
 contraintuitivo e nao e: o unico INSERT de `conversas` esta em
@@ -12,20 +13,26 @@ a convencao dos repositorios deste repo.
 """
 
 import re
+import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import Select, and_, false, func, or_, select
-from sqlalchemy.dialects.postgresql import distinct_on
+from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.auditoria.vocabulario import CAMPO_TELEFONE
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.conversa.models import Conversa
 from mobia.domain.conversa.vocabulario import Status
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.identidade.models import VinculoDeSessao
-from mobia.domain.leads.consulta import SEM_RECORTE, Cursor, Filtro, RecorteDoPapel
+from mobia.domain.identidade.telefone import normalizar
+from mobia.domain.leads.consulta import SEM_RECORTE, Cursor, Filtro, FiltroInvalido, RecorteDoPapel
+from mobia.domain.leads.mascara import mascarar_telefone
+from mobia.domain.leads.models import ReferenciaDeLead
 from mobia.domain.messages.models import Message
 
 _SO_DIGITOS = re.compile(r"\D+")
@@ -35,18 +42,27 @@ _SO_DIGITOS = re.compile(r"\D+")
 class LeadDaLista:
     """Uma linha da lista. E o que a card pede, menos o que nao existe.
 
-    **Sem `nome` e sem `telefone`**, e nenhum dos dois por escolha desta
-    consulta: nenhuma tabela deste sistema guarda o nome do lead (Emenda E-02
-    da RN-15.1), e o telefone so sairia mascarado, o que e a TEC-195. Ver a
-    Emenda E-01 a secao 6.2.
+    **Sem `nome`**: nenhuma tabela deste sistema guarda o nome do lead (Emenda
+    E-02 da RN-15.1).
 
-    **`channel` e `conversation_key` no lugar de um `id`**: nao existe entidade
-    lead neste sistema, e o par e a identidade que `handoffs`, `optout_events`
-    e `lead_qualification` ja usam (D2).
+    **Sem `conversation_key`, desde a TEC-195**, e a ausencia e a card inteira:
+    no WhatsApp aquele campo E o telefone do lead, e ele saia em claro para
+    todo papel com `VER_LEADS`. Quem aponta para um lead agora e `lead_id`, o
+    apelido opaco de `referencias_de_lead`; quem mostra o telefone e
+    `telefone`, ja mascarado. Nao ha caminho por esta dataclass que reconstrua
+    o par -- que e o ponto de ela nao o carregar.
+
+    `channel` fica: dizer que o lead veio do WhatsApp ou do site nao identifica
+    ninguem, e a tela ordena por isso.
+
+    **`telefone` nulo e "nao ha numero", e nao "nao pode ver"**: todo chamador
+    recebe mascarado (D4), e o lead web que nunca digitou telefone simplesmente
+    nao tem um.
     """
 
+    lead_id: uuid.UUID
     channel: str
-    conversation_key: str
+    telefone: str | None
     score: int | None
     temperatura: str | None
     status: str
@@ -119,6 +135,14 @@ def _onde_a_busca_bate(base: Any, termo: str) -> Any:
     `%so-os-digitos%` para telefone: quem digita "+55 (48) 99999" esta
     procurando `5548999...`, e um ILIKE do texto cru com pontuacao nao acharia
     nada -- o que se leria como "este lead nao existe".
+
+    **A busca por telefone SOBREVIVEU ao mascaramento da TEC-195, e isso e um
+    oraculo declarado** (D8). Quem nao pode ler o numero ainda pode CONFIRMAR
+    um que ja suspeita, vendo se a busca devolve alguem. E confirmacao, nao
+    descoberta -- o espaco de numeros e grande demais para varrer --, e o preco
+    de fechar seria tirar da tela a forma mais usada de achar um lead, que a
+    RN-18.1 pede por escrito. Quem decidir o contrario decide contra aquela
+    regra, e isso e card de produto.
     """
     alvos: list[Any] = [LeadQualification.regiao.ilike(f"%{termo}%")]
 
@@ -138,7 +162,23 @@ def _onde_a_busca_bate(base: Any, termo: str) -> Any:
     return or_(*alvos)
 
 
-def _depois_do_cursor(base: Any, score: Any, cursor: Cursor) -> Any:
+@dataclass(frozen=True)
+class _Posicao:
+    """O cursor JA RESOLVIDO: o par que o `lead_id` dele nomeia.
+
+    **Existe porque a ordem continua sendo por par, e o cursor deixou de
+    carrega-lo** (TEC-195, D3). O que viaja para o cliente e o apelido opaco; o
+    que o `ORDER BY` compara e `(channel, conversation_key)`, que nao mudou.
+    Trocar tambem a ordem exigiria juntar `referencias_de_lead` na consulta, e
+    lead ainda sem apelido -- eles nascem sob demanda -- ficaria fora dela.
+    """
+
+    score: int | None
+    channel: str
+    conversation_key: str
+
+
+def _depois_do_cursor(base: Any, score: Any, posicao: _Posicao) -> Any:
     """A pagina seguinte, por keyset. D5 do desenho.
 
     A ordem e `score DESC NULLS LAST, channel, conversation_key`, e este
@@ -155,20 +195,41 @@ def _depois_do_cursor(base: Any, score: Any, cursor: Cursor) -> Any:
     invisivel em teste de pagina unica.
     """
     desempate = func.row(base.c.channel, base.c.conversation_key) > func.row(
-        cursor.channel, cursor.conversation_key
+        posicao.channel, posicao.conversation_key
     )
 
-    if cursor.score is None:
+    if posicao.score is None:
         return and_(score.c.score.is_(None), desempate)
 
     return or_(
-        score.c.score < cursor.score,
+        score.c.score < posicao.score,
         score.c.score.is_(None),
-        and_(score.c.score == cursor.score, desempate),
+        and_(score.c.score == posicao.score, desempate),
     )
 
 
-def _consulta(filtro: Filtro, *, recorte: RecorteDoPapel) -> Select[Any]:
+def _telefone_da_sessao(base: Any) -> Any:
+    """O numero que o lead web digitou, ou nulo. TEC-129.
+
+    Escalar correlacionada e nao JOIN: `vinculos_de_sessao` tem uma linha por
+    SESSAO, e a mesma pessoa em dois navegadores sao duas linhas -- um JOIN
+    duplicaria o lead na lista. `limit(1)` porque qualquer uma delas serve: a
+    tabela so aceita um telefone por sessao, e as duas apontam para o mesmo.
+    """
+    return (
+        select(VinculoDeSessao.telefone)
+        .where(
+            VinculoDeSessao.channel == base.c.channel,
+            VinculoDeSessao.conversation_key == base.c.conversation_key,
+        )
+        .limit(1)
+        .scalar_subquery()
+    )
+
+
+def _consulta(
+    filtro: Filtro, *, recorte: RecorteDoPapel, posicao: _Posicao | None = None
+) -> Select[Any]:
     base = _ultima_interacao()
     score = _score_corrente()
 
@@ -176,6 +237,7 @@ def _consulta(filtro: Filtro, *, recorte: RecorteDoPapel) -> Select[Any]:
         select(
             base.c.channel,
             base.c.conversation_key,
+            _telefone_da_sessao(base).label("telefone_da_sessao"),
             base.c.ultima_interacao_em,
             score.c.score,
             LeadQualification.temperatura,
@@ -243,14 +305,86 @@ def _consulta(filtro: Filtro, *, recorte: RecorteDoPapel) -> Select[Any]:
                 .exists()
             )
 
-    if filtro.cursor is not None:
-        consulta = consulta.where(_depois_do_cursor(base, score, filtro.cursor))
+    if posicao is not None:
+        consulta = consulta.where(_depois_do_cursor(base, score, posicao))
 
     return consulta.order_by(
         score.c.score.desc().nullslast(),
         base.c.channel,
         base.c.conversation_key,
     )
+
+
+async def referencias_para(
+    session: AsyncSession, pares: Sequence[tuple[str, str]]
+) -> dict[tuple[str, str], uuid.UUID]:
+    """O apelido opaco de cada par, criando o que faltar. TEC-195, D2.
+
+    **Duas consultas para a pagina inteira, e nao duas por lead.** O INSERT em
+    lote com `ON CONFLICT DO NOTHING` cria o que nao existe, e o SELECT seguinte
+    le tudo -- inclusive o que ja existia e o que outra requisicao criou entre
+    os dois.
+
+    **O `ON CONFLICT` e o que torna o get-or-create seguro sob concorrencia.**
+    Sem ele, duas requisicoes simultaneas para o mesmo lead produziriam dois
+    apelidos, e o mesmo lead teria dois enderecos -- a trilha de auditoria
+    registraria os dois como entidades diferentes, e nada juntaria os dois
+    depois.
+
+    **Nao commita**, como os outros repositorios deste repo. Quem chama e a
+    rota, que ja abre e fecha a sessao.
+    """
+    if not pares:
+        return {}
+
+    agora = datetime.now(UTC)
+    await session.execute(
+        insert(ReferenciaDeLead)
+        .values(
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "channel": channel,
+                    "conversation_key": conversation_key,
+                    "criado_em": agora,
+                }
+                for channel, conversation_key in pares
+            ]
+        )
+        .on_conflict_do_nothing(constraint="uq_referencias_de_lead_conversa"),
+    )
+
+    linhas = (
+        await session.execute(
+            select(
+                ReferenciaDeLead.channel,
+                ReferenciaDeLead.conversation_key,
+                ReferenciaDeLead.id,
+            ).where(
+                func.row(ReferenciaDeLead.channel, ReferenciaDeLead.conversation_key).in_(
+                    [func.row(channel, chave) for channel, chave in pares]
+                )
+            )
+        )
+    ).all()
+    return {(linha.channel, linha.conversation_key): linha.id for linha in linhas}
+
+
+async def par_de(session: AsyncSession, lead_id: uuid.UUID) -> tuple[str, str] | None:
+    """O par que este apelido nomeia, ou `None` se ele nao existe.
+
+    O caminho inverso de `referencias_para`, e o unico. E ele que permite a
+    revelacao voltar ao telefone -- a razao de esta referencia ser uma linha e
+    nao um HMAC como o `lead_ref` da trilha.
+    """
+    linha = (
+        await session.execute(
+            select(ReferenciaDeLead.channel, ReferenciaDeLead.conversation_key).where(
+                ReferenciaDeLead.id == lead_id
+            )
+        )
+    ).first()
+    return (linha.channel, linha.conversation_key) if linha is not None else None
 
 
 async def listar_leads(
@@ -264,16 +398,49 @@ async def listar_leads(
     um numero que o cliente nao usa para nada alem de saber se continua.
 
     `recorte` vem da claim do JWT, nunca da query: ver a D7 e `RecorteDoPapel`.
+
+    **O cursor chega com o apelido e e resolvido aqui** (TEC-195, D3). Apelido
+    que nao existe e cursor invalido, e nao primeira pagina: quem chamou perdeu
+    o lugar, e devolver o comeco em silencio faria a tela mostra-lo como se
+    fosse a continuacao.
     """
+    posicao: _Posicao | None = None
+    if filtro.cursor is not None:
+        par = await par_de(session, filtro.cursor.lead_id)
+        if par is None:
+            raise FiltroInvalido("cursor invalido")
+        posicao = _Posicao(score=filtro.cursor.score, channel=par[0], conversation_key=par[1])
+
     linhas = (
-        await session.execute(_consulta(filtro, recorte=recorte).limit(filtro.limite + 1))
+        await session.execute(
+            _consulta(filtro, recorte=recorte, posicao=posicao).limit(filtro.limite + 1)
+        )
     ).all()
 
     tem_mais = len(linhas) > filtro.limite
+    visiveis = linhas[: filtro.limite]
+    apelidos = await referencias_para(
+        session, [(linha.channel, linha.conversation_key) for linha in visiveis]
+    )
+
     pagina = [
         LeadDaLista(
+            lead_id=apelidos[(linha.channel, linha.conversation_key)],
             channel=linha.channel,
-            conversation_key=linha.conversation_key,
+            # **O telefone sai de duas origens, e a ordem importa.** No
+            # WhatsApp a propria `conversation_key` e o numero; no web ela e um
+            # UUID de sessao, `mascarar_telefone` devolve nulo, e o numero so
+            # existe se o lead o digitou (TEC-129). Mascarar as duas e deixar a
+            # primeira que der certo vencer evita um `if` por canal, que
+            # precisaria ser mantido a cada canal novo.
+            telefone=(
+                mascarar_telefone(linha.conversation_key)
+                or (
+                    mascarar_telefone(linha.telefone_da_sessao)
+                    if linha.telefone_da_sessao
+                    else None
+                )
+            ),
             score=linha.score,
             temperatura=linha.temperatura,
             # A ausencia de linha em `conversas` e ATIVA (D8), e a traducao
@@ -285,15 +452,69 @@ async def listar_leads(
             qualificado_em=linha.qualificado_em,
             ultima_interacao_em=linha.ultima_interacao_em,
         )
-        for linha in linhas[: filtro.limite]
+        for linha in visiveis
     ]
 
     if not tem_mais or not pagina:
         return pagina, None
 
     ultimo = pagina[-1]
-    return pagina, Cursor(
-        score=ultimo.score,
-        channel=ultimo.channel,
-        conversation_key=ultimo.conversation_key,
-    )
+    return pagina, Cursor(score=ultimo.score, lead_id=ultimo.lead_id)
+
+
+async def e_lead_do_corretor(
+    session: AsyncSession, *, par: tuple[str, str], corretor_id: uuid.UUID | None
+) -> bool:
+    """Se este lead ja foi repassado a este corretor.
+
+    Mesmo vinculo que o recorte da lista usa (`handoffs.corretor_id`), pela
+    mesma razao: antes do repasse o lead nao tem dono. Corretor sem vinculo
+    devolve falso -- fail-CLOSED, como `RecorteDoPapel.nao_ve_nada`.
+    """
+    if corretor_id is None:
+        return False
+    channel, conversation_key = par
+    return (
+        await session.execute(
+            select(Handoff.id)
+            .where(
+                Handoff.channel == channel,
+                Handoff.conversation_key == conversation_key,
+                Handoff.corretor_id == corretor_id,
+            )
+            .limit(1)
+        )
+    ).first() is not None
+
+
+async def valor_revelado(session: AsyncSession, *, par: tuple[str, str], campo: str) -> str | None:
+    """O dado pessoal em claro. So `revelar` chama, e so depois de registrar.
+
+    **`telefone` sai na forma canonica com `+`**, e nao nos digitos crus da
+    `conversation_key`: quem revela vai discar ou copiar, e `5548999990021`
+    obriga a tela a formatar de novo -- uma segunda regra de formatacao, livre
+    para divergir da que a mascara usa.
+
+    **`email` devolve `None`, e isso nao e falha** (TEC-195, D7): nenhuma
+    tabela deste sistema guarda e-mail de lead. O campo e aceito pelo
+    vocabulario para que a tela nao precise mudar no dia em que a coluna
+    nascer; ate la, nulo diz "nao ha", que e a verdade.
+    """
+    if campo != CAMPO_TELEFONE:
+        return None
+
+    channel, conversation_key = par
+    canonico = normalizar(conversation_key)
+    if canonico is None:
+        canonico = (
+            await session.execute(
+                select(VinculoDeSessao.telefone)
+                .where(
+                    VinculoDeSessao.channel == channel,
+                    VinculoDeSessao.conversation_key == conversation_key,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+    return f"+{canonico}" if canonico else None

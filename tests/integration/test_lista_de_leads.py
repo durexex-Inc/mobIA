@@ -5,6 +5,7 @@ nas duas origens (D3), o lead sem score (D4) e a escrita de
 `handoffs.corretor_id` (D6), que e o que torna o terceiro cenario exercitavel.
 """
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -20,6 +21,7 @@ from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status as StatusDoHandoff
 from mobia.domain.identidade.models import VinculoDeSessao
+from mobia.domain.leads.repositorio import par_de
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.usuarios import tokens
@@ -128,8 +130,21 @@ async def _lead(
     return chave
 
 
-def _chaves(resposta: Any) -> list[str]:
-    return [item["conversationKey"] for item in resposta.json()["itens"]]
+async def _chaves(session: AsyncSession, resposta: Any) -> list[str]:
+    """O `conversation_key` de cada item, resolvido a partir do `leadId`.
+
+    **A resposta nao traz mais o par** (TEC-195): o item carrega o apelido
+    opaco de `referencias_de_lead`, e e o servidor que sabe a quem ele
+    pertence. Estas assertas continuam sendo sobre o par porque e ele que
+    ordena a lista -- o que mudou e que o teste precisa do banco para chegar
+    nele, exatamente como o cliente precisaria da rota de revelacao.
+    """
+    chaves = []
+    for item in resposta.json()["itens"]:
+        par = await par_de(session, uuid.UUID(item["leadId"]))
+        assert par is not None, f"apelido sem referencia: {item['leadId']}"
+        chaves.append(par[1])
+    return chaves
 
 
 async def test_ordenacao_padrao_por_score(
@@ -156,7 +171,7 @@ async def test_busca_por_bairro_de_interesse(
 
     resposta = await client.get(ROTA, params={"busca": "Trindade"}, headers=_bearer("GERENTE"))
 
-    assert _chaves(resposta) == ["5548990000001"]
+    assert await _chaves(session, resposta) == ["5548990000001"]
 
 
 async def test_busca_por_bairro_ignora_a_caixa(
@@ -166,7 +181,7 @@ async def test_busca_por_bairro_ignora_a_caixa(
 
     resposta = await client.get(ROTA, params={"busca": "trINDade"}, headers=_bearer("GERENTE"))
 
-    assert _chaves(resposta) == ["5548990000001"]
+    assert await _chaves(session, resposta) == ["5548990000001"]
 
 
 async def test_corretor_ve_apenas_os_proprios_leads(
@@ -185,7 +200,7 @@ async def test_corretor_ve_apenas_os_proprios_leads(
 
     resposta = await client.get(ROTA, headers=_bearer("CORRETOR", corretor_id=paulo))
 
-    assert _chaves(resposta) == ["5548990000001"]
+    assert await _chaves(session, resposta) == ["5548990000001"]
 
 
 async def test_corretor_nao_alarga_o_recorte_pela_query(
@@ -204,7 +219,7 @@ async def test_corretor_nao_alarga_o_recorte_pela_query(
         ROTA, params={"corretorId": str(marcia)}, headers=_bearer("CORRETOR", corretor_id=paulo)
     )
 
-    assert _chaves(resposta) == []
+    assert await _chaves(session, resposta) == []
 
 
 async def test_corretor_sem_vinculo_ve_lista_vazia(
@@ -216,7 +231,7 @@ async def test_corretor_sem_vinculo_ve_lista_vazia(
 
     resposta = await client.get(ROTA, headers=_bearer("CORRETOR"))
 
-    assert _chaves(resposta) == []
+    assert await _chaves(session, resposta) == []
 
 
 async def test_gerente_ve_a_base_inteira(
@@ -229,7 +244,7 @@ async def test_gerente_ve_a_base_inteira(
 
     resposta = await client.get(ROTA, headers=_bearer("GERENTE"))
 
-    assert len(_chaves(resposta)) == 2
+    assert len(await _chaves(session, resposta)) == 2
 
 
 async def test_paginacao_preserva_a_ordenacao(
@@ -254,7 +269,10 @@ async def test_paginacao_preserva_a_ordenacao(
             params["cursor"] = cursor
         resposta = await client.get(ROTA, params=params, headers=_bearer("GERENTE"))
         corpo = resposta.json()
-        vistos.extend(item["conversationKey"] for item in corpo["itens"])
+        # `leadId` e nao o par: o apelido e unico por lead (UNIQUE em
+        # `referencias_de_lead`), entao ele serve a asserta de "a mesma linha
+        # apareceu em duas paginas" sem que o teste precise do banco.
+        vistos.extend(item["leadId"] for item in corpo["itens"])
         scores.extend(item["score"] for item in corpo["itens"])
         cursor = corpo["proximoCursor"]
         if cursor is None:
@@ -280,8 +298,8 @@ async def test_empate_de_score_sai_em_ordem_estavel(
     primeira = await client.get(ROTA, headers=_bearer("GERENTE"))
     segunda = await client.get(ROTA, headers=_bearer("GERENTE"))
 
-    assert _chaves(primeira) == _chaves(segunda)
-    assert _chaves(primeira) == sorted(_chaves(primeira))
+    assert await _chaves(session, primeira) == await _chaves(session, segunda)
+    assert await _chaves(session, primeira) == sorted(await _chaves(session, primeira))
 
 
 async def test_lead_sem_score_aparece_por_ultimo(
@@ -305,7 +323,7 @@ async def test_busca_por_telefone_do_whatsapp(
 
     resposta = await client.get(ROTA, params={"busca": "48988887777"}, headers=_bearer("GERENTE"))
 
-    assert _chaves(resposta) == ["5548988887777"]
+    assert await _chaves(session, resposta) == ["5548988887777"]
 
 
 async def test_busca_por_telefone_aceita_pontuacao(
@@ -322,7 +340,7 @@ async def test_busca_por_telefone_aceita_pontuacao(
         ROTA, params={"busca": "+55 (48) 98888-7777"}, headers=_bearer("GERENTE")
     )
 
-    assert _chaves(resposta) == ["5548988887777"]
+    assert await _chaves(session, resposta) == ["5548988887777"]
 
 
 async def test_busca_por_telefone_do_chat_web(
@@ -361,7 +379,7 @@ async def test_busca_por_telefone_do_chat_web(
 
     resposta = await client.get(ROTA, params={"busca": "977776666"}, headers=_bearer("GERENTE"))
 
-    assert _chaves(resposta) == [sessao]
+    assert await _chaves(session, resposta) == [sessao]
 
 
 async def test_filtro_de_status_trata_ausencia_como_ativa(
@@ -378,8 +396,8 @@ async def test_filtro_de_status_trata_ausencia_como_ativa(
     ativas = await client.get(ROTA, params={"status": "ATIVA"}, headers=_bearer("GERENTE"))
     encerradas = await client.get(ROTA, params={"status": "ENCERRADA"}, headers=_bearer("GERENTE"))
 
-    assert _chaves(ativas) == ["5548990000001"]
-    assert _chaves(encerradas) == ["5548990000002"]
+    assert await _chaves(session, ativas) == ["5548990000001"]
+    assert await _chaves(session, encerradas) == ["5548990000002"]
 
 
 async def test_filtros_de_canal_e_temperatura(
@@ -391,8 +409,8 @@ async def test_filtros_de_canal_e_temperatura(
     por_canal = await client.get(ROTA, params={"canal": "web"}, headers=_bearer("GERENTE"))
     por_temp = await client.get(ROTA, params={"temperatura": "QUENTE"}, headers=_bearer("GERENTE"))
 
-    assert _chaves(por_canal) == ["sessao-web-1"]
-    assert _chaves(por_temp) == ["5548990000001"]
+    assert await _chaves(session, por_canal) == ["sessao-web-1"]
+    assert await _chaves(session, por_temp) == ["5548990000001"]
 
 
 @pytest.mark.parametrize(
@@ -438,22 +456,29 @@ async def test_ultima_interacao_e_a_fala_mais_recente(
     assert datetime.fromisoformat(item["ultimaInteracaoEm"]) > ontem
 
 
-async def test_a_lista_nao_devolve_telefone_nem_nome(
+async def test_a_lista_nao_devolve_nome_e_o_telefone_sai_mascarado(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
-    """L1 e L3, presas por teste.
+    """L1 presa por teste, e a L3 resolvida pela TEC-195.
 
-    O nome nao existe em tabela nenhuma, e o telefone so poderia sair
-    mascarado (TEC-195). Esta asserta e o que impede alguem de "completar" a
-    resposta com o `conversation_key` renomeado para `telefone`, que entregaria
-    em claro justamente o dado que a TEC-195 existe para proteger.
+    O nome continua sem existir em tabela nenhuma. O telefone passou a sair, e
+    MASCARADO -- era isto que a versao anterior deste teste esperava quando
+    afirmava que ele "so poderia sair mascarado (TEC-195)".
+
+    A asserta que importa e a ultima: o par nao esta em lugar nenhum da
+    resposta. E o que impede alguem de "completar" o item com o
+    `conversation_key`, que entregaria em claro justamente o dado que esta
+    mascara existe para proteger.
     """
     await _lead(session, chave="5548990000001", score=10)
 
-    item = (await client.get(ROTA, headers=_bearer("GERENTE"))).json()["itens"][0]
+    corpo = (await client.get(ROTA, headers=_bearer("GERENTE"))).json()
+    item = corpo["itens"][0]
 
     assert "nome" not in item
-    assert "telefone" not in item
+    assert "conversationKey" not in item
+    assert item["telefone"] == "+55 48 9****-**01"
+    assert "5548990000001" not in json.dumps(corpo)
 
 
 async def test_leitura_le_a_lista_e_ninguem_sem_credencial_le(

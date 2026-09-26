@@ -1,9 +1,14 @@
 """O vocabulario fechado da trilha de auditoria. TEC-206, D2 e D5 do desenho.
 
 Modulo sem I/O, no molde de `handoff/vocabulario.py`. Os tres enums tem copia
-literal nos CHECKs da migration 0053 -- a migration nao importa daqui, porque
+literal nos CHECKs de uma migration -- a migration nao importa daqui, porque
 migration aplicada nao muda quando o codigo muda --, e quem prende as duas
 copias juntas e `tests/unit/test_auditoria_vocabulario.py`.
+
+**Nem sempre a MESMA migration, desde a TEC-195.** A 0053 escreveu os tres; a
+0056 acrescentou `lead` a `Entidade` e teve de RECRIAR o CHECK, porque o
+Postgres nao estende CHECK. Entao o vocabulario em vigor e o da migration mais
+recente que escreve cada um, e e assim que aquele teste procura.
 
 **`detalhes` so e montado pelas funcoes deste modulo** (D5): cada valor sai de
 um vocabulario fechado, e texto digitado por uma pessoa nunca entra. Texto
@@ -48,11 +53,29 @@ class Entidade(StrEnum):
     # 0053 e o que custaria migration depois, e o chamador nao custa nada.
     LEAD_QUALIFICATION = "lead_qualification"
     CONFIGURACAO_AGENTE = "configuracao_agente"
+    # TEC-195. O `entidade_id` e o apelido opaco de `referencias_de_lead`, e
+    # NAO o par `(channel, conversation_key)` -- gravar o par seria gravar o
+    # telefone, que e o que a D4 da TEC-206 proibiu. Quem pesquisa a trilha por
+    # lead continua usando `lead_ref`. Custou a migration 0056, que recriou o
+    # CHECK da 0053.
+    LEAD = "lead"
 
 
-# O unico `campo` com chamador hoje: o resumo do handoff, em
-# `POST /api/v1/handoffs/{handoff_id}/resumo`.
+# Os `campo` que a trilha nomeia. O que vai para a linha e QUAL campo foi
+# lido, nunca o que ele dizia.
+#
+# `CAMPO_RESUMO` era o unico com chamador ate a TEC-195; os outros dois sao da
+# revelacao de dado pessoal em `POST /api/v1/leads/{lead_id}/revelar`.
 CAMPO_RESUMO = "resumo"
+CAMPO_TELEFONE = "telefone"
+# Sem fonte: nenhuma tabela deste sistema guarda e-mail de lead (TEC-195, D7).
+# A rota o aceita e devolve nulo, para que a tela nao precise mudar quando a
+# coluna nascer.
+CAMPO_EMAIL = "email"
+
+# Os campos que `POST /leads/{lead_id}/revelar` aceita. Fora daqui e 422, e
+# nao 500: o campo vem de quem chamou.
+CAMPOS_REVELAVEIS = frozenset({CAMPO_TELEFONE, CAMPO_EMAIL})
 
 # Os tres motivos que `api/autorizacao.py` produz. Um quarto, sem entrar aqui,
 # e erro de programacao -- e nao texto que passe para a trilha.
