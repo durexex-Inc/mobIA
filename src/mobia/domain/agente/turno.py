@@ -1283,6 +1283,9 @@ async def _executar_turno(
                 conversation_key=message.conversation_key,
                 message_id=message.id,
             )
+            # A mesma escrituracao do bloco de opt-out (TEC-130, D6), na mesma
+            # ordem: opt-out primeiro, encerramento depois.
+            await _encerrar_por_optout(session_factory, message)
         log.info(
             "turno.pedido_de_titular",
             channel=message.channel,
@@ -1593,15 +1596,7 @@ async def _executar_turno(
         # ainda ATIVA -- registro de menos, nunca mensagem a mais. A varredura
         # diaria fecha essa conversa por INATIVIDADE 30 dias depois, com o
         # motivo menos preciso; e o custo aceito.
-        async with session_factory() as sessao_do_encerramento:
-            await encerrar_conversa(
-                sessao_do_encerramento,
-                channel=message.channel,
-                conversation_key=message.conversation_key,
-                motivo=str(MotivoDoEncerramento.OPTOUT),
-                agora=datetime.now(UTC),
-            )
-            await sessao_do_encerramento.commit()
+        #
         # **`conversa.encerrada` passa a significar TODO encerramento**, e nao
         # so o da RN-03.5 (fix da revisao final). O evento ja existia com campo
         # `motivo`, e emiti-lo em dois dos tres caminhos fazia o `motivo`
@@ -1609,16 +1604,13 @@ async def _executar_turno(
         # paginasse por ele veria o funil sem os encerramentos por opt-out e
         # sem os da varredura (`encerrar_inativas` emite o terceiro).
         #
-        # Depois do commit e sem texto do lead, pelas mesmas duas razoes do
-        # bloco da RN-03.5 mais abaixo. Sem `seguidas`: aqui nao ha contagem
-        # que tenha decidido nada -- o que decidiu foi o pedido do lead, e o
-        # `message_id` e a alca que leva ate ele.
-        log.info(
-            "conversa.encerrada",
-            channel=message.channel,
-            message_id=str(message.id),
-            motivo=str(MotivoDoEncerramento.OPTOUT),
-        )
+        # `_encerrar_por_optout` o emite depois do commit e sem texto do lead,
+        # pelas mesmas duas razoes do bloco da RN-03.5 mais abaixo. Sem
+        # `seguidas`: aqui nao ha contagem que tenha decidido nada -- o que
+        # decidiu foi o pedido do lead, e o `message_id` e a alca que leva ate
+        # ele. Desde a TEC-207 o bloco do pedido de titular, la em cima, chama
+        # a mesma funcao quando grava opt-out.
+        await _encerrar_por_optout(session_factory, message)
         # Nome distinto de `entregue` (o bool que `outbound.send` devolve mais
         # abaixo, no caminho principal): mypy infere um tipo unico por nome de
         # variavel na funcao inteira, e este aqui e o `ResultadoDoTurno` que
@@ -4474,6 +4466,35 @@ async def _degradar_por_provedor(
     # "expirado" e "sem_resposta" dizem mais que "provedor_indisponivel" sobre
     # o que o lead de fato recebeu.
     return "provedor_indisponivel" if entrega == "respondido" else entrega
+
+
+async def _encerrar_por_optout(
+    session_factory: async_sessionmaker[AsyncSession], message: Message
+) -> None:
+    """Fecha a conversa com `MotivoDoEncerramento.OPTOUT` e emite o evento.
+
+    Escrituracao, nao silencio (TEC-130, D6): o porque, a ordem das duas
+    transacoes e o significado de `conversa.encerrada` estao comentados no
+    bloco `if pedido_de_optout:` de `_executar_turno`, o primeiro chamador.
+    Extraida quando o pedido de titular (TEC-207) passou a gravar opt-out
+    tambem -- sem ela, o opt-out que ele grava deixava a conversa ATIVA,
+    sem data nem motivo, ao contrario do que o bloco de opt-out faz.
+    """
+    async with session_factory() as sessao_do_encerramento:
+        await encerrar_conversa(
+            sessao_do_encerramento,
+            channel=message.channel,
+            conversation_key=message.conversation_key,
+            motivo=str(MotivoDoEncerramento.OPTOUT),
+            agora=datetime.now(UTC),
+        )
+        await sessao_do_encerramento.commit()
+    log.info(
+        "conversa.encerrada",
+        channel=message.channel,
+        message_id=str(message.id),
+        motivo=str(MotivoDoEncerramento.OPTOUT),
+    )
 
 
 async def _entregar_texto_fixo(

@@ -13,16 +13,19 @@ que fura as duas guardas de `GuardedOutbound.send`.
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.agente.turno import executar_turno
 from mobia.domain.atendimento.repositorio import assumir
+from mobia.domain.conversa.models import Conversa
+from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
 from mobia.domain.handoff.agendador import AgendadorNoop
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.moderacao.port import Direcao
+from mobia.domain.optout.models import OptoutEvent
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
 from mobia.domain.titular.deteccao import (
     TEXTO_DA_CONFIRMACAO_DE_ACESSO,
@@ -84,6 +87,23 @@ async def _solicitacoes(session) -> list[SolicitacaoDeTitular]:
     return list((await session.execute(select(SolicitacaoDeTitular))).scalars().all())
 
 
+async def _encerramento(session) -> tuple[str | None, str | None]:
+    """(status, motivo) da conversa do par, ou (None, None) sem linha."""
+    session.expire_all()
+    linha = (
+        await session.execute(
+            select(Conversa.status, Conversa.motivo_do_encerramento).where(
+                Conversa.channel == CANAL, Conversa.conversation_key == CONVERSA
+            )
+        )
+    ).one_or_none()
+    return (None, None) if linha is None else (linha.status, linha.motivo_do_encerramento)
+
+
+async def _eventos_de_optout(session) -> int:
+    return (await session.execute(select(func.count()).select_from(OptoutEvent))).scalar_one()
+
+
 async def test_pedido_de_eliminacao_registra_optout_e_confirma_sem_o_modelo(
     session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
 ) -> None:
@@ -115,6 +135,9 @@ async def test_pedido_de_eliminacao_registra_optout_e_confirma_sem_o_modelo(
     assert linha.status == StatusDaSolicitacao.ABERTA
     assert (linha.channel, linha.conversation_key) == (CANAL, CONVERSA)
     assert await esta_em_optout(session, channel=CANAL, conversation_key=CONVERSA)
+    # Escrituracao do opt-out que o pedido gravou (TEC-130, D6), igual ao
+    # bloco de opt-out: a conversa fecha com data e motivo.
+    assert await _encerramento(session) == (Status.ENCERRADA, MotivoDoEncerramento.OPTOUT)
     # `in` e nao `==`: primeira mensagem da conversa, entao a entrega carrega o
     # prefixo de identificacao da TEC-139.
     assert len(outbound.entregues) == 1
@@ -145,6 +168,7 @@ async def test_pedido_de_acesso_nao_registra_optout(
     assert linha.tipo == TipoDeSolicitacao.ACESSO
     assert linha.status == StatusDaSolicitacao.ABERTA
     assert not await esta_em_optout(session, channel=CANAL, conversation_key=CONVERSA)
+    assert (await _encerramento(session))[0] != Status.ENCERRADA
     assert len(outbound.entregues) == 1
     assert TEXTO_DA_CONFIRMACAO_DE_ACESSO in outbound.entregues[0]
 
@@ -172,6 +196,7 @@ async def test_pedido_de_acesso_junto_com_optout_registra_os_dois(
     [linha] = await _solicitacoes(session)
     assert linha.tipo == TipoDeSolicitacao.ACESSO
     assert await esta_em_optout(session, channel=CANAL, conversation_key=CONVERSA)
+    assert await _encerramento(session) == (Status.ENCERRADA, MotivoDoEncerramento.OPTOUT)
     assert TEXTO_DA_CONFIRMACAO_DE_ACESSO in outbound.entregues[0]
 
 
@@ -199,6 +224,9 @@ async def test_lead_ja_em_optout_ainda_exerce_o_direito(
     assert resultado == "pedido_de_titular"
     [linha] = await _solicitacoes(session)
     assert linha.tipo == TipoDeSolicitacao.ELIMINACAO
+    # O opt-out ja valia: o bloco nao acrescenta um segundo evento a tabela
+    # append-only.
+    assert await _eventos_de_optout(session) == 1
     assert len(outbound.entregues) == 1
     assert TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO in outbound.entregues[0]
 
