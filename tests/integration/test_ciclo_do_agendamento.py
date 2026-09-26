@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.agendamento.cancelamento import avisar_cancelamento
 from mobia.domain.agendamento.ciclo import (
+    MOTIVO_ANTES_DA_HORA,
     MOTIVO_INEXISTENTE,
     MOTIVO_ORIGEM_ILEGAL,
     PONTOS_POR_NAO_COMPARECIMENTO,
@@ -51,6 +52,15 @@ FIM = datetime(2026, 9, 26, 16, tzinfo=SP)
 CANAL = "whatsapp"
 CONVERSA = "5511911111111"
 AGORA = datetime(2026, 9, 25, 12, tzinfo=UTC)
+# **O relogio depois da visita**, e nao antes. `marcar_realizado` e
+# `marcar_nao_comparecimento` exigem que o inicio ja tenha passado (TEC-374,
+# D2) -- ate ela, estes testes marcavam como realizada, com `AGORA`, uma
+# visita marcada para o dia SEGUINTE. Era conveniencia de fixture, e era uma
+# asserta errada: afirmava legal uma transicao que nunca esta certa.
+#
+# `cancelar` e `remarcar` continuam em `AGORA`, que para elas e o relogio
+# certo: desistir antes da hora e o caso comum das duas.
+DEPOIS = FIM + timedelta(hours=1)
 
 
 async def _agendamento(
@@ -309,7 +319,9 @@ async def test_o_no_show_tira_quinze_pontos_e_deixa_as_duas_causas_na_trilha(
     await session.commit()
     assert antes is not None
 
-    resultado = await marcar_nao_comparecimento(session, agendamento_id=agendamento.id, agora=AGORA)
+    resultado = await marcar_nao_comparecimento(
+        session, agendamento_id=agendamento.id, agora=DEPOIS
+    )
     await session.commit()
 
     assert isinstance(resultado, NaoCompareceu)
@@ -342,7 +354,7 @@ async def test_o_recalculo_seguinte_nao_devolve_os_pontos(
     await _lead_com_score(session)
 
     penalizado = await marcar_nao_comparecimento(
-        session, agendamento_id=agendamento.id, agora=AGORA
+        session, agendamento_id=agendamento.id, agora=DEPOIS
     )
     await session.commit()
     assert isinstance(penalizado, NaoCompareceu)
@@ -366,9 +378,14 @@ async def test_dois_nao_comparecimentos_acumulam(session: AsyncSession, semear_c
         fim=FIM + timedelta(days=1),
     )
 
-    await marcar_nao_comparecimento(session, agendamento_id=primeiro.id, agora=AGORA)
+    await marcar_nao_comparecimento(session, agendamento_id=primeiro.id, agora=DEPOIS)
     await session.commit()
-    resultado = await marcar_nao_comparecimento(session, agendamento_id=segundo.id, agora=AGORA)
+    # O segundo e no dia seguinte, entao `DEPOIS` ainda esta ANTES dele -- e a
+    # guarda da TEC-374 o recusaria. Cada desfecho se marca depois da sua
+    # propria visita.
+    resultado = await marcar_nao_comparecimento(
+        session, agendamento_id=segundo.id, agora=DEPOIS + timedelta(days=1)
+    )
     await session.commit()
 
     assert isinstance(resultado, NaoCompareceu)
@@ -381,7 +398,9 @@ async def test_o_total_nao_fica_negativo(session: AsyncSession, semear_corretor)
     await _lead_com_score(session, urgencia=None, forma_pagamento=None, regiao=None)
     agendamento = await _agendamento(session, corretor_id=corretor.id)
 
-    resultado = await marcar_nao_comparecimento(session, agendamento_id=agendamento.id, agora=AGORA)
+    resultado = await marcar_nao_comparecimento(
+        session, agendamento_id=agendamento.id, agora=DEPOIS
+    )
     await session.commit()
 
     assert isinstance(resultado, NaoCompareceu)
@@ -402,7 +421,9 @@ async def test_no_show_de_lead_sem_qualificacao_nao_levanta(
     corretor = await semear_corretor(email="ana@imob.com.br")
     agendamento = await _agendamento(session, corretor_id=corretor.id)
 
-    resultado = await marcar_nao_comparecimento(session, agendamento_id=agendamento.id, agora=AGORA)
+    resultado = await marcar_nao_comparecimento(
+        session, agendamento_id=agendamento.id, agora=DEPOIS
+    )
     await session.commit()
 
     assert isinstance(resultado, NaoCompareceu)
@@ -421,7 +442,7 @@ async def test_marcar_realizado_nao_custa_nada_ao_lead(
     agendamento = await _agendamento(session, corretor_id=corretor.id)
 
     assert isinstance(
-        await marcar_realizado(session, agendamento_id=agendamento.id, agora=AGORA),
+        await marcar_realizado(session, agendamento_id=agendamento.id, agora=DEPOIS),
         Transicionado,
     )
     await session.commit()
@@ -442,10 +463,10 @@ async def test_so_confirmado_pode_ser_realizado_ou_faltado(
     agendamento = await _agendamento(session, corretor_id=corretor.id, status=status)
 
     assert isinstance(
-        await marcar_realizado(session, agendamento_id=agendamento.id, agora=AGORA), Recusado
+        await marcar_realizado(session, agendamento_id=agendamento.id, agora=DEPOIS), Recusado
     )
     assert isinstance(
-        await marcar_nao_comparecimento(session, agendamento_id=agendamento.id, agora=AGORA),
+        await marcar_nao_comparecimento(session, agendamento_id=agendamento.id, agora=DEPOIS),
         Recusado,
     )
 
@@ -547,3 +568,102 @@ async def test_falha_de_canal_deixa_a_coluna_nula(
     assert eventos_de_log(caplog, "agendamento.aviso_de_cancelamento_falhou")
     linha = await _recarregar(session, agendamento.id)
     assert linha.corretor_avisado_do_cancelamento_em is None
+
+
+async def test_nao_se_marca_realizada_visita_que_nao_comecou(
+    session: AsyncSession, semear_corretor
+) -> None:
+    """TEC-374, D2. Marcar antes da hora e afirmar o que ainda nao aconteceu.
+
+    **Ate a TEC-374 este arquivo afirmava o contrario por acidente**: `AGORA`
+    era um dia ANTES de `INICIO`, e oito chamadas marcavam desfecho a partir
+    dali. Era conveniencia de fixture, nao intencao -- mas a suite dizia que
+    se pode marcar como realizada uma visita de amanha.
+    """
+    corretor = await semear_corretor(email="ana@imob.com.br")
+    agendamento = await _agendamento(session, corretor_id=corretor.id)
+
+    resultado = await marcar_realizado(session, agendamento_id=agendamento.id, agora=AGORA)
+    await session.commit()
+
+    assert isinstance(resultado, Recusado)
+    assert resultado.motivo == MOTIVO_ANTES_DA_HORA
+    assert (await _recarregar(session, agendamento.id)).status == StatusDoAgendamento.CONFIRMADO
+
+
+async def test_no_show_antes_da_hora_nao_penaliza_o_lead(
+    session: AsyncSession, semear_corretor
+) -> None:
+    """A asserta que importa: a guarda roda ANTES da penalidade.
+
+    No no-show a ordem pesa. A penalidade e somada depois da transicao, entao
+    uma guarda que recusasse no fim deixaria 15 pontos gravados sobre um
+    desfecho que nao aconteceu -- e nao ha caminho de volta a partir de
+    `NO_SHOW` para desfaze-los.
+    """
+    corretor = await semear_corretor(email="ana@imob.com.br")
+    await _lead_com_score(session)
+    agendamento = await _agendamento(session, corretor_id=corretor.id)
+    antes = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+    assert antes is not None
+
+    resultado = await marcar_nao_comparecimento(session, agendamento_id=agendamento.id, agora=AGORA)
+    await session.commit()
+
+    assert isinstance(resultado, Recusado)
+    assert resultado.motivo == MOTIVO_ANTES_DA_HORA
+    depois = await registrar_recalculo(session, channel=CANAL, conversation_key=CONVERSA)
+    await session.commit()
+    assert depois is not None
+    assert depois.total == antes.total
+
+
+async def test_cancelar_antes_da_hora_continua_valendo(
+    session: AsyncSession, semear_corretor
+) -> None:
+    """O outro lado da D2: a guarda NAO vale para as duas transicoes do lead.
+
+    Desistir de uma visita antes dela acontecer e o caso comum de `cancelar`,
+    e `remarcar` idem. Uma guarda global teria quebrado a resposta ao lembrete
+    de 24 horas (TEC-372), que por construcao chega antes do compromisso.
+    """
+    corretor = await semear_corretor(email="ana@imob.com.br")
+    agendamento = await _agendamento(session, corretor_id=corretor.id)
+
+    resultado = await cancelar(session, agendamento_id=agendamento.id, agora=AGORA)
+    await session.commit()
+
+    assert isinstance(resultado, Transicionado)
+    assert (await _recarregar(session, agendamento.id)).status == StatusDoAgendamento.CANCELADO
+
+
+async def test_a_recusa_por_origem_ilegal_diz_de_qual_estado(
+    session: AsyncSession, semear_corretor
+) -> None:
+    """TEC-374, D3. `ORIGEM_ILEGAL` sozinho nao da a frase que a card pede.
+
+    A borda precisa dizer "este agendamento ja foi cancelado", e nao um erro
+    generico -- entao o status atual viaja junto na recusa. O dado ja estava
+    sendo lido e descartado por `_transicionar`.
+    """
+    corretor = await semear_corretor(email="ana@imob.com.br")
+    agendamento = await _agendamento(
+        session, corretor_id=corretor.id, status=StatusDoAgendamento.CANCELADO
+    )
+
+    resultado = await marcar_realizado(session, agendamento_id=agendamento.id, agora=DEPOIS)
+    await session.commit()
+
+    assert isinstance(resultado, Recusado)
+    assert resultado.motivo == MOTIVO_ORIGEM_ILEGAL
+    assert resultado.status_atual == StatusDoAgendamento.CANCELADO
+
+
+async def test_a_recusa_por_inexistente_nao_tem_status(session: AsyncSession) -> None:
+    """Nulo porque nao ha linha de onde tirar status -- e nao porque se omitiu."""
+    resultado = await marcar_realizado(session, agendamento_id=uuid.uuid4(), agora=DEPOIS)
+
+    assert isinstance(resultado, Recusado)
+    assert resultado.motivo == MOTIVO_INEXISTENTE
+    assert resultado.status_atual is None

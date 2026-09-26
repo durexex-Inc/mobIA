@@ -150,6 +150,12 @@ PERMISSAO_ESPERADA = {
     # chegava a dizer que seria "capacidade consultada DENTRO de um handler".
     ("POST", "/api/v1/leads/{lead_id}/revelar"): "VER_DADOS_COMPLETOS",
     ("GET", "/api/v1/auditoria"): "VER_AUDITORIA",
+    # TEC-374. `ATENDER_LEAD` mais a checagem de dono dentro do handler --
+    # "so o corretor dono do agendamento, ou um gerente". A permissao sozinha
+    # nao expressa a segunda metade, e e por isso que ela nao pode ser a unica
+    # coisa que este mapa confere.
+    ("POST", "/api/v1/agendamentos/{agendamento_id}/realizado"): "ATENDER_LEAD",
+    ("POST", "/api/v1/agendamentos/{agendamento_id}/nao-comparecimento"): "ATENDER_LEAD",
 }
 
 
