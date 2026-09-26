@@ -33,7 +33,7 @@ transacao para trocar o pseudonimo do lead -- ver `domain/identidade/reindexacao
 Trocar o pseudonimo nao altera o fato registrado.
 
 E aqui a troca e tambem a que tira o telefone em claro da trilha: antes
-da 0061, `conversation_key` guardava o `wa_id`.
+da 0062, `conversation_key` guardava o `wa_id`.
 
 Revision ID: 0012
 Revises: 0011

@@ -1,7 +1,7 @@
-"""A 0061 e a rotacao: o telefone sai de toda coluna e passa a morar cifrado. TEC-203, D3.
+"""A 0062 e a rotacao: o telefone sai de toda coluna e passa a morar cifrado. TEC-203, D3.
 
 Molde de `test_migrations.py`: o teste que parte do telefone em claro desce o
-esquema para a 0060, semeia em SQL cru -- o esquema e o da 0060 e os modelos
+esquema para a 0061, semeia em SQL cru -- o esquema e o da 0061 e os modelos
 ja sao os novos --, sobe para o head e garante o retorno ao head no fim. Os
 que so exercitam a rotacao ou a descida sobre um banco ja reindexado semeiam
 direto no head, sem descer. Cada chamada ao Alembic e um
@@ -58,9 +58,9 @@ def alembic(*args: str) -> None:
     subprocess.run([sys.executable, "-m", "alembic", *args], check=True, capture_output=True)
 
 
-async def _descer_para_a_0060() -> None:
+async def _descer_para_a_0061() -> None:
     await dispose_engine()
-    alembic("downgrade", "0060")
+    alembic("downgrade", "0061")
 
 
 async def _subir() -> None:
@@ -82,7 +82,7 @@ _MENSAGEM = text(
 )
 
 
-async def _semear_na_0060() -> dict[str, uuid.UUID]:
+async def _semear_na_0061() -> dict[str, uuid.UUID]:
     """Um lead do WhatsApp em toda tabela que o guardava em claro.
 
     Mais um segundo lead com o `wa_id` sem o 9 (outra conversa, outra chave) e
@@ -203,11 +203,11 @@ async def _semear_na_0060() -> dict[str, uuid.UUID]:
 
 
 @pytest.fixture
-async def semeado_na_0060_e_subido() -> AsyncIterator[dict[str, uuid.UUID]]:
+async def semeado_na_0061_e_subido() -> AsyncIterator[dict[str, uuid.UUID]]:
     """Desce, semeia com o telefone em claro, sobe -- e volta ao head no fim."""
-    await _descer_para_a_0060()
+    await _descer_para_a_0061()
     try:
-        ids = await _semear_na_0060()
+        ids = await _semear_na_0061()
         await _subir()
         yield ids
     finally:
@@ -226,7 +226,7 @@ async def _colunas_de_texto(sessao: Any, tabela: str) -> list[str]:
 
 
 async def test_nenhuma_coluna_guarda_o_telefone_depois_da_subida(
-    semeado_na_0060_e_subido: dict[str, uuid.UUID],
+    semeado_na_0061_e_subido: dict[str, uuid.UUID],
 ) -> None:
     achados = []
     async with get_sessionmaker()() as sessao:
@@ -243,9 +243,9 @@ async def test_nenhuma_coluna_guarda_o_telefone_depois_da_subida(
 
 
 async def test_o_par_vira_chave_de_e_a_identidade_revela_o_cru(
-    semeado_na_0060_e_subido: dict[str, uuid.UUID],
+    semeado_na_0061_e_subido: dict[str, uuid.UUID],
 ) -> None:
-    ids = semeado_na_0060_e_subido
+    ids = semeado_na_0061_e_subido
     chave = chave_de("whatsapp", TELEFONE)
     async with get_sessionmaker()() as sessao:
         for tabela in (
@@ -312,7 +312,7 @@ async def test_o_par_vira_chave_de_e_a_identidade_revela_o_cru(
 
 
 async def test_resumo_de_antes_continua_legivel(
-    semeado_na_0060_e_subido: dict[str, uuid.UUID],
+    semeado_na_0061_e_subido: dict[str, uuid.UUID],
 ) -> None:
     async with get_sessionmaker()() as sessao:
         resumo = await ler_resumo(sessao, "whatsapp", chave_de("whatsapp", TELEFONE))
@@ -321,7 +321,7 @@ async def test_resumo_de_antes_continua_legivel(
 
 
 async def test_evento_de_auditoria_de_antes_e_achado_pelo_lead(
-    semeado_na_0060_e_subido: dict[str, uuid.UUID],
+    semeado_na_0061_e_subido: dict[str, uuid.UUID],
 ) -> None:
     filtro = montar_filtro(
         channel="whatsapp",
@@ -342,7 +342,7 @@ async def test_evento_de_auditoria_de_antes_e_achado_pelo_lead(
     ],
 )
 async def test_trigger_de_imutabilidade_volta_ligada(
-    semeado_na_0060_e_subido: dict[str, uuid.UUID], tabela: str, coluna: str
+    semeado_na_0061_e_subido: dict[str, uuid.UUID], tabela: str, coluna: str
 ) -> None:
     async with get_sessionmaker()() as sessao:
         with pytest.raises(DBAPIError, match="imutavel"):
@@ -376,7 +376,7 @@ async def _retrato() -> dict[str, list[tuple[Any, ...]]]:
 
 
 async def test_rodar_a_reindexacao_de_novo_nao_muda_nada(
-    semeado_na_0060_e_subido: dict[str, uuid.UUID],
+    semeado_na_0061_e_subido: dict[str, uuid.UUID],
 ) -> None:
     """A idempotencia que deixa retomar uma subida interrompida (D3)."""
     antes = await _retrato()
@@ -399,10 +399,10 @@ async def test_rodar_a_reindexacao_de_novo_nao_muda_nada(
 
 
 async def test_descida_devolve_os_valores_originais(
-    semeado_na_0060_e_subido: dict[str, uuid.UUID],
+    semeado_na_0061_e_subido: dict[str, uuid.UUID],
 ) -> None:
-    ids = semeado_na_0060_e_subido
-    await _descer_para_a_0060()
+    ids = semeado_na_0061_e_subido
+    await _descer_para_a_0061()
     async with get_sessionmaker()() as sessao:
         entrada = (
             await sessao.execute(
@@ -443,10 +443,10 @@ async def test_descida_devolve_os_valores_originais(
 
 
 async def test_rotacao_da_chave_de_indice_leva_tudo_para_a_chave_nova(
-    semeado_na_0060_e_subido: dict[str, uuid.UUID], monkeypatch: pytest.MonkeyPatch
+    semeado_na_0061_e_subido: dict[str, uuid.UUID], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """O que `scripts/reindexar_leads.py` roda, com a chave de indice trocada."""
-    ids = semeado_na_0060_e_subido
+    ids = semeado_na_0061_e_subido
     chave_a = chave_de("whatsapp", TELEFONE)
     configuracao_b = get_settings().model_copy(
         update={"lead_indice_chave": "chave-de-indice-B-" + "x" * 40}
@@ -508,7 +508,7 @@ async def test_rotacao_da_chave_de_indice_leva_tudo_para_a_chave_nova(
 
 
 async def test_rotacao_da_chave_do_lead_ref_mantem_a_trilha_achavel(
-    semeado_na_0060_e_subido: dict[str, uuid.UUID],
+    semeado_na_0061_e_subido: dict[str, uuid.UUID],
 ) -> None:
     """A chave de indice fica; so a do `lead_ref` troca. O par nao se move,
     mas o evento gravado sob a chave A tem de ser achado pela B."""
@@ -553,8 +553,8 @@ ORFAO = "5548988887777"
 
 async def test_evento_de_rate_limit_orfao_tambem_perde_o_telefone() -> None:
     """Um numero que so aparece em `rate_limit_events` -- a mensagem ja saiu
-    pela retencao, o evento fica -- nao pode sobrar em claro depois da 0061."""
-    await _descer_para_a_0060()
+    pela retencao, o evento fica -- nao pode sobrar em claro depois da 0062."""
+    await _descer_para_a_0061()
     try:
         async with get_sessionmaker()() as sessao:
             await sessao.execute(
@@ -573,7 +573,7 @@ async def test_evento_de_rate_limit_orfao_tambem_perde_o_telefone() -> None:
             assert await revelar(sessao, "whatsapp", chave) == ORFAO
 
         # E a descida tem de onde tirar o valor cru: a subida gravou a identidade.
-        await _descer_para_a_0060()
+        await _descer_para_a_0061()
         async with get_sessionmaker()() as sessao:
             assert await sessao.scalar(text("SELECT chave FROM rate_limit_events")) == ORFAO
         await dispose_engine()
@@ -711,7 +711,7 @@ async def test_par_sem_identidade_e_pulado_e_contado_e_os_outros_seguem(
 
 
 async def test_chave_anterior_errada_nao_recalcula_lead_ref_nenhum(
-    semeado_na_0060_e_subido: dict[str, uuid.UUID],
+    semeado_na_0061_e_subido: dict[str, uuid.UUID],
 ) -> None:
     """Com a chave ANTERIOR errada nenhum `lead_ref` casa, e o resultado diz
     zero -- e o sinal que `scripts/reindexar_leads.py` transforma em aviso."""

@@ -17,10 +17,13 @@ docstring de `domain/identidade/reindexacao.py`.
 
 Nasceu 0058 e virou 0061 no merge com a `main`, que ganhou a 0058, a 0059 e a
 0060 (TEC-198, TEC-199, TEC-191) antes. Nenhuma das tres cria tabela com
-`conversation_key`, entao a lista abaixo nao mudou.
+`conversation_key`, entao a lista abaixo nao mudou. Virou 0062 num segundo
+merge, porque a TEC-209 tambem tirou 0061 da `main` antes desta: o CHECK que
+ela recria em `messages.status` nao mexe em `conversation_key`, entao a lista
+abaixo continua sem mudar.
 
-Revision ID: 0061
-Revises: 0060
+Revision ID: 0062
+Revises: 0061
 """
 
 import sqlalchemy as sa
@@ -33,8 +36,8 @@ from mobia.domain.identidade.models import aad_do_vinculo
 from mobia.domain.identidade.reindexacao import reindexar
 from mobia.infra.crypto import decrypt, encrypt
 
-revision = "0061"
-down_revision = "0060"
+revision = "0062"
+down_revision = "0061"
 branch_labels = None
 depends_on = None
 

@@ -148,7 +148,7 @@ async def test_downgrade_decifra_text_body_e_raw_payload(session) -> None:
     com_payload, sem_payload, de_saida = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     payload = {"id": "wamid.NESTED", "envelope": {"tipo": "text"}}
     # No head a chave e o HMAC do telefone, e a identidade existe: e dela que a
-    # descida da 0061 tira o valor cru que devolve as colunas (TEC-203).
+    # descida da 0062 tira o valor cru que devolve as colunas (TEC-203).
     chave = await registrar(session, "whatsapp", "5511911112222")
 
     session.add_all(
@@ -532,7 +532,7 @@ async def _semear_para_o_backfill(
 
 
 async def _carimbo(conversa: str) -> datetime | None:
-    """O `qualificado_em` da conversa, ja no head -- onde a 0061 (TEC-203)
+    """O `qualificado_em` da conversa, ja no head -- onde a 0062 (TEC-203)
     trocou o `conversation_key` semeado pelo HMAC dele."""
     async with get_sessionmaker()() as sessao:
         return (
