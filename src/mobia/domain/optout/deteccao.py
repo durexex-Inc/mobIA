@@ -105,9 +105,11 @@ TEXTO_DA_CONFIRMACAO_DE_OPTOUT = (
 )
 
 # Kind proprio, e nao `reply`, porque a guarda de opt-out em
-# `GuardedOutbound.send` precisa distinguir o unico envio permitido depois do
-# registro. Kind separado tambem da reserva propria em `outbound_dispatches`:
-# a confirmacao nao colide com a resposta que o mesmo turno nao vai mandar.
+# `GuardedOutbound.send` precisa distinguir o envio permitido depois do
+# registro (desde a TEC-207 sao dois, com a confirmacao do pedido de titular --
+# ver `KINDS_QUE_FURAM_AS_GUARDAS`, em `outbound/port.py`). Kind separado
+# tambem da reserva propria em `outbound_dispatches`: a confirmacao nao colide
+# com a resposta que o mesmo turno nao vai mandar.
 #
 # Mora aqui, e nao em `turno.py`, porque `turno.py` importa de
 # `outbound.port` e `outbound.port` precisa desta constante: colocar a
