@@ -37,6 +37,8 @@ A TEC-219 declara que destrava a TEC-203 "apenas na parte de ambiente; os dois g
 
 **Procedimento:** acrescentar a chave e torná-la ativa → `scripts/recifrar.py` reescreve, em lotes e com o serviço de pé, todo blob de outra chave → a chave velha sai quando o script relatar zero blobs com ela.
 
+**O `recifrar` cobre as colunas cifradas do banco, não os arquivos de mídia** (`.midias/` ou S3, TEC-132). Enquanto houver mídia gravada sob uma chave, ela fica no keyring. Reescrever arquivos em armazenamento externo é outro problema (download, recifra, upload, sem janela de inconsistência), e a retenção de mídia já os expira. Fica registrado como limite.
+
 ### Chave de índice
 
 - Config nova: `LEAD_INDICE_CHAVE`, própria, pela regra que `referencia.py` já registra — chaves com funções diferentes não se reaproveitam. Também leva id com data.
@@ -68,13 +70,14 @@ Tabela nova `identidades_de_lead`:
 
 `conversation_key = HMAC-SHA256(LEAD_INDICE_CHAVE, f"{channel}:{valor}")` em hex — 64 caracteres, cabe no `String(64)` que as tabelas já têm. **Nenhuma coluna muda de tipo**, e o código do meio, que só compara igualdade, não muda.
 
-Vale igual para o canal web: a sessão (UUID) também vira HMAC e é revelada para achar o canal Redis. Um mecanismo, sem caso especial por canal.
+Vale igual para o canal web: a sessão (UUID) também vira HMAC. **O widget assina o canal Redis pelo próprio HMAC** (`canal_da_sessao(chave)`), então `WebOutbound` e `WebIndicador` publicam no `para` que já recebem, sem revelar nada. O navegador continua recebendo a sessão crua, que é a credencial dele; só o servidor vê o HMAC.
 
 Módulo novo `src/mobia/domain/identidade/indice.py`, único lugar que conhece a chave de índice:
 
 - `chave_de(channel, valor)` — o HMAC. No WhatsApp normaliza antes com `identidade/telefone.py::normalizar`.
 - `registrar(sessao, channel, valor)` — upsert da identidade; devolve a chave.
 - `revelar(sessao, channel, chave)` — decifra. É a única porta para o valor em claro. Identidade ausente levanta erro explícito; nunca devolve a própria chave como se fosse telefone.
+- `telefones_de(sessao, pares)` — o telefone canônico de cada lead, pelas duas origens: a identidade no WhatsApp, o vínculo cifrado no web. É o que listagem, revelação, CRM e e-mails de agendamento usam.
 
 O AAD do resumo (`context/models.py::aad_do_resumo`) já é montado sobre `(channel, conversation_key)`; passa a sê-lo sobre o HMAC, e a reindexação recifra `conversation_summaries`.
 
@@ -104,16 +107,16 @@ Regra: **o telefone em claro só existe em memória, no instante em que sai do p
 | Consumidor | Depois |
 |---|---|
 | Envio ao WhatsApp (os ~13 sítios que montam `"para"`) | O payload continua carregando a chave; `outbound/whatsapp.py` revela ao montar o `to`. Os sítios não mudam |
-| Canal web (`outbound/web.py::canal_da_sessao`) e presença | Revelam no mesmo ponto do adaptador |
+| Canal web (`outbound/web.py::canal_da_sessao`) e presença | **Sem mudança**: o widget assina pelo HMAC (D2) |
 | CRM (`crm/payload.py`) | **Recebe o telefone revelado** — o CRM existe para o corretor ligar |
-| Dossiê para o LLM (`handoff/dossie.py`, `handoff/contingencia.py`) | **O telefone sai do prompt.** O resumo não precisa dele; reduz o RT-08 |
-| Link da transcrição (`handoff/resumo.py`) | Usa o apelido opaco de `referencias_de_lead` (TEC-195); o telefone some da URL, do e-mail e do access log |
+| Dossiê para o LLM (`handoff/dossie.py`, `handoff/contingencia.py`) | **Sem mudança**: `conversa` passa a ser o HMAC, que não é dado pessoal. Tirar a linha do prompt era a primeira versão deste desenho; com a chave pseudônima ela deixou de vazar, e mexer no prompt custaria orçamento sem ganho |
+| Link da transcrição (`handoff/resumo.py`) | **Sem mudança**: a URL passa a carregar o HMAC, e o telefone some dela, do e-mail e do access log sem tocar em código |
 | E-mails de agendamento (`agendamento/mensagens.py`) | **Telefone revelado** — o corretor precisa dele para a visita |
 | Dashboard, listagem | Revela por linha da página e mascara |
 | Dashboard, revelar (`leads/repositorio.py::valor_revelado`) | Passa por `revelar`; a auditoria de acesso continua |
 | Dashboard, busca | Normaliza e compara pelo HMAC, em `conversation_key` e em `vinculos_de_sessao.telefone_indice`. Só número completo |
 | Absorção web→WhatsApp (`identidade/absorcao.py`) | Casa `telefone_indice` com a chave do WhatsApp; não revela nada |
-| Rotas com o par (`/assumir`, `/devolver`, auditoria `?conversationKey=`) | Recebem o apelido opaco; o telefone sai da query string |
+| Rotas com o par (`/assumir`, `/devolver`, auditoria `?conversationKey=`) | **Sem mudança**: o par que elas recebem passa a ser pseudônimo, e o telefone sai da query string por consequência |
 | `admin/reativar.py --key` | Aceita o telefone e calcula a chave — ferramenta de operador |
 | Entrada | `registrar` antes de persistir em `messages/service.py::IngestionService._persist` e em `api/routes/widget.py`; o rate limit de `messages/service.py::IngestionService.ingest` passa a usar a chave |
 | Redis de rate limit | Chaves passam a usar o HMAC; as antigas expiram sozinhas |
@@ -134,7 +137,7 @@ O cliente do secret manager concreto é da TEC-219.
 ## D6 — TLS
 
 - **Postgres, em produção:** o engine usa `SSLContext` com `minimum_version = TLSv1_3` e verificação de certificado.
-- **Redis, em produção:** exige `rediss://`, piso 1.3, na API e no ARQ.
+- **Redis, em produção:** exige `rediss://` com verificação de certificado (`ssl_cert_reqs=required`, `ssl_check_hostname`), na API e no ARQ. **O piso 1.3 não é imposto no Redis**: o `RedisSettings` do ARQ 0.28 não expõe versão mínima de TLS, e contorná-lo exigiria montar a conexão por fora do ARQ. Divergência declarada, junto com a de terceiros.
 - **Fora de produção nada muda** — o compose local segue sem TLS.
 - **APIs de terceiros** (Meta, Anthropic, Google, SMTP, CRM): piso padrão do `ssl`, que negocia 1.3 quando o servidor oferece. Forçar 1.3 num servidor que não controlamos derrubaria a integração no dia em que ele oferecer só 1.2. **Divergência do "todos os canais" da card**, registrada como emenda.
 - **Borda (widget e painel):** o TLS termina no proxy do provedor — TEC-219.
@@ -157,7 +160,7 @@ O cliente do secret manager concreto é da TEC-219.
 - **Unitários:** keyring (v1 legado decifra, v2 grava com a ativa, id desconhecido e id adulterado reprovam); `chave_de` (determinística, normalização, domínio por canal); aviso dos 90 dias; guardas de produção (`.env` ignorado, TLS exigido, chaves default recusadas).
 - **Integração:** reindexação sobre banco semeado com telefones em claro em todas as tabelas da lista, inclusive as imutáveis — depois, nenhuma coluna contém o número e a trigger volta ligada (um UPDATE reprova); duas execuções dão o mesmo resultado; upgrade e downgrade devolvem os valores originais; envio revela o `to` certo e identidade ausente é erro; absorção casa; busca por número completo acha e por substring não.
 - **Guarda** de `TABELAS_COM_CHAVE_DE_LEAD`.
-- **Os ~121 arquivos de teste existentes** usam strings como `conversation_key` e devem seguir passando, porque a chave é opaca para o meio. Os que afirmam o `to` enviado ou o link mudam junto, cada um justificado no commit.
+- **Os ~121 arquivos de teste existentes.** Os que gravam o par direto no banco e o leem de volta seguem passando, porque a chave é opaca para o meio. **Quebram os que entram pela ingestão com um telefone e depois consultam por ele** (a coluna passa a guardar o HMAC) e os que afirmam o `to` enviado. Esses passam a comparar contra `chave_de(...)`; o volume só se conhece rodando a suíte.
 
 ## Critérios de aceite
 
