@@ -68,6 +68,13 @@ def test_nao_e_pedido_de_titular(texto: str) -> None:
         # "meus" ali e posse gramatical ("os dados que EU tenho do imovel"),
         # nao o titular pedindo os proprios dados pessoais.
         "quero meus dados do imóvel",
+        # Achado da terceira revisao: "sobre" nao contrai com o artigo --
+        # "sobre o imovel", nao "sobreimovel" -- e sem o artigo opcional entre
+        # a preposicao e o substantivo estas quatro escapavam do veto.
+        "apague meus dados sobre o imóvel",
+        "quero meus dados sobre o imóvel",
+        "quero ver meus dados sobre o apartamento",
+        "me mandem uma cópia dos meus dados sobre a casa",
     ],
 )
 def test_qualificador_de_imovel_derruba_o_casamento(texto: str) -> None:

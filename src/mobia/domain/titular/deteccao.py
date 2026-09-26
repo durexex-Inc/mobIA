@@ -33,12 +33,25 @@ perdido e pior que uma pergunta sobre o imovel deixada passar. Por isso o veto
 mede DISTANCIA a partir do fim do objeto casado (`_OBJETO_DE_DADOS_DO_LEAD`):
 so vale quando o substantivo de imovel aparece a no maximo 4 palavras dali E
 colado a uma preposicao (`do`/`da`/`dos`/`das`/`sobre`/`de`) IMEDIATAMENTE
-antes dele, sem recheio entre a preposicao e o substantivo. O recheio entre o
-objeto e a preposicao existe para alcancar "dados QUE VOCES TEM do
-condominio" e "dados QUE VOCES TEM A RESPEITO DO imovel"; a falta de recheio
-entre a preposicao e o substantivo existe para NAO alcancar "parem DE MANDAR
-imoveis" -- ali "de" e preposicao do verbo "mandar", nao do substantivo de
-imovel, e um recheio ali reabriria o mesmo defeito que esta revisao fechou.
+antes dele (a menos de um artigo entre as duas -- ver o paragrafo seguinte),
+sem outro recheio. O recheio entre o objeto e a preposicao existe para
+alcancar "dados QUE VOCES TEM do condominio" e "dados QUE VOCES TEM A
+RESPEITO DO imovel"; a falta de recheio entre a preposicao e o substantivo
+existe para NAO alcancar "parem DE MANDAR imoveis" -- ali "de" e preposicao do
+verbo "mandar", nao do substantivo de imovel, e um recheio generico ali
+reabriria o mesmo defeito que esta revisao fechou.
+
+**"sobre" nao contrai com o artigo, e um artigo aqui NAO e o recheio generico
+acima** -- achado da terceira revisao: `do`/`da`/`dos`/`das` ja SAO
+preposicao+artigo fundidos ("de" + "o" = "do"), mas "sobre" e "de" sozinhos
+nao contraem -- portugues natural e "sobre O imovel", nao "sobreimovel". Sem
+isso, `"apague meus dados sobre o imovel"` e `"...sobre a casa"` escapavam do
+veto e um pedido sobre o IMOVEL virava ELIMINACAO/ACESSO. Por isso, entre a
+preposicao e o substantivo, so um artigo (`o`/`a`/`os`/`as`) e permitido --
+nada mais --, porque um artigo nao e um verbo como "mandar": ele nao introduz
+um OBJETO novo, so concorda com o substantivo que vem a seguir. Continua
+distinto do recheio generico do lado do objeto (paragrafo acima), que aceita
+`{0,4}` palavras quaisquer -- aqui e literalmente so o artigo, ou nada.
 """
 
 import re
@@ -86,14 +99,18 @@ _PREPOSICOES_DE_QUALIFICADOR: tuple[str, ...] = ("do", "da", "dos", "das", "sobr
 
 # Colado ao FIM do objeto casado (nao a mensagem inteira): ate 4 palavras de
 # recheio entre o objeto e a preposicao -- o bastante para "dados QUE VOCES
-# TEM do condominio" e "dados QUE VOCES TEM A RESPEITO DO imovel" --, e ZERO
-# recheio entre a preposicao e o substantivo -- para NAO alcancar "parem DE
-# MANDAR imoveis", onde "de" e preposicao do verbo "mandar" e nao do
-# substantivo de imovel. Ver o docstring do modulo para os dois achados de
-# revisao que fixaram esta forma.
+# TEM do condominio" e "dados QUE VOCES TEM A RESPEITO DO imovel" --, um
+# artigo OPCIONAL entre a preposicao e o substantivo -- "sobre o imovel", "de
+# a casa" nao existe mas nao custa aceitar -- e nada alem disso, para NAO
+# alcancar "parem DE MANDAR imoveis", onde "de" e preposicao do verbo "mandar"
+# e nao do substantivo de imovel. Ver o docstring do modulo para os tres
+# achados de revisao que fixaram esta forma.
+_ARTIGO: tuple[str, ...] = ("os", "as", "o", "a")
+
 _QUALIFICADOR_COLADO_AO_OBJETO = re.compile(
     r"(?:\s+\w+){0,4}?"
     r"\s+(?:" + "|".join(_PREPOSICOES_DE_QUALIFICADOR) + r")"
+    r"(?:\s+(?:" + "|".join(_ARTIGO) + r"))?"
     r"\s+(?:" + "|".join(_QUALIFICADORES_DE_IMOVEL) + r")\b"
 )
 
