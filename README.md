@@ -822,8 +822,8 @@ infrator).
 `ModeradorAnthropic` (`src/mobia/infra/moderacao.py`) é o único adaptador. Ele
 manda uma mensagem para o modelo com um dos dois system prompts fixos
 (`SISTEMA_DA_ENTRADA`, `SISTEMA_DA_SAIDA`) e exige de volta `LIBERAR` sozinho,
-ou `BLOQUEAR` seguido de uma ou duas categorias — sem pontuação nem
-explicação —, com `MAX_TOKENS_DO_VEREDITO = 24`: curto o bastante para que um
+ou `BLOQUEAR` seguido de uma categoria — e, na entrada, de um `INJECAO`
+opcional (ver abaixo) —, sem pontuação nem explicação, com `MAX_TOKENS_DO_VEREDITO = 24`: curto o bastante para que um
 truncamento vire um erro tipado em vez de um veredito pela metade — "BLOQ"
 não é resposta. Qualquer coisa fora do protocolo (resposta truncada, palavra
 diferente, exceção do SDK, `stop_reason` que não é `end_turn`) vira
