@@ -62,6 +62,11 @@ class Permissao(StrEnum):
     # do ADMIN, por construcao, como as duas de cima. Escrita -- reprocessar
     # roda o turno de novo, com chamadas pagas e resposta ao lead.
     OPERAR_FILA = "OPERAR_FILA"
+    # TEC-207, D4. A fila de solicitacoes do titular, a exportacao, a
+    # eliminacao e a recusa. Como `OPERAR_FILA`, so do ADMIN, por construcao --
+    # nao ha papel de DPO neste sistema (D4 do desenho: "fica com o ADMIN").
+    # Escrita: exportar grava trilha, eliminar muda dado, recusar muda status.
+    ATENDER_TITULAR = "ATENDER_TITULAR"
 
 
 # As permissoes que MUDAM estado. Existe para que o terceiro cenario do
@@ -79,6 +84,7 @@ DE_ESCRITA = frozenset(
         Permissao.ATENDER_LEAD,
         Permissao.CONFIGURAR_AGENTE,
         Permissao.OPERAR_FILA,
+        Permissao.ATENDER_TITULAR,
     }
 )
 

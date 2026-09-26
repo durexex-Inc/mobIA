@@ -61,6 +61,16 @@ class Acao(StrEnum):
     # `PROMPT_PUBLICADO`. O id da ativacao, e nao o da versao, porque o
     # rollback para o padrao (versao 0) nao tem versao. Custou a 0059.
     PROMPT_REVERTIDO = "PROMPT_REVERTIDO"
+    # TEC-207, D6. O pedido chegou, pelo WhatsApp ou pelo ADMIN. Entidade
+    # SOLICITACAO_DE_TITULAR, entidade_id o id da solicitacao.
+    TITULAR_SOLICITOU = "TITULAR_SOLICITOU"
+    # TEC-207, D6. A exportacao de `GET /leads/{leadId}/dados-pessoais`.
+    DADOS_EXPORTADOS = "DADOS_EXPORTADOS"
+    # TEC-207, D6. `anonimizar_lead` rodou -- pelo job da eliminacao a pedido
+    # ou pelo sweep de retencao. A origem da solicitacao (D2) diz qual.
+    LEAD_ANONIMIZADO = "LEAD_ANONIMIZADO"
+    # TEC-207, D6. `POST /titular/solicitacoes/{id}/recusa`.
+    TITULAR_RECUSADO = "TITULAR_RECUSADO"
 
 
 class Entidade(StrEnum):
@@ -82,6 +92,8 @@ class Entidade(StrEnum):
     # TEC-204. O objeto da tentativa de injecao: `entidade_id` e o id da
     # mensagem, cuja linha continua existindo -- cifrada -- para quem investigar.
     MENSAGEM = "mensagem"
+    # TEC-207, D2 e D6. `entidade_id` e o id de `solicitacoes_de_titular`.
+    SOLICITACAO_DE_TITULAR = "solicitacao_de_titular"
 
 
 # Os `campo` que a trilha nomeia. O que vai para a linha e QUAL campo foi

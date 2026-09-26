@@ -225,13 +225,18 @@ def test_o_vocabulario_bate_com_o_check_da_migration(constante: str, enum: type)
 
 
 def test_a_tupla_vem_da_migration_mais_recente() -> None:
-    """A 0059 redefine as acoes, a 0057 as entidades, e a 0053 os atores.
+    """A 0063 redefine acoes e entidades, e a 0053 continua respondendo por atores.
 
-    Tres migrations diferentes respondem, uma por tupla -- e o caso que a
+    Migrations diferentes respondem, uma por tupla ou as duas -- e o caso que a
     busca por nome existe para cobrir.
     """
     assert "PROMPT_REVERTIDO" in _tupla_da_migracao("_ACOES")
     assert "CONFIGURACAO_ALTERADA" in _tupla_da_migracao("_ACOES")
     assert "INJECAO_DETECTADA" in _tupla_da_migracao("_ACOES")
+    assert "TITULAR_SOLICITOU" in _tupla_da_migracao("_ACOES")
+    assert "DADOS_EXPORTADOS" in _tupla_da_migracao("_ACOES")
+    assert "LEAD_ANONIMIZADO" in _tupla_da_migracao("_ACOES")
+    assert "TITULAR_RECUSADO" in _tupla_da_migracao("_ACOES")
     assert "mensagem" in _tupla_da_migracao("_ENTIDADES")
+    assert "solicitacao_de_titular" in _tupla_da_migracao("_ENTIDADES")
     assert _tupla_da_migracao("_ATORES") == ("USUARIO", "AGENTE", "SISTEMA")

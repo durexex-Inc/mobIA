@@ -69,6 +69,9 @@ TABELAS_COM_CHAVE_DE_LEAD = (
     "optout_events",
     "recomendacoes",
     "referencias_de_lead",
+    # TEC-207. Guarda o par so enquanto ABERTA (D2 do desenho); a rotacao a
+    # arrasta junto como qualquer outra tabela com `conversation_key`.
+    "solicitacoes_de_titular",
     "tarefas_de_corretor",
     "vinculos_de_sessao",
 )
