@@ -100,7 +100,8 @@ Todos exigem a permissão nova `ATENDER_TITULAR`, só do ADMIN, fora de `_CONCED
 Sweep diário, `sweep_retencao_de_leads`, depois do da auditoria:
 
 - **Transcrição com mais de 12 meses**, de qualquer lead: o conteúdo das mensagens vira nulo e a mídia correspondente é apagada. A linha fica.
-- **Lead sem conversão** (nenhum handoff `ACEITO` ou `CONCLUIDO`) **com mais de 24 meses desde a última interação** (`max(messages.created_at)`, a mesma de `leads/repositorio.py::_ultima_interacao`): `anonimizar_lead`. Lead com solicitação `ELIMINACAO` aberta também é anonimizado por aqui, e a solicitação passa a atendida.
+- **Lead sem conversão** (nenhum handoff `ACEITO` ou `CONCLUIDO`) **com mais de 24 meses desde a última interação** (`max(messages.created_at)`, a mesma de `leads/repositorio.py::_ultima_interacao`): `anonimizar_lead`.
+- **Solicitação `ELIMINACAO` aberta com o prazo de 15 dias vencido:** `anonimizar_lead`, e a solicitação passa a atendida. Antes do prazo o sweep não toca nela — o ADMIN tem os 15 dias para executar ou recusar (decisão 3); depois deles, o pedido é cumprido, e nenhum passa do prazo legal por inação.
 - Em lotes, com commit por lead, para não segurar lock longo.
 
 ## D6 — Auditoria
