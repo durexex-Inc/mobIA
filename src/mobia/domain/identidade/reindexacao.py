@@ -8,11 +8,11 @@ carrega a mesma chave da sessao.
 
 Tres modos, e a diferenca entre eles e so DE ONDE vem o valor cru:
 
-- `migracao` (0061, subida): o par que nao tem identidade ainda guarda o valor
+- `migracao` (0062, subida): o par que nao tem identidade ainda guarda o valor
   cru na coluna. O que ja tem identidade ja foi reindexado -- e a idempotencia
   que deixa retomar uma subida interrompida.
 - `rotacao` (script, chave de indice nova): o valor vem da identidade.
-- `reversao` (0061, descida): o valor vem da identidade e VIRA a chave; nada e
+- `reversao` (0062, descida): o valor vem da identidade e VIRA a chave; nada e
   gravado em `identidades_de_lead`, que a descida apaga em seguida.
 
 **Par sem identidade na rotacao e na reversao e pulado, nao reprova.** Nao ha
@@ -48,7 +48,7 @@ from mobia.infra.crypto import decrypt, encrypt
 
 # Toda tabela com `conversation_key`. `tests/unit/test_tabelas_com_chave_de_lead.py`
 # reprova se aparecer uma fora daqui -- a proxima tabela nao escapa da rotacao
-# em silencio. A 0061 NAO usa esta lista: tem copia literal, porque migration
+# em silencio. A 0062 NAO usa esta lista: tem copia literal, porque migration
 # aplicada nao muda quando o codigo muda.
 TABELAS_COM_CHAVE_DE_LEAD = (
     "agendamentos",
@@ -104,7 +104,7 @@ def _pares(conn: Connection, tabelas: Sequence[str], modo: Modo) -> list[tuple[s
 
     O evento de rate limit por numero sobrevive a mensagem que o gerou (a
     retencao de `messages` e mais curta), entao pode ser o unico lugar com
-    aquele telefone -- e fora daqui ele ficaria em claro depois da 0061. Na
+    aquele telefone -- e fora daqui ele ficaria em claro depois da 0062. Na
     rotacao entram tambem as identidades: a do lead que so deixou a trilha
     nao tem linha em tabela nenhuma, e seu `lead_ref` ficaria na chave velha.
     """
@@ -153,7 +153,7 @@ def reindexar(
     mudados = 0
     lead_refs = 0
     sem_identidade: Counter[str] = Counter()
-    # Uma vez so, e nao por par: na subida da 0061 a coluna ainda nao existe
+    # Uma vez so, e nao por par: na subida da 0062 a coluna ainda nao existe
     # (nasce depois do loop), e na descida ja foi removida antes dele.
     vinculo_cifrado = _tem_coluna(conn, "vinculos_de_sessao", "telefone_cifrado")
     _triggers(conn, "DISABLE")

@@ -84,9 +84,9 @@ Módulo novo `src/mobia/domain/identidade/indice.py`, único lugar que conhece a
 
 O AAD do resumo (`context/models.py::aad_do_resumo`) já é montado sobre `(channel, conversation_key)`; passa a sê-lo sobre o HMAC, e a reindexação recifra `conversation_summaries`.
 
-## D3 — Reindexação: migration `0061` e `scripts/reindexar_leads.py`, o mesmo código
+## D3 — Reindexação: migration `0062` e `scripts/reindexar_leads.py`, o mesmo código
 
-*Numeração:* este desenho a chamava de `0058`. A `main` ganhou a `0058`, a `0059` e a `0060` (TEC-198, TEC-199, TEC-191) antes do merge, e a migration da identidade passou a ser a `0061`, com `down_revision = "0060"`. Nenhuma das três cria tabela com `conversation_key`.
+*Numeração:* este desenho a chamava de `0058`. A `main` ganhou a `0058`, a `0059` e a `0060` (TEC-198, TEC-199, TEC-191) antes do merge, e a migration da identidade passou a ser a `0061`, com `down_revision = "0060"`. Um segundo merge em paralelo, da TEC-209, também tirou `0061` da `main` antes deste; a migration da identidade virou `0062`, com `down_revision = "0061"`. Nenhuma das quatro cria tabela com `conversation_key`.
 
 1. Para cada par distinto `(channel, valor_antigo)` nas tabelas da lista: calcula a chave nova e grava a identidade.
 2. `UPDATE t SET conversation_key = :novo WHERE channel = :c AND conversation_key = :antigo` em cada tabela de `TABELAS_COM_CHAVE_DE_LEAD` — lista que vive num lugar só.
@@ -195,5 +195,5 @@ Aninhadas abaixo das regras, sem reescrever o texto de 22/08/2026:
 4. keyring e rotação
 5. identidade e índice
 6. bordas
-7. migration `0061` e reindexação
+7. migration `0062` e reindexação
 8. runbook, emendas e docs
