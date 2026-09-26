@@ -25,29 +25,48 @@ da migration 0056.
 `VER_DADOS_COMPLETOS` (D4). Nao ha ramo por papel nesta rota, e nao deve haver:
 o unico lugar do sistema que devolve o numero cheio e `revelar`, abaixo, que
 registra na trilha antes de responder.
+
+**O detalhe e a transcricao sao `GET` que registram** (TEC-193, D3). Abrir a
+tela e o acesso, e o registro e comitado antes de o conteudo sair -- o molde de
+`revelar`, sem o `POST`. Ver `_abrir_para_leitura`.
 """
 
 import uuid
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao
+from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao, exigir_dono
 from mobia.api.middleware import origem_da_requisicao
 from mobia.domain.auditoria.registro import registrar_evento
-from mobia.domain.auditoria.vocabulario import CAMPOS_REVELAVEIS, Acao, Entidade
+from mobia.domain.auditoria.vocabulario import (
+    CAMPO_DETALHE,
+    CAMPO_TRANSCRICAO,
+    CAMPOS_REVELAVEIS,
+    Acao,
+    Entidade,
+)
 from mobia.domain.leads.consulta import (
     LIMITE_PADRAO,
     FiltroInvalido,
     RecorteDoPapel,
     montar_filtro,
 )
+from mobia.domain.leads.detalhe import DetalheDoLead, ler_detalhe
 from mobia.domain.leads.repositorio import (
     e_lead_do_corretor,
     listar_leads,
     par_de,
     valor_revelado,
+)
+from mobia.domain.leads.transcricao import (
+    LIMITE_PADRAO_DA_TRANSCRICAO,
+    decodificar_cursor_da_transcricao,
+    pagina_da_transcricao,
+    validar_limite_da_transcricao,
 )
 from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
@@ -221,3 +240,235 @@ async def revelar(
         valor = await valor_revelado(session, par=par, campo=pedido.campo)
 
     return {"campo": pedido.campo, "valor": valor}
+
+
+async def _abrir_para_leitura(
+    session: AsyncSession,
+    *,
+    lead_id: uuid.UUID,
+    campo: str,
+    request: Request,
+    identidade: IdentidadeDaRequisicao,
+) -> tuple[str, str]:
+    """404, depois o recorte do CORRETOR, depois o registro COMITADO. TEC-193.
+
+    **A ordem e a D2 e a D3 do desenho.** O apelido inexistente e 404 para
+    todo papel; o CORRETOR que pede o lead de outro leva 403 e `ACESSO_NEGADO`
+    antes de qualquer consulta ao conteudo; e so entao `DADO_PESSOAL_ACESSADO`
+    e gravado e comitado -- se a escrita falhar, a resposta e erro e o conteudo
+    nao sai. Registra a TENTATIVA, como `revelar`.
+
+    **`exigir_dono` recebe o proprio `corretor_id` de quem chama, ou nulo**,
+    porque o dono de um lead nao e uma coluna: e "existe handoff para ele", e
+    um lead pode ter varios. `e_lead_do_corretor` responde isso, e a funcao
+    compartilhada cuida do 403 e da trilha da negativa, que sao o que nao pode
+    divergir entre as rotas.
+
+    **Por que `GET` que escreve, se `revelar` recusou isso** (D3): la o
+    registro e a razao da chamada; aqui, abrir a tela e o acesso, e modela-lo
+    como `POST` faria a rota mentir sobre o que faz. As duas rotas exigem
+    `Authorization: Bearer`, que o pre-fetch do navegador nao manda -- sem
+    credencial e 401 e nada e escrito. Uma repeticao por proxy produz um
+    registro a mais, e a trilha erra para o lado de registrar.
+    """
+    par = await par_de(session, lead_id)
+    if par is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lead nao existe")
+
+    if identidade.e_corretor:
+        dono = await e_lead_do_corretor(session, par=par, corretor_id=identidade.corretor_id)
+        await exigir_dono(
+            request,
+            identidade,
+            permissao=Permissao.VER_DETALHE_DO_LEAD,
+            corretor_id=identidade.corretor_id if dono else None,
+        )
+
+    await registrar_evento(
+        session,
+        ator=identidade.como_ator(),
+        acao=Acao.DADO_PESSOAL_ACESSADO,
+        entidade=Entidade.LEAD,
+        # O apelido, e NUNCA o par -- a mesma regra de `revelar`.
+        entidade_id=str(lead_id),
+        campo=campo,
+        lead=par,
+        origem=origem_da_requisicao(request),
+    )
+    await session.commit()
+    return par
+
+
+@router.get("/{lead_id}")
+async def detalhe(
+    lead_id: uuid.UUID,
+    request: Request,
+    identidade: IdentidadeDaRequisicao = Depends(Exige(Permissao.VER_DETALHE_DO_LEAD)),
+) -> dict[str, object]:
+    """Os seis blocos da RN-18.2 e o resumo. A transcricao e a rota ao lado.
+
+    TEC-193, D1 e D4. Os papeis sao os da secao 6.2 do SRS -- "`CORRETOR`
+    (proprio), `GERENTE`, `ADMIN`" --, e LEITURA fica de fora: a lista e um
+    indice sem dado pessoal, e esta resposta traz o resumo em claro.
+    """
+    async with get_sessionmaker()() as session:
+        par = await _abrir_para_leitura(
+            session, lead_id=lead_id, campo=CAMPO_DETALHE, request=request, identidade=identidade
+        )
+        lido = await ler_detalhe(session, lead_id=lead_id, par=par)
+
+    if lido is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lead nao existe")
+    return _detalhe_como_json(lido)
+
+
+def _detalhe_como_json(lido: DetalheDoLead) -> dict[str, object]:
+    resumo = lido.resumo
+    return {
+        "leadId": str(lido.lead_id),
+        "channel": lido.channel,
+        "status": lido.status,
+        "ultimaInteracaoEm": lido.ultima_interacao_em.isoformat(),
+        # So mascarado, e `email` nulo: nao ha fonte (D7 da TEC-195).
+        "contato": {"telefone": lido.telefone, "email": None},
+        "score": lido.score,
+        "resumo": (
+            {
+                "handoffId": str(resumo.handoff_id),
+                "texto": resumo.texto,
+                "geradoEm": resumo.gerado_em.isoformat() if resumo.gerado_em else None,
+                "modelo": resumo.modelo,
+                "fallback": resumo.fallback,
+            }
+            if resumo is not None
+            else None
+        ),
+        "qualificacao": (
+            {chave: _escalar(valor) for chave, valor in lido.qualificacao.items()}
+            if lido.qualificacao is not None
+            else None
+        ),
+        "historicoScore": [
+            {
+                "em": r.em.isoformat(),
+                "anterior": r.anterior,
+                "novo": r.novo,
+                "fatores": r.fatores,
+                "causas": r.causas,
+            }
+            for r in lido.historico_score
+        ],
+        "recomendacoes": [
+            {
+                "imovelId": str(r.imovel_id),
+                "codigo": r.codigo,
+                "titulo": r.titulo,
+                "bairro": r.bairro,
+                "scoreMatch": float(r.score_match),
+                "motivoMatch": r.motivo_match,
+                "reacao": r.reacao,
+                "motivoDescarte": r.motivo_descarte,
+                "apresentadoEm": r.apresentado_em.isoformat(),
+            }
+            for r in lido.recomendacoes
+        ],
+        "agendamentos": [
+            {
+                "id": str(a.id),
+                "tipo": a.tipo,
+                "inicio": a.inicio.isoformat(),
+                "fim": a.fim.isoformat(),
+                "status": a.status,
+                "imovelId": str(a.imovel_id) if a.imovel_id else None,
+            }
+            for a in lido.agendamentos
+        ],
+        "followups": [
+            {
+                "tentativa": f.tentativa,
+                "temperatura": f.temperatura,
+                "disparadoEm": f.disparado_em.isoformat(),
+            }
+            for f in lido.followups
+        ],
+    }
+
+
+def _escalar(valor: object) -> object:
+    """O valor de uma coluna da qualificacao, na forma que o JSON aceita.
+
+    `qualificadoEm` e o unico instante, e `retornoEsperadoPct` o unico
+    `Decimal` -- que o encoder do FastAPI serializaria como texto, e a tela
+    faria conta com uma string.
+    """
+    if isinstance(valor, Decimal):
+        return float(valor)
+    isoformat = getattr(valor, "isoformat", None)
+    return isoformat() if isoformat is not None else valor
+
+
+@router.get("/{lead_id}/mensagens")
+async def mensagens(
+    lead_id: uuid.UUID,
+    request: Request,
+    limite: Annotated[int, Query()] = LIMITE_PADRAO_DA_TRANSCRICAO,
+    cursor: Annotated[str | None, Query()] = None,
+    identidade: IdentidadeDaRequisicao = Depends(Exige(Permissao.VER_DETALHE_DO_LEAD)),
+) -> dict[str, object]:
+    """A transcricao, da mais recente para tras. TEC-193, D5, para a TEC-324.
+
+    **Cada pagina e um registro na trilha** (D3): carregar as anteriores e
+    outro acesso, a um trecho que a primeira pagina nao mostrou.
+
+    **A fala retida pela moderacao so aparece para ADMIN, e sem conteudo** --
+    e a tabela da TEC-324. Para os outros papeis ela nao existe.
+
+    O filtro e validado ANTES de abrir o lead, para que um `?limite=0` nao
+    grave um acesso na trilha por uma resposta que nao devolveu nada.
+    """
+    try:
+        validar_limite_da_transcricao(limite)
+        posicao = decodificar_cursor_da_transcricao(cursor) if cursor else None
+    except FiltroInvalido as erro:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(erro)
+        ) from erro
+
+    async with get_sessionmaker()() as session:
+        par = await _abrir_para_leitura(
+            session,
+            lead_id=lead_id,
+            campo=CAMPO_TRANSCRICAO,
+            request=request,
+            identidade=identidade,
+        )
+        try:
+            falas, anterior = await pagina_da_transcricao(
+                session,
+                par=par,
+                limite=limite,
+                cursor=posicao,
+                ve_retidas=identidade.papel == "ADMIN",
+            )
+        except FiltroInvalido as erro:
+            # O cursor de uma mensagem de OUTRO lead so o banco reconhece. O
+            # acesso ja foi registrado, e foi tentado -- que e o que a trilha
+            # registra.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(erro)
+            ) from erro
+
+    return {
+        "itens": [
+            {
+                "id": str(f.id),
+                "autor": f.autor,
+                "tipo": f.tipo,
+                "conteudo": f.conteudo,
+                "retida": f.retida,
+                "em": f.em.isoformat(),
+            }
+            for f in falas
+        ],
+        "cursorAnterior": anterior.codificar() if anterior else None,
+    }
