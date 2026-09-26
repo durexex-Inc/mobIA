@@ -89,7 +89,7 @@ async def test_conversar_pelo_chat_do_site(ws_cliente, session, redis_pool) -> N
     try:
         # Quando a visitante envia a pergunta
         await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": PERGUNTA})
-        assert (await ws.receber())["tipo"] == "recebido"
+        assert (await ws.receber())["tipo"] == "ack"
 
         # Entao a mensagem entra na fila de processamento com canal WEB
         linha = await _linha_da_sessao(session, sessao)

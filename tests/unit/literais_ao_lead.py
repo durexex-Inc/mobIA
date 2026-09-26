@@ -30,6 +30,7 @@ compara a legenda inteira contra o texto esperado por extenso. Quem cobre os
 rotulos da ficha e aquele arquivo, nao estas guardas.
 """
 
+from mobia.api.routes.widget import MENSAGEM_DO_ERRO
 from mobia.domain.agendamento.data_falada import (
     TEXTO_DA_DATA_INEXISTENTE,
     TEXTO_DA_HORA_AMBIGUA,
@@ -147,4 +148,9 @@ LITERAIS_AO_LEAD = (
     TEXTO_DA_LISTA_DE_ESPERA,
     TEXTO_DA_ESPERA_ACEITA,
     TEXTO_DO_SLOT_LIBERADO,
+    # TEC-364. As frases de `erro.mensagem` do chat web, que a tela mostra
+    # como estao. A do texto longo demais nasce de f-string com o teto e fica
+    # de fora, pela razao que a docstring deste modulo da para os rotulos da
+    # ficha.
+    *MENSAGEM_DO_ERRO.values(),
 )

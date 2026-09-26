@@ -95,13 +95,13 @@ async def _falar_no_site(
     ws, sessao = await _abrir(ws_cliente, sessao)
     if retomada:
         # Na retomada o servidor manda o historico logo depois do `ola`
-        # (TEC-124, D6), e ele tem de sair da frente antes do `recebido`.
+        # (TEC-124, D6), e ele tem de sair da frente antes do `ack`.
         assert (await ws.receber())["tipo"] == "historico"
     fabrica = get_sessionmaker()
     try:
         for texto in textos:
             await ws.enviar({"tipo": "mensagem", "id": str(uuid.uuid4()), "texto": texto})
-            assert (await ws.receber())["tipo"] == "recebido"
+            assert (await ws.receber())["tipo"] == "ack"
             async with fabrica() as sessao_db:
                 linha = (
                     await sessao_db.execute(

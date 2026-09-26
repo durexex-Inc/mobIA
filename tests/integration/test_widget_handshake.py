@@ -30,7 +30,7 @@ async def test_a_mensagem_vira_linha_no_canal_web(ws_cliente, session) -> None:
         await ws.enviar(
             {"tipo": "mensagem", "id": "m-1", "texto": "esse apê da zona sul ainda está?"}
         )
-        assert await ws.receber() == {"tipo": "recebido", "id": "m-1"}
+        assert await ws.receber() == {"tipo": "ack", "messageId": "m-1"}
 
     linha = (
         await session.execute(select(Message).where(Message.conversation_key == sessao))
@@ -87,10 +87,15 @@ async def test_texto_vazio_nao_vira_linha_e_a_conexao_segue(ws_cliente, session)
     async with ws_cliente() as ws:
         sessao = await _cumprimentar(ws)
         await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "   "})
-        assert await ws.receber() == {"tipo": "erro", "motivo": "texto_vazio"}
+        assert await ws.receber() == {
+            "tipo": "erro",
+            "codigo": "texto_vazio",
+            "mensagem": "Sua mensagem está vazia.",
+            "messageId": "m-1",
+        }
 
         await ws.enviar({"tipo": "mensagem", "id": "m-2", "texto": "agora vai"})
-        assert (await ws.receber())["tipo"] == "recebido"
+        assert (await ws.receber())["tipo"] == "ack"
 
     linhas = (await session.execute(select(Message))).scalars().all()
     assert [linha.provider_message_id for linha in linhas] == [f"{sessao}:m-2"]
@@ -107,10 +112,17 @@ async def test_texto_acima_do_teto_e_recusado_sem_derrubar(
     async with ws_cliente() as ws:
         await _cumprimentar(ws)
         await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "x" * 11})
-        assert await ws.receber() == {"tipo": "erro", "motivo": "texto_longo_demais"}
+        erro = await ws.receber()
+        assert (erro["tipo"], erro["codigo"], erro["messageId"]) == (
+            "erro",
+            "texto_longo_demais",
+            "m-1",
+        )
+        # A frase cita o teto do SERVIDOR, e nao um numero escrito na tela.
+        assert str(get_settings().tamanho_maximo_do_texto_do_widget) in erro["mensagem"]
 
         await ws.enviar({"tipo": "mensagem", "id": "m-2", "texto": "curto"})
-        assert (await ws.receber())["tipo"] == "recebido"
+        assert (await ws.receber())["tipo"] == "ack"
 
 
 async def test_retomar_devolve_o_historico(ws_cliente) -> None:
@@ -131,19 +143,20 @@ async def test_retomar_devolve_o_historico(ws_cliente) -> None:
 
 async def test_sessao_nova_nao_recebe_historico(ws_cliente) -> None:
     # Sem sessao reapresentada nao ha o que reler: o proximo frame depois do
-    # `sessao` e o `recebido` da primeira mensagem, e nao um `historico` vazio.
+    # `sessao` e o `ack` da primeira mensagem, e nao um `historico` vazio.
     async with ws_cliente() as ws:
         await _cumprimentar(ws)
         await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "oi"})
-        assert (await ws.receber())["tipo"] == "recebido"
+        assert (await ws.receber())["tipo"] == "ack"
 
 
 async def test_id_repetido_nao_grava_duas_linhas(ws_cliente, session) -> None:
+    """TEC-364, segundo cenario: o reenvio e confirmado de novo, sem duplicar."""
     async with ws_cliente() as ws:
         await _cumprimentar(ws)
         for _ in range(2):
             await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "primeira"})
-            await ws.receber()
+            assert await ws.receber() == {"tipo": "ack", "messageId": "m-1"}
 
     linhas = (await session.execute(select(Message))).scalars().all()
     assert len(linhas) == 1
@@ -240,7 +253,7 @@ async def test_o_mesmo_id_em_duas_sessoes_grava_as_duas(ws_cliente, session) -> 
 
     Na UNIQUE `(channel, provider_message_id)` ele era chave GLOBAL do canal: o
     segundo visitante que mandasse `"m-1"` -- um contador, um `Date.now()` --
-    caia no `ON CONFLICT DO NOTHING`, recebia `recebido` e perdia a mensagem.
+    caia no `ON CONFLICT DO NOTHING`, recebia a confirmacao e perdia a mensagem.
     No WhatsApp o id e unico porque a Meta o cunha; aqui quem cunha e a pagina.
     """
     sessoes = []
@@ -248,7 +261,7 @@ async def test_o_mesmo_id_em_duas_sessoes_grava_as_duas(ws_cliente, session) -> 
         async with ws_cliente() as ws:
             sessoes.append(await _cumprimentar(ws))
             await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": texto})
-            assert (await ws.receber())["tipo"] == "recebido"
+            assert (await ws.receber())["tipo"] == "ack"
 
     linhas = (await session.execute(select(Message))).scalars().all()
     assert sorted(linha.conversation_key for linha in linhas) == sorted(sessoes)
