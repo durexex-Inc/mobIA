@@ -45,29 +45,33 @@ def contexto_do_historico(
     *,
     sistema: str,
     estado: LeadQualification | None = None,
+    resumo: str | None = None,
 ) -> ContextoMontado:
-    """Monta o contexto direto, sem resumo.
+    """Monta o contexto direto, sem banco.
 
-    Sem resumo porque as conversas do corpus sao curtas -- a regeneracao so
-    dispara a cada ~40 mensagens.
+    Sem resumo por padrao porque as conversas do corpus sao curtas -- a
+    regeneracao so dispara a cada ~40 mensagens. `resumo` existe desde a
+    TEC-204: o ataque multi-turno da suite de injecao dobra o primeiro turno
+    num resumo de verdade, e e o resumo que carrega a instrucao plantada.
 
     `estado` existe a partir da TEC-145: o runner acumula a extracao dos turnos
     anteriores e passa aqui, porque medir "nao repergunta campo preenchido" com
     estado sempre vazio nao mediria nada -- o modelo nunca teria visto o campo.
     """
     literais = [mensagem_transiente(texto, papel=papel) for papel, texto in historico]
-    # Estimativa de tokens: len(sistema) + soma dos textos brutos, dividido por 4.
-    # Diverge de montagem._estimar em varios pontos, o maior sendo a formula em
-    # si -- aqui e `bruto // 4` plano, sem separar ASCII de nao-ASCII como a
-    # formula ciente de densidade da TEC-225 faz. Tambem nao inclui prefixo
-    # "[ROLE] " nem separadores, e nao inclui o texto do estado. tokens nao
-    # alimenta decisao nenhuma no eval -- so preenche campo obrigatorio do
-    # dataclass. O valor e lido apenas por __repr__, nunca por logica de negocio.
-    estimativa = len(sistema) + sum(len(texto) for _, texto in historico)
+    # Estimativa de tokens: len(sistema) + resumo + soma dos textos brutos,
+    # dividido por 4. Diverge de montagem._estimar em varios pontos, o maior
+    # sendo a formula em si -- aqui e `bruto // 4` plano, sem separar ASCII de
+    # nao-ASCII como a formula ciente de densidade da TEC-225 faz. Tambem nao
+    # inclui prefixo "[ROLE] " nem separadores, e nao inclui o texto do
+    # estado. tokens nao alimenta decisao nenhuma no eval -- so preenche campo
+    # obrigatorio do dataclass. O valor e lido apenas por __repr__, nunca por
+    # logica de negocio.
+    estimativa = len(sistema) + len(resumo or "") + sum(len(texto) for _, texto in historico)
     tokens = estimativa // 4
     return ContextoMontado(
         sistema=sistema,
-        resumo=None,
+        resumo=resumo,
         literais=literais,
         estado=estado,
         tokens=tokens,

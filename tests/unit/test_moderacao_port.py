@@ -79,7 +79,9 @@ def test_o_vocabulario_difere_por_direcao() -> None:
     entrada = CATEGORIAS_POR_DIRECAO[Direcao.ENTRADA]
     saida = CATEGORIAS_POR_DIRECAO[Direcao.SAIDA]
 
-    assert entrada == frozenset({"DISCRIMINACAO", "AMEACA", "ASSEDIO", "VIOLENCIA"})
+    # `INJECAO` e da TEC-204 e nao bloqueia -- ver
+    # `test_injecao_e_categoria_de_entrada_e_nao_bloqueia`.
+    assert entrada == frozenset({"DISCRIMINACAO", "AMEACA", "ASSEDIO", "VIOLENCIA", "INJECAO"})
     assert saida == frozenset(
         {"DISCRIMINACAO", "AMEACA", "ASSEDIO", "OFENSA", "ACONSELHAMENTO", "NEGOCIACAO"}
     )
@@ -121,3 +123,36 @@ def test_veredito_continua_imutavel_com_a_categoria() -> None:
     v = Veredito(bloqueado=True, motivo="x", categoria="DISCRIMINACAO")
     with pytest.raises(dataclasses.FrozenInstanceError):
         v.categoria = "AMEACA"  # type: ignore[misc]
+
+
+def test_injecao_e_categoria_de_entrada_e_nao_bloqueia() -> None:
+    """TEC-204, D3. A deteccao e registro, nao defesa: o conjunto do que
+    bloqueia e explicito, e a categoria nova nao depende de um `if` no turno."""
+    from mobia.domain.moderacao.port import (
+        CATEGORIA_INJECAO,
+        CATEGORIAS_POR_DIRECAO,
+        CATEGORIAS_QUE_BLOQUEIAM,
+        Direcao,
+    )
+
+    assert CATEGORIA_INJECAO in CATEGORIAS_POR_DIRECAO[Direcao.ENTRADA]
+    assert CATEGORIA_INJECAO not in CATEGORIAS_POR_DIRECAO[Direcao.SAIDA]
+    assert CATEGORIA_INJECAO not in CATEGORIAS_QUE_BLOQUEIAM
+
+
+def test_o_que_bloqueia_e_todo_o_vocabulario_menos_a_injecao() -> None:
+    """O literal e para ler; este teste impede que ele diverja do vocabulario."""
+    from mobia.domain.moderacao.port import (
+        CATEGORIA_INJECAO,
+        CATEGORIAS_POR_DIRECAO,
+        CATEGORIAS_QUE_BLOQUEIAM,
+    )
+
+    todas = frozenset().union(*CATEGORIAS_POR_DIRECAO.values())
+    assert CATEGORIAS_QUE_BLOQUEIAM == todas - {CATEGORIA_INJECAO}
+
+
+def test_veredito_sem_injecao_por_padrao() -> None:
+    from mobia.domain.moderacao.port import Veredito
+
+    assert Veredito(bloqueado=False, motivo="x").injecao is False

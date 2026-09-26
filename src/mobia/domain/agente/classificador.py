@@ -9,6 +9,7 @@ from anthropic import transform_schema
 from anthropic.types import Message
 
 from mobia.app.config import get_settings
+from mobia.domain.agente.delimitacao import CLAUSULA_DO_AGENTE
 from mobia.domain.agente.dinheiro import Recusa, parsear
 from mobia.domain.agente.ferramenta_de_busca import FERRAMENTA_DE_BUSCA, PortaDeBusca
 from mobia.domain.agente.investidor import (
@@ -107,6 +108,15 @@ MAX_TOKENS_DA_RESPOSTA = 1500
 # curta faz o mesmo servico porque o parser deterministico (`dinheiro.py`,
 # Tasks 1-3) e quem decide "vago", nao o modelo -- o prompt so precisa
 # lembrar o modelo de perguntar quando `extrair` (Task 4) ja recusou gravar.
+#
+# A TEC-204 acrescentou `CLAUSULA_DO_AGENTE` (de `delimitacao.py`) ao final,
+# e o teto fixo subiu exatamente o custo medido pelo ritual: 22,5 da clausula
+# e 4,75 das tags `<resumo>` que `montar_prompt` poe em volta do resumo. E
+# regra nova, sem forma anterior para encolher -- o caso de "Orcamento vago".
+# O corte cogitado ("A confianca e o quanto voce considera a classificacao
+# segura", ~16) foi recusado: todo corte neste prompt mexe no eval de
+# intencao, e a regra nova nao substitui nenhuma antiga. A mesma clausula vai
+# nos tres outros `system` de `_chamar`, que recebem o mesmo turno montado.
 SISTEMA_DO_AGENTE = (
     "Voce e o assistente virtual de uma imobiliaria brasileira, atendendo um lead "
     "por mensagem. A cada turno voce faz tres coisas: classifica a intencao do "
@@ -128,6 +138,7 @@ SISTEMA_DO_AGENTE = (
     "afirma. O imovel que o lead ja tem nao e o que ele procura. "
     "Urgencia so com marco temporal explicito; pressa nao basta."
     " Orcamento vago: peca confirmacao."
+    f" {CLAUSULA_DO_AGENTE}"
 )
 
 MAX_TOKENS_DA_PERGUNTA = 300
@@ -140,6 +151,7 @@ SISTEMA_DA_DESAMBIGUACAO = (
     "conversa, que ajude o lead a explicar o que procura. Nao ofereca menu de "
     "opcoes numeradas. Nao assuma nenhuma intencao. Nao faca mais de uma "
     "pergunta. Devolva apenas o texto da pergunta, sem aspas e sem comentario."
+    f" {CLAUSULA_DO_AGENTE}"
 )
 
 # TEC-163, D6. Segunda chamada, no molde de SISTEMA_DA_DESAMBIGUACAO: este
@@ -156,6 +168,7 @@ SISTEMA_DA_REACAO = (
     "ele mencionou, se houve INTERESSE ou DESCARTE, e no descarte a categoria: "
     "DISTANCIA, PRECO, TAMANHO ou OUTRO. Use o numero do imovel. Imovel que ele "
     "nao mencionou fica de fora da lista."
+    f" {CLAUSULA_DO_AGENTE}"
 )
 
 MAX_TOKENS_DA_REACAO = 300
@@ -210,6 +223,7 @@ SISTEMA_DO_INVESTIDOR = (
     'null e "nao falou disso agora", nunca "nao sei". Nao infira. Em '
     "ticket_expressao copie o valor como o lead falou, sem converter. "
     "Orcamento vago: peca confirmacao."
+    f" {CLAUSULA_DO_AGENTE}"
 )
 
 # Mesmo teto de MAX_TOKENS_DA_RESPOSTA, e constante propria mesmo assim: a

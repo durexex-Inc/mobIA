@@ -14,7 +14,8 @@ import re
 import unicodedata
 
 from evals.sonda_composicao_familiar import BRACOS, CASOS, REPETICOES, textos_do_corpus
-from mobia.infra.moderacao import SISTEMA_DA_ENTRADA
+from mobia.domain.moderacao.port import Direcao
+from mobia.infra.moderacao import SISTEMA_DA_ENTRADA, _protocolo_de
 
 
 def _normalizar(texto: str) -> list[str]:
@@ -69,7 +70,9 @@ def test_as_candidatas_preservam_o_prompt_de_producao() -> None:
     for nome, prompt in BRACOS.items():
         assert "restricao de vizinhanca por composicao familiar" in prompt, nome
         assert "Bloquear lead legitimo custa atendimento" in prompt, nome
-        assert "Categorias: " in prompt, nome
+        # O protocolo inteiro, e nao a palavra `Categorias:`: a TEC-204 reescreveu
+        # o da entrada sem ela, e o que importa e que nenhum enxerto o coma.
+        assert _protocolo_de(Direcao.ENTRADA) in prompt, nome
         if nome != "atual":
             assert len(prompt) > len(SISTEMA_DA_ENTRADA), nome
 

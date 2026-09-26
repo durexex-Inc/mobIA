@@ -7,8 +7,10 @@ copias juntas e `tests/unit/test_auditoria_vocabulario.py`.
 
 **Nem sempre a MESMA migration, desde a TEC-195.** A 0053 escreveu os tres; a
 0056 acrescentou `lead` a `Entidade` e teve de RECRIAR o CHECK, porque o
-Postgres nao estende CHECK. Entao o vocabulario em vigor e o da migration mais
-recente que escreve cada um, e e assim que aquele teste procura.
+Postgres nao estende CHECK; a 0057 (TEC-204) recriou os de `Acao` e
+`Entidade` para `INJECAO_DETECTADA` e `mensagem`. Entao o vocabulario em vigor
+e o da migration mais recente que escreve cada um, e e assim que aquele teste
+procura.
 
 **`detalhes` so e montado pelas funcoes deste modulo** (D5): cada valor sai de
 um vocabulario fechado, e texto digitado por uma pessoa nunca entra. Texto
@@ -42,6 +44,9 @@ class Acao(StrEnum):
     # Sem chamador: `ConfiguracaoAgente` nao existe (TEC-198/199).
     PROMPT_PUBLICADO = "PROMPT_PUBLICADO"
     ACESSO_NEGADO = "ACESSO_NEGADO"
+    # TEC-204, D6. A moderacao de entrada achou tentativa de mudar as
+    # instrucoes do agente. Ator SISTEMA; entidade, a mensagem.
+    INJECAO_DETECTADA = "INJECAO_DETECTADA"
 
 
 class Entidade(StrEnum):
@@ -59,6 +64,9 @@ class Entidade(StrEnum):
     # lead continua usando `lead_ref`. Custou a migration 0056, que recriou o
     # CHECK da 0053.
     LEAD = "lead"
+    # TEC-204. O objeto da tentativa de injecao: `entidade_id` e o id da
+    # mensagem, cuja linha continua existindo -- cifrada -- para quem investigar.
+    MENSAGEM = "mensagem"
 
 
 # Os `campo` que a trilha nomeia. O que vai para a linha e QUAL campo foi

@@ -36,12 +36,33 @@ class ModeracaoIndisponivel(RuntimeError):
 # `NEGOCIACAO` e da TEC-141. Sem ela, o modelo ficaria sem palavra legal para
 # um bloqueio que aquela card acabou de instruir, e responderia fora do
 # protocolo exatamente no caso novo.
+#
+# `INJECAO` (TEC-204) e a excecao: esta no vocabulario da entrada e fora de
+# `CATEGORIAS_QUE_BLOQUEIAM`.
+
+# TEC-204, D3. Tentativa de mudar as instrucoes, de fazer revelar as regras ou
+# de se passar pelo sistema. So a entrada julga a fala do lead, entao so ela
+# oferece a palavra. **Nao bloqueia**: a defesa e a delimitacao
+# (`domain/agente/delimitacao.py`), e a deteccao so registra -- ver
+# `CATEGORIAS_QUE_BLOQUEIAM`.
+CATEGORIA_INJECAO = "INJECAO"
+
 CATEGORIAS_POR_DIRECAO: dict[Direcao, frozenset[str]] = {
-    Direcao.ENTRADA: frozenset({"DISCRIMINACAO", "AMEACA", "ASSEDIO", "VIOLENCIA"}),
+    Direcao.ENTRADA: frozenset(
+        {"DISCRIMINACAO", "AMEACA", "ASSEDIO", "VIOLENCIA", CATEGORIA_INJECAO}
+    ),
     Direcao.SAIDA: frozenset(
         {"DISCRIMINACAO", "AMEACA", "ASSEDIO", "OFENSA", "ACONSELHAMENTO", "NEGOCIACAO"}
     ),
 }
+
+# O que bloqueia, escrito por extenso (TEC-204): uma categoria nova do
+# vocabulario nao bloqueia so por existir -- ela tem de entrar aqui. `INJECAO`
+# fica de fora de proposito. `test_o_que_bloqueia_e_todo_o_vocabulario_menos_
+# a_injecao` prende este literal ao vocabulario acima.
+CATEGORIAS_QUE_BLOQUEIAM: frozenset[str] = frozenset(
+    {"DISCRIMINACAO", "AMEACA", "ASSEDIO", "VIOLENCIA", "OFENSA", "ACONSELHAMENTO", "NEGOCIACAO"}
+)
 
 # Fracasso do protocolo, nao categoria do dominio: o modelo bloqueou e o rotulo
 # nao foi reconhecido. Fica FORA de `CATEGORIAS_POR_DIRECAO` de proposito --
@@ -59,6 +80,10 @@ class Veredito:
     # inventar, e um valor sentinela como "NENHUMA" criaria uma categoria que
     # nunca vai para a auditoria e que todo leitor teria que aprender a ignorar.
     categoria: str | None = None
+    # TEC-204. A moderacao de entrada achou tentativa de injecao. Independente
+    # de `bloqueado`: sozinha, o veredito e liberado e so vira evento de
+    # auditoria; junto de uma categoria que bloqueia, a recusa e a de sempre.
+    injecao: bool = False
 
 
 class ModeradorPort(Protocol):

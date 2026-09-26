@@ -589,6 +589,7 @@ class ModeradorFake:
         erro_na_saida: Exception | None = None,
         categoria_de_entrada: str = "DISCRIMINACAO",
         categoria_de_saida: str = "NEGOCIACAO",
+        injecao_na_entrada: bool = False,
     ) -> None:
         self.bloqueia_entrada = bloqueia_entrada
         self.bloqueia_saida = bloqueia_saida
@@ -596,6 +597,7 @@ class ModeradorFake:
         self.erro_na_saida = erro_na_saida
         self.categoria_de_entrada = categoria_de_entrada
         self.categoria_de_saida = categoria_de_saida
+        self.injecao_na_entrada = injecao_na_entrada
         self.entradas = 0
         self.saidas = 0
         self.direcoes: list = []
@@ -615,6 +617,7 @@ class ModeradorFake:
                 # veredito liberado, senao um teste passaria por causa de um
                 # valor que o moderador real nunca produz.
                 categoria=self.categoria_de_entrada if self.bloqueia_entrada else None,
+                injecao=self.injecao_na_entrada,
             )
         self.saidas += 1
         if self.erro_na_saida is not None:

@@ -26,8 +26,16 @@ from mobia.infra.anthropic import get_client
 # acoplamento e pre-existente (nao nasceu deste helper); o helper so o
 # concentra num unico ponto em vez de deixa-lo duplicado entre os dois testes
 # que o usavam.
+#
+# A TEC-204 pos o resumo entre `<resumo>` e `</resumo>`: as duas tags e as
+# duas quebras de linha que `delimitar` acrescenta entram aqui porque sao
+# enviadas e nao contadas -- `_estimar` conta o resumo cru. As tags `<lead>`
+# de cada mensagem NAO entram: estao dentro de `_texto_das`, que
+# `montar_contexto` conta.
 _ROTULOS_DE_MONTAR_PROMPT = (
-    "Resumo da conversa ate aqui:\nMensagens recentes:\nEstado de qualificacao:\n" + "\n\n" * 2
+    "Resumo da conversa ate aqui:\nMensagens recentes:\nEstado de qualificacao:\n"
+    + "\n\n" * 2
+    + "<resumo>\n\n</resumo>"
 )
 
 
@@ -307,8 +315,14 @@ def test_o_headroom_cobre_a_subcontagem_medida() -> None:
     agente, no schema ou na ferramenta de busca, ele envelhece -- e o teste
     vizinho de margem do orcamento e quem avisa, porque conta crescimento do
     prompt em unidades do proxy.
+
+    A TEC-204 remediu o que ela acrescentou, com `count_tokens` e
+    `claude-sonnet-5`, em 25/09/2026: a clausula de dado nao confiavel em
+    `SISTEMA_DO_AGENTE` custa 41 tokens reais e o par `<resumo>` em volta do
+    resumo, 12. A subcontagem vai a 1599 + 53 = 1652, e a folga real sobre a
+    reserva de 1700 cai de 101 para 48.
     """
-    SUBCONTAGEM_REAL_MEDIDA = 1599
+    SUBCONTAGEM_REAL_MEDIDA = 1652
     assert get_settings().contexto_headroom_de_tokens >= SUBCONTAGEM_REAL_MEDIDA
 
 
@@ -417,14 +431,14 @@ def test_diferenca_entre_o_contado_e_o_enviado(settings) -> None:
 def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     """A margem existe para ser vista antes de ser gasta, nao depois.
 
-    O teto de 793 e mais apertado que o `headroom * 0,75` usado pelo teste
+    O teto de 820,25 e mais apertado que o `headroom * 0,75` usado pelo teste
     irmao, e e o proposito deste teste: se voce esta lendo isto porque ele
     reprovou, a pergunta e "o que sai do prompt para o novo texto entrar?",
     nao "quanto subo o numero?". Subir e resposta legitima -- mas so depois da
     primeira pergunta, e com o preco por turno escrito no comentario de
     `contexto_headroom_de_tokens`.
 
-    O 793 e o unico numero desta conta escrito a mao em qualquer lugar, e e
+    O 820,25 e o unico numero desta conta escrito a mao em qualquer lugar, e e
     escrito aqui de proposito: um limite so trava se estiver fixo. Todo o
     resto -- subcontagem, folga, margem -- e derivado e sai impresso por
     `_subcontagem`, para ninguem precisar transcrever (TEC-243):
@@ -505,11 +519,11 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     `contexto_headroom_de_tokens` junto -- margem apertada que ficou para a
     TEC-225 herdar, e que a TEC-225 de fato gastou ao medir a reserva contra
     o contador real. Hoje o derivado e `1700 * 0,75 = 1275` (a reserva subiu
-    para 1700 -- ver o comentario de `contexto_headroom_de_tokens`), 482
-    acima do fixo: a margem apertada nao existe mais. O acoplamento que o
-    CLAUDE.md descreve continua de pe -- o fixo segue sendo o mais apertado
-    dos dois --, so que a distancia entre eles parou de ser o risco imediato
-    que era.
+    para 1700 -- ver o comentario de `contexto_headroom_de_tokens`), 454,75
+    acima do fixo desde a TEC-204 (482 antes dela): a margem apertada nao
+    existe mais. O acoplamento que o CLAUDE.md descreve continua de pe -- o
+    fixo segue sendo o mais apertado dos dois --, so que a distancia entre
+    eles parou de ser o risco imediato que era.
 
     O teto fixo NAO foi para 800. As duas redacoes mais longas cabem, em
     tokens brutos, no teto derivado de 795,0: `nem desconto` fica em 790,00
@@ -521,13 +535,25 @@ def test_a_margem_do_orcamento_do_prompt_e_deliberada(settings) -> None:
     ja e negociar valor (desenho, D2), entao a forma curta cobre o mesmo
     cenario do Gherkin sem apertar a margem. A palavra `desconto` ficou com
     o moderador de saida, onde nao custa orcamento.
+
+    A TEC-204 subiu o teto de 793 para 820,25, exatamente o custo medido:
+    22,5 da clausula de dado nao confiavel no fim de `SISTEMA_DO_AGENTE`
+    (`CLAUSULA_DO_AGENTE`, com o espaco que a separa) e 4,75 das tags
+    `<resumo>` que `montar_prompt` poe em volta do resumo -- 27,25 no total,
+    margem de novo em 6,25. Regra nova, sem forma anterior para encolher, o
+    caso de "Orcamento vago". O corte cogitado ("A confianca e o quanto voce
+    considera a classificacao segura", ~16) foi recusado: todo corte neste
+    prompt mexe no eval de intencao. As tags `<lead>` de cada mensagem nao
+    entram nesta conta -- estao dentro de `_texto_das`, que `montar_contexto`
+    conta. O derivado (1275) segue acima do fixo, entao o fixo continua sendo
+    o que prende e a reserva nao mudou.
     """
     subcontagem = _subcontagem()
-    _linha("teto desta assercao (fixo)", 793)
-    _linha("margem", 793 - subcontagem)
+    _linha("teto desta assercao (fixo)", 820.25)
+    _linha("margem", 820.25 - subcontagem)
 
-    assert subcontagem < 793, (
-        f"subcontagem {subcontagem}: a margem sobre o teto de 793 foi "
+    assert subcontagem < 820.25, (
+        f"subcontagem {subcontagem}: a margem sobre o teto de 820,25 foi "
         f"consumida. Encolha o texto enviado, ou suba a reserva registrando "
         f"o preco por turno."
     )

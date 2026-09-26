@@ -391,17 +391,20 @@ class Settings(BaseSettings):
     # que mediria outra coisa e nao pode ser subtraido de um numero em tokens
     # (foi o erro da primeira redacao deste paragrafo, na TEC-225: fazia
     # `1600 - 793`, tokens reais menos um teto medido no proxy). A reserva de
-    # 1700 cobre a subcontagem medida de 1599 (ver a entrada TEC-225 abaixo)
-    # com **101 tokens reais de folga**. Medido contra `ContadorAnthropic`
+    # 1700 cobria a subcontagem medida de 1599 (ver a entrada TEC-225 abaixo)
+    # com **101 tokens reais de folga**; a TEC-204 gastou 53 deles (41 da
+    # clausula de dado nao confiavel, 12 das tags `<resumo>`), e hoje sao
+    # 1652 contra 1700, **48 de folga**. Medido contra `ContadorAnthropic`
     # (20/09/2026): um `tool_result` de 10 candidatos com titulo e bairro
     # TIPICOS (~45 e ~8 caracteres) custa **1.169 tokens reais**; com titulo e
     # bairro no MAXIMO da coluna (`String(160)`/`String(120)` em
-    # `catalogo/models.py`), **3.709**. Os dois estouram os 101 de folga por
-    # larga margem -- 11,6x e 36,7x, respectivamente. O segundo round-trip de
-    # um turno com busca de 10 candidatos NAO "pode" estourar a reserva: ele a
-    # estoura, toda vez que a segunda volta do laco acontece com essa
-    # contagem. Busca que volta com um candidato, ou com zero, nao foi
-    # medida -- e plausivel que estoure tambem (a folga e so 101), mas isto
+    # `catalogo/models.py`), **3.709**. Os dois estouram a folga (101 na
+    # TEC-225, 48 desde a TEC-204) por larga margem -- 11,6x e 36,7x,
+    # respectivamente. O segundo round-trip de um turno com busca de 10
+    # candidatos NAO "pode" estourar a reserva: ele a estoura, toda vez que a
+    # segunda volta do laco acontece com essa contagem. Busca que volta com um
+    # candidato, ou com zero, nao foi medida -- e plausivel que estoure tambem
+    # (a folga e so 48), mas isto
     # nao afirma por numero que nao mediu. A sexta parcela continua fora
     # da reserva por decisao de desenho anterior a esta card (fix-wave da
     # TEC-265) -- o que muda aqui e este comentario parar de mentir sobre o
@@ -509,7 +512,8 @@ class Settings(BaseSettings):
     # 1.599** tokens reais.
     #
     # A reserva de 1060 era 539 tokens menor que essa lacuna (1599 - 1060).
-    # 1700 cobre os 1599 medidos com **101 de folga real** -- ver a entrada
+    # 1700 cobria os 1599 medidos com **101 de folga real** (48 desde a
+    # TEC-204) -- ver a entrada
     # da sexta parcela, acima, para o que essa folga NAO cobre. A validacao
     # desta subida e `test_o_headroom_cobre_a_subcontagem_medida` em
     # `tests/unit/test_config.py`, e nao os dois testes acima: aqueles

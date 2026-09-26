@@ -10,6 +10,7 @@ from typing import Protocol
 import structlog
 
 from mobia.app.config import get_settings
+from mobia.domain.agente.delimitacao import CLAUSULA_DO_HANDOFF, TAG_RESUMO, delimitar
 from mobia.domain.handoff.dossie import AUSENTE
 from mobia.domain.messages.recorder import custo_em_dolar
 from mobia.infra.anthropic import get_client
@@ -124,13 +125,14 @@ INSTRUCAO_REDIGIR = (
     "**Use apenas os dados do dossie abaixo.** Nao estime, nao arredonde, nao "
     f"complete o que estiver como {AUSENTE!r} -- escreva que nao foi "
     "informado. Todo numero que voce citar tem de aparecer literalmente no "
-    "dossie."
+    "dossie.\n\n" + CLAUSULA_DO_HANDOFF
 )
 
 INSTRUCAO_COMPRIMIR = (
     "O resumo abaixo passou do limite. Reescreva-o em no maximo "
     f"{LIMITE_DE_CARACTERES} caracteres, mantendo os seis titulos na mesma ordem "
-    "e todo dado factual. Corte narrativa e transicao, nunca numero nem titulo."
+    "e todo dado factual. Corte narrativa e transicao, nunca numero nem titulo. "
+    + CLAUSULA_DO_HANDOFF
 )
 
 
@@ -170,8 +172,10 @@ class RedatorAnthropic:
             # que ja perdeu um bloco nao o traz de volta -- so gastaria a
             # segunda chamada para falhar igual.
             comprimiu = True
+            # O rascunho e texto do modelo que pode ecoar a regiao do lead:
+            # vai delimitado como o resumo da conversa (TEC-204).
             bruto, uso_da_compressao = await self._chamar(
-                INSTRUCAO_COMPRIMIR, bruto, settings.modelo_resumo
+                INSTRUCAO_COMPRIMIR, delimitar(bruto, tag=TAG_RESUMO), settings.modelo_resumo
             )
             uso = (uso[0] + uso_da_compressao[0], uso[1] + uso_da_compressao[1])
             texto = validar(bruto)

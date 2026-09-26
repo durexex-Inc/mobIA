@@ -28,6 +28,15 @@ servico caiu pune o inocente (ver a docstring dela e
 `domain/moderacao/port.py`). A falha da MARCA dentro dela continua subindo,
 pelo motivo dos paragrafos acima: ela chama `marcar_bloqueada` e nao captura
 nada dali para baixo.
+
+**A TEC-204 acrescenta o evento da tentativa de injecao.** `INJECAO` nao
+bloqueia (D3 do desenho): sozinha, `moderar_entrada_e_marcar` grava so o
+`INJECAO_DETECTADA` em `eventos_auditoria`, numa sessao curta propria, e
+devolve o veredito liberado -- sem marca e sem `ModerationEvent`, que continua
+sendo uma linha por bloqueio. Junto de uma categoria que bloqueia, o evento
+entra no mesmo commit de `marcar_bloqueada`. Nos dois casos a falha da
+escrita sobe, pelo motivo dos paragrafos acima, e uma segunda passada sobre a
+mesma mensagem nao grava um segundo evento.
 """
 
 from datetime import UTC, datetime
@@ -37,6 +46,9 @@ import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from mobia.domain.auditoria.models import EventoAuditoria
+from mobia.domain.auditoria.registro import registrar_evento
+from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA, Acao, Entidade
 from mobia.domain.messages.models import Message
 from mobia.domain.moderacao.models import ModerationEvent
 from mobia.domain.moderacao.port import (
@@ -50,6 +62,57 @@ from mobia.domain.moderacao.port import (
 log = structlog.get_logger(__name__)
 
 
+async def _registrar_injecao(
+    session: AsyncSession, *, message_id: UUID, channel: str, conversation_key: str
+) -> None:
+    """Acrescenta o `INJECAO_DETECTADA` a sessao de quem chama, uma vez por mensagem.
+
+    A consulta antes e o que torna a escrita idempotente: o veredito liberado
+    nao e persistido (ver `veredito_ja_registrado`), entao a retentativa de um
+    turno remodera, acha a injecao de novo e, sem ela, gravaria um segundo
+    evento para a mesma fala. Sem `detalhes`: o texto da tentativa fica na
+    mensagem, cifrado, e nunca na trilha (D5 da TEC-206).
+    """
+    ja_registrado = await session.scalar(
+        select(EventoAuditoria.id)
+        .where(
+            EventoAuditoria.acao == Acao.INJECAO_DETECTADA.value,
+            EventoAuditoria.entidade == Entidade.MENSAGEM.value,
+            EventoAuditoria.entidade_id == str(message_id),
+        )
+        .limit(1)
+    )
+    if ja_registrado is not None:
+        return
+    await registrar_evento(
+        session,
+        ator=ATOR_SISTEMA,
+        acao=Acao.INJECAO_DETECTADA,
+        entidade=Entidade.MENSAGEM,
+        entidade_id=str(message_id),
+        lead=(channel, conversation_key),
+    )
+
+
+async def registrar_injecao_detectada(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    message_id: UUID,
+    channel: str,
+    conversation_key: str,
+) -> None:
+    """O evento da injecao que nao bloqueou, num commit proprio (TEC-204, D6).
+
+    Sessao curta porque o caminho liberado nao tem outra: nao ha marca a
+    carimbar nem recusa a auditar. Propaga como as irmas deste modulo.
+    """
+    async with session_factory() as session:
+        await _registrar_injecao(
+            session, message_id=message_id, channel=channel, conversation_key=conversation_key
+        )
+        await session.commit()
+
+
 async def marcar_bloqueada(
     session_factory: async_sessionmaker[AsyncSession],
     message_id: UUID,
@@ -57,6 +120,7 @@ async def marcar_bloqueada(
     channel: str,
     conversation_key: str,
     categoria: str,
+    injecao: bool = False,
 ) -> None:
     """Carimba `bloqueada_em` e grava a auditoria, num commit so.
 
@@ -97,11 +161,21 @@ async def marcar_bloqueada(
     O `UPDATE` continua sendo idempotente de proposito: se uma rota futura
     voltar a passar por aqui duas vezes, reescrever o carimbo com a hora nova
     e inofensivo -- o que importa e a coluna deixar de ser NULL.
+
+    **Com `injecao`, o evento da TEC-204 entra no mesmo commit** -- nem
+    recusa sem o registro da tentativa, nem registro sem a recusa.
     """
     async with session_factory() as session:
         await session.execute(
             update(Message).where(Message.id == message_id).values(bloqueada_em=datetime.now(UTC))
         )
+        if injecao:
+            await _registrar_injecao(
+                session,
+                message_id=message_id,
+                channel=channel,
+                conversation_key=conversation_key,
+            )
         session.add(
             ModerationEvent(
                 id=uuid4(),
@@ -137,6 +211,9 @@ async def moderar_entrada_e_marcar(
     turno entrega a recusa de entrada, o caminho do agrupado e os cinco ramos
     que retornam cedo nao entregam nada (TEC-297, D2).
 
+    **`INJECAO` sozinha nao marca** (TEC-204): grava so o evento de auditoria
+    e devolve o veredito liberado.
+
     Existe para ter um sitio so. Antes da TEC-297 esta sequencia estava
     escrita duas vezes -- no turno e em `_moderar_superada`, que a TEC-295
     criou --, e os cinco ramos que retornam antes da moderacao precisariam
@@ -154,6 +231,16 @@ async def moderar_entrada_e_marcar(
         return None
 
     if not veredito.bloqueado:
+        if veredito.injecao:
+            # `warning` e nao `error`: o atendimento segue, e quem acompanha a
+            # tentativa le a trilha. Sem o texto -- e fala do lead.
+            log.warning("moderacao.injecao_detectada", message_id=str(message_id))
+            await registrar_injecao_detectada(
+                session_factory,
+                message_id=message_id,
+                channel=channel,
+                conversation_key=conversation_key,
+            )
         return veredito
 
     # `error` e nao `warning`: e o nivel que o alerta observa, pelo mesmo
@@ -177,6 +264,7 @@ async def moderar_entrada_e_marcar(
         channel=channel,
         conversation_key=conversation_key,
         categoria=veredito.categoria or CATEGORIA_OUTRO,
+        injecao=veredito.injecao,
     )
     return veredito
 

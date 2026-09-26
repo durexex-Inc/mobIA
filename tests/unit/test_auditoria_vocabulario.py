@@ -181,7 +181,7 @@ VERSIONS = pathlib.Path(__file__).resolve().parents[2] / "alembic" / "versions"
 def _tupla_da_migracao(nome: str) -> tuple[str, ...]:
     """O valor literal de `nome = ("...", ...)` na ULTIMA migration que o define.
 
-    Le o ARQUIVO com `ast`, como `test_uma_cabeca_de_migration.py`: nao
+    Le os ARQUIVOS com `ast`, como `test_uma_cabeca_de_migration.py`: nao
     precisa de banco, e nao importa a migration -- importa-la rodaria o
     `from alembic import op` fora de um contexto de migracao.
 
@@ -189,22 +189,27 @@ def _tupla_da_migracao(nome: str) -> tuple[str, ...]:
     recriou o CHECK na `0056` -- o Postgres nao estende CHECK, entao o
     vocabulario em vigor passou a ser o da migration mais recente que o
     escreve. Ordenar por nome de arquivo basta porque as revisoes sao `NNNN_`,
-    e o que interessa e a ultima a tocar no assunto.
+    e o que interessa e a ultima a tocar no assunto. A `0057` (TEC-204)
+    redefine `_ACOES` e `_ENTIDADES` de novo, para a injecao. So conta
+    migration que fala de `eventos_auditoria`, porque o nome da tupla poderia
+    ser reusado para outra tabela.
 
     **A varredura NAO afrouxa a asserta.** Ela continua comparando o enum com
     uma copia literal escrita a mao num arquivo de migration; o que mudou e
     qual arquivo responde.
     """
-    for arquivo in sorted(VERSIONS.glob("[0-9]*.py"), reverse=True):
-        arvore = ast.parse(arquivo.read_text(encoding="utf-8"))
-        for no in arvore.body:
+    for arquivo in sorted(VERSIONS.glob("[0-9][0-9][0-9][0-9]_*.py"), reverse=True):
+        fonte = arquivo.read_text(encoding="utf-8")
+        if "eventos_auditoria" not in fonte:
+            continue
+        for no in ast.parse(fonte).body:
             if isinstance(no, ast.Assign) and any(
                 isinstance(alvo, ast.Name) and alvo.id == nome for alvo in no.targets
             ):
                 valor = ast.literal_eval(no.value)
                 assert isinstance(valor, tuple)
                 return valor
-    raise AssertionError(f"{nome} nao encontrado em migration nenhuma")
+    raise AssertionError(f"{nome} nao encontrado em nenhuma migration de eventos_auditoria")
 
 
 @pytest.mark.parametrize(
@@ -214,3 +219,10 @@ def _tupla_da_migracao(nome: str) -> tuple[str, ...]:
 def test_o_vocabulario_bate_com_o_check_da_migration(constante: str, enum: type) -> None:
     """Valor novo no enum sem migration seria recusado pelo banco no primeiro INSERT."""
     assert set(_tupla_da_migracao(constante)) == {membro.value for membro in enum}
+
+
+def test_a_tupla_vem_da_migration_mais_recente() -> None:
+    """A 0057 redefine acoes e entidades; a 0053 continua sendo a unica dos atores."""
+    assert "INJECAO_DETECTADA" in _tupla_da_migracao("_ACOES")
+    assert "mensagem" in _tupla_da_migracao("_ENTIDADES")
+    assert _tupla_da_migracao("_ATORES") == ("USUARIO", "AGENTE", "SISTEMA")

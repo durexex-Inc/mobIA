@@ -55,6 +55,9 @@ jobs:
     #   - Estimativa realista: 136 chamadas sequenciais ao classificador (uma
     #     por turno em evals/corpus/*.yaml), poucos segundos cada, mais
     #     checkout/install -- na casa de 20min.
+    #     Desde a TEC-204 somam-se ~25 chamadas ao classificador, uma ao
+    #     resumidor e ~24 a moderacao em evals/test_injecao.py -- minutos,
+    #     nao dezenas.
     #   - Pior caso teorico: em src/mobia/infra/anthropic.py,
     #     TIMEOUT_SEGUNDOS=60 e MAX_TENTATIVAS=1 fecham 120s por chamada se
     #     ela estourar o timeout do cliente e a retentativa tambem. 136 x
@@ -93,11 +96,11 @@ jobs:
             exit 1
           fi
           # Este filtro nao cobre tudo que muda o que o modelo ve ou qual
-          # modelo roda. Dois exemplos conhecidos, deixados de fora de
-          # proposito:
-          #   - src/mobia/domain/context/montagem.py: monta o contexto que o
-          #     agente recebe; uma mudanca ali pode alterar a classificacao
-          #     sem tocar em src/mobia/domain/agente/.
+          # modelo roda. `src/mobia/domain/context/` (onde vive
+          # `montar_prompt`) e `src/mobia/infra/moderacao.py` entraram na
+          # TEC-204: e ali que mora a delimitacao que evals/test_injecao.py
+          # mede, e o comentario anterior ja admitia o ponto cego. Um exemplo
+          # conhecido continua de fora de proposito:
           #   - src/mobia/app/config.py: contem modelo_agente (qual modelo e
           #     chamado), mas tambem toda config alheia ao agente. Incluir o
           #     arquivo inteiro no filtro faria o gate pago rodar por motivos
@@ -110,7 +113,7 @@ jobs:
           # `evals/`, e este comeca com `.github/` --, e por isso um PR que
           # mexesse so no gate passava verde sem nunca exercitar o gate.
           if printf '%s\n' "$alterados" \
-             | grep -qE '^(\.github/workflows/evals\.yml$|src/mobia/domain/agente/|src/mobia/evals/|evals/)'; then
+             | grep -qE '^(\.github/workflows/evals\.yml$|src/mobia/domain/agente/|src/mobia/domain/context/|src/mobia/infra/moderacao\.py$|src/mobia/evals/|evals/)'; then
             echo "mexeu=true" >> "$GITHUB_OUTPUT"
           else
             echo "mexeu=false" >> "$GITHUB_OUTPUT"
