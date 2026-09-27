@@ -24,15 +24,14 @@ ida e na retomada.
 
 import asyncio
 import json
-import math
 import uuid
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
-from starlette.responses import Response
 
 from mobia.api.central_do_widget import CentralIndisponivel, central_de
 from mobia.api.deps import get_ingestion_service
@@ -51,7 +50,12 @@ from mobia.domain.messages.historico import historico_da_sessao
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.service import IngestionService
 from mobia.infra.db import get_sessionmaker, motivo_do_erro_de_banco
-from mobia.infra.rate_limit import JANELA_DE_UM_MINUTO, chave_de_ip, consumir
+from mobia.infra.rate_limit import (
+    JANELA_DE_UM_MINUTO,
+    chave_de_ip,
+    consumir,
+    segundos_ate_caber,
+)
 
 log = structlog.get_logger(__name__)
 router = APIRouter(tags=["widget"])
@@ -68,6 +72,11 @@ CODIGO_PROTOCOLO = 1002
 # 1011 e "condicao inesperada no servidor" do RFC 6455: o banco ou o Redis
 # fora, que nao e culpa de quem esta do outro lado.
 CODIGO_INDISPONIVEL = 1011
+
+# 1013 e "tente mais tarde" do RFC 6455: o limite por IP da RNF-16, TEC-346
+# D1. Ao contrario dos dois de cima, este vem DEPOIS do `accept` e de um
+# frame `erro` -- a visitante le quanto esperar antes do socket cair.
+CODIGO_TENTE_MAIS_TARDE = 1013
 
 
 # Teto do `id` que o cliente escolhe. A coluna e `String(255)` e a chave gravada
@@ -130,8 +139,13 @@ async def chat(
     correlation_id.set(str(uuid.uuid4()))
 
     pool = getattr(websocket.app.state, "redis_pool", None)
-    if not await _cabe_no_limite_por_ip(websocket, pool):
-        await _recusar_por_excesso(websocket)
+    veredito = await _cabe_no_limite_por_ip(websocket, pool)
+    if not veredito.permitido:
+        assert veredito.chave is not None  # so falta quando barrado, e ai sempre veio preenchida
+        aguarde_segundos = await segundos_ate_caber(
+            pool, chave=veredito.chave, janela_segundos=JANELA_DE_UM_MINUTO
+        )
+        await _recusar_por_excesso(websocket, aguarde_segundos=aguarde_segundos)
         return
 
     await websocket.accept()
@@ -215,29 +229,27 @@ async def chat(
         log.info("widget.desconectado", sessao=sessao)
 
 
-async def _recusar_por_excesso(websocket: WebSocket) -> None:
-    """Recusa o handshake com 429 e `Retry-After`, a mesma resposta do middleware.
+async def _recusar_por_excesso(websocket: WebSocket, *, aguarde_segundos: int) -> None:
+    """Aceita, diz quanto esperar e fecha com 1013. TEC-346, D1.
 
-    **Nao `close()` antes do `accept`.** Foi a primeira versao, com o codigo
-    1013 ("tente mais tarde"), e o teste passava olhando o evento ASGI. So que
-    o uvicorn transforma o fechamento antes do `accept` em HTTP **403** nas
-    tres implementacoes de WebSocket, e o navegador ve `onclose` 1006: o
-    cliente lia "proibido, nao tente de novo" onde devia ler "espere".
+    **Nao e mais o 429 da TEC-124.** Aquela recusa era a certa para um cliente
+    HTTP, e o cliente desta rota e um navegador: a API `WebSocket` nao expoe o
+    status nem os cabecalhos de um handshake recusado, e a pagina via so
+    `onclose` 1006, como numa queda de rede. Aceitar custa um `accept` a mais
+    por conexao barrada, e e o que deixa a visitante ler "espere".
 
-    `send_denial_response` precisa da extensao `websocket.http.response`, que o
-    uvicorn anuncia. Um servidor que nao a anuncie cai no `close()`, e ai o 403
-    e o melhor que se consegue -- continua recusando, so que com a palavra
-    errada.
+    Nada alem disso acontece: nenhum `ola` e lido e nenhuma sessao e criada.
     """
-    if "websocket.http.response" in websocket.scope.get("extensions", {}):
-        await websocket.send_denial_response(
-            Response(
-                status_code=429,
-                headers={"Retry-After": str(math.ceil(JANELA_DE_UM_MINUTO))},
-            )
-        )
-        return
-    await websocket.close()
+    await websocket.accept()
+    await websocket.send_json(
+        {
+            "tipo": "erro",
+            "codigo": "muitas_tentativas",
+            "mensagem": f"Muitas tentativas, aguarde {aguarde_segundos} s.",
+            "aguardeSegundos": aguarde_segundos,
+        }
+    )
+    await websocket.close(code=CODIGO_TENTE_MAIS_TARDE)
 
 
 def _falha_de(feitas: set[asyncio.Task[None]]) -> BaseException | None:
@@ -255,7 +267,20 @@ def _falha_de(feitas: set[asyncio.Task[None]]) -> BaseException | None:
     return None
 
 
-async def _cabe_no_limite_por_ip(websocket: WebSocket, pool: Any) -> bool:
+@dataclass(frozen=True)
+class VereditoDoLimite:
+    """Se o handshake cabe no limite por IP, e a chave para saber quanto falta se nao.
+
+    `chave` so vem preenchida quando `permitido` e falso -- e a mesma chave
+    Redis que acabou de contar o bloqueio, para quem chama nao ter de
+    resolver o IP de novo so para ler `segundos_ate_caber`.
+    """
+
+    permitido: bool
+    chave: str | None = None
+
+
+async def _cabe_no_limite_por_ip(websocket: WebSocket, pool: Any) -> VereditoDoLimite:
     """O limite da RNF-16 aplicado ao aperto de mao.
 
     **Mora aqui, e nao no middleware, porque o middleware nao alcanca.**
@@ -272,7 +297,7 @@ async def _cabe_no_limite_por_ip(websocket: WebSocket, pool: Any) -> bool:
     settings = get_settings()
     limite = settings.rate_limit_requisicoes_por_ip_por_minuto
     if limite <= 0:
-        return True
+        return VereditoDoLimite(permitido=True)
 
     ip = resolver_ip(
         socket_host=websocket.client.host if websocket.client else None,
@@ -280,13 +305,12 @@ async def _cabe_no_limite_por_ip(websocket: WebSocket, pool: Any) -> bool:
         confiar_em_forwarded_for=settings.confiar_em_forwarded_for,
     )
     if ip is None:
-        return True
+        return VereditoDoLimite(permitido=True)
 
-    consumo = await consumir(
-        pool, chave=chave_de_ip(ip), limite=limite, janela_segundos=JANELA_DE_UM_MINUTO
-    )
+    chave = chave_de_ip(ip)
+    consumo = await consumir(pool, chave=chave, limite=limite, janela_segundos=JANELA_DE_UM_MINUTO)
     if consumo.permitido:
-        return True
+        return VereditoDoLimite(permitido=True)
 
     log.warning(
         "ratelimit.blocked",
@@ -305,7 +329,7 @@ async def _cabe_no_limite_por_ip(websocket: WebSocket, pool: Any) -> bool:
         volume=consumo.volume,
         limite=limite,
     )
-    return False
+    return VereditoDoLimite(permitido=False, chave=chave)
 
 
 async def _identificar(websocket: WebSocket) -> tuple[str, bool] | None:

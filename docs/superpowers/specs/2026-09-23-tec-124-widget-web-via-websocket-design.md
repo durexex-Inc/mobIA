@@ -135,6 +135,8 @@ Então o endpoint consome `chave_de_ip` com o mesmo limite e a mesma janela do m
 
 O limite por número continua valendo por dentro, via `IngestionService`: uma conexão aceita não é licença para inundar.
 
+- **Emenda (TEC-346, 27/09/2026):** o `429` com `Retry-After` saiu. A API `WebSocket` do navegador não expõe status nem cabeçalhos de um handshake recusado — a página via só `onclose` 1006. O handshake excedente agora é aceito, recebe `{"tipo": "erro", "codigo": "muitas_tentativas", "mensagem", "aguardeSegundos"}` e é fechado com 1013; a espera é o que falta da janela deslizante (`infra/rate_limit.py::espera_para_caber`). Ver a D1 do desenho da TEC-346.
+
 ## D8 — Reengajamento não alcança o web
 
 `sweep_followups` e a seleção de candidatos passam a filtrar por `CANAIS_COM_REENGAJAMENTO`. **Allowlist, e não `channel <> 'web'`**: canal novo nasce de fora do reengajamento e entra quando alguém decidir que ele tem para onde empurrar mensagem.

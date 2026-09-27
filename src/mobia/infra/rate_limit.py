@@ -20,6 +20,7 @@ existia o namespace `arq:`, da propria biblioteca. O prefixo e `ratelimit:`.
 
 import math
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from time import time
 
@@ -119,3 +120,45 @@ async def consumir(
 
     volume = int(resultado[3])
     return Consumo(permitido=volume <= limite, volume=volume)
+
+
+# TEC-346, D1. O que a visitante le quando nao da para calcular: a janela
+# inteira, que e o teto do que ela pode ter de esperar.
+ESPERA_PADRAO_EM_SEGUNDOS = math.ceil(JANELA_DE_UM_MINUTO)
+
+
+def espera_para_caber(scores: Sequence[float], *, janela_segundos: float, agora: float) -> int:
+    """Segundos ate um pedido novo caber, dados os scores do zset em ordem crescente.
+
+    O zset guarda os `limite + 1` mais recentes -- o pedido barrado incluso,
+    porque `consumir` adiciona antes de contar. O proximo cabe quando, somado a
+    ele mesmo, o volume nao passa de `limite`: sobram no maximo `limite - 1`
+    antigos, e para isso os dois mais velhos precisam ter saido da janela.
+
+    Pura, para ser testada sem Redis. Nunca menos de 1: "aguarde 0 s" seria
+    convite a tentar ja, e a contagem pode estar no limite exato.
+    """
+    if len(scores) < 2:
+        return ESPERA_PADRAO_EM_SEGUNDOS
+    return max(1, math.ceil(scores[1] + janela_segundos - agora))
+
+
+async def segundos_ate_caber(
+    pool: Redis | None,
+    *,
+    chave: str,
+    janela_segundos: float,
+    agora: float | None = None,
+) -> int:
+    """Le os dois scores mais velhos e devolve a espera. Redis fora: o padrao."""
+    if pool is None:
+        return ESPERA_PADRAO_EM_SEGUNDOS
+    instante = time() if agora is None else agora
+    try:
+        pares = await pool.zrange(chave, 0, 1, withscores=True)
+    except RedisError as exc:
+        log.warning("ratelimit.indisponivel", erro=type(exc).__name__)
+        return ESPERA_PADRAO_EM_SEGUNDOS
+    return espera_para_caber(
+        [float(score) for _, score in pares], janela_segundos=janela_segundos, agora=instante
+    )
