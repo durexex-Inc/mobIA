@@ -79,7 +79,7 @@ Esta card grava o UUID ao receber `sessao` e manda sempre `ola` com `sessao: nul
 - **Campo com limite de 1000 caracteres**, `maxLength` e contador. O teto de 4096 do servidor continua sendo a rede.
 - **`muitas_tentativas`:** a mensagem do servidor aparece no lugar do campo, e o chat reabre a conexão sozinho depois de `aguardeSegundos`.
 - **Cores só por classe e pela variável `--cor-primaria`** do `<style nonce>` da TEC-344, nunca por atributo `style` (a CSP de produção não tem `'unsafe-inline'` em `style-src`).
-  - **Nota (27/09/2026):** "Reenviar" fica desabilitado enquanto a espera de `muitas_tentativas` corre — reenviar ali só estenderia o bloqueio. Enter envia e Shift+Enter quebra a linha; o Enter que confirma uma composição de IME não envia. A lista é um `role="log"` com `aria-relevant="additions"`, para que a troca de "Enviando…" por "Recebida" não seja anunciada a cada mensagem. E ela só rola sozinha até o fim se a visitante já estava perto do fim, ou se a mensagem nova é dela.
+  - **Nota (27/09/2026):** "Reenviar" fica desabilitado enquanto a espera de `muitas_tentativas` corre — reenviar ali só estenderia o bloqueio. Enter envia e Shift+Enter quebra a linha; o Enter que confirma uma composição de IME não envia. A lista fica dentro de um `role="log"` com `aria-relevant="additions"`, para que a troca de "Enviando…" por "Recebida" não seja anunciada a cada mensagem; o papel fica num invólucro porque `log` não é permitido num `<ol>`. E ela só rola sozinha até o fim se a visitante já estava perto do fim, ou se a mensagem nova é dela.
 
 ## Testes
 

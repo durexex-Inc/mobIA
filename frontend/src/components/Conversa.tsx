@@ -245,42 +245,40 @@ export function Conversa({ endereco }: { endereco: string }) {
 
   return (
     <section className="conversa">
-      <ol
-        ref={listaRef}
-        className="conversa__mensagens"
-        role="log"
-        aria-live="polite"
-        aria-relevant="additions"
-        onScroll={aoRolar}
-      >
-        {conversa.mensagens.map((mensagem) =>
-          mensagem.autor === 'visitante' ? (
-            <li key={mensagem.messageId} className="conversa__balao conversa__balao--visitante">
-              <p className="conversa__texto">{mensagem.texto}</p>
-              <div className="conversa__situacao">
-                <span className={`conversa__estado conversa__estado--${mensagem.estado}`}>
-                  {ROTULO_DO_ESTADO[mensagem.estado]}
-                </span>
-                {mensagem.estado === 'falhou' ? (
-                  // Durante a espera de `muitas_tentativas` reenviar so
-                  // estenderia o bloqueio; o botao volta quando a espera acaba.
-                  <button
-                    type="button"
-                    disabled={espera !== null}
-                    onClick={() => reenviar(mensagem.messageId, mensagem.texto)}
-                  >
-                    Reenviar
-                  </button>
-                ) : null}
-              </div>
-            </li>
-          ) : (
-            <li key={mensagem.chave} className="conversa__balao conversa__balao--agente">
-              {mensagem.texto}
-            </li>
-          ),
-        )}
-      </ol>
+      {/* `log` nao e papel permitido num `<ol>`, e tira dele a semantica de
+          lista: o papel fica no involucro, e a lista continua lista.
+          `additions` anuncia so os baloes novos, nao a troca de estado. */}
+      <div className="conversa__registro" role="log" aria-live="polite" aria-relevant="additions">
+        <ol ref={listaRef} className="conversa__mensagens" onScroll={aoRolar}>
+          {conversa.mensagens.map((mensagem) =>
+            mensagem.autor === 'visitante' ? (
+              <li key={mensagem.messageId} className="conversa__balao conversa__balao--visitante">
+                <p className="conversa__texto">{mensagem.texto}</p>
+                <div className="conversa__situacao">
+                  <span className={`conversa__estado conversa__estado--${mensagem.estado}`}>
+                    {ROTULO_DO_ESTADO[mensagem.estado]}
+                  </span>
+                  {mensagem.estado === 'falhou' ? (
+                    // Durante a espera de `muitas_tentativas` reenviar so
+                    // estenderia o bloqueio; o botao volta quando a espera acaba.
+                    <button
+                      type="button"
+                      disabled={espera !== null}
+                      onClick={() => reenviar(mensagem.messageId, mensagem.texto)}
+                    >
+                      Reenviar
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            ) : (
+              <li key={mensagem.chave} className="conversa__balao conversa__balao--agente">
+                {mensagem.texto}
+              </li>
+            ),
+          )}
+        </ol>
+      </div>
       {espera ? (
         <p className="conversa__espera" role="status">
           {espera.mensagem}

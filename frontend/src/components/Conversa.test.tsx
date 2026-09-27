@@ -202,7 +202,7 @@ describe('Conversa', () => {
     socket.receber({ tipo: 'mensagem', texto: 'São três opções.', kind: 'texto' })
     socket.receber({ tipo: 'mensagem', texto: 'Quer ver a primeira?', kind: 'texto' })
 
-    const lista = screen.getByRole('log')
+    const lista = screen.getByRole('list')
     const itens = within(lista).getAllByRole('listitem')
     expect(itens.map((li) => li.textContent)).toEqual(['Temos, sim.', 'São três opções.', 'Quer ver a primeira?'])
     for (const li of itens) {
@@ -440,12 +440,17 @@ describe('Conversa', () => {
     expect(screen.getByText('3/1000')).toBeInTheDocument()
   })
 
-  it('a lista de mensagens e um log que anuncia so os baloes novos (D5)', () => {
+  it('a lista de mensagens fica dentro de um log que anuncia so os baloes novos (D5)', () => {
     montarAberto()
 
-    const lista = screen.getByRole('log')
-    expect(lista).toHaveAttribute('aria-live', 'polite')
-    expect(lista).toHaveAttribute('aria-relevant', 'additions')
+    const registro = screen.getByRole('log')
+    expect(registro).toHaveAttribute('aria-live', 'polite')
+    expect(registro).toHaveAttribute('aria-relevant', 'additions')
+    // `log` nao e papel permitido num `<ol>`: a lista continua lista, dentro dele.
+    const lista = within(registro).getByRole('list')
+    expect(lista.tagName).toBe('OL')
+    expect(lista).not.toHaveAttribute('role')
+    expect(lista).not.toHaveAttribute('aria-live')
   })
 
   it('Enter envia, pelo mesmo caminho do botao', () => {
@@ -486,7 +491,7 @@ describe('Conversa', () => {
 
   it('balao do agente nao puxa para o fim quem rolou para cima para reler', () => {
     const socket = montarAberto()
-    const lista = comGeometria(screen.getByRole('log'), { alturaTotal: 1000, alturaVisivel: 300 })
+    const lista = comGeometria(screen.getByRole('list'), { alturaTotal: 1000, alturaVisivel: 300 })
     rolarPara(lista, 100)
 
     socket.receber({ tipo: 'mensagem', texto: 'Temos, sim.', kind: 'texto' })
@@ -496,7 +501,7 @@ describe('Conversa', () => {
 
   it('balao do agente rola para o fim quando a lista ja estava perto do fim', () => {
     const socket = montarAberto()
-    const lista = comGeometria(screen.getByRole('log'), { alturaTotal: 1000, alturaVisivel: 300 })
+    const lista = comGeometria(screen.getByRole('list'), { alturaTotal: 1000, alturaVisivel: 300 })
     rolarPara(lista, 670)
 
     socket.receber({ tipo: 'mensagem', texto: 'Temos, sim.', kind: 'texto' })
@@ -506,7 +511,7 @@ describe('Conversa', () => {
 
   it('a mensagem da propria visitante sempre rola para o fim', () => {
     montarAberto()
-    const lista = comGeometria(screen.getByRole('log'), { alturaTotal: 1000, alturaVisivel: 300 })
+    const lista = comGeometria(screen.getByRole('list'), { alturaTotal: 1000, alturaVisivel: 300 })
     rolarPara(lista, 100)
 
     enviar('Oi')

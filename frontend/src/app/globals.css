@@ -552,6 +552,15 @@ a {
   min-height: 0;
 }
 
+/* O involucro do `role="log"`: repassa a altura que sobra para a lista, que
+   continua sendo quem rola. */
+.conversa__registro {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .conversa__mensagens {
   flex: 1;
   min-height: 0;
