@@ -61,7 +61,11 @@
   function buscarAparencia(origem, tenant) {
     var controle = new AbortController()
     var prazo = setTimeout(function () {
-      controle.abort()
+      try {
+        controle.abort()
+      } catch {
+        // D7.
+      }
     }, TEMPO_DA_APARENCIA_MS)
     var url = origem + '/embed/aparencia?tenant=' + encodeURIComponent(tenant)
     return fetch(url, { credentials: 'omit', signal: controle.signal })
@@ -175,8 +179,12 @@
     // saem do site. So vale a mensagem da nossa origem E da janela deste
     // iframe -- qualquer outra aba ou frame poderia mandar o mesmo texto.
     var prazo = setTimeout(function () {
-      window.removeEventListener('message', aoMensagem)
-      hospede.remove()
+      try {
+        window.removeEventListener('message', aoMensagem)
+        hospede.remove()
+      } catch {
+        // D7.
+      }
     }, TEMPO_DO_PRONTO_MS)
 
     function aoMensagem(evento) {
