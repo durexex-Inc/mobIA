@@ -79,6 +79,8 @@ Tabela `solicitacoes_de_titular`. Como guarda `conversation_key` enquanto aberta
 | `recebida_em`, `prazo_em` | prazo = recebida + 15 dias |
 | `atendida_em` | |
 
+**Corrigido na revisão final:** a unicidade da solicitação aberta (`uq_solicitacao_aberta`) e a busca dela são pelo **par** e pelo tipo, e não por `lead_ref`. A rotação de chave da TEC-203 arrasta o par nesta tabela, mas só recalcula `lead_ref` em `eventos_auditoria`; chaveado por `lead_ref`, o pedido repetido depois de uma rotação abria uma segunda solicitação, e a exportação não achava a aberta para fechar. `lead_ref` continua gravado como a referência que sobra depois de a solicitação fechar — e ele não é recalculado na rotação, então a de uma solicitação aberta durante uma rotação deixa de bater com a trilha.
+
 ## D3 — O pedido pelo WhatsApp
 
 - **Detecção determinística**, no molde de `optout/deteccao.py::pediu_optout` e `humano/deteccao.py::pediu_humano`: sem chamada paga, porque uma decisão de LGPD não pode depender de o provedor estar de pé.

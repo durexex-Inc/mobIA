@@ -26,7 +26,10 @@ class SolicitacaoDeTitular(Base):
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
 
     # HMAC do par (`auditoria/referencia.py::lead_ref`) -- sobrevive a
-    # anonimizacao, ao contrario do par abaixo.
+    # anonimizacao, ao contrario do par abaixo. E a referencia DEPOIS de a
+    # solicitacao fechar, e so isso: enquanto ABERTA, quem localiza a linha e
+    # o par (ver `uq_solicitacao_aberta`), porque a rotacao de chave da
+    # TEC-203 arrasta o par e nao recalcula este campo.
     lead_ref: Mapped[str] = mapped_column(CHAR(64), nullable=False)
 
     # O par, SO ENQUANTO ABERTA -- vira nulo ao ser atendida ou recusada
@@ -73,10 +76,18 @@ class SolicitacaoDeTitular(Base):
             name="ck_solicitacoes_de_titular_par_completo",
         ),
         # Uma aberta por tipo e por lead: pedir eliminacao duas vezes nao cria
-        # duas linhas (D3 do desenho, "idempotente").
+        # duas linhas (D3 do desenho, "idempotente"). Pelo PAR, e nao por
+        # `lead_ref` -- revisao final da TEC-207, I2: a rotacao da chave de
+        # indice (TEC-203) move `conversation_key` nesta tabela como em toda
+        # outra de `TABELAS_COM_CHAVE_DE_LEAD`, mas so recalcula `lead_ref` em
+        # `eventos_auditoria`. Chaveada por `lead_ref`, a unicidade deixava o
+        # pedido repetido depois de uma rotacao abrir uma segunda linha. O par
+        # esta sempre presente enquanto ABERTA (o CHECK acima), entao o indice
+        # parcial cobre exatamente as linhas que ele precisa cobrir.
         Index(
             "uq_solicitacao_aberta",
-            "lead_ref",
+            "channel",
+            "conversation_key",
             "tipo",
             unique=True,
             postgresql_where=text("status = 'ABERTA'"),

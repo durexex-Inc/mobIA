@@ -21,7 +21,9 @@ from mobia.domain.auditoria.models import EventoAuditoria
 from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA
 from mobia.domain.consentimento.models import Consentimento
 from mobia.domain.context.models import LeadQualification
+from mobia.domain.identidade import indice
 from mobia.domain.identidade.indice import chave_de, registrar
+from mobia.domain.identidade.reindexacao import TABELAS_COM_CHAVE_DE_LEAD, reindexar
 from mobia.domain.leads.repositorio import referencias_para
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
@@ -34,7 +36,7 @@ from mobia.domain.titular.vocabulario import (
 )
 from mobia.domain.usuarios import tokens
 from mobia.infra.crypto import aad_de, encrypt
-from mobia.infra.db import get_sessionmaker
+from mobia.infra.db import get_engine, get_sessionmaker
 from mobia.workers.jobs.eliminar_lead import eliminar_lead
 
 CANAL = "whatsapp"
@@ -194,6 +196,70 @@ async def test_exportacao_traz_telefone_qualificacao_consentimento_e_transcricao
         )
     ).scalar_one()
     assert linha_acesso.status == StatusDaSolicitacao.ATENDIDA.value
+
+
+async def test_depois_da_rotacao_a_aberta_continua_achada_pelo_pedido_e_pela_exportacao(
+    session: AsyncSession,
+    client: AsyncClient,
+    banco_limpo: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Revisao final da TEC-207, I2. A rotacao da chave de indice (TEC-203)
+    move `conversation_key` em toda tabela da lista -- esta inclusive --, mas
+    so recalcula `lead_ref` em `eventos_auditoria`. Com a unicidade e a busca
+    por `lead_ref`, o pedido repetido depois da rotacao abria uma SEGUNDA
+    solicitacao, e a exportacao nao achava a aberta para fechar. Pelo par,
+    que a rotacao arrasta, as duas acham a mesma linha."""
+    telefone = "5548999990010"
+    chave_a, lead_id = await _lead(session, telefone=telefone)
+    acesso_id = await registrar_solicitacao(
+        session,
+        channel=CANAL,
+        conversation_key=chave_a,
+        tipo=TipoDeSolicitacao.ACESSO,
+        origem=OrigemDaSolicitacao.WHATSAPP,
+        ator=ATOR_SISTEMA,
+    )
+    await session.commit()
+
+    configuracao_b = get_settings().model_copy(
+        update={"lead_indice_chave": "chave-de-indice-B-" + "x" * 40}
+    )
+    monkeypatch.setattr(indice, "get_settings", lambda: configuracao_b)
+    chave_b = chave_de(CANAL, telefone)
+    assert chave_b != chave_a
+    chave_do_lead = get_settings().auditoria_chave_do_lead
+    async with get_engine().begin() as conexao:
+        await conexao.run_sync(
+            lambda conn: reindexar(
+                conn,
+                tabelas=TABELAS_COM_CHAVE_DE_LEAD,
+                nova_chave=chave_de,
+                modo="rotacao",
+                chave_do_lead_antiga=chave_do_lead,
+                chave_do_lead_nova=chave_do_lead,
+            )
+        )
+
+    de_novo = await registrar_solicitacao(
+        session,
+        channel=CANAL,
+        conversation_key=chave_b,
+        tipo=TipoDeSolicitacao.ACESSO,
+        origem=OrigemDaSolicitacao.WHATSAPP,
+        ator=ATOR_SISTEMA,
+    )
+    await session.commit()
+    assert de_novo == acesso_id
+
+    resposta = await client.get(f"/api/v1/leads/{lead_id}/dados-pessoais", headers=_bearer("ADMIN"))
+
+    assert resposta.status_code == 200
+    session.expire_all()
+    linhas = (await session.execute(select(SolicitacaoDeTitular))).scalars().all()
+    assert [(linha.id, linha.status) for linha in linhas] == [
+        (acesso_id, StatusDaSolicitacao.ATENDIDA.value)
+    ]
 
 
 async def test_exportacao_sem_acesso_aberta_nao_estoura(

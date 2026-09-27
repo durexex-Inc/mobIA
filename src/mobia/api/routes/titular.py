@@ -157,7 +157,7 @@ async def eliminar(
     """Registra (ou reaproveita) a ELIMINACAO e enfileira o job que a executa.
 
     **A rota deixa a solicitacao ABERTA** -- `registrar_solicitacao` e
-    idempotente por `(lead_ref, tipo)`, entao um pedido de ELIMINACAO do
+    idempotente pelo par e pelo tipo, entao um pedido de ELIMINACAO do
     proprio WhatsApp que ja estivesse aberto e reaproveitado, sem origem
     trocada. Quem fecha a solicitacao e o job, via `eliminacao.anonimizar`.
 

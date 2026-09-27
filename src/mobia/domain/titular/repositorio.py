@@ -99,9 +99,14 @@ async def registrar_solicitacao(
 ) -> uuid.UUID:
     """Cria a solicitacao ABERTA, ou devolve o id da que ja existe.
 
-    **Idempotente por `(lead_ref, tipo)`** (D2 e D3): um segundo pedido do
-    mesmo tipo, do mesmo lead, nao cria uma segunda linha enquanto a primeira
-    espera. Um INSERT com `ON CONFLICT DO NOTHING` sobre `uq_solicitacao_aberta`
+    **Idempotente por `(channel, conversation_key, tipo)`** (D2 e D3): um
+    segundo pedido do mesmo tipo, do mesmo lead, nao cria uma segunda linha
+    enquanto a primeira espera. Pelo par, e nao por `lead_ref`, desde a
+    revisao final (I2): a rotacao de chave da TEC-203 arrasta o par e nao
+    recalcula o `lead_ref` desta tabela -- ver `uq_solicitacao_aberta` em
+    `titular/models.py`. `lead_ref` continua gravado, como a referencia que
+    sobra depois de a solicitacao fechar. Um INSERT com
+    `ON CONFLICT DO NOTHING` sobre `uq_solicitacao_aberta`
     decide isso no banco, e nao com um SELECT antes -- a corrida e a mesma que
     `registrar_handoff` previne, so que aqui basta saber se a linha nasceu ou
     nao, sem acumular nada na que ja existia.
@@ -129,7 +134,7 @@ async def registrar_solicitacao(
     inserida = (
         await session.execute(
             statement.on_conflict_do_nothing(
-                index_elements=["lead_ref", "tipo"],
+                index_elements=["channel", "conversation_key", "tipo"],
                 index_where=text("status = 'ABERTA'"),
             ).returning(SolicitacaoDeTitular.id)
         )
@@ -146,8 +151,8 @@ async def registrar_solicitacao(
         )
         return inserida
 
-    # ON CONFLICT DO NOTHING nao devolveu linha: a ABERTA deste (lead_ref,
-    # tipo) ja existia. `uq_solicitacao_aberta` garante que ha exatamente uma.
+    # ON CONFLICT DO NOTHING nao devolveu linha: a ABERTA deste par e deste
+    # tipo ja existia. `uq_solicitacao_aberta` garante que ha exatamente uma.
     existente = await solicitacao_aberta(
         session, channel=channel, conversation_key=conversation_key, tipo=tipo
     )
@@ -161,12 +166,14 @@ async def registrar_solicitacao(
 async def solicitacao_aberta(
     session: AsyncSession, *, channel: str, conversation_key: str, tipo: TipoDeSolicitacao
 ) -> SolicitacaoDeTitular | None:
-    """A ABERTA deste lead e deste tipo, se houver."""
-    ref = calcular_lead_ref(channel, conversation_key, chave=get_settings().auditoria_chave_do_lead)
+    """A ABERTA deste lead e deste tipo, se houver -- pelo par, que e o que
+    `uq_solicitacao_aberta` garante unico e o que a rotacao de chave arrasta
+    (ver `registrar_solicitacao`)."""
     return (
         await session.execute(
             select(SolicitacaoDeTitular).where(
-                SolicitacaoDeTitular.lead_ref == ref,
+                SolicitacaoDeTitular.channel == channel,
+                SolicitacaoDeTitular.conversation_key == conversation_key,
                 SolicitacaoDeTitular.tipo == tipo.value,
                 SolicitacaoDeTitular.status == StatusDaSolicitacao.ABERTA.value,
             )

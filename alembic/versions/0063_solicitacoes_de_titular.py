@@ -13,7 +13,10 @@ TEC-207, D2 e D6 do desenho. Duas coisas:
   depois de `anonimizar_lead` apagar o par de toda outra tabela.
   `uq_solicitacao_aberta` (parcial, sobre `status = 'ABERTA'`) e o que torna o
   registro idempotente: um segundo pedido do mesmo tipo, do mesmo lead, nao
-  cria uma segunda linha enquanto a primeira espera.
+  cria uma segunda linha enquanto a primeira espera. Ele e sobre o PAR, e nao
+  sobre `lead_ref`: a rotacao de chave da TEC-203 arrasta o par e so recalcula
+  `lead_ref` em `eventos_auditoria`, e um indice sobre `lead_ref` deixaria o
+  pedido repetido depois de uma rotacao abrir uma segunda linha.
   `ck_solicitacoes_de_titular_par_completo` amarra os dois lados do par entre
   si -- `ck_solicitacoes_de_titular_par_com_status` sozinho so liga a
   presenca do par ao status, e deixaria passar `channel` preenchido com
@@ -134,7 +137,7 @@ def upgrade() -> None:
     op.create_index(
         "uq_solicitacao_aberta",
         "solicitacoes_de_titular",
-        ["lead_ref", "tipo"],
+        ["channel", "conversation_key", "tipo"],
         unique=True,
         postgresql_where=sa.text("status = 'ABERTA'"),
     )

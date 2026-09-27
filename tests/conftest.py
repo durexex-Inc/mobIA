@@ -263,7 +263,7 @@ TABELAS = (
     # TEC-203. PK no par, como `vinculos_de_sessao`: sem o truncate, a
     # identidade gravada por um teste revela o lead do proximo.
     "identidades_de_lead",
-    # TEC-207. UNIQUE parcial por (lead_ref, tipo) sobre a linha ABERTA: sem o
+    # TEC-207. UNIQUE parcial pelo par e pelo tipo sobre a linha ABERTA: sem o
     # truncate, a solicitacao de um teste bloqueia a do proximo.
     "solicitacoes_de_titular",
 )
