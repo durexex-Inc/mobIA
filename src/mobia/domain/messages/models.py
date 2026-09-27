@@ -101,11 +101,13 @@ class Message(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Contexto do envelope da Meta -- `change.value` sem o array `messages`.
-    # Coluna reservada pelo TEC-217; nada escreve nela ainda.
+    # Contexto do envelope da Meta -- `change.value` sem `messages` nem
+    # `statuses`, com `contacts` so do remetente da linha, e o `entry.id`
+    # (TEC-217; ver `schemas._contexto_do_envelope`). Nulo no canal web e nas
+    # linhas gravadas antes da TEC-217.
     #
     # Cifrada em repouso desde o TEC-221, ANTES de existir escritor. O que o
-    # TEC-217 vai gravar aqui carrega `contacts[].profile.name` e `wa_id` --
+    # TEC-217 grava aqui carrega `contacts[].profile.name` e `wa_id` --
     # nome e telefone do lead --, e a premissa desta tabela desde o TEC-126 e
     # que conteudo pessoal nao fica em claro. Cifrar com a coluna vazia custou
     # uma migracao trivial; depois do escritor, custaria backfill.

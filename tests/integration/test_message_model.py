@@ -264,7 +264,12 @@ async def test_mesmo_id_em_canais_diferentes_convive(session) -> None:
 
 
 async def test_colunas_reservadas_nascem_nulas(session) -> None:
-    """`envelope_context` (TEC-217) e `claimed_at` (TEC-218) entram no esquema sem escritor."""
+    """`envelope_context` (TEC-217) e `claimed_at` (TEC-218) sao nulaveis e nascem nulos.
+
+    Uma linha gravada fora da ingestao do WhatsApp -- como esta, pelo ORM --
+    nao tem envelope. Desde a TEC-217 quem escreve `envelope_context` e a
+    ingestao (`test_envelope_da_meta.py`); `claimed_at` segue sem escritor.
+    """
     session.add(nova_mensagem("wamid.RESERVADAS"))
     await session.commit()
 

@@ -211,6 +211,12 @@ class IngestionService:
                     "raw_payload": encrypt_json(
                         item.raw_payload, aad_de(identificador, "raw_payload")
                     ),
+                    # TEC-217. Cifrado como o raw, com o AAD da propria linha e
+                    # coluna: e o que impede copiar o envelope de um lead para
+                    # a linha de outro.
+                    "envelope_context": encrypt_json(
+                        item.envelope_context, aad_de(identificador, "envelope_context")
+                    ),
                     "status": MessageStatus.RECEIVED,
                 }
             )
