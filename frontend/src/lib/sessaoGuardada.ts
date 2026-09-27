@@ -5,7 +5,7 @@
  * Modulo puro: recebe o storage e o instante como parametros, entao e
  * testavel sem localStorage real e sem relogio real. `Armazem` e o
  * subconjunto de `Storage` que o modulo usa -- basta para aceitar tanto
- * `window.localStorage` quanto um dublê de teste.
+ * `window.localStorage` quanto um substituto de teste.
  *
  * Nenhuma funcao daqui lanca. Storage bloqueado (Safari ITP, modo privado)
  * e o formato de fato usado em producao: o chat tem de abrir sessao
