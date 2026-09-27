@@ -292,3 +292,17 @@ a {
   font-size: 0.8rem;
   opacity: 0.6;
 }
+
+/* --- Sair (TEC-310) ------------------------------------------------------- */
+
+.menu-conta {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.menu-conta button {
+  padding: 0.3rem 0.8rem;
+  font: inherit;
+  cursor: pointer;
+}

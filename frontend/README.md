@@ -87,8 +87,12 @@ desenho está em
   `exigirSessao` (em `lib/servidor/sessao.ts`) procura o valor no Redis. A
   primeira é só uma checagem rápida; a segunda é a de verdade, e toda página
   que mostre dado de lead precisa chamá-la.
-- **Sem renovação e sem logout ainda** — é a TEC-310. Uma hora depois do login
-  o access expira e o painel manda de volta ao login, preservando o recorte.
+- **Renovação transparente (TEC-310).** Faltando 5 minutos para o access
+  vencer, a sessão troca o refresh por um par novo, com um lock no Redis —
+  o refresh da TEC-201 detecta reuso, e duas renovações juntas derrubariam a
+  sessão. A sessão dura 7 dias contados do login; renovar não estende.
+- **"Sair" é um POST para `/sair`**: revoga o refresh no FastAPI, apaga a
+  sessão e o cookie, e responde com `Clear-Site-Data: "cache"`.
 - **O Redis dos testes é um mapa** (`test/armazem-em-memoria.ts`), trocado por
   `vi.mock`: nenhum teste do frontend precisa de Redis de pé.
 

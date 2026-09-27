@@ -14,6 +14,7 @@ import { redirect } from 'next/navigation'
 import { urlDoLogin } from '@/lib/destino'
 import { periodoPadrao } from '@/lib/periodo'
 import { exigirPermissao } from '@/lib/servidor/quemSou'
+import { apagarSessaoDaRequisicao } from '@/lib/servidor/sessao'
 
 type Busca = Record<string, string | string[] | undefined>
 
@@ -110,11 +111,16 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
       : 'Não foi possível carregar os dados do painel.'
   }
 
-  // **401 e o access que expirou**, 60 minutos depois do login: sem a TEC-310
-  // ninguem o renova. Volta ao login com o recorte preservado. O `redirect`
-  // fica FORA do `try` acima de proposito -- ele lanca para interromper o
-  // render, e o `catch` o engoliria.
+  // **401 e o FastAPI recusando um token que o painel acha valido.** A
+  // expiracao comum nao chega aqui: a sessao renova o access antes de ele
+  // vencer (TEC-310). Sobra o `JWT_SEGREDO` trocado, o usuario desativado.
+  // Volta ao login com o recorte preservado. O `redirect` fica FORA do `try`
+  // acima de proposito -- ele lanca para interromper o render, e o `catch` o
+  // engoliria.
   if (erroDeCarga?.status === 401) {
+    // A sessao sai do Redis ANTES do redirecionamento (TEC-310, D5): sem isto,
+    // o login veria a sessao viva e mandaria de volta para ca, num laco.
+    await apagarSessaoDaRequisicao()
     redirect(urlDoLogin({ returnTo: recorte, erro: 'sessao_expirada' }))
   }
 

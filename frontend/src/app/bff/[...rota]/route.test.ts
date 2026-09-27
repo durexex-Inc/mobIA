@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { limparArmazem } from '../../../../test/armazem-em-memoria'
+import { ACESSO_VALIDO } from '../../../../test/token'
 import { criarSessao } from '@/lib/servidor/sessao'
 import { DELETE, GET, POST } from './route'
 
@@ -62,7 +63,7 @@ describe('proxy /bff/*', () => {
     process.env.MOBIA_API_BASE = 'http://backend:8000'
     process.env.MOBIA_ORIGEM_DO_PAINEL = PAINEL
     limparArmazem()
-    idDaSessao = await criarSessao({ acesso: 'jwt-da-anelise', refresh: 'refresh' })
+    idDaSessao = await criarSessao({ acesso: ACESSO_VALIDO, refresh: 'refresh' })
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -203,7 +204,7 @@ describe('proxy /bff/*', () => {
 
       const [url, init] = api.mock.calls[0]
       expect(String(url)).toBe('http://backend:8000/api/v1/metricas/funil?de=2026-08-01&ate=2026-08-22')
-      expect(init.headers.Authorization).toBe('Bearer jwt-da-anelise')
+      expect(init.headers.Authorization).toBe(`Bearer ${ACESSO_VALIDO}`)
       expect(init.headers['X-Admin-Token']).toBeUndefined()
       expect(init.headers['X-Request-Id']).toBeTruthy()
     })

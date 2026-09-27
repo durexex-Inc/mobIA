@@ -6,7 +6,13 @@ import { cache } from 'react'
 
 import { urlDoLogin } from '@/lib/destino'
 import { chamarApi } from '@/lib/servidor/api'
-import { COOKIE_DA_SESSAO, exigirSessao, lerSessao, type Sessao } from '@/lib/servidor/sessao'
+import {
+  apagarSessaoDaRequisicao,
+  COOKIE_DA_SESSAO,
+  exigirSessao,
+  obterSessaoValida,
+  type Sessao,
+} from '@/lib/servidor/sessao'
 
 /**
  * Quem esta logado e o que pode (TEC-312, D2).
@@ -21,7 +27,11 @@ export type QuemSou = {
   permissoes: ReadonlySet<string>
 }
 
-/** O FastAPI recusou o token: o access expirou (sem a TEC-310, ninguem o renova). */
+/**
+ * O FastAPI recusou o token. Nao e a expiracao comum -- a sessao renova antes
+ * (TEC-310) --, e sim o token que deixou de valer: segredo trocado, usuario
+ * desativado.
+ */
 export class SessaoRecusada extends Error {
   constructor() {
     super('o FastAPI recusou o token da sessao')
@@ -74,7 +84,9 @@ export const quemSou = cache(async (acesso: string): Promise<QuemSou> => {
  */
 export async function quemSouDaRequisicao(): Promise<QuemSou | null> {
   try {
-    const sessao = await lerSessao((await cookies()).get(COOKIE_DA_SESSAO)?.value)
+    // A mesma leitura da pagina, sob o mesmo `cache`: se precisar renovar, o
+    // layout e a pagina renovam uma vez so (TEC-310, D1).
+    const sessao = await obterSessaoValida((await cookies()).get(COOKIE_DA_SESSAO)?.value)
     return sessao ? await quemSou(sessao.acesso) : null
   } catch {
     return null
@@ -103,6 +115,9 @@ export async function exigirPermissao(
     quem = await quemSou(sessao.acesso)
   } catch (erro) {
     if (erro instanceof SessaoRecusada) {
+      // Apagar antes de redirecionar: sem isto, o login veria a sessao no
+      // Redis e devolveria a esta pagina, num laco (TEC-310, D5).
+      await apagarSessaoDaRequisicao()
       redirect(urlDoLogin({ returnTo, erro: 'sessao_expirada' }))
     }
     throw erro

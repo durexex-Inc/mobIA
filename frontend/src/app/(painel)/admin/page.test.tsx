@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { limparArmazem } from '../../../../test/armazem-em-memoria'
+import { ACESSO_VALIDO } from '../../../../test/token'
 import { criarSessao } from '@/lib/servidor/sessao'
 import PaginaDeAdministracao from './page'
 
@@ -45,7 +46,7 @@ describe('PaginaDeAdministracao', () => {
     process.env.MOBIA_API_BASE = 'http://backend:8000'
     limparArmazem()
     cookiesDaRequisicao.clear()
-    cookiesDaRequisicao.set('mobia_sessao', await criarSessao({ acesso: 'jwt', refresh: 'r' }))
+    cookiesDaRequisicao.set('mobia_sessao', await criarSessao({ acesso: ACESSO_VALIDO, refresh: 'r' }))
   })
   afterEach(() => vi.unstubAllGlobals())
 

@@ -25,7 +25,14 @@ export function Menu({ quem }: { quem: QuemSou }) {
           ))}
         </ul>
       </nav>
-      <p className="menu-papel">{nomeDoPapel(quem.papel)}</p>
+      <div className="menu-conta">
+        <p className="menu-papel">{nomeDoPapel(quem.papel)}</p>
+        {/* Formulario, e nao link: sair e POST (TEC-310, D6). Sem JavaScript,
+            como o resto do painel. */}
+        <form method="post" action="/sair">
+          <button type="submit">Sair</button>
+        </form>
+      </div>
     </header>
   )
 }

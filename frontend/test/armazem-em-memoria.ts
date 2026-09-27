@@ -20,6 +20,13 @@ export const armazemEmMemoria: Armazem = {
   gravar: async (chave, valor, segundos) => {
     valores.set(chave, { valor, segundos })
   },
+  gravarSeAusente: async (chave, valor, segundos) => {
+    if (valores.has(chave)) {
+      return false
+    }
+    valores.set(chave, { valor, segundos })
+    return true
+  },
   apagar: async (chave) => {
     valores.delete(chave)
   },

@@ -72,6 +72,7 @@ Decisão do Eduardo em 26/09/2026. `/` continua sendo o funil. O CORRETOR não t
 - **L1 — `/admin/prompts` dá 404, e não "Sem permissão".** A página não existe (D5). Não é vazamento: 404 não diz nada a ninguém.
 - **L2 — "ações conforme o papel" (o título da card) não tem ação nenhuma para esconder.** A única tela é o funil, que é só leitura. O mecanismo (`permissoes` no `quemSou`) é o mesmo que os botões das próximas telas vão usar.
 - **L3 — o menu reflete o papel com até 60 minutos de atraso.** `/auth/me` lê as claims do JWT, e não o banco (D7 da TEC-202). Mudar o papel de alguém só aparece no menu depois do próximo login — ou da próxima renovação, quando a TEC-310 existir.
+  - **Nota (TEC-310, 26/09/2026):** a renovação existe agora, e a cada uma o papel é relido do banco. O atraso continua de até 60 minutos, porque a renovação só acontece perto de o access vencer.
 
 ## Critérios de aceite
 
