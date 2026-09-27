@@ -14,7 +14,8 @@ import { COOKIE_DA_SESSAO, obterSessaoValida } from '@/lib/servidor/sessao'
  *
  * **O primeiro consumidor de cliente chegou com a TEC-324**: o "carregar
  * anteriores" da conversa do lead. A TEC-327 trouxe as primeiras mutacoes --
- * assumir e devolver a conversa -- e o polling. Ate la ele era exercitado so por teste, e
+ * assumir e devolver a conversa -- e o polling, e a TEC-330 a revelacao de
+ * telefone e e-mail. Ate a TEC-324 ele era exercitado so por teste, e
  * de proposito -- inventar um componente de cliente so para lhe dar
  * consumidor seria inventar entidade para um criterio se auto-satisfazer. O
  * resto do painel continua sem passar por aqui: e `<form method="get">` mais
@@ -30,11 +31,21 @@ import { COOKIE_DA_SESSAO, obterSessaoValida } from '@/lib/servidor/sessao'
 /** Metodos que nao carregam corpo, e de que nao se deve tentar ler um. */
 const SEM_CORPO: ReadonlySet<string> = new Set(['GET', 'HEAD'])
 
+/**
+ * Em TODA resposta, recusa inclusive (TEC-330, D5). O que passa por aqui e
+ * dado pessoal de lead ou mutacao, e nada disso deve ficar em cache de
+ * navegador nem de intermediario -- o numero revelado menos que tudo.
+ */
+const SEM_CACHE = 'no-store'
+
 function recusar(status: number, motivo: string, id: string): NextResponse {
   // Corpo minimo e sem prosa: quem le isto e codigo, nao a gerente. E uma
   // mensagem detalhada num 404 de allowlist contaria a quem sonda o que existe
   // do outro lado.
-  return NextResponse.json({ erro: motivo }, { status, headers: { 'X-Request-Id': id } })
+  return NextResponse.json(
+    { erro: motivo },
+    { status, headers: { 'X-Request-Id': id, 'Cache-Control': SEM_CACHE } },
+  )
 }
 
 async function repassar(
@@ -104,7 +115,7 @@ async function repassar(
   // So o `Content-Type` e repassado. Copiar os cabecalhos de resposta em bloco
   // relaiaria o que o FastAPI decidir mandar um dia -- `Set-Cookie` inclusive --
   // para um dominio que nao e o dele.
-  const cabecalhos = new Headers({ 'X-Request-Id': id })
+  const cabecalhos = new Headers({ 'X-Request-Id': id, 'Cache-Control': SEM_CACHE })
   const tipo = resposta.headers.get('content-type')
   if (tipo) {
     cabecalhos.set('Content-Type', tipo)

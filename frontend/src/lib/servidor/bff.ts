@@ -23,8 +23,8 @@
  * aqui porque a sessao e o FastAPI ja cuidam dela: o JWT e o de quem esta
  * logado, o recorte do CORRETOR e do backend, e cada pagina grava na trilha.
  * O que a allowlist ainda decide e QUAIS rotas de lead chegam ao navegador:
- * desde a TEC-327 sao tres -- a transcricao, assumir e devolver --, e o
- * detalhe, a revelacao e a edicao continuam fora.
+ * desde a TEC-330 sao quatro -- a transcricao, assumir, devolver e a
+ * revelacao --, e o detalhe e a edicao continuam fora.
  *
  * `*` casa EXATAMENTE um segmento. A primeira rota que precisou dele foi a
  * transcricao do lead (TEC-324); ele foi escrito antes, porque sem ele a
@@ -39,9 +39,9 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
 }> = [
   { metodo: 'GET', padrao: ['api', 'v1', 'metricas', 'funil'] },
   // A transcricao do lead (TEC-324, D2): o "carregar anteriores" busca daqui.
-  // Entra SO o `GET` das mensagens -- o detalhe e a revelacao continuam fora
-  // do alcance do navegador. Cada pagina grava um acesso na trilha (D3 da
-  // TEC-193), e e por isso que so o clique do usuario a pede.
+  // Entra SO o `GET` das mensagens -- o detalhe continua fora do alcance do
+  // navegador. Cada pagina grava um acesso na trilha (D3 da TEC-193), e e por
+  // isso que so o clique do usuario a pede.
   { metodo: 'GET', padrao: ['api', 'v1', 'leads', '*', 'mensagens'] },
   // Assumir e devolver a conversa (TEC-327, D4): as primeiras MUTACOES que o
   // navegador faz pelo proxy. A regra de `Origin` ja recusa mutacao sem ela
@@ -49,6 +49,11 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   // nem e lido pelo FastAPI.
   { metodo: 'POST', padrao: ['api', 'v1', 'leads', '*', 'assumir'] },
   { metodo: 'POST', padrao: ['api', 'v1', 'leads', '*', 'devolver'] },
+  // Revelar telefone ou e-mail (TEC-330, D5): o unico caminho pelo qual o
+  // navegador recebe dado pessoal de lead em claro. Quem decide se pode e o
+  // `VER_DADOS_COMPLETOS` do JWT, no FastAPI, que grava a trilha antes de
+  // responder.
+  { metodo: 'POST', padrao: ['api', 'v1', 'leads', '*', 'revelar'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */

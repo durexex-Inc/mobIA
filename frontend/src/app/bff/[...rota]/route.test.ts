@@ -250,6 +250,17 @@ describe('proxy /bff/*', () => {
       expect(api.mock.calls[0][1].next).toBeUndefined()
     })
 
+    it('a resposta ao navegador e `no-store`, repassada ou recusada (TEC-330)', async () => {
+      vi.stubGlobal('fetch', apiRespondendo({}))
+
+      const repassada = await GET(requisicao('/bff/api/v1/metricas/funil'), contexto(FUNIL))
+      const recusada = await GET(requisicao('/bff/api/v1/leads'), contexto(['api', 'v1', 'leads']))
+
+      expect(repassada.headers.get('Cache-Control')).toBe('no-store')
+      expect(recusada.status).toBe(404)
+      expect(recusada.headers.get('Cache-Control')).toBe('no-store')
+    })
+
     it('repassa o status de recusa do backend em vez de o traduzir', async () => {
       vi.stubGlobal('fetch', apiRespondendo({ detail: 'filtro invalido' }, 422))
 

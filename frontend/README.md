@@ -209,6 +209,26 @@ em `docs/superpowers/specs/2026-09-27-tec-327-assumir-e-devolver-design.md`.
 - **A faixa sobrevive a recarregar**, porque o detalhe diz quem tem a conversa
   (`atendimento`). O 409 de "já assumida" traz o nome de quem a tem.
 
+## Revelar telefone e e-mail (TEC-330)
+
+O telefone chega mascarado para todo papel (`+55 48 9****-**21`), na lista e
+no detalhe: o número cheio nunca vem na página. Quem tem `VER_DADOS_COMPLETOS`
+(GERENTE e ADMIN) vê um botão "Revelar" ao lado da máscara. O clique faz
+`POST /leads/{leadId}/revelar` pelo `/bff/*`, e o backend grava a trilha antes
+de responder. O desenho está em
+`docs/superpowers/specs/2026-09-27-tec-330-revelar-dado-pessoal-design.md`.
+
+- **O número vive só no estado de `components/DadoRevelavel.tsx`.** Some em 5
+  minutos, no "Ocultar" ou ao sair da tela. Nada vai para a URL, o
+  armazenamento do navegador ou o `console`. Revelar de novo grava outra
+  linha na trilha.
+- **O e-mail não tem botão**, porque nenhuma tabela guarda e-mail de lead
+  (D7 da TEC-195) e o detalhe o recebe sempre nulo. Quando a fonte existir e o
+  backend mandar a máscara, o botão aparece sem mudar a tela.
+- **Na lista, o botão fica fora do link** que abre o detalhe.
+- **Toda resposta do `/bff/*` é `Cache-Control: no-store`**, recusa
+  inclusive.
+
 ## O proxy `/bff/*` exige sessão
 
 Desde a TEC-309, uma requisição sem sessão válida no Redis leva `401` e não

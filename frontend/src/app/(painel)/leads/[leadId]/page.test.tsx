@@ -32,6 +32,7 @@ const PERMISSOES: Record<string, string[]> = {
   // Um GERENTE sem cadastro de corretor: pode atender pela matriz, e nao tem
   // em nome de quem falar (TEC-327, D4).
   GERENTE_SEM_VINCULO: ['ATENDER_LEAD', 'VER_DETALHE_DO_LEAD', 'VER_LEADS'],
+  GERENTE: ['ATENDER_LEAD', 'VER_DADOS_COMPLETOS', 'VER_DETALHE_DO_LEAD', 'VER_FUNIL', 'VER_LEADS'],
 }
 
 const LEAD_ID = '6f1c2a4e-0000-4000-8000-000000000001'
@@ -256,6 +257,29 @@ describe('PaginaDoLead', () => {
     expect(contato).toHaveTextContent('+55 48 9****-**21')
     expect(contato).toHaveTextContent('E-mailNão informado')
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('+55 48 9****-**21')
+  })
+
+  describe('revelar o contato (TEC-330)', () => {
+    it('cenario: CORRETOR recebe so a mascara, e nao ve o "Revelar"', async () => {
+      responde(detalhe())
+
+      await abrir()
+
+      const contato = screen.getByRole('region', { name: 'Contato' })
+      expect(contato).toHaveTextContent('+55 48 9****-**21')
+      expect(within(contato).queryByRole('button')).toBeNull()
+      expect(document.body.innerHTML).not.toContain('99999')
+    })
+
+    it('GERENTE ve o "Revelar" do telefone; o e-mail, sem fonte, nao tem botao', async () => {
+      responde(detalhe(), 200, { papel: 'GERENTE' })
+
+      await abrir()
+
+      const contato = screen.getByRole('region', { name: 'Contato' })
+      expect(within(contato).getByRole('button', { name: 'Revelar telefone' })).toBeInTheDocument()
+      expect(within(contato).queryByRole('button', { name: 'Revelar e-mail' })).toBeNull()
+    })
   })
 
   it('qualificacao com o que falta e o que foi recusado', async () => {
