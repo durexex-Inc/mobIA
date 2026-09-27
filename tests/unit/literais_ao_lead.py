@@ -93,6 +93,11 @@ from mobia.domain.moderacao.port import (
 )
 from mobia.domain.notificacao.envio import TEXTO_DA_JANELA_HUMANA
 from mobia.domain.optout.deteccao import TEXTO_DA_CONFIRMACAO_DE_OPTOUT
+from mobia.domain.titular.deteccao import (
+    TEXTO_DA_CONFIRMACAO_DE_ACESSO,
+    TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO,
+    TEXTO_DA_PERGUNTA_DE_ELIMINACAO,
+)
 from mobia.workers.jobs.process_message import TEXTO_DO_AVISO_DE_ERRO
 
 LITERAIS_AO_LEAD = (
@@ -148,6 +153,11 @@ LITERAIS_AO_LEAD = (
     TEXTO_DA_LISTA_DE_ESPERA,
     TEXTO_DA_ESPERA_ACEITA,
     TEXTO_DO_SLOT_LIBERADO,
+    # TEC-207. Os dois da confirmacao de pedido de titular, e a pergunta que
+    # abre o segundo passo da eliminacao (revisao final, C2).
+    TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO,
+    TEXTO_DA_CONFIRMACAO_DE_ACESSO,
+    TEXTO_DA_PERGUNTA_DE_ELIMINACAO,
     # TEC-364. As frases de `erro.mensagem` do chat web, que a tela mostra
     # como estao. A do texto longo demais nasce de f-string com o teto e fica
     # de fora, pela razao que a docstring deste modulo da para os rotulos da

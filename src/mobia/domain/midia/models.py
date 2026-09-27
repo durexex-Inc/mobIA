@@ -10,8 +10,14 @@ DOCUMENTO usam.
 duplicaria um dado sensivel fora do cofre que ja o protege.
 
 **CASCADE em `message_id`**, que e PK e FK ao mesmo tempo (uma linha por
-mensagem): a midia e da mensagem, entao mensagem apagada (retencao, direito
-do titular) nao deixa midia orfa para apontar para lugar nenhum.
+mensagem): a midia e da mensagem, entao uma mensagem apagada nao deixa linha
+de midia apontando para lugar nenhum. **Mas nenhum caminho de hoje apaga
+mensagem, e o CASCADE nao apaga o arquivo.** A eliminacao e a retencao da
+TEC-207 mantem a linha de `messages` (so zeram o conteudo) e por isso apagam
+a linha desta tabela elas mesmas -- `titular/anonimizacao.py::anonimizar_lead`
+e `titular/retencao.py::esvaziar_transcricoes_vencidas` --, e o blob no
+armazem, que esta fora do banco, cai por `ArmazemDeMidia.apagar` depois do
+commit. Um CASCADE sozinho deixaria o blob cifrado orfao no disco ou no S3.
 
 **`status` e `motivo` sao `String` livre, sem CHECK.** A 0037 (TEC-223) criou
 CHECK para o vocabulario de `messages` porque DUAS guardas do sistema

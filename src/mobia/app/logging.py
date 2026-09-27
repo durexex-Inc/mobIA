@@ -26,8 +26,17 @@ _CORRIDA_DE_DIGITOS = re.compile(r"\d{10,15}")
 # Um UUID termina em 12 digitos hexadecimais que podem ser todos decimais, e o
 # `message_id` aparece em quase todo evento de ingestao. Mascarar isso mataria a
 # correlacao entre eventos sem proteger ninguem.
+#
+# **Em qualquer ponto do valor, e nao so o valor inteiro** (TEC-207). A
+# primeira versao ancorava em `\A...\Z`, e um UUID DENTRO de um valor maior
+# -- a chave de midia `midias/<uuid>` que a eliminacao e a retencao logam
+# para o operador achar o blob orfao -- tinha o ultimo grupo mascarado sempre
+# que os 12 caracteres eram todos decimais (cerca de uma chave em sete), e a
+# chave logada deixava de apontar para arquivo nenhum. As fronteiras de hex
+# dos dois lados impedem que o padrao morda o meio de uma corrida maior. Um
+# telefone nao tem os hifens do UUID, entao continua fora daqui.
 _UUID = re.compile(
-    r"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z",
+    r"(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])",
     re.IGNORECASE,
 )
 
@@ -74,15 +83,25 @@ _CHAVES_MASCARADAS = frozenset(
 _CAUDA_VISIVEL = 4
 
 
-def _mascarar_digitos(texto: str) -> str:
-    if _UUID.match(texto):
-        return texto
+def _mascarar_corridas(trecho: str) -> str:
     return _CORRIDA_DE_DIGITOS.sub(
         lambda achado: (
             "*" * (len(achado.group()) - _CAUDA_VISIVEL) + achado.group()[-_CAUDA_VISIVEL:]
         ),
-        texto,
+        trecho,
     )
+
+
+def _mascarar_digitos(texto: str) -> str:
+    """Mascara corridas de digitos FORA dos UUIDs; os UUIDs saem intactos."""
+    partes: list[str] = []
+    inicio = 0
+    for uuid_achado in _UUID.finditer(texto):
+        partes.append(_mascarar_corridas(texto[inicio : uuid_achado.start()]))
+        partes.append(uuid_achado.group())
+        inicio = uuid_achado.end()
+    partes.append(_mascarar_corridas(texto[inicio:]))
+    return "".join(partes)
 
 
 def _mascarar_inteiro(texto: str) -> str:

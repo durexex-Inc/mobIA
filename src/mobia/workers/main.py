@@ -27,6 +27,7 @@ from mobia.infra.rotacao import avisar_rotacao_vencida
 from mobia.workers.jobs.avisar_cancelamento import avisar_cancelamento
 from mobia.workers.jobs.avisar_confirmacao import avisar_confirmacao
 from mobia.workers.jobs.baixar_midia import MAXIMO_DE_TENTATIVAS, baixar_midia
+from mobia.workers.jobs.eliminar_lead import eliminar_lead
 from mobia.workers.jobs.exportar_crm import exportar_crm
 from mobia.workers.jobs.gerar_resumo import gerar_resumo
 from mobia.workers.jobs.importar_catalogo import importar_catalogo
@@ -42,6 +43,7 @@ from mobia.workers.jobs.sweep_lista_de_espera import sweep_lista_de_espera
 from mobia.workers.jobs.sweep_midias_pendentes import sweep_midias_pendentes
 from mobia.workers.jobs.sweep_remarcacoes import sweep_remarcacoes
 from mobia.workers.jobs.sweep_retencao_auditoria import sweep_retencao_auditoria
+from mobia.workers.jobs.sweep_retencao_de_leads import sweep_retencao_de_leads
 from mobia.workers.jobs.sweep_sla import sweep_sla
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
 
@@ -319,6 +321,46 @@ class WorkerSettings:
         # (um `int`) nao serve para nada depois que o log saiu. Entra em
         # `cron_jobs` tambem -- e o relogio que dispara este job.
         func(sweep_retencao_auditoria, keep_result=0),
+        # TEC-207, D5. `keep_result=0` pela mesma razao do `sweep_sla`: o
+        # resultado (um `int`) nao serve para nada depois que o log saiu.
+        # Entra em `cron_jobs` tambem -- e o relogio que dispara este job.
+        #
+        # **Sem `timeout` proprio: roda sob o `job_timeout=240` global** (ver
+        # abaixo, no fim da classe). As tres funcoes que ele chama sao
+        # limitadas por passagem (`max_lotes` em duas, `lote` na terceira --
+        # ver o docstring do job), e a conta do pior caso com os defaults de
+        # hoje e:
+        #
+        #   ~20s  cumprir_eliminacoes_a_vencer: ate 100 solicitacoes, cada
+        #          uma um `eliminacao.anonimizar` inteiro
+        #   ~40s  anonimizar_leads_vencidos: ate 200 leads (2 lotes de 100),
+        #          mesmo custo por unidade que acima
+        #   ~40s  esvaziar_transcricoes_vencidas: ate 10 mil mensagens (20
+        #          lotes de 500), mas em UPDATE/DELETE em massa, bem mais
+        #          barato por linha
+        #   ----
+        #   ~100s contra 240 -- mais de 2x de folga
+        #
+        # Os numeros supoem banco e armazem saudaveis. Se a passagem estourar
+        # os 240s (Postgres degradado, blob em S3 lento), ela vira
+        # `CancelledError` no meio: o que ja commitou fica, porque cada lead e
+        # cada lote commitam sozinhos, e o resto volta na passagem do dia
+        # seguinte -- os tetos por passagem existem justamente para o trabalho
+        # de um dia caber aqui.
+        #
+        # **A versao anterior registrava `timeout=900` aqui, e ele nao fazia o
+        # que prometia** (revisao final da TEC-207, I1). O `cron(...)` la
+        # embaixo registra OUTRA entrada, `cron:sweep_retencao_de_leads`, com
+        # timeout proprio (`None`, isto e, `job_timeout`) -- entao a passagem
+        # diaria sempre rodou sob os 240s. E o arq calcula
+        # `in_progress_timeout_s = max(timeout_s or job_timeout) + 10` sobre
+        # TODAS as funcoes (`arq/worker.py`): os 900 levavam a trava "em
+        # andamento" de todo job, `process_message` incluido, a 910s,
+        # atrasando em ~15 minutos a retomada de um job cujo worker morreu, e
+        # quebravam a invariante `job_completion_wait > job_timeout` descrita
+        # la embaixo. `test_nenhum_job_registra_teto_acima_do_job_timeout`
+        # (`tests/integration/test_worker_startup.py`) prende isso.
+        func(sweep_retencao_de_leads, keep_result=0),
         # TEC-180. `keep_result=0` pela razao do `gerar_resumo`: o `_job_id` e
         # fixo por handoff (`crm:<id>`), e uma chave de resultado sobrevivente
         # bloquearia em silencio o reenqueue que a varredura faz a cada rodada
@@ -369,6 +411,14 @@ class WorkerSettings:
         # `avisada_por_agendamento_id` o registra ele deixa de aparecer na
         # consulta. Retentar nao tem como duplicar aviso.
         func(sweep_lista_de_espera, keep_result=0),
+        # TEC-207. `keep_result=0` pela mesma razao do `process_message`: o
+        # `_job_id` e fixo por solicitacao (`titular:<id>`, ver
+        # `api/routes/titular.py::eliminar`), e uma chave de resultado
+        # sobrevivente bloquearia em silencio um reenqueue legitimo -- por
+        # exemplo, um segundo `DELETE` sobre a mesma solicitacao ainda ABERTA
+        # depois de o job anterior ter terminado. Nao entra em `cron_jobs`:
+        # quem dispara este job e a rota, nunca o relogio.
+        func(eliminar_lead, keep_result=0),
     ]
     cron_jobs = [
         cron(sweep_stalled, second={0, 30}, run_at_startup=False),
@@ -434,6 +484,13 @@ class WorkerSettings:
         # passagem perdida deixa uma linha viva um dia a mais, e quem impede
         # apagar historico recente e o trigger da 0053, nao este horario.
         cron(sweep_retencao_auditoria, hour={4}, minute={0}, run_at_startup=False),
+        # TEC-207, D5. **Uma vez por dia, as 5h** -- uma hora depois do
+        # `sweep_retencao_auditoria`, para as duas varreduras diarias nao
+        # disputarem a mesma janela ociosa. A regra mais apertada e de DOZE
+        # MESES (transcricao): uma passagem perdida deixa uma linha de
+        # conteudo viva um dia a mais, e nada aqui decide sozinho o que pode
+        # ser apagado -- ver a docstring de `domain/titular/retencao.py`.
+        cron(sweep_retencao_de_leads, hour={5}, minute={0}, run_at_startup=False),
         # TEC-180. **De 15 em 15 minutos**, e nao de 5 em 5 como os irmaos: a
         # cadencia aqui e a de uma rodada de retentativa contra um sistema que
         # ja falhou tres vezes, nao a de um prazo a cumprir. Mais frequente so

@@ -67,11 +67,15 @@ _SO_LETRAS_E_ESPACO = re.compile(r"[^a-z ]+")
 _ESPACOS = re.compile(r"\s+")
 
 
-def _normalizar(texto: str) -> str:
+def normalizar(texto: str) -> str:
     """Minusculas, sem acento, sem pontuacao, espacos colapsados.
 
     Sem isso "PARAR!" e "Parar" escapariam da faixa estrita, que compara a
     mensagem inteira -- e sao exatamente a forma que um lead irritado escreve.
+
+    Publica desde a TEC-207: `titular/deteccao.py` reusa esta normalizacao em
+    vez de duplica-la, pela mesma razao que o modulo de titular e o de opt-out
+    compartilham o argumento de determinismo no docstring de `pediu_optout`.
     """
     sem_acento = unicodedata.normalize("NFKD", texto.casefold())
     sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
@@ -84,7 +88,7 @@ def pediu_optout(texto: str) -> bool:
     Deterministico e sem chamada paga: uma decisao de LGPD nao pode depender de
     um provedor estar de pe.
     """
-    normalizado = _normalizar(texto)
+    normalizado = normalizar(texto)
     if not normalizado:
         return False
     if normalizado in _TERMOS_AMBIGUOS:
@@ -101,9 +105,11 @@ TEXTO_DA_CONFIRMACAO_DE_OPTOUT = (
 )
 
 # Kind proprio, e nao `reply`, porque a guarda de opt-out em
-# `GuardedOutbound.send` precisa distinguir o unico envio permitido depois do
-# registro. Kind separado tambem da reserva propria em `outbound_dispatches`:
-# a confirmacao nao colide com a resposta que o mesmo turno nao vai mandar.
+# `GuardedOutbound.send` precisa distinguir o envio permitido depois do
+# registro (desde a TEC-207 sao dois, com a confirmacao do pedido de titular --
+# ver `KINDS_QUE_FURAM_AS_GUARDAS`, em `outbound/port.py`). Kind separado
+# tambem da reserva propria em `outbound_dispatches`: a confirmacao nao colide
+# com a resposta que o mesmo turno nao vai mandar.
 #
 # Mora aqui, e nao em `turno.py`, porque `turno.py` importa de
 # `outbound.port` e `outbound.port` precisa desta constante: colocar a

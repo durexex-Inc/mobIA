@@ -195,6 +195,13 @@ PERMISSAO_ESPERADA = {
     # coisa que este mapa confere.
     ("POST", "/api/v1/agendamentos/{agendamento_id}/realizado"): "ATENDER_LEAD",
     ("POST", "/api/v1/agendamentos/{agendamento_id}/nao-comparecimento"): "ATENDER_LEAD",
+    # TEC-207, D4. So do ADMIN, por construcao -- nao ha papel de DPO neste
+    # sistema. As duas de `leads` moram no vocabulario daquele prefixo (D2 do
+    # desenho da TEC-193: "o painel abre um LEAD"), mas a permissao e outra.
+    ("GET", "/api/v1/titular/solicitacoes"): "ATENDER_TITULAR",
+    ("GET", "/api/v1/leads/{lead_id}/dados-pessoais"): "ATENDER_TITULAR",
+    ("DELETE", "/api/v1/leads/{lead_id}/dados-pessoais"): "ATENDER_TITULAR",
+    ("POST", "/api/v1/titular/solicitacoes/{solicitacao_id}/recusa"): "ATENDER_TITULAR",
 }
 
 

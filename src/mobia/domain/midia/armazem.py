@@ -20,6 +20,10 @@ class ArmazemDeMidia(Protocol):
 
     async def ler(self, chave: str) -> bytes: ...
 
+    # TEC-207, D1. Idempotente: apagar o que ja nao existe nao reprova -- a
+    # anonimizacao apaga depois do commit, e um retry nao pode travar nisso.
+    async def apagar(self, chave: str) -> None: ...
+
 
 class ArmazemLocal:
     """Diretorio no disco. O padrao de desenvolvimento e dos testes."""
@@ -46,6 +50,10 @@ class ArmazemLocal:
 
     async def ler(self, chave: str) -> bytes:
         return await asyncio.to_thread(self._caminho(chave).read_bytes)
+
+    async def apagar(self, chave: str) -> None:
+        caminho = self._caminho(chave)
+        await asyncio.to_thread(caminho.unlink, missing_ok=True)
 
 
 class ArmazemS3:
@@ -76,6 +84,12 @@ class ArmazemS3:
             resposta = await s3.get_object(Bucket=self._bucket, Key=chave)
             dados: bytes = await resposta["Body"].read()
             return dados
+
+    async def apagar(self, chave: str) -> None:
+        # O S3 responde 204 tambem para chave que nao existe: a idempotencia
+        # da porta vem de graca.
+        async with self._cliente() as s3:
+            await s3.delete_object(Bucket=self._bucket, Key=chave)
 
 
 def armazem_da_config(settings: Settings) -> ArmazemDeMidia:

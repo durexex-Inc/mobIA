@@ -389,6 +389,37 @@ def test_job_completion_wait_passa_do_job_timeout() -> None:
     assert WorkerSettings.job_completion_wait > WorkerSettings.job_timeout
 
 
+def test_nenhum_job_registra_teto_acima_do_job_timeout() -> None:
+    """Um `timeout` proprio acima de `job_timeout` quebra duas coisas de uma vez.
+
+    O arq calcula `in_progress_timeout_s = max(f.timeout_s or job_timeout) + 10`
+    sobre TODAS as funcoes registradas (`arq/worker.py`), entao um unico job
+    com teto de 900s levava a trava "em andamento" de todo job -- inclusive
+    `process_message` -- para 910s, atrasando em ~15 minutos a retomada depois
+    de um worker morto. E quebrava a invariante acima: um job de 900s nao cabe
+    nos 250s de `job_completion_wait`, e o deploy voltaria a cancela-lo.
+
+    E o teto nem valia para o que se queria: o cron registra o job com nome
+    proprio (`cron:sweep_retencao_de_leads`) e timeout proprio, `None` por
+    padrao, entao a passagem diaria de `sweep_retencao_de_leads` sempre rodou
+    sob os 240s de `job_timeout` (revisao final da TEC-207, I1). Olha as duas
+    listas porque o arq tambem olha as duas.
+    """
+    from arq.worker import Function
+
+    from mobia.workers.main import WorkerSettings
+
+    tetos = {f.name: f.timeout_s for f in WorkerSettings.functions if isinstance(f, Function)} | {
+        c.name: c.timeout_s for c in WorkerSettings.cron_jobs
+    }
+    acima = {
+        nome: teto
+        for nome, teto in tetos.items()
+        if teto is not None and teto > WorkerSettings.job_timeout
+    }
+    assert acima == {}
+
+
 async def test_arq_instala_o_handler_que_drena_no_sigterm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

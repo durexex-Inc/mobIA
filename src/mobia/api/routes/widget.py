@@ -4,7 +4,8 @@
 o mesmo `IngestionService` do webhook com `channel=CANAL_WEB`. Com isso o
 canal herda, sem escrever linha nenhuma: persistir antes de enfileirar, o rate
 limit por numero, o debounce de rajada, o atalho que fura a janela para
-opt-out e pedido de humano, e a contagem de duplicata descartada.
+opt-out, pedido de humano e pedido de titular, e a contagem de duplicata
+descartada.
 
 **Nenhuma chamada a modelo acontece dentro do ciclo da conexao**, pelo mesmo
 motivo que a RN-01.2 escreve para o webhook.

@@ -115,6 +115,9 @@ def create_app() -> FastAPI:
     # `agendamentos` (TEC-374) tambem e so import tardio, e tambem nao e
     # administrativa: quem a protege e `ATENDER_LEAD` mais a checagem de dono
     # dentro do handler, como em `handoffs`.
+    # `titular` (TEC-207) e a fila de solicitacoes e o `GET`/`DELETE` de
+    # `dados-pessoais` em cima do prefixo de `leads`; quem a protege e
+    # `ATENDER_TITULAR`, so do ADMIN, como `auditoria`.
     from mobia.api.routes.agendamentos import router as agendamentos_router
     from mobia.api.routes.auditoria import router as auditoria_router
     from mobia.api.routes.configuracao import router as configuracao_router
@@ -127,6 +130,7 @@ def create_app() -> FastAPI:
     from mobia.api.routes.mensagens import router as mensagens_router
     from mobia.api.routes.metricas import router as metricas_router
     from mobia.api.routes.prompts import router as prompts_router
+    from mobia.api.routes.titular import router as titular_router
 
     app.include_router(imoveis_router)
     app.include_router(corretores_router)
@@ -140,6 +144,7 @@ def create_app() -> FastAPI:
     app.include_router(configuracao_router)
     app.include_router(prompts_router)
     app.include_router(mensagens_router)
+    app.include_router(titular_router)
 
     if not settings.catalogo_admin_token:
         # O aviso FICA, com outro sentido: nao diz mais que as rotas sumiram --
