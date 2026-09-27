@@ -154,6 +154,31 @@ describe('reduzir', () => {
     expect(depois.conexao).toEqual({ tipo: 'aguardando', mensagem: 'Muitas tentativas, aguarde N s.', segundos: 60 })
   })
 
+  it('mensagem sem texto string mantem o estado, mesma referencia', () => {
+    const antes = comVisitanteEnviando('m1')
+    const depois = reduzir(antes, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 42, kind: 'reply' }) })
+    expect(depois).toBe(antes)
+  })
+
+  it('ack sem messageId mantem o estado, mesma referencia', () => {
+    const antes = comVisitanteEnviando('m1')
+    const depois = reduzir(antes, { tipo: 'frame', bruto: frame({ tipo: 'ack' }) })
+    expect(depois).toBe(antes)
+  })
+
+  it('erro com codigo muitas_tentativas e segundos nao numerico usa 60', () => {
+    const depois = reduzir(INICIAL, {
+      tipo: 'frame',
+      bruto: frame({
+        tipo: 'erro',
+        codigo: 'muitas_tentativas',
+        mensagem: 'Muitas tentativas, aguarde N s.',
+        aguardeSegundos: '20',
+      }),
+    })
+    expect(depois.conexao).toEqual({ tipo: 'aguardando', mensagem: 'Muitas tentativas, aguarde N s.', segundos: 60 })
+  })
+
   it('digitando mantem o estado, mesma referencia', () => {
     const antes = INICIAL
     const depois = reduzir(antes, {

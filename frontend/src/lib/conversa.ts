@@ -2,7 +2,7 @@
  * O estado da conversa do chat embutido (TEC-346, D3): mensagens em ordem e o
  * estado da conexao, atualizados por um redutor puro -- sem I/O, sem relogio,
  * sem `localStorage`. Quem abre o socket, dispara os timers e grava a sessao
- * e o componente da Task 4; este modulo so decide o proximo estado.
+ * e `components/Conversa.tsx`; este modulo so decide o proximo estado.
  *
  * `reduzir` devolve a MESMA referencia de `Conversa` quando um evento nao
  * muda nada -- frame que nao e JSON, `tipo` desconhecido, `ack` que nao acha
