@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 
-import { BUSCA_MINIMA, buscaEfetiva, type Ordem, urlDaLista } from '@/lib/leads'
+import { BUSCA_MINIMA, buscaEfetiva, type FiltrosDaLista, type Ordem, urlDaLista } from '@/lib/leads'
 
 /** O intervalo depois da ultima tecla (RN-FE-07.3). */
 export const ESPERA_DA_BUSCA_MS = 300
@@ -22,7 +22,15 @@ export const ESPERA_DA_BUSCA_MS = 300
  * - Zero caracteres navega: apagar a busca devolve a lista inteira.
  * - Sem JS, o `<form method="get">` continua funcionando pelo Enter.
  */
-export function BuscaDeLeads({ inicial, ordem }: { inicial: string; ordem: Ordem }) {
+export function BuscaDeLeads({
+  inicial,
+  ordem,
+  filtros,
+}: {
+  inicial: string
+  ordem: Ordem
+  filtros?: FiltrosDaLista
+}) {
   const router = useRouter()
   const [texto, setTexto] = useState(inicial)
   const espera = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -49,7 +57,8 @@ export function BuscaDeLeads({ inicial, ordem }: { inicial: string; ordem: Ordem
       return
     }
     aplicada.current = alvo
-    router.replace(urlDaLista({ busca: alvo || undefined, ordem }))
+    // Os filtros ficam, e a posicao nao (D1 da TEC-322).
+    router.replace(urlDaLista({ busca: alvo || undefined, ordem, filtros }))
   }
 
   function aoDigitar(valor: string) {
@@ -82,6 +91,10 @@ export function BuscaDeLeads({ inicial, ordem }: { inicial: string; ordem: Ordem
       />
       {/* A ordem vai junto, para buscar nao desfazer a ordenacao. */}
       {ordem !== 'score_desc' && <input type="hidden" name="ordenar" value={ordem} />}
+      {/* E os filtros, pelo mesmo motivo (TEC-322). */}
+      {Object.entries(filtros ?? {}).map(([chave, valor]) =>
+        valor ? <input key={chave} type="hidden" name={chave} value={valor} /> : null,
+      )}
     </form>
   )
 }

@@ -10,6 +10,12 @@ import {
   temperaturaLegivel,
   tempoRelativo,
   urlDaLista,
+  filtrosDaUrl,
+  numeroDaPagina,
+  posicaoDaPagina,
+  posicaoDaProxima,
+  posicaoDaUrl,
+  PRIMEIRA_PAGINA,
 } from './leads'
 
 describe('buscaEfetiva', () => {
@@ -58,6 +64,54 @@ describe('urlDaLista', () => {
     expect(urlDaLista({ busca: '(48) 9', ordem: 'ultima_interacao_desc' })).toBe(
       '/leads?busca=%2848%29+9&ordenar=ultima_interacao_desc',
     )
+  })
+})
+
+describe('estado da lista na URL (TEC-322)', () => {
+  const UUID = '6f1c2a4e-0000-4000-8000-000000000001'
+
+  it('filtros e posicao, em ordem estavel', () => {
+    expect(
+      urlDaLista({
+        ordem: 'score_desc',
+        filtros: { temperatura: 'QUENTE', canal: 'whatsapp' },
+        posicao: { cursor: 'c3', anteriores: ['c2'], acumular: true },
+      }),
+    ).toBe('/leads?temperatura=QUENTE&canal=whatsapp&cursor=c3&anterior=c2&acumular=1')
+  })
+
+  it('cenario: filtros compartilhaveis -- o link lido de volta da os mesmos filtros', () => {
+    const url = urlDaLista({ ordem: 'score_desc', filtros: { temperatura: 'QUENTE', canal: 'whatsapp' } })
+    const lido = Object.fromEntries(new URL(url, 'http://x').searchParams)
+
+    expect(filtrosDaUrl(lido)).toEqual({ temperatura: 'QUENTE', canal: 'whatsapp' })
+  })
+
+  it('valor fora do vocabulario e "todos"', () => {
+    expect(filtrosDaUrl({ status: 'QUALQUER', temperatura: 'quente', corretorId: 'nao-e-uuid' })).toEqual({})
+    expect(filtrosDaUrl({ corretorId: UUID }).corretorId).toBe(UUID)
+  })
+
+  it('sem cursor e a primeira pagina, e `anterior` repetido vira a lista', () => {
+    expect(posicaoDaUrl({ anterior: 'x' })).toBe(PRIMEIRA_PAGINA)
+    expect(posicaoDaUrl({ cursor: 'c4', anterior: ['c2', 'c3'], acumular: '1' })).toEqual({
+      cursor: 'c4',
+      anteriores: ['c2', 'c3'],
+      acumular: true,
+    })
+  })
+
+  it('a numeracao vem dos cursores vistos, e voltar remonta a URL da pagina', () => {
+    const terceira = { cursor: 'c3', anteriores: ['c2'], acumular: false }
+    expect(numeroDaPagina(PRIMEIRA_PAGINA)).toBe(1)
+    expect(numeroDaPagina(terceira)).toBe(3)
+
+    expect(posicaoDaProxima(PRIMEIRA_PAGINA, 'c2', false)).toEqual({ cursor: 'c2', anteriores: [], acumular: false })
+    expect(posicaoDaProxima(terceira, 'c4', true)).toEqual({ cursor: 'c4', anteriores: ['c2', 'c3'], acumular: true })
+
+    expect(posicaoDaPagina(terceira, 1)).toBe(PRIMEIRA_PAGINA)
+    expect(posicaoDaPagina(terceira, 2)).toEqual({ cursor: 'c2', anteriores: [], acumular: false })
+    expect(posicaoDaPagina(terceira, 3)).toEqual({ cursor: 'c3', anteriores: ['c2'], acumular: false })
   })
 })
 

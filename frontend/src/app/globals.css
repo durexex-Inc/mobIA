@@ -376,12 +376,6 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
-.leads-mais {
-  margin-top: 1rem;
-  font-size: 0.9rem;
-  opacity: 0.75;
-}
-
 /* --- Detalhe do lead (TEC-323) --------------------------------------------- */
 
 .detalhe-cabecalho {
@@ -728,4 +722,124 @@ a {
 
 .recomendacoes-lista {
   gap: 1rem;
+}
+
+/* --- Filtros e paginacao da lista (TEC-322) -------------------------------- */
+
+.leads-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.leads-filtro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+}
+
+.leads-filtro select,
+.leads-filtros button {
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.leads-filtro-motivo,
+.leads-filtro-corretor {
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+.leads-filtro-corretor {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.leads-paginas {
+  display: none;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.leads-pagina-atual {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.leads-carregar-mais {
+  margin-top: 1rem;
+}
+
+.leads-carregar-mais a {
+  display: inline-block;
+  padding: 0.5rem 1.2rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+/* A partir de 1024 px: paginas numeradas, so a pagina atual (D2 e D3). */
+@media (min-width: 1024px) {
+  .leads-paginas {
+    display: flex;
+  }
+
+  .leads-carregar-mais,
+  .leads-pagina-anterior {
+    display: none;
+  }
+}
+
+/* Abaixo de 768 px: a mesma tabela vira cartoes (D4). */
+@media (max-width: 767.98px) {
+  .leads-tabela thead {
+    display: none;
+  }
+
+  .leads-tabela,
+  .leads-tabela tbody,
+  .leads-tabela tr,
+  .leads-tabela td {
+    display: block;
+    width: 100%;
+  }
+
+  .leads-tabela tr {
+    margin-bottom: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: 6px;
+  }
+
+  .leads-tabela td {
+    padding: 0.15rem 0;
+    border: 0;
+  }
+
+  .leads-tabela td[data-rotulo]::before {
+    content: attr(data-rotulo) ': ';
+    font-size: 0.8rem;
+    opacity: 0.7;
+  }
+
+  .leads-tabela td.leads-celula-lead {
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+
+  .leads-tabela td.leads-celula-lead::before {
+    content: none;
+  }
+
+  .leads-tabela td.leads-celula-destaque {
+    display: inline-block;
+    width: auto;
+    margin-right: 1rem;
+    font-weight: 600;
+  }
 }

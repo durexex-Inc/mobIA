@@ -54,13 +54,39 @@ export function buscaEfetiva(texto: string | undefined): string | undefined {
   return limpa && limpa.length >= BUSCA_MINIMA ? limpa : undefined
 }
 
+/** Os filtros da lista (TEC-322, D5). Ausente e "todos". */
+export type FiltrosDaLista = {
+  status?: string
+  temperatura?: string
+  canal?: string
+  corretorId?: string
+}
+
 /**
- * O endereco da lista com esta busca e esta ordem.
+ * Onde a lista esta (TEC-322, D2 e D3). A pagina 1 nao tem cursor;
+ * `anteriores` sao os cursores das paginas 2 a N-1, na ordem; `acumular` e o
+ * "carregar mais", que desenha todas as paginas ate a atual.
+ */
+export type PosicaoNaLista = { cursor?: string; anteriores: string[]; acumular: boolean }
+
+export type EstadoDaLista = {
+  busca?: string
+  ordem: Ordem
+  filtros?: FiltrosDaLista
+  posicao?: PosicaoNaLista
+}
+
+export const PRIMEIRA_PAGINA: PosicaoNaLista = { anteriores: [], acumular: false }
+
+/**
+ * O endereco da lista com este estado (TEC-322, D1).
  *
  * A ordem padrao nao vai na URL: `/leads` e `/leads?ordenar=score_desc` sao a
  * mesma tela, e um endereco so para ela e o que a pessoa ve e compartilha.
+ * Quem muda busca, ordem ou filtro chama sem `posicao`: o cursor e de uma
+ * consulta, e continua-lo noutra devolveria uma pagina plausivel e errada.
  */
-export function urlDaLista({ busca, ordem }: { busca?: string; ordem: Ordem }): string {
+export function urlDaLista({ busca, ordem, filtros = {}, posicao }: EstadoDaLista): string {
   const parametros = new URLSearchParams()
   if (busca) {
     parametros.set('busca', busca)
@@ -68,8 +94,94 @@ export function urlDaLista({ busca, ordem }: { busca?: string; ordem: Ordem }): 
   if (ordem !== 'score_desc') {
     parametros.set('ordenar', ordem)
   }
+  for (const chave of ['status', 'temperatura', 'canal', 'corretorId'] as const) {
+    const valor = filtros[chave]
+    if (valor) {
+      parametros.set(chave, valor)
+    }
+  }
+  if (posicao?.cursor) {
+    parametros.set('cursor', posicao.cursor)
+    for (const anterior of posicao.anteriores) {
+      parametros.append('anterior', anterior)
+    }
+    if (posicao.acumular) {
+      parametros.set('acumular', '1')
+    }
+  }
   const texto = parametros.toString()
   return texto ? `/leads?${texto}` : '/leads'
+}
+
+type ParametrosDaUrl = Record<string, string | string[] | undefined>
+
+function um(valor: string | string[] | undefined): string | undefined {
+  return Array.isArray(valor) ? valor[0] : valor
+}
+
+function todos(valor: string | string[] | undefined): string[] {
+  if (valor === undefined) {
+    return []
+  }
+  return (Array.isArray(valor) ? valor : [valor]).filter(Boolean)
+}
+
+const FORMA_DE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Os filtros que a URL pede, so os do vocabulario (D1). Valor desconhecido
+ * cai em "todos", como a ordem cai na padrao: o backend recusaria `status`
+ * fora do vocabulario com 422, e a tela nao repassa o que nao sabe mostrar.
+ */
+export function filtrosDaUrl(parametros: ParametrosDaUrl): FiltrosDaLista {
+  const dentro = (valor: string | undefined, mapa: Record<string, string>) =>
+    valor !== undefined && valor in mapa ? valor : undefined
+  const corretorId = um(parametros.corretorId)
+  return {
+    status: dentro(um(parametros.status), STATUS),
+    temperatura: dentro(um(parametros.temperatura), TEMPERATURAS),
+    canal: dentro(um(parametros.canal), CANAIS),
+    corretorId: corretorId && FORMA_DE_UUID.test(corretorId) ? corretorId : undefined,
+  }
+}
+
+/** A posicao que a URL pede. Sem `cursor`, e a primeira pagina. */
+export function posicaoDaUrl(parametros: ParametrosDaUrl): PosicaoNaLista {
+  const cursor = um(parametros.cursor)
+  if (!cursor) {
+    return PRIMEIRA_PAGINA
+  }
+  return { cursor, anteriores: todos(parametros.anterior), acumular: um(parametros.acumular) === '1' }
+}
+
+/** O numero da pagina atual: 1 sem cursor, e depois uma a mais por cursor visto. */
+export function numeroDaPagina(posicao: PosicaoNaLista): number {
+  return posicao.cursor ? posicao.anteriores.length + 2 : 1
+}
+
+/**
+ * A pagina seguinte. O cursor atual entra em `anteriores`, e e isso que deixa
+ * voltar a ela depois sem o total (D2).
+ */
+export function posicaoDaProxima(atual: PosicaoNaLista, proximo: string, acumular: boolean): PosicaoNaLista {
+  return {
+    cursor: proximo,
+    anteriores: atual.cursor ? [...atual.anteriores, atual.cursor] : [],
+    acumular,
+  }
+}
+
+/** A posicao da pagina `numero` ja visitada (1 <= numero <= a atual). Nunca acumula. */
+export function posicaoDaPagina(atual: PosicaoNaLista, numero: number): PosicaoNaLista {
+  if (numero <= 1) {
+    return PRIMEIRA_PAGINA
+  }
+  const todosOsCursores = [...atual.anteriores, ...(atual.cursor ? [atual.cursor] : [])]
+  return {
+    cursor: todosOsCursores[numero - 2],
+    anteriores: todosOsCursores.slice(0, numero - 2),
+    acumular: false,
+  }
 }
 
 /**
@@ -89,9 +201,25 @@ export function identificacaoDoLead(lead: Pick<LeadDaLista, 'telefone' | 'channe
   return lead.channel === 'web' ? 'Visitante do site' : 'Telefone indisponível'
 }
 
-const TEMPERATURAS: Record<string, string> = { QUENTE: 'Quente', MORNO: 'Morno', FRIO: 'Frio' }
-const STATUS: Record<string, string> = { ATIVA: 'Ativa', ENCERRADA: 'Encerrada' }
-const CANAIS: Record<string, string> = { whatsapp: 'WhatsApp', web: 'Site' }
+/**
+ * Os vocabularios dos filtros e das colunas (TEC-322, D5). Exportados porque
+ * as listas de filtro saem deles, e `tests/unit/test_vocabulario_da_tela.py`
+ * os compara com o backend: `Temperatura`, `Status` da conversa e os canais
+ * de `messages/canais.py`.
+ */
+export const TEMPERATURAS: Record<string, string> = {
+  QUENTE: 'Quente',
+  MORNO: 'Morno',
+  FRIO: 'Frio',
+}
+export const STATUS: Record<string, string> = {
+  ATIVA: 'Ativa',
+  ENCERRADA: 'Encerrada',
+}
+export const CANAIS: Record<string, string> = {
+  whatsapp: 'WhatsApp',
+  web: 'Site',
+}
 
 /**
  * Temperatura nula e travessao, e nunca "Frio": o lead ainda nao foi
