@@ -316,6 +316,31 @@ describe('o painel', () => {
     expect(aviso.mock.calls[1][1]).toBe(PAINEL)
   })
 
+  it('fechar antes do `mobia:pronto` nao se perde: o pronto reenvia o estado atual', async () => {
+    // O aviso de fechar pode sair antes de o chat escutar `message`; o
+    // `mobia:pronto` e o primeiro momento em que ele com certeza escuta.
+    apiRespondendo(200)
+    instalar()
+    await assentar()
+
+    botao()!.click()
+    const aviso = vi.spyOn(quadro()!.contentWindow as Window, 'postMessage')
+    botao()!.click()
+    aviso.mockClear()
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { tipo: 'mobia:pronto' },
+        origin: PAINEL,
+        source: quadro()!.contentWindow,
+      }),
+    )
+
+    expect(aviso).toHaveBeenCalledTimes(1)
+    expect(aviso.mock.calls[0][0]).toEqual({ tipo: 'mobia:visibilidade', aberto: false })
+    expect(aviso.mock.calls[0][1]).toBe(PAINEL)
+  })
+
   it('`postMessage` que lanca nao gera erro no site', async () => {
     apiRespondendo(200)
     instalar()

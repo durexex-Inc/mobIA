@@ -140,7 +140,8 @@
       try {
         if (!painel) {
           // Recem-criado: o iframe comeca assumindo aberto, entao nao ha
-          // aviso para mandar aqui (D4 do desenho).
+          // aviso para mandar aqui (D4 do desenho); o `mobia:pronto` manda o
+          // estado atual.
           var criado = abrirPainel(origem, tenant, aparencia.lado, raiz, hospede)
           painel = criado.painel
           quadro = criado.quadro
@@ -202,6 +203,9 @@
         if (evento.data && evento.data.tipo === 'mobia:pronto') {
           clearTimeout(prazo)
           window.removeEventListener('message', aoMensagem)
+          // D4: um fechar antes daqui pode ter saido sem o chat escutar, e o
+          // pronto e o primeiro momento em que ele com certeza escuta.
+          avisarVisibilidade(quadro, origem, painel.style.display !== 'none')
         }
       } catch {
         // D7.
