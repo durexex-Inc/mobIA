@@ -341,7 +341,7 @@ A imobiliária cola uma linha no site:
 
 O `<slug>` tem de ser igual ao `TENANT_SLUG` do backend: minúsculas, dígitos e hífen, começando por letra ou dígito, até 64 caracteres (`^[a-z0-9][a-z0-9-]{0,63}$`). O backend não sobe com um `TENANT_SLUG` fora desse formato, porque o Next recusaria todo `data-tenant` e o botão sumiria sem aviso. Sem `TENANT_SLUG`, nenhum site mostra o botão — é o padrão, de propósito. Quem compara os dois é o Next, e não o FastAPI: `GET /widget/aparencia` responde sempre 200 com o slug configurado, porque o cache do Next só guarda resposta 200. Cor, lado e nome do assistente vêm da configuração do agente (`PATCH /api/v1/configuracao/agente`), e uma mudança leva até um minuto para chegar ao site, por causa do cache de `/embed/aparencia`.
 
-`public/widget.js` não passa por build: o que está no arquivo é o que o visitante baixa, e `npm run verificar:widget` reprova acima de 5 KB gzip. Desde a TEC-346 a visitante conversa pelo chat e vê se cada mensagem chegou; até a TEC-347, cada abertura do chat é uma conversa nova, e até a TEC-348 a conexão só reabre quando a visitante envia ou reenvia uma mensagem. Até a TEC-345, qualquer site pode embutir o chat.
+`public/widget.js` não passa por build: o que está no arquivo é o que o visitante baixa, e `npm run verificar:widget` reprova acima de 5 KB gzip. Desde a TEC-346 a visitante conversa pelo chat e vê se cada mensagem chegou; até a TEC-347, cada abertura do chat é uma conversa nova, e até a TEC-348 a conexão só reabre quando a visitante envia ou reenvia uma mensagem, ou sozinha, quando acaba a espera pedida por um `muitas_tentativas`. Até a TEC-345, qualquer site pode embutir o chat.
 
 ## Comandos
 

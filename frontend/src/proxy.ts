@@ -141,9 +141,12 @@ export function proxy(request: NextRequest): NextResponse {
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
   const embutivel = rotaDoEmbed(request.nextUrl.pathname)
   // `origemDoChat` lanca se MOBIA_WIDGET_WS_URL ou MOBIA_API_BASE nao forem uma
-  // URL valida. Um erro de configuracao nao pode derrubar o embed inteiro com
-  // 500 -- o lado seguro e a CSP sem connect-src, que e o mesmo padrao fechado
-  // de frame-ancestors: o chat carrega, so o WebSocket nao conecta.
+  // URL valida. O proxy roda em TODA rota `/embed/*`, e um erro de
+  // configuracao do WebSocket nao pode derrubar com 500 as que nao dependem
+  // dele -- `/embed/aparencia`, que o botao do site le, continua respondendo.
+  // O lado seguro e a CSP sem connect-src, o mesmo padrao fechado de
+  // frame-ancestors. A pagina `/embed/chat` nao fica meio de pe: ela chama
+  // `enderecoDoChat()` e falha alto por conta propria, de proposito.
   let conectarA: string | undefined
   if (embutivel) {
     try {

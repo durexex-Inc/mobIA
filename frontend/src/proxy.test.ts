@@ -192,11 +192,13 @@ describe('proxy sem sessao (TEC-309, D5)', () => {
       vi.restoreAllMocks()
     })
 
-    it('o embed carrega sem connect-src, em vez de 500, e loga o erro uma vez', () => {
+    it('o proxy nao derruba as outras rotas do embed: CSP sem connect-src, e loga o erro uma vez', () => {
       process.env.MOBIA_WIDGET_WS_URL = 'nao e url'
       const erro = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-      const politica = cspDe('/embed/chat')
+      // `/embed/aparencia` nao usa o WebSocket e tem de continuar de pe; a
+      // pagina `/embed/chat` falha sozinha, e isso nao e do proxy.
+      const politica = cspDe('/embed/aparencia')
 
       expect(politica).toContain('frame-ancestors *')
       expect(politica).not.toContain('connect-src')
