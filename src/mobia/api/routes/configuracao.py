@@ -29,7 +29,7 @@ from mobia.domain.configuracao.repositorio import (
     gravar_versao,
     historico,
 )
-from mobia.domain.configuracao.vigente import ConfiguracaoInvalida, Tom
+from mobia.domain.configuracao.vigente import ConfiguracaoInvalida, PosicaoDoBotao, Tom
 from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
 
@@ -49,6 +49,8 @@ _CAMPOS = {
     "pesoCapacidade": "peso_capacidade",
     "cadencia": "cadencia",
     "orcamentoMensalUsd": "orcamento_mensal_usd",
+    "corPrimaria": "cor_primaria",
+    "posicaoDoBotao": "posicao_do_botao",
 }
 _DA_TABELA = {coluna: nome for nome, coluna in _CAMPOS.items()}
 
@@ -80,6 +82,9 @@ _LIMITES: dict[str, object] = {
         "maximo": vigente.ORCAMENTO_MAXIMO,
         "nulavel": True,
     },
+    # TEC-344, D1. O formato e conferido em `vigente.validar`.
+    "corPrimaria": {"formato": "#RRGGBB"},
+    "posicaoDoBotao": {"valores": [p.value for p in PosicaoDoBotao]},
 }
 
 
@@ -112,6 +117,8 @@ class PedidoDeAlteracao(BaseModel):
     # `null` LIMPA o orcamento, como o nome do assistente: os dois sao os
     # campos da configuracao que tem "nenhum" como valor legitimo.
     orcamentoMensalUsd: Decimal | None = None  # noqa: N815
+    corPrimaria: str | None = None  # noqa: N815
+    posicaoDoBotao: PosicaoDoBotao | None = None  # noqa: N815
 
 
 def _mudancas(pedido: PedidoDeAlteracao) -> dict[str, Any]:
@@ -124,6 +131,8 @@ def _mudancas(pedido: PedidoDeAlteracao) -> dict[str, Any]:
             valor = {t: tuple(timedelta(hours=h) for h in horas) for t, horas in valor.items()}
         elif coluna == "tom" and valor is not None:
             valor = Tom(valor)
+        elif coluna == "posicao_do_botao" and valor is not None:
+            valor = PosicaoDoBotao(valor)
         mudancas[coluna] = valor
     if mudancas.get("tom", "") is None or mudancas.get("teto_de_perguntas", 0) is None:
         raise ConfiguracaoInvalida("tom e limite de perguntas nao podem ser nulos")
@@ -131,6 +140,10 @@ def _mudancas(pedido: PedidoDeAlteracao) -> dict[str, Any]:
         raise ConfiguracaoInvalida("peso nao pode ser nulo")
     if "cadencia" in mudancas and mudancas["cadencia"] is None:
         raise ConfiguracaoInvalida("cadencia nao pode ser nula")
+    # TEC-344, D1. Ao contrario do nome e do orcamento, "nenhum" nao e valor
+    # legitimo aqui: o botao sempre tem cor e lado.
+    if mudancas.get("cor_primaria", "") is None or mudancas.get("posicao_do_botao", "") is None:
+        raise ConfiguracaoInvalida("cor primaria e posicao do botao nao podem ser nulas")
     return mudancas
 
 

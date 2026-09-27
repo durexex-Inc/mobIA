@@ -19,7 +19,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.configuracao.models import VersaoDaConfiguracao
-from mobia.domain.configuracao.vigente import ConfiguracaoDoAgente, Pesos, Tom, padrao
+from mobia.domain.configuracao.vigente import (
+    ConfiguracaoDoAgente,
+    Pesos,
+    PosicaoDoBotao,
+    Tom,
+    padrao,
+)
 
 _UMA_HORA = timedelta(hours=1)
 
@@ -41,6 +47,8 @@ def _da_linha(linha: VersaoDaConfiguracao) -> ConfiguracaoDoAgente:
             for temperatura, horas in linha.cadencia.items()
         },
         orcamento_mensal_usd=linha.orcamento_mensal_usd,
+        cor_primaria=linha.cor_primaria,
+        posicao_do_botao=PosicaoDoBotao(linha.posicao_do_botao),
     )
 
 
@@ -60,6 +68,10 @@ def como_plano(config: ConfiguracaoDoAgente) -> dict[str, object]:
             for temperatura, intervalos in config.cadencia.items()
         },
         "orcamento_mensal_usd": config.orcamento_mensal_usd,
+        "cor_primaria": config.cor_primaria,
+        # `PosicaoDoBotao(...)` e nao `.value` direto: `aplicar` aceita a
+        # string crua, e `validar` a deixa passar se for um dos dois valores.
+        "posicao_do_botao": PosicaoDoBotao(config.posicao_do_botao).value,
     }
 
 
