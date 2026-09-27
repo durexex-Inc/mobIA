@@ -27,6 +27,30 @@ describe('caminhoPermitido', () => {
     expect(caminhoPermitido('GET', [])).toBeNull()
   })
 
+  describe('a transcricao do lead (TEC-324)', () => {
+    const LEAD = '6f1c2a4e-0000-4000-8000-000000000001'
+
+    it('deixa passar a transcricao, com o `*` casando o id', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'mensagens'])).toBe(
+        `/api/v1/leads/${LEAD}/mensagens`,
+      )
+    })
+
+    it('o `*` nao abre as outras rotas do lead', () => {
+      // O detalhe, a revelacao e a lista continuam fora do alcance do
+      // navegador: so a transcricao tem consumidor de cliente.
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD])).toBeNull()
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'revelar'])).toBeNull()
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads'])).toBeNull()
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'mensagens'])).toBeNull()
+    })
+
+    it('o `*` casa um segmento so, e nunca `..`', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', '..', 'mensagens'])).toBeNull()
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', 'a', 'b', 'mensagens'])).toBeNull()
+    })
+  })
+
   it('nao casa por PREFIXO, que e o furo classico de allowlist', () => {
     // Se o casamento fosse `startsWith`, esta linha passaria e levaria o
     // FastAPI a `/api/v1/corretores` depois da normalizacao do caminho.

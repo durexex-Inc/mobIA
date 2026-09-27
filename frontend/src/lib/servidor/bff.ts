@@ -13,16 +13,21 @@
 /**
  * O que o navegador pode alcancar atraves do proxy.
  *
- * Uma entrada so, e e a que o epico precisa. A allowlist nasceu (TEC-302) como
- * o que continha o estrago enquanto o proxy nao autenticava ninguem: esta rota
- * e leitura agregada, e o proprio router dela no backend registra que nao ha
- * dado pessoal de lead na resposta, so contagens e medias. Desde a TEC-309 o
- * proxy exige sessao, e a allowlist continua pela outra razao que sempre teve:
- * o navegador so alcanca do FastAPI o que alguem decidiu expor.
+ * A allowlist nasceu (TEC-302) com uma entrada so, o funil, como o que
+ * continha o estrago enquanto o proxy nao autenticava ninguem: aquela rota e
+ * leitura agregada, sem dado pessoal de lead. Desde a TEC-309 o proxy exige
+ * sessao, e a allowlist continua pela outra razao que sempre teve: o navegador
+ * so alcanca do FastAPI o que alguem decidiu expor.
  *
- * `*` casa EXATAMENTE um segmento. Nenhuma rota de hoje precisa dele, e ele
- * existe mesmo assim: sem ele, a primeira rota parametrizada do epico chega com
- * a tentacao do `startsWith`, e `startsWith` e o furo classico de allowlist --
+ * **A segunda entrada, a transcricao (TEC-324), E dado pessoal**, e passa
+ * aqui porque a sessao e o FastAPI ja cuidam dela: o JWT e o de quem esta
+ * logado, o recorte do CORRETOR e do backend, e cada pagina grava na trilha.
+ * O que a allowlist ainda decide e que so ela, entre as rotas de lead, chega
+ * ao navegador.
+ *
+ * `*` casa EXATAMENTE um segmento. A primeira rota que precisou dele foi a
+ * transcricao do lead (TEC-324); ele foi escrito antes, porque sem ele a
+ * primeira rota parametrizada chegaria com a tentacao do `startsWith`, e `startsWith` e o furo classico de allowlist --
  * `/api/v1/metricas/funil` como prefixo libera
  * `/api/v1/metricas/funil/../../corretores`. O custo de evitar isso e uma linha
  * de casamento e dois testes.
@@ -30,7 +35,14 @@
 export const ROTAS_PERMITIDAS: ReadonlyArray<{
   readonly metodo: string
   readonly padrao: readonly string[]
-}> = [{ metodo: 'GET', padrao: ['api', 'v1', 'metricas', 'funil'] }]
+}> = [
+  { metodo: 'GET', padrao: ['api', 'v1', 'metricas', 'funil'] },
+  // A transcricao do lead (TEC-324, D2): o "carregar anteriores" busca daqui.
+  // Entra SO o `GET` das mensagens -- o detalhe e a revelacao continuam fora
+  // do alcance do navegador. Cada pagina grava um acesso na trilha (D3 da
+  // TEC-193), e e por isso que so o clique do usuario a pede.
+  { metodo: 'GET', padrao: ['api', 'v1', 'leads', '*', 'mensagens'] },
+]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */
 const METODOS_SEGUROS: ReadonlySet<string> = new Set(['GET', 'HEAD'])

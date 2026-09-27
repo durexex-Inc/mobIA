@@ -3,10 +3,12 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
 import { SecoesDoDetalhe } from '@/components/DetalheDoLead'
+import { Transcricao } from '@/components/Transcricao'
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
 import { SemPermissao } from '@/components/SemPermissao'
 import { urlDoLogin } from '@/lib/destino'
 import type { DetalheDoLead } from '@/lib/detalhe'
+import type { PaginaDaTranscricao } from '@/lib/transcricao'
 import {
   canalLegivel,
   dataAbsoluta,
@@ -15,7 +17,7 @@ import {
   tempoRelativo,
 } from '@/lib/leads'
 import { paginaInicialDe } from '@/lib/navegacao'
-import { buscarDetalhe, ErroDeLeads } from '@/lib/servidor/leads'
+import { buscarDetalhe, buscarTranscricao, ErroDeLeads } from '@/lib/servidor/leads'
 import { exigirPermissao } from '@/lib/servidor/quemSou'
 import { apagarSessaoDaRequisicao } from '@/lib/servidor/sessao'
 
@@ -25,7 +27,7 @@ export const metadata: Metadata = {
 
 /**
  * O detalhe do lead (TEC-323, RF-FE-08): o resumo no topo, depois contato,
- * qualificacao, agendamentos e follow-ups.
+ * qualificacao, agendamentos e follow-ups, e a conversa por ultimo (TEC-324).
  *
  * **Abrir esta pagina grava um acesso na trilha** (D3 da TEC-193). Por isso a
  * lista linka para ela com `<a>`, e nao com `next/link` (D2 do desenho): o
@@ -48,13 +50,20 @@ export default async function PaginaDoLead({ params }: { params: Promise<{ leadI
     return <SemPermissao papel={quem.papel} paginaInicial={paginaInicialDe(quem.permissoes)} />
   }
 
-  let detalhe: DetalheDoLead | null = null
-  let erro: ErroDeLeads | null = null
-  try {
-    detalhe = await buscarDetalhe(leadId, sessao.acesso)
-  } catch (falha) {
-    erro = falha instanceof ErroDeLeads ? falha : new ErroDeLeads(0, 'sem resposta', null)
-  }
+  // **As duas em paralelo** (TEC-324, D1): o SLA de 2 s da transcricao nao
+  // tem por que somar a latencia do detalhe, e uma nao depende da outra. O
+  // preco: o CORRETOR que abre o lead de outro grava dois `ACESSO_NEGADO`, um
+  // por rota, em vez de um.
+  const [lidoDetalhe, lidaTranscricao] = await Promise.allSettled([
+    buscarDetalhe(leadId, sessao.acesso),
+    buscarTranscricao(leadId, sessao.acesso),
+  ])
+  const detalhe: DetalheDoLead | null = lidoDetalhe.status === 'fulfilled' ? lidoDetalhe.value : null
+  const erro = lidoDetalhe.status === 'rejected' ? comoErro(lidoDetalhe.reason) : null
+  const transcricao: PaginaDaTranscricao | null =
+    lidaTranscricao.status === 'fulfilled' ? lidaTranscricao.value : null
+  const erroDaTranscricao =
+    lidaTranscricao.status === 'rejected' ? comoErro(lidaTranscricao.reason) : null
 
   // Fora do `try`: o `redirect` lanca para interromper o render.
   if (erro?.status === 401) {
@@ -115,6 +124,25 @@ export default async function PaginaDoLead({ params }: { params: Promise<{ leadI
         </time>
       </p>
       <SecoesDoDetalhe detalhe={detalhe} agora={agora} />
+      {/* A ultima secao da ordem da card. Se so ela falhar, o resto da tela
+          continua util para quem vai ligar (D1). */}
+      <section className="detalhe-secao" aria-label="Conversa">
+        <h2>Conversa</h2>
+        {transcricao ? (
+          <Transcricao leadId={leadId} inicial={transcricao} />
+        ) : (
+          <ErroDeCarga
+            mensagem="Não foi possível carregar a conversa."
+            requestId={erroDaTranscricao?.requestId}
+            urlParaTentarDeNovo={endereco}
+          />
+        )}
+      </section>
     </main>
   )
+}
+
+/** Backend fora do ar faz o `fetch` lancar, e nao responder: sem status. */
+function comoErro(motivo: unknown): ErroDeLeads {
+  return motivo instanceof ErroDeLeads ? motivo : new ErroDeLeads(0, 'sem resposta', null)
 }

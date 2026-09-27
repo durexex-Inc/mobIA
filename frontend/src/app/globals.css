@@ -446,3 +446,80 @@ a {
   text-decoration: underline;
   text-underline-offset: 0.2em;
 }
+
+/* --- Transcricao (TEC-324) ------------------------------------------------- */
+
+/* Rolagem propria: comecar no fim sem levar a pagina inteira ao fim, o que
+   esconderia o resumo (D3). */
+.transcricao-caixa {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent);
+  border-radius: 6px;
+}
+
+.transcricao-anteriores {
+  align-self: center;
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.transcricao-inicio,
+.transcricao-aviso {
+  align-self: center;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.transcricao-aviso:empty {
+  display: none;
+}
+
+.fala {
+  max-width: 80%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+.fala header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.8rem;
+  margin-bottom: 0.2rem;
+}
+
+.fala header time {
+  opacity: 0.65;
+}
+
+.fala p {
+  white-space: pre-line;
+}
+
+/* O lado e enfeite por cima do rotulo, nunca no lugar dele (D4). */
+.fala-lead {
+  align-self: flex-start;
+}
+
+.fala-equipe {
+  align-self: flex-end;
+  background: color-mix(in srgb, #2563eb 14%, transparent);
+}
+
+.fala-sistema {
+  align-self: center;
+  max-width: 90%;
+  font-size: 0.85rem;
+}
+
+.fala-sem-texto {
+  font-style: italic;
+  opacity: 0.8;
+}

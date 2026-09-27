@@ -96,7 +96,7 @@ desenho está em
 - **Sessão ociosa (TEC-311).** Aos 30 minutos sem interação, um aviso conta
   60 segundos e depois chama `/sair`. Foi o **primeiro componente de cliente**
   do painel (`components/AvisoDeInatividade.tsx`); o segundo é a busca da lista
-  de leads (TEC-321). Ele guarda no `localStorage`
+  de leads (TEC-321), e o terceiro, a conversa do lead (TEC-324). Ele guarda no `localStorage`
   só o horário da última interação, para as abas se enxergarem. O servidor
   também encerra a sessão ociosa há mais de 32 minutos — para o celular
   esquecido, que não roda o aviso.
@@ -113,7 +113,7 @@ que põe o JWT da sessão num cabeçalho:
 | --- | --- | --- | --- |
 | Server Component → `buscarFunil` | o painel de funil | `revalidate: 60` | **não** |
 | Server Component → `buscarLeads` | a lista de leads | `no-store` | não |
-| Route Handler `/bff/[...rota]` | ainda ninguém — nem o login nem o menu passam por ele | `no-store` | sim |
+| Route Handler `/bff/[...rota]` | a conversa do lead, ao carregar as falas anteriores (TEC-324) | `no-store` | sim |
 
 **O painel não passa pelo `/bff/*`, e isso é deliberado.** Um Server Component
 chamando o próprio Route Handler custaria um round-trip HTTP do processo para
@@ -172,8 +172,25 @@ da lista não é link. O desenho está em
 - **O resumo é cortado nos marcadores literais da TEC-175** (`## Quem e o
   lead` …). Se um marcador mudar lá, a tela mostra o texto inteiro, sem os
   títulos, e nada some.
-- **Histórico de score, recomendações e transcrição ainda não aparecem**:
-  TEC-325 e TEC-324.
+- **Histórico de score e recomendações ainda não aparecem**: TEC-325.
+
+## A conversa do lead (TEC-324)
+
+A última seção do detalhe. A primeira página, com as 100 falas mais recentes,
+vem do servidor, pedida **em paralelo** com o detalhe. As anteriores vêm do
+navegador, pelo `/bff/*`. A conversa é o **primeiro consumidor de cliente
+do proxy**: a allowlist ganhou `GET api/v1/leads/*/mensagens`, e só essa rota
+de lead. O desenho está em
+`docs/superpowers/specs/2026-09-27-tec-324-transcricao-design.md`.
+
+- **Abrir o detalhe grava dois acessos na trilha** (`detalhe` e `transcricao`),
+  e cada "Carregar anteriores" grava mais um. Por isso as anteriores só vêm por
+  clique, e nunca ao rolar.
+- **`components/Transcricao.tsx` é o terceiro componente de cliente**: manter
+  a posição de leitura ao inserir falas acima exige medir a altura antes e
+  depois.
+- **A moderação é do backend.** A fala retida só chega para ADMIN, e a tela a
+  mostra como "Mensagem retida pela moderação" mesmo que um conteúdo viesse.
 
 ## O proxy `/bff/*` exige sessão
 
