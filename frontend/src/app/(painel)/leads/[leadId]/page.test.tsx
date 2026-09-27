@@ -259,6 +259,35 @@ describe('PaginaDoLead', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('+55 48 9****-**21')
   })
 
+  describe('corrigir a qualificacao (TEC-329)', () => {
+    it('quem tem ATENDER_LEAD ve o "Editar qualificação" na secao', async () => {
+      responde(detalhe())
+
+      await abrir()
+
+      const secao = screen.getByRole('region', { name: 'Qualificação' })
+      expect(within(secao).getByRole('button', { name: 'Editar qualificação' })).toBeInTheDocument()
+    })
+
+    it('GERENTE sem cadastro de corretor tambem edita: nao depende do vinculo', async () => {
+      responde(detalhe(), 200, { papel: 'GERENTE_SEM_VINCULO', corretorId: null })
+
+      await abrir()
+
+      expect(screen.getByRole('button', { name: 'Editar qualificação' })).toBeInTheDocument()
+    })
+
+    it('conversa encerrada diz que nao se edita, sem botao', async () => {
+      responde(detalhe({ status: 'ENCERRADA' }))
+
+      await abrir()
+
+      const secao = screen.getByRole('region', { name: 'Qualificação' })
+      expect(within(secao).queryByRole('button')).toBeNull()
+      expect(secao).toHaveTextContent('não pode mais ser editada')
+    })
+  })
+
   describe('revelar o contato (TEC-330)', () => {
     it('cenario: CORRETOR recebe so a mascara, e nao ve o "Revelar"', async () => {
       responde(detalhe())

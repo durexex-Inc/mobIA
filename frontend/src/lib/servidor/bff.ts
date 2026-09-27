@@ -23,8 +23,8 @@
  * aqui porque a sessao e o FastAPI ja cuidam dela: o JWT e o de quem esta
  * logado, o recorte do CORRETOR e do backend, e cada pagina grava na trilha.
  * O que a allowlist ainda decide e QUAIS rotas de lead chegam ao navegador:
- * desde a TEC-330 sao quatro -- a transcricao, assumir, devolver e a
- * revelacao --, e o detalhe e a edicao continuam fora.
+ * desde a TEC-329 sao cinco -- a transcricao, assumir, devolver, a revelacao
+ * e a correcao da qualificacao --, e o detalhe continua fora.
  *
  * `*` casa EXATAMENTE um segmento. A primeira rota que precisou dele foi a
  * transcricao do lead (TEC-324); ele foi escrito antes, porque sem ele a
@@ -54,6 +54,9 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   // `VER_DADOS_COMPLETOS` do JWT, no FastAPI, que grava a trilha antes de
   // responder.
   { metodo: 'POST', padrao: ['api', 'v1', 'leads', '*', 'revelar'] },
+  // Corrigir a qualificacao (TEC-329, D6). O unico `PATCH`: o pedido e
+  // parcial, e o recorte do CORRETOR e do FastAPI, como nas outras mutacoes.
+  { metodo: 'PATCH', padrao: ['api', 'v1', 'leads', '*', 'qualificacao'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */

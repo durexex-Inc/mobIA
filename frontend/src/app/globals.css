@@ -581,3 +581,70 @@ a {
   font-size: 0.85rem;
   color: #b23c17;
 }
+
+/* --- Correcao da qualificacao (TEC-329) ------------------------------------ */
+
+.edicao-da-qualificacao {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.edicao-da-qualificacao button {
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.edicao-resultado {
+  font-weight: 600;
+}
+
+.edicao-formulario {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.75rem 1.5rem;
+  width: 100%;
+}
+
+.edicao-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.edicao-campo label {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.edicao-campo input,
+.edicao-campo select {
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+.edicao-erro {
+  font-size: 0.85rem;
+  color: #b23c17;
+}
+
+.edicao-aviso {
+  grid-column: 1 / -1;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}
+
+.edicao-acoes {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.edicao-nota {
+  margin-top: 1rem;
+  opacity: 0.8;
+}

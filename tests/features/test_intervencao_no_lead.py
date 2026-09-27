@@ -3,7 +3,8 @@
 Os quatro cenarios do Gherkin da card, e o que o desenho acrescentou: os
 desfechos do envio (D3), as duas guardas vistas pela fala do corretor, a trilha
 da edicao (D4), o autor na trilha de score (D6) e o vinculo de corretor (D2).
-E o 409 de assumir com o nome de quem tem a conversa (TEC-327, D3).
+E o 409 de assumir com o nome de quem tem a conversa (TEC-327, D3), e a regiao
+editada gravada na forma canonica (TEC-329, D1).
 
 **A porta de saida e falsa, mas as guardas sao as de verdade.** `PortaFalsa`
 herda de `GuardedOutbound` e so troca `_deliver`: e o que deixa o teste afirmar
@@ -501,6 +502,43 @@ async def test_null_explicito_limpa_e_ausente_nao_muda(
         )
     ).scalar_one()
     assert (linha.regiao, linha.faixa_preco_max_centavos) == (None, 50_000_000)
+
+
+@pytest.mark.parametrize(
+    ("digitado", "gravado"),
+    [
+        ("Perto do Campeche", "campeche"),
+        ("  Lagoa da Conceição ", "lagoa da conceicao"),
+        ("perto da", None),
+    ],
+)
+async def test_regiao_editada_e_gravada_na_forma_canonica(
+    session: AsyncSession, cliente: AsyncClient, digitado: str, gravado: str | None
+) -> None:
+    """TEC-329, D1: a correcao manual nao e a porta que grava regiao fora da forma do agente.
+
+    O filtro estruturado da TEC-158 compara `regiao` por igualdade -- "Perto do
+    Campeche" nunca casaria com o `campeche` do catalogo.
+    """
+    paulo = await _corretor(session)
+    lead_id = await _lead(session, dono=paulo, orcamento=50_000_000)
+
+    resposta = await cliente.patch(
+        f"{ROTA}/{lead_id}/qualificacao",
+        json={"regiao": digitado},
+        headers=_bearer("CORRETOR", corretor_id=paulo),
+    )
+
+    assert resposta.status_code == 200
+    await session.commit()
+    linha = (
+        await session.execute(
+            select(LeadQualification)
+            .where(LeadQualification.conversation_key == TELEFONE)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert linha.regiao == gravado
 
 
 @pytest.mark.parametrize(
