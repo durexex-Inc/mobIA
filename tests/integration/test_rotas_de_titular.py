@@ -312,6 +312,9 @@ async def test_delete_reaproveita_a_eliminacao_aberta_e_enfileira(
     assert len(jobs) == 1
     assert jobs[0].function == "eliminar_lead"
     assert jobs[0].args == (str(whatsapp_id),)
+    # `_job_id` fixo por solicitacao: um segundo DELETE da mesma solicitacao,
+    # com o primeiro job ainda na fila, nao enfileira outro.
+    assert jobs[0].job_id == f"titular:{whatsapp_id}"
 
     # Reaproveitada, e nao recriada: a origem continua WHATSAPP.
     linha = (
@@ -363,7 +366,7 @@ async def test_delete_sem_pool_do_redis_e_503(session: AsyncSession, banco_limpo
 # --- POST .../recusa -----------------------------------------------------------
 
 
-async def test_recusa_com_motivo_vazio_e_422(
+async def test_recusa_com_motivo_vazio_ou_acima_de_2000_e_422(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
     chave, _ = await _lead(session, telefone="5548999990003")
@@ -383,6 +386,21 @@ async def test_recusa_com_motivo_vazio_e_422(
         headers=_bearer("ADMIN"),
     )
     assert resposta.status_code == 422
+
+    # O teto de 2000 caracteres: 2001 e 422, e a solicitacao continua ABERTA.
+    resposta = await client.post(
+        f"/api/v1/titular/solicitacoes/{solicitacao_id}/recusa",
+        json={"motivo": "x" * 2001},
+        headers=_bearer("ADMIN"),
+    )
+    assert resposta.status_code == 422
+    session.expire_all()
+    linha = (
+        await session.execute(
+            select(SolicitacaoDeTitular).where(SolicitacaoDeTitular.id == solicitacao_id)
+        )
+    ).scalar_one()
+    assert linha.status == StatusDaSolicitacao.ABERTA.value
 
 
 async def test_recusa_ok_devolve_200_com_recusada_e_recusar_de_novo_e_409(
