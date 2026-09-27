@@ -24,6 +24,7 @@ from mobia.domain.context.models import LeadQualification
 from mobia.domain.identidade import indice
 from mobia.domain.identidade.indice import chave_de, registrar
 from mobia.domain.identidade.reindexacao import TABELAS_COM_CHAVE_DE_LEAD, reindexar
+from mobia.domain.leads.models import ReferenciaDeLead
 from mobia.domain.leads.repositorio import referencias_para
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
@@ -484,3 +485,35 @@ async def test_fila_ordena_por_prazo_com_leadid_nulo_nas_atendidas(
     item_b = next(item for item in itens if item["id"] == str(id_b))
     assert item_b["status"] == "ABERTA"
     assert item_b["leadId"] == str(lead_b)
+
+
+async def test_a_fila_nao_cria_apelido_de_lead(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """Revisao final, M2. A fila so LE apelidos, nunca cria. Criando
+    (`referencias_para`, get-or-create), uma listagem que leu a solicitacao
+    ABERTA logo antes de uma anonimizacao commitar recriava a linha de
+    `referencias_de_lead` sob a chave antiga -- a que a anonimizacao acabara
+    de apagar, e que a chave de indice ainda liga ao telefone. Quem cria
+    apelido e o painel de leads, como sempre criou; um lead que nunca passou
+    por ele aparece na fila com `leadId` nulo."""
+    chave = chave_de(CANAL, "5548999990011")
+    await registrar(session, CANAL, "5548999990011")
+    solicitacao_id = await registrar_solicitacao(
+        session,
+        channel=CANAL,
+        conversation_key=chave,
+        tipo=TipoDeSolicitacao.ACESSO,
+        origem=OrigemDaSolicitacao.WHATSAPP,
+        ator=ATOR_SISTEMA,
+    )
+    await session.commit()
+
+    resposta = await client.get("/api/v1/titular/solicitacoes", headers=_bearer("ADMIN"))
+
+    assert resposta.status_code == 200
+    [item] = resposta.json()["itens"]
+    assert item["id"] == str(solicitacao_id)
+    assert item["leadId"] is None
+    session.expire_all()
+    assert (await session.execute(select(ReferenciaDeLead))).scalars().all() == []

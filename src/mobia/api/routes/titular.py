@@ -23,7 +23,7 @@ from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao
 from mobia.api.middleware import origem_da_requisicao
 from mobia.domain.auditoria.registro import registrar_evento
 from mobia.domain.auditoria.vocabulario import Acao, Entidade
-from mobia.domain.leads.repositorio import par_de, referencias_para
+from mobia.domain.leads.repositorio import par_de, referencias_existentes
 from mobia.domain.titular.exportacao import exportar
 from mobia.domain.titular.models import SolicitacaoDeTitular
 from mobia.domain.titular.repositorio import (
@@ -53,7 +53,9 @@ def _item(
 ) -> dict[str, object]:
     """Uma linha da fila, no camelCase da API. `leadId` e nulo para quem ja
     foi atendida ou recusada -- o par some da linha nesses dois status
-    (`ck_solicitacoes_de_titular_par_com_status`), e nao ha apelido a buscar."""
+    (`ck_solicitacoes_de_titular_par_com_status`), e nao ha apelido a buscar --
+    e tambem para a ABERTA cujo lead ainda nao tem apelido: a fila so le
+    apelidos, nao cria (ver `solicitacoes`)."""
     par = (
         (linha.channel, linha.conversation_key)
         if linha.channel is not None and linha.conversation_key is not None
@@ -68,7 +70,7 @@ def _item(
         "prazoEm": linha.prazo_em.isoformat(),
         "atendidaEm": linha.atendida_em.isoformat() if linha.atendida_em else None,
         "motivoDaRecusa": linha.motivo_da_recusa,
-        "leadId": str(apelidos[par]) if par is not None else None,
+        "leadId": str(apelidos[par]) if par is not None and par in apelidos else None,
     }
 
 
@@ -77,7 +79,17 @@ async def solicitacoes(
     status_da_fila: Annotated[str | None, Query(alias="status")] = None,
     _: IdentidadeDaRequisicao = _ATENDE_TITULAR,
 ) -> dict[str, object]:
-    """A fila, por prazo -- quem vence primeiro aparece primeiro (D4)."""
+    """A fila, por prazo -- quem vence primeiro aparece primeiro (D4).
+
+    **So le apelidos, nunca os cria** (revisao final, M2 --
+    `referencias_existentes`, e nao o get-or-create `referencias_para`). A
+    anonimizacao apaga a linha de `referencias_de_lead` do par e fecha a
+    solicitacao na mesma transacao; uma listagem que leu a ABERTA logo antes
+    desse commit e depois criasse o apelido recriaria a linha sob a chave
+    antiga, que a chave de indice ainda liga ao telefone. O preco: o lead que
+    nunca apareceu no painel de leads (quem cria apelido) sai aqui com
+    `leadId` nulo, e o ADMIN o acha pelo painel antes de exportar ou apagar.
+    """
     status_enum: StatusDaSolicitacao | None = None
     if status_da_fila is not None:
         try:
@@ -95,8 +107,7 @@ async def solicitacoes(
             for linha in linhas
             if linha.channel is not None and linha.conversation_key is not None
         ]
-        apelidos = await referencias_para(session, pares)
-        await session.commit()
+        apelidos = await referencias_existentes(session, pares)
 
     return {"itens": [_item(linha, apelidos) for linha in linhas]}
 

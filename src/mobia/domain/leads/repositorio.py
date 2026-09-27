@@ -364,6 +364,37 @@ async def referencias_para(
     return {(linha.channel, linha.conversation_key): linha.id for linha in linhas}
 
 
+async def referencias_existentes(
+    session: AsyncSession, pares: Sequence[tuple[str, str]]
+) -> dict[tuple[str, str], uuid.UUID]:
+    """O apelido de cada par que JA tem um -- so leitura, sem criar nada.
+
+    Para quem lista algo que nao e o painel de leads e nao pode recriar um
+    apelido que outra transacao acabou de apagar. O caso que a trouxe (TEC-207,
+    revisao final, M2): a fila de solicitacoes de titular le a solicitacao
+    ABERTA, e se uma anonimizacao commitar entre essa leitura e um
+    `referencias_para`, o get-or-create recriava a linha sob a chave antiga,
+    que a chave de indice ainda liga ao telefone. Par sem apelido fica fora
+    do dicionario.
+    """
+    if not pares:
+        return {}
+    linhas = (
+        await session.execute(
+            select(
+                ReferenciaDeLead.channel,
+                ReferenciaDeLead.conversation_key,
+                ReferenciaDeLead.id,
+            ).where(
+                func.row(ReferenciaDeLead.channel, ReferenciaDeLead.conversation_key).in_(
+                    [func.row(channel, chave) for channel, chave in pares]
+                )
+            )
+        )
+    ).all()
+    return {(linha.channel, linha.conversation_key): linha.id for linha in linhas}
+
+
 async def par_de(session: AsyncSession, lead_id: uuid.UUID) -> tuple[str, str] | None:
     """O par que este apelido nomeia, ou `None` se ele nao existe.
 
