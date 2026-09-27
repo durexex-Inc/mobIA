@@ -801,6 +801,53 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
     ])
   })
 
+  it('TEC-366: o servidor fechar por ociosidade e sono, e reabrir retoma a sessao', () => {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.receber({ tipo: 'mensagem', texto: 'Olá! Como posso ajudar?', kind: 'texto' })
+    avisar({ tipo: 'mobia:visibilidade', aberto: false })
+
+    // O servidor chegou primeiro: 4000, e nao o sono do proprio cliente.
+    socket.fechar(4000)
+
+    expect(screen.queryByText('Não enviada')).toBeNull()
+    expect(SocketFalso.instancias).toHaveLength(1)
+
+    avisar({ tipo: 'mobia:visibilidade', aberto: true })
+
+    expect(SocketFalso.instancias).toHaveLength(2)
+    const novo = ultimoSocket()
+    novo.abrir()
+    expect(novo.frames()).toEqual([{ tipo: 'ola', sessao: SESSAO }])
+  })
+
+  it('TEC-366: uma queda comum nao vira sono, e reabrir o painel nao reconecta sozinho', () => {
+    // O contraste que prova que o codigo 4000 e o que decide: a reconexao
+    // automatica depois de uma queda e da TEC-348.
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    avisar({ tipo: 'mobia:visibilidade', aberto: false })
+
+    socket.fechar(1006)
+    avisar({ tipo: 'mobia:visibilidade', aberto: true })
+
+    expect(SocketFalso.instancias).toHaveLength(1)
+  })
+
+  it('TEC-366: depois do fechamento por ociosidade com o painel aberto, a proxima mensagem reconecta', () => {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+
+    socket.fechar(4000)
+    enviar('voltei')
+
+    expect(SocketFalso.instancias).toHaveLength(2)
+    const novo = ultimoSocket()
+    novo.abrir()
+    expect(novo.frames()[0]).toEqual({ tipo: 'ola', sessao: SESSAO })
+    expect(novo.frames()[1]).toMatchObject({ tipo: 'mensagem', texto: 'voltei' })
+  })
+
   it('reabrir antes de dormir nao abre socket novo e cancela o sono', () => {
     montarAberto()
 

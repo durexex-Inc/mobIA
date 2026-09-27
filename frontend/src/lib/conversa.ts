@@ -56,6 +56,15 @@ export type Evento =
   // 30 min minimizado sem atividade venceram (D4).
   | { tipo: 'adormeceu' }
 
+/**
+ * O codigo com que o SERVIDOR fecha o socket ocioso (TEC-366): 30 minutos sem
+ * nenhum frame. Copia de `CODIGO_OCIOSA` em `src/mobia/api/routes/widget.py`.
+ * E o mesmo sono do painel minimizado (D4), so que decidido do outro lado, e
+ * por isso vira `adormecida` e nao `fechada`: a proxima mensagem, ou o painel
+ * reaberto, reconecta com a sessao.
+ */
+export const CODIGO_OCIOSA = 4000
+
 /** Teto do campo de texto (D5). A rede continua com o teto de 4096 do servidor. */
 export const LIMITE_DE_CARACTERES = 1000
 

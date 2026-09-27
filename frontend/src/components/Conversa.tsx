@@ -15,6 +15,7 @@ import {
 
 import { CabecalhoDoChat } from '@/components/CabecalhoDoChat'
 import {
+  CODIGO_OCIOSA,
   type Conexao,
   type EstadoDaMensagem,
   INICIAL,
@@ -256,9 +257,16 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
         despachar({ tipo: 'frame', bruto: evento.data })
       }
     })
-    socket.addEventListener('close', () => {
+    socket.addEventListener('close', (evento: CloseEvent) => {
       if (!atual()) {
         return
+      }
+      // O servidor fechou por ociosidade (TEC-366): o mesmo sono de D4, e nao
+      // uma queda. `adormeceu` antes de `fechou`, porque o redutor preserva
+      // `adormecida` no `fechou` -- e e desse estado que reabrir o painel
+      // reconecta.
+      if (evento.code === CODIGO_OCIOSA) {
+        despachar({ tipo: 'adormeceu' })
       }
       // O que estava na fila nunca saiu; o redutor ja o marca como `falhou`.
       filaRef.current = []
