@@ -54,7 +54,7 @@ def _item(
     """Uma linha da fila, no camelCase da API. `leadId` e nulo para quem ja
     foi atendida ou recusada -- o par some da linha nesses dois status
     (`ck_solicitacoes_de_titular_par_com_status`), e nao ha apelido a buscar --
-    e tambem para a ABERTA cujo lead ainda nao tem apelido: a fila so le
+    e tambem para a ABERTA cujo apelido alguem apagou por fora: a fila so le
     apelidos, nao cria (ver `solicitacoes`)."""
     par = (
         (linha.channel, linha.conversation_key)
@@ -86,9 +86,12 @@ async def solicitacoes(
     anonimizacao apaga a linha de `referencias_de_lead` do par e fecha a
     solicitacao na mesma transacao; uma listagem que leu a ABERTA logo antes
     desse commit e depois criasse o apelido recriaria a linha sob a chave
-    antiga, que a chave de indice ainda liga ao telefone. O preco: o lead que
-    nunca apareceu no painel de leads (quem cria apelido) sai aqui com
-    `leadId` nulo, e o ADMIN o acha pelo painel antes de exportar ou apagar.
+    antiga, que a chave de indice ainda liga ao telefone. **Quem garante o
+    apelido de toda ABERTA e `registrar_solicitacao`**, na mesma transacao do
+    INSERT (segunda revisao) -- entao o lead que so falou pelo WhatsApp, e
+    nunca apareceu no painel de leads, sai aqui com `leadId` e o ADMIN
+    exporta ou apaga por ele. `leadId` nulo numa ABERTA so aparece se alguem
+    apagar o apelido por fora.
     """
     status_enum: StatusDaSolicitacao | None = None
     if status_da_fila is not None:

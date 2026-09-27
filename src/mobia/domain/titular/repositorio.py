@@ -19,6 +19,7 @@ from mobia.app.config import get_settings
 from mobia.domain.auditoria.referencia import lead_ref as calcular_lead_ref
 from mobia.domain.auditoria.registro import registrar_evento
 from mobia.domain.auditoria.vocabulario import Acao, Ator, Entidade
+from mobia.domain.leads.repositorio import referencias_para
 from mobia.domain.messages.models import Message
 from mobia.domain.outbound.models import OutboundDispatch
 from mobia.domain.titular.deteccao import (
@@ -120,6 +121,16 @@ async def registrar_solicitacao(
 
     **So grava `TITULAR_SOLICITOU` quando cria** a linha: um pedido repetido
     nao e um novo fato para a trilha. **Nao commita.**
+
+    **Garante o apelido do lead (`referencias_para`) na mesma transacao**
+    (segunda revisao, sobre o M2). A fila de solicitacoes so le apelidos, e as
+    rotas do ADMIN -- exportar, apagar -- entram por `leadId`; sem apelido, o
+    pedido de um lead que nunca apareceu no painel de leads ficava na fila sem
+    porta de entrada, e o prazo do ACESSO corria sem o ADMIN poder atende-lo.
+    Criar aqui nao reabre o defeito do M2: este registro so roda a partir de
+    uma mensagem viva do lead, da rota do ADMIN ou do sweep de retencao --
+    nunca sobre um par que uma anonimizacao ja apagou, porque a anonimizacao
+    apaga o apelido e fecha as solicitacoes do par na mesma transacao.
     """
     ref = calcular_lead_ref(channel, conversation_key, chave=get_settings().auditoria_chave_do_lead)
     agora = datetime.now(UTC)
@@ -142,6 +153,8 @@ async def registrar_solicitacao(
             ).returning(SolicitacaoDeTitular.id)
         )
     ).scalar_one_or_none()
+
+    await referencias_para(session, [(channel, conversation_key)])
 
     if inserida is not None:
         await registrar_evento(

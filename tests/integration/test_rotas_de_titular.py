@@ -505,18 +505,55 @@ async def test_fila_ordena_por_prazo_com_leadid_nulo_nas_atendidas(
     assert item_b["leadId"] == str(lead_b)
 
 
-async def test_a_fila_nao_cria_apelido_de_lead(
+async def test_o_registro_cria_o_apelido_e_a_fila_nao_cria_nenhum(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
-    """Revisao final, M2. A fila so LE apelidos, nunca cria. Criando
+    """Segunda revisao, sobre o M2. A fila so LE apelidos: criando
     (`referencias_para`, get-or-create), uma listagem que leu a solicitacao
     ABERTA logo antes de uma anonimizacao commitar recriava a linha de
-    `referencias_de_lead` sob a chave antiga -- a que a anonimizacao acabara
-    de apagar, e que a chave de indice ainda liga ao telefone. Quem cria
-    apelido e o painel de leads, como sempre criou; um lead que nunca passou
-    por ele aparece na fila com `leadId` nulo."""
+    `referencias_de_lead` sob a chave antiga. Mas o apelido tem de existir,
+    senao o ADMIN nao tem `leadId` para exportar ou apagar -- entao quem o
+    cria e `registrar_solicitacao`, na mesma transacao do INSERT.
+
+    Apagar o apelido a mao e o estado que a anonimizacao deixa (ela apaga o
+    apelido e fecha a solicitacao juntos); aqui a solicitacao continua ABERTA
+    de proposito, para provar que a fila, sozinha, nao o recria."""
     chave = chave_de(CANAL, "5548999990011")
     await registrar(session, CANAL, "5548999990011")
+    await registrar_solicitacao(
+        session,
+        channel=CANAL,
+        conversation_key=chave,
+        tipo=TipoDeSolicitacao.ACESSO,
+        origem=OrigemDaSolicitacao.WHATSAPP,
+        ator=ATOR_SISTEMA,
+    )
+    await session.commit()
+    [apelido] = (await session.execute(select(ReferenciaDeLead))).scalars().all()
+    assert (apelido.channel, apelido.conversation_key) == (CANAL, chave)
+
+    await session.execute(ReferenciaDeLead.__table__.delete())
+    await session.commit()
+
+    resposta = await client.get("/api/v1/titular/solicitacoes", headers=_bearer("ADMIN"))
+
+    assert resposta.status_code == 200
+    [item] = resposta.json()["itens"]
+    assert item["leadId"] is None
+    session.expire_all()
+    assert (await session.execute(select(ReferenciaDeLead))).scalars().all() == []
+
+
+async def test_pedido_pelo_whatsapp_sai_na_fila_com_leadid_que_a_exportacao_aceita(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """O lead que so falou pelo WhatsApp e nunca apareceu no painel de leads:
+    o registro do pedido lhe da apelido, a fila o mostra, e o ADMIN exporta
+    por ele -- o que fecha o ACESSO dentro do prazo."""
+    telefone = "5548999990012"
+    chave = chave_de(CANAL, telefone)
+    await registrar(session, CANAL, telefone)
+    session.add(_fala(chave=chave, em=INICIO))
     solicitacao_id = await registrar_solicitacao(
         session,
         channel=CANAL,
@@ -527,11 +564,21 @@ async def test_a_fila_nao_cria_apelido_de_lead(
     )
     await session.commit()
 
-    resposta = await client.get("/api/v1/titular/solicitacoes", headers=_bearer("ADMIN"))
-
-    assert resposta.status_code == 200
-    [item] = resposta.json()["itens"]
+    fila = await client.get("/api/v1/titular/solicitacoes", headers=_bearer("ADMIN"))
+    [item] = fila.json()["itens"]
     assert item["id"] == str(solicitacao_id)
-    assert item["leadId"] is None
+    assert item["leadId"] is not None
+
+    exportacao = await client.get(
+        f"/api/v1/leads/{item['leadId']}/dados-pessoais", headers=_bearer("ADMIN")
+    )
+
+    assert exportacao.status_code == 200
+    assert exportacao.json()["telefone"] == f"+{telefone}"
     session.expire_all()
-    assert (await session.execute(select(ReferenciaDeLead))).scalars().all() == []
+    linha = (
+        await session.execute(
+            select(SolicitacaoDeTitular).where(SolicitacaoDeTitular.id == solicitacao_id)
+        )
+    ).scalar_one()
+    assert linha.status == StatusDaSolicitacao.ATENDIDA.value
