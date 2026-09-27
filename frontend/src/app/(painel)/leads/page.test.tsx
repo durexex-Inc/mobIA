@@ -30,6 +30,7 @@ vi.mock('next/navigation', () => ({
 const PERMISSOES: Record<string, string[]> = {
   GERENTE: ['ATENDER_LEAD', 'VER_DADOS_COMPLETOS', 'VER_DETALHE_DO_LEAD', 'VER_FUNIL', 'VER_LEADS'],
   CORRETOR: ['ATENDER_LEAD', 'BUSCAR_IMOVEIS', 'VER_DETALHE_DO_LEAD', 'VER_LEADS'],
+  LEITURA: ['BUSCAR_IMOVEIS', 'VER_FUNIL', 'VER_LEADS'],
   NINGUEM: [],
 }
 
@@ -173,6 +174,28 @@ describe('PaginaDeLeads', () => {
       // manda `corretorId`, e nao desenha filtro por corretor (L2).
       expect(parametrosDe(chamadas).has('corretorId')).toBe(false)
       expect(screen.queryByLabelText(/corretor/i)).not.toBeInTheDocument()
+    })
+  })
+
+  describe('a linha abre o detalhe (TEC-323)', () => {
+    it('para quem tem VER_DETALHE_DO_LEAD, com `<a>` comum', async () => {
+      responde({ itens: [lead(82)], proximoCursor: null }, 200, { papel: 'CORRETOR' })
+
+      await abrir()
+
+      expect(screen.getByRole('link', { name: '+55 48 9****-**21' })).toHaveAttribute(
+        'href',
+        '/leads/lead-82',
+      )
+    })
+
+    it('para LEITURA nao: o link terminaria sempre em "Sem permissao"', async () => {
+      responde({ itens: [lead(82)], proximoCursor: null }, 200, { papel: 'LEITURA' })
+
+      await abrir()
+
+      expect(screen.queryByRole('link', { name: '+55 48 9****-**21' })).not.toBeInTheDocument()
+      expect(screen.getByTestId('lead')).toHaveTextContent('+55 48 9****-**21')
     })
   })
 

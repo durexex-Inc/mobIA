@@ -381,3 +381,68 @@ a {
   font-size: 0.9rem;
   opacity: 0.75;
 }
+
+/* --- Detalhe do lead (TEC-323) --------------------------------------------- */
+
+.detalhe-cabecalho {
+  margin: 0.25rem 0 1.5rem;
+  opacity: 0.8;
+}
+
+.detalhe-secao {
+  margin-bottom: 1.75rem;
+}
+
+.detalhe-secao h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 1.15rem;
+}
+
+.detalhe-rotulo {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 400;
+  border: 1px solid color-mix(in srgb, var(--foreground) 30%, transparent);
+  border-radius: 999px;
+}
+
+.detalhe-bloco {
+  margin-bottom: 0.75rem;
+}
+
+.detalhe-bloco h3 {
+  font-size: 0.95rem;
+  margin-bottom: 0.25rem;
+}
+
+/* O resumo e o texto do modelo, com as quebras de linha dele. */
+.detalhe-texto {
+  white-space: pre-line;
+}
+
+.detalhe-campos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.75rem 1.5rem;
+}
+
+.detalhe-campo dt {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.detalhe-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-left: 1.25rem;
+}
+
+.leads-tabela td a {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}

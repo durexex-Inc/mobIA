@@ -85,7 +85,13 @@ export default async function PaginaDeLeads({ searchParams }: { searchParams: Pr
       )}
       {pagina && pagina.itens.length > 0 && (
         <>
-          <TabelaDeLeads itens={pagina.itens} ordem={ordem} busca={busca} agora={new Date()} />
+          <TabelaDeLeads
+            itens={pagina.itens}
+            ordem={ordem}
+            busca={busca}
+            agora={new Date()}
+            abreDetalhe={quem.permissoes.has('VER_DETALHE_DO_LEAD')}
+          />
           {/* A paginacao e a TEC-322 (L3 do desenho). Ate la, a tela diz que
               ha mais, em vez de deixar a pessoa achar que a lista acabou. */}
           {pagina.proximoCursor && (

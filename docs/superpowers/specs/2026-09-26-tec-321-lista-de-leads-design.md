@@ -94,6 +94,7 @@ Mais: a ordenação por última interação tem testes de integração próprios
 - **L2 — o "filtro por corretor não é exibido" vale porque não há filtro nenhum.** Os filtros são a TEC-322. Quando o filtro por corretor entrar lá, ele precisa ficar escondido para o CORRETOR, e o teste desta card não pega isso: hoje ele não tem o que verificar.
 - **L3 — a tela mostra só a primeira página, com 25 leads.** Paginação é a TEC-322. O CORRETOR com mais de 25 leads vê os 25 primeiros da ordem escolhida e não tem como chegar ao 26º. A tela diz isso quando há próxima página.
 - **L4 — a linha não abre o detalhe.** O detalhe é a TEC-323. As linhas não são links, porque um link para uma tela que não existe daria 404.
+  - **Nota (TEC-323, 27/09/2026):** fechada. A primeira célula abre o detalhe para quem tem `VER_DETALHE_DO_LEAD`, com `<a>`, e não com `next/link`: o prefetch gravaria um acesso na trilha por linha visível.
 - **L5 — o texto relativo não se atualiza com a página aberta** (D7).
 
 ## Emenda ao SRS do agente

@@ -19,17 +19,27 @@ import {
  *
  * Os cabecalhos ordenaveis sao LINKS, e nao botoes: trocar a ordem e trocar
  * de endereco, e isso funciona sem JS.
+ *
+ * **A primeira celula abre o detalhe, com `<a>` e nao `next/link`** (TEC-323,
+ * D2): abrir o detalhe grava um acesso na trilha. O prefetch padrao do
+ * `<Link>` para no `loading.tsx` do detalhe e nao chega a gravar, mas passaria
+ * a gravar um acesso por linha visivel com `prefetch={true}` ou sem aquele
+ * arquivo; o `<a>` nao depende de nenhum dos dois. So para quem tem
+ * `VER_DETALHE_DO_LEAD` -- para LEITURA o link terminaria sempre em "Sem
+ * permissao".
  */
 export function TabelaDeLeads({
   itens,
   ordem,
   busca,
   agora,
+  abreDetalhe,
 }: {
   itens: LeadDaLista[]
   ordem: Ordem
   busca?: string
   agora: Date
+  abreDetalhe: boolean
 }) {
   return (
     <table className="leads-tabela">
@@ -51,7 +61,13 @@ export function TabelaDeLeads({
       <tbody>
         {itens.map((lead) => (
           <tr key={lead.leadId} data-testid="lead">
-            <td>{identificacaoDoLead(lead)}</td>
+            <td>
+              {abreDetalhe ? (
+                <a href={`/leads/${encodeURIComponent(lead.leadId)}`}>{identificacaoDoLead(lead)}</a>
+              ) : (
+                identificacaoDoLead(lead)
+              )}
+            </td>
             <td>{temperaturaLegivel(lead.temperatura)}</td>
             {/* Sem score e travessao, e nao zero: "ainda nao pontuado" nao e
                 "pontuou zero" (D4 da TEC-192). */}
