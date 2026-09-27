@@ -8,7 +8,7 @@ from mobia.domain.titular.retencao import (
     LOTE_PADRAO_DE_LEADS,
     LOTE_PADRAO_DE_TRANSCRICOES,
     anonimizar_leads_vencidos,
-    cumprir_eliminacoes_vencidas,
+    cumprir_eliminacoes_a_vencer,
     esvaziar_transcricoes_vencidas,
 )
 
@@ -25,11 +25,11 @@ async def sweep_retencao_de_leads(
     """Fino de proposito, como `sweep_retencao_auditoria`.
 
     Chama as tres funcoes de `domain/titular/retencao.py` nesta ordem --
-    cumprir uma ELIMINACAO vencida primeiro, depois anonimizar quem parou ha
-    24 meses, por ultimo esvaziar transcricao de 12 meses. A ordem decide
+    cumprir uma ELIMINACAO que vence ate amanha primeiro, depois anonimizar
+    quem parou ha 24 meses, por ultimo esvaziar transcricao de 12 meses. A ordem decide
     QUAL funcao processa um lead que se encaixa em mais de uma regra no
-    mesmo dia: um par que ja tinha uma ELIMINACAO aberta e vencida e cumprido
-    por `cumprir_eliminacoes_vencidas`, e some da consulta de
+    mesmo dia: um par que ja tinha uma ELIMINACAO aberta a vencer e cumprido
+    por `cumprir_eliminacoes_a_vencer`, e some da consulta de
     `anonimizar_leads_vencidos` (que exige `identidades_de_lead`, apagada
     pela anonimizacao) antes dela rodar -- sem essa ordem, as duas
     poderiam competir pelo mesmo par. Pela mesma razao, as duas rodam antes
@@ -41,20 +41,20 @@ async def sweep_retencao_de_leads(
 
     **Cada uma das tres roda mesmo que a anterior tenha falhado por
     inteiro.** Cada chamada esta no seu proprio `try/except Exception`: se
-    `cumprir_eliminacoes_vencidas` levantar antes mesmo do laco por item
-    comecar (por exemplo, o SELECT de `vencidas` falhando por uma
+    `cumprir_eliminacoes_a_vencer` levantar antes mesmo do laco por item
+    comecar (por exemplo, o SELECT de `vencendo` falhando por uma
     instabilidade transitoria do banco), isso nao impede
     `anonimizar_leads_vencidos` nem `esvaziar_transcricoes_vencidas` de
     rodar na mesma passagem -- a etapa que falhou loga
     `titular.sweep_retencao_etapa_falhou` com o nome dela, e a proxima
     passagem do cron tenta de novo. Isto e alem da resiliencia por ITEM que
-    `anonimizar_leads_vencidos` e `cumprir_eliminacoes_vencidas` ja tem
+    `anonimizar_leads_vencidos` e `cumprir_eliminacoes_a_vencer` ja tem
     internamente (ver as docstrings delas) -- aqui a preocupacao e uma etapa
     inteira falhar antes do laco dela sequer comecar.
 
     **Cada uma das tres tambem tem um teto de trabalho por passagem**
     (`max_lotes` em `esvaziar_transcricoes_vencidas` e em
-    `anonimizar_leads_vencidos`; `lote` em `cumprir_eliminacoes_vencidas`,
+    `anonimizar_leads_vencidos`; `lote` em `cumprir_eliminacoes_a_vencer`,
     que poda a lista em vez de reconsultar) -- e por isso este job registra
     um `timeout` proprio, maior que o `job_timeout` global do worker. Ver o
     comentario de `func(sweep_retencao_de_leads, ...)` em `workers/main.py`
@@ -73,7 +73,7 @@ async def sweep_retencao_de_leads(
     armazem = ctx["armazem"]
     total = 0
     for nome, corrotina in (
-        ("cumprir_eliminacoes_vencidas", cumprir_eliminacoes_vencidas(session_factory, armazem)),
+        ("cumprir_eliminacoes_a_vencer", cumprir_eliminacoes_a_vencer(session_factory, armazem)),
         (
             "anonimizar_leads_vencidos",
             anonimizar_leads_vencidos(session_factory, armazem, lote=lote_de_leads),

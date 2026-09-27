@@ -3,8 +3,8 @@
 TEC-207, D3 do desenho. Deterministico e sem chamada paga, no molde de
 `optout/deteccao.py::pediu_optout` e `humano/deteccao.py::pediu_humano`: uma
 decisao de LGPD (o titular tem direito de acesso e de eliminacao dos proprios
-dados, e o prazo comeca a contar da mensagem) nao pode depender de um
-provedor de LLM estar de pe.
+dados, e o prazo de 15 dias so comeca a contar quando o turno registra o
+pedido) nao pode depender de um provedor de LLM estar de pe.
 
 **Colisao com o opt-out, e a precedencia e por OBJETO, nao por lista.** "Remover
 meu contato" fala de CONTATO/MENSAGERIA e e opt-out; "apagar meus dados" fala

@@ -331,7 +331,7 @@ class WorkerSettings:
         # (`max_lotes` em duas, `lote` na terceira -- ver o docstring do job),
         # e a conta do pior caso com os defaults de hoje e:
         #
-        #   ~20s  cumprir_eliminacoes_vencidas: ate 100 solicitacoes, cada
+        #   ~20s  cumprir_eliminacoes_a_vencer: ate 100 solicitacoes, cada
         #          uma um `eliminacao.anonimizar` inteiro
         #   ~40s  anonimizar_leads_vencidos: ate 200 leads (2 lotes de 100),
         #          mesmo custo por unidade que acima

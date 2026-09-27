@@ -26,7 +26,7 @@ from mobia.domain.titular import retencao as retencao_mod
 from mobia.domain.titular.repositorio import registrar_solicitacao
 from mobia.domain.titular.retencao import (
     anonimizar_leads_vencidos,
-    cumprir_eliminacoes_vencidas,
+    cumprir_eliminacoes_a_vencer,
     esvaziar_transcricoes_vencidas,
 )
 from mobia.domain.titular.vocabulario import OrigemDaSolicitacao, TipoDeSolicitacao
@@ -234,27 +234,36 @@ async def test_lead_com_handoff_aceito_25_meses_nao_e_anonimizado_mas_conteudo_e
         )
 
 
-async def test_solicitacao_eliminacao_vencida_e_cumprida_no_prazo_fica_intacta(
+async def test_eliminacao_que_vence_ate_amanha_e_cumprida_a_de_3_dias_fica_aberta(
     session: AsyncSession, session_factory: async_sessionmaker[AsyncSession], tmp_path: Any
 ) -> None:
+    """O sweep passa uma vez por dia: cumprindo so o que ja venceu, todo pedido
+    passaria do prazo. Com um dia de antecedencia, o de amanha e cumprido hoje
+    (dentro do prazo), o ja vencido tambem (passagem perdida), e o de daqui a
+    3 dias continua com o ADMIN."""
     await _lead(session, conversa="conversa-vencida", falas=1)
-    await _lead(session, conversa="conversa-no-prazo", falas=1)
+    await _lead(session, conversa="conversa-amanha", falas=1)
+    await _lead(session, conversa="conversa-3-dias", falas=1)
     vencida_id = await _registrar_eliminacao(
         session, conversa="conversa-vencida", prazo="now() - interval '1 day'"
     )
-    no_prazo_id = await _registrar_eliminacao(
-        session, conversa="conversa-no-prazo", prazo="now() + interval '10 days'"
+    amanha_id = await _registrar_eliminacao(
+        session, conversa="conversa-amanha", prazo="now() + interval '20 hours'"
+    )
+    tres_dias_id = await _registrar_eliminacao(
+        session, conversa="conversa-3-dias", prazo="now() + interval '3 days'"
     )
 
-    contagem = await cumprir_eliminacoes_vencidas(session_factory, ArmazemLocal(tmp_path))
+    contagem = await cumprir_eliminacoes_a_vencer(session_factory, ArmazemLocal(tmp_path))
 
-    assert contagem == 1
+    assert contagem == 2
     async with session_factory() as sessao:
         status = dict(
             (await sessao.execute(text("SELECT id, status FROM solicitacoes_de_titular"))).all()
         )
     assert status[vencida_id] == "ATENDIDA"
-    assert status[no_prazo_id] == "ABERTA"
+    assert status[amanha_id] == "ATENDIDA"
+    assert status[tres_dias_id] == "ABERTA"
 
 
 async def test_sweep_rodado_duas_vezes_a_segunda_nao_muda_nada(

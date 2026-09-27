@@ -3,7 +3,7 @@
 **As duas regras de idade (12 e 24 meses) nao decidem sozinhas o que pode ser
 apagado** -- pedem as linhas com o corte certo sobre `clock_timestamp()` do
 banco, e nao `datetime.now()` do worker, pela mesma razao de
-`auditoria/retencao.py`. `cumprir_eliminacoes_vencidas` e diferente: o prazo
+`auditoria/retencao.py`. `cumprir_eliminacoes_a_vencer` e diferente: o prazo
 que ela cumpre (`prazo_em`) ja foi calculado em `registrar_solicitacao`
 (RNF-21, 15 dias) a partir de `datetime.now(UTC)`, e comparar contra o mesmo
 relogio aqui e consistente com aquele calculo -- nao ha um segundo corte para
@@ -12,8 +12,8 @@ divergir do banco.
 Tres operacoes. `esvaziar_transcricoes_vencidas` e `anonimizar_leads_vencidos`
 varrem o banco em lotes, com commit por lote (ou por lead, na anonimizacao),
 para nao segurar lock longo sobre uma tabela que pode ter milhoes de linhas.
-`cumprir_eliminacoes_vencidas` e diferente: `repositorio.vencidas` ja devolve
-a lista inteira das solicitacoes vencidas num SELECT so (normalmente pequena
+`cumprir_eliminacoes_a_vencer` e diferente: `repositorio.vencendo` ja devolve
+a lista inteira das solicitacoes a cumprir num SELECT so (normalmente pequena
 -- e gente que pediu, nao mensagem), e esta funcao apenas poda essa lista a
 `lote` itens por passagem, sem reconsultar o banco a cada fatia.
 
@@ -26,9 +26,11 @@ a lista inteira das solicitacoes vencidas num SELECT so (normalmente pequena
   mais de 24 meses (`max(messages.created_at)`, a mesma base de
   `leads/repositorio.py::_ultima_interacao`), vira uma solicitacao ELIMINACAO
   de origem RETENCAO, cumprida na hora por `eliminacao.anonimizar`.
-- `cumprir_eliminacoes_vencidas`: toda solicitacao ELIMINACAO ABERTA cujo
-  prazo de 15 dias (RNF-21) ja passou -- o titular pediu, o ADMIN nao decidiu
-  a tempo, e o prazo legal nao pode depender de inacao.
+- `cumprir_eliminacoes_a_vencer`: toda solicitacao ELIMINACAO ABERTA cujo
+  prazo de 15 dias (RNF-21) vence ate amanha (`ANTECEDENCIA_DO_CUMPRIMENTO`)
+  -- o titular pediu, o ADMIN nao decidiu em ~14 dias, e o prazo legal nao
+  pode depender de inacao. Cumprir so o que JA venceu faria a passagem
+  diaria chegar sempre depois do prazo.
 
 **Par ja anonimizado nao entra de novo em `anonimizar_leads_vencidos`.** A
 anonimizacao apaga a linha de `identidades_de_lead` do par (ver
@@ -39,9 +41,9 @@ pseudonimo, criando uma solicitacao RETENCAO nova a cada dia.
 
 **Um lead que falha nao trava os outros, nem se repete para sempre.** As
 duas funcoes que iteram lead a lead (`anonimizar_leads_vencidos` e
-`cumprir_eliminacoes_vencidas`) capturam excecao por item: um lead com dado
+`cumprir_eliminacoes_a_vencer`) capturam excecao por item: um lead com dado
 inconsistente, ou uma falha transitoria de banco, loga
-`titular.anonimizacao_por_retencao_falhou` ou `titular.eliminacao_vencida_falhou`
+`titular.anonimizacao_por_retencao_falhou` ou `titular.eliminacao_a_vencer_falhou`
 (com `lead_ref`/`solicitacao_id`, nunca telefone) e segue para o proximo. Sem
 isso, a selecao em lote e ordenada (`ORDER BY max(created_at)` e
 `ORDER BY prazo_em`), entao o MESMO lead problematico apareceria primeiro em
@@ -70,8 +72,9 @@ from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA
 from mobia.domain.midia.armazem import ArmazemDeMidia
 from mobia.domain.midia.politica import chave_do_objeto
 from mobia.domain.titular import eliminacao
-from mobia.domain.titular.repositorio import registrar_solicitacao, vencidas
+from mobia.domain.titular.repositorio import registrar_solicitacao, vencendo
 from mobia.domain.titular.vocabulario import (
+    ANTECEDENCIA_DO_CUMPRIMENTO,
     RETENCAO_DA_TRANSCRICAO_MESES,
     RETENCAO_DO_LEAD_MESES,
     OrigemDaSolicitacao,
@@ -296,7 +299,7 @@ async def anonimizar_leads_vencidos(
     `solicitacao_id`, se ja existir) e segue para o proximo par -- sem isso,
     o MESMO lead problematico venceria primeiro em toda passagem futura
     (`ORDER BY max(created_at)`) e travaria quem vem depois dele para
-    sempre. `total` conta só quem foi anonimizado com sucesso.
+    sempre. `total` conta so quem foi anonimizado com sucesso.
     """
     total = 0
     lotes_processados = 0
@@ -345,16 +348,26 @@ async def anonimizar_leads_vencidos(
     return total
 
 
-async def cumprir_eliminacoes_vencidas(
+async def cumprir_eliminacoes_a_vencer(
     session_factory: async_sessionmaker[AsyncSession],
     armazem: ArmazemDeMidia,
     *,
     lote: int = LOTE_PADRAO_DE_ELIMINACOES,
 ) -> int:
-    """Cumpre solicitacao ELIMINACAO ABERTA cujo prazo de 15 dias passou.
+    """Cumpre solicitacao ELIMINACAO ABERTA cujo prazo vence ate amanha.
 
-    `repositorio.vencidas` devolve a lista inteira num SELECT so -- ela e
-    ordenada por `prazo_em` (quem venceu ha mais tempo primeiro), e esta
+    Um dia de antecedencia (`ANTECEDENCIA_DO_CUMPRIMENTO`, ver
+    `repositorio.py::vencendo`): o sweep passa uma vez por dia, e so com a
+    antecedencia a passagem que cumpre o pedido cai dentro dos 15 dias. O
+    que ja venceu (uma passagem perdida, um backlog) entra tambem.
+
+    **O teto e o que ainda pode deixar um pedido passar do prazo:** com mais
+    de `lote` solicitacoes na janela no mesmo dia, as excedentes ficam para a
+    passagem seguinte, e uma que falhe (log abaixo) tambem. Nos dois casos o
+    rastro esta no log, nao numa garantia.
+
+    `repositorio.vencendo` devolve a lista inteira num SELECT so -- ela e
+    ordenada por `prazo_em` (quem vence primeiro, primeiro), e esta
     funcao poda essa lista a `lote` itens por passagem, a mesma razao de
     `max_lotes` nas outras duas funcoes (D5, `workers/main.py`): sem o teto,
     um backlog grande arriscaria estourar o `job_timeout` do worker numa so
@@ -363,13 +376,16 @@ async def cumprir_eliminacoes_vencidas(
     **Uma solicitacao que falha nao para as outras**, pela mesma razao de
     `anonimizar_leads_vencidos`: cada `eliminacao.anonimizar` esta num
     `try/except Exception` por item, e uma falha loga
-    `titular.eliminacao_vencida_falhou` com `solicitacao_id` e `lead_ref` (a
+    `titular.eliminacao_a_vencer_falhou` com `solicitacao_id` e `lead_ref` (a
     coluna sobrevive a anonimizacao, ver `models.py`) e segue. `total` conta
     so quem foi cumprida com sucesso.
     """
     async with session_factory() as session:
-        pendentes = await vencidas(
-            session, agora=datetime.now(UTC), tipo=TipoDeSolicitacao.ELIMINACAO
+        pendentes = await vencendo(
+            session,
+            agora=datetime.now(UTC),
+            tipo=TipoDeSolicitacao.ELIMINACAO,
+            antecedencia=ANTECEDENCIA_DO_CUMPRIMENTO,
         )
     total = 0
     for solicitacao in pendentes[:lote]:
@@ -378,10 +394,10 @@ async def cumprir_eliminacoes_vencidas(
             total += 1
         except Exception:
             log.warning(
-                "titular.eliminacao_vencida_falhou",
+                "titular.eliminacao_a_vencer_falhou",
                 solicitacao_id=str(solicitacao.id),
                 lead_ref=solicitacao.lead_ref,
                 exc_info=True,
             )
-    log.info("titular.eliminacoes_vencidas_cumpridas", contagem=total)
+    log.info("titular.eliminacoes_a_vencer_cumpridas", contagem=total)
     return total

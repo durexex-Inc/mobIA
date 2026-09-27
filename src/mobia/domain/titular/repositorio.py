@@ -6,7 +6,7 @@ resto keyword-only, sem commit -- convencao dos repositorios deste repo (ver
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -234,16 +234,24 @@ async def listar(
     return list((await session.execute(consulta)).scalars())
 
 
-async def vencidas(
-    session: AsyncSession, *, agora: datetime, tipo: TipoDeSolicitacao
+async def vencendo(
+    session: AsyncSession, *, agora: datetime, tipo: TipoDeSolicitacao, antecedencia: timedelta
 ) -> list[SolicitacaoDeTitular]:
-    """As ABERTAS deste tipo cujo prazo ja passou -- o sweep de retencao (D5)."""
+    """As ABERTAS deste tipo cujo prazo vence ate `agora + antecedencia`.
+
+    O sweep de retencao (D5) passa com `ANTECEDENCIA_DO_CUMPRIMENTO` (1 dia):
+    ele roda uma vez por dia, entao cumprir so o que ja venceu deixaria todo
+    pedido passar do prazo por ate um dia. Cumprir o que vence ate amanha
+    mantem a passagem diaria dentro do prazo e deixa ao ADMIN os ~14 dias
+    restantes para executar ou recusar. O que ja venceu tambem entra -- uma
+    passagem perdida nao o esconde da seguinte.
+    """
     consulta = (
         select(SolicitacaoDeTitular)
         .where(
             SolicitacaoDeTitular.status == StatusDaSolicitacao.ABERTA.value,
             SolicitacaoDeTitular.tipo == tipo.value,
-            SolicitacaoDeTitular.prazo_em <= agora,
+            SolicitacaoDeTitular.prazo_em <= agora + antecedencia,
         )
         .order_by(SolicitacaoDeTitular.prazo_em)
     )

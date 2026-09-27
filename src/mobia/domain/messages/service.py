@@ -110,8 +110,8 @@ class IngestionService:
             # incondicional levaria toda mensagem a esperar a janela inteira
             # antes de qualquer handoff). Desde a TEC-207 (D3) o pedido de
             # titular tambem nao: e o terceiro pedido do lead que a rajada nao
-            # pode segurar -- o prazo legal de 15 dias corre da mensagem, e
-            # a janela so o atrasaria. As tres funcoes sao puras e
+            # pode segurar -- o prazo de 15 dias conta de quando o turno
+            # registra o pedido, e a janela so atrasaria o registro. As tres funcoes sao puras e
             # deterministicas, sem chamada paga, e aqui o texto ainda esta em
             # claro -- e o unico ponto do fluxo onde ele esta.
             pediu = (

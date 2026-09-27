@@ -19,7 +19,7 @@ from mobia.domain.titular.repositorio import (
     recusar,
     registrar_solicitacao,
     solicitacao_aberta,
-    vencidas,
+    vencendo,
 )
 from mobia.domain.titular.vocabulario import (
     PRAZO_DO_TITULAR,
@@ -270,7 +270,7 @@ async def test_marcar_atendida_de_um_id_inexistente_levanta(session: AsyncSessio
         await marcar_atendida(session, uuid.uuid4(), agora=datetime.now(UTC))
 
 
-async def test_vencidas_so_devolve_as_abertas_com_prazo_passado(session: AsyncSession) -> None:
+async def test_vencendo_sem_antecedencia_so_devolve_abertas_vencidas(session: AsyncSession) -> None:
     conversa_vencida = chave_de("whatsapp", "5548999990001")
     conversa_no_prazo = chave_de("whatsapp", "5548999990002")
     conversa_atendida = chave_de("whatsapp", "5548999990003")
@@ -319,7 +319,12 @@ async def test_vencidas_so_devolve_as_abertas_com_prazo_passado(session: AsyncSe
     await marcar_atendida(session, atendida_id, agora=datetime.now(UTC))
     await session.commit()
 
-    resultado = await vencidas(session, agora=datetime.now(UTC), tipo=TipoDeSolicitacao.ELIMINACAO)
+    resultado = await vencendo(
+        session,
+        agora=datetime.now(UTC),
+        tipo=TipoDeSolicitacao.ELIMINACAO,
+        antecedencia=timedelta(0),
+    )
 
     assert [linha.id for linha in resultado] == [vencida_id]
 

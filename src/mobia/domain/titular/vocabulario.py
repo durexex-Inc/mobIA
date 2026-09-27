@@ -31,6 +31,12 @@ class StatusDaSolicitacao(StrEnum):
 # RNF-21 / D2 do desenho. Prazo legal para atender um pedido do titular.
 PRAZO_DO_TITULAR = timedelta(days=15)
 
+# D5 do desenho. O sweep de retencao cumpre a ELIMINACAO aberta que vence ate
+# um dia a frente, e nao so a que ja venceu: ele passa uma vez por dia, e com
+# esta antecedencia a passagem diaria sempre cai dentro do prazo. Ver
+# `repositorio.py::vencendo`.
+ANTECEDENCIA_DO_CUMPRIMENTO = timedelta(days=1)
+
 # D5 do desenho. Lead sem conversao (nenhum handoff ACEITO ou CONCLUIDO) com
 # mais de 24 meses desde a ultima interacao (max(messages.created_at)) e
 # anonimizado. Conteudo de mensagem com mais de 12 meses, de qualquer lead,
