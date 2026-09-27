@@ -58,6 +58,44 @@ def test_nao_e_pedido_de_titular(texto: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        (
+            "quero uma cópia dos meus dados, exclusivamente por e-mail",
+            TipoDeSolicitacao.ACESSO,
+        ),
+        ("esqueci de mandar meus dados pessoais", None),
+        ("quero ver meus dados, o anuncio foi removido?", TipoDeSolicitacao.ACESSO),
+        ("quero ver meus dados, é exclusivo?", TipoDeSolicitacao.ACESSO),
+        ("meus dados foram apagados?", None),
+    ],
+)
+def test_radical_dentro_de_outra_palavra_nao_e_eliminacao(
+    texto: str, esperado: TipoDeSolicitacao | None
+) -> None:
+    """A primeira versao casava `exclu`, `esquec` e `remov` soltos, e as tres
+    primeiras frases viravam ELIMINACAO -- opt-out, conversa encerrada e, sem
+    recusa do ADMIN, o lead anonimizado sem volta."""
+    assert pedido_de_titular(texto) is esperado
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "exclui meus dados",
+        "remove meus dados",
+        "remova meus dados pessoais",
+        "esqueçam meus dados",
+        "eliminem meus dados",
+        "quero que vocês deletem meus dados",
+        "peço para vocês apagarem meus dados",
+    ],
+)
+def test_formas_conjugadas_de_pedir_continuam_eliminacao(texto: str) -> None:
+    assert pedido_de_titular(texto) is TipoDeSolicitacao.ELIMINACAO
+
+
+@pytest.mark.parametrize(
     "texto",
     [
         # Achado de revisao: "dados que voces tem" e substring livre e casava

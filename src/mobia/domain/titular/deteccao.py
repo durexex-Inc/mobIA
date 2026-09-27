@@ -133,9 +133,36 @@ def _fala_de_dados_do_lead(normalizado: str) -> bool:
     return _QUALIFICADOR_COLADO_AO_OBJETO.match(resto) is None
 
 
-# Stems, de proposito: cada um casa varias conjugacoes ("apagar", "apague",
-# "apaguem") sem listar uma por uma, no mesmo molde de `optout/deteccao.py`.
-_VERBO_DE_ELIMINAR = re.compile(r"apag|exclu|delet|remov|esquec|elimin")
+# So as formas conjugadas de PEDIR -- infinitivo ("quero apagar"), imperativo
+# e subjuntivo ("apague", "quero que apaguem"), o presente que o portugues
+# falado usa como imperativo ("exclui meus dados") e o infinitivo pessoal
+# ("para voces apagarem") --, cada uma entre fronteiras de palavra.
+#
+# A primeira versao casava o RADICAL solto (`apag|exclu|...`) em qualquer
+# ponto do texto, e isso transformava em ELIMINACAO frases que so continham o
+# radical dentro de outra palavra: "uma copia dos meus dados, EXCLUsivamente
+# por e-mail", "ESQUECi de mandar meus dados pessoais", "o anuncio foi
+# REMOVido?". Um falso positivo aqui nao e inofensivo: grava opt-out, encerra
+# a conversa e, se o ADMIN nao recusar no prazo, a retencao anonimiza o lead
+# sem volta. O participio ("apagado", "removido") fica de fora de proposito:
+# e pergunta ou constatacao ("meus dados foram apagados?"), nao pedido.
+_TERMINACOES_DE_PEDIDO: dict[str, tuple[str, ...]] = {
+    "apag": ("ar", "arem", "a", "am", "ue", "uem"),
+    "delet": ("ar", "arem", "a", "am", "e", "em"),
+    "elimin": ("ar", "arem", "a", "am", "e", "em"),
+    "exclu": ("ir", "irem", "i", "em", "a", "am"),
+    "remov": ("er", "erem", "e", "em", "a", "am"),
+    # Sem acento: `normalizar` ja tirou o cedilha de "esqueca"/"esquecam".
+    "esquec": ("er", "erem", "e", "em", "a", "am"),
+}
+_VERBO_DE_ELIMINAR = re.compile(
+    r"\b(?:"
+    + "|".join(
+        radical + "(?:" + "|".join(terminacoes) + ")"
+        for radical, terminacoes in _TERMINACOES_DE_PEDIDO.items()
+    )
+    + r")\b"
+)
 
 # Ao contrario do verbo de eliminar, estes sao palavras inteiras (fronteira de
 # palavra) -- "ver", "quero" e "quais" sao curtos o bastante para colidir com
