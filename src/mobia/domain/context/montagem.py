@@ -38,6 +38,7 @@ from mobia.domain.context.resumo import (
 from mobia.domain.conversa.regras import DIAS_DE_SILENCIO_PARA_CONVERSA_NOVA
 from mobia.domain.messages.enums import MessageContentType, MessageRole
 from mobia.domain.messages.models import Message
+from mobia.domain.privacidade.pseudonimo import pseudonimizar
 from mobia.domain.prompts.modelo import AgenteDoPrompt
 from mobia.domain.prompts.repositorio import modelos_vigentes, padroes
 from mobia.infra.anthropic import PRAZO_DA_RESPOSTA_SEGUNDOS, TETO_DO_RESUMO, motivo_do_provedor
@@ -185,6 +186,13 @@ def _texto_da(linha: Message) -> str:
     o lead escreveu entra na tag: o marcador de midia e texto do sistema e
     fica fora, e mensagem sem corpo nao tem tag. As tags sao contadas junto
     com o resto de `_texto_das` -- nao sao parcela do orcamento.
+
+    **O nome e o telefone do lead saem aqui (TEC-381, RNF-23).** "O conteudo
+    real" do primeiro paragrafo continua valendo para todo o resto: so o nome
+    anunciado e o telefone viram marcador. E aqui, e nao num passo proprio,
+    porque este texto e ao mesmo tempo o que se conta e o que se envia -- a
+    contagem continua medindo exatamente o que sai. So a fala do LEAD: o
+    agente nunca viu o nome, e o da fala do corretor e o dele.
     """
     corpo = decrypt(linha.text_body, aad_de(linha.id, "text_body"))
     marcador = _MARCADOR_DE_MIDIA.get(linha.content_type)
@@ -196,7 +204,7 @@ def _texto_da(linha: Message) -> str:
         )
         return f"[{linha.role}] {texto}"
     if linha.role == MessageRole.LEAD:
-        corpo = delimitar(corpo)
+        corpo = delimitar(pseudonimizar(corpo))
     marcador = marcador or _MARCADOR_COM_TEXTO.get(linha.content_type)
     if marcador is not None:
         corpo = f"{marcador} {corpo}"

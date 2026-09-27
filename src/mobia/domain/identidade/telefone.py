@@ -112,3 +112,18 @@ def extrair_telefone(texto: str) -> str | None:
     if len(encontrados) != 1:
         return None
     return encontrados.pop()
+
+
+def trechos_de_telefone(texto: str) -> list[tuple[int, int]]:
+    """Onde estao os telefones da fala, como (inicio, fim). TEC-381.
+
+    Todos, e nao so um como `extrair_telefone`: quem pseudonimiza (RNF-23)
+    esconde o da esposa tambem. O criterio de "e telefone" e o MESMO do
+    vinculo -- a regex e `normalizar` --, para que o numero que vincula a
+    sessao seja exatamente o que deixa de ir ao modelo.
+    """
+    return [
+        candidato.span()
+        for candidato in _CANDIDATO.finditer(texto)
+        if normalizar(candidato.group()) is not None
+    ]

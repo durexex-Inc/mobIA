@@ -17,6 +17,7 @@ from mobia.domain.agente.delimitacao import TAG_RESUMO, delimitar
 from mobia.domain.context.montagem import conteudo_da_dobra, montar_prompt
 from mobia.domain.messages.enums import MessageRole
 from mobia.domain.moderacao.port import ModeracaoIndisponivel
+from mobia.domain.privacidade.pseudonimo import pseudonimizar
 from mobia.evals.contexto import contexto_do_historico, mensagem_transiente
 from mobia.evals.injecao import (
     carregar_ataques,
@@ -91,8 +92,11 @@ def test_o_ataque_chega_delimitado_e_escapado(ataque) -> None:
 
     prompt = montar_prompt(contexto_do_historico(historico, sistema="s"), omitir_sistema=True)
 
+    # `pseudonimizar` por dentro da tag desde a TEC-381: um ataque que se
+    # apresenta ("aqui e o Roberto, gerente") chega com o nome trocado. O que
+    # este teste protege e a delimitacao, e ela e a mesma.
     for fala in ataque.turnos:
-        assert f"[LEAD] {delimitar(fala)}" in prompt
+        assert f"[LEAD] {delimitar(pseudonimizar(fala))}" in prompt
     fora = fora_das_tags(prompt)
     assert "CANARIO" not in fora
     for marca in ("<lead>", "</lead>", "<system>", "[sistema]"):
@@ -111,7 +115,7 @@ def test_o_ataque_dobrado_chega_delimitado_ao_resumo_e_dele_ao_turno(ataque) -> 
     ]
     conteudo = conteudo_da_dobra(None, dobrados)
     for fala in ataque.turnos[: ataque.resumir_ate]:
-        assert f"[LEAD] {delimitar(fala)}" in conteudo
+        assert f"[LEAD] {delimitar(pseudonimizar(fala))}" in conteudo
 
     # O pior resumo possivel: o resumidor copiou a instrucao plantada.
     contexto = contexto_do_historico(
