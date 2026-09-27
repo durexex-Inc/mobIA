@@ -30,7 +30,7 @@ export function Menu({ quem }: { quem: QuemSou }) {
         {/* Formulario, e nao link: sair e POST (TEC-310, D6). Sem JavaScript --
             o painel so tem JS de cliente onde nao ha alternativa: o aviso de
             inatividade (TEC-311), a busca da lista de leads (TEC-321) e a
-            conversa do lead (TEC-324). */}
+            conversa do lead (TEC-324) e o controle dela (TEC-327). */}
         <form method="post" action="/sair">
           <button type="submit">Sair</button>
         </form>

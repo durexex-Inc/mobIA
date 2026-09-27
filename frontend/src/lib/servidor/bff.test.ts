@@ -36,6 +36,16 @@ describe('caminhoPermitido', () => {
       )
     })
 
+    it('assumir e devolver passam como POST, e so como POST (TEC-327)', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'assumir'])).toBe(
+        `/api/v1/leads/${LEAD}/assumir`,
+      )
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'devolver'])).toBe(
+        `/api/v1/leads/${LEAD}/devolver`,
+      )
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'assumir'])).toBeNull()
+    })
+
     it('o `*` nao abre as outras rotas do lead', () => {
       // O detalhe, a revelacao e a lista continuam fora do alcance do
       // navegador: so a transcricao tem consumidor de cliente.

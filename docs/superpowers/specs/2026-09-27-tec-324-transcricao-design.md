@@ -55,7 +55,9 @@ Cada fala tem o **rótulo textual** do autor e o **horário**. Cor e alinhamento
 
 A card pede que "mensagens novas" sejam anunciadas com `aria-live="polite"`. **Nesta tela não chega mensagem nova com ela aberta**: não há atualização em tempo real, que é Won't (TEC-320), e a conversa só muda ao recarregar.
 
-O que muda com a tela aberta é o carregamento das anteriores, e é isso que a região `aria-live="polite"` anuncia: "100 falas anteriores carregadas", ou a falha. A lista das falas **não** é região viva: anunciar 100 falas antigas de uma vez seria ruído, e não seria "nova".
+O que muda com a tela aberta é o carregamento das anteriores, e é isso que a região `aria-live="polite"` anuncia: "100 falas anteriores carregadas", ou a falha.
+
+- **Nota (TEC-327, 27/09/2026):** agora há mensagem nova com a tela aberta, na conversa assumida por quem a vê: o polling de 5 s a traz, e a mesma região a anuncia ("1 mensagem nova"). A lista das falas **não** é região viva: anunciar 100 falas antigas de uma vez seria ruído, e não seria "nova".
 
 ## D6 — Os estados do "carregar anteriores"
 

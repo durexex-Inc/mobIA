@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
+import { ControleDaConversa } from '@/components/ControleDaConversa'
 import { SecoesDoDetalhe } from '@/components/DetalheDoLead'
 import { Transcricao } from '@/components/Transcricao'
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
@@ -108,6 +109,13 @@ export default async function PaginaDoLead({ params }: { params: Promise<{ leadI
   }
 
   const agora = new Date()
+  // Os botoes so para quem pode agir: `ATENDER_LEAD` E um vinculo de corretor
+  // em nome de quem falar (TEC-327, D4). Sem o vinculo, todo clique seria o
+  // 409 "sem vinculo de corretor ativo" da TEC-194.
+  const meuCorretorId = quem.permissoes.has('ATENDER_LEAD') ? quem.corretorId : null
+  // O polling so quando a conversa e de quem ve a tela (D5).
+  const acompanhar =
+    meuCorretorId !== null && detalhe.atendimento?.assumidoPor.corretorId === meuCorretorId
   return (
     <main className="painel detalhe">
       <p>
@@ -123,13 +131,20 @@ export default async function PaginaDoLead({ params }: { params: Promise<{ leadI
           {tempoRelativo(detalhe.ultimaInteracaoEm, agora)}
         </time>
       </p>
+      {meuCorretorId && (
+        <ControleDaConversa
+          leadId={leadId}
+          atendimento={detalhe.atendimento}
+          meuCorretorId={meuCorretorId}
+        />
+      )}
       <SecoesDoDetalhe detalhe={detalhe} agora={agora} />
       {/* A ultima secao da ordem da card. Se so ela falhar, o resto da tela
           continua util para quem vai ligar (D1). */}
       <section className="detalhe-secao" aria-label="Conversa">
         <h2>Conversa</h2>
         {transcricao ? (
-          <Transcricao leadId={leadId} inicial={transcricao} />
+          <Transcricao leadId={leadId} inicial={transcricao} acompanhar={acompanhar} />
         ) : (
           <ErroDeCarga
             mensagem="Não foi possível carregar a conversa."

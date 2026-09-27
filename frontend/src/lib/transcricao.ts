@@ -16,7 +16,19 @@ export type Fala = {
   em: string
 }
 
-export type PaginaDaTranscricao = { itens: Fala[]; cursorAnterior: string | null }
+/**
+ * Uma pagina da transcricao. `cursorPosterior` (TEC-327) e o ponto de partida
+ * do proximo poll: a fala mais recente da pagina. O servidor devolve o
+ * proximo em toda resposta, e a tela nunca monta um cursor.
+ */
+export type PaginaDaTranscricao = {
+  itens: Fala[]
+  cursorAnterior: string | null
+  cursorPosterior?: string | null
+}
+
+/** O intervalo do polling da conversa assumida (RN-FE-09.4). */
+export const INTERVALO_DO_POLLING_MS = 5_000
 
 export type Lado = 'lead' | 'equipe' | 'sistema'
 
@@ -74,6 +86,14 @@ export function textoDaFala(fala: Pick<Fala, 'retida' | 'conteudo' | 'tipo'>): s
     return fala.conteudo
   }
   return SEM_TEXTO[fala.tipo] ?? 'Mensagem sem texto'
+}
+
+/**
+ * Onde buscar as falas NOVAS, pelo proxy (TEC-327, D1). O backend so grava o
+ * acesso na trilha quando a resposta traz fala.
+ */
+export function urlDasPosteriores(leadId: string, cursor: string): string {
+  return `/bff/api/v1/leads/${encodeURIComponent(leadId)}/mensagens?depois=${encodeURIComponent(cursor)}`
 }
 
 /** Onde buscar as falas anteriores: pelo proxy, que poe o JWT da sessao (D2). */

@@ -28,6 +28,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from mobia.domain.agendamento.models import Agendamento
 from mobia.domain.agente.models import Recomendacao
+from mobia.domain.atendimento.repositorio import AtendimentoEmCurso, em_curso
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.conversa.models import Conversa
@@ -127,6 +128,9 @@ class DetalheDoLead:
     recomendacoes: list[ImovelRecomendado]
     agendamentos: list[AgendamentoDoLead]
     followups: list[FollowUpDisparado]
+    # Quem tem a conversa agora, ou `None` (TEC-327, D2): sem isto a faixa
+    # "Voce esta no controle" sumiria ao recarregar a pagina.
+    atendimento: AtendimentoEmCurso | None = None
 
 
 # O que sai de `lead_qualification`, e com qual nome. Lista explicita, e nao
@@ -214,6 +218,7 @@ async def ler_detalhe(
         recomendacoes=await _recomendacoes(session, par),
         agendamentos=await _agendamentos(session, par),
         followups=await _followups(session, par),
+        atendimento=await em_curso(session, channel=par[0], conversation_key=par[1]),
     )
 
 

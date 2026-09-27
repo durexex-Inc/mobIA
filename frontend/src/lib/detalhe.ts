@@ -26,6 +26,12 @@ export type FollowUpDoLead = { tentativa: number; temperatura: string; disparado
 
 export type Qualificacao = Record<string, unknown>
 
+/** Quem tem a conversa agora (TEC-327, D2), ou `null` no detalhe. */
+export type Atendimento = {
+  assumidoPor: { corretorId: string; nome: string }
+  assumidoEm: string
+}
+
 export type DetalheDoLead = {
   leadId: string
   channel: string
@@ -37,6 +43,7 @@ export type DetalheDoLead = {
   qualificacao: Qualificacao | null
   agendamentos: AgendamentoDoLead[]
   followups: FollowUpDoLead[]
+  atendimento: Atendimento | null
 }
 
 /**
