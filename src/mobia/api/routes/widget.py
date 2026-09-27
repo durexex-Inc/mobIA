@@ -39,6 +39,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from starlette.responses import Response
 
 from mobia.api.central_do_widget import CentralIndisponivel, central_de
 from mobia.api.deps import get_ingestion_service

@@ -59,7 +59,8 @@ async def test_lista_vazia_recusa_ate_o_painel(ws_cliente, monkeypatch) -> None:
 
 async def test_a_recusa_conta_no_limite_por_ip(ws_cliente, monkeypatch) -> None:
     """D3: a checagem vem depois do limite, entao a tentativa recusada consome
-    o balde -- e quem martela de outra pagina acaba no 429."""
+    o balde -- e quem martela de outra pagina acaba na recusa por limite, que
+    desde a TEC-346 e `muitas_tentativas` seguido de 1013, e nao mais 429."""
     monkeypatch.setenv("RATE_LIMIT_REQUISICOES_POR_IP_POR_MINUTO", "1")
     get_settings.cache_clear()
 
@@ -67,5 +68,9 @@ async def test_a_recusa_conta_no_limite_por_ip(ws_cliente, monkeypatch) -> None:
         status, _ = await ws.recusa()
     assert status == 403
     async with ws_cliente(origem="https://copia-do-site.com", ip="198.51.100.41") as ws:
-        status, _ = await ws.recusa()
-    assert status == 429
+        await ws.aceitar()
+        frame = await ws.receber()
+        fechamento = await ws.evento()
+    assert frame["codigo"] == "muitas_tentativas"
+    assert fechamento["type"] == "websocket.close"
+    assert fechamento["code"] == 1013
