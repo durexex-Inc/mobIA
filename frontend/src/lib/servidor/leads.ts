@@ -1,5 +1,6 @@
 import 'server-only'
 
+import type { DetalheDoLead } from '@/lib/detalhe'
 import type { Ordem, PaginaDeLeads } from '@/lib/leads'
 import { detalheDe } from '@/lib/metricas'
 import { chamarApi } from '@/lib/servidor/api'
@@ -46,4 +47,23 @@ export async function buscarLeads(
   }
 
   return (await resposta.json()) as PaginaDeLeads
+}
+
+/**
+ * `GET /api/v1/leads/{leadId}` (TEC-323).
+ *
+ * **Cada chamada grava um acesso na trilha** (D3 da TEC-193), e por isso ela
+ * e `no-store` e so sai quando a pagina e aberta de fato -- nunca por
+ * prefetch (D2 do desenho da TEC-323). O `leadId` vai codificado: ele vem da
+ * URL, e um valor com `/` nao pode virar outro caminho da API.
+ */
+export async function buscarDetalhe(leadId: string, acesso: string): Promise<DetalheDoLead> {
+  const resposta = await chamarApi(`/api/v1/leads/${encodeURIComponent(leadId)}`, { acesso })
+
+  if (!resposta.ok) {
+    const { mensagem } = await detalheDe(resposta)
+    throw new ErroDeLeads(resposta.status, mensagem, resposta.headers.get('x-request-id'))
+  }
+
+  return (await resposta.json()) as DetalheDoLead
 }

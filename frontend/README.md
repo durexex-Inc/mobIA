@@ -154,7 +154,26 @@ para `/leads` quem não tem `VER_FUNIL` e tem `VER_LEADS`. O desenho está em
   mascarado que a API devolve.
 - **Sem cache**, ao contrário do funil: o score muda a cada turno do agente.
 - **Só a primeira página.** Paginação, filtros e cartões no celular são a
-  TEC-322; o detalhe do lead é a TEC-323.
+  TEC-322.
+
+## O detalhe do lead (TEC-323)
+
+`/leads/[leadId]` mostra o resumo em seis blocos, o contato mascarado, a
+qualificação, os agendamentos e os follow-ups. Guardado por
+`VER_DETALHE_DO_LEAD`: LEITURA vê a lista e não o detalhe, e para ela a linha
+da lista não é link. O desenho está em
+`docs/superpowers/specs/2026-09-27-tec-323-detalhe-do-lead-design.md`.
+
+- **Abrir o detalhe grava um acesso na trilha de auditoria** (TEC-193), a cada
+  abertura, recarregar inclusive. Por isso a lista linka para ele com `<a>`, e
+  não com `next/link`. O prefetch padrão para no `loading.tsx` do detalhe e não
+  grava nada, mas `prefetch={true}`, ou apagar aquele `loading.tsx`, passaria a
+  gravar um acesso por linha visível.
+- **O resumo é cortado nos marcadores literais da TEC-175** (`## Quem e o
+  lead` …). Se um marcador mudar lá, a tela mostra o texto inteiro, sem os
+  títulos, e nada some.
+- **Histórico de score, recomendações e transcrição ainda não aparecem**:
+  TEC-325 e TEC-324.
 
 ## O proxy `/bff/*` exige sessão
 
