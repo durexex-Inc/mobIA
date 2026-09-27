@@ -97,9 +97,11 @@ async def falar_com_o_lead(
     reenvio seguro: a fala ja gravada com ele volta como enviada, sem sair de
     novo. Sem ele, o id nasce aqui, como antes.
 
-    **Tres sessoes curtas, e nao uma longa**, e a do meio e a chamada de rede:
-    segurar uma transacao aberta enquanto a Meta responde prenderia o lock de
-    `atendimento_humano` pelo tempo do HTTP. A tomada e commitada antes do
+    **Sessoes curtas, e nao uma longa, com a chamada de rede entre elas**: uma
+    antes do envio (conferencias do id e tomada), uma depois (a fala gravada),
+    e uma terceira so quando a guarda devolve `False`. Segurar uma transacao
+    aberta enquanto a Meta responde prenderia o lock de `atendimento_humano`
+    pelo tempo do HTTP. A tomada e commitada antes do
     envio de proposito (ver a docstring do modulo); se o envio falhar, a
     conversa FICA assumida -- o corretor quis falar, e o agente voltar a
     responder por causa de uma falha de rede seria a surpresa pior.
