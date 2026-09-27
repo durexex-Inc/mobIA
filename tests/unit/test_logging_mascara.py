@@ -193,3 +193,46 @@ def test_o_ip_sai_mascarado(caplog) -> None:
 
     assert "203.0.113.7" not in caplog.text
     assert "*" in caplog.text
+
+
+# O ultimo grupo todo decimal e o caso que a mascara comia: 12 digitos
+# seguidos, dentro da faixa de 10 a 15 da corrida de telefone.
+_UUID_DE_ULTIMO_GRUPO_DECIMAL = "c6b6bff9-6e84-402d-a811-358448328945"
+
+
+def test_uuid_de_ultimo_grupo_decimal_sobrevive_em_campo_livre(caplog) -> None:
+    """Fora de `_CHAVES_LIVRES`, o UUID sozinho no valor continua intacto."""
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.INFO):
+        log.info("evento.teste", chave=_UUID_DE_ULTIMO_GRUPO_DECIMAL)
+
+    assert _UUID_DE_ULTIMO_GRUPO_DECIMAL in caplog.text
+
+
+def test_uuid_dentro_de_caminho_sobrevive(caplog) -> None:
+    """TEC-207: a chave da midia orfa (`midias/<uuid>`) e o que o operador usa
+    para achar o blob; mascarada, ela nao aponta para arquivo nenhum. Vale
+    tambem dentro de uma lista, que e como `chaves_restantes` sai."""
+    caminho = f"midias/{_UUID_DE_ULTIMO_GRUPO_DECIMAL}"
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.INFO):
+        log.info("evento.teste", chave=caminho, chaves_restantes=[caminho])
+
+    assert caplog.text.count(caminho) == 2
+    assert "********" not in caplog.text
+
+
+def test_telefone_ao_lado_de_uuid_continua_mascarado(caplog) -> None:
+    """Preservar o UUID nao pode abrir brecha para o telefone no mesmo valor."""
+    log = structlog.get_logger("teste")
+    with caplog.at_level(logging.INFO):
+        log.info(
+            "evento.teste",
+            detalhe=f"midias/{_UUID_DE_ULTIMO_GRUPO_DECIMAL} de 5548999990000 e 48999990000",
+        )
+
+    assert _UUID_DE_ULTIMO_GRUPO_DECIMAL in caplog.text
+    assert "5548999990000" not in caplog.text
+    assert "48999990000" not in caplog.text
+    assert "*********0000" in caplog.text
+    assert "*******0000" in caplog.text
