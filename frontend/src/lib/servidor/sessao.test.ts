@@ -266,3 +266,56 @@ describe('obterSessaoValida (TEC-310)', () => {
     })
   })
 })
+
+describe('sessao ociosa no servidor (TEC-311, D3)', () => {
+  beforeEach(() => limparArmazem())
+
+  function chaveDeAtividade(): string | undefined {
+    return conteudoDoArmazem().find((i) => i.chave.startsWith('mobia:painel:atividade:'))?.chave
+  }
+
+  it('o login cria a marca de atividade, com 32 minutos de validade', async () => {
+    await criarSessao({ acesso: tokenQueExpiraEm(3600), refresh: 'r' })
+
+    const marca = conteudoDoArmazem().find((i) => i.chave === chaveDeAtividade())
+    expect(marca?.segundos).toBe(32 * 60)
+  })
+
+  it('sem a marca -- 32 minutos sem nada --, a sessao e apagada e vale `null`', async () => {
+    const id = await criarSessao({ acesso: tokenQueExpiraEm(3600), refresh: 'r' })
+    await armazemEmMemoria.apagar(chaveDeAtividade()!)
+
+    expect(await obterSessaoValida(id)).toBeNull()
+    expect(await lerSessao(id)).toBeNull()
+  })
+
+  it('cada leitura regrava a marca, o que empurra o fim para frente', async () => {
+    const id = await criarSessao({ acesso: tokenQueExpiraEm(3600), refresh: 'r' })
+    await armazemEmMemoria.gravar(chaveDeAtividade()!, '1', 5)
+
+    await obterSessaoValida(id)
+
+    expect(conteudoDoArmazem().find((i) => i.chave === chaveDeAtividade())?.segundos).toBe(32 * 60)
+  })
+
+  it('marcar atividade NAO regrava o registro dos tokens', async () => {
+    // O motivo da chave propria: regravar o registro poderia desfazer uma
+    // renovacao concorrente e ressuscitar um refresh ja consumido.
+    const id = await criarSessao({ acesso: tokenQueExpiraEm(3600), refresh: 'r' })
+    const antes = conteudoDoArmazem().find((i) => i.chave.startsWith('mobia:painel:sessao:'))!
+    const gravar = vi.spyOn(armazemEmMemoria, 'gravar')
+
+    await obterSessaoValida(id)
+
+    expect(gravar.mock.calls.map(([chave]) => chave)).not.toContain(antes.chave)
+    gravar.mockRestore()
+  })
+
+  it('apagar a sessao apaga a marca junto', async () => {
+    const id = await criarSessao({ acesso: tokenQueExpiraEm(3600), refresh: 'r' })
+
+    await apagarSessao(id)
+
+    expect(conteudoDoArmazem()).toEqual([])
+  })
+})

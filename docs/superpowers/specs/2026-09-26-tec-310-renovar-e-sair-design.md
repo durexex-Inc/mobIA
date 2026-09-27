@@ -66,6 +66,8 @@ O cenário 3 pede que, depois de sair, o botão "voltar" não mostre tela com da
 
 "O cache de requisições em memória é limpo" (RNF-FE-11) não tem o que limpar: o painel não tem estado de cliente nem cache de requisição no navegador.
 
+- **Nota (TEC-311, 26/09/2026):** o painel passou a ter estado de cliente — o horário da última interação, no `localStorage`, para o aviso de inatividade. Não é cache de requisição nem dado de lead, e o logout não precisa limpá-lo.
+
 ## Lacunas declaradas
 
 - **L1 — o "voltar" não foi verificado num navegador de verdade.** O comportamento do back/forward cache varia por navegador e por versão, e o projeto não tem teste de navegador. O que se verifica: os cabeçalhos da página e do logout, e que a página pedida de novo vai ao login. A verificação no navegador é manual, e fica no PR.

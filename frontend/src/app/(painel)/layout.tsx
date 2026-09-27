@@ -1,3 +1,4 @@
+import { AvisoDeInatividade } from '@/components/AvisoDeInatividade'
 import { Menu } from '@/components/Menu'
 import { quemSouDaRequisicao } from '@/lib/servidor/quemSou'
 
@@ -19,6 +20,9 @@ export default async function LayoutDoPainel({ children }: LayoutProps<'/'>) {
   return (
     <>
       {quem && <Menu quem={quem} />}
+      {/* So para quem esta logado: sem sessao nao ha o que encerrar
+          (TEC-311). E o unico componente de cliente do painel. */}
+      {quem && <AvisoDeInatividade />}
       {children}
     </>
   )

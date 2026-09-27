@@ -93,6 +93,12 @@ desenho está em
   sessão. A sessão dura 7 dias contados do login; renovar não estende.
 - **"Sair" é um POST para `/sair`**: revoga o refresh no FastAPI, apaga a
   sessão e o cookie, e responde com `Clear-Site-Data: "cache"`.
+- **Sessão ociosa (TEC-311).** Aos 30 minutos sem interação, um aviso conta
+  60 segundos e depois chama `/sair`. É o **único componente de cliente** do
+  painel (`components/AvisoDeInatividade.tsx`); ele guarda no `localStorage`
+  só o horário da última interação, para as abas se enxergarem. O servidor
+  também encerra a sessão ociosa há mais de 32 minutos — para o celular
+  esquecido, que não roda o aviso.
 - **O Redis dos testes é um mapa** (`test/armazem-em-memoria.ts`), trocado por
   `vi.mock`: nenhum teste do frontend precisa de Redis de pé.
 
