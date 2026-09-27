@@ -192,30 +192,57 @@ _VERBO_DE_ELIMINAR = re.compile(
 # corrigir meus dados". O custo desse falso positivo e o turno inteiro: ele
 # registra a solicitacao, responde com o texto fixo e nunca chama o modelo.
 #
-# Duas formas, e so elas:
+# Tres formas, e so elas:
 #
-# - verbo de querer/pedir SEGUIDO do objeto, com no maximo um verbo de acesso
-#   ("ver", "receber"...) e um "uma copia dos" no meio: "quero meus dados",
-#   "quero ver os meus dados", "me mandem uma copia dos meus dados". Um verbo
-#   que nao e de acesso entre os dois ("quero CORRIGIR meus dados", "quero
-#   AGENDAR uma visita, meus dados") quebra a colagem, de proposito.
+# - "quero"/"queria"/"gostaria de" SEGUIDO do objeto, com no maximo um verbo
+#   de acesso ("ver", "receber", "acessar", "consultar", "saber") e um "uma
+#   copia dos" no meio: "quero meus dados", "quero ver os meus dados". Um
+#   verbo que nao e de acesso entre os dois ("quero CORRIGIR meus dados",
+#   "quero AGENDAR uma visita, meus dados") quebra a colagem, de proposito.
+# - "mandem"/"enviem" (o plural, dirigido a empresa) ou "me manda"/"me envia"
+#   seguido do objeto, do mesmo jeito -- mas nunca com um destino logo
+#   depois ("pro corretor", "para o Joao", "a imobiliaria"). Segunda
+#   revisao: "manda"/"envia" soltos tinham entrado, e "manda meus dados pro
+#   corretor" -- o lead pedindo para REPASSAR os dados a alguem -- virava
+#   acesso. O singular sem "me" nao conta nunca.
 # - a pergunta "quais dados ... voces tem DE MIM": o "de mim"/"sobre mim" e
 #   obrigatorio, porque "quais dados voces precisam" sem ele e pergunta de
 #   cadastro, nao de titular.
+#
+# Nas duas primeiras, o que vem logo DEPOIS do objeto tambem veta
+# (`_CONTEXTO_QUE_NAO_E_ACESSO`): "meus dados NO contrato", "meus dados
+# ATUALIZADOS no cadastro", "meus dados DE acesso ao portal", "meus dados DO
+# financiamento", "meus dados EXPOSTOS" falam de outra coisa. E a negacao
+# antes do verbo ("nao quero meus dados expostos") anula, como na eliminacao.
 #
 # O preco aceito e o recall: "gostaria de saber o que voces sabem sobre mim"
 # nao casa. Perder um pedido aqui deixa o lead sem o texto fixo, mas o modelo
 # ainda responde e o ADMIN ainda pode atender pela exportacao
 # (`GET /api/v1/leads/{id}/dados-pessoais`); sequestrar uma
 # frase de venda cala o agente justamente na conversa que importa.
-_PEDIDO_DE_ACESSO = re.compile(
-    r"\b(?:quero|queria|gostaria de|mandem|enviem|manda|envia)"
-    r"(?: me)?"
+# O miolo comum as duas primeiras formas. O objeto e um grupo ATOMICO
+# (`(?>...)`), com a forma longa primeiro: sem isso, em "me manda meus dados
+# pessoais pro corretor" o motor recuaria para "meus dados", o veto de destino
+# olharia " pessoais" em vez de " pro", e a frase passaria.
+_OBJETO_DO_ACESSO = (
     r"(?: (?:ver|receber|acessar|consultar|saber))?"
     r"(?: (?:uma|a) copia d(?:os|e))?"
     r"(?: todos)?(?: os)?"
-    r" (?:meus dados|dados pessoais)\b"
-    r"|\bquais (?:sao )?(?:os )?dados(?: pessoais)?(?: que)? voces "
+    r" (?>meus dados pessoais|meus dados|dados pessoais)\b"
+)
+_CONTEXTO_QUE_NAO_E_ACESSO = (
+    r"(?! (?:no|na|nos|nas|do|da|dos|das|de|atualizad\w*|corrigid\w*|expost\w*)\b)"
+)
+_DESTINO = r"(?! (?:pro|pra|pros|pras|para|ao|aos|a|as)\b)"
+_PEDIDO_DE_ACESSO = re.compile(
+    r"\b(?:quero|queria|gostaria de)"
+    + _OBJETO_DO_ACESSO
+    + _CONTEXTO_QUE_NAO_E_ACESSO
+    + r"|\b(?:mandem|enviem|me manda|me envia)(?: me)?"
+    + _OBJETO_DO_ACESSO
+    + _CONTEXTO_QUE_NAO_E_ACESSO
+    + _DESTINO
+    + r"|\bquais (?:sao )?(?:os )?dados(?: pessoais)?(?: que)? voces "
     r"(?:tem|guardam|possuem|armazenam) (?:de|sobre) mim\b"
 )
 
@@ -251,7 +278,8 @@ def pedido_de_titular(texto: str) -> TipoDeSolicitacao | None:
             return None
         return TipoDeSolicitacao.ELIMINACAO
 
-    if _PEDIDO_DE_ACESSO.search(normalizado):
+    pedido_de_acesso = _PEDIDO_DE_ACESSO.search(normalizado)
+    if pedido_de_acesso and not _tem_negacao_antes(normalizado, pedido_de_acesso.start()):
         return TipoDeSolicitacao.ACESSO
     return None
 

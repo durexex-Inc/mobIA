@@ -225,3 +225,48 @@ def test_a_pergunta_de_eliminacao_fura_as_guardas_e_cabe_na_coluna() -> None:
     String(32); estourar so apareceria no INSERT."""
     assert KIND_DA_PERGUNTA_DE_ELIMINACAO in KINDS_QUE_FURAM_AS_GUARDAS
     assert len(KIND_DA_PERGUNTA_DE_ELIMINACAO) <= 32
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "manda meus dados pro corretor",
+        "Oi, envia meus dados para o corretor que me atendeu",
+        "manda meus dados pessoais pro corretor e marca visita",
+        "envia meus dados pra imobiliária",
+        "me envia meus dados pro João por favor",
+    ],
+)
+def test_mandar_os_dados_a_alguem_nao_e_acesso(texto: str) -> None:
+    """Regressao da primeira correcao do C1: "manda"/"envia" soltos entraram
+    como verbo de acesso, e a frase em que o lead pede para REPASSAR os dados
+    a um terceiro virava pedido de acesso aos proprios dados. So o plural
+    ("mandem", "enviem") e o "me manda"/"me envia" contam, e nunca com um
+    destino ("pro corretor", "para o Joao") logo depois do objeto."""
+    assert pedido_de_titular(texto) is None
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "não quero meus dados expostos",
+        "quero meus dados no contrato",
+        "quero meus dados atualizados no cadastro",
+        "queria meus dados de acesso ao portal",
+        "quero meus dados do financiamento",
+    ],
+)
+def test_negacao_e_contexto_a_direita_derrubam_o_acesso(texto: str) -> None:
+    assert pedido_de_titular(texto) is None
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "me manda meus dados",
+        "me envia uma cópia dos meus dados",
+        "mandem meus dados pessoais",
+    ],
+)
+def test_me_manda_sem_destino_continua_acesso(texto: str) -> None:
+    assert pedido_de_titular(texto) is TipoDeSolicitacao.ACESSO
