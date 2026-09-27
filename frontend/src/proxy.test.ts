@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import { COOKIE_DA_SESSAO as COOKIE_DA_SESSAO_DE_VERDADE } from '@/lib/servidor/sessao'
 
-import { COOKIE_DA_SESSAO, politicaDeSeguranca, proxy } from './proxy'
+import { config, COOKIE_DA_SESSAO, politicaDeSeguranca, proxy } from './proxy'
 
 const PAINEL = 'https://painel.exemplo.com'
 
@@ -53,6 +53,13 @@ describe('politicaDeSeguranca', () => {
     // O painel e `<form method="get">`; sem esta diretiva uma injecao poderia
     // apontar o envio para outro host.
     expect(politicaDeSeguranca('abc', false)).toContain("form-action 'self'")
+  })
+
+  it('so a rota do embed aceita ser enquadrada, e por qualquer site ate a TEC-345', () => {
+    expect(politicaDeSeguranca('abc', false, { embutivel: true })).toContain('frame-ancestors *')
+    expect(politicaDeSeguranca('abc', false, { embutivel: true })).not.toContain(
+      "frame-ancestors 'none'",
+    )
   })
 })
 
@@ -105,8 +112,8 @@ describe('proxy sem sessao (TEC-309, D5)', () => {
     expect(destinoDe('/?de=2026-09-01')).toBe(`${PAINEL}/login?returnTo=%2F%3Fde%3D2026-09-01`)
   })
 
-  it.each(['/login', '/login/entrar', '/login/mfa', '/embed/chat', '/sair', '/sessao/atividade'])(
-    '%s abre sem sessao, e continua recebendo a CSP',
+  it.each(['/login', '/login/entrar', '/login/mfa', '/sair', '/sessao/atividade'])(
+    '%s abre sem sessao, e continua recebendo a CSP que nega iframe',
     (caminho) => {
       const resposta = proxy(requisicao(caminho, { comSessao: false }))
 
@@ -114,6 +121,38 @@ describe('proxy sem sessao (TEC-309, D5)', () => {
       expect(resposta.headers.get('content-security-policy')).toContain("frame-ancestors 'none'")
     },
   )
+
+  it.each(['/embed/chat', '/embed/aparencia'])(
+    '%s abre sem sessao e aceita ser enquadrada (TEC-344, D8)',
+    (caminho) => {
+      const resposta = proxy(requisicao(caminho, { comSessao: false }))
+
+      expect(resposta.headers.get('location')).toBeNull()
+      expect(resposta.headers.get('content-security-policy')).toContain('frame-ancestors *')
+    },
+  )
+
+  it.each(['/', '/leads', '/embedx'])(
+    '%s continua negando iframe: afrouxar a rota errada e o que este teste pega',
+    (caminho) => {
+      expect(cspDe(caminho)).toContain("frame-ancestors 'none'")
+    },
+  )
+
+  it('`/widget.js` nao passa pelo proxy: sem isso o visitante sem cookie levaria 307 (D9)', () => {
+    // O `source` do matcher e expressao do path-to-regexp; para estes caminhos
+    // ela coincide com uma RegExp ancorada.
+    const fonte = (config.matcher[0] as { source: string }).source
+    const casa = (caminho: string) => new RegExp(`^${fonte}$`).test(caminho)
+
+    expect(casa('/widget.js')).toBe(false)
+    // So o nome exato: `widget.json` ou `widgetXjs` sao rota do painel, e
+    // passam pela guarda como qualquer outra.
+    expect(casa('/widget.json')).toBe(true)
+    expect(casa('/widgetXjs')).toBe(true)
+    expect(casa('/embed/chat')).toBe(true)
+    expect(casa('/leads')).toBe(true)
+  })
 
   it('`/loginx` nao e o login: e prefixo de texto, nao de rota', () => {
     expect(destinoDe('/loginx')).toBe(`${PAINEL}/login?returnTo=%2Floginx`)

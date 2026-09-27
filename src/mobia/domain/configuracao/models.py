@@ -44,6 +44,10 @@ class VersaoDaConfiguracao(Base):
     # e sem orcamento o painel de custo nao acende alerta nenhum. Nulo nas
     # linhas anteriores a `0060`, que e o que elas de fato diziam.
     orcamento_mensal_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # TEC-344, D1. A aparencia do botao do chat web. Nao nulas: o botao sempre
+    # tem cor e lado, e a `0064` preencheu as linhas antigas com o padrao.
+    cor_primaria: Mapped[str] = mapped_column(String(7), nullable=False)
+    posicao_do_botao: Mapped[str] = mapped_column(String(8), nullable=False)
     autor: Mapped[str] = mapped_column(String(120), nullable=False)
     # `clock_timestamp()` e nao `now()`: duas edicoes na mesma transacao de
     # teste sairiam com o mesmo instante, e "a mais recente" deixaria de ser

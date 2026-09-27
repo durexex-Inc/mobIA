@@ -240,3 +240,50 @@ async def test_so_admin_configura_o_agente(
         await client.get(f"{ROTA}/historico", headers=_bearer(papel)),
     ]
     assert [r.status_code for r in respostas] == [403, 403, 403]
+
+
+# --- TEC-344: a aparencia do chat web ------------------------------------------
+
+
+async def test_cor_e_posicao_do_botao_se_gravam_e_se_leem(
+    client: AsyncClient, banco_limpo: None
+) -> None:
+    antes = (await client.get(ROTA, headers=_bearer())).json()
+    assert antes["configuracao"]["corPrimaria"] == "#1D4ED8"
+    assert antes["configuracao"]["posicaoDoBotao"] == "DIREITA"
+    assert antes["limites"]["posicaoDoBotao"] == {"valores": ["DIREITA", "ESQUERDA"]}
+
+    resposta = await client.patch(
+        ROTA, json={"corPrimaria": "#0A7F5A", "posicaoDoBotao": "ESQUERDA"}, headers=_bearer()
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert sorted(resposta.json()["alterados"]) == ["corPrimaria", "posicaoDoBotao"]
+    depois = (await client.get(ROTA, headers=_bearer())).json()["configuracao"]
+    assert (depois["corPrimaria"], depois["posicaoDoBotao"]) == ("#0A7F5A", "ESQUERDA")
+
+
+@pytest.mark.parametrize(
+    "pedido",
+    [
+        {"corPrimaria": "#0A7F5AFF"},
+        {"corPrimaria": None},
+        {"posicaoDoBotao": None},
+    ],
+)
+async def test_aparencia_invalida_e_recusada_e_nada_se_grava(
+    client: AsyncClient, banco_limpo: None, pedido: dict[str, object]
+) -> None:
+    resposta = await client.patch(ROTA, json=pedido, headers=_bearer())
+
+    assert resposta.status_code == 422, resposta.text
+    historico = (await client.get(f"{ROTA}/historico", headers=_bearer())).json()
+    assert historico["itens"] == []
+
+
+async def test_posicao_fora_do_vocabulario_e_recusada_na_borda(
+    client: AsyncClient, banco_limpo: None
+) -> None:
+    resposta = await client.patch(ROTA, json={"posicaoDoBotao": "CIMA"}, headers=_bearer())
+
+    assert resposta.status_code == 422, resposta.text

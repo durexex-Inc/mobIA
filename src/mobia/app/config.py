@@ -1,12 +1,13 @@
 import base64
 import os
+import re
 from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Commitada de proposito para desenvolvimento e teste. Toda comparacao com este
@@ -43,6 +44,11 @@ _AMBIENTES_DE_PRODUCAO = frozenset({"production", "producao", "prod"})
 # `contexto_limiar_de_contagem` nao e sobrescrito. Derivada, nao um numero
 # redondo -- ver o property para a conta e para o que ela nao cobre.
 _FRACAO_SEGURA_DO_LIMIAR_DE_CONTAGEM = 0.6
+
+# O formato de `tenant_slug` (TEC-344). Copia do `SLUG` de
+# `frontend/src/lib/servidor/aparencia.ts`: mudar um sem o outro faz o botao
+# sumir de todo site.
+_FORMATO_DO_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 
 
 class ConfiguracaoInsegura(RuntimeError):
@@ -350,6 +356,16 @@ class Settings(BaseSettings):
     # Teto de caracteres por frame de texto do widget (TEC-124, D3). Acima
     # disso o frame e recusado e a conexao CONTINUA aberta.
     tamanho_maximo_do_texto_do_widget: int = 4096
+
+    # TEC-344, D2. O slug que o `data-tenant` do snippet do site tem de trazer
+    # para o botao aparecer. `GET /widget/aparencia` o devolve, e quem compara
+    # e o Next (emenda da TEC-344 ao D3). **Nulo por padrao, e nulo quer dizer
+    # que nenhum slug casa**: um ambiente que esqueceu a variavel fica sem
+    # botao, e nao com um botao que aceita qualquer valor. Vazio vira nulo, e
+    # fora do formato do Next nao sobe -- ver `_tenant_slug_no_formato_do_next`.
+    # Tenant unico na POC (PR-03); o multi-tenant troca a comparacao por uma
+    # busca.
+    tenant_slug: str | None = None
 
     # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
     # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link
@@ -919,6 +935,30 @@ class Settings(BaseSettings):
                 "lead que pedir humano receber o texto de fora do horario, sempre."
             )
         return self
+
+    @field_validator("tenant_slug", mode="before")
+    @classmethod
+    def _tenant_slug_no_formato_do_next(cls, valor: object) -> object:
+        """O formato e o que o Next aceita no `data-tenant` (`SLUG`, em
+        `frontend/src/lib/servidor/aparencia.ts`), e as duas copias tem de
+        bater.
+
+        Sem esta guarda, `TENANT_SLUG=MinhaImob` subiria, o Next recusaria
+        todo `data-tenant` antes de comparar, e nenhum site mostraria o botao
+        -- sem uma linha de log em lugar nenhum. `TENANT_SLUG=` vazio no
+        `.env` chega como "", e "" nao e um slug: vira nulo, que e o "nenhum
+        slug casa" do default.
+        """
+        if valor is None or valor == "":
+            return None
+        if not isinstance(valor, str) or not _FORMATO_DO_SLUG.fullmatch(valor):
+            raise ValueError(
+                f"TENANT_SLUG fora do formato; recebi {valor!r}. Use minusculas, digitos "
+                "e hifen, comecando por letra ou digito, ate 64 caracteres "
+                "(^[a-z0-9][a-z0-9-]{0,63}$) -- o Next recusa qualquer outro, e o botao "
+                "sumiria de todo site sem aviso."
+            )
+        return valor
 
     @model_validator(mode="after")
     def _recusar_rate_limit_impossivel(self) -> "Settings":

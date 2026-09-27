@@ -16,6 +16,7 @@ para os pesos; importar `Temperatura` daqui fecharia o ciclo. Os tres nomes
 sao os valores do enum, e `followup/cadencia.py` faz a ponte.
 """
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -35,6 +36,19 @@ class Tom(StrEnum):
     CORDIAL = "CORDIAL"
     FORMAL = "FORMAL"
     DESCONTRAIDO = "DESCONTRAIDO"
+
+
+class PosicaoDoBotao(StrEnum):
+    """Em que canto do site o botao do chat fica (TEC-344, D1)."""
+
+    DIREITA = "DIREITA"
+    ESQUERDA = "ESQUERDA"
+
+
+# TEC-344, D1. Neutra e com contraste para o icone branco. Nao preserva
+# comportamento nenhum -- antes desta card nao havia botao --, e por isso nao
+# vem de constante antiga como o resto de `padrao()`.
+COR_PRIMARIA_PADRAO = "#1D4ED8"
 
 
 @dataclass(frozen=True)
@@ -87,6 +101,9 @@ class ConfiguracaoDoAgente:
     # TEC-191, D3. Mensal, em dolares; o painel de custo o faz proporcional ao
     # periodo consultado. Nulo no padrao: nao ha orcamento que valha inventar.
     orcamento_mensal_usd: Decimal | None = None
+    # TEC-344, D1. A aparencia do botao do chat web no site da imobiliaria.
+    cor_primaria: str = COR_PRIMARIA_PADRAO
+    posicao_do_botao: PosicaoDoBotao = PosicaoDoBotao.DIREITA
 
 
 def padrao() -> ConfiguracaoDoAgente:
@@ -119,6 +136,11 @@ INTERVALO_MAXIMO_DA_CADENCIA = timedelta(days=90)
 # alerta nunca acenderia.
 ORCAMENTO_MINIMO = Decimal("0.01")
 ORCAMENTO_MAXIMO = Decimal("100000")
+
+# TEC-344, D1. Seis digitos e nada mais: sem alfa, sem forma curta, sem nome de
+# cor. E o formato que o loader confere de novo antes de desenhar, e o `CHECK`
+# da `0064` repete no banco.
+_COR_PRIMARIA = re.compile(r"#[0-9A-Fa-f]{6}")
 
 
 def validar(config: ConfiguracaoDoAgente) -> ConfiguracaoDoAgente:
@@ -187,6 +209,11 @@ def validar(config: ConfiguracaoDoAgente) -> ConfiguracaoDoAgente:
             f"orcamento mensal {orcamento} fora da faixa {ORCAMENTO_MINIMO}..{ORCAMENTO_MAXIMO}; "
             "use null para nao ter orcamento"
         )
+
+    if not _COR_PRIMARIA.fullmatch(config.cor_primaria):
+        erros.append(f"cor primaria {config.cor_primaria!r} nao e #RRGGBB")
+    if config.posicao_do_botao not in tuple(PosicaoDoBotao):
+        erros.append(f"posicao do botao {config.posicao_do_botao!r} desconhecida")
 
     if erros:
         raise ConfiguracaoInvalida("; ".join(erros))

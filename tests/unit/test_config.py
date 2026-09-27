@@ -850,3 +850,23 @@ def test_desenvolvimento_segue_com_a_chave_do_lead_de_desenvolvimento(
     monkeypatch.delenv("AUDITORIA_CHAVE_DO_LEAD", raising=False)
 
     assert Settings(_env_file=None).auditoria_chave_do_lead == CHAVE_DO_LEAD_DE_DESENVOLVIMENTO
+
+
+@pytest.mark.parametrize("slug", ["imobiliaria-x", "a", "0", "x" * 64])
+def test_tenant_slug_no_formato_sobe(slug: str) -> None:
+    assert Settings(_env_file=None, tenant_slug=slug).tenant_slug == slug
+
+
+def test_tenant_slug_vazio_vira_nulo() -> None:
+    """`TENANT_SLUG=` no `.env` chega como "", e "" nao e um slug."""
+    assert Settings(_env_file=None, tenant_slug="").tenant_slug is None
+
+
+@pytest.mark.parametrize(
+    "slug", ["MinhaImob", "minha_imob", "-imob", "x" * 65, "a/b", "a.b", " imob"]
+)
+def test_tenant_slug_fora_do_formato_nao_sobe(slug: str) -> None:
+    """TEC-344: o Next so aceita `data-tenant` neste formato. Aceitar aqui um
+    slug que o Next recusa deixaria todo site sem botao, e nada no log."""
+    with pytest.raises(ValidationError, match="TENANT_SLUG"):
+        Settings(_env_file=None, tenant_slug=slug)

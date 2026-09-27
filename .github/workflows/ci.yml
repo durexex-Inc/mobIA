@@ -221,6 +221,12 @@ jobs:
       - name: Testes
         run: npm test
 
+      # A segunda regra da TEC-344: o loader do chat cabe em 5 KB gzip. Nao
+      # depende do build -- `public/widget.js` e servido como esta (D5) --, e
+      # por isso vem antes dele: reprova em segundos, sem esperar o `next build`.
+      - name: Tamanho do loader do chat
+        run: npm run verificar:widget
+
       # O build e o gate do `server-only` (TEC-302): ele reprova aqui se um
       # modulo de `lib/servidor/` for arrastado para um componente de cliente.
       #

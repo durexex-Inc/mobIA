@@ -14,8 +14,10 @@ import pytest
 from mobia.domain.agente.classificador import SISTEMA_DO_AGENTE, sistema_do_agente
 from mobia.domain.agente.schemas import Urgencia
 from mobia.domain.configuracao.vigente import (
+    COR_PRIMARIA_PADRAO,
     ConfiguracaoInvalida,
     Pesos,
+    PosicaoDoBotao,
     Tom,
     aplicar,
     padrao,
@@ -157,6 +159,12 @@ def test_a_cadencia_encurtada_vence_antes() -> None:
         ({"orcamento_mensal_usd": Decimal("0")}, "orcamento mensal 0 fora da faixa"),
         ({"orcamento_mensal_usd": Decimal("-5")}, "orcamento mensal -5 fora da faixa"),
         ({"orcamento_mensal_usd": Decimal("100000.01")}, "fora da faixa 0.01..100000"),
+        # TEC-344, D1.
+        ({"cor_primaria": "0A7F5A"}, "nao e #RRGGBB"),
+        ({"cor_primaria": "#0A7F5"}, "nao e #RRGGBB"),
+        ({"cor_primaria": "#0A7F5AFF"}, "nao e #RRGGBB"),
+        ({"cor_primaria": "red"}, "nao e #RRGGBB"),
+        ({"posicao_do_botao": "CIMA"}, "posicao do botao 'CIMA' desconhecida"),
     ],
 )
 def test_fora_da_faixa_e_recusado(mudancas: dict[str, object], trecho: str) -> None:
@@ -208,3 +216,22 @@ def test_orcamento_nulo_e_o_padrao_e_e_aceito() -> None:
     config = validar(aplicar(padrao(), {"orcamento_mensal_usd": Decimal("100")}))
     assert config.orcamento_mensal_usd == Decimal("100")
     assert validar(aplicar(config, {"orcamento_mensal_usd": None})).orcamento_mensal_usd is None
+
+
+def test_a_aparencia_padrao_e_botao_a_direita_na_cor_neutra() -> None:
+    """TEC-344, D1: antes desta card nao havia botao, entao o padrao nao
+    preserva comportamento nenhum -- so precisa ser valido."""
+    config = padrao()
+
+    assert config.cor_primaria == COR_PRIMARIA_PADRAO == "#1D4ED8"
+    assert config.posicao_do_botao is PosicaoDoBotao.DIREITA
+    assert validar(config) == config
+
+
+def test_cor_e_posicao_do_tenant_sao_aceitas() -> None:
+    config = validar(
+        aplicar(padrao(), {"cor_primaria": "#0a7f5a", "posicao_do_botao": PosicaoDoBotao.ESQUERDA})
+    )
+
+    assert config.cor_primaria == "#0a7f5a"
+    assert config.posicao_do_botao is PosicaoDoBotao.ESQUERDA

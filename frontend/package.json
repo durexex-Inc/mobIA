@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "verificar:bundle": "node scripts/verificar-bundle.mjs"
+    "verificar:bundle": "node scripts/verificar-bundle.mjs",
+    "verificar:widget": "node scripts/verificar-widget.mjs"
   },
   "dependencies": {
     "next": "16.3.6",
