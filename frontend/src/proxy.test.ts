@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { COOKIE_DA_SESSAO as COOKIE_DA_SESSAO_DE_VERDADE } from '@/lib/servidor/sessao'
 
@@ -184,5 +184,23 @@ describe('proxy sem sessao (TEC-309, D5)', () => {
     } finally {
       delete process.env.MOBIA_WIDGET_WS_URL
     }
+  })
+
+  describe('com MOBIA_WIDGET_WS_URL invalida', () => {
+    afterEach(() => {
+      delete process.env.MOBIA_WIDGET_WS_URL
+      vi.restoreAllMocks()
+    })
+
+    it('o embed carrega sem connect-src, em vez de 500, e loga o erro uma vez', () => {
+      process.env.MOBIA_WIDGET_WS_URL = 'nao e url'
+      const erro = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const politica = cspDe('/embed/chat')
+
+      expect(politica).toContain('frame-ancestors *')
+      expect(politica).not.toContain('connect-src')
+      expect(erro).toHaveBeenCalledTimes(1)
+    })
   })
 })

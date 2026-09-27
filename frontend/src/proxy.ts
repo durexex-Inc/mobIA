@@ -140,11 +140,21 @@ export function proxy(request: NextRequest): NextResponse {
   // duas requisicoes nao recebem o mesmo.
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
   const embutivel = rotaDoEmbed(request.nextUrl.pathname)
+  // `origemDoChat` lanca se MOBIA_WIDGET_WS_URL ou MOBIA_API_BASE nao forem uma
+  // URL valida. Um erro de configuracao nao pode derrubar o embed inteiro com
+  // 500 -- o lado seguro e a CSP sem connect-src, que e o mesmo padrao fechado
+  // de frame-ancestors: o chat carrega, so o WebSocket nao conecta.
+  let conectarA: string | undefined
+  if (embutivel) {
+    try {
+      conectarA = origemDoChat()
+    } catch {
+      console.error('CSP do embed: MOBIA_WIDGET_WS_URL ou MOBIA_API_BASE invalida')
+    }
+  }
   const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development', {
     embutivel,
-    // So calculado para o embed: fora dele o valor e descartado por
-    // `politicaDeSeguranca`, e nao ha razao para montar a URL a toa.
-    conectarA: embutivel ? origemDoChat() : undefined,
+    conectarA,
   })
 
   // O nonce vai no cabecalho da REQUISICAO tambem, e nao so no da resposta: e
