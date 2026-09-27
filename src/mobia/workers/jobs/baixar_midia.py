@@ -201,6 +201,11 @@ async def gravar_desfecho(
         # o estado terminal dela vale, e este desfecho e descartado.
         # Se foi um sucesso, o blob ja gravado fica orfao no armazem: cifrado,
         # na chave da propria mensagem, e sem linha que aponte para ele.
+        #
+        # Desde a TEC-131 ha uma segunda corrida, so no audio: este job e
+        # `transcrever_audio` baixam o mesmo arquivo, e o primeiro a gravar
+        # ARMAZENADA vence. Ai o blob nao fica orfao -- a chave e a mesma
+        # (`midias/{message_id}`), e a linha vencedora aponta para ela.
         log.info(
             "midia.corrida_perdida",
             message_id=str(identificador),
