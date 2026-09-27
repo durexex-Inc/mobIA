@@ -148,7 +148,7 @@ async def chat(
 
     # TEC-365, D3. DEPOIS do limite por IP, de proposito: assim a tentativa
     # recusada tambem conta no balde, e quem martela o handshake de outra
-    # pagina e contido pelo mesmo teto -- e nao gera uma linha de log por vez.
+    # pagina passa a levar 429 pelo mesmo teto de qualquer outro cliente.
     settings = get_settings()
     origem = websocket.headers.get("origin")
     if not origem_permitida(origem, settings.origens_permitidas_do_widget):
