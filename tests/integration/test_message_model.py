@@ -267,8 +267,10 @@ async def test_colunas_reservadas_nascem_nulas(session) -> None:
     """`envelope_context` (TEC-217) e `claimed_at` (TEC-218) sao nulaveis e nascem nulos.
 
     Uma linha gravada fora da ingestao do WhatsApp -- como esta, pelo ORM --
-    nao tem envelope. Desde a TEC-217 quem escreve `envelope_context` e a
-    ingestao (`test_envelope_da_meta.py`); `claimed_at` segue sem escritor.
+    nao tem envelope, e uma linha que nenhum worker reivindicou nao tem lease.
+    Quem escreve `envelope_context` e a ingestao (TEC-217,
+    `test_envelope_da_meta.py`); quem escreve `claimed_at` e o claim (TEC-218,
+    `test_lease_de_processamento.py`).
     """
     session.add(nova_mensagem("wamid.RESERVADAS"))
     await session.commit()

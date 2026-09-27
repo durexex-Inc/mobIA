@@ -117,8 +117,12 @@ class Message(Base):
     # envelope tera de decifrar na aplicacao.
     envelope_context: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
-    # Instante da reivindicacao, para o lease de exclusao mutua entre workers.
-    # Coluna reservada pelo TEC-218; nada escreve nela ainda.
+    # Instante da reivindicacao: o lease de exclusao mutua entre workers
+    # (TEC-218). O claim grava `clock_timestamp()` aqui, PROCESSING so volta a
+    # ser reivindicavel quando ele passa de `sweep_inflight_after_seconds`, e
+    # o valor e a ficha que toda escrita posterior do worker exige -- ver
+    # `workers/jobs/process_message.py::reivindicar`. Nulo na linha que nunca
+    # foi reivindicada, e na PROCESSING de antes da TEC-218.
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     @validates("text_body", "raw_payload", "envelope_context")

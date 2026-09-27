@@ -1,10 +1,11 @@
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
 import structlog
-from sqlalchemy import CursorResult, select, update
+from sqlalchemy import ColumnElement, CursorResult, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
@@ -117,9 +118,28 @@ def _detalhe_para_o_log(exc: BaseException) -> str:
 SEGUNDOS_PARA_REGISTRAR_CANCELAMENTO = 10
 
 
+def _do_meu_lease(identifier: uuid.UUID, lease: datetime) -> ColumnElement[bool]:
+    """A linha ainda e deste worker: PROCESSING, com o `claimed_at` que ele gravou. TEC-218.
+
+    O `claimed_at` do claim e a ficha do worker. Toda escrita depois do claim
+    -- fechar PROCESSED, marcar FAILED, contar interrupcao -- exige a ficha
+    dele, e nao so o id. Sem isso, o worker cujo lease expirou e que outro
+    substituiu continuaria escrevendo numa linha que ja nao e dele: o terceiro
+    cenario da card, o FAILED atrasado por cima do PROCESSED.
+    """
+    return and_(
+        Message.id == identifier,
+        Message.status == MessageStatus.PROCESSING,
+        Message.claimed_at == lease,
+    )
+
+
 async def _marcar_falha(
-    session_factory: async_sessionmaker[AsyncSession], identifier: uuid.UUID, detalhe: str
-) -> int:
+    session_factory: async_sessionmaker[AsyncSession],
+    identifier: uuid.UUID,
+    detalhe: str,
+    lease: datetime,
+) -> int | None:
     """Fecha a linha como FAILED, conta a tentativa e devolve o novo total.
 
     Nao loga: os dois chamadores emitem eventos diferentes de proposito, e o
@@ -128,11 +148,15 @@ async def _marcar_falha(
     **Devolve o total desde a TEC-174.** O incremento e expressao SQL, entao
     sem o `returning` ninguem em Python sabe quantas tentativas ja houve -- e
     "irrecuperavel" e a falha que ESGOTA as tentativas, nao qualquer falha.
+
+    **`None` quando a linha ja nao e deste worker** (TEC-218): outro a
+    reivindicou depois de o lease deste expirar, ou ja a fechou. Nada e
+    gravado -- a falha atrasada nao sobrescreve o PROCESSED de quem terminou.
     """
     async with session_factory() as session:
         resultado = await session.execute(
             update(Message)
-            .where(Message.id == identifier)
+            .where(_do_meu_lease(identifier, lease))
             .values(
                 status=MessageStatus.FAILED,
                 attempts=Message.attempts + 1,
@@ -141,7 +165,7 @@ async def _marcar_falha(
             .returning(Message.attempts)
         )
         await session.commit()
-        return resultado.scalar_one()
+        return resultado.scalar_one_or_none()
 
 
 # TEC-209, D4. O `last_error` da tentativa que um worker morto nao chegou a
@@ -151,8 +175,8 @@ ERRO_DA_INTERRUPCAO = "TrabalhoInterrompido"
 
 
 async def _contar_interrupcao(
-    session_factory: async_sessionmaker[AsyncSession], identifier: uuid.UUID
-) -> int:
+    session_factory: async_sessionmaker[AsyncSession], identifier: uuid.UUID, lease: datetime
+) -> int | None:
     """Conta a tentativa de um worker que morreu sem conta-la. TEC-209, D4.
 
     Chamada quando o claim pega a linha em PROCESSING. Um job vivo nunca fica
@@ -164,20 +188,25 @@ async def _contar_interrupcao(
 
     Nao muda o status: o claim ja o pos em PROCESSING, e e este worker que
     segue com ela.
+
+    Desde a TEC-218 so chega aqui a linha cujo lease EXPIROU: PROCESSING com
+    lease vivo nao e reivindicavel. `None` se a linha deixou de ser deste
+    worker entre o claim e esta escrita -- improvavel dentro da janela do
+    lease, mas a guarda e a mesma de toda escrita depois do claim.
     """
     async with session_factory() as session:
         resultado = await session.execute(
             update(Message)
-            .where(Message.id == identifier)
+            .where(_do_meu_lease(identifier, lease))
             .values(attempts=Message.attempts + 1, last_error=ERRO_DA_INTERRUPCAO)
             .returning(Message.attempts)
         )
         await session.commit()
-        return resultado.scalar_one()
+        return resultado.scalar_one_or_none()
 
 
 async def _esgotar(
-    session_factory: async_sessionmaker[AsyncSession], identifier: uuid.UUID
+    session_factory: async_sessionmaker[AsyncSession], identifier: uuid.UUID, lease: datetime
 ) -> None:
     """Move a linha para a dead-letter queue. TEC-209, D5.
 
@@ -185,10 +214,42 @@ async def _esgotar(
     falha que esgota as tentativas e o claim que esgota por interrupcao.
     """
     async with session_factory() as session:
+        # A ficha, e nao `_do_meu_lease`: pelo caminho da falha `_marcar_falha`
+        # acabou de gravar FAILED, entao o status ja nao e PROCESSING. O
+        # `claimed_at` e que diz que a linha ainda e deste worker.
         await session.execute(
-            update(Message).where(Message.id == identifier).values(status=MessageStatus.ESGOTADA)
+            update(Message)
+            .where(
+                Message.id == identifier,
+                Message.status.in_((MessageStatus.PROCESSING, MessageStatus.FAILED)),
+                Message.claimed_at == lease,
+            )
+            .values(status=MessageStatus.ESGOTADA)
         )
         await session.commit()
+
+
+async def _concluir(
+    session_factory: async_sessionmaker[AsyncSession], identifier: uuid.UUID, lease: datetime
+) -> bool:
+    """Fecha a linha como PROCESSED se ela ainda e deste worker. TEC-218.
+
+    `False` quando o lease foi perdido: outro worker a reivindicou depois de
+    este passar da janela. A entrega nao duplica -- a reserva de
+    `outbound_dispatches` segura isso desde sempre --, mas o status e de quem
+    tem a ficha agora, e so ele o fecha.
+    """
+    async with session_factory() as session:
+        resultado = cast(
+            CursorResult[Any],
+            await session.execute(
+                update(Message)
+                .where(_do_meu_lease(identifier, lease))
+                .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
+            ),
+        )
+        await session.commit()
+    return resultado.rowcount == 1
 
 
 async def _encaminhar_por_erro(
@@ -307,49 +368,103 @@ async def _tem_entrega_parcial_pendente(session_factory: Any, message_id: uuid.U
     return bool(ja_reservados & {linha.kind for linha in lote})
 
 
+@dataclass(frozen=True)
+class Reivindicacao:
+    """O que o claim devolve: o status de antes e a ficha do worker. TEC-218.
+
+    `anterior` existe desde a TEC-209 (D4): PROCESSING nele e retomar o
+    trabalho de um worker que morreu. `lease` e o `claimed_at` que este claim
+    gravou, e toda escrita posterior o exige (`_do_meu_lease`).
+    """
+
+    anterior: MessageStatus
+    lease: datetime
+
+
+def _reivindicavel(message_id: uuid.UUID) -> ColumnElement[bool]:
+    """O predicado do claim. TEC-218.
+
+    PROCESSING continua reivindicavel -- e o que um worker morto deixa para
+    tras, e o que permite a retomada --, mas **so com o lease expirado**:
+    `claimed_at` mais velho que `sweep_inflight_after_seconds`. A janela e a
+    do sweeper de proposito: `test_job_timeout_cabe_dentro_da_janela_do_sweeper`
+    ja garante que um job vivo termina dentro dela, entao lease expirado quer
+    dizer worker morto, e nunca worker lento.
+
+    `claimed_at` nulo conta como expirado: e a linha em PROCESSING gravada
+    antes desta card, que sem isto nunca mais seria retomada.
+    """
+    janela = timedelta(seconds=get_settings().sweep_inflight_after_seconds)
+    return and_(
+        Message.id == message_id,
+        Message.status.in_(CLAIMABLE_STATUSES),
+        or_(
+            Message.status != MessageStatus.PROCESSING,
+            Message.claimed_at.is_(None),
+            Message.claimed_at < func.now() - janela,
+        ),
+    )
+
+
 async def claim_message(session: AsyncSession, message_id: uuid.UUID) -> bool:
-    """Reivindica a mensagem para processamento. `reivindicar` sem o status anterior."""
+    """Reivindica a mensagem para processamento. `reivindicar` sem o resto."""
     return await reivindicar(session, message_id) is not None
 
 
-async def reivindicar(session: AsyncSession, message_id: uuid.UUID) -> MessageStatus | None:
-    """Reivindica a mensagem e devolve o status em que ela ESTAVA, ou None.
+async def reivindicar(session: AsyncSession, message_id: uuid.UUID) -> Reivindicacao | None:
+    """Reivindica a mensagem, ou devolve None se ela nao e deste worker agora.
 
-    O status anterior existe desde a TEC-209 (D4): reivindicar a partir de
-    PROCESSING e retomar o trabalho de um worker que morreu, e e ai que a
-    tentativa dele e contada. O resto da docstring e o de sempre.
+    A exclusao mutua tem duas metades, e so a segunda e da TEC-218:
 
-    PROCESSING esta entre os estados reivindicaveis de proposito: e o estado que
-    um worker morto no meio do job deixa para tras, e e o que permite a retomada.
+    - **simultanea**: o `SELECT ... FOR UPDATE SKIP LOCKED`. Quem chega com a
+      linha travada sai limpo com None, em vez de bloquear, reavaliar o
+      predicado contra a versao nova da linha e reivindicar tambem;
+    - **sequencial**: o lease (`_reivindicavel`). Um worker que chega DEPOIS
+      do commit do primeiro encontra PROCESSING com `claimed_at` recente e sai
+      sem processar. Antes da TEC-218 ele reivindicava, e os dois pagavam o
+      mesmo turno.
 
-    A exclusao mutua e **parcial**. O `SELECT ... FOR UPDATE SKIP LOCKED` resolve
-    o caso simultaneo: quem chega com a linha travada sai limpo com False, em vez
-    de bloquear, reavaliar o predicado contra a nova versao da linha (onde
-    PROCESSING continua reivindicavel) e reivindicar tambem. O que ele nao cobre
-    e o worker que chega depois do commit do primeiro -- por construcao, ja que
-    e assim que a retomada funciona. Exclusao completa pede um lease com coluna
-    `claimed_at`, que fica para uma historia posterior.
+    `clock_timestamp()` e nao `now()` no `claimed_at`: `now()` e o inicio da
+    transacao, e duas reivindicacoes seguidas na mesma transacao gravariam a
+    mesma ficha.
     """
     reservada = await session.execute(
-        select(Message.status)
-        .where(Message.id == message_id, Message.status.in_(CLAIMABLE_STATUSES))
-        .with_for_update(skip_locked=True)
+        select(Message.status).where(_reivindicavel(message_id)).with_for_update(skip_locked=True)
     )
     anterior = reservada.scalar_one_or_none()
     if anterior is None:
         return None
 
-    # O `execute` de um UPDATE devolve um CursorResult em runtime, mas a tipagem
-    # do SQLAlchemy declara o Result generico, que nao expoe `rowcount`.
-    resultado = cast(
-        CursorResult[Any],
+    lease = (
         await session.execute(
             update(Message)
-            .where(Message.id == message_id, Message.status.in_(CLAIMABLE_STATUSES))
-            .values(status=MessageStatus.PROCESSING)
-        ),
-    )
-    return MessageStatus(anterior) if resultado.rowcount == 1 else None
+            .where(_reivindicavel(message_id))
+            .values(status=MessageStatus.PROCESSING, claimed_at=func.clock_timestamp())
+            .returning(Message.claimed_at)
+        )
+    ).scalar_one_or_none()
+    if lease is None:
+        return None
+    return Reivindicacao(anterior=MessageStatus(anterior), lease=lease)
+
+
+async def motivo_da_recusa(session: AsyncSession, message_id: uuid.UUID) -> str:
+    """Por que o claim recusou, para o log. TEC-218, primeiro cenario da card.
+
+    Leitura solta, sem trava: e so diagnostico, e o claim ja decidiu.
+
+    - `lease_ativo`: PROCESSING com lease vivo -- outro worker esta nela;
+    - `reivindicada_em_paralelo`: status reivindicavel, mas a linha estava
+      travada por outro claim no mesmo instante (o SKIP LOCKED);
+    - `not_claimable`: status terminal, ou a linha nao existe. E o `reason`
+      de antes desta card, mantido para quem ja o procura no log.
+    """
+    status = await session.scalar(select(Message.status).where(Message.id == message_id))
+    if status == MessageStatus.PROCESSING:
+        return "lease_ativo"
+    if status in CLAIMABLE_STATUSES:
+        return "reivindicada_em_paralelo"
+    return "not_claimable"
 
 
 async def _moderar_superada(
@@ -425,24 +540,29 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
     identifier = uuid.UUID(message_id)
 
     async with session_factory() as session:
-        anterior = await reivindicar(session, identifier)
-        if anterior is None:
+        reivindicacao = await reivindicar(session, identifier)
+        if reivindicacao is None:
             await session.rollback()
-            log.info("message.skipped", message_id=message_id, reason="not_claimable")
+            motivo = await motivo_da_recusa(session, identifier)
+            log.info("message.skipped", message_id=message_id, reason=motivo)
             return "skipped"
         await session.commit()
+    anterior, lease = reivindicacao.anterior, reivindicacao.lease
 
     # TEC-209, D4. PROCESSING no claim e trabalho que um worker morto deixou
     # sem contar. Conta aqui; se isso esgota as tentativas, a linha vai para a
     # DLQ com o handoff por erro, sem rodar o turno -- rodar seria a sexta
     # tentativa de uma mensagem que ja matou cinco workers.
     if anterior == MessageStatus.PROCESSING:
-        tentativas = await _contar_interrupcao(session_factory, identifier)
+        tentativas = await _contar_interrupcao(session_factory, identifier, lease)
+        if tentativas is None:
+            log.warning("message.lease_perdido", message_id=message_id, etapa="interrupcao")
+            return "skipped"
         log.warning("message.interrompida", message_id=message_id, attempts=tentativas)
         if tentativas >= get_settings().sweep_max_attempts:
             async with session_factory() as session:
                 interrompida = await session.get(Message, identifier)
-            await _esgotar(session_factory, identifier)
+            await _esgotar(session_factory, identifier, lease)
             if interrompida is not None:
                 await _encaminhar_por_erro(session_factory, outbound, interrompida, agendador)
             log.warning("message.esgotada", message_id=message_id, reason=ERRO_DA_INTERRUPCAO)
@@ -563,13 +683,8 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 bloqueada = await _moderar_superada(
                     session_factory, linha, corpo_da_superada, moderador=ctx["moderador"]
                 )
-            async with session_factory() as session:
-                await session.execute(
-                    update(Message)
-                    .where(Message.id == identifier)
-                    .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
-                )
-                await session.commit()
+            if not await _concluir(session_factory, identifier, lease):
+                log.warning("message.lease_perdido", message_id=message_id, etapa="agrupado")
             log.info("message.agrupado", message_id=message_id, bloqueada=bloqueada)
             return "agrupado"
 
@@ -614,15 +729,12 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 agendador_de_avisos=agendador_de_avisos,
             )
 
-        async with session_factory() as session:
-            await session.execute(
-                update(Message)
-                .where(Message.id == identifier)
-                .values(status=MessageStatus.PROCESSED, processed_at=datetime.now(UTC))
-            )
-            await session.commit()
+        if not await _concluir(session_factory, identifier, lease):
+            log.warning("message.lease_perdido", message_id=message_id, etapa="concluir")
     except Exception as exc:
-        tentativas = await _marcar_falha(session_factory, identifier, _detalhe_para_a_coluna(exc))
+        tentativas = await _marcar_falha(
+            session_factory, identifier, _detalhe_para_a_coluna(exc), lease
+        )
         # Valor que PODE ser maior que o da coluna, desde a TEC-222: para
         # excecao de `mobia` o log carrega a mensagem inteira e a coluna so o
         # nome da classe; para excecao de terceiro (DBAPIError,
@@ -630,6 +742,14 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # coluna e duravel e fora da mascara, o log nao. Ver os dois
         # docstrings acima.
         log.warning("message.failed", message_id=message_id, error=_detalhe_para_o_log(exc))
+        if tentativas is None:
+            # TEC-218, terceiro cenario da card. A linha ja nao e deste
+            # worker, entao nada foi gravado: nem FAILED por cima do PROCESSED
+            # de quem terminou, nem tentativa contada, nem DLQ, nem handoff. A
+            # excecao sobe do mesmo jeito -- quem roda o job precisa saber que
+            # ele falhou.
+            log.warning("message.lease_perdido", message_id=message_id, etapa="falha")
+            raise
         # So encaminha quando as tentativas ESGOTARAM (D9) -- na primeira
         # falha a proxima retentativa ainda pode resolver, e handoff aqui
         # seria alarme falso para o corretor. `linha is not None` cobre o
@@ -638,7 +758,7 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         if tentativas >= get_settings().sweep_max_attempts:
             # TEC-209, D5. A DLQ, antes do handoff: se o handoff falhar, a
             # linha ja esta onde o operador a procura.
-            await _esgotar(session_factory, identifier)
+            await _esgotar(session_factory, identifier, lease)
             log.warning("message.esgotada", message_id=message_id)
             if linha is not None:
                 await _encaminhar_por_erro(session_factory, outbound, linha, agendador)
@@ -650,7 +770,7 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
         # reenfileirava para sempre, pagando o turno inteiro a cada volta.
         try:
             async with asyncio.timeout(SEGUNDOS_PARA_REGISTRAR_CANCELAMENTO):
-                await _marcar_falha(session_factory, identifier, _detalhe_para_a_coluna(exc))
+                await _marcar_falha(session_factory, identifier, _detalhe_para_a_coluna(exc), lease)
         except Exception as falha:
             # Esta excecao nao pode escapar: ela **substituiria** o
             # CancelledError, o worker deixaria de ver o cancelamento e o

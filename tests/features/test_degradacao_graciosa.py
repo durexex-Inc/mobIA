@@ -18,6 +18,7 @@ ou porque o ponto certo de testa-los e mais baixo:
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -119,7 +120,16 @@ async def test_worker_morto_e_reprocessado_sem_resposta_duplicada(
     primeira = OutboundFake(get_sessionmaker())
     await process_message(_ctx(primeira, ClassificadorFake()), str(entrada.id))
     assert len(primeira.entregues) == 1
-    await _forcar(session, entrada.id, status=MessageStatus.PROCESSING)
+    # O lease do worker morto tambem vence: desde a TEC-218, PROCESSING com
+    # `claimed_at` recente e de um worker VIVO, e ninguem o retoma. A retomada
+    # real so acontece depois da janela, e e ela que este cenario descreve.
+    await _forcar(
+        session,
+        entrada.id,
+        status=MessageStatus.PROCESSING,
+        claimed_at=datetime.now(UTC)
+        - timedelta(seconds=get_settings().sweep_inflight_after_seconds + 1),
+    )
 
     segunda = OutboundFake(get_sessionmaker())
     await process_message(_ctx(segunda, ClassificadorFake()), str(entrada.id))
