@@ -1413,6 +1413,11 @@ def log_legivel(caplog: Any) -> str:
     return "\n".join(linhas)
 
 
+# A origem do painel nos testes do widget (TEC-365): a que o `ClienteWebSocket`
+# manda por padrao e a que `app_do_widget` poe em `ORIGENS_DO_WIDGET`.
+ORIGEM_DO_PAINEL_NOS_TESTES = "http://painel.teste"
+
+
 class ClienteWebSocket:
     """Fala ASGI direto com o app, sem sair do event loop do teste. TEC-124.
 
@@ -1423,10 +1428,20 @@ class ClienteWebSocket:
     do teste, e o app roda como uma tarefa dele.
     """
 
-    def __init__(self, app: Any, *, caminho: str = "/widget/chat", ip: str = "203.0.113.7") -> None:
+    def __init__(
+        self,
+        app: Any,
+        *,
+        caminho: str = "/widget/chat",
+        ip: str = "203.0.113.7",
+        origem: str | None = ORIGEM_DO_PAINEL_NOS_TESTES,
+    ) -> None:
         self._app = app
         self._caminho = caminho
         self._ip = ip
+        # TEC-365. Por padrao, a origem que `app_do_widget` poe na lista: o
+        # handshake sem ela e recusado com 403. `None` omite o header.
+        self._origem = origem
         self._para_o_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._do_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._tarefa: asyncio.Task[None] | None = None
@@ -1441,7 +1456,8 @@ class ClienteWebSocket:
             "raw_path": self._caminho.encode(),
             "query_string": b"",
             "root_path": "",
-            "headers": [(b"host", b"testserver")],
+            "headers": [(b"host", b"testserver")]
+            + ([] if self._origem is None else [(b"origin", self._origem.encode())]),
             "client": (self._ip, 55000),
             "server": ("testserver", 80),
             "subprotocols": [],
@@ -1505,7 +1521,14 @@ class ClienteWebSocket:
 
 
 @pytest.fixture
-async def app_do_widget(banco_limpo: None, redis_pool: "ArqRedis") -> AsyncIterator[Any]:
+async def app_do_widget(
+    banco_limpo: None, redis_pool: "ArqRedis", monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[Any]:
+    # TEC-365. Sem a origem do `ClienteWebSocket` na lista, todo handshake dos
+    # testes do widget receberia 403. Quem quer outra lista sobrescreve a
+    # variavel e limpa o cache, como ja se faz com o limite por IP.
+    monkeypatch.setenv("ORIGENS_DO_WIDGET", ORIGEM_DO_PAINEL_NOS_TESTES)
+    get_settings.cache_clear()
     app = create_app()
     app.state.redis_pool = redis_pool
     yield app
@@ -1515,6 +1538,9 @@ async def app_do_widget(banco_limpo: None, redis_pool: "ArqRedis") -> AsyncItera
     central = getattr(app.state, "central_do_widget", None)
     if central is not None:
         await central.encerrar()
+    # O `monkeypatch` desfaz a variavel depois daqui; sem isto o `Settings`
+    # com a lista do widget ficaria no cache para o proximo teste.
+    get_settings.cache_clear()
 
 
 @pytest.fixture

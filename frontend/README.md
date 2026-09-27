@@ -352,6 +352,8 @@ A imobiliária cola uma linha no site:
 
 O `<slug>` tem de ser igual ao `TENANT_SLUG` do backend: minúsculas, dígitos e hífen, começando por letra ou dígito, até 64 caracteres (`^[a-z0-9][a-z0-9-]{0,63}$`). O backend não sobe com um `TENANT_SLUG` fora desse formato, porque o Next recusaria todo `data-tenant` e o botão sumiria sem aviso. Sem `TENANT_SLUG`, nenhum site mostra o botão — é o padrão, de propósito. Quem compara os dois é o Next, e não o FastAPI: `GET /widget/aparencia` responde sempre 200 com o slug configurado, porque o cache do Next só guarda resposta 200. Cor, lado e nome do assistente vêm da configuração do agente (`PATCH /api/v1/configuracao/agente`), e uma mudança leva até um minuto para chegar ao site, por causa do cache de `/embed/aparencia`.
 
+O botão aparecer não basta para a conversa conectar. O `WS /widget/chat` só aceita o handshake cuja origem esteja em `ORIGENS_DO_WIDGET` do backend, e essa origem é a **do painel**, que serve o iframe `/embed/chat`, e não a do site da imobiliária: quem abre o socket é o iframe. Sem ela, o handshake leva `403`. Em desenvolvimento, `ORIGENS_DO_WIDGET=http://localhost:3000`.
+
 `public/widget.js` não passa por build: o que está no arquivo é o que o visitante baixa, e `npm run verificar:widget` reprova acima de 5 KB gzip. Até a TEC-346, quem abre o chat vê só o cabeçalho; até a TEC-345, qualquer site pode embutir o chat.
 
 ## Comandos
