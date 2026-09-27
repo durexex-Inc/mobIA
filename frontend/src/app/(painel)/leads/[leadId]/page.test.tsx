@@ -70,9 +70,26 @@ function detalhe(extra: Record<string, unknown> = {}) {
   }
 }
 
-function responde(corpo: unknown, status = 200, { papel = 'CORRETOR' } = {}) {
-  const api = vi.fn<(url: URL | string, init?: RequestInit) => Promise<Response>>(
-    async () => new Response(JSON.stringify(corpo), { status }),
+const SEM_FALAS = { itens: [], cursorAnterior: null }
+
+/**
+ * O `fetch` dublado, com as tres rotas que a pagina chama: `/auth/me`, o
+ * detalhe e a transcricao (TEC-324). Devolve as chamadas ao detalhe e a
+ * transcricao, nessa ordem de disparo.
+ */
+function responde(
+  corpo: unknown,
+  status = 200,
+  {
+    papel = 'CORRETOR',
+    transcricao = SEM_FALAS as unknown,
+    statusDaTranscricao = 200,
+  }: { papel?: string; transcricao?: unknown; statusDaTranscricao?: number } = {},
+) {
+  const api = vi.fn<(url: URL | string, init?: RequestInit) => Promise<Response>>(async (url) =>
+    new URL(String(url)).pathname.endsWith('/mensagens')
+      ? new Response(JSON.stringify(transcricao), { status: statusDaTranscricao })
+      : new Response(JSON.stringify(corpo), { status }),
   )
   const me = async () =>
     new Response(
@@ -135,6 +152,7 @@ describe('PaginaDoLead', () => {
         'Qualificação',
         'Agendamentos',
         'Follow-ups',
+        'Conversa',
       ])
     })
   })
@@ -264,6 +282,70 @@ describe('PaginaDoLead', () => {
     expect(screen.getByRole('region', { name: 'Follow-ups' })).toHaveTextContent(
       'Tentativa 1 · Morno · anteontem',
     )
+  })
+
+  describe('a conversa (TEC-324)', () => {
+    it('e a ultima secao, com as falas da primeira pagina', async () => {
+      responde(detalhe(), 200, {
+        transcricao: {
+          itens: [{ id: 'f-1', autor: 'LEAD', tipo: 'TEXTO', conteudo: 'Oi, vi o anúncio', retida: false, em: '2026-09-26T17:03:00+00:00' }],
+          cursorAnterior: 'c1',
+        },
+      })
+
+      await abrir()
+
+      expect(titulosDasSecoes().at(-1)).toBe('Conversa')
+      const conversa = screen.getByRole('region', { name: 'Conversa' })
+      expect(conversa).toHaveTextContent('Oi, vi o anúncio')
+      expect(within(conversa).getByRole('button', { name: 'Carregar anteriores' })).toBeInTheDocument()
+    })
+
+    it('detalhe e transcricao sao pedidos juntos, antes de qualquer resposta', async () => {
+      // Se a pagina esperasse o detalhe para pedir a transcricao, o segundo
+      // pedido so sairia depois de o primeiro resolver. Aqui o detalhe nunca
+      // resolve sozinho, e a transcricao tem de ter saido assim mesmo.
+      const pedidos: string[] = []
+      let liberar: () => void = () => {}
+      const detalheSegurado = new Promise<void>((resolver) => {
+        liberar = resolver
+      })
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: URL | string) => {
+          const caminho = new URL(String(url)).pathname
+          if (caminho.endsWith('/auth/me')) {
+            return new Response(
+              JSON.stringify({ usuarioId: 'u', papel: 'CORRETOR', corretorId: 'c', permissoes: PERMISSOES.CORRETOR }),
+            )
+          }
+          pedidos.push(caminho)
+          if (caminho.endsWith('/mensagens')) {
+            return new Response(JSON.stringify(SEM_FALAS))
+          }
+          await detalheSegurado
+          return new Response(JSON.stringify(detalhe()))
+        }),
+      )
+
+      const pagina = PaginaDoLead({ params: Promise.resolve({ leadId: LEAD_ID }) })
+      await vi.waitFor(() => expect(pedidos).toHaveLength(2))
+      liberar()
+      render(await pagina)
+
+      expect(pedidos).toEqual([`/api/v1/leads/${LEAD_ID}`, `/api/v1/leads/${LEAD_ID}/mensagens`])
+    })
+
+    it('se so a transcricao falha, o resto da tela abre, e a secao diz que falhou', async () => {
+      responde(detalhe(), 200, { transcricao: { detail: 'boom' }, statusDaTranscricao: 500 })
+
+      await abrir()
+
+      expect(screen.getByRole('region', { name: 'Resumo' })).toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'Conversa' })).toHaveTextContent(
+        'Não foi possível carregar a conversa.',
+      )
+    })
   })
 
   it('historico de score e recomendacoes nao aparecem: sao da TEC-325', async () => {

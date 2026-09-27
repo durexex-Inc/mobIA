@@ -12,14 +12,13 @@ import { COOKIE_DA_SESSAO, obterSessaoValida } from '@/lib/servidor/sessao'
  * regra mora aqui -- este arquivo e o adaptador entre a `Request` do Next e
  * funcoes que se testam sem ele.
  *
- * **Ele ainda nao tem consumidor de cliente, e isso e esperado.** O painel e
- * `<form method="get">` mais Server Component, e o login da TEC-309 tambem nao
- * passa por aqui -- os formularios dele vao a `/login/entrar` e `/login/mfa`.
- * A navegacao por papel (TEC-312) tambem nao: o menu e Server Component e le
- * `/auth/me` pelo servidor (D2 do desenho dela). Ate o primeiro componente de
- * cliente precisar dele, ele e exercitado por teste. Inventar um componente de
- * cliente so para lhe dar consumidor seria inventar entidade para um criterio
- * se auto-satisfazer.
+ * **O primeiro consumidor de cliente chegou com a TEC-324**: o "carregar
+ * anteriores" da conversa do lead. Ate la ele era exercitado so por teste, e
+ * de proposito -- inventar um componente de cliente so para lhe dar
+ * consumidor seria inventar entidade para um criterio se auto-satisfazer. O
+ * resto do painel continua sem passar por aqui: e `<form method="get">` mais
+ * Server Component, o login vai a `/login/entrar` e `/login/mfa`, e o menu le
+ * `/auth/me` pelo servidor (D2 da TEC-312).
  *
  * **Desde a TEC-309 ele autentica.** Sem sessao valida no Redis, responde
  * `401` e nada chega ao FastAPI; com ela, a chamada leva o JWT de quem esta

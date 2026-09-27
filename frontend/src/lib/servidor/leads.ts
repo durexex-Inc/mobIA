@@ -2,6 +2,7 @@ import 'server-only'
 
 import type { DetalheDoLead } from '@/lib/detalhe'
 import type { Ordem, PaginaDeLeads } from '@/lib/leads'
+import type { PaginaDaTranscricao } from '@/lib/transcricao'
 import { detalheDe } from '@/lib/metricas'
 import { chamarApi } from '@/lib/servidor/api'
 
@@ -66,4 +67,27 @@ export async function buscarDetalhe(leadId: string, acesso: string): Promise<Det
   }
 
   return (await resposta.json()) as DetalheDoLead
+}
+
+/**
+ * A primeira pagina da transcricao: as 100 falas mais recentes (TEC-324, D1).
+ *
+ * Grava um acesso na trilha com `campo=transcricao`, como `buscarDetalhe`
+ * grava o dele (D3 da TEC-193). As paginas anteriores nao passam por aqui: o
+ * componente de cliente as busca pelo proxy `/bff/*`.
+ */
+export async function buscarTranscricao(
+  leadId: string,
+  acesso: string,
+): Promise<PaginaDaTranscricao> {
+  const resposta = await chamarApi(`/api/v1/leads/${encodeURIComponent(leadId)}/mensagens`, {
+    acesso,
+  })
+
+  if (!resposta.ok) {
+    const { mensagem } = await detalheDe(resposta)
+    throw new ErroDeLeads(resposta.status, mensagem, resposta.headers.get('x-request-id'))
+  }
+
+  return (await resposta.json()) as PaginaDaTranscricao
 }
