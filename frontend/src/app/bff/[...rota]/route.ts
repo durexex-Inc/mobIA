@@ -15,8 +15,8 @@ import { COOKIE_DA_SESSAO, obterSessaoValida } from '@/lib/servidor/sessao'
  * **O primeiro consumidor de cliente chegou com a TEC-324**: o "carregar
  * anteriores" da conversa do lead. A TEC-327 trouxe as primeiras mutacoes --
  * assumir e devolver a conversa -- e o polling, a TEC-330 a revelacao de
- * telefone e e-mail, a TEC-329 a correcao da qualificacao e a TEC-328 a
- * resposta do corretor. Ate a TEC-324
+ * telefone e e-mail, a TEC-329 a correcao da qualificacao, a TEC-328 a
+ * resposta do corretor e a TEC-326 a regeneracao do resumo. Ate a TEC-324
  * ele era exercitado so por teste, e
  * de proposito -- inventar um componente de cliente so para lhe dar
  * consumidor seria inventar entidade para um criterio se auto-satisfazer. O
@@ -39,6 +39,9 @@ const SEM_CORPO: ReadonlySet<string> = new Set(['GET', 'HEAD'])
  * navegador nem de intermediario -- o numero revelado menos que tudo.
  */
 const SEM_CACHE = 'no-store'
+
+/** Os cabecalhos da resposta do FastAPI que chegam ao navegador. */
+const REPASSADOS = ['Content-Type', 'Retry-After'] as const
 
 function recusar(status: number, motivo: string, id: string): NextResponse {
   // Corpo minimo e sem prosa: quem le isto e codigo, nao a gerente. E uma
@@ -114,13 +117,17 @@ async function repassar(
     return recusar(502, 'api_inacessivel', id)
   }
 
-  // So o `Content-Type` e repassado. Copiar os cabecalhos de resposta em bloco
-  // relaiaria o que o FastAPI decidir mandar um dia -- `Set-Cookie` inclusive --
-  // para um dominio que nao e o dele.
+  // So `Content-Type` e `Retry-After` sao repassados, por lista. Copiar os
+  // cabecalhos de resposta em bloco relaiaria o que o FastAPI decidir mandar um
+  // dia -- `Set-Cookie` inclusive -- para um dominio que nao e o dele.
+  // `Retry-After` entrou na TEC-326: a trava do "Regenerar resumo" le dele
+  // quanto falta, e sem ele a tela so poderia supor os 60 s cheios.
   const cabecalhos = new Headers({ 'X-Request-Id': id, 'Cache-Control': SEM_CACHE })
-  const tipo = resposta.headers.get('content-type')
-  if (tipo) {
-    cabecalhos.set('Content-Type', tipo)
+  for (const nome of REPASSADOS) {
+    const valor = resposta.headers.get(nome)
+    if (valor) {
+      cabecalhos.set(nome, valor)
+    }
   }
 
   return new NextResponse(resposta.body, { status: resposta.status, headers: cabecalhos })

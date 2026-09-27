@@ -198,6 +198,18 @@ da lista não é link. O desenho está em
   e a lista embaixo dele é a leitura completa. A reação ao imóvel usa os
   rótulos do chat web ("Gostei", "Não é pra mim").
 
+## Regenerar o resumo (TEC-326)
+
+Quem tem `ATENDER_LEAD` vê "Regenerar resumo" na seção Resumo, quando há
+resumo. O clique faz `POST /handoffs/{handoffId}/resumo` pelo `/bff/*`, uma
+rota síncrona que espera o modelo, e **o resumo novo entra no lugar do antigo
+pela resposta**, sem reler o detalhe (reler gravaria outro acesso na trilha).
+O desenho está em `docs/superpowers/specs/2026-09-27-tec-326-regenerar-resumo-design.md`.
+
+- **A trava de 60 s conta de `geradoEm`**, como a do backend. A geração
+  automática do handoff também conta, e a tela mostra "Disponível em N s".
+- **O 429 é dito como trava**, com o `Retry-After`, e não como erro.
+
 ## A conversa do lead (TEC-324)
 
 A última seção do detalhe. A primeira página, com as 100 falas mais recentes,

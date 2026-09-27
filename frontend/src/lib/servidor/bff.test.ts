@@ -60,6 +60,14 @@ describe('caminhoPermitido', () => {
       expect(caminhoPermitido('PUT', ['api', 'v1', 'leads', LEAD, 'mensagens'])).toBeNull()
     })
 
+    it('a regeneracao do resumo entra como `POST` do handoff (TEC-326)', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'handoffs', LEAD, 'resumo'])).toBe(
+        `/api/v1/handoffs/${LEAD}/resumo`,
+      )
+      expect(caminhoPermitido('GET', ['api', 'v1', 'handoffs', LEAD, 'resumo'])).toBeNull()
+      expect(caminhoPermitido('POST', ['api', 'v1', 'handoffs', LEAD, 'aceitar'])).toBeNull()
+    })
+
     it('a correcao da qualificacao entra so como `PATCH` (TEC-329)', () => {
       expect(caminhoPermitido('PATCH', ['api', 'v1', 'leads', LEAD, 'qualificacao'])).toBe(
         `/api/v1/leads/${LEAD}/qualificacao`,
