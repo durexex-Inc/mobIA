@@ -1,4 +1,5 @@
-"""O cursor e a validacao do filtro da lista de leads. TEC-192.
+"""O cursor e a validacao do filtro da lista de leads. TEC-192, e a segunda
+ordem da TEC-321 (`TestCursorDaUltimaInteracao` e o `ordenar` do filtro).
 
 Sem banco: o que se verifica aqui e a FORMA do cursor e o que a borda recusa --
 as duas coisas que decidem antes de qualquer SQL rodar. Os cenarios contra

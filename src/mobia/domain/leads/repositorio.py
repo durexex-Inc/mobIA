@@ -212,6 +212,11 @@ def _depois_do_cursor(base: Any, score: Any, posicao: _Posicao) -> Any:
     - sem score no cursor, ja se esta na cauda dos sem score, e so o desempate
       decide.
 
+    **Na ordem por ultima interacao** (TEC-321, D4) a ordem e
+    `ultima_interacao_em DESC, channel, conversation_key`, e o predicado e o
+    ramo de `posicao.ultima_interacao_em`: vem depois quem falou antes, e quem
+    empata no instante perde no desempate.
+
     **`OFFSET` nao serve aqui, e nao e questao de gosto:** o score e
     recalculado a cada turno, e um lead que sobe entre a primeira e a segunda
     pagina faz uma linha ser pulada e outra aparecer duas vezes. O defeito e

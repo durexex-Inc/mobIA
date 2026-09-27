@@ -3,6 +3,9 @@
 Mais os que o desenho acrescentou: o empate de score (D5), a busca por telefone
 nas duas origens (D3), o lead sem score (D4) e a escrita de
 `handoffs.corretor_id` (D6), que e o que torna o terceiro cenario exercitavel.
+
+E a ordem por ultima interacao da TEC-321 (D4): a ordem, a paginacao por
+keyset nela, e o cursor de uma ordem recusado na outra.
 """
 
 import json
