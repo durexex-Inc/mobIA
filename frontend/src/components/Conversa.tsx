@@ -104,17 +104,35 @@ export function Conversa({ endereco }: { endereco: string }) {
     }
   }, [conectar])
 
-  // Fim da espera de `muitas_tentativas`: um socket novo. `espera` e o
-  // proprio objeto da conexao, que o redutor preserva enquanto nada muda --
-  // entao o timer nao reinicia a cada balao que chega.
+  // Fim da espera de `muitas_tentativas`: `reabrindo` tira a conexao de
+  // `aguardando` e um socket novo abre. Sem o `reabrindo`, uma queda desse
+  // socket antes do `open` manteria a espera -- o mesmo objeto, sem timer
+  // novo -- e o chat ficaria preso nela. `espera` e o proprio objeto da
+  // conexao, que o redutor preserva enquanto nada muda -- entao o timer nao
+  // reinicia a cada balao que chega.
   const espera = conversa.conexao.tipo === 'aguardando' ? conversa.conexao : null
   useEffect(() => {
     if (!espera) {
       return
     }
-    const reabrir = setTimeout(conectar, espera.segundos * 1000)
+    const reabrir = setTimeout(() => {
+      despachar({ tipo: 'reabrindo' })
+      conectar()
+    }, espera.segundos * 1000)
     return () => clearTimeout(reabrir)
   }, [espera, conectar])
+
+  // A mensagem mais nova a vista. `scrollTop` na propria lista, e nao
+  // `scrollIntoView`: dentro do iframe, `scrollIntoView` tambem rola os
+  // ancestrais -- inclusive a pagina do site da imobiliaria.
+  const listaRef = useRef<HTMLOListElement | null>(null)
+  const totalDeMensagens = conversa.mensagens.length
+  useEffect(() => {
+    const lista = listaRef.current
+    if (totalDeMensagens > 0 && lista) {
+      lista.scrollTop = lista.scrollHeight
+    }
+  }, [totalDeMensagens])
 
   useEffect(() => {
     if (!conversa.sessao) {
@@ -185,7 +203,7 @@ export function Conversa({ endereco }: { endereco: string }) {
 
   return (
     <section className="conversa">
-      <ol className="conversa__mensagens" aria-live="polite">
+      <ol ref={listaRef} className="conversa__mensagens" aria-live="polite">
         {conversa.mensagens.map((mensagem) =>
           mensagem.autor === 'visitante' ? (
             <li key={mensagem.messageId} className="conversa__balao conversa__balao--visitante">

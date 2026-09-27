@@ -37,6 +37,8 @@ export type Evento =
   | { tipo: 'fechou' }
   | { tipo: 'prazoDoAck'; messageId: string }
   | { tipo: 'reenviou'; messageId: string }
+  // A espera de `muitas_tentativas` acabou e um socket novo esta abrindo.
+  | { tipo: 'reabrindo' }
 
 /** Teto do campo de texto (D5). A rede continua com o teto de 4096 do servidor. */
 export const LIMITE_DE_CARACTERES = 1000
@@ -176,8 +178,10 @@ function marcarTodasEnviandoComoFalhou(mensagens: Mensagem[]): Mensagem[] {
 
 function aplicarFechou(estado: Conversa): Conversa {
   const mensagens = marcarTodasEnviandoComoFalhou(estado.mensagens)
-  // Se a queda ja veio com 'muitas_tentativas', a espera continua sendo a
-  // informacao relevante -- 'fechada' pisaria em cima da contagem regressiva.
+  // Enquanto a espera de 'muitas_tentativas' corre, ela e a informacao
+  // relevante -- 'fechada' pisaria em cima da contagem regressiva. Quando a
+  // espera acaba, `reabrindo` a troca por 'conectando', e uma queda do socket
+  // novo antes do `open` vira 'fechada' normalmente.
   const conexao: Conexao = estado.conexao.tipo === 'aguardando' ? estado.conexao : { tipo: 'fechada' }
   return mensagens === estado.mensagens && conexao === estado.conexao ? estado : { ...estado, mensagens, conexao }
 }
@@ -202,6 +206,8 @@ export function reduzir(estado: Conversa, evento: Evento): Conversa {
       return marcarFalhouSeEnviando(estado, evento.messageId)
     case 'reenviou':
       return marcarEnviando(estado, evento.messageId)
+    case 'reabrindo':
+      return estado.conexao.tipo === 'conectando' ? estado : { ...estado, conexao: { tipo: 'conectando' } }
   }
 }
 

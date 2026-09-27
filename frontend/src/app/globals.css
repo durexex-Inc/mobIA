@@ -521,7 +521,11 @@ a {
 /* O chat embutido no site da imobiliaria (TEC-344). `--cor-primaria` vem da
    configuracao do tenant, por `<style nonce>` na pagina. */
 .chat-embutido {
-  min-height: 100vh;
+  /* Altura fixa do iframe, e nao minima: so assim a lista de mensagens
+     transborda e rola sozinha, com o campo parado no rodape. `100vh` e a
+     reserva de navegador sem `dvh`. */
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
 }
@@ -538,7 +542,9 @@ a {
 }
 
 /* A conversa do chat embutido (TEC-346, D5). A lista rola sozinha e o campo
-   fica no rodape; a cor da visitante e a do tenant, nunca atributo `style`. */
+   fica no rodape -- o `min-height: 0` deixa os filhos flex encolherem abaixo
+   do conteudo, senao a lista empurraria o campo para fora do iframe. A cor da
+   visitante e a do tenant, nunca atributo `style`. */
 .conversa {
   flex: 1;
   display: flex;
@@ -548,6 +554,7 @@ a {
 
 .conversa__mensagens {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;

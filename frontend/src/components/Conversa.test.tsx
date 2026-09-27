@@ -208,6 +208,29 @@ describe('Conversa', () => {
     expect(screen.getByRole('textbox', { name: 'Mensagem' })).toBeInTheDocument()
   })
 
+  it('se o socket reaberto depois da espera cair antes do open, o chat nao fica preso na espera', () => {
+    vi.useFakeTimers()
+    const socket = montarAberto()
+    enviar('Oi')
+    socket.receber({
+      tipo: 'erro',
+      codigo: 'muitas_tentativas',
+      mensagem: 'Muitas tentativas, aguarde 20 s.',
+      aguardeSegundos: 20,
+    })
+    socket.fechar(1013)
+    expect(screen.getByRole('button', { name: 'Reenviar' })).toBeDisabled()
+
+    act(() => {
+      vi.advanceTimersByTime(20_000)
+    })
+    ultimoSocket().fechar(1006)
+
+    expect(screen.queryByText('Muitas tentativas, aguarde 20 s.')).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Mensagem' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reenviar' })).toBeEnabled()
+  })
+
   it('sem ack em 10 s marca "Não enviada", e "Reenviar" manda o MESMO id', () => {
     vi.useFakeTimers()
     const socket = montarAberto()

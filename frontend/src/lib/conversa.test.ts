@@ -204,6 +204,22 @@ describe('reduzir', () => {
     expect(depois.conexao).toEqual({ tipo: 'aguardando', mensagem: 'espera', segundos: 5 })
   })
 
+  it('reabrindo encerra a espera: conectando, e uma queda depois vira fechada', () => {
+    const aguardando = reduzir(INICIAL, {
+      tipo: 'frame',
+      bruto: frame({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'espera', aguardeSegundos: 5 }),
+    })
+    const reabrindo = reduzir(aguardando, { tipo: 'reabrindo' })
+    expect(reabrindo.conexao).toEqual({ tipo: 'conectando' })
+
+    const depois = reduzir(reabrindo, { tipo: 'fechou' })
+    expect(depois.conexao).toEqual({ tipo: 'fechada' })
+  })
+
+  it('reabrindo com a conexao ja conectando devolve a mesma referencia', () => {
+    expect(reduzir(INICIAL, { tipo: 'reabrindo' })).toBe(INICIAL)
+  })
+
   it('prazoDoAck de mensagem enviando marca falhou', () => {
     const antes = comVisitanteEnviando('m1')
     const depois = reduzir(antes, { tipo: 'prazoDoAck', messageId: 'm1' })
