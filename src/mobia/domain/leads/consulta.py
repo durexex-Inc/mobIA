@@ -9,6 +9,8 @@ import base64
 import json
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
 
 # Teto de itens por pagina. O SRS escreve `limite=25` no exemplo da secao 6.2;
 # o teto existe para que `?limite=100000` nao vire uma consulta que agrega
@@ -24,6 +26,19 @@ class FiltroInvalido(ValueError):
     ha lead assim", que e afirmacao sobre o negocio -- e o erro e de quem
     chamou.
     """
+
+
+class Ordem(StrEnum):
+    """As ordens da lista. TEC-321, D4, e o `ordenar` da secao 6.2 do SRS.
+
+    Os valores sao os nomes que o SRS ja escreve (`?ordenar=score_desc`). Nas
+    duas ordens o desempate e o par, pela razao da D5 da TEC-192: empate
+    tambem acontece no instante, porque duas falas podem cair no mesmo
+    microssegundo.
+    """
+
+    SCORE = "score_desc"
+    ULTIMA_INTERACAO = "ultima_interacao_desc"
 
 
 @dataclass(frozen=True)
@@ -45,10 +60,16 @@ class Cursor:
 
     `score` nulavel porque lead sem pontuacao entra na lista (D4), e a pagina
     pode terminar num deles.
+
+    **O cursor carrega a ordem em que nasceu** (TEC-321, D4). Na ordem por
+    ultima interacao, o que se compara e `ultima_interacao_em`, e `score` fica
+    nulo. Um cursor usado na outra ordem e recusado em `montar_filtro`.
     """
 
     score: int | None
     lead_id: uuid.UUID
+    ordem: Ordem = Ordem.SCORE
+    ultima_interacao_em: datetime | None = None
 
     def codificar(self) -> str:
         """base64 de um JSON. **Opaco de proposito.**
@@ -62,10 +83,14 @@ class Cursor:
         ja nao e dado pessoal, entao a fragilidade do base64 deixou de ter
         consequencia. Um `lead_id` decodificado nao diz nada sobre o lead.
         """
-        corpo = json.dumps(
-            {"s": self.score, "l": str(self.lead_id)},
-            separators=(",", ":"),
-        )
+        # O cursor de score continua com a forma `{"s","l"}` da TEC-195: a
+        # TEC-321 acrescentou a segunda ordem sem invalidar cursor em uso.
+        campos: dict[str, object]
+        if self.ordem is Ordem.ULTIMA_INTERACAO and self.ultima_interacao_em is not None:
+            campos = {"o": "u", "u": self.ultima_interacao_em.isoformat(), "l": str(self.lead_id)}
+        else:
+            campos = {"s": self.score, "l": str(self.lead_id)}
+        corpo = json.dumps(campos, separators=(",", ":"))
         return base64.urlsafe_b64encode(corpo.encode("utf-8")).decode("ascii")
 
 
@@ -88,6 +113,13 @@ def decodificar_cursor(texto: str) -> Cursor:
     """
     try:
         corpo = json.loads(base64.urlsafe_b64decode(texto.encode("ascii")))
+        if corpo.get("o") == "u":
+            return Cursor(
+                score=None,
+                lead_id=uuid.UUID(corpo["l"]),
+                ordem=Ordem.ULTIMA_INTERACAO,
+                ultima_interacao_em=datetime.fromisoformat(corpo["u"]),
+            )
         return Cursor(score=corpo["s"], lead_id=uuid.UUID(corpo["l"]))
     except (ValueError, KeyError, TypeError) as erro:
         raise FiltroInvalido("cursor invalido") from erro
@@ -144,6 +176,7 @@ class Filtro:
     corretor_id: uuid.UUID | None = None
     limite: int = LIMITE_PADRAO
     cursor: Cursor | None = None
+    ordem: Ordem = Ordem.SCORE
 
 
 def montar_filtro(
@@ -155,6 +188,7 @@ def montar_filtro(
     corretor_id: uuid.UUID | None = None,
     limite: int = LIMITE_PADRAO,
     cursor: str | None = None,
+    ordenar: str | None = None,
 ) -> Filtro:
     """Valida na borda o que o SQL nao valida sozinho.
 
@@ -167,6 +201,10 @@ def montar_filtro(
     coluna aceita nulo e valores antigos, e `canal` cresce a cada integracao
     nova -- fixar a lista aqui obrigaria a mexer neste arquivo toda vez que um
     canal nascesse, para nao ganhar nada que a lista vazia nao diga.
+
+    `ordenar` e conferido, e o cursor tem de ser da mesma ordem (TEC-321, D4):
+    a ordem padrao em silencio, ou um cursor de score continuado por instante,
+    devolveriam uma pagina plausivel e errada.
     """
     from mobia.domain.conversa.vocabulario import Status
 
@@ -175,6 +213,15 @@ def montar_filtro(
 
     if status is not None and status not in {s.value for s in Status}:
         raise FiltroInvalido(f"status desconhecido: {status}")
+
+    try:
+        ordem = Ordem(ordenar) if ordenar is not None else Ordem.SCORE
+    except ValueError as erro:
+        raise FiltroInvalido(f"ordenacao desconhecida: {ordenar}") from erro
+
+    posicao = decodificar_cursor(cursor) if cursor else None
+    if posicao is not None and posicao.ordem is not ordem:
+        raise FiltroInvalido("cursor de outra ordenacao")
 
     # `strip()` e depois "vazio vira None": uma busca de espacos em branco
     # filtraria por `%   %` e devolveria quase nada, o que pareceria base vazia.
@@ -187,5 +234,6 @@ def montar_filtro(
         canal=canal,
         corretor_id=corretor_id,
         limite=limite,
-        cursor=decodificar_cursor(cursor) if cursor else None,
+        cursor=posicao,
+        ordem=ordem,
     )

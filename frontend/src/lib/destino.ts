@@ -6,9 +6,11 @@
  */
 
 /**
- * Para onde o login manda quando nao ha destino. E `/` para todos os papeis --
- * a TEC-312 decidiu assim enquanto so o funil existe, e a regra por papel mora
- * em `paginaInicialDe` (`lib/navegacao.ts`). As duas tem de mudar juntas.
+ * Para onde o login manda quando nao ha destino. E `/` para todos os papeis,
+ * porque o login redireciona antes de saber as permissoes. A regra por
+ * permissao mora em `paginaInicialDe` (`lib/navegacao.ts`), e desde a TEC-321
+ * e a pagina do funil que a aplica: quem nao ve o funil e ve a lista de leads
+ * segue de `/` para `/leads`.
  */
 export const PAGINA_INICIAL = '/'
 

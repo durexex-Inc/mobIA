@@ -5,8 +5,9 @@ import { nomeDoPapel } from '@/lib/navegacao'
  *
  * Aparece em tres situacoes, e nenhuma delas pode virar tela vazia: o acesso
  * direto por URL a uma area que o papel nao tem, o 403 do backend numa tela
- * que o menu mostrou, e a pagina inicial de um papel que ainda nao tem tela
- * nenhuma (o CORRETOR, ate a TEC-321).
+ * que o menu mostrou, e a pagina inicial de um papel que nao tem tela nenhuma.
+ * Ate a TEC-321 o CORRETOR caia na terceira; desde ela, o `/` o manda para a
+ * lista de leads, e nenhum papel da matriz de hoje cai mais nela.
  *
  * **Diz o papel**, porque a primeira pergunta de quem cai aqui e "entrei com a
  * conta certa?". E o link para a pagina inicial e omitido quando ja se esta
@@ -14,11 +15,9 @@ import { nomeDoPapel } from '@/lib/navegacao'
  */
 export function SemPermissao({
   papel,
-  detalhe,
   paginaInicial,
 }: {
   papel: string | null
-  detalhe?: string
   paginaInicial?: string | null
 }) {
   return (
@@ -30,7 +29,6 @@ export function SemPermissao({
             ? `Você entrou como ${nomeDoPapel(papel)}, e esse perfil não tem acesso a esta tela.`
             : 'O seu perfil não tem acesso a esta tela.'}
         </p>
-        {detalhe && <p>{detalhe}</p>}
         {paginaInicial && <a href={paginaInicial}>Ir para a página inicial</a>}
       </div>
     </main>

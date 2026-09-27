@@ -80,8 +80,11 @@ type ErroDeValidacao = { loc?: unknown[]; msg?: string }
  *
  * Corpo nao-JSON (um 502 de proxy, por exemplo) cai no generico: ali o
  * status sozinho ja diz o que da para dizer.
+ *
+ * Exportada desde a TEC-321: a lista de leads le o mesmo `detail` do mesmo
+ * FastAPI, e uma segunda copia desta leitura divergiria da primeira.
  */
-async function detalheDe(resposta: Response): Promise<{ mensagem: string; campos: string[] }> {
+export async function detalheDe(resposta: Response): Promise<{ mensagem: string; campos: string[] }> {
   try {
     const corpo = await resposta.json()
 

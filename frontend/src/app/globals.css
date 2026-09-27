@@ -332,3 +332,52 @@ a {
   font-weight: 600;
   cursor: pointer;
 }
+
+/* --- Lista de leads (TEC-321) --------------------------------------------- */
+
+.leads-busca {
+  margin-bottom: 1.5rem;
+}
+
+.leads-busca input {
+  width: 100%;
+  max-width: 24rem;
+  padding: 0.5rem;
+  font: inherit;
+}
+
+/* A tabela rola sozinha no celular, e nao a pagina: seis colunas nao cabem em
+   360px, e os cartoes do celular sao a TEC-322. */
+.leads-tabela {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.leads-tabela th,
+.leads-tabela td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+
+.leads-tabela th a {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.leads-tabela th[aria-sort] a {
+  text-decoration: none;
+}
+
+.leads-score {
+  font-variant-numeric: tabular-nums;
+}
+
+.leads-mais {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}

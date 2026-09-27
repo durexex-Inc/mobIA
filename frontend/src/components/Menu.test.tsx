@@ -32,10 +32,12 @@ describe('Menu', () => {
     expect(formulario).toHaveAttribute('action', '/sair')
   })
 
-  it('CORRETOR nao ve nenhum dos dois', () => {
+  it('CORRETOR ve so a lista de leads (TEC-321)', () => {
     render(<Menu quem={quem('CORRETOR', ['VER_LEADS', 'ATENDER_LEAD'])} />)
 
-    expect(screen.queryAllByRole('link')).toEqual([])
+    expect(screen.getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([
+      '/leads',
+    ])
     expect(screen.getByText('Corretor')).toBeInTheDocument()
   })
 })

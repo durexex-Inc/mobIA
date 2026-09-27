@@ -12,6 +12,7 @@ import {
 import { redirect } from 'next/navigation'
 
 import { urlDoLogin } from '@/lib/destino'
+import { paginaInicialDe } from '@/lib/navegacao'
 import { periodoPadrao } from '@/lib/periodo'
 import { exigirPermissao } from '@/lib/servidor/quemSou'
 import { apagarSessaoDaRequisicao } from '@/lib/servidor/sessao'
@@ -68,20 +69,6 @@ function urlDoRecorte(filtros: FiltrosTipo): string {
   return `/?${busca.toString()}`
 }
 
-/**
- * O que a tela "Sem permissao" acrescenta quando e a PAGINA INICIAL do papel
- * que cai nela (D6 do desenho).
- *
- * Hoje so o CORRETOR: `/` e a pagina inicial de todo papel, e ele nao ve o
- * funil. A tela dele e a lista de leads (TEC-321), que ainda nao existe -- e a
- * frase diz isso, em vez de deixa-lo achar que entrou com a conta errada.
- */
-function detalheDoInicio(papel: string): string | undefined {
-  return papel === 'CORRETOR'
-    ? 'A tela do corretor, com a lista dos seus leads, ainda não está disponível.'
-    : undefined
-}
-
 export default async function Pagina({ searchParams }: { searchParams: Promise<Busca> }) {
   const busca = await searchParams
   const filtros = filtrosDaUrl(busca)
@@ -91,7 +78,15 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
   // menu ja esconde o funil de quem nao o ve, mas esconder e conveniencia.
   const { sessao, quem, permitido } = await exigirPermissao(recorte, (p) => p.has('VER_FUNIL'))
   if (!permitido) {
-    return <SemPermissao papel={quem.papel} detalhe={detalheDoInicio(quem.papel)} />
+    // **Quem tem outra tela vai para ela** (TEC-321, D2). O login manda todo
+    // mundo para `/`, porque redireciona antes de ler as permissoes; e aqui
+    // que o CORRETOR segue para a lista de leads, em vez de cair na tela "Sem
+    // permissao" que a D6 da TEC-312 deixou como provisoria.
+    const inicio = paginaInicialDe(quem.permissoes)
+    if (inicio !== '/') {
+      redirect(inicio)
+    }
+    return <SemPermissao papel={quem.papel} />
   }
 
   let funil: FunilTipo | null = null
