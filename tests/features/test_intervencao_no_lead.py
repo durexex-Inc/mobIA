@@ -3,7 +3,8 @@
 Os quatro cenarios do Gherkin da card, e o que o desenho acrescentou: os
 desfechos do envio (D3), as duas guardas vistas pela fala do corretor, a trilha
 da edicao (D4), o autor na trilha de score (D6) e o vinculo de corretor (D2).
-E o 409 de assumir com o nome de quem tem a conversa (TEC-327, D3).
+E o 409 de assumir com o nome de quem tem a conversa (TEC-327, D3), e a regiao
+editada gravada na forma canonica (TEC-329, D1).
 
 **A porta de saida e falsa, mas as guardas sao as de verdade.** `PortaFalsa`
 herda de `GuardedOutbound` e so troca `_deliver`: e o que deixa o teste afirmar
