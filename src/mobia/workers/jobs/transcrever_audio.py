@@ -41,6 +41,7 @@ from mobia.domain.midia.models import (
 )
 from mobia.domain.midia.repositorio import gravar_transcricao, ler_midia
 from mobia.domain.midia.transcricao import TranscricaoIndisponivel, TranscritorPort
+from mobia.domain.privacidade.redacao import redigir
 from mobia.infra.crypto import aad_de, decrypt_bytes
 from mobia.infra.queue import enqueue_turno_apos_transcricao
 from mobia.workers.jobs.baixar_midia import DesfechoDoDownload, baixar_e_guardar, gravar_desfecho
@@ -86,13 +87,27 @@ async def transcrever_audio(ctx: dict[str, Any], message_id: str) -> str:
         await _acordar_turno(ctx, identificador)
         raise
 
+    # TEC-380, RNF-20. A transcricao e o segundo ponto que grava texto do lead
+    # (o primeiro e `IngestionService._persist`), e o dado sensivel sai aqui
+    # pela mesma regra, antes de chegar a `text_body`. O que a Whisper ouviu
+    # nao se desfaz -- ver "O que esta card nao entrega", no desenho.
+    texto = desfecho.texto
+    if texto is not None:
+        redacao = redigir(texto)
+        texto = redacao.texto
+        if redacao.trechos:
+            log.info(
+                "privacidade.dado_sensivel_redigido",
+                message_id=message_id,
+                trechos=redacao.trechos,
+            )
     gravou = await gravar_transcricao(
         session_factory,
         identificador,
         status=desfecho.status,
         motivo=desfecho.motivo,
         duracao=desfecho.duracao,
-        texto=desfecho.texto,
+        texto=texto,
     )
     if not gravou:
         # Outro job sobre o mesmo audio gravou primeiro. O desfecho dele vale, e

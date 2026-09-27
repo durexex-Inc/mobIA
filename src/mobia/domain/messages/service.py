@@ -22,6 +22,7 @@ from mobia.domain.messages.status import MessageStatus
 from mobia.domain.midia.models import MidiaRecebida
 from mobia.domain.midia.repositorio import linha_pendente
 from mobia.domain.optout.deteccao import pediu_optout
+from mobia.domain.privacidade.redacao import redigir, redigir_payload
 from mobia.domain.titular.deteccao import e_palavra_de_confirmacao, pedido_de_titular
 from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 from mobia.infra.db import motivo_do_erro_de_banco
@@ -205,6 +206,22 @@ class IngestionService:
         valores = []
         for item in parsed:
             identificador = uuid.uuid4()
+            # TEC-380, RNF-20. O dado sensivel sai AQUI, antes do `encrypt`, e
+            # nos dois lugares onde o texto do lead e gravado: o corpo e o
+            # envelope, que o carrega de novo (`text.body`, a legenda, o
+            # `texto` do widget). O `ParsedMessage` nao muda: a deteccao de
+            # opt-out, humano e titular em `ingest` le o original, que so
+            # existe na memoria e nunca e gravado.
+            texto = redigir(item.text_body) if item.text_body is not None else None
+            envelope, trechos_no_envelope = redigir_payload(item.raw_payload)
+            trechos = max(texto.trechos if texto else 0, trechos_no_envelope)
+            if trechos:
+                # Sem categoria: a categoria ligada ao id seria o proprio dado.
+                log.info(
+                    "privacidade.dado_sensivel_redigido",
+                    message_id=str(identificador),
+                    trechos=trechos,
+                )
             valores.append(
                 {
                     "id": identificador,
@@ -218,10 +235,10 @@ class IngestionService:
                     "role": MessageRole.LEAD,
                     "direction": MessageDirection.INBOUND,
                     "content_type": item.content_type,
-                    "text_body": encrypt(item.text_body, aad_de(identificador, "text_body")),
-                    "raw_payload": encrypt_json(
-                        item.raw_payload, aad_de(identificador, "raw_payload")
+                    "text_body": encrypt(
+                        texto.texto if texto else None, aad_de(identificador, "text_body")
                     ),
+                    "raw_payload": encrypt_json(envelope, aad_de(identificador, "raw_payload")),
                     # TEC-217. Cifrado como o raw, com o AAD da propria linha e
                     # coluna: e o que impede copiar o envelope de um lead para
                     # a linha de outro.
