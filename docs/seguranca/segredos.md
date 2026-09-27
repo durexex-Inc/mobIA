@@ -15,7 +15,6 @@ Os comandos de geração são os mesmos que as mensagens de erro dos validators 
 | `LEAD_INDICE_CHAVE_ID` | Data de criação da chave de índice, só para o aviso dos 90 dias | Tem de ser data `AAAAMMDD`. **O default é `20260926`**: quem troca a chave e esquece o id recebe o aviso na data errada | a data de hoje |
 | `AUDITORIA_CHAVE_DO_LEAD` | Chave do HMAC do `lead_ref` de `eventos_auditoria` | Recusa o default de desenvolvimento | `python -c "import secrets;print(secrets.token_urlsafe(48))"` |
 | `JWT_SEGREDO` | Assina os JWT do dashboard | Recusa o default e qualquer valor com menos de 32 bytes | `python -c "import secrets;print(secrets.token_urlsafe(48))"` |
-| `CATALOGO_ADMIN_TOKEN` | Libera `POST /api/v1/imoveis/importar`; vazio desliga a rota | Recusa o default de desenvolvimento | `python -c "import secrets;print(secrets.token_urlsafe(32))"` |
 | `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN` | Assinatura do webhook, verificação do webhook e envio pela Cloud API | **Nenhuma**: os defaults `dev-app-secret` e `dev-verify-token` não são recusados | app secret e access token no painel da Meta; o verify token é escolhido por nós e cadastrado lá |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Modelo do agente; embeddings | A da OpenAI é exigida pelo worker em produção | no provedor |
 | `SMTP_SENHA`, `CRM_WEBHOOK_SECRET`, `GOOGLE_CALENDAR_CLIENT_SECRET`, `GOOGLE_CALENDAR_REFRESH_TOKEN` | Notificação ao corretor, assinatura do POST ao CRM, calendário | Nenhuma | no provedor |

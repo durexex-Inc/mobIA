@@ -23,7 +23,9 @@ regexes = [
   '''dev-auditoria-chave-do-lead-nao-use-em-producao''',
   # Chave do HMAC do indice do lead (TEC-203/Task 5) em .env.example.
   '''dev-indice-do-lead-nao-use-em-producao''',
-  # Token do catalogo em .env.example.
+  # Token do catalogo compartilhado (`X-Admin-Token`), apagado do FastAPI e do
+  # .env.example pela TEC-382. Fica na allowlist porque o valor continua no
+  # historico do git, que o job `main` varre inteiro.
   '''dev-catalogo-token''',
   # Sentinela do bundle do frontend (TEC-302), definida no job `Frontend` do CI.
   '''tec302-sentinela-do-token-nao-vaza''',
