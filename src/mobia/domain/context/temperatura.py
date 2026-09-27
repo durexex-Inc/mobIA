@@ -16,6 +16,7 @@ por faixa nao e uma faixa; e uma conjuncao de quase-maximos**, e por isso os
 gatilhos da RN-06.3 sao o caminho principal, e nao a excecao.
 """
 
+from dataclasses import replace
 from enum import StrEnum
 
 from mobia.domain.context.score import Score
@@ -67,3 +68,19 @@ def temperatura_de(score: Score, *, qualificado: bool, forcada: bool) -> Tempera
     if score.total >= CORTE_MORNO:
         return Temperatura.MORNO
     return Temperatura.FRIO
+
+
+def temperatura_da_cadencia_de(score: Score, *, qualificado: bool, forcada: bool) -> Temperatura:
+    """A temperatura que escolhe a regua de reengajamento: a de `temperatura_de`
+    sem a penalidade de nao comparecimento. TEC-385, Emenda E-02 a RN-13.1.
+
+    **So a penalidade sai, e nada mais muda.** O teto de `qualificado` e o
+    forcamento valem igual: os dois dizem o que o LEAD sinalizou -- os
+    obrigatorios que ele respondeu, o pedido de visita que ele fez --, e
+    faltar a uma visita nao desfaz nenhum dos dois. O que a Emenda E-02 a RN-12.4
+    tira da cadencia e so o desconto, que e o juizo sobre a falta.
+
+    Por construcao, sem penalidade as duas funcoes devolvem o mesmo: e o
+    terceiro cenario da card ("lead sem nao comparecimento nao muda nada").
+    """
+    return temperatura_de(replace(score, penalidade=0), qualificado=qualificado, forcada=forcada)
