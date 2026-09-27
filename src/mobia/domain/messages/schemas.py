@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any
 
+from mobia.domain.identidade.indice import chave_de_mensagem
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.messages.enums import MessageContentType, content_type_da_meta
 
 
@@ -101,7 +103,11 @@ def parse_meta_envelope(payload: dict[str, Any]) -> list[ParsedMessage]:
 
                 parsed.append(
                     ParsedMessage(
-                        provider_message_id=str(provider_message_id),
+                        # TEC-383. O HMAC do wamid, e nao o wamid: ele carrega o
+                        # telefone do lead. O cru fica em `raw_payload`, cifrado.
+                        provider_message_id=chave_de_mensagem(
+                            CANAL_WHATSAPP, str(provider_message_id)
+                        ),
                         sender_external_id=str(sender),
                         recipient_external_id=recipient,
                         content_type=content_type,

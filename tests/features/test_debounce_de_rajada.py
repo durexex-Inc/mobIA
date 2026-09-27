@@ -7,6 +7,7 @@ import asyncio
 import json
 from datetime import UTC, datetime
 
+from conftest import pmid_do_whatsapp  # type: ignore[import-not-found]
 from sqlalchemy import func, select
 
 from mobia.app.config import get_settings
@@ -220,7 +221,7 @@ async def test_optout_na_rajada_nao_espera(
         assert len(jobs) == 2
 
         optout = await session.scalar(
-            select(Message).where(Message.provider_message_id == "wamid.O2")
+            select(Message).where(Message.provider_message_id == pmid_do_whatsapp("wamid.O2"))
         )
         assert optout is not None
         pronto = jobs[f"msg:{optout.id}"]

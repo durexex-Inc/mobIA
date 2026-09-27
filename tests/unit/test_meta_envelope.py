@@ -1,5 +1,6 @@
 from typing import Any
 
+from mobia.domain.identidade.indice import chave_de_mensagem
 from mobia.domain.messages.enums import MessageContentType, content_type_da_meta
 from mobia.domain.messages.schemas import ParsedMessage, nome_no_envelope, parse_meta_envelope
 
@@ -43,7 +44,9 @@ def test_extrai_mensagem_de_texto() -> None:
     assert len(resultado) == 1
     msg = resultado[0]
     assert isinstance(msg, ParsedMessage)
-    assert msg.provider_message_id == "wamid.TEXTO"
+    # TEC-383: o HMAC do wamid, e nao o wamid, que carrega o telefone.
+    assert msg.provider_message_id == chave_de_mensagem("whatsapp", "wamid.TEXTO")
+    assert msg.raw_payload["id"] == "wamid.TEXTO"
     assert msg.sender_external_id == "5511911112222"
     assert msg.recipient_external_id == "222222222"
     assert msg.content_type is MessageContentType.TEXTO
@@ -67,7 +70,10 @@ def test_audio_e_registrado_sem_corpo_de_texto() -> None:
 def test_varias_mensagens_no_mesmo_envelope() -> None:
     outra = dict(MENSAGEM_TEXTO, id="wamid.SEGUNDA")
     resultado = parse_meta_envelope(envelope(MENSAGEM_TEXTO, outra))
-    assert [m.provider_message_id for m in resultado] == ["wamid.TEXTO", "wamid.SEGUNDA"]
+    assert [m.provider_message_id for m in resultado] == [
+        chave_de_mensagem("whatsapp", "wamid.TEXTO"),
+        chave_de_mensagem("whatsapp", "wamid.SEGUNDA"),
+    ]
 
 
 def test_notificacao_de_status_nao_gera_mensagem() -> None:
@@ -241,3 +247,31 @@ def test_campo_novo_de_value_sobrevive() -> None:
 
     assert mensagem.envelope_context is not None
     assert mensagem.envelope_context["value"]["campo_que_a_meta_ainda_nao_manda"] == {"x": 1}
+
+
+# --- TEC-383: o wamid nao sai do parser ---------------------------------------
+
+
+def test_o_id_gravado_nao_carrega_o_wamid_nem_o_telefone() -> None:
+    """O wamid real e base64 de um protobuf com o `wa_id` legivel. Nada dele,
+    nem o telefone, pode chegar ao `provider_message_id`."""
+    import base64
+
+    telefone = "5548999887766"
+    corpo_do_wamid = base64.b64encode(bytes([0x1C, 0x18, 0x0D]) + telefone.encode()).decode()
+    wamid = f"wamid.{corpo_do_wamid}"
+
+    (mensagem,) = parse_meta_envelope(envelope({**MENSAGEM_TEXTO, "id": wamid}))
+
+    assert telefone in base64.b64decode(corpo_do_wamid).decode("latin-1")
+    assert corpo_do_wamid[:12] not in mensagem.provider_message_id
+    assert telefone not in mensagem.provider_message_id
+    assert "wamid" not in mensagem.provider_message_id
+
+
+def test_o_mesmo_wamid_da_sempre_o_mesmo_id() -> None:
+    """E o que mantem a dedup da reentrega (TEC-125) sobre a mesma UNIQUE."""
+    primeira = parse_meta_envelope(envelope(MENSAGEM_TEXTO))
+    reentrega = parse_meta_envelope(envelope(MENSAGEM_TEXTO))
+
+    assert primeira[0].provider_message_id == reentrega[0].provider_message_id

@@ -20,7 +20,7 @@ from sqlalchemy import text
 
 from mobia.domain.auditoria.registro import registrar_evento
 from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA, Acao, Entidade
-from mobia.domain.identidade.indice import chave_de, registrar
+from mobia.domain.identidade.indice import chave_de, chave_de_mensagem, registrar
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
@@ -99,17 +99,18 @@ async def test_upgrade_sobre_banco_com_duplicatas(esquema_na_0002) -> None:
     await dispose_engine()
     alembic("upgrade", "head")
 
+    # Desde a 0066 (TEC-383) o wamid do WhatsApp chega ao head como HMAC. O
+    # `id.COMPARTILHADO` nao tem a forma de wamid, e fica como estava.
     async with get_sessionmaker()() as sessao:
         sobreviventes = (
             await sessao.execute(
-                text(
-                    "SELECT id, text_body FROM messages"
-                    " WHERE provider_message_id = 'wamid.REENTREGUE'"
-                )
+                text("SELECT id, text_body FROM messages WHERE provider_message_id = :pid"),
+                {"pid": chave_de_mensagem("whatsapp", "wamid.REENTREGUE")},
             )
         ).all()
         intocada = await sessao.scalar(
-            text("SELECT count(*) FROM messages WHERE provider_message_id = 'wamid.INTOCADA'")
+            text("SELECT count(*) FROM messages WHERE provider_message_id = :pid"),
+            {"pid": chave_de_mensagem("whatsapp", "wamid.INTOCADA")},
         )
         canais = (
             await sessao.execute(

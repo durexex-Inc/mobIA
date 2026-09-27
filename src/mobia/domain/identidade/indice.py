@@ -45,6 +45,22 @@ def chave_de(channel: str, valor: str) -> str:
     return _hmac(f"{channel}:{valor}")
 
 
+def chave_de_mensagem(channel: str, id_do_provedor: str) -> str:
+    """HMAC de `mensagem:{channel}:{id}`: o `provider_message_id` do WhatsApp. TEC-383.
+
+    O wamid da Meta e base64 de um protobuf que carrega o `wa_id` do lead em
+    claro (`HBgNNTU0ODk5...` decodifica para `...5548999...`). Gravado cru,
+    ele devolvia o telefone que `chave_de` existe para tirar da tabela. O HMAC
+    e deterministico, entao a UNIQUE `(channel, provider_message_id)` continua
+    descartando a reentrega (TEC-125) -- e o prefixo `mensagem:` o separa de
+    qualquer chave de lead ou de telefone.
+
+    O wamid cru continua existindo, cifrado, em `raw_payload`: e de la que o
+    indicador de digitacao o le (`outbound/presenca.py`).
+    """
+    return _hmac(f"mensagem:{channel}:{id_do_provedor}")
+
+
 def indice_de_telefone(canonico: str) -> str:
     """HMAC de `telefone:{canonico}`. O prefixo o separa de qualquer chave de canal."""
     return _hmac(f"telefone:{canonico}")

@@ -7,6 +7,7 @@ import json
 from contextlib import asynccontextmanager
 
 import pytest
+from conftest import pmid_do_whatsapp  # type: ignore[import-not-found]
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
@@ -85,7 +86,7 @@ async def test_confirmar_recebimento_antes_de_processar(
     assert response.status_code == 200
 
     linha = await session.scalar(
-        select(Message).where(Message.provider_message_id == "wamid.GHERKIN")
+        select(Message).where(Message.provider_message_id == pmid_do_whatsapp("wamid.GHERKIN"))
     )
     assert linha is not None
     assert linha.status == MessageStatus.QUEUED
@@ -338,7 +339,7 @@ async def test_falha_ao_virar_status_nao_pode_propagar(
     assert response.status_code == 200, "a linha ja esta gravada; re-entrega da Meta duplicaria"
 
     linha = await session.scalar(
-        select(Message).where(Message.provider_message_id == "wamid.GHERKIN")
+        select(Message).where(Message.provider_message_id == pmid_do_whatsapp("wamid.GHERKIN"))
     )
     assert linha is not None, "o commit do lote passou, a linha tem de estar la"
     assert linha.status == MessageStatus.RECEIVED, "a virada de status falhou; o sweeper recupera"
