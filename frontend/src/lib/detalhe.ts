@@ -44,6 +44,8 @@ export type DetalheDoLead = {
   agendamentos: AgendamentoDoLead[]
   followups: FollowUpDoLead[]
   atendimento: Atendimento | null
+  /** Quando fecha a janela de 24 h do WhatsApp (TEC-328, D2). `null` no site. */
+  janelaDeServicoFechaEm: string | null
 }
 
 /**

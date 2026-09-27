@@ -178,6 +178,10 @@ class PedidoDeFala(BaseModel):
     texto: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=TETO_DA_FALA)
     ]
+    # O id que o cliente gerou para a fala (TEC-328, D1). Opcional para nao
+    # quebrar quem ja chama sem ele; com ele, o reenvio da mesma fala devolve a
+    # que ja foi gravada, em vez de manda-la de novo ao lead.
+    messageId: uuid.UUID | None = None  # noqa: N815
 
 
 # O status HTTP de cada recusa. 409 para o que e estado da conversa e nao muda
@@ -188,6 +192,8 @@ _STATUS_DA_RECUSA = {
     Recusa.JANELA_FECHADA: status.HTTP_409_CONFLICT,
     Recusa.LEAD_EM_OPTOUT: status.HTTP_409_CONFLICT,
     Recusa.CANAL_FALHOU: status.HTTP_502_BAD_GATEWAY,
+    Recusa.MESSAGE_ID_EM_USO: status.HTTP_409_CONFLICT,
+    Recusa.FALA_EM_ENVIO: status.HTTP_409_CONFLICT,
 }
 
 
@@ -216,6 +222,7 @@ async def falar(
             corretor_id=corretor_id,
             texto=pedido.texto,
             outbound=outbound,
+            fala_id=pedido.messageId,
         )
     except FalaNaoEnviada as erro:
         raise HTTPException(

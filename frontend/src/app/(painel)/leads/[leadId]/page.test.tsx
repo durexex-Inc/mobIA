@@ -259,6 +259,25 @@ describe('PaginaDoLead', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('+55 48 9****-**21')
   })
 
+  describe('responder o lead (TEC-328)', () => {
+    it('quem pode assumir ve o campo de resposta na conversa', async () => {
+      responde(detalhe({ janelaDeServicoFechaEm: null }))
+
+      await abrir()
+
+      const conversa = screen.getByRole('region', { name: 'Conversa' })
+      expect(within(conversa).getByLabelText('Responder ao lead')).toBeInTheDocument()
+    })
+
+    it('GERENTE sem vinculo de corretor nao responde: nao ha em nome de quem falar', async () => {
+      responde(detalhe(), 200, { papel: 'GERENTE_SEM_VINCULO', corretorId: null })
+
+      await abrir()
+
+      expect(screen.queryByLabelText('Responder ao lead')).toBeNull()
+    })
+  })
+
   describe('corrigir a qualificacao (TEC-329)', () => {
     it('quem tem ATENDER_LEAD ve o "Editar qualificação" na secao', async () => {
       responde(detalhe())

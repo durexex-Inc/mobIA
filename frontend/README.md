@@ -114,7 +114,7 @@ que põe o JWT da sessão num cabeçalho:
 | --- | --- | --- | --- |
 | Server Component → `buscarFunil` | o painel de funil | `revalidate: 60` | **não** |
 | Server Component → `buscarLeads` | a lista de leads | `no-store` | não |
-| Route Handler `/bff/[...rota]` | a conversa do lead (falas anteriores, TEC-324; polling, TEC-327), assumir e devolver (TEC-327), revelar telefone (TEC-330), corrigir a qualificação (TEC-329) | `no-store` | sim |
+| Route Handler `/bff/[...rota]` | a conversa do lead (falas anteriores, TEC-324; polling, TEC-327), assumir e devolver (TEC-327), revelar telefone (TEC-330), corrigir a qualificação (TEC-329), responder o lead (TEC-328) | `no-store` | sim |
 
 **O painel não passa pelo `/bff/*`, e isso é deliberado.** Um Server Component
 chamando o próprio Route Handler custaria um round-trip HTTP do processo para
@@ -208,6 +208,24 @@ em `docs/superpowers/specs/2026-09-27-tec-327-assumir-e-devolver-design.md`.
   (decisão de 27/09/2026): um poll vazio não entrega dado pessoal.
 - **A faixa sobrevive a recarregar**, porque o detalhe diz quem tem a conversa
   (`atendimento`). O 409 de "já assumida" traz o nome de quem a tem.
+
+## Responder o lead (TEC-328)
+
+Quem vê "Assumir conversa" vê também, embaixo da conversa, o campo para
+responder o lead. Ele só fica habilitado com a conversa assumida por quem vê a
+tela. Enviar faz `POST /leads/{leadId}/mensagens` pelo `/bff/*`, e a fala
+entra no fim da conversa com o rótulo "Corretor". O desenho está em
+`docs/superpowers/specs/2026-09-27-tec-328-responder-pelo-painel-design.md`.
+
+- **Até 1.000 caracteres**, com contador. A API aceita até 4096; o limite
+  menor é da tela.
+- **Cada mensagem leva um `messageId`**, gerado no cliente e reusado enquanto
+  o texto não mudar. Reenviar depois de uma falha não manda a mensagem duas
+  vezes ao lead.
+- **Janela de 24 h do WhatsApp:** o detalhe diz quando ela fecha
+  (`janelaDeServicoFechaEm`), e a tela bloqueia o texto livre a partir daí e
+  explica que só template aprovado pode ser enviado. Uma fala nova do lead
+  reabre a janela. O painel ainda não envia templates.
 
 ## Corrigir a qualificação (TEC-329)
 

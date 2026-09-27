@@ -15,7 +15,8 @@ import { COOKIE_DA_SESSAO, obterSessaoValida } from '@/lib/servidor/sessao'
  * **O primeiro consumidor de cliente chegou com a TEC-324**: o "carregar
  * anteriores" da conversa do lead. A TEC-327 trouxe as primeiras mutacoes --
  * assumir e devolver a conversa -- e o polling, a TEC-330 a revelacao de
- * telefone e e-mail, e a TEC-329 a correcao da qualificacao. Ate a TEC-324
+ * telefone e e-mail, a TEC-329 a correcao da qualificacao e a TEC-328 a
+ * resposta do corretor. Ate a TEC-324
  * ele era exercitado so por teste, e
  * de proposito -- inventar um componente de cliente so para lhe dar
  * consumidor seria inventar entidade para um criterio se auto-satisfazer. O

@@ -286,4 +286,50 @@ describe('Transcricao', () => {
     expect(screen.queryByRole('button', { name: 'Carregar anteriores' })).not.toBeInTheDocument()
     expect(screen.getByText('Início da conversa')).toBeInTheDocument()
   })
+
+  describe('a resposta do corretor (TEC-328)', () => {
+    it('a fala enviada entra no fim com o rotulo "Corretor", e o polling nao a duplica', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout'] })
+      try {
+        const enviada = fala(9, { id: 'f-enviada', autor: 'CORRETOR', conteudo: 'Oi, sou o Paulo' })
+        api.mockImplementation(async (_url, init) =>
+          init?.method === 'POST'
+            ? new Response(JSON.stringify({ id: 'f-enviada', em: enviada.em }), { status: 201 })
+            : new Response(JSON.stringify({ itens: [enviada], cursorAnterior: null, cursorPosterior: 'p9' })),
+        )
+        render(
+          <Transcricao
+            leadId={LEAD}
+            inicial={{ ...pagina(1, 2, null), cursorPosterior: 'p2' }}
+            acompanhar
+            resposta={{ janelaFechaEm: null }}
+          />,
+        )
+
+        fireEvent.change(screen.getByLabelText('Responder ao lead'), { target: { value: 'Oi, sou o Paulo' } })
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))
+        })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5_000)
+        })
+
+        const falas = screen.getAllByTestId('fala')
+        expect(falas).toHaveLength(3)
+        expect(falas.at(-1)).toHaveTextContent('Corretor')
+        expect(falas.at(-1)).toHaveTextContent('Oi, sou o Paulo')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('sem `resposta` nao ha campo; sem a conversa, ele esta desabilitado', () => {
+      const { unmount } = render(<Transcricao leadId={LEAD} inicial={pagina(1, 2, null)} />)
+      expect(screen.queryByLabelText('Responder ao lead')).toBeNull()
+      unmount()
+
+      render(<Transcricao leadId={LEAD} inicial={pagina(1, 2, null)} resposta={{ janelaFechaEm: null }} />)
+      expect(screen.getByLabelText('Responder ao lead')).toBeDisabled()
+    })
+  })
 })

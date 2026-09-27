@@ -376,6 +376,9 @@ def _detalhe_como_json(lido: DetalheDoLead) -> dict[str, object]:
         "ultimaInteracaoEm": lido.ultima_interacao_em.isoformat(),
         # So mascarado, e `email` nulo: nao ha fonte (D7 da TEC-195).
         "contato": {"telefone": lido.telefone, "email": None},
+        "janelaDeServicoFechaEm": (
+            lido.janela_de_servico_fecha_em.isoformat() if lido.janela_de_servico_fecha_em else None
+        ),
         "score": lido.score,
         "resumo": (
             {

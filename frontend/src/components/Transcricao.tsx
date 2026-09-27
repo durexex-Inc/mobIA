@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
+import { RespostaDoCorretor } from '@/components/RespostaDoCorretor'
 import { urlDoLogin } from '@/lib/destino'
 import { dataAbsoluta } from '@/lib/leads'
 import {
@@ -37,15 +38,23 @@ type Estado = 'ocioso' | 'carregando' | 'erro' | 'sessao'
  * **Com `acompanhar`, busca as falas novas a cada 5 s** (TEC-327, D5): so
  * quando a conversa e de quem ve a tela, e so com a aba visivel. O backend so
  * grava o poll na trilha quando ele traz fala (D1 de la).
+ *
+ * **Com `resposta`, o campo em que o corretor responde fica embaixo** (TEC-328,
+ * D3): habilitado so quando a conversa e de quem ve a tela -- o mesmo
+ * `acompanhar` do polling. A fala enviada entra no fim da lista, e o polling
+ * nao a duplica.
  */
 export function Transcricao({
   leadId,
   inicial,
   acompanhar = false,
+  resposta,
 }: {
   leadId: string
   inicial: PaginaDaTranscricao
   acompanhar?: boolean
+  /** So para quem pode responder (TEC-328). `janelaFechaEm` vem do detalhe. */
+  resposta?: { janelaFechaEm: string | null }
 }) {
   const [falas, setFalas] = useState<Fala[]>(inicial.itens)
   const [cursor, setCursor] = useState(inicial.cursorAnterior)
@@ -156,6 +165,15 @@ export function Transcricao({
     return parar
   }, [acompanhar, leadId])
 
+  // A fala mais recente do lead que a tela tem: a que chega pelo polling
+  // reabre a janela do WhatsApp (D2 da TEC-328).
+  const ultimaFalaDoLeadEm = falas.findLast((fala) => fala.autor === 'LEAD')?.em ?? null
+
+  function incluirEnviada(fala: Fala) {
+    colarNoFim.current = true
+    setFalas((atuais) => (atuais.some((f) => f.id === fala.id) ? atuais : [...atuais, fala]))
+  }
+
   async function carregarAnteriores() {
     if (!cursor || estado === 'carregando') {
       return
@@ -248,6 +266,15 @@ export function Transcricao({
           </>
         )}
       </p>
+      {resposta && (
+        <RespostaDoCorretor
+          leadId={leadId}
+          conversaMinha={acompanhar}
+          janelaFechaEm={resposta.janelaFechaEm}
+          ultimaFalaDoLeadEm={ultimaFalaDoLeadEm}
+          aoEnviar={incluirEnviada}
+        />
+      )}
     </div>
   )
 }
