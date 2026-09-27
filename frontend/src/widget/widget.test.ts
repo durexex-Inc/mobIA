@@ -295,4 +295,38 @@ describe('o painel', () => {
 
     expect(document.body.contains(raizes[0].host)).toBe(false)
   })
+
+  it('o primeiro clique nao avisa; fechar manda aberto:false e reabrir manda aberto:true', async () => {
+    apiRespondendo(200)
+    instalar()
+    await assentar()
+
+    botao()!.click()
+    const aviso = vi.spyOn(quadro()!.contentWindow as Window, 'postMessage')
+    expect(aviso).not.toHaveBeenCalled()
+
+    botao()!.click()
+    expect(aviso).toHaveBeenCalledTimes(1)
+    expect(aviso.mock.calls[0][0]).toEqual({ tipo: 'mobia:visibilidade', aberto: false })
+    expect(aviso.mock.calls[0][1]).toBe(PAINEL)
+
+    botao()!.click()
+    expect(aviso).toHaveBeenCalledTimes(2)
+    expect(aviso.mock.calls[1][0]).toEqual({ tipo: 'mobia:visibilidade', aberto: true })
+    expect(aviso.mock.calls[1][1]).toBe(PAINEL)
+  })
+
+  it('`postMessage` que lanca nao gera erro no site', async () => {
+    apiRespondendo(200)
+    instalar()
+    await assentar()
+
+    botao()!.click()
+    vi.spyOn(quadro()!.contentWindow as Window, 'postMessage').mockImplementation(() => {
+      throw new Error('bloqueado')
+    })
+
+    expect(() => botao()!.click()).not.toThrow()
+    expect(erros).toEqual([])
+  })
 })

@@ -135,12 +135,19 @@
     raiz.appendChild(botao)
 
     var painel = null
+    var quadro = null
     botao.addEventListener('click', function () {
       try {
         if (!painel) {
-          painel = abrirPainel(origem, tenant, aparencia.lado, raiz, hospede)
+          // Recem-criado: o iframe comeca assumindo aberto, entao nao ha
+          // aviso para mandar aqui (D4 do desenho).
+          var criado = abrirPainel(origem, tenant, aparencia.lado, raiz, hospede)
+          painel = criado.painel
+          quadro = criado.quadro
         } else {
-          painel.style.display = painel.style.display === 'none' ? 'block' : 'none'
+          var vaiAbrir = painel.style.display === 'none'
+          painel.style.display = vaiAbrir ? 'block' : 'none'
+          avisarVisibilidade(quadro, origem, vaiAbrir)
         }
         botao.setAttribute('aria-expanded', painel.style.display === 'none' ? 'false' : 'true')
       } catch {
@@ -201,7 +208,17 @@
       }
     }
     window.addEventListener('message', aoMensagem)
-    return painel
+    return { painel: painel, quadro: quadro }
+  }
+
+  // D4: avisa o chat se o painel esta visivel, para ele dormir o socket
+  // quando minimizado. So para a janela deste iframe, na origem do chat.
+  function avisarVisibilidade(quadro, origem, aberto) {
+    try {
+      quadro.contentWindow.postMessage({ tipo: 'mobia:visibilidade', aberto: aberto }, origem)
+    } catch {
+      // D7.
+    }
   }
 
   function icone() {
