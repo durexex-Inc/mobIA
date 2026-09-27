@@ -1,4 +1,5 @@
 import { DadoRevelavel } from '@/components/DadoRevelavel'
+import { EdicaoDaQualificacao } from '@/components/EdicaoDaQualificacao'
 import { Vazio } from '@/components/estado/Vazio'
 import {
   type AgendamentoDoLead,
@@ -19,17 +20,20 @@ import { canalLegivel, dataAbsoluta, temperaturaLegivel, tempoRelativo } from '@
  * Server Components sem estado: recebem o que a rota devolveu e nao buscam
  * nada. Historico de score e recomendacoes entram entre elas quando a TEC-325
  * chegar. A conversa (TEC-324) e a ultima secao, e fica fora daqui: ela vem
- * de outra rota, e a pagina a desenha depois destas. A excecao ao "sem
- * estado" e o contato, que revela por um componente de cliente (TEC-330).
+ * de outra rota, e a pagina a desenha depois destas. As excecoes ao "sem
+ * estado" sao o contato, que revela por um componente de cliente (TEC-330), e
+ * a qualificacao, que se corrige por outro (TEC-329).
  */
 export function SecoesDoDetalhe({
   detalhe,
   agora,
   podeRevelar,
+  podeEditar,
 }: {
   detalhe: DetalheDoLead
   agora: Date
   podeRevelar: boolean
+  podeEditar: boolean
 }) {
   return (
     <>
@@ -40,7 +44,12 @@ export function SecoesDoDetalhe({
         canal={detalhe.channel}
         podeRevelar={podeRevelar}
       />
-      <SecaoQualificacao qualificacao={detalhe.qualificacao} />
+      <SecaoQualificacao
+        leadId={detalhe.leadId}
+        qualificacao={detalhe.qualificacao}
+        podeEditar={podeEditar}
+        encerrada={detalhe.status === 'ENCERRADA'}
+      />
       <SecaoAgendamentos agendamentos={detalhe.agendamentos} />
       <SecaoFollowUps followups={detalhe.followups} agora={agora} />
     </>
@@ -153,7 +162,23 @@ function SecaoContato({
   )
 }
 
-function SecaoQualificacao({ qualificacao }: { qualificacao: Qualificacao | null }) {
+/**
+ * A ficha que o agente extraiu, e a correcao para quem tem `ATENDER_LEAD`
+ * (TEC-329). O formulario fica embaixo da lista, e nao no lugar dela: depois
+ * de salvar, a lista e o que o detalhe relido diz, e o formulario so mostra o
+ * score de antes e o de agora.
+ */
+function SecaoQualificacao({
+  leadId,
+  qualificacao,
+  podeEditar,
+  encerrada,
+}: {
+  leadId: string
+  qualificacao: Qualificacao | null
+  podeEditar: boolean
+  encerrada: boolean
+}) {
   return (
     <Secao titulo="Qualificação">
       {qualificacao ? (
@@ -171,6 +196,9 @@ function SecaoQualificacao({ qualificacao }: { qualificacao: Qualificacao | null
         <p>
           <Vazio texto="O agente ainda não extraiu nenhum dado deste lead." />
         </p>
+      )}
+      {podeEditar && (
+        <EdicaoDaQualificacao leadId={leadId} qualificacao={qualificacao} encerrada={encerrada} />
       )}
     </Secao>
   )

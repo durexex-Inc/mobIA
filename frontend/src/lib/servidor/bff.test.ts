@@ -53,6 +53,14 @@ describe('caminhoPermitido', () => {
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'revelar'])).toBeNull()
     })
 
+    it('a correcao da qualificacao entra so como `PATCH` (TEC-329)', () => {
+      expect(caminhoPermitido('PATCH', ['api', 'v1', 'leads', LEAD, 'qualificacao'])).toBe(
+        `/api/v1/leads/${LEAD}/qualificacao`,
+      )
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'qualificacao'])).toBeNull()
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'qualificacao'])).toBeNull()
+    })
+
     it('o `*` nao abre as outras rotas do lead', () => {
       // O detalhe e a lista continuam fora do alcance do navegador: quem os
       // le e o Server Component.

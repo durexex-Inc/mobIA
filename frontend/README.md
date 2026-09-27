@@ -114,7 +114,7 @@ que põe o JWT da sessão num cabeçalho:
 | --- | --- | --- | --- |
 | Server Component → `buscarFunil` | o painel de funil | `revalidate: 60` | **não** |
 | Server Component → `buscarLeads` | a lista de leads | `no-store` | não |
-| Route Handler `/bff/[...rota]` | a conversa do lead (falas anteriores, TEC-324; polling, TEC-327), assumir e devolver (TEC-327), revelar telefone (TEC-330) | `no-store` | sim |
+| Route Handler `/bff/[...rota]` | a conversa do lead (falas anteriores, TEC-324; polling, TEC-327), assumir e devolver (TEC-327), revelar telefone (TEC-330), corrigir a qualificação (TEC-329) | `no-store` | sim |
 
 **O painel não passa pelo `/bff/*`, e isso é deliberado.** Um Server Component
 chamando o próprio Route Handler custaria um round-trip HTTP do processo para
@@ -208,6 +208,25 @@ em `docs/superpowers/specs/2026-09-27-tec-327-assumir-e-devolver-design.md`.
   (decisão de 27/09/2026): um poll vazio não entrega dado pessoal.
 - **A faixa sobrevive a recarregar**, porque o detalhe diz quem tem a conversa
   (`atendimento`). O 409 de "já assumida" traz o nome de quem a tem.
+
+## Corrigir a qualificação (TEC-329)
+
+Quem tem `ATENDER_LEAD` vê "Editar qualificação" na seção Qualificação do
+detalhe. Isso inclui CORRETOR, GERENTE e ADMIN, e a GERENTE sem cadastro de
+corretor também. Salvar faz `PATCH /leads/{leadId}/qualificacao` pelo
+`/bff/*`, mostra "Score 47 → 62" e recarrega a tela do servidor. O desenho está
+em `docs/superpowers/specs/2026-09-27-tec-329-corrigir-qualificacao-design.md`.
+
+- **Só o que mudou vai no `PATCH`**, comparado com o formulário de partida, e
+  não com a ficha. Campo esvaziado vai como `null`, que limpa.
+- **Tipo de imóvel, urgência e forma de pagamento são listas**, e as opções
+  são os mapas de rótulo de `lib/detalhe.ts`. `tests/unit/test_vocabulario_da_tela.py`,
+  do lado Python, reprova se eles divergirem dos enums do backend.
+- **A região é texto**: o backend a trata como conjunto aberto e a grava na
+  forma canônica. "Perto do Campeche" vira `campeche`.
+- **A faixa de preço é digitada em reais inteiros.**
+- **Formulário sujo** avisa o aviso de inatividade (TEC-311).
+- **Conversa encerrada** não mostra o botão.
 
 ## Revelar telefone e e-mail (TEC-330)
 

@@ -143,6 +143,10 @@ export default async function PaginaDoLead({ params }: { params: Promise<{ leadI
         detalhe={detalhe}
         agora={agora}
         podeRevelar={quem.permissoes.has('VER_DADOS_COMPLETOS')}
+        // Editar nao exige vinculo de corretor, ao contrario de assumir: o
+        // GERENTE sem cadastro edita (TEC-194), e por isso a prop e so a
+        // permissao, e nao `meuCorretorId`.
+        podeEditar={quem.permissoes.has('ATENDER_LEAD')}
       />
       {/* A ultima secao da ordem da card. Se so ela falhar, o resto da tela
           continua util para quem vai ligar (D1). */}

@@ -504,6 +504,43 @@ async def test_null_explicito_limpa_e_ausente_nao_muda(
 
 
 @pytest.mark.parametrize(
+    ("digitado", "gravado"),
+    [
+        ("Perto do Campeche", "campeche"),
+        ("  Lagoa da Conceição ", "lagoa da conceicao"),
+        ("perto da", None),
+    ],
+)
+async def test_regiao_editada_e_gravada_na_forma_canonica(
+    session: AsyncSession, cliente: AsyncClient, digitado: str, gravado: str | None
+) -> None:
+    """TEC-329, D1: a correcao manual nao e a porta que grava regiao fora da forma do agente.
+
+    O filtro estruturado da TEC-158 compara `regiao` por igualdade -- "Perto do
+    Campeche" nunca casaria com o `campeche` do catalogo.
+    """
+    paulo = await _corretor(session)
+    lead_id = await _lead(session, dono=paulo, orcamento=50_000_000)
+
+    resposta = await cliente.patch(
+        f"{ROTA}/{lead_id}/qualificacao",
+        json={"regiao": digitado},
+        headers=_bearer("CORRETOR", corretor_id=paulo),
+    )
+
+    assert resposta.status_code == 200
+    await session.commit()
+    linha = (
+        await session.execute(
+            select(LeadQualification)
+            .where(LeadQualification.conversation_key == TELEFONE)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert linha.regiao == gravado
+
+
+@pytest.mark.parametrize(
     "corpo",
     [
         {"urgencia": "ONTEM"},

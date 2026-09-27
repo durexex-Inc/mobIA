@@ -20,14 +20,19 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao, exigir_dono
 from mobia.api.middleware import origem_da_requisicao
 from mobia.api.saida import porta_de_saida
-from mobia.domain.agente.schemas import FormaPagamento, TipoImovel, Urgencia
+from mobia.domain.agente.schemas import (
+    FormaPagamento,
+    TipoImovel,
+    Urgencia,
+    normalizar_regiao,
+)
 from mobia.domain.atendimento import tomada
 from mobia.domain.atendimento.fala import TETO_DA_FALA, FalaNaoEnviada, Recusa, falar_com_o_lead
 from mobia.domain.atendimento.repositorio import em_curso
@@ -239,6 +244,24 @@ class PedidoDeEdicao(BaseModel):
     urgencia: Urgencia | None = None
     formaPagamento: FormaPagamento | None = None  # noqa: N815
     temImovelParaVender: bool | None = None  # noqa: N815
+
+    @field_validator("regiao")
+    @classmethod
+    def _regiao_canonica(cls, valor: str | None) -> str | None:
+        """A forma que a extracao do agente grava (TEC-329, D1).
+
+        Sem isto, a correcao manual seria a unica porta que grava `regiao` fora
+        da forma canonica -- e o filtro estruturado da TEC-158 compara por
+        igualdade: "Perto do Campeche" nunca casaria com o `campeche` do
+        catalogo. O que se normaliza para vazio ("perto da") e ausencia de
+        lugar, e vira `null`, como o `null` explicito.
+
+        Roda depois do `max_length`: o teto e sobre o que chegou, e a forma
+        canonica so encurta.
+        """
+        if valor is None:
+            return None
+        return normalizar_regiao(valor) or None
 
 
 def _resposta(resultado: Resultado) -> dict[str, object]:
