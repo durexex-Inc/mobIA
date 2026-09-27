@@ -29,11 +29,13 @@ conversas web ficam: sao outros pares), resumo da conversa, apelido de
 devolve as chaves, e quem chama apaga depois do commit -- apagar antes
 deixaria um rollback com linha apontando para blob que nao existe.
 
-**O `provider_message_id` vira `anon:{id}`, em todo canal.** O wamid da Meta
-e base64 de um protobuf que carrega o `wa_id` em claro (`HBgNNTU0ODk5...`
-decodifica para `...5548999...`); o do widget carrega a chave da sessao na
-frente. Nenhum dos dois pode ficar, e o id da propria linha mantem o UNIQUE
-`(channel, provider_message_id)` sem guardar nada do lead. O preco: um
+**O `provider_message_id` vira `anon:{id}`, em todo canal.** No WhatsApp ele e,
+desde a TEC-383, o HMAC do wamid (`identidade/indice.py::chave_de_mensagem`),
+e nao mais o wamid, que carregava o `wa_id` em claro; o do widget carrega a
+chave da sessao na frente. Os dois sao pseudonimos estaveis do lead --
+calculaveis de novo por quem tiver a chave de indice e o wamid --, e o id da
+propria linha mantem o UNIQUE `(channel, provider_message_id)` sem guardar
+nada dele. O preco: um
 status de entrega que a Meta mande depois para o wamid antigo nao acha mais
 a linha -- o que, para um lead eliminado, e o comportamento certo.
 
