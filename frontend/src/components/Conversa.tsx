@@ -1,8 +1,10 @@
 'use client'
 
 import {
+  type FocusEvent,
   type FormEvent,
   type KeyboardEvent,
+  type RefObject,
   useCallback,
   useEffect,
   useId,
@@ -56,12 +58,20 @@ function comoAvisoDeVisibilidade(dado: unknown): { aberto: boolean } | null {
 /**
  * O botao "Opções da conversa" do cabecalho e o menu dele (D3). O menu so
  * tem "Encerrar conversa", e escolher nao encerra: pede a confirmacao, que
- * mora em `Conversa`. Escape fecha e devolve o foco ao botao.
+ * mora em `Conversa`. Escape fecha e devolve o foco ao botao; o foco sair
+ * do menu (a visitante tocou no campo, por exemplo) tambem fecha, senao o
+ * menu ficaria aberto por cima da lista. `botaoRef` vem de `Conversa`, que
+ * devolve o foco ao botao quando a confirmacao e cancelada.
  */
-function MenuDaConversa({ aoEscolherEncerrar }: { aoEscolherEncerrar: () => void }) {
+function MenuDaConversa({
+  aoEscolherEncerrar,
+  botaoRef,
+}: {
+  aoEscolherEncerrar: () => void
+  botaoRef: RefObject<HTMLButtonElement | null>
+}) {
   const [aberto, setAberto] = useState(false)
   const idDoMenu = useId()
-  const botaoRef = useRef<HTMLButtonElement | null>(null)
   const itemRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
@@ -78,8 +88,16 @@ function MenuDaConversa({ aoEscolherEncerrar }: { aoEscolherEncerrar: () => void
     }
   }
 
+  // `relatedTarget` e quem recebe o foco; nulo quando o foco vai para lugar
+  // nenhum. Foco que passa do item para o botao (ou o contrario) fica dentro.
+  function aoPerderFoco(evento: FocusEvent<HTMLDivElement>) {
+    if (aberto && !evento.currentTarget.contains(evento.relatedTarget as Node | null)) {
+      setAberto(false)
+    }
+  }
+
   return (
-    <div className="conversa__opcoes" onKeyDown={aoTeclar}>
+    <div className="conversa__opcoes" onKeyDown={aoTeclar} onBlur={aoPerderFoco}>
       <button
         ref={botaoRef}
         type="button"
@@ -137,8 +155,10 @@ function MenuDaConversa({ aoEscolherEncerrar }: { aoEscolherEncerrar: () => void
  * **Toda conexao manda a sessao conhecida (TEC-347, D1 e D2).** A primeira
  * de cada montagem leva a que `lerSessao` achar valida no `localStorage` (30
  * dias desde a criacao), ou `null`; as seguintes (reenvio, envio com o
- * socket fechado, fim da espera, despertar do sono) levam a que o servidor
- * emitiu, mesmo que o storage esteja bloqueado. O `historico` que o servidor
+ * socket fechado, fim da espera, despertar do sono) levam a sessao
+ * conhecida: a ultima que o servidor emitiu -- mesmo que o storage esteja
+ * bloqueado --, ou, se a primeira conexao caiu antes do frame `sessao`, a
+ * mesma lida do storage. O `historico` que o servidor
  * devolve ao retomar substitui as falas confirmadas da tela -- e assim que o
  * que o agente disse com o socket fechado aparece. Gravar e so quando o
  * servidor emite sessao diferente da guardada: retomar nao regrava, entao o
@@ -320,19 +340,30 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   // `scroll`, ANTES de o balao novo crescer a lista; medir depois daria
   // sempre longe. `scrollTop` na propria lista, e nao `scrollIntoView`:
   // dentro do iframe, `scrollIntoView` tambem rola os ancestrais --
-  // inclusive a pagina do site da imobiliaria. O `historico` troca a lista
-  // inteira: o total e a autora da ultima mudam, e a regra e a mesma.
+  // inclusive a pagina do site da imobiliaria.
+  //
+  // "A mensagem nova e dela" quer dizer: a ultima da lista trocou, e a nova
+  // ultima e um envio da visitante ainda `enviando`. O `historico` troca a
+  // lista inteira sem ser envio de ninguem: as falas dela vindas dele sao
+  // `recebida`, e a pendente que ele mantem no fim continua com o mesmo id
+  // -- entao nenhum dos dois casos puxa para o fim, e so a regra do "perto
+  // do fim" vale.
   const listaRef = useRef<HTMLOListElement | null>(null)
   const pertoDoFimRef = useRef(true)
   const totalDeMensagens = conversa.mensagens.length
-  const autorDaUltima = conversa.mensagens.at(-1)?.autor
+  const ultima = conversa.mensagens.at(-1)
+  const chaveDaUltima = ultima ? (ultima.autor === 'visitante' ? ultima.messageId : ultima.chave) : null
+  const ultimaEEnvioDaVisitante = ultima?.autor === 'visitante' && ultima.estado === 'enviando'
+  const chaveAnteriorRef = useRef<string | null>(null)
   useEffect(() => {
     const lista = listaRef.current
-    if (totalDeMensagens > 0 && lista && (pertoDoFimRef.current || autorDaUltima === 'visitante')) {
+    const enviouAgora = ultimaEEnvioDaVisitante && chaveDaUltima !== chaveAnteriorRef.current
+    chaveAnteriorRef.current = chaveDaUltima
+    if (totalDeMensagens > 0 && lista && (pertoDoFimRef.current || enviouAgora)) {
       lista.scrollTop = lista.scrollHeight
       pertoDoFimRef.current = true
     }
-  }, [totalDeMensagens, autorDaUltima])
+  }, [totalDeMensagens, chaveDaUltima, ultimaEEnvioDaVisitante])
 
   function aoRolar() {
     const lista = listaRef.current
@@ -443,11 +474,32 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
     filaRef.current = []
     limparPrazos()
     pertoDoFimRef.current = true
-    if (!aguardando) {
+    // O foco vai para onde a conversa nova comeca: o campo. Durante a espera
+    // de `muitas_tentativas` nao ha campo, e ele volta ao botao do menu.
+    if (aguardando) {
+      botaoDeOpcoesRef.current?.focus()
+    } else {
+      campoRef.current?.focus()
       conectar()
     }
   }
 
+  // A confirmacao sai sem efeito -- "Cancelar" ou Escape -- e o foco volta
+  // ao botao que a abriu, e nao ao `body`.
+  function cancelarEncerramento() {
+    setConfirmando(false)
+    botaoDeOpcoesRef.current?.focus()
+  }
+
+  function aoTeclarNaConfirmacao(evento: KeyboardEvent<HTMLDivElement>) {
+    if (evento.key === 'Escape') {
+      evento.preventDefault()
+      cancelarEncerramento()
+    }
+  }
+
+  const botaoDeOpcoesRef = useRef<HTMLButtonElement | null>(null)
+  const campoRef = useRef<HTMLTextAreaElement | null>(null)
   const cancelarRef = useRef<HTMLButtonElement | null>(null)
   const idDaPergunta = useId()
   useEffect(() => {
@@ -459,17 +511,22 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   return (
     <>
       <CabecalhoDoChat nome={nome}>
-        <MenuDaConversa aoEscolherEncerrar={() => setConfirmando(true)} />
+        <MenuDaConversa botaoRef={botaoDeOpcoesRef} aoEscolherEncerrar={() => setConfirmando(true)} />
       </CabecalhoDoChat>
       <section className="conversa">
         {confirmando ? (
-          <div className="conversa__confirmacao" role="alertdialog" aria-labelledby={idDaPergunta}>
+          <div
+            className="conversa__confirmacao"
+            role="alertdialog"
+            aria-labelledby={idDaPergunta}
+            onKeyDown={aoTeclarNaConfirmacao}
+          >
             <p id={idDaPergunta}>{PERGUNTA_DE_ENCERRAR}</p>
             <div className="conversa__confirmacao-acoes">
               <button type="button" className="conversa__confirmar" onClick={encerrar}>
                 Encerrar
               </button>
-              <button ref={cancelarRef} type="button" onClick={() => setConfirmando(false)}>
+              <button ref={cancelarRef} type="button" onClick={cancelarEncerramento}>
                 Cancelar
               </button>
             </div>
@@ -516,6 +573,7 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
         ) : (
           <form className="conversa__formulario" onSubmit={aoEnviar}>
             <textarea
+              ref={campoRef}
               value={rascunho}
               onChange={(evento) => setRascunho(evento.target.value)}
               onKeyDown={aoTeclar}

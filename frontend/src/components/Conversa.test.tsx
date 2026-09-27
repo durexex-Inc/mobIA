@@ -836,11 +836,30 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
     expect(socket.fechadoPeloCliente).toBe(true)
   })
 
-  it('aviso de outra janela, ou com aberto que nao e booleano, e ignorado (Review Focus 4)', () => {
+  it('aviso de outra janela, ou com aberto que nao e booleano, nao cancela o sono (Review Focus 4)', () => {
+    const socket = montarAberto()
+    avisar({ tipo: 'mobia:visibilidade', aberto: false })
+
+    // Cada um destes, se aceito, leria "aberto" e cancelaria o sono.
+    avisar({ tipo: 'mobia:visibilidade', aberto: 'false' })
+    avisar({ tipo: 'mobia:visibilidade', aberto: 'true' })
+    avisar({ tipo: 'mobia:visibilidade', aberto: 1 })
+    avisar({ tipo: 'mobia:visibilidade', aberto: true }, {})
+
+    act(() => {
+      vi.advanceTimersByTime(TRINTA_MIN_MS - 1)
+    })
+    expect(socket.fechadoPeloCliente).toBe(false)
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(socket.fechadoPeloCliente).toBe(true)
+  })
+
+  it('aviso de outra janela, ou de outro tipo, nao faz o chat dormir (Review Focus 4)', () => {
     const socket = montarAberto()
 
     avisar({ tipo: 'mobia:visibilidade', aberto: false }, {})
-    avisar({ tipo: 'mobia:visibilidade', aberto: 'false' })
     avisar({ tipo: 'outra:coisa', aberto: false })
     avisar('mobia:visibilidade')
     avisar(null)
@@ -850,6 +869,65 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
 
     expect(socket.fechadoPeloCliente).toBe(false)
     expect(SocketFalso.instancias).toHaveLength(1)
+  })
+
+  it('o cabecalho mostra o nome do assistente', () => {
+    render(<Conversa endereco={ENDERECO} nome="Lia" />)
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Lia · Assistente virtual$/)
+  })
+
+  it('o menu fecha quando o foco sai dele, e nao quando passa do item ao botao', () => {
+    montarAberto()
+    const botao = screen.getByRole('button', { name: 'Opções da conversa' })
+    fireEvent.click(botao)
+    const item = screen.getByRole('menuitem', { name: 'Encerrar conversa' })
+
+    fireEvent.blur(item, { relatedTarget: botao })
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+
+    fireEvent.blur(item, { relatedTarget: screen.getByRole('textbox', { name: 'Mensagem' }) })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(botao).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('"Cancelar" e Escape fecham a confirmacao e devolvem o foco ao botao do menu', () => {
+    montarAberto()
+    const botao = screen.getByRole('button', { name: 'Opções da conversa' })
+
+    abrirMenuEEscolherEncerrar()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(botao).toHaveFocus()
+
+    abrirMenuEEscolherEncerrar()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Cancelar' }), { key: 'Escape' })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(botao).toHaveFocus()
+    expect(SocketFalso.instancias).toHaveLength(1)
+  })
+
+  it('"Encerrar" devolve o foco ao campo da mensagem', () => {
+    montarAberto()
+
+    abrirMenuEEscolherEncerrar()
+    fireEvent.click(screen.getByRole('button', { name: 'Encerrar' }))
+
+    expect(screen.getByRole('textbox', { name: 'Mensagem' })).toHaveFocus()
+  })
+
+  it('o historico nao puxa para o fim quem rolou para cima, mesmo com a pendente dela no fim', () => {
+    const socket = montarAberto()
+    const lista = comGeometria(screen.getByRole('list'), { alturaTotal: 1000, alturaVisivel: 300 })
+    enviar('Pendente')
+    expect(lista.scrollTop).toBe(1000)
+    rolarPara(lista, 100)
+
+    socket.receber({ tipo: 'historico', mensagens: doze() })
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(13)
+    expect(lista.scrollTop).toBe(100)
   })
 
   it('encerrar durante a espera de muitas_tentativas nao abre conexao antes do fim da espera (Review Focus 5)', () => {
