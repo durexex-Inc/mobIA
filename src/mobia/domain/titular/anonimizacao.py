@@ -22,11 +22,12 @@ intencao ficam sob o pseudonimo -- sem conteudo que identifique, exceto o
 `resumo` do handoff, derivado da transcricao, que vira nulo.
 
 **O que sai.** Identidade, vinculo de sessao (o telefone digitado no widget),
-resumo da conversa, apelido de `referencias_de_lead` (o `leadId` do painel
-passa a dar 404) e a linha de `midias_recebidas`. O arquivo de midia em si
-esta fora do banco: a funcao devolve as chaves, e quem chama apaga depois do
-commit -- apagar antes deixaria um rollback com linha apontando para blob
-que nao existe.
+os vinculos de sessoes web cujo telefone e o deste lead do WhatsApp (as
+conversas web ficam: sao outros pares), resumo da conversa, apelido de
+`referencias_de_lead` (o `leadId` do painel passa a dar 404) e a linha de
+`midias_recebidas`. O arquivo de midia em si esta fora do banco: a funcao
+devolve as chaves, e quem chama apaga depois do commit -- apagar antes
+deixaria um rollback com linha apontando para blob que nao existe.
 
 **O `provider_message_id` vira `anon:{id}`, em todo canal.** O wamid da Meta
 e base64 de um protobuf que carrega o `wa_id` em claro (`HBgNNTU0ODk5...`
@@ -51,13 +52,18 @@ import uuid
 
 from sqlalchemy import Connection, text
 
+from mobia.domain.identidade.indice import indice_de_telefone
+from mobia.domain.identidade.models import aad_da_identidade
 from mobia.domain.identidade.reindexacao import (
     TABELAS_COM_CHAVE_DE_LEAD,
     desligar_triggers,
     mover_referencias_fora_da_chave,
     religar_triggers,
 )
+from mobia.domain.identidade.telefone import normalizar
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.midia.politica import chave_do_objeto
+from mobia.infra.crypto import decrypt
 
 # As tabelas imutaveis que a troca de chave reescreve. `eventos_auditoria`
 # fica de fora: a trilha nao e tocada (ver a docstring do modulo).
@@ -70,6 +76,32 @@ TABELAS_APAGADAS = (
     "identidades_de_lead",
     "referencias_de_lead",
 )
+
+
+def _indice_do_telefone_do_whatsapp(
+    conn: Connection, *, channel: str, conversation_key: str
+) -> str | None:
+    """O `telefone_indice` do numero deste lead do WhatsApp, ou `None`.
+
+    Lido da identidade, que a anonimizacao apaga logo depois -- por isso tem
+    de rodar antes. `None` fora do WhatsApp, sem identidade, ou quando o
+    `wa_id` nao e telefone brasileiro: `vincular_sessao` so grava vinculo de
+    numero que `normalizar` reconhece, entao nesses casos nao ha o que casar.
+    """
+    if channel != CANAL_WHATSAPP:
+        return None
+    blob = conn.execute(
+        text(
+            "SELECT valor_cifrado FROM identidades_de_lead"
+            " WHERE channel = :c AND conversation_key = :k"
+        ),
+        {"c": channel, "k": conversation_key},
+    ).scalar()
+    if blob is None:
+        return None
+    wa_id = decrypt(bytes(blob), aad_da_identidade(channel, conversation_key))
+    canonico = normalizar(wa_id) if wa_id else None
+    return indice_de_telefone(canonico) if canonico else None
 
 
 def anonimizar_lead(conn: Connection, *, channel: str, conversation_key: str) -> list[str]:
@@ -93,6 +125,9 @@ def anonimizar_lead(conn: Connection, *, channel: str, conversation_key: str) ->
     # tabela abre um deadlock com um turno concorrente que grava score.
     desligar_triggers(conn, TABELAS_IMUTAVEIS_REESCRITAS)
 
+    indice_do_telefone = _indice_do_telefone_do_whatsapp(
+        conn, channel=channel, conversation_key=conversation_key
+    )
     midias: list[tuple[uuid.UUID, str | None]] = [
         (message_id, chave)
         for message_id, chave in conn.execute(
@@ -120,6 +155,16 @@ def anonimizar_lead(conn: Connection, *, channel: str, conversation_key: str) ->
     for tabela in TABELAS_APAGADAS:
         conn.execute(
             text(f"DELETE FROM {tabela} WHERE channel = :c AND conversation_key = :k"), par
+        )
+    # O mesmo telefone digitado no widget (TEC-129): o vinculo de uma sessao
+    # web e a unica linha, fora deste par, que guarda o numero deste lead do
+    # WhatsApp -- cifrado e indexado, mas e o numero. Sai o VINCULO; as
+    # conversas web em si sao outros pares e ficam (limite declarado na
+    # Emenda E-01 a RNF-22).
+    if indice_do_telefone is not None:
+        conn.execute(
+            text("DELETE FROM vinculos_de_sessao WHERE telefone_indice = :i"),
+            {"i": indice_do_telefone},
         )
 
     conn.execute(

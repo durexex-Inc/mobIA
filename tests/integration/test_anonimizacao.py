@@ -582,3 +582,30 @@ async def test_so_executa_solicitacao_de_eliminacao(
     assert semeado.blob.exists()
     ((_, evento),) = eventos_de_log(caplog, "titular.anonimizacao_ignorada")
     assert (evento["status"], evento["tipo"]) == ("ABERTA", "ACESSO")
+
+
+async def test_eliminar_o_whatsapp_apaga_o_vinculo_do_mesmo_telefone_no_widget(
+    semeado: Semeado,
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """A sessao web onde a pessoa digitou o mesmo telefone (TEC-129) guarda o
+    numero no vinculo -- a unica linha fora do par do WhatsApp que o guarda.
+    Sai o vinculo; a conversa web, que e outro par, fica."""
+    chave_web = await _semear_web(session)
+    indice_do_telefone = indice.indice_de_telefone(TELEFONE)
+    assert await _varrer(session, (indice_do_telefone,)) != []
+
+    await _anonimizar(session_factory, tmp_path, semeado.eliminacao)
+
+    async with session_factory() as sessao:
+        assert await sessao.scalar(text("SELECT count(*) FROM vinculos_de_sessao")) == 0
+        assert await _varrer(sessao, (TELEFONE, indice_do_telefone)) == []
+        assert (
+            await sessao.scalar(
+                text("SELECT count(*) FROM messages WHERE conversation_key = :k"),
+                {"k": chave_web},
+            )
+            == 2
+        )
