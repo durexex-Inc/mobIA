@@ -165,6 +165,23 @@ def test_a_cadencia_encurtada_vence_antes() -> None:
         ({"cor_primaria": "#0A7F5AFF"}, "nao e #RRGGBB"),
         ({"cor_primaria": "red"}, "nao e #RRGGBB"),
         ({"posicao_do_botao": "CIMA"}, "posicao do botao 'CIMA' desconhecida"),
+        # TEC-345, D1. O dominio vai para dentro da CSP: `;` ou espaco abririam
+        # uma diretiva nova, e esquema, caminho e curinga nao sao host-source
+        # desta forma.
+        ({"dominios_do_chat": ("imob.com.br; script-src *",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("imob.com.br x.com",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("https://imob.com.br",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("imob.com.br/",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("*.imob.com.br",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("*",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("Imob.com.br",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("-imob.com.br",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("imob..com.br",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("imob.com.br:",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("'self'",)}, "nao e host ou host:porta"),
+        ({"dominios_do_chat": ("a.com", "a.com")}, "dominio do chat repetido"),
+        ({"dominios_do_chat": tuple(f"s{i}.com" for i in range(6))}, "6 dominios do chat"),
     ],
 )
 def test_fora_da_faixa_e_recusado(mudancas: dict[str, object], trecho: str) -> None:
@@ -235,3 +252,22 @@ def test_cor_e_posicao_do_tenant_sao_aceitas() -> None:
 
     assert config.cor_primaria == "#0a7f5a"
     assert config.posicao_do_botao is PosicaoDoBotao.ESQUERDA
+
+
+def test_nenhum_dominio_e_o_padrao() -> None:
+    """TEC-345, D1: vazio e o lado seguro -- nenhum site embute o chat."""
+    assert padrao().dominios_do_chat == ()
+    assert validar(padrao()).dominios_do_chat == ()
+
+
+def test_dominios_do_tenant_sao_aceitos() -> None:
+    dominios = (
+        "imobiliariasol.com.br",
+        "www.imobiliariasol.com.br",
+        "localhost:5500",
+        "xn--imobiliria-q8a.com.br",
+        "a",
+    )
+    config = validar(aplicar(padrao(), {"dominios_do_chat": dominios}))
+
+    assert config.dominios_do_chat == dominios

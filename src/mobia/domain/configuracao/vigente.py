@@ -104,6 +104,10 @@ class ConfiguracaoDoAgente:
     # TEC-344, D1. A aparencia do botao do chat web no site da imobiliaria.
     cor_primaria: str = COR_PRIMARIA_PADRAO
     posicao_do_botao: PosicaoDoBotao = PosicaoDoBotao.DIREITA
+    # TEC-345, D1. Os sites que podem embutir o chat. **Vazio no padrao, e
+    # vazio quer dizer que nenhum site embute** -- o lado seguro, no lugar do
+    # `frame-ancestors *` provisorio da TEC-344.
+    dominios_do_chat: tuple[str, ...] = ()
 
 
 def padrao() -> ConfiguracaoDoAgente:
@@ -141,6 +145,17 @@ ORCAMENTO_MAXIMO = Decimal("100000")
 # cor. E o formato que o loader confere de novo antes de desenhar, e o `CHECK`
 # da `0064` repete no banco.
 _COR_PRIMARIA = re.compile(r"#[0-9A-Fa-f]{6}")
+
+# TEC-345, D1. Quantos sites a card deixa cadastrar.
+MAXIMO_DE_DOMINIOS_DO_CHAT = 5
+
+# TEC-345, D1. `host` ou `host:porta`, em minusculas: a forma de um
+# host-source de CSP, e e dentro da CSP que a entrada e interpolada. O formato
+# fechado e o que impede um `;` ou um espaco de abrir uma diretiva nova. Copia
+# de `DOMINIO` em `frontend/src/lib/dominios.ts`, que confere de novo antes de
+# interpolar: mudar um sem o outro faz o Next descartar o dominio em silencio.
+_ROTULO = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+_DOMINIO_DO_CHAT = re.compile(rf"{_ROTULO}(?:\.{_ROTULO})*(?::[0-9]{{1,5}})?")
 
 
 def validar(config: ConfiguracaoDoAgente) -> ConfiguracaoDoAgente:
@@ -214,6 +229,18 @@ def validar(config: ConfiguracaoDoAgente) -> ConfiguracaoDoAgente:
         erros.append(f"cor primaria {config.cor_primaria!r} nao e #RRGGBB")
     if config.posicao_do_botao not in tuple(PosicaoDoBotao):
         erros.append(f"posicao do botao {config.posicao_do_botao!r} desconhecida")
+
+    dominios = config.dominios_do_chat
+    if len(dominios) > MAXIMO_DE_DOMINIOS_DO_CHAT:
+        erros.append(f"{len(dominios)} dominios do chat; o maximo e {MAXIMO_DE_DOMINIOS_DO_CHAT}")
+    for dominio in dominios:
+        if not isinstance(dominio, str) or not _DOMINIO_DO_CHAT.fullmatch(dominio):
+            erros.append(
+                f"dominio do chat {dominio!r} nao e host ou host:porta em minusculas, "
+                "sem esquema, caminho ou curinga"
+            )
+    if len(set(dominios)) != len(dominios):
+        erros.append("dominio do chat repetido")
 
     if erros:
         raise ConfiguracaoInvalida("; ".join(erros))

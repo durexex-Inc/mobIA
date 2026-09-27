@@ -49,6 +49,7 @@ def _da_linha(linha: VersaoDaConfiguracao) -> ConfiguracaoDoAgente:
         orcamento_mensal_usd=linha.orcamento_mensal_usd,
         cor_primaria=linha.cor_primaria,
         posicao_do_botao=PosicaoDoBotao(linha.posicao_do_botao),
+        dominios_do_chat=tuple(linha.dominios_do_chat),
     )
 
 
@@ -72,6 +73,9 @@ def como_plano(config: ConfiguracaoDoAgente) -> dict[str, object]:
         # `PosicaoDoBotao(...)` e nao `.value` direto: `aplicar` aceita a
         # string crua, e `validar` a deixa passar se for um dos dois valores.
         "posicao_do_botao": PosicaoDoBotao(config.posicao_do_botao).value,
+        # Lista, e nao a tupla da dataclass: e o que a coluna `ARRAY` e o JSON
+        # da API esperam.
+        "dominios_do_chat": list(config.dominios_do_chat),
     }
 
 

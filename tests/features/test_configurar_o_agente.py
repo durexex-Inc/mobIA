@@ -287,3 +287,49 @@ async def test_posicao_fora_do_vocabulario_e_recusada_na_borda(
     resposta = await client.patch(ROTA, json={"posicaoDoBotao": "CIMA"}, headers=_bearer())
 
     assert resposta.status_code == 422, resposta.text
+
+
+# --- TEC-345: os dominios do chat web -----------------------------------------
+
+
+async def test_dominios_do_chat_se_gravam_se_leem_e_se_limpam(
+    client: AsyncClient, banco_limpo: None
+) -> None:
+    antes = (await client.get(ROTA, headers=_bearer())).json()
+    assert antes["configuracao"]["dominiosDoChat"] == []
+    assert antes["limites"]["dominiosDoChat"]["maximo"] == 5
+
+    resposta = await client.patch(
+        ROTA,
+        json={"dominiosDoChat": ["imobiliariasol.com.br", "www.imobiliariasol.com.br"]},
+        headers=_bearer(),
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["alterados"] == ["dominiosDoChat"]
+    depois = (await client.get(ROTA, headers=_bearer())).json()["configuracao"]
+    assert depois["dominiosDoChat"] == ["imobiliariasol.com.br", "www.imobiliariasol.com.br"]
+
+    limpa = await client.patch(ROTA, json={"dominiosDoChat": []}, headers=_bearer())
+    assert limpa.status_code == 200, limpa.text
+    final = (await client.get(ROTA, headers=_bearer())).json()["configuracao"]
+    assert final["dominiosDoChat"] == []
+
+
+@pytest.mark.parametrize(
+    "pedido",
+    [
+        {"dominiosDoChat": None},
+        {"dominiosDoChat": ["https://imobiliariasol.com.br"]},
+        {"dominiosDoChat": ["imob.com.br; script-src *"]},
+        {"dominiosDoChat": [f"s{i}.com.br" for i in range(6)]},
+    ],
+)
+async def test_dominios_invalidos_sao_recusados_e_nada_se_grava(
+    client: AsyncClient, banco_limpo: None, pedido: dict[str, object]
+) -> None:
+    resposta = await client.patch(ROTA, json=pedido, headers=_bearer())
+
+    assert resposta.status_code == 422, resposta.text
+    historico = (await client.get(f"{ROTA}/historico", headers=_bearer())).json()
+    assert historico["itens"] == []

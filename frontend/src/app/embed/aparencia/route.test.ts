@@ -5,14 +5,22 @@ import { GET } from './route'
 
 const PAINEL = 'https://painel.exemplo.com'
 const APARENCIA = { nomeDoAssistente: 'Lia', corPrimaria: '#0A7F5A', posicaoDoBotao: 'ESQUERDA' }
-// O que o FastAPI devolve: a aparencia e o slug configurado, sempre com 200.
-const DO_FASTAPI = { tenant: 'imobiliaria-x', ...APARENCIA }
+// O que o FastAPI devolve: a aparencia, o slug configurado e os dominios
+// (TEC-345), sempre com 200.
+const SITE = 'https://imobiliariasol.com.br'
+const DO_FASTAPI = {
+  tenant: 'imobiliaria-x',
+  ...APARENCIA,
+  dominios: ['imobiliariasol.com.br', 'localhost:5500'],
+}
 const URL_DO_FASTAPI = 'http://backend:8000/widget/aparencia'
 
-function pedido(tenant?: string) {
+// Por padrao o pedido vem de um site cadastrado, como o do loader: o `fetch`
+// dele e de outra origem, e o navegador manda `Origin`. `null` omite o header.
+function pedido(tenant?: string, origem: string | null = SITE) {
   const url = new URL('/embed/aparencia', PAINEL)
   if (tenant !== undefined) url.searchParams.set('tenant', tenant)
-  return new NextRequest(url)
+  return new NextRequest(url, origem === null ? {} : { headers: { origin: origem } })
 }
 
 function apiRespondendo(status: number, corpo: unknown = DO_FASTAPI) {
@@ -123,10 +131,59 @@ describe('GET /embed/aparencia', () => {
     ['cor invalida', { ...DO_FASTAPI, corPrimaria: 'azul' }],
     ['sem tenant', APARENCIA],
     ['tenant que nao e texto', { ...DO_FASTAPI, tenant: 7 }],
+    ['sem dominios', { ...APARENCIA, tenant: 'imobiliaria-x' }],
   ])('corpo malformado da API (%s) vira 503: e defeito nosso, nao tenant ausente', async (_, corpo) => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     apiRespondendo(200, corpo)
 
     expect((await GET(pedido('imobiliaria-x'))).status).toBe(503)
+  })
+
+  describe('dominios cadastrados (TEC-345, D3)', () => {
+    it('pedido de um site cadastrado leva a aparencia, sem os dominios, e `Vary: Origin`', async () => {
+      apiRespondendo(200)
+
+      const resposta = await GET(pedido('imobiliaria-x', SITE))
+
+      expect(resposta.status).toBe(200)
+      expect(await resposta.json()).toEqual(APARENCIA)
+      expect(resposta.headers.get('vary')).toBe('Origin')
+    })
+
+    it('a porta faz parte do dominio, e a porta padrao nao', async () => {
+      apiRespondendo(200)
+
+      expect((await GET(pedido('imobiliaria-x', 'http://localhost:5500'))).status).toBe(200)
+      expect((await GET(pedido('imobiliaria-x', 'http://localhost:5501'))).status).toBe(404)
+      expect((await GET(pedido('imobiliaria-x', 'https://imobiliariasol.com.br:443'))).status).toBe(
+        200,
+      )
+    })
+
+    it.each([
+      ['site nao cadastrado', 'https://copia-do-site.com'],
+      ['subdominio nao cadastrado', 'https://www.imobiliariasol.com.br'],
+      ['documento sem origem', 'null'],
+    ])('%s e o mesmo 404 do slug errado, com CORS e `Vary`', async (_, origem) => {
+      apiRespondendo(200)
+
+      const resposta = await GET(pedido('imobiliaria-x', origem))
+
+      expect(resposta.status).toBe(404)
+      expect(resposta.headers.get('access-control-allow-origin')).toBe('*')
+      expect(resposta.headers.get('vary')).toBe('Origin')
+    })
+
+    it('sem `Origin` e 404: o loader sempre pede de outra origem', async () => {
+      apiRespondendo(200)
+
+      expect((await GET(pedido('imobiliaria-x', null))).status).toBe(404)
+    })
+
+    it('sem dominio nenhum cadastrado, nenhum site recebe a aparencia', async () => {
+      apiRespondendo(200, { ...DO_FASTAPI, dominios: [] })
+
+      expect((await GET(pedido('imobiliaria-x', SITE))).status).toBe(404)
+    })
   })
 })

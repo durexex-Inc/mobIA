@@ -1,8 +1,10 @@
 """A aparencia do chat web, para o loader do site. TEC-344, D3 do desenho.
 
-**Publica, e so com o que o botao precisa**: nome do assistente, cor primaria
-e posicao. O resto da configuracao do agente e do administrador e nao sai por
-uma rota anonima.
+**Publica, e so com o que o chat embutido precisa**: nome do assistente, cor
+primaria, posicao e -- desde a TEC-345 -- os dominios que podem embutir o
+chat, que o Next usa no `frame-ancestors` e para negar a aparencia a outro
+site. Os dominios nao sao segredo: sao os sites onde o chat aparece. O resto
+da configuracao do agente e do administrador e nao sai por uma rota anonima.
 
 **Responde sempre 200, e devolve o slug configurado em `tenant`** (nulo sem
 `TENANT_SLUG`). Quem compara com o `data-tenant` do snippet e o Next, e nao
@@ -46,4 +48,5 @@ async def aparencia() -> dict[str, object]:
         "nomeDoAssistente": config.nome_do_assistente,
         "corPrimaria": config.cor_primaria,
         "posicaoDoBotao": PosicaoDoBotao(config.posicao_do_botao).value,
+        "dominios": list(config.dominios_do_chat),
     }
