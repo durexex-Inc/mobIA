@@ -699,3 +699,33 @@ a {
   border-left: 3px solid #b23c17;
   background: color-mix(in srgb, #b23c17 12%, transparent);
 }
+
+/* --- Historico de score e recomendacoes (TEC-325) -------------------------- */
+
+.historico-grafico {
+  display: block;
+  width: 100%;
+  max-width: 32rem;
+  height: auto;
+  margin-bottom: 0.75rem;
+  color: #2563eb;
+}
+
+.recomendacao h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.recomendacao-codigo {
+  font-size: 0.8rem;
+  font-weight: normal;
+  opacity: 0.7;
+}
+
+.recomendacao p {
+  margin: 0.2rem 0;
+}
+
+.recomendacoes-lista {
+  gap: 1rem;
+}

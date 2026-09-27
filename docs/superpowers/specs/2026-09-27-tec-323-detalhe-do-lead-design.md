@@ -55,6 +55,7 @@ A seção lista tipo, horário e status de cada agendamento. Lista vazia diz "Ne
 | 8 | transcrição | não: TEC-324 |
 
 - **Nota (TEC-324, 27/09/2026):** a transcrição entrou, como "Conversa", na última posição. As falas vêm de outra rota, pedida em paralelo com o detalhe.
+- **Nota (TEC-325, 27/09/2026):** histórico de score e imóveis recomendados entraram nas posições 4 e 5. Ver `docs/superpowers/specs/2026-09-27-tec-325-historico-e-recomendacoes-design.md`.
 
 **As seções de outras cards não aparecem**, nem como "em breve". Cada uma entra na posição dela quando a card chegar. A resposta já traz os dados do histórico e das recomendações; a página só não os desenha.
 

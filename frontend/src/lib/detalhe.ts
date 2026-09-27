@@ -24,6 +24,28 @@ export type AgendamentoDoLead = {
 
 export type FollowUpDoLead = { tentativa: number; temperatura: string; disparadoEm: string }
 
+/** Um recalculo do score, em ordem cronologica crescente (TEC-325). */
+export type RecalculoDoScore = {
+  em: string
+  anterior: number | null
+  novo: number
+  fatores: Record<string, number>
+  causas: string[]
+}
+
+/** Um imovel apresentado ao lead, com a reacao dele (TEC-325). */
+export type ImovelRecomendado = {
+  imovelId: string
+  codigo: string
+  titulo: string
+  bairro: string
+  scoreMatch: number
+  motivoMatch: string
+  reacao: string | null
+  motivoDescarte: string | null
+  apresentadoEm: string
+}
+
 export type Qualificacao = Record<string, unknown>
 
 /** Quem tem a conversa agora (TEC-327, D2), ou `null` no detalhe. */
@@ -43,6 +65,8 @@ export type DetalheDoLead = {
   qualificacao: Qualificacao | null
   agendamentos: AgendamentoDoLead[]
   followups: FollowUpDoLead[]
+  historicoScore: RecalculoDoScore[]
+  recomendacoes: ImovelRecomendado[]
   atendimento: Atendimento | null
   /** Quando fecha a janela de 24 h do WhatsApp (TEC-328, D2). `null` no site. */
   janelaDeServicoFechaEm: string | null
@@ -141,6 +165,92 @@ export const FORMAS_DE_PAGAMENTO: Record<string, string> = {
   FGTS: 'FGTS',
   INDEFINIDA: 'Indefinida',
 }
+/**
+ * Os motivos de cada recalculo do score (TEC-325, D4): as constantes
+ * `CAUSA_*` de `context/auditoria.py`. O teste do lado Python compara as
+ * chaves com elas.
+ */
+export const CAUSAS_DO_SCORE: Record<string, string> = {
+  PRIMEIRO_CALCULO: 'Primeiro cálculo',
+  CAMPOS_OBRIGATORIOS: 'Campos da qualificação',
+  URGENCIA: 'Urgência',
+  CATALOGO: 'Catálogo',
+  ENGAJAMENTO: 'Engajamento',
+  FORMA_DE_PAGAMENTO: 'Forma de pagamento',
+  PENALIDADE: 'Penalidade',
+  EDICAO_MANUAL: 'Edição manual',
+  RECALCULO_MANUAL: 'Recálculo manual',
+  NAO_COMPARECIMENTO: 'Não compareceu à visita',
+  MUDANCA_DE_INTENCAO: 'Mudança de intenção',
+}
+
+/**
+ * A reacao do lead a um imovel (TEC-325, D3): `ReacaoLead`. "Gostei" e
+ * "Não é pra mim" sao os rotulos dos botoes do chat web (TEC-350) -- o
+ * corretor le a mesma palavra que o lead clicaria.
+ */
+export const REACOES: Record<string, string> = {
+  INTERESSE: 'Gostei',
+  DESCARTE: 'Não é pra mim',
+  NEUTRO: 'Viu, sem opinar',
+  SEM_RESPOSTA: 'Sem resposta',
+}
+
+/** Por que o lead descartou (TEC-325, D3): `CategoriaDescarte`. */
+export const DESCARTES: Record<string, string> = {
+  DISTANCIA: 'distância',
+  PRECO: 'preço',
+  TAMANHO: 'tamanho',
+  OUTRO: 'outro motivo',
+}
+
+/** "Gostei", "Não é pra mim · distância", ou "Aguardando reação" sem reação. */
+export function reacaoLegivel(reacao: string | null, motivoDescarte: string | null): string {
+  if (reacao === null) {
+    return 'Aguardando reação'
+  }
+  const rotulo = rotuloDe(REACOES, reacao)
+  if (reacao === 'DESCARTE' && motivoDescarte) {
+    return `${rotulo} · ${DESCARTES[motivoDescarte] ?? humanizar(motivoDescarte).toLowerCase()}`
+  }
+  return rotulo
+}
+
+/** Os motivos de um recalculo, em portugues, separados por virgula. */
+export function motivosDoRecalculo(causas: string[]): string {
+  return causas.map((causa) => rotuloDe(CAUSAS_DO_SCORE, causa)).join(', ')
+}
+
+/** O valor de um recalculo: "30 → 47", ou "30" no primeiro. */
+export function valorDoRecalculo(recalculo: Pick<RecalculoDoScore, 'anterior' | 'novo'>): string {
+  return recalculo.anterior === null ? String(recalculo.novo) : `${recalculo.anterior} → ${recalculo.novo}`
+}
+
+/**
+ * Os pontos do grafico de linha (D2), numa caixa `largura` x `altura`. O Y vai
+ * de 0 a 100 -- o score e limitado a isso -- e o X espaca os pontos por igual:
+ * a distancia entre recalculos nao e o que o corretor procura, e os horarios
+ * estao na lista. Um ponto so fica no meio.
+ */
+export function pontosDoGrafico(
+  valores: number[],
+  { largura, altura, margem }: { largura: number; altura: number; margem: number },
+): Array<{ x: number; y: number }> {
+  const util = { x: largura - 2 * margem, y: altura - 2 * margem }
+  return valores.map((valor, i) => ({
+    x: margem + (valores.length === 1 ? util.x / 2 : (util.x * i) / (valores.length - 1)),
+    y: margem + util.y * (1 - Math.min(100, Math.max(0, valor)) / 100),
+  }))
+}
+
+/** O resumo do grafico para leitor de tela: "Score de 30 a 82 em 3 recálculos". */
+export function resumoDoGrafico(valores: number[]): string {
+  if (valores.length === 1) {
+    return `Score ${valores[0]} no único cálculo`
+  }
+  return `Score de ${valores[0]} a ${valores.at(-1)} em ${valores.length} recálculos`
+}
+
 const TIPOS_DE_AGENDAMENTO: Record<string, string> = {
   VISITA_PRESENCIAL: 'Visita presencial',
   REUNIAO_REMOTA: 'Reunião remota',

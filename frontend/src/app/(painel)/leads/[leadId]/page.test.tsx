@@ -163,6 +163,8 @@ describe('PaginaDoLead', () => {
         'Resumo',
         'Contato',
         'Qualificação',
+        'Histórico de score',
+        'Imóveis recomendados',
         'Agendamentos',
         'Follow-ups',
         'Conversa',
@@ -257,6 +259,78 @@ describe('PaginaDoLead', () => {
     expect(contato).toHaveTextContent('+55 48 9****-**21')
     expect(contato).toHaveTextContent('E-mailNão informado')
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('+55 48 9****-**21')
+  })
+
+  describe('historico de score e recomendacoes (TEC-325)', () => {
+    it('cenario: ler o historico sem o grafico -- a lista tem os tres valores, com data e motivo', async () => {
+      responde(
+        detalhe({
+          historicoScore: [
+            { em: '2026-09-20T12:00:00+00:00', anterior: null, novo: 30, fatores: {}, causas: ['PRIMEIRO_CALCULO'] },
+            { em: '2026-09-21T12:00:00+00:00', anterior: 30, novo: 47, fatores: {}, causas: ['CAMPOS_OBRIGATORIOS'] },
+            { em: '2026-09-22T12:00:00+00:00', anterior: 47, novo: 82, fatores: {}, causas: ['URGENCIA', 'EDICAO_MANUAL'] },
+          ],
+        }),
+      )
+
+      await abrir()
+
+      const secao = screen.getByRole('region', { name: 'Histórico de score' })
+      expect(within(secao).getByRole('img', { name: 'Score de 30 a 82 em 3 recálculos' })).toBeInTheDocument()
+      const linhas = within(secao).getAllByRole('listitem').map((li) => li.textContent)
+      expect(linhas).toHaveLength(3)
+      expect(linhas[0]).toMatch(/20\/09\/2026.*30 · Primeiro cálculo/)
+      expect(linhas[1]).toMatch(/21\/09\/2026.*30 → 47 · Campos da qualificação/)
+      expect(linhas[2]).toMatch(/22\/09\/2026.*47 → 82 · Urgência, Edição manual/)
+    })
+
+    it('sem recalculo, diz que o score ainda nao foi calculado, sem grafico', async () => {
+      responde(detalhe({ historicoScore: [] }))
+
+      await abrir()
+
+      const secao = screen.getByRole('region', { name: 'Histórico de score' })
+      expect(secao).toHaveTextContent('O score deste lead ainda não foi calculado.')
+      expect(within(secao).queryByRole('img')).toBeNull()
+    })
+
+    it('cenario: imovel recomendado com o motivo do match e a reacao "Gostei"', async () => {
+      responde(
+        detalhe({
+          recomendacoes: [
+            {
+              imovelId: 'i-1',
+              codigo: 'AP-101',
+              titulo: 'Apartamento 2 quartos',
+              bairro: 'Campeche',
+              scoreMatch: 0.874,
+              motivoMatch: 'No bairro pedido e dentro do orçamento.',
+              reacao: 'INTERESSE',
+              motivoDescarte: null,
+              apresentadoEm: '2026-09-22T12:00:00+00:00',
+            },
+          ],
+        }),
+      )
+
+      await abrir()
+
+      const secao = screen.getByRole('region', { name: 'Imóveis recomendados' })
+      expect(secao).toHaveTextContent('Apartamento 2 quartos')
+      expect(secao).toHaveTextContent('Campeche · match de 87%')
+      expect(secao).toHaveTextContent('No bairro pedido e dentro do orçamento.')
+      expect(secao).toHaveTextContent('Reação: Gostei')
+    })
+
+    it('cenario: lead sem recomendacoes mostra o estado vazio, e nao "Ainda não medido"', async () => {
+      responde(detalhe({ recomendacoes: [] }))
+
+      await abrir()
+
+      const secao = screen.getByRole('region', { name: 'Imóveis recomendados' })
+      expect(secao).toHaveTextContent('Nenhum imóvel recomendado ainda.')
+      expect(secao).not.toHaveTextContent('Ainda não medido')
+    })
   })
 
   describe('responder o lead (TEC-328)', () => {
@@ -470,15 +544,6 @@ describe('PaginaDoLead', () => {
 
       expect(screen.queryByRole('button', { name: 'Assumir conversa' })).not.toBeInTheDocument()
     })
-  })
-
-  it('historico de score e recomendacoes nao aparecem: sao da TEC-325', async () => {
-    responde(detalhe())
-
-    await abrir()
-
-    expect(screen.queryByRole('region', { name: /score/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: /recomend/i })).not.toBeInTheDocument()
   })
 
   it('pede o lead pelo id, codificado, com o JWT de quem esta logado', async () => {
