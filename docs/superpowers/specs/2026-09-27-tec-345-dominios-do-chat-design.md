@@ -46,6 +46,7 @@ Para `/embed/*`, o proxy passa a buscar os domínios e monta:
 - **`frame-ancestors <dominio> <dominio> ...`**, ou `'none'` se a lista estiver vazia ou a busca falhar. Falhar fechado: sem resposta da API, nenhum site embute.
 - **`connect-src 'self' <api> <ws da api>`**, com a origem pública da API em `MOBIA_ORIGEM_PUBLICA_DA_API`. A mesma origem aparece com o esquema de WebSocket correspondente (`https` vira `wss`, `http` vira `ws`), porque o casamento de `https:` com `wss:` não é uniforme entre navegadores. Sem a variável, fica só `'self'`, e a conversa não conecta.
 - O painel continua com `frame-ancestors 'none'` e sem `connect-src` próprio.
+  - **Emenda (TEC-384, 27/09/2026):** `MOBIA_ORIGEM_PUBLICA_DA_API` não existe mais. A TEC-346 entrou na mesma tarde com o endereço do socket em `enderecoDoChat()` (`MOBIA_WIDGET_WS_URL`, ou o derivado de `MOBIA_API_BASE`). Com duas variáveis, o socket podia ir para uma origem que a CSP não admitia. O `connect-src` do embed passou a ser `'self'` mais `origemDoChat()`, a mesma fonte, só com o esquema de WebSocket. Sem origem válida, a diretiva é omitida e o embed herda `'self'`, como a TEC-346 fazia. O merge das duas cards também deixou `proxy.ts` sem compilar, e é isso que a TEC-384 conserta.
 
 **A busca tem memória de 60 s no processo, e não o Data Cache.** A referência de `proxy` do Next 16 não documenta `fetch` com `next.revalidate` no proxy, e contar com isso seria repetir a TEC-344 aprendendo o comportamento do cache em produção. Um `Map` de módulo com prazo resolve e se testa com relógio falso:
 
@@ -83,6 +84,7 @@ O "critério de release 7.2" da card (`frame-ancestors` testado com domínio per
 
 - **L1 — O SRS do frontend não está no repo**, como nas cards anteriores. RN-FE-16.3 e RT-FE-09 vêm só do texto da card.
 - **L2 — Sem tela.** Até a TEC-337, os domínios só se cadastram por `PATCH /api/v1/configuracao/agente`.
-- **L3 — Três variáveis para o chat funcionar.** `TENANT_SLUG` (botão), os domínios na configuração (onde aparece), `ORIGENS_DO_WIDGET` no backend e `MOBIA_ORIGEM_PUBLICA_DA_API` no Next (conversa). A falta de qualquer uma falha fechado, e em silêncio para o visitante.
+- **L3 — Três variáveis para o chat funcionar.** `TENANT_SLUG` (botão), os domínios na configuração (onde aparece), `ORIGENS_DO_WIDGET` no backend e `MOBIA_ORIGEM_PUBLICA_DA_API` no Next (conversa). **Emenda (TEC-384):** a última virou `MOBIA_WIDGET_WS_URL`, opcional, derivada de `MOBIA_API_BASE`. A falta de qualquer uma falha fechado, e em silêncio para o visitante.
 - **L4 — Mudança de domínio leva até dois minutos.** Até 60 s na memória do proxy e até 60 s no Data Cache da aparência, que são independentes.
 - **L5 — A TEC-346 precisa abrir o socket em `MOBIA_ORIGEM_PUBLICA_DA_API`.** Esta card fixa o nome da variável. Se a TEC-346 usar outro, o `connect-src` recusa a conexão.
+  - **Emenda (TEC-384, 27/09/2026):** foi o que aconteceu. A TEC-346 usou `MOBIA_WIDGET_WS_URL`, e a TEC-384 fez o `connect-src` ler a mesma fonte. Ver a emenda da D4.

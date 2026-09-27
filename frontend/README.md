@@ -41,7 +41,6 @@ com o código de 6 dígitos (RNF-11). A URI leva a semente em claro.
 | `MOBIA_REDIS_URL` | servidor Next, onde a sessão do painel mora | não (`redis://localhost:6380`, o do `docker compose`) |
 | `MOBIA_ORIGEM_DO_PAINEL` | proxy `/bff/*` e login, na checagem de `Origin` | só atrás de proxy — ver abaixo |
 | `MOBIA_WIDGET_WS_URL` | a página `/embed/chat` e o proxy, no servidor | não (derivada de `MOBIA_API_BASE`) |
-| `MOBIA_ORIGEM_PUBLICA_DA_API` | proxy, no `connect-src` de `/embed/*` (TEC-345) | para o chat conectar — ver "O chat no site da imobiliária" |
 
 **Não há mais token de API no ambiente do Next.** Até a TEC-309 havia o
 `MOBIA_ADMIN_TOKEN`, que ia em toda chamada como `X-Admin-Token` — um ADMIN sem
@@ -362,7 +361,7 @@ O `<slug>` tem de ser igual ao `TENANT_SLUG` do backend: minúsculas, dígitos e
 
 O proxy guarda os domínios por 60 s, e a aparência tem o seu próprio cache de 60 s. Uma mudança leva até dois minutos para valer em todo lugar. Se a API estiver fora do ar, o proxy responde `frame-ancestors 'none'`, e nenhum site embute o chat até ela voltar.
 
-O botão aparecer não basta para a conversa conectar. O `WS /widget/chat` só aceita o handshake cuja origem esteja em `ORIGENS_DO_WIDGET` do backend, e essa origem é a **do painel**, que serve o iframe `/embed/chat`, e não a do site da imobiliária: quem abre o socket é o iframe. Sem ela, o handshake leva `403`. Em desenvolvimento, `ORIGENS_DO_WIDGET=http://localhost:3000`. Do lado do Next, o `connect-src` de `/embed/*` só admite a API em `MOBIA_ORIGEM_PUBLICA_DA_API` (em desenvolvimento, `http://localhost:8000`), com o esquema HTTP e o de WebSocket. Sem ela, o iframe só conecta na própria origem.
+O botão aparecer não basta para a conversa conectar. O `WS /widget/chat` só aceita o handshake cuja origem esteja em `ORIGENS_DO_WIDGET` do backend, e essa origem é a **do painel**, que serve o iframe `/embed/chat`, e não a do site da imobiliária: quem abre o socket é o iframe. Sem ela, o handshake leva `403`. Em desenvolvimento, `ORIGENS_DO_WIDGET=http://localhost:3000`. Do lado do Next, o `connect-src` de `/embed/*` admite só a origem do endereço que a página passa ao socket, `MOBIA_WIDGET_WS_URL` ou o derivado de `MOBIA_API_BASE`. As duas coisas saem da mesma função, `enderecoDoChat()`, e por isso não divergem (TEC-384).
 
 `public/widget.js` não passa por build: o que está no arquivo é o que o visitante baixa, e `npm run verificar:widget` reprova acima de 5 KB gzip. Até a TEC-346, quem abre o chat vê só o cabeçalho.
 
