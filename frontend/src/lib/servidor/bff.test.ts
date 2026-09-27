@@ -53,6 +53,13 @@ describe('caminhoPermitido', () => {
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'revelar'])).toBeNull()
     })
 
+    it('a resposta do corretor entra como `POST` das mensagens (TEC-328)', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'mensagens'])).toBe(
+        `/api/v1/leads/${LEAD}/mensagens`,
+      )
+      expect(caminhoPermitido('PUT', ['api', 'v1', 'leads', LEAD, 'mensagens'])).toBeNull()
+    })
+
     it('a correcao da qualificacao entra so como `PATCH` (TEC-329)', () => {
       expect(caminhoPermitido('PATCH', ['api', 'v1', 'leads', LEAD, 'qualificacao'])).toBe(
         `/api/v1/leads/${LEAD}/qualificacao`,
@@ -66,7 +73,6 @@ describe('caminhoPermitido', () => {
       // le e o Server Component.
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD])).toBeNull()
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads'])).toBeNull()
-      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'mensagens'])).toBeNull()
     })
 
     it('o `*` casa um segmento so, e nunca `..`', () => {

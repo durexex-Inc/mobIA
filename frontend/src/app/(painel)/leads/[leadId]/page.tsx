@@ -153,7 +153,16 @@ export default async function PaginaDoLead({ params }: { params: Promise<{ leadI
       <section className="detalhe-secao" aria-label="Conversa">
         <h2>Conversa</h2>
         {transcricao ? (
-          <Transcricao leadId={leadId} inicial={transcricao} acompanhar={acompanhar} />
+          <Transcricao
+            leadId={leadId}
+            inicial={transcricao}
+            acompanhar={acompanhar}
+            // Quem ve "Assumir conversa" ve tambem onde responder (TEC-328,
+            // D3); habilitado so com a conversa sua, que e o `acompanhar`.
+            resposta={
+              meuCorretorId ? { janelaFechaEm: detalhe.janelaDeServicoFechaEm ?? null } : undefined
+            }
+          />
         ) : (
           <ErroDeCarga
             mensagem="Não foi possível carregar a conversa."

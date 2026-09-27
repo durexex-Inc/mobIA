@@ -84,6 +84,10 @@
 > | E-01 | RNF-21 | [TEC-207](https://eduardodurieuxlopes.atlassian.net/browse/TEC-207) | 26/09/2026 |
 > | E-01 | RNF-22 | [TEC-207](https://eduardodurieuxlopes.atlassian.net/browse/TEC-207) | 26/09/2026 |
 > | E-01 | Seção 6.7 (`GET` e `DELETE /api/v1/leads/{leadId}/dados-pessoais`) | [TEC-207](https://eduardodurieuxlopes.atlassian.net/browse/TEC-207) | 26/09/2026 |
+> | E-02 | Seção 6.2 (`GET /api/v1/leads/{leadId}`, `GET /api/v1/conversas/{conversaId}/mensagens`, `POST /api/v1/conversas/{conversaId}/assumir`) | [TEC-327](https://eduardodurieuxlopes.atlassian.net/browse/TEC-327) | 27/09/2026 |
+> | E-02 | RN-18.3 | [TEC-329](https://eduardodurieuxlopes.atlassian.net/browse/TEC-329) | 27/09/2026 |
+> | E-03 | RN-18.3 | [TEC-328](https://eduardodurieuxlopes.atlassian.net/browse/TEC-328) | 27/09/2026 |
+> | E-03 | Seção 6.2 (`GET /api/v1/leads/{leadId}`) | [TEC-328](https://eduardodurieuxlopes.atlassian.net/browse/TEC-328) | 27/09/2026 |
 >
 > **Este índice está incompleto e a linha acima não o conserta.** Emendas do corpo de várias cards (TEC-139, TEC-142, TEC-161, TEC-162, TEC-174 a TEC-179, TEC-196, TEC-278) nunca foram indexadas — a TEC-275 acrescentou só a sua. Quem procura a lista completa lê o corpo do documento, não esta tabela.
 
@@ -675,6 +679,12 @@ Cada requisito tem identificador rastreável. `RF-` = requisito funcional, `RN-`
     - **Editáveis:** faixa de preço, região, tipo de imóvel, quartos, vagas, urgência, forma de pagamento e se tem imóvel para vender. **A intenção não se edita**: trocá-la dispara a regra da Emenda E-01 da RN-03.3, que descarta orçamento, e é uma operação e não um campo. O `PATCH` é parcial — ausente não muda, `null` limpa —, a faixa invertida é conferida contra o que já havia, e o recálculo grava a causa `EDICAO_MANUAL`. Se a edição faz o lead cruzar a borda da RN-05.3, **`qualificado_em` é carimbado**, e o funil passa a contá-lo.
     - **O recálculo forçado grava a causa `RECALCULO_MANUAL`**, e a linha nasce mesmo com o total igual. **Lacuna declarada:** o fator de catálogo é sempre zero, então a mudança de catálogo que o critério de aceite descreve não move o score por este caminho.
   - **Emenda E-02 (TEC-329, 27/09/2026):** **a região editada é gravada na forma canônica**, a mesma que a extração do agente produz (`normalizar_regiao`): "Perto do Campeche" vira `campeche`, e o que se normaliza para vazio vira `null`. Sem isso, a correção manual seria a única porta que grava região fora dessa forma, e o filtro estruturado, que compara `regiao` por igualdade, não casaria o lead com o catálogo. **A região continua conjunto aberto**: a tela a edita como texto, e as listas de seleção são só para os três vocabulários fechados (tipo de imóvel, urgência, forma de pagamento).
+  - **Emenda E-03 (TEC-328, 27/09/2026):** **o envio do corretor aceita o `messageId` gerado no cliente**, que passa a ser o id da fala. Reenviar com o mesmo id **não manda de novo**:
+    - a fala já gravada para aquele lead volta como `201` com o mesmo `{id, em}`;
+    - um id que é de outra fala é `409 message_id_em_uso`;
+    - um id que já tem reserva de envio sem fala gravada é `409 fala_em_envio`. É a tentativa que ainda espera a Meta, ou a que entregou e caiu antes de gravar.
+
+    O campo é opcional, e sem ele o id nasce no servidor, como antes. **A janela de 24 h do WhatsApp passa a ser conferida antes da Meta**, contra a última fala do lead e pela mesma regra dos envios automáticos. Fora dela, a resposta é `409 janela_fechada` sem requisição ao canal, e a recusa da Meta fica como segunda linha. O limite de 1.000 caracteres da RN-FE-09.3 é da tela; a API continua aceitando até 4096, o teto da Meta.
 - RN-18.4: Toda edição manual é registrada com autor e timestamp.
   - **Emenda E-01 (TEC-194, 26/09/2026):** o registro é duplo. **Na trilha de score**, `lead_score_audit.autor` passa a ser escrito — o identificador do usuário, o mesmo que a trilha de auditoria grava em `ator_id` — na edição e no recálculo manual; nos recálculos do agente e do não-comparecimento continua nulo, porque o ato não é de uma pessoa. **Na trilha de auditoria**, um `QUALIFICACAO_ALTERADA` por campo alterado, com o nome do campo e sem o valor; campo enviado com o valor que já tinha não conta. **A devolução da conversa** é registrada com autor e momento em `atendimento_humano` (`devolvido_por`, `devolvido_em`), como já era desde a TEC-179, e não entra na trilha de auditoria, que a RNF-18 não lhe atribui.
 - RN-18.5: Telefone e e-mail exibidos mascarados por padrão para papéis sem permissão `VER_DADOS_COMPLETOS`; revelar registra evento de auditoria.
@@ -1340,6 +1350,7 @@ Autenticação: Bearer JWT | Papéis: `CORRETOR` (próprio), `GERENTE`, `ADMIN`
 Erros: 403 (lead de outro corretor), 404.
   - **Emenda E-01 (TEC-193, 26/09/2026):** a permissão é `VER_DETALHE_DO_LEAD` (Emenda E-04 à RNF-12), e o "próprio" do `CORRETOR` é *existe handoff com o `corretor_id` dele* — o mesmo vínculo do recorte da lista. O 403 grava `ACESSO_NEGADO`. **A rota registra `DADO_PESSOAL_ACESSADO`** com `campo=detalhe` antes de responder (Emenda E-03 à RNF-18). A forma da resposta está na Emenda E-01 da RN-18.2; as "conversas" deste parágrafo são a rota de transcrição abaixo.
   - **Emenda E-02 (TEC-327, 27/09/2026):** a resposta ganha **`atendimento`**, com quem tem a conversa agora e desde quando: `{"assumidoPor": {"corretorId": "uuid", "nome": "Paulo"}, "assumidoEm": "ISO-8601"}`, ou `null` quando ninguém assumiu ou a última pessoa devolveu. O nome é de `corretores`, gente da operação, e não é dado do lead. **Consequência declarada:** a faixa "Você está no controle" do painel sobrevive a recarregar a página. Ver a D2 do desenho da TEC-327.
+  - **Emenda E-03 (TEC-328, 27/09/2026):** a resposta ganha **`janelaDeServicoFechaEm`** (ISO-8601 ou `null`). É o instante em que fecha a janela de serviço da Meta: a última fala **do lead** mais 24 h. Uma resposta do agente no meio não move a janela. Sai `null` no canal do site, que não tem janela, e no lead que nunca falou. A tela bloqueia o texto livre a partir desse instante, com a borda estrita (`agora >= janelaDeServicoFechaEm` já é fechada).
 
 #### GET /api/v1/conversas/{conversaId}/mensagens
 Autenticação: Bearer JWT | Paginação por cursor, ordem cronológica.

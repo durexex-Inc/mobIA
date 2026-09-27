@@ -46,6 +46,7 @@ from mobia.domain.messages.enums import MessageContentType, MessageDirection, Me
 from mobia.domain.messages.models import Message
 from mobia.domain.optout.repositorio import registrar_optout
 from mobia.domain.outbound.kinds import KIND_DA_RESPOSTA, kind_da_fala_do_corretor
+from mobia.domain.outbound.models import OutboundDispatch
 from mobia.domain.outbound.port import EnvioForaDaJanela, EnvioRetentavel, GuardedOutbound
 from mobia.domain.usuarios import tokens
 from mobia.infra.crypto import aad_de, decrypt, encrypt
@@ -682,3 +683,111 @@ async def test_as_rotas_antigas_continuam_aceitando_o_handoff_junto(
         )
     ).scalar_one()
     assert status_do_handoff == StatusDoHandoff.ACEITO.value
+
+
+# --- o `messageId` do cliente e a janela antes do envio (TEC-328) --------------
+
+
+async def _ancora(session: AsyncSession) -> uuid.UUID:
+    return (
+        await session.execute(select(Message.id).where(Message.role == MessageRole.LEAD))
+    ).scalar_one()
+
+
+async def test_o_message_id_do_cliente_e_o_id_da_fala(
+    session: AsyncSession, cliente: AsyncClient, porta: PortaFalsa
+) -> None:
+    paulo = await _corretor(session)
+    lead_id = await _lead(session, dono=paulo)
+    fala_id = uuid.uuid4()
+
+    resposta = await cliente.post(
+        f"{ROTA}/{lead_id}/mensagens",
+        json={"texto": "Oi, sou o Paulo", "messageId": str(fala_id)},
+        headers=_bearer("CORRETOR", corretor_id=paulo),
+    )
+
+    assert resposta.status_code == 201
+    assert resposta.json()["id"] == str(fala_id)
+    assert [fala.id for fala in await _falas_do_corretor(session)] == [fala_id]
+    assert [kind for kind, _ in porta.entregues] == [kind_da_fala_do_corretor(fala_id)]
+
+
+async def test_reenviar_com_o_mesmo_message_id_nao_manda_de_novo(
+    session: AsyncSession, cliente: AsyncClient, porta: PortaFalsa
+) -> None:
+    """TEC-328, D1: quem nao viu a primeira resposta tenta de novo, e o lead le uma vez so."""
+    paulo = await _corretor(session)
+    lead_id = await _lead(session, dono=paulo)
+    corpo = {"texto": "Oi, sou o Paulo", "messageId": str(uuid.uuid4())}
+    cabecalhos = _bearer("CORRETOR", corretor_id=paulo)
+
+    primeira = await cliente.post(f"{ROTA}/{lead_id}/mensagens", json=corpo, headers=cabecalhos)
+    segunda = await cliente.post(f"{ROTA}/{lead_id}/mensagens", json=corpo, headers=cabecalhos)
+
+    assert (primeira.status_code, segunda.status_code) == (201, 201)
+    assert segunda.json() == primeira.json()
+    assert len(porta.entregues) == 1
+    assert len(await _falas_do_corretor(session)) == 1
+
+
+async def test_message_id_de_outra_fala_e_409_e_nao_envia(
+    session: AsyncSession, cliente: AsyncClient, porta: PortaFalsa
+) -> None:
+    paulo = await _corretor(session)
+    lead_id = await _lead(session, dono=paulo)
+    da_fala_do_lead = await _ancora(session)
+
+    resposta = await cliente.post(
+        f"{ROTA}/{lead_id}/mensagens",
+        json={"texto": "oi", "messageId": str(da_fala_do_lead)},
+        headers=_bearer("CORRETOR", corretor_id=paulo),
+    )
+
+    assert (resposta.status_code, resposta.json()["detail"]) == (409, "message_id_em_uso")
+    assert porta.entregues == []
+
+
+async def test_reserva_sem_fala_gravada_e_fala_em_envio_e_nao_envia(
+    session: AsyncSession, cliente: AsyncClient, porta: PortaFalsa
+) -> None:
+    """A primeira tentativa entregou e caiu antes de gravar -- ou ainda espera a Meta.
+
+    A reserva e procurada pelo `kind`, e nao pelo par da UNIQUE: a ancora
+    daquela tentativa pode nao ser mais a ultima fala do lead.
+    """
+    paulo = await _corretor(session)
+    lead_id = await _lead(session, dono=paulo)
+    fala_id = uuid.uuid4()
+    session.add(
+        OutboundDispatch(message_id=await _ancora(session), kind=kind_da_fala_do_corretor(fala_id))
+    )
+    await session.commit()
+
+    resposta = await cliente.post(
+        f"{ROTA}/{lead_id}/mensagens",
+        json={"texto": "oi", "messageId": str(fala_id)},
+        headers=_bearer("CORRETOR", corretor_id=paulo),
+    )
+
+    assert (resposta.status_code, resposta.json()["detail"]) == (409, "fala_em_envio")
+    assert porta.entregues == []
+    assert await _falas_do_corretor(session) == []
+
+
+async def test_fora_da_janela_de_24h_recusa_sem_chamar_a_meta(
+    session: AsyncSession, cliente: AsyncClient, porta: PortaFalsa
+) -> None:
+    """TEC-328, D2: a porta falsa entregaria -- e a recusa sai antes dela."""
+    paulo = await _corretor(session)
+    lead_id = await _lead(session, dono=paulo, falou_em=datetime.now(UTC) - timedelta(hours=25))
+
+    resposta = await cliente.post(
+        f"{ROTA}/{lead_id}/mensagens",
+        json={"texto": "oi"},
+        headers=_bearer("CORRETOR", corretor_id=paulo),
+    )
+
+    assert (resposta.status_code, resposta.json()["detail"]) == (409, "janela_fechada")
+    assert porta.entregues == []
+    assert await _falas_do_corretor(session) == []

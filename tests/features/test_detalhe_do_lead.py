@@ -867,3 +867,33 @@ async def test_o_detalhe_diz_quem_tem_a_conversa(
     assert assumida["atendimento"]["assumidoPor"] == {"corretorId": str(paulo), "nome": "Paulo"}
     assert assumida["atendimento"]["assumidoEm"]
     assert devolvida["atendimento"] is None
+
+
+async def test_o_detalhe_diz_quando_fecha_a_janela_do_whatsapp(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """TEC-328, D2: a ultima fala DO LEAD mais 24 h -- a do agente nao move a janela."""
+    session.add_all(
+        [
+            _fala(texto="oi", em=INICIO),
+            _fala(autor=MessageRole.AGENTE, texto="ola", em=INICIO + timedelta(hours=2)),
+        ]
+    )
+    await session.commit()
+    lead_id = await _apelido(session)
+
+    corpo = (await client.get(f"{ROTA}/{lead_id}", headers=_bearer("GERENTE"))).json()
+
+    assert datetime.fromisoformat(corpo["janelaDeServicoFechaEm"]) == INICIO + timedelta(hours=24)
+
+
+async def test_sem_fala_do_lead_nao_ha_janela(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    session.add(_fala(autor=MessageRole.AGENTE, texto="ola", em=INICIO))
+    await session.commit()
+    lead_id = await _apelido(session)
+
+    corpo = (await client.get(f"{ROTA}/{lead_id}", headers=_bearer("GERENTE"))).json()
+
+    assert corpo["janelaDeServicoFechaEm"] is None
