@@ -1,7 +1,8 @@
 /**
  * A aparencia do chat web (TEC-344, D1 e D3): o que o botao e o cabecalho do
  * chat precisam, no formato que `GET /widget/aparencia` devolve (menos o
- * `tenant`, que so serve para `buscarAparencia` comparar o slug).
+ * `tenant`, que so serve para `buscarAparencia` comparar o slug, e os
+ * `dominios` da TEC-345, que `lerDominios` le a parte).
  *
  * Sem `server-only`: a pagina do chat e o teste leem isto, e nao ha segredo
  * aqui. O loader (`public/widget.js`) repete a mesma conferencia porque nao

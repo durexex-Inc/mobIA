@@ -51,6 +51,7 @@ _CAMPOS = {
     "orcamentoMensalUsd": "orcamento_mensal_usd",
     "corPrimaria": "cor_primaria",
     "posicaoDoBotao": "posicao_do_botao",
+    "dominiosDoChat": "dominios_do_chat",
 }
 _DA_TABELA = {coluna: nome for nome, coluna in _CAMPOS.items()}
 
@@ -85,6 +86,11 @@ _LIMITES: dict[str, object] = {
     # TEC-344, D1. O formato e conferido em `vigente.validar`.
     "corPrimaria": {"formato": "#RRGGBB"},
     "posicaoDoBotao": {"valores": [p.value for p in PosicaoDoBotao]},
+    # TEC-345, D1. O formato de cada um e conferido em `vigente.validar`.
+    "dominiosDoChat": {
+        "maximo": vigente.MAXIMO_DE_DOMINIOS_DO_CHAT,
+        "formato": "host ou host:porta, em minusculas",
+    },
 }
 
 
@@ -119,6 +125,8 @@ class PedidoDeAlteracao(BaseModel):
     orcamentoMensalUsd: Decimal | None = None  # noqa: N815
     corPrimaria: str | None = None  # noqa: N815
     posicaoDoBotao: PosicaoDoBotao | None = None  # noqa: N815
+    # `[]` LIMPA a lista; `null` e recusado, como a cor.
+    dominiosDoChat: list[str] | None = None  # noqa: N815
 
 
 def _mudancas(pedido: PedidoDeAlteracao) -> dict[str, Any]:
@@ -133,6 +141,8 @@ def _mudancas(pedido: PedidoDeAlteracao) -> dict[str, Any]:
             valor = Tom(valor)
         elif coluna == "posicao_do_botao" and valor is not None:
             valor = PosicaoDoBotao(valor)
+        elif coluna == "dominios_do_chat" and valor is not None:
+            valor = tuple(valor)
         mudancas[coluna] = valor
     if mudancas.get("tom", "") is None or mudancas.get("teto_de_perguntas", 0) is None:
         raise ConfiguracaoInvalida("tom e limite de perguntas nao podem ser nulos")
@@ -144,6 +154,10 @@ def _mudancas(pedido: PedidoDeAlteracao) -> dict[str, Any]:
     # legitimo aqui: o botao sempre tem cor e lado.
     if mudancas.get("cor_primaria", "") is None or mudancas.get("posicao_do_botao", "") is None:
         raise ConfiguracaoInvalida("cor primaria e posicao do botao nao podem ser nulas")
+    # TEC-345. "Nenhum dominio" e `[]`, e nao `null`: com dois jeitos de dizer
+    # a mesma coisa, a tela e o historico teriam de tratar os dois.
+    if "dominios_do_chat" in mudancas and mudancas["dominios_do_chat"] is None:
+        raise ConfiguracaoInvalida("dominios do chat nao podem ser nulos: use [] para nenhum")
     return mudancas
 
 

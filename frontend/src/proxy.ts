@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 
 import { origemDoChat } from '@/lib/servidor/enderecoDoChat'
+import { dominiosDoEmbed } from '@/lib/servidor/dominiosDoEmbed'
 
 /**
  * A CSP com nonce das rotas do dashboard (TEC-356, RNF-FE-09).
@@ -37,11 +38,23 @@ import { origemDoChat } from '@/lib/servidor/enderecoDoChat'
  * desenvolvimento para reconstruir pilha de erro do servidor no navegador, e
  * que isso nao vale para producao. O `'unsafe-inline'` de `style-src` segue o
  * mesmo guia. Quem trocar um `isDev` por `true` aqui esta afrouxando producao.
+ *
+ * **`embed` so vem nas rotas de `/embed/*` (TEC-345, D4)**, com os dominios
+ * que podem enquadrar o chat e a origem publica da API. Ausente, a politica e
+ * a do painel: ninguem enquadra, e `connect-src` herda `default-src 'self'`.
  */
+export type PoliticaDoEmbed = {
+  /** Os dominios cadastrados, ja conferidos por `lerDominios`. Vazio, ninguem. */
+  ancestrais: readonly string[]
+  /** `MOBIA_ORIGEM_PUBLICA_DA_API`, ja conferida; `null` se ausente ou invalida. */
+  origemDaApi: string | null
+}
+
 export function politicaDeSeguranca(
   nonce: string,
   isDev: boolean,
   { embutivel = false, conectarA }: { embutivel?: boolean; conectarA?: string } = {},
+  { embed }: { embed?: PoliticaDoEmbed } = {},
 ): string {
   return [
     "default-src 'self'",
@@ -63,12 +76,50 @@ export function politicaDeSeguranca(
     // dois existem o navegador moderno ignora o antigo, entao ele nao compraria
     // protecao -- compraria uma segunda fonte para o mesmo fato. Ver a D3.
     // `/embed/*` e o chat que o site da imobiliaria enquadra (TEC-344, D8), e
-    // aceita qualquer ancestral ate a TEC-345 restringir aos dominios
-    // cadastrados. O padrao do parametro e o fechado: esquecer de passa-lo
-    // nega o iframe, e nao o abre.
-    embutivel ? 'frame-ancestors *' : "frame-ancestors 'none'",
+    // so os dominios cadastrados o enquadram (TEC-345, D4). Sem esquema: um
+    // host-source sem esquema casa com o do proprio iframe, entao a mesma
+    // entrada vale em `https` e em desenvolvimento. O padrao do parametro e o
+    // fechado: esquecer de passa-lo nega o iframe, e nao o abre -- e lista
+    // vazia tambem.
+    embed && embed.ancestrais.length > 0
+      ? `frame-ancestors ${embed.ancestrais.join(' ')}`
+      : "frame-ancestors 'none'",
+    ...(embed ? [conexoesDoEmbed(embed.origemDaApi)] : []),
     'upgrade-insecure-requests',
   ].join('; ')
+}
+
+/**
+ * O `connect-src` do embed (TEC-345, D4): a propria origem e a API, para o
+ * WebSocket que o iframe abre direto (regra da TEC-346).
+ *
+ * A API entra duas vezes, com o esquema HTTP e com o de WebSocket: o
+ * casamento de `https:` com `wss:` nao e uniforme entre navegadores, e listar
+ * os dois custa uma palavra.
+ */
+function conexoesDoEmbed(origemDaApi: string | null): string {
+  if (!origemDaApi) {
+    return "connect-src 'self'"
+  }
+  return `connect-src 'self' ${origemDaApi} ${origemDaApi.replace(/^http/, 'ws')}`
+}
+
+/**
+ * `MOBIA_ORIGEM_PUBLICA_DA_API` como origem (`https://api.x`), ou `null`.
+ *
+ * O valor vai para dentro da CSP, entao so passa o que `URL` reconhece como
+ * origem `http`/`https` -- e sai na forma dela, sem caminho nem barra.
+ */
+export function origemPublicaDaApi(bruta: string | undefined): string | null {
+  if (!bruta) {
+    return null
+  }
+  try {
+    const url = new URL(bruta)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.origin : null
+  } catch {
+    return null
+  }
 }
 
 /** O chat embutido no site da imobiliaria (TEC-344). Casamento por segmento. */
@@ -129,7 +180,7 @@ function semSessao(request: NextRequest): NextResponse | null {
   return NextResponse.redirect(login)
 }
 
-export function proxy(request: NextRequest): NextResponse {
+export async function proxy(request: NextRequest): Promise<NextResponse> {
   const redirecionamento = semSessao(request)
   if (redirecionamento) {
     return redirecionamento
@@ -159,6 +210,15 @@ export function proxy(request: NextRequest): NextResponse {
     embutivel,
     conectarA,
   })
+  // So o embed espera pela API: o painel nao tem ancestral a conferir, e nao
+  // paga a chamada.
+  const embed = rotaDoEmbed(request.nextUrl.pathname)
+    ? {
+        ancestrais: await dominiosDoEmbed(),
+        origemDaApi: origemPublicaDaApi(process.env.MOBIA_ORIGEM_PUBLICA_DA_API),
+      }
+    : undefined
+  const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development', { embed })
 
   // O nonce vai no cabecalho da REQUISICAO tambem, e nao so no da resposta: e
   // assim que o render o alcanca. O Next extrai o nonce da propria CSP e o
