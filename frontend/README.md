@@ -199,6 +199,18 @@ da lista não é link. O desenho está em
   e a lista embaixo dele é a leitura completa. A reação ao imóvel usa os
   rótulos do chat web ("Gostei", "Não é pra mim").
 
+## Regenerar o resumo (TEC-326)
+
+Quem tem `ATENDER_LEAD` vê "Regenerar resumo" na seção Resumo, quando há
+resumo. O clique faz `POST /handoffs/{handoffId}/resumo` pelo `/bff/*`, uma
+rota síncrona que espera o modelo, e **o resumo novo entra no lugar do antigo
+pela resposta**, sem reler o detalhe (reler gravaria outro acesso na trilha).
+O desenho está em `docs/superpowers/specs/2026-09-27-tec-326-regenerar-resumo-design.md`.
+
+- **A trava de 60 s conta de `geradoEm`**, como a do backend. A geração
+  automática do handoff também conta, e a tela mostra "Disponível em N s".
+- **O 429 é dito como trava**, com o `Retry-After`, e não como erro.
+
 ## A conversa do lead (TEC-324)
 
 A última seção do detalhe. A primeira página, com as 100 falas mais recentes,
@@ -340,6 +352,8 @@ A imobiliária cola uma linha no site:
     <script src="https://<painel>/widget.js" data-tenant="<slug>" async></script>
 
 O `<slug>` tem de ser igual ao `TENANT_SLUG` do backend: minúsculas, dígitos e hífen, começando por letra ou dígito, até 64 caracteres (`^[a-z0-9][a-z0-9-]{0,63}$`). O backend não sobe com um `TENANT_SLUG` fora desse formato, porque o Next recusaria todo `data-tenant` e o botão sumiria sem aviso. Sem `TENANT_SLUG`, nenhum site mostra o botão — é o padrão, de propósito. Quem compara os dois é o Next, e não o FastAPI: `GET /widget/aparencia` responde sempre 200 com o slug configurado, porque o cache do Next só guarda resposta 200. Cor, lado e nome do assistente vêm da configuração do agente (`PATCH /api/v1/configuracao/agente`), e uma mudança leva até um minuto para chegar ao site, por causa do cache de `/embed/aparencia`.
+
+O botão aparecer não basta para a conversa conectar. O `WS /widget/chat` só aceita o handshake cuja origem esteja em `ORIGENS_DO_WIDGET` do backend, e essa origem é a **do painel**, que serve o iframe `/embed/chat`, e não a do site da imobiliária: quem abre o socket é o iframe. Sem ela, o handshake leva `403`. Em desenvolvimento, `ORIGENS_DO_WIDGET=http://localhost:3000`.
 
 `public/widget.js` não passa por build: o que está no arquivo é o que o visitante baixa, e `npm run verificar:widget` reprova acima de 5 KB gzip. Desde a TEC-346 a visitante conversa pelo chat e vê se cada mensagem chegou; até a TEC-347, cada abertura do chat é uma conversa nova, e até a TEC-348 a conexão só reabre quando a visitante envia ou reenvia uma mensagem, ou sozinha, quando acaba a espera pedida por um `muitas_tentativas`. Até a TEC-345, qualquer site pode embutir o chat.
 

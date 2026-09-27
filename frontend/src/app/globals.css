@@ -996,3 +996,24 @@ a {
     font-weight: 600;
   }
 }
+
+/* --- Regenerar o resumo (TEC-326) ------------------------------------------ */
+
+.resumo-regenerar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.resumo-regenerar button {
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.resumo-estado {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}

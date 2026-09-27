@@ -261,6 +261,25 @@ describe('PaginaDoLead', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('+55 48 9****-**21')
   })
 
+  describe('regenerar o resumo (TEC-326)', () => {
+    it('quem tem ATENDER_LEAD ve o "Regenerar resumo" na secao', async () => {
+      responde(detalhe())
+
+      await abrir()
+
+      const secao = screen.getByRole('region', { name: 'Resumo' })
+      expect(within(secao).getByRole('button', { name: 'Regenerar resumo' })).toBeInTheDocument()
+    })
+
+    it('sem resumo nao ha o que regenerar', async () => {
+      responde(detalhe({ resumo: null }))
+
+      await abrir()
+
+      expect(screen.queryByRole('button', { name: 'Regenerar resumo' })).toBeNull()
+    })
+  })
+
   describe('historico de score e recomendacoes (TEC-325)', () => {
     it('cenario: ler o historico sem o grafico -- a lista tem os tres valores, com data e motivo', async () => {
       responde(
