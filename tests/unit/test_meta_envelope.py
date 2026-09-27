@@ -1,7 +1,7 @@
 from typing import Any
 
 from mobia.domain.messages.enums import MessageContentType, content_type_da_meta
-from mobia.domain.messages.schemas import ParsedMessage, parse_meta_envelope
+from mobia.domain.messages.schemas import ParsedMessage, nome_no_envelope, parse_meta_envelope
 
 
 def envelope(*messages: dict[str, Any]) -> dict[str, Any]:
@@ -148,3 +148,96 @@ def test_tipo_ausente_ou_desconhecido_nao_derruba_o_parse() -> None:
 def test_parser_devolve_o_tipo_do_dominio() -> None:
     (parsed,) = parse_meta_envelope(envelope_com_tipo("image"))
     assert parsed.content_type is MessageContentType.IMAGEM
+
+
+# --- TEC-217: o envelope ------------------------------------------------------
+
+
+def _com(value_extra: dict[str, Any], *messages: dict[str, Any]) -> dict[str, Any]:
+    corpo = envelope(*messages)
+    corpo["entry"][0]["changes"][0]["value"].update(value_extra)
+    return corpo
+
+
+def test_o_envelope_traz_a_conta_e_nao_as_mensagens() -> None:
+    """D2: `entry_id` e `metadata` entram; `messages` fica so no raw de cada
+    linha, e `statuses` -- da saida, com telefone de outros -- sai."""
+    corpo = _com(
+        {"statuses": [{"id": "wamid.SAIDA", "recipient_id": "5511900000000"}]},
+        MENSAGEM_TEXTO,
+    )
+
+    (mensagem,) = parse_meta_envelope(corpo)
+
+    contexto = mensagem.envelope_context
+    assert contexto is not None
+    assert contexto["entry_id"] == "111111111"
+    assert contexto["value"]["metadata"]["display_phone_number"] == "5511999998888"
+    assert "messages" not in contexto["value"]
+    assert "statuses" not in contexto["value"]
+
+
+def test_nome_do_perfil_sobrevive() -> None:
+    corpo = _com(
+        {"contacts": [{"wa_id": "5511911112222", "profile": {"name": "Marina Souza"}}]},
+        MENSAGEM_TEXTO,
+    )
+
+    (mensagem,) = parse_meta_envelope(corpo)
+
+    assert nome_no_envelope(mensagem.envelope_context) == "Marina Souza"
+
+
+def test_cada_linha_so_leva_o_contato_do_proprio_remetente() -> None:
+    """D2, a decisao de LGPD: sem o filtro, a linha de um lead guardaria o nome
+    do outro, e a anonimizacao do outro nao a alcancaria."""
+    outra = {**MENSAGEM_TEXTO, "from": "5511933334444", "id": "wamid.OUTRA"}
+    corpo = _com(
+        {
+            "contacts": [
+                {"wa_id": "5511911112222", "profile": {"name": "Marina"}},
+                {"wa_id": "5511933334444", "profile": {"name": "Rafael"}},
+            ]
+        },
+        MENSAGEM_TEXTO,
+        outra,
+    )
+
+    primeira, segunda = parse_meta_envelope(corpo)
+
+    assert primeira.envelope_context is not None
+    assert segunda.envelope_context is not None
+    assert primeira.envelope_context["value"]["contacts"] == [
+        {"wa_id": "5511911112222", "profile": {"name": "Marina"}}
+    ]
+    assert nome_no_envelope(primeira.envelope_context) == "Marina"
+    assert nome_no_envelope(segunda.envelope_context) == "Rafael"
+
+
+def test_sem_contacts_o_nome_e_nulo() -> None:
+    corpo = envelope(MENSAGEM_TEXTO)
+    del corpo["entry"][0]["changes"][0]["value"]["contacts"]
+
+    (mensagem,) = parse_meta_envelope(corpo)
+
+    assert mensagem.envelope_context is not None
+    assert "contacts" not in mensagem.envelope_context["value"]
+    assert nome_no_envelope(mensagem.envelope_context) is None
+
+
+def test_contato_sem_perfil_da_nome_nulo() -> None:
+    # O `envelope()` padrao traz `contacts` so com `wa_id`.
+    (mensagem,) = parse_meta_envelope(envelope(MENSAGEM_TEXTO))
+
+    assert nome_no_envelope(mensagem.envelope_context) is None
+    assert nome_no_envelope(None) is None
+
+
+def test_campo_novo_de_value_sobrevive() -> None:
+    """D2: tolerar formato novo da Meta e o argumento da coluna unica."""
+    corpo = _com({"campo_que_a_meta_ainda_nao_manda": {"x": 1}}, MENSAGEM_TEXTO)
+
+    (mensagem,) = parse_meta_envelope(corpo)
+
+    assert mensagem.envelope_context is not None
+    assert mensagem.envelope_context["value"]["campo_que_a_meta_ainda_nao_manda"] == {"x": 1}
