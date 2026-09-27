@@ -1,7 +1,9 @@
 """A aparencia do chat web, lida sem autenticacao. TEC-344, D2 e D3 do desenho.
 
-O loader do site a pede antes de desenhar o botao. O slug do snippet tem de
-bater com `TENANT_SLUG`; sem ele configurado, nenhum slug bate.
+O loader do site a pede antes de desenhar o botao, pelo servidor do Next. A
+rota responde sempre 200, com o slug configurado em `tenant` (ou nulo): quem
+compara com o slug do snippet e o Next, porque o Data Cache dele so guarda
+resposta 200 (emenda da TEC-344 ao D3).
 """
 
 import uuid
@@ -33,10 +35,11 @@ def com_slug(monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None) ->
 async def test_devolve_a_aparencia_padrao_sem_credencial(
     client: AsyncClient, banco_limpo: None, com_slug: None
 ) -> None:
-    resposta = await client.get(f"/widget/aparencia/{SLUG}")
+    resposta = await client.get("/widget/aparencia")
 
     assert resposta.status_code == 200, resposta.text
     assert resposta.json() == {
+        "tenant": SLUG,
         "nomeDoAssistente": None,
         "corPrimaria": "#1D4ED8",
         "posicaoDoBotao": "DIREITA",
@@ -53,40 +56,50 @@ async def test_devolve_o_que_o_admin_configurou(
         headers=_bearer_admin(),
     )
 
-    resposta = await client.get(f"/widget/aparencia/{SLUG}")
+    resposta = await client.get("/widget/aparencia")
 
     assert resposta.json() == {
+        "tenant": SLUG,
         "nomeDoAssistente": "Lia",
         "corPrimaria": "#0A7F5A",
         "posicaoDoBotao": "ESQUERDA",
     }
 
 
-async def test_so_devolve_os_tres_campos_da_aparencia(
+async def test_so_devolve_o_slug_e_os_tres_campos_da_aparencia(
     client: AsyncClient, banco_limpo: None, com_slug: None
 ) -> None:
     """D3: tom, pesos, cadencia e orcamento sao do admin e nao saem daqui."""
-    corpo = (await client.get(f"/widget/aparencia/{SLUG}")).json()
+    corpo = (await client.get("/widget/aparencia")).json()
 
-    assert set(corpo) == {"nomeDoAssistente", "corPrimaria", "posicaoDoBotao"}
+    assert set(corpo) == {"tenant", "nomeDoAssistente", "corPrimaria", "posicaoDoBotao"}
 
 
-async def test_slug_errado_e_slug_nao_configurado_dao_o_mesmo_404(
+async def test_sem_slug_configurado_responde_200_com_tenant_nulo(
     client: AsyncClient,
     banco_limpo: None,
     monkeypatch: pytest.MonkeyPatch,
     caches_de_cliente_limpos: None,
 ) -> None:
-    """D3: responder diferente diria a quem sonda se existe algum tenant."""
+    """200 e nao 404: o Data Cache do Next so guarda 200, e um 404 aqui
+    chegaria ao FastAPI a cada visita, no balde de rate limit do painel.
+    Quem transforma `tenant: null` em 404 para o visitante e o Next.
+    """
     # Vazio, e nao `delenv`: fora de producao o `Settings` le o `.env`, e um
-    # `TENANT_SLUG` la dentro voltaria pela porta dos fundos.
+    # `TENANT_SLUG` la dentro voltaria pela porta dos fundos. O validador do
+    # campo faz do vazio um nulo.
     monkeypatch.setenv("TENANT_SLUG", "")
     get_settings.cache_clear()
-    sem_slug = await client.get(f"/widget/aparencia/{SLUG}")
 
-    monkeypatch.setenv("TENANT_SLUG", SLUG)
-    get_settings.cache_clear()
-    errado = await client.get("/widget/aparencia/outra-imobiliaria")
+    resposta = await client.get("/widget/aparencia")
 
-    assert sem_slug.status_code == errado.status_code == 404
-    assert sem_slug.json() == errado.json()
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["tenant"] is None
+
+
+async def test_a_rota_antiga_com_slug_no_caminho_nao_existe(
+    client: AsyncClient, banco_limpo: None, com_slug: None
+) -> None:
+    """Um URL por slug seria uma entrada de cache por slug -- e cada slug
+    errado, um pedido novo ao FastAPI."""
+    assert (await client.get(f"/widget/aparencia/{SLUG}")).status_code == 404

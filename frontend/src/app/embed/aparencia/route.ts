@@ -20,7 +20,10 @@ export async function GET(requisicao: NextRequest) {
   let aparencia: Awaited<ReturnType<typeof buscarAparencia>>
   try {
     aparencia = await buscarAparencia(tenant)
-  } catch {
+  } catch (erro) {
+    // Sem esta linha o 503 nao diz por que. O erro vem de `buscarAparencia`
+    // (status ou corpo do FastAPI, ou a rede) e nao carrega dado de visitante.
+    console.error('embed/aparencia: aparencia indisponivel', erro)
     return NextResponse.json({ erro: 'indisponivel' }, { status: 503, headers: CORS })
   }
   if (!aparencia) {

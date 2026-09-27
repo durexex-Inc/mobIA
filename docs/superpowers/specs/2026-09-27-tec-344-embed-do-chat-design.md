@@ -33,6 +33,7 @@ Decisão do Eduardo, 27/09/2026. Tenant único não significa atributo decorativ
 - **`tenant_slug`** em `Settings` (`app/config.py`), lido da variável `TENANT_SLUG` — o `Settings` do backend não usa prefixo —, **nulo por padrão**.
 - Nulo quer dizer que nenhum slug casa: nenhum widget aparece em lugar nenhum até alguém configurar. É o lado seguro. Um deploy que esqueceu a variável fica sem chat, não com um chat que aceita qualquer valor.
 - O contrato do endpoint já nasce com o tenant no caminho (D3). O multi-tenant troca a comparação por uma busca, sem mudar a URL.
+  - **Emenda (TEC-344, 27/09/2026):** o tenant saiu do caminho — ver a emenda da D3. A rota do FastAPI passou a ser `GET /widget/aparencia`, e quem compara o slug é o Next. O formato do slug também passou a ser conferido na subida: `Settings` recusa um `TENANT_SLUG` fora de `^[a-z0-9][a-z0-9-]{0,63}$`, o mesmo que o Next aceita no `data-tenant`, e trata o vazio como nulo (`src/mobia/app/config.py::Settings._tenant_slug_no_formato_do_next`). Sem isso, `TENANT_SLUG=MinhaImob` subiria, o Next recusaria todo `data-tenant` antes de comparar, e o botão sumiria de todo site sem uma linha de log.
 
 ## D3 — Endpoint público `GET /widget/aparencia/{slug}`
 
@@ -40,6 +41,7 @@ Em módulo próprio, `api/routes/aparencia_do_widget.py`, e não em `widget.py`:
 
 - **Devolve só `{nome_do_assistente, cor_primaria, posicao_do_botao}`** da configuração vigente. O resto da configuração (tom, pesos, cadência, orçamento) é do administrador e não sai por uma rota anônima.
 - **`404` quando o slug não casa, e também quando não há slug configurado**, com o mesmo corpo. Distinguir os dois diria a quem sonda se existe algum tenant.
+  - **Emenda (TEC-344, 27/09/2026):** o 404 saiu do FastAPI e foi para o Next. O Data Cache do Next só guarda resposta com status 200 (`next/dist/server/lib/patch-fetch.js`), então um 404 do FastAPI nunca entraria no cache da D4: cada visita com slug errado — e, com `TENANT_SLUG` vazio, que é o padrão, com qualquer slug — chegaria ao FastAPI. Lá o `RateLimitPorIP` só enxerga o IP do servidor do Next, que é o mesmo balde de 100 por minuto do painel inteiro; umas duas requisições por segundo a `/embed/aparencia?tenant=x` deixariam o painel respondendo 429. A rota passou a ser **`GET /widget/aparencia`, sem slug no caminho, sempre 200**, com `{tenant, nomeDoAssistente, corPrimaria, posicaoDoBotao}` — `tenant` é o slug configurado, ou `null`. `buscarAparencia` (`frontend/src/lib/servidor/aparencia.ts`) compara esse `tenant` com o `data-tenant` e devolve `null` quando não batem; o route handler e a página continuam respondendo o mesmo 404 ao visitante nos dois casos, e o loader não mudou. Um URL só também quer dizer uma entrada só no cache, qualquer que seja o slug pedido. O slug configurado não é segredo: está no snippet de todo site que embute o chat.
 - **`nome_do_assistente` pode ser `null`.** O que o visitante vê nesse caso é decisão do frontend (D6), porque é texto de tela.
 
 ## D4 — O Next faz cache de 60 s, porque o limite por IP enxerga o servidor, não o visitante
@@ -47,6 +49,8 @@ Em módulo próprio, `api/routes/aparencia_do_widget.py`, e não em `widget.py`:
 O navegador nunca fala com a API direto (TEC-302). Quem chama `GET /widget/aparencia` é o servidor do Next, e o `RateLimitPorIP` da API vê o IP dele. **Todos os visitantes de todos os sites cairiam no mesmo balde**, e um pico de tráfego num site derrubaria o botão em todos.
 
 O route handler `/embed/aparencia` (D5) chama a API com `revalidate: 60`. A API recebe cerca de uma chamada por minuto, qualquer que seja o tráfego, e uma mudança de cor feita pelo admin leva até 60 s para chegar ao site.
+
+- **Emenda (TEC-344, 27/09/2026):** a conta de "cerca de uma chamada por minuto" só valia para o slug certo. O Data Cache só guarda resposta 200, e com o tenant no caminho cada slug errado era um 404 fora do cache e uma chamada nova à API. Por isso a comparação do slug foi para o Next e a rota perdeu o parâmetro (ver a emenda da D3): com um URL só e sempre 200, a conta passa a valer para qualquer `data-tenant`, certo ou errado. O `/embed/aparencia` também passou a registrar em log (`console.error`) o erro que vira 503, que antes sumia sem rastro.
 
 ## D5 — O loader é JavaScript puro em `frontend/public/widget.js`
 
@@ -125,9 +129,11 @@ O conserto é excluir `widget.js` do matcher, ao lado de `favicon.ico`, e não a
 - **CSP:** `/embed/chat` com `frame-ancestors *`, o painel com `'none'`.
 - **Matcher:** `/widget.js` fora do proxy (D9).
 - **`/embed/aparencia` e `/embed/chat`:** cabeçalhos CORS e de cache, e o `404` repassado.
+  - **Emenda (TEC-344, 27/09/2026):** o `404` não é mais repassado do FastAPI, é decidido no Next (emenda da D3). Os testes afirmam que o URL pedido à API é sempre `/widget/aparencia`, qualquer que seja o tenant; que slug diferente do configurado, ou `tenant: null`, dá 404 sem outro pedido; e que qualquer status diferente de 200 da API vira 503, com o erro em log.
 - **Backend:**
   - unitários de `validar()` para cor e posição;
   - integração do endpoint: `200` com os três campos, slug errado e slug não configurado;
+    - **Emenda (TEC-344, 27/09/2026):** `200` sempre, com `tenant` e os três campos; `tenant` nulo sem slug configurado. O slug errado passou a ser teste do Next.
   - `GET` e `PATCH /agente` com os campos novos;
   - `test_uma_cabeca_de_migration.py` na `main` atualizada, depois do merge.
 
