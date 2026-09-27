@@ -54,6 +54,8 @@ A seção lista tipo, horário e status de cada agendamento. Lista vazia diz "Ne
 | 7 | follow-ups | sim: tentativa, temperatura e quando |
 | 8 | transcrição | não: TEC-324 |
 
+- **Nota (TEC-324, 27/09/2026):** a transcrição entrou, como "Conversa", na última posição. As falas vêm de outra rota, pedida em paralelo com o detalhe.
+
 **As seções de outras cards não aparecem**, nem como "em breve". Cada uma entra na posição dela quando a card chegar. A resposta já traz os dados do histórico e das recomendações; a página só não os desenha.
 
 **Revelar o telefone também não é desta card**: é a TEC-330. O contato mostra o mascarado e mais nada.

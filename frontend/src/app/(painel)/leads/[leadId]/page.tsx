@@ -27,7 +27,7 @@ export const metadata: Metadata = {
 
 /**
  * O detalhe do lead (TEC-323, RF-FE-08): o resumo no topo, depois contato,
- * qualificacao, agendamentos e follow-ups.
+ * qualificacao, agendamentos e follow-ups, e a conversa por ultimo (TEC-324).
  *
  * **Abrir esta pagina grava um acesso na trilha** (D3 da TEC-193). Por isso a
  * lista linka para ela com `<a>`, e nao com `next/link` (D2 do desenho): o

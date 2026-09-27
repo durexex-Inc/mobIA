@@ -17,8 +17,9 @@ import { canalLegivel, dataAbsoluta, temperaturaLegivel, tempoRelativo } from '@
  * As secoes do detalhe do lead, na ordem da card (TEC-323, D5).
  *
  * Server Components sem estado: recebem o que a rota devolveu e nao buscam
- * nada. Historico de score, recomendacoes e transcricao entram entre elas
- * quando as cards deles chegarem (TEC-325 e TEC-324).
+ * nada. Historico de score e recomendacoes entram entre elas quando a TEC-325
+ * chegar. A conversa (TEC-324) e a ultima secao, e fica fora daqui: ela vem
+ * de outra rota, e a pagina a desenha depois destas.
  */
 export function SecoesDoDetalhe({ detalhe, agora }: { detalhe: DetalheDoLead; agora: Date }) {
   return (
