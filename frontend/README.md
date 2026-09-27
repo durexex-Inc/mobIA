@@ -154,8 +154,28 @@ para `/leads` quem não tem `VER_FUNIL` e tem `VER_LEADS`. O desenho está em
 - **Não há nome.** Nenhuma tabela o guarda; a primeira coluna é o telefone
   mascarado que a API devolve.
 - **Sem cache**, ao contrário do funil: o score muda a cada turno do agente.
-- **Só a primeira página.** Paginação, filtros e cartões no celular são a
-  TEC-322.
+- **Filtros, paginação e cartões no celular** entraram na TEC-322 (seção
+  abaixo).
+
+## Filtros e paginação da lista (TEC-322)
+
+Tudo na URL: busca, ordem, os filtros (status, temperatura, canal, corretor) e
+a posição. O link copiado abre a mesma lista. O desenho está em
+`docs/superpowers/specs/2026-09-27-tec-322-filtrar-e-paginar-design.md`.
+
+- **Mudar busca, ordem ou filtro volta à primeira página**: o cursor é de uma
+  consulta.
+- **Sem total não há "de 7"**. A partir de 1024 px, as páginas são numeradas
+  com as já visitadas e "Próxima"; os cursores vistos vão em `anterior=`.
+  Abaixo disso, "Carregar mais" leva `acumular=1`, e o servidor soma as
+  páginas, buscando-as em paralelo.
+- **Abaixo de 768 px a tabela vira cartões pelo CSS**, na mesma marcação: cada
+  célula leva `data-rotulo`. O jsdom não avalia media query, então os testes
+  afirmam só a estrutura.
+- **Filtro por corretor**: só o ADMIN escolhe, porque só ele pode listar
+  corretores. Para a GERENTE e a LEITURA o filtro aparece desabilitado, e para
+  o CORRETOR ele não aparece. Um `corretorId` que chegou pela URL continua
+  valendo para todos.
 
 ## O detalhe do lead (TEC-323)
 

@@ -2,6 +2,7 @@ import { DadoRevelavel } from '@/components/DadoRevelavel'
 import {
   canalLegivel,
   dataAbsoluta,
+  type FiltrosDaLista,
   identificacaoDoLead,
   type LeadDaLista,
   type Ordem,
@@ -32,6 +33,12 @@ import {
  * **A mesma celula revela o telefone** para quem tem `VER_DADOS_COMPLETOS`
  * (TEC-330, D4), com o botao FORA do link: botao dentro de `<a>` e HTML
  * invalido, e o clique abriria o detalhe em vez de revelar.
+ *
+ * **A mesma marcacao vira cartoes abaixo de 768 px** (TEC-322, D4), pelo CSS:
+ * cada celula leva o rotulo da coluna em `data-rotulo`. Uma segunda marcacao
+ * duplicaria o "Revelar" e o estado dele. Com o "carregar mais", as
+ * `quantasAnteriores` primeiras linhas sao das paginas anteriores, e o CSS as
+ * esconde a partir de 1024 px, onde a navegacao e numerada (D3).
  */
 export function TabelaDeLeads({
   itens,
@@ -40,6 +47,8 @@ export function TabelaDeLeads({
   agora,
   abreDetalhe,
   podeRevelar,
+  filtros,
+  quantasAnteriores = 0,
 }: {
   itens: LeadDaLista[]
   ordem: Ordem
@@ -47,6 +56,8 @@ export function TabelaDeLeads({
   agora: Date
   abreDetalhe: boolean
   podeRevelar: boolean
+  filtros?: FiltrosDaLista
+  quantasAnteriores?: number
 }) {
   return (
     <table className="leads-tabela">
@@ -54,7 +65,7 @@ export function TabelaDeLeads({
         <tr>
           <th scope="col">Lead</th>
           <th scope="col">Temperatura</th>
-          <CabecalhoOrdenavel rotulo="Score" esta={ordem} ordem="score_desc" busca={busca} />
+          <CabecalhoOrdenavel rotulo="Score" esta={ordem} ordem="score_desc" busca={busca} filtros={filtros} />
           <th scope="col">Status</th>
           <th scope="col">Canal</th>
           <CabecalhoOrdenavel
@@ -62,13 +73,18 @@ export function TabelaDeLeads({
             esta={ordem}
             ordem="ultima_interacao_desc"
             busca={busca}
+            filtros={filtros}
           />
         </tr>
       </thead>
       <tbody>
-        {itens.map((lead) => (
-          <tr key={lead.leadId} data-testid="lead">
-            <td>
+        {itens.map((lead, i) => (
+          <tr
+            key={lead.leadId}
+            data-testid="lead"
+            className={i < quantasAnteriores ? 'leads-pagina-anterior' : undefined}
+          >
+            <td data-rotulo="Lead" className="leads-celula-lead">
               {/* Sem telefone, o texto e o "Visitante do site" ou o
                   "Telefone indisponível" de `identificacaoDoLead`, e sem
                   mascara nao ha o que revelar. */}
@@ -81,13 +97,17 @@ export function TabelaDeLeads({
                 href={abreDetalhe ? `/leads/${encodeURIComponent(lead.leadId)}` : undefined}
               />
             </td>
-            <td>{temperaturaLegivel(lead.temperatura)}</td>
+            <td data-rotulo="Temperatura" className="leads-celula-destaque">
+              {temperaturaLegivel(lead.temperatura)}
+            </td>
             {/* Sem score e travessao, e nao zero: "ainda nao pontuado" nao e
                 "pontuou zero" (D4 da TEC-192). */}
-            <td className="leads-score">{lead.score ?? '—'}</td>
-            <td>{statusLegivel(lead.status)}</td>
-            <td>{canalLegivel(lead.channel)}</td>
-            <td>
+            <td data-rotulo="Score" className="leads-score leads-celula-destaque">
+              {lead.score ?? '—'}
+            </td>
+            <td data-rotulo="Status">{statusLegivel(lead.status)}</td>
+            <td data-rotulo="Canal">{canalLegivel(lead.channel)}</td>
+            <td data-rotulo="Última interação">
               <time dateTime={lead.ultimaInteracaoEm} title={dataAbsoluta(lead.ultimaInteracaoEm)}>
                 {tempoRelativo(lead.ultimaInteracaoEm, agora)}
               </time>
@@ -104,16 +124,20 @@ function CabecalhoOrdenavel({
   esta,
   ordem,
   busca,
+  filtros,
 }: {
   rotulo: string
   esta: Ordem
   ordem: Ordem
   busca?: string
+  filtros?: FiltrosDaLista
 }) {
   const ativa = esta === ordem
   return (
     <th scope="col" aria-sort={ativa ? 'descending' : undefined}>
-      <a href={urlDaLista({ busca, ordem })} aria-current={ativa ? 'true' : undefined}>
+      {/* Trocar a ordem mantem busca e filtros, e volta a primeira pagina: o
+          cursor e da ordem anterior (D1 da TEC-322). */}
+      <a href={urlDaLista({ busca, ordem, filtros })} aria-current={ativa ? 'true' : undefined}>
         {rotulo}
         {ativa ? ' ↓' : ''}
       </a>

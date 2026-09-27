@@ -4,12 +4,21 @@ import { redirect } from 'next/navigation'
 import { BuscaDeLeads } from '@/components/BuscaDeLeads'
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
 import { Vazio } from '@/components/estado/Vazio'
+import { type FiltroPorCorretor, FiltrosDeLeads } from '@/components/FiltrosDeLeads'
+import { PaginacaoDeLeads } from '@/components/PaginacaoDeLeads'
 import { SemPermissao } from '@/components/SemPermissao'
 import { TabelaDeLeads } from '@/components/TabelaDeLeads'
 import { urlDoLogin } from '@/lib/destino'
-import { buscaEfetiva, ordemDaUrl, type PaginaDeLeads, urlDaLista } from '@/lib/leads'
+import {
+  buscaEfetiva,
+  filtrosDaUrl,
+  ordemDaUrl,
+  type PaginaDeLeads,
+  posicaoDaUrl,
+  urlDaLista,
+} from '@/lib/leads'
 import { paginaInicialDe } from '@/lib/navegacao'
-import { buscarLeads, ErroDeLeads } from '@/lib/servidor/leads'
+import { buscarCorretores, buscarPaginas, ErroDeLeads } from '@/lib/servidor/leads'
 import { exigirPermissao } from '@/lib/servidor/quemSou'
 import { apagarSessaoDaRequisicao } from '@/lib/servidor/sessao'
 
@@ -25,7 +34,8 @@ function um(valor: string | string[] | undefined): string | undefined {
 
 /**
  * A lista de leads (TEC-321, RF-FE-07): por score, com busca por telefone ou
- * bairro. A tela de entrada do CORRETOR (D2 do desenho).
+ * bairro. A tela de entrada do CORRETOR (D2 do desenho). Desde a TEC-322,
+ * com filtros e paginacao, todos na URL.
  *
  * **O recorte do CORRETOR e do backend**, pela claim do JWT (D7 da TEC-192). A
  * pagina nao filtra nada por papel e nao deve filtrar: um filtro aqui seria
@@ -38,7 +48,9 @@ export default async function PaginaDeLeads({ searchParams }: { searchParams: Pr
   // `?busca=a` digitada na URL nao chega ao FastAPI.
   const busca = buscaEfetiva(textoDaBusca)
   const ordem = ordemDaUrl(um(parametros.ordenar))
-  const endereco = urlDaLista({ busca, ordem })
+  const filtros = filtrosDaUrl(parametros)
+  const posicao = posicaoDaUrl(parametros)
+  const endereco = urlDaLista({ busca, ordem, filtros, posicao })
 
   // Antes de qualquer busca, como toda pagina do painel (D3 da TEC-312).
   const { sessao, quem, permitido } = await exigirPermissao(endereco, (p) => p.has('VER_LEADS'))
@@ -46,10 +58,20 @@ export default async function PaginaDeLeads({ searchParams }: { searchParams: Pr
     return <SemPermissao papel={quem.papel} paginaInicial={paginaInicialDe(quem.permissoes)} />
   }
 
-  let pagina: PaginaDeLeads | null = null
+  // O filtro por corretor por papel (D5 da TEC-322): so quem pode listar os
+  // corretores escolhe entre eles.
+  let corretor: FiltroPorCorretor = { modo: 'indisponivel' }
+  if (quem.papel === 'CORRETOR') {
+    corretor = { modo: 'oculto' }
+  } else if (quem.permissoes.has('GERIR_CORRETORES')) {
+    // Falhar aqui nao derruba a lista: o filtro fica sem opcoes.
+    corretor = { modo: 'lista', opcoes: await buscarCorretores(sessao.acesso).catch(() => []) }
+  }
+
+  let paginas: Array<PaginaDeLeads & { numero: number }> | null = null
   let erro: ErroDeLeads | null = null
   try {
-    pagina = await buscarLeads({ busca, ordem }, sessao.acesso)
+    paginas = await buscarPaginas({ busca, ordem, filtros }, posicao, sessao.acesso)
   } catch (falha) {
     // Backend fora do ar faz o `fetch` LANCAR, e nao responder: sem resposta
     // nao ha status nem codigo para o suporte, e a tela diz so que falhou --
@@ -71,35 +93,48 @@ export default async function PaginaDeLeads({ searchParams }: { searchParams: Pr
     return <SemPermissao papel={quem.papel} paginaInicial={null} />
   }
 
+  const itens = paginas?.flatMap((p) => p.itens) ?? []
+  const ultima = paginas?.at(-1) ?? null
+  // Com "carregar mais", as linhas das paginas anteriores a atual (D3).
+  const quantasAnteriores = paginas ? itens.length - (ultima?.itens.length ?? 0) : 0
+  const primeiraComFiltros = urlDaLista({ busca, ordem, filtros })
+
   return (
     <main className="painel">
       <h1>Leads</h1>
-      <BuscaDeLeads inicial={textoDaBusca} ordem={ordem} />
-      {erro && <Falha erro={erro} endereco={endereco} />}
-      {pagina && pagina.itens.length === 0 && (
+      <BuscaDeLeads inicial={textoDaBusca} ordem={ordem} filtros={filtros} />
+      <FiltrosDeLeads busca={busca} ordem={ordem} filtros={filtros} corretor={corretor} />
+      {erro && <Falha erro={erro} endereco={endereco} primeiraPagina={primeiraComFiltros} />}
+      {paginas && itens.length === 0 && (
         <p>
           <Vazio
-            texto={busca ? `Nenhum lead encontrado para “${busca}”.` : 'Nenhum lead ainda.'}
+            texto={
+              busca
+                ? `Nenhum lead encontrado para “${busca}”.`
+                : Object.values(filtros).some(Boolean)
+                  ? 'Nenhum lead com estes filtros.'
+                  : 'Nenhum lead ainda.'
+            }
           />
         </p>
       )}
-      {pagina && pagina.itens.length > 0 && (
+      {paginas && itens.length > 0 && (
         <>
           <TabelaDeLeads
-            itens={pagina.itens}
+            itens={itens}
             ordem={ordem}
             busca={busca}
+            filtros={filtros}
             agora={new Date()}
             abreDetalhe={quem.permissoes.has('VER_DETALHE_DO_LEAD')}
             podeRevelar={quem.permissoes.has('VER_DADOS_COMPLETOS')}
+            quantasAnteriores={quantasAnteriores}
           />
-          {/* A paginacao e a TEC-322 (L3 do desenho). Ate la, a tela diz que
-              ha mais, em vez de deixar a pessoa achar que a lista acabou. */}
-          {pagina.proximoCursor && (
-            <p className="leads-mais">
-              Mostrando os {pagina.itens.length} primeiros. Ver os demais ainda não está disponível.
-            </p>
-          )}
+          <PaginacaoDeLeads
+            estado={{ busca, ordem, filtros }}
+            posicao={posicao}
+            proximoCursor={ultima?.proximoCursor ?? null}
+          />
         </>
       )}
     </main>
@@ -109,17 +144,27 @@ export default async function PaginaDeLeads({ searchParams }: { searchParams: Pr
 /**
  * A falha de carga (D8 do desenho).
  *
- * **Num 422, "tentar de novo" volta para a lista sem busca nem ordem**: o
- * parametro recusado estava na URL, e repeti-la reproduziria o erro. No resto
- * -- o backend fora, um 5xx --, tentar de novo e recarregar o mesmo endereco,
- * e o codigo para o suporte e o da resposta.
+ * **Num 422, "tentar de novo" volta a primeira pagina com os mesmos
+ * filtros** (TEC-322): o que o backend recusa e o cursor -- os filtros a
+ * tela ja validou em `filtrosDaUrl` --, e um cursor que deixou de valer
+ * (o lead sumiu) reproduziria o erro. No resto -- o backend fora, um 5xx --,
+ * tentar de novo e recarregar o mesmo endereco, e o codigo para o suporte e o
+ * da resposta.
  */
-function Falha({ erro, endereco }: { erro: ErroDeLeads; endereco: string }) {
+function Falha({
+  erro,
+  endereco,
+  primeiraPagina,
+}: {
+  erro: ErroDeLeads
+  endereco: string
+  primeiraPagina: string
+}) {
   if (erro.status === 422) {
     return (
       <ErroDeCarga
         mensagem={`Não foi possível carregar a lista: ${erro.message}`}
-        urlParaTentarDeNovo="/leads"
+        urlParaTentarDeNovo={primeiraPagina}
       />
     )
   }
