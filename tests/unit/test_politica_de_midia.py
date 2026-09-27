@@ -20,6 +20,12 @@ from mobia.domain.midia.politica import chave_do_objeto, tipo_permitido
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "IMAGE/JPEG",
         "image/jpeg; charset=binary",
+        # TEC-131: os tipos de audio do WhatsApp sao guardados.
+        "audio/ogg; codecs=opus",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/aac",
+        "audio/amr",
     ],
 )
 def test_permitidos(mime: str) -> None:

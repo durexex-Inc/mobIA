@@ -26,6 +26,7 @@ from mobia.domain.messages.bloqueio import moderar_entrada_e_marcar
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import superada_por_mais_nova
 from mobia.domain.messages.status import CLAIMABLE_STATUSES, MessageStatus
+from mobia.domain.midia.espera import ha_audio_sem_transcricao
 from mobia.domain.moderacao.port import ModeradorPort
 from mobia.domain.optout.deteccao import pediu_optout
 from mobia.domain.outbound.port import OutboundPort
@@ -48,8 +49,12 @@ log = structlog.get_logger(__name__)
 # nova do mesmo lead assumiu o turno. Colapsar os dois tornaria ilegivel
 # qualquer contagem de anomalia no log. "esgotada" (TEC-209) e o claim que
 # achou a linha interrompida pela ultima vez e a mandou para a DLQ sem rodar o
-# turno -- a unica saida deste modulo que NAO fecha a linha em PROCESSED.
-ResultadoDoProcessamento = Literal["skipped", "agrupado", "esgotada"] | ResultadoDoTurno
+# turno -- a unica saida deste modulo que NAO fecha a linha em PROCESSED. Desde
+# a TEC-131 sao duas: "aguardando_transcricao" nem chega ao claim, e a linha
+# fica como estava, a espera de `transcrever_audio` acordar o turno.
+ResultadoDoProcessamento = (
+    Literal["skipped", "agrupado", "esgotada", "aguardando_transcricao"] | ResultadoDoTurno
+)
 
 
 def _detalhe_para_a_coluna(exc: BaseException) -> str:
@@ -538,6 +543,18 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
     # que deixasse de popular a chave -- ou de um canal novo sem indicador --
     # seria nenhum indicador, nunca, sem log e sem erro.
     identifier = uuid.UUID(message_id)
+
+    # TEC-131, D1. ANTES do claim, e e isso que torna a espera barata: sem
+    # claim nao ha lease, tentativa nem status a desfazer -- a linha fica
+    # QUEUED como chegou, e o job so sai. Quem acorda o turno e
+    # `transcrever_audio`, ao gravar o desfecho do audio. Rodar agora
+    # responderia sem o que o lead falou, e o audio, mais antigo, fecharia
+    # "agrupado" sem resposta.
+    async with session_factory() as session:
+        candidata = await session.get(Message, identifier)
+        if candidata is not None and await ha_audio_sem_transcricao(session, candidata):
+            log.info("message.aguardando_transcricao", message_id=message_id)
+            return "aguardando_transcricao"
 
     async with session_factory() as session:
         reivindicacao = await reivindicar(session, identifier)

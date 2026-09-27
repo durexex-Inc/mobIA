@@ -113,13 +113,17 @@ from mobia.domain.messages.bloqueio import (
     veredito_ja_registrado,
 )
 from mobia.domain.messages.canais import CANAL_WHATSAPP
+from mobia.domain.messages.enums import MessageContentType
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import ha_fala_pendente_antes
 from mobia.domain.messages.recorder import MessageRecorder
 from mobia.domain.midia.confirmacao import (
     CONFIRMACOES_DE_MIDIA,
     KIND_DA_CONFIRMACAO_DE_MIDIA,
+    KIND_DO_AVISO_DE_AUDIO,
+    SUBAGENTE_AUDIO,
     SUBAGENTE_MIDIA,
+    aviso_de_audio,
     ja_confirmou_ha_pouco,
 )
 from mobia.domain.moderacao.port import (
@@ -1875,10 +1879,22 @@ async def _executar_turno(
     # mensagem ainda nao tem a confirmacao reservada: tendo, a ultima fala
     # pode ser a dela mesma, e quem responde e a supressao de
     # `_entregar_texto_fixo`, com o desfecho de sempre.
+    #
+    # **TEC-131, D4: o audio que chega aqui sem texto entra no mesmo ramo.** Sem
+    # texto quer dizer que a transcricao nao aconteceu -- longo demais, falha,
+    # ou a espera de `process_message` venceu o prazo --, porque o audio
+    # transcrito tem `corpo` e segue o turno normal. Tudo o que o paragrafo de
+    # cima diz vale para ele, com kind e subagente proprios e sem a regra do
+    # "ja confirmou ha pouco" (ver `aviso_de_audio`).
     confirmacao = CONFIRMACOES_DE_MIDIA.get(message.content_type)
+    kind_fixo, subagente_fixo = KIND_DA_CONFIRMACAO_DE_MIDIA, SUBAGENTE_MIDIA
+    if message.content_type == MessageContentType.AUDIO and corpo is None:
+        async with session_factory() as sessao_do_audio:
+            confirmacao = await aviso_de_audio(sessao_do_audio, message)
+        kind_fixo, subagente_fixo = KIND_DO_AVISO_DE_AUDIO, SUBAGENTE_AUDIO
     if confirmacao is not None and corpo is None:
         reservados_antes = await kinds_reservados(session_factory, message_id=message.id)
-        ja_seguiu_o_turno_normal = bool(reservados_antes - {KIND_DA_CONFIRMACAO_DE_MIDIA})
+        ja_seguiu_o_turno_normal = bool(reservados_antes - {kind_fixo})
         ha_texto_pendente = False
         if not ja_seguiu_o_turno_normal:
             async with session_factory() as sessao_da_rajada:
@@ -1886,7 +1902,10 @@ async def _executar_turno(
                     sessao_da_rajada, message, com_texto=True
                 )
         if not ja_seguiu_o_turno_normal and not ha_texto_pendente:
-            if KIND_DA_CONFIRMACAO_DE_MIDIA not in reservados_antes:
+            if (
+                kind_fixo == KIND_DA_CONFIRMACAO_DE_MIDIA
+                and KIND_DA_CONFIRMACAO_DE_MIDIA not in reservados_antes
+            ):
                 async with session_factory() as sessao_da_confirmacao:
                     ja_confirmada = await ja_confirmou_ha_pouco(sessao_da_confirmacao, message)
                 if ja_confirmada:
@@ -1897,8 +1916,8 @@ async def _executar_turno(
                 message=message,
                 outbound=outbound,
                 recorder_texto=confirmacao,
-                kind=KIND_DA_CONFIRMACAO_DE_MIDIA,
-                subagent=SUBAGENTE_MIDIA,
+                kind=kind_fixo,
+                subagent=subagente_fixo,
             )
 
     if corpo:

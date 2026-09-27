@@ -1,4 +1,7 @@
-"""O ciclo de status da midia recebida. TEC-132, D2 e D3."""
+"""O ciclo de status da midia recebida. TEC-132, D2 e D3.
+
+Desde a TEC-131, tambem o desfecho da transcricao do audio (`gravar_transcricao`).
+"""
 
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -8,11 +11,23 @@ from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.messages.enums import MessageContentType
-from mobia.domain.midia.models import MidiaRecebida, MotivoDaMidia, StatusDaMidia
+from mobia.domain.messages.models import Message
+from mobia.domain.midia.models import (
+    MidiaRecebida,
+    MotivoDaMidia,
+    MotivoDaTranscricao,
+    StatusDaMidia,
+    StatusDaTranscricao,
+)
+from mobia.infra.crypto import aad_de, encrypt
 
-# O vocabulario cru da Meta que carrega midia, por tipo. So estas duas chaves:
-# audio e a TEC-131, e o resto continua DESCONHECIDO (D2).
-_CHAVE_DO_ENVELOPE = {MessageContentType.IMAGEM: "image", MessageContentType.DOCUMENTO: "document"}
+# O vocabulario cru da Meta que carrega midia, por tipo. O audio entrou com a
+# TEC-131; video, figurinha e localizacao continuam DESCONHECIDO (D2).
+_CHAVE_DO_ENVELOPE = {
+    MessageContentType.IMAGEM: "image",
+    MessageContentType.DOCUMENTO: "document",
+    MessageContentType.AUDIO: "audio",
+}
 
 
 def linha_pendente(
@@ -207,3 +222,57 @@ async def expirar_pendentes(
         )
         await session.commit()
         return resultado.rowcount
+
+
+async def gravar_transcricao(
+    session_factory: async_sessionmaker[AsyncSession],
+    message_id: uuid.UUID,
+    *,
+    status: StatusDaTranscricao,
+    motivo: MotivoDaTranscricao | None = None,
+    duracao: float | None = None,
+    texto: str | None = None,
+) -> bool:
+    """Grava o desfecho da transcricao, e o texto, numa transacao so. TEC-131, D2.
+
+    Devolve se esta chamada gravou. **As duas escritas sao condicionais**, pela
+    mesma razao de `marcar`: dois jobs sobre o mesmo audio (o reenqueue a mao,
+    ou uma retentativa do ARQ depois de um cancelamento) nao sobrescrevem um ao
+    outro. Quem arbitra e o `status_da_transcricao IS NULL` do UPDATE; o
+    `text_body IS NULL` e a segunda trava, para nunca apagar um texto que ja
+    estava la.
+
+    O texto vai para `messages.text_body`, cifrado com o AAD que a coluna ja
+    usa -- e o que faz o audio transcrito ser, dali em diante, texto para todo
+    o resto do sistema (D3).
+    """
+    agora = datetime.now(UTC)
+    async with session_factory() as session:
+        resultado = cast(
+            CursorResult[Any],
+            await session.execute(
+                update(MidiaRecebida)
+                .where(
+                    MidiaRecebida.message_id == message_id,
+                    MidiaRecebida.status_da_transcricao.is_(None),
+                )
+                .values(
+                    status_da_transcricao=status,
+                    motivo_da_transcricao=motivo,
+                    duracao_segundos=duracao,
+                    transcrita_em=agora,
+                    atualizado_em=agora,
+                )
+            ),
+        )
+        if resultado.rowcount == 0:
+            await session.rollback()
+            return False
+        if texto is not None:
+            await session.execute(
+                update(Message)
+                .where(Message.id == message_id, Message.text_body.is_(None))
+                .values(text_body=encrypt(texto, aad_de(message_id, "text_body")))
+            )
+        await session.commit()
+        return True

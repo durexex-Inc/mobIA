@@ -9,6 +9,9 @@ O que se prova: a confirmacao sai sem chamar o classificador, com kind e
 subagente proprios; ela NAO sai para quem pediu silencio (opt-out, atendimento
 humano); e havendo texto do lead -- na legenda ou numa irma pendente da
 rajada -- o turno normal roda.
+
+Desde a TEC-131, o mesmo para o audio que chega ao turno sem transcricao, com
+o aviso de audio no lugar da confirmacao.
 """
 
 import uuid
@@ -29,9 +32,12 @@ from mobia.domain.messages.models import Message, MessageTelemetry
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.midia.confirmacao import (
     KIND_DA_CONFIRMACAO_DE_MIDIA,
+    KIND_DO_AVISO_DE_AUDIO,
+    SUBAGENTE_AUDIO,
     SUBAGENTE_MIDIA,
     TEXTO_DA_CONFIRMACAO_DE_DOCUMENTO,
     TEXTO_DA_CONFIRMACAO_DE_IMAGEM,
+    TEXTO_DO_AUDIO_NAO_TRANSCRITO,
 )
 from mobia.domain.optout.repositorio import registrar_optout
 from mobia.domain.outbound.kinds import KIND_DA_RESPOSTA
@@ -363,3 +369,91 @@ async def test_foto_depois_de_uma_resposta_do_agente_confirma_de_novo(
     assert resultado == "respondido"
     assert len(outbound.entregues) == 1
     assert outbound.entregues[0].endswith(TEXTO_DA_CONFIRMACAO_DE_IMAGEM)
+
+
+# --- TEC-131, D4: o audio que chega ao turno sem transcricao ---
+
+
+async def test_audio_sem_transcricao_recebe_o_aviso_com_kind_e_subagente_proprios(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    # Sem linha de midia (envelope sem `id`), o aviso e o de falha: nao ha
+    # duracao nenhuma que justifique o do limite.
+    audio = await _gravar(session, content_type=MessageContentType.AUDIO, texto=None)
+    classificador = classificador_fake()
+    outbound = outbound_fake()
+
+    resultado = await _rodar(
+        audio, classificador, outbound, resumidor_fake, contador_fake, moderador_fake
+    )
+
+    assert resultado == "respondido"
+    assert classificador.chamadas == 0
+    assert outbound.entregues == [
+        f"{TEXTO_DA_IDENTIFICACAO}{SEPARADOR_DA_IDENTIFICACAO}{TEXTO_DO_AUDIO_NAO_TRANSCRITO}"
+    ]
+    assert await _kinds(session, audio.id) == [KIND_DO_AVISO_DE_AUDIO]
+    subagentes = (await session.scalars(select(MessageTelemetry.subagent))).all()
+    assert subagentes == [SUBAGENTE_AUDIO]
+
+
+async def test_audio_sem_transcricao_com_texto_pendente_roda_o_turno_normal(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    await _gravar(session, texto="quero um apartamento")
+    audio = await _gravar(session, content_type=MessageContentType.AUDIO, texto=None)
+    classificador = classificador_fake()
+
+    resultado = await _rodar(
+        audio, classificador, outbound_fake(), resumidor_fake, contador_fake, moderador_fake
+    )
+
+    assert resultado == "respondido"
+    assert classificador.chamadas == 1
+    assert KIND_DO_AVISO_DE_AUDIO not in await _kinds(session, audio.id)
+
+
+async def test_aviso_de_audio_nao_silencia_a_foto_seguinte(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """O subagente proprio existe por isto: contado como `SUBAGENTE_MIDIA`, o
+    aviso do audio faria `ja_confirmou_ha_pouco` fechar a foto em silencio."""
+    audio = await _gravar(session, content_type=MessageContentType.AUDIO, texto=None)
+    await _rodar(
+        audio, classificador_fake(), outbound_fake(), resumidor_fake, contador_fake, moderador_fake
+    )
+    await _recuar_a_conversa(session, 2)
+    imagem = await _gravar(session, content_type=MessageContentType.IMAGEM, texto=None)
+    outbound = outbound_fake()
+
+    resultado = await _rodar(
+        imagem, classificador_fake(), outbound, resumidor_fake, contador_fake, moderador_fake
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [TEXTO_DA_CONFIRMACAO_DE_IMAGEM]
+
+
+async def test_dois_avisos_de_audio_seguidos_saem_os_dois(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """D4: sem a regra do "ja confirmou ha pouco" -- cada aviso fala do seu audio."""
+    primeiro = await _gravar(session, content_type=MessageContentType.AUDIO, texto=None)
+    await _rodar(
+        primeiro,
+        classificador_fake(),
+        outbound_fake(),
+        resumidor_fake,
+        contador_fake,
+        moderador_fake,
+    )
+    await _recuar_a_conversa(session, 2)
+    segundo = await _gravar(session, content_type=MessageContentType.AUDIO, texto=None)
+    outbound = outbound_fake()
+
+    resultado = await _rodar(
+        segundo, classificador_fake(), outbound, resumidor_fake, contador_fake, moderador_fake
+    )
+
+    assert resultado == "respondido"
+    assert outbound.entregues == [TEXTO_DO_AUDIO_NAO_TRANSCRITO]

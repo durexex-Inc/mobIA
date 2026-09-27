@@ -38,8 +38,12 @@ MAXIMO_DE_TENTATIVAS = 5  # o mesmo `max_tries` do registro em workers/main.py
 _SEGUNDOS_DE_BACKOFF = 30
 
 
-class _Desfecho(Exception):
-    """Um estado terminal decidido no meio do caminho."""
+class DesfechoDoDownload(Exception):
+    """Um estado terminal decidido no meio do caminho.
+
+    Publico desde a TEC-131: `transcrever_audio` baixa pela mesma sequencia
+    (`baixar_e_guardar`) e grava o mesmo desfecho.
+    """
 
     def __init__(self, status: StatusDaMidia, motivo: MotivoDaMidia) -> None:
         super().__init__(motivo.value)
@@ -86,7 +90,7 @@ async def baixar_midia(ctx: dict[str, Any], message_id: str) -> str:
     # nao e quente o bastante para o reuso de conexao pagar a diferenca.
     cliente = injetado or httpx.AsyncClient(timeout=graph.TIMEOUT_SEGUNDOS)
     try:
-        chave, tamanho = await _baixar_e_guardar(
+        chave, dados = await baixar_e_guardar(
             identificador,
             media_id,
             sha256_esperado,
@@ -94,18 +98,9 @@ async def baixar_midia(ctx: dict[str, Any], message_id: str) -> str:
             cliente=cliente,
             armazem=ctx["armazem"],
         )
-    except _Desfecho as desfecho:
-        return await _gravar(session_factory, identificador, desfecho.status, desfecho.motivo)
-    except graph.MidiaRecusada:
-        return await _gravar(
-            session_factory,
-            identificador,
-            StatusDaMidia.FALHOU,
-            MotivoDaMidia.RECUSADA_PELA_META,
-        )
-    except graph.MidiaAcimaDoTeto:
-        return await _gravar(
-            session_factory, identificador, StatusDaMidia.RECUSADA, MotivoDaMidia.ACIMA_DO_TETO
+    except DesfechoDoDownload as desfecho:
+        return await gravar_desfecho(
+            session_factory, identificador, desfecho.status, desfecho.motivo
         )
     except graph.MidiaIndisponivel as exc:
         if tentativa < MAXIMO_DE_TENTATIVAS:
@@ -116,7 +111,7 @@ async def baixar_midia(ctx: dict[str, Any], message_id: str) -> str:
                 motivo=str(exc),
             )
             raise Retry(defer=_SEGUNDOS_DE_BACKOFF * tentativa) from exc
-        return await _gravar(
+        return await gravar_desfecho(
             session_factory,
             identificador,
             StatusDaMidia.FALHOU,
@@ -126,12 +121,17 @@ async def baixar_midia(ctx: dict[str, Any], message_id: str) -> str:
         if injetado is None:
             await cliente.aclose()
 
-    return await _gravar(
-        session_factory, identificador, StatusDaMidia.ARMAZENADA, None, chave=chave, tamanho=tamanho
+    return await gravar_desfecho(
+        session_factory,
+        identificador,
+        StatusDaMidia.ARMAZENADA,
+        None,
+        chave=chave,
+        tamanho=len(dados),
     )
 
 
-async def _baixar_e_guardar(
+async def baixar_e_guardar(
     identificador: uuid.UUID,
     media_id: str,
     sha256_esperado: str | None,
@@ -139,22 +139,38 @@ async def _baixar_e_guardar(
     teto: int,
     cliente: httpx.AsyncClient,
     armazem: ArmazemDeMidia,
-) -> tuple[str, int]:
-    """A sequencia da D3. Devolve a chave e o tamanho em claro."""
-    meta = await graph.resolver(media_id, cliente=cliente)
-    # O tipo da RESOLUCAO, e nao o do envelope: e o que a Meta diz do arquivo
-    # que ela vai entregar.
-    if not tipo_permitido(meta.mime_type):
-        raise _Desfecho(StatusDaMidia.RECUSADA, MotivoDaMidia.TIPO_NAO_PERMITIDO)
-    if meta.tamanho is not None and meta.tamanho > teto:
-        raise _Desfecho(StatusDaMidia.RECUSADA, MotivoDaMidia.ACIMA_DO_TETO)
+) -> tuple[str, bytes]:
+    """A sequencia da D3. Devolve a chave e os bytes em claro.
 
-    dados = await graph.baixar(meta.url, teto=teto, cliente=cliente)
+    Os bytes, e nao so o tamanho, desde a TEC-131: quem transcreve precisa do
+    audio que acabou de baixar, e reler do armazem seria decifrar o que ainda
+    esta na memoria.
+
+    Todo estado terminal sai como `DesfechoDoDownload` -- inclusive a recusa da
+    Meta e o estouro do teto no streaming, que antes eram traduzidos por quem
+    chamava. Com dois chamadores, a traducao mora aqui. So o retentavel
+    (`graph.MidiaIndisponivel`) escapa, porque cada chamador o trata de um
+    jeito: `baixar_midia` pede `Retry`, a transcricao desiste.
+    """
+    try:
+        meta = await graph.resolver(media_id, cliente=cliente)
+        # O tipo da RESOLUCAO, e nao o do envelope: e o que a Meta diz do
+        # arquivo que ela vai entregar.
+        if not tipo_permitido(meta.mime_type):
+            raise DesfechoDoDownload(StatusDaMidia.RECUSADA, MotivoDaMidia.TIPO_NAO_PERMITIDO)
+        if meta.tamanho is not None and meta.tamanho > teto:
+            raise DesfechoDoDownload(StatusDaMidia.RECUSADA, MotivoDaMidia.ACIMA_DO_TETO)
+
+        dados = await graph.baixar(meta.url, teto=teto, cliente=cliente)
+    except graph.MidiaRecusada as exc:
+        raise DesfechoDoDownload(StatusDaMidia.FALHOU, MotivoDaMidia.RECUSADA_PELA_META) from exc
+    except graph.MidiaAcimaDoTeto as exc:
+        raise DesfechoDoDownload(StatusDaMidia.RECUSADA, MotivoDaMidia.ACIMA_DO_TETO) from exc
 
     # So quando o envelope trouxe um: sem digest nao ha contra o que conferir,
     # e recusar por isso perderia toda midia de um envelope que nao o manda.
     if sha256_esperado and not _sha256_confere(dados, sha256_esperado):
-        raise _Desfecho(StatusDaMidia.FALHOU, MotivoDaMidia.SHA256_DIVERGENTE)
+        raise DesfechoDoDownload(StatusDaMidia.FALHOU, MotivoDaMidia.SHA256_DIVERGENTE)
 
     blob = encrypt_bytes(dados, aad_de(identificador, "midia"))
     chave = chave_do_objeto(identificador)
@@ -164,10 +180,10 @@ async def _baixar_e_guardar(
         # Disco cheio, S3 fora: o arquivo ainda existe na Meta, entao e o
         # mesmo caso de uma Graph API fora do ar -- retenta.
         raise graph.MidiaIndisponivel(f"armazem: {type(exc).__name__}") from exc
-    return chave, len(dados)
+    return chave, dados
 
 
-async def _gravar(
+async def gravar_desfecho(
     session_factory: async_sessionmaker[AsyncSession],
     identificador: uuid.UUID,
     status: StatusDaMidia,

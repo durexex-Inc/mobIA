@@ -15,6 +15,11 @@ guardas de opt-out, atendimento humano e conversa encerrada, e so quando nao
 ha texto do lead pendente na rajada (`ha_fala_pendente_antes(...,
 com_texto=True)`, em `domain/messages/rajada.py`) -- e nao sai de novo
 quando a ultima fala do agente ja foi ela, ha pouco (`ja_confirmou_ha_pouco`).
+
+Desde a TEC-131 (D4), o audio sem transcricao tambem recebe texto fixo, pelo
+mesmo ramo do turno e com as mesmas guardas -- mas com texto, kind e subagente
+proprios (`aviso_de_audio`), e sem a regra do "ja confirmou ha pouco". O audio
+transcrito nao passa por aqui: ele tem texto, e segue o turno de sempre.
 """
 
 from datetime import timedelta
@@ -24,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection
 from mobia.domain.messages.models import Message, MessageTelemetry
+from mobia.domain.midia.models import MidiaRecebida, MotivoDaTranscricao
 
 TEXTO_DA_CONFIRMACAO_DE_IMAGEM = (
     "Recebi sua imagem! Por aqui eu ainda não consigo ver fotos. "
@@ -44,8 +50,10 @@ KIND_DA_CONFIRMACAO_DE_MIDIA = "confirmacao_de_midia"
 # sem `Literal`: o vocabulario e aberto, e um rotulo novo nao pede migration.
 SUBAGENTE_MIDIA = "midia"
 
-# So os dois tipos que a TEC-132 guarda. Audio fica de fora de proposito: ele
-# nao e guardado e nao recebe esta confirmacao -- segue o turno de sempre.
+# So imagem e documento. O audio e guardado desde a TEC-131, mas nao recebe
+# esta confirmacao: o "recebi" daqui cobre as midias seguintes por dez minutos
+# (`ja_confirmou_ha_pouco`), e o aviso de audio nao pode cobrir -- ver
+# `aviso_de_audio`.
 CONFIRMACOES_DE_MIDIA: dict[str, str] = {
     MessageContentType.IMAGEM: TEXTO_DA_CONFIRMACAO_DE_IMAGEM,
     MessageContentType.DOCUMENTO: TEXTO_DA_CONFIRMACAO_DE_DOCUMENTO,
@@ -103,3 +111,47 @@ async def ja_confirmou_ha_pouco(session: AsyncSession, message: Message) -> bool
         .limit(1)
     )
     return subagente == SUBAGENTE_MIDIA
+
+
+# TEC-131, D4. Os dois avisos do audio sem transcricao. Com acento: e texto que o
+# lead recebe (TEC-267).
+TEXTO_DO_AUDIO_LONGO = (
+    "Recebi seu áudio! Por aqui eu só consigo ouvir áudios de até 2 minutos. "
+    "Pode me mandar por escrito o que você precisa?"
+)
+
+TEXTO_DO_AUDIO_NAO_TRANSCRITO = (
+    "Recebi seu áudio, mas não consegui ouvir direito. Pode me escrever o que você disse?"
+)
+
+# Kind proprio pela razao do de cima: a UNIQUE (message_id, kind) de
+# `outbound_dispatches` nao pode colidir com a resposta que o turno nao manda.
+KIND_DO_AVISO_DE_AUDIO = "aviso_de_audio"
+
+# Subagente proprio, e nao `SUBAGENTE_MIDIA`: `ja_confirmou_ha_pouco` le este
+# rotulo, e um aviso de audio contado como confirmacao de midia silenciaria a
+# foto mandada logo depois -- que precisa do "recebi" dela.
+SUBAGENTE_AUDIO = "audio"
+
+
+async def aviso_de_audio(session: AsyncSession, message: Message) -> str:
+    """O texto fixo do audio que chegou ao turno sem transcricao.
+
+    Acima da duracao, o aviso do limite; qualquer outro caso -- falha da
+    Whisper, da Meta, formato, silencio, ou o prazo da espera vencido sem
+    desfecho --, o de falha. Para o lead a diferenca que importa e so esta: no
+    primeiro, um audio mais curto resolveria; no segundo, nao ha o que ele
+    corrija, e o pedido e para escrever.
+
+    **Sem a regra do "ja confirmou ha pouco"**, e isso e deliberado (D4). Na
+    imagem, a segunda foto em silencio nao perde nada: o "recebi" da primeira
+    vale para as duas. Aqui cada aviso diz o que aconteceu com AQUELE audio, e
+    quem recebeu "ate 2 minutos" e mandou um de 1:50 que falhou nao pode ficar
+    em silencio.
+    """
+    motivo = await session.scalar(
+        select(MidiaRecebida.motivo_da_transcricao).where(MidiaRecebida.message_id == message.id)
+    )
+    if motivo == MotivoDaTranscricao.ACIMA_DA_DURACAO:
+        return TEXTO_DO_AUDIO_LONGO
+    return TEXTO_DO_AUDIO_NAO_TRANSCRITO

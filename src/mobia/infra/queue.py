@@ -8,6 +8,7 @@ from mobia.infra.tls import exigir_redis_com_tls
 
 PROCESS_MESSAGE_JOB = "process_message"
 BAIXAR_MIDIA_JOB = "baixar_midia"
+TRANSCREVER_AUDIO_JOB = "transcrever_audio"
 
 
 def redis_settings() -> RedisSettings:
@@ -70,4 +71,35 @@ async def enqueue_baixar_midia(pool: ArqRedis, message_id: uuid.UUID) -> bool:
     `workers/main.py` pelo mesmo motivo do irmao.
     """
     job = await pool.enqueue_job(BAIXAR_MIDIA_JOB, str(message_id), _job_id=f"midia:{message_id}")
+    return job is not None
+
+
+async def enqueue_transcrever_audio(pool: ArqRedis, message_id: uuid.UUID) -> bool:
+    """Enfileira a transcricao do audio de uma mensagem. TEC-131, D1.
+
+    Mesmo `_job_id` estavel dos irmaos, e `keep_result=0` no registro pelo
+    mesmo motivo: um reenqueue nao multiplica chamadas pagas a Whisper.
+    """
+    job = await pool.enqueue_job(
+        TRANSCREVER_AUDIO_JOB, str(message_id), _job_id=f"audio:{message_id}"
+    )
+    return job is not None
+
+
+async def enqueue_turno_apos_transcricao(
+    pool: ArqRedis, message_id: uuid.UUID, *, audio_id: uuid.UUID
+) -> bool:
+    """Acorda o turno que esperava a transcricao de `audio_id`. TEC-131, D1.
+
+    **O `_job_id` e proprio, e nao o `msg:{id}` de `enqueue_process_message`.**
+    O turno que decidiu esperar pode ainda estar rodando no instante em que a
+    transcricao termina -- entre a consulta que achou o audio pendente e o
+    `return` --, e enquanto ele roda o ARQ recusa outro job com o mesmo id. Com
+    o id de sempre, esse turno nunca seria acordado, e so o `sweep_stalled`
+    o recuperaria, cinco minutos depois. Com um id proprio, o pior caso e o
+    turno rodar duas vezes, e o claim da TEC-218 faz a segunda sair `skipped`.
+    """
+    job = await pool.enqueue_job(
+        PROCESS_MESSAGE_JOB, str(message_id), _job_id=f"msg:{message_id}:audio:{audio_id}"
+    )
     return job is not None

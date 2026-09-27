@@ -136,11 +136,13 @@ class ContextoMontado:
         )
 
 
-# Marcador por tipo para a mensagem que chega sem texto. AUDIO grava
-# `text_body` NULL hoje -- transcricao e historia propria -- e DESCONHECIDO e
-# por definicao o que ninguem mapeou. IMAGEM e DOCUMENTO saem daqui desde a
-# TEC-132: a legenda vira `text_body`, entao as duas passam a ter marcador
-# proprio em `_MARCADOR_DE_MIDIA`, presente com ou sem corpo.
+# Marcador por tipo para a mensagem que chega sem texto. AUDIO so fica sem
+# `text_body` quando a transcricao nao aconteceu (TEC-131: longo demais,
+# falha, ou prazo vencido) -- transcrito, ele tem texto e o marcador de
+# `_MARCADOR_COM_TEXTO` --, e DESCONHECIDO e por definicao o que ninguem
+# mapeou. IMAGEM e DOCUMENTO saem daqui desde a TEC-132: a legenda vira
+# `text_body`, entao as duas passam a ter marcador proprio em
+# `_MARCADOR_DE_MIDIA`, presente com ou sem corpo.
 #
 # Sem marcador, tres audios do lead entram no prompt como tres turnos vazios,
 # indistinguiveis de tres mensagens em branco. O estrago nao para no turno: e
@@ -159,6 +161,14 @@ _SEM_TEXTO_PADRAO = "(mensagem sem texto)"
 _MARCADOR_DE_MIDIA: dict[str, str] = {
     MessageContentType.IMAGEM: "(imagem recebida; o conteudo nao esta visivel para voce)",
     MessageContentType.DOCUMENTO: "(documento recebido; o conteudo nao esta visivel para voce)",
+}
+
+# TEC-131, D4. So com texto: o audio transcrito entra marcado para o modelo
+# saber que a fala passou por uma transcricao automatica -- um "tres quartos"
+# que devia ser "dois quartos" pode ser erro de ouvido, e nao do lead. Sem
+# texto, o audio continua em `_SEM_TEXTO`.
+_MARCADOR_COM_TEXTO: dict[str, str] = {
+    MessageContentType.AUDIO: "(audio transcrito)",
 }
 
 
@@ -187,6 +197,7 @@ def _texto_da(linha: Message) -> str:
         return f"[{linha.role}] {texto}"
     if linha.role == MessageRole.LEAD:
         corpo = delimitar(corpo)
+    marcador = marcador or _MARCADOR_COM_TEXTO.get(linha.content_type)
     if marcador is not None:
         corpo = f"{marcador} {corpo}"
     return f"[{linha.role}] {corpo}"

@@ -1,4 +1,7 @@
-"""O modelo ve que recebeu midia e que nao a enxerga. TEC-132, D4."""
+"""O modelo ve que recebeu midia e que nao a enxerga. TEC-132, D4.
+
+Desde a TEC-131, tambem que o audio foi transcrito.
+"""
 
 import uuid
 
@@ -38,8 +41,18 @@ def test_documento_sem_legenda() -> None:
     )
 
 
-def test_audio_nao_muda() -> None:
+def test_audio_sem_transcricao() -> None:
     assert _texto_da(_linha(MessageContentType.AUDIO, None)) == "[LEAD] (audio, sem transcricao)"
+
+
+def test_audio_transcrito_leva_marcador_fora_da_tag() -> None:
+    """TEC-131, D4. A transcricao e fala do lead e vai delimitada; o marcador
+    e do sistema e fica fora, como o da imagem."""
+    fala = "procuro apartamento de dois quartos"
+
+    assert _texto_da(_linha(MessageContentType.AUDIO, fala)) == (
+        "[LEAD] (audio transcrito) " + delimitar(fala)
+    )
 
 
 def test_texto_do_lead_vai_delimitado() -> None:

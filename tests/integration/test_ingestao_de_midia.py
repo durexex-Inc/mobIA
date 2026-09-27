@@ -1,4 +1,7 @@
-"""A ingestao grava a midia pendente e enfileira o download. TEC-132, Task 4."""
+"""A ingestao grava a midia pendente e enfileira o download. TEC-132, Task 4.
+
+Desde a TEC-131, o audio enfileira a transcricao no lugar do download.
+"""
 
 from sqlalchemy import select
 
@@ -134,3 +137,52 @@ async def test_falha_no_enqueue_da_midia_nao_derruba_a_ingestao(
     linha = await session.get(MidiaRecebida, message_id)
     assert linha is not None
     assert linha.status == StatusDaMidia.PENDENTE
+
+
+def _audio(provider_message_id: str = "wamid.AUD") -> ParsedMessage:
+    return ParsedMessage(
+        provider_message_id=provider_message_id,
+        sender_external_id="5511911112222",
+        recipient_external_id="222222222",
+        content_type=MessageContentType.AUDIO,
+        text_body=None,
+        raw_payload={
+            "id": provider_message_id,
+            "type": "audio",
+            "audio": {"id": "media-3", "mime_type": "audio/ogg; codecs=opus", "voice": True},
+        },
+    )
+
+
+async def test_audio_gera_midia_e_job_de_transcricao_no_lugar_do_download(
+    session, redis_pool
+) -> None:
+    """TEC-131, D1: quem baixa o audio e o job de transcricao. O turno e
+    enfileirado como sempre, e espera a transcricao antes do claim."""
+    service = IngestionService(get_sessionmaker(), redis_pool)
+
+    (message_id,) = await service.ingest([_audio()])
+
+    linha = await session.get(MidiaRecebida, message_id)
+    assert linha is not None
+    assert linha.status == StatusDaMidia.PENDENTE
+    assert linha.status_da_transcricao is None
+    assert await redis_pool.zscore("arq:queue", f"audio:{message_id}") is not None
+    assert await redis_pool.zscore("arq:queue", f"midia:{message_id}") is None
+    assert await redis_pool.zscore("arq:queue", f"msg:{message_id}") is not None
+
+
+async def test_falha_no_enqueue_da_transcricao_nao_derruba_a_ingestao(
+    session, redis_pool, monkeypatch, caplog
+) -> None:
+    async def _quebrado(pool, message_id):
+        raise RuntimeError("fila fora do ar")
+
+    monkeypatch.setattr("mobia.domain.messages.service.enqueue_transcrever_audio", _quebrado)
+    service = IngestionService(get_sessionmaker(), redis_pool)
+
+    with caplog.at_level("WARNING"):
+        (message_id,) = await service.ingest([_audio("wamid.FALHA_AUDIO")])
+
+    assert await redis_pool.zscore("arq:queue", f"msg:{message_id}") is not None
+    assert "audio.enqueue_failed" in caplog.text
