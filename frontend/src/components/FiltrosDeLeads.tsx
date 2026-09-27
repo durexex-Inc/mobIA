@@ -16,8 +16,8 @@ import {
 /**
  * Como o filtro por corretor aparece, por papel (TEC-322, D5). So o ADMIN tem
  * de onde tirar os nomes (`GERIR_CORRETORES`); para a GERENTE e a LEITURA ele
- * fica desabilitado, como o do funil na TEC-316; para o CORRETOR, que o
- * backend ja recorta pela carteira, ele nem aparece.
+ * fica desabilitado, como a TEC-316 (a fazer) preve para o do funil; para o
+ * CORRETOR, que o backend ja recorta pela carteira, ele nem aparece.
  */
 export type FiltroPorCorretor =
   | { modo: 'lista'; opcoes: Array<{ id: string; nome: string }> }

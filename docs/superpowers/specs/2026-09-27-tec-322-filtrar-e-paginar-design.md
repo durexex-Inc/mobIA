@@ -12,7 +12,7 @@
 **Duas coisas que a card pressupõe e que não existem:**
 
 1. **páginas numeradas sem total.** O cursor só sabe dar a próxima página, não a página 7;
-2. **nomes para o filtro por corretor.** `GET /api/v1/corretores` exige `GERIR_CORRETORES`, que só o ADMIN tem. A GERENTE, para quem o filtro mais serve, não tem de onde tirar a lista. É a mesma lacuna que levou a TEC-316 a manter desabilitado o filtro por corretor do funil.
+2. **nomes para o filtro por corretor.** `GET /api/v1/corretores` exige `GERIR_CORRETORES`, que só o ADMIN tem. A GERENTE, para quem o filtro mais serve, não tem de onde tirar a lista. É a mesma lacuna que a TEC-316, ainda a fazer, já prevê no título para o funil: "com o filtro por corretor desabilitado".
 
 **A card é só de frontend.** O único Python é o teste de vocabulário.
 
@@ -58,11 +58,11 @@ Um `<form method="get">` com quatro listas: status, temperatura, canal e correto
 - **Status, temperatura e canal** saem dos mapas de rótulo de `lib/leads.ts`, exportados e presos aos vocabulários do backend pelo teste de vocabulário: `conversa/vocabulario.py::Status`, `context/temperatura.py::Temperatura` e os canais de `messages/canais.py`.
 - **Corretor**, por papel:
   - **ADMIN** (`GERIR_CORRETORES`): a lista com os corretores ativos, buscada no servidor.
-  - **GERENTE e LEITURA**: a lista aparece desabilitada, com "Filtro por corretor indisponível para o seu papel". É o mesmo desfecho da TEC-316.
+  - **GERENTE e LEITURA**: a lista aparece desabilitada, com "Filtro por corretor indisponível para o seu papel". É o desfecho que a TEC-316 prevê para o funil.
   - **CORRETOR**: não aparece. O backend já recorta pela carteira dele.
   - **`corretorId` na URL vale para todos.** Um link filtrado pela ADMIN abre filtrado para a GERENTE, e a tela diz "Filtrada por um corretor", com "Remover filtro".
 
 ## Fora do escopo
 
 - **Total de leads e salto para página não visitada** (D2).
-- **Liberar a lista de corretores para a GERENTE.** É decisão de permissão, não de tela, e a TEC-316 já a deixou em aberto.
+- **Liberar a lista de corretores para a GERENTE.** É decisão de permissão, não de tela, e o título da TEC-316 mostra que ela também a deixa em aberto.
