@@ -162,8 +162,9 @@ function MenuDaConversa({
  * devolve ao retomar substitui as falas confirmadas da tela -- e assim que o
  * que o agente disse com o socket fechado aparece --, mantendo o mesmo balao
  * para o que ja estava nela. Gravar e so quando o servidor emite sessao
- * diferente da guardada: retomar nao regrava, entao o prazo nao anda. A
- * reconexao depois de uma queda continua
+ * diferente da que este socket mandou no `ola`, isto e, quando cunhou uma
+ * nova: retomar nao regrava, entao o prazo nao anda -- nem se outra aba
+ * apagou a guardada no meio tempo. A reconexao depois de uma queda continua
  * manual (L5 da TEC-346) -- reconectar sozinho e da TEC-348. As reaberturas
  * automaticas sao o fim da espera de `muitas_tentativas` (D5 da TEC-346) e o
  * despertar do sono (abaixo).
@@ -193,6 +194,9 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   // frame `sessao` a atualiza, e so o encerramento a zera.
   const sessaoRef = useRef<string | null>(null)
   const sessaoLidaRef = useRef(false)
+  // A sessao que o `ola` do socket atual levou: o frame `sessao` so e
+  // gravado quando difere dela.
+  const sessaoDoOlaRef = useRef<string | null>(null)
   // Visibilidade do painel segundo o ultimo aviso do loader, e o timer do sono.
   const abertoRef = useRef(true)
   const sonoRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -240,6 +244,7 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
         return
       }
       despachar({ tipo: 'abriu' })
+      sessaoDoOlaRef.current = sessaoRef.current
       mandar(JSON.stringify({ tipo: 'ola', sessao: sessaoRef.current }))
       for (const envio of filaRef.current.splice(0)) {
         mandar(frameDeMensagem(envio))
@@ -377,12 +382,19 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   // `null` nao vem daqui: o redutor so volta a `null` no `encerrou`, e o
   // encerramento zera `sessaoRef` ele mesmo. Copiar o `null` inicial pisaria
   // na sessao que a montagem leu do storage.
+  //
+  // Grava so a sessao que o servidor cunhou -- a que difere da que o `ola`
+  // levou. Comparar com o storage nao basta: se outra aba o apagou entre o
+  // `ola` e o frame, a sessao retomada seria regravada com `criadaEm` de
+  // agora, e o prazo de 30 dias recomecaria (D1).
   useEffect(() => {
     if (!conversa.sessao) {
       return
     }
     sessaoRef.current = conversa.sessao
-    gravarSessao(armazemDoNavegador(), conversa.sessao, Date.now())
+    if (conversa.sessao !== sessaoDoOlaRef.current) {
+      gravarSessao(armazemDoNavegador(), conversa.sessao, Date.now())
+    }
   }, [conversa.sessao])
 
   // Prazo de mensagem que nao esta mais `enviando` (ack, erro, queda) -- ou

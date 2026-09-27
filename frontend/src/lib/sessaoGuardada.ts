@@ -91,8 +91,11 @@ export function lerSessao(armazem: Armazem | null, agora: number): string | null
  * a criacao, nao uma janela de inatividade. Se toda leitura regravasse
  * `criadaEm`, uma conversa reaberta todo dia nunca venceria -- o que
  * contradiz "no maximo 30 dias". Por isso `gravarSessao` so e chamada
- * quando o servidor emite uma sessao nova (o `sessao` do frame difere do
- * guardado); retomar a mesma sessao nao regrava.
+ * quando o servidor cunha uma sessao nova -- o `sessao` do frame difere do
+ * que o `ola` levou (`components/Conversa.tsx`) --, e retomar a mesma sessao
+ * nao regrava. A conferencia com o guardado, aqui dentro, e uma segunda
+ * rede, nao a regra: sozinha ela regravaria a sessao retomada se outra aba
+ * tivesse apagado o storage no meio tempo.
  */
 export function gravarSessao(armazem: Armazem | null, sessao: string, agora: number): void {
   if (!armazem) {

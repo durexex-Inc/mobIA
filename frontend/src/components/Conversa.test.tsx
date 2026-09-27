@@ -1009,6 +1009,18 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
     expect(depois[15]).toHaveTextContent('E piscina?')
   })
 
+  it('retomar nao regrava a sessao mesmo que outra aba a tenha apagado (D1)', () => {
+    guardarSessao(SESSAO, AGORA - UM_DIA_MS)
+    const socket = montarAberto()
+    expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: SESSAO }])
+
+    // Outra aba encerrou a conversa entre o `ola` e o frame `sessao`.
+    localStorage.clear()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+
+    expect(localStorage.getItem('mobia:sessao')).toBeNull()
+  })
+
   it('localStorage que lanca: o chat abre com null e conversa normalmente', () => {
     for (const metodo of ['getItem', 'setItem', 'removeItem'] as const) {
       vi.spyOn(Storage.prototype, metodo).mockImplementation(() => {
