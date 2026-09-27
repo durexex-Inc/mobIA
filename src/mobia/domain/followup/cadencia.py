@@ -158,14 +158,14 @@ def esta_dormente(*, temperatura: Temperatura, ja_disparada: int) -> bool:
     sem a ancora se mover -- um lead que esgotasse QUENTE em 4 e so depois
     esfriasse para MORNO, cujo teto e 3 --, `==` o faria deixar de ser
     dormente ao esfriar, o contrario do que a temperatura mais fria significa.
-    **Esse caminho e hoje INALCANCAVEL, nao so hipotetico**: o unico gravador
-    de `lead_qualification.temperatura` e `registrar_recalculo`, chamado so
-    por `executar_turno`, que so roda por uma fala INBOUND do lead nao
-    bloqueada -- e essa mesma fala move a ancora e zera `ja_disparada`, o que
-    impede o esfriamento de acontecer sem o corte de candidatura tambem
-    reagir. Tornar o caminho alcancavel e a lacuna L4 do desenho (TEC-158,
-    TEC-192); ate la o `>=` continua certo por seguranca, so a alegacao de
-    alcancabilidade e que era falsa.
+    **Esse caminho e alcancavel, e o `>=` e o que o mantem certo.** Esta
+    docstring dizia que nao: que o unico chamador de `registrar_recalculo` era
+    `executar_turno`, cuja fala move a ancora. Deixou de ser verdade com a
+    TEC-172 (o nao comparecimento, `agendamento/ciclo.py`) e a TEC-194 (a
+    edicao manual, `leads/edicao.py`): os dois recalculam sem fala do lead.
+    Desde a TEC-385 a cadencia le `temperatura_da_cadencia`, que o nao
+    comparecimento nao move; a edicao manual continua podendo esfriar o lead
+    sem mover a ancora, e e ai que o `>=` segura.
 
     **`temperatura` e `Temperatura`, e nao `str | None`.** Lead com
     `temperatura IS NULL` (escreveu antes da TEC-151 e nunca mais falou) fica

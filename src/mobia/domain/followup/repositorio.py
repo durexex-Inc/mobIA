@@ -78,6 +78,13 @@ class Candidato:
 # calculo a uma CTE e a forma mais legivel de filtrar por ele depois, sem
 # repetir o subselect correlacionado numa segunda copia.
 #
+# **A temperatura desta consulta e a da CADENCIA (TEC-385).** As duas leem
+# `COALESCE(lq.temperatura_da_cadencia, lq.temperatura)`: a regua de
+# reengajamento e escolhida sem a penalidade de nao comparecimento (Emenda E-02
+# a RN-13.1), e o `COALESCE` cobre a linha que a 0068 deixou nula -- para ela,
+# a regua e a de antes da card. Onde os paragrafos abaixo dizem
+# `lq.temperatura`, leia essa expressao; o raciocinio de cada um vale igual.
+#
 # **`lq.temperatura IN :temperaturas_validas` e a D3 E a defesa contra lixo.**
 # `lead_qualification.temperatura` e uma `String(8)` sem CHECK de vocabulario:
 # um `UPDATE` manual em producao e o bastante para gravar um valor fora do
@@ -203,7 +210,7 @@ _SELECIONAR_CANDIDATOS = text(
     candidatos AS (
         SELECT lq.channel,
                lq.conversation_key,
-               lq.temperatura,
+               COALESCE(lq.temperatura_da_cadencia, lq.temperatura) AS temperatura,
                u.ancora,
                u.mensagem_id,
                COALESCE(
@@ -223,7 +230,7 @@ _SELECIONAR_CANDIDATOS = text(
           JOIN ultima_fala u
             ON u.channel = lq.channel
            AND u.conversation_key = lq.conversation_key
-         WHERE lq.temperatura IN :temperaturas_validas
+         WHERE COALESCE(lq.temperatura_da_cadencia, lq.temperatura) IN :temperaturas_validas
     )
     SELECT channel, conversation_key, temperatura, ancora, mensagem_id, ja_disparada, ja_enviadas
       FROM candidatos
@@ -266,7 +273,9 @@ async def candidatos_a_followup(
     varredura nunca mais alcancar quem esta realmente devido.
 
     **O corte de esgotamento e POR TEMPERATURA, e reavaliado a cada
-    passagem contra a `temperatura` viva de `lead_qualification`.** Um lead
+    passagem contra a temperatura viva da cadencia de `lead_qualification`**
+    (`temperatura_da_cadencia`, desde a TEC-385 -- ver o comentario da
+    query). Um lead
     exaure a propria temperatura (MORNO em 3, FRIO em 2, QUENTE em 4) e some
     da candidatura; se esquentar depois, a proxima varredura o ve com a nova
     temperatura e o teto certo, porque o corte nunca olha um valor congelado.
@@ -313,7 +322,7 @@ _SELECIONAR_DORMENTES = text(
     esgotados AS (
         SELECT lq.channel,
                lq.conversation_key,
-               lq.temperatura,
+               COALESCE(lq.temperatura_da_cadencia, lq.temperatura) AS temperatura,
                u.ancora,
                COALESCE(
                    (SELECT MAX(f.tentativa_numero)
@@ -337,7 +346,7 @@ _SELECIONAR_DORMENTES = text(
           JOIN ultima_fala u
             ON u.channel = lq.channel
            AND u.conversation_key = lq.conversation_key
-         WHERE lq.temperatura IN :temperaturas_validas
+         WHERE COALESCE(lq.temperatura_da_cadencia, lq.temperatura) IN :temperaturas_validas
     )
     SELECT channel, conversation_key, temperatura, ancora, ja_disparada, ja_enviadas, adormeceu_em
       FROM esgotados

@@ -11,7 +11,7 @@ import structlog
 from sqlalchemy import CursorResult, String, cast, delete, func, literal_column, select, update
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.agente.dinheiro import mudou_de_banda, ticket_de
 from mobia.domain.agente.investidor import (
@@ -32,7 +32,11 @@ from mobia.domain.context.models import (
 )
 from mobia.domain.context.qualificacao import esta_qualificado, perfil_de
 from mobia.domain.context.score import Score, calcular_score
-from mobia.domain.context.temperatura import Temperatura, temperatura_de
+from mobia.domain.context.temperatura import (
+    Temperatura,
+    temperatura_da_cadencia_de,
+    temperatura_de,
+)
 from mobia.domain.messages.enums import MessageDirection
 from mobia.domain.messages.models import Message
 from mobia.infra.crypto import decrypt, encrypt
@@ -1448,6 +1452,10 @@ async def registrar_recalculo(
 
     anterior = Temperatura(estado.temperatura) if estado.temperatura else None
     temperatura = temperatura_de(novo, qualificado=qualificado, forcada=forcada)
+    # TEC-385. A da cadencia sai da MESMA conta, com os mesmos `qualificado` e
+    # `forcada`, e so sem a penalidade. Calculada aqui e gravada no mesmo
+    # UPDATE para as duas nunca descreverem estados diferentes da linha.
+    cadencia = temperatura_da_cadencia_de(novo, qualificado=qualificado, forcada=forcada)
 
     # So os motivos que a coluna AINDA nao tem -- e nao `gatilhos` bruto --
     # decidem se ha algo NOVO a escrever. Um lead ja forcado que repete a
@@ -1467,9 +1475,14 @@ async def registrar_recalculo(
     # tupla se o texto casar o mesmo motivo duas vezes) e nao incomoda, mesma
     # aceitacao das duas colunas de array vizinhas -- o que este calculo
     # fecha e so a duplicata ENTRE turnos.
-    if temperatura is not anterior or novos:
+    # `cadencia` entra no teste pela mesma razao que `novos`: um nao
+    # comparecimento que nao muda a temperatura viva nao muda nada, mas a
+    # linha anterior a 0068 com a coluna nula precisa ser preenchida no
+    # primeiro recalculo, mude ou nao a temperatura.
+    if temperatura is not anterior or novos or cadencia.value != estado.temperatura_da_cadencia:
         valores: dict[str, Any] = {
             "temperatura": temperatura.value,
+            "temperatura_da_cadencia": cadencia.value,
             "updated_at": datetime.now(UTC),
         }
         if novos:
@@ -1504,10 +1517,10 @@ async def registrar_recalculo(
         # com `synchronize_session="auto"` (o default), que sincroniza cada
         # coluna do `SET` de um jeito diferente conforme o valor.
         #
-        # `temperatura` e `updated_at` sao literais Python (`str`, `datetime`)
-        # -- o avaliador consegue calcula-los e os atribui direto na
-        # instancia que a sessao ja tem (`estado`, mesma linha, pelo identity
-        # map), sem expirar nada.
+        # `temperatura`, `temperatura_da_cadencia` e `updated_at` sao literais
+        # Python (`str`, `datetime`) -- o avaliador consegue calcula-los e os
+        # atribui direto na instancia que a sessao ja tem (`estado`, mesma
+        # linha, pelo identity map), sem expirar nada.
         #
         # `temperatura_forcada_em` e `temperatura_forcada_motivos` -- gravadas
         # so quando `novos` nao e vazio -- sao expressao SQL
@@ -1574,3 +1587,35 @@ async def registrar_recalculo(
         gatilhos=gatilhos,
         total=novo.total,
     )
+
+
+async def preencher_temperaturas_da_cadencia(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    """Recalcula os leads que a 0068 deixou sem temperatura da cadencia. TEC-385.
+
+    Sao os que ja tinham penalidade de nao comparecimento: para eles a
+    temperatura sem a penalidade depende do score recalculado e do
+    `qualificado`, e isso e o que `registrar_recalculo` sabe fazer -- entao e
+    ele que roda, sem causa externa, e a trilha so ganha linha se o score se
+    mover. Um lead por transacao: o recalculo trava a linha, e um lead que
+    falhe nao desfaz os outros. Devolve quantos preencheu.
+    """
+    async with session_factory() as session:
+        pares = (
+            await session.execute(
+                select(LeadQualification.channel, LeadQualification.conversation_key).where(
+                    LeadQualification.temperatura_da_cadencia.is_(None),
+                    LeadQualification.temperatura.is_not(None),
+                )
+            )
+        ).all()
+    preenchidos = 0
+    for channel, conversation_key in pares:
+        async with session_factory() as session:
+            if await registrar_recalculo(
+                session, channel=channel, conversation_key=conversation_key
+            ):
+                preenchidos += 1
+            await session.commit()
+    return preenchidos

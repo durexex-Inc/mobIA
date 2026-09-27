@@ -221,6 +221,19 @@ class LeadQualification(Base):
     # calculada com os pesos de ontem.
     temperatura: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
+    # TEC-385, Emenda E-02 a RN-13.1. A temperatura que escolhe a regua de
+    # reengajamento: a de cima SEM a penalidade de nao comparecimento
+    # (`temperatura_da_cadencia_de`). A de cima continua sendo a do resto do
+    # sistema -- SLA, handoff automatico, filtros do painel --, e so a
+    # varredura de follow-up le esta.
+    #
+    # Gravada sempre junto com `temperatura`, pelo mesmo `registrar_recalculo`.
+    # `NULL` e a linha que o preenchimento da 0068 nao soube calcular (lead
+    # que ja tinha penalidade) e que nenhum recalculo alcancou ainda; a
+    # varredura le `COALESCE(temperatura_da_cadencia, temperatura)`, que para
+    # essa linha e o comportamento de antes desta card.
+    temperatura_da_cadencia: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
     # TEC-151, RN-06.3. Quando o lead foi forcado a QUENTE por gatilho.
     #
     # `NULL` = nao forcada. Nao nulo = QUENTE ate intervencao humana, e
