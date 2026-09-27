@@ -1,6 +1,6 @@
 # TEC-207 — Direitos do titular e retenção
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** implementado, PR aberto
 **Card:** [TEC-207](https://eduardodurieuxlopes.atlassian.net/browse/TEC-207) — épico TEC-200
 **Branch:** `feat/tec-207-direitos-do-titular`
 **Origem:** RNF-19 a RNF-24, PR-09 e RN-B07 do SRS v1.0 (`docs/srs/srs-agente-sdr-imobiliario-v1.0.md`); endpoints da §6.7.
@@ -51,6 +51,14 @@ Eliminar não é apagar linhas: apagar `messages` tira o lead da coorte do funil
    - `message_telemetry`, `lead_qualification`, handoffs, agendamentos, recomendações, trilhas de score e intenção e consentimentos, todos sob o pseudônimo.
 4. **Tabelas imutáveis:** reusa o desligamento das triggers de `reindexacao.py` (`TRIGGERS_DE_IMUTABILIDADE`), na mesma transação, pela mesma razão declarada lá.
 5. **A trilha de auditoria não é tocada.** O `lead_ref` antigo continua lá e deixa de bater com o par, que agora é aleatório. É o que `auditoria/referencia.py::lead_ref` já prometia: "sobrevive à eliminação do lead".
+6. **O que a implementação acrescentou** (corrigido na implementação — a lista acima não bastava para "nenhuma coluna guarda o telefone"):
+   - **`provider_message_id` vira `'anon:' || id`** em todas as mensagens do par, em qualquer canal. O wamid da Meta é base64 de um protobuf que carrega o telefone em claro, e o id do widget carrega a chave da sessão na frente. O preço: um status de entrega que a Meta mande depois para o wamid antigo não acha mais a linha — para um lead eliminado, o comportamento certo.
+   - **`handoffs.resumo` vira nulo.** É derivado da transcrição, e o item 3 o mantinha sob o pseudônimo junto com o handoff.
+   - **`referencias_de_lead` é apagada** junto com as quatro do item 2, e é isso que faz o `leadId` dar 404 (D4).
+   - **Mídia:** toda linha de `midias_recebidas` do par sai, em qualquer status; a sem `chave_no_armazem` entra pela chave determinística de `midia/politica.py::chave_do_objeto`, porque um download em voo pode ter gravado o arquivo antes da linha. `anonimizar_lead` devolve as chaves e **quem chama apaga os arquivos depois do commit** — antes, um rollback deixaria linha apontando para arquivo apagado; depois, o pior caso é um arquivo órfão, logado. `ArmazemDeMidia.apagar` é idempotente.
+   - **Toda solicitação `ABERTA` do par é fechada como `ATENDIDA`**, não só a que disparou a anonimização: `solicitacoes_de_titular` está em `TABELAS_COM_CHAVE_DE_LEAD`, e uma aberta seria arrastada para o pseudônimo e ficaria na fila sem ninguém que a pudesse atender.
+   - **`eliminacao.anonimizar` só executa solicitação `ABERTA` de `ELIMINACAO`**, sob `SELECT ... FOR UPDATE`; qualquer outra é no-op com log. Um id de pedido de acesso passado por engano apagaria quem só pediu para ver os dados.
+   - **O pulado da rotação de chave.** Sem identidade, o par anonimizado é pulado pela rotação da TEC-203 e conta no aviso de `reindexacao.par_sem_identidade`; o runbook (`docs/seguranca/segredos.md`) diz como separar esse caso do bug.
 
 Função única, `anonimizar_lead(conn, *, channel, conversation_key)`, sync sobre `Connection` como a reindexação. Ela serve a eliminação a pedido e a retenção de 24 meses.
 
@@ -84,6 +92,14 @@ Tabela `solicitacoes_de_titular`. Como guarda `conversation_key` enquanto aberta
   - O texto sai com um kind próprio, que fura as guardas de opt-out e de atendimento humano de `GuardedOutbound.send`, exatamente como `KIND_DA_CONFIRMACAO_DE_OPTOUT` fura: é reconhecimento legal de um pedido do próprio lead, e sem isso o opt-out que o pedido de eliminação registra bloquearia a confirmação dele.
 - **O pedido de eliminação também registra opt-out.** Quem pede para apagar os dados não quer receber follow-up enquanto o pedido espera.
 
+**Corrigido na implementação:**
+- **A detecção ficou mais larga que as frases acima, e tem limite declarado.** O objeto é "dados do próprio lead" (`meus dados`, `dados pessoais`, `dados que vocês têm`, `dados … de mim`); a eliminação é um radical de verbo (`apag`, `exclu`, `delet`, `remov`, `esquec`, `elimin`); o acesso é uma palavra inteira (`quero`, `ver`, `cópia`, `mandem`, `enviem`, `quais`). Negação até duas palavras antes do verbo anula. Frase fora desses padrões não é reconhecida — o ADMIN ainda pode registrar pelo `DELETE` (D4).
+- **Veto de imóvel colado ao "dados".** "Quais dados vocês têm do condomínio?" é pergunta sobre o imóvel: um substantivo de imóvel (imóvel, apartamento, casa, condomínio, anúncio) a até quatro palavras do fim do objeto, precedido de preposição (e no máximo um artigo), veta. Um imóvel em outra parte da mensagem ("apaguem meus dados e parem de mandar imóveis") não veta — três rodadas de revisão fixaram essa forma, registradas na docstring de `titular/deteccao.py`.
+- **O pedido fura o debounce e o fecho "agrupado"**, como o opt-out e o pedido de humano (`messages/service.py::IngestionService`, `workers/jobs/process_message.py::process_message`): o prazo corre da mensagem, e uma rajada que o engolisse perderia o pedido em silêncio.
+- **O pedido de eliminação encerra a conversa** com motivo `OPTOUT`, pela mesma função do bloco de opt-out (`_encerrar_por_optout`), e só grava opt-out se o lead ainda não estiver nele. **Uma mensagem de acesso que também pede opt-out** ("pare de mandar mensagem e quero meus dados") grava o opt-out junto, porque o bloco do titular retorna antes do bloco de opt-out.
+- **Na mesma mensagem, o pedido de titular vence o pedido de humano:** o bloco vem antes de todas as guardas e encerra o turno, então nenhum handoff nasce. Com eliminação é coerente (a conversa acaba de ser encerrada por opt-out); com acesso, o lead que também quer uma pessoa precisa pedir de novo. Registrado como Emenda E-08 à RN-16.1.
+- **Antes da moderação de entrada, mas não sem ela:** desde a TEC-297 a moderação roda no fecho de `executar_turno`, depois do registro.
+
 ## D4 — Endpoints
 
 Todos exigem a permissão nova `ATENDER_TITULAR`, só do ADMIN, fora de `_CONCEDIDAS` como `VER_AUDITORIA`.
@@ -95,6 +111,11 @@ Todos exigem a permissão nova `ATENDER_TITULAR`, só do ADMIN, fora de `_CONCED
 | `DELETE /api/v1/leads/{leadId}/dados-pessoais` | 202 e job ARQ que roda `anonimizar_lead`. Marca como atendida a solicitação `ELIMINACAO` aberta, ou cria uma de origem `ADMIN` já atendida. 404 se o apelido não resolve, que é o caso do lead já anonimizado |
 | `POST /api/v1/titular/solicitacoes/{id}/recusa` | recusa com motivo obrigatório (ex.: retenção legal). Registra `TITULAR_RECUSADO` |
 
+**Corrigido na implementação:**
+- **O `DELETE` deixa a solicitação `ABERTA`**, e quem a fecha como atendida é o job, via `eliminacao.anonimizar`. A tabela acima dizia que a rota a marcava atendida ou criava uma já atendida; fechar antes do job rodar mostraria atendido um pedido cujo dado ainda existe. A solicitação que a rota cria tem origem `ADMIN`; a que o lead já abrira pelo WhatsApp é reaproveitada sem trocar a origem. Sem pool do Redis, ou com o enqueue falhando, é 503 e a solicitação continua aberta; o `_job_id` é fixo por solicitação.
+- **A exportação** traz também score, recomendações e follow-ups, e a transcrição com as falas retidas pela moderação (`ve_retidas=True`), que a tela do corretor esconde. **O resumo fica de fora**: é derivado da transcrição, que já sai inteira.
+- **A recusa** é 404 para solicitação inexistente e 409 para a que já não está aberta; o motivo tem de 1 a 2000 caracteres, e não só espaço.
+
 `leadId` é o apelido de `referencias_de_lead`, como no resto do dashboard. A anonimização apaga a linha de `referencias_de_lead` do par antigo: o apelido deixa de resolver, e o que `leads/detalhe.py` já prevê ("um apelido que sobreviver às mensagens dele é 404") passa a acontecer.
 
 ## D5 — Retenção
@@ -105,6 +126,15 @@ Sweep diário, `sweep_retencao_de_leads`, depois do da auditoria:
 - **Lead sem conversão** (nenhum handoff `ACEITO` ou `CONCLUIDO`) **com mais de 24 meses desde a última interação** (`max(messages.created_at)`, a mesma de `leads/repositorio.py::_ultima_interacao`): `anonimizar_lead`.
 - **Solicitação `ELIMINACAO` aberta com o prazo de 15 dias vencido:** `anonimizar_lead`, e a solicitação passa a atendida. Antes do prazo o sweep não toca nela — o ADMIN tem os 15 dias para executar ou recusar (decisão 3); depois deles, o pedido é cumprido, e nenhum passa do prazo legal por inação.
 - Em lotes, com commit por lead, para não segurar lock longo.
+
+**Corrigido na implementação:**
+- **A transcrição de 12 meses zera `text_body`, `raw_payload` e `envelope_context`, e só.** `handoffs.resumo`, `provider_message_id` e o vínculo de sessão ficam — só a anonimização os apaga, e para o lead convertido, que nunca é anonimizado, eles ficam enquanto a conversa existir. O resumo da conversa (`conversation_summaries`) cuja última mensagem passou do corte é apagado.
+- **Par sem identidade não entra na regra dos 24 meses**: é o pseudônimo de um lead já anonimizado, que nunca volta a falar e seria "anonimizado" de novo a cada dia.
+- **Reconferência antes de anonimizar** (`titular/retencao.py::_lead_ainda_vencido`): a seleção em lote é um retrato, e o lead pode ter voltado a falar ou ganho um handoff `ACEITO` enquanto esperava a vez.
+- **Falha isolada por lead**: uma exceção num lead loga com `lead_ref` (nunca o telefone) e o sweep segue; sem isso, a ordenação faria o mesmo lead problemático travar todas as passagens futuras. Cada uma das três etapas também roda mesmo que a anterior falhe inteira.
+- **Teto por passagem e `timeout=900`**: até 100 eliminações vencidas, 200 leads (2 lotes de 100) e 10 mil mensagens (20 lotes de 500) por passagem; o job tem teto próprio de 900 s, maior que o `job_timeout` de 240 s do worker. Um acúmulo grande drena em vários dias. A conta está no comentário de `workers/main.py::WorkerSettings`.
+- **Ordem das etapas:** eliminações vencidas, depois leads de 24 meses, depois transcrições — assim um lead que caiba em duas regras é processado por uma só.
+- **Horário:** 5h, uma hora depois do `sweep_retencao_auditoria` (4h).
 
 ## D6 — Auditoria
 
@@ -150,3 +180,5 @@ Ações novas no vocabulário da trilha, com migration que recria o CHECK (molde
 
 - **RNF-21:** o pedido pelo WhatsApp entra numa fila atendida pelo ADMIN; não há execução automática.
 - **RNF-22:** "lead sem conversão" = sem handoff `ACEITO` ou `CONCLUIDO`; a anonimização troca o par por pseudônimo aleatório e mantém as linhas sem conteúdo.
+
+Feitas (todas `TEC-207, 26/09/2026`, no SRS): E-01 à RNF-21 (fila, prazo, cumprimento pela retenção, limite da detecção, correção só pelo dashboard), E-01 à RNF-22 (conversão, anonimização, os 12 meses, o CRM), E-06 à RNF-18 (as quatro ações e a entidade), E-01 ao `GET` e ao `DELETE` da seção 6.7 (só `ADMIN`; 404 para lead anonimizado; recusa por `POST .../recusa` em vez do 409), E-02 à RN-01.4 (a mídia passa a ter retenção), E-02 à RN-01.6 (o pedido fura o debounce), E-01 à RN-14.4 (a eliminação também silencia) e E-08 à RN-16.1 (o pedido de titular vence o de humano na mesma mensagem).

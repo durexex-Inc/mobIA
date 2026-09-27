@@ -97,8 +97,12 @@ async def falar_com_o_lead(
 
     if ancora is None or ancora.de is None:
         # Sem fala do lead nao ha de que numero mandar. Nao acontece com lead
-        # que chegou pela lista -- ele existe porque falou --, mas a TEC-207 vai
-        # eliminar mensagens, e isto nao pode virar um POST sem remetente.
+        # que chegou pela lista -- ele existe porque falou -- e a TEC-207 nao
+        # mudou isso: a eliminacao e a retencao mantem as linhas de `messages`
+        # e o `recipient_external_id` delas, e o lead anonimizado nem chega
+        # aqui, porque o apelido dele deixa de resolver. A guarda fica pelo
+        # contrato de `Ancora.de`, que e nulavel: isto nao pode virar um POST
+        # sem remetente.
         raise FalaNaoEnviada(Recusa.SEM_FALA_DO_LEAD)
 
     fala_id = uuid.uuid4()

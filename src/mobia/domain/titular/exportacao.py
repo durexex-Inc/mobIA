@@ -151,8 +151,10 @@ async def exportar(
 
     `None` quando `ler_detalhe` devolve `None` -- o par existe em
     `referencias_de_lead` (quem chama ja confirmou com `par_de`), mas nao tem
-    mensagem nenhuma. So acontece depois de uma eliminacao que a TEC-207
-    introduz; sem ela, todo apelido tinha ao menos uma fala.
+    mensagem nenhuma. Nao deveria acontecer, nem depois de uma eliminacao: a
+    anonimizacao apaga o apelido na mesma transacao em que troca o par, entao
+    o lead eliminado ja e 404 em `par_de`, e a retencao mantem as linhas de
+    `messages`. Ver a docstring de `ler_detalhe`.
     """
     lido = await ler_detalhe(session, lead_id=lead_id, par=par)
     if lido is None:

@@ -71,8 +71,11 @@ class VinculoDeSessao(Base):
     telefone_indice: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # A fala que trouxe o numero. CASCADE porque o vinculo e derivado do
-    # conteudo dela: apagada a mensagem (retencao, direito do titular), nao
-    # sobra evidencia que sustente o vinculo.
+    # conteudo dela: apagada a mensagem, nao sobra evidencia que sustente o
+    # vinculo. Nenhum caminho de hoje apaga mensagem: a eliminacao da TEC-207
+    # apaga o vinculo ela mesma (`titular/anonimizacao.py::TABELAS_APAGADAS`),
+    # e a retencao de 12 meses zera o conteudo da fala e NAO toca o vinculo --
+    # ele so cai com o lead, pela regra dos 24 meses ou por pedido.
     message_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), nullable=False
     )

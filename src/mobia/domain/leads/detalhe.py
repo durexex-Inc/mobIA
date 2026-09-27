@@ -172,9 +172,13 @@ async def ler_detalhe(
     """O detalhe, ou `None` quando o par nao tem mensagem nenhuma.
 
     `None` nao deveria acontecer -- o apelido so nasce na listagem, e a lista
-    so mostra quem tem mensagem (D1 da TEC-192) --, mas a TEC-207 vai eliminar
-    dado de titular, e um apelido que sobreviver as mensagens dele e 404, nao
-    uma tela de blocos vazios que afirmaria um lead sem conversa.
+    so mostra quem tem mensagem (D1 da TEC-192) -- e a TEC-207 nao abriu esse
+    caso: nem a eliminacao nem a retencao apagam linha de `messages` (zeram o
+    conteudo e mantem a linha, que as metricas contam), e a anonimizacao apaga
+    o apelido na mesma transacao em que troca o par, entao o lead anonimizado
+    ja e 404 em `par_de`, antes de chegar aqui. A guarda fica porque um
+    apelido sem mensagem, se um dia existir, e 404, nao uma tela de blocos
+    vazios que afirmaria um lead sem conversa.
     """
     # Anotado a mao: o stub tipa `max()` como a coluna, sem nulo, e o `max` de
     # zero linhas e nulo.

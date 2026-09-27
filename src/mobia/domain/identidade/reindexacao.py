@@ -22,6 +22,14 @@ deixaria um par orfao (bug antigo, erro de operador) travar a rotacao de todo
 mundo. O resultado conta os pulados, e o log `reindexacao.par_sem_identidade`
 diz quantos por canal -- so o canal, nunca a chave.
 
+**Desde a TEC-207 o pulado mais comum e o lead anonimizado**, e nao bug nem
+erro de operador: `titular/anonimizacao.py::anonimizar_lead` apaga a
+identidade e deixa as linhas de metrica sob um pseudonimo aleatorio, que nao
+tem valor cru de onde recalcular a chave. Pula-lo e o certo -- o pseudonimo
+nao depende da chave de indice --, mas ele entra na contagem de
+`sem_identidade` e no aviso, que por isso cresce com cada eliminacao e cada
+passagem da retencao.
+
 **Tabelas imutaveis.** `lead_score_audit`, `conversation_intent_audit` e
 `eventos_auditoria` recusam UPDATE por trigger. A reindexacao desliga a
 trigger de cada uma, reescreve e religa, na mesma transacao. E excecao
