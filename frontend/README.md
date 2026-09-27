@@ -96,7 +96,8 @@ desenho está em
 - **Sessão ociosa (TEC-311).** Aos 30 minutos sem interação, um aviso conta
   60 segundos e depois chama `/sair`. Foi o **primeiro componente de cliente**
   do painel (`components/AvisoDeInatividade.tsx`); o segundo é a busca da lista
-  de leads (TEC-321), e o terceiro, a conversa do lead (TEC-324). Ele guarda no `localStorage`
+  de leads (TEC-321), o terceiro, a conversa do lead (TEC-324), e o quarto, o controle da
+  conversa (TEC-327). Ele guarda no `localStorage`
   só o horário da última interação, para as abas se enxergarem. O servidor
   também encerra a sessão ociosa há mais de 32 minutos — para o celular
   esquecido, que não roda o aviso.
@@ -113,7 +114,7 @@ que põe o JWT da sessão num cabeçalho:
 | --- | --- | --- | --- |
 | Server Component → `buscarFunil` | o painel de funil | `revalidate: 60` | **não** |
 | Server Component → `buscarLeads` | a lista de leads | `no-store` | não |
-| Route Handler `/bff/[...rota]` | a conversa do lead, ao carregar as falas anteriores (TEC-324) | `no-store` | sim |
+| Route Handler `/bff/[...rota]` | a conversa do lead (falas anteriores, TEC-324; polling, TEC-327), assumir e devolver (TEC-327), revelar telefone (TEC-330), corrigir a qualificação (TEC-329), responder o lead (TEC-328) | `no-store` | sim |
 
 **O painel não passa pelo `/bff/*`, e isso é deliberado.** Um Server Component
 chamando o próprio Route Handler custaria um round-trip HTTP do processo para
@@ -191,6 +192,79 @@ de lead. O desenho está em
   depois.
 - **A moderação é do backend.** A fala retida só chega para ADMIN, e a tela a
   mostra como "Mensagem retida pela moderação" mesmo que um conteúdo viesse.
+
+## Assumir e devolver a conversa (TEC-327)
+
+Quem tem `ATENDER_LEAD` e vínculo de corretor vê "Assumir conversa" ou
+"Devolver ao agente" logo abaixo do título do lead. As duas ações pedem
+confirmação e vão como `POST` pelo `/bff/*`, as primeiras mutações do
+navegador pelo proxy. Depois de cada uma, a tela recarrega do servidor
+(`router.refresh()`) em vez de mudar a faixa por conta própria. O desenho está
+em `docs/superpowers/specs/2026-09-27-tec-327-assumir-e-devolver-design.md`.
+
+- **Com a conversa assumida por quem vê a tela, a conversa faz polling a cada
+  5 s**, só com a aba visível, pedindo `?depois=` o cursor que o servidor
+  devolveu. **O backend só grava esse poll na trilha quando ele traz fala**
+  (decisão de 27/09/2026): um poll vazio não entrega dado pessoal.
+- **A faixa sobrevive a recarregar**, porque o detalhe diz quem tem a conversa
+  (`atendimento`). O 409 de "já assumida" traz o nome de quem a tem.
+
+## Responder o lead (TEC-328)
+
+Quem vê "Assumir conversa" vê também, embaixo da conversa, o campo para
+responder o lead. Ele só fica habilitado com a conversa assumida por quem vê a
+tela. Enviar faz `POST /leads/{leadId}/mensagens` pelo `/bff/*`, e a fala
+entra no fim da conversa com o rótulo "Corretor". O desenho está em
+`docs/superpowers/specs/2026-09-27-tec-328-responder-pelo-painel-design.md`.
+
+- **Até 1.000 caracteres**, com contador. A API aceita até 4096; o limite
+  menor é da tela.
+- **Cada mensagem leva um `messageId`**, gerado no cliente e reusado enquanto
+  o texto não mudar. Reenviar depois de uma falha não manda a mensagem duas
+  vezes ao lead.
+- **Janela de 24 h do WhatsApp:** o detalhe diz quando ela fecha
+  (`janelaDeServicoFechaEm`), e a tela bloqueia o texto livre a partir daí e
+  explica que só template aprovado pode ser enviado. Uma fala nova do lead
+  reabre a janela. O painel ainda não envia templates.
+
+## Corrigir a qualificação (TEC-329)
+
+Quem tem `ATENDER_LEAD` vê "Editar qualificação" na seção Qualificação do
+detalhe. Isso inclui CORRETOR, GERENTE e ADMIN, e a GERENTE sem cadastro de
+corretor também. Salvar faz `PATCH /leads/{leadId}/qualificacao` pelo
+`/bff/*`, mostra "Score 47 → 62" e recarrega a tela do servidor. O desenho está
+em `docs/superpowers/specs/2026-09-27-tec-329-corrigir-qualificacao-design.md`.
+
+- **Só o que mudou vai no `PATCH`**, comparado com o formulário de partida, e
+  não com a ficha. Campo esvaziado vai como `null`, que limpa.
+- **Tipo de imóvel, urgência e forma de pagamento são listas**, e as opções
+  são os mapas de rótulo de `lib/detalhe.ts`. `tests/unit/test_vocabulario_da_tela.py`,
+  do lado Python, reprova se eles divergirem dos enums do backend.
+- **A região é texto**: o backend a trata como conjunto aberto e a grava na
+  forma canônica. "Perto do Campeche" vira `campeche`.
+- **A faixa de preço é digitada em reais inteiros.**
+- **Formulário sujo** avisa o aviso de inatividade (TEC-311).
+- **Conversa encerrada** não mostra o botão.
+
+## Revelar telefone e e-mail (TEC-330)
+
+O telefone chega mascarado para todo papel (`+55 48 9****-**21`), na lista e
+no detalhe: o número cheio nunca vem na página. Quem tem `VER_DADOS_COMPLETOS`
+(GERENTE e ADMIN) vê um botão "Revelar" ao lado da máscara. O clique faz
+`POST /leads/{leadId}/revelar` pelo `/bff/*`, e o backend grava a trilha antes
+de responder. O desenho está em
+`docs/superpowers/specs/2026-09-27-tec-330-revelar-dado-pessoal-design.md`.
+
+- **O número vive só no estado de `components/DadoRevelavel.tsx`.** Some em 5
+  minutos, no "Ocultar" ou ao sair da tela. Nada vai para a URL, o
+  armazenamento do navegador ou o `console`. Revelar de novo grava outra
+  linha na trilha.
+- **O e-mail não tem botão**, porque nenhuma tabela guarda e-mail de lead
+  (D7 da TEC-195) e o detalhe o recebe sempre nulo. Quando a fonte existir e o
+  backend mandar a máscara, o botão aparece sem mudar a tela.
+- **Na lista, o botão fica fora do link** que abre o detalhe.
+- **Toda resposta do `/bff/*` é `Cache-Control: no-store`**, recusa
+  inclusive.
 
 ## O proxy `/bff/*` exige sessão
 

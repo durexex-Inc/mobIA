@@ -542,3 +542,179 @@ a {
   margin: 0;
   font-size: 1.125rem;
 }
+
+/* --- Controle da conversa (TEC-327) ---------------------------------------- */
+
+.controle-da-conversa {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+/* A faixa permanente: tem de ser vista sem ser procurada. */
+.controle-faixa {
+  flex-basis: 100%;
+  padding: 0.6rem 0.9rem;
+  font-weight: 600;
+  border-left: 4px solid #2563eb;
+  background: color-mix(in srgb, #2563eb 14%, transparent);
+}
+
+.controle-de-outro {
+  opacity: 0.85;
+}
+
+.controle-acoes button {
+  padding: 0.45rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.controle-aviso {
+  flex-basis: 100%;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}
+
+/* --- Dado pessoal revelavel (TEC-330) -------------------------------------- */
+
+.dado-revelavel {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.dado-revelavel-acao {
+  padding: 0.1rem 0.5rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.dado-revelavel-aviso {
+  flex-basis: 100%;
+  font-size: 0.85rem;
+  color: #b23c17;
+}
+
+/* --- Correcao da qualificacao (TEC-329) ------------------------------------ */
+
+.edicao-da-qualificacao {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.edicao-da-qualificacao button {
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.edicao-resultado {
+  font-weight: 600;
+}
+
+.edicao-formulario {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.75rem 1.5rem;
+  width: 100%;
+}
+
+.edicao-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.edicao-campo label {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.edicao-campo input,
+.edicao-campo select {
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+.edicao-erro {
+  font-size: 0.85rem;
+  color: #b23c17;
+}
+
+.edicao-aviso {
+  grid-column: 1 / -1;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}
+
+.edicao-acoes {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.edicao-nota {
+  margin-top: 1rem;
+  opacity: 0.8;
+}
+
+/* --- Resposta do corretor (TEC-328) ---------------------------------------- */
+
+.resposta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.resposta-rotulo {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.resposta textarea {
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  resize: vertical;
+}
+
+.resposta-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.resposta-rodape button {
+  padding: 0.4rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.resposta-excesso {
+  color: #b23c17;
+  font-weight: 600;
+}
+
+.resposta-motivo {
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+
+.resposta-aviso {
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}

@@ -22,8 +22,10 @@
  * **A segunda entrada, a transcricao (TEC-324), E dado pessoal**, e passa
  * aqui porque a sessao e o FastAPI ja cuidam dela: o JWT e o de quem esta
  * logado, o recorte do CORRETOR e do backend, e cada pagina grava na trilha.
- * O que a allowlist ainda decide e que so ela, entre as rotas de lead, chega
- * ao navegador.
+ * O que a allowlist ainda decide e QUAIS rotas de lead chegam ao navegador:
+ * desde a TEC-328 sao seis -- a transcricao, assumir, devolver, a revelacao,
+ * a correcao da qualificacao e a resposta do corretor --, e o detalhe continua
+ * fora.
  *
  * `*` casa EXATAMENTE um segmento. A primeira rota que precisou dele foi a
  * transcricao do lead (TEC-324); ele foi escrito antes, porque sem ele a
@@ -38,10 +40,28 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
 }> = [
   { metodo: 'GET', padrao: ['api', 'v1', 'metricas', 'funil'] },
   // A transcricao do lead (TEC-324, D2): o "carregar anteriores" busca daqui.
-  // Entra SO o `GET` das mensagens -- o detalhe e a revelacao continuam fora
-  // do alcance do navegador. Cada pagina grava um acesso na trilha (D3 da
-  // TEC-193), e e por isso que so o clique do usuario a pede.
+  // Entra SO o `GET` das mensagens -- o detalhe continua fora do alcance do
+  // navegador. Cada pagina grava um acesso na trilha (D3 da TEC-193), e e por
+  // isso que so o clique do usuario a pede.
   { metodo: 'GET', padrao: ['api', 'v1', 'leads', '*', 'mensagens'] },
+  // Assumir e devolver a conversa (TEC-327, D4): as primeiras MUTACOES que o
+  // navegador faz pelo proxy. A regra de `Origin` ja recusa mutacao sem ela
+  // (CSRF), e o corretor em nome de quem se age e o da claim do JWT -- o corpo
+  // nem e lido pelo FastAPI.
+  { metodo: 'POST', padrao: ['api', 'v1', 'leads', '*', 'assumir'] },
+  { metodo: 'POST', padrao: ['api', 'v1', 'leads', '*', 'devolver'] },
+  // Revelar telefone ou e-mail (TEC-330, D5): o unico caminho pelo qual o
+  // navegador recebe dado pessoal de lead em claro. Quem decide se pode e o
+  // `VER_DADOS_COMPLETOS` do JWT, no FastAPI, que grava a trilha antes de
+  // responder.
+  { metodo: 'POST', padrao: ['api', 'v1', 'leads', '*', 'revelar'] },
+  // Corrigir a qualificacao (TEC-329, D6). O unico `PATCH`: o pedido e
+  // parcial, e o recorte do CORRETOR e do FastAPI, como nas outras mutacoes.
+  { metodo: 'PATCH', padrao: ['api', 'v1', 'leads', '*', 'qualificacao'] },
+  // A resposta do corretor (TEC-328, D5): o `POST` da mesma rota cujo `GET`
+  // e a transcricao. O corretor e o da claim do JWT, e o `messageId` do corpo
+  // e o que torna o reenvio seguro.
+  { metodo: 'POST', padrao: ['api', 'v1', 'leads', '*', 'mensagens'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */

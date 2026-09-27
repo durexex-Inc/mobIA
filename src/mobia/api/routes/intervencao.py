@@ -20,16 +20,22 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao, exigir_dono
 from mobia.api.middleware import origem_da_requisicao
 from mobia.api.saida import porta_de_saida
-from mobia.domain.agente.schemas import FormaPagamento, TipoImovel, Urgencia
+from mobia.domain.agente.schemas import (
+    FormaPagamento,
+    TipoImovel,
+    Urgencia,
+    normalizar_regiao,
+)
 from mobia.domain.atendimento import tomada
 from mobia.domain.atendimento.fala import TETO_DA_FALA, FalaNaoEnviada, Recusa, falar_com_o_lead
+from mobia.domain.atendimento.repositorio import em_curso
 from mobia.domain.auditoria.registro import registrar_evento
 from mobia.domain.auditoria.vocabulario import Acao, Entidade
 from mobia.domain.corretores.models import Corretor
@@ -115,8 +121,22 @@ async def assumir(
         corretor_id = await _corretor_de(session, identidade)
         atendimento = await tomada.assumir_conversa(session, par=par, corretor_id=corretor_id)
         if atendimento is None:
+            # **O 409 diz quem tem a conversa** (TEC-327, D3): a tela precisa
+            # do nome, e tira-lo de dentro de uma frase prenderia a tela ao
+            # texto daqui. Entre a recusa e esta leitura o dono pode ter
+            # devolvido -- ai `assumidoPor` sai nulo, e a tela manda recarregar
+            # em vez de tentar de novo sozinha.
+            dono = await em_curso(session, channel=par[0], conversation_key=par[1])
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="conversa ja assumida por outro"
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "motivo": "conversa_de_outro",
+                    "assumidoPor": (
+                        {"corretorId": str(dono.corretor_id), "nome": dono.nome}
+                        if dono is not None
+                        else None
+                    ),
+                },
             )
         await session.commit()
     return {
@@ -158,6 +178,10 @@ class PedidoDeFala(BaseModel):
     texto: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=TETO_DA_FALA)
     ]
+    # O id que o cliente gerou para a fala (TEC-328, D1). Opcional para nao
+    # quebrar quem ja chama sem ele; com ele, o reenvio da mesma fala devolve a
+    # que ja foi gravada, em vez de manda-la de novo ao lead.
+    messageId: uuid.UUID | None = None  # noqa: N815
 
 
 # O status HTTP de cada recusa. 409 para o que e estado da conversa e nao muda
@@ -168,6 +192,8 @@ _STATUS_DA_RECUSA = {
     Recusa.JANELA_FECHADA: status.HTTP_409_CONFLICT,
     Recusa.LEAD_EM_OPTOUT: status.HTTP_409_CONFLICT,
     Recusa.CANAL_FALHOU: status.HTTP_502_BAD_GATEWAY,
+    Recusa.MESSAGE_ID_EM_USO: status.HTTP_409_CONFLICT,
+    Recusa.FALA_EM_ENVIO: status.HTTP_409_CONFLICT,
 }
 
 
@@ -196,6 +222,7 @@ async def falar(
             corretor_id=corretor_id,
             texto=pedido.texto,
             outbound=outbound,
+            fala_id=pedido.messageId,
         )
     except FalaNaoEnviada as erro:
         raise HTTPException(
@@ -224,6 +251,24 @@ class PedidoDeEdicao(BaseModel):
     urgencia: Urgencia | None = None
     formaPagamento: FormaPagamento | None = None  # noqa: N815
     temImovelParaVender: bool | None = None  # noqa: N815
+
+    @field_validator("regiao")
+    @classmethod
+    def _regiao_canonica(cls, valor: str | None) -> str | None:
+        """A forma que a extracao do agente grava (TEC-329, D1).
+
+        Sem isto, a correcao manual seria a unica porta que grava `regiao` fora
+        da forma canonica -- e o filtro estruturado da TEC-158 compara por
+        igualdade: "Perto do Campeche" nunca casaria com o `campeche` do
+        catalogo. O que se normaliza para vazio ("perto da") e ausencia de
+        lugar, e vira `null`, como o `null` explicito.
+
+        Roda depois do `max_length`: o teto e sobre o que chegou, e a forma
+        canonica so encurta.
+        """
+        if valor is None:
+            return None
+        return normalizar_regiao(valor) or None
 
 
 def _resposta(resultado: Resultado) -> dict[str, object]:

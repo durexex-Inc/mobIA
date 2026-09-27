@@ -199,6 +199,31 @@ describe('PaginaDeLeads', () => {
     })
   })
 
+  describe('revelar o telefone na lista (TEC-330)', () => {
+    it('GERENTE ve o "Revelar" ao lado do link, e so na linha com mascara', async () => {
+      responde({
+        itens: [lead(82), lead(null, { leadId: 'web', channel: 'web', telefone: null })],
+        proximoCursor: null,
+      })
+
+      await abrir()
+
+      const [comTelefone, semTelefone] = screen.getAllByTestId('lead')
+      const botao = within(comTelefone).getByRole('button', { name: 'Revelar telefone' })
+      expect(botao.closest('a')).toBeNull()
+      expect(within(semTelefone).queryByRole('button')).toBeNull()
+    })
+
+    it('CORRETOR nao ve o botao, e a pagina nao traz o numero', async () => {
+      responde({ itens: [lead(82)], proximoCursor: null }, 200, { papel: 'CORRETOR' })
+
+      await abrir()
+
+      expect(screen.queryByRole('button', { name: 'Revelar telefone' })).not.toBeInTheDocument()
+      expect(document.body.innerHTML).not.toContain('99999')
+    })
+  })
+
   it('a linha mostra o telefone mascarado, e o visitante sem telefone e dito', async () => {
     responde({
       itens: [lead(82), lead(null, { leadId: 'web', channel: 'web', telefone: null, temperatura: null })],

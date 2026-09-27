@@ -1,3 +1,5 @@
+import { DadoRevelavel } from '@/components/DadoRevelavel'
+import { EdicaoDaQualificacao } from '@/components/EdicaoDaQualificacao'
 import { Vazio } from '@/components/estado/Vazio'
 import {
   type AgendamentoDoLead,
@@ -5,7 +7,6 @@ import {
   dividirResumo,
   type FollowUpDoLead,
   linhasDaQualificacao,
-  NAO_INFORMADO,
   type Qualificacao,
   type ResumoDoLead,
   statusDoAgendamento,
@@ -19,14 +20,36 @@ import { canalLegivel, dataAbsoluta, temperaturaLegivel, tempoRelativo } from '@
  * Server Components sem estado: recebem o que a rota devolveu e nao buscam
  * nada. Historico de score e recomendacoes entram entre elas quando a TEC-325
  * chegar. A conversa (TEC-324) e a ultima secao, e fica fora daqui: ela vem
- * de outra rota, e a pagina a desenha depois destas.
+ * de outra rota, e a pagina a desenha depois destas. As excecoes ao "sem
+ * estado" sao o contato, que revela por um componente de cliente (TEC-330), e
+ * a qualificacao, que se corrige por outro (TEC-329).
  */
-export function SecoesDoDetalhe({ detalhe, agora }: { detalhe: DetalheDoLead; agora: Date }) {
+export function SecoesDoDetalhe({
+  detalhe,
+  agora,
+  podeRevelar,
+  podeEditar,
+}: {
+  detalhe: DetalheDoLead
+  agora: Date
+  podeRevelar: boolean
+  podeEditar: boolean
+}) {
   return (
     <>
       <SecaoResumo resumo={detalhe.resumo} />
-      <SecaoContato telefone={detalhe.contato.telefone} canal={detalhe.channel} />
-      <SecaoQualificacao qualificacao={detalhe.qualificacao} />
+      <SecaoContato
+        leadId={detalhe.leadId}
+        contato={detalhe.contato}
+        canal={detalhe.channel}
+        podeRevelar={podeRevelar}
+      />
+      <SecaoQualificacao
+        leadId={detalhe.leadId}
+        qualificacao={detalhe.qualificacao}
+        podeEditar={podeEditar}
+        encerrada={detalhe.status === 'ENCERRADA'}
+      />
       <SecaoAgendamentos agendamentos={detalhe.agendamentos} />
       <SecaoFollowUps followups={detalhe.followups} agora={agora} />
     </>
@@ -86,20 +109,49 @@ function SecaoResumo({ resumo }: { resumo: ResumoDoLead | null }) {
 }
 
 /**
- * Contato so mascarado (D4 da TEC-195). Revelar o numero e a TEC-330.
- * E-mail nao tem fonte em tabela nenhuma (D7 da TEC-195).
+ * Contato mascarado para todo papel (D4 da TEC-195), com o "Revelar" para
+ * quem tem `VER_DADOS_COMPLETOS` (TEC-330).
+ *
+ * O e-mail le `contato.email` em vez de escrever "Não informado" fixo: hoje
+ * ele vem sempre nulo, porque nenhuma tabela o guarda (D7 da TEC-195), e sem
+ * mascara nao ha botao. No dia em que a fonte nascer, o botao aparece sem
+ * mudar esta tela (D2 da TEC-330).
  */
-function SecaoContato({ telefone, canal }: { telefone: string | null; canal: string }) {
+function SecaoContato({
+  leadId,
+  contato,
+  canal,
+  podeRevelar,
+}: {
+  leadId: string
+  contato: DetalheDoLead['contato']
+  canal: string
+  podeRevelar: boolean
+}) {
   return (
     <Secao titulo="Contato">
       <dl className="detalhe-campos">
         <div className="detalhe-campo">
           <dt>Telefone</dt>
-          <dd>{telefone ?? NAO_INFORMADO}</dd>
+          <dd>
+            <DadoRevelavel
+              leadId={leadId}
+              campo="telefone"
+              mascarado={contato.telefone}
+              podeRevelar={podeRevelar}
+            />
+          </dd>
         </div>
         <div className="detalhe-campo">
           <dt>E-mail</dt>
-          <dd>{NAO_INFORMADO}</dd>
+          <dd>
+            <DadoRevelavel
+              leadId={leadId}
+              campo="email"
+              mascarado={contato.email}
+              podeRevelar={podeRevelar}
+            />
+          </dd>
         </div>
         <div className="detalhe-campo">
           <dt>Canal</dt>
@@ -110,7 +162,23 @@ function SecaoContato({ telefone, canal }: { telefone: string | null; canal: str
   )
 }
 
-function SecaoQualificacao({ qualificacao }: { qualificacao: Qualificacao | null }) {
+/**
+ * A ficha que o agente extraiu, e a correcao para quem tem `ATENDER_LEAD`
+ * (TEC-329). O formulario fica embaixo da lista, e nao no lugar dela: depois
+ * de salvar, a lista e o que o detalhe relido diz, e o formulario so mostra o
+ * score de antes e o de agora.
+ */
+function SecaoQualificacao({
+  leadId,
+  qualificacao,
+  podeEditar,
+  encerrada,
+}: {
+  leadId: string
+  qualificacao: Qualificacao | null
+  podeEditar: boolean
+  encerrada: boolean
+}) {
   return (
     <Secao titulo="Qualificação">
       {qualificacao ? (
@@ -128,6 +196,9 @@ function SecaoQualificacao({ qualificacao }: { qualificacao: Qualificacao | null
         <p>
           <Vazio texto="O agente ainda não extraiu nenhum dado deste lead." />
         </p>
+      )}
+      {podeEditar && (
+        <EdicaoDaQualificacao leadId={leadId} qualificacao={qualificacao} encerrada={encerrada} />
       )}
     </Secao>
   )

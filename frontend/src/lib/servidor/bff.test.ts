@@ -36,13 +36,43 @@ describe('caminhoPermitido', () => {
       )
     })
 
+    it('assumir e devolver passam como POST, e so como POST (TEC-327)', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'assumir'])).toBe(
+        `/api/v1/leads/${LEAD}/assumir`,
+      )
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'devolver'])).toBe(
+        `/api/v1/leads/${LEAD}/devolver`,
+      )
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'assumir'])).toBeNull()
+    })
+
+    it('a revelacao entra so como `POST` (TEC-330)', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'revelar'])).toBe(
+        `/api/v1/leads/${LEAD}/revelar`,
+      )
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'revelar'])).toBeNull()
+    })
+
+    it('a resposta do corretor entra como `POST` das mensagens (TEC-328)', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'mensagens'])).toBe(
+        `/api/v1/leads/${LEAD}/mensagens`,
+      )
+      expect(caminhoPermitido('PUT', ['api', 'v1', 'leads', LEAD, 'mensagens'])).toBeNull()
+    })
+
+    it('a correcao da qualificacao entra so como `PATCH` (TEC-329)', () => {
+      expect(caminhoPermitido('PATCH', ['api', 'v1', 'leads', LEAD, 'qualificacao'])).toBe(
+        `/api/v1/leads/${LEAD}/qualificacao`,
+      )
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'qualificacao'])).toBeNull()
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'qualificacao'])).toBeNull()
+    })
+
     it('o `*` nao abre as outras rotas do lead', () => {
-      // O detalhe, a revelacao e a lista continuam fora do alcance do
-      // navegador: so a transcricao tem consumidor de cliente.
+      // O detalhe e a lista continuam fora do alcance do navegador: quem os
+      // le e o Server Component.
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD])).toBeNull()
-      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'revelar'])).toBeNull()
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads'])).toBeNull()
-      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'mensagens'])).toBeNull()
     })
 
     it('o `*` casa um segmento so, e nunca `..`', () => {

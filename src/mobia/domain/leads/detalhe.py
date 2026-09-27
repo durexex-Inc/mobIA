@@ -4,6 +4,9 @@ RN-18.2 e D4 do desenho. A transcricao, que e o setimo bloco, mora em
 `transcricao.py` e tem rota propria (D1): ela e paginada, e embuti-la aqui faria
 a tela pagar a conversa inteira para mostrar o resumo.
 
+Desde a TEC-327 o detalhe tambem diz quem tem a conversa (`atendimento`), para
+a faixa "Voce esta no controle" do painel sobreviver a recarregar a pagina.
+
 **Os seis blocos sao pequenos pela natureza deles, e nao por teto** -- a trilha
 de score so grava quando algo muda, e um lead tem poucas recomendacoes, poucos
 agendamentos e no maximo a cadencia de follow-ups. Isso NAO foi medido num lead
@@ -28,6 +31,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from mobia.domain.agendamento.models import Agendamento
 from mobia.domain.agente.models import Recomendacao
+from mobia.domain.atendimento.repositorio import AtendimentoEmCurso, em_curso
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.conversa.models import Conversa
@@ -36,7 +40,10 @@ from mobia.domain.followup.models import FollowUp
 from mobia.domain.handoff.models import Handoff, aad_do_resumo_de_handoff
 from mobia.domain.identidade.indice import telefones_de
 from mobia.domain.leads.mascara import mascarar_telefone
+from mobia.domain.messages.ancora import ancora_do_lead
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.messages.models import Message
+from mobia.domain.outbound.janela import JANELA_DE_SERVICO
 from mobia.infra.crypto import decrypt
 
 
@@ -127,6 +134,12 @@ class DetalheDoLead:
     recomendacoes: list[ImovelRecomendado]
     agendamentos: list[AgendamentoDoLead]
     followups: list[FollowUpDisparado]
+    # Quem tem a conversa agora, ou `None` (TEC-327, D2): sem isto a faixa
+    # "Voce esta no controle" sumiria ao recarregar a pagina.
+    atendimento: AtendimentoEmCurso | None = None
+    # Quando fecha a janela de servico da Meta (TEC-328, D2): a tela bloqueia
+    # o texto livre antes do clique. `None` no site e para quem nunca falou.
+    janela_de_servico_fecha_em: datetime | None = None
 
 
 # O que sai de `lead_qualification`, e com qual nome. Lista explicita, e nao
@@ -214,7 +227,23 @@ async def ler_detalhe(
         recomendacoes=await _recomendacoes(session, par),
         agendamentos=await _agendamentos(session, par),
         followups=await _followups(session, par),
+        atendimento=await em_curso(session, channel=par[0], conversation_key=par[1]),
+        janela_de_servico_fecha_em=await _janela_fecha_em(session, par),
     )
+
+
+async def _janela_fecha_em(session: AsyncSession, par: tuple[str, str]) -> datetime | None:
+    """A ancora mais `JANELA_DE_SERVICO`, so no WhatsApp. TEC-328, D2.
+
+    A MESMA ancora do envio (`messages/ancora.py`): a ultima fala do LEAD, e
+    nao a ultima mensagem -- uma resposta do agente no meio nao move a janela.
+    A tela compara com o relogio; a borda estrita de `dentro_da_janela` vale
+    la como `agora >= fechaEm`.
+    """
+    if par[0] != CANAL_WHATSAPP:
+        return None
+    ancora = await ancora_do_lead(session, channel=par[0], conversation_key=par[1])
+    return ancora.criada_em + JANELA_DE_SERVICO if ancora is not None else None
 
 
 async def _telefone_mascarado(session: AsyncSession, par: tuple[str, str]) -> str | None:

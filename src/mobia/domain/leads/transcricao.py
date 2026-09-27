@@ -1,7 +1,9 @@
 """A conversa inteira do lead, em paginas, da mais recente para tras. TEC-193.
 
 D5 do desenho, para a tela da TEC-324: paginas de 100 falas, a rolagem comeca
-na mais recente e "carregar anteriores" pagina para tras.
+na mais recente e "carregar anteriores" pagina para tras. Desde a TEC-327 ha
+tambem o sentido contrario, `posteriores_da_transcricao`, para o polling da
+conversa assumida.
 
 **Uma conversa e o par do endereco, e so ele** (D7). A sessao web e o WhatsApp
 da mesma pessoa, que `vinculos_de_sessao` liga desde a TEC-129, continuam sendo
@@ -38,7 +40,11 @@ LIMITE_MAXIMO_DA_TRANSCRICAO = 200
 
 @dataclass(frozen=True)
 class CursorDaTranscricao:
-    """A fala MAIS ANTIGA da pagina atual: as anteriores comecam antes dela.
+    """Uma fala da conversa, como ponto de partida de uma pagina.
+
+    Para tras, e a fala MAIS ANTIGA da pagina atual: as anteriores comecam
+    antes dela. Para frente (TEC-327), e a MAIS RECENTE que a tela ja tem: as
+    posteriores comecam depois dela. A forma e a mesma nos dois sentidos.
 
     **O par `(em, message_id)`, e nao so o instante.** `_persist` grava o lote
     de um envelope num INSERT so, e `created_at` cai no `now()` do statement,
@@ -134,15 +140,7 @@ async def pagina_da_transcricao(
         consulta = consulta.where(Message.bloqueada_em.is_(None))
 
     if cursor is not None:
-        dono = (
-            await session.execute(
-                select(Message.channel, Message.conversation_key).where(
-                    Message.id == cursor.message_id
-                )
-            )
-        ).first()
-        if dono is None or (dono.channel, dono.conversation_key) != par:
-            raise FiltroInvalido("cursor invalido")
+        await _conferir_dono_do_cursor(session, par=par, cursor=cursor)
         consulta = consulta.where(
             func.row(Message.created_at, Message.id) < func.row(cursor.em, cursor.message_id)
         )
@@ -158,25 +156,80 @@ async def pagina_da_transcricao(
     )
 
     ha_anteriores = len(linhas) > limite
-    visiveis = list(reversed(linhas[:limite]))
-
-    falas = [
-        Fala(
-            id=linha.id,
-            autor=linha.role,
-            tipo=linha.content_type,
-            conteudo=(
-                None
-                if linha.bloqueada_em is not None
-                else decrypt(linha.text_body, aad_de(linha.id, "text_body"))
-            ),
-            retida=linha.bloqueada_em is not None,
-            em=linha.created_at,
-        )
-        for linha in visiveis
-    ]
+    falas = [_como_fala(linha) for linha in reversed(linhas[:limite])]
 
     if not ha_anteriores or not falas:
         return falas, None
     mais_antiga = falas[0]
     return falas, CursorDaTranscricao(em=mais_antiga.em, message_id=mais_antiga.id)
+
+
+async def posteriores_da_transcricao(
+    session: AsyncSession,
+    *,
+    par: tuple[str, str],
+    limite: int,
+    depois: CursorDaTranscricao,
+    ve_retidas: bool,
+) -> list[Fala]:
+    """As falas DEPOIS de `depois`, em ordem cronologica. TEC-327, D1.
+
+    O polling da conversa assumida: a tela pede so o que ainda nao tem. Sobe
+    por `(created_at, id)`, o mesmo desempate da pagina para tras, e o mesmo
+    filtro da moderacao. Passando do limite, o resto vem no proximo poll --
+    nao ha `cursorAnterior` aqui, porque quem pede ja tem tudo o que veio antes.
+
+    **`depois` de outro lead e `FiltroInvalido`**, pela mesma razao do cursor
+    para tras.
+    """
+    await _conferir_dono_do_cursor(session, par=par, cursor=depois)
+    channel, conversation_key = par
+    consulta = select(Message).where(
+        Message.channel == channel,
+        Message.conversation_key == conversation_key,
+        func.row(Message.created_at, Message.id) > func.row(depois.em, depois.message_id),
+    )
+    if not ve_retidas:
+        consulta = consulta.where(Message.bloqueada_em.is_(None))
+
+    linhas = (
+        (await session.execute(consulta.order_by(Message.created_at, Message.id).limit(limite)))
+        .scalars()
+        .all()
+    )
+    return [_como_fala(linha) for linha in linhas]
+
+
+def cursor_posterior(falas: list[Fala]) -> CursorDaTranscricao | None:
+    """O ponto de partida do proximo poll: a fala mais recente, ou `None`.
+
+    Opaco para a tela, como os outros cursores: ela nunca monta um, e o
+    servidor devolve o proximo em toda resposta (TEC-327, D1).
+    """
+    if not falas:
+        return None
+    return CursorDaTranscricao(em=falas[-1].em, message_id=falas[-1].id)
+
+
+async def _conferir_dono_do_cursor(
+    session: AsyncSession, *, par: tuple[str, str], cursor: CursorDaTranscricao
+) -> None:
+    dono = (
+        await session.execute(
+            select(Message.channel, Message.conversation_key).where(Message.id == cursor.message_id)
+        )
+    ).first()
+    if dono is None or (dono.channel, dono.conversation_key) != par:
+        raise FiltroInvalido("cursor invalido")
+
+
+def _como_fala(linha: Message) -> Fala:
+    retida = linha.bloqueada_em is not None
+    return Fala(
+        id=linha.id,
+        autor=linha.role,
+        tipo=linha.content_type,
+        conteudo=None if retida else decrypt(linha.text_body, aad_de(linha.id, "text_body")),
+        retida=retida,
+        em=linha.created_at,
+    )

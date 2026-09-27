@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.domain.atendimento.models import AtendimentoHumano
+from mobia.domain.corretores.models import Corretor
 from mobia.domain.messages.models import Message
 
 
@@ -24,6 +25,47 @@ class Atendimento:
 
     assumido_por: uuid.UUID
     assumido_em: datetime
+
+
+@dataclass(frozen=True)
+class AtendimentoEmCurso:
+    """Quem tem a conversa agora, com o nome para a tela. TEC-327, D2 e D3.
+
+    O nome e de `corretores`, gente da operacao -- nao e dado do lead, e a
+    trilha nao registra quem o le.
+    """
+
+    corretor_id: uuid.UUID
+    nome: str
+    assumido_em: datetime
+
+
+async def em_curso(
+    session: AsyncSession, *, channel: str, conversation_key: str
+) -> AtendimentoEmCurso | None:
+    """O atendimento que silencia esta conversa, ou `None`.
+
+    A mesma condicao de `esta_silenciada` (`devolvido_em IS NULL`), com o dono
+    e o nome dele. Existe porque o painel precisa dizer QUEM tem a conversa, e
+    `esta_silenciada` so diz se alguem tem.
+    """
+    linha = (
+        await session.execute(
+            select(AtendimentoHumano.assumido_por, AtendimentoHumano.assumido_em, Corretor.nome)
+            .join(Corretor, Corretor.id == AtendimentoHumano.assumido_por)
+            .where(
+                AtendimentoHumano.channel == channel,
+                AtendimentoHumano.conversation_key == conversation_key,
+                AtendimentoHumano.devolvido_em.is_(None),
+            )
+            .limit(1)
+        )
+    ).first()
+    if linha is None:
+        return None
+    return AtendimentoEmCurso(
+        corretor_id=linha.assumido_por, nome=linha.nome, assumido_em=linha.assumido_em
+    )
 
 
 async def esta_silenciada(session: AsyncSession, *, channel: str, conversation_key: str) -> bool:

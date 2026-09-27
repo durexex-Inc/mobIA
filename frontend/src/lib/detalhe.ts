@@ -26,6 +26,12 @@ export type FollowUpDoLead = { tentativa: number; temperatura: string; disparado
 
 export type Qualificacao = Record<string, unknown>
 
+/** Quem tem a conversa agora (TEC-327, D2), ou `null` no detalhe. */
+export type Atendimento = {
+  assumidoPor: { corretorId: string; nome: string }
+  assumidoEm: string
+}
+
 export type DetalheDoLead = {
   leadId: string
   channel: string
@@ -37,6 +43,9 @@ export type DetalheDoLead = {
   qualificacao: Qualificacao | null
   agendamentos: AgendamentoDoLead[]
   followups: FollowUpDoLead[]
+  atendimento: Atendimento | null
+  /** Quando fecha a janela de 24 h do WhatsApp (TEC-328, D2). `null` no site. */
+  janelaDeServicoFechaEm: string | null
 }
 
 /**
@@ -105,20 +114,27 @@ const INTENCOES: Record<string, string> = {
   INDEFINIDA: 'Indefinida',
   FORA_DE_ESCOPO: 'Fora de escopo',
 }
-const TIPOS_DE_IMOVEL: Record<string, string> = {
+/**
+ * Os tres vocabularios fechados que a correcao da qualificacao edita (TEC-329,
+ * D2). Sao os de `agente/schemas.py`, e nao os do catalogo: o `TipoImovel` do
+ * catalogo tem `COBERTURA`, que o `PATCH` recusaria. Um teste do lado Python
+ * (`tests/unit/test_vocabulario_da_tela.py`) le estes tres mapas e os compara
+ * com os enums -- valor novo de um lado so reprova la.
+ */
+export const TIPOS_DE_IMOVEL: Record<string, string> = {
   APARTAMENTO: 'Apartamento',
   CASA: 'Casa',
   TERRENO: 'Terreno',
   COMERCIAL: 'Comercial',
   RURAL: 'Rural',
 }
-const URGENCIAS: Record<string, string> = {
+export const URGENCIAS: Record<string, string> = {
   IMEDIATA: 'Imediata',
   ATE_3_MESES: 'Até 3 meses',
   ATE_6_MESES: 'Até 6 meses',
   SEM_PRESSA: 'Sem pressa',
 }
-const FORMAS_DE_PAGAMENTO: Record<string, string> = {
+export const FORMAS_DE_PAGAMENTO: Record<string, string> = {
   A_VISTA: 'À vista',
   FINANCIAMENTO: 'Financiamento',
   CONSORCIO: 'Consórcio',

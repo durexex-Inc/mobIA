@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
+import { ControleDaConversa } from '@/components/ControleDaConversa'
 import { SecoesDoDetalhe } from '@/components/DetalheDoLead'
 import { Transcricao } from '@/components/Transcricao'
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
@@ -108,13 +109,21 @@ export default async function PaginaDoLead({ params }: { params: Promise<{ leadI
   }
 
   const agora = new Date()
+  // Os botoes so para quem pode agir: `ATENDER_LEAD` E um vinculo de corretor
+  // em nome de quem falar (TEC-327, D4). Sem o vinculo, todo clique seria o
+  // 409 "sem vinculo de corretor ativo" da TEC-194.
+  const meuCorretorId = quem.permissoes.has('ATENDER_LEAD') ? quem.corretorId : null
+  // O polling so quando a conversa e de quem ve a tela (D5).
+  const acompanhar =
+    meuCorretorId !== null && detalhe.atendimento?.assumidoPor.corretorId === meuCorretorId
   return (
     <main className="painel detalhe">
       <p>
         <Link href="/leads">← Voltar para a lista</Link>
       </p>
       {/* Sem nome: nenhuma tabela o guarda (L3). O titulo e o telefone
-          mascarado, como a primeira coluna da lista. */}
+          mascarado, como a primeira coluna da lista, e fica mascarado mesmo
+          depois de revelar: quem revela e a secao Contato (D4 da TEC-330). */}
       <h1>{identificacaoDoLead({ telefone: detalhe.contato.telefone, channel: detalhe.channel })}</h1>
       <p className="detalhe-cabecalho">
         Score {detalhe.score ?? '—'} · {statusLegivel(detalhe.status)} ·{' '}
@@ -123,13 +132,37 @@ export default async function PaginaDoLead({ params }: { params: Promise<{ leadI
           {tempoRelativo(detalhe.ultimaInteracaoEm, agora)}
         </time>
       </p>
-      <SecoesDoDetalhe detalhe={detalhe} agora={agora} />
+      {meuCorretorId && (
+        <ControleDaConversa
+          leadId={leadId}
+          atendimento={detalhe.atendimento}
+          meuCorretorId={meuCorretorId}
+        />
+      )}
+      <SecoesDoDetalhe
+        detalhe={detalhe}
+        agora={agora}
+        podeRevelar={quem.permissoes.has('VER_DADOS_COMPLETOS')}
+        // Editar nao exige vinculo de corretor, ao contrario de assumir: o
+        // GERENTE sem cadastro edita (TEC-194), e por isso a prop e so a
+        // permissao, e nao `meuCorretorId`.
+        podeEditar={quem.permissoes.has('ATENDER_LEAD')}
+      />
       {/* A ultima secao da ordem da card. Se so ela falhar, o resto da tela
           continua util para quem vai ligar (D1). */}
       <section className="detalhe-secao" aria-label="Conversa">
         <h2>Conversa</h2>
         {transcricao ? (
-          <Transcricao leadId={leadId} inicial={transcricao} />
+          <Transcricao
+            leadId={leadId}
+            inicial={transcricao}
+            acompanhar={acompanhar}
+            // Quem ve "Assumir conversa" ve tambem onde responder (TEC-328,
+            // D3); habilitado so com a conversa sua, que e o `acompanhar`.
+            resposta={
+              meuCorretorId ? { janelaFechaEm: detalhe.janelaDeServicoFechaEm ?? null } : undefined
+            }
+          />
         ) : (
           <ErroDeCarga
             mensagem="Não foi possível carregar a conversa."

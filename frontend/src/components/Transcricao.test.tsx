@@ -174,10 +174,162 @@ describe('Transcricao', () => {
     })
   })
 
+  describe('cenario: mensagem nova do lead chega sem recarregar (TEC-327)', () => {
+    const visibilidade = { valor: 'visible' as DocumentVisibilityState }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout'] })
+      visibilidade.valor = 'visible'
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => visibilidade.valor,
+      })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      delete (document as { visibilityState?: string }).visibilityState
+    })
+
+    async function passar(ms: number) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms)
+      })
+    }
+
+    const INICIAL = { ...pagina(1, 3, null), cursorPosterior: 'p3' }
+
+    it('a fala nova aparece no fim em ate 10 s, pelo proxy, com o cursor do servidor', async () => {
+      api.mockResolvedValueOnce(
+        new Response(JSON.stringify({ itens: [fala(4, { conteudo: 'Pode ser amanhã às 10h?' })], cursorAnterior: null, cursorPosterior: 'p4' })),
+      )
+      api.mockResolvedValue(new Response(JSON.stringify({ itens: [], cursorAnterior: null, cursorPosterior: 'p4' })))
+      render(<Transcricao leadId={LEAD} inicial={INICIAL} acompanhar />)
+
+      await passar(5_000)
+
+      const textos = screen.getAllByTestId('fala').map((f) => f.querySelector('p')?.textContent)
+      expect(textos.at(-1)).toBe('Pode ser amanhã às 10h?')
+      expect(api.mock.calls[0][0]).toBe('/bff/api/v1/leads/lead-1/mensagens?depois=p3')
+      expect(screen.getByRole('status')).toHaveTextContent('1 mensagem nova.')
+
+      await passar(5_000)
+      expect(api.mock.calls[1][0]).toBe('/bff/api/v1/leads/lead-1/mensagens?depois=p4')
+    })
+
+    it('sem acompanhar, nao ha polling', async () => {
+      render(<Transcricao leadId={LEAD} inicial={INICIAL} />)
+
+      await passar(30_000)
+
+      expect(api).not.toHaveBeenCalled()
+    })
+
+    it('com a aba escondida nao pergunta; ao voltar, pergunta na hora', async () => {
+      api.mockResolvedValue(new Response(JSON.stringify({ itens: [], cursorAnterior: null, cursorPosterior: 'p3' })))
+      visibilidade.valor = 'hidden'
+      render(<Transcricao leadId={LEAD} inicial={INICIAL} acompanhar />)
+
+      await passar(20_000)
+      expect(api).not.toHaveBeenCalled()
+
+      visibilidade.valor = 'visible'
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(api).toHaveBeenCalledOnce()
+    })
+
+    it('quem estava no fim acompanha a fala nova; quem subiu para ler nao e arrastado', async () => {
+      api.mockImplementation(
+        async () =>
+          new Response(JSON.stringify({ itens: [fala(Math.random())], cursorAnterior: null, cursorPosterior: 'px' })),
+      )
+      // 20 falas = 200px: longe o bastante do fim para subir alem da folga.
+      render(
+        <Transcricao leadId={LEAD} inicial={{ ...pagina(1, 20, null), cursorPosterior: 'p20' }} acompanhar />,
+      )
+      expect(caixa().scrollTop).toBe(200)
+
+      await passar(5_000)
+      expect(caixa().scrollTop).toBe(210)
+
+      caixa().scrollTop = 0
+      await passar(5_000)
+      expect(caixa().scrollTop).toBe(0)
+    })
+
+    it('401 para o polling e diz que a sessao terminou', async () => {
+      api.mockResolvedValue(new Response('{}', { status: 401 }))
+      render(<Transcricao leadId={LEAD} inicial={INICIAL} acompanhar />)
+
+      await passar(5_000)
+      await passar(20_000)
+
+      expect(api).toHaveBeenCalledOnce()
+      expect(screen.getByRole('status')).toHaveTextContent('Sua sessão terminou.')
+    })
+
+    it('falha comum nao avisa e tenta de novo no proximo ciclo', async () => {
+      api.mockResolvedValue(new Response('{}', { status: 502 }))
+      render(<Transcricao leadId={LEAD} inicial={INICIAL} acompanhar />)
+
+      await passar(10_000)
+
+      expect(api).toHaveBeenCalledTimes(2)
+      expect(screen.getByRole('status')).toHaveTextContent('')
+    })
+  })
+
   it('sem cursor na primeira pagina, nao ha o que carregar', () => {
     render(<Transcricao leadId={LEAD} inicial={pagina(1, 3, null)} />)
 
     expect(screen.queryByRole('button', { name: 'Carregar anteriores' })).not.toBeInTheDocument()
     expect(screen.getByText('Início da conversa')).toBeInTheDocument()
+  })
+
+  describe('a resposta do corretor (TEC-328)', () => {
+    it('a fala enviada entra no fim com o rotulo "Corretor", e o polling nao a duplica', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout'] })
+      try {
+        const enviada = fala(9, { id: 'f-enviada', autor: 'CORRETOR', conteudo: 'Oi, sou o Paulo' })
+        api.mockImplementation(async (_url, init) =>
+          init?.method === 'POST'
+            ? new Response(JSON.stringify({ id: 'f-enviada', em: enviada.em }), { status: 201 })
+            : new Response(JSON.stringify({ itens: [enviada], cursorAnterior: null, cursorPosterior: 'p9' })),
+        )
+        render(
+          <Transcricao
+            leadId={LEAD}
+            inicial={{ ...pagina(1, 2, null), cursorPosterior: 'p2' }}
+            acompanhar
+            resposta={{ janelaFechaEm: null }}
+          />,
+        )
+
+        fireEvent.change(screen.getByLabelText('Responder ao lead'), { target: { value: 'Oi, sou o Paulo' } })
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))
+        })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5_000)
+        })
+
+        const falas = screen.getAllByTestId('fala')
+        expect(falas).toHaveLength(3)
+        expect(falas.at(-1)).toHaveTextContent('Corretor')
+        expect(falas.at(-1)).toHaveTextContent('Oi, sou o Paulo')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('sem `resposta` nao ha campo; sem a conversa, ele esta desabilitado', () => {
+      const { unmount } = render(<Transcricao leadId={LEAD} inicial={pagina(1, 2, null)} />)
+      expect(screen.queryByLabelText('Responder ao lead')).toBeNull()
+      unmount()
+
+      render(<Transcricao leadId={LEAD} inicial={pagina(1, 2, null)} resposta={{ janelaFechaEm: null }} />)
+      expect(screen.getByLabelText('Responder ao lead')).toBeDisabled()
+    })
   })
 })
