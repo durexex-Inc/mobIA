@@ -43,6 +43,7 @@ async def test_devolve_a_aparencia_padrao_sem_credencial(
         "nomeDoAssistente": None,
         "corPrimaria": "#1D4ED8",
         "posicaoDoBotao": "DIREITA",
+        "dominios": [],
     }
 
 
@@ -52,7 +53,12 @@ async def test_devolve_o_que_o_admin_configurou(
     """Cenario 3 do Gherkin, do lado do backend."""
     await client.patch(
         "/api/v1/configuracao/agente",
-        json={"nomeDoAssistente": "Lia", "corPrimaria": "#0A7F5A", "posicaoDoBotao": "ESQUERDA"},
+        json={
+            "nomeDoAssistente": "Lia",
+            "corPrimaria": "#0A7F5A",
+            "posicaoDoBotao": "ESQUERDA",
+            "dominiosDoChat": ["imobiliariasol.com.br"],
+        },
         headers=_bearer_admin(),
     )
 
@@ -63,16 +69,24 @@ async def test_devolve_o_que_o_admin_configurou(
         "nomeDoAssistente": "Lia",
         "corPrimaria": "#0A7F5A",
         "posicaoDoBotao": "ESQUERDA",
+        "dominios": ["imobiliariasol.com.br"],
     }
 
 
-async def test_so_devolve_o_slug_e_os_tres_campos_da_aparencia(
+async def test_so_devolve_o_slug_a_aparencia_e_os_dominios(
     client: AsyncClient, banco_limpo: None, com_slug: None
 ) -> None:
-    """D3: tom, pesos, cadencia e orcamento sao do admin e nao saem daqui."""
+    """D3: tom, pesos, cadencia e orcamento sao do admin e nao saem daqui.
+    Os dominios saem desde a TEC-345 (D2), porque o Next precisa deles."""
     corpo = (await client.get("/widget/aparencia")).json()
 
-    assert set(corpo) == {"tenant", "nomeDoAssistente", "corPrimaria", "posicaoDoBotao"}
+    assert set(corpo) == {
+        "tenant",
+        "nomeDoAssistente",
+        "corPrimaria",
+        "posicaoDoBotao",
+        "dominios",
+    }
 
 
 async def test_sem_slug_configurado_responde_200_com_tenant_nulo(

@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { type Aparencia, lerAparencia } from '@/lib/aparencia'
+import { lerDominios } from '@/lib/dominios'
 
 import { chamarApi } from './api'
 
@@ -33,8 +34,14 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/
  *
  * Lanca quando o FastAPI responde outra coisa que 200, ou devolve um corpo
  * que nao e aparencia: e defeito, e nao "tenant ausente".
+ *
+ * **Os `dominios` vem junto (TEC-345, D3)**, porque sao do mesmo corpo e do
+ * mesmo cache: `/embed/aparencia` os usa para negar a aparencia a quem pede de
+ * outro site. Nao vao ao loader -- a rota os tira antes de responder.
  */
-export async function buscarAparencia(tenant: string): Promise<Aparencia | null> {
+export async function buscarAparencia(
+  tenant: string,
+): Promise<(Aparencia & { dominios: string[] }) | null> {
   if (!SLUG.test(tenant)) {
     return null
   }
@@ -46,11 +53,12 @@ export async function buscarAparencia(tenant: string): Promise<Aparencia | null>
   const configurado =
     typeof corpo === 'object' && corpo !== null ? (corpo as Record<string, unknown>).tenant : undefined
   const aparencia = lerAparencia(corpo)
-  if (!aparencia || (configurado !== null && typeof configurado !== 'string')) {
+  const dominios = lerDominios((corpo as Record<string, unknown> | null)?.dominios)
+  if (!aparencia || !dominios || (configurado !== null && typeof configurado !== 'string')) {
     throw new Error('aparencia do widget: o FastAPI devolveu um corpo fora do formato')
   }
   if (configurado !== tenant) {
     return null
   }
-  return aparencia
+  return { ...aparencia, dominios }
 }

@@ -16,8 +16,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import DateTime, Index, Numeric, SmallInteger, String, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import DateTime, Index, Numeric, SmallInteger, String, Text, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -48,6 +48,9 @@ class VersaoDaConfiguracao(Base):
     # tem cor e lado, e a `0064` preencheu as linhas antigas com o padrao.
     cor_primaria: Mapped[str] = mapped_column(String(7), nullable=False)
     posicao_do_botao: Mapped[str] = mapped_column(String(8), nullable=False)
+    # TEC-345, D1. Os sites que podem embutir o chat; vazia, nenhum. A `0065`
+    # preencheu as linhas antigas com a lista vazia.
+    dominios_do_chat: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     autor: Mapped[str] = mapped_column(String(120), nullable=False)
     # `clock_timestamp()` e nao `now()`: duas edicoes na mesma transacao de
     # teste sairiam com o mesmo instante, e "a mais recente" deixaria de ser
