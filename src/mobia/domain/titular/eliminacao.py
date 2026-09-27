@@ -54,6 +54,8 @@ async def anonimizar(
     Falha ao apagar um blob loga `titular.midia_nao_apagada` com a chave (que
     e so o id da mensagem, `midia/politica.py::chave_do_objeto`) e segue: o
     commit ja desligou o arquivo do lead, e reprovar aqui nao desfaz nada.
+    Um cancelamento no meio do laco loga `titular.midia_apagamento_cancelado`
+    com as chaves restantes e repropaga.
     """
     async with session_factory() as session:
         solicitacao = (
@@ -102,8 +104,19 @@ async def anonimizar(
         )
         await session.commit()
 
-    for chave in chaves_de_midia:
-        try:
-            await armazem.apagar(chave)
-        except Exception:
-            log.warning("titular.midia_nao_apagada", chave=chave, exc_info=True)
+    # Mesma forma de `retencao.py::esvaziar_transcricoes_vencidas`: um
+    # cancelamento no meio do laco (job_timeout, SIGTERM) loga as chaves que
+    # ainda nao foram confirmadas apagadas e repropaga -- o blob orfao que
+    # sobrar fica nomeado no log, e nao some em silencio.
+    restantes = list(chaves_de_midia)
+    try:
+        while restantes:
+            chave = restantes[0]
+            try:
+                await armazem.apagar(chave)
+            except Exception:
+                log.warning("titular.midia_nao_apagada", chave=chave, exc_info=True)
+            restantes.pop(0)
+    except BaseException:
+        log.warning("titular.midia_apagamento_cancelado", chaves_restantes=restantes)
+        raise

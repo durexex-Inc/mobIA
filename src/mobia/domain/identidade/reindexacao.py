@@ -113,9 +113,11 @@ class Reindexacao:
 def _pares(conn: Connection, tabelas: Sequence[str], modo: Modo) -> list[tuple[str, str]]:
     """Todo par que guarda o lead, tambem os que nao aparecem nas `tabelas`.
 
-    O evento de rate limit por numero sobrevive a mensagem que o gerou (a
-    retencao de `messages` e mais curta), entao pode ser o unico lugar com
-    aquele telefone -- e fora daqui ele ficaria em claro depois da 0062. Na
+    O evento de rate limit por numero guarda a chave em `chave`, e nao em
+    `conversation_key`, entao nenhuma das `tabelas` o enumera -- e um par
+    cujo unico rastro fosse esse evento ficaria em claro depois da 0062.
+    Nenhum caminho de runtime apaga linha de `messages` (a retencao da
+    TEC-207 so zera o conteudo), entao isto e defesa, nao caso esperado. Na
     rotacao entram tambem as identidades: a do lead que so deixou a trilha
     nao tem linha em tabela nenhuma, e seu `lead_ref` ficaria na chave velha.
     """
