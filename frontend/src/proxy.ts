@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 
+import { origemDoChat } from '@/lib/servidor/enderecoDoChat'
 import { dominiosDoEmbed } from '@/lib/servidor/dominiosDoEmbed'
 
 /**
@@ -52,10 +53,15 @@ export type PoliticaDoEmbed = {
 export function politicaDeSeguranca(
   nonce: string,
   isDev: boolean,
+  { embutivel = false, conectarA }: { embutivel?: boolean; conectarA?: string } = {},
   { embed }: { embed?: PoliticaDoEmbed } = {},
 ): string {
   return [
     "default-src 'self'",
+    // So o embed abre WebSocket, e so para a origem do proprio chat (TEC-346,
+    // D2): o painel nao tem `fetch` nem socket para fora da propria origem, e
+    // por isso continua sem esta diretiva.
+    ...(embutivel && conectarA ? [`connect-src 'self' ${conectarA}`] : []),
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ''}`,
     `style-src 'self' ${isDev ? "'unsafe-inline'" : `'nonce-${nonce}'`}`,
     "img-src 'self' blob: data:",
@@ -184,6 +190,26 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   // nao e nonce. Precisa ser novo a cada requisicao, e ha teste afirmando que
   // duas requisicoes nao recebem o mesmo.
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
+  const embutivel = rotaDoEmbed(request.nextUrl.pathname)
+  // `origemDoChat` lanca se MOBIA_WIDGET_WS_URL ou MOBIA_API_BASE nao forem uma
+  // URL valida. O proxy roda em TODA rota `/embed/*`, e um erro de
+  // configuracao do WebSocket nao pode derrubar com 500 as que nao dependem
+  // dele -- `/embed/aparencia`, que o botao do site le, continua respondendo.
+  // O lado seguro e a CSP sem connect-src, o mesmo padrao fechado de
+  // frame-ancestors. A pagina `/embed/chat` nao fica meio de pe: ela chama
+  // `enderecoDoChat()` e falha alto por conta propria, de proposito.
+  let conectarA: string | undefined
+  if (embutivel) {
+    try {
+      conectarA = origemDoChat()
+    } catch {
+      console.error('CSP do embed: MOBIA_WIDGET_WS_URL ou MOBIA_API_BASE invalida')
+    }
+  }
+  const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development', {
+    embutivel,
+    conectarA,
+  })
   // So o embed espera pela API: o painel nao tem ancestral a conferir, e nao
   // paga a chamada.
   const embed = rotaDoEmbed(request.nextUrl.pathname)

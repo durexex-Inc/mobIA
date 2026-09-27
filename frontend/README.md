@@ -40,6 +40,7 @@ com o código de 6 dígitos (RNF-11). A URI leva a semente em claro.
 | `MOBIA_API_BASE` | servidor Next, ao montar a URL do FastAPI | não (`http://localhost:8000`) |
 | `MOBIA_REDIS_URL` | servidor Next, onde a sessão do painel mora | não (`redis://localhost:6380`, o do `docker compose`) |
 | `MOBIA_ORIGEM_DO_PAINEL` | proxy `/bff/*` e login, na checagem de `Origin` | só atrás de proxy — ver abaixo |
+| `MOBIA_WIDGET_WS_URL` | a página `/embed/chat` e o proxy, no servidor | não (derivada de `MOBIA_API_BASE`) |
 | `MOBIA_ORIGEM_PUBLICA_DA_API` | proxy, no `connect-src` de `/embed/*` (TEC-345) | para o chat conectar — ver "O chat no site da imobiliária" |
 
 **Não há mais token de API no ambiente do Next.** Até a TEC-309 havia o
@@ -355,6 +356,7 @@ O `<slug>` tem de ser igual ao `TENANT_SLUG` do backend: minúsculas, dígitos e
 
 **Só os domínios cadastrados mostram o chat (TEC-345).** Eles ficam na configuração do agente, em `dominiosDoChat` (até 5, `host` ou `host:porta` em minúsculas, sem esquema). `www.` e o domínio nu são entradas diferentes. Sem domínio cadastrado, nenhum site mostra o chat — é o padrão. São duas travas:
 
+`public/widget.js` não passa por build: o que está no arquivo é o que o visitante baixa, e `npm run verificar:widget` reprova acima de 5 KB gzip. Desde a TEC-346 a visitante conversa pelo chat e vê se cada mensagem chegou; até a TEC-347, cada abertura do chat é uma conversa nova, e até a TEC-348 a conexão só reabre quando a visitante envia ou reenvia uma mensagem, ou sozinha, quando acaba a espera pedida por um `muitas_tentativas`. Até a TEC-345, qualquer site pode embutir o chat.
 - o `frame-ancestors` de `/embed/*` lista os domínios, e o navegador recusa o iframe em qualquer outro site. Esta é a de segurança;
 - `/embed/aparencia` responde 404 quando o `Origin` do loader não é um desses domínios, e o botão nem aparece. Esta é só de experiência: qualquer um manda o `Origin` que quiser.
 

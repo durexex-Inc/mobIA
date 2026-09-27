@@ -11,15 +11,15 @@ from mobia.app.config import get_settings
 from mobia.domain.limites.models import ESCOPO_IP, RateLimitEvent
 
 
-async def test_handshake_acima_do_limite_recebe_429_com_retry_after(
+async def test_handshake_acima_do_limite_recebe_muitas_tentativas_e_1013(
     ws_cliente, session, monkeypatch, caches_de_cliente_limpos
 ) -> None:
-    """O que chega no FIO, e nao so a mensagem ASGI.
+    """TEC-346, D1: o navegador nao le status de handshake recusado.
 
-    A primeira versao fechava antes do `accept` com o codigo 1013, e o teste
-    passava olhando o evento ASGI. So que o uvicorn transforma o fechamento
-    antes do `accept` em HTTP 403 -- e o navegador ve `onclose` 1006, lendo
-    "proibido" onde devia ler "espere e tente de novo".
+    A TEC-124 respondia HTTP 429 com `Retry-After` antes do `accept`. Para um
+    navegador isso e so `onclose` 1006, igual a qualquer queda de rede. Agora o
+    servidor aceita, diz quanto esperar num frame e fecha com 1013 ("Try
+    Again Later"), que a pagina consegue ler.
     """
     monkeypatch.setenv("RATE_LIMIT_REQUISICOES_POR_IP_POR_MINUTO", "2")
     get_settings.cache_clear()
@@ -29,9 +29,16 @@ async def test_handshake_acima_do_limite_recebe_429_com_retry_after(
             await ws.aceitar()
 
     async with ws_cliente(ip="198.51.100.9") as ws:
-        status, cabecalhos = await ws.recusa()
-    assert status == 429
-    assert cabecalhos[b"retry-after"] == b"60"
+        await ws.aceitar()
+        frame = await ws.receber()
+        fechamento = await ws.evento()
+
+    assert frame["tipo"] == "erro"
+    assert frame["codigo"] == "muitas_tentativas"
+    assert 1 <= frame["aguardeSegundos"] <= 60
+    assert frame["mensagem"] == f"Muitas tentativas, aguarde {frame['aguardeSegundos']} s."
+    assert fechamento["type"] == "websocket.close"
+    assert fechamento["code"] == 1013
 
     evento = (
         await session.execute(select(RateLimitEvent).where(RateLimitEvent.chave == "198.51.100.9"))
