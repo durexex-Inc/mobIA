@@ -93,7 +93,7 @@ MAXIMO_DE_LOTES_DE_TRANSCRICOES = 20
 
 # Ate 200 leads por passagem (2 x 100) -- bem mais caro por unidade que a
 # transcricao: cada lead paga um `eliminacao.anonimizar` inteiro, com
-# DISABLE/ENABLE TRIGGER (ACCESS EXCLUSIVE, ainda que breve) e cerca de dez
+# DISABLE/ENABLE TRIGGER (SHARE ROW EXCLUSIVE, ainda que breve) e cerca de dez
 # DELETE/UPDATE em tabelas diferentes.
 MAXIMO_DE_LOTES_DE_LEADS = 2
 

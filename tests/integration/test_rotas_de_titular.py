@@ -27,6 +27,7 @@ from mobia.domain.identidade.reindexacao import TABELAS_COM_CHAVE_DE_LEAD, reind
 from mobia.domain.leads.repositorio import referencias_para
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
+from mobia.domain.midia.armazem import armazem_da_config
 from mobia.domain.titular.models import SolicitacaoDeTitular
 from mobia.domain.titular.repositorio import marcar_atendida, registrar_solicitacao
 from mobia.domain.titular.vocabulario import (
@@ -330,7 +331,8 @@ async def test_delete_reaproveita_a_eliminacao_aberta_e_enfileira(
     # Roda o job a mao (D4 do teste): GET e DELETE de novo dao 404 -- a
     # anonimizacao apaga `referencias_de_lead`, e `par_de` deixa de resolver.
     await eliminar_lead(
-        {"session_factory": get_sessionmaker(), "settings": get_settings()}, str(whatsapp_id)
+        {"session_factory": get_sessionmaker(), "armazem": armazem_da_config(get_settings())},
+        str(whatsapp_id),
     )
 
     resposta_get = await client.get(

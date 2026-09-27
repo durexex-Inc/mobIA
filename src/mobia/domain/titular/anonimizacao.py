@@ -120,9 +120,12 @@ def anonimizar_lead(conn: Connection, *, channel: str, conversation_key: str) ->
     novo = secrets.token_hex(32)
     par = {"c": channel, "k": conversation_key, "novo": novo}
 
-    # Antes de qualquer DML, na mesma ordem de `reindexar`: o ALTER TABLE pede
-    # ACCESS EXCLUSIVE, e pedi-lo depois de ja segurar lock de linha em outra
-    # tabela abre um deadlock com um turno concorrente que grava score.
+    # Antes de qualquer DML, na mesma ordem de `reindexar`: o ALTER TABLE ...
+    # DISABLE TRIGGER pede SHARE ROW EXCLUSIVE (medido em `pg_locks`), que
+    # conflita com o ROW EXCLUSIVE de todo INSERT -- e pedi-lo depois de ja
+    # segurar lock de linha em outra tabela abre um deadlock com um turno
+    # concorrente que grava score. A espera por ele tem teto: quem chama abre
+    # a transacao com `lock_timeout` (`eliminacao.py::LOCK_TIMEOUT_DA_ANONIMIZACAO`).
     desligar_triggers(conn, TABELAS_IMUTAVEIS_REESCRITAS)
 
     indice_do_telefone = _indice_do_telefone_do_whatsapp(
