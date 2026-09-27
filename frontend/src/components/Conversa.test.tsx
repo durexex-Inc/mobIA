@@ -7,6 +7,8 @@ import { Conversa } from './Conversa'
 const ENDERECO = 'ws://localhost:8000/widget/chat'
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
+const SESSAO = '6f1c2c7e-6a0b-4c1f-9d0e-1a2b3c4d5e6f'
+
 type Ouvinte = (evento: unknown) => void
 
 /**
@@ -108,6 +110,30 @@ function montarAberto(): SocketFalso {
   return socket
 }
 
+/**
+ * O jsdom nao faz layout: `scrollHeight` e `clientHeight` sao sempre 0 e
+ * `scrollTop` nao guarda o que se escreve nele. Aqui a lista ganha uma
+ * geometria fixa e um `scrollTop` que guarda o valor.
+ */
+function comGeometria(lista: HTMLElement, { alturaTotal, alturaVisivel }: { alturaTotal: number; alturaVisivel: number }) {
+  let topo = 0
+  Object.defineProperty(lista, 'scrollHeight', { configurable: true, get: () => alturaTotal })
+  Object.defineProperty(lista, 'clientHeight', { configurable: true, get: () => alturaVisivel })
+  Object.defineProperty(lista, 'scrollTop', {
+    configurable: true,
+    get: () => topo,
+    set: (valor: number) => {
+      topo = valor
+    },
+  })
+  return lista
+}
+
+function rolarPara(lista: HTMLElement, topo: number) {
+  lista.scrollTop = topo
+  fireEvent.scroll(lista)
+}
+
 function frameDeMensagem(socket: SocketFalso): { id: string; texto: string } {
   const frame = socket.frames().find((f) => f.tipo === 'mensagem')
   if (!frame) {
@@ -133,6 +159,14 @@ describe('Conversa', () => {
     const socket = montarAberto()
 
     expect(socket.url).toBe(ENDERECO)
+    expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: null }])
+  })
+
+  it('o primeiro ola da montagem vai com sessao nula mesmo com sessao gravada (D4)', () => {
+    localStorage.setItem('mobia:sessao', SESSAO)
+
+    const socket = montarAberto()
+
     expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: null }])
   })
 
@@ -168,7 +202,7 @@ describe('Conversa', () => {
     socket.receber({ tipo: 'mensagem', texto: 'São três opções.', kind: 'texto' })
     socket.receber({ tipo: 'mensagem', texto: 'Quer ver a primeira?', kind: 'texto' })
 
-    const lista = screen.getByRole('list')
+    const lista = screen.getByRole('log')
     const itens = within(lista).getAllByRole('listitem')
     expect(itens.map((li) => li.textContent)).toEqual(['Temos, sim.', 'São três opções.', 'Quer ver a primeira?'])
     for (const li of itens) {
@@ -290,8 +324,9 @@ describe('Conversa', () => {
     expect(screen.getByText('Recebida')).toBeInTheDocument()
   })
 
-  it('queda com mensagem pendente marca "Não enviada"; "Reenviar" abre socket novo, manda ola e depois a mensagem', () => {
+  it('queda com mensagem pendente marca "Não enviada"; "Reenviar" abre socket novo, manda ola com a sessao e depois a mensagem', () => {
     const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
     enviar('Qual o valor do condomínio?')
     const { id } = frameDeMensagem(socket)
 
@@ -305,8 +340,10 @@ describe('Conversa', () => {
     const novo = ultimoSocket()
     expect(novo.enviados).toEqual([])
     novo.abrir()
+    // A reconexao retoma a sessao em memoria: o servidor deduplica o id
+    // dentro dela, e o agente nao perde o contexto (D4).
     expect(novo.frames()).toEqual([
-      { tipo: 'ola', sessao: null },
+      { tipo: 'ola', sessao: SESSAO },
       { tipo: 'mensagem', id, texto: 'Qual o valor do condomínio?' },
     ])
     expect(screen.getByText('Enviando…')).toBeInTheDocument()
@@ -403,10 +440,78 @@ describe('Conversa', () => {
     expect(screen.getByText('3/1000')).toBeInTheDocument()
   })
 
-  it('a lista de mensagens e anunciada com aria-live="polite" (D5)', () => {
+  it('a lista de mensagens e um log que anuncia so os baloes novos (D5)', () => {
     montarAberto()
 
-    expect(screen.getByRole('list')).toHaveAttribute('aria-live', 'polite')
+    const lista = screen.getByRole('log')
+    expect(lista).toHaveAttribute('aria-live', 'polite')
+    expect(lista).toHaveAttribute('aria-relevant', 'additions')
+  })
+
+  it('Enter envia, pelo mesmo caminho do botao', () => {
+    const socket = montarAberto()
+    escrever('Oi')
+
+    const campo = screen.getByRole('textbox', { name: 'Mensagem' })
+    const naoImpedido = fireEvent.keyDown(campo, { key: 'Enter' })
+
+    expect(naoImpedido).toBe(false)
+    expect(frameDeMensagem(socket).texto).toBe('Oi')
+    expect(campo).toHaveValue('')
+  })
+
+  it('Shift+Enter nao envia e deixa a quebra de linha acontecer', () => {
+    const socket = montarAberto()
+    escrever('Oi')
+
+    const campo = screen.getByRole('textbox', { name: 'Mensagem' })
+    const naoImpedido = fireEvent.keyDown(campo, { key: 'Enter', shiftKey: true })
+
+    expect(naoImpedido).toBe(true)
+    expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: null }])
+    expect(campo).toHaveValue('Oi')
+  })
+
+  it('Enter durante a composicao de um IME nao envia', () => {
+    const socket = montarAberto()
+    escrever('Oi')
+
+    const campo = screen.getByRole('textbox', { name: 'Mensagem' })
+    const naoImpedido = fireEvent.keyDown(campo, { key: 'Enter', isComposing: true })
+
+    expect(naoImpedido).toBe(true)
+    expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: null }])
+    expect(campo).toHaveValue('Oi')
+  })
+
+  it('balao do agente nao puxa para o fim quem rolou para cima para reler', () => {
+    const socket = montarAberto()
+    const lista = comGeometria(screen.getByRole('log'), { alturaTotal: 1000, alturaVisivel: 300 })
+    rolarPara(lista, 100)
+
+    socket.receber({ tipo: 'mensagem', texto: 'Temos, sim.', kind: 'texto' })
+
+    expect(lista.scrollTop).toBe(100)
+  })
+
+  it('balao do agente rola para o fim quando a lista ja estava perto do fim', () => {
+    const socket = montarAberto()
+    const lista = comGeometria(screen.getByRole('log'), { alturaTotal: 1000, alturaVisivel: 300 })
+    rolarPara(lista, 670)
+
+    socket.receber({ tipo: 'mensagem', texto: 'Temos, sim.', kind: 'texto' })
+
+    expect(lista.scrollTop).toBe(1000)
+  })
+
+  it('a mensagem da propria visitante sempre rola para o fim', () => {
+    montarAberto()
+    const lista = comGeometria(screen.getByRole('log'), { alturaTotal: 1000, alturaVisivel: 300 })
+    rolarPara(lista, 100)
+
+    enviar('Oi')
+
+    expect(lista.scrollTop).toBe(1000)
   })
 
   it('o balao da visitante leva a classe dela', () => {

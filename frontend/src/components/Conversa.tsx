@@ -1,6 +1,6 @@
 'use client'
 
-import { type FormEvent, useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 import {
   type EstadoDaMensagem,
@@ -18,6 +18,9 @@ const ROTULO_DO_ESTADO: Record<EstadoDaMensagem, string> = {
   recebida: 'Recebida',
   falhou: 'Não enviada',
 }
+
+// Quanto acima do fim a lista ainda conta como "no fim" para rolar sozinha.
+const DISTANCIA_DO_FIM_PX = 40
 
 type Envio = { id: string; texto: string }
 
@@ -40,11 +43,18 @@ function frameDeMensagem({ id, texto }: Envio): string {
  * **Mensagem que sai com o socket fechado espera o `open` na fila.** Enviar
  * ou reenviar sem socket aberto abre um novo (a menos que um ja esteja
  * conectando) e a mensagem sai logo depois do `ola`. Reenviar usa o mesmo
- * `messageId` (D3) -- o servidor deduplica --, e por isso despacha
- * `reenviou`, nunca `enviou`, que duplicaria o balao.
+ * `messageId` (D3) -- o servidor deduplica dentro da sessao, e por isso a
+ * reconexao retoma a sessao em memoria (abaixo) --, e despacha `reenviou`,
+ * nunca `enviou`, que duplicaria o balao.
  *
- * **A sessao e gravada e nao e usada (D4).** O `ola` vai sempre com
- * `sessao: null`; retomar a conversa pelo UUID gravado e da TEC-347. A
+ * **A sessao gravada nao e lida; a da memoria, sim (D4).** O primeiro `ola`
+ * de cada montagem vai com `sessao: null` -- retomar pelo UUID do
+ * `localStorage` e da TEC-347. Toda conexao seguinte da mesma montagem
+ * (reenvio, envio com o socket fechado, fim da espera) manda a sessao que o
+ * servidor emitiu nesta montagem, se ja emitiu: sem isso cada queda abriria
+ * uma conversa nova, o agente perderia o contexto e a dedup por `messageId`
+ * nao valeria entre as duas. O `historico` que o servidor devolve na
+ * retomada e ignorado pelo redutor -- os baloes ja estao na tela. A
  * reconexao e so manual (L5) -- reconectar sozinho depois de uma queda e da
  * TEC-348. A unica reabertura automatica e a do fim da espera de
  * `muitas_tentativas` (D5).
@@ -56,6 +66,10 @@ export function Conversa({ endereco }: { endereco: string }) {
   // Mensagens que esperam o `open` do socket atual para sair.
   const filaRef = useRef<Envio[]>([])
   const prazosRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  // A sessao que o servidor emitiu NESTA montagem, para o `ola` das
+  // reconexoes. Comeca nula e so o frame `sessao` a preenche -- nunca o
+  // `localStorage` (D4) --, entao a primeira conexao sempre vai com `null`.
+  const sessaoRef = useRef<string | null>(null)
 
   const conectar = useCallback(() => {
     const socket = new WebSocket(endereco)
@@ -69,7 +83,7 @@ export function Conversa({ endereco }: { endereco: string }) {
         return
       }
       despachar({ tipo: 'abriu' })
-      socket.send(JSON.stringify({ tipo: 'ola', sessao: null }))
+      socket.send(JSON.stringify({ tipo: 'ola', sessao: sessaoRef.current }))
       for (const envio of filaRef.current.splice(0)) {
         socket.send(frameDeMensagem(envio))
       }
@@ -122,19 +136,34 @@ export function Conversa({ endereco }: { endereco: string }) {
     return () => clearTimeout(reabrir)
   }, [espera, conectar])
 
-  // A mensagem mais nova a vista. `scrollTop` na propria lista, e nao
-  // `scrollIntoView`: dentro do iframe, `scrollIntoView` tambem rola os
-  // ancestrais -- inclusive a pagina do site da imobiliaria.
+  // A mensagem mais nova a vista -- mas so se a visitante ja estava perto do
+  // fim, ou se a mensagem nova e dela: quem rolou para cima para reler nao e
+  // puxado de volta a cada fala do agente. "Perto do fim" e medido no
+  // `scroll`, ANTES de o balao novo crescer a lista; medir depois daria
+  // sempre longe. `scrollTop` na propria lista, e nao `scrollIntoView`:
+  // dentro do iframe, `scrollIntoView` tambem rola os ancestrais --
+  // inclusive a pagina do site da imobiliaria.
   const listaRef = useRef<HTMLOListElement | null>(null)
+  const pertoDoFimRef = useRef(true)
   const totalDeMensagens = conversa.mensagens.length
+  const autorDaUltima = conversa.mensagens.at(-1)?.autor
   useEffect(() => {
     const lista = listaRef.current
-    if (totalDeMensagens > 0 && lista) {
+    if (totalDeMensagens > 0 && lista && (pertoDoFimRef.current || autorDaUltima === 'visitante')) {
       lista.scrollTop = lista.scrollHeight
+      pertoDoFimRef.current = true
     }
-  }, [totalDeMensagens])
+  }, [totalDeMensagens, autorDaUltima])
+
+  function aoRolar() {
+    const lista = listaRef.current
+    if (lista) {
+      pertoDoFimRef.current = lista.scrollHeight - lista.scrollTop - lista.clientHeight <= DISTANCIA_DO_FIM_PX
+    }
+  }
 
   useEffect(() => {
+    sessaoRef.current = conversa.sessao
     if (!conversa.sessao) {
       return
     }
@@ -184,8 +213,7 @@ export function Conversa({ endereco }: { endereco: string }) {
     }
   }
 
-  function aoEnviar(evento: FormEvent<HTMLFormElement>) {
-    evento.preventDefault()
+  function enviarRascunho() {
     const texto = rascunho.trim()
     if (!texto) {
       return
@@ -196,6 +224,20 @@ export function Conversa({ endereco }: { endereco: string }) {
     setRascunho('')
   }
 
+  function aoEnviar(evento: FormEvent<HTMLFormElement>) {
+    evento.preventDefault()
+    enviarRascunho()
+  }
+
+  // Enter envia, pelo mesmo caminho do botao; Shift+Enter quebra a linha. O
+  // Enter que confirma a composicao de um IME nao e envio.
+  function aoTeclar(evento: KeyboardEvent<HTMLTextAreaElement>) {
+    if (evento.key === 'Enter' && !evento.shiftKey && !evento.nativeEvent.isComposing) {
+      evento.preventDefault()
+      enviarRascunho()
+    }
+  }
+
   function reenviar(id: string, texto: string) {
     despachar({ tipo: 'reenviou', messageId: id })
     transmitir({ id, texto })
@@ -203,7 +245,14 @@ export function Conversa({ endereco }: { endereco: string }) {
 
   return (
     <section className="conversa">
-      <ol ref={listaRef} className="conversa__mensagens" aria-live="polite">
+      <ol
+        ref={listaRef}
+        className="conversa__mensagens"
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        onScroll={aoRolar}
+      >
         {conversa.mensagens.map((mensagem) =>
           mensagem.autor === 'visitante' ? (
             <li key={mensagem.messageId} className="conversa__balao conversa__balao--visitante">
@@ -241,6 +290,7 @@ export function Conversa({ endereco }: { endereco: string }) {
           <textarea
             value={rascunho}
             onChange={(evento) => setRascunho(evento.target.value)}
+            onKeyDown={aoTeclar}
             maxLength={LIMITE_DE_CARACTERES}
             placeholder="Escreva sua mensagem"
             aria-label="Mensagem"
