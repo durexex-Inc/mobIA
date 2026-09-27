@@ -261,6 +261,24 @@ describe('proxy /bff/*', () => {
       expect(recusada.headers.get('Cache-Control')).toBe('no-store')
     })
 
+    it('repassa o `Retry-After` do backend, e nao os outros cabecalhos (TEC-326)', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response('{}', {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Retry-After': '15', 'Set-Cookie': 'x=1' },
+          }),
+        ),
+      )
+
+      const resposta = await GET(requisicao('/bff/api/v1/metricas/funil'), contexto(FUNIL))
+
+      expect(resposta.status).toBe(429)
+      expect(resposta.headers.get('Retry-After')).toBe('15')
+      expect(resposta.headers.get('Set-Cookie')).toBeNull()
+    })
+
     it('repassa o status de recusa do backend em vez de o traduzir', async () => {
       vi.stubGlobal('fetch', apiRespondendo({ detail: 'filtro invalido' }, 422))
 

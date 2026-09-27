@@ -1,10 +1,10 @@
 import { DadoRevelavel } from '@/components/DadoRevelavel'
 import { EdicaoDaQualificacao } from '@/components/EdicaoDaQualificacao'
+import { ResumoRegeneravel } from '@/components/ResumoRegeneravel'
 import { Vazio } from '@/components/estado/Vazio'
 import {
   type AgendamentoDoLead,
   type DetalheDoLead,
-  dividirResumo,
   type FollowUpDoLead,
   type ImovelRecomendado,
   linhasDaQualificacao,
@@ -29,7 +29,9 @@ import { canalLegivel, dataAbsoluta, temperaturaLegivel, tempoRelativo } from '@
  * 4 e 5 da D5. A conversa (TEC-324) e a ultima secao, e fica fora daqui: ela vem
  * de outra rota, e a pagina a desenha depois destas. As excecoes ao "sem
  * estado" sao o contato, que revela por um componente de cliente (TEC-330), e
- * a qualificacao, que se corrige por outro (TEC-329).
+ * a qualificacao, que se corrige por outro (TEC-329), e o resumo, que se
+ * regenera por um terceiro (TEC-326). Os tres pedem `ATENDER_LEAD`, e por isso
+ * o resumo usa a mesma `podeEditar`.
  */
 export function SecoesDoDetalhe({
   detalhe,
@@ -44,7 +46,7 @@ export function SecoesDoDetalhe({
 }) {
   return (
     <>
-      <SecaoResumo resumo={detalhe.resumo} />
+      <SecaoResumo resumo={detalhe.resumo} podeRegenerar={podeEditar} />
       <SecaoContato
         leadId={detalhe.leadId}
         contato={detalhe.contato}
@@ -83,7 +85,7 @@ function Secao({ titulo, rotulo, children }: { titulo: string; rotulo?: string; 
  * Sem resumo, a secao continua sendo a primeira e diz por que esta vazia: o
  * resumo nasce no handoff, e um lead que ainda nao foi encaminhado nao tem um.
  */
-function SecaoResumo({ resumo }: { resumo: ResumoDoLead | null }) {
+function SecaoResumo({ resumo, podeRegenerar }: { resumo: ResumoDoLead | null; podeRegenerar: boolean }) {
   if (!resumo) {
     return (
       <Secao titulo="Resumo">
@@ -93,28 +95,9 @@ function SecaoResumo({ resumo }: { resumo: ResumoDoLead | null }) {
       </Secao>
     )
   }
-
-  const rotulo = resumo.fallback ? 'Resumo simplificado' : 'Gerado pelo assistente'
-  const emBlocos = dividirResumo(resumo.texto, { fallback: resumo.fallback })
-  return (
-    <Secao titulo="Resumo" rotulo={rotulo}>
-      {emBlocos ? (
-        <>
-          {emBlocos.preambulo && <p className="detalhe-texto">{emBlocos.preambulo}</p>}
-          {emBlocos.blocos.map((bloco) => (
-            <div key={bloco.titulo} className="detalhe-bloco">
-              <h3>{bloco.titulo}</h3>
-              <p className="detalhe-texto">{bloco.corpo}</p>
-            </div>
-          ))}
-        </>
-      ) : (
-        // Texto que nao se deixa cortar sai inteiro: esconder o resumo seria
-        // pior que mostra-lo sem os titulos.
-        <p className="detalhe-texto">{resumo.texto}</p>
-      )}
-    </Secao>
-  )
+  // Com resumo, a secao e de cliente: o "Regenerar" troca o texto e o rotulo
+  // pela resposta, sem reler o detalhe (TEC-326, D2).
+  return <ResumoRegeneravel resumo={resumo} podeRegenerar={podeRegenerar} />
 }
 
 /**
