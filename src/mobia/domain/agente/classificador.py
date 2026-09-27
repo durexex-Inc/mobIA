@@ -38,6 +38,7 @@ from mobia.domain.agente.schemas import (
 from mobia.domain.configuracao.vigente import Tom
 from mobia.domain.context.montagem import ContextoMontado, montar_prompt
 from mobia.domain.messages.recorder import custo_em_dolar
+from mobia.domain.privacidade.pseudonimo import sem_marcadores
 from mobia.domain.prompts.modelo import AgenteDoPrompt
 from mobia.infra.anthropic import (
     ERROS_RETENTAVEIS,
@@ -1265,7 +1266,10 @@ class ClassificadorAnthropic:
                 # `qualificar_investidor` passou a ler o mesmo campo do mesmo
                 # envelope. As razoes finas das duas guardas estao la.
                 confianca=_confianca_de(dados["confianca"]),
-                resposta=dados["resposta"].strip(),
+                # TEC-381, RNF-23: o modelo ve `[nome do lead]` no contexto e pode
+                # copia-lo; o lead nao pode receber o marcador. Mesma guarda no
+                # investidor e na desambiguacao, abaixo.
+                resposta=sem_marcadores(dados["resposta"].strip()),
                 modelo=modelo_que_respondeu,
                 tokens_in=resposta.usage.input_tokens,
                 tokens_out=resposta.usage.output_tokens,
@@ -1405,7 +1409,7 @@ class ClassificadorAnthropic:
             resultado = RespostaDoInvestidor(
                 intencao=intencao,
                 confianca=_confianca_de(dados["confianca"]),
-                resposta=dados["resposta"].strip(),
+                resposta=sem_marcadores(dados["resposta"].strip()),
                 modelo=modelo_que_respondeu,
                 tokens_in=resposta.usage.input_tokens,
                 tokens_out=resposta.usage.output_tokens,
@@ -1549,7 +1553,9 @@ class ClassificadorAnthropic:
             ),
         )
         return PerguntaDeDesambiguacao(
-            texto=texto,
+            # TEC-381: a pergunta e fala do modelo para o lead, como a
+            # resposta -- mesma guarda contra o marcador copiado do contexto.
+            texto=sem_marcadores(texto),
             modelo=settings.modelo_agente,
             cache_write=getattr(resposta.usage, "cache_creation_input_tokens", 0) or 0,
             cache_read=getattr(resposta.usage, "cache_read_input_tokens", 0) or 0,

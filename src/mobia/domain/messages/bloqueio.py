@@ -58,6 +58,7 @@ from mobia.domain.moderacao.port import (
     ModeradorPort,
     Veredito,
 )
+from mobia.domain.privacidade.pseudonimo import pseudonimizar
 
 log = structlog.get_logger(__name__)
 
@@ -218,9 +219,14 @@ async def moderar_entrada_e_marcar(
     escrita duas vezes -- no turno e em `_moderar_superada`, que a TEC-295
     criou --, e os cinco ramos que retornam antes da moderacao precisariam
     de uma terceira copia.
+
+    **O provedor recebe a fala pseudonimizada (TEC-381, RNF-23).** A moderacao
+    e o segundo caminho por onde o texto do lead sai do processo -- o outro e
+    `context/montagem.py::_texto_da` --, e nome e telefone nao mudam veredito
+    de toxicidade nem de injecao.
     """
     try:
-        veredito = await moderador.moderar(corpo, direcao=Direcao.ENTRADA)
+        veredito = await moderador.moderar(pseudonimizar(corpo), direcao=Direcao.ENTRADA)
     except ModeracaoIndisponivel as exc:
         log.error(
             "moderacao.indisponivel",

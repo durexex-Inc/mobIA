@@ -31,6 +31,7 @@ from mobia.domain.agente.investidor import Horizonte
 from mobia.domain.agente.schemas import CategoriaDescarte, Intencao, ReacaoDoImovel, ReacaoLead
 from mobia.domain.configuracao.vigente import Tom
 from mobia.domain.context.montagem import ContextoMontado
+from mobia.domain.privacidade.pseudonimo import MARCADOR_DE_NOME
 from mobia.domain.prompts.modelo import AgenteDoPrompt
 from mobia.infra.anthropic import (
     TETO_DA_CLASSIFICACAO,
@@ -1690,3 +1691,29 @@ async def test_o_investidor_renderiza_o_proprio_modelo_vigente(
 
     enviado = cliente.messages.create.call_args.kwargs["system"][0]["text"]
     assert enviado.startswith("INVESTIDOR o assistente virtual em tom de conversa")
+
+
+async def test_marcador_de_nome_copiado_pelo_modelo_nao_chega_a_resposta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEC-381, D2: o modelo so ve `[nome do lead]`, e se o repetir o lead nao
+    pode receber o marcador. A guarda e aqui, na fonte, e nao no envio."""
+    _instalar_cliente_falso(
+        monkeypatch, _resposta_json(resposta=f"Oi, {MARCADOR_DE_NOME}! Tenho opções.")
+    )
+
+    resultado = await ClassificadorAnthropic().classificar(_contexto())
+
+    assert resultado.resposta == "Oi! Tenho opções."
+
+
+async def test_marcador_copiado_na_pergunta_de_desambiguacao_tambem_sai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _instalar_cliente_falso(
+        monkeypatch, _resposta_falsa(texto=f"{MARCADOR_DE_NOME}, é compra ou aluguel?")
+    )
+
+    pergunta = await ClassificadorAnthropic().desambiguar(_contexto())
+
+    assert pergunta.texto == "é compra ou aluguel?"
