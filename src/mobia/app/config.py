@@ -366,6 +366,13 @@ class Settings(BaseSettings):
     # disso o frame e recusado e a conexao CONTINUA aberta.
     tamanho_maximo_do_texto_do_widget: int = 4096
 
+    # TEC-366, RN-FE-17.7. Quanto tempo sem nenhum frame, em nenhum sentido,
+    # antes de o servidor fechar o socket do widget (`CODIGO_OCIOSA`). Os 30
+    # minutos sao os do cliente (TEC-347, D4), que adormece o socket sozinho
+    # com o painel minimizado; este e o teto para quem nao adormece -- aba
+    # esquecida com o painel aberto, cliente antigo, conexao orfa.
+    widget_ociosidade_segundos: float = 1800.0
+
     # TEC-344, D2. O slug que o `data-tenant` do snippet do site tem de trazer
     # para o botao aparecer. `GET /widget/aparencia` o devolve, e quem compara
     # e o Next (emenda da TEC-344 ao D3). **Nulo por padrao, e nulo quer dizer

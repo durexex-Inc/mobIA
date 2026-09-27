@@ -31,6 +31,7 @@ embute o iframe. Em que site o chat aparece e trava da TEC-345, no
 
 import asyncio
 import json
+import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
@@ -85,6 +86,15 @@ CODIGO_INDISPONIVEL = 1011
 # D1. Ao contrario dos dois de cima, este vem DEPOIS do `accept` e de um
 # frame `erro` -- a visitante le quanto esperar antes do socket cair.
 CODIGO_TENTE_MAIS_TARDE = 1013
+
+# TEC-366. O socket ficou `widget_ociosidade_segundos` sem nenhum frame, em
+# nenhum sentido, e o servidor o fechou. Da faixa privada do RFC 6455
+# (4000-4999), porque nenhum codigo padrao diz "ocioso": 1000 e fechamento
+# normal sem motivo, e 1001 e "indo embora", que e o servidor desligando. O
+# cliente o trata como sono, e nao como falha (`CODIGO_OCIOSA` em
+# `frontend/src/lib/conversa.ts`): a proxima mensagem, ou o painel reaberto,
+# reconecta com a sessao e o historico.
+CODIGO_OCIOSA = 4000
 
 
 # Teto do `id` que o cliente escolhe. A coluna e `String(255)` e a chave gravada
@@ -227,21 +237,25 @@ async def chat(
         await _anunciar(websocket, sessao, chave, retomada)
         log.info("widget.conectado", sessao=sessao, retomada=retomada)
 
-        entrada = asyncio.create_task(_ler_do_lead(websocket, service, sessao))
-        saida = asyncio.create_task(_escrever_do_agente(websocket, fila))
+        atividade = Atividade()
+        entrada = asyncio.create_task(_ler_do_lead(websocket, service, sessao, atividade))
+        saida = asyncio.create_task(_escrever_do_agente(websocket, fila, atividade))
+        vigia = asyncio.create_task(_vigiar_ociosidade(websocket, sessao, atividade))
+        tarefas = (entrada, saida, vigia)
         try:
-            # A primeira que terminar decide: a visitante fechou a aba, ou o
-            # socket morreu escrevendo. A outra nao tem mais para quem falar.
-            feitas, _ = await asyncio.wait({entrada, saida}, return_when=asyncio.FIRST_COMPLETED)
+            # A primeira que terminar decide: a visitante fechou a aba, o
+            # socket morreu escrevendo, ou ficou ocioso demais (TEC-366). As
+            # outras nao tem mais para quem falar.
+            feitas, _ = await asyncio.wait(set(tarefas), return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for tarefa in (entrada, saida):
+            for tarefa in tarefas:
                 tarefa.cancel()
             # O `gather` so recolhe: sem ele a tarefa cancelada vazaria "Task
             # exception was never retrieved" no log. Ele NAO e quem expoe a
             # falha -- `return_exceptions` a devolveria numa lista que
             # ninguem le. Quem expoe e a checagem logo abaixo, sobre a tarefa
             # que terminou primeiro.
-            await asyncio.gather(entrada, saida, return_exceptions=True)
+            await asyncio.gather(*tarefas, return_exceptions=True)
         falha = _falha_de(feitas)
         if falha is not None:
             raise falha
@@ -539,13 +553,57 @@ def _instante_do_cliente(bruto: Any) -> datetime | None:
         return None
 
 
-async def _escrever_do_agente(websocket: WebSocket, fila: asyncio.Queue[str]) -> None:
+class Atividade:
+    """O instante do ultimo frame da conexao, em qualquer sentido. TEC-366.
+
+    Relogio monotonico, e nao `datetime.now()`: um ajuste do relogio do host
+    nao pode fechar -- nem manter aberta para sempre -- uma conexao inteira.
+    Conta como trafego o frame que chega e o que o agente manda; o `ack` e o
+    `erro` sao resposta a um frame que chegou, que ja contou.
+    """
+
+    def __init__(self) -> None:
+        self.ultimo = time.monotonic()
+
+    def tocar(self) -> None:
+        self.ultimo = time.monotonic()
+
+
+async def _vigiar_ociosidade(websocket: WebSocket, sessao: str, atividade: Atividade) -> None:
+    """Fecha o socket com `CODIGO_OCIOSA` depois do prazo sem trafego. TEC-366.
+
+    Dorme exatamente o que falta para o prazo, e nao num intervalo fixo:
+    cada despertar sem ociosidade recalcula a partir do ultimo frame. O prazo
+    e lido a cada volta porque o teste o encurta pelo ambiente.
+
+    Terminar esta tarefa e o que tira `chat` do `asyncio.wait`, pelo mesmo
+    caminho da visitante fechando a aba -- e o `finally` de la solta a fila
+    da central.
+    """
+    while True:
+        limite = get_settings().widget_ociosidade_segundos
+        resto = limite - (time.monotonic() - atividade.ultimo)
+        if resto <= 0:
+            log.info("widget.ociosa", sessao=sessao, segundos=limite)
+            with suppress(RuntimeError, WebSocketDisconnect):
+                # O socket pode ter caido no mesmo instante; ai nao ha o que fechar.
+                await websocket.close(code=CODIGO_OCIOSA)
+            return
+        await asyncio.sleep(resto)
+
+
+async def _escrever_do_agente(
+    websocket: WebSocket, fila: asyncio.Queue[str], atividade: Atividade
+) -> None:
     """Repassa ao navegador o que o worker publicou para esta sessao."""
     while True:
         await websocket.send_text(await fila.get())
+        atividade.tocar()
 
 
-async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: str) -> None:
+async def _ler_do_lead(
+    websocket: WebSocket, service: IngestionService, sessao: str, atividade: Atividade
+) -> None:
     teto = get_settings().tamanho_maximo_do_texto_do_widget
     chave = chave_de(CANAL_WEB, sessao)
 
@@ -557,6 +615,9 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
         except FrameInvalido:
             await websocket.close(code=CODIGO_PROTOCOLO)
             return
+        # Qualquer frame legivel conta, inclusive um que sera recusado logo
+        # abaixo: quem esta mandando alguma coisa nao esta ocioso.
+        atividade.tocar()
 
         if not isinstance(frame, dict):
             await websocket.close(code=CODIGO_PROTOCOLO)
