@@ -20,6 +20,13 @@ impede o id de um visitante de colidir com o de outro; ver `_chave_do_id`.
 le aquela conversa --, e numa query string entraria em log de acesso, em
 `Referer` e no historico do navegador. Por isso ele vai no primeiro frame, na
 ida e na retomada.
+
+**So o iframe do painel conversa (TEC-365).** O handshake cujo `Origin` nao
+esta em `ORIGENS_DO_WIDGET` e recusado com 403 antes do `accept`. Os dominios
+do tenant nao entram nessa lista: quem abre o socket e a pagina `/embed/chat`,
+e o `Origin` que o navegador manda e o dela, qualquer que seja o site que
+embute o iframe. Em que site o chat aparece e trava da TEC-345, no
+`frame-ancestors`.
 """
 
 import asyncio
@@ -81,6 +88,11 @@ TAMANHO_MAXIMO_DO_ID = 128
 # 4000 cabe qualquer aviso de privacidade real com folga larga.
 TAMANHO_MAXIMO_DO_AVISO = 4000
 
+# Quanto do `Origin` recusado vai ao log (TEC-365, D4). O header e texto que o
+# cliente escolhe; sem teto, cada recusa poderia gravar kilobytes. Uma origem
+# real cabe folgada em 200.
+TAMANHO_MAXIMO_DA_ORIGEM_NO_LOG = 200
+
 # TEC-364, D1. O vocabulario fechado de `erro.codigo`, e a frase que a tela
 # pode mostrar como esta -- texto que chega a visitante, entao com acento. Os
 # codigos sao os `motivo` da TEC-124, sem renomear: so o nome da chave mudou.
@@ -132,6 +144,26 @@ async def chat(
     pool = getattr(websocket.app.state, "redis_pool", None)
     if not await _cabe_no_limite_por_ip(websocket, pool):
         await _recusar_por_excesso(websocket)
+        return
+
+    # TEC-365, D3. DEPOIS do limite por IP, de proposito: assim a tentativa
+    # recusada tambem conta no balde, e quem martela o handshake de outra
+    # pagina passa a levar 429 pelo mesmo teto de qualquer outro cliente.
+    settings = get_settings()
+    origem = websocket.headers.get("origin")
+    if not origem_permitida(origem, settings.origens_permitidas_do_widget):
+        log.warning(
+            "widget.origem_recusada",
+            origem=None if origem is None else origem[:TAMANHO_MAXIMO_DA_ORIGEM_NO_LOG],
+            # O mesmo IP que o limite conta, e nao o do socket: atras de
+            # proxy, o do socket seria o do proxy em toda recusa.
+            ip=resolver_ip(
+                socket_host=websocket.client.host if websocket.client else None,
+                forwarded_for=websocket.headers.get("x-forwarded-for"),
+                confiar_em_forwarded_for=settings.confiar_em_forwarded_for,
+            ),
+        )
+        await _recusar_por_origem(websocket)
         return
 
     await websocket.accept()
@@ -236,6 +268,34 @@ async def _recusar_por_excesso(websocket: WebSocket) -> None:
                 headers={"Retry-After": str(math.ceil(JANELA_DE_UM_MINUTO))},
             )
         )
+        return
+    await websocket.close()
+
+
+def origem_permitida(origem: str | None, permitidas: frozenset[str]) -> bool:
+    """O `Origin` do handshake esta na lista? TEC-365, D1 e D3.
+
+    Comparacao exata, depois de baixar a caixa: sem prefixo nem subdominio.
+    `https://x.painel.com` nao herda a permissao de `https://painel.com`.
+
+    Sem `Origin` e recusa: todo navegador manda o header num handshake de
+    WebSocket, e o unico cliente legitimo e o iframe do painel. `"null"` --
+    documento sandboxed ou `file://` -- cai no mesmo ramo, porque nao esta na
+    lista. Contra quem nao e navegador esta trava nao vale nada (ele manda o
+    header que quiser), e a defesa ali continua sendo o limite por IP.
+    """
+    return origem is not None and origem.lower() in permitidas
+
+
+async def _recusar_por_origem(websocket: WebSocket) -> None:
+    """Recusa o handshake com 403, pelo mesmo mecanismo do 429.
+
+    Aqui o 403 e a palavra certa -- "proibido, nao tente de novo" --, e por
+    isso o `close()` do servidor sem a extensao nao perde nada: o uvicorn o
+    transforma em 403 do mesmo jeito (ver `_recusar_por_excesso`).
+    """
+    if "websocket.http.response" in websocket.scope.get("extensions", {}):
+        await websocket.send_denial_response(Response(status_code=403))
         return
     await websocket.close()
 

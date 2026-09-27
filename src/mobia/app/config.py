@@ -50,6 +50,15 @@ _FRACAO_SEGURA_DO_LIMIAR_DE_CONTAGEM = 0.6
 # sumir de todo site.
 _FORMATO_DO_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 
+# O formato de cada entrada de `origens_do_widget` (TEC-365, D2), ja em
+# minusculas: o que o navegador manda no `Origin` -- esquema, host e porta, e
+# nada depois.
+_FORMATO_DA_ORIGEM = re.compile(r"(https?)://[a-z0-9.-]+(?::(\d{1,5}))?")
+
+# O navegador omite a porta padrao do `Origin`, entao uma entrada que a escreve
+# nunca casaria.
+_PORTA_PADRAO = {"http": "80", "https": "443"}
+
 
 class ConfiguracaoInsegura(RuntimeError):
     """Configuracao que rodaria, mas sem a protecao que devia ter."""
@@ -366,6 +375,13 @@ class Settings(BaseSettings):
     # Tenant unico na POC (PR-03); o multi-tenant troca a comparacao por uma
     # busca.
     tenant_slug: str | None = None
+
+    # TEC-365, D2. As origens de onde o handshake do `WS /widget/chat` e
+    # aceito, separadas por virgula -- na pratica, a do painel, que serve o
+    # iframe `/embed/chat` que abre a conexao. **Vazia por padrao, e vazia
+    # recusa todo handshake**, pelo mesmo lado seguro do `tenant_slug`. Cada
+    # entrada e conferida na subida: ver `_origens_do_widget_sao_origens`.
+    origens_do_widget: str = ""
 
     # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
     # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link
@@ -960,6 +976,33 @@ class Settings(BaseSettings):
             )
         return valor
 
+    @field_validator("origens_do_widget")
+    @classmethod
+    def _origens_do_widget_sao_origens(cls, valor: str) -> str:
+        """Toda entrada tem de ser uma origem que o navegador poderia mandar.
+
+        `https://painel.x/` (barra final), `https://painel.x:443` (porta
+        padrao, que o navegador omite) ou `painel.x` (sem esquema) subiriam e
+        nunca casariam com o `Origin` de handshake nenhum: o chat seria
+        recusado em todo site, e o log diria so que a origem nao e permitida
+        -- sem dizer que a lista e que esta errada. Mesmo argumento de
+        `_tenant_slug_no_formato_do_next`.
+        """
+        for bruta in valor.split(","):
+            origem = bruta.strip().lower()
+            if not origem:
+                continue
+            casou = _FORMATO_DA_ORIGEM.fullmatch(origem)
+            if casou is None or casou.group(2) == _PORTA_PADRAO[casou.group(1)]:
+                raise ValueError(
+                    "ORIGENS_DO_WIDGET tem uma entrada que nao e origem; "
+                    f"recebi {bruta.strip()!r}. Use esquema, host e porta opcional -- "
+                    "http://localhost:3000 ou https://painel.exemplo.com.br --, sem caminho, "
+                    "sem barra final e sem a "
+                    "porta padrao do esquema: o navegador nunca manda nada disso no Origin."
+                )
+        return valor
+
     @model_validator(mode="after")
     def _recusar_rate_limit_impossivel(self) -> "Settings":
         """Numero negativo aqui falha em silencio ou inverte o fluxo.
@@ -1048,6 +1091,18 @@ class Settings(BaseSettings):
         """
         return frozenset(
             nome.strip() for nome in self.whatsapp_templates_aprovados.split(",") if nome.strip()
+        )
+
+    @property
+    def origens_permitidas_do_widget(self) -> frozenset[str]:
+        """As origens de `origens_do_widget`, separadas e em minusculas. TEC-365.
+
+        Minusculas porque host nao diferencia caixa; quem compara
+        (`origem_permitida`, em `api/routes/widget.py`) baixa a caixa do
+        `Origin` tambem.
+        """
+        return frozenset(
+            origem.strip().lower() for origem in self.origens_do_widget.split(",") if origem.strip()
         )
 
     @property

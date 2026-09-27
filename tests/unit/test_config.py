@@ -870,3 +870,38 @@ def test_tenant_slug_fora_do_formato_nao_sobe(slug: str) -> None:
     slug que o Next recusa deixaria todo site sem botao, e nada no log."""
     with pytest.raises(ValidationError, match="TENANT_SLUG"):
         Settings(_env_file=None, tenant_slug=slug)
+
+
+def test_origens_do_widget_vazia_nao_permite_nada() -> None:
+    """TEC-365, D2: o padrao e o lado seguro -- nenhum handshake passa."""
+    assert Settings(_env_file=None).origens_permitidas_do_widget == frozenset()
+
+
+def test_origens_do_widget_separa_por_virgula_e_baixa_a_caixa() -> None:
+    settings = Settings(
+        _env_file=None,
+        origens_do_widget=" http://localhost:3000 , HTTPS://Painel.Exemplo.com.br,",
+    )
+    assert settings.origens_permitidas_do_widget == frozenset(
+        {"http://localhost:3000", "https://painel.exemplo.com.br"}
+    )
+
+
+@pytest.mark.parametrize(
+    "origem",
+    [
+        "https://painel.x/",
+        "https://painel.x/embed",
+        "https://painel.x:443",
+        "http://painel.x:80",
+        "painel.x",
+        "ws://painel.x",
+        "https://painel.x?a=1",
+        "*",
+    ],
+)
+def test_origem_do_widget_fora_do_formato_nao_sobe(origem: str) -> None:
+    """TEC-365: nenhuma destas casaria com o `Origin` que o navegador manda, e
+    o chat seria recusado em todo site sem o log dizer que a lista esta errada."""
+    with pytest.raises(ValidationError, match="ORIGENS_DO_WIDGET"):
+        Settings(_env_file=None, origens_do_widget=f"http://localhost:3000,{origem}")
