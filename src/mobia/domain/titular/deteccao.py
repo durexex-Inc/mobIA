@@ -133,10 +133,22 @@ def _fala_de_dados_do_lead(normalizado: str) -> bool:
     return _QUALIFICADOR_COLADO_AO_OBJETO.match(resto) is None
 
 
-# So as formas conjugadas de PEDIR -- infinitivo ("quero apagar"), imperativo
-# e subjuntivo ("apague", "quero que apaguem"), o presente que o portugues
-# falado usa como imperativo ("exclui meus dados") e o infinitivo pessoal
-# ("para voces apagarem") --, cada uma entre fronteiras de palavra.
+# So as formas conjugadas de PEDIR, cada uma entre fronteiras de palavra:
+# infinitivo ("quero apagar"), infinitivo pessoal ("para voces apagarem"),
+# subjuntivo singular e plural ("apague", "exclua", "quero que apaguem",
+# "removam") e o imperativo singular do portugues falado ("apaga meus dados",
+# "exclui", "remove"). Pela conjugacao: no -ar o subjuntivo termina em
+# -e/-em, no -er/-ir em -a/-am.
+#
+# **O presente do indicativo no plural fica de fora** ("apagam", "deletam",
+# "excluem", "removem", "esquecem"): e pergunta ou constatacao -- "voces
+# apagam meus dados?", "voces excluem meus dados depois de quanto tempo?" --,
+# nao pedido. **O singular fica dentro, e isso e uma ambiguidade aceita:**
+# "apaga", "exclui" e "remove" sao tambem o presente do indicativo de terceira
+# pessoa, e "o sistema apaga meus dados depois?" vira ELIMINACAO. Aceita
+# porque o imperativo singular e a forma mais comum de pedir no Brasil
+# ("apaga meus dados"), e perde-lo seria perder pedido legal; o ADMIN ainda
+# pode recusar na fila.
 #
 # A primeira versao casava o RADICAL solto (`apag|exclu|...`) em qualquer
 # ponto do texto, e isso transformava em ELIMINACAO frases que so continham o
@@ -147,13 +159,13 @@ def _fala_de_dados_do_lead(normalizado: str) -> bool:
 # sem volta. O participio ("apagado", "removido") fica de fora de proposito:
 # e pergunta ou constatacao ("meus dados foram apagados?"), nao pedido.
 _TERMINACOES_DE_PEDIDO: dict[str, tuple[str, ...]] = {
-    "apag": ("ar", "arem", "a", "am", "ue", "uem"),
-    "delet": ("ar", "arem", "a", "am", "e", "em"),
-    "elimin": ("ar", "arem", "a", "am", "e", "em"),
-    "exclu": ("ir", "irem", "i", "em", "a", "am"),
-    "remov": ("er", "erem", "e", "em", "a", "am"),
+    "apag": ("ar", "arem", "a", "ue", "uem"),
+    "delet": ("ar", "arem", "a", "e", "em"),
+    "elimin": ("ar", "arem", "a", "e", "em"),
+    "exclu": ("ir", "irem", "i", "a", "am"),
+    "remov": ("er", "erem", "e", "a", "am"),
     # Sem acento: `normalizar` ja tirou o cedilha de "esqueca"/"esquecam".
-    "esquec": ("er", "erem", "e", "em", "a", "am"),
+    "esquec": ("er", "erem", "e", "a", "am"),
 }
 _VERBO_DE_ELIMINAR = re.compile(
     r"\b(?:"

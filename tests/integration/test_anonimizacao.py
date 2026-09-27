@@ -10,6 +10,7 @@ auditoria e duas solicitacoes abertas -- e confere o que sobra depois de
 (desde a TEC-203 a coluna guarda o HMAC, e e ele que deixa de poder aparecer).
 """
 
+import asyncio
 import base64
 import uuid
 from dataclasses import dataclass
@@ -609,3 +610,31 @@ async def test_eliminar_o_whatsapp_apaga_o_vinculo_do_mesmo_telefone_no_widget(
             )
             == 2
         )
+
+
+async def test_cancelamento_no_meio_do_apagar_loga_as_chaves_restantes_e_repropaga(
+    semeado: Semeado,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    caplog: Any,
+) -> None:
+    """O worker pode cancelar o job no meio do laco de blobs (job_timeout,
+    SIGTERM). O commit ja aconteceu; o que falta e dizer quais blobs podem ter
+    ficado orfaos -- e o cancelamento tem de continuar sendo cancelamento."""
+
+    class _ArmazemCancelado(ArmazemLocal):
+        async def apagar(self, chave: str) -> None:
+            raise asyncio.CancelledError
+
+    with caplog.at_level("WARNING"), pytest.raises(asyncio.CancelledError):
+        await eliminacao.anonimizar(
+            session_factory, _ArmazemCancelado(tmp_path), solicitacao_id=semeado.eliminacao
+        )
+
+    ((_, evento),) = eventos_de_log(caplog, "titular.midia_apagamento_cancelado")
+    assert sorted(evento["chaves_restantes"]) == sorted(
+        b.relative_to(tmp_path).as_posix() for b in (semeado.blob, semeado.blob_pendente)
+    )
+    assert semeado.blob.exists() and semeado.blob_pendente.exists()
+    async with session_factory() as sessao:
+        assert await sessao.scalar(text("SELECT count(*) FROM identidades_de_lead")) == 0

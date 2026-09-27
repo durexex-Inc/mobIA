@@ -80,8 +80,25 @@ def test_radical_dentro_de_outra_palavra_nao_e_eliminacao(
 
 
 @pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        ("vocês excluem meus dados pessoais depois de quanto tempo?", None),
+        ("vocês apagam meus dados?", None),
+        ("quero meus dados. vocês removem o apto da lista?", TipoDeSolicitacao.ACESSO),
+    ],
+)
+def test_indicativo_plural_e_pergunta_nao_pedido(
+    texto: str, esperado: TipoDeSolicitacao | None
+) -> None:
+    """O presente do indicativo no plural pergunta o que o sistema faz, nao
+    pede que faca. So o subjuntivo ("apaguem", "excluam") e pedido."""
+    assert pedido_de_titular(texto) is esperado
+
+
+@pytest.mark.parametrize(
     "texto",
     [
+        "apaga meus dados",
         "exclui meus dados",
         "remove meus dados",
         "remova meus dados pessoais",
@@ -148,3 +165,11 @@ def test_remover_contato_e_optout_mas_nao_pedido_de_titular() -> None:
     """
     assert pedido_de_titular("remover meu contato") is None
     assert pediu_optout("remover meu contato") is True
+
+
+def test_ambiguidade_aceita_do_indicativo_singular() -> None:
+    """O imperativo singular ("apaga meus dados") e o indicativo de terceira
+    pessoa sao a mesma palavra. Manter o pedido mais comum custa este falso
+    positivo, declarado no comentario de `_TERMINACOES_DE_PEDIDO` -- o teste
+    prende a escolha, para que muda-la seja deliberado."""
+    assert pedido_de_titular("o sistema apaga meus dados depois?") is (TipoDeSolicitacao.ELIMINACAO)
