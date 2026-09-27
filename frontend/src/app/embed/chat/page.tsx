@@ -7,8 +7,11 @@ import { CabecalhoDoChat } from '@/components/CabecalhoDoChat'
 import { nomeExibido } from '@/lib/aparencia'
 import { buscarAparencia } from '@/lib/servidor/aparencia'
 
+// `description` explicita: sem ela o Next herda a do layout raiz do painel
+// ("Funil de leads..."), que nao tem nada a ver com esta pagina publica.
 export const metadata: Metadata = {
   title: 'Chat',
+  description: 'Chat de atendimento da imobiliária.',
   robots: { index: false, follow: false },
 }
 
