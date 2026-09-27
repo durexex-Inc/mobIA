@@ -114,7 +114,7 @@ que põe o JWT da sessão num cabeçalho:
 | --- | --- | --- | --- |
 | Server Component → `buscarFunil` | o painel de funil | `revalidate: 60` | **não** |
 | Server Component → `buscarLeads` | a lista de leads | `no-store` | não |
-| Route Handler `/bff/[...rota]` | a conversa do lead, ao carregar as falas anteriores (TEC-324) | `no-store` | sim |
+| Route Handler `/bff/[...rota]` | a conversa do lead (falas anteriores, TEC-324; polling, TEC-327), assumir e devolver (TEC-327), revelar telefone (TEC-330) | `no-store` | sim |
 
 **O painel não passa pelo `/bff/*`, e isso é deliberado.** Um Server Component
 chamando o próprio Route Handler custaria um round-trip HTTP do processo para
