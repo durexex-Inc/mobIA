@@ -20,6 +20,8 @@ A card junta sete frentes de natureza diferente. Esta entrega o **núcleo de dir
 
 As duas dependem de detectar conteúdo no texto livre do lead, e isso é outro problema, com outro custo e outro teste. Há uma constatação que muda o tamanho da segunda: **o sistema não guarda o nome do lead**. Não há tabela de lead, e `messages.envelope_context` não tem escritor. O único nome que chega ao modelo é o que o lead digita.
 
+- **Emenda (TEC-217, 27/09/2026):** o sistema passou a guardar o nome do perfil do WhatsApp do lead, em `messages.envelope_context`, cifrado e só com o contato do remetente de cada linha. A anonimização e a retenção desta card já esvaziam a coluna, então a eliminação o cobre. A exportação (`GET /leads/{id}/dados-pessoais`) não o inclui, e isso é lacuna. O nome continua sem ir ao modelo: nada lê a coluna no turno.
+
 ## O que já existia
 
 | Frente | Antes desta card |
