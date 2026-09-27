@@ -260,7 +260,8 @@ async def chat(
         if falha is not None:
             raise falha
     except Exception as exc:
-        # A identidade, o anuncio (a leitura do historico) e as duas tarefas caem aqui. Sem
+        # A identidade, o anuncio (a leitura do historico) e as tres tarefas
+        # -- a vigia da ociosidade entrou na TEC-366 -- caem aqui. Sem
         # este ramo a excecao escapava do endpoint e o uvicorn a logava crua
         # -- ou, vinda de uma tarefa, sumia no `gather` e o socket fechava sem
         # codigo, com o cliente vendo 1006 e o servidor sem rastro nenhum.
