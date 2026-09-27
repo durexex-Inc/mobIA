@@ -694,6 +694,15 @@ class Settings(BaseSettings):
     embedding_modelo: str = "text-embedding-3-small"
     embedding_dimensoes: int = 1536
 
+    # TEC-131. A transcricao do audio do lead usa a mesma `openai_api_key`
+    # acima: a Whisper API e a escolha do SRS (tabela de stack) e sai do mesmo
+    # SDK. Sem a chave, o audio nao e transcrito e o lead recebe o pedido de
+    # texto -- o mesmo desfecho de a Whisper estar fora do ar.
+    transcricao_modelo: str = "whisper-1"
+    # RN-01.3: acima disto o audio e recusado sem ser transcrito. O corte e no
+    # segundo inteiro (`midia/audio.py::dentro_do_limite`).
+    transcricao_duracao_maxima_segundos: int = 120
+
     # Teto de candidatos por passagem e tamanho do lote por chamada. O lote e
     # MENOR que o teto de proposito: com um lote so, "comita por lote" nao
     # significaria nada -- uma falha desfaria a passagem inteira. Com dois,

@@ -24,6 +24,7 @@ from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import ModeradorAnthropic
 from mobia.infra.queue import redis_settings
 from mobia.infra.rotacao import avisar_rotacao_vencida
+from mobia.infra.transcricao import TranscritorWhisper
 from mobia.workers.jobs.avisar_cancelamento import avisar_cancelamento
 from mobia.workers.jobs.avisar_confirmacao import avisar_confirmacao
 from mobia.workers.jobs.baixar_midia import MAXIMO_DE_TENTATIVAS, baixar_midia
@@ -46,6 +47,7 @@ from mobia.workers.jobs.sweep_retencao_auditoria import sweep_retencao_auditoria
 from mobia.workers.jobs.sweep_retencao_de_leads import sweep_retencao_de_leads
 from mobia.workers.jobs.sweep_sla import sweep_sla
 from mobia.workers.jobs.sweep_stalled import sweep_stalled
+from mobia.workers.jobs.transcrever_audio import transcrever_audio
 
 log = structlog.get_logger(__name__)
 
@@ -196,6 +198,10 @@ async def startup(ctx: dict[str, Any]) -> None:
     if settings.em_producao and settings.midia_armazem == "local":
         log.warning("midia.armazem_local_em_producao", diretorio=settings.midia_diretorio)
     ctx["armazem"] = armazem_da_config(settings)
+    # TEC-131. A Whisper, com a mesma `openai_api_key` dos embeddings -- que a
+    # guarda de producao acima ja exige. Sem a chave em desenvolvimento, cada
+    # audio falha como `servico_indisponivel` e o lead recebe o pedido de texto.
+    ctx["transcritor"] = TranscritorWhisper()
     #
     # TEC-170. Uma instancia so, guardada tambem em `ctx["email_ao_corretor"]`:
     # e a mesma porta que `avisar_confirmacao` usa para o aviso ao corretor, e
@@ -387,6 +393,13 @@ class WorkerSettings:
         # o ARQ desiste antes do job gravar e a linha fica PENDENTE ate a
         # varredura.
         func(baixar_midia, keep_result=0, max_tries=MAXIMO_DE_TENTATIVAS),
+        # TEC-131. `keep_result=0` pela mesma razao do `baixar_midia`: o
+        # `_job_id` e fixo (`audio:<id>`). `max_tries=1` porque o job nunca
+        # pede `Retry` (D2), e a unica retentativa que o ARQ faria sozinho e a
+        # de um cancelamento por `job_timeout` -- que chegaria bem depois de o
+        # turno ter desistido de esperar (`PRAZO_DA_TRANSCRICAO`, 90s) e so
+        # pagaria a Whisper de novo por uma transcricao que ninguem le.
+        func(transcrever_audio, keep_result=0, max_tries=1),
         # `keep_result=0` pela mesma razao do `sweep_sla`: o resultado (um
         # `int`) nao serve para nada depois que o log saiu. Entra em
         # `cron_jobs` tambem -- e o relogio que dispara este job.

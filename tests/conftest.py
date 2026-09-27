@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import secrets
+import struct
 import subprocess
 import sys
 import time
@@ -509,6 +510,61 @@ class ClassificadorFake:
             tokens_out=40,
             latency_ms=600,
         )
+
+
+def _pagina_ogg(granule: int, serial: int, sequencia: int, corpo: bytes) -> bytes:
+    # Um pacote so por pagina e menor que 255 bytes: a tabela de segmentos e
+    # um byte com o tamanho. O CRC fica zerado -- `duracao_do_ogg_opus` nao o
+    # confere, e o duble nao vai para decodificador nenhum.
+    assert len(corpo) < 255
+    cabecalho = struct.pack("<4sBBqIIIB", b"OggS", 0, 0, granule, serial, sequencia, 0, 1)
+    return cabecalho + bytes([len(corpo)]) + corpo
+
+
+def ogg_opus(duracao_segundos: float, *, pre_skip: int = 312) -> bytes:
+    """Um fluxo Ogg/Opus minimo com a duracao pedida. TEC-131.
+
+    Tres paginas, como a nota de voz do WhatsApp: `OpusHead`, `OpusTags` e uma
+    pagina de audio cujo granule e a duracao em amostras de 48 kHz mais o
+    pre-skip (RFC 7845). O "audio" e lixo -- quem transcreve nos testes e o
+    duble, nunca a Whisper.
+    """
+    serial = 0x4D0B1A
+    cabeca = b"OpusHead" + struct.pack("<BBHIhB", 1, 1, pre_skip, 48_000, 0, 0)
+    granule = round(duracao_segundos * 48_000) + pre_skip
+    return (
+        _pagina_ogg(0, serial, 0, cabeca)
+        + _pagina_ogg(0, serial, 1, b"OpusTags" + b"\x00" * 8)
+        + _pagina_ogg(granule, serial, 2, b"\xfc" * 64)
+    )
+
+
+class TranscritorFake:
+    """Duble da Whisper. TEC-131.
+
+    Devolve `texto` com a `duracao` que a Whisper diria, ou levanta `erro`.
+    Guarda o que recebeu para o teste afirmar que o audio longo NAO chegou aqui.
+    """
+
+    def __init__(
+        self,
+        texto: str = "procuro um apartamento de dois quartos",
+        *,
+        duracao: float | None = None,
+        erro: Exception | None = None,
+    ) -> None:
+        self.texto = texto
+        self.duracao = duracao
+        self.erro = erro
+        self.chamadas: list[tuple[bytes, str]] = []
+
+    async def transcrever(self, dados: bytes, extensao: str):
+        from mobia.domain.midia.transcricao import Transcricao
+
+        self.chamadas.append((dados, extensao))
+        if self.erro is not None:
+            raise self.erro
+        return Transcricao(texto=self.texto, duracao_segundos=self.duracao)
 
 
 class EmbedadorFake:

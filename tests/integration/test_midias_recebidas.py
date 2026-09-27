@@ -50,10 +50,20 @@ def test_linha_pendente_de_documento() -> None:
     assert "filename" not in linha and linha["sha256"] is None
 
 
-def test_texto_e_audio_nao_geram_linha() -> None:
+def test_texto_nao_gera_linha() -> None:
     assert linha_pendente(uuid.uuid4(), {"type": "text"}, MessageContentType.TEXTO) is None
-    envelope_audio = {"type": "audio", "audio": {"id": "a"}}
-    assert linha_pendente(uuid.uuid4(), envelope_audio, MessageContentType.AUDIO) is None
+
+
+def test_audio_gera_linha_desde_a_tec_131() -> None:
+    # Ate a TEC-131 o audio nao gerava linha: nada o baixava. Agora ele e
+    # guardado como a imagem, e a linha e tambem onde mora o desfecho da
+    # transcricao -- nulo ao nascer.
+    envelope = {"type": "audio", "audio": {"id": "a", "mime_type": "audio/ogg; codecs=opus"}}
+    linha = linha_pendente(uuid.uuid4(), envelope, MessageContentType.AUDIO)
+    assert linha is not None
+    assert linha["media_id_da_meta"] == "a"
+    assert linha["mime_type"] == "audio/ogg; codecs=opus"
+    assert "status_da_transcricao" not in linha
 
 
 def test_envelope_sem_id_nao_gera_linha() -> None:

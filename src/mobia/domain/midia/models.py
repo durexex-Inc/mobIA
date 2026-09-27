@@ -1,9 +1,12 @@
 """A midia recebida: onde ela mora e o estado do download. TEC-132, D1-D3.
 
+Desde a TEC-131 (D3), tambem o desfecho da transcricao do audio -- as quatro
+colunas de transcricao, nulas em imagem e documento.
+
 **Tabela a parte, e nao colunas em `messages`** (D2): so midia tem estes
-campos, e o estado do download muda DEPOIS que a mensagem ja foi gravada --
-misturar faria toda leitura de `messages` carregar colunas que so IMAGEM e
-DOCUMENTO usam.
+campos, e o estado do download (e o da transcricao) muda DEPOIS que a
+mensagem ja foi gravada -- misturar faria toda leitura de `messages` carregar
+colunas que so IMAGEM, DOCUMENTO e AUDIO usam.
 
 **O nome do arquivo do documento nao vira coluna.** Ele ja fica cifrado em
 `messages.raw_payload`, onde o parser o grava; guardar de novo aqui
@@ -35,7 +38,17 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,6 +69,24 @@ class MotivoDaMidia(StrEnum):
     RECUSADA_PELA_META = "recusada_pela_meta"
     TENTATIVAS_ESGOTADAS = "tentativas_esgotadas"
     EXPIRADA = "expirada"
+
+
+class StatusDaTranscricao(StrEnum):
+    """O desfecho da transcricao de um audio (TEC-131, D3). Nulo na coluna e
+    "ainda sem desfecho", e e o que a espera do turno procura."""
+
+    TRANSCRITA = "TRANSCRITA"
+    RECUSADA = "RECUSADA"
+    FALHOU = "FALHOU"
+
+
+class MotivoDaTranscricao(StrEnum):
+    ACIMA_DA_DURACAO = "acima_da_duracao"
+    FORMATO_NAO_SUPORTADO = "formato_nao_suportado"
+    SERVICO_INDISPONIVEL = "servico_indisponivel"
+    MIDIA_INDISPONIVEL = "midia_indisponivel"
+    TRANSCRICAO_VAZIA = "transcricao_vazia"
+    ERRO_INESPERADO = "erro_inesperado"
 
 
 class MidiaRecebida(Base):
@@ -79,6 +110,13 @@ class MidiaRecebida(Base):
     # ingestao nao conta, e os `Retry` do ARQ dentro de um job tambem nao. E o
     # teto de `sweep_midias_pendentes` (`TETO_DE_REENFILEIRAMENTOS`) que le.
     tentativas: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # TEC-131, D3. So AUDIO usa as quatro; em imagem e documento ficam nulas.
+    # O texto transcrito nao mora aqui: mora em `messages.text_body`, onde tudo
+    # o que le texto do lead ja o encontra.
+    status_da_transcricao: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    motivo_da_transcricao: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    duracao_segundos: Mapped[float | None] = mapped_column(Float, nullable=True)
+    transcrita_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -15,7 +15,7 @@ from mobia.domain.identidade.indice import chave_de, registrar
 from mobia.domain.limites.eventos import registrar_bloqueio
 from mobia.domain.limites.models import ESCOPO_NUMERO
 from mobia.domain.messages.canais import CANAL_WHATSAPP
-from mobia.domain.messages.enums import MessageDirection, MessageRole
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.schemas import ParsedMessage
 from mobia.domain.messages.status import MessageStatus
@@ -25,7 +25,11 @@ from mobia.domain.optout.deteccao import pediu_optout
 from mobia.domain.titular.deteccao import e_palavra_de_confirmacao, pedido_de_titular
 from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 from mobia.infra.db import motivo_do_erro_de_banco
-from mobia.infra.queue import enqueue_baixar_midia, enqueue_process_message
+from mobia.infra.queue import (
+    enqueue_baixar_midia,
+    enqueue_process_message,
+    enqueue_transcrever_audio,
+)
 from mobia.infra.rate_limit import JANELA_DE_UM_MINUTO, chave_de_numero, consumir
 
 log = structlog.get_logger(__name__)
@@ -44,7 +48,11 @@ class IngestionService:
     Mesma forma -- falha no enqueue vira `log.warning` e nao impede nada -- e
     mesma rede de seguranca, so que outra: aqui quem recupera o que se perder
     e `sweep_midias_pendentes` (workers/jobs/sweep_midias_pendentes.py), nao o
-    sweeper de mensagens.
+    sweeper de mensagens. Desde a TEC-131, o audio toma `_try_enqueue_audio`
+    no lugar dele: quem baixa o audio e o job de transcricao, e a mesma
+    varredura cobre o download que ele nao chegar a fazer. A transcricao
+    perdida nao tem varredura: o turno para de espera-la depois de
+    `PRAZO_DA_TRANSCRICAO`, e o `sweep_stalled` o recupera.
 
     `consumir` (chamado daqui para o rate limit por numero) so absorve
     `RedisError`: indisponibilidade de Redis fica silenciosa e fail-open, por
@@ -102,7 +110,7 @@ class IngestionService:
         # nao ha caso em que duas ocorrencias do mesmo id tragam corpos
         # diferentes para este dicionario escolher entre eles.
         texto_de = {item.provider_message_id: item.text_body for item in parsed}
-        for message_id, provider_message_id, tem_midia in gravadas:
+        for message_id, provider_message_id, tipo_da_midia in gravadas:
             texto = texto_de.get(provider_message_id) or ""
             # O opt-out nao espera a janela (RN-01.6 + RN-14), e desde a
             # TEC-128 (onda final) o pedido de humano tambem nao (RN-16.1,
@@ -165,13 +173,15 @@ class IngestionService:
                 )
 
             await self._try_enqueue(message_id, atraso_segundos=atraso)
-            if tem_midia:
+            if tipo_da_midia is MessageContentType.AUDIO:
+                await self._try_enqueue_audio(message_id)
+            elif tipo_da_midia is not None:
                 await self._try_enqueue_midia(message_id)
         return [message_id for message_id, _, _ in gravadas]
 
     async def _persist(
         self, parsed: list[ParsedMessage], channel: str, chave_de_remetente: dict[str, str]
-    ) -> list[tuple[uuid.UUID, str, bool]]:
+    ) -> list[tuple[uuid.UUID, str, MessageContentType | None]]:
         """Grava as mensagens novas e descarta as que ja tinham chegado.
 
         "Ja tinham chegado" e a reentrega da Meta, e desde a TEC-124 tambem o
@@ -185,11 +195,12 @@ class IngestionService:
         mensagens legitimas que vieram junto.
 
         Desde a TEC-132, a mensagem de imagem/documento tambem grava a linha
-        PENDENTE em `midias_recebidas`, NA MESMA transacao e antes do commit:
-        uma mensagem de midia sem a linha correspondente seria uma midia que
-        nenhuma varredura (`pendentes_para_reenfileirar`) encontra. O
-        `on_conflict_do_nothing` aqui e pela mesma razao do de `messages` --
-        reentrega nao pode tentar gravar a mesma PK duas vezes.
+        PENDENTE em `midias_recebidas` -- e o audio, desde a TEC-131 --, NA
+        MESMA transacao e antes do commit: uma mensagem de midia sem a linha
+        correspondente seria uma midia que nenhuma varredura
+        (`pendentes_para_reenfileirar`) encontra. O `on_conflict_do_nothing`
+        aqui e pela mesma razao do de `messages` -- reentrega nao pode tentar
+        gravar a mesma PK duas vezes.
         """
         valores = []
         for item in parsed:
@@ -244,6 +255,9 @@ class IngestionService:
             # da Meta nunca traz corpos diferentes para o mesmo wamid).
             item_de = {item.provider_message_id: item for item in parsed}
             midia_valores = []
+            # O tipo, e nao so "tem midia": desde a TEC-131 o audio vai para
+            # outro job (`_try_enqueue_audio`), e `ingest` precisa saber qual.
+            tipo_da_midia: dict[uuid.UUID, MessageContentType] = {}
             for linha in inseridas:
                 correspondente = item_de.get(linha.provider_message_id)
                 if correspondente is None:
@@ -253,6 +267,7 @@ class IngestionService:
                 )
                 if midia is not None:
                     midia_valores.append(midia)
+                    tipo_da_midia[linha.id] = correspondente.content_type
 
             if midia_valores:
                 await session.execute(
@@ -260,8 +275,6 @@ class IngestionService:
                 )
 
             await session.commit()
-
-        ids_com_midia = {midia["message_id"] for midia in midia_valores}
 
         # Contagem, nao conjunto: o mesmo wamid pode vir repetido dentro de um
         # unico envelope, e ai uma das ocorrencias e gravada e a outra descartada.
@@ -289,9 +302,11 @@ class IngestionService:
         # id gravado com o texto em claro do `ParsedMessage` que o originou --
         # `inseridas` pode ser subconjunto de `parsed`, sem garantia de ordem.
         # O terceiro elemento (TEC-132) e quem decide, ja em `ingest`, se aquele
-        # id precisa tambem do `_try_enqueue_midia`.
+        # id precisa tambem do `_try_enqueue_midia` -- ou, desde a TEC-131, do
+        # `_try_enqueue_audio`. None quando nao ha linha de midia.
         return [
-            (linha.id, linha.provider_message_id, linha.id in ids_com_midia) for linha in inseridas
+            (linha.id, linha.provider_message_id, tipo_da_midia.get(linha.id))
+            for linha in inseridas
         ]
 
     async def _try_enqueue(self, message_id: uuid.UUID, *, atraso_segundos: float = 0.0) -> None:
@@ -382,6 +397,26 @@ class IngestionService:
         except Exception as exc:
             log.warning(
                 "midia.enqueue_failed",
+                message_id=str(message_id),
+                reason=type(exc).__name__,
+            )
+
+    async def _try_enqueue_audio(self, message_id: uuid.UUID) -> None:
+        """Enfileira `transcrever_audio`. TEC-131, D1.
+
+        Mesma forma de `_try_enqueue_midia`, e chamado no lugar dele: o job de
+        transcricao e quem baixa o audio. Falha aqui nao tem varredura propria
+        -- o turno espera ate `PRAZO_DA_TRANSCRICAO` e segue sem a transcricao,
+        e a `sweep_midias_pendentes` ainda guarda o audio pelo `baixar_midia`.
+        """
+        if self._queue is None:
+            log.warning("audio.enqueue_failed", message_id=str(message_id), reason="no_queue")
+            return
+        try:
+            await enqueue_transcrever_audio(self._queue, message_id)
+        except Exception as exc:
+            log.warning(
+                "audio.enqueue_failed",
                 message_id=str(message_id),
                 reason=type(exc).__name__,
             )
