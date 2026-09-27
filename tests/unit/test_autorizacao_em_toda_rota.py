@@ -233,8 +233,10 @@ def test_o_me_exige_sessao_e_nao_permissao() -> None:
 
     Permissao nenhuma e exigida de proposito -- a rota nao da acesso a dado
     nenhum alem do que o token de quem chama ja carrega --, mas ela tambem nao
-    e publica: o token compartilhado nao serve, porque nao ha usuario por tras
-    dele para descrever.
+    e publica: `ExigeSessao` exige um usuario de verdade por tras do token, e
+    nao so um JWT valido. Ate a TEC-382 isso tambem recusava o token
+    compartilhado, que resolvia para um ADMIN sem usuario; apagado o ramo,
+    quem nao apresenta JWT nenhum cai no mesmo caso por outro caminho.
     """
     por_sessao = [
         rota.path for rota in _rotas_do_app() if isinstance(_guarda_de(rota), ExigeSessao)
@@ -265,11 +267,18 @@ async def test_o_token_compartilhado_antigo_nao_autentica_mais() -> None:
     `registrar_negativa` so grava no log (`identidade is None`, ver o
     docstring dela), e o `RateLimitPorIP` degrada sem pool de Redis no
     `app.state`.
+
+    `GET /api/v1/auth/me` entra a parte, fora de `PERMISSAO_ESPERADA`: ela e
+    guardada por `ExigeSessao`, e nao por `Exige(Permissao.X)`, entao a matriz
+    de permissao nao a cobre -- mas e administrativa no sentido que importa
+    aqui (responde quem chamou), e o token antigo tem de reprovar nela tanto
+    quanto em qualquer outra.
     """
     app = create_app()
     transporte = ASGITransport(app=app)
+    rotas = [*PERMISSAO_ESPERADA, ("GET", "/api/v1/auth/me")]
     async with AsyncClient(transport=transporte, base_url="http://test") as cliente:
-        for metodo, caminho in PERMISSAO_ESPERADA:
+        for metodo, caminho in rotas:
             resposta = await cliente.request(
                 metodo,
                 _com_placeholder(caminho),

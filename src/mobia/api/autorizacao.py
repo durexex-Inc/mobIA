@@ -66,16 +66,20 @@ ROTAS_PUBLICAS: dict[str, str] = {
     "/redoc": "idem",
 }
 
-# O que o ramo do token compartilhado produzia no lugar de um usuario.
+# O texto que `para_log`/`como_ator` devolvem quando `usuario_id` e nulo.
 #
-# A TEC-382 apagou o ramo (`_do_token_compartilhado`) que produzia isto; a
-# constante fica porque os EVENTOS ANTIGOS da auditoria, gravados enquanto ele
-# ainda respondia, continuam com este texto em `ator_id` -- `consulta.py` os
-# busca por ele, e `para_log`/`como_ator` abaixo tambem o citam.
+# Nenhum construtor produz mais essa identidade: so o JWT resolve identidade
+# desde que a TEC-382 apagou `_do_token_compartilhado`, e o `sub` dele e claim
+# obrigatoria (`domain/usuarios/tokens.py`) -- o ramo de `usuario_id` nulo fica
+# vestigial em `para_log`/`como_ator`, e a razao de ele continuar la e a mesma
+# que `ExigeSessao.__call__` explica: o campo segue tipado `uuid.UUID | None`.
 #
-# Nao e um UUID de verdade porque nao havia usuario nenhum por tras dele: quem
-# usava o token compartilhado nao tinha identidade, e esta constante existe
-# para que o log diga isso em vez de inventar um id.
+# Nao e um UUID de verdade porque nao havia usuario nenhum por tras do token
+# compartilhado que produzia este valor: a constante existia para que o log
+# dissesse isso em vez de inventar um id. Os EVENTOS GRAVADOS ENTAO continuam
+# com este texto exato em `ator_id`, e uma consulta por ele e possivel (`ator`
+# em `domain/auditoria/consulta.py` e texto exato, nao UUID) -- mas nada neste
+# modulo dispara essa consulta; ela e responsabilidade de quem le a trilha.
 SEM_USUARIO = "token-compartilhado"
 
 
@@ -92,8 +96,8 @@ class IdentidadeDaRequisicao:
     TEC-382 apaga o ramo em si (Emenda E-04 a RNF-11).
 
     `usuario_id` continua nulavel no tipo, mas nao ha mais construtor nenhum
-    que passe `None` -- ver `para_log` e `como_ator` sobre o texto que os
-    EVENTOS ANTIGOS da auditoria ainda carregam.
+    que passe `None` -- `para_log` e `como_ator` tratam esse ramo como
+    vestigial, e nao como caminho vivo.
     """
 
     papel: str
@@ -117,8 +121,9 @@ class IdentidadeDaRequisicao:
 
         So devolve `SEM_USUARIO` para uma identidade com `usuario_id` nulo --
         o que o JWT nunca produz (`sub` e claim obrigatoria em
-        `domain/usuarios/tokens.py`). O ramo fica pelos eventos antigos da
-        auditoria que o token compartilhado gravou antes da TEC-382.
+        `domain/usuarios/tokens.py`). Ninguem mais constroi essa identidade
+        desde a TEC-382; o ramo fica porque `usuario_id` continua tipado
+        nulavel.
         """
         return str(self.usuario_id) if self.usuario_id is not None else SEM_USUARIO
 
@@ -126,8 +131,8 @@ class IdentidadeDaRequisicao:
         """Quem chamou, como ator da trilha de auditoria (TEC-206).
 
         Sempre USUARIO, com o mesmo identificador do log: o `usuario_id`, ou
-        `token-compartilhado` para os eventos antigos que o `X-Admin-Token`
-        gravou antes de a TEC-382 apagar o ramo que o produzia.
+        `SEM_USUARIO` se ele for nulo -- ramo vestigial, pela mesma razao de
+        `para_log`.
         """
         return Ator(AtorTipo.USUARIO, self.para_log())
 
