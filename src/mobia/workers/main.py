@@ -325,11 +325,11 @@ class WorkerSettings:
         # resultado (um `int`) nao serve para nada depois que o log saiu.
         # Entra em `cron_jobs` tambem -- e o relogio que dispara este job.
         #
-        # **`timeout=900` (15 min), MAIOR que o `job_timeout=240` global** (ver
-        # abaixo, no fim da classe) -- e o unico job deste worker com teto
-        # proprio. As tres funcoes que ele chama sao limitadas por passagem
-        # (`max_lotes` em duas, `lote` na terceira -- ver o docstring do job),
-        # e a conta do pior caso com os defaults de hoje e:
+        # **Sem `timeout` proprio: roda sob o `job_timeout=240` global** (ver
+        # abaixo, no fim da classe). As tres funcoes que ele chama sao
+        # limitadas por passagem (`max_lotes` em duas, `lote` na terceira --
+        # ver o docstring do job), e a conta do pior caso com os defaults de
+        # hoje e:
         #
         #   ~20s  cumprir_eliminacoes_a_vencer: ate 100 solicitacoes, cada
         #          uma um `eliminacao.anonimizar` inteiro
@@ -339,17 +339,28 @@ class WorkerSettings:
         #          lotes de 500), mas em UPDATE/DELETE em massa, bem mais
         #          barato por linha
         #   ----
-        #   ~100s contra 900 -- quase 10x de folga
+        #   ~100s contra 240 -- mais de 2x de folga
         #
-        # A folga grande e deliberada, e nao arredondamento: os numeros acima
-        # supoem banco e armazem saudaveis, e o proprio CLAUDE.md deste repo
-        # documenta que o Postgres local degrada sob carga (secao "Quando o
-        # `-n 8` derruba o Postgres") e que blob em S3 paga latencia de rede
-        # que um disco local nao paga. 900s deixa margem para os dois sem
-        # perder a funcao do teto: um job genuinamente travado (conexao presa,
-        # deadlock) ainda estoura e vira `CancelledError` em vez de segurar o
-        # worker para sempre.
-        func(sweep_retencao_de_leads, keep_result=0, timeout=900),
+        # Os numeros supoem banco e armazem saudaveis. Se a passagem estourar
+        # os 240s (Postgres degradado, blob em S3 lento), ela vira
+        # `CancelledError` no meio: o que ja commitou fica, porque cada lead e
+        # cada lote commitam sozinhos, e o resto volta na passagem do dia
+        # seguinte -- os tetos por passagem existem justamente para o trabalho
+        # de um dia caber aqui.
+        #
+        # **A versao anterior registrava `timeout=900` aqui, e ele nao fazia o
+        # que prometia** (revisao final da TEC-207, I1). O `cron(...)` la
+        # embaixo registra OUTRA entrada, `cron:sweep_retencao_de_leads`, com
+        # timeout proprio (`None`, isto e, `job_timeout`) -- entao a passagem
+        # diaria sempre rodou sob os 240s. E o arq calcula
+        # `in_progress_timeout_s = max(timeout_s or job_timeout) + 10` sobre
+        # TODAS as funcoes (`arq/worker.py`): os 900 levavam a trava "em
+        # andamento" de todo job, `process_message` incluido, a 910s,
+        # atrasando em ~15 minutos a retomada de um job cujo worker morreu, e
+        # quebravam a invariante `job_completion_wait > job_timeout` descrita
+        # la embaixo. `test_nenhum_job_registra_teto_acima_do_job_timeout`
+        # (`tests/integration/test_worker_startup.py`) prende isso.
+        func(sweep_retencao_de_leads, keep_result=0),
         # TEC-180. `keep_result=0` pela razao do `gerar_resumo`: o `_job_id` e
         # fixo por handoff (`crm:<id>`), e uma chave de resultado sobrevivente
         # bloquearia em silencio o reenqueue que a varredura faz a cada rodada

@@ -55,10 +55,10 @@ async def sweep_retencao_de_leads(
     **Cada uma das tres tambem tem um teto de trabalho por passagem**
     (`max_lotes` em `esvaziar_transcricoes_vencidas` e em
     `anonimizar_leads_vencidos`; `lote` em `cumprir_eliminacoes_a_vencer`,
-    que poda a lista em vez de reconsultar) -- e por isso este job registra
-    um `timeout` proprio, maior que o `job_timeout` global do worker. Ver o
-    comentario de `func(sweep_retencao_de_leads, ...)` em `workers/main.py`
-    para a conta.
+    que poda a lista em vez de reconsultar) -- e por isso este job cabe no
+    `job_timeout` global do worker, sem teto proprio. Ver o comentario de
+    `func(sweep_retencao_de_leads, ...)` em `workers/main.py` para a conta, e
+    para por que um teto proprio maior foi retirado.
 
     `lote_de_leads` e separado de `lote`: `anonimizar_leads_vencidos` teria,
     sem ele, herdado o `lote` de transcricao (500) no lugar do proprio
