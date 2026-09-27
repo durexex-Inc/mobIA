@@ -36,7 +36,11 @@ import { type NextRequest, NextResponse } from 'next/server'
  * que isso nao vale para producao. O `'unsafe-inline'` de `style-src` segue o
  * mesmo guia. Quem trocar um `isDev` por `true` aqui esta afrouxando producao.
  */
-export function politicaDeSeguranca(nonce: string, isDev: boolean): string {
+export function politicaDeSeguranca(
+  nonce: string,
+  isDev: boolean,
+  { embutivel = false }: { embutivel?: boolean } = {},
+): string {
   return [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ''}`,
@@ -52,9 +56,18 @@ export function politicaDeSeguranca(nonce: string, isDev: boolean): string {
     // O cenario 1 do Gherkin da card. Sem `X-Frame-Options` junto: onde os
     // dois existem o navegador moderno ignora o antigo, entao ele nao compraria
     // protecao -- compraria uma segunda fonte para o mesmo fato. Ver a D3.
-    "frame-ancestors 'none'",
+    // `/embed/*` e o chat que o site da imobiliaria enquadra (TEC-344, D8), e
+    // aceita qualquer ancestral ate a TEC-345 restringir aos dominios
+    // cadastrados. O padrao do parametro e o fechado: esquecer de passa-lo
+    // nega o iframe, e nao o abre.
+    embutivel ? 'frame-ancestors *' : "frame-ancestors 'none'",
     'upgrade-insecure-requests',
   ].join('; ')
+}
+
+/** O chat embutido no site da imobiliaria (TEC-344). Casamento por segmento. */
+function rotaDoEmbed(caminho: string): boolean {
+  return caminho === '/embed' || caminho.startsWith('/embed/')
 }
 
 /**
@@ -73,8 +86,7 @@ function rotaPublica(caminho: string): boolean {
   return (
     caminho === '/login' ||
     caminho.startsWith('/login/') ||
-    caminho === '/embed' ||
-    caminho.startsWith('/embed/') ||
+    rotaDoEmbed(caminho) ||
     caminho === '/sair' ||
     caminho === '/sessao/atividade'
   )
@@ -121,7 +133,9 @@ export function proxy(request: NextRequest): NextResponse {
   // nao e nonce. Precisa ser novo a cada requisicao, e ha teste afirmando que
   // duas requisicoes nao recebem o mesmo.
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
-  const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development')
+  const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development', {
+    embutivel: rotaDoEmbed(request.nextUrl.pathname),
+  })
 
   // O nonce vai no cabecalho da REQUISICAO tambem, e nao so no da resposta: e
   // assim que o render o alcanca. O Next extrai o nonce da propria CSP e o
@@ -150,8 +164,13 @@ export const config = {
        * - `bff` -- devolve JSON. Nao renderiza, nao embute, nao carrega script.
        *   Ver a D7 do desenho; as respostas dele montam `Headers` proprios em
        *   `app/bff/[...rota]/route.ts` e continuam intactas.
+       * - `widget.js` -- o loader do chat que o site da imobiliaria carrega
+       *   (TEC-344, D9). Sem esta exclusao, o visitante sem cookie levaria
+       *   `307` para `/login` em vez do script, e o botao nunca apareceria --
+       *   com os testes do loader verdes, porque eles leem o arquivo do disco.
+       *   E asset: o `nosniff` vem do `next.config.ts`.
        */
-      source: '/((?!_next/static|_next/image|favicon.ico|bff).*)',
+      source: '/((?!_next/static|_next/image|favicon.ico|widget.js|bff).*)',
       /*
        * Prefetch do `next/link` nao pinta tela nenhuma: gastar um nonce nele e
        * desperdicio, e a recomendacao e da propria referencia do Next.
