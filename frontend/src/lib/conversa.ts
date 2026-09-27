@@ -90,8 +90,12 @@ function chaveDe(mensagem: Mensagem): string {
  * (0 se nao ha nenhuma). A chave e a identidade do `<li>` para o React --
  * repetida entre irmaos, dois baloes se confundem; repetida com a de um balao
  * que acabou de sair, o balao novo herdaria o no dele e o `log` nao o
- * anunciaria. Contar o comprimento da lista nao serve: o `historico` e o
- * `encerrou` tiram mensagens, e as que ficam mantem as chaves de antes.
+ * anunciaria. Contar o comprimento da lista nao serve por causa do
+ * `historico`: ele pode tirar mensagens do meio (a fala retida pela
+ * moderacao, o que o servidor nao devolveu) enquanto as que ficam mantem as
+ * chaves de antes, e ai o comprimento cai abaixo do maior N em uso -- a
+ * proxima chave repetiria a de um balao na tela. O `encerrou` nao tem esse
+ * problema: esvazia a lista, e recomecar do 0 nao repete ninguem.
  */
 function proximoNumero(mensagens: Mensagem[]): number {
   let proximo = 0

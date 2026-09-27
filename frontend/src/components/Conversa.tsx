@@ -133,8 +133,8 @@ function MenuDaConversa({
 
 /**
  * A conversa do chat embutido (TEC-346; retomada, encerramento e sono da
- * TEC-347): liga o redutor de `lib/conversa` (D3) a um `WebSocket` de
- * verdade e desenha a tela da D5, com o cabecalho. Todo o I/O mora aqui --
+ * TEC-347): liga o redutor de `lib/conversa` (D3 da TEC-346) a um
+ * `WebSocket` de verdade e desenha a tela da D5 da TEC-346, com o cabecalho. Todo o I/O mora aqui --
  * socket, timers do prazo do `ack` e do sono, `localStorage`, o aviso de
  * visibilidade do loader --; decidir o proximo estado e do redutor.
  *
@@ -350,8 +350,8 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   // inclusive a pagina do site da imobiliaria.
   //
   // "A mensagem nova e dela" quer dizer: a ultima da lista trocou, e a nova
-  // ultima e um envio da visitante ainda `enviando`. O `historico` troca a
-  // lista inteira sem ser envio de ninguem: as falas dela vindas dele sao
+  // ultima e um envio da visitante ainda `enviando`. O `historico` refaz a
+  // lista sem ser envio de ninguem: as falas dela vindas dele sao
   // `recebida`, e a pendente que ele mantem no fim continua com o mesmo id
   // -- entao nenhum dos dois casos puxa para o fim, e so a regra do "perto
   // do fim" vale.
@@ -398,8 +398,10 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   }, [conversa.sessao])
 
   // Prazo de mensagem que nao esta mais `enviando` (ack, erro, queda) -- ou
-  // que saiu da lista -- nao tem mais o que marcar. O `historico` troca a
-  // lista inteira, mas mantem as pendentes com o mesmo id.
+  // que saiu da lista -- nao tem mais o que marcar. O `historico` nao tira
+  // pendente nenhuma: ela continua no fim, com o mesmo id e o mesmo estado,
+  // entao o prazo dela segue valendo. E um `historico` igual a tela devolve
+  // a mesma lista, e este efeito nem roda.
   useEffect(() => {
     const prazos = prazosRef.current
     const enviando = new Set<string>()
