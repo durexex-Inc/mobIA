@@ -6,7 +6,7 @@ Funcionalidade: Idempotencia na recepcao de mensagens
 import asyncio
 import json
 
-from conftest import eventos_de_log  # type: ignore[import-not-found]
+from conftest import eventos_de_log, pmid_do_whatsapp  # type: ignore[import-not-found]
 from sqlalchemy import func, select
 
 from mobia.domain.messages.models import Message
@@ -69,7 +69,7 @@ async def test_mesma_mensagem_entregue_duas_vezes(client, session, redis_pool, s
 
     descartes = eventos_de_log(caplog, "message.duplicate_discarded")
     assert len(descartes) == 1
-    assert descartes[0].corpo["provider_message_id"] == "wamid.ABC123"
+    assert descartes[0].corpo["provider_message_id"] == pmid_do_whatsapp("wamid.ABC123")
     assert descartes[0].corpo["channel"] == "whatsapp"
 
 
@@ -102,8 +102,8 @@ async def test_mensagens_distintas_do_mesmo_lead_nao_se_confundem(
 
     linhas = (await session.scalars(select(Message))).all()
     assert {linha.provider_message_id for linha in linhas} == {
-        "wamid.PRIMEIRA",
-        "wamid.SEGUNDA",
+        pmid_do_whatsapp("wamid.PRIMEIRA"),
+        pmid_do_whatsapp("wamid.SEGUNDA"),
     }
     assert len(await redis_pool.queued_jobs()) == 2
 
@@ -125,13 +125,15 @@ async def test_duplicata_dentro_do_mesmo_envelope(client, session, redis_pool, s
     assert resposta.status_code == 200
     linhas = (await session.scalars(select(Message))).all()
     assert {linha.provider_message_id for linha in linhas} == {
-        "wamid.REPETIDA",
-        "wamid.OUTRA",
+        pmid_do_whatsapp("wamid.REPETIDA"),
+        pmid_do_whatsapp("wamid.OUTRA"),
     }
     assert len(await redis_pool.queued_jobs()) == 2
 
     descartes = eventos_de_log(caplog, "message.duplicate_discarded")
-    assert [d.corpo["provider_message_id"] for d in descartes] == ["wamid.REPETIDA"]
+    assert [d.corpo["provider_message_id"] for d in descartes] == [
+        pmid_do_whatsapp("wamid.REPETIDA")
+    ]
 
 
 async def test_lote_com_duplicata_nao_derruba_as_mensagens_legitimas(
@@ -149,7 +151,7 @@ async def test_lote_com_duplicata_nao_derruba_as_mensagens_legitimas(
     assert resposta.status_code == 200
     linhas = (await session.scalars(select(Message))).all()
     assert {linha.provider_message_id for linha in linhas} == {
-        "wamid.JA_VISTA",
-        "wamid.NOVA",
+        pmid_do_whatsapp("wamid.JA_VISTA"),
+        pmid_do_whatsapp("wamid.NOVA"),
     }
     assert len(await redis_pool.queued_jobs()) == 2, "so a mensagem nova entra na fila"

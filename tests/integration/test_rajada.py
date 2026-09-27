@@ -3,13 +3,14 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from conftest import pmid_do_whatsapp  # type: ignore[import-not-found]
 from sqlalchemy import insert, update
 
 from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.rajada import ha_fala_pendente_antes, superada_por_mais_nova
 from mobia.domain.messages.status import MessageStatus
-from mobia.infra.crypto import aad_de, encrypt
+from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 
 LEAD = "5511911112222"
 CANAL = "whatsapp"
@@ -39,7 +40,11 @@ async def gravar(
         insert(Message).values(
             id=identificador,
             channel=channel,
-            provider_message_id=f"wamid.{identificador}",
+            # TEC-383: o HMAC na coluna e o wamid cru so no raw cifrado.
+            provider_message_id=pmid_do_whatsapp(f"wamid.{identificador}"),
+            raw_payload=encrypt_json(
+                {"id": f"wamid.{identificador}"}, aad_de(identificador, "raw_payload")
+            ),
             sender_external_id=conversation_key,
             recipient_external_id="222222222",
             conversation_key=conversation_key,

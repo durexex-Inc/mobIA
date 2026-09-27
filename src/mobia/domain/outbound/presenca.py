@@ -22,8 +22,10 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.atendimento.repositorio import esta_silenciada_por_mensagem
+from mobia.domain.messages.canais import CANAL_WHATSAPP
 from mobia.domain.messages.models import Message
 from mobia.domain.optout.repositorio import esta_em_optout_por_mensagem
+from mobia.infra.crypto import aad_de, decrypt_json
 
 log = structlog.get_logger(__name__)
 
@@ -112,6 +114,27 @@ async def _esperar_e_indicar(
         log.warning("presenca.indicador_falhou", reason=type(exc).__name__)
 
 
+def _id_da_entrada_no_provedor(message: Message) -> str | None:
+    """O id que o provedor deu a mensagem de entrada, cru. TEC-383.
+
+    **No WhatsApp ele sai do `raw_payload`, e nao de `provider_message_id`.**
+    Desde a TEC-383 aquela coluna guarda o HMAC do wamid
+    (`identidade/indice.py::chave_de_mensagem`), porque o wamid carrega o
+    telefone do lead -- e a Meta so reconhece o wamid cru. O cru mora cifrado
+    no objeto da mensagem que o parser grava, na chave `id`. Linha sem ele
+    (retencao ou anonimizacao ja esvaziaram o raw) nao indica, o que nesse
+    ponto da vida da linha nao faz falta a ninguem.
+
+    Fora do WhatsApp o id e o da propria coluna: o web ignora o valor, mas a
+    guarda de `indicador_de_digitacao` exige que ele exista.
+    """
+    if message.channel != CANAL_WHATSAPP:
+        return message.provider_message_id
+    raw = decrypt_json(message.raw_payload, aad_de(message.id, "raw_payload"))
+    wamid = (raw or {}).get("id")
+    return wamid if isinstance(wamid, str) and wamid else None
+
+
 @asynccontextmanager
 async def indicador_de_digitacao(
     session_factory: async_sessionmaker[AsyncSession],
@@ -136,7 +159,7 @@ async def indicador_de_digitacao(
     recolher. A variavel local e a referencia forte que impede a coleta
     prematura ate la.
     """
-    provider_message_id = message.provider_message_id
+    provider_message_id = _id_da_entrada_no_provedor(message)
     de = message.recipient_external_id
     # **`para` NAO entra na guarda logo abaixo**, de proposito. Quem precisa
     # dele e so o canal web; acrescenta-lo aqui faria um turno do WhatsApp que

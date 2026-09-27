@@ -43,7 +43,7 @@ from mobia.domain.messages.status import MessageStatus
 from mobia.domain.outbound.port import GuardedOutbound
 from mobia.domain.usuarios import tokens
 from mobia.infra.anthropic import get_client
-from mobia.infra.crypto import aad_de, encrypt
+from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 from mobia.infra.db import dispose_engine, get_sessionmaker
 from mobia.infra.moderacao import get_moderation_client
 from mobia.infra.queue import create_redis_pool
@@ -348,7 +348,9 @@ async def _entrada_do_lead(
     linha = Message(
         id=identificador,
         channel=CANAL_AGENTE,
-        provider_message_id=f"wamid.{identificador.hex[:10]}",
+        # Como o parser grava desde a TEC-383: o HMAC do wamid na coluna, e o
+        # wamid cru so no `raw_payload` cifrado, de onde o indicador o le.
+        provider_message_id=pmid_do_whatsapp(f"wamid.{identificador.hex[:10]}"),
         sender_external_id=CONVERSA_AGENTE,
         recipient_external_id="222222222",
         conversation_key=CONVERSA_AGENTE,
@@ -356,7 +358,9 @@ async def _entrada_do_lead(
         direction=MessageDirection.INBOUND,
         content_type=MessageContentType.TEXTO,
         text_body=encrypt(texto, aad_de(identificador, "text_body")),
-        raw_payload=None,
+        raw_payload=encrypt_json(
+            {"id": f"wamid.{identificador.hex[:10]}"}, aad_de(identificador, "raw_payload")
+        ),
         status=status,
     )
     session.add(linha)
@@ -1411,6 +1415,17 @@ def log_legivel(caplog: Any) -> str:
         except (json.JSONDecodeError, TypeError):
             linhas.append(bruto)
     return "\n".join(linhas)
+
+
+def pmid_do_whatsapp(wamid: str) -> str:
+    """O `provider_message_id` que o parser grava para um wamid (TEC-383).
+
+    O HMAC, e nao o wamid: quem procura a linha de uma mensagem que entrou
+    pelo webhook tem de procurar por isto.
+    """
+    from mobia.domain.identidade.indice import chave_de_mensagem
+
+    return chave_de_mensagem(CANAL_AGENTE, wamid)
 
 
 # A origem do painel nos testes do widget (TEC-365): a que o `ClienteWebSocket`

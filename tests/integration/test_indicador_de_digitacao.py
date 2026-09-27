@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
-from conftest import CANAL_AGENTE, CONVERSA_AGENTE
+from conftest import CANAL_AGENTE, CONVERSA_AGENTE, pmid_do_whatsapp
 from test_process_message_agrupado import _ctx  # type: ignore[import-not-found]
 from test_rajada import gravar  # type: ignore[import-not-found]
 
@@ -19,6 +19,7 @@ from mobia.domain.messages.models import Message
 from mobia.domain.optout.repositorio import registrar_optout
 from mobia.domain.outbound.presenca import IndicadorNoop, indicador_de_digitacao
 from mobia.domain.outbound.web import WebIndicador, canal_da_sessao
+from mobia.infra.crypto import aad_de, encrypt_json
 from mobia.infra.db import get_sessionmaker
 from mobia.workers.jobs.process_message import process_message
 
@@ -76,7 +77,12 @@ async def _entrada(session, *, wamid: str | None = "wamid.TESTE") -> Message:
     linha = Message(
         id=identificador,
         channel=CANAL_AGENTE,
-        provider_message_id=wamid,
+        # TEC-383: o HMAC na coluna e o wamid cru so no raw cifrado -- e de
+        # la que o indicador o le.
+        provider_message_id=None if wamid is None else pmid_do_whatsapp(wamid),
+        raw_payload=None
+        if wamid is None
+        else encrypt_json({"id": wamid}, aad_de(identificador, "raw_payload")),
         conversation_key=CONVERSA_AGENTE,
         # Os DOIS preenchidos, e diferentes de proposito: `de` sai do
         # recipient (o numero da imobiliaria) e `para` sai do sender (o lead).

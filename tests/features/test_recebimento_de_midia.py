@@ -15,7 +15,13 @@ import json
 from typing import Any
 
 import httpx
-from conftest import ClassificadorFake, ContadorFake, ModeradorFake, ResumidorFake
+from conftest import (
+    ClassificadorFake,
+    ContadorFake,
+    ModeradorFake,
+    ResumidorFake,
+    pmid_do_whatsapp,
+)
 from sqlalchemy import select
 
 from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
@@ -169,10 +175,9 @@ def _ctx_do_job(cliente: httpx.AsyncClient, armazem: Any, settings: Any) -> dict
 
 
 async def _linha_da_mensagem(session, provider_message_id: str) -> Message:
+    procurado = pmid_do_whatsapp(provider_message_id)
     return (
-        await session.execute(
-            select(Message).where(Message.provider_message_id == provider_message_id)
-        )
+        await session.execute(select(Message).where(Message.provider_message_id == procurado))
     ).scalar_one()
 
 
