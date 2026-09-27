@@ -163,7 +163,10 @@ async def chat(
 
     # TEC-365, D3. DEPOIS do limite por IP, de proposito: assim a tentativa
     # recusada tambem conta no balde, e quem martela o handshake de outra
-    # pagina passa a levar 429 pelo mesmo teto de qualquer outro cliente.
+    # pagina cai na recusa por limite pelo mesmo teto de qualquer outro
+    # cliente -- desde a TEC-346, `muitas_tentativas` e 1013 em vez do 429.
+    # O preco dessa ordem e que o barrado de outra origem ganha um `accept`
+    # e le aquele frame; nada alem dele, nenhuma sessao.
     settings = get_settings()
     origem = websocket.headers.get("origin")
     if not origem_permitida(origem, settings.origens_permitidas_do_widget):
@@ -301,11 +304,13 @@ def origem_permitida(origem: str | None, permitidas: frozenset[str]) -> bool:
 
 
 async def _recusar_por_origem(websocket: WebSocket) -> None:
-    """Recusa o handshake com 403, pelo mesmo mecanismo do 429.
+    """Recusa o handshake com 403, antes do `accept`.
 
     Aqui o 403 e a palavra certa -- "proibido, nao tente de novo" --, e por
-    isso o `close()` do servidor sem a extensao nao perde nada: o uvicorn o
-    transforma em 403 do mesmo jeito (ver `_recusar_por_excesso`).
+    isso o `close()` do servidor sem a extensao `websocket.http.response` nao
+    perde nada: o uvicorn transforma um `close()` antes do `accept` em 403 do
+    mesmo jeito. Ao contrario da recusa por limite (`_recusar_por_excesso`),
+    nao ha o que a pagina precise ler: o iframe do painel nunca cai aqui.
     """
     if "websocket.http.response" in websocket.scope.get("extensions", {}):
         await websocket.send_denial_response(Response(status_code=403))

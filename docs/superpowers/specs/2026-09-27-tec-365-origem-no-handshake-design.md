@@ -39,6 +39,7 @@ Não entra guarda de produção recusando `http://`. A card não pede, e a TEC-2
 - **`403` por `send_denial_response`**, o mesmo mecanismo do `429` (`_recusar_por_excesso`). "Proibido, não tente de novo" é exatamente a leitura certa aqui, e não era no `429`. Sem a extensão `websocket.http.response`, o `close()` antes do `accept` vira `403` no uvicorn do mesmo jeito.
 - **Sem `Origin` também é recusado.** Todo navegador manda o header num handshake de WebSocket, e o único cliente legítimo é um navegador. O valor `null` (documento sandboxed, `file://`) é recusado pelo mesmo caminho, porque não está na lista.
 - **A checagem vem depois do limite por IP.** Toda tentativa conta contra o balde do IP, inclusive a recusada. Na ordem inversa, quem martela o handshake de outra página levaria `403` para sempre, sem nunca chegar ao `429` nem ao registro em `rate_limit_events`.
+  - **Nota (27/09/2026, TEC-346):** a recusa por limite deixou de ser o `429` por `send_denial_response`. `_recusar_por_excesso` agora aceita o handshake, manda `{"tipo":"erro","codigo":"muitas_tentativas",...}` e fecha com 1013, porque o navegador não lê status de handshake. Onde esta decisão diz `429`, leia essa recusa: a ordem e o argumento continuam valendo, e o registro em `rate_limit_events` também. O `403` desta card continua por `send_denial_response`, antes do `accept`. A consequência da ordem é que quem vem de outra página e já estourou o balde recebe um `accept` e aquele frame, e nada além dele.
 
 ## D4 — Log, e a métrica fica com a TEC-211
 

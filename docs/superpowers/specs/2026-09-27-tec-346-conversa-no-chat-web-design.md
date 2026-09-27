@@ -105,4 +105,5 @@ Esta card grava o UUID ao receber `sessao` e manda sempre `ola` com `sessao: nul
   - **Nota (27/09/2026):** resolvida pela verificação no Edge de 27/09/2026: `ws://localhost` conectou sob o `upgrade-insecure-requests` da CSP. A CSP não precisou mudar.
 - **L3 — Até a TEC-347, cada abertura do chat é uma conversa nova** (D4).
 - **L4 — O WebSocket não confere a origem** (TEC-365). Com o `connect-src` desta card, a página embutida alcança o WebSocket; quem o alcança de outras páginas continua sem barreira até lá.
+  - **Nota (27/09/2026):** a TEC-365 entrou na main durante esta card; o handshake agora exige a origem do painel, que é a do iframe de /embed/chat.
 - **L5 — A reconexão é só manual.** Queda de conexão marca as pendentes como `falhou`; reconectar sozinho é da TEC-348.
