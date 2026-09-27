@@ -265,11 +265,12 @@ async def busca(
     """A busca hibrida da RF-09, no contrato da secao 6.3.
 
     **A guarda ganhou papel proprio na TEC-202, que e o que faltava.** A secao
-    6.3 pede "Bearer JWT ou token interno do agente", e ate aqui o que existia
-    era o `X-Admin-Token` que a D1 da TEC-156 registra como provisorio -- que
-    fazia deste endpoint, que NAO e administrativo, um endpoint administrativo
-    na pratica. `BUSCAR_IMOVEIS` e a unica permissao que os quatro papeis tem:
-    buscar imovel no catalogo e o que qualquer pessoa do time faz.
+    6.3 pede "Bearer JWT ou token interno do agente", e ate ali o que existia
+    era o `X-Admin-Token` que a D1 da TEC-156 registrou como provisorio (e que
+    a TEC-382 apagou) -- que fazia deste endpoint, que NAO e administrativo,
+    um endpoint administrativo na pratica. `BUSCAR_IMOVEIS` e a unica
+    permissao que os quatro papeis tem: buscar imovel no catalogo e o que
+    qualquer pessoa do time faz.
 
     O "token interno do agente" da secao 6.3 continua sem existir -- o agente
     nao chama esta rota por HTTP, chama `busca_hibrida` direto.

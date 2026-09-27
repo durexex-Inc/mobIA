@@ -1,7 +1,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-import structlog
 from fastapi import FastAPI
 
 from mobia.api.middleware import CorrelacaoDeRequisicao, RateLimitPorIP
@@ -13,8 +12,6 @@ from mobia.app.logging import configure_logging
 from mobia.infra.db import dispose_engine
 from mobia.infra.queue import create_redis_pool
 from mobia.infra.rotacao import avisar_rotacao_vencida
-
-log = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
@@ -70,14 +67,13 @@ def create_app() -> FastAPI:
     # Quem reprova e `test_correlacao_envolve_o_limitador`.
     app.add_middleware(CorrelacaoDeRequisicao)
 
-    # TEC-201. Incondicional, ao contrario dos administrativos abaixo: o
-    # `catalogo_admin_token` que os condiciona e justamente o que estas rotas
-    # existem para substituir -- amarrar uma a outra faria a autenticacao nova
-    # depender da provisoria para ser registrada.
+    # TEC-201. Import cedo e nao tardio como os administrativos abaixo: `auth`
+    # produz a credencial que a guarda das outras rotas valida, e amarrar o
+    # registro dela a alguma condicao faria a autenticacao nova depender de
+    # configuracao para sequer existir.
     app.include_router(auth_router)
     app.include_router(whatsapp_router)
-    # Publico por natureza, e por isso fora do gate de token logo abaixo: e o
-    # chat do site, e quem o abre e visitante anonima.
+    # Publico por natureza: e o chat do site, e quem o abre e visitante anonima.
     app.include_router(widget_router)
 
     # **A condicional da TEC-156 caiu na TEC-201, porque a premissa dela caiu.**
@@ -85,14 +81,16 @@ def create_app() -> FastAPI:
     # O comentario que estava aqui dizia: "rota que nao existe nao pode ser
     # exposta por engano de configuracao, e este projeto ainda nao tem camada
     # de autenticacao". A segunda metade deixou de ser verdade -- `exigir_admin`
-    # agora exige JWT de ADMIN ou o token compartilhado, e recusar com 403 e o
-    # que uma camada de autenticacao faz.
+    # passou a exigir JWT de ADMIN (ou, ate a TEC-382, o token compartilhado), e
+    # recusar com 403 e o que uma camada de autenticacao faz.
     #
     # **Manter a condicional teria efeito pior que o problema original:** com
-    # JWT configurado e sem `CATALOGO_ADMIN_TOKEN`, as rotas administrativas
-    # nao existiriam, e a autenticacao que esta card acabou de construir seria
-    # inutil sozinha. Quem quisesse usa-la precisaria manter configurado
-    # justamente o token que ela veio substituir.
+    # JWT configurado e sem o token que a TEC-156 introduziu, as rotas
+    # administrativas nao existiriam, e a autenticacao que a TEC-201 acabou de
+    # construir seria inutil sozinha. Quem quisesse usa-la precisaria manter
+    # configurado justamente o token que ela veio substituir -- e a TEC-382
+    # apagou esse token de vez, o que faria a condicional ficar sempre
+    # verdadeira e a mensagem abaixo, permanente.
     #
     # O que protege agora e a guarda, nao a ausencia da rota. Ver a D2 do
     # desenho da TEC-201 e a D1 da TEC-156, cujo argumento fica registrado como
@@ -145,17 +143,6 @@ def create_app() -> FastAPI:
     app.include_router(prompts_router)
     app.include_router(mensagens_router)
     app.include_router(titular_router)
-
-    if not settings.catalogo_admin_token:
-        # O aviso FICA, com outro sentido: nao diz mais que as rotas sumiram --
-        # elas existem --, diz que o caminho de compatibilidade esta desligado.
-        # Desde a TEC-309 o painel nao depende mais dele -- manda o JWT de quem
-        # esta logado --, entao subir sem o token e a configuracao que a
-        # TEC-382 vai tornar a unica. O aviso sai junto com o token.
-        log.warning(
-            "auth.token_compartilhado_ausente",
-            motivo="sem CATALOGO_ADMIN_TOKEN; as rotas administrativas so aceitam JWT",
-        )
 
     @app.get("/health")
     async def health() -> dict[str, str]:

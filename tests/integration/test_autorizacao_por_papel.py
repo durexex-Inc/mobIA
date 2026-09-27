@@ -23,14 +23,12 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.app.config import get_settings
 from mobia.domain.auditoria.models import EventoAuditoria
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status
-from mobia.domain.usuarios import tokens
 from mobia.domain.usuarios.models import Usuario
 from mobia.domain.usuarios.permissoes import Permissao, permissoes_de
-from tests.conftest import eventos_de_log
+from tests.conftest import cabecalho_de, eventos_de_log
 
 # Uma rota administrativa de verdade (RN-19.2, papel ADMIN) e uma rota de
 # escrita que o CORRETOR tambem alcanca. As duas juntas separam "so o ADMIN" de
@@ -44,22 +42,6 @@ ROTA_DE_CATALOGO = "/api/v1/imoveis/importacoes/00000000-0000-0000-0000-00000000
 # com "Different tests were collected between gw1 and gw0", antes de rodar
 # teste nenhum. Nao precisa existir no banco: a guarda nega antes de olhar.
 HANDOFF_INEXISTENTE = "5f9d3a1e-0000-4000-8000-000000000002"
-
-
-def _token(papel: str, *, corretor_id: uuid.UUID | None = None) -> str:
-    """Um JWT valido para este papel, sem passar pelo login.
-
-    O caminho do login ja e exercitado inteiro por `test_autenticacao.py`; o que
-    se testa aqui e o que a guarda faz com um token legitimo, e semear senha e
-    TOTP para cada um dos quatro papeis so acrescentaria Argon2 ao relogio.
-    """
-    return tokens.emitir(
-        uuid.uuid4(), papel, mfa=papel == "ADMIN", corretor_id=corretor_id, settings=get_settings()
-    )
-
-
-def _bearer(papel: str, *, corretor_id: uuid.UUID | None = None) -> dict[str, str]:
-    return {"Authorization": f"Bearer {_token(papel, corretor_id=corretor_id)}"}
 
 
 async def _corretor(semear_corretor: Any, nome: str) -> uuid.UUID:
@@ -104,7 +86,7 @@ async def _handoff_de(session: AsyncSession, corretor_id: uuid.UUID | None) -> u
 async def test_acesso_ao_modulo_administrativo(
     client: AsyncClient, banco_limpo: None, papel: str, permitido: bool
 ) -> None:
-    resposta = await client.get(ROTA_ADMINISTRATIVA, headers=_bearer(papel))
+    resposta = await client.get(ROTA_ADMINISTRATIVA, headers=cabecalho_de(papel))
 
     assert (resposta.status_code != 403) is permitido
 
@@ -123,7 +105,7 @@ async def test_o_catalogo_tambem_e_so_do_admin(
     handler so. Aqui a resposta esperada para o ADMIN e 404 (a importacao nao
     existe) -- que e exatamente o ponto: ele passou pela guarda.
     """
-    resposta = await client.get(ROTA_DE_CATALOGO, headers=_bearer(papel))
+    resposta = await client.get(ROTA_DE_CATALOGO, headers=cabecalho_de(papel))
 
     assert (resposta.status_code != 403) is permitido
     if permitido:
@@ -151,7 +133,7 @@ async def test_corretor_nao_aceita_handoff_de_outro_corretor(
     with caplog.at_level("WARNING"):
         resposta = await client.post(
             f"/api/v1/handoffs/{handoff_id}/aceitar",
-            headers=_bearer("CORRETOR", corretor_id=intruso),
+            headers=cabecalho_de("CORRETOR", corretor_id=intruso),
         )
 
     assert resposta.status_code == 403
@@ -180,7 +162,7 @@ async def test_corretor_aceita_o_proprio_handoff(
 
     resposta = await client.post(
         f"/api/v1/handoffs/{handoff_id}/aceitar",
-        headers=_bearer("CORRETOR", corretor_id=dono),
+        headers=cabecalho_de("CORRETOR", corretor_id=dono),
     )
 
     assert resposta.status_code == 200
@@ -203,7 +185,7 @@ async def test_gerente_aceita_handoff_de_qualquer_corretor(
     handoff_id = await _handoff_de(session, dono)
 
     resposta = await client.post(
-        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=_bearer("GERENTE")
+        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=cabecalho_de("GERENTE")
     )
 
     assert resposta.status_code == 200
@@ -225,7 +207,7 @@ async def test_corretor_sem_vinculo_nao_alcanca_handoff_nenhum(
     handoff_id = await _handoff_de(session, dono)
 
     resposta = await client.post(
-        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=_bearer("CORRETOR")
+        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=cabecalho_de("CORRETOR")
     )
 
     assert resposta.status_code == 403
@@ -248,10 +230,10 @@ async def test_handoff_sem_destinatario_nao_e_de_ninguem(
 
     do_corretor = await client.post(
         f"/api/v1/handoffs/{handoff_id}/aceitar",
-        headers=_bearer("CORRETOR", corretor_id=qualquer),
+        headers=cabecalho_de("CORRETOR", corretor_id=qualquer),
     )
     da_gerente = await client.post(
-        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=_bearer("GERENTE")
+        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=cabecalho_de("GERENTE")
     )
 
     assert do_corretor.status_code == 403
@@ -279,7 +261,7 @@ async def test_corretor_nao_assume_conversa_em_nome_de_outro(
         resposta = await client.post(
             "/api/v1/conversas/assumir",
             json={"channel": "whatsapp", "conversation_key": "5548999", "corretor_id": str(outro)},
-            headers=_bearer("CORRETOR", corretor_id=eu),
+            headers=cabecalho_de("CORRETOR", corretor_id=eu),
         )
 
     assert resposta.status_code == 403
@@ -298,7 +280,7 @@ async def test_corretor_assume_em_nome_de_si_mesmo(
     resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": "whatsapp", "conversation_key": "5548999", "corretor_id": str(eu)},
-        headers=_bearer("CORRETOR", corretor_id=eu),
+        headers=cabecalho_de("CORRETOR", corretor_id=eu),
     )
 
     assert resposta.status_code == 200
@@ -323,7 +305,7 @@ async def test_admin_continua_assumindo_em_nome_de_outro(
     resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": "whatsapp", "conversation_key": "5548777", "corretor_id": str(outro)},
-        headers=_bearer("ADMIN"),
+        headers=cabecalho_de("ADMIN"),
     )
 
     assert resposta.status_code == 200
@@ -349,7 +331,7 @@ async def test_leitura_nao_altera_nada(
     if corpo is not None:
         corpo = {**corpo, "corretor_id": str(uuid.uuid4())}
 
-    resposta = await client.request(metodo, rota, json=corpo, headers=_bearer("LEITURA"))
+    resposta = await client.request(metodo, rota, json=corpo, headers=cabecalho_de("LEITURA"))
 
     assert resposta.status_code == 403
 
@@ -363,7 +345,7 @@ async def test_leitura_le_o_funil(client: AsyncClient, banco_limpo: None) -> Non
     resposta = await client.get(
         "/api/v1/metricas/funil",
         params={"de": "2026-09-01", "ate": "2026-09-24"},
-        headers=_bearer("LEITURA"),
+        headers=cabecalho_de("LEITURA"),
     )
 
     assert resposta.status_code == 200
@@ -374,7 +356,7 @@ async def test_corretor_nao_le_o_funil(client: AsyncClient, banco_limpo: None) -
     resposta = await client.get(
         "/api/v1/metricas/funil",
         params={"de": "2026-09-01", "ate": "2026-09-24"},
-        headers=_bearer("CORRETOR", corretor_id=uuid.uuid4()),
+        headers=cabecalho_de("CORRETOR", corretor_id=uuid.uuid4()),
     )
 
     assert resposta.status_code == 403
@@ -410,7 +392,7 @@ async def test_a_negativa_por_papel_registra_quem_tentou(
     `test_a_negativa_por_papel_tambem_vai_para_a_trilha`.
     """
     with caplog.at_level("WARNING"):
-        await client.get(ROTA_ADMINISTRATIVA, headers=_bearer("LEITURA"))
+        await client.get(ROTA_ADMINISTRATIVA, headers=cabecalho_de("LEITURA"))
 
     ((nivel, evento),) = eventos_de_log(caplog, "autorizacao.negada")
 
@@ -418,28 +400,6 @@ async def test_a_negativa_por_papel_registra_quem_tentou(
     assert evento["papel"] == "LEITURA"
     assert evento["metodo"] == "GET"
     assert evento["motivo"] == "sem_permissao"
-
-
-@pytest.mark.parametrize(
-    "rota",
-    [ROTA_ADMINISTRATIVA, "/api/v1/metricas/funil", "/api/v1/imoveis/busca"],
-)
-async def test_o_token_compartilhado_continua_passando_em_tudo(
-    client: AsyncClient, banco_limpo: None, rota: str
-) -> None:
-    """A coexistencia da D2 -- o teste que garante que esta card nao parou o painel.
-
-    O BFF deixou de mandar `X-Admin-Token` na TEC-309, mas o FastAPI ainda o
-    aceita: ele resolve para um ADMIN sintetico e passa em toda permissao da
-    matriz, inclusive nas que so o ADMIN tem. **Isto e exposicao declarada
-    (L4), nao propriedade desejada**: quando a TEC-382 apagar o token, e este
-    teste que sai junto.
-    """
-    resposta = await client.get(
-        rota, headers={"X-Admin-Token": get_settings().catalogo_admin_token}
-    )
-
-    assert resposta.status_code != 403
 
 
 async def test_me_devolve_papel_vinculo_e_permissoes(
@@ -451,7 +411,9 @@ async def test_me_devolve_papel_vinculo_e_permissoes(
     permissoes vem de /bff/me; o cliente nao decodifica JWT".
     """
     vinculo = uuid.uuid4()
-    resposta = await client.get("/api/v1/auth/me", headers=_bearer("GERENTE", corretor_id=vinculo))
+    resposta = await client.get(
+        "/api/v1/auth/me", headers=cabecalho_de("GERENTE", corretor_id=vinculo)
+    )
 
     corpo = resposta.json()
     assert resposta.status_code == 200
@@ -463,16 +425,15 @@ async def test_me_devolve_papel_vinculo_e_permissoes(
     assert Permissao.VER_DADOS_COMPLETOS.value in corpo["permissoes"]
 
 
-async def test_me_recusa_o_token_compartilhado(client: AsyncClient, banco_limpo: None) -> None:
-    """A unica guarda do sistema em que o token compartilhado NAO serve.
+async def test_me_recusa_sem_credencial(client: AsyncClient, banco_limpo: None) -> None:
+    """`ExigeSessao` nega sem JWT nenhum, como qualquer outra guarda.
 
-    Ele resolve para um ADMIN sem usuario, e uma rota que responde "quem sou
-    eu" nao tem o que responder a quem nao e ninguem. Inventar um corpo para
-    esse caso seria ensinar o BFF a confiar numa identidade que nao existe.
+    Ate a TEC-382 havia um segundo caminho para tentar -- o `X-Admin-Token`
+    compartilhado --, e mesmo ele nao servia aqui (resolvia para um ADMIN sem
+    usuario, e a rota nao tem o que responder a quem nao e ninguem). Sem
+    caminho nenhum, o motivo muda mas o desfecho e o mesmo: 403.
     """
-    resposta = await client.get(
-        "/api/v1/auth/me", headers={"X-Admin-Token": get_settings().catalogo_admin_token}
-    )
+    resposta = await client.get("/api/v1/auth/me")
 
     assert resposta.status_code == 403
 
@@ -549,7 +510,7 @@ async def test_a_negativa_com_identidade_vai_para_a_trilha(
 
     resposta = await client.post(
         f"/api/v1/handoffs/{handoff_id}/aceitar",
-        headers=_bearer("CORRETOR", corretor_id=intruso),
+        headers=cabecalho_de("CORRETOR", corretor_id=intruso),
     )
 
     assert resposta.status_code == 403
@@ -571,7 +532,7 @@ async def test_a_negativa_com_identidade_vai_para_a_trilha(
 async def test_a_negativa_por_papel_tambem_vai_para_a_trilha(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
-    resposta = await client.get(ROTA_ADMINISTRATIVA, headers=_bearer("LEITURA"))
+    resposta = await client.get(ROTA_ADMINISTRATIVA, headers=cabecalho_de("LEITURA"))
 
     assert resposta.status_code == 403
     (evento,) = await _negativas(session)
@@ -591,19 +552,3 @@ async def test_a_negativa_sem_credencial_fica_so_no_log(
     assert resposta.status_code == 403
     assert len(eventos_de_log(caplog, "autorizacao.negada")) == 1
     assert await _negativas(session) == []
-
-
-async def test_o_token_compartilhado_sem_sessao_vai_para_a_trilha(
-    session: AsyncSession, client: AsyncClient, banco_limpo: None
-) -> None:
-    """Identidade resolvida, mas sem usuario: `ator_id` e o `para_log` dela."""
-    resposta = await client.get(
-        "/api/v1/auth/me", headers={"X-Admin-Token": get_settings().catalogo_admin_token}
-    )
-
-    assert resposta.status_code == 403
-    (evento,) = await _negativas(session)
-    assert evento.ator_id == "token-compartilhado"
-    assert evento.detalhes is not None
-    assert evento.detalhes["motivo"] == "sem_sessao"
-    assert evento.detalhes["permissao"] is None

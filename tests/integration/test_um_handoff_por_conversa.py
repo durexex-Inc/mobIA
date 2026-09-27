@@ -3,39 +3,16 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import pytest
-from conftest import CANAL_AGENTE, CONVERSA_AGENTE
-from httpx import ASGITransport, AsyncClient
+from conftest import CANAL_AGENTE, CONVERSA_AGENTE, cabecalho_de
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.app.config import get_settings
-from mobia.app.main import create_app
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.auditoria.vocabulario import ATOR_AGENTE
 from mobia.domain.handoff.escalada import escalar_vencidos
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho, Status
-
-TOKEN = "token-de-teste-um-handoff-por-conversa"
-
-
-@pytest.fixture
-async def cliente_http(monkeypatch, caches_de_cliente_limpos, banco_limpo, redis_pool):
-    """Molde de `cliente_http` em `test_rota_de_conversas.py`.
-
-    So o terceiro cenario precisa da rota HTTP -- os outros tres ficam no
-    nivel do turno e do modelo.
-    """
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN)
-    get_settings.cache_clear()
-    app = create_app()
-    app.state.redis_pool = redis_pool
-    transporte = ASGITransport(app=app)
-    async with AsyncClient(transport=transporte, base_url="http://teste") as cliente:
-        yield cliente
-    get_settings.cache_clear()
 
 
 async def test_lead_escalado_que_continua_conversando_nao_gera_handoff_novo(
@@ -135,7 +112,7 @@ async def test_lead_aceito_que_continua_conversando_nao_gera_handoff_novo(
 
 async def test_conversa_concluida_aceita_um_handoff_novo(
     session: AsyncSession,
-    cliente_http,
+    client,
     semear_corretor,
     rodar_turno,
     classificador_fake,
@@ -173,9 +150,9 @@ async def test_conversa_concluida_aceita_um_handoff_novo(
         "conversation_key": CONVERSA_AGENTE,
         "corretor_id": str(corretor.id),
     }
-    cabecalho = {"X-Admin-Token": TOKEN}
-    await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
-    resposta = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+    cabecalho = cabecalho_de("GERENTE")
+    await client.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    resposta = await client.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
     assert resposta.status_code == 200
 
     await rodar_turno(

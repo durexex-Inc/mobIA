@@ -14,9 +14,13 @@ from mobia.app.main import create_app
 from mobia.domain.auditoria.models import EventoAuditoria
 from mobia.domain.handoff import resumo as resumo_mod
 from mobia.domain.handoff.resumo import MARCADORES, link_da_transcricao
+from mobia.domain.usuarios import tokens
 from mobia.infra.db import get_sessionmaker
+from tests.conftest import cabecalho_de
 
-TOKEN = "token-de-teste"
+# GERENTE, e nao CORRETOR: a rota confere dono via `exigir_dono` so para quem
+# entra como CORRETOR, e os handoffs destes testes nao tem dono conhecido por
+# eles -- ver `test_autorizacao_por_papel.py` para a checagem de dono.
 
 
 def _resumo_valido() -> str:
@@ -48,26 +52,22 @@ class _ClienteFalso:
 async def _cliente_com_redator(monkeypatch, redis_pool, *, texto_do_redator: str):
     """O corpo comum de `cliente_http` e `cliente_http_redator_falha`.
 
-    O router so e registrado quando `catalogo_admin_token` e verdadeiro, entao
-    o token tem de estar no ambiente ANTES do `create_app()`. O redator real
-    fala com a Anthropic -- substituir `get_client` pela referencia que
-    `resumo.py` guardou (mesmo molde de `tests/unit/test_handoff_redator.py`)
-    isola o teste da rede sem precisar tornar o redator injetavel na rota.
+    O redator real fala com a Anthropic -- substituir `get_client` pela
+    referencia que `resumo.py` guardou (mesmo molde de
+    `tests/unit/test_handoff_redator.py`) isola o teste da rede sem precisar
+    tornar o redator injetavel na rota.
     """
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN)
-    get_settings.cache_clear()
     monkeypatch.setattr(resumo_mod, "get_client", lambda: _ClienteFalso(texto_do_redator))
     app = create_app()
     app.state.redis_pool = redis_pool
     transporte = ASGITransport(app=app)
     async with AsyncClient(transport=transporte, base_url="http://teste") as cliente:
         yield cliente
-    get_settings.cache_clear()
 
 
 @pytest.fixture
 async def cliente_http(monkeypatch, caches_de_cliente_limpos, banco_limpo, redis_pool):
-    """Molde do `app_com_token` de `test_busca_endpoint.py`, com redator valido."""
+    """App com o redator valido, para os testes que nao mexem nele."""
     async for cliente in _cliente_com_redator(
         monkeypatch, redis_pool, texto_do_redator=_resumo_valido()
     ):
@@ -105,7 +105,7 @@ async def test_handoff_inexistente_e_404(cliente_http) -> None:
     entao dossie ausente e a UNICA causa que sobra para este 404.
     """
     resposta = await cliente_http.post(
-        f"/api/v1/handoffs/{uuid.uuid4()}/resumo", headers={"X-Admin-Token": TOKEN}
+        f"/api/v1/handoffs/{uuid.uuid4()}/resumo", headers=cabecalho_de("GERENTE")
     )
     assert resposta.status_code == 404
     assert resposta.json()["detail"] == "handoff nao existe"
@@ -126,7 +126,7 @@ async def test_regenera_com_falha_do_redator_devolve_o_template(
     handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
 
     resposta = await cliente_http_redator_falha.post(
-        f"/api/v1/handoffs/{handoff_id}/resumo", headers={"X-Admin-Token": TOKEN}
+        f"/api/v1/handoffs/{handoff_id}/resumo", headers=cabecalho_de("GERENTE")
     )
 
     assert resposta.status_code == 200
@@ -141,7 +141,7 @@ async def test_regenera_e_devolve_o_resumo_com_o_link(cliente_http, semear_lead_
     handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=3)
 
     resposta = await cliente_http.post(
-        f"/api/v1/handoffs/{handoff_id}/resumo", headers={"X-Admin-Token": TOKEN}
+        f"/api/v1/handoffs/{handoff_id}/resumo", headers=cabecalho_de("GERENTE")
     )
 
     assert resposta.status_code == 200
@@ -177,9 +177,13 @@ async def test_o_acesso_ao_resumo_vai_para_a_trilha_sem_o_resumo(
 ) -> None:
     """TEC-206, D7: `campo = resumo`, e o texto nao aparece em coluna nenhuma."""
     handoff_id = await semear_lead_completo(score=72, faixa_max_centavos=60_000_000, imoveis=1)
+    usuario_id = uuid.uuid4()
+    token = tokens.emitir(
+        usuario_id, "GERENTE", mfa=False, corretor_id=None, settings=get_settings()
+    )
 
     resposta = await cliente_http.post(
-        f"/api/v1/handoffs/{handoff_id}/resumo", headers={"X-Admin-Token": TOKEN}
+        f"/api/v1/handoffs/{handoff_id}/resumo", headers={"Authorization": f"Bearer {token}"}
     )
 
     assert resposta.status_code == 200
@@ -188,7 +192,10 @@ async def test_o_acesso_ao_resumo_vai_para_a_trilha_sem_o_resumo(
     assert evento.entidade == "handoff"
     assert evento.entidade_id == str(handoff_id)
     assert evento.ator_tipo == "USUARIO"
-    assert evento.ator_id == "token-compartilhado"
+    # O ator e o usuario do JWT, e nao mais `token-compartilhado` -- a TEC-382
+    # apagou o ramo que produzia esse texto; ele so segue existindo em
+    # eventos gravados antes dela (`api/autorizacao.py::SEM_USUARIO`).
+    assert evento.ator_id == str(usuario_id)
     assert evento.correlation_id == resposta.headers["X-Request-Id"]
     colunas = [
         evento.entidade_id,
@@ -215,5 +222,5 @@ async def test_sem_registro_o_resumo_nao_sai(
 
     with pytest.raises(RuntimeError, match="trilha fora do ar"):
         await cliente_http.post(
-            f"/api/v1/handoffs/{handoff_id}/resumo", headers={"X-Admin-Token": TOKEN}
+            f"/api/v1/handoffs/{handoff_id}/resumo", headers=cabecalho_de("GERENTE")
         )

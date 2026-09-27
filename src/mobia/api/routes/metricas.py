@@ -11,10 +11,12 @@ RN-19.5 declarou, e que esta rota herdou, fecha aqui para quem entra por JWT.
 navegacao da RN-FE-03.1 (TEC-312). O funil e da operacao inteira, e o corretor
 trabalha a propria carteira.
 
-**Consequencia que permanece: quem tem o `X-Admin-Token` le os dois paineis**,
-porque ele resolve para um ADMIN sintetico (D2 da TEC-202). Nao ha dado pessoal
-de lead na resposta -- so contagens e medias --, o que torna esta exposicao
-menos grave que a de `corretores.py`, mas ela existe.
+**A consequencia que valia ate a TEC-382 nao vale mais.** Enquanto o
+`X-Admin-Token` compartilhado autenticou (D2 da TEC-202), quem o tivesse lia
+os dois paineis, porque ele resolvia para um ADMIN sintetico. A TEC-382
+apagou aquele ramo; hoje so o JWT autentica, e a exposicao era de qualquer
+jeito menor que a de `corretores.py` -- nao ha dado pessoal de lead na
+resposta, so contagens e medias.
 """
 
 import uuid

@@ -6,37 +6,21 @@ TEC-179, Task 6.
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import pytest
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.app.config import get_settings
-from mobia.app.main import create_app
 from mobia.domain.handoff.escalada import escalar_vencidos
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status
+from tests.conftest import cabecalho_de
 
-TOKEN = "token-de-teste-de-conversas"
 CHANNEL = "whatsapp"
 CHAVE = "5511988887777"
 
-
-@pytest.fixture
-async def cliente_http(monkeypatch, caches_de_cliente_limpos, banco_limpo, redis_pool):
-    """Molde de `app_com_token` em `test_rota_de_corretores.py`.
-
-    O router so e registrado quando `catalogo_admin_token` e verdadeiro,
-    entao o token tem de estar no ambiente ANTES do `create_app()`.
-    """
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN)
-    get_settings.cache_clear()
-    app = create_app()
-    app.state.redis_pool = redis_pool
-    transporte = ASGITransport(app=app)
-    async with AsyncClient(transport=transporte, base_url="http://teste") as cliente:
-        yield cliente
-    get_settings.cache_clear()
+# GERENTE, e nao CORRETOR: estas rotas conferem o `corretor_id` do corpo
+# contra a claim so quando quem chama E CORRETOR (`PedidoDeAtendimento`, em
+# `api/routes/conversas.py`), e os cenarios aqui usam varios corretores por
+# teste -- ver `test_autorizacao_por_papel.py` para a checagem de dono.
 
 
 async def _handoff(session: AsyncSession, handoff_id: uuid.UUID) -> Handoff:
@@ -66,17 +50,17 @@ async def _marcar_handoff(
         await session.commit()
 
 
-async def test_assumir_silencia_e_devolve_200(cliente_http, semear_corretor) -> None:
+async def test_assumir_silencia_e_devolve_200(client, semear_corretor) -> None:
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={
             "channel": CHANNEL,
             "conversation_key": CHAVE,
             "corretor_id": str(corretor.id),
         },
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("GERENTE"),
     )
 
     assert resposta.status_code == 200
@@ -86,44 +70,16 @@ async def test_assumir_silencia_e_devolve_200(cliente_http, semear_corretor) -> 
     assert datetime.fromisoformat(corpo["assumidoEm"])
 
 
-async def test_assumir_sem_token_e_403(cliente_http) -> None:
-    resposta = await cliente_http.post(
+async def test_assumir_sem_token_e_403(client) -> None:
+    resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(uuid.uuid4())},
     )
     assert resposta.status_code == 403
 
 
-async def test_sem_token_configurado_a_rota_existe_e_recusa(
-    monkeypatch, caches_de_cliente_limpos, banco_limpo, redis_pool
-) -> None:
-    """403 e nao 404 -- **este teste afirmava o contrario ate a TEC-201.**
-
-    Gemeo de `test_importacao_http.py::test_sem_token_configurado_a_rota_existe_e_recusa`,
-    e o porque da mudanca esta escrito la. Em resumo: a condicional da TEC-156
-    existia porque nao havia camada de autenticacao, e agora ha -- manter o 404
-    faria quem configurasse so o JWT ficar sem rota nenhuma.
-
-    Esta rota governa quem fala com qual lead, entao o que importa e que ela
-    **continue recusando sem credencial** -- e isso o teste segue afirmando.
-    """
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "")
-    get_settings.cache_clear()
-    app = create_app()
-    app.state.redis_pool = redis_pool
-    transporte = ASGITransport(app=app)
-    async with AsyncClient(transport=transporte, base_url="http://teste") as cliente:
-        resposta = await cliente.post(
-            "/api/v1/conversas/assumir",
-            json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(uuid.uuid4())},
-            headers={"X-Admin-Token": TOKEN},
-        )
-    assert resposta.status_code == 403
-    get_settings.cache_clear()
-
-
 async def test_assumir_com_conversation_key_acima_de_64_caracteres_e_422(
-    cliente_http, semear_corretor
+    client, semear_corretor
 ) -> None:
     """Achado da revisao final (Minor, reproduzido): sem `max_length`, uma
     `conversation_key` maior que a coluna `String(64)` (migration 0029) passa
@@ -134,73 +90,71 @@ async def test_assumir_com_conversation_key_acima_de_64_caracteres_e_422(
     """
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={
             "channel": CHANNEL,
             "conversation_key": "5" * 65,
             "corretor_id": str(corretor.id),
         },
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("GERENTE"),
     )
 
     assert resposta.status_code == 422
 
 
-async def test_assumir_com_channel_acima_de_32_caracteres_e_422(
-    cliente_http, semear_corretor
-) -> None:
+async def test_assumir_com_channel_acima_de_32_caracteres_e_422(client, semear_corretor) -> None:
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={
             "channel": "w" * 33,
             "conversation_key": CHAVE,
             "corretor_id": str(corretor.id),
         },
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("GERENTE"),
     )
 
     assert resposta.status_code == 422
 
 
-async def test_assumir_com_corretor_inexistente_e_404(cliente_http) -> None:
-    resposta = await cliente_http.post(
+async def test_assumir_com_corretor_inexistente_e_404(client) -> None:
+    resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(uuid.uuid4())},
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("GERENTE"),
     )
     assert resposta.status_code == 404
 
 
-async def test_assumir_com_corretor_inativo_e_recusado(cliente_http, semear_corretor) -> None:
+async def test_assumir_com_corretor_inativo_e_recusado(client, semear_corretor) -> None:
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com", ativo=False)
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("GERENTE"),
     )
 
     assert resposta.status_code == 404
 
 
-async def test_outro_corretor_recebe_409(cliente_http, semear_corretor) -> None:
+async def test_outro_corretor_recebe_409(client, semear_corretor) -> None:
     """O 409 do SRS: "ja assumida por outro"."""
     paulo = await semear_corretor(email=f"paulo-{uuid.uuid4().hex[:8]}@ex.com")
     marina = await semear_corretor(email=f"marina-{uuid.uuid4().hex[:8]}@ex.com")
-    cabecalho = {"X-Admin-Token": TOKEN}
+    cabecalho = cabecalho_de("GERENTE")
     corpo_base = {"channel": CHANNEL, "conversation_key": CHAVE}
 
-    primeira = await cliente_http.post(
+    primeira = await client.post(
         "/api/v1/conversas/assumir",
         json=corpo_base | {"corretor_id": str(paulo.id)},
         headers=cabecalho,
     )
     assert primeira.status_code == 200
 
-    segunda = await cliente_http.post(
+    segunda = await client.post(
         "/api/v1/conversas/assumir",
         json=corpo_base | {"corretor_id": str(marina.id)},
         headers=cabecalho,
@@ -209,31 +163,31 @@ async def test_outro_corretor_recebe_409(cliente_http, semear_corretor) -> None:
 
 
 async def test_reassumir_pela_mesma_pessoa_e_200_e_nao_move_o_carimbo(
-    cliente_http, semear_corretor
+    client, semear_corretor
 ) -> None:
     """D3 do desenho da TEC-179: idempotente, `assumidoEm` fica onde estava."""
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
-    cabecalho = {"X-Admin-Token": TOKEN}
+    cabecalho = cabecalho_de("GERENTE")
     corpo = {"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)}
 
-    primeira = await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    primeira = await client.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
     assert primeira.status_code == 200
 
-    segunda = await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    segunda = await client.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
 
     assert segunda.status_code == 200
     assert segunda.json()["assumidoEm"] == primeira.json()["assumidoEm"]
 
 
-async def test_devolver_reativa_o_agente(cliente_http, semear_corretor) -> None:
+async def test_devolver_reativa_o_agente(client, semear_corretor) -> None:
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
-    cabecalho = {"X-Admin-Token": TOKEN}
+    cabecalho = cabecalho_de("GERENTE")
     corpo = {"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)}
 
-    assumida = await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    assumida = await client.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
     assert assumida.status_code == 200
 
-    devolvida = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+    devolvida = await client.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
 
     assert devolvida.status_code == 200
     resposta = devolvida.json()
@@ -241,22 +195,22 @@ async def test_devolver_reativa_o_agente(cliente_http, semear_corretor) -> None:
     assert resposta["assumidoPor"] == str(corretor.id)
 
 
-async def test_devolver_o_que_ninguem_assumiu_e_409(cliente_http, semear_corretor) -> None:
+async def test_devolver_o_que_ninguem_assumiu_e_409(client, semear_corretor) -> None:
     """Corretor existente e ativo, para exercitar o 409 e nao o 404 da
     validacao acrescentada pela revisao -- ver `test_devolver_com_corretor_*`
     para os dois casos que o `corretor_id` invalido cobre.
     """
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/devolver",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("GERENTE"),
     )
     assert resposta.status_code == 409
 
 
-async def test_devolver_com_corretor_inexistente_e_404(cliente_http, semear_corretor) -> None:
+async def test_devolver_com_corretor_inexistente_e_404(client, semear_corretor) -> None:
     """Achado da revisao (Major): sem validar, um `corretor_id` inexistente
     numa conversa de fato assumida faz o UPDATE achar a linha e violar a FK
     `fk_atendimento_devolvido_por` -- 500 em vez de 404. `devolver` valida o
@@ -264,14 +218,14 @@ async def test_devolver_com_corretor_inexistente_e_404(cliente_http, semear_corr
     buraco.
     """
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
-    cabecalho = {"X-Admin-Token": TOKEN}
-    await cliente_http.post(
+    cabecalho = cabecalho_de("GERENTE")
+    await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
         headers=cabecalho,
     )
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/devolver",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(uuid.uuid4())},
         headers=cabecalho,
@@ -280,20 +234,20 @@ async def test_devolver_com_corretor_inexistente_e_404(cliente_http, semear_corr
     assert resposta.status_code == 404
 
 
-async def test_devolver_com_corretor_inativo_e_recusado(cliente_http, semear_corretor) -> None:
+async def test_devolver_com_corretor_inativo_e_recusado(client, semear_corretor) -> None:
     """Mesmo desfecho que `assumir` da para corretor inativo -- 404, pela
     mesma `_corretor_apto`.
     """
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
     inativo = await semear_corretor(email=f"i-{uuid.uuid4().hex[:8]}@ex.com", ativo=False)
-    cabecalho = {"X-Admin-Token": TOKEN}
-    await cliente_http.post(
+    cabecalho = cabecalho_de("GERENTE")
+    await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
         headers=cabecalho,
     )
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/devolver",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(inativo.id)},
         headers=cabecalho,
@@ -303,16 +257,16 @@ async def test_devolver_com_corretor_inativo_e_recusado(cliente_http, semear_cor
 
 
 async def test_assumir_aceita_o_handoff_pendente_junto(
-    cliente_http, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
+    client, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
 ) -> None:
     """D6. Sem isto o corretor atende e a gerente e cobrada ao mesmo tempo."""
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
     handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=CHANNEL, conversa=CHAVE)
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("GERENTE"),
     )
 
     assert resposta.status_code == 200
@@ -322,7 +276,7 @@ async def test_assumir_aceita_o_handoff_pendente_junto(
 
 
 async def test_assumir_aceita_tambem_o_handoff_ja_escalado(
-    cliente_http, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
+    client, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
 ) -> None:
     """Mesmo argumento da Emenda E-01 da secao 6.5: assumir depois da
     escalada e o caso real, porque a escalada existe para alguem pegar.
@@ -331,10 +285,10 @@ async def test_assumir_aceita_tambem_o_handoff_ja_escalado(
     handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=CHANNEL, conversa=CHAVE)
     await _marcar_handoff(session, handoff_id=handoff_id, status=Status.ESCALADO)
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("GERENTE"),
     )
 
     assert resposta.status_code == 200
@@ -343,21 +297,21 @@ async def test_assumir_aceita_tambem_o_handoff_ja_escalado(
     assert linha.aceito_em is not None
 
 
-async def test_assumir_sem_handoff_nenhum_funciona(cliente_http, semear_corretor) -> None:
+async def test_assumir_sem_handoff_nenhum_funciona(client, semear_corretor) -> None:
     """Nem toda conversa gerou handoff. Assumir nao pode exigir um."""
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("GERENTE"),
     )
 
     assert resposta.status_code == 200
 
 
 async def test_handoff_aceito_ao_assumir_para_de_ser_varrido(
-    cliente_http,
+    client,
     session: AsyncSession,
     session_factory,
     semear_corretor,
@@ -372,10 +326,10 @@ async def test_handoff_aceito_ao_assumir_para_de_ser_varrido(
     prazo_vencido = datetime.now(UTC) - timedelta(minutes=1)
     await _marcar_handoff(session, handoff_id=handoff_id, sla_limite_em=prazo_vencido)
 
-    resposta = await cliente_http.post(
+    resposta = await client.post(
         "/api/v1/conversas/assumir",
         json={"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)},
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("GERENTE"),
     )
     assert resposta.status_code == 200
 
@@ -387,7 +341,7 @@ async def test_handoff_aceito_ao_assumir_para_de_ser_varrido(
 
 
 async def test_devolver_conclui_o_handoff_aberto(
-    cliente_http, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
+    client, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
 ) -> None:
     """D2: o espelho da D6 da TEC-179. Assumir aceita, devolver conclui.
 
@@ -397,11 +351,11 @@ async def test_devolver_conclui_o_handoff_aberto(
     """
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
     handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=CHANNEL, conversa=CHAVE)
-    cabecalho = {"X-Admin-Token": TOKEN}
+    cabecalho = cabecalho_de("GERENTE")
     corpo = {"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)}
 
-    await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
-    resposta = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+    await client.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    resposta = await client.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
 
     assert resposta.status_code == 200
     linha = await _handoff(session, handoff_id)
@@ -409,7 +363,7 @@ async def test_devolver_conclui_o_handoff_aberto(
 
 
 async def test_devolver_conclui_tambem_o_handoff_escalado(
-    cliente_http, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
+    client, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
 ) -> None:
     """Nao ha lista de estados: o criterio e "nao esta CONCLUIDO".
 
@@ -418,34 +372,34 @@ async def test_devolver_conclui_tambem_o_handoff_escalado(
     """
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
     handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=CHANNEL, conversa=CHAVE)
-    cabecalho = {"X-Admin-Token": TOKEN}
+    cabecalho = cabecalho_de("GERENTE")
     corpo = {"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)}
 
-    await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    await client.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
     await _marcar_handoff(session, handoff_id=handoff_id, status=Status.ESCALADO)
 
-    resposta = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+    resposta = await client.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
 
     assert resposta.status_code == 200
     linha = await _handoff(session, handoff_id)
     assert linha.status == Status.CONCLUIDO
 
 
-async def test_devolver_sem_handoff_nenhum_funciona(cliente_http, semear_corretor) -> None:
+async def test_devolver_sem_handoff_nenhum_funciona(client, semear_corretor) -> None:
     """Nem toda conversa assumida gerou handoff -- exigir um quebraria o
     caso comum, pelo mesmo argumento que `assumir` ja aplica."""
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
-    cabecalho = {"X-Admin-Token": TOKEN}
+    cabecalho = cabecalho_de("GERENTE")
     corpo = {"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)}
 
-    await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
-    resposta = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+    await client.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    resposta = await client.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
 
     assert resposta.status_code == 200
 
 
 async def test_devolver_duas_vezes_e_409_e_o_handoff_segue_concluido(
-    cliente_http, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
+    client, session: AsyncSession, semear_corretor, semear_handoff_com_resumo
 ) -> None:
     """A segunda devolucao e 409 (a conversa nao esta assumida) e o handoff
     continua CONCLUIDO.
@@ -457,14 +411,14 @@ async def test_devolver_duas_vezes_e_409_e_o_handoff_segue_concluido(
     seria docstring que afirma o que o teste nao exercita."""
     corretor = await semear_corretor(email=f"p-{uuid.uuid4().hex[:8]}@ex.com")
     handoff_id = await semear_handoff_com_resumo(resumo="texto", canal=CHANNEL, conversa=CHAVE)
-    cabecalho = {"X-Admin-Token": TOKEN}
+    cabecalho = cabecalho_de("GERENTE")
     corpo = {"channel": CHANNEL, "conversation_key": CHAVE, "corretor_id": str(corretor.id)}
 
-    await cliente_http.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
-    primeira = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+    await client.post("/api/v1/conversas/assumir", json=corpo, headers=cabecalho)
+    primeira = await client.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
     assert primeira.status_code == 200
 
-    segunda = await cliente_http.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
+    segunda = await client.post("/api/v1/conversas/devolver", json=corpo, headers=cabecalho)
 
     assert segunda.status_code == 409
     linha = await _handoff(session, handoff_id)

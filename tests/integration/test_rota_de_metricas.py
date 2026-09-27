@@ -1,44 +1,23 @@
 """O endpoint do painel de funil. TEC-190, RF-17."""
 
-from typing import Any
+from tests.conftest import cabecalho_de
 
-import pytest
-from httpx import ASGITransport, AsyncClient
-
-from mobia.app.config import get_settings
-from mobia.app.main import create_app
-
-TOKEN = "token-de-teste-de-metricas"
 ROTA = "/api/v1/metricas/funil"
 PERIODO = {"de": "2026-08-01", "ate": "2026-08-31"}
 
-
-@pytest.fixture
-async def app_com_token(monkeypatch: Any, caches_de_cliente_limpos, banco_limpo, redis_pool):
-    """Molde de `app_com_token` em `test_rota_de_corretores.py`.
-
-    O router so e registrado quando `catalogo_admin_token` e verdadeiro, entao
-    o token tem de estar no ambiente ANTES do `create_app`.
-    """
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN)
-    get_settings.cache_clear()
-    app = create_app()
-    app.state.redis_pool = redis_pool
-    transporte = ASGITransport(app=app)
-    async with AsyncClient(transport=transporte, base_url="http://teste") as cliente:
-        yield cliente
-    get_settings.cache_clear()
+# LEITURA, e nao ADMIN: `VER_FUNIL` e do ADMIN, da GERENTE e da LEITURA (o
+# CORRETOR fica de fora, RN-FE-03.1) -- LEITURA e o menos privilegiado dos tres.
 
 
-async def test_sem_token_e_403(app_com_token) -> None:
-    resposta = await app_com_token.get(ROTA, params=PERIODO)
+async def test_sem_token_e_403(client) -> None:
+    resposta = await client.get(ROTA, params=PERIODO)
 
     assert resposta.status_code == 403
 
 
-async def test_periodo_sem_lead_devolve_200_com_as_seis_etapas(app_com_token) -> None:
+async def test_periodo_sem_lead_devolve_200_com_as_seis_etapas(client) -> None:
     """Item 5 do Review Focus: vazio e 200, nunca 404."""
-    resposta = await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})
+    resposta = await client.get(ROTA, params=PERIODO, headers=cabecalho_de("LEITURA"))
 
     assert resposta.status_code == 200
     corpo = resposta.json()
@@ -53,12 +32,12 @@ async def test_periodo_sem_lead_devolve_200_com_as_seis_etapas(app_com_token) ->
     assert corpo["indicadores"]["taxaQualificacao"] is None
 
 
-async def test_a_etapa_agendado_sai_disponivel_como_as_outras_cinco(app_com_token) -> None:
+async def test_a_etapa_agendado_sai_disponivel_como_as_outras_cinco(client) -> None:
     """Coorte vazia, entao zero -- e zero MEDIDO, nao ausencia de fonte.
 
     Ate a TEC-376 esta etapa saia `quantidade: None` e `disponivel: False`.
     """
-    resposta = await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})
+    resposta = await client.get(ROTA, params=PERIODO, headers=cabecalho_de("LEITURA"))
 
     agendado = next(e for e in resposta.json()["etapas"] if e["nome"] == "Agendado")
     assert agendado["quantidade"] == 0
@@ -66,14 +45,14 @@ async def test_a_etapa_agendado_sai_disponivel_como_as_outras_cinco(app_com_toke
 
 
 async def test_os_quatro_indicadores_de_visita_saem_no_corpo_e_a_lista_fica_vazia(
-    app_com_token,
+    client,
 ) -> None:
     """A chave `indisponiveis` FICA, e vazia -- omiti-la e mudanca de contrato.
 
     `taxaNoShow` continua nula aqui por nao haver desfecho DECIDIDO no
     periodo, e nao por falta de fonte: 0/0 nao e 0%.
     """
-    corpo = (await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})).json()
+    corpo = (await client.get(ROTA, params=PERIODO, headers=cabecalho_de("LEITURA"))).json()
 
     assert corpo["indisponiveis"] == []
     assert corpo["indicadores"]["agendamentosCriados"] == 0
@@ -82,37 +61,37 @@ async def test_os_quatro_indicadores_de_visita_saem_no_corpo_e_a_lista_fica_vazi
     assert corpo["indicadores"]["taxaNoShow"] is None
 
 
-async def test_de_depois_de_ate_e_422_nomeando_o_campo(app_com_token) -> None:
-    resposta = await app_com_token.get(
+async def test_de_depois_de_ate_e_422_nomeando_o_campo(client) -> None:
+    resposta = await client.get(
         ROTA,
         params={"de": "2026-08-31", "ate": "2026-08-01"},
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("LEITURA"),
     )
 
     assert resposta.status_code == 422
     assert "de" in resposta.json()["detail"]
 
 
-async def test_temperatura_invalida_e_422_e_nao_funil_vazio(app_com_token) -> None:
-    resposta = await app_com_token.get(
+async def test_temperatura_invalida_e_422_e_nao_funil_vazio(client) -> None:
+    resposta = await client.get(
         ROTA,
         params={**PERIODO, "temperatura": "MORNA"},
-        headers={"X-Admin-Token": TOKEN},
+        headers=cabecalho_de("LEITURA"),
     )
 
     assert resposta.status_code == 422
     assert "MORNA" in resposta.json()["detail"]
 
 
-async def test_data_malformada_e_422(app_com_token) -> None:
-    resposta = await app_com_token.get(
-        ROTA, params={"de": "ontem", "ate": "2026-08-31"}, headers={"X-Admin-Token": TOKEN}
+async def test_data_malformada_e_422(client) -> None:
+    resposta = await client.get(
+        ROTA, params={"de": "ontem", "ate": "2026-08-31"}, headers=cabecalho_de("LEITURA")
     )
 
     assert resposta.status_code == 422
 
 
-async def test_periodo_e_obrigatorio(app_com_token) -> None:
-    resposta = await app_com_token.get(ROTA, headers={"X-Admin-Token": TOKEN})
+async def test_periodo_e_obrigatorio(client) -> None:
+    resposta = await client.get(ROTA, headers=cabecalho_de("LEITURA"))
 
     assert resposta.status_code == 422

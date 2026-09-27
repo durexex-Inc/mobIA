@@ -9,7 +9,6 @@ from mobia.app.config import (
     CHAVE_DE_DESENVOLVIMENTO,
     CHAVE_DO_LEAD_DE_DESENVOLVIMENTO,
     SEGREDO_DE_JWT_DE_DESENVOLVIMENTO,
-    TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO,
     ConfiguracaoInsegura,
     Settings,
     get_settings,
@@ -177,10 +176,10 @@ def test_producao_com_chave_propria_sobe(monkeypatch: pytest.MonkeyPatch) -> Non
     # TEC-201: a guarda do JWT dispararia depois desta e o teste morreria por
     # ela, nao pela chave que ele afirma.
     monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
-    # TEC-206: a quarta guarda do mesmo tipo. Sem isto ela dispara e o teste
+    # TEC-206: a terceira guarda do mesmo tipo. Sem isto ela dispara e o teste
     # morre por ela, nao pelo que afirma.
     monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
-    # TEC-203: a quinta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
+    # TEC-203: a quarta guarda do mesmo tipo, pelo mesmo motivo das duas acima.
     monkeypatch.setenv("LEAD_INDICE_CHAVE", "chave-de-indice-propria")
     settings = Settings(_env_file=None)
     assert settings.content_encryption_key == chave
@@ -212,56 +211,6 @@ def test_desenvolvimento_segue_com_o_default(monkeypatch: pytest.MonkeyPatch) ->
     settings = Settings(_env_file=None)
     assert settings.environment == "development"
     assert settings.content_encryption_key == CHAVE_DE_DESENVOLVIMENTO
-
-
-def test_producao_com_o_token_de_catalogo_de_desenvolvimento_nao_sobe(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Token de catalogo de dev em producao deixa o catalogo gravavel por quem o leu.
-
-    Mesmo molde da guarda da chave de cifra: o valor de desenvolvimento esta
-    no `.env.example`, versionado, e por isso conhecido de qualquer um que
-    clonou o repo.
-    """
-    # CONTENT_ENCRYPTION_KEY e JWT_SEGREDO precisam de valor proprio aqui --
-    # sem isso as guardas delas (que rodam antes desta) disparam primeiro, e o
-    # teste acabaria verificando a mensagem errada. A do JWT entrou na TEC-201,
-    # e a lista tende a crescer: toda guarda nova de segredo em producao cai
-    # nesta mesma armadilha.
-    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
-    monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
-    monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO)
-    with pytest.raises(ConfiguracaoInsegura) as erro:
-        Settings(_env_file=None)
-
-    assert "CATALOGO_ADMIN_TOKEN" in str(erro.value)
-    assert TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO not in str(erro.value)
-
-
-def test_producao_com_token_de_catalogo_proprio_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
-    token = "token-de-producao-gerado-com-secrets"
-    monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
-    monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
-    # TEC-206: a quarta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
-    monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
-    # TEC-203: a quinta guarda do mesmo tipo, pelo mesmo motivo das quatro acima.
-    monkeypatch.setenv("LEAD_INDICE_CHAVE", "chave-de-indice-propria")
-    monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", token)
-    settings = Settings(_env_file=None)
-    assert settings.catalogo_admin_token == token
-
-
-def test_desenvolvimento_segue_com_o_token_de_catalogo_de_desenvolvimento(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A guarda nao pode travar a maquina de ninguem nem o CI."""
-    monkeypatch.delenv("ENVIRONMENT", raising=False)
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO)
-    settings = Settings(_env_file=None)
-    assert settings.environment == "development"
-    assert settings.catalogo_admin_token == TOKEN_DE_CATALOGO_DE_DESENVOLVIMENTO
 
 
 def test_s3_sem_bucket_nao_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -816,14 +765,12 @@ def test_producao_com_o_segredo_de_jwt_de_desenvolvimento_nao_sobe(
 ) -> None:
     """TEC-201. Quem conhece o segredo emite token de ADMIN para si mesmo.
 
-    E o modo de falha mais silencioso das tres guardas deste arquivo: com a
-    chave de cifra errada o dado e gravado com valor conhecido, com o token de
-    catalogo errado o catalogo fica gravavel -- e com o segredo de JWT errado
-    NADA parece errado. O sistema autentica normalmente; so que qualquer um e
-    ADMIN.
+    E o modo de falha mais silencioso das guardas deste arquivo: com a
+    chave de cifra errada o dado e gravado com valor conhecido -- e com o
+    segredo de JWT errado NADA parece errado. O sistema autentica
+    normalmente; so que qualquer um e ADMIN.
     """
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.delenv("JWT_SEGREDO", raising=False)
 
@@ -833,7 +780,7 @@ def test_producao_com_o_segredo_de_jwt_de_desenvolvimento_nao_sobe(
     assert "JWT_SEGREDO" in str(erro.value)
     # O valor NAO aparece na mensagem: ela vai para o log, e um segredo em log
     # e o proprio defeito que a guarda existe para evitar. Mesma disciplina das
-    # outras duas guardas.
+    # outras guardas deste arquivo.
     assert SEGREDO_DE_JWT_DE_DESENVOLVIMENTO not in str(erro.value)
 
 
@@ -845,7 +792,6 @@ def test_producao_com_segredo_de_jwt_curto_nao_sobe(monkeypatch: pytest.MonkeyPa
     log. Esta guarda transforma o aviso em recusa.
     """
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("JWT_SEGREDO", "x" * (BYTES_MINIMOS_DO_JWT - 1))
 
@@ -870,12 +816,11 @@ def test_producao_com_a_chave_do_lead_de_desenvolvimento_nao_sobe(
 
     E o mesmo modo de falha silencioso das outras guardas deste arquivo: a
     trilha grava normalmente, so que qualquer um descobre se um numero aparece
-    nela. As tres guardas anteriores recebem valor proprio para nao dispararem
+    nela. As duas guardas anteriores recebem valor proprio para nao dispararem
     primeiro.
     """
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
     monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.delenv("AUDITORIA_CHAVE_DO_LEAD", raising=False)
 
@@ -889,10 +834,9 @@ def test_producao_com_a_chave_do_lead_de_desenvolvimento_nao_sobe(
 def test_producao_com_chave_do_lead_propria_sobe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
     monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
-    # TEC-203: a quinta guarda do mesmo tipo, pelo mesmo motivo das quatro acima.
+    # TEC-203: a quarta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
     monkeypatch.setenv("LEAD_INDICE_CHAVE", "chave-de-indice-propria")
 
     assert Settings(_env_file=None).auditoria_chave_do_lead == "chave-do-lead-propria"

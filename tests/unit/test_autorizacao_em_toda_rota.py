@@ -12,10 +12,16 @@ app inteiro em vez de conferir uma lista escrita a mao: lista a mao envelhece
 junto com quem a escreve.
 """
 
+import re
+import uuid
+
+from httpx import ASGITransport, AsyncClient
 from starlette.routing import BaseRoute
 
 from mobia.api.autorizacao import ROTAS_PUBLICAS, Exige, ExigeSessao
+from mobia.app.config import get_settings
 from mobia.app.main import create_app
+from mobia.domain.usuarios import tokens
 
 
 def _guarda_de(rota: BaseRoute) -> Exige | ExigeSessao | None:
@@ -227,11 +233,78 @@ def test_o_me_exige_sessao_e_nao_permissao() -> None:
 
     Permissao nenhuma e exigida de proposito -- a rota nao da acesso a dado
     nenhum alem do que o token de quem chama ja carrega --, mas ela tambem nao
-    e publica: o token compartilhado nao serve, porque nao ha usuario por tras
-    dele para descrever.
+    e publica: `ExigeSessao` exige um usuario de verdade por tras do token, e
+    nao so um JWT valido. Ate a TEC-382 isso tambem recusava o token
+    compartilhado, que resolvia para um ADMIN sem usuario; apagado o ramo,
+    quem nao apresenta JWT nenhum cai no mesmo caso por outro caminho.
     """
     por_sessao = [
         rota.path for rota in _rotas_do_app() if isinstance(_guarda_de(rota), ExigeSessao)
     ]
 
     assert por_sessao == ["/api/v1/auth/me"]
+
+
+def _com_placeholder(path: str) -> str:
+    """Troca todo `{parametro}` do caminho por um valor generico.
+
+    O valor nao precisa ser um UUID nem bater com o tipo declarado na rota:
+    sem credencial nenhuma, a guarda de autorizacao recusa ANTES de o FastAPI
+    validar tipo de parametro de caminho ou corpo -- conferido a mao, request a
+    request, contra o app de verdade, na TEC-382.
+    """
+    return re.sub(r"\{[^}]+\}", "x", path)
+
+
+async def test_o_token_compartilhado_antigo_nao_autentica_mais() -> None:
+    """TEC-382, criterio (a): o `X-Admin-Token` some, e o valor de
+    desenvolvimento que ele aceitava (`dev-catalogo-token`, `.env.example`)
+    passa a ser um header sem efeito nenhum -- toda rota administrativa
+    reprova, a mesma resposta de qualquer requisicao sem credencial
+    (`_negar` em `api/autorizacao.py`).
+
+    Nao precisa de banco nem de Redis: sem identidade nenhuma resolvida,
+    `registrar_negativa` so grava no log (`identidade is None`, ver o
+    docstring dela), e o `RateLimitPorIP` degrada sem pool de Redis no
+    `app.state`.
+
+    `GET /api/v1/auth/me` entra a parte, fora de `PERMISSAO_ESPERADA`: ela e
+    guardada por `ExigeSessao`, e nao por `Exige(Permissao.X)`, entao a matriz
+    de permissao nao a cobre -- mas e administrativa no sentido que importa
+    aqui (responde quem chamou), e o token antigo tem de reprovar nela tanto
+    quanto em qualquer outra.
+    """
+    app = create_app()
+    transporte = ASGITransport(app=app)
+    rotas = [*PERMISSAO_ESPERADA, ("GET", "/api/v1/auth/me")]
+    async with AsyncClient(transport=transporte, base_url="http://test") as cliente:
+        for metodo, caminho in rotas:
+            resposta = await cliente.request(
+                metodo,
+                _com_placeholder(caminho),
+                json={},
+                headers={"X-Admin-Token": "dev-catalogo-token"},
+            )
+            assert resposta.status_code == 403, (
+                f"{metodo} {caminho} devolveu {resposta.status_code}, e nao 403 -- "
+                "o X-Admin-Token antigo nao pode continuar autenticando."
+            )
+
+
+async def test_gerente_recebe_403_numa_rota_so_de_admin() -> None:
+    """TEC-382, criterio (b): JWT valido, papel de menos, ainda 403.
+
+    `VER_AUDITORIA` e do ADMIN por construcao (`permissoes.py`) -- nenhum
+    outro papel a tem, GERENTE incluido.
+    """
+    app = create_app()
+    transporte = ASGITransport(app=app)
+    token = tokens.emitir(
+        uuid.uuid4(), "GERENTE", mfa=False, corretor_id=None, settings=get_settings()
+    )
+    async with AsyncClient(transport=transporte, base_url="http://test") as cliente:
+        resposta = await cliente.get(
+            "/api/v1/auditoria", headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert resposta.status_code == 403
