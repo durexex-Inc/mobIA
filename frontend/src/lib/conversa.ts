@@ -46,7 +46,8 @@ export type Evento =
   | { tipo: 'fechou' }
   | { tipo: 'prazoDoAck'; messageId: string }
   | { tipo: 'reenviou'; messageId: string }
-  // A espera de `muitas_tentativas` acabou e um socket novo esta abrindo.
+  // Um socket novo esta abrindo depois de uma pausa deliberada: o fim da
+  // espera de `muitas_tentativas`, ou o painel reaberto depois do sono (D4).
   | { tipo: 'reabrindo' }
   // A visitante confirmou "Encerrar conversa" no menu (D3).
   | { tipo: 'encerrou' }
@@ -241,9 +242,10 @@ function aplicarFechou(estado: Conversa): Conversa {
   // nao deve pisar: a espera de 'muitas_tentativas' e a informacao relevante
   // na primeira -- 'fechada' pisaria em cima da contagem regressiva --, e
   // 'adormecida' (D4) ja e um fechamento deliberado, que pode receber outro
-  // 'fechou' do mesmo socket sem virar 'fechada'. Quando a espera acaba,
-  // `reabrindo` a troca por 'conectando', e uma queda do socket novo antes
-  // do `open` vira 'fechada' normalmente.
+  // 'fechou' do mesmo socket sem virar 'fechada'. Quando a espera acaba, ou
+  // quando o painel reabre depois do sono, `reabrindo` troca qualquer das
+  // duas por 'conectando', e uma queda do socket novo antes do `open` vira
+  // 'fechada' normalmente.
   const conexao: Conexao =
     estado.conexao.tipo === 'aguardando' || estado.conexao.tipo === 'adormecida'
       ? estado.conexao

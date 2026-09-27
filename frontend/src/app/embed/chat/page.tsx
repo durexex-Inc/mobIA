@@ -3,7 +3,6 @@ import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
 
 import { AvisoDePronto } from '@/components/AvisoDePronto'
-import { CabecalhoDoChat } from '@/components/CabecalhoDoChat'
 import { Conversa } from '@/components/Conversa'
 import { buscarAparencia } from '@/lib/servidor/aparencia'
 import { enderecoDoChat } from '@/lib/servidor/enderecoDoChat'
@@ -18,7 +17,8 @@ export const metadata: Metadata = {
 
 /**
  * O chat que o site da imobiliaria enquadra (TEC-344, D6): o cabecalho e a
- * conversa (TEC-346, D5). O endereco do WebSocket e lido aqui, no servidor, e
+ * conversa (TEC-346, D5), os dois desenhados por `Conversa` -- o menu de
+ * encerrar do cabecalho e dela (TEC-347, D3). O endereco do WebSocket e lido aqui, no servidor, e
  * desce por prop ao componente cliente -- sem variavel `NEXT_PUBLIC_` (D2).
  *
  * **A cor entra por `<style nonce>`, e nao pelo atributo `style`.** A CSP do
@@ -42,8 +42,7 @@ export default async function ChatEmbutido({ searchParams }: PageProps<'/embed/c
   return (
     <main className="chat-embutido">
       <style nonce={nonce}>{`.chat-embutido { --cor-primaria: ${aparencia.corPrimaria}; }`}</style>
-      <CabecalhoDoChat nome={aparencia.nomeDoAssistente} />
-      <Conversa endereco={enderecoDoChat()} />
+      <Conversa endereco={enderecoDoChat()} nome={aparencia.nomeDoAssistente} />
       <AvisoDePronto />
     </main>
   )

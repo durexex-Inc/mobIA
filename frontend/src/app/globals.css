@@ -534,6 +534,97 @@ a {
   background: var(--cor-primaria, #1d4ed8);
   color: #fff;
   padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* O menu "Opções da conversa" (TEC-347, D3). Abre por cima da lista, preso
+   ao canto do botao; so classe, nunca atributo `style` (CSP). */
+.conversa__opcoes {
+  position: relative;
+}
+
+.conversa__botao-de-opcoes {
+  padding: 0 8px;
+  font: inherit;
+  font-size: 1.25rem;
+  line-height: 1.5;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.conversa__botao-de-opcoes:hover,
+.conversa__botao-de-opcoes[aria-expanded='true'] {
+  background: rgb(255 255 255 / 0.18);
+}
+
+.conversa__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 1;
+  min-width: 180px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--background, #fff);
+  color: var(--foreground, #171717);
+  border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+
+.conversa__menu button {
+  width: 100%;
+  padding: 8px 12px;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.conversa__menu button:hover,
+.conversa__menu button:focus-visible {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+/* A confirmacao de encerrar: uma faixa no topo da conversa, acima da lista. */
+.conversa__confirmacao {
+  padding: 12px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+
+.conversa__confirmacao p {
+  margin: 0 0 8px;
+}
+
+.conversa__confirmacao-acoes {
+  display: flex;
+  gap: 8px;
+}
+
+.conversa__confirmacao-acoes button {
+  padding: 6px 16px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.conversa__confirmacao-acoes .conversa__confirmar {
+  font-weight: 600;
+  color: #fff;
+  background: var(--cor-primaria, #1d4ed8);
+  border-color: var(--cor-primaria, #1d4ed8);
 }
 
 .chat-embutido__cabecalho h1 {

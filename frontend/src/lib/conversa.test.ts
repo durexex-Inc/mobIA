@@ -347,6 +347,15 @@ describe('reduzir', () => {
     expect(depois.conexao).toEqual({ tipo: 'fechada' })
   })
 
+  it('reabrindo acorda do sono: conectando, e uma queda depois vira fechada (D4)', () => {
+    const adormecida = reduzir(INICIAL, { tipo: 'adormeceu' })
+    const reabrindo = reduzir(adormecida, { tipo: 'reabrindo' })
+    expect(reabrindo.conexao).toEqual({ tipo: 'conectando' })
+
+    const depois = reduzir(reabrindo, { tipo: 'fechou' })
+    expect(depois.conexao).toEqual({ tipo: 'fechada' })
+  })
+
   it('reabrindo com a conexao ja conectando devolve a mesma referencia', () => {
     expect(reduzir(INICIAL, { tipo: 'reabrindo' })).toBe(INICIAL)
   })
