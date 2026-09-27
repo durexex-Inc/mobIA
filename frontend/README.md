@@ -355,7 +355,6 @@ O `<slug>` tem de ser igual ao `TENANT_SLUG` do backend: minúsculas, dígitos e
 
 **Só os domínios cadastrados mostram o chat (TEC-345).** Eles ficam na configuração do agente, em `dominiosDoChat` (até 5, `host` ou `host:porta` em minúsculas, sem esquema). `www.` e o domínio nu são entradas diferentes. Sem domínio cadastrado, nenhum site mostra o chat — é o padrão. São duas travas:
 
-`public/widget.js` não passa por build: o que está no arquivo é o que o visitante baixa, e `npm run verificar:widget` reprova acima de 5 KB gzip. Desde a TEC-346 a visitante conversa pelo chat e vê se cada mensagem chegou; até a TEC-347, cada abertura do chat é uma conversa nova, e até a TEC-348 a conexão só reabre quando a visitante envia ou reenvia uma mensagem, ou sozinha, quando acaba a espera pedida por um `muitas_tentativas`. Até a TEC-345, qualquer site pode embutir o chat.
 - o `frame-ancestors` de `/embed/*` lista os domínios, e o navegador recusa o iframe em qualquer outro site. Esta é a de segurança;
 - `/embed/aparencia` responde 404 quando o `Origin` do loader não é um desses domínios, e o botão nem aparece. Esta é só de experiência: qualquer um manda o `Origin` que quiser.
 
@@ -363,7 +362,9 @@ O proxy guarda os domínios por 60 s, e a aparência tem o seu próprio cache de
 
 O botão aparecer não basta para a conversa conectar. O `WS /widget/chat` só aceita o handshake cuja origem esteja em `ORIGENS_DO_WIDGET` do backend, e essa origem é a **do painel**, que serve o iframe `/embed/chat`, e não a do site da imobiliária: quem abre o socket é o iframe. Sem ela, o handshake leva `403`. Em desenvolvimento, `ORIGENS_DO_WIDGET=http://localhost:3000`. Do lado do Next, o `connect-src` de `/embed/*` admite só a origem do endereço que a página passa ao socket, `MOBIA_WIDGET_WS_URL` ou o derivado de `MOBIA_API_BASE`. As duas coisas saem da mesma função, `enderecoDoChat()`, e por isso não divergem (TEC-384).
 
-`public/widget.js` não passa por build: o que está no arquivo é o que o visitante baixa, e `npm run verificar:widget` reprova acima de 5 KB gzip. Até a TEC-346, quem abre o chat vê só o cabeçalho.
+`public/widget.js` não passa por build: o que está no arquivo é o que o visitante baixa, e `npm run verificar:widget` reprova acima de 5 KB gzip. Desde a TEC-346 a visitante conversa pelo chat e vê se cada mensagem chegou.
+
+**Recarregar a página retoma a conversa (TEC-347).** O iframe guarda a sessão em `localStorage['mobia:sessao']` por no máximo 30 dias contados da criação — retomar não renova o prazo —, e o `historico` que o servidor devolve repõe as falas na tela. Com o storage bloqueado (modo privado, Safari ITP), cada carregamento volta a ser uma conversa nova, sem erro. O menu "Opções da conversa", no cabeçalho, encerra a conversa: apaga a sessão guardada e zera a tela, sem avisar o servidor. Com o painel minimizado por 30 minutos sem nenhum frame, a conexão dorme, e reabrir o painel a retoma com a mesma sessão; quem avisa o iframe que o painel abriu ou fechou é o loader. Fora isso, até a TEC-348 a conexão só reabre em três casos. O primeiro é a visitante enviar ou reenviar uma mensagem. O segundo é ela encerrar a conversa, o que abre uma conversa nova, com sessão nova; se isso acontecer durante a espera de um `muitas_tentativas`, a conexão nova só abre quando a espera acaba. O terceiro é o fim dessa espera: aí a conexão reabre sozinha.
 
 ## Comandos
 

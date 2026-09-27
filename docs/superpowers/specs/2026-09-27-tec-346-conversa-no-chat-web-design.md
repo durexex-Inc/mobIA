@@ -71,6 +71,7 @@ A card manda guardar o UUID emitido pelo servidor no `localStorage` da origem do
 Esta card grava o UUID ao receber `sessao` e manda sempre `ola` com `sessao: null`. Retomar sem mostrar o histórico deixaria a visitante numa tela vazia enquanto o agente lembra da conversa, que é pior do que começar de novo. O acesso ao `localStorage` fica em try/catch: modo privado ou storage bloqueado não vira erro.
 
 - **Nota (27/09/2026):** o "sempre `sessao: null`" vale só para a primeira conexão de cada carregamento da página. As reconexões na mesma página — reenviar, enviar com o socket fechado, o fim da espera de `muitas_tentativas` — mandam a sessão que o servidor emitiu nela, guardada em memória, nunca lida do `localStorage`. Sem isso cada queda abria uma sessão nova no servidor: o agente perdia o contexto, e a deduplicação por `messageId`, que é por sessão, não valia entre as duas — uma queda entre a gravação e o `ack` duplicava a mensagem. Nessas reconexões a tela já mostra os balões, então o argumento acima (tela vazia com o agente lembrando) não se aplica; o `historico` que o servidor devolve continua ignorado.
+  - **Nota (TEC-347, 27/09/2026):** superada pela D1 e pela D2 da TEC-347. A primeira conexão de cada carregamento passou a mandar a sessão guardada, se ainda válida (30 dias desde a criação), e o `historico` deixou de ser ignorado: em toda conexão ele é a verdade do servidor e substitui as falas confirmadas da tela. Ver `docs/superpowers/specs/2026-09-27-tec-347-retomar-conversa-design.md`.
 
 ## D5 — A tela
 
@@ -104,6 +105,7 @@ Esta card grava o UUID ao receber `sessao` e manda sempre `ola` com `sessao: nul
 - **L2 — `upgrade-insecure-requests` pode transformar `ws://` em `wss://`** numa página servida por HTTP. Em produção a página é HTTPS e o WebSocket é `wss://`, então não há o que transformar; em desenvolvimento, a verificação no navegador decide se a diretiva precisa sair de `/embed/*` fora de produção.
   - **Nota (27/09/2026):** resolvida pela verificação no Edge de 27/09/2026: `ws://localhost` conectou sob o `upgrade-insecure-requests` da CSP. A CSP não precisou mudar.
 - **L3 — Até a TEC-347, cada abertura do chat é uma conversa nova** (D4).
+  - **Nota (TEC-347, 27/09/2026):** superada pela D1 e pela D2 da TEC-347: recarregar a página retoma a conversa por até 30 dias desde a criação da sessão, e o `historico` repõe as falas na tela.
 - **L4 — O WebSocket não confere a origem** (TEC-365). Com o `connect-src` desta card, a página embutida alcança o WebSocket; quem o alcança de outras páginas continua sem barreira até lá.
   - **Nota (27/09/2026):** a TEC-365 entrou na main durante esta card; o handshake agora exige a origem do painel, que é a do iframe de /embed/chat.
 - **L5 — A reconexão é só manual.** Queda de conexão marca as pendentes como `falhou`; reconectar sozinho é da TEC-348.

@@ -104,7 +104,7 @@ function enviar(texto: string) {
 }
 
 function montarAberto(): SocketFalso {
-  render(<Conversa endereco={ENDERECO} />)
+  render(<Conversa endereco={ENDERECO} nome={null} />)
   const socket = ultimoSocket()
   socket.abrir()
   return socket
@@ -162,12 +162,13 @@ describe('Conversa', () => {
     expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: null }])
   })
 
-  it('o primeiro ola da montagem vai com sessao nula mesmo com sessao gravada (D4)', () => {
+  it('o texto puro que a TEC-346 gravava nao e retomado: o ola vai com sessao nula e a chave some (D1)', () => {
     localStorage.setItem('mobia:sessao', SESSAO)
 
     const socket = montarAberto()
 
     expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: null }])
+    expect(localStorage.getItem('mobia:sessao')).toBeNull()
   })
 
   it('mostra "Enviando…" ate o ack e "Recebida" depois (cenario 1)', () => {
@@ -388,14 +389,6 @@ describe('Conversa', () => {
     expect(screen.getByText('Enviando…')).toBeInTheDocument()
   })
 
-  it('grava a sessao em localStorage["mobia:sessao"] (D4)', () => {
-    const socket = montarAberto()
-
-    socket.receber({ tipo: 'sessao', sessao: '6f1c2c7e-6a0b-4c1f-9d0e-1a2b3c4d5e6f' })
-
-    expect(localStorage.getItem('mobia:sessao')).toBe('6f1c2c7e-6a0b-4c1f-9d0e-1a2b3c4d5e6f')
-  })
-
   it('storage bloqueado nao interrompe a conversa (D4)', () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new DOMException('bloqueado', 'SecurityError')
@@ -529,7 +522,7 @@ describe('Conversa', () => {
 
   it('desmontar fecha o socket e cancela o prazo pendente', () => {
     vi.useFakeTimers()
-    const { unmount } = render(<Conversa endereco={ENDERECO} />)
+    const { unmount } = render(<Conversa endereco={ENDERECO} nome={null} />)
     const socket = ultimoSocket()
     socket.abrir()
     enviar('Oi')
@@ -543,7 +536,7 @@ describe('Conversa', () => {
 
   it('desmontar durante a espera de muitas_tentativas nao reabre depois', () => {
     vi.useFakeTimers()
-    const { unmount } = render(<Conversa endereco={ENDERECO} />)
+    const { unmount } = render(<Conversa endereco={ENDERECO} nome={null} />)
     const socket = ultimoSocket()
     socket.abrir()
     socket.receber({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'Muitas tentativas, aguarde 5 s.', aguardeSegundos: 5 })
@@ -560,7 +553,7 @@ describe('Conversa', () => {
   it('em StrictMode, a montagem dupla deixa um socket vivo so', () => {
     render(
       <StrictMode>
-        <Conversa endereco={ENDERECO} />
+        <Conversa endereco={ENDERECO} nome={null} />
       </StrictMode>,
     )
 
@@ -579,5 +572,488 @@ describe('Conversa', () => {
       { tipo: 'ola', sessao: null },
       { tipo: 'mensagem', id: expect.stringMatching(UUID_V4), texto: 'Oi' },
     ])
+  })
+})
+
+// --- TEC-347: retomar, encerrar e dormir ----------------------------------
+
+const AGORA = Date.UTC(2026, 8, 27, 12, 0, 0)
+const UM_DIA_MS = 24 * 60 * 60 * 1000
+const TRINTA_MIN_MS = 30 * 60 * 1000
+const OUTRA_SESSAO = '415b23dc-823d-4926-9442-964169fdb758'
+
+function guardarSessao(sessao: string, criadaEm: number) {
+  localStorage.setItem('mobia:sessao', JSON.stringify({ sessao, criadaEm }))
+}
+
+function sessaoNoStorage(): unknown {
+  const bruto = localStorage.getItem('mobia:sessao')
+  return bruto === null ? null : JSON.parse(bruto)
+}
+
+/**
+ * Um aviso de visibilidade como o loader manda. No jsdom `window.parent` e a
+ * propria janela; outra janela e simulada com qualquer outro objeto em
+ * `source` -- definido depois de construir, porque o `MessageEvent` do jsdom
+ * so aceita janela ou porta de verdade no construtor.
+ */
+function avisar(data: unknown, source: unknown = window.parent) {
+  const evento = new MessageEvent('message', { data })
+  Object.defineProperty(evento, 'source', { value: source })
+  act(() => {
+    window.dispatchEvent(evento)
+  })
+}
+
+function doze(): { papel: 'lead' | 'agente'; texto: string; em: string }[] {
+  return Array.from({ length: 12 }, (_, i) => ({
+    papel: i % 2 === 0 ? ('lead' as const) : ('agente' as const),
+    texto: `fala ${i + 1}`,
+    em: '2026-09-27T11:00:00Z',
+  }))
+}
+
+function abrirMenuEEscolherEncerrar() {
+  fireEvent.click(screen.getByRole('button', { name: 'Opções da conversa' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Encerrar conversa' }))
+}
+
+const PERGUNTA = 'Encerrar esta conversa? O histórico some desta tela.'
+
+describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(AGORA)
+  })
+
+  it('cenario 1: com sessao valida guardada, o primeiro ola a leva e o historico repoe as 12 falas', () => {
+    guardarSessao(SESSAO, AGORA - 2 * UM_DIA_MS)
+
+    const socket = montarAberto()
+
+    expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: SESSAO }])
+
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.receber({ tipo: 'historico', mensagens: doze() })
+
+    const itens = within(screen.getByRole('list')).getAllByRole('listitem')
+    expect(itens).toHaveLength(12)
+    expect(itens.map((li) => li.querySelector('.conversa__texto')?.textContent ?? li.textContent)).toEqual(
+      doze().map((m) => m.texto),
+    )
+    for (const [i, li] of itens.entries()) {
+      if (i % 2 === 0) {
+        expect(li).toHaveClass('conversa__balao--visitante')
+        expect(within(li).getByText('Recebida')).toBeInTheDocument()
+      } else {
+        expect(li).toHaveClass('conversa__balao--agente')
+      }
+    }
+    expect(screen.queryByRole('button', { name: 'Reenviar' })).toBeNull()
+    // Retomar a mesma sessao nao regrava: o prazo conta desde a criacao (D1).
+    expect(sessaoNoStorage()).toEqual({ sessao: SESSAO, criadaEm: AGORA - 2 * UM_DIA_MS })
+  })
+
+  it('sem sessao guardada, o ola vai com null; a sessao emitida e gravada uma vez so', () => {
+    const socket = montarAberto()
+    expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: null }])
+
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    expect(sessaoNoStorage()).toEqual({ sessao: SESSAO, criadaEm: AGORA })
+
+    act(() => {
+      vi.advanceTimersByTime(5_000)
+    })
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    expect(sessaoNoStorage()).toEqual({ sessao: SESSAO, criadaEm: AGORA })
+  })
+
+  it('cenario 3: sessao guardada ha 31 dias abre com null e a chave e apagada', () => {
+    guardarSessao(SESSAO, AGORA - 31 * UM_DIA_MS)
+
+    const socket = montarAberto()
+
+    expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: null }])
+    expect(localStorage.getItem('mobia:sessao')).toBeNull()
+  })
+
+  it('em StrictMode, a montagem descartada nao consome a sessao guardada', () => {
+    guardarSessao(SESSAO, AGORA - UM_DIA_MS)
+
+    render(
+      <StrictMode>
+        <Conversa endereco={ENDERECO} nome={null} />
+      </StrictMode>,
+    )
+    const [descartado, vivo] = SocketFalso.instancias
+    descartado.fechar()
+    vivo.abrir()
+
+    expect(vivo.frames()).toEqual([{ tipo: 'ola', sessao: SESSAO }])
+    expect(sessaoNoStorage()).toEqual({ sessao: SESSAO, criadaEm: AGORA - UM_DIA_MS })
+  })
+
+  it('o menu abre por um botao com aria-haspopup e fecha com Escape', () => {
+    montarAberto()
+    const botao = screen.getByRole('button', { name: 'Opções da conversa' })
+    expect(botao).toHaveAttribute('aria-haspopup', 'menu')
+    expect(botao).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    fireEvent.click(botao)
+    expect(botao).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Encerrar conversa' }), { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(botao).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('cenario 2: encerrar apaga o storage, zera a tela e abre socket novo com ola null', () => {
+    guardarSessao(SESSAO, AGORA - UM_DIA_MS)
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.receber({ tipo: 'historico', mensagens: doze() })
+    enviar('Pendente')
+    expect(vi.getTimerCount()).toBe(1)
+
+    abrirMenuEEscolherEncerrar()
+    expect(screen.getByText(PERGUNTA)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Encerrar' }))
+
+    expect(localStorage.getItem('mobia:sessao')).toBeNull()
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0)
+    expect(screen.queryByText(PERGUNTA)).toBeNull()
+    expect(socket.fechadoPeloCliente).toBe(true)
+    // O prazo do `ack` da mensagem pendente nao sobrevive ao encerramento.
+    // O avanco de 0 ms so escoa os timers de 0 ms que o `focus()` do jsdom
+    // agenda ao abrir o menu e a confirmacao; o do `ack` e de 10 s.
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(vi.getTimerCount()).toBe(0)
+    expect(SocketFalso.instancias).toHaveLength(2)
+
+    // O `close` atrasado do socket antigo nao marca nada na tela nova.
+    socket.fechar()
+    const novo = ultimoSocket()
+    novo.abrir()
+    expect(novo.frames()).toEqual([{ tipo: 'ola', sessao: null }])
+    expect(screen.getByRole('textbox', { name: 'Mensagem' })).toBeInTheDocument()
+
+    // A sessao nova que o servidor emitir e gravada do zero.
+    novo.receber({ tipo: 'sessao', sessao: OUTRA_SESSAO })
+    expect(sessaoNoStorage()).toEqual({ sessao: OUTRA_SESSAO, criadaEm: AGORA })
+  })
+
+  it('cenario 2: "Cancelar" fecha a confirmacao sem mudar nada', () => {
+    guardarSessao(SESSAO, AGORA - UM_DIA_MS)
+    const socket = montarAberto()
+    socket.receber({ tipo: 'historico', mensagens: doze() })
+
+    abrirMenuEEscolherEncerrar()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByText(PERGUNTA)).toBeNull()
+    expect(screen.getAllByRole('listitem')).toHaveLength(12)
+    expect(sessaoNoStorage()).toEqual({ sessao: SESSAO, criadaEm: AGORA - UM_DIA_MS })
+    expect(socket.fechadoPeloCliente).toBe(false)
+    expect(SocketFalso.instancias).toHaveLength(1)
+  })
+
+  it('cenario 4: minimizado 30 min o socket dorme sem falha; reabrir retoma a sessao e o historico', () => {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.receber({ tipo: 'mensagem', texto: 'Olá! Como posso ajudar?', kind: 'texto' })
+
+    avisar({ tipo: 'mobia:visibilidade', aberto: false })
+    act(() => {
+      vi.advanceTimersByTime(TRINTA_MIN_MS - 1)
+    })
+    expect(socket.fechadoPeloCliente).toBe(false)
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(socket.fechadoPeloCliente).toBe(true)
+    socket.fechar(1000)
+
+    expect(screen.queryByText('Não enviada')).toBeNull()
+    expect(screen.getByText('Olá! Como posso ajudar?')).toBeInTheDocument()
+    expect(SocketFalso.instancias).toHaveLength(1)
+
+    avisar({ tipo: 'mobia:visibilidade', aberto: true })
+
+    expect(SocketFalso.instancias).toHaveLength(2)
+    const novo = ultimoSocket()
+    novo.abrir()
+    expect(novo.frames()).toEqual([{ tipo: 'ola', sessao: SESSAO }])
+    novo.receber({ tipo: 'sessao', sessao: SESSAO })
+    novo.receber({
+      tipo: 'historico',
+      mensagens: [
+        { papel: 'agente', texto: 'Olá! Como posso ajudar?', em: '2026-09-27T11:00:00Z' },
+        { papel: 'agente', texto: 'Ainda está por aí?', em: '2026-09-27T11:20:00Z' },
+      ],
+    })
+    expect(within(screen.getByRole('list')).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'Olá! Como posso ajudar?',
+      'Ainda está por aí?',
+    ])
+  })
+
+  it('reabrir antes de dormir nao abre socket novo e cancela o sono', () => {
+    montarAberto()
+
+    avisar({ tipo: 'mobia:visibilidade', aberto: false })
+    act(() => {
+      vi.advanceTimersByTime(TRINTA_MIN_MS - 1)
+    })
+    avisar({ tipo: 'mobia:visibilidade', aberto: true })
+    act(() => {
+      vi.advanceTimersByTime(TRINTA_MIN_MS)
+    })
+
+    expect(SocketFalso.instancias).toHaveLength(1)
+    expect(ultimoSocket().fechadoPeloCliente).toBe(false)
+  })
+
+  it('frame recebido enquanto minimizado reinicia o prazo do sono', () => {
+    const socket = montarAberto()
+    avisar({ tipo: 'mobia:visibilidade', aberto: false })
+
+    act(() => {
+      vi.advanceTimersByTime(29 * 60 * 1000)
+    })
+    socket.receber({ tipo: 'mensagem', texto: 'Ainda está por aí?', kind: 'texto' })
+    act(() => {
+      vi.advanceTimersByTime(29 * 60 * 1000)
+    })
+    expect(socket.fechadoPeloCliente).toBe(false)
+
+    act(() => {
+      vi.advanceTimersByTime(60 * 1000)
+    })
+    expect(socket.fechadoPeloCliente).toBe(true)
+  })
+
+  it('aviso de outra janela, ou com aberto que nao e booleano, nao cancela o sono (Review Focus 4)', () => {
+    const socket = montarAberto()
+    avisar({ tipo: 'mobia:visibilidade', aberto: false })
+
+    // Cada um destes, se aceito, leria "aberto" e cancelaria o sono.
+    avisar({ tipo: 'mobia:visibilidade', aberto: 'false' })
+    avisar({ tipo: 'mobia:visibilidade', aberto: 'true' })
+    avisar({ tipo: 'mobia:visibilidade', aberto: 1 })
+    avisar({ tipo: 'mobia:visibilidade', aberto: true }, {})
+
+    act(() => {
+      vi.advanceTimersByTime(TRINTA_MIN_MS - 1)
+    })
+    expect(socket.fechadoPeloCliente).toBe(false)
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(socket.fechadoPeloCliente).toBe(true)
+  })
+
+  it('aviso de outra janela, ou de outro tipo, nao faz o chat dormir (Review Focus 4)', () => {
+    const socket = montarAberto()
+
+    avisar({ tipo: 'mobia:visibilidade', aberto: false }, {})
+    avisar({ tipo: 'outra:coisa', aberto: false })
+    avisar('mobia:visibilidade')
+    avisar(null)
+    act(() => {
+      vi.advanceTimersByTime(2 * TRINTA_MIN_MS)
+    })
+
+    expect(socket.fechadoPeloCliente).toBe(false)
+    expect(SocketFalso.instancias).toHaveLength(1)
+  })
+
+  it('o cabecalho mostra o nome do assistente', () => {
+    render(<Conversa endereco={ENDERECO} nome="Lia" />)
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Lia · Assistente virtual$/)
+  })
+
+  it('o menu fecha quando o foco sai dele, e nao quando passa do item ao botao', () => {
+    montarAberto()
+    const botao = screen.getByRole('button', { name: 'Opções da conversa' })
+    fireEvent.click(botao)
+    const item = screen.getByRole('menuitem', { name: 'Encerrar conversa' })
+
+    fireEvent.blur(item, { relatedTarget: botao })
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+
+    fireEvent.blur(item, { relatedTarget: screen.getByRole('textbox', { name: 'Mensagem' }) })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(botao).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('"Cancelar" e Escape fecham a confirmacao e devolvem o foco ao botao do menu', () => {
+    montarAberto()
+    const botao = screen.getByRole('button', { name: 'Opções da conversa' })
+
+    abrirMenuEEscolherEncerrar()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(botao).toHaveFocus()
+
+    abrirMenuEEscolherEncerrar()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Cancelar' }), { key: 'Escape' })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(botao).toHaveFocus()
+    expect(SocketFalso.instancias).toHaveLength(1)
+  })
+
+  it('"Encerrar" devolve o foco ao campo da mensagem', () => {
+    montarAberto()
+
+    abrirMenuEEscolherEncerrar()
+    fireEvent.click(screen.getByRole('button', { name: 'Encerrar' }))
+
+    expect(screen.getByRole('textbox', { name: 'Mensagem' })).toHaveFocus()
+  })
+
+  it('o historico nao puxa para o fim quem rolou para cima, mesmo com a pendente dela no fim', () => {
+    const socket = montarAberto()
+    const lista = comGeometria(screen.getByRole('list'), { alturaTotal: 1000, alturaVisivel: 300 })
+    enviar('Pendente')
+    expect(lista.scrollTop).toBe(1000)
+    rolarPara(lista, 100)
+
+    socket.receber({ tipo: 'historico', mensagens: doze() })
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(13)
+    expect(lista.scrollTop).toBe(100)
+  })
+
+  it('encerrar durante a espera de muitas_tentativas nao abre conexao antes do fim da espera (Review Focus 5)', () => {
+    guardarSessao(SESSAO, AGORA - UM_DIA_MS)
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.receber({ tipo: 'mensagem', texto: 'Temos, sim.', kind: 'texto' })
+    socket.receber({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'Muitas tentativas, aguarde 20 s.', aguardeSegundos: 20 })
+    socket.fechar(1013)
+    act(() => {
+      vi.advanceTimersByTime(5_000)
+    })
+
+    abrirMenuEEscolherEncerrar()
+    fireEvent.click(screen.getByRole('button', { name: 'Encerrar' }))
+
+    expect(localStorage.getItem('mobia:sessao')).toBeNull()
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0)
+    expect(screen.getByText('Muitas tentativas, aguarde 20 s.')).toBeInTheDocument()
+    expect(SocketFalso.instancias).toHaveLength(1)
+
+    // A espera nao reinicia com o encerramento: acaba nos 20 s originais.
+    act(() => {
+      vi.advanceTimersByTime(14_999)
+    })
+    expect(SocketFalso.instancias).toHaveLength(1)
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(SocketFalso.instancias).toHaveLength(2)
+    const novo = ultimoSocket()
+    novo.abrir()
+    expect(novo.frames()).toEqual([{ tipo: 'ola', sessao: null }])
+  })
+
+  it('encerrar durante a espera de muitas_tentativas devolve o foco ao botao de opcoes', () => {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'Muitas tentativas, aguarde 20 s.', aguardeSegundos: 20 })
+    socket.fechar(1013)
+
+    abrirMenuEEscolherEncerrar()
+    fireEvent.click(screen.getByRole('button', { name: 'Encerrar' }))
+
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Opções da conversa' }))
+  })
+
+  it('a reconexao nao remonta os baloes que ja estavam na tela: o log nao os anuncia de novo', () => {
+    guardarSessao(SESSAO, AGORA - UM_DIA_MS)
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.receber({ tipo: 'historico', mensagens: doze() })
+    enviar('Tem garagem?')
+    socket.receber({ tipo: 'ack', messageId: frameDeMensagem(socket).id })
+    socket.receber({ tipo: 'mensagem', texto: 'Tem, sim.', kind: 'texto' })
+    const antes = within(screen.getByRole('list')).getAllByRole('listitem')
+    expect(antes).toHaveLength(14)
+
+    // Queda; a proxima mensagem abre socket novo, que retoma e recebe o
+    // historico -- o mesmo que a tela ja tinha, mais uma fala nova.
+    socket.fechar()
+    enviar('E piscina?')
+    const novo = ultimoSocket()
+    novo.abrir()
+    novo.receber({ tipo: 'sessao', sessao: SESSAO })
+    novo.receber({
+      tipo: 'historico',
+      mensagens: [
+        ...doze(),
+        { papel: 'lead', texto: 'Tem garagem?', em: '2026-09-27T11:59:00Z' },
+        { papel: 'agente', texto: 'Tem, sim.', em: '2026-09-27T11:59:05Z' },
+        { papel: 'agente', texto: 'Mais alguma dúvida?', em: '2026-09-27T11:59:30Z' },
+      ],
+    })
+
+    const depois = within(screen.getByRole('list')).getAllByRole('listitem')
+    expect(depois).toHaveLength(16)
+    antes.forEach((li, i) => expect(depois[i]).toBe(li))
+    expect(depois[14]).toHaveTextContent('Mais alguma dúvida?')
+    expect(depois[15]).toHaveTextContent('E piscina?')
+  })
+
+  it('retomar nao regrava a sessao mesmo que outra aba a tenha apagado (D1)', () => {
+    guardarSessao(SESSAO, AGORA - UM_DIA_MS)
+    const socket = montarAberto()
+    expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: SESSAO }])
+
+    // Outra aba encerrou a conversa entre o `ola` e o frame `sessao`.
+    localStorage.clear()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+
+    expect(localStorage.getItem('mobia:sessao')).toBeNull()
+  })
+
+  it('localStorage que lanca: o chat abre com null e conversa normalmente', () => {
+    for (const metodo of ['getItem', 'setItem', 'removeItem'] as const) {
+      vi.spyOn(Storage.prototype, metodo).mockImplementation(() => {
+        throw new DOMException('bloqueado', 'SecurityError')
+      })
+    }
+
+    const socket = montarAberto()
+    expect(socket.frames()).toEqual([{ tipo: 'ola', sessao: null }])
+
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.receber({ tipo: 'mensagem', texto: 'Olá! Como posso ajudar?', kind: 'texto' })
+    enviar('Quero alugar')
+    expect(screen.getByText('Olá! Como posso ajudar?')).toBeInTheDocument()
+    expect(frameDeMensagem(socket).texto).toBe('Quero alugar')
+
+    abrirMenuEEscolherEncerrar()
+    fireEvent.click(screen.getByRole('button', { name: 'Encerrar' }))
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0)
+    ultimoSocket().abrir()
+    expect(ultimoSocket().frames()).toEqual([{ tipo: 'ola', sessao: null }])
+  })
+
+  it('desmontar minimizado cancela o sono e para de ouvir os avisos', () => {
+    const { unmount } = render(<Conversa endereco={ENDERECO} nome={null} />)
+    ultimoSocket().abrir()
+    avisar({ tipo: 'mobia:visibilidade', aberto: false })
+    expect(vi.getTimerCount()).toBe(1)
+
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+
+    avisar({ tipo: 'mobia:visibilidade', aberto: true })
+    expect(SocketFalso.instancias).toHaveLength(1)
   })
 })

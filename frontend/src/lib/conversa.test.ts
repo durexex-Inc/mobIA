@@ -194,10 +194,195 @@ describe('reduzir', () => {
     expect(depois).toBe(antes)
   })
 
-  it('historico mantem o estado, mesma referencia', () => {
-    const antes = INICIAL
-    const depois = reduzir(antes, { tipo: 'frame', bruto: frame({ tipo: 'historico', mensagens: [] }) })
+  it('historico com mensagens que nao e lista mantem o estado, mesma referencia', () => {
+    // Review Focus 3: frame de historico inteiro invalido nao muda nada.
+    const antes = comVisitanteEnviando('m1')
+    const depois = reduzir(antes, {
+      tipo: 'frame',
+      bruto: frame({ tipo: 'historico', mensagens: 'nao e uma lista' }),
+    })
     expect(depois).toBe(antes)
+  })
+
+  it('historico monta lead como visitante recebida e agente como balao, na ordem', () => {
+    const depois = reduzir(INICIAL, {
+      tipo: 'frame',
+      bruto: frame({
+        tipo: 'historico',
+        mensagens: [
+          { papel: 'lead', texto: 'Oi, quero um apartamento', em: '2026-09-01T10:00:00Z' },
+          { papel: 'agente', texto: 'Claro, me conta mais', em: '2026-09-01T10:00:05Z' },
+        ],
+      }),
+    })
+    expect(depois.mensagens).toEqual([
+      { autor: 'visitante', messageId: 'historico-0', texto: 'Oi, quero um apartamento', estado: 'recebida' },
+      { autor: 'agente', chave: 'agente-1', texto: 'Claro, me conta mais' },
+    ])
+  })
+
+  it('historico pula item invalido (papel desconhecido, sem texto, texto vazio) e mantem os validos', () => {
+    // Review Focus 3: itens invalidos sao pulados, o resto do frame vale.
+    const depois = reduzir(INICIAL, {
+      tipo: 'frame',
+      bruto: frame({
+        tipo: 'historico',
+        mensagens: [
+          { papel: 'lead', texto: 'primeira' },
+          { papel: 'corretor', texto: 'papel desconhecido' },
+          { papel: 'agente' },
+          { papel: 'lead', texto: '' },
+          { papel: 'agente', texto: 'ultima valida' },
+        ],
+      }),
+    })
+    expect(depois.mensagens).toEqual([
+      { autor: 'visitante', messageId: 'historico-0', texto: 'primeira', estado: 'recebida' },
+      { autor: 'agente', chave: 'agente-1', texto: 'ultima valida' },
+    ])
+  })
+
+  it('historico substitui as confirmadas e preserva a pendente da visitante no fim, uma vez so', () => {
+    // Review Focus 2: mensagem local em 'enviando' sobrevive ao historico, no
+    // fim, sem duplicar -- e o balao do agente em memoria que o historico nao
+    // contem sai. A fala nova nao herda a chave `agente-0` de quem saiu: com
+    // ela, o React reaproveitaria o `<li>` e o `log` nao a anunciaria.
+    let estado = reduzir(INICIAL, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'ola', kind: 'reply' }) })
+    estado = reduzir(estado, { tipo: 'enviou', messageId: 'm1', texto: 'ainda enviando' })
+
+    const depois = reduzir(estado, {
+      tipo: 'frame',
+      bruto: frame({ tipo: 'historico', mensagens: [{ papel: 'agente', texto: 'do historico' }] }),
+    })
+
+    expect(depois.mensagens).toEqual([
+      { autor: 'agente', chave: 'agente-1', texto: 'do historico' },
+      { autor: 'visitante', messageId: 'm1', texto: 'ainda enviando', estado: 'enviando' },
+    ])
+  })
+
+  it('ack da pendente depois do historico marca recebida sem duplicar', () => {
+    // Continuacao do Review Focus 2: o ack da mensagem que sobreviveu ao
+    // historico so muda o estado dela, nao acrescenta outra.
+    let estado = comVisitanteEnviando('m1')
+    estado = reduzir(estado, {
+      tipo: 'frame',
+      bruto: frame({ tipo: 'historico', mensagens: [{ papel: 'agente', texto: 'do historico' }] }),
+    })
+
+    const depois = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'ack', messageId: 'm1' }) })
+
+    expect(depois.mensagens).toEqual([
+      { autor: 'agente', chave: 'agente-0', texto: 'do historico' },
+      { autor: 'visitante', messageId: 'm1', texto: 'oi', estado: 'recebida' },
+    ])
+  })
+
+  it('a chave do agente continua unica depois de um historico seguido de nova fala', () => {
+    let estado = reduzir(INICIAL, {
+      tipo: 'frame',
+      bruto: frame({
+        tipo: 'historico',
+        mensagens: [
+          { papel: 'agente', texto: 'primeira do historico' },
+          { papel: 'agente', texto: 'segunda do historico' },
+        ],
+      }),
+    })
+    estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'nova fala', kind: 'reply' }) })
+
+    const chaves = (estado.mensagens as Extract<Mensagem, { autor: 'agente' }>[]).map((m) => m.chave)
+    expect(chaves).toEqual(['agente-0', 'agente-1', 'agente-2'])
+    expect(new Set(chaves).size).toBe(3)
+  })
+
+  it('ack de messageId historico-* mantem o estado, mesma referencia', () => {
+    // A mensagem do historico ja chega 'recebida' -- na pratica o servidor
+    // nao manda ack para ela, mas se mandasse nao haveria o que mudar.
+    const antes = reduzir(INICIAL, {
+      tipo: 'frame',
+      bruto: frame({ tipo: 'historico', mensagens: [{ papel: 'lead', texto: 'oi' }] }),
+    })
+    const depois = reduzir(antes, { tipo: 'frame', bruto: frame({ tipo: 'ack', messageId: 'historico-0' }) })
+    expect(depois).toBe(antes)
+  })
+
+  describe('historico reaproveita a identidade do que ja esta na tela (chaves estaveis)', () => {
+    // Uma chave nova remonta o `<li>`, e o `log` com `additions` anuncia de
+    // novo o balao remontado: a reconexao nao pode trocar a chave de quem
+    // ja estava na tela.
+    function telaComTresFalas(): Conversa {
+      let estado = comVisitanteEnviando('m1', 'Quero um apartamento')
+      estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'ack', messageId: 'm1' }) })
+      estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'Claro!', kind: 'reply' }) })
+      estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'Qual bairro?', kind: 'reply' }) })
+      return estado
+    }
+
+    const HISTORICO_DAS_TRES = [
+      { papel: 'lead', texto: 'Quero um apartamento' },
+      { papel: 'agente', texto: 'Claro!' },
+      { papel: 'agente', texto: 'Qual bairro?' },
+    ]
+
+    function chaveDe(mensagem: Mensagem): string {
+      return mensagem.autor === 'visitante' ? mensagem.messageId : mensagem.chave
+    }
+
+    it('historico igual a tela, sem pendente, devolve a mesma referencia', () => {
+      const antes = telaComTresFalas()
+      const depois = reduzir(antes, { tipo: 'frame', bruto: frame({ tipo: 'historico', mensagens: HISTORICO_DAS_TRES }) })
+      expect(depois).toBe(antes)
+    })
+
+    it('historico vazio com a tela vazia devolve a mesma referencia', () => {
+      const depois = reduzir(INICIAL, { tipo: 'frame', bruto: frame({ tipo: 'historico', mensagens: [] }) })
+      expect(depois).toBe(INICIAL)
+    })
+
+    it('historico igual a tela com uma pendente no fim mantem os mesmos objetos', () => {
+      const antes = reduzir(telaComTresFalas(), { tipo: 'enviou', messageId: 'm2', texto: 'no Campeche' })
+      const depois = reduzir(antes, { tipo: 'frame', bruto: frame({ tipo: 'historico', mensagens: HISTORICO_DAS_TRES }) })
+      expect(depois.mensagens).toHaveLength(4)
+      depois.mensagens.forEach((mensagem, i) => expect(mensagem).toBe(antes.mensagens[i]))
+    })
+
+    it('uma fala nova do agente no fim do historico: so ela ganha chave nova', () => {
+      const antes = telaComTresFalas()
+      const depois = reduzir(antes, {
+        tipo: 'frame',
+        bruto: frame({ tipo: 'historico', mensagens: [...HISTORICO_DAS_TRES, { papel: 'agente', texto: 'Ainda está por aí?' }] }),
+      })
+      expect(depois.mensagens.slice(0, 3).map(chaveDe)).toEqual(antes.mensagens.map(chaveDe))
+      const nova = depois.mensagens[3]
+      expect(nova).toMatchObject({ autor: 'agente', texto: 'Ainda está por aí?' })
+      expect(antes.mensagens.map(chaveDe)).not.toContain(chaveDe(nova))
+    })
+
+    it('uma fala que falta no historico (moderacao): as outras mantem a chave', () => {
+      const antes = telaComTresFalas()
+      const depois = reduzir(antes, {
+        tipo: 'frame',
+        bruto: frame({ tipo: 'historico', mensagens: [HISTORICO_DAS_TRES[0], HISTORICO_DAS_TRES[2]] }),
+      })
+      expect(depois.mensagens.map(chaveDe)).toEqual([chaveDe(antes.mensagens[0]), chaveDe(antes.mensagens[2])])
+      expect(depois.mensagens[0]).toBe(antes.mensagens[0])
+      expect(depois.mensagens[1]).toBe(antes.mensagens[2])
+    })
+
+    it('a fala seguinte a uma remocao nao repete a chave de quem ficou', () => {
+      let estado = telaComTresFalas()
+      estado = reduzir(estado, {
+        tipo: 'frame',
+        bruto: frame({ tipo: 'historico', mensagens: [HISTORICO_DAS_TRES[1], HISTORICO_DAS_TRES[2]] }),
+      })
+      // Sobram 2 baloes com as chaves de quando eram 3: uma chave derivada do
+      // comprimento da lista repetiria a do ultimo.
+      estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'Tem vaga?', kind: 'reply' }) })
+      const chaves = estado.mensagens.map(chaveDe)
+      expect(chaves).toHaveLength(3)
+      expect(new Set(chaves).size).toBe(3)
+    })
   })
 
   it('consentimento_registrado mantem o estado, mesma referencia', () => {
@@ -241,6 +426,15 @@ describe('reduzir', () => {
     expect(depois.conexao).toEqual({ tipo: 'fechada' })
   })
 
+  it('reabrindo acorda do sono: conectando, e uma queda depois vira fechada (D4)', () => {
+    const adormecida = reduzir(INICIAL, { tipo: 'adormeceu' })
+    const reabrindo = reduzir(adormecida, { tipo: 'reabrindo' })
+    expect(reabrindo.conexao).toEqual({ tipo: 'conectando' })
+
+    const depois = reduzir(reabrindo, { tipo: 'fechou' })
+    expect(depois.conexao).toEqual({ tipo: 'fechada' })
+  })
+
   it('reabrindo com a conexao ja conectando devolve a mesma referencia', () => {
     expect(reduzir(INICIAL, { tipo: 'reabrindo' })).toBe(INICIAL)
   })
@@ -271,6 +465,70 @@ describe('reduzir', () => {
       { autor: 'visitante', messageId: 'm1', texto: 'oi', estado: 'enviando' },
       { autor: 'visitante', messageId: 'm2', texto: 'segunda', estado: 'enviando' },
     ])
+  })
+
+  it('encerrou volta ao inicial e abre com conectando', () => {
+    let estado = reduzir(INICIAL, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'oi', kind: 'reply' }) })
+    estado = reduzir(estado, { tipo: 'abriu' })
+    estado = reduzir(estado, {
+      tipo: 'frame',
+      bruto: frame({ tipo: 'sessao', sessao: '11111111-1111-4111-8111-111111111111' }),
+    })
+
+    const depois = reduzir(estado, { tipo: 'encerrou' })
+
+    expect(depois).toEqual({ mensagens: [], conexao: { tipo: 'conectando' }, sessao: null })
+  })
+
+  it('encerrou durante a espera de muitas_tentativas mantem a espera (Review Focus 5)', () => {
+    // A tela zera, mas a nova conexao nao pode furar a fila: a espera
+    // continua valendo ate o proprio timer da vencer.
+    const aguardando = reduzir(INICIAL, {
+      tipo: 'frame',
+      bruto: frame({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'espera', aguardeSegundos: 5 }),
+    })
+
+    const depois = reduzir(aguardando, { tipo: 'encerrou' })
+
+    expect(depois).toEqual({
+      mensagens: [],
+      conexao: { tipo: 'aguardando', mensagem: 'espera', segundos: 5 },
+      sessao: null,
+    })
+  })
+
+  it('adormeceu muda a conexao para adormecida sem tocar nas mensagens', () => {
+    const antes = comVisitanteEnviando('m1')
+    const depois = reduzir(antes, { tipo: 'adormeceu' })
+    expect(depois.conexao).toEqual({ tipo: 'adormecida' })
+    expect(depois.mensagens).toBe(antes.mensagens)
+  })
+
+  it('adormeceu com a conexao ja adormecida devolve a mesma referencia', () => {
+    const adormecida = reduzir(INICIAL, { tipo: 'adormeceu' })
+    expect(reduzir(adormecida, { tipo: 'adormeceu' })).toBe(adormecida)
+  })
+
+  it('fechou com a conexao adormecida continua adormecida e marca enviando como falhou', () => {
+    let estado = comVisitanteEnviando('m1')
+    estado = reduzir(estado, { tipo: 'adormeceu' })
+
+    const depois = reduzir(estado, { tipo: 'fechou' })
+
+    expect(depois.conexao).toEqual({ tipo: 'adormecida' })
+    expect(depois.mensagens).toEqual([{ autor: 'visitante', messageId: 'm1', texto: 'oi', estado: 'falhou' }])
+  })
+
+  it('fechou com a conexao adormecida e nada pendente mantem a mesma referencia', () => {
+    const antes = reduzir(INICIAL, { tipo: 'adormeceu' })
+    const depois = reduzir(antes, { tipo: 'fechou' })
+    expect(depois).toBe(antes)
+  })
+
+  it('abriu a partir de adormecida vai para aberta', () => {
+    const adormecida = reduzir(INICIAL, { tipo: 'adormeceu' })
+    const depois = reduzir(adormecida, { tipo: 'abriu' })
+    expect(depois.conexao).toEqual({ tipo: 'aberta' })
   })
 })
 
