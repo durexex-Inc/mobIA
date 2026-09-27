@@ -4,8 +4,9 @@ import { notFound } from 'next/navigation'
 
 import { AvisoDePronto } from '@/components/AvisoDePronto'
 import { CabecalhoDoChat } from '@/components/CabecalhoDoChat'
-import { nomeExibido } from '@/lib/aparencia'
+import { Conversa } from '@/components/Conversa'
 import { buscarAparencia } from '@/lib/servidor/aparencia'
+import { enderecoDoChat } from '@/lib/servidor/enderecoDoChat'
 
 // `description` explicita: sem ela o Next herda a do layout raiz do painel
 // ("Funil de leads..."), que nao tem nada a ver com esta pagina publica.
@@ -16,8 +17,9 @@ export const metadata: Metadata = {
 }
 
 /**
- * O chat que o site da imobiliaria enquadra (TEC-344, D6). Nesta card, so o
- * cabecalho; a conversa e da TEC-346 (L3).
+ * O chat que o site da imobiliaria enquadra (TEC-344, D6): o cabecalho e a
+ * conversa (TEC-346, D5). O endereco do WebSocket e lido aqui, no servidor, e
+ * desce por prop ao componente cliente -- sem variavel `NEXT_PUBLIC_` (D2).
  *
  * **A cor entra por `<style nonce>`, e nao pelo atributo `style`.** A CSP do
  * proxy nao tem `'unsafe-inline'` em `style-src` fora de desenvolvimento, e
@@ -40,7 +42,8 @@ export default async function ChatEmbutido({ searchParams }: PageProps<'/embed/c
   return (
     <main className="chat-embutido">
       <style nonce={nonce}>{`.chat-embutido { --cor-primaria: ${aparencia.corPrimaria}; }`}</style>
-      <CabecalhoDoChat nome={nomeExibido(aparencia)} />
+      <CabecalhoDoChat nome={aparencia.nomeDoAssistente} />
+      <Conversa endereco={enderecoDoChat()} />
       <AvisoDePronto />
     </main>
   )

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { type Aparencia, lerAparencia, nomeExibido } from './aparencia'
+import { type Aparencia, lerAparencia } from './aparencia'
 
 const VALIDA: Aparencia = { nomeDoAssistente: 'Lia', corPrimaria: '#0A7F5A', posicaoDoBotao: 'ESQUERDA' }
 
@@ -20,12 +20,5 @@ describe('lerAparencia', () => {
     ['nome que nao e texto', { ...VALIDA, nomeDoAssistente: 7 }],
   ])('recusa %s', (_, corpo) => {
     expect(lerAparencia(corpo)).toBeNull()
-  })
-})
-
-describe('nomeExibido', () => {
-  it('usa o nome configurado, ou "Assistente virtual" sem nome', () => {
-    expect(nomeExibido(VALIDA)).toBe('Lia')
-    expect(nomeExibido({ ...VALIDA, nomeDoAssistente: null })).toBe('Assistente virtual')
   })
 })

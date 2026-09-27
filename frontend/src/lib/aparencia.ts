@@ -37,8 +37,3 @@ export function lerAparencia(corpo: unknown): Aparencia | null {
   }
   return { nomeDoAssistente, corPrimaria, posicaoDoBotao: posicaoDoBotao as PosicaoDoBotao }
 }
-
-/** O nome com que o chat se apresenta. Texto de tela: com acento se tiver. */
-export function nomeExibido(aparencia: Aparencia): string {
-  return aparencia.nomeDoAssistente ?? 'Assistente virtual'
-}
