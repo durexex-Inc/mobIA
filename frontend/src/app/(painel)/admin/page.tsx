@@ -32,7 +32,7 @@ export default async function PaginaDeAdministracao() {
   // copiam o molde dela.
   const { quem, permitido } = await exigirPermissao('/admin', podeVerAdmin)
   if (!permitido) {
-    return <SemPermissao papel={quem.papel} paginaInicial={paginaInicialDe()} />
+    return <SemPermissao papel={quem.papel} paginaInicial={paginaInicialDe(quem.permissoes)} />
   }
 
   return (

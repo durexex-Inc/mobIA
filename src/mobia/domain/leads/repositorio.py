@@ -31,7 +31,14 @@ from mobia.domain.handoff.models import Handoff
 from mobia.domain.identidade.indice import chave_de, indice_de_telefone, telefones_de
 from mobia.domain.identidade.models import VinculoDeSessao
 from mobia.domain.identidade.telefone import grafias_do_wa_id, normalizar
-from mobia.domain.leads.consulta import SEM_RECORTE, Cursor, Filtro, FiltroInvalido, RecorteDoPapel
+from mobia.domain.leads.consulta import (
+    SEM_RECORTE,
+    Cursor,
+    Filtro,
+    FiltroInvalido,
+    Ordem,
+    RecorteDoPapel,
+)
 from mobia.domain.leads.mascara import mascarar_telefone
 from mobia.domain.leads.models import ReferenciaDeLead
 from mobia.domain.messages.canais import CANAL_WHATSAPP
@@ -190,6 +197,8 @@ class _Posicao:
     score: int | None
     channel: str
     conversation_key: str
+    # So na ordem por ultima interacao (TEC-321, D4); ali `score` nao e lido.
+    ultima_interacao_em: datetime | None = None
 
 
 def _depois_do_cursor(base: Any, score: Any, posicao: _Posicao) -> Any:
@@ -211,6 +220,15 @@ def _depois_do_cursor(base: Any, score: Any, posicao: _Posicao) -> Any:
     desempate = func.row(base.c.channel, base.c.conversation_key) > func.row(
         posicao.channel, posicao.conversation_key
     )
+
+    if posicao.ultima_interacao_em is not None:
+        # A ordem por ultima interacao (TEC-321, D4). O instante nunca e nulo
+        # -- todo lead da lista tem ao menos uma fala, e e de `messages` que a
+        # lista nasce --, entao nao ha cauda de nulos como no score.
+        return or_(
+            base.c.ultima_interacao_em < posicao.ultima_interacao_em,
+            and_(base.c.ultima_interacao_em == posicao.ultima_interacao_em, desempate),
+        )
 
     if posicao.score is None:
         return and_(score.c.score.is_(None), desempate)
@@ -302,11 +320,14 @@ def _consulta(
     if posicao is not None:
         consulta = consulta.where(_depois_do_cursor(base, score, posicao))
 
-    return consulta.order_by(
-        score.c.score.desc().nullslast(),
-        base.c.channel,
-        base.c.conversation_key,
+    # O `ORDER BY` e o complemento exato de `_depois_do_cursor`, nas duas ordens
+    # -- quem mexer num tem de mexer no outro, ou o keyset pula ou repete linha.
+    primeira = (
+        base.c.ultima_interacao_em.desc()
+        if filtro.ordem is Ordem.ULTIMA_INTERACAO
+        else score.c.score.desc().nullslast()
     )
+    return consulta.order_by(primeira, base.c.channel, base.c.conversation_key)
 
 
 async def referencias_para(
@@ -403,7 +424,12 @@ async def listar_leads(
         par = await par_de(session, filtro.cursor.lead_id)
         if par is None:
             raise FiltroInvalido("cursor invalido")
-        posicao = _Posicao(score=filtro.cursor.score, channel=par[0], conversation_key=par[1])
+        posicao = _Posicao(
+            score=filtro.cursor.score,
+            channel=par[0],
+            conversation_key=par[1],
+            ultima_interacao_em=filtro.cursor.ultima_interacao_em,
+        )
 
     linhas = (
         await session.execute(
@@ -447,7 +473,12 @@ async def listar_leads(
         return pagina, None
 
     ultimo = pagina[-1]
-    return pagina, Cursor(score=ultimo.score, lead_id=ultimo.lead_id)
+    return pagina, Cursor(
+        score=ultimo.score,
+        lead_id=ultimo.lead_id,
+        ordem=filtro.ordem,
+        ultima_interacao_em=ultimo.ultima_interacao_em,
+    )
 
 
 async def e_lead_do_corretor(

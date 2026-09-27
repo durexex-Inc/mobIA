@@ -68,9 +68,10 @@ describe('PaginaDeAdministracao', () => {
 
       expect(screen.getByRole('heading', { name: 'Sem permissão' })).toBeInTheDocument()
       expect(screen.getByRole('alert')).toHaveTextContent('Você entrou como Corretor')
+      // O inicio do CORRETOR e a lista de leads desde a TEC-321 (D2).
       expect(screen.getByRole('link', { name: 'Ir para a página inicial' })).toHaveAttribute(
         'href',
-        '/',
+        '/leads',
       )
       expect(screen.queryByText('Prompts do agente')).not.toBeInTheDocument()
     })

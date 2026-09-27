@@ -431,6 +431,7 @@ async def test_filtros_de_canal_e_temperatura(
         ({"limite": 500}, "limite acima do teto"),
         ({"status": "QUALIFICADO"}, "status que existe no SRS e nao neste sistema"),
         ({"cursor": "nao-e-base64-valido!!"}, "cursor corrompido"),
+        ({"ordenar": "nome_asc"}, "ordenacao fora do vocabulario"),
     ],
 )
 async def test_pedido_invalido_e_422_e_nao_lista_vazia(
@@ -441,6 +442,79 @@ async def test_pedido_invalido_e_422_e_nao_lista_vazia(
     resposta = await client.get(ROTA, params=params, headers=_bearer("GERENTE"))
 
     assert resposta.status_code == 422, porque
+
+
+async def test_ordenar_pela_ultima_interacao(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """TEC-321, D4: a mais recente primeiro, qualquer que seja o score."""
+    agora = datetime.now(UTC)
+    await _lead(session, chave="5548990000001", score=90, falou_em=agora - timedelta(days=3))
+    await _lead(session, chave="5548990000002", score=10, falou_em=agora - timedelta(minutes=5))
+    await _lead(session, chave="5548990000003", falou_em=agora - timedelta(hours=2))
+
+    resposta = await client.get(
+        ROTA, params={"ordenar": "ultima_interacao_desc"}, headers=_bearer("GERENTE")
+    )
+
+    assert resposta.status_code == 200
+    assert await _chaves(session, resposta) == ["5548990000002", "5548990000003", "5548990000001"]
+
+
+async def test_paginacao_pela_ultima_interacao_nao_repete_linha(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """O keyset da segunda ordem, com empate de instante de proposito.
+
+    Um terco dos leads fala no MESMO instante: e o desempate pelo par que
+    impede a mesma linha de aparecer em duas paginas, como na D5 da TEC-192.
+    """
+    base = datetime.now(UTC) - timedelta(days=1)
+    for i in range(60):
+        falou_em = base if i % 3 == 0 else base + timedelta(minutes=i)
+        await _lead(session, chave=f"55489900{i:05d}", score=i % 7, falou_em=falou_em)
+
+    vistos: list[str] = []
+    instantes: list[datetime] = []
+    cursor: str | None = None
+    for _ in range(4):
+        params: dict[str, object] = {"limite": 25, "ordenar": "ultima_interacao_desc"}
+        if cursor:
+            params["cursor"] = cursor
+        resposta = await client.get(ROTA, params=params, headers=_bearer("GERENTE"))
+        assert resposta.status_code == 200, resposta.text
+        corpo = resposta.json()
+        vistos.extend(item["leadId"] for item in corpo["itens"])
+        instantes.extend(
+            datetime.fromisoformat(item["ultimaInteracaoEm"]) for item in corpo["itens"]
+        )
+        cursor = corpo["proximoCursor"]
+        if cursor is None:
+            break
+
+    assert len(vistos) == 60
+    assert len(set(vistos)) == 60, "a mesma linha apareceu em duas paginas"
+    assert instantes == sorted(instantes, reverse=True)
+
+
+async def test_cursor_de_uma_ordem_e_422_na_outra(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """Continuar a lista por score a partir de um instante daria uma pagina
+    plausivel e errada. TEC-321, D4."""
+    for i in range(3):
+        await _lead(session, chave=f"554899000{i:04d}", score=i)
+    primeira = await client.get(ROTA, params={"limite": 1}, headers=_bearer("GERENTE"))
+    cursor = primeira.json()["proximoCursor"]
+    assert cursor is not None
+
+    resposta = await client.get(
+        ROTA,
+        params={"ordenar": "ultima_interacao_desc", "cursor": cursor},
+        headers=_bearer("GERENTE"),
+    )
+
+    assert resposta.status_code == 422
 
 
 async def test_ultima_interacao_e_a_fala_mais_recente(

@@ -34,6 +34,7 @@ export type ItemDoMenu = { rotulo: string; href: string }
 const ITENS: ReadonlyArray<ItemDoMenu & { visivel: (permissoes: ReadonlySet<string>) => boolean }> =
   [
     { rotulo: 'Funil', href: '/', visivel: (p) => p.has('VER_FUNIL') },
+    { rotulo: 'Leads', href: '/leads', visivel: (p) => p.has('VER_LEADS') },
     { rotulo: 'Administração', href: '/admin', visivel: podeVerAdmin },
   ]
 
@@ -67,13 +68,18 @@ export function nomeDoPapel(papel: string): string {
 }
 
 /**
- * A pagina inicial. `/` para todos os papeis, por enquanto (D6 do desenho).
+ * A pagina inicial de quem tem estas permissoes (TEC-321, D2).
  *
- * Para o CORRETOR, `/` mostra "Sem permissao": a tela dele e a lista de leads
- * (TEC-321), que ainda nao existe. Quando existir, esta funcao passa a receber
- * o papel e a devolver a tela de cada um -- e os chamadores ja estao todos
- * aqui, em vez de um `'/'` literal espalhado por pagina.
+ * O funil para quem o ve; a lista de leads para quem so ve a lista -- hoje, o
+ * CORRETOR. Sem nenhuma das duas, `/`, que mostra "Sem permissao".
+ *
+ * **O login nao usa esta funcao**: ele redireciona antes de ler `/auth/me`, e
+ * manda todo mundo para `PAGINA_INICIAL` (`lib/destino.ts`). Quem leva o
+ * CORRETOR do `/` para `/leads` e a pagina do funil, com esta mesma regra.
  */
-export function paginaInicialDe(): string {
+export function paginaInicialDe(permissoes: ReadonlySet<string>): string {
+  if (!permissoes.has('VER_FUNIL') && permissoes.has('VER_LEADS')) {
+    return '/leads'
+  }
   return '/'
 }

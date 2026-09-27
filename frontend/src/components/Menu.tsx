@@ -28,8 +28,8 @@ export function Menu({ quem }: { quem: QuemSou }) {
       <div className="menu-conta">
         <p className="menu-papel">{nomeDoPapel(quem.papel)}</p>
         {/* Formulario, e nao link: sair e POST (TEC-310, D6). Sem JavaScript --
-            o unico componente de cliente do painel e o aviso de inatividade
-            (TEC-311). */}
+            o painel so tem JS de cliente onde nao ha alternativa: o aviso de
+            inatividade (TEC-311) e a busca da lista de leads (TEC-321). */}
         <form method="post" action="/sair">
           <button type="submit">Sair</button>
         </form>

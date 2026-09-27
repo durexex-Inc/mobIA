@@ -94,8 +94,9 @@ desenho está em
 - **"Sair" é um POST para `/sair`**: revoga o refresh no FastAPI, apaga a
   sessão e o cookie, e responde com `Clear-Site-Data: "cache"`.
 - **Sessão ociosa (TEC-311).** Aos 30 minutos sem interação, um aviso conta
-  60 segundos e depois chama `/sair`. É o **único componente de cliente** do
-  painel (`components/AvisoDeInatividade.tsx`); ele guarda no `localStorage`
+  60 segundos e depois chama `/sair`. Foi o **primeiro componente de cliente**
+  do painel (`components/AvisoDeInatividade.tsx`); o segundo é a busca da lista
+  de leads (TEC-321). Ele guarda no `localStorage`
   só o horário da última interação, para as abas se enxergarem. O servidor
   também encerra a sessão ociosa há mais de 32 minutos — para o celular
   esquecido, que não roda o aviso.
@@ -111,6 +112,7 @@ que põe o JWT da sessão num cabeçalho:
 | caminho | quem usa | cache | `X-Request-Id` |
 | --- | --- | --- | --- |
 | Server Component → `buscarFunil` | o painel de funil | `revalidate: 60` | **não** |
+| Server Component → `buscarLeads` | a lista de leads | `no-store` | não |
 | Route Handler `/bff/[...rota]` | ainda ninguém — nem o login nem o menu passam por ele | `no-store` | sim |
 
 **O painel não passa pelo `/bff/*`, e isso é deliberado.** Um Server Component
@@ -133,6 +135,26 @@ enxurrada no FastAPI só apareceria quando muita gente abrisse a tela. O tipo de
 header em lugar nenhum — `correlation_id`, em `app/logging.py`, é preenchido com
 um UUID próprio pelo webhook e pelo widget, e a rota de métricas nem isso faz. O
 header sai do BFF e é descartado na entrada.
+
+## A lista de leads (TEC-321)
+
+`/leads` lista os leads por score, com busca por telefone ou bairro, e é a tela
+de entrada do CORRETOR: o login manda todo mundo para `/`, e o funil redireciona
+para `/leads` quem não tem `VER_FUNIL` e tem `VER_LEADS`. O desenho está em
+`docs/superpowers/specs/2026-09-26-tec-321-lista-de-leads-design.md`.
+
+- **A ordem é do backend.** "Score" e "Última interação" são links
+  (`?ordenar=`), e a tabela nunca reordena o que recebeu: ordenar no cliente
+  reordenaria só os 25 da página.
+- **A busca troca a URL, e não chama a API.** `components/BuscaDeLeads.tsx`
+  espera 300 ms e só navega com 2 caracteres ou mais (ou com zero, para voltar
+  à lista inteira). A página aplica a mesma regra a uma `?busca=` digitada à
+  mão.
+- **Não há nome.** Nenhuma tabela o guarda; a primeira coluna é o telefone
+  mascarado que a API devolve.
+- **Sem cache**, ao contrário do funil: o score muda a cada turno do agente.
+- **Só a primeira página.** Paginação, filtros e cartões no celular são a
+  TEC-322; o detalhe do lead é a TEC-323.
 
 ## O proxy `/bff/*` exige sessão
 

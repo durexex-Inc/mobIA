@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { itensDoMenu, nomeDoPapel, podeVerAdmin } from './navegacao'
+import { itensDoMenu, nomeDoPapel, paginaInicialDe, podeVerAdmin } from './navegacao'
 
 /**
  * As permissoes de cada papel, copiadas de `domain/usuarios/permissoes.py`
@@ -49,12 +49,36 @@ describe('itensDoMenu', () => {
     expect(rotulos.includes('Funil')).toBe(funil)
   })
 
+  it.each(['ADMIN', 'GERENTE', 'CORRETOR', 'LEITURA'] as const)(
+    '%s ve "Leads": VER_LEADS e dos quatro papeis (TEC-321)',
+    (papel) => {
+      const rotulos = itensDoMenu(new Set(PERMISSOES[papel])).map((item) => item.rotulo)
+
+      expect(rotulos).toContain('Leads')
+    },
+  )
+
   it('sem permissao nenhuma, menu vazio', () => {
     expect(itensDoMenu(new Set())).toEqual([])
   })
 
   it('uma permissao de admin so ja abre a area', () => {
     expect(podeVerAdmin(new Set(['VER_AUDITORIA']))).toBe(true)
+  })
+})
+
+describe('paginaInicialDe', () => {
+  it.each([
+    ['ADMIN', '/'],
+    ['GERENTE', '/'],
+    ['LEITURA', '/'],
+    ['CORRETOR', '/leads'],
+  ] as const)('%s comeca em %s', (papel, pagina) => {
+    expect(paginaInicialDe(new Set(PERMISSOES[papel]))).toBe(pagina)
+  })
+
+  it('sem nenhuma das duas telas, `/`, que diz "Sem permissao"', () => {
+    expect(paginaInicialDe(new Set())).toBe('/')
   })
 })
 

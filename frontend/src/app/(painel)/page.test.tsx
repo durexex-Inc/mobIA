@@ -55,6 +55,9 @@ const PERMISSOES: Record<string, string[]> = {
   GERENTE: ['ATENDER_LEAD', 'BUSCAR_IMOVEIS', 'VER_DADOS_COMPLETOS', 'VER_DETALHE_DO_LEAD', 'VER_FUNIL', 'VER_LEADS'],
   CORRETOR: ['ATENDER_LEAD', 'BUSCAR_IMOVEIS', 'VER_DETALHE_DO_LEAD', 'VER_LEADS'],
   LEITURA: ['BUSCAR_IMOVEIS', 'VER_FUNIL', 'VER_LEADS'],
+  // Nenhum papel da matriz de hoje e assim; e o caso que ainda cai em "Sem
+  // permissao" no inicio, e o teste o mantem exercitado.
+  NINGUEM: [],
 }
 
 /**
@@ -132,16 +135,20 @@ describe('Pagina', () => {
     expect(screen.queryByLabelText('Funil de leads')).not.toBeInTheDocument()
   })
 
-  it('CORRETOR ve "Sem permissao" no inicio, e o funil NAO e buscado', async () => {
-    // D6: a tela do corretor e a TEC-321. Ate ela existir, o `/` diz isso.
+  it('CORRETOR segue para a lista de leads, e o funil NAO e buscado (TEC-321, D2)', async () => {
     const funil = responde(FUNIL, 200, { papel: 'CORRETOR' })
+
+    await expect(Pagina({ searchParams: Promise.resolve({}) })).rejects.toThrow('REDIRECT:/leads')
+    expect(funil).not.toHaveBeenCalled()
+  })
+
+  it('sem o funil e sem a lista, "Sem permissao", sem link para o inicio', async () => {
+    // Ja esta na pagina inicial: o link para ela so recarregaria esta tela.
+    const funil = responde(FUNIL, 200, { papel: 'NINGUEM' })
 
     render(await Pagina({ searchParams: Promise.resolve({}) }))
 
     expect(screen.getByRole('heading', { name: 'Sem permissão' })).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toHaveTextContent('Você entrou como Corretor')
-    expect(screen.getByRole('alert')).toHaveTextContent('lista dos seus leads, ainda não está disponível')
-    // Ja esta na pagina inicial: o link para ela so recarregaria esta tela.
     expect(screen.queryByRole('link', { name: 'Ir para a página inicial' })).not.toBeInTheDocument()
     expect(funil).not.toHaveBeenCalled()
   })

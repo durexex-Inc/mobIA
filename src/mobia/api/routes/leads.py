@@ -84,9 +84,14 @@ async def listar(
     corretor_id: Annotated[uuid.UUID | None, Query(alias="corretorId")] = None,
     limite: Annotated[int, Query()] = LIMITE_PADRAO,
     cursor: Annotated[str | None, Query()] = None,
+    ordenar: Annotated[str | None, Query()] = None,
     identidade: IdentidadeDaRequisicao = Depends(Exige(Permissao.VER_LEADS)),
 ) -> dict[str, object]:
     """Os leads em ordem decrescente de score, paginados por cursor.
+
+    **Ou pela ultima interacao, com `ordenar=ultima_interacao_desc`** (TEC-321,
+    D4). A tela precisa das duas ordens, e ordenar no cliente reordenaria so a
+    pagina recebida. Valor fora do vocabulario e 422, e nao a ordem padrao.
 
     **O papel CORRETOR recebe a consulta ja recortada pelo proprio vinculo**, e
     o recorte vem da claim do JWT, nunca da query (D7). Mandar
@@ -115,6 +120,7 @@ async def listar(
             corretor_id=corretor_id,
             limite=limite,
             cursor=cursor,
+            ordenar=ordenar,
         )
     except FiltroInvalido as erro:
         # `UNPROCESSABLE_CONTENT` e nao `UNPROCESSABLE_ENTITY`: o segundo esta

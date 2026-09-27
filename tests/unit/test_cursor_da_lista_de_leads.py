@@ -8,6 +8,7 @@ banco estao em `tests/integration/test_lista_de_leads.py`.
 import base64
 import json
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -15,6 +16,7 @@ from mobia.domain.leads.consulta import (
     LIMITE_MAXIMO,
     Cursor,
     FiltroInvalido,
+    Ordem,
     RecorteDoPapel,
     decodificar_cursor,
     montar_filtro,
@@ -83,6 +85,37 @@ class TestCursor:
             decodificar_cursor(texto)
 
 
+class TestCursorDaUltimaInteracao:
+    """A segunda ordem da lista (TEC-321, D4): o cursor carrega a ordem."""
+
+    def test_ida_e_volta_preserva_o_instante_e_a_ordem(self) -> None:
+        cursor = Cursor(
+            score=None,
+            lead_id=uuid.uuid4(),
+            ordem=Ordem.ULTIMA_INTERACAO,
+            ultima_interacao_em=datetime(2026, 9, 26, 14, 3, 7, 123456, tzinfo=UTC),
+        )
+
+        assert decodificar_cursor(cursor.codificar()) == cursor
+
+    def test_o_cursor_de_score_mantem_a_forma_de_antes(self) -> None:
+        """Nenhum cursor em uso passa a ser recusado: a forma `{"s","l"}` e a
+        mesma da TEC-195, e decodifica como ordem por score."""
+        lead_id = uuid.uuid4()
+        de_antes = base64.urlsafe_b64encode(
+            json.dumps({"s": 42, "l": str(lead_id)}, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+
+        assert Cursor(score=42, lead_id=lead_id).codificar() == de_antes
+        assert decodificar_cursor(de_antes).ordem is Ordem.SCORE
+
+    def test_cursor_da_ultima_interacao_sem_instante_e_recusado(self) -> None:
+        corpo = json.dumps({"o": "u", "l": str(uuid.uuid4())}).encode("utf-8")
+
+        with pytest.raises(FiltroInvalido):
+            decodificar_cursor(base64.urlsafe_b64encode(corpo).decode("ascii"))
+
+
 class TestFiltro:
     @pytest.mark.parametrize("limite", [0, -1, LIMITE_MAXIMO + 1])
     def test_limite_fora_da_faixa_e_recusado(self, limite: int) -> None:
@@ -97,6 +130,26 @@ class TestFiltro:
         """
         with pytest.raises(FiltroInvalido):
             montar_filtro(status="QUALIFICADO")
+
+    def test_a_ordem_padrao_e_por_score(self) -> None:
+        assert montar_filtro().ordem is Ordem.SCORE
+
+    def test_ordem_pelo_nome_do_srs(self) -> None:
+        assert montar_filtro(ordenar="ultima_interacao_desc").ordem is Ordem.ULTIMA_INTERACAO
+
+    def test_ordem_desconhecida_e_recusada(self) -> None:
+        """Cair na ordem padrao em silencio devolveria uma lista que quem pediu
+        leria como a ordem que pediu."""
+        with pytest.raises(FiltroInvalido):
+            montar_filtro(ordenar="nome_asc")
+
+    def test_cursor_de_uma_ordem_e_recusado_na_outra(self) -> None:
+        """Continuar a lista por score a partir de um instante daria uma pagina
+        plausivel e errada. TEC-321, D4."""
+        de_score = Cursor(score=42, lead_id=uuid.uuid4()).codificar()
+
+        with pytest.raises(FiltroInvalido):
+            montar_filtro(ordenar="ultima_interacao_desc", cursor=de_score)
 
     def test_busca_so_de_espacos_vira_ausencia(self) -> None:
         """Sem isto, a busca filtraria por `%   %` e a base pareceria vazia."""
