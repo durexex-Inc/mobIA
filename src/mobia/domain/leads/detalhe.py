@@ -4,6 +4,9 @@ RN-18.2 e D4 do desenho. A transcricao, que e o setimo bloco, mora em
 `transcricao.py` e tem rota propria (D1): ela e paginada, e embuti-la aqui faria
 a tela pagar a conversa inteira para mostrar o resumo.
 
+Desde a TEC-327 o detalhe tambem diz quem tem a conversa (`atendimento`), para
+a faixa "Voce esta no controle" do painel sobreviver a recarregar a pagina.
+
 **Os seis blocos sao pequenos pela natureza deles, e nao por teto** -- a trilha
 de score so grava quando algo muda, e um lead tem poucas recomendacoes, poucos
 agendamentos e no maximo a cadencia de follow-ups. Isso NAO foi medido num lead

@@ -3,7 +3,9 @@
 Os quatro cenarios do Gherkin da card, e o que o desenho acrescentou: a
 paginacao da transcricao para tras (D5), a fala retida por papel (TEC-324), o
 recorte do CORRETOR e de LEITURA (D2), a trilha das duas leituras (D3) e a
-trava de 60 s da regeneracao (D6).
+trava de 60 s da regeneracao (D6). No fim, o que a TEC-327 acrescentou: o
+polling por `depois`, que so grava na trilha quando traz fala, e o
+`atendimento` no detalhe.
 
 **O setimo bloco -- a transcricao -- e lido pela rota ao lado**, e o primeiro
 cenario o afirma assim: o detalhe traz seis blocos e o resumo, e

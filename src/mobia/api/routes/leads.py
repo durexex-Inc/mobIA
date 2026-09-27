@@ -30,6 +30,10 @@ registra na trilha antes de responder.
 **O detalhe e a transcricao sao `GET` que registram** (TEC-193, D3). Abrir a
 tela e o acesso, e o registro e comitado antes de o conteudo sair -- o molde de
 `revelar`, sem o `POST`. Ver `_abrir_para_leitura`.
+
+**A excecao e o polling** (`?depois=`, TEC-327, D1): ele so registra quando
+traz fala, porque poll vazio nao entrega conteudo. Decisao do Eduardo,
+27/09/2026. Ver `_posteriores`.
 """
 
 import uuid
