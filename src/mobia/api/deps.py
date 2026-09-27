@@ -21,7 +21,6 @@ def get_ingestion_service(conexao: HTTPConnection) -> IngestionService:
 # exerce, e quem sabe que papeis a tem e a matriz de
 # `domain/usuarios/permissoes.py`.
 #
-# O ramo do token compartilhado nao morreu: virou
-# `_do_token_compartilhado` em `api/autorizacao.py`, com os comentarios da
-# TEC-156 e da TEC-201 que ainda valem. O painel parou de manda-lo na TEC-309;
-# quem o apaga do FastAPI e a TEC-382.
+# O ramo do token compartilhado virou `_do_token_compartilhado` em
+# `api/autorizacao.py` por um tempo: o painel parou de manda-lo na TEC-309, e
+# a TEC-382 apagou o ramo em si. So o JWT autentica desde entao.

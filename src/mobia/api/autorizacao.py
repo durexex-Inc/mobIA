@@ -20,7 +20,6 @@ o que ela garante e que nenhuma rota chega a `main` sem alguem ter decidido,
 por escrito, quem pode chama-la.
 """
 
-import secrets
 import uuid
 from dataclasses import dataclass
 
@@ -67,28 +66,34 @@ ROTAS_PUBLICAS: dict[str, str] = {
     "/redoc": "idem",
 }
 
-# O que o ramo do token compartilhado produz no lugar de um usuario.
+# O que o ramo do token compartilhado produzia no lugar de um usuario.
 #
-# Nao e um UUID de verdade porque nao ha usuario nenhum por tras dele: quem
-# usa o token compartilhado nao tem identidade, e esta constante existe para
-# que o log diga isso em vez de inventar um id.
+# A TEC-382 apagou o ramo (`_do_token_compartilhado`) que produzia isto; a
+# constante fica porque os EVENTOS ANTIGOS da auditoria, gravados enquanto ele
+# ainda respondia, continuam com este texto em `ator_id` -- `consulta.py` os
+# busca por ele, e `para_log`/`como_ator` abaixo tambem o citam.
+#
+# Nao e um UUID de verdade porque nao havia usuario nenhum por tras dele: quem
+# usava o token compartilhado nao tinha identidade, e esta constante existe
+# para que o log diga isso em vez de inventar um id.
 SEM_USUARIO = "token-compartilhado"
 
 
 @dataclass(frozen=True)
 class IdentidadeDaRequisicao:
-    """Quem chamou, ja resolvido -- por JWT ou pelo token compartilhado.
+    """Quem chamou, resolvido por JWT -- o unico caminho aceito desde a TEC-382.
 
-    **O token compartilhado resolve para um ADMIN sem usuario** (D2 do
-    desenho). Nao e concessao preguicosa: e o que a Emenda E-01 da RN-19.5 ja
-    escreveu em 12/09/2026 -- "enquanto a TEC-201 nao existir, o papel ADMIN e
-    o header X-Admin-Token". A TEC-201 chegou e nao o apagou, por sequenciamento.
-    A TEC-309 fez o BFF mandar o JWT de quem esta logado e tirou o token do
-    frontend, mas nao daqui: quem o apaga do FastAPI e a TEC-382.
+    **Ate aqui havia um segundo caminho**, o header `X-Admin-Token`, que a
+    Emenda E-01 da RN-19.5 introduziu em 12/09/2026 -- "enquanto a TEC-201 nao
+    existir, o papel ADMIN e o header X-Admin-Token". A TEC-201 chegou e nao o
+    apagou, por sequenciamento (Emenda E-02 a RNF-11): ele resolvia para um
+    ADMIN sem usuario e passava em TODA permissao da matriz. A TEC-309 tirou o
+    painel desse caminho sem apaga-lo do FastAPI (Emenda E-03 a RNF-11); a
+    TEC-382 apaga o ramo em si (Emenda E-04 a RNF-11).
 
-    **A consequencia, dita:** quem tem o token compartilhado passa em TODA
-    permissao da matriz, inclusive nas que so o ADMIN tem. A autorizacao por
-    papel so vale de verdade para quem entra por JWT.
+    `usuario_id` continua nulavel no tipo, mas nao ha mais construtor nenhum
+    que passe `None` -- ver `para_log` e `como_ator` sobre o texto que os
+    EVENTOS ANTIGOS da auditoria ainda carregam.
     """
 
     papel: str
@@ -108,14 +113,21 @@ class IdentidadeDaRequisicao:
         return permissao in permissoes_de(self.papel)
 
     def para_log(self) -> str:
-        """O identificador que vai para o log. Nunca o token."""
+        """O identificador que vai para o log. Nunca o token.
+
+        So devolve `SEM_USUARIO` para uma identidade com `usuario_id` nulo --
+        o que o JWT nunca produz (`sub` e claim obrigatoria em
+        `domain/usuarios/tokens.py`). O ramo fica pelos eventos antigos da
+        auditoria que o token compartilhado gravou antes da TEC-382.
+        """
         return str(self.usuario_id) if self.usuario_id is not None else SEM_USUARIO
 
     def como_ator(self) -> Ator:
         """Quem chamou, como ator da trilha de auditoria (TEC-206).
 
         Sempre USUARIO, com o mesmo identificador do log: o `usuario_id`, ou
-        `token-compartilhado` para quem entrou pelo `X-Admin-Token`.
+        `token-compartilhado` para os eventos antigos que o `X-Admin-Token`
+        gravou antes de a TEC-382 apagar o ramo que o produzia.
         """
         return Ator(AtorTipo.USUARIO, self.para_log())
 
@@ -139,8 +151,9 @@ def _do_jwt(authorization: str) -> IdentidadeDaRequisicao | None:
 
     Devolve None -- e nao levanta -- para tudo que nao for um JWT valido:
     formato errado, assinatura invalida, expirado. Quem decide o desfecho e
-    `Exige`, que ainda tem o caminho do token compartilhado para tentar depois
-    (D2 da TEC-201, que esta funcao herda de `_jwt_de_admin`).
+    `Exige`, que ate a TEC-382 ainda tinha o caminho do token compartilhado
+    para tentar depois (D2 da TEC-201, que esta funcao herda de
+    `_jwt_de_admin`); agora um `None` daqui e identidade nenhuma, ponto final.
     """
     prefixo = "Bearer "
     if not authorization.startswith(prefixo):
@@ -157,52 +170,14 @@ def _do_jwt(authorization: str) -> IdentidadeDaRequisicao | None:
     )
 
 
-def _do_token_compartilhado(x_admin_token: str) -> IdentidadeDaRequisicao | None:
-    """O ADMIN sintetico do `X-Admin-Token`, ou None. TEC-201, D2.
+def identidade_da_requisicao(authorization: str = "") -> IdentidadeDaRequisicao | None:
+    """Quem chamou -- so pelo JWT, desde a TEC-382.
 
-    O texto abaixo e da TEC-156 e continua valendo:
-
-    `compare_digest` e nao `==`: comparacao de string curto-circuita no
-    primeiro byte diferente, e o tempo da resposta revela o prefixo correto.
-
-    Comparado em bytes, nao nas strings recebidas: `compare_digest` exige que
-    os dois lados sejam ASCII quando sao `str`, e recusa com `TypeError`
-    quando nao sao -- um cliente mandando `X-Admin-Token` com acento ou emoji
-    viraria 500 (erro do servidor) em vez de 403 (token errado). Codificar
-    para UTF-8 antes de comparar tira essa exigencia do caminho.
-
-    `not esperado` curto-circuita antes do `compare_digest` quando o token nao
-    esta configurado: sem esta clausula, um token vazio comparado contra um
-    vazio passaria como "correto". Desde a TEC-201 isso nao e hipotetico --
-    `main.py` registra os routers administrativos INCONDICIONALMENTE, entao a
-    aplicacao sobe de fato sem `CATALOGO_ADMIN_TOKEN` configurado.
+    Ate aqui havia um segundo argumento, `x_admin_token`, resolvido por
+    `_do_token_compartilhado` (TEC-156, TEC-201). O painel ja tinha parado de
+    manda-lo na TEC-309; esta funcao para de aceita-lo (Emenda E-04 a RNF-11).
     """
-    esperado = get_settings().catalogo_admin_token
-    if not esperado or not secrets.compare_digest(
-        x_admin_token.encode("utf-8"), esperado.encode("utf-8")
-    ):
-        return None
-
-    # O `warning` e por USO, nao por requisicao recusada: ele e o instrumento
-    # que permite apagar o token antigo com EVIDENCIA, medindo quando ele
-    # parou de ser usado em vez de apagar por fe (D2 da TEC-201). Depois da
-    # TEC-202 ele importa MAIS, nao menos -- agora este caminho nao contorna
-    # so a autenticacao, contorna a matriz inteira.
-    log.warning("auth.token_compartilhado_usado")
-    return IdentidadeDaRequisicao(papel="ADMIN", usuario_id=None, corretor_id=None)
-
-
-def identidade_da_requisicao(
-    x_admin_token: str = "", authorization: str = ""
-) -> IdentidadeDaRequisicao | None:
-    """Quem chamou, pelos dois caminhos aceitos hoje, nesta ordem.
-
-    O JWT vem primeiro para que uma requisicao que traga os dois seja atribuida
-    a PESSOA, e nao ao token anonimo -- o unico caso em que a ordem muda alguma
-    coisa: o que ela decide e o que sai no log. O painel deixou de mandar o
-    token na TEC-309; o ramo dele fica ate a TEC-382 o apagar.
-    """
-    return _do_jwt(authorization) or _do_token_compartilhado(x_admin_token)
+    return _do_jwt(authorization)
 
 
 class Exige:
@@ -221,10 +196,9 @@ class Exige:
     async def __call__(
         self,
         request: Request,
-        x_admin_token: str = Header(default=""),
         authorization: str = Header(default=""),
     ) -> IdentidadeDaRequisicao:
-        identidade = identidade_da_requisicao(x_admin_token, authorization)
+        identidade = identidade_da_requisicao(authorization)
 
         if identidade is None:
             # Sem identidade nenhuma nao ha papel a registrar, e o evento sai
@@ -244,11 +218,15 @@ class Exige:
 class ExigeSessao:
     """Exige um usuario de verdade, de qualquer papel. TEC-202, D7.
 
-    **O token compartilhado NAO serve aqui**, e e a unica guarda deste sistema
-    de que isso vale: ele resolve para um ADMIN sem usuario, e uma rota que
-    responde "quem sou eu" nao tem o que responder a quem nao e ninguem.
-    Inventar um corpo para esse caso seria ensinar o BFF a confiar numa
-    identidade que nao existe.
+    **A checagem de `identidade.usuario_id is None` abaixo ficou vestigial
+    com a TEC-382.** Ate ela, era o que recusava o token compartilhado aqui --
+    e so aqui, a unica guarda deste sistema de que isso valia: ele resolvia
+    para um ADMIN sem usuario, e uma rota que responde "quem sou eu" nao tem o
+    que responder a quem nao e ninguem. Sem `_do_token_compartilhado`, so o
+    JWT chega a este ponto, e o `sub` dele e claim obrigatoria
+    (`domain/usuarios/tokens.py`) -- `usuario_id` nunca mais e `None` na
+    pratica. A linha fica porque `IdentidadeDaRequisicao.usuario_id` continua
+    tipado como nulavel.
 
     Guarda o `GET /auth/me`, e so ele. Permissao nenhuma e exigida de
     proposito: a rota nao da acesso a dado nenhum alem do que o proprio token
@@ -258,10 +236,9 @@ class ExigeSessao:
     async def __call__(
         self,
         request: Request,
-        x_admin_token: str = Header(default=""),
         authorization: str = Header(default=""),
     ) -> IdentidadeDaRequisicao:
-        identidade = identidade_da_requisicao(x_admin_token, authorization)
+        identidade = identidade_da_requisicao(authorization)
         if identidade is None or identidade.usuario_id is None:
             await registrar_negativa(request, None, identidade=identidade, motivo="sem_sessao")
             raise _negar()
@@ -359,8 +336,7 @@ async def exigir_dono(
     recurso -- e quem sabe qual e o recurso e a rota, nao a dependencia.
 
     **So morde o papel CORRETOR.** Para ADMIN e GERENTE, agir em nome de
-    terceiro e a funcao (Emenda E-05 a RN-16.4) -- e o token compartilhado,
-    que resolve para ADMIN, passa junto.
+    terceiro e a funcao (Emenda E-05 a RN-16.4).
 
     **403 e nao 404** (D8): o 404 esconderia a existencia do recurso, e ai a
     tentativa negada -- que a card manda registrar -- se perderia no ruido de

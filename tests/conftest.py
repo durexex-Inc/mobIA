@@ -41,6 +41,7 @@ from mobia.domain.messages.enums import MessageContentType, MessageDirection, Me
 from mobia.domain.messages.models import Message
 from mobia.domain.messages.status import MessageStatus
 from mobia.domain.outbound.port import GuardedOutbound
+from mobia.domain.usuarios import tokens
 from mobia.infra.anthropic import get_client
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import dispose_engine, get_sessionmaker
@@ -1069,9 +1070,10 @@ def segredos_de_producao(monkeypatch: pytest.MonkeyPatch) -> None:
 
     TEC-203, D5. Cada `_recusar_*_de_desenvolvimento_em_producao` de
     `config.py` recusa o default de desenvolvimento quando `ENVIRONMENT` e de
-    producao -- sem um valor proprio para os cinco campos abaixo,
+    producao -- sem um valor proprio para os quatro campos abaixo,
     `Settings()` levantaria `ConfiguracaoInsegura` antes de o teste chegar ao
-    que de fato quer exercitar.
+    que de fato quer exercitar. (Eram cinco ate a TEC-382 apagar
+    `CATALOGO_ADMIN_TOKEN` e a guarda dele.)
 
     De proposito NAO seta `ENVIRONMENT`: quem usa esta fixture decide isso,
     porque alguns testes comparam producao com nao-producao no mesmo caso.
@@ -1086,7 +1088,6 @@ def segredos_de_producao(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
     monkeypatch.setenv("JWT_SEGREDO", secrets.token_urlsafe(48))
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", secrets.token_urlsafe(48))
     monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", secrets.token_urlsafe(48))
     monkeypatch.setenv("LEAD_INDICE_CHAVE", secrets.token_urlsafe(48))
 
@@ -1111,24 +1112,31 @@ async def client(banco_limpo: None, redis_pool) -> AsyncIterator[AsyncClient]:
         yield http_client
 
 
-@pytest.fixture
-async def client_sem_token_compartilhado(
-    banco_limpo: None, redis_pool, monkeypatch: pytest.MonkeyPatch
-) -> AsyncIterator[AsyncClient]:
-    """O app construido SEM `CATALOGO_ADMIN_TOKEN`. TEC-201.
+def cabecalho_de(papel: str, *, corretor_id: uuid.UUID | None = None) -> dict[str, str]:
+    """Um `Authorization: Bearer` valido para este papel, sem passar pelo login.
 
-    Existe para provar que as rotas administrativas continuam existindo nessa
-    configuracao -- ate a TEC-201 elas sumiam do app, e a resposta era 404.
+    TEC-382. So o JWT autentica desde que o `X-Admin-Token` compartilhado saiu
+    do FastAPI, e este e o helper que os testes de rota usam para montar um --
+    substitui as copias de `_bearer`/`_token` que cada arquivo mantinha, uma
+    por uma, do mesmo jeito.
+
+    `mfa=papel == "ADMIN"`: e o unico papel que a RNF-11 exige segundo fator no
+    login de verdade, e um token de teste que fugisse disso descreveria uma
+    sessao que o login de verdade nunca produz.
+
+    Sem senha nem TOTP porque o caminho do login ja e exercitado inteiro por
+    `tests/integration/test_autenticacao.py`; o que os testes de rota
+    exercitam e o que a guarda faz com um token legitimo, e semear credencial
+    para cada papel so acrescentaria Argon2 ao relogio de cada teste.
     """
-    from mobia.app.config import get_settings
-
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "")
-    get_settings.cache_clear()
-    app = create_app()
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as http_client:
-        yield http_client
-    get_settings.cache_clear()
+    token = tokens.emitir(
+        uuid.uuid4(),
+        papel,
+        mfa=papel == "ADMIN",
+        corretor_id=corretor_id,
+        settings=get_settings(),
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
