@@ -21,38 +21,24 @@ O cenario "Carregamento dentro do SLA" vive em
 """
 
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import _agendar, _corretor, _lead, _recomendar
-from httpx import ASGITransport, AsyncClient
+from conftest import _agendar, _corretor, _lead, _recomendar, cabecalho_de
 
-from mobia.app.config import get_settings
-from mobia.app.main import create_app
 from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.metricas.filtros import montar_recorte
 
-TOKEN = "token-do-criterio-de-aceite"
 ROTA = "/api/v1/metricas/funil"
 PERIODO = {"de": "2026-08-01", "ate": "2026-08-31"}
 DENTRO = datetime(2026, 8, 10, 15, 0, tzinfo=UTC)
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
 
-
-@pytest.fixture
-async def app_com_token(monkeypatch: Any, caches_de_cliente_limpos, banco_limpo, redis_pool):
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN)
-    get_settings.cache_clear()
-    app = create_app()
-    app.state.redis_pool = redis_pool
-    transporte = ASGITransport(app=app)
-    async with AsyncClient(transport=transporte, base_url="http://teste") as cliente:
-        yield cliente
-    get_settings.cache_clear()
+# LEITURA: `VER_FUNIL` e do ADMIN, da GERENTE e da LEITURA -- o menos
+# privilegiado dos tres alcanca esta rota (TEC-202).
 
 
-async def test_funil_mostra_as_seis_etapas_com_conversao(app_com_token, session) -> None:
+async def test_funil_mostra_as_seis_etapas_com_conversao(client, session) -> None:
     """Cenario: Funil mostra as seis etapas com conversao."""
     await _lead(
         session,
@@ -65,7 +51,7 @@ async def test_funil_mostra_as_seis_etapas_com_conversao(app_com_token, session)
     await _lead(session, conversa="5511900000003", nasceu_em=DENTRO, falas=1)
     await _recomendar(session, conversa="5511900000001", em=DENTRO)
 
-    corpo = (await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})).json()
+    corpo = (await client.get(ROTA, params=PERIODO, headers=cabecalho_de("LEITURA"))).json()
 
     assert len(corpo["etapas"]) == 6
     assert corpo["etapas"][0]["quantidade"] == 3
@@ -75,7 +61,7 @@ async def test_funil_mostra_as_seis_etapas_com_conversao(app_com_token, session)
     assert corpo["etapas"][2]["conversaoDaAnterior"] == pytest.approx(1 / 2)
 
 
-async def test_filtro_por_canal_recalcula_os_indicadores(app_com_token, session) -> None:
+async def test_filtro_por_canal_recalcula_os_indicadores(client, session) -> None:
     """Cenario: Filtro por canal recalcula os indicadores.
 
     **Os dois canais do Gherkin existem de verdade desde a TEC-124**, que
@@ -89,10 +75,10 @@ async def test_filtro_por_canal_recalcula_os_indicadores(app_com_token, session)
     await _lead(session, conversa="5511900000002", nasceu_em=DENTRO, canal=CANAL_WHATSAPP)
     await _lead(session, conversa="5511900000003", nasceu_em=DENTRO, canal=CANAL_WEB)
 
-    todos = (await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})).json()
+    todos = (await client.get(ROTA, params=PERIODO, headers=cabecalho_de("LEITURA"))).json()
     so_whatsapp = (
-        await app_com_token.get(
-            ROTA, params={**PERIODO, "canal": CANAL_WHATSAPP}, headers={"X-Admin-Token": TOKEN}
+        await client.get(
+            ROTA, params={**PERIODO, "canal": CANAL_WHATSAPP}, headers=cabecalho_de("LEITURA")
         )
     ).json()
 
@@ -101,7 +87,7 @@ async def test_filtro_por_canal_recalcula_os_indicadores(app_com_token, session)
     assert so_whatsapp["etapas"][0]["quantidade"] == 2
 
 
-async def test_o_agendamento_criado_aparece_no_contador_do_painel(app_com_token, session) -> None:
+async def test_o_agendamento_criado_aparece_no_contador_do_painel(client, session) -> None:
     """CA-17.1, exercitada pela primeira vez. Ver a docstring do modulo.
 
     "Dado um agendamento criado, quando o dashboard e recarregado, entao o
@@ -112,11 +98,9 @@ async def test_o_agendamento_criado_aparece_no_contador_do_painel(app_com_token,
     corretor = await _corretor(session)
     await _lead(session, conversa="5511900000001", nasceu_em=DENTRO)
 
-    antes = (await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})).json()
+    antes = (await client.get(ROTA, params=PERIODO, headers=cabecalho_de("LEITURA"))).json()
     await _agendar(session, conversa="5511900000001", corretor_id=corretor)
-    depois = (
-        await app_com_token.get(ROTA, params=PERIODO, headers={"X-Admin-Token": TOKEN})
-    ).json()
+    depois = (await client.get(ROTA, params=PERIODO, headers=cabecalho_de("LEITURA"))).json()
 
     assert antes["indicadores"]["agendamentosCriados"] == 0
     assert depois["indicadores"]["agendamentosCriados"] == 1

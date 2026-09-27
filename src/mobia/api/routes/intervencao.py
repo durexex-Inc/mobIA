@@ -81,10 +81,11 @@ async def _corretor_de(session: AsyncSession, identidade: IdentidadeDaRequisicao
     """O corretor em nome de quem se assume, devolve e fala. D2 do desenho.
 
     **Da claim do JWT, nunca do corpo.** `atendimento_humano.assumido_por` tem
-    FK para `corretores.id`, e as rotas antigas aceitam o id no corpo porque o
-    `X-Admin-Token` nao carrega identidade. Aqui ela existe, e aceitar o corpo
-    reabriria o "falar em nome de terceiro" para ADMIN e GERENTE. Decisao do
-    Eduardo, 26/09/2026.
+    FK para `corretores.id`, e as rotas antigas (`conversas.py`) aceitam o id
+    no corpo porque nasceram quando so havia o `X-Admin-Token`, que nao
+    carregava identidade nenhuma -- ramo que a TEC-382 apagou. Aqui a
+    identidade existe, e aceitar o corpo reabriria o "falar em nome de
+    terceiro" para ADMIN e GERENTE. Decisao do Eduardo, 26/09/2026.
 
     **409, e nao 403**: quem chama tem a permissao; o que falta e o cadastro
     de corretor, que e estado e nao autorizacao. Inativo e o mesmo caso -- um

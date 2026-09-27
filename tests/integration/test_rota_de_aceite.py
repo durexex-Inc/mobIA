@@ -3,35 +3,17 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import pytest
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.app.config import get_settings
-from mobia.app.main import create_app
 from mobia.domain.handoff.escalada import escalar_vencidos
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status
+from tests.conftest import cabecalho_de
 
-TOKEN = "token-de-teste-de-aceite"
-
-
-@pytest.fixture
-async def cliente_http(monkeypatch, caches_de_cliente_limpos, banco_limpo, redis_pool):
-    """Molde de `app_com_token` em `test_rota_de_corretores.py`.
-
-    O router so e registrado quando `catalogo_admin_token` e verdadeiro, entao
-    o token tem de estar no ambiente ANTES do `create_app()`.
-    """
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", TOKEN)
-    get_settings.cache_clear()
-    app = create_app()
-    app.state.redis_pool = redis_pool
-    transporte = ASGITransport(app=app)
-    async with AsyncClient(transport=transporte, base_url="http://teste") as cliente:
-        yield cliente
-    get_settings.cache_clear()
+# GERENTE, e nao CORRETOR: o handoff aceito aqui nao tem dono conhecido pelo
+# teste, e o que estes casos exercitam e o SLA e a idempotencia do aceite, nao
+# a checagem de dono -- que `test_autorizacao_por_papel.py` ja cobre.
 
 
 async def _marcar(
@@ -60,26 +42,26 @@ async def _linha(session: AsyncSession, handoff_id: uuid.UUID) -> Handoff:
     return (await session.execute(select(Handoff).where(Handoff.id == handoff_id))).scalar_one()
 
 
-async def test_sem_token_e_403(cliente_http) -> None:
-    resposta = await cliente_http.post(f"/api/v1/handoffs/{uuid.uuid4()}/aceitar")
+async def test_sem_token_e_403(client) -> None:
+    resposta = await client.post(f"/api/v1/handoffs/{uuid.uuid4()}/aceitar")
     assert resposta.status_code == 403
 
 
-async def test_handoff_inexistente_e_404(cliente_http) -> None:
-    resposta = await cliente_http.post(
-        f"/api/v1/handoffs/{uuid.uuid4()}/aceitar", headers={"X-Admin-Token": TOKEN}
+async def test_handoff_inexistente_e_404(client) -> None:
+    resposta = await client.post(
+        f"/api/v1/handoffs/{uuid.uuid4()}/aceitar", headers=cabecalho_de("GERENTE")
     )
     assert resposta.status_code == 404
     assert resposta.json()["detail"] == "handoff nao existe"
 
 
 async def test_aceitar_registra_aceito_em_e_muda_status(
-    cliente_http, session: AsyncSession, semear_handoff_com_resumo
+    client, session: AsyncSession, semear_handoff_com_resumo
 ) -> None:
     handoff_id = await semear_handoff_com_resumo(resumo="texto")
 
-    resposta = await cliente_http.post(
-        f"/api/v1/handoffs/{handoff_id}/aceitar", headers={"X-Admin-Token": TOKEN}
+    resposta = await client.post(
+        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=cabecalho_de("GERENTE")
     )
 
     assert resposta.status_code == 200
@@ -95,19 +77,19 @@ async def test_aceitar_registra_aceito_em_e_muda_status(
 
 
 async def test_segundo_aceite_devolve_409_e_nao_sobrescreve_aceito_em(
-    cliente_http, session: AsyncSession, semear_handoff_com_resumo
+    client, session: AsyncSession, semear_handoff_com_resumo
 ) -> None:
     handoff_id = await semear_handoff_com_resumo(resumo="texto")
 
-    primeira = await cliente_http.post(
-        f"/api/v1/handoffs/{handoff_id}/aceitar", headers={"X-Admin-Token": TOKEN}
+    primeira = await client.post(
+        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=cabecalho_de("GERENTE")
     )
     assert primeira.status_code == 200
     aceito_em_original = (await _linha(session, handoff_id)).aceito_em
     assert aceito_em_original is not None
 
-    segunda = await cliente_http.post(
-        f"/api/v1/handoffs/{handoff_id}/aceitar", headers={"X-Admin-Token": TOKEN}
+    segunda = await client.post(
+        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=cabecalho_de("GERENTE")
     )
 
     assert segunda.status_code == 409
@@ -119,7 +101,7 @@ async def test_segundo_aceite_devolve_409_e_nao_sobrescreve_aceito_em(
 
 
 async def test_aceitar_dentro_do_prazo_com_sla_real_e_true(
-    cliente_http, session: AsyncSession, semear_handoff_com_resumo
+    client, session: AsyncSession, semear_handoff_com_resumo
 ) -> None:
     """M5 da revisao final: o ramo com `sla_limite_em` NAO nulo e aceite
     dentro do prazo nunca era exercitado -- so o nulo (por vacuidade, linha
@@ -131,8 +113,8 @@ async def test_aceitar_dentro_do_prazo_com_sla_real_e_true(
     prazo_futuro = datetime.now(UTC) + timedelta(hours=1)
     await _marcar(session, handoff_id=handoff_id, sla_limite_em=prazo_futuro)
 
-    resposta = await cliente_http.post(
-        f"/api/v1/handoffs/{handoff_id}/aceitar", headers={"X-Admin-Token": TOKEN}
+    resposta = await client.post(
+        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=cabecalho_de("GERENTE")
     )
 
     assert resposta.status_code == 200
@@ -140,7 +122,7 @@ async def test_aceitar_dentro_do_prazo_com_sla_real_e_true(
 
 
 async def test_aceitar_handoff_escalado_e_permitido(
-    cliente_http, session: AsyncSession, semear_handoff_com_resumo
+    client, session: AsyncSession, semear_handoff_com_resumo
 ) -> None:
     """Decisao da Task 6: aceitar depois da escalada e o caso real (o gerente
     cobrou e alguem pegou), e por isso e permitido -- ver o relatorio da task
@@ -152,8 +134,8 @@ async def test_aceitar_handoff_escalado_e_permitido(
         session, handoff_id=handoff_id, status=Status.ESCALADO, sla_limite_em=prazo_vencido
     )
 
-    resposta = await cliente_http.post(
-        f"/api/v1/handoffs/{handoff_id}/aceitar", headers={"X-Admin-Token": TOKEN}
+    resposta = await client.post(
+        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=cabecalho_de("GERENTE")
     )
 
     assert resposta.status_code == 200
@@ -168,7 +150,7 @@ async def test_aceitar_handoff_escalado_e_permitido(
 
 
 async def test_handoff_aceito_deixa_de_ser_varrido_pela_escalada(
-    cliente_http, session: AsyncSession, session_factory, semear_handoff_com_resumo
+    client, session: AsyncSession, session_factory, semear_handoff_com_resumo
 ) -> None:
     """A prova da corrida (item 4 do brief): o UPDATE do aceite tira o handoff
     do conjunto que `escalar_vencidos` seleciona, mesmo com o prazo vencido --
@@ -178,8 +160,8 @@ async def test_handoff_aceito_deixa_de_ser_varrido_pela_escalada(
     prazo_vencido = datetime.now(UTC) - timedelta(minutes=1)
     await _marcar(session, handoff_id=handoff_id, sla_limite_em=prazo_vencido)
 
-    resposta = await cliente_http.post(
-        f"/api/v1/handoffs/{handoff_id}/aceitar", headers={"X-Admin-Token": TOKEN}
+    resposta = await client.post(
+        f"/api/v1/handoffs/{handoff_id}/aceitar", headers=cabecalho_de("GERENTE")
     )
     assert resposta.status_code == 200
 

@@ -9,11 +9,13 @@ opt-out da TEC-182, que por isso ficou sem rota HTTP". Aqui o objeto E dado
 pessoal: nome, e-mail e telefone de pessoas reais. Decisao consciente de
 12/09/2026, declarada na emenda E-01 da RN-19.5 e no comentario da card.
 
-**A exposicao diminuiu e nao acabou.** Quem entra por JWT agora precisa ser
-ADMIN; quem tem o `X-Admin-Token` compartilhado continua lendo o contato de
-todos os corretores, porque ele resolve para um ADMIN sintetico (D2 da
-TEC-202). O painel parou de manda-lo na TEC-309, e quem o apaga do FastAPI e
-a TEC-382. Ver tambem a D8 do desenho da TEC-196.
+**A exposicao diminuiu, e so acabou de vez na TEC-382.** Entre a TEC-202 e
+ali, quem entrava por JWT precisava ser ADMIN, mas quem tinha o
+`X-Admin-Token` compartilhado continuava lendo o contato de todos os
+corretores, porque ele resolvia para um ADMIN sintetico (D2 da TEC-202). O
+painel parou de manda-lo na TEC-309; a TEC-382 apagou o ramo que o aceitava
+no FastAPI, e desde entao so o JWT autentica. Ver tambem a D8 do desenho da
+TEC-196.
 
 Nao ha rota DELETE de proposito: desativar e `ativo = false` (D6).
 """

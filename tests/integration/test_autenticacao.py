@@ -1,7 +1,8 @@
 """Os cinco cenarios do Gherkin da TEC-201, contra banco de verdade.
 
-Mais os dois que o desenho acrescentou: o reuso de refresh (D4) e a
-convivencia com o token compartilhado (D2).
+Mais o que o desenho acrescentou: o reuso de refresh (D4). A convivencia com
+o token compartilhado (D2) foi exercitada aqui ate a TEC-382 apagar o ramo
+que a produzia -- o que sobra dela e a garantia de que so o JWT autentica.
 """
 
 import uuid
@@ -260,15 +261,16 @@ async def test_refresh_expirado_e_recusado(
 
 
 @pytest.mark.parametrize("rota", ["/api/v1/corretores", "/api/v1/metricas/funil"])
-async def test_rota_administrativa_aceita_jwt_e_o_token_compartilhado(
+async def test_rota_administrativa_aceita_jwt_e_recusa_sem_credencial(
     session: AsyncSession, client: AsyncClient, banco_limpo: None, rota: str
 ) -> None:
-    """A convivencia da D2, que e o que garante que esta card nao quebrou o painel.
+    """So o JWT autentica, desde a TEC-382.
 
-    Escrito quando o BFF do frontend ainda mandava `X-Admin-Token`. Desde a
-    TEC-309 ele manda o JWT de quem esta logado, e o token so vale para quem
-    chama a API direto; os dois caminhos funcionam ate a TEC-382 apagar o
-    segundo -- e o terceiro, sem credencial nenhuma, precisa recusar.
+    Ate ela havia um segundo caminho, o `X-Admin-Token` compartilhado, e este
+    teste afirmava que os dois funcionavam lado a lado (D2 da TEC-201). O
+    painel parou de manda-lo na TEC-309; a TEC-382 apagou o ramo que o
+    aceitava no FastAPI -- ver `test_autorizacao_em_toda_rota.py` para a prova
+    de que o valor antigo deixou de autenticar em toda rota administrativa.
     """
     await _semear(session, email="admin-rota@x.com", papel="ADMIN", com_mfa=True)
     from mobia.app.config import get_settings
@@ -281,11 +283,9 @@ async def test_rota_administrativa_aceita_jwt_e_o_token_compartilhado(
     jwt_de_admin = tokens.emitir(usuario.id, "ADMIN", mfa=True, corretor_id=None, settings=settings)
 
     com_jwt = await client.get(rota, headers={"Authorization": f"Bearer {jwt_de_admin}"})
-    com_token = await client.get(rota, headers={"X-Admin-Token": settings.catalogo_admin_token})
     sem_nada = await client.get(rota)
 
     assert com_jwt.status_code != 403
-    assert com_token.status_code != 403
     assert sem_nada.status_code == 403
 
 
@@ -310,22 +310,5 @@ async def test_jwt_de_papel_nao_admin_nao_abre_rota_administrativa(
     )
 
     resposta = await client.get("/api/v1/corretores", headers={"Authorization": f"Bearer {token}"})
-
-    assert resposta.status_code == 403
-
-
-async def test_rota_administrativa_existe_mesmo_sem_o_token_compartilhado(
-    session: AsyncSession, client_sem_token_compartilhado: AsyncClient, banco_limpo: None
-) -> None:
-    """A condicional da TEC-156 caiu, e este teste e o que a impede de voltar.
-
-    Ate esta card, sem `CATALOGO_ADMIN_TOKEN` os routers administrativos NAO
-    entravam no app -- e a resposta era 404. Com autenticacao de verdade isso
-    passou a ter efeito perverso: quem configurasse so o JWT nao teria rota
-    nenhuma, e precisaria manter justamente o token que a card veio substituir.
-
-    O que se afirma aqui e a diferenca entre 403 e 404: a rota EXISTE e recusa.
-    """
-    resposta = await client_sem_token_compartilhado.get("/api/v1/corretores")
 
     assert resposta.status_code == 403

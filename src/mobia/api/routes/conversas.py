@@ -22,9 +22,9 @@ CORRETOR** -- ver `_exigir_que_seja_ele_mesmo` e a Emenda E-05 a RN-16.4.
 `leadId` (TEC-195) e nao tem o par -- no WhatsApp ele era o telefone, e desde
 a TEC-203 e o HMAC dele, pseudonimo estavel do lead; as rotas dele
 sao `POST /leads/{leadId}/assumir` e `/devolver`, em `leads.py`, e tiram o
-corretor da claim em vez do corpo. Estas ficam para quem tem o par -- o
-`X-Admin-Token` e os testes que ja existem --, e as duas portas passam pela
-mesma logica, `atendimento/tomada.py`.
+corretor da claim em vez do corpo. Estas ficam para quem tem o par -- clientes
+diretos da API, exercitados pelos testes que ja existem --, e as duas portas
+passam pela mesma logica, `atendimento/tomada.py`.
 """
 
 import uuid
@@ -50,12 +50,11 @@ class PedidoDeAtendimento(BaseModel):
     CONFERIDO quando quem chama e um CORRETOR** (Emenda E-05 a RN-16.4).
 
     A D2 desta card registrou que o campo era "afirmacao de quem chama, nao
-    identidade provada", porque o `X-Admin-Token` nao carrega QUEM o esta
-    usando. O JWT carrega: para papel CORRETOR, mandar o id de outro e 403 com
-    registro. Para ADMIN e GERENTE -- e para o token compartilhado, que resolve
-    para ADMIN --, o campo SEGUE sendo afirmacao, porque agir em nome de
-    terceiro e a funcao desses papeis, e o custo que a D2 aceitou permanece
-    inteiro para quem usa o token.
+    identidade provada" -- verdade ate a TEC-202, quando so havia o
+    `X-Admin-Token`, que nao carrega QUEM o esta usando. O JWT carrega: para
+    papel CORRETOR, mandar o id de outro e 403 com registro. Para ADMIN e
+    GERENTE, o campo SEGUE sendo afirmacao, porque agir em nome de terceiro e
+    a funcao desses papeis.
     """
 
     model_config = ConfigDict(extra="forbid")

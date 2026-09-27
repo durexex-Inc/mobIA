@@ -35,8 +35,10 @@ class EventoAuditoria(Base):
     )
 
     ator_tipo: Mapped[str] = mapped_column(String(16), nullable=False)
-    # `usuario_id` de pessoa, `token-compartilhado` pelo `X-Admin-Token`, nulo
-    # para agente e sistema -- o par e conferido por `ck_eventos_auditoria_ator_id`.
+    # `usuario_id` de pessoa; `token-compartilhado` so em eventos gravados
+    # antes de a TEC-382 apagar o `X-Admin-Token` que o produzia -- nenhuma
+    # requisicao nova gera este valor. Nulo para agente e sistema -- o par e
+    # conferido por `ck_eventos_auditoria_ator_id`.
     ator_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     acao: Mapped[str] = mapped_column(String(32), nullable=False)

@@ -204,20 +204,20 @@ async def test_o_worker_nao_sobe_sem_remetente(
 def _producao(monkeypatch: pytest.MonkeyPatch) -> None:
     """Producao COM os outros segredos proprios.
 
-    Sem isto os validators de `Settings` recusariam antes, pela chave de cifra
-    e pelo token de catalogo de desenvolvimento, e o teste passaria pelo
-    motivo errado.
+    Sem isto o validator da chave de cifra recusaria antes, e o teste passaria
+    pelo motivo errado. (Ate a TEC-382 havia tambem um `CATALOGO_ADMIN_TOKEN`
+    aqui, pela guarda do token de catalogo de desenvolvimento -- ela e o campo
+    sairam junto.)
     """
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("CONTENT_ENCRYPTION_KEY", base64.b64encode(b"x" * 32).decode())
-    monkeypatch.setenv("CATALOGO_ADMIN_TOKEN", "token-de-catalogo-proprio")
-    # TEC-201: a terceira guarda do mesmo tipo. Sem isto ela dispara primeiro e
+    # TEC-201: a segunda guarda do mesmo tipo. Sem isto ela dispara primeiro e
     # o teste passaria pelo motivo errado -- exatamente o que o docstring acima
-    # ja dizia das outras duas.
+    # ja dizia da de cima.
     monkeypatch.setenv("JWT_SEGREDO", "segredo-de-jwt-proprio-com-32-bytes-ou-mais")
-    # TEC-206: a quarta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
+    # TEC-206: a terceira guarda do mesmo tipo, pelo mesmo motivo das duas acima.
     monkeypatch.setenv("AUDITORIA_CHAVE_DO_LEAD", "chave-do-lead-propria")
-    # TEC-203: a quinta guarda do mesmo tipo, pelo mesmo motivo das quatro acima.
+    # TEC-203: a quarta guarda do mesmo tipo, pelo mesmo motivo das tres acima.
     monkeypatch.setenv("LEAD_INDICE_CHAVE", "chave-de-indice-propria")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
 
