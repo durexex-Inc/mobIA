@@ -5,8 +5,13 @@ import {
   faixaDePreco,
   humanizar,
   linhasDaQualificacao,
+  motivosDoRecalculo,
+  pontosDoGrafico,
+  reacaoLegivel,
+  resumoDoGrafico,
   statusDoAgendamento,
   tipoDoAgendamento,
+  valorDoRecalculo,
 } from './detalhe'
 
 /** O texto como a TEC-175 o grava: seis marcadores literais, em ordem. */
@@ -138,5 +143,41 @@ describe('agendamentos', () => {
   it('traduz tipo e status', () => {
     expect(tipoDoAgendamento('VISITA_PRESENCIAL')).toBe('Visita presencial')
     expect(statusDoAgendamento('NO_SHOW')).toBe('Não compareceu')
+  })
+})
+
+describe('historico de score (TEC-325)', () => {
+  it('o valor mostra de onde veio, e o primeiro calculo so o numero', () => {
+    expect(valorDoRecalculo({ anterior: null, novo: 30 })).toBe('30')
+    expect(valorDoRecalculo({ anterior: 30, novo: 47 })).toBe('30 → 47')
+  })
+
+  it('os motivos saem em portugues; causa desconhecida, humanizada', () => {
+    expect(motivosDoRecalculo(['CAMPOS_OBRIGATORIOS', 'URGENCIA'])).toBe('Campos da qualificação, Urgência')
+    expect(motivosDoRecalculo(['CAUSA_NOVA'])).toBe('Causa nova')
+  })
+
+  it('os pontos vao de 0 a 100 no Y, espacados por igual no X', () => {
+    const caixa = { largura: 120, altura: 120, margem: 10 }
+    expect(pontosDoGrafico([0, 50, 100], caixa)).toEqual([
+      { x: 10, y: 110 },
+      { x: 60, y: 60 },
+      { x: 110, y: 10 },
+    ])
+    expect(pontosDoGrafico([40], caixa)).toEqual([{ x: 60, y: 70 }])
+  })
+
+  it('o resumo do grafico e o que o leitor de tela ouve', () => {
+    expect(resumoDoGrafico([30, 47, 82])).toBe('Score de 30 a 82 em 3 recálculos')
+    expect(resumoDoGrafico([30])).toBe('Score 30 no único cálculo')
+  })
+})
+
+describe('reacao ao imovel (TEC-325)', () => {
+  it('os rotulos do chat web, com a categoria do descarte', () => {
+    expect(reacaoLegivel('INTERESSE', null)).toBe('Gostei')
+    expect(reacaoLegivel('DESCARTE', 'DISTANCIA')).toBe('Não é pra mim · distância')
+    expect(reacaoLegivel('DESCARTE', null)).toBe('Não é pra mim')
+    expect(reacaoLegivel(null, null)).toBe('Aguardando reação')
   })
 })

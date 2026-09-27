@@ -173,7 +173,10 @@ da lista não é link. O desenho está em
 - **O resumo é cortado nos marcadores literais da TEC-175** (`## Quem e o
   lead` …). Se um marcador mudar lá, a tela mostra o texto inteiro, sem os
   títulos, e nada some.
-- **Histórico de score e recomendações ainda não aparecem**: TEC-325.
+- **Histórico de score e imóveis recomendados** entraram na TEC-325, entre
+  Qualificação e Agendamentos. O gráfico é SVG desenhado à mão, sem biblioteca,
+  e a lista embaixo dele é a leitura completa. A reação ao imóvel usa os
+  rótulos do chat web ("Gostei", "Não é pra mim").
 
 ## A conversa do lead (TEC-324)
 

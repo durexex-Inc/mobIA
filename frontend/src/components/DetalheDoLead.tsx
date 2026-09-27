@@ -6,11 +6,18 @@ import {
   type DetalheDoLead,
   dividirResumo,
   type FollowUpDoLead,
+  type ImovelRecomendado,
   linhasDaQualificacao,
+  motivosDoRecalculo,
+  pontosDoGrafico,
   type Qualificacao,
+  reacaoLegivel,
+  type RecalculoDoScore,
   type ResumoDoLead,
+  resumoDoGrafico,
   statusDoAgendamento,
   tipoDoAgendamento,
+  valorDoRecalculo,
 } from '@/lib/detalhe'
 import { canalLegivel, dataAbsoluta, temperaturaLegivel, tempoRelativo } from '@/lib/leads'
 
@@ -18,8 +25,8 @@ import { canalLegivel, dataAbsoluta, temperaturaLegivel, tempoRelativo } from '@
  * As secoes do detalhe do lead, na ordem da card (TEC-323, D5).
  *
  * Server Components sem estado: recebem o que a rota devolveu e nao buscam
- * nada. Historico de score e recomendacoes entram entre elas quando a TEC-325
- * chegar. A conversa (TEC-324) e a ultima secao, e fica fora daqui: ela vem
+ * nada. Historico de score e recomendacoes entraram na TEC-325, nas posicoes
+ * 4 e 5 da D5. A conversa (TEC-324) e a ultima secao, e fica fora daqui: ela vem
  * de outra rota, e a pagina a desenha depois destas. As excecoes ao "sem
  * estado" sao o contato, que revela por um componente de cliente (TEC-330), e
  * a qualificacao, que se corrige por outro (TEC-329).
@@ -50,6 +57,8 @@ export function SecoesDoDetalhe({
         podeEditar={podeEditar}
         encerrada={detalhe.status === 'ENCERRADA'}
       />
+      <SecaoHistorico historico={detalhe.historicoScore ?? []} />
+      <SecaoRecomendacoes recomendacoes={detalhe.recomendacoes ?? []} />
       <SecaoAgendamentos agendamentos={detalhe.agendamentos} />
       <SecaoFollowUps followups={detalhe.followups} agora={agora} />
     </>
@@ -199,6 +208,96 @@ function SecaoQualificacao({
       )}
       {podeEditar && (
         <EdicaoDaQualificacao leadId={leadId} qualificacao={qualificacao} encerrada={encerrada} />
+      )}
+    </Secao>
+  )
+}
+
+// A caixa do grafico, em unidades do `viewBox`: o SVG estica para a largura da
+// secao, e o texto fica fora dele, na lista.
+const GRAFICO = { largura: 320, altura: 120, margem: 8 }
+
+/**
+ * O historico do score (TEC-325, D2): o grafico de linha e, embaixo, a lista
+ * -- que e a leitura de verdade. O grafico tem `role="img"` com o resumo da
+ * serie; quem nao o ve le a lista, com data, valor e motivos de cada recalculo.
+ */
+function SecaoHistorico({ historico }: { historico: RecalculoDoScore[] }) {
+  if (historico.length === 0) {
+    return (
+      <Secao titulo="Histórico de score">
+        <p>
+          <Vazio texto="O score deste lead ainda não foi calculado." />
+        </p>
+      </Secao>
+    )
+  }
+  const valores = historico.map((recalculo) => recalculo.novo)
+  const pontos = pontosDoGrafico(valores, GRAFICO)
+  return (
+    <Secao titulo="Histórico de score">
+      <svg
+        className="historico-grafico"
+        viewBox={`0 0 ${GRAFICO.largura} ${GRAFICO.altura}`}
+        role="img"
+        aria-label={resumoDoGrafico(valores)}
+      >
+        {pontos.length > 1 && (
+          <polyline
+            points={pontos.map((p) => `${p.x},${p.y}`).join(' ')}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+          />
+        )}
+        {pontos.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r={3} fill="currentColor" />
+        ))}
+      </svg>
+      <ol className="detalhe-lista historico-lista">
+        {historico.map((recalculo, i) => (
+          <li key={`${recalculo.em}-${i}`}>
+            <time dateTime={recalculo.em}>{dataAbsoluta(recalculo.em)}</time> ·{' '}
+            <strong>{valorDoRecalculo(recalculo)}</strong>
+            {recalculo.causas.length > 0 && <> · {motivosDoRecalculo(recalculo.causas)}</>}
+          </li>
+        ))}
+      </ol>
+    </Secao>
+  )
+}
+
+/**
+ * Os imoveis que o agente apresentou (TEC-325, D3), na ordem em que foram
+ * apresentados, com o motivo do match e a reacao do lead. Sem nenhum, e o
+ * estado vazio -- e nao "Ainda nao medido": o lead ainda nao ter recebido
+ * imovel e fato, e nao falta de fonte.
+ */
+function SecaoRecomendacoes({ recomendacoes }: { recomendacoes: ImovelRecomendado[] }) {
+  return (
+    <Secao titulo="Imóveis recomendados">
+      {recomendacoes.length === 0 ? (
+        <p>
+          <Vazio texto="Nenhum imóvel recomendado ainda." />
+        </p>
+      ) : (
+        <ul className="detalhe-lista recomendacoes-lista">
+          {recomendacoes.map((imovel) => (
+            <li key={`${imovel.imovelId}-${imovel.apresentadoEm}`} className="recomendacao">
+              <h3>
+                {imovel.titulo} <span className="recomendacao-codigo">{imovel.codigo}</span>
+              </h3>
+              <p>
+                {imovel.bairro} · match de {Math.round(imovel.scoreMatch * 100)}% · apresentado em{' '}
+                <time dateTime={imovel.apresentadoEm}>{dataAbsoluta(imovel.apresentadoEm)}</time>
+              </p>
+              <p className="detalhe-texto">{imovel.motivoMatch}</p>
+              <p className="recomendacao-reacao">
+                Reação: <strong>{reacaoLegivel(imovel.reacao, imovel.motivoDescarte)}</strong>
+              </p>
+            </li>
+          ))}
+        </ul>
       )}
     </Secao>
   )
