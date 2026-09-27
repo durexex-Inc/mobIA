@@ -1,5 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 
+import { origemDoChat } from '@/lib/servidor/enderecoDoChat'
+
 /**
  * A CSP com nonce das rotas do dashboard (TEC-356, RNF-FE-09).
  *
@@ -39,10 +41,14 @@ import { type NextRequest, NextResponse } from 'next/server'
 export function politicaDeSeguranca(
   nonce: string,
   isDev: boolean,
-  { embutivel = false }: { embutivel?: boolean } = {},
+  { embutivel = false, conectarA }: { embutivel?: boolean; conectarA?: string } = {},
 ): string {
   return [
     "default-src 'self'",
+    // So o embed abre WebSocket, e so para a origem do proprio chat (TEC-346,
+    // D2): o painel nao tem `fetch` nem socket para fora da propria origem, e
+    // por isso continua sem esta diretiva.
+    ...(embutivel && conectarA ? [`connect-src 'self' ${conectarA}`] : []),
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ''}`,
     `style-src 'self' ${isDev ? "'unsafe-inline'" : `'nonce-${nonce}'`}`,
     "img-src 'self' blob: data:",
@@ -133,8 +139,12 @@ export function proxy(request: NextRequest): NextResponse {
   // nao e nonce. Precisa ser novo a cada requisicao, e ha teste afirmando que
   // duas requisicoes nao recebem o mesmo.
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
+  const embutivel = rotaDoEmbed(request.nextUrl.pathname)
   const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development', {
-    embutivel: rotaDoEmbed(request.nextUrl.pathname),
+    embutivel,
+    // So calculado para o embed: fora dele o valor e descartado por
+    // `politicaDeSeguranca`, e nao ha razao para montar a URL a toa.
+    conectarA: embutivel ? origemDoChat() : undefined,
   })
 
   // O nonce vai no cabecalho da REQUISICAO tambem, e nao so no da resposta: e

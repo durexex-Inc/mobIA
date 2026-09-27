@@ -61,6 +61,18 @@ describe('politicaDeSeguranca', () => {
       "frame-ancestors 'none'",
     )
   })
+
+  it('o embed pode abrir o WebSocket do chat, e so ele (TEC-346, D2)', () => {
+    const politica = politicaDeSeguranca('abc', false, {
+      embutivel: true,
+      conectarA: 'wss://api.exemplo.com',
+    })
+    expect(politica).toContain("connect-src 'self' wss://api.exemplo.com")
+  })
+
+  it('o painel continua sem connect-src', () => {
+    expect(politicaDeSeguranca('abc', false)).not.toContain('connect-src')
+  })
 })
 
 describe('proxy', () => {
@@ -162,5 +174,15 @@ describe('proxy sem sessao (TEC-309, D5)', () => {
     // O proxy repete o nome em vez de importar `lib/servidor/sessao`, para nao
     // arrastar o Redis para ca. Este teste e o que impede os dois de divergirem.
     expect(COOKIE_DA_SESSAO).toBe(COOKIE_DA_SESSAO_DE_VERDADE)
+  })
+
+  it('a resposta de /embed/chat autoriza a origem do WebSocket', () => {
+    process.env.MOBIA_WIDGET_WS_URL = 'wss://api.exemplo.com/widget/chat'
+    try {
+      expect(cspDe('/embed/chat')).toContain("connect-src 'self' wss://api.exemplo.com")
+      expect(cspDe('/leads')).not.toContain('connect-src')
+    } finally {
+      delete process.env.MOBIA_WIDGET_WS_URL
+    }
   })
 })

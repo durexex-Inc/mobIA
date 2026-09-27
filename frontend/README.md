@@ -40,6 +40,7 @@ com o código de 6 dígitos (RNF-11). A URI leva a semente em claro.
 | `MOBIA_API_BASE` | servidor Next, ao montar a URL do FastAPI | não (`http://localhost:8000`) |
 | `MOBIA_REDIS_URL` | servidor Next, onde a sessão do painel mora | não (`redis://localhost:6380`, o do `docker compose`) |
 | `MOBIA_ORIGEM_DO_PAINEL` | proxy `/bff/*` e login, na checagem de `Origin` | só atrás de proxy — ver abaixo |
+| `MOBIA_WIDGET_WS_URL` | a página `/embed/chat` e o proxy, no servidor | não (derivada de `MOBIA_API_BASE`) |
 
 **Não há mais token de API no ambiente do Next.** Até a TEC-309 havia o
 `MOBIA_ADMIN_TOKEN`, que ia em toda chamada como `X-Admin-Token` — um ADMIN sem
