@@ -176,11 +176,41 @@ _VERBO_DE_ELIMINAR = re.compile(
     + r")\b"
 )
 
-# Ao contrario do verbo de eliminar, estes sao palavras inteiras (fronteira de
-# palavra) -- "ver", "quero" e "quais" sao curtos o bastante para colidir com
-# substring de outra palavra ("resolver" contem "ver") se comparados sem
-# fronteira.
-_SINAL_DE_ACESSO = re.compile(r"\bquero\b|\bver\b|\bcopia\b|\bmandem\b|\benviem\b|\bquais\b")
+# O pedido de acesso e o VERBO LIGADO AO OBJETO, nunca um verbo solto em
+# qualquer ponto da mensagem -- achado da revisao final (C1). A primeira versao
+# aceitava "quero", "ver" e "quais" como sinais independentes, e bastava a
+# mensagem tambem conter "meus dados" para uma frase de venda virar ACESSO:
+# "quero agendar uma visita, meus dados: ...", "ja mandei meus dados, quero ver
+# o apartamento", "quais dados pessoais voces precisam pra visita?", "quero
+# corrigir meus dados". O custo desse falso positivo e o turno inteiro: ele
+# registra a solicitacao, responde com o texto fixo e nunca chama o modelo.
+#
+# Duas formas, e so elas:
+#
+# - verbo de querer/pedir SEGUIDO do objeto, com no maximo um verbo de acesso
+#   ("ver", "receber"...) e um "uma copia dos" no meio: "quero meus dados",
+#   "quero ver os meus dados", "me mandem uma copia dos meus dados". Um verbo
+#   que nao e de acesso entre os dois ("quero CORRIGIR meus dados", "quero
+#   AGENDAR uma visita, meus dados") quebra a colagem, de proposito.
+# - a pergunta "quais dados ... voces tem DE MIM": o "de mim"/"sobre mim" e
+#   obrigatorio, porque "quais dados voces precisam" sem ele e pergunta de
+#   cadastro, nao de titular.
+#
+# O preco aceito e o recall: "gostaria de saber o que voces sabem sobre mim"
+# nao casa. Perder um pedido aqui deixa o lead sem o texto fixo, mas o modelo
+# ainda responde e o ADMIN ainda pode atender pela exportacao
+# (`GET /api/v1/leads/{id}/dados-pessoais`); sequestrar uma
+# frase de venda cala o agente justamente na conversa que importa.
+_PEDIDO_DE_ACESSO = re.compile(
+    r"\b(?:quero|queria|gostaria de|mandem|enviem|manda|envia)"
+    r"(?: me)?"
+    r"(?: (?:ver|receber|acessar|consultar|saber))?"
+    r"(?: (?:uma|a) copia d(?:os|e))?"
+    r"(?: todos)?(?: os)?"
+    r" (?:meus dados|dados pessoais)\b"
+    r"|\bquais (?:sao )?(?:os )?dados(?: pessoais)?(?: que)? voces "
+    r"(?:tem|guardam|possuem|armazenam) (?:de|sobre) mim\b"
+)
 
 # So nega o que esta imediatamente antes do verbo (ate 2 palavras, para cobrir
 # "nao quero apagar" alem de "nao apague"), no mesmo espirito da guarda de
@@ -214,7 +244,7 @@ def pedido_de_titular(texto: str) -> TipoDeSolicitacao | None:
             return None
         return TipoDeSolicitacao.ELIMINACAO
 
-    if _SINAL_DE_ACESSO.search(normalizado):
+    if _PEDIDO_DE_ACESSO.search(normalizado):
         return TipoDeSolicitacao.ACESSO
     return None
 

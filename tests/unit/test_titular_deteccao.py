@@ -159,6 +159,25 @@ def test_pedido_de_titular_nao_depende_do_resultado_do_optout(texto: str) -> Non
     pedido_de_titular(texto)
 
 
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "Quero agendar uma visita, meus dados: Joao, 11 99999-0000",
+        "Ja mandei meus dados, quero ver o apartamento",
+        "Quais dados pessoais voces precisam pra visita?",
+        "quero corrigir meus dados",
+        "Quero falar com um corretor, ele ja tem meus dados?",
+    ],
+)
+def test_frase_de_venda_com_meus_dados_nao_vira_acesso(texto: str) -> None:
+    """A regressao principal da revisao final: "quero", "ver" e "quais" eram
+    sinais soltos, e bastava a mensagem conter "meus dados" em qualquer ponto
+    para uma frase de venda virar pedido de ACESSO -- o turno registrava a
+    solicitacao, respondia com o texto fixo e nunca chamava o modelo. O verbo
+    de acesso tem de estar ligado ao objeto."""
+    assert pedido_de_titular(texto) is None
+
+
 def test_remover_contato_e_optout_mas_nao_pedido_de_titular() -> None:
     """A colisao nomeada no desenho D3: fala de CONTATO e opt-out, fala de
     DADOS e pedido de titular. "remover meu contato" e so o primeiro.
