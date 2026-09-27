@@ -963,6 +963,52 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
     expect(novo.frames()).toEqual([{ tipo: 'ola', sessao: null }])
   })
 
+  it('encerrar durante a espera de muitas_tentativas devolve o foco ao botao de opcoes', () => {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'Muitas tentativas, aguarde 20 s.', aguardeSegundos: 20 })
+    socket.fechar(1013)
+
+    abrirMenuEEscolherEncerrar()
+    fireEvent.click(screen.getByRole('button', { name: 'Encerrar' }))
+
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Opções da conversa' }))
+  })
+
+  it('a reconexao nao remonta os baloes que ja estavam na tela: o log nao os anuncia de novo', () => {
+    guardarSessao(SESSAO, AGORA - UM_DIA_MS)
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.receber({ tipo: 'historico', mensagens: doze() })
+    enviar('Tem garagem?')
+    socket.receber({ tipo: 'ack', messageId: frameDeMensagem(socket).id })
+    socket.receber({ tipo: 'mensagem', texto: 'Tem, sim.', kind: 'texto' })
+    const antes = within(screen.getByRole('list')).getAllByRole('listitem')
+    expect(antes).toHaveLength(14)
+
+    // Queda; a proxima mensagem abre socket novo, que retoma e recebe o
+    // historico -- o mesmo que a tela ja tinha, mais uma fala nova.
+    socket.fechar()
+    enviar('E piscina?')
+    const novo = ultimoSocket()
+    novo.abrir()
+    novo.receber({ tipo: 'sessao', sessao: SESSAO })
+    novo.receber({
+      tipo: 'historico',
+      mensagens: [
+        ...doze(),
+        { papel: 'lead', texto: 'Tem garagem?', em: '2026-09-27T11:59:00Z' },
+        { papel: 'agente', texto: 'Tem, sim.', em: '2026-09-27T11:59:05Z' },
+        { papel: 'agente', texto: 'Mais alguma dúvida?', em: '2026-09-27T11:59:30Z' },
+      ],
+    })
+
+    const depois = within(screen.getByRole('list')).getAllByRole('listitem')
+    expect(depois).toHaveLength(16)
+    antes.forEach((li, i) => expect(depois[i]).toBe(li))
+    expect(depois[14]).toHaveTextContent('Mais alguma dúvida?')
+    expect(depois[15]).toHaveTextContent('E piscina?')
+  })
+
   it('localStorage que lanca: o chat abre com null e conversa normalmente', () => {
     for (const metodo of ['getItem', 'setItem', 'removeItem'] as const) {
       vi.spyOn(Storage.prototype, metodo).mockImplementation(() => {

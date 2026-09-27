@@ -244,8 +244,9 @@ describe('reduzir', () => {
 
   it('historico substitui as confirmadas e preserva a pendente da visitante no fim, uma vez so', () => {
     // Review Focus 2: mensagem local em 'enviando' sobrevive ao historico, no
-    // fim, sem duplicar -- e o balao do agente em memoria sai (o historico o
-    // contem).
+    // fim, sem duplicar -- e o balao do agente em memoria que o historico nao
+    // contem sai. A fala nova nao herda a chave `agente-0` de quem saiu: com
+    // ela, o React reaproveitaria o `<li>` e o `log` nao a anunciaria.
     let estado = reduzir(INICIAL, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'ola', kind: 'reply' }) })
     estado = reduzir(estado, { tipo: 'enviou', messageId: 'm1', texto: 'ainda enviando' })
 
@@ -255,7 +256,7 @@ describe('reduzir', () => {
     })
 
     expect(depois.mensagens).toEqual([
-      { autor: 'agente', chave: 'agente-0', texto: 'do historico' },
+      { autor: 'agente', chave: 'agente-1', texto: 'do historico' },
       { autor: 'visitante', messageId: 'm1', texto: 'ainda enviando', estado: 'enviando' },
     ])
   })
@@ -304,6 +305,84 @@ describe('reduzir', () => {
     })
     const depois = reduzir(antes, { tipo: 'frame', bruto: frame({ tipo: 'ack', messageId: 'historico-0' }) })
     expect(depois).toBe(antes)
+  })
+
+  describe('historico reaproveita a identidade do que ja esta na tela (chaves estaveis)', () => {
+    // Uma chave nova remonta o `<li>`, e o `log` com `additions` anuncia de
+    // novo o balao remontado: a reconexao nao pode trocar a chave de quem
+    // ja estava na tela.
+    function telaComTresFalas(): Conversa {
+      let estado = comVisitanteEnviando('m1', 'Quero um apartamento')
+      estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'ack', messageId: 'm1' }) })
+      estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'Claro!', kind: 'reply' }) })
+      estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'Qual bairro?', kind: 'reply' }) })
+      return estado
+    }
+
+    const HISTORICO_DAS_TRES = [
+      { papel: 'lead', texto: 'Quero um apartamento' },
+      { papel: 'agente', texto: 'Claro!' },
+      { papel: 'agente', texto: 'Qual bairro?' },
+    ]
+
+    function chaveDe(mensagem: Mensagem): string {
+      return mensagem.autor === 'visitante' ? mensagem.messageId : mensagem.chave
+    }
+
+    it('historico igual a tela, sem pendente, devolve a mesma referencia', () => {
+      const antes = telaComTresFalas()
+      const depois = reduzir(antes, { tipo: 'frame', bruto: frame({ tipo: 'historico', mensagens: HISTORICO_DAS_TRES }) })
+      expect(depois).toBe(antes)
+    })
+
+    it('historico vazio com a tela vazia devolve a mesma referencia', () => {
+      const depois = reduzir(INICIAL, { tipo: 'frame', bruto: frame({ tipo: 'historico', mensagens: [] }) })
+      expect(depois).toBe(INICIAL)
+    })
+
+    it('historico igual a tela com uma pendente no fim mantem os mesmos objetos', () => {
+      const antes = reduzir(telaComTresFalas(), { tipo: 'enviou', messageId: 'm2', texto: 'no Campeche' })
+      const depois = reduzir(antes, { tipo: 'frame', bruto: frame({ tipo: 'historico', mensagens: HISTORICO_DAS_TRES }) })
+      expect(depois.mensagens).toHaveLength(4)
+      depois.mensagens.forEach((mensagem, i) => expect(mensagem).toBe(antes.mensagens[i]))
+    })
+
+    it('uma fala nova do agente no fim do historico: so ela ganha chave nova', () => {
+      const antes = telaComTresFalas()
+      const depois = reduzir(antes, {
+        tipo: 'frame',
+        bruto: frame({ tipo: 'historico', mensagens: [...HISTORICO_DAS_TRES, { papel: 'agente', texto: 'Ainda está por aí?' }] }),
+      })
+      expect(depois.mensagens.slice(0, 3).map(chaveDe)).toEqual(antes.mensagens.map(chaveDe))
+      const nova = depois.mensagens[3]
+      expect(nova).toMatchObject({ autor: 'agente', texto: 'Ainda está por aí?' })
+      expect(antes.mensagens.map(chaveDe)).not.toContain(chaveDe(nova))
+    })
+
+    it('uma fala que falta no historico (moderacao): as outras mantem a chave', () => {
+      const antes = telaComTresFalas()
+      const depois = reduzir(antes, {
+        tipo: 'frame',
+        bruto: frame({ tipo: 'historico', mensagens: [HISTORICO_DAS_TRES[0], HISTORICO_DAS_TRES[2]] }),
+      })
+      expect(depois.mensagens.map(chaveDe)).toEqual([chaveDe(antes.mensagens[0]), chaveDe(antes.mensagens[2])])
+      expect(depois.mensagens[0]).toBe(antes.mensagens[0])
+      expect(depois.mensagens[1]).toBe(antes.mensagens[2])
+    })
+
+    it('a fala seguinte a uma remocao nao repete a chave de quem ficou', () => {
+      let estado = telaComTresFalas()
+      estado = reduzir(estado, {
+        tipo: 'frame',
+        bruto: frame({ tipo: 'historico', mensagens: [HISTORICO_DAS_TRES[1], HISTORICO_DAS_TRES[2]] }),
+      })
+      // Sobram 2 baloes com as chaves de quando eram 3: uma chave derivada do
+      // comprimento da lista repetiria a do ultimo.
+      estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'Tem vaga?', kind: 'reply' }) })
+      const chaves = estado.mensagens.map(chaveDe)
+      expect(chaves).toHaveLength(3)
+      expect(new Set(chaves).size).toBe(3)
+    })
   })
 
   it('consentimento_registrado mantem o estado, mesma referencia', () => {

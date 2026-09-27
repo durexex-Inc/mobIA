@@ -14,7 +14,9 @@
  * **`historico` e a verdade do servidor (D2):** troca as mensagens
  * confirmadas (recebida da visitante, baloes do agente) pelas que o servidor
  * mandou, e mantem no fim, na ordem, as pendentes da visitante que ainda nao
- * foram confirmadas.
+ * foram confirmadas. A fala do historico que ja estava na tela fica com o
+ * mesmo objeto -- e a mesma chave --, e so a que falta ganha chave nova: ver
+ * `aplicarHistorico`.
  *
  * **Frames do servidor que esta card ainda ignora, e quem trata cada um:**
  * `digitando` (TEC-351), `imagem` (TEC-349) e `consentimento_registrado`
@@ -74,10 +76,36 @@ function segundosValidos(valor: unknown): valor is number {
   return typeof valor === 'number' && Number.isInteger(valor) && valor >= 1
 }
 
+// As chaves que este modulo inventa: `agente-N` para o balao do agente e
+// `historico-N` para a fala da visitante que so o historico trouxe. O
+// `messageId` de um envio da visitante e UUID e nunca casa com este padrao.
+const CHAVE_INVENTADA = /^(?:agente|historico)-(\d+)$/
+
+function chaveDe(mensagem: Mensagem): string {
+  return mensagem.autor === 'visitante' ? mensagem.messageId : mensagem.chave
+}
+
+/**
+ * O proximo N livre: 1 acima do maior N de chave inventada em `mensagens`
+ * (0 se nao ha nenhuma). A chave e a identidade do `<li>` para o React --
+ * repetida entre irmaos, dois baloes se confundem; repetida com a de um balao
+ * que acabou de sair, o balao novo herdaria o no dele e o `log` nao o
+ * anunciaria. Contar o comprimento da lista nao serve: o `historico` e o
+ * `encerrou` tiram mensagens, e as que ficam mantem as chaves de antes.
+ */
+function proximoNumero(mensagens: Mensagem[]): number {
+  let proximo = 0
+  for (const mensagem of mensagens) {
+    const achado = CHAVE_INVENTADA.exec(chaveDe(mensagem))
+    if (achado) {
+      proximo = Math.max(proximo, Number(achado[1]) + 1)
+    }
+  }
+  return proximo
+}
+
 function adicionarBalaoDoAgente(estado: Conversa, texto: string): Conversa {
-  // A chave e o total de mensagens ANTES de acrescentar esta -- estavel
-  // porque mensagem nunca e removida da lista, so acrescentada.
-  const chave = `agente-${estado.mensagens.length}`
+  const chave = `agente-${proximoNumero(estado.mensagens)}`
   return { ...estado, mensagens: [...estado.mensagens, { autor: 'agente', chave, texto }] }
 }
 
@@ -142,48 +170,79 @@ function aplicarMuitasTentativas(estado: Conversa, dado: FrameBruto): Conversa {
   return { ...estado, conexao: { tipo: 'aguardando', mensagem, segundos } }
 }
 
-function mensagemDoHistorico(item: unknown, indiceNoFrame: number, posicaoNaLista: number): Mensagem | null {
+type FalaDoHistorico = { autor: Mensagem['autor']; texto: string }
+
+function falaDoHistorico(item: unknown): FalaDoHistorico | null {
   const objeto = comoObjeto(item)
   if (!objeto || typeof objeto.texto !== 'string' || objeto.texto === '') {
     return null
   }
   if (objeto.papel === 'lead') {
-    return { autor: 'visitante', messageId: `historico-${indiceNoFrame}`, texto: objeto.texto, estado: 'recebida' }
+    return { autor: 'visitante', texto: objeto.texto }
   }
   if (objeto.papel === 'agente') {
-    // `posicaoNaLista` e o mesmo esquema de `adicionarBalaoDoAgente`: o
-    // comprimento da lista MONTADA antes desta mensagem -- so os itens
-    // validos, sem contar as pendentes que entram depois. A proxima fala do
-    // agente, ja fora do historico, usa `estado.mensagens.length` (o
-    // comprimento final), que fica 1 acima da maior posicao usada aqui --
-    // entao a chave continua unica.
-    return { autor: 'agente', chave: `agente-${posicaoNaLista}`, texto: objeto.texto }
+    return { autor: 'agente', texto: objeto.texto }
   }
   return null
+}
+
+function ePendente(mensagem: Mensagem): boolean {
+  return mensagem.autor === 'visitante' && (mensagem.estado === 'enviando' || mensagem.estado === 'falhou')
 }
 
 /**
  * `historico` e a verdade do servidor (D2): a nova lista de mensagens e o
  * que o servidor mandou, seguido das pendentes da visitante (`enviando` ou
  * `falhou`) na ordem em que estavam -- elas ainda nao foram confirmadas,
- * entao o historico nao as contem. As `recebida` locais e os baloes do
- * agente em memoria saem: o historico os substitui.
+ * entao o historico nao as contem.
+ *
+ * **Quem ja estava na tela continua sendo o mesmo objeto.** Chave nova
+ * remonta o `<li>`, e o `log` da tela (`aria-relevant="additions"`) leria de
+ * novo a conversa inteira a cada reconexao. Por isso historico e confirmadas
+ * da tela (`recebida` da visitante, baloes do agente) andam juntos, em
+ * ordem: cada fala do historico procura, da posicao atual da tela para
+ * frente, a primeira confirmada do mesmo autor com o mesmo texto; achando,
+ * entra a da tela e o que ficou para tras dela sai -- e o que o servidor nao
+ * devolveu, como fala retida pela moderacao. Nao achando, a fala e nova e
+ * ganha chave de `proximoNumero`, contado sobre a lista ANTIGA inteira, para
+ * nao repetir a chave de ninguem que esteja saindo.
+ *
+ * Se o resultado e a lista de antes, objeto por objeto, devolve a MESMA
+ * `Conversa` -- inclusive historico vazio com a tela vazia.
  */
 function aplicarHistorico(estado: Conversa, dado: FrameBruto): Conversa {
   if (!Array.isArray(dado.mensagens)) {
     return estado
   }
-  const doHistorico: Mensagem[] = []
-  dado.mensagens.forEach((item, indice) => {
-    const mensagem = mensagemDoHistorico(item, indice, doHistorico.length)
-    if (mensagem) {
-      doHistorico.push(mensagem)
+  const confirmadas = estado.mensagens.filter((mensagem) => !ePendente(mensagem))
+  const pendentes = estado.mensagens.filter(ePendente)
+  let numero = proximoNumero(estado.mensagens)
+  let naTela = 0
+  const mensagens: Mensagem[] = []
+  for (const item of dado.mensagens) {
+    const fala = falaDoHistorico(item)
+    if (!fala) {
+      continue
     }
-  })
-  const pendentes = estado.mensagens.filter(
-    (mensagem) => mensagem.autor === 'visitante' && (mensagem.estado === 'enviando' || mensagem.estado === 'falhou'),
-  )
-  return { ...estado, mensagens: [...doHistorico, ...pendentes] }
+    const achada = confirmadas.findIndex(
+      (mensagem, posicao) => posicao >= naTela && mensagem.autor === fala.autor && mensagem.texto === fala.texto,
+    )
+    if (achada >= 0) {
+      mensagens.push(confirmadas[achada])
+      naTela = achada + 1
+      continue
+    }
+    mensagens.push(
+      fala.autor === 'visitante'
+        ? { autor: 'visitante', messageId: `historico-${numero}`, texto: fala.texto, estado: 'recebida' }
+        : { autor: 'agente', chave: `agente-${numero}`, texto: fala.texto },
+    )
+    numero += 1
+  }
+  mensagens.push(...pendentes)
+  const igual =
+    mensagens.length === estado.mensagens.length && mensagens.every((mensagem, i) => mensagem === estado.mensagens[i])
+  return igual ? estado : { ...estado, mensagens }
 }
 
 function aplicarErro(estado: Conversa, dado: FrameBruto): Conversa {

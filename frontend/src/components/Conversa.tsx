@@ -160,11 +160,13 @@ function MenuDaConversa({
  * bloqueado --, ou, se a primeira conexao caiu antes do frame `sessao`, a
  * mesma lida do storage. O `historico` que o servidor
  * devolve ao retomar substitui as falas confirmadas da tela -- e assim que o
- * que o agente disse com o socket fechado aparece. Gravar e so quando o
- * servidor emite sessao diferente da guardada: retomar nao regrava, entao o
- * prazo nao anda. A reconexao depois de uma queda continua manual (L5) --
- * reconectar sozinho e da TEC-348. As reaberturas automaticas sao o fim da
- * espera de `muitas_tentativas` (D5) e o despertar do sono (abaixo).
+ * que o agente disse com o socket fechado aparece --, mantendo o mesmo balao
+ * para o que ja estava nela. Gravar e so quando o servidor emite sessao
+ * diferente da guardada: retomar nao regrava, entao o prazo nao anda. A
+ * reconexao depois de uma queda continua
+ * manual (L5 da TEC-346) -- reconectar sozinho e da TEC-348. As reaberturas
+ * automaticas sao o fim da espera de `muitas_tentativas` (D5 da TEC-346) e o
+ * despertar do sono (abaixo).
  *
  * **Encerrar (D3) nao avisa o servidor.** Apaga a sessao guardada e a da
  * memoria, zera a tela e troca o socket por um que manda `ola` com `null`
@@ -534,7 +536,10 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
         ) : null}
         {/* `log` nao e papel permitido num `<ol>`, e tira dele a semantica de
             lista: o papel fica no involucro, e a lista continua lista.
-            `additions` anuncia so os baloes novos, nao a troca de estado. */}
+            `additions` anuncia so os baloes novos, nao a troca de estado --
+            e o `historico` de cada reconexao mantem o mesmo objeto, e a mesma
+            chave, para o balao que ja estava na tela (`aplicarHistorico`):
+            chave nova remontaria o `<li>`, e ele seria anunciado de novo. */}
         <div className="conversa__registro" role="log" aria-live="polite" aria-relevant="additions">
           <ol ref={listaRef} className="conversa__mensagens" onScroll={aoRolar}>
             {conversa.mensagens.map((mensagem) =>
