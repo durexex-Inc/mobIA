@@ -26,17 +26,17 @@ Decisão do Eduardo, 27/09/2026. A card diz que a aparência "vem da configuraç
 
 Atributos na tag (`data-cor`, `data-posicao`) foram descartados: a configuração viraria texto colado no site do cliente, e mudar a cor exigiria editar o site.
 
-## D2 — `data-tenant` é conferido contra `MOBIA_TENANT_SLUG`
+## D2 — `data-tenant` é conferido contra `TENANT_SLUG`
 
 Decisão do Eduardo, 27/09/2026. Tenant único não significa atributo decorativo: um snippet colado com o valor errado precisa falhar no primeiro teste de quem o instala, não no dia em que houver multi-tenant.
 
-- **`MOBIA_TENANT_SLUG`** em `app/config.py`, **nulo por padrão**.
+- **`tenant_slug`** em `Settings` (`app/config.py`), lido da variável `TENANT_SLUG` — o `Settings` do backend não usa prefixo —, **nulo por padrão**.
 - Nulo quer dizer que nenhum slug casa: nenhum widget aparece em lugar nenhum até alguém configurar. É o lado seguro. Um deploy que esqueceu a variável fica sem chat, não com um chat que aceita qualquer valor.
 - O contrato do endpoint já nasce com o tenant no caminho (D3). O multi-tenant troca a comparação por uma busca, sem mudar a URL.
 
 ## D3 — Endpoint público `GET /widget/aparencia/{slug}`
 
-No router de `api/routes/widget.py`, com entrada em `ROTAS_PUBLICAS` (`test_toda_rota_declara_autorizacao` exige).
+Em módulo próprio, `api/routes/aparencia_do_widget.py`, e não em `widget.py`: aquele arquivo tem 635 linhas, todas sobre o ciclo do WebSocket, e esta rota é HTTP comum sem nada em comum com ele. Entra em `ROTAS_PUBLICAS` (`test_toda_rota_declara_autorizacao` exige).
 
 - **Devolve só `{nome_do_assistente, cor_primaria, posicao_do_botao}`** da configuração vigente. O resto da configuração (tom, pesos, cadência, orçamento) é do administrador e não sai por uma rota anônima.
 - **`404` quando o slug não casa, e também quando não há slug configurado**, com o mesmo corpo. Distinguir os dois diria a quem sonda se existe algum tenant.
@@ -52,7 +52,7 @@ O route handler `/embed/aparencia` (D5) chama a API com `revalidate: 60`. A API 
 
 Não há etapa de build. O Next serve o arquivo como está, e "sem dependências" fica literal: não existe bundler que possa arrastar nada para dentro.
 
-- **ES2017 dentro de uma IIFE.** Não há conferência de tipos: o `include` do `tsconfig.json` só cobre `*.ts` e `*.tsx`, então um `// @ts-check` aqui não seria lido por gate nenhum, e escrevê-lo sugeriria uma garantia que não existe. Os testes da seção "Testes" executam o arquivo real e são a rede.
+- **ES2019 dentro de uma IIFE.** O piso é o `catch {}` sem variável, que o `no-unused-vars` do ESLint exige no lugar de `catch (_)`. Não há conferência de tipos: o `include` do `tsconfig.json` só cobre `*.ts` e `*.tsx`, então um `// @ts-check` aqui não seria lido por gate nenhum, e escrevê-lo sugeriria uma garantia que não existe. Os testes da seção "Testes" executam o arquivo real e são a rede.
 - **O tamanho é conferido** por `npm run verificar:widget` (`frontend/scripts/verificar-widget.mjs`), que comprime com gzip e reprova acima de 5120 bytes. Entra no job `frontend` do CI, ao lado de `verificar:bundle`.
 
 Descartadas:
@@ -96,6 +96,12 @@ Esta é a quinta regra da card e o quarto cenário do Gherkin.
 - **Entra um teste que afirma que o painel continua `'none'`.** É ele que pega uma mudança que afrouxe a CSP da rota errada.
 - `connect-src` para o WebSocket não entra aqui: quem abre a conexão é a TEC-346 (L4).
 
+## D9 — `/widget.js` sai do matcher do proxy
+
+`frontend/public/widget.js` passaria pelo `proxy.ts`, cujo matcher só exclui `_next/static`, `_next/image`, `favicon.ico` e `bff`. E `/widget.js` não é rota pública: **o visitante sem cookie de sessão receberia um `307` para `/login` em vez do script**, e o botão nunca apareceria em site nenhum — com todo teste de unidade do loader verde, porque eles carregam o arquivo direto do disco.
+
+O conserto é excluir `widget.js` do matcher, ao lado de `favicon.ico`, e não acrescentá-lo a `rotaPublica()`. É asset, não documento: não tem script a autorizar com nonce, e o `nosniff` que ele precisa vem de `next.config.ts`, que alcança `/public` (D2 da TEC-356). O teste do proxy afirma o matcher sobre `/widget.js`.
+
 ## Testes
 
 - **Loader (vitest/jsdom, executando o arquivo real de `public/`):**
@@ -109,6 +115,7 @@ Esta é a quinta regra da card e o quarto cenário do Gherkin.
   - `postMessage` de outra origem é ignorado.
 - **Tamanho:** `verificar:widget` no CI.
 - **CSP:** `/embed/chat` com `frame-ancestors *`, o painel com `'none'`.
+- **Matcher:** `/widget.js` fora do proxy (D9).
 - **`/embed/aparencia` e `/embed/chat`:** cabeçalhos CORS e de cache, e o `404` repassado.
 - **Backend:**
   - unitários de `validar()` para cor e posição;
@@ -131,4 +138,4 @@ Esta é a quinta regra da card e o quarto cenário do Gherkin.
 - **L2 — O "1,5 s em 4G" não é medido.** Não há deploy (TEC-219) nem medição de Web Vitals (TEC-357). A card entrega o que torna o número alcançável (loader pequeno, iframe só no clique) sem provar o número.
 - **L3 — Até a TEC-346, quem abre o chat vê só o cabeçalho.** Hoje ninguém é afetado, porque não há deploy. Mas o botão não deve ir a um site real antes da conversa existir.
 - **L4 — O WebSocket não confere origem**, e isso é a TEC-365. O `connect-src` do WebSocket em `/embed/*` fica para a TEC-346.
-- **L5 — Até a TEC-345, qualquer site pode embutir o chat.** O `frame-ancestors *` da D8 é deliberado e provisório. Com `MOBIA_TENANT_SLUG` nulo por padrão, nenhum ambiente mostra o botão sem que alguém o ligue.
+- **L5 — Até a TEC-345, qualquer site pode embutir o chat.** O `frame-ancestors *` da D8 é deliberado e provisório. Com `TENANT_SLUG` nulo por padrão, nenhum ambiente mostra o botão sem que alguém o ligue.
